@@ -8,9 +8,7 @@ import (
 )
 
 const (
-	thoughtPanelMaxEntries = 12
-	thoughtPanelMaxChars   = 8000
-	thoughtPanelMaxRows    = 8
+	thoughtPanelMaxRows = 8
 )
 
 type thoughtPanelEntry struct {
@@ -22,6 +20,7 @@ type thoughtPanelState struct {
 	entries   []thoughtPanelEntry
 	expanded  bool
 	scrollOff int
+	wrapWidth int
 }
 
 func (p *thoughtPanelState) reset() {
@@ -32,6 +31,7 @@ func (p *thoughtPanelState) reset() {
 	p.entries = nil
 	p.expanded = false
 	p.scrollOff = 0
+	p.wrapWidth = 0
 }
 
 func (p *thoughtPanelState) visible() bool {
@@ -55,18 +55,6 @@ func (p *thoughtPanelState) append(step int, text string) {
 	wasAtBottom := p.atBottom()
 
 	p.entries = append(p.entries, thoughtPanelEntry{step: step, text: text})
-	if len(p.entries) > thoughtPanelMaxEntries {
-		p.entries = append([]thoughtPanelEntry(nil), p.entries[len(p.entries)-thoughtPanelMaxEntries:]...)
-	}
-
-	for p.totalChars() > thoughtPanelMaxChars && len(p.entries) > 1 {
-		p.entries = append([]thoughtPanelEntry(nil), p.entries[1:]...)
-	}
-
-	if p.totalChars() > thoughtPanelMaxChars && len(p.entries) == 1 {
-		p.entries[0].text = truncateRunes(p.entries[0].text, thoughtPanelMaxChars)
-	}
-
 	p.expanded = true
 	if wasAtBottom {
 		p.scrollToBottom()
@@ -89,17 +77,16 @@ func (p *thoughtPanelState) contains(step int, text string) bool {
 	return false
 }
 
-func (p *thoughtPanelState) totalChars() int {
+func (p *thoughtPanelState) rowWidth() int {
 	if p == nil {
-		return 0
+		return 80
 	}
 
-	total := 0
-	for _, entry := range p.entries {
-		total += len(entry.text)
+	if p.wrapWidth > 0 {
+		return p.wrapWidth
 	}
 
-	return total
+	return 80
 }
 
 func (p *thoughtPanelState) scroll(delta int) bool {
@@ -149,7 +136,7 @@ func (p *thoughtPanelState) maxScrollOff() int {
 		return 0
 	}
 
-	rows := allThoughtPanelRows(p.entries)
+	rows := allThoughtPanelRows(p.entries, p.rowWidth())
 	if len(rows) <= thoughtPanelMaxRows {
 		return 0
 	}
@@ -157,10 +144,12 @@ func (p *thoughtPanelState) maxScrollOff() int {
 	return len(rows) - thoughtPanelMaxRows
 }
 
-func renderThoughtPanel(p thoughtPanelState, width int) string {
-	if len(p.entries) == 0 {
+func renderThoughtPanel(p *thoughtPanelState, width int) string {
+	if p == nil || len(p.entries) == 0 {
 		return ""
 	}
+
+	p.setRenderWidth(width)
 
 	indicator := "▸"
 	if p.expanded {
@@ -172,7 +161,7 @@ func renderThoughtPanel(p thoughtPanelState, width int) string {
 		return thoughtPanelHeaderStyle.Width(max(1, width)).Render(title)
 	}
 
-	rows := thoughtPanelRows(p.entries, thoughtPanelMaxRows, p.scrollOff)
+	rows := thoughtPanelRows(p.entries, thoughtPanelMaxRows, p.scrollOff, p.rowWidth())
 	body := strings.Join(rows, "\n")
 	if body == "" {
 		return thoughtPanelHeaderStyle.Width(max(1, width)).Render(title)
@@ -180,11 +169,31 @@ func renderThoughtPanel(p thoughtPanelState, width int) string {
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		thoughtPanelHeaderStyle.Width(max(1, width)).Render(title),
-		thoughtPanelBodyStyle.Width(max(1, width)).Render(body),
+		thoughtPanelBodyStyle.Render(body),
 	)
 }
 
-func allThoughtPanelRows(entries []thoughtPanelEntry) []string {
+func (p *thoughtPanelState) setRenderWidth(width int) {
+	if p == nil {
+		return
+	}
+
+	wasAtBottom := p.atBottom()
+	p.wrapWidth = thoughtPanelBodyContentWidth(width)
+	if wasAtBottom {
+		p.scrollToBottom()
+	} else {
+		p.clampScroll()
+	}
+}
+
+func thoughtPanelBodyContentWidth(width int) int {
+	return max(1, width-2)
+}
+
+func allThoughtPanelRows(entries []thoughtPanelEntry, width int) []string {
+	width = max(1, width)
+
 	var rows []string
 	for _, entry := range entries {
 		text := strings.TrimSpace(entry.text)
@@ -203,7 +212,7 @@ func allThoughtPanelRows(entries []thoughtPanelEntry) []string {
 				continue
 			}
 
-			rows = append(rows, prefix+line)
+			rows = appendWrappedThoughtRows(rows, prefix, line, width)
 			prefix = "    "
 		}
 	}
@@ -211,12 +220,33 @@ func allThoughtPanelRows(entries []thoughtPanelEntry) []string {
 	return rows
 }
 
-func thoughtPanelRows(entries []thoughtPanelEntry, maxRows int, scrollOff int) []string {
+func appendWrappedThoughtRows(rows []string, prefix string, line string, width int) []string {
+	available := max(1, width-lipgloss.Width(prefix))
+	wrapped := wrapLines(line, available)
+	continuationPrefix := strings.Repeat(" ", max(0, lipgloss.Width(prefix)))
+
+	for i, wrappedLine := range wrapped {
+		wrappedLine = strings.TrimRight(wrappedLine, " ")
+		if strings.TrimSpace(wrappedLine) == "" {
+			continue
+		}
+
+		if i == 0 {
+			rows = append(rows, prefix+wrappedLine)
+		} else {
+			rows = append(rows, continuationPrefix+wrappedLine)
+		}
+	}
+
+	return rows
+}
+
+func thoughtPanelRows(entries []thoughtPanelEntry, maxRows int, scrollOff int, width int) []string {
 	if maxRows <= 0 {
 		return nil
 	}
 
-	rows := allThoughtPanelRows(entries)
+	rows := allThoughtPanelRows(entries, width)
 	if len(rows) <= maxRows {
 		return rows
 	}

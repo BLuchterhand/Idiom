@@ -31,6 +31,25 @@ var date = ""
 // weren't injected, so a `go install ./...` build still reports the
 // VCS state Go's toolchain captured.
 func runVersionMain(_ []string, stdout io.Writer, _ io.Writer) int {
+	resolvedVersion, resolvedCommit, resolvedDate := resolvedBuildInfo()
+
+	fmt.Fprintf(stdout, "version: %s\n", resolvedVersion)
+
+	if resolvedCommit != "" {
+		fmt.Fprintf(stdout, "commit:  %s\n", resolvedCommit)
+	}
+
+	if resolvedDate != "" {
+		fmt.Fprintf(stdout, "date:    %s\n", resolvedDate)
+	}
+
+	fmt.Fprintf(stdout, "go:      %s\n", runtime.Version())
+	fmt.Fprintf(stdout, "os/arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+
+	return 0
+}
+
+func resolvedBuildInfo() (string, string, string) {
 	resolvedCommit, resolvedDate := commit, date
 	if resolvedCommit == "" || resolvedDate == "" {
 		if info, ok := debug.ReadBuildInfo(); ok {
@@ -49,18 +68,5 @@ func runVersionMain(_ []string, stdout io.Writer, _ io.Writer) int {
 		}
 	}
 
-	fmt.Fprintf(stdout, "version: %s\n", version)
-
-	if resolvedCommit != "" {
-		fmt.Fprintf(stdout, "commit:  %s\n", resolvedCommit)
-	}
-
-	if resolvedDate != "" {
-		fmt.Fprintf(stdout, "date:    %s\n", resolvedDate)
-	}
-
-	fmt.Fprintf(stdout, "go:      %s\n", runtime.Version())
-	fmt.Fprintf(stdout, "os/arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
-
-	return 0
+	return version, resolvedCommit, resolvedDate
 }

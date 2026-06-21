@@ -194,7 +194,7 @@ For bugs involving agent behavior, readiness, tool loops, prompts, recovery, or 
   that investigation misroutes, loops, fabricates, or fails to use available
   evidence, treat the failed investigation itself as behavior-debugging evidence
   and consider whether the harness should be fixed before bypassing it.
-- Treat conversation logs, telemetry logs, and `harness_audit` as the source of truth for what happened. Start from the newest relevant `.idiom/logs/conversations/*.jsonl`, `logs/conversations/*.jsonl`, and `logs/telemetry/*.jsonl` records before changing prompts, rails, gates, or tests. Do not rely on memory, summaries, or the user's paraphrase of the run when logs are available.
+- Treat conversation logs, telemetry logs, and `harness_audit` as the source of truth for what happened. Start from the newest relevant user-level `~/.idiom/logs/conversations/*.jsonl` records, then check repo-local `.idiom/logs/conversations/*.jsonl`, `logs/conversations/*.jsonl`, and `logs/telemetry/*.jsonl` records before changing prompts, rails, gates, or tests. The `idiom -prompt ... -json` path normally writes conversation logs under `~/.idiom/logs/conversations`, even when the workspace has its own `.idiom/` directory. Do not rely on memory, summaries, or the user's paraphrase of the run when logs are available.
 - Record the evidence trail in your diagnosis: exact session/log path(s), relevant stop reason(s), rejected tool/error counts, completion-gate or recovery events, and the tool sequence that proves the failure shape. If you cannot name those facts yet, keep inspecting logs instead of patching.
 - Compare the newest failure against prior similar logs before choosing a fix. A recurring behavior bug should be classified from log patterns across attempts, not from the single most recent transcript alone.
 - When an investigation starts to chase prompt wording, a lane name, a single
@@ -340,42 +340,12 @@ forcing another broad packet.
 - `prompts/`: baseline and mode/profile instructions
 - `docs/`: design intent, north star, remediation, and parity plans
 
-## MiniMax M2.7 Implementation Routing
+## Hosted DeepSeek Implementation Routing
 
-The `minimax-m2.7` profile in `.idiom/backends.json` routes all roles
-(planner, executor, classifier) through the hosted MiniMax M2.7 model. No
-local GPU or model process is required. Use this profile when hosted model
-quality, latency, or cost is preferable to local inference.
-
-### When to use MiniMax M2.7
-
-- **Implementation-heavy atoms**: briefs that enumerate many precise edits
-  (plan-execute, implement, delegate_edit).
-- **Multi-file changes**: MiniMax M2.7 handles both planning and execution.
-- **When local GPU is unavailable or local model quality is the bottleneck**.
-
-### When to pivot back to local Qwen
-
-- **Cost-sensitive batch runs**: switch to `qwen-pair` profile to use local
-  inference with no per-token cost.
-- **Network-constrained environments**: no internet access, or API key
-  unavailable.
-- **Quick iteration loops**: local latency is lower for rapid
-  plan-execute-implement cycles.
-
-### Invocation patterns
-
-```bash
-# Plan-execute with MiniMax M2.7 (all roles)
-idiom lane plan-execute --backend-profile minimax-m2.7 "Add DONKEY animal constant"
-idiom lane plan-execute --backend-profile minimax-m2.7 --prompt-file brief.md
-
-# Implement lane with MiniMax M2.7
-idiom lane implement --backend-profile minimax-m2.7 --prompt-file brief.md
-
-# No local backend start needed — MiniMax M2.7 is fully hosted
-idiom backend status --profile minimax-m2.7
-```
+The repository default backend profile is `deepseek-v4-flash`, a hosted
+non-local DeepSeek profile declared in `.idiom/backends.json`. Prefer the
+default profile for implementation-heavy atoms when the user asks for a
+non-local implementor and no more specific backend is required.
 
 Brief lint is local (Python preflight) and does not route through any model
 backend:
@@ -387,23 +357,23 @@ idiom brief lint --json path/to/brief.md
 
 ### Prerequisites
 
-- `MINIMAX_API_KEY` environment variable must be set in the shell.
-- The `minimax-m2.7` profile is declared in `.idiom/backends.json` (already
-  present in this repo).
-- No local backend process is needed — MiniMax M2.7 is fully hosted.
+- The hosted DeepSeek API credentials required by the active backend profile
+  must be set in the shell.
+- No local backend process is needed for hosted DeepSeek profiles.
 
 ### Smoke testing
 
 After any change to the profile, backends.json, or prompt stack, verify the
 end-to-end path:
 
-1. **Backend health**: `idiom backend status --profile minimax-m2.7` — expect
-   MiniMax-M2.7 UP (hosted).
+1. **Backend health**: `idiom backend status --profile deepseek-v4-flash` —
+   expect the hosted DeepSeek backend to report UP.
 2. **Brief lint** (no model needed): write a minimal brief and run
    `idiom brief lint <path>`.
 3. **Plan-execute dry run**: invoke `idiom lane plan-execute --backend-profile
-   minimax-m2.7 --json` with a trivial one-edit brief and confirm the planner
-   phase completes and the executor phase dispatches against MiniMax M2.7.
+   deepseek-v4-flash --json` with a trivial one-edit brief and confirm the
+   planner phase completes and the executor phase dispatches against the hosted
+   DeepSeek backend.
 
 ## Project Docs
 

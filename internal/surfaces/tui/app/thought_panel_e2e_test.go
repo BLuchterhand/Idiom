@@ -187,6 +187,64 @@ func TestThoughtPanelE2ESuppressedPromptRunKeepsCurrentTurnThoughtFeed(t *testin
 	}
 }
 
+func TestThoughtPanelE2ERendersNewestSegmentFromLongReasoningReply(t *testing.T) {
+	cfg := config.Default()
+	cfg.Chat.AutoStartServer = false
+	cfg.Chat.AttachInstructionFiles = false
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	cfg.Chat.MaxToolSteps = 1
+	cfg.Workspace.Root = t.TempDir()
+	cfg.Workspace.CWD = cfg.Workspace.Root
+	cfg.MCP = nil
+	writeThoughtPanelFixtureFile(t, cfg.Workspace.Root)
+
+	client := &scriptedLLMClient{
+		responses: []string{"Visible answer."},
+		reasoningResponses: []string{strings.Join([]string{
+			"first reasoning segment",
+			"second reasoning segment",
+			"third reasoning segment",
+			"fourth reasoning segment",
+			"fifth reasoning segment",
+			"sixth reasoning segment",
+			"seventh reasoning segment",
+			"eighth reasoning segment",
+			"ninth reasoning segment",
+		}, "\n\n")},
+	}
+
+	model := New(cfg)
+	defer model.Close()
+
+	model.client = client
+	model.runner.Client = client
+	model.ready = true
+	model.streaming = true
+	model.events = make(chan tea.Msg, 64)
+	model.viewport = viewport.New(52, 14)
+	model.input = textarea.New()
+	model.spinner = spinner.New()
+
+	if _, err := model.RunPromptOnce(context.Background(), "show all thought segments"); err != nil {
+		t.Fatalf("RunPromptOnce: %v", err)
+	}
+
+	if !drainThoughtPanelMessages(model) {
+		t.Fatal("expected RunPromptOnce to queue thought segments")
+	}
+
+	if len(model.thoughts.entries) != 9 {
+		t.Fatalf("thought entries = %#v, want all nine reasoning segments", model.thoughts.entries)
+	}
+
+	model.renderMessages(true)
+	view := model.viewport.View()
+	if !strings.Contains(view, "thoughts · 9") || !strings.Contains(view, "ninth reasoning segment") {
+		t.Fatalf("thought panel should follow newest reasoning segment, got:\n%s", view)
+	}
+}
+
 var _ llama.LLMClient = (*scriptedLLMClient)(nil)
 
 func drainThoughtPanelMessages(model *Model) bool {

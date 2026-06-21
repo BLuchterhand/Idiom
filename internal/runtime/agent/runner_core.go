@@ -1562,6 +1562,13 @@ func initRunnerRuntimeSurfaceForCompile() {
 	_ = time.Now
 }
 
+func (r *Runner) sessionID() string {
+	if r == nil || r.Workspace == nil {
+		return ""
+	}
+	return r.Workspace.SessionID()
+}
+
 type Runner struct {
 	Client llama.LLMClient
 	// ImplementerClient, when non-nil, is used for write-enabled child
@@ -1623,8 +1630,14 @@ type Runner struct {
 	// terminates the turn. When nil the runner falls back to a hard rejection.
 	DoomLoopGate         func(req workspace.ToolRequest, count int) bool
 	LastAssistantMessage llama.ChatMessage
-	currentAllowedTools  []string
-	activeAutonomy       *runnerAutonomyRecorder
+	// ReadApprovalGate, when wired, lets the operator approve or deny a
+	// read that the post-readiness candidate-scope rejection would
+	// otherwise block. Only the "Plan-execute read outside allowed
+	// candidate scope" rejection is overridable; all other rejections
+	// enforce real invariants and pass through unchanged.
+	ReadApprovalGate    *ReadApprovalGate
+	currentAllowedTools []string
+	activeAutonomy      *runnerAutonomyRecorder
 
 	// lastCompletionGateError stores the error text from the most recent
 	// completion-gate rejection so that recovery prompt functions can
@@ -1898,6 +1911,13 @@ func (r *Runner) runLegacySessionBody(
 		runState.completionStatusLastBlockerKind = completionStatusLastBlockerKind
 		runState.acceptedAnswerSignalsEmitted = acceptedAnswerSignalsEmitted
 		value, finishErr = r.finish(runState, value, finishErr, reason, exhausted)
+		if finishErr == nil &&
+			strings.TrimSpace(value) != "" &&
+			strings.TrimSpace(value) != strings.TrimSpace(r.LastAssistantMessage.Content) &&
+			(strings.TrimSpace(r.LastAssistantMessage.Role) != "" || strings.TrimSpace(r.LastAssistantMessage.Content) != "") {
+
+			r.LastAssistantMessage.Content = value
+		}
 
 		applyRunState()
 
@@ -2628,6 +2648,13 @@ func (r *Runner) runLegacySessionBody(
 				}
 
 				if priorGateRejections >= r.completionGateRetryLimit(collectedResults) {
+					if recovered, recoveredAcceptance, ok := r.readOnlyTerminalRecoveryCandidate("completion_gate_repeated_rejection", collectedResults); ok {
+						_ = recoveredAcceptance
+						emitCompletionStatus("accepted", "read_only_terminal_recovery", "", collectedResults, false)
+
+						return finish(recovered, nil, "read_only_terminal_recovery", false)
+					}
+
 					answer := r.completionGateRepeatedBlockerAnswer(result, collectedResults)
 					blockerKind := r.completionGateRepeatedBlockerKind(collectedResults)
 					emitCompletionStatus("blocked", blockerKind, blockerKind, collectedResults, true)
@@ -2988,12 +3015,28 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
+		// Docs context reads under the cap are allowed even when the terminal
+		// submit_plan surface is active. Must run before the nudge rejection
+		// below so the read can reach the post-readiness candidate-scope check.
+		if !recoveryReadAllowanceGrantedThisRequest && workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
+			target := agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
+			if target != "" && isPlanExecuteContextDocPath(target) &&
+				planExecuteContextDocReadCount(collectedResults) < planThenExecuteContextDocReadCap {
+				recoveryReadAllowanceGrantedThisRequest = true
+			}
+		}
+		if !recoveryReadAllowanceGrantedThisRequest &&
+			r.ReadApprovalGate != nil && r.ReadApprovalGate.Decider != nil &&
+			workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
+			recoveryReadAllowanceGrantedThisRequest = true
+		}
+
 		if redirected, redirectedRaw, ok := r.planThenExecuteMissingTargetReadRedirect(req, collectedResults); ok {
 			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_missing_target_read_ranked_candidate")
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 
-		if summary, errorText, prompt, reject := planThenExecuteReadinessNudgedNonSubmitRejection(req, r.RuntimeBrief, collectedResults, planThenExecuteSubmitOnlyReadinessNudged); reject {
+		if summary, errorText, prompt, reject := planThenExecuteReadinessNudgedNonSubmitRejection(req, r.RuntimeBrief, collectedResults, planThenExecuteSubmitOnlyReadinessNudged); reject && !recoveryReadAllowanceGrantedThisRequest {
 			result := workspace.ToolResult{
 				Tool:    req.Tool,
 				Summary: summary,
@@ -3830,22 +3873,30 @@ func (r *Runner) runLegacySessionBody(
 		}
 
 		if summary, errorText, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(req, r.RuntimeBrief, collectedResults); reject {
-			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
-			if done {
-				return finish(answer, err, "plan_then_execute_candidate_post_readiness_discovery_rejected", true)
-			}
+			if override, denialContext := r.ReadApprovalGate.MaybeOverrideRejection(ctx, r.sessionID(), req, r.RuntimeBrief, summary, errorText); override {
+				// Gate approved the read — fall through to normal tool dispatch
+			} else {
+				if denialContext != "" {
+					errorText = strings.TrimSpace(errorText) + denialContext
+				}
 
-			if summary == "Anchor refresh capability required" {
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: errorText})
-				r.emitEvent(RunEvent{Role: "plan_then_execute_anchor_refresh_required", Content: errorText})
+				answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
+				if done {
+					return finish(answer, err, "plan_then_execute_candidate_post_readiness_discovery_rejected", true)
+				}
+
+				if summary == "Anchor refresh capability required" {
+					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: errorText})
+					r.emitEvent(RunEvent{Role: "plan_then_execute_anchor_refresh_required", Content: errorText})
+
+					continue
+				}
+
+				prompt := r.planThenExecuteSubmitReadyTerminalPrompt(errorText, collectedResults, chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan))
+				transitionPlanThenExecuteSubmitReadyTerminal(prompt, "plan_then_execute_submit_ready_terminal_required", "candidate_post_readiness_discovery")
 
 				continue
 			}
-
-			prompt := r.planThenExecuteSubmitReadyTerminalPrompt(errorText, collectedResults, chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan))
-			transitionPlanThenExecuteSubmitReadyTerminal(prompt, "plan_then_execute_submit_ready_terminal_required", "candidate_post_readiness_discovery")
-
-			continue
 		}
 
 		if summary, errorText, reject := r.repeatedRangeLessReadFileRejection(req, collectedResults); reject {
@@ -11251,6 +11302,7 @@ func hasPendingVerificationAfterWrites(results []workspace.ToolResult, brief wor
 
 	docLane := briefIsDocDeliverableLane(brief)
 	pending := false
+	var pendingPaths []string
 
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) != "" {
@@ -11275,12 +11327,14 @@ func hasPendingVerificationAfterWrites(results []workspace.ToolResult, brief wor
 			}
 
 			pending = true
+			pendingPaths = util.AppendUniqueMulti(pendingPaths, changedPathsFromToolResult(result)...)
 
 			continue
 		}
 
-		if pending && resultCountsAsSuccessfulVerification(result) {
+		if pending && resultCountsAsSuccessfulPostWriteVerification(result, pendingPaths) {
 			pending = false
+			pendingPaths = nil
 		}
 	}
 
@@ -11719,39 +11773,86 @@ func stripQuotedEvidenceForProcessIntent(text string) string {
 }
 
 // looksLikeToolResultTranscript returns true when the reply looks like
-// a raw tool result transcript (e.g. "The inspected source in X contains
-// func Foo, if bar != nil, and return baz"). Catches the pattern where
-// the model dumps raw function signatures instead of synthesizing prose.
+// a raw tool result transcript (e.g. line-numbered source fragments or
+// "contains `func Foo`"). Broader low-value source inventories are
+// handled by final-answer acceptance; this completion gate is only for
+// raw transcript/search scaffolding that should never be user-visible.
 func looksLikeToolResultTranscript(lower string) bool {
-	// "The inspected source in `path` contains `code`"
-	if strings.Contains(lower, "the inspected source in") &&
-		strings.Contains(lower, " contains `") {
+	scanText := strings.ToLower(stripQuotedAndFencedSourceExamples(lower))
+	hasLead := replyHasDirectSynthesisLead(scanText)
 
+	if looksLikeLowValueSourceInventoryNonAnswer(scanText) && !hasLead {
 		return true
 	}
 
-	if looksLikePathShowsSourceInventory(lower) {
-		return true
-	}
-
-	if looksLikeInspectedBodySourceInventory(lower) {
-		return true
-	}
-
-	if looksLikeLineOrientedSourceSnippetAnswer(lower) {
+	if looksLikeLineOrientedSourceSnippetAnswer(scanText) && !hasLead {
 		return true
 	}
 
 	// " contains `f" where f is any function/symbol name
-	if strings.Contains(lower, " contains `func ") ||
-		strings.Contains(lower, " contains `type ") ||
-		strings.Contains(lower, " contains `var ") ||
-		strings.Contains(lower, " contains `const ") {
+	if !hasLead && (strings.Contains(scanText, " contains `func ") ||
+		strings.Contains(scanText, " contains `type ") ||
+		strings.Contains(scanText, " contains `var ") ||
+		strings.Contains(scanText, " contains `const ")) {
 
 		return true
 	}
 
 	return false
+}
+
+func replyHasDirectSynthesisLead(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return false
+	}
+
+	trimmed = strings.TrimPrefix(trimmed, "**")
+	lower := strings.ToLower(strings.TrimSpace(trimmed))
+	for _, prefix := range []string{
+		"i have sufficient evidence to answer.",
+		"i now have sufficient evidence to answer.",
+		"i now have enough evidence to answer.",
+		"i now have enough evidence to answer both questions.",
+		"i now have all the evidence needed for a grounded answer.",
+		"now i have sufficient evidence to answer.",
+		"now i have enough evidence to answer.",
+		"now i have enough evidence to answer both questions.",
+		"now i have all the evidence needed for a grounded answer.",
+		"now i have the full picture.",
+		"let me synthesize.",
+	} {
+		lower = strings.TrimSpace(strings.TrimPrefix(lower, prefix))
+	}
+
+	first := lower
+	if idx := strings.Index(first, "\n\n"); idx >= 0 {
+		first = first[:idx]
+	}
+	first = strings.TrimSpace(strings.Trim(first, "* "))
+	if first == "" {
+		return false
+	}
+
+	if strings.HasPrefix(first, "for `") ||
+		strings.HasPrefix(first, "`") ||
+		strings.HasPrefix(first, "the inspected source") ||
+		strings.Contains(first, "clearest inspected implementation anchor") ||
+		strings.Contains(first, " inspected body shows ") {
+
+		return false
+	}
+
+	return strings.Contains(first, "confirmed:") ||
+		strings.HasPrefix(first, "confirmed.") ||
+		strings.Contains(first, "the answer is:") ||
+		strings.HasPrefix(first, "answer:") ||
+		strings.HasPrefix(first, "## answer:") ||
+		strings.HasPrefix(first, "yes,") ||
+		strings.HasPrefix(first, "no,") ||
+		strings.HasPrefix(first, "no —") ||
+		strings.HasPrefix(first, "yes —") ||
+		(strings.Contains(first, " is ") && len(strings.Fields(first)) >= 8)
 }
 
 func (r *Runner) readOnlySearchHitInventoryCompletionRejection(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
@@ -11773,7 +11874,10 @@ func (r *Runner) readOnlySearchHitInventoryCompletionRejection(reply string, res
 	}
 
 	lower := strings.ToLower(trimmed)
-	if !looksLikeToolResultTranscript(lower) && !toolLocalSearchHandlePattern.MatchString(trimmed) {
+	unquotedReply := stripQuotedAndFencedSourceExamples(trimmed)
+	hasTranscript := looksLikeToolResultTranscript(lower)
+	hasSearchHandle := toolLocalSearchHandlePattern.MatchString(unquotedReply)
+	if !hasTranscript && !(hasSearchHandle && !replyHasDirectSynthesisLead(trimmed)) {
 		return workspace.ToolResult{}, false
 	}
 
@@ -16893,7 +16997,7 @@ func allowRecoverablePostReadinessRepairExecution(req workspace.ToolRequest, las
 
 func (r *Runner) emitThinkingTrace(step int, reason string, message llama.ChatMessage, opts llama.ChatOptions, preservedInHistory bool) {
 	if r != nil && r.OnThought != nil && !preservedInHistory {
-		if text := strings.TrimSpace(message.ReasoningContent); text != "" {
+		for _, text := range thoughtSegmentsFromMessage(message) {
 			r.OnThought(ThoughtEvent{Step: step, Text: text})
 		}
 	}
@@ -16926,6 +17030,75 @@ func (r *Runner) emitThinkingTrace(step int, reason string, message llama.ChatMe
 	}
 
 	r.OnEvent(RunEvent{Role: "thinking_trace", Content: string(data)})
+}
+
+func thoughtSegmentsFromMessage(message llama.ChatMessage) []string {
+	var segments []string
+	segments = appendThoughtSegments(segments, message.ReasoningContent)
+	segments = appendThoughtSegments(segments, extractThinkTagContent(message.Content)...)
+	return segments
+}
+
+func appendThoughtSegments(segments []string, values ...string) []string {
+	for _, value := range values {
+		for _, segment := range splitThoughtSegments(value) {
+			if segment != "" {
+				segments = append(segments, segment)
+			}
+		}
+	}
+
+	return segments
+}
+
+func splitThoughtSegments(text string) []string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+
+	chunks := strings.Split(text, "\n\n")
+	if len(chunks) == 1 {
+		chunks = strings.Split(text, "\n")
+	}
+
+	var out []string
+	for _, chunk := range chunks {
+		chunk = strings.TrimSpace(chunk)
+		if chunk == "" {
+			continue
+		}
+
+		out = append(out, chunk)
+	}
+
+	return out
+}
+
+func extractThinkTagContent(text string) []string {
+	var out []string
+	for {
+		start := strings.Index(text, "<think>")
+		if start < 0 {
+			return out
+		}
+
+		rest := text[start+len("<think>"):]
+		end := strings.Index(rest, "</think>")
+		if end < 0 {
+			if segment := strings.TrimSpace(rest); segment != "" {
+				out = append(out, segment)
+			}
+
+			return out
+		}
+
+		if segment := strings.TrimSpace(rest[:end]); segment != "" {
+			out = append(out, segment)
+		}
+
+		text = rest[end+len("</think>"):]
+	}
 }
 
 // stripOrphanedToolCalls returns a copy of messages with any assistant
@@ -20380,6 +20553,7 @@ func (r *Runner) finish(state *runnerRunState, value string, finishErr error, re
 
 	state.budgetExhausted = exhausted
 	if finishErr == nil {
+		terminalInput := value
 		decision := r.classifyTerminalAnswer(value, state.stopReason, state.collectedResults)
 		presentedBeforeDecoration := decision.PresentedAnswer
 
@@ -20391,6 +20565,12 @@ func (r *Runner) finish(state *runnerRunState, value string, finishErr error, re
 			if strings.TrimSpace(r.LastAssistantMessage.Role) != "" || strings.TrimSpace(r.LastAssistantMessage.Content) != "" {
 				r.LastAssistantMessage.Content = decision.PresentedAnswer
 			}
+		}
+
+		if strings.TrimSpace(decision.PresentedAnswer) != strings.TrimSpace(terminalInput) &&
+			(strings.TrimSpace(r.LastAssistantMessage.Role) != "" || strings.TrimSpace(r.LastAssistantMessage.Content) != "") {
+
+			r.LastAssistantMessage.Content = decision.PresentedAnswer
 		}
 
 		value = decision.PresentedAnswer
@@ -22309,6 +22489,16 @@ func (r *Runner) classifyTerminalAnswer(answer string, stopReason string, result
 		return decision
 	}
 
+	if recovered, recoveredAcceptance, ok := r.recoveredReadOnlyTerminalAnswer(answer, results, acceptance); ok {
+		decision.Outcome = terminalAnswerAccepted
+		decision.RawAnswer = recovered
+		decision.PresentedAnswer = recovered
+		decision.StopReason = "read_only_terminal_recovery"
+		decision.Acceptance = recoveredAcceptance
+
+		return decision
+	}
+
 	decision.Outcome = terminalAnswerBlocked
 	decision.StopReason = acceptance.BlockerKind
 	decision.RetryExhausted = retryableReadOnlyFinalAnswerBlockerKind(acceptance.BlockerKind)
@@ -22326,6 +22516,34 @@ func (r *Runner) classifyTerminalAnswer(answer string, stopReason string, result
 	}
 
 	return decision
+}
+
+func (r *Runner) recoveredReadOnlyTerminalAnswer(answer string, results []workspace.ToolResult, acceptance finalAnswerAcceptance) (string, finalAnswerAcceptance, bool) {
+	if r == nil {
+		return "", finalAnswerAcceptance{}, false
+	}
+
+	return r.readOnlyTerminalRecoveryCandidate(acceptance.BlockerKind, results)
+}
+
+func (r *Runner) readOnlyTerminalRecoveryCandidate(blockerKind string, results []workspace.ToolResult) (string, finalAnswerAcceptance, bool) {
+	if r == nil {
+		return "", finalAnswerAcceptance{}, false
+	}
+
+	brief := readOnlyDirectAnswerAcceptanceLedgerBrief(workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief))
+	closeout := readOnlyClosureDecisionForResults(brief, results)
+	recovered, ok := closeout.RecoverableTerminalCandidate(r.agentName(), blockerKind)
+	if !ok {
+		return "", finalAnswerAcceptance{}, false
+	}
+
+	recoveredAcceptance := r.evaluateFinalAnswerAcceptance(recovered, results)
+	if recoveredAcceptance.BlockerKind != "" {
+		return "", finalAnswerAcceptance{}, false
+	}
+
+	return recovered, recoveredAcceptance, true
 }
 
 func (r *Runner) hostOwnedReadOnlyCloseoutAccepted(answer string, stopReason string, results []workspace.ToolResult, acceptance finalAnswerAcceptance) bool {
@@ -22356,6 +22574,7 @@ func (r *Runner) terminalAnswerShouldOverrideRejectedRaw(answer string, acceptan
 
 	return acceptance.BlockerKind != "non_answer_prose" ||
 		looksLikeMetaIntentRestatement(answer) ||
+		looksLikeLowValueSourceInventoryNonAnswer(answer) ||
 		finishShouldOverrideSourceEcho(answer)
 }
 

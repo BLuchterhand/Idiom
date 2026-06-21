@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
+	"idiom/internal/platform/config"
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/workerruntime"
 	"os"
@@ -2244,6 +2245,26 @@ func (d ReadOnlyCloseout) ConcreteFallbackAnswer() (string, bool) {
 	return "", false
 }
 
+func (d ReadOnlyCloseout) RecoverableTerminalCandidate(agentName string, blockerKind string) (string, bool) {
+	switch strings.TrimSpace(blockerKind) {
+	case "non_answer_prose", "completion_gate_repeated_rejection", "answer_objective_unmet:insufficient_evidence_claimed":
+	default:
+		return "", false
+	}
+
+	brief := workerruntime.NormalizeRuntimeBrief(d.Brief)
+	if !readOnlyDirectAnswerLane(brief) || runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
+		return "", false
+	}
+
+	recovered, ok := d.ConcreteFallbackAnswer()
+	if !ok {
+		return "", false
+	}
+
+	return d.PresentableObjectiveAnswerCandidate(agentName, recovered)
+}
+
 func (d ReadOnlyCloseout) AllowsSourceInventoryAnswer(answer string, currentlyAccepted bool) bool {
 	return false
 }
@@ -2353,10 +2374,52 @@ func (d ReadOnlyCloseout) FinalAnswerDecision(answer string) readOnlyFinalAnswer
 		return decision
 	}
 
+	if readOnlyLowConfidenceTermMatchAccepted(substantiveAnswer, objective, ledger, d.Results) {
+		decision.Status = "checked_low_confidence_term_match"
+		decision.AcceptedEvidencePaths = readOnlyAcceptedDirectAnswerEvidencePaths(answer, ledger, d.Results)
+		decision.AnswerObjectiveTerms = readOnlySharedObjectiveSupportTerms(substantiveAnswer, objective)
+		return decision
+	}
+
 	decision.BlockerKind = "answer_objective_unmet:term_mismatch"
 	decision.Reason = "the final answer is grounded in inspected source evidence, but it does not address the user's objective. Answer using objective-relevant source-body evidence, or use <<QUESTION>>: with the exact missing evidence."
 
 	return decision
+}
+
+func readOnlyLowConfidenceTermMatchAccepted(answer string, objective string, ledger readOnlyAnswerabilityLedger, results []workspace.ToolResult) bool {
+	if !ledger.Answerable() || answerLacksObjectiveSourceEvidence(answer, ledger) {
+		return false
+	}
+
+	if !answerSourceCitationsAreObjectiveRelevant(answer, ledger) {
+		return false
+	}
+
+	if len(readOnlyAcceptedDirectAnswerEvidencePaths(answer, ledger, results)) == 0 {
+		return false
+	}
+
+	if readOnlyAnswerHasHardNonFinalProse(answer) {
+		return false
+	}
+
+	supportTerms := readOnlySharedObjectiveSupportTerms(answer, objective)
+	if readOnlyScaffoldFinalAnswer(answer) && len(supportTerms) < 2 {
+		return false
+	}
+
+	return len(supportTerms) > 0
+}
+
+func readOnlyAnswerLooksLikeNonFinalProse(answer string) bool {
+	return readOnlyScaffoldFinalAnswer(answer) ||
+		readOnlyAnswerHasHardNonFinalProse(answer)
+}
+
+func readOnlyAnswerHasHardNonFinalProse(answer string) bool {
+	return looksLikeLowValueSourceInventoryNonAnswer(answer) ||
+		looksLikeNonAnswerProseCore(answer)
 }
 
 func readOnlyCarriedEvidenceAnswerAccepted(answer string, objective string, ledger readOnlyAnswerabilityLedger, results []workspace.ToolResult) bool {
@@ -2558,6 +2621,74 @@ func answerObjectiveTerms(answer string, objective string) []string {
 	}
 
 	return util.Sorted(matches)
+}
+
+func readOnlySharedObjectiveSupportTerms(answer string, objective string) []string {
+	answer = AnswerProseForObjectiveMatching(AnswerTextWithoutPathCitations(SubstantiveAnswerWithoutEchoedObjective(answer, objective)))
+	if strings.TrimSpace(answer) == "" || strings.TrimSpace(objective) == "" {
+		return nil
+	}
+
+	var matches []string
+	for _, term := range readOnlyObjectiveSupportTerms(objective) {
+		if readOnlyObjectivePromotionTermInText(answer, term) {
+			matches = append(matches, term)
+		}
+	}
+
+	return util.Sorted(matches)
+}
+
+func readOnlyObjectiveSupportTerms(objective string) []string {
+	rawTerms := agentutil.RecoveryObjectiveSearchWords(objective, 32)
+	if len(rawTerms) == 0 {
+		return nil
+	}
+
+	seen := map[string]struct{}{}
+	var terms []string
+
+	for _, raw := range rawTerms {
+		term := agentutil.ReadOnlyObjectiveSupportTerm(raw)
+		term = agentutil.SingularObjectiveWord(term)
+		if len(term) < 4 {
+			continue
+		}
+
+		if readOnlyLowConfidenceObjectiveSupportStopWord(term) ||
+			readOnlyCollectiveObjectiveSupportStopWord(term) ||
+			readOnlyObjectivePromotionStopWord(term) ||
+			sourceOwnerGenericIdentityTerm(term) {
+
+			continue
+		}
+
+		if _, ok := seen[term]; ok {
+			continue
+		}
+
+		seen[term] = struct{}{}
+		terms = append(terms, term)
+	}
+
+	return util.Sorted(terms)
+}
+
+func readOnlyLowConfidenceObjectiveSupportStopWord(term string) bool {
+	term = agentutil.ReadOnlyObjectiveSupportTerm(term)
+	if len(term) < 5 {
+		return true
+	}
+
+	switch term {
+	case "answer", "source", "file", "code", "user", "risk", "change",
+		"request", "result", "finding", "objective", "workflow", "evidence":
+		return true
+	case "agent", "better", "generic", "good", "need", "option", "project":
+		return true
+	default:
+		return false
+	}
 }
 
 func answerSourceCitationsAreObjectiveRelevant(answer string, ledger readOnlyAnswerabilityLedger) bool {
@@ -6209,23 +6340,49 @@ func sourceCitationCanonicalPath(r *Runner, path string, results []workspace.Too
 }
 
 func sourceGroundingMentionedPaths(answer string) []string {
-	paths := filterSourceGroundingMentionedPaths(pathparse.MentionedWorkspaceFiles(answer))
+	scanText := stripQuotedAndFencedSourceExamples(answer)
+	paths := filterSourceGroundingMentionedPaths(pathparse.MentionedWorkspaceFiles(scanText))
 	lineRE := regexp.MustCompile("(?i)(?:^|[\\s`'\"(])([a-z0-9_.-]+\\.(?:go|py|ts|tsx|js|jsx|rs|java|c|cc|cpp|h|hpp|sh|zsh|gd)):\\d+")
 
-	for _, match := range lineRE.FindAllStringSubmatch(answer, -1) {
+	for _, match := range lineRE.FindAllStringSubmatch(scanText, -1) {
 		if len(match) > 1 && sourceGroundingMentionedPathLooksPlausible(match[1]) {
 			paths = append(paths, match[1])
 		}
 	}
 
 	rootLineRE := regexp.MustCompile("(?i)(?:^|[\\s`'\"(])((?:go\\.mod|go\\.sum|makefile|dockerfile|readme\\.md|agents\\.md|package\\.json|package-lock\\.json|pnpm-lock\\.yaml|yarn\\.lock|pyproject\\.toml|poetry\\.lock|cargo\\.toml|cargo\\.lock)):\\d+")
-	for _, match := range rootLineRE.FindAllStringSubmatch(answer, -1) {
+	for _, match := range rootLineRE.FindAllStringSubmatch(scanText, -1) {
 		if len(match) > 1 && sourceGroundingMentionedPathLooksPlausible(match[1]) {
 			paths = append(paths, match[1])
 		}
 	}
 
 	return uniqueSortedRunnerPaths(paths)
+}
+
+func stripQuotedAndFencedSourceExamples(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return text
+	}
+
+	var out []string
+	inFence := false
+
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence = !inFence
+			continue
+		}
+
+		if inFence || strings.HasPrefix(trimmed, ">") {
+			continue
+		}
+
+		out = append(out, line)
+	}
+
+	return strings.Join(out, "\n")
 }
 
 func filterSourceGroundingMentionedPaths(paths []string) []string {
@@ -6926,7 +7083,7 @@ func (r *Runner) implementationTargetSourceWriteBeforeEvidenceRejection(req work
 		return "", "", false
 	}
 
-	if strings.TrimSpace(req.Tool) == workspace.ToolNameWriteFile && strings.TrimSpace(req.Content) != "" && r.writeRequestTargetsAllMissing(req) {
+	if r.writeRequestCreatesOnlyMissingTargets(req) {
 		return "", "", false
 	}
 
@@ -6955,7 +7112,7 @@ func (r *Runner) writeRequestTargetsAllMissing(req workspace.ToolRequest) bool {
 	}
 
 	for _, path := range paths {
-		clean := cleanRelativeRunnerPath(path)
+		clean := r.cleanWorkspaceRelativeWritePath(path)
 		if clean == "" {
 			return false
 		}
@@ -6967,6 +7124,64 @@ func (r *Runner) writeRequestTargetsAllMissing(req workspace.ToolRequest) bool {
 	}
 
 	return true
+}
+
+func (r *Runner) writeRequestCreatesOnlyMissingTargets(req workspace.ToolRequest) bool {
+	switch strings.TrimSpace(req.Tool) {
+	case workspace.ToolNameWriteFile:
+		return strings.TrimSpace(req.Content) != "" && r.writeRequestTargetsAllMissing(req)
+	case workspace.ToolNameMkdir:
+		return r.writeRequestTargetsAllMissing(req)
+	case workspace.ToolNameApplyPatch:
+		ops, err := workspace.ParsePatch(req.Content)
+		if err != nil || len(ops) == 0 {
+			return false
+		}
+
+		for _, op := range ops {
+			if op.Kind != workspace.PatchOpAdd {
+				return false
+			}
+		}
+
+		return r.writeRequestTargetsAllMissing(req)
+	default:
+		return false
+	}
+}
+
+func (r *Runner) cleanWorkspaceRelativeWritePath(path string) string {
+	if clean := cleanRelativeRunnerPath(path); clean != "" {
+		return clean
+	}
+
+	if r == nil || r.Workspace == nil {
+		return ""
+	}
+
+	root := strings.TrimSpace(r.Workspace.Root())
+	if root == "" {
+		return ""
+	}
+
+	path = strings.TrimSpace(path)
+	if path == "" || !filepath.IsAbs(path) {
+		return ""
+	}
+
+	for _, candidateRoot := range []string{root, config.CanonicalizeExistingPath(root)} {
+		candidateRoot = strings.TrimSpace(candidateRoot)
+		if candidateRoot == "" {
+			continue
+		}
+
+		rel, err := filepath.Rel(candidateRoot, config.CanonicalizeExistingPath(path))
+		if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return filepath.ToSlash(filepath.Clean(rel))
+		}
+	}
+
+	return ""
 }
 
 func implementationTargetSourceWriteTargetsHaveEvidence(req workspace.ToolRequest, results []workspace.ToolResult) bool {
@@ -7657,6 +7872,18 @@ func looksLikeRawReadOnlyEvidencePacketAnswer(answer string) bool {
 }
 
 func looksLikeNonAnswerProse(answer string) bool {
+	if looksLikeNonAnswerProseCore(answer) {
+		return true
+	}
+
+	if finalAnswerSectionMarkerCount(answer) > 1 {
+		return true
+	}
+
+	return false
+}
+
+func looksLikeNonAnswerProseCore(answer string) bool {
 	trimmed := strings.TrimSpace(answer)
 	lower := strings.ToLower(trimmed)
 
@@ -7688,10 +7915,6 @@ func looksLikeNonAnswerProse(answer string) bool {
 	}
 
 	if looksLikeLowValueSourceInventoryNonAnswer(trimmed) {
-		return true
-	}
-
-	if finalAnswerSectionMarkerCount(answer) > 1 {
 		return true
 	}
 

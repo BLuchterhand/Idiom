@@ -21,6 +21,7 @@ var slashCommands = map[string]slashCommandFunc{
 	"/exit":             (*Model).slashQuit,
 	"/help":             (*Model).slashHelp,
 	"/clear":            (*Model).slashClear,
+	"/new":              (*Model).slashClear,
 	"/compact":          (*Model).slashCompact,
 	"/save":             (*Model).slashSave,
 	"/context":          (*Model).slashContext,
@@ -64,7 +65,7 @@ func (m *Model) slashHelp(_ string, _ []string) bool {
 func (m *Model) helpText() string {
 	var b strings.Builder
 
-	b.WriteString("Commands: /save /clear /compact /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /product-create [--effort-root <path>] /product-status [--effort-root <path>] /product-continue <action> [--effort-root <path>] /product-approve [--effort-root <path>] /recover-status [--packet <path>|<path>] /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /mode [build|plan|general] /approve /deny /undo /panel /plan /feature-planner <objective> /implement <objective> /plan-execute <objective> /resume [id] /help")
+	b.WriteString("Commands: /save /clear /new /compact /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /product-create [--effort-root <path>] /product-status [--effort-root <path>] /product-continue <action> [--effort-root <path>] /product-approve [--effort-root <path>] /recover-status [--packet <path>|<path>] /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /mode [build|plan|general] /approve /deny /undo /panel /plan /feature-planner <objective> /implement <objective> /plan-execute <objective> /resume [id] /help")
 	b.WriteString("\nNavigation: Ctrl+T cycles panel tabs | transcript: PgUp/PgDn or mouse wheel")
 
 	if strings.TrimSpace(m.featurePlannerPhase) != "" {
@@ -86,6 +87,8 @@ func (m *Model) slashClear(_ string, _ []string) bool {
 	m.messages = nil
 	m.history.entries = nil
 	m.history.selected = 0
+	m.pinnedFiles = nil
+	m.ClearLastTurnSourceResults()
 	m.status = "Cleared chat."
 
 	return false

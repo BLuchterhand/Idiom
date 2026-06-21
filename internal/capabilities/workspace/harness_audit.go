@@ -13,6 +13,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -40,6 +41,7 @@ var harnessAuditContractCoverageIntroducedAt = time.Date(2026, 6, 18, 13, 55, 0,
 
 type harnessAuditReport struct {
 	GeneratedAt             string                       `json:"generated_at"`
+	Build                   harnessAuditBuildIdentity    `json:"build"`
 	WorkspaceRoot           string                       `json:"workspace_root,omitempty"`
 	Purpose                 string                       `json:"purpose"`
 	Findings                []harnessAuditFinding        `json:"findings,omitempty"`
@@ -55,6 +57,42 @@ type harnessAuditReport struct {
 	FreshnessHealth         *harnessAuditFreshnessHealth `json:"freshness_health,omitempty"`
 	ImprovementQuestions    []harnessAuditQuestion       `json:"improvement_questions,omitempty"`
 	ConsolidationCandidates []harnessAuditQuestion       `json:"consolidation_candidates,omitempty"`
+}
+
+type harnessAuditBuildIdentity struct {
+	Version          string `json:"version"`
+	Commit           string `json:"commit,omitempty"`
+	Date             string `json:"date,omitempty"`
+	SourceOrDevBuild bool   `json:"source_or_dev_build"`
+}
+
+var harnessAuditBuildIdentityMu sync.RWMutex
+var harnessAuditBuildIdentityCurrent = harnessAuditBuildIdentity{
+	Version:          "dev",
+	SourceOrDevBuild: true,
+}
+
+func SetHarnessAuditBuildIdentity(version string, commit string, date string) {
+	identity := harnessAuditBuildIdentity{
+		Version: strings.TrimSpace(version),
+		Commit:  strings.TrimSpace(commit),
+		Date:    strings.TrimSpace(date),
+	}
+	if identity.Version == "" {
+		identity.Version = "dev"
+	}
+	identity.SourceOrDevBuild = identity.Version == "dev" || identity.Commit == ""
+
+	harnessAuditBuildIdentityMu.Lock()
+	defer harnessAuditBuildIdentityMu.Unlock()
+	harnessAuditBuildIdentityCurrent = identity
+}
+
+func currentHarnessAuditBuildIdentity() harnessAuditBuildIdentity {
+	harnessAuditBuildIdentityMu.RLock()
+	defer harnessAuditBuildIdentityMu.RUnlock()
+
+	return harnessAuditBuildIdentityCurrent
 }
 
 // harnessAuditContextCache surfaces graph_views (context_pack cache)
@@ -176,6 +214,8 @@ type harnessAuditFinding struct {
 	Evidence       string   `json:"evidence"`
 	Recommendation string   `json:"recommendation,omitempty"`
 	Tools          []string `json:"tools,omitempty"`
+	EventIDs       []string `json:"event_ids,omitempty"`
+	ContractIDs    []string `json:"contract_ids,omitempty"`
 }
 
 type harnessAuditToolSurface struct {
@@ -425,6 +465,7 @@ func (m *Manager) harnessAudit(req ToolRequest) ToolResult {
 	purpose := normalizeHarnessAuditPurpose(req.Purpose)
 	report := harnessAuditReport{
 		GeneratedAt:   time.Now().Format(time.RFC3339),
+		Build:         currentHarnessAuditBuildIdentity(),
 		WorkspaceRoot: m.cfg.Root,
 		Purpose:       purpose,
 	}
@@ -3968,14 +4009,51 @@ func contractCoverageFindings(report *autonomy.EventAuditReport) []harnessAuditF
 	findings := make([]harnessAuditFinding, 0, len(report.Findings))
 	for _, finding := range report.Findings {
 		findings = append(findings, harnessAuditFinding{
-			ID:       finding.ID,
-			Severity: finding.Severity,
-			Evidence: finding.Evidence,
-			Tools:    []string{"harness_audit"},
+			ID:             finding.ID,
+			Severity:       finding.Severity,
+			Evidence:       finding.Evidence,
+			Recommendation: contractCoverageFindingRecommendation(finding),
+			Tools:          []string{"harness_audit"},
+			EventIDs:       boundedAuditIdentifiers(finding.EventIDs, 8),
+			ContractIDs:    boundedAuditIdentifiers(finding.ContractIDs, 8),
 		})
 	}
 
 	return findings
+}
+
+func contractCoverageFindingRecommendation(finding autonomy.EventAuditFinding) string {
+	parts := []string{"inspect contract_coverage.findings for full non-raw refs"}
+
+	if ids := boundedAuditIdentifiers(finding.EventIDs, 3); len(ids) > 0 {
+		parts = append(parts, "event_ids="+strings.Join(ids, ","))
+	}
+
+	if ids := boundedAuditIdentifiers(finding.ContractIDs, 3); len(ids) > 0 {
+		parts = append(parts, "contract_ids="+strings.Join(ids, ","))
+	}
+
+	switch finding.ID {
+	case "turn_phase_contract_contradiction":
+		parts = append(parts, "fix the phase projection or tool policy emitter named by those refs")
+	case "contract_event_privacy_forbidden_raw_content":
+		parts = append(parts, "redact or remove raw-content metadata at the emitting boundary named by those refs")
+	}
+
+	return strings.Join(parts, "; ")
+}
+
+func boundedAuditIdentifiers(ids []string, limit int) []string {
+	if limit <= 0 || len(ids) == 0 {
+		return nil
+	}
+
+	uniq := util.Sorted(ids)
+	if len(uniq) > limit {
+		uniq = uniq[:limit]
+	}
+
+	return uniq
 }
 
 func splitHistoricalHarnessAuditFindings(findings []harnessAuditFinding) ([]harnessAuditFinding, []harnessAuditFinding) {

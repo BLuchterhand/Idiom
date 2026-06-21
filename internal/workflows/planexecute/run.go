@@ -327,6 +327,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 			UseActiveModel:           opts.UseActiveModel,
 			Telemetry:                rec,
 			ScopeContract:            scopeContract,
+			AuthorizedNewFiles:       append([]string(nil), authorizedNewFiles...),
 		}, stdout)
 		if err != nil {
 			progress.MarkPlanningFailed("planner_failed", err.Error())

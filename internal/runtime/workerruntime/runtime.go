@@ -33,6 +33,7 @@ type WorkerRuntimeBrief struct {
 	TargetRefs           []string              `json:"target_refs,omitempty"`
 	RequiredEditPaths    []string              `json:"required_edit_paths,omitempty"`
 	AllowedEditPaths     []string              `json:"allowed_edit_paths,omitempty"`
+	AuthorizedNewFiles   []string              `json:"authorized_new_files,omitempty"`
 	RequiredEditSnippets []RequiredEditSnippet `json:"required_edit_snippets,omitempty"`
 	EvidencePaths        []string              `json:"evidence_paths,omitempty"`
 	ChangedPaths         []string              `json:"changed_paths,omitempty"`

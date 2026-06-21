@@ -430,6 +430,10 @@ func finalAnswerNeedsDecoration(answer string) bool {
 		return true
 	}
 
+	if looksLikeLeakedImplementationBlockerTemplate(lower) {
+		return true
+	}
+
 	if strings.Contains(lower, "<invoke") ||
 		strings.HasPrefix(lower, "what i found:") ||
 		strings.HasPrefix(lower, "partial findings from this turn") ||
@@ -1491,8 +1495,17 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 		return reject("non_answer_prose", "insufficient_evidence_answer")
 	}
 
-	if looksLikeNonAnswerProse(answer) && !finalAnswerAcceptanceAllowsSourceInventory(acceptance, answer, r, results) {
-		return reject("non_answer_prose", "non_answer_prose")
+	if looksLikeNonAnswerProse(answer) {
+		// Leaked implementation blocker templates are protocol artifacts,
+		// not valid answers — always reject them for user-facing agents
+		// regardless of source inventory policy.
+		if r != nil && r.userFacingFinalAnswer() && looksLikeLeakedImplementationBlockerTemplate(strings.ToLower(strings.TrimSpace(answer))) {
+			return reject("non_answer_prose", "leaked_implementation_blocker_template")
+		}
+
+		if !finalAnswerAcceptanceAllowsSourceInventory(acceptance, answer, r, results) {
+			return reject("non_answer_prose", "non_answer_prose")
+		}
 	}
 
 	if r != nil {
@@ -4143,9 +4156,12 @@ func finalAnswerStopReasonPreservesUncertainty(stopReason string) bool {
 	return strings.HasSuffix(strings.TrimSpace(stopReason), "_budget_exhausted")
 }
 
-func (r *Runner) userFacingFinalAnswer() bool {
-	name := r.agentName()
+func userFacingAgentName(name string) bool {
 	return !strings.HasPrefix(name, "child:") && !strings.HasPrefix(name, "child_write:")
+}
+
+func (r *Runner) userFacingFinalAnswer() bool {
+	return userFacingAgentName(r.agentName())
 }
 
 // stripCompletedMutationSelfBlocker rewrites a mutation-lane final
@@ -9410,6 +9426,65 @@ func resultCountsAsSuccessfulVerification(result workspace.ToolResult) bool {
 		isVerificationCommandText(result.Output)
 }
 
+func resultCountsAsSuccessfulPostWriteVerification(result workspace.ToolResult, pendingPaths []string) bool {
+	if resultCountsAsSuccessfulVerification(result) {
+		return true
+	}
+
+	if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Tool) != "shell" {
+		return false
+	}
+
+	return shellOutputVerifiesPendingHTMLArtifacts(result.Output, pendingPaths)
+}
+
+func shellOutputVerifiesPendingHTMLArtifacts(output string, pendingPaths []string) bool {
+	normalized := make([]string, 0, len(pendingPaths))
+	for _, path := range pendingPaths {
+		path = agentutil.NormalizeRunnerPath(path)
+		if path == "" {
+			continue
+		}
+		normalized = util.AppendUniqueMulti(normalized, path)
+	}
+	if len(normalized) == 0 {
+		return false
+	}
+
+	for _, path := range normalized {
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext != ".html" && ext != ".htm" {
+			return false
+		}
+	}
+
+	lower := strings.ToLower(output)
+	if !strings.Contains(lower, "python") ||
+		(!strings.Contains(lower, "html.parser") && !strings.Contains(lower, "htmlparser")) {
+		return false
+	}
+
+	for _, path := range normalized {
+		if !shellOutputMentionsPath(lower, path) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func shellOutputMentionsPath(lowerOutput string, path string) bool {
+	normalized := strings.ToLower(agentutil.NormalizeRunnerPath(path))
+	if normalized == "" {
+		return false
+	}
+	if strings.Contains(lowerOutput, normalized) {
+		return true
+	}
+	base := strings.ToLower(filepath.Base(normalized))
+	return base != "." && base != "" && strings.Contains(lowerOutput, base)
+}
+
 func sourceEditVerificationRejection(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (summary string, errorText string, reject bool) {
 	if !sourceVerificationGateApplies(brief, results) {
 		return "", "", false
@@ -9680,6 +9755,9 @@ func scriptSyntaxVerificationCommand(path string) string {
 	lower := strings.ToLower(normalized)
 
 	switch {
+	case strings.HasSuffix(lower, ".html") || strings.HasSuffix(lower, ".htm"):
+		script := fmt.Sprintf("from html.parser import HTMLParser\npath = %q\nwith open(path, encoding='utf-8') as f:\n    HTMLParser().feed(f.read())\nprint('HTML parsed OK: ' + path)\n", normalized)
+		return "python3 -c " + shellSingleQuote(script)
 	case strings.HasSuffix(lower, ".sh") || strings.HasSuffix(lower, ".bash"):
 		return "bash -n " + normalized
 	case strings.HasSuffix(lower, ".zsh"):
@@ -9687,6 +9765,10 @@ func scriptSyntaxVerificationCommand(path string) string {
 	default:
 		return ""
 	}
+}
+
+func shellSingleQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func sourceVerificationBoundaryAllowsTool(tool string) bool {
@@ -9716,6 +9798,7 @@ func failedVerificationAfterLatestWrite(results []workspace.ToolResult, brief wo
 	docLane := briefIsDocDeliverableLane(brief)
 	pending := false
 	failed := false
+	var pendingPaths []string
 
 	var latestFailed workspace.ToolResult
 
@@ -9730,6 +9813,16 @@ func failedVerificationAfterLatestWrite(results []workspace.ToolResult, brief wo
 			}
 
 			pending = true
+			pendingPaths = util.AppendUniqueMulti(pendingPaths, changedPathsFromToolResult(result)...)
+			failed = false
+			latestFailed = workspace.ToolResult{}
+
+			continue
+		}
+
+		if pending && strings.TrimSpace(result.Error) == "" && resultCountsAsSuccessfulPostWriteVerification(result, pendingPaths) {
+			pending = false
+			pendingPaths = nil
 			failed = false
 			latestFailed = workspace.ToolResult{}
 
@@ -9742,6 +9835,7 @@ func failedVerificationAfterLatestWrite(results []workspace.ToolResult, brief wo
 
 		if strings.TrimSpace(result.Error) == "" && resultCountsAsSuccessfulVerification(result) {
 			pending = false
+			pendingPaths = nil
 			failed = false
 			latestFailed = workspace.ToolResult{}
 

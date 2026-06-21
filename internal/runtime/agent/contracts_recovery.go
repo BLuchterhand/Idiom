@@ -1519,18 +1519,27 @@ func applyImplementationVerifyReady(contract *TurnPhaseContract, brief workerrun
 	contract.PhaseID = turnPhaseImplementationVerifyReady
 	contract.Phase = "verification"
 	contract.DerivationReason = "implementation_post_write_verification_pending"
-	contract.AllowedTools = filterPhaseTools(baseTools, "source_sanity", "shell", "git_diff", "git_status")
+	contract.AllowedTools = filterPhaseTools(baseTools, "source_sanity", "shell", "git_diff", "git_status", "write_file", "apply_patch", "mkdir")
+	additiveWriteVisible := slices.Contains(contract.AllowedTools, "write_file") ||
+		slices.Contains(contract.AllowedTools, "apply_patch") ||
+		slices.Contains(contract.AllowedTools, "mkdir")
+
 	contract.RequiredNext = []string{"one focused language-appropriate verification command/tool for changed source files, compiler-backed diagnostics, or <<QUESTION>> with the exact verification blocker"}
-	contract.InvalidNext = []string{"final answer before post-write verification", "more source reads/search before naming a verification blocker", "additional edits before verification unless verification fails"}
+	contract.InvalidNext = []string{"final answer before post-write verification", "more source reads/search before naming a verification blocker", "edits to existing files before verification unless verification fails"}
 	contract.TerminalOutcomes = []string{"<<QUESTION>>:"}
 	contract.ActionPolicy = TurnActionClassPolicy{
 		AllowedActionClasses:   []string{actionVerify, actionBlocker},
-		InvalidActionClasses:   []string{actionFinalAnswer, actionRead, actionSearch, actionPerEditWrite, actionGenericProbe, actionProseFinal},
+		InvalidActionClasses:   []string{actionFinalAnswer, actionRead, actionSearch, actionGenericProbe, actionProseFinal},
 		TerminalResponseShapes: []string{"<<QUESTION>>:"},
 		CallableToolNames:      contract.AllowedTools,
 	}
-	contract.RuntimeCall.ParserContract = firstPhaseString(contract.RuntimeCall.ParserContract, "verification_tool_or_blocker")
+	contract.RuntimeCall.ParserContract = firstPhaseString(contract.RuntimeCall.ParserContract, "verification_or_additive_new_file_tool")
 	contract.RuntimeCall.ExpressibleActionClasses = []string{actionVerify, actionBlocker}
+	if additiveWriteVisible {
+		contract.RequiredNext = []string{"one focused language-appropriate verification command/tool for changed source files, one additive new-file write needed by the same implementation objective, compiler-backed diagnostics, or <<QUESTION>> with the exact verification blocker"}
+		contract.ActionPolicy.AllowedActionClasses = []string{actionVerify, actionPerEditWrite, actionBlocker}
+		contract.RuntimeCall.ExpressibleActionClasses = []string{actionVerify, actionPerEditWrite, actionBlocker}
+	}
 }
 
 func applyImplementationVerificationRepair(contract *TurnPhaseContract, brief workerruntime.WorkerRuntimeBrief, baseTools []string) {
@@ -4113,9 +4122,11 @@ type RecoveryCardInput struct {
 func BuildRecoveryCard(input RecoveryCardInput) RecoveryCard {
 	contract := input.PhaseContract
 	invariantID := recoveryCardInvariantID(input)
+	callableTools := recoveryCardCallableTools(contract, input.CurrentAllowedTools)
+	callableActionClasses := recoveryCardCallableActionClassesForSurface(contract, callableTools, input.CurrentAllowedTools)
 	deterministicSafeNextAction := firstRecoveryCardString(
 		input.DeterministicSafeNextAction,
-		recoveryCardSafeNextActionFromPhaseContract(contract),
+		recoveryCardSafeNextActionFromPhaseContractForSurface(contract, callableActionClasses),
 		recoveryCardStrategyNextActionFromPhaseContract(contract),
 	)
 
@@ -4135,8 +4146,8 @@ func BuildRecoveryCard(input RecoveryCardInput) RecoveryCard {
 		},
 		Invariant:                   recoveryCardInvariantText(invariantID, contract),
 		InvalidRepeats:              mergeRecoveryCardStrings(input.InvalidRepeats, recoveryCardInvalidRepeats(invariantID, contract)),
-		CallableTools:               recoveryCardCallableTools(contract, input.CurrentAllowedTools),
-		CallableActionClasses:       recoveryCardCallableActionClasses(contract, input.CurrentAllowedTools),
+		CallableTools:               callableTools,
+		CallableActionClasses:       callableActionClasses,
 		TerminalOutcomes:            recoveryCardTerminalOutcomes(contract),
 		RecoveryState:               copyPlanExecuteRecoveryState(input.RecoveryState),
 		VisibleSafeAlternatives:     recoveryCardVisibleSafeAlternatives(input.RecoveryState, contract),
@@ -4552,6 +4563,10 @@ func recoveryCardSafeNextActionForRejectedAction(brief workerruntime.WorkerRunti
 }
 
 func recoveryCardSafeNextActionFromPhaseContract(contract TurnPhaseContract) string {
+	return recoveryCardSafeNextActionFromPhaseContractForSurface(contract, nil)
+}
+
+func recoveryCardSafeNextActionFromPhaseContractForSurface(contract TurnPhaseContract, callableClasses []string) string {
 	next := firstRecoveryCardString(contract.RequiredNext...)
 	if next == "" {
 		return ""
@@ -4561,8 +4576,15 @@ func recoveryCardSafeNextActionFromPhaseContract(contract TurnPhaseContract) str
 	case turnPhaseImplementationWriteReady:
 		return "Follow the active write-ready requirement: " + next
 	case turnPhaseImplementationVerifyReady:
-		if contract.Phase != "verification" || !recoveryCardActionClassesExactly(contract, actionVerify, actionBlocker) {
+		classes := callableClasses
+		if len(classes) == 0 {
+			classes = firstNonEmptyRecoveryCardStrings(contract.RuntimeCall.ExpressibleActionClasses, contract.ActionPolicy.AllowedActionClasses)
+		}
+		if contract.Phase != "verification" || !slicesContainRecoveryCardString(classes, actionVerify) {
 			return ""
+		}
+		if !slicesContainRecoveryCardString(classes, actionPerEditWrite) {
+			next = "one focused language-appropriate verification command/tool for changed source files, compiler-backed diagnostics, or <<QUESTION>> with the exact verification blocker"
 		}
 
 		return "Run one focused verification action from the active verification requirement: " + next
@@ -4732,6 +4754,10 @@ func recoveryCardActionPolicyHasNoToolClasses(classes []string) bool {
 }
 
 func recoveryCardCallableActionClasses(contract TurnPhaseContract, currentAllowedTools []string) []string {
+	return recoveryCardCallableActionClassesForSurface(contract, recoveryCardCallableTools(contract, currentAllowedTools), currentAllowedTools)
+}
+
+func recoveryCardCallableActionClassesForSurface(contract TurnPhaseContract, callableTools []string, currentAllowedTools []string) []string {
 	contractClasses := firstNonEmptyRecoveryCardStrings(
 		contract.RuntimeCall.ExpressibleActionClasses,
 		contract.ActionPolicy.AllowedActionClasses,
@@ -4739,13 +4765,30 @@ func recoveryCardCallableActionClasses(contract TurnPhaseContract, currentAllowe
 
 	contractClasses = actionClassesAllowedByPolicy(contractClasses, contract.ActionPolicy.InvalidActionClasses)
 
-	toolClasses := recoveryCardCallableActionClassesForTools(recoveryCardCallableTools(contract, currentAllowedTools), contractClasses)
+	toolClasses := recoveryCardCallableActionClassesForTools(callableTools, contractClasses)
+	if len(currentAllowedTools) > 0 && len(toolClasses) > 0 {
+		return actionClassesAllowedByPolicy(
+			mergeRecoveryCardStrings(toolClasses, recoveryCardTerminalOnlyActionClasses(contractClasses)),
+			contract.ActionPolicy.InvalidActionClasses,
+		)
+	}
 
 	if len(toolClasses) == 0 {
 		return contractClasses
 	}
 
 	return actionClassesAllowedByPolicy(mergeRecoveryCardStrings(toolClasses, contractClasses), contract.ActionPolicy.InvalidActionClasses)
+}
+
+func recoveryCardTerminalOnlyActionClasses(classes []string) []string {
+	var out []string
+	for _, class := range classes {
+		switch strings.TrimSpace(class) {
+		case actionBlocker, actionFinalAnswer, actionSourceSatisfied, actionReviewPass:
+			out = append(out, class)
+		}
+	}
+	return uniqueRecoveryCardStrings(out)
 }
 
 func recoveryCardTerminalOutcomes(contract TurnPhaseContract) []string {

@@ -24,20 +24,23 @@ type recoverInspectOptions struct {
 }
 
 type recoverInspectReport struct {
-	Type              string                  `json:"type"`
-	Status            string                  `json:"status"`
-	SessionID         string                  `json:"session_id,omitempty"`
-	FailureID         string                  `json:"failure_id,omitempty"`
-	RecordPath        string                  `json:"record_path,omitempty"`
-	ProgressStatePath string                  `json:"progress_state_path,omitempty"`
-	Recorded          bool                    `json:"recorded"`
-	FailureClass      string                  `json:"failure_class,omitempty"`
-	FailureKind       string                  `json:"failure_kind,omitempty"`
-	NextAction        string                  `json:"next_valid_action"`
-	Summary           string                  `json:"summary,omitempty"`
-	PartialState      recovery.PartialState   `json:"partial_state"`
-	Record            *recovery.FailureRecord `json:"record,omitempty"`
-	Error             string                  `json:"error,omitempty"`
+	Type                   string                                        `json:"type"`
+	Status                 string                                        `json:"status"`
+	SessionID              string                                        `json:"session_id,omitempty"`
+	FailureID              string                                        `json:"failure_id,omitempty"`
+	RecordPath             string                                        `json:"record_path,omitempty"`
+	ProgressStatePath      string                                        `json:"progress_state_path,omitempty"`
+	TerminalCompletionPath string                                        `json:"terminal_completion_path,omitempty"`
+	Recorded               bool                                          `json:"recorded"`
+	FailureClass           string                                        `json:"failure_class,omitempty"`
+	FailureKind            string                                        `json:"failure_kind,omitempty"`
+	FailureReason          string                                        `json:"failure_reason,omitempty"`
+	NextAction             string                                        `json:"next_valid_action"`
+	Summary                string                                        `json:"summary,omitempty"`
+	RequiredPathCoverage   []planexecute.PlanExecuteRequiredPathCoverage `json:"required_path_coverage,omitempty"`
+	PartialState           recovery.PartialState                         `json:"partial_state"`
+	Record                 *recovery.FailureRecord                       `json:"record,omitempty"`
+	Error                  string                                        `json:"error,omitempty"`
 }
 
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
@@ -62,6 +65,8 @@ func RunMain(args []string, stdout io.Writer, stderr io.Writer) int {
 	switch args[0] {
 	case "inspect":
 		return runRecoverInspectMain(args[1:], stdout, stderr)
+	case "show":
+		return runRecoverShowMain(args[1:], stdout, stderr)
 	case "decompose":
 		return runRecoverDecomposeMain(args[1:], stdout, stderr)
 	case "promote":
@@ -85,6 +90,7 @@ func RunMain(args []string, stdout io.Writer, stderr io.Writer) int {
 func printRecoverUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  idiom recover inspect --session <id> [--config <config.json>] [--json]")
+	fmt.Fprintln(w, "  idiom recover show <failure-id|session-id> [--config <config.json>] [--json]")
 	fmt.Fprintln(w, "  idiom recover decompose --session <id> [--config <config.json>] [--output <packet.json>] [--json]")
 	fmt.Fprintln(w, "  idiom recover promote --packet <packet.json> --atom <id> --output <brief.md> [--config <config.json>] [--json] [--allow-dirty]")
 	fmt.Fprintln(w, "  idiom recover reconcile --packet <packet.json> --completed <atom-id>[,<atom-id>...] [--config <config.json>] [--output <reconciliation.json>] [--json]")
@@ -132,6 +138,60 @@ func runRecoverInspectMain(args []string, stdout io.Writer, stderr io.Writer) in
 	return writeRecoverInspectReport(stdout, stderr, opts.JSON, report, 0)
 }
 
+func runRecoverShowMain(args []string, stdout io.Writer, stderr io.Writer) int {
+	opts := recoverInspectOptions{ConfigPath: "config.json"}
+	fs := flag.NewFlagSet("idiom recover show", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.StringVar(&opts.ConfigPath, "config", opts.ConfigPath, "path to config file")
+	fs.StringVar(&opts.SessionID, "session", "", "recovery session id to inspect")
+	fs.BoolVar(&opts.JSON, "json", false, "emit machine-readable recovery report")
+
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	if fs.NArg() > 1 {
+		return emitRecoverInspectError(stdout, stderr, opts.JSON, 2, "unexpected positional argument: "+fs.Arg(1))
+	}
+	if fs.NArg() == 1 {
+		if strings.TrimSpace(opts.SessionID) != "" {
+			return emitRecoverInspectError(stdout, stderr, opts.JSON, 2, "recover show: pass either --session or a positional id, not both")
+		}
+		opts.SessionID = recoverSessionIDFromInspectArg(fs.Arg(0))
+	}
+
+	if strings.TrimSpace(opts.SessionID) == "" {
+		return emitRecoverInspectError(stdout, stderr, opts.JSON, 2, "recover show: session id or failure id is required")
+	}
+
+	cfg, err := config.Load(opts.ConfigPath)
+	if err != nil {
+		return emitRecoverInspectError(stdout, stderr, opts.JSON, 1, err.Error())
+	}
+
+	report, err := buildRecoverInspectReport(cfg.Workspace.Root, opts.SessionID)
+	if err != nil {
+		report = recoverInspectReport{
+			Type:       "idiom.recover.inspect.v1",
+			Status:     "error",
+			SessionID:  strings.TrimSpace(opts.SessionID),
+			NextAction: recovery.NextActionInspectFailure,
+			Error:      err.Error(),
+		}
+
+		return writeRecoverInspectReport(stdout, stderr, opts.JSON, report, 1)
+	}
+
+	return writeRecoverInspectReport(stdout, stderr, opts.JSON, report, 0)
+}
+
+func recoverSessionIDFromInspectArg(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "plan-execute-")
+
+	return value
+}
+
 func buildRecoverInspectReport(root string, sessionID string) (recoverInspectReport, error) {
 	sessionID = strings.TrimSpace(sessionID)
 
@@ -154,7 +214,7 @@ func buildRecoverInspectReport(root string, sessionID string) (recoverInspectRep
 	}
 
 	if state.Status != planexecute.ProgressStatusFailed {
-		return recoverInspectReport{
+		report := recoverInspectReport{
 			Type:              "idiom.recover.inspect.v1",
 			Status:            state.Status,
 			SessionID:         state.SessionID,
@@ -162,7 +222,10 @@ func buildRecoverInspectReport(root string, sessionID string) (recoverInspectRep
 			Recorded:          false,
 			NextAction:        recovery.NextActionNone,
 			Summary:           fmt.Sprintf("plan-execute session is %s, not failed", state.Status),
-		}, nil
+		}
+		attachRecoverInspectTerminalCompletion(root, &report)
+
+		return report, nil
 	}
 
 	computed, err := recovery.BuildPlanExecuteFailureRecord(planexecute.RecoveryInputFromProgress(state, statePath), time.Now().UTC())
@@ -183,7 +246,7 @@ func recoverInspectReportFromRecord(root string, record recovery.FailureRecord, 
 	record.PartialState = partial
 	record.NextAction = recovery.NextActionForPartialState(record, partial)
 
-	return recoverInspectReport{
+	report := recoverInspectReport{
 		Type:              "idiom.recover.inspect.v1",
 		Status:            "failed",
 		SessionID:         record.SourceRun.SessionID,
@@ -193,11 +256,44 @@ func recoverInspectReportFromRecord(root string, record recovery.FailureRecord, 
 		Recorded:          recorded,
 		FailureClass:      record.Failure.Class,
 		FailureKind:       record.Failure.Kind,
+		FailureReason:     record.Failure.Summary,
 		NextAction:        record.NextAction,
 		Summary:           record.Failure.Summary,
 		PartialState:      partial,
 		Record:            &record,
 	}
+	attachRecoverInspectTerminalCompletion(root, &report)
+
+	return report
+}
+
+func attachRecoverInspectTerminalCompletion(root string, report *recoverInspectReport) {
+	if report == nil || strings.TrimSpace(report.SessionID) == "" {
+		return
+	}
+
+	record, path, found, err := planexecute.TryLoadPlanExecuteTerminalCompletionRecord(root, report.SessionID)
+	if err != nil || !found {
+		return
+	}
+
+	report.TerminalCompletionPath = path
+	if report.FailureKind == "" {
+		report.FailureKind = record.FailureKind
+	}
+	if strings.TrimSpace(record.FailureReason) != "" {
+		report.FailureReason = record.FailureReason
+	}
+	if report.FailureID == "" {
+		report.FailureID = record.FailureID
+	}
+	if report.RecordPath == "" {
+		report.RecordPath = record.RecordPath
+	}
+	if report.NextAction == "" {
+		report.NextAction = record.NextAction
+	}
+	report.RequiredPathCoverage = append([]planexecute.PlanExecuteRequiredPathCoverage(nil), record.RequiredPathCoverage...)
 }
 
 func emitRecoverInspectError(stdout io.Writer, stderr io.Writer, jsonOut bool, code int, message string) int {
@@ -252,8 +348,16 @@ func writeRecoverInspectReport(stdout io.Writer, stderr io.Writer, jsonOut bool,
 		fmt.Fprintf(stdout, "failure_kind: %s\n", report.FailureKind)
 	}
 
+	if report.FailureReason != "" {
+		fmt.Fprintf(stdout, "failure_reason: %s\n", report.FailureReason)
+	}
+
 	if report.RecordPath != "" {
 		fmt.Fprintf(stdout, "record: %s\n", report.RecordPath)
+	}
+
+	if report.TerminalCompletionPath != "" {
+		fmt.Fprintf(stdout, "terminal_completion: %s\n", report.TerminalCompletionPath)
 	}
 
 	if report.PartialState.DirtyStatus != "" {
@@ -268,6 +372,17 @@ func writeRecoverInspectReport(stdout io.Writer, stderr io.Writer, jsonOut bool,
 
 	if report.Summary != "" {
 		fmt.Fprintf(stdout, "summary: %s\n", report.Summary)
+	}
+
+	if len(report.RequiredPathCoverage) > 0 {
+		fmt.Fprintln(stdout, "required_path_coverage:")
+		for _, coverage := range report.RequiredPathCoverage {
+			fmt.Fprintf(stdout, "  %s: %s", coverage.Path, coverage.Status)
+			if coverage.Evidence != "" {
+				fmt.Fprintf(stdout, " (%s)", coverage.Evidence)
+			}
+			fmt.Fprintln(stdout)
+		}
 	}
 
 	return code

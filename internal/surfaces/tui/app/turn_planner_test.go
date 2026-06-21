@@ -6157,7 +6157,7 @@ func TestUseConfigPlannerModelBypassesPlannerRoleAlias(t *testing.T) {
 	}
 }
 
-func TestRunPromptOncePlanExecuteRecoversFromMissingPackageOutlineForNewRequiredFile(t *testing.T) {
+func TestRunPromptOncePlanExecuteCreatesTypedAuthorizedNewFileAfterSubmitReadyRecovery(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
 	allowImplementationDispatchPlanDocumentPreflight(t)
@@ -6214,6 +6214,11 @@ func TestRunPromptOncePlanExecuteRecoversFromMissingPackageOutlineForNewRequired
 				reply = "Decision: pass\n\nVerification Checklist:\n- internal/newpkg/decision.go exists with the requested helper.\n- No out-of-scope paths were changed.\n- Planner-owned build or test commands remain pending outside this mocked lane."
 			case strings.Contains(requestText, "Plan submitted with"):
 				reply = "Plan submitted."
+			case strings.Contains(requestText, "PLANNER READINESS REACHED") ||
+				strings.Contains(requestText, "Current Submit Plan Skeleton"):
+
+				reply = "<tool_call>\n" +
+					`{"tool":"submit_plan","rationale":"Create the new package file from the referenced plan document.","edits":[{"path":"internal/newpkg/decision.go","replace_all":true,"old_text":"","new_text":"package newpkg\n\nfunc Decision() string {\n\treturn \"ok\"\n}\n","purpose":"create the decision helper"}]}`
 			case strings.Contains(requestText, "Required new-file directory does not exist yet"):
 				sawNewFileNudge.Store(true)
 
@@ -6280,12 +6285,12 @@ func TestRunPromptOncePlanExecuteRecoversFromMissingPackageOutlineForNewRequired
 		t.Fatalf("generated file content = %q", string(got))
 	}
 
-	if !sawNewFileNudge.Load() {
-		t.Fatalf("expected missing package outline to be rewritten into a new-file submit_plan nudge")
+	if sawNewFileNudge.Load() {
+		t.Fatalf("typed-authorized new file should be submit-ready without probing the missing package directory")
 	}
 
 	if initialPlannerRequests.Load() != 1 {
-		t.Fatalf("expected one initial planner request, got %d", initialPlannerRequests.Load())
+		t.Fatalf("expected one initial package probe before submit-ready recovery, got %d probe request(s)", initialPlannerRequests.Load())
 	}
 }
 

@@ -5,7 +5,7 @@ A local coding-agent harness for running local and hosted models through
 for plan-execute / implement / atom-spec lanes plus a Bubble Tea terminal UI.
 
 Idiom is being built and optimized around the Qwen 3.6 family of models,
-though it has also been tested successfully against GLM 5.x and Minimax m2.7
+though it has also been tested successfully against GLM 5.x and DeepSeek
 models. It is meant to be an agnostic harness for local and hosted models, but
 it has not yet been broadly validated across providers.
 

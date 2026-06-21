@@ -111,6 +111,7 @@ is allowed to mutate the workspace.
 | `implementation_flow.go` | implementation flow |
 | `plan_execute.go` | plan-execute runtime |
 | `plan_execute_contracts.go` | plan-execute decision, coverage, and terminal-shape helpers |
+| `read_approval.go` | read-approval gate bridging the post-readiness rejection to the shared readapproval contract |
 | `runner_core.go` | runner core |
 | `tools_surface.go` | tool surface |
 

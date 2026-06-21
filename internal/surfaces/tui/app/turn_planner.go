@@ -1078,6 +1078,19 @@ func fallbackTurnRoute(prompt string, mode modepolicy.Mode) turnRoutePlan {
 	// If the classifier is unavailable or declines to route, stay conservative:
 	// natural language remains conversation, while typed slash commands enter
 	// their lanes through explicit command handlers outside this fallback.
+	if strings.EqualFold(mode.Name, "build") && promptRequestsConcreteWorkspaceCreation(prompt) {
+		return normalizeTurnRoutePlan(turnRoutePlan{
+			Family:           "implementation",
+			InitialLane:      "implement",
+			Contract:         "implementation_result",
+			RequestedOutcome: "change_workspace",
+			WriteIntent:      "yes",
+			Reason:           "route_fallback_concrete_workspace_creation",
+			ReasonCodes:      []string{"route_fallback_concrete_workspace_creation"},
+			RouteSource:      routeSourceConservativeFallback,
+		}, mode)
+	}
+
 	if strings.EqualFold(mode.Name, "build") && promptRequestsFileDeletionFollowup(prompt) {
 		return normalizeTurnRoutePlan(turnRoutePlan{
 			Family:           "implementation",
@@ -1096,6 +1109,57 @@ func fallbackTurnRoute(prompt string, mode modepolicy.Mode) turnRoutePlan {
 	}
 
 	return normalizeTurnRoutePlan(turnRoutePlan{Family: "conversation", RouteSource: routeSourceConservativeFallback}, mode)
+}
+
+func promptRequestsConcreteWorkspaceCreation(prompt string) bool {
+	words := plannerWordText(prompt)
+	if words == " " || tuiRequestHasReadOnlyConstraint(words) || promptRequestsReadOnlyEvidenceReport(prompt) {
+		return false
+	}
+
+	if plannerWordsContainAnyWholePhrase(words,
+		"how would",
+		"how do i",
+		"how do we",
+		"explain how",
+		"what would",
+		"what should",
+	) {
+		return false
+	}
+
+	hasCreationIntent := plannerWordsContainDirectiveVerb(words,
+		"make", "making",
+		"create", "creating",
+		"build", "building",
+		"write", "writing",
+		"add", "adding",
+	) || plannerWordsContainAnyWholePhrase(words,
+		"let s make",
+		"let us make",
+		"turn this into",
+		"turn it into",
+		"convert this into",
+		"convert it into",
+	)
+	if !hasCreationIntent {
+		return false
+	}
+
+	return plannerWordsContainAny(words,
+		"browser",
+		"html",
+		"page",
+		"site",
+		"website",
+		"app",
+		"file",
+		"open",
+		"serve",
+		"view",
+		"ui",
+		"interface",
+	)
 }
 
 func promptRequestsFileDeletionFollowup(prompt string) bool {

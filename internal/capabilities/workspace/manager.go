@@ -4044,7 +4044,11 @@ func (m *Manager) shouldSkipListEntry(base string, path string, isDir bool) bool
 	return discovery.ShouldSkipPath(base, path, isDir)
 }
 
-func (m *Manager) shouldSkipSearchEntry(base string, path string, isDir bool, includeLogDirs bool) bool {
+func (m *Manager) shouldSkipSearchEntry(base string, path string, isDir bool, includeLogDirs bool, explicitHiddenRoot bool) bool {
+	if explicitHiddenRoot {
+		return false
+	}
+
 	if includeLogDirs && isDir && filepath.Base(path) == "logs" {
 		return false
 	}
@@ -4057,6 +4061,21 @@ func (m *Manager) shouldSkipSearchEntry(base string, path string, isDir bool, in
 	}
 
 	return m.shouldSkipListEntry(base, path, isDir)
+}
+
+func searchFilesExplicitHiddenRoot(path string) bool {
+	clean := filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
+	if clean == "" || clean == "." {
+		return false
+	}
+
+	for _, segment := range strings.Split(clean, "/") {
+		if strings.HasPrefix(segment, ".") && segment != "." && segment != ".." {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (m *Manager) sortExploreListEntries(entries []listedEntry) {
@@ -4143,6 +4162,7 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 
 	query := strings.ToLower(pattern)
 	includeLogDirs := searchIntentTargetsLogs(req.Path, pattern, req.Glob)
+	explicitHiddenRoot := searchFilesExplicitHiddenRoot(req.Path)
 	rootDepth := strings.Count(filepath.Clean(base), string(filepath.Separator))
 
 	var matches []searchFileMatch
@@ -4153,7 +4173,7 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 		}
 
 		if d.IsDir() {
-			if m.shouldSkipSearchEntry(base, path, true, includeLogDirs) {
+			if m.shouldSkipSearchEntry(base, path, true, includeLogDirs, explicitHiddenRoot) {
 				return filepath.SkipDir
 			}
 
@@ -4165,7 +4185,7 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 			return nil
 		}
 
-		if m.shouldSkipSearchEntry(base, path, false, includeLogDirs) {
+		if m.shouldSkipSearchEntry(base, path, false, includeLogDirs, explicitHiddenRoot) {
 			return nil
 		}
 

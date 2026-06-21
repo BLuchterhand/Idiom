@@ -248,8 +248,10 @@ type Model struct {
 	// previous conversation turn so the next turn's source grounding gate
 	// can verify evidence paths without re-reading files.
 	lastTurnSourceResults            []workspace.ToolResult
+	lastTurnSourceObjective          string
 	planExecuteActive                bool
 	planExecuteScopeContract         planexecute.PlanScopeContract
+	planExecuteAuthorizedNewFiles    []string
 	planExecuteWriteEnvelope         []string
 	planExecuteWriteEnvelopeExplicit bool
 	modelThinkingFloor               bool
@@ -259,26 +261,26 @@ type Model struct {
 
 	pinnedFiles *PinnedFileRegistry
 
-	approvalMu          sync.Mutex
-	approvalSerial      sync.Mutex
-	approvalPending     *pendingApproval
-	modelPopup          modelPopupState
-	laneSwitchPopup     laneSwitchPopupState
+	approvalMu      sync.Mutex
+	approvalSerial  sync.Mutex
+	approvalPending *pendingApproval
+	modelPopup      modelPopupState
+	laneSwitchPopup laneSwitchPopupState
 	// lastLaneSwitchSelection records the most recent lane command key
 	// chosen from the lane-switch popup. It supports test assertions and
 	// operator telemetry without coupling the popup to the dispatch path.
 	lastLaneSwitchSelection string
-	rollbackHistory     []rollbackEntry
-	instructionAttacher *instructions.Attacher
-	mdRenderer          *glamour.TermRenderer
-	mdRendererWrapWidth int
-	messageRenderCache  string
-	messageRenderWidth  int
-	messageRenderHash   uint64
-	messageRenderMD     bool
-	perMsgRenderCache   []string
-	perMsgRenderHashes  []uint64
-	perMsgRenderLen     int
+	rollbackHistory         []rollbackEntry
+	instructionAttacher     *instructions.Attacher
+	mdRenderer              *glamour.TermRenderer
+	mdRendererWrapWidth     int
+	messageRenderCache      string
+	messageRenderWidth      int
+	messageRenderHash       uint64
+	messageRenderMD         bool
+	perMsgRenderCache       []string
+	perMsgRenderHashes      []uint64
+	perMsgRenderLen         int
 
 	summaryClient     llama.LLMClient
 	summaryController *llama.ServerController
@@ -1783,20 +1785,26 @@ func (m *Model) SetForcedReadinessOpenObligations(obligations []string) {
 }
 
 // SetLastTurnSourceResults stores source-body tool results from the completed
-// agent turn so they can seed the next turn's evidence grounding.
-func (m *Model) SetLastTurnSourceResults(results []workspace.ToolResult) {
+// agent turn so a continuing follow-up can seed evidence grounding without
+// re-reading files.
+func (m *Model) SetLastTurnSourceResults(objective string, results []workspace.ToolResult) {
 	cap := 32
 	if len(results) > cap {
 		results = results[len(results)-cap:]
 	}
 
 	m.lastTurnSourceResults = append([]workspace.ToolResult(nil), results...)
+	m.lastTurnSourceObjective = strings.TrimSpace(objective)
 }
 
-// LastTurnSourceResults returns the source-body tool results from the previous
-// conversation turn, for use as SeedResults in the next Runner.Run() call.
-func (m *Model) LastTurnSourceResults() []workspace.ToolResult {
+// LastTurnSourceResultsForObjective returns previous-turn source-body results
+// only when the current objective is plausibly continuing that prior turn.
+func (m *Model) LastTurnSourceResultsForObjective(objective string) []workspace.ToolResult {
 	if len(m.lastTurnSourceResults) == 0 {
+		return nil
+	}
+
+	if !turnObjectiveContinuesSourceEvidence(m.lastTurnSourceObjective, objective) {
 		return nil
 	}
 
@@ -1809,6 +1817,73 @@ func (m *Model) LastTurnSourceResults() []workspace.ToolResult {
 // ClearLastTurnSourceResults resets the cross-turn seed results.
 func (m *Model) ClearLastTurnSourceResults() {
 	m.lastTurnSourceResults = nil
+	m.lastTurnSourceObjective = ""
+}
+
+func turnObjectiveContinuesSourceEvidence(previous string, current string) bool {
+	previous = strings.TrimSpace(previous)
+	current = strings.TrimSpace(current)
+	if previous == "" || current == "" {
+		return false
+	}
+
+	lowerCurrent := strings.ToLower(current)
+	for _, marker := range []string{
+		" that ", " it ", " its ", " those ", " these ",
+		" above ", " previous ", " earlier ", " same ", " follow up",
+		"follow-up", " elaborate", " what about", " how about",
+	} {
+		if strings.Contains(" "+lowerCurrent+" ", marker) {
+			return true
+		}
+	}
+
+	previousTerms := turnObjectiveCarryTerms(previous)
+	currentTerms := turnObjectiveCarryTerms(current)
+	if len(previousTerms) == 0 || len(currentTerms) == 0 {
+		return false
+	}
+
+	matches := 0
+	for term := range currentTerms {
+		if _, ok := previousTerms[term]; ok {
+			matches++
+		}
+	}
+
+	return matches >= 2
+}
+
+func turnObjectiveCarryTerms(text string) map[string]struct{} {
+	stop := map[string]struct{}{
+		"about": {}, "actual": {}, "answer": {}, "better": {}, "could": {}, "does": {},
+		"generic": {}, "good": {}, "have": {}, "need": {}, "option": {}, "please": {},
+		"project": {}, "question": {}, "request": {}, "should": {}, "than": {},
+		"that": {}, "this": {}, "what": {}, "when": {}, "where": {}, "which": {},
+		"with": {}, "would": {},
+	}
+
+	terms := make(map[string]struct{})
+	for _, word := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	}) {
+		word = strings.TrimSpace(word)
+		if len(word) < 4 {
+			continue
+		}
+
+		if len(word) > 4 && strings.HasSuffix(word, "s") && !strings.HasSuffix(word, "ss") {
+			word = strings.TrimSuffix(word, "s")
+		}
+
+		if _, skip := stop[word]; skip {
+			continue
+		}
+
+		terms[word] = struct{}{}
+	}
+
+	return terms
 }
 
 func (m *Model) SetPlanExecuteScopeContract(contract planexecute.PlanScopeContract) {

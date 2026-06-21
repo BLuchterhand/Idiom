@@ -156,6 +156,7 @@ func (m *Model) applyPlanExecutePromptRunnerState(cfg config.Config, opts planex
 	priorEventStream := m.eventStream
 	priorPlanExecuteActive := m.planExecuteActive
 	priorPlanExecuteScopeContract := m.planExecuteScopeContract
+	priorPlanExecuteAuthorizedNewFiles := append([]string(nil), m.planExecuteAuthorizedNewFiles...)
 	priorPlanExecuteWriteEnvelope := append([]string(nil), m.planExecuteWriteEnvelope...)
 	priorPlanExecuteWriteEnvelopeExplicit := m.planExecuteWriteEnvelopeExplicit
 	disableThinking := priorDisableThinkingOverride || opts.DisableThinking ||
@@ -163,6 +164,7 @@ func (m *Model) applyPlanExecutePromptRunnerState(cfg config.Config, opts planex
 
 	m.planExecuteActive = true
 	m.planExecuteScopeContract = opts.ScopeContract.Normalized()
+	m.planExecuteAuthorizedNewFiles = appendUniqueBriefStrings(nil, opts.AuthorizedNewFiles...)
 	m.cfg.Workspace.SessionID = cfg.Workspace.SessionID
 
 	if m.workspace != nil {
@@ -196,6 +198,7 @@ func (m *Model) applyPlanExecutePromptRunnerState(cfg config.Config, opts planex
 		m.SetForcedReadinessOpenObligations(priorForcedReadinessOpenObligations)
 
 		m.planExecuteScopeContract = priorPlanExecuteScopeContract
+		m.planExecuteAuthorizedNewFiles = priorPlanExecuteAuthorizedNewFiles
 		m.planExecuteWriteEnvelope = priorPlanExecuteWriteEnvelope
 		m.planExecuteWriteEnvelopeExplicit = priorPlanExecuteWriteEnvelopeExplicit
 		m.eventStream = priorEventStream

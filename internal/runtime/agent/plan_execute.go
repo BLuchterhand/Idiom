@@ -3144,6 +3144,13 @@ func (r *Runner) retryableFinalAnswerAcceptanceRejection(acceptance finalAnswerA
 	}
 
 	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
+	// Leaked implementation blocker templates should trigger a repair
+	// retry even in mutation lanes — the model emitted a protocol
+	// artifact instead of a user-facing answer.
+	if acceptance.Reason == "leaked_implementation_blocker_template" {
+		return true
+	}
+
 	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) ||
 		len(brief.RequiredEditPaths) > 0 ||
 		runnerBriefRequiresMutation(brief) {
@@ -4562,7 +4569,11 @@ func prunePlanThenExecuteTerminalTextualMessages(messages []llama.ChatMessage) (
 
 	for _, message := range messages {
 		if strings.TrimSpace(message.Role) == "tool" {
-			droppedActions++
+			// Keep tool results — they carry source-body evidence the
+			// model needs for reasoning about edits. Without them, the
+			// model sees "Read file X" in the summary but not the
+			// actual content.
+			out = append(out, message)
 			continue
 		}
 
@@ -7232,14 +7243,11 @@ func planThenExecuteRequiredPathHasExplicitNewFileIntent(brief workerruntime.Wor
 		return false
 	}
 
-	text := strings.ToLower(strings.Join([]string{
-		brief.Objective,
-		brief.RequestedOutcome,
-		brief.WriteIntent,
-		strings.Join(brief.UserBoundaries, "\n"),
-		strings.Join(brief.Constraints, "\n"),
-		strings.Join(brief.RequiredNext, "\n"),
-	}, "\n"))
+	if planThenExecuteBriefAuthorizesNewFilePath(brief, path) {
+		return true
+	}
+
+	text := strings.ToLower(planThenExecuteBriefNewFileAuthorityText(brief))
 	if !strings.Contains(text, strings.ToLower(path)) {
 		return false
 	}
@@ -7272,6 +7280,100 @@ func planThenExecuteRequiredPathHasExplicitNewFileIntent(brief workerruntime.Wor
 	}
 
 	return false
+}
+
+func planThenExecuteBriefNewFileAuthorityText(brief workerruntime.WorkerRuntimeBrief) string {
+	return strings.Join([]string{
+		brief.Objective,
+		brief.RequestedOutcome,
+		brief.WriteIntent,
+		strings.Join(brief.UserBoundaries, "\n"),
+		strings.Join(brief.Constraints, "\n"),
+		strings.Join(brief.RequiredNext, "\n"),
+		strings.Join(brief.TargetPacket, "\n"),
+	}, "\n")
+}
+
+func planThenExecuteBriefAuthorizesNewFilePath(brief workerruntime.WorkerRuntimeBrief, path string) bool {
+	path = agentutil.NormalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+
+	for _, authorized := range brief.AuthorizedNewFiles {
+		if agentutil.NormalizeRunnerPath(authorized) == path {
+			return true
+		}
+	}
+
+	for _, authorized := range planThenExecuteAuthorizedNewFilesFromText(planThenExecuteBriefNewFileAuthorityText(brief)) {
+		if agentutil.NormalizeRunnerPath(authorized) == path {
+			return true
+		}
+	}
+
+	return false
+}
+
+func planThenExecuteAuthorizedNewFilesFromText(text string) []string {
+	text = strings.TrimSpace(text)
+	if text == "" || !strings.Contains(text, "authorized_new_files") {
+		return nil
+	}
+
+	const marker = "Typed plan execution contract:"
+
+	var paths []string
+	remaining := text
+
+	for {
+		idx := strings.Index(remaining, marker)
+		if idx < 0 {
+			break
+		}
+
+		section := strings.TrimSpace(remaining[idx+len(marker):])
+		if section == "" {
+			break
+		}
+
+		current := section
+		nextOffset := len(section)
+		for _, next := range []string{
+			"\nTyped plan authority projection:",
+			"\nAtom contract:",
+			"\n## ",
+			"\n# ",
+		} {
+			if nextIdx := strings.Index(section, next); nextIdx >= 0 && nextIdx < nextOffset {
+				nextOffset = nextIdx
+			}
+		}
+
+		current = strings.TrimSpace(section[:nextOffset])
+		remaining = strings.TrimSpace(section[nextOffset:])
+
+		var contract plancontract.PlanExecutionContract
+		if err := json.Unmarshal([]byte(current), &contract); err != nil {
+			if remaining == "" || remaining == section {
+				break
+			}
+
+			continue
+		}
+
+		for _, file := range contract.Normalized().AuthorizedNewFiles {
+			if normalized := plancontract.NormalizeScopePath(file.Path); normalized != "" {
+				paths = append(paths, normalized)
+			}
+		}
+
+		if remaining == "" || remaining == section {
+			break
+		}
+	}
+
+	return uniqueSortedRunnerPaths(paths)
 }
 
 func planThenExecuteRequiredPathHasBlockerEvidence(path string, results []workspace.ToolResult) bool {
@@ -8920,6 +9022,46 @@ func planThenExecuteCandidateSourcePending(brief workerruntime.WorkerRuntimeBrie
 	return true
 }
 
+const planThenExecuteContextDocReadCap = 5
+
+var planThenExecuteRepoRootMarkdownFiles = map[string]struct{}{
+	"readme.md":       {},
+	"agents.md":       {},
+	"contributing.md": {},
+	"changelog.md":    {},
+}
+
+func isPlanExecuteContextDocPath(path string) bool {
+	normalized := strings.ToLower(agentutil.NormalizeRunnerPath(path))
+	if normalized == "" {
+		return false
+	}
+
+	if strings.HasPrefix(normalized, "docs/") && strings.HasSuffix(normalized, ".md") {
+		return true
+	}
+
+	if !strings.Contains(normalized, "/") {
+		if _, ok := planThenExecuteRepoRootMarkdownFiles[normalized]; ok {
+			return true
+		}
+	}
+
+	return false
+}
+
+func planExecuteContextDocReadCount(results []workspace.ToolResult) int {
+	seen := make(map[string]struct{})
+	for path := range readPathsFromResults(results) {
+		normalized := agentutil.NormalizeRunnerPath(path)
+		if normalized == "" || !isPlanExecuteContextDocPath(normalized) {
+			continue
+		}
+		seen[strings.ToLower(normalized)] = struct{}{}
+	}
+	return len(seen)
+}
+
 func planThenExecuteCandidatePostReadinessDiscoveryRejection(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, string, bool) {
 	if strings.TrimSpace(brief.TaskFamily) != PlanThenExecutePlannerTaskFamily ||
 		len(planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "")) > 0 ||
@@ -8940,6 +9082,11 @@ func planThenExecuteCandidatePostReadinessDiscoveryRejection(req workspace.ToolR
 		if summary, errorText, reject := planThenExecutePostGateOutOfScopeCandidateReadRejection(target, brief, results); reject {
 			return summary, errorText, true
 		}
+	}
+
+	if target != "" && isPlanExecuteContextDocPath(target) &&
+		planExecuteContextDocReadCount(results) < planThenExecuteContextDocReadCap {
+		return "", "", false
 	}
 
 	allowedCandidateSet := normalizedRequiredEditPathSet(brief.AllowedEditPaths)

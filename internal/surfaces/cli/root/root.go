@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 
+	"idiom/internal/capabilities/workspace"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/surfaces/cli/telemetry"
 	toolcmd "idiom/internal/surfaces/cli/tool"
@@ -117,6 +118,9 @@ func applyBuildInfo(opts Options) {
 
 	commit = opts.Commit
 	date = opts.Date
+
+	resolvedVersion, resolvedCommit, resolvedDate := resolvedBuildInfo()
+	workspace.SetHarnessAuditBuildIdentity(resolvedVersion, resolvedCommit, resolvedDate)
 }
 
 func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {

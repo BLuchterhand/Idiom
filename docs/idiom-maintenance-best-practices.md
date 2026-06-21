@@ -193,6 +193,11 @@ live/scripted contracts are covered by a better boundary.
   what the harness and model actually did. Do not reconstruct the story from
   memory, from a previous assistant summary, or from the user's paraphrase when
   local logs exist.
+- For CLI prompt sessions, check `~/.idiom/logs/conversations/*.jsonl` first.
+  That user-level directory is where `idiom -prompt ... -json` normally writes
+  conversation logs, even when the current repo also has `.idiom/logs/` or
+  `logs/` directories. Repo-local logs are still relevant for workspace-scoped
+  runs and telemetry.
 - Before proposing a behavior fix, write down the exact session/log paths,
   stop reason, rejected-action counts, completion-gate/recovery events, and
   tool sequence that prove the failure class. If any of those are missing,

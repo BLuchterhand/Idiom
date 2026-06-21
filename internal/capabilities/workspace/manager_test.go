@@ -2129,6 +2129,31 @@ func TestSearchFilesSkipsNoisyDirsByDefaultButAllowsExplicitPath(t *testing.T) {
 	}
 }
 
+func TestSearchFilesAllowsExplicitPlanningDotDirPath(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, ".planning", "qwen-rename", "rca-brief.md"), "failure analysis\n")
+	writeTestFile(t, filepath.Join(dir, "internal", "surfaces", "tui", "app", "app.go"), "package app\n")
+
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		MaxDirectoryEntries: 100,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "search_files",
+		Pattern: "rca-brief",
+		Path:    ".planning",
+	})
+
+	if result.Error != "" {
+		t.Fatalf("explicit .planning search failed: %#v", result)
+	}
+
+	if !strings.Contains(result.Output, ".planning/qwen-rename/rca-brief.md") {
+		t.Fatalf("explicit .planning search should include nested files, got:\n%s", result.Output)
+	}
+}
+
 func TestSearchFilesIncludesLogsForLogIntent(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "logs", "llama-server.log"), "failed to bind\n")

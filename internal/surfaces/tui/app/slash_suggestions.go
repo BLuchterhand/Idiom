@@ -39,6 +39,7 @@ func allSlashSuggestions() []slashSuggestionEntry {
 		{"/exit", ""},
 		{"/help", ""},
 		{"/clear", ""},
+		{"/new", ""},
 		{"/compact", ""},
 		{"/save", ""},
 		{"/context", ""},

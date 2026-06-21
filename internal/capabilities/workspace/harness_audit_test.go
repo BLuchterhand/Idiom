@@ -128,6 +128,33 @@ func TestBuildRankerLearningAuditClassifiesRecoveryReconciliationSource(t *testi
 	}
 }
 
+func TestHarnessAuditIncludesBuildIdentity(t *testing.T) {
+	root := t.TempDir()
+	SetHarnessAuditBuildIdentity("test-version", "abc123", "2026-06-20T00:00:00Z")
+	t.Cleanup(func() {
+		SetHarnessAuditBuildIdentity("", "", "")
+	})
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "tool_surface"})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+
+	var report harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+
+	if report.Build.Version != "test-version" || report.Build.Commit != "abc123" || report.Build.Date != "2026-06-20T00:00:00Z" {
+		t.Fatalf("unexpected build identity: %#v", report.Build)
+	}
+
+	if report.Build.SourceOrDevBuild {
+		t.Fatalf("complete build identity should not be marked source/dev: %#v", report.Build)
+	}
+}
+
 func TestHarnessAuditBehaviorSummarizesIntentLoopEventsWithoutRawPayloadLeakage(t *testing.T) {
 	root := t.TempDir()
 	logPath := filepath.Join(root, "logs", "telemetry", "intent-loop.jsonl")
@@ -357,6 +384,40 @@ func TestSplitHistoricalHarnessAuditFindings(t *testing.T) {
 
 	if len(historical) != 2 {
 		t.Fatalf("unexpected historical findings: %#v", historical)
+	}
+}
+
+func TestContractCoverageFindingsCarryActionableNonRawRefs(t *testing.T) {
+	report := &autonomy.EventAuditReport{
+		Findings: []autonomy.EventAuditFinding{{
+			ID:          "contract_event_privacy_forbidden_raw_content",
+			Severity:    "high",
+			Evidence:    "2 forbidden raw-content field(s) or value marker(s) in autonomy event metadata",
+			EventIDs:    []string{"event-z", "event-a", "event-a"},
+			ContractIDs: []string{"contract-b", "contract-a"},
+		}},
+	}
+
+	findings := contractCoverageFindings(report)
+	finding := harnessAuditFindingByID(findings, "contract_event_privacy_forbidden_raw_content")
+	if finding == nil {
+		t.Fatalf("expected privacy finding, got %#v", findings)
+	}
+
+	if got, want := finding.EventIDs, []string{"event-a", "event-z"}; !slices.Equal(got, want) {
+		t.Fatalf("event IDs should be bounded sorted refs, got %#v want %#v", got, want)
+	}
+	if got, want := finding.ContractIDs, []string{"contract-a", "contract-b"}; !slices.Equal(got, want) {
+		t.Fatalf("contract IDs should be bounded sorted refs, got %#v want %#v", got, want)
+	}
+	for _, forbidden := range []string{"raw_prompt", "customer-acme", "SECRET"} {
+		if strings.Contains(finding.Recommendation, forbidden) || strings.Contains(strings.Join(finding.EventIDs, ","), forbidden) {
+			t.Fatalf("finding leaked forbidden raw marker %q: %#v", forbidden, finding)
+		}
+	}
+	if !strings.Contains(finding.Recommendation, "event_ids=event-a,event-z") ||
+		!strings.Contains(finding.Recommendation, "redact or remove raw-content metadata") {
+		t.Fatalf("recommendation should point to non-raw refs and owner action, got %q", finding.Recommendation)
 	}
 }
 

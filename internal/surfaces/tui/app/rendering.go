@@ -608,7 +608,7 @@ func (m *Model) renderMessages(forceBottom bool) {
 			b.WriteString(label)
 			b.WriteString("\n")
 			b.WriteString(msgBodyStyle.Render(content))
-			if panel := renderThoughtPanel(m.thoughts, width); panel != "" {
+			if panel := renderThoughtPanel(&m.thoughts, width); panel != "" {
 				b.WriteString("\n")
 				b.WriteString(panel)
 			}
@@ -659,7 +659,7 @@ func (m *Model) renderMessages(forceBottom bool) {
 		}
 
 		b.WriteString(renderActiveContainer(m.turnEvidence, width, maxContainerRows, m.streaming))
-		if panel := renderThoughtPanel(m.thoughts, width); panel != "" {
+		if panel := renderThoughtPanel(&m.thoughts, width); panel != "" {
 			b.WriteString("\n")
 			b.WriteString(panel)
 		}
@@ -680,7 +680,7 @@ func (m *Model) renderMessages(forceBottom bool) {
 		b.WriteString(label)
 		b.WriteString("\n")
 		b.WriteString(msgBodyStyle.Render(content))
-		if panel := renderThoughtPanel(m.thoughts, width); panel != "" {
+		if panel := renderThoughtPanel(&m.thoughts, width); panel != "" {
 			b.WriteString("\n")
 			b.WriteString(panel)
 		}

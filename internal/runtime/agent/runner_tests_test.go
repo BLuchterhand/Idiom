@@ -11872,6 +11872,147 @@ func TestReadOnlyCompletionGateRejectsSearchHitInventory(t *testing.T) {
 	}
 }
 
+func TestReadOnlyCompletionGateAllowsExplanatorySourceCitationWithSymbol(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Can you confirm whether the implementation result is templated?",
+	}}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/runtime/agent/implementation_flow.go lines 54-81",
+		Output:  "54:func composeGenericEvidenceAnswer() string { return \"template\" }\n",
+	}}
+	reply := "The inspected source in `internal/runtime/agent/implementation_flow.go` contains `composeGenericEvidenceAnswer`, which constructs the templated implementation-result prose rather than leaving that closeout entirely to free-form model wording."
+	if result, rejected := runner.readOnlySearchHitInventoryCompletionRejection(reply, results); rejected {
+		t.Fatalf("explanatory source citation should not be rejected as search-hit inventory: %#v", result)
+	}
+}
+
+func TestReadOnlyCompletionGateAllowsSourcedExplanationWithQuotedTemplate(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Would it fit our north star to replace the template with model prose?",
+	}}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/runtime/agent/implementation_flow.go lines 54-81",
+		Output:  "54:func composeGenericEvidenceAnswer() string { return \"The strongest implementation evidence is in [paths]. Use...\" }\n",
+	}}
+	reply := strings.Join([]string{
+		"The answer is: replacing the deterministic implementation-result template with unchecked model prose would not fit the north star.",
+		"",
+		"The `composeGenericEvidenceAnswer` function (`internal/runtime/agent/implementation_flow.go`, lines 54-81) produces a rigid template so the harness can report verified implementation evidence instead of inventing unsupported prose.",
+		"",
+		"> \"The strongest implementation evidence is in [paths]. Use...\"",
+		"",
+		"That means the right fix is to keep the harness-owned verification contract and improve the model-facing closeout surface only after source-backed evidence exists.",
+	}, "\n")
+
+	if result, rejected := runner.readOnlySearchHitInventoryCompletionRejection(reply, results); rejected {
+		t.Fatalf("sourced explanation with quoted template should not be rejected as search-hit inventory: %#v", result)
+	}
+}
+
+func TestReadOnlyCompletionGateAllowsReplayStyleTemplateCompositionAnswer(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Can you confirm or deny whether the implementation result message is templated?",
+	}}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/runtime/agent/implementation_flow.go lines 2200-2360",
+		Output:  "func composedFinalAnswerFromEvidence() string { return \"template\" }\nfunc canonicalMutationBlockerFinalAnswer() string { return \"<<QUESTION>>\" }\n",
+	}}
+	reply := strings.Join([]string{
+		"**Confirmed: the implementation result message is deliberately a template response, by design — not an accident or unfilled placeholder.**",
+		"",
+		"The codebase has a multi-layered final answer composition system in `internal/runtime/agent/implementation_flow.go` that constructs answers from fixed prose patterns, then validates them against source-grounding and relevance checks.",
+		"",
+		"**How it works:**",
+		"",
+		"1. **`composedFinalAnswerFromEvidence`** (lines 2292-2353) is the central composer. It tries multiple deterministic answer builders before returning user-facing prose.",
+		"2. **`canonicalMutationBlockerFinalAnswer`** constructs the blocker closeout when required edit paths remain unchanged.",
+		"",
+		"> f9 testdata/swe/live-subset.json:8: an example search hit embedded in quoted evidence should not turn the synthesized answer into a raw search inventory.",
+	}, "\n")
+
+	if result, rejected := runner.readOnlySearchHitInventoryCompletionRejection(reply, results); rejected {
+		t.Fatalf("replay-style synthesized template answer should not be rejected as search-hit inventory: %#v", result)
+	}
+}
+
+func TestReadOnlyCompletionGateAllowsDirectAnswerWithPathLineCitations(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Would it fit our north star to replace this with model prose?",
+	}}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/runtime/agent/contract_surface_tests_test.go lines 5509-5557",
+			Output:  "5517:Read-only conversation, direct-answer, architecture, and review lanes are strategy lanes.\n5518:The model owns strategy; the harness owns contracts.\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/runtime/agent/implementation_flow.go lines 2292-2360",
+			Output:  "2292:func composedFinalAnswerFromEvidence() string { return \"template\" }\n",
+		},
+	}
+	reply := strings.Join([]string{
+		"**No, it would not fit our north star to replace the deterministic template with free-form model prose. Yes, doing so would risk leaking unverified information to the user.**",
+		"",
+		"Here is the evidence trail from the codebase:",
+		"",
+		"`docs/decisioning-north-star.md:28-34` is cited in `internal/runtime/agent/contract_surface_tests_test.go:5517-5519` as the boundary: read-only lanes are strategy lanes, while the model owns strategy and the harness owns contracts.",
+		"",
+		"`internal/runtime/agent/implementation_flow.go:2292-2360` shows the deterministic answer composer that keeps closeout grounded in inspected evidence.",
+	}, "\n")
+
+	if result, rejected := runner.readOnlySearchHitInventoryCompletionRejection(reply, results); rejected {
+		t.Fatalf("direct answer with path-line citations should not be rejected as search-hit inventory: %#v", result)
+	}
+}
+
+func TestReadOnlyCompletionGateAllowsDirectAnswerWithLineOrientedEvidenceBullets(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Can you confirm whether the implementation result is templated?",
+	}}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/runtime/agent/implementation_flow.go lines 2508-2549",
+		Output:  "2515:\tidx := strings.Index(lower, \"grounded answer\")\n2520:\tanswer = answer[idx:]\n",
+	}}
+	reply := strings.Join([]string{
+		"I now have enough evidence to answer both questions. Let me synthesize.",
+		"",
+		"**Confirmed.** The implementation result message is not a naturally generated model response. It is a harness-shaped, template-filtered artifact.",
+		"",
+		"Here is the evidence chain:",
+		"",
+		"### 1. Core answer-shaping: `presentableGroundedAnswerFromRenderedPacket`",
+		"**`internal/runtime/agent/implementation_flow.go` lines 2508-2549**",
+		"",
+		"This function takes the model's raw output and:",
+		"- Strips everything before a `\"grounded answer:\\n\"` marker (line 2515-2520)",
+		"- Cuts off at known section boundaries before presentation",
+	}, "\n")
+
+	if result, rejected := runner.readOnlySearchHitInventoryCompletionRejection(reply, results); rejected {
+		t.Fatalf("direct answer with line-oriented evidence bullets should not be rejected as search-hit inventory: %#v", result)
+	}
+}
+
 func TestCompletionGateRejectsRawToolResultTranscript(t *testing.T) {
 	result, rejected := rawToolResultTranscriptCompletionRejection("tool: read_file\nsummary: Read internal/surfaces/tui/app/model_swap.go lines 70-91\nstatus: ok\noutput:\n70:\t\tm.openModelPopup()")
 	if !rejected {
@@ -21681,6 +21822,108 @@ func TestImplementationTargetSourceWriteBeforeEvidenceRedirectsToBoundedRead(t *
 	}
 }
 
+func TestImplementationTargetSourceAllowsNewAbsoluteWriteFileWithoutEvidence(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "write_file"},
+		},
+	}
+	req := workspace.ToolRequest{
+		Tool:        workspace.ToolNameWriteFile,
+		Path:        filepath.Join(root, "index.html"),
+		Content:     "<!doctype html>\n",
+		Description: "create the first app file",
+	}
+
+	if redirected, _, ok := runner.implementationTargetSourceWriteBeforeEvidenceRedirect(req, nil, []string{"read_file", "write_file"}); ok {
+		t.Fatalf("new absolute in-workspace write_file should not redirect, got %#v", redirected)
+	}
+
+	if summary, errorText, reject := runner.implementationTargetSourceWriteBeforeEvidenceRejection(req, nil, []string{"read_file", "write_file"}); reject {
+		t.Fatalf("new absolute in-workspace write_file should not be rejected: %s %s", summary, errorText)
+	}
+}
+
+func TestImplementationTargetSourceAllowsAbsoluteAddFilePatchWithoutEvidence(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "apply_patch"},
+		},
+	}
+	req := workspace.ToolRequest{
+		Tool: workspace.ToolNameApplyPatch,
+		Content: strings.Join([]string{
+			"*** Begin Patch",
+			"*** Add File: " + filepath.Join(root, "index.html"),
+			"+<!doctype html>",
+			"*** End Patch",
+		}, "\n"),
+		Description: "create the first app file",
+	}
+
+	if redirected, _, ok := runner.implementationTargetSourceWriteBeforeEvidenceRedirect(req, nil, []string{"read_file", "apply_patch"}); ok {
+		t.Fatalf("new absolute Add File patch should not redirect, got %#v", redirected)
+	}
+
+	if summary, errorText, reject := runner.implementationTargetSourceWriteBeforeEvidenceRejection(req, nil, []string{"read_file", "apply_patch"}); reject {
+		t.Fatalf("new absolute Add File patch should not be rejected: %s %s", summary, errorText)
+	}
+}
+
+func TestImplementationTargetSourceRedirectsExistingAbsoluteWriteFileToBoundedRead(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("<!doctype html>\n"), 0o644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "write_file"},
+		},
+	}
+	req := workspace.ToolRequest{
+		Tool:        workspace.ToolNameWriteFile,
+		Path:        filepath.Join(root, "index.html"),
+		Content:     "<!doctype html>\n<title>Pocket Log</title>\n",
+		Description: "replace the first app file",
+	}
+
+	redirected, _, ok := runner.implementationTargetSourceWriteBeforeEvidenceRedirect(req, nil, []string{"read_file", "write_file"})
+	if !ok {
+		t.Fatal("expected existing absolute write_file to redirect to source-body evidence")
+	}
+
+	if redirected.Tool != workspace.ToolNameReadFile || redirected.Path != filepath.ToSlash(filepath.Join(root, "index.html")) {
+		t.Fatalf("redirected request = %#v", redirected)
+	}
+}
+
 func TestImplementationDeferredWriteReplayRequiresAnchorCoverage(t *testing.T) {
 	req := workspace.ToolRequest{
 		Tool:        "edit_file",
@@ -23400,6 +23643,85 @@ func TestFinalAnswerNeedsDecorationRejectsStructuredAnswerEnvelope(t *testing.T)
 	answer := `{"answer":["The route classifier chooses the workflow family."],"verification":["internal/surfaces/tui/app/turn_planner.go"]}`
 	if !finalAnswerNeedsDecoration(answer) {
 		t.Fatal("expected structured answer envelope to need decoration")
+	}
+}
+
+func TestFinalAnswerNeedsDecorationRejectsLeakedImplementationBlockerTemplate(t *testing.T) {
+	cases := []struct {
+		name   string
+		answer string
+		want   bool
+	}{
+		{
+			"pure blocker template from mutation synthesizer",
+			"Changed paths: none\n\nVerification: not run or not detected.\n\nBlocker:\n- Plan-execute read outside allowed candidate scope: docs/design-intent-loop-mutation-cycle.md is not an explicit allowed candidate path.",
+			true,
+		},
+		{
+			"blocker template with file-search failure",
+			"Changed paths: none\n\nVerification: not run.\n\nBlocker:\n- File search rejected: pattern is required",
+			true,
+		},
+		{
+			"question-prefixed template must NOT be flagged (operator-facing question)",
+			"<<QUESTION>>: Implementation incomplete; required edit path(s) remain unchanged.\n\nChanged paths: none\n\nRequired edit paths not changed:\n- native/tests/test_energy.cpp\n\nVerification: not run or not detected.",
+			false,
+		},
+		{
+			"ordinary prose must NOT be flagged",
+			"The plan-execute planner may consult design docs in docs/ directly relevant to its edit target.",
+			false,
+		},
+	}
+	for _, c := range cases {
+		if got := finalAnswerNeedsDecoration(c.answer); got != c.want {
+			t.Errorf("%s: finalAnswerNeedsDecoration = %v, want %v\nanswer:\n%s", c.name, got, c.want, c.answer)
+		}
+	}
+}
+
+func TestDeterministicNoToolsAnswerDeclinesLeakedBlockerForUserFacingAgent(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		PermissionProfile:    "guarded_workspace_write",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "search_content",
+			Summary: "Plan-execute read outside allowed candidate scope",
+			Error:   "docs/design-intent-loop-mutation-cycle.md is not an explicit allowed candidate path.",
+		},
+	}
+
+	answer, ok := deterministicNoToolsAnswer("main", brief, results)
+	if ok {
+		t.Fatalf("user-facing agent must not surface leaked implementation blocker template as final answer; repair path should handle it instead. got:\n%s", answer)
+	}
+}
+
+func TestDeterministicNoToolsAnswerStillReturnsLeakedBlockerForChildAgent(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		PermissionProfile:    "guarded_workspace_write",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "search_content",
+			Summary: "Plan-execute read outside allowed candidate scope",
+			Error:   "docs/design-intent-loop-mutation-cycle.md is not an explicit allowed candidate path.",
+		},
+	}
+
+	answer, ok := deterministicNoToolsAnswer("child:read-only-probe", brief, results)
+	if !ok {
+		t.Fatal("child agent must still receive synthesized blocker template so the parent can fold it into its own rewrite")
+	}
+	if !strings.Contains(answer, "Changed paths: none") || !strings.Contains(answer, "Blocker:") {
+		t.Fatalf("expected child-facing answer to retain blocker template, got:\n%s", answer)
 	}
 }
 
@@ -35614,6 +35936,63 @@ func TestFinalAnswerBlockerKindRejectsCandidateLineClaimWithoutSourceBody(t *tes
 	}
 }
 
+func TestSourceGroundingIgnoresPathsInsideFencedTemplateExamples(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "internal", "runtime", "agent", "implementation_flow.go")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("package agent\n\nfunc canonicalMutationBlockerFinalAnswer() string { return \"template\" }\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/runtime/agent/implementation_flow.go lines 1-20",
+		Output:  "1:package agent\n3:func canonicalMutationBlockerFinalAnswer() string { return \"template\" }\n",
+	}}
+	answer := strings.Join([]string{
+		"`canonicalMutationBlockerFinalAnswer` in `internal/runtime/agent/implementation_flow.go` constructs deterministic blocker prose from source-backed state.",
+		"",
+		"```",
+		"<<QUESTION>>: Required edit paths not changed.",
+		"- a.txt: no successful write was recorded.",
+		"```",
+	}, "\n")
+
+	if reason := runner.sourceGroundingRejectionReason(answer, results); reason != "" {
+		t.Fatalf("fenced template paths should not be treated as answer citations, got %q", reason)
+	}
+}
+
+func TestSourceGroundingStillRejectsUnquotedTopLevelCandidateTextPath(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The root cause is in `a.txt`, where the fixture records the wrong closeout."
+	results := []workspace.ToolResult{
+		{Tool: "context_pack", Summary: "Context pack wrote packet", Output: "a.txt"},
+	}
+
+	if reason := runner.sourceGroundingRejectionReason(answer, results); !strings.Contains(reason, "a.txt") {
+		t.Fatalf("unquoted top-level candidate path should still require source grounding, got %q", reason)
+	}
+}
+
 func TestFinalAnswerBlockerKindAllowsQualifiedEvidencePathListWithoutSourceBody(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "internal", "runtime", "agent", "runner_core.go")
@@ -36164,6 +36543,219 @@ func TestClassifyTerminalAnswerRetryExhaustedFalseForNonRetryableBlocker(t *test
 
 	if decision.RetryExhausted {
 		t.Fatal("RetryExhausted must be false for non_answer_prose blocker which is not a retryable blocker")
+	}
+}
+
+func TestClassifyTerminalAnswerRecoversReadOnlyNonAnswerWhenEvidenceAnswerable(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "What is the role of evidence in this harness? Where does it come from and what is it used for?",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read docs/idiom-strategic-thesis.md lines 1-320",
+		Output: strings.Join([]string{
+			"1:# Idiom Strategic Thesis",
+			"5:Idiom sells the missing substrate: repo memory, freshness, contracts, audit, and evals.",
+			"20:Idiom is the local, evidence-first coding-agent harness for teams that need agents to do real work in real repositories.",
+			"21:The model owns strategy; the harness owns contracts, repository memory, verification, auditability, and the learning loop.",
+			"146:The harness decides whether that action is allowed, whether evidence is fresh enough, and whether readiness is satisfied.",
+			"287:Task-scoped repository evidence feeds the runtime brief, including tools, editable paths, evidence paths, verification, and budget.",
+		}, "\n"),
+	}}
+	rawAnswer := "The user is asking me to inspect `docs/idiom-strategic-thesis.md`, but I should gather more evidence before answering."
+
+	decision := runner.classifyTerminalAnswer(rawAnswer, "model_final", results)
+
+	if decision.Outcome != terminalAnswerAccepted {
+		t.Fatalf("answerable read-only non-answer should recover to accepted closeout, got %#v", decision)
+	}
+	if decision.StopReason != "read_only_terminal_recovery" {
+		t.Fatalf("stopReason=%q, want read_only_terminal_recovery", decision.StopReason)
+	}
+	if decision.Acceptance.BlockerKind != "" {
+		t.Fatalf("recovered answer should pass final-answer acceptance: %#v", decision.Acceptance)
+	}
+	if strings.Contains(decision.PresentedAnswer, "I could not produce a supported final answer") ||
+		strings.Contains(decision.PresentedAnswer, "Reply with substantive prose") {
+
+		t.Fatalf("terminal recovery leaked completion-gate blocker prose:\n%s", decision.PresentedAnswer)
+	}
+	for _, want := range []string{"docs/idiom-strategic-thesis.md", "evidence-first", "contracts", "runtime brief"} {
+		if !strings.Contains(decision.PresentedAnswer, want) {
+			t.Fatalf("recovered answer missing %q:\n%s", want, decision.PresentedAnswer)
+		}
+	}
+}
+
+func TestRecoveredReadOnlyTerminalCloseoutAnswersRepeatedCompletionGateRejection(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "What is the role of evidence in this harness? Where does it come from and what is it used for?",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read docs/idiom-strategic-thesis.md lines 1-320",
+		Output: strings.Join([]string{
+			"1:# Idiom Strategic Thesis",
+			"5:Idiom sells the missing substrate: repo memory, freshness, contracts, audit, and evals.",
+			"20:Idiom is the local, evidence-first coding-agent harness for teams that need agents to do real work in real repositories.",
+			"21:The model owns strategy; the harness owns contracts, repository memory, verification, auditability, and the learning loop.",
+			"146:The harness decides whether that action is allowed, whether evidence is fresh enough, and whether readiness is satisfied.",
+			"287:Task-scoped repository evidence feeds the runtime brief, including tools, editable paths, evidence paths, verification, and budget.",
+		}, "\n"),
+	}}
+
+	answer, acceptance, ok := runner.readOnlyTerminalRecoveryCandidate("completion_gate_repeated_rejection", results)
+	if !ok {
+		t.Fatalf("answerable read-only repeated gate rejection should recover; acceptance=%#v", acceptance)
+	}
+	if acceptance.BlockerKind != "" {
+		t.Fatalf("recovered answer should pass acceptance: %#v", acceptance)
+	}
+	if strings.Contains(answer, "I could not produce a supported final answer") ||
+		strings.Contains(answer, "<<QUESTION>>") {
+
+		t.Fatalf("recovered answer leaked blocker prose:\n%s", answer)
+	}
+	for _, want := range []string{"docs/idiom-strategic-thesis.md", "evidence-first", "contracts", "runtime brief"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("recovered answer missing %q:\n%s", want, answer)
+		}
+	}
+}
+
+func TestRecoveredReadOnlyTerminalCloseoutSupportsDirectAnswerTaskFamily(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+			Objective:         "What is the role of evidence in this harness? Where does it come from and what is it used for?",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read docs/idiom-strategic-thesis.md lines 1-320",
+		Output: strings.Join([]string{
+			"1:# Idiom Strategic Thesis",
+			"5:Idiom sells the missing substrate: repo memory, freshness, contracts, audit, and evals.",
+			"20:Idiom is the local, evidence-first coding-agent harness for teams that need agents to do real work in real repositories.",
+			"21:The model owns strategy; the harness owns contracts, repository memory, verification, auditability, and the learning loop.",
+			"146:The harness decides whether that action is allowed, whether evidence is fresh enough, and whether readiness is satisfied.",
+			"287:Task-scoped repository evidence feeds the runtime brief, including tools, editable paths, evidence paths, verification, and budget.",
+		}, "\n"),
+	}}
+
+	answer, acceptance, ok := runner.readOnlyTerminalRecoveryCandidate("completion_gate_repeated_rejection", results)
+	if !ok {
+		t.Fatalf("direct_answer task family should recover from answerable read-only terminal blocker; acceptance=%#v", acceptance)
+	}
+	if acceptance.BlockerKind != "" {
+		t.Fatalf("recovered answer should pass acceptance: %#v", acceptance)
+	}
+	if !strings.Contains(answer, "docs/idiom-strategic-thesis.md") || !strings.Contains(answer, "evidence-first") {
+		t.Fatalf("unexpected recovered direct-answer task-family answer:\n%s", answer)
+	}
+}
+
+func TestRecoveredReadOnlyTerminalCloseoutAnswersInsufficientEvidenceClaimWhenAnswerable(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "What is the role of evidence in this harness? Where does it come from and what is it used for?",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read docs/idiom-strategic-thesis.md lines 1-320",
+		Output: strings.Join([]string{
+			"1:# Idiom Strategic Thesis",
+			"5:Idiom sells the missing substrate: repo memory, freshness, contracts, audit, and evals.",
+			"20:Idiom is the local, evidence-first coding-agent harness for teams that need agents to do real work in real repositories.",
+			"21:The model owns strategy; the harness owns contracts, repository memory, verification, auditability, and the learning loop.",
+			"146:The harness decides whether that action is allowed, whether evidence is fresh enough, and whether readiness is satisfied.",
+			"287:Task-scoped repository evidence feeds the runtime brief, including tools, editable paths, evidence paths, verification, and budget.",
+		}, "\n"),
+	}}
+
+	answer, acceptance, ok := runner.readOnlyTerminalRecoveryCandidate("answer_objective_unmet:insufficient_evidence_claimed", results)
+	if !ok {
+		t.Fatalf("answerable insufficient-evidence claim should recover; acceptance=%#v", acceptance)
+	}
+	if acceptance.BlockerKind != "" {
+		t.Fatalf("recovered answer should pass acceptance: %#v", acceptance)
+	}
+	if strings.Contains(answer, "I could not produce a supported final answer") ||
+		strings.Contains(answer, "insufficient evidence") ||
+		strings.Contains(answer, "<<QUESTION>>") {
+
+		t.Fatalf("recovered answer leaked blocker or insufficiency prose:\n%s", answer)
+	}
+	for _, want := range []string{"docs/idiom-strategic-thesis.md", "evidence-first", "contracts", "runtime brief"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("recovered answer missing %q:\n%s", want, answer)
+		}
+	}
+}
+
+func TestRecoveredReadOnlyTerminalCloseoutDoesNotAnswerMutationGateRejection(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			Objective:         "Edit foo.go.",
+			RequiredEditPaths: []string{"foo.go"},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read foo.go lines 1-20",
+		Output:  "1:package foo\n",
+	}}
+
+	if answer, _, ok := runner.readOnlyTerminalRecoveryCandidate("completion_gate_repeated_rejection", results); ok {
+		t.Fatalf("mutation repeated gate rejection must not use read-only terminal recovery, got:\n%s", answer)
+	}
+}
+
+func TestClassifyTerminalAnswerDoesNotRecoverReadOnlyNonAnswerFromSearchOnlyEvidence(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "Explain what ShortLabel returns from internal/labels/labels.go.",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "search_content",
+		Summary: "Found 1 matching line(s).",
+		Output:  "internal/labels/labels.go:3:func ShortLabel() string {",
+	}}
+	rawAnswer := "The user is asking me to inspect `internal/labels/labels.go`, but I should gather more evidence before answering."
+
+	decision := runner.classifyTerminalAnswer(rawAnswer, "model_final", results)
+
+	if decision.Outcome != terminalAnswerBlocked {
+		t.Fatalf("search-only evidence must not host-recover a direct answer, got %#v", decision)
+	}
+	if decision.StopReason != "non_answer_prose" {
+		t.Fatalf("stopReason=%q, want non_answer_prose", decision.StopReason)
+	}
+	if decision.OverrideSource != "" {
+		t.Fatalf("search-only non-answer should not be converted through blocker override, got %q", decision.OverrideSource)
 	}
 }
 
@@ -37254,6 +37846,75 @@ func TestSourceEditsAreSemanticallyVerifiedAfterLanguageCommand(t *testing.T) {
 
 	if !sourceEditsAreSemanticallyVerified(brief, results) {
 		t.Fatal("language/project verification command should mark source edits as semantically verified")
+	}
+}
+
+func TestPostWriteVerificationAcceptsFocusedHTMLSmokeCheck(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "write_file", Summary: "Wrote index.html"},
+		{Tool: "source_sanity", Summary: "Source sanity unavailable", Error: "index.html is not a supported source file"},
+		{
+			Tool:    "shell",
+			Summary: "Ran shell command",
+			Output:  "$ python3 -c \"import html.parser; html.parser.HTMLParser().feed(open('index.html').read()); print('HTML parsed OK')\"\nHTML parsed OK",
+		},
+	}
+
+	if hasPendingVerificationAfterWrites(results, brief) {
+		t.Fatal("focused HTML parser smoke check should satisfy post-write verification for index.html")
+	}
+
+	if failed, ok := failedVerificationAfterLatestWrite(results, brief); ok {
+		t.Fatalf("earlier unsupported source_sanity should not remain failed after HTML smoke check: %#v", failed)
+	}
+}
+
+func TestDeterministicPostWriteVerificationSchedulesHTMLSmokeCheck(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "write_file", Summary: "Wrote index.html"},
+	}
+
+	req, ok := deterministicPostWriteVerificationRequest(results, brief)
+	if !ok {
+		t.Fatal("expected deterministic HTML verification request")
+	}
+	if req.Tool != "shell" {
+		t.Fatalf("Tool = %q, want shell", req.Tool)
+	}
+	for _, want := range []string{"python3 -c", "html.parser", "index.html"} {
+		if !strings.Contains(req.Command, want) {
+			t.Fatalf("deterministic HTML command missing %q: %s", want, req.Command)
+		}
+	}
+}
+
+func TestPostWriteVerificationRejectsHTMLSmokeCheckForGoWrite(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "write_file", Summary: "Wrote main.go"},
+		{
+			Tool:    "shell",
+			Summary: "Ran shell command",
+			Output:  "$ python3 -c \"import html.parser; html.parser.HTMLParser().feed(open('index.html').read()); print('HTML parsed OK')\"\nHTML parsed OK",
+		},
+	}
+
+	if !hasPendingVerificationAfterWrites(results, brief) {
+		t.Fatal("HTML parser smoke check must not satisfy post-write verification for a Go source write")
 	}
 }
 

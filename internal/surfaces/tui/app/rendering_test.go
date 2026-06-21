@@ -1,6 +1,8 @@
 package app
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -293,6 +295,45 @@ func TestRequestMessagesDropsAssistantReasoningFromCrossTurnHistory(t *testing.T
 
 	if m.messages[1].ReasoningContent == "" {
 		t.Fatalf("request payload filtering must not mutate transcript history")
+	}
+}
+
+func TestSlashClearDropsInvisibleCrossTurnContext(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "stale.go"), []byte("package stale\nconst Sentinel = \"STALE_PINNED_CONTEXT\"\n"), 0o644); err != nil {
+		t.Fatalf("write stale fixture: %v", err)
+	}
+
+	mgr := workspace.NewManager(config.Workspace{Root: dir, CWD: dir})
+	m := &Model{
+		workspace: mgr,
+		messages: []llama.ChatMessage{
+			{Role: "user", Content: "prior question"},
+			{Role: "assistant", Content: "prior answer mentioning canonicalMutationBlockerFinalAnswer"},
+		},
+	}
+	m.pinnedFilesRegistry().Pin("stale.go")
+	priorObjective := "should canonicalMutationBlockerFinalAnswer be replaced"
+	m.SetLastTurnSourceResults(priorObjective, []workspace.ToolResult{{
+		Tool:    workspace.ToolNameReadFile,
+		Summary: "stale source read",
+		Output:  "STALE_SEED_CONTEXT",
+	}})
+
+	m.slashClear("/new", []string{"/new"})
+	m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: "fresh unrelated naming question"})
+
+	payload := m.requestMessages()
+	for _, msg := range payload {
+		if strings.Contains(msg.Content, "canonicalMutationBlockerFinalAnswer") ||
+			strings.Contains(msg.Content, "STALE_PINNED_CONTEXT") ||
+			strings.Contains(msg.Content, pinnedFileSnapshotHeaderTag) {
+			t.Fatalf("fresh session payload leaked cleared context in %#v", payload)
+		}
+	}
+
+	if seeds := m.LastTurnSourceResultsForObjective(priorObjective); len(seeds) != 0 {
+		t.Fatalf("clear should drop cross-turn seed results, got %#v", seeds)
 	}
 }
 

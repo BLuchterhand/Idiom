@@ -161,55 +161,6 @@
         "default_classifier": "glm-5.2"
       }
     },
-    "minimax-m2.7": {
-      "models": [
-        {
-          "alias": "qwen3.6-35b",
-          "binary": "vmlx",
-          "model_path": "models/qwen3.6-35b-a3b",
-          "port": 47780,
-          "cache_size": 4,
-          "cache_bytes": 12884901888,
-          "max_tokens": 8192,
-          "request_timeout_seconds": 900,
-          "extra_args": [
-            "--temp",
-            "0.6",
-            "--top-p",
-            "0.95",
-            "--top-k",
-            "20",
-            "--chat-template-args",
-            "{\"enable_thinking\":true,\"preserve_thinking\":true}"
-          ],
-          "roles": [
-            "planner",
-            "classifier"
-          ]
-        },
-        {
-          "alias": "MiniMax-M2.7",
-          "binary": "",
-          "model_path": "",
-          "model": "MiniMax-M2.7",
-          "port": 0,
-          "kind": "minimax",
-          "base_url": "https://api.minimax.io/v1",
-          "api_key_env": "MINIMAX_API_KEY",
-          "roles": [
-            "executor"
-          ]
-        }
-      ],
-      "proxy": {
-        "listen": 47680,
-        "default_alias": "qwen3.6-35b",
-        "default_coder": "MiniMax-M2.7",
-        "default_planner": "qwen3.6-35b",
-        "default_executor": "MiniMax-M2.7",
-        "default_classifier": "qwen3.6-35b"
-      }
-    },
     "qwen-27b-pair": {
       "models": [
         {

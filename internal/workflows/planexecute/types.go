@@ -24,6 +24,7 @@ type RunOptions struct {
 	Telemetry                   *telemetry.Recorder
 	ConfigSourcePath            string
 	ScopeContract               PlanScopeContract
+	AuthorizedNewFiles          []string
 }
 
 type MultiFlag []string

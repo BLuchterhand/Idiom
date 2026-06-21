@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"idiom/internal/capabilities/workspace"
 	"idiom/internal/runtime/llama"
 )
 
@@ -78,6 +79,28 @@ func TestSequentialTurnsDoNotAccumulateGhostPlaceholders(t *testing.T) {
 		if got.Role != want.Role || got.Content != want.Content {
 			t.Errorf("messages[%d] = %#v, want %#v", i, got, want)
 		}
+	}
+}
+
+func TestLastTurnSourceResultsOnlySeedContinuingObjectives(t *testing.T) {
+	m := &Model{}
+	results := []workspace.ToolResult{{
+		Tool:    workspace.ToolNameReadFile,
+		Summary: "Read docs/decisioning-north-star.md lines 1-6",
+		Output:  "The model owns strategy; the harness owns contracts.",
+	}}
+
+	m.SetLastTurnSourceResults(
+		"Would it fit our north star to replace this with model prose?",
+		results,
+	)
+
+	if got := m.LastTurnSourceResultsForObjective("Could you elaborate on that risk?"); len(got) != 1 {
+		t.Fatalf("continuing follow-up should inherit prior source evidence, got %#v", got)
+	}
+
+	if got := m.LastTurnSourceResultsForObjective("we need a better and more generic name than qwen for the agent in this project"); len(got) != 0 {
+		t.Fatalf("unrelated naming turn must not inherit prior source evidence, got %#v", got)
 	}
 }
 
@@ -353,33 +376,39 @@ func TestMouseClickCollapsesThoughtPanel(t *testing.T) {
 	}
 }
 
-func TestThoughtPanelBoundsEntriesAndRows(t *testing.T) {
+func TestThoughtPanelRetainsManyEntriesWhileRenderingBoundedWindow(t *testing.T) {
 	var panel thoughtPanelState
-	for i := 1; i <= thoughtPanelMaxEntries+3; i++ {
-		panel.append(i, "line a\nline b")
+	for i := 1; i <= 24; i++ {
+		panel.append(i, "thought line "+string(rune('a'+i-1)))
 	}
 
-	if len(panel.entries) != thoughtPanelMaxEntries {
-		t.Fatalf("entries = %d, want %d", len(panel.entries), thoughtPanelMaxEntries)
+	if len(panel.entries) != 24 {
+		t.Fatalf("entries = %d, want full current-turn feed", len(panel.entries))
 	}
 
-	got := renderThoughtPanel(panel, 80)
+	got := renderThoughtPanel(&panel, 80)
 	if !strings.Contains(got, "earlier thought line(s) hidden") {
 		t.Fatalf("expected row overflow summary, got:\n%s", got)
 	}
 
 	if strings.Contains(got, "[1]") {
-		t.Fatalf("oldest thoughts should be dropped from bounded panel, got:\n%s", got)
+		t.Fatalf("oldest thoughts should scroll out of the bounded window without being dropped, got:\n%s", got)
+	}
+
+	panel.scroll(-1000)
+	scrolled := renderThoughtPanel(&panel, 80)
+	if !strings.Contains(scrolled, "[1] thought line a") {
+		t.Fatalf("oldest thoughts should remain scrollable, got:\n%s", scrolled)
 	}
 }
 
 func TestThoughtPanelAutoScrollsOnlyWhenAtBottom(t *testing.T) {
 	var panel thoughtPanelState
-	for i := 1; i <= thoughtPanelMaxEntries; i++ {
+	for i := 1; i <= 12; i++ {
 		panel.append(i, "thought line "+string(rune('a'+i-1)))
 	}
 
-	atBottom := renderThoughtPanel(panel, 80)
+	atBottom := renderThoughtPanel(&panel, 80)
 	if !strings.Contains(atBottom, "[12] thought line l") {
 		t.Fatalf("bottom view should include latest thought, got:\n%s", atBottom)
 	}
@@ -389,7 +418,7 @@ func TestThoughtPanelAutoScrollsOnlyWhenAtBottom(t *testing.T) {
 	}
 
 	panel.append(13, "newest while reading earlier")
-	held := renderThoughtPanel(panel, 80)
+	held := renderThoughtPanel(&panel, 80)
 	if strings.Contains(held, "[13] newest while reading earlier") {
 		t.Fatalf("panel should preserve scrolled window when not at bottom, got:\n%s", held)
 	}
@@ -400,9 +429,53 @@ func TestThoughtPanelAutoScrollsOnlyWhenAtBottom(t *testing.T) {
 
 	panel.scrollToBottom()
 	panel.append(14, "newest after returning to bottom")
-	following := renderThoughtPanel(panel, 80)
+	following := renderThoughtPanel(&panel, 80)
 	if !strings.Contains(following, "[14] newest after returning to bottom") {
 		t.Fatalf("panel should follow new thoughts again at bottom, got:\n%s", following)
+	}
+}
+
+func TestThoughtPanelAutoScrollsPastFourLongWrappedThoughts(t *testing.T) {
+	var panel thoughtPanelState
+	for i := 1; i <= 9; i++ {
+		panel.append(i, strings.Repeat("long wrapped thought "+string(rune('a'+i-1))+" ", 8))
+	}
+
+	got := renderThoughtPanel(&panel, 36)
+	if !strings.Contains(got, "thought i") {
+		t.Fatalf("bottom view should include latest wrapped thought after more than four entries, got:\n%s", got)
+	}
+
+	lines := strings.Split(got, "\n")
+	if len(lines) > thoughtPanelMaxRows+1 {
+		t.Fatalf("thought panel should render a bounded window, got %d line(s):\n%s", len(lines), got)
+	}
+}
+
+func TestThoughtPanelHandlerFollowsNewestAfterManyThoughts(t *testing.T) {
+	m := newRenderModel(t)
+	m.streaming = true
+	m.viewport.Width = 36
+	m.viewport.Height = 12
+
+	for i := 1; i <= 9; i++ {
+		m.handleThought(thoughtMsg{
+			step: i,
+			text: strings.Repeat("handler thought "+string(rune('a'+i-1))+" ", 8),
+		})
+	}
+
+	view := m.viewport.View()
+	if !strings.Contains(view, "thoughts · 9") {
+		t.Fatalf("expected all handled thoughts to be retained, got:\n%s", view)
+	}
+
+	if !strings.Contains(view, "thought i") {
+		t.Fatalf("handler/render loop should follow newest thought past the first five, got:\n%s", view)
+	}
+
+	if strings.Contains(view, "thought a") {
+		t.Fatalf("newest-following view should scroll older thoughts out of the bounded panel body, got:\n%s", view)
 	}
 }
 
@@ -410,7 +483,7 @@ func TestMouseWheelScrollsThoughtPanelWithoutMainViewportScroll(t *testing.T) {
 	m := newRenderModel(t)
 	m.streaming = true
 	m.events = make(chan tea.Msg, 1)
-	for i := 1; i <= thoughtPanelMaxEntries; i++ {
+	for i := 1; i <= 12; i++ {
 		m.thoughts.append(i, "thought line "+string(rune('a'+i-1)))
 	}
 	m.renderMessages(true)

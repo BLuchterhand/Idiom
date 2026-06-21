@@ -3271,6 +3271,11 @@ func deterministicNoToolsAnswer(agentName string, brief workerruntime.WorkerRunt
 		return "", false
 	}
 
+	if userFacingAgentName(agentName) &&
+		looksLikeLeakedImplementationBlockerTemplate(strings.ToLower(strings.TrimSpace(answer))) {
+		return "", false
+	}
+
 	return presentableFallbackCandidate(agentName, brief, results, answer)
 }
 
@@ -9453,7 +9458,7 @@ func RecoverySearchStopWords() map[string]struct{} {
 		"repo": {}, "repository": {}, "discovery": {}, "first": {}, "make": {}, "minimal": {}, "code": {}, "changes": {}, "change": {}, "requested": {}, "request": {},
 		"tdd": {}, "prd": {}, "adr": {}, "brief": {}, "research": {}, "workflow": {}, "workflows": {}, "markdown": {},
 		// "model" intentionally kept — it carries domain signal for path→objective matching.
-		"send": {}, "through": {}, "plan": {}, "execute": {}, "expose": {}, "read": {}, "external": {}, "agents": {},
+		"send": {}, "through": {}, "plan": {}, "execute": {}, "expose": {}, "read": {}, "external": {}, "agent": {}, "agents": {},
 	}
 }
 

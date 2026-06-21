@@ -5465,6 +5465,279 @@ func TestFinalAnswerAcceptanceAllowsObjectiveRelevantSourceBackedAnswer(t *testi
 	}
 }
 
+func TestFinalAnswerAcceptanceAllowsLowConfidenceStrategicSourceBackedAnswer(t *testing.T) {
+	objective := "Why would replacing this with model prose fit our north star or risk leaking unverified information to the user?"
+	brief := readOnlyConversationBriefForTest(objective)
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read docs/decisioning-north-star.md lines 1-6",
+		Output: strings.Join([]string{
+			"1:# Decisioning North Star",
+			"2:The model owns strategy; the harness owns contracts.",
+			"3:Final answers must be grounded in verified source evidence rather than unverified model prose.",
+			"4:Deterministic closeouts prevent raw unverified information from leaking to users.",
+		}, "\n"),
+	}}
+	answer := "No. Free-form prose moves the closeout away from deterministic contract enforcement."
+	runner := &Runner{RuntimeBrief: brief}
+
+	decision := readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results).
+		FinalAnswerDecision(answer)
+	if decision.BlockerKind != "" {
+		t.Fatalf("low-confidence strategic answer blocked by shared decision: %#v", decision)
+	}
+
+	if decision.Status != "checked" && decision.Status != "checked_low_confidence_term_match" {
+		t.Fatalf("expected checked objective status, got %q with terms %#v", decision.Status, decision.AnswerObjectiveTerms)
+	}
+
+	if !slices.Contains(decision.AcceptedEvidencePaths, "docs/decisioning-north-star.md") {
+		t.Fatalf("expected accepted source-body evidence path, got %#v", decision.AcceptedEvidencePaths)
+	}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "" || reason != "" {
+		t.Fatalf("low-confidence strategic answer blocked by runner: kind=%q reason=%q", kind, reason)
+	}
+
+	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
+	if acceptance.ObjectiveRelevanceStatus != "checked_low_confidence_term_match" {
+		t.Fatalf("expected accepted telemetry status checked_low_confidence_term_match, got %q", acceptance.ObjectiveRelevanceStatus)
+	}
+}
+
+func TestFinalAnswerAcceptanceAllowsReplayStyleNorthStarRiskAnswer(t *testing.T) {
+	objective := "Would it fit our north star to replace this with model prose? Or do we ris leaking unverified information to the user?"
+	brief := readOnlyConversationBriefForTest(objective)
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read docs/decisioning-north-star.md lines 26-53",
+			Output: strings.Join([]string{
+				"28:Read-only conversation, direct-answer, architecture, and review lanes are strategy lanes.",
+				"30:The model owns strategy; the harness owns contracts.",
+				"34:In read-only strategy lanes, do not force answer synthesis or answer-only surfaces merely because the harness thinks evidence is sufficient.",
+			}, "\n"),
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/runtime/agent/tools_surface.go lines 2815-2900",
+			Output: strings.Join([]string{
+				"2815:func completeWithoutMoreToolsWithReason() {}",
+				"2834:if answer, ok := deterministicNoToolsAnswer(...) { return answer }",
+			}, "\n"),
+		},
+	}
+	answer := strings.Join([]string{
+		"I now have sufficient evidence to answer your north-star question.",
+		"",
+		"**No, it would not fit our north star to replace the deterministic template answer with free-form model prose in read-only strategy lanes. And yes, doing so would risk leaking unverified information to the user.**",
+		"",
+		"From `docs/decisioning-north-star.md:28-34`:",
+		"",
+		"> Read-only conversation, direct-answer, architecture, and review lanes are strategy lanes.",
+		"",
+		"`internal/runtime/agent/tools_surface.go` shows the harness-owned deterministic closeout path, so the safer fix is to keep verified contract prose and improve the template surface only when source-backed evidence exists.",
+	}, "\n")
+	runner := &Runner{RuntimeBrief: brief}
+
+	decision := readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results).
+		FinalAnswerDecision(answer)
+	if decision.BlockerKind != "" {
+		t.Fatalf("replay-style north-star answer blocked by shared decision: %#v", decision)
+	}
+
+	if decision.Status != "checked" && decision.Status != "checked_low_confidence_term_match" {
+		t.Fatalf("expected checked objective status, got %q with terms %#v", decision.Status, decision.AnswerObjectiveTerms)
+	}
+
+	if kind, reason := runner.finalAnswerBlockerKind(answer, results); kind != "" || reason != "" {
+		t.Fatalf("replay-style north-star answer blocked by runner: kind=%q reason=%q", kind, reason)
+	}
+}
+
+func TestFinalAnswerAcceptanceRejectsPriorTopicAnswerForNamingQuestion(t *testing.T) {
+	objective := "we need a better and more generic name than qwen for the agent in this project... what is a good thematic yet cute option"
+	brief := readOnlyConversationBriefForTest(objective)
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read docs/idiom-strategic-thesis.md lines 1-6",
+			Output: strings.Join([]string{
+				"1:# Idiom strategic thesis",
+				"2:Idiom is a local coding-agent harness originally optimized around Qwen models.",
+				"3:The project focuses on repo memory, freshness, contracts, audit, and evals.",
+			}, "\n"),
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/runtime/agent/implementation_flow.go lines 2219-2290",
+			Output: strings.Join([]string{
+				"2219:func canonicalMutationBlockerFinalAnswer() string {",
+				"2220:\treturn \"<<QUESTION>>: required edit paths remain unchanged\"",
+				"2221:}",
+			}, "\n"),
+		},
+	}
+	answer := strings.Join([]string{
+		"I have enough evidence to answer this question directly.",
+		"",
+		"## Answer: It would not fit our north star to replace `canonicalMutationBlockerFinalAnswer` with model prose.",
+		"",
+		"The north star says the model owns strategy and the harness owns contracts. The `canonicalMutationBlockerFinalAnswer` is a harness-owned contract artifact, not a model strategy output.",
+		"",
+		"Do not replace `canonicalMutationBlockerFinalAnswer` with model prose.",
+	}, "\n")
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "answer_objective_unmet:term_mismatch" {
+		t.Fatalf("prior-topic naming answer got (%q, %q), want answer_objective_unmet:term_mismatch", kind, reason)
+	}
+}
+
+func TestFinalAnswerAcceptanceAllowsGenericLowConfidenceSourceBackedAnswer(t *testing.T) {
+	objective := "Why would replacing verified summaries with generated narrative affect customer release reports?"
+	brief := readOnlyConversationBriefForTest(objective)
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/runtime/agent/runner_core.go lines 1-8",
+		Output: strings.Join([]string{
+			"1:package agent",
+			"2:// Verified summaries are deterministic release-report closeouts.",
+			"3:// Generated narrative is separate from the customer-facing contract.",
+			"4:func finalReportCloseout() {}",
+		}, "\n"),
+	}}
+	answer := "No. The release closeout remains under a deterministic contract boundary."
+	runner := &Runner{RuntimeBrief: brief}
+
+	decision := readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results).
+		FinalAnswerDecision(answer)
+	if decision.BlockerKind != "" {
+		t.Fatalf("generic low-confidence answer blocked by shared decision: %#v", decision)
+	}
+
+	if decision.Status != "checked_low_confidence_term_match" {
+		t.Fatalf("expected low-confidence objective status, got %q with terms %#v", decision.Status, decision.AnswerObjectiveTerms)
+	}
+
+	if kind, reason := runner.finalAnswerBlockerKind(answer, results); kind != "" || reason != "" {
+		t.Fatalf("generic low-confidence answer blocked by runner: kind=%q reason=%q", kind, reason)
+	}
+}
+
+func TestFinalAnswerAcceptanceKeepsCandidateOnlyCitationHardRejectedAfterLowConfidenceMatch(t *testing.T) {
+	objective := "Would it fit our north star to replace this with model prose? Or do we risk leaking unverified information to the user?"
+	brief := readOnlyConversationBriefForTest(objective)
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote packet",
+			Output:  `{"candidate_files":[{"path":"internal/runtime/agent/runner_tests_test.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read docs/decisioning-north-star.md lines 1-6",
+			Output: strings.Join([]string{
+				"1:# Decisioning North Star",
+				"2:The model owns strategy; the harness owns contracts.",
+				"3:Final answers must be grounded in verified source evidence rather than unverified model prose.",
+			}, "\n"),
+		},
+	}
+	answer := "No. Free-form prose would move deterministic closeout language away from the contract boundary; `internal/runtime/agent/runner_tests_test.go` confirms the tested closeout behavior."
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("candidate-only citation got (%q, %q), want source_grounding_unmet", kind, reason)
+	}
+}
+
+func TestFinalAnswerAcceptanceRejectsLowConfidenceWrongSourceCitation(t *testing.T) {
+	objective := "Would it fit our north star to replace this with model prose? Or do we risk leaking unverified information to the user?"
+	brief := readOnlyConversationBriefForTest(objective)
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote packet",
+			Output:  `{"candidate_files":[{"path":"docs/decisioning-north-star.md"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read docs/decisioning-north-star.md lines 1-6",
+			Output: strings.Join([]string{
+				"1:# Decisioning North Star",
+				"2:The model owns strategy; the harness owns contracts.",
+				"3:Final answers must be grounded in verified source evidence rather than unverified model prose.",
+			}, "\n"),
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/runtime/agent/tools_surface.go lines 1-4",
+			Output:  "1:package agent\n2:func ToolSchemaExample() {}\n",
+		},
+	}
+	answer := "No. Free-form prose would move deterministic closeout language away from the contract boundary in `internal/runtime/agent/tools_surface.go`."
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind == "" && reason == "" {
+		t.Fatal("wrong-source low-confidence answer should remain rejected")
+	}
+}
+
+func TestFinalAnswerAcceptanceRejectsLowConfidenceSourceInventoryWithOneSupportTerm(t *testing.T) {
+	objective := "Would it fit our north star to replace this with model prose? Or do we risk leaking unverified information to the user?"
+	brief := readOnlyConversationBriefForTest(objective)
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read docs/decisioning-north-star.md lines 1-6",
+		Output: strings.Join([]string{
+			"1:# Decisioning North Star",
+			"2:The model owns strategy; the harness owns contracts.",
+			"3:Final answers must be grounded in verified source evidence rather than unverified model prose.",
+		}, "\n"),
+	}}
+	answer := "The strongest implementation evidence is in `docs/decisioning-north-star.md`; it mentions prose."
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind == "" && reason == "" {
+		t.Fatal("one-term source inventory should remain rejected")
+	}
+}
+
+func TestLowConfidenceObjectiveSupportTermsIgnoreBroadTerms(t *testing.T) {
+	objective := "Does the answer source file risk misleading the user?"
+	answer := "The answer cites a source file and reduces user risk."
+
+	if terms := readOnlySharedObjectiveSupportTerms(answer, objective); len(terms) > 0 {
+		t.Fatalf("broad terms must not satisfy low-confidence support, got %#v", terms)
+	}
+}
+
+func TestLowConfidenceNonFinalProseDistinguishesSoftScaffoldFromHardLeak(t *testing.T) {
+	answer := strings.Join([]string{
+		"**No, this would risk leaking unverified information to the user.**",
+		"",
+		"What this establishes:",
+		"The north-star boundary keeps strategy with the model and contracts with the harness.",
+		"",
+		"Verification boundary:",
+		"The deterministic template keeps model prose behind source-backed verification.",
+	}, "\n")
+
+	if readOnlyAnswerHasHardNonFinalProse(answer) {
+		t.Fatal("soft scaffold wording with a direct strategic answer should not be treated as a hard non-answer leak")
+	}
+
+	if !readOnlyScaffoldFinalAnswer(answer) {
+		t.Fatal("test fixture should exercise the soft scaffold marker path")
+	}
+}
+
 func TestFinalAnswerAcceptanceAllowsNamedFileContentAnswer(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("What is in internal/runtime/agent/runner_core.go?")
 	results := []workspace.ToolResult{{
@@ -7671,6 +7944,32 @@ func TestPlanExecutePlanningStateAuthorizedNewFileIsSubmitReadyWithoutRead(t *te
 	}
 }
 
+func TestPlanExecutePlanningStateTypedAuthorizedNewFileIsSubmitReadyWithoutProse(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		Objective: strings.Join([]string{
+			"Implement docs/plan.md.",
+			"",
+			"Typed plan execution contract:",
+			`{"authorized_new_files":[{"path":"internal/newpkg/decision.go"}]}`,
+			"Typed plan authority projection:",
+			`{"atom_id":"atom-1"}`,
+		}, "\n"),
+		RequiredEditPaths: []string{"internal/newpkg/decision.go"},
+	}
+
+	state := DerivePlanExecutePlanningState(brief, nil, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeSubmitReady {
+		t.Fatalf("Mode = %q, want %q; state=%#v", state.Mode, PlanExecutePlanningModeSubmitReady, state)
+	}
+
+	if unread := planThenExecuteUnreadRequiredPaths(brief, nil); len(unread) != 0 {
+		t.Fatalf("typed authorized new file must not require source-body read, got %#v", unread)
+	}
+}
+
 func TestPlanExecuteTerminalTransportCompatibilityMatrix(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
@@ -8548,6 +8847,41 @@ func TestDeriveTurnPhaseContractImplementationVerifyReady(t *testing.T) {
 	assertContains(t, contract.HiddenTools, "read_file")
 }
 
+func TestDeriveTurnPhaseContractPostWriteAllowsAdditiveNewFileBeforeVerification(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			Objective:         "Create the smallest useful browser version.",
+			AllowedTools: []string{
+				"read_file", "search_content", "edit_file", "write_file", "apply_patch",
+				"mkdir", "source_sanity", "shell", "git_diff", "git_status",
+			},
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "write_file",
+			Summary: "Wrote go.mod",
+		}},
+	})
+
+	if contract.PhaseID != turnPhaseImplementationVerifyReady {
+		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseImplementationVerifyReady)
+	}
+
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionVerify)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionBlocker)
+	assertContains(t, contract.AllowedTools, "write_file")
+	assertContains(t, contract.AllowedTools, "apply_patch")
+	assertContains(t, contract.AllowedTools, "mkdir")
+	assertContains(t, contract.AllowedTools, "source_sanity")
+	assertNotContains(t, contract.AllowedTools, "edit_file")
+	assertNotContains(t, contract.AllowedTools, "read_file")
+	assertContains(t, contract.HiddenTools, "edit_file")
+	assertContains(t, contract.HiddenTools, "read_file")
+}
+
 func TestDeriveTurnPhaseContractImplementationTextualDoesNotAdvertiseManifestTools(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -8719,7 +9053,6 @@ func TestDeriveTurnPhaseContractUnscopedImplementationVerifyReadyRequiresVerific
 	}
 
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionVerify)
-	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionPerEditWrite)
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
 	assertContains(t, contract.AllowedTools, "source_sanity")
 	assertNotContains(t, contract.AllowedTools, "edit_file")
@@ -11078,11 +11411,11 @@ func TestBuildRecoveryCardDerivesCallableSurfaceFromPhaseContract(t *testing.T) 
 		}
 	}
 
-	if slices.Contains(card.CallableTools, "read_file") || slices.Contains(card.CallableTools, "apply_patch") {
+	if slices.Contains(card.CallableTools, "read_file") {
 		t.Fatalf("verification recovery card should use current phase callable tools, got %#v", card.CallableTools)
 	}
 
-	for _, want := range []string{"source_sanity", "shell"} {
+	for _, want := range []string{"source_sanity", "shell", "apply_patch"} {
 		if !slices.Contains(card.CallableTools, want) {
 			t.Fatalf("verification recovery card missing callable tool %q: %#v", want, card.CallableTools)
 		}
@@ -12476,6 +12809,24 @@ func TestFinishShouldOverrideSourceEchoEmptyAnswer(t *testing.T) {
 func TestFinishShouldOverrideSourceEchoRequiresTranscript(t *testing.T) {
 	if finishShouldOverrideSourceEcho("Read internal/runtime/agent/runner_core.go") {
 		t.Fatal("expected false — bare path doesn't look like transcript")
+	}
+}
+
+func TestTerminalAnswerOverridesRejectedLowValueSourceInventory(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "`Runner.evaluateFinalAnswerAcceptance` in `internal/runtime/agent/implementation_flow.go` is the clearest inspected implementation anchor. The inspected body shows that it assigns `acceptance` from `newFinalAnswerAcceptance()`, sets `acceptance.EvidencePaths`, and sets `acceptance.RelevantSourceBodyPaths`."
+	acceptance := finalAnswerAcceptance{
+		BlockerKind: "non_answer_prose",
+	}
+
+	if !runner.terminalAnswerShouldOverrideRejectedRaw(answer, acceptance) {
+		t.Fatal("user-facing read-only final answer should not surface raw inspected-body source inventory")
 	}
 }
 
@@ -25597,22 +25948,29 @@ func TestPlanExecuteTerminalPruneDropsOrphanableNativeToolResultHistory(t *testi
 	}
 
 	pruned, droppedActions, droppedScaffolding := prunePlanThenExecuteTerminalTextualMessages(messages)
-	if droppedActions != 2 || droppedScaffolding != 0 {
-		t.Fatalf("drops = actions:%d scaffolding:%d, want 2/0; messages=%#v", droppedActions, droppedScaffolding, pruned)
+	if droppedActions != 1 || droppedScaffolding != 0 {
+		t.Fatalf("drops = actions:%d scaffolding:%d, want 1/0 (tool messages preserved); messages=%#v", droppedActions, droppedScaffolding, pruned)
 	}
 
 	joined := ""
 
+	// Tool results are now preserved during pruning so the model retains
+	// source-body evidence. Only orphanable native tool history (assistant
+	// tool calls without matching tool results) is still pruned. Tool results
+	// naturally carry a ToolCallID linking back to the assistant's call;
+	// that linking metadata is not orphaned as long as the assistant call
+	// is also gone from the history.
 	for _, msg := range pruned {
-		if msg.Role == "tool" || len(msg.ToolCalls) > 0 || strings.TrimSpace(msg.ToolCallID) != "" {
+		if msg.Role != "tool" && (len(msg.ToolCalls) > 0 || strings.TrimSpace(msg.ToolCallID) != "") {
 			t.Fatalf("terminal prune must not leave orphanable native tool history: %#v", pruned)
 		}
 
 		joined += msg.Role + "\n" + msg.Content + "\n"
 	}
 
-	if !strings.Contains(joined, "Read f1 a.go") || !strings.Contains(joined, "AUTHORITATIVE_CONSTRAINT") {
-		t.Fatalf("terminal prune should preserve source evidence and unrelated authority, got:\n%s", joined)
+	// The tool result and source evidence are preserved in the pruned output.
+	if !strings.Contains(joined, "submit_plan rejected") || !strings.Contains(joined, "Read f1 a.go") || !strings.Contains(joined, "AUTHORITATIVE_CONSTRAINT") {
+		t.Fatalf("terminal prune should keep tool results, source evidence, and unrelated authority, got:\n%s", joined)
 	}
 }
 
@@ -26347,12 +26705,12 @@ func TestPlanExecuteRejectedSubmitPlanDraftEvidencePreservesFailingBody(t *testi
 	}
 	pruned, droppedActions, droppedScaffolding := prunePlanThenExecuteTerminalTextualMessages(messages)
 
-	if droppedActions != 2 || droppedScaffolding != 1 {
-		t.Fatalf("drops = actions:%d scaffolding:%d, want 2/1", droppedActions, droppedScaffolding)
+	if droppedActions != 1 || droppedScaffolding != 1 {
+		t.Fatalf("drops = actions:%d scaffolding:%d, want 1/1 (tool messages are preserved)", droppedActions, droppedScaffolding)
 	}
 
-	if len(pruned) != 1 || !strings.Contains(pruned[0].Content, "func Value() int") {
-		t.Fatalf("terminal prune should preserve rejected draft evidence, got %#v", pruned)
+	if len(pruned) < 2 || !strings.Contains(pruned[0].Content, "func Value() int") {
+		t.Fatalf("terminal prune should keep tool messages and preserve rejected draft evidence, got %#v (%d messages)", pruned, len(pruned))
 	}
 }
 
@@ -28695,6 +29053,113 @@ func TestPlanThenExecuteCandidatePostReadinessRejectsSiblingTopicSearchOutsideAl
 	for _, want := range []string{"internal/surfaces/cli/atom", "not an explicit allowed candidate path", "internal/runtime/agent/runner_plan_then_execute_guard.go"} {
 		if !strings.Contains(errorText, want) {
 			t.Fatalf("rejection missing %q:\n%s", want, errorText)
+		}
+	}
+}
+
+func TestPlanThenExecuteCandidatePostReadinessAllowsUnderCapDocsContextRead(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:       PlanThenExecutePlannerTaskFamily,
+		AllowedEditPaths: []string{"internal/runtime/agent/plan_execute.go"},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    workspace.ToolNameReadFile,
+		Summary: "Read f1 internal/runtime/agent/plan_execute.go lines 1-11916 (total lines: 11916)",
+		Output:  "1:package agent\n",
+	}}
+
+	_, _, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
+		Tool: workspace.ToolNameReadFile,
+		Path: "docs/design-intent-loop-mutation-cycle.md",
+	}, brief, results)
+	if reject {
+		t.Fatal("post-readiness docs/*.md context read with no prior docs reads must be allowed under the cap")
+	}
+}
+
+func TestPlanThenExecuteCandidatePostReadinessRejectsOverCapDocsContextRead(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:       PlanThenExecutePlannerTaskFamily,
+		AllowedEditPaths: []string{"internal/runtime/agent/plan_execute.go"},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    workspace.ToolNameReadFile,
+		Summary: "Read f1 internal/runtime/agent/plan_execute.go lines 1-11916 (total lines: 11916)",
+		Output:  "1:package agent\n",
+	}}
+	for _, docPath := range []string{
+		"docs/one.md",
+		"docs/two.md",
+		"docs/three.md",
+		"docs/four.md",
+		"docs/five.md",
+	} {
+		results = append(results, workspace.ToolResult{
+			Tool:    workspace.ToolNameReadFile,
+			Summary: "Read f1 " + docPath + " lines 1-100 (total lines: 100)",
+			Output:  "1:# doc\n",
+		})
+	}
+
+	summary, _, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
+		Tool: workspace.ToolNameReadFile,
+		Path: "docs/six.md",
+	}, brief, results)
+	if !reject {
+		t.Fatal("post-readiness docs/*.md read beyond cap must be rejected so the anti-sprawl invariant holds")
+	}
+	if summary != "Plan-execute read outside allowed candidate scope" {
+		t.Fatalf("unexpected over-cap summary %q", summary)
+	}
+}
+
+func TestPlanThenExecuteCandidatePostReadinessStillRejectsNonDocOutOfScopeRead(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:       PlanThenExecutePlannerTaskFamily,
+		AllowedEditPaths: []string{"internal/runtime/agent/plan_execute.go"},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    workspace.ToolNameReadFile,
+		Summary: "Read f1 internal/runtime/agent/plan_execute.go lines 1-11916 (total lines: 11916)",
+		Output:  "1:package agent\n",
+	}}
+
+	summary, _, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
+		Tool: workspace.ToolNameReadFile,
+		Path: "internal/runtime/agent/runner_core.go",
+	}, brief, results)
+	if !reject {
+		t.Fatal("post-readiness non-doc out-of-scope source read must still be rejected")
+	}
+	if summary != "Plan-execute read outside allowed candidate scope" {
+		t.Fatalf("unexpected non-doc summary %q", summary)
+	}
+}
+
+func TestIsPlanExecuteContextDocPath(t *testing.T) {
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"docs/design-intent-loop-mutation-cycle.md", true},
+		{"docs/idiom-maintenance-best-practices.md", true},
+		{"docs/nested/path/doc.md", true},
+		{"./docs/with-dot-prefix.md", true},
+		{"README.md", true},
+		{"AGENTS.md", true},
+		{"CONTRIBUTING.md", true},
+		{"CHANGELOG.md", true},
+		{"readme.md", true},
+		{"internal/runtime/agent/plan_execute.go", false},
+		{"internal/runtime/agent/plan_execute_test.go", false},
+		{"go.mod", false},
+		{"docs/design.txt", false},
+		{"internal/README.md", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := isPlanExecuteContextDocPath(c.path); got != c.want {
+			t.Errorf("isPlanExecuteContextDocPath(%q) = %v, want %v", c.path, got, c.want)
 		}
 	}
 }

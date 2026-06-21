@@ -31,6 +31,57 @@ func TestEmitThinkingTraceNotifiesThoughtObserverWithoutTelemetry(t *testing.T) 
 	}
 }
 
+func TestEmitThinkingTraceSplitsReasoningSegments(t *testing.T) {
+	var got []ThoughtEvent
+
+	runner := &Runner{
+		OnThought: func(event ThoughtEvent) {
+			got = append(got, event)
+		},
+	}
+
+	runner.emitThinkingTrace(4, "model_reply", llama.ChatMessage{
+		Content:          "visible answer",
+		ReasoningContent: "first thought\n\nsecond thought\n\nthird thought",
+	}, llama.ChatOptions{}, false)
+
+	want := []string{"first thought", "second thought", "third thought"}
+	if len(got) != len(want) {
+		t.Fatalf("OnThought calls = %d, want %d: %#v", len(got), len(want), got)
+	}
+
+	for i, event := range got {
+		if event.Step != 4 || event.Text != want[i] {
+			t.Fatalf("thought[%d] = %#v, want step 4 text %q", i, event, want[i])
+		}
+	}
+}
+
+func TestEmitThinkingTraceExtractsThinkTagContent(t *testing.T) {
+	var got []ThoughtEvent
+
+	runner := &Runner{
+		OnThought: func(event ThoughtEvent) {
+			got = append(got, event)
+		},
+	}
+
+	runner.emitThinkingTrace(5, "model_reply", llama.ChatMessage{
+		Content: "prefix <think>first inline thought\nsecond inline thought</think> visible answer <think>third inline thought</think>",
+	}, llama.ChatOptions{}, false)
+
+	want := []string{"first inline thought", "second inline thought", "third inline thought"}
+	if len(got) != len(want) {
+		t.Fatalf("OnThought calls = %d, want %d: %#v", len(got), len(want), got)
+	}
+
+	for i, event := range got {
+		if event.Step != 5 || event.Text != want[i] {
+			t.Fatalf("thought[%d] = %#v, want step 5 text %q", i, event, want[i])
+		}
+	}
+}
+
 func TestEmitThinkingTraceSkipsEmptyThoughtObserverPayload(t *testing.T) {
 	calls := 0
 

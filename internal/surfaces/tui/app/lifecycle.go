@@ -399,6 +399,7 @@ func New(cfg config.Config) *Model {
 		Workspace:         m.workspace,
 		MaxToolSteps:      modeStepCap(cfg.Chat.MaxToolSteps, mode),
 		AgentName:         "main",
+		ReadApprovalGate:  m.newReadApprovalGate(),
 	}
 	if err := m.reloadPromptStack(); err != nil {
 		m.setContextError("Prompt context failed: " + err.Error())
@@ -808,6 +809,7 @@ func (m *Model) saveTranscriptAsync() {
 func (m *Model) sendPromptAsync(prompt string) {
 	m.streaming = true
 	m.workingFrame = 0
+	m.thoughts.reset()
 	m.currentTurnBusyStatus = busyStatusForPrompt(prompt)
 	m.beginAgentHistoryTurn()
 
@@ -829,6 +831,7 @@ func (m *Model) sendPromptAsync(prompt string) {
 func (m *Model) sendPlanExecuteCommandAsync(objective string) {
 	m.streaming = true
 	m.workingFrame = 0
+	m.thoughts.reset()
 	m.currentTurnBusyStatus = busyStatusForPrompt(objective)
 	m.beginAgentHistoryTurn()
 
@@ -844,6 +847,7 @@ func (m *Model) sendPlanExecuteCommandAsync(objective string) {
 func (m *Model) sendImplementCommandAsync(objective string) {
 	m.streaming = true
 	m.workingFrame = 0
+	m.thoughts.reset()
 	m.currentTurnBusyStatus = busyStatusForPrompt(objective)
 	m.beginAgentHistoryTurn()
 
@@ -1073,10 +1077,11 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 		MaxToolSteps:        steps,
 		Policy:              policy,
 		AgentName:           "main",
-		SeedResults:         m.LastTurnSourceResults(),
+		SeedResults:         m.LastTurnSourceResultsForObjective(prompt),
 		RuntimeBrief:        plan.runtimeBrief,
 		InstructionAttacher: m.instructionAttacher,
 		ContextSize:         m.cfg.LlamaServer.CtxSize,
+		ReadApprovalGate:    m.newReadApprovalGate(),
 		OnEvent: func(event agent.RunEvent) {
 			m.logRunEvent(event)
 		},
@@ -1173,7 +1178,7 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 	// and direct-answer lanes — these are the routes where the user may
 	// ask a follow-up question without re-reading source files.
 	if plan.route.Family == "conversation" || plan.route.Family == "direct_answer" || plan.route.Contract == "direct_answer" {
-		m.SetLastTurnSourceResults(turnSourceResults)
+		m.SetLastTurnSourceResults(prompt, turnSourceResults)
 	} else {
 		m.ClearLastTurnSourceResults()
 	}

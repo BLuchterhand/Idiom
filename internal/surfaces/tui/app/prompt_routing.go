@@ -606,6 +606,10 @@ func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode modepolicy.Mo
 		)
 	}
 
+	if useTypedPlanExecuteScope && len(m.planExecuteAuthorizedNewFiles) > 0 {
+		brief.AuthorizedNewFiles = appendUniqueBriefStrings(brief.AuthorizedNewFiles, m.planExecuteAuthorizedNewFiles...)
+	}
+
 	snippetScope := required
 	if !useTypedPlanExecuteScope && len(snippetScope) == 0 && implementationLike && len(allowed) > 0 && promptHasRequiredEditPayload(prompt) {
 		snippetScope = allowed

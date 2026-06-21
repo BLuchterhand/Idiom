@@ -67,6 +67,60 @@ func TestRunMainRecoverInspectReadsFailureRecord(t *testing.T) {
 	}
 }
 
+func TestRunMainRecoverShowAcceptsFailureIDAndPrintsTerminalSummary(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	state := planexecute.NewProgressState("recover-session-show", "make a change", "", []string{"a.go"}, nil, time.Now().UTC())
+
+	state.Status = planexecute.ProgressStatusFailed
+	state.FailureKind = planexecute.RunFailurePlannerBlocked
+	state.FailureReason = "no launchable backend controller configured"
+
+	statePath, err := planexecute.SaveProgressState(root, &state)
+	if err != nil {
+		t.Fatalf("save progress: %v", err)
+	}
+
+	record, _, err := recovery.WritePlanExecuteFailureRecord(root, planexecute.RecoveryInputFromProgress(state, statePath), time.Now().UTC())
+	if err != nil {
+		t.Fatalf("write recovery record: %v", err)
+	}
+
+	terminalPath, err := planexecute.SavePlanExecuteTerminalCompletionRecord(root, planexecute.PlanExecuteTerminalCompletionRecord{
+		SessionID:         state.SessionID,
+		Status:            planexecute.ProgressStatusFailed,
+		FailureKind:       state.FailureKind,
+		FailureReason:     state.FailureReason,
+		FailureID:         record.FailureID,
+		RecordPath:        ".idiom/recovery/" + record.FailureID + "/failure.json",
+		PacketPath:        ".idiom/recovery/" + record.FailureID + "/packet.json",
+		NextAction:        recovery.NextActionAnswerBlocker,
+		RequiredEditPaths: []string{"a.go"},
+	})
+	if err != nil {
+		t.Fatalf("save terminal completion: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+
+	code := RunMain([]string{"show", "--config", configPath, record.FailureID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("recover show exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+
+	output := stdout.String()
+	for _, want := range []string{
+		"failure_reason: no launchable backend controller configured",
+		"terminal_completion: " + terminalPath,
+		"required_path_coverage:",
+		"a.go: missing",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("recover show output missing %q:\n%s", want, output)
+		}
+	}
+}
+
 func TestRunRecoverInspectAndDecomposeReadImplementFailureRecord(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
 	root := filepath.Dir(configPath)
@@ -107,6 +161,22 @@ func TestRunRecoverInspectAndDecomposeReadImplementFailureRecord(t *testing.T) {
 
 	if inspectReport.FailureID != record.FailureID || inspectReport.FailureClass != recovery.FailureClassExecutorEdit || inspectReport.NextAction != recovery.NextActionReviewDecomposition {
 		t.Fatalf("unexpected inspect report: %#v", inspectReport)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+
+	code = RunMain([]string{"show", "--config", configPath, "--json", record.FailureID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("recover show implement exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+
+	var showReport recoverInspectReport
+	if err := json.Unmarshal(stdout.Bytes(), &showReport); err != nil {
+		t.Fatalf("decode show report: %v\n%s", err, stdout.String())
+	}
+	if showReport.FailureID != record.FailureID {
+		t.Fatalf("show report loaded wrong implement failure: %#v", showReport)
 	}
 
 	stdout.Reset()

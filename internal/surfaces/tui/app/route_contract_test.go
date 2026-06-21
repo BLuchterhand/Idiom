@@ -36,6 +36,32 @@ func TestRouteContractClassifierUnavailableNaturalLanguageFallsBackToConversatio
 	}
 }
 
+func TestRouteContractFallbackConcreteBrowserCreationActivatesImplementation(t *testing.T) {
+	plan := fallbackTurnRoute("Let’s make this feel like a cozy little personal place I can open in a browser. Choose the smallest useful first step.", modepolicy.BuildMode())
+	contract := projectRouteContract(plan, modepolicy.BuildMode())
+
+	if contract.Family != "implementation" || contract.Lane != "implement" || contract.Contract != "implementation_result" {
+		t.Fatalf("browser creation prompt should route to implementation, got %#v", contract)
+	}
+
+	if contract.Source != routeSourceConservativeFallback {
+		t.Fatalf("source = %q, want conservative fallback", contract.Source)
+	}
+
+	if contract.MutationAuthority != routeMutationAuthorityExplicit || !contract.MutationCapable {
+		t.Fatalf("browser creation fallback should grant guarded mutation authority: %#v", contract)
+	}
+}
+
+func TestRouteContractFallbackCreationQuestionStaysConversation(t *testing.T) {
+	plan := fallbackTurnRoute("How would we make this into a cozy browser journal without editing files?", modepolicy.BuildMode())
+	contract := projectRouteContract(plan, modepolicy.BuildMode())
+
+	if contract.Family != "conversation" || contract.MutationAuthority != routeMutationAuthorityNone || contract.MutationCapable {
+		t.Fatalf("read-only creation question should stay conversation, got %#v", contract)
+	}
+}
+
 func TestRouteContractClassifierImplementationActivatesGuardedMutationAuthority(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
