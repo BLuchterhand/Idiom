@@ -2,6 +2,7 @@ package root
 
 import (
 	"io"
+	"os"
 
 	"idiom/internal/evidence/lanehistory"
 	"idiom/internal/evidence/productevidence"
@@ -16,6 +17,7 @@ import (
 	contextcmd "idiom/internal/surfaces/cli/context"
 	doctorcmd "idiom/internal/surfaces/cli/doctor"
 	featureplannercmd "idiom/internal/surfaces/cli/featureplanner"
+	headlesscmd "idiom/internal/surfaces/cli/headless"
 	initcmd "idiom/internal/surfaces/cli/init"
 	localopscmd "idiom/internal/surfaces/cli/localops"
 	probecmd "idiom/internal/surfaces/cli/probe"
@@ -85,6 +87,26 @@ func runDoctorMainWithTelemetry(args []string, stdout io.Writer, stderr io.Write
 
 func runFeaturePlannerMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	return featureplannercmd.RunMainWithTelemetry(args, stdout, stderr, rec, featurePlannerDependencies())
+}
+
+func runHeadlessMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner, rec *telemetry.Recorder) int {
+	return headlesscmd.Run(args, os.Stdin, stdout, stderr, headlesscmd.PromptRunner(promptRun), rec)
+}
+
+func runHeadlessServeMain(args []string, stdout io.Writer, stderr io.Writer) int {
+	return headlesscmd.RunServe(args, stdout, stderr)
+}
+
+func runHeadlessSessionMain(args []string, stdout io.Writer, stderr io.Writer) int {
+	return headlesscmd.RunSession(args, stdout, stderr)
+}
+
+func runHeadlessContractMain(args []string, stdout io.Writer, stderr io.Writer) int {
+	return headlesscmd.RunContract(args, stdout, stderr)
+}
+
+func runHeadlessDecisionMain(args []string, stdout io.Writer, stderr io.Writer) int {
+	return headlesscmd.RunDecision(args, stdout, stderr)
 }
 
 func featurePlannerDependencies() featureplannercmd.Dependencies {

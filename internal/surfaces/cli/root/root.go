@@ -53,6 +53,16 @@ func runMainWithTelemetryDir(args []string, stdout io.Writer, stderr io.Writer, 
 		subcommandArgs := args[1:]
 
 		switch subcommand {
+		case "run":
+			return runHeadlessMainWithTelemetry(subcommandArgs, stdout, stderr, runPromptOnce, rec)
+		case "serve":
+			return runHeadlessServeMain(subcommandArgs, stdout, stderr)
+		case "session":
+			return runHeadlessSessionMain(subcommandArgs, stdout, stderr)
+		case "contract":
+			return runHeadlessContractMain(subcommandArgs, stdout, stderr)
+		case "decision":
+			return runHeadlessDecisionMain(subcommandArgs, stdout, stderr)
 		case "tool":
 			return runToolMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
 		case "mcp":

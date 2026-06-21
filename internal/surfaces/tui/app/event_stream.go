@@ -9,6 +9,8 @@ import (
 	"idiom/internal/runtime/agent"
 )
 
+const JSONEventSchemaVersion = "idiom.headless.event.v1"
+
 type jsonEventStream struct {
 	mu        sync.Mutex
 	w         io.Writer
@@ -26,6 +28,10 @@ func (s *jsonEventStream) emit(record map[string]any) {
 
 	if record == nil {
 		return
+	}
+
+	if _, ok := record["schema_version"]; !ok {
+		record["schema_version"] = JSONEventSchemaVersion
 	}
 
 	if _, ok := record["ts"]; !ok {
