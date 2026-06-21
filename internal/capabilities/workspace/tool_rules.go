@@ -260,6 +260,10 @@ func MatchToolRule(tool string, req ToolRequest, rules map[string][]ToolRule) To
 	return toolpolicy.Match(tool, toolPolicyRequest(req), rules)
 }
 
+func MatchConfiguredToolRule(tool string, req ToolRequest, rules map[string][]config.ToolRule) ToolRuleDecision {
+	return MatchToolRule(tool, req, convertConfiguredToolRules(rules))
+}
+
 func extractToolRuleTarget(tool string, req ToolRequest) string {
 	return toolpolicy.ExtractTarget(tool, toolPolicyRequest(req))
 }

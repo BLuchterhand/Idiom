@@ -8,8 +8,9 @@ without installing the local model harness, queue daemon, or chat UI workflow.
 - Unix sidecar install is release-targeted for macOS and Linux on `amd64` and
   `arm64`.
 - Windows sidecar install is release-targeted for `windows/amd64`.
-- Windows full CLI install and other OS/architecture combinations are not yet
-  release-proven by these installers.
+- Windows full CLI install is release-targeted for `windows/amd64` through
+  `install.ps1`. Other OS/architecture combinations are not yet release-proven
+  by these installers.
 
 ## Install
 
@@ -29,6 +30,12 @@ Windows PowerShell (`windows/amd64` sidecar only):
 
 ```powershell
 irm https://raw.githubusercontent.com/BLuchterhand/idiom/main/install-tools.ps1 | iex
+```
+
+Windows PowerShell (`windows/amd64` full CLI):
+
+```powershell
+irm https://raw.githubusercontent.com/BLuchterhand/idiom/main/install.ps1 | iex
 ```
 
 The Unix compatibility wrapper routes to `install.sh --profile tools`. The

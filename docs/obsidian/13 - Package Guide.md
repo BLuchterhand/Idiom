@@ -14,23 +14,21 @@ not as a substitute for `context_pack` or source inspection.
 
 | Package | Purpose |
 | --- | --- |
-| `cmd/idiom` | Thin CLI entrypoint (`main.go`); all subcommand impls live in `internal/*cmd/` |
-| `cmd/idiom-analyze` | Thin entrypoint; analysis impl in `internal/analyzecmd/` |
-| `cmd/idiom-e2e` | Thin entrypoint; e2e impl in `internal/e2ecmd/` |
+| `cmd/idiom` | Thin CLI entrypoint (`main.go`); root command wiring lives in `internal/surfaces/cli/root` |
+| `cmd/idiom-analyze` | Thin entrypoint; analysis impl in `internal/surfaces/cli/analyze` |
+| `cmd/idiom-e2e` | Thin entrypoint; e2e impl in `internal/surfaces/cli/e2e` |
 | `cmd/idiom-eval` | Thin entrypoint; eval impl in `internal/surfaces/cli/eval/` |
-| `cmd/idiom-perf-eval` | Thin entrypoint; perf-eval impl in `internal/perfevalcmd/` |
-| `cmd/idiom-swe-eval` | Thin entrypoint; swe-eval impl in `internal/sweevalcmd/` |
+| `cmd/idiom-perf-eval` | Thin entrypoint; perf-eval impl in `internal/surfaces/cli/perfeval` |
+| `cmd/idiom-swe-eval` | Thin entrypoint; swe-eval impl in `internal/surfaces/cli/sweeval` |
 
-Important CLI subcommands live in `internal/*cmd/` packages:
-lanes (`internal/lanecmd`), tools (`internal/toolcmd`), backend management
-(`internal/surfaces/cli/backend`), queue (`internal/surfaces/cli/queue`), atom intake
-(`internal/atomcmd`), brief lint (`internal/briefcmd`), lane postflight
-(`internal/workflows/postflight`), product-evidence export (`internal/evidence/productevidence`),
-release evidence (`internal/evidence/productevidence`), audit watch (`internal/auditcmd`),
-ranker commands (`internal/surfaces/cli/ranker`), local-ops benchmark (`internal/surfaces/cli/localops`),
-MCP serve (`internal/surfaces/cli/mcp`), doctor (`internal/surfaces/cli/doctor`), probe
-(`internal/surfaces/cli/probe`), architect (`internal/surfaces/cli/architect`), refine
-(`internal/surfaces/cli/refine`), and init (`internal/initcmd`).
+Important CLI subcommands live under `internal/surfaces/cli/`: lanes
+(`lane`), tools (`tool`), backend management (`backend`), queue (`queue`), atom
+intake (`atom`), brief lint (`brief`), plan-execute (`planexecute`), product
+workflow and evidence commands (`product`), release evidence
+(`internal/evidence/productevidence`), audit watch (`audit`), ranker commands
+(`ranker`), local-ops benchmark (`localops`), MCP serve (`mcp`), doctor
+(`doctor`), probe (`probe`), architect (`architect`), refine (`refine`), and
+init (`init`).
 
 ## Core Runtime Packages
 

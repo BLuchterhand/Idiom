@@ -711,6 +711,10 @@ func toolTimeoutForRequest(req ToolRequest) time.Duration {
 	return toolTimeoutFor(tool)
 }
 
+func ToolTimeoutForRequest(req ToolRequest) time.Duration {
+	return toolTimeoutForRequest(req)
+}
+
 func toolTimeoutFor(tool string) time.Duration {
 	spec, ok := builtInToolSurfaceMetadata(tool)
 	if !ok {

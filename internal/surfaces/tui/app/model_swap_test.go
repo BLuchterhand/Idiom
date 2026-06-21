@@ -640,8 +640,8 @@ func TestEnsureServerReadyDisplaysAliasWithoutChangingRequestModel(t *testing.T)
 
 	m.plannerSpec = config.LlamaServer{
 		Kind:        config.BackendMLX,
-		Model:       "/models/qwen3.6-35b-a3b-jang-6m",
-		DisplayName: "qwen3.6-35b",
+		Model:       "/models/local-coder-mlx",
+		DisplayName: "local-coder",
 		Host:        "127.0.0.1",
 		Port:        11434,
 	}
@@ -656,15 +656,15 @@ func TestEnsureServerReadyDisplaysAliasWithoutChangingRequestModel(t *testing.T)
 		t.Fatalf("ensureServerReady: %v", err)
 	}
 
-	if m.modelID != "/models/qwen3.6-35b-a3b-jang-6m" {
+	if m.modelID != "/models/local-coder-mlx" {
 		t.Fatalf("request modelID should remain backend path, got %q", m.modelID)
 	}
 
-	if m.activeModelDisplayID() != "qwen3.6-35b" {
+	if m.activeModelDisplayID() != "local-coder" {
 		t.Fatalf("display model should use alias, got %q", m.activeModelDisplayID())
 	}
 
-	if opts := m.chatOptions(); opts.Model != "/models/qwen3.6-35b-a3b-jang-6m" {
+	if opts := m.chatOptions(); opts.Model != "/models/local-coder-mlx" {
 		t.Fatalf("chat options should use request model path, got %q", opts.Model)
 	}
 }

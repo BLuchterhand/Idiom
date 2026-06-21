@@ -2,14 +2,14 @@
 # install.sh - Unix installer for idiom release archives.
 #
 # Usage:
-#   curl -fsSL https://idiom.sh/install.sh | sh
-#   curl -fsSL https://idiom.sh/install.sh | sh -s -- --profile tools
+#   curl -fsSL https://raw.githubusercontent.com/BLuchterhand/idiom/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/BLuchterhand/idiom/main/install.sh | sh -s -- --profile tools
 #
 # Profiles:
 #   cli             install the idiom CLI only (default; current public footprint)
 #   tools           install idiom-tool and idiom-mcp-discovery only
-#   full            install idiom plus tool launchers; dependency setup is delegated
-#   discovery-deps  install idiom and print dependency setup guidance
+#   full            install idiom, tool launchers, and all discovery dependencies
+#   discovery-deps  install idiom and discovery dependencies
 #   doctor-only     install idiom, verify version, then run doctor diagnostics
 #
 # Override knobs:
@@ -18,6 +18,8 @@
 #                           /usr/local/bin if writable without sudo)
 #   IDIOM_REPO              GitHub repo (default: BLuchterhand/idiom)
 #   IDIOM_RELEASE_URL_BASE  URL prefix for assets and SHA256SUMS
+#   IDIOM_INSTALL_SCRIPT_REF Git ref used when this script must fetch helper
+#                            installers (default: release tag, or main)
 #
 # The script is POSIX sh. Keep it self-contained so curl-piped installs
 # do not depend on a second helper fetch.
@@ -30,6 +32,12 @@ INSTALL_DIR="${IDIOM_INSTALL_DIR:-}"
 RELEASE_URL_BASE="${IDIOM_RELEASE_URL_BASE:-}"
 RELEASE_URL_BASE="${RELEASE_URL_BASE%/}"
 PROFILE="cli"
+INSTALL_DEPS=false
+DEPS_ALL=false
+DEPS_DISABLED=false
+DEPS_NO_QUEUE=false
+DEPS_NO_AUDIT=false
+HELPER_REF="${IDIOM_INSTALL_SCRIPT_REF:-}"
 
 log() { printf '%s\n' "$*" >&2; }
 die() { log "error: $*"; exit 1; }
@@ -41,9 +49,16 @@ Usage: install.sh [--profile PROFILE]
 Profiles:
   cli             install the idiom CLI only (default)
   tools           install idiom-tool and idiom-mcp-discovery only
-  full            install idiom plus tool launchers
-  discovery-deps  install idiom and print dependency setup guidance
+  full            install idiom, tool launchers, and all discovery dependencies
+  discovery-deps  install idiom and discovery dependencies
   doctor-only     install idiom, verify version, run doctor diagnostics
+
+Dependency flags:
+  --with-deps     install the default discovery dependency set
+  --all-deps      install the full discovery dependency set for all languages
+  --no-deps       do not install discovery dependencies, even for full profile
+  --no-queue      skip queue daemon setup when dependency setup runs
+  --no-audit      skip dependency-script harness audit after dependency setup
 USAGE
 }
 
@@ -77,6 +92,31 @@ parse_args() {
       --help|-h)
         usage
         exit 0
+        ;;
+      --with-deps)
+        INSTALL_DEPS=true
+        DEPS_DISABLED=false
+        shift
+        ;;
+      --all-deps|--all)
+        INSTALL_DEPS=true
+        DEPS_ALL=true
+        DEPS_DISABLED=false
+        shift
+        ;;
+      --no-deps)
+        INSTALL_DEPS=false
+        DEPS_ALL=false
+        DEPS_DISABLED=true
+        shift
+        ;;
+      --no-queue)
+        DEPS_NO_QUEUE=true
+        shift
+        ;;
+      --no-audit)
+        DEPS_NO_AUDIT=true
+        shift
         ;;
       *)
         die "unknown argument: $1"
@@ -192,10 +232,49 @@ warn_path() {
   esac
 }
 
-print_dependency_delegation_note() {
-  log ""
-  log "dependency setup is delegated to idiom doctor and the release dependency manifest track"
-  log "run: ${INSTALL_DIR}/idiom doctor"
+dependency_helper_ref() {
+  if [ -n "$HELPER_REF" ]; then
+    printf '%s' "$HELPER_REF"
+    return
+  fi
+  case "$VERSION" in
+    v*) printf '%s' "$VERSION" ;;
+    *) printf 'main' ;;
+  esac
+}
+
+resolve_dependency_installer() {
+  if [ -f "./scripts/install-requirements.sh" ]; then
+    printf '%s' "./scripts/install-requirements.sh"
+    return
+  fi
+
+  ref=$(dependency_helper_ref)
+  helper_url="https://raw.githubusercontent.com/${REPO}/${ref}/scripts/install-requirements.sh"
+  helper_path="${tmp}/install-requirements.sh"
+  curl -fsSL -o "$helper_path" "$helper_url" || die "could not fetch dependency installer: ${helper_url}"
+  chmod 755 "$helper_path"
+  printf '%s' "$helper_path"
+}
+
+install_discovery_dependencies() {
+  require bash
+  helper=$(resolve_dependency_installer)
+  log "installing discovery dependencies with ${helper}"
+
+  set -- --no-build --no-queue
+  if $DEPS_NO_AUDIT; then
+    set -- "$@" --no-audit
+  fi
+  if $DEPS_ALL; then
+    set -- --all "$@"
+  fi
+  if ! $DEPS_NO_QUEUE; then
+    # Release installs are binary-first and may run without a source checkout;
+    # queue setup is source-specific, so leave it to source installs.
+    :
+  fi
+  IDIOM_BIN="${INSTALL_DIR}/idiom" bash "$helper" "$@"
 }
 
 install_cli_binary() {
@@ -234,6 +313,12 @@ verify_tools() {
   log "verified: idiom-tool list --profile discovery"
 }
 
+initialize_global_config() {
+  bin="$1"
+  "$bin" init --global --merge >/dev/null || die "global config initialization failed"
+  log "verified: global config initialized under ~/.idiom"
+}
+
 verify_doctor_json() {
   doctor_out="${tmp}/doctor.json"
   doctor_err="${tmp}/doctor.err"
@@ -261,6 +346,20 @@ OS=$(detect_os)
 ARCH=$(detect_arch)
 VERSION=$(resolve_version)
 INSTALL_DIR=$(pick_install_dir)
+
+case "$PROFILE" in
+  full)
+    if ! $DEPS_DISABLED; then
+      INSTALL_DEPS=true
+      DEPS_ALL=true
+    fi
+    ;;
+  discovery-deps)
+    if ! $DEPS_DISABLED; then
+      INSTALL_DEPS=true
+    fi
+    ;;
+esac
 
 asset_version=${VERSION#v}
 asset="idiom_${asset_version}_${OS}_${ARCH}.tar.gz"
@@ -292,28 +391,35 @@ case "$PROFILE" in
   cli)
     install_cli_binary "${tmp}/idiom"
     verify_version "${INSTALL_DIR}/idiom"
+    initialize_global_config "${INSTALL_DIR}/idiom"
     ;;
   tools)
     install_tools_binary "${tmp}/idiom" "idiom-tool-bin"
     verify_tools
+    initialize_global_config "${INSTALL_DIR}/idiom-tool-bin"
     ;;
   full)
     install_cli_binary "${tmp}/idiom"
     install_tools_binary "${INSTALL_DIR}/idiom" "idiom"
     verify_version "${INSTALL_DIR}/idiom"
     verify_tools
-    print_dependency_delegation_note
+    initialize_global_config "${INSTALL_DIR}/idiom"
     ;;
   discovery-deps)
     install_cli_binary "${tmp}/idiom"
     verify_version "${INSTALL_DIR}/idiom"
-    print_dependency_delegation_note
+    initialize_global_config "${INSTALL_DIR}/idiom"
     ;;
   doctor-only)
     install_cli_binary "${tmp}/idiom"
     verify_version "${INSTALL_DIR}/idiom"
+    initialize_global_config "${INSTALL_DIR}/idiom"
     verify_doctor_json
     ;;
 esac
+
+if $INSTALL_DEPS; then
+  install_discovery_dependencies
+fi
 
 warn_path

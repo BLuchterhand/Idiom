@@ -197,6 +197,38 @@ require_java_17() {
   fi
 }
 
+resolve_idiom_bin() {
+  if [[ -n "${IDIOM_BIN:-}" && -x "${IDIOM_BIN}" ]]; then
+    printf '%s\n' "${IDIOM_BIN}"
+    return 0
+  fi
+  if [[ -x "./bin/idiom" ]]; then
+    printf '%s\n' "./bin/idiom"
+    return 0
+  fi
+  if [[ -x "./idiom" ]]; then
+    printf '%s\n' "./idiom"
+    return 0
+  fi
+  if command -v idiom >/dev/null 2>&1; then
+    command -v idiom
+    return 0
+  fi
+
+  return 1
+}
+
+initialize_global_config() {
+  local idiom_bin
+  if ! idiom_bin="$(resolve_idiom_bin)"; then
+    echo "No idiom binary found for global config initialization. Run without --no-build or set IDIOM_BIN." >&2
+    return 1
+  fi
+
+  "$idiom_bin" init --global --merge >/dev/null
+  echo "Verified global config initialized under ~/.idiom"
+}
+
 case "$os_name" in
   Darwin)
     if ! command -v brew >/dev/null 2>&1; then
@@ -285,6 +317,8 @@ elif [[ -x "./bin/idiom" ]]; then
   make install-path
 fi
 
+initialize_global_config
+
 if $install_queue && [[ "$os_name" == "Darwin" ]]; then
   echo "Installing per-user queue daemon (launchd agent)..."
   scripts/install-queue-daemon.sh
@@ -293,11 +327,7 @@ elif $install_queue; then
 fi
 
 if $run_audit; then
-  idiom_bin="./bin/idiom"
-  if [[ ! -x "$idiom_bin" ]]; then
-    idiom_bin="./idiom"
-  fi
-  if [[ ! -x "$idiom_bin" ]]; then
+  if ! idiom_bin="$(resolve_idiom_bin)"; then
     echo "No idiom binary found for audit verification. Run make build first." >&2
     exit 1
   fi

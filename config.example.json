@@ -5,7 +5,7 @@
     "binary": "llama-server",
     "host": "127.0.0.1",
     "port": 8080,
-    "model": "models/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q4_K_M.gguf",
+    "model": "models/local-model.gguf",
     "ctx_size": 262144,
     "threads": 0,
     "gpu_layers": 0,
@@ -87,12 +87,26 @@
     "enable_writes": true,
     "allow_private_network": false
   },
-  "_mcp_comment": "Uncomment the `mcp` block below to enable Exa AI's hosted MCP endpoint. The single entry exposes two tools — mcp:exa/web_search_exa (search) and mcp:exa/web_fetch_exa (URL fetch as clean markdown). Both inherit per-Mode rules from internal/runtime/modepolicy/modes.go (plan: allow, build/general: ask). Set EXA_API_KEY in your env for higher rate limits — auth is optional.",
+  "_mcp_comment": "Uncomment the `mcp` block below to enable Exa AI's hosted MCP endpoint. The single entry exposes two tools — mcp:exa/web_search_exa (search) and mcp:exa/web_fetch_exa (URL fetch as clean markdown). Agent modes inherit per-Mode rules from internal/runtime/modepolicy/modes.go (plan: allow, build/general: ask). Direct CLI discovery calls require an explicit workspace.tool_rules allow for each MCP tool because dynamic MCP tools do not carry trusted side-effect metadata. Set EXA_API_KEY in your env for higher rate limits — auth is optional.",
   "_mcp": [
     {
       "name": "exa",
       "url": "https://mcp.exa.ai/mcp",
       "timeout_seconds": 25
     }
-  ]
+  ],
+  "_workspace_tool_rules_for_direct_cli_mcp": {
+    "mcp:exa/web_search_exa": [
+      {
+        "pattern": "*",
+        "decision": "allow"
+      }
+    ],
+    "mcp:exa/web_fetch_exa": [
+      {
+        "pattern": "https://trusted.example/**",
+        "decision": "allow"
+      }
+    ]
+  }
 }

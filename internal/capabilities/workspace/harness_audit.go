@@ -95,6 +95,22 @@ func currentHarnessAuditBuildIdentity() harnessAuditBuildIdentity {
 	return harnessAuditBuildIdentityCurrent
 }
 
+func HarnessAuditBuildIdentityMetadata() map[string][]string {
+	identity := currentHarnessAuditBuildIdentity()
+	out := map[string][]string{
+		"build_version":       {identity.Version},
+		"source_or_dev_build": {fmt.Sprint(identity.SourceOrDevBuild)},
+	}
+	if strings.TrimSpace(identity.Commit) != "" {
+		out["build_commit"] = []string{identity.Commit}
+	}
+	if strings.TrimSpace(identity.Date) != "" {
+		out["build_date"] = []string{identity.Date}
+	}
+
+	return out
+}
+
 // harnessAuditContextCache surfaces graph_views (context_pack cache)
 // state so audits can measure whether the cache is doing useful work.
 // The eval suite's "fewer broad reads / fewer repeated searches"

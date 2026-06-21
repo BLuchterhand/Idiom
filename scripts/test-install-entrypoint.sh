@@ -17,7 +17,13 @@
 #     integration, the Phase 5 postflight pipeline, and the Phase 4
 #     backend resolver — none of which need a live model.
 #
-#   tier 3 — stub-LLM lane
+#   tier 3 — post-install global-config harness smoke
+#     a python3 mock chat-completions server is reached by `idiom run`
+#     from a clean temp workspace without --config. The test temporarily
+#     points installer-created ~/.idiom/config.json at the mock, restores
+#     it, and verifies a completion artifact was written.
+#
+#   tier 4 — stub-LLM lane
 #     a python3 mock chat-completions server returns canonical
 #     OpenAI-shaped responses; idiom lane implement runs against a
 #     workspace pointing at the mock; the assertion is that the mock
@@ -111,6 +117,37 @@ verify_binary() {
     echo "FAIL: idiom version did not print 'version: ${VERSION}'" >&2
     exit 1
   fi
+}
+
+verify_global_config() {
+  echo "[install] verifying global ~/.idiom bootstrap artifacts"
+  required=(
+    "$HOME/.idiom/config.json"
+    "$HOME/.idiom/backends.json"
+    "$HOME/.idiom/external_tools/README.md"
+    "$HOME/.idiom/postflight/checks/README.md"
+    "$HOME/.idiom/prompts/base.md"
+    "$HOME/.idiom/prompts/lanes/README.md"
+    "$HOME/.idiom/prompts/rules/README.md"
+    "$HOME/.idiom/prompts/profiles/coding.md"
+    "$HOME/.idiom/prompts/profiles/claude-qwen-worker.md"
+  )
+  for path in "${required[@]}"; do
+    if [ ! -f "$path" ]; then
+      echo "FAIL: installer did not create required global artifact: $path" >&2
+      exit 1
+    fi
+  done
+  echo "[install] global config bootstrap OK"
+}
+
+verify_post_install_harness() {
+  echo "[install] verifying installed harness can run from global config"
+  if [ ! -f /test-post-install-harness.py ]; then
+    echo "FAIL: /test-post-install-harness.py not mounted into install test container" >&2
+    exit 1
+  fi
+  IDIOM_BIN=/usr/local/bin/idiom python3 /test-post-install-harness.py
 }
 
 verify_tools_profile() {
@@ -449,7 +486,7 @@ PY
 }
 
 verify_lane_against_mock() {
-  echo "[mock] tier 3: stub-LLM lane test"
+  echo "[mock] tier 4: stub-LLM lane test"
   local ws=/tmp/install-test-project
   rm -rf "${ws}"
   mkdir -p "${ws}/.idiom"
@@ -528,7 +565,7 @@ BRIEF
   fi
 
   request_count=$(wc -l < /tmp/mock-llm.log 2>/dev/null || echo 0)
-  echo "[mock] tier 3 OK: lane runner reached LLM call (${request_count} request(s) recorded)"
+  echo "[mock] tier 4 OK: lane runner reached LLM call (${request_count} request(s) recorded)"
 }
 
 #######################################
@@ -543,6 +580,8 @@ main() {
   echo "==> phase 1: install"
   run_install
   verify_binary
+  verify_global_config
+  verify_post_install_harness
   verify_tools_profile
   verify_doctor
 
@@ -555,7 +594,7 @@ main() {
   verify_static_functionality
 
   echo
-  echo "==> phase 4: tier 3 (stub-LLM lane)"
+  echo "==> phase 4: tier 4 (stub-LLM lane)"
   stage_llama_server_stub
   start_mock_llm
   verify_lane_against_mock

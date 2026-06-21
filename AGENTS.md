@@ -93,6 +93,14 @@ tradeoffs.
   default. Prefer the TUI/live operator path when the behavior under test is
   user-facing, and monitor long-running CLI/TUI work by polling slowly and
   reading only small bounded log or telemetry chunks.
+- Do not classify a long-running `idiom` command, lane, TUI session, or worker
+  as a harness failure merely because it is taking a while. This is a large
+  repository; reads, writes, discovery, review, and verification can legitimately
+  run for a long time. Treat a run as failed only when it emits a typed failure,
+  exits non-zero, records a blocker, or shows a repeated no-progress condition
+  across slow bounded polls with evidence. While it is still running, poll
+  process status, structured status artifacts, or small log/telemetry tails at a
+  low cadence instead of streaming output or imposing a new timeout.
 - For local harness or subagent delegation, use a context-efficient supervisor
   loop by default. Launch each worker with stdout/stderr redirected to a run log,
   record the PID and expected artifact paths, and poll only process status or a

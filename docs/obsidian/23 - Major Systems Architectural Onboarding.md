@@ -361,7 +361,7 @@ Use the narrowest proof first, then escalate when a contract crosses packages.
 
 | Change class | Focused proof | Escalation |
 | --- | --- | --- |
-| Docs only | `git diff --check -- docs/obsidian docs/obsidian-export/docs/obsidian` | Link checks or parity tests when doc generation changes |
+| Docs only | `git diff --check -- docs/obsidian docs` | Link checks when doc generation or public docs links change |
 | One package | `go test ./internal/<package>` | `go test ./...` if exported contracts changed |
 | Runner, prompts, tools, lanes | Focused package tests plus behavior regression | `go test ./...` and the relevant scripted/live subset |
 | Eval, audit, recovery, product workflow | Focused package tests plus fixture review | `make scripted-contracts`; live suite only after deterministic tests pass |

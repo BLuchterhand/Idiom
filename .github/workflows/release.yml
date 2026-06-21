@@ -160,45 +160,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          archive_count=$(find dist -maxdepth 1 -type f -name "idiom_*_darwin_${{ matrix.goarch }}.tar.gz" | wc -l | tr -d ' ')
-          if [ "${archive_count}" != "1" ]; then
-            echo "expected exactly one darwin/${{ matrix.goarch }} archive, found ${archive_count}" >&2
-            find dist -maxdepth 1 -type f -name "idiom_*_darwin_${{ matrix.goarch }}.tar.gz" -print >&2
-            exit 1
-          fi
-          archive=$(find dist -maxdepth 1 -type f -name "idiom_*_darwin_${{ matrix.goarch }}.tar.gz" -print)
-          asset=$(basename "${archive}")
-          version="${asset#idiom_}"
-          version="${version%_darwin_${{ matrix.goarch }}.tar.gz}"
-
-          python3 -m http.server 8080 --bind 127.0.0.1 --directory dist >"${RUNNER_TEMP}/release-server.log" 2>&1 &
-          server_pid=$!
-          trap 'kill "${server_pid}" 2>/dev/null || true' EXIT
-          for _ in 1 2 3 4 5; do
-            curl -fsSL http://127.0.0.1:8080/SHA256SUMS >/dev/null && break
-            sleep 0.5
-          done
-
-          install_dir="${RUNNER_TEMP}/idiom-bin"
-          IDIOM_VERSION="${version}" \
-          IDIOM_RELEASE_URL_BASE="http://127.0.0.1:8080" \
-          IDIOM_INSTALL_DIR="${install_dir}" \
-          sh ./install.sh
-          "${install_dir}/idiom" version | grep -qF "version: ${version}"
-
-          before_hash=$(shasum -a 256 "${install_dir}/idiom" | awk '{print $1}')
-          IDIOM_VERSION="${version}" \
-          IDIOM_RELEASE_URL_BASE="http://127.0.0.1:8080" \
-          IDIOM_INSTALL_DIR="${install_dir}" \
-          sh ./install-tools.sh
-          after_hash=$(shasum -a 256 "${install_dir}/idiom" | awk '{print $1}')
-          if [ "${before_hash}" != "${after_hash}" ]; then
-            echo "install-tools.sh changed existing idiom binary" >&2
-            exit 1
-          fi
-          "${install_dir}/idiom-tool" list --profile discovery >/dev/null
+          IDIOM_TEST_DIST="${PWD}/dist" \
+          IDIOM_TEST_GOARCH="${{ matrix.goarch }}" \
+          IDIOM_INSTALL_DIR="${RUNNER_TEMP}/idiom-bin" \
+          ./scripts/test-install-macos.sh
 
   install-dependencies-macos:
+    needs: snapshot
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -209,14 +177,23 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: goreleaser-dist
+          path: dist
       - name: Install and validate discovery dependencies
         shell: bash
         run: |
           set -euo pipefail
-          ./scripts/install-requirements.sh --all --no-build --no-audit --no-queue
+          install_dir="${RUNNER_TEMP}/idiom-bin"
+          IDIOM_INSTALL_DIR="${install_dir}" ./scripts/install-snapshot-from-dist.sh --profile full --no-queue
+          echo "${install_dir}" >> "$GITHUB_PATH"
           ./scripts/test-install-dependencies.sh
+          IDIOM_BIN="${install_dir}/idiom" python3 scripts/test-post-install-harness.py
+          IDIOM_BIN="${install_dir}/idiom" IDIOM_TOOL_BIN="${install_dir}/idiom-tool" ./scripts/test-discovery-tools-e2e.sh
 
   install-dependencies-linux:
+    needs: snapshot
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -227,24 +204,32 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: goreleaser-dist
+          path: dist
       - name: Install and validate discovery dependencies
         shell: bash
         run: |
           set -euo pipefail
-          ./scripts/install-requirements.sh --all --no-build --no-audit --no-queue
+          install_dir="${RUNNER_TEMP}/idiom-bin"
+          IDIOM_INSTALL_DIR="${install_dir}" ./scripts/install-snapshot-from-dist.sh --profile full --no-queue
+          echo "${install_dir}" >> "$GITHUB_PATH"
           ./scripts/test-install-dependencies.sh
+          IDIOM_BIN="${install_dir}/idiom" python3 scripts/test-post-install-harness.py
+          IDIOM_BIN="${install_dir}/idiom" IDIOM_TOOL_BIN="${install_dir}/idiom-tool" ./scripts/test-discovery-tools-e2e.sh
 
   install-windows:
     needs: snapshot
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: goreleaser-dist
           path: dist
-      - name: PowerShell sidecar validation from snapshot dist
+      - name: PowerShell install validation from snapshot dist
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -265,15 +250,31 @@ jobs:
               }
             }
 
-            $installDir = Join-Path $env:RUNNER_TEMP "idiom-tools-bin"
+            $installDir = Join-Path $env:RUNNER_TEMP "idiom-bin"
             $env:IDIOM_VERSION = $version
             $env:IDIOM_RELEASE_URL_BASE = "http://127.0.0.1:8080"
             $env:IDIOM_INSTALL_DIR = $installDir
+            ./install.ps1 -Profile Full
+            & (Join-Path $installDir "idiom.exe") version | Select-String -SimpleMatch "version: $version" | Out-Null
+            & (Join-Path $installDir "idiom-tool.cmd") list --profile discovery | Out-Null
+
+            $beforeHash = (Get-FileHash -Algorithm SHA256 -Path (Join-Path $installDir "idiom.exe")).Hash
             ./install-tools.ps1
+            $afterHash = (Get-FileHash -Algorithm SHA256 -Path (Join-Path $installDir "idiom.exe")).Hash
+            if ($beforeHash -ne $afterHash) {
+              throw "install-tools.ps1 changed existing idiom.exe"
+            }
             & (Join-Path $installDir "idiom-tool.cmd") list --profile discovery | Out-Null
             if ($LASTEXITCODE -ne 0) {
               throw "idiom-tool.cmd verification failed"
             }
+
+            $env:Path = "$installDir;$env:Path"
+            ./scripts/test-install-dependencies.ps1
+            $env:IDIOM_BIN = Join-Path $installDir "idiom.exe"
+            python scripts/test-post-install-harness.py
+            Remove-Item Env:IDIOM_TOOL_BIN -ErrorAction SilentlyContinue
+            python scripts/test-discovery-tools-e2e.py
           } finally {
             Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
           }

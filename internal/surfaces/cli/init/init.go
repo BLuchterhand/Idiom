@@ -19,13 +19,12 @@ var initSeedClaudeQwenWorkerProfile = canonicalprompts.MustProfile("claude-qwen-
 
 var initSeedBasePrompt = canonicalprompts.BasePrompt()
 
-// runInitMain creates the .idiom/ skeleton in the target directory
-// with template config files and README placeholders. Phase 7.1 of
-// the reusability migration. With --merge, only files that don't
-// already exist are written; the .idiom/ root being present is not
-// itself a fatal condition. Without --merge, an existing .idiom/
-// dir is treated as "already initialized" and the operator must
-// either re-run with --merge or rm -rf .idiom/ first.
+// runInitMain creates the .idiom/ skeleton in the target directory, or the
+// user-global ~/.idiom/ skeleton with --global. With --merge, only files that
+// don't already exist are written; the root being present is not itself a fatal
+// condition. Without --merge, an existing root is treated as "already
+// initialized" and the operator must either re-run with --merge or remove it
+// first.
 //
 // Exit codes: 0 success, 1 IO failure, 2 flag/usage error.
 func RunMain(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -33,6 +32,7 @@ func RunMain(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 
 	merge := fs.Bool("merge", false, "add only missing files; do not overwrite existing ones (use to upgrade an existing .idiom/ layout)")
+	global := fs.Bool("global", false, "initialize the user-global ~/.idiom/ config directory instead of a project .idiom/ directory")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -41,6 +41,12 @@ func RunMain(args []string, stdout io.Writer, stderr io.Writer) int {
 	target := "."
 
 	if len(tail) == 1 {
+		if *global {
+			fmt.Fprintln(stderr, "init: --global does not accept a target directory")
+
+			return 2
+		}
+
 		target = tail[0]
 	} else if len(tail) > 1 {
 		fmt.Fprintln(stderr, "init: too many positional arguments (expected at most one directory)")
@@ -48,11 +54,30 @@ func RunMain(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 2
 	}
 
+	if *global {
+		home, err := os.UserHomeDir()
+		if err != nil || home == "" {
+			fmt.Fprintf(stderr, "init: resolve home directory: %v\n", err)
+
+			return 1
+		}
+
+		target = filepath.Join(home, ".idiom")
+	}
+
 	abs, err := filepath.Abs(target)
 	if err != nil {
 		fmt.Fprintf(stderr, "init: resolve target: %v\n", err)
 
 		return 1
+	}
+
+	if *global {
+		if err := os.MkdirAll(abs, 0o755); err != nil {
+			fmt.Fprintf(stderr, "init: mkdir %q: %v\n", abs, err)
+
+			return 1
+		}
 	}
 
 	info, err := os.Stat(abs)
@@ -69,6 +94,10 @@ func RunMain(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	idiomDir := filepath.Join(abs, ".idiom")
+	if *global {
+		idiomDir = abs
+	}
+
 	if _, err := os.Stat(idiomDir); err == nil && !*merge {
 		fmt.Fprintf(stderr, "init: .idiom/ already exists at %s (use --merge to add only missing files)\n", idiomDir)
 
@@ -128,46 +157,93 @@ var initSeedFiles = []initSeedFile{
 }
 
 const initSeedConfigJSON = `{
-  "_comment": "Idiom project config. Edit endpoint, workspace.root, and prompts to match this project. See cmd/idiom/main.go for full schema.",
-  "app_name": "Project Name Here",
+  "_comment": "Idiom config. The hosted default needs DEEPSEEK_API_KEY. For local use, edit llama_server to point at a real local model and keep private paths out of version control.",
+  "app_name": "Idiom",
   "llama_server": {
-    "kind": "mlx",
-    "host": "127.0.0.1",
-    "port": 47680,
-    "model": "qwen3.6-35b"
+    "kind": "deepseek",
+    "model": "deepseek-v4-flash",
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "reasoning_effort": "high"
   },
   "chat": {
     "auto_start_server": false,
-    "save_dir": ".idiom/transcripts",
-    "system_prompt_files": [".idiom/prompts/base.md"]
+    "save_dir": "transcripts",
+    "debug_log_dir": "logs/conversations",
+    "debug_log_mode": "redacted",
+    "system_prompt_files": ["prompts/base.md"],
+    "profiles_dir": "prompts/profiles",
+    "default_profiles": ["coding"],
+    "project_root": "",
+    "project_prompt_files": []
+  },
+  "route_classifier": {
+    "enabled": true,
+    "kind": "deepseek",
+    "model": "deepseek-v4-flash",
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "reasoning_effort": "high",
+    "always_on": true,
+    "max_tokens": 512,
+    "timeout_seconds": 20,
+    "auto_start_server": false
   },
   "workspace": {
     "root": "",
     "cwd": "",
-    "shell": "/bin/bash",
-    "command_timeout_seconds": 60,
-    "max_output_bytes": 65536,
-    "enable_writes": true
+    "command_timeout_seconds": 180,
+    "max_output_bytes": 262144,
+    "max_file_bytes": 262144,
+    "max_directory_entries": 400,
+    "enable_shell": true,
+    "enable_writes": true,
+    "allow_private_network": false
   }
 }
 `
 
 const initSeedBackendsJSON = `{
-  "_comment": "Local LLM backend declarations. Uncomment and edit a profile for the models you have on disk; idiom backend start --profile <name> launches them.",
-  "default_profile": "qwen-pair-example",
+  "_comment": "Portable backend examples. The default hosted profile needs DEEPSEEK_API_KEY. The local example uses a placeholder model path under ignored models/; replace it with your local model.",
+  "default_profile": "deepseek-v4-flash",
   "profiles": {
-    "qwen-pair-example": {
+    "deepseek-v4-flash": {
       "models": [
         {
-          "alias": "qwen3.6-35b",
-          "binary": "/path/to/mlx_lm.server",
-          "model_path": "/path/to/qwen3.6-35b",
-          "port": 47780
+          "alias": "deepseek-v4-flash",
+          "kind": "deepseek",
+          "model": "deepseek-v4-flash",
+          "api_key_env": "DEEPSEEK_API_KEY",
+          "reasoning_effort": "high",
+          "roles": ["planner", "executor", "classifier"]
+        }
+      ],
+      "proxy": {
+        "default_alias": "deepseek-v4-flash",
+        "default_planner": "deepseek-v4-flash",
+        "default_executor": "deepseek-v4-flash",
+        "default_coder": "deepseek-v4-flash",
+        "default_classifier": "deepseek-v4-flash"
+      }
+    },
+    "local-llama-example": {
+      "models": [
+        {
+          "alias": "local-coder",
+          "binary": "llama-server",
+          "model_path": "models/local-model.gguf",
+          "host": "127.0.0.1",
+          "port": 47780,
+          "kind": "llama",
+          "max_tokens": 8192,
+          "roles": ["planner", "executor", "classifier"]
         }
       ],
       "proxy": {
         "listen": 47680,
-        "default_alias": "qwen3.6-35b"
+        "default_alias": "local-coder",
+        "default_planner": "local-coder",
+        "default_executor": "local-coder",
+        "default_coder": "local-coder",
+        "default_classifier": "local-coder"
       }
     }
   }

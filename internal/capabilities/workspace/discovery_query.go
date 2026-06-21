@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -59,6 +60,9 @@ type discoveryQueryPacket struct {
 	ContextProvenance    *comprehension.GraphResultProvenance `json:"context_provenance,omitempty"`
 	Layers               []discoveryQueryLayer                `json:"layers"`
 	Gaps                 []string                             `json:"gaps,omitempty"`
+	Status               string                               `json:"status,omitempty"`
+	TimeoutOwner         string                               `json:"timeout_owner,omitempty"`
+	SkippedLayers        []string                             `json:"skipped_layers,omitempty"`
 }
 
 type discoveryQueryLayer struct {
@@ -91,8 +95,11 @@ type discoveryQuerySummary struct {
 		Error         string `json:"error,omitempty"`
 		OutputExcerpt string `json:"output_excerpt,omitempty"`
 	} `json:"evidence,omitempty"`
-	Errors []string `json:"errors,omitempty"`
-	Gaps   []string `json:"gaps,omitempty"`
+	Errors        []string `json:"errors,omitempty"`
+	Gaps          []string `json:"gaps,omitempty"`
+	Status        string   `json:"status,omitempty"`
+	SkippedLayers []string `json:"skipped_layers,omitempty"`
+	TimeoutOwner  string   `json:"timeout_owner,omitempty"`
 }
 
 type discoveryQueryRunner struct {
@@ -100,6 +107,7 @@ type discoveryQueryRunner struct {
 	ctx     context.Context
 	packet  discoveryQueryPacket
 	seen    map[string]struct{}
+	stopped bool
 }
 
 func (m *Manager) discoveryQuery(ctx context.Context, req ToolRequest) ToolResult {
@@ -168,7 +176,13 @@ func (r *discoveryQueryRunner) run(req ToolRequest, targetAbs string) {
 	language := r.packet.Language
 
 	contextBacked := r.addContextGraphLayer(req, path, pattern, language)
+	if r.stopped {
+		return
+	}
 	r.addContextLayer()
+	if r.stopped {
+		return
+	}
 
 	if isRegularFile(targetAbs) {
 		r.addFileOrientation(path, language)
@@ -177,9 +191,15 @@ func (r *discoveryQueryRunner) run(req ToolRequest, targetAbs string) {
 	} else {
 		r.addLayer(DiscoveryLayerTargetListing, ToolRequest{Tool: ToolNameListFiles, Path: path, Recursive: true, MaxDepth: 2})
 	}
+	if r.stopped {
+		return
+	}
 
 	if pattern != "" {
 		r.addLayer(DiscoveryLayerTextAnchorSearch, ToolRequest{Tool: ToolNameSearchContent, Path: path, Pattern: pattern, Glob: globForDiscoveryLanguage(language)})
+	}
+	if r.stopped {
+		return
 	}
 
 	switch purpose {
@@ -223,6 +243,10 @@ type discoveryContextPackSummary struct {
 }
 
 func (r *discoveryQueryRunner) addContextGraphLayer(req ToolRequest, path string, pattern string, language string) bool {
+	if r.stopBeforeLayer(DiscoveryLayerContextPack) {
+		return false
+	}
+
 	status, err := comprehension.Status(r.manager.cfg.Root)
 	if err != nil {
 		return false
@@ -247,6 +271,9 @@ func (r *discoveryQueryRunner) addContextGraphLayer(req ToolRequest, path string
 		Status:    &status,
 	})
 	if err != nil {
+		if r.stopAfterLayer(DiscoveryLayerContextPack) {
+			return false
+		}
 		r.packet.Gaps = append(r.packet.Gaps, "context freshness check failed: "+err.Error())
 		return false
 	}
@@ -360,6 +387,10 @@ func discoveryContextPackTask(purpose string, path string, pattern string, langu
 }
 
 func (r *discoveryQueryRunner) addContextLayer() {
+	if r.stopBeforeLayer(DiscoveryLayerProjectContextDigest) {
+		return
+	}
+
 	path := filepath.Join(r.manager.cfg.Root, ".idiom", "discovery", "context.md")
 
 	data, err := os.ReadFile(path)
@@ -481,6 +512,10 @@ func (r *discoveryQueryRunner) addLayer(name string, req ToolRequest) {
 }
 
 func (r *discoveryQueryRunner) addLayerResult(name string, req ToolRequest) (ToolResult, bool) {
+	if r.stopBeforeLayer(name) {
+		return ToolResult{}, false
+	}
+
 	if strings.TrimSpace(req.Tool) == "" || req.Tool == ToolNameDiscoveryQuery {
 		return ToolResult{}, false
 	}
@@ -508,8 +543,67 @@ func (r *discoveryQueryRunner) addLayerResult(name string, req ToolRequest) (Too
 	}
 
 	r.packet.Layers = append(r.packet.Layers, layer)
+	r.checkpointArtifact()
+	r.stopAfterLayer(name)
 
 	return result, true
+}
+
+func (r *discoveryQueryRunner) stopBeforeLayer(name string) bool {
+	if r.stopped {
+		r.addSkippedLayer(name)
+		return true
+	}
+
+	if err := r.ctx.Err(); err != nil {
+		r.markStopped(err, "before "+name)
+		r.addSkippedLayer(name)
+		return true
+	}
+
+	return false
+}
+
+func (r *discoveryQueryRunner) stopAfterLayer(name string) bool {
+	if err := r.ctx.Err(); err != nil {
+		r.markStopped(err, "after "+name)
+		return true
+	}
+
+	return false
+}
+
+func (r *discoveryQueryRunner) markStopped(err error, location string) {
+	if r.stopped {
+		return
+	}
+
+	r.stopped = true
+	if errors.Is(err, context.DeadlineExceeded) {
+		r.packet.Status = "partial_interrupted"
+		r.packet.TimeoutOwner = "parent_context"
+		r.packet.Gaps = append(r.packet.Gaps, "discovery_query parent context deadline reached "+location+"; partial artifact records completed layers and skipped layers")
+		return
+	}
+
+	r.packet.Status = "partial_interrupted"
+	r.packet.TimeoutOwner = "parent_context"
+	r.packet.Gaps = append(r.packet.Gaps, "discovery_query was canceled "+location+"; partial artifact records completed layers and skipped layers")
+}
+
+func (r *discoveryQueryRunner) addSkippedLayer(name string) {
+	name = strings.TrimSpace(name)
+	if name == "" || slices.Contains(r.packet.SkippedLayers, name) {
+		return
+	}
+
+	r.packet.SkippedLayers = append(r.packet.SkippedLayers, name)
+}
+
+func (r *discoveryQueryRunner) checkpointArtifact() {
+	if err := r.writeArtifact(); err != nil {
+		r.packet.Gaps = append(r.packet.Gaps, "discovery_query checkpoint write failed: "+err.Error())
+	}
 }
 
 func (r *discoveryQueryRunner) writeArtifact() error {
@@ -544,6 +638,9 @@ func (r *discoveryQueryRunner) summaryJSON() string {
 		ContextConfidence:    r.packet.ContextConfidence,
 		ContextProvenance:    r.packet.ContextProvenance,
 		Gaps:                 slices.Clone(r.packet.Gaps),
+		Status:               r.packet.Status,
+		SkippedLayers:        slices.Clone(r.packet.SkippedLayers),
+		TimeoutOwner:         r.packet.TimeoutOwner,
 	}
 	for _, layer := range r.packet.Layers {
 		summary.LayersRun = append(summary.LayersRun, layer.Name+":"+layer.Tool)

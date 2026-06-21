@@ -1,28 +1,27 @@
 {
-  "_comment": "Self-hosted dispatch config for idiom-on-idiom development. Adapted from config.example.json with auto_start_server flipped off (use `idiom backend start --profile qwen-pair` against .idiom/backends.json when launching local backends). Keep this tracked file portable; put machine-specific paths in an ignored config.json or another --config/IDIOM_CONFIG target.",
-  "app_name": "Idiom (ds4)",
+  "_comment": "Portable developer-preview config for this repository. This file shows a local llama.cpp-style setup with a placeholder model path. Keep real model paths, API choices, and auto-start overrides in ignored config.json files or another --config/IDIOM_CONFIG target.",
+  "app_name": "Idiom",
   "llama_server": {
     "kind": "llama",
-    "binary": "/Users/ben/models/ds4/ds4-server",
+    "binary": "llama-server",
     "host": "127.0.0.1",
-    "port": 47786,
-    "model": "/Users/ben/models/ds4/gguf/DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix.gguf",
-    "ctx_size": 100000,
-    "jinja": false,
-    "flash_attention": false,
-    "reasoning": "",
-    "reasoning_format": "",
-    "reasoning_budget": 0,
-    "log_file": "logs/ds4-server.log",
-    "extra_args": [
-      "--chdir",
-      "/Users/ben/models/ds4"
-    ]
+    "port": 8080,
+    "model": "../models/local-model.gguf",
+    "ctx_size": 262144,
+    "threads": 0,
+    "gpu_layers": 0,
+    "jinja": true,
+    "flash_attention": true,
+    "reasoning": "auto",
+    "reasoning_format": "deepseek",
+    "reasoning_budget": -1,
+    "log_file": "../logs/llama-server.log",
+    "extra_args": []
   },
   "chat": {
-    "auto_start_server": true,
-    "save_dir": "transcripts",
-    "debug_log_dir": "logs/conversations",
+    "auto_start_server": false,
+    "save_dir": "../transcripts",
+    "debug_log_dir": "../logs/conversations",
     "debug_log_mode": "redacted",
     "system_prompt": "",
     "system_prompt_files": [
@@ -32,7 +31,7 @@
     "default_profiles": [
       "coding"
     ],
-    "project_root": "",
+    "project_root": "..",
     "project_prompt_files": [],
     "preset": "qwen3-coding-preserve",
     "temperature": 0.6,
@@ -45,21 +44,41 @@
     "preserve_thinking": true,
     "max_tokens": 8192,
     "max_history": 20,
-    "max_tool_steps": 0,
+    "max_tool_steps": 16,
     "max_context_messages": 40,
-    "max_context_chars": 100000,
+    "max_context_chars": 200000,
     "max_model_calls": 40,
     "max_duration_seconds": 780,
     "request_timeout_seconds": 900,
-    "server_start_timeout_seconds": 120,
+    "server_start_timeout_seconds": 240,
     "implementation_dispatch": "plan_execute"
   },
   "route_classifier": {
-    "enabled": false
+    "enabled": true,
+    "base_url": "",
+    "model": "",
+    "always_on": true,
+    "max_tokens": 512,
+    "timeout_seconds": 20,
+    "start_timeout_seconds": 120,
+    "auto_start_server": false,
+    "kind": "llama",
+    "binary": "llama-server",
+    "host": "127.0.0.1",
+    "port": 11437,
+    "server_model": "",
+    "ctx_size": 8192,
+    "threads": 0,
+    "gpu_layers": 0,
+    "log_file": "../logs/route-classifier.log",
+    "extra_args": []
+  },
+  "tui": {
+    "evidence_panel": true
   },
   "workspace": {
-    "root": "",
-    "cwd": "",
+    "root": "..",
+    "cwd": ".",
     "shell": "/bin/zsh",
     "command_timeout_seconds": 120,
     "max_output_bytes": 65536,
@@ -67,36 +86,6 @@
     "max_directory_entries": 400,
     "enable_shell": true,
     "enable_writes": true,
-    "tool_rules": {
-      "read_file": [
-        {
-          "pattern": ".idiom/deny-read-test.txt",
-          "decision": "deny"
-        },
-        {
-          "pattern": "*",
-          "decision": "allow"
-        }
-      ]
-    },
     "allow_private_network": false
-  },
-  "implementer": {
-    "kind": "llama",
-    "binary": "/Users/ben/models/ds4/ds4-server",
-    "host": "127.0.0.1",
-    "port": 47787,
-    "model": "/Users/ben/models/ds4/gguf/DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix.gguf",
-    "ctx_size": 100000,
-    "jinja": false,
-    "flash_attention": false,
-    "reasoning": "",
-    "reasoning_format": "",
-    "reasoning_budget": 0,
-    "log_file": "logs/ds4-implementer.log",
-    "extra_args": [
-      "--chdir",
-      "/Users/ben/models/ds4"
-    ]
   }
 }

@@ -99,6 +99,15 @@ func TestRunAppliesPolicyOverridesAndWritesCompletion(t *testing.T) {
 	if saved.Artifacts["completion"] == "" {
 		t.Fatalf("saved completion should be self-referential: %#v", saved.Artifacts)
 	}
+	if got := saved.Metadata["active_mode"]; len(got) != 1 || got[0] != "headless_prompt" {
+		t.Fatalf("completion metadata should record active headless mode: %#v", saved.Metadata)
+	}
+	if got := saved.Metadata["timeout_owner"]; len(got) != 1 || got[0] != "headless_policy_timeout" {
+		t.Fatalf("completion metadata should record timeout owner: %#v", saved.Metadata)
+	}
+	if got := saved.Metadata["build_version"]; len(got) != 1 || got[0] == "" {
+		t.Fatalf("completion metadata should record build identity: %#v", saved.Metadata)
+	}
 	if _, err := os.Stat(summaryPath); err != nil {
 		t.Fatalf("summary artifact missing: %v", err)
 	}
@@ -276,6 +285,40 @@ func TestRunFailsWhenCompletionCannotBeSaved(t *testing.T) {
 	}
 	if output.Artifacts["completion"] != "" {
 		t.Fatalf("failed completion save must not advertise a saved completion artifact: %#v", output.Artifacts)
+	}
+}
+
+func TestRunPolicyTimeoutProjectsToRuntimeRequestTimeout(t *testing.T) {
+	root := t.TempDir()
+	configPath := writeHeadlessTestConfig(t, root)
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"--config", configPath,
+		"--prompt", "bounded review",
+		"--output", "json",
+		"--timeout", "2s",
+		"--session", "run-timeout-projection",
+	}, bytes.NewReader(nil), &stdout, &stderr, func(cfg config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
+		if config.Default().Chat.RequestTimeoutSeconds == 2 {
+			t.Fatal("test precondition invalid: default request timeout should differ from override")
+		}
+		if cfg.Chat.RequestTimeoutSeconds != 2 || cfg.Chat.ServerStartTimeoutSecs != 0 {
+			t.Fatalf("timeout projection = request %d start %d, want 2/0", cfg.Chat.RequestTimeoutSeconds, cfg.Chat.ServerStartTimeoutSecs)
+		}
+		return "ok", nil
+	}, nil)
+
+	if code != 0 {
+		t.Fatalf("timeout projection run failed stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+
+	var output RunOutputRecord
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatalf("decode timeout projection completion: %v\n%s", err, stdout.String())
+	}
+	if got := output.Metadata["timeout_owner"]; len(got) != 1 || got[0] != "headless_policy_timeout" {
+		t.Fatalf("timeout owner metadata should identify policy timeout: %#v", output.Metadata)
 	}
 }
 

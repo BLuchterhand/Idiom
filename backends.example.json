@@ -1,102 +1,14 @@
 {
+  "_comment": "Copy to .idiom/backends.json or use as a reference. Keep real model paths and API-key choices out of committed project config.",
+  "default_profile": "deepseek-v4-flash",
   "profiles": {
-    "single-model": {
+    "deepseek-v4-flash": {
+      "_comment": "Hosted example. Set DEEPSEEK_API_KEY in the shell.",
       "models": [
         {
-          "alias": "qwen3-coder-30b",
-          "binary": "mlx_lm.server",
-          "model_path": "/path/to/qwen3-coder-30b",
-          "host": "127.0.0.1",
-          "port": 47780,
-          "kind": "mlx",
-          "max_tokens": 8192
-        }
-      ]
-    },
-    "planner-executor-split": {
-      "models": [
-        {
-          "alias": "qwen3.6-35b",
-          "binary": "mlx_lm.server",
-          "model_path": "/path/to/qwen3.6-35b",
-          "host": "127.0.0.1",
-          "port": 47780,
-          "kind": "mlx",
-          "max_tokens": 8192,
-          "roles": [
-            "planner"
-          ]
-        },
-        {
-          "alias": "qwen3-coder-30b",
-          "binary": "mlx_lm.server",
-          "model_path": "/path/to/qwen3-coder-30b",
-          "host": "127.0.0.1",
-          "port": 47781,
-          "kind": "mlx",
-          "max_tokens": 8192,
-          "roles": [
-            "executor"
-          ]
-        }
-      ]
-    },
-    "behind-alias-proxy": {
-      "models": [
-        {
-          "alias": "qwen3.6-35b",
-          "binary": "mlx_lm.server",
-          "model_path": "/path/to/qwen3.6-35b",
-          "host": "127.0.0.1",
-          "port": 47780,
-          "kind": "mlx"
-        },
-        {
-          "alias": "qwen3-coder-30b",
-          "binary": "mlx_lm.server",
-          "model_path": "/path/to/qwen3-coder-30b",
-          "host": "127.0.0.1",
-          "port": 47781,
-          "kind": "mlx"
-        }
-      ],
-      "proxy": {
-        "listen": 47680,
-        "default_alias": "qwen3.6-35b",
-        "default_planner": "qwen3.6-35b",
-        "default_executor": "qwen3-coder-30b"
-      }
-    },
-    "all-gpt-5.5-high": {
-      "models": [
-        {
-          "alias": "gpt-5.5-high",
-          "kind": "codex",
-          "model": "gpt-5.5",
-          "api_key_env": "OPENAI_API_KEY",
-          "reasoning_effort": "high",
-          "roles": [
-            "planner",
-            "executor",
-            "classifier"
-          ]
-        }
-      ],
-      "proxy": {
-        "default_alias": "gpt-5.5-high",
-        "default_planner": "gpt-5.5-high",
-        "default_executor": "gpt-5.5-high",
-        "default_coder": "gpt-5.5-high",
-        "default_classifier": "gpt-5.5-high"
-      }
-    },
-    "deepseek-v4-pro": {
-      "_comment": "Hosted DeepSeek V4 Pro profile. Set DEEPSEEK_API_KEY in the shell; do not store the key in this file. Local backend start/proxy commands do not apply to this hosted profile.",
-      "models": [
-        {
-          "alias": "deepseek-v4-pro",
+          "alias": "deepseek-v4-flash",
           "kind": "deepseek",
-          "model": "deepseek-chat",
+          "model": "deepseek-v4-flash",
           "api_key_env": "DEEPSEEK_API_KEY",
           "reasoning_effort": "high",
           "roles": [
@@ -107,22 +19,24 @@
         }
       ],
       "proxy": {
-        "default_alias": "deepseek-v4-pro",
-        "default_planner": "deepseek-v4-pro",
-        "default_executor": "deepseek-v4-pro",
-        "default_coder": "deepseek-v4-pro",
-        "default_classifier": "deepseek-v4-pro"
+        "default_alias": "deepseek-v4-flash",
+        "default_planner": "deepseek-v4-flash",
+        "default_executor": "deepseek-v4-flash",
+        "default_coder": "deepseek-v4-flash",
+        "default_classifier": "deepseek-v4-flash"
       }
     },
-    "glm-5.2": {
-      "_comment": "Hosted GLM 5.2 profile through Z.AI's coding endpoint. Set ZAI_API_KEY in the shell; do not store the key in this file. Local backend start/proxy commands do not apply to this hosted profile.",
+    "local-llama-example": {
+      "_comment": "Local example. Put a local model under ignored models/ and update model_path.",
       "models": [
         {
-          "alias": "glm-5.2",
-          "kind": "glm",
-          "model": "glm-5.2",
-          "api_key_env": "ZAI_API_KEY",
-          "reasoning_effort": "max",
+          "alias": "local-coder",
+          "binary": "llama-server",
+          "model_path": "models/local-model.gguf",
+          "host": "127.0.0.1",
+          "port": 47780,
+          "kind": "llama",
+          "max_tokens": 8192,
           "roles": [
             "planner",
             "executor",
@@ -131,11 +45,12 @@
         }
       ],
       "proxy": {
-        "default_alias": "glm-5.2",
-        "default_planner": "glm-5.2",
-        "default_executor": "glm-5.2",
-        "default_coder": "glm-5.2",
-        "default_classifier": "glm-5.2"
+        "listen": 47680,
+        "default_alias": "local-coder",
+        "default_planner": "local-coder",
+        "default_executor": "local-coder",
+        "default_coder": "local-coder",
+        "default_classifier": "local-coder"
       }
     }
   }

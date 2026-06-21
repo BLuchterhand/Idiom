@@ -300,6 +300,92 @@ func TestDiscoveryQueryRejectsUnknownPurpose(t *testing.T) {
 	}
 }
 
+func TestDiscoveryQueryCheckpointsArtifactAfterCompletedLayer(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "service.go"), "package main\nfunc Target() {}\n")
+	mgr := NewManager(config.Workspace{
+		Root:           root,
+		CWD:            root,
+		MaxOutputBytes: 65536,
+		MaxFileBytes:   65536,
+	})
+
+	runner := &discoveryQueryRunner{
+		manager: mgr,
+		ctx:     context.Background(),
+		seen:    make(map[string]struct{}),
+		packet: discoveryQueryPacket{
+			SchemaVersion: discoveryQuerySchemaVersion,
+			ID:            "checkpoint-test",
+			Purpose:       DiscoveryQueryPurposeImpactAnalysis,
+			Target:        ".",
+			ArtifactPath:  ".idiom/discovery/queries/checkpoint-test.json",
+		},
+	}
+
+	if result, ok := runner.addLayerResult(DiscoveryLayerTargetListing, ToolRequest{Tool: ToolNameListFiles, Path: "."}); !ok || result.Error != "" {
+		t.Fatalf("expected first layer to complete, ok=%t result=%#v", ok, result)
+	}
+
+	packet := readDiscoveryQueryPacket(t, root, runner.summaryJSON())
+	if !packetHasLayer(packet, DiscoveryLayerTargetListing) {
+		t.Fatalf("checkpoint artifact should preserve completed layers: %#v", packet.Layers)
+	}
+	if packet.Status != "" {
+		t.Fatalf("completed checkpoint should not classify a long-running query as failure/interruption: %#v", packet)
+	}
+}
+
+func TestDiscoveryQueryRecordsSkippedLayerAfterParentCancellation(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "service.go"), "package main\nfunc Target() {}\n")
+	mgr := NewManager(config.Workspace{
+		Root:           root,
+		CWD:            root,
+		MaxOutputBytes: 65536,
+		MaxFileBytes:   65536,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runner := &discoveryQueryRunner{
+		manager: mgr,
+		ctx:     ctx,
+		seen:    make(map[string]struct{}),
+		packet: discoveryQueryPacket{
+			SchemaVersion: discoveryQuerySchemaVersion,
+			ID:            "parent-canceled-test",
+			Purpose:       DiscoveryQueryPurposeImpactAnalysis,
+			Target:        ".",
+			ArtifactPath:  ".idiom/discovery/queries/parent-canceled-test.json",
+		},
+	}
+
+	if result, ok := runner.addLayerResult(DiscoveryLayerTargetListing, ToolRequest{Tool: ToolNameListFiles, Path: "."}); !ok || result.Error != "" {
+		t.Fatalf("expected first layer to complete, ok=%t result=%#v", ok, result)
+	}
+	cancel()
+	if _, ok := runner.addLayerResult(DiscoveryLayerTextAnchorSearch, ToolRequest{Tool: ToolNameSearchContent, Path: ".", Pattern: "Target"}); ok {
+		t.Fatal("layer scheduled after parent cancellation should be skipped")
+	}
+	if err := runner.writeArtifact(); err != nil {
+		t.Fatalf("write interrupted artifact: %v", err)
+	}
+
+	packet := readDiscoveryQueryPacket(t, root, runner.summaryJSON())
+	if packet.Status != "partial_interrupted" || packet.TimeoutOwner != "parent_context" {
+		t.Fatalf("expected parent interruption metadata, got %#v", packet)
+	}
+	if !packetHasLayer(packet, DiscoveryLayerTargetListing) {
+		t.Fatalf("interrupted artifact should preserve completed layers: %#v", packet.Layers)
+	}
+	if !slices.Contains(packet.SkippedLayers, DiscoveryLayerTextAnchorSearch) {
+		t.Fatalf("interrupted artifact should record skipped layer, got %#v", packet.SkippedLayers)
+	}
+	if !packetGapsContain(packet, "canceled") {
+		t.Fatalf("interrupted artifact should explain parent cancellation gap, got %#v", packet.Gaps)
+	}
+}
+
 func TestDiscoveryQueryNormalizesArchitectureUsefulnessAliases(t *testing.T) {
 	for _, purpose := range []string{
 		"tool_usefulness",

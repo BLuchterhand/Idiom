@@ -1,66 +1,13 @@
 {
+  "_comment": "Portable backend examples for this repository. The default hosted profile needs only an API key env var. The local example uses a placeholder model path under ignored models/; do not commit real model weights or machine-local absolute paths.",
   "default_profile": "deepseek-v4-flash",
   "profiles": {
-    "all-gpt-5.5-high": {
-      "models": [
-        {
-          "alias": "gpt-5.5-high",
-          "binary": "",
-          "model_path": "",
-          "model": "gpt-5.5",
-          "port": 0,
-          "kind": "codex",
-          "api_key_env": "OPENAI_API_KEY",
-          "reasoning_effort": "high",
-          "roles": [
-            "planner",
-            "executor",
-            "classifier"
-          ]
-        }
-      ],
-      "proxy": {
-        "default_alias": "gpt-5.5-high",
-        "default_coder": "gpt-5.5-high",
-        "default_planner": "gpt-5.5-high",
-        "default_executor": "gpt-5.5-high",
-        "default_classifier": "gpt-5.5-high"
-      }
-    },
-    "deepseek-v4-pro": {
-      "models": [
-        {
-          "alias": "deepseek-v4-pro",
-          "binary": "",
-          "model_path": "",
-          "model": "deepseek-chat",
-          "port": 0,
-          "kind": "deepseek",
-          "api_key_env": "DEEPSEEK_API_KEY",
-          "reasoning_effort": "high",
-          "roles": [
-            "planner",
-            "executor",
-            "classifier"
-          ]
-        }
-      ],
-      "proxy": {
-        "default_alias": "deepseek-v4-pro",
-        "default_coder": "deepseek-v4-pro",
-        "default_planner": "deepseek-v4-pro",
-        "default_executor": "deepseek-v4-pro",
-        "default_classifier": "deepseek-v4-pro"
-      }
-    },
     "deepseek-v4-flash": {
+      "_comment": "Hosted example. Set DEEPSEEK_API_KEY in the shell; no local model process is started.",
       "models": [
         {
           "alias": "deepseek-v4-flash",
-          "binary": "",
-          "model_path": "",
           "model": "deepseek-v4-flash",
-          "port": 0,
           "kind": "deepseek",
           "api_key_env": "DEEPSEEK_API_KEY",
           "reasoning_effort": "high",
@@ -79,220 +26,31 @@
         "default_classifier": "deepseek-v4-flash"
       }
     },
-    "ds4": {
+    "local-llama-example": {
+      "_comment": "Local example. Put your GGUF or local model directory under ignored models/, then update model_path. The checked-in placeholder is intentionally not a real model file.",
       "models": [
         {
-          "alias": "ds4flash",
-          "binary": "/Users/ben/models/ds4/ds4-server",
-          "model_path": "/Users/ben/models/ds4/gguf/DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix.gguf",
-          "port": 47786,
+          "alias": "local-coder",
+          "binary": "llama-server",
+          "model_path": "models/local-model.gguf",
           "host": "127.0.0.1",
+          "port": 47780,
           "kind": "llama",
           "max_tokens": 8192,
-          "extra_args": [
-            "--chdir",
-            "/Users/ben/models/ds4"
-          ],
           "roles": [
             "planner",
             "executor",
             "classifier"
-          ]
-        }
-      ],
-      "proxy": {
-        "listen": 47786,
-        "default_alias": "ds4flash",
-        "default_coder": "ds4flash",
-        "default_planner": "ds4flash",
-        "default_executor": "ds4flash",
-        "default_classifier": "ds4flash"
-      }
-    },
-    "glm-5.1": {
-      "models": [
-        {
-          "alias": "glm-5.1",
-          "binary": "",
-          "model_path": "",
-          "model": "glm-5.1",
-          "port": 0,
-          "kind": "zai",
-          "base_url": "https://api.z.ai/api/coding/paas/v4",
-          "api_key_env": "ZAI_API_KEY",
-          "roles": [
-            "planner",
-            "executor",
-            "classifier"
-          ]
-        }
-      ],
-      "proxy": {
-        "default_alias": "glm-5.1",
-        "default_coder": "glm-5.1",
-        "default_planner": "glm-5.1",
-        "default_executor": "glm-5.1",
-        "default_classifier": "glm-5.1"
-      }
-    },
-    "glm-5.2": {
-      "models": [
-        {
-          "alias": "glm-5.2",
-          "binary": "",
-          "model_path": "",
-          "model": "glm-5.2",
-          "port": 0,
-          "kind": "glm",
-          "api_key_env": "ZAI_API_KEY",
-          "reasoning_effort": "max",
-          "roles": [
-            "planner",
-            "executor",
-            "classifier"
-          ]
-        }
-      ],
-      "proxy": {
-        "default_alias": "glm-5.2",
-        "default_coder": "glm-5.2",
-        "default_planner": "glm-5.2",
-        "default_executor": "glm-5.2",
-        "default_classifier": "glm-5.2"
-      }
-    },
-    "qwen-27b-pair": {
-      "models": [
-        {
-          "alias": "qwen3.6-27b",
-          "binary": "vmlx",
-          "model_path": "models/qwen3.6-27b-mlx",
-          "port": 47783,
-          "cache_size": 4,
-          "cache_bytes": 12884901888,
-          "max_tokens": 8192,
-          "request_timeout_seconds": 900,
-          "extra_args": [
-            "--temp",
-            "0.6",
-            "--top-p",
-            "0.95",
-            "--top-k",
-            "20",
-            "--chat-template-args",
-            "{\"enable_thinking\":true,\"preserve_thinking\":true}"
-          ],
-          "roles": [
-            "planner",
-            "classifier"
-          ]
-        },
-        {
-          "alias": "qwen3-coder-30b",
-          "binary": "vmlx",
-          "model_path": "models/qwen3-coder-30b-a3b-mlx",
-          "port": 47781,
-          "cache_size": 4,
-          "cache_bytes": 12884901888,
-          "max_tokens": 8192,
-          "request_timeout_seconds": 900,
-          "extra_args": [
-            "--temp",
-            "0.7",
-            "--top-p",
-            "0.8",
-            "--top-k",
-            "20",
-            "--chat-template-args",
-            "{\"enable_thinking\":false}"
-          ],
-          "roles": [
-            "executor"
           ]
         }
       ],
       "proxy": {
         "listen": 47680,
-        "default_alias": "qwen3.6-27b",
-        "default_coder": "qwen3-coder-30b",
-        "default_planner": "qwen3.6-27b",
-        "default_executor": "qwen3-coder-30b",
-        "default_classifier": "qwen3.6-27b"
-      }
-    },
-    "qwen-pair": {
-      "models": [
-        {
-          "alias": "qwen3.6-35b",
-          "binary": "vmlx",
-          "model_path": "models/qwen3.6-35b-a3b",
-          "port": 47780,
-          "cache_size": 4,
-          "cache_bytes": 12884901888,
-          "max_tokens": 8192,
-          "request_timeout_seconds": 900,
-          "extra_args": [
-            "--temp",
-            "0.6",
-            "--top-p",
-            "0.95",
-            "--top-k",
-            "20",
-            "--chat-template-args",
-            "{\"enable_thinking\":true,\"preserve_thinking\":true}",
-            "--prefill-step-size",
-            "1024",
-            "--max-prompt-tokens",
-            "131072",
-            "--use-paged-cache",
-            "--enable-disk-cache",
-            "--enable-pld",
-            "--enable-jit"
-          ],
-          "roles": [
-            "planner",
-            "classifier"
-          ]
-        },
-        {
-          "alias": "qwen3.6-27b",
-          "binary": "vmlx",
-          "model_path": "models/qwen3.6-27b-mlx",
-          "port": 47783,
-          "cache_size": 4,
-          "cache_bytes": 12884901888,
-          "max_tokens": 8192,
-          "request_timeout_seconds": 900,
-          "extra_args": [
-            "--temp",
-            "0.6",
-            "--top-p",
-            "0.95",
-            "--top-k",
-            "20",
-            "--chat-template-args",
-            "{\"enable_thinking\":true,\"preserve_thinking\":true}",
-            "--prefill-step-size",
-            "1024",
-            "--max-prompt-tokens",
-            "131072",
-            "--use-paged-cache",
-            "--enable-disk-cache",
-            "--enable-pld",
-            "--enable-jit"
-          ],
-          "roles": [
-            "executor"
-          ]
-        }
-      ],
-      "proxy": {
-        "listen": 47680,
-        "default_alias": "qwen3.6-35b",
-        "default_coder": "qwen3.6-27b",
-        "default_planner": "qwen3.6-35b",
-        "default_executor": "qwen3.6-27b",
-        "default_classifier": "qwen3.6-35b"
+        "default_alias": "local-coder",
+        "default_coder": "local-coder",
+        "default_planner": "local-coder",
+        "default_executor": "local-coder",
+        "default_classifier": "local-coder"
       }
     }
   }

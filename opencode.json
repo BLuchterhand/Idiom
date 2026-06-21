@@ -22,8 +22,8 @@
         "apiKey": "not-needed"
       },
       "models": {
-        "qwen3.6-35b-a3b": {
-          "name": "Qwen3.6-35B-A3B (llama-server)"
+        "local-coder": {
+          "name": "Local coder (llama-server)"
         }
       }
     }

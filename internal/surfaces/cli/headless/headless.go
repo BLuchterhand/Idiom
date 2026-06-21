@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/capabilities/workspace"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
 	"idiom/internal/surfaces/cli/runrecord"
@@ -129,6 +130,7 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 		StartedAt:        started,
 		Implementation:   "idiom run",
 		UnsupportedFlags: append([]string(nil), req.UnsupportedIntent...),
+		Metadata:         runMetadata(req),
 	}
 
 	runWriter := stdout
@@ -1072,6 +1074,23 @@ func workspaceRoot(cfg config.Config) string {
 	}
 
 	return commandDir(cfg)
+}
+
+func runMetadata(req runRequest) map[string][]string {
+	metadata := workspace.HarnessAuditBuildIdentityMetadata()
+	metadata["entrypoint"] = []string{"idiom run"}
+	metadata["active_mode"] = []string{"headless_prompt"}
+	metadata["timeout_owner"] = []string{"chat_request_timeout"}
+	metadata["output_mode"] = []string{req.OutputMode}
+	if strings.TrimSpace(req.Policy.Timeout) != "" {
+		metadata["timeout_owner"] = []string{"headless_policy_timeout"}
+		metadata["timeout"] = []string{strings.TrimSpace(req.Policy.Timeout)}
+	}
+	if strings.TrimSpace(req.Resume) != "" {
+		metadata["resume"] = []string{strings.TrimSpace(req.Resume)}
+	}
+
+	return metadata
 }
 
 func stdinHasData(r io.Reader) bool {

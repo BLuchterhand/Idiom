@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/capabilities/mcp"
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
@@ -179,7 +180,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		return 1
 	}
 
-	if decision := toolAllowedForCLIProfile(req, profile, extReg); !decision.Allowed {
+	if decision := directToolAllowedForProfile(req, profile, cfg.Workspace, extReg); !decision.Allowed {
 		result := workspace.ToolProfileDeniedResult(req.Tool, profile, decision)
 		LogDirectToolResult(rec, req, result, 0, profile, caller)
 
@@ -188,10 +189,12 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 
 		payload := struct {
 			workspace.ToolResult
-			Sidecar workspace.ToolSidecarEnvelope `json:"sidecar"`
+			Sidecar      workspace.ToolSidecarEnvelope `json:"sidecar"`
+			TimeoutOwner string                        `json:"timeout_owner,omitempty"`
 		}{
-			ToolResult: result,
-			Sidecar:    workspace.BuildToolSidecarEnvelopeWithOptions(req, result, profile, sidecarOptions),
+			ToolResult:   result,
+			Sidecar:      workspace.BuildToolSidecarEnvelopeWithOptions(req, result, profile, sidecarOptions),
+			TimeoutOwner: directToolTimeoutOwner(req),
 		}
 		if err := enc.Encode(payload); err != nil {
 			fmt.Fprintf(stderr, "encode result: %v\n", err)
@@ -202,6 +205,25 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		return 1
 	}
 
+	var mcpReg *mcp.Registry
+	if strings.HasPrefix(req.Tool, "mcp:") {
+		mcpCtx, mcpCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		var mcpFailures []string
+		mcpReg, mcpFailures = mcp.SetupRegistry(mcpCtx, cfg.MCP, cfg.Workspace.AllowPrivateNetwork)
+		mcpCancel()
+		if mcpReg != nil {
+			defer mcpReg.Close()
+		}
+
+		if len(mcpFailures) > 0 && (mcpReg == nil || !mcpReg.Has(req.Tool)) {
+			errText := "mcp setup: " + strings.Join(mcpFailures, "; ")
+			logFailureResult("Direct tool setup failed", errText)
+			fmt.Fprintln(stderr, errText)
+
+			return 1
+		}
+	}
+
 	mgr := workspace.NewManager(cfg.Workspace)
 	mgr.SetBypassReadBeforeEdit(true)
 
@@ -209,7 +231,11 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		mgr.SetExternalToolsRegistry(extReg)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	if mcpReg != nil {
+		mgr.SetMCPRegistry(mcpReg)
+	}
+
+	ctx, cancel := directToolContext(req)
 	defer cancel()
 
 	startedAt := time.Now()
@@ -221,10 +247,12 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 
 	payload := struct {
 		workspace.ToolResult
-		Sidecar workspace.ToolSidecarEnvelope `json:"sidecar"`
+		Sidecar      workspace.ToolSidecarEnvelope `json:"sidecar"`
+		TimeoutOwner string                        `json:"timeout_owner,omitempty"`
 	}{
-		ToolResult: result,
-		Sidecar:    workspace.BuildToolSidecarEnvelopeWithOptions(req, result, profile, sidecarOptions),
+		ToolResult:   result,
+		Sidecar:      workspace.BuildToolSidecarEnvelopeWithOptions(req, result, profile, sidecarOptions),
+		TimeoutOwner: directToolTimeoutOwner(req),
 	}
 	if err := enc.Encode(payload); err != nil {
 		fmt.Fprintf(stderr, "encode result: %v\n", err)
@@ -239,13 +267,35 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 	return 0
 }
 
-func toolAllowedForCLIProfile(req workspace.ToolRequest, profile string, extReg *workspace.ExternalToolRegistry) workspace.ToolProfileDecision {
+func directToolContext(req workspace.ToolRequest) (context.Context, context.CancelFunc) {
+	timeout := workspace.ToolTimeoutForRequest(req)
+	if timeout <= 0 {
+		return context.WithCancel(context.Background())
+	}
+
+	return context.WithTimeout(context.Background(), timeout+5*time.Second)
+}
+
+func directToolTimeoutOwner(req workspace.ToolRequest) string {
+	timeout := workspace.ToolTimeoutForRequest(req)
+	if timeout <= 0 {
+		return "tool_internal_timeout"
+	}
+
+	return "workspace_tool_timeout_with_cli_margin"
+}
+
+func directToolAllowedForProfile(req workspace.ToolRequest, profile string, cfg config.Workspace, extReg *workspace.ExternalToolRegistry) workspace.ToolProfileDecision {
 	decision := workspace.ToolRequestAllowedForProfile(req, profile)
 	if decision.Allowed || profile != workspace.ToolProfileDiscovery || workspace.IsBuiltInToolName(req.Tool) {
 		return decision
 	}
 
 	if extReg != nil && extReg.IsReadOnlyDiscovery(req.Tool) {
+		return workspace.ToolProfileDecision{Allowed: true}
+	}
+
+	if strings.HasPrefix(strings.TrimSpace(req.Tool), "mcp:") && workspace.MatchConfiguredToolRule(req.Tool, req, cfg.ToolRules) == workspace.ToolRuleAllow {
 		return workspace.ToolProfileDecision{Allowed: true}
 	}
 
@@ -362,9 +412,47 @@ func RunListWithConfig(stdout io.Writer, configPath string, profile string) int 
 				fmt.Fprintln(stdout, name)
 			}
 		}
+
+		if profile != workspace.ToolProfileDiscovery || hasConfiguredMCPAllowRule(cfg.Workspace.ToolRules) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			mcpReg, _ := mcp.SetupRegistry(ctx, cfg.MCP, cfg.Workspace.AllowPrivateNetwork)
+			cancel()
+			if mcpReg != nil {
+				defer mcpReg.Close()
+
+				names := make([]string, 0, len(mcpReg.Tools()))
+				for name := range mcpReg.Tools() {
+					if profile == workspace.ToolProfileDiscovery &&
+						workspace.MatchConfiguredToolRule(name, workspace.ToolRequest{Tool: name}, cfg.Workspace.ToolRules) != workspace.ToolRuleAllow {
+						continue
+					}
+					names = append(names, name)
+				}
+				slices.Sort(names)
+
+				for _, name := range names {
+					fmt.Fprintln(stdout, name)
+				}
+			}
+		}
 	}
 
 	return 0
+}
+
+func hasConfiguredMCPAllowRule(rules map[string][]config.ToolRule) bool {
+	for tool, list := range rules {
+		if !strings.HasPrefix(strings.TrimSpace(tool), "mcp:") {
+			continue
+		}
+		for _, rule := range list {
+			if strings.EqualFold(strings.TrimSpace(rule.Decision), "allow") {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func RunSchemas(stdout io.Writer, stderr io.Writer) int {
@@ -479,6 +567,7 @@ func LogDirectToolRequest(rec *telemetry.Recorder, req workspace.ToolRequest, ra
 		"end_line":        req.EndLine,
 		"limit":           req.Limit,
 		"recursive":       req.Recursive,
+		"timeout_owner":   directToolTimeoutOwner(req),
 	}
 	AddToolAttributionTelemetry(fields, workspace.ToolSidecarEnvelopeVersion, "cli", strings.TrimSpace(profile), caller, strings.TrimSpace(req.Tool))
 
@@ -500,12 +589,13 @@ func LogDirectToolResult(rec *telemetry.Recorder, req workspace.ToolRequest, res
 	outputChars := len(result.Output)
 	tool := FirstNonEmptyString(result.Tool, req.Tool)
 	fields := map[string]any{
-		"step":        1,
-		"agent":       "direct",
-		"tool":        tool,
-		"summary":     result.Summary,
-		"error":       result.Error,
-		"duration_ms": durationMillis,
+		"step":          1,
+		"agent":         "direct",
+		"tool":          tool,
+		"summary":       result.Summary,
+		"error":         result.Error,
+		"duration_ms":   durationMillis,
+		"timeout_owner": directToolTimeoutOwner(req),
 	}
 	AddToolAttributionTelemetry(fields, workspace.ToolSidecarEnvelopeVersion, "cli", strings.TrimSpace(profile), caller, tool)
 

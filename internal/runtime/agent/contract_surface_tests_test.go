@@ -24557,7 +24557,7 @@ func TestUnscopedImplementationWriteReadyRejectsNonWriteAfterSymbolBody(t *testi
 	}
 
 	summary, errorText, prompt, reject := runner.implementationTargetWriteReadyNonWriteRecovery(
-		workspace.ToolRequest{Tool: "read_file", Path: "docs/obsidian-export/docs/design-prd-adr-brief-research-workflow.md"},
+		workspace.ToolRequest{Tool: "read_file", Path: "docs/design-prd-adr-brief-research-workflow.md"},
 		results,
 	)
 	if !reject {
@@ -24648,7 +24648,7 @@ func TestUnscopedImplementationWriteReadyAllowsOneSamePathSourceRefreshAfterSymb
 	}
 
 	for name, req := range map[string]workspace.ToolRequest{
-		"design doc path": {Tool: "read_file", Path: "docs/obsidian-export/docs/design-prd-adr-brief-research-workflow.md"},
+		"design doc path": {Tool: "read_file", Path: "docs/design-prd-adr-brief-research-workflow.md"},
 		"search":          {Tool: "search_content", Pattern: "coverage"},
 		"write":           {Tool: "edit_file", Path: "internal/workflows/productworkflow/coverage_gate.go"},
 	} {

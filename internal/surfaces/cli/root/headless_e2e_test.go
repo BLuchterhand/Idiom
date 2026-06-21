@@ -143,4 +143,10 @@ func TestLegacyPromptAdapterE2EWritesCompletionForJSONMode(t *testing.T) {
 
 		t.Fatalf("unexpected legacy e2e completion: %#v", record)
 	}
+	if got := record.Metadata["active_mode"]; len(got) != 1 || got[0] != "prompt" {
+		t.Fatalf("legacy completion should record active prompt mode: %#v", record.Metadata)
+	}
+	if got := record.Metadata["timeout_owner"]; len(got) != 1 || got[0] != "chat_request_timeout" {
+		t.Fatalf("legacy completion should record timeout owner: %#v", record.Metadata)
+	}
 }

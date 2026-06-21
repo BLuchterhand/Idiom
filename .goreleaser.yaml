@@ -95,7 +95,7 @@ release:
   header: |
     `idiom` {{ .Tag }}.
 
-    See [docs/reusability-design.md](https://github.com/BLuchterhand/idiom/blob/main/docs/reusability-design.md) for the roadmap and what's in this release.
+    See [docs/idiom-design-roadmap.md](https://github.com/BLuchterhand/idiom/blob/main/docs/idiom-design-roadmap.md) for the current roadmap and release scope.
   footer: |
     ## Install
 
@@ -105,6 +105,12 @@ release:
     curl -fsSL https://raw.githubusercontent.com/BLuchterhand/idiom/main/install.sh | sh
     ```
 
+    Full harness install with discovery dependencies on macOS / Linux amd64 or arm64:
+
+    ```
+    curl -fsSL https://raw.githubusercontent.com/BLuchterhand/idiom/main/install.sh | sh -s -- --profile full
+    ```
+
     Tool sidecar only on macOS / Linux amd64 or arm64 (no model harness or queue setup):
 
     ```
@@ -112,6 +118,21 @@ release:
     ```
 
     Existing Unix scripts can keep using `install-tools.sh`; it is a compatibility wrapper for the tools profile.
+
+    All installer profiles initialize missing user-global config artifacts under
+    `~/.idiom` and preserve files that already exist.
+
+    Windows PowerShell full CLI (windows/amd64):
+
+    ```powershell
+    irm https://raw.githubusercontent.com/BLuchterhand/idiom/main/install.ps1 | iex
+    ```
+
+    Windows PowerShell full harness install with discovery dependencies (windows/amd64):
+
+    ```powershell
+    & ([scriptblock]::Create((irm https://raw.githubusercontent.com/BLuchterhand/idiom/main/install.ps1))) -Profile Full
+    ```
 
     Windows PowerShell tool sidecar (windows/amd64):
 

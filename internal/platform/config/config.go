@@ -389,7 +389,7 @@ func Default() Config {
 			Binary:          "llama-server",
 			Host:            "127.0.0.1",
 			Port:            8080,
-			Model:           "models/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q4_K_M.gguf",
+			Model:           "models/local-model.gguf",
 			CtxSize:         262144,
 			Threads:         defaultThreads(),
 			GPULayers:       0,

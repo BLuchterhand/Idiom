@@ -17,7 +17,9 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"golang.org/x/term"
 
+	"idiom/internal/capabilities/workspace"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/llama"
@@ -285,6 +287,12 @@ func legacyRunCompletionRecord(cfg config.Config, req ApplicationRequest, runID 
 	metadata := map[string][]string{
 		"legacy_mode": {string(req.Mode)},
 	}
+	for key, value := range workspace.HarnessAuditBuildIdentityMetadata() {
+		metadata[key] = value
+	}
+	metadata["entrypoint"] = []string{"idiom"}
+	metadata["active_mode"] = []string{string(req.Mode)}
+	metadata["timeout_owner"] = []string{"chat_request_timeout"}
 	if strings.TrimSpace(req.TurnsFile) != "" {
 		metadata["turns_file"] = []string{filepath.Clean(req.TurnsFile)}
 	}
@@ -417,6 +425,10 @@ func CleanPromptTurns(prompts []string) ([]string, error) {
 }
 
 func RunTUI(cfg config.Config, opts RunOptions) error {
+	if !stdoutIsTerminal() || !stderrIsTerminal() {
+		return fmt.Errorf("interactive TUI requires a terminal; use `idiom run --prompt ...` or legacy `idiom -prompt ...` for non-interactive runs")
+	}
+
 	model := app.New(cfg)
 	closeModel := ModelCloseout(opts.Telemetry, model, "tui", opts.TaskFamily)
 	unregisterCloseout := opts.Telemetry.RegisterCloseout(closeModel)
@@ -438,6 +450,14 @@ func RunTUI(cfg config.Config, opts RunOptions) error {
 	}
 
 	return nil
+}
+
+func stdoutIsTerminal() bool {
+	return term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+func stderrIsTerminal() bool {
+	return term.IsTerminal(int(os.Stderr.Fd()))
 }
 
 func RunPromptOnce(cfg config.Config, prompt string, opts RunOptions, stdout io.Writer) (string, error) {

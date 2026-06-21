@@ -131,6 +131,15 @@ so. Prefer the TUI/live operator path when validating user-facing behavior, but
 observe it through conversation/telemetry logs first and poll slowly with small
 bounded reads.
 
+Long runtime is not itself a failure signal. Idiom work can take a long time in
+this repository because discovery, source reads, writes, review, and full
+verification are large. A supervisor should keep the run alive and poll at a low
+cadence through process status, structured status files, declared artifacts, or
+small log/telemetry tails. Classify a run as failed only after a typed failure,
+non-zero exit, blocker artifact, or repeated no-progress condition that is
+supported by bounded polling evidence. Do not add ad hoc turn budgets or
+shorter wrapper timeouts to make slow work look diagnosable.
+
 If a run exposes an idiom bug, keep investigating and resolving it inside idiom
 when possible. Treat the failed idiom run as primary evidence: preserve the
 session id, recovery/failure record, stop reason, and tool sequence. If the bug

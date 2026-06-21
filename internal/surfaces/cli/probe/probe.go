@@ -48,7 +48,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 // runProbeLane executes the synthetic-brief route probe. For each
 // selected mode it constructs the route the lane wrapper would
 // force via --task-family and asserts the resulting plan + brief
-// match the contract documented in docs/reusability-design.md.
+// match the contract documented in the historical reusability migration notes.
 //
 // Exit codes mirror the rest of `idiom backend`: 0 all probes pass,
 // 1 at least one assertion failed, 2 flag-parse error.

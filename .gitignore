@@ -64,10 +64,17 @@ docs/evidence/**/*.pid
 docs/evidence/**/*.exit
 docs/evidence/**/*.stderr.log
 docs/evidence/**/*.tmp
+docs/codebase-deadcode-signals.txt
+docs/codebase-file-cleanup-tracker.csv
+docs/codebase-file-cleanup-tracker.md
+docs/codebase-file-inventory.txt
+docs/codebase-manual-review-ledger.csv
+docs/obsidian-export/
 
 # Internal working docs (bugs, feature requests)
 BUG_*.md
 FEATURE_REQUEST_*.md
+.patent/
 
 # Agent state
 .qwen/

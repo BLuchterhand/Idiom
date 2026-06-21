@@ -129,6 +129,7 @@ echo "==> running docker container (ubuntu:24.04, ${GOARCH})"
 docker run --rm \
   -e VERSION="${VERSION}" \
   -v "${script_dir}/test-install-entrypoint.sh:/entrypoint.sh:ro" \
+  -v "${script_dir}/test-post-install-harness.py:/test-post-install-harness.py:ro" \
   -v "${repo_root}/install.sh:/install.sh:ro" \
   -v "${repo_root}/install-tools.sh:/install-tools.sh:ro" \
   -v "${dist}:/dist:ro" \
