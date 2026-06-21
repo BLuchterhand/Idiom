@@ -1173,7 +1173,7 @@ func (p *TurnPhaseContractEvent) normalize() {
 	p.PermissionProfile = strings.TrimSpace(p.PermissionProfile)
 	p.AllowedTools = compactStrings(p.AllowedTools)
 	p.HiddenTools = compactStrings(p.HiddenTools)
-	p.RequiredNext = compactStrings(p.RequiredNext)
+	p.RequiredNext = compactTurnPhaseRequiredNext(p.RequiredNext)
 	p.InvalidNext = compactStrings(p.InvalidNext)
 	p.StopConditions = compactStrings(p.StopConditions)
 	p.TerminalOutcomes = compactStrings(p.TerminalOutcomes)
@@ -1185,6 +1185,46 @@ func (p *TurnPhaseContractEvent) normalize() {
 	p.EvidenceState.normalize()
 
 	p.EnforcementMode = strings.TrimSpace(p.EnforcementMode)
+}
+
+func compactTurnPhaseRequiredNext(values []string) []string {
+	cleaned := compactStrings(values)
+	if len(cleaned) == 0 {
+		return nil
+	}
+
+	out := make([]string, 0, len(cleaned))
+	for _, value := range cleaned {
+		if turnPhaseRequiredNextIsSafe(value) {
+			out = append(out, value)
+			continue
+		}
+
+		out = append(out, "sanitized_required_next:"+shortEventHash(value))
+	}
+
+	return compactStrings(out)
+}
+
+func turnPhaseRequiredNextIsSafe(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	if len(value) > 160 {
+		return false
+	}
+	if looksLikeRawContractEventContent(value) {
+		return false
+	}
+
+	return true
+}
+
+func shortEventHash(value string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(value)))
+
+	return hex.EncodeToString(sum[:])[:16]
 }
 
 func (p *ModelProtocolEvent) normalize() {

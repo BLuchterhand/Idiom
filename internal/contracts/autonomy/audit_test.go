@@ -1030,6 +1030,15 @@ func TestAuditEventsFlagsTurnPhaseContradictoryToolAction(t *testing.T) {
 	if !hasEventAuditFinding(report, "turn_phase_contract_contradiction") || report.AllClear {
 		t.Fatalf("expected contradiction finding and all_clear=false, all_clear=%v findings=%#v", report.AllClear, report.Findings)
 	}
+
+	finding := eventAuditFindingByID(report, "turn_phase_contract_contradiction")
+	if finding == nil || finding.DetailCount != 1 || len(finding.Details) != 1 {
+		t.Fatalf("expected contradiction finding details, got %#v", finding)
+	}
+	detail := finding.Details[0]
+	if detail.ToolName != "read_file" || detail.ActionClass != "read" || detail.PhaseID != "plan_execute.submit_ready.textual" {
+		t.Fatalf("unexpected contradiction detail: %#v", detail)
+	}
 }
 
 func TestAuditEventsAllowsTextualPhaseCallableToolsWhenActionIsExpressible(t *testing.T) {
@@ -1842,8 +1851,47 @@ func TestAuditEventsReportsReplayIntentMissingPayloadsAndPrivacy(t *testing.T) {
 		t.Fatalf("expected privacy finding, got %#v", report.Findings)
 	}
 
+	finding := eventAuditFindingByID(report, "contract_event_privacy_forbidden_raw_content")
+	if finding == nil || finding.DetailCount == 0 || len(finding.Details) == 0 {
+		t.Fatalf("expected privacy finding details, got %#v", finding)
+	}
+	if finding.Details[0].Field != "policy.arguments_summary" || finding.Details[0].Reason == "" {
+		t.Fatalf("unexpected privacy detail: %#v", finding.Details[0])
+	}
+
 	if report.ReplayClassification.Classification != ReplayClassificationNonReplayable {
 		t.Fatalf("privacy markers should make replay non-replayable, got %#v", report.ReplayClassification)
+	}
+}
+
+func TestTurnPhaseRequiredNextNormalizesUnsafeProseForReplayPrivacy(t *testing.T) {
+	contract := newEventTestPhaseContract(t)
+	occurredAt := time.Date(2026, 5, 13, 21, 0, 0, 0, time.UTC)
+	presented := mustAutonomyEvent(NewContractPresentedEvent(contract, ContractLifecycleEvent{
+		Reason: "turn_phase_contract",
+		TurnPhaseContract: &TurnPhaseContractEvent{
+			SchemaVersion: "idiom.turn_phase_contract.v1",
+			PhaseID:       "main",
+			RequiredNext: []string{
+				"raw_prompt: customer-acme token=SECRET " + strings.Repeat("x", 520),
+				"source_body_required",
+			},
+		},
+	}, occurredAt, 1))
+
+	got := presented.Lifecycle.TurnPhaseContract.RequiredNext
+	if len(got) != 2 || got[0] == "" || !strings.HasPrefix(got[0], "sanitized_required_next:") || got[1] != "source_body_required" {
+		t.Fatalf("unsafe required_next should be replaced with stable ref, got %#v", got)
+	}
+	if strings.Contains(strings.Join(got, "\n"), "customer-acme") || strings.Contains(strings.Join(got, "\n"), "SECRET") {
+		t.Fatalf("required_next leaked raw content after normalization: %#v", got)
+	}
+
+	report := AuditEvents([]Event{presented}, EventAuditOptions{})
+	if report.PrivacyChecks.FieldCounts["lifecycle.turn_phase_contract.required_next"] != 0 ||
+		hasEventAuditFinding(report, "contract_event_privacy_forbidden_raw_content") {
+
+		t.Fatalf("normalized required_next should not trigger privacy finding, privacy=%#v findings=%#v", report.PrivacyChecks, report.Findings)
 	}
 }
 
@@ -1856,13 +1904,18 @@ func mustAutonomyEvent(event Event, err error) Event {
 }
 
 func hasEventAuditFinding(report EventAuditReport, id string) bool {
+	return eventAuditFindingByID(report, id) != nil
+}
+
+func eventAuditFindingByID(report EventAuditReport, id string) *EventAuditFinding {
 	for _, finding := range report.Findings {
 		if finding.ID == id {
-			return true
+			finding := finding
+			return &finding
 		}
 	}
 
-	return false
+	return nil
 }
 
 func hasTurnPhaseInvariant(issues []TurnPhaseContradiction, invariantID string, reasonContains string) bool {

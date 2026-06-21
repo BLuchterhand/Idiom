@@ -17,8 +17,15 @@ The record uses `schema_version: idiom.headless.run_completion.v1` and includes
 the run id, prompt and answer hashes, output mode, exit code, terminal class,
 policy overrides, checks, and artifact paths. `--summary-out` writes the same
 record to a caller-selected path. The durable record does not persist the raw
-prompt or answer. `--output=json` includes the final answer on stdout for the
-calling process. `--patch-out` writes `git diff --binary`.
+prompt or answer. Caller-supplied run ids are validated before they can become
+artifact paths. `--output=json` includes the final answer on stdout for the
+calling process. `--patch-out` writes `git diff --binary` under the workspace
+command timeout.
+
+Legacy `idiom -prompt ... -json` and `idiom -turns-file ... -json` remain
+compatibility surfaces. They now write the same completion-record schema, but
+new automation should prefer `idiom run` because that surface exposes the full
+policy and artifact controls.
 
 Headless JSONL events now include
 `schema_version: idiom.headless.event.v1`. The event stream remains the existing

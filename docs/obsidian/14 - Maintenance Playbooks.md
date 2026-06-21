@@ -36,7 +36,7 @@ Use this when investigating agent behavior, readiness, tool loops, prompts,
 recovery, or context packets.
 
 1. Run an actual `idiom` binary investigation first, ideally
-   `idiom -prompt '<debug request>' -json`, and ask it to inspect the newest
+   `idiom run --prompt '<debug request>' --json`, and ask it to inspect the newest
    relevant conversation and telemetry logs.
 2. If the binary investigation is unhelpful, misrouted, looping, stale, or
    garbage, classify that output from its route events, tool sequence, stop

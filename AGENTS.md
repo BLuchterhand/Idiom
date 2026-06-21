@@ -121,8 +121,9 @@ tradeoffs.
   session/failure id and blocker, then use the smallest external fallback needed
   to continue.
 - For behavior-debugging and broad harness investigations, run through the
-  actual `idiom` binary first, preferably headless CLI such as `idiom -prompt
-  '<investigation>' -json` or `idiom -turns-file <file> -json`. Treat the
+  actual `idiom` binary first, preferably the durable headless CLI such as
+  `idiom run --prompt '<investigation>' --json`. Use legacy `idiom -prompt
+  '<investigation>' -json` only for compatibility checks. Treat the
   binary's route, tool sequence, answer, and log as the first diagnostic
   artifact before reaching for lower-level workspace tools or raw shell search.
   For simple literal lookups or already-localized source review, use the
@@ -295,8 +296,9 @@ When invoked via CLI, the tool result is printed as JSON with `Tool`, `Summary`,
 When investigating this codebase, the right order is:
 
 1. **Actual `idiom` binary for behavior debugging or broad harness
-   investigations** with the investigation prompt, preferably `idiom -prompt
-   '<question>' -json` or `idiom -turns-file <file> -json`. Inspect its route,
+   investigations** with the investigation prompt, preferably
+   `idiom run --prompt '<question>' --json`. Use legacy `idiom -prompt
+   '<question>' -json` only for compatibility checks. Inspect its route,
    tools, answer, and log before using lower-level tools. For simple literal
    lookups or already-localized source review, skip directly to the narrow exact
    tool.

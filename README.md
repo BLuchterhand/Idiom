@@ -305,7 +305,7 @@ If you want the server without the TUI:
 Headless one-shot prompt with structured JSONL events on stdout:
 
 ```bash
-./idiom --prompt "summarize internal/runtime/agent/runner.go" --json
+./idiom run --prompt "summarize internal/runtime/agent/runner.go" --json
 ```
 
 Generate a standalone artifact while keeping the event stream separate:

@@ -214,6 +214,39 @@ func TestRunRejectsInvalidPolicyFlags(t *testing.T) {
 	}
 }
 
+func TestRunRejectsInvalidSessionIDsBeforeModelExecution(t *testing.T) {
+	root := t.TempDir()
+	configPath := writeHeadlessTestConfig(t, root)
+
+	tests := []string{
+		"../escape",
+		"a/b",
+		`a\b`,
+		strings.Repeat("a", 129),
+	}
+	for _, sessionID := range tests {
+		t.Run(sessionID, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := Run([]string{
+				"--config", configPath,
+				"--prompt", "hello",
+				"--output", "json",
+				"--session", sessionID,
+			}, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+				t.Fatal("prompt runner should not run for invalid session id")
+				return "", nil
+			}, nil)
+
+			if code != 2 {
+				t.Fatalf("exit = %d, want 2 stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "invalid run id") {
+				t.Fatalf("stderr should explain invalid run id, got %q", stderr.String())
+			}
+		})
+	}
+}
+
 func TestRunFailsWhenCompletionCannotBeSaved(t *testing.T) {
 	root := t.TempDir()
 	configPath := writeHeadlessTestConfig(t, root)
@@ -240,6 +273,9 @@ func TestRunFailsWhenCompletionCannotBeSaved(t *testing.T) {
 	}
 	if output.TerminalClass != "artifact_failed" || output.Error == "" {
 		t.Fatalf("unexpected artifact failure record: %#v", output.RunCompletionRecord)
+	}
+	if output.Artifacts["completion"] != "" {
+		t.Fatalf("failed completion save must not advertise a saved completion artifact: %#v", output.Artifacts)
 	}
 }
 

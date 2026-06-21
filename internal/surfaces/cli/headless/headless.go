@@ -4,8 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -22,69 +20,23 @@ import (
 
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
+	"idiom/internal/surfaces/cli/runrecord"
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
 	"idiom/internal/surfaces/tui/app"
 	"idiom/internal/workflows/planexecute"
 )
 
 const (
-	RunCompletionSchemaVersion = "idiom.headless.run_completion.v1"
-	RunCompletionRecordType    = "idiom.headless.run_completion"
+	RunCompletionSchemaVersion = runrecord.RunCompletionSchemaVersion
+	RunCompletionRecordType    = runrecord.RunCompletionRecordType
 )
 
 type PromptRunner func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error)
 
-type RunCompletionRecord struct {
-	SchemaVersion    string              `json:"schema_version"`
-	Type             string              `json:"type"`
-	RunID            string              `json:"run_id"`
-	SessionID        string              `json:"session_id,omitempty"`
-	DebugLogPath     string              `json:"debug_log_path,omitempty"`
-	PromptSHA256     string              `json:"prompt_sha256,omitempty"`
-	AnswerSHA256     string              `json:"answer_sha256,omitempty"`
-	OutputMode       string              `json:"output_mode"`
-	OutputSchema     string              `json:"output_schema,omitempty"`
-	ExitCode         int                 `json:"exit_code"`
-	TerminalClass    string              `json:"terminal_class"`
-	Error            string              `json:"error,omitempty"`
-	ConfigPath       string              `json:"config_path,omitempty"`
-	WorkspaceRoot    string              `json:"workspace_root,omitempty"`
-	Policy           HeadlessPolicy      `json:"policy"`
-	Artifacts        map[string]string   `json:"artifacts,omitempty"`
-	Checks           []HeadlessCheck     `json:"checks,omitempty"`
-	StartedAt        time.Time           `json:"started_at"`
-	CompletedAt      time.Time           `json:"completed_at"`
-	DurationMS       int64               `json:"duration_ms"`
-	Implementation   string              `json:"implementation"`
-	UnsupportedFlags []string            `json:"unsupported_flags,omitempty"`
-	Metadata         map[string][]string `json:"metadata,omitempty"`
-}
-
-type RunOutputRecord struct {
-	RunCompletionRecord
-	Answer string `json:"answer,omitempty"`
-}
-
-type HeadlessPolicy struct {
-	PermissionProfile string   `json:"permission_profile,omitempty"`
-	ApprovalPolicy    string   `json:"approval_policy,omitempty"`
-	Ephemeral         bool     `json:"ephemeral,omitempty"`
-	AllowTools        []string `json:"allow_tools,omitempty"`
-	DenyTools         []string `json:"deny_tools,omitempty"`
-	AllowWrites       []string `json:"allow_writes,omitempty"`
-	DenyPaths         []string `json:"deny_paths,omitempty"`
-	MaxToolSteps      int      `json:"max_tool_steps,omitempty"`
-	Timeout           string   `json:"timeout,omitempty"`
-}
-
-type HeadlessCheck struct {
-	Name       string `json:"name"`
-	Command    string `json:"command"`
-	ExitCode   int    `json:"exit_code"`
-	Stdout     string `json:"stdout,omitempty"`
-	Stderr     string `json:"stderr,omitempty"`
-	DurationMS int64  `json:"duration_ms"`
-}
+type RunCompletionRecord = runrecord.RunCompletionRecord
+type RunOutputRecord = runrecord.RunOutputRecord
+type HeadlessPolicy = runrecord.HeadlessPolicy
+type HeadlessCheck = runrecord.HeadlessCheck
 
 type stringList []string
 
@@ -153,7 +105,12 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 
 	runID := strings.TrimSpace(req.SessionID)
 	if runID == "" {
-		runID = newRunID()
+		runID = runrecord.NewRunID()
+	}
+	if err := runrecord.ValidateRunID(runID); err != nil {
+		fmt.Fprintln(stderr, err)
+
+		return 2
 	}
 	cfg.Workspace.SessionID = runID
 
@@ -163,7 +120,7 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 		Type:             RunCompletionRecordType,
 		RunID:            runID,
 		SessionID:        runID,
-		PromptSHA256:     sha256Hex(req.Prompt),
+		PromptSHA256:     runrecord.SHA256Hex(req.Prompt),
 		OutputMode:       req.OutputMode,
 		OutputSchema:     strings.TrimSpace(req.OutputSchema),
 		ConfigPath:       filepath.Clean(req.ConfigPath),
@@ -184,7 +141,7 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 		Resume:     req.Resume,
 		Telemetry:  rec,
 	}, runWriter)
-	record.AnswerSHA256 = sha256Hex(answer)
+	record.AnswerSHA256 = runrecord.SHA256Hex(answer)
 
 	exitCode := 0
 	if runErr != nil {
@@ -223,7 +180,7 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 			record.TerminalClass = "artifact_failed"
 			record.Error = err.Error()
 		} else if err == nil {
-			addArtifact(&record, "patch", req.PatchOut)
+			runrecord.AddArtifact(&record, "patch", req.PatchOut)
 		}
 	}
 
@@ -247,10 +204,12 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 		record.TerminalClass = "degraded"
 	}
 
-	addArtifact(&record, "completion", RunCompletionRelPath(record.RunID))
-	completionPath, saveErr := SaveRunCompletionRecord(workspaceRoot(cfg), record)
+	completionRecord := record
+	runrecord.AddArtifact(&completionRecord, "completion", runrecord.RunCompletionRelPath(record.RunID))
+	completionPath, saveErr := runrecord.SaveRunCompletionRecord(workspaceRoot(cfg), completionRecord)
 	if saveErr == nil {
-		addArtifact(&record, "completion", completionPath)
+		record = completionRecord
+		runrecord.AddArtifact(&record, "completion", completionPath)
 	} else if record.Error == "" {
 		exitCode = 1
 		record.ExitCode = exitCode
@@ -259,7 +218,7 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 	}
 
 	if req.SummaryOut != "" {
-		addArtifact(&record, "summary", req.SummaryOut)
+		runrecord.AddArtifact(&record, "summary", req.SummaryOut)
 		if err := writeJSONFile(req.SummaryOut, record); err != nil {
 			fmt.Fprintln(stderr, err)
 
@@ -951,31 +910,6 @@ func scanJSONL(path string, visit func(map[string]any)) error {
 	return nil
 }
 
-func SaveRunCompletionRecord(root string, record RunCompletionRecord) (string, error) {
-	if strings.TrimSpace(root) == "" {
-		return "", fmt.Errorf("workspace root is required")
-	}
-	if strings.TrimSpace(record.RunID) == "" {
-		return "", fmt.Errorf("run id is required")
-	}
-
-	relPath := RunCompletionRelPath(record.RunID)
-	fullPath := filepath.Join(root, filepath.FromSlash(relPath))
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-		return "", fmt.Errorf("mkdir headless run completion dir: %w", err)
-	}
-
-	if err := writeJSONFile(fullPath, record); err != nil {
-		return "", err
-	}
-
-	return relPath, nil
-}
-
-func RunCompletionRelPath(runID string) string {
-	return filepath.ToSlash(filepath.Join(".idiom", "runs", strings.TrimSpace(runID)+".completion.json"))
-}
-
 func validateOutputSchema(answer string, schemaVersion string) error {
 	schemaVersion = strings.TrimSpace(schemaVersion)
 	if schemaVersion == "" {
@@ -1074,10 +1008,22 @@ func runCommand(ctx context.Context, name string, command string, cfg config.Con
 }
 
 func writeGitDiff(path string, cfg config.Config) error {
-	cmd := exec.Command(shellName(cfg), "-c", "git diff --binary")
+	timeout := time.Duration(cfg.Workspace.CommandTimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = 120 * time.Second
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, shellName(cfg), "-c", "git diff --binary")
 	cmd.Dir = commandDir(cfg)
 	data, err := cmd.Output()
 	if err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("git diff --binary: %w", ctx.Err())
+		}
+
 		return fmt.Errorf("git diff --binary: %w", err)
 	}
 
@@ -1126,27 +1072,6 @@ func workspaceRoot(cfg config.Config) string {
 	}
 
 	return commandDir(cfg)
-}
-
-func addArtifact(record *RunCompletionRecord, name string, path string) {
-	if record.Artifacts == nil {
-		record.Artifacts = map[string]string{}
-	}
-	record.Artifacts[name] = path
-}
-
-func newRunID() string {
-	return time.Now().UTC().Format("20060102-150405.000")
-}
-
-func sha256Hex(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	sum := sha256.Sum256([]byte(value))
-
-	return hex.EncodeToString(sum[:])
 }
 
 func stdinHasData(r io.Reader) bool {

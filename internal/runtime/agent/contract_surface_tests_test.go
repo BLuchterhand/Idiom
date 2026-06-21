@@ -9524,6 +9524,32 @@ func TestDeriveTurnPhaseContractReadOnlyDirectAnswerWithoutReadinessRequiresEvid
 	assertNotContains(t, contract.AllowedTools, "edit_file")
 }
 
+func TestDeriveTurnPhaseContractReadOnlyOpenEvidenceBlocksFinalAnswer(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "direct_answer",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"search_content", "read_file", "edit_file"},
+		},
+		ResidualBlockers:   []string{"context_pack blocked by context freshness"},
+		VerificationStatus: "failed",
+	})
+
+	if contract.Phase != "read_only_evidence_pending" {
+		t.Fatalf("Phase = %q, want read_only_evidence_pending", contract.Phase)
+	}
+
+	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
+	assertNotContains(t, contract.RuntimeCall.ExpressibleActionClasses, actionFinalAnswer)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
+	assertNotContains(t, contract.ActionPolicy.TerminalResponseShapes, "final answer")
+	assertNotContains(t, contract.TerminalOutcomes, "final answer")
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionBlocker)
+}
+
 func TestDeriveTurnPhaseContractReadOnlyWorkspaceAllowsAnswerAfterEvidence(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{

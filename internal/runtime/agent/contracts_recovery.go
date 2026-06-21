@@ -911,6 +911,7 @@ func deriveTurnPhaseContract(input TurnPhaseContractInput) TurnPhaseContract {
 	contract.EvidenceState.SourceBodyObligations = modelProtocolSourceBodyObligations(brief, input.Results, contract)
 	contract.EvidenceState.CompletedGitHistoryPaths = modelProtocolCompletedGitHistoryPaths(brief, input.Results)
 	contract.EvidenceState.PendingGitHistoryPaths = modelProtocolPendingGitHistoryPaths(brief, input.Results)
+	pruneFinalAnswerWhenEvidenceOpen(&contract)
 
 	if phaseContractTextualOnly(input, contract) {
 		contract.AllowedTools = nil
@@ -960,6 +961,18 @@ func deriveTurnPhaseContract(input TurnPhaseContractInput) TurnPhaseContract {
 	}
 
 	return contract
+}
+
+func pruneFinalAnswerWhenEvidenceOpen(contract *TurnPhaseContract) {
+	if contract == nil || !phaseEvidenceHasOpenObligation(contract.EvidenceState) {
+		return
+	}
+
+	contract.ActionPolicy.AllowedActionClasses = removePhaseActionClass(contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
+	contract.RuntimeCall.ExpressibleActionClasses = removePhaseActionClass(contract.RuntimeCall.ExpressibleActionClasses, actionFinalAnswer)
+	contract.TerminalOutcomes = removePhaseTerminalShape(contract.TerminalOutcomes, "final answer")
+	contract.ActionPolicy.TerminalResponseShapes = removePhaseTerminalShape(contract.ActionPolicy.TerminalResponseShapes, "final answer")
+	contract.ActionPolicy.InvalidActionClasses = append(contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
 }
 
 func activeSurfaceProvided(surface ActiveSurface) bool {
@@ -1773,6 +1786,20 @@ func removePhaseActionClass(classes []string, remove string) []string {
 		}
 
 		out = append(out, class)
+	}
+
+	return util.Unique(out)
+}
+
+func removePhaseTerminalShape(shapes []string, remove string) []string {
+	var out []string
+
+	for _, shape := range shapes {
+		if strings.TrimSpace(shape) == remove {
+			continue
+		}
+
+		out = append(out, shape)
 	}
 
 	return util.Unique(out)

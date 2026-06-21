@@ -308,11 +308,29 @@ type SidecarToolCorrelationIssue struct {
 }
 
 type EventAuditFinding struct {
-	ID          string   `json:"id"`
-	Severity    string   `json:"severity"`
-	Evidence    string   `json:"evidence"`
-	EventIDs    []string `json:"event_ids,omitempty"`
-	ContractIDs []string `json:"contract_ids,omitempty"`
+	ID          string                    `json:"id"`
+	Severity    string                    `json:"severity"`
+	Evidence    string                    `json:"evidence"`
+	EventIDs    []string                  `json:"event_ids,omitempty"`
+	ContractIDs []string                  `json:"contract_ids,omitempty"`
+	DetailCount int                       `json:"detail_count,omitempty"`
+	Details     []EventAuditFindingDetail `json:"details,omitempty"`
+}
+
+type EventAuditFindingDetail struct {
+	EventID     string `json:"event_id,omitempty"`
+	Type        string `json:"type,omitempty"`
+	Sequence    int64  `json:"sequence,omitempty"`
+	ContractID  string `json:"contract_id,omitempty"`
+	PhaseID     string `json:"phase_id,omitempty"`
+	ModelCallID string `json:"model_call_id,omitempty"`
+	SurfaceID   string `json:"surface_id,omitempty"`
+	SurfacePair string `json:"surface_pair,omitempty"`
+	InvariantID string `json:"invariant_id,omitempty"`
+	ToolName    string `json:"tool_name,omitempty"`
+	ActionClass string `json:"action_class,omitempty"`
+	Field       string `json:"field,omitempty"`
+	Reason      string `json:"reason,omitempty"`
 }
 
 type eventAuditState struct {
@@ -1606,6 +1624,8 @@ func (s *eventAuditState) addFindings() {
 			Evidence:    fmt.Sprintf("%d turn phase contract contradiction(s)", len(issues)),
 			EventIDs:    eventIDsFromTurnPhaseContradictions(issues),
 			ContractIDs: contractIDsFromTurnPhaseContradictions(issues),
+			DetailCount: len(issues),
+			Details:     eventAuditDetailsFromTurnPhaseContradictions(issues, 25),
 		})
 	}
 
@@ -1666,6 +1686,8 @@ func (s *eventAuditState) addFindings() {
 			Evidence:    fmt.Sprintf("%d forbidden raw-content field(s) or value marker(s) in autonomy event metadata", len(refs)),
 			EventIDs:    eventIDsFromPrivacyRefs(refs),
 			ContractIDs: contractIDsFromPrivacyRefs(refs),
+			DetailCount: len(refs),
+			Details:     eventAuditDetailsFromPrivacyRefs(refs, 25),
 		})
 	}
 }
@@ -2319,4 +2341,56 @@ func contractIDsFromPrivacyRefs(refs []ReplayPrivacyRef) []string {
 	}
 
 	return sortedKeys(set)
+}
+
+func eventAuditDetailsFromTurnPhaseContradictions(issues []TurnPhaseContradiction, limit int) []EventAuditFindingDetail {
+	if limit <= 0 || len(issues) == 0 {
+		return nil
+	}
+	if len(issues) > limit {
+		issues = issues[:limit]
+	}
+
+	details := make([]EventAuditFindingDetail, 0, len(issues))
+	for _, issue := range issues {
+		details = append(details, EventAuditFindingDetail{
+			EventID:     issue.EventID,
+			Type:        issue.Type,
+			Sequence:    issue.Sequence,
+			ContractID:  issue.ContractID,
+			PhaseID:     issue.PhaseID,
+			ModelCallID: issue.ModelCallID,
+			SurfaceID:   issue.SurfaceID,
+			SurfacePair: issue.SurfacePair,
+			InvariantID: issue.InvariantID,
+			ToolName:    issue.ToolName,
+			ActionClass: issue.ActionClass,
+			Reason:      issue.Reason,
+		})
+	}
+
+	return details
+}
+
+func eventAuditDetailsFromPrivacyRefs(refs []ReplayPrivacyRef, limit int) []EventAuditFindingDetail {
+	if limit <= 0 || len(refs) == 0 {
+		return nil
+	}
+	if len(refs) > limit {
+		refs = refs[:limit]
+	}
+
+	details := make([]EventAuditFindingDetail, 0, len(refs))
+	for _, ref := range refs {
+		details = append(details, EventAuditFindingDetail{
+			EventID:    ref.EventID,
+			Type:       ref.Type,
+			Sequence:   ref.Sequence,
+			ContractID: ref.ContractID,
+			Field:      ref.Field,
+			Reason:     ref.Reason,
+		})
+	}
+
+	return details
 }

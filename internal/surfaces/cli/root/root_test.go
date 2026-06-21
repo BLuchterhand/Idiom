@@ -14,6 +14,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
+	"idiom/internal/surfaces/cli/runrecord"
 	"idiom/internal/workflows/recovery"
 )
 
@@ -23,7 +24,8 @@ func nopPrompts(config.Config, []string, runOptions, io.Writer) ([]string, error
 }
 
 func TestRunPromptModeUsesInjectedRunner(t *testing.T) {
-	configPath := writeMainConfig(t)
+	root := t.TempDir()
+	configPath := writeMainConfigRoot(t, root)
 
 	var (
 		stdout, stderr bytes.Buffer
@@ -65,6 +67,18 @@ func TestRunPromptModeUsesInjectedRunner(t *testing.T) {
 
 	if gotOpts.JSONEvents || gotOpts.Resume != "" {
 		t.Fatalf("opts should default to empty: %#v", gotOpts)
+	}
+
+	record := readSingleLegacyRunCompletion(t, root)
+	if record.SchemaVersion != runrecord.RunCompletionSchemaVersion ||
+		record.Type != runrecord.RunCompletionRecordType ||
+		record.Implementation != "idiom --prompt" ||
+		record.TerminalClass != "completed" ||
+		record.OutputMode != "text" {
+		t.Fatalf("unexpected legacy completion record: %#v", record)
+	}
+	if record.AnswerSHA256 == "" || record.PromptSHA256 == "" {
+		t.Fatalf("legacy completion should carry hashes without raw content: %#v", record)
 	}
 }
 
@@ -137,6 +151,34 @@ func TestRunPromptModeForwardsResume(t *testing.T) {
 
 	if gotOpts.Resume != "20260101-000000.000" {
 		t.Fatalf("resume id not forwarded: %#v", gotOpts)
+	}
+}
+
+func TestRunPromptModeWritesFailureCompletion(t *testing.T) {
+	root := t.TempDir()
+	configPath := writeMainConfigRoot(t, root)
+
+	var stdout, stderr bytes.Buffer
+	code := run(
+		[]string{"-config", configPath, "-prompt", "fail this"},
+		&stdout,
+		&stderr,
+		func(config.Config, string, runOptions, io.Writer) (string, error) {
+			return "", errors.New("prompt failed")
+		},
+		nopPrompts,
+		func(config.Config, runOptions) error { return nil },
+		func(config.Config, runOptions) error { return nil },
+		nopList,
+	)
+
+	if code != 1 || !strings.Contains(stderr.String(), "prompt failed") {
+		t.Fatalf("expected prompt failure, code=%d stderr=%s", code, stderr.String())
+	}
+
+	record := readSingleLegacyRunCompletion(t, root)
+	if record.TerminalClass != "failed" || record.ExitCode != 1 || !strings.Contains(record.Error, "prompt failed") {
+		t.Fatalf("unexpected failure completion: %#v", record)
 	}
 }
 
@@ -1123,14 +1165,7 @@ func writeMainConfig(t *testing.T) string {
 	t.Helper()
 
 	root := t.TempDir()
-	t.Setenv("IDIOM_QUEUE_SOCKET", filepath.Join(root, "missing-runner.sock"))
-
-	path := filepath.Join(root, "config.json")
-	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	return path
+	return writeMainConfigRoot(t, root)
 }
 
 func writeMainConfigRoot(t *testing.T, root string) string {
@@ -1150,6 +1185,33 @@ func writeMainConfigRoot(t *testing.T, root string) string {
 func stringFieldForTest(record map[string]any, key string) string {
 	value, _ := record[key].(string)
 	return value
+}
+
+func readSingleLegacyRunCompletion(t *testing.T, root string) runrecord.RunCompletionRecord {
+	t.Helper()
+
+	matches, err := filepath.Glob(filepath.Join(root, ".idiom", "runs", "*.completion.json"))
+	if err != nil {
+		t.Fatalf("glob completion records: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected one completion record under %s, got %#v", root, matches)
+	}
+
+	body, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatalf("read completion record: %v", err)
+	}
+	if bytes.Contains(body, []byte("answer text")) || bytes.Contains(body, []byte("explain routing")) {
+		t.Fatalf("completion record should not contain raw prompt or answer: %s", string(body))
+	}
+
+	var record runrecord.RunCompletionRecord
+	if err := json.Unmarshal(body, &record); err != nil {
+		t.Fatalf("decode completion record: %v", err)
+	}
+
+	return record
 }
 
 func readMainTelemetryRecords(t *testing.T, path string) []map[string]any {

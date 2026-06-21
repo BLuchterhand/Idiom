@@ -209,13 +209,15 @@ type harnessAuditRankerTrigger struct {
 }
 
 type harnessAuditFinding struct {
-	ID             string   `json:"id"`
-	Severity       string   `json:"severity"`
-	Evidence       string   `json:"evidence"`
-	Recommendation string   `json:"recommendation,omitempty"`
-	Tools          []string `json:"tools,omitempty"`
-	EventIDs       []string `json:"event_ids,omitempty"`
-	ContractIDs    []string `json:"contract_ids,omitempty"`
+	ID             string                             `json:"id"`
+	Severity       string                             `json:"severity"`
+	Evidence       string                             `json:"evidence"`
+	Recommendation string                             `json:"recommendation,omitempty"`
+	Tools          []string                           `json:"tools,omitempty"`
+	EventIDs       []string                           `json:"event_ids,omitempty"`
+	ContractIDs    []string                           `json:"contract_ids,omitempty"`
+	DetailCount    int                                `json:"detail_count,omitempty"`
+	Details        []autonomy.EventAuditFindingDetail `json:"details,omitempty"`
 }
 
 type harnessAuditToolSurface struct {
@@ -4016,10 +4018,25 @@ func contractCoverageFindings(report *autonomy.EventAuditReport) []harnessAuditF
 			Tools:          []string{"harness_audit"},
 			EventIDs:       boundedAuditIdentifiers(finding.EventIDs, 8),
 			ContractIDs:    boundedAuditIdentifiers(finding.ContractIDs, 8),
+			DetailCount:    finding.DetailCount,
+			Details:        boundedAuditFindingDetails(finding.Details, 8),
 		})
 	}
 
 	return findings
+}
+
+func boundedAuditFindingDetails(details []autonomy.EventAuditFindingDetail, limit int) []autonomy.EventAuditFindingDetail {
+	if limit <= 0 || len(details) == 0 {
+		return nil
+	}
+
+	out := append([]autonomy.EventAuditFindingDetail(nil), details...)
+	if len(out) > limit {
+		out = out[:limit]
+	}
+
+	return out
 }
 
 func contractCoverageFindingRecommendation(finding autonomy.EventAuditFinding) string {

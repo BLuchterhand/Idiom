@@ -395,6 +395,15 @@ func TestContractCoverageFindingsCarryActionableNonRawRefs(t *testing.T) {
 			Evidence:    "2 forbidden raw-content field(s) or value marker(s) in autonomy event metadata",
 			EventIDs:    []string{"event-z", "event-a", "event-a"},
 			ContractIDs: []string{"contract-b", "contract-a"},
+			DetailCount: 2,
+			Details: []autonomy.EventAuditFindingDetail{{
+				EventID:    "event-a",
+				Type:       "tool_policy_decision",
+				Sequence:   2,
+				ContractID: "contract-a",
+				Field:      "policy.arguments_summary",
+				Reason:     "raw content marker",
+			}},
 		}},
 	}
 
@@ -410,8 +419,19 @@ func TestContractCoverageFindingsCarryActionableNonRawRefs(t *testing.T) {
 	if got, want := finding.ContractIDs, []string{"contract-a", "contract-b"}; !slices.Equal(got, want) {
 		t.Fatalf("contract IDs should be bounded sorted refs, got %#v want %#v", got, want)
 	}
+	if finding.DetailCount != 2 ||
+		len(finding.Details) != 1 ||
+		finding.Details[0].Field != "policy.arguments_summary" ||
+		finding.Details[0].Reason != "raw content marker" {
+
+		t.Fatalf("finding should carry bounded source-owner detail refs, got %#v", finding)
+	}
 	for _, forbidden := range []string{"raw_prompt", "customer-acme", "SECRET"} {
-		if strings.Contains(finding.Recommendation, forbidden) || strings.Contains(strings.Join(finding.EventIDs, ","), forbidden) {
+		detailJSON, _ := json.Marshal(finding.Details)
+		if strings.Contains(finding.Recommendation, forbidden) ||
+			strings.Contains(strings.Join(finding.EventIDs, ","), forbidden) ||
+			strings.Contains(string(detailJSON), forbidden) {
+
 			t.Fatalf("finding leaked forbidden raw marker %q: %#v", forbidden, finding)
 		}
 	}

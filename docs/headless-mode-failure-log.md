@@ -23,20 +23,22 @@ completion record.
 
 Implementation status:
 
-- Fixed for the new `idiom run` surface in this branch.
+- Fixed for the new `idiom run` surface in this branch and for the legacy
+  compatibility `idiom -prompt` / `idiom -turns-file` dispatcher.
 - `idiom run` writes `.idiom/runs/<run-id>.completion.json` using
   `schema_version: idiom.headless.run_completion.v1`.
 - The record includes exit code, terminal class, policy overrides, checks, and
   artifact paths.
 - `--fail-on-degraded` lets CI reject requests that asked for a parity feature
   that is only recorded, not enforced.
+- The shared completion writer validates run ids before using them as artifact
+  names, so caller-supplied ids cannot escape `.idiom/runs`.
 
-Remaining follow-up:
+Compatibility note:
 
-Legacy `idiom -prompt ... -json` remains a compatibility path. New automation
-should use `idiom run`; if the legacy path stays supported for CI, it should
-delegate to the same completion-record writer instead of maintaining a separate
-contract.
+New automation should use `idiom run`. Legacy `idiom -prompt ... -json`
+remains supported for compatibility and now writes the same completion-record
+schema on success and model/runtime error.
 
 ## 2026-06-21: Review Found Incomplete Headless CLI Contracts
 
@@ -73,9 +75,12 @@ Implementation status:
   prompt and answer hashes only.
 - Completion-save failures now produce `terminal_class: artifact_failed` and
   a non-zero exit.
-- Lint, test, and commit commands use the workspace command timeout.
+- Lint, test, commit, and patch export commands use the workspace command
+  timeout.
 - `serve --once` and its single-connection listener were removed; server health
   handlers are tested directly.
+- Caller-supplied `--session` / run ids reject path components, `..`, spaces,
+  and overlong values before model execution.
 
 ## 2026-06-21: Harness Audit Reported Existing Contract/Audit Failures
 
@@ -107,29 +112,21 @@ turn-phase state is not a reliable audit source. Metadata carrying raw-content
 markers violates the audit privacy boundary even when the output is otherwise
 redacted.
 
-Implementation proposal:
-
-1. Add a redaction gate at autonomy event construction so metadata keys and
-   values are scrubbed before events enter logs or audit state. The gate should
-   reject or replace fields named like `raw`, `content`, `prompt`,
-   `transcript`, `body`, `excerpt`, and known raw-content marker values unless
-   the field is explicitly allowlisted as a count, hash, path, id, or boolean.
-2. Add source-owner details to `harness_audit` findings: event id, contract id,
-   event type, emitting package/function when known, and sanitized field path.
-   The current high-severity findings are actionable as evidence of a class of
-   failure, but not yet precise enough for a safe local patch.
-3. Reconcile turn-phase surface emission so `contract_presented`,
-   `model_exchange`, `readiness_state_updated`, and `turn_phase_surface_summary`
-   derive terminal/readiness/action state from one typed projection. Add a test
-   that a single synthetic turn cannot audit as both terminal-ready and
-   action-required for the same contract id.
-4. Add a focused audit regression fixture with one contradictory turn-phase
-   event and one raw-content metadata event, then assert both are reported with
-   sanitized, source-owner references.
-
 Implementation status:
 
-- Logged as follow-up work from the review.
-- Not patched in this headless branch because the audit payload exposes only
-  redacted ids for the high-severity findings; patching the suspected emitters
-  without source-owner evidence would risk a symptom fix.
+- Implemented.
+- `harness_audit` findings now carry bounded, sanitized `details` plus
+  `detail_count`, including source-owner fields such as event id, contract id,
+  phase id, surface pair, invariant id, field path, and reason.
+- `TurnPhaseContractEvent.required_next` now normalizes unsafe long/raw
+  model-facing prose into stable `sanitized_required_next:<hash>` refs before
+  event emission.
+- The generic turn-phase projection now prunes `final_answer` from allowed,
+  expressible, and terminal surfaces whenever the derived evidence state still
+  has open recovery, blocker, verification, product-workflow, or TDD evidence.
+- Regression tests cover sanitized finding details, required-next privacy
+  normalization, and final-answer pruning for open read-only evidence.
+- A fresh audit with the patched binary no longer reports
+  `contract_event_privacy_forbidden_raw_content` for current logs. Historical
+  logs may still retain old raw metadata evidence until they fall outside the
+  audit window.

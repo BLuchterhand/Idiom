@@ -22,6 +22,7 @@ import (
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/surfaces/cli/runrecord"
 	toolcmd "idiom/internal/surfaces/cli/tool"
 	"idiom/internal/surfaces/tui/app"
 	"idiom/internal/workflows/planexecute"
@@ -155,16 +156,50 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptR
 	}
 
 	if req.Mode == ApplicationRequestTurnsFile {
+		started := time.Now().UTC()
+		runID, runIDErr := ensureLegacyRunID(&cfg)
+		if runIDErr != nil {
+			fmt.Fprintln(stderr, runIDErr)
+
+			return 2
+		}
+
 		prompts, err := LoadPromptTurns(req.TurnsFile)
 		if err != nil {
+			record := legacyRunCompletionRecord(cfg, req, runID, started, "idiom --turns-file", "", nil)
+			record.ExitCode = 1
+			record.TerminalClass = "failed"
+			record.Error = err.Error()
+			if saveErr := saveLegacyRunCompletion(record); saveErr != nil {
+				fmt.Fprintln(stderr, saveErr)
+
+				return 1
+			}
 			fmt.Fprintln(stderr, err)
 
 			return 1
 		}
 
 		answers, err := promptsRun(cfg, prompts, req.Options, stdout)
+		record := legacyRunCompletionRecord(cfg, req, runID, started, "idiom --turns-file", strings.Join(prompts, "\n\n"), answers)
 		if err != nil {
+			record.ExitCode = 1
+			record.TerminalClass = "failed"
+			record.Error = err.Error()
+			if saveErr := saveLegacyRunCompletion(record); saveErr != nil {
+				fmt.Fprintln(stderr, saveErr)
+
+				return 1
+			}
 			fmt.Fprintln(stderr, err)
+
+			return 1
+		}
+
+		record.ExitCode = 0
+		record.TerminalClass = "completed"
+		if saveErr := saveLegacyRunCompletion(record); saveErr != nil {
+			fmt.Fprintln(stderr, saveErr)
 
 			return 1
 		}
@@ -179,9 +214,34 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptR
 	}
 
 	if req.Mode == ApplicationRequestPrompt {
+		started := time.Now().UTC()
+		runID, runIDErr := ensureLegacyRunID(&cfg)
+		if runIDErr != nil {
+			fmt.Fprintln(stderr, runIDErr)
+
+			return 2
+		}
+
 		answer, err := promptRun(cfg, req.Prompt, req.Options, stdout)
+		record := legacyRunCompletionRecord(cfg, req, runID, started, "idiom --prompt", req.Prompt, []string{answer})
 		if err != nil {
+			record.ExitCode = 1
+			record.TerminalClass = "failed"
+			record.Error = err.Error()
+			if saveErr := saveLegacyRunCompletion(record); saveErr != nil {
+				fmt.Fprintln(stderr, saveErr)
+
+				return 1
+			}
 			fmt.Fprintln(stderr, err)
+
+			return 1
+		}
+
+		record.ExitCode = 0
+		record.TerminalClass = "completed"
+		if saveErr := saveLegacyRunCompletion(record); saveErr != nil {
+			fmt.Fprintln(stderr, saveErr)
 
 			return 1
 		}
@@ -200,6 +260,70 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptR
 	}
 
 	return 0
+}
+
+func ensureLegacyRunID(cfg *config.Config) (string, error) {
+	runID := strings.TrimSpace(cfg.Workspace.SessionID)
+	if runID == "" {
+		runID = runrecord.NewRunID()
+	}
+	if err := runrecord.ValidateRunID(runID); err != nil {
+		return "", err
+	}
+
+	cfg.Workspace.SessionID = runID
+
+	return runID, nil
+}
+
+func legacyRunCompletionRecord(cfg config.Config, req ApplicationRequest, runID string, started time.Time, implementation string, prompt string, answers []string) runrecord.RunCompletionRecord {
+	outputMode := "text"
+	if req.Options.JSONEvents {
+		outputMode = "jsonl"
+	}
+
+	metadata := map[string][]string{
+		"legacy_mode": {string(req.Mode)},
+	}
+	if strings.TrimSpace(req.TurnsFile) != "" {
+		metadata["turns_file"] = []string{filepath.Clean(req.TurnsFile)}
+	}
+	if strings.TrimSpace(req.Options.Resume) != "" {
+		metadata["resume"] = []string{strings.TrimSpace(req.Options.Resume)}
+	}
+
+	root := strings.TrimSpace(cfg.Workspace.Root)
+	if root == "" {
+		root = "."
+	}
+
+	return runrecord.RunCompletionRecord{
+		SchemaVersion:  runrecord.RunCompletionSchemaVersion,
+		Type:           runrecord.RunCompletionRecordType,
+		RunID:          runID,
+		SessionID:      runID,
+		PromptSHA256:   runrecord.SHA256Hex(prompt),
+		AnswerSHA256:   runrecord.SHA256Hex(strings.Join(answers, "\n\n")),
+		OutputMode:     outputMode,
+		ConfigPath:     filepath.Clean(req.ConfigPath),
+		WorkspaceRoot:  root,
+		StartedAt:      started,
+		Implementation: implementation,
+		Metadata:       metadata,
+	}
+}
+
+func saveLegacyRunCompletion(record runrecord.RunCompletionRecord) error {
+	record.CompletedAt = time.Now().UTC()
+	record.DurationMS = record.CompletedAt.Sub(record.StartedAt).Milliseconds()
+
+	completionRecord := record
+	runrecord.AddArtifact(&completionRecord, "completion", runrecord.RunCompletionRelPath(record.RunID))
+	if _, err := runrecord.SaveRunCompletionRecord(record.WorkspaceRoot, completionRecord); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 type applicationRequestFlags struct {
