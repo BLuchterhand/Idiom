@@ -113,7 +113,8 @@ func TestFeaturePlannerTUIDirectAnswerResumesOpenQuestionSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runFeaturePlannerCommandOnce: %v", err)
 	}
-	if !strings.Contains(answer, "feature-planner: "+featureplanner.FeatureStatePlanningQuestion) {
+	if !strings.Contains(answer, "Feature planner needs your approval before it can continue.") ||
+		!strings.Contains(answer, "Proposed paths:") {
 		t.Fatalf("expected planning question answer, got:\n%s", answer)
 	}
 
@@ -422,7 +423,8 @@ func TestFeaturePlannerCommandKeepsInternalRecordsOutOfConversationMessages(t *t
 	if err != nil {
 		t.Fatalf("runFeaturePlannerCommandOnce: %v", err)
 	}
-	if !strings.Contains(answer, "feature-planner: "+featureplanner.FeatureStatePlanningQuestion) {
+	if !strings.Contains(answer, "Feature planner needs your approval before it can continue.") ||
+		!strings.Contains(answer, "Also provide the exact verification command for this project.") {
 		t.Fatalf("expected planning-question answer, got:\n%s", answer)
 	}
 
@@ -464,6 +466,50 @@ func featurePlannerInternalLogRole(role string) bool {
 	return strings.HasPrefix(role, "feature_planner_") ||
 		strings.HasPrefix(role, "idiom.feature_planner.") ||
 		strings.HasPrefix(role, "idiom.plan_execute.")
+}
+
+func TestFeaturePlannerTUIOperatorQuestionUsesApprovalPrompt(t *testing.T) {
+	state := featureplanner.NewState("question-session", "need scope", "", 3, time.Unix(1, 0).UTC())
+	state.Status = featureplanner.FeatureStatePlanningQuestion
+	state.Blockers = []string{
+		`atom 0 edit path "src/brain.py" is missing from the workspace and is not authorized as a new file`,
+	}
+	state.OpenQuestions = []featureplanner.PlannerQuestion{{
+		Status:            "open",
+		QuestionSummary:   "Approve greenfield scope",
+		AuthorityRequired: "operator_approval",
+		RequestedDecision: "Approve creating src/brain.py or revise scope.",
+		AffectedPaths:     []string{"src/brain.py", "tests/test_brain.py"},
+		AffectedFields:    []string{"new_file_authorization", "verification_command"},
+	}}
+
+	answer := formatFeaturePlannerTUIAnswer(state, ".idiom/feature-planner/question-session/state.json")
+	for _, want := range []string{
+		"Feature planner needs your approval before it can continue.",
+		"Question: Approve greenfield scope",
+		"Proposed paths:",
+		"- src/brain.py",
+		"- tests/test_brain.py",
+		"Also provide the exact verification command for this project.",
+		"Reply with approval, revised paths/setup, or rejection.",
+		"State saved at .idiom/feature-planner/question-session/state.json",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("TUI answer missing %q:\n%s", want, answer)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"feature-planner: planning-question-open",
+		"requested_decision:",
+		"blockers:",
+		"next:",
+		"atom 0 edit path",
+	} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("TUI answer leaked state-summary/internal text %q:\n%s", forbidden, answer)
+		}
+	}
 }
 
 func TestFeaturePlannerProductWriteEnvelopeExcludesContextEvidencePaths(t *testing.T) {
