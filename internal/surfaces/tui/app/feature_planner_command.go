@@ -429,7 +429,7 @@ func openDirectFeaturePlannerQuestions(state featureplanner.FeatureState) []feat
 func directFeaturePlannerQuestionInputLooksAnswer(question featureplanner.PlannerQuestion, input string) bool {
 	switch strings.TrimSpace(question.AuthorityRequired) {
 	case "operator_approval":
-		return featurePlannerOperatorReplyLooksIntentional(input) || directFeaturePlannerInputLooksPlanRevision(input)
+		return featurePlannerOperatorReplyLooksIntentional(input)
 	case "accepted_source":
 		return featurePlannerStructuredAnswerLooksIntentional(input)
 	default:
@@ -437,10 +437,70 @@ func directFeaturePlannerQuestionInputLooksAnswer(question featureplanner.Planne
 	}
 }
 
+type featurePlannerOperatorInputIntent string
+
+const (
+	featurePlannerOperatorInputNone     featurePlannerOperatorInputIntent = ""
+	featurePlannerOperatorInputDecision featurePlannerOperatorInputIntent = "decision"
+	featurePlannerOperatorInputRevision featurePlannerOperatorInputIntent = "revision"
+)
+
 func directFeaturePlannerInputLooksPlanRevision(input string) bool {
-	normalized := featurePlannerNormalizedOperatorInput(input)
-	if normalized == "" || strings.Contains(input, "?") {
-		return false
+	return classifyFeaturePlannerOperatorInput(input) == featurePlannerOperatorInputRevision
+}
+
+func classifyFeaturePlannerOperatorInput(input string) featurePlannerOperatorInputIntent {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" || strings.Contains(trimmed, "?") {
+		return featurePlannerOperatorInputNone
+	}
+
+	normalized := featurePlannerNormalizedOperatorInput(trimmed)
+	if normalized == "" {
+		return featurePlannerOperatorInputNone
+	}
+
+	for _, prefix := range []string{
+		"approve",
+		"approved",
+		"authorize",
+		"authorized",
+		"yes",
+		"yep",
+		"ok",
+		"okay",
+		"go ahead",
+		"proceed",
+		"continue",
+		"reject",
+		"rejected",
+		"deny",
+		"denied",
+		"no",
+		"nope",
+		"create",
+		"do not",
+		"don t",
+		"dont",
+		"don't",
+	} {
+		if normalized == prefix || strings.HasPrefix(normalized, prefix+" ") {
+			return featurePlannerOperatorInputDecision
+		}
+	}
+
+	for _, phrase := range []string{
+		" i approve ",
+		" i authorize ",
+		" you may ",
+		" ok to ",
+		" okay to ",
+		" create these ",
+		" create the ",
+	} {
+		if strings.Contains(" "+normalized+" ", phrase) {
+			return featurePlannerOperatorInputDecision
+		}
 	}
 
 	for _, prefix := range []string{
@@ -454,9 +514,11 @@ func directFeaturePlannerInputLooksPlanRevision(input string) bool {
 		"scope",
 		"expand",
 		"narrow",
+		"use",
+		"instead",
 	} {
 		if normalized == prefix || strings.HasPrefix(normalized, prefix+" ") {
-			return true
+			return featurePlannerOperatorInputRevision
 		}
 	}
 
@@ -471,13 +533,16 @@ func directFeaturePlannerInputLooksPlanRevision(input string) bool {
 		" change the scope ",
 		" make this ",
 		" make it ",
+		" use these ",
+		" use the ",
+		" instead ",
 	} {
 		if strings.Contains(" "+normalized+" ", phrase) {
-			return true
+			return featurePlannerOperatorInputRevision
 		}
 	}
 
-	return false
+	return featurePlannerOperatorInputNone
 }
 
 func featurePlannerGenericAnswerLooksIntentional(input string) bool {
@@ -509,61 +574,7 @@ func featurePlannerStructuredAnswerLooksIntentional(input string) bool {
 }
 
 func featurePlannerOperatorReplyLooksIntentional(input string) bool {
-	trimmed := strings.TrimSpace(input)
-	if trimmed == "" || strings.Contains(trimmed, "?") {
-		return false
-	}
-
-	normalized := featurePlannerNormalizedOperatorInput(trimmed)
-	for _, prefix := range []string{
-		"approve",
-		"approved",
-		"authorize",
-		"authorized",
-		"yes",
-		"yep",
-		"ok",
-		"okay",
-		"go ahead",
-		"proceed",
-		"continue",
-		"reject",
-		"rejected",
-		"deny",
-		"denied",
-		"no",
-		"nope",
-		"revise",
-		"use",
-		"create",
-		"do not",
-		"don t",
-		"dont",
-		"don't",
-		"instead",
-	} {
-		if normalized == prefix || strings.HasPrefix(normalized, prefix+" ") {
-			return true
-		}
-	}
-
-	for _, phrase := range []string{
-		" i approve ",
-		" i authorize ",
-		" you may ",
-		" ok to ",
-		" okay to ",
-		" use these ",
-		" use the ",
-		" create these ",
-		" create the ",
-	} {
-		if strings.Contains(" "+normalized+" ", phrase) {
-			return true
-		}
-	}
-
-	return false
+	return classifyFeaturePlannerOperatorInput(input) != featurePlannerOperatorInputNone
 }
 
 func featurePlannerNormalizedOperatorInput(input string) string {
