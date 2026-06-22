@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -12,6 +13,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
+	"idiom/internal/workflows/featureplanner"
 )
 
 // TestRehydratePlanStateRecoversLedgerAndHits drives the core resume
@@ -227,6 +229,250 @@ func TestResumeSessionRestoresHistoryPanelGovernance(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("resumed history missing %q:\n%s", want, view)
 		}
+	}
+}
+
+func TestResumeSessionRestoresDirectFeaturePlannerSession(t *testing.T) {
+	root := t.TempDir()
+	logDir := filepath.Join(root, "logs", "conversations")
+	sessionID := "feature-session"
+
+	state := featureplanner.NewState(sessionID, "Plan greenfield memory project.", "", 3, time.Unix(1, 0).UTC())
+	state.Status = featureplanner.FeatureStatePlanningQuestion
+	state.OpenQuestions = []featureplanner.PlannerQuestion{{
+		ID:                "question-new-files",
+		Status:            "open",
+		QuestionSummary:   "Approve greenfield scope",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "New files require operator approval.",
+		RequestedDecision: "Approve creating src/memory.py and tests/test_memory.py.",
+		AuthorityRequired: "operator_approval",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     []string{"src/memory.py", "tests/test_memory.py"},
+		AffectedFields:    []string{"new_file_authorization"},
+	}}
+	if _, err := featureplanner.SaveState(root, &state); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+
+	writeSessionLog(t, logDir, "resumed.jsonl", []string{
+		`{"type":"message","role":"user","content":"/feature-planner Plan greenfield memory project."}`,
+		`{"type":"message","role":"idiom.feature_planner.question_open","content":"feature-planner: planning-question-open\nstate: .idiom/feature-planner/feature-session/state.json\nquestion: Approve greenfield scope"}`,
+		`{"type":"message","role":"assistant","content":"Feature planner needs your approval before it can continue."}`,
+	})
+
+	m := snapshotModel(t, root)
+	m.cfg = config.Config{
+		Chat:      config.Chat{DebugLogDir: logDir, DebugLogMode: "redacted", ProjectRoot: root},
+		Workspace: config.Workspace{Root: root, CWD: root},
+	}
+	m.history.viewport = viewport.New(96, 24)
+
+	if err := m.ResumeSession("resumed"); err != nil {
+		t.Fatalf("ResumeSession: %v", err)
+	}
+
+	if m.directFeaturePlannerSessionID != sessionID {
+		t.Fatalf("direct feature-planner session = %q, want %q", m.directFeaturePlannerSessionID, sessionID)
+	}
+
+	if !m.directFeaturePlannerShouldConsumeOperatorInput("Approved.") {
+		t.Fatal("restored feature-planner session should consume explicit approval")
+	}
+	if m.directFeaturePlannerShouldConsumeOperatorInput("Can we discuss the plan first?") {
+		t.Fatal("restored feature-planner session should leave ordinary questions interactive")
+	}
+}
+
+func TestResumeSessionDoesNotReviveOlderFeaturePlannerWhenLatestIsClosed(t *testing.T) {
+	root := t.TempDir()
+	logDir := filepath.Join(root, "logs", "conversations")
+
+	oldState := featureplanner.NewState("old-open-session", "Old plan.", "", 3, time.Unix(1, 0).UTC())
+	oldState.Status = featureplanner.FeatureStatePlanningQuestion
+	oldState.OpenQuestions = []featureplanner.PlannerQuestion{{
+		ID:                "question-old",
+		Status:            "open",
+		QuestionSummary:   "Approve old scope",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "Old new files require approval.",
+		RequestedDecision: "Approve creating src/old.py.",
+		AuthorityRequired: "operator_approval",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     []string{"src/old.py"},
+		AffectedFields:    []string{"new_file_authorization"},
+	}}
+	if _, err := featureplanner.SaveState(root, &oldState); err != nil {
+		t.Fatalf("SaveState old: %v", err)
+	}
+
+	closedState := featureplanner.NewState("latest-complete-session", "Latest plan.", "", 3, time.Unix(2, 0).UTC())
+	closedState.Status = featureplanner.FeatureStateComplete
+	if _, err := featureplanner.SaveState(root, &closedState); err != nil {
+		t.Fatalf("SaveState latest: %v", err)
+	}
+
+	writeSessionLog(t, logDir, "resumed.jsonl", []string{
+		`{"type":"message","role":"assistant","content":"feature-planner: planning-question-open\nstate: .idiom/feature-planner/old-open-session/state.json"}`,
+		`{"type":"message","role":"assistant","content":"feature-planner: complete\nstate: .idiom/feature-planner/latest-complete-session/state.json"}`,
+	})
+
+	m := snapshotModel(t, root)
+	m.cfg = config.Config{
+		Chat:      config.Chat{DebugLogDir: logDir, DebugLogMode: "redacted", ProjectRoot: root},
+		Workspace: config.Workspace{Root: root, CWD: root},
+	}
+
+	if err := m.ResumeSession("resumed"); err != nil {
+		t.Fatalf("ResumeSession: %v", err)
+	}
+
+	if m.directFeaturePlannerSessionID != "" {
+		t.Fatalf("closed latest feature-planner state should clear active session, got %q", m.directFeaturePlannerSessionID)
+	}
+}
+
+func TestResumeSessionDoesNotReviveOlderFeaturePlannerWhenLatestIsMissing(t *testing.T) {
+	root := t.TempDir()
+	logDir := filepath.Join(root, "logs", "conversations")
+
+	oldState := featureplanner.NewState("old-open-session", "Old plan.", "", 3, time.Unix(1, 0).UTC())
+	oldState.Status = featureplanner.FeatureStatePlanningQuestion
+	oldState.OpenQuestions = []featureplanner.PlannerQuestion{{
+		ID:                "question-old",
+		Status:            "open",
+		QuestionSummary:   "Approve old scope",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "Old new files require approval.",
+		RequestedDecision: "Approve creating src/old.py.",
+		AuthorityRequired: "operator_approval",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     []string{"src/old.py"},
+		AffectedFields:    []string{"new_file_authorization"},
+	}}
+	if _, err := featureplanner.SaveState(root, &oldState); err != nil {
+		t.Fatalf("SaveState old: %v", err)
+	}
+
+	writeSessionLog(t, logDir, "resumed.jsonl", []string{
+		`{"type":"message","role":"assistant","content":"feature-planner: planning-question-open\nstate: .idiom/feature-planner/old-open-session/state.json"}`,
+		`{"type":"message","role":"assistant","content":"feature-planner: planning-question-open\nstate: .idiom/feature-planner/missing-latest-session/state.json"}`,
+	})
+
+	m := snapshotModel(t, root)
+	m.cfg = config.Config{
+		Chat:      config.Chat{DebugLogDir: logDir, DebugLogMode: "redacted", ProjectRoot: root},
+		Workspace: config.Workspace{Root: root, CWD: root},
+	}
+
+	if err := m.ResumeSession("resumed"); err != nil {
+		t.Fatalf("ResumeSession: %v", err)
+	}
+
+	if m.directFeaturePlannerSessionID != "" {
+		t.Fatalf("missing latest feature-planner state should clear active session, got %q", m.directFeaturePlannerSessionID)
+	}
+}
+
+func TestResumeSessionRestoresLatestOpenFeaturePlannerSession(t *testing.T) {
+	root := t.TempDir()
+	logDir := filepath.Join(root, "logs", "conversations")
+
+	oldState := featureplanner.NewState("old-open-session", "Old plan.", "", 3, time.Unix(1, 0).UTC())
+	oldState.Status = featureplanner.FeatureStatePlanningQuestion
+	oldState.OpenQuestions = []featureplanner.PlannerQuestion{{
+		ID:                "question-old",
+		Status:            "open",
+		QuestionSummary:   "Approve old scope",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "Old new files require approval.",
+		RequestedDecision: "Approve creating src/old.py.",
+		AuthorityRequired: "operator_approval",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     []string{"src/old.py"},
+		AffectedFields:    []string{"new_file_authorization"},
+	}}
+	if _, err := featureplanner.SaveState(root, &oldState); err != nil {
+		t.Fatalf("SaveState old: %v", err)
+	}
+
+	latestState := featureplanner.NewState("latest-open-session", "Latest plan.", "", 3, time.Unix(2, 0).UTC())
+	latestState.Status = featureplanner.FeatureStatePlanningQuestion
+	latestState.OpenQuestions = []featureplanner.PlannerQuestion{{
+		ID:                "question-latest",
+		Status:            "open",
+		QuestionSummary:   "Approve latest scope",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "Latest new files require approval.",
+		RequestedDecision: "Approve creating src/latest.py.",
+		AuthorityRequired: "operator_approval",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     []string{"src/latest.py"},
+		AffectedFields:    []string{"new_file_authorization"},
+	}}
+	if _, err := featureplanner.SaveState(root, &latestState); err != nil {
+		t.Fatalf("SaveState latest: %v", err)
+	}
+
+	writeSessionLog(t, logDir, "resumed.jsonl", []string{
+		`{"type":"message","role":"assistant","content":"feature-planner: planning-question-open\nstate: .idiom/feature-planner/old-open-session/state.json"}`,
+		`{"type":"message","role":"assistant","content":"feature-planner: planning-question-open\nstate: .idiom/feature-planner/latest-open-session/state.json"}`,
+	})
+
+	m := snapshotModel(t, root)
+	m.cfg = config.Config{
+		Chat:      config.Chat{DebugLogDir: logDir, DebugLogMode: "redacted", ProjectRoot: root},
+		Workspace: config.Workspace{Root: root, CWD: root},
+	}
+
+	if err := m.ResumeSession("resumed"); err != nil {
+		t.Fatalf("ResumeSession: %v", err)
+	}
+
+	if m.directFeaturePlannerSessionID != latestState.SessionID {
+		t.Fatalf("direct feature-planner session = %q, want latest %q", m.directFeaturePlannerSessionID, latestState.SessionID)
+	}
+}
+
+func TestResumeSessionIgnoresOutsideFeaturePlannerStatePath(t *testing.T) {
+	root := t.TempDir()
+	logDir := filepath.Join(root, "logs", "conversations")
+
+	state := featureplanner.NewState("outside-session", "Outside plan.", "", 3, time.Unix(1, 0).UTC())
+	state.Status = featureplanner.FeatureStatePlanningQuestion
+	state.OpenQuestions = []featureplanner.PlannerQuestion{{
+		ID:                "question-outside",
+		Status:            "open",
+		QuestionSummary:   "Approve outside scope",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "Outside new files require approval.",
+		RequestedDecision: "Approve creating src/outside.py.",
+		AuthorityRequired: "operator_approval",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     []string{"src/outside.py"},
+		AffectedFields:    []string{"new_file_authorization"},
+	}}
+	if _, err := featureplanner.SaveState(root, &state); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+
+	writeSessionLog(t, logDir, "resumed.jsonl", []string{
+		`{"type":"message","role":"user","content":"resume outside path"}`,
+		`{"type":"message","role":"assistant","content":"feature-planner state: /tmp/outside/.idiom/feature-planner/outside-session/state.json"}`,
+	})
+
+	m := snapshotModel(t, root)
+	m.cfg = config.Config{
+		Chat:      config.Chat{DebugLogDir: logDir, DebugLogMode: "redacted", ProjectRoot: root},
+		Workspace: config.Workspace{Root: root, CWD: root},
+	}
+
+	if err := m.ResumeSession("resumed"); err != nil {
+		t.Fatalf("ResumeSession: %v", err)
+	}
+
+	if m.directFeaturePlannerSessionID != "" {
+		t.Fatalf("outside transcript path should not restore active feature-planner session, got %q", m.directFeaturePlannerSessionID)
 	}
 }
 

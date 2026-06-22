@@ -6350,16 +6350,233 @@ func TestProductTDDJSONUsageErrors(t *testing.T) {
 	})
 
 	t.Run("missing mode flag", func(t *testing.T) {
-		assertUsageError(t, []string{"--json", "--effort-root", "."}, "tdd_missing_mode_flag", "mode", "exactly one of --plan-obligations or --evaluate-coverage is required")
+		assertUsageError(t, []string{"--json", "--effort-root", "."}, "tdd_missing_mode_flag", "mode", "exactly one of --plan-obligations, --evaluate-coverage, or --promote-coverage is required")
 	})
 
 	t.Run("multiple mode flags", func(t *testing.T) {
-		assertUsageError(t, []string{"--json", "--effort-root", ".", "--plan-obligations", "--evaluate-coverage"}, "tdd_multiple_mode_flags", "mode", "exactly one of --plan-obligations or --evaluate-coverage is required")
+		assertUsageError(t, []string{"--json", "--effort-root", ".", "--plan-obligations", "--evaluate-coverage"}, "tdd_multiple_mode_flags", "mode", "exactly one of --plan-obligations, --evaluate-coverage, or --promote-coverage is required")
 	})
 
 	t.Run("flag parse error", func(t *testing.T) {
 		assertUsageError(t, []string{"--json", "--unknown-flag"}, "tdd_flag_parse_error", "flags", "flag provided but not defined: -unknown-flag")
 	})
+}
+
+func TestProductTDDPromoteCoveragePreviewsAndWritesProjectedLedger(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "tdd.json", `{
+		"schema_version":"idiom.tdd_obligations.v2.fixture",
+		"effort_id":"test-effort",
+		"task_id":"impl-test",
+		"coverage_tier":"behavior_standard",
+		"coverage":{"mutation_min_score":80},
+		"obligations":[{"id":"TDD-KEEP","type":"acceptance","behavior":"keep existing","owner":"test","command":"go test ./keep","required_before":"implementation","status":"pending"}]
+	}`)
+	writeTestFile(t, dir, "coverage/behavioral.json", `{
+		"contract_id":"cov-test",
+		"ears":[{"id":"REQ-TEST-001","pattern":"event-driven","statement":"When the test requirement is accepted, the system shall preserve typed behavioral coverage.","mapped_refs":["BDD-001"],"tdd_obligations":["TDD-001"]}],
+		"example_rules":[{"id":"RULE-001","requirement_id":"REQ-TEST-001","rule":"Accepted coverage is projected into tdd.json.","examples":[{"id":"EX-001","description":"coverage accepted","concrete_data_refs":["fixtures/accepted.json"]},{"id":"EX-002","description":"coverage missing","concrete_data_refs":["fixtures/missing.json"],"negative":true}]}],
+		"bdd_scenarios":[{"id":"BDD-001","requirement_id":"REQ-TEST-001","rule_id":"RULE-001","given":["accepted product artifacts"],"when":["coverage is promoted"],"then":["tdd.json contains projected coverage"],"concrete_data_refs":["fixtures/accepted.json"],"tdd_obligations":["TDD-001"]}],
+		"design_contracts":[{"id":"DBC-001","boundary":"product tdd promotion","preconditions":["coverage contract validates"],"postconditions":["ledger projection matches"],"invariants":["productworkflow owns accepted coverage"],"test_refs":["TestProductTDDPromoteCoveragePreviewsAndWritesProjectedLedger"],"tdd_obligations":["TDD-001"]}],
+		"test_obligations":[{"id":"TDD-001","type":"behavior","behavior":"promote accepted behavioral coverage","owner":"productworkflow","command":"go test ./internal/workflows/productworkflow","required_before":"implementation"}]
+	}`)
+
+	beforeTDD, err := os.ReadFile(filepath.Join(dir, "tdd.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var previewStdout, previewStderr bytes.Buffer
+	code := runProductTDD([]string{
+		"--effort-root", dir,
+		"--promote-coverage", "coverage/behavioral.json",
+		"--json",
+	}, &previewStdout, &previewStderr, nil)
+	if code != 0 {
+		t.Fatalf("expected preview code 0, got %d stdout=%s stderr=%s", code, previewStdout.String(), previewStderr.String())
+	}
+	afterPreviewTDD, err := os.ReadFile(filepath.Join(dir, "tdd.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(beforeTDD, afterPreviewTDD) {
+		t.Fatal("promote-coverage without --write must not mutate tdd.json")
+	}
+
+	var preview struct {
+		Status  string                    `json:"status"`
+		State   string                    `json:"state"`
+		EventID string                    `json:"event_id"`
+		Digest  string                    `json:"digest"`
+		Ledger  productworkflow.TDDLedger `json:"ledger"`
+	}
+	if err := json.Unmarshal(previewStdout.Bytes(), &preview); err != nil {
+		t.Fatalf("preview output should be valid JSON: %v\n%s", err, previewStdout.String())
+	}
+	if preview.Status != "pass" || preview.State != productworkflow.BehavioralCoveragePromotionStateReviewed || preview.EventID == "" || preview.Digest == "" || preview.Ledger.BehavioralCoverage == nil || preview.Ledger.Coverage.BDDTotal != 1 {
+		t.Fatalf("expected projected preview ledger, got %#v", preview)
+	}
+
+	var writeStdout, writeStderr bytes.Buffer
+	code = runProductTDD([]string{
+		"--effort-root", dir,
+		"--promote-coverage", "coverage/behavioral.json",
+		"--write",
+		"--json",
+	}, &writeStdout, &writeStderr, nil)
+	if code != 0 {
+		t.Fatalf("expected write code 0, got %d stdout=%s stderr=%s", code, writeStdout.String(), writeStderr.String())
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "tdd.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var written productworkflow.TDDLedger
+	if err := json.Unmarshal(data, &written); err != nil {
+		t.Fatalf("written tdd.json should be valid JSON: %v\n%s", err, string(data))
+	}
+	if written.BehavioralCoverage == nil || written.BehavioralCoverage.EffortID != "test-effort" || written.Coverage.BDDWithConcreteData != 1 {
+		t.Fatalf("expected written behavioral coverage projection, got %#v", written)
+	}
+	if len(written.Obligations) != 2 || written.Obligations[0].ID != "TDD-KEEP" || written.Obligations[1].ID != "TDD-001" {
+		t.Fatalf("expected deterministic obligation merge, got %#v", written.Obligations)
+	}
+	var writeOut struct {
+		Status  string `json:"status"`
+		State   string `json:"state"`
+		EventID string `json:"event_id"`
+		Digest  string `json:"digest"`
+	}
+	if err := json.Unmarshal(writeStdout.Bytes(), &writeOut); err != nil {
+		t.Fatalf("write output should be valid JSON: %v\n%s", err, writeStdout.String())
+	}
+	if writeOut.State != productworkflow.BehavioralCoveragePromotionStateAccepted || writeOut.EventID == "" || writeOut.Digest == "" {
+		t.Fatalf("expected accepted lifecycle output, got %#v", writeOut)
+	}
+	eventsData, err := os.ReadFile(filepath.Join(dir, "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(eventsData), `"event":"behavioral_coverage_accepted"`) || !strings.Contains(string(eventsData), writeOut.EventID) {
+		t.Fatalf("expected durable accepted event, got %s", string(eventsData))
+	}
+}
+
+func TestProductTDDPromoteCoverageRejectsInvalidContractWithoutDurableEvent(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "coverage/invalid.json", `{
+		"contract_id":"cov-invalid",
+		"bdd_scenarios":[{"id":"BDD-BAD","status":"accepted"}]
+	}`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductTDD([]string{
+		"--effort-root", dir,
+		"--promote-coverage", "coverage/invalid.json",
+		"--write",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected rejected invalid coverage to return code 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+
+	var out struct {
+		Status   string                                     `json:"status"`
+		State    string                                     `json:"state"`
+		Findings []productworkflow.TDDObligationPlanFinding `json:"findings"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("rejection output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "blocked" || out.State != productworkflow.BehavioralCoveragePromotionStateRejected {
+		t.Fatalf("expected rejected lifecycle state, got %#v", out)
+	}
+	found := false
+	for _, finding := range out.Findings {
+		if finding.Kind == "coverage_contract_invalid" && finding.File == "coverage/invalid.json" && strings.Contains(finding.Message, "bdd_scenarios[0] accepted coverage missing") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected structured invalid coverage finding, got %#v", out.Findings)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "events.jsonl")); err == nil && strings.Contains(string(data), "behavioral_coverage_accepted") {
+		t.Fatalf("rejected promotion must not append accepted event, got %s", string(data))
+	}
+}
+
+func TestProductTDDPromoteCoverageDoesNotMutateLedgerWhenPromotionEventAppendFails(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "tdd.json", `{
+		"schema_version":"idiom.tdd_obligations.v2.fixture",
+		"effort_id":"test-effort",
+		"task_id":"impl-test",
+		"coverage_tier":"behavior_standard",
+		"coverage":{"mutation_min_score":80},
+		"obligations":[{"id":"TDD-KEEP","type":"acceptance","behavior":"keep existing","owner":"test","command":"go test ./keep","required_before":"implementation","status":"pending"}]
+	}`)
+	writeTestFile(t, dir, "coverage/behavioral.json", `{
+		"contract_id":"cov-event-fail",
+		"ears":[{"id":"REQ-TEST-001","pattern":"event-driven","statement":"When the event sink fails, the ledger shall remain unchanged.","mapped_refs":["BDD-001"],"tdd_obligations":["TDD-001"]}],
+		"bdd_scenarios":[{"id":"BDD-001","requirement_id":"REQ-TEST-001","given":["accepted product artifacts"],"when":["coverage is promoted"],"then":["tdd.json contains projected coverage"],"concrete_data_refs":["fixtures/accepted.json"],"tdd_obligations":["TDD-001"]}],
+		"test_obligations":[{"id":"TDD-001","type":"behavior","behavior":"promote accepted behavioral coverage","owner":"productworkflow","command":"go test ./internal/workflows/productworkflow","required_before":"implementation"}]
+	}`)
+	beforeTDD, err := os.ReadFile(filepath.Join(dir, "tdd.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "events.jsonl")); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "events.jsonl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runProductTDD([]string{
+		"--effort-root", dir,
+		"--promote-coverage", "coverage/behavioral.json",
+		"--write",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected event append preflight failure to return code 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	afterTDD, err := os.ReadFile(filepath.Join(dir, "tdd.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(beforeTDD, afterTDD) {
+		t.Fatalf("ledger mutated despite event failure\nbefore=%s\nafter=%s", string(beforeTDD), string(afterTDD))
+	}
+
+	var out struct {
+		Status   string                                     `json:"status"`
+		State    string                                     `json:"state"`
+		Ledger   productworkflow.TDDLedger                  `json:"ledger"`
+		Findings []productworkflow.TDDObligationPlanFinding `json:"findings"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("event failure output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "blocked" || out.State != productworkflow.BehavioralCoveragePromotionStateAccepted {
+		t.Fatalf("expected accepted promotion blocked before commit, got %#v", out)
+	}
+	if out.Ledger.BehavioralCoverage != nil || len(out.Ledger.Obligations) != 1 || out.Ledger.Obligations[0].ID != "TDD-KEEP" {
+		t.Fatalf("blocked promotion output must retain original ledger, got %#v", out.Ledger)
+	}
+	found := false
+	for _, finding := range out.Findings {
+		if finding.Kind == "write_error" && finding.File == "events.jsonl" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected structured event write error, got %#v", out.Findings)
+	}
 }
 
 func TestProductTDDCoverageGatePassesDeterministicFixture(t *testing.T) {
@@ -6381,6 +6598,17 @@ func TestProductTDDCoverageGatePassesDeterministicFixture(t *testing.T) {
 			"mutation_min_score":80,
 			"mutation_score":90,
 			"gates_passed":["contract"]
+		},
+		"behavioral_coverage":{
+			"contract_id":"cov-test",
+			"effort_id":"test-effort",
+			"task_id":"impl-test",
+			"coverage_tier":"behavior_standard",
+			"ears":[{"id":"REQ-TEST-001","statement":"When the test requirement is accepted, the system shall preserve typed behavioral coverage.","mapped_refs":["BDD-001"]}],
+			"bdd_scenarios":[{"id":"BDD-001","requirement_id":"REQ-TEST-001","given":["accepted PRD and ADR exist"],"when":["coverage gate evaluates"],"then":["typed behavioral coverage is present"],"concrete_data_refs":["fixtures/test.json"],"tdd_obligations":["TDD-001"]}],
+			"design_contracts":[{"id":"DBC-001","boundary":"product tdd gate","preconditions":["coverage tier is behavior_standard"],"postconditions":["behavioral coverage contract exists"],"invariants":["coverage counters are projections"],"test_refs":["TestProductTDDCoverageGatePassesDeterministicFixture"],"tdd_obligations":["TDD-001"]}],
+			"test_obligations":[{"id":"TDD-001","type":"acceptance","behavior":"test","owner":"test","command":"go test","required_before":"close"}],
+			"mutation":{"requirement":"required","min_score":80,"score":90}
 		},
 		"obligations":[{
 			"id":"TDD-001","type":"acceptance","behavior":"test","owner":"test","command":"go test","required_before":"close","status":"pending"
@@ -6478,6 +6706,17 @@ func TestProductTDDCoverageGateEmitsCoverageGateEvaluatedTelemetry(t *testing.T)
 			"mutation_min_score":80,
 			"mutation_score":90,
 			"gates_passed":["contract"]
+		},
+		"behavioral_coverage":{
+			"contract_id":"cov-test",
+			"effort_id":"test-effort",
+			"task_id":"impl-test",
+			"coverage_tier":"behavior_standard",
+			"ears":[{"id":"REQ-TEST-001","statement":"When the test requirement is accepted, the system shall preserve typed behavioral coverage.","mapped_refs":["BDD-001"]}],
+			"bdd_scenarios":[{"id":"BDD-001","requirement_id":"REQ-TEST-001","given":["accepted PRD and ADR exist"],"when":["coverage gate evaluates"],"then":["typed behavioral coverage is present"],"concrete_data_refs":["fixtures/test.json"],"tdd_obligations":["TDD-001"]}],
+			"design_contracts":[{"id":"DBC-001","boundary":"product tdd gate","preconditions":["coverage tier is behavior_standard"],"postconditions":["behavioral coverage contract exists"],"invariants":["coverage counters are projections"],"test_refs":["TestProductTDDCoverageGateEmitsCoverageGateEvaluatedTelemetry"],"tdd_obligations":["TDD-001"]}],
+			"test_obligations":[{"id":"TDD-001","type":"acceptance","behavior":"test","owner":"test","command":"go test","required_before":"close"}],
+			"mutation":{"requirement":"required","min_score":80,"score":90}
 		},
 		"obligations":[{
 			"id":"TDD-001","type":"acceptance","behavior":"test","owner":"test","command":"go test","required_before":"close","status":"pending"
@@ -7003,7 +7242,18 @@ func TestProductBriefRenderWritesRequestedPathOnly(t *testing.T) {
 		"effort_id":"test-effort",
 		"task_id":"impl-test",
 		"coverage_tier":"behavior_standard",
-		"coverage":{"ears_total":1,"ears_mapped":1,"bdd_total":1,"bdd_with_concrete_data":1,"mutation_min_score":80,"gates_passed":["contract"]},
+		"coverage":{"ears_total":1,"ears_mapped":1,"bdd_total":1,"bdd_with_concrete_data":1,"mutation_min_score":80,"mutation_score":90,"gates_passed":["contract"]},
+		"behavioral_coverage":{
+			"contract_id":"cov-test",
+			"effort_id":"test-effort",
+			"task_id":"impl-test",
+			"coverage_tier":"behavior_standard",
+			"ears":[{"id":"REQ-TEST-001","statement":"When the test requirement is accepted, the system shall preserve typed behavioral coverage.","mapped_refs":["BDD-001"]}],
+			"bdd_scenarios":[{"id":"BDD-001","requirement_id":"REQ-TEST-001","given":["accepted PRD and ADR exist"],"when":["brief renders"],"then":["typed behavioral coverage is present"],"concrete_data_refs":["fixtures/test.json"],"tdd_obligations":["TDD-001"]}],
+			"design_contracts":[{"id":"DBC-001","boundary":"product brief render","preconditions":["coverage tier is behavior_standard"],"postconditions":["behavioral coverage contract exists"],"invariants":["coverage counters are projections"],"test_refs":["TestProductBriefRenderWritesRequestedPathOnly"],"tdd_obligations":["TDD-001"]}],
+			"test_obligations":[{"id":"TDD-001","type":"acceptance","behavior":"test","owner":"test","command":"go test ./...","required_before":"close"}],
+			"mutation":{"requirement":"required","min_score":80,"score":90}
+		},
 		"obligations":[{"id":"TDD-001","type":"acceptance","behavior":"test","owner":"test","command":"go test ./...","required_before":"close","status":"pending"}]
 	}`)
 

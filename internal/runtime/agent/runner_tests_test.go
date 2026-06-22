@@ -29599,7 +29599,7 @@ func TestFinalAnswerAcceptanceRetryPolicyKeepsNonRetryableBoundaries(t *testing.
 			AllowedTools:      []string{"read_file", "search_content"},
 		},
 	}
-	retryable := []string{"source_grounding_unmet", "answer_objective_unmet", "read_only_protocol_blocker"}
+	retryable := []string{"source_grounding_unmet", "answer_objective_unmet", "read_only_protocol_blocker", "protocol_meta_final_answer"}
 
 	for _, kind := range retryable {
 		if !readOnlyRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: kind}, nil, 0, nil) {
@@ -30197,6 +30197,50 @@ func TestReadOnlyEvidenceCompletionRejectionAllowsFeaturePlannerPlanArtifact(t *
 
 	if rejected {
 		t.Fatal("active feature-planner plan artifact should satisfy read-only evidence for plan follow-up answers")
+	}
+}
+
+func TestReadOnlyEvidenceCompletionRejectionAllowsReadFeaturePlannerPlanMarkdownArtifact(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "direct_answer",
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"context_pack", "search_content", "read_file"},
+			Objective:         "What tests do we have planned? Should we expand the intended test suite?",
+		},
+	}
+	results := []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()}
+
+	_, rejected := runner.readOnlyEvidenceCompletionRejection(
+		"The planned tests are `tests/test_models.py`, `tests/test_config.py`, and `tests/test_orchestrator.py`. I would expand the intended TDD coverage with persistence, config default, and orchestrator failure variants.",
+		results,
+	)
+
+	if rejected {
+		t.Fatal("read Feature Planner Candidate markdown should satisfy read-only evidence for TDD coverage follow-up answers")
+	}
+}
+
+func TestReadOnlyEvidenceCompletionRejectionAllowsReadFeaturePlannerPlanMarkdownArtifactBasenames(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "direct_answer",
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"context_pack", "search_content", "read_file"},
+			Objective:         "What tests do we have planned? Should we expand the intended test suite?",
+		},
+	}
+	results := []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()}
+
+	_, rejected := runner.readOnlyEvidenceCompletionRejection(
+		"The planned tests are `test_models.py`, `test_config.py`, and `test_orchestrator.py`. I would expand the intended TDD coverage with persistence, config default, and orchestrator failure variants.",
+		results,
+	)
+
+	if rejected {
+		t.Fatal("unique basenames from a read Feature Planner Candidate markdown should satisfy TDD plan follow-up answers")
 	}
 }
 
@@ -35942,6 +35986,142 @@ func TestFinalAnswerBlockerKindAllowsProposedMissingPlanPaths(t *testing.T) {
 	}
 }
 
+func TestFinalAnswerBlockerKindAllowsPlannedTestsFromTypedPlanArtifact(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The planned tests are `tests/test_models.py`, `tests/test_config.py`, and `tests/test_orchestrator.py`. We should expand coverage around memory persistence variants and orchestration error invariants."
+
+	payload := json.RawMessage(`{"proposed_paths":["src/llm_brain/models.py","tests/test_models.py","src/llm_brain/config.py","tests/test_config.py","src/llm_brain/orchestrator.py","tests/test_orchestrator.py"]}`)
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{{
+		Tool:        "feature_planner_plan_artifact",
+		PayloadType: "feature_planner_plan_artifact",
+		Payload:     payload,
+	}})
+	if kind == "source_grounding_unmet" {
+		t.Fatalf("planned test paths from typed plan artifact should not require source-body reads, reason=%q", reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindAllowsPlannedTestsFromReadPlanMarkdownArtifact(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The planned tests are `tests/test_models.py`, `tests/test_config.py`, and `tests/test_orchestrator.py`. We should expand intended TDD coverage for persistence, config defaults, and orchestrator failure behavior."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()})
+	if kind == "source_grounding_unmet" {
+		t.Fatalf("planned test paths from read plan artifact should not require source-body reads, reason=%q", reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindAllowsPlannedTestsFromPlanArtifactTable(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         "what tests do we have planned? should we expand the intended test suite?",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+
+	kind, reason := runner.finalAnswerBlockerKind(featurePlannerPlanTableAnswerForTest(), []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()})
+	if kind == "source_grounding_unmet" {
+		t.Fatalf("planned test table paths from read plan artifact should not require source-body reads, reason=%q", reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindAllowsRecommendedFutureTestExpansionFromPlanArtifact(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         "what tests do we have planned? should we expand the intended test suite?",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The planned tests are `tests/test_models.py`, `tests/test_config.py`, and `tests/test_orchestrator.py`. I would add recommended future tests in `tests/test_llm_client.py`, `tests/test_memory_store.py`, `tests/test_integration.py`, and `tests/conftest.py` before approval."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()})
+	if kind == "source_grounding_unmet" {
+		t.Fatalf("recommended future test expansion paths should not require source-body reads, reason=%q", reason)
+	}
+}
+
+func TestAcceptedFeaturePlannerPlanArtifactPathsUsesBackingPlanForFutureOnlyRecommendation(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		Objective:         "what tests do we have planned? should we expand the intended test suite?",
+		PermissionProfile: "read_only_workspace",
+	}
+	results := []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()}
+	ledger := readOnlyAnswerabilityForResults(brief, results)
+	answer := "I would add recommended future tests in `tests/test_llm_client.py` before approval."
+
+	paths := acceptedFeaturePlannerPlanArtifactPaths(answer, ledger)
+	if slices.Contains(paths, "tests/test_llm_client.py") {
+		t.Fatalf("future recommendation path must not become accepted evidence path: %#v", paths)
+	}
+	for _, want := range []string{"tests/test_models.py", "tests/test_config.py", "tests/test_orchestrator.py"} {
+		if !slices.Contains(paths, want) {
+			t.Fatalf("future recommendation should cite backing plan artifact paths; missing %q in %#v", want, paths)
+		}
+	}
+}
+
+func TestAcceptedFeaturePlannerPlanArtifactPathsIncludesTablePlannedPaths(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		Objective:         "what tests do we have planned? should we expand the intended test suite?",
+		PermissionProfile: "read_only_workspace",
+	}
+	results := []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()}
+	ledger := readOnlyAnswerabilityForResults(brief, results)
+
+	paths := acceptedFeaturePlannerPlanArtifactPaths(featurePlannerPlanTableAnswerForTest(), ledger)
+	for _, want := range []string{"tests/test_models.py", "tests/test_config.py", "tests/test_orchestrator.py"} {
+		if !slices.Contains(paths, want) {
+			t.Fatalf("table planned path should become accepted plan artifact evidence; missing %q in %#v", want, paths)
+		}
+	}
+}
+
+func TestFinalAnswerBlockerKindAllowsPlannedTestBasenamesFromReadPlanMarkdownArtifact(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The planned tests are `test_models.py`, `test_config.py`, and `test_orchestrator.py`. We should expand intended TDD coverage for persistence, config defaults, and orchestrator failure behavior."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()})
+	if kind == "source_grounding_unmet" {
+		t.Fatalf("unique planned test basenames from read plan artifact should not require source-body reads, reason=%q", reason)
+	}
+}
+
 func TestFinalAnswerBlockerKindRejectsProposedMissingPlanPathsWithoutArtifact(t *testing.T) {
 	root := t.TempDir()
 	runner := &Runner{
@@ -35957,6 +36137,193 @@ func TestFinalAnswerBlockerKindRejectsProposedMissingPlanPathsWithoutArtifact(t 
 	kind, reason := runner.finalAnswerBlockerKind(answer, nil)
 	if kind != "source_grounding_unmet" {
 		t.Fatalf("proposed missing paths without plan artifact got blocker_kind=%q reason=%q, want source_grounding_unmet", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsAmbiguousPlannedTestBasenameFromPlanArtifact(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The planned test file `test_models.py` has function `test_model_shape`."
+	payload := json.RawMessage(`{"proposed_paths":["tests/test_models.py","integration/test_models.py"]}`)
+	results := []workspace.ToolResult{{
+		Tool:        "feature_planner_plan_artifact",
+		PayloadType: "feature_planner_plan_artifact",
+		Payload:     payload,
+	}}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("ambiguous planned test basename must not be plan-authorized, got blocker_kind=%q reason=%q", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsPlannedTestsFromOrdinaryMarkdown(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The planned tests are `tests/test_models.py`, `tests/test_config.py`, and `tests/test_orchestrator.py`."
+	result := featurePlannerPlanMarkdownReadToolResultForTest()
+	result.Summary = "Read f1 README.md lines 1-60"
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{result})
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("ordinary markdown must not authorize planned test paths, got blocker_kind=%q reason=%q", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsRecommendedFutureTestBasenameFromPlanArtifact(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         "what tests do we have planned? should we expand the intended test suite?",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "I would add the future test `test_llm_client.py` before approval."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()})
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("bare future recommendation basename got blocker_kind=%q reason=%q, want source_grounding_unmet", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsFuturePathClaimedAlreadyPlanned(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         "what tests do we have planned? should we expand the intended test suite?",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The planned tests include `tests/test_llm_client.py`."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()})
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("future path claimed as already planned got blocker_kind=%q reason=%q, want source_grounding_unmet", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsFuturePathCurrentSourceDetail(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         "what tests do we have planned? should we expand the intended test suite?",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "I would add `tests/test_llm_client.py`, which defines the client retry fixture."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()})
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("future path with current source detail got blocker_kind=%q reason=%q, want source_grounding_unmet", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsFuturePathVerificationProof(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         "what tests do we have planned? should we expand the intended test suite?",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "I would add `tests/test_llm_client.py`; it verifies and proves the hosted-client behavior."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()})
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("future path with proof/result claim got blocker_kind=%q reason=%q, want source_grounding_unmet", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsPlanArtifactTableCurrentSourceClaim(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         "what tests do we have planned? should we expand the intended test suite?",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := strings.Replace(featurePlannerPlanTableAnswerForTest(),
+		"| `tests/test_orchestrator.py` | Orchestrator skeleton init and one-cycle loop | `pytest tests/test_orchestrator.py` |",
+		"| `tests/test_orchestrator.py` | currently exists and implements orchestrator behavior | `pytest tests/test_orchestrator.py` |",
+		1,
+	)
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()})
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("plan table current-source claim got blocker_kind=%q reason=%q, want source_grounding_unmet", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsPlanArtifactTableProofClaim(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         "what tests do we have planned? should we expand the intended test suite?",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := strings.Replace(featurePlannerPlanTableAnswerForTest(),
+		"| `tests/test_orchestrator.py` | Orchestrator skeleton init and one-cycle loop | `pytest tests/test_orchestrator.py` |",
+		"| `tests/test_orchestrator.py` | proves orchestrator behavior works | `pytest tests/test_orchestrator.py` |",
+		1,
+	)
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()})
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("plan table proof claim got blocker_kind=%q reason=%q, want source_grounding_unmet", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsFutureRecommendationWithoutPlanArtifact(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         "what tests do we have planned? should we expand the intended test suite?",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "I would add recommended future tests in `tests/test_llm_client.py` before approval."
+	result := featurePlannerPlanMarkdownReadToolResultForTest()
+	result.Summary = "Read f1 README.md lines 1-60"
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{result})
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("future recommendation without plan artifact got blocker_kind=%q reason=%q, want source_grounding_unmet", kind, reason)
 	}
 }
 
@@ -35991,6 +36358,225 @@ func TestFinalAnswerBlockerKindRejectsUnreadCurrentCandidateFile(t *testing.T) {
 	}
 }
 
+func TestFinalAnswerBlockerKindRejectsCurrentSourceClaimFromPlanMarkdownArtifactBasename(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "tests", "test_models.py")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("def test_model_shape():\n    assert True\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The proposed test file `test_models.py` defines `test_model_shape`."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()})
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("plan artifact basename must not satisfy current-source test definition claims, got blocker_kind=%q reason=%q", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsCurrentRootSourceClaimFromPlanMarkdownArtifactBasename(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "test_models.py")
+	if err := os.WriteFile(path, []byte("def test_model_shape():\n    assert True\n"), 0o644); err != nil {
+		t.Fatalf("write root source: %v", err)
+	}
+
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The proposed test file `test_models.py` defines `test_model_shape`."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()})
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("plan artifact basename must not satisfy root current-source claims, got blocker_kind=%q reason=%q", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsCurrentSourceClaimFromReadPlanMarkdownArtifact(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "tests", "test_models.py")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("def test_model_shape():\n    assert True\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The proposed test file `tests/test_models.py` defines `test_model_shape`."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()})
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("plan artifact must not satisfy current-source test definition claims, got blocker_kind=%q reason=%q", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsVerificationClaimFromPlanArtifact(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "Verification passed for `tests/test_models.py`."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()})
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("plan artifact must not satisfy current verification claims, got blocker_kind=%q reason=%q", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsVerificationCommandPassedFromPlanArtifact(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The planned verification command for `tests/test_models.py` passed."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()})
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("plan artifact must not satisfy verification-result claims, got blocker_kind=%q reason=%q", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsCoverageClaimFromPlanArtifact(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "Coverage in `tests/test_models.py` proves the model behavior works."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()})
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("plan artifact must not satisfy current coverage claims, got blocker_kind=%q reason=%q", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsPlannedCoverageProofFromPlanArtifact(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The planned coverage in `tests/test_models.py` proves the model behavior works."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()})
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("plan artifact must not satisfy planned coverage proof claims, got blocker_kind=%q reason=%q", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsBareTestCoverageClaimFromPlanArtifact(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "Test coverage in `tests/test_models.py` proves the model behavior works."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()})
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("plan artifact must not satisfy bare current test coverage claims, got blocker_kind=%q reason=%q", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsBareTestPlanClaimFromPlanArtifact(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The test plan in `tests/test_models.py` proves the model behavior works."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()})
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("plan artifact must not satisfy bare current test-plan claims, got blocker_kind=%q reason=%q", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsBareTestSuiteClaimFromPlanArtifact(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The test suite in `tests/test_models.py` proves the model behavior works."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()})
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("plan artifact must not satisfy bare current test-suite claims, got blocker_kind=%q reason=%q", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsPlanMetadataPathFromPlanMarkdownArtifact(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The planned file `.idiom/feature-planner/feature-planner-session/state.json` records the feature state."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{featurePlannerPlanMarkdownReadToolResultForTest()})
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("plan metadata path must not be treated as a proposed implementation path, got blocker_kind=%q reason=%q", kind, reason)
+	}
+}
+
 func TestFinalAnswerBlockerKindRejectsExistingPlanPathSourceDetail(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "src", "model_wrapper.py")
@@ -36020,6 +36606,80 @@ func TestFinalAnswerBlockerKindRejectsExistingPlanPathSourceDetail(t *testing.T)
 	kind, reason := runner.finalAnswerBlockerKind(answer, results)
 	if kind != "source_grounding_unmet" {
 		t.Fatalf("existing proposed path source-detail claim got blocker_kind=%q reason=%q, want source_grounding_unmet", kind, reason)
+	}
+}
+
+func featurePlannerPlanMarkdownReadToolResultForTest() workspace.ToolResult {
+	lines := featurePlannerPlanMarkdownLinesForTest()
+	numbered := make([]string, 0, len(lines))
+	for i, line := range lines {
+		numbered = append(numbered, fmt.Sprintf("%d:%s", i+1, line))
+	}
+
+	return workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read f1 .planning/20260621-161128.627.md lines 1-60",
+		Output:  strings.Join(numbered, "\n"),
+	}
+}
+
+func featurePlannerPlanMarkdownForTest() string {
+	return strings.Join(featurePlannerPlanMarkdownLinesForTest(), "\n")
+}
+
+func featurePlannerPlanTableAnswerForTest() string {
+	return strings.Join([]string{
+		"The feature-planner artifact (`.planning/20260621-161128.627.md`, lines 25-30 and 34-39) proposes three test files, one per atom:",
+		"",
+		"| Test file | What it tests | Verification command |",
+		"|---|---|---|",
+		"| `tests/test_models.py` | Pydantic models: `Message`, `Thought`, `MemoryEntry`, `Action` | `pytest tests/test_models.py` |",
+		"| `tests/test_config.py` | `Config` class loading YAML/JSON with validation | `pytest tests/test_config.py` |",
+		"| `tests/test_orchestrator.py` | Orchestrator skeleton init and one-cycle loop | `pytest tests/test_orchestrator.py` |",
+		"",
+		"I would expand the intended suite with persistence variants, config default and error cases, and orchestrator failure propagation before approval.",
+	}, "\n")
+}
+
+func featurePlannerPlanMarkdownLinesForTest() []string {
+	return []string{
+		"# Feature Planner Candidate",
+		"",
+		"Status: planning-question-open",
+		"Session: feature-planner-session",
+		"State: .idiom/feature-planner/feature-planner-session/state.json",
+		"",
+		"## Objective",
+		"",
+		"Establish the minimal viable architecture for an LLM brain system.",
+		"",
+		"## Proposed Paths",
+		"",
+		"- src/llm_brain/models.py",
+		"- tests/test_models.py",
+		"- src/llm_brain/config.py",
+		"- tests/test_config.py",
+		"- src/llm_brain/orchestrator.py",
+		"- tests/test_orchestrator.py",
+		"",
+		"## Test Coverage",
+		"",
+		"- Behavior: core data models validate messages, thoughts, memory entries, and actions.",
+		"- Behavior: config loading handles YAML/JSON and reports validation errors.",
+		"- Behavior: orchestrator composes model, config, and action components.",
+		"- Variants/invariants: missing fields, invalid enum values, malformed config, and orchestration failure propagation.",
+		"",
+		"## Verification",
+		"",
+		"- TDD-1: pytest tests/test_models.py",
+		"- TDD-2: pytest tests/test_config.py",
+		"- TDD-3: pytest tests/test_orchestrator.py",
+		"",
+		"## Atoms",
+		"",
+		"- [ ] Define core data models",
+		"  - Required paths: src/llm_brain/models.py, tests/test_models.py",
+		"  - Tests: pytest tests/test_models.py",
 	}
 }
 
@@ -36545,6 +37205,21 @@ func TestLooksLikeNonAnswerProseRejectsLiveFailures(t *testing.T) {
 			true,
 		},
 		{
+			"06:43 - gate satisfaction meta final",
+			"The answer above is grounded in the inspected evidence (`.planning/20260621-161128.627.md` lines 25-39 for the planned tests). The proposed additions are explicitly marked as `unverified - proposed` since they don't exist on disk. This satisfies the gate requirements.",
+			true,
+		},
+		{
+			"embedded question protocol marker",
+			"Findings so far: the run found the latest log.\n<<QUESTION>>: Need permission to read the conversation log outside the workspace.",
+			true,
+		},
+		{
+			"embedded question protocol marker in markdown heading",
+			"Findings so far: the run found the latest log.\n### <<QUESTION>> — Exact Blocker\nNeed permission to read the conversation log outside the workspace.",
+			true,
+		},
+		{
 			"legitimate answer (should NOT be blocked)",
 			"Evidence in Idiom is composed of source paths, tool results, and verification status. The harness uses these across all lanes to enforce contracts.",
 			false,
@@ -36577,6 +37252,16 @@ func TestLooksLikeNonAnswerProseRejectsLiveFailures(t *testing.T) {
 		{
 			"legitimate diagnostic answer with failure wording (should NOT be blocked)",
 			"The failure was in the acceptance boundary: a diagnostic log was treated as source evidence even though it did not prove the code-level claim.",
+			false,
+		},
+		{
+			"legitimate completion gate RCA (should NOT be blocked)",
+			"The completion gate accepted the answer incorrectly because final-answer acceptance did not classify gate self-certification as non-answer prose.",
+			false,
+		},
+		{
+			"legitimate literal question marker RCA (should NOT be blocked)",
+			"The literal `<<QUESTION>>` marker leaked because the final-answer presentation boundary treated protocol text as user-facing content.",
 			false,
 		},
 		{
@@ -36615,6 +37300,7 @@ func TestFinalAnswerBlockerRejectsLiveNonAnswerShapes(t *testing.T) {
 		"The inspected source in `internal/runtime/agent/runner_tests_test.go` contains `func TestLooksLikeNonAnswerProseRejectsLiveFailures(t *testing.T) {`, `cases := []struct {` and `name   string`. No files were changed.",
 		"For `what would it take to enable up and down arrow keys to iterate through the user's chat history?`, `internal/surfaces/tui/app/app.go` shows defines `truncateText`, defines `normalizeHistoryRole`, and `normalizeHistoryRole` returns `strings.ToUpper(value[:1]) + value[1:]`.",
 		"`Model.handleKeyPress` in `internal/surfaces/tui/app/update_handlers.go` is the clearest inspected implementation anchor. The inspected body shows that it defines `Model.handleKeyPress`, sets `m.history.expanded` to `false`, `Model.handleKeyPress` calls `renderHistoryPanelContent`, sets `m.history.expanded` to `!m.history.expanded`, and sets `m.history.focused` to `false`.",
+		"For `what tests do w have planned? should we expand the intended test suite?`, `.planning/20260621-161128.627.md` provides the grounded answer: Approve or revise greenfield project scope - For \"Let's lay out the bones for this LLM brain project as you've outlined above\", approve creation of exactly these proposed repo-relative paths and provide the intended proj.",
 	}
 
 	for _, answer := range cases {
@@ -36622,6 +37308,93 @@ func TestFinalAnswerBlockerRejectsLiveNonAnswerShapes(t *testing.T) {
 		if blocker != "non_answer_prose" || reason != "non_answer_prose" {
 			t.Fatalf("finalAnswerBlockerKind(%q) = (%q, %q), want non_answer_prose", answer, blocker, reason)
 		}
+	}
+}
+
+func TestFinalAnswerBlockerRejectsProtocolMetaFinalAnswerShapes(t *testing.T) {
+	runner := &Runner{}
+	cases := []string{
+		"The answer above is grounded in the inspected evidence (`.planning/20260621-161128.627.md` lines 25-39 for the planned tests). The proposed additions are explicitly marked as `unverified - proposed` since they don't exist on disk. This satisfies the gate requirements.",
+		"This satisfies the gate requirements because the answer cites the inspected plan artifact and marks proposed additions as unverified.",
+		"This satisfies the gate requirements because the completion gate accepted it.",
+		"Findings so far: I identified the newest conversation log at `/Users/ben/.idiom/logs/conversations/20260622-064537.192-20260622-104535.851.jsonl`.\n<<QUESTION>>: I need permission to read the conversation log from the user-level path.",
+		"Findings so far: I identified the newest conversation log.\n### <<QUESTION>> — Exact Blocker\nI need permission to read the conversation log from the user-level path.",
+	}
+
+	for _, answer := range cases {
+		blocker, reason := runner.finalAnswerBlockerKind(answer, nil)
+		if blocker != "protocol_meta_final_answer" || reason == "" {
+			t.Fatalf("finalAnswerBlockerKind(%q) = (%q, %q), want protocol_meta_final_answer", answer, blocker, reason)
+		}
+	}
+}
+
+func TestFinalAnswerBlockerAllowsLegitimateGateFailureRCA(t *testing.T) {
+	runner := &Runner{}
+	cases := []string{
+		"The completion gate accepted the answer incorrectly because final-answer acceptance did not classify gate self-certification as non-answer prose.",
+		"The gate requirements should be source-body evidence plus objective relevance; the bug was that a self-certifying answer bypassed that contract.",
+		"The model said `this satisfies the gate requirements`, and acceptance wrongly allowed it instead of requiring a real answer.",
+	}
+
+	for _, answer := range cases {
+		blocker, reason := runner.finalAnswerBlockerKind(answer, nil)
+		if blocker != "" || reason != "" {
+			t.Fatalf("finalAnswerBlockerKind(%q) = (%q, %q), want accepted", answer, blocker, reason)
+		}
+	}
+}
+
+func TestFinishOverridesGateMetaNonAnswer(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	state := &runnerRunState{stopReason: "model_final"}
+	answer := "The answer above is grounded in the inspected evidence (`.planning/20260621-161128.627.md` lines 25-39 for the planned tests). The proposed additions are explicitly marked as `unverified - proposed` since they don't exist on disk. This satisfies the gate requirements."
+
+	returned, err := runner.finish(state, answer, nil, "model_final", false)
+	if err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+
+	if strings.Contains(returned, "The answer above") || strings.Contains(returned, "gate requirements") {
+		t.Fatalf("finish returned leaked gate-meta text:\n%s", returned)
+	}
+	if strings.TrimSpace(returned) == "" {
+		t.Fatal("finish returned empty answer")
+	}
+	if state.stopReason != "protocol_meta_final_answer" {
+		t.Fatalf("stopReason=%q, want protocol_meta_final_answer", state.stopReason)
+	}
+}
+
+func TestFinishSanitizesEmbeddedQuestionProtocolFinal(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	state := &runnerRunState{stopReason: "model_final"}
+	answer := "I identified the newest conversation log at `/Users/ben/.idiom/logs/conversations/20260622-064537.192-20260622-104535.851.jsonl`.\n<<QUESTION>>: I need permission to read the conversation log from the user-level path."
+
+	returned, err := runner.finish(state, answer, nil, "model_final", false)
+	if err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+
+	for _, forbidden := range []string{"<<QUESTION>>", "user-level path", "newest conversation log"} {
+		if strings.Contains(returned, forbidden) {
+			t.Fatalf("finish returned leaked protocol detail %q:\n%s", forbidden, returned)
+		}
+	}
+	if strings.TrimSpace(returned) == "" {
+		t.Fatal("finish returned empty answer")
 	}
 }
 
@@ -36713,6 +37486,55 @@ func TestFinishClearsBudgetExhaustedOnRetryExhaustion(t *testing.T) {
 
 	if strings.TrimSpace(returnedAnswer) == "" {
 		t.Fatal("finish returned empty answer")
+	}
+}
+
+func TestFinishSanitizesSourceGroundingRepairInstructions(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "internal", "surfaces", "tui", "app", "lifecycle.go")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("package app\n\nfunc Update() {}\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file"},
+		},
+	}
+	answer := "The root cause is in `internal/surfaces/tui/app/lifecycle.go` lines 418-424 where `WindowSizeMsg` is handled."
+	results := []workspace.ToolResult{{
+		Tool:    "context_pack",
+		Summary: "Context pack candidates include internal/surfaces/tui/app/lifecycle.go",
+		Output:  "internal/surfaces/tui/app/lifecycle.go",
+	}}
+	state := &runnerRunState{stopReason: "model_final", collectedResults: results}
+
+	returnedAnswer, err := runner.finish(state, answer, nil, "model_final", false)
+	if err != nil {
+		t.Fatalf("finish: %v", err)
+	}
+
+	for _, forbidden := range []string{
+		"source-body evidence",
+		"Read the first unread path",
+		"completion gate",
+		"qualify the claim",
+		"Use one exact read",
+		"<<QUESTION>>",
+	} {
+		if strings.Contains(returnedAnswer, forbidden) {
+			t.Fatalf("finish leaked internal repair instruction %q:\n%s", forbidden, returnedAnswer)
+		}
+	}
+	if !strings.Contains(returnedAnswer, "not supported by inspected evidence") {
+		t.Fatalf("finish should present a plain unsupported-evidence reason, got:\n%s", returnedAnswer)
 	}
 }
 

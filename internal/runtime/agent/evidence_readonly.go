@@ -2282,7 +2282,7 @@ func (d ReadOnlyCloseout) ConcreteFallbackAnswer() (string, bool) {
 
 func (d ReadOnlyCloseout) RecoverableTerminalCandidate(agentName string, blockerKind string) (string, bool) {
 	switch strings.TrimSpace(blockerKind) {
-	case "non_answer_prose", "completion_gate_repeated_rejection", "answer_objective_unmet:insufficient_evidence_claimed":
+	case "non_answer_prose", "protocol_meta_final_answer", "completion_gate_repeated_rejection", "answer_objective_unmet:insufficient_evidence_claimed":
 	default:
 		return "", false
 	}
@@ -2512,6 +2512,10 @@ func answerAddressesObjective(answer string, objective string, ledger readOnlyAn
 		return true
 	}
 
+	if ledger.planArtifactAnswerable() && answerAddressesPlanArtifactObjective(answer, objective, ledger) {
+		return true
+	}
+
 	if readOnlyCauseIntent(objective) {
 		return false
 	}
@@ -2547,6 +2551,24 @@ func answerAddressesObjective(answer string, objective string, ledger readOnlyAn
 	}
 
 	return objectiveLineMatches >= 2
+}
+
+func answerAddressesPlanArtifactObjective(answer string, objective string, ledger readOnlyAnswerabilityLedger) bool {
+	if !ledger.planArtifactAnswerable() {
+		return false
+	}
+
+	objectiveText := strings.ToLower(strings.Join(strings.Fields(objective), " "))
+	if !objectiveAsksAboutActivePlan(objectiveText) {
+		return false
+	}
+
+	mentioned := readOnlySourceLikePaths(sourceGroundingMentionedPaths(answer), 16)
+	if len(mentioned) > 0 {
+		return featurePlannerPlanPathCitationsAreRelevant(answer, mentioned, ledger)
+	}
+
+	return answerMentionsFeaturePlannerPlan(answer)
 }
 
 func answerMentionsInspectedCodeSymbol(answer string, results []workspace.ToolResult) bool {
@@ -2732,7 +2754,7 @@ func answerSourceCitationsAreObjectiveRelevant(answer string, ledger readOnlyAns
 		return true
 	}
 
-	if ledger.planArtifactAnswerable() && proposedPlanPathCitationsAreRelevant(answer, mentioned, ledger) {
+	if ledger.planArtifactAnswerable() && featurePlannerPlanPathCitationsAreRelevant(answer, mentioned, ledger) {
 		return true
 	}
 
@@ -2760,16 +2782,52 @@ func answerSourceCitationsAreObjectiveRelevant(answer string, ledger readOnlyAns
 }
 
 func proposedPlanPathCitationsAreRelevant(answer string, mentioned []string, ledger readOnlyAnswerabilityLedger) bool {
-	planSet := readOnlyPathSet(ledger.PlanArtifactPaths)
-	if len(planSet) == 0 {
+	if len(ledger.PlanArtifactPaths) == 0 {
+		return false
+	}
+
+	ctx := featurePlannerPlanArtifactCitationContextForAnswer(answer, ledger.Objective, ledger.PlanArtifactPaths, true)
+	for _, path := range mentioned {
+		if featurePlannerPlanArtifactPathCitationAuthority(answer, path, ctx).Kind == featurePlannerPlanCitationArtifactProposed {
+			return true
+		}
+	}
+
+	return false
+}
+
+func featurePlannerPlanPathCitationsAreRelevant(answer string, mentioned []string, ledger readOnlyAnswerabilityLedger) bool {
+	if proposedPlanPathCitationsAreRelevant(answer, mentioned, ledger) {
+		return true
+	}
+
+	return futurePlanRecommendationCitationsAreRelevant(answer, mentioned, ledger)
+}
+
+func futurePlanRecommendationCitationsAreRelevant(answer string, mentioned []string, ledger readOnlyAnswerabilityLedger) bool {
+	if len(ledger.PlanArtifactPaths) == 0 {
+		return false
+	}
+
+	objectiveText := strings.ToLower(strings.Join(strings.Fields(ledger.Objective), " "))
+	if !objectiveAsksAboutActivePlan(objectiveText) || !objectiveAsksAboutPlanExpansion(objectiveText) {
 		return false
 	}
 
 	for _, path := range mentioned {
-		normalized := agentutil.NormalizeRunnerPath(path)
-		if _, ok := planSet[normalized]; ok && sourceCitationExplicitlyProposedPlanPath(answer, normalized) {
-			return true
+		path = agentutil.NormalizeRunnerPath(path)
+		if path == "" || !strings.Contains(path, "/") || featurePlannerPlanMetadataPath(path) {
+			continue
 		}
+		if sourceCitationClaimsPlanResult(answer, path) ||
+			sourceCitationClaimsSourceDetail(answer, path) ||
+			sourceCitationClaimsCurrentOrPlannedPath(answer, path) ||
+			!sourceCitationExplicitlyFutureRecommendation(answer, path) {
+
+			continue
+		}
+
+		return true
 	}
 
 	return false
@@ -6310,7 +6368,8 @@ func (r *Runner) sourceGroundingRejectionReason(answer string, results []workspa
 			}
 
 			if !sourceCitationExplicitlyNonCurrent(answer, path) &&
-				!sourceCitationBackedByProposedPlanArtifact(r, answer, path, results) {
+				!sourceCitationBackedByProposedPlanArtifact(r, answer, path, results) &&
+				!sourceCitationBackedByFuturePlanRecommendation(r, answer, path, results) {
 				missing = append(missing, path)
 			}
 
@@ -6586,16 +6645,51 @@ func sourceCitationExplicitlyNonCurrent(answer string, path string) bool {
 }
 
 func sourceCitationBackedByProposedPlanArtifact(r *Runner, answer string, path string, results []workspace.ToolResult) bool {
-	if !sourceCitationExplicitlyProposedPlanPath(answer, path) {
-		return false
+	return featurePlannerPlanPathCitationAuthority(r, answer, path, results).Kind == featurePlannerPlanCitationArtifactProposed
+}
+
+func sourceCitationBackedByFuturePlanRecommendation(r *Runner, answer string, path string, results []workspace.ToolResult) bool {
+	return featurePlannerPlanPathCitationAuthority(r, answer, path, results).Kind == featurePlannerPlanCitationFutureRecommendation
+}
+
+type featurePlannerPlanCitationKind string
+
+const (
+	featurePlannerPlanCitationNone                 featurePlannerPlanCitationKind = ""
+	featurePlannerPlanCitationArtifactProposed     featurePlannerPlanCitationKind = "artifact_proposed"
+	featurePlannerPlanCitationFutureRecommendation featurePlannerPlanCitationKind = "future_recommendation"
+)
+
+type featurePlannerPlanCitationAuthority struct {
+	Kind                 featurePlannerPlanCitationKind
+	ResolvedPlanPath     string
+	BackedByPlanArtifact bool
+}
+
+type featurePlannerPlanArtifactCitationContext struct {
+	Objective            string
+	ProposedPaths        []string
+	BackedByPlanArtifact bool
+	AnswerHasPlanContext bool
+}
+
+func featurePlannerPlanArtifactCitationContextForAnswer(answer string, objective string, proposedPaths []string, backedByPlanArtifact bool) featurePlannerPlanArtifactCitationContext {
+	return featurePlannerPlanArtifactCitationContext{
+		Objective:            strings.TrimSpace(objective),
+		ProposedPaths:        proposedPaths,
+		BackedByPlanArtifact: backedByPlanArtifact,
+		AnswerHasPlanContext: answerHasFeaturePlannerPlanArtifactContext(answer, objective),
+	}
+}
+
+func featurePlannerPlanPathCitationAuthority(r *Runner, answer string, path string, results []workspace.ToolResult) featurePlannerPlanCitationAuthority {
+	if r == nil {
+		return featurePlannerPlanCitationAuthority{}
 	}
 
 	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" {
-		return false
-	}
-	if sourceCitationExists(r, path) && sourceCitationClaimsSourceDetail(answer, path) {
-		return false
+		return featurePlannerPlanCitationAuthority{}
 	}
 
 	for _, result := range results {
@@ -6603,19 +6697,191 @@ func sourceCitationBackedByProposedPlanArtifact(r *Runner, answer string, path s
 			continue
 		}
 
-		for _, proposed := range featurePlannerPlanArtifactProposedPaths(result) {
-			if proposed == path {
-				return true
+		brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
+		ctx := featurePlannerPlanArtifactCitationContextForAnswer(answer, brief.Objective, featurePlannerPlanArtifactProposedPaths(result), true)
+		authority := featurePlannerPlanArtifactPathCitationAuthority(answer, path, ctx)
+		if authority.Kind != featurePlannerPlanCitationArtifactProposed {
+			continue
+		}
+
+		resolved := authority.ResolvedPlanPath
+		if sourceCitationClaimsPlanResult(answer, path) || sourceCitationClaimsPlanResult(answer, resolved) {
+			return featurePlannerPlanCitationAuthority{}
+		}
+		if (sourceCitationExists(r, path) || sourceCitationExists(r, resolved)) &&
+			(sourceCitationClaimsSourceDetail(answer, path) || sourceCitationClaimsSourceDetail(answer, resolved)) {
+
+			return featurePlannerPlanCitationAuthority{}
+		}
+
+		return authority
+	}
+
+	if sourceCitationClaimsPlanResult(answer, path) ||
+		sourceCitationClaimsSourceDetail(answer, path) ||
+		sourceCitationClaimsCurrentOrPlannedPath(answer, path) ||
+		!sourceCitationExplicitlyFutureRecommendation(answer, path) {
+
+		return featurePlannerPlanCitationAuthority{}
+	}
+
+	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
+	objectiveText := strings.ToLower(strings.Join(strings.Fields(brief.Objective), " "))
+	if !objectiveAsksAboutActivePlan(objectiveText) || !objectiveAsksAboutPlanExpansion(objectiveText) {
+		return featurePlannerPlanCitationAuthority{}
+	}
+
+	if path == "" || !strings.Contains(path, "/") || featurePlannerPlanMetadataPath(path) {
+		return featurePlannerPlanCitationAuthority{}
+	}
+
+	for _, result := range results {
+		if featurePlannerPlanArtifactMatchesObjective(brief.Objective, result) {
+			return featurePlannerPlanCitationAuthority{
+				Kind:                 featurePlannerPlanCitationFutureRecommendation,
+				BackedByPlanArtifact: true,
 			}
 		}
 	}
 
-	return false
+	return featurePlannerPlanCitationAuthority{}
+}
+
+func featurePlannerPlanArtifactPathCitationAuthority(answer string, path string, ctx featurePlannerPlanArtifactCitationContext) featurePlannerPlanCitationAuthority {
+	resolved, ok := featurePlannerPlanProposedPathForCitation(path, ctx.ProposedPaths)
+	if !ok {
+		return featurePlannerPlanCitationAuthority{}
+	}
+
+	hasLocalPlanContext := sourceCitationExplicitlyProposedPlanPath(answer, path) ||
+		sourceCitationExplicitlyProposedPlanPath(answer, resolved)
+	if !hasLocalPlanContext && !ctx.AnswerHasPlanContext {
+		return featurePlannerPlanCitationAuthority{}
+	}
+
+	if sourceCitationClaimsPlanResult(answer, path) ||
+		sourceCitationClaimsPlanResult(answer, resolved) ||
+		sourceCitationClaimsCurrentSourcePath(answer, path) ||
+		sourceCitationClaimsCurrentSourcePath(answer, resolved) {
+
+		return featurePlannerPlanCitationAuthority{}
+	}
+
+	return featurePlannerPlanCitationAuthority{
+		Kind:                 featurePlannerPlanCitationArtifactProposed,
+		ResolvedPlanPath:     resolved,
+		BackedByPlanArtifact: ctx.BackedByPlanArtifact,
+	}
+}
+
+func sourceCitationExplicitlyFutureRecommendation(answer string, path string) bool {
+	lower := strings.ToLower(sourceCitationWindow(answer, path))
+	return agentutil.ContainsAny(lower,
+		"i would add", "i'd add", "would add", "should add", "also add",
+		"recommend adding", "recommend add", "recommended addition", "recommended additions",
+		"future test", "future tests", "future file", "future files",
+		"new test file", "new test files", "new file to add", "new files to add",
+		"additional test", "additional tests", "additional file", "additional files",
+		"expand with", "expand the", "expansion test", "expansion tests",
+		"files to add", "tests to add",
+	)
+}
+
+func sourceCitationClaimsCurrentOrPlannedPath(answer string, path string) bool {
+	if sourceCitationClaimsCurrentSourcePath(answer, path) {
+		return true
+	}
+
+	lower := strings.ToLower(sourceCitationLocalWindow(answer, path, 80, 140))
+	return agentutil.ContainsAny(lower,
+		"planned tests include", "planned test includes", "planned files include", "planned file includes",
+		"the planned tests are", "the planned files are", "the plan includes", "plan proposes",
+		"from the plan", "in the plan", "already planned",
+	)
+}
+
+func sourceCitationClaimsPlanResult(answer string, path string) bool {
+	lower := strings.ToLower(sourceCitationWindow(answer, path))
+	return agentutil.ContainsAny(lower,
+		" passed", " passes", " passing",
+		" succeeded", " succeeds", " successful",
+		" failed", " failing",
+		" proves", " prove ", " proof",
+		" verified", " verifies", " confirms", " validates",
+	)
+}
+
+func featurePlannerPlanProposedPathForCitation(citation string, proposedPaths []string) (string, bool) {
+	citation = agentutil.NormalizeRunnerPath(citation)
+	if citation == "" || len(proposedPaths) == 0 {
+		return "", false
+	}
+
+	for _, proposed := range proposedPaths {
+		proposed = agentutil.NormalizeRunnerPath(proposed)
+		if proposed == "" {
+			continue
+		}
+		if proposed == citation {
+			return proposed, true
+		}
+	}
+
+	if strings.Contains(citation, "/") || sourceCitationLooksLikeRootPath(citation) {
+		return "", false
+	}
+
+	base := strings.ToLower(filepath.Base(filepath.ToSlash(citation)))
+	var matches []string
+	for _, proposed := range proposedPaths {
+		proposed = agentutil.NormalizeRunnerPath(proposed)
+		if proposed == "" {
+			continue
+		}
+		if strings.ToLower(filepath.Base(filepath.ToSlash(proposed))) == base {
+			matches = append(matches, proposed)
+		}
+	}
+
+	matches = uniqueSortedRunnerPaths(matches)
+	if len(matches) != 1 {
+		return "", false
+	}
+
+	return matches[0], true
 }
 
 func featurePlannerPlanArtifactResult(result workspace.ToolResult) bool {
-	return strings.EqualFold(strings.TrimSpace(result.PayloadType), featurePlannerPlanArtifactPayloadType) ||
-		strings.EqualFold(strings.TrimSpace(result.Tool), featurePlannerPlanArtifactPayloadType)
+	if strings.EqualFold(strings.TrimSpace(result.PayloadType), featurePlannerPlanArtifactPayloadType) ||
+		strings.EqualFold(strings.TrimSpace(result.Tool), featurePlannerPlanArtifactPayloadType) {
+		return true
+	}
+
+	return featurePlannerPlanMarkdownReadResult(result)
+}
+
+func readOnlyPlanArtifactEvidenceSupportsReply(brief workerruntime.WorkerRuntimeBrief, answer string, results []workspace.ToolResult) bool {
+	ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
+	if len(ledger.PlanArtifactPaths) == 0 {
+		return false
+	}
+
+	if ledger.planArtifactAnswerable() && answerAddressesPlanArtifactObjective(answer, ledger.Objective, ledger) {
+		return true
+	}
+
+	mentioned := readOnlySourceLikePaths(sourceGroundingMentionedPaths(answer), 16)
+	return len(mentioned) > 0 && proposedPlanPathCitationsAreRelevant(answer, mentioned, ledger)
+}
+
+func readOnlyPlanArtifactEvidenceAvailable(results []workspace.ToolResult) bool {
+	for _, result := range results {
+		if featurePlannerPlanArtifactResult(result) && len(featurePlannerPlanArtifactProposedPaths(result)) > 0 {
+			return true
+		}
+	}
+
+	return false
 }
 
 func featurePlannerPlanArtifactMatchesObjective(objective string, result workspace.ToolResult) bool {
@@ -6636,6 +6902,8 @@ func featurePlannerPlanArtifactMatchesObjective(objective string, result workspa
 }
 
 func objectiveAsksAboutActivePlan(objectiveText string) bool {
+	objectiveText = normalizedPlanObjectiveText(objectiveText)
+
 	return agentutil.ContainsAny(" "+objectiveText+" ",
 		" plan ", " planning ", " planned ",
 		" proposal ", " proposed ",
@@ -6648,6 +6916,30 @@ func objectiveAsksAboutActivePlan(objectiveText string) bool {
 	)
 }
 
+func objectiveAsksAboutPlanExpansion(objectiveText string) bool {
+	objectiveText = normalizedPlanObjectiveText(objectiveText)
+
+	return agentutil.ContainsAny(" "+objectiveText+" ",
+		" expand ", " expansion ", " add ", " additional ", " more ",
+		" recommend ", " recommendation ", " should we ",
+		" coverage ", " tests ", " test ", " test suite ", " tdd ",
+	)
+}
+
+func normalizedPlanObjectiveText(objectiveText string) string {
+	objectiveText = strings.NewReplacer(
+		"?", " ",
+		"!", " ",
+		",", " ",
+		".", " ",
+		":", " ",
+		";", " ",
+		"(", " ",
+		")", " ",
+	).Replace(strings.ToLower(objectiveText))
+	return strings.Join(strings.Fields(objectiveText), " ")
+}
+
 func answerMentionsFeaturePlannerPlan(answer string) bool {
 	lower := " " + strings.ToLower(strings.Join(strings.Fields(answer), " ")) + " "
 	return agentutil.ContainsAny(lower,
@@ -6656,11 +6948,35 @@ func answerMentionsFeaturePlannerPlan(answer string) bool {
 	)
 }
 
+func answerHasFeaturePlannerPlanArtifactContext(answer string, objective string) bool {
+	lowerAnswer := " " + strings.ToLower(strings.Join(strings.Fields(answer), " ")) + " "
+	if agentutil.ContainsAny(lowerAnswer,
+		" feature-planner artifact ", " feature planner artifact ",
+		" active plan ", " proposed plan ", " current plan ",
+		" planned tests ", " planned test files ", " planned files ",
+		" proposed tests ", " proposed test files ", " proposed files ",
+		" plan proposes ", " plan defines ", " plan includes ",
+		" from the plan ", " in the plan ",
+		" what tests are planned ", " what tests are currently planned ",
+	) {
+		return true
+	}
+
+	objectiveText := normalizedPlanObjectiveText(objective)
+	return objectiveAsksAboutActivePlan(objectiveText)
+}
+
 func sourceCitationExplicitlyProposedPlanPath(answer string, path string) bool {
 	lower := strings.ToLower(sourceCitationWindow(answer, path))
 	for _, phrase := range []string{
 		"proposed path", "proposed paths", "proposed file", "proposed files",
 		"planned path", "planned paths", "planned file", "planned files",
+		"proposed test", "proposed tests", "planned test", "planned tests", "intended test", "intended tests",
+		"planned test plan", "proposed test plan", "intended test plan",
+		"planned test suite", "proposed test suite", "intended test suite",
+		"planned verification", "proposed verification", "verification command", "verification commands",
+		"planned coverage", "proposed coverage", "intended coverage", "planned test coverage",
+		"proposed test coverage", "intended test coverage",
 		"would create", "will create", "to create", "to be created",
 		"files to create", "paths to create",
 		"not existing source", "not current source",
@@ -6671,6 +6987,79 @@ func sourceCitationExplicitlyProposedPlanPath(answer string, path string) bool {
 	}
 
 	return false
+}
+
+func sourceCitationClaimsCurrentSourcePath(answer string, path string) bool {
+	lower := strings.ToLower(sourceCitationLocalWindow(answer, path, 80, 140))
+	if agentutil.ContainsAny(lower,
+		"not existing source", "not existing file",
+		"not current source", "not current file",
+		"not yet existing source", "not yet existing file",
+		"not an existing source", "not an existing file",
+		"not a current source", "not a current file",
+	) {
+		return false
+	}
+
+	return agentutil.ContainsAny(lower,
+		"already exists", "existing source", "existing file",
+		"current source", "current file", "currently exists",
+		"exists on disk", "exists in the workspace",
+		"defines ", "contains ", "implements ",
+	)
+}
+
+func featurePlannerPlanMarkdownReadResult(result workspace.ToolResult) bool {
+	if strings.TrimSpace(result.Error) != "" {
+		return false
+	}
+
+	if !agentutil.ReadStyleSourceBodyTool(strings.TrimSpace(result.Tool)) {
+		return false
+	}
+
+	text := featurePlannerPlanMarkdownRecognitionText(result)
+	if !strings.Contains(text, "# Feature Planner Candidate") {
+		return false
+	}
+
+	if !agentutil.ContainsAny(text, "\nStatus:", "\nSession:", "\nState:") {
+		return false
+	}
+
+	if !agentutil.ContainsAny(text, "\n## Proposed Paths", "\n## Test Coverage", "\n## Verification", "\n## Atoms") {
+		return false
+	}
+
+	readPaths := agentutil.ReadPathsFromToolResult(result)
+	if len(readPaths) == 0 {
+		return false
+	}
+
+	for _, path := range readPaths {
+		path = agentutil.NormalizeRunnerPath(path)
+		if path == "" {
+			continue
+		}
+		if strings.HasPrefix(path, ".planning/") ||
+			strings.HasPrefix(path, "planning/") ||
+			strings.HasSuffix(path, ".planning.md") {
+
+			return true
+		}
+	}
+
+	return false
+}
+
+func featurePlannerPlanMarkdownRecognitionText(result workspace.ToolResult) string {
+	text := strings.TrimSpace(result.Summary + "\n" + result.Output)
+	if text == "" {
+		return ""
+	}
+
+	lineNumberPrefix := regexp.MustCompile(`(?m)^\s*\d+:`)
+	return lineNumberPrefix.ReplaceAllString(text, "")
 }
 
 func featurePlannerPlanArtifactProposedPaths(result workspace.ToolResult) []string {
@@ -6685,6 +7074,9 @@ func featurePlannerPlanArtifactProposedPaths(result workspace.ToolResult) []stri
 
 	paths := append([]string(nil), raw.ProposedPaths...)
 	paths = append(paths, raw.Paths...)
+	if featurePlannerPlanMarkdownReadResult(result) {
+		paths = append(paths, pathparse.MentionedWorkspaceFiles(featurePlannerPlanMarkdownRecognitionText(result))...)
+	}
 	paths = append(paths, pathparse.MentionedWorkspaceFiles(result.Output)...)
 	paths = append(paths, pathparse.MentionedWorkspaceFiles(result.Summary)...)
 
@@ -6695,6 +7087,9 @@ func featurePlannerPlanArtifactProposedPaths(result workspace.ToolResult) []stri
 		if path == "" {
 			continue
 		}
+		if featurePlannerPlanMetadataPath(path) {
+			continue
+		}
 		if _, ok := seen[path]; ok {
 			continue
 		}
@@ -6703,6 +7098,14 @@ func featurePlannerPlanArtifactProposedPaths(result workspace.ToolResult) []stri
 	}
 
 	return out
+}
+
+func featurePlannerPlanMetadataPath(path string) bool {
+	path = agentutil.NormalizeRunnerPath(path)
+	return strings.HasPrefix(path, ".idiom/") ||
+		strings.HasPrefix(path, "idiom/") ||
+		strings.HasPrefix(path, ".planning/") ||
+		strings.HasPrefix(path, "planning/")
 }
 
 func sourceCitationExplicitlyUnverified(answer string, path string) bool {
@@ -6720,6 +7123,10 @@ func sourceCitationExplicitlyUnverified(answer string, path string) bool {
 }
 
 func sourceCitationWindow(answer string, path string) string {
+	return sourceCitationLocalWindow(answer, path, 180, 180)
+}
+
+func sourceCitationLocalWindow(answer string, path string, before int, after int) string {
 	if strings.TrimSpace(answer) == "" || strings.TrimSpace(path) == "" {
 		return ""
 	}
@@ -6729,12 +7136,12 @@ func sourceCitationWindow(answer string, path string) string {
 		return answer
 	}
 
-	start := idx - 180
+	start := idx - before
 	if start < 0 {
 		start = 0
 	}
 
-	end := idx + len(path) + 180
+	end := idx + len(path) + after
 	if end > len(answer) {
 		end = len(answer)
 	}
@@ -8088,6 +8495,18 @@ func looksLikeNonAnswerProseCore(answer string) bool {
 		return true
 	}
 
+	if looksLikeGroundedAnswerRepairState(trimmed) {
+		return true
+	}
+
+	if looksLikeGateSatisfactionMetaFinalAnswer(trimmed) {
+		return true
+	}
+
+	if looksLikeEmbeddedQuestionProtocolFinalAnswer(trimmed) {
+		return true
+	}
+
 	if looksLikeRawReadOnlyEvidencePacketAnswer(trimmed) {
 		return true
 	}
@@ -8110,6 +8529,140 @@ func looksLikeNonAnswerProseCore(answer string) bool {
 	// discusses a blocker, a failed command, or an exit status.
 	if looksLikeLeakedImplementationBlockerTemplate(lower) {
 		return true
+	}
+
+	return false
+}
+
+func looksLikeGateSatisfactionMetaFinalAnswer(answer string) bool {
+	normalized := strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(answer)), " "))
+	if normalized == "" {
+		return false
+	}
+
+	selfReferential := strings.HasPrefix(normalized, "the answer above ") ||
+		strings.HasPrefix(normalized, "the previous answer ") ||
+		strings.HasPrefix(normalized, "the prior answer ")
+	if selfReferential && agentutil.ContainsAny(normalized,
+		"grounded in the inspected evidence",
+		"grounded in inspected evidence",
+		"satisfies the gate",
+		"satisfies the completion gate",
+		"satisfies the gate requirements",
+		"gate requirements",
+	) {
+		return true
+	}
+
+	if gateMetaPhraseAppearsSelfCertifying(normalized) {
+		return true
+	}
+
+	return false
+}
+
+func gateMetaPhraseAppearsSelfCertifying(normalized string) bool {
+	if gateMetaPhraseDiscussesFailure(normalized) {
+		return false
+	}
+
+	for _, phrase := range []string{
+		"this satisfies the gate",
+		"this satisfies the completion gate",
+		"this satisfies the gate requirements",
+		"this answer satisfies the gate",
+		"this answer satisfies the completion gate",
+		"this answer satisfies the gate requirements",
+		"the gate requirements are satisfied",
+		"gate requirements are satisfied",
+		"the completion gate accepted this answer",
+		"completion gate accepted this answer",
+	} {
+		if strings.HasPrefix(normalized, phrase) ||
+			strings.Contains(normalized, ". "+phrase) ||
+			strings.Contains(normalized, "\n"+phrase) {
+
+			return true
+		}
+	}
+
+	return false
+}
+
+func gateMetaPhraseDiscussesFailure(normalized string) bool {
+	return agentutil.ContainsAny(normalized,
+		"model said",
+		"answer said",
+		"literal",
+		"quoted",
+		"phrase",
+		"wrongly",
+		"incorrectly",
+		"bug",
+		"root cause",
+		"failure",
+		"accepted incorrectly",
+	)
+}
+
+func looksLikeEmbeddedQuestionProtocolFinalAnswer(answer string) bool {
+	trimmedAnswer := strings.TrimSpace(answer)
+	if trimmedAnswer == "" || strings.HasPrefix(trimmedAnswer, "<<QUESTION>>") {
+		return false
+	}
+
+	for _, line := range strings.Split(trimmedAnswer, "\n") {
+		if embeddedQuestionProtocolLine(line) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func embeddedQuestionProtocolLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if strings.HasPrefix(trimmed, "<<QUESTION>>") {
+		return true
+	}
+
+	stripped := strings.TrimSpace(strings.TrimLeft(trimmed, "#>*-+ \t"))
+	if stripped != trimmed && strings.HasPrefix(stripped, "<<QUESTION>>") {
+		return true
+	}
+
+	stripped = regexp.MustCompile(`^\d+[\.)]\s*`).ReplaceAllString(trimmed, "")
+	return stripped != trimmed && strings.HasPrefix(strings.TrimSpace(stripped), "<<QUESTION>>")
+}
+
+func looksLikeGroundedAnswerRepairState(answer string) bool {
+	normalized := strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(answer)), " "))
+	if normalized == "" {
+		return false
+	}
+
+	if !strings.HasPrefix(normalized, "for `") ||
+		!strings.Contains(normalized, "` provides the grounded answer:") {
+
+		return false
+	}
+
+	prefix := normalized[:strings.Index(normalized, "` provides the grounded answer:")]
+	if strings.Count(prefix, "`") < 3 {
+		return false
+	}
+
+	for _, path := range pathparse.MentionedWorkspaceFiles(prefix) {
+		path = agentutil.NormalizeRunnerPath(path)
+		if path == "" {
+			continue
+		}
+		if agentutil.IsNonSourceEvidenceArtifactPath(path) ||
+			strings.HasPrefix(path, ".planning/") ||
+			strings.HasPrefix(path, "planning/") {
+
+			return true
+		}
 	}
 
 	return false

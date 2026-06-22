@@ -11,32 +11,34 @@ import (
 // needs to produce a grounded feature plan. The CLI layer populates it
 // from the product workflow effort artifacts and passes it through RunOptions.
 type ProductWorkflowBrief struct {
-	EffortID                  string                `json:"effort_id"`
-	TaskID                    string                `json:"task_id"`
-	EffortRoot                string                `json:"effort_root"`
-	StatusBucket              string                `json:"status_bucket,omitempty"`
-	CurrentPhase              string                `json:"current_phase,omitempty"`
-	CurrentState              string                `json:"current_state,omitempty"`
-	NextValidActions          []string              `json:"next_valid_actions,omitempty"`
-	PRDRequirements           []PRDRequirementBrief `json:"prd_requirements"`
-	AcceptedADRIDs            []string              `json:"accepted_adr_ids"`
-	AcceptedADRPaths          []string              `json:"accepted_adr_paths"`
-	TDDObligations            []TDDObligationBrief  `json:"tdd_obligations"`
-	CoverageTier              string                `json:"coverage_tier"`
-	CoverageGatePassed        bool                  `json:"coverage_gate_passed"`
-	CoverageBlockers          []string              `json:"coverage_blockers"`
-	CoverageBlockerKinds      []string              `json:"coverage_blocker_kinds,omitempty"`
-	FilesToModify             []string              `json:"files_to_modify"`
-	ContextEvidencePaths      []string              `json:"context_evidence_paths,omitempty"`
-	SourceFacts               []SourceFactBrief     `json:"source_facts,omitempty"`
-	AuthorizedNewPackageRoots []string              `json:"authorized_new_package_roots,omitempty"`
-	RequiredBehavior          []string              `json:"required_behavior"`
-	Tests                     []string              `json:"tests"`
-	Acceptance                []string              `json:"acceptance"`
-	Constraints               []string              `json:"constraints"`
-	Decisions                 []string              `json:"decisions"`
-	Blockers                  []string              `json:"blockers"`
-	ArtifactRootPath          string                `json:"artifact_root_path"`
+	EffortID                  string                      `json:"effort_id"`
+	TaskID                    string                      `json:"task_id"`
+	EffortRoot                string                      `json:"effort_root"`
+	StatusBucket              string                      `json:"status_bucket,omitempty"`
+	CurrentPhase              string                      `json:"current_phase,omitempty"`
+	CurrentState              string                      `json:"current_state,omitempty"`
+	NextValidActions          []string                    `json:"next_valid_actions,omitempty"`
+	PRDRequirements           []PRDRequirementBrief       `json:"prd_requirements"`
+	AcceptedADRIDs            []string                    `json:"accepted_adr_ids"`
+	AcceptedADRPaths          []string                    `json:"accepted_adr_paths"`
+	TDDObligations            []TDDObligationBrief        `json:"tdd_obligations"`
+	CoverageTier              string                      `json:"coverage_tier"`
+	CoverageGatePassed        bool                        `json:"coverage_gate_passed"`
+	CoverageContract          *CoverageContractRef        `json:"coverage_contract,omitempty"`
+	AcceptedCoverage          *AcceptedBehavioralCoverage `json:"accepted_coverage,omitempty"`
+	CoverageBlockers          []string                    `json:"coverage_blockers"`
+	CoverageBlockerKinds      []string                    `json:"coverage_blocker_kinds,omitempty"`
+	FilesToModify             []string                    `json:"files_to_modify"`
+	ContextEvidencePaths      []string                    `json:"context_evidence_paths,omitempty"`
+	SourceFacts               []SourceFactBrief           `json:"source_facts,omitempty"`
+	AuthorizedNewPackageRoots []string                    `json:"authorized_new_package_roots,omitempty"`
+	RequiredBehavior          []string                    `json:"required_behavior"`
+	Tests                     []string                    `json:"tests"`
+	Acceptance                []string                    `json:"acceptance"`
+	Constraints               []string                    `json:"constraints"`
+	Decisions                 []string                    `json:"decisions"`
+	Blockers                  []string                    `json:"blockers"`
+	ArtifactRootPath          string                      `json:"artifact_root_path"`
 }
 
 func ProductWriteEnvelopePaths(brief *ProductWorkflowBrief) []string {

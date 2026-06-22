@@ -48,6 +48,10 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 
 	var events []Event
 
+	if opts.ProductWorkflowBrief != nil {
+		state.Plan.BehavioralCoverageDraft = nil
+	}
+
 	if strings.TrimSpace(opts.ResumeAnswer) != "" {
 		events = append(events, answerOpenQuestion(&state, opts.ResumeAnswer)...)
 		if state.Status == FeatureStatePlanningQuestion {
@@ -240,6 +244,12 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 		b.WriteString("\nProduct Workflow Context:\n")
 		fmt.Fprintf(&b, "Effort: %s (task %s)\n", brief.EffortID, brief.TaskID)
 		fmt.Fprintf(&b, "Coverage tier: %s, gate passed: %v\n", brief.CoverageTier, brief.CoverageGatePassed)
+		if brief.CoverageContract != nil {
+			fmt.Fprintf(&b, "Accepted coverage contract: id=%s event=%s digest=%s status=%s\n", brief.CoverageContract.ContractID, brief.CoverageContract.EventID, brief.CoverageContract.Digest, brief.CoverageContract.Status)
+		}
+		if brief.AcceptedCoverage != nil {
+			writeAcceptedCoveragePromptContext(&b, *brief.AcceptedCoverage)
+		}
 
 		if len(brief.PRDRequirements) > 0 {
 			b.WriteString("PRD Requirements:\n")
@@ -346,6 +356,9 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 			b.WriteString(productSubmitFeaturePlanShape(brief.CoverageTier))
 			b.WriteString("Your FeaturePlan SDD refs MUST reference only PRD requirement IDs and ADR IDs from the context above.\n")
 			b.WriteString("Your TDD obligations MUST reference only the obligation IDs listed above.\n")
+			if brief.CoverageContract != nil {
+				b.WriteString("Set coverage_contract to the accepted coverage contract id/event/digest/status/tier from the context. Do not include behavioral_coverage_draft or accepted_coverage in product-workflow-backed submissions; the harness stamps accepted coverage detail after validation.\n")
+			}
 
 			if brief.coveragePendingImplementationVerification() {
 				b.WriteString("The coverage gate is pending only because TDD pre-execution evidence is not recorded yet; treat the listed TDD obligations as test-first acceptance for this dispatch, and do not ask a planner question solely for that missing pre-execution evidence.\n")
@@ -418,6 +431,19 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 	b.WriteString("\n")
 
 	return b.String()
+}
+
+func writeAcceptedCoveragePromptContext(b *strings.Builder, coverage AcceptedBehavioralCoverage) {
+	if b == nil {
+		return
+	}
+
+	for _, section := range AcceptedCoveragePresentation(&coverage) {
+		fmt.Fprintf(b, "Accepted Coverage - %s:\n", section.Label)
+		for _, row := range section.Rows {
+			fmt.Fprintf(b, "  - %s\n", row.Text)
+		}
+	}
 }
 
 func acceptedSourceAuthorityConstraints(deltas []PlanAuthorityDelta) []string {
@@ -2267,7 +2293,7 @@ func greenfieldMissingNewFileAuthorizationQuestion(err error, prompt string, wor
 		return PlannerQuestion{}, false
 	}
 
-	if !standaloneWorkspaceLooksGreenfield(workspaceRoot) || !promptRequestsGreenfieldSkeleton(prompt) {
+	if !standaloneWorkspaceLooksGreenfield(workspaceRoot) || !promptRequestsGreenfieldProjectScope(prompt) {
 		return PlannerQuestion{}, false
 	}
 
@@ -2293,7 +2319,7 @@ func greenfieldMissingNewFileAuthorizationQuestion(err error, prompt string, wor
 	}, true
 }
 
-func promptRequestsGreenfieldSkeleton(prompt string) bool {
+func promptRequestsGreenfieldProjectScope(prompt string) bool {
 	words := " " + strings.ToLower(strings.TrimSpace(prompt)) + " "
 	words = strings.NewReplacer(
 		".", " ",
@@ -2316,16 +2342,13 @@ func promptRequestsGreenfieldSkeleton(prompt string) bool {
 		return false
 	}
 
+	greenfieldIntent := false
 	projectLike := strings.Contains(words, " project ") ||
 		strings.Contains(words, " app ") ||
 		strings.Contains(words, " application ") ||
 		strings.Contains(words, " repo ") ||
 		strings.Contains(words, " repository ") ||
 		strings.Contains(words, " workspace ")
-	if !projectLike {
-		return false
-	}
-
 	for _, term := range []string{
 		" bones ",
 		" skeleton ",
@@ -2336,13 +2359,16 @@ func promptRequestsGreenfieldSkeleton(prompt string) bool {
 		" greenfield ",
 		" from scratch ",
 		" starting from scratch ",
+		" mvp ",
+		" minimum viable ",
 	} {
 		if strings.Contains(words, term) {
-			return true
+			greenfieldIntent = true
+			break
 		}
 	}
 
-	return false
+	return projectLike && greenfieldIntent
 }
 
 const (

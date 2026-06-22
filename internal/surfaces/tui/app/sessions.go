@@ -161,10 +161,10 @@ type sessionReplay struct {
 }
 
 // LoadHistoryFromSession replays the user/assistant message records from a
-// prior session log into the model's conversation history. It does not restore
-// workspace, plan, or workflow state — those load from their own per-workspace
-// persistence on Model construction. Tool results are not replayed; the model
-// just sees the prior conversation as plain chat history.
+// prior session log into the model's conversation history. Tool results are not
+// replayed; the model just sees the prior conversation as plain chat history.
+// Durable workflow pointers are restored only when the log names a resumable
+// per-workspace state artifact, such as an open direct feature-planner session.
 func (m *Model) LoadHistoryFromSession(path string) error {
 	if m == nil {
 		return fmt.Errorf("model is nil")
@@ -199,6 +199,9 @@ func (m *Model) LoadHistoryFromSession(path string) error {
 	}
 
 	m.requestHistoryPanelRender(true, true)
+	if strings.TrimSpace(m.directFeaturePlannerSessionID) == "" {
+		m.restoreDirectFeaturePlannerSessionFromSessionLog(path)
+	}
 
 	return nil
 }

@@ -11604,7 +11604,7 @@ func (r *Runner) readOnlyEvidenceCompletionRejection(reply string, results []wor
 		}
 	}
 
-	if readOnlyDirectAnswerLane(brief) && readOnlyAnswerHasConcreteEvidence(results) {
+	if readOnlyDirectAnswerLane(brief) && (readOnlyAnswerHasConcreteEvidence(results) || readOnlyPlanArtifactEvidenceSupportsReply(brief, reply, results)) {
 		if acceptance := r.evaluateFinalAnswerAcceptance(reply, results); acceptance.BlockerKind == "" {
 			return workspace.ToolResult{}, false
 		}
@@ -22574,6 +22574,8 @@ func (r *Runner) terminalAnswerShouldOverrideRejectedRaw(answer string, acceptan
 
 	return acceptance.BlockerKind != "non_answer_prose" ||
 		looksLikeMetaIntentRestatement(answer) ||
+		looksLikeGateSatisfactionMetaFinalAnswer(answer) ||
+		looksLikeEmbeddedQuestionProtocolFinalAnswer(answer) ||
 		looksLikeLowValueSourceInventoryNonAnswer(answer) ||
 		finishShouldOverrideSourceEcho(answer)
 }
@@ -23043,6 +23045,8 @@ func (r *Runner) finalAnswerBlockerErrorText(kind string, reason string, answer 
 		return "the final answer was a <<QUESTION>>: blocker; surface the path-specific blocker reason for each unfinished required edit path."
 	case "read_only_protocol_blocker":
 		return "the final answer exposed internal <<QUESTION>> blocker protocol in a read-only direct-answer lane. Answer in normal prose from gathered evidence, or state the exact unresolved claim and the smallest useful next probe without raw blocker markup."
+	case "protocol_meta_final_answer":
+		return "the final answer repeated internal validation status instead of answering the user. Answer in normal prose from the gathered evidence; omit validation status and internal protocol markers."
 	case "unexecuted_tool_request_final_answer":
 		return "the final answer was an unexecuted workspace-tool request payload. Issue the lookup as a parser-readable tool call with the `tool` field, or answer in normal prose from the available evidence."
 	case "non_answer_prose":

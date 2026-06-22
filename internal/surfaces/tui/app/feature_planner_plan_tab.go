@@ -122,8 +122,9 @@ func featurePlannerStatePrefersRejectedCandidate(status string) bool {
 }
 
 func featurePlannerPlanHasDisplayableContent(plan featureplanner.FeaturePlan) bool {
-	return strings.TrimSpace(plan.Summary) != "" ||
-		strings.TrimSpace(plan.TopLevelScope.Objective) != "" ||
+	return strings.TrimSpace(plan.TopLevelScope.Objective) != "" ||
+		strings.TrimSpace(plan.SourceTask.Summary) != "" ||
+		len(plan.TopLevelScope.SuccessCriteria) > 0 ||
 		len(plan.Atoms) > 0
 }
 
@@ -137,18 +138,9 @@ func renderFeaturePlannerPlanTabMarkdown(state featureplanner.FeatureState, stat
 	if hash := strings.TrimSpace(candidate.PlanHash); hash != "" {
 		writeFeaturePlannerMarkdownField(&b, "Candidate", hash)
 	}
-	if diagnostic := strings.TrimSpace(candidate.Diagnostic); diagnostic != "" {
-		writeFeaturePlannerMarkdownField(&b, "Diagnostic", diagnostic)
-	}
 	b.WriteString("\n")
 
-	writeFeaturePlannerMarkdownSection(&b, "Objective", firstNonEmptyFeaturePlannerPlanText(plan.TopLevelScope.Objective, plan.SourceTask.Summary, state.PromptSummary, plan.Summary))
-	writeFeaturePlannerMarkdownSection(&b, "Summary", plan.Summary)
-	writeFeaturePlannerMarkdownList(&b, "Success Criteria", plan.TopLevelScope.SuccessCriteria)
-	writeFeaturePlannerMarkdownList(&b, "Non Goals", plan.TopLevelScope.NonGoals)
-	writeFeaturePlannerMarkdownList(&b, "Proposed Paths", featurePlannerPlanTabPaths(plan))
-	writeFeaturePlannerMarkdownVerification(&b, plan)
-	writeFeaturePlannerMarkdownQuestions(&b, state.OpenQuestions)
+	writeFeaturePlannerMarkdownCoverageSections(&b, state, statePath, plan, candidate)
 	writeFeaturePlannerMarkdownAtoms(&b, plan.Atoms)
 
 	return strings.TrimRight(b.String(), "\n") + "\n"
@@ -163,68 +155,48 @@ func writeFeaturePlannerMarkdownField(b *strings.Builder, label string, value st
 	fmt.Fprintf(b, "%s: %s\n", label, featurePlannerInlineMarkdown(value))
 }
 
-func writeFeaturePlannerMarkdownSection(b *strings.Builder, title string, value string) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return
+func writeFeaturePlannerMarkdownCoverageSections(b *strings.Builder, state featureplanner.FeatureState, statePath string, plan featureplanner.FeaturePlan, candidate featureplanner.RejectedPlanCandidate) {
+	sections := featureplanner.FeaturePlanCoveragePresentation(state, statePath, plan, candidate)
+	for _, section := range sections {
+		rows := make([]string, 0, len(section.Rows))
+		for _, row := range section.Rows {
+			rows = append(rows, row.Text)
+		}
+		switch section.Label {
+		case featureplanner.CoverageSectionE2EJourneys,
+			featureplanner.CoverageSectionFuzzAndPropertyCoverage,
+			featureplanner.CoverageSectionSecurityPrivacyRAGEvals,
+			featureplanner.CoverageSectionProviderContracts,
+			featureplanner.CoverageSectionObservability,
+			featureplanner.CoverageSectionPerformanceBounds:
+			writeFeaturePlannerMarkdownCoverageListIfAny(b, section.Label, rows)
+		default:
+			writeFeaturePlannerMarkdownCoverageList(b, section.Label, rows)
+		}
 	}
-
-	fmt.Fprintf(b, "## %s\n\n%s\n\n", title, value)
 }
 
-func writeFeaturePlannerMarkdownList(b *strings.Builder, title string, values []string) {
+func writeFeaturePlannerMarkdownCoverageList(b *strings.Builder, title string, values []string) {
 	values = featurePlannerUniqueStrings(values)
+	fmt.Fprintf(b, "## %s\n\n", title)
 	if len(values) == 0 {
+		b.WriteString("- No entries recorded in the structured plan.\n\n")
 		return
 	}
 
-	fmt.Fprintf(b, "## %s\n\n", title)
 	for _, value := range values {
 		fmt.Fprintf(b, "- %s\n", value)
 	}
 	b.WriteString("\n")
 }
 
-func writeFeaturePlannerMarkdownVerification(b *strings.Builder, plan featureplanner.FeaturePlan) {
-	var values []string
-	for _, obligation := range plan.TDDContract.Obligations {
-		command := strings.TrimSpace(obligation.Command)
-		if command == "" {
-			continue
-		}
-		label := strings.TrimSpace(obligation.ID)
-		if label == "" {
-			label = "verification"
-		}
-		values = append(values, label+": "+command)
-	}
-	for _, atom := range plan.Atoms {
-		values = append(values, atom.TestFirst.Commands...)
-		values = append(values, atom.RequiredTests...)
+func writeFeaturePlannerMarkdownCoverageListIfAny(b *strings.Builder, title string, values []string) {
+	values = featurePlannerUniqueStrings(values)
+	if len(values) == 0 {
+		return
 	}
 
-	writeFeaturePlannerMarkdownList(b, "Verification", values)
-}
-
-func writeFeaturePlannerMarkdownQuestions(b *strings.Builder, questions []featureplanner.PlannerQuestion) {
-	var values []string
-	for _, question := range questions {
-		if !featurePlannerQuestionOpen(question) {
-			continue
-		}
-		summary := strings.TrimSpace(question.QuestionSummary)
-		decision := strings.TrimSpace(question.RequestedDecision)
-		switch {
-		case summary != "" && decision != "":
-			values = append(values, summary+" - "+decision)
-		case summary != "":
-			values = append(values, summary)
-		case decision != "":
-			values = append(values, decision)
-		}
-	}
-
-	writeFeaturePlannerMarkdownList(b, "Open Questions", values)
+	writeFeaturePlannerMarkdownCoverageList(b, title, values)
 }
 
 func writeFeaturePlannerMarkdownAtoms(b *strings.Builder, atoms []featureplanner.FeatureAtomPlan) {

@@ -7,6 +7,122 @@ import (
 
 func TestCoverageGatePassesBehaviorStandardWithCompleteCoverage(t *testing.T) {
 	mutation := 90.0
+	contract := BehavioralCoverageContract{
+		EARS: []EARSRequirementCoverage{{
+			ID:         "REQ-1",
+			Statement:  "When behavior coverage exists, the system shall require typed behavioral coverage.",
+			MappedRefs: []string{"BDD-1"},
+		}},
+		BDDScenarios: []BDDScenarioCoverage{{
+			ID:               "BDD-1",
+			RequirementID:    "REQ-1",
+			Given:            []string{"behavior coverage exists"},
+			When:             []string{"gate evaluates"},
+			Then:             []string{"typed behavioral contract is present"},
+			ConcreteDataRefs: []string{"fixtures/behavior.json"},
+		}},
+		DesignContracts: []DesignContractCoverage{{
+			ID:             "DBC-1",
+			Boundary:       "coverage gate",
+			Preconditions:  []string{"behavior tier requested"},
+			Postconditions: []string{"typed coverage exists"},
+			Invariants:     []string{"counters are projection only"},
+			TestRefs:       []string{"TestCoverageGatePassesBehaviorStandardWithCompleteCoverage"},
+		}},
+		Mutation: BehavioralMutationCoverage{Requirement: "required", MinScore: 80, Score: &mutation},
+	}
+	eval := EvaluateCoverageGate(
+		PRDDocument{
+			FrontMatter: PRDFrontMatter{Status: "accepted"},
+			Requirements: []PRDRequirement{
+				{ID: "REQ-1", EvidenceRefs: []string{"EV-1"}, TDDObligations: []string{"TDD-1"}},
+			},
+		},
+		ADRIndex{ADRs: []ADRIndexEntry{{ADRID: "ADR-1"}}},
+		[]ParsedADR{{
+			Doc: ADRDocument{
+				FrontMatter: ADRFrontMatter{
+					ADRID:        "ADR-1",
+					Status:       "accepted",
+					EvidenceRefs: []string{"EV-1"},
+				},
+			},
+		}},
+		TDDLedger{
+			CoverageTier:       "behavior_standard",
+			Coverage:           ProjectBehavioralCoverageContract(contract),
+			BehavioralCoverage: &contract,
+			Obligations:        []TDDObligation{{ID: "TDD-1"}},
+		},
+		TraceabilityMatrix{
+			Matrix: []TraceabilityRow{{PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-1"}},
+		},
+		map[string]bool{"TDD-1": true},
+	)
+
+	if eval.Status != "pass" {
+		t.Fatalf("expected pass, got %q: %#v", eval.Status, eval.Findings)
+	}
+
+	if CoverageGateHasBlockers(eval) {
+		t.Fatalf("expected no blockers, got %#v", eval.Blockers)
+	}
+}
+
+func TestCoverageGateBlocksInvalidBehavioralCoverageContract(t *testing.T) {
+	contract := BehavioralCoverageContract{
+		EARS: []EARSRequirementCoverage{{ID: "REQ-1", Statement: "should be accepted", MappedRefs: []string{"BDD-1"}}},
+	}
+	eval := EvaluateCoverageGate(
+		PRDDocument{FrontMatter: PRDFrontMatter{Status: "accepted"}, Requirements: []PRDRequirement{{ID: "REQ-1", EvidenceRefs: []string{"EV-1"}, TDDObligations: []string{"TDD-1"}}}},
+		ADRIndex{ADRs: []ADRIndexEntry{{ADRID: "ADR-1"}}},
+		[]ParsedADR{{Doc: ADRDocument{FrontMatter: ADRFrontMatter{ADRID: "ADR-1", Status: "accepted", EvidenceRefs: []string{"EV-1"}}}}},
+		TDDLedger{
+			CoverageTier:       "behavior_standard",
+			Coverage:           TDDCoverage{EARSTotal: 1, EARSMapped: 1, BDDTotal: 1, BDDWithConcreteData: 1, GatesPassed: []string{"contract"}, MutationMinScore: 80},
+			BehavioralCoverage: &contract,
+			Obligations:        []TDDObligation{{ID: "TDD-1"}},
+		},
+		TraceabilityMatrix{Matrix: []TraceabilityRow{{PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-1"}}},
+		map[string]bool{"TDD-1": true},
+	)
+
+	if eval.Status != ProductWorkflowStatusBlocked {
+		t.Fatalf("expected invalid behavioral coverage to block, got %q", eval.Status)
+	}
+	if !coverageGateTestHasFinding(eval, "coverage_behavioral_contract_invalid") {
+		t.Fatalf("expected invalid contract finding, got %#v", eval.Findings)
+	}
+}
+
+func TestCoverageGateBlocksBehavioralCoverageProjectionMismatch(t *testing.T) {
+	contract := coverageGateTestBehavioralCoverageContract("behavior_standard", TDDCoverage{})
+	coverage := ProjectBehavioralCoverageContract(contract)
+	coverage.BDDWithConcreteData = 0
+	eval := EvaluateCoverageGate(
+		PRDDocument{FrontMatter: PRDFrontMatter{Status: "accepted"}, Requirements: []PRDRequirement{{ID: "REQ-1", EvidenceRefs: []string{"EV-1"}, TDDObligations: []string{"TDD-1"}}}},
+		ADRIndex{ADRs: []ADRIndexEntry{{ADRID: "ADR-1"}}},
+		[]ParsedADR{{Doc: ADRDocument{FrontMatter: ADRFrontMatter{ADRID: "ADR-1", Status: "accepted", EvidenceRefs: []string{"EV-1"}}}}},
+		TDDLedger{
+			CoverageTier:       "behavior_standard",
+			Coverage:           coverage,
+			BehavioralCoverage: &contract,
+			Obligations:        []TDDObligation{{ID: "TDD-1"}},
+		},
+		TraceabilityMatrix{Matrix: []TraceabilityRow{{PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-1"}}},
+		map[string]bool{"TDD-1": true},
+	)
+
+	if eval.Status != ProductWorkflowStatusBlocked {
+		t.Fatalf("expected projection mismatch to block, got %q", eval.Status)
+	}
+	if !coverageGateTestHasFinding(eval, "coverage_behavioral_projection_mismatch") {
+		t.Fatalf("expected projection mismatch finding, got %#v", eval.Findings)
+	}
+}
+
+func TestCoverageGateBlocksBehaviorTierWithoutBehavioralCoverageContract(t *testing.T) {
+	mutation := 90.0
 	eval := EvaluateCoverageGate(
 		PRDDocument{
 			FrontMatter: PRDFrontMatter{Status: "accepted"},
@@ -27,10 +143,10 @@ func TestCoverageGatePassesBehaviorStandardWithCompleteCoverage(t *testing.T) {
 		TDDLedger{
 			CoverageTier: "behavior_standard",
 			Coverage: TDDCoverage{
-				EARSTotal:           2,
-				EARSMapped:          2,
-				BDDTotal:            2,
-				BDDWithConcreteData: 2,
+				EARSTotal:           1,
+				EARSMapped:          1,
+				BDDTotal:            1,
+				BDDWithConcreteData: 1,
 				GatesPassed:         []string{"contract"},
 				MutationScore:       &mutation,
 				MutationMinScore:    80,
@@ -43,13 +159,125 @@ func TestCoverageGatePassesBehaviorStandardWithCompleteCoverage(t *testing.T) {
 		map[string]bool{"TDD-1": true},
 	)
 
-	if eval.Status != "pass" {
-		t.Fatalf("expected pass, got %q: %#v", eval.Status, eval.Findings)
+	if eval.Status != ProductWorkflowStatusBlocked {
+		t.Fatalf("expected counter-only behavioral coverage to block, got %q", eval.Status)
+	}
+	if !coverageGateTestHasBlocker(eval, "coverage_behavioral_contract_missing") {
+		t.Fatalf("expected behavioral contract blocker, got %#v", eval.Blockers)
+	}
+}
+
+func TestCoverageGateBlocksIncompleteDeclaredProductionReadinessCategories(t *testing.T) {
+	baseCoverage := TDDCoverage{
+		EARSTotal:            1,
+		EARSMapped:           1,
+		BDDTotal:             1,
+		BDDWithConcreteData:  1,
+		GatesPassed:          []string{"contract"},
+		InvariantsTotal:      1,
+		InvariantsWithPBT:    1,
+		StateMachinesTotal:   1,
+		StateMachinesCovered: 1,
+	}
+	contract := BehavioralCoverageContract{
+		EARS: []EARSRequirementCoverage{{
+			ID:         "REQ-1",
+			Statement:  "When declared coverage exists, the system shall require complete production-readiness evidence.",
+			MappedRefs: []string{"BDD-1"},
+		}},
+		BDDScenarios: []BDDScenarioCoverage{{
+			ID:               "BDD-1",
+			Given:            []string{"coverage is declared"},
+			When:             []string{"gate evaluates"},
+			Then:             []string{"declared categories are complete"},
+			ConcreteDataRefs: []string{"fixtures/coverage.json"},
+		}},
+		DesignContracts: []DesignContractCoverage{{
+			ID:             "DBC-1",
+			Boundary:       "coverage gate",
+			Preconditions:  []string{"contract tier requested"},
+			Postconditions: []string{"incomplete declared coverage blocks"},
+			Invariants:     []string{"declared totals match tested totals"},
+			TestRefs:       []string{"TestCoverageGateBlocksIncompleteDeclaredProductionReadinessCategories"},
+		}},
+	}
+	prd := PRDDocument{
+		FrontMatter: PRDFrontMatter{Status: "accepted"},
+		Requirements: []PRDRequirement{
+			{ID: "REQ-1", EvidenceRefs: []string{"EV-1"}, TDDObligations: []string{"TDD-1"}},
+		},
+	}
+	adrIndex := ADRIndex{ADRs: []ADRIndexEntry{{ADRID: "ADR-1"}}}
+	adrs := []ParsedADR{{
+		Doc: ADRDocument{
+			FrontMatter: ADRFrontMatter{
+				ADRID:        "ADR-1",
+				Status:       "accepted",
+				EvidenceRefs: []string{"EV-1"},
+			},
+		},
+	}}
+	traceability := TraceabilityMatrix{Matrix: []TraceabilityRow{{PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-1"}}}
+
+	tests := []struct {
+		name string
+		set  func(*TDDCoverage)
+		kind string
+	}{
+		{"fuzz", func(c *TDDCoverage) { c.FuzzTargetsTotal = 1 }, "coverage_fuzz_incomplete"},
+		{"rag eval", func(c *TDDCoverage) { c.RAGEvalsTotal = 1 }, "coverage_rag_eval_incomplete"},
+		{"security", func(c *TDDCoverage) { c.SecurityCasesTotal = 1 }, "coverage_llm_security_incomplete"},
+		{"privacy", func(c *TDDCoverage) { c.PrivacyControlsTotal = 1 }, "coverage_privacy_incomplete"},
+		{"provider contract", func(c *TDDCoverage) { c.ProviderContractsTotal = 1 }, "coverage_provider_contract_incomplete"},
+		{"observability", func(c *TDDCoverage) { c.ObservabilityTotal = 1 }, "coverage_observability_incomplete"},
+		{"performance", func(c *TDDCoverage) { c.PerformanceBoundsTotal = 1 }, "coverage_performance_incomplete"},
+		{"scripted e2e", func(c *TDDCoverage) { c.E2EJourneysTotal = 1 }, "coverage_scripted_e2e_incomplete"},
 	}
 
-	if CoverageGateHasBlockers(eval) {
-		t.Fatalf("expected no blockers, got %#v", eval.Blockers)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			coverage := baseCoverage
+			tt.set(&coverage)
+			eval := EvaluateCoverageGate(
+				prd,
+				adrIndex,
+				adrs,
+				TDDLedger{
+					CoverageTier:       "contract_high",
+					Coverage:           coverage,
+					BehavioralCoverage: &contract,
+					Obligations:        []TDDObligation{{ID: "TDD-1"}},
+				},
+				traceability,
+				map[string]bool{"TDD-1": true},
+			)
+
+			if eval.Status != ProductWorkflowStatusBlocked {
+				t.Fatalf("expected blocked status for %s, got %q", tt.name, eval.Status)
+			}
+			if !coverageGateTestHasBlocker(eval, tt.kind) {
+				t.Fatalf("expected blocker %q, got %#v", tt.kind, eval.Blockers)
+			}
+		})
 	}
+}
+
+func coverageGateTestHasBlocker(eval CoverageGateEvaluation, kind string) bool {
+	for _, blocker := range eval.Blockers {
+		if blocker.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func coverageGateTestHasFinding(eval CoverageGateEvaluation, kind string) bool {
+	for _, finding := range eval.Findings {
+		if finding.Kind == kind {
+			return true
+		}
+	}
+	return false
 }
 
 func TestBuildCoverageGateEvaluatedEventReportsCoveragePercentages(t *testing.T) {
@@ -84,6 +312,22 @@ func TestBuildCoverageGateEvaluatedEventReportsCoveragePercentages(t *testing.T)
 				PostMortemCatchingTests:  2,
 				FormalModelsTotal:        2,
 				FormalModelsVerified:     1,
+				FuzzTargetsTotal:         4,
+				FuzzTargetsCovered:       3,
+				RAGEvalsTotal:            2,
+				RAGEvalsMeasured:         1,
+				SecurityCasesTotal:       5,
+				SecurityCasesTested:      4,
+				PrivacyControlsTotal:     4,
+				PrivacyControlsTested:    2,
+				ProviderContractsTotal:   3,
+				ProviderContractsTested:  2,
+				ObservabilityTotal:       2,
+				ObservabilityTested:      1,
+				PerformanceBoundsTotal:   4,
+				PerformanceBoundsTested:  3,
+				E2EJourneysTotal:         5,
+				E2EJourneysScripted:      4,
 				MutationScore:            &mutation,
 			},
 		},
@@ -104,6 +348,14 @@ func TestBuildCoverageGateEvaluatedEventReportsCoveragePercentages(t *testing.T)
 	assertCoveragePct(t, "fault_tree", event.Coverage.FaultTreeCoveragePct, 60)
 	assertCoveragePct(t, "post_mortem", event.Coverage.PostMortemCoveragePct, 40)
 	assertCoveragePct(t, "formal_verification", event.Coverage.FormalVerificationPct, 50)
+	assertCoveragePct(t, "fuzz", event.Coverage.FuzzCoveragePct, 75)
+	assertCoveragePct(t, "rag_eval", event.Coverage.RAGEvalCoveragePct, 50)
+	assertCoveragePct(t, "security", event.Coverage.SecurityCoveragePct, 80)
+	assertCoveragePct(t, "privacy", event.Coverage.PrivacyCoveragePct, 50)
+	assertCoveragePct(t, "provider_contract", event.Coverage.ProviderContractPct, 66.66666666666666)
+	assertCoveragePct(t, "observability", event.Coverage.ObservabilityPct, 50)
+	assertCoveragePct(t, "performance", event.Coverage.PerformancePct, 75)
+	assertCoveragePct(t, "scripted_e2e", event.Coverage.ScriptedE2EPct, 80)
 	assertCoveragePct(t, "mutation", event.Coverage.MutationScore, 85)
 
 	if len(event.BlockedReasons) != 0 {
@@ -763,7 +1015,7 @@ func TestCoverageGateBlocksContractTiersWhenPBTInvariantTotalIsZero(t *testing.T
 }
 
 func TestCoverageGateDoesNotBlockLowerTiersWhenPBTInvariantTotalIsZero(t *testing.T) {
-	for _, tier := range []string{"documentation", "local_low", "unit", "behavior_standard"} {
+	for _, tier := range []string{"documentation", "local_low", "unit"} {
 		t.Run(tier, func(t *testing.T) {
 			eval := coverageGateEvalWithZeroInvariants(tier)
 			if eval.Status != "pass" {
@@ -802,7 +1054,7 @@ func TestCoverageGateBlocksContractTiersWhenStateMachineCoveragePartial(t *testi
 }
 
 func TestCoverageGateDoesNotRequireStateMachineCoverageBelowContractTiers(t *testing.T) {
-	for _, tier := range []string{"documentation", "local_low", "unit", "behavior_standard"} {
+	for _, tier := range []string{"documentation", "local_low", "unit"} {
 		t.Run(tier, func(t *testing.T) {
 			eval := coverageGateEvalWithStateMachineCoverage(tier, 0, 0)
 			if eval.Status != "pass" {
@@ -1127,6 +1379,16 @@ func coverageGateEvalWithFormalCoverage(tier string, total int, verified int, ga
 }
 
 func coverageGateEvalWithCoverage(tier string, coverage TDDCoverage) CoverageGateEvaluation {
+	ledger := TDDLedger{
+		CoverageTier: tier,
+		Coverage:     coverage,
+		Obligations:  []TDDObligation{{ID: "TDD-1"}},
+	}
+	if tierRequiresBehaviorCoverage(tier) {
+		contract := coverageGateTestBehavioralCoverageContract(tier, coverage)
+		ledger.BehavioralCoverage = &contract
+	}
+
 	return EvaluateCoverageGate(
 		PRDDocument{
 			FrontMatter: PRDFrontMatter{Status: "accepted"},
@@ -1144,16 +1406,132 @@ func coverageGateEvalWithCoverage(tier string, coverage TDDCoverage) CoverageGat
 				},
 			},
 		}},
-		TDDLedger{
-			CoverageTier: tier,
-			Coverage:     coverage,
-			Obligations:  []TDDObligation{{ID: "TDD-1"}},
-		},
+		ledger,
 		TraceabilityMatrix{
 			Matrix: []TraceabilityRow{{PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-1"}},
 		},
 		map[string]bool{"TDD-1": true},
 	)
+}
+
+func coverageGateTestBehavioralCoverageContract(tier string, coverage TDDCoverage) BehavioralCoverageContract {
+	contract := BehavioralCoverageContract{
+		CoverageTier: tier,
+		EARS: []EARSRequirementCoverage{{
+			ID:         "REQ-1",
+			Statement:  "When coverage is evaluated, the system shall use typed behavioral coverage.",
+			MappedRefs: []string{"BDD-1"},
+		}},
+		BDDScenarios: []BDDScenarioCoverage{{
+			ID:               "BDD-1",
+			RequirementID:    "REQ-1",
+			Given:            []string{"coverage counters exist"},
+			When:             []string{"the gate evaluates"},
+			Then:             []string{"typed behavioral coverage is present"},
+			ConcreteDataRefs: []string{"fixtures/coverage.json"},
+			Obligations:      []string{"TDD-1"},
+		}},
+		DesignContracts: []DesignContractCoverage{{
+			ID:             "DBC-1",
+			Boundary:       "coverage gate",
+			Preconditions:  []string{"typed coverage exists"},
+			Postconditions: []string{"gate can evaluate counters"},
+			Invariants:     []string{"behavioral counters are projections"},
+			TestRefs:       []string{"TestCoverageGateUsesTypedBehavioralCoverage"},
+			Obligations:    []string{"TDD-1"},
+		}},
+		TestObligations: []TestObligationCoverage{{
+			ID:             "TDD-1",
+			Type:           "contract",
+			Behavior:       "typed behavioral coverage is evaluated",
+			Command:        "go test ./internal/workflows/productworkflow",
+			RequiredBefore: "implementation",
+		}},
+	}
+	if coverage.InvariantsTotal > 0 {
+		contract.Invariants = []InvariantCoverage{{
+			ID:                    "INV-1",
+			Statement:             "coverage projection remains stable",
+			PropertyBasedTestRefs: []string{"TestCoverageProjectionStable"},
+			Obligations:           []string{"TDD-1"},
+		}}
+	}
+	if coverage.FMEAModesTotal > 0 {
+		contract.FailureModes = []FailureModeCoverage{{
+			ID:                 "FM-1",
+			Mode:               "coverage projection mismatch",
+			Mitigation:         "validate projected coverage",
+			RPN:                32,
+			MitigationTestRefs: []string{"TestCoverageProjectionStable"},
+			Obligations:        []string{"TDD-1"},
+		}}
+	}
+	if coverage.HAZOPDeviationsTotal > 0 {
+		contract.HAZOPDeviations = []HAZOPDeviationCoverage{{
+			ID:           "HAZOP-1",
+			GuideWord:    "Other Than",
+			WorkflowStep: "coverage gate",
+			Deviation:    "counter projection differs from contract",
+			TestRefs:     []string{"TestCoverageProjectionStable"},
+			Obligations:  []string{"TDD-1"},
+		}}
+	}
+	if coverage.StateMachinesTotal > 0 {
+		contract.StateMachines = []StateMachineCoverage{{
+			ID:     "SM-1",
+			States: []string{"planned", "verified"},
+			Transitions: []StateTransitionCoverage{{
+				ID:       "TR-1",
+				From:     "planned",
+				To:       "verified",
+				Event:    "coverage",
+				TestRefs: []string{"TestCoverageProjectionStable"},
+			}},
+		}}
+	}
+	if coverage.DecisionTablesTotal > 0 {
+		contract.DecisionTables = []DecisionTableCoverage{{
+			ID:         "DT-1",
+			Conditions: []string{"coverage_present"},
+			Rules:      []DecisionTableRuleCoverage{{ID: "DT-1-R1", Conditions: map[string]string{"coverage_present": "true"}, Expected: "evaluate"}},
+			TestRefs:   []string{"TestCoverageProjectionStable"},
+		}}
+	}
+	if coverage.BoundaryValuesTotal > 0 {
+		contract.BoundaryValues = []BoundaryValueCoverage{{
+			ID:          "BV-1",
+			Parameter:   "coverage_count",
+			Values:      []string{"0", "1"},
+			TestRefs:    []string{"TestCoverageProjectionStable"},
+			Obligations: []string{"TDD-1"},
+		}}
+	}
+	if coverage.FaultTreeLeavesTotal > 0 {
+		contract.FaultTreeLeaves = []FaultTreeLeafCoverage{{
+			ID:          "FTA-1",
+			TopEvent:    "coverage gate accepts invalid projection",
+			Cause:       "typed coverage missing",
+			TestRefs:    []string{"TestCoverageProjectionStable"},
+			Obligations: []string{"TDD-1"},
+		}}
+	}
+	if coverage.PostMortemIncidentsTotal > 0 {
+		contract.PostMortems = []PostMortemCoverage{{
+			ID:               "PM-1",
+			Incident:         "coverage projection drift",
+			CatchingTestRefs: []string{"TestCoverageProjectionStable"},
+			Obligations:      []string{"TDD-1"},
+		}}
+	}
+	if coverage.FormalModelsTotal > 0 {
+		contract.FormalModels = []FormalModelCoverage{{
+			ID:               "FORMAL-1",
+			Model:            "coverage_projection",
+			VerificationRefs: []string{"models/coverage_projection.tla"},
+			Obligations:      []string{"TDD-1"},
+		}}
+	}
+	return contract
 }
 
 func assertCoverageGateBlocker(t *testing.T, eval CoverageGateEvaluation, criterion string, kind string, messageSubstring string) {

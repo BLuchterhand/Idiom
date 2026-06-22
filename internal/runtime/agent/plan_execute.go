@@ -3185,6 +3185,7 @@ func retryableReadOnlyFinalAnswerBlockerKind(kind string) bool {
 	switch {
 	case trimmed == "source_grounding_unmet",
 		trimmed == "read_only_protocol_blocker",
+		trimmed == "protocol_meta_final_answer",
 		trimmed == "answer_objective_unmet",
 		strings.HasPrefix(trimmed, "answer_objective_unmet:"):
 		return true

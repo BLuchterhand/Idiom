@@ -71,6 +71,31 @@ func EvaluateCoverageGate(prd PRDDocument, adrIndex ADRIndex, adrs []ParsedADR, 
 	tddEvidencePass := len(tddIDs) == 0 || evaluateTDDEvidenceCoverage(ledger, knownTDDIDs...)
 	record("tdd_evidence", true, tddEvidencePass, fmt.Sprintf("expected all %d TDD obligations to have verification evidence", len(tddIDs)), "tdd.json", "coverage_tdd_evidence_missing")
 
+	behavioralContractPass := ledger.BehavioralCoverage != nil
+	if ledger.BehavioralCoverage != nil {
+		if err := ValidateBehavioralCoverageContract(*ledger.BehavioralCoverage); err != nil {
+			behavioralContractPass = false
+			out.Findings = append(out.Findings, CoverageGateFinding{
+				Kind:      "coverage_behavioral_contract_invalid",
+				Criterion: "behavioral_contract",
+				Message:   err.Error(),
+				File:      "tdd.json",
+				Severity:  ProductWorkflowSeverityError,
+			})
+		}
+		if err := ValidateBehavioralCoverageProjection(*ledger.BehavioralCoverage, ledger.Coverage); err != nil {
+			behavioralContractPass = false
+			out.Findings = append(out.Findings, CoverageGateFinding{
+				Kind:      "coverage_behavioral_projection_mismatch",
+				Criterion: "behavioral_contract",
+				Message:   err.Error(),
+				File:      "tdd.json",
+				Severity:  ProductWorkflowSeverityError,
+			})
+		}
+	}
+	record("behavioral_contract", requireBehavior, behavioralContractPass, "behavior, contract, and formal coverage tiers require typed behavioral_coverage contract authority", "tdd.json", "coverage_behavioral_contract_missing")
+
 	earsPass := ledger.Coverage.EARSTotal > 0 && ledger.Coverage.EARSMapped == ledger.Coverage.EARSTotal
 	record("ears", requireBehavior, earsPass, fmt.Sprintf("expected ears_mapped == ears_total (%d/%d)", ledger.Coverage.EARSMapped, ledger.Coverage.EARSTotal), "tdd.json", "coverage_ears_incomplete")
 
@@ -167,6 +192,15 @@ func EvaluateCoverageGate(prd PRDDocument, adrIndex ADRIndex, adrs []ParsedADR, 
 	} else {
 		record("formal_verification", formalRequired, formalPass, fmt.Sprintf("expected formal_models_verified == formal_models_total (%d/%d)", ledger.Coverage.FormalModelsVerified, ledger.Coverage.FormalModelsTotal), "tdd.json", "coverage_formal_verification_incomplete")
 	}
+
+	record("fuzz", requireContract && ledger.Coverage.FuzzTargetsTotal > 0, ledger.Coverage.FuzzTargetsCovered == ledger.Coverage.FuzzTargetsTotal, fmt.Sprintf("expected fuzz_targets_covered == fuzz_targets_total (%d/%d)", ledger.Coverage.FuzzTargetsCovered, ledger.Coverage.FuzzTargetsTotal), "tdd.json", "coverage_fuzz_incomplete")
+	record("rag_eval", requireContract && ledger.Coverage.RAGEvalsTotal > 0, ledger.Coverage.RAGEvalsMeasured == ledger.Coverage.RAGEvalsTotal, fmt.Sprintf("expected rag_evals_measured == rag_evals_total (%d/%d)", ledger.Coverage.RAGEvalsMeasured, ledger.Coverage.RAGEvalsTotal), "tdd.json", "coverage_rag_eval_incomplete")
+	record("llm_security", requireContract && ledger.Coverage.SecurityCasesTotal > 0, ledger.Coverage.SecurityCasesTested == ledger.Coverage.SecurityCasesTotal, fmt.Sprintf("expected security_cases_tested == security_cases_total (%d/%d)", ledger.Coverage.SecurityCasesTested, ledger.Coverage.SecurityCasesTotal), "tdd.json", "coverage_llm_security_incomplete")
+	record("privacy", requireContract && ledger.Coverage.PrivacyControlsTotal > 0, ledger.Coverage.PrivacyControlsTested == ledger.Coverage.PrivacyControlsTotal, fmt.Sprintf("expected privacy_controls_tested == privacy_controls_total (%d/%d)", ledger.Coverage.PrivacyControlsTested, ledger.Coverage.PrivacyControlsTotal), "tdd.json", "coverage_privacy_incomplete")
+	record("provider_contract", requireContract && ledger.Coverage.ProviderContractsTotal > 0, ledger.Coverage.ProviderContractsTested == ledger.Coverage.ProviderContractsTotal, fmt.Sprintf("expected provider_contracts_tested == provider_contracts_total (%d/%d)", ledger.Coverage.ProviderContractsTested, ledger.Coverage.ProviderContractsTotal), "tdd.json", "coverage_provider_contract_incomplete")
+	record("observability", requireContract && ledger.Coverage.ObservabilityTotal > 0, ledger.Coverage.ObservabilityTested == ledger.Coverage.ObservabilityTotal, fmt.Sprintf("expected observability_tested == observability_total (%d/%d)", ledger.Coverage.ObservabilityTested, ledger.Coverage.ObservabilityTotal), "tdd.json", "coverage_observability_incomplete")
+	record("performance", requireContract && ledger.Coverage.PerformanceBoundsTotal > 0, ledger.Coverage.PerformanceBoundsTested == ledger.Coverage.PerformanceBoundsTotal, fmt.Sprintf("expected performance_bounds_tested == performance_bounds_total (%d/%d)", ledger.Coverage.PerformanceBoundsTested, ledger.Coverage.PerformanceBoundsTotal), "tdd.json", "coverage_performance_incomplete")
+	record("scripted_e2e", requireContract && ledger.Coverage.E2EJourneysTotal > 0, ledger.Coverage.E2EJourneysScripted == ledger.Coverage.E2EJourneysTotal, fmt.Sprintf("expected e2e_journeys_scripted == e2e_journeys_total (%d/%d)", ledger.Coverage.E2EJourneysScripted, ledger.Coverage.E2EJourneysTotal), "tdd.json", "coverage_scripted_e2e_incomplete")
 
 	mutationRequired := requireContract && ledger.Coverage.MutationMinScore > 0
 	mutationUnavailable := hasUnavailableMutationBlocker(ledger.Coverage.GatesBlocked)
@@ -288,6 +322,14 @@ func BuildCoverageGateEvaluatedEvent(eval CoverageGateEvaluation, ledger TDDLedg
 			FaultTreeCoveragePct:  coveragePercent(ledger.Coverage.FaultTreeLeavesTested, ledger.Coverage.FaultTreeLeavesTotal),
 			PostMortemCoveragePct: coveragePercent(ledger.Coverage.PostMortemCatchingTests, ledger.Coverage.PostMortemIncidentsTotal),
 			FormalVerificationPct: coveragePercent(ledger.Coverage.FormalModelsVerified, ledger.Coverage.FormalModelsTotal),
+			FuzzCoveragePct:       coveragePercent(ledger.Coverage.FuzzTargetsCovered, ledger.Coverage.FuzzTargetsTotal),
+			RAGEvalCoveragePct:    coveragePercent(ledger.Coverage.RAGEvalsMeasured, ledger.Coverage.RAGEvalsTotal),
+			SecurityCoveragePct:   coveragePercent(ledger.Coverage.SecurityCasesTested, ledger.Coverage.SecurityCasesTotal),
+			PrivacyCoveragePct:    coveragePercent(ledger.Coverage.PrivacyControlsTested, ledger.Coverage.PrivacyControlsTotal),
+			ProviderContractPct:   coveragePercent(ledger.Coverage.ProviderContractsTested, ledger.Coverage.ProviderContractsTotal),
+			ObservabilityPct:      coveragePercent(ledger.Coverage.ObservabilityTested, ledger.Coverage.ObservabilityTotal),
+			PerformancePct:        coveragePercent(ledger.Coverage.PerformanceBoundsTested, ledger.Coverage.PerformanceBoundsTotal),
+			ScriptedE2EPct:        coveragePercent(ledger.Coverage.E2EJourneysScripted, ledger.Coverage.E2EJourneysTotal),
 			MutationScore:         ledger.Coverage.MutationScore,
 		},
 		GateResult:     gateResult,

@@ -74,6 +74,22 @@ func TestBuildImplementationHandoffUsesGeneratedDispatchSemantics(t *testing.T) 
 	}
 }
 
+func TestLoadCoverageGateEvaluationReportsMissingInputsAsStructuredFindings(t *testing.T) {
+	loaded := LoadCoverageGateEvaluation(t.TempDir())
+
+	if loaded.Evaluation.Status != ProductWorkflowStatusBlocked {
+		t.Fatalf("empty effort coverage evaluation should be blocked, got %#v", loaded.Evaluation)
+	}
+
+	for _, finding := range loaded.Findings {
+		if finding.Kind == "missing_file" && finding.File == "workflow_state.json" && finding.Message == "not found" {
+			return
+		}
+	}
+
+	t.Fatalf("expected structured missing workflow_state.json finding, got %#v", loaded.Findings)
+}
+
 func TestBuildImplementationHandoffCarriesCoverageBlockers(t *testing.T) {
 	input := implementationHandoffInput(t.TempDir())
 
@@ -126,6 +142,154 @@ func TestBuildImplementationHandoffAllowsPendingTDDEvidenceFeaturePlannerDispatc
 
 	if len(handoff.TDDObligations) != 1 || handoff.TDDObligations[0].Status != "planned" {
 		t.Fatalf("handoff should preserve implementation-pending TDD obligation state: %#v", handoff.TDDObligations)
+	}
+}
+
+func TestBuildImplementationHandoffKeepsAcceptedCoverageSeparateFromPendingTDDEvidence(t *testing.T) {
+	input := implementationHandoffInput(t.TempDir())
+	contract := BehavioralCoverageContract{
+		ContractID:   "cov-handoff",
+		EffortID:     "effort-handoff",
+		TaskID:       "impl-handoff",
+		CoverageTier: "behavior_standard",
+		EventID:      "evt-coverage",
+		EARS: []EARSRequirementCoverage{{
+			ID:         "REQ-HANDOFF",
+			Statement:  "When accepted coverage exists, the system shall carry it into feature planning.",
+			MappedRefs: []string{"BDD-HANDOFF"},
+		}},
+		BDDScenarios: []BDDScenarioCoverage{{
+			ID:               "BDD-HANDOFF",
+			RequirementID:    "REQ-HANDOFF",
+			Given:            []string{"accepted behavioral coverage exists"},
+			When:             []string{"handoff is built"},
+			Then:             []string{"accepted coverage is available to feature planning"},
+			ConcreteDataRefs: []string{"fixtures/handoff.json"},
+			Obligations:      []string{"TDD-HANDOFF"},
+		}},
+		DesignContracts: []DesignContractCoverage{{
+			ID:             "DBC-HANDOFF",
+			Boundary:       "productworkflow/featureplanner",
+			Preconditions:  []string{"behavioral coverage validates"},
+			Postconditions: []string{"coverage contract ref is accepted"},
+			Invariants:     []string{"coverage gate status remains separate"},
+			TestRefs:       []string{"TestBuildImplementationHandoffKeepsAcceptedCoverageSeparateFromPendingTDDEvidence"},
+			Obligations:    []string{"TDD-HANDOFF"},
+		}},
+		TestObligations: []TestObligationCoverage{{
+			ID:             "TDD-HANDOFF",
+			Type:           "contract",
+			Behavior:       "accepted coverage handoff remains available while implementation evidence is pending",
+			Command:        "go test ./internal/workflows/productworkflow",
+			RequiredBefore: "implementation",
+		}},
+	}
+	input.TDD.CoverageTier = "behavior_standard"
+	input.TDD.Coverage = ProjectBehavioralCoverageContract(contract)
+	input.TDD.BehavioralCoverage = &contract
+	input.PromotionEvents = []BehavioralCoveragePromotionEvent{{
+		Event:   "behavioral_coverage_accepted",
+		EventID: "evt-coverage",
+		State:   BehavioralCoveragePromotionStateAccepted,
+		Digest:  BehavioralCoverageContractDigest(contract),
+	}}
+	input.CoverageEvaluation = CoverageGateEvaluation{
+		Status:       ProductWorkflowStatusBlocked,
+		CoverageTier: "behavior_standard",
+		Blockers: []CoverageGateBlocker{{
+			Kind:      "coverage_tdd_evidence_missing",
+			Criterion: "tdd_evidence",
+			Message:   "expected all 1 TDD obligations to have verification evidence",
+			File:      "tdd.json",
+		}},
+	}
+
+	handoff := BuildImplementationHandoff(input)
+	if handoff.CoverageGatePassed {
+		t.Fatal("overall coverage gate should remain blocked while implementation TDD evidence is pending")
+	}
+	if handoff.CoverageContract == nil || handoff.CoverageContract.Status != BehavioralCoverageStatusAccepted {
+		t.Fatalf("accepted behavioral contract should not inherit pending TDD gate status: %+v", handoff.CoverageContract)
+	}
+	if handoff.AcceptedCoverage == nil ||
+		handoff.AcceptedCoverage.Status != BehavioralCoverageStatusAccepted ||
+		handoff.AcceptedCoverage.Contract.Status != BehavioralCoverageStatusAccepted ||
+		len(handoff.AcceptedCoverage.Behavioral.BDDScenarios) != 1 {
+
+		t.Fatalf("accepted behavioral coverage should be available to feature planning: %+v", handoff.AcceptedCoverage)
+	}
+}
+
+func TestBuildImplementationHandoffRequiresAcceptedPromotionEvent(t *testing.T) {
+	input := implementationHandoffInput(t.TempDir())
+	contract := BehavioralCoverageContract{
+		ContractID:   "cov-derived",
+		EffortID:     "effort-handoff",
+		TaskID:       "impl-handoff",
+		CoverageTier: "behavior_standard",
+		EARS: []EARSRequirementCoverage{{
+			ID:         "REQ-HANDOFF",
+			Statement:  "When coverage is accepted, the system shall require a durable accepted promotion event.",
+			MappedRefs: []string{"BDD-HANDOFF"},
+		}},
+		BDDScenarios: []BDDScenarioCoverage{{
+			ID:               "BDD-HANDOFF",
+			RequirementID:    "REQ-HANDOFF",
+			Given:            []string{"accepted behavioral coverage exists"},
+			When:             []string{"handoff is built without an accepted promotion event"},
+			Then:             []string{"coverage contract ref remains blocked"},
+			ConcreteDataRefs: []string{"fixtures/handoff.json"},
+		}},
+		DesignContracts: []DesignContractCoverage{{
+			ID:             "DBC-HANDOFF",
+			Boundary:       "productworkflow/featureplanner",
+			Preconditions:  []string{"behavioral coverage validates"},
+			Postconditions: []string{"accepted event is durable"},
+			Invariants:     []string{"accepted coverage is digest-bound to events.jsonl"},
+			TestRefs:       []string{"TestBuildImplementationHandoffRequiresAcceptedPromotionEvent"},
+		}},
+	}
+	input.WorkflowState.LastEventID = ""
+	input.TDD.CoverageTier = "behavior_standard"
+	input.TDD.Coverage = ProjectBehavioralCoverageContract(contract)
+	input.TDD.BehavioralCoverage = &contract
+	input.CoverageEvaluation = CoverageGateEvaluation{Status: ProductWorkflowStatusPass, CoverageTier: "behavior_standard"}
+
+	handoff := BuildImplementationHandoff(input)
+	if handoff.CoverageContract == nil || handoff.CoverageContract.Status != ProductWorkflowStatusBlocked {
+		t.Fatalf("expected missing promotion event to block accepted coverage, got %+v", handoff.CoverageContract)
+	}
+	if handoff.AcceptedCoverage != nil {
+		t.Fatalf("coverage without accepted promotion event must not be exposed as accepted: %+v", handoff.AcceptedCoverage)
+	}
+}
+
+func TestBuildImplementationHandoffDoesNotExposeBlockedBehavioralCoverageAsAccepted(t *testing.T) {
+	input := implementationHandoffInput(t.TempDir())
+	contract := BehavioralCoverageContract{
+		ContractID:   "cov-blocked",
+		EffortID:     "effort-handoff",
+		TaskID:       "impl-handoff",
+		CoverageTier: "behavior_standard",
+		BDDScenarios: []BDDScenarioCoverage{{
+			ID:     "BDD-INCOMPLETE",
+			Given:  []string{"accepted behavioral coverage is incomplete"},
+			When:   []string{"handoff is built"},
+			Then:   []string{"coverage must not be exposed as accepted"},
+			Status: BehavioralCoverageStatusAccepted,
+		}},
+	}
+	input.TDD.CoverageTier = "behavior_standard"
+	input.TDD.Coverage = TDDCoverage{BDDTotal: 1}
+	input.TDD.BehavioralCoverage = &contract
+	input.CoverageEvaluation = CoverageGateEvaluation{Status: ProductWorkflowStatusPass, CoverageTier: "behavior_standard"}
+
+	handoff := BuildImplementationHandoff(input)
+	if handoff.CoverageContract == nil || handoff.CoverageContract.Status != ProductWorkflowStatusBlocked {
+		t.Fatalf("blocked behavioral coverage should still expose a non-accepted diagnostic ref, got %+v", handoff.CoverageContract)
+	}
+	if handoff.AcceptedCoverage != nil {
+		t.Fatalf("blocked behavioral coverage must not be exposed as accepted coverage: %+v", handoff.AcceptedCoverage)
 	}
 }
 
@@ -210,10 +374,11 @@ func implementationHandoffInput(root string) BriefGenerationInput {
 			}},
 		},
 		ADRIndex: ADRIndex{SchemaVersion: "idiom.adr_index.v1", EffortID: "effort-handoff", ADRs: []ADRIndexEntry{{
-			ADRID:   "ADR-HANDOFF",
-			Status:  "accepted",
-			Path:    "001-handoff.md",
-			PRDRefs: []string{"REQ-HANDOFF"},
+			ADRID:        "ADR-HANDOFF",
+			Status:       "accepted",
+			Path:         "001-handoff.md",
+			CoverageTier: "unit",
+			PRDRefs:      []string{"REQ-HANDOFF"},
 		}}},
 		ADRs: []ParsedADR{{
 			Doc: ADRDocument{
@@ -339,6 +504,17 @@ func writeImplementationHandoffEffort(t *testing.T, root string) {
 	}
 
 	writeImplementationHandoffJSON(t, filepath.Join(root, "evidence", "traceability_matrix.json"), input.Traceability)
+
+	if err := os.MkdirAll(filepath.Join(root, "briefs"), 0o755); err != nil {
+		t.Fatalf("mkdir briefs: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "briefs", "impl-handoff.md"), []byte("# Brief\n"), 0o644); err != nil {
+		t.Fatalf("write traceability brief: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "reports"), 0o755); err != nil {
+		t.Fatalf("mkdir reports: %v", err)
+	}
+	writeImplementationHandoffJSON(t, filepath.Join(root, "reports", "impl-handoff.json"), map[string]any{"status": "pass"})
 
 	var ledgerLines []byte
 

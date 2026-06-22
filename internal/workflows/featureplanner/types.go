@@ -162,17 +162,22 @@ type Continuation struct {
 }
 
 type FeaturePlan struct {
-	SchemaVersion      string              `json:"schema_version,omitempty"`
-	FeatureID          string              `json:"feature_id,omitempty"`
-	Tool               string              `json:"tool,omitempty"`
-	SourceTask         SourceTask          `json:"source_task,omitempty"`
-	Context            PlanContext         `json:"context,omitempty"`
-	Summary            string              `json:"summary"`
-	TopLevelScope      TopLevelScope       `json:"top_level_scope"`
-	SDDContract        SDDContract         `json:"sdd_contract"`
-	TDDContract        TDDContract         `json:"tdd_contract"`
-	Atoms              []FeatureAtomPlan   `json:"atoms"`
-	CoverageGateResult *CoverageGateResult `json:"coverage_gate_result,omitempty"`
+	SchemaVersion      string                      `json:"schema_version,omitempty"`
+	FeatureID          string                      `json:"feature_id,omitempty"`
+	Tool               string                      `json:"tool,omitempty"`
+	SourceTask         SourceTask                  `json:"source_task,omitempty"`
+	Context            PlanContext                 `json:"context,omitempty"`
+	Summary            string                      `json:"summary"`
+	TopLevelScope      TopLevelScope               `json:"top_level_scope"`
+	SDDContract        SDDContract                 `json:"sdd_contract"`
+	TDDContract        TDDContract                 `json:"tdd_contract"`
+	Atoms              []FeatureAtomPlan           `json:"atoms"`
+	CoverageGateResult *CoverageGateResult         `json:"coverage_gate_result,omitempty"`
+	CoverageContract   *CoverageContractRef        `json:"coverage_contract,omitempty"`
+	AcceptedCoverage   *AcceptedBehavioralCoverage `json:"accepted_coverage,omitempty"`
+	// BehavioralCoverageDraft is provisional standalone planning evidence. Product
+	// workflow context owns accepted coverage authority and supersedes this draft.
+	BehavioralCoverageDraft *BehavioralCoverageDraft `json:"behavioral_coverage_draft,omitempty"`
 }
 
 type SourceSatisfiedCloseout struct {
@@ -364,6 +369,496 @@ type CoverageGateResult struct {
 	EffortID     string `json:"effort_id"`     // product workflow effort identity
 	CoverageTier string `json:"coverage_tier"` // coverage tier at time of evaluation
 	CheckedAt    string `json:"checked_at"`    // ISO 8601 timestamp
+}
+
+// CoverageContractRef is a read-only product workflow authority binding. The
+// Feature Planner may cite it, but Product Workflow owns sufficiency decisions.
+type CoverageContractRef struct {
+	ContractID   string `json:"contract_id,omitempty"`
+	Digest       string `json:"digest,omitempty"`
+	EventID      string `json:"event_id,omitempty"`
+	Status       string `json:"status,omitempty"`
+	EffortID     string `json:"effort_id,omitempty"`
+	CoverageTier string `json:"coverage_tier,omitempty"`
+}
+
+type AcceptedBehavioralCoverage struct {
+	Authority         string                             `json:"authority,omitempty"`
+	Status            string                             `json:"status,omitempty"`
+	Contract          CoverageContractRef                `json:"contract,omitempty"`
+	Tier              string                             `json:"tier,omitempty"`
+	Requirements      []AcceptedCoverageRequirement      `json:"requirements,omitempty"`
+	ExampleRules      []AcceptedCoverageExampleRule      `json:"example_rules,omitempty"`
+	Scenarios         []AcceptedCoverageScenario         `json:"scenarios,omitempty"`
+	DesignContracts   []AcceptedCoverageDesignContract   `json:"design_contracts,omitempty"`
+	Invariants        []AcceptedCoverageInvariant        `json:"invariants,omitempty"`
+	FailureModes      []AcceptedCoverageFailureMode      `json:"failure_modes,omitempty"`
+	HAZOPDeviations   []AcceptedCoverageHAZOPDeviation   `json:"hazop_deviations,omitempty"`
+	FaultTreeLeaves   []AcceptedCoverageFaultTreeLeaf    `json:"fault_tree_leaves,omitempty"`
+	DecisionTables    []AcceptedCoverageDecisionTable    `json:"decision_tables,omitempty"`
+	BoundaryValues    []AcceptedCoverageBoundaryValue    `json:"boundary_values,omitempty"`
+	StateMachines     []AcceptedCoverageStateMachine     `json:"state_machines,omitempty"`
+	PostMortems       []AcceptedCoveragePostMortem       `json:"post_mortems,omitempty"`
+	FormalModels      []AcceptedCoverageFormalModel      `json:"formal_models,omitempty"`
+	FuzzTargets       []AcceptedCoverageFuzzTarget       `json:"fuzz_targets,omitempty"`
+	RAGEvals          []AcceptedCoverageRAGEval          `json:"rag_evals,omitempty"`
+	SecurityCases     []AcceptedCoverageSecurityCase     `json:"security_cases,omitempty"`
+	PrivacyControls   []AcceptedCoveragePrivacyControl   `json:"privacy_controls,omitempty"`
+	ProviderContracts []AcceptedCoverageProviderContract `json:"provider_contracts,omitempty"`
+	Observability     []AcceptedCoverageObservability    `json:"observability,omitempty"`
+	PerformanceBounds []AcceptedCoveragePerformanceBound `json:"performance_bounds,omitempty"`
+	E2EJourneys       []AcceptedCoverageE2EJourney       `json:"e2e_journeys,omitempty"`
+	TestObligations   []AcceptedCoverageTestObligation   `json:"test_obligations,omitempty"`
+	Verification      []AcceptedCoverageVerification     `json:"verification,omitempty"`
+	Mutation          AcceptedCoverageMutation           `json:"mutation,omitempty"`
+	Feedback          []AcceptedCoverageFeedback         `json:"feedback,omitempty"`
+	Waivers           []AcceptedCoverageWaiver           `json:"waivers,omitempty"`
+	Questions         []AcceptedCoverageQuestion         `json:"questions,omitempty"`
+}
+
+type AcceptedCoverageRequirement struct {
+	ID          string   `json:"id"`
+	Pattern     string   `json:"pattern,omitempty"`
+	Statement   string   `json:"statement"`
+	Refs        []string `json:"refs,omitempty"`
+	Obligations []string `json:"tdd_obligations,omitempty"`
+}
+
+type AcceptedCoverageExampleRule struct {
+	ID            string                    `json:"id"`
+	RequirementID string                    `json:"requirement_id,omitempty"`
+	Rule          string                    `json:"rule"`
+	Examples      []AcceptedCoverageExample `json:"examples,omitempty"`
+	Questions     []string                  `json:"questions,omitempty"`
+}
+
+type AcceptedCoverageExample struct {
+	ID               string   `json:"id"`
+	Description      string   `json:"description,omitempty"`
+	ConcreteDataRefs []string `json:"concrete_data_refs,omitempty"`
+	Negative         bool     `json:"negative,omitempty"`
+}
+
+type AcceptedCoverageScenario struct {
+	ID               string   `json:"id"`
+	RequirementID    string   `json:"requirement_id,omitempty"`
+	RuleID           string   `json:"rule_id,omitempty"`
+	Given            []string `json:"given,omitempty"`
+	When             []string `json:"when,omitempty"`
+	Then             []string `json:"then,omitempty"`
+	ConcreteDataRefs []string `json:"concrete_data_refs,omitempty"`
+	Obligations      []string `json:"tdd_obligations,omitempty"`
+	Tags             []string `json:"tags,omitempty"`
+}
+
+type AcceptedCoverageDesignContract struct {
+	ID             string   `json:"id"`
+	Boundary       string   `json:"boundary,omitempty"`
+	Preconditions  []string `json:"preconditions,omitempty"`
+	Postconditions []string `json:"postconditions,omitempty"`
+	Invariants     []string `json:"invariants,omitempty"`
+	TestRefs       []string `json:"test_refs,omitempty"`
+	Obligations    []string `json:"tdd_obligations,omitempty"`
+}
+
+type AcceptedCoverageInvariant struct {
+	ID                    string   `json:"id"`
+	Statement             string   `json:"statement,omitempty"`
+	PropertyBasedTestRefs []string `json:"property_based_test_refs,omitempty"`
+	Obligations           []string `json:"tdd_obligations,omitempty"`
+}
+
+type AcceptedCoverageFailureMode struct {
+	ID                 string   `json:"id"`
+	Mode               string   `json:"mode,omitempty"`
+	Mitigation         string   `json:"mitigation,omitempty"`
+	RPN                int      `json:"rpn,omitempty"`
+	MitigationTestRefs []string `json:"mitigation_test_refs,omitempty"`
+	Obligations        []string `json:"tdd_obligations,omitempty"`
+}
+
+type AcceptedCoverageHAZOPDeviation struct {
+	ID           string   `json:"id"`
+	GuideWord    string   `json:"guide_word,omitempty"`
+	WorkflowStep string   `json:"workflow_step,omitempty"`
+	Deviation    string   `json:"deviation,omitempty"`
+	Severity     int      `json:"severity,omitempty"`
+	TestRefs     []string `json:"test_refs,omitempty"`
+	Obligations  []string `json:"tdd_obligations,omitempty"`
+}
+
+type AcceptedCoverageFaultTreeLeaf struct {
+	ID          string   `json:"id"`
+	TopEvent    string   `json:"top_event,omitempty"`
+	Cause       string   `json:"cause,omitempty"`
+	TestRefs    []string `json:"test_refs,omitempty"`
+	Obligations []string `json:"tdd_obligations,omitempty"`
+}
+
+type AcceptedCoverageDecisionTable struct {
+	ID          string                         `json:"id"`
+	Conditions  []string                       `json:"conditions,omitempty"`
+	Rules       []AcceptedCoverageDecisionRule `json:"rules,omitempty"`
+	TestRefs    []string                       `json:"test_refs,omitempty"`
+	Obligations []string                       `json:"tdd_obligations,omitempty"`
+}
+
+type AcceptedCoverageDecisionRule struct {
+	ID         string            `json:"id,omitempty"`
+	Conditions map[string]string `json:"conditions,omitempty"`
+	Expected   string            `json:"expected,omitempty"`
+}
+
+type AcceptedCoverageBoundaryValue struct {
+	ID          string   `json:"id"`
+	Parameter   string   `json:"parameter,omitempty"`
+	Classes     []string `json:"classes,omitempty"`
+	Values      []string `json:"values,omitempty"`
+	TestRefs    []string `json:"test_refs,omitempty"`
+	Obligations []string `json:"tdd_obligations,omitempty"`
+}
+
+type AcceptedCoverageStateMachine struct {
+	ID          string                       `json:"id"`
+	States      []string                     `json:"states,omitempty"`
+	Transitions []AcceptedCoverageTransition `json:"transitions,omitempty"`
+	Obligations []string                     `json:"tdd_obligations,omitempty"`
+}
+
+type AcceptedCoverageTransition struct {
+	ID       string   `json:"id,omitempty"`
+	From     string   `json:"from,omitempty"`
+	Event    string   `json:"event,omitempty"`
+	To       string   `json:"to,omitempty"`
+	TestRefs []string `json:"test_refs,omitempty"`
+}
+
+type AcceptedCoveragePostMortem struct {
+	ID               string   `json:"id"`
+	Incident         string   `json:"incident,omitempty"`
+	CatchingTestRefs []string `json:"catching_test_refs,omitempty"`
+	Obligations      []string `json:"tdd_obligations,omitempty"`
+}
+
+type AcceptedCoverageFormalModel struct {
+	ID               string   `json:"id"`
+	Model            string   `json:"model,omitempty"`
+	VerificationRefs []string `json:"verification_refs,omitempty"`
+	Obligations      []string `json:"tdd_obligations,omitempty"`
+}
+
+type AcceptedCoverageFuzzTarget struct {
+	ID          string   `json:"id"`
+	Status      string   `json:"status,omitempty"`
+	Target      string   `json:"target,omitempty"`
+	Generators  []string `json:"generators,omitempty"`
+	Invariants  []string `json:"invariants,omitempty"`
+	TestRefs    []string `json:"test_refs,omitempty"`
+	Obligations []string `json:"tdd_obligations,omitempty"`
+}
+
+type AcceptedCoverageRAGEval struct {
+	ID          string             `json:"id"`
+	Status      string             `json:"status,omitempty"`
+	DatasetRefs []string           `json:"dataset_refs,omitempty"`
+	Metrics     map[string]float64 `json:"metrics,omitempty"`
+	Thresholds  map[string]float64 `json:"thresholds,omitempty"`
+	EvalRefs    []string           `json:"eval_refs,omitempty"`
+	Obligations []string           `json:"tdd_obligations,omitempty"`
+}
+
+type AcceptedCoverageSecurityCase struct {
+	ID          string   `json:"id"`
+	Status      string   `json:"status,omitempty"`
+	Risk        string   `json:"risk,omitempty"`
+	Attack      string   `json:"attack,omitempty"`
+	Expected    string   `json:"expected,omitempty"`
+	TestRefs    []string `json:"test_refs,omitempty"`
+	Obligations []string `json:"tdd_obligations,omitempty"`
+}
+
+type AcceptedCoveragePrivacyControl struct {
+	ID            string   `json:"id"`
+	Status        string   `json:"status,omitempty"`
+	DataClass     string   `json:"data_class,omitempty"`
+	Policy        string   `json:"policy,omitempty"`
+	RedactionRefs []string `json:"redaction_refs,omitempty"`
+	Retention     string   `json:"retention,omitempty"`
+	TestRefs      []string `json:"test_refs,omitempty"`
+	Obligations   []string `json:"tdd_obligations,omitempty"`
+}
+
+type AcceptedCoverageProviderContract struct {
+	ID           string   `json:"id"`
+	Status       string   `json:"status,omitempty"`
+	Provider     string   `json:"provider,omitempty"`
+	Consumer     string   `json:"consumer,omitempty"`
+	ContractRefs []string `json:"contract_refs,omitempty"`
+	TestRefs     []string `json:"test_refs,omitempty"`
+	Obligations  []string `json:"tdd_obligations,omitempty"`
+}
+
+type AcceptedCoverageObservability struct {
+	ID               string   `json:"id"`
+	Status           string   `json:"status,omitempty"`
+	Signal           string   `json:"signal,omitempty"`
+	InstrumentedPath string   `json:"instrumented_path,omitempty"`
+	RequiredFields   []string `json:"required_fields,omitempty"`
+	TestRefs         []string `json:"test_refs,omitempty"`
+	Obligations      []string `json:"tdd_obligations,omitempty"`
+}
+
+type AcceptedCoveragePerformanceBound struct {
+	ID              string   `json:"id"`
+	Status          string   `json:"status,omitempty"`
+	Operation       string   `json:"operation,omitempty"`
+	Bound           string   `json:"bound,omitempty"`
+	MeasurementRefs []string `json:"measurement_refs,omitempty"`
+	Obligations     []string `json:"tdd_obligations,omitempty"`
+}
+
+type AcceptedCoverageE2EJourney struct {
+	ID          string   `json:"id"`
+	Status      string   `json:"status,omitempty"`
+	Journey     string   `json:"journey,omitempty"`
+	Steps       []string `json:"steps,omitempty"`
+	ScriptRefs  []string `json:"script_refs,omitempty"`
+	Obligations []string `json:"tdd_obligations,omitempty"`
+}
+
+type AcceptedCoverageTestObligation struct {
+	ID             string `json:"id"`
+	Type           string `json:"type,omitempty"`
+	Behavior       string `json:"behavior"`
+	Owner          string `json:"owner,omitempty"`
+	Command        string `json:"command"`
+	RequiredBefore string `json:"required_before,omitempty"`
+}
+
+type AcceptedCoverageVerification struct {
+	ID          string   `json:"id"`
+	Gate        string   `json:"gate"`
+	Command     string   `json:"command,omitempty"`
+	Obligations []string `json:"obligations,omitempty"`
+}
+
+type AcceptedCoverageMutation struct {
+	Requirement  string   `json:"requirement,omitempty"`
+	MinScore     int      `json:"min_score,omitempty"`
+	Score        *float64 `json:"score,omitempty"`
+	WaiverReason string   `json:"waiver_reason,omitempty"`
+}
+
+type AcceptedCoverageFeedback struct {
+	ID             string   `json:"id"`
+	Outcome        string   `json:"outcome,omitempty"`
+	ObligationRefs []string `json:"obligation_refs,omitempty"`
+}
+
+type AcceptedCoverageWaiver struct {
+	ID        string `json:"id"`
+	Technique string `json:"technique"`
+	Reason    string `json:"reason"`
+}
+
+type AcceptedCoverageQuestion struct {
+	ID         string `json:"id"`
+	Question   string `json:"question"`
+	Status     string `json:"status,omitempty"`
+	Resolution string `json:"resolution,omitempty"`
+}
+
+type BehavioralCoverageDraft struct {
+	Authority         string                          `json:"authority,omitempty"` // "standalone_provisional"
+	Status            string                          `json:"status,omitempty"`    // "draft", "provisional", "question_open", or "superseded"
+	Tier              string                          `json:"tier,omitempty"`
+	Requirements      []CoverageDraftRequirement      `json:"requirements,omitempty"`
+	ExampleRules      []CoverageDraftExampleRule      `json:"example_rules,omitempty"`
+	Scenarios         []CoverageDraftScenario         `json:"scenarios,omitempty"`
+	Invariants        []CoverageDraftInvariant        `json:"invariants,omitempty"`
+	FailureModes      []CoverageDraftFailureMode      `json:"failure_modes,omitempty"`
+	StateMachines     []CoverageDraftStateMachine     `json:"state_machines,omitempty"`
+	FuzzTargets       []CoverageDraftFuzzTarget       `json:"fuzz_targets,omitempty"`
+	RAGEvals          []CoverageDraftRAGEval          `json:"rag_evals,omitempty"`
+	SecurityCases     []CoverageDraftSecurityCase     `json:"security_cases,omitempty"`
+	PrivacyControls   []CoverageDraftPrivacyControl   `json:"privacy_controls,omitempty"`
+	ProviderContracts []CoverageDraftProviderContract `json:"provider_contracts,omitempty"`
+	Observability     []CoverageDraftObservability    `json:"observability,omitempty"`
+	PerformanceBounds []CoverageDraftPerformanceBound `json:"performance_bounds,omitempty"`
+	E2EJourneys       []CoverageDraftE2EJourney       `json:"e2e_journeys,omitempty"`
+	TestObligations   []CoverageDraftTestObligation   `json:"test_obligations,omitempty"`
+	Verification      []CoverageDraftVerification     `json:"verification,omitempty"`
+	Waivers           []CoverageDraftWaiver           `json:"waivers,omitempty"`
+	OpenQuestions     []CoverageDraftOpenQuestion     `json:"open_questions,omitempty"`
+	Items             []BehavioralCoverageItem        `json:"items,omitempty"` // legacy compact draft entries
+}
+
+type BehavioralCoverageItem struct {
+	ID          string   `json:"id"`
+	Behavior    string   `json:"behavior"`
+	Obligations []string `json:"tdd_obligations,omitempty"`
+	Evidence    []string `json:"evidence,omitempty"`
+}
+
+type CoverageDraftRequirement struct {
+	ID        string   `json:"id"`
+	Pattern   string   `json:"pattern,omitempty"`
+	Statement string   `json:"statement"`
+	Refs      []string `json:"refs,omitempty"`
+}
+
+type CoverageDraftExampleRule struct {
+	ID            string                 `json:"id"`
+	RequirementID string                 `json:"requirement_id,omitempty"`
+	Rule          string                 `json:"rule"`
+	Examples      []CoverageDraftExample `json:"examples,omitempty"`
+	Questions     []string               `json:"questions,omitempty"`
+}
+
+type CoverageDraftExample struct {
+	ID           string            `json:"id"`
+	Description  string            `json:"description,omitempty"`
+	ConcreteData map[string]string `json:"concrete_data,omitempty"`
+	Negative     bool              `json:"negative,omitempty"`
+}
+
+type CoverageDraftScenario struct {
+	ID            string            `json:"id"`
+	RequirementID string            `json:"requirement_id,omitempty"`
+	Given         []string          `json:"given,omitempty"`
+	When          []string          `json:"when,omitempty"`
+	Then          []string          `json:"then,omitempty"`
+	ConcreteData  map[string]string `json:"concrete_data,omitempty"`
+	Obligations   []string          `json:"obligations,omitempty"`
+}
+
+type CoverageDraftInvariant struct {
+	ID          string   `json:"id"`
+	Statement   string   `json:"statement"`
+	Obligations []string `json:"obligations,omitempty"`
+}
+
+type CoverageDraftFailureMode struct {
+	ID          string   `json:"id"`
+	Mode        string   `json:"mode"`
+	Mitigation  string   `json:"mitigation,omitempty"`
+	Obligations []string `json:"obligations,omitempty"`
+}
+
+type CoverageDraftStateMachine struct {
+	ID          string                    `json:"id"`
+	States      []string                  `json:"states,omitempty"`
+	Transitions []CoverageDraftTransition `json:"transitions,omitempty"`
+	Obligations []string                  `json:"obligations,omitempty"`
+}
+
+type CoverageDraftFuzzTarget struct {
+	ID          string   `json:"id"`
+	Status      string   `json:"status,omitempty"`
+	Target      string   `json:"target,omitempty"`
+	Generators  []string `json:"generators,omitempty"`
+	Invariants  []string `json:"invariants,omitempty"`
+	TestRefs    []string `json:"test_refs,omitempty"`
+	Obligations []string `json:"tdd_obligations,omitempty"`
+}
+
+type CoverageDraftRAGEval struct {
+	ID          string             `json:"id"`
+	Status      string             `json:"status,omitempty"`
+	DatasetRefs []string           `json:"dataset_refs,omitempty"`
+	Metrics     map[string]float64 `json:"metrics,omitempty"`
+	Thresholds  map[string]float64 `json:"thresholds,omitempty"`
+	EvalRefs    []string           `json:"eval_refs,omitempty"`
+	Obligations []string           `json:"tdd_obligations,omitempty"`
+}
+
+type CoverageDraftSecurityCase struct {
+	ID          string   `json:"id"`
+	Status      string   `json:"status,omitempty"`
+	Risk        string   `json:"risk,omitempty"`
+	Attack      string   `json:"attack,omitempty"`
+	Expected    string   `json:"expected,omitempty"`
+	TestRefs    []string `json:"test_refs,omitempty"`
+	Obligations []string `json:"tdd_obligations,omitempty"`
+}
+
+type CoverageDraftPrivacyControl struct {
+	ID            string   `json:"id"`
+	Status        string   `json:"status,omitempty"`
+	DataClass     string   `json:"data_class,omitempty"`
+	Policy        string   `json:"policy,omitempty"`
+	RedactionRefs []string `json:"redaction_refs,omitempty"`
+	Retention     string   `json:"retention,omitempty"`
+	TestRefs      []string `json:"test_refs,omitempty"`
+	Obligations   []string `json:"tdd_obligations,omitempty"`
+}
+
+type CoverageDraftProviderContract struct {
+	ID           string   `json:"id"`
+	Status       string   `json:"status,omitempty"`
+	Provider     string   `json:"provider,omitempty"`
+	Consumer     string   `json:"consumer,omitempty"`
+	ContractRefs []string `json:"contract_refs,omitempty"`
+	TestRefs     []string `json:"test_refs,omitempty"`
+	Obligations  []string `json:"tdd_obligations,omitempty"`
+}
+
+type CoverageDraftObservability struct {
+	ID               string   `json:"id"`
+	Status           string   `json:"status,omitempty"`
+	Signal           string   `json:"signal,omitempty"`
+	InstrumentedPath string   `json:"instrumented_path,omitempty"`
+	RequiredFields   []string `json:"required_fields,omitempty"`
+	TestRefs         []string `json:"test_refs,omitempty"`
+	Obligations      []string `json:"tdd_obligations,omitempty"`
+}
+
+type CoverageDraftPerformanceBound struct {
+	ID              string   `json:"id"`
+	Status          string   `json:"status,omitempty"`
+	Operation       string   `json:"operation,omitempty"`
+	Bound           string   `json:"bound,omitempty"`
+	MeasurementRefs []string `json:"measurement_refs,omitempty"`
+	Obligations     []string `json:"tdd_obligations,omitempty"`
+}
+
+type CoverageDraftE2EJourney struct {
+	ID          string   `json:"id"`
+	Status      string   `json:"status,omitempty"`
+	Journey     string   `json:"journey,omitempty"`
+	Steps       []string `json:"steps,omitempty"`
+	ScriptRefs  []string `json:"script_refs,omitempty"`
+	Obligations []string `json:"tdd_obligations,omitempty"`
+}
+
+type CoverageDraftTransition struct {
+	From  string `json:"from"`
+	Event string `json:"event"`
+	To    string `json:"to"`
+}
+
+type CoverageDraftTestObligation struct {
+	ID       string `json:"id"`
+	Behavior string `json:"behavior"`
+	Command  string `json:"command"`
+	Type     string `json:"type,omitempty"`
+}
+
+type CoverageDraftVerification struct {
+	ID      string `json:"id"`
+	Gate    string `json:"gate"`
+	Command string `json:"command,omitempty"`
+}
+
+type CoverageDraftWaiver struct {
+	ID        string `json:"id"`
+	Technique string `json:"technique"`
+	Reason    string `json:"reason"`
+}
+
+type CoverageDraftOpenQuestion struct {
+	ID       string `json:"id"`
+	Question string `json:"question"`
 }
 
 type FeatureAtomPlan struct {

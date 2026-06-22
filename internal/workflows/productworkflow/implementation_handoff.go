@@ -20,6 +20,8 @@ type ImplementationHandoff struct {
 	NextValidActions          []string
 	CoverageTier              string
 	CoverageGatePassed        bool
+	CoverageContract          *ImplementationHandoffCoverageContract
+	AcceptedCoverage          *ImplementationHandoffAcceptedCoverage
 	CoverageBlockers          []string
 	CoverageBlockerKinds      []string
 	PRDRequirements           []ImplementationHandoffPRDRequirement
@@ -36,6 +38,24 @@ type ImplementationHandoff struct {
 	Constraints               []string
 	Decisions                 []string
 	Blockers                  []string
+}
+
+type ImplementationHandoffCoverageContract struct {
+	ContractID   string
+	Digest       string
+	EventID      string
+	Status       string
+	EffortID     string
+	CoverageTier string
+}
+
+type ImplementationHandoffAcceptedCoverage struct {
+	Contract   ImplementationHandoffCoverageContract
+	Projection AcceptedBehavioralCoverageProjection
+	Behavioral BehavioralCoverageContract
+	Projected  TDDCoverage
+	Status     string
+	Authority  string
 }
 
 type ImplementationHandoffPRDRequirement struct {
@@ -55,63 +75,268 @@ type ImplementationHandoffTDDObligation struct {
 	Status         string
 }
 
+type CoverageGateEffortEvaluation struct {
+	Evaluation CoverageGateEvaluation
+	TDD        TDDLedger
+	Findings   []TDDObligationPlanFinding
+}
+
 func LoadImplementationHandoff(effortRoot string) (ImplementationHandoff, error) {
+	input, blockers := LoadBriefGenerationInput(effortRoot)
+	if parseBlockers := briefGenerationInputParseBlockers(blockers); len(parseBlockers) > 0 {
+		return ImplementationHandoff{}, fmt.Errorf("%s", strings.Join(parseBlockers, "; "))
+	}
+
+	return BuildImplementationHandoff(input), nil
+}
+
+func LoadBriefGenerationInput(effortRoot string) (BriefGenerationInput, []string) {
 	root := filepath.Clean(effortRoot)
+	input := BriefGenerationInput{
+		EffortRoot:       root,
+		ArtifactRootPath: artifactRootPathForEffort(root),
+	}
+	var blockers []string
 
-	stateData, err := os.ReadFile(filepath.Join(root, WorkflowStateFileName))
-	if err != nil {
-		return ImplementationHandoff{}, fmt.Errorf("load workflow state: %w", err)
+	readAndParse := func(relPath string, parse func([]byte) error) {
+		data, err := os.ReadFile(filepath.Join(root, relPath))
+		if err != nil {
+			if os.IsNotExist(err) {
+				blockers = append(blockers, fmt.Sprintf("required file missing: %s", filepath.ToSlash(relPath)))
+			} else {
+				blockers = append(blockers, fmt.Sprintf("read %s: %v", filepath.ToSlash(relPath), err))
+			}
+
+			return
+		}
+
+		if err := parse(data); err != nil {
+			blockers = append(blockers, fmt.Sprintf("parse %s: %v", filepath.ToSlash(relPath), err))
+		}
 	}
 
-	workflowState, err := ParseWorkflowStateJSON(stateData)
-	if err != nil {
-		return ImplementationHandoff{}, fmt.Errorf("parse workflow state: %w", err)
+	readAndParse(WorkflowStateFileName, func(data []byte) error {
+		parsed, err := ParseWorkflowStateJSON(data)
+		if err == nil {
+			input.WorkflowState = parsed
+		}
+
+		return err
+	})
+	readAndParse("prd.md", func(data []byte) error {
+		parsed, err := ParsePRDMarkdown(data)
+		if err == nil {
+			input.PRD = parsed
+		}
+
+		return err
+	})
+	readAndParse(filepath.Join("adrs", "index.json"), func(data []byte) error {
+		parsed, err := ParseADRIndexJSON(data)
+		if err == nil {
+			input.ADRIndex = parsed
+		}
+
+		return err
+	})
+
+	for _, entry := range input.ADRIndex.ADRs {
+		rel := filepath.Join("adrs", entry.Path)
+		readAndParse(rel, func(data []byte) error {
+			parsed, err := ParseADRMarkdown(data)
+			if err == nil {
+				input.ADRs = append(input.ADRs, ParsedADR{Doc: parsed, RelPath: rel, RawMarkdown: string(data)})
+			}
+
+			return err
+		})
 	}
 
-	prdData, err := os.ReadFile(filepath.Join(root, "prd.md"))
-	if err != nil {
-		return ImplementationHandoff{}, fmt.Errorf("load prd.md: %w", err)
+	readAndParse("tdd.json", func(data []byte) error {
+		parsed, err := ParseTDDLedgerJSON(data)
+		if err == nil {
+			input.TDD = parsed
+		}
+
+		return err
+	})
+	readAndParse(filepath.Join("evidence", "traceability_matrix.json"), func(data []byte) error {
+		parsed, err := ParseTraceabilityMatrixJSON(data)
+		if err == nil {
+			input.Traceability = parsed
+		}
+
+		return err
+	})
+	readAndParse("implementation_ledger.jsonl", func(data []byte) error {
+		parsed, err := ParseImplementationLedgerJSONL(data)
+		if err == nil {
+			input.ImplementationRecords = parsed
+		}
+
+		return err
+	})
+	if data, err := os.ReadFile(filepath.Join(root, "events.jsonl")); err == nil {
+		parsed, parseErr := ParseBehavioralCoveragePromotionEventsJSONL(data)
+		if parseErr != nil {
+			blockers = append(blockers, fmt.Sprintf("parse events.jsonl: %v", parseErr))
+		} else {
+			input.PromotionEvents = parsed
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		blockers = append(blockers, fmt.Sprintf("read events.jsonl: %v", err))
 	}
 
-	prd, err := ParsePRDMarkdown(prdData)
-	if err != nil {
-		return ImplementationHandoff{}, fmt.Errorf("parse prd.md: %w", err)
+	input = PrepareBriefGenerationInput(input)
+	if input.ExistingWorkspacePath == nil {
+		input.ExistingWorkspacePath = implementationHandoffExistingWorkspacePaths(input.EffortRoot, input.WorkflowState, input.ImplementationRecords)
+	}
+	if len(blockers) == 0 && CoverageGateHasBlockers(input.CoverageEvaluation) {
+		blockers = append(blockers, "coverage gate evaluation is blocked")
 	}
 
-	tddData, err := os.ReadFile(filepath.Join(root, "tdd.json"))
-	if err != nil {
-		return ImplementationHandoff{}, fmt.Errorf("load tdd.json: %w", err)
+	return input, blockers
+}
+
+func LoadCoverageGateEvaluation(effortRoot string) CoverageGateEffortEvaluation {
+	input, blockers := LoadBriefGenerationInput(effortRoot)
+	eval := input.CoverageEvaluation
+	if strings.TrimSpace(eval.Status) == "" {
+		eval = CoverageGateEvaluation{
+			EffortID:     input.TDD.EffortID,
+			TaskID:       input.TDD.TaskID,
+			CoverageTier: input.TDD.CoverageTier,
+			Status:       ProductWorkflowStatusBlocked,
+			Criteria:     []CoverageGateCriterion{},
+			Findings:     []CoverageGateFinding{},
+			Blockers:     []CoverageGateBlocker{},
+		}
 	}
 
-	tdd, err := ParseTDDLedgerJSON(tddData)
-	if err != nil {
-		return ImplementationHandoff{}, fmt.Errorf("parse tdd.json: %w", err)
+	var findings []TDDObligationPlanFinding
+	for _, blocker := range blockers {
+		trimmed := strings.TrimSpace(blocker)
+		if trimmed == "" || trimmed == "coverage gate evaluation is blocked" {
+			continue
+		}
+		kind, file, message := coverageGateInputBlockerParts(trimmed)
+		findings = append(findings, TDDObligationPlanFinding{
+			Kind:     kind,
+			Message:  message,
+			File:     file,
+			Severity: ProductWorkflowSeverityError,
+		})
+		eval.Findings = append(eval.Findings, CoverageGateFinding{
+			Kind:      kind,
+			Criterion: "input",
+			Message:   message,
+			File:      file,
+			Severity:  ProductWorkflowSeverityError,
+		})
+		eval.Blockers = append(eval.Blockers, CoverageGateBlocker{
+			Kind:      kind,
+			Criterion: "input",
+			Message:   message,
+			File:      file,
+		})
+	}
+	if len(findings) > 0 {
+		eval.Status = ProductWorkflowStatusBlocked
 	}
 
-	adrIndex, parsedADRs, err := loadImplementationHandoffADRs(root)
-	if err != nil {
-		return ImplementationHandoff{}, err
+	return CoverageGateEffortEvaluation{
+		Evaluation: eval,
+		TDD:        input.TDD,
+		Findings:   findings,
+	}
+}
+
+func coverageGateInputBlockerParts(blocker string) (kind string, file string, message string) {
+	message = strings.TrimSpace(blocker)
+	kind = "input_error"
+	if before, after, ok := strings.Cut(message, ":"); ok {
+		prefix := strings.TrimSpace(before)
+		message = strings.TrimSpace(after)
+		switch {
+		case prefix == "required file missing":
+			kind = "missing_file"
+			file = message
+			message = "not found"
+		case strings.HasPrefix(prefix, "required file missing "):
+			kind = "missing_file"
+			file = strings.TrimSpace(strings.TrimPrefix(prefix, "required file missing "))
+		case strings.HasPrefix(prefix, "parse "):
+			kind = "parse_error"
+			file = strings.TrimSpace(strings.TrimPrefix(prefix, "parse "))
+		case strings.HasPrefix(prefix, "read "):
+			kind = "read_error"
+			file = strings.TrimSpace(strings.TrimPrefix(prefix, "read "))
+		}
+	}
+	file = strings.Trim(file, " :")
+	if message == "" {
+		message = blocker
 	}
 
-	traceability := loadImplementationHandoffTraceability(root)
-	implementationRecords := loadImplementationHandoffLedger(root)
+	return kind, file, message
+}
 
-	satisfiedTDDIDs := BuildSatisfiedTDDObligationIDs(tdd, implementationRecords)
-	coverage := EvaluateCoverageGate(prd, adrIndex, parsedADRs, tdd, traceability, satisfiedTDDIDs)
+func briefGenerationInputParseBlockers(blockers []string) []string {
+	var out []string
+	for _, blocker := range blockers {
+		trimmed := strings.TrimSpace(blocker)
+		if trimmed == "coverage gate evaluation is blocked" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "parse implementation_ledger.jsonl:") {
+			continue
+		}
+		out = append(out, blocker)
+	}
 
-	return BuildImplementationHandoff(BriefGenerationInput{
-		EffortRoot:            root,
-		ArtifactRootPath:      root,
-		WorkflowState:         workflowState,
-		PRD:                   prd,
-		ADRIndex:              adrIndex,
-		ADRs:                  parsedADRs,
-		TDD:                   tdd,
-		Traceability:          traceability,
-		ImplementationRecords: implementationRecords,
-		CoverageEvaluation:    coverage,
-		ExistingWorkspacePath: implementationHandoffExistingWorkspacePaths(root, workflowState, implementationRecords),
-	}), nil
+	return out
+}
+
+func PrepareBriefGenerationInput(input BriefGenerationInput) BriefGenerationInput {
+	input.EffortRoot = strings.TrimSpace(input.EffortRoot)
+	if input.ArtifactRootPath == "" && input.EffortRoot != "" {
+		input.ArtifactRootPath = artifactRootPathForEffort(input.EffortRoot)
+	}
+	if strings.TrimSpace(input.CoverageEvaluation.Status) == "" {
+		satisfiedTDDIDs := BuildSatisfiedTDDObligationIDs(input.TDD, input.ImplementationRecords)
+		if briefGenerationInputHasEffortArtifacts(input.EffortRoot) {
+			lintResult := LintEffortFolder(input.EffortRoot)
+			input.CoverageEvaluation = EvaluateCoverageGateWithAuthorityPreflight(input.PRD, input.ADRIndex, input.ADRs, input.TDD, input.Traceability, lintResult.Findings, satisfiedTDDIDs)
+		} else {
+			input.CoverageEvaluation = EvaluateCoverageGate(input.PRD, input.ADRIndex, input.ADRs, input.TDD, input.Traceability, satisfiedTDDIDs)
+		}
+	}
+
+	return input
+}
+
+func artifactRootPathForEffort(effortRoot string) string {
+	root := filepath.Clean(effortRoot)
+	workspaceRoot := implementationHandoffWorkspaceRoot(root)
+	if rel, err := filepath.Rel(workspaceRoot, root); err == nil && rel != "." && !strings.HasPrefix(filepath.ToSlash(rel), "../") {
+		return filepath.ToSlash(rel)
+	}
+
+	return filepath.ToSlash(root)
+}
+
+func briefGenerationInputHasEffortArtifacts(effortRoot string) bool {
+	root := strings.TrimSpace(effortRoot)
+	if root == "" {
+		return false
+	}
+	for _, rel := range []string{WorkflowStateFileName, "prd.md", "tdd.json", filepath.Join("adrs", "index.json")} {
+		if _, err := os.Stat(filepath.Join(root, rel)); err == nil {
+			return true
+		}
+	}
+
+	return false
 }
 
 func BuildImplementationHandoff(input BriefGenerationInput) ImplementationHandoff {
@@ -133,6 +358,8 @@ func BuildImplementationHandoff(input BriefGenerationInput) ImplementationHandof
 		NextValidActions:          append([]string{}, input.WorkflowState.NextValidActions...),
 		CoverageTier:              coverageTier,
 		CoverageGatePassed:        util.EqualTrimFold(input.CoverageEvaluation.Status, ProductWorkflowStatusPass),
+		CoverageContract:          implementationHandoffCoverageContract(input),
+		AcceptedCoverage:          implementationHandoffAcceptedCoverage(input),
 		CoverageBlockers:          coverageBlockerMessages(input.CoverageEvaluation),
 		CoverageBlockerKinds:      coverageBlockerKinds(input.CoverageEvaluation),
 		FilesToModify:             append([]string{}, generated.FilesToModify...),
@@ -196,6 +423,86 @@ func BuildImplementationHandoff(input BriefGenerationInput) ImplementationHandof
 	}
 
 	return handoff
+}
+
+func implementationHandoffCoverageContract(input BriefGenerationInput) *ImplementationHandoffCoverageContract {
+	if input.TDD.BehavioralCoverage == nil {
+		return nil
+	}
+
+	contract := *input.TDD.BehavioralCoverage
+	if strings.TrimSpace(contract.EffortID) == "" {
+		contract.EffortID = firstNonEmptyHandoffString(input.TDD.EffortID, input.WorkflowState.EffortID, input.CoverageEvaluation.EffortID)
+	}
+	if strings.TrimSpace(contract.TaskID) == "" {
+		contract.TaskID = firstNonEmptyHandoffString(input.TDD.TaskID, input.WorkflowState.TaskID, input.CoverageEvaluation.TaskID)
+	}
+	if strings.TrimSpace(contract.CoverageTier) == "" {
+		contract.CoverageTier = firstNonEmptyHandoffString(input.TDD.CoverageTier, input.CoverageEvaluation.CoverageTier)
+	}
+
+	ref := ImplementationHandoffCoverageContract{
+		ContractID:   firstNonEmptyHandoffString(contract.ContractID, contract.TaskID, input.TDD.TaskID),
+		Digest:       BehavioralCoverageContractDigest(contract),
+		Status:       implementationHandoffBehavioralCoverageStatus(contract, input),
+		EffortID:     firstNonEmptyHandoffString(contract.EffortID, input.TDD.EffortID, input.WorkflowState.EffortID, input.CoverageEvaluation.EffortID),
+		CoverageTier: firstNonEmptyHandoffString(contract.CoverageTier, input.TDD.CoverageTier, input.CoverageEvaluation.CoverageTier),
+	}
+	ref.EventID = implementationHandoffCoverageEventID(contract, input, ref.Digest)
+	if strings.TrimSpace(ref.Status) == "" {
+		ref.Status = ProductWorkflowStatusBlocked
+	}
+
+	return &ref
+}
+
+func implementationHandoffCoverageEventID(contract BehavioralCoverageContract, input BriefGenerationInput, digest string) string {
+	if event := AcceptedBehavioralCoveragePromotionEvent(input.PromotionEvents, digest); event != nil {
+		return strings.TrimSpace(event.EventID)
+	}
+	if eventID := firstNonEmptyHandoffString(contract.EventID, input.WorkflowState.LastEventID); eventID != "" {
+		return eventID
+	}
+	return ""
+}
+
+func implementationHandoffBehavioralCoverageStatus(contract BehavioralCoverageContract, input BriefGenerationInput) string {
+	if err := ValidateBehavioralCoverageContract(contract); err != nil {
+		return ProductWorkflowStatusBlocked
+	}
+	if err := ValidateBehavioralCoverageProjection(contract, input.TDD.Coverage); err != nil {
+		return ProductWorkflowStatusBlocked
+	}
+	digest := BehavioralCoverageContractDigest(contract)
+	if AcceptedBehavioralCoveragePromotionEvent(input.PromotionEvents, digest) == nil {
+		return ProductWorkflowStatusBlocked
+	}
+	return BehavioralCoverageStatusAccepted
+}
+
+func implementationHandoffAcceptedCoverage(input BriefGenerationInput) *ImplementationHandoffAcceptedCoverage {
+	projection := ProjectAcceptedBehavioralCoverage(input)
+	if projection == nil {
+		return nil
+	}
+
+	return &ImplementationHandoffAcceptedCoverage{
+		Contract:   projection.Contract,
+		Projection: *projection,
+		Behavioral: projection.Behavioral,
+		Projected:  projection.Projected,
+		Status:     projection.Status,
+		Authority:  projection.Authority,
+	}
+}
+
+func implementationHandoffAcceptedCoverageStatus(status string) bool {
+	switch strings.TrimSpace(status) {
+	case BehavioralCoverageStatusAccepted, ProductWorkflowStatusPass:
+		return true
+	default:
+		return false
+	}
 }
 
 func copyHandoffStringMap(in map[string]string) map[string]string {

@@ -7,12 +7,18 @@ memory, freshness, contracts, audit, and evals.**
 Status: cross-pillar target design with implementation status overlay, drafted
 2026-05-15; reviewed 2026-05-18
 
-Implementation state as of 2026-05-24: the full behavioral coverage pipeline is
-still a target design. The PRD/ADR/brief workflow effort has shipped a
-deterministic tiered coverage evaluator, brief-render dependency, product
-lint/audit authority preflight, and passive `coverage_gate_evaluated` telemetry
-event. That gate is still not the complete nine-stage coverage pipeline
-described here.
+Implementation state as of 2026-06-22: the full behavioral coverage program
+remains incremental, and accepted behavioral coverage now has a shipped typed
+contract path. The product workflow command
+`idiom product tdd --promote-coverage <coverage.json>` validates a behavioral
+coverage contract, projects counters and test obligations into `tdd.json`, and
+with `--write` persists that productworkflow-owned authority. The coverage
+gate evaluates the accepted contract plus projected counters, brief rendering
+blocks on coverage-gate blockers, implementation handoff carries the coverage
+contract `{contract_id, digest, event_id}`, and feature planner consumes that
+coverage as read-only product context. Remaining target work is deeper
+automation and completeness of the nine-stage pipeline, not the existence of a
+durable accepted-contract route.
 
 This document defines how Idiom achieves exhaustive behavioral coverage between
 a human-approved ADR and a dispatch-ready implementation brief. It is the
@@ -491,6 +497,19 @@ Mutation testing obligation:
 ### Stage 9: Coverage Gate
 
 The coverage gate blocks brief dispatch when behavioral coverage is incomplete.
+For accepted behavioral coverage, the canonical route is:
+
+1. Review a typed behavioral coverage JSON artifact.
+2. Run `idiom product tdd --effort-root <path> --promote-coverage <coverage.json>`
+   to preview the projected ledger.
+3. Run the same command with `--write` to persist the accepted contract,
+   projected counters, and promoted obligations into `tdd.json`.
+4. Run `idiom product tdd --effort-root <path> --evaluate-coverage --json`.
+5. Render the implementation brief only after non-TDD coverage blockers are
+   resolved. Pending implementation TDD evidence can pass into feature-planner
+   context as required pre-dispatch test-first work, but command names alone
+   are not verification proof.
+
 This is the hard gate before stage 10 (Brief Lint and Intake) in the
 PRD-to-brief lifecycle.
 
@@ -746,8 +765,10 @@ This design composes with existing Idiom surfaces, not replaces them:
 ### Phase 0: Schema And Gate Definitions
 
 - Add TDD obligation schema v2 with coverage metadata.
-- Add coverage gate event schema. Implemented as passive
-  `coverage_gate_evaluated` telemetry in `idiom product tdd --evaluate-coverage`.
+- Coverage gate event schema exists as `coverage_gate_evaluated` telemetry from
+  `idiom product tdd --evaluate-coverage`; accepted behavioral coverage also
+  carries a stable contract ref through implementation handoff and feature
+  planner product context.
 - Add nine new obligation types to the obligation type enum. Implemented for
   ledger validation.
 - Add coverage gate as a mandatory step between TDD audit (stage 8) and brief

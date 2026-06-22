@@ -38,6 +38,7 @@ var harnessAuditBehaviorFindingsIntroducedAt = time.Date(2026, 6, 18, 13, 55, 0,
 var harnessAuditLifecycleCloseoutIntroducedAt = time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
 var harnessAuditTurnPhaseProjectionIntroducedAt = time.Date(2026, 6, 11, 22, 8, 0, 0, time.UTC)
 var harnessAuditContractCoverageIntroducedAt = time.Date(2026, 6, 18, 13, 55, 0, 0, time.UTC)
+var harnessAuditOpenEvidenceFinalAnswerProjectionFixedAt = time.Date(2026, 6, 22, 18, 25, 0, 0, time.UTC)
 
 type harnessAuditReport struct {
 	GeneratedAt             string                       `json:"generated_at"`
@@ -1095,6 +1096,7 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 	findings = append(findings, historicalLogBehaviorFindings(aggregate, currentAggregate)...)
 	findings = append(findings, childLifecycleFindings(childLifecycle)...)
 	findings = append(findings, historicalTurnPhaseProjectionFindings(paths)...)
+	findings = append(findings, historicalOpenEvidenceFinalAnswerProjectionFindings(paths)...)
 	findings = append(findings, contractCoverageWarningFindings(currentContractWarnings)...)
 	findings = append(findings, historicalContractCoverageWarningFindings(contractWarnings, currentContractWarnings)...)
 	findings = append(findings, contractCoverageFindings(currentContractCoverage)...)
@@ -1640,12 +1642,42 @@ func (m *Manager) harnessAuditPathIsCurrent(path string) bool {
 func currentHarnessAuditAutonomyEvents(events []autonomy.Event) []autonomy.Event {
 	current := make([]autonomy.Event, 0, len(events))
 	for _, event := range events {
+		if preFixOpenEvidenceFinalAnswerProjectionEvent(event) {
+			continue
+		}
 		if event.OccurredAt.IsZero() || !event.OccurredAt.Before(harnessAuditContractCoverageIntroducedAt) {
 			current = append(current, event)
 		}
 	}
 
 	return current
+}
+
+func preFixOpenEvidenceFinalAnswerProjectionEvent(event autonomy.Event) bool {
+	if event.OccurredAt.IsZero() || !event.OccurredAt.Before(harnessAuditOpenEvidenceFinalAnswerProjectionFixedAt) {
+		return false
+	}
+	if event.Lifecycle == nil || event.Lifecycle.TurnPhaseContract == nil {
+		return false
+	}
+
+	phase := event.Lifecycle.TurnPhaseContract
+	return slices.Contains(phase.ActionPolicy.AllowedActionClasses, string(autonomy.ActionClassFinalAnswer)) &&
+		harnessAuditTurnPhaseEvidenceHasOpenObligation(phase.EvidenceState)
+}
+
+func harnessAuditTurnPhaseEvidenceHasOpenObligation(state autonomy.PhaseEvidenceStateEvent) bool {
+	verificationStatus := strings.ToLower(strings.TrimSpace(state.VerificationStatus))
+
+	return len(state.TDDObligationRefs) > 0 ||
+		len(state.ResidualBlockers) > 0 ||
+		len(state.RecoveryPacketRefs) > 0 ||
+		util.EqualTrimFold(state.ProductWorkflowState, "recovery_open") ||
+		util.EqualTrimFold(state.ProductWorkflowState, "incomplete") ||
+		util.EqualTrimFold(state.ProductWorkflowState, "skipped") ||
+		verificationStatus == "missing" ||
+		verificationStatus == "failed" ||
+		verificationStatus == "pre_write"
 }
 
 func dedupeAndSortHarnessAuditAutonomyEvents(events []autonomy.Event) []autonomy.Event {
@@ -3893,6 +3925,31 @@ func legacySurfaceSummaryHasUnexpressibleTool(surface autonomy.TurnPhaseSurfaceS
 	}
 
 	return false
+}
+
+func historicalOpenEvidenceFinalAnswerProjectionFindings(paths []string) []harnessAuditFinding {
+	var count int
+
+	for _, path := range paths {
+		pathEvents, _ := readHarnessAuditAutonomyEvents(path)
+		for _, event := range pathEvents {
+			if preFixOpenEvidenceFinalAnswerProjectionEvent(event) {
+				count++
+			}
+		}
+	}
+
+	if count == 0 {
+		return nil
+	}
+
+	return []harnessAuditFinding{{
+		ID:             "historical_open_evidence_final_answer_projection",
+		Severity:       "info",
+		Evidence:       fmt.Sprintf("%d pre-fix turn-phase projection(s) allowed final_answer while open evidence obligations remained", count),
+		Recommendation: "Pre-fix open-evidence/final-answer projection mismatches are retained as historical evidence; post-fix contradictions still raise turn_phase_contract_contradiction.",
+		Tools:          []string{"harness_audit"},
+	}}
 }
 
 func stringSetContainsWorkspaceAudit(values []string, want string) bool {

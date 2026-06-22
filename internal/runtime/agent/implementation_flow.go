@@ -1450,6 +1450,14 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 		return reject("plan_execute_anchor_refresh_pending", "plan_execute_anchor_refresh_pending")
 	}
 
+	if looksLikeGateSatisfactionMetaFinalAnswer(answer) {
+		return reject("protocol_meta_final_answer", "gate_satisfaction_meta_final_answer")
+	}
+
+	if looksLikeEmbeddedQuestionProtocolFinalAnswer(answer) {
+		return reject("protocol_meta_final_answer", "embedded_question_protocol_marker")
+	}
+
 	if looksLikeUnexecutedToolRequestAnswer(answer) {
 		return reject("unexecuted_tool_request_final_answer", "unexecuted_tool_request_final_answer")
 	}
@@ -1691,12 +1699,16 @@ func acceptedFeaturePlannerPlanArtifactPaths(answer string, ledger readOnlyAnswe
 	}
 
 	var paths []string
-	planSet := readOnlyPathSet(ledger.PlanArtifactPaths)
+	ctx := featurePlannerPlanArtifactCitationContextForAnswer(answer, ledger.Objective, ledger.PlanArtifactPaths, true)
 	for _, path := range readOnlySourceLikePaths(mentioned, 16) {
-		normalized := agentutil.NormalizeRunnerPath(path)
-		if _, ok := planSet[normalized]; ok && sourceCitationExplicitlyProposedPlanPath(answer, normalized) {
-			paths = util.Merge(paths, []string{normalized})
+		authority := featurePlannerPlanArtifactPathCitationAuthority(answer, path, ctx)
+		if authority.Kind == featurePlannerPlanCitationArtifactProposed {
+			paths = util.Merge(paths, []string{authority.ResolvedPlanPath})
 		}
+	}
+
+	if len(paths) == 0 && futurePlanRecommendationCitationsAreRelevant(answer, readOnlySourceLikePaths(mentioned, 16), ledger) {
+		return ledger.PlanArtifactPaths
 	}
 
 	if len(paths) == 0 && answerMentionsFeaturePlannerPlan(answer) {
@@ -2134,11 +2146,18 @@ func presentableCompletionGateQuestionBlockerReason(reason string) string {
 	}
 
 	detail = stripGateRetryPrefix(detail)
+	if sourceGroundingDetail := presentableSourceGroundingGateReason(detail); sourceGroundingDetail != "" {
+		return "the final answer was rejected because " + sourceGroundingDetail
+	}
+
 	detail = firstSentenceBeforeAny(detail,
 		" — repeated rejections indicate",
 		" Either anchor that detail",
 		" Either issue ONE concrete tool call",
 		" Answer with the exact",
+		" Read the first unread path",
+		" Use one exact read",
+		" If the path was",
 		" state that the current evidence",
 		" or use a blocker",
 		" or use <<QUESTION>>",
@@ -2150,6 +2169,18 @@ func presentableCompletionGateQuestionBlockerReason(reason string) string {
 	}
 
 	return "the final answer was rejected because " + lowercaseFirstSentence(detail)
+}
+
+func presentableSourceGroundingGateReason(detail string) string {
+	lower := strings.ToLower(detail)
+	switch {
+	case strings.Contains(lower, "source-body evidence") && strings.Contains(lower, "answer cites path"):
+		return "the answer cited path(s) that were not supported by inspected evidence"
+	case strings.Contains(lower, "source path/line/symbol detail not backed"):
+		return "the answer cited source path, line, or symbol detail that was not supported by inspected evidence"
+	default:
+		return ""
+	}
 }
 
 func stripGateRetryPrefix(text string) string {

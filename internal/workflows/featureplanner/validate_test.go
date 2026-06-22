@@ -230,6 +230,315 @@ func TestValidatePlanProductWorkflowContextRejectsNonTDDCoverageBlocker(t *testi
 	}
 }
 
+func TestValidatePlanProductWorkflowContextRejectsStandaloneCoverageDraft(t *testing.T) {
+	plan := validProductContextPlan()
+	plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
+	brief := validProductWorkflowBrief()
+
+	err := ValidatePlanProductWorkflowContext(plan, brief, "")
+	if err == nil {
+		t.Fatal("expected product context to reject standalone behavioral coverage draft")
+	}
+
+	if !strings.Contains(err.Error(), "behavioral_coverage_draft") ||
+		!strings.Contains(err.Error(), "superseded by product workflow coverage authority") {
+		t.Fatalf("validation error should identify superseded standalone draft, got %v", err)
+	}
+}
+
+func TestValidatePlanProductWorkflowContextRejectsCompetingCoverageGateResult(t *testing.T) {
+	plan := validProductContextPlan()
+	plan.CoverageGateResult = &CoverageGateResult{
+		Status:       "pass",
+		EffortID:     "planner-decided",
+		CoverageTier: "contract_high",
+		CheckedAt:    "2026-06-22T00:00:00Z",
+	}
+	brief := validProductWorkflowBrief()
+
+	err := ValidatePlanProductWorkflowContext(plan, brief, "")
+	if err == nil {
+		t.Fatal("expected product context to reject planner-supplied coverage gate result")
+	}
+
+	if !strings.Contains(err.Error(), "must consume product workflow coverage authority") ||
+		!strings.Contains(err.Error(), "competing coverage_gate_result") {
+		t.Fatalf("validation error should identify competing coverage gate result, got %v", err)
+	}
+}
+
+func TestValidatePlanProductWorkflowContextRequiresCoverageContractRefWhenBriefProvidesOne(t *testing.T) {
+	plan := validProductContextPlan()
+	plan.CoverageContract = nil
+	brief := validProductWorkflowBrief()
+	brief.CoverageContract = &CoverageContractRef{
+		ContractID:   "cov-1",
+		Digest:       "sha256:abc",
+		EventID:      "evt-cov-1",
+		Status:       "pass",
+		EffortID:     "effort-1",
+		CoverageTier: "contract_high",
+	}
+
+	err := ValidatePlanProductWorkflowContext(plan, brief, "")
+	if err == nil {
+		t.Fatal("expected product context to require coverage_contract ref")
+	}
+	if !strings.Contains(err.Error(), "missing coverage_contract ref") {
+		t.Fatalf("validation error should identify missing coverage_contract ref, got %v", err)
+	}
+
+	plan.CoverageContract = brief.CoverageContract
+	if err := ValidatePlanProductWorkflowContext(plan, brief, ""); err != nil {
+		t.Fatalf("matching coverage_contract ref should pass: %v", err)
+	}
+}
+
+func TestValidatePlanProductWorkflowContextRejectsEmptyCoverageContractAuthorityRef(t *testing.T) {
+	plan := validProductContextPlan()
+	plan.CoverageContract = &CoverageContractRef{}
+	brief := validProductWorkflowBrief()
+	brief.CoverageContract = &CoverageContractRef{}
+
+	err := ValidatePlanProductWorkflowContext(plan, brief, "")
+	if err == nil {
+		t.Fatal("expected empty product workflow coverage_contract authority ref to reject")
+	}
+	for _, want := range []string{
+		"product workflow coverage_contract missing contract_id",
+		"product workflow coverage_contract missing digest",
+		"product workflow coverage_contract missing event_id",
+		"product workflow coverage_contract missing status",
+		"product workflow coverage_contract missing effort_id",
+		"product workflow coverage_contract missing coverage_tier",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("validation error missing %q: %v", want, err)
+		}
+	}
+}
+
+func TestValidatePlanProductWorkflowContextRejectsMismatchedCoverageContractRef(t *testing.T) {
+	plan := validProductContextPlan()
+	plan.CoverageContract = &CoverageContractRef{
+		ContractID:   "cov-wrong",
+		Digest:       "sha256:wrong",
+		EventID:      "evt-wrong",
+		Status:       "blocked",
+		EffortID:     "effort-1",
+		CoverageTier: "unit",
+	}
+	brief := validProductWorkflowBrief()
+	brief.CoverageContract = &CoverageContractRef{
+		ContractID:   "cov-1",
+		Digest:       "sha256:abc",
+		EventID:      "evt-cov-1",
+		Status:       "pass",
+		EffortID:     "effort-1",
+		CoverageTier: "contract_high",
+	}
+
+	err := ValidatePlanProductWorkflowContext(plan, brief, "")
+	if err == nil {
+		t.Fatal("expected mismatched coverage_contract ref to reject")
+	}
+	for _, want := range []string{"coverage_contract.contract_id", "coverage_contract.digest", "coverage_contract.event_id", "coverage_contract.status", "coverage_contract.coverage_tier"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("validation error missing %q: %v", want, err)
+		}
+	}
+}
+
+func TestValidatePlanProductWorkflowContextRejectsPlannerAuthoredAcceptedCoverage(t *testing.T) {
+	plan := validProductContextPlan()
+	plan.AcceptedCoverage = &AcceptedBehavioralCoverage{Authority: "model"}
+	brief := validProductWorkflowBrief()
+
+	err := ValidatePlanProductWorkflowContext(plan, brief, "")
+	if err == nil {
+		t.Fatal("expected planner-authored accepted coverage to reject")
+	}
+	if !strings.Contains(err.Error(), "accepted_coverage is product workflow authority") {
+		t.Fatalf("expected accepted coverage authority error, got %v", err)
+	}
+}
+
+func TestValidatePlanProductWorkflowContextRejectsInvalidBriefAcceptedCoverageAuthority(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*AcceptedBehavioralCoverage)
+		want   string
+	}{
+		{
+			name: "wrong authority",
+			mutate: func(coverage *AcceptedBehavioralCoverage) {
+				coverage.Authority = "model"
+			},
+			want: "accepted_coverage.authority must be product_workflow",
+		},
+		{
+			name: "blocked status",
+			mutate: func(coverage *AcceptedBehavioralCoverage) {
+				coverage.Status = "blocked"
+			},
+			want: "accepted_coverage status is not accepted",
+		},
+		{
+			name: "mismatched contract",
+			mutate: func(coverage *AcceptedBehavioralCoverage) {
+				coverage.Contract.Digest = "sha256:wrong"
+			},
+			want: "coverage_contract.digest does not match",
+		},
+		{
+			name: "mismatched tier",
+			mutate: func(coverage *AcceptedBehavioralCoverage) {
+				coverage.Tier = "unit"
+			},
+			want: "accepted_coverage.tier",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := validProductContextPlan()
+			brief := validProductWorkflowBrief()
+			brief.AcceptedCoverage = validAcceptedBehavioralCoverage()
+			tt.mutate(brief.AcceptedCoverage)
+
+			err := ValidatePlanProductWorkflowContext(plan, brief, "")
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected brief accepted coverage authority error containing %q, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
+func TestNormalizePlanProductWorkflowContextStampsAcceptedCoverageAuthority(t *testing.T) {
+	plan := validProductContextPlan()
+	plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
+
+	brief := validProductWorkflowBrief()
+	brief.AcceptedCoverage = validAcceptedBehavioralCoverage()
+
+	normalized := NormalizePlanProductWorkflowContext(plan, brief, "")
+	if normalized.BehavioralCoverageDraft != nil {
+		t.Fatalf("product normalization should clear superseded standalone draft: %+v", normalized.BehavioralCoverageDraft)
+	}
+	if normalized.AcceptedCoverage == nil {
+		t.Fatal("product normalization should stamp accepted coverage from product workflow authority")
+	}
+	if normalized.AcceptedCoverage.Authority != "product_workflow" ||
+		normalized.AcceptedCoverage.Contract.ContractID != "cov-1" ||
+		len(normalized.AcceptedCoverage.Scenarios) != 1 ||
+		normalized.AcceptedCoverage.Scenarios[0].Then[0] != "product behavior is rendered" {
+
+		t.Fatalf("unexpected accepted coverage stamp: %+v", normalized.AcceptedCoverage)
+	}
+}
+
+func TestValidatePlanStandaloneWorkspaceContextAllowsProvisionalCoverageDraft(t *testing.T) {
+	plan := validPlan()
+	plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
+
+	if err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{}); err != nil {
+		t.Fatalf("standalone context should allow provisional behavioral coverage draft: %v", err)
+	}
+}
+
+func TestValidatePlanStandaloneWorkspaceContextRequiresCompleteProductionReadinessDraftEntries(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*BehavioralCoverageDraft)
+		want   string
+	}{
+		{
+			name: "fuzz target missing generators",
+			mutate: func(draft *BehavioralCoverageDraft) {
+				draft.FuzzTargets = []CoverageDraftFuzzTarget{{ID: "FUZZ-1", Target: "ParsePlan", Invariants: []string{"no panic"}, TestRefs: []string{"FuzzParsePlan"}}}
+			},
+			want: "behavioral_coverage_draft.fuzz_targets[0] missing generators",
+		},
+		{
+			name: "rag eval missing threshold",
+			mutate: func(draft *BehavioralCoverageDraft) {
+				draft.RAGEvals = []CoverageDraftRAGEval{{ID: "RAG-1", DatasetRefs: []string{"evals/rag.jsonl"}, Metrics: map[string]float64{"groundedness": 0.97}, EvalRefs: []string{"TestRAG"}}}
+			},
+			want: "behavioral_coverage_draft.rag_evals[0] missing thresholds",
+		},
+		{
+			name: "security case missing expected",
+			mutate: func(draft *BehavioralCoverageDraft) {
+				draft.SecurityCases = []CoverageDraftSecurityCase{{ID: "SEC-1", Risk: "prompt injection", Attack: "ignore policy", TestRefs: []string{"TestSecurity"}}}
+			},
+			want: "behavioral_coverage_draft.security_cases[0] missing expected",
+		},
+		{
+			name: "privacy control missing redaction refs",
+			mutate: func(draft *BehavioralCoverageDraft) {
+				draft.PrivacyControls = []CoverageDraftPrivacyControl{{ID: "PRIV-1", DataClass: "prompt", Policy: "redact", Retention: "structured only", TestRefs: []string{"TestPrivacy"}}}
+			},
+			want: "behavioral_coverage_draft.privacy_controls[0] missing redaction_refs",
+		},
+		{
+			name: "provider contract missing contract refs",
+			mutate: func(draft *BehavioralCoverageDraft) {
+				draft.ProviderContracts = []CoverageDraftProviderContract{{ID: "PACT-1", Provider: "fake-llm", Consumer: "planner", TestRefs: []string{"TestProvider"}}}
+			},
+			want: "behavioral_coverage_draft.provider_contracts[0] missing contract_refs",
+		},
+		{
+			name: "observability missing required fields",
+			mutate: func(draft *BehavioralCoverageDraft) {
+				draft.Observability = []CoverageDraftObservability{{ID: "OBS-1", Signal: "planner_failures_total", InstrumentedPath: "internal/workflows/featureplanner", TestRefs: []string{"TestTelemetry"}}}
+			},
+			want: "behavioral_coverage_draft.observability[0] missing required_fields",
+		},
+		{
+			name: "performance missing measurements",
+			mutate: func(draft *BehavioralCoverageDraft) {
+				draft.PerformanceBounds = []CoverageDraftPerformanceBound{{ID: "PERF-1", Operation: "render", Bound: "bounded"}}
+			},
+			want: "behavioral_coverage_draft.performance_bounds[0] missing measurement_refs",
+		},
+		{
+			name: "e2e missing scripts",
+			mutate: func(draft *BehavioralCoverageDraft) {
+				draft.E2EJourneys = []CoverageDraftE2EJourney{{ID: "E2E-1", Journey: "greenfield planning", Steps: []string{"start", "plan"}}}
+			},
+			want: "behavioral_coverage_draft.e2e_journeys[0] missing script_refs",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := validPlan()
+			plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
+			tt.mutate(plan.BehavioralCoverageDraft)
+
+			err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected standalone draft validation error containing %q, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
+func TestValidatePlanStandaloneWorkspaceContextRejectsNonProvisionalCoverageAuthority(t *testing.T) {
+	plan := validPlan()
+	plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
+	plan.BehavioralCoverageDraft.Authority = "product_workflow"
+
+	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{})
+	if err == nil {
+		t.Fatal("expected standalone coverage draft with product authority to reject")
+	}
+
+	if !strings.Contains(err.Error(), "standalone_provisional") {
+		t.Fatalf("validation error should identify provisional authority requirement, got %v", err)
+	}
+}
+
 func TestRunRejectsProductPlanWithUnknownArtifactRefs(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	plan := validPlan()
@@ -268,6 +577,27 @@ func TestRunRejectsProductPlanWithUnknownArtifactRefs(t *testing.T) {
 
 	if len(result.Events) != 1 || result.Events[0].Type != "idiom.feature_planner.product_context_blocked" {
 		t.Fatalf("unexpected events: %+v", result.Events)
+	}
+}
+
+func TestRunWithProductContextInvalidatesExistingStandaloneCoverageDraft(t *testing.T) {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	state.Plan = validPlan()
+	state.Plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
+	brief := validProductWorkflowBrief()
+
+	result, err := Run(state, RunOptions{
+		Prompt:               "build feature",
+		ProductWorkflowBrief: &brief,
+	}, func(_ string, _ string) (string, error) {
+		return `{"tool":"ask_planner_question","question_summary":"need source context","blocking_claim":"need source context","requested_decision":"provide source context","question_kind":"external_answer_required","authority_required":"accepted_source","required_before":"plan_approval","affected_fields":["source_localization"]}`, nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.State.Plan.BehavioralCoverageDraft != nil {
+		t.Fatalf("product context should invalidate existing standalone draft: %+v", result.State.Plan.BehavioralCoverageDraft)
 	}
 }
 
@@ -589,6 +919,83 @@ func TestBuildPlannerPromptProductExampleUsesNonAuthoritativePlaceholders(t *tes
 	} {
 		if strings.Contains(schemaExample, forbidden) {
 			t.Fatalf("product prompt schema example contains validator-rejected TDD snapshot placeholder %q:\n%s", forbidden, prompt)
+		}
+	}
+}
+
+func TestBuildPlannerPromptRendersAcceptedCoverageAsReadOnlyContext(t *testing.T) {
+	brief := validProductWorkflowBrief()
+	brief.AcceptedCoverage = validAcceptedBehavioralCoverage()
+
+	prompt := BuildPlannerPrompt("build feature", NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC()), &brief)
+
+	for _, want := range []string{
+		"Accepted coverage contract: id=cov-1 event=evt-cov-1 digest=sha256:abc status=pass",
+		"Accepted Coverage - Requirements:",
+		"Accepted coverage authority: product_workflow",
+		"REQ-1: When product behavior is requested, the system shall render it. (event-driven)",
+		"Accepted Coverage - Rules & Examples:",
+		"RULE-1: Accepted product coverage renders structured behavior. [requirement: REQ-1]",
+		"Accepted Coverage - Scenarios:",
+		"BDD-1: Given product workflow accepted coverage exists / When the plan is rendered / Then product behavior is rendered (concrete data)",
+		"Accepted Coverage - Invariants:",
+		"INV-1: accepted coverage remains product-owned",
+		"Accepted Coverage - Failure Modes:",
+		"FM-1: planner authors accepted coverage -> validator rejects accepted_coverage in submit_feature_plan (RPN 72)",
+		"Accepted Coverage - State Model:",
+		"SM-1 states: brief_loaded, plan_validated, plan_stamped",
+		"Accepted Coverage - Fuzz & Property Coverage:",
+		"Fuzz FUZZ-1: accepted coverage JSON parser [covered] test: FuzzAcceptedCoverageParser",
+		"Accepted Coverage - Security, Privacy & RAG Evals:",
+		"Security SEC-1: planner-authored coverage authority attack=model includes accepted_coverage in submit_feature_plan expected=plan is rejected [tested] test: TestValidatePlanProductWorkflowContextRejectsPlannerAuthoredAcceptedCoverage",
+		"Privacy PRIV-1: raw prompt context policy=do not persist raw model-only context retention=structured fields only [tested] redaction: redaction/accepted_coverage_context",
+		"RAG RAG-1 [measured] metric: groundedness=0.97",
+		"Accepted Coverage - Provider Contracts:",
+		"Provider contract PACT-1: product-workflow -> feature-planner [tested] contract: contracts/product_feature_planner.json",
+		"Accepted Coverage - Observability:",
+		"Observability OBS-1: feature_planner.accepted_coverage_context at internal/workflows/featureplanner/orchestrate.go [tested] required field: contract_id",
+		"Accepted Coverage - Performance Bounds:",
+		"Performance PERF-1: accepted coverage prompt rendering <= bounded deterministic context [tested] measurement: benchmarks/accepted_coverage_prompt.txt",
+		"Accepted Coverage - E2E Journeys:",
+		"E2E E2E-1: product accepted coverage reaches feature planner prompt [scripted] script: internal/workflows/featureplanner/validate_test.go",
+		"Accepted Coverage - Test Obligations:",
+		"TDD-1 - accepted coverage is shown without planner authorship (go test ./internal/workflows/featureplanner) [contract]",
+		"Accepted Coverage - Verification Gates:",
+		"VERIFY-1: contract (go test ./internal/workflows/featureplanner)",
+		"Do not include behavioral_coverage_draft or accepted_coverage in product-workflow-backed submissions",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("product prompt missing accepted coverage context %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestAcceptedCoveragePresentationUsesSharedSectionLabelsAndRows(t *testing.T) {
+	coverage := validAcceptedBehavioralCoverage()
+
+	sections := AcceptedCoveragePresentation(coverage)
+	requirements := AcceptedCoverageRowsBySection(sections, CoverageSectionRequirements)
+	if !slices.Contains(requirements, "REQ-1: When product behavior is requested, the system shall render it. (event-driven)") {
+		t.Fatalf("requirements projection missing accepted fact: %+v", requirements)
+	}
+
+	scenarios := AcceptedCoverageRowsBySection(sections, CoverageSectionScenarios)
+	if !slices.Contains(scenarios, "BDD-1: Given product workflow accepted coverage exists / When the plan is rendered / Then product behavior is rendered (concrete data)") {
+		t.Fatalf("scenario projection missing accepted fact: %+v", scenarios)
+	}
+
+	labels := make([]string, 0, len(sections))
+	for _, section := range sections {
+		labels = append(labels, section.Label)
+	}
+	for _, want := range []string{
+		CoverageSectionRequirements,
+		CoverageSectionScenarios,
+		CoverageSectionSecurityPrivacyRAGEvals,
+		CoverageSectionVerificationGates,
+	} {
+		if !slices.Contains(labels, want) {
+			t.Fatalf("projection missing shared section label %q in %+v", want, labels)
 		}
 	}
 }
@@ -2064,6 +2471,82 @@ func TestRunGreenfieldSkeletonOpensOperatorQuestionWithoutLeakingDiagnosticSumma
 		"requested_decision:",
 		"how_to_continue: reply with approval",
 		"blockers: blocked by open planner question",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("operator summary missing %q:\n%s", want, summary)
+		}
+	}
+}
+
+func TestRunGreenfieldMVPProjectOpensOperatorQuestionWithoutLeakingRepair(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+
+	plan.FeatureID = "llm-brain-mvp"
+	plan.Summary = "Work out an MVP for an LLM brain project."
+	plan.TopLevelScope.Objective = "Establish the minimal LLM brain project structure."
+	plan.Atoms[0].RequiredEditPaths = []string{"src/brain/knowledge_store.py", "tests/test_knowledge_store.py"}
+	plan.Atoms[0].AllowedEditPaths = nil
+	plan.Atoms[0].TestFirst.Commands = []string{"pytest tests/test_knowledge_store.py"}
+	plan.Atoms[0].RequiredTests = []string{"pytest tests/test_knowledge_store.py"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"tests/test_knowledge_store.py"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = []string{"pytest tests/test_knowledge_store.py"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"tests/test_knowledge_store.py"}
+	plan.Atoms[0].Prompt = "Create src/brain/knowledge_store.py and tests/test_knowledge_store.py for the MVP."
+
+	state := NewState("session", "llm brain mvp", "", 3, time.Unix(1, 0).UTC())
+	result, err := Run(state, RunOptions{
+		Prompt:                `Can you work out an MVP to an effective "llm brain" sort of project?`,
+		MaxPlanningIterations: 3,
+		WorkspaceRoot:         root,
+	}, func(_ string, taskFamily string) (string, error) {
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
+			t.Fatal("greenfield MVP authority must block before dispatch")
+		}
+
+		return mustPlanJSON(t, plan), nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.State.Status != FeatureStatePlanningQuestion {
+		t.Fatalf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers)
+	}
+	if len(result.Events) != 2 || result.Events[0].Type != "idiom.feature_planner.standalone_context_blocked" || result.Events[1].Type != "idiom.feature_planner.planner_question_opened" {
+		t.Fatalf("expected rejected-plan then question events, got %+v", result.Events)
+	}
+	if len(result.State.OpenQuestions) != 1 {
+		t.Fatalf("expected one open question, got %+v", result.State.OpenQuestions)
+	}
+
+	question := result.State.OpenQuestions[0]
+	for _, want := range []string{"src/brain/knowledge_store.py", "tests/test_knowledge_store.py"} {
+		if !containsString(question.AffectedPaths, want) {
+			t.Fatalf("question missing affected path %q: %+v", want, question)
+		}
+	}
+	if question.AuthorityRequired != "operator_approval" ||
+		!containsString(question.AffectedFields, "new_file_authorization") ||
+		!containsString(question.AffectedFields, "verification_command") {
+		t.Fatalf("unexpected greenfield MVP authority question: %+v", question)
+	}
+
+	summary := FormatStateSummary(result.State, ".idiom/feature-planner/session/state.json")
+	for _, forbidden := range []string{
+		"atom 0 edit path",
+		"has no pytest project evidence",
+		"retrieve_similar(",
+		"missing standalone new-file authorization",
+	} {
+		if strings.Contains(summary, forbidden) {
+			t.Fatalf("operator summary leaked repair diagnostic %q:\n%s", forbidden, summary)
+		}
+	}
+	for _, want := range []string{
+		"feature-planner: planning-question-open",
+		"question: Approve or revise greenfield project scope",
+		"blocked by open planner question",
 	} {
 		if !strings.Contains(summary, want) {
 			t.Fatalf("operator summary missing %q:\n%s", want, summary)
@@ -4957,13 +5440,29 @@ func validProductContextPlan() FeaturePlan {
 	plan.SDDContract.ADRRefs = []string{"ADR-1"}
 	plan.Atoms[0].SDDRefs = []string{"REQ-1", "ADR-1"}
 	plan.Atoms[0].TDDObligations = []string{"TDD-1"}
+	plan.CoverageContract = validCoverageContractRef()
 
 	return plan
+}
+
+func validBehavioralCoverageDraft() *BehavioralCoverageDraft {
+	return &BehavioralCoverageDraft{
+		Authority: "standalone_provisional",
+		Status:    "draft",
+		Tier:      "contract_high",
+		Items: []BehavioralCoverageItem{{
+			ID:          "BCD-1",
+			Behavior:    "Short label changes",
+			Obligations: []string{"TDD-1"},
+			Evidence:    []string{"standalone operator request"},
+		}},
+	}
 }
 
 func validProductWorkflowBrief() ProductWorkflowBrief {
 	return ProductWorkflowBrief{
 		CoverageGatePassed: true,
+		CoverageContract:   validCoverageContractRef(),
 		PRDRequirements: []PRDRequirementBrief{{
 			ID:          "REQ-1",
 			Obligations: []string{"TDD-1"},
@@ -4980,5 +5479,204 @@ func validProductWorkflowBrief() ProductWorkflowBrief {
 		FilesToModify:        []string{"internal/labels/labels.go", "internal/labels/labels_test.go"},
 		ContextEvidencePaths: []string{"internal/labels/labels.go"},
 		Tests:                []string{"go test ./..."},
+	}
+}
+
+func validCoverageContractRef() *CoverageContractRef {
+	return &CoverageContractRef{
+		ContractID:   "cov-1",
+		Digest:       "sha256:abc",
+		EventID:      "evt-cov-1",
+		Status:       "pass",
+		EffortID:     "effort-1",
+		CoverageTier: "contract_high",
+	}
+}
+
+func validAcceptedBehavioralCoverage() *AcceptedBehavioralCoverage {
+	return &AcceptedBehavioralCoverage{
+		Authority: "product_workflow",
+		Status:    "pass",
+		Contract:  *validCoverageContractRef(),
+		Tier:      "contract_high",
+		Requirements: []AcceptedCoverageRequirement{{
+			ID:          "REQ-1",
+			Pattern:     "event-driven",
+			Statement:   "When product behavior is requested, the system shall render it.",
+			Refs:        []string{"BDD-1"},
+			Obligations: []string{"TDD-1"},
+		}},
+		ExampleRules: []AcceptedCoverageExampleRule{{
+			ID:            "RULE-1",
+			RequirementID: "REQ-1",
+			Rule:          "Accepted product coverage renders structured behavior.",
+			Examples: []AcceptedCoverageExample{
+				{ID: "EX-1", Description: "accepted detail present", ConcreteDataRefs: []string{"fixtures/accepted.json"}},
+				{ID: "EX-2", Description: "draft omitted", ConcreteDataRefs: []string{"fixtures/no-draft.json"}, Negative: true},
+			},
+		}},
+		Scenarios: []AcceptedCoverageScenario{{
+			ID:               "BDD-1",
+			RequirementID:    "REQ-1",
+			Given:            []string{"product workflow accepted coverage exists"},
+			When:             []string{"the plan is rendered"},
+			Then:             []string{"product behavior is rendered"},
+			ConcreteDataRefs: []string{"fixtures/accepted.json"},
+			Obligations:      []string{"TDD-1"},
+		}},
+		DesignContracts: []AcceptedCoverageDesignContract{{
+			ID:             "DBC-1",
+			Boundary:       "product coverage authority",
+			Preconditions:  []string{"product workflow accepted coverage exists"},
+			Postconditions: []string{"feature planner receives read-only accepted coverage"},
+			Invariants:     []string{"planner cannot author accepted coverage"},
+			TestRefs:       []string{"TestValidatePlanProductWorkflowContextRejectsPlannerAuthoredAcceptedCoverage"},
+			Obligations:    []string{"TDD-1"},
+		}},
+		Invariants: []AcceptedCoverageInvariant{{
+			ID:                    "INV-1",
+			Statement:             "accepted coverage remains product-owned",
+			PropertyBasedTestRefs: []string{"TestNormalizePlanProductWorkflowContextStampsAcceptedCoverageAuthority"},
+			Obligations:           []string{"TDD-1"},
+		}},
+		FailureModes: []AcceptedCoverageFailureMode{{
+			ID:                 "FM-1",
+			Mode:               "planner authors accepted coverage",
+			Mitigation:         "validator rejects accepted_coverage in submit_feature_plan",
+			RPN:                72,
+			MitigationTestRefs: []string{"TestValidatePlanProductWorkflowContextRejectsPlannerAuthoredAcceptedCoverage"},
+			Obligations:        []string{"TDD-1"},
+		}},
+		HAZOPDeviations: []AcceptedCoverageHAZOPDeviation{{
+			ID:           "HAZOP-1",
+			GuideWord:    "Other Than",
+			WorkflowStep: "feature planner submission",
+			Deviation:    "accepted coverage is reauthored by planner",
+			Severity:     4,
+			TestRefs:     []string{"TestValidatePlanProductWorkflowContextRejectsPlannerAuthoredAcceptedCoverage"},
+			Obligations:  []string{"TDD-1"},
+		}},
+		FaultTreeLeaves: []AcceptedCoverageFaultTreeLeaf{{
+			ID:          "FTA-1",
+			TopEvent:    "planner-owned coverage authority",
+			Cause:       "accepted coverage accepted from model output",
+			TestRefs:    []string{"TestValidatePlanProductWorkflowContextRejectsPlannerAuthoredAcceptedCoverage"},
+			Obligations: []string{"TDD-1"},
+		}},
+		DecisionTables: []AcceptedCoverageDecisionTable{{
+			ID:         "DT-1",
+			Conditions: []string{"brief has accepted coverage", "plan submits accepted coverage"},
+			Rules: []AcceptedCoverageDecisionRule{{
+				ID:         "DT-1-R1",
+				Conditions: map[string]string{"brief has accepted coverage": "true", "plan submits accepted coverage": "false"},
+				Expected:   "stamp accepted coverage",
+			}},
+			TestRefs:    []string{"TestNormalizePlanProductWorkflowContextStampsAcceptedCoverageAuthority"},
+			Obligations: []string{"TDD-1"},
+		}},
+		BoundaryValues: []AcceptedCoverageBoundaryValue{{
+			ID:          "BV-1",
+			Parameter:   "accepted_coverage submission count",
+			Classes:     []string{"zero", "one"},
+			Values:      []string{"0", "1"},
+			TestRefs:    []string{"TestValidatePlanProductWorkflowContextRejectsPlannerAuthoredAcceptedCoverage"},
+			Obligations: []string{"TDD-1"},
+		}},
+		StateMachines: []AcceptedCoverageStateMachine{{
+			ID:     "SM-1",
+			States: []string{"brief_loaded", "plan_validated", "plan_stamped"},
+			Transitions: []AcceptedCoverageTransition{{
+				ID:       "TR-1",
+				From:     "plan_validated",
+				Event:    "normalize",
+				To:       "plan_stamped",
+				TestRefs: []string{"TestNormalizePlanProductWorkflowContextStampsAcceptedCoverageAuthority"},
+			}},
+		}},
+		FuzzTargets: []AcceptedCoverageFuzzTarget{{
+			ID:          "FUZZ-1",
+			Status:      "covered",
+			Target:      "accepted coverage JSON parser",
+			Generators:  []string{"coverage authority mutations"},
+			Invariants:  []string{"product authority remains read-only"},
+			TestRefs:    []string{"FuzzAcceptedCoverageParser"},
+			Obligations: []string{"TDD-1"},
+		}},
+		RAGEvals: []AcceptedCoverageRAGEval{{
+			ID:          "RAG-1",
+			Status:      "measured",
+			DatasetRefs: []string{"evals/accepted_coverage_context.jsonl"},
+			Metrics:     map[string]float64{"groundedness": 0.97},
+			Thresholds:  map[string]float64{"groundedness": 0.95},
+			EvalRefs:    []string{"TestAcceptedCoveragePromptContextEval"},
+			Obligations: []string{"TDD-1"},
+		}},
+		SecurityCases: []AcceptedCoverageSecurityCase{{
+			ID:          "SEC-1",
+			Status:      "tested",
+			Risk:        "planner-authored coverage authority",
+			Attack:      "model includes accepted_coverage in submit_feature_plan",
+			Expected:    "plan is rejected",
+			TestRefs:    []string{"TestValidatePlanProductWorkflowContextRejectsPlannerAuthoredAcceptedCoverage"},
+			Obligations: []string{"TDD-1"},
+		}},
+		PrivacyControls: []AcceptedCoveragePrivacyControl{{
+			ID:            "PRIV-1",
+			Status:        "tested",
+			DataClass:     "raw prompt context",
+			Policy:        "do not persist raw model-only context",
+			RedactionRefs: []string{"redaction/accepted_coverage_context"},
+			Retention:     "structured fields only",
+			TestRefs:      []string{"TestBuildPlannerPromptRendersAcceptedCoverageAsReadOnlyContext"},
+			Obligations:   []string{"TDD-1"},
+		}},
+		ProviderContracts: []AcceptedCoverageProviderContract{{
+			ID:           "PACT-1",
+			Status:       "tested",
+			Provider:     "product-workflow",
+			Consumer:     "feature-planner",
+			ContractRefs: []string{"contracts/product_feature_planner.json"},
+			TestRefs:     []string{"TestNormalizePlanProductWorkflowContextStampsAcceptedCoverageAuthority"},
+			Obligations:  []string{"TDD-1"},
+		}},
+		Observability: []AcceptedCoverageObservability{{
+			ID:               "OBS-1",
+			Status:           "tested",
+			Signal:           "feature_planner.accepted_coverage_context",
+			InstrumentedPath: "internal/workflows/featureplanner/orchestrate.go",
+			RequiredFields:   []string{"contract_id", "coverage_tier"},
+			TestRefs:         []string{"TestBuildPlannerPromptRendersAcceptedCoverageAsReadOnlyContext"},
+			Obligations:      []string{"TDD-1"},
+		}},
+		PerformanceBounds: []AcceptedCoveragePerformanceBound{{
+			ID:              "PERF-1",
+			Status:          "tested",
+			Operation:       "accepted coverage prompt rendering",
+			Bound:           "bounded deterministic context",
+			MeasurementRefs: []string{"benchmarks/accepted_coverage_prompt.txt"},
+			Obligations:     []string{"TDD-1"},
+		}},
+		E2EJourneys: []AcceptedCoverageE2EJourney{{
+			ID:          "E2E-1",
+			Status:      "scripted",
+			Journey:     "product accepted coverage reaches feature planner prompt",
+			Steps:       []string{"load product brief", "build planner prompt", "inspect accepted coverage context"},
+			ScriptRefs:  []string{"internal/workflows/featureplanner/validate_test.go"},
+			Obligations: []string{"TDD-1"},
+		}},
+		TestObligations: []AcceptedCoverageTestObligation{{
+			ID:             "TDD-1",
+			Type:           "contract",
+			Behavior:       "accepted coverage is shown without planner authorship",
+			Owner:          "featureplanner",
+			Command:        "go test ./internal/workflows/featureplanner",
+			RequiredBefore: "implementation",
+		}},
+		Verification: []AcceptedCoverageVerification{{
+			ID:          "VERIFY-1",
+			Gate:        "contract",
+			Command:     "go test ./internal/workflows/featureplanner",
+			Obligations: []string{"TDD-1"},
+		}},
 	}
 }

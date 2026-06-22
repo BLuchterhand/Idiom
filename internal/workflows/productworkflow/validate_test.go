@@ -911,6 +911,79 @@ func TestInvalidTDDFormalVerificationCountersFailClosed(t *testing.T) {
 	}
 }
 
+func TestTDDLedgerAllowsProductionReadinessObligationTypes(t *testing.T) {
+	for _, typ := range []string{
+		"fuzz",
+		"fuzz_target",
+		"rag_eval",
+		"llm_security",
+		"security",
+		"privacy",
+		"provider_contract",
+		"observability",
+		"performance",
+		"scripted_e2e",
+		"e2e_journey",
+	} {
+		t.Run(typ, func(t *testing.T) {
+			ledger := TDDLedger{
+				SchemaVersion: "idiom.tdd_obligations.v2",
+				EffortID:      "test",
+				TaskID:        "test",
+				CoverageTier:  "contract_high",
+				Coverage:      TDDCoverage{MutationMinScore: 80},
+				Obligations: []TDDObligation{
+					{ID: "TDD-1", Type: typ, Behavior: "b", Owner: "o", Command: "go test ./...", RequiredBefore: "implementation", Status: "planned"},
+				},
+			}
+
+			if err := validateTDDLedger(ledger); err != nil {
+				t.Fatalf("expected production-readiness obligation type %q to validate, got %v", typ, err)
+			}
+		})
+	}
+}
+
+func TestInvalidTDDProductionReadinessCountersFailClosed(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*TDDCoverage)
+		want   string
+	}{
+		{"negative fuzz", func(c *TDDCoverage) { c.FuzzTargetsTotal = -1 }, "fuzz_targets_total must be non-negative"},
+		{"fuzz exceeds", func(c *TDDCoverage) { c.FuzzTargetsTotal = 1; c.FuzzTargetsCovered = 2 }, "fuzz_targets_covered (2) exceeds fuzz_targets_total (1)"},
+		{"negative rag", func(c *TDDCoverage) { c.RAGEvalsMeasured = -1 }, "rag_evals_measured must be non-negative"},
+		{"rag exceeds", func(c *TDDCoverage) { c.RAGEvalsTotal = 1; c.RAGEvalsMeasured = 2 }, "rag_evals_measured (2) exceeds rag_evals_total (1)"},
+		{"security exceeds", func(c *TDDCoverage) { c.SecurityCasesTotal = 1; c.SecurityCasesTested = 2 }, "security_cases_tested (2) exceeds security_cases_total (1)"},
+		{"privacy exceeds", func(c *TDDCoverage) { c.PrivacyControlsTotal = 1; c.PrivacyControlsTested = 2 }, "privacy_controls_tested (2) exceeds privacy_controls_total (1)"},
+		{"provider exceeds", func(c *TDDCoverage) { c.ProviderContractsTotal = 1; c.ProviderContractsTested = 2 }, "provider_contracts_tested (2) exceeds provider_contracts_total (1)"},
+		{"observability exceeds", func(c *TDDCoverage) { c.ObservabilityTotal = 1; c.ObservabilityTested = 2 }, "observability_tested (2) exceeds observability_total (1)"},
+		{"performance exceeds", func(c *TDDCoverage) { c.PerformanceBoundsTotal = 1; c.PerformanceBoundsTested = 2 }, "performance_bounds_tested (2) exceeds performance_bounds_total (1)"},
+		{"e2e exceeds", func(c *TDDCoverage) { c.E2EJourneysTotal = 1; c.E2EJourneysScripted = 2 }, "e2e_journeys_scripted (2) exceeds e2e_journeys_total (1)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ledger := TDDLedger{
+				SchemaVersion: "idiom.tdd_obligations.v2",
+				EffortID:      "test",
+				TaskID:        "test",
+				CoverageTier:  "contract_high",
+				Coverage:      TDDCoverage{MutationMinScore: 80},
+				Obligations: []TDDObligation{
+					{ID: "TDD-1", Type: "contract", Behavior: "b", Owner: "o", Command: "go test ./...", RequiredBefore: "implementation", Status: "planned"},
+				},
+			}
+			tt.mutate(&ledger.Coverage)
+
+			err := validateTDDLedger(ledger)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected production-readiness counter error containing %q, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
 func TestInvalidTDDUnknownCoverageTierFailsClosed(t *testing.T) {
 	ledger := TDDLedger{
 		SchemaVersion: "idiom.tdd_obligations.v2",

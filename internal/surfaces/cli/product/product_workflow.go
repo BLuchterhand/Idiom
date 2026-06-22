@@ -1734,12 +1734,16 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		effortRoot       string
 		planObligations  bool
 		evaluateCoverage bool
+		promoteCoverage  string
+		writePromotion   bool
 		jsonOutput       bool
 	)
 
 	fs.StringVar(&effortRoot, "effort-root", "", "path to the effort folder root")
 	fs.BoolVar(&planObligations, "plan-obligations", false, "plan deterministic TDD obligations from accepted PRD and ADR artifacts")
 	fs.BoolVar(&evaluateCoverage, "evaluate-coverage", false, "evaluate deterministic coverage gate from accepted PRD/ADR/TDD/traceability artifacts")
+	fs.StringVar(&promoteCoverage, "promote-coverage", "", "effort-relative behavioral coverage JSON artifact to validate and project into tdd.json")
+	fs.BoolVar(&writePromotion, "write", false, "persist a successful --promote-coverage projection to tdd.json")
 	fs.BoolVar(&jsonOutput, "json", false, "emit structured JSON output")
 
 	if err := fs.Parse(args); err != nil {
@@ -1759,22 +1763,33 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		return 2
 	}
 
-	if planObligations == evaluateCoverage {
+	modeCount := 0
+	if planObligations {
+		modeCount++
+	}
+	if evaluateCoverage {
+		modeCount++
+	}
+	if strings.TrimSpace(promoteCoverage) != "" {
+		modeCount++
+	}
+
+	if modeCount != 1 {
 		if jsonOutput {
 			code := "tdd_missing_mode_flag"
-			if planObligations && evaluateCoverage {
+			if modeCount > 1 {
 				code = "tdd_multiple_mode_flags"
 			}
 
 			return writeProductUsageJSON(stdout, stderr, "product tdd", productUsageResult(
 				code,
 				"mode",
-				"exactly one of --plan-obligations or --evaluate-coverage is required",
-				"rerun with exactly one of --plan-obligations or --evaluate-coverage",
+				"exactly one of --plan-obligations, --evaluate-coverage, or --promote-coverage is required",
+				"rerun with exactly one product tdd mode flag",
 			))
 		}
 
-		fmt.Fprintln(stderr, "product tdd: exactly one of --plan-obligations or --evaluate-coverage is required")
+		fmt.Fprintln(stderr, "product tdd: exactly one of --plan-obligations, --evaluate-coverage, or --promote-coverage is required")
 
 		return 2
 	}
@@ -1808,6 +1823,62 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		fmt.Fprintf(stderr, "product tdd: resolve effort root: %v\n", err)
 
 		return 2
+	}
+
+	if evaluateCoverage {
+		out := productCoverageOutput{
+			Status:     productworkflow.ProductWorkflowStatusBlocked,
+			EffortRoot: absRoot,
+		}
+		loaded := productworkflow.LoadCoverageGateEvaluation(absRoot)
+		out.Status = loaded.Evaluation.Status
+		out.Evaluation = loaded.Evaluation
+		if out.Evaluation.Criteria == nil {
+			out.Evaluation.Criteria = []productworkflow.CoverageGateCriterion{}
+		}
+		if out.Evaluation.Findings == nil {
+			out.Evaluation.Findings = []productworkflow.CoverageGateFinding{}
+		}
+		if out.Evaluation.Blockers == nil {
+			out.Evaluation.Blockers = []productworkflow.CoverageGateBlocker{}
+		}
+
+		logProductPhase(rec, "product_tdd_coverage_gate_evaluated", map[string]any{
+			"status":         out.Evaluation.Status,
+			"finding_count":  len(out.Evaluation.Findings),
+			"blocker_count":  len(out.Evaluation.Blockers),
+			"criteria_count": len(out.Evaluation.Criteria),
+		})
+
+		coverageGateEvent := productworkflow.BuildCoverageGateEvaluatedEvent(out.Evaluation, loaded.TDD)
+		logProductPhase(rec, coverageGateEvent.Event, map[string]any{
+			"event":           coverageGateEvent.Event,
+			"effort_id":       coverageGateEvent.EffortID,
+			"task_id":         coverageGateEvent.TaskID,
+			"coverage":        coverageGateEvent.Coverage,
+			"gate_result":     coverageGateEvent.GateResult,
+			"blocked_reasons": coverageGateEvent.BlockedReasons,
+			"waivers":         coverageGateEvent.Waivers,
+		})
+
+		if jsonOutput {
+			enc := json.NewEncoder(stdout)
+			enc.SetIndent("", "  ")
+
+			if err := enc.Encode(out); err != nil {
+				fmt.Fprintf(stderr, "product tdd: encode JSON: %v\n", err)
+
+				return 1
+			}
+		} else {
+			fmt.Fprintf(stdout, "product tdd evaluate-coverage: %s (%d criteria, %d blockers)\n", out.Status, len(out.Evaluation.Criteria), len(out.Evaluation.Blockers))
+		}
+
+		if out.Status != "pass" {
+			return 1
+		}
+
+		return 0
 	}
 
 	var findings []productworkflow.TDDObligationPlanFinding
@@ -1892,120 +1963,126 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		}
 	}
 
-	if evaluateCoverage {
-		var traceability productworkflow.TraceabilityMatrix
-
-		if data, ok := readFile(filepath.Join("evidence", "traceability_matrix.json")); ok {
-			parsed, parseErr := productworkflow.ParseTraceabilityMatrixJSON(data)
-			if parseErr != nil {
-				addFinding("parse_error", parseErr.Error(), filepath.Join("evidence", "traceability_matrix.json"))
-			} else {
-				traceability = parsed
-			}
+	if strings.TrimSpace(promoteCoverage) != "" {
+		cleanPromotionPath, ok := cleanProductRelativePath(promoteCoverage)
+		if !ok {
+			addFinding("invalid_promote_coverage_path", "--promote-coverage must be effort-relative and must not contain path traversal", "--promote-coverage")
 		}
 
-		var implementationRecords []productworkflow.ImplementationLedgerRecord
-
-		if data, ok := readFile("implementation_ledger.jsonl"); ok {
-			parsed, parseErr := productworkflow.ParseImplementationLedgerJSONL(data)
-			if parseErr != nil {
-				addFinding("parse_error", parseErr.Error(), "implementation_ledger.jsonl")
-			} else {
-				implementationRecords = parsed
-			}
-		}
-
-		lintResult := productworkflow.LintEffortFolder(absRoot)
-
-		eval := productworkflow.CoverageGateEvaluation{
-			EffortID:     ledger.EffortID,
-			TaskID:       ledger.TaskID,
-			CoverageTier: ledger.CoverageTier,
-			Status:       "blocked",
-			Criteria:     []productworkflow.CoverageGateCriterion{},
-			Findings:     []productworkflow.CoverageGateFinding{},
-			Blockers:     []productworkflow.CoverageGateBlocker{},
-		}
-		if len(findings) == 0 {
-			satisfiedTDDIDs := productworkflow.BuildSatisfiedTDDObligationIDs(ledger, implementationRecords)
-
-			eval = productworkflow.EvaluateCoverageGateWithAuthorityPreflight(prdDoc, adrIndex, parsedADRs, ledger, traceability, lintResult.Findings, satisfiedTDDIDs)
-		} else {
-			for _, f := range findings {
-				msg := f.Message
-				if strings.TrimSpace(msg) == "" {
-					msg = f.Kind
+		var contract productworkflow.BehavioralCoverageContract
+		if ok {
+			data, readOK := readFile(cleanPromotionPath)
+			if readOK {
+				if err := json.Unmarshal(data, &contract); err != nil {
+					addFinding("parse_error", err.Error(), filepath.ToSlash(cleanPromotionPath))
 				}
-
-				eval.Findings = append(eval.Findings, productworkflow.CoverageGateFinding{
-					Kind:      f.Kind,
-					Criterion: "input",
-					Message:   msg,
-					File:      f.File,
-					Severity:  f.Severity,
-				})
-				eval.Blockers = append(eval.Blockers, productworkflow.CoverageGateBlocker{
-					Kind:      f.Kind,
-					Criterion: "input",
-					Message:   msg,
-					File:      f.File,
-				})
 			}
 		}
 
-		if len(findings) > 0 {
-			authorityPreflightFindings := append([]productworkflow.LintSummaryFinding(nil), lintResult.Findings...)
-			for _, f := range findings {
-				authorityPreflightFindings = append(authorityPreflightFindings, productworkflow.LintSummaryFinding{
-					Code:    f.Kind,
-					Path:    f.File,
-					Message: f.Message,
-				})
+		status := "blocked"
+		promoted := ledger
+		promotion := productworkflow.BehavioralCoveragePromotionResult{State: productworkflow.BehavioralCoveragePromotionStateProposed}
+		if len(findings) == 0 {
+			var promotionErr error
+			if writePromotion {
+				promotion, promotionErr = productworkflow.PromoteBehavioralCoverageContractWithResult(ledger, contract)
+			} else {
+				promotion, promotionErr = productworkflow.ReviewBehavioralCoverageContractWithResult(ledger, contract)
 			}
-
-			eval = productworkflow.ApplyCoverageGateAuthorityPreflight(eval, authorityPreflightFindings)
+			if promotionErr != nil {
+				promotion.State = productworkflow.BehavioralCoveragePromotionStateRejected
+				addFinding("coverage_contract_invalid", promotionErr.Error(), filepath.ToSlash(cleanPromotionPath))
+			} else {
+				promoted = promotion.Ledger
+				status = "pass"
+			}
 		}
 
-		logProductPhase(rec, "product_tdd_coverage_gate_evaluated", map[string]any{
-			"status":         eval.Status,
-			"finding_count":  len(eval.Findings),
-			"blocker_count":  len(eval.Blockers),
-			"criteria_count": len(eval.Criteria),
+		if status == "pass" && writePromotion {
+			data, err := json.MarshalIndent(promoted, "", "  ")
+			if err != nil {
+				addFinding("encode_error", err.Error(), "tdd.json")
+				status = "blocked"
+			} else if err := productworkflow.ValidateBehavioralCoveragePromotionEventTarget(absRoot, promotion); err != nil {
+				addFinding("write_error", err.Error(), "events.jsonl")
+				status = "blocked"
+			} else {
+				tmp, err := os.CreateTemp(absRoot, ".tdd-*.json")
+				if err != nil {
+					addFinding("write_error", err.Error(), "tdd.json")
+					status = "blocked"
+				} else {
+					tmpPath := tmp.Name()
+					cleanupTmp := true
+					if _, err := tmp.Write(append(data, '\n')); err != nil {
+						addFinding("write_error", err.Error(), "tdd.json")
+						status = "blocked"
+					} else if err := tmp.Close(); err != nil {
+						addFinding("write_error", err.Error(), "tdd.json")
+						status = "blocked"
+					} else if err := productworkflow.AppendBehavioralCoveragePromotionEvent(absRoot, promotion); err != nil {
+						addFinding("write_error", err.Error(), "events.jsonl")
+						status = "blocked"
+					} else if err := os.Rename(tmpPath, filepath.Join(absRoot, "tdd.json")); err != nil {
+						addFinding("write_error", err.Error(), "tdd.json")
+						status = "blocked"
+					} else {
+						cleanupTmp = false
+					}
+					if cleanupTmp {
+						_ = tmp.Close()
+						_ = os.Remove(tmpPath)
+					}
+				}
+			}
+			if status != "pass" {
+				promoted = ledger
+			}
+		}
+
+		logProductPhase(rec, "product_tdd_behavioral_coverage_promoted", map[string]any{
+			"status":        status,
+			"state":         promotion.State,
+			"event_id":      promotion.EventID,
+			"digest":        promotion.Digest,
+			"superseded":    promotion.SupersededDigest,
+			"finding_count": len(findings),
+			"write":         writePromotion,
 		})
 
-		coverageGateEvent := productworkflow.BuildCoverageGateEvaluatedEvent(eval, ledger)
-		logProductPhase(rec, coverageGateEvent.Event, map[string]any{
-			"event":           coverageGateEvent.Event,
-			"effort_id":       coverageGateEvent.EffortID,
-			"task_id":         coverageGateEvent.TaskID,
-			"coverage":        coverageGateEvent.Coverage,
-			"gate_result":     coverageGateEvent.GateResult,
-			"blocked_reasons": coverageGateEvent.BlockedReasons,
-			"waivers":         coverageGateEvent.Waivers,
-		})
-
-		type coverageOutput struct {
-			Status     string                                 `json:"status"`
-			EffortRoot string                                 `json:"effort_root"`
-			Evaluation productworkflow.CoverageGateEvaluation `json:"evaluation"`
+		type promotionOutput struct {
+			Status           string                                     `json:"status"`
+			EffortRoot       string                                     `json:"effort_root"`
+			PromoteCoverage  string                                     `json:"promote_coverage"`
+			State            string                                     `json:"state"`
+			EventID          string                                     `json:"event_id,omitempty"`
+			SupersededDigest string                                     `json:"superseded_digest,omitempty"`
+			Write            bool                                       `json:"write"`
+			Digest           string                                     `json:"digest,omitempty"`
+			Ledger           productworkflow.TDDLedger                  `json:"ledger"`
+			Findings         []productworkflow.TDDObligationPlanFinding `json:"findings"`
 		}
 
-		out := coverageOutput{
-			Status:     eval.Status,
-			EffortRoot: absRoot,
-			Evaluation: eval,
+		out := promotionOutput{
+			Status:           status,
+			EffortRoot:       absRoot,
+			PromoteCoverage:  filepath.ToSlash(cleanPromotionPath),
+			State:            promotion.State,
+			EventID:          promotion.EventID,
+			SupersededDigest: promotion.SupersededDigest,
+			Write:            writePromotion,
+			Digest:           promotion.Digest,
+			Ledger:           promoted,
+			Findings:         findings,
 		}
-
-		if out.Evaluation.Criteria == nil {
-			out.Evaluation.Criteria = []productworkflow.CoverageGateCriterion{}
+		if out.Digest == "" && promoted.BehavioralCoverage != nil {
+			out.Digest = productworkflow.BehavioralCoverageContractDigest(*promoted.BehavioralCoverage)
 		}
-
-		if out.Evaluation.Findings == nil {
-			out.Evaluation.Findings = []productworkflow.CoverageGateFinding{}
+		if out.Findings == nil {
+			out.Findings = []productworkflow.TDDObligationPlanFinding{}
 		}
-
-		if out.Evaluation.Blockers == nil {
-			out.Evaluation.Blockers = []productworkflow.CoverageGateBlocker{}
+		if out.Ledger.Obligations == nil {
+			out.Ledger.Obligations = []productworkflow.TDDObligation{}
 		}
 
 		if jsonOutput {
@@ -2018,7 +2095,7 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 				return 1
 			}
 		} else {
-			fmt.Fprintf(stdout, "product tdd evaluate-coverage: %s (%d criteria, %d blockers)\n", out.Status, len(out.Evaluation.Criteria), len(out.Evaluation.Blockers))
+			fmt.Fprintf(stdout, "product tdd promote-coverage: %s (%d findings, write=%v)\n", out.Status, len(out.Findings), out.Write)
 		}
 
 		if out.Status != "pass" {
@@ -2090,6 +2167,12 @@ type productFeedbackOutput struct {
 	EffortRoot      string                                   `json:"effort_root"`
 	Summary         productworkflow.ExecutionFeedbackSummary `json:"summary"`
 	NextValidAction string                                   `json:"next_valid_action"`
+}
+
+type productCoverageOutput struct {
+	Status     string                                 `json:"status"`
+	EffortRoot string                                 `json:"effort_root"`
+	Evaluation productworkflow.CoverageGateEvaluation `json:"evaluation"`
 }
 
 type productFeedbackReconcileOutput struct {
@@ -2886,7 +2969,7 @@ func runProductBrief(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 		return 2
 	}
 
-	input, blockers := loadBriefGenerationInput(absRoot)
+	input, blockers := productworkflow.LoadBriefGenerationInput(absRoot)
 	gen := productworkflow.GenerateImplementationBrief(input)
 
 	allBlockers := append([]string{}, blockers...)
@@ -3108,153 +3191,6 @@ func cleanProductRelativePath(relPath string) (string, bool) {
 	}
 
 	return clean, true
-}
-
-func loadBriefGenerationInput(effortRoot string) (productworkflow.BriefGenerationInput, []string) {
-	in := productworkflow.BriefGenerationInput{EffortRoot: effortRoot, ExistingWorkspacePath: map[string]bool{}}
-	blockers := []string{}
-	workspaceRoot := resolveProductBriefWorkspaceRoot(effortRoot)
-
-	if rel, err := filepath.Rel(workspaceRoot, effortRoot); err == nil && rel != "." && !strings.HasPrefix(filepath.ToSlash(rel), "../") {
-		in.ArtifactRootPath = filepath.ToSlash(rel)
-	} else {
-		in.ArtifactRootPath = filepath.ToSlash(effortRoot)
-	}
-
-	readAndParse := func(relPath string, parse func([]byte) error) {
-		data, err := os.ReadFile(filepath.Join(effortRoot, relPath))
-		if err != nil {
-			if os.IsNotExist(err) {
-				blockers = append(blockers, fmt.Sprintf("required file missing: %s", relPath))
-			} else {
-				blockers = append(blockers, fmt.Sprintf("read %s: %v", relPath, err))
-			}
-
-			return
-		}
-
-		if err := parse(data); err != nil {
-			blockers = append(blockers, fmt.Sprintf("parse %s: %v", relPath, err))
-		}
-	}
-	readAndParse("workflow_state.json", func(data []byte) error {
-		parsed, err := productworkflow.ParseWorkflowStateJSON(data)
-		if err == nil {
-			in.WorkflowState = parsed
-		}
-
-		return err
-	})
-	readAndParse("prd.md", func(data []byte) error {
-		parsed, err := productworkflow.ParsePRDMarkdown(data)
-		if err == nil {
-			in.PRD = parsed
-		}
-
-		return err
-	})
-	readAndParse(filepath.Join("adrs", "index.json"), func(data []byte) error {
-		parsed, err := productworkflow.ParseADRIndexJSON(data)
-		if err == nil {
-			in.ADRIndex = parsed
-		}
-
-		return err
-	})
-
-	for _, entry := range in.ADRIndex.ADRs {
-		rel := filepath.Join("adrs", entry.Path)
-		readAndParse(rel, func(data []byte) error {
-			parsed, err := productworkflow.ParseADRMarkdown(data)
-			if err == nil {
-				in.ADRs = append(in.ADRs, productworkflow.ParsedADR{Doc: parsed, RelPath: rel, RawMarkdown: string(data)})
-			}
-
-			return err
-		})
-	}
-
-	readAndParse("tdd.json", func(data []byte) error {
-		parsed, err := productworkflow.ParseTDDLedgerJSON(data)
-		if err == nil {
-			in.TDD = parsed
-		}
-
-		return err
-	})
-	readAndParse(filepath.Join("evidence", "traceability_matrix.json"), func(data []byte) error {
-		parsed, err := productworkflow.ParseTraceabilityMatrixJSON(data)
-		if err == nil {
-			in.Traceability = parsed
-		}
-
-		return err
-	})
-	readAndParse("implementation_ledger.jsonl", func(data []byte) error {
-		parsed, err := productworkflow.ParseImplementationLedgerJSONL(data)
-		if err == nil {
-			in.ImplementationRecords = parsed
-		}
-
-		return err
-	})
-
-	for _, rec := range in.ImplementationRecords {
-		if rec.RecordType != "atom_planned" || rec.Scope == nil {
-			continue
-		}
-
-		for _, path := range append(append([]string{}, rec.Scope.ExpectedFiles...), rec.Scope.AllowedFiles...) {
-			clean := filepath.ToSlash(strings.TrimSpace(path))
-			if clean == "" {
-				continue
-			}
-
-			for _, candidate := range productBriefExistingPathCandidates(clean, in.WorkflowState.Context.PathAliases) {
-				if _, statErr := os.Stat(filepath.Join(workspaceRoot, filepath.FromSlash(candidate))); statErr == nil {
-					in.ExistingWorkspacePath[candidate] = true
-				}
-			}
-		}
-	}
-
-	if len(blockers) == 0 {
-		satisfiedTDDIDs := productworkflow.BuildSatisfiedTDDObligationIDs(in.TDD, in.ImplementationRecords)
-		lintResult := productworkflow.LintEffortFolder(effortRoot)
-
-		in.CoverageEvaluation = productworkflow.EvaluateCoverageGateWithAuthorityPreflight(in.PRD, in.ADRIndex, in.ADRs, in.TDD, in.Traceability, lintResult.Findings, satisfiedTDDIDs)
-
-		if productworkflow.CoverageGateHasBlockers(in.CoverageEvaluation) {
-			blockers = append(blockers, "coverage gate evaluation is blocked")
-		}
-	}
-
-	return in, blockers
-}
-
-func productBriefExistingPathCandidates(path string, aliases map[string]string) []string {
-	candidates := []string{path}
-	if alias := strings.TrimSpace(aliases[path]); alias != "" {
-		candidates = append(candidates, filepath.ToSlash(alias))
-	}
-
-	return candidates
-}
-
-func resolveProductBriefWorkspaceRoot(effortRoot string) string {
-	dir := filepath.Clean(effortRoot)
-	for {
-		next := filepath.Dir(dir)
-		if next == dir {
-			return filepath.Clean(effortRoot)
-		}
-
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			return dir
-		}
-
-		dir = next
-	}
 }
 
 func runProductResearchPlanRuns(profiles *productworkflow.ProfileStoreResult, researchOutputDir, researchProfile string, jsonOutput bool, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {

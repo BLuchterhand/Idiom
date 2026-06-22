@@ -122,12 +122,13 @@ type PrivacyState struct {
 }
 
 type TDDLedger struct {
-	SchemaVersion string          `json:"schema_version"`
-	EffortID      string          `json:"effort_id"`
-	TaskID        string          `json:"task_id"`
-	CoverageTier  string          `json:"coverage_tier"`
-	Coverage      TDDCoverage     `json:"coverage"`
-	Obligations   []TDDObligation `json:"obligations"`
+	SchemaVersion      string                      `json:"schema_version"`
+	EffortID           string                      `json:"effort_id"`
+	TaskID             string                      `json:"task_id"`
+	CoverageTier       string                      `json:"coverage_tier"`
+	Coverage           TDDCoverage                 `json:"coverage"`
+	BehavioralCoverage *BehavioralCoverageContract `json:"behavioral_coverage,omitempty"`
+	Obligations        []TDDObligation             `json:"obligations"`
 }
 
 type TDDCoverage struct {
@@ -153,6 +154,22 @@ type TDDCoverage struct {
 	PostMortemCatchingTests  int      `json:"post_mortem_catching_tests"`
 	FormalModelsTotal        int      `json:"formal_models_total"`
 	FormalModelsVerified     int      `json:"formal_models_verified"`
+	FuzzTargetsTotal         int      `json:"fuzz_targets_total"`
+	FuzzTargetsCovered       int      `json:"fuzz_targets_covered"`
+	RAGEvalsTotal            int      `json:"rag_evals_total"`
+	RAGEvalsMeasured         int      `json:"rag_evals_measured"`
+	SecurityCasesTotal       int      `json:"security_cases_total"`
+	SecurityCasesTested      int      `json:"security_cases_tested"`
+	PrivacyControlsTotal     int      `json:"privacy_controls_total"`
+	PrivacyControlsTested    int      `json:"privacy_controls_tested"`
+	ProviderContractsTotal   int      `json:"provider_contracts_total"`
+	ProviderContractsTested  int      `json:"provider_contracts_tested"`
+	ObservabilityTotal       int      `json:"observability_total"`
+	ObservabilityTested      int      `json:"observability_tested"`
+	PerformanceBoundsTotal   int      `json:"performance_bounds_total"`
+	PerformanceBoundsTested  int      `json:"performance_bounds_tested"`
+	E2EJourneysTotal         int      `json:"e2e_journeys_total"`
+	E2EJourneysScripted      int      `json:"e2e_journeys_scripted"`
 	MutationScore            *float64 `json:"mutation_score"`
 	MutationMinScore         int      `json:"mutation_min_score"`
 	GatesPassed              []string `json:"gates_passed"`

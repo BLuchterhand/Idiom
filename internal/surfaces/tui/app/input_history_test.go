@@ -256,6 +256,146 @@ func TestInputHistoryRecordsSubmissionsAndResetsOnManualEdit(t *testing.T) {
 	}
 }
 
+func TestLeakedTerminalMouseReportsDoNotReachTextarea(t *testing.T) {
+	in := textarea.New()
+	in.Focus()
+	m := &Model{
+		events: make(chan tea.Msg, 8),
+		input:  in,
+		width:  120,
+		height: 35,
+	}
+
+	for _, leaked := range []string{
+		"[<64;120;35M",
+		"[<65;120;35m",
+		"[<64;120;35M[<65;120;35m",
+		"[64;120;35M",
+		"[65;120;35M",
+		"[<64;",
+		"[64;120;",
+		"[M`!!",
+		string([]rune{'[', 'M', '`', 128, '!'}),
+	} {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(leaked)})
+		m = updated.(*Model)
+
+		if got := m.input.Value(); got != "" {
+			t.Fatalf("leaked mouse report %q reached textarea, got %q", leaked, got)
+		}
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("normal input")})
+	m = updated.(*Model)
+
+	if got := m.input.Value(); got != "normal input" {
+		t.Fatalf("normal text should still reach textarea, got %q", got)
+	}
+}
+
+func TestLeakedMouseReportInMixedKeyRunesIsStripped(t *testing.T) {
+	in := textarea.New()
+	in.Focus()
+	m := &Model{
+		events: make(chan tea.Msg, 4),
+		input:  in,
+		width:  160,
+		height: 40,
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[65;149;34Mreal text")})
+	m = updated.(*Model)
+
+	if got := m.input.Value(); got != "real text" {
+		t.Fatalf("mixed mouse report chunk should preserve only real text, got %q", got)
+	}
+}
+
+func TestLeakedTerminalMouseReportsDoNotResetInputHistoryNavigation(t *testing.T) {
+	in := textarea.New()
+	in.Focus()
+	m := &Model{
+		events:            make(chan tea.Msg, 4),
+		input:             in,
+		inputHistoryIndex: 1,
+		inputHistoryDraft: "draft",
+		width:             120,
+		height:            35,
+	}
+
+	for _, leaked := range []string{"[<64;120;35M", "[64;120;35M", "[<64;", "[M`!!"} {
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(leaked)})
+		m = updated.(*Model)
+
+		if m.inputHistoryIndex != 1 || m.inputHistoryDraft != "draft" {
+			t.Fatalf("leaked mouse report %q should not reset history navigation, index=%d draft=%q", leaked, m.inputHistoryIndex, m.inputHistoryDraft)
+		}
+	}
+}
+
+func TestMouseReportFilterDoesNotDropBracketedText(t *testing.T) {
+	in := textarea.New()
+	in.Focus()
+	m := &Model{
+		events: make(chan tea.Msg, 4),
+		input:  in,
+		width:  120,
+		height: 35,
+	}
+
+	text := "[Mary"
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text)})
+	m = updated.(*Model)
+
+	if got := m.input.Value(); got != text {
+		t.Fatalf("ordinary bracketed text should remain editable, got %q", got)
+	}
+}
+
+func TestOutOfBoundsMouseShapedTextStillReachesTextarea(t *testing.T) {
+	in := textarea.New()
+	in.Focus()
+	m := &Model{
+		events: make(chan tea.Msg, 4),
+		input:  in,
+		width:  80,
+		height: 24,
+	}
+
+	text := "[<64;999;999M"
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text)})
+	m = updated.(*Model)
+
+	if got := m.input.Value(); got != text {
+		t.Fatalf("out-of-bounds mouse-shaped text should remain editable, got %q", got)
+	}
+
+	text = "[65;999;999M"
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text)})
+	m = updated.(*Model)
+
+	if got := m.input.Value(); got != "[<64;999;999M"+text {
+		t.Fatalf("out-of-bounds urxvt mouse-shaped text should remain editable, got %q", got)
+	}
+}
+
+func TestPastedMouseReportTextStillReachesTextarea(t *testing.T) {
+	in := textarea.New()
+	in.Focus()
+	m := &Model{
+		events: make(chan tea.Msg, 4),
+		input:  in,
+	}
+
+	pasted := "[<64;120;35M"
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(pasted), Paste: true})
+	m = updated.(*Model)
+
+	if got := m.input.Value(); got != pasted {
+		t.Fatalf("pasted mouse-shaped text should remain editable, got %q", got)
+	}
+}
+
 func TestEnterSubmitsLongFeaturePlannerCommandWithoutTextareaResidue(t *testing.T) {
 	command := "/feature-planner FET 3.3c brewery cistern atom. " +
 		"Use native/src/simulation/machines/machine.cpp and native/src/simulation/economy/fluid_network_system.h. " +

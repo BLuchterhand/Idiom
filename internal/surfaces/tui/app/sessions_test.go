@@ -6,10 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/llama"
+	"idiom/internal/workflows/featureplanner"
 )
 
 func writeSessionLog(t *testing.T, dir string, name string, lines []string) string {
@@ -208,6 +210,109 @@ func TestLoadHistoryFromSessionRestoresGovernanceHistory(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("history viewport missing %q:\n%s", want, view)
 		}
+	}
+}
+
+func TestLoadHistoryFromSessionDoesNotOverwriteActiveFeaturePlannerSession(t *testing.T) {
+	root := t.TempDir()
+	logDir := filepath.Join(root, "logs", "conversations")
+
+	active := featureplanner.NewState("active-session", "Current plan.", "", 3, time.Unix(1, 0).UTC())
+	active.Status = featureplanner.FeatureStatePlanningQuestion
+	active.OpenQuestions = []featureplanner.PlannerQuestion{{
+		ID:                "question-active",
+		Status:            "open",
+		QuestionSummary:   "Approve current scope",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "Current new files require approval.",
+		RequestedDecision: "Approve creating src/current.py.",
+		AuthorityRequired: "operator_approval",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     []string{"src/current.py"},
+		AffectedFields:    []string{"new_file_authorization"},
+	}}
+	if _, err := featureplanner.SaveState(root, &active); err != nil {
+		t.Fatalf("SaveState active: %v", err)
+	}
+
+	old := featureplanner.NewState("old-session", "Old plan.", "", 3, time.Unix(2, 0).UTC())
+	old.Status = featureplanner.FeatureStatePlanningQuestion
+	old.OpenQuestions = []featureplanner.PlannerQuestion{{
+		ID:                "question-old",
+		Status:            "open",
+		QuestionSummary:   "Approve old scope",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "Old new files require approval.",
+		RequestedDecision: "Approve creating src/old.py.",
+		AuthorityRequired: "operator_approval",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     []string{"src/old.py"},
+		AffectedFields:    []string{"new_file_authorization"},
+	}}
+	if _, err := featureplanner.SaveState(root, &old); err != nil {
+		t.Fatalf("SaveState old: %v", err)
+	}
+
+	path := writeSessionLog(t, logDir, "old.jsonl", []string{
+		`{"type":"message","role":"user","content":"/feature-planner Old plan."}`,
+		`{"type":"message","role":"assistant","content":"feature-planner: planning-question-open\nstate: .idiom/feature-planner/old-session/state.json"}`,
+	})
+
+	model := snapshotModel(t, root)
+	model.cfg = config.Config{
+		Chat:      config.Chat{ProjectRoot: root},
+		Workspace: config.Workspace{Root: root, CWD: root},
+	}
+	model.directFeaturePlannerSessionID = active.SessionID
+
+	if err := model.LoadHistoryFromSession(path); err != nil {
+		t.Fatalf("LoadHistoryFromSession: %v", err)
+	}
+
+	if model.directFeaturePlannerSessionID != active.SessionID {
+		t.Fatalf("LoadHistoryFromSession overwrote active planner with %q", model.directFeaturePlannerSessionID)
+	}
+}
+
+func TestLoadHistoryFromSessionRestoresDirectFeaturePlannerWhenNoneActive(t *testing.T) {
+	root := t.TempDir()
+	logDir := filepath.Join(root, "logs", "conversations")
+
+	state := featureplanner.NewState("history-session", "History plan.", "", 3, time.Unix(1, 0).UTC())
+	state.Status = featureplanner.FeatureStatePlanningQuestion
+	state.OpenQuestions = []featureplanner.PlannerQuestion{{
+		ID:                "question-history",
+		Status:            "open",
+		QuestionSummary:   "Approve history scope",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "New files require operator approval.",
+		RequestedDecision: "Approve creating src/history.py.",
+		AuthorityRequired: "operator_approval",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     []string{"src/history.py"},
+		AffectedFields:    []string{"new_file_authorization"},
+	}}
+	if _, err := featureplanner.SaveState(root, &state); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+
+	path := writeSessionLog(t, logDir, "history.jsonl", []string{
+		`{"type":"message","role":"user","content":"/feature-planner History plan."}`,
+		`{"type":"message","role":"assistant","content":"feature-planner: planning-question-open\nstate: .idiom/feature-planner/history-session/state.json"}`,
+	})
+
+	model := snapshotModel(t, root)
+	model.cfg = config.Config{
+		Chat:      config.Chat{ProjectRoot: root},
+		Workspace: config.Workspace{Root: root, CWD: root},
+	}
+
+	if err := model.LoadHistoryFromSession(path); err != nil {
+		t.Fatalf("LoadHistoryFromSession: %v", err)
+	}
+
+	if model.directFeaturePlannerSessionID != state.SessionID {
+		t.Fatalf("direct feature-planner session = %q, want %q", model.directFeaturePlannerSessionID, state.SessionID)
 	}
 }
 

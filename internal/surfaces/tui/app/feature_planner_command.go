@@ -383,7 +383,7 @@ func (m *Model) directFeaturePlannerAcceptsOperatorInput() bool {
 		return false
 	}
 
-	return featureplanner.CountOpenPlannerQuestions(state) > 0 || directFeaturePlannerStateNeedsRepairInstruction(state)
+	return featurePlannerStateAcceptsDirectOperatorInput(state)
 }
 
 func (m *Model) directFeaturePlannerShouldConsumeOperatorInput(input string) bool {
@@ -398,7 +398,7 @@ func (m *Model) directFeaturePlannerShouldConsumeOperatorInput(input string) boo
 	}
 
 	if directFeaturePlannerStateNeedsRepairInstruction(state) {
-		return true
+		return featurePlannerGenericAnswerLooksIntentional(input)
 	}
 
 	openQuestions := openDirectFeaturePlannerQuestions(state)
@@ -595,9 +595,13 @@ func directFeaturePlannerStateNeedsRepairInstruction(state featureplanner.Featur
 	}
 }
 
+func featurePlannerStateAcceptsDirectOperatorInput(state featureplanner.FeatureState) bool {
+	return featureplanner.CountOpenPlannerQuestions(state) > 0 || directFeaturePlannerStateNeedsRepairInstruction(state)
+}
+
 func (m *Model) updateDirectFeaturePlannerSession(state featureplanner.FeatureState) {
 	switch state.Status {
-	case featureplanner.FeatureStatePlanningQuestion, featureplanner.FeatureStatePlanningRepair, featureplanner.FeatureStateStaleEditAnchor, featureplanner.FeatureStateDispatching:
+	case featureplanner.FeatureStatePlanningQuestion, featureplanner.FeatureStatePlanningRepair, featureplanner.FeatureStateStaleEditAnchor:
 		m.directFeaturePlannerSessionID = strings.TrimSpace(state.SessionID)
 	default:
 		m.directFeaturePlannerSessionID = ""

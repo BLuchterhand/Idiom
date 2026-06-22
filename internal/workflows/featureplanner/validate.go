@@ -350,6 +350,300 @@ func validatePlan(plan FeaturePlan, contract plancontract.PlanExecutionContract)
 	return errors.Join(errs...)
 }
 
+func validateStandaloneBehavioralCoverageDraft(plan FeaturePlan) []error {
+	draft := plan.BehavioralCoverageDraft
+	if draft == nil {
+		return nil
+	}
+
+	var errs []error
+	if authority := strings.TrimSpace(draft.Authority); authority != "" && authority != "standalone_provisional" {
+		errs = append(errs, fmt.Errorf("behavioral_coverage_draft.authority must be standalone_provisional when no product workflow context exists, got %q", authority))
+	}
+
+	status := strings.TrimSpace(draft.Status)
+	if status == "" {
+		errs = append(errs, errors.New("behavioral_coverage_draft missing status"))
+	} else if status != "draft" && status != "provisional" && status != "question_open" && status != "superseded" {
+		errs = append(errs, fmt.Errorf("behavioral_coverage_draft.status must be draft, provisional, question_open, or superseded, got %q", status))
+	}
+
+	if strings.TrimSpace(draft.Tier) == "" {
+		errs = append(errs, errors.New("behavioral_coverage_draft missing tier"))
+	}
+
+	if status != "superseded" && !behavioralCoverageDraftHasStructuredCoverage(*draft) {
+		errs = append(errs, errors.New("behavioral_coverage_draft must include structured requirements, scenarios, invariants, failure modes, state machines, test obligations, verification, open questions, or legacy items"))
+	}
+
+	tddIDs := normalizedStringSet(tddObligationIDs(plan.TDDContract.Obligations))
+	for i, obligation := range draft.TestObligations {
+		prefix := fmt.Sprintf("behavioral_coverage_draft.test_obligations[%d]", i)
+		if strings.TrimSpace(obligation.ID) == "" {
+			errs = append(errs, fmt.Errorf("%s missing id", prefix))
+		}
+		if strings.TrimSpace(obligation.Behavior) == "" {
+			errs = append(errs, fmt.Errorf("%s missing behavior", prefix))
+		}
+		if strings.TrimSpace(obligation.Command) == "" {
+			errs = append(errs, fmt.Errorf("%s missing command", prefix))
+		}
+		if id := strings.TrimSpace(obligation.ID); id != "" && len(tddIDs) > 0 && !tddIDs[id] {
+			errs = append(errs, fmt.Errorf("%s id %q is not declared by tdd_contract.obligations", prefix, id))
+		}
+	}
+	for i, scenario := range draft.Scenarios {
+		prefix := fmt.Sprintf("behavioral_coverage_draft.scenarios[%d]", i)
+		if strings.TrimSpace(scenario.ID) == "" {
+			errs = append(errs, fmt.Errorf("%s missing id", prefix))
+		}
+		if len(nonEmptyFeaturePlannerStrings(scenario.Given)) == 0 ||
+			len(nonEmptyFeaturePlannerStrings(scenario.When)) == 0 ||
+			len(nonEmptyFeaturePlannerStrings(scenario.Then)) == 0 ||
+			len(scenario.ConcreteData) == 0 {
+			errs = append(errs, fmt.Errorf("%s missing concrete given/when/then data", prefix))
+		}
+		for j, ref := range scenario.Obligations {
+			ref = strings.TrimSpace(ref)
+			if ref != "" && len(tddIDs) > 0 && !tddIDs[ref] {
+				errs = append(errs, fmt.Errorf("%s.obligations[%d] references unknown TDD obligation %q", prefix, j, ref))
+			}
+		}
+	}
+	for i, invariant := range draft.Invariants {
+		prefix := fmt.Sprintf("behavioral_coverage_draft.invariants[%d]", i)
+		if strings.TrimSpace(invariant.ID) == "" {
+			errs = append(errs, fmt.Errorf("%s missing id", prefix))
+		}
+		if strings.TrimSpace(invariant.Statement) == "" {
+			errs = append(errs, fmt.Errorf("%s missing statement", prefix))
+		}
+	}
+	for i, mode := range draft.FailureModes {
+		prefix := fmt.Sprintf("behavioral_coverage_draft.failure_modes[%d]", i)
+		if strings.TrimSpace(mode.ID) == "" {
+			errs = append(errs, fmt.Errorf("%s missing id", prefix))
+		}
+		if strings.TrimSpace(mode.Mode) == "" {
+			errs = append(errs, fmt.Errorf("%s missing mode", prefix))
+		}
+	}
+	for i, target := range draft.FuzzTargets {
+		prefix := fmt.Sprintf("behavioral_coverage_draft.fuzz_targets[%d]", i)
+		if strings.TrimSpace(target.ID) == "" {
+			errs = append(errs, fmt.Errorf("%s missing id", prefix))
+		}
+		if strings.TrimSpace(target.Target) == "" {
+			errs = append(errs, fmt.Errorf("%s missing target", prefix))
+		}
+		if len(nonEmptyFeaturePlannerStrings(target.Generators)) == 0 {
+			errs = append(errs, fmt.Errorf("%s missing generators", prefix))
+		}
+		if len(nonEmptyFeaturePlannerStrings(target.Invariants)) == 0 {
+			errs = append(errs, fmt.Errorf("%s missing invariants", prefix))
+		}
+		if len(nonEmptyFeaturePlannerStrings(target.TestRefs)) == 0 {
+			errs = append(errs, fmt.Errorf("%s missing test_refs", prefix))
+		}
+		errs = append(errs, validateDraftObligationRefs(prefix, target.Obligations, tddIDs)...)
+	}
+	for i, eval := range draft.RAGEvals {
+		prefix := fmt.Sprintf("behavioral_coverage_draft.rag_evals[%d]", i)
+		if strings.TrimSpace(eval.ID) == "" {
+			errs = append(errs, fmt.Errorf("%s missing id", prefix))
+		}
+		if len(nonEmptyFeaturePlannerStrings(eval.DatasetRefs)) == 0 {
+			errs = append(errs, fmt.Errorf("%s missing dataset_refs", prefix))
+		}
+		if len(eval.Metrics) == 0 {
+			errs = append(errs, fmt.Errorf("%s missing metrics", prefix))
+		}
+		if len(eval.Thresholds) == 0 {
+			errs = append(errs, fmt.Errorf("%s missing thresholds", prefix))
+		}
+		if len(nonEmptyFeaturePlannerStrings(eval.EvalRefs)) == 0 {
+			errs = append(errs, fmt.Errorf("%s missing eval_refs", prefix))
+		}
+		errs = append(errs, validateDraftObligationRefs(prefix, eval.Obligations, tddIDs)...)
+	}
+	for i, securityCase := range draft.SecurityCases {
+		prefix := fmt.Sprintf("behavioral_coverage_draft.security_cases[%d]", i)
+		if strings.TrimSpace(securityCase.ID) == "" {
+			errs = append(errs, fmt.Errorf("%s missing id", prefix))
+		}
+		if strings.TrimSpace(securityCase.Risk) == "" {
+			errs = append(errs, fmt.Errorf("%s missing risk", prefix))
+		}
+		if strings.TrimSpace(securityCase.Attack) == "" {
+			errs = append(errs, fmt.Errorf("%s missing attack", prefix))
+		}
+		if strings.TrimSpace(securityCase.Expected) == "" {
+			errs = append(errs, fmt.Errorf("%s missing expected", prefix))
+		}
+		if len(nonEmptyFeaturePlannerStrings(securityCase.TestRefs)) == 0 {
+			errs = append(errs, fmt.Errorf("%s missing test_refs", prefix))
+		}
+		errs = append(errs, validateDraftObligationRefs(prefix, securityCase.Obligations, tddIDs)...)
+	}
+	for i, privacy := range draft.PrivacyControls {
+		prefix := fmt.Sprintf("behavioral_coverage_draft.privacy_controls[%d]", i)
+		if strings.TrimSpace(privacy.ID) == "" {
+			errs = append(errs, fmt.Errorf("%s missing id", prefix))
+		}
+		if strings.TrimSpace(privacy.DataClass) == "" {
+			errs = append(errs, fmt.Errorf("%s missing data_class", prefix))
+		}
+		if strings.TrimSpace(privacy.Policy) == "" {
+			errs = append(errs, fmt.Errorf("%s missing policy", prefix))
+		}
+		if len(nonEmptyFeaturePlannerStrings(privacy.RedactionRefs)) == 0 {
+			errs = append(errs, fmt.Errorf("%s missing redaction_refs", prefix))
+		}
+		if strings.TrimSpace(privacy.Retention) == "" {
+			errs = append(errs, fmt.Errorf("%s missing retention", prefix))
+		}
+		if len(nonEmptyFeaturePlannerStrings(privacy.TestRefs)) == 0 {
+			errs = append(errs, fmt.Errorf("%s missing test_refs", prefix))
+		}
+		errs = append(errs, validateDraftObligationRefs(prefix, privacy.Obligations, tddIDs)...)
+	}
+	for i, provider := range draft.ProviderContracts {
+		prefix := fmt.Sprintf("behavioral_coverage_draft.provider_contracts[%d]", i)
+		if strings.TrimSpace(provider.ID) == "" {
+			errs = append(errs, fmt.Errorf("%s missing id", prefix))
+		}
+		if strings.TrimSpace(provider.Provider) == "" {
+			errs = append(errs, fmt.Errorf("%s missing provider", prefix))
+		}
+		if strings.TrimSpace(provider.Consumer) == "" {
+			errs = append(errs, fmt.Errorf("%s missing consumer", prefix))
+		}
+		if len(nonEmptyFeaturePlannerStrings(provider.ContractRefs)) == 0 {
+			errs = append(errs, fmt.Errorf("%s missing contract_refs", prefix))
+		}
+		if len(nonEmptyFeaturePlannerStrings(provider.TestRefs)) == 0 {
+			errs = append(errs, fmt.Errorf("%s missing test_refs", prefix))
+		}
+		errs = append(errs, validateDraftObligationRefs(prefix, provider.Obligations, tddIDs)...)
+	}
+	for i, signal := range draft.Observability {
+		prefix := fmt.Sprintf("behavioral_coverage_draft.observability[%d]", i)
+		if strings.TrimSpace(signal.ID) == "" {
+			errs = append(errs, fmt.Errorf("%s missing id", prefix))
+		}
+		if strings.TrimSpace(signal.Signal) == "" {
+			errs = append(errs, fmt.Errorf("%s missing signal", prefix))
+		}
+		if strings.TrimSpace(signal.InstrumentedPath) == "" {
+			errs = append(errs, fmt.Errorf("%s missing instrumented_path", prefix))
+		}
+		if len(nonEmptyFeaturePlannerStrings(signal.RequiredFields)) == 0 {
+			errs = append(errs, fmt.Errorf("%s missing required_fields", prefix))
+		}
+		if len(nonEmptyFeaturePlannerStrings(signal.TestRefs)) == 0 {
+			errs = append(errs, fmt.Errorf("%s missing test_refs", prefix))
+		}
+		errs = append(errs, validateDraftObligationRefs(prefix, signal.Obligations, tddIDs)...)
+	}
+	for i, bound := range draft.PerformanceBounds {
+		prefix := fmt.Sprintf("behavioral_coverage_draft.performance_bounds[%d]", i)
+		if strings.TrimSpace(bound.ID) == "" {
+			errs = append(errs, fmt.Errorf("%s missing id", prefix))
+		}
+		if strings.TrimSpace(bound.Operation) == "" {
+			errs = append(errs, fmt.Errorf("%s missing operation", prefix))
+		}
+		if strings.TrimSpace(bound.Bound) == "" {
+			errs = append(errs, fmt.Errorf("%s missing bound", prefix))
+		}
+		if len(nonEmptyFeaturePlannerStrings(bound.MeasurementRefs)) == 0 {
+			errs = append(errs, fmt.Errorf("%s missing measurement_refs", prefix))
+		}
+		errs = append(errs, validateDraftObligationRefs(prefix, bound.Obligations, tddIDs)...)
+	}
+	for i, journey := range draft.E2EJourneys {
+		prefix := fmt.Sprintf("behavioral_coverage_draft.e2e_journeys[%d]", i)
+		if strings.TrimSpace(journey.ID) == "" {
+			errs = append(errs, fmt.Errorf("%s missing id", prefix))
+		}
+		if strings.TrimSpace(journey.Journey) == "" {
+			errs = append(errs, fmt.Errorf("%s missing journey", prefix))
+		}
+		if len(nonEmptyFeaturePlannerStrings(journey.Steps)) == 0 {
+			errs = append(errs, fmt.Errorf("%s missing steps", prefix))
+		}
+		if len(nonEmptyFeaturePlannerStrings(journey.ScriptRefs)) == 0 {
+			errs = append(errs, fmt.Errorf("%s missing script_refs", prefix))
+		}
+		errs = append(errs, validateDraftObligationRefs(prefix, journey.Obligations, tddIDs)...)
+	}
+	for i, item := range draft.Items {
+		prefix := fmt.Sprintf("behavioral_coverage_draft.items[%d]", i)
+		if strings.TrimSpace(item.ID) == "" {
+			errs = append(errs, fmt.Errorf("%s missing id", prefix))
+		}
+		if strings.TrimSpace(item.Behavior) == "" {
+			errs = append(errs, fmt.Errorf("%s missing behavior", prefix))
+		}
+		for j, ref := range item.Obligations {
+			ref = strings.TrimSpace(ref)
+			if ref != "" && len(tddIDs) > 0 && !tddIDs[ref] {
+				errs = append(errs, fmt.Errorf("%s.tdd_obligations[%d] references unknown TDD obligation %q", prefix, j, ref))
+			}
+		}
+	}
+
+	return errs
+}
+
+func behavioralCoverageDraftHasStructuredCoverage(draft BehavioralCoverageDraft) bool {
+	return len(draft.Requirements) > 0 ||
+		len(draft.ExampleRules) > 0 ||
+		len(draft.Scenarios) > 0 ||
+		len(draft.Invariants) > 0 ||
+		len(draft.FailureModes) > 0 ||
+		len(draft.StateMachines) > 0 ||
+		len(draft.FuzzTargets) > 0 ||
+		len(draft.RAGEvals) > 0 ||
+		len(draft.SecurityCases) > 0 ||
+		len(draft.PrivacyControls) > 0 ||
+		len(draft.ProviderContracts) > 0 ||
+		len(draft.Observability) > 0 ||
+		len(draft.PerformanceBounds) > 0 ||
+		len(draft.E2EJourneys) > 0 ||
+		len(draft.TestObligations) > 0 ||
+		len(draft.Verification) > 0 ||
+		len(draft.Waivers) > 0 ||
+		len(draft.OpenQuestions) > 0 ||
+		len(draft.Items) > 0
+}
+
+func validateDraftObligationRefs(prefix string, refs []string, tddIDs map[string]bool) []error {
+	if len(tddIDs) == 0 {
+		return nil
+	}
+
+	var errs []error
+	for i, ref := range refs {
+		ref = strings.TrimSpace(ref)
+		if ref != "" && !tddIDs[ref] {
+			errs = append(errs, fmt.Errorf("%s.tdd_obligations[%d] references unknown TDD obligation %q", prefix, i, ref))
+		}
+	}
+
+	return errs
+}
+
+func tddObligationIDs(obligations []TDDObligation) []string {
+	ids := make([]string, 0, len(obligations))
+	for _, obligation := range obligations {
+		if id := strings.TrimSpace(obligation.ID); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 func sddContractHasEvidence(contract SDDContract) bool {
 	return len(nonEmptyFeaturePlannerStrings(contract.Refs)) > 0 ||
 		len(nonEmptyFeaturePlannerStrings(contract.Acceptance)) > 0 ||
@@ -512,6 +806,28 @@ func validateDurablePlan(plan FeaturePlan, contract plancontract.PlanExecutionCo
 func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowBrief, workspaceRoot string) error {
 	var errs []error
 
+	if plan.BehavioralCoverageDraft != nil {
+		errs = append(errs, errors.New("behavioral_coverage_draft is standalone provisional coverage and is superseded by product workflow coverage authority"))
+	}
+
+	if plan.AcceptedCoverage != nil {
+		errs = append(errs, errors.New("accepted_coverage is product workflow authority; submit_feature_plan must cite coverage_contract and must not author accepted coverage detail"))
+	}
+
+	if plan.CoverageGateResult != nil {
+		errs = append(errs, errors.New("feature planner must consume product workflow coverage authority from context; submit_feature_plan must not include competing coverage_gate_result"))
+	}
+
+	if productBriefRequiresCoverageContract(brief) && brief.CoverageContract == nil {
+		errs = append(errs, errors.New("product workflow brief missing accepted coverage_contract for behavior/contract coverage tier"))
+	}
+
+	errs = append(errs, validateProductAcceptedCoverageAuthority(brief)...)
+
+	if brief.CoverageContract != nil {
+		errs = append(errs, validateProductCoverageContractRef(plan.CoverageContract, *brief.CoverageContract)...)
+	}
+
 	errs = append(errs, validatePlanCoversFilesToModify(plan, brief)...)
 	plan = NormalizePlanProductWorkflowContext(plan, brief, workspaceRoot)
 
@@ -619,6 +935,106 @@ func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowB
 	return errors.Join(errs...)
 }
 
+func productBriefRequiresCoverageContract(brief ProductWorkflowBrief) bool {
+	if brief.AcceptedCoverage != nil {
+		return true
+	}
+	switch strings.TrimSpace(brief.CoverageTier) {
+	case "behavior_standard", "contract_high", "formal_optional":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateProductAcceptedCoverageAuthority(brief ProductWorkflowBrief) []error {
+	accepted := brief.AcceptedCoverage
+	if accepted == nil {
+		return nil
+	}
+
+	var errs []error
+	if strings.TrimSpace(accepted.Authority) != "product_workflow" {
+		errs = append(errs, fmt.Errorf("product workflow accepted_coverage.authority must be product_workflow, got %q", accepted.Authority))
+	}
+
+	switch strings.TrimSpace(accepted.Status) {
+	case "accepted", "pass":
+	case "":
+		errs = append(errs, errors.New("product workflow accepted_coverage missing accepted status"))
+	default:
+		errs = append(errs, fmt.Errorf("product workflow accepted_coverage status is not accepted: %s", accepted.Status))
+	}
+
+	if brief.CoverageContract == nil {
+		errs = append(errs, errors.New("product workflow accepted_coverage missing coverage_contract authority ref"))
+	} else {
+		errs = append(errs, validateProductCoverageContractRef(&accepted.Contract, *brief.CoverageContract)...)
+	}
+
+	if want := strings.TrimSpace(brief.CoverageTier); want != "" && strings.TrimSpace(accepted.Tier) != "" && strings.TrimSpace(accepted.Tier) != want {
+		errs = append(errs, fmt.Errorf("product workflow accepted_coverage.tier %q does not match coverage tier %q", accepted.Tier, want))
+	}
+
+	return errs
+}
+
+func validateProductCoverageContractRef(planRef *CoverageContractRef, briefRef CoverageContractRef) []error {
+	var errs []error
+	if planRef == nil {
+		return []error{errors.New("feature plan missing coverage_contract ref from product workflow context")}
+	}
+	for _, missing := range missingProductCoverageContractAuthorityFields(briefRef) {
+		errs = append(errs, fmt.Errorf("product workflow coverage_contract missing %s", missing))
+	}
+	if status := strings.TrimSpace(briefRef.Status); status != "" && status != "pass" && status != "accepted" {
+		errs = append(errs, fmt.Errorf("product workflow coverage contract is not accepted: %s", status))
+	}
+	if want := strings.TrimSpace(briefRef.ContractID); want != "" && strings.TrimSpace(planRef.ContractID) != want {
+		errs = append(errs, fmt.Errorf("coverage_contract.contract_id %q does not match product workflow coverage contract %q", planRef.ContractID, want))
+	}
+	if want := strings.TrimSpace(briefRef.Digest); want != "" && strings.TrimSpace(planRef.Digest) != want {
+		errs = append(errs, fmt.Errorf("coverage_contract.digest does not match product workflow coverage contract digest"))
+	}
+	if want := strings.TrimSpace(briefRef.EventID); want != "" && strings.TrimSpace(planRef.EventID) != want {
+		errs = append(errs, fmt.Errorf("coverage_contract.event_id %q does not match product workflow coverage event %q", planRef.EventID, want))
+	}
+	if want := strings.TrimSpace(briefRef.EffortID); want != "" && strings.TrimSpace(planRef.EffortID) != want {
+		errs = append(errs, fmt.Errorf("coverage_contract.effort_id %q does not match product workflow effort %q", planRef.EffortID, want))
+	}
+	if want := strings.TrimSpace(briefRef.Status); want != "" && strings.TrimSpace(planRef.Status) != want {
+		errs = append(errs, fmt.Errorf("coverage_contract.status %q does not match product workflow coverage status %q", planRef.Status, want))
+	}
+	if want := strings.TrimSpace(briefRef.CoverageTier); want != "" && strings.TrimSpace(planRef.CoverageTier) != want {
+		errs = append(errs, fmt.Errorf("coverage_contract.coverage_tier %q does not match product workflow coverage tier %q", planRef.CoverageTier, want))
+	}
+
+	return errs
+}
+
+func missingProductCoverageContractAuthorityFields(ref CoverageContractRef) []string {
+	var missing []string
+	if strings.TrimSpace(ref.ContractID) == "" {
+		missing = append(missing, "contract_id")
+	}
+	if strings.TrimSpace(ref.Digest) == "" {
+		missing = append(missing, "digest")
+	}
+	if strings.TrimSpace(ref.EventID) == "" {
+		missing = append(missing, "event_id")
+	}
+	if strings.TrimSpace(ref.Status) == "" {
+		missing = append(missing, "status")
+	}
+	if strings.TrimSpace(ref.EffortID) == "" {
+		missing = append(missing, "effort_id")
+	}
+	if strings.TrimSpace(ref.CoverageTier) == "" {
+		missing = append(missing, "coverage_tier")
+	}
+	return missing
+}
+
 type StandaloneWorkspaceContext struct {
 	WorkspaceRoot string
 	Contract      plancontract.PlanExecutionContract
@@ -627,11 +1043,13 @@ type StandaloneWorkspaceContext struct {
 func ValidatePlanStandaloneWorkspaceContext(plan FeaturePlan, context StandaloneWorkspaceContext) error {
 	root := strings.TrimSpace(context.WorkspaceRoot)
 	if root == "" {
-		return nil
+		return errors.Join(validateStandaloneBehavioralCoverageDraft(plan)...)
 	}
 
 	var errs []error
 	var missingNewFilePaths []string
+
+	errs = append(errs, validateStandaloneBehavioralCoverageDraft(plan)...)
 
 	for i, atom := range plan.Atoms {
 		for _, scopedPath := range standaloneAtomWorkspaceScopePaths(atom) {
@@ -2020,7 +2438,6 @@ func planContractAuthorityDeltaKind(delta PlanAuthorityDelta) plancontract.Autho
 	return plancontract.AuthorityDeltaKindExpandWriteEnvelope
 }
 
-
 func atomRequiredTestCommands(atom plancontract.AtomExecutionContract) []string {
 	var out []string
 
@@ -2287,6 +2704,8 @@ func newFileAuthorizedPathsFromDeltas(deltas []PlanAuthorityDelta) []string {
 
 func NormalizePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowBrief, workspaceRoot string) FeaturePlan {
 	grounding := newRepoGrounding(brief, workspaceRoot)
+	plan.BehavioralCoverageDraft = nil
+	plan.AcceptedCoverage = brief.AcceptedCoverage
 
 	for i := range plan.Atoms {
 		atom := &plan.Atoms[i]

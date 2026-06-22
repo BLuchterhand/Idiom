@@ -19,8 +19,44 @@ func TestProductWorkflowBrief_JSONRoundTrip(t *testing.T) {
 		},
 		CoverageTier:       "behavior_standard",
 		CoverageGatePassed: true,
-		CoverageBlockers:   []string{},
-		FilesToModify:      []string{"internal/example/thing.go"},
+		CoverageContract: &CoverageContractRef{
+			ContractID:   "cov-1",
+			Digest:       "sha256:abc",
+			EventID:      "evt-cov-1",
+			Status:       "pass",
+			EffortID:     "test-effort-1",
+			CoverageTier: "behavior_standard",
+		},
+		AcceptedCoverage: &AcceptedBehavioralCoverage{
+			Authority: "product_workflow",
+			Status:    "pass",
+			Tier:      "behavior_standard",
+			Contract: CoverageContractRef{
+				ContractID:   "cov-1",
+				Digest:       "sha256:abc",
+				EventID:      "evt-cov-1",
+				Status:       "pass",
+				EffortID:     "test-effort-1",
+				CoverageTier: "behavior_standard",
+			},
+			Scenarios: []AcceptedCoverageScenario{{
+				ID:               "BDD-1",
+				Given:            []string{"accepted product coverage exists"},
+				When:             []string{"brief is serialized"},
+				Then:             []string{"accepted coverage survives"},
+				ConcreteDataRefs: []string{"fixtures/accepted.json"},
+				Obligations:      []string{"TDD-1"},
+			}},
+			TestObligations: []AcceptedCoverageTestObligation{{
+				ID:             "TDD-1",
+				Type:           "contract",
+				Behavior:       "accepted coverage round-trips",
+				Command:        "go test ./internal/workflows/featureplanner",
+				RequiredBefore: "implementation",
+			}},
+		},
+		CoverageBlockers: []string{},
+		FilesToModify:    []string{"internal/example/thing.go"},
 		SourceFacts: []SourceFactBrief{{
 			Path:         "internal/example/thing.go",
 			Symbol:       "DoThing",
@@ -73,6 +109,19 @@ func TestProductWorkflowBrief_JSONRoundTrip(t *testing.T) {
 
 	if !roundTripped.CoverageGatePassed {
 		t.Error("CoverageGatePassed should be true")
+	}
+
+	if roundTripped.CoverageContract == nil || roundTripped.CoverageContract.ContractID != "cov-1" {
+		t.Fatalf("CoverageContract did not round-trip: %+v", roundTripped.CoverageContract)
+	}
+
+	if roundTripped.AcceptedCoverage == nil ||
+		roundTripped.AcceptedCoverage.Authority != "product_workflow" ||
+		len(roundTripped.AcceptedCoverage.Scenarios) != 1 ||
+		roundTripped.AcceptedCoverage.Scenarios[0].Then[0] != "accepted coverage survives" ||
+		len(roundTripped.AcceptedCoverage.TestObligations) != 1 {
+
+		t.Fatalf("AcceptedCoverage did not round-trip: %+v", roundTripped.AcceptedCoverage)
 	}
 
 	if len(roundTripped.SourceFacts) != 1 || roundTripped.SourceFacts[0].Signature != "func DoThing() error" {

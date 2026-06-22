@@ -36,6 +36,7 @@ Implemented surfaces include:
 - `idiom product prd --render-prompt`
 - `idiom product adr --render-prompt`
 - `idiom product tdd --plan-obligations`
+- `idiom product tdd --promote-coverage`
 - `idiom product tdd --evaluate-coverage`
 - `idiom product brief --render`
 - `idiom product feedback`
@@ -89,10 +90,11 @@ parse, audit, acceptance, coverage, and dispatch gates before it affects work.
 
 ## TDD Operator Process
 
-The shipped TDD process is an obligation workflow, not a classic red-green UI
-inside the TUI. The operator uses product commands to derive test obligations
-from accepted PRD/ADR artifacts, evaluate whether those obligations are covered,
-and block brief dispatch when coverage evidence is incomplete.
+The shipped TDD process is a productworkflow-owned coverage workflow, not a
+classic red-green UI inside the TUI. The operator uses product commands to
+derive test obligations from accepted PRD/ADR artifacts, promote reviewed
+behavioral coverage into `tdd.json`, evaluate whether those obligations are
+covered, and block brief dispatch when coverage evidence is incomplete.
 
 ```mermaid
 flowchart TD
@@ -116,20 +118,26 @@ Current operator sequence:
 
 1. Accept or update PRD/ADR artifacts through the product workflow.
 2. Run `idiom product tdd --effort-root <path> --plan-obligations`.
-3. Review `tdd.json` for obligation IDs, owners, commands, and coverage tier.
-4. Run `idiom product tdd --effort-root <path> --evaluate-coverage --json`.
-5. Resolve coverage blockers by adding or updating required tests, commands,
+3. Review the proposed obligation IDs, owners, commands, and coverage tier.
+4. When behavioral coverage has been reviewed, promote the typed contract into
+   `tdd.json` with
+   `idiom product tdd --effort-root <path> --promote-coverage <coverage.json> --write`.
+   Without `--write`, the command previews the projected ledger and does not
+   mutate `tdd.json`.
+5. Run `idiom product tdd --effort-root <path> --evaluate-coverage --json`.
+6. Resolve coverage blockers by adding or updating required tests, commands,
    evidence refs, or accepted artifact links.
-6. Render the implementation brief only after the coverage gate passes:
+7. Render the implementation brief only after the coverage gate passes:
    `idiom product brief --effort-root <path> --render`.
-7. Dispatch the brief through `implement` or `plan-execute`.
-8. Feed execution results back into product workflow feedback and future TDD
+8. Dispatch the brief through `implement` or `plan-execute`.
+9. Feed execution results back into product workflow feedback and future TDD
    obligations when tests, blockers, or recovery show missing coverage.
 
 | TDD surface | Current role |
 | --- | --- |
 | `tdd.json` | Durable obligation ledger for the effort |
 | `--plan-obligations` | Deterministically derives obligations from accepted PRD/ADR artifacts |
+| `--promote-coverage` | Validates a typed behavioral coverage contract, projects counters/gates, and optionally writes the accepted contract into `tdd.json` |
 | `--evaluate-coverage` | Evaluates current fixture coverage and reports blockers |
 | `brief --render` | Blocks when coverage-gate blockers remain |
 | Lane verification | Proves required commands after implementation; command names alone are not proof |
@@ -143,9 +151,19 @@ cannot be produced.
 
 ## Behavioral Coverage
 
-The target behavioral coverage design* is broader than the current shipped
-gate. The long-form target* remains in
-[design-tdd-coverage.md](../design-tdd-coverage.md).
+The behavioral coverage authority is now split deliberately:
+
+- The model owns strategy and may propose behavior, examples, scenarios,
+  invariants, state transitions, failure modes, and test obligations.
+- Product workflow owns accepted coverage contracts, projection into `tdd.json`,
+  coverage-gate evaluation, and implementation handoff.
+- Feature planner consumes accepted coverage as read-only context. It cites the
+  coverage contract; it does not author `accepted_coverage` in submitted plans.
+
+The long-form BDD-TDD design remains in
+[design-tdd-coverage.md](../design-tdd-coverage.md), but the product workflow
+implementation now has a typed accepted-contract path beyond plain obligation
+planning.
 
 ```mermaid
 flowchart TD
@@ -161,17 +179,24 @@ flowchart TD
     Gate --> Brief["Dispatch-ready brief"]
 ```
 
-Current implementation is narrower:
+Current implementation:
 
 - TDD obligation types and ledger parsing exist.
 - Deterministic TDD obligation synthesis from accepted PRD/ADR artifacts exists.
-- A tiered coverage evaluator exists for current product-workflow fixtures.
-- Brief generation blocks on coverage-gate blockers.
-
-Remaining target work* includes EARS parsing*, example mapping*, BDD
-validation*, contract schemas*, FMEA/HAZOP/FTA templates*, state-machine
-checks*, decision table enumeration*, property-based obligations*, mutation
-score calculation*, and the full nine-stage coverage gate*.
+- Typed behavioral coverage contracts cover EARS requirements, example rules,
+  BDD scenarios, design contracts, invariants, state machines, FMEA, HAZOP,
+  fault-tree leaves, decision tables, boundary values, postmortems, formal
+  models, fuzz/property coverage, RAG evals, security/privacy/provider cases,
+  observability, performance bounds, scripted e2e journeys, mutation thresholds,
+  waivers, feedback, and open questions.
+- `--promote-coverage` is the canonical productworkflow-owned transition from a
+  reviewed behavioral coverage JSON artifact into accepted `tdd.json`
+  authority.
+- The coverage evaluator reads the accepted contract and projected counters from
+  `tdd.json`; command names alone are not proof until implementation ledger
+  verification records satisfy the obligations.
+- Implementation handoff and feature planner context load accepted coverage
+  through productworkflow, not caller-local parsing.
 
 ## Open Work*
 

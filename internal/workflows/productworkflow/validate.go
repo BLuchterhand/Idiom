@@ -87,6 +87,17 @@ var allowedObligationTypes = map[string]bool{
 	"mutation_score":      true,
 	"post_mortem":         true,
 	"formal_verification": true,
+	"fuzz":                true,
+	"fuzz_target":         true,
+	"rag_eval":            true,
+	"llm_security":        true,
+	"security":            true,
+	"privacy":             true,
+	"provider_contract":   true,
+	"observability":       true,
+	"performance":         true,
+	"scripted_e2e":        true,
+	"e2e_journey":         true,
 	"manual":              true,
 }
 
@@ -107,6 +118,15 @@ func validateTDDLedger(ledger TDDLedger) error {
 	}
 
 	errs = append(errs, validateTDDCoverage(ledger.Coverage)...)
+	if ledger.BehavioralCoverage != nil {
+		if err := ValidateBehavioralCoverageContract(*ledger.BehavioralCoverage); err != nil {
+			errs = append(errs, err)
+		}
+		if err := ValidateBehavioralCoverageProjection(*ledger.BehavioralCoverage, ledger.Coverage); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
 	for i, obligation := range ledger.Obligations {
 		prefix := fmt.Sprintf("tdd obligation %d", i)
 		require(&errs, obligation.ID, prefix+" missing id")
@@ -158,6 +178,22 @@ func validateTDDCoverage(coverage TDDCoverage) []error {
 		{"post_mortem_catching_tests", coverage.PostMortemCatchingTests},
 		{"formal_models_total", coverage.FormalModelsTotal},
 		{"formal_models_verified", coverage.FormalModelsVerified},
+		{"fuzz_targets_total", coverage.FuzzTargetsTotal},
+		{"fuzz_targets_covered", coverage.FuzzTargetsCovered},
+		{"rag_evals_total", coverage.RAGEvalsTotal},
+		{"rag_evals_measured", coverage.RAGEvalsMeasured},
+		{"security_cases_total", coverage.SecurityCasesTotal},
+		{"security_cases_tested", coverage.SecurityCasesTested},
+		{"privacy_controls_total", coverage.PrivacyControlsTotal},
+		{"privacy_controls_tested", coverage.PrivacyControlsTested},
+		{"provider_contracts_total", coverage.ProviderContractsTotal},
+		{"provider_contracts_tested", coverage.ProviderContractsTested},
+		{"observability_total", coverage.ObservabilityTotal},
+		{"observability_tested", coverage.ObservabilityTested},
+		{"performance_bounds_total", coverage.PerformanceBoundsTotal},
+		{"performance_bounds_tested", coverage.PerformanceBoundsTested},
+		{"e2e_journeys_total", coverage.E2EJourneysTotal},
+		{"e2e_journeys_scripted", coverage.E2EJourneysScripted},
 	}
 	for _, c := range counters {
 		if c.value < 0 {
@@ -207,6 +243,30 @@ func validateTDDCoverage(coverage TDDCoverage) []error {
 
 	if coverage.FormalModelsVerified > coverage.FormalModelsTotal {
 		errs = append(errs, fmt.Errorf("tdd ledger coverage.formal_models_verified (%d) exceeds formal_models_total (%d)", coverage.FormalModelsVerified, coverage.FormalModelsTotal))
+	}
+	if coverage.FuzzTargetsCovered > coverage.FuzzTargetsTotal {
+		errs = append(errs, fmt.Errorf("tdd ledger coverage.fuzz_targets_covered (%d) exceeds fuzz_targets_total (%d)", coverage.FuzzTargetsCovered, coverage.FuzzTargetsTotal))
+	}
+	if coverage.RAGEvalsMeasured > coverage.RAGEvalsTotal {
+		errs = append(errs, fmt.Errorf("tdd ledger coverage.rag_evals_measured (%d) exceeds rag_evals_total (%d)", coverage.RAGEvalsMeasured, coverage.RAGEvalsTotal))
+	}
+	if coverage.SecurityCasesTested > coverage.SecurityCasesTotal {
+		errs = append(errs, fmt.Errorf("tdd ledger coverage.security_cases_tested (%d) exceeds security_cases_total (%d)", coverage.SecurityCasesTested, coverage.SecurityCasesTotal))
+	}
+	if coverage.PrivacyControlsTested > coverage.PrivacyControlsTotal {
+		errs = append(errs, fmt.Errorf("tdd ledger coverage.privacy_controls_tested (%d) exceeds privacy_controls_total (%d)", coverage.PrivacyControlsTested, coverage.PrivacyControlsTotal))
+	}
+	if coverage.ProviderContractsTested > coverage.ProviderContractsTotal {
+		errs = append(errs, fmt.Errorf("tdd ledger coverage.provider_contracts_tested (%d) exceeds provider_contracts_total (%d)", coverage.ProviderContractsTested, coverage.ProviderContractsTotal))
+	}
+	if coverage.ObservabilityTested > coverage.ObservabilityTotal {
+		errs = append(errs, fmt.Errorf("tdd ledger coverage.observability_tested (%d) exceeds observability_total (%d)", coverage.ObservabilityTested, coverage.ObservabilityTotal))
+	}
+	if coverage.PerformanceBoundsTested > coverage.PerformanceBoundsTotal {
+		errs = append(errs, fmt.Errorf("tdd ledger coverage.performance_bounds_tested (%d) exceeds performance_bounds_total (%d)", coverage.PerformanceBoundsTested, coverage.PerformanceBoundsTotal))
+	}
+	if coverage.E2EJourneysScripted > coverage.E2EJourneysTotal {
+		errs = append(errs, fmt.Errorf("tdd ledger coverage.e2e_journeys_scripted (%d) exceeds e2e_journeys_total (%d)", coverage.E2EJourneysScripted, coverage.E2EJourneysTotal))
 	}
 
 	if coverage.MutationScore != nil {

@@ -2697,6 +2697,50 @@ func TestHarnessAuditStillFlagsCurrentTurnPhaseProjectionContradictions(t *testi
 	}
 }
 
+func TestHarnessAuditClassifiesPreFixOpenEvidenceFinalAnswerProjectionAsHistorical(t *testing.T) {
+	encoded := mustWorkspaceOpenEvidenceFinalAnswerProjectionEvent(t, harnessAuditOpenEvidenceFinalAnswerProjectionFixedAt.Add(-time.Minute))
+	path := filepath.Join(t.TempDir(), "prefixed.jsonl")
+	if err := os.WriteFile(path, []byte(encoded+"\n"), 0o644); err != nil {
+		t.Fatalf("write pre-fix event log: %v", err)
+	}
+
+	events, warnings := decodeHarnessAuditAutonomyEvents([]byte(encoded))
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %#v", warnings)
+	}
+
+	report := autonomy.AuditEvents(currentHarnessAuditAutonomyEvents(events), autonomy.EventAuditOptions{})
+	if slices.ContainsFunc(report.Findings, func(finding autonomy.EventAuditFinding) bool {
+		return finding.ID == "turn_phase_contract_contradiction"
+	}) {
+		t.Fatalf("pre-fix residual-blocker projection should not raise current contradiction, got %#v", report.Findings)
+	}
+
+	historical := historicalOpenEvidenceFinalAnswerProjectionFindings([]string{path})
+	if !slices.ContainsFunc(historical, func(finding harnessAuditFinding) bool {
+		return finding.ID == "historical_open_evidence_final_answer_projection" &&
+			strings.Contains(finding.Evidence, "pre-fix turn-phase projection")
+	}) {
+		t.Fatalf("expected pre-fix projection to remain historical evidence, got %#v", historical)
+	}
+}
+
+func TestHarnessAuditStillFlagsPostFixOpenEvidenceFinalAnswerProjection(t *testing.T) {
+	encoded := mustWorkspaceOpenEvidenceFinalAnswerProjectionEvent(t, harnessAuditOpenEvidenceFinalAnswerProjectionFixedAt.Add(time.Minute))
+
+	events, warnings := decodeHarnessAuditAutonomyEvents([]byte(encoded))
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %#v", warnings)
+	}
+
+	report := autonomy.AuditEvents(currentHarnessAuditAutonomyEvents(events), autonomy.EventAuditOptions{})
+	if !slices.ContainsFunc(report.Findings, func(finding autonomy.EventAuditFinding) bool {
+		return finding.ID == "turn_phase_contract_contradiction"
+	}) {
+		t.Fatalf("post-fix residual-blocker projection must remain a current contradiction, got %#v", report.Findings)
+	}
+}
+
 func mustWorkspaceTextualTurnPhaseProjectionEvent(t *testing.T, occurredAt time.Time) string {
 	t.Helper()
 
@@ -2734,6 +2778,58 @@ func mustWorkspaceTextualTurnPhaseProjectionEvent(t *testing.T, occurredAt time.
 		},
 		TerminalOutcomes: []string{"final answer"},
 		EnforcementMode:  "observe_only",
+	}
+	event := mustWorkspaceAutonomyEvent(autonomy.NewContractPresentedEvent(contract, autonomy.ContractLifecycleEvent{
+		Reason:            "turn_phase_contract",
+		ProtocolHash:      phase.ProtocolHash,
+		TurnPhaseContract: &phase,
+		SurfaceSummaries: []autonomy.TurnPhaseSurfaceSummaryEvent{
+			autonomy.SurfaceSummaryFromTurnPhaseContract(phase),
+		},
+	}, occurredAt, 1))
+
+	return mustMarshalWorkspaceAutonomyEvent(t, event)
+}
+
+func mustWorkspaceOpenEvidenceFinalAnswerProjectionEvent(t *testing.T, occurredAt time.Time) string {
+	t.Helper()
+
+	contract, err := autonomy.NewContract(autonomy.ContractInput{
+		Scope: autonomy.ContractScope{
+			InvocationKind:    autonomy.InvocationLane,
+			Lane:              "explore",
+			LaneRunID:         "open-evidence-final-answer-session",
+			TaskFamily:        "conversation",
+			RuntimeContract:   "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewContract returned error: %v", err)
+	}
+
+	phase := autonomy.TurnPhaseContractEvent{
+		SchemaVersion: "idiom.turn_phase_contract.v1",
+		ContractID:    contract.ContractID,
+		PhaseID:       "generic",
+		ModelCallID:   contract.ContractID + ":model_call_1",
+		ProtocolHash:  "sha256:open-evidence-final-answer-test",
+		Phase:         "read_only_evidence_pending",
+		ActionPolicy: autonomy.TurnActionClassPolicyEvent{
+			AllowedActionClasses:   []string{"final_answer", "read", "blocker"},
+			TerminalResponseShapes: []string{"final answer", "<<QUESTION>>:"},
+			CallableToolNames:      []string{"read_file"},
+		},
+		RuntimeCall: autonomy.RuntimeCallContractEvent{
+			ToolTransportMode:        "native",
+			ExpectedVisibleOutput:    "native_tool_call",
+			ExpressibleActionClasses: []string{"final_answer", "read", "blocker"},
+		},
+		TerminalOutcomes: []string{"final answer", "<<QUESTION>>:"},
+		EvidenceState: autonomy.PhaseEvidenceStateEvent{
+			ResidualBlockers: []string{"context_pack blocked by context freshness (missing_index)"},
+		},
+		EnforcementMode: "observe_only",
 	}
 	event := mustWorkspaceAutonomyEvent(autonomy.NewContractPresentedEvent(contract, autonomy.ContractLifecycleEvent{
 		Reason:            "turn_phase_contract",

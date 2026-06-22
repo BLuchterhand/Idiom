@@ -94,6 +94,14 @@ type CoverageGateEventCoverage struct {
 	FaultTreeCoveragePct  *float64 `json:"fault_tree_coverage_pct"`
 	PostMortemCoveragePct *float64 `json:"post_mortem_coverage_pct"`
 	FormalVerificationPct *float64 `json:"formal_verification_pct"`
+	FuzzCoveragePct       *float64 `json:"fuzz_coverage_pct"`
+	RAGEvalCoveragePct    *float64 `json:"rag_eval_coverage_pct"`
+	SecurityCoveragePct   *float64 `json:"security_coverage_pct"`
+	PrivacyCoveragePct    *float64 `json:"privacy_coverage_pct"`
+	ProviderContractPct   *float64 `json:"provider_contract_pct"`
+	ObservabilityPct      *float64 `json:"observability_pct"`
+	PerformancePct        *float64 `json:"performance_pct"`
+	ScriptedE2EPct        *float64 `json:"scripted_e2e_pct"`
 	MutationScore         *float64 `json:"mutation_score"`
 }
 
@@ -237,6 +245,7 @@ type BriefGenerationInput struct {
 	TDD                   TDDLedger
 	Traceability          TraceabilityMatrix
 	ImplementationRecords []ImplementationLedgerRecord
+	PromotionEvents       []BehavioralCoveragePromotionEvent
 	CoverageEvaluation    CoverageGateEvaluation
 	ExistingWorkspacePath map[string]bool
 }

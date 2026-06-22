@@ -47,12 +47,20 @@ func (m *Model) RunPromptOnce(ctx context.Context, prompt string) (string, error
 		return m.runPlanExecuteCommandOnce(ctx, objective)
 	}
 
+	if objective, ok := typedPromptCommandObjective(prompt, "/feature-planner"); ok {
+		return m.runFeaturePlannerCommandOnce(ctx, objective)
+	}
+
 	m.emitJSONStart(prompt)
 
 	if err := m.ensureServerReady(ctx); err != nil {
 		m.emitJSONError("server_not_ready", err.Error())
 
 		return "", err
+	}
+
+	if m.directFeaturePlannerShouldConsumeOperatorInput(prompt) {
+		return m.runDirectFeaturePlannerAnswerOnce(ctx, prompt)
 	}
 
 	return m.runStandardPromptOnce(ctx, prompt)

@@ -11,6 +11,7 @@ import (
 	"idiom/internal/evidence/transcript"
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/llama"
+	"idiom/internal/workflows/featureplanner"
 )
 
 // resumeLinePathsRe captures the optional `(paths: a.go, b.go)` note the
@@ -18,6 +19,7 @@ import (
 // recover the per-item paths the writer recorded, so the hit tracker
 // can match subsequent writes to the right item.
 var resumeLinePathsRe = regexp.MustCompile(`\(paths:\s*([^)]+)\)`)
+var featurePlannerStatePathRe = regexp.MustCompile(`\.idiom/feature-planner/([^/\s"']+)/state\.json`)
 
 // ResumeSession swaps the model into a prior session identified by id:
 // the debug logger is re-pointed at that session's JSONL (append mode),
@@ -121,6 +123,8 @@ func (m *Model) ResumeSession(id string) error {
 	m.currentTurnHistoryActive = false
 	m.currentTurnHistoryIndex = 0
 	m.currentTurnTools = nil
+	m.directFeaturePlannerSessionID = ""
+	m.restoreDirectFeaturePlannerSessionFromSessionLog(path)
 	m.renderMessages(false)
 	m.requestHistoryPanelRender(true, true)
 
@@ -128,6 +132,114 @@ func (m *Model) ResumeSession(id string) error {
 	m.renderPlanPanelContent()
 
 	return nil
+}
+
+func (m *Model) restoreDirectFeaturePlannerSessionFromSessionLog(path string) bool {
+	if m == nil {
+		return false
+	}
+
+	root := strings.TrimSpace(m.projectRoot())
+	if root == "" {
+		return false
+	}
+
+	ids := featurePlannerSessionIDsFromSessionLog(path)
+	for i := len(ids) - 1; i >= 0; i-- {
+		state, _, err := featureplanner.LoadState(root, ids[i])
+		if err != nil {
+			m.directFeaturePlannerSessionID = ""
+			return false
+		}
+
+		if featurePlannerStateAcceptsDirectOperatorInput(state) {
+			m.directFeaturePlannerSessionID = strings.TrimSpace(state.SessionID)
+			if effortRoot := strings.TrimSpace(state.EffortRoot); effortRoot != "" {
+				m.featurePlannerEffortRoot = m.resolveFeaturePlannerEffortRoot(effortRoot)
+			}
+
+			return true
+		}
+
+		m.directFeaturePlannerSessionID = ""
+
+		return false
+	}
+
+	return false
+}
+
+func featurePlannerSessionIDsFromSessionLog(path string) []string {
+	var ids []string
+	seen := map[string]bool{}
+
+	appendID := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return
+		}
+
+		if seen[id] {
+			for i, existing := range ids {
+				if existing == id {
+					ids = append(ids[:i], ids[i+1:]...)
+					break
+				}
+			}
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+
+	_ = util.ScanFile(path, func(raw json.RawMessage) error {
+		var record map[string]any
+		if err := json.Unmarshal(raw, &record); err != nil {
+			return nil
+		}
+
+		role := sessionStringField(record, "role")
+		content := sessionStringField(record, "content")
+		if content == "" {
+			return nil
+		}
+
+		featurePlannerRole := strings.Contains(role, "feature_planner")
+
+		for _, match := range featurePlannerStatePathRe.FindAllStringSubmatchIndex(content, -1) {
+			if !featurePlannerStatePathMatchIsRelative(content, match[0]) {
+				continue
+			}
+			if len(match) > 3 {
+				appendID(content[match[2]:match[3]])
+			}
+		}
+
+		if featurePlannerRole {
+			var event struct {
+				SessionID string `json:"session_id"`
+			}
+			if err := json.Unmarshal([]byte(content), &event); err == nil {
+				appendID(event.SessionID)
+			}
+		}
+
+		return nil
+	})
+
+	return ids
+}
+
+func featurePlannerStatePathMatchIsRelative(content string, start int) bool {
+	if start <= 0 || start > len(content) {
+		return true
+	}
+
+	switch content[start-1] {
+	case '/', '\\':
+		return false
+	default:
+		return true
+	}
 }
 
 // replaySessionMessages reads one JSONL log and returns the

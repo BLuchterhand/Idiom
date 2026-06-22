@@ -1042,8 +1042,16 @@ func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, featurepl
 		return "", featureplanner.FeatureState{}, "", fmt.Errorf("write tdd.json: %w", writeErr)
 	}
 
-	traceability := loadProductWorkflowTraceability(effortRoot)
-	brief := buildProductWorkflowBrief(effortRoot, ws, prd, adrIdx, parsedADRs, ledger, traceability)
+	handoff, handoffErr := productworkflow.LoadImplementationHandoff(effortRoot)
+	if handoffErr != nil {
+		return "", featureplanner.FeatureState{}, "", fmt.Errorf("load product workflow implementation handoff: %w", handoffErr)
+	}
+	brief := featureplannerproduct.BriefFromImplementationHandoff(handoff)
+	brief.Constraints = appendUniqueBriefStrings(brief.Constraints,
+		"Preserve accepted PRD requirements and ADR decisions unless a new accepted ADR supersedes them.",
+		"Do not mutate product workflow artifacts while implementing the feature atom.",
+		"Report a planner question if PRD, ADR, or TDD obligations contradict the implementation scope.",
+	)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1120,83 +1128,24 @@ func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, featurepl
 }
 
 // buildProductWorkflowBrief constructs a ProductWorkflowBrief from effort artifacts.
-func buildProductWorkflowBrief(effortRoot string, workflowState productworkflow.WorkflowState, prd productworkflow.PRDDocument, adrIdx productworkflow.ADRIndex, parsedADRs []productworkflow.ParsedADR, ledger productworkflow.TDDLedger, traceability productworkflow.TraceabilityMatrix) *featureplanner.ProductWorkflowBrief {
-	brief := &featureplanner.ProductWorkflowBrief{
-		EffortID:           ledger.EffortID,
-		TaskID:             ledger.TaskID,
-		EffortRoot:         effortRoot,
-		CoverageTier:       ledger.CoverageTier,
-		CoverageGatePassed: true,
-		ArtifactRootPath:   effortRoot,
-	}
+func buildProductWorkflowBrief(effortRoot string, workflowState productworkflow.WorkflowState, prd productworkflow.PRDDocument, adrIdx productworkflow.ADRIndex, parsedADRs []productworkflow.ParsedADR, ledger productworkflow.TDDLedger, traceability productworkflow.TraceabilityMatrix, implementationRecords []productworkflow.ImplementationLedgerRecord) *featureplanner.ProductWorkflowBrief {
+	return buildProductWorkflowBriefWithPromotionEvents(effortRoot, workflowState, prd, adrIdx, parsedADRs, ledger, traceability, implementationRecords, nil)
+}
 
-	brief.ContextEvidencePaths = appendUniqueBriefStrings(brief.ContextEvidencePaths, workflowState.Context.ReferencedPaths...)
-
-	for _, finding := range productworkflow.ImplementationAffectingClaimFindings(prd, parsedADRs) {
-		brief.Blockers = appendUniqueBriefStrings(brief.Blockers, finding.Message)
-	}
-
-	for _, finding := range productworkflow.ImplementationAffectingClaimEvidenceFindings(prd, parsedADRs, productworkflow.TraceabilityEvidenceIDs(traceability)) {
-		brief.Blockers = appendUniqueBriefStrings(brief.Blockers, finding.Message)
-	}
-
-	for _, req := range prd.Requirements {
-		brief.PRDRequirements = append(brief.PRDRequirements, featureplanner.PRDRequirementBrief{
-			ID:          req.ID,
-			Priority:    req.Priority,
-			Statement:   req.Statement,
-			Testability: req.Testability,
-			Metric:      req.Metric,
-			Obligations: append([]string{}, req.TDDObligations...),
-		})
-		if strings.TrimSpace(req.Statement) != "" {
-			brief.RequiredBehavior = appendUniqueBriefStrings(brief.RequiredBehavior, fmt.Sprintf("%s: %s", req.ID, strings.TrimSpace(req.Statement)))
-		}
-
-		if strings.TrimSpace(req.Testability) != "" {
-			brief.Acceptance = appendUniqueBriefStrings(brief.Acceptance, fmt.Sprintf("%s testability: %s", req.ID, strings.TrimSpace(req.Testability)))
-		}
-
-		if strings.TrimSpace(req.Metric) != "" {
-			brief.Acceptance = appendUniqueBriefStrings(brief.Acceptance, fmt.Sprintf("%s metric: %s", req.ID, strings.TrimSpace(req.Metric)))
-		}
-	}
-
-	for _, entry := range adrIdx.ADRs {
-		brief.AcceptedADRIDs = append(brief.AcceptedADRIDs, entry.ADRID)
-		brief.AcceptedADRPaths = append(brief.AcceptedADRPaths, filepath.Join("adrs", entry.Path))
-	}
-
-	for _, obl := range ledger.Obligations {
-		brief.TDDObligations = append(brief.TDDObligations, featureplanner.TDDObligationBrief{
-			ID:             obl.ID,
-			Behavior:       obl.Behavior,
-			Command:        obl.Command,
-			RequiredBefore: obl.RequiredBefore,
-			Status:         obl.Status,
-		})
-		if strings.TrimSpace(obl.Behavior) != "" {
-			brief.RequiredBehavior = appendUniqueBriefStrings(brief.RequiredBehavior, fmt.Sprintf("%s: %s", obl.ID, strings.TrimSpace(obl.Behavior)))
-		}
-
-		if strings.TrimSpace(obl.Command) != "" {
-			brief.Tests = appendUniqueBriefStrings(brief.Tests, strings.TrimSpace(obl.Command))
-			brief.Acceptance = appendUniqueBriefStrings(brief.Acceptance, fmt.Sprintf("%s passes before implementation dispatch", strings.TrimSpace(obl.Command)))
-		}
-	}
-
-	for _, adr := range parsedADRs {
-		adrID := strings.TrimSpace(adr.Doc.FrontMatter.ADRID)
-		if adrID == "" {
-			continue
-		}
-
-		if decision := adrSectionExcerpt(adr.Doc.BodyMarkdown, "Decision"); decision != "" {
-			brief.Decisions = appendUniqueBriefStrings(brief.Decisions, fmt.Sprintf("%s (%s): %s", adrID, adr.RelPath, decision))
-		}
-
-		brief.FilesToModify = appendUniqueBriefStrings(brief.FilesToModify, inferProductWorkflowFilesToModify(adr.Doc.BodyMarkdown)...)
-	}
+func buildProductWorkflowBriefWithPromotionEvents(effortRoot string, workflowState productworkflow.WorkflowState, prd productworkflow.PRDDocument, adrIdx productworkflow.ADRIndex, parsedADRs []productworkflow.ParsedADR, ledger productworkflow.TDDLedger, traceability productworkflow.TraceabilityMatrix, implementationRecords []productworkflow.ImplementationLedgerRecord, promotionEvents []productworkflow.BehavioralCoveragePromotionEvent) *featureplanner.ProductWorkflowBrief {
+	input := productworkflow.PrepareBriefGenerationInput(productworkflow.BriefGenerationInput{
+		EffortRoot:            effortRoot,
+		WorkflowState:         workflowState,
+		PRD:                   prd,
+		ADRIndex:              adrIdx,
+		ADRs:                  parsedADRs,
+		TDD:                   ledger,
+		Traceability:          traceability,
+		ImplementationRecords: implementationRecords,
+		PromotionEvents:       promotionEvents,
+	})
+	handoff := productworkflow.BuildImplementationHandoff(input)
+	brief := featureplannerproduct.BriefFromImplementationHandoff(handoff)
 
 	brief.Constraints = appendUniqueBriefStrings(brief.Constraints,
 		"Preserve accepted PRD requirements and ADR decisions unless a new accepted ADR supersedes them.",
@@ -1205,20 +1154,6 @@ func buildProductWorkflowBrief(effortRoot string, workflowState productworkflow.
 	)
 
 	return brief
-}
-
-func loadProductWorkflowTraceability(effortRoot string) productworkflow.TraceabilityMatrix {
-	data, err := os.ReadFile(filepath.Join(effortRoot, "evidence", "traceability_matrix.json"))
-	if err != nil {
-		return productworkflow.TraceabilityMatrix{}
-	}
-
-	matrix, err := productworkflow.ParseTraceabilityMatrixJSON(data)
-	if err != nil {
-		return productworkflow.TraceabilityMatrix{}
-	}
-
-	return matrix
 }
 
 func formatProductWorkflowFeaturePlannerRecovery(state featureplanner.FeatureState, statePath string) (string, bool) {

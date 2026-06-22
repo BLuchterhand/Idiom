@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -246,8 +247,6 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 
 			if m.featurePlannerPhase != "" {
 				m.sendProductFeaturePlannerTurnAsync(text)
-			} else if m.directFeaturePlannerShouldConsumeOperatorInput(text) {
-				m.sendDirectFeaturePlannerAnswerAsync(text)
 			} else {
 				m.updateTUIRequestStatus(text)
 				m.sendPromptAsync(text)
@@ -397,8 +396,7 @@ func (m *Model) handleFeaturePlannerCommand(raw string) bool {
 	}
 
 	m.appendHistoryMessage("user", raw, nil)
-	m.logMessage("user", raw)
-	m.sendFeaturePlannerCommandAsync(objective)
+	m.sendPromptAsync(raw)
 
 	m.status = "Dispatching to feature-planner..."
 
@@ -459,6 +457,238 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
 	}
 
 	return m.waitForEventCmd(), true
+}
+
+func (m *Model) filterTerminalMouseReportFragmentKey(msg tea.Msg) (tea.Msg, bool) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok || keyMsg.Type != tea.KeyRunes || keyMsg.Paste {
+		return msg, false
+	}
+
+	filtered, changed := m.stripLeakedTerminalMouseReports(string(keyMsg.Runes))
+	if !changed {
+		return msg, false
+	}
+	if filtered == "" {
+		return nil, true
+	}
+
+	keyMsg.Runes = []rune(filtered)
+	return keyMsg, true
+}
+
+func (m *Model) stripLeakedTerminalMouseReports(value string) (string, bool) {
+	if value == "" {
+		return value, false
+	}
+
+	var out strings.Builder
+	changed := false
+
+	// Parsed tea.MouseMsg values are consumed before the textarea. This catches
+	// terminal mouse protocol tails that arrive as printable runes instead.
+	for value != "" {
+		if mouseReportPrefixFragment(value) {
+			return out.String(), true
+		}
+
+		if n := m.sgrMouseReportLen(value); n > 0 {
+			value = value[n:]
+			changed = true
+			continue
+		}
+
+		if n := m.urxvtMouseReportLen(value); n > 0 {
+			value = value[n:]
+			changed = true
+			continue
+		}
+
+		if n := m.x10WheelMouseReportLen(value); n > 0 {
+			value = value[n:]
+			changed = true
+			continue
+		}
+
+		r, size := utf8.DecodeRuneInString(value)
+		if r == utf8.RuneError && size == 0 {
+			break
+		}
+		out.WriteRune(r)
+		value = value[size:]
+	}
+
+	if !changed {
+		return value, false
+	}
+
+	return out.String(), true
+}
+
+func mouseReportPrefixFragment(value string) bool {
+	switch {
+	case strings.HasPrefix(value, "[<"):
+		return semicolonNumberMousePrefix(value[2:])
+	case strings.HasPrefix(value, "["):
+		return semicolonNumberMousePrefix(value[1:])
+	default:
+		return false
+	}
+}
+
+func semicolonNumberMousePrefix(value string) bool {
+	if value == "" {
+		return false
+	}
+
+	fields := 0
+	digitsInField := 0
+	for _, r := range value {
+		switch {
+		case r >= '0' && r <= '9':
+			digitsInField++
+		case r == ';':
+			if digitsInField == 0 {
+				return false
+			}
+			fields++
+			digitsInField = 0
+		default:
+			return false
+		}
+	}
+
+	return fields > 0
+}
+
+func (m *Model) sgrMouseReportLen(value string) int {
+	if !strings.HasPrefix(value, "[<") {
+		return 0
+	}
+
+	width, height := m.mouseReportBounds()
+	if width <= 0 || height <= 0 {
+		return 0
+	}
+
+	i := 2
+	var fields [3]int
+	for field := 0; field < 3; field++ {
+		start := i
+		for i < len(value) && value[i] >= '0' && value[i] <= '9' {
+			fields[field] = fields[field]*10 + int(value[i]-'0')
+			i++
+		}
+		if i == start {
+			return 0
+		}
+		if field < 2 {
+			if i >= len(value) || value[i] != ';' {
+				return 0
+			}
+			i++
+		}
+	}
+
+	if i >= len(value) || (value[i] != 'M' && value[i] != 'm') {
+		return 0
+	}
+
+	x := fields[1] - 1
+	y := fields[2] - 1
+	if x < 0 || x >= width || y < 0 || y >= height {
+		return 0
+	}
+
+	return i + 1
+}
+
+func (m *Model) urxvtMouseReportLen(value string) int {
+	if !strings.HasPrefix(value, "[") || strings.HasPrefix(value, "[<") {
+		return 0
+	}
+
+	i := 1
+	var fields [3]int
+	for field := 0; field < 3; field++ {
+		start := i
+		for i < len(value) && value[i] >= '0' && value[i] <= '9' {
+			fields[field] = fields[field]*10 + int(value[i]-'0')
+			i++
+		}
+		if i == start {
+			return 0
+		}
+		if field < 2 {
+			if i >= len(value) || value[i] != ';' {
+				return 0
+			}
+			i++
+		}
+	}
+
+	if i >= len(value) || value[i] != 'M' {
+		return 0
+	}
+
+	width, height := m.mouseReportBounds()
+	if width <= 0 || height <= 0 {
+		return 0
+	}
+
+	x := fields[1] - 1
+	y := fields[2] - 1
+	if x < 0 || x >= width || y < 0 || y >= height {
+		return 0
+	}
+
+	return i + 1
+}
+
+func (m *Model) x10WheelMouseReportLen(value string) int {
+	const reportLen = 5
+	if !strings.HasPrefix(value, "[M") {
+		return 0
+	}
+
+	report := []rune(value)
+	if len(report) < reportLen {
+		return 0
+	}
+
+	width, height := m.mouseReportBounds()
+	if width <= 0 || height <= 0 {
+		return 0
+	}
+
+	encodedButton := int(report[2]) - 32
+	if encodedButton < 0 || encodedButton&64 == 0 {
+		return 0
+	}
+
+	x := int(report[3]) - 33
+	y := int(report[4]) - 33
+	if x < 0 || x >= width || y < 0 || y >= height {
+		return 0
+	}
+
+	return len(string(report[:reportLen]))
+}
+
+func (m *Model) mouseReportBounds() (int, int) {
+	if m == nil {
+		return 0, 0
+	}
+
+	width, height := m.width, m.height
+	if width <= 0 {
+		width = m.viewport.Width
+	}
+	if height <= 0 {
+		height = m.viewport.Height
+	}
+
+	return width, height
 }
 
 func (m *Model) handleMainViewportThoughtPanelMouse(msg tea.MouseMsg) bool {

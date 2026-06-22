@@ -521,6 +521,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		rearmEventWait = true
 	}
 
+	if filteredMsg, changed := m.filterTerminalMouseReportFragmentKey(msg); changed {
+		if filteredMsg == nil {
+			if rearmEventWait {
+				cmds = append(cmds, m.waitForEventCmd())
+			}
+
+			return m, tea.Batch(cmds...)
+		}
+
+		msg = filteredMsg
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		cmd, done := m.handleWindowSize(msg)
