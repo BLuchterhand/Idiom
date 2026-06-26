@@ -460,14 +460,14 @@ func implementationHandoffCoverageEventID(contract BehavioralCoverageContract, i
 	if event := AcceptedBehavioralCoveragePromotionEvent(input.PromotionEvents, digest); event != nil {
 		return strings.TrimSpace(event.EventID)
 	}
-	if eventID := firstNonEmptyHandoffString(contract.EventID, input.WorkflowState.LastEventID); eventID != "" {
-		return eventID
-	}
 	return ""
 }
 
 func implementationHandoffBehavioralCoverageStatus(contract BehavioralCoverageContract, input BriefGenerationInput) string {
 	if err := ValidateBehavioralCoverageContract(contract); err != nil {
+		return ProductWorkflowStatusBlocked
+	}
+	if projected := ProjectBehavioralCoverageContract(contract); behavioralCoverageHasAcceptedHandoffBlockingGate(projected) {
 		return ProductWorkflowStatusBlocked
 	}
 	if err := ValidateBehavioralCoverageProjection(contract, input.TDD.Coverage); err != nil {
@@ -478,6 +478,18 @@ func implementationHandoffBehavioralCoverageStatus(contract BehavioralCoverageCo
 		return ProductWorkflowStatusBlocked
 	}
 	return BehavioralCoverageStatusAccepted
+}
+
+func behavioralCoverageHasAcceptedHandoffBlockingGate(coverage TDDCoverage) bool {
+	for _, gate := range coverage.GatesBlocked {
+		if hasUnavailableMutationBlocker([]string{gate}) {
+			continue
+		}
+		if strings.TrimSpace(gate) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func implementationHandoffAcceptedCoverage(input BriefGenerationInput) *ImplementationHandoffAcceptedCoverage {

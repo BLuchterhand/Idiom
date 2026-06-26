@@ -1826,6 +1826,86 @@ func TestRunInjectsExplicitVerificationCommandsIntoExecutorPlan(t *testing.T) {
 	t.Fatalf("explicit verification command did not pass, verification=%#v", result.Completion.Verification)
 }
 
+func TestRunExecutesRequestedPytestVerificationForGreenfieldAtom(t *testing.T) {
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	markerPath := filepath.Join(root, "pytest-ran.txt")
+	fakePytest := filepath.Join(binDir, "pytest")
+	fakePytestBody := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellQuoteRunTest(markerPath) + "\nexit 0\n"
+	if err := os.WriteFile(fakePytest, []byte(fakePytestBody), 0o755); err != nil {
+		t.Fatalf("write fake pytest: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+	cfg.Workspace.CommandTimeoutSeconds = 30
+
+	var stdout, stderr bytes.Buffer
+
+	result := Run(cfg, Options{
+		Prompt: strings.Join([]string{
+			"Implement the LLM Brain query handler.",
+			"Required verification command: run `pytest tests/test_query_handler.py` after edits.",
+		}, "\n"),
+		JSONEvents:        true,
+		SkipReviewRepair:  true,
+		RequiredEditPaths: MultiFlag{"llm_brain/query_handler.py", "tests/test_query_handler.py"},
+		AuthorizedNewFiles: []string{
+			"llm_brain/query_handler.py",
+			"tests/test_query_handler.py",
+		},
+	}, func(cfg config.Config, _ string, opts RunOptions, _ io.Writer) (string, error) {
+		if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecutePlanner) {
+			t.Fatalf("unexpected task family %q", opts.TaskFamily)
+		}
+
+		writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{
+			{
+				Path:       "tests/test_query_handler.py",
+				OldText:    "",
+				NewText:    "def test_query_handler_smoke():\n    assert True\n",
+				ReplaceAll: true,
+				Purpose:    "create pytest smoke coverage for the query handler",
+			},
+			{
+				Path:       "llm_brain/query_handler.py",
+				OldText:    "",
+				NewText:    "class QueryHandler:\n    def handle_query(self, query: str) -> str:\n        return 'ok'\n",
+				ReplaceAll: true,
+				Purpose:    "create the query handler implementation",
+			},
+		}, "create greenfield query handler and test")
+
+		return "submitted plan", nil
+	}, nil, &stdout, &stderr)
+
+	if result.ExitCode != 0 {
+		t.Fatalf("Run exit=%d result=%#v stdout=%s stderr=%s", result.ExitCode, result, stdout.String(), stderr.String())
+	}
+	if result.Completion == nil {
+		t.Fatalf("expected terminal completion record, result=%#v stdout=%s", result, stdout.String())
+	}
+
+	command := "pytest tests/test_query_handler.py"
+	if !planExecuteRunTestCompletionHasCommand(result.Completion.VerificationCommands, command) {
+		t.Fatalf("requested pytest command was not planned, commands=%#v", result.Completion.VerificationCommands)
+	}
+	if !planExecuteRunTestCompletionHasPassedVerification(result.Completion.Verification, command) {
+		t.Fatalf("requested pytest command did not pass, verification=%#v", result.Completion.Verification)
+	}
+
+	marker := strings.TrimSpace(readFileStringForRunTest(t, markerPath))
+	if marker != "tests/test_query_handler.py" {
+		t.Fatalf("fake pytest args = %q, want test path", marker)
+	}
+}
+
 func TestRunKeepsSourceSanityFailureWhenReviewRepairUnavailable(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/recover-source-sanity-unavailable\n\ngo 1.22\n"), 0o644); err != nil {
@@ -3444,6 +3524,21 @@ func TestExtractRequestedVerificationCommandsHandlesRunAfterExecutorPhrase(t *te
 	}
 }
 
+func TestExtractRequestedVerificationCommandsHandlesCommaSeparatedPytestApproval(t *testing.T) {
+	prompt := `Approved. Use pytest tests/test_llm_core.py, pytest tests/test_memory.py, pytest tests/test_tools.py, and pytest tests/test_planner.py as the verification commands.`
+	got := ExtractRequestedVerificationCommands(prompt)
+	want := []string{
+		"pytest tests/test_llm_core.py",
+		"pytest tests/test_memory.py",
+		"pytest tests/test_tools.py",
+		"pytest tests/test_planner.py",
+	}
+
+	if !slices.Equal(got, want) {
+		t.Fatalf("verification commands = %#v, want %#v", got, want)
+	}
+}
+
 func TestExtractRequestedVerificationCommandsIgnoresSuggestedTests(t *testing.T) {
 	prompt := strings.Join([]string{
 		"# Plan",
@@ -3616,6 +3711,30 @@ func readFileStringForRunTest(t *testing.T, path string) string {
 	}
 
 	return string(body)
+}
+
+func shellQuoteRunTest(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func planExecuteRunTestCompletionHasCommand(commands []VerificationCommand, want string) bool {
+	for _, command := range commands {
+		if command.Command == want {
+			return true
+		}
+	}
+
+	return false
+}
+
+func planExecuteRunTestCompletionHasPassedVerification(checks []PhaseEvidenceCheck, want string) bool {
+	for _, check := range checks {
+		if check.Command == want && check.Status == "ok" {
+			return true
+		}
+	}
+
+	return false
 }
 
 func timeNowForRunTest() time.Time {

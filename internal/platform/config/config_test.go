@@ -71,6 +71,27 @@ func TestLoadAppliesDefaultsAndResolvesWorkspacePaths(t *testing.T) {
 	}
 }
 
+func TestGlobalConfigFallbackSkipsProcessHomeDuringTests(t *testing.T) {
+	if processHomeDir == "" {
+		t.Skip("process home unavailable")
+	}
+
+	t.Setenv("IDIOM_TEST_ALLOW_GLOBAL_CONFIG_FALLBACK", "")
+
+	if shouldUseGlobalConfigFallback(processHomeDir) {
+		t.Fatal("tests must not fall back to the process user's global config by default")
+	}
+
+	if tempHome := t.TempDir(); !shouldUseGlobalConfigFallback(tempHome) {
+		t.Fatal("tests that explicitly replace HOME should still be able to exercise global config fallback")
+	}
+
+	t.Setenv("IDIOM_TEST_ALLOW_GLOBAL_CONFIG_FALLBACK", "1")
+	if !shouldUseGlobalConfigFallback(processHomeDir) {
+		t.Fatal("explicit test opt-in should allow process-home global config fallback")
+	}
+}
+
 func TestLoadHonorsAttachInstructionFilesFalse(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")

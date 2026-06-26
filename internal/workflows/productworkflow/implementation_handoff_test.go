@@ -249,18 +249,159 @@ func TestBuildImplementationHandoffRequiresAcceptedPromotionEvent(t *testing.T) 
 			TestRefs:       []string{"TestBuildImplementationHandoffRequiresAcceptedPromotionEvent"},
 		}},
 	}
-	input.WorkflowState.LastEventID = ""
+	input.WorkflowState.LastEventID = "evt-workflow-not-accepted"
+	contract.EventID = "evt-contract-not-accepted"
 	input.TDD.CoverageTier = "behavior_standard"
 	input.TDD.Coverage = ProjectBehavioralCoverageContract(contract)
 	input.TDD.BehavioralCoverage = &contract
+	input.PromotionEvents = []BehavioralCoveragePromotionEvent{{
+		Event:        "behavioral_coverage_prepared",
+		EventID:      "evt-prepared-not-accepted",
+		State:        BehavioralCoveragePromotionStatePrepared,
+		CommitStatus: BehavioralCoveragePromotionCommitStatusPrepared,
+		Digest:       BehavioralCoverageContractDigest(contract),
+	}}
 	input.CoverageEvaluation = CoverageGateEvaluation{Status: ProductWorkflowStatusPass, CoverageTier: "behavior_standard"}
 
 	handoff := BuildImplementationHandoff(input)
 	if handoff.CoverageContract == nil || handoff.CoverageContract.Status != ProductWorkflowStatusBlocked {
 		t.Fatalf("expected missing promotion event to block accepted coverage, got %+v", handoff.CoverageContract)
 	}
+	if handoff.CoverageContract.EventID != "" {
+		t.Fatalf("blocked coverage contract must not expose non-authoritative event id, got %+v", handoff.CoverageContract)
+	}
 	if handoff.AcceptedCoverage != nil {
 		t.Fatalf("coverage without accepted promotion event must not be exposed as accepted: %+v", handoff.AcceptedCoverage)
+	}
+}
+
+func TestBuildImplementationHandoffBlocksAcceptedCoverageWithOpenQuestionSurface(t *testing.T) {
+	input := implementationHandoffInput(t.TempDir())
+	contract := BehavioralCoverageContract{
+		ContractID:   "cov-open-surface",
+		EffortID:     "effort-handoff",
+		TaskID:       "impl-handoff",
+		CoverageTier: "behavior_standard",
+		EARS: []EARSRequirementCoverage{{
+			ID:          "REQ-HANDOFF",
+			Statement:   "When coverage is accepted, unresolved surface questions shall block accepted handoff.",
+			MappedRefs:  []string{"BDD-HANDOFF"},
+			Obligations: []string{"TDD-HANDOFF"},
+		}},
+		BDDScenarios: []BDDScenarioCoverage{{
+			ID:               "BDD-HANDOFF",
+			RequirementID:    "REQ-HANDOFF",
+			Given:            []string{"an accepted promotion event exists"},
+			When:             []string{"surface inventory still has an open question"},
+			Then:             []string{"accepted coverage is not exposed to feature planning"},
+			ConcreteDataRefs: []string{"fixtures/handoff.json"},
+			Obligations:      []string{"TDD-HANDOFF"},
+		}},
+		SurfaceInventory: []BehavioralSurfaceCoverage{{
+			ID:           "SURF-API",
+			Surface:      "api_transport",
+			Status:       "open_question",
+			Rationale:    "operator must decide whether transport is in scope",
+			QuestionRefs: []string{"Q-API"},
+		}},
+		TestObligations: []TestObligationCoverage{{
+			ID:             "TDD-HANDOFF",
+			Type:           "contract",
+			Behavior:       "open surface questions block accepted handoff",
+			Command:        "go test ./internal/workflows/productworkflow",
+			RequiredBefore: "implementation",
+		}},
+	}
+	input.TDD.CoverageTier = "behavior_standard"
+	input.TDD.Coverage = ProjectBehavioralCoverageContract(contract)
+	input.TDD.BehavioralCoverage = &contract
+	input.PromotionEvents = []BehavioralCoveragePromotionEvent{{
+		Event:   "behavioral_coverage_accepted",
+		EventID: "evt-open-surface",
+		State:   BehavioralCoveragePromotionStateAccepted,
+		Digest:  BehavioralCoverageContractDigest(contract),
+	}}
+	input.CoverageEvaluation = CoverageGateEvaluation{Status: ProductWorkflowStatusPass, CoverageTier: "behavior_standard"}
+
+	if err := ValidateBehavioralCoverageContract(contract); err != nil {
+		t.Fatalf("open_question surface should be valid structured contract state: %v", err)
+	}
+	if !containsString(input.TDD.Coverage.GatesBlocked, "surface_inventory") {
+		t.Fatalf("open_question surface should block surface_inventory gate: %+v", input.TDD.Coverage)
+	}
+
+	handoff := BuildImplementationHandoff(input)
+	if handoff.CoverageContract == nil || handoff.CoverageContract.Status != ProductWorkflowStatusBlocked {
+		t.Fatalf("open surface question should block accepted coverage contract, got %+v", handoff.CoverageContract)
+	}
+	if handoff.AcceptedCoverage != nil {
+		t.Fatalf("open surface question must not be filtered out into accepted coverage: %+v", handoff.AcceptedCoverage)
+	}
+}
+
+func TestBuildImplementationHandoffAllowsAcceptedCoverageWithWaivedMutationUnavailableTool(t *testing.T) {
+	input := implementationHandoffInput(t.TempDir())
+	contract := BehavioralCoverageContract{
+		ContractID:   "cov-waived-mutation",
+		EffortID:     "effort-handoff",
+		TaskID:       "impl-handoff",
+		CoverageTier: "behavior_standard",
+		EARS: []EARSRequirementCoverage{{
+			ID:          "REQ-HANDOFF",
+			Statement:   "When mutation tooling is unavailable, the system shall preserve accepted coverage with an explicit waiver.",
+			MappedRefs:  []string{"BDD-HANDOFF"},
+			Obligations: []string{"TDD-HANDOFF"},
+		}},
+		BDDScenarios: []BDDScenarioCoverage{{
+			ID:               "BDD-HANDOFF",
+			RequirementID:    "REQ-HANDOFF",
+			Given:            []string{"mutation tooling is unavailable"},
+			When:             []string{"coverage has an accepted waiver"},
+			Then:             []string{"accepted coverage remains available to feature planning"},
+			ConcreteDataRefs: []string{"fixtures/handoff.json"},
+			Obligations:      []string{"TDD-HANDOFF"},
+		}},
+		SurfaceInventory: []BehavioralSurfaceCoverage{{
+			ID:          "SURF-DOMAIN",
+			Surface:     "domain_logic",
+			Status:      "in_scope",
+			Rationale:   "handoff behavior is in scope",
+			Obligations: []string{"TDD-HANDOFF"},
+		}},
+		TestObligations: []TestObligationCoverage{{
+			ID:             "TDD-HANDOFF",
+			Type:           "contract",
+			Behavior:       "waived mutation unavailable-tool coverage remains accepted",
+			Command:        "go test ./internal/workflows/productworkflow",
+			RequiredBefore: "implementation",
+		}},
+		Mutation: BehavioralMutationCoverage{
+			Requirement:  BehavioralMutationRequirementWaived,
+			MinScore:     80,
+			WaiverReason: "mutation tool unavailable in this environment",
+		},
+	}
+	input.TDD.CoverageTier = "behavior_standard"
+	input.TDD.Coverage = ProjectBehavioralCoverageContract(contract)
+	input.TDD.BehavioralCoverage = &contract
+	input.PromotionEvents = []BehavioralCoveragePromotionEvent{{
+		Event:   "behavioral_coverage_accepted",
+		EventID: "evt-waived-mutation",
+		State:   BehavioralCoveragePromotionStateAccepted,
+		Digest:  BehavioralCoverageContractDigest(contract),
+	}}
+	input.CoverageEvaluation = CoverageGateEvaluation{Status: ProductWorkflowStatusPass, CoverageTier: "behavior_standard"}
+
+	if !containsString(input.TDD.Coverage.GatesBlocked, "mutation_unavailable_tool") {
+		t.Fatalf("waived mutation should project unavailable-tool token: %+v", input.TDD.Coverage)
+	}
+
+	handoff := BuildImplementationHandoff(input)
+	if handoff.CoverageContract == nil || handoff.CoverageContract.Status != BehavioralCoverageStatusAccepted {
+		t.Fatalf("waived mutation unavailable-tool token should not block accepted coverage, got %+v", handoff.CoverageContract)
+	}
+	if handoff.AcceptedCoverage == nil || handoff.AcceptedCoverage.Status != BehavioralCoverageStatusAccepted {
+		t.Fatalf("waived mutation accepted coverage should remain exposed, got %+v", handoff.AcceptedCoverage)
 	}
 }
 

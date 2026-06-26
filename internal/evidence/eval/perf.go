@@ -382,8 +382,8 @@ func analyzeRecords(path string, records []Record) PerfReport {
 		detectZeroHitSearch(&rep, records)
 		detectTruncatedSearch(&rep, records)
 		detectRedirectStorm(&rep, records)
-		detectSameToolRepeat(&rep, steps)
-		detectNamedGapReadWalk(&rep, steps)
+		detectSameToolRepeat(&rep, steps, records)
+		detectNamedGapReadWalk(&rep, steps, records)
 		detectDocWander(&rep, steps)
 		detectPromptSurfaceOverlap(&rep, records)
 		detectRejectionRetry(&rep, steps)
@@ -1080,7 +1080,7 @@ func detectRedirectStorm(rep *PerfReport, records []Record) {
 	}
 }
 
-func detectSameToolRepeat(rep *PerfReport, steps []toolStep) {
+func detectSameToolRepeat(rep *PerfReport, steps []toolStep, records []Record) {
 	counts := make(map[string]int)
 
 	for _, s := range steps {
@@ -1100,6 +1100,10 @@ func detectSameToolRepeat(rep *PerfReport, steps []toolStep) {
 	}
 
 	if worst >= 3 {
+		if strings.HasPrefix(worstKey, "read_file|") && hasRunEventRole(records, "mutation_no_write_loop_recovery") {
+			return
+		}
+
 		display := worstKey
 		if len(display) > 80 {
 			display = display[:80] + "..."
@@ -1114,7 +1118,11 @@ func detectSameToolRepeat(rep *PerfReport, steps []toolStep) {
 	}
 }
 
-func detectNamedGapReadWalk(rep *PerfReport, steps []toolStep) {
+func detectNamedGapReadWalk(rep *PerfReport, steps []toolStep, records []Record) {
+	if hasRunEventRole(records, "mutation_no_write_loop_recovery") {
+		return
+	}
+
 	type readWalk struct {
 		count int
 		first int
@@ -1183,6 +1191,24 @@ func detectNamedGapReadWalk(rep *PerfReport, steps []toolStep) {
 			Examples:    examples,
 		})
 	}
+}
+
+func hasRunEventRole(records []Record, role string) bool {
+	role = strings.TrimSpace(role)
+	if role == "" {
+		return false
+	}
+
+	for _, record := range records {
+		if record.Type != "run_event" {
+			continue
+		}
+		if strings.TrimSpace(stringField(record.Data, "role")) == role {
+			return true
+		}
+	}
+
+	return false
 }
 
 func detectDocWander(rep *PerfReport, steps []toolStep) {

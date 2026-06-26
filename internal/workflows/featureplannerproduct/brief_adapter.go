@@ -380,6 +380,17 @@ func acceptedCoverageFromHandoff(coverage *productworkflow.ImplementationHandoff
 			Obligations: append([]string(nil), journey.Obligations...),
 		})
 	}
+	for _, surface := range contract.SurfaceInventory {
+		out.SurfaceInventory = append(out.SurfaceInventory, featureplanner.AcceptedCoverageSurfaceDecision{
+			ID:           surface.ID,
+			Surface:      surface.Surface,
+			Status:       surface.Status,
+			Rationale:    surface.Rationale,
+			EvidenceRefs: append([]string(nil), surface.EvidenceRefs...),
+			Obligations:  append([]string(nil), surface.Obligations...),
+			QuestionRefs: append([]string(nil), surface.QuestionRefs...),
+		})
+	}
 	for _, obligation := range contract.TestObligations {
 		out.TestObligations = append(out.TestObligations, featureplanner.AcceptedCoverageTestObligation{
 			ID:             obligation.ID,

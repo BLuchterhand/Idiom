@@ -90,46 +90,13 @@ func (m *Model) featurePlannerPlanTabPath(sessionID string) string {
 }
 
 func featurePlannerPlanTabCandidate(state featureplanner.FeatureState) (featureplanner.FeaturePlan, featureplanner.RejectedPlanCandidate, bool) {
-	if featurePlannerPlanHasDisplayableContent(state.Plan) && !featurePlannerStatePrefersRejectedCandidate(state.Status) {
-		return state.Plan, featureplanner.RejectedPlanCandidate{}, true
-	}
-
-	if len(state.RejectedPlanCandidates) > 0 {
-		candidate := state.RejectedPlanCandidates[len(state.RejectedPlanCandidates)-1]
-		if featurePlannerPlanHasDisplayableContent(candidate.Plan) {
-			return candidate.Plan, candidate, true
-		}
-	}
-
-	if featurePlannerPlanHasDisplayableContent(state.Plan) {
-		return state.Plan, featureplanner.RejectedPlanCandidate{}, true
-	}
-
-	return featureplanner.FeaturePlan{}, featureplanner.RejectedPlanCandidate{}, false
-}
-
-func featurePlannerStatePrefersRejectedCandidate(status string) bool {
-	switch strings.TrimSpace(status) {
-	case featureplanner.FeatureStatePlanningQuestion,
-		featureplanner.FeatureStatePlanningRepair,
-		featureplanner.FeatureStatePlanningStuck,
-		featureplanner.FeatureStateStaleEditAnchor,
-		featureplanner.FeatureStateMalformedOutput:
-		return true
-	default:
-		return false
-	}
-}
-
-func featurePlannerPlanHasDisplayableContent(plan featureplanner.FeaturePlan) bool {
-	return strings.TrimSpace(plan.TopLevelScope.Objective) != "" ||
-		strings.TrimSpace(plan.SourceTask.Summary) != "" ||
-		len(plan.TopLevelScope.SuccessCriteria) > 0 ||
-		len(plan.Atoms) > 0
+	candidate, ok := featureplanner.SelectFeaturePlanProjectionCandidate(state)
+	return candidate.Plan, candidate.RejectedCandidate, ok
 }
 
 func renderFeaturePlannerPlanTabMarkdown(state featureplanner.FeatureState, statePath string, plan featureplanner.FeaturePlan, candidate featureplanner.RejectedPlanCandidate) string {
 	var b strings.Builder
+	review := buildFeaturePlannerCoverageReview(plan)
 
 	b.WriteString("# Feature Planner Candidate\n\n")
 	writeFeaturePlannerMarkdownField(&b, "Status", state.Status)
@@ -138,12 +105,321 @@ func renderFeaturePlannerPlanTabMarkdown(state featureplanner.FeatureState, stat
 	if hash := strings.TrimSpace(candidate.PlanHash); hash != "" {
 		writeFeaturePlannerMarkdownField(&b, "Candidate", hash)
 	}
+	writeFeaturePlannerPlanTabArtifactFields(&b, plan)
 	b.WriteString("\n")
 
+	writeFeaturePlannerProposedFiles(&b, plan)
+	writeFeaturePlannerCoverageReviewSummary(&b, review)
+	writeFeaturePlannerBehaviorReview(&b, review)
+	writeFeaturePlannerTraceabilityMatrix(&b, review)
 	writeFeaturePlannerMarkdownCoverageSections(&b, state, statePath, plan, candidate)
 	writeFeaturePlannerMarkdownAtoms(&b, plan.Atoms)
+	writeFeaturePlannerPlanTabVerificationClosures(&b, featurePlannerVerificationClosuresForPlan(plan, state.VerificationClosures))
+	if release, ok := featurePlannerReleaseReadinessForPlan(plan, state.ReleaseReadiness); ok {
+		writeFeaturePlannerPlanTabReleaseReadiness(&b, release)
+	}
 
 	return strings.TrimRight(b.String(), "\n") + "\n"
+}
+
+type featurePlannerCoverageReview = featureplanner.FeaturePlanTraceabilityReview
+type featurePlannerBehaviorReview = featureplanner.FeaturePlanBehaviorReview
+
+func buildFeaturePlannerCoverageReview(plan featureplanner.FeaturePlan) featurePlannerCoverageReview {
+	return featureplanner.FeaturePlanTraceabilityReviewForPlan(plan)
+}
+
+func writeFeaturePlannerCoverageReviewSummary(b *strings.Builder, review featurePlannerCoverageReview) {
+	missingConcreteTests := 0
+	for _, behavior := range review.Behaviors {
+		if behavior.MissingTests {
+			missingConcreteTests++
+		}
+	}
+	inScopeSurfaces := 0
+	missingSurfaceObligations := 0
+	openSurfaceQuestions := 0
+	for _, surface := range review.Surfaces {
+		if surface.Status == "accepted" {
+			inScopeSurfaces++
+		}
+		if surface.MissingObligations {
+			missingSurfaceObligations++
+		}
+		if surface.OpenQuestion {
+			openSurfaceQuestions++
+		}
+	}
+
+	b.WriteString("## Coverage Review Summary\n\n")
+	fmt.Fprintf(b, "- Behaviors: %d\n", len(review.Behaviors))
+	fmt.Fprintf(b, "- Behavior surfaces: %d\n", len(review.Surfaces))
+	fmt.Fprintf(b, "- In-scope surfaces: %d\n", inScopeSurfaces)
+	fmt.Fprintf(b, "- In-scope surfaces missing TDD obligations: %d\n", missingSurfaceObligations)
+	fmt.Fprintf(b, "- Open surface questions: %d\n", openSurfaceQuestions)
+	fmt.Fprintf(b, "- Variants: %d\n", review.VariantCount)
+	fmt.Fprintf(b, "- Domain invariants: %d\n", len(review.InvariantRefs))
+	fmt.Fprintf(b, "- Concrete test cases: %d\n", len(review.TestCaseRefs))
+	fmt.Fprintf(b, "- Test files: %d\n", len(review.TestFiles))
+	fmt.Fprintf(b, "- Required commands: %d\n", len(review.Commands))
+	fmt.Fprintf(b, "- Behaviors missing concrete test cases: %d\n\n", missingConcreteTests)
+}
+
+func writeFeaturePlannerBehaviorReview(b *strings.Builder, review featurePlannerCoverageReview) {
+	b.WriteString("## Behavior Review\n\n")
+	if len(review.Behaviors) == 0 {
+		b.WriteString("- No behavior obligations recorded in the structured plan.\n\n")
+		return
+	}
+
+	for _, behavior := range review.Behaviors {
+		title := firstNonEmptyFeaturePlannerPlanText(behavior.ID, behavior.Behavior, "unnamed behavior")
+		if behavior.ID != "" && behavior.Behavior != "" && behavior.ID != behavior.Behavior {
+			title = behavior.ID + " - " + behavior.Behavior
+		}
+		fmt.Fprintf(b, "### Behavior: %s\n\n", title)
+		writeFeaturePlannerBehaviorList(b, "Atoms", behavior.AtomTitles, "No atom linkage recorded.")
+		writeFeaturePlannerBehaviorList(b, "Requirements", behavior.Requirements, "No requirement refs recorded.")
+		writeFeaturePlannerBehaviorList(b, "Acceptance refs", behavior.Acceptance, "No acceptance refs recorded.")
+		writeFeaturePlannerBehaviorList(b, "Scenarios", behavior.Scenarios, "No BDD scenarios recorded.")
+		writeFeaturePlannerBehaviorList(b, "Variants", behavior.Variants, "No variants recorded.")
+		writeFeaturePlannerBehaviorList(b, "Invariants", behavior.Invariants, "No domain invariants recorded.")
+		writeFeaturePlannerBehaviorList(b, "Concrete tests", behavior.TestCases, "No concrete test cases recorded.")
+		writeFeaturePlannerBehaviorList(b, "Test files", behavior.TestFiles, "No test files recorded.")
+		writeFeaturePlannerBehaviorList(b, "Commands", behavior.Commands, "No commands recorded.")
+		writeFeaturePlannerBehaviorList(b, "Surfaces", behavior.Surfaces, "No behavior surface linkage recorded.")
+		b.WriteString("\n")
+	}
+}
+
+func writeFeaturePlannerBehaviorList(b *strings.Builder, label string, values []string, empty string) {
+	values = featurePlannerUniqueStrings(values)
+	if len(values) == 0 {
+		fmt.Fprintf(b, "- %s: %s\n", label, empty)
+		return
+	}
+	fmt.Fprintf(b, "- %s: %s\n", label, strings.Join(values, "; "))
+}
+
+func writeFeaturePlannerTraceabilityMatrix(b *strings.Builder, review featurePlannerCoverageReview) {
+	b.WriteString("## Traceability Matrix\n\n")
+	if len(review.Behaviors) == 0 {
+		b.WriteString("- No behavior obligations recorded in the structured plan.\n\n")
+		return
+	}
+	b.WriteString("| Behavior | Acceptance | Scenarios / variants | Invariants | Concrete tests | Test files | Commands | Atoms |\n")
+	b.WriteString("|---|---|---|---|---|---|---|---|\n")
+	for _, behavior := range review.Behaviors {
+		label := firstNonEmptyFeaturePlannerPlanText(behavior.ID, behavior.Behavior, "unnamed behavior")
+		fmt.Fprintf(
+			b,
+			"| %s | %s | %s | %s | %s | %s | %s | %s |\n",
+			featurePlannerMarkdownTableCell(label),
+			featurePlannerMarkdownTableListCell(behavior.Acceptance),
+			featurePlannerMarkdownTableListCell(featurePlannerUniqueStrings(append(append([]string(nil), behavior.Scenarios...), behavior.Variants...))),
+			featurePlannerMarkdownTableListCell(behavior.Invariants),
+			featurePlannerMarkdownTableListCell(behavior.TestCases),
+			featurePlannerMarkdownTableListCell(behavior.TestFiles),
+			featurePlannerMarkdownTableListCell(behavior.Commands),
+			featurePlannerMarkdownTableListCell(behavior.AtomTitles),
+		)
+	}
+	b.WriteString("\n")
+}
+
+func featurePlannerMarkdownTableListCell(values []string) string {
+	values = featurePlannerUniqueStrings(values)
+	if len(values) == 0 {
+		return " "
+	}
+	for i, value := range values {
+		values[i] = featurePlannerInlineMarkdown(value)
+		values[i] = strings.ReplaceAll(values[i], "|", "\\|")
+	}
+	return strings.Join(values, "<br>")
+}
+
+func featurePlannerMarkdownTableCell(value string) string {
+	value = featurePlannerInlineMarkdown(value)
+	value = strings.ReplaceAll(value, "|", "\\|")
+	if value == "" {
+		return " "
+	}
+	return value
+}
+
+func writeFeaturePlannerPlanTabArtifactFields(b *strings.Builder, plan featureplanner.FeaturePlan) {
+	writeFeaturePlannerMarkdownField(b, "Artifact", plan.Artifact.ArtifactID)
+	if plan.Artifact.Revision > 0 {
+		writeFeaturePlannerMarkdownField(b, "Revision", fmt.Sprintf("%d", plan.Artifact.Revision))
+	}
+	writeFeaturePlannerMarkdownField(b, "Digest", plan.Artifact.Digest)
+	writeFeaturePlannerMarkdownField(b, "Workspace", plan.Artifact.WorkspaceFingerprint)
+	writeFeaturePlannerMarkdownField(b, "Approval", plan.Approval.Status)
+	writeFeaturePlannerMarkdownField(b, "Approval mode", plan.Approval.Mode)
+	writeFeaturePlannerMarkdownField(b, "Approval event", plan.Approval.EventID)
+}
+
+func writeFeaturePlannerProposedFiles(b *strings.Builder, plan featureplanner.FeaturePlan) {
+	required, allowed, testArtifacts := featurePlannerProposedFileGroups(plan)
+	b.WriteString("## Proposed Files\n\n")
+	if len(required) == 0 && len(allowed) == 0 && len(testArtifacts) == 0 {
+		b.WriteString("- No proposed edit files recorded in the structured plan.\n\n")
+		return
+	}
+
+	writeFeaturePlannerProposedFileGroup(b, "Required edit paths", required)
+	writeFeaturePlannerProposedFileGroup(b, "Allowed candidate edit paths", allowed)
+	writeFeaturePlannerProposedFileGroup(b, "Test artifact paths", testArtifacts)
+	b.WriteString("\n")
+}
+
+func featurePlannerProposedFileGroups(plan featureplanner.FeaturePlan) ([]string, []string, []string) {
+	groups := featureplanner.FeaturePlanProposedFiles(plan)
+	return groups.RequiredEditPaths, groups.AllowedEditPaths, groups.TestArtifactPaths
+}
+
+func writeFeaturePlannerProposedFileGroup(b *strings.Builder, label string, paths []string) {
+	paths = featurePlannerUniqueStrings(paths)
+	if len(paths) == 0 {
+		return
+	}
+
+	fmt.Fprintf(b, "- %s (%d):\n", label, len(paths))
+	for _, path := range paths {
+		fmt.Fprintf(b, "  - %s\n", featurePlannerInlineMarkdown(path))
+	}
+}
+
+func writeFeaturePlannerPlanTabVerificationClosures(b *strings.Builder, closures []featureplanner.VerificationClosure) {
+	if len(closures) == 0 {
+		return
+	}
+
+	b.WriteString("## Verification Closures\n\n")
+	for _, closure := range closures {
+		title := firstNonEmptyFeaturePlannerPlanText(closure.AtomID, closure.EventID, "atom")
+		fmt.Fprintf(b, "- %s: %s", title, featurePlannerInlineMarkdown(closure.Status))
+		if closure.PlanRevision > 0 {
+			fmt.Fprintf(b, " (plan r%d)", closure.PlanRevision)
+		}
+		b.WriteString("\n")
+		if closure.EventID != "" {
+			fmt.Fprintf(b, "  - Closure: %s\n", featurePlannerInlineMarkdown(closure.EventID))
+		}
+		if closure.PlanDigest != "" {
+			fmt.Fprintf(b, "  - Digest: %s\n", featurePlannerInlineMarkdown(closure.PlanDigest))
+		}
+		if len(closure.ChangedPaths) > 0 {
+			fmt.Fprintf(b, "  - Changed paths: %s\n", strings.Join(featurePlannerUniqueStrings(closure.ChangedPaths), ", "))
+		}
+		if len(closure.SourceSatisfiedEvidencePaths) > 0 {
+			fmt.Fprintf(b, "  - Source-satisfied paths: %s\n", strings.Join(featurePlannerUniqueStrings(closure.SourceSatisfiedEvidencePaths), ", "))
+		}
+		if commands := featurePlannerVerificationClosureCommands(closure); len(commands) > 0 {
+			fmt.Fprintf(b, "  - Commands: %s\n", strings.Join(commands, "; "))
+		}
+		if checks := featurePlannerVerificationClosureChecks(closure); len(checks) > 0 {
+			fmt.Fprintf(b, "  - Checks: %s\n", strings.Join(checks, "; "))
+		}
+	}
+	b.WriteString("\n")
+}
+
+func featurePlannerVerificationClosuresForPlan(plan featureplanner.FeaturePlan, closures []featureplanner.VerificationClosure) []featureplanner.VerificationClosure {
+	artifactID := strings.TrimSpace(plan.Artifact.ArtifactID)
+	digest := strings.TrimSpace(plan.Artifact.Digest)
+	if artifactID == "" || digest == "" {
+		return nil
+	}
+	var out []featureplanner.VerificationClosure
+	for _, closure := range closures {
+		if strings.TrimSpace(closure.PlanArtifactID) == artifactID && strings.TrimSpace(closure.PlanDigest) == digest {
+			out = append(out, closure)
+		}
+	}
+	return out
+}
+
+func featurePlannerReleaseReadinessForPlan(plan featureplanner.FeaturePlan, decision featureplanner.ReleaseReadinessDecision) (featureplanner.ReleaseReadinessDecision, bool) {
+	artifactID := strings.TrimSpace(plan.Artifact.ArtifactID)
+	digest := strings.TrimSpace(plan.Artifact.Digest)
+	if artifactID == "" || digest == "" || strings.TrimSpace(decision.Status) == "" {
+		return featureplanner.ReleaseReadinessDecision{}, false
+	}
+	if strings.TrimSpace(decision.PlanArtifactID) != artifactID || strings.TrimSpace(decision.PlanDigest) != digest {
+		return featureplanner.ReleaseReadinessDecision{}, false
+	}
+	return decision, true
+}
+
+func writeFeaturePlannerPlanTabReleaseReadiness(b *strings.Builder, decision featureplanner.ReleaseReadinessDecision) {
+	if strings.TrimSpace(decision.Status) == "" {
+		return
+	}
+
+	b.WriteString("## Release Readiness\n\n")
+	fmt.Fprintf(b, "- Status: %s\n", featurePlannerInlineMarkdown(decision.Status))
+	if decision.EventID != "" {
+		fmt.Fprintf(b, "- Decision: %s\n", featurePlannerInlineMarkdown(decision.EventID))
+	}
+	if decision.PlanRevision > 0 {
+		fmt.Fprintf(b, "- Plan revision: %d\n", decision.PlanRevision)
+	}
+	if decision.PlanDigest != "" {
+		fmt.Fprintf(b, "- Digest: %s\n", featurePlannerInlineMarkdown(decision.PlanDigest))
+	}
+	if decision.ApprovalEventID != "" {
+		fmt.Fprintf(b, "- Approval: %s\n", featurePlannerInlineMarkdown(decision.ApprovalEventID))
+	}
+	if len(decision.VerificationClosureEventIDs) > 0 {
+		fmt.Fprintf(b, "- Verification closures: %s\n", strings.Join(featurePlannerUniqueStrings(decision.VerificationClosureEventIDs), ", "))
+	}
+	if len(decision.OpenObligations) > 0 {
+		fmt.Fprintf(b, "- Open obligations: %s\n", strings.Join(featurePlannerUniqueStrings(decision.OpenObligations), "; "))
+	}
+	if len(decision.Blockers) > 0 {
+		fmt.Fprintf(b, "- Blockers: %s\n", strings.Join(featurePlannerUniqueStrings(decision.Blockers), "; "))
+	}
+	b.WriteString("\n")
+}
+
+func featurePlannerVerificationClosureCommands(closure featureplanner.VerificationClosure) []string {
+	var commands []string
+	for _, result := range append(append([]featureplanner.VerificationCommandResult(nil), closure.RequiredTestResults...), closure.TDDCommandResults...) {
+		command := strings.TrimSpace(result.Command)
+		if command == "" {
+			continue
+		}
+		status := strings.TrimSpace(result.Status)
+		if status != "" {
+			command = command + " [" + status + "]"
+		}
+		commands = append(commands, command)
+	}
+
+	return featurePlannerUniqueStrings(commands)
+}
+
+func featurePlannerVerificationClosureChecks(closure featureplanner.VerificationClosure) []string {
+	var checks []string
+	for _, check := range append(append([]featureplanner.VerificationCheckResult(nil), closure.SourceSanity...), closure.Verification...) {
+		label := strings.TrimSpace(check.Kind)
+		if path := strings.TrimSpace(check.Path); path != "" {
+			label = firstNonEmptyFeaturePlannerPlanText(label, "check") + " " + path
+		}
+		if command := strings.TrimSpace(check.Command); command != "" {
+			label = firstNonEmptyFeaturePlannerPlanText(label, "check") + " `" + command + "`"
+		}
+		if status := strings.TrimSpace(check.Status); status != "" {
+			label = firstNonEmptyFeaturePlannerPlanText(label, "check") + " [" + status + "]"
+		}
+		if label != "" {
+			checks = append(checks, label)
+		}
+	}
+
+	return featurePlannerUniqueStrings(checks)
 }
 
 func writeFeaturePlannerMarkdownField(b *strings.Builder, label string, value string) {
@@ -222,14 +498,7 @@ func writeFeaturePlannerMarkdownAtoms(b *strings.Builder, atoms []featureplanner
 }
 
 func featurePlannerPlanTabPaths(plan featureplanner.FeaturePlan) []string {
-	var paths []string
-	for _, atom := range plan.Atoms {
-		paths = append(paths, atom.RequiredEditPaths...)
-		paths = append(paths, atom.AllowedEditPaths...)
-		paths = append(paths, atom.TestFirst.TestArtifactPaths...)
-	}
-
-	return featurePlannerUniqueStrings(paths)
+	return featureplanner.FeaturePlanProposedPaths(plan)
 }
 
 func featurePlannerUniqueStrings(values []string) []string {

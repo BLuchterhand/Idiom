@@ -15,10 +15,17 @@ const (
 	BehavioralCoverageStatusNotRequired = "not_required"
 
 	BehavioralCoveragePromotionStateProposed   = "proposed"
+	BehavioralCoveragePromotionStatePrepared   = "prepared"
 	BehavioralCoveragePromotionStateReviewed   = "reviewed"
 	BehavioralCoveragePromotionStateAccepted   = "accepted"
 	BehavioralCoveragePromotionStateRejected   = "rejected"
 	BehavioralCoveragePromotionStateSuperseded = "superseded"
+
+	BehavioralCoveragePromotionCommitStatusNotWritten   = "not_written"
+	BehavioralCoveragePromotionCommitStatusWritePending = "write_pending"
+	BehavioralCoveragePromotionCommitStatusPrepared     = "prepared"
+	BehavioralCoveragePromotionCommitStatusCommitted    = "committed"
+	BehavioralCoveragePromotionCommitStatusBlocked      = "blocked"
 
 	BehavioralMutationRequirementRequired    = "required"
 	BehavioralMutationRequirementWaived      = "waived"
@@ -35,6 +42,8 @@ type AcceptedBehavioralCoverageProjection struct {
 
 type BehavioralCoveragePromotionResult struct {
 	State            string
+	CommitStatus     string
+	LedgerCommitted  bool
 	EventID          string
 	Digest           string
 	SupersededDigest string
@@ -71,6 +80,7 @@ type BehavioralCoverageContract struct {
 	Observability     []ObservabilityCoverage      `json:"observability,omitempty"`
 	PerformanceBounds []PerformanceBoundCoverage   `json:"performance_bounds,omitempty"`
 	E2EJourneys       []E2EJourneyCoverage         `json:"e2e_journeys,omitempty"`
+	SurfaceInventory  []BehavioralSurfaceCoverage  `json:"surface_inventory,omitempty"`
 	TestObligations   []TestObligationCoverage     `json:"test_obligations,omitempty"`
 	Verification      []VerificationGateCoverage   `json:"verification,omitempty"`
 	Mutation          BehavioralMutationCoverage   `json:"mutation,omitempty"`
@@ -300,6 +310,16 @@ type E2EJourneyCoverage struct {
 	Obligations []string `json:"tdd_obligations,omitempty"`
 }
 
+type BehavioralSurfaceCoverage struct {
+	ID           string   `json:"id"`
+	Surface      string   `json:"surface"`
+	Status       string   `json:"status"`
+	Rationale    string   `json:"rationale,omitempty"`
+	EvidenceRefs []string `json:"evidence_refs,omitempty"`
+	Obligations  []string `json:"tdd_obligations,omitempty"`
+	QuestionRefs []string `json:"question_refs,omitempty"`
+}
+
 type TestObligationCoverage struct {
 	ID             string `json:"id"`
 	Type           string `json:"type,omitempty"`
@@ -489,6 +509,12 @@ func ValidateBehavioralCoverageContract(contract BehavioralCoverageContract) err
 		prefix := fmt.Sprintf("behavioral coverage e2e_journeys[%d]", i)
 		errs = append(errs, validateE2EJourneyCoverage(prefix, journey)...)
 		errs = append(errs, validateKnownBehavioralObligationRefs(prefix, journey.Obligations, obligationIDs)...)
+	}
+	errs = append(errs, validateBehavioralSurfaceInventoryConsistency(contract.SurfaceInventory)...)
+	for i, surface := range contract.SurfaceInventory {
+		prefix := fmt.Sprintf("behavioral coverage surface_inventory[%d]", i)
+		errs = append(errs, validateBehavioralSurfaceCoverage(prefix, surface)...)
+		errs = append(errs, validateKnownBehavioralObligationRefs(prefix, surface.Obligations, obligationIDs)...)
 	}
 
 	for i, obligation := range contract.TestObligations {
@@ -713,6 +739,13 @@ func ProjectBehavioralCoverageContract(contract BehavioralCoverageContract) TDDC
 			coverage.E2EJourneysScripted++
 		}
 	}
+	if len(contract.SurfaceInventory) > 0 {
+		if allBehavioralSurfacesDecided(contract.SurfaceInventory) {
+			coverage.GatesPassed = appendUniqueString(coverage.GatesPassed, "surface_inventory")
+		} else {
+			coverage.GatesBlocked = appendUniqueString(coverage.GatesBlocked, "surface_inventory")
+		}
+	}
 
 	projectMutationCoverage(contract.Mutation, &coverage)
 	coverage.GatesPassed = sortedUniqueStrings(coverage.GatesPassed)
@@ -924,6 +957,15 @@ func AcceptedOnlyBehavioralCoverageContract(contract BehavioralCoverageContract)
 			addObligations(item.Obligations)
 		}
 	}
+	out.SurfaceInventory = nil
+	for _, item := range contract.SurfaceInventory {
+		if BehavioralCoverageSurfaceStatusIsClosedDecision(item.Status) {
+			out.SurfaceInventory = append(out.SurfaceInventory, item)
+			if BehavioralCoverageSurfaceStatusIsAccepted(item.Status) {
+				addObligations(item.Obligations)
+			}
+		}
+	}
 	out.Verification = nil
 	for _, item := range contract.Verification {
 		refs := nonEmptyStrings(item.Obligations)
@@ -962,17 +1004,30 @@ func PromoteBehavioralCoverageContract(ledger TDDLedger, contract BehavioralCove
 }
 
 func ReviewBehavioralCoverageContractWithResult(ledger TDDLedger, contract BehavioralCoverageContract) (BehavioralCoveragePromotionResult, error) {
-	return behavioralCoveragePromotionResult(ledger, contract, BehavioralCoveragePromotionStateReviewed)
+	result, err := behavioralCoveragePromotionResult(ledger, contract, BehavioralCoveragePromotionStateReviewed)
+	if err != nil {
+		return result, err
+	}
+	result.CommitStatus = BehavioralCoveragePromotionCommitStatusNotWritten
+	return result, nil
 }
 
 func PromoteBehavioralCoverageContractWithResult(ledger TDDLedger, contract BehavioralCoverageContract) (BehavioralCoveragePromotionResult, error) {
-	return behavioralCoveragePromotionResult(ledger, contract, BehavioralCoveragePromotionStateAccepted)
+	result, err := behavioralCoveragePromotionResult(ledger, contract, BehavioralCoveragePromotionStateAccepted)
+	if err != nil {
+		return result, err
+	}
+	result.CommitStatus = BehavioralCoveragePromotionCommitStatusWritePending
+	return result, nil
 }
 
 func behavioralCoveragePromotionResult(ledger TDDLedger, contract BehavioralCoverageContract, state string) (BehavioralCoveragePromotionResult, error) {
 	contract = fillBehavioralCoverageContractIdentity(ledger, contract)
 	if err := ValidateBehavioralCoverageContract(contract); err != nil {
-		return BehavioralCoveragePromotionResult{State: BehavioralCoveragePromotionStateRejected}, err
+		return BehavioralCoveragePromotionResult{
+			State:        BehavioralCoveragePromotionStateRejected,
+			CommitStatus: BehavioralCoveragePromotionCommitStatusBlocked,
+		}, err
 	}
 
 	projected := ProjectBehavioralCoverageContract(contract)
@@ -1368,6 +1423,64 @@ func validateE2EJourneyCoverage(prefix string, journey E2EJourneyCoverage) []err
 	return errs
 }
 
+func validateBehavioralSurfaceCoverage(prefix string, surface BehavioralSurfaceCoverage) []error {
+	var errs []error
+	if strings.TrimSpace(surface.ID) == "" {
+		errs = append(errs, fmt.Errorf("%s missing id", prefix))
+	}
+	if strings.TrimSpace(surface.Surface) == "" {
+		errs = append(errs, fmt.Errorf("%s missing surface", prefix))
+	}
+	status := normalizeBehavioralSurfaceStatus(surface.Status)
+	if status == "" {
+		errs = append(errs, fmt.Errorf("%s missing status", prefix))
+	}
+	switch status {
+	case BehavioralCoverageStatusAccepted:
+		if len(nonEmptyStrings(surface.Obligations)) == 0 {
+			errs = append(errs, fmt.Errorf("%s in-scope surface missing tdd_obligations", prefix))
+		}
+	case BehavioralCoverageStatusWaived, BehavioralCoverageStatusNotRequired:
+		if strings.TrimSpace(surface.Rationale) == "" {
+			errs = append(errs, fmt.Errorf("%s %s surface missing rationale", prefix, status))
+		}
+	case "open_question":
+		if strings.TrimSpace(surface.Rationale) == "" && len(nonEmptyStrings(surface.QuestionRefs)) == 0 {
+			errs = append(errs, fmt.Errorf("%s open_question surface missing rationale or question_refs", prefix))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("%s unsupported status %q", prefix, surface.Status))
+	}
+	return errs
+}
+
+func validateBehavioralSurfaceInventoryConsistency(surfaces []BehavioralSurfaceCoverage) []error {
+	var errs []error
+	ids := map[string]int{}
+	surfaceStatuses := map[string]string{}
+	for i, surface := range surfaces {
+		id := strings.TrimSpace(surface.ID)
+		if id != "" {
+			if first, ok := ids[id]; ok {
+				errs = append(errs, fmt.Errorf("behavioral coverage surface_inventory[%d] duplicates id %q first declared at surface_inventory[%d]", i, id, first))
+			} else {
+				ids[id] = i
+			}
+		}
+		name := strings.TrimSpace(strings.ToLower(surface.Surface))
+		if name == "" {
+			continue
+		}
+		status := normalizeBehavioralSurfaceStatus(surface.Status)
+		if firstStatus, ok := surfaceStatuses[name]; ok && firstStatus != status {
+			errs = append(errs, fmt.Errorf("behavioral coverage surface_inventory[%d] conflicts for surface %q: status %q differs from prior status %q", i, surface.Surface, surface.Status, firstStatus))
+			continue
+		}
+		surfaceStatuses[name] = status
+	}
+	return errs
+}
+
 func validateBehavioralCoverageQuestion(prefix string, question BehavioralCoverageQuestion) []error {
 	var errs []error
 	if strings.TrimSpace(question.ID) == "" {
@@ -1670,6 +1783,22 @@ func e2eJourneyCoverageComplete(journey E2EJourneyCoverage) bool {
 		len(nonEmptyStrings(journey.ScriptRefs)) > 0
 }
 
+func allBehavioralSurfacesDecided(surfaces []BehavioralSurfaceCoverage) bool {
+	if len(validateBehavioralSurfaceInventoryConsistency(surfaces)) > 0 {
+		return false
+	}
+	for _, surface := range surfaces {
+		status := normalizeBehavioralSurfaceStatus(surface.Status)
+		if status == "" || status == "open_question" {
+			return false
+		}
+		if status == BehavioralCoverageStatusAccepted && len(nonEmptyStrings(surface.Obligations)) == 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func validateBehavioralCoverageItem(prefix string, id string, status string, complete bool, missingDetail string) []error {
 	var errs []error
 
@@ -1806,6 +1935,23 @@ func BehavioralCoverageStatusIsAccepted(status string) bool {
 	return normalizeBehavioralCoverageStatus(status) == BehavioralCoverageStatusAccepted
 }
 
+func BehavioralCoverageSurfaceStatusIsAccepted(status string) bool {
+	return normalizeBehavioralSurfaceStatus(status) == BehavioralCoverageStatusAccepted
+}
+
+func BehavioralCoverageSurfaceStatusIsClosedDecision(status string) bool {
+	switch normalizeBehavioralSurfaceStatus(status) {
+	case BehavioralCoverageStatusAccepted, BehavioralCoverageStatusWaived, BehavioralCoverageStatusNotRequired:
+		return true
+	default:
+		return false
+	}
+}
+
+func NormalizeBehavioralSurfaceStatus(status string) string {
+	return normalizeBehavioralSurfaceStatus(status)
+}
+
 func normalizeBehavioralCoverageStatus(status string) string {
 	trimmed := strings.TrimSpace(strings.ToLower(status))
 	if trimmed == "" {
@@ -1813,6 +1959,23 @@ func normalizeBehavioralCoverageStatus(status string) string {
 	}
 
 	return trimmed
+}
+
+func normalizeBehavioralSurfaceStatus(status string) string {
+	switch strings.TrimSpace(strings.ToLower(status)) {
+	case "accepted", "covered", "tested", "in_scope", "required":
+		return BehavioralCoverageStatusAccepted
+	case "":
+		return ""
+	case BehavioralCoverageStatusWaived:
+		return BehavioralCoverageStatusWaived
+	case BehavioralCoverageStatusNotRequired, "out_of_scope":
+		return BehavioralCoverageStatusNotRequired
+	case "open_question", "question_open", "unknown":
+		return "open_question"
+	default:
+		return strings.TrimSpace(strings.ToLower(status))
+	}
 }
 
 func validBehavioralCoverageStatus(status string) bool {

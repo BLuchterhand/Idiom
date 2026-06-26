@@ -328,6 +328,57 @@ func TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute(t *testi
 	}
 }
 
+func TestDefaultHeadlessFeaturePlannerBlocksDispatchForInScopeSurfaceWithoutTDDObligation(t *testing.T) {
+	root := t.TempDir()
+	configPath := writeMainConfigRoot(t, root)
+	writeFeaturePlannerFixtureFile(t, filepath.Join(root, "go.mod"), "module idiom.test\n")
+	writeFeaturePlannerFixtureFile(t, filepath.Join(root, "docs", "feature-planner-plan-execute.txt"), "existing feature planner dispatch doc\n")
+	writeFeaturePlannerFixtureFile(t, filepath.Join(root, "cmd", "idiom", "feature_planner_test.go"), "package idiom\n\nimport \"testing\"\n\nfunc TestFixture(t *testing.T) {\n\tif 1 != 1 {\n\t\tt.Fatal(\"unreachable\")\n\t}\n}\n")
+
+	originalModelTurn := runFeaturePlannerModelTurn
+	originalPlanExecute := runFeaturePlannerPlanExecute
+
+	t.Cleanup(func() {
+		runFeaturePlannerModelTurn = originalModelTurn
+		runFeaturePlannerPlanExecute = originalPlanExecute
+	})
+
+	modelCalls := 0
+	planExecuteCalls := 0
+
+	runFeaturePlannerModelTurn = func(_ featurePlannerRequest, _ string, _ string, _ io.Writer) (string, error) {
+		modelCalls++
+		return featurePlannerPlanExecuteDispatchPlanJSONWithEvidenceOnlySurface(t), nil
+	}
+	runFeaturePlannerPlanExecute = func(_ context.Context, _ featurePlannerRequest, _ string, _ io.Writer) (string, error) {
+		planExecuteCalls++
+		return "", nil
+	}
+
+	var stdout, stderr bytes.Buffer
+
+	code := RunMain(
+		[]string{"-config", configPath, "-prompt", "send atom through plan-execute", "-json"},
+		&stdout,
+		&stderr,
+	)
+
+	if code != 0 {
+		t.Fatalf("runFeaturePlannerMain exit=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if modelCalls != 3 {
+		t.Fatalf("model calls = %d, want bounded planner repair attempts", modelCalls)
+	}
+	if planExecuteCalls != 0 {
+		t.Fatalf("plan-execute calls = %d, want dispatch blocked until in-scope surfaces have TDD obligations", planExecuteCalls)
+	}
+	for _, want := range []string{"in-scope surface missing tdd_obligations", "planning-stuck"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout missing repair evidence %q:\nstdout=%s\nstderr=%s", want, stdout.String(), stderr.String())
+		}
+	}
+}
+
 func TestFeaturePlannerPlanExecuteProgressPathUsesLatestStateEvent(t *testing.T) {
 	output := strings.Join([]string{
 		`{"type":"idiom.plan_execute.resume_state_saved","phase":"executor","status":"running","state_path":".idiom/plan-execute/first/state.json"}`,
@@ -616,6 +667,10 @@ func TestDefaultFeaturePlannerPlanExecuteReturnsTypedFailureCompletion(t *testin
 
 	if got := fmt.Sprint(envelope["failure_reason"]); !strings.Contains(got, "exit 1") {
 		t.Fatalf("failure_reason = %q, want exit status; envelope=%+v", got, envelope)
+	}
+
+	if got := envelope["exit_code"]; got != float64(1) {
+		t.Fatalf("exit_code = %#v, want 1; envelope=%+v", got, envelope)
 	}
 }
 
@@ -1291,6 +1346,70 @@ func featurePlannerPlanExecuteDispatchPlanJSON() string {
       }
     ]
   },
+  "behavioral_coverage_draft": {
+    "authority": "standalone_provisional",
+    "status": "draft",
+    "tier": "contract_high",
+    "requirements": [
+      {
+        "id": "REQ-PlanExecuteDispatch",
+        "statement": "Ready feature-planner atoms execute through plan-execute.",
+        "tdd_obligations": ["TDD-PlanExecuteDispatch"]
+      }
+    ],
+    "scenarios": [
+      {
+        "id": "BDD-PlanExecuteDispatch",
+        "requirement_id": "REQ-PlanExecuteDispatch",
+        "given": ["a standalone feature plan with one ready atom"],
+        "when": ["the headless feature-planner dispatch loop runs"],
+        "then": ["the atom implementation prompt is sent to plan-execute"],
+        "concrete_data": {
+          "required_edit_path": "docs/feature-planner-plan-execute.txt",
+          "test_path": "cmd/idiom/feature_planner_test.go"
+        },
+        "obligations": ["TDD-PlanExecuteDispatch"]
+      }
+    ],
+    "invariants": [
+      {
+        "id": "INV-PlanExecuteDispatch",
+        "statement": "Feature-planner must not directly model-call implementation atoms when plan-execute dispatch is configured.",
+        "property_based_test_refs": ["TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute"],
+        "obligations": ["TDD-PlanExecuteDispatch"]
+      }
+    ],
+    "surface_inventory": [
+      {
+        "id": "SURF-PlanExecuteDispatch",
+        "surface": "workflow_dispatch",
+        "status": "in_scope",
+        "rationale": "the requested behavior is feature-planner dispatch through plan-execute",
+        "tdd_obligations": ["TDD-PlanExecuteDispatch"]
+      },
+      {
+        "id": "SURF-PlanExecuteTransport",
+        "surface": "api_transport",
+        "status": "not_required",
+        "rationale": "no external API or transport boundary changes in this dispatch fixture"
+      }
+    ],
+    "test_obligations": [
+      {
+        "id": "TDD-PlanExecuteDispatch",
+        "behavior": "feature-planner dispatch delegates code writing to plan-execute",
+        "command": "go test ./cmd/idiom -run TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute",
+        "type": "integration"
+      }
+    ],
+    "verification": [
+      {
+        "id": "VERIFY-PlanExecuteDispatch",
+        "gate": "plan-execute dispatch fixture passes",
+        "command": "go test ./cmd/idiom -run TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute"
+      }
+    ]
+  },
   "atoms": [
     {
       "schema_version": "idiom.feature_atom.v1",
@@ -1324,6 +1443,26 @@ func featurePlannerPlanExecuteDispatchPlanJSON() string {
     }
   ]
 }`
+}
+
+func featurePlannerPlanExecuteDispatchPlanJSONWithEvidenceOnlySurface(t *testing.T) string {
+	t.Helper()
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(featurePlannerPlanExecuteDispatchPlanJSON()), &payload); err != nil {
+		t.Fatalf("unmarshal dispatch fixture: %v", err)
+	}
+	draft := payload["behavioral_coverage_draft"].(map[string]any)
+	surfaces := draft["surface_inventory"].([]any)
+	surface := surfaces[0].(map[string]any)
+	delete(surface, "tdd_obligations")
+	surface["evidence_refs"] = []any{"docs/feature-planner-plan-execute.txt"}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal dispatch fixture: %v", err)
+	}
+	return string(body)
 }
 
 func writeMainConfig(t *testing.T) string {

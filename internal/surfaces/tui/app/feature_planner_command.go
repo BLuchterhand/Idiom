@@ -107,7 +107,7 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 		return "", err
 	}
 
-	answer := formatFeaturePlannerTUIAnswer(result.State, statePath)
+	answer := formatFeaturePlannerTUIAnswerForRoot(result.State, statePath, m.projectRoot())
 	m.logFeaturePlannerInternalEvent(featurePlannerTUITerminalRole(result.State.Status), answer)
 	m.updateDirectFeaturePlannerSession(result.State)
 
@@ -134,7 +134,7 @@ func (m *Model) closeFeaturePlannerTUISourceSatisfied(state featureplanner.Featu
 		return "", err
 	}
 
-	answer := formatFeaturePlannerTUIAnswer(state, statePath)
+	answer := formatFeaturePlannerTUIAnswerForRoot(state, statePath, m.projectRoot())
 	m.logFeaturePlannerInternalEvent(featurePlannerTUITerminalRole(state.Status), answer)
 	m.updateDirectFeaturePlannerSession(state)
 
@@ -268,11 +268,13 @@ func (m *Model) runDirectFeaturePlannerAnswerOnce(ctx context.Context, answer st
 
 	writeEnvelope := featureplanner.ProductWriteEnvelopePaths(productBrief)
 	writeEnvelopeExplicit := productBrief != nil
+	resumePlanRevision := directFeaturePlannerPlanRevisionBypassesQuestionAuthority(state, answer)
 
 	result, err := featureplanner.Run(state, featureplanner.RunOptions{
 		Prompt:                directFeaturePlannerResumePrompt(state, answer),
 		MaxPlanningIterations: 3,
 		ResumeAnswer:          answer,
+		ResumePlanRevision:    resumePlanRevision,
 		Now:                   time.Now().UTC(),
 		ProductWorkflowBrief:  productBrief,
 		ReconcileActiveRuns:   m.reconcileFeaturePlannerActivePlanExecuteRuns,
@@ -313,7 +315,7 @@ func (m *Model) runDirectFeaturePlannerAnswerOnce(ctx context.Context, answer st
 		m.featurePlannerEffortRoot = effortRoot
 	}
 
-	reply := formatFeaturePlannerTUIAnswer(result.State, statePath)
+	reply := formatFeaturePlannerTUIAnswerForRoot(result.State, statePath, m.projectRoot())
 	m.logFeaturePlannerInternalEvent(featurePlannerTUITerminalRole(result.State.Status), reply)
 	m.updateDirectFeaturePlannerSession(result.State)
 
@@ -341,6 +343,21 @@ func directFeaturePlannerResumePrompt(state featureplanner.FeatureState, answer 
 	}
 
 	return prompt
+}
+
+func directFeaturePlannerPlanRevisionBypassesQuestionAuthority(state featureplanner.FeatureState, answer string) bool {
+	if !directFeaturePlannerInputLooksPlanRevision(answer) {
+		return false
+	}
+
+	for _, question := range openDirectFeaturePlannerQuestions(state) {
+		authority := strings.TrimSpace(question.AuthorityRequired)
+		if authority != "" && authority != "operator_approval" {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (m *Model) productBriefForFeaturePlannerState(state featureplanner.FeatureState) (*featureplanner.ProductWorkflowBrief, string, error) {
@@ -398,12 +415,16 @@ func (m *Model) directFeaturePlannerShouldConsumeOperatorInput(input string) boo
 	}
 
 	if directFeaturePlannerStateNeedsRepairInstruction(state) {
-		return featurePlannerGenericAnswerLooksIntentional(input)
+		return directFeaturePlannerInputLooksPlanRevision(input) || featurePlannerGenericAnswerLooksIntentional(input)
 	}
 
 	openQuestions := openDirectFeaturePlannerQuestions(state)
 	if len(openQuestions) == 0 {
 		return false
+	}
+
+	if directFeaturePlannerInputLooksPlanRevision(input) {
+		return true
 	}
 
 	for _, question := range openQuestions {
@@ -451,13 +472,17 @@ func directFeaturePlannerInputLooksPlanRevision(input string) bool {
 
 func classifyFeaturePlannerOperatorInput(input string) featurePlannerOperatorInputIntent {
 	trimmed := strings.TrimSpace(input)
-	if trimmed == "" || strings.Contains(trimmed, "?") {
+	if trimmed == "" {
 		return featurePlannerOperatorInputNone
 	}
 
 	normalized := featurePlannerNormalizedOperatorInput(trimmed)
 	if normalized == "" {
 		return featurePlannerOperatorInputNone
+	}
+
+	if featurePlannerOperatorInputHasRevisionIntent(normalized) {
+		return featurePlannerOperatorInputRevision
 	}
 
 	for _, prefix := range []string{
@@ -503,46 +528,68 @@ func classifyFeaturePlannerOperatorInput(input string) featurePlannerOperatorInp
 		}
 	}
 
+	return featurePlannerOperatorInputNone
+}
+
+func featurePlannerOperatorInputHasRevisionIntent(normalized string) bool {
+	normalized = strings.TrimSpace(normalized)
+	if normalized == "" {
+		return false
+	}
+
 	for _, prefix := range []string{
 		"please revise",
 		"revise",
-		"update",
+		"update the plan",
 		"change",
 		"make it",
 		"make the plan",
 		"adjust",
+		"add",
 		"scope",
 		"expand",
+		"flesh out",
+		"include",
 		"narrow",
-		"use",
 		"instead",
 	} {
 		if normalized == prefix || strings.HasPrefix(normalized, prefix+" ") {
-			return featurePlannerOperatorInputRevision
+			return true
 		}
 	}
 
 	for _, phrase := range []string{
 		" revise the ",
+		" update plan ",
 		" update the ",
+		" update this plan ",
 		" change the ",
 		" adjust the ",
+		" add more detail ",
+		" add more details ",
+		" add more info ",
+		" add more information ",
+		" add detail ",
+		" add details ",
+		" add info ",
+		" add information ",
+		" flesh out the plan ",
+		" include this in the plan ",
+		" include that in the plan ",
 		" update scope ",
 		" revise scope ",
 		" revise the scope ",
 		" change the scope ",
 		" make this ",
 		" make it ",
-		" use these ",
-		" use the ",
 		" instead ",
 	} {
 		if strings.Contains(" "+normalized+" ", phrase) {
-			return featurePlannerOperatorInputRevision
+			return true
 		}
 	}
 
-	return featurePlannerOperatorInputNone
+	return false
 }
 
 func featurePlannerGenericAnswerLooksIntentional(input string) bool {
@@ -676,10 +723,10 @@ func (m *Model) logFeaturePlannerPlanExecuteGitHistoryRequirement() {
 
 func featurePlannerPlanExecuteGitHistoryRequirementPayload() string {
 	body, _ := json.Marshal(map[string]any{
-		"tool":                         "git_history_requirement",
-		"lane_family":                  "plan-execute",
-		"commit_descriptions_required": true,
-		"evidence_tools":               []string{"history_range", "history_symbol"},
+		"tool": "git_history_requirement",
+		featureplanner.PlanExecuteCompletionFieldLaneFamily: featureplanner.PlanExecuteCompletionLaneFamily,
+		"commit_descriptions_required":                      true,
+		"evidence_tools":                                    []string{"history_range", "history_symbol"},
 	})
 
 	return string(body)
@@ -723,20 +770,20 @@ func (m *Model) featurePlannerPlanExecuteCompletionFields(summary string) map[st
 		overlayFeaturePlannerPlanExecuteRunResult(fields, m.cfg.Workspace.Root, m.lastPlanExecuteRunResult)
 	}
 
-	fields["tool"] = featureplanner.ToolPlanExecuteComplete
-	fields["lane_family"] = "plan-execute"
+	fields[featureplanner.PlanExecuteCompletionFieldTool] = featureplanner.ToolPlanExecuteComplete
+	fields[featureplanner.PlanExecuteCompletionFieldLaneFamily] = featureplanner.PlanExecuteCompletionLaneFamily
 
-	if featureplanner.CompletionFieldString(fields, "status") == "" {
-		fields["status"] = "ambiguous"
-		fields["failure_kind"] = util.FirstNonEmpty(featureplanner.CompletionFieldString(fields, "failure_kind"), "missing_nested_plan_execute_status")
-		fields["failure_reason"] = util.FirstNonEmpty(featureplanner.CompletionFieldString(fields, "failure_reason"), "nested plan-execute returned without typed completion status")
+	if featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldStatus) == "" {
+		fields[featureplanner.PlanExecuteCompletionFieldStatus] = featureplanner.PlanExecuteCompletionStatusAmbiguous
+		fields[featureplanner.PlanExecuteCompletionFieldFailureKind] = util.FirstNonEmpty(featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldFailureKind), featureplanner.PlanExecuteCompletionMissingStatusFailureKind)
+		fields[featureplanner.PlanExecuteCompletionFieldFailureReason] = util.FirstNonEmpty(featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldFailureReason), featureplanner.PlanExecuteCompletionMissingStatusFailureReason)
 	}
 
-	if featureplanner.CompletionFieldString(fields, "completion_source") == "" {
-		fields["completion_source"] = "tui_plan_execute_returned"
+	if featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldCompletionSource) == "" {
+		fields[featureplanner.PlanExecuteCompletionFieldCompletionSource] = featureplanner.PlanExecuteCompletionSourceTUIReturned
 	}
 
-	fields["summary"] = featurePlannerPlanExecuteCompletionSummary(fields)
+	fields[featureplanner.PlanExecuteCompletionFieldSummary] = featurePlannerPlanExecuteCompletionSummary(fields)
 	featureplanner.TrustObservedPlanExecuteCompletionFields(fields)
 
 	return fields
@@ -754,7 +801,13 @@ func encodeFeaturePlannerPlanExecuteCompletionFields(fields map[string]any) (str
 func featurePlannerPlanExecuteCompletionSummary(fields map[string]any) string {
 	var parts []string
 
-	for _, key := range []string{"status", "phase", "review_status", "failure_kind", "progress_path"} {
+	for _, key := range []string{
+		featureplanner.PlanExecuteCompletionFieldStatus,
+		featureplanner.PlanExecuteCompletionFieldPhase,
+		featureplanner.PlanExecuteCompletionFieldReviewStatus,
+		featureplanner.PlanExecuteCompletionFieldFailureKind,
+		featureplanner.PlanExecuteCompletionFieldProgressPath,
+	} {
 		if value := featureplanner.CompletionFieldString(fields, key); value != "" {
 			parts = append(parts, key+"="+value)
 		}
@@ -769,8 +822,8 @@ func featurePlannerPlanExecuteCompletionSummary(fields map[string]any) string {
 
 func encodeFeaturePlannerSiblingDispatchPaused() string {
 	body, _ := json.Marshal(map[string]any{
-		"tool":             featureplanner.ToolQuestionForPlanner,
-		"lane_family":      "plan-execute",
+		"tool": featureplanner.ToolQuestionForPlanner,
+		featureplanner.PlanExecuteCompletionFieldLaneFamily: featureplanner.PlanExecuteCompletionLaneFamily,
 		"question_summary": "sibling atom dispatch paused because an earlier implementor child opened a blocker in this feature-planner run",
 		"blocking_claim":   "resolve the first blocked child session before dispatching additional sibling atoms",
 	})
@@ -797,7 +850,7 @@ func featurePlannerPlanExecuteCompletionLogType(payload string) string {
 		return "idiom.plan_execute.blocked"
 	}
 
-	if featurePlannerPlanExecuteLogStringField(fields, "tool") != featureplanner.ToolPlanExecuteComplete {
+	if featurePlannerPlanExecuteLogStringField(fields, featureplanner.PlanExecuteCompletionFieldTool) != featureplanner.ToolPlanExecuteComplete {
 		return "idiom.plan_execute.blocked"
 	}
 
@@ -823,20 +876,25 @@ func overlayFeaturePlannerPlanExecuteRunResult(fields map[string]any, root strin
 		return
 	}
 
-	if strings.TrimSpace(result.ResumeStatePath) != "" && featureplanner.CompletionFieldString(fields, "progress_path") == "" {
-		fields["progress_path"] = strings.TrimSpace(result.ResumeStatePath)
+	if strings.TrimSpace(result.ResumeStatePath) != "" && featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldProgressPath) == "" {
+		fields[featureplanner.PlanExecuteCompletionFieldProgressPath] = strings.TrimSpace(result.ResumeStatePath)
 	}
 
-	if strings.TrimSpace(result.FailureKind) != "" && featureplanner.CompletionFieldString(fields, "failure_kind") == "" {
-		fields["failure_kind"] = strings.TrimSpace(result.FailureKind)
+	if strings.TrimSpace(result.FailureKind) != "" && featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldFailureKind) == "" {
+		fields[featureplanner.PlanExecuteCompletionFieldFailureKind] = strings.TrimSpace(result.FailureKind)
 	}
 
-	if strings.TrimSpace(result.FailureReason) != "" && featureplanner.CompletionFieldString(fields, "failure_reason") == "" {
-		fields["failure_reason"] = strings.TrimSpace(result.FailureReason)
+	if strings.TrimSpace(result.FailureReason) != "" && featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldFailureReason) == "" {
+		fields[featureplanner.PlanExecuteCompletionFieldFailureReason] = strings.TrimSpace(result.FailureReason)
 	}
 
-	if result.ExitCode != 0 && featureplanner.CompletionFieldString(fields, "status") == "" {
-		fields["status"] = "failed"
+	if result.ExitCode != 0 {
+		if _, ok := fields[featureplanner.PlanExecuteCompletionFieldExitCode]; !ok {
+			fields[featureplanner.PlanExecuteCompletionFieldExitCode] = result.ExitCode
+		}
+		if featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldStatus) == "" {
+			fields[featureplanner.PlanExecuteCompletionFieldStatus] = "failed"
+		}
 	}
 
 	if result.Completion != nil {
@@ -872,6 +930,9 @@ func overlayFeaturePlannerPlanExecuteRunResult(fields map[string]any, root strin
 		overlayFeaturePlannerPlanExecuteTerminalFields(fields, planexecute.PlanExecuteTerminalCompletionEventFields(record, ""))
 	} else {
 		progressFields := planexecute.ProgressStateEventFields(state, statePath)
+		if result.ExitCode != 0 {
+			progressFields[featureplanner.PlanExecuteCompletionFieldExitCode] = result.ExitCode
+		}
 		overlayFeaturePlannerPlanExecuteProgressFields(fields, progressFields)
 	}
 
@@ -888,30 +949,30 @@ func overlayFeaturePlannerRecoverySidecarFields(fields map[string]any, root stri
 		return
 	}
 
-	if strings.TrimSpace(record.FailureID) != "" && featureplanner.CompletionFieldString(fields, "failure_id") == "" {
-		fields["failure_id"] = strings.TrimSpace(record.FailureID)
+	if strings.TrimSpace(record.FailureID) != "" && featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldFailureID) == "" {
+		fields[featureplanner.PlanExecuteCompletionFieldFailureID] = strings.TrimSpace(record.FailureID)
 	}
 
-	if strings.TrimSpace(recordPath) != "" && featureplanner.CompletionFieldString(fields, "record_path") == "" {
-		fields["record_path"] = strings.TrimSpace(recordPath)
+	if strings.TrimSpace(recordPath) != "" && featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldRecordPath) == "" {
+		fields[featureplanner.PlanExecuteCompletionFieldRecordPath] = strings.TrimSpace(recordPath)
 	}
 
 	packetPath := filepath.ToSlash(filepath.Join(".idiom", "recovery", strings.TrimSpace(record.FailureID), "packet.json"))
-	if strings.TrimSpace(record.FailureID) != "" && featureplanner.CompletionFieldString(fields, "packet_path") == "" {
+	if strings.TrimSpace(record.FailureID) != "" && featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldPacketPath) == "" {
 		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(packetPath))); err == nil {
-			fields["packet_path"] = packetPath
+			fields[featureplanner.PlanExecuteCompletionFieldPacketPath] = packetPath
 		}
 	}
 
-	if strings.TrimSpace(record.NextAction) != "" && featureplanner.CompletionFieldString(fields, "next_valid_action") == "" {
-		fields["next_valid_action"] = strings.TrimSpace(record.NextAction)
+	if strings.TrimSpace(record.NextAction) != "" && featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldNextValidAction) == "" {
+		fields[featureplanner.PlanExecuteCompletionFieldNextValidAction] = strings.TrimSpace(record.NextAction)
 	}
 }
 
 func overlayFeaturePlannerPlanExecuteProgressFields(fields map[string]any, progressFields map[string]any) {
 	featureplanner.OverlayPlanExecuteCompletionFields(fields, progressFields)
 
-	for _, key := range []string{"required_edit_paths", "allowed_edit_paths", "changed_paths", "source_sanity"} {
+	for _, key := range featureplanner.PlanExecuteProgressPreservedFieldKeys {
 		if value, ok := progressFields[key]; ok {
 			fields[key] = value
 		}
@@ -921,7 +982,7 @@ func overlayFeaturePlannerPlanExecuteProgressFields(fields map[string]any, progr
 func overlayFeaturePlannerPlanExecuteTerminalFields(fields map[string]any, terminalFields map[string]any) {
 	featureplanner.OverlayPlanExecuteCompletionFields(fields, terminalFields)
 
-	for _, key := range []string{"required_edit_paths", "allowed_edit_paths", "write_allowed_paths", "changed_paths", "source_sanity", "source_satisfied_evidence_paths", "source_satisfied_evidence", "contract_hash", "completion_path"} {
+	for _, key := range featureplanner.PlanExecuteTerminalPreservedFieldKeys {
 		if value, ok := terminalFields[key]; ok {
 			fields[key] = value
 		}
@@ -1033,11 +1094,27 @@ func featurePlannerTUITerminalRole(status string) string {
 }
 
 func formatFeaturePlannerTUIAnswer(state featureplanner.FeatureState, statePath string) string {
+	return formatFeaturePlannerTUIAnswerForRoot(state, statePath, "")
+}
+
+func formatFeaturePlannerTUIAnswerForRoot(state featureplanner.FeatureState, statePath string, workspaceRoot string) string {
+	statePath = featurePlannerTUIDisplayPath(workspaceRoot, statePath)
+
 	if answer, ok := formatFeaturePlannerTUIOperatorQuestion(state, statePath); ok {
 		return answer
 	}
 
-	return featureplanner.FormatStateSummary(state, statePath)
+	return featureplanner.FormatUserFacingStateSummary(state, statePath)
+}
+
+func featurePlannerTUIDisplayPath(workspaceRoot string, path string) string {
+	workspaceRoot = strings.TrimSpace(workspaceRoot)
+	path = strings.TrimSpace(path)
+	if workspaceRoot == "" || path == "" || !filepath.IsAbs(path) {
+		return path
+	}
+
+	return featurePlannerRelPath(workspaceRoot, path)
 }
 
 func formatFeaturePlannerTUIOperatorQuestion(state featureplanner.FeatureState, statePath string) (string, bool) {
@@ -1059,7 +1136,28 @@ func formatFeaturePlannerTUIOperatorQuestion(state featureplanner.FeatureState, 
 		return renderGreenfieldWriteApproval(request), true
 	}
 
+	for _, question := range state.OpenQuestions {
+		if featurePlannerTUIShouldRenderQuestion(question) {
+			return renderFeaturePlannerQuestion(question, statePath), true
+		}
+	}
+
 	return "", false
+}
+
+func featurePlannerTUIShouldRenderQuestion(question featureplanner.PlannerQuestion) bool {
+	if !featurePlannerQuestionOpen(question) {
+		return false
+	}
+
+	authority := strings.TrimSpace(question.AuthorityRequired)
+	if authority == "" || authority == "operator_approval" {
+		return true
+	}
+
+	return authority == "accepted_source" &&
+		featurePlannerQuestionNeedsField(question, "source_localization") &&
+		question.UserFacing
 }
 
 func featurePlannerApprovalExplanation(state featureplanner.FeatureState) string {
@@ -1082,12 +1180,30 @@ func featurePlannerApprovalExplanation(state featureplanner.FeatureState) string
 	if atomSummaries := featurePlannerApprovalAtomSummaries(plan.Atoms, 4); len(atomSummaries) > 0 {
 		fmt.Fprintf(&b, "- Work breakdown: %s\n", strings.Join(atomSummaries, "; "))
 	}
-	if commands := featurePlannerApprovalVerificationCommands(plan, 3); len(commands) > 0 {
+	if commands := featurePlannerApprovalVerificationCommands(plan, 0); len(commands) > 0 {
 		fmt.Fprintf(&b, "- Proposed verification: %s\n", strings.Join(commands, "; "))
 	}
-	b.WriteString("- These are proposed files to create in the empty workspace, not existing source files.\n")
+	if featurePlannerApprovalQuestionMentionsEmptyWorkspace(state) {
+		b.WriteString("- These are proposed files to create in the empty workspace, not existing source files.\n")
+	} else {
+		b.WriteString("- These are proposed missing paths to create only after approval; they are not authorized workspace edits yet.\n")
+	}
 
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func featurePlannerApprovalQuestionMentionsEmptyWorkspace(state featureplanner.FeatureState) bool {
+	for _, question := range state.OpenQuestions {
+		if !featurePlannerQuestionOpen(question) {
+			continue
+		}
+		text := strings.ToLower(strings.TrimSpace(question.QuestionSummary + " " + question.BlockingClaim + " " + question.RequestedDecision))
+		if strings.Contains(text, "empty workspace") || strings.Contains(text, "no project files") || strings.Contains(text, "greenfield") {
+			return true
+		}
+	}
+
+	return false
 }
 
 func featurePlannerApprovalAtomSummaries(atoms []featureplanner.FeatureAtomPlan, limit int) []string {

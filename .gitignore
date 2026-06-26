@@ -26,6 +26,8 @@ __pycache__/
 !.idiom/prompts/**
 .planning/
 logs/
+!.book/exports/kindle-preview/Logs/
+!.book/exports/kindle-preview/Logs/*.csv
 models/
 outputs/
 transcripts/
@@ -55,8 +57,12 @@ config.*.backup.json
 .env.local
 .env.*.local
 
+# Book workspace local artifacts
+.book/.venv/
+.book/tools/__pycache__/
+.book/**/*.pyc
+
 # Ephemeral review / session notes
-.book/
 REVIEW_*.md
 NOTES_*.md
 SCRATCH_*.md

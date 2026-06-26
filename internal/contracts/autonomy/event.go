@@ -333,6 +333,20 @@ type PhaseEvidenceStateEvent struct {
 	PendingGitHistoryPaths   []string `json:"pending_git_history_paths,omitempty"`
 }
 
+func PhaseEvidenceStateHasOpenObligation(state PhaseEvidenceStateEvent) bool {
+	verificationStatus := strings.ToLower(strings.TrimSpace(state.VerificationStatus))
+
+	return len(state.TDDObligationRefs) > 0 ||
+		len(state.ResidualBlockers) > 0 ||
+		len(state.RecoveryPacketRefs) > 0 ||
+		strings.EqualFold(strings.TrimSpace(state.ProductWorkflowState), "recovery_open") ||
+		strings.EqualFold(strings.TrimSpace(state.ProductWorkflowState), "incomplete") ||
+		strings.EqualFold(strings.TrimSpace(state.ProductWorkflowState), "skipped") ||
+		verificationStatus == "missing" ||
+		verificationStatus == "failed" ||
+		verificationStatus == "pre_write"
+}
+
 type ContractPolicyEvent struct {
 	ToolCallID          string             `json:"tool_call_id,omitempty"`
 	ToolName            string             `json:"tool_name,omitempty"`

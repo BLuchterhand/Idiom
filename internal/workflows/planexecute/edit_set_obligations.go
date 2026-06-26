@@ -50,7 +50,7 @@ func planExecuteRequestedVerificationCommands(prompt string) []string {
 			continue
 		}
 
-		for _, command := range planExecuteGoTestCommandsFromLine(line) {
+		for _, command := range planExecuteVerificationCommandsFromLine(line) {
 			if _, ok := seen[command]; ok {
 				continue
 			}
@@ -65,7 +65,7 @@ func planExecuteRequestedVerificationCommands(prompt string) []string {
 
 func planExecuteLineRequestsVerificationCommand(line string) bool {
 	lower := strings.ToLower(strings.TrimSpace(line))
-	if lower == "" || !strings.Contains(lower, "go test") {
+	if lower == "" || !planExecuteLineContainsSupportedVerificationCommand(lower) {
 		return false
 	}
 
@@ -92,6 +92,16 @@ func planExecuteLineRequestsVerificationCommand(line string) bool {
 	)
 }
 
+func planExecuteLineContainsSupportedVerificationCommand(line string) bool {
+	for _, prefix := range planExecuteVerificationCommandPrefixes() {
+		if strings.Contains(line, prefix) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func containsAnyVerificationRequestPhrase(text string, phrases ...string) bool {
 	for _, phrase := range phrases {
 		if strings.Contains(text, phrase) {
@@ -102,43 +112,97 @@ func containsAnyVerificationRequestPhrase(text string, phrases ...string) bool {
 	return false
 }
 
-func planExecuteGoTestCommandsFromLine(line string) []string {
+func planExecuteVerificationCommandsFromLine(line string) []string {
 	var commands []string
 
 	text := strings.TrimSpace(line)
 
 	for _, span := range planExecuteInlineCodeSpans(text) {
-		commands = append(commands, planExecuteGoTestCommandsFromPlainText(span)...)
+		commands = append(commands, planExecuteVerificationCommandsFromPlainText(span)...)
 	}
 
 	text = planExecuteStripInlineCodeSpans(text)
-	commands = append(commands, planExecuteGoTestCommandsFromPlainText(text)...)
+	commands = append(commands, planExecuteVerificationCommandsFromPlainText(text)...)
 
 	return commands
 }
 
-func planExecuteGoTestCommandsFromPlainText(text string) []string {
+func planExecuteVerificationCommandsFromPlainText(text string) []string {
 	var commands []string
 
 	for {
-		idx := strings.Index(text, "go test")
-		if idx < 0 {
+		idx, prefix := planExecuteFirstVerificationCommandPrefix(text)
+		if idx < 0 || prefix == "" {
 			return commands
 		}
 
-		rest := strings.TrimSpace(text[idx:])
-		command := planExecuteTrimVerificationCommand(rest)
+		candidate, remaining := planExecuteSplitVerificationCommandCandidate(text[idx:], prefix)
+		command := planExecuteTrimVerificationCommand(candidate)
 
 		if strings.TrimSpace(command) != "" {
 			commands = append(commands, command)
 		}
 
-		if idx+len("go test") >= len(text) {
+		if strings.TrimSpace(remaining) == "" {
 			return commands
 		}
 
-		text = text[idx+len("go test"):]
+		text = remaining
 	}
+}
+
+func planExecuteSplitVerificationCommandCandidate(text string, prefix string) (string, string) {
+	lower := strings.ToLower(text)
+	searchStart := len(prefix)
+	if searchStart > len(lower) {
+		searchStart = len(lower)
+	}
+
+	bestIndex := -1
+	bestPrefixIndex := -1
+	for _, nextPrefix := range planExecuteVerificationCommandPrefixes() {
+		for _, marker := range []string{", and " + nextPrefix, ", " + nextPrefix, " and " + nextPrefix} {
+			idx := strings.Index(lower[searchStart:], marker)
+			if idx < 0 {
+				continue
+			}
+			idx += searchStart
+			prefixIndex := idx + len(marker) - len(nextPrefix)
+			if bestIndex < 0 || idx < bestIndex {
+				bestIndex = idx
+				bestPrefixIndex = prefixIndex
+			}
+		}
+	}
+
+	if bestIndex < 0 {
+		return text, ""
+	}
+
+	return text[:bestIndex], text[bestPrefixIndex:]
+}
+
+func planExecuteFirstVerificationCommandPrefix(text string) (int, string) {
+	text = strings.ToLower(text)
+
+	bestIndex := -1
+	bestPrefix := ""
+	for _, prefix := range planExecuteVerificationCommandPrefixes() {
+		idx := strings.Index(text, prefix)
+		if idx < 0 {
+			continue
+		}
+		if bestIndex < 0 || idx < bestIndex || (idx == bestIndex && len(prefix) > len(bestPrefix)) {
+			bestIndex = idx
+			bestPrefix = prefix
+		}
+	}
+
+	return bestIndex, bestPrefix
+}
+
+func planExecuteVerificationCommandPrefixes() []string {
+	return plancontract.VerificationCommandPrefixes()
 }
 
 func planExecuteInlineCodeSpans(text string) []string {
@@ -192,11 +256,35 @@ func planExecuteTrimVerificationCommand(text string) string {
 		text = text[:idx]
 	}
 
+	text = planExecuteTrimVerificationTrailingPhrases(text)
 	text = planExecuteTrimVerificationSentence(text)
+	text = planExecuteTrimVerificationTrailingPhrases(text)
 	text = strings.TrimSpace(text)
 
 	for (strings.HasSuffix(text, ".") && !strings.HasSuffix(text, "...")) || strings.HasSuffix(text, ",") {
 		text = strings.TrimSpace(text[:len(text)-1])
+	}
+
+	return text
+}
+
+func planExecuteTrimVerificationTrailingPhrases(text string) string {
+	lower := strings.ToLower(text)
+	for _, marker := range []string{
+		" as the verification commands",
+		" as the verification command",
+		" as verification commands",
+		" as verification command",
+		" as the test commands",
+		" as the test command",
+		" after edits",
+		" after editing",
+		" after implementation",
+		" after the changes",
+	} {
+		if idx := strings.Index(lower, marker); idx >= 0 {
+			return strings.TrimSpace(text[:idx])
+		}
 	}
 
 	return text
@@ -236,122 +324,21 @@ func planExecuteTrimVerificationSentence(text string) string {
 }
 
 func VerificationCommandArgs(command string) ([]string, bool) {
-	args, ok := planExecuteVerificationCommandArgs(command)
-	if !ok || !VerificationArgvAllowed(args) {
-		return nil, false
-	}
-
-	return args, true
+	return plancontract.VerificationCommandArgs(command)
 }
 
 func VerificationArgvAllowed(args []string) bool {
-	args = normalizeVerificationArgv(args)
-	if len(args) == 0 {
-		return false
-	}
-
-	for _, prefix := range verificationCommandAllowedPrefixes() {
-		if len(args) < len(prefix) {
-			continue
-		}
-
-		matches := true
-
-		for i := range prefix {
-			if args[i] != prefix[i] {
-				matches = false
-				break
-			}
-		}
-
-		if matches {
-			return true
-		}
-	}
-
-	return false
+	return plancontract.VerificationArgvAllowed(args)
 }
 
 func normalizeVerificationArgv(args []string) []string {
-	out := make([]string, 0, len(args))
-	for _, arg := range args {
-		arg = strings.TrimSpace(arg)
-		if arg == "" || strings.ContainsAny(arg, "\x00\n\r") {
-			return nil
-		}
-
-		if strings.Contains(arg, ";") || strings.Contains(arg, "&&") || strings.Contains(arg, "||") || strings.ContainsAny(arg, "`><") {
-			return nil
-		}
-
-		out = append(out, arg)
-	}
-
-	return out
+	return plancontract.NormalizeVerificationArgv(args)
 }
 
 func verificationCommandAllowedPrefixes() [][]string {
-	return [][]string{{"go", "test"}, {"go", "vet"}}
+	return plancontract.VerificationCommandAllowedPrefixes()
 }
 
 func planExecuteVerificationCommandArgs(command string) ([]string, bool) {
-	command = strings.TrimSpace(command)
-	if command == "" || strings.ContainsAny(command, "\n\r") {
-		return nil, false
-	}
-
-	var (
-		args []string
-		b    strings.Builder
-	)
-
-	quote := rune(0)
-	escaped := false
-
-	for _, r := range command {
-		if escaped {
-			b.WriteRune(r)
-
-			escaped = false
-
-			continue
-		}
-
-		if quote == 0 {
-			switch r {
-			case '\\':
-				escaped = true
-			case '\'', '"':
-				quote = r
-			case ' ', '\t':
-				if b.Len() > 0 {
-					args = append(args, b.String())
-					b.Reset()
-				}
-			case ';', '&', '|', '`', '$', '(', ')', '>', '<':
-				return nil, false
-			default:
-				b.WriteRune(r)
-			}
-
-			continue
-		}
-
-		if r == quote {
-			quote = 0
-			continue
-		}
-
-		b.WriteRune(r)
-	}
-
-	if escaped || quote != 0 {
-		return nil, false
-	}
-
-	if b.Len() > 0 {
-		args = append(args, b.String())
-	}
-
-	return args, len(args) > 0
+	return plancontract.ParseVerificationCommand(command)
 }

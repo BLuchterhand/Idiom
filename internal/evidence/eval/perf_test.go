@@ -625,6 +625,24 @@ func TestDetectSameToolRepeatOnlyAtThreeOrMore(t *testing.T) {
 	}
 }
 
+func TestDetectSameToolRepeatIgnoresRecoveredMutationNoWriteLoop(t *testing.T) {
+	raw := `{"tool":"read_file","path":"missing.html","named_gap":"source before write"}`
+	records := buildSynth("", nil, []synthStep{
+		{tool: "read_file", action: "read_file:missing.html", raw: raw, summary: "Failed to resolve file target", err: "missing"},
+		{tool: "read_file", action: "read_file:missing.html", raw: raw, summary: "Failed to resolve file target (replayed same blocker)", err: "missing"},
+		{tool: "read_file", action: "read_file:missing.html", raw: raw, summary: "Mutation write required after repeated non-write request", err: "repeated"},
+	})
+	records = append(records, Record{Type: "run_event", Data: map[string]any{
+		"role":    "mutation_no_write_loop_recovery",
+		"content": "read_file was repeated 3 times before any successful workspace write",
+	}})
+
+	rep := analyzeRecords("test", records)
+	if hasPattern(rep, "same_tool_repeat") {
+		t.Fatalf("recovered mutation loop should not remain a current same_tool_repeat finding: %+v", rep.AntiPatterns)
+	}
+}
+
 func TestDetectNamedGapReadWalk(t *testing.T) {
 	records := buildSynth("", nil, []synthStep{
 		{tool: "read_file", action: "read_file:src/item.cpp", raw: `{"path":"src/item.cpp","named_gap":"find_insert_anchor","start_line":1,"end_line":50}`, summary: "Read src/item.cpp lines 1-50"},
@@ -640,6 +658,23 @@ func TestDetectNamedGapReadWalk(t *testing.T) {
 
 	if ap.Count != 3 {
 		t.Fatalf("count=%d, want 3", ap.Count)
+	}
+}
+
+func TestDetectNamedGapReadWalkIgnoresRecoveredMutationNoWriteLoop(t *testing.T) {
+	records := buildSynth("", nil, []synthStep{
+		{tool: "read_file", action: "read_file:missing.html", raw: `{"path":"missing.html","named_gap":"source before write","start_line":1,"end_line":50}`, summary: "Failed to resolve file target", err: "missing"},
+		{tool: "read_file", action: "read_file:missing.html", raw: `{"path":"missing.html","named_gap":"source before write","start_line":1,"end_line":50}`, summary: "Failed to resolve file target (replayed same blocker)", err: "missing"},
+		{tool: "read_file", action: "read_file:missing.html", raw: `{"path":"missing.html","named_gap":"source before write","start_line":1,"end_line":50}`, summary: "Mutation write required after repeated non-write request", err: "repeated"},
+	})
+	records = append(records, Record{Type: "run_event", Data: map[string]any{
+		"role":    "mutation_no_write_loop_recovery",
+		"content": "read_file was repeated 3 times before any successful workspace write",
+	}})
+
+	rep := analyzeRecords("test", records)
+	if hasPattern(rep, "named_gap_read_walk") {
+		t.Fatalf("recovered mutation loop should not remain a current named_gap_read_walk finding: %+v", rep.AntiPatterns)
 	}
 }
 

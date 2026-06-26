@@ -61,6 +61,10 @@ The executable implementation plan is
   dispatch when behavioral coverage is incomplete. This is the verification
   contract for the PRD-to-brief workflow; only a narrower tiered coverage
   evaluator has shipped so far.
+- [BDD-TDD production readiness requirements](bdd-tdd-production-readiness-requirements.md)
+  defines the release gates still required before the integrated feature
+  planning, BDD coverage, TDD obligation, approval, handoff, verification, and
+  audit flow can be declared production-ready.
 - [Decompose on failure](design-decompose-on-failure.md)
   defines the recovery layer that turns a failed lane or atom into a durable
   failure record, deterministic failure classification, smaller gated recovery

@@ -47,8 +47,10 @@ func TestReconcileActiveRunsFoldsBoundTerminalCompletion(t *testing.T) {
 		t.Fatalf("active runs should be folded: %+v", state.ActiveRuns)
 	}
 
-	if len(events) != 1 || events[0].Type != "idiom.feature_planner.atom_completed" {
-		t.Fatalf("events = %+v, want atom_completed", events)
+	if len(events) != 2 ||
+		events[0].Type != "idiom.feature_planner.atom_completed" ||
+		events[1].Type != "idiom.feature_planner.release_blocked" {
+		t.Fatalf("events = %+v, want atom_completed and release_blocked", events)
 	}
 }
 
@@ -78,19 +80,19 @@ func TestReconcileActiveRunsOverlaysActiveParentAuthorityForDivergentTerminalSco
 	payload := encodeTerminalCompletion(record, completionPath, run)
 	fields := decodeCompletionPayloadForTest(t, payload)
 
-	if got := featureplanner.CompletionFieldString(fields, "contract_id"); got != run.InvocationContractID {
+	if got := featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldContractID); got != run.InvocationContractID {
 		t.Fatalf("contract_id = %q, want active invocation %q; payload=%s", got, run.InvocationContractID, payload)
 	}
 
-	if got := featureplanner.CompletionFieldString(fields, "snapshot_hash"); got != run.RuntimeEnvelopeID {
+	if got := featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldSnapshotHash); got != run.RuntimeEnvelopeID {
 		t.Fatalf("snapshot_hash = %q, want active snapshot %q; payload=%s", got, run.RuntimeEnvelopeID, payload)
 	}
 
-	if got := featureplanner.CompletionFieldString(fields, "scope_contract_id"); got != "child-scope-contract" {
+	if got := featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldScopeContractID); got != "child-scope-contract" {
 		t.Fatalf("scope_contract_id = %q, want preserved child scope; payload=%s", got, payload)
 	}
 
-	if got := featureplanner.CompletionFieldString(fields, "scope_contract_hash"); got != "child-scope-hash" {
+	if got := featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldScopeContractHash); got != "child-scope-hash" {
 		t.Fatalf("scope_contract_hash = %q, want preserved child scope hash; payload=%s", got, payload)
 	}
 
@@ -126,7 +128,7 @@ func TestEncodeTerminalCompletionDoesNotTrustFailedAcceptanceEvidence(t *testing
 	payload := encodeTerminalCompletion(record, ".idiom/plan-execute/completions/atom-1-run-1.json", run)
 	fields := decodeCompletionPayloadForTest(t, payload)
 
-	if fields["acceptance_evidence_trusted"] == true {
+	if fields[featureplanner.PlanExecuteCompletionFieldAcceptanceEvidenceTrusted] == true {
 		t.Fatalf("failed terminal completion should not trust acceptance evidence: %s", payload)
 	}
 }
@@ -151,15 +153,15 @@ func TestReconcileActiveRunsOverlaysActiveParentAuthorityForDivergentProgressSco
 	payload := encodeProgressCompletion(progress, ".idiom/plan-execute/sessions/atom-1-run-1.json", run)
 	fields := decodeCompletionPayloadForTest(t, payload)
 
-	if got := featureplanner.CompletionFieldString(fields, "contract_id"); got != run.InvocationContractID {
+	if got := featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldContractID); got != run.InvocationContractID {
 		t.Fatalf("contract_id = %q, want active invocation %q; payload=%s", got, run.InvocationContractID, payload)
 	}
 
-	if got := featureplanner.CompletionFieldString(fields, "snapshot_hash"); got != run.RuntimeEnvelopeID {
+	if got := featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldSnapshotHash); got != run.RuntimeEnvelopeID {
 		t.Fatalf("snapshot_hash = %q, want active snapshot %q; payload=%s", got, run.RuntimeEnvelopeID, payload)
 	}
 
-	if got := featureplanner.CompletionFieldString(fields, "scope_contract_id"); got != "child-progress-scope-contract" {
+	if got := featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldScopeContractID); got != "child-progress-scope-contract" {
 		t.Fatalf("scope_contract_id = %q, want preserved child scope; payload=%s", got, payload)
 	}
 
@@ -404,10 +406,10 @@ func featureStateWithActivePlanExecuteRunForTest(runID string) featureplanner.Fe
 			RunID:                runID,
 			AtomID:               "atom-1",
 			LaneSessionID:        runID,
-			LaneFamily:           "plan-execute",
+			LaneFamily:           featureplanner.PlanExecuteCompletionLaneFamily,
 			InvocationContractID: atomContract.Scope.ContractID,
 			RuntimeEnvelopeID:    contract.ContractHash,
-			State:                "running",
+			State:                featureplanner.ActiveRunStateRunning,
 			StartedAt:            started,
 		}},
 	}

@@ -138,6 +138,10 @@ func (m *Model) operatorStatusText(width int) string {
 }
 
 func (m *Model) operatorHintText() string {
+	if m.mouseSelectionMode {
+		return "drag to select · Esc restores mouse"
+	}
+
 	if m.history.panelOpen {
 		if m.history.focused {
 			return "Esc unfocus · Ctrl+T tabs"
@@ -150,7 +154,7 @@ func (m *Model) operatorHintText() string {
 		return "working · Ctrl+C quits"
 	}
 
-	return "/help commands · Ctrl+B panel · Ctrl+S save"
+	return "/help commands · Ctrl+B panel · Ctrl+Y copy · Ctrl+O select"
 }
 
 func (m *Model) requestMessages() []llama.ChatMessage {

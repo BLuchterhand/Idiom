@@ -70,6 +70,64 @@ func TestPlanExecutionContractNormalizesStableIDAndHash(t *testing.T) {
 	}
 }
 
+func TestPlanExecutionContractCarriesApprovedPlanArtifactBinding(t *testing.T) {
+	base := PlanExecutionContract{
+		PlanID: "feature-plan-42",
+		PlanArtifact: PlanArtifactBinding{
+			ArtifactID:           " plan-artifact-1 ",
+			Revision:             2,
+			Digest:               " digest-1 ",
+			WorkspaceFingerprint: " workspace-1 ",
+			ApprovalEventID:      " approval-1 ",
+			ApprovalStatus:       " Approved ",
+			ApprovalMode:         " Auto ",
+		},
+		Atoms: []AtomExecutionContract{{
+			AtomID: "atom-1",
+			Scope:  PlanScopeContract{RequiredCoveragePaths: []string{"pkg/a.go"}},
+		}},
+	}
+	variant := base
+	variant.PlanArtifact.Digest = "digest-2"
+
+	normalized := base.Normalized()
+	if normalized.PlanArtifact.ArtifactID != "plan-artifact-1" ||
+		normalized.PlanArtifact.ApprovalStatus != "approved" ||
+		normalized.PlanArtifact.ApprovalMode != "auto" {
+		t.Fatalf("plan artifact binding was not normalized: %+v", normalized.PlanArtifact)
+	}
+
+	if violations := ValidatePlanExecutionContractInput(normalized); len(violations) > 0 {
+		t.Fatalf("approved plan artifact binding should validate: %+v", violations)
+	}
+
+	if normalized.ContractHash == variant.Normalized().ContractHash {
+		t.Fatalf("plan artifact digest must contribute to contract hash")
+	}
+}
+
+func TestPlanExecutionContractRejectsIncompleteApprovedPlanArtifactBinding(t *testing.T) {
+	contract := PlanExecutionContract{
+		PlanID: "feature-plan-42",
+		PlanArtifact: PlanArtifactBinding{
+			ArtifactID:      "plan-artifact-1",
+			Revision:        1,
+			ApprovalStatus:  "approved",
+			ApprovalEventID: "approval-1",
+		},
+		Atoms: []AtomExecutionContract{{
+			AtomID: "atom-1",
+			Scope:  PlanScopeContract{RequiredCoveragePaths: []string{"pkg/a.go"}},
+		}},
+	}
+
+	violations := ValidatePlanExecutionContractInput(contract)
+	if !hasViolationCode(violations, "missing_plan_artifact_digest") ||
+		!hasViolationCode(violations, "missing_plan_artifact_workspace_fingerprint") {
+		t.Fatalf("expected artifact digest/workspace violations, got %+v", violations)
+	}
+}
+
 func TestPlanExecutionContractNormalizesAuthoritySourceFacts(t *testing.T) {
 	base := PlanExecutionContract{
 		PlanID: "source-facts",

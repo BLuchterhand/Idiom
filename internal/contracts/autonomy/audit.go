@@ -716,7 +716,7 @@ func (s *eventAuditState) addTurnPhaseContract(event Event, phase TurnPhaseContr
 	}
 
 	finalAnswerClass := ActionClassToken(ActionClassFinalAnswer)
-	if stringSetContains(phase.ActionPolicy.AllowedActionClasses, finalAnswerClass) && turnPhaseEvidenceOpen(phase.EvidenceState) {
+	if stringSetContains(phase.ActionPolicy.AllowedActionClasses, finalAnswerClass) && PhaseEvidenceStateHasOpenObligation(phase.EvidenceState) {
 		s.addTurnPhaseContradiction(event, phase, "", finalAnswerClass, "phase allows final_answer while evidence_state still has open acceptance, verification, recovery, or blocker evidence")
 	}
 
@@ -1998,20 +1998,6 @@ func TurnPhaseActionClassForToolClass(tool string) ActionClass {
 	default:
 		return ""
 	}
-}
-
-func turnPhaseEvidenceOpen(state PhaseEvidenceStateEvent) bool {
-	verificationStatus := strings.ToLower(strings.TrimSpace(state.VerificationStatus))
-
-	return len(state.TDDObligationRefs) > 0 ||
-		len(state.ResidualBlockers) > 0 ||
-		len(state.RecoveryPacketRefs) > 0 ||
-		util.EqualTrimFold(state.ProductWorkflowState, "recovery_open") ||
-		util.EqualTrimFold(state.ProductWorkflowState, "incomplete") ||
-		util.EqualTrimFold(state.ProductWorkflowState, "skipped") ||
-		verificationStatus == "missing" ||
-		verificationStatus == "failed" ||
-		verificationStatus == "pre_write"
 }
 
 func stringSetContains(values []string, want string) bool {

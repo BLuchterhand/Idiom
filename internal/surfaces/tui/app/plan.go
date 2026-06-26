@@ -50,6 +50,10 @@ type planDisplayLine struct {
 	LineIdx int
 }
 
+type planRenderedRow struct {
+	SourceLineIdx int
+}
+
 // planDirName is the directory (relative to workspace root) where per-session
 // plan markdown files live.
 const planDirName = ".planning"
@@ -156,12 +160,14 @@ func (m *Model) renderPlanPanelContent() {
 		b.WriteString(panelTitleStyle.Width(w).Render(title))
 		b.WriteString("\n")
 		b.WriteString(m.plan.overlayBody)
+		m.plan.renderedRows = nil
 		m.planViewport.SetContent(strings.TrimRight(b.String(), "\n"))
 
 		return
 	}
 
 	var b strings.Builder
+	var renderedRows []planRenderedRow
 
 	title := "◇ Plan"
 
@@ -172,13 +178,16 @@ func (m *Model) renderPlanPanelContent() {
 		title = "◇ Plan · ↑/↓ select · Enter diff/fold"
 	}
 
-	b.WriteString(panelTitleStyle.Width(w).Render(title))
+	renderedTitle := panelTitleStyle.Width(w).Render(title)
+	b.WriteString(renderedTitle)
 	b.WriteString("\n")
+	renderedRows = appendPlanRenderedRows(renderedRows, renderedTitle, -1)
 
 	content := m.loadPlanContent()
 	path := m.ensurePlanPath()
 
 	if strings.TrimSpace(content) == "" {
+		m.plan.renderedRows = nil
 		lines := []string{
 			"No plan yet.",
 			"",
@@ -238,9 +247,20 @@ func (m *Model) renderPlanPanelContent() {
 
 		b.WriteString(rendered)
 		b.WriteString("\n")
+		renderedRows = appendPlanRenderedRows(renderedRows, rendered, displayLine.LineIdx)
 	}
 
+	m.plan.renderedRows = renderedRows
 	m.planViewport.SetContent(strings.TrimRight(b.String(), "\n"))
+}
+
+func appendPlanRenderedRows(rows []planRenderedRow, rendered string, sourceLineIdx int) []planRenderedRow {
+	height := max(1, lipgloss.Height(rendered))
+	for range height {
+		rows = append(rows, planRenderedRow{SourceLineIdx: sourceLineIdx})
+	}
+
+	return rows
 }
 
 // currentPlanItems returns the parsed clickable items of the plan.

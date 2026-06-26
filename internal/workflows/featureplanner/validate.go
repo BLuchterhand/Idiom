@@ -17,6 +17,7 @@ import (
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/platform/util"
+	"idiom/internal/workflows/productworkflow"
 )
 
 type ParsedPlannerOutput struct {
@@ -328,6 +329,7 @@ func validatePlan(plan FeaturePlan, contract plancontract.PlanExecutionContract)
 
 		grounding := newAtomPromptGrounding(atom, nil)
 		grounding.addContractSourceAuthority(contract)
+		grounding.addContractNewFileAuthority(contract)
 		errs = append(errs, validateAtomPromptPathScope(prefix, atom, grounding)...)
 		errs = append(errs, validateAtomPromptVerifiedCalls(prefix, atom, grounding)...)
 
@@ -376,207 +378,9 @@ func validateStandaloneBehavioralCoverageDraft(plan FeaturePlan) []error {
 		errs = append(errs, errors.New("behavioral_coverage_draft must include structured requirements, scenarios, invariants, failure modes, state machines, test obligations, verification, open questions, or legacy items"))
 	}
 
+	errs = append(errs, validateStandaloneBehavioralCoverageDraftContract(plan)...)
+
 	tddIDs := normalizedStringSet(tddObligationIDs(plan.TDDContract.Obligations))
-	for i, obligation := range draft.TestObligations {
-		prefix := fmt.Sprintf("behavioral_coverage_draft.test_obligations[%d]", i)
-		if strings.TrimSpace(obligation.ID) == "" {
-			errs = append(errs, fmt.Errorf("%s missing id", prefix))
-		}
-		if strings.TrimSpace(obligation.Behavior) == "" {
-			errs = append(errs, fmt.Errorf("%s missing behavior", prefix))
-		}
-		if strings.TrimSpace(obligation.Command) == "" {
-			errs = append(errs, fmt.Errorf("%s missing command", prefix))
-		}
-		if id := strings.TrimSpace(obligation.ID); id != "" && len(tddIDs) > 0 && !tddIDs[id] {
-			errs = append(errs, fmt.Errorf("%s id %q is not declared by tdd_contract.obligations", prefix, id))
-		}
-	}
-	for i, scenario := range draft.Scenarios {
-		prefix := fmt.Sprintf("behavioral_coverage_draft.scenarios[%d]", i)
-		if strings.TrimSpace(scenario.ID) == "" {
-			errs = append(errs, fmt.Errorf("%s missing id", prefix))
-		}
-		if len(nonEmptyFeaturePlannerStrings(scenario.Given)) == 0 ||
-			len(nonEmptyFeaturePlannerStrings(scenario.When)) == 0 ||
-			len(nonEmptyFeaturePlannerStrings(scenario.Then)) == 0 ||
-			len(scenario.ConcreteData) == 0 {
-			errs = append(errs, fmt.Errorf("%s missing concrete given/when/then data", prefix))
-		}
-		for j, ref := range scenario.Obligations {
-			ref = strings.TrimSpace(ref)
-			if ref != "" && len(tddIDs) > 0 && !tddIDs[ref] {
-				errs = append(errs, fmt.Errorf("%s.obligations[%d] references unknown TDD obligation %q", prefix, j, ref))
-			}
-		}
-	}
-	for i, invariant := range draft.Invariants {
-		prefix := fmt.Sprintf("behavioral_coverage_draft.invariants[%d]", i)
-		if strings.TrimSpace(invariant.ID) == "" {
-			errs = append(errs, fmt.Errorf("%s missing id", prefix))
-		}
-		if strings.TrimSpace(invariant.Statement) == "" {
-			errs = append(errs, fmt.Errorf("%s missing statement", prefix))
-		}
-	}
-	for i, mode := range draft.FailureModes {
-		prefix := fmt.Sprintf("behavioral_coverage_draft.failure_modes[%d]", i)
-		if strings.TrimSpace(mode.ID) == "" {
-			errs = append(errs, fmt.Errorf("%s missing id", prefix))
-		}
-		if strings.TrimSpace(mode.Mode) == "" {
-			errs = append(errs, fmt.Errorf("%s missing mode", prefix))
-		}
-	}
-	for i, target := range draft.FuzzTargets {
-		prefix := fmt.Sprintf("behavioral_coverage_draft.fuzz_targets[%d]", i)
-		if strings.TrimSpace(target.ID) == "" {
-			errs = append(errs, fmt.Errorf("%s missing id", prefix))
-		}
-		if strings.TrimSpace(target.Target) == "" {
-			errs = append(errs, fmt.Errorf("%s missing target", prefix))
-		}
-		if len(nonEmptyFeaturePlannerStrings(target.Generators)) == 0 {
-			errs = append(errs, fmt.Errorf("%s missing generators", prefix))
-		}
-		if len(nonEmptyFeaturePlannerStrings(target.Invariants)) == 0 {
-			errs = append(errs, fmt.Errorf("%s missing invariants", prefix))
-		}
-		if len(nonEmptyFeaturePlannerStrings(target.TestRefs)) == 0 {
-			errs = append(errs, fmt.Errorf("%s missing test_refs", prefix))
-		}
-		errs = append(errs, validateDraftObligationRefs(prefix, target.Obligations, tddIDs)...)
-	}
-	for i, eval := range draft.RAGEvals {
-		prefix := fmt.Sprintf("behavioral_coverage_draft.rag_evals[%d]", i)
-		if strings.TrimSpace(eval.ID) == "" {
-			errs = append(errs, fmt.Errorf("%s missing id", prefix))
-		}
-		if len(nonEmptyFeaturePlannerStrings(eval.DatasetRefs)) == 0 {
-			errs = append(errs, fmt.Errorf("%s missing dataset_refs", prefix))
-		}
-		if len(eval.Metrics) == 0 {
-			errs = append(errs, fmt.Errorf("%s missing metrics", prefix))
-		}
-		if len(eval.Thresholds) == 0 {
-			errs = append(errs, fmt.Errorf("%s missing thresholds", prefix))
-		}
-		if len(nonEmptyFeaturePlannerStrings(eval.EvalRefs)) == 0 {
-			errs = append(errs, fmt.Errorf("%s missing eval_refs", prefix))
-		}
-		errs = append(errs, validateDraftObligationRefs(prefix, eval.Obligations, tddIDs)...)
-	}
-	for i, securityCase := range draft.SecurityCases {
-		prefix := fmt.Sprintf("behavioral_coverage_draft.security_cases[%d]", i)
-		if strings.TrimSpace(securityCase.ID) == "" {
-			errs = append(errs, fmt.Errorf("%s missing id", prefix))
-		}
-		if strings.TrimSpace(securityCase.Risk) == "" {
-			errs = append(errs, fmt.Errorf("%s missing risk", prefix))
-		}
-		if strings.TrimSpace(securityCase.Attack) == "" {
-			errs = append(errs, fmt.Errorf("%s missing attack", prefix))
-		}
-		if strings.TrimSpace(securityCase.Expected) == "" {
-			errs = append(errs, fmt.Errorf("%s missing expected", prefix))
-		}
-		if len(nonEmptyFeaturePlannerStrings(securityCase.TestRefs)) == 0 {
-			errs = append(errs, fmt.Errorf("%s missing test_refs", prefix))
-		}
-		errs = append(errs, validateDraftObligationRefs(prefix, securityCase.Obligations, tddIDs)...)
-	}
-	for i, privacy := range draft.PrivacyControls {
-		prefix := fmt.Sprintf("behavioral_coverage_draft.privacy_controls[%d]", i)
-		if strings.TrimSpace(privacy.ID) == "" {
-			errs = append(errs, fmt.Errorf("%s missing id", prefix))
-		}
-		if strings.TrimSpace(privacy.DataClass) == "" {
-			errs = append(errs, fmt.Errorf("%s missing data_class", prefix))
-		}
-		if strings.TrimSpace(privacy.Policy) == "" {
-			errs = append(errs, fmt.Errorf("%s missing policy", prefix))
-		}
-		if len(nonEmptyFeaturePlannerStrings(privacy.RedactionRefs)) == 0 {
-			errs = append(errs, fmt.Errorf("%s missing redaction_refs", prefix))
-		}
-		if strings.TrimSpace(privacy.Retention) == "" {
-			errs = append(errs, fmt.Errorf("%s missing retention", prefix))
-		}
-		if len(nonEmptyFeaturePlannerStrings(privacy.TestRefs)) == 0 {
-			errs = append(errs, fmt.Errorf("%s missing test_refs", prefix))
-		}
-		errs = append(errs, validateDraftObligationRefs(prefix, privacy.Obligations, tddIDs)...)
-	}
-	for i, provider := range draft.ProviderContracts {
-		prefix := fmt.Sprintf("behavioral_coverage_draft.provider_contracts[%d]", i)
-		if strings.TrimSpace(provider.ID) == "" {
-			errs = append(errs, fmt.Errorf("%s missing id", prefix))
-		}
-		if strings.TrimSpace(provider.Provider) == "" {
-			errs = append(errs, fmt.Errorf("%s missing provider", prefix))
-		}
-		if strings.TrimSpace(provider.Consumer) == "" {
-			errs = append(errs, fmt.Errorf("%s missing consumer", prefix))
-		}
-		if len(nonEmptyFeaturePlannerStrings(provider.ContractRefs)) == 0 {
-			errs = append(errs, fmt.Errorf("%s missing contract_refs", prefix))
-		}
-		if len(nonEmptyFeaturePlannerStrings(provider.TestRefs)) == 0 {
-			errs = append(errs, fmt.Errorf("%s missing test_refs", prefix))
-		}
-		errs = append(errs, validateDraftObligationRefs(prefix, provider.Obligations, tddIDs)...)
-	}
-	for i, signal := range draft.Observability {
-		prefix := fmt.Sprintf("behavioral_coverage_draft.observability[%d]", i)
-		if strings.TrimSpace(signal.ID) == "" {
-			errs = append(errs, fmt.Errorf("%s missing id", prefix))
-		}
-		if strings.TrimSpace(signal.Signal) == "" {
-			errs = append(errs, fmt.Errorf("%s missing signal", prefix))
-		}
-		if strings.TrimSpace(signal.InstrumentedPath) == "" {
-			errs = append(errs, fmt.Errorf("%s missing instrumented_path", prefix))
-		}
-		if len(nonEmptyFeaturePlannerStrings(signal.RequiredFields)) == 0 {
-			errs = append(errs, fmt.Errorf("%s missing required_fields", prefix))
-		}
-		if len(nonEmptyFeaturePlannerStrings(signal.TestRefs)) == 0 {
-			errs = append(errs, fmt.Errorf("%s missing test_refs", prefix))
-		}
-		errs = append(errs, validateDraftObligationRefs(prefix, signal.Obligations, tddIDs)...)
-	}
-	for i, bound := range draft.PerformanceBounds {
-		prefix := fmt.Sprintf("behavioral_coverage_draft.performance_bounds[%d]", i)
-		if strings.TrimSpace(bound.ID) == "" {
-			errs = append(errs, fmt.Errorf("%s missing id", prefix))
-		}
-		if strings.TrimSpace(bound.Operation) == "" {
-			errs = append(errs, fmt.Errorf("%s missing operation", prefix))
-		}
-		if strings.TrimSpace(bound.Bound) == "" {
-			errs = append(errs, fmt.Errorf("%s missing bound", prefix))
-		}
-		if len(nonEmptyFeaturePlannerStrings(bound.MeasurementRefs)) == 0 {
-			errs = append(errs, fmt.Errorf("%s missing measurement_refs", prefix))
-		}
-		errs = append(errs, validateDraftObligationRefs(prefix, bound.Obligations, tddIDs)...)
-	}
-	for i, journey := range draft.E2EJourneys {
-		prefix := fmt.Sprintf("behavioral_coverage_draft.e2e_journeys[%d]", i)
-		if strings.TrimSpace(journey.ID) == "" {
-			errs = append(errs, fmt.Errorf("%s missing id", prefix))
-		}
-		if strings.TrimSpace(journey.Journey) == "" {
-			errs = append(errs, fmt.Errorf("%s missing journey", prefix))
-		}
-		if len(nonEmptyFeaturePlannerStrings(journey.Steps)) == 0 {
-			errs = append(errs, fmt.Errorf("%s missing steps", prefix))
-		}
-		if len(nonEmptyFeaturePlannerStrings(journey.ScriptRefs)) == 0 {
-			errs = append(errs, fmt.Errorf("%s missing script_refs", prefix))
-		}
-		errs = append(errs, validateDraftObligationRefs(prefix, journey.Obligations, tddIDs)...)
-	}
 	for i, item := range draft.Items {
 		prefix := fmt.Sprintf("behavioral_coverage_draft.items[%d]", i)
 		if strings.TrimSpace(item.ID) == "" {
@@ -611,6 +415,7 @@ func behavioralCoverageDraftHasStructuredCoverage(draft BehavioralCoverageDraft)
 		len(draft.Observability) > 0 ||
 		len(draft.PerformanceBounds) > 0 ||
 		len(draft.E2EJourneys) > 0 ||
+		len(draft.SurfaceInventory) > 0 ||
 		len(draft.TestObligations) > 0 ||
 		len(draft.Verification) > 0 ||
 		len(draft.Waivers) > 0 ||
@@ -750,6 +555,105 @@ func featurePlanHash(plan FeaturePlan) string {
 	return fmt.Sprintf("sha256:%x", sum[:])
 }
 
+func FeaturePlanDigest(plan FeaturePlan) string {
+	canonical := plan
+	canonical.Artifact.Digest = ""
+	canonical.Artifact.UpdatedAt = ""
+	canonical.Approval = FeaturePlanApproval{}
+	for i := range canonical.Atoms {
+		canonical.Atoms[i].RuntimeEnvelope = RuntimeEnvelope{}
+	}
+
+	body, err := json.Marshal(canonical)
+	if err != nil {
+		body = []byte(fmt.Sprintf("%#v", canonical))
+	}
+
+	sum := sha256.Sum256(body)
+	return fmt.Sprintf("sha256:%x", sum[:])
+}
+
+func validateFeaturePlanArtifactBinding(plan FeaturePlan) []error {
+	var errs []error
+	artifact := plan.Artifact
+	approval := plan.Approval
+
+	if featurePlanArtifactEmpty(artifact) && featurePlanApprovalEmpty(approval) {
+		return nil
+	}
+
+	if strings.TrimSpace(artifact.ArtifactID) == "" {
+		errs = append(errs, errors.New("feature plan artifact missing artifact_id"))
+	}
+	if artifact.Revision <= 0 {
+		errs = append(errs, errors.New("feature plan artifact missing positive revision"))
+	}
+	if strings.TrimSpace(artifact.WorkspaceFingerprint) == "" {
+		errs = append(errs, errors.New("feature plan artifact missing workspace_fingerprint"))
+	}
+	if strings.TrimSpace(artifact.CreatedAt) == "" {
+		errs = append(errs, errors.New("feature plan artifact missing created_at"))
+	}
+
+	wantDigest := FeaturePlanDigest(plan)
+	if strings.TrimSpace(artifact.Digest) == "" {
+		errs = append(errs, errors.New("feature plan artifact missing digest"))
+	} else if strings.TrimSpace(artifact.Digest) != wantDigest {
+		errs = append(errs, fmt.Errorf("feature plan artifact digest %q does not match canonical digest %q", artifact.Digest, wantDigest))
+	}
+
+	if !featurePlanApprovalEmpty(approval) {
+		switch strings.TrimSpace(approval.Status) {
+		case "approved", "not_required":
+		case "":
+			errs = append(errs, errors.New("feature plan approval missing status"))
+		default:
+			errs = append(errs, fmt.Errorf("feature plan approval has unsupported status %q", approval.Status))
+		}
+		if strings.TrimSpace(approval.Mode) == "" {
+			errs = append(errs, errors.New("feature plan approval missing mode"))
+		}
+		if strings.TrimSpace(approval.EventID) == "" {
+			errs = append(errs, errors.New("feature plan approval missing event_id"))
+		}
+		if approval.PlanRevision != artifact.Revision {
+			errs = append(errs, fmt.Errorf("feature plan approval revision %d does not match artifact revision %d", approval.PlanRevision, artifact.Revision))
+		}
+		if strings.TrimSpace(approval.PlanDigest) != strings.TrimSpace(artifact.Digest) {
+			errs = append(errs, errors.New("feature plan approval digest does not match artifact digest"))
+		}
+		if strings.TrimSpace(approval.WorkspaceFingerprint) != strings.TrimSpace(artifact.WorkspaceFingerprint) {
+			errs = append(errs, errors.New("feature plan approval workspace_fingerprint does not match artifact workspace_fingerprint"))
+		}
+		if strings.TrimSpace(approval.ApprovedAt) == "" {
+			errs = append(errs, errors.New("feature plan approval missing approved_at"))
+		}
+	}
+
+	return errs
+}
+
+func featurePlanArtifactEmpty(artifact FeaturePlanArtifact) bool {
+	return strings.TrimSpace(artifact.ArtifactID) == "" &&
+		artifact.Revision == 0 &&
+		strings.TrimSpace(artifact.Digest) == "" &&
+		strings.TrimSpace(artifact.WorkspaceFingerprint) == "" &&
+		strings.TrimSpace(artifact.CreatedAt) == "" &&
+		strings.TrimSpace(artifact.UpdatedAt) == ""
+}
+
+func featurePlanApprovalEmpty(approval FeaturePlanApproval) bool {
+	return strings.TrimSpace(approval.Status) == "" &&
+		strings.TrimSpace(approval.Mode) == "" &&
+		strings.TrimSpace(approval.EventID) == "" &&
+		strings.TrimSpace(approval.Actor) == "" &&
+		strings.TrimSpace(approval.Reason) == "" &&
+		strings.TrimSpace(approval.ApprovedAt) == "" &&
+		approval.PlanRevision == 0 &&
+		strings.TrimSpace(approval.PlanDigest) == "" &&
+		strings.TrimSpace(approval.WorkspaceFingerprint) == ""
+}
+
 func ValidateDurablePlan(plan FeaturePlan) error {
 	return validateDurablePlan(plan, plancontract.PlanExecutionContract{})
 }
@@ -768,6 +672,8 @@ func validateDurablePlan(plan FeaturePlan, contract plancontract.PlanExecutionCo
 	if err := validatePlan(plan, contract); err != nil {
 		errs = append(errs, err)
 	}
+
+	errs = append(errs, validateFeaturePlanArtifactBinding(plan)...)
 
 	if strings.TrimSpace(plan.FeatureID) == "" {
 		errs = append(errs, errors.New("feature plan missing feature_id"))
@@ -1036,20 +942,78 @@ func missingProductCoverageContractAuthorityFields(ref CoverageContractRef) []st
 }
 
 type StandaloneWorkspaceContext struct {
-	WorkspaceRoot string
-	Contract      plancontract.PlanExecutionContract
+	WorkspaceRoot   string
+	Contract        plancontract.PlanExecutionContract
+	AuthorityDeltas []PlanAuthorityDelta
+}
+
+type StandaloneValidationDisposition string
+
+const (
+	StandaloneValidationModelRepairable       StandaloneValidationDisposition = "model_repairable"
+	StandaloneValidationNeedsOperatorApproval StandaloneValidationDisposition = "needs_operator_approval"
+	StandaloneValidationNeedsAcceptedSource   StandaloneValidationDisposition = "needs_accepted_source"
+)
+
+type StandaloneValidationIssue struct {
+	Kind              string                          `json:"kind"`
+	Disposition       StandaloneValidationDisposition `json:"disposition"`
+	Message           string                          `json:"message"`
+	AuthorityRequired string                          `json:"authority_required,omitempty"`
+	AffectedPaths     []string                        `json:"affected_paths,omitempty"`
+	AffectedFields    []string                        `json:"affected_fields,omitempty"`
+	Commands          []string                        `json:"commands,omitempty"`
+}
+
+type StandaloneWorkspaceValidationError struct {
+	Issues []StandaloneValidationIssue
+	Errors []error
+}
+
+func (e *StandaloneWorkspaceValidationError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if joined := errors.Join(e.Errors...); joined != nil {
+		return joined.Error()
+	}
+	return ""
+}
+
+func (e *StandaloneWorkspaceValidationError) Unwrap() []error {
+	if e == nil {
+		return nil
+	}
+	return append([]error(nil), e.Errors...)
+}
+
+func StandaloneValidationIssues(err error) []StandaloneValidationIssue {
+	var validationErr *StandaloneWorkspaceValidationError
+	if !errors.As(err, &validationErr) || validationErr == nil {
+		return nil
+	}
+	return append([]StandaloneValidationIssue(nil), validationErr.Issues...)
 }
 
 func ValidatePlanStandaloneWorkspaceContext(plan FeaturePlan, context StandaloneWorkspaceContext) error {
 	root := strings.TrimSpace(context.WorkspaceRoot)
 	if root == "" {
-		return errors.Join(validateStandaloneBehavioralCoverageDraft(plan)...)
+		return errors.Join(validateRequiredStandaloneBehavioralCoverageDraft(plan)...)
 	}
 
 	var errs []error
 	var missingNewFilePaths []string
+	var issues []StandaloneValidationIssue
 
-	errs = append(errs, validateStandaloneBehavioralCoverageDraft(plan)...)
+	for _, err := range validateRequiredStandaloneBehavioralCoverageDraft(plan) {
+		errs = append(errs, err)
+		issues = append(issues, StandaloneValidationIssue{
+			Kind:           "coverage_contract_incomplete",
+			Disposition:    StandaloneValidationModelRepairable,
+			Message:        err.Error(),
+			AffectedFields: []string{"behavioral_coverage_draft"},
+		})
+	}
 
 	for i, atom := range plan.Atoms {
 		for _, scopedPath := range standaloneAtomWorkspaceScopePaths(atom) {
@@ -1079,21 +1043,144 @@ func ValidatePlanStandaloneWorkspaceContext(plan FeaturePlan, context Standalone
 			}
 		}
 
-		if err := validateStandaloneVerificationCommands(root, atom); err != nil {
+		if err := validateStandaloneVerificationCommands(root, atom, context.AuthorityDeltas); err != nil {
 			errs = append(errs, fmt.Errorf("atom %d %w", i, err))
+			issues = append(issues, StandaloneValidationIssue{
+				Kind:              "verification_command_unverified",
+				Disposition:       StandaloneValidationNeedsOperatorApproval,
+				Message:           err.Error(),
+				AuthorityRequired: "operator_approval",
+				AffectedPaths:     normalizeEditScopeList(atom.TestFirst.TestArtifactPaths),
+				AffectedFields:    []string{"verification_command"},
+				Commands:          nonEmptyFeaturePlannerStrings(append(append([]string(nil), atom.TestFirst.Commands...), atom.PlannedTDDSnapshot.TestCommands...)),
+			})
 		}
 
 		grounding := newAtomPromptGrounding(atom, nil)
 		grounding.addContractSourceAuthority(context.Contract)
+		grounding.addContractNewFileAuthority(context.Contract)
 		errs = append(errs, validateAtomPromptPathScope(fmt.Sprintf("atom %d", i), atom, grounding)...)
-		errs = append(errs, validateAtomPromptVerifiedCalls(fmt.Sprintf("atom %d", i), atom, grounding)...)
+		for _, err := range validateAtomPromptVerifiedCalls(fmt.Sprintf("atom %d", i), atom, grounding) {
+			errs = append(errs, err)
+			issues = append(issues, StandaloneValidationIssue{
+				Kind:              "helper_signature_unverified",
+				Disposition:       StandaloneValidationNeedsAcceptedSource,
+				Message:           err.Error(),
+				AuthorityRequired: "accepted_source",
+				AffectedPaths:     normalizeEditScopeList(append(append([]string(nil), atom.RequiredEditPaths...), atom.EvidencePaths...)),
+				AffectedFields:    []string{"source_localization"},
+			})
+		}
 	}
 
 	if missingNewFilePaths = normalizeEditScopeList(missingNewFilePaths); len(missingNewFilePaths) > 0 {
-		errs = append(errs, &MissingNewFileAuthorizationError{Paths: missingNewFilePaths})
+		missingErr := &MissingNewFileAuthorizationError{Paths: missingNewFilePaths}
+		errs = append(errs, missingErr)
+		issues = append(issues, StandaloneValidationIssue{
+			Kind:              "missing_new_file_authorization",
+			Disposition:       StandaloneValidationNeedsOperatorApproval,
+			Message:           missingErr.Error(),
+			AuthorityRequired: "operator_approval",
+			AffectedPaths:     missingNewFilePaths,
+			AffectedFields:    []string{"new_file_authorization"},
+		})
 	}
 
-	return errors.Join(errs...)
+	if len(errs) == 0 {
+		return nil
+	}
+
+	return &StandaloneWorkspaceValidationError{Issues: issues, Errors: errs}
+}
+
+func validateRequiredStandaloneBehavioralCoverageDraft(plan FeaturePlan) []error {
+	var errs []error
+	if plan.BehavioralCoverageDraft == nil {
+		return []error{errors.New("standalone feature plan missing behavioral_coverage_draft with BDD scenarios, variants/invariants, and concrete TDD traceability")}
+	}
+
+	errs = append(errs, validateStandaloneBehavioralCoverageDraft(plan)...)
+	errs = append(errs, validateStandaloneBehavioralCoverageCompleteness(plan)...)
+
+	return errs
+}
+
+func validateStandaloneBehavioralCoverageCompleteness(plan FeaturePlan) []error {
+	draft := plan.BehavioralCoverageDraft
+	if draft == nil {
+		return nil
+	}
+
+	var errs []error
+	if len(draft.Requirements) == 0 {
+		errs = append(errs, errors.New("behavioral_coverage_draft missing requirements mapped from accepted scope"))
+	}
+	if len(draft.Scenarios) == 0 {
+		errs = append(errs, errors.New("behavioral_coverage_draft missing BDD scenarios with Given/When/Then coverage"))
+	}
+	if len(draft.Invariants) == 0 {
+		errs = append(errs, errors.New("behavioral_coverage_draft missing invariants"))
+	}
+	if len(draft.TestObligations) == 0 {
+		errs = append(errs, errors.New("behavioral_coverage_draft missing concrete test obligations"))
+	}
+	if len(draft.SurfaceInventory) == 0 {
+		errs = append(errs, errors.New("behavioral_coverage_draft missing generic behavior surface inventory"))
+	}
+	errs = append(errs, validateStandaloneSurfaceInventoryReadiness(draft)...)
+
+	scenarioRefs := map[string]bool{}
+	for _, scenario := range draft.Scenarios {
+		for _, ref := range scenario.Obligations {
+			if ref = strings.TrimSpace(ref); ref != "" {
+				scenarioRefs[ref] = true
+			}
+		}
+	}
+	testRefs := map[string]bool{}
+	for _, obligation := range draft.TestObligations {
+		if ref := strings.TrimSpace(obligation.ID); ref != "" {
+			testRefs[ref] = true
+		}
+	}
+
+	for _, obligation := range plan.TDDContract.Obligations {
+		id := strings.TrimSpace(obligation.ID)
+		if id == "" {
+			continue
+		}
+		if !scenarioRefs[id] {
+			errs = append(errs, fmt.Errorf("tdd obligation %q is not mapped by any behavioral_coverage_draft.scenarios entry", id))
+		}
+		if !testRefs[id] {
+			errs = append(errs, fmt.Errorf("tdd obligation %q is not represented by behavioral_coverage_draft.test_obligations", id))
+		}
+	}
+
+	return errs
+}
+
+func validateStandaloneSurfaceInventoryReadiness(draft *BehavioralCoverageDraft) []error {
+	if draft == nil {
+		return nil
+	}
+	var errs []error
+	for i, surface := range draft.SurfaceInventory {
+		prefix := fmt.Sprintf("behavioral_coverage_draft.surface_inventory[%d]", i)
+		status := normalizeStandaloneSurfaceStatus(surface.Status)
+		if status == "open_question" {
+			errs = append(errs, fmt.Errorf("%s has unresolved open_question status; resolve, waive, mark not_required, or map it to concrete coverage before approval", prefix))
+			continue
+		}
+		if status == "accepted" && len(nonEmptyFeaturePlannerStrings(surface.Obligations)) == 0 {
+			errs = append(errs, fmt.Errorf("%s in-scope surface missing tdd_obligations", prefix))
+		}
+	}
+	return errs
+}
+
+func normalizeStandaloneSurfaceStatus(status string) string {
+	return productworkflow.NormalizeBehavioralSurfaceStatus(status)
 }
 
 func standaloneAtomWorkspaceScopePaths(atom FeatureAtomPlan) []string {
@@ -1106,22 +1193,29 @@ func standaloneAtomTestArtifactPaths(atom FeatureAtomPlan) []string {
 
 type atomPromptGrounding struct {
 	declaredPaths      map[string]bool
+	mutationPaths      map[string]bool
+	authorizedNewFiles map[string]bool
 	verifiedSignatures map[string][]string
 }
 
 func newAtomPromptGrounding(atom FeatureAtomPlan, brief *ProductWorkflowBrief) atomPromptGrounding {
 	grounding := atomPromptGrounding{
 		declaredPaths:      map[string]bool{},
+		mutationPaths:      map[string]bool{},
+		authorizedNewFiles: map[string]bool{},
 		verifiedSignatures: map[string][]string{},
 	}
 
 	grounding.addDeclaredPaths(atom.RequiredEditPaths...)
 	grounding.addDeclaredPaths(atom.AllowedEditPaths...)
+	grounding.addMutationPaths(atom.RequiredEditPaths...)
+	grounding.addMutationPaths(atom.AllowedEditPaths...)
+	grounding.addMutationPaths(atom.TestFirst.TestArtifactPaths...)
+	grounding.addMutationPaths(atom.PlannedTDDSnapshot.TestArtifactPaths...)
 	grounding.addDeclaredPaths(atom.TestFirst.TestArtifactPaths...)
 	grounding.addDeclaredPaths(atom.PlannedTDDSnapshot.TestArtifactPaths...)
 	grounding.addDeclaredPaths(atom.EvidencePaths...)
 	grounding.addDeclaredPaths(standaloneAtomCommandContextPaths(atom)...)
-	grounding.addPromptSignatures(atom.Prompt)
 
 	if brief != nil {
 		grounding.addDeclaredPaths(brief.ContextEvidencePaths...)
@@ -1140,6 +1234,15 @@ func (g atomPromptGrounding) addDeclaredPaths(paths ...string) {
 	for _, path := range paths {
 		if normalized := plancontract.NormalizeScopePath(path); normalized != "" {
 			g.declaredPaths[normalized] = true
+		}
+	}
+}
+
+func (g atomPromptGrounding) addMutationPaths(paths ...string) {
+	for _, path := range paths {
+		if normalized := plancontract.NormalizeScopePath(path); normalized != "" {
+			g.declaredPaths[normalized] = true
+			g.mutationPaths[normalized] = true
 		}
 	}
 }
@@ -1219,6 +1322,38 @@ func (g atomPromptGrounding) addContractSourceAuthority(contract plancontract.Pl
 			}
 		}
 	}
+}
+
+func (g atomPromptGrounding) addContractNewFileAuthority(contract plancontract.PlanExecutionContract) {
+	for _, file := range contract.AuthorizedNewFiles {
+		g.addAuthorizedNewFile(file.Path)
+	}
+	for _, atom := range contract.Atoms {
+		for _, file := range atom.AuthorizedNewFiles {
+			g.addAuthorizedNewFile(file.Path)
+		}
+	}
+}
+
+func (g atomPromptGrounding) addAuthorizedNewFile(path string) {
+	if normalized := plancontract.NormalizeScopePath(path); normalized != "" {
+		g.declaredPaths[normalized] = true
+		g.authorizedNewFiles[normalized] = true
+	}
+}
+
+func (g atomPromptGrounding) pathIsDeclaredDirectory(path string) bool {
+	path = plancontract.NormalizeScopePath(path)
+	if path == "" {
+		return false
+	}
+	prefix := path + "/"
+	for declared := range g.declaredPaths {
+		if strings.HasPrefix(declared, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (g atomPromptGrounding) addPromptSignatures(prompt string) {
@@ -1425,7 +1560,7 @@ func validateAtomPromptPathScope(prefix string, atom FeatureAtomPlan, grounding 
 
 	var errs []error
 	for _, path := range repoPathsMentionedInText(prompt) {
-		if grounding.declaredPaths[path] || promptPathCanRemainContextOnly(path) {
+		if grounding.declaredPaths[path] || grounding.pathIsDeclaredDirectory(path) || promptPathCanRemainContextOnly(path) {
 			continue
 		}
 		errs = append(errs, fmt.Errorf("%s prompt mentions repo path %q outside required_edit_paths, allowed_edit_paths, test artifact paths, or evidence_paths; declare it as scope/evidence or ask_planner_question for scope repair", prefix, path))
@@ -1471,6 +1606,12 @@ func normalizeFeaturePlannerMentionedPaths(raw string) []string {
 	if path == "" || !strings.Contains(path, "/") {
 		return nil
 	}
+	if strings.ContainsAny(path, "<>") {
+		return nil
+	}
+	if featurePlannerMentionedPathLooksLikeProseAlternative(path) {
+		return nil
+	}
 	if expanded, shorthand := expandFeaturePlannerExtensionShorthand(path); shorthand {
 		return expanded
 	}
@@ -1478,6 +1619,26 @@ func normalizeFeaturePlannerMentionedPaths(raw string) []string {
 		return nil
 	}
 	return []string{path}
+}
+
+func featurePlannerMentionedPathLooksLikeProseAlternative(path string) bool {
+	parts := strings.Split(path, "/")
+	if len(parts) != 2 || strings.Contains(path, ".") {
+		return false
+	}
+	common := map[string]bool{
+		"api":       true,
+		"cli":       true,
+		"function":  true,
+		"functions": true,
+		"input":     true,
+		"output":    true,
+		"prompt":    true,
+		"response":  true,
+		"tool":      true,
+		"tools":     true,
+	}
+	return common[parts[0]] && common[parts[1]]
 }
 
 func normalizeFeaturePlannerMentionedPath(raw string) string {
@@ -1538,12 +1699,12 @@ func validateAtomPromptVerifiedCalls(prefix string, atom FeatureAtomPlan, ground
 
 	var errs []error
 	seen := map[string]bool{}
-	for _, match := range featurePlannerCallPattern.FindAllStringSubmatch(prompt, -1) {
-		if len(match) < 3 {
+	for _, match := range featurePlannerCallPattern.FindAllStringSubmatchIndex(prompt, -1) {
+		if len(match) < 6 {
 			continue
 		}
-		name := strings.TrimSpace(match[1])
-		args := strings.TrimSpace(match[2])
+		name := strings.TrimSpace(prompt[match[2]:match[3]])
+		args := strings.TrimSpace(prompt[match[4]:match[5]])
 		if !plannerCallNeedsSignatureEvidence(name, args) {
 			continue
 		}
@@ -1551,6 +1712,9 @@ func validateAtomPromptVerifiedCalls(prefix string, atom FeatureAtomPlan, ground
 			continue
 		}
 		call := name + "(" + args + ")"
+		if plannerCallIsNewAPIDefinition(prompt, match[0], call, grounding) {
+			continue
+		}
 		if seen[call] {
 			continue
 		}
@@ -1559,6 +1723,64 @@ func validateAtomPromptVerifiedCalls(prefix string, atom FeatureAtomPlan, ground
 	}
 
 	return errs
+}
+
+func plannerCallIsNewAPIDefinition(prompt string, callStart int, call string, grounding atomPromptGrounding) bool {
+	if !grounding.hasDeclaredMutationScope() && !grounding.hasDeclaredNewFileScope() {
+		return false
+	}
+	if callStart < 0 || callStart > len(prompt) {
+		return false
+	}
+	windowStart := callStart - 96
+	if windowStart < 0 {
+		windowStart = 0
+	}
+	prefix := strings.ToLower(prompt[windowStart:callStart])
+	apiDefinitionMarkers := []string{
+		" add method ",
+		" add methods ",
+		" add a method ",
+		" add a function ",
+		" add function ",
+		" add functions ",
+		"methods:",
+		"function:",
+		" define ",
+		" define method ",
+		" define function ",
+		" expose ",
+	}
+	if grounding.hasDeclaredNewFileScope() {
+		apiDefinitionMarkers = append(apiDefinitionMarkers,
+			" method ",
+			" methods ",
+			" function ",
+			" functions ",
+			" class method ",
+			" api ",
+			" public api ",
+			" add a ",
+			"add a ",
+			" create ",
+			" implement ",
+		)
+	}
+
+	for _, marker := range apiDefinitionMarkers {
+		if strings.Contains(prefix, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func (g atomPromptGrounding) hasDeclaredNewFileScope() bool {
+	return len(g.authorizedNewFiles) > 0
+}
+
+func (g atomPromptGrounding) hasDeclaredMutationScope() bool {
+	return len(g.mutationPaths) > 0
 }
 
 func plannerCallNeedsSignatureEvidence(name string, args string) bool {
@@ -1604,7 +1826,7 @@ func plannerCallLooksLikeProseLabel(lowerName string, args string) bool {
 	switch lowerName {
 	case "const":
 		return true
-	case "field", "volume":
+	case "dicts", "field", "volume":
 		return plannerCallArgsLookLikeDescriptor(args)
 	default:
 		return false
@@ -1628,7 +1850,7 @@ func plannerCallArgsLookLikeDescriptor(args string) bool {
 
 func plannerCallLooksLikeTDDResultProse(lowerName string, args string) bool {
 	switch lowerName {
-	case "fail", "fails", "pass", "passes":
+	case "fail", "fails", "initially", "pass", "passes":
 	default:
 		return false
 	}
@@ -1676,13 +1898,88 @@ func plannerCallLooksLikeInstructionalParenthetical(lowerArgs string) bool {
 	return false
 }
 
-func validateStandaloneVerificationCommands(root string, atom FeatureAtomPlan) error {
+func validateStandaloneVerificationCommands(root string, atom FeatureAtomPlan, deltas []PlanAuthorityDelta) error {
 	for _, command := range nonEmptyFeaturePlannerStrings(append(append([]string(nil), atom.TestFirst.Commands...), atom.PlannedTDDSnapshot.TestCommands...)) {
+		if verificationCommandAuthorizedByDeltas(command, deltas) {
+			continue
+		}
 		if err := validateWorkspaceCommand(root, command); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func verificationCommandAuthorizedByDeltas(command string, deltas []PlanAuthorityDelta) bool {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return false
+	}
+	for _, delta := range normalizePlanAuthorityDeltas(deltas) {
+		if !authorityDeltaActualApprovesCreation(delta) && !authorityDeltaActualApprovesVerification(delta) {
+			continue
+		}
+		if !deltaAllowsField(delta, "verification_command") {
+			if !verificationCommandCoveredByNewFileAuthorization(command, delta) {
+				continue
+			}
+			return true
+		}
+		actual := strings.ToLower(delta.Actual)
+		if authorityTextRevisesScope(actual) {
+			continue
+		}
+		if strings.Contains(actual, strings.ToLower(command)) {
+			return true
+		}
+	}
+	return false
+}
+
+func verificationCommandCoveredByNewFileAuthorization(command string, delta PlanAuthorityDelta) bool {
+	if !deltaAllowsField(delta, "new_file_authorization") {
+		return false
+	}
+	if !authorityDeltaActualApprovesCreation(delta) {
+		return false
+	}
+	if authorityTextRevisesScope(strings.ToLower(delta.Actual)) {
+		return false
+	}
+
+	command = strings.ToLower(strings.TrimSpace(command))
+	if command == "" {
+		return false
+	}
+	for _, path := range normalizeEditScopeList(delta.AffectedPaths) {
+		if strings.Contains(command, strings.ToLower(path)) {
+			return true
+		}
+	}
+	return false
+}
+
+func authorityDeltaActualApprovesVerification(delta PlanAuthorityDelta) bool {
+	text := strings.ToLower(strings.TrimSpace(delta.Actual))
+	if text == "" {
+		return false
+	}
+	if authorityTextDenies(text) {
+		return false
+	}
+	for _, approved := range []string{
+		"approved",
+		"approve",
+		"use ",
+		"verification command",
+		"verify with",
+		"run ",
+	} {
+		if strings.Contains(text, approved) {
+			return true
+		}
+	}
+	return false
 }
 
 func validateWorkspaceCommand(root string, command string) error {
@@ -2132,6 +2429,7 @@ func validateStandaloneWorkspacePath(root string, contract plancontract.PlanExec
 func CompilePlanAuthorityContract(plan FeaturePlan, deltas []PlanAuthorityDelta) plancontract.PlanExecutionContract {
 	contract := plancontract.PlanExecutionContract{
 		PlanID:             plan.FeatureID,
+		PlanArtifact:       planArtifactBindingFromFeaturePlan(plan),
 		AuthorizedNewFiles: newFileAuthorizationsFromDeltas(deltas),
 		AuthorityDeltas:    planContractAuthorityDeltas(deltas),
 	}
@@ -2142,6 +2440,18 @@ func CompilePlanAuthorityContract(plan FeaturePlan, deltas []PlanAuthorityDelta)
 	}
 
 	return contract.Normalized()
+}
+
+func planArtifactBindingFromFeaturePlan(plan FeaturePlan) plancontract.PlanArtifactBinding {
+	return plancontract.PlanArtifactBinding{
+		ArtifactID:           plan.Artifact.ArtifactID,
+		Revision:             plan.Artifact.Revision,
+		Digest:               plan.Artifact.Digest,
+		WorkspaceFingerprint: plan.Artifact.WorkspaceFingerprint,
+		ApprovalEventID:      plan.Approval.EventID,
+		ApprovalStatus:       plan.Approval.Status,
+		ApprovalMode:         plan.Approval.Mode,
+	}
 }
 
 func compileAtomAuthorityContract(plan FeaturePlan, atom FeatureAtomPlan) plancontract.AtomExecutionContract {
@@ -2337,10 +2647,67 @@ func deltaAuthorizesNewFile(delta PlanAuthorityDelta) bool {
 }
 
 func authorityDeltaActualApprovesCreation(delta PlanAuthorityDelta) bool {
-	text := strings.ToLower(strings.TrimSpace(strings.Join([]string{delta.Actual, delta.Expected}, "\n")))
+	text := strings.ToLower(strings.TrimSpace(delta.Actual))
 	if text == "" {
 		return false
 	}
+	if authorityTextDenies(text) || authorityTextRevisesScope(text) {
+		return false
+	}
+	for _, approved := range []string{
+		"approved",
+		"approve",
+		"authorized",
+		"authorize",
+		"you may create",
+		"may create",
+		"allowed",
+		"allow",
+		"create exactly",
+		"yes",
+	} {
+		if strings.Contains(text, approved) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func authorityTextRevisesScope(text string) bool {
+	text = strings.ToLower(strings.TrimSpace(text))
+	if text == "" {
+		return false
+	}
+
+	for _, revised := range []string{
+		" instead",
+		"instead ",
+		" revise",
+		"revise ",
+		" change",
+		"change ",
+		" adjust",
+		"adjust ",
+		" update",
+		"update ",
+		" use existing",
+		"use existing",
+		" different ",
+		"different ",
+		" replace",
+		"replace ",
+	} {
+		if strings.Contains(text, revised) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func authorityTextDenies(text string) bool {
+	text = strings.ToLower(strings.TrimSpace(text))
 	for _, denied := range []string{
 		"no authorization",
 		"no approval",
@@ -2363,26 +2730,9 @@ func authorityDeltaActualApprovesCreation(delta PlanAuthorityDelta) bool {
 		"no ",
 	} {
 		if strings.Contains(text, denied) {
-			return false
-		}
-	}
-	for _, approved := range []string{
-		"approved",
-		"approve",
-		"authorized",
-		"authorize",
-		"you may create",
-		"may create",
-		"allowed",
-		"allow",
-		"create exactly",
-		"yes",
-	} {
-		if strings.Contains(text, approved) {
 			return true
 		}
 	}
-
 	return false
 }
 
@@ -3251,6 +3601,131 @@ func ValidateDurableState(state FeatureState) error {
 		}
 	}
 
+	closuresByAtom := map[string]VerificationClosure{}
+	closureIDs := map[string]struct{}{}
+	expectedTerminalClosureIDs := map[string]struct{}{}
+	for i, closure := range state.VerificationClosures {
+		closure = normalizeVerificationClosure(closure)
+		if strings.TrimSpace(closure.EventID) == "" {
+			errs = append(errs, fmt.Errorf("verification closure %d missing event_id", i))
+		}
+		if strings.TrimSpace(closure.AtomID) == "" {
+			errs = append(errs, fmt.Errorf("verification closure %d missing atom_id", i))
+		}
+		if strings.TrimSpace(closure.Status) == "" {
+			errs = append(errs, fmt.Errorf("verification closure %d missing status", i))
+		}
+		if closure.Status != "" && closure.Status != "passed" && closure.Status != "source_satisfied" {
+			errs = append(errs, fmt.Errorf("verification closure %d has unsupported status %q", i, closure.Status))
+		}
+		if state.Plan.Artifact.ArtifactID != "" {
+			if closure.PlanArtifactID != state.Plan.Artifact.ArtifactID {
+				errs = append(errs, fmt.Errorf("verification closure %d plan_artifact_id %q does not match active artifact %q", i, closure.PlanArtifactID, state.Plan.Artifact.ArtifactID))
+			}
+			if closure.PlanRevision != state.Plan.Artifact.Revision {
+				errs = append(errs, fmt.Errorf("verification closure %d plan_revision %d does not match active revision %d", i, closure.PlanRevision, state.Plan.Artifact.Revision))
+			}
+			if closure.PlanDigest != state.Plan.Artifact.Digest {
+				errs = append(errs, fmt.Errorf("verification closure %d plan_digest does not match active artifact digest", i))
+			}
+			if closure.ApprovalEventID != state.Plan.Approval.EventID {
+				errs = append(errs, fmt.Errorf("verification closure %d approval_event_id %q does not match active approval %q", i, closure.ApprovalEventID, state.Plan.Approval.EventID))
+			}
+		}
+		for j, result := range closure.RequiredTestResults {
+			if strings.TrimSpace(result.Command) == "" {
+				errs = append(errs, fmt.Errorf("verification closure %d required_test_results[%d] missing command", i, j))
+			}
+			if strings.TrimSpace(result.Status) == "" {
+				errs = append(errs, fmt.Errorf("verification closure %d required_test_results[%d] missing status", i, j))
+			}
+		}
+		for j, result := range closure.TDDCommandResults {
+			if strings.TrimSpace(result.Command) == "" {
+				errs = append(errs, fmt.Errorf("verification closure %d tdd_command_results[%d] missing command", i, j))
+			}
+			if strings.TrimSpace(result.Status) == "" {
+				errs = append(errs, fmt.Errorf("verification closure %d tdd_command_results[%d] missing status", i, j))
+			}
+		}
+		for j, check := range append(append([]VerificationCheckResult(nil), closure.SourceSanity...), closure.Verification...) {
+			if strings.TrimSpace(check.Kind) == "" {
+				errs = append(errs, fmt.Errorf("verification closure %d check[%d] missing kind", i, j))
+			}
+			if strings.TrimSpace(check.Status) == "" {
+				errs = append(errs, fmt.Errorf("verification closure %d check[%d] missing status", i, j))
+			}
+			if strings.TrimSpace(check.Path) != "" && plancontract.NormalizeScopePath(check.Path) == "" {
+				errs = append(errs, fmt.Errorf("verification closure %d check[%d] has invalid path %q", i, j, check.Path))
+			}
+		}
+		if closure.AtomID != "" {
+			closuresByAtom[closure.AtomID] = closure
+		}
+		if closure.EventID != "" {
+			closureIDs[closure.EventID] = struct{}{}
+		}
+	}
+
+	if state.Plan.Artifact.ArtifactID != "" {
+		for i, atom := range state.Atoms {
+			switch atom.State {
+			case AtomStateComplete, AtomStateSourceSatisfied:
+				if closure, ok := closuresByAtom[atom.ID]; !ok {
+					errs = append(errs, fmt.Errorf("atom %d %q has terminal state %q without verification closure for approved plan artifact", i, atom.ID, atom.State))
+				} else if closure.EventID != "" {
+					expectedTerminalClosureIDs[closure.EventID] = struct{}{}
+				}
+			}
+		}
+	}
+	if state.Status == FeatureStateComplete && strings.TrimSpace(state.ReleaseReadiness.Status) == "" {
+		errs = append(errs, errors.New("complete feature-planner state missing release readiness decision"))
+	}
+	if strings.TrimSpace(state.ReleaseReadiness.Status) != "" {
+		switch state.ReleaseReadiness.Status {
+		case "ready", "blocked":
+		default:
+			errs = append(errs, fmt.Errorf("release readiness has unsupported status %q", state.ReleaseReadiness.Status))
+		}
+		if state.ReleaseReadiness.Status == "ready" && (len(state.ReleaseReadiness.Blockers) > 0 || len(state.ReleaseReadiness.OpenObligations) > 0) {
+			errs = append(errs, errors.New("release readiness cannot be ready with blockers or open obligations"))
+		}
+		for _, closureID := range state.ReleaseReadiness.VerificationClosureEventIDs {
+			if _, ok := closureIDs[closureID]; !ok {
+				errs = append(errs, fmt.Errorf("release readiness references unknown verification closure %q", closureID))
+			}
+		}
+		if state.ReleaseReadiness.Status == "ready" {
+			if len(state.ReleaseReadiness.VerificationClosureEventIDs) == 0 {
+				errs = append(errs, errors.New("release readiness ready state requires verification closure ids"))
+			}
+			releaseClosureIDs := map[string]struct{}{}
+			for _, closureID := range state.ReleaseReadiness.VerificationClosureEventIDs {
+				releaseClosureIDs[closureID] = struct{}{}
+			}
+			for closureID := range expectedTerminalClosureIDs {
+				if _, ok := releaseClosureIDs[closureID]; !ok {
+					errs = append(errs, fmt.Errorf("release readiness missing terminal verification closure %q", closureID))
+				}
+			}
+		}
+		if state.Plan.Artifact.ArtifactID != "" {
+			if state.ReleaseReadiness.PlanArtifactID != state.Plan.Artifact.ArtifactID {
+				errs = append(errs, fmt.Errorf("release readiness plan_artifact_id %q does not match active artifact %q", state.ReleaseReadiness.PlanArtifactID, state.Plan.Artifact.ArtifactID))
+			}
+			if state.ReleaseReadiness.PlanRevision != state.Plan.Artifact.Revision {
+				errs = append(errs, fmt.Errorf("release readiness plan_revision %d does not match active revision %d", state.ReleaseReadiness.PlanRevision, state.Plan.Artifact.Revision))
+			}
+			if state.ReleaseReadiness.PlanDigest != state.Plan.Artifact.Digest {
+				errs = append(errs, errors.New("release readiness plan_digest does not match active artifact digest"))
+			}
+			if state.ReleaseReadiness.ApprovalEventID != state.Plan.Approval.EventID {
+				errs = append(errs, fmt.Errorf("release readiness approval_event_id %q does not match active approval %q", state.ReleaseReadiness.ApprovalEventID, state.Plan.Approval.EventID))
+			}
+		}
+	}
+
 	for i, delta := range state.AuthorityDeltas {
 		if strings.TrimSpace(delta.QuestionID) == "" {
 			errs = append(errs, fmt.Errorf("authority delta %d missing question_id", i))
@@ -3294,6 +3769,7 @@ func ApplyPlannerOutput(state *FeatureState, parsed ParsedPlannerOutput, now tim
 	switch parsed.Kind {
 	case ToolAskPlannerQuestion:
 		question := normalizePlannerQuestion(parsed.Question, fmt.Sprintf("q-%03d", len(state.OpenQuestions)+1), "", now)
+		question = demoteUnanchoredPathAuthorityQuestion(question)
 		if err := ValidatePlannerQuestion(question); err != nil {
 			state.Status = FeatureStatePlanningRepair
 			state.PlanningLoop.State = FeatureStatePlanningRepair
@@ -3345,6 +3821,8 @@ func ApplyPlannerOutput(state *FeatureState, parsed ParsedPlannerOutput, now tim
 	case ToolSubmitFeaturePlan:
 		parsed.Plan = NormalizePlanPromptDeclarations(parsed.Plan)
 		hydrateDurablePlanDefaults(&parsed.Plan, state, now)
+		stampFeaturePlanArtifact(&parsed.Plan, state, now)
+		stampFeaturePlanApproval(&parsed.Plan, state, now)
 		contract := StampPlanAuthorityContract(&parsed.Plan, state.AuthorityDeltas)
 
 		if err := ValidateDurablePlanWithContract(parsed.Plan, contract); err != nil {
@@ -3357,6 +3835,9 @@ func ApplyPlannerOutput(state *FeatureState, parsed ParsedPlannerOutput, now tim
 		}
 
 		state.Plan = parsed.Plan
+		state.PlannerRevision = parsed.Plan.Artifact.Revision
+		state.WorkspaceFingerprint = parsed.Plan.Artifact.WorkspaceFingerprint
+		state.Blockers = nil
 		state.Atoms = make([]FeatureAtomState, 0, len(parsed.Plan.Atoms))
 
 		for _, atom := range parsed.Plan.Atoms {
@@ -3375,10 +3856,10 @@ func ApplyPlannerOutput(state *FeatureState, parsed ParsedPlannerOutput, now tim
 		}
 
 		events := []Event{
-			{Type: "idiom.feature_planner.plan_accepted", SessionID: state.SessionID, FeatureTo: FeatureStatePlanReview, Fields: map[string]any{"atom_count": len(state.Atoms)}},
-			{Type: "idiom.feature_planner.plan_reviewed", SessionID: state.SessionID, FeatureFrom: FeatureStatePlanReview, FeatureTo: FeatureStateAwaitingApproval, Fields: map[string]any{"review": "durable_plan_contract_passed"}},
-			{Type: "idiom.feature_planner.plan_approved", SessionID: state.SessionID, FeatureFrom: FeatureStateAwaitingApproval, FeatureTo: FeatureStateAtomizing, Fields: map[string]any{"approval": "harness_contract_approval"}},
-			{Type: "idiom.feature_planner.atoms_compiled", SessionID: state.SessionID, FeatureFrom: FeatureStateAtomizing, FeatureTo: FeatureStateReady, Fields: map[string]any{"atom_count": len(state.Atoms)}},
+			{Type: "idiom.feature_planner.plan_accepted", SessionID: state.SessionID, FeatureTo: FeatureStatePlanReview, Fields: featurePlanArtifactEventFields(state.Plan, map[string]any{"atom_count": len(state.Atoms)})},
+			{Type: "idiom.feature_planner.plan_reviewed", SessionID: state.SessionID, FeatureFrom: FeatureStatePlanReview, FeatureTo: FeatureStateAwaitingApproval, Fields: featurePlanArtifactEventFields(state.Plan, map[string]any{"review": "durable_plan_contract_passed"})},
+			{Type: "idiom.feature_planner.plan_approved", EventID: state.Plan.Approval.EventID, SessionID: state.SessionID, FeatureFrom: FeatureStateAwaitingApproval, FeatureTo: FeatureStateAtomizing, Fields: featurePlanArtifactEventFields(state.Plan, map[string]any{"approval": "harness_contract_approval"})},
+			{Type: "idiom.feature_planner.atoms_compiled", SessionID: state.SessionID, FeatureFrom: FeatureStateAtomizing, FeatureTo: FeatureStateReady, Fields: featurePlanArtifactEventFields(state.Plan, map[string]any{"atom_count": len(state.Atoms)})},
 		}
 
 		events = append(events, recordTDDPreExecutionEvidence(state, now)...)
@@ -3517,6 +3998,33 @@ func tddEvidenceFromAtom(atom FeatureAtomPlan, createdAt string) TDDPreExecution
 	}
 }
 
+func featurePlanArtifactEventFields(plan FeaturePlan, fields map[string]any) map[string]any {
+	if fields == nil {
+		fields = map[string]any{}
+	}
+
+	if artifactID := strings.TrimSpace(plan.Artifact.ArtifactID); artifactID != "" {
+		fields["plan_artifact_id"] = artifactID
+	}
+	if plan.Artifact.Revision > 0 {
+		fields["plan_revision"] = plan.Artifact.Revision
+	}
+	if digest := strings.TrimSpace(plan.Artifact.Digest); digest != "" {
+		fields["plan_digest"] = digest
+	}
+	if fingerprint := strings.TrimSpace(plan.Artifact.WorkspaceFingerprint); fingerprint != "" {
+		fields["workspace_fingerprint"] = fingerprint
+	}
+	if approval := strings.TrimSpace(plan.Approval.EventID); approval != "" {
+		fields["approval_event_id"] = approval
+	}
+	if mode := strings.TrimSpace(plan.Approval.Mode); mode != "" {
+		fields["approval_mode"] = mode
+	}
+
+	return fields
+}
+
 func upsertTDDEvidence(state *FeatureState, evidence TDDPreExecutionEvidence) {
 	if state == nil || evidence.EventID == "" || evidence.AtomID == "" {
 		return
@@ -3531,6 +4039,268 @@ func upsertTDDEvidence(state *FeatureState, evidence TDDPreExecutionEvidence) {
 	}
 
 	state.TDDPreExecutionEvidence = append(state.TDDPreExecutionEvidence, evidence)
+}
+
+func normalizeVerificationClosure(closure VerificationClosure) VerificationClosure {
+	closure.EventID = strings.TrimSpace(closure.EventID)
+	closure.AtomID = strings.TrimSpace(closure.AtomID)
+	closure.Status = strings.TrimSpace(strings.ToLower(closure.Status))
+	closure.Outcome = strings.TrimSpace(closure.Outcome)
+	closure.PlanArtifactID = strings.TrimSpace(closure.PlanArtifactID)
+	if closure.PlanRevision < 0 {
+		closure.PlanRevision = 0
+	}
+	closure.PlanDigest = strings.TrimSpace(closure.PlanDigest)
+	closure.ApprovalEventID = strings.TrimSpace(closure.ApprovalEventID)
+	closure.WorkspaceFingerprint = strings.TrimSpace(closure.WorkspaceFingerprint)
+	closure.ContractID = strings.TrimSpace(closure.ContractID)
+	closure.ContractHash = strings.TrimSpace(closure.ContractHash)
+	closure.ScopeContractID = strings.TrimSpace(closure.ScopeContractID)
+	closure.ScopeContractHash = strings.TrimSpace(closure.ScopeContractHash)
+	closure.ChangedPaths = normalizeEditScopeList(closure.ChangedPaths)
+	closure.SourceSatisfiedEvidencePaths = normalizeEditScopeList(closure.SourceSatisfiedEvidencePaths)
+	closure.RequiredTestResults = normalizeVerificationCommandResults(closure.RequiredTestResults)
+	closure.TDDCommandResults = normalizeVerificationCommandResults(closure.TDDCommandResults)
+	closure.SourceSanity = normalizeVerificationCheckResults(closure.SourceSanity)
+	closure.Verification = normalizeVerificationCheckResults(closure.Verification)
+	closure.CreatedAt = strings.TrimSpace(closure.CreatedAt)
+
+	return closure
+}
+
+func EvaluateReleaseReadiness(state FeatureState, decidedAt string) ReleaseReadinessDecision {
+	decision := ReleaseReadinessDecision{
+		Status:               "ready",
+		PlanArtifactID:       strings.TrimSpace(state.Plan.Artifact.ArtifactID),
+		PlanRevision:         state.Plan.Artifact.Revision,
+		PlanDigest:           strings.TrimSpace(state.Plan.Artifact.Digest),
+		WorkspaceFingerprint: strings.TrimSpace(state.Plan.Artifact.WorkspaceFingerprint),
+		ApprovalEventID:      strings.TrimSpace(state.Plan.Approval.EventID),
+		DecidedAt:            strings.TrimSpace(decidedAt),
+	}
+	if decision.PlanArtifactID == "" {
+		decision.PlanArtifactID = firstNonEmpty(state.FeatureID, state.SessionID, "feature") + ":feature-plan"
+	}
+	if decision.EventID == "" {
+		decision.EventID = stableReleaseReadinessEventID(decision.PlanArtifactID, decision.PlanRevision)
+	}
+
+	addBlocker := func(blocker string) {
+		blocker = strings.TrimSpace(blocker)
+		if blocker == "" {
+			return
+		}
+		decision.Blockers = append(decision.Blockers, blocker)
+		decision.OpenObligations = append(decision.OpenObligations, blocker)
+	}
+
+	if decision.PlanRevision <= 0 {
+		addBlocker("plan artifact revision missing")
+	}
+	if decision.PlanDigest == "" {
+		addBlocker("plan artifact digest missing")
+	}
+	if decision.WorkspaceFingerprint == "" {
+		addBlocker("workspace fingerprint missing")
+	}
+	if decision.ApprovalEventID == "" || !util.EqualTrimFold(state.Plan.Approval.Status, "approved") {
+		addBlocker("approved plan artifact missing")
+	}
+	if state.Plan.Approval.PlanRevision > 0 && state.Plan.Approval.PlanRevision != decision.PlanRevision {
+		addBlocker("approval revision does not match plan artifact")
+	}
+	if state.Plan.Approval.PlanDigest != "" && state.Plan.Approval.PlanDigest != decision.PlanDigest {
+		addBlocker("approval digest does not match plan artifact")
+	}
+	if state.Plan.Approval.WorkspaceFingerprint != "" && state.Plan.Approval.WorkspaceFingerprint != decision.WorkspaceFingerprint {
+		addBlocker("approval workspace fingerprint does not match plan artifact")
+	}
+	if len(state.Atoms) == 0 {
+		addBlocker("plan has no executable atoms")
+	}
+	if len(normalizedStringList(state.OpenObligations)) > 0 {
+		for _, obligation := range normalizedStringList(state.OpenObligations) {
+			addBlocker("open obligation: " + obligation)
+		}
+	}
+	if len(normalizedStringList(state.Blockers)) > 0 {
+		for _, blocker := range normalizedStringList(state.Blockers) {
+			addBlocker("open blocker: " + blocker)
+		}
+	}
+	if len(state.OpenQuestions) > 0 {
+		for _, question := range state.OpenQuestions {
+			if strings.TrimSpace(question.Status) == "" || util.EqualTrimFold(question.Status, "open") {
+				addBlocker("open planner question: " + firstNonEmpty(question.ID, question.QuestionSummary, "unknown"))
+			}
+		}
+	}
+	for _, run := range state.ActiveRuns {
+		if strings.TrimSpace(run.State) != "" && !util.EqualTrimFold(run.State, "complete") && !util.EqualTrimFold(run.State, "completed") && !util.EqualTrimFold(run.State, "source-satisfied") {
+			addBlocker("active implementation run: " + firstNonEmpty(run.AtomID, run.RunID, "unknown"))
+		}
+	}
+
+	closuresByAtom := map[string]VerificationClosure{}
+	for _, closure := range state.VerificationClosures {
+		closure = normalizeVerificationClosure(closure)
+		if closure.AtomID == "" {
+			continue
+		}
+		closuresByAtom[closure.AtomID] = closure
+	}
+
+	for _, atom := range state.Atoms {
+		switch atom.State {
+		case AtomStateComplete, AtomStateSourceSatisfied:
+		default:
+			addBlocker("atom not terminal: " + firstNonEmpty(atom.ID, atom.Title, "unknown"))
+			continue
+		}
+
+		closure, ok := closuresByAtom[atom.ID]
+		if !ok {
+			addBlocker("verification closure missing for atom: " + firstNonEmpty(atom.ID, atom.Title, "unknown"))
+			continue
+		}
+
+		if closure.EventID != "" {
+			decision.VerificationClosureEventIDs = append(decision.VerificationClosureEventIDs, closure.EventID)
+		}
+		if closure.Status != "passed" && closure.Status != "source_satisfied" {
+			addBlocker("verification closure not passed for atom: " + firstNonEmpty(atom.ID, atom.Title, "unknown"))
+		}
+		if closure.PlanArtifactID != decision.PlanArtifactID {
+			addBlocker("verification closure artifact mismatch for atom: " + firstNonEmpty(atom.ID, atom.Title, "unknown"))
+		}
+		if closure.PlanRevision != decision.PlanRevision {
+			addBlocker("verification closure revision mismatch for atom: " + firstNonEmpty(atom.ID, atom.Title, "unknown"))
+		}
+		if closure.PlanDigest != decision.PlanDigest {
+			addBlocker("verification closure digest mismatch for atom: " + firstNonEmpty(atom.ID, atom.Title, "unknown"))
+		}
+		if closure.ApprovalEventID != decision.ApprovalEventID {
+			addBlocker("verification closure approval mismatch for atom: " + firstNonEmpty(atom.ID, atom.Title, "unknown"))
+		}
+		if closure.WorkspaceFingerprint != "" && decision.WorkspaceFingerprint != "" && closure.WorkspaceFingerprint != decision.WorkspaceFingerprint {
+			addBlocker("verification closure workspace mismatch for atom: " + firstNonEmpty(atom.ID, atom.Title, "unknown"))
+		}
+		if atom.State == AtomStateComplete && len(closure.RequiredTestResults) == 0 && len(closure.TDDCommandResults) == 0 {
+			addBlocker("verification command results missing for atom: " + firstNonEmpty(atom.ID, atom.Title, "unknown"))
+		}
+		if atom.State == AtomStateComplete {
+			for _, result := range append(append([]VerificationCommandResult(nil), closure.RequiredTestResults...), closure.TDDCommandResults...) {
+				if result.Status != "passed" && result.Status != "source_satisfied" {
+					addBlocker("verification command not passed for atom: " + firstNonEmpty(atom.ID, atom.Title, "unknown"))
+				}
+			}
+		}
+	}
+
+	decision.VerificationClosureEventIDs = uniqueSortedStrings(decision.VerificationClosureEventIDs)
+	decision.OpenObligations = uniqueSortedStrings(decision.OpenObligations)
+	decision.Blockers = uniqueSortedStrings(decision.Blockers)
+	if len(decision.Blockers) > 0 {
+		decision.Status = "blocked"
+	}
+
+	return decision
+}
+
+func stableReleaseReadinessEventID(planArtifactID string, revision int) string {
+	artifactPart := plancontract.NormalizeStableContractIDPart(planArtifactID)
+	if artifactPart == "" {
+		artifactPart = "feature-plan"
+	}
+	if revision > 0 {
+		return fmt.Sprintf("release-%s-r%d", artifactPart, revision)
+	}
+	return fmt.Sprintf("release-%s", artifactPart)
+}
+
+func uniqueSortedStrings(values []string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func normalizeVerificationCommandResults(results []VerificationCommandResult) []VerificationCommandResult {
+	out := make([]VerificationCommandResult, 0, len(results))
+	seen := map[string]bool{}
+
+	for _, result := range results {
+		result.ID = plancontract.NormalizeStableContractIDPart(result.ID)
+		result.Command = strings.TrimSpace(result.Command)
+		result.Status = strings.TrimSpace(strings.ToLower(result.Status))
+		result.Source = strings.TrimSpace(result.Source)
+		result.ObligationRefs = normalizeCompletionStableIDList(result.ObligationRefs)
+		result.TestArtifactPaths = normalizeEditScopeList(result.TestArtifactPaths)
+		if result.Command == "" {
+			continue
+		}
+		if result.Status == "" {
+			result.Status = "unknown"
+		}
+		if result.Status == "ok" {
+			result.Status = "passed"
+		}
+		if result.Status == "passed" || result.Status == "source_satisfied" {
+			result.Passed = true
+		}
+
+		key := strings.Join(append([]string{result.ID, result.Command, result.Status, result.Source}, result.ObligationRefs...), "\x00")
+		if seen[key] {
+			continue
+		}
+
+		seen[key] = true
+		out = append(out, result)
+	}
+
+	return out
+}
+
+func normalizeVerificationCheckResults(checks []VerificationCheckResult) []VerificationCheckResult {
+	out := make([]VerificationCheckResult, 0, len(checks))
+	seen := map[string]bool{}
+
+	for _, check := range checks {
+		check.Kind = strings.TrimSpace(check.Kind)
+		check.Path = plancontract.NormalizeScopePath(check.Path)
+		check.Command = strings.TrimSpace(check.Command)
+		check.WorkingDir = strings.TrimSpace(check.WorkingDir)
+		check.Status = strings.TrimSpace(strings.ToLower(check.Status))
+		check.Summary = strings.TrimSpace(check.Summary)
+		check.Error = strings.TrimSpace(check.Error)
+		if check.Kind == "" && check.Path == "" && check.Command == "" && check.Status == "" {
+			continue
+		}
+		if check.Status == "" {
+			check.Status = "unknown"
+		}
+
+		key := strings.Join([]string{check.Kind, check.Path, check.Command, check.WorkingDir, check.Status}, "\x00")
+		if seen[key] {
+			continue
+		}
+
+		seen[key] = true
+		out = append(out, check)
+	}
+
+	return out
 }
 
 func MarkPlanningStuck(state *FeatureState, reason string) {
@@ -3743,19 +4513,111 @@ func ValidatePlannerQuestion(question PlannerQuestion) error {
 	if plannerQuestionRequestsPathAuthority(question) && len(normalizeEditScopeList(question.AffectedPaths)) == 0 {
 		errs = append(errs, errors.New("planner question path-level authority requires affected_paths"))
 	}
+	if plannerQuestionDelegatesSourceLocalizationToOperator(question) {
+		errs = append(errs, errors.New("planner question must not ask the operator to discover existing source or test paths; use workspace context/model localization, propose exact new paths for approval, or request accepted_source evidence"))
+	}
 
 	return errors.Join(errs...)
 }
 
+func demoteUnanchoredPathAuthorityQuestion(question PlannerQuestion) PlannerQuestion {
+	if len(normalizeEditScopeList(question.AffectedPaths)) > 0 {
+		return question
+	}
+
+	var kept []string
+	demoted := false
+	hasRequirementsScope := false
+
+	for _, field := range question.AffectedFields {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+		if plannerQuestionAffectedFieldRequiresPathAuthority(field) {
+			demoted = true
+			continue
+		}
+		if field == "requirements_scope" {
+			hasRequirementsScope = true
+		}
+		kept = append(kept, field)
+	}
+
+	if !demoted {
+		return question
+	}
+
+	if !hasRequirementsScope {
+		kept = append([]string{"requirements_scope"}, kept...)
+	}
+
+	question.AffectedFields = kept
+
+	return question
+}
+
 func plannerQuestionRequestsPathAuthority(question PlannerQuestion) bool {
 	for _, field := range question.AffectedFields {
-		switch strings.TrimSpace(field) {
-		case "new_file_authorization", "required_edit_paths", "allowed_edit_paths", "write_allowed_paths":
+		if plannerQuestionAffectedFieldRequiresPathAuthority(field) {
 			return true
 		}
 	}
 
 	return false
+}
+
+func plannerQuestionDelegatesSourceLocalizationToOperator(question PlannerQuestion) bool {
+	if strings.TrimSpace(question.AuthorityRequired) != "operator_approval" {
+		return false
+	}
+	if !plannerQuestionHasAffectedField(question, "source_localization") {
+		return false
+	}
+
+	text := strings.ToLower(strings.TrimSpace(question.QuestionSummary + " " + question.BlockingClaim + " " + question.RequestedDecision))
+	for _, marker := range []string{
+		"existing source files",
+		"existing source or test",
+		"existing source/test",
+		"repo-relative paths",
+		"source files should be edited",
+		"test files should be edited",
+		"files should be edited",
+		"files that should be modified",
+		"provide the paths",
+		"provide paths",
+	} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func plannerQuestionHasAffectedField(question PlannerQuestion, field string) bool {
+	field = strings.TrimSpace(field)
+	for _, candidate := range question.AffectedFields {
+		if strings.TrimSpace(candidate) == field {
+			return true
+		}
+	}
+
+	return false
+}
+
+func PlannerQuestionHasAffectedField(question PlannerQuestion, field string) bool {
+	return plannerQuestionHasAffectedField(question, field)
+}
+
+func plannerQuestionAffectedFieldRequiresPathAuthority(field string) bool {
+	switch strings.TrimSpace(field) {
+	case "new_file_authorization", "required_edit_paths", "allowed_edit_paths", "write_allowed_paths":
+		return true
+	default:
+		return false
+	}
 }
 
 func MissingPreDispatchPlanTDD(atom FeatureAtomPlan) []string {
@@ -4008,6 +4870,88 @@ func hydrateDurablePlanDefaults(plan *FeaturePlan, state *FeatureState, now time
 		// Model-provided values are never trusted for these fields.
 		stampPlannedTDDSnapshot(atom, state.SessionID)
 	}
+
+	stampFeaturePlanArtifact(plan, state, now)
+	stampFeaturePlanApproval(plan, state, now)
+}
+
+func stampFeaturePlanArtifact(plan *FeaturePlan, state *FeatureState, now time.Time) {
+	if plan == nil || state == nil {
+		return
+	}
+
+	stamp := now.UTC().Format(time.RFC3339Nano)
+	revision := plan.Artifact.Revision
+	if revision <= 0 {
+		revision = state.PlannerRevision + 1
+	}
+	if revision <= 0 {
+		revision = 1
+	}
+
+	if strings.TrimSpace(plan.Artifact.ArtifactID) == "" {
+		plan.Artifact.ArtifactID = firstNonEmpty(plan.FeatureID, state.FeatureID, state.SessionID) + ":feature-plan"
+	}
+	plan.Artifact.Revision = revision
+	if strings.TrimSpace(plan.Artifact.WorkspaceFingerprint) == "" {
+		plan.Artifact.WorkspaceFingerprint = featurePlanWorkspaceFingerprint(*state, *plan)
+	}
+	if strings.TrimSpace(plan.Artifact.CreatedAt) == "" {
+		plan.Artifact.CreatedAt = stamp
+	}
+	plan.Artifact.UpdatedAt = stamp
+	plan.Artifact.Digest = FeaturePlanDigest(*plan)
+}
+
+func stampFeaturePlanApproval(plan *FeaturePlan, state *FeatureState, now time.Time) {
+	if plan == nil || state == nil || strings.TrimSpace(plan.Artifact.Digest) == "" {
+		return
+	}
+
+	stamp := now.UTC().Format(time.RFC3339Nano)
+	if strings.TrimSpace(plan.Approval.Status) == "" {
+		plan.Approval.Status = "approved"
+	}
+	if strings.TrimSpace(plan.Approval.Mode) == "" {
+		plan.Approval.Mode = "harness_policy"
+	}
+	if strings.TrimSpace(plan.Approval.EventID) == "" {
+		plan.Approval.EventID = fmt.Sprintf("approval-%s-rev-%d", firstNonEmpty(state.SessionID, plan.FeatureID, "feature"), plan.Artifact.Revision)
+	}
+	if strings.TrimSpace(plan.Approval.Actor) == "" {
+		plan.Approval.Actor = "harness"
+	}
+	if strings.TrimSpace(plan.Approval.Reason) == "" {
+		plan.Approval.Reason = "durable_plan_contract_passed"
+	}
+	if strings.TrimSpace(plan.Approval.ApprovedAt) == "" {
+		plan.Approval.ApprovedAt = stamp
+	}
+	plan.Approval.PlanRevision = plan.Artifact.Revision
+	plan.Approval.PlanDigest = plan.Artifact.Digest
+	plan.Approval.WorkspaceFingerprint = plan.Artifact.WorkspaceFingerprint
+}
+
+func featurePlanWorkspaceFingerprint(state FeatureState, plan FeaturePlan) string {
+	if value := strings.TrimSpace(state.WorkspaceFingerprint); value != "" {
+		return value
+	}
+
+	parts := []string{
+		strings.TrimSpace(state.GitHead),
+		strings.TrimSpace(state.ContextIndexID),
+		strings.TrimSpace(state.PromptSHA256),
+		strings.TrimSpace(plan.Context.PackID),
+		strings.TrimSpace(plan.Context.IndexID),
+		strings.TrimSpace(plan.Context.Freshness),
+	}
+
+	body, err := json.Marshal(parts)
+	if err != nil {
+		body = []byte(strings.Join(parts, "\x00"))
+	}
+	sum := sha256.Sum256(body)
+	return fmt.Sprintf("sha256:%x", sum[:])
 }
 
 // stampPlannedTDDSnapshot sets the harness-owned snapshot_id and snapshot_digest

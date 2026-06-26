@@ -44,10 +44,7 @@ func ResolveSessionLogPath(cfg config.Config, id string) string {
 		return id
 	}
 
-	dir := cfg.Chat.DebugLogDir
-	if strings.TrimSpace(dir) == "" {
-		dir = "logs/conversations"
-	}
+	dir := recordedSessionLogDir(cfg)
 
 	return filepath.Join(dir, id+".jsonl")
 }
@@ -55,10 +52,37 @@ func ResolveSessionLogPath(cfg config.Config, id string) string {
 // ListRecordedSessions returns the recorded sessions in the configured
 // debug-log directory, sorted newest-first by id (id is a sortable timestamp).
 func ListRecordedSessions(cfg config.Config) ([]SessionInfo, error) {
-	dir := cfg.Chat.DebugLogDir
-	if strings.TrimSpace(dir) == "" {
+	sessionFiles, err := listRecordedSessionFiles(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	sessions := make([]SessionInfo, 0, len(sessionFiles))
+	for _, sessionFile := range sessionFiles {
+		info := summarizeSessionLog(sessionFile.Path)
+		info.ID = sessionFile.ID
+		info.Path = sessionFile.Path
+		if !isUserVisibleSession(info) {
+			continue
+		}
+
+		sessions = append(sessions, info)
+	}
+
+	return sessions, nil
+}
+
+func recordedSessionLogDir(cfg config.Config) string {
+	dir := strings.TrimSpace(cfg.Chat.DebugLogDir)
+	if dir == "" {
 		dir = "logs/conversations"
 	}
+
+	return dir
+}
+
+func listRecordedSessionFiles(cfg config.Config) ([]SessionInfo, error) {
+	dir := recordedSessionLogDir(cfg)
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -93,15 +117,7 @@ func ListRecordedSessions(cfg config.Config) ([]SessionInfo, error) {
 		sessionFiles = sessionFiles[:maxRecordedSessionsScanned]
 	}
 
-	sessions := make([]SessionInfo, 0, len(sessionFiles))
-	for _, sessionFile := range sessionFiles {
-		info := summarizeSessionLog(sessionFile.Path)
-		info.ID = sessionFile.ID
-		info.Path = sessionFile.Path
-		sessions = append(sessions, info)
-	}
-
-	return sessions, nil
+	return sessionFiles, nil
 }
 
 func summarizeSessionLog(path string) SessionInfo {
@@ -135,6 +151,10 @@ func summarizeSessionLog(path string) SessionInfo {
 	})
 
 	return info
+}
+
+func isUserVisibleSession(info SessionInfo) bool {
+	return info.UserMessages > 0
 }
 
 func oneLineSummary(text string, max int) string {

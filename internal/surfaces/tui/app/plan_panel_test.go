@@ -186,6 +186,52 @@ func TestPlanPanelClickTogglesHeadingUsingRenderedRows(t *testing.T) {
 	}
 }
 
+func TestPlanPanelClickUsesRenderedRowMetadataWhenRowsWrap(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "plan.md")
+	content := "# Plan\n\n## Objective\nbody\n\n## Steps\n- [ ] visible item\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	m := planPanelTestModel(path)
+	m.renderPlanPanelContent()
+
+	stepsSourceLine := -1
+	for _, row := range m.currentPlanSelectableRows() {
+		if row.Kind == planSelectableHeading && row.Heading == "Steps" {
+			stepsSourceLine = row.LineIdx
+			break
+		}
+	}
+	if stepsSourceLine < 0 {
+		t.Fatalf("Steps heading not selectable:\n%s", m.planViewport.View())
+	}
+
+	// Simulate a rendered plan where earlier long rows occupy extra viewport
+	// rows. Click dispatch must use render-owned geometry instead of assuming
+	// source lines and visible rows have the same index.
+	m.plan.renderedRows = []planRenderedRow{
+		{SourceLineIdx: -1},
+		{SourceLineIdx: 0},
+		{SourceLineIdx: 0},
+		{SourceLineIdx: 0},
+		{SourceLineIdx: 2},
+		{SourceLineIdx: 3},
+		{SourceLineIdx: 4},
+		{SourceLineIdx: stepsSourceLine},
+	}
+
+	if !m.handlePlanPanelClick(7) {
+		t.Fatal("heading click should be handled through rendered row metadata")
+	}
+
+	got := m.planViewport.View()
+	if !strings.Contains(got, "▸ Steps") || strings.Contains(got, "visible item") {
+		t.Fatalf("metadata-routed heading click did not collapse Steps:\n%s", got)
+	}
+}
+
 func TestPlanPanelMouseClickTogglesHeadingThroughPanelHitTest(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "plan.md")
@@ -222,6 +268,91 @@ func TestPlanPanelMouseClickTogglesHeadingThroughPanelHitTest(t *testing.T) {
 	got := m.planViewport.View()
 	if !strings.Contains(got, "▸ Objective") || strings.Contains(got, "body") {
 		t.Fatalf("mouse click did not collapse section:\n%s", got)
+	}
+}
+
+func TestPlanPanelMouseLeftTypeClickTogglesHeading(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "plan.md")
+	content := "# Plan\n\n## Objective\nbody\n\n## Steps\n- [ ] visible item\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	m := planPanelTestModel(path)
+	m.viewport.Width = 100
+	m.renderPlanPanelContent()
+
+	clickRow := -1
+	for i, line := range strings.Split(m.planViewport.View(), "\n") {
+		if strings.Contains(line, "Objective") {
+			clickRow = i
+			break
+		}
+	}
+	if clickRow < 0 {
+		t.Fatalf("Objective row not rendered:\n%s", m.planViewport.View())
+	}
+
+	_, handled := m.handleMouse(tea.MouseMsg{
+		Type: tea.MouseLeft,
+		X:    m.panelStartX() + 1,
+		Y:    3 + clickRow,
+	})
+	if !handled {
+		t.Fatal("MouseLeft-typed panel click should be handled")
+	}
+
+	got := m.planViewport.View()
+	if !strings.Contains(got, "▸ Objective") || strings.Contains(got, "body") {
+		t.Fatalf("MouseLeft-typed click did not collapse section:\n%s", got)
+	}
+}
+
+func TestPrimaryMousePressRecognizesSupportedEncodings(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  tea.MouseMsg
+		want bool
+	}{
+		{
+			name: "button action left press",
+			msg: tea.MouseMsg{
+				Button: tea.MouseButtonLeft,
+				Action: tea.MouseActionPress,
+			},
+			want: true,
+		},
+		{
+			name: "deprecated type left",
+			msg:  tea.MouseMsg{Type: tea.MouseLeft},
+			want: true,
+		},
+		{
+			name: "left release",
+			msg: tea.MouseMsg{
+				Button: tea.MouseButtonLeft,
+				Action: tea.MouseActionRelease,
+			},
+			want: false,
+		},
+		{
+			name: "wheel",
+			msg: tea.MouseMsg{
+				Type:   tea.MouseWheelUp,
+				Button: tea.MouseButtonWheelUp,
+				Action: tea.MouseActionPress,
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isPrimaryMousePress(tt.msg); got != tt.want {
+				t.Fatalf("isPrimaryMousePress() = %t, want %t", got, tt.want)
+			}
+		})
 	}
 }
 

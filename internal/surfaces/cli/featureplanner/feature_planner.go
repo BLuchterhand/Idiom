@@ -456,18 +456,21 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 		}
 	}
 
-	completion["tool"] = featureplanner.ToolPlanExecuteComplete
-	completion["lane_family"] = "plan-execute"
-	completion["summary"] = strings.TrimSpace(planStdout.String())
+	completion[featureplanner.PlanExecuteCompletionFieldTool] = featureplanner.ToolPlanExecuteComplete
+	completion[featureplanner.PlanExecuteCompletionFieldLaneFamily] = featureplanner.PlanExecuteCompletionLaneFamily
+	completion[featureplanner.PlanExecuteCompletionFieldSummary] = strings.TrimSpace(planStdout.String())
 
-	if featureplanner.CompletionFieldString(completion, "completion_source") == "" {
-		completion["completion_source"] = "headless_plan_execute_returned"
+	if featureplanner.CompletionFieldString(completion, featureplanner.PlanExecuteCompletionFieldCompletionSource) == "" {
+		completion[featureplanner.PlanExecuteCompletionFieldCompletionSource] = featureplanner.PlanExecuteCompletionSourceHeadlessReturned
 	}
 
 	if code != 0 {
-		completion["status"] = util.FirstNonEmpty(featureplanner.CompletionFieldString(completion, "status"), "failed")
-		completion["failure_reason"] = util.FirstNonEmpty(
-			featureplanner.CompletionFieldString(completion, "failure_reason"),
+		if _, ok := completion[featureplanner.PlanExecuteCompletionFieldExitCode]; !ok {
+			completion[featureplanner.PlanExecuteCompletionFieldExitCode] = code
+		}
+		completion[featureplanner.PlanExecuteCompletionFieldStatus] = util.FirstNonEmpty(featureplanner.CompletionFieldString(completion, featureplanner.PlanExecuteCompletionFieldStatus), "failed")
+		completion[featureplanner.PlanExecuteCompletionFieldFailureReason] = util.FirstNonEmpty(
+			featureplanner.CompletionFieldString(completion, featureplanner.PlanExecuteCompletionFieldFailureReason),
 			strings.TrimSpace(fmt.Sprintf("plan-execute atom dispatch failed with exit %d: %s", code, strings.TrimSpace(planStderr.String()))),
 		)
 		featureplanner.TrustObservedPlanExecuteCompletionFields(completion)
@@ -475,10 +478,10 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 		return encodeHeadlessPlanExecuteCompletion(req, stdout, completion)
 	}
 
-	if featureplanner.CompletionFieldString(completion, "status") == "" {
-		completion["status"] = "ambiguous"
-		completion["failure_kind"] = util.FirstNonEmpty(featureplanner.CompletionFieldString(completion, "failure_kind"), "missing_nested_plan_execute_status")
-		completion["failure_reason"] = util.FirstNonEmpty(featureplanner.CompletionFieldString(completion, "failure_reason"), "nested plan-execute returned without typed completion status")
+	if featureplanner.CompletionFieldString(completion, featureplanner.PlanExecuteCompletionFieldStatus) == "" {
+		completion[featureplanner.PlanExecuteCompletionFieldStatus] = featureplanner.PlanExecuteCompletionStatusAmbiguous
+		completion[featureplanner.PlanExecuteCompletionFieldFailureKind] = util.FirstNonEmpty(featureplanner.CompletionFieldString(completion, featureplanner.PlanExecuteCompletionFieldFailureKind), featureplanner.PlanExecuteCompletionMissingStatusFailureKind)
+		completion[featureplanner.PlanExecuteCompletionFieldFailureReason] = util.FirstNonEmpty(featureplanner.CompletionFieldString(completion, featureplanner.PlanExecuteCompletionFieldFailureReason), featureplanner.PlanExecuteCompletionMissingStatusFailureReason)
 	}
 
 	featureplanner.TrustObservedPlanExecuteCompletionFields(completion)

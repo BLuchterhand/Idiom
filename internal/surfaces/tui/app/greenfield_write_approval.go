@@ -76,7 +76,7 @@ func renderGreenfieldScopeAuthorization(request greenfieldWriteApprovalRequest) 
 		fmt.Fprintf(&b, "Decision needed: %s\n", decision)
 	}
 
-	if request.RequiresVerificationCommand {
+	if request.RequiresVerificationCommand && !strings.Contains(request.Explanation, "Proposed verification:") {
 		b.WriteString("Also provide the exact verification command for this project.\n")
 	}
 
@@ -87,6 +87,40 @@ func renderGreenfieldScopeAuthorization(request greenfieldWriteApprovalRequest) 
 	b.WriteString("\nReply with approval, revised paths/setup, or rejection. Other questions will stay in chat.")
 
 	if statePath := strings.TrimSpace(request.StatePath); statePath != "" {
+		fmt.Fprintf(&b, "\nState saved at %s", statePath)
+	}
+
+	return strings.TrimSpace(b.String())
+}
+
+func renderFeaturePlannerQuestion(question featureplanner.PlannerQuestion, statePath string) string {
+	var b strings.Builder
+
+	b.WriteString("Feature planner needs your input before it can continue.\n\n")
+
+	if summary := strings.TrimSpace(question.QuestionSummary); summary != "" {
+		fmt.Fprintf(&b, "Question: %s\n", summary)
+	}
+
+	if claim := strings.TrimSpace(question.BlockingClaim); claim != "" && claim != strings.TrimSpace(question.QuestionSummary) {
+		fmt.Fprintf(&b, "\nWhy this is needed: %s\n", claim)
+	}
+
+	if decision := strings.TrimSpace(question.RequestedDecision); decision != "" && decision != strings.TrimSpace(question.QuestionSummary) {
+		fmt.Fprintf(&b, "\nDecision needed: %s\n", decision)
+	}
+
+	if featurePlannerQuestionNeedsField(question, "verification_command") {
+		b.WriteString("\nAlso provide the exact verification command for this project.\n")
+	}
+
+	if authority := strings.TrimSpace(question.AuthorityRequired); authority != "" && authority != "operator_approval" {
+		fmt.Fprintf(&b, "\nanswer_format: %s\n", featureplanner.PlannerQuestionAnswerFormat(authority))
+	}
+
+	b.WriteString("\nReply with the requested answer, a revised scope, or a rejection. Other questions will stay in chat.")
+
+	if statePath = strings.TrimSpace(statePath); statePath != "" {
 		fmt.Fprintf(&b, "\nState saved at %s", statePath)
 	}
 
@@ -133,9 +167,7 @@ func greenfieldScopeAuthorizationFromPlannerQuestion(question featureplanner.Pla
 }
 
 func featurePlannerQuestionOpen(question featureplanner.PlannerQuestion) bool {
-	status := strings.TrimSpace(question.Status)
-
-	return status == "" || strings.EqualFold(status, "open")
+	return featureplanner.PlannerQuestionOpen(question)
 }
 
 func featurePlannerQuestionAffectedPaths(question featureplanner.PlannerQuestion) []string {
@@ -158,12 +190,5 @@ func featurePlannerQuestionAffectedPaths(question featureplanner.PlannerQuestion
 }
 
 func featurePlannerQuestionNeedsField(question featureplanner.PlannerQuestion, field string) bool {
-	field = strings.TrimSpace(field)
-	for _, candidate := range question.AffectedFields {
-		if strings.TrimSpace(candidate) == field {
-			return true
-		}
-	}
-
-	return false
+	return featureplanner.PlannerQuestionHasAffectedField(question, field)
 }

@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"idiom/internal/contracts/autonomy"
+	plancontract "idiom/internal/contracts/plan"
+	coreplanexecute "idiom/internal/workflows/planexecute"
 )
 
 const (
@@ -446,6 +448,184 @@ func TestValidatePlanStandaloneWorkspaceContextAllowsProvisionalCoverageDraft(t 
 	}
 }
 
+func TestValidatePlanStandaloneWorkspaceContextRequiresProvisionalCoverageDraft(t *testing.T) {
+	plan := validPlan()
+	plan.BehavioralCoverageDraft = nil
+
+	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{})
+	if err == nil {
+		t.Fatal("expected standalone context to require behavioral coverage draft")
+	}
+
+	for _, want := range []string{"behavioral_coverage_draft", "BDD scenarios", "concrete TDD traceability"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("validation error missing %q: %v", want, err)
+		}
+	}
+}
+
+func TestValidatePlanStandaloneWorkspaceContextRequiresSurfaceInventory(t *testing.T) {
+	plan := validPlan()
+	plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
+	plan.BehavioralCoverageDraft.SurfaceInventory = nil
+
+	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{})
+	if err == nil || !strings.Contains(err.Error(), "missing generic behavior surface inventory") {
+		t.Fatalf("expected missing surface inventory to reject standalone coverage draft, got %v", err)
+	}
+}
+
+func TestValidatePlanStandaloneWorkspaceContextRejectsInScopeSurfaceWithoutTDDObligation(t *testing.T) {
+	plan := validPlan()
+	plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
+	plan.BehavioralCoverageDraft.SurfaceInventory = []CoverageDraftSurfaceDecision{{
+		ID:           "SURF-PERSISTENCE",
+		Surface:      "persistence",
+		Status:       "in_scope",
+		Rationale:    "durable behavior is in scope",
+		EvidenceRefs: []string{"docs/design.md#persistence"},
+	}}
+
+	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{})
+	if err == nil || !strings.Contains(err.Error(), "in-scope surface missing tdd_obligations") {
+		t.Fatalf("expected evidence-only in-scope surface to reject standalone coverage draft, got %v", err)
+	}
+}
+
+func TestValidatePlanStandaloneWorkspaceContextRejectsOpenQuestionSurfaceBeforeApproval(t *testing.T) {
+	plan := validPlan()
+	plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
+	plan.BehavioralCoverageDraft.SurfaceInventory = []CoverageDraftSurfaceDecision{{
+		ID:           "SURF-API",
+		Surface:      "api_transport",
+		Status:       "open_question",
+		Rationale:    "operator must choose whether HTTP transport is in scope",
+		QuestionRefs: []string{"Q-API"},
+	}}
+
+	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{})
+	if err == nil || !strings.Contains(err.Error(), "unresolved open_question status") {
+		t.Fatalf("expected open question surface to block standalone approval, got %v", err)
+	}
+}
+
+func TestValidatePlanStandaloneWorkspaceContextRejectsPlannedSurfaceStatus(t *testing.T) {
+	plan := validPlan()
+	plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
+	plan.BehavioralCoverageDraft.SurfaceInventory = []CoverageDraftSurfaceDecision{{
+		ID:          "SURF-API",
+		Surface:     "api_transport",
+		Status:      "planned",
+		Rationale:   "planned must not silently satisfy readiness",
+		Obligations: []string{"TDD-1"},
+	}}
+
+	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{})
+	if err == nil || !strings.Contains(err.Error(), `unsupported status "planned"`) {
+		t.Fatalf("expected planned surface status to reject standalone coverage draft, got %v", err)
+	}
+}
+
+func TestParsePlannerOutputNormalizesFlexibleCoverageConcreteData(t *testing.T) {
+	plan := validPlan()
+	body := mustPlanJSON(t, plan)
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		t.Fatalf("decode generated plan: %v", err)
+	}
+	draft := payload["behavioral_coverage_draft"].(map[string]any)
+	exampleRules := draft["example_rules"].([]any)
+	firstRule := exampleRules[0].(map[string]any)
+	examples := firstRule["examples"].([]any)
+	examples[0].(map[string]any)["concrete_data"] = []any{"label", "short label"}
+	scenarios := draft["scenarios"].([]any)
+	scenarios[0].(map[string]any)["concrete_data"] = map[string]any{"fixture": []any{"draft.json"}, "count": float64(2)}
+	mutated, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal mutated plan: %v", err)
+	}
+
+	parsed, err := ParsePlannerOutput(string(mutated))
+	if err != nil {
+		t.Fatalf("ParsePlannerOutput should tolerate flexible concrete_data: %v", err)
+	}
+	exampleData := parsed.Plan.BehavioralCoverageDraft.ExampleRules[0].Examples[0].ConcreteData
+	if exampleData["item_1"] != "label" || exampleData["item_2"] != "short label" {
+		t.Fatalf("array concrete_data not normalized: %#v", exampleData)
+	}
+	scenarioData := parsed.Plan.BehavioralCoverageDraft.Scenarios[0].ConcreteData
+	if scenarioData["fixture"] != `["draft.json"]` || scenarioData["count"] != "2" {
+		t.Fatalf("object concrete_data values not normalized: %#v", scenarioData)
+	}
+}
+
+func TestValidatePlanStandaloneWorkspaceContextRequiresEveryTDDObligationMappedByCoverageDraft(t *testing.T) {
+	plan := validPlan()
+	plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
+	plan.TDDContract.Obligations = append(plan.TDDContract.Obligations, TDDObligation{
+		ID:             "TDD-UNMAPPED",
+		Behavior:       "Unmapped behavior",
+		Command:        "go test ./...",
+		RequiredBefore: "implementation",
+	})
+
+	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{})
+	if err == nil {
+		t.Fatal("expected unmapped TDD obligation to reject standalone coverage draft")
+	}
+
+	for _, want := range []string{
+		`TDD-UNMAPPED`,
+		`behavioral_coverage_draft.scenarios`,
+		`behavioral_coverage_draft.test_obligations`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("validation error missing %q: %v", want, err)
+		}
+	}
+}
+
+func TestValidatePlanStandaloneWorkspaceContextAllowsCrossCuttingInvariants(t *testing.T) {
+	plan := validGreenfieldBrainPlanForTest()
+
+	if err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{}); err != nil {
+		t.Fatalf("cross-cutting invariants should not require one invariant per TDD obligation: %v", err)
+	}
+}
+
+func TestRunStandaloneRejectsNarrowTDDOnlyPlanBeforeDispatch(t *testing.T) {
+	state := NewState("session", "Plan a greenfield memory MVP.", "", 3, time.Unix(1, 0).UTC())
+	plan := validPlan()
+	plan.BehavioralCoverageDraft = nil
+
+	result, err := Run(state, RunOptions{
+		Prompt:                "Plan a greenfield memory MVP.",
+		MaxPlanningIterations: 3,
+		Now:                   time.Unix(2, 0).UTC(),
+	}, func(prompt string, taskFamily string) (string, error) {
+		if !strings.Contains(prompt, "behavioral_coverage_draft") {
+			t.Fatalf("standalone planner prompt must advertise behavioral_coverage_draft contract:\n%s", prompt)
+		}
+		return mustPlanJSON(t, plan), nil
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if result.State.Status != FeatureStatePlanningRepair {
+		t.Fatalf("narrow TDD-only plan should stop in planning repair, got %s", result.State.Status)
+	}
+	if len(result.State.Atoms) != 0 {
+		t.Fatalf("narrow TDD-only plan must not compile atoms: %+v", result.State.Atoms)
+	}
+	if len(result.Events) != 1 || result.Events[0].Type != "idiom.feature_planner.standalone_context_blocked" {
+		t.Fatalf("expected standalone context blocked event, got %+v", result.Events)
+	}
+	if got := strings.Join(result.State.Blockers, "\n"); !strings.Contains(got, "behavioral_coverage_draft") {
+		t.Fatalf("blocker should name missing behavioral coverage draft, got %q", got)
+	}
+}
+
 func TestValidatePlanStandaloneWorkspaceContextRequiresCompleteProductionReadinessDraftEntries(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -457,56 +637,56 @@ func TestValidatePlanStandaloneWorkspaceContextRequiresCompleteProductionReadine
 			mutate: func(draft *BehavioralCoverageDraft) {
 				draft.FuzzTargets = []CoverageDraftFuzzTarget{{ID: "FUZZ-1", Target: "ParsePlan", Invariants: []string{"no panic"}, TestRefs: []string{"FuzzParsePlan"}}}
 			},
-			want: "behavioral_coverage_draft.fuzz_targets[0] missing generators",
+			want: "behavioral coverage fuzz_targets[0] accepted coverage missing target, generators, invariants, or test_refs",
 		},
 		{
 			name: "rag eval missing threshold",
 			mutate: func(draft *BehavioralCoverageDraft) {
 				draft.RAGEvals = []CoverageDraftRAGEval{{ID: "RAG-1", DatasetRefs: []string{"evals/rag.jsonl"}, Metrics: map[string]float64{"groundedness": 0.97}, EvalRefs: []string{"TestRAG"}}}
 			},
-			want: "behavioral_coverage_draft.rag_evals[0] missing thresholds",
+			want: "behavioral coverage rag_evals[0] accepted coverage missing dataset_refs, metrics, thresholds, or eval_refs",
 		},
 		{
 			name: "security case missing expected",
 			mutate: func(draft *BehavioralCoverageDraft) {
 				draft.SecurityCases = []CoverageDraftSecurityCase{{ID: "SEC-1", Risk: "prompt injection", Attack: "ignore policy", TestRefs: []string{"TestSecurity"}}}
 			},
-			want: "behavioral_coverage_draft.security_cases[0] missing expected",
+			want: "behavioral coverage security_cases[0] accepted coverage missing risk, attack, expected outcome, or test_refs",
 		},
 		{
 			name: "privacy control missing redaction refs",
 			mutate: func(draft *BehavioralCoverageDraft) {
 				draft.PrivacyControls = []CoverageDraftPrivacyControl{{ID: "PRIV-1", DataClass: "prompt", Policy: "redact", Retention: "structured only", TestRefs: []string{"TestPrivacy"}}}
 			},
-			want: "behavioral_coverage_draft.privacy_controls[0] missing redaction_refs",
+			want: "behavioral coverage privacy_controls[0] accepted coverage missing data_class, policy, redaction_refs, retention, or test_refs",
 		},
 		{
 			name: "provider contract missing contract refs",
 			mutate: func(draft *BehavioralCoverageDraft) {
 				draft.ProviderContracts = []CoverageDraftProviderContract{{ID: "PACT-1", Provider: "fake-llm", Consumer: "planner", TestRefs: []string{"TestProvider"}}}
 			},
-			want: "behavioral_coverage_draft.provider_contracts[0] missing contract_refs",
+			want: "behavioral coverage provider_contracts[0] accepted coverage missing provider, consumer, contract_refs, or test_refs",
 		},
 		{
 			name: "observability missing required fields",
 			mutate: func(draft *BehavioralCoverageDraft) {
 				draft.Observability = []CoverageDraftObservability{{ID: "OBS-1", Signal: "planner_failures_total", InstrumentedPath: "internal/workflows/featureplanner", TestRefs: []string{"TestTelemetry"}}}
 			},
-			want: "behavioral_coverage_draft.observability[0] missing required_fields",
+			want: "behavioral coverage observability[0] accepted coverage missing signal, instrumented_path, required_fields, or test_refs",
 		},
 		{
 			name: "performance missing measurements",
 			mutate: func(draft *BehavioralCoverageDraft) {
 				draft.PerformanceBounds = []CoverageDraftPerformanceBound{{ID: "PERF-1", Operation: "render", Bound: "bounded"}}
 			},
-			want: "behavioral_coverage_draft.performance_bounds[0] missing measurement_refs",
+			want: "behavioral coverage performance_bounds[0] accepted coverage missing operation, bound, or measurement_refs",
 		},
 		{
 			name: "e2e missing scripts",
 			mutate: func(draft *BehavioralCoverageDraft) {
 				draft.E2EJourneys = []CoverageDraftE2EJourney{{ID: "E2E-1", Journey: "greenfield planning", Steps: []string{"start", "plan"}}}
 			},
-			want: "behavioral_coverage_draft.e2e_journeys[0] missing script_refs",
+			want: "behavioral coverage e2e_journeys[0] accepted coverage missing journey, steps, or script_refs",
 		},
 	}
 
@@ -521,6 +701,25 @@ func TestValidatePlanStandaloneWorkspaceContextRequiresCompleteProductionReadine
 				t.Fatalf("expected standalone draft validation error containing %q, got %v", tt.want, err)
 			}
 		})
+	}
+}
+
+func TestValidatePlanStandaloneWorkspaceContextUsesCanonicalCoverageContract(t *testing.T) {
+	plan := validPlan()
+	plan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
+	plan.BehavioralCoverageDraft.Invariants[0].PropertyBasedTestRefs = nil
+
+	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{})
+	if err == nil {
+		t.Fatal("expected canonical behavioral coverage validation to reject missing property-based test refs")
+	}
+	for _, want := range []string{
+		"behavioral_coverage_draft violates canonical behavioral coverage contract",
+		"behavioral coverage invariants[0] accepted coverage missing property_based_test_refs",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected validation error containing %q, got %v", want, err)
+		}
 	}
 }
 
@@ -934,6 +1133,10 @@ func TestBuildPlannerPromptRendersAcceptedCoverageAsReadOnlyContext(t *testing.T
 		"Accepted Coverage - Requirements:",
 		"Accepted coverage authority: product_workflow",
 		"REQ-1: When product behavior is requested, the system shall render it. (event-driven)",
+		"Accepted Coverage - Behavior Surface Inventory:",
+		"SURF-1: domain_logic [in_scope] - accepted product behavior is in scope",
+		"Surface SURF-1: domain_logic [in_scope] - accepted product behavior is in scope obligation: TDD-1",
+		"SURF-2: api_transport [not_required] - no transport boundary changes",
 		"Accepted Coverage - Rules & Examples:",
 		"RULE-1: Accepted product coverage renders structured behavior. [requirement: REQ-1]",
 		"Accepted Coverage - Scenarios:",
@@ -974,14 +1177,18 @@ func TestAcceptedCoveragePresentationUsesSharedSectionLabelsAndRows(t *testing.T
 	coverage := validAcceptedBehavioralCoverage()
 
 	sections := AcceptedCoveragePresentation(coverage)
-	requirements := AcceptedCoverageRowsBySection(sections, CoverageSectionRequirements)
+	requirements := CoverageRowsBySection(sections, CoverageSectionRequirements)
 	if !slices.Contains(requirements, "REQ-1: When product behavior is requested, the system shall render it. (event-driven)") {
 		t.Fatalf("requirements projection missing accepted fact: %+v", requirements)
 	}
 
-	scenarios := AcceptedCoverageRowsBySection(sections, CoverageSectionScenarios)
+	scenarios := CoverageRowsBySection(sections, CoverageSectionScenarios)
 	if !slices.Contains(scenarios, "BDD-1: Given product workflow accepted coverage exists / When the plan is rendered / Then product behavior is rendered (concrete data)") {
 		t.Fatalf("scenario projection missing accepted fact: %+v", scenarios)
+	}
+	surfaces := CoverageRowsBySection(sections, CoverageSectionSurfaceInventory)
+	if !slices.Contains(surfaces, "SURF-1: domain_logic [in_scope] - accepted product behavior is in scope") {
+		t.Fatalf("surface projection missing accepted fact: %+v", surfaces)
 	}
 
 	labels := make([]string, 0, len(sections))
@@ -990,6 +1197,7 @@ func TestAcceptedCoveragePresentationUsesSharedSectionLabelsAndRows(t *testing.T
 	}
 	for _, want := range []string{
 		CoverageSectionRequirements,
+		CoverageSectionSurfaceInventory,
 		CoverageSectionScenarios,
 		CoverageSectionSecurityPrivacyRAGEvals,
 		CoverageSectionVerificationGates,
@@ -997,6 +1205,62 @@ func TestAcceptedCoveragePresentationUsesSharedSectionLabelsAndRows(t *testing.T
 		if !slices.Contains(labels, want) {
 			t.Fatalf("projection missing shared section label %q in %+v", want, labels)
 		}
+	}
+}
+
+func TestFeaturePlanCoveragePresentationUsesSharedDraftAndAcceptedRows(t *testing.T) {
+	plan := FeaturePlan{
+		TopLevelScope: TopLevelScope{Objective: "render behavior"},
+		BehavioralCoverageDraft: &BehavioralCoverageDraft{
+			Requirements: []CoverageDraftRequirement{{
+				ID:        "REQ-DRAFT",
+				Statement: "When a planner drafts coverage, the plan tab shall render it.",
+				Pattern:   "event-driven",
+			}},
+			ExampleRules: []CoverageDraftExampleRule{{
+				ID:            "RULE-DRAFT",
+				RequirementID: "REQ-DRAFT",
+				Rule:          "Drafted examples render through the same formatter.",
+				Examples: []CoverageDraftExample{{
+					ID:           "EX-DRAFT",
+					Description:  "draft example",
+					ConcreteData: map[string]string{"fixture": "draft.json"},
+				}},
+			}},
+			Scenarios: []CoverageDraftScenario{{
+				ID:           "BDD-DRAFT",
+				Given:        []string{"draft coverage exists"},
+				When:         []string{"the plan tab renders"},
+				Then:         []string{"draft behavior is visible"},
+				ConcreteData: map[string]string{"fixture": "draft.json"},
+			}},
+		},
+		AcceptedCoverage: validAcceptedBehavioralCoverage(),
+	}
+
+	sections := FeaturePlanCoveragePresentation(FeatureState{}, "", plan, RejectedPlanCandidate{})
+	requirements := FeaturePlanCoverageRowsBySection(sections, CoverageSectionRequirements)
+	for _, want := range []string{
+		"REQ-DRAFT: When a planner drafts coverage, the plan tab shall render it. (event-driven)",
+		"REQ-1: When product behavior is requested, the system shall render it. (event-driven)",
+	} {
+		if !slices.Contains(requirements, want) {
+			t.Fatalf("requirements missing shared row %q in %+v", want, requirements)
+		}
+	}
+
+	rules := FeaturePlanCoverageRowsBySection(sections, CoverageSectionRulesAndExamples)
+	if !slices.Contains(rules, "Example EX-DRAFT: draft example (concrete data)") {
+		t.Fatalf("rules/examples missing draft example row: %+v", rules)
+	}
+
+	scenarios := FeaturePlanCoverageRowsBySection(sections, CoverageSectionScenarios)
+	if !slices.Contains(scenarios, "BDD-DRAFT: Given draft coverage exists / When the plan tab renders / Then draft behavior is visible (concrete data)") {
+		t.Fatalf("scenarios missing draft scenario row: %+v", scenarios)
+	}
+	surfaces := FeaturePlanCoverageRowsBySection(sections, CoverageSectionSurfaceInventory)
+	if !slices.Contains(surfaces, "SURF-1: domain_logic [in_scope] - accepted product behavior is in scope") {
+		t.Fatalf("accepted surface missing shared row: %+v", surfaces)
 	}
 }
 
@@ -1030,6 +1294,8 @@ func TestBuildPlannerPromptStandaloneUsesLanguageNeutralPlaceholders(t *testing.
 		"include every test_first.test_artifact_paths entry in required_edit_paths",
 		"Define stable standalone acceptance IDs",
 		"use those IDs in atom.sdd_refs",
+		"every in-scope surface must map to concrete TDD obligations",
+		"evidence refs may support but not replace those obligations",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("standalone prompt missing schema invariant %q:\n%s", want, prompt)
@@ -1096,15 +1362,65 @@ func TestBuildPlannerPromptAdvertisesTypedPlannerQuestionAuthority(t *testing.T)
 
 	for _, want := range []string{
 		`"tool":"ask_planner_question"`,
-		`"affected_paths":["repo/path"]`,
-		`"affected_fields":["new_file_authorization"]`,
+		`"affected_fields":["requirements_scope","verification_command"]`,
+		`do not include affected_paths for non-path authority`,
+		`affected_paths must contain the exact repo-relative paths`,
 		`authority_required="accepted_source"`,
 		`affected_fields=["source_localization"]`,
-		`do not label source-evidence questions as new_file_authorization`,
+		`do not label source-evidence or requirements questions as new_file_authorization`,
 		"paths inside requested_decision are explanatory text only and do not grant authority",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("planner prompt missing typed planner-question authority contract %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestBuildPlannerPromptWithWorkspaceContextListsEstablishedCandidateFiles(t *testing.T) {
+	root := t.TempDir()
+	mkdirAndWriteFile(t, filepath.Join(root, "src", "memory.py"), "class Memory:\n    pass\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "tests", "test_memory.py"), "def test_memory():\n    pass\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "pyproject.toml"), "[project]\nname = \"brain\"\n")
+
+	prompt := BuildPlannerPromptWithWorkspaceContext(
+		"Update the plan for persistent memory and multi-repo support.",
+		NewState("session", "build llm brain", "", 3, time.Unix(1, 0).UTC()),
+		nil,
+		root,
+	)
+
+	for _, want := range []string{
+		"Standalone Workspace Context:",
+		"Existing candidate source/test/build files available for localization:",
+		"src/memory.py",
+		"tests/test_memory.py",
+		"pyproject.toml",
+		"Localize required_edit_paths/test_artifact_paths from these candidates",
+		"propose exact new paths for operator approval instead of asking which existing files to edit",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("planner prompt missing workspace context %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestBuildPlannerPromptWithWorkspaceContextTellsGreenfieldPlannerToProposePaths(t *testing.T) {
+	root := t.TempDir()
+
+	prompt := BuildPlannerPromptWithWorkspaceContext(
+		"Work out an MVP for an LLM brain.",
+		NewState("session", "build llm brain", "", 3, time.Unix(1, 0).UTC()),
+		nil,
+		root,
+	)
+
+	for _, want := range []string{
+		"Workspace appears greenfield",
+		"propose exact new repo-relative paths in the plan",
+		"do not ask the operator which existing source files should be edited",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("planner prompt missing greenfield context %q:\n%s", want, prompt)
 		}
 	}
 }
@@ -1260,17 +1576,17 @@ func TestValidatePlanRejectsGuessedHelperCallWithoutSignatureEvidence(t *testing
 	}
 
 	plan.Atoms[0].Prompt = "Current source evidence: exact signature is EntityID find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required). Call it only with verified arguments."
-	if err := ValidatePlan(plan); err != nil {
-		t.Fatalf("source-verified signature prompt should pass: %v", err)
+	if err := ValidatePlan(plan); err == nil || !strings.Contains(err.Error(), "find_connected_cistern_with_volume") {
+		t.Fatalf("model-authored signature prompt must not self-authorize helper calls, got %v", err)
 	}
 }
 
-func TestValidatePlanAllowsMultipleSourceVerifiedSignaturesAfterMarker(t *testing.T) {
+func TestValidatePlanRejectsModelAuthoredSourceVerifiedSignaturesAfterMarker(t *testing.T) {
 	plan := validPlan()
 	plan.Atoms[0].Prompt = "Source-verified signatures:\n- MachineSystem::try_consume_inputs(EntityID machine_id, const Recipe& recipe)\n- EntityID find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const\n\nCall find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required)."
 
-	if err := ValidatePlan(plan); err != nil {
-		t.Fatalf("all signatures after source-verified marker should satisfy helper calls: %v", err)
+	if err := ValidatePlan(plan); err == nil || !strings.Contains(err.Error(), "find_connected_cistern_with_volume") {
+		t.Fatalf("model-authored signature marker must not satisfy helper calls, got %v", err)
 	}
 }
 
@@ -1302,7 +1618,7 @@ func TestValidatePlanDoesNotTreatNegatedSignatureMarkerAsAuthority(t *testing.T)
 	}
 }
 
-func TestPromptSignatureDeclarationsAllowLanguageNeutralSuffixes(t *testing.T) {
+func TestPromptSignatureDeclarationsDoNotSelfAuthorizeLanguageNeutralSuffixes(t *testing.T) {
 	for _, prompt := range []string{
 		"Source-verified signatures:\n- func renderLabel(name string) string\n\nCall renderLabel(name).",
 		"Source-verified signatures:\n- fn helper(x: i32) -> bool\n\nCall helper(x).",
@@ -1311,8 +1627,8 @@ func TestPromptSignatureDeclarationsAllowLanguageNeutralSuffixes(t *testing.T) {
 		plan := validPlan()
 		plan.Atoms[0].Prompt = prompt
 
-		if err := ValidatePlan(plan); err != nil {
-			t.Fatalf("language-neutral source signature should authorize call, got %v for prompt %q", err, prompt)
+		if err := ValidatePlan(plan); err == nil {
+			t.Fatalf("model-authored language-neutral signature must not authorize call for prompt %q", prompt)
 		}
 	}
 }
@@ -1640,6 +1956,46 @@ func TestValidatePlannerQuestionRejectsPathAuthorityWithoutAffectedPaths(t *test
 	}
 }
 
+func TestApplyPlannerOutputDemotesUnanchoredPathAuthorityQuestion(t *testing.T) {
+	state := NewState("session", "work out an MVP", "", 3, time.Unix(1, 0).UTC())
+	parsed, err := ParsePlannerOutput(`{
+		"tool": "ask_planner_question",
+		"question_summary": "Define minimal MVP requirements",
+		"blocking_claim": "A safe plan needs explicit runtime behavior before file creation can be proposed.",
+		"requested_decision": "Choose the minimal runnable behavior and verification command for the MVP.",
+		"question_kind": "external_answer_required",
+		"authority_required": "operator_approval",
+		"required_before": "plan_approval",
+		"affected_fields": ["new_file_authorization", "verification_command"]
+	}`)
+	if err != nil {
+		t.Fatalf("ParsePlannerOutput returned error: %v", err)
+	}
+
+	events := ApplyPlannerOutput(&state, parsed, time.Unix(2, 0).UTC())
+	if state.Status != FeatureStatePlanningQuestion {
+		t.Fatalf("state.Status = %q, want planning-question-open; blockers=%+v", state.Status, state.Blockers)
+	}
+	if len(events) != 1 || events[0].Type != "idiom.feature_planner.planner_question_opened" {
+		t.Fatalf("expected planner_question_opened event, got %+v", events)
+	}
+	if len(state.Blockers) != 0 {
+		t.Fatalf("unexpected blockers after demotion: %+v", state.Blockers)
+	}
+	if len(state.OpenQuestions) != 1 {
+		t.Fatalf("expected one open question, got %+v", state.OpenQuestions)
+	}
+
+	question := state.OpenQuestions[0]
+	if containsString(question.AffectedFields, "new_file_authorization") {
+		t.Fatalf("unanchored path authority should not survive intake: %+v", question)
+	}
+	if !containsString(question.AffectedFields, "requirements_scope") ||
+		!containsString(question.AffectedFields, "verification_command") {
+		t.Fatalf("question should remain a requirements question: %+v", question)
+	}
+}
+
 func TestValidatePlannerQuestionSourceLocalizationIsNotPathAuthority(t *testing.T) {
 	sourceQuestion := PlannerQuestion{
 		ID:                "q-source",
@@ -1660,6 +2016,56 @@ func TestValidatePlannerQuestionSourceLocalizationIsNotPathAuthority(t *testing.
 	sourceQuestion.AffectedFields = []string{"new_file_authorization"}
 	if err := ValidatePlannerQuestion(sourceQuestion); err == nil || !strings.Contains(err.Error(), "path-level authority requires affected_paths") {
 		t.Fatalf("new-file authorization should require affected_paths, got %v", err)
+	}
+}
+
+func TestValidatePlannerQuestionRejectsOperatorOwnedSourceFileDiscovery(t *testing.T) {
+	question := PlannerQuestion{
+		ID:                "q-source-paths",
+		QuestionSummary:   "What existing source files or test files should be edited?",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "No existing source or test paths are available in the workspace context.",
+		RequestedDecision: "Please provide the repo-relative paths of existing source files and test files that should be modified.",
+		AuthorityRequired: "operator_approval",
+		RequiredBefore:    "plan_approval",
+		Status:            "open",
+		AffectedFields:    []string{"requirements_scope", "source_localization"},
+	}
+
+	err := ValidatePlannerQuestion(question)
+	if err == nil || !strings.Contains(err.Error(), "must not ask the operator to discover existing source or test paths") {
+		t.Fatalf("expected source discovery delegation rejection, got %v", err)
+	}
+}
+
+func TestApplyPlannerOutputRejectsSourcePathDiscoveryQuestionBeforeChat(t *testing.T) {
+	state := NewState("session", "build llm brain", "", 3, time.Unix(1, 0).UTC())
+	parsed, err := ParsePlannerOutput(`{
+		"tool": "ask_planner_question",
+		"question_summary": "What existing source files or test files should be edited for persistent memory?",
+		"blocking_claim": "No existing source or test paths are available in the workspace context.",
+		"requested_decision": "Please provide the repo-relative paths of existing source files and test files that should be modified.",
+		"question_kind": "external_answer_required",
+		"authority_required": "operator_approval",
+		"required_before": "plan_approval",
+		"affected_fields": ["requirements_scope", "source_localization"]
+	}`)
+	if err != nil {
+		t.Fatalf("ParsePlannerOutput returned error: %v", err)
+	}
+
+	events := ApplyPlannerOutput(&state, parsed, time.Unix(2, 0).UTC())
+	if state.Status != FeatureStatePlanningRepair {
+		t.Fatalf("state.Status = %q, want planning-repair", state.Status)
+	}
+	if len(state.OpenQuestions) != 0 {
+		t.Fatalf("invalid source discovery question should not open chat question: %+v", state.OpenQuestions)
+	}
+	if len(events) != 1 || events[0].Type != "idiom.feature_planner.planner_question_rejected" {
+		t.Fatalf("expected planner_question_rejected event, got %+v", events)
+	}
+	if !strings.Contains(strings.Join(state.Blockers, "\n"), "must not ask the operator to discover existing source or test paths") {
+		t.Fatalf("state blockers missing source-discovery rejection: %+v", state.Blockers)
 	}
 }
 
@@ -2056,12 +2462,417 @@ func TestRunOpensLocalizationQuestionForPreparedAtomSelectionWithInventedPaths(t
 	if question.AuthorityRequired != "accepted_source" || containsString(question.AffectedFields, "new_file_authorization") {
 		t.Fatalf("localization question must not authorize invented files: %+v", question)
 	}
+	if !question.UserFacing {
+		t.Fatalf("explicit source-localization question should be marked user-facing: %+v", question)
+	}
 	if !containsString(question.AffectedFields, "source_localization") {
 		t.Fatalf("localization question missing source_localization field: %+v", question)
 	}
 	if !strings.Contains(question.RequestedDecision, "source-verified atom candidate") ||
 		!strings.Contains(question.RequestedDecision, "src/services/colony_service.py") {
 		t.Fatalf("question should request real source localization and preserve rejected paths diagnostically: %+v", question)
+	}
+}
+
+func TestRunOpensNewFileApprovalQuestionForStandaloneProjectPlanInPartialWorkspace(t *testing.T) {
+	root := t.TempDir()
+	mkdirAndWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/brain\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "README.md"), "# Brain\n")
+
+	plan := validGreenfieldBrainPlanForTest()
+
+	state := NewState("session", `Can you work out an MVP to an effective "llm brain" sort of project to manage long-term agentic memory?`, "", 2, time.Unix(1, 0).UTC())
+	result, err := Run(state, RunOptions{
+		Prompt:                state.PromptSummary,
+		MaxPlanningIterations: 3,
+		WorkspaceRoot:         root,
+	}, func(_ string, taskFamily string) (string, error) {
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
+			t.Fatal("standalone workspace validation must block before dispatch")
+		}
+
+		return mustPlanJSON(t, plan), nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.State.Status != FeatureStatePlanningQuestion {
+		t.Fatalf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers)
+	}
+	if len(result.Events) != 2 || result.Events[0].Type != "idiom.feature_planner.standalone_context_blocked" || result.Events[1].Type != "idiom.feature_planner.planner_question_opened" {
+		t.Fatalf("expected rejected-plan then new-file approval question events, got %+v", result.Events)
+	}
+	if len(result.State.OpenQuestions) != 1 {
+		t.Fatalf("expected one open question, got %+v", result.State.OpenQuestions)
+	}
+
+	question := result.State.OpenQuestions[0]
+	if question.AuthorityRequired != "operator_approval" {
+		t.Fatalf("question authority = %q, want operator_approval: %+v", question.AuthorityRequired, question)
+	}
+	if !containsString(question.AffectedFields, "new_file_authorization") {
+		t.Fatalf("question affected fields missing new_file_authorization: %+v", question)
+	}
+	if containsString(question.AffectedFields, "verification_command") {
+		t.Fatalf("new-file approval should not ask the operator to provide model-synthesized verification commands: %+v", question)
+	}
+	for _, want := range []string{"src/brain.py", "tests/test_brain.py"} {
+		if !containsString(question.AffectedPaths, want) {
+			t.Fatalf("question affected paths missing %q: %+v", want, question)
+		}
+	}
+	if strings.Contains(strings.ToLower(question.RequestedDecision), "what existing source files") {
+		t.Fatalf("question must not delegate source discovery to the operator: %+v", question)
+	}
+}
+
+func TestRunGenericPickOneMVPDoesNotOpenSourceLocalizationQuestion(t *testing.T) {
+	root := t.TempDir()
+	mkdirAndWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/brain\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "README.md"), "# Brain\n")
+
+	plan := validGreenfieldBrainPlanForTest()
+	prompt := "Pick one MVP direction for this app."
+
+	state := NewState("session", prompt, "", 3, time.Unix(1, 0).UTC())
+	result, err := Run(state, RunOptions{
+		Prompt:                state.PromptSummary,
+		MaxPlanningIterations: 3,
+		WorkspaceRoot:         root,
+	}, func(_ string, taskFamily string) (string, error) {
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
+			t.Fatal("standalone workspace validation must block before dispatch")
+		}
+
+		return mustPlanJSON(t, plan), nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.State.Status != FeatureStatePlanningQuestion {
+		t.Fatalf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers)
+	}
+	if len(result.State.OpenQuestions) != 1 {
+		t.Fatalf("expected one open question, got %+v", result.State.OpenQuestions)
+	}
+
+	question := result.State.OpenQuestions[0]
+	if question.AuthorityRequired != "operator_approval" ||
+		!containsString(question.AffectedFields, "new_file_authorization") ||
+		containsString(question.AffectedFields, "source_localization") {
+		t.Fatalf("generic MVP selection should request operator approval, not source localization: %+v", question)
+	}
+}
+
+func TestRunRetriesModelRepairableStandaloneValidationAndAcceptsCorrectedPlan(t *testing.T) {
+	root := t.TempDir()
+	mkdirAndWriteFile(t, filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n")
+
+	rejectedPlan := runningExampleExistingPathPlanForTest()
+	correctedPlan := runningExampleExistingPathPlanForTest()
+	correctedPlan.BehavioralCoverageDraft = validBehavioralCoverageDraft()
+	correctedPlan.Atoms[0].Prompt = "Add memory storage and retrieval behavior in the existing query handler and cover creation, retrieval, and empty-content behavior."
+
+	state := NewState("session", `Can you work out an MVP to an effective "llm brain" sort of project to manage long-term agentic memory?`, "", 3, time.Unix(1, 0).UTC())
+	var plannerPrompts []string
+	result, err := Run(state, RunOptions{
+		Prompt:                state.PromptSummary,
+		MaxPlanningIterations: 3,
+		WorkspaceRoot:         root,
+	}, func(prompt string, taskFamily string) (string, error) {
+		switch taskFamily {
+		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
+			plannerPrompts = append(plannerPrompts, prompt)
+			if len(plannerPrompts) == 1 {
+				return mustPlanJSON(t, rejectedPlan), nil
+			}
+			return mustPlanJSON(t, correctedPlan), nil
+		case string(autonomy.TaskFamilyFeaturePlannerImplementor):
+			return testPlanExecuteCompletedJSONForPlanWithSourceSanity(correctedPlan, prompt), nil
+		default:
+			t.Fatalf("unexpected task family %q", taskFamily)
+		}
+
+		return "", nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.State.Status != FeatureStateComplete {
+		t.Fatalf("state.Status = %q, want complete; blockers=%+v", result.State.Status, result.State.Blockers)
+	}
+	if len(plannerPrompts) != 2 {
+		t.Fatalf("planner calls = %d, want rejected plan + corrected plan", len(plannerPrompts))
+	}
+	if !strings.Contains(plannerPrompts[1], "Previous planner blockers that must be repaired before resubmission") ||
+		!strings.Contains(plannerPrompts[1], "behavioral_coverage_draft") {
+		t.Fatalf("retry prompt missing rejected-plan blocker context:\n%s", plannerPrompts[1])
+	}
+	if len(result.State.RejectedPlanCandidates) != 1 {
+		t.Fatalf("expected one rejected candidate, got %+v", result.State.RejectedPlanCandidates)
+	}
+	if len(result.State.Blockers) != 0 {
+		t.Fatalf("corrected plan should clear stale planner blockers: %+v", result.State.Blockers)
+	}
+	var eventTypes []string
+	for _, event := range result.Events {
+		eventTypes = append(eventTypes, event.Type)
+	}
+	for _, want := range []string{
+		"idiom.feature_planner.standalone_context_blocked",
+		"idiom.feature_planner.standalone_context_repair_retry",
+		"idiom.feature_planner.plan_accepted",
+	} {
+		if !slices.Contains(eventTypes, want) {
+			t.Fatalf("missing event %q in %+v", want, eventTypes)
+		}
+	}
+}
+
+func TestClassifyStandaloneValidationRepairMixedCoverageAndPytestOpensOperatorQuestion(t *testing.T) {
+	root := t.TempDir()
+	mkdirAndWriteFile(t, filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
+
+	plan := runningExampleExistingPathPlanForTest()
+
+	state := NewState("session", `Can you work out an MVP to an effective "llm brain" sort of project to manage long-term agentic memory?`, "", 2, time.Unix(1, 0).UTC())
+	result, err := Run(state, RunOptions{
+		Prompt:                state.PromptSummary,
+		MaxPlanningIterations: 3,
+		WorkspaceRoot:         root,
+	}, func(_ string, taskFamily string) (string, error) {
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
+			t.Fatal("verification authority must block before dispatch")
+		}
+
+		return mustPlanJSON(t, plan), nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.State.Status != FeatureStatePlanningQuestion {
+		t.Fatalf("state.Status = %q, want planning-question-open; blockers=%+v", result.State.Status, result.State.Blockers)
+	}
+	if len(result.Events) != 2 || result.Events[0].Type != "idiom.feature_planner.standalone_context_blocked" || result.Events[1].Type != "idiom.feature_planner.planner_question_opened" {
+		t.Fatalf("expected rejected-plan then verification question events, got %+v", result.Events)
+	}
+	if len(result.State.OpenQuestions) != 1 {
+		t.Fatalf("expected one open question, got %+v", result.State.OpenQuestions)
+	}
+
+	question := result.State.OpenQuestions[0]
+	if question.AuthorityRequired != "operator_approval" ||
+		!containsString(question.AffectedFields, "verification_command") ||
+		containsString(question.AffectedFields, "new_file_authorization") ||
+		containsString(question.AffectedFields, "source_localization") {
+		t.Fatalf("unexpected verification command question: %+v", question)
+	}
+	if !strings.Contains(question.RequestedDecision, "pytest tests/test_query_handler.py") {
+		t.Fatalf("verification question should preserve rejected command candidate: %+v", question)
+	}
+}
+
+func TestClassifyStandaloneValidationRepairMixedCoverageAndSourceSignatureRetriesForGenericRequest(t *testing.T) {
+	root := t.TempDir()
+	mkdirAndWriteFile(t, filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n")
+
+	plan := runningExampleExistingPathPlanForTest()
+	plan.Atoms[0].Prompt = "Call create_memory(content) from llm_brain/query_handler.py before dispatch."
+
+	state := NewState("session", `Can you work out an MVP to an effective "llm brain" sort of project to manage long-term agentic memory?`, "", 2, time.Unix(1, 0).UTC())
+	plannerCalls := 0
+	result, err := Run(state, RunOptions{
+		Prompt:                state.PromptSummary,
+		MaxPlanningIterations: 2,
+		WorkspaceRoot:         root,
+	}, func(_ string, taskFamily string) (string, error) {
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
+			t.Fatal("source-signature repair must block before dispatch")
+		}
+		plannerCalls++
+
+		return mustPlanJSON(t, plan), nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.State.Status != FeatureStatePlanningStuck {
+		t.Fatalf("state.Status = %q, want planning-stuck; blockers=%+v", result.State.Status, result.State.Blockers)
+	}
+	if plannerCalls != 2 {
+		t.Fatalf("planner calls = %d, want retry until budget", plannerCalls)
+	}
+	var blockedEvents int
+	for _, event := range result.Events {
+		if event.Type == "idiom.feature_planner.standalone_context_blocked" {
+			blockedEvents++
+		}
+	}
+	if blockedEvents != 2 || result.Events[len(result.Events)-1].Type != "idiom.feature_planner.planning_stuck" {
+		t.Fatalf("expected two rejected plans then planning_stuck, got %+v", result.Events)
+	}
+	if len(result.State.OpenQuestions) != 0 {
+		t.Fatalf("generic source-signature repair must not ask the operator for accepted source facts: %+v", result.State.OpenQuestions)
+	}
+}
+
+func TestRunDoesNotRetryPartiallyClassifiedStandaloneValidation(t *testing.T) {
+	root := t.TempDir()
+	mkdirAndWriteFile(t, filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n")
+
+	plan := runningExampleExistingPathPlanForTest()
+	plan.BehavioralCoverageDraft = nil
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"../outside_test.py"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"../outside_test.py"}
+
+	state := NewState("session", "Plan an LLM brain MVP.", "", 3, time.Unix(1, 0).UTC())
+	plannerCalls := 0
+	result, err := Run(state, RunOptions{
+		Prompt:                state.PromptSummary,
+		MaxPlanningIterations: 3,
+		WorkspaceRoot:         root,
+	}, func(_ string, taskFamily string) (string, error) {
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
+			t.Fatal("partially classified standalone validation must block before dispatch")
+		}
+		plannerCalls++
+		return mustPlanJSON(t, plan), nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if plannerCalls != 1 {
+		t.Fatalf("planner calls = %d, want no retry for partially classified validation", plannerCalls)
+	}
+	if result.State.Status != FeatureStatePlanningRepair {
+		t.Fatalf("state.Status = %q, want planning-repair; blockers=%+v", result.State.Status, result.State.Blockers)
+	}
+	if len(result.Events) != 1 || result.Events[0].Type != "idiom.feature_planner.standalone_context_blocked" {
+		t.Fatalf("expected only standalone context rejection, got %+v", result.Events)
+	}
+}
+
+func TestRunPreservesRetryEventsWhenNextPlannerOutputIsMalformed(t *testing.T) {
+	root := t.TempDir()
+	mkdirAndWriteFile(t, filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n")
+
+	rejectedPlan := runningExampleExistingPathPlanForTest()
+	state := NewState("session", "Plan an LLM brain MVP.", "", 3, time.Unix(1, 0).UTC())
+	plannerCalls := 0
+	result, err := Run(state, RunOptions{
+		Prompt:                state.PromptSummary,
+		MaxPlanningIterations: 3,
+		WorkspaceRoot:         root,
+	}, func(_ string, taskFamily string) (string, error) {
+		plannerCalls++
+		if plannerCalls == 1 {
+			return mustPlanJSON(t, rejectedPlan), nil
+		}
+		return "not json", nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.State.Status != FeatureStateMalformedOutput {
+		t.Fatalf("state.Status = %q, want malformed-output", result.State.Status)
+	}
+	wantEvents := []string{
+		"idiom.feature_planner.standalone_context_blocked",
+		"idiom.feature_planner.standalone_context_repair_retry",
+		"idiom.feature_planner.malformed_structured_output",
+	}
+	if got := featurePlannerEventTypesForTest(result.Events); !slices.Equal(got, wantEvents) {
+		t.Fatalf("event trail = %#v, want %#v", got, wantEvents)
+	}
+}
+
+func TestRunPreservesRetryEventsWhenNextPlanViolatesLockedContract(t *testing.T) {
+	root := t.TempDir()
+	mkdirAndWriteFile(t, filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "pyproject.toml"), "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n")
+
+	lockedPlan := runningExampleExistingPathPlanForTest()
+	rejectedPlan := runningExampleExistingPathPlanForTest()
+	contractRejectedPlan := runningExampleExistingPathPlanForTest()
+	contractRejectedPlan.Atoms[0].RequiredEditPaths = []string{"llm_brain/renamed_handler.py"}
+
+	state := NewState("session", "Repair the locked labels plan.", "", 3, time.Unix(1, 0).UTC())
+	state.Plan = lockedPlan
+	plannerCalls := 0
+	result, err := Run(state, RunOptions{
+		Prompt:                state.PromptSummary,
+		MaxPlanningIterations: 3,
+		WorkspaceRoot:         root,
+	}, func(_ string, taskFamily string) (string, error) {
+		plannerCalls++
+		if plannerCalls == 1 {
+			return mustPlanJSON(t, rejectedPlan), nil
+		}
+		return mustPlanJSON(t, contractRejectedPlan), nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.State.Status != FeatureStatePlanningRepair {
+		t.Fatalf("state.Status = %q, want planning-repair; blockers=%+v", result.State.Status, result.State.Blockers)
+	}
+	wantEvents := []string{
+		"idiom.feature_planner.standalone_context_blocked",
+		"idiom.feature_planner.standalone_context_repair_retry",
+		"idiom.feature_planner.plan_contract_blocked",
+	}
+	if got := featurePlannerEventTypesForTest(result.Events); !slices.Equal(got, wantEvents) {
+		t.Fatalf("event trail = %#v, want %#v", got, wantEvents)
+	}
+}
+
+func TestClassifyStandaloneValidationRepairPrefersVerificationCommandForGenericRequest(t *testing.T) {
+	root := t.TempDir()
+	mkdirAndWriteFile(t, filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
+
+	plan := runningExampleExistingPathPlanForTest()
+	plan.Atoms[0].Prompt = "Call create_memory(content) from llm_brain/query_handler.py before dispatch."
+
+	state := NewState("session", `Can you work out an MVP to an effective "llm brain" sort of project to manage long-term agentic memory?`, "", 3, time.Unix(1, 0).UTC())
+	result, err := Run(state, RunOptions{
+		Prompt:                state.PromptSummary,
+		MaxPlanningIterations: 3,
+		WorkspaceRoot:         root,
+	}, func(_ string, taskFamily string) (string, error) {
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
+			t.Fatal("verification authority must block before dispatch")
+		}
+
+		return mustPlanJSON(t, plan), nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	question := result.State.OpenQuestions[0]
+	if question.AuthorityRequired != "operator_approval" ||
+		!containsString(question.AffectedFields, "verification_command") ||
+		containsString(question.AffectedFields, "source_localization") {
+		t.Fatalf("generic mixed repair should ask for operator verification command first: %+v", question)
 	}
 }
 
@@ -2103,6 +2914,9 @@ func TestStandaloneUnverifiedHelperCallOpensAcceptedSourceQuestion(t *testing.T)
 	question := result.State.OpenQuestions[0]
 	if question.AuthorityRequired != "accepted_source" || !containsString(question.AffectedFields, "source_localization") {
 		t.Fatalf("signature question must request accepted source localization: %+v", question)
+	}
+	if !question.UserFacing {
+		t.Fatalf("explicit source-signature question should be marked user-facing: %+v", question)
 	}
 	if !strings.Contains(question.RequestedDecision, "exact current helper signatures") {
 		t.Fatalf("question should request source-verified signatures: %+v", question)
@@ -2449,9 +3263,11 @@ func TestRunGreenfieldSkeletonOpensOperatorQuestionWithoutLeakingDiagnosticSumma
 	if question.QuestionSummary != "Approve or revise greenfield project scope" ||
 		question.AuthorityRequired != "operator_approval" ||
 		!containsString(question.AffectedFields, "new_file_authorization") ||
-		!containsString(question.AffectedFields, "verification_command") ||
 		!containsString(question.AffectedPaths, "src/brain_core/types.py") {
 		t.Fatalf("unexpected greenfield authority question: %+v", question)
+	}
+	if containsString(question.AffectedFields, "verification_command") {
+		t.Fatalf("greenfield approval should not ask the operator to provide model-synthesized verification commands: %+v", question)
 	}
 
 	summary := FormatStateSummary(result.State, ".idiom/feature-planner/session/state.json")
@@ -2527,9 +3343,11 @@ func TestRunGreenfieldMVPProjectOpensOperatorQuestionWithoutLeakingRepair(t *tes
 		}
 	}
 	if question.AuthorityRequired != "operator_approval" ||
-		!containsString(question.AffectedFields, "new_file_authorization") ||
-		!containsString(question.AffectedFields, "verification_command") {
+		!containsString(question.AffectedFields, "new_file_authorization") {
 		t.Fatalf("unexpected greenfield MVP authority question: %+v", question)
+	}
+	if containsString(question.AffectedFields, "verification_command") {
+		t.Fatalf("greenfield MVP approval should not ask the operator to provide model-synthesized verification commands: %+v", question)
 	}
 
 	summary := FormatStateSummary(result.State, ".idiom/feature-planner/session/state.json")
@@ -2689,7 +3507,7 @@ func TestAnswerOpenQuestionClearsAuthorizedNewFileBlockers(t *testing.T) {
 	}
 
 	events := answerOpenQuestion(&state, "Approved. You may create native/src/simulation/world/collapse_event.cpp and native/tests/test_collapse_event.cpp.")
-	if len(events) != 1 || events[0].Type != "idiom.feature_planner.planner_question_answered" {
+	if len(events) != 1 || events[0].Type != EventPlannerQuestionAnswered {
 		t.Fatalf("unexpected answer events: %+v", events)
 	}
 	if slices.Contains(state.Blockers, blocker) || slices.Contains(state.Atoms[0].Blockers, blocker) {
@@ -2724,7 +3542,7 @@ func TestAnswerOpenQuestionDenialDoesNotClearNewFileBlockers(t *testing.T) {
 	}
 
 	events := answerOpenQuestion(&state, "No, do not create native/src/simulation/world/collapse_event.cpp or native/tests/test_collapse_event.cpp.")
-	if len(events) != 1 || events[0].Type != "idiom.feature_planner.planner_question_answered" {
+	if len(events) != 1 || events[0].Type != EventPlannerQuestionAnswered {
 		t.Fatalf("unexpected answer events: %+v", events)
 	}
 	if !slices.Contains(state.Blockers, blocker) || !slices.Contains(state.Atoms[0].Blockers, blocker) {
@@ -2732,6 +3550,30 @@ func TestAnswerOpenQuestionDenialDoesNotClearNewFileBlockers(t *testing.T) {
 	}
 	if deltaAuthorizesNewFile(state.AuthorityDeltas[0]) {
 		t.Fatalf("denial answer must not compile as new-file authorization: %+v", state.AuthorityDeltas[0])
+	}
+}
+
+func TestAnswerOpenQuestionTreatsBlankStatusAsOpen(t *testing.T) {
+	state := FeatureState{
+		SessionID: "feature-session",
+		Status:    FeatureStatePlanningQuestion,
+		OpenQuestions: []PlannerQuestion{{
+			ID:                "q-001",
+			QuestionSummary:   "Authorize new files",
+			BlockingClaim:     "new files need approval",
+			QuestionKind:      "external_answer_required",
+			AuthorityRequired: "operator_approval",
+			AffectedPaths:     []string{"src/brain.py"},
+			AffectedFields:    []string{"new_file_authorization"},
+		}},
+	}
+
+	events := answerOpenQuestion(&state, "Approved. You may create src/brain.py.")
+	if len(events) != 1 || events[0].Type != EventPlannerQuestionAnswered {
+		t.Fatalf("blank-status question should be answerable, got events=%+v state=%+v", events, state)
+	}
+	if state.OpenQuestions[0].Status != "answered" {
+		t.Fatalf("question status = %q, want answered", state.OpenQuestions[0].Status)
 	}
 }
 
@@ -2764,6 +3606,36 @@ func TestNewFileAuthorizationDenialPhrasesWinOverApprovalWords(t *testing.T) {
 	approved.Actual = "Approved. You may create exactly native/src/simulation/world/collapse_event.cpp."
 	if !deltaAuthorizesNewFile(approved) {
 		t.Fatalf("explicit approval should compile as new-file authorization")
+	}
+}
+
+func TestNewFileAuthorizationRevisionPhrasesDoNotAuthorizeOriginalPaths(t *testing.T) {
+	base := PlanAuthorityDelta{
+		QuestionID:     "q-001",
+		AuthorityKind:  "operator_approval",
+		AffectedPaths:  []string{"src/brain.py", "tests/test_brain.py"},
+		AffectedFields: []string{"new_file_authorization", "verification_command"},
+		Revision:       1,
+		CreatedAt:      time.Unix(1, 0).UTC().Format(time.RFC3339Nano),
+	}
+
+	for _, actual := range []string{
+		"Yes, use existing files instead.",
+		"Yes, revise the plan to avoid creating new files.",
+		"Approved, but change the paths before continuing.",
+		"Ok, use a different project structure instead.",
+	} {
+		delta := base
+		delta.Actual = actual
+		if deltaAuthorizesNewFile(delta) {
+			t.Fatalf("revision answer compiled as new-file authorization: %q", actual)
+		}
+	}
+
+	approved := base
+	approved.Actual = "Approved. Use Python with pytest. Create src/brain.py and tests/test_brain.py."
+	if !deltaAuthorizesNewFile(approved) {
+		t.Fatalf("approval with project setup should still authorize listed new files")
 	}
 }
 
@@ -2813,7 +3685,8 @@ func TestBuildPlannerPromptAdvertisesFlatSubmitFeaturePlanSchema(t *testing.T) {
 		`"question_summary"`,
 		`"blocking_claim"`,
 		`"requested_decision"`,
-		`"affected_paths"`,
+		`do not include affected_paths for non-path authority`,
+		`affected_paths must contain the exact repo-relative paths`,
 		`"affected_fields"`,
 		`paths inside requested_decision are explanatory text only and do not grant authority`,
 		`do not return both arrays empty`,
@@ -3154,12 +4027,203 @@ func TestRunDispatchesAtomAfterAcceptedTDDPlan(t *testing.T) {
 		t.Fatalf("state.Status = %q, want complete", result.State.Status)
 	}
 
-	if len(result.Events) != 8 {
+	if len(result.Events) != 9 || result.Events[len(result.Events)-1].Type != "idiom.feature_planner.release_ready" {
 		t.Fatalf("events = %+v, want plan review sequence, dispatch, complete", result.Events)
 	}
 
 	if len(result.State.ActiveRuns) != 0 {
 		t.Fatalf("active runs should be folded after terminal atom: %+v", result.State.ActiveRuns)
+	}
+}
+
+func TestNewFileAuthorizationApprovalIgnoresBlockingClaimNoProjectFiles(t *testing.T) {
+	delta := PlanAuthorityDelta{
+		QuestionID:     "q-001",
+		AuthorityKind:  "operator_approval",
+		AffectedPaths:  []string{"src/brain.py", "tests/test_brain.py"},
+		AffectedFields: []string{"new_file_authorization", "verification_command"},
+		Expected:       "The workspace has no project files, so the standalone feature planner cannot infer new files safely.",
+		Actual:         "Approved. Use Python with pytest. Create src/brain.py and tests/test_brain.py.",
+	}
+
+	if !deltaAuthorizesNewFile(delta) {
+		t.Fatalf("operator approval should authorize new files even when the blocking claim says no project files: %+v", delta)
+	}
+}
+
+func TestValidateStandaloneWorkspaceAcceptsGreenfieldPlannerVerificationCommandFromApprovedNewFiles(t *testing.T) {
+	root := t.TempDir()
+	plan := validGreenfieldBrainPlanForTest()
+	deltas := []PlanAuthorityDelta{{
+		QuestionID:     "q-001",
+		AuthorityKind:  "operator_approval",
+		EvidenceRefs:   []string{"planner_question:q-001"},
+		AffectedPaths:  []string{"src/brain.py", "tests/test_brain.py"},
+		AffectedFields: []string{"new_file_authorization"},
+		Expected:       "The workspace has no project files, so the standalone feature planner cannot infer new files safely.",
+		Actual:         "Approved. Use Python with pytest. Create src/brain.py and tests/test_brain.py.",
+		Revision:       1,
+		CreatedAt:      time.Unix(1, 0).UTC().Format(time.RFC3339Nano),
+	}}
+	contract := StampPlanAuthorityContract(&plan, deltas)
+
+	if err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{
+		WorkspaceRoot:   root,
+		Contract:        contract,
+		AuthorityDeltas: deltas,
+	}); err != nil {
+		t.Fatalf("approved greenfield new files should authorize planner-synthesized pytest command for those files: %v", err)
+	}
+}
+
+func TestValidateStandaloneWorkspaceRejectsVerificationCommandFamilyApproval(t *testing.T) {
+	root := t.TempDir()
+	plan := runningExampleExistingPathPlanForTest()
+	mkdirAndWriteFile(t, filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
+
+	deltas := []PlanAuthorityDelta{{
+		QuestionID:     "q-001",
+		AuthorityKind:  "operator_approval",
+		EvidenceRefs:   []string{"planner_question:q-001"},
+		AffectedPaths:  []string{"tests/test_query_handler.py"},
+		AffectedFields: []string{"verification_command"},
+		Expected:       "Provide the exact verification command to use for this project.",
+		Actual:         "Approved. Use pytest as the verification command.",
+		Revision:       1,
+		CreatedAt:      time.Unix(1, 0).UTC().Format(time.RFC3339Nano),
+	}}
+	contract := StampPlanAuthorityContract(&plan, deltas)
+
+	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{
+		WorkspaceRoot:   root,
+		Contract:        contract,
+		AuthorityDeltas: deltas,
+	})
+	if err == nil {
+		t.Fatal("verification command family approval must not authorize exact rejected command")
+	}
+	if issues := StandaloneValidationIssues(err); !standaloneValidationHasIssueKind(issues, "verification_command_unverified") {
+		t.Fatalf("expected typed verification issue, got err=%v issues=%+v", err, issues)
+	}
+}
+
+func TestValidateStandaloneWorkspaceRejectsGreenfieldVerificationCommandOutsideApprovedNewFiles(t *testing.T) {
+	root := t.TempDir()
+	plan := validGreenfieldBrainPlanForTest()
+	plan.Atoms[0].TestFirst.Commands = []string{"pytest tests/test_other.py"}
+	plan.Atoms[0].RequiredTests = []string{"pytest tests/test_other.py"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = []string{"pytest tests/test_other.py"}
+
+	deltas := []PlanAuthorityDelta{{
+		QuestionID:     "q-001",
+		AuthorityKind:  "operator_approval",
+		EvidenceRefs:   []string{"planner_question:q-001"},
+		AffectedPaths:  []string{"src/brain.py", "tests/test_brain.py"},
+		AffectedFields: []string{"new_file_authorization"},
+		Expected:       "Approve greenfield project files.",
+		Actual:         "Approved. Create src/brain.py and tests/test_brain.py.",
+		Revision:       1,
+		CreatedAt:      time.Unix(1, 0).UTC().Format(time.RFC3339Nano),
+	}}
+	contract := StampPlanAuthorityContract(&plan, deltas)
+
+	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{
+		WorkspaceRoot:   root,
+		Contract:        contract,
+		AuthorityDeltas: deltas,
+	})
+	if err == nil {
+		t.Fatal("new-file approval must not authorize verification commands for unrelated test paths")
+	}
+	if issues := StandaloneValidationIssues(err); !standaloneValidationHasIssueKind(issues, "verification_command_unverified") {
+		t.Fatalf("expected typed verification issue, got err=%v issues=%+v", err, issues)
+	}
+}
+
+func TestValidateStandaloneWorkspaceRejectsRevisionMentionOfExactVerificationCommand(t *testing.T) {
+	root := t.TempDir()
+	plan := runningExampleExistingPathPlanForTest()
+	mkdirAndWriteFile(t, filepath.Join(root, "llm_brain", "query_handler.py"), "class QueryHandler:\n    pass\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "tests", "test_query_handler.py"), "def test_placeholder():\n    assert True\n")
+
+	deltas := []PlanAuthorityDelta{{
+		QuestionID:     "q-001",
+		AuthorityKind:  "operator_approval",
+		EvidenceRefs:   []string{"planner_question:q-001"},
+		AffectedPaths:  []string{"tests/test_query_handler.py"},
+		AffectedFields: []string{"verification_command"},
+		Expected:       "Provide the exact verification command to use for this project.",
+		Actual:         "Use pytest -q instead of pytest tests/test_query_handler.py.",
+		Revision:       1,
+		CreatedAt:      time.Unix(1, 0).UTC().Format(time.RFC3339Nano),
+	}}
+	contract := StampPlanAuthorityContract(&plan, deltas)
+
+	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{
+		WorkspaceRoot:   root,
+		Contract:        contract,
+		AuthorityDeltas: deltas,
+	})
+	if err == nil {
+		t.Fatal("revision mention of exact rejected command must not authorize stale candidate")
+	}
+	if issues := StandaloneValidationIssues(err); !standaloneValidationHasIssueKind(issues, "verification_command_unverified") {
+		t.Fatalf("expected typed verification issue, got err=%v issues=%+v", err, issues)
+	}
+}
+
+func TestGreenfieldPromptClassifiersAllowAPIDefinitionsAndTDDProse(t *testing.T) {
+	if plannerCallNeedsSignatureEvidence("initially", "red") {
+		t.Fatal("TDD status prose initially(red) must not require source signature evidence")
+	}
+
+	grounding := newAtomPromptGrounding(FeatureAtomPlan{}, nil)
+	grounding.addAuthorizedNewFile("llm_brain/working_memory.py")
+	prompt := "implement the WorkingMemory class in llm_brain/working_memory.py with methods store(step_id: str, output: str) and retrieve(step_id: str) -> str"
+	storeStart := strings.Index(prompt, "store(")
+	if storeStart < 0 {
+		t.Fatalf("test prompt missing store call: %s", prompt)
+	}
+	if !plannerCallIsNewAPIDefinition(prompt, storeStart, "store(step_id: str, output: str)", grounding) {
+		t.Fatalf("authorized greenfield method definition should not require existing-source signature proof")
+	}
+
+	registerPrompt := "Add a register_tool(name, description, parameters, func) method for tool/function calling."
+	registerStart := strings.Index(registerPrompt, "register_tool(")
+	if registerStart < 0 || !plannerCallIsNewAPIDefinition(registerPrompt, registerStart, "register_tool(name, description, parameters, func)", grounding) {
+		t.Fatalf("authorized greenfield add-method prompt should not require existing-source signature proof")
+	}
+
+	existingGrounding := newAtomPromptGrounding(FeatureAtomPlan{
+		RequiredEditPaths: []string{"llm_brain/query_handler.py"},
+	}, nil)
+	existingPrompt := "Implement memory storage and retrieval in llm_brain/query_handler.py. Add methods: create_memory(content) -> MemoryEntry."
+	createStart := strings.Index(existingPrompt, "create_memory(")
+	if createStart < 0 || !plannerCallIsNewAPIDefinition(existingPrompt, createStart, "create_memory(content)", existingGrounding) {
+		t.Fatalf("explicit existing-file add-method prompt should be treated as new API definition")
+	}
+
+	evidenceOnlyGrounding := newAtomPromptGrounding(FeatureAtomPlan{
+		EvidencePaths: []string{"llm_brain/query_handler.py"},
+	}, nil)
+	callPrompt := "Use accepted source localization from llm_brain/query_handler.py, then call create_memory(content) before dispatch."
+	callStart := strings.Index(callPrompt, "create_memory(")
+	if callStart < 0 {
+		t.Fatalf("test prompt missing helper call: %s", callPrompt)
+	}
+	if plannerCallIsNewAPIDefinition(callPrompt, callStart, "create_memory(content)", evidenceOnlyGrounding) {
+		t.Fatalf("evidence-only scope must not exempt existing helper call from source signature proof")
+	}
+
+	grounding.addAuthorizedNewFile("llm_brain/providers/base.py")
+	if !grounding.pathIsDeclaredDirectory("llm_brain/providers") {
+		t.Fatal("directory mention should be in scope when declared files are inside it")
+	}
+
+	paths := repoPathsMentionedInText("parse <tool>calculator</tool><input>2+2</input> as example data for tool/function calling")
+	if len(paths) != 0 {
+		t.Fatalf("XML-like examples and slash-separated prose alternatives should not be treated as repo paths: %#v", paths)
 	}
 }
 
@@ -3251,6 +4315,64 @@ func TestRunUsesAnsweredPlannerQuestionForStandaloneNewFileAuthorization(t *test
 	}
 	if got := PlanExecuteAuthorizedNewFilesFromImplementorPrompt(implementorPrompt); !slices.Equal(got, want) {
 		t.Fatalf("authorized new files = %#v, want %#v", got, want)
+	}
+}
+
+func TestRunRevalidatesApprovedRejectedGreenfieldCandidateWithoutPlannerDrift(t *testing.T) {
+	root := t.TempDir()
+	plan := validGreenfieldBrainPlanForTest()
+
+	state := NewState("session", "Can you work out an MVP to an effective \"llm brain\" sort of project?", "", 3, time.Unix(1, 0).UTC())
+	state.Status = FeatureStatePlanningQuestion
+	state.PlanningLoop.State = FeatureStatePlanningQuestion
+	state.RejectedPlanCandidates = []RejectedPlanCandidate{{
+		Plan:       plan,
+		PlanHash:   featurePlanHash(plan),
+		Diagnostic: "missing standalone new-file authorization",
+		EventType:  "idiom.feature_planner.standalone_context_blocked",
+		RejectedAt: time.Unix(1, 0).UTC().Format(time.RFC3339Nano),
+	}}
+	state.OpenQuestions = []PlannerQuestion{{
+		ID:                "q-001",
+		Status:            "open",
+		QuestionSummary:   "Approve or revise greenfield project scope",
+		AuthorityRequired: "operator_approval",
+		BlockingClaim:     "The workspace has no project files, so the standalone feature planner cannot infer new files, project structure, or verification commands safely.",
+		RequestedDecision: "Approve creating src/brain.py and tests/test_brain.py with the planned Python pytest project setup.",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     []string{"src/brain.py", "tests/test_brain.py"},
+		AffectedFields:    []string{"new_file_authorization"},
+	}}
+
+	var calls []string
+	result, err := Run(state, RunOptions{
+		Prompt:                state.PromptSummary,
+		ResumeAnswer:          "Approved. Use Python with pytest. Create src/brain.py and tests/test_brain.py.",
+		WorkspaceRoot:         root,
+		MaxPlanningIterations: 3,
+		Now:                   time.Unix(2, 0).UTC(),
+	}, func(prompt string, taskFamily string) (string, error) {
+		calls = append(calls, taskFamily)
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerPlanner) {
+			t.Fatalf("approved rejected candidate should be revalidated before planner regeneration; prompt:\n%s", prompt)
+		}
+		return testPlanExecuteCompletedJSONForPlanWithSourceSanity(plan, prompt), nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if result.State.Status != FeatureStateComplete {
+		t.Fatalf("state.Status = %q, want complete; blockers=%+v", result.State.Status, result.State.Blockers)
+	}
+	if got := result.State.Plan.TopLevelScope.Objective; got != plan.TopLevelScope.Objective {
+		t.Fatalf("approved candidate drifted objective = %q, want %q", got, plan.TopLevelScope.Objective)
+	}
+	if !slices.Equal(calls, []string{string(autonomy.TaskFamilyFeaturePlannerImplementor)}) {
+		t.Fatalf("calls = %#v, want only implementor dispatch", calls)
+	}
+	if len(result.Events) == 0 || result.Events[1].Type != "idiom.feature_planner.rejected_candidate_revalidated" {
+		t.Fatalf("missing candidate revalidation event: %+v", result.Events)
 	}
 }
 
@@ -3570,8 +4692,8 @@ func TestDispatchRecordsPlanExecuteLaneFamily(t *testing.T) {
 		return testPlanExecuteCompletedJSONForPrompt(prompt), nil
 	})
 
-	if len(events) != 2 {
-		t.Fatalf("events = %+v, want dispatch and complete", events)
+	if len(events) != 3 || events[2].Type != "idiom.feature_planner.release_ready" {
+		t.Fatalf("events = %+v, want dispatch, complete, release-ready", events)
 	}
 
 	dispatch := events[0]
@@ -3607,8 +4729,8 @@ func TestDispatchUsesPlanExecuteSafeRunIDForUnsafeAtomID(t *testing.T) {
 		return testPlanExecuteCompletedJSONForPrompt(gotPrompt), nil
 	})
 
-	if len(events) != 2 {
-		t.Fatalf("events = %+v, want dispatch and complete", events)
+	if len(events) != 3 || events[2].Type != "idiom.feature_planner.release_ready" {
+		t.Fatalf("events = %+v, want dispatch, complete, release-ready", events)
 	}
 
 	runID := events[0].ActiveRunDeltas[0].LaneSessionID
@@ -3880,7 +5002,7 @@ func TestApplyImplementorOutputQuestionPrefixOpensPlannerQuestion(t *testing.T) 
 
 	atom.State = AtomStateImplementing
 	atom.LastRunID = "atom-1-run-1"
-	state.ActiveRuns = []ActiveRun{{RunID: "atom-1-run-1", AtomID: atom.ID, State: "running"}}
+	state.ActiveRuns = []ActiveRun{{RunID: "atom-1-run-1", AtomID: atom.ID, State: ActiveRunStateRunning}}
 
 	events := ApplyImplementorOutput(&state, atom, "<<QUESTION>>: Plan-execute could not produce a plan artifact.")
 
@@ -4150,7 +5272,7 @@ func TestImplementorAtomJSONDoesNotOpenPlannerQuestionOrComplete(t *testing.T) {
 		RunID:         "atom-1-run-1",
 		AtomID:        atom.ID,
 		LaneSessionID: "atom-1-run-1",
-		State:         "running",
+		State:         ActiveRunStateRunning,
 	}}
 
 	raw, err := json.Marshal(atom.FeatureAtomPlan)
@@ -4190,7 +5312,7 @@ func TestApplyImplementorOutputRejectsUnobservedEditAndTestClaims(t *testing.T) 
 		RunID:         "atom-1-run-1",
 		AtomID:        atom.ID,
 		LaneSessionID: "atom-1-run-1",
-		State:         "running",
+		State:         ActiveRunStateRunning,
 	}}
 
 	events := ApplyImplementorOutput(&state, atom, `Implemented & TDD-verified.
@@ -4227,6 +5349,41 @@ func TestApplyImplementorOutputRejectsUnobservedEditAndTestClaims(t *testing.T) 
 	}
 }
 
+func TestApplyImplementorOutputRejectsMissingObservedVerificationCommands(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+	payload := map[string]any{}
+
+	if err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtom(*atom)), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	delete(payload, "verification_commands")
+
+	events := ApplyImplementorOutput(&state, atom, mustJSONMap(trustPlanExecuteCompletionForTest(payload)))
+
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "missing observed verification command")
+	if state.ReleaseReadiness.Status == "ready" {
+		t.Fatalf("missing observed verification commands must not become release-ready: %+v", state.ReleaseReadiness)
+	}
+}
+
+func TestObservedVerificationCommandsUseCanonicalEvidenceKey(t *testing.T) {
+	atom := plancontract.AtomExecutionContract{
+		RequiredTests: []plancontract.RequiredTest{{Command: "python -m pytest tests/test_brain.py"}},
+		TDDObligations: []plancontract.TDDObligation{{
+			Command: "python -m pytest tests/test_brain.py",
+		}},
+	}
+	completion := planExecuteCompletion{
+		VerificationCommands: []coreplanexecute.VerificationCommand{{
+			Argv: []string{"python", "-m", "pytest", "tests/test_brain.py"},
+		}},
+	}
+
+	if missing := missingObservedVerificationCommands(atom, completion); len(missing) > 0 {
+		t.Fatalf("canonical argv evidence should satisfy required command, missing %+v", missing)
+	}
+}
+
 func TestApplyImplementorOutputAcceptsObservedPlanExecuteCompletion(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
@@ -4235,12 +5392,15 @@ func TestApplyImplementorOutputAcceptsObservedPlanExecuteCompletion(t *testing.T
 
 	atom.State = AtomStateImplementing
 	atom.LastRunID = "atom-1-run-1"
+	contractID, protocolHash := stampCompletionTestAtomRuntime(&state, atom)
 	state.ActiveRuns = []ActiveRun{{
-		RunID:         "atom-1-run-1",
-		AtomID:        atom.ID,
-		LaneSessionID: "atom-1-run-1",
-		LaneFamily:    "plan-execute",
-		State:         "running",
+		RunID:                "atom-1-run-1",
+		AtomID:               atom.ID,
+		LaneSessionID:        "atom-1-run-1",
+		LaneFamily:           "plan-execute",
+		InvocationContractID: contractID,
+		RuntimeEnvelopeID:    protocolHash,
+		State:                ActiveRunStateRunning,
 	}}
 
 	events := ApplyImplementorOutput(&state, atom, testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom))
@@ -4253,7 +5413,7 @@ func TestApplyImplementorOutputAcceptsObservedPlanExecuteCompletion(t *testing.T
 		t.Fatalf("feature state = %q, want complete", state.Status)
 	}
 
-	if len(events) != 1 || events[0].Type != "idiom.feature_planner.atom_completed" {
+	if len(events) != 2 || events[0].Type != "idiom.feature_planner.atom_completed" || events[1].Type != "idiom.feature_planner.release_ready" {
 		t.Fatalf("unexpected events: %+v", events)
 	}
 
@@ -4268,6 +5428,57 @@ func TestApplyImplementorOutputAcceptsObservedPlanExecuteCompletion(t *testing.T
 	if got := events[0].Fields["review_repair_skipped"]; got != true {
 		t.Fatalf("review_repair_skipped = %v, want true", got)
 	}
+
+	if len(state.VerificationClosures) != 1 {
+		t.Fatalf("verification closures = %+v, want one closure", state.VerificationClosures)
+	}
+	closure := state.VerificationClosures[0]
+	if closure.PlanArtifactID != state.Plan.Artifact.ArtifactID ||
+		closure.PlanDigest != state.Plan.Artifact.Digest ||
+		closure.ApprovalEventID != state.Plan.Approval.EventID {
+		t.Fatalf("closure not bound to approved plan artifact: closure=%+v artifact=%+v approval=%+v", closure, state.Plan.Artifact, state.Plan.Approval)
+	}
+	if closure.Status != "passed" {
+		t.Fatalf("closure status = %q, want passed", closure.Status)
+	}
+	if len(closure.TDDCommandResults) == 0 {
+		t.Fatalf("closure missing TDD command results: %+v", closure)
+	}
+	if len(closure.Verification) == 0 {
+		t.Fatalf("closure missing typed verification checks: %+v", closure)
+	}
+	if got := fmt.Sprint(events[0].Fields["verification_closure_event_id"]); got != closure.EventID {
+		t.Fatalf("event closure id = %q, want %q", got, closure.EventID)
+	}
+	if state.ReleaseReadiness.Status != "ready" ||
+		state.ReleaseReadiness.PlanArtifactID != state.Plan.Artifact.ArtifactID ||
+		state.ReleaseReadiness.PlanDigest != state.Plan.Artifact.Digest ||
+		state.ReleaseReadiness.ApprovalEventID != state.Plan.Approval.EventID ||
+		!containsString(state.ReleaseReadiness.VerificationClosureEventIDs, closure.EventID) {
+		t.Fatalf("release readiness not bound to closed artifact: %+v", state.ReleaseReadiness)
+	}
+	if got := fmt.Sprint(events[1].Fields["release_status"]); got != "ready" {
+		t.Fatalf("release event status = %q, want ready; fields=%+v", got, events[1].Fields)
+	}
+	if got := fmt.Sprint(events[1].Fields["plan_digest"]); got != state.Plan.Artifact.Digest {
+		t.Fatalf("release event digest = %q, want %q", got, state.Plan.Artifact.Digest)
+	}
+}
+
+func TestApplyImplementorOutputRejectsNonzeroPlanExecuteExitCode(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+	payload := map[string]any{}
+
+	if err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom)), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+
+	payload["exit_code"] = 1
+	trustPlanExecuteCompletionForTest(payload)
+
+	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
+
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute reported non-zero exit code")
 }
 
 func TestApplyImplementorOutputBindsActiveAuthorityForScopeOnlyPlanExecuteCompletion(t *testing.T) {
@@ -4291,7 +5502,7 @@ func TestApplyImplementorOutputBindsActiveAuthorityForScopeOnlyPlanExecuteComple
 		t.Fatalf("atom state = %q, want complete; blockers=%+v events=%+v", atom.State, atom.Blockers, events)
 	}
 
-	if len(events) != 1 || events[0].Type != "idiom.feature_planner.atom_completed" {
+	if len(events) != 2 || events[0].Type != "idiom.feature_planner.atom_completed" || events[1].Type != "idiom.feature_planner.release_ready" {
 		t.Fatalf("unexpected events: %+v", events)
 	}
 
@@ -4305,6 +5516,56 @@ func TestApplyImplementorOutputBindsActiveAuthorityForScopeOnlyPlanExecuteComple
 
 	if got := fmt.Sprint(events[0].Fields["scope_contract_id"]); got != "child-local-scope" {
 		t.Fatalf("scope_contract_id = %q, want preserved child scope; fields=%+v", got, events[0].Fields)
+	}
+}
+
+func TestReplayRestoresVerificationClosureFromTerminalEvent(t *testing.T) {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+
+	atom := &state.Atoms[0]
+	atom.State = AtomStateImplementing
+	atom.LastRunID = "atom-1-run-1"
+	contractID, protocolHash := stampCompletionTestAtomRuntime(&state, atom)
+	state.ActiveRuns = []ActiveRun{{
+		RunID:                "atom-1-run-1",
+		AtomID:               atom.ID,
+		LaneSessionID:        "atom-1-run-1",
+		LaneFamily:           "plan-execute",
+		InvocationContractID: contractID,
+		RuntimeEnvelopeID:    protocolHash,
+		State:                ActiveRunStateRunning,
+	}}
+	preTerminal := state
+	preTerminal.Atoms = append([]FeatureAtomState(nil), state.Atoms...)
+	preTerminal.ActiveRuns = append([]ActiveRun(nil), state.ActiveRuns...)
+
+	events := ApplyImplementorOutput(&state, atom, testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom))
+	if len(events) != 2 || events[0].Type != "idiom.feature_planner.atom_completed" || events[1].Type != "idiom.feature_planner.release_ready" {
+		t.Fatalf("unexpected terminal events: %+v", events)
+	}
+
+	bundle, err := Replay(preTerminal, events)
+	if err != nil {
+		t.Fatalf("replay terminal event: %v", err)
+	}
+
+	if len(bundle.State.VerificationClosures) != 1 {
+		t.Fatalf("replayed verification closures = %+v, want one", bundle.State.VerificationClosures)
+	}
+	got := bundle.State.VerificationClosures[0]
+	want := state.VerificationClosures[0]
+	if got.EventID != want.EventID ||
+		got.PlanDigest != want.PlanDigest ||
+		got.ApprovalEventID != want.ApprovalEventID ||
+		len(got.TDDCommandResults) != len(want.TDDCommandResults) ||
+		len(got.Verification) != len(want.Verification) {
+		t.Fatalf("replayed closure mismatch:\ngot  %+v\nwant %+v", got, want)
+	}
+	if bundle.State.ReleaseReadiness.Status != "ready" ||
+		bundle.State.ReleaseReadiness.PlanDigest != state.ReleaseReadiness.PlanDigest ||
+		!containsString(bundle.State.ReleaseReadiness.VerificationClosureEventIDs, got.EventID) {
+		t.Fatalf("replayed release readiness mismatch:\ngot  %+v\nwant %+v", bundle.State.ReleaseReadiness, state.ReleaseReadiness)
 	}
 }
 
@@ -4396,7 +5657,7 @@ func TestApplyImplementorOutputAcceptsNestedPlanExecuteCompletionStatus(t *testi
 		t.Fatalf("atom state = %q, want complete; blockers=%+v events=%+v", atom.State, atom.Blockers, events)
 	}
 
-	if len(events) != 1 || events[0].Type != "idiom.feature_planner.atom_completed" {
+	if len(events) != 2 || events[0].Type != "idiom.feature_planner.atom_completed" || events[1].Type != "idiom.feature_planner.release_ready" {
 		t.Fatalf("unexpected events: %+v", events)
 	}
 
@@ -4407,6 +5668,26 @@ func TestApplyImplementorOutputAcceptsNestedPlanExecuteCompletionStatus(t *testi
 	if got := fmt.Sprint(events[0].Fields["nested_phase"]); got != "review_repair" {
 		t.Fatalf("nested phase = %q, want review_repair; fields=%+v", got, events[0].Fields)
 	}
+}
+
+func TestApplyImplementorOutputRejectsNestedNonzeroPlanExecuteExitCode(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+	payload := map[string]any{}
+
+	if err := json.Unmarshal([]byte(testNestedPlanExecuteCompletedJSONForAtom(*atom)), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+
+	nested, ok := payload["plan_execute"].(map[string]any)
+	if !ok {
+		t.Fatalf("payload missing nested plan_execute: %+v", payload)
+	}
+	nested["exit_code"] = 1
+	trustPlanExecuteCompletionForTest(nested)
+
+	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
+
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute reported non-zero exit code")
 }
 
 func TestApplyImplementorOutputRejectsMissingAcceptanceEvidenceIDs(t *testing.T) {
@@ -4464,7 +5745,7 @@ func TestApplyImplementorOutputPreservesPlanExecuteSourceSatisfiedAtomState(t *t
 		t.Fatalf("feature state = %q, want complete", state.Status)
 	}
 
-	if len(events) != 1 || events[0].Type != "idiom.feature_planner.atom_source_satisfied" {
+	if len(events) != 2 || events[0].Type != "idiom.feature_planner.atom_source_satisfied" || events[1].Type != "idiom.feature_planner.release_ready" {
 		t.Fatalf("unexpected events: %+v", events)
 	}
 
@@ -4558,7 +5839,7 @@ func TestApplyImplementorOutputAcceptsOutcomeOnlySourceSatisfiedCompletion(t *te
 		t.Fatalf("atom state = %q, want source-satisfied; blockers=%+v events=%+v", atom.State, atom.Blockers, events)
 	}
 
-	if len(events) != 1 || events[0].Type != "idiom.feature_planner.atom_source_satisfied" {
+	if len(events) != 2 || events[0].Type != "idiom.feature_planner.atom_source_satisfied" || events[1].Type != "idiom.feature_planner.release_ready" {
 		t.Fatalf("unexpected events: %+v", events)
 	}
 
@@ -4633,7 +5914,7 @@ func TestApplyImplementorOutputPromotesNestedPlanExecuteFailureDetailToBlocker(t
 
 func TestApplyImplementorOutputPreservesPlanExecuteRetryNextAction(t *testing.T) {
 	state, atom := implementingAtomForCompletionTest(t)
-	state.ActiveRuns = []ActiveRun{{RunID: "atom-1-run-1", AtomID: atom.ID, LaneSessionID: "atom-1-run-1", State: "running"}}
+	state.ActiveRuns = []ActiveRun{{RunID: "atom-1-run-1", AtomID: atom.ID, LaneSessionID: "atom-1-run-1", State: ActiveRunStateRunning}}
 	atom.LastRunID = "atom-1-run-1"
 
 	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"failed","phase":"planning","failure_kind":"planner_blocked","failure_reason":"<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.","next_valid_action":"retry_plan_execute","progress_path":".idiom/plan-execute/sessions/pe.json"}`)
@@ -4733,15 +6014,27 @@ func implementingAtomForCompletionTest(t *testing.T) (FeatureState, *FeatureAtom
 	atom.State = AtomStateImplementing
 	atom.LastRunID = "atom-1-run-1"
 	state.Status = FeatureStateDispatching
+	contractID, protocolHash := stampCompletionTestAtomRuntime(&state, atom)
 	state.ActiveRuns = []ActiveRun{{
-		RunID:         "atom-1-run-1",
-		AtomID:        atom.ID,
-		LaneSessionID: "atom-1-run-1",
-		LaneFamily:    "plan-execute",
-		State:         "running",
+		RunID:                "atom-1-run-1",
+		AtomID:               atom.ID,
+		LaneSessionID:        "atom-1-run-1",
+		LaneFamily:           "plan-execute",
+		InvocationContractID: contractID,
+		RuntimeEnvelopeID:    protocolHash,
+		State:                ActiveRunStateRunning,
 	}}
 
 	return state, atom
+}
+
+func stampCompletionTestAtomRuntime(state *FeatureState, atom *FeatureAtomState) (string, string) {
+	contract := StampPlanAuthorityContract(&state.Plan, state.AuthorityDeltas)
+	atomContract, _ := planAuthorityContractAtom(contract, atom.ID)
+	atom.RuntimeEnvelope.ContractID = atomContract.Scope.ContractID
+	atom.RuntimeEnvelope.ProtocolHash = contract.ContractHash
+
+	return atom.RuntimeEnvelope.ContractID, atom.RuntimeEnvelope.ProtocolHash
 }
 
 func assertRejectedPlanExecuteCompletion(t *testing.T, state FeatureState, atom *FeatureAtomState, events []Event, wantMessage string) {
@@ -4876,6 +6169,80 @@ func TestRunRejectsPlainAnswerForNonOperatorQuestion(t *testing.T) {
 
 	if len(result.Events) != 1 || result.Events[0].Type != "idiom.feature_planner.planner_question_answer_rejected" {
 		t.Fatalf("unexpected events: %+v", result.Events)
+	}
+}
+
+func TestRunPlanRevisionSupersedesRequiredAuthorityQuestion(t *testing.T) {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+
+	state.Status = FeatureStatePlanningQuestion
+	state.PlanningLoop.State = FeatureStatePlanningQuestion
+	state.Blockers = []string{
+		`planner question "q-source" requires typed accepted_source authority answer`,
+		`atom 0 prompt includes concrete helper call "BuildThing(arg)" without source-verified signature evidence; require exact signature/source verification or ask_planner_question before dispatch`,
+	}
+	state.OpenQuestions = []PlannerQuestion{{
+		ID:                "q-source",
+		QuestionKind:      "missing_spec",
+		QuestionSummary:   "Which accepted source authorizes this behavior?",
+		BlockingClaim:     "Implementation needs accepted source authority.",
+		RequestedDecision: "Provide the accepted source.",
+		AuthorityRequired: "accepted_source",
+		RequiredBefore:    "plan_approval",
+		Status:            "open",
+	}}
+
+	revision := "Can you add more detail to the plan for persistent memory and multi-repo support?"
+	var plannerPrompt string
+	result, err := Run(state, RunOptions{
+		Prompt:             "build feature\n\nOperator plan revision instruction:\n" + revision,
+		ResumeAnswer:       revision,
+		ResumePlanRevision: true,
+	}, func(prompt string, taskFamily string) (string, error) {
+		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerPlanner) {
+			t.Fatalf("unexpected task family %q", taskFamily)
+		}
+		plannerPrompt = prompt
+		return `{"tool":"ask_planner_question","question_summary":"Confirm persistent memory and multi-repo plan additions","blocking_claim":"The operator asked to revise the plan, so the revised MVP boundary needs confirmation before approval.","requested_decision":"Confirm the plan should add persistent memory storage, repository-scoped namespaces, and explicit multi-repo isolation tests.","question_kind":"external_answer_required","authority_required":"operator_approval","required_before":"plan_approval","affected_paths":["llm_brain/query_handler.py","tests/test_query_handler.py"],"affected_fields":["requirements_scope","test_obligations"]}`, nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if !strings.Contains(plannerPrompt, "Operator plan revision instruction:") || !strings.Contains(plannerPrompt, revision) {
+		t.Fatalf("planner prompt did not include revision instruction:\n%s", plannerPrompt)
+	}
+	if len(result.State.OpenQuestions) != 2 {
+		t.Fatalf("expected old question plus revised planner question, got %+v", result.State.OpenQuestions)
+	}
+	oldQuestion := result.State.OpenQuestions[0]
+	if oldQuestion.Status != "answered" || oldQuestion.Answer != revision || oldQuestion.AnswerSourceKind != "plan_revision" {
+		t.Fatalf("old authority question was not superseded as a plan revision: %+v", oldQuestion)
+	}
+	if len(result.State.AuthorityDeltas) != 0 {
+		t.Fatalf("plan revision must not mint accepted-source authority: %+v", result.State.AuthorityDeltas)
+	}
+	if containsString(result.State.Blockers, `planner question "q-source" requires typed accepted_source authority answer`) {
+		t.Fatalf("superseded question blocker should be cleared: %+v", result.State.Blockers)
+	}
+	if !containsString(result.State.Blockers, `atom 0 prompt includes concrete helper call "BuildThing(arg)" without source-verified signature evidence; require exact signature/source verification or ask_planner_question before dispatch`) {
+		t.Fatalf("source-fact blocker should remain until source facts or a revised plan resolves it: %+v", result.State.Blockers)
+	}
+	if result.State.OpenQuestions[1].Status != "open" || result.State.OpenQuestions[1].AuthorityRequired != "operator_approval" {
+		t.Fatalf("revised planner question was not opened: %+v", result.State.OpenQuestions[1])
+	}
+
+	var sawSuperseded bool
+	for _, event := range result.Events {
+		if event.Type == EventPlannerQuestionSupersededByRevision {
+			sawSuperseded = true
+			if _, ok := event.Fields["revision"]; ok {
+				t.Fatalf("supersession event should not include raw operator revision text: %+v", event.Fields)
+			}
+		}
+	}
+	if !sawSuperseded {
+		t.Fatalf("missing supersession event: %+v", result.Events)
 	}
 }
 
@@ -5187,7 +6554,225 @@ func validPlan() FeaturePlan {
 				CreatedBeforeDispatchEventID: "evt-tdd-1",
 			},
 		}},
+		BehavioralCoverageDraft: validBehavioralCoverageDraft(),
 	}
+}
+
+func validGreenfieldBrainPlanForTest() FeaturePlan {
+	plan := validPlan()
+	plan.FeatureID = "llm-brain-mvp"
+	plan.SourceTask = SourceTask{Kind: "operator_prompt", Summary: "Build an LLM brain MVP."}
+	plan.Summary = "MVP for an LLM Brain with memory and tool use."
+	plan.TopLevelScope = TopLevelScope{
+		Objective: "Build a minimal viable LLM Brain that processes prompts, maintains conversation history, and invokes a calculator tool.",
+		SuccessCriteria: []string{
+			"LLM Brain responds to a greeting.",
+			"LLM Brain invokes a calculator tool for arithmetic.",
+			"LLM Brain remembers the user's name across turns.",
+		},
+	}
+	plan.SDDContract = SDDContract{
+		Acceptance: []string{
+			"SDD-ACCEPTANCE-1: LLM Brain responds to a simple greeting with a greeting.",
+			"SDD-ACCEPTANCE-2: LLM Brain can call a calculator tool for arithmetic expressions and return the computed result.",
+			"SDD-ACCEPTANCE-3: Conversation history is maintained and influences subsequent responses.",
+		},
+	}
+	commands := []string{
+		"pytest tests/test_brain.py -k test_greeting",
+		"pytest tests/test_brain.py -k test_calculator_tool",
+		"pytest tests/test_brain.py -k test_history_persistence",
+	}
+	plan.TDDContract.Obligations = []TDDObligation{
+		{ID: "TDD-1", Behavior: "LLM Brain responds to user input using conversation history", Command: commands[0], RequiredBefore: "implementation"},
+		{ID: "TDD-2", Behavior: "LLM Brain calls calculator tool for arithmetic expressions", Command: commands[1], RequiredBefore: "implementation"},
+		{ID: "TDD-3", Behavior: "Conversation history is persisted across turns", Command: commands[2], RequiredBefore: "implementation"},
+	}
+	plan.Atoms = []FeatureAtomPlan{{
+		ID:                "atom-brain-core",
+		Title:             "Implement LLM Brain core with conversation history and tool calling",
+		Summary:           "Create the main brain module, tests, memory behavior, and calculator tool routing.",
+		Prompt:            "Check if the work is already satisfied: verify that file tests/test_brain.py exists and contains tests named test_greeting, test_calculator_tool, test_history_persistence that pass. If all pass, return source_satisfied. Otherwise, create tests/test_brain.py with those three tests and create src/brain.py with a class LLMBrain that maintains message history, a method respond(message) that returns a greeting for 'Hello', calls a calculator tool for arithmetic expressions, and remembers user name across turns.",
+		RequiredEditPaths: []string{"src/brain.py", "tests/test_brain.py"},
+		SDDRefs:           []string{"SDD-ACCEPTANCE-1", "SDD-ACCEPTANCE-2", "SDD-ACCEPTANCE-3"},
+		TestFirst: TestFirstPlan{
+			ObligationRefs:             []string{"TDD-1", "TDD-2", "TDD-3"},
+			Commands:                   commands,
+			BaselineRequired:           true,
+			TestArtifactPaths:          []string{"tests/test_brain.py"},
+			PreExecutionEventIDs:       []string{"evt-tdd-1"},
+			ExpectedPreExecutionResult: "red-confirmed",
+			CoverageGateEventID:        "evt-tdd-1",
+		},
+		PlannedTDDSnapshot: PlannedTDDSnapshot{
+			SnapshotID:                   "snapshot-evidence-0001",
+			SnapshotDigest:               validTDDSnapshotDigest,
+			ObligationIDs:                []string{"TDD-1", "TDD-2", "TDD-3"},
+			TestCommands:                 commands,
+			TestArtifactPaths:            []string{"tests/test_brain.py"},
+			ExpectedPreExecutionResults:  []string{"red-confirmed"},
+			CreatedBeforeDispatchEventID: "evt-tdd-1",
+		},
+	}}
+	plan.BehavioralCoverageDraft = &BehavioralCoverageDraft{
+		Authority: "standalone_provisional",
+		Status:    "draft",
+		Tier:      "contract_high",
+		Requirements: []CoverageDraftRequirement{
+			{ID: "REQ-1", Pattern: "event-driven", Statement: "When the user sends a greeting, the brain shall return a greeting.", Refs: []string{"SDD-ACCEPTANCE-1"}, Obligations: []string{"TDD-1"}},
+			{ID: "REQ-2", Pattern: "event-driven", Statement: "When the user sends arithmetic, the brain shall call the calculator tool.", Refs: []string{"SDD-ACCEPTANCE-2"}, Obligations: []string{"TDD-2"}},
+			{ID: "REQ-3", Pattern: "stateful", Statement: "When the user shares a name, later turns shall use conversation history.", Refs: []string{"SDD-ACCEPTANCE-3"}, Obligations: []string{"TDD-3"}},
+		},
+		Scenarios: []CoverageDraftScenario{
+			{ID: "BDD-1", RequirementID: "REQ-1", Given: []string{"no prior messages"}, When: []string{"the user sends Hello"}, Then: []string{"the system responds with a greeting"}, ConcreteData: map[string]string{"input": "Hello", "expected": "Hello"}, Obligations: []string{"TDD-1"}},
+			{ID: "BDD-2", RequirementID: "REQ-2", Given: []string{"calculator tool is registered"}, When: []string{"the user asks What is 2+2?"}, Then: []string{"the calculator tool is invoked and the result 4 is returned"}, ConcreteData: map[string]string{"input": "What is 2+2?", "expected": "4"}, Obligations: []string{"TDD-2"}},
+			{ID: "BDD-3", RequirementID: "REQ-3", Given: []string{"the user previously said My name is Alice"}, When: []string{"the user asks What is my name?"}, Then: []string{"the system answers Alice"}, ConcreteData: map[string]string{"name": "Alice"}, Obligations: []string{"TDD-3"}},
+		},
+		Invariants: []CoverageDraftInvariant{{
+			ID:                    "INV-1",
+			Statement:             "Conversation history is append-only after the first user message.",
+			PropertyBasedTestRefs: []string{"TestHistoryAppendOnly"},
+			Obligations:           []string{"TDD-3"},
+		}},
+		FailureModes: []CoverageDraftFailureMode{{
+			ID:                 "FM-1",
+			Mode:               "calculator tool cannot evaluate an expression",
+			Mitigation:         "return a friendly error without crashing",
+			RPN:                1,
+			MitigationTestRefs: []string{"TestCalculatorToolErrorRecovery"},
+			Obligations:        []string{"TDD-2"},
+		}},
+		SurfaceInventory: []CoverageDraftSurfaceDecision{
+			{ID: "SURF-1", Surface: "domain_logic", Status: "in_scope", Rationale: "core prompt handling behavior", Obligations: []string{"TDD-1", "TDD-2", "TDD-3"}},
+			{ID: "SURF-2", Surface: "api_transport", Status: "not_required", Rationale: "no external transport boundary is requested for this standalone MVP"},
+			{ID: "SURF-3", Surface: "persistence", Status: "in_scope", Rationale: "conversation history is a requested behavior", Obligations: []string{"TDD-3"}},
+			{ID: "SURF-4", Surface: "security", Status: "not_required", Rationale: "no authorization boundary is introduced by this increment"},
+		},
+		TestObligations: []CoverageDraftTestObligation{
+			{ID: "TDD-1", Type: "unit", Behavior: "LLM Brain responds to a greeting", Owner: "featureplanner", Command: commands[0], RequiredBefore: "implementation"},
+			{ID: "TDD-2", Type: "unit", Behavior: "LLM Brain calls calculator tool", Owner: "featureplanner", Command: commands[1], RequiredBefore: "implementation"},
+			{ID: "TDD-3", Type: "unit", Behavior: "LLM Brain remembers name across turns", Owner: "featureplanner", Command: commands[2], RequiredBefore: "implementation"},
+		},
+		Verification: []CoverageDraftVerification{
+			{ID: "VERIFY-1", Gate: "required test passes", Command: commands[0], Obligations: []string{"TDD-1"}},
+			{ID: "VERIFY-2", Gate: "required test passes", Command: commands[1], Obligations: []string{"TDD-2"}},
+			{ID: "VERIFY-3", Gate: "required test passes", Command: commands[2], Obligations: []string{"TDD-3"}},
+		},
+	}
+	return plan
+}
+
+func runningExampleExistingPathPlanForTest() FeaturePlan {
+	plan := validGreenfieldBrainPlanForTest()
+	plan.FeatureID = "llm-brain-memory-mvp"
+	plan.Summary = "MVP for LLM Brain: long-term agentic memory management with query handling and persistence."
+	plan.TopLevelScope.Objective = "Implement an MVP of an LLM Brain that stores and retrieves agentic memory entries, supporting basic querying and persistence."
+	plan.TopLevelScope.SuccessCriteria = []string{
+		"Memory entries can be created with content and metadata.",
+		"Memory entries can be retrieved by query matching.",
+		"Persistence to a local file store works across sessions.",
+		"All unit tests pass.",
+	}
+	plan.SDDContract.Acceptance = []string{"SDD-ACCEPTANCE-1: Memory entry creation and retrieval via query_handler."}
+	plan.TDDContract.Obligations = []TDDObligation{{
+		ID:             "TDD-1",
+		Behavior:       "Memory entry creation and retrieval via query_handler.",
+		Command:        "pytest tests/test_query_handler.py",
+		RequiredBefore: "implementation",
+	}}
+	plan.Atoms = []FeatureAtomPlan{{
+		ID:                "atom-1",
+		Title:             "Implement memory storage and retrieval in query_handler",
+		Summary:           "Add methods to create and retrieve memory entries with persistence.",
+		Prompt:            "Implement memory storage and retrieval in llm_brain/query_handler.py. Add methods: create_memory(content) -> MemoryEntry, get_memory(id) -> MemoryEntry. Use a simple in-memory dict for storage, and add persistence to a JSON file 'memory_store.json'. In tests/test_query_handler.py, write tests for creation and retrieval, including edge cases like empty content. Run tests with 'pytest tests/test_query_handler.py' and ensure they pass.",
+		RequiredEditPaths: []string{"llm_brain/query_handler.py", "tests/test_query_handler.py"},
+		SDDRefs:           []string{"SDD-ACCEPTANCE-1"},
+		TestFirst: TestFirstPlan{
+			ObligationRefs:             []string{"TDD-1"},
+			Commands:                   []string{"pytest tests/test_query_handler.py"},
+			BaselineRequired:           true,
+			TestArtifactPaths:          []string{"tests/test_query_handler.py"},
+			PreExecutionEventIDs:       []string{"evt-tdd-1"},
+			ExpectedPreExecutionResult: "red-confirmed",
+			CoverageGateEventID:        "evt-tdd-1",
+		},
+		PlannedTDDSnapshot: PlannedTDDSnapshot{
+			SnapshotID:                   "snapshot-evidence-0001",
+			SnapshotDigest:               validTDDSnapshotDigest,
+			ObligationIDs:                []string{"TDD-1"},
+			TestCommands:                 []string{"pytest tests/test_query_handler.py"},
+			TestArtifactPaths:            []string{"tests/test_query_handler.py"},
+			ExpectedPreExecutionResults:  []string{"red-confirmed"},
+			CreatedBeforeDispatchEventID: "evt-tdd-1",
+		},
+	}}
+	plan.BehavioralCoverageDraft = &BehavioralCoverageDraft{
+		Authority: "standalone_provisional",
+		Status:    "draft",
+		Tier:      "contract_high",
+		Requirements: []CoverageDraftRequirement{{
+			ID:          "REQ-1",
+			Pattern:     "event-driven",
+			Statement:   "When a memory entry is created, the system shall store it and allow retrieval by query.",
+			Refs:        []string{"SDD-ACCEPTANCE-1"},
+			Obligations: []string{"TDD-1"},
+		}},
+		ExampleRules: []CoverageDraftExampleRule{{
+			ID:            "RULE-1",
+			RequirementID: "REQ-1",
+			Rule:          "Memory entries are stored with a unique ID, content, and timestamp.",
+			Examples: []CoverageDraftExample{{
+				ID:           "EX-1",
+				Description:  "Create and retrieve a memory entry",
+				ConcreteData: map[string]string{"input": `{"content": "test memory"}`, "expected": `{"content": "test memory"}`},
+			}},
+		}},
+		Scenarios: []CoverageDraftScenario{{
+			ID:            "BDD-1",
+			RequirementID: "REQ-1",
+			RuleID:        "RULE-1",
+			Given:         []string{"A query_handler instance"},
+			When:          []string{"A memory entry is created with content 'test memory'"},
+			Then:          []string{"The entry is stored and can be retrieved by its ID"},
+			ConcreteData:  map[string]string{"input": `{"content": "test memory"}`, "expected": `{"content": "test memory"}`},
+			Obligations:   []string{"TDD-1"},
+			Tags:          []string{"mvp"},
+		}},
+		Invariants: []CoverageDraftInvariant{{
+			ID:                    "INV-1",
+			Statement:             "All memory entries have a unique ID.",
+			PropertyBasedTestRefs: []string{"TestMemoryIDsUnique"},
+			Obligations:           []string{"TDD-1"},
+		}},
+		FailureModes: []CoverageDraftFailureMode{{
+			ID:                 "FM-1",
+			Mode:               "Empty content",
+			Mitigation:         "Reject with error message",
+			RPN:                1,
+			MitigationTestRefs: []string{"TestEmptyContentRejected"},
+			Obligations:        []string{"TDD-1"},
+		}},
+		SurfaceInventory: []CoverageDraftSurfaceDecision{
+			{ID: "SURF-1", Surface: "domain_logic", Status: "in_scope", Rationale: "memory creation and retrieval are core domain behavior", Obligations: []string{"TDD-1"}},
+			{ID: "SURF-2", Surface: "persistence", Status: "in_scope", Rationale: "local persistence is part of the requested MVP", Obligations: []string{"TDD-1"}},
+			{ID: "SURF-3", Surface: "api_transport", Status: "not_required", Rationale: "no external API or transport boundary is requested"},
+		},
+		TestObligations: []CoverageDraftTestObligation{{
+			ID:             "TDD-1",
+			Type:           "unit",
+			Behavior:       "Memory entry creation and retrieval via query_handler.",
+			Owner:          "standalone feature planner",
+			Command:        "pytest tests/test_query_handler.py",
+			RequiredBefore: "implementation",
+		}},
+		Verification: []CoverageDraftVerification{{
+			ID:          "VERIFY-1",
+			Gate:        "required test command passes",
+			Command:     "pytest tests/test_query_handler.py",
+			Obligations: []string{"TDD-1"},
+		}},
+	}
+	return plan
 }
 
 func mustPlanJSON(t *testing.T, plan FeaturePlan) string {
@@ -5201,9 +6786,18 @@ func mustPlanJSON(t *testing.T, plan FeaturePlan) string {
 	return string(body)
 }
 
+func featurePlannerEventTypesForTest(events []Event) []string {
+	types := make([]string, 0, len(events))
+	for _, event := range events {
+		types = append(types, event.Type)
+	}
+	return types
+}
+
 func testPlanExecuteCompletedJSONForPrompt(prompt string) string {
 	contractID, snapshotHash, paths := testPlanExecuteContractFromPrompt(prompt)
 	sourceSanity := testSourceSanityEvidenceForPaths(paths)
+	commands := testVerificationCommandsFromPrompt(prompt)
 	payload := map[string]any{
 		"tool":                        "plan_execute_completed",
 		"lane_family":                 "plan-execute",
@@ -5216,7 +6810,66 @@ func testPlanExecuteCompletedJSONForPrompt(prompt string) string {
 		"changed_paths":               paths,
 		"required_edit_paths":         paths,
 		"source_sanity":               sourceSanity,
+		"verification":                testVerificationEvidenceForCommands(commands),
+		"verification_commands":       testVerificationCommandsForCommands(commands),
 		"acceptance_evidence_ids":     []string{"req-1", "adr-1"},
+		"acceptance_evidence_trusted": true,
+	}
+
+	return mustJSONMap(trustPlanExecuteCompletionForTest(payload))
+}
+
+func testPlanExecuteCompletedJSONWithSourceSanityForPrompt(prompt string) string {
+	contractID, snapshotHash, paths := testPlanExecuteContractFromPrompt(prompt)
+	commands := testVerificationCommandsFromPrompt(prompt)
+	sourceSanity := make([]map[string]string, 0, len(paths))
+	for _, path := range paths {
+		sourceSanity = append(sourceSanity, map[string]string{"kind": "source_sanity", "path": path, "status": "ok"})
+	}
+	payload := map[string]any{
+		"tool":                        "plan_execute_completed",
+		"lane_family":                 "plan-execute",
+		"status":                      "completed",
+		"phase":                       "complete",
+		"review_status":               "completed",
+		"completion_source":           "durable_plan_execute_terminal_completion",
+		"contract_id":                 contractID,
+		"snapshot_hash":               snapshotHash,
+		"changed_paths":               paths,
+		"required_edit_paths":         paths,
+		"source_sanity":               sourceSanity,
+		"verification":                testVerificationEvidenceForCommands(commands),
+		"verification_commands":       testVerificationCommandsForCommands(commands),
+		"acceptance_evidence_ids":     []string{"req-1", "adr-1"},
+		"acceptance_evidence_trusted": true,
+	}
+
+	return mustJSONMap(trustPlanExecuteCompletionForTest(payload))
+}
+
+func testPlanExecuteCompletedJSONForPlanWithSourceSanity(plan FeaturePlan, prompt string) string {
+	contractID, snapshotHash, paths := testPlanExecuteContractFromPrompt(prompt)
+	sourceSanity := make([]map[string]string, 0, len(paths))
+	for _, path := range paths {
+		sourceSanity = append(sourceSanity, map[string]string{"kind": "source_sanity", "path": path, "status": "ok"})
+	}
+	contract := CompilePlanAuthorityContract(plan, nil)
+	commands := testVerificationCommandsFromContract(contract)
+	payload := map[string]any{
+		"tool":                        "plan_execute_completed",
+		"lane_family":                 "plan-execute",
+		"status":                      "completed",
+		"phase":                       "complete",
+		"review_status":               "completed",
+		"completion_source":           "durable_plan_execute_terminal_completion",
+		"contract_id":                 contractID,
+		"snapshot_hash":               snapshotHash,
+		"changed_paths":               paths,
+		"required_edit_paths":         paths,
+		"source_sanity":               sourceSanity,
+		"verification":                testVerificationEvidenceForCommands(commands),
+		"verification_commands":       testVerificationCommandsForCommands(commands),
+		"acceptance_evidence_ids":     requiredAcceptanceEvidenceIDs(contract.Atoms[0]),
 		"acceptance_evidence_trusted": true,
 	}
 
@@ -5227,6 +6880,7 @@ func testPlanExecuteCompletedJSONForPlanAndPrompt(plan FeaturePlan, prompt strin
 	contractID, snapshotHash, paths := testPlanExecuteContractFromPrompt(prompt)
 	sourceSanity := testSourceSanityEvidenceForPaths(paths)
 	contract := CompilePlanAuthorityContract(plan, nil)
+	commands := testVerificationCommandsFromContract(contract)
 
 	payload := map[string]any{
 		"tool":                        "plan_execute_completed",
@@ -5240,6 +6894,8 @@ func testPlanExecuteCompletedJSONForPlanAndPrompt(plan FeaturePlan, prompt strin
 		"changed_paths":               paths,
 		"required_edit_paths":         paths,
 		"source_sanity":               sourceSanity,
+		"verification":                testVerificationEvidenceForCommands(commands),
+		"verification_commands":       testVerificationCommandsForCommands(commands),
 		"acceptance_evidence_ids":     requiredAcceptanceEvidenceIDs(contract.Atoms[0]),
 		"acceptance_evidence_trusted": true,
 	}
@@ -5269,6 +6925,7 @@ func testPlanExecuteSourceSatisfiedJSONForPrompt(prompt string) string {
 
 func testPlanExecuteCompletedJSONForAtom(atom FeatureAtomState) string {
 	sourceSanity := testSourceSanityEvidenceForPaths(atom.RequiredEditPaths)
+	verification := testVerificationEvidenceForAtom(atom)
 	payload := map[string]any{
 		"tool":                        "plan_execute_completed",
 		"lane_family":                 "plan-execute",
@@ -5281,6 +6938,8 @@ func testPlanExecuteCompletedJSONForAtom(atom FeatureAtomState) string {
 		"changed_paths":               atom.RequiredEditPaths,
 		"required_edit_paths":         atom.RequiredEditPaths,
 		"source_sanity":               sourceSanity,
+		"verification":                verification,
+		"verification_commands":       testVerificationCommandsForAtom(atom),
 		"acceptance_evidence_ids":     []string{"req-1", "adr-1"},
 		"acceptance_evidence_trusted": true,
 	}
@@ -5302,6 +6961,7 @@ func testPlanExecuteCompletedJSONForAtomWithReviewSkipped(atom FeatureAtomState)
 
 func testNestedPlanExecuteCompletedJSONForAtom(atom FeatureAtomState) string {
 	sourceSanity := testSourceSanityEvidenceForPaths(atom.RequiredEditPaths)
+	verification := testVerificationEvidenceForAtom(atom)
 	nested := trustPlanExecuteCompletionForTest(map[string]any{
 		"lane_family":                 "plan-execute",
 		"status":                      "completed",
@@ -5313,6 +6973,8 @@ func testNestedPlanExecuteCompletedJSONForAtom(atom FeatureAtomState) string {
 		"changed_paths":               atom.RequiredEditPaths,
 		"required_edit_paths":         atom.RequiredEditPaths,
 		"source_sanity":               sourceSanity,
+		"verification":                verification,
+		"verification_commands":       testVerificationCommandsForAtom(atom),
 		"acceptance_evidence_ids":     []string{"req-1", "adr-1"},
 		"acceptance_evidence_trusted": true,
 		"completion_source":           "durable_plan_execute_terminal_completion",
@@ -5333,6 +6995,73 @@ func testSourceSanityEvidenceForPaths(paths []string) []map[string]string {
 	}
 
 	return sourceSanity
+}
+
+func testVerificationEvidenceForAtom(atom FeatureAtomState) []map[string]string {
+	var checks []map[string]string
+	for _, command := range normalizedStringList(append(append([]string(nil), atom.RequiredTests...), atom.TestFirst.Commands...)) {
+		checks = append(checks, map[string]string{"kind": "verification", "command": command, "status": "ok"})
+	}
+
+	return checks
+}
+
+func testVerificationCommandsFromPrompt(prompt string) []string {
+	var commands []string
+	for _, line := range strings.Split(prompt, "\n") {
+		line = strings.Trim(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "-")), "`")
+		idx := strings.Index(line, "go test")
+		if idx < 0 {
+			continue
+		}
+		command := strings.Trim(line[idx:], "` ")
+		if cut := strings.IndexAny(command, "`\";,"); cut >= 0 {
+			command = strings.TrimSpace(command[:cut])
+		}
+		if cut := strings.Index(command, " after "); cut >= 0 {
+			command = strings.TrimSpace(command[:cut])
+		}
+		commands = append(commands, command)
+	}
+	return normalizedStringList(commands)
+}
+
+func testVerificationCommandsFromContract(contract plancontract.PlanExecutionContract) []string {
+	var commands []string
+	for _, atom := range contract.Atoms {
+		for _, test := range atom.RequiredTests {
+			commands = append(commands, test.Command)
+		}
+		for _, obligation := range atom.TDDObligations {
+			commands = append(commands, obligation.Command)
+		}
+	}
+	return normalizedStringList(commands)
+}
+
+func testVerificationEvidenceForCommands(commands []string) []map[string]string {
+	var checks []map[string]string
+	for _, command := range normalizedStringList(commands) {
+		checks = append(checks, map[string]string{"kind": "verification", "command": command, "status": "ok"})
+	}
+	return checks
+}
+
+func testVerificationCommandsForCommands(commands []string) []map[string]any {
+	var out []map[string]any
+	for _, command := range normalizedStringList(commands) {
+		out = append(out, map[string]any{"command": command, "source": "featureplanner.test"})
+	}
+	return out
+}
+
+func testVerificationCommandsForAtom(atom FeatureAtomState) []map[string]any {
+	var commands []map[string]any
+	for _, command := range normalizedStringList(append(append([]string(nil), atom.RequiredTests...), atom.TestFirst.Commands...)) {
+		commands = append(commands, map[string]any{"command": command, "source": "featureplanner.test"})
+	}
+
+	return commands
 }
 
 func testPlanExecuteSourceSatisfiedJSONForAtom(atom FeatureAtomState) string {
@@ -5434,6 +7163,7 @@ func mkdirAndWriteFile(t *testing.T, path string, content string) {
 
 func validProductContextPlan() FeaturePlan {
 	plan := validPlan()
+	plan.BehavioralCoverageDraft = nil
 
 	plan.SDDContract.Refs = nil
 	plan.SDDContract.PRDRequirementRefs = []string{"REQ-1"}
@@ -5450,6 +7180,74 @@ func validBehavioralCoverageDraft() *BehavioralCoverageDraft {
 		Authority: "standalone_provisional",
 		Status:    "draft",
 		Tier:      "contract_high",
+		Requirements: []CoverageDraftRequirement{{
+			ID:          "REQ-1",
+			Pattern:     "event-driven",
+			Statement:   "When label behavior changes, the system shall keep the short label visible.",
+			Refs:        []string{"SDD-1"},
+			Obligations: []string{"TDD-1"},
+		}},
+		ExampleRules: []CoverageDraftExampleRule{{
+			ID:            "RULE-1",
+			RequirementID: "REQ-1",
+			Rule:          "Short labels render deterministically.",
+			Examples: []CoverageDraftExample{{
+				ID:               "EX-1",
+				Description:      "short label request",
+				ConcreteData:     map[string]string{"input": "label", "expected": "short label"},
+				ConcreteDataRefs: []string{"fixtures/short-label.json"},
+			}, {
+				ID:               "EX-2",
+				Description:      "blank label request",
+				ConcreteData:     map[string]string{"input": "", "expected": "label"},
+				ConcreteDataRefs: []string{"fixtures/blank-label.json"},
+			}},
+		}},
+		Scenarios: []CoverageDraftScenario{{
+			ID:               "BDD-1",
+			RequirementID:    "REQ-1",
+			RuleID:           "RULE-1",
+			Given:            []string{"a short label request exists"},
+			When:             []string{"the label renderer runs"},
+			Then:             []string{"the short label is returned"},
+			ConcreteData:     map[string]string{"input": "label", "expected": "short label"},
+			ConcreteDataRefs: []string{"fixtures/short-label-scenario.json"},
+			Obligations:      []string{"TDD-1"},
+			Tags:             []string{"unit"},
+		}},
+		Invariants: []CoverageDraftInvariant{{
+			ID:                    "INV-1",
+			Statement:             "Short label rendering is deterministic.",
+			PropertyBasedTestRefs: []string{"TestShortLabelDeterministic"},
+			Obligations:           []string{"TDD-1"},
+		}},
+		FailureModes: []CoverageDraftFailureMode{{
+			ID:                 "FM-1",
+			Mode:               "blank label request",
+			Mitigation:         "return a stable fallback label",
+			RPN:                1,
+			MitigationTestRefs: []string{"TestBlankLabelFallback"},
+			Obligations:        []string{"TDD-1"},
+		}},
+		SurfaceInventory: []CoverageDraftSurfaceDecision{
+			{ID: "SURF-1", Surface: "domain_logic", Status: "in_scope", Rationale: "label rendering is the requested behavior", Obligations: []string{"TDD-1"}},
+			{ID: "SURF-2", Surface: "api_transport", Status: "not_required", Rationale: "no external transport boundary is changed"},
+			{ID: "SURF-3", Surface: "persistence", Status: "not_required", Rationale: "label rendering has no durable state"},
+		},
+		TestObligations: []CoverageDraftTestObligation{{
+			ID:             "TDD-1",
+			Type:           "unit",
+			Behavior:       "Short label changes",
+			Owner:          "featureplanner",
+			Command:        "go test ./...",
+			RequiredBefore: "implementation",
+		}},
+		Verification: []CoverageDraftVerification{{
+			ID:          "VERIFY-1",
+			Gate:        "required tests pass",
+			Command:     "go test ./...",
+			Obligations: []string{"TDD-1"},
+		}},
 		Items: []BehavioralCoverageItem{{
 			ID:          "BCD-1",
 			Behavior:    "Short label changes",
@@ -5663,6 +7461,18 @@ func validAcceptedBehavioralCoverage() *AcceptedBehavioralCoverage {
 			Steps:       []string{"load product brief", "build planner prompt", "inspect accepted coverage context"},
 			ScriptRefs:  []string{"internal/workflows/featureplanner/validate_test.go"},
 			Obligations: []string{"TDD-1"},
+		}},
+		SurfaceInventory: []AcceptedCoverageSurfaceDecision{{
+			ID:          "SURF-1",
+			Surface:     "domain_logic",
+			Status:      "in_scope",
+			Rationale:   "accepted product behavior is in scope",
+			Obligations: []string{"TDD-1"},
+		}, {
+			ID:        "SURF-2",
+			Surface:   "api_transport",
+			Status:    "not_required",
+			Rationale: "no transport boundary changes",
 		}},
 		TestObligations: []AcceptedCoverageTestObligation{{
 			ID:             "TDD-1",

@@ -8,10 +8,10 @@ func TruncateBytes(s string, maxBytes int, marker string) string {
 	}
 
 	if maxBytes <= len(marker) {
-		return s[:maxBytes]
+		return utf8SafePrefix(s, maxBytes)
 	}
 
-	return s[:maxBytes-len(marker)] + marker
+	return utf8SafePrefix(s, maxBytes-len(marker)) + marker
 }
 
 func TruncateRunes(s string, maxRunes int, marker string) string {
@@ -32,4 +32,25 @@ func TruncateRunes(s string, maxRunes int, marker string) string {
 
 func Truncate(s string, maxBytes int) string {
 	return TruncateBytes(s, maxBytes, "...")
+}
+
+func utf8SafePrefix(s string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+
+	if len(s) <= maxBytes {
+		return s
+	}
+
+	end := 0
+	for i := range s {
+		if i > maxBytes {
+			break
+		}
+
+		end = i
+	}
+
+	return s[:end]
 }

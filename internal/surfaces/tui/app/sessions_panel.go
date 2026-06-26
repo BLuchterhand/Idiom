@@ -100,6 +100,10 @@ func (m *Model) refreshSessionsList() {
 			size:    size,
 			info:    session,
 		}
+		if !isUserVisibleSession(session) {
+			continue
+		}
+
 		sessions = append(sessions, session)
 	}
 

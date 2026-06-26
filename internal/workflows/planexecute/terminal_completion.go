@@ -550,6 +550,10 @@ func planExecuteTerminalSourceSatisfiedValidationFailures(record PlanExecuteTerm
 	return failures
 }
 
+func PlanExecuteTerminalSourceSanityValidationFailures(record PlanExecuteTerminalCompletionRecord) []string {
+	return append([]string(nil), planExecuteTerminalSourceSanityValidationFailures(record)...)
+}
+
 func planExecuteTerminalSourceSanityValidationFailures(record PlanExecuteTerminalCompletionRecord) []string {
 	byPath := map[string]PhaseEvidenceCheck{}
 
@@ -980,7 +984,6 @@ func normalizePlanExecuteTerminalVerificationCommands(commands []VerificationCom
 	seen := map[string]struct{}{}
 
 	for _, command := range commands {
-		command.Command = strings.TrimSpace(command.Command)
 		command.Argv = normalizeVerificationArgv(command.Argv)
 
 		if len(command.Argv) == 0 {
@@ -993,9 +996,7 @@ func normalizePlanExecuteTerminalVerificationCommands(commands []VerificationCom
 			continue
 		}
 
-		if command.Command == "" {
-			command.Command = strings.Join(command.Argv, " ")
-		}
+		command.Command = plancontract.CanonicalVerificationCommand(command.Command, command.Argv)
 
 		workingDir, ok := cleanVerificationWorkingDir(command.WorkingDir)
 		if !ok {
@@ -1074,15 +1075,13 @@ func planExecuteTerminalCheckPassed(check PhaseEvidenceCheck) bool {
 }
 
 func planExecuteTerminalVerificationKey(command string, workingDir string) string {
-	command = strings.TrimSpace(command)
-
 	workingDir, ok := cleanVerificationWorkingDir(workingDir)
 
-	if !ok || command == "" {
+	if !ok {
 		return ""
 	}
 
-	return workingDir + "\x00" + command
+	return plancontract.VerificationCommandEvidenceKey(command, nil, workingDir)
 }
 
 func planExecuteTerminalUniqueStrings(values []string) []string {

@@ -222,6 +222,12 @@ type transcriptSavedMsg struct {
 	err  error
 }
 
+type clipboardCopyDoneMsg struct {
+	target string
+	bytes  int
+	err    error
+}
+
 func New(cfg config.Config) *Model {
 	in := textarea.New()
 
@@ -599,6 +605,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case transcriptSavedMsg:
 		cmd, done := m.handleTranscriptSaved(msg)
+		if done {
+			return m, cmd
+		}
+
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case clipboardCopyDoneMsg:
+		cmd, done := m.handleClipboardCopyDone(msg)
 		if done {
 			return m, cmd
 		}
@@ -1322,6 +1337,10 @@ func looksLikeFileHandle(token string) bool {
 }
 
 func (m *Model) initDebugLogger() {
+	if suppressDebugLoggerForTestProcess(m.cfg.Chat.DebugLogDir) {
+		return
+	}
+
 	logger, err := transcript.NewDebugLogger(transcript.DebugLoggerOptions{
 		Dir:           m.cfg.Chat.DebugLogDir,
 		Mode:          transcript.DebugLogMode(util.FirstNonEmpty(m.cfg.Chat.DebugLogMode, "redacted")),

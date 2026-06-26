@@ -42,6 +42,8 @@ func allSlashSuggestions() []slashSuggestionEntry {
 		{"/new", ""},
 		{"/compact", ""},
 		{"/save", ""},
+		{"/copy", "[last|all|visible|selected]"},
+		{"/select", ""},
 		{"/context", ""},
 		{"/workspace", ""},
 		{"/pwd", ""},

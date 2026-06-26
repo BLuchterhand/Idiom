@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/workflows/productworkflow"
@@ -298,6 +299,47 @@ func TestE2EFeaturePlannerPRDToADR(t *testing.T) {
 	}
 
 	t.Logf("PASS: %d ADRs, index valid", len(idx.ADRs))
+}
+
+func TestE2EFeaturePlannerAcceptedSourceQuestionPlanRevisionStaysInPlanner(t *testing.T) {
+	projectRoot := t.TempDir()
+	cfg := featurePlannerTestConfig(projectRoot)
+	state := saveAcceptedSourceFeaturePlannerQuestionState(t, projectRoot, "accepted-source-e2e-session")
+
+	client := &scriptedLLMClient{responses: []string{
+		`{"tool":"ask_planner_question","question_summary":"Confirm persistent memory and multi-repo plan additions","blocking_claim":"The operator asked to add more information to the plan, so the revised MVP boundary needs confirmation before approval.","requested_decision":"Confirm the plan should add persistent memory storage, repository-scoped namespaces, and explicit multi-repo isolation tests.","question_kind":"external_answer_required","authority_required":"operator_approval","required_before":"plan_approval","affected_paths":["llm_brain/query_handler.py","tests/test_query_handler.py"],"affected_fields":["requirements_scope","test_obligations"]}`,
+	}}
+	m := newReadyFeaturePlannerTUITestModel(t, cfg, client, state.SessionID, true)
+
+	revision := "Can you add more info to the plan for persistent memory and multi-repo support?"
+	m.input.SetValue(revision)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(*Model)
+	m = waitForFeaturePlannerTUIStreamDone(t, m)
+
+	if len(client.messages) != 1 {
+		t.Fatalf("plan revision question should route to feature-planner exactly once, got %#v", client.messages)
+	}
+	if !featurePlannerRequestMessagesContain(client.messages[0], "Operator plan revision instruction:") ||
+		!featurePlannerRequestMessagesContain(client.messages[0], revision) {
+		t.Fatalf("question-form plan revision did not reach feature-planner resume prompt: %#v", client.messages)
+	}
+	for _, message := range m.messages {
+		if message.Role == "user" && message.Content == revision {
+			t.Fatalf("feature-planner revision must not be appended as normal chat history: %#v", m.messages)
+		}
+	}
+
+	after := loadFeaturePlannerCommandStateFile(t, filepath.Join(projectRoot, ".idiom", "feature-planner", state.SessionID, "state.json"))
+	if len(after.OpenQuestions) != 2 || after.OpenQuestions[0].Status != "answered" || after.OpenQuestions[1].Status != "open" {
+		t.Fatalf("question-form revision should answer prior question and open revised planner question: %+v", after.OpenQuestions)
+	}
+	if after.OpenQuestions[0].Answer != revision || after.OpenQuestions[0].AnswerSourceKind != "plan_revision" {
+		t.Fatalf("prior accepted-source question was not superseded by plan revision: %+v", after.OpenQuestions[0])
+	}
+	if len(after.AuthorityDeltas) != 0 {
+		t.Fatalf("plan revision must not create accepted-source authority deltas: %+v", after.AuthorityDeltas)
+	}
 }
 
 // TestPRDRepairLoop verifies malformed PRD triggers repair and retry succeeds.

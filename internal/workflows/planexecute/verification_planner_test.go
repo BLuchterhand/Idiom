@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -50,6 +51,48 @@ func TestVerificationPlannerRejectsUnsafePromptCommand(t *testing.T) {
 
 	if len(plan.Rejects) != 1 || plan.Rejects[0].Reason != VerificationRejectUnsupportedCmd {
 		t.Fatalf("unsafe prompt command should be a structured reject, got %#v", plan.Rejects)
+	}
+}
+
+func TestVerificationPlannerAcceptsRequestedPytestCommands(t *testing.T) {
+	root := t.TempDir()
+
+	plan := PlanVerification(VerificationPlannerInput{
+		WorkspaceRoot: root,
+		Prompt: strings.Join([]string{
+			"Required verification command: run `pytest tests/test_query_handler.py` after edits.",
+			"After implementation, run `python -m pytest tests/test_memory.py`.",
+		}, "\n"),
+	})
+
+	if len(plan.Commands) != 2 {
+		t.Fatalf("commands = %#v, want requested pytest commands", plan.Commands)
+	}
+
+	if got := plan.Commands[0]; got.Command != "pytest tests/test_query_handler.py" || got.Source != VerificationCommandSourcePrompt {
+		t.Fatalf("unexpected pytest command = %#v", got)
+	}
+	if got := plan.Commands[1]; got.Command != "python -m pytest tests/test_memory.py" || got.Source != VerificationCommandSourcePrompt {
+		t.Fatalf("unexpected python -m pytest command = %#v", got)
+	}
+	if len(plan.Rejects) != 0 {
+		t.Fatalf("safe pytest commands should not be rejected: %#v", plan.Rejects)
+	}
+}
+
+func TestVerificationPlannerRejectsUnsafePytestCommand(t *testing.T) {
+	root := t.TempDir()
+
+	plan := PlanVerification(VerificationPlannerInput{
+		WorkspaceRoot: root,
+		Prompt:        "Required verification command: run `pytest tests/test_query_handler.py; rm -rf /` after edits.",
+	})
+
+	if len(plan.Commands) != 0 {
+		t.Fatalf("unsafe pytest command must not be executable: %#v", plan.Commands)
+	}
+	if len(plan.Rejects) != 1 || plan.Rejects[0].Reason != VerificationRejectUnsupportedCmd {
+		t.Fatalf("unsafe pytest command should be a structured reject, got %#v", plan.Rejects)
 	}
 }
 

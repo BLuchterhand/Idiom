@@ -307,14 +307,14 @@ func TestResumeSessionDoesNotReviveOlderFeaturePlannerWhenLatestIsClosed(t *test
 	}
 
 	closedState := featureplanner.NewState("latest-complete-session", "Latest plan.", "", 3, time.Unix(2, 0).UTC())
-	closedState.Status = featureplanner.FeatureStateComplete
+	closedState.Status = featureplanner.FeatureStateSourceSatisfied
 	if _, err := featureplanner.SaveState(root, &closedState); err != nil {
 		t.Fatalf("SaveState latest: %v", err)
 	}
 
 	writeSessionLog(t, logDir, "resumed.jsonl", []string{
 		`{"type":"message","role":"assistant","content":"feature-planner: planning-question-open\nstate: .idiom/feature-planner/old-open-session/state.json"}`,
-		`{"type":"message","role":"assistant","content":"feature-planner: complete\nstate: .idiom/feature-planner/latest-complete-session/state.json"}`,
+		`{"type":"message","role":"assistant","content":"feature-planner: source-satisfied\nstate: .idiom/feature-planner/latest-complete-session/state.json"}`,
 	})
 
 	m := snapshotModel(t, root)

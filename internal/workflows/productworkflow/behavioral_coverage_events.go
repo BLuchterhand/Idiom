@@ -15,12 +15,90 @@ type BehavioralCoveragePromotionEvent struct {
 	Event            string `json:"event"`
 	EventID          string `json:"event_id"`
 	State            string `json:"state"`
+	CommitStatus     string `json:"commit_status,omitempty"`
 	EffortID         string `json:"effort_id,omitempty"`
 	TaskID           string `json:"task_id,omitempty"`
 	Digest           string `json:"digest,omitempty"`
 	SupersededDigest string `json:"superseded_digest,omitempty"`
 	Timestamp        string `json:"timestamp"`
 	Source           string `json:"source"`
+}
+
+type BehavioralCoveragePromotionCommitError struct {
+	File string
+	Err  error
+}
+
+func (e BehavioralCoveragePromotionCommitError) Error() string {
+	if strings.TrimSpace(e.File) == "" {
+		return e.Err.Error()
+	}
+	return strings.TrimSpace(e.File) + ": " + e.Err.Error()
+}
+
+func (e BehavioralCoveragePromotionCommitError) Unwrap() error {
+	return e.Err
+}
+
+func CommitBehavioralCoveragePromotion(effortRoot string, ledger TDDLedger, contract BehavioralCoverageContract) (BehavioralCoveragePromotionResult, error) {
+	result, err := PromoteBehavioralCoverageContractWithResult(ledger, contract)
+	if err != nil {
+		return result, err
+	}
+	result.CommitStatus = BehavioralCoveragePromotionCommitStatusWritePending
+
+	data, err := json.MarshalIndent(result.Ledger, "", "  ")
+	if err != nil {
+		return blockedBehavioralCoveragePromotion(result, false), BehavioralCoveragePromotionCommitError{File: "tdd.json", Err: err}
+	}
+	if err := ValidateBehavioralCoveragePromotionEventTarget(effortRoot, result); err != nil {
+		return blockedBehavioralCoveragePromotion(result, false), BehavioralCoveragePromotionCommitError{File: "events.jsonl", Err: err}
+	}
+
+	tmp, err := os.CreateTemp(effortRoot, ".tdd-*.json")
+	if err != nil {
+		return blockedBehavioralCoveragePromotion(result, false), BehavioralCoveragePromotionCommitError{File: "tdd.json", Err: err}
+	}
+	tmpPath := tmp.Name()
+	cleanupTmp := true
+	defer func() {
+		if cleanupTmp {
+			_ = tmp.Close()
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if _, err := tmp.Write(append(data, '\n')); err != nil {
+		return blockedBehavioralCoveragePromotion(result, false), BehavioralCoveragePromotionCommitError{File: "tdd.json", Err: err}
+	}
+	if err := tmp.Close(); err != nil {
+		return blockedBehavioralCoveragePromotion(result, false), BehavioralCoveragePromotionCommitError{File: "tdd.json", Err: err}
+	}
+
+	prepared := result
+	prepared.State = BehavioralCoveragePromotionStatePrepared
+	prepared.CommitStatus = BehavioralCoveragePromotionCommitStatusPrepared
+	if err := AppendBehavioralCoveragePromotionEvent(effortRoot, prepared); err != nil {
+		return blockedBehavioralCoveragePromotion(result, false), BehavioralCoveragePromotionCommitError{File: "events.jsonl", Err: err}
+	}
+	if err := os.Rename(tmpPath, filepath.Join(effortRoot, "tdd.json")); err != nil {
+		return blockedBehavioralCoveragePromotion(result, false), BehavioralCoveragePromotionCommitError{File: "tdd.json", Err: err}
+	}
+	cleanupTmp = false
+
+	result.CommitStatus = BehavioralCoveragePromotionCommitStatusCommitted
+	result.LedgerCommitted = true
+	if err := AppendBehavioralCoveragePromotionEvent(effortRoot, result); err != nil {
+		return blockedBehavioralCoveragePromotion(result, true), BehavioralCoveragePromotionCommitError{File: "events.jsonl", Err: err}
+	}
+
+	return result, nil
+}
+
+func blockedBehavioralCoveragePromotion(result BehavioralCoveragePromotionResult, ledgerCommitted bool) BehavioralCoveragePromotionResult {
+	result.CommitStatus = BehavioralCoveragePromotionCommitStatusBlocked
+	result.LedgerCommitted = ledgerCommitted
+	return result
 }
 
 func AppendBehavioralCoveragePromotionEvent(effortRoot string, result BehavioralCoveragePromotionResult) error {
@@ -31,6 +109,7 @@ func AppendBehavioralCoveragePromotionEvent(effortRoot string, result Behavioral
 		Event:            "behavioral_coverage_" + strings.TrimSpace(result.State),
 		EventID:          strings.TrimSpace(result.EventID),
 		State:            strings.TrimSpace(result.State),
+		CommitStatus:     strings.TrimSpace(result.CommitStatus),
 		Digest:           strings.TrimSpace(result.Digest),
 		SupersededDigest: strings.TrimSpace(result.SupersededDigest),
 		Timestamp:        time.Now().UTC().Format(time.RFC3339Nano),

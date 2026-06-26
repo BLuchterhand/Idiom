@@ -95,7 +95,7 @@ func inputHistoryFromRecordedSessions(cfg config.Config, limit int) ([]string, e
 		return nil, nil
 	}
 
-	sessions, err := ListRecordedSessions(cfg)
+	sessions, err := listRecordedSessionFiles(cfg)
 	if err != nil {
 		return nil, err
 	}

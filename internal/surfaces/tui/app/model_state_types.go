@@ -22,6 +22,7 @@ type planState struct {
 	cachedItemsContent    string
 	cachedItems           []planItemMeta
 	collapsedHeadings     map[string]bool
+	renderedRows          []planRenderedRow
 }
 
 type docViewerState struct {

@@ -1,0 +1,13 @@
+Metric,Value,Unit,Threshold,Type,Action When Threshold Is Crossed
+Expected proposals per week,,packets,,input,
+Complete-packet rate,,decimal fraction,,input,
+Complete packets per week,"=IF(COUNTA(B2:B3)<2,"""",B2*B3)",packets,,calculated,
+Funded reviewer-hours per week,,hours,,input,
+Average review time per complete packet,,hours,,input,
+Maximum well-reviewed packets per week,"=IF(COUNTA(B5:B6)<2,"""",IF(B6=0,0,B5/B6))",packets,,calculated,
+Review debt,"=IF(OR(B4="""",B7=""""),"""",MAX(0,B4-B7))",packets,0,calculated,"Throttle volume, narrow scope, or add funded reviewer time."
+Returned incomplete,,packets,,input,"Fix source collection and return incomplete packets without reviewer reconstruction."
+Escaped unsupported decisions,,packets,0,input,"Stop or roll back authority before optimizing throughput."
+Bypass incidents,,incidents,0,input,"Provide a sanctioned lower-authority path or fix throughput."
+Accepted verified packets,,packets,,input,"Track accepted verified output, not generated volume."
+Scale recommendation,"=IF(COUNTA(B2:B3,B5:B6,B10:B11)<6,""Needs inputs"",IF(AND(B8=0,B10=0,B11=0),""Eligible to consider authority increase after authority-pace checklist"",""Do not scale yet""))",text,,calculated,"Increase authority only when review debt, escaped unsupported decisions, and bypass incidents are zero for the chosen review window."

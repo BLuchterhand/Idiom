@@ -134,6 +134,18 @@ func TestBriefFromImplementationHandoffCarriesGrounding(t *testing.T) {
 					ScriptRefs:  []string{"scripts/e2e/feature_planner_bdd_tdd.sh"},
 					Obligations: []string{"TDD-1"},
 				}},
+				SurfaceInventory: []productworkflow.BehavioralSurfaceCoverage{{
+					ID:          "SURF-DOMAIN",
+					Surface:     "domain_logic",
+					Status:      "in_scope",
+					Rationale:   "core accepted behavior",
+					Obligations: []string{"TDD-1"},
+				}, {
+					ID:        "SURF-TRANSPORT",
+					Surface:   "api_transport",
+					Status:    productworkflow.BehavioralCoverageStatusNotRequired,
+					Rationale: "no transport boundary changed",
+				}},
 				TestObligations: []productworkflow.TestObligationCoverage{{ID: "TDD-1", Behavior: "behavior", Command: "go test ./...", Type: "contract"}},
 				OpenQuestions: []productworkflow.BehavioralCoverageQuestion{{
 					ID:         "Q-1",
@@ -243,6 +255,11 @@ func TestBriefFromImplementationHandoffCarriesGrounding(t *testing.T) {
 	}
 	if len(brief.AcceptedCoverage.E2EJourneys) != 1 || brief.AcceptedCoverage.E2EJourneys[0].ScriptRefs[0] != "scripts/e2e/feature_planner_bdd_tdd.sh" {
 		t.Fatalf("expected scripted e2e coverage to round-trip, got %+v", brief.AcceptedCoverage.E2EJourneys)
+	}
+	if len(brief.AcceptedCoverage.SurfaceInventory) != 2 ||
+		brief.AcceptedCoverage.SurfaceInventory[0].Obligations[0] != "TDD-1" ||
+		brief.AcceptedCoverage.SurfaceInventory[1].Status != productworkflow.BehavioralCoverageStatusNotRequired {
+		t.Fatalf("expected accepted surface decisions to round-trip, got %+v", brief.AcceptedCoverage.SurfaceInventory)
 	}
 	if len(brief.AcceptedCoverage.Questions) != 1 ||
 		brief.AcceptedCoverage.Questions[0].Status != "resolved" ||
@@ -613,6 +630,18 @@ None.
 			TestRefs:       []string{"TestDiskBackedImplementationHandoffCarriesAcceptedCoverage"},
 			Obligations:    []string{"TDD-DISK"},
 		}},
+		SurfaceInventory: []productworkflow.BehavioralSurfaceCoverage{{
+			ID:          "SURF-DISK-DOMAIN",
+			Surface:     "domain_logic",
+			Status:      "in_scope",
+			Rationale:   "disk-backed accepted behavior is in scope",
+			Obligations: []string{"TDD-DISK"},
+		}, {
+			ID:        "SURF-DISK-TRANSPORT",
+			Surface:   "api_transport",
+			Status:    productworkflow.BehavioralCoverageStatusNotRequired,
+			Rationale: "disk loader does not add an external transport",
+		}},
 		TestObligations: []productworkflow.TestObligationCoverage{{
 			ID:             "TDD-DISK",
 			Type:           "acceptance",
@@ -654,6 +683,11 @@ None.
 	}
 	if brief.AcceptedCoverage.Contract.ContractID != "cov-disk" || brief.AcceptedCoverage.Scenarios[0].ID != "BDD-DISK" {
 		t.Fatalf("expected accepted coverage detail, got %+v", brief.AcceptedCoverage)
+	}
+	if len(brief.AcceptedCoverage.SurfaceInventory) != 2 ||
+		brief.AcceptedCoverage.SurfaceInventory[0].ID != "SURF-DISK-DOMAIN" ||
+		brief.AcceptedCoverage.SurfaceInventory[1].Status != productworkflow.BehavioralCoverageStatusNotRequired {
+		t.Fatalf("expected disk-backed accepted surface decisions, got %+v", brief.AcceptedCoverage.SurfaceInventory)
 	}
 	if brief.CoverageContract == nil || brief.CoverageContract.Digest == "" {
 		t.Fatalf("expected coverage contract ref with digest, got %+v", brief.CoverageContract)

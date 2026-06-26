@@ -19,6 +19,30 @@ func contractGateEventHasExtendedAuditFields() bool {
 	return true
 }
 
+func TestPhaseEvidenceStateHasOpenObligationCentralizesOpenEvidencePredicate(t *testing.T) {
+	tests := []struct {
+		name  string
+		state PhaseEvidenceStateEvent
+		want  bool
+	}{
+		{name: "closed", state: PhaseEvidenceStateEvent{AcceptanceRefs: []string{"ACC-1"}, VerificationStatus: "passed"}, want: false},
+		{name: "tdd obligation", state: PhaseEvidenceStateEvent{TDDObligationRefs: []string{"TDD-1"}}, want: true},
+		{name: "residual blocker", state: PhaseEvidenceStateEvent{ResidualBlockers: []string{"blocked"}}, want: true},
+		{name: "recovery packet", state: PhaseEvidenceStateEvent{RecoveryPacketRefs: []string{"recovery-1"}}, want: true},
+		{name: "product workflow recovery open", state: PhaseEvidenceStateEvent{ProductWorkflowState: "recovery_open"}, want: true},
+		{name: "verification failed", state: PhaseEvidenceStateEvent{VerificationStatus: "FAILED"}, want: true},
+		{name: "verification pre write", state: PhaseEvidenceStateEvent{VerificationStatus: "pre_write"}, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := PhaseEvidenceStateHasOpenObligation(tt.state); got != tt.want {
+				t.Fatalf("PhaseEvidenceStateHasOpenObligation()=%t, want %t for %#v", got, tt.want, tt.state)
+			}
+		})
+	}
+}
+
 func withGateAuditFields(t *testing.T, gate ContractGateEvent, packID, enforcementMode string, observedFacts, safeAlternatives []string) ContractGateEvent {
 	t.Helper()
 

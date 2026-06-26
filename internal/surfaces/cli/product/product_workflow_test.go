@@ -2880,6 +2880,154 @@ func TestProductStatusOperatorViewJSON(t *testing.T) {
 	}
 }
 
+func TestProductCreateInitializesEffort(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "new-effort")
+
+	var stdout, stderr bytes.Buffer
+
+	code := runProductCreate([]string{"--effort-root", dir, "--effort-id", "new-effort", "--title", "New Effort", "--json"}, &stdout, &stderr, nil)
+
+	if code != 0 {
+		t.Fatalf("expected create to pass, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+
+	var result productworkflow.CreateResult
+
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("create output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+
+	if result.Status != productworkflow.ProductWorkflowStatusOK || result.EffortID != "new-effort" || result.CurrentPhase != productworkflow.PhasePRDDrafting {
+		t.Fatalf("expected new PRD drafting effort, got %#v", result)
+	}
+
+	state, err := productworkflow.LoadWorkflowState(dir)
+	if err != nil {
+		t.Fatalf("load created workflow state: %v", err)
+	}
+
+	if state.EffortID != "new-effort" || state.Title != "New Effort" || state.CurrentState != productworkflow.WorkflowStatePlanned {
+		t.Fatalf("unexpected created workflow state: %#v", state)
+	}
+
+	for _, relPath := range []string{"adrs", "evidence", "briefs", "reports"} {
+		info, err := os.Stat(filepath.Join(dir, relPath))
+		if err != nil {
+			t.Fatalf("expected created directory %s: %v", relPath, err)
+		}
+
+		if !info.IsDir() {
+			t.Fatalf("expected %s to be a directory", relPath)
+		}
+	}
+}
+
+func TestProductTransitionAppliesWorkflowAction(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	ws := strings.Replace(
+		validTestWorkflowStateJSON(),
+		`"current_state":"implementing"`,
+		`"current_state":"planned"`,
+		1,
+	)
+
+	ws = strings.Replace(
+		ws,
+		`"next_valid_actions":["complete"]`,
+		`"next_valid_actions":["submit_for_human_verification"]`,
+		1,
+	)
+	writeTestFile(t, dir, "workflow_state.json", ws)
+
+	var stdout, stderr bytes.Buffer
+
+	code := runProductTransition([]string{"--effort-root", dir, "--action", "submit_for_human_verification", "--json"}, &stdout, &stderr, nil)
+
+	if code != 0 {
+		t.Fatalf("expected transition to pass, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+
+	var result productworkflow.ProductWorkflowTransitionApplyResult
+
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("transition output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+
+	if result.Status != productworkflow.ProductWorkflowStatusApplied || result.FromState != "planned" || result.ToState != "human_verification" {
+		t.Fatalf("expected applied planned -> human_verification result, got %#v", result)
+	}
+
+	state, err := productworkflow.LoadWorkflowState(dir)
+	if err != nil {
+		t.Fatalf("load updated workflow state: %v", err)
+	}
+
+	if state.CurrentState != "human_verification" || !containsString(state.NextValidActions, "approve_for_implementation") {
+		t.Fatalf("expected updated workflow state with approval action, got %#v", state)
+	}
+
+	events, err := os.ReadFile(filepath.Join(dir, "events.jsonl"))
+	if err != nil {
+		t.Fatalf("read transition events: %v", err)
+	}
+
+	if !strings.Contains(string(events), `"event":"product_workflow_transition_applied"`) || !strings.Contains(string(events), `"action":"submit_for_human_verification"`) {
+		t.Fatalf("expected transition event in events.jsonl, got:\n%s", string(events))
+	}
+}
+
+func TestProductTransitionBlocksUnlistedActionWithoutMutation(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	ws := strings.Replace(
+		validTestWorkflowStateJSON(),
+		`"current_state":"implementing"`,
+		`"current_state":"planned"`,
+		1,
+	)
+
+	ws = strings.Replace(
+		ws,
+		`"next_valid_actions":["complete"]`,
+		`"next_valid_actions":["submit_for_human_verification"]`,
+		1,
+	)
+	writeTestFile(t, dir, "workflow_state.json", ws)
+
+	beforeState, err := os.ReadFile(filepath.Join(dir, "workflow_state.json"))
+	if err != nil {
+		t.Fatalf("read workflow state before transition: %v", err)
+	}
+
+	beforeEvents, beforeEventsExists := readOptionalTestFile(t, filepath.Join(dir, "events.jsonl"))
+
+	var stdout, stderr bytes.Buffer
+
+	code := runProductTransition([]string{"--effort-root", dir, "--action", "approve_for_implementation"}, &stdout, &stderr, nil)
+
+	if code != 1 {
+		t.Fatalf("expected blocked transition exit code 1, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+
+	if !strings.Contains(stdout.String(), "action_not_listed") {
+		t.Fatalf("expected action_not_listed blocker, got:\n%s", stdout.String())
+	}
+
+	afterState, err := os.ReadFile(filepath.Join(dir, "workflow_state.json"))
+	if err != nil {
+		t.Fatalf("read workflow state after transition: %v", err)
+	}
+
+	afterEvents, afterEventsExists := readOptionalTestFile(t, filepath.Join(dir, "events.jsonl"))
+
+	if string(afterState) != string(beforeState) {
+		t.Fatalf("blocked transition mutated workflow_state.json\nbefore:\n%s\n\nafter:\n%s", string(beforeState), string(afterState))
+	}
+
+	if afterEventsExists != beforeEventsExists || string(afterEvents) != string(beforeEvents) {
+		t.Fatalf("blocked transition mutated events.jsonl\nbefore:\n%s\n\nafter:\n%s", string(beforeEvents), string(afterEvents))
+	}
+}
+
 func TestProductStatusOperatorViewBlocksLegacyStartImplementationWithoutHumanVerification(t *testing.T) {
 	dir := writeValidTestEffort(t)
 	ws := strings.Replace(
@@ -4101,6 +4249,23 @@ func writeTestFile(t *testing.T, dir, relPath, content string) {
 	if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", fullPath, err)
 	}
+}
+
+func readOptionalTestFile(t *testing.T, path string) ([]byte, bool) {
+	t.Helper()
+
+	data, err := os.ReadFile(path)
+	if err == nil {
+		return data, true
+	}
+
+	if os.IsNotExist(err) {
+		return nil, false
+	}
+
+	t.Fatalf("read %s: %v", path, err)
+
+	return nil, false
 }
 
 func productWorkflowTestRecoveryPacketJSON(t *testing.T) string {
@@ -6443,10 +6608,12 @@ func TestProductTDDPromoteCoveragePreviewsAndWritesProjectedLedger(t *testing.T)
 		t.Fatalf("expected deterministic obligation merge, got %#v", written.Obligations)
 	}
 	var writeOut struct {
-		Status  string `json:"status"`
-		State   string `json:"state"`
-		EventID string `json:"event_id"`
-		Digest  string `json:"digest"`
+		Status          string `json:"status"`
+		State           string `json:"state"`
+		CommitStatus    string `json:"commit_status"`
+		LedgerCommitted bool   `json:"ledger_committed"`
+		EventID         string `json:"event_id"`
+		Digest          string `json:"digest"`
 	}
 	if err := json.Unmarshal(writeStdout.Bytes(), &writeOut); err != nil {
 		t.Fatalf("write output should be valid JSON: %v\n%s", err, writeStdout.String())
@@ -6454,11 +6621,17 @@ func TestProductTDDPromoteCoveragePreviewsAndWritesProjectedLedger(t *testing.T)
 	if writeOut.State != productworkflow.BehavioralCoveragePromotionStateAccepted || writeOut.EventID == "" || writeOut.Digest == "" {
 		t.Fatalf("expected accepted lifecycle output, got %#v", writeOut)
 	}
+	if writeOut.CommitStatus != productworkflow.BehavioralCoveragePromotionCommitStatusCommitted || !writeOut.LedgerCommitted {
+		t.Fatalf("expected committed promotion output, got %#v", writeOut)
+	}
 	eventsData, err := os.ReadFile(filepath.Join(dir, "events.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(eventsData), `"event":"behavioral_coverage_accepted"`) || !strings.Contains(string(eventsData), writeOut.EventID) {
+	if !strings.Contains(string(eventsData), `"event":"behavioral_coverage_prepared"`) ||
+		!strings.Contains(string(eventsData), `"event":"behavioral_coverage_accepted"`) ||
+		!strings.Contains(string(eventsData), `"commit_status":"committed"`) ||
+		!strings.Contains(string(eventsData), writeOut.EventID) {
 		t.Fatalf("expected durable accepted event, got %s", string(eventsData))
 	}
 }
@@ -6553,16 +6726,21 @@ func TestProductTDDPromoteCoverageDoesNotMutateLedgerWhenPromotionEventAppendFai
 	}
 
 	var out struct {
-		Status   string                                     `json:"status"`
-		State    string                                     `json:"state"`
-		Ledger   productworkflow.TDDLedger                  `json:"ledger"`
-		Findings []productworkflow.TDDObligationPlanFinding `json:"findings"`
+		Status          string                                     `json:"status"`
+		State           string                                     `json:"state"`
+		CommitStatus    string                                     `json:"commit_status"`
+		LedgerCommitted bool                                       `json:"ledger_committed"`
+		Ledger          productworkflow.TDDLedger                  `json:"ledger"`
+		Findings        []productworkflow.TDDObligationPlanFinding `json:"findings"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		t.Fatalf("event failure output should be valid JSON: %v\n%s", err, stdout.String())
 	}
 	if out.Status != "blocked" || out.State != productworkflow.BehavioralCoveragePromotionStateAccepted {
 		t.Fatalf("expected accepted promotion blocked before commit, got %#v", out)
+	}
+	if out.CommitStatus != productworkflow.BehavioralCoveragePromotionCommitStatusBlocked || out.LedgerCommitted {
+		t.Fatalf("expected blocked uncommitted promotion output, got %#v", out)
 	}
 	if out.Ledger.BehavioralCoverage != nil || len(out.Ledger.Obligations) != 1 || out.Ledger.Obligations[0].ID != "TDD-KEEP" {
 		t.Fatalf("blocked promotion output must retain original ledger, got %#v", out.Ledger)

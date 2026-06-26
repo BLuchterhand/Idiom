@@ -19,7 +19,7 @@ func ReconcileActiveRuns(state *featureplanner.FeatureState, root string) []feat
 	var events []featureplanner.Event
 
 	for _, run := range append([]featureplanner.ActiveRun(nil), state.ActiveRuns...) {
-		if strings.TrimSpace(run.LaneFamily) != "" && strings.TrimSpace(run.LaneFamily) != "plan-execute" {
+		if strings.TrimSpace(run.LaneFamily) != "" && strings.TrimSpace(run.LaneFamily) != featureplanner.PlanExecuteCompletionLaneFamily {
 			continue
 		}
 
@@ -190,9 +190,9 @@ func encodeTerminalCompletion(record coreplanexecute.PlanExecuteTerminalCompleti
 
 	addActiveRunParentEvidence(fields, run)
 
-	fields["tool"] = featureplanner.ToolPlanExecuteComplete
-	fields["lane_family"] = "plan-execute"
-	fields["completion_source"] = "durable_plan_execute_terminal_completion"
+	fields[featureplanner.PlanExecuteCompletionFieldTool] = featureplanner.ToolPlanExecuteComplete
+	fields[featureplanner.PlanExecuteCompletionFieldLaneFamily] = featureplanner.PlanExecuteCompletionLaneFamily
+	fields[featureplanner.PlanExecuteCompletionFieldCompletionSource] = featureplanner.PlanExecuteCompletionSourceDurableTerminal
 	markTrustedAcceptanceEvidence(fields)
 
 	body, _ := json.Marshal(fields)
@@ -210,7 +210,7 @@ func encodeProgressCompletion(progress coreplanexecute.ProgressState, progressPa
 			fields = map[string]any{}
 		}
 
-		return encodePlanExecuteCompletionFields(fields, progressPath, "durable_plan_execute_progress", run)
+		return encodePlanExecuteCompletionFields(fields, progressPath, featureplanner.PlanExecuteCompletionSourceDurableProgress, run)
 	}
 
 	fields := coreplanexecute.PlanExecuteTerminalCompletionEventFields(record, "")
@@ -218,23 +218,23 @@ func encodeProgressCompletion(progress coreplanexecute.ProgressState, progressPa
 		fields = map[string]any{}
 	}
 
-	return encodePlanExecuteCompletionFields(fields, progressPath, "durable_plan_execute_progress", run)
+	return encodePlanExecuteCompletionFields(fields, progressPath, featureplanner.PlanExecuteCompletionSourceDurableProgress, run)
 }
 
 func encodePlanExecuteCompletionFields(fields map[string]any, progressPath string, source string, run featureplanner.ActiveRun) string {
 	if strings.TrimSpace(progressPath) == "" {
-		progressPath = strings.TrimSpace(featureplanner.CompletionFieldString(fields, "state_path"))
+		progressPath = strings.TrimSpace(featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldStatePath))
 	}
 
-	delete(fields, "state_path")
+	delete(fields, featureplanner.PlanExecuteCompletionFieldStatePath)
 	addActiveRunParentEvidence(fields, run)
 
-	fields["tool"] = featureplanner.ToolPlanExecuteComplete
-	fields["lane_family"] = "plan-execute"
-	fields["completion_source"] = source
+	fields[featureplanner.PlanExecuteCompletionFieldTool] = featureplanner.ToolPlanExecuteComplete
+	fields[featureplanner.PlanExecuteCompletionFieldLaneFamily] = featureplanner.PlanExecuteCompletionLaneFamily
+	fields[featureplanner.PlanExecuteCompletionFieldCompletionSource] = source
 
 	if strings.TrimSpace(progressPath) != "" {
-		fields["progress_path"] = strings.TrimSpace(progressPath)
+		fields[featureplanner.PlanExecuteCompletionFieldProgressPath] = strings.TrimSpace(progressPath)
 	}
 
 	markTrustedAcceptanceEvidence(fields)
@@ -245,12 +245,12 @@ func encodePlanExecuteCompletionFields(fields map[string]any, progressPath strin
 }
 
 func addActiveRunParentEvidence(fields map[string]any, run featureplanner.ActiveRun) {
-	if strings.TrimSpace(featureplanner.CompletionFieldString(fields, "contract_id")) == "" && strings.TrimSpace(run.InvocationContractID) != "" {
-		fields["contract_id"] = strings.TrimSpace(run.InvocationContractID)
+	if strings.TrimSpace(featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldContractID)) == "" && strings.TrimSpace(run.InvocationContractID) != "" {
+		fields[featureplanner.PlanExecuteCompletionFieldContractID] = strings.TrimSpace(run.InvocationContractID)
 	}
 
-	if strings.TrimSpace(featureplanner.CompletionFieldString(fields, "snapshot_hash")) == "" && strings.TrimSpace(run.RuntimeEnvelopeID) != "" {
-		fields["snapshot_hash"] = strings.TrimSpace(run.RuntimeEnvelopeID)
+	if strings.TrimSpace(featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldSnapshotHash)) == "" && strings.TrimSpace(run.RuntimeEnvelopeID) != "" {
+		fields[featureplanner.PlanExecuteCompletionFieldSnapshotHash] = strings.TrimSpace(run.RuntimeEnvelopeID)
 	}
 }
 
@@ -260,12 +260,12 @@ func markTrustedAcceptanceEvidence(fields map[string]any) {
 	}
 
 	if featureplanner.PlanExecuteCompletionTerminalClass(fields) != featureplanner.PlanExecuteTerminalCompleted {
-		delete(fields, "acceptance_evidence_trusted")
+		delete(fields, featureplanner.PlanExecuteCompletionFieldAcceptanceEvidenceTrusted)
 
 		return
 	}
 
-	if _, ok := fields["acceptance_evidence_ids"]; ok {
+	if _, ok := fields[featureplanner.PlanExecuteCompletionFieldAcceptanceEvidenceIDs]; ok {
 		featureplanner.TrustObservedPlanExecuteCompletionFields(fields)
 	}
 }

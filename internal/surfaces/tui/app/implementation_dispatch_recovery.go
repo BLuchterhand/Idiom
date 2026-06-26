@@ -41,12 +41,14 @@ func (m *Model) newPlanExecutePromptRunner(ctx context.Context) planexecute.Prom
 		priorPinnedFiles := m.pinnedFiles
 		priorSuppressPromptTranscript := m.suppressPromptTranscript
 		priorSuppressGreenfield := m.suppressGreenfieldConfirmation
+		priorDirectFeaturePlannerSessionID := m.directFeaturePlannerSessionID
 
 		m.messages = nil
 		m.lastAssistantReasoningContent = ""
 		m.pinnedFiles = nil
 		m.suppressPromptTranscript = true
 		m.suppressGreenfieldConfirmation = true
+		m.directFeaturePlannerSessionID = ""
 
 		defer func() {
 			m.messages = priorMessages
@@ -54,6 +56,7 @@ func (m *Model) newPlanExecutePromptRunner(ctx context.Context) planexecute.Prom
 			m.pinnedFiles = priorPinnedFiles
 			m.suppressPromptTranscript = priorSuppressPromptTranscript
 			m.suppressGreenfieldConfirmation = priorSuppressGreenfield
+			m.directFeaturePlannerSessionID = priorDirectFeaturePlannerSessionID
 
 			restore()
 			restoreRoute()

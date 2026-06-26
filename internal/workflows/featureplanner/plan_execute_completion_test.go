@@ -199,7 +199,7 @@ func TestPlanExecuteCompletionFieldsPreservesRecoverySidecarMetadata(t *testing.
 
 func TestPlanExecuteCompletionFieldsLaterCompletedStateClearsEarlierFailure(t *testing.T) {
 	output := strings.Join([]string{
-		`{"type":"idiom.plan_execute.resume_state_saved","state_path":".idiom/plan-execute/sessions/fallback.json","phase":"planning","status":"failed","failure_kind":"plan_artifact_missing","failure_reason":"planning/no plan artifact"}`,
+		`{"type":"idiom.plan_execute.resume_state_saved","state_path":".idiom/plan-execute/sessions/fallback.json","phase":"planning","status":"failed","exit_code":1,"failure_kind":"plan_artifact_missing","failure_reason":"planning/no plan artifact","failure_id":"failure-123","record_path":".idiom/recovery/failures/failure-123.json","packet_path":".idiom/recovery/failure-123/packet.json","next_valid_action":"review_decomposition","validation_failures":["exit_code_nonzero"],"source_sanity":[{"kind":"source_sanity","path":"pkg/feature.go","status":"failed","error":"compile failed"}],"verification_rejects":[{"command":"go test ./pkg","reason":"unsupported_verification_command"}]}`,
 		`{"type":"idiom.plan_execute.completed","state_path":".idiom/plan-execute/sessions/active.json","phase":"complete","status":"completed","review_status":"skipped","review_repair_skipped":true}`,
 	}, "\n")
 
@@ -211,6 +211,28 @@ func TestPlanExecuteCompletionFieldsLaterCompletedStateClearsEarlierFailure(t *t
 
 	if got := CompletionFieldString(fields, "failure_kind"); got != "" {
 		t.Fatalf("failure_kind = %q, want cleared earlier planning failure; fields=%+v", got, fields)
+	}
+
+	if got, ok := fields["exit_code"]; ok {
+		t.Fatalf("exit_code = %#v, want cleared earlier planning failure; fields=%+v", got, fields)
+	}
+
+	if got, ok := fields["validation_failures"]; ok {
+		t.Fatalf("validation_failures = %#v, want cleared earlier planning failure; fields=%+v", got, fields)
+	}
+
+	if got, ok := fields["verification_rejects"]; ok {
+		t.Fatalf("verification_rejects = %#v, want cleared earlier planning failure; fields=%+v", got, fields)
+	}
+
+	if got, ok := fields["source_sanity"]; ok {
+		t.Fatalf("source_sanity = %#v, want cleared earlier planning failure; fields=%+v", got, fields)
+	}
+
+	for _, key := range []string{"failure_id", "record_path", "packet_path", "next_valid_action"} {
+		if got, ok := fields[key]; ok {
+			t.Fatalf("%s = %#v, want cleared earlier planning failure; fields=%+v", key, got, fields)
+		}
 	}
 
 	if got := fmt.Sprint(fields["progress_path"]); got != ".idiom/plan-execute/sessions/active.json" {
@@ -352,6 +374,112 @@ func TestPlanExecuteCompletionMergeAndOverlayPreserveScopeContractFields(t *test
 
 	if got := CompletionFieldString(fields, "contract_hash"); got != "" {
 		t.Fatalf("overlaid contract_hash = %q, want empty generic contract hash; fields=%+v", got, fields)
+	}
+}
+
+func TestPlanExecuteCompletionMergeAndOverlayPreserveNonzeroExitCode(t *testing.T) {
+	merged := MergePlanExecuteCompletionSummaries(
+		PlanExecuteCompletionSummary{
+			Status:        "completed",
+			Phase:         "complete",
+			TerminalClass: "success",
+		},
+		PlanExecuteCompletionSummary{
+			ExitCode: 1,
+		},
+	).Fields()
+
+	if got := merged["exit_code"]; got != 1 {
+		t.Fatalf("merged exit_code = %#v, want 1; fields=%+v", got, merged)
+	}
+	if got := PlanExecuteCompletionTerminalClass(merged); got != PlanExecuteTerminalBlocked {
+		t.Fatalf("merged terminal class = %q, want blocked; fields=%+v", got, merged)
+	}
+
+	fields := map[string]any{
+		"status":         "completed",
+		"phase":          "complete",
+		"terminal_class": "success",
+	}
+	OverlayPlanExecuteCompletionFields(fields, map[string]any{
+		"exit_code": 1,
+	})
+
+	if got := fields["exit_code"]; got != 1 {
+		t.Fatalf("overlaid exit_code = %#v, want 1; fields=%+v", got, fields)
+	}
+	if got := PlanExecuteCompletionTerminalClass(fields); got != PlanExecuteTerminalBlocked {
+		t.Fatalf("overlaid terminal class = %q, want blocked; fields=%+v", got, fields)
+	}
+}
+
+func TestPlanExecuteCompletionMergePreservesSparseValidationFailure(t *testing.T) {
+	merged := MergePlanExecuteCompletionSummaries(
+		PlanExecuteCompletionSummary{
+			Status:        "completed",
+			Phase:         "complete",
+			TerminalClass: "success",
+		},
+		PlanExecuteCompletionSummary{
+			ValidationFailures: []string{"exit_code_nonzero"},
+		},
+	).Fields()
+
+	if got := completionFieldStringSlice(merged, "validation_failures"); len(got) != 1 || got[0] != "exit_code_nonzero" {
+		t.Fatalf("validation_failures = %#v, want sparse failure preserved; fields=%+v", got, merged)
+	}
+	if got := PlanExecuteCompletionTerminalClass(merged); got != PlanExecuteTerminalBlocked {
+		t.Fatalf("terminal class = %q, want blocked; fields=%+v", got, merged)
+	}
+}
+
+func TestPlanExecuteCompletionMergePreservesSparseVerificationReject(t *testing.T) {
+	merged := MergePlanExecuteCompletionSummaries(
+		PlanExecuteCompletionSummary{
+			Status:        "completed",
+			Phase:         "complete",
+			TerminalClass: "success",
+		},
+		PlanExecuteCompletionSummary{
+			VerificationRejects: []coreplanexecute.VerificationReject{{
+				Command: "go test ./pkg",
+				Reason:  coreplanexecute.VerificationRejectUnsupportedCmd,
+			}},
+		},
+	).Fields()
+
+	rejects, _ := merged["verification_rejects"].([]coreplanexecute.VerificationReject)
+	if len(rejects) != 1 || rejects[0].Command != "go test ./pkg" {
+		t.Fatalf("verification_rejects = %#v, want sparse reject preserved; fields=%+v", merged["verification_rejects"], merged)
+	}
+	if got := PlanExecuteCompletionTerminalClass(merged); got != PlanExecuteTerminalBlocked {
+		t.Fatalf("terminal class = %q, want blocked; fields=%+v", got, merged)
+	}
+}
+
+func TestPlanExecuteCompletionMergePreservesSparseSourceSanityFailure(t *testing.T) {
+	merged := MergePlanExecuteCompletionSummaries(
+		PlanExecuteCompletionSummary{
+			Status:        "completed",
+			Phase:         "complete",
+			TerminalClass: "success",
+		},
+		PlanExecuteCompletionSummary{
+			SourceSanity: []coreplanexecute.PhaseEvidenceCheck{{
+				Kind:   "source_sanity",
+				Path:   "pkg/feature.go",
+				Status: "failed",
+				Error:  "compile failed",
+			}},
+		},
+	).Fields()
+
+	checks, _ := merged["source_sanity"].([]coreplanexecute.PhaseEvidenceCheck)
+	if len(checks) != 1 || checks[0].Path != "pkg/feature.go" {
+		t.Fatalf("source_sanity = %#v, want sparse failure preserved; fields=%+v", merged["source_sanity"], merged)
+	}
+	if got := PlanExecuteCompletionTerminalClass(merged); got != PlanExecuteTerminalBlocked {
+		t.Fatalf("terminal class = %q, want blocked; fields=%+v", got, merged)
 	}
 }
 

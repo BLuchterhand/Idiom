@@ -128,6 +128,14 @@ function demoCommandSummary(request: CommandRequest) {
       return JSON.stringify({ pools: [], state: "idle" }, null, 2);
     case "product efforts --json":
       return JSON.stringify({ efforts: [], status: "empty" }, null, 2);
+    case "product create --effort-root docs/product-workflows/efforts/started/example --json":
+      return JSON.stringify({ status: "ok", effort_root: "docs/product-workflows/efforts/started/example", effort_id: "example", current_phase: "prd_drafting", next_valid_action: "approve_prd" }, null, 2);
+    case "product status --effort-root docs/product-workflows/efforts/started/example --operator-view":
+      return "product operator status: example\n  authority: workflow_state\n  next_valid_actions (1):\n    - submit for human verification [submit_for_human_verification] owner=planner dispatchable=true runnable_now=true";
+    case "product transition --effort-root docs/product-workflows/efforts/started/example --action submit_for_human_verification --json":
+      return JSON.stringify({ status: "applied", action: "submit_for_human_verification", from_state: "planned", to_state: "human_verification", next_valid_action: "approve_for_implementation" }, null, 2);
+    case "recover status --packet .idiom/recovery/packet.json --json":
+      return JSON.stringify({ status: "ready", candidate_atom_count: 1, next_valid_action: "review decomposition" }, null, 2);
     default:
       return `Demo command accepted: idiom ${request.command} ${args}`.trim();
   }

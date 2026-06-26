@@ -17,11 +17,22 @@ type PlanExecutionContract struct {
 	ContractID                string                     `json:"contract_id,omitempty"`
 	ContractHash              string                     `json:"contract_hash,omitempty"`
 	PlanID                    string                     `json:"plan_id,omitempty"`
+	PlanArtifact              PlanArtifactBinding        `json:"plan_artifact,omitempty"`
 	Atoms                     []AtomExecutionContract    `json:"atoms,omitempty"`
 	AuthorizedNewFiles        []AuthorizedNewFile        `json:"authorized_new_files,omitempty"`
 	AuthorizedNewRoots        []AuthorizedNewRoot        `json:"authorized_new_roots,omitempty"`
 	AuthorityDeltas           []AuthorityDelta           `json:"authority_deltas,omitempty"`
 	RecoveryInvariantFailures []RecoveryInvariantFailure `json:"recovery_invariant_failures,omitempty"`
+}
+
+type PlanArtifactBinding struct {
+	ArtifactID           string `json:"artifact_id,omitempty"`
+	Revision             int    `json:"revision,omitempty"`
+	Digest               string `json:"digest,omitempty"`
+	WorkspaceFingerprint string `json:"workspace_fingerprint,omitempty"`
+	ApprovalEventID      string `json:"approval_event_id,omitempty"`
+	ApprovalStatus       string `json:"approval_status,omitempty"`
+	ApprovalMode         string `json:"approval_mode,omitempty"`
 }
 
 type AtomExecutionContract struct {
@@ -215,6 +226,7 @@ func (contract PlanExecutionContract) Normalized() PlanExecutionContract {
 	}
 
 	contract.PlanID = NormalizeStableContractIDPart(contract.PlanID)
+	contract.PlanArtifact = normalizePlanArtifactBinding(contract.PlanArtifact)
 	contract.AuthorizedNewFiles = normalizeAuthorizedNewFiles(contract.AuthorizedNewFiles)
 	contract.AuthorizedNewRoots = normalizeAuthorizedNewRoots(contract.AuthorizedNewRoots)
 	contract.AuthorityDeltas = normalizeAuthorityDeltas(contract.AuthorityDeltas)
@@ -237,6 +249,33 @@ func (contract PlanExecutionContract) Normalized() PlanExecutionContract {
 
 func (atom AtomExecutionContract) Normalized() AtomExecutionContract {
 	return atom.normalized("")
+}
+
+func normalizePlanArtifactBinding(binding PlanArtifactBinding) PlanArtifactBinding {
+	binding.ArtifactID = strings.TrimSpace(binding.ArtifactID)
+	binding.Digest = strings.TrimSpace(binding.Digest)
+	binding.WorkspaceFingerprint = strings.TrimSpace(binding.WorkspaceFingerprint)
+	binding.ApprovalEventID = strings.TrimSpace(binding.ApprovalEventID)
+	binding.ApprovalStatus = strings.TrimSpace(strings.ToLower(binding.ApprovalStatus))
+	binding.ApprovalMode = strings.TrimSpace(strings.ToLower(binding.ApprovalMode))
+
+	if binding.Revision < 0 {
+		binding.Revision = 0
+	}
+
+	return binding
+}
+
+func planArtifactBindingHasContent(binding PlanArtifactBinding) bool {
+	binding = normalizePlanArtifactBinding(binding)
+
+	return binding.ArtifactID != "" ||
+		binding.Revision != 0 ||
+		binding.Digest != "" ||
+		binding.WorkspaceFingerprint != "" ||
+		binding.ApprovalEventID != "" ||
+		binding.ApprovalStatus != "" ||
+		binding.ApprovalMode != ""
 }
 
 func (atom AtomExecutionContract) normalized(planID string) AtomExecutionContract {
@@ -374,6 +413,28 @@ func ValidatePlanExecutionContractInput(contract PlanExecutionContract) []PlanEx
 
 	if strings.TrimSpace(contract.Revision) != "" && strings.TrimSpace(contract.Revision) != PlanExecutionContractRevision {
 		violations = append(violations, contractViolation("unsupported_contract_revision", "", "", "", fmt.Sprintf("unsupported plan execution contract revision %q", contract.Revision)))
+	}
+
+	if planArtifactBindingHasContent(contract.PlanArtifact) {
+		binding := normalizePlanArtifactBinding(contract.PlanArtifact)
+		if binding.ArtifactID == "" {
+			violations = append(violations, contractViolation("missing_plan_artifact_id", "", "", "", "plan artifact binding must declare artifact_id"))
+		}
+		if binding.Revision <= 0 {
+			violations = append(violations, contractViolation("missing_plan_artifact_revision", "", "", "", "plan artifact binding must declare a positive revision"))
+		}
+		if binding.Digest == "" {
+			violations = append(violations, contractViolation("missing_plan_artifact_digest", "", "", "", "plan artifact binding must declare digest"))
+		}
+		if binding.WorkspaceFingerprint == "" {
+			violations = append(violations, contractViolation("missing_plan_artifact_workspace_fingerprint", "", "", "", "plan artifact binding must declare workspace_fingerprint"))
+		}
+		if binding.ApprovalStatus != "" && binding.ApprovalStatus != "approved" {
+			violations = append(violations, contractViolation("plan_artifact_not_approved", "", "", "", "plan artifact binding approval_status must be approved"))
+		}
+		if binding.ApprovalStatus == "approved" && binding.ApprovalEventID == "" {
+			violations = append(violations, contractViolation("missing_plan_artifact_approval_event", "", "", "", "approved plan artifact binding must declare approval_event_id"))
+		}
 	}
 
 	if len(contract.Atoms) == 0 {

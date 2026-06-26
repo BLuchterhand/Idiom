@@ -19468,6 +19468,64 @@ func TestRunnerExecutesWorkbranchWriteChildTaskWithoutMutatingParent(t *testing.
 	}
 }
 
+func TestWorkbranchManagerFallsBackToFilesystemCopyForNonGitWorkspace(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "README.md", "hello\n"); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	manager := WorkbranchManager{Root: root}
+	checkout, err := manager.Create(context.Background(), "patch-readme")
+	if err != nil {
+		t.Fatalf("create fallback checkout: %v", err)
+	}
+	removed := false
+	defer func() {
+		if removed {
+			return
+		}
+		if err := manager.Remove(context.Background(), checkout); err != nil {
+			t.Fatalf("remove fallback checkout: %v", err)
+		}
+	}()
+
+	if checkout.Mode != "filesystem-copy" || checkout.BaseSHA != "non-git" {
+		t.Fatalf("unexpected fallback checkout: %#v", checkout)
+	}
+
+	if err := os.WriteFile(filepath.Join(checkout.Path, "README.md"), []byte("hello from non-git child\n"), 0o644); err != nil {
+		t.Fatalf("edit checkout file: %v", err)
+	}
+
+	diff, err := manager.Diff(context.Background(), checkout)
+	if err != nil {
+		t.Fatalf("diff fallback checkout: %v", err)
+	}
+	if !slices.Equal(diff.ChangedPaths, []string{"README.md"}) {
+		t.Fatalf("changed paths = %#v, want README.md", diff.ChangedPaths)
+	}
+	if !strings.Contains(diff.Patch, "hello from non-git child") {
+		t.Fatalf("expected fallback patch to include child content, got:\n%s", diff.Patch)
+	}
+
+	parentData, err := os.ReadFile(filepath.Join(root, "README.md"))
+	if err != nil {
+		t.Fatalf("read parent README: %v", err)
+	}
+	if string(parentData) != "hello\n" {
+		t.Fatalf("parent workspace was mutated: %q", parentData)
+	}
+
+	if err := manager.Remove(context.Background(), checkout); err != nil {
+		t.Fatalf("remove fallback checkout: %v", err)
+	}
+	removed = true
+	checkoutPath := checkout.Path
+	if _, err := os.Stat(checkoutPath); !os.IsNotExist(err) {
+		t.Fatalf("fallback checkout should be removed, stat err=%v", err)
+	}
+}
+
 func TestRunnerRoutesWorkbranchChildOntoImplementerClient(t *testing.T) {
 	root := t.TempDir()
 	runGit(t, root, "init")

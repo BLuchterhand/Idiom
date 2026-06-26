@@ -85,6 +85,38 @@ func FormatStateSummary(state FeatureState, statePath string) string {
 	return strings.TrimSpace(b.String())
 }
 
+func FormatUserFacingStateSummary(state FeatureState, statePath string) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "feature-planner: %s\n", state.Status)
+
+	if statePath != "" {
+		fmt.Fprintf(&b, "state: %s\n", statePath)
+	}
+	if strings.TrimSpace(state.PlanPath) != "" {
+		fmt.Fprintf(&b, "plan: %s\n", strings.TrimSpace(state.PlanPath))
+	}
+
+	if len(state.Atoms) > 0 {
+		fmt.Fprintf(&b, "atoms: %d\n", len(state.Atoms))
+	}
+	if openCount := CountOpenPlannerQuestions(state); openCount > 0 {
+		fmt.Fprintf(&b, "open questions: %d\n", openCount)
+	}
+	if len(state.Blockers) > 0 {
+		fmt.Fprintf(&b, "diagnostics: %d internal planner diagnostic(s) saved in feature-planner state\n", len(state.Blockers))
+	}
+
+	switch state.Status {
+	case FeatureStatePlanningRepair:
+		fmt.Fprintf(&b, "how_to_continue: feature-planner will continue repair from the saved state; ask a question or provide revised requirements if you want to steer the plan\n")
+	case FeatureStateBlocked, FeatureStateFailed:
+		fmt.Fprintf(&b, "how_to_continue: inspect the saved state or provide revised requirements before continuing\n")
+	}
+
+	return strings.TrimSpace(b.String())
+}
+
 func plannerQuestionAnswerFormat(authorityRequired string) string {
 	authorityRequired = strings.TrimSpace(authorityRequired)
 	if authorityRequired == "accepted_source" {
@@ -94,9 +126,17 @@ func plannerQuestionAnswerFormat(authorityRequired string) string {
 	return fmt.Sprintf("JSON object with answer, answer_source_kind=%q, and evidence_refs", authorityRequired)
 }
 
-func questionOpen(question PlannerQuestion) bool {
+func PlannerQuestionAnswerFormat(authorityRequired string) string {
+	return plannerQuestionAnswerFormat(authorityRequired)
+}
+
+func PlannerQuestionOpen(question PlannerQuestion) bool {
 	status := strings.TrimSpace(question.Status)
 	return status == "" || strings.EqualFold(status, "open")
+}
+
+func questionOpen(question PlannerQuestion) bool {
+	return PlannerQuestionOpen(question)
 }
 
 func CountOpenPlannerQuestions(state FeatureState) int {

@@ -4,108 +4,99 @@ import { eventFromText } from "../core/idiom";
 import { createBridge } from "../adapters/createBridge";
 
 const lanes: LaneKind[] = ["plan-execute", "implement", "atom-spec"];
+const sidebarTabs = ["chat", "plan", "memory", "product", "recover", "audit", "settings"] as const;
+const productTransitionActions = [
+  "submit_for_human_verification",
+  "approve_for_implementation",
+  "request_changes",
+  "request_investigation",
+  "start_investigation",
+  "submit_for_verification",
+  "submit_for_review",
+  "approve",
+  "complete_investigation",
+  "mark_blocked",
+  "resolve_blocker",
+];
 
-type SurfaceKey = "runs" | "memory" | "audit" | "recover" | "settings";
-
-interface Surface {
-  key: SurfaceKey;
-  label: string;
-  shortcut: string;
-  description: string;
-}
+type SidebarTab = typeof sidebarTabs[number];
+type ChatRole = "user" | "assistant" | "operator";
 
 interface QuickAction {
   label: string;
-  description: string;
   request: CommandRequest;
 }
 
-const surfaces: Surface[] = [
-  {
-    key: "runs",
-    label: "Runs",
-    shortcut: "R",
-    description: "Start lanes, watch event streams, and keep terminal parity with plan-execute, implement, and atom-spec.",
-  },
-  {
-    key: "memory",
-    label: "Memory",
-    shortcut: "M",
-    description: "Inspect repository memory, tool schemas, discovery profile tools, and context freshness.",
-  },
-  {
-    key: "audit",
-    label: "Audit",
-    shortcut: "A",
-    description: "Run harness audits and surface evidence trails without leaving the desktop app.",
-  },
-  {
-    key: "recover",
-    label: "Recover",
-    shortcut: "V",
-    description: "Reach product workflow and recovery status surfaces that mirror the current CLI/TUI operators.",
-  },
-  {
-    key: "settings",
-    label: "Settings",
-    shortcut: "S",
-    description: "Check backend, queue, profile, skills, and binary status.",
-  },
-];
+interface ChatMessage {
+  id: string;
+  role: ChatRole;
+  title?: string;
+  body: string;
+  timestamp: string;
+  level?: "info" | "success" | "warning" | "error";
+}
 
-const quickActionsBySurface: Record<SurfaceKey, QuickAction[]> = {
-  runs: [
-    { label: "Doctor", description: "Check host readiness profiles.", request: { command: "doctor", args: ["--json"] } },
-    { label: "Backend status", description: "Inspect planner/executor backend state.", request: { command: "backend", args: ["status"] } },
-    { label: "Queue status", description: "Show durable runner queue state.", request: { command: "queue", args: ["status", "--json"] } },
+const quickActionsByTab: Partial<Record<SidebarTab, QuickAction[]>> = {
+  chat: [
+    { label: "Doctor", request: { command: "doctor", args: ["--json"] } },
+    { label: "Backend", request: { command: "backend", args: ["status"] } },
+    { label: "Queue", request: { command: "queue", args: ["status", "--json"] } },
+  ],
+  plan: [
+    { label: "Probe lanes", request: { command: "probe", args: ["lane", "--mode", "all"] } },
+    { label: "Brief help", request: { command: "brief", args: ["--help"] } },
+    { label: "Lane help", request: { command: "lane", args: ["--help"] } },
   ],
   memory: [
-    { label: "Context status", description: "Check graph freshness through sidecar tooling.", request: { command: "tool", args: ["context_status", "--profile", "discovery", "--input", "{\"refresh\":false,\"limit\":20}"] } },
-    { label: "Tool list", description: "List discovery-safe tools.", request: { command: "tool", args: ["list", "--profile", "discovery"] } },
-    { label: "Tool schemas", description: "Export the sidecar schema surface.", request: { command: "tool", args: ["schemas"] } },
+    { label: "Context status", request: { command: "tool", args: ["context_status", "--profile", "discovery", "--input", "{\"refresh\":false,\"limit\":20}"] } },
+    { label: "Tool list", request: { command: "tool", args: ["list", "--profile", "discovery"] } },
+    { label: "Schemas", request: { command: "tool", args: ["schemas"] } },
   ],
   audit: [
-    { label: "Harness audit", description: "Run behavior audit through the tool sidecar.", request: { command: "tool", args: ["harness_audit", "--profile", "discovery", "--input", "{\"purpose\":\"behavior\"}"] } },
-    { label: "Audit help", description: "Show audit command surface.", request: { command: "audit", args: ["--help"] } },
-    { label: "Probe lane", description: "Check lane route wiring.", request: { command: "probe", args: ["lane", "--mode", "all"] } },
+    { label: "Harness audit", request: { command: "tool", args: ["harness_audit", "--profile", "discovery", "--input", "{\"purpose\":\"behavior\"}"] } },
+    { label: "Audit help", request: { command: "audit", args: ["--help"] } },
+    { label: "Probe", request: { command: "probe", args: ["lane", "--mode", "all"] } },
+  ],
+  product: [
+    { label: "Efforts", request: { command: "product", args: ["efforts", "--json"] } },
+    { label: "Product help", request: { command: "product", args: ["--help"] } },
   ],
   recover: [
-    { label: "Recover help", description: "Show inspect/status/decompose/promote/reconcile commands.", request: { command: "recover", args: ["--help"] } },
-    { label: "Product efforts", description: "List product workflow efforts.", request: { command: "product", args: ["efforts", "--json"] } },
-    { label: "Product help", description: "Show PRD/ADR/TDD/brief workflow commands.", request: { command: "product", args: ["--help"] } },
+    { label: "Recover help", request: { command: "recover", args: ["--help"] } },
+    { label: "Show failure", request: { command: "recover", args: ["show", "latest", "--json"] } },
   ],
   settings: [
-    { label: "Version", description: "Report the current idiom binary version.", request: { command: "version", args: [] } },
-    { label: "Profiles", description: "Inspect profile command surface.", request: { command: "profile", args: ["--help"] } },
-    { label: "Skills", description: "Inspect skills command surface.", request: { command: "skills", args: ["--help"] } },
+    { label: "Version", request: { command: "version", args: [] } },
+    { label: "Profiles", request: { command: "profile", args: ["--help"] } },
+    { label: "Skills", request: { command: "skills", args: ["--help"] } },
   ],
 };
 
-const startingEvents: IdiomEvent[] = [
-  eventFromText({
-    type: "surface",
-    level: "info",
-    title: "Desktop surface ready",
-    detail: "A dedicated product shell for contracts, repository memory, lanes, audit, and evals.",
-  }),
-  eventFromText({
-    type: "hook",
+const initialMessages: ChatMessage[] = [
+  {
+    id: crypto.randomUUID(),
+    role: "assistant",
+    title: "Idiom",
+    body: "Ready.",
+    timestamp: new Date().toISOString(),
     level: "success",
-    title: "Bridge abstraction online",
-    detail: "The UI is connected through IdiomBridge, so sidecar, MCP, or socket transports can replace the adapter.",
-  }),
+  },
 ];
 
 export function App() {
   const bridge = useMemo<IdiomBridge>(() => createBridge(), []);
   const [manifest, setManifest] = useState<DesktopManifest | null>(null);
-  const [events, setEvents] = useState<IdiomEvent[]>(startingEvents);
+  const [events, setEvents] = useState<IdiomEvent[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [lane, setLane] = useState<LaneKind>("plan-execute");
   const [prompt, setPrompt] = useState("Inspect the current workspace and propose the smallest safe next change.");
   const [workspace, setWorkspace] = useState("");
-  const [activeSurface, setActiveSurface] = useState<SurfaceKey>("runs");
+  const [activeTab, setActiveTab] = useState<SidebarTab>("chat");
   const [commandOutput, setCommandOutput] = useState("No command output yet.");
   const [running, setRunning] = useState(false);
+  const [effortRoot, setEffortRoot] = useState("");
+  const [transitionAction, setTransitionAction] = useState("submit_for_human_verification");
+  const [recoveryPacket, setRecoveryPacket] = useState("");
 
   useEffect(() => {
     let mounted = true;
@@ -116,21 +107,16 @@ export function App() {
         if (!mounted) {
           return;
         }
-
         setManifest(value);
         setWorkspace(value.workspace);
       })
       .catch((error: unknown) => {
-        setEvents((current) => [eventFromText({
-          type: "error",
-          level: "error",
-          title: "Unable to read app manifest",
-          detail: error instanceof Error ? error.message : String(error),
-        }), ...current]);
+        appendOperatorMessage("Manifest", error instanceof Error ? error.message : String(error), "error");
       });
 
     bridge.subscribe((event) => {
-      setEvents((current) => [event, ...current].slice(0, 80));
+      setEvents((current) => [event, ...current].slice(0, 120));
+      appendMessage(messageFromEvent(event));
       if (event.type === "lane_completed" || event.type === "lane_failed" || event.type === "lane_exit") {
         setRunning(false);
       }
@@ -145,17 +131,25 @@ export function App() {
   }, [bridge]);
 
   async function startLane() {
+    const body = prompt.trim();
+    if (body === "") {
+      return;
+    }
+
     setRunning(true);
+    appendMessage({
+      id: crypto.randomUUID(),
+      role: "user",
+      title: lane,
+      body,
+      timestamp: new Date().toISOString(),
+    });
+
     try {
-      await bridge.startLane({ lane, prompt, workspace });
+      await bridge.startLane({ lane, prompt: body, workspace });
     } catch (error) {
       setRunning(false);
-      setEvents((current) => [eventFromText({
-        type: "lane_failed",
-        level: "error",
-        title: "Lane failed to start",
-        detail: error instanceof Error ? error.message : String(error),
-      }), ...current]);
+      appendOperatorMessage("Lane failed", error instanceof Error ? error.message : String(error), "error");
     }
   }
 
@@ -166,165 +160,269 @@ export function App() {
       input: { refresh: false, limit: 20 },
     });
 
-    setEvents((current) => [eventFromText({
-      type: "tool_result",
-      level: result.status === 0 ? "success" : "warning",
-      title: "context_status",
-      detail: result.stdout || result.stderr,
-      payload: result,
-    }), ...current].slice(0, 80));
+    recordCommandResult("context_status", result.status, result.stdout || result.stderr);
   }
 
   async function runQuickAction(action: QuickAction) {
+    await runCommandWithOutput(`idiom ${action.request.command}`, action.request);
+  }
+
+  async function runProductCreate() {
+    await runCommandWithOutput("idiom product create", {
+      command: "product",
+      args: ["create", "--effort-root", effortRoot, "--json"],
+    });
+  }
+
+  async function runProductStatus() {
+    await runCommandWithOutput("idiom product status", {
+      command: "product",
+      args: ["status", "--effort-root", effortRoot, "--operator-view"],
+    });
+  }
+
+  async function runProductCheck(kind: "lint" | "audit") {
+    await runCommandWithOutput(`idiom product ${kind}`, {
+      command: "product",
+      args: [kind, "--effort-root", effortRoot, "--json"],
+    });
+  }
+
+  async function runProductTransition(action = transitionAction) {
+    await runCommandWithOutput("idiom product transition", {
+      command: "product",
+      args: ["transition", "--effort-root", effortRoot, "--action", action, "--json"],
+    });
+  }
+
+  async function runRecoverStatus() {
+    await runCommandWithOutput("idiom recover status", {
+      command: "recover",
+      args: ["status", "--packet", recoveryPacket, "--json"],
+    });
+  }
+
+  async function runCommandWithOutput(title: string, request: CommandRequest) {
     setRunning(true);
     try {
-      const result = await bridge.runCommand({ ...action.request, workspace });
-      const detail = result.stdout || result.stderr || `exit status ${result.status}`;
-
-      setCommandOutput(detail);
-      setEvents((current) => [eventFromText({
-        type: "command_result",
-        level: result.status === 0 ? "success" : "warning",
-        title: `idiom ${action.request.command}`,
-        detail,
-        payload: result,
-      }), ...current].slice(0, 80));
+      const result = await bridge.runCommand({ ...request, workspace });
+      recordCommandResult(title, result.status, result.stdout || result.stderr || `exit status ${result.status}`);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-
       setCommandOutput(detail);
-      setEvents((current) => [eventFromText({
-        type: "command_failed",
-        level: "error",
-        title: `idiom ${action.request.command}`,
-        detail,
-      }), ...current].slice(0, 80));
+      appendOperatorMessage(title, detail, "error");
     } finally {
       setRunning(false);
     }
   }
 
+  function recordCommandResult(title: string, status: number, detail: string) {
+    setCommandOutput(detail);
+    appendOperatorMessage(title, detail, status === 0 ? "success" : "warning");
+  }
+
+  function appendOperatorMessage(title: string, body: string, level: ChatMessage["level"] = "info") {
+    appendMessage({
+      id: crypto.randomUUID(),
+      role: "operator",
+      title,
+      body,
+      level,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  function appendMessage(message: ChatMessage) {
+    setMessages((current) => [...current, message].slice(-160));
+  }
+
   const latestRun = events.find((event) => event.sessionId);
   const failures = events.filter((event) => event.level === "error").length;
   const evidenceCount = events.filter((event) => ["tool", "tool_result", "memory", "contract"].includes(event.type)).length;
-  const activeSurfaceDetails = surfaces.find((surface) => surface.key === activeSurface) ?? surfaces[0];
-  const quickActions = quickActionsBySurface[activeSurface];
+  const quickActions = quickActionsByTab[activeTab] ?? [];
 
   return (
-    <main className="shell">
-      <aside className="rail" aria-label="Idiom surfaces">
-        <div className="brand-mark">id</div>
-        {surfaces.map((surface) => (
-          <button
-            key={surface.key}
-            className={`rail-button ${activeSurface === surface.key ? "active" : ""}`}
-            aria-label={surface.label}
-            onClick={() => setActiveSurface(surface.key)}
-          >
-            {surface.shortcut}
-          </button>
-        ))}
-      </aside>
-
-      <section className="workspace">
-        <header className="topbar">
+    <main className="app-shell">
+      <aside className="sidebar" aria-label="Idiom panels">
+        <div className="sidebar-header">
+          <div className="brand-mark">id</div>
           <div>
-            <p className="eyebrow">Local agent substrate</p>
-            <h1>Idiom</h1>
+            <strong>Idiom</strong>
+            <span>{manifest?.version ?? "loading"}</span>
           </div>
-          <div className="runtime-card" aria-label="Runtime status">
-            <span className="status-dot" />
-            <div>
-              <strong>{manifest?.version ?? "loading"}</strong>
-              <span>{manifest?.idiomBinary ?? "resolving idiom binary"}</span>
-            </div>
-          </div>
-        </header>
+        </div>
 
-        <section className="control-strip" aria-label="Run controls">
+        <nav className="panel-nav" aria-label="Panel navigation">
+          {sidebarTabs.map((tab) => (
+            <button
+              key={tab}
+              className={activeTab === tab ? "active" : ""}
+              onClick={() => setActiveTab(tab)}
+            >
+              {tab}
+            </button>
+          ))}
+        </nav>
+
+        <div className="sidebar-section">
           <label>
             Lane
             <select value={lane} onChange={(event) => setLane(event.target.value as LaneKind)}>
               {lanes.map((item) => <option key={item} value={item}>{item}</option>)}
             </select>
           </label>
-          <label className="workspace-field">
+          <label>
             Workspace
             <input value={workspace} onChange={(event) => setWorkspace(event.target.value)} />
           </label>
-          <button onClick={checkMemory}>Check memory</button>
+        </div>
+
+        <SidebarPanel
+          activeTab={activeTab}
+          quickActions={quickActions}
+          running={running}
+          effortRoot={effortRoot}
+          transitionAction={transitionAction}
+          recoveryPacket={recoveryPacket}
+          onEffortRootChange={setEffortRoot}
+          onTransitionActionChange={setTransitionAction}
+          onRecoveryPacketChange={setRecoveryPacket}
+          onQuickAction={runQuickAction}
+          onCheckMemory={checkMemory}
+          onProductCreate={runProductCreate}
+          onProductStatus={runProductStatus}
+          onProductCheck={runProductCheck}
+          onProductTransition={runProductTransition}
+          onRecoverStatus={runRecoverStatus}
+        />
+      </aside>
+
+      <section className="chat-pane" aria-label="Chat">
+        <header className="chat-header">
+          <div>
+            <strong>{lane}</strong>
+            <span>{latestRun?.sessionId ? latestRun.sessionId.slice(0, 8) : "no session"}</span>
+          </div>
+          <div className={`run-state ${running ? "running" : ""}`}>{running ? "running" : "idle"}</div>
+        </header>
+
+        <section className="transcript" aria-label="Transcript">
+          {messages.map((message) => <ChatBubble key={message.id} message={message} />)}
         </section>
 
-        <section className="main-grid">
-          <section className="composer" aria-label="Prompt composer">
-            <div className="panel-heading">
-              <span>New run</span>
-              <small>{latestRun?.sessionId ? `session ${latestRun.sessionId.slice(0, 8)}` : "no active session"}</small>
-            </div>
-            <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} />
-            <div className="composer-actions">
-              <span>Contracts stay host-owned. The model still chooses strategy.</span>
-              <button className="primary" onClick={startLane} disabled={running || prompt.trim() === ""}>
-                {running ? "Running" : "Start lane"}
-              </button>
-            </div>
-          </section>
-
-          <section className="metrics" aria-label="Run health">
-            <Metric label="Evidence" value={String(evidenceCount)} tone="blue" />
-            <Metric label="Open failures" value={String(failures)} tone={failures > 0 ? "red" : "green"} />
-            <Metric label="Events" value={String(events.length)} tone="violet" />
-          </section>
-
-          <section className="surface-panel" aria-label={`${activeSurfaceDetails.label} controls`}>
-            <div className="panel-heading">
-              <span>{activeSurfaceDetails.label}</span>
-              <small>{activeSurfaceDetails.shortcut}</small>
-            </div>
-            <p>{activeSurfaceDetails.description}</p>
-            <div className="quick-actions">
-              {quickActions.map((action) => (
-                <button key={action.label} onClick={() => runQuickAction(action)} disabled={running}>
-                  <strong>{action.label}</strong>
-                  <span>{action.description}</span>
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section className="timeline" aria-label="Run timeline">
-            <div className="panel-heading">
-              <span>Run timeline</span>
-              <small>contracts, memory, tools, audit</small>
-            </div>
-            <div className="event-list">
-              {events.map((event) => <EventRow key={event.id} event={event} />)}
-            </div>
-          </section>
-
-          <section className="command-output" aria-label="Command output">
-            <div className="panel-heading">
-              <span>Command output</span>
-              <small>raw CLI parity</small>
-            </div>
-            <pre>{commandOutput}</pre>
-          </section>
-
-          <section className="substrate" aria-label="Idiom substrate">
-            <div className="panel-heading">
-              <span>Substrate</span>
-              <small>what Idiom exposes beyond chat</small>
-            </div>
-            <div className="substrate-grid">
-              <SubstrateItem title="Repo memory" body="Fresh context packets, symbols, traces, and impact views." />
-              <SubstrateItem title="Contracts" body="Permissions, path roles, obligations, verification, and fuses." />
-              <SubstrateItem title="Audit" body="Structured event trails for replay, evals, and regression protection." />
-              <SubstrateItem title="Adapters" body="Bridge hooks for sidecar commands, MCP, sockets, or hosted control planes." />
-            </div>
-          </section>
+        <section className="composer" aria-label="Composer">
+          <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} />
+          <div className="composer-actions">
+            <button onClick={checkMemory} disabled={running}>Context</button>
+            <button className="primary" onClick={startLane} disabled={running || prompt.trim() === ""}>
+              {running ? "Running" : "Send"}
+            </button>
+          </div>
         </section>
       </section>
+
+      <aside className="inspector" aria-label="Run inspector">
+        <section className="metric-strip">
+          <Metric label="Evidence" value={String(evidenceCount)} tone="blue" />
+          <Metric label="Failures" value={String(failures)} tone={failures > 0 ? "red" : "green"} />
+          <Metric label="Events" value={String(events.length)} tone="violet" />
+        </section>
+
+        <section className="inspector-panel">
+          <div className="panel-heading">
+            <span>Events</span>
+            <small>{events.length}</small>
+          </div>
+          <div className="event-list">
+            {events.map((event) => <EventRow key={event.id} event={event} />)}
+          </div>
+        </section>
+
+        <section className="inspector-panel output-panel">
+          <div className="panel-heading">
+            <span>Output</span>
+            <small>raw</small>
+          </div>
+          <pre>{commandOutput}</pre>
+        </section>
+      </aside>
     </main>
+  );
+}
+
+function SidebarPanel(props: {
+  activeTab: SidebarTab;
+  quickActions: QuickAction[];
+  running: boolean;
+  effortRoot: string;
+  transitionAction: string;
+  recoveryPacket: string;
+  onEffortRootChange: (value: string) => void;
+  onTransitionActionChange: (value: string) => void;
+  onRecoveryPacketChange: (value: string) => void;
+  onQuickAction: (action: QuickAction) => void;
+  onCheckMemory: () => void;
+  onProductCreate: () => void;
+  onProductStatus: () => void;
+  onProductCheck: (kind: "lint" | "audit") => void;
+  onProductTransition: (action?: string) => void;
+  onRecoverStatus: () => void;
+}) {
+  return (
+    <div className="sidebar-section panel-actions">
+      {props.activeTab === "memory" ? (
+        <button onClick={props.onCheckMemory} disabled={props.running}>Context status</button>
+      ) : null}
+
+      {props.quickActions.map((action) => (
+        <button key={action.label} onClick={() => props.onQuickAction(action)} disabled={props.running}>
+          {action.label}
+        </button>
+      ))}
+
+      {props.activeTab === "product" ? (
+        <div className="operator-controls">
+          <label>
+            Effort root
+            <input value={props.effortRoot} onChange={(event) => props.onEffortRootChange(event.target.value)} placeholder="docs/product-workflows/efforts/started/example" />
+          </label>
+          <button className="primary-secondary" onClick={props.onProductCreate} disabled={props.running || props.effortRoot.trim() === ""}>Create</button>
+          <button onClick={props.onProductStatus} disabled={props.running || props.effortRoot.trim() === ""}>Status</button>
+          <button onClick={() => props.onProductCheck("lint")} disabled={props.running || props.effortRoot.trim() === ""}>Lint</button>
+          <button onClick={() => props.onProductCheck("audit")} disabled={props.running || props.effortRoot.trim() === ""}>Audit</button>
+          <label>
+            Transition
+            <select value={props.transitionAction} onChange={(event) => props.onTransitionActionChange(event.target.value)}>
+              {productTransitionActions.map((action) => <option key={action} value={action}>{action}</option>)}
+            </select>
+          </label>
+          <button className="primary-secondary" onClick={() => props.onProductTransition()} disabled={props.running || props.effortRoot.trim() === ""}>Apply</button>
+          <button onClick={() => props.onProductTransition("approve_for_implementation")} disabled={props.running || props.effortRoot.trim() === ""}>Approve</button>
+        </div>
+      ) : null}
+
+      {props.activeTab === "recover" ? (
+        <div className="operator-controls">
+          <label>
+            Packet
+            <input value={props.recoveryPacket} onChange={(event) => props.onRecoveryPacketChange(event.target.value)} placeholder=".idiom/recovery/packet.json" />
+          </label>
+          <button className="primary-secondary" onClick={props.onRecoverStatus} disabled={props.running || props.recoveryPacket.trim() === ""}>Status</button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ChatBubble({ message }: { message: ChatMessage }) {
+  return (
+    <article className={`chat-bubble ${message.role} ${message.level ?? "info"}`}>
+      <header>
+        <strong>{message.title ?? message.role}</strong>
+        <time>{formatEventTime(message.timestamp)}</time>
+      </header>
+      <p>{message.body}</p>
+    </article>
   );
 }
 
@@ -346,10 +444,20 @@ function EventRow({ event }: { event: IdiomEvent }) {
           <strong>{event.title}</strong>
           <time>{formatEventTime(event.timestamp)}</time>
         </header>
-        {event.detail ? <p>{event.detail}</p> : null}
       </div>
     </article>
   );
+}
+
+function messageFromEvent(event: IdiomEvent): ChatMessage {
+  return {
+    id: event.id,
+    role: event.type.startsWith("lane") ? "assistant" : "operator",
+    title: event.title,
+    body: event.detail ?? event.type,
+    timestamp: event.timestamp,
+    level: event.level,
+  };
 }
 
 function formatEventTime(timestamp: string) {
@@ -363,13 +471,4 @@ function formatEventTime(timestamp: string) {
   }
 
   return date.toLocaleTimeString();
-}
-
-function SubstrateItem({ title, body }: { title: string; body: string }) {
-  return (
-    <article className="substrate-item">
-      <strong>{title}</strong>
-      <p>{body}</p>
-    </article>
-  );
 }

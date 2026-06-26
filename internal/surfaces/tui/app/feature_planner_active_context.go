@@ -111,13 +111,5 @@ func (m *Model) activeFeaturePlannerPlanState() (featureplanner.FeatureState, st
 }
 
 func activeFeaturePlannerProposedPaths(state featureplanner.FeatureState, plan featureplanner.FeaturePlan) []string {
-	var paths []string
-	for _, question := range state.OpenQuestions {
-		if featurePlannerQuestionOpen(question) {
-			paths = append(paths, question.AffectedPaths...)
-		}
-	}
-	paths = append(paths, featurePlannerPlanTabPaths(plan)...)
-
-	return featurePlannerUniqueStrings(paths)
+	return featureplanner.ActiveFeaturePlanProposedPaths(state, plan)
 }

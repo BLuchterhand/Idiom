@@ -50,15 +50,63 @@ func TestFeaturePlannerTUIDirectCommandUsesProductContextFromMentionedEffortRoot
 	if !strings.Contains(answer, "feature-planner: "+featureplanner.FeatureStatePlanningRepair) {
 		t.Fatalf("expected planning-repair answer, got:\n%s", answer)
 	}
-
-	for _, want := range []string{"internal/qcb/binding.go", "TDD-1"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("expected blocker to mention %q, got:\n%s", want, answer)
+	if !strings.Contains(answer, "diagnostics: 1 internal planner diagnostic(s) saved in feature-planner state") {
+		t.Fatalf("expected sanitized diagnostic count, got:\n%s", answer)
+	}
+	for _, forbidden := range []string{"internal/qcb/binding.go", "TDD-1", "blockers:"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("answer leaked raw repair diagnostic %q:\n%s", forbidden, answer)
 		}
 	}
 
 	if m.lastPlanExecuteRunResult != nil {
 		t.Fatalf("plan-execute should not be dispatched after product context rejection")
+	}
+}
+
+func TestOverlayFeaturePlannerPlanExecuteRunResultPreservesExitCode(t *testing.T) {
+	fields := map[string]any{}
+
+	overlayFeaturePlannerPlanExecuteRunResult(fields, "", &planexecute.RunResult{
+		ExitCode:      7,
+		FailureReason: "plan-execute failed",
+	})
+
+	if got := fields[featureplanner.PlanExecuteCompletionFieldExitCode]; got != 7 {
+		t.Fatalf("exit_code = %#v, want 7; fields=%+v", got, fields)
+	}
+
+	if got := featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldStatus); got != "failed" {
+		t.Fatalf("status = %q, want failed; fields=%+v", got, fields)
+	}
+
+	if got := featureplanner.PlanExecuteCompletionTerminalClass(fields); got != featureplanner.PlanExecuteTerminalBlocked {
+		t.Fatalf("terminal class = %q, want blocked; fields=%+v", got, fields)
+	}
+
+	root := t.TempDir()
+	progress := planexecute.NewProgressState("pe-session", "prompt", "", []string{"pkg/feature.go"}, nil, time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC))
+	progress.Phase = planexecute.ProgressPhasePlanning
+	progress.Status = planexecute.ProgressStatusRunning
+	statePath, err := planexecute.SaveProgressState(root, &progress)
+	if err != nil {
+		t.Fatalf("SaveProgressState: %v", err)
+	}
+
+	fields = map[string]any{}
+	overlayFeaturePlannerPlanExecuteRunResult(fields, root, &planexecute.RunResult{
+		ExitCode:        7,
+		SessionID:       "pe-session",
+		ResumeStatePath: statePath,
+		FailureReason:   "plan-execute failed",
+	})
+
+	if got := fields[featureplanner.PlanExecuteCompletionFieldExitCode]; got != 7 {
+		t.Fatalf("durable progress exit_code = %#v, want 7; fields=%+v", got, fields)
+	}
+
+	if got := featureplanner.PlanExecuteCompletionTerminalClass(fields); got != featureplanner.PlanExecuteTerminalBlocked {
+		t.Fatalf("durable progress terminal class = %q, want blocked; fields=%+v", got, fields)
 	}
 }
 
@@ -84,16 +132,67 @@ func TestFeaturePlannerTUIDirectPlanValidatesBeforeProductNormalization(t *testi
 
 	for _, want := range []string{
 		"feature-planner: " + featureplanner.FeatureStatePlanningRepair,
-		"native/tests/test_quality_inventory_bindings.cpp",
-		"not omitted or demoted to allowed_edit_paths",
+		"diagnostics: 1 internal planner diagnostic(s) saved in feature-planner state",
 	} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("expected answer to contain %q, got:\n%s", want, answer)
 		}
 	}
+	for _, forbidden := range []string{"native/tests/test_quality_inventory_bindings.cpp", "not omitted or demoted to allowed_edit_paths", "blockers:"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("answer leaked raw repair diagnostic %q:\n%s", forbidden, answer)
+		}
+	}
 
 	if m.lastPlanExecuteRunResult != nil {
 		t.Fatalf("plan-execute should not be dispatched after raw product scope rejection")
+	}
+}
+
+func TestFeaturePlannerTUIDirectCommandRetriesModelRepairableStandalonePlan(t *testing.T) {
+	projectRoot := t.TempDir()
+	writeFile(t, projectRoot, "llm_brain/query_handler.py", "class QueryHandler:\n    pass\n")
+	writeFile(t, projectRoot, "tests/test_query_handler.py", "def test_placeholder():\n    assert True\n")
+	writeFile(t, projectRoot, "pyproject.toml", "[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n")
+
+	rejectedPlan := featurePlannerCommandRunningExampleExistingPathPlan()
+	secondResponse := `{"tool":"ask_planner_question","question_summary":"Confirm LLM brain MVP scope","blocking_claim":"The repaired standalone plan needs an explicit operator approval boundary before implementation.","requested_decision":"Confirm the minimal memory behavior and verification command for the LLM brain MVP.","question_kind":"external_answer_required","authority_required":"operator_approval","required_before":"plan_approval","affected_paths":["llm_brain/query_handler.py","tests/test_query_handler.py"],"affected_fields":["requirements_scope","verification_command"]}`
+
+	client := &scriptedLLMClient{responses: []string{
+		featurePlannerCommandPlanJSON(t, rejectedPlan),
+		secondResponse,
+	}}
+	m := &Model{
+		client: client,
+		cfg: config.Config{
+			Chat:      config.Chat{ProjectRoot: projectRoot},
+			Workspace: config.Workspace{Root: projectRoot, CWD: projectRoot},
+		},
+		workspace: workspace.NewManager(config.Workspace{Root: projectRoot, CWD: projectRoot}),
+	}
+
+	answer, err := m.runFeaturePlannerCommandOnce(context.Background(), `Can you work out an MVP to an effective "llm brain" sort of project to manage long-term agentic memory?`)
+	if err != nil {
+		t.Fatalf("runFeaturePlannerCommandOnce: %v", err)
+	}
+
+	if client.callCount != 2 {
+		t.Fatalf("planner should retry after model-repairable standalone rejection, calls=%d", client.callCount)
+	}
+	if strings.Contains(answer, "feature-planner: "+featureplanner.FeatureStatePlanningRepair) {
+		t.Fatalf("model-repairable standalone rejection should not surface terminal planning-repair:\n%s", answer)
+	}
+	if !strings.Contains(answer, "Feature planner needs your input before it can continue.") {
+		t.Fatalf("expected repaired follow-up question, got:\n%s", answer)
+	}
+
+	if m.directFeaturePlannerSessionID == "" {
+		t.Fatal("direct feature-planner session should be remembered")
+	}
+	statePath := filepath.Join(projectRoot, ".idiom", "feature-planner", m.directFeaturePlannerSessionID, "state.json")
+	state := loadFeaturePlannerCommandStateFile(t, statePath)
+	if state.Status != featureplanner.FeatureStatePlanningQuestion || len(state.RejectedPlanCandidates) != 1 {
+		t.Fatalf("state should preserve rejected candidate and open repaired question, got status=%q rejected=%d questions=%+v", state.Status, len(state.RejectedPlanCandidates), state.OpenQuestions)
 	}
 }
 
@@ -143,13 +242,16 @@ func TestFeaturePlannerTUIDirectAnswerResumesOpenQuestionSession(t *testing.T) {
 	if strings.Contains(client.messages[1][len(client.messages[1])-1].Content, "User request:\nApproved.") {
 		t.Fatalf("resumed planner prompt used approval answer as objective:\n%s", client.messages[1][len(client.messages[1])-1].Content)
 	}
-	if !strings.Contains(answer, "feature-planner: "+featureplanner.FeatureStatePlanningRepair) ||
-		!strings.Contains(answer, "missing sdd_refs") {
-		t.Fatalf("expected resumed planning-repair answer with SDD blocker, got:\n%s", answer)
+	if !strings.Contains(answer, "feature-planner: "+featureplanner.FeatureStatePlanningStuck) ||
+		!strings.Contains(answer, "diagnostics: 2 internal planner diagnostic(s) saved in feature-planner state") {
+		t.Fatalf("expected resumed planning-stuck answer with sanitized diagnostics, got:\n%s", answer)
+	}
+	if strings.Contains(answer, "behavioral_coverage_draft") || strings.Contains(answer, "blockers:") {
+		t.Fatalf("resumed planning-repair answer leaked raw diagnostics:\n%s", answer)
 	}
 
-	if m.directFeaturePlannerSessionID != sessionID {
-		t.Fatalf("direct session changed from %q to %q", sessionID, m.directFeaturePlannerSessionID)
+	if m.directFeaturePlannerSessionID != "" {
+		t.Fatalf("terminal planning-stuck state should clear direct session, got %q", m.directFeaturePlannerSessionID)
 	}
 
 	state := loadFeaturePlannerCommandStateFile(t, filepath.Join(projectRoot, ".idiom", "feature-planner", sessionID, "state.json"))
@@ -159,7 +261,7 @@ func TestFeaturePlannerTUIDirectAnswerResumesOpenQuestionSession(t *testing.T) {
 	if len(state.AuthorityDeltas) != 1 || !slices.Equal(state.AuthorityDeltas[0].AffectedPaths, []string{"pkg/collapse_event.go", "pkg/collapse_event_test.go"}) {
 		t.Fatalf("typed authority delta was not preserved: %+v", state.AuthorityDeltas)
 	}
-	if len(state.RejectedPlanCandidates) != 1 || !strings.Contains(state.RejectedPlanCandidates[0].Diagnostic, "missing sdd_refs") {
+	if len(state.RejectedPlanCandidates) != 2 || !strings.Contains(state.RejectedPlanCandidates[len(state.RejectedPlanCandidates)-1].Diagnostic, "behavioral_coverage_draft") {
 		t.Fatalf("rejected candidate evidence missing: %+v", state.RejectedPlanCandidates)
 	}
 	if strings.TrimSpace(state.PlanPath) == "" {
@@ -171,10 +273,21 @@ func TestFeaturePlannerTUIDirectAnswerResumesOpenQuestionSession(t *testing.T) {
 	}
 	for _, want := range []string{
 		"# Feature Planner Candidate",
-		"Status: " + featureplanner.FeatureStatePlanningRepair,
+		"Status: " + featureplanner.FeatureStatePlanningStuck,
 		"Route collapse dispatch through a slim event helper.",
 		"pkg/collapse_event.go",
 		"pkg/collapse_event_test.go",
+		"## Coverage Review Summary",
+		"- Behaviors: 1",
+		"- Concrete test cases: 0",
+		"- Test files: 1",
+		"- Required commands: 1",
+		"- Behaviors missing concrete test cases: 1",
+		"## Behavior Review",
+		"### Behavior: TDD-COLLAPSE-EVENT - Collapse dispatch routes through helper.",
+		"- Concrete tests: No concrete test cases recorded.",
+		"## Traceability Matrix",
+		"| TDD-COLLAPSE-EVENT |   |   |   |   | pkg/collapse_event_test.go | go test ./pkg | CollapseEvent helper |",
 		"## Test Obligations",
 		"TDD-COLLAPSE-EVENT - Collapse dispatch routes through helper.",
 		"## Invariants",
@@ -197,7 +310,7 @@ func TestFeaturePlannerTUIDirectAnswerResumesOpenQuestionSession(t *testing.T) {
 	m.renderPlanPanelContent()
 
 	renderedPlan := m.planViewport.View()
-	for _, want := range []string{"▾ Feature Planner Candidate", "▾ Test Obligations", "▾ Atoms", "CollapseEvent helper"} {
+	for _, want := range []string{"▾ Feature Planner Candidate", "▾ Coverage Review Summary", "▾ Behavior Review", "▾ Traceability Matrix", "CollapseEvent helper"} {
 		if !strings.Contains(renderedPlan, want) {
 			t.Fatalf("rendered plan missing %q:\n%s", want, renderedPlan)
 		}
@@ -212,9 +325,8 @@ func TestFeaturePlannerTUIDirectAnswerResumesOpenQuestionSession(t *testing.T) {
 		t.Fatal("Enter should collapse generated Atoms section")
 	}
 
-	collapsedPlan := m.planViewport.View()
-	if !strings.Contains(collapsedPlan, "▸ Atoms") || strings.Contains(collapsedPlan, "Summary: Create CollapseEvent helper and route dispatch through it.") {
-		t.Fatalf("generated Atoms section did not collapse cleanly:\n%s", collapsedPlan)
+	if rows := m.currentPlanSelectableRows(); atomsIdx >= len(rows) || !m.plan.collapsedHeadings[rows[atomsIdx].HeadingKey] {
+		t.Fatalf("generated Atoms section was not marked collapsed: %+v", rows)
 	}
 }
 
@@ -399,11 +511,11 @@ func TestFeaturePlannerTUIDirectOperatorQuestionDoesNotConsumeChatQuestions(t *t
 		QuestionSummary:   "Authorize CollapseEvent new files",
 		QuestionKind:      "external_answer_required",
 		BlockingClaim:     "Missing helper and test files require operator approval.",
-		RequestedDecision: "Approve creating pkg/collapse_event.go and pkg/collapse_event_test.go.",
+		RequestedDecision: "Approve creating pkg/collapse_event.go and pkg/collapse_event_test.go and provide the exact verification command for this project.",
 		AuthorityRequired: "operator_approval",
 		RequiredBefore:    "plan_approval",
 		AffectedPaths:     []string{"pkg/collapse_event.go", "pkg/collapse_event_test.go"},
-		AffectedFields:    []string{"new_file_authorization"},
+		AffectedFields:    []string{"new_file_authorization", "verification_command"},
 	}}
 	if _, err := featureplanner.SaveState(projectRoot, &state); err != nil {
 		t.Fatalf("SaveState: %v", err)
@@ -421,6 +533,7 @@ func TestFeaturePlannerTUIDirectOperatorQuestionDoesNotConsumeChatQuestions(t *t
 		"Is this information model-generated, or is it a harness template?",
 		"Can we talk about the design plan first?",
 		"What paths are you asking me to approve?",
+		"Update me on the plan.",
 	} {
 		if m.directFeaturePlannerShouldConsumeOperatorInput(input) {
 			t.Fatalf("chat question should not be consumed as feature-planner approval: %q", input)
@@ -436,6 +549,44 @@ func TestFeaturePlannerTUIDirectOperatorQuestionDoesNotConsumeChatQuestions(t *t
 	} {
 		if !m.directFeaturePlannerShouldConsumeOperatorInput(input) {
 			t.Fatalf("explicit operator answer should resume feature planner: %q", input)
+		}
+	}
+
+	for _, input := range []string{
+		"Yes, use existing files instead.",
+		"Approved, but change the paths before continuing.",
+	} {
+		if !m.directFeaturePlannerShouldConsumeOperatorInput(input) {
+			t.Fatalf("revision-shaped approval should stay in feature-planner lane: %q", input)
+		}
+		if !directFeaturePlannerInputLooksPlanRevision(input) {
+			t.Fatalf("revision-shaped approval should be routed as plan revision: %q", input)
+		}
+	}
+}
+
+func TestFeaturePlannerOperatorInputClassifiesPolitePlanRevisions(t *testing.T) {
+	for _, input := range []string{
+		"Can you add more info to the plan?",
+		"Could you add more detail to the plan?",
+		"Please flesh out the plan with persistence and multi-repo support.",
+		"Add persistent memory requirements to the plan.",
+		"Can you update the plan with this in mind?",
+	} {
+		if got := classifyFeaturePlannerOperatorInput(input); got != featurePlannerOperatorInputRevision {
+			t.Fatalf("plan refinement request should classify as revision, input=%q got=%q", input, got)
+		}
+	}
+
+	for _, input := range []string{
+		"Can we discuss why this is blocked first?",
+		"What paths are you asking me to approve?",
+		"Update me on the plan.",
+		"Should we expand the test suite?",
+		"Use the source facts from the current branch.",
+	} {
+		if got := classifyFeaturePlannerOperatorInput(input); got != featurePlannerOperatorInputNone {
+			t.Fatalf("discussion/source-evidence question should stay in chat, input=%q got=%q", input, got)
 		}
 	}
 }
@@ -531,11 +682,11 @@ func TestFeaturePlannerTUIE2EOpenApprovalQuestionKeepsChatInteractive(t *testing
 		QuestionSummary:   "Authorize CollapseEvent new files",
 		QuestionKind:      "external_answer_required",
 		BlockingClaim:     "Missing helper and test files require operator approval.",
-		RequestedDecision: "Approve creating pkg/collapse_event.go and pkg/collapse_event_test.go.",
+		RequestedDecision: "Approve creating pkg/collapse_event.go and pkg/collapse_event_test.go and provide the exact verification command for this project.",
 		AuthorityRequired: "operator_approval",
 		RequiredBefore:    "plan_approval",
 		AffectedPaths:     []string{"pkg/collapse_event.go", "pkg/collapse_event_test.go"},
-		AffectedFields:    []string{"new_file_authorization"},
+		AffectedFields:    []string{"new_file_authorization", "verification_command"},
 	}}
 	if _, err := featureplanner.SaveState(projectRoot, &state); err != nil {
 		t.Fatalf("SaveState: %v", err)
@@ -562,7 +713,7 @@ func TestFeaturePlannerTUIE2EOpenApprovalQuestionKeepsChatInteractive(t *testing
 		t.Fatalf("ordinary chat must not create authority deltas: %+v", afterChat.AuthorityDeltas)
 	}
 
-	m.input.SetValue("Approved.")
+	m.input.SetValue("Approved. Use go test ./pkg.")
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(*Model)
 	m = waitForFeaturePlannerTUIStreamDone(t, m)
@@ -575,7 +726,9 @@ func TestFeaturePlannerTUIE2EOpenApprovalQuestionKeepsChatInteractive(t *testing
 	if len(afterApproval.OpenQuestions) != 1 || afterApproval.OpenQuestions[0].Status != "answered" {
 		t.Fatalf("explicit approval should answer planner question: %+v", afterApproval.OpenQuestions)
 	}
-	if len(afterApproval.AuthorityDeltas) != 1 || afterApproval.AuthorityDeltas[0].Actual != "Approved." {
+	if len(afterApproval.AuthorityDeltas) != 1 ||
+		afterApproval.AuthorityDeltas[0].Actual != "Approved. Use go test ./pkg." ||
+		!slices.Contains(afterApproval.AuthorityDeltas[0].AffectedFields, "verification_command") {
 		t.Fatalf("explicit approval should create typed authority delta: %+v", afterApproval.AuthorityDeltas)
 	}
 	if strings.TrimSpace(afterApproval.PlanPath) == "" {
@@ -587,7 +740,7 @@ func TestFeaturePlannerTUIE2EOpenApprovalQuestionKeepsChatInteractive(t *testing
 	}
 	for _, want := range []string{
 		"# Feature Planner Candidate",
-		"Status: " + featureplanner.FeatureStatePlanningRepair,
+		"Status: " + featureplanner.FeatureStatePlanningStuck,
 		"Route collapse dispatch through a slim event helper.",
 		"pkg/collapse_event.go",
 		"pkg/collapse_event_test.go",
@@ -667,6 +820,127 @@ func TestFeaturePlannerTUIFollowupQuestionUsesActivePlanArtifactEvidence(t *test
 	if len(client.messages) == 0 || !featurePlannerRequestMessagesContain(client.messages[0], "Active feature-planner plan artifact") ||
 		!featurePlannerRequestMessagesContain(client.messages[0], "Proposed paths to create:") {
 		t.Fatalf("normal chat request did not receive active plan context: %#v", client.messages)
+	}
+}
+
+func TestFeaturePlannerPlanExecuteRunnerDoesNotFeedPromptToDirectFeaturePlanner(t *testing.T) {
+	projectRoot := t.TempDir()
+	state := featureplanner.NewState("question-session", "Plan greenfield LLM brain MVP.", "", 3, time.Unix(1, 0).UTC())
+	state.Status = featureplanner.FeatureStatePlanningQuestion
+	state.PlanningLoop.State = featureplanner.FeatureStatePlanningQuestion
+	state.OpenQuestions = []featureplanner.PlannerQuestion{{
+		ID:                "q-001",
+		Status:            "open",
+		QuestionSummary:   "Approve new files",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "The empty workspace requires explicit authorization.",
+		RequestedDecision: "Approve creating brain/core.py and tests/test_brain.py.",
+		AuthorityRequired: "operator_approval",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     []string{"brain/core.py", "tests/test_brain.py"},
+		AffectedFields:    []string{"new_file_authorization", "verification_command"},
+	}}
+	if _, err := featureplanner.SaveState(projectRoot, &state); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+
+	client := &scriptedLLMClient{responses: []string{"plan-execute model response"}}
+	m := &Model{
+		client:                        client,
+		directFeaturePlannerSessionID: state.SessionID,
+		cfg: config.Config{
+			Chat:      config.Chat{ProjectRoot: projectRoot},
+			Workspace: config.Workspace{Root: projectRoot, CWD: projectRoot},
+		},
+		workspace: workspace.NewManager(config.Workspace{Root: projectRoot, CWD: projectRoot}),
+	}
+
+	runner := m.newPlanExecutePromptRunner(context.Background())
+	_, _ = runner(m.cfg, "# Plan-then-execute (planner phase)\n\nmodel-facing child prompt", planexecute.RunOptions{
+		TaskFamily: string(workerruntime.TaskFamilyPlanThenExecutePlanner),
+	}, nil)
+
+	if m.directFeaturePlannerSessionID != state.SessionID {
+		t.Fatalf("direct feature-planner session was not restored: %q", m.directFeaturePlannerSessionID)
+	}
+	after := loadFeaturePlannerCommandStateFile(t, filepath.Join(projectRoot, ".idiom", "feature-planner", state.SessionID, "state.json"))
+	if len(after.OpenQuestions) != 1 || after.OpenQuestions[0].Status != "open" || after.OpenQuestions[0].Answer != "" {
+		t.Fatalf("nested plan-execute prompt was consumed as feature-planner answer: %+v", after.OpenQuestions)
+	}
+}
+
+func TestFeaturePlannerTUIInteractivePlanUpdateResumesDirectFeaturePlanner(t *testing.T) {
+	projectRoot := t.TempDir()
+	cfg := config.Default()
+	cfg.Chat.AutoStartServer = false
+	cfg.Chat.AttachInstructionFiles = false
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	cfg.Chat.ProjectRoot = projectRoot
+	cfg.Workspace.Root = projectRoot
+	cfg.Workspace.CWD = projectRoot
+	cfg.MCP = nil
+
+	state := featureplanner.NewState("question-session", "Plan greenfield LLM brain MVP.", "", 3, time.Unix(1, 0).UTC())
+	state.Status = featureplanner.FeatureStatePlanningQuestion
+	state.OpenQuestions = []featureplanner.PlannerQuestion{{
+		ID:                "question-new-files",
+		Status:            "open",
+		QuestionSummary:   "Approve or revise greenfield project scope",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "The empty workspace requires explicit authorization before creating proposed files.",
+		RequestedDecision: "Approve creation of src/memory.py and tests/test_memory.py, or revise the greenfield project setup.",
+		AuthorityRequired: "operator_approval",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     []string{"src/memory.py", "tests/test_memory.py"},
+		AffectedFields:    []string{"new_file_authorization", "verification_command"},
+	}}
+	if _, err := featureplanner.SaveState(projectRoot, &state); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+
+	client := &scriptedLLMClient{responses: []string{
+		`{"tool":"ask_planner_question","question_summary":"Confirm persistence and multi-repo MVP boundaries","blocking_claim":"The revised plan now targets persistent memory and multi-repo support, so it needs operator confirmation of the MVP boundary before approval.","requested_decision":"Confirm that the MVP should include disk-backed memory storage, repository-scoped namespaces, and tests for cross-repo isolation.","question_kind":"external_answer_required","authority_required":"operator_approval","required_before":"plan_approval","affected_paths":["src/memory.py","src/repository.py","tests/test_memory.py","tests/test_repository.py"],"affected_fields":["requirements_scope","new_file_authorization","verification_command"]}`,
+	}}
+	m := New(cfg)
+	defer m.Close()
+	m.client = client
+	m.ready = true
+	m.events = make(chan tea.Msg, 16)
+	m.input = textarea.New()
+	m.width = 100
+	m.height = 24
+	m.resize()
+	m.directFeaturePlannerSessionID = state.SessionID
+
+	revision := "Can you update the plan with persistent memory and multi-repo support in mind?"
+	m.input.SetValue(revision)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(*Model)
+	m = waitForFeaturePlannerTUIStreamDone(t, m)
+
+	if len(client.messages) != 1 {
+		t.Fatalf("plan update should resume feature-planner exactly once, got %#v", client.messages)
+	}
+	if !featurePlannerRequestMessagesContain(client.messages[0], "Operator plan revision instruction:") ||
+		!featurePlannerRequestMessagesContain(client.messages[0], revision) {
+		t.Fatalf("interactive plan update did not reach feature-planner revision prompt: %#v", client.messages)
+	}
+	for _, message := range m.messages {
+		if message.Role == "user" && message.Content == revision {
+			t.Fatalf("direct feature-planner revision must not be appended as normal chat history: %#v", m.messages)
+		}
+	}
+
+	after := loadFeaturePlannerCommandStateFile(t, filepath.Join(projectRoot, ".idiom", "feature-planner", state.SessionID, "state.json"))
+	if len(after.OpenQuestions) != 2 || after.OpenQuestions[0].Status != "answered" || after.OpenQuestions[1].Status != "open" {
+		t.Fatalf("plan update should answer prior approval question and open revised planner question: %+v", after.OpenQuestions)
+	}
+	if after.OpenQuestions[0].Answer != revision {
+		t.Fatalf("prior question did not retain plan update answer: %+v", after.OpenQuestions[0])
+	}
+	if !strings.Contains(after.OpenQuestions[1].QuestionSummary, "persistence and multi-repo") {
+		t.Fatalf("revised planner question not surfaced: %+v", after.OpenQuestions[1])
 	}
 }
 
@@ -905,6 +1179,65 @@ func waitForFeaturePlannerTUIStreamDone(t *testing.T, m *Model) *Model {
 	}
 }
 
+func featurePlannerTestConfig(projectRoot string) config.Config {
+	cfg := config.Default()
+	cfg.Chat.AutoStartServer = false
+	cfg.Chat.AttachInstructionFiles = false
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	cfg.Chat.ProjectRoot = projectRoot
+	cfg.Workspace.Root = projectRoot
+	cfg.Workspace.CWD = projectRoot
+	cfg.MCP = nil
+
+	return cfg
+}
+
+func saveAcceptedSourceFeaturePlannerQuestionState(t *testing.T, projectRoot string, sessionID string) featureplanner.FeatureState {
+	t.Helper()
+
+	state := featureplanner.NewState(sessionID, "Plan LLM brain MVP.", "", 3, time.Unix(1, 0).UTC())
+	state.Status = featureplanner.FeatureStatePlanningQuestion
+	state.PlanningLoop.State = featureplanner.FeatureStatePlanningQuestion
+	state.OpenQuestions = []featureplanner.PlannerQuestion{{
+		ID:                "question-source-facts",
+		Status:            "open",
+		QuestionSummary:   "Provide accepted source facts for helper signatures",
+		QuestionKind:      "external_answer_required",
+		BlockingClaim:     "The plan needs accepted source facts before helper calls can be approved.",
+		RequestedDecision: "Provide accepted source facts for helper signatures.",
+		AuthorityRequired: "accepted_source",
+		RequiredBefore:    "plan_approval",
+		AffectedPaths:     []string{"llm_brain/query_handler.py"},
+		AffectedFields:    []string{"source_localization"},
+	}}
+	if _, err := featureplanner.SaveState(projectRoot, &state); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+
+	return state
+}
+
+func newReadyFeaturePlannerTUITestModel(t *testing.T, cfg config.Config, client *scriptedLLMClient, sessionID string, interactive bool) *Model {
+	t.Helper()
+
+	m := New(cfg)
+	t.Cleanup(m.Close)
+	m.client = client
+	m.runner.Client = client
+	m.ready = true
+	m.directFeaturePlannerSessionID = sessionID
+	if interactive {
+		m.events = make(chan tea.Msg, 16)
+		m.input = textarea.New()
+		m.width = 100
+		m.height = 24
+		m.resize()
+	}
+
+	return m
+}
+
 func featurePlannerRequestMessagesContain(messages []llama.ChatMessage, text string) bool {
 	for _, message := range messages {
 		if strings.Contains(message.Content, text) {
@@ -959,6 +1292,18 @@ func TestFeaturePlannerTUIDirectAcceptedSourceQuestionConsumesOnlyStructuredAnsw
 	} {
 		if !m.directFeaturePlannerShouldConsumeOperatorInput(input) {
 			t.Fatalf("structured accepted-source answer should be consumed: %q", input)
+		}
+	}
+
+	for _, input := range []string{
+		"Can you add more detail to the plan?",
+		"Please update the plan with persistent memory and multi-repo support.",
+	} {
+		if !m.directFeaturePlannerShouldConsumeOperatorInput(input) {
+			t.Fatalf("explicit plan revision should resume feature planner even while accepted-source question is open: %q", input)
+		}
+		if !directFeaturePlannerInputLooksPlanRevision(input) {
+			t.Fatalf("accepted-source plan revision should be classified as revision: %q", input)
 		}
 	}
 }
@@ -1028,10 +1373,34 @@ func TestFeaturePlannerPlanTabHidesRawSummaryAndRendersStructuredCoverage(t *tes
 		"# Feature Planner Candidate",
 		"Status: " + featureplanner.FeatureStatePlanningRepair,
 		"Candidate: candidate-hash",
+		"## Coverage Review Summary",
+		"- Behaviors: 1",
+		"- Behavior surfaces: 2",
+		"- In-scope surfaces: 1",
+		"- In-scope surfaces missing TDD obligations: 0",
+		"- Open surface questions: 0",
+		"- Variants: 11",
+		"- Domain invariants: 2",
+		"- Concrete test cases: 8",
+		"- Test files: 1",
+		"- Required commands: 1",
+		"- Behaviors missing concrete test cases: 0",
+		"## Behavior Review",
+		"### Behavior: TDD-COLLAPSE-EVENT - Collapse dispatch routes through helper.",
+		"- Variants: BDD-COLLAPSE; FM-COLLAPSE; SM-COLLAPSE; FUZZ-COLLAPSE; RAG-COLLAPSE; SEC-COLLAPSE; PRIV-COLLAPSE; PROVIDER-COLLAPSE; OBS-COLLAPSE; PERF-COLLAPSE; E2E-COLLAPSE",
+		"- Invariants: INV-COLLAPSE; event identity is preserved",
+		"- Concrete tests: TDD-COLLAPSE-EVENT; FuzzCollapseEventPayload; TestCollapseRAGEval; TestCollapseRejectsOversizedPayload; TestCollapsePayloadRedaction; TestCollapseProviderContract; TestCollapseDispatchTelemetry; e2e/collapse_dispatch_test.go",
+		"- Surfaces: SURF-COLLAPSE-DOMAIN: domain_logic [accepted]",
+		"## Traceability Matrix",
+		"| TDD-COLLAPSE-EVENT | SDD-COLLAPSE-EVENT-1 | BDD-COLLAPSE<br>FM-COLLAPSE<br>SM-COLLAPSE<br>FUZZ-COLLAPSE<br>RAG-COLLAPSE<br>SEC-COLLAPSE<br>PRIV-COLLAPSE<br>PROVIDER-COLLAPSE<br>OBS-COLLAPSE<br>PERF-COLLAPSE<br>E2E-COLLAPSE | INV-COLLAPSE<br>event identity is preserved | TDD-COLLAPSE-EVENT<br>FuzzCollapseEventPayload",
 		"## Requirements",
 		"REQ-COLLAPSE: When collapse dispatch is requested, the system shall route through CollapseEvent. (event-driven)",
 		"Objective: Route collapse dispatch through a slim event helper.",
 		"Success criterion: Collapse dispatch uses the helper.",
+		"## Behavior Surface Inventory",
+		"SURF-COLLAPSE-DOMAIN: domain_logic [in_scope] - collapse dispatch is the requested behavior",
+		"Surface SURF-COLLAPSE-DOMAIN: domain_logic [in_scope] - collapse dispatch is the requested behavior obligation: TDD-COLLAPSE-EVENT",
+		"SURF-COLLAPSE-TRANSPORT: api_transport [not_required] - no external transport boundary is changed",
 		"## Rules & Examples",
 		"RULE-COLLAPSE: Collapse dispatch delegates through the helper [requirement: REQ-COLLAPSE]",
 		"Example EX-COLLAPSE: collapse request with local event payload (concrete data)",
@@ -1119,47 +1488,67 @@ func featurePlannerStructuredCoverageDraftForTest() *featureplanner.BehavioralCo
 		Status:    "draft",
 		Tier:      "contract_high",
 		Requirements: []featureplanner.CoverageDraftRequirement{{
-			ID:        "REQ-COLLAPSE",
-			Pattern:   "event-driven",
-			Statement: "When collapse dispatch is requested, the system shall route through CollapseEvent.",
+			ID:          "REQ-COLLAPSE",
+			Pattern:     "event-driven",
+			Statement:   "When collapse dispatch is requested, the system shall route through CollapseEvent.",
+			Obligations: []string{"TDD-COLLAPSE-EVENT"},
 		}},
 		ExampleRules: []featureplanner.CoverageDraftExampleRule{{
 			ID:            "RULE-COLLAPSE",
 			RequirementID: "REQ-COLLAPSE",
 			Rule:          "Collapse dispatch delegates through the helper",
 			Examples: []featureplanner.CoverageDraftExample{{
-				ID:           "EX-COLLAPSE",
-				Description:  "collapse request with local event payload",
-				ConcreteData: map[string]string{"event": "collapse"},
+				ID:               "EX-COLLAPSE",
+				Description:      "collapse request with local event payload",
+				ConcreteData:     map[string]string{"event": "collapse"},
+				ConcreteDataRefs: []string{"fixtures/collapse-event.json"},
+			}, {
+				ID:               "EX-COLLAPSE-REJECT",
+				Description:      "malformed collapse request is rejected",
+				ConcreteData:     map[string]string{"event": ""},
+				ConcreteDataRefs: []string{"fixtures/collapse-event-malformed.json"},
+				Negative:         true,
 			}},
 		}},
 		Scenarios: []featureplanner.CoverageDraftScenario{{
-			ID:            "BDD-COLLAPSE",
-			RequirementID: "REQ-COLLAPSE",
-			Given:         []string{"collapse dispatcher receives event payload"},
-			When:          []string{"dispatch runs"},
-			Then:          []string{"CollapseEvent helper is invoked"},
-			ConcreteData:  map[string]string{"event": "collapse"},
-			Obligations:   []string{"TDD-COLLAPSE-EVENT"},
+			ID:               "BDD-COLLAPSE",
+			RequirementID:    "REQ-COLLAPSE",
+			RuleID:           "RULE-COLLAPSE",
+			Given:            []string{"collapse dispatcher receives event payload"},
+			When:             []string{"dispatch runs"},
+			Then:             []string{"CollapseEvent helper is invoked"},
+			ConcreteData:     map[string]string{"event": "collapse"},
+			ConcreteDataRefs: []string{"fixtures/collapse-scenario.json"},
+			Obligations:      []string{"TDD-COLLAPSE-EVENT"},
+			Tags:             []string{"contract"},
 		}},
 		Invariants: []featureplanner.CoverageDraftInvariant{{
-			ID:          "INV-COLLAPSE",
-			Statement:   "helper invocation preserves event identity",
-			Obligations: []string{"TDD-COLLAPSE-EVENT"},
+			ID:                    "INV-COLLAPSE",
+			Statement:             "helper invocation preserves event identity",
+			PropertyBasedTestRefs: []string{"TestCollapsePreservesEventIdentity"},
+			Obligations:           []string{"TDD-COLLAPSE-EVENT"},
 		}},
 		FailureModes: []featureplanner.CoverageDraftFailureMode{{
-			ID:          "FM-COLLAPSE",
-			Mode:        "helper not invoked",
-			Mitigation:  "route through helper or fail test",
-			Obligations: []string{"TDD-COLLAPSE-EVENT"},
+			ID:                 "FM-COLLAPSE",
+			Mode:               "helper not invoked",
+			Mitigation:         "route through helper or fail test",
+			RPN:                1,
+			MitigationTestRefs: []string{"TestCollapseRequiresHelper"},
+			Obligations:        []string{"TDD-COLLAPSE-EVENT"},
 		}},
+		SurfaceInventory: []featureplanner.CoverageDraftSurfaceDecision{
+			{ID: "SURF-COLLAPSE-DOMAIN", Surface: "domain_logic", Status: "in_scope", Rationale: "collapse dispatch is the requested behavior", Obligations: []string{"TDD-COLLAPSE-EVENT"}},
+			{ID: "SURF-COLLAPSE-TRANSPORT", Surface: "api_transport", Status: "not_required", Rationale: "no external transport boundary is changed"},
+		},
 		StateMachines: []featureplanner.CoverageDraftStateMachine{{
 			ID:     "SM-COLLAPSE",
 			States: []string{"requested", "dispatched"},
 			Transitions: []featureplanner.CoverageDraftTransition{{
-				From:  "requested",
-				Event: "dispatch",
-				To:    "dispatched",
+				ID:       "TR-COLLAPSE-DISPATCH",
+				From:     "requested",
+				Event:    "dispatch",
+				To:       "dispatched",
+				TestRefs: []string{"TestCollapseDispatchTransition"},
 			}},
 			Obligations: []string{"TDD-COLLAPSE-EVENT"},
 		}},
@@ -1235,15 +1624,18 @@ func featurePlannerStructuredCoverageDraftForTest() *featureplanner.BehavioralCo
 			Obligations: []string{"TDD-COLLAPSE-EVENT"},
 		}},
 		TestObligations: []featureplanner.CoverageDraftTestObligation{{
-			ID:       "TDD-COLLAPSE-EVENT",
-			Type:     "contract",
-			Behavior: "Collapse dispatch routes through helper.",
-			Command:  "go test ./pkg",
+			ID:             "TDD-COLLAPSE-EVENT",
+			Type:           "contract",
+			Behavior:       "Collapse dispatch routes through helper.",
+			Owner:          "featureplanner",
+			Command:        "go test ./pkg",
+			RequiredBefore: "implementation",
 		}},
 		Verification: []featureplanner.CoverageDraftVerification{{
-			ID:      "VERIFY-COLLAPSE",
-			Gate:    "contract",
-			Command: "go test ./pkg",
+			ID:          "VERIFY-COLLAPSE",
+			Gate:        "contract",
+			Command:     "go test ./pkg",
+			Obligations: []string{"TDD-COLLAPSE-EVENT"},
 		}},
 		OpenQuestions: []featureplanner.CoverageDraftOpenQuestion{{
 			ID:       "Q-COLLAPSE",
@@ -1258,6 +1650,7 @@ func TestFeaturePlannerPlanTabDoesNotFabricateCoverageForUnmappedTDD(t *testing.
 	plan.Atoms[0].Summary = ""
 	plan.Atoms[0].TDDObligations = []string{"TDD-MISSING"}
 	plan.Atoms[0].TestFirst.ObligationRefs = []string{"TDD-MISSING"}
+	plan.Atoms[0].PlannedTDDSnapshot.ObligationIDs = []string{"TDD-MISSING"}
 	state := featureplanner.NewState("plan-session", "Implement CollapseEvent helper.", "", 3, time.Unix(1, 0).UTC())
 	state.Status = featureplanner.FeatureStatePlanningRepair
 
@@ -1267,6 +1660,12 @@ func TestFeaturePlannerPlanTabDoesNotFabricateCoverageForUnmappedTDD(t *testing.
 		t.Fatalf("unmapped TDD refs should not produce behavior coverage:\n%s", body)
 	}
 	for _, want := range []string{
+		"## Coverage Review Summary",
+		"- Concrete test cases: 0",
+		"- Behaviors missing concrete test cases: 1",
+		"### Behavior: TDD-MISSING",
+		"- Concrete tests: No concrete test cases recorded.",
+		"| TDD-MISSING | SDD-COLLAPSE-EVENT-1 |   |   |   | pkg/collapse_event_test.go | go test ./pkg | CollapseEvent helper |",
 		"## Failure Modes",
 		"Atom CollapseEvent helper: Unmapped TDD ref: TDD-MISSING",
 		"## Invariants",
@@ -1277,6 +1676,123 @@ func TestFeaturePlannerPlanTabDoesNotFabricateCoverageForUnmappedTDD(t *testing.
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("unmapped coverage plan missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestFeaturePlannerPlanTabCountsCommandsSeparatelyFromConcreteTests(t *testing.T) {
+	plan := featurePlannerCommandStandaloneCollapsePlan()
+	plan.TDDContract.Obligations = []featureplanner.TDDObligation{{
+		ID:             "TDD-MEMORY",
+		Behavior:       "Memory storage and retrieval functions work correctly with a vector store.",
+		Command:        "python -m pytest tests/test_memory.py",
+		RequiredBefore: "implementation",
+	}}
+	plan.Atoms = []featureplanner.FeatureAtomPlan{
+		{
+			ID:                "atom-memory-core",
+			Title:             "Implement memory storage and retrieval core",
+			RequiredEditPaths: []string{"src/memory.py", "tests/test_memory.py"},
+			TDDObligations:    []string{"TDD-MEMORY"},
+			RequiredTests:     []string{"python -m pytest tests/test_memory.py"},
+			TestFirst: featureplanner.TestFirstPlan{
+				ObligationRefs:    []string{"TDD-MEMORY"},
+				Commands:          []string{"python -m pytest tests/test_memory.py"},
+				BaselineRequired:  true,
+				TestArtifactPaths: []string{"tests/test_memory.py"},
+			},
+		},
+		{
+			ID:                "atom-agent-context",
+			Title:             "Integrate memory into agent context",
+			RequiredEditPaths: []string{"src/agent.py", "tests/test_agent.py"},
+			TDDObligations:    []string{"TDD-MEMORY"},
+			RequiredTests:     []string{"python -m pytest tests/test_agent.py"},
+			TestFirst: featureplanner.TestFirstPlan{
+				ObligationRefs:    []string{"TDD-MEMORY"},
+				Commands:          []string{"python -m pytest tests/test_agent.py"},
+				BaselineRequired:  true,
+				TestArtifactPaths: []string{"tests/test_agent.py"},
+			},
+		},
+	}
+
+	state := featureplanner.NewState("plan-session", "Build an LLM brain MVP.", "", 3, time.Unix(1, 0).UTC())
+	state.Status = featureplanner.FeatureStatePlanningQuestion
+	body := renderFeaturePlannerPlanTabMarkdown(state, "state.json", plan, featureplanner.RejectedPlanCandidate{})
+
+	for _, want := range []string{
+		"## Coverage Review Summary",
+		"- Behaviors: 1",
+		"- Variants: 0",
+		"- Domain invariants: 0",
+		"- Concrete test cases: 0",
+		"- Test files: 2",
+		"- Required commands: 2",
+		"- Behaviors missing concrete test cases: 1",
+		"### Behavior: TDD-MEMORY - Memory storage and retrieval functions work correctly with a vector store.",
+		"- Atoms: Implement memory storage and retrieval core; Integrate memory into agent context",
+		"- Concrete tests: No concrete test cases recorded.",
+		"- Test files: tests/test_memory.py; tests/test_agent.py",
+		"- Commands: python -m pytest tests/test_memory.py; python -m pytest tests/test_agent.py",
+		"| TDD-MEMORY |   |   |   |   | tests/test_memory.py<br>tests/test_agent.py | python -m pytest tests/test_memory.py<br>python -m pytest tests/test_agent.py | Implement memory storage and retrieval core<br>Integrate memory into agent context |",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("plan tab missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestFeaturePlannerPlanTabShowsProposedFilesNearTop(t *testing.T) {
+	plan := featurePlannerCommandStandaloneCollapsePlan()
+	plan.Atoms = []featureplanner.FeatureAtomPlan{
+		{
+			ID:                "atom-memory-core",
+			Title:             "Implement memory core",
+			RequiredEditPaths: []string{"src/memory.py", "tests/test_memory.py"},
+			AllowedEditPaths:  []string{"pyproject.toml"},
+			TestFirst: featureplanner.TestFirstPlan{
+				TestArtifactPaths: []string{"tests/test_memory.py"},
+			},
+			PlannedTDDSnapshot: featureplanner.PlannedTDDSnapshot{
+				TestArtifactPaths: []string{"tests/test_memory_integration.py"},
+			},
+		},
+	}
+	state := featureplanner.NewState("plan-session", "Build an LLM brain MVP.", "", 3, time.Unix(1, 0).UTC())
+	state.Status = featureplanner.FeatureStatePlanningQuestion
+
+	body := renderFeaturePlannerPlanTabMarkdown(state, "state.json", plan, featureplanner.RejectedPlanCandidate{})
+	for _, want := range []string{
+		"## Proposed Files",
+		"- Required edit paths (2):",
+		"  - src/memory.py",
+		"  - tests/test_memory.py",
+		"- Allowed candidate edit paths (1):",
+		"  - pyproject.toml",
+		"- Test artifact paths (2):",
+		"  - tests/test_memory.py",
+		"  - tests/test_memory_integration.py",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("plan tab missing proposed file entry %q:\n%s", want, body)
+		}
+	}
+	if proposedIdx, coverageIdx := strings.Index(body, "## Proposed Files"), strings.Index(body, "## Coverage Review Summary"); proposedIdx < 0 || coverageIdx < 0 || proposedIdx > coverageIdx {
+		t.Fatalf("proposed files should render before coverage summary:\n%s", body)
+	}
+
+	path := filepath.Join(t.TempDir(), "plan.md")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write plan tab artifact: %v", err)
+	}
+	m := planPanelTestModel(path)
+	m.planViewport = viewport.New(100, 80)
+	m.renderPlanPanelContent()
+	rendered := m.planViewport.View()
+	for _, want := range []string{"▾ Proposed Files", "Required edit paths (2):", "src/memory.py", "tests/test_memory_integration.py"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered plan missing proposed file entry %q:\n%s", want, rendered)
 		}
 	}
 }
@@ -1459,6 +1975,18 @@ func TestFeaturePlannerPlanTabRendersAcceptedProductCoverageWithoutDraft(t *test
 			ScriptRefs:  []string{"internal/surfaces/tui/app/feature_planner_product_test.go"},
 			Obligations: []string{"TDD-PRODUCT"},
 		}},
+		SurfaceInventory: []featureplanner.AcceptedCoverageSurfaceDecision{{
+			ID:          "SURF-PRODUCT-DOMAIN",
+			Surface:     "domain_logic",
+			Status:      "in_scope",
+			Rationale:   "accepted product behavior is in scope",
+			Obligations: []string{"TDD-PRODUCT"},
+		}, {
+			ID:        "SURF-PRODUCT-TRANSPORT",
+			Surface:   "api_transport",
+			Status:    "not_required",
+			Rationale: "no external transport boundary is changed",
+		}},
 		Mutation: featureplanner.AcceptedCoverageMutation{Requirement: "required", MinScore: 80, Score: &score},
 	}
 	state := featureplanner.NewState("plan-session", "Implement product-backed coverage.", "", 3, time.Unix(1, 0).UTC())
@@ -1477,9 +2005,9 @@ func TestFeaturePlannerPlanTabRendersAcceptedProductCoverageWithoutDraft(t *test
 		"BDD-PRODUCT: Given accepted product coverage exists / When feature planner renders the plan / Then accepted BDD detail is visible (concrete data)",
 		"Security SEC-PRODUCT: coverage authority injection attack=planner-authored accepted coverage expected=rejected [tested] test: TestValidatePlanProductWorkflowContextRejectsPlannerAuthoredAcceptedCoverage",
 	} {
-		if !slices.Contains(featureplanner.AcceptedCoverageRowsBySection(sharedSections, featureplanner.CoverageSectionRequirements), sharedRow) &&
-			!slices.Contains(featureplanner.AcceptedCoverageRowsBySection(sharedSections, featureplanner.CoverageSectionScenarios), sharedRow) &&
-			!slices.Contains(featureplanner.AcceptedCoverageRowsBySection(sharedSections, featureplanner.CoverageSectionSecurityPrivacyRAGEvals), sharedRow) {
+		if !slices.Contains(featureplanner.CoverageRowsBySection(sharedSections, featureplanner.CoverageSectionRequirements), sharedRow) &&
+			!slices.Contains(featureplanner.CoverageRowsBySection(sharedSections, featureplanner.CoverageSectionScenarios), sharedRow) &&
+			!slices.Contains(featureplanner.CoverageRowsBySection(sharedSections, featureplanner.CoverageSectionSecurityPrivacyRAGEvals), sharedRow) {
 			t.Fatalf("shared projection missing row %q", sharedRow)
 		}
 		if !strings.Contains(body, sharedRow) {
@@ -1489,7 +2017,16 @@ func TestFeaturePlannerPlanTabRendersAcceptedProductCoverageWithoutDraft(t *test
 
 	for _, want := range []string{
 		"Accepted coverage authority: product_workflow",
+		"- Behavior surfaces: 2",
+		"- In-scope surfaces: 1",
+		"- In-scope surfaces missing TDD obligations: 0",
+		"- Open surface questions: 0",
+		"- Surfaces: SURF-PRODUCT-DOMAIN: domain_logic [accepted]",
 		"REQ-PRODUCT: When product dispatch is approved",
+		"## Behavior Surface Inventory",
+		"SURF-PRODUCT-DOMAIN: domain_logic [in_scope] - accepted product behavior is in scope",
+		"Surface SURF-PRODUCT-DOMAIN: domain_logic [in_scope] - accepted product behavior is in scope obligation: TDD-PRODUCT",
+		"SURF-PRODUCT-TRANSPORT: api_transport [not_required] - no external transport boundary is changed",
 		"BDD-PRODUCT: Given accepted product coverage exists / When feature planner renders the plan / Then accepted BDD detail is visible (concrete data)",
 		"E2E-PRODUCT: accepted coverage reaches feature planner plan tab [scripted]",
 		"E2E E2E-PRODUCT: accepted coverage reaches feature planner plan tab [scripted] script: internal/surfaces/tui/app/feature_planner_product_test.go",
@@ -1553,6 +2090,123 @@ func TestFeaturePlannerPlanTabRejectsSummaryOnlyCandidate(t *testing.T) {
 	}
 }
 
+func TestFeaturePlannerPlanTabRendersCanonicalArtifactAndApproval(t *testing.T) {
+	plan := featurePlannerCommandStandaloneCollapsePlan()
+	plan.Artifact = featureplanner.FeaturePlanArtifact{
+		ArtifactID:           "feature-collapse-event:feature-plan",
+		Revision:             3,
+		Digest:               "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		WorkspaceFingerprint: "sha256:workspace",
+		CreatedAt:            "2026-06-22T19:00:00Z",
+		UpdatedAt:            "2026-06-22T19:01:00Z",
+	}
+	plan.Approval = featureplanner.FeaturePlanApproval{
+		Status:               "approved",
+		Mode:                 "harness_policy",
+		EventID:              "approval-plan-session-rev-3",
+		Actor:                "harness",
+		Reason:               "durable_plan_contract_passed",
+		ApprovedAt:           "2026-06-22T19:01:00Z",
+		PlanRevision:         3,
+		PlanDigest:           plan.Artifact.Digest,
+		WorkspaceFingerprint: plan.Artifact.WorkspaceFingerprint,
+	}
+	state := featureplanner.NewState("plan-session", "Implement CollapseEvent helper.", "", 3, time.Unix(1, 0).UTC())
+	state.Status = featureplanner.FeatureStateDispatching
+	state.VerificationClosures = []featureplanner.VerificationClosure{{
+		EventID:              "verification-feature-collapse-event-atom-1-r3",
+		AtomID:               "atom-1",
+		Status:               "passed",
+		PlanRevision:         3,
+		PlanDigest:           plan.Artifact.Digest,
+		PlanArtifactID:       plan.Artifact.ArtifactID,
+		ApprovalEventID:      plan.Approval.EventID,
+		ChangedPaths:         []string{"pkg/collapse_event.go", "pkg/collapse_event_test.go"},
+		RequiredTestResults:  []featureplanner.VerificationCommandResult{{Command: "go test ./pkg", Status: "passed", Passed: true}},
+		TDDCommandResults:    []featureplanner.VerificationCommandResult{{Command: "go test ./pkg", Status: "passed", Passed: true, ObligationRefs: []string{"TDD-1"}}},
+		Verification:         []featureplanner.VerificationCheckResult{{Kind: "verification", Command: "go test ./pkg", Status: "ok"}},
+		WorkspaceFingerprint: plan.Artifact.WorkspaceFingerprint,
+	}}
+	state.ReleaseReadiness = featureplanner.ReleaseReadinessDecision{
+		Status:                      "ready",
+		EventID:                     "release-feature-collapse-event-feature-plan-r3",
+		PlanArtifactID:              plan.Artifact.ArtifactID,
+		PlanRevision:                3,
+		PlanDigest:                  plan.Artifact.Digest,
+		WorkspaceFingerprint:        plan.Artifact.WorkspaceFingerprint,
+		ApprovalEventID:             plan.Approval.EventID,
+		VerificationClosureEventIDs: []string{"verification-feature-collapse-event-atom-1-r3"},
+	}
+
+	body := renderFeaturePlannerPlanTabMarkdown(state, "state.json", plan, featureplanner.RejectedPlanCandidate{})
+
+	for _, want := range []string{
+		"Artifact: feature-collapse-event:feature-plan",
+		"Revision: 3",
+		"Digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		"Workspace: sha256:workspace",
+		"Approval: approved",
+		"Approval mode: harness_policy",
+		"Approval event: approval-plan-session-rev-3",
+		"## Verification Closures",
+		"atom-1: passed (plan r3)",
+		"Closure: verification-feature-collapse-event-atom-1-r3",
+		"Changed paths: pkg/collapse_event.go, pkg/collapse_event_test.go",
+		"Commands: go test ./pkg [passed]",
+		"Checks: verification `go test ./pkg` [ok]",
+		"## Release Readiness",
+		"Status: ready",
+		"Decision: release-feature-collapse-event-feature-plan-r3",
+		"Verification closures: verification-feature-collapse-event-atom-1-r3",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("plan tab missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestFeaturePlannerPlanTabDoesNotMixRejectedCandidateWithStaleReleaseState(t *testing.T) {
+	accepted := featurePlannerCommandStandaloneCollapsePlan()
+	accepted.Artifact = featureplanner.FeaturePlanArtifact{
+		ArtifactID:           "accepted:feature-plan",
+		Revision:             1,
+		Digest:               "sha256:accepted",
+		WorkspaceFingerprint: "sha256:workspace",
+	}
+	rejected := featurePlannerCommandStandaloneCollapsePlan()
+	rejected.Summary = "Rejected replacement candidate"
+
+	state := featureplanner.NewState("plan-session", "Implement CollapseEvent helper.", "", 3, time.Unix(1, 0).UTC())
+	state.Status = featureplanner.FeatureStatePlanningRepair
+	state.VerificationClosures = []featureplanner.VerificationClosure{{
+		EventID:        "verification-accepted-r1",
+		AtomID:         "atom-1",
+		Status:         "passed",
+		PlanRevision:   1,
+		PlanDigest:     accepted.Artifact.Digest,
+		PlanArtifactID: accepted.Artifact.ArtifactID,
+	}}
+	state.ReleaseReadiness = featureplanner.ReleaseReadinessDecision{
+		Status:                      "ready",
+		EventID:                     "release-accepted-r1",
+		PlanArtifactID:              accepted.Artifact.ArtifactID,
+		PlanRevision:                1,
+		PlanDigest:                  accepted.Artifact.Digest,
+		WorkspaceFingerprint:        accepted.Artifact.WorkspaceFingerprint,
+		VerificationClosureEventIDs: []string{"verification-accepted-r1"},
+	}
+
+	body := renderFeaturePlannerPlanTabMarkdown(state, "state.json", rejected, featureplanner.RejectedPlanCandidate{Plan: rejected, PlanHash: "sha256:rejected"})
+	if !strings.Contains(body, "Candidate: sha256:rejected") {
+		t.Fatalf("rejected candidate did not render:\n%s", body)
+	}
+	for _, stale := range []string{"## Verification Closures", "## Release Readiness", "release-accepted-r1", "verification-accepted-r1"} {
+		if strings.Contains(body, stale) {
+			t.Fatalf("plan tab mixed rejected candidate with stale lifecycle marker %q:\n%s", stale, body)
+		}
+	}
+}
+
 func TestFeaturePlannerPlanTabRenderedPanelShowsStructuredCoverageOnly(t *testing.T) {
 	root := t.TempDir()
 	plan := featurePlannerCommandStandaloneCollapsePlan()
@@ -1569,7 +2223,7 @@ func TestFeaturePlannerPlanTabRenderedPanelShowsStructuredCoverageOnly(t *testin
 	}
 
 	m := planPanelTestModel(path)
-	m.planViewport = viewport.New(120, 80)
+	m.planViewport = viewport.New(120, 160)
 	m.renderPlanPanelContent()
 
 	rendered := m.planViewport.View()
@@ -1580,6 +2234,12 @@ func TestFeaturePlannerPlanTabRenderedPanelShowsStructuredCoverageOnly(t *testin
 	}
 	for _, want := range []string{
 		"▾ Feature Planner Candidate",
+		"▾ Coverage Review Summary",
+		"Concrete test cases: 0",
+		"▾ Behavior Review",
+		"▾ Behavior: TDD-COLLAPSE-EVENT - Collapse dispatch routes through helper.",
+		"Concrete tests: No concrete test cases recorded.",
+		"▾ Traceability Matrix",
 		"▾ Requirements",
 		"▾ Test Obligations",
 		"TDD-COLLAPSE-EVENT - Collapse dispatch routes through helper.",
@@ -1596,6 +2256,42 @@ func TestFeaturePlannerPlanTabRenderedPanelShowsStructuredCoverageOnly(t *testin
 	if coverageIdx < 0 {
 		t.Fatalf("Test Obligations heading should be selectable:\n%s", rendered)
 	}
+
+	clickRow := -1
+	for i, line := range strings.Split(m.planViewport.View(), "\n") {
+		if strings.Contains(line, "Test Obligations") {
+			clickRow = i
+			break
+		}
+	}
+	if clickRow < 0 {
+		t.Fatalf("Test Obligations heading should be clickable:\n%s", rendered)
+	}
+	m.viewport.Width = 80
+	if _, handled := m.handleMouse(tea.MouseMsg{
+		X:      m.panelStartX() + 1,
+		Y:      3 + clickRow,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	}); !handled {
+		t.Fatal("mouse click should collapse generated Test Obligations section")
+	}
+	mouseCollapsed := m.planViewport.View()
+	if !strings.Contains(mouseCollapsed, "▸ Test Obligations") || strings.Contains(mouseCollapsed, "Atom CollapseEvent helper test artifact:") {
+		t.Fatalf("generated Test Obligations section did not collapse on click:\n%s", mouseCollapsed)
+	}
+	if _, handled := m.handleMouse(tea.MouseMsg{
+		X:      m.panelStartX() + 1,
+		Y:      3 + clickRow,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	}); !handled {
+		t.Fatal("second mouse click should expand generated Test Obligations section")
+	}
+	if expanded := m.planViewport.View(); !strings.Contains(expanded, "▾ Test Obligations") || !strings.Contains(expanded, "Atom CollapseEvent helper test artifact:") {
+		t.Fatalf("generated Test Obligations section did not expand on second click:\n%s", expanded)
+	}
+
 	m.plan.cursor = coverageIdx
 	if handled, _ := m.handlePlanPanelKey(tea.KeyMsg{Type: tea.KeyEnter}); !handled {
 		t.Fatal("Enter should collapse generated Test Obligations section")
@@ -1666,6 +2362,48 @@ func TestRunPromptOnceAcceptedSourceQuestionLeavesUnstructuredChatInteractive(t 
 	}
 }
 
+func TestFeaturePlannerTUIAcceptedSourcePlanRevisionQuestionResumesPlanner(t *testing.T) {
+	projectRoot := t.TempDir()
+	cfg := featurePlannerTestConfig(projectRoot)
+	state := saveAcceptedSourceFeaturePlannerQuestionState(t, projectRoot, "accepted-source-revision-session")
+
+	client := &scriptedLLMClient{responses: []string{
+		`{"tool":"ask_planner_question","question_summary":"Confirm persistent memory and multi-repo plan additions","blocking_claim":"The operator asked to add more detail to the plan, so the revised MVP boundary needs confirmation before approval.","requested_decision":"Confirm the plan should add persistent memory storage, repository-scoped namespaces, and explicit multi-repo isolation tests.","question_kind":"external_answer_required","authority_required":"operator_approval","required_before":"plan_approval","affected_paths":["llm_brain/query_handler.py","tests/test_query_handler.py"],"affected_fields":["requirements_scope","test_obligations"]}`,
+	}}
+	m := newReadyFeaturePlannerTUITestModel(t, cfg, client, state.SessionID, false)
+
+	revision := "Can you add more detail to the plan for persistent memory and multi-repo support?"
+	answer, err := m.RunPromptOnce(context.Background(), revision)
+	if err != nil {
+		t.Fatalf("RunPromptOnce: %v", err)
+	}
+	if len(client.messages) != 1 {
+		t.Fatalf("plan revision question should route to feature-planner exactly once, got %#v", client.messages)
+	}
+	if !featurePlannerRequestMessagesContain(client.messages[0], "Operator plan revision instruction:") ||
+		!featurePlannerRequestMessagesContain(client.messages[0], revision) {
+		t.Fatalf("question-form plan revision did not reach feature-planner resume prompt: %#v", client.messages)
+	}
+	if strings.Contains(answer, "I could not produce a supported final answer") ||
+		strings.Contains(answer, "source_grounding_unmet") {
+		t.Fatalf("plan revision should not fall through to direct-answer completion gate:\n%s", answer)
+	}
+	if !strings.Contains(answer, "Confirm persistent memory and multi-repo plan additions") {
+		t.Fatalf("revised planner question not surfaced:\n%s", answer)
+	}
+
+	after := loadFeaturePlannerCommandStateFile(t, filepath.Join(projectRoot, ".idiom", "feature-planner", state.SessionID, "state.json"))
+	if len(after.OpenQuestions) != 2 || after.OpenQuestions[0].Status != "answered" || after.OpenQuestions[1].Status != "open" {
+		t.Fatalf("question-form revision should answer prior question and open revised planner question: %+v", after.OpenQuestions)
+	}
+	if after.OpenQuestions[0].Answer != revision {
+		t.Fatalf("prior question did not retain revision request: %+v", after.OpenQuestions[0])
+	}
+	if len(after.AuthorityDeltas) != 0 {
+		t.Fatalf("plan revision must not create accepted-source authority deltas: %+v", after.AuthorityDeltas)
+	}
+}
+
 func TestFeaturePlannerTUIDirectAcceptedSourceAnswerCarriesAuthorityIntoResumePrompt(t *testing.T) {
 	projectRoot := t.TempDir()
 	writeFile(t, projectRoot, "go.mod", "module example.com/tui\n")
@@ -1689,8 +2427,22 @@ func TestFeaturePlannerTUIDirectAcceptedSourceAnswerCarriesAuthorityIntoResumePr
 	if err != nil {
 		t.Fatalf("runFeaturePlannerCommandOnce: %v", err)
 	}
-	if !strings.Contains(answer, `answer_format: JSON object with answer, answer_source_kind="accepted_source", evidence_refs, and source_facts [{path, symbol, signature}]`) {
-		t.Fatalf("question summary should show typed answer format, got:\n%s", answer)
+	for _, want := range []string{
+		"feature-planner: " + featureplanner.FeatureStatePlanningQuestion,
+		"open questions: 1",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("accepted-source question summary missing %q:\n%s", want, answer)
+		}
+	}
+	for _, forbidden := range []string{
+		"Feature planner needs your input before it can continue.",
+		"answer_format:",
+		"Provide accepted source facts",
+	} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("accepted-source question leaked internal prompt %q:\n%s", forbidden, answer)
+		}
 	}
 
 	sessionID := m.directFeaturePlannerSessionID
@@ -2196,7 +2948,7 @@ func TestFeaturePlannerTUIConvertsGreenfieldMVPRepairIntoApprovalPrompt(t *testi
 		"Proposed paths:",
 		"- src/brain/knowledge_store.py",
 		"- tests/test_knowledge_store.py",
-		"Also provide the exact verification command for this project.",
+		"Proposed verification: go test ./pkg; pytest tests/test_knowledge_store.py",
 		"Reply with approval, revised paths/setup, or rejection. Other questions will stay in chat.",
 	} {
 		if !strings.Contains(answer, want) {
@@ -2259,7 +3011,7 @@ func TestFeaturePlannerTUIOperatorQuestionUsesApprovalPrompt(t *testing.T) {
 		"Proposed paths:",
 		"- src/brain.py",
 		"- tests/test_brain.py",
-		"Also provide the exact verification command for this project.",
+		"Proposed verification: go test ./pkg",
 		"Reply with approval, revised paths/setup, or rejection. Other questions will stay in chat.",
 		"State saved at .idiom/feature-planner/question-session/state.json",
 	} {
@@ -2281,7 +3033,152 @@ func TestFeaturePlannerTUIOperatorQuestionUsesApprovalPrompt(t *testing.T) {
 	}
 }
 
-func TestFeaturePlannerTUIGenericOperatorQuestionKeepsStateSummary(t *testing.T) {
+func TestFeaturePlannerTUIAutoRepairsStandaloneProjectMissingNewFilesInPartialWorkspace(t *testing.T) {
+	projectRoot := t.TempDir()
+	writeFile(t, projectRoot, "go.mod", "module example.com/tui\n")
+
+	model := New(config.Config{
+		AppName: "Idiom",
+		Chat: config.Chat{
+			DebugLogDir: filepath.Join(projectRoot, "logs", "conversations"),
+			ProjectRoot: projectRoot,
+		},
+		Workspace: config.Workspace{
+			Root: projectRoot,
+			CWD:  projectRoot,
+		},
+	})
+	plan := featurePlannerCommandStandaloneCollapsePlan()
+	model.client = &scriptedLLMClient{responses: []string{featurePlannerCommandPlanJSON(t, plan)}}
+
+	answer, err := model.runFeaturePlannerCommandOnce(context.Background(), `Can you work out an MVP to an effective "llm brain" sort of project to manage long-term agentic memory?`)
+	if err != nil {
+		t.Fatalf("runFeaturePlannerCommandOnce: %v", err)
+	}
+	model.Close()
+
+	for _, want := range []string{
+		"Feature planner needs your approval before it can continue.",
+		"Question: Authorize proposed new files for feature plan",
+		"What this proposed plan entails:",
+		"Proposed paths:",
+		"- pkg/collapse_event.go",
+		"- pkg/collapse_event_test.go",
+		"These are proposed missing paths to create only after approval; they are not authorized workspace edits yet.",
+		"Reply with approval, revised paths/setup, or rejection. Other questions will stay in chat.",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer missing %q:\n%s", want, answer)
+		}
+	}
+	for _, forbidden := range []string{
+		"feature-planner: planning-repair",
+		"blockers:",
+		"atom 0 edit path",
+		"missing standalone new-file authorization",
+		"next: repair_feature_plan",
+		"What existing source files or test files should be edited",
+		"empty workspace",
+	} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("answer leaked failed-repair text %q:\n%s", forbidden, answer)
+		}
+	}
+}
+
+func TestFeaturePlannerTUIOpensVerificationQuestionForExistingPathRunningExample(t *testing.T) {
+	projectRoot := t.TempDir()
+	writeFile(t, projectRoot, "llm_brain/query_handler.py", "class QueryHandler:\n    pass\n")
+	writeFile(t, projectRoot, "tests/test_query_handler.py", "def test_placeholder():\n    assert True\n")
+
+	model := New(config.Config{
+		AppName: "Idiom",
+		Chat: config.Chat{
+			DebugLogDir: filepath.Join(projectRoot, "logs", "conversations"),
+			ProjectRoot: projectRoot,
+		},
+		Workspace: config.Workspace{
+			Root: projectRoot,
+			CWD:  projectRoot,
+		},
+	})
+	plan := featurePlannerCommandRunningExampleExistingPathPlan()
+	model.client = &scriptedLLMClient{responses: []string{featurePlannerCommandPlanJSON(t, plan)}}
+
+	answer, err := model.runFeaturePlannerCommandOnce(context.Background(), `Can you work out an MVP to an effective "llm brain" sort of project to manage long-term agentic memory?`)
+	if err != nil {
+		t.Fatalf("runFeaturePlannerCommandOnce: %v", err)
+	}
+	sessionID := model.directFeaturePlannerSessionID
+	model.Close()
+
+	for _, want := range []string{
+		"Feature planner needs your input before it can continue.",
+		"Question: Confirm standalone verification command",
+		"Decision needed:",
+		"pytest tests/test_query_handler.py",
+		"Also provide the exact verification command for this project.",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer missing %q:\n%s", want, answer)
+		}
+	}
+	for _, forbidden := range []string{
+		"feature-planner: planning-repair",
+		"blockers:",
+		"behavioral_coverage_draft",
+		"create_memory(content)",
+		"get_memory(id)",
+		"next: repair_feature_plan",
+		"Feature planner needs your approval before it can continue.",
+	} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("answer leaked repair or wrong approval surface %q:\n%s", forbidden, answer)
+		}
+	}
+
+	state := loadFeaturePlannerCommandStateFile(t, filepath.Join(projectRoot, ".idiom", "feature-planner", sessionID, "state.json"))
+	if len(state.OpenQuestions) != 1 || state.OpenQuestions[0].AuthorityRequired != "operator_approval" ||
+		!slices.Contains(state.OpenQuestions[0].AffectedFields, "verification_command") {
+		t.Fatalf("state should persist one verification command question: %+v", state.OpenQuestions)
+	}
+	if len(state.RejectedPlanCandidates) != 1 || !strings.Contains(state.RejectedPlanCandidates[0].Diagnostic, "behavioral_coverage_draft") {
+		t.Fatalf("state should retain model-owned BDD repair diagnostic: %+v", state.RejectedPlanCandidates)
+	}
+}
+
+func TestFeaturePlannerTUIRepairSummaryDoesNotLeakRawDiagnostics(t *testing.T) {
+	state := featureplanner.NewState("repair-session", "repair feature", "", 3, time.Unix(1, 0).UTC())
+	state.Status = featureplanner.FeatureStatePlanningRepair
+	state.PlanningLoop.State = featureplanner.FeatureStatePlanningRepair
+	state.Blockers = []string{
+		`atom 0 edit path "src/brain.py" is missing from the workspace and is not authorized as a new file`,
+		"behavioral_coverage_draft missing concrete_data",
+	}
+
+	answer := formatFeaturePlannerTUIAnswer(state, ".idiom/feature-planner/repair-session/state.json")
+	for _, want := range []string{
+		"feature-planner: planning-repair",
+		"state: .idiom/feature-planner/repair-session/state.json",
+		"diagnostics: 2 internal planner diagnostic(s) saved in feature-planner state",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("repair answer missing %q:\n%s", want, answer)
+		}
+	}
+	for _, forbidden := range []string{
+		"blockers:",
+		"atom 0 edit path",
+		"behavioral_coverage_draft",
+		"next: repair_feature_plan",
+	} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("repair answer leaked raw diagnostic %q:\n%s", forbidden, answer)
+		}
+	}
+}
+
+func TestFeaturePlannerTUIGenericOperatorQuestionRendersChatQuestion(t *testing.T) {
 	state := featureplanner.NewState("question-session", "need approval", "", 3, time.Unix(1, 0).UTC())
 	state.Status = featureplanner.FeatureStatePlanningQuestion
 	state.OpenQuestions = []featureplanner.PlannerQuestion{{
@@ -2293,13 +3190,209 @@ func TestFeaturePlannerTUIGenericOperatorQuestionKeepsStateSummary(t *testing.T)
 	}}
 
 	answer := formatFeaturePlannerTUIAnswer(state, ".idiom/feature-planner/question-session/state.json")
-	if !strings.Contains(answer, "feature-planner: "+featureplanner.FeatureStatePlanningQuestion) ||
-		!strings.Contains(answer, "question: Confirm product decision") {
-		t.Fatalf("generic operator question should keep state summary:\n%s", answer)
+	for _, want := range []string{
+		"Feature planner needs your input before it can continue.",
+		"Question: Confirm product decision",
+		"Decision needed: Confirm whether this belongs in the current effort.",
+		"Reply with the requested answer, a revised scope, or a rejection. Other questions will stay in chat.",
+		"State saved at .idiom/feature-planner/question-session/state.json",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("generic operator question answer missing %q:\n%s", want, answer)
+		}
 	}
-	if strings.Contains(answer, "Feature planner needs your approval before it can continue.") ||
-		strings.Contains(answer, "Proposed paths:") {
-		t.Fatalf("generic operator question should not use greenfield scope authorization presenter:\n%s", answer)
+	for _, forbidden := range []string{
+		"feature-planner: " + featureplanner.FeatureStatePlanningQuestion,
+		"Proposed paths:",
+		"blockers:",
+		"next:",
+	} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("generic operator question leaked internal text %q:\n%s", forbidden, answer)
+		}
+	}
+}
+
+func TestFeaturePlannerTUINonOperatorSourceLocalizationQuestionIsHiddenByDefault(t *testing.T) {
+	state := featureplanner.NewState("question-session", "Implement CollapseEvent helper.", "", 3, time.Unix(1, 0).UTC())
+	state.Status = featureplanner.FeatureStatePlanningQuestion
+	state.OpenQuestions = []featureplanner.PlannerQuestion{{
+		Status:            "open",
+		QuestionSummary:   "Provide accepted source facts for CollapseEvent",
+		BlockingClaim:     "The planner needs source-localized signature evidence.",
+		RequestedDecision: "Provide accepted source facts for the current CollapseEvent signature.",
+		AuthorityRequired: "accepted_source",
+		AffectedPaths:     []string{"pkg/collapse_event.go"},
+		AffectedFields:    []string{"source_localization"},
+	}}
+
+	answer := formatFeaturePlannerTUIAnswer(state, ".idiom/feature-planner/question-session/state.json")
+	for _, want := range []string{
+		"feature-planner: " + featureplanner.FeatureStatePlanningQuestion,
+		"state: .idiom/feature-planner/question-session/state.json",
+		"open questions: 1",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("hidden internal question summary missing %q:\n%s", want, answer)
+		}
+	}
+	for _, forbidden := range []string{
+		"Feature planner needs your input before it can continue.",
+		"Question: Provide accepted source facts",
+		"answer_format:",
+		"source_facts",
+	} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("internal accepted-source question leaked %q:\n%s", forbidden, answer)
+		}
+	}
+}
+
+func TestFeaturePlannerTUIExplicitSourceLocalizationQuestionCanRender(t *testing.T) {
+	state := featureplanner.NewState("question-session", "Please do source localization and collect accepted source facts for the CollapseEvent helper.", "", 3, time.Unix(1, 0).UTC())
+	state.Status = featureplanner.FeatureStatePlanningQuestion
+	state.OpenQuestions = []featureplanner.PlannerQuestion{{
+		Status:            "open",
+		QuestionSummary:   "Provide accepted source facts for CollapseEvent",
+		BlockingClaim:     "The operator asked for source localization.",
+		RequestedDecision: "Provide accepted source facts for the current CollapseEvent signature.",
+		AuthorityRequired: "accepted_source",
+		AffectedPaths:     []string{"pkg/collapse_event.go"},
+		AffectedFields:    []string{"source_localization"},
+		UserFacing:        true,
+	}}
+
+	answer := formatFeaturePlannerTUIAnswer(state, ".idiom/feature-planner/question-session/state.json")
+	for _, want := range []string{
+		"Feature planner needs your input before it can continue.",
+		"Question: Provide accepted source facts for CollapseEvent",
+		`answer_format: JSON object with answer, answer_source_kind="accepted_source", evidence_refs, and source_facts [{path, symbol, signature}]`,
+		"State saved at .idiom/feature-planner/question-session/state.json",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("explicit source-localization question answer missing %q:\n%s", want, answer)
+		}
+	}
+}
+
+func TestFeaturePlannerTUIStatePathDisplayUsesWorkspaceRelativePath(t *testing.T) {
+	root := t.TempDir()
+	insidePath := filepath.Join(root, ".idiom", "feature-planner", "question-session", "state.json")
+	outsidePath := filepath.Join(t.TempDir(), "state.json")
+
+	if got := featurePlannerTUIDisplayPath(root, insidePath); got != ".idiom/feature-planner/question-session/state.json" {
+		t.Fatalf("inside-root display path = %q", got)
+	}
+	if got := featurePlannerTUIDisplayPath(root, outsidePath); got != outsidePath {
+		t.Fatalf("outside-root display path = %q, want %q", got, outsidePath)
+	}
+	if got := featurePlannerTUIDisplayPath(root, ".idiom/feature-planner/question-session/state.json"); got != ".idiom/feature-planner/question-session/state.json" {
+		t.Fatalf("relative display path = %q", got)
+	}
+}
+
+func TestFeaturePlannerCommandDemotesUnanchoredPathAuthorityQuestion(t *testing.T) {
+	root := t.TempDir()
+	model := New(config.Config{
+		AppName: "Idiom",
+		Chat: config.Chat{
+			DebugLogDir: filepath.Join(root, "logs", "conversations"),
+			ProjectRoot: root,
+		},
+		Workspace: config.Workspace{
+			Root: root,
+			CWD:  root,
+		},
+	})
+	model.client = &scriptedLLMClient{responses: []string{`{
+		"tool": "ask_planner_question",
+		"question_summary": "Define minimal MVP requirements",
+		"blocking_claim": "A safe plan needs explicit runtime behavior before file creation can be proposed.",
+		"requested_decision": "Choose the minimal runnable behavior and verification command for the MVP.",
+		"question_kind": "external_answer_required",
+		"authority_required": "operator_approval",
+		"required_before": "plan_approval",
+		"affected_fields": ["new_file_authorization", "verification_command"]
+	}`}}
+
+	answer, err := model.runFeaturePlannerCommandOnce(context.Background(), `Can you work out an MVP to an effective "llm brain" sort of project?`)
+	if err != nil {
+		t.Fatalf("runFeaturePlannerCommandOnce: %v", err)
+	}
+	model.Close()
+
+	for _, want := range []string{
+		"Feature planner needs your input before it can continue.",
+		"Question: Define minimal MVP requirements",
+		"Decision needed: Choose the minimal runnable behavior and verification command for the MVP.",
+		"Also provide the exact verification command for this project.",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer missing %q:\n%s", want, answer)
+		}
+	}
+	for _, forbidden := range []string{
+		"feature-planner: planning-repair",
+		"planner question path-level authority requires affected_paths",
+		"blockers:",
+		"next: repair_feature_plan",
+		"Feature planner needs your approval before it can continue.",
+	} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("answer leaked rejected-question state %q:\n%s", forbidden, answer)
+		}
+	}
+}
+
+func TestFeaturePlannerCommandRejectsOperatorOwnedSourcePathDiscoveryQuestion(t *testing.T) {
+	root := t.TempDir()
+	model := New(config.Config{
+		AppName: "Idiom",
+		Chat: config.Chat{
+			DebugLogDir: filepath.Join(root, "logs", "conversations"),
+			ProjectRoot: root,
+		},
+		Workspace: config.Workspace{
+			Root: root,
+			CWD:  root,
+		},
+	})
+	model.client = &scriptedLLMClient{responses: []string{`{
+		"tool": "ask_planner_question",
+		"question_summary": "What existing source files or test files should be edited for persistent memory and multi-repo support?",
+		"blocking_claim": "No existing source or test paths are available in the workspace context to plan edits for the requested features.",
+		"requested_decision": "Please provide the repo-relative paths of existing source files and test files that should be modified.",
+		"question_kind": "external_answer_required",
+		"authority_required": "operator_approval",
+		"required_before": "plan_approval",
+		"affected_fields": ["requirements_scope", "source_localization"]
+	}`}}
+
+	answer, err := model.runFeaturePlannerCommandOnce(context.Background(), `We need persistent memory and multi-repo support. Please update the plan with this in mind.`)
+	if err != nil {
+		t.Fatalf("runFeaturePlannerCommandOnce: %v", err)
+	}
+	model.Close()
+
+	for _, want := range []string{
+		"feature-planner: planning-repair",
+		"diagnostics: 1 internal planner diagnostic(s) saved in feature-planner state",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer missing rejected-question repair detail %q:\n%s", want, answer)
+		}
+	}
+	for _, forbidden := range []string{
+		"must not ask the operator to discover existing source or test paths",
+		"next: repair_feature_plan",
+		"blockers:",
+		"Feature planner needs your input before it can continue.",
+		"Question: What existing source files or test files should be edited",
+		"Decision needed: Please provide the repo-relative paths",
+	} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("answer surfaced invalid source discovery question %q:\n%s", forbidden, answer)
+		}
 	}
 }
 
@@ -2338,8 +3431,12 @@ func TestFeaturePlannerTUIAnswerIncludesOpenQuestionDetails(t *testing.T) {
 	}}
 
 	answer := formatFeaturePlannerTUIAnswer(state, ".idiom/feature-planner/question-session/state.json")
-	if !strings.Contains(answer, "open questions: 1") || !strings.Contains(answer, "question: Which tooltip path owns the row?") {
+	if !strings.Contains(answer, "Feature planner needs your input before it can continue.") ||
+		!strings.Contains(answer, "Question: Which tooltip path owns the row?") {
 		t.Fatalf("TUI answer omitted question details:\n%s", answer)
+	}
+	if strings.Contains(answer, "open questions: 1") || strings.Contains(answer, "feature-planner: planning-question-open") {
+		t.Fatalf("TUI answer leaked state summary text:\n%s", answer)
 	}
 }
 
@@ -2820,6 +3917,127 @@ func featurePlannerCommandStandaloneCollapsePlan() featureplanner.FeaturePlan {
 	return plan
 }
 
+func featurePlannerCommandRunningExampleExistingPathPlan() featureplanner.FeaturePlan {
+	plan := featurePlannerCommandNativePlan()
+	plan.FeatureID = "llm-brain-memory-mvp"
+	plan.SourceTask = featureplanner.SourceTask{Kind: "operator_prompt", Summary: "Plan an LLM brain MVP."}
+	plan.Summary = "MVP for LLM Brain long-term agentic memory management."
+	plan.TopLevelScope = featureplanner.TopLevelScope{
+		Objective: "Implement an MVP of an LLM Brain that stores and retrieves agentic memory entries with basic query handling and local persistence.",
+		SuccessCriteria: []string{
+			"Memory entries can be created with content and metadata.",
+			"Memory entries can be retrieved by ID or query handler flow.",
+			"Persistence to a local file store works across sessions.",
+			"Project verification runs with the approved test command.",
+		},
+	}
+	plan.SDDContract = featureplanner.SDDContract{
+		Acceptance: []string{"SDD-ACCEPTANCE-1: memory entry creation and retrieval through query_handler."},
+	}
+	plan.TDDContract.Obligations = []featureplanner.TDDObligation{{
+		ID:             "TDD-1",
+		Behavior:       "Memory entry creation and retrieval via query_handler.",
+		Command:        "pytest tests/test_query_handler.py",
+		RequiredBefore: "implementation",
+	}}
+	plan.Atoms = []featureplanner.FeatureAtomPlan{{
+		SchemaVersion:     featureplanner.FeatureAtomSchemaVersion,
+		ID:                "atom-memory-query-handler",
+		Title:             "Implement memory storage and retrieval in query_handler",
+		Summary:           "Add memory entry creation, retrieval, and persistence behavior.",
+		RequiredEditPaths: []string{"llm_brain/query_handler.py", "tests/test_query_handler.py"},
+		SDDRefs:           []string{"SDD-ACCEPTANCE-1"},
+		TDDObligations:    []string{"TDD-1"},
+		RequiredTests:     []string{"pytest tests/test_query_handler.py"},
+		TestFirst: featureplanner.TestFirstPlan{
+			ObligationRefs:             []string{"TDD-1"},
+			Commands:                   []string{"pytest tests/test_query_handler.py"},
+			BaselineRequired:           true,
+			TestArtifactPaths:          []string{"tests/test_query_handler.py"},
+			PreExecutionEventIDs:       []string{"evt-tdd-memory-query-handler"},
+			ExpectedPreExecutionResult: "red-confirmed",
+			CoverageGateEventID:        "evt-tdd-memory-query-handler",
+		},
+		PlannedTDDSnapshot: featureplanner.PlannedTDDSnapshot{
+			SnapshotID:                   "snap-memory-query-handler",
+			SnapshotDigest:               "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+			ObligationIDs:                []string{"TDD-1"},
+			TestCommands:                 []string{"pytest tests/test_query_handler.py"},
+			TestArtifactPaths:            []string{"tests/test_query_handler.py"},
+			ExpectedPreExecutionResults:  []string{"red-confirmed"},
+			CreatedBeforeDispatchEventID: "evt-tdd-memory-query-handler",
+		},
+		Prompt: "Implement memory storage and retrieval in llm_brain/query_handler.py. Add methods: create_memory(content) -> MemoryEntry, get_memory(id) -> MemoryEntry. Use a simple in-memory dict for storage, and add persistence to a JSON file 'memory_store.json'. In tests/test_query_handler.py, write tests for creation and retrieval, including edge cases like empty content. Run tests with 'pytest tests/test_query_handler.py' and ensure they pass.",
+	}}
+	plan.BehavioralCoverageDraft = &featureplanner.BehavioralCoverageDraft{
+		Authority: "standalone_provisional",
+		Status:    "draft",
+		Tier:      "contract_high",
+		Requirements: []featureplanner.CoverageDraftRequirement{{
+			ID:          "REQ-1",
+			Pattern:     "event-driven",
+			Statement:   "When a memory entry is created, the system shall store it and allow retrieval by query handler flow.",
+			Refs:        []string{"SDD-ACCEPTANCE-1"},
+			Obligations: []string{"TDD-1"},
+		}},
+		ExampleRules: []featureplanner.CoverageDraftExampleRule{{
+			ID:            "RULE-1",
+			RequirementID: "REQ-1",
+			Rule:          "Memory entries are stored with a unique ID, content, and timestamp.",
+			Examples: []featureplanner.CoverageDraftExample{{
+				ID:           "EX-1",
+				Description:  "Create and retrieve a memory entry",
+				ConcreteData: map[string]string{"input": `{"content":"test memory"}`, "expected": `{"content":"test memory"}`},
+			}},
+		}},
+		Scenarios: []featureplanner.CoverageDraftScenario{{
+			ID:            "BDD-1",
+			RequirementID: "REQ-1",
+			RuleID:        "RULE-1",
+			Given:         []string{"A query_handler instance"},
+			When:          []string{"A memory entry is created with content 'test memory'"},
+			Then:          []string{"The entry is stored and can be retrieved by its ID"},
+			ConcreteData:  map[string]string{"input": `{"content":"test memory"}`, "expected": `{"content":"test memory"}`},
+			Obligations:   []string{"TDD-1"},
+			Tags:          []string{"mvp"},
+		}},
+		Invariants: []featureplanner.CoverageDraftInvariant{{
+			ID:                    "INV-1",
+			Statement:             "All memory entries have a unique ID.",
+			PropertyBasedTestRefs: []string{"TestMemoryIDsUnique"},
+			Obligations:           []string{"TDD-1"},
+		}},
+		FailureModes: []featureplanner.CoverageDraftFailureMode{{
+			ID:                 "FM-1",
+			Mode:               "Empty content",
+			Mitigation:         "Reject with an error message.",
+			RPN:                1,
+			MitigationTestRefs: []string{"TestEmptyContentRejected"},
+			Obligations:        []string{"TDD-1"},
+		}},
+		SurfaceInventory: []featureplanner.CoverageDraftSurfaceDecision{
+			{ID: "SURF-1", Surface: "domain_logic", Status: "in_scope", Rationale: "memory creation and retrieval are core behavior", Obligations: []string{"TDD-1"}},
+			{ID: "SURF-2", Surface: "persistence", Status: "in_scope", Rationale: "local persistence is part of the proposed MVP", Obligations: []string{"TDD-1"}},
+			{ID: "SURF-3", Surface: "api_transport", Status: "not_required", Rationale: "no external API or transport boundary is requested"},
+		},
+		TestObligations: []featureplanner.CoverageDraftTestObligation{{
+			ID:             "TDD-1",
+			Type:           "unit",
+			Behavior:       "Memory entry creation and retrieval via query_handler.",
+			Owner:          "standalone feature planner",
+			Command:        "pytest tests/test_query_handler.py",
+			RequiredBefore: "implementation",
+		}},
+		Verification: []featureplanner.CoverageDraftVerification{{
+			ID:          "VERIFY-1",
+			Gate:        "required test command passes",
+			Command:     "pytest tests/test_query_handler.py",
+			Obligations: []string{"TDD-1"},
+		}},
+	}
+	return plan
+}
+
 func featurePlannerCommandNewFileQuestionJSON(t *testing.T) string {
 	t.Helper()
 	question := featureplanner.PlannerQuestion{
@@ -3259,11 +4477,14 @@ func TestProductWorkflowFeaturePlannerRecoveryBlocksCompletion(t *testing.T) {
 		"session_id: feature-session",
 		"state_path: .idiom/feature-planner/feature-session/state.json",
 		"atom=atom-1 state=recovery-open session=plan-execute-session-1 required_paths=internal/surfaces/tui/app/product_status.go",
-		"blockers=source sanity failed",
+		"diagnostics=1 internal planner diagnostic(s) saved in feature-planner state",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("recovery message missing %q:\n%s", want, msg)
 		}
+	}
+	if strings.Contains(msg, "source sanity failed") {
+		t.Fatalf("recovery message leaked raw blocker:\n%s", msg)
 	}
 }
 
@@ -3337,7 +4558,7 @@ func TestFeaturePlannerReconcilesStaleActiveRunFromTerminalPlanExecuteProgress(t
 		AtomID:        "atom-1",
 		LaneSessionID: "atom-1-run-1",
 		LaneFamily:    "plan-execute",
-		State:         "running",
+		State:         featureplanner.ActiveRunStateRunning,
 		StartedAt:     startedAt.Format(time.RFC3339Nano),
 	}}
 
@@ -3419,7 +4640,7 @@ func TestFeaturePlannerReconcilesSkippedReviewProgressAsComplete(t *testing.T) {
 		LaneFamily:           "plan-execute",
 		InvocationContractID: plan.Atoms[0].RuntimeEnvelope.ContractID,
 		RuntimeEnvelopeID:    contract.ContractHash,
-		State:                "running",
+		State:                featureplanner.ActiveRunStateRunning,
 		StartedAt:            startedAt.Format(time.RFC3339Nano),
 	}}
 
@@ -3455,7 +4676,9 @@ func TestFeaturePlannerReconcilesSkippedReviewProgressAsComplete(t *testing.T) {
 		t.Fatalf("active run should be folded after durable terminal progress: %+v", state.ActiveRuns)
 	}
 
-	if len(events) != 1 || events[0].Type != "idiom.feature_planner.atom_completed" {
+	if len(events) != 2 ||
+		events[0].Type != "idiom.feature_planner.atom_completed" ||
+		events[1].Type != "idiom.feature_planner.release_blocked" {
 		t.Fatalf("unexpected events: %+v", events)
 	}
 

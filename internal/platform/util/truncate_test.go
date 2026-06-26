@@ -1,6 +1,9 @@
 package util
 
-import "testing"
+import (
+	"testing"
+	"unicode/utf8"
+)
 
 func TestTruncateBytes(t *testing.T) {
 	tests := []struct {
@@ -21,6 +24,9 @@ func TestTruncateBytes(t *testing.T) {
 		{"custom marker", "hello world", 10, "…", "hello w…"},
 		{"empty marker", "hello world", 5, "", "hello"},
 		{"single byte limit", "hello", 1, "...", "h"},
+		{"does not split emoji with marker", "hi😀there", 6, "...", "hi..."},
+		{"does not split CJK with custom marker", "hello世界", 10, "…", "hello…"},
+		{"limit smaller than first rune", "😀hello", 2, "...", ""},
 	}
 
 	for _, tt := range tests {
@@ -29,6 +35,10 @@ func TestTruncateBytes(t *testing.T) {
 			if got != tt.want {
 				t.Errorf("TruncateBytes(%q, %d, %q) = %q, want %q",
 					tt.input, tt.maxBytes, tt.marker, got, tt.want)
+			}
+			if !utf8.ValidString(got) {
+				t.Errorf("TruncateBytes(%q, %d, %q) returned invalid UTF-8: %q",
+					tt.input, tt.maxBytes, tt.marker, got)
 			}
 		})
 	}
@@ -83,6 +93,7 @@ func TestTruncate(t *testing.T) {
 		{"zero limit", "hello", 0, "hello"},
 		{"negative limit", "hello", -1, "hello"},
 		{"delegates to TruncateBytes", "abcdefghij", 5, "ab..."},
+		{"does not split multibyte text", "ab😀cd", 6, "ab..."},
 	}
 
 	for _, tt := range tests {
@@ -91,6 +102,10 @@ func TestTruncate(t *testing.T) {
 			if got != tt.want {
 				t.Errorf("Truncate(%q, %d) = %q, want %q",
 					tt.input, tt.maxBytes, got, tt.want)
+			}
+			if !utf8.ValidString(got) {
+				t.Errorf("Truncate(%q, %d) returned invalid UTF-8: %q",
+					tt.input, tt.maxBytes, got)
 			}
 		})
 	}

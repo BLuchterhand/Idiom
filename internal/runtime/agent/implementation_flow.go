@@ -16,6 +16,7 @@ import (
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/modepolicy"
 	"idiom/internal/runtime/workerruntime"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -5801,6 +5802,11 @@ func (r *Runner) runWorkbranchChildTask(ctx context.Context, req workspace.ToolR
 
 	r.emitEvent(marshalRunEvent("child_workbranch", checkout))
 
+	childWorkspaceDescription := "temporary git worktree"
+	if strings.TrimSpace(checkout.Mode) == "filesystem-copy" {
+		childWorkspaceDescription = "temporary isolated filesystem copy"
+	}
+
 	childWorkspace := workspace.NewManager(config.Workspace{
 		Root:                  checkout.Path,
 		CWD:                   checkout.Path,
@@ -5849,7 +5855,7 @@ func (r *Runner) runWorkbranchChildTask(ctx context.Context, req workspace.ToolR
 			{
 				Role: "system",
 				Content: strings.Join([]string{
-					"You are a bounded isolated implementation child task running in a temporary git worktree.",
+					"You are a bounded isolated implementation child task running in a " + childWorkspaceDescription + ".",
 					"Make only the delegated change. Do not push, publish, deploy, or spawn more tasks.",
 					"Keep task_ledger current. Verify the changed surface when practical.",
 					"Final answer must include changed files, verification status, and confidence.",
@@ -11007,6 +11013,7 @@ type Checkout struct {
 	Branch  string
 	Path    string
 	BaseSHA string
+	Mode    string
 }
 
 type Diff struct {
@@ -11036,17 +11043,30 @@ func (m Manager) Create(ctx context.Context, name string) (Checkout, error) {
 		safeName = "task"
 	}
 
-	baseSHA, err := gitOutput(ctx, root, "rev-parse", "HEAD")
-	if err != nil {
-		return Checkout{}, err
-	}
-
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	branch := prefix + "/" + safeName + "-" + suffix
 	path := filepath.Join(scratch, "idiom-"+safeName+"-"+suffix)
 
 	if err := os.MkdirAll(scratch, 0o755); err != nil {
 		return Checkout{}, err
+	}
+
+	baseSHA, err := gitOutput(ctx, root, "rev-parse", "HEAD")
+	if err != nil {
+		if !workbranchCanFallbackWithoutGit(err) {
+			return Checkout{}, err
+		}
+
+		if err := copyWorkbranchTree(root, path); err != nil {
+			return Checkout{}, err
+		}
+
+		return Checkout{
+			Name:    safeName,
+			Path:    path,
+			BaseSHA: "non-git",
+			Mode:    "filesystem-copy",
+		}, nil
 	}
 
 	if _, err := gitOutput(ctx, root, "worktree", "add", "-b", branch, path, strings.TrimSpace(baseSHA)); err != nil {
@@ -11058,6 +11078,7 @@ func (m Manager) Create(ctx context.Context, name string) (Checkout, error) {
 		Branch:  branch,
 		Path:    path,
 		BaseSHA: strings.TrimSpace(baseSHA),
+		Mode:    "git-worktree",
 	}, nil
 }
 
@@ -11070,6 +11091,10 @@ func (m Manager) Diff(ctx context.Context, checkout Checkout) (Diff, error) {
 	base := strings.TrimSpace(checkout.BaseSHA)
 	if base == "" {
 		base = "HEAD"
+	}
+
+	if strings.TrimSpace(checkout.Mode) == "filesystem-copy" || strings.TrimSpace(checkout.Branch) == "" || base == "non-git" {
+		return diffWorkbranchCopy(m.Root, path)
 	}
 
 	if _, err := gitOutput(ctx, path, "add", "-N", "."); err != nil {
@@ -11113,6 +11138,10 @@ func (m Manager) Remove(ctx context.Context, checkout Checkout) error {
 		return fmt.Errorf("workbranch path is required")
 	}
 
+	if strings.TrimSpace(checkout.Mode) == "filesystem-copy" || strings.TrimSpace(checkout.Branch) == "" || strings.TrimSpace(checkout.BaseSHA) == "non-git" {
+		return os.RemoveAll(path)
+	}
+
 	if _, err := gitOutput(ctx, root, "worktree", "remove", "--force", path); err != nil {
 		return err
 	}
@@ -11135,6 +11164,280 @@ func gitOutput(ctx context.Context, root string, args ...string) (string, error)
 	}
 
 	return string(output), nil
+}
+
+func workbranchCanFallbackWithoutGit(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	lower := strings.ToLower(err.Error())
+	return strings.Contains(lower, "not a git repository") ||
+		strings.Contains(lower, "executable file not found") ||
+		strings.Contains(lower, "ambiguous argument 'head'") ||
+		strings.Contains(lower, "unknown revision or path not in the working tree") ||
+		strings.Contains(lower, "needed a single revision")
+}
+
+func copyWorkbranchTree(srcRoot string, dstRoot string) error {
+	srcRoot = strings.TrimSpace(srcRoot)
+	dstRoot = strings.TrimSpace(dstRoot)
+	if srcRoot == "" {
+		return fmt.Errorf("workbranch source root is required")
+	}
+	if dstRoot == "" {
+		return fmt.Errorf("workbranch copy path is required")
+	}
+
+	srcAbs, err := filepath.Abs(srcRoot)
+	if err != nil {
+		return err
+	}
+	dstAbs, err := filepath.Abs(dstRoot)
+	if err != nil {
+		return err
+	}
+
+	return filepath.WalkDir(srcAbs, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+
+		rel, err := filepath.Rel(srcAbs, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return os.MkdirAll(dstAbs, 0o755)
+		}
+		if skipWorkbranchCopyPath(rel, entry) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		target := filepath.Join(dstAbs, rel)
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return os.MkdirAll(target, info.Mode().Perm())
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+
+		return copyWorkbranchFile(path, target, info.Mode().Perm())
+	})
+}
+
+func skipWorkbranchCopyPath(rel string, entry os.DirEntry) bool {
+	first := strings.Split(filepath.ToSlash(rel), "/")[0]
+	switch first {
+	case ".git", ".idiom":
+		return true
+	default:
+		return false
+	}
+}
+
+func copyWorkbranchFile(src string, dst string, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+
+	return out.Close()
+}
+
+func diffWorkbranchCopy(parentRoot string, childRoot string) (Diff, error) {
+	parentFiles, err := snapshotWorkbranchFiles(parentRoot)
+	if err != nil {
+		return Diff{}, err
+	}
+	childFiles, err := snapshotWorkbranchFiles(childRoot)
+	if err != nil {
+		return Diff{}, err
+	}
+
+	pathSet := make(map[string]struct{}, len(parentFiles)+len(childFiles))
+	for path := range parentFiles {
+		pathSet[path] = struct{}{}
+	}
+	for path := range childFiles {
+		pathSet[path] = struct{}{}
+	}
+
+	var changed []string
+	for path := range pathSet {
+		before, beforeOK := parentFiles[path]
+		after, afterOK := childFiles[path]
+		if beforeOK != afterOK || !slices.Equal(before, after) {
+			changed = append(changed, path)
+		}
+	}
+	sort.Strings(changed)
+
+	return Diff{
+		ChangedPaths: changed,
+		Stat:         renderFilesystemDiffStat(changed, parentFiles, childFiles),
+		Patch:        renderFilesystemDiffPatch(changed, parentFiles, childFiles),
+	}, nil
+}
+
+func snapshotWorkbranchFiles(root string) (map[string][]byte, error) {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return nil, fmt.Errorf("workbranch snapshot root is required")
+	}
+
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+
+	files := make(map[string][]byte)
+	err = filepath.WalkDir(rootAbs, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+
+		rel, err := filepath.Rel(rootAbs, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		if skipWorkbranchCopyPath(rel, entry) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.IsDir() {
+			return nil
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		files[filepath.ToSlash(rel)] = data
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return files, nil
+}
+
+func renderFilesystemDiffStat(changed []string, parentFiles map[string][]byte, childFiles map[string][]byte) string {
+	if len(changed) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	for _, path := range changed {
+		before := lineCount(parentFiles[path])
+		after := lineCount(childFiles[path])
+		b.WriteString(fmt.Sprintf(" %s | %d -> %d lines\n", path, before, after))
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func renderFilesystemDiffPatch(changed []string, parentFiles map[string][]byte, childFiles map[string][]byte) string {
+	if len(changed) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	for _, path := range changed {
+		b.WriteString("--- a/" + path + "\n")
+		b.WriteString("+++ b/" + path + "\n")
+		b.WriteString("@@ filesystem-copy diff @@\n")
+		if _, ok := parentFiles[path]; !ok {
+			b.WriteString(renderAddedFilePatch(childFiles[path]))
+		} else if _, ok := childFiles[path]; !ok {
+			b.WriteString(renderRemovedFilePatch(parentFiles[path]))
+		} else {
+			b.WriteString(renderReplacedFilePatch(parentFiles[path], childFiles[path]))
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func renderAddedFilePatch(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	for _, line := range splitPatchLines(data) {
+		b.WriteString("+" + line + "\n")
+	}
+	return b.String()
+}
+
+func renderRemovedFilePatch(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	for _, line := range splitPatchLines(data) {
+		b.WriteString("-" + line + "\n")
+	}
+	return b.String()
+}
+
+func renderReplacedFilePatch(before []byte, after []byte) string {
+	var b strings.Builder
+	for _, line := range splitPatchLines(before) {
+		b.WriteString("-" + line + "\n")
+	}
+	for _, line := range splitPatchLines(after) {
+		b.WriteString("+" + line + "\n")
+	}
+	return b.String()
+}
+
+func splitPatchLines(data []byte) []string {
+	text := strings.TrimSuffix(string(data), "\n")
+	if text == "" {
+		return nil
+	}
+	return strings.Split(text, "\n")
+}
+
+func lineCount(data []byte) int {
+	return len(splitPatchLines(data))
 }
 
 func sanitizeName(name string) string {

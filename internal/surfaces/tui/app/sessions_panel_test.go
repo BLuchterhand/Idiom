@@ -56,6 +56,29 @@ func TestRefreshSessionsListExcludesCurrentSession(t *testing.T) {
 	}
 }
 
+func TestRefreshSessionsListHidesLogsWithoutUserMessages(t *testing.T) {
+	dir := t.TempDir()
+	writeSessionLog(t, dir, "human.jsonl", []string{
+		`{"type":"message","role":"user","content":"real prompt"}`,
+		`{"type":"message","role":"assistant","content":"real answer"}`,
+	})
+	writeSessionLog(t, dir, "test-startup.jsonl", []string{
+		`{"type":"session_start","app_name":"idiom-test"}`,
+		`{"type":"server","running":true}`,
+		`{"type":"message","role":"ui_trace","content":"ui.refresh_sessions duration_ms=55"}`,
+	})
+
+	m := sessionsPanelModel(t, dir)
+	m.refreshSessionsList()
+
+	if len(m.sessions.list) != 1 {
+		t.Fatalf("expected only the human session, got %#v", m.sessions.list)
+	}
+	if m.sessions.list[0].ID != "human" {
+		t.Fatalf("test-only session should be hidden, got %#v", m.sessions.list)
+	}
+}
+
 // TestRenderSessionsPanelShowsSummaryNotJustID verifies the rendered
 // panel surfaces each session's first user prompt — without a summary
 // the user can't tell sessions apart by id alone.

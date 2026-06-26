@@ -81,6 +81,10 @@ const (
 )
 
 const (
+	ActiveRunStateRunning = "running"
+)
+
+const (
 	ToolSubmitFeaturePlan   = "submit_feature_plan"
 	ToolSourceSatisfied     = "source_satisfied"
 	ToolAskPlannerQuestion  = "ask_planner_question"
@@ -89,8 +93,12 @@ const (
 )
 
 const (
-	EventPlannerSourceSatisfied = "idiom.feature_planner.planner_source_satisfied"
-	EventProductSourceSatisfied = "idiom.feature_planner.product_source_satisfied"
+	EventPlannerSourceSatisfied              = "idiom.feature_planner.planner_source_satisfied"
+	EventProductSourceSatisfied              = "idiom.feature_planner.product_source_satisfied"
+	EventPlannerQuestionOpened               = "idiom.feature_planner.planner_question_opened"
+	EventImplementorQuestionOpened           = "idiom.feature_planner.implementor_question_opened"
+	EventPlannerQuestionAnswered             = "idiom.feature_planner.planner_question_answered"
+	EventPlannerQuestionSupersededByRevision = "idiom.feature_planner.planner_question_superseded_by_revision"
 )
 
 type FeatureState struct {
@@ -120,6 +128,8 @@ type FeatureState struct {
 	Plan                    FeaturePlan               `json:"plan,omitempty"`
 	Atoms                   []FeatureAtomState        `json:"atoms,omitempty"`
 	TDDPreExecutionEvidence []TDDPreExecutionEvidence `json:"tdd_pre_execution_evidence,omitempty"`
+	VerificationClosures    []VerificationClosure     `json:"verification_closures,omitempty"`
+	ReleaseReadiness        ReleaseReadinessDecision  `json:"release_readiness,omitempty"`
 	AuthorityDeltas         []PlanAuthorityDelta      `json:"authority_deltas,omitempty"`
 	RejectedPlanCandidates  []RejectedPlanCandidate   `json:"rejected_plan_candidates,omitempty"`
 	OpenQuestions           []PlannerQuestion         `json:"open_questions,omitempty"`
@@ -165,6 +175,8 @@ type FeaturePlan struct {
 	SchemaVersion      string                      `json:"schema_version,omitempty"`
 	FeatureID          string                      `json:"feature_id,omitempty"`
 	Tool               string                      `json:"tool,omitempty"`
+	Artifact           FeaturePlanArtifact         `json:"artifact,omitempty"`
+	Approval           FeaturePlanApproval         `json:"approval,omitempty"`
 	SourceTask         SourceTask                  `json:"source_task,omitempty"`
 	Context            PlanContext                 `json:"context,omitempty"`
 	Summary            string                      `json:"summary"`
@@ -178,6 +190,41 @@ type FeaturePlan struct {
 	// BehavioralCoverageDraft is provisional standalone planning evidence. Product
 	// workflow context owns accepted coverage authority and supersedes this draft.
 	BehavioralCoverageDraft *BehavioralCoverageDraft `json:"behavioral_coverage_draft,omitempty"`
+}
+
+type FeaturePlanArtifact struct {
+	ArtifactID           string `json:"artifact_id,omitempty"`
+	Revision             int    `json:"revision,omitempty"`
+	Digest               string `json:"digest,omitempty"`
+	WorkspaceFingerprint string `json:"workspace_fingerprint,omitempty"`
+	CreatedAt            string `json:"created_at,omitempty"`
+	UpdatedAt            string `json:"updated_at,omitempty"`
+}
+
+type FeaturePlanApproval struct {
+	Status               string `json:"status,omitempty"`
+	Mode                 string `json:"mode,omitempty"`
+	EventID              string `json:"event_id,omitempty"`
+	Actor                string `json:"actor,omitempty"`
+	Reason               string `json:"reason,omitempty"`
+	ApprovedAt           string `json:"approved_at,omitempty"`
+	PlanRevision         int    `json:"plan_revision,omitempty"`
+	PlanDigest           string `json:"plan_digest,omitempty"`
+	WorkspaceFingerprint string `json:"workspace_fingerprint,omitempty"`
+}
+
+type ReleaseReadinessDecision struct {
+	Status                      string   `json:"status,omitempty"` // ready or blocked
+	EventID                     string   `json:"event_id,omitempty"`
+	PlanArtifactID              string   `json:"plan_artifact_id,omitempty"`
+	PlanRevision                int      `json:"plan_revision,omitempty"`
+	PlanDigest                  string   `json:"plan_digest,omitempty"`
+	WorkspaceFingerprint        string   `json:"workspace_fingerprint,omitempty"`
+	ApprovalEventID             string   `json:"approval_event_id,omitempty"`
+	VerificationClosureEventIDs []string `json:"verification_closure_event_ids,omitempty"`
+	OpenObligations             []string `json:"open_obligations,omitempty"`
+	Blockers                    []string `json:"blockers,omitempty"`
+	DecidedAt                   string   `json:"decided_at,omitempty"`
 }
 
 type SourceSatisfiedCloseout struct {
@@ -408,6 +455,7 @@ type AcceptedBehavioralCoverage struct {
 	Observability     []AcceptedCoverageObservability    `json:"observability,omitempty"`
 	PerformanceBounds []AcceptedCoveragePerformanceBound `json:"performance_bounds,omitempty"`
 	E2EJourneys       []AcceptedCoverageE2EJourney       `json:"e2e_journeys,omitempty"`
+	SurfaceInventory  []AcceptedCoverageSurfaceDecision  `json:"surface_inventory,omitempty"`
 	TestObligations   []AcceptedCoverageTestObligation   `json:"test_obligations,omitempty"`
 	Verification      []AcceptedCoverageVerification     `json:"verification,omitempty"`
 	Mutation          AcceptedCoverageMutation           `json:"mutation,omitempty"`
@@ -668,6 +716,16 @@ type AcceptedCoverageQuestion struct {
 	Resolution string `json:"resolution,omitempty"`
 }
 
+type AcceptedCoverageSurfaceDecision struct {
+	ID           string   `json:"id"`
+	Surface      string   `json:"surface"`
+	Status       string   `json:"status"`
+	Rationale    string   `json:"rationale,omitempty"`
+	EvidenceRefs []string `json:"evidence_refs,omitempty"`
+	Obligations  []string `json:"tdd_obligations,omitempty"`
+	QuestionRefs []string `json:"question_refs,omitempty"`
+}
+
 type BehavioralCoverageDraft struct {
 	Authority         string                          `json:"authority,omitempty"` // "standalone_provisional"
 	Status            string                          `json:"status,omitempty"`    // "draft", "provisional", "question_open", or "superseded"
@@ -686,6 +744,7 @@ type BehavioralCoverageDraft struct {
 	Observability     []CoverageDraftObservability    `json:"observability,omitempty"`
 	PerformanceBounds []CoverageDraftPerformanceBound `json:"performance_bounds,omitempty"`
 	E2EJourneys       []CoverageDraftE2EJourney       `json:"e2e_journeys,omitempty"`
+	SurfaceInventory  []CoverageDraftSurfaceDecision  `json:"surface_inventory,omitempty"`
 	TestObligations   []CoverageDraftTestObligation   `json:"test_obligations,omitempty"`
 	Verification      []CoverageDraftVerification     `json:"verification,omitempty"`
 	Waivers           []CoverageDraftWaiver           `json:"waivers,omitempty"`
@@ -701,10 +760,11 @@ type BehavioralCoverageItem struct {
 }
 
 type CoverageDraftRequirement struct {
-	ID        string   `json:"id"`
-	Pattern   string   `json:"pattern,omitempty"`
-	Statement string   `json:"statement"`
-	Refs      []string `json:"refs,omitempty"`
+	ID          string   `json:"id"`
+	Pattern     string   `json:"pattern,omitempty"`
+	Statement   string   `json:"statement"`
+	Refs        []string `json:"refs,omitempty"`
+	Obligations []string `json:"tdd_obligations,omitempty"`
 }
 
 type CoverageDraftExampleRule struct {
@@ -716,33 +776,118 @@ type CoverageDraftExampleRule struct {
 }
 
 type CoverageDraftExample struct {
-	ID           string            `json:"id"`
-	Description  string            `json:"description,omitempty"`
-	ConcreteData map[string]string `json:"concrete_data,omitempty"`
-	Negative     bool              `json:"negative,omitempty"`
+	ID               string            `json:"id"`
+	Description      string            `json:"description,omitempty"`
+	ConcreteData     map[string]string `json:"concrete_data,omitempty"`
+	ConcreteDataRefs []string          `json:"concrete_data_refs,omitempty"`
+	Negative         bool              `json:"negative,omitempty"`
+}
+
+func (example *CoverageDraftExample) UnmarshalJSON(data []byte) error {
+	type alias CoverageDraftExample
+	var raw struct {
+		alias
+		ConcreteData json.RawMessage `json:"concrete_data"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*example = CoverageDraftExample(raw.alias)
+	example.ConcreteData = normalizeCoverageConcreteData(raw.ConcreteData)
+	return nil
 }
 
 type CoverageDraftScenario struct {
-	ID            string            `json:"id"`
-	RequirementID string            `json:"requirement_id,omitempty"`
-	Given         []string          `json:"given,omitempty"`
-	When          []string          `json:"when,omitempty"`
-	Then          []string          `json:"then,omitempty"`
-	ConcreteData  map[string]string `json:"concrete_data,omitempty"`
-	Obligations   []string          `json:"obligations,omitempty"`
+	ID               string            `json:"id"`
+	RequirementID    string            `json:"requirement_id,omitempty"`
+	RuleID           string            `json:"rule_id,omitempty"`
+	Given            []string          `json:"given,omitempty"`
+	When             []string          `json:"when,omitempty"`
+	Then             []string          `json:"then,omitempty"`
+	ConcreteData     map[string]string `json:"concrete_data,omitempty"`
+	ConcreteDataRefs []string          `json:"concrete_data_refs,omitempty"`
+	Obligations      []string          `json:"obligations,omitempty"`
+	Tags             []string          `json:"tags,omitempty"`
+}
+
+func (scenario *CoverageDraftScenario) UnmarshalJSON(data []byte) error {
+	type alias CoverageDraftScenario
+	var raw struct {
+		alias
+		ConcreteData json.RawMessage `json:"concrete_data"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*scenario = CoverageDraftScenario(raw.alias)
+	scenario.ConcreteData = normalizeCoverageConcreteData(raw.ConcreteData)
+	return nil
+}
+
+func normalizeCoverageConcreteData(raw json.RawMessage) map[string]string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil
+	}
+	out := map[string]string{}
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, item := range typed {
+			if normalizedKey := strings.TrimSpace(key); normalizedKey != "" {
+				out[normalizedKey] = coverageConcreteDataValueString(item)
+			}
+		}
+	case []any:
+		for i, item := range typed {
+			out[fmt.Sprintf("item_%d", i+1)] = coverageConcreteDataValueString(item)
+		}
+	case string:
+		if text := strings.TrimSpace(typed); text != "" {
+			out["value"] = text
+		}
+	default:
+		out["value"] = coverageConcreteDataValueString(typed)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func coverageConcreteDataValueString(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(typed)
+	case float64, bool:
+		return fmt.Sprint(typed)
+	default:
+		body, err := json.Marshal(typed)
+		if err != nil {
+			return fmt.Sprint(typed)
+		}
+		return string(body)
+	}
 }
 
 type CoverageDraftInvariant struct {
-	ID          string   `json:"id"`
-	Statement   string   `json:"statement"`
-	Obligations []string `json:"obligations,omitempty"`
+	ID                    string   `json:"id"`
+	Statement             string   `json:"statement"`
+	PropertyBasedTestRefs []string `json:"property_based_test_refs,omitempty"`
+	Obligations           []string `json:"obligations,omitempty"`
 }
 
 type CoverageDraftFailureMode struct {
-	ID          string   `json:"id"`
-	Mode        string   `json:"mode"`
-	Mitigation  string   `json:"mitigation,omitempty"`
-	Obligations []string `json:"obligations,omitempty"`
+	ID                 string   `json:"id"`
+	Mode               string   `json:"mode"`
+	Mitigation         string   `json:"mitigation,omitempty"`
+	RPN                int      `json:"rpn,omitempty"`
+	MitigationTestRefs []string `json:"mitigation_test_refs,omitempty"`
+	Obligations        []string `json:"obligations,omitempty"`
 }
 
 type CoverageDraftStateMachine struct {
@@ -831,23 +976,38 @@ type CoverageDraftE2EJourney struct {
 	Obligations []string `json:"tdd_obligations,omitempty"`
 }
 
+type CoverageDraftSurfaceDecision struct {
+	ID           string   `json:"id"`
+	Surface      string   `json:"surface"`
+	Status       string   `json:"status"`
+	Rationale    string   `json:"rationale,omitempty"`
+	EvidenceRefs []string `json:"evidence_refs,omitempty"`
+	Obligations  []string `json:"tdd_obligations,omitempty"`
+	QuestionRefs []string `json:"question_refs,omitempty"`
+}
+
 type CoverageDraftTransition struct {
-	From  string `json:"from"`
-	Event string `json:"event"`
-	To    string `json:"to"`
+	ID       string   `json:"id,omitempty"`
+	From     string   `json:"from"`
+	Event    string   `json:"event"`
+	To       string   `json:"to"`
+	TestRefs []string `json:"test_refs,omitempty"`
 }
 
 type CoverageDraftTestObligation struct {
-	ID       string `json:"id"`
-	Behavior string `json:"behavior"`
-	Command  string `json:"command"`
-	Type     string `json:"type,omitempty"`
+	ID             string `json:"id"`
+	Type           string `json:"type,omitempty"`
+	Behavior       string `json:"behavior"`
+	Owner          string `json:"owner,omitempty"`
+	Command        string `json:"command"`
+	RequiredBefore string `json:"required_before,omitempty"`
 }
 
 type CoverageDraftVerification struct {
-	ID      string `json:"id"`
-	Gate    string `json:"gate"`
-	Command string `json:"command,omitempty"`
+	ID          string   `json:"id"`
+	Gate        string   `json:"gate"`
+	Command     string   `json:"command,omitempty"`
+	Obligations []string `json:"obligations,omitempty"`
 }
 
 type CoverageDraftWaiver struct {
@@ -920,6 +1080,49 @@ type TDDPreExecutionEvidence struct {
 	CreatedAt                  string   `json:"created_at,omitempty"`
 }
 
+type VerificationClosure struct {
+	EventID                      string                      `json:"event_id"`
+	AtomID                       string                      `json:"atom_id"`
+	Status                       string                      `json:"status"`
+	Outcome                      string                      `json:"outcome,omitempty"`
+	PlanArtifactID               string                      `json:"plan_artifact_id,omitempty"`
+	PlanRevision                 int                         `json:"plan_revision,omitempty"`
+	PlanDigest                   string                      `json:"plan_digest,omitempty"`
+	ApprovalEventID              string                      `json:"approval_event_id,omitempty"`
+	WorkspaceFingerprint         string                      `json:"workspace_fingerprint,omitempty"`
+	ContractID                   string                      `json:"contract_id,omitempty"`
+	ContractHash                 string                      `json:"contract_hash,omitempty"`
+	ScopeContractID              string                      `json:"scope_contract_id,omitempty"`
+	ScopeContractHash            string                      `json:"scope_contract_hash,omitempty"`
+	ChangedPaths                 []string                    `json:"changed_paths,omitempty"`
+	SourceSatisfiedEvidencePaths []string                    `json:"source_satisfied_evidence_paths,omitempty"`
+	RequiredTestResults          []VerificationCommandResult `json:"required_test_results,omitempty"`
+	TDDCommandResults            []VerificationCommandResult `json:"tdd_command_results,omitempty"`
+	SourceSanity                 []VerificationCheckResult   `json:"source_sanity,omitempty"`
+	Verification                 []VerificationCheckResult   `json:"verification,omitempty"`
+	CreatedAt                    string                      `json:"created_at,omitempty"`
+}
+
+type VerificationCommandResult struct {
+	ID                string   `json:"id,omitempty"`
+	Command           string   `json:"command"`
+	Status            string   `json:"status"`
+	Passed            bool     `json:"passed"`
+	Source            string   `json:"source,omitempty"`
+	ObligationRefs    []string `json:"obligation_refs,omitempty"`
+	TestArtifactPaths []string `json:"test_artifact_paths,omitempty"`
+}
+
+type VerificationCheckResult struct {
+	Kind       string `json:"kind"`
+	Path       string `json:"path,omitempty"`
+	Command    string `json:"command,omitempty"`
+	WorkingDir string `json:"working_dir,omitempty"`
+	Status     string `json:"status"`
+	Summary    string `json:"summary,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
 type PlanAuthorityDelta struct {
 	QuestionID     string                `json:"question_id"`
 	AuthorityKind  string                `json:"authority_kind"`
@@ -976,6 +1179,7 @@ type PlannerQuestion struct {
 	AffectedPaths       []string `json:"affected_paths,omitempty"`
 	AffectedFields      []string `json:"affected_fields,omitempty"`
 	EvidenceRefs        []string `json:"evidence_refs,omitempty"`
+	UserFacing          bool     `json:"user_facing,omitempty"`
 	AskedAt             string   `json:"asked_at,omitempty"`
 	RequiredBefore      string   `json:"required_before,omitempty"`
 	Status              string   `json:"status"`

@@ -58,7 +58,7 @@ struct LaneHandle {
     session_id: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct IdiomEvent {
     id: String,

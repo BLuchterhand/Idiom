@@ -24,6 +24,8 @@ type Config struct {
 	RouteClassifier RouteClassifier `json:"route_classifier"`
 }
 
+var processHomeDir = currentUserHomeDir()
+
 // TUI holds terminal-UI behaviour flags.
 type TUI struct {
 	// EvidencePanel enables collapsible evidence containers beneath each
@@ -458,7 +460,7 @@ func Load(path string) (Config, error) {
 	}
 
 	// Local config missing — try ~/.idiom/config.json.
-	if home, homeErr := os.UserHomeDir(); homeErr == nil {
+	if home, homeErr := os.UserHomeDir(); homeErr == nil && shouldUseGlobalConfigFallback(home) {
 		globalPath := filepath.Join(home, ".idiom", "config.json")
 		data, err = os.ReadFile(globalPath)
 		if err == nil {
@@ -475,6 +477,32 @@ func Load(path string) (Config, error) {
 	cfg.canonicalizeWorkspacePaths()
 
 	return cfg, nil
+}
+
+func currentUserHomeDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	return filepath.Clean(home)
+}
+
+func shouldUseGlobalConfigFallback(home string) bool {
+	home = filepath.Clean(strings.TrimSpace(home))
+	if home == "" {
+		return false
+	}
+
+	if !util.RunningUnderGoTest() {
+		return true
+	}
+
+	if strings.TrimSpace(os.Getenv("IDIOM_TEST_ALLOW_GLOBAL_CONFIG_FALLBACK")) != "" {
+		return true
+	}
+
+	return processHomeDir != "" && home != processHomeDir
 }
 
 // loadConfigFromData unmarshals config data, resolves paths relative to

@@ -24,6 +24,17 @@ func (m *Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Cmd, bool) {
 }
 
 func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
+	if m.mouseSelectionMode {
+		switch msg.Type {
+		case tea.KeyEsc, tea.KeyCtrlO:
+			m.mouseSelectionMode = false
+			m.status = "Selection mode off. Mouse support restored."
+			return tea.EnableMouseCellMotion, true
+		default:
+			return nil, false
+		}
+	}
+
 	if m.laneSwitchPopup.open {
 		if cmd, handled := m.handleLaneSwitchPopupKey(msg); handled {
 			return cmd, true
@@ -154,6 +165,10 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 		return tea.Quit, true
 	case tea.KeyCtrlS:
 		m.saveTranscriptAsync()
+	case tea.KeyCtrlY:
+		return m.copyConversationTarget("last")
+	case tea.KeyCtrlO:
+		return m.enableMouseSelectionMode(), true
 	case tea.KeyCtrlL:
 		m.messages = nil
 		m.status = "Cleared chat."
@@ -243,11 +258,14 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 				return cmd, true
 			}
 		} else if !m.streaming {
-			m.appendHistoryMessage("user", text, nil)
-
 			if m.featurePlannerPhase != "" {
+				m.appendHistoryMessage("user", text, nil)
 				m.sendProductFeaturePlannerTurnAsync(text)
+			} else if m.directFeaturePlannerShouldConsumeOperatorInput(text) {
+				m.sendDirectFeaturePlannerAnswerAsync(text)
+				m.status = "Dispatching to feature-planner..."
 			} else {
+				m.appendHistoryMessage("user", text, nil)
 				m.updateTUIRequestStatus(text)
 				m.sendPromptAsync(text)
 			}
@@ -429,6 +447,10 @@ func (m *Model) handleImplementCommand(raw string) bool {
 }
 
 func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
+	if m.mouseSelectionMode {
+		return m.waitForEventCmd(), true
+	}
+
 	if m.laneSwitchPopup.open {
 		if m.handleLaneSwitchPopupMouse(msg) {
 			return m.waitForEventCmd(), true
@@ -436,7 +458,7 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
 	}
 
 	if m.history.panelOpen && msg.X >= m.panelStartX() {
-		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
+		if isPrimaryMousePress(msg) {
 			if m.handlePanelClick(msg) {
 				return m.waitForEventCmd(), true
 			}
@@ -448,7 +470,7 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
 			return m.waitForEventCmd(), true
 		}
 
-		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
+		if isPrimaryMousePress(msg) {
 			m.history.focused = false
 			m.rerenderActivePanel()
 		}
@@ -706,7 +728,7 @@ func (m *Model) handleMainViewportThoughtPanelMouse(msg tea.MouseMsg) bool {
 		return false
 	}
 
-	if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress && row == headerRow {
+	if isPrimaryMousePress(msg) && row == headerRow {
 		m.thoughts.expanded = !m.thoughts.expanded
 		m.renderMessages(false)
 
@@ -733,6 +755,14 @@ func (m *Model) handleMainViewportThoughtPanelMouse(msg tea.MouseMsg) bool {
 	}
 
 	return false
+}
+
+func isPrimaryMousePress(msg tea.MouseMsg) bool {
+	if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
+		return true
+	}
+
+	return msg.Type == tea.MouseLeft
 }
 
 func thoughtPanelViewportRows(view string) (headerRow, bodyStart, bodyEnd int, ok bool) {
@@ -875,13 +905,11 @@ func (m *Model) handlePlanPanelClick(row int) bool {
 		return false
 	}
 
-	renderedLine := row + m.planViewport.YOffset - 1 // plan viewport row 0 is the panel title.
-	displayLines := m.currentPlanDisplayLines()
-	if renderedLine < 0 || renderedLine >= len(displayLines) {
+	sourceLine, ok := m.planSourceLineForRenderedRow(row + m.planViewport.YOffset)
+	if !ok {
 		return false
 	}
 
-	sourceLine := displayLines[renderedLine].LineIdx
 	rows := m.currentPlanSelectableRows()
 	idx := -1
 
@@ -900,6 +928,29 @@ func (m *Model) handlePlanPanelClick(row int) bool {
 	m.activateSelectedPlanRow()
 
 	return true
+}
+
+func (m *Model) planSourceLineForRenderedRow(viewportRow int) (int, bool) {
+	if viewportRow < 0 {
+		return 0, false
+	}
+
+	if viewportRow < len(m.plan.renderedRows) {
+		sourceLine := m.plan.renderedRows[viewportRow].SourceLineIdx
+		if sourceLine < 0 {
+			return 0, false
+		}
+
+		return sourceLine, true
+	}
+
+	renderedLine := viewportRow - 1 // plan viewport row 0 is the panel title.
+	displayLines := m.currentPlanDisplayLines()
+	if renderedLine < 0 || renderedLine >= len(displayLines) {
+		return 0, false
+	}
+
+	return displayLines[renderedLine].LineIdx, true
 }
 
 func (m *Model) handleDocViewerPanelClick(row int) bool {
@@ -1112,6 +1163,16 @@ func (m *Model) handleTranscriptSaved(msg transcriptSavedMsg) (tea.Cmd, bool) {
 		m.logArtifact("transcript", msg.path)
 	}
 
+	return nil, false
+}
+
+func (m *Model) handleClipboardCopyDone(msg clipboardCopyDoneMsg) (tea.Cmd, bool) {
+	if msg.err != nil {
+		m.status = "Copy failed: " + msg.err.Error()
+		return nil, false
+	}
+
+	m.status = fmt.Sprintf("Copied %s to clipboard (%d bytes).", msg.target, msg.bytes)
 	return nil, false
 }
 

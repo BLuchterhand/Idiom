@@ -421,6 +421,10 @@ func (l *readOnlyAnswerabilityLedger) observeSourceBodyObjectiveSupport(path str
 	}
 
 	terms := l.sourceBodyObjectiveTerms(body)
+	if l.sourceBodyObjectiveTermSupportSatisfies(path, terms, body) {
+		l.SourceBodyObjectivePaths = util.Merge(l.SourceBodyObjectivePaths, []string{path})
+	}
+
 	if len(terms) == 0 {
 		return
 	}
@@ -485,6 +489,80 @@ func (l readOnlyAnswerabilityLedger) sourceBodyObjectiveTerms(body string) []str
 	}
 
 	return util.Sorted(terms)
+}
+
+func (l readOnlyAnswerabilityLedger) sourceBodyObjectiveTermSupportSatisfies(path string, terms []string, body string) bool {
+	required := l.requiredSourceBodyObjectiveTerms()
+	if len(required) == 0 || len(terms) == 0 {
+		return false
+	}
+
+	termSet := map[string]struct{}{}
+	for _, term := range terms {
+		term = agentutil.ReadOnlyObjectiveSupportTerm(term)
+		if term == "" {
+			continue
+		}
+
+		termSet[term] = struct{}{}
+	}
+
+	matches := 0
+	for _, requiredTerm := range required {
+		requiredTerm = agentutil.ReadOnlyObjectiveSupportTerm(requiredTerm)
+		if requiredTerm == "" {
+			continue
+		}
+
+		if _, ok := termSet[requiredTerm]; ok {
+			matches++
+		}
+	}
+
+	if len(required) == 1 {
+		requiredTerm := agentutil.ReadOnlyObjectiveSupportTerm(required[0])
+		if readOnlyTextNegatesObjectiveTerm(l.Objective, requiredTerm) &&
+			!readOnlyTextNegatesObjectiveTerm(body, requiredTerm) {
+
+			return false
+		}
+
+		_, carried := readOnlyPathSet(l.CandidatePaths)[agentutil.NormalizeRunnerPath(path)]
+		return matches == 1 &&
+			readOnlyCarriedReferentObjective(l.Objective) &&
+			carried
+	}
+
+	return false
+}
+
+func readOnlyTextNegatesObjectiveTerm(text string, term string) bool {
+	term = agentutil.ReadOnlyObjectiveSupportTerm(term)
+	if term == "" {
+		return false
+	}
+
+	normalized := " " + strings.Join(strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	}), " ") + " "
+
+	return strings.Contains(normalized, " not "+term+" ") ||
+		strings.Contains(normalized, " no "+term+" ") ||
+		strings.Contains(normalized, " non "+term+" ") ||
+		strings.Contains(normalized, " not yet "+term+" ") ||
+		strings.Contains(normalized, " "+term+" no ") ||
+		strings.Contains(normalized, " "+term+" false ")
+}
+
+func readOnlyCarriedReferentObjective(objective string) bool {
+	words := objectiveWordSet(objective)
+	for _, word := range []string{"these", "those", "they", "them", "their"} {
+		if _, ok := words[word]; ok {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (l readOnlyAnswerabilityLedger) requiredSourceBodyObjectiveTerms() []string {
@@ -910,6 +988,7 @@ func readOnlySearchHitObjectiveTerms(objective string) []string {
 	stop := map[string]struct{}{
 		"what": {}, "does": {}, "this": {}, "that": {}, "with": {}, "from": {}, "about": {},
 		"explain": {}, "describe": {}, "should": {}, "could": {}, "would": {}, "where": {}, "when": {}, "which": {},
+		"these": {}, "those": {}, "they": {}, "them": {}, "their": {},
 	}
 	seen := map[string]struct{}{}
 
@@ -2516,7 +2595,7 @@ func answerAddressesObjective(answer string, objective string, ledger readOnlyAn
 		return true
 	}
 
-	if readOnlyCauseIntent(objective) {
+	if readOnlyCauseIntent(objective) && len(ledger.SourceBodyObjectivePaths) == 0 {
 		return false
 	}
 

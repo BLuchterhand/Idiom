@@ -67,6 +67,11 @@ func TestListRecordedSessionsSummarizesNewestFirst(t *testing.T) {
 	writeSessionLog(t, dir, "20260419-100000.000.jsonl", []string{
 		`{"type":"message","role":"user","content":"second session prompt"}`,
 	})
+	writeSessionLog(t, dir, "20260420-000000.000.jsonl", []string{
+		`{"type":"session_start","app_name":"idiom-test"}`,
+		`{"type":"server","running":true}`,
+		`{"type":"message","role":"ui_trace","content":"ui.refresh_sessions duration_ms=55"}`,
+	})
 	writeSessionLog(t, dir, "skipme.txt", []string{"not a session"})
 
 	got, err := ListRecordedSessions(cfg)

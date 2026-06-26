@@ -1,6 +1,9 @@
 package productworkflow
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -391,6 +394,158 @@ func TestBehavioralCoverageContractRejectsIncompleteAcceptedProductionReadinessD
 		coverage.PerformanceBoundsTotal != 1 || coverage.PerformanceBoundsTested != 0 ||
 		coverage.E2EJourneysTotal != 1 || coverage.E2EJourneysScripted != 0 {
 		t.Fatalf("projection should preserve incomplete production-readiness counters, got %#v", coverage)
+	}
+}
+
+func TestBehavioralCoverageContractValidatesSurfaceInventoryDecisions(t *testing.T) {
+	contract := BehavioralCoverageContract{
+		TestObligations: []TestObligationCoverage{{
+			ID:       "TDD-1",
+			Type:     "unit",
+			Behavior: "domain behavior is covered",
+			Command:  "go test ./...",
+		}},
+		SurfaceInventory: []BehavioralSurfaceCoverage{{
+			ID:          "SURF-DOMAIN",
+			Surface:     "domain_logic",
+			Status:      "in_scope",
+			Rationale:   "core requested behavior",
+			Obligations: []string{"TDD-1"},
+		}, {
+			ID:        "SURF-API",
+			Surface:   "api_transport",
+			Status:    "not_required",
+			Rationale: "no external transport boundary is changed",
+		}, {
+			ID:        "SURF-PRIVACY",
+			Surface:   "privacy",
+			Status:    "waived",
+			Rationale: "no user data is processed in this increment",
+		}},
+	}
+
+	if err := ValidateBehavioralCoverageContract(contract); err != nil {
+		t.Fatalf("valid surface inventory should pass: %v", err)
+	}
+
+	coverage := ProjectBehavioralCoverageContract(contract)
+	if !containsString(coverage.GatesPassed, "surface_inventory") || containsString(coverage.GatesBlocked, "surface_inventory") {
+		t.Fatalf("surface inventory should pass projection gate: %+v", coverage)
+	}
+}
+
+func TestBehavioralCoverageContractRejectsInScopeSurfaceWithoutObligation(t *testing.T) {
+	contract := BehavioralCoverageContract{
+		SurfaceInventory: []BehavioralSurfaceCoverage{{
+			ID:           "SURF-PERSISTENCE",
+			Surface:      "persistence",
+			Status:       "in_scope",
+			Rationale:    "durable behavior is requested",
+			EvidenceRefs: []string{"docs/design.md#persistence"},
+		}},
+	}
+
+	err := ValidateBehavioralCoverageContract(contract)
+	if err == nil || !strings.Contains(err.Error(), "in-scope surface missing tdd_obligations") {
+		t.Fatalf("expected in-scope surface without obligations to fail, got %v", err)
+	}
+}
+
+func TestBehavioralCoverageContractRejectsNonRequiredSurfaceWithoutRationale(t *testing.T) {
+	for _, status := range []string{"not_required", "waived"} {
+		contract := BehavioralCoverageContract{
+			SurfaceInventory: []BehavioralSurfaceCoverage{{
+				ID:      "SURF-1",
+				Surface: "api_transport",
+				Status:  status,
+			}},
+		}
+
+		err := ValidateBehavioralCoverageContract(contract)
+		if err == nil || !strings.Contains(err.Error(), status+" surface missing rationale") {
+			t.Fatalf("expected %s surface without rationale to fail, got %v", status, err)
+		}
+	}
+}
+
+func TestBehavioralCoverageContractRejectsDuplicateAndConflictingSurfaceDecisions(t *testing.T) {
+	contract := BehavioralCoverageContract{
+		TestObligations: []TestObligationCoverage{{
+			ID:       "TDD-1",
+			Behavior: "domain behavior is covered",
+			Command:  "go test ./...",
+		}},
+		SurfaceInventory: []BehavioralSurfaceCoverage{{
+			ID:          "SURF-DOMAIN",
+			Surface:     "domain_logic",
+			Status:      "in_scope",
+			Rationale:   "domain behavior is in scope",
+			Obligations: []string{"TDD-1"},
+		}, {
+			ID:        "SURF-DOMAIN",
+			Surface:   "api_transport",
+			Status:    "not_required",
+			Rationale: "duplicate id must not pass",
+		}, {
+			ID:        "SURF-DOMAIN-CONFLICT",
+			Surface:   "domain_logic",
+			Status:    "not_required",
+			Rationale: "same surface cannot be both in scope and not required",
+		}},
+	}
+
+	err := ValidateBehavioralCoverageContract(contract)
+	if err == nil {
+		t.Fatal("expected duplicate/conflicting surface decisions to fail")
+	}
+	for _, want := range []string{"duplicates id", "conflicts for surface"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected surface consistency error containing %q, got %v", want, err)
+		}
+	}
+
+	coverage := ProjectBehavioralCoverageContract(contract)
+	if !containsString(coverage.GatesBlocked, "surface_inventory") {
+		t.Fatalf("conflicting surface inventory should block projection readiness: %+v", coverage)
+	}
+}
+
+func TestBehavioralCoverageContractRejectsUnknownSurfaceStatus(t *testing.T) {
+	for _, status := range []string{"", "planned", "unknown_status"} {
+		contract := BehavioralCoverageContract{
+			SurfaceInventory: []BehavioralSurfaceCoverage{{
+				ID:        "SURF-1",
+				Surface:   "domain_logic",
+				Status:    status,
+				Rationale: "ambiguous status must not pass",
+			}},
+		}
+
+		err := ValidateBehavioralCoverageContract(contract)
+		if err == nil {
+			t.Fatalf("expected status %q to fail", status)
+		}
+	}
+}
+
+func TestBehavioralCoverageContractOpenQuestionSurfaceBlocksProjectionReadiness(t *testing.T) {
+	contract := BehavioralCoverageContract{
+		SurfaceInventory: []BehavioralSurfaceCoverage{{
+			ID:           "SURF-API",
+			Surface:      "api_transport",
+			Status:       "open_question",
+			Rationale:    "operator must choose CLI or HTTP boundary",
+			QuestionRefs: []string{"q-api-boundary"},
+		}},
+	}
+
+	if err := ValidateBehavioralCoverageContract(contract); err != nil {
+		t.Fatalf("open_question should be valid structured coverage state: %v", err)
+	}
+
+	coverage := ProjectBehavioralCoverageContract(contract)
+	if !containsString(coverage.GatesBlocked, "surface_inventory") {
+		t.Fatalf("open_question should block readiness projection: %+v", coverage)
 	}
 }
 
@@ -906,6 +1061,14 @@ func TestAcceptedBehavioralCoverageProjectionFiltersNonAcceptedItems(t *testing.
 	if len(projection.Behavioral.Verification) != 1 || projection.Behavioral.Verification[0].ID != "VERIFY-ACCEPTED" {
 		t.Fatalf("expected only accepted-obligation verification in projection, got %#v", projection.Behavioral.Verification)
 	}
+	if len(projection.Behavioral.SurfaceInventory) != 3 {
+		t.Fatalf("expected closed surface decisions to remain in accepted projection, got %#v", projection.Behavioral.SurfaceInventory)
+	}
+	if projection.Behavioral.SurfaceInventory[0].ID != "SURF-BDD-DOMAIN" ||
+		projection.Behavioral.SurfaceInventory[1].Status != BehavioralCoverageStatusNotRequired ||
+		projection.Behavioral.SurfaceInventory[2].Status != BehavioralCoverageStatusWaived {
+		t.Fatalf("accepted projection should preserve closed surface decisions, got %#v", projection.Behavioral.SurfaceInventory)
+	}
 }
 
 func TestBehavioralCoveragePromotionLifecycleStatesAndSupersededDigest(t *testing.T) {
@@ -934,6 +1097,57 @@ func TestBehavioralCoveragePromotionLifecycleStatesAndSupersededDigest(t *testin
 	}
 	if superseding.State != BehavioralCoveragePromotionStateAccepted || superseding.SupersededDigest != accepted.Digest {
 		t.Fatalf("expected accepted superseding result, got %#v previous=%s", superseding, accepted.Digest)
+	}
+}
+
+func TestCommitBehavioralCoveragePromotionWritesPreparedThenCommittedAcceptedEvent(t *testing.T) {
+	dir := t.TempDir()
+	contract := promotableBehavioralCoverageContract()
+	ledger := TDDLedger{EffortID: "effort-promote", TaskID: "task-promote", CoverageTier: "behavior_standard", Coverage: TDDCoverage{MutationMinScore: 80}}
+
+	result, err := CommitBehavioralCoveragePromotion(dir, ledger, contract)
+	if err != nil {
+		t.Fatalf("CommitBehavioralCoveragePromotion: %v", err)
+	}
+	if result.State != BehavioralCoveragePromotionStateAccepted ||
+		result.CommitStatus != BehavioralCoveragePromotionCommitStatusCommitted ||
+		!result.LedgerCommitted ||
+		result.EventID == "" ||
+		result.Digest == "" {
+		t.Fatalf("expected committed accepted promotion result, got %#v", result)
+	}
+
+	ledgerData, err := os.ReadFile(filepath.Join(dir, "tdd.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var written TDDLedger
+	if err := json.Unmarshal(ledgerData, &written); err != nil {
+		t.Fatalf("written tdd.json should decode: %v\n%s", err, string(ledgerData))
+	}
+	if written.BehavioralCoverage == nil || BehavioralCoverageContractDigest(*written.BehavioralCoverage) != result.Digest {
+		t.Fatalf("written ledger should contain committed behavioral coverage, got %#v", written.BehavioralCoverage)
+	}
+
+	eventsData, err := os.ReadFile(filepath.Join(dir, "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := ParseBehavioralCoveragePromotionEventsJSONL(eventsData)
+	if err != nil {
+		t.Fatalf("events should parse: %v\n%s", err, string(eventsData))
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected prepared and accepted events, got %#v", events)
+	}
+	if events[0].State != BehavioralCoveragePromotionStatePrepared || events[0].CommitStatus != BehavioralCoveragePromotionCommitStatusPrepared {
+		t.Fatalf("first event should be prepared, got %#v", events[0])
+	}
+	if events[1].State != BehavioralCoveragePromotionStateAccepted || events[1].CommitStatus != BehavioralCoveragePromotionCommitStatusCommitted {
+		t.Fatalf("second event should be committed accepted, got %#v", events[1])
+	}
+	if accepted := AcceptedBehavioralCoveragePromotionEvent(events, result.Digest); accepted == nil || accepted.EventID != result.EventID {
+		t.Fatalf("accepted event lookup should ignore prepared event and return committed accepted event, got %#v", accepted)
 	}
 }
 
@@ -996,6 +1210,23 @@ func promotableBehavioralCoverageContract() BehavioralCoverageContract {
 			Invariants:     []string{"productworkflow owns accepted coverage projection"},
 			TestRefs:       []string{"TestPromoteBehavioralCoverageContractProjectsLedgerAndMergesObligations"},
 			Obligations:    []string{"TDD-BDD"},
+		}},
+		SurfaceInventory: []BehavioralSurfaceCoverage{{
+			ID:          "SURF-BDD-DOMAIN",
+			Surface:     "domain_logic",
+			Status:      "in_scope",
+			Rationale:   "coverage promotion is the requested behavior",
+			Obligations: []string{"TDD-BDD"},
+		}, {
+			ID:        "SURF-BDD-TRANSPORT",
+			Surface:   "api_transport",
+			Status:    BehavioralCoverageStatusNotRequired,
+			Rationale: "no external transport boundary changes in this product workflow contract",
+		}, {
+			ID:        "SURF-BDD-PRIVACY",
+			Surface:   "privacy",
+			Status:    BehavioralCoverageStatusWaived,
+			Rationale: "fixture does not process user data",
 		}},
 		TestObligations: []TestObligationCoverage{{
 			ID:             "TDD-BDD",

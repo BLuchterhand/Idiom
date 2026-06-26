@@ -5465,6 +5465,118 @@ func TestFinalAnswerAcceptanceAllowsObjectiveRelevantSourceBackedAnswer(t *testi
 	}
 }
 
+func TestFinalAnswerAcceptanceAllowsSourceBackedPlanningReadinessWhyAnswer(t *testing.T) {
+	cases := []struct {
+		name       string
+		statusPath string
+		trackPath  string
+	}{
+		{
+			name:       "planning-paths",
+			statusPath: ".planning/campaign-status.md",
+			trackPath:  ".planning/campaigns/rec-025-tick-path-audit-tracker.md",
+		},
+		{
+			name:       "neutral-paths",
+			statusPath: "docs/work/status.md",
+			trackPath:  "trackers/rec-025.md",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			brief := readOnlyConversationBriefForTest("Why are those not dispatchable?")
+			brief.EvidencePaths = []string{tc.statusPath, tc.trackPath}
+			results := []workspace.ToolResult{
+				{
+					Tool:    "read_file",
+					Summary: fmt.Sprintf("Read f1 %s lines 1-8 (total lines: 8)", tc.statusPath),
+					Output: strings.Join([]string{
+						"1:# Campaign status",
+						"2:Approved campaigns exist for REC-025, REC-026, REC-027, and REC-028.",
+						"3:These campaign trackers are planning-level approvals, not dispatchable implementation atoms.",
+						"4:They remain blocked until Atom 0.1 specs are written and intake passes.",
+					}, "\n"),
+				},
+				{
+					Tool:    "read_file",
+					Summary: fmt.Sprintf("Read f1 %s lines 1-7 (total lines: 7)", tc.trackPath),
+					Output: strings.Join([]string{
+						"1:# REC-025 tick-path audit tracker",
+						"2:Status: approved planning.",
+						"3:Dispatchable: no.",
+						"4:Next gate: write the Atom 0.1 spec and pass atom intake.",
+					}, "\n"),
+				},
+			}
+			answer := strings.Join([]string{
+				"They are not dispatchable because the approved campaign docs are still planning-level approvals, not implementation atoms.",
+				fmt.Sprintf("`%s` says the trackers remain blocked until Atom 0.1 specs are written and intake passes.", tc.statusPath),
+				fmt.Sprintf("`%s` records the same gate: approved planning, dispatchable no, next gate Atom 0.1 plus intake.", tc.trackPath),
+			}, "\n")
+			runner := &Runner{RuntimeBrief: brief}
+
+			decision := readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results).
+				FinalAnswerDecision(answer)
+			if decision.BlockerKind != "" {
+				t.Fatalf("planning readiness answer blocked by shared decision: %#v", decision)
+			}
+
+			if !slices.Contains(decision.RelevantSourceBodyPaths, tc.statusPath) {
+				t.Fatalf("expected status source body to be relevant, got %#v", decision.RelevantSourceBodyPaths)
+			}
+
+			if kind, reason := runner.finalAnswerBlockerKind(answer, results); kind != "" || reason != "" {
+				t.Fatalf("planning readiness answer blocked by runner: kind=%q reason=%q", kind, reason)
+			}
+		})
+	}
+}
+
+func TestFinalAnswerAcceptanceRejectsPlanningPathWithoutBodyOwnedSupport(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Why are those not dispatchable?")
+	brief.EvidencePaths = []string{".planning/campaign-status.md"}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 .planning/campaign-status.md lines 1-6 (total lines: 6)",
+		Output: strings.Join([]string{
+			"1:# Campaign status",
+			"2:Approved campaigns exist for REC-025 and REC-026.",
+			"3:Owners should review the schedule before the next checkpoint.",
+			"4:No atom intake or implementation-readiness decision is recorded here.",
+		}, "\n"),
+	}}
+	answer := "`.planning/campaign-status.md` shows they are not dispatchable because Atom 0.1 intake has not passed."
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "answer_objective_unmet:citation_mismatch" {
+		t.Fatalf("unsupported planning-path answer got kind=%q reason=%q, want citation mismatch", kind, reason)
+	}
+}
+
+func TestFinalAnswerAcceptanceRejectsContradictedDispatchabilityAnswer(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Why are those not dispatchable?")
+	brief.EvidencePaths = []string{"docs/work/status.md"}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 docs/work/status.md lines 1-6 (total lines: 6)",
+		Output: strings.Join([]string{
+			"1:# Campaign status",
+			"2:Dispatchable: yes.",
+			"3:Atom 0.1 spec is complete and intake passed.",
+			"4:The implementation atom is ready to start.",
+		}, "\n"),
+	}}
+	answer := "`docs/work/status.md` shows they are not dispatchable because Atom 0.1 intake has not passed."
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "answer_objective_unmet:citation_mismatch" {
+		t.Fatalf("contradicted dispatchability answer got kind=%q reason=%q, want citation mismatch", kind, reason)
+	}
+}
+
 func TestFinalAnswerAcceptanceAllowsLowConfidenceStrategicSourceBackedAnswer(t *testing.T) {
 	objective := "Why would replacing this with model prose fit our north star or risk leaking unverified information to the user?"
 	brief := readOnlyConversationBriefForTest(objective)

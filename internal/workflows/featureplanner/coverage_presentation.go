@@ -8,6 +8,7 @@ import (
 
 const (
 	CoverageSectionRequirements            = "Requirements"
+	CoverageSectionSurfaceInventory        = "Behavior Surface Inventory"
 	CoverageSectionRulesAndExamples        = "Rules & Examples"
 	CoverageSectionScenarios               = "Scenarios"
 	CoverageSectionE2EJourneys             = "E2E Journeys"
@@ -33,40 +34,101 @@ type CoveragePresentationRow struct {
 	Text string
 }
 
+type coveragePresentationSectionSpec struct {
+	Label string
+	Rows  []string
+}
+
+type coverageRequirementPresentation struct {
+	ID        string
+	Statement string
+	Pattern   string
+}
+
+type coverageExampleRulePresentation struct {
+	ID            string
+	RequirementID string
+	Rule          string
+	Examples      []coverageExamplePresentation
+	Questions     []string
+}
+
+type coverageExamplePresentation struct {
+	ID                  string
+	Description         string
+	ConcreteDataPresent bool
+	Negative            bool
+}
+
+type coverageScenarioPresentation struct {
+	ID                  string
+	Given               []string
+	When                []string
+	Then                []string
+	ConcreteDataPresent bool
+	Obligations         []string
+}
+
+type coverageSurfacePresentation struct {
+	ID           string
+	Surface      string
+	Status       string
+	Rationale    string
+	EvidenceRefs []string
+	Obligations  []string
+	QuestionRefs []string
+}
+
 func AcceptedCoveragePresentation(coverage *AcceptedBehavioralCoverage) []CoveragePresentationSection {
 	if coverage == nil {
 		return nil
 	}
 
-	sections := []CoveragePresentationSection{
-		{Label: CoverageSectionRequirements, Rows: coverageRows(acceptedCoverageRequirementRows(*coverage))},
-		{Label: CoverageSectionRulesAndExamples, Rows: coverageRows(acceptedCoverageRulesAndExamplesRows(*coverage))},
-		{Label: CoverageSectionScenarios, Rows: coverageRows(acceptedCoverageScenarioRows(*coverage))},
-		{Label: CoverageSectionE2EJourneys, Rows: coverageRows(acceptedCoverageE2EJourneyRows(*coverage))},
-		{Label: CoverageSectionInvariants, Rows: coverageRows(acceptedCoverageInvariantRows(*coverage))},
-		{Label: CoverageSectionFuzzAndPropertyCoverage, Rows: coverageRows(acceptedCoverageFuzzRows(*coverage))},
-		{Label: CoverageSectionFailureModes, Rows: coverageRows(acceptedCoverageFailureRows(*coverage))},
-		{Label: CoverageSectionSecurityPrivacyRAGEvals, Rows: coverageRows(acceptedCoverageSecurityPrivacyRAGEvalRows(*coverage))},
-		{Label: CoverageSectionProviderContracts, Rows: coverageRows(acceptedCoverageProviderContractRows(*coverage))},
-		{Label: CoverageSectionStateModel, Rows: coverageRows(acceptedCoverageStateModelRows(*coverage))},
-		{Label: CoverageSectionObservability, Rows: coverageRows(acceptedCoverageObservabilityRows(*coverage))},
-		{Label: CoverageSectionPerformanceBounds, Rows: coverageRows(acceptedCoveragePerformanceRows(*coverage))},
-		{Label: CoverageSectionTestObligations, Rows: coverageRows(acceptedCoverageTestObligationRows(*coverage))},
-		{Label: CoverageSectionVerificationGates, Rows: coverageRows(acceptedCoverageVerificationRows(*coverage))},
-		{Label: CoverageSectionWaiversAndOpenQuestions, Rows: coverageRows(acceptedCoverageWaiverQuestionRows(*coverage))},
-	}
-
-	out := sections[:0]
-	for _, section := range sections {
-		if len(section.Rows) > 0 {
-			out = append(out, section)
-		}
-	}
-
-	return out
+	return buildCoveragePresentationSections([]coveragePresentationSectionSpec{
+		{Label: CoverageSectionRequirements, Rows: acceptedCoverageRequirementRows(*coverage)},
+		{Label: CoverageSectionSurfaceInventory, Rows: acceptedCoverageSurfaceRows(*coverage)},
+		{Label: CoverageSectionRulesAndExamples, Rows: acceptedCoverageRulesAndExamplesRows(*coverage)},
+		{Label: CoverageSectionScenarios, Rows: acceptedCoverageScenarioRows(*coverage)},
+		{Label: CoverageSectionE2EJourneys, Rows: acceptedCoverageE2EJourneyRows(*coverage)},
+		{Label: CoverageSectionInvariants, Rows: acceptedCoverageInvariantRows(*coverage)},
+		{Label: CoverageSectionFuzzAndPropertyCoverage, Rows: acceptedCoverageFuzzRows(*coverage)},
+		{Label: CoverageSectionFailureModes, Rows: acceptedCoverageFailureRows(*coverage)},
+		{Label: CoverageSectionSecurityPrivacyRAGEvals, Rows: acceptedCoverageSecurityPrivacyRAGEvalRows(*coverage)},
+		{Label: CoverageSectionProviderContracts, Rows: acceptedCoverageProviderContractRows(*coverage)},
+		{Label: CoverageSectionStateModel, Rows: acceptedCoverageStateModelRows(*coverage)},
+		{Label: CoverageSectionObservability, Rows: acceptedCoverageObservabilityRows(*coverage)},
+		{Label: CoverageSectionPerformanceBounds, Rows: acceptedCoveragePerformanceRows(*coverage)},
+		{Label: CoverageSectionTestObligations, Rows: acceptedCoverageTestObligationRows(*coverage)},
+		{Label: CoverageSectionVerificationGates, Rows: acceptedCoverageVerificationRows(*coverage)},
+		{Label: CoverageSectionWaiversAndOpenQuestions, Rows: acceptedCoverageWaiverQuestionRows(*coverage)},
+	})
 }
 
-func AcceptedCoverageRowsBySection(sections []CoveragePresentationSection, label string) []string {
+func buildCoveragePresentationSections(specs []coveragePresentationSectionSpec) []CoveragePresentationSection {
+	return buildCoveragePresentationSectionsFromSpecs(specs, false)
+}
+
+func buildCoveragePresentationSectionsIncludingEmpty(specs []coveragePresentationSectionSpec) []CoveragePresentationSection {
+	return buildCoveragePresentationSectionsFromSpecs(specs, true)
+}
+
+func buildCoveragePresentationSectionsFromSpecs(specs []coveragePresentationSectionSpec, includeEmpty bool) []CoveragePresentationSection {
+	sections := make([]CoveragePresentationSection, 0, len(specs))
+	for _, spec := range specs {
+		rows := coverageRows(spec.Rows)
+		if len(rows) == 0 && !includeEmpty {
+			continue
+		}
+		sections = append(sections, CoveragePresentationSection{
+			Label: spec.Label,
+			Rows:  rows,
+		})
+	}
+
+	return sections
+}
+
+func CoverageRowsBySection(sections []CoveragePresentationSection, label string) []string {
 	label = strings.TrimSpace(label)
 	if label == "" {
 		return nil
@@ -108,7 +170,59 @@ func acceptedCoverageRequirementRows(coverage AcceptedBehavioralCoverage) []stri
 	if status := strings.TrimSpace(coverage.Status); status != "" {
 		values = append(values, "Accepted coverage status: "+status)
 	}
-	for _, requirement := range coverage.Requirements {
+	values = append(values, coverageRequirementRows(acceptedCoverageRequirements(coverage.Requirements))...)
+
+	return values
+}
+
+func acceptedCoverageRulesAndExamplesRows(coverage AcceptedBehavioralCoverage) []string {
+	return coverageExampleRuleRows(acceptedCoverageExampleRules(coverage.ExampleRules))
+}
+
+func acceptedCoverageSurfaceRows(coverage AcceptedBehavioralCoverage) []string {
+	surfaces := make([]coverageSurfacePresentation, 0, len(coverage.SurfaceInventory))
+	for _, surface := range coverage.SurfaceInventory {
+		surfaces = append(surfaces, coverageSurfacePresentation{
+			ID:           surface.ID,
+			Surface:      surface.Surface,
+			Status:       surface.Status,
+			Rationale:    surface.Rationale,
+			EvidenceRefs: append([]string(nil), surface.EvidenceRefs...),
+			Obligations:  append([]string(nil), surface.Obligations...),
+			QuestionRefs: append([]string(nil), surface.QuestionRefs...),
+		})
+	}
+	return coverageSurfaceRows(surfaces)
+}
+
+func acceptedCoverageScenarioRows(coverage AcceptedBehavioralCoverage) []string {
+	return coverageScenarioRows(acceptedCoverageScenarios(coverage.Scenarios))
+}
+
+func coverageSurfaceRows(surfaces []coverageSurfacePresentation) []string {
+	var values []string
+	for _, surface := range surfaces {
+		label := firstCoverageText(surface.ID, surface.Surface, "surface")
+		if text := strings.TrimSpace(surface.Surface); text != "" && text != label {
+			label += ": " + text
+		}
+		if status := strings.TrimSpace(surface.Status); status != "" {
+			label += " [" + status + "]"
+		}
+		if rationale := strings.TrimSpace(surface.Rationale); rationale != "" {
+			label += " - " + rationale
+		}
+		values = append(values, label)
+		values = append(values, prefixedCoverageValues("Surface "+label+" obligation", surface.Obligations)...)
+		values = append(values, prefixedCoverageValues("Surface "+label+" evidence", surface.EvidenceRefs)...)
+		values = append(values, prefixedCoverageValues("Surface "+label+" question", surface.QuestionRefs)...)
+	}
+	return values
+}
+
+func coverageRequirementRows(requirements []coverageRequirementPresentation) []string {
+	var values []string
+	for _, requirement := range requirements {
 		label := firstCoverageText(requirement.ID, requirement.Statement, "requirement")
 		if statement := strings.TrimSpace(requirement.Statement); statement != "" && statement != label {
 			label += ": " + statement
@@ -122,9 +236,9 @@ func acceptedCoverageRequirementRows(coverage AcceptedBehavioralCoverage) []stri
 	return values
 }
 
-func acceptedCoverageRulesAndExamplesRows(coverage AcceptedBehavioralCoverage) []string {
+func coverageExampleRuleRows(rules []coverageExampleRulePresentation) []string {
 	var values []string
-	for _, rule := range coverage.ExampleRules {
+	for _, rule := range rules {
 		label := firstCoverageText(rule.ID, rule.Rule, "rule")
 		if text := strings.TrimSpace(rule.Rule); text != "" && text != label {
 			label += ": " + text
@@ -138,7 +252,7 @@ func acceptedCoverageRulesAndExamplesRows(coverage AcceptedBehavioralCoverage) [
 			if description := strings.TrimSpace(example.Description); description != "" && description != exampleLabel {
 				exampleLabel += ": " + description
 			}
-			if len(example.ConcreteDataRefs) > 0 {
+			if example.ConcreteDataPresent {
 				exampleLabel += " (concrete data)"
 			}
 			if example.Negative {
@@ -152,9 +266,9 @@ func acceptedCoverageRulesAndExamplesRows(coverage AcceptedBehavioralCoverage) [
 	return values
 }
 
-func acceptedCoverageScenarioRows(coverage AcceptedBehavioralCoverage) []string {
+func coverageScenarioRows(scenarios []coverageScenarioPresentation) []string {
 	var values []string
-	for _, scenario := range coverage.Scenarios {
+	for _, scenario := range scenarios {
 		label := firstCoverageText(scenario.ID, "scenario")
 		var parts []string
 		if len(scenario.Given) > 0 {
@@ -169,7 +283,7 @@ func acceptedCoverageScenarioRows(coverage AcceptedBehavioralCoverage) []string 
 		if len(parts) > 0 {
 			label += ": " + strings.Join(parts, " / ")
 		}
-		if len(scenario.ConcreteDataRefs) > 0 {
+		if scenario.ConcreteDataPresent {
 			label += " (concrete data)"
 		}
 		values = append(values, label)
@@ -177,6 +291,112 @@ func acceptedCoverageScenarioRows(coverage AcceptedBehavioralCoverage) []string 
 	}
 
 	return values
+}
+
+func acceptedCoverageRequirements(requirements []AcceptedCoverageRequirement) []coverageRequirementPresentation {
+	out := make([]coverageRequirementPresentation, 0, len(requirements))
+	for _, requirement := range requirements {
+		out = append(out, coverageRequirementPresentation{
+			ID:        requirement.ID,
+			Statement: requirement.Statement,
+			Pattern:   requirement.Pattern,
+		})
+	}
+
+	return out
+}
+
+func acceptedCoverageExampleRules(rules []AcceptedCoverageExampleRule) []coverageExampleRulePresentation {
+	out := make([]coverageExampleRulePresentation, 0, len(rules))
+	for _, rule := range rules {
+		examples := make([]coverageExamplePresentation, 0, len(rule.Examples))
+		for _, example := range rule.Examples {
+			examples = append(examples, coverageExamplePresentation{
+				ID:                  example.ID,
+				Description:         example.Description,
+				ConcreteDataPresent: len(example.ConcreteDataRefs) > 0,
+				Negative:            example.Negative,
+			})
+		}
+		out = append(out, coverageExampleRulePresentation{
+			ID:            rule.ID,
+			RequirementID: rule.RequirementID,
+			Rule:          rule.Rule,
+			Examples:      examples,
+			Questions:     rule.Questions,
+		})
+	}
+
+	return out
+}
+
+func acceptedCoverageScenarios(scenarios []AcceptedCoverageScenario) []coverageScenarioPresentation {
+	out := make([]coverageScenarioPresentation, 0, len(scenarios))
+	for _, scenario := range scenarios {
+		out = append(out, coverageScenarioPresentation{
+			ID:                  scenario.ID,
+			Given:               scenario.Given,
+			When:                scenario.When,
+			Then:                scenario.Then,
+			ConcreteDataPresent: len(scenario.ConcreteDataRefs) > 0,
+			Obligations:         scenario.Obligations,
+		})
+	}
+
+	return out
+}
+
+func draftCoverageRequirements(requirements []CoverageDraftRequirement) []coverageRequirementPresentation {
+	out := make([]coverageRequirementPresentation, 0, len(requirements))
+	for _, requirement := range requirements {
+		out = append(out, coverageRequirementPresentation{
+			ID:        requirement.ID,
+			Statement: requirement.Statement,
+			Pattern:   requirement.Pattern,
+		})
+	}
+
+	return out
+}
+
+func draftCoverageExampleRules(rules []CoverageDraftExampleRule) []coverageExampleRulePresentation {
+	out := make([]coverageExampleRulePresentation, 0, len(rules))
+	for _, rule := range rules {
+		examples := make([]coverageExamplePresentation, 0, len(rule.Examples))
+		for _, example := range rule.Examples {
+			examples = append(examples, coverageExamplePresentation{
+				ID:                  example.ID,
+				Description:         example.Description,
+				ConcreteDataPresent: len(example.ConcreteData) > 0,
+				Negative:            example.Negative,
+			})
+		}
+		out = append(out, coverageExampleRulePresentation{
+			ID:            rule.ID,
+			RequirementID: rule.RequirementID,
+			Rule:          rule.Rule,
+			Examples:      examples,
+			Questions:     rule.Questions,
+		})
+	}
+
+	return out
+}
+
+func draftCoverageScenarios(scenarios []CoverageDraftScenario) []coverageScenarioPresentation {
+	out := make([]coverageScenarioPresentation, 0, len(scenarios))
+	for _, scenario := range scenarios {
+		out = append(out, coverageScenarioPresentation{
+			ID:                  scenario.ID,
+			Given:               scenario.Given,
+			When:                scenario.When,
+			Then:                scenario.Then,
+			ConcreteDataPresent: len(scenario.ConcreteData) > 0,
+			Obligations:         scenario.Obligations,
+		})
+	}
+
+	return out
 }
 
 func acceptedCoverageE2EJourneyRows(coverage AcceptedBehavioralCoverage) []string {

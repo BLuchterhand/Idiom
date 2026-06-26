@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateDurablePlanRequiresPreDispatchBaseline(t *testing.T) {
@@ -25,6 +26,15 @@ func TestValidateDurablePlanRequiresPreDispatchBaseline(t *testing.T) {
 	if !strings.Contains(err.Error(), "test_first.pre_execution_event_ids") {
 		t.Fatalf("expected pre-execution event error, got %v", err)
 	}
+}
+
+func mustParseFeaturePlannerTime(t *testing.T, value string) time.Time {
+	t.Helper()
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		t.Fatalf("parse time %q: %v", value, err)
+	}
+	return parsed
 }
 
 func TestValidateDurablePlanRejectsMismatchedTDDSnapshot(t *testing.T) {
@@ -116,7 +126,7 @@ func TestReplayPreservesMalformedAuthorityDeltaForDurableValidation(t *testing.T
 		SchemaVersion:         FeatureEventSchemaVersion,
 		EventID:               "evt-authority",
 		IdempotencyKey:        "feature-one/rev-0/authority",
-		Type:                  "idiom.feature_planner.planner_question_answered",
+		Type:                  EventPlannerQuestionAnswered,
 		SessionID:             "session",
 		FeatureID:             "feature-one",
 		FeatureRevisionBefore: 0,
@@ -153,7 +163,7 @@ func TestReplayPreservesNewFileAuthorityForContractRecompile(t *testing.T) {
 		SchemaVersion:         FeatureEventSchemaVersion,
 		EventID:               "evt-authority",
 		IdempotencyKey:        "feature-one/rev-0/authority",
-		Type:                  "idiom.feature_planner.planner_question_answered",
+		Type:                  EventPlannerQuestionAnswered,
 		SessionID:             "session",
 		FeatureID:             "feature-one",
 		FeatureRevisionBefore: 0,
@@ -184,6 +194,58 @@ func TestReplayPreservesNewFileAuthorityForContractRecompile(t *testing.T) {
 
 	if !slices.Equal(got, []string{"pkg/new_helper.go", "pkg/new_helper_test.go"}) {
 		t.Fatalf("replayed authority did not recompile authorized new files: %#v", got)
+	}
+}
+
+func TestReplaySupersedesPlannerQuestionByRevision(t *testing.T) {
+	state := durableState()
+	state.Status = FeatureStatePlanningQuestion
+	state.PlanningLoop.State = FeatureStatePlanningQuestion
+	state.Blockers = []string{
+		`planner question "q-source" requires typed accepted_source authority answer`,
+		"source fact blocker remains",
+	}
+	state.OpenQuestions = []PlannerQuestion{{
+		ID:                "q-source",
+		Status:            "open",
+		QuestionSummary:   "Provide accepted source facts",
+		AuthorityRequired: "accepted_source",
+	}}
+
+	bundle, err := Replay(state, []Event{{
+		SchemaVersion:         FeatureEventSchemaVersion,
+		EventID:               "evt-supersede",
+		IdempotencyKey:        "feature-one/rev-0/question-supersede",
+		Type:                  EventPlannerQuestionSupersededByRevision,
+		SessionID:             "session",
+		FeatureID:             "feature-one",
+		FeatureRevisionBefore: 0,
+		FeatureRevisionAfter:  1,
+		Fields: map[string]any{
+			"question_id": "q-source",
+		},
+	}})
+	if err != nil {
+		t.Fatalf("Replay returned error: %v", err)
+	}
+
+	if bundle.State.Status != FeatureStatePlanning || bundle.State.PlanningLoop.State != FeatureStatePlanning {
+		t.Fatalf("superseded question should resume planning, got status=%q loop=%q", bundle.State.Status, bundle.State.PlanningLoop.State)
+	}
+	if len(bundle.State.OpenQuestions) != 1 ||
+		bundle.State.OpenQuestions[0].Status != "answered" ||
+		bundle.State.OpenQuestions[0].AnswerSourceKind != "plan_revision" ||
+		!slices.Contains(bundle.State.OpenQuestions[0].EvidenceRefs, "operator_plan_revision") {
+		t.Fatalf("question was not replayed as superseded plan revision: %+v", bundle.State.OpenQuestions)
+	}
+	if len(bundle.State.AuthorityDeltas) != 0 {
+		t.Fatalf("plan revision replay must not mint authority deltas: %+v", bundle.State.AuthorityDeltas)
+	}
+	if containsString(bundle.State.Blockers, `planner question "q-source" requires typed accepted_source authority answer`) {
+		t.Fatalf("superseded question blocker should be cleared: %+v", bundle.State.Blockers)
+	}
+	if !containsString(bundle.State.Blockers, "source fact blocker remains") {
+		t.Fatalf("unrelated blocker should remain: %+v", bundle.State.Blockers)
 	}
 }
 
@@ -224,6 +286,150 @@ func TestSaveLoadBundleUsesStateAuthorityForAcceptedSourceSignatures(t *testing.
 	}
 	if len(loaded.State.AuthorityDeltas[0].SourceFacts) != 1 {
 		t.Fatalf("source facts were not preserved: %+v", loaded.State.AuthorityDeltas[0])
+	}
+}
+
+func TestApplyPlannerOutputStampsCanonicalPlanArtifactAndApproval(t *testing.T) {
+	state := NewState("session", "Implement durable feature planner.", "", 3, mustParseFeaturePlannerTime(t, "2026-06-22T19:00:00Z"))
+	plan := durablePlan()
+	plan.Artifact = FeaturePlanArtifact{}
+	plan.Approval = FeaturePlanApproval{}
+
+	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: plan}, mustParseFeaturePlannerTime(t, "2026-06-22T19:01:00Z"))
+
+	if state.Status != FeatureStateDispatching {
+		t.Fatalf("state status = %q, want dispatching; blockers=%v events=%+v", state.Status, state.Blockers, events)
+	}
+	if state.PlannerRevision != 1 || state.Plan.Artifact.Revision != 1 {
+		t.Fatalf("planner revision not stamped: state=%d artifact=%d", state.PlannerRevision, state.Plan.Artifact.Revision)
+	}
+	if state.Plan.Artifact.ArtifactID == "" || state.Plan.Artifact.Digest == "" || state.Plan.Artifact.WorkspaceFingerprint == "" {
+		t.Fatalf("artifact metadata incomplete: %+v", state.Plan.Artifact)
+	}
+	if state.Plan.Approval.Status != "approved" ||
+		state.Plan.Approval.Mode != "harness_policy" ||
+		state.Plan.Approval.PlanDigest != state.Plan.Artifact.Digest ||
+		state.Plan.Approval.PlanRevision != state.Plan.Artifact.Revision ||
+		state.Plan.Approval.WorkspaceFingerprint != state.Plan.Artifact.WorkspaceFingerprint {
+		t.Fatalf("approval is not bound to artifact: approval=%+v artifact=%+v", state.Plan.Approval, state.Plan.Artifact)
+	}
+	if err := ValidateDurablePlan(state.Plan); err != nil {
+		t.Fatalf("stamped plan should validate: %v", err)
+	}
+
+	var approved Event
+	for _, event := range events {
+		if event.Type == "idiom.feature_planner.plan_approved" {
+			approved = event
+			break
+		}
+	}
+	if approved.EventID != state.Plan.Approval.EventID {
+		t.Fatalf("approval event id = %q, want %q", approved.EventID, state.Plan.Approval.EventID)
+	}
+	if approved.Fields["plan_digest"] != state.Plan.Artifact.Digest ||
+		approved.Fields["plan_revision"] != state.Plan.Artifact.Revision ||
+		approved.Fields["workspace_fingerprint"] != state.Plan.Artifact.WorkspaceFingerprint {
+		t.Fatalf("approval event does not carry artifact binding: %+v", approved.Fields)
+	}
+}
+
+func TestValidateDurablePlanRejectsApprovalAfterPlanDigestDrift(t *testing.T) {
+	state := NewState("session", "Implement durable feature planner.", "", 3, mustParseFeaturePlannerTime(t, "2026-06-22T19:00:00Z"))
+	plan := durablePlan()
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: plan}, mustParseFeaturePlannerTime(t, "2026-06-22T19:01:00Z"))
+
+	state.Plan.TopLevelScope.SuccessCriteria = append(state.Plan.TopLevelScope.SuccessCriteria, "unapproved new criterion")
+
+	err := ValidateDurablePlan(state.Plan)
+	if err == nil || !strings.Contains(err.Error(), "does not match canonical digest") {
+		t.Fatalf("expected digest drift rejection, got %v", err)
+	}
+}
+
+func TestValidateDurableStateRequiresVerificationClosureForApprovedTerminalAtom(t *testing.T) {
+	state := NewState("session", "Implement durable feature planner.", "", 3, mustParseFeaturePlannerTime(t, "2026-06-22T19:00:00Z"))
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: durablePlan()}, mustParseFeaturePlannerTime(t, "2026-06-22T19:01:00Z"))
+	state.Atoms[0].State = AtomStateComplete
+	state.Status = FeatureStateComplete
+	state.ActiveRuns = nil
+	state.VerificationClosures = nil
+
+	err := ValidateDurableState(state)
+	if err == nil {
+		t.Fatal("expected durable state validation error")
+	}
+	if !strings.Contains(err.Error(), "without verification closure") {
+		t.Fatalf("expected missing verification closure error, got %v", err)
+	}
+}
+
+func TestEvaluateReleaseReadinessBlocksOpenVerificationObligations(t *testing.T) {
+	state := NewState("session", "Implement durable feature planner.", "", 3, mustParseFeaturePlannerTime(t, "2026-06-22T19:00:00Z"))
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: durablePlan()}, mustParseFeaturePlannerTime(t, "2026-06-22T19:01:00Z"))
+	state.Status = FeatureStateComplete
+	state.Atoms[0].State = AtomStateComplete
+	state.ActiveRuns = nil
+	state.VerificationClosures = nil
+
+	decision := EvaluateReleaseReadiness(state, "2026-06-22T19:02:00Z")
+	if decision.Status != "blocked" || !containsString(decision.Blockers, "verification closure missing for atom: atom-1") {
+		t.Fatalf("release readiness should block missing closure, got %+v", decision)
+	}
+
+	state.ReleaseReadiness = ReleaseReadinessDecision{
+		Status:               "ready",
+		EventID:              "release-feature-one-r1",
+		PlanArtifactID:       state.Plan.Artifact.ArtifactID,
+		PlanRevision:         state.Plan.Artifact.Revision,
+		PlanDigest:           state.Plan.Artifact.Digest,
+		WorkspaceFingerprint: state.Plan.Artifact.WorkspaceFingerprint,
+		ApprovalEventID:      state.Plan.Approval.EventID,
+		Blockers:             []string{"verification closure missing for atom: atom-1"},
+	}
+	err := ValidateDurableState(state)
+	if err == nil || !strings.Contains(err.Error(), "release readiness cannot be ready with blockers") {
+		t.Fatalf("expected impossible release readiness rejection, got %v", err)
+	}
+}
+
+func TestValidateDurableStateRequiresReleaseDecisionForCompleteState(t *testing.T) {
+	state := NewState("session", "Implement durable feature planner.", "", 3, mustParseFeaturePlannerTime(t, "2026-06-22T19:00:00Z"))
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: durablePlan()}, mustParseFeaturePlannerTime(t, "2026-06-22T19:01:00Z"))
+	state.Status = FeatureStateComplete
+	state.Atoms[0].State = AtomStateComplete
+	state.ActiveRuns = nil
+	state.VerificationClosures = []VerificationClosure{{
+		EventID:              "verification-feature-one-atom-1-r1",
+		AtomID:               "atom-1",
+		Status:               "passed",
+		PlanArtifactID:       state.Plan.Artifact.ArtifactID,
+		PlanRevision:         state.Plan.Artifact.Revision,
+		PlanDigest:           state.Plan.Artifact.Digest,
+		ApprovalEventID:      state.Plan.Approval.EventID,
+		WorkspaceFingerprint: state.Plan.Artifact.WorkspaceFingerprint,
+		RequiredTestResults:  []VerificationCommandResult{{Command: "go test ./internal/workflows/featureplanner", Status: "passed", Passed: true}},
+		TDDCommandResults:    []VerificationCommandResult{{Command: "go test ./internal/workflows/featureplanner", Status: "passed", Passed: true, TestArtifactPaths: []string{"internal/workflows/featureplanner/durable_test.go"}}},
+	}}
+
+	err := ValidateDurableState(state)
+	if err == nil || !strings.Contains(err.Error(), "missing release readiness decision") {
+		t.Fatalf("expected missing release readiness rejection, got %v", err)
+	}
+
+	state.ReleaseReadiness = ReleaseReadinessDecision{
+		Status:                      "ready",
+		EventID:                     "release-feature-one-r1",
+		PlanArtifactID:              state.Plan.Artifact.ArtifactID,
+		PlanRevision:                state.Plan.Artifact.Revision,
+		PlanDigest:                  state.Plan.Artifact.Digest,
+		WorkspaceFingerprint:        state.Plan.Artifact.WorkspaceFingerprint,
+		ApprovalEventID:             state.Plan.Approval.EventID,
+		VerificationClosureEventIDs: []string{"unknown-closure"},
+	}
+	err = ValidateDurableState(state)
+	if err == nil || !strings.Contains(err.Error(), "unknown verification closure") {
+		t.Fatalf("expected unknown release closure rejection, got %v", err)
 	}
 }
 
@@ -321,7 +527,7 @@ func TestReplayAppliesFeaturePlannerDispatchAndCompletionDeltas(t *testing.T) {
 				AtomID:        "atom-1",
 				LaneSessionID: "atom-1-run-1",
 				LaneFamily:    "feature-planner-implementor",
-				AfterState:    "running",
+				AfterState:    ActiveRunStateRunning,
 				StartedAt:     "2026-05-24T21:00:00Z",
 			}},
 		},
@@ -338,7 +544,7 @@ func TestReplayAppliesFeaturePlannerDispatchAndCompletionDeltas(t *testing.T) {
 				Op:            "fold_terminal",
 				AtomID:        "atom-1",
 				LaneSessionID: "atom-1-run-1",
-				BeforeState:   "running",
+				BeforeState:   ActiveRunStateRunning,
 				AfterState:    AtomStateComplete,
 			}},
 		},
@@ -374,7 +580,7 @@ func TestReplayAppliesProductSourceSatisfiedCloseout(t *testing.T) {
 		RunID:         "run-1",
 		AtomID:        "atom-1",
 		LaneSessionID: "lane-1",
-		State:         "running",
+		State:         ActiveRunStateRunning,
 	}}
 
 	bundle, err := Replay(state, []Event{{
@@ -387,7 +593,7 @@ func TestReplayAppliesProductSourceSatisfiedCloseout(t *testing.T) {
 			Op:            "fold_terminal",
 			AtomID:        "atom-1",
 			LaneSessionID: "lane-1",
-			BeforeState:   "running",
+			BeforeState:   ActiveRunStateRunning,
 			AfterState:    FeatureStateSourceSatisfied,
 		}},
 	}})

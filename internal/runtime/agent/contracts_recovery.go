@@ -804,6 +804,22 @@ type PhaseEvidenceState struct {
 	PendingGitHistoryPaths   []string // paths still needing git history evidence
 }
 
+func (state PhaseEvidenceState) autonomyEvent() autonomy.PhaseEvidenceStateEvent {
+	return autonomy.PhaseEvidenceStateEvent{
+		AcceptanceRefs:           append([]string(nil), state.AcceptanceRefs...),
+		TDDObligationRefs:        append([]string(nil), state.TDDObligationRefs...),
+		VerificationEvidenceRefs: append([]string(nil), state.VerificationEvidenceRefs...),
+		VerificationStatus:       state.VerificationStatus,
+		ProductWorkflowState:     state.ProductWorkflowState,
+		AtomStatus:               state.AtomStatus,
+		RecoveryPacketRefs:       append([]string(nil), state.RecoveryPacketRefs...),
+		ResidualBlockers:         append([]string(nil), state.ResidualBlockers...),
+		SourceBodyObligations:    append([]string(nil), state.SourceBodyObligations...),
+		CompletedGitHistoryPaths: append([]string(nil), state.CompletedGitHistoryPaths...),
+		PendingGitHistoryPaths:   append([]string(nil), state.PendingGitHistoryPaths...),
+	}
+}
+
 type TurnPhaseContractInput struct {
 	ContractID  string
 	PhaseEpoch  int
@@ -2320,17 +2336,7 @@ func phaseContractKeepsTextualCallableTools(input TurnPhaseContractInput, contra
 }
 
 func phaseEvidenceHasOpenObligation(state PhaseEvidenceState) bool {
-	verificationStatus := strings.ToLower(strings.TrimSpace(state.VerificationStatus))
-
-	return len(state.TDDObligationRefs) > 0 ||
-		len(state.ResidualBlockers) > 0 ||
-		len(state.RecoveryPacketRefs) > 0 ||
-		util.EqualTrimFold(state.ProductWorkflowState, "recovery_open") ||
-		util.EqualTrimFold(state.ProductWorkflowState, "incomplete") ||
-		util.EqualTrimFold(state.ProductWorkflowState, "skipped") ||
-		verificationStatus == "missing" ||
-		verificationStatus == "failed" ||
-		verificationStatus == "pre_write"
+	return autonomy.PhaseEvidenceStateHasOpenObligation(state.autonomyEvent())
 }
 
 type PlanExecutePlanningMode string

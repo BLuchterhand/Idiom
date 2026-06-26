@@ -144,7 +144,7 @@ func (m *Model) handleLaneSwitchPopupMouse(msg tea.MouseMsg) bool {
 		return false
 	}
 
-	if msg.Button != tea.MouseButtonLeft || msg.Action != tea.MouseActionPress {
+	if !isPrimaryMousePress(msg) {
 		return false
 	}
 

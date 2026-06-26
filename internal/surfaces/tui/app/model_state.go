@@ -258,6 +258,7 @@ type Model struct {
 	modelSwapped                     bool
 	traceMode                        traceDisplayMode
 	planPhaseText                    string
+	mouseSelectionMode               bool
 
 	pinnedFiles *PinnedFileRegistry
 

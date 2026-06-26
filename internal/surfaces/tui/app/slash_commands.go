@@ -24,6 +24,8 @@ var slashCommands = map[string]slashCommandFunc{
 	"/new":              (*Model).slashClear,
 	"/compact":          (*Model).slashCompact,
 	"/save":             (*Model).slashSave,
+	"/copy":             (*Model).slashCopy,
+	"/select":           (*Model).slashSelect,
 	"/context":          (*Model).slashContext,
 	"/workspace":        (*Model).slashWorkspace,
 	"/pwd":              (*Model).slashPwd,
@@ -65,8 +67,8 @@ func (m *Model) slashHelp(_ string, _ []string) bool {
 func (m *Model) helpText() string {
 	var b strings.Builder
 
-	b.WriteString("Commands: /save /clear /new /compact /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /product-create [--effort-root <path>] /product-status [--effort-root <path>] /product-continue <action> [--effort-root <path>] /product-approve [--effort-root <path>] /recover-status [--packet <path>|<path>] /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /mode [build|plan|general] /approve /deny /undo /panel /plan /feature-planner <objective> /implement <objective> /plan-execute <objective> /resume [id] /help")
-	b.WriteString("\nNavigation: Ctrl+T cycles panel tabs | transcript: PgUp/PgDn or mouse wheel")
+	b.WriteString("Commands: /save /copy [last|all|visible|selected] /select /clear /new /compact /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /product-create [--effort-root <path>] /product-status [--effort-root <path>] /product-continue <action> [--effort-root <path>] /product-approve [--effort-root <path>] /recover-status [--packet <path>|<path>] /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /mode [build|plan|general] /approve /deny /undo /panel /plan /feature-planner <objective> /implement <objective> /plan-execute <objective> /resume [id] /help")
+	b.WriteString("\nNavigation: Ctrl+T cycles panel tabs | Ctrl+Y copies last assistant response | Ctrl+O toggles terminal selection | transcript: PgUp/PgDn or mouse wheel")
 
 	if strings.TrimSpace(m.featurePlannerPhase) != "" {
 		b.WriteString("\nProduct workflow: phase=")
@@ -113,6 +115,37 @@ func (m *Model) slashCompact(_ string, fields []string) bool {
 func (m *Model) slashSave(_ string, _ []string) bool {
 	m.saveTranscriptAsync()
 
+	return false
+}
+
+func (m *Model) slashCopy(_ string, fields []string) bool {
+	m.pendingExec = nil
+
+	target := "last"
+	if len(fields) > 2 {
+		m.status = "Usage: /copy [last|all|visible|selected]"
+		return false
+	}
+
+	if len(fields) == 2 {
+		target = fields[1]
+	}
+
+	cmd, handled := m.copyConversationTarget(target)
+	if handled {
+		m.pendingExec = cmd
+	}
+
+	return false
+}
+
+func (m *Model) slashSelect(_ string, fields []string) bool {
+	if len(fields) != 1 {
+		m.status = "Usage: /select"
+		return false
+	}
+
+	m.pendingExec = m.enableMouseSelectionMode()
 	return false
 }
 

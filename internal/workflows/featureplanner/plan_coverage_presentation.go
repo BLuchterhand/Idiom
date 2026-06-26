@@ -10,23 +10,24 @@ func FeaturePlanCoveragePresentation(state FeatureState, statePath string, plan 
 	obligationsByID := planPresentationTDDObligationsByID(plan.TDDContract.Obligations)
 	accepted := AcceptedCoveragePresentation(plan.AcceptedCoverage)
 
-	sections := []CoveragePresentationSection{
-		{Label: CoverageSectionRequirements, Rows: coverageRows(append(planPresentationRequirements(state, plan), AcceptedCoverageRowsBySection(accepted, CoverageSectionRequirements)...))},
-		{Label: CoverageSectionRulesAndExamples, Rows: coverageRows(append(planPresentationRulesAndExamples(plan), AcceptedCoverageRowsBySection(accepted, CoverageSectionRulesAndExamples)...))},
-		{Label: CoverageSectionScenarios, Rows: coverageRows(append(planPresentationScenarios(plan, obligationsByID), AcceptedCoverageRowsBySection(accepted, CoverageSectionScenarios)...))},
-		{Label: CoverageSectionE2EJourneys, Rows: coverageRows(append(planPresentationE2EJourneys(plan), AcceptedCoverageRowsBySection(accepted, CoverageSectionE2EJourneys)...))},
-		{Label: CoverageSectionInvariants, Rows: coverageRows(append(planPresentationInvariants(plan), AcceptedCoverageRowsBySection(accepted, CoverageSectionInvariants)...))},
-		{Label: CoverageSectionFuzzAndPropertyCoverage, Rows: coverageRows(append(planPresentationFuzzAndPropertyCoverage(plan), AcceptedCoverageRowsBySection(accepted, CoverageSectionFuzzAndPropertyCoverage)...))},
-		{Label: CoverageSectionFailureModes, Rows: coverageRows(append(planPresentationFailureModes(state, plan, obligationsByID), AcceptedCoverageRowsBySection(accepted, CoverageSectionFailureModes)...))},
-		{Label: CoverageSectionSecurityPrivacyRAGEvals, Rows: coverageRows(append(planPresentationSecurityPrivacyAndRAGEvals(plan), AcceptedCoverageRowsBySection(accepted, CoverageSectionSecurityPrivacyRAGEvals)...))},
-		{Label: CoverageSectionProviderContracts, Rows: coverageRows(append(planPresentationProviderContracts(plan), AcceptedCoverageRowsBySection(accepted, CoverageSectionProviderContracts)...))},
-		{Label: CoverageSectionStateModel, Rows: coverageRows(append(append(planPresentationStateModelDraftValues(plan), planPresentationStateModel(state, statePath, candidate)...), AcceptedCoverageRowsBySection(accepted, CoverageSectionStateModel)...))},
-		{Label: CoverageSectionObservability, Rows: coverageRows(append(planPresentationObservability(plan), AcceptedCoverageRowsBySection(accepted, CoverageSectionObservability)...))},
-		{Label: CoverageSectionPerformanceBounds, Rows: coverageRows(append(planPresentationPerformanceBounds(plan), AcceptedCoverageRowsBySection(accepted, CoverageSectionPerformanceBounds)...))},
-		{Label: CoverageSectionTestObligations, Rows: coverageRows(append(planPresentationTestObligations(plan), AcceptedCoverageRowsBySection(accepted, CoverageSectionTestObligations)...))},
-		{Label: CoverageSectionVerificationGates, Rows: coverageRows(append(planPresentationVerificationGates(plan), AcceptedCoverageRowsBySection(accepted, CoverageSectionVerificationGates)...))},
-		{Label: CoverageSectionWaiversAndOpenQuestions, Rows: coverageRows(append(planPresentationWaiversAndQuestions(state, plan), AcceptedCoverageRowsBySection(accepted, CoverageSectionWaiversAndOpenQuestions)...))},
-	}
+	sections := buildCoveragePresentationSectionsIncludingEmpty([]coveragePresentationSectionSpec{
+		{Label: CoverageSectionRequirements, Rows: append(planPresentationRequirements(state, plan), CoverageRowsBySection(accepted, CoverageSectionRequirements)...)},
+		{Label: CoverageSectionSurfaceInventory, Rows: append(planPresentationSurfaceInventory(plan), CoverageRowsBySection(accepted, CoverageSectionSurfaceInventory)...)},
+		{Label: CoverageSectionRulesAndExamples, Rows: append(planPresentationRulesAndExamples(plan), CoverageRowsBySection(accepted, CoverageSectionRulesAndExamples)...)},
+		{Label: CoverageSectionScenarios, Rows: append(planPresentationScenarios(plan, obligationsByID), CoverageRowsBySection(accepted, CoverageSectionScenarios)...)},
+		{Label: CoverageSectionE2EJourneys, Rows: append(planPresentationE2EJourneys(plan), CoverageRowsBySection(accepted, CoverageSectionE2EJourneys)...)},
+		{Label: CoverageSectionInvariants, Rows: append(planPresentationInvariants(plan), CoverageRowsBySection(accepted, CoverageSectionInvariants)...)},
+		{Label: CoverageSectionFuzzAndPropertyCoverage, Rows: append(planPresentationFuzzAndPropertyCoverage(plan), CoverageRowsBySection(accepted, CoverageSectionFuzzAndPropertyCoverage)...)},
+		{Label: CoverageSectionFailureModes, Rows: append(planPresentationFailureModes(state, plan, obligationsByID), CoverageRowsBySection(accepted, CoverageSectionFailureModes)...)},
+		{Label: CoverageSectionSecurityPrivacyRAGEvals, Rows: append(planPresentationSecurityPrivacyAndRAGEvals(plan), CoverageRowsBySection(accepted, CoverageSectionSecurityPrivacyRAGEvals)...)},
+		{Label: CoverageSectionProviderContracts, Rows: append(planPresentationProviderContracts(plan), CoverageRowsBySection(accepted, CoverageSectionProviderContracts)...)},
+		{Label: CoverageSectionStateModel, Rows: append(append(planPresentationStateModelDraftValues(plan), planPresentationStateModel(state, statePath, candidate)...), CoverageRowsBySection(accepted, CoverageSectionStateModel)...)},
+		{Label: CoverageSectionObservability, Rows: append(planPresentationObservability(plan), CoverageRowsBySection(accepted, CoverageSectionObservability)...)},
+		{Label: CoverageSectionPerformanceBounds, Rows: append(planPresentationPerformanceBounds(plan), CoverageRowsBySection(accepted, CoverageSectionPerformanceBounds)...)},
+		{Label: CoverageSectionTestObligations, Rows: append(planPresentationTestObligations(plan), CoverageRowsBySection(accepted, CoverageSectionTestObligations)...)},
+		{Label: CoverageSectionVerificationGates, Rows: append(planPresentationVerificationGates(plan), CoverageRowsBySection(accepted, CoverageSectionVerificationGates)...)},
+		{Label: CoverageSectionWaiversAndOpenQuestions, Rows: append(planPresentationWaiversAndQuestions(state, plan), CoverageRowsBySection(accepted, CoverageSectionWaiversAndOpenQuestions)...)},
+	})
 
 	for i := range sections {
 		sections[i].Rows = uniqueCoveragePresentationRows(sections[i].Rows)
@@ -36,7 +37,7 @@ func FeaturePlanCoveragePresentation(state FeatureState, statePath string, plan 
 }
 
 func FeaturePlanCoverageRowsBySection(sections []CoveragePresentationSection, label string) []string {
-	return AcceptedCoverageRowsBySection(sections, label)
+	return CoverageRowsBySection(sections, label)
 }
 
 func planPresentationRequirements(state FeatureState, plan FeaturePlan) []string {
@@ -45,16 +46,7 @@ func planPresentationRequirements(state FeatureState, plan FeaturePlan) []string
 		values = append(values, "Objective: "+objective)
 	}
 	if draft := plan.BehavioralCoverageDraft; draft != nil {
-		for _, requirement := range draft.Requirements {
-			label := firstCoverageText(requirement.ID, requirement.Statement, "requirement")
-			if statement := strings.TrimSpace(requirement.Statement); statement != "" && statement != label {
-				label += ": " + statement
-			}
-			if pattern := strings.TrimSpace(requirement.Pattern); pattern != "" {
-				label += " (" + pattern + ")"
-			}
-			values = append(values, label)
-		}
+		values = append(values, coverageRequirementRows(draftCoverageRequirements(draft.Requirements))...)
 	}
 	values = append(values, prefixedCoverageValues("Success criterion", plan.TopLevelScope.SuccessCriteria)...)
 	values = append(values, prefixedCoverageValues("Non-goal", plan.TopLevelScope.NonGoals)...)
@@ -62,33 +54,29 @@ func planPresentationRequirements(state FeatureState, plan FeaturePlan) []string
 	return values
 }
 
+func planPresentationSurfaceInventory(plan FeaturePlan) []string {
+	if draft := plan.BehavioralCoverageDraft; draft != nil {
+		surfaces := make([]coverageSurfacePresentation, 0, len(draft.SurfaceInventory))
+		for _, surface := range draft.SurfaceInventory {
+			surfaces = append(surfaces, coverageSurfacePresentation{
+				ID:           surface.ID,
+				Surface:      surface.Surface,
+				Status:       surface.Status,
+				Rationale:    surface.Rationale,
+				EvidenceRefs: append([]string(nil), surface.EvidenceRefs...),
+				Obligations:  append([]string(nil), surface.Obligations...),
+				QuestionRefs: append([]string(nil), surface.QuestionRefs...),
+			})
+		}
+		return coverageSurfaceRows(surfaces)
+	}
+	return nil
+}
+
 func planPresentationRulesAndExamples(plan FeaturePlan) []string {
 	var values []string
 	if draft := plan.BehavioralCoverageDraft; draft != nil {
-		for _, rule := range draft.ExampleRules {
-			label := firstCoverageText(rule.ID, rule.Rule, "rule")
-			if text := strings.TrimSpace(rule.Rule); text != "" && text != label {
-				label += ": " + text
-			}
-			if req := strings.TrimSpace(rule.RequirementID); req != "" {
-				label += " [requirement: " + req + "]"
-			}
-			values = append(values, label)
-			for _, example := range rule.Examples {
-				exampleLabel := firstCoverageText(example.ID, example.Description, "example")
-				if desc := strings.TrimSpace(example.Description); desc != "" && desc != exampleLabel {
-					exampleLabel += ": " + desc
-				}
-				if len(example.ConcreteData) > 0 {
-					exampleLabel += " (concrete data)"
-				}
-				if example.Negative {
-					exampleLabel += " (negative)"
-				}
-				values = append(values, "Example "+exampleLabel)
-			}
-			values = append(values, prefixedCoverageValues("Rule "+label+" question", rule.Questions)...)
-		}
+		values = append(values, coverageExampleRuleRows(draftCoverageExampleRules(draft.ExampleRules))...)
 	}
 	values = append(values, prefixedCoverageValues("Acceptance", append(append([]string(nil), plan.SDDContract.Acceptance...), plan.SDDContract.Refs...))...)
 	values = append(values, prefixedCoverageValues("PRD requirement ref", plan.SDDContract.PRDRequirementRefs)...)
@@ -104,26 +92,7 @@ func planPresentationRulesAndExamples(plan FeaturePlan) []string {
 func planPresentationScenarios(plan FeaturePlan, obligationsByID map[string]TDDObligation) []string {
 	var values []string
 	if draft := plan.BehavioralCoverageDraft; draft != nil {
-		for _, scenario := range draft.Scenarios {
-			label := firstCoverageText(scenario.ID, "scenario")
-			parts := []string{}
-			if len(scenario.Given) > 0 {
-				parts = append(parts, "Given "+strings.Join(normalizedStringList(scenario.Given), "; "))
-			}
-			if len(scenario.When) > 0 {
-				parts = append(parts, "When "+strings.Join(normalizedStringList(scenario.When), "; "))
-			}
-			if len(scenario.Then) > 0 {
-				parts = append(parts, "Then "+strings.Join(normalizedStringList(scenario.Then), "; "))
-			}
-			if len(parts) > 0 {
-				label += ": " + strings.Join(parts, " / ")
-			}
-			if len(scenario.ConcreteData) > 0 {
-				label += " (concrete data)"
-			}
-			values = append(values, label)
-		}
+		values = append(values, coverageScenarioRows(draftCoverageScenarios(draft.Scenarios))...)
 	}
 	for _, obligation := range plan.TDDContract.Obligations {
 		id := strings.TrimSpace(obligation.ID)

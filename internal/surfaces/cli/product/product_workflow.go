@@ -38,8 +38,12 @@ func runProductMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writ
 		return runProductAudit(args[1:], stdout, stderr, rec)
 	case "efforts":
 		return runProductEfforts(args[1:], stdout, stderr, rec)
+	case "create":
+		return runProductCreate(args[1:], stdout, stderr, rec)
 	case "status":
 		return runProductStatus(args[1:], stdout, stderr, rec)
+	case "transition":
+		return runProductTransition(args[1:], stdout, stderr, rec)
 	case "status-migration":
 		return runProductStatusMigration(args[1:], stdout, stderr, rec)
 	case "research":
@@ -73,7 +77,9 @@ func printProductUsage(w io.Writer) {
 	fmt.Fprintln(w, "  idiom product lint --effort-root <path> [--json]")
 	fmt.Fprintln(w, "  idiom product audit --effort-root <path> [--json]")
 	fmt.Fprintln(w, "  idiom product efforts [--root docs/product-workflows/efforts] [--status unstarted|started|closed|all] [--query <text>] [--json]")
+	fmt.Fprintln(w, "  idiom product create --effort-root <path> [--effort-id <id>] [--title <title>] [--json]")
 	fmt.Fprintln(w, "  idiom product status --effort-root <path> [--operator-view] [--json]")
+	fmt.Fprintln(w, "  idiom product transition --effort-root <path> --action <id> [--expected-revision <n>] [--json]")
 	fmt.Fprintln(w, "  idiom product status-migration --effort-root <path> [--efforts-root <path>] --target-status <bucket> (--plan|--apply) [--target-current-state <state>] [--updated-at <timestamp>] [--event-id <id>] [--workspace-fingerprint <value>] [--expected-revision <n>] [--expected-source-status <bucket>] [--json]")
 	fmt.Fprintln(w, "  idiom product research --project-root <path> [--json]")
 	fmt.Fprintln(w, "  idiom product research --project-root <path> --plan-runs [--profile <profile-id-or-name>] [--research-output-dir research/outputs] [--json]")
@@ -1166,6 +1172,204 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 	return exitCode
 }
 
+func runProductCreate(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+	fs := flag.NewFlagSet("idiom product create", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+
+	var (
+		effortRoot string
+		effortID   string
+		title      string
+		jsonOutput bool
+	)
+
+	fs.StringVar(&effortRoot, "effort-root", "", "path to the effort folder root")
+	fs.StringVar(&effortID, "effort-id", "", "optional effort id")
+	fs.StringVar(&title, "title", "", "optional effort title")
+	fs.BoolVar(&jsonOutput, "json", false, "emit structured JSON output")
+
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+
+		return 2
+	}
+
+	if strings.TrimSpace(effortRoot) == "" {
+		fmt.Fprintln(stderr, "product create: --effort-root is required")
+
+		return 2
+	}
+
+	result, err := productworkflow.InitializeEffort(productworkflow.CreateEffortOptions{
+		EffortRoot: effortRoot,
+		EffortID:   effortID,
+		Title:      title,
+	})
+	if err != nil {
+		result.Status = productworkflow.ProductWorkflowStatusError
+		result.NextValidAction = "fix product effort creation blockers before continuing"
+		result.Blockers = append(result.Blockers, err.Error())
+	}
+
+	logProductPhase(rec, "product_create", map[string]any{
+		"status":        result.Status,
+		"effort_root":   result.EffortRoot,
+		"effort_id":     result.EffortID,
+		"current_phase": result.CurrentPhase,
+		"blockers":      len(result.Blockers),
+	})
+
+	if jsonOutput {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+
+		if err := enc.Encode(result); err != nil {
+			fmt.Fprintf(stderr, "product create: encode JSON: %v\n", err)
+
+			return 1
+		}
+	} else {
+		printProductCreate(stdout, result)
+	}
+
+	if result.Status == productworkflow.ProductWorkflowStatusError || len(result.Blockers) > 0 {
+		return 1
+	}
+
+	return 0
+}
+
+func printProductCreate(stdout io.Writer, result productworkflow.CreateResult) {
+	fmt.Fprintf(stdout, "product create: %s\n", result.Status)
+
+	if strings.TrimSpace(result.EffortRoot) != "" {
+		fmt.Fprintf(stdout, "  effort_root: %s\n", result.EffortRoot)
+	}
+
+	if strings.TrimSpace(result.EffortID) != "" {
+		fmt.Fprintf(stdout, "  effort_id: %s\n", result.EffortID)
+	}
+
+	if strings.TrimSpace(result.CurrentPhase) != "" {
+		fmt.Fprintf(stdout, "  phase: %s\n", result.CurrentPhase)
+	}
+
+	if len(result.Blockers) > 0 {
+		fmt.Fprintf(stdout, "  blockers (%d):\n", len(result.Blockers))
+
+		for _, blocker := range result.Blockers {
+			fmt.Fprintf(stdout, "    %s\n", blocker)
+		}
+	}
+
+	if strings.TrimSpace(result.NextValidAction) != "" {
+		fmt.Fprintf(stdout, "  next: %s\n", result.NextValidAction)
+	}
+}
+
+func runProductTransition(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+	fs := flag.NewFlagSet("idiom product transition", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+
+	var (
+		effortRoot       string
+		action           string
+		expectedRevision int
+		jsonOutput       bool
+	)
+
+	fs.StringVar(&effortRoot, "effort-root", "", "path to the effort folder root")
+	fs.StringVar(&action, "action", "", "workflow transition action to apply")
+	fs.IntVar(&expectedRevision, "expected-revision", 0, "optional workflow state revision guard")
+	fs.BoolVar(&jsonOutput, "json", false, "emit structured JSON output")
+
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+
+		return 2
+	}
+
+	if strings.TrimSpace(effortRoot) == "" {
+		fmt.Fprintln(stderr, "product transition: --effort-root is required")
+
+		return 2
+	}
+
+	if strings.TrimSpace(action) == "" {
+		fmt.Fprintln(stderr, "product transition: --action is required")
+
+		return 2
+	}
+
+	result := productworkflow.ApplyProductWorkflowTransition(productworkflow.ProductWorkflowTransitionApplyOptions{
+		EffortRoot:            effortRoot,
+		Action:                action,
+		Actor:                 "operator",
+		ExpectedStateRevision: expectedRevision,
+	})
+
+	logProductPhase(rec, "product_transition", map[string]any{
+		"status":      result.Status,
+		"action":      result.Action,
+		"from_state":  result.FromState,
+		"to_state":    result.ToState,
+		"blockers":    len(result.Blockers),
+		"effort_root": result.EffortRoot,
+	})
+
+	if jsonOutput {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+
+		if err := enc.Encode(result); err != nil {
+			fmt.Fprintf(stderr, "product transition: encode JSON: %v\n", err)
+
+			return 1
+		}
+	} else {
+		printProductTransition(stdout, result)
+	}
+
+	if result.Status != productworkflow.ProductWorkflowStatusApplied {
+		return 1
+	}
+
+	return 0
+}
+
+func printProductTransition(stdout io.Writer, result productworkflow.ProductWorkflowTransitionApplyResult) {
+	fmt.Fprintf(stdout, "product transition: %s\n", result.Status)
+	fmt.Fprintf(stdout, "  action: %s\n", result.Action)
+
+	if result.FromState != "" || result.ToState != "" {
+		fmt.Fprintf(stdout, "  state: %s -> %s\n", result.FromState, result.ToState)
+	}
+
+	if result.Event.EventID != "" {
+		fmt.Fprintf(stdout, "  event_id: %s\n", result.Event.EventID)
+	}
+
+	if len(result.Blockers) > 0 {
+		fmt.Fprintf(stdout, "  blockers (%d):\n", len(result.Blockers))
+
+		for _, blocker := range result.Blockers {
+			if blocker.Path != "" {
+				fmt.Fprintf(stdout, "    [%s] %s: %s\n", blocker.Code, blocker.Path, blocker.Message)
+			} else {
+				fmt.Fprintf(stdout, "    [%s] %s\n", blocker.Code, blocker.Message)
+			}
+		}
+	}
+
+	if strings.TrimSpace(result.NextValidAction) != "" {
+		fmt.Fprintf(stdout, "  next: %s\n", result.NextValidAction)
+	}
+}
+
 func printProductOperatorStatus(stdout io.Writer, effortName string, view productworkflow.ProductOperatorStatusView) {
 	fmt.Fprint(stdout, productworkflow.FormatProductOperatorStatusText(effortName, view))
 }
@@ -1985,69 +2189,47 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		if len(findings) == 0 {
 			var promotionErr error
 			if writePromotion {
-				promotion, promotionErr = productworkflow.PromoteBehavioralCoverageContractWithResult(ledger, contract)
+				promotion, promotionErr = productworkflow.CommitBehavioralCoveragePromotion(absRoot, ledger, contract)
 			} else {
 				promotion, promotionErr = productworkflow.ReviewBehavioralCoverageContractWithResult(ledger, contract)
 			}
 			if promotionErr != nil {
-				promotion.State = productworkflow.BehavioralCoveragePromotionStateRejected
-				addFinding("coverage_contract_invalid", promotionErr.Error(), filepath.ToSlash(cleanPromotionPath))
+				var commitErr productworkflow.BehavioralCoveragePromotionCommitError
+				if errors.As(promotionErr, &commitErr) {
+					file := strings.TrimSpace(commitErr.File)
+					if file == "" {
+						file = "tdd.json"
+					}
+					addFinding("write_error", promotionErr.Error(), filepath.ToSlash(file))
+				} else {
+					promotion.State = productworkflow.BehavioralCoveragePromotionStateRejected
+					promotion.CommitStatus = productworkflow.BehavioralCoveragePromotionCommitStatusBlocked
+					addFinding("coverage_contract_invalid", promotionErr.Error(), filepath.ToSlash(cleanPromotionPath))
+				}
 			} else {
 				promoted = promotion.Ledger
 				status = "pass"
 			}
-		}
-
-		if status == "pass" && writePromotion {
-			data, err := json.MarshalIndent(promoted, "", "  ")
-			if err != nil {
-				addFinding("encode_error", err.Error(), "tdd.json")
+			if len(findings) > 0 {
 				status = "blocked"
-			} else if err := productworkflow.ValidateBehavioralCoveragePromotionEventTarget(absRoot, promotion); err != nil {
-				addFinding("write_error", err.Error(), "events.jsonl")
-				status = "blocked"
-			} else {
-				tmp, err := os.CreateTemp(absRoot, ".tdd-*.json")
-				if err != nil {
-					addFinding("write_error", err.Error(), "tdd.json")
-					status = "blocked"
+				if promotion.LedgerCommitted {
+					promoted = promotion.Ledger
 				} else {
-					tmpPath := tmp.Name()
-					cleanupTmp := true
-					if _, err := tmp.Write(append(data, '\n')); err != nil {
-						addFinding("write_error", err.Error(), "tdd.json")
-						status = "blocked"
-					} else if err := tmp.Close(); err != nil {
-						addFinding("write_error", err.Error(), "tdd.json")
-						status = "blocked"
-					} else if err := productworkflow.AppendBehavioralCoveragePromotionEvent(absRoot, promotion); err != nil {
-						addFinding("write_error", err.Error(), "events.jsonl")
-						status = "blocked"
-					} else if err := os.Rename(tmpPath, filepath.Join(absRoot, "tdd.json")); err != nil {
-						addFinding("write_error", err.Error(), "tdd.json")
-						status = "blocked"
-					} else {
-						cleanupTmp = false
-					}
-					if cleanupTmp {
-						_ = tmp.Close()
-						_ = os.Remove(tmpPath)
-					}
+					promoted = ledger
 				}
-			}
-			if status != "pass" {
-				promoted = ledger
 			}
 		}
 
 		logProductPhase(rec, "product_tdd_behavioral_coverage_promoted", map[string]any{
-			"status":        status,
-			"state":         promotion.State,
-			"event_id":      promotion.EventID,
-			"digest":        promotion.Digest,
-			"superseded":    promotion.SupersededDigest,
-			"finding_count": len(findings),
-			"write":         writePromotion,
+			"status":           status,
+			"state":            promotion.State,
+			"commit_status":    promotion.CommitStatus,
+			"ledger_committed": promotion.LedgerCommitted,
+			"event_id":         promotion.EventID,
+			"digest":           promotion.Digest,
+			"superseded":       promotion.SupersededDigest,
+			"finding_count":    len(findings),
+			"write":            writePromotion,
 		})
 
 		type promotionOutput struct {
@@ -2055,6 +2237,8 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 			EffortRoot       string                                     `json:"effort_root"`
 			PromoteCoverage  string                                     `json:"promote_coverage"`
 			State            string                                     `json:"state"`
+			CommitStatus     string                                     `json:"commit_status,omitempty"`
+			LedgerCommitted  bool                                       `json:"ledger_committed"`
 			EventID          string                                     `json:"event_id,omitempty"`
 			SupersededDigest string                                     `json:"superseded_digest,omitempty"`
 			Write            bool                                       `json:"write"`
@@ -2068,6 +2252,8 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 			EffortRoot:       absRoot,
 			PromoteCoverage:  filepath.ToSlash(cleanPromotionPath),
 			State:            promotion.State,
+			CommitStatus:     promotion.CommitStatus,
+			LedgerCommitted:  promotion.LedgerCommitted,
 			EventID:          promotion.EventID,
 			SupersededDigest: promotion.SupersededDigest,
 			Write:            writePromotion,

@@ -225,6 +225,139 @@ func TestHarnessAuditBehaviorSummarizesIntentLoopEventsWithoutRawPayloadLeakage(
 	}
 }
 
+func TestHarnessAuditBehaviorSummarizesFeaturePlannerLifecycleWithoutRawPayloadLeakage(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "logs", "telemetry", "feature-planner.jsonl")
+	writeWorkspaceFile(t, logPath, strings.Join([]string{
+		`{"type":"idiom.feature_planner.plan_accepted","session_id":"fp-1","fields":{"plan_artifact_id":"artifact-1","plan_revision":2,"plan_digest":"sha256:plan","workspace_fingerprint":"sha256:workspace","raw_prompt":"SECRET prompt"}}`,
+		`{"type":"idiom.feature_planner.plan_approved","session_id":"fp-1","event_id":"approval-1","fields":{"plan_artifact_id":"artifact-1","plan_revision":2,"plan_digest":"sha256:plan","workspace_fingerprint":"sha256:workspace","approval_event_id":"approval-1","model_notes":"SECRET approval notes"}}`,
+		`{"type":"idiom.feature_planner.planner_question_superseded_by_revision","session_id":"fp-1","fields":{"question_id":"q-source","raw_revision":"SECRET operator revision"}}`,
+		`{"type":"idiom.feature_planner.atom_dispatched","session_id":"fp-1","atom_id":"atom-1","fields":{"run_id":"atom-1-run-1","prompt":"SECRET implementor prompt"}}`,
+		`{"type":"idiom.feature_planner.atom_completed","session_id":"fp-1","atom_id":"atom-1","fields":{"verification_closure_event_id":"verification-artifact-1-atom-1-r2","verification_status":"passed","plan_artifact_id":"artifact-1","plan_revision":2,"plan_digest":"sha256:plan","workspace_fingerprint":"sha256:workspace","approval_event_id":"approval-1","raw_output":"SECRET command output"}}`,
+		`{"type":"idiom.feature_planner.release_ready","session_id":"fp-1","event_id":"release-artifact-1-r2","fields":{"release_status":"ready","verification_closure_event_ids":["verification-artifact-1-atom-1-r2"],"plan_artifact_id":"artifact-1","plan_revision":2,"plan_digest":"sha256:plan","workspace_fingerprint":"sha256:workspace","approval_event_id":"approval-1","raw_release_notes":"SECRET release notes"}}`,
+		"",
+	}, "\n"))
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "behavior", Path: "logs/telemetry", Limit: 5})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+	if strings.Contains(result.Output, "SECRET") {
+		t.Fatalf("feature-planner audit leaked raw payload: %s", result.Output)
+	}
+
+	var report harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+	if report.LogBehavior == nil || report.LogBehavior.FeaturePlanner == nil {
+		t.Fatalf("feature planner lifecycle missing from report: %#v", report.LogBehavior)
+	}
+	lifecycle := report.LogBehavior.FeaturePlanner
+	if lifecycle.PlanApprovedEvents != 1 ||
+		lifecycle.ExecutionHandoffEvents != 1 ||
+		lifecycle.QuestionAnswerEvents != 1 ||
+		lifecycle.AtomTerminalEvents != 1 ||
+		lifecycle.ReleaseReadyEvents != 1 ||
+		lifecycle.VerificationStatuses["passed"] != 1 {
+		t.Fatalf("unexpected feature planner lifecycle summary: %#v", lifecycle)
+	}
+	if !slices.Contains(lifecycle.ArtifactIDs, "artifact-1") ||
+		!slices.Contains(lifecycle.PlanDigests, "sha256:plan") ||
+		!slices.Contains(lifecycle.ApprovalEvents, "approval-1") ||
+		!slices.Contains(lifecycle.VerificationClosures, "verification-artifact-1-atom-1-r2") {
+		t.Fatalf("lifecycle identifiers missing: %#v", lifecycle)
+	}
+	if finding := harnessAuditFindingByID(report.Findings, "feature_planner_lifecycle_binding_missing"); finding != nil {
+		t.Fatalf("complete lifecycle should not report missing bindings: %#v", finding)
+	}
+}
+
+func TestHarnessAuditBehaviorFlagsFeaturePlannerLifecycleMissingBindings(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "logs", "telemetry", "feature-planner-missing.jsonl")
+	writeWorkspaceFile(t, logPath, strings.Join([]string{
+		`{"type":"idiom.feature_planner.plan_approved","session_id":"fp-1","event_id":"approval-1","fields":{"approval":"harness_contract_approval"}}`,
+		`{"type":"idiom.feature_planner.atom_completed","session_id":"fp-1","atom_id":"atom-1","fields":{"verification_status":"passed"}}`,
+		"",
+	}, "\n"))
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "behavior", Path: "logs/telemetry", Limit: 5})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+
+	var report harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+	finding := harnessAuditFindingByID(report.Findings, "feature_planner_lifecycle_binding_missing")
+	if finding == nil || finding.DetailCount != 2 {
+		t.Fatalf("expected missing lifecycle binding finding, got %#v", report.Findings)
+	}
+}
+
+func TestHarnessAuditBehaviorFlagsFeaturePlannerLifecycleCorrelationMismatch(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "logs", "telemetry", "feature-planner-mismatch.jsonl")
+	writeWorkspaceFile(t, logPath, strings.Join([]string{
+		`{"type":"idiom.feature_planner.plan_approved","session_id":"fp-1","event_id":"approval-1","fields":{"plan_artifact_id":"artifact-1","plan_revision":2,"plan_digest":"sha256:plan","workspace_fingerprint":"sha256:workspace","approval_event_id":"approval-1"}}`,
+		`{"type":"idiom.feature_planner.atom_completed","session_id":"fp-1","atom_id":"atom-1","fields":{"verification_closure_event_id":"verification-artifact-1-atom-1-r2","verification_status":"passed","plan_artifact_id":"artifact-1","plan_revision":2,"plan_digest":"sha256:plan","workspace_fingerprint":"sha256:workspace","approval_event_id":"approval-1"}}`,
+		`{"type":"idiom.feature_planner.release_ready","session_id":"fp-1","event_id":"release-artifact-1-r2","fields":{"release_status":"ready","verification_closure_event_ids":["verification-artifact-1-atom-1-r2"],"plan_artifact_id":"artifact-1","plan_revision":2,"plan_digest":"sha256:other","workspace_fingerprint":"sha256:workspace","approval_event_id":"approval-2"}}`,
+		"",
+	}, "\n"))
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "behavior", Path: "logs/telemetry", Limit: 5})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+
+	var report harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+	finding := harnessAuditFindingByID(report.Findings, "feature_planner_lifecycle_correlation_failed")
+	if finding == nil || finding.DetailCount != 1 {
+		t.Fatalf("expected lifecycle correlation finding, got %#v", report.Findings)
+	}
+}
+
+func TestHarnessAuditBehaviorFlagsFeaturePlannerMissingCoverageAuthorityWithoutRawLeakage(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "logs", "telemetry", "feature-planner-coverage.jsonl")
+	writeWorkspaceFile(t, logPath, strings.Join([]string{
+		`{"type":"idiom.feature_planner.standalone_context_blocked","session_id":"fp-coverage","fields":{"validation_diagnostic":"standalone feature plan missing behavioral_coverage_draft with BDD scenarios, variants/invariants, and concrete TDD traceability","raw_plan":"SECRET raw model plan"}}`,
+		"",
+	}, "\n"))
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "behavior", Path: "logs/telemetry", Limit: 5})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+	for _, leaked := range []string{"SECRET", "raw model plan", "standalone feature plan missing behavioral_coverage_draft"} {
+		if strings.Contains(result.Output, leaked) {
+			t.Fatalf("feature-planner coverage audit leaked raw diagnostic marker %q: %s", leaked, result.Output)
+		}
+	}
+
+	var report harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+	lifecycle := report.LogBehavior.FeaturePlanner
+	if lifecycle == nil || lifecycle.CoverageAuthorityBlocks != 1 || lifecycle.PlanRejectedEvents != 1 {
+		t.Fatalf("expected coverage authority block rollup, got %#v", lifecycle)
+	}
+	finding := harnessAuditFindingByID(report.Findings, "feature_planner_coverage_authority_missing")
+	if finding == nil || finding.DetailCount != 1 {
+		t.Fatalf("expected missing coverage authority finding, got %#v", report.Findings)
+	}
+}
+
 func TestRankerLearningFindingsIgnoreEvidenceOnlyRecoveryNoOps(t *testing.T) {
 	root := t.TempDir()
 	for i := 0; i < 4; i++ {

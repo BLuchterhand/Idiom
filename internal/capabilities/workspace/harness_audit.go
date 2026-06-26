@@ -314,6 +314,7 @@ type harnessAuditLogBehavior struct {
 	WorstOffenders      []eval.PerfWorstOffender        `json:"worst_offenders,omitempty"`
 	MalformedOutput     *harnessAuditMalformedOutput    `json:"malformed_output,omitempty"`
 	IntentLoop          *harnessAuditIntentLoop         `json:"intent_loop,omitempty"`
+	FeaturePlanner      *harnessAuditFeaturePlanner     `json:"feature_planner,omitempty"`
 	GuardFriction       *autonomy.GuardFrictionCoverage `json:"guard_friction,omitempty"`
 	ChildLifecycle      *harnessAuditChildLifecycle     `json:"child_lifecycle,omitempty"`
 	LaneHistory         *harnessAuditLaneHistory        `json:"lane_history,omitempty"`
@@ -354,6 +355,54 @@ type harnessAuditIntentLoop struct {
 	EventCounts          map[string]int `json:"event_counts,omitempty"`
 	GapRequirementCounts map[string]int `json:"gap_requirement_counts,omitempty"`
 	GapStatusCounts      map[string]int `json:"gap_status_counts,omitempty"`
+}
+
+type harnessAuditFeaturePlanner struct {
+	LogsHit                 int               `json:"logs_hit,omitempty"`
+	EventCounts             map[string]int    `json:"event_counts,omitempty"`
+	ArtifactIDs             []string          `json:"artifact_ids,omitempty"`
+	PlanRevisions           []int             `json:"plan_revisions,omitempty"`
+	PlanDigests             []string          `json:"plan_digests,omitempty"`
+	WorkspaceFingerprints   []string          `json:"workspace_fingerprints,omitempty"`
+	ApprovalEvents          []string          `json:"approval_events,omitempty"`
+	VerificationClosures    []string          `json:"verification_closures,omitempty"`
+	VerificationStatuses    map[string]int    `json:"verification_statuses,omitempty"`
+	ExecutionHandoffEvents  int               `json:"execution_handoff_events,omitempty"`
+	OpenQuestionEvents      int               `json:"open_question_events,omitempty"`
+	QuestionAnswerEvents    int               `json:"question_answer_events,omitempty"`
+	PlanRejectedEvents      int               `json:"plan_rejected_events,omitempty"`
+	CoverageAuthorityBlocks int               `json:"coverage_authority_blocks,omitempty"`
+	PlanApprovedEvents      int               `json:"plan_approved_events,omitempty"`
+	AtomTerminalEvents      int               `json:"atom_terminal_events,omitempty"`
+	ReleaseReadyEvents      int               `json:"release_ready_events,omitempty"`
+	ReleaseBlockedEvents    int               `json:"release_blocked_events,omitempty"`
+	MissingArtifactBindings []harnessAuditRef `json:"missing_artifact_bindings,omitempty"`
+	CorrelationFailures     []harnessAuditRef `json:"correlation_failures,omitempty"`
+	terminalClosures        map[string]featurePlannerAuditBinding
+	releaseDecisions        []featurePlannerAuditRelease
+}
+
+type harnessAuditRef struct {
+	Type    string `json:"type,omitempty"`
+	Path    string `json:"path,omitempty"`
+	Line    int    `json:"line,omitempty"`
+	Problem string `json:"problem,omitempty"`
+}
+
+type featurePlannerAuditBinding struct {
+	EventType            string
+	Path                 string
+	Line                 int
+	ArtifactID           string
+	PlanRevision         int
+	PlanDigest           string
+	WorkspaceFingerprint string
+	ApprovalEventID      string
+}
+
+type featurePlannerAuditRelease struct {
+	Binding    featurePlannerAuditBinding
+	ClosureIDs []string
 }
 
 type harnessAuditChildLifecycle struct {
@@ -1063,6 +1112,7 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 	}
 
 	intentLoop := auditIntentLoopEvents(paths)
+	featurePlanner := auditFeaturePlannerEvents(paths, m.displayPath)
 	aggregate := eval.Aggregate(reports)
 	currentReports := currentHarnessAuditPerfReports(m.cfg.Root, reports)
 	currentAggregate := eval.Aggregate(currentReports)
@@ -1085,6 +1135,7 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 		WorstOffenders:      aggregate.WorstOffenders,
 		MalformedOutput:     malformedOutput,
 		IntentLoop:          intentLoop,
+		FeaturePlanner:      featurePlanner,
 		GuardFriction:       harnessAuditGuardFrictionCoverage(contractCoverage),
 		ChildLifecycle:      childLifecycle,
 		LaneHistory:         buildHarnessAuditLaneHistory(m.cfg.Root, 8),
@@ -1100,6 +1151,7 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 	findings = append(findings, contractCoverageWarningFindings(currentContractWarnings)...)
 	findings = append(findings, historicalContractCoverageWarningFindings(contractWarnings, currentContractWarnings)...)
 	findings = append(findings, contractCoverageFindings(currentContractCoverage)...)
+	findings = append(findings, featurePlannerLifecycleFindings(featurePlanner)...)
 
 	return behavior, contractCoverage, findings, logBehaviorQuestions(aggregate), nil
 }
@@ -1257,6 +1309,26 @@ func auditString(value any) string {
 	return strings.TrimSpace(s)
 }
 
+func auditStringList(value any) []string {
+	switch v := value.(type) {
+	case []string:
+		return uniqueSortedHarnessAuditStrings(v)
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if text := auditString(item); text != "" {
+				out = append(out, text)
+			}
+		}
+		return uniqueSortedHarnessAuditStrings(out)
+	case string:
+		if text := strings.TrimSpace(v); text != "" {
+			return []string{text}
+		}
+	}
+	return nil
+}
+
 func pruneEmptyAuditCounts(out *harnessAuditMalformedOutput) {
 	if len(out.EventCounts) == 0 {
 		out.EventCounts = nil
@@ -1399,6 +1471,344 @@ func auditIntentLoopEvent(out *harnessAuditIntentLoop, eventType string, event m
 	case "idiom.intent_loop.blocked":
 		out.Blocked++
 	}
+}
+
+const (
+	featurePlannerAuditEventQuestionAnswered             = "idiom.feature_planner.planner_question_answered"
+	featurePlannerAuditEventQuestionSupersededByRevision = "idiom.feature_planner.planner_question_superseded_by_revision"
+)
+
+var featurePlannerAuditEvents = map[string]struct{}{
+	"idiom.feature_planner.plan_accepted":                    {},
+	"idiom.feature_planner.plan_reviewed":                    {},
+	"idiom.feature_planner.plan_approved":                    {},
+	"idiom.feature_planner.tdd_pre_execution_checked":        {},
+	"idiom.feature_planner.dispatch_ready":                   {},
+	"idiom.feature_planner.atom_dispatched":                  {},
+	"idiom.feature_planner.atom_completed":                   {},
+	"idiom.feature_planner.atom_source_satisfied":            {},
+	"idiom.feature_planner.planner_question_opened":          {},
+	"idiom.feature_planner.implementor_question_opened":      {},
+	featurePlannerAuditEventQuestionAnswered:                 {},
+	featurePlannerAuditEventQuestionSupersededByRevision:     {},
+	"idiom.feature_planner.standalone_context_blocked":       {},
+	"idiom.feature_planner.product_context_blocked":          {},
+	"idiom.feature_planner.plan_contract_blocked":            {},
+	"idiom.feature_planner.tdd_pre_execution_blocked":        {},
+	"idiom.feature_planner.plan_execute_completion_rejected": {},
+	"idiom.feature_planner.release_ready":                    {},
+	"idiom.feature_planner.release_blocked":                  {},
+}
+
+func auditFeaturePlannerEvents(paths []string, displayPath func(string) string) *harnessAuditFeaturePlanner {
+	out := &harnessAuditFeaturePlanner{
+		EventCounts:          map[string]int{},
+		VerificationStatuses: map[string]int{},
+		terminalClosures:     map[string]featurePlannerAuditBinding{},
+	}
+	logsHit := map[string]struct{}{}
+
+	for _, path := range paths {
+		file, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+
+		scanner := bufio.NewScanner(file)
+		lineNumber := 0
+		for scanner.Scan() {
+			lineNumber++
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+
+			for _, event := range auditFeaturePlannerEventCandidates([]byte(line)) {
+				eventType := auditString(event["type"])
+				if _, ok := featurePlannerAuditEvents[eventType]; !ok {
+					continue
+				}
+
+				logsHit[path] = struct{}{}
+				out.EventCounts[eventType]++
+				auditFeaturePlannerEvent(out, eventType, event, displayPath(path), lineNumber)
+			}
+		}
+
+		_ = file.Close()
+	}
+
+	out.LogsHit = len(logsHit)
+	if out.LogsHit == 0 {
+		return nil
+	}
+
+	out.ArtifactIDs = uniqueSortedHarnessAuditStrings(out.ArtifactIDs)
+	out.PlanDigests = uniqueSortedHarnessAuditStrings(out.PlanDigests)
+	out.WorkspaceFingerprints = uniqueSortedHarnessAuditStrings(out.WorkspaceFingerprints)
+	out.ApprovalEvents = uniqueSortedHarnessAuditStrings(out.ApprovalEvents)
+	out.VerificationClosures = uniqueSortedHarnessAuditStrings(out.VerificationClosures)
+	out.PlanRevisions = uniqueSortedHarnessAuditInts(out.PlanRevisions)
+	correlateFeaturePlannerReleaseEvents(out)
+	out.terminalClosures = nil
+	out.releaseDecisions = nil
+
+	return out
+}
+
+func auditFeaturePlannerEventCandidates(line []byte) []map[string]any {
+	var row map[string]any
+	if err := json.Unmarshal(line, &row); err != nil {
+		return nil
+	}
+
+	var candidates []map[string]any
+	candidates = appendFeaturePlannerEventCandidate(candidates, row)
+	for _, key := range []string{"event", "feature_planner_event"} {
+		if nested, ok := row[key].(map[string]any); ok {
+			candidates = appendFeaturePlannerEventCandidate(candidates, nested)
+		}
+	}
+	if content := auditString(row["content"]); content != "" {
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(content), &payload); err == nil {
+			candidates = appendFeaturePlannerEventCandidate(candidates, payload)
+		}
+	}
+
+	return candidates
+}
+
+func appendFeaturePlannerEventCandidate(candidates []map[string]any, event map[string]any) []map[string]any {
+	if event == nil {
+		return candidates
+	}
+	if _, ok := featurePlannerAuditEvents[auditString(event["type"])]; !ok {
+		return candidates
+	}
+
+	return append(candidates, event)
+}
+
+func auditFeaturePlannerEvent(out *harnessAuditFeaturePlanner, eventType string, event map[string]any, path string, line int) {
+	fields, _ := event["fields"].(map[string]any)
+	artifactID := firstNonEmptyHarnessAuditString(auditString(fields["plan_artifact_id"]), auditString(event["plan_artifact_id"]))
+	planDigest := firstNonEmptyHarnessAuditString(auditString(fields["plan_digest"]), auditString(event["plan_digest"]))
+	workspaceFingerprint := firstNonEmptyHarnessAuditString(auditString(fields["workspace_fingerprint"]), auditString(event["workspace_fingerprint"]))
+	approvalEvent := firstNonEmptyHarnessAuditString(auditString(fields["approval_event_id"]), auditString(event["approval_event_id"]))
+	closureID := firstNonEmptyHarnessAuditString(auditString(fields["verification_closure_event_id"]), auditString(event["verification_closure_event_id"]))
+	planRevision := auditIntField(fields, "plan_revision")
+	binding := featurePlannerAuditBinding{
+		EventType:            eventType,
+		Path:                 path,
+		Line:                 line,
+		ArtifactID:           artifactID,
+		PlanRevision:         planRevision,
+		PlanDigest:           planDigest,
+		WorkspaceFingerprint: workspaceFingerprint,
+		ApprovalEventID:      approvalEvent,
+	}
+
+	if artifactID != "" {
+		out.ArtifactIDs = append(out.ArtifactIDs, artifactID)
+	}
+	if planDigest != "" {
+		out.PlanDigests = append(out.PlanDigests, planDigest)
+	}
+	if workspaceFingerprint != "" {
+		out.WorkspaceFingerprints = append(out.WorkspaceFingerprints, workspaceFingerprint)
+	}
+	if approvalEvent != "" {
+		out.ApprovalEvents = append(out.ApprovalEvents, approvalEvent)
+	}
+	if planRevision > 0 {
+		out.PlanRevisions = append(out.PlanRevisions, planRevision)
+	}
+	if closureID != "" {
+		out.VerificationClosures = append(out.VerificationClosures, closureID)
+	}
+	out.VerificationClosures = append(out.VerificationClosures, auditStringList(fields["verification_closure_event_ids"])...)
+	if status := auditString(fields["verification_status"]); status != "" {
+		out.VerificationStatuses[status]++
+	}
+
+	switch eventType {
+	case "idiom.feature_planner.plan_approved":
+		out.PlanApprovedEvents++
+		if artifactID == "" || planDigest == "" || workspaceFingerprint == "" {
+			out.MissingArtifactBindings = append(out.MissingArtifactBindings, harnessAuditRef{Type: eventType, Path: path, Line: line, Problem: "plan approval event missing artifact revision, digest, or workspace fingerprint"})
+		}
+	case "idiom.feature_planner.plan_accepted", "idiom.feature_planner.plan_reviewed":
+		if artifactID == "" || planDigest == "" || workspaceFingerprint == "" {
+			out.MissingArtifactBindings = append(out.MissingArtifactBindings, harnessAuditRef{Type: eventType, Path: path, Line: line, Problem: "plan lifecycle event missing artifact revision, digest, or workspace fingerprint"})
+		}
+	case "idiom.feature_planner.planner_question_opened", "idiom.feature_planner.implementor_question_opened":
+		out.OpenQuestionEvents++
+	case featurePlannerAuditEventQuestionAnswered, featurePlannerAuditEventQuestionSupersededByRevision:
+		out.QuestionAnswerEvents++
+	case "idiom.feature_planner.tdd_pre_execution_blocked", "idiom.feature_planner.plan_execute_completion_rejected", "idiom.feature_planner.standalone_context_blocked", "idiom.feature_planner.product_context_blocked", "idiom.feature_planner.plan_contract_blocked":
+		out.PlanRejectedEvents++
+		if featurePlannerEventIndicatesCoverageAuthorityBlock(fields, event) {
+			out.CoverageAuthorityBlocks++
+		}
+	case "idiom.feature_planner.atom_dispatched":
+		out.ExecutionHandoffEvents++
+	case "idiom.feature_planner.atom_completed", "idiom.feature_planner.atom_source_satisfied":
+		out.AtomTerminalEvents++
+		if closureID == "" {
+			out.MissingArtifactBindings = append(out.MissingArtifactBindings, harnessAuditRef{Type: eventType, Path: path, Line: line, Problem: "terminal atom event missing verification closure"})
+		} else {
+			out.terminalClosures[closureID] = binding
+		}
+	case "idiom.feature_planner.release_ready":
+		out.ReleaseReadyEvents++
+		closureIDs := auditStringList(fields["verification_closure_event_ids"])
+		if artifactID == "" || planDigest == "" || workspaceFingerprint == "" || approvalEvent == "" || len(closureIDs) == 0 {
+			out.MissingArtifactBindings = append(out.MissingArtifactBindings, harnessAuditRef{Type: eventType, Path: path, Line: line, Problem: "release-ready event missing artifact, approval, or verification closure bindings"})
+		}
+		out.releaseDecisions = append(out.releaseDecisions, featurePlannerAuditRelease{Binding: binding, ClosureIDs: closureIDs})
+	case "idiom.feature_planner.release_blocked":
+		out.ReleaseBlockedEvents++
+		if artifactID == "" || planDigest == "" || workspaceFingerprint == "" {
+			out.MissingArtifactBindings = append(out.MissingArtifactBindings, harnessAuditRef{Type: eventType, Path: path, Line: line, Problem: "release-blocked event missing artifact binding"})
+		}
+	}
+}
+
+func correlateFeaturePlannerReleaseEvents(out *harnessAuditFeaturePlanner) {
+	if out == nil {
+		return
+	}
+	for _, release := range out.releaseDecisions {
+		for _, closureID := range release.ClosureIDs {
+			terminal, ok := out.terminalClosures[closureID]
+			if !ok {
+				out.CorrelationFailures = append(out.CorrelationFailures, harnessAuditRef{
+					Type:    release.Binding.EventType,
+					Path:    release.Binding.Path,
+					Line:    release.Binding.Line,
+					Problem: "release-ready event references verification closure not emitted by a terminal atom event",
+				})
+				continue
+			}
+			if terminal.ArtifactID != release.Binding.ArtifactID ||
+				terminal.PlanRevision != release.Binding.PlanRevision ||
+				terminal.PlanDigest != release.Binding.PlanDigest ||
+				terminal.WorkspaceFingerprint != release.Binding.WorkspaceFingerprint ||
+				terminal.ApprovalEventID != release.Binding.ApprovalEventID {
+				out.CorrelationFailures = append(out.CorrelationFailures, harnessAuditRef{
+					Type:    release.Binding.EventType,
+					Path:    release.Binding.Path,
+					Line:    release.Binding.Line,
+					Problem: "release-ready event artifact, digest, workspace, or approval binding does not match terminal verification closure",
+				})
+			}
+		}
+	}
+}
+
+func featurePlannerEventIndicatesCoverageAuthorityBlock(fields map[string]any, event map[string]any) bool {
+	for _, value := range []string{
+		auditString(fields["validation_diagnostic"]),
+		auditString(fields["diagnostic"]),
+		auditString(event["message"]),
+		auditString(event["error"]),
+	} {
+		value = strings.ToLower(value)
+		if strings.Contains(value, "behavioral_coverage_draft") ||
+			strings.Contains(value, "bdd scenarios") ||
+			strings.Contains(value, "concrete tdd traceability") {
+			return true
+		}
+	}
+	return false
+}
+
+func featurePlannerLifecycleFindings(lifecycle *harnessAuditFeaturePlanner) []harnessAuditFinding {
+	if lifecycle == nil {
+		return nil
+	}
+
+	var findings []harnessAuditFinding
+	if len(lifecycle.MissingArtifactBindings) > 0 {
+		findings = append(findings, harnessAuditFinding{
+			ID:             "feature_planner_lifecycle_binding_missing",
+			Severity:       "high",
+			Evidence:       fmt.Sprintf("%d feature-planner lifecycle event(s) were missing artifact or verification closure bindings", len(lifecycle.MissingArtifactBindings)),
+			Recommendation: "Emit artifact revision/digest/workspace fields on plan lifecycle events and verification_closure_event_id on terminal atom events.",
+			Tools:          []string{"harness_audit"},
+			DetailCount:    len(lifecycle.MissingArtifactBindings),
+		})
+	}
+	if lifecycle.CoverageAuthorityBlocks > 0 {
+		findings = append(findings, harnessAuditFinding{
+			ID:             "feature_planner_coverage_authority_missing",
+			Severity:       "high",
+			Evidence:       fmt.Sprintf("%d feature-planner plan rejection(s) lacked structured behavioral coverage authority", lifecycle.CoverageAuthorityBlocks),
+			Recommendation: "Require accepted product coverage or standalone behavioral_coverage_draft before plan approval, dispatch, or release-readiness claims.",
+			Tools:          []string{"harness_audit"},
+			DetailCount:    lifecycle.CoverageAuthorityBlocks,
+		})
+	}
+	if len(lifecycle.CorrelationFailures) > 0 {
+		findings = append(findings, harnessAuditFinding{
+			ID:             "feature_planner_lifecycle_correlation_failed",
+			Severity:       "high",
+			Evidence:       fmt.Sprintf("%d feature-planner release lifecycle correlation failure(s)", len(lifecycle.CorrelationFailures)),
+			Recommendation: "Ensure release-ready events reference terminal verification closures with the same artifact revision, digest, workspace fingerprint, and approval event.",
+			Tools:          []string{"harness_audit"},
+			DetailCount:    len(lifecycle.CorrelationFailures),
+		})
+	}
+
+	return findings
+}
+
+func firstNonEmptyHarnessAuditString(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+
+	return ""
+}
+
+func uniqueSortedHarnessAuditStrings(values []string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	sort.Strings(out)
+
+	return out
+}
+
+func uniqueSortedHarnessAuditInts(values []int) []int {
+	seen := map[int]struct{}{}
+	var out []int
+	for _, value := range values {
+		if value <= 0 {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	sort.Ints(out)
+
+	return out
 }
 
 func auditIntentLoopGaps(out *harnessAuditIntentLoop, value any) {
@@ -1663,21 +2073,7 @@ func preFixOpenEvidenceFinalAnswerProjectionEvent(event autonomy.Event) bool {
 
 	phase := event.Lifecycle.TurnPhaseContract
 	return slices.Contains(phase.ActionPolicy.AllowedActionClasses, string(autonomy.ActionClassFinalAnswer)) &&
-		harnessAuditTurnPhaseEvidenceHasOpenObligation(phase.EvidenceState)
-}
-
-func harnessAuditTurnPhaseEvidenceHasOpenObligation(state autonomy.PhaseEvidenceStateEvent) bool {
-	verificationStatus := strings.ToLower(strings.TrimSpace(state.VerificationStatus))
-
-	return len(state.TDDObligationRefs) > 0 ||
-		len(state.ResidualBlockers) > 0 ||
-		len(state.RecoveryPacketRefs) > 0 ||
-		util.EqualTrimFold(state.ProductWorkflowState, "recovery_open") ||
-		util.EqualTrimFold(state.ProductWorkflowState, "incomplete") ||
-		util.EqualTrimFold(state.ProductWorkflowState, "skipped") ||
-		verificationStatus == "missing" ||
-		verificationStatus == "failed" ||
-		verificationStatus == "pre_write"
+		autonomy.PhaseEvidenceStateHasOpenObligation(phase.EvidenceState)
 }
 
 func dedupeAndSortHarnessAuditAutonomyEvents(events []autonomy.Event) []autonomy.Event {

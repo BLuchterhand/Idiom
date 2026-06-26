@@ -52,7 +52,7 @@ The first desktop pass maps the existing terminal surface into five app areas:
 | Runs | `startLane`, `runCommand` | `idiom lane plan-execute`, `idiom lane implement`, `idiom lane atom-spec`, `idiom doctor`, `idiom backend status`, `idiom queue status` |
 | Memory | `runTool`, `runCommand` | `idiom tool context_status`, `idiom tool list`, `idiom tool schemas` |
 | Audit | `runCommand` | `idiom tool harness_audit`, `idiom audit`, `idiom probe lane` |
-| Recover | `runCommand` | `idiom recover`, `idiom product efforts`, `idiom product` |
+| Recover | `runCommand` | `idiom recover`, `idiom recover status`, `idiom product efforts`, `idiom product create`, `idiom product status`, `idiom product lint`, `idiom product audit`, `idiom product transition` |
 | Settings | `runCommand` | `idiom version`, `idiom profile`, `idiom skills` |
 
 The UI intentionally shows raw command output for these parity hooks. That keeps

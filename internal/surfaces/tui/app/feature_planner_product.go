@@ -288,7 +288,7 @@ func (m *Model) runDirectFeaturePlannerPlanFromDraft(ctx context.Context, rawPla
 		_ = os.RemoveAll(effortRoot)
 	}
 
-	answer := formatFeaturePlannerTUIAnswer(state, statePath)
+	answer := formatFeaturePlannerTUIAnswerForRoot(state, statePath, m.projectRoot())
 	m.logFeaturePlannerInternalEvent(featurePlannerTUITerminalRole(state.Status), answer)
 
 	return answer, nil
@@ -1119,7 +1119,7 @@ func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, featurepl
 	}
 
 	output.WriteString("\n")
-	output.WriteString(formatFeaturePlannerTUIAnswer(result.State, statePath))
+	output.WriteString(formatFeaturePlannerTUIAnswerForRoot(result.State, statePath, m.projectRoot()))
 
 	answer := output.String()
 	m.logFeaturePlannerInternalEvent(featurePlannerTUITerminalRole(result.State.Status), answer)
@@ -1183,7 +1183,7 @@ func formatProductWorkflowFeaturePlannerRecovery(state featureplanner.FeatureSta
 		}
 
 		if len(atom.Blockers) > 0 {
-			line += " blockers=" + strings.Join(atom.Blockers, "; ")
+			line += fmt.Sprintf(" diagnostics=%d internal planner diagnostic(s) saved in feature-planner state", len(atom.Blockers))
 		}
 
 		if question := productWorkflowAtomQuestionDetail(state, atom); question != "" {
