@@ -166,6 +166,54 @@ func TestReadApprovalGateOverridesWhenOperatorApproves(t *testing.T) {
 	}
 }
 
+func TestReadApprovalGateAutoApprovesConversationLogReads(t *testing.T) {
+	decider := &fakeDecider{decision: readapproval.Decision{
+		Outcome: readapproval.OutcomeDenied,
+		Reason:  readapproval.ReasonOperatorDeniedLive,
+		Source:  readapproval.SourceOperator,
+	}}
+	cache := newFakeCache()
+	var gotDecision readapproval.Decision
+	var gotOrigin string
+	gate := &ReadApprovalGate{
+		Decider: decider,
+		Cache:   cache,
+		OnEvent: func(_ readapproval.Request, decision readapproval.Decision, origin string) {
+			gotDecision = decision
+			gotOrigin = origin
+		},
+	}
+
+	override, denialContext := gate.MaybeOverrideRejection(
+		context.Background(),
+		"session-1",
+		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: ".idiom/logs/conversations/session.jsonl"},
+		workerruntime.WorkerRuntimeBrief{TaskFamily: "plan-then-execute-planner"},
+		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
+		".idiom/logs/conversations/session.jsonl is not an explicit allowed candidate path.",
+	)
+
+	if !override {
+		t.Fatal("conversation log read must be approved by default policy")
+	}
+	if denialContext != "" {
+		t.Fatalf("default-approved conversation log must not append denial context, got %q", denialContext)
+	}
+	if decider.calls != 0 {
+		t.Fatalf("decider must not be called for default-readable conversation log; got %d calls", decider.calls)
+	}
+	if len(cache.recorded) != 0 {
+		t.Fatalf("default policy approval should not write operator cache records, got %#v", cache.recorded)
+	}
+	if gotDecision.Outcome != readapproval.OutcomeApproved ||
+		gotDecision.Reason != readapproval.ReasonConversationLogDefault ||
+		gotDecision.Source != readapproval.SourceHarnessDefault ||
+		gotOrigin != readapproval.EventOriginPolicyDefault {
+
+		t.Fatalf("unexpected default approval event: decision=%+v origin=%q", gotDecision, gotOrigin)
+	}
+}
+
 func TestReadApprovalGateFailsClosedWhenLiveDecisionCannotBeRecorded(t *testing.T) {
 	decider := &fakeDecider{decision: readapproval.Decision{
 		Outcome: readapproval.OutcomeApproved,

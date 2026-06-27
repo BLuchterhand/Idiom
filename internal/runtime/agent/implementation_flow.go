@@ -1518,26 +1518,12 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 	}
 
 	if r != nil {
-		// Compute objective relevance to detect compound rejection
-		// reasons. The source-grounding check runs first, but if the
-		// evidence also fails objective relevance, surface both problems
-		// so the model doesn't fix one issue only to discover another.
-		hasObjectiveBlocker := directAnswerRelevance.BlockerKind != "" && directAnswerRelevance.Reason != ""
-
 		if reason := r.sourceGroundingRejectionReason(answer, results); reason != "" {
 			if len(acceptance.EvidencePaths) == 0 {
 				acceptance.EvidencePaths = closurePromptEvidencePaths(directAnswerRelevance.RelevantSourceBodyPaths, 8)
 			}
 
-			if hasObjectiveBlocker {
-				reason = reason + " Additionally, " + directAnswerRelevance.Reason
-			}
-
 			return reject("source_grounding_unmet", reason)
-		}
-
-		if hasObjectiveBlocker {
-			return reject(directAnswerRelevance.BlockerKind, directAnswerRelevance.Reason)
 		}
 	}
 
@@ -5849,34 +5835,7 @@ func (r *Runner) runWorkbranchChildTask(ctx context.Context, req workspace.ToolR
 			r.emitEvent(RunEvent{Role: "child_" + event.Role, Content: event.Content})
 		},
 	}
-	answer, runErr := child.Run(
-		ctx,
-		[]llama.ChatMessage{
-			{
-				Role: "system",
-				Content: strings.Join([]string{
-					"You are a bounded isolated implementation child task running in a " + childWorkspaceDescription + ".",
-					"Make only the delegated change. Do not push, publish, deploy, or spawn more tasks.",
-					"Keep task_ledger current. Verify the changed surface when practical.",
-					"Final answer must include changed files, verification status, and confidence.",
-					childWorkspace.Instructions(),
-				}, "\n"),
-			},
-			{Role: "user", Content: prompt},
-		},
-		opts,
-		nil,
-		func(event ToolRequestEvent) {
-			event.ChildInvocationID = lifecycle.InvocationID
-			event.ChildContractID = lifecycle.ChildContractID
-			r.emitEvent(marshalRunEvent("child_tool_request", event))
-		},
-		func(event ToolResultEvent) {
-			event.ChildInvocationID = lifecycle.InvocationID
-			event.ChildContractID = lifecycle.ChildContractID
-			r.emitEvent(marshalRunEvent("child_tool_result", event))
-		},
-	)
+	answer, runErr := r.runWorkbranchChildModel(ctx, child, lifecycle, childWorkspaceDescription, childWorkspace.Instructions(), prompt, opts)
 	diff, diffErr := manager.Diff(ctx, checkout)
 
 	if runErr != nil {
@@ -5898,6 +5857,43 @@ func (r *Runner) runWorkbranchChildTask(ctx context.Context, req workspace.ToolR
 	}
 	r.emitWorkbranchChildTerminal(lifecycle, checkout, result, diff, autonomy.ChildTerminalCompleted)
 	return result
+}
+
+func (r *Runner) runWorkbranchChildModel(ctx context.Context, child *Runner, lifecycle childLifecycleContext, childWorkspaceDescription string, childWorkspaceInstructions string, prompt string, opts llama.ChatOptions) (answer string, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("workbranch child task panic: %v", recovered)
+		}
+	}()
+
+	return child.Run(
+		ctx,
+		[]llama.ChatMessage{
+			{
+				Role: "system",
+				Content: strings.Join([]string{
+					"You are a bounded isolated implementation child task running in a " + childWorkspaceDescription + ".",
+					"Make only the delegated change. Do not push, publish, deploy, or spawn more tasks.",
+					"Keep task_ledger current. Verify the changed surface when practical.",
+					"Final answer must include changed files, verification status, and confidence.",
+					childWorkspaceInstructions,
+				}, "\n"),
+			},
+			{Role: "user", Content: prompt},
+		},
+		opts,
+		nil,
+		func(event ToolRequestEvent) {
+			event.ChildInvocationID = lifecycle.InvocationID
+			event.ChildContractID = lifecycle.ChildContractID
+			r.emitEvent(marshalRunEvent("child_tool_request", event))
+		},
+		func(event ToolResultEvent) {
+			event.ChildInvocationID = lifecycle.InvocationID
+			event.ChildContractID = lifecycle.ChildContractID
+			r.emitEvent(marshalRunEvent("child_tool_result", event))
+		},
+	)
 }
 
 func renderWorkbranchChildOutput(checkout WorkbranchCheckout, diff WorkbranchDiff, answer string) string {

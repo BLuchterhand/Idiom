@@ -5543,21 +5543,18 @@ func EvaluateAcceptance(input CompletionPolicyInput) Acceptance {
 		return reject("non_answer_prose", "non_answer_prose")
 	}
 
-	hasObjectiveBlocker := input.DirectAnswerBlockerKind != "" && input.DirectAnswerReason != ""
+	hasEnforceableDirectAnswerBlocker := input.DirectAnswerBlockerKind != "" &&
+		input.DirectAnswerReason != "" &&
+		!finalAnswerObjectiveRelevanceAdvisoryKind(input.DirectAnswerBlockerKind)
 	if input.SourceGroundingReason != "" {
 		if len(acceptance.EvidencePaths) == 0 {
 			acceptance.EvidencePaths = append([]string(nil), input.RelevantSourceBodyPaths...)
 		}
 
-		groundingReason := input.SourceGroundingReason
-		if hasObjectiveBlocker {
-			groundingReason = groundingReason + " Additionally, " + input.DirectAnswerReason
-		}
-
-		return reject("source_grounding_unmet", groundingReason)
+		return reject("source_grounding_unmet", input.SourceGroundingReason)
 	}
 
-	if hasObjectiveBlocker {
+	if hasEnforceableDirectAnswerBlocker {
 		return reject(input.DirectAnswerBlockerKind, input.DirectAnswerReason)
 	}
 

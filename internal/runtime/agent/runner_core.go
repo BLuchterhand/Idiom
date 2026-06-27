@@ -830,6 +830,11 @@ func (r *Runner) finalAnswerPolicyEngine() FinalAnswerPolicyEngine {
 	return newFinalAnswerPolicyEngine()
 }
 
+func finalAnswerObjectiveRelevanceAdvisoryKind(kind string) bool {
+	trimmed := strings.TrimSpace(kind)
+	return trimmed == "answer_objective_unmet" || strings.HasPrefix(trimmed, "answer_objective_unmet:")
+}
+
 func (defaultFinalAnswerPolicyEngine) EvaluateFinalAnswer(input finalAnswerPolicyInput) finalAnswerAcceptance {
 	acceptance := newFinalAnswerAcceptance()
 	acceptance.EvidencePaths = append([]string(nil), input.DirectAnswerRelevance.RelevantSourceBodyPaths...)
@@ -841,15 +846,13 @@ func (defaultFinalAnswerPolicyEngine) EvaluateFinalAnswer(input finalAnswerPolic
 	if input.RequiresMutation && len(input.MissingRequiredEditPaths) > 0 {
 		return finalAnswerAcceptanceWithPolicy(rejectFinalAnswerAcceptance(acceptance, "required_edit_paths_remaining", "required_edit_paths_remaining"))
 	}
-	hasObjectiveBlocker := input.DirectAnswerRelevance.BlockerKind != "" && input.DirectAnswerRelevance.Reason != ""
+	hasEnforceableDirectAnswerBlocker := input.DirectAnswerRelevance.BlockerKind != "" &&
+		input.DirectAnswerRelevance.Reason != "" &&
+		!finalAnswerObjectiveRelevanceAdvisoryKind(input.DirectAnswerRelevance.BlockerKind)
 	if input.SourceGroundingReason != "" {
-		reason := input.SourceGroundingReason
-		if hasObjectiveBlocker {
-			reason += " Additionally, " + input.DirectAnswerRelevance.Reason
-		}
-		return finalAnswerAcceptanceWithPolicy(rejectFinalAnswerAcceptance(acceptance, "source_grounding_unmet", reason))
+		return finalAnswerAcceptanceWithPolicy(rejectFinalAnswerAcceptance(acceptance, "source_grounding_unmet", input.SourceGroundingReason))
 	}
-	if hasObjectiveBlocker {
+	if hasEnforceableDirectAnswerBlocker {
 		return finalAnswerAcceptanceWithPolicy(rejectFinalAnswerAcceptance(acceptance, input.DirectAnswerRelevance.BlockerKind, input.DirectAnswerRelevance.Reason))
 	}
 	return finalAnswerAcceptanceWithPolicy(acceptance)
@@ -1099,6 +1102,25 @@ func (r *Runner) toolAuthorizationPolicyEngine() ToolAuthorizationPolicyEngine {
 		return r.ToolAuthorizationPolicyEngine
 	}
 	return newToolAuthorizationPolicyEngine()
+}
+
+func (r *Runner) readOnlyWriteChildTaskPermissionDecision(req workspace.ToolRequest) (PermissionDecisionSnapshot, bool) {
+	if r == nil || strings.TrimSpace(req.Tool) != workspace.ToolNameTask || !isWriteChildMode(req.Mode) {
+		return PermissionDecisionSnapshot{}, false
+	}
+
+	readOnlyProfile := strings.TrimSpace(r.RuntimeBrief.PermissionProfile) == string(workerruntime.PermissionReadOnlyWorkspace)
+	readOnlyWorkspace := r.Workspace != nil && r.Workspace.Mode() == workspace.ModeExplore
+	if !readOnlyProfile && !readOnlyWorkspace {
+		return PermissionDecisionSnapshot{}, false
+	}
+
+	return PermissionDecisionSnapshot{
+		Tool:     strings.TrimSpace(req.Tool),
+		Target:   permissionTarget(req),
+		Decision: PermissionAsk,
+		Rule:     "read_only_workspace task.mode=write decision=ask",
+	}, true
 }
 
 func (defaultToolAuthorizationPolicyEngine) Permission(req workspace.ToolRequest, policy ToolPermissionPolicy, workspaceRulesDeny bool) ToolAuthorizationPermissionDecision {
@@ -2592,8 +2614,7 @@ func (r *Runner) runLegacySessionBody(
 				}
 
 				if priorGateRejections >= r.completionGateRetryLimit(collectedResults) {
-					if recovered, recoveredAcceptance, ok := r.readOnlyTerminalRecoveryCandidate("completion_gate_repeated_rejection", collectedResults); ok {
-						_ = recoveredAcceptance
+					if recovered, _, ok := r.readOnlyTerminalRecoveryCandidate("completion_gate_repeated_rejection", collectedResults); ok {
 						emitCompletionStatus("accepted", "read_only_terminal_recovery", "", collectedResults, false)
 
 						return finish(recovered, nil, "read_only_terminal_recovery", false)
@@ -2636,17 +2657,6 @@ func (r *Runner) runLegacySessionBody(
 				!strings.HasPrefix(strings.TrimSpace(gateReply), "<<QUESTION>>") {
 
 				answer = gateReply
-			}
-
-			if reason := retryAnswerHedgeRejectionReason(answer); reason != "" {
-				// The retry answer is a hedge or meta-response about evidence
-				// sufficiency rather than a substantive answer — reject and block.
-				r.emitCompletionStatusFromParams("blocked", reason, "content_gap", collectedResults, true)
-
-				blockerResult := workspace.ToolResult{Tool: "completion_gate", Summary: "Retry answer rejected as hedge", Error: reason}
-				overridden := r.completionGateRepeatedBlockerAnswer(blockerResult, collectedResults)
-
-				return finish(overridden, nil, "content_gap", true)
 			}
 
 			if acceptance := r.evaluateFinalAnswerAcceptance(answer, collectedResults); acceptance.BlockerKind != "" {
@@ -4488,6 +4498,10 @@ func (r *Runner) runLegacySessionBody(
 				Decision: PermissionDeny,
 				Rule:     "workspace.tool_rules decision=deny",
 			}
+		} else if permissionDecision.Decision == PermissionAllow {
+			if readOnlyWriteChildDecision, ok := r.readOnlyWriteChildTaskPermissionDecision(req); ok {
+				permissionDecision = readOnlyWriteChildDecision
+			}
 		}
 
 		if autonomyRecorder != nil {
@@ -6169,58 +6183,6 @@ func readOnlyExplanationMetaRejectionReason(reply string) string {
 	}
 
 	return ""
-}
-
-func readOnlyExplanationObjectiveRejectionReason(reply string, brief workerruntime.WorkerRuntimeBrief) string {
-	brief = workerruntime.NormalizeRuntimeBrief(brief)
-
-	objective := strings.TrimSpace(brief.Objective)
-
-	if objective == "" || !readOnlyExplanationGateApplies(brief) {
-		return ""
-	}
-
-	body := SubstantiveAnswerWithoutEchoedObjective(reply, objective)
-	if strings.TrimSpace(body) == "" {
-		return "the answer repeats the question but does not provide a substantive explanation from the inspected evidence."
-	}
-
-	terms := readOnlySearchHitObjectiveTerms(objective)
-	if len(terms) == 0 {
-		return ""
-	}
-
-	objectiveText := AnswerTextWithoutPathCitations(body)
-	lower := strings.ToLower(AnswerProseForObjectiveMatching(body))
-	mechanismText := strings.ToLower(AnswerProseForObjectiveMatching(objectiveText))
-
-	if readOnlyObjectiveAnswerEvidenceSupported(objectiveText, objective) {
-		return ""
-	}
-
-	matches := 0
-
-	for _, term := range terms {
-		if strings.Contains(lower, term) {
-			matches++
-		}
-	}
-
-	if matches >= 2 {
-		return ""
-	}
-
-	if sourceBodyHasStrongObjectiveToken(objectiveText, objective) && ReadOnlyExplanationHasMechanismVerb(mechanismText) {
-		return ""
-	}
-
-	for _, term := range longestObjectiveTerms(terms, 2) {
-		if strings.Contains(lower, term) && ReadOnlyExplanationHasMechanismVerb(mechanismText) {
-			return ""
-		}
-	}
-
-	return "the answer is grounded in inspected evidence, but the substantive answer body does not address the user's objective terms. Do not rely on an echoed question or path citation as the answer; state the concrete behavior or finding tied to the objective."
 }
 
 func architectureUnsupportedExactDetail(reply string, results []workspace.ToolResult) []string {
@@ -12585,14 +12547,6 @@ func alreadyReadPath(results []workspace.ToolResult, path string) bool {
 	return false
 }
 
-type discoveryConsumptionStrength int
-
-const (
-	discoveryConsumptionNone discoveryConsumptionStrength = iota
-	discoveryConsumptionCandidateOnly
-	discoveryConsumptionSourceOwner
-)
-
 type runnerExecutionState struct {
 	verificationAttempted            bool
 	needsNarrowingAfterBroad         bool
@@ -12832,97 +12786,6 @@ func (s *runnerExecutionState) noteMissingPathListFailure(exploreMode bool, req 
 	s.consecutiveMissingPathListErrors = 0
 
 	return 0
-}
-
-func successfulSearchDiscoveryResult(req workspace.ToolRequest, result workspace.ToolResult) bool {
-	if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" || workerruntime.IsZeroHitSearchResult(result) {
-		return false
-	}
-
-	switch strings.TrimSpace(req.Tool) {
-	case "search_files", "search_content", "rg", "grep",
-		"go_workspace_symbol", "cpp_workspace_symbol", "python_workspace_symbol", "ts_workspace_symbol", "rust_workspace_symbol", "java_workspace_symbol":
-		return true
-	default:
-		return false
-	}
-}
-
-func discoveryConsumptionResultStrength(req workspace.ToolRequest, result workspace.ToolResult) discoveryConsumptionStrength {
-	return discoveryConsumptionResultStrengthFromLegacySemantics(req, result)
-}
-
-func discoveryConsumptionResultStrengthFromLegacySemantics(req workspace.ToolRequest, result workspace.ToolResult) discoveryConsumptionStrength {
-	if strings.TrimSpace(result.Error) != "" || workerruntime.IsZeroHitSearchResult(result) {
-		return discoveryConsumptionNone
-	}
-
-	if concreteSourceEvidenceResult(result) {
-		return discoveryConsumptionNone
-	}
-
-	if strings.TrimSpace(result.Output) == "" && strings.TrimSpace(result.Summary) == "" {
-		return discoveryConsumptionNone
-	}
-
-	switch strings.TrimSpace(req.Tool) {
-	case "context_pack":
-		if !contextPackResultHasTargets(result) {
-			return discoveryConsumptionNone
-		}
-
-		if contextPackResultWeakSourceOwner(result) {
-			return discoveryConsumptionCandidateOnly
-		}
-
-		return discoveryConsumptionSourceOwner
-	case "context_query":
-		if len(discoveryConsumptionCandidatesFromResult(result, 1)) == 0 {
-			return discoveryConsumptionNone
-		}
-
-		if discoveryConsumptionResultHasReadableSourceOwner(result) {
-			return discoveryConsumptionSourceOwner
-		}
-
-		return discoveryConsumptionCandidateOnly
-	case "search_files", "search_content", "rg", "grep",
-		"go_workspace_symbol", "cpp_workspace_symbol", "python_workspace_symbol", "ts_workspace_symbol", "rust_workspace_symbol", "java_workspace_symbol",
-		"structural_search", "discovery_query", "context_zoom", "context_impact":
-		if len(discoveryConsumptionCandidatesFromResult(result, 1)) == 0 {
-			return discoveryConsumptionNone
-		}
-
-		return discoveryConsumptionSourceOwner
-	default:
-		return discoveryConsumptionNone
-	}
-}
-
-func discoveryConsumptionResultHasReadableSourceOwner(result workspace.ToolResult) bool {
-	text := strings.TrimSpace(result.Summary + "\n" + result.Output)
-	if text == "" {
-		return false
-	}
-
-	lower := strings.ToLower(text)
-	if strings.Contains(lower, `"source_owner_found":false`) ||
-		strings.Contains(lower, `"source_owner_found": false`) {
-
-		return false
-	}
-
-	if !strings.Contains(lower, `"source_owner_found":true`) &&
-		!strings.Contains(lower, `"source_owner_found": true`) &&
-		!strings.Contains(lower, "source owner found") &&
-		!strings.Contains(lower, "source-owner found") &&
-		!strings.Contains(lower, "readable source owner") &&
-		!strings.Contains(lower, "readable source-owner") {
-
-		return false
-	}
-
-	return len(readOnlySourceLikePaths(sourceLikePathsFromText(text, 4), 1)) > 0
 }
 
 func (s *runnerExecutionState) shouldConsumeSearchHitBeforeMoreSearch(req workspace.ToolRequest) bool {
@@ -20521,7 +20384,7 @@ func (r *Runner) finish(state *runnerRunState, value string, finishErr error, re
 		value = decision.PresentedAnswer
 		state.stopReason = decision.StopReason
 
-		if decision.RetryExhausted {
+		if decision.RetryExhausted || (decision.Outcome == terminalAnswerAccepted && decision.StopReason == "read_only_terminal_recovery") {
 			state.budgetExhausted = false
 		}
 
@@ -22957,6 +22820,12 @@ func (r *Runner) requiredEditPathsProgressMessage(req workspace.ToolRequest, res
 // rejected-completion retry, plus an explicit note that its claimed
 // changed-paths summary did not match reality.
 func (r *Runner) finalAnswerBlockerErrorText(kind string, reason string, answer string, results []workspace.ToolResult) string {
+	kind = strings.TrimSpace(kind)
+	reason = strings.TrimSpace(reason)
+	if finalAnswerObjectiveRelevanceAdvisoryKind(kind) {
+		return "objective relevance diagnostics are advisory. Accept the model's final answer unless a mechanical blocker such as missing source-body evidence, protocol markup, permissions, or required evidence applies."
+	}
+
 	switch kind {
 	case "required_edit_paths_remaining":
 		missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results))
@@ -22997,8 +22866,6 @@ func (r *Runner) finalAnswerBlockerErrorText(kind string, reason string, answer 
 	case "non_answer_prose":
 		return "the final answer looks like transport-level noise (tool-call markup, echoed user question, or tool-failure language) rather than an actual answer. Reply with substantive prose that addresses the user's request, or use <<QUESTION>>: to state a concrete blocker."
 	case "source_grounding_unmet":
-		return reason
-	case "answer_objective_unmet", "answer_objective_unmet:insufficient_evidence_claimed", "answer_objective_unmet:no_source_body_evidence", "answer_objective_unmet:citation_mismatch", "answer_objective_unmet:term_mismatch":
 		return reason
 	case "required_evidence_unmet":
 		if r != nil {

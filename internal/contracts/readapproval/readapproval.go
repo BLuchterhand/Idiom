@@ -39,6 +39,7 @@ const (
 	SourceHeadlessDefault       = "headless_default"
 	SourcePromptBudgetExhausted = "prompt_budget_exhausted"
 	SourceNoDecider             = "no_decider"
+	SourceHarnessDefault        = "harness_default"
 )
 
 const (
@@ -59,6 +60,7 @@ const (
 	ReasonCacheUnavailable       = "cache_unavailable"
 	ReasonContextDocCapExhausted = "context_doc_cap_exhausted"
 	ReasonClassifierDenied       = "classifier_denied"
+	ReasonConversationLogDefault = "conversation_log_default"
 )
 
 const (
@@ -72,6 +74,8 @@ const (
 	EventOriginLiveDecision = "live_decision"
 	// EventOriginCacheRecord marks a live decision rejected because it could not be durably recorded.
 	EventOriginCacheRecord = "cache_record"
+	// EventOriginPolicyDefault marks decisions approved by host-owned default read policy.
+	EventOriginPolicyDefault = "policy_default"
 )
 
 // Classification describes a policy-level read decision before it is persisted.

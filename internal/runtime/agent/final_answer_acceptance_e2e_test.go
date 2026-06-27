@@ -2,11 +2,7 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -17,7 +13,7 @@ import (
 )
 
 func TestRunnerEndToEndAcceptsLowConfidenceSourceBackedDirectAnswer(t *testing.T) {
-	root := t.TempDir()
+	root := newGoModuleTestWorkspace(t)
 	if err := writeTestFile(root, "docs/decisioning-north-star.md", strings.Join([]string{
 		"# Decisioning North Star",
 		"The model owns strategy; the harness owns contracts.",
@@ -26,9 +22,6 @@ func TestRunnerEndToEndAcceptsLowConfidenceSourceBackedDirectAnswer(t *testing.T
 	}, "\n")); err != nil {
 		t.Fatalf("write source doc: %v", err)
 	}
-	if err := writeTestFile(root, "go.mod", "module idiomtest\n\ngo 1.22\n"); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
 
 	finalAnswer := "No. Free-form prose moves the closeout away from deterministic contract enforcement."
 	replies := []string{
@@ -36,41 +29,7 @@ func TestRunnerEndToEndAcceptsLowConfidenceSourceBackedDirectAnswer(t *testing.T
 		finalAnswer,
 	}
 
-	requests := 0
-	var requestBodies []string
-	var mu sync.Mutex
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
-
-		var body strings.Builder
-		buf := make([]byte, 1<<16)
-		for {
-			n, err := r.Body.Read(buf)
-			if n > 0 {
-				body.Write(buf[:n])
-			}
-			if err != nil {
-				break
-			}
-		}
-
-		mu.Lock()
-		idx := requests
-		requests++
-		requestBodies = append(requestBodies, body.String())
-		mu.Unlock()
-
-		reply := replies[len(replies)-1]
-		if idx < len(replies) {
-			reply = replies[idx]
-		}
-
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{
-				"message": map[string]string{"content": reply},
-			}},
-		})
-	}))
+	server, requestBodies := newScriptedChatServer(t, replies, false)
 	defer server.Close()
 
 	objective := "Why would replacing this with model prose fit our north star or risk leaking unverified information to the user?"
@@ -110,10 +69,7 @@ func TestRunnerEndToEndAcceptsLowConfidenceSourceBackedDirectAnswer(t *testing.T
 		t.Fatalf("runner returned unexpected answer:\n%s", answer)
 	}
 
-	mu.Lock()
-	bodies := append([]string(nil), requestBodies...)
-	mu.Unlock()
-
+	bodies := requestBodies()
 	if len(bodies) < 2 {
 		t.Fatalf("expected read request plus final answer request, got %d request(s)", len(bodies))
 	}
@@ -142,46 +98,115 @@ func TestRunnerEndToEndAcceptsLowConfidenceSourceBackedDirectAnswer(t *testing.T
 	}
 }
 
-func TestRunnerEndToEndRecoversReadOnlyNonAnswerFromAnswerableEvidence(t *testing.T) {
-	root := t.TempDir()
-	if err := writeTestFile(root, "docs/idiom-strategic-thesis.md", strings.Join([]string{
-		"# Idiom Strategic Thesis",
-		"Idiom sells the missing substrate: repo memory, freshness, contracts, audit, and evals.",
-		"Idiom is the local, evidence-first coding-agent harness for teams that need agents to do real work in real repositories.",
-		"The model owns strategy; the harness owns contracts, repository memory, verification, auditability, and the learning loop.",
-		"The harness decides whether that action is allowed, whether evidence is fresh enough, and whether readiness is satisfied.",
-		"Task-scoped repository evidence feeds the runtime brief, including tools, editable paths, evidence paths, verification, and budget.",
+func TestRunnerEndToEndAllowsContextQueryAfterBroadTextSearch(t *testing.T) {
+	root := newGoModuleTestWorkspace(t)
+	if err := writeTestFile(root, "internal/contracts/workflowstate/machine.go", strings.Join([]string{
+		"package workflowstate",
+		"",
+		"type Machine struct{}",
+		"const PhaseTerminal = \"terminal\"",
 	}, "\n")); err != nil {
-		t.Fatalf("write source doc: %v", err)
+		t.Fatalf("write workflow source: %v", err)
 	}
-	if err := writeTestFile(root, "go.mod", "module idiomtest\n\ngo 1.22\n"); err != nil {
-		t.Fatalf("write go.mod: %v", err)
+
+	finalAnswer := "The lifecycle state surface is in `internal/contracts/workflowstate/machine.go`: it defines `Machine` and the terminal phase constant `PhaseTerminal`, so review should focus there."
+	replies := []string{
+		`{"tool":"search_content","path":".","pattern":"workflow state"}`,
+		`{"tool":"context_query","query":"find all types and constants related to lifecycle state, phase, terminal/nonterminal status, and workflow state machines","resolution":"symbol","include_evidence":true}`,
+		`{"tool":"read_file","path":"internal/contracts/workflowstate/machine.go","start_line":1,"end_line":20}`,
+		finalAnswer,
 	}
+
+	server, _ := newScriptedChatServer(t, replies, true)
+	defer server.Close()
+
+	var toolEvents []ToolResultEvent
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, 5*time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 5, MaxNoProgressTurns: 4, MaxModelCalls: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         "Review lifecycle state machine surfaces.",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"search_content", "context_query", "read_file"},
+		},
+		PreExecute: func(step int, req workspace.ToolRequest) *workspace.ToolResult {
+			switch req.Tool {
+			case "search_content":
+				return &workspace.ToolResult{
+					Tool:    req.Tool,
+					Summary: "Found 400 matching line(s) (showing first 50).",
+					Output: strings.Join([]string{
+						"internal/contracts/workflowstate/machine.go:3:type Machine struct{}",
+						"internal/runtime/agent/discovery_consumption.go:12:type discoveryConsumptionStrength int",
+					}, "\n"),
+				}
+			case "context_query":
+				return &workspace.ToolResult{
+					Tool:    req.Tool,
+					Summary: "Context query returned lifecycle candidates.",
+					Output:  `{"source_owner_found":false,"candidates":[{"path":"internal/contracts/workflowstate/machine.go","symbol":"Machine"}]}`,
+				}
+			default:
+				return nil
+			}
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Review lifecycle state machine surfaces."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			toolEvents = append(toolEvents, event)
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if answer != finalAnswer {
+		t.Fatalf("unexpected final answer:\n%s", answer)
+	}
+
+	var sawContextQuery bool
+	for _, event := range toolEvents {
+		if event.Result.Tool != "context_query" {
+			continue
+		}
+
+		if strings.Contains(event.Result.Summary, "Discovery consumption required before more broad discovery") || strings.TrimSpace(event.Result.Error) != "" {
+			t.Fatalf("context_query was rejected instead of executed: %#v", event.Result)
+		}
+
+		sawContextQuery = true
+	}
+
+	if !sawContextQuery {
+		t.Fatalf("expected scripted context_query to execute; tool events=%#v", toolEvents)
+	}
+}
+
+func TestRunnerEndToEndRecoversReadOnlyNonAnswerFromAnswerableEvidence(t *testing.T) {
+	root := newReadOnlyStrategicThesisWorkspace(t)
 
 	nonAnswer := "The user is asking me to inspect `docs/idiom-strategic-thesis.md`, but I should gather more evidence before answering."
 	replies := []string{
-		`{"tool":"read_file","path":"docs/idiom-strategic-thesis.md","start_line":1,"end_line":20}`,
+		readOnlyStrategicThesisReadFileToolCall,
 		nonAnswer,
 		nonAnswer,
 		nonAnswer,
 		nonAnswer,
 	}
 
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
-		reply := replies[len(replies)-1]
-		if requests < len(replies) {
-			reply = replies[requests]
-		}
-		requests++
-
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{
-				"message": map[string]string{"content": reply},
-			}},
-		})
-	}))
+	server, _ := newScriptedChatServer(t, replies, false)
 	defer server.Close()
 
 	objective := "What is the role of evidence in this harness? Where does it come from and what is it used for?"
@@ -217,16 +242,7 @@ func TestRunnerEndToEndRecoversReadOnlyNonAnswerFromAnswerableEvidence(t *testin
 		t.Fatalf("Run: %v", err)
 	}
 
-	for _, forbidden := range []string{"I could not produce a supported final answer", "Reply with substantive prose", nonAnswer} {
-		if strings.Contains(answer, forbidden) {
-			t.Fatalf("read-only terminal recovery leaked forbidden text %q:\n%s", forbidden, answer)
-		}
-	}
-	for _, want := range []string{"docs/idiom-strategic-thesis.md", "evidence-first", "contracts", "runtime brief"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("recovered answer missing %q:\n%s", want, answer)
-		}
-	}
+	assertRecoveredStrategicThesisAnswer(t, answer, "I could not produce a supported final answer", "Reply with substantive prose", nonAnswer)
 
 	for _, event := range events {
 		if event.Role == "completion_status" && strings.Contains(event.Content, `"user_visible_blocker":true`) {
@@ -236,20 +252,7 @@ func TestRunnerEndToEndRecoversReadOnlyNonAnswerFromAnswerableEvidence(t *testin
 }
 
 func TestRunnerEndToEndRecoversReadOnlyRepeatedCompletionGateRejection(t *testing.T) {
-	root := t.TempDir()
-	if err := writeTestFile(root, "docs/idiom-strategic-thesis.md", strings.Join([]string{
-		"# Idiom Strategic Thesis",
-		"Idiom sells the missing substrate: repo memory, freshness, contracts, audit, and evals.",
-		"Idiom is the local, evidence-first coding-agent harness for teams that need agents to do real work in real repositories.",
-		"The model owns strategy; the harness owns contracts, repository memory, verification, auditability, and the learning loop.",
-		"The harness decides whether that action is allowed, whether evidence is fresh enough, and whether readiness is satisfied.",
-		"Task-scoped repository evidence feeds the runtime brief, including tools, editable paths, evidence paths, verification, and budget.",
-	}, "\n")); err != nil {
-		t.Fatalf("write source doc: %v", err)
-	}
-	if err := writeTestFile(root, "go.mod", "module idiomtest\n\ngo 1.22\n"); err != nil {
-		t.Fatalf("write go.mod: %v", err)
-	}
+	root := newReadOnlyStrategicThesisWorkspace(t)
 
 	rejectedFinal := strings.Join([]string{
 		"Now I have sufficient evidence to answer. Let me synthesize.",
@@ -259,28 +262,14 @@ func TestRunnerEndToEndRecoversReadOnlyRepeatedCompletionGateRejection(t *testin
 		"The inspected source in `docs/idiom-strategic-thesis.md` says Idiom is evidence-first and that the harness owns contracts, repository memory, verification, auditability, and the learning loop.",
 	}, "\n")
 	replies := []string{
-		`{"tool":"read_file","path":"docs/idiom-strategic-thesis.md","start_line":1,"end_line":20}`,
+		readOnlyStrategicThesisReadFileToolCall,
 		rejectedFinal,
 		rejectedFinal,
 		rejectedFinal,
 		rejectedFinal,
 	}
 
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
-		reply := replies[len(replies)-1]
-		if requests < len(replies) {
-			reply = replies[requests]
-		}
-		requests++
-
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{
-				"message": map[string]string{"content": reply},
-			}},
-		})
-	}))
+	server, _ := newScriptedChatServer(t, replies, false)
 	defer server.Close()
 
 	objective := "What is the role of evidence in this harness? Where does it come from and what is it used for?"
@@ -293,7 +282,7 @@ func TestRunnerEndToEndRecoversReadOnlyRepeatedCompletionGateRejection(t *testin
 		}),
 		Policy: RunPolicy{MaxToolSteps: 6, MaxNoProgressTurns: 4, MaxModelCalls: 8},
 		CompletionGate: func(input CompletionGateInput) CompletionGateResult {
-			if strings.Contains(input.Reply, "docs/idiom-strategic-thesis.md") {
+			if strings.Contains(input.Reply, readOnlyStrategicThesisPath) {
 				return CompletionGateResult{
 					Summary: "Read-only completion gate rejected search-hit inventory",
 					Error:   "the reply inventories search handles or raw hit lines instead of answering the user's question",
@@ -326,16 +315,7 @@ func TestRunnerEndToEndRecoversReadOnlyRepeatedCompletionGateRejection(t *testin
 		t.Fatalf("Run: %v", err)
 	}
 
-	for _, forbidden := range []string{"I could not produce a supported final answer", "reply inventories search handles", "<<QUESTION>>"} {
-		if strings.Contains(answer, forbidden) {
-			t.Fatalf("read-only repeated gate recovery leaked forbidden text %q:\n%s", forbidden, answer)
-		}
-	}
-	for _, want := range []string{"docs/idiom-strategic-thesis.md", "evidence-first", "contracts", "runtime brief"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("recovered answer missing %q:\n%s", want, answer)
-		}
-	}
+	assertRecoveredStrategicThesisAnswer(t, answer, "I could not produce a supported final answer", "reply inventories search handles", "<<QUESTION>>")
 	if strings.TrimSpace(runner.LastAssistantMessage.Content) != strings.TrimSpace(answer) {
 		t.Fatalf("last assistant message should store recovered answer, got:\n%s\nwant:\n%s", runner.LastAssistantMessage.Content, answer)
 	}
@@ -354,7 +334,7 @@ func TestRunnerEndToEndRecoversReadOnlyRepeatedCompletionGateRejection(t *testin
 		}
 		if event.Role == "final_answer_critic" &&
 			strings.Contains(event.Content, `"passed":true`) &&
-			strings.Contains(event.Content, "docs/idiom-strategic-thesis.md") {
+			strings.Contains(event.Content, readOnlyStrategicThesisPath) {
 
 			sawAcceptedCriticWithEvidence = true
 		}
@@ -364,5 +344,160 @@ func TestRunnerEndToEndRecoversReadOnlyRepeatedCompletionGateRejection(t *testin
 	}
 	if !sawAcceptedCriticWithEvidence {
 		t.Fatalf("expected accepted final-answer critic with source evidence path; events=%#v", events)
+	}
+}
+
+func TestRunnerEndToEndDoesNotOverrideReadOnlyHedgeAfterCompletionGateRetry(t *testing.T) {
+	root := newReadOnlyStrategicThesisWorkspace(t)
+
+	firstAnswer := "The inspected source in `docs/idiom-strategic-thesis.md` says Idiom is evidence-first."
+	hedgeAnswer := "I cannot provide a supported answer because the retained source context is not sufficient."
+	replies := []string{
+		readOnlyStrategicThesisReadFileToolCall,
+		firstAnswer,
+		hedgeAnswer,
+	}
+
+	server, requestBodies := newScriptedChatServer(t, replies, false)
+	defer server.Close()
+
+	objective := "What is the role of evidence in this harness? Where does it come from and what is it used for?"
+	gateAttempts := 0
+	var events []RunEvent
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, 5*time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 3, MaxModelCalls: 6},
+		CompletionGate: func(input CompletionGateInput) CompletionGateResult {
+			gateAttempts++
+			if gateAttempts == 1 {
+				return CompletionGateResult{
+					Summary: "Read-only completion gate rejected final answer",
+					Error:   "the answer cites source path/line/symbol detail not backed by retained gate proof",
+				}
+			}
+
+			return CompletionGateResult{Accept: true}
+		},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         objective,
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file"},
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: objective}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if answer != hedgeAnswer {
+		t.Fatalf("read-only hedge should remain model-authored, got:\n%s", answer)
+	}
+	if got := len(requestBodies()); got != len(replies) {
+		t.Fatalf("expected scripted first answer and hedge retry to run, used %d/%d replies", got, len(replies))
+	}
+
+	for _, event := range events {
+		if event.Role == "completion_status" && strings.Contains(event.Content, `"user_visible_blocker":true`) {
+			t.Fatalf("read-only hedge recovery must not emit a user-visible blocker: %s", event.Content)
+		}
+		if event.Role == "completion_status" &&
+			strings.Contains(event.Content, `"status":"accepted"`) &&
+			strings.Contains(event.Content, `"reason":"read_only_terminal_recovery"`) {
+
+			t.Fatalf("read-only hedge should not be host-recovered: %s", event.Content)
+		}
+	}
+	if gateAttempts < 2 {
+		t.Fatalf("expected first final answer rejection plus hedge retry acceptance, got %d gate attempt(s)", gateAttempts)
+	}
+}
+
+func TestRunnerEndToEndRecoversReadOnlyReadinessNudgeEcho(t *testing.T) {
+	root := newReadOnlyStrategicThesisWorkspace(t)
+
+	nudgeEcho := strings.Join([]string{
+		"The read-only evidence is sufficient for a grounded answer to this question.",
+		"",
+		"Why a final answer is now valid: the current evidence already names inspected source paths `docs/idiom-strategic-thesis.md`.",
+		"",
+		"Core evidence paths: `docs/idiom-strategic-thesis.md`",
+		"",
+		"A final answer is available unless one exact unresolved claim remains.",
+		"",
+		"If one more source read would materially change the answer, take a bounded follow-up through the normal tool policy.",
+	}, "\n")
+	replies := []string{
+		readOnlyStrategicThesisReadFileToolCall,
+		nudgeEcho,
+	}
+
+	server, requestBodies := newScriptedChatServer(t, replies, true)
+	defer server.Close()
+
+	objective := "What is the role of evidence in this harness? Where does it come from and what is it used for?"
+	var events []RunEvent
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, 5*time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 3, MaxModelCalls: 5},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         objective,
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file"},
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: objective}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	assertRecoveredStrategicThesisAnswer(t, answer, "The read-only evidence is sufficient", "A final answer is available unless", "<<QUESTION>>")
+	if got := len(requestBodies()); got != len(replies) {
+		t.Fatalf("expected read request plus nudge echo final, got %d request(s)", got)
+	}
+
+	for _, event := range events {
+		if event.Role == "completion_status" && strings.Contains(event.Content, `"user_visible_blocker":true`) {
+			t.Fatalf("readiness nudge recovery must not emit a user-visible blocker: %s", event.Content)
+		}
+		if event.Role == "budget_ledger" &&
+			strings.Contains(event.Content, `"stop_reason":"read_only_terminal_recovery"`) &&
+			strings.Contains(event.Content, `"budget_exhausted":true`) {
+
+			t.Fatalf("accepted read-only recovery must not be reported as budget-exhausted: %s", event.Content)
+		}
 	}
 }

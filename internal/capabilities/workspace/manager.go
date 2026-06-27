@@ -6337,7 +6337,11 @@ func (m *Manager) resolveReadTarget(req ToolRequest) (string, string, error) {
 	if strings.TrimSpace(req.Path) != "" {
 		pathFromRequest, err := m.resolvePath(req.Path, req.Workdir)
 		if err != nil {
-			return "", "", err
+			if resolved, ok := resolveUserGlobalConversationLogReadPath(req.Path); ok {
+				pathFromRequest = resolved
+			} else {
+				return "", "", err
+			}
 		}
 
 		if strings.TrimSpace(req.ID) != "" {

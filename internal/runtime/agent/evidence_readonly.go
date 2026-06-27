@@ -1641,6 +1641,29 @@ func readOnlyScaffoldFinalAnswer(answer string) bool {
 		strings.Contains(lower, "inspected paths:")
 }
 
+func looksLikeReadOnlyReadinessNudgeEcho(answer string) bool {
+	normalized := strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(answer)), " "))
+	if normalized == "" {
+		return false
+	}
+
+	if strings.HasPrefix(normalized, "the read-only evidence is sufficient for a grounded answer to this question") {
+		return true
+	}
+
+	return agentutil.ContainsAny(normalized,
+		"why a final answer is now valid:",
+		"a final answer is available unless one exact unresolved claim remains",
+		"if one more source read would materially change the answer",
+		"core evidence paths:",
+	) && agentutil.ContainsAny(normalized,
+		"answer_readiness_reached",
+		"read-only evidence is sufficient",
+		"post-readiness",
+		"bounded follow-up through the normal tool policy",
+	)
+}
+
 func contextDependentSourceFooter(lower string) bool {
 	normalized := strings.Join(strings.Fields(lower), " ")
 	if normalized == "" {
@@ -2363,7 +2386,7 @@ func (d ReadOnlyCloseout) ConcreteFallbackAnswer() (string, bool) {
 
 func (d ReadOnlyCloseout) RecoverableTerminalCandidate(agentName string, blockerKind string) (string, bool) {
 	switch strings.TrimSpace(blockerKind) {
-	case "non_answer_prose", "protocol_meta_final_answer", "completion_gate_repeated_rejection", "answer_objective_unmet:insufficient_evidence_claimed":
+	case "non_answer_prose", "protocol_meta_final_answer", "completion_gate_repeated_rejection":
 	default:
 		return "", false
 	}
@@ -2437,14 +2460,14 @@ func (d ReadOnlyCloseout) FinalAnswerDecision(answer string) readOnlyFinalAnswer
 		decision.Status = "insufficient_evidence_answer"
 		if ledger.Answerable() {
 			decision.BlockerKind = "answer_objective_unmet:insufficient_evidence_claimed"
-			decision.Reason = "the final answer says the evidence is insufficient even though the gathered source evidence is answerable for the user's objective. Answer with the concrete objective-relevant finding, or name the exact missing claim and one bounded probe."
+			decision.Reason = "the final answer says the evidence is insufficient even though the gathered source evidence appears answerable for the user's objective. This objective-relevance diagnostic is advisory."
 
 			return decision
 		}
 
 		if len(ledger.SourceBodyPaths) == 0 && !ledger.DiagnosticEvidence {
 			decision.BlockerKind = "answer_objective_unmet:no_source_body_evidence"
-			decision.Reason = "the final answer says the evidence is insufficient before inspecting source-body or diagnostic evidence for the user's objective. Gather bounded source-body evidence, or use <<QUESTION>>: with the exact missing evidence source."
+			decision.Reason = "the final answer says the evidence is insufficient before source-body or diagnostic evidence for the user's objective is present. This objective-relevance diagnostic is advisory."
 
 			return decision
 		}
@@ -2475,7 +2498,7 @@ func (d ReadOnlyCloseout) FinalAnswerDecision(answer string) readOnlyFinalAnswer
 	if !ledger.Answerable() || answerLacksObjectiveSourceEvidence(answer, ledger) {
 		if readOnlyAnswerUsesInspectedSourceAsAnswer(answer, ledger) || answerMakesCausalClaimWithoutObjectiveEvidence(answer, ledger) {
 			decision.BlockerKind = "answer_objective_unmet:citation_mismatch"
-			decision.Reason = "the final answer uses inspected source evidence, but that evidence does not establish the user's objective. Answer with the exact objective-relevant source-body evidence, state that the current evidence is insufficient, or use <<QUESTION>>: with the exact missing evidence."
+			decision.Reason = "the final answer uses inspected source evidence, but that evidence does not establish the user's objective. This objective-relevance diagnostic is advisory."
 
 			return decision
 		}
@@ -2498,7 +2521,7 @@ func (d ReadOnlyCloseout) FinalAnswerDecision(answer string) readOnlyFinalAnswer
 	}
 
 	decision.BlockerKind = "answer_objective_unmet:term_mismatch"
-	decision.Reason = "the final answer is grounded in inspected source evidence, but it does not address the user's objective. Answer using objective-relevant source-body evidence, or use <<QUESTION>>: with the exact missing evidence."
+	decision.Reason = "the final answer is grounded in inspected source evidence, but it does not address the user's objective. This objective-relevance diagnostic is advisory."
 
 	return decision
 }
@@ -6271,14 +6294,6 @@ func (r *Runner) readOnlyExplanationCompletionRejection(reply string, results []
 		}, true
 	}
 
-	if reason := readOnlyExplanationObjectiveRejectionReason(reply, r.RuntimeBrief); reason != "" {
-		return workspace.ToolResult{
-			Tool:    "completion_gate",
-			Summary: "Read-only explanation gate rejected off-objective final answer",
-			Error:   reason,
-		}, true
-	}
-
 	if reason := readOnlyBinaryVerdictContradictionReason(reply, r.RuntimeBrief.Objective); reason != "" {
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
@@ -8581,6 +8596,10 @@ func looksLikeNonAnswerProseCore(answer string) bool {
 	}
 
 	if looksLikeGateSatisfactionMetaFinalAnswer(trimmed) {
+		return true
+	}
+
+	if looksLikeReadOnlyReadinessNudgeEcho(trimmed) {
 		return true
 	}
 

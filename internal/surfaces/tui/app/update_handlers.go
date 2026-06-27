@@ -588,11 +588,6 @@ func (m *Model) sgrMouseReportLen(value string) int {
 		return 0
 	}
 
-	width, height := m.mouseReportBounds()
-	if width <= 0 || height <= 0 {
-		return 0
-	}
-
 	i := 2
 	var fields [3]int
 	for field := 0; field < 3; field++ {
@@ -616,10 +611,13 @@ func (m *Model) sgrMouseReportLen(value string) int {
 		return 0
 	}
 
-	x := fields[1] - 1
-	y := fields[2] - 1
-	if x < 0 || x >= width || y < 0 || y >= height {
-		return 0
+	width, height := m.mouseReportBounds()
+	if width > 0 && height > 0 {
+		x := fields[1] - 1
+		y := fields[2] - 1
+		if x < 0 || x >= width || y < 0 || y >= height {
+			return 0
+		}
 	}
 
 	return i + 1

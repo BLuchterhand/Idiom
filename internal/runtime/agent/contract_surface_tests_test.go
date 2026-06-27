@@ -2861,7 +2861,7 @@ func TestEvaluateAcceptanceRejectsRequiredEditPaths(t *testing.T) {
 	}
 }
 
-func TestEvaluateAcceptanceCombinesGroundingAndObjectiveReasons(t *testing.T) {
+func TestEvaluateAcceptanceRejectsGroundingAndKeepsObjectiveAdvisory(t *testing.T) {
 	acceptance := EvaluateAcceptance(CompletionPolicyInput{
 		SourceGroundingReason:   "source grounding missing",
 		DirectAnswerBlockerKind: "answer_objective_unmet",
@@ -2871,7 +2871,7 @@ func TestEvaluateAcceptanceCombinesGroundingAndObjectiveReasons(t *testing.T) {
 
 	if acceptance.Decision != CompletionDecisionReject ||
 		acceptance.BlockerKind != "source_grounding_unmet" ||
-		acceptance.Reason != "source grounding missing Additionally, objective evidence missing" {
+		acceptance.Reason != "source grounding missing" {
 		t.Fatalf("unexpected grounding rejection: %#v", acceptance)
 	}
 	if len(acceptance.EvidencePaths) != 1 || acceptance.EvidencePaths[0] != "internal/runtime/agent/runner_core.go" {
@@ -4292,7 +4292,31 @@ func TestFinalAnswerAcceptanceAllowsWhatWouldItTakeAnswerFromDiscoveredTUISource
 	}
 }
 
-func TestFinalAnswerAcceptanceRejectsEchoedObjectivePathInventoryFromLiveTUIQuestion(t *testing.T) {
+func assertObjectiveRelevanceAdvisoryForTest(t *testing.T, runner *Runner, answer string, results []workspace.ToolResult, wantKind string) readOnlyDirectAnswerRelevance {
+	t.Helper()
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "" || reason != "" {
+		t.Fatalf("objective relevance advisory must not reject final answer: kind=%q reason=%q", kind, reason)
+	}
+
+	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
+	if acceptance.Decision != finalAnswerAcceptanceAccepted || acceptance.PolicyDecision != autonomy.PolicyAllow {
+		t.Fatalf("objective relevance advisory must leave acceptance allowed, got %#v", acceptance)
+	}
+
+	relevance := runner.readOnlyDirectAnswerRelevance(answer, results)
+	if relevance.BlockerKind != wantKind {
+		t.Fatalf("objective relevance advisory got kind=%q reason=%q, want %q", relevance.BlockerKind, relevance.Reason, wantKind)
+	}
+	if !finalAnswerObjectiveRelevanceAdvisoryKind(relevance.BlockerKind) {
+		t.Fatalf("objective relevance kind should be advisory: %#v", relevance)
+	}
+
+	return relevance
+}
+
+func TestFinalAnswerAcceptanceTreatsEchoedObjectivePathInventoryAsAdvisory(t *testing.T) {
 	objective := "What would it take to enable the up and down arrow keys to iterate through old user messages as a shortcut to retry previous messages?"
 	brief := readOnlyConversationBriefForTest(objective)
 	results := []workspace.ToolResult{
@@ -4336,10 +4360,7 @@ func TestFinalAnswerAcceptanceRejectsEchoedObjectivePathInventoryFromLiveTUIQues
 	answer := "For `" + objective + "`, `internal/surfaces/tui/app/update_handlers.go` shows defines `Model.handleKeyPress`."
 	runner := &Runner{RuntimeBrief: brief}
 
-	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "answer_objective_unmet:term_mismatch" {
-		t.Fatalf("echoed-objective path inventory got (%q, %q), want answer_objective_unmet:term_mismatch", kind, reason)
-	}
+	assertObjectiveRelevanceAdvisoryForTest(t, runner, answer, results, "answer_objective_unmet:term_mismatch")
 
 	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
 	if len(acceptance.AnswerObjectiveTerms) > 0 {
@@ -4676,19 +4697,14 @@ func TestFinalAnswerAcceptanceRejectsSessionsPanelAsChatRecallOwner(t *testing.T
 		t.Fatalf("direct_answer alias promoted conflicting navigation owner, got %#v", aliasDecision.AcceptedEvidencePaths)
 	}
 
-	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "answer_objective_unmet:citation_mismatch" {
-		t.Fatalf("sessions-panel-owned final answer got blocker kind=%q reason=%q", kind, reason)
-	}
+	assertObjectiveRelevanceAdvisoryForTest(t, runner, answer, results, "answer_objective_unmet:citation_mismatch")
 
 	if paths := acceptedAnswerEvidencePaths(answer, results, brief); slices.Contains(paths, "internal/surfaces/tui/app/sessions_panel.go") {
 		t.Fatalf("accepted evidence paths must not promote conflicting navigation owner, got %#v", paths)
 	}
 
 	aliasRunner := &Runner{RuntimeBrief: aliasBrief}
-	if kind, reason := aliasRunner.finalAnswerBlockerKind(answer, results); kind != "answer_objective_unmet:citation_mismatch" {
-		t.Fatalf("direct_answer alias final answer got blocker kind=%q reason=%q", kind, reason)
-	}
+	assertObjectiveRelevanceAdvisoryForTest(t, aliasRunner, answer, results, "answer_objective_unmet:citation_mismatch")
 
 	if paths := acceptedAnswerEvidencePaths(answer, results, aliasBrief); slices.Contains(paths, "internal/surfaces/tui/app/sessions_panel.go") {
 		t.Fatalf("direct_answer alias accepted evidence paths promoted conflicting navigation owner, got %#v", paths)
@@ -5199,7 +5215,7 @@ func TestReadOnlyAnswerabilityAllowsStandaloneGroundedEvidenceAnswer(t *testing.
 	}
 }
 
-func TestFinalAnswerAcceptanceRejectsOffObjectiveSourceBackedAnswer(t *testing.T) {
+func TestFinalAnswerAcceptanceTreatsOffObjectiveSourceBackedAnswerAsAdvisory(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
 	results := []workspace.ToolResult{
 		{
@@ -5216,17 +5232,13 @@ func TestFinalAnswerAcceptanceRejectsOffObjectiveSourceBackedAnswer(t *testing.T
 	answer := "The relevant code is `internal/surfaces/tui/app/rendering.go`: `evidenceDisplayName` trims the raw tool name before display."
 	runner := &Runner{RuntimeBrief: brief}
 
-	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "answer_objective_unmet:citation_mismatch" {
-		t.Fatalf("off-objective source-backed answer got (%q, %q), want answer_objective_unmet:citation_mismatch", kind, reason)
-	}
-
-	if !strings.Contains(reason, "does not establish the user's objective") {
-		t.Fatalf("blocker reason should describe objective mismatch, got %q", reason)
+	relevance := assertObjectiveRelevanceAdvisoryForTest(t, runner, answer, results, "answer_objective_unmet:citation_mismatch")
+	if !strings.Contains(relevance.Reason, "does not establish the user's objective") {
+		t.Fatalf("advisory reason should describe objective mismatch, got %q", relevance.Reason)
 	}
 }
 
-func TestFinalAnswerAcceptanceRejectsObjectiveParrotWithWrongSource(t *testing.T) {
+func TestFinalAnswerAcceptanceTreatsObjectiveParrotWithWrongSourceAsAdvisory(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
 	results := []workspace.ToolResult{
 		{
@@ -5243,13 +5255,10 @@ func TestFinalAnswerAcceptanceRejectsObjectiveParrotWithWrongSource(t *testing.T
 	answer := "The TUI chat input newline wrap and upward shift issue is in `internal/surfaces/tui/app/rendering.go`: `evidenceDisplayName` trims the raw tool name before display."
 	runner := &Runner{RuntimeBrief: brief}
 
-	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "answer_objective_unmet:citation_mismatch" {
-		t.Fatalf("objective-parroting wrong-source answer got (%q, %q), want answer_objective_unmet:citation_mismatch", kind, reason)
-	}
+	assertObjectiveRelevanceAdvisoryForTest(t, runner, answer, results, "answer_objective_unmet:citation_mismatch")
 }
 
-func TestFinalAnswerAcceptanceRejectsCitationlessObjectiveParrotWithUnrelatedRead(t *testing.T) {
+func TestFinalAnswerAcceptanceTreatsCitationlessObjectiveParrotWithUnrelatedReadAsAdvisory(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
 	results := []workspace.ToolResult{{
 		Tool:    "read_file",
@@ -5259,10 +5268,7 @@ func TestFinalAnswerAcceptanceRejectsCitationlessObjectiveParrotWithUnrelatedRea
 	answer := "The TUI chat input newline wrap and upward shift issue is caused by trimming the raw tool name before display."
 	runner := &Runner{RuntimeBrief: brief}
 
-	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "answer_objective_unmet:citation_mismatch" {
-		t.Fatalf("citationless objective-parroting unrelated read got (%q, %q), want answer_objective_unmet:citation_mismatch", kind, reason)
-	}
+	assertObjectiveRelevanceAdvisoryForTest(t, runner, answer, results, "answer_objective_unmet:citation_mismatch")
 }
 
 func TestFinalAnswerAcceptanceAppliesToDirectAnswerTaskFamilyAlias(t *testing.T) {
@@ -5285,13 +5291,10 @@ func TestFinalAnswerAcceptanceAppliesToDirectAnswerTaskFamilyAlias(t *testing.T)
 	answer := "The relevant code is `internal/surfaces/tui/app/rendering.go`: `evidenceDisplayName` trims the raw tool name before display."
 	runner := &Runner{RuntimeBrief: brief}
 
-	kind, _ := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "answer_objective_unmet:citation_mismatch" {
-		t.Fatalf("direct_answer task-family alias was not checked: got %q, want answer_objective_unmet:citation_mismatch", kind)
-	}
+	assertObjectiveRelevanceAdvisoryForTest(t, runner, answer, results, "answer_objective_unmet:citation_mismatch")
 }
 
-func TestFinalAnswerAcceptanceRejectsAliasInsufficientEvidenceWithoutSourceBody(t *testing.T) {
+func TestFinalAnswerAcceptanceTreatsAliasInsufficientEvidenceWithoutSourceBodyAsAdvisory(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
 
 	brief.TaskFamily = string(autonomy.TaskFamilyDirectAnswer)
@@ -5304,17 +5307,14 @@ func TestFinalAnswerAcceptanceRejectsAliasInsufficientEvidenceWithoutSourceBody(
 	answer := "I cannot determine from the available evidence why the TUI chat input first wraps to a newline."
 	runner := &Runner{RuntimeBrief: brief}
 
-	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "answer_objective_unmet:no_source_body_evidence" {
-		t.Fatalf("premature insufficient-evidence alias answer got (%q, %q), want answer_objective_unmet:no_source_body_evidence", kind, reason)
-	}
-
-	if !strings.Contains(reason, "before inspecting source-body or diagnostic evidence") {
-		t.Fatalf("expected source-body insufficiency reason, got %q", reason)
+	relevance := assertObjectiveRelevanceAdvisoryForTest(t, runner, answer, results, "answer_objective_unmet:no_source_body_evidence")
+	if !strings.Contains(relevance.Reason, "before source-body or diagnostic evidence") ||
+		!strings.Contains(relevance.Reason, "diagnostic is advisory") {
+		t.Fatalf("expected source-body insufficiency advisory reason, got %q", relevance.Reason)
 	}
 }
 
-func TestFinalAnswerAcceptanceRejectsAliasInsufficientEvidenceWhenSourceBodyIsAnswerable(t *testing.T) {
+func TestFinalAnswerAcceptanceTreatsAliasInsufficientEvidenceWhenSourceBodyIsAnswerableAsAdvisory(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("What is the role of evidence in the harness?")
 
 	brief.TaskFamily = string(autonomy.TaskFamilyDirectAnswer)
@@ -5327,17 +5327,49 @@ func TestFinalAnswerAcceptanceRejectsAliasInsufficientEvidenceWhenSourceBodyIsAn
 	answer := "I cannot determine from the available evidence what role evidence has in the harness."
 	runner := &Runner{RuntimeBrief: brief}
 
-	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "answer_objective_unmet:insufficient_evidence_claimed" {
-		t.Fatalf("answerable source-backed insufficient-evidence answer got (%q, %q), want answer_objective_unmet:insufficient_evidence_claimed", kind, reason)
-	}
-
-	if !strings.Contains(reason, "evidence is answerable") {
-		t.Fatalf("expected answerable evidence reason, got %q", reason)
+	relevance := assertObjectiveRelevanceAdvisoryForTest(t, runner, answer, results, "answer_objective_unmet:insufficient_evidence_claimed")
+	if !strings.Contains(relevance.Reason, "evidence appears answerable") ||
+		!strings.Contains(relevance.Reason, "diagnostic is advisory") {
+		t.Fatalf("expected answerable evidence advisory reason, got %q", relevance.Reason)
 	}
 }
 
-func TestFinalAnswerAcceptanceRejectsAliasObjectiveParrotWithWrongSource(t *testing.T) {
+func TestFinalAnswerAcceptanceRejectsReadOnlyReadinessNudgeEcho(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("What is the role of evidence in this harness? Where does it come from and what is it used for?")
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read docs/architecture.md lines 1-80",
+		Output: strings.Join([]string{
+			"1:# Idiom Architecture",
+			"2:Idiom is a local coding-agent harness.",
+			"3:The model owns strategy; the harness owns contracts, evidence, permissions, audit, and verification.",
+			"4:Repository evidence feeds runtime briefs, answer grounding, audit trails, and verification decisions.",
+		}, "\n"),
+	}}
+	answer := strings.Join([]string{
+		"The read-only evidence is sufficient for a grounded answer to this question.",
+		"",
+		"Why a final answer is now valid: the current evidence already names inspected source paths `docs/architecture.md`.",
+		"",
+		"Core evidence paths: `docs/architecture.md`",
+		"",
+		"A final answer is available unless one exact unresolved claim remains.",
+		"",
+		"If one more source read would materially change the answer, take a bounded follow-up through the normal tool policy.",
+	}, "\n")
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "non_answer_prose" {
+		t.Fatalf("readiness nudge echo got (%q, %q), want non_answer_prose", kind, reason)
+	}
+
+	if !looksLikeReadOnlyReadinessNudgeEcho(answer) {
+		t.Fatal("test fixture should exercise readiness-nudge echo detector")
+	}
+}
+
+func TestFinalAnswerAcceptanceTreatsAliasObjectiveParrotWithWrongSourceAsAdvisory(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
 
 	brief.TaskFamily = string(autonomy.TaskFamilyDirectAnswer)
@@ -5357,10 +5389,7 @@ func TestFinalAnswerAcceptanceRejectsAliasObjectiveParrotWithWrongSource(t *test
 	answer := "The TUI chat input newline wrap and upward shift issue is in `internal/surfaces/tui/app/rendering.go`: `evidenceDisplayName` trims the raw tool name before display."
 	runner := &Runner{RuntimeBrief: brief}
 
-	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "answer_objective_unmet:citation_mismatch" {
-		t.Fatalf("alias objective-parroting wrong-source answer got (%q, %q), want answer_objective_unmet:citation_mismatch", kind, reason)
-	}
+	assertObjectiveRelevanceAdvisoryForTest(t, runner, answer, results, "answer_objective_unmet:citation_mismatch")
 }
 
 func TestGenericReadOnlyEvidenceReadyRejectsAliasWrongSource(t *testing.T) {
@@ -5539,10 +5568,7 @@ func TestFinalAnswerAcceptanceRejectsPlanningPathWithoutBodyOwnedSupport(t *test
 	answer := "`.planning/campaign-status.md` shows they are not dispatchable because Atom 0.1 intake has not passed."
 	runner := &Runner{RuntimeBrief: brief}
 
-	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "answer_objective_unmet:citation_mismatch" {
-		t.Fatalf("unsupported planning-path answer got kind=%q reason=%q, want citation mismatch", kind, reason)
-	}
+	assertObjectiveRelevanceAdvisoryForTest(t, runner, answer, results, "answer_objective_unmet:citation_mismatch")
 }
 
 func TestFinalAnswerAcceptanceRejectsContradictedDispatchabilityAnswer(t *testing.T) {
@@ -5561,10 +5587,7 @@ func TestFinalAnswerAcceptanceRejectsContradictedDispatchabilityAnswer(t *testin
 	answer := "`docs/work/status.md` shows they are not dispatchable because Atom 0.1 intake has not passed."
 	runner := &Runner{RuntimeBrief: brief}
 
-	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "answer_objective_unmet:citation_mismatch" {
-		t.Fatalf("contradicted dispatchability answer got kind=%q reason=%q, want citation mismatch", kind, reason)
-	}
+	assertObjectiveRelevanceAdvisoryForTest(t, runner, answer, results, "answer_objective_unmet:citation_mismatch")
 }
 
 func TestFinalAnswerAcceptanceAllowsLowConfidenceStrategicSourceBackedAnswer(t *testing.T) {
@@ -5692,10 +5715,7 @@ func TestFinalAnswerAcceptanceRejectsPriorTopicAnswerForNamingQuestion(t *testin
 	}, "\n")
 	runner := &Runner{RuntimeBrief: brief}
 
-	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "answer_objective_unmet:term_mismatch" {
-		t.Fatalf("prior-topic naming answer got (%q, %q), want answer_objective_unmet:term_mismatch", kind, reason)
-	}
+	assertObjectiveRelevanceAdvisoryForTest(t, runner, answer, results, "answer_objective_unmet:term_mismatch")
 }
 
 func TestFinalAnswerAcceptanceAllowsGenericLowConfidenceSourceBackedAnswer(t *testing.T) {
@@ -5757,7 +5777,7 @@ func TestFinalAnswerAcceptanceKeepsCandidateOnlyCitationHardRejectedAfterLowConf
 	}
 }
 
-func TestFinalAnswerAcceptanceRejectsLowConfidenceWrongSourceCitation(t *testing.T) {
+func TestFinalAnswerAcceptanceTreatsLowConfidenceWrongSourceCitationAsAdvisory(t *testing.T) {
 	objective := "Would it fit our north star to replace this with model prose? Or do we risk leaking unverified information to the user?"
 	brief := readOnlyConversationBriefForTest(objective)
 	results := []workspace.ToolResult{
@@ -5784,10 +5804,7 @@ func TestFinalAnswerAcceptanceRejectsLowConfidenceWrongSourceCitation(t *testing
 	answer := "No. Free-form prose would move deterministic closeout language away from the contract boundary in `internal/runtime/agent/tools_surface.go`."
 	runner := &Runner{RuntimeBrief: brief}
 
-	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind == "" && reason == "" {
-		t.Fatal("wrong-source low-confidence answer should remain rejected")
-	}
+	assertObjectiveRelevanceAdvisoryForTest(t, runner, answer, results, "answer_objective_unmet:term_mismatch")
 }
 
 func TestFinalAnswerAcceptanceRejectsLowConfidenceSourceInventoryWithOneSupportTerm(t *testing.T) {
@@ -5806,8 +5823,8 @@ func TestFinalAnswerAcceptanceRejectsLowConfidenceSourceInventoryWithOneSupportT
 	runner := &Runner{RuntimeBrief: brief}
 
 	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind == "" && reason == "" {
-		t.Fatal("one-term source inventory should remain rejected")
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("source-inventory answer should remain rejected by grounding contract, got kind=%q reason=%q", kind, reason)
 	}
 }
 
@@ -5888,10 +5905,7 @@ func TestFinalAnswerAcceptanceRejectsNamedFileWhyAnswerWithUnrelatedBody(t *test
 	answer := "`internal/surfaces/tui/app/rendering.go` contains `evidenceDisplayName`, which trims the raw tool name before display."
 	runner := &Runner{RuntimeBrief: brief}
 
-	kind, reason := runner.finalAnswerBlockerKind(answer, results)
-	if kind != "answer_objective_unmet:citation_mismatch" {
-		t.Fatalf("named-file why answer with unrelated body got (%q, %q), want answer_objective_unmet:citation_mismatch", kind, reason)
-	}
+	assertObjectiveRelevanceAdvisoryForTest(t, runner, answer, results, "answer_objective_unmet:citation_mismatch")
 }
 
 func TestAcceptedAnswerEvidencePathsPreferObjectiveRelevantSourceBody(t *testing.T) {
@@ -33893,6 +33907,65 @@ func TestDiscoveryConsumptionWeakContextPackAllowsCorrectiveFollowup(t *testing.
 	}
 }
 
+func TestDiscoveryConsumptionBroadTextSearchAllowsStructuredContextQuery(t *testing.T) {
+	state := newRunnerExecutionState(false, 0)
+	state.applyResult(
+		workspace.ToolRequest{Tool: "search_content", Path: ".", Pattern: "workflow state"},
+		workspace.ToolResult{
+			Tool:    "search_content",
+			Summary: "Found 400 matching line(s) (showing first 50).",
+			Output: strings.Join([]string{
+				"internal/contracts/workflowstate/machine.go:1:package workflowstate",
+				"internal/runtime/agent/discovery_consumption.go:12:type discoveryConsumptionStrength int",
+			}, "\n"),
+		},
+		"",
+		nil,
+		nil,
+	)
+
+	if !state.pendingDiscoveryConsumption || state.pendingDiscoveryStrength != discoveryConsumptionCandidateOnly {
+		t.Fatalf("expected broad text search to be candidate-only, got pending=%v strength=%v", state.pendingDiscoveryConsumption, state.pendingDiscoveryStrength)
+	}
+
+	req := workspace.ToolRequest{
+		Tool:            "context_query",
+		Query:           "find all types and constants related to lifecycle state, phase, terminal/nonterminal status, and workflow state machines",
+		Resolution:      "symbol",
+		IncludeEvidence: true,
+	}
+	if state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(req, directAnswerReadOnlyBrief()) {
+		t.Fatalf("broad text search should allow structured context_query follow-up: %#v", req)
+	}
+}
+
+func TestDiscoveryConsumptionFocusedTextSearchStillBlocksBroadRediscovery(t *testing.T) {
+	state := newRunnerExecutionState(false, 0)
+	state.applyResult(
+		workspace.ToolRequest{Tool: "search_content", Path: ".", Pattern: "pendingDiscoveryConsumption"},
+		workspace.ToolResult{
+			Tool:    "search_content",
+			Summary: "Found 2 matching line(s).",
+			Output: strings.Join([]string{
+				"internal/runtime/agent/runner_core.go:12607:\tpendingDiscoveryConsumption bool",
+				"internal/runtime/agent/runner_core.go:12671:\t\ts.pendingDiscoveryConsumption = true",
+			}, "\n"),
+		},
+		"",
+		nil,
+		nil,
+	)
+
+	if state.pendingDiscoveryStrength != discoveryConsumptionSourceOwner {
+		t.Fatalf("expected focused text search to require source-body consumption, got %v", state.pendingDiscoveryStrength)
+	}
+
+	req := workspace.ToolRequest{Tool: "context_query", Query: "runner discovery consumption", Resolution: "symbol"}
+	if !state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(req, directAnswerReadOnlyBrief()) {
+		t.Fatalf("focused text search should still block broad rediscovery before source body: %#v", req)
+	}
+}
+
 func TestReadOnlyWeakDiscoveryNextActionNamesMissingSourceOwner(t *testing.T) {
 	brief := directAnswerReadOnlyBrief()
 
@@ -37427,7 +37500,7 @@ func TestFinalAnswerPolicyRejectsRequiredEditPathsWithTypedMetadata(t *testing.T
 	assertFinalAnswerPolicyMetadata(t, acceptance, autonomy.PolicyReject)
 }
 
-func TestFinalAnswerPolicyCombinesGroundingAndObjectiveReasons(t *testing.T) {
+func TestFinalAnswerPolicyRejectsGroundingAndKeepsObjectiveAdvisory(t *testing.T) {
 	acceptance := newFinalAnswerPolicyEngine().EvaluateFinalAnswer(finalAnswerPolicyInput{
 		Answer: "Unsupported final answer.",
 		DirectAnswerRelevance: readOnlyDirectAnswerRelevance{
@@ -37439,15 +37512,38 @@ func TestFinalAnswerPolicyCombinesGroundingAndObjectiveReasons(t *testing.T) {
 	})
 
 	if acceptance.BlockerKind != "source_grounding_unmet" ||
-		acceptance.Reason != "source grounding missing Additionally, objective evidence missing" ||
+		acceptance.Reason != "source grounding missing" ||
 		acceptance.PolicyDecision != autonomy.PolicyReject {
 
-		t.Fatalf("expected combined grounding/objective rejection, got %#v", acceptance)
+		t.Fatalf("expected grounding rejection with advisory objective metadata, got %#v", acceptance)
 	}
 	if len(acceptance.EvidencePaths) != 1 || acceptance.EvidencePaths[0] != "internal/runtime/agent/runner_core.go" {
 		t.Fatalf("expected fallback evidence path, got %#v", acceptance.EvidencePaths)
 	}
 	assertFinalAnswerPolicyMetadata(t, acceptance, autonomy.PolicyReject)
+}
+
+func TestFinalAnswerPolicyTreatsObjectiveRelevanceAsAdvisory(t *testing.T) {
+	acceptance := newFinalAnswerPolicyEngine().EvaluateFinalAnswer(finalAnswerPolicyInput{
+		Answer: "The model-authored answer.",
+		DirectAnswerRelevance: readOnlyDirectAnswerRelevance{
+			Status:                  "checked",
+			BlockerKind:             "answer_objective_unmet:citation_mismatch",
+			Reason:                  "objective evidence mismatch",
+			RelevantSourceBodyPaths: []string{"internal/runtime/agent/runner_core.go"},
+		},
+	})
+
+	if acceptance.Decision != finalAnswerAcceptanceAccepted ||
+		acceptance.PolicyDecision != autonomy.PolicyAllow ||
+		acceptance.BlockerKind != "" {
+		t.Fatalf("objective relevance should be advisory-only, got %#v", acceptance)
+	}
+	if acceptance.ObjectiveRelevanceStatus != "checked" ||
+		len(acceptance.RelevantSourceBodyPaths) != 1 {
+		t.Fatalf("objective relevance advisory metadata should be retained, got %#v", acceptance)
+	}
+	assertFinalAnswerPolicyMetadata(t, acceptance, autonomy.PolicyAllow)
 }
 
 func TestFinalAnswerAcceptanceTerminalOverrideKeepsPolicyDecisionConsistent(t *testing.T) {

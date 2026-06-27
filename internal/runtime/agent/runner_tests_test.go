@@ -37,6 +37,28 @@ type recordingGateEngine struct {
 	sourceGroundingText  string
 }
 
+type panicLLMClient struct{}
+
+func (panicLLMClient) CompleteChat(context.Context, []llama.ChatMessage, llama.ChatOptions) (string, error) {
+	panic("panic client invoked")
+}
+
+func (panicLLMClient) CompleteChatMessage(context.Context, []llama.ChatMessage, llama.ChatOptions) (llama.ChatMessage, error) {
+	panic("panic client invoked")
+}
+
+func (panicLLMClient) StreamChat(context.Context, []llama.ChatMessage, llama.ChatOptions, func(string) error) error {
+	panic("panic client invoked")
+}
+
+func (panicLLMClient) ListModels(context.Context) ([]llama.ModelInfo, error) {
+	return nil, errors.New("panic client has no models")
+}
+
+func (panicLLMClient) Backend() string { return "panic-test" }
+
+func (panicLLMClient) SupportsNativeTools() bool { return true }
+
 func (g *recordingGateEngine) EvaluateGate(string, []workspace.ToolResult, StateStore) GateDecision {
 	g.evaluateCalls++
 	if g.evaluateDecision.Kind != "" || g.evaluateDecision.Reason != "" || !g.evaluateDecision.Accepted {
@@ -15193,7 +15215,6 @@ func TestRunnerRepairsFinalAnswerAfterNoGapReadFileRanges(t *testing.T) {
 		`{"tool":"read_file","path":"internal/labels/labels.go","start_line":1,"end_line":4,"named_gap":"inspect ShortLabel source","why_not_answering":"need source evidence before answering"}`,
 		`{"tool":"read_file","path":"internal/labels/labels.go","start_line":5,"end_line":8}`,
 		`{"tool":"read_file","path":"internal/labels/labels.go","start_line":9,"end_line":12}`,
-		"BAD_FALLBACK_NOT_USED: the model was asked for another answer after repeated no-gap reads.",
 		"For `Explain what ShortLabel returns from internal/labels/labels.go.`, `internal/labels/labels.go` shows `ShortLabel` returns \"Save changes\".",
 	}
 	requests := 0
@@ -19682,6 +19703,48 @@ func TestRunnerRoutesWorkbranchChildOntoImplementerClient(t *testing.T) {
 	}
 }
 
+func TestRunWorkbranchChildTaskConvertsChildPanicToFailedTerminal(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "README.md", "hello\n"); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	var events []RunEvent
+	runner := &Runner{
+		Client: panicLLMClient{},
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+
+	result := runner.runWorkbranchChildTask(
+		context.Background(),
+		workspace.ToolRequest{Tool: "task", Agent: "panic-child", Mode: "workbranch_write"},
+		"change README greeting",
+		llama.ChatOptions{},
+	)
+	if result.Summary != "Workbranch child task failed" {
+		t.Fatalf("summary = %q, want failed child task", result.Summary)
+	}
+	if !strings.Contains(result.Error, "workbranch child task panic") || !strings.Contains(result.Error, "panic client invoked") {
+		t.Fatalf("expected panic to be reported as child error, got %q", result.Error)
+	}
+
+	terminal := mustFindLifecycleRecord[autonomy.ChildTerminalRecord](t, events, childLifecycleTerminalEventRole)
+	if terminal.Status != autonomy.ChildTerminalFailed || terminal.ResultKind != autonomy.ChildResultTypedBlocker {
+		t.Fatalf("unexpected terminal after panic recovery: %#v", terminal)
+	}
+
+	acceptance := mustFindLifecycleRecord[autonomy.ChildAcceptanceRecord](t, events, childLifecycleAcceptanceEventRole)
+	if acceptance.Decision != autonomy.ChildAcceptanceBlocked {
+		t.Fatalf("panic terminal should be blocked, got %#v", acceptance)
+	}
+}
+
 func TestRunnerReplaysFirstRepeatedToolRequestThenRejectsExactLoop(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "README.md", "hello\n"); err != nil {
@@ -24142,6 +24205,76 @@ func TestRunnerWriteApprovalRequiredEmitsToolAuthorizationPolicy(t *testing.T) {
 	policyEvent := mustAutonomyPolicyEventByInvariantAndReason(t, decodeRunnerAutonomyEventsForTest(t, runEvents), autonomy.EventToolPolicyResult, toolAuthorizationPolicyInvariant, "write_approval_required")
 	if policyEvent.Policy.PackID != autonomy.ContractPackToolAuthorization || policyEvent.Policy.Decision != autonomy.PolicyAsk || !policyEvent.Policy.ApprovalRequired {
 		t.Fatalf("write approval should emit typed authorization policy event, got %#v", policyEvent.Policy)
+	}
+}
+
+func TestRunnerReadOnlyWriteChildTaskRequiresApproval(t *testing.T) {
+	replies := []string{
+		"```tool\n{\"tool\":\"task\",\"agent\":\"explorer\",\"mode\":\"write\",\"prompt\":\"Apply a small README edit.\"}\n```",
+		"Write approval is required before delegating a write-mode child task.",
+	}
+
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+
+		reply := replies[requests]
+		requests++
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+
+	defer server.Close()
+
+	var runEvents []RunEvent
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         t.TempDir(),
+			CWD:          ".",
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Lane:              "main",
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+			Objective:         "Explain the fix.",
+		},
+		OnEvent: func(event RunEvent) {
+			runEvents = append(runEvents, event)
+		},
+	}
+
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "fix it"}}, llama.ChatOptions{}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if !strings.Contains(answer, "Write approval is required") {
+		t.Fatalf("unexpected answer %q", answer)
+	}
+
+	for _, event := range runEvents {
+		if event.Role == "child_workbranch" {
+			t.Fatalf("read-only write child task should not create a workbranch: %#v", event)
+		}
+	}
+
+	policyEvent := mustAutonomyPolicyEventByInvariantAndReason(t, decodeRunnerAutonomyEventsForTest(t, runEvents), autonomy.EventToolPolicyResult, toolAuthorizationPolicyInvariant, "permission_policy")
+	if policyEvent.Policy.ToolName != workspace.ToolNameTask ||
+		policyEvent.Policy.Decision != autonomy.PolicyAsk ||
+		!policyEvent.Policy.ApprovalRequired ||
+		policyEvent.Policy.Result != "approval_required" ||
+		!strings.Contains(policyEvent.Policy.Source, "task.mode=write") {
+		t.Fatalf("write child task should require approval in read-only profile, got %#v", policyEvent.Policy)
 	}
 }
 
@@ -29307,15 +29440,14 @@ func TestEmitAcceptedAnswerSignalsDirectAnswerAliasBlocksUnrelatedEvidence(t *te
 		t.Fatalf("expected acceptance contract field, got %#v", readiness)
 	}
 
-	if readiness["acceptance_decision"] != string(finalAnswerAcceptanceRejected) ||
+	if readiness["acceptance_decision"] != string(finalAnswerAcceptanceAccepted) ||
 		readiness["policy_pack_id"] != "final_answer/acceptance" ||
 		readiness["invariant_id"] != finalAnswerPolicyInvariantAcceptance ||
-		readiness["policy_decision"] != "reject" ||
-		readiness["action"] != "block" ||
-		readiness["blocker_kind"] != "answer_objective_unmet:citation_mismatch" ||
+		readiness["policy_decision"] != "allow" ||
+		readiness["action"] != "answer" ||
 		readiness["objective_relevance"] != "checked" {
 
-		t.Fatalf("expected blocked objective relevance readiness, got %#v", readiness)
+		t.Fatalf("expected accepted readiness with objective relevance advisory, got %#v", readiness)
 	}
 
 	if paths, _ := readiness["evidence_paths"].([]any); len(paths) != 0 {
@@ -29324,22 +29456,22 @@ func TestEmitAcceptedAnswerSignalsDirectAnswerAliasBlocksUnrelatedEvidence(t *te
 
 	critic := events["final_answer_critic"]
 	if critic["acceptance_contract"] != finalAnswerAcceptanceSchema ||
-		critic["acceptance_decision"] != string(finalAnswerAcceptanceRejected) ||
+		critic["acceptance_decision"] != string(finalAnswerAcceptanceAccepted) ||
 		critic["policy_pack_id"] != "final_answer/acceptance" ||
 		critic["invariant_id"] != finalAnswerPolicyInvariantAcceptance ||
-		critic["policy_decision"] != "reject" ||
-		critic["blocker_kind"] != "answer_objective_unmet:citation_mismatch" {
+		critic["policy_decision"] != "allow" ||
+		critic["objective_relevance"] != "checked" {
 
-		t.Fatalf("expected final critic to carry rejected acceptance fields, got %#v", critic)
+		t.Fatalf("expected final critic to carry accepted advisory fields, got %#v", critic)
 	}
 }
 
-func TestFinalAnswerOverrideLogsOriginalObjectiveRejection(t *testing.T) {
-	rawRejectedAnswer := "The TUI chat input newline wrap and upward shift issue is in `internal/surfaces/tui/app/rendering.go`: `evidenceDisplayName` trims the raw tool name before display."
+func TestFinalAnswerObjectiveAdvisoryDoesNotOverrideModelAnswer(t *testing.T) {
+	rawAnswer := "The TUI chat input newline wrap and upward shift issue is in `internal/surfaces/tui/app/rendering.go`: `evidenceDisplayName` trims the raw tool name before display."
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
-				"message": map[string]string{"content": rawRejectedAnswer},
+				"message": map[string]string{"content": rawAnswer},
 			}},
 		})
 	}))
@@ -29349,7 +29481,6 @@ func TestFinalAnswerOverrideLogsOriginalObjectiveRejection(t *testing.T) {
 	var (
 		override       map[string]any
 		acceptedCritic bool
-		blockedCritic  map[string]any
 	)
 
 	runner := &Runner{
@@ -29379,12 +29510,6 @@ func TestFinalAnswerOverrideLogsOriginalObjectiveRejection(t *testing.T) {
 				if strings.Contains(event.Content, `"action":"accept"`) {
 					acceptedCritic = true
 				}
-
-				if strings.Contains(event.Content, `"action":"block"`) {
-					if err := json.Unmarshal([]byte(event.Content), &blockedCritic); err != nil {
-						t.Fatalf("decode blocked critic: %v", err)
-					}
-				}
 			}
 		},
 	}
@@ -29401,48 +29526,16 @@ func TestFinalAnswerOverrideLogsOriginalObjectiveRejection(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	if strings.Contains(answer, "<<QUESTION>>") {
-		t.Fatalf("user-facing answer should be sanitized, got:\n%s", answer)
+	if answer != rawAnswer {
+		t.Fatalf("objective advisory should not replace model answer:\n%s", answer)
 	}
 
-	if strings.Contains(answer, "evidenceDisplayName") {
-		t.Fatalf("user-facing answer leaked rejected model answer:\n%s", answer)
+	if override != nil {
+		t.Fatalf("objective advisory should not emit blocker override: %#v", override)
 	}
 
-	if override == nil {
-		t.Fatal("expected final_answer_blocker_override event")
-	}
-
-	if acceptedCritic {
-		t.Fatal("rejected final answer replacement must not emit accepted final-answer telemetry")
-	}
-
-	if blockedCritic["blocker_kind"] != "answer_objective_unmet:citation_mismatch" ||
-		blockedCritic["acceptance_decision"] != string(finalAnswerAcceptanceRejected) ||
-		blockedCritic["objective_relevance"] != "checked" {
-
-		t.Fatalf("blocked telemetry should consume the original raw-answer acceptance, got %#v", blockedCritic)
-	}
-
-	if override["original_blocker_kind"] != "answer_objective_unmet:citation_mismatch" ||
-		override["replacement_stop_reason"] != "answer_objective_unmet:citation_mismatch" ||
-		override["objective_relevance"] != "checked" ||
-		override["original_acceptance_decision"] != string(finalAnswerAcceptanceRejected) ||
-		override["raw_answer_logged"] != false {
-
-		t.Fatalf("override event lost original rejection metadata: %#v", override)
-	}
-
-	if reason, _ := override["original_reason"].(string); !strings.Contains(reason, "does not establish the user's objective") {
-		t.Fatalf("override event should carry sanitized contract reason, got %#v", override)
-	}
-
-	if paths, _ := override["original_evidence_paths"].([]any); len(paths) != 0 {
-		t.Fatalf("override event must not promote unrelated evidence paths, got %#v", paths)
-	}
-
-	if strings.Contains(fmt.Sprint(override), "evidenceDisplayName") {
-		t.Fatalf("override event leaked raw rejected answer: %#v", override)
+	if !acceptedCritic {
+		t.Fatal("objective advisory should emit accepted final-answer telemetry")
 	}
 }
 
@@ -29601,7 +29694,7 @@ func TestReadOnlySourceGroundingRejectionRetriesEvidenceLoop(t *testing.T) {
 	}
 }
 
-func TestReadOnlyAnswerObjectiveRejectionRetriesEvidenceLoop(t *testing.T) {
+func TestReadOnlyAnswerObjectiveAdvisoryDoesNotRetryEvidenceLoop(t *testing.T) {
 	root := t.TempDir()
 	source := strings.Join([]string{
 		"package app",
@@ -29618,8 +29711,6 @@ func TestReadOnlyAnswerObjectiveRejectionRetriesEvidenceLoop(t *testing.T) {
 	objective := "Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view."
 	replies := []string{
 		"The TUI chat input newline wrap and upward shift issue is in `internal/surfaces/tui/app/rendering.go`: `evidenceDisplayName` trims the raw tool name before display.",
-		`{"tool":"read_file","path":"internal/surfaces/tui/app/model.go","start_line":1,"end_line":5,"named_gap":"objective-relevant source body for TUI chat input wrapping upward","why_not_answering":"the previous final answer used inspected source that did not establish the user's objective"}`,
-		"The objective-relevant source is `internal/surfaces/tui/app/model.go` lines 3-5: `explainChatInputWrap` says the chat input first wraps to a newline when measured height grows and the viewport shifts upward out of view.",
 	}
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -29692,23 +29783,19 @@ func TestReadOnlyAnswerObjectiveRejectionRetriesEvidenceLoop(t *testing.T) {
 	}
 
 	if requests != len(replies) {
-		t.Fatalf("expected objective rejection, recovery read, and corrected answer; used %d/%d replies", requests, len(replies))
+		t.Fatalf("expected objective advisory to accept first model answer; used %d/%d replies", requests, len(replies))
 	}
 
-	if !sawCompletionGateRejection {
-		t.Fatal("expected objective rejection to be recorded as completion_gate_rejected")
+	if sawCompletionGateRejection {
+		t.Fatal("objective advisory should not be recorded as completion_gate_rejected")
 	}
 
 	if sawOverride {
 		t.Fatal("recoverable objective rejection should not be replaced with final_answer_blocker_override")
 	}
 
-	if !strings.Contains(answer, "internal/surfaces/tui/app/model.go") || !strings.Contains(answer, "explainChatInputWrap") {
-		t.Fatalf("expected corrected answer from objective-relevant source evidence, got:\n%s", answer)
-	}
-
-	if strings.Contains(answer, "evidenceDisplayName") {
-		t.Fatalf("corrected answer should not retain unrelated source claim:\n%s", answer)
+	if !strings.Contains(answer, "evidenceDisplayName") {
+		t.Fatalf("objective advisory should not replace model answer, got:\n%s", answer)
 	}
 }
 
@@ -29721,7 +29808,7 @@ func TestFinalAnswerAcceptanceRetryPolicyKeepsNonRetryableBoundaries(t *testing.
 			AllowedTools:      []string{"read_file", "search_content"},
 		},
 	}
-	retryable := []string{"source_grounding_unmet", "answer_objective_unmet", "read_only_protocol_blocker", "protocol_meta_final_answer"}
+	retryable := []string{"source_grounding_unmet", "read_only_protocol_blocker", "protocol_meta_final_answer"}
 
 	for _, kind := range retryable {
 		if !readOnlyRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: kind}, nil, 0, nil) {
@@ -29791,7 +29878,7 @@ func TestFinalAnswerAcceptanceRetryPolicyRequiresToolsAndNoMutation(t *testing.T
 		},
 	}
 	if noToolsRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: "answer_objective_unmet"}, nil, 0, nil) {
-		t.Fatal("answer_objective_unmet must remain terminal when no evidence tools are available")
+		t.Fatal("answer_objective_unmet must not enter retry policy")
 	}
 
 	readOnlyRunner := &Runner{
@@ -29863,7 +29950,7 @@ func TestFinalAnswerAcceptanceRetryPolicyRequiresToolsAndNoMutation(t *testing.T
 	}
 
 	if mutationRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: "answer_objective_unmet"}, nil, 0, nil) {
-		t.Fatal("read-only answer retry policy must not apply to mutation lanes")
+		t.Fatal("objective relevance advisory must not enter mutation retry policy")
 	}
 }
 
@@ -30110,10 +30197,7 @@ func TestReadOnlyRecoveryPromptMentionsToolRestriction(t *testing.T) {
 	}
 }
 
-// TestCompoundRejectionReasonIncludesObjectiveUnmet verifies that when
-// both source-grounding AND objective-unmet apply, the rejection reason
-// surfaces both problems in a compound message.
-func TestCompoundRejectionReasonIncludesObjectiveUnmet(t *testing.T) {
+func TestSourceGroundingRejectionDoesNotCompoundObjectiveAdvisory(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
@@ -30130,10 +30214,10 @@ func TestCompoundRejectionReasonIncludesObjectiveUnmet(t *testing.T) {
 
 	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
 	if acceptance.Decision != finalAnswerAcceptanceRejected {
-		t.Fatal("expected compound rejection to be rejected")
+		t.Fatal("expected source-grounding rejection")
 	}
-	if !strings.Contains(acceptance.Reason, "Additionally") {
-		t.Fatalf("expected compound rejection to include 'Additionally', got:\n%s", acceptance.Reason)
+	if strings.Contains(acceptance.Reason, "Additionally") {
+		t.Fatalf("source-grounding rejection should not compound objective advisory, got:\n%s", acceptance.Reason)
 	}
 	if !strings.Contains(acceptance.Reason, "not read as source-body evidence") {
 		t.Fatalf("expected compound rejection to include source-grounding reason, got:\n%s", acceptance.Reason)
@@ -31154,7 +31238,7 @@ func TestArchitectureFinalAnswerAcceptanceRejectsGroundedPacketSourceInventory(t
 	}
 }
 
-func TestArchitectureCompletionRejectionRejectsOffObjectiveDebugLogDetail(t *testing.T) {
+func TestArchitectureCompletionRejectionAllowsObjectiveMismatchWhenMechanicallyGrounded(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Contract:          "architecture_assessment",
@@ -31169,20 +31253,22 @@ func TestArchitectureCompletionRejectionRejectsOffObjectiveDebugLogDetail(t *tes
 		Summary: "Read f1 internal/evidence/transcript/debuglog.go lines 1-80",
 		Output:  "1:package transcript\n2:func (l *DebugLogger) sanitizeValue(value any) any { out := make(map[string]any); return out }\n",
 	}}
-	result, rejected := runner.completionGateRejection(
-		"`DebugLogger.sanitizeValue` in `internal/evidence/transcript/debuglog.go` is the clearest inspected implementation anchor. The inspected body shows that it assigns `out` from `make(map[string]any, len(typed))`, returns `out`, and assigns `out` from `make([]any, 0, len(typed))`.",
+	answer := "`DebugLogger.sanitizeValue` returns the map it creates for a typed value in `internal/evidence/transcript/debuglog.go`."
+	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
+	if acceptance.Decision == finalAnswerAcceptanceRejected {
+		t.Fatalf("objective mismatch alone should not reject final-answer acceptance: %#v", acceptance)
+	}
+
+	_, rejected := runner.completionGateRejection(
+		answer,
 		results,
 		1,
 		nil,
 		false,
 	)
 
-	if !rejected {
-		t.Fatal("expected off-objective debug log implementation detail to be rejected")
-	}
-
-	if !strings.Contains(result.Error, "does not address the user's objective terms") {
-		t.Fatalf("expected objective-term rejection, got %#v", result)
+	if rejected {
+		t.Fatal("objective mismatch alone should be advisory, not a completion-gate rejection")
 	}
 }
 
@@ -37808,7 +37894,7 @@ func TestRecoveredReadOnlyTerminalCloseoutSupportsDirectAnswerTaskFamily(t *test
 	}
 }
 
-func TestRecoveredReadOnlyTerminalCloseoutAnswersInsufficientEvidenceClaimWhenAnswerable(t *testing.T) {
+func TestRecoveredReadOnlyTerminalCloseoutDoesNotOverrideObjectiveAdvisory(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "conversation",
@@ -37830,23 +37916,40 @@ func TestRecoveredReadOnlyTerminalCloseoutAnswersInsufficientEvidenceClaimWhenAn
 		}, "\n"),
 	}}
 
-	answer, acceptance, ok := runner.readOnlyTerminalRecoveryCandidate("answer_objective_unmet:insufficient_evidence_claimed", results)
-	if !ok {
-		t.Fatalf("answerable insufficient-evidence claim should recover; acceptance=%#v", acceptance)
+	if answer, acceptance, ok := runner.readOnlyTerminalRecoveryCandidate("answer_objective_unmet:insufficient_evidence_claimed", results); ok {
+		t.Fatalf("objective relevance advisory must not trigger host-authored recovery: answer=%q acceptance=%#v", answer, acceptance)
 	}
-	if acceptance.BlockerKind != "" {
-		t.Fatalf("recovered answer should pass acceptance: %#v", acceptance)
-	}
-	if strings.Contains(answer, "I could not produce a supported final answer") ||
-		strings.Contains(answer, "insufficient evidence") ||
-		strings.Contains(answer, "<<QUESTION>>") {
+}
 
-		t.Fatalf("recovered answer leaked blocker or insufficiency prose:\n%s", answer)
+func TestRetryAnswerHedgeDoesNotBecomeObjectiveRecovery(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "What is the role of evidence in this harness? Where does it come from and what is it used for?",
+		},
 	}
-	for _, want := range []string{"docs/idiom-strategic-thesis.md", "evidence-first", "contracts", "runtime brief"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("recovered answer missing %q:\n%s", want, answer)
-		}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read docs/idiom-strategic-thesis.md lines 1-320",
+		Output: strings.Join([]string{
+			"1:# Idiom Strategic Thesis",
+			"5:Idiom sells the missing substrate: repo memory, freshness, contracts, audit, and evals.",
+			"20:Idiom is the local, evidence-first coding-agent harness for teams that need agents to do real work in real repositories.",
+			"21:The model owns strategy; the harness owns contracts, repository memory, verification, auditability, and the learning loop.",
+			"146:The harness decides whether that action is allowed, whether evidence is fresh enough, and whether readiness is satisfied.",
+			"287:Task-scoped repository evidence feeds the runtime brief, including tools, editable paths, evidence paths, verification, and budget.",
+		}, "\n"),
+	}}
+
+	hedge := "I cannot provide a supported answer because the retained source context is not sufficient."
+	if reason := retryAnswerHedgeRejectionReason(hedge); reason == "" {
+		t.Fatalf("test setup should detect retry hedge")
+	}
+
+	if answer, acceptance, ok := runner.readOnlyTerminalRecoveryCandidate("answer_objective_unmet:insufficient_evidence_claimed", results); ok {
+		t.Fatalf("retry hedge should not route through objective advisory recovery: answer=%q acceptance=%#v", answer, acceptance)
 	}
 }
 

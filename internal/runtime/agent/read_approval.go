@@ -60,6 +60,18 @@ func (g *ReadApprovalGate) MaybeOverrideRejection(
 		Lane:      brief.TaskFamily,
 	}
 
+	if workspace.IsDefaultReadableConversationLogPath(path) {
+		decision := readapproval.Decision{
+			Outcome: readapproval.OutcomeApproved,
+			Reason:  readapproval.ReasonConversationLogDefault,
+			Source:  readapproval.SourceHarnessDefault,
+			At:      time.Now(),
+			Path:    path,
+		}
+		g.emit(request, decision, readapproval.EventOriginPolicyDefault)
+		return true, ""
+	}
+
 	if g.Cache != nil {
 		decision, ok, err := g.Cache.Lookup(sessionID, path)
 		if err != nil {

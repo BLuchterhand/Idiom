@@ -2536,6 +2536,57 @@ func TestReadFileDefaultsToLogTail(t *testing.T) {
 	}
 }
 
+func TestReadFileAllowsUserGlobalConversationLog(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	logPath := filepath.Join(home, ".idiom", "logs", "conversations", "session.jsonl")
+	writeTestFile(t, logPath, "line-001\nline-002\n")
+
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		MaxFileBytes: 1 << 20,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: ToolNameReadFile,
+		Path: logPath,
+	})
+
+	if result.Error != "" {
+		t.Fatalf("read_file should allow user-global conversation log, got %#v", result)
+	}
+	if !strings.Contains(result.Output, "line-002") || !strings.Contains(result.Summary, "session.jsonl") {
+		t.Fatalf("expected conversation log output, summary=%q output=\n%s", result.Summary, result.Output)
+	}
+}
+
+func TestReadFileRejectsOtherUserGlobalIdiomFiles(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	configPath := filepath.Join(home, ".idiom", "config.json")
+	writeTestFile(t, configPath, "{}\n")
+
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		MaxFileBytes: 1 << 20,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: ToolNameReadFile,
+		Path: configPath,
+	})
+
+	if result.Error == "" || !strings.Contains(result.Error, "escapes workspace root") {
+		t.Fatalf("read_file should reject non-log user-global .idiom path, got %#v", result)
+	}
+}
+
 func TestReadFileCapsOpenEndedLogRange(t *testing.T) {
 	dir := t.TempDir()
 	lines := make([]string, 0, defaultLogReadLineCap+20)
