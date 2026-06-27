@@ -5,6 +5,8 @@ package e2e
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -100,7 +102,7 @@ func Main() {
 		"workspace_mode":        string(ws.Mode()),
 		"workspace_root":        ws.Root(),
 		"system_prompt_chars":   len(system),
-		"turns":                 []string(prompts),
+		"turns":                 e2ePromptMetadataList(prompts),
 		"model":                 modelID,
 		"allowed_tools_count":   len(allowedTools),
 		"allowed_tools_preview": firstN(allowedTools, 10),
@@ -156,7 +158,10 @@ func Main() {
 	var lastAnswer string
 
 	for i, userPrompt := range prompts {
-		emit("user_turn", map[string]any{"index": i, "prompt": userPrompt})
+		emit("user_turn", map[string]any{
+			"index":  i,
+			"prompt": e2ePromptMetadata(userPrompt),
+		})
 
 		history = append(history, llama.ChatMessage{Role: "user", Content: userPrompt})
 
@@ -255,6 +260,22 @@ type multiPrompt []string
 
 func (m *multiPrompt) String() string     { return strings.Join(*m, " || ") }
 func (m *multiPrompt) Set(s string) error { *m = append(*m, s); return nil }
+
+func e2ePromptMetadataList(prompts []string) []map[string]any {
+	out := make([]map[string]any, 0, len(prompts))
+	for _, prompt := range prompts {
+		out = append(out, e2ePromptMetadata(prompt))
+	}
+	return out
+}
+
+func e2ePromptMetadata(prompt string) map[string]any {
+	sum := sha256.Sum256([]byte(prompt))
+	return map[string]any{
+		"content_hash":   "sha256:" + hex.EncodeToString(sum[:]),
+		"content_length": len(prompt),
+	}
+}
 
 func e2eInstructionAttacher(chat config.Chat, root string) *instructions.Attacher {
 	if !chat.AttachInstructionFiles {

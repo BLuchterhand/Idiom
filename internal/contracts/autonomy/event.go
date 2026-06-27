@@ -5,10 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -477,15 +475,6 @@ type ContractGuardFrictionEvent struct {
 	EvidenceRefs             []string                  `json:"evidence_refs,omitempty"`
 }
 
-type EventSink interface {
-	Emit(Event) error
-}
-
-type MemoryEventSink struct {
-	mu     sync.Mutex
-	events []Event
-}
-
 func NewEvent(input EventInput) (Event, error) {
 	event := Event{
 		SchemaVersion: EventSchemaVersion,
@@ -721,60 +710,6 @@ func ObligationEventFromObligation(obligation Obligation) ContractObligationEven
 	payload.normalize()
 
 	return payload
-}
-
-func NewMemoryEventSink() *MemoryEventSink {
-	return &MemoryEventSink{}
-}
-
-func (s *MemoryEventSink) Emit(event Event) error {
-	if s == nil {
-		return fmt.Errorf("autonomy event sink is nil")
-	}
-
-	event.Normalize()
-
-	if event.EventID == "" {
-		event.EventID = event.stableID()
-	}
-
-	if err := event.Validate(); err != nil {
-		return err
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if len(s.events) > 0 {
-		last := s.events[len(s.events)-1]
-		if event.Sequence <= last.Sequence {
-			return fmt.Errorf("autonomy event sequence must increase: got %d after %d", event.Sequence, last.Sequence)
-		}
-
-		if event.OccurredAt.Before(last.OccurredAt) {
-			return fmt.Errorf("autonomy event timestamp moved backwards: got %s after %s", event.OccurredAt.Format(time.RFC3339Nano), last.OccurredAt.Format(time.RFC3339Nano))
-		}
-	}
-
-	s.events = append(s.events, copyEvent(event))
-
-	return nil
-}
-
-func (s *MemoryEventSink) Events() []Event {
-	if s == nil {
-		return nil
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	out := make([]Event, 0, len(s.events))
-	for _, event := range s.events {
-		out = append(out, copyEvent(event))
-	}
-
-	return out
 }
 
 func (e *Event) Normalize() {

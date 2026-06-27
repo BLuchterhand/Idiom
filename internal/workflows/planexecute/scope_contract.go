@@ -3,16 +3,10 @@ package planexecute
 import (
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/contracts/pathparse"
-	"idiom/internal/contracts/plan"
+	plancontract "idiom/internal/contracts/plan"
 )
 
-type PlanScopeContract = plancontract.PlanScopeContract
-
-func NewPlanScopeContract(requiredCoveragePaths []string, allowedCandidatePaths []string, obligations EditSetObligations) PlanScopeContract {
-	return plancontract.NewPlanScopeContract(requiredCoveragePaths, allowedCandidatePaths, obligations)
-}
-
-func planExecuteScopeContract(opts Options, prompt string) PlanScopeContract {
+func planExecuteScopeContract(opts Options, prompt string) plancontract.PlanScopeContract {
 	scope := opts.ScopeContract
 	writeAllowed, writeAllowedExplicit := planExecuteHostWriteAllowedPaths(opts)
 	extractPromptScope := opts.ScopeExtractionPolicy != ScopeExtractionFrozen
@@ -51,7 +45,7 @@ func planExecuteScopeContract(opts Options, prompt string) PlanScopeContract {
 	return planExecuteContractWithWriteEnvelope(plancontract.NewPlanScopeContract(coverage.RequiredCoveragePaths, coverage.AllowedCandidatePaths, obligations), writeAllowed, writeAllowedExplicit)
 }
 
-func planExecuteContractWithWriteEnvelope(contract PlanScopeContract, writeAllowed []string, explicit bool) PlanScopeContract {
+func planExecuteContractWithWriteEnvelope(contract plancontract.PlanScopeContract, writeAllowed []string, explicit bool) plancontract.PlanScopeContract {
 	if explicit {
 		return contract.WithWriteAllowedPaths(writeAllowed)
 	}

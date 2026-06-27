@@ -8,7 +8,7 @@ import (
 
 	"idiom/internal/evidence/transcript"
 	"idiom/internal/platform/config"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/modepolicy"
 	"idiom/internal/runtime/promptstack"
@@ -169,7 +169,7 @@ func (m *Model) slashDebugLog(_ string, fields []string) bool {
 	case len(fields) == 1 && m.debugLogPath == "":
 		m.status = "Debug conversation logging is unavailable."
 	case len(fields) == 1:
-		m.status = "Debug log: " + m.displayPath(m.debugLogPath) + " | mode: " + util.FirstNonEmpty(m.cfg.Chat.DebugLogMode, "redacted")
+		m.status = "Debug log: " + m.displayPath(m.debugLogPath) + " | mode: " + textutil.FirstNonEmpty(m.cfg.Chat.DebugLogMode, "redacted")
 	case len(fields) == 3 && fields[1] == "mode":
 		switch fields[2] {
 		case "redacted", "full":
@@ -368,9 +368,9 @@ func (m *Model) slashTemp(_ string, fields []string) bool {
 func (m *Model) slashPreset(_ string, fields []string) bool {
 	switch {
 	case len(fields) == 1:
-		m.status = "Current preset: " + util.Fallback(strings.TrimSpace(m.cfg.Chat.Preset), "custom") + " | " + m.samplingSummary()
+		m.status = "Current preset: " + textutil.Fallback(strings.TrimSpace(m.cfg.Chat.Preset), "custom") + " | " + m.samplingSummary()
 	case len(fields) == 2 && fields[1] == "list":
-		m.status = "Presets: " + joinOrNone(config.BuiltinChatPresetNames()) + " | current: " + util.Fallback(strings.TrimSpace(m.cfg.Chat.Preset), "custom")
+		m.status = "Presets: " + joinOrNone(config.BuiltinChatPresetNames()) + " | current: " + textutil.Fallback(strings.TrimSpace(m.cfg.Chat.Preset), "custom")
 	case len(fields) == 2:
 		if err := config.ApplyBuiltinChatPreset(&m.cfg.Chat, fields[1]); err != nil {
 			m.status = err.Error()
@@ -409,7 +409,7 @@ func (m *Model) slashServer(_ string, fields []string) bool {
 			state = "up"
 		}
 
-		m.status = fmt.Sprintf("Server %s on %s. Model: %s", state, m.plannerSpec.EndpointBaseURL(), util.Fallback(m.activeModelDisplayID(), "unknown"))
+		m.status = fmt.Sprintf("Server %s on %s. Model: %s", state, m.plannerSpec.EndpointBaseURL(), textutil.Fallback(m.activeModelDisplayID(), "unknown"))
 	default:
 		m.status = "Usage: /server <start|stop|restart|status>"
 	}

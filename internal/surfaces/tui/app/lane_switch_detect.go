@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	lanecontract "idiom/internal/contracts/lane"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -14,7 +15,7 @@ import (
 // "none" sentinel means "stay in the current read-only lane".
 const (
 	laneSwitchImplement      = "implement"
-	laneSwitchPlanExecute    = "plan-execute"
+	laneSwitchPlanExecute    = string(lanecontract.LanePlanExecute)
 	laneSwitchFeaturePlanner = "feature-planner"
 	laneSwitchNone           = "none"
 )

@@ -153,6 +153,9 @@ func format(value string) string {
 		if node.Confidence == "" {
 			t.Fatalf("query results must include confidence tiers: %#v", query.Nodes)
 		}
+		if _, ok := node.Properties["match_score"]; ok {
+			t.Fatalf("query result properties must not expose internal ranking scores: %#v", node)
+		}
 	}
 
 	zoom, err := Zoom(ZoomOptions{Root: root, Handle: runHandle})

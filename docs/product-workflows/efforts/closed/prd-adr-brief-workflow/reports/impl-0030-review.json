@@ -23,8 +23,8 @@
     }
   ],
   "checks": {
-    "reconciliation_authority": "passed_after_phase_state_revision_and_plan_status_validation",
-    "path_boundary": "passed_after_root_scoped_write_and_workflow_state_overwrite_rejection",
+    "reconciliation_authority": "passed",
+    "path_boundary": "passed",
     "no_dispatch_or_runtime_mutation": "passed",
     "evidence_export_write_absent": "passed",
     "ranker_learning_promotion_absent": "passed",

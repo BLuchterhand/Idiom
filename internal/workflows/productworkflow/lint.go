@@ -224,44 +224,22 @@ func LintEffortFolder(root string) LintSummaryResult {
 		var evidenceIDs map[string]bool
 
 		if parsedCards != nil {
-			evidenceIDs = make(map[string]bool)
-			for _, c := range parsedCards {
-				evidenceIDs[c.CardID] = true
-			}
+			evidenceIDs = EvidenceCardIDSet(parsedCards)
 		}
 
 		var prdReqIDs map[string]bool
 
 		if parsedPRD != nil {
-			prdReqIDs = make(map[string]bool)
-			for _, r := range parsedPRD.Requirements {
-				prdReqIDs[r.ID] = true
-			}
+			prdReqIDs = PRDRequirementIDSet(parsedPRD.Requirements)
 		}
 
 		var adrIDSet map[string]bool
 
 		if parsedADRIndex != nil {
-			adrIDSet = make(map[string]bool)
-			for _, a := range parsedADRIndex.ADRs {
-				adrIDSet[a.ADRID] = true
-			}
+			adrIDSet = ADRIndexIDSet(*parsedADRIndex)
 		}
 
-		tddIDSet := make(map[string]bool)
-
-		if parsedTDD != nil {
-			for _, o := range parsedTDD.Obligations {
-				tddIDSet[o.ID] = true
-			}
-		}
-
-		for _, rec := range parsedLedger {
-			for _, id := range rec.TDDObligationsSatisfied {
-				tddIDSet[id] = true
-			}
-		}
-
+		tddIDSet := knownTDDIDSet(parsedTDD, parsedLedger)
 		linkErrs := ValidateTraceabilityCrossLinks(
 			*parsedMatrix, evidenceIDs, prdReqIDs, adrIDSet, tddIDSet, briefPaths, reportPaths,
 		)
@@ -271,10 +249,7 @@ func LintEffortFolder(root string) LintSummaryResult {
 	}
 
 	if parsedPRD != nil && parsedCards != nil {
-		evidenceIDs := make(map[string]bool)
-		for _, c := range parsedCards {
-			evidenceIDs[c.CardID] = true
-		}
+		evidenceIDs := EvidenceCardIDSet(parsedCards)
 
 		for _, req := range parsedPRD.Requirements {
 			for _, ref := range req.EvidenceRefs {
@@ -291,34 +266,16 @@ func LintEffortFolder(root string) LintSummaryResult {
 		var prdReqIDs map[string]bool
 
 		if parsedPRD != nil {
-			prdReqIDs = make(map[string]bool)
-			for _, r := range parsedPRD.Requirements {
-				prdReqIDs[r.ID] = true
-			}
+			prdReqIDs = PRDRequirementIDSet(parsedPRD.Requirements)
 		}
 
 		var evidenceIDs map[string]bool
 
 		if parsedCards != nil {
-			evidenceIDs = make(map[string]bool)
-			for _, c := range parsedCards {
-				evidenceIDs[c.CardID] = true
-			}
+			evidenceIDs = EvidenceCardIDSet(parsedCards)
 		}
 
-		tddIDSet := make(map[string]bool)
-
-		if parsedTDD != nil {
-			for _, o := range parsedTDD.Obligations {
-				tddIDSet[o.ID] = true
-			}
-		}
-
-		for _, rec := range parsedLedger {
-			for _, id := range rec.TDDObligationsSatisfied {
-				tddIDSet[id] = true
-			}
-		}
+		tddIDSet := knownTDDIDSet(parsedTDD, parsedLedger)
 
 		adrLinkErrs := ValidateADRCrossLinks(parsedADRs, prdReqIDs, evidenceIDs, tddIDSet)
 		for _, le := range adrLinkErrs {
@@ -351,10 +308,7 @@ func LintEffortFolder(root string) LintSummaryResult {
 	var evidenceIDs map[string]bool
 
 	if parsedCards != nil {
-		evidenceIDs = make(map[string]bool)
-		for _, card := range parsedCards {
-			evidenceIDs[card.CardID] = true
-		}
+		evidenceIDs = EvidenceCardIDSet(parsedCards)
 	}
 
 	for _, finding := range ImplementationAffectingClaimEvidenceFindings(prdForClaimLint, parsedADRs, evidenceIDs) {
@@ -362,21 +316,7 @@ func LintEffortFolder(root string) LintSummaryResult {
 	}
 
 	if parsedPRD != nil {
-		tddIDSet := make(map[string]bool)
-
-		if parsedTDD != nil {
-			for _, o := range parsedTDD.Obligations {
-				tddIDSet[o.ID] = true
-			}
-		}
-
-		for _, rec := range parsedLedger {
-			for _, id := range rec.TDDObligationsSatisfied {
-				tddIDSet[id] = true
-			}
-		}
-
-		prdTDDErrs := ValidatePRDTDDObligationCrossLinks(parsedPRD.Requirements, tddIDSet)
+		prdTDDErrs := ValidatePRDTDDObligationCrossLinks(parsedPRD.Requirements, knownTDDIDSet(parsedTDD, parsedLedger))
 		for _, le := range prdTDDErrs {
 			addFinding("broken_link", "tdd.json", le.Message)
 		}
@@ -598,6 +538,13 @@ func LintEffortFolder(root string) LintSummaryResult {
 	}
 
 	return result
+}
+
+func knownTDDIDSet(ledger *TDDLedger, records []ImplementationLedgerRecord) map[string]bool {
+	if ledger == nil {
+		return BuildKnownTDDObligationIDs(TDDLedger{}, records)
+	}
+	return BuildKnownTDDObligationIDs(*ledger, records)
 }
 
 func gitChangedPaths(effortRoot string) []string {

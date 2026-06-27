@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	lanecontract "idiom/internal/contracts/lane"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/featureplanner"
 )
@@ -133,7 +134,7 @@ func greenfieldCreationConfirmationQuestion(plan promptExecutionPlan) string {
 
 	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(plan.route.Family) {
 		command = "/plan-execute"
-		lane = "plan-execute"
+		lane = string(lanecontract.LanePlanExecute)
 	}
 
 	return renderGreenfieldWriteApproval(greenfieldWriteApprovalRequest{

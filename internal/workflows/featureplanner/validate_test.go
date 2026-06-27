@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"idiom/internal/contracts/autonomy"
+	featureplannercontract "idiom/internal/contracts/featureplanner"
 	plancontract "idiom/internal/contracts/plan"
-	coreplanexecute "idiom/internal/workflows/planexecute"
 )
 
 const (
@@ -167,6 +167,72 @@ func TestValidateDurableStateTreatsSourceSatisfiedAsTerminal(t *testing.T) {
 	err := ValidateDurableState(state)
 	if err == nil || !strings.Contains(err.Error(), "terminal feature state has open planner questions") {
 		t.Fatalf("source-satisfied state should reject terminal-incompatible open questions, got %v", err)
+	}
+}
+
+func TestValidateDurableStateTreatsFailedAndPlanningStuckAsTerminal(t *testing.T) {
+	tests := []struct {
+		name   string
+		status string
+		setup  func(*FeatureState)
+		want   string
+	}{
+		{
+			name:   "failed active run",
+			status: FeatureStateFailed,
+			setup: func(state *FeatureState) {
+				state.ActiveRuns = []ActiveRun{{RunID: "run-1", State: ActiveRunStateRunning}}
+			},
+			want: "terminal feature state has active runs",
+		},
+		{
+			name:   "planning stuck open question",
+			status: FeatureStatePlanningStuck,
+			setup: func(state *FeatureState) {
+				state.OpenQuestions = []PlannerQuestion{{ID: "q-1", Status: "open", QuestionSummary: "stale question"}}
+			},
+			want: "terminal feature state has open planner questions",
+		},
+		{
+			name:   "failed recovery packet",
+			status: FeatureStateFailed,
+			setup: func(state *FeatureState) {
+				state.OpenRecoveryPackets = []string{".idiom/recovery/packets/failure-1.json"}
+			},
+			want: "terminal feature state has open recovery packets",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := NewState("terminal-session", "terminal state", "", 3, time.Unix(1, 0).UTC())
+			state.Status = tt.status
+			state.PlanningLoop.State = tt.status
+			tt.setup(&state)
+
+			err := ValidateDurableState(state)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected terminal invariant %q, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
+func TestValidateDurableStateRejectsUnknownActiveRunState(t *testing.T) {
+	for _, stateName := range []string{"complete", "retry_plan_execute"} {
+		t.Run(stateName, func(t *testing.T) {
+			state := NewState("active-run-state-session", "active run state", "", 3, time.Unix(1, 0).UTC())
+			state.ActiveRuns = []ActiveRun{{
+				RunID:  "run-1",
+				AtomID: "atom-1",
+				State:  stateName,
+			}}
+
+			err := ValidateDurableState(state)
+			if err == nil || !strings.Contains(err.Error(), `active run 0 has unknown state "`+stateName+`"`) {
+				t.Fatalf("expected unknown active run state rejection for %q, got %v", stateName, err)
+			}
+		})
 	}
 }
 
@@ -1928,7 +1994,7 @@ func TestParsePlannerOutputAcceptsQuestionAlias(t *testing.T) {
 		t.Fatalf("ParsePlannerOutput returned error: %v", err)
 	}
 
-	if parsed.Kind != ToolAskPlannerQuestion {
+	if parsed.Kind != featureplannercontract.ToolAskPlannerQuestion {
 		t.Fatalf("kind = %q, want ask_planner_question", parsed.Kind)
 	}
 
@@ -2077,7 +2143,7 @@ func TestParsePlannerOutputAcceptsSourceSatisfiedCloseout(t *testing.T) {
 		t.Fatalf("ParsePlannerOutput returned error: %v", err)
 	}
 
-	if parsed.Kind != ToolSourceSatisfied {
+	if parsed.Kind != featureplannercontract.ToolSourceSatisfied {
 		t.Fatalf("kind = %q, want source_satisfied", parsed.Kind)
 	}
 
@@ -2116,7 +2182,7 @@ func TestRunSourceSatisfiedCloseoutSkipsAtomDispatch(t *testing.T) {
 		t.Fatalf("source-satisfied closeout should not create dispatch state: atoms=%+v active=%+v", result.State.Atoms, result.State.ActiveRuns)
 	}
 
-	if len(result.Events) != 1 || result.Events[0].Type != EventPlannerSourceSatisfied {
+	if len(result.Events) != 1 || result.Events[0].Type != featureplannercontract.EventName(featureplannercontract.EventPlannerSourceSatisfied) {
 		t.Fatalf("events = %+v, want planner source-satisfied event", result.Events)
 	}
 }
@@ -3507,7 +3573,7 @@ func TestAnswerOpenQuestionClearsAuthorizedNewFileBlockers(t *testing.T) {
 	}
 
 	events := answerOpenQuestion(&state, "Approved. You may create native/src/simulation/world/collapse_event.cpp and native/tests/test_collapse_event.cpp.")
-	if len(events) != 1 || events[0].Type != EventPlannerQuestionAnswered {
+	if len(events) != 1 || events[0].Type != featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionAnswered) {
 		t.Fatalf("unexpected answer events: %+v", events)
 	}
 	if slices.Contains(state.Blockers, blocker) || slices.Contains(state.Atoms[0].Blockers, blocker) {
@@ -3542,7 +3608,7 @@ func TestAnswerOpenQuestionDenialDoesNotClearNewFileBlockers(t *testing.T) {
 	}
 
 	events := answerOpenQuestion(&state, "No, do not create native/src/simulation/world/collapse_event.cpp or native/tests/test_collapse_event.cpp.")
-	if len(events) != 1 || events[0].Type != EventPlannerQuestionAnswered {
+	if len(events) != 1 || events[0].Type != featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionAnswered) {
 		t.Fatalf("unexpected answer events: %+v", events)
 	}
 	if !slices.Contains(state.Blockers, blocker) || !slices.Contains(state.Atoms[0].Blockers, blocker) {
@@ -3569,7 +3635,7 @@ func TestAnswerOpenQuestionTreatsBlankStatusAsOpen(t *testing.T) {
 	}
 
 	events := answerOpenQuestion(&state, "Approved. You may create src/brain.py.")
-	if len(events) != 1 || events[0].Type != EventPlannerQuestionAnswered {
+	if len(events) != 1 || events[0].Type != featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionAnswered) {
 		t.Fatalf("blank-status question should be answerable, got events=%+v state=%+v", events, state)
 	}
 	if state.OpenQuestions[0].Status != "answered" {
@@ -3793,7 +3859,7 @@ func TestBuildImplementorPromptCarriesTypedPlanNewFileAuthority(t *testing.T) {
 
 func TestApplyPlannerOutputAcceptsPlanAndQueuesAtoms(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
-	parsed := ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}
+	parsed := ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}
 
 	events := ApplyPlannerOutput(&state, parsed, time.Unix(2, 0).UTC())
 
@@ -3820,7 +3886,7 @@ func TestApplyPlannerOutputStampsTDDSnapshotIdentity(t *testing.T) {
 	plan.Atoms[0].PlannedTDDSnapshot.SnapshotID = "model-authored-snapshot"
 	plan.Atoms[0].PlannedTDDSnapshot.SnapshotDigest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 
-	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: plan}, time.Unix(2, 0).UTC())
+	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: plan}, time.Unix(2, 0).UTC())
 	if len(events) == 0 || state.Status != FeatureStateDispatching {
 		t.Fatalf("expected accepted plan, status=%q events=%+v blockers=%v", state.Status, events, state.Blockers)
 	}
@@ -3886,13 +3952,13 @@ func TestComputePlannedTDDSnapshotDigestIsDeterministic(t *testing.T) {
 func TestApplyPlannerOutputInvalidDurablePlanDoesNotReplaceCommittedPlan(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	accepted := validPlan()
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: accepted}, time.Unix(2, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: accepted}, time.Unix(2, 0).UTC())
 	committedID := state.Plan.Atoms[0].ID
 
 	invalid := validPlan()
 	invalid.Atoms[0].ID = "invalid-candidate"
 	invalid.Atoms[0].TestFirst.Commands = nil
-	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: invalid}, time.Unix(3, 0).UTC())
+	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: invalid}, time.Unix(3, 0).UTC())
 
 	if len(events) != 1 || events[0].Type != "idiom.feature_planner.tdd_pre_execution_blocked" {
 		t.Fatalf("expected blocked event, got %+v", events)
@@ -3925,7 +3991,7 @@ func TestApplyPlannerOutputUsesAcceptedSourceAuthorityForDurablePromptCalls(t *t
 	plan := validPlan()
 	plan.Atoms[0].Prompt = "Use FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) before posting fallback water haul."
 
-	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: plan}, time.Unix(3, 0).UTC())
+	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: plan}, time.Unix(3, 0).UTC())
 	if len(events) == 1 && events[0].Type == "idiom.feature_planner.tdd_pre_execution_blocked" {
 		t.Fatalf("durable validation ignored accepted source authority: %+v", events[0])
 	}
@@ -3987,7 +4053,7 @@ func TestApplyPlannerOutputRejectsDemotedImplementationScopeBeforeDispatch(t *te
 	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"native/tests/test_collapse_event.cpp"}
 	plan.Atoms[0].Prompt = "Implement collapse_event.h declarations and update colony_sim_tick.cpp to use CollapseEvent::dispatch."
 
-	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: plan}, time.Unix(2, 0).UTC())
+	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: plan}, time.Unix(2, 0).UTC())
 	if len(events) != 1 || events[0].Type != "idiom.feature_planner.tdd_pre_execution_blocked" {
 		t.Fatalf("expected durable plan rejection, got status=%s events=%+v", state.Status, events)
 	}
@@ -4682,7 +4748,7 @@ func TestRunRejectsGenericAddPromptForStandaloneImplementationNewFile(t *testing
 
 func TestDispatchRecordsPlanExecuteLaneFamily(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 	events := DispatchReadyAtoms(&state, 1, func(prompt string, taskFamily string) (string, error) {
 		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerImplementor) {
@@ -4720,7 +4786,7 @@ func TestDispatchUsesPlanExecuteSafeRunIDForUnsafeAtomID(t *testing.T) {
 	plan := validPlan()
 
 	plan.Atoms[0].ID = "atoms/1.3c"
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: plan}, time.Unix(2, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: plan}, time.Unix(2, 0).UTC())
 
 	var prompt string
 
@@ -4749,7 +4815,7 @@ func TestDispatchUsesPlanExecuteSafeRunIDForUnsafeAtomID(t *testing.T) {
 
 func TestDispatchRejectsRawSourceSatisfiedWithoutTypedPlanExecuteEvidence(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 	events := DispatchReadyAtoms(&state, 1, func(_ string, taskFamily string) (string, error) {
 		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerImplementor) {
@@ -4778,7 +4844,7 @@ func TestDispatchRejectsRawSourceSatisfiedWithoutTypedPlanExecuteEvidence(t *tes
 
 func TestDispatchRejectsRawProseWithoutTypedPlanExecuteEvidence(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 	events := DispatchReadyAtoms(&state, 1, func(_ string, taskFamily string) (string, error) {
 		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerImplementor) {
@@ -4807,7 +4873,7 @@ func TestDispatchRejectsRawProseWithoutTypedPlanExecuteEvidence(t *testing.T) {
 
 func TestDispatchRejectsUnsupportedImplementorJSONTool(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 	events := DispatchReadyAtoms(&state, 1, func(_ string, taskFamily string) (string, error) {
 		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerImplementor) {
@@ -4845,7 +4911,7 @@ func TestDispatchRejectsMalformedOrEmptyImplementorJSON(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
-			ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+			ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 			events := DispatchReadyAtoms(&state, 1, func(_ string, taskFamily string) (string, error) {
 				if taskFamily != string(autonomy.TaskFamilyFeaturePlannerImplementor) {
@@ -4885,7 +4951,7 @@ func TestDispatchStopsAfterBlockedAtomWithoutSyntheticSiblingRuns(t *testing.T) 
 	plan.Atoms = append(plan.Atoms, second)
 
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: plan}, time.Unix(2, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: plan}, time.Unix(2, 0).UTC())
 
 	var implementorCalls int
 
@@ -4933,7 +4999,7 @@ func TestDispatchStopsAfterPreDispatchTDDBlocker(t *testing.T) {
 	plan.Atoms = append(plan.Atoms, second)
 
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: plan}, time.Unix(2, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: plan}, time.Unix(2, 0).UTC())
 
 	state.TDDPreExecutionEvidence = nil
 
@@ -4965,7 +5031,7 @@ func TestDispatchStopsAfterPreDispatchTDDBlocker(t *testing.T) {
 
 func TestDispatchDoesNotCompletePlanExecuteQuestion(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 	events := DispatchReadyAtoms(&state, 1, func(_ string, taskFamily string) (string, error) {
 		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerImplementor) {
@@ -4996,7 +5062,7 @@ func TestDispatchDoesNotCompletePlanExecuteQuestion(t *testing.T) {
 
 func TestApplyImplementorOutputQuestionPrefixOpensPlannerQuestion(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 	atom := &state.Atoms[0]
 
@@ -5069,7 +5135,7 @@ func TestDispatchWaitsForAtomDependencies(t *testing.T) {
 	plan.Atoms = []FeatureAtomPlan{dependent, base}
 
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: plan}, time.Unix(2, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: plan}, time.Unix(2, 0).UTC())
 
 	var prompts []string
 
@@ -5262,7 +5328,7 @@ func TestRunKeepsImplementorQuestionAsPlannerRepairState(t *testing.T) {
 
 func TestImplementorAtomJSONDoesNotOpenPlannerQuestionOrComplete(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 	atom := &state.Atoms[0]
 
@@ -5301,7 +5367,7 @@ func TestImplementorAtomJSONDoesNotOpenPlannerQuestionOrComplete(t *testing.T) {
 
 func TestApplyImplementorOutputRejectsUnobservedEditAndTestClaims(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 	atom := &state.Atoms[0]
 
@@ -5374,7 +5440,7 @@ func TestObservedVerificationCommandsUseCanonicalEvidenceKey(t *testing.T) {
 		}},
 	}
 	completion := planExecuteCompletion{
-		VerificationCommands: []coreplanexecute.VerificationCommand{{
+		VerificationCommands: []plancontract.VerificationCommand{{
 			Argv: []string{"python", "-m", "pytest", "tests/test_brain.py"},
 		}},
 	}
@@ -5386,7 +5452,7 @@ func TestObservedVerificationCommandsUseCanonicalEvidenceKey(t *testing.T) {
 
 func TestApplyImplementorOutputAcceptsObservedPlanExecuteCompletion(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 	atom := &state.Atoms[0]
 
@@ -5447,7 +5513,7 @@ func TestApplyImplementorOutputAcceptsObservedPlanExecuteCompletion(t *testing.T
 	if len(closure.Verification) == 0 {
 		t.Fatalf("closure missing typed verification checks: %+v", closure)
 	}
-	if got := fmt.Sprint(events[0].Fields["verification_closure_event_id"]); got != closure.EventID {
+	if got := fmt.Sprint(events[0].Fields[featureplannercontract.EventFieldVerificationClosureEventID]); got != closure.EventID {
 		t.Fatalf("event closure id = %q, want %q", got, closure.EventID)
 	}
 	if state.ReleaseReadiness.Status != "ready" ||
@@ -5457,10 +5523,10 @@ func TestApplyImplementorOutputAcceptsObservedPlanExecuteCompletion(t *testing.T
 		!containsString(state.ReleaseReadiness.VerificationClosureEventIDs, closure.EventID) {
 		t.Fatalf("release readiness not bound to closed artifact: %+v", state.ReleaseReadiness)
 	}
-	if got := fmt.Sprint(events[1].Fields["release_status"]); got != "ready" {
+	if got := fmt.Sprint(events[1].Fields[featureplannercontract.EventFieldReleaseStatus]); got != "ready" {
 		t.Fatalf("release event status = %q, want ready; fields=%+v", got, events[1].Fields)
 	}
-	if got := fmt.Sprint(events[1].Fields["plan_digest"]); got != state.Plan.Artifact.Digest {
+	if got := fmt.Sprint(events[1].Fields[featureplannercontract.EventFieldPlanDigest]); got != state.Plan.Artifact.Digest {
 		t.Fatalf("release event digest = %q, want %q", got, state.Plan.Artifact.Digest)
 	}
 }
@@ -5481,7 +5547,7 @@ func TestApplyImplementorOutputRejectsNonzeroPlanExecuteExitCode(t *testing.T) {
 	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute reported non-zero exit code")
 }
 
-func TestApplyImplementorOutputBindsActiveAuthorityForScopeOnlyPlanExecuteCompletion(t *testing.T) {
+func TestApplyImplementorOutputRejectsScopeOnlyPlanExecuteCompletion(t *testing.T) {
 	state, atom := implementingAtomForCompletionTest(t)
 	payload := map[string]any{}
 
@@ -5498,30 +5564,32 @@ func TestApplyImplementorOutputBindsActiveAuthorityForScopeOnlyPlanExecuteComple
 
 	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
 
-	if atom.State != AtomStateComplete {
-		t.Fatalf("atom state = %q, want complete; blockers=%+v events=%+v", atom.State, atom.Blockers, events)
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "plan-execute terminal completion is not correlated to the active plan contract snapshot")
+}
+
+func TestApplyImplementorOutputRejectsIdentitylessPlanExecuteCompletion(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+	payload := map[string]any{}
+
+	if err := json.Unmarshal([]byte(testPlanExecuteCompletedJSONForAtomWithReviewSkipped(*atom)), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
 	}
 
-	if len(events) != 2 || events[0].Type != "idiom.feature_planner.atom_completed" || events[1].Type != "idiom.feature_planner.release_ready" {
-		t.Fatalf("unexpected events: %+v", events)
-	}
+	delete(payload, "contract_id")
+	delete(payload, "contract_hash")
+	delete(payload, "snapshot_hash")
+	delete(payload, "scope_contract_id")
+	delete(payload, "scope_contract_hash")
+	trustPlanExecuteCompletionForTest(payload)
 
-	if got := fmt.Sprint(events[0].Fields["contract_id"]); got != atom.RuntimeEnvelope.ContractID {
-		t.Fatalf("contract_id = %q, want active atom contract %q; fields=%+v", got, atom.RuntimeEnvelope.ContractID, events[0].Fields)
-	}
+	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
 
-	if got := fmt.Sprint(events[0].Fields["snapshot_hash"]); got != atom.RuntimeEnvelope.ProtocolHash {
-		t.Fatalf("snapshot_hash = %q, want active snapshot %q; fields=%+v", got, atom.RuntimeEnvelope.ProtocolHash, events[0].Fields)
-	}
-
-	if got := fmt.Sprint(events[0].Fields["scope_contract_id"]); got != "child-local-scope" {
-		t.Fatalf("scope_contract_id = %q, want preserved child scope; fields=%+v", got, events[0].Fields)
-	}
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "plan-execute terminal completion is not correlated to the active plan contract snapshot")
 }
 
 func TestReplayRestoresVerificationClosureFromTerminalEvent(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 	atom := &state.Atoms[0]
 	atom.State = AtomStateImplementing
@@ -5720,7 +5788,7 @@ func TestApplyImplementorOutputRejectsUntrustedAcceptanceEvidenceIDs(t *testing.
 	assertRejectedPlanExecuteCompletion(t, state, atom, events, "acceptance_evidence_ids are not backed by trusted plan-execute terminal evidence")
 }
 
-func TestApplyImplementorOutputUsesNestedPlanExecuteTerminalClass(t *testing.T) {
+func TestApplyImplementorOutputUsesNestedPlanExecuteCompletionDecisionClass(t *testing.T) {
 	state, atom := implementingAtomForCompletionTest(t)
 
 	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","plan_execute":{"lane_family":"plan-execute","status":"completed","terminal_class":"recovery_required","outcome":"review_degraded","phase":"review_repair","review_status":"degraded","progress_path":".idiom/plan-execute/session/state.json"}}`)
@@ -5730,6 +5798,28 @@ func TestApplyImplementorOutputUsesNestedPlanExecuteTerminalClass(t *testing.T) 
 	if got := fmt.Sprint(events[0].Fields["terminal_class"]); got != "recovery_required" {
 		t.Fatalf("terminal_class = %q, want recovery_required; fields=%+v", got, events[0].Fields)
 	}
+}
+
+func TestApplyImplementorOutputRejectsInvalidNestedPlanExecuteTerminalRecord(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+	payload := map[string]any{}
+
+	if err := json.Unmarshal([]byte(testNestedPlanExecuteCompletedJSONForAtom(*atom)), &payload); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+
+	nested, ok := payload["plan_execute"].(map[string]any)
+	if !ok {
+		t.Fatalf("payload missing nested plan_execute: %+v", payload)
+	}
+	nested["terminal_class"] = string(plancontract.PlanExecuteTerminalClassSuccess)
+	nested["status"] = "not-a-plan-execute-status"
+	nested["phase"] = "not-a-plan-execute-phase"
+	nested["failure_kind"] = "not-a-plan-execute-failure"
+
+	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
+
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute terminal record invalid")
 }
 
 func TestApplyImplementorOutputPreservesPlanExecuteSourceSatisfiedAtomState(t *testing.T) {
@@ -5780,6 +5870,26 @@ func TestApplyImplementorOutputRejectsSourceSatisfiedWithChangedPaths(t *testing
 	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
 
 	assertRejectedPlanExecuteCompletion(t, state, atom, events, "source-satisfied completion must not include changed_paths")
+}
+
+func TestApplyImplementorOutputRejectsSourceSatisfiedWithFailedTerminalEvidence(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+	payload := map[string]any{}
+
+	_ = json.Unmarshal([]byte(testPlanExecuteSourceSatisfiedJSONForAtom(*atom)), &payload)
+	payload["source_sanity"] = []map[string]any{{
+		"kind":   "source_sanity",
+		"path":   atom.RequiredEditPaths[0],
+		"status": "failed",
+		"error":  "source sanity failed",
+	}}
+
+	events := ApplyImplementorOutput(&state, atom, mustJSONMap(payload))
+
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute terminal validation failed")
+	if !strings.Contains(events[0].Message, "source_sanity_failed:"+atom.RequiredEditPaths[0]) {
+		t.Fatalf("rejection did not name failed source_sanity path: %+v", events[0])
+	}
 }
 
 func TestApplyImplementorOutputRejectsOutOfScopeSourceSatisfiedPath(t *testing.T) {
@@ -5881,7 +5991,7 @@ func TestApplyImplementorOutputRejectsPlanExecuteModelError(t *testing.T) {
 
 	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"completed","phase":"review_repair","review_status":"review_model_error","failure_kind":"review_model_error","failure_reason":"model returned malformed review"}`)
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute reported failure details")
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, `nested plan-execute terminal record invalid: invalid plan-execute terminal completion review status "review_model_error": review_model_error - model returned malformed review`)
 
 	if got := fmt.Sprint(events[0].Fields["nested_failure_kind"]); got != "review_model_error" {
 		t.Fatalf("nested_failure_kind = %q, want review_model_error", got)
@@ -6007,7 +6117,7 @@ func implementingAtomForCompletionTest(t *testing.T) (FeatureState, *FeatureAtom
 	t.Helper()
 
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 	atom := &state.Atoms[0]
 
@@ -6106,7 +6216,7 @@ func TestRunReconcilesActiveRunsBeforeResumeActiveRun(t *testing.T) {
 
 func TestRunResumesDispatchingStateWithoutReplacingPlan(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
-	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 	if len(events) == 0 {
 		t.Fatal("expected initial plan events")
@@ -6234,7 +6344,7 @@ func TestRunPlanRevisionSupersedesRequiredAuthorityQuestion(t *testing.T) {
 
 	var sawSuperseded bool
 	for _, event := range result.Events {
-		if event.Type == EventPlannerQuestionSupersededByRevision {
+		if event.Type == featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionSupersededByRevision) {
 			sawSuperseded = true
 			if _, ok := event.Fields["revision"]; ok {
 				t.Fatalf("supersession event should not include raw operator revision text: %+v", event.Fields)
@@ -6506,7 +6616,7 @@ func validPlan() FeaturePlan {
 	return FeaturePlan{
 		SchemaVersion: FeaturePlanSchemaVersion,
 		FeatureID:     "feature-test",
-		Tool:          ToolSubmitFeaturePlan,
+		Tool:          string(featureplannercontract.ToolSubmitFeaturePlan),
 		SourceTask: SourceTask{
 			Kind:    "operator_prompt",
 			Summary: "build feature",

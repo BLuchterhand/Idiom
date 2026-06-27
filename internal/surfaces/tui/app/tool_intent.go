@@ -7,7 +7,25 @@ import (
 )
 
 func toolIntent(toolName, target string) string {
-	switch strings.TrimSpace(toolName) {
+	toolName = strings.TrimSpace(toolName)
+
+	if workspace.LanguageToolHasCapability(toolName, workspace.CapFileOutline) {
+		if target == "" {
+			return "scan the file structure before reading details"
+		}
+
+		return "scan " + target + " to find the right symbol or section"
+	}
+
+	if workspace.LanguageToolHasCapability(toolName, workspace.CapReadSymbol) {
+		if target == "" {
+			return "read the exact declaration instead of a broad file slice"
+		}
+
+		return "read the exact declaration around " + target
+	}
+
+	switch toolName {
 	case workspace.ToolNameListFiles:
 		if target == "" {
 			target = "the current workspace"
@@ -32,18 +50,6 @@ func toolIntent(toolName, target string) string {
 		}
 
 		return "inspect " + target + " for the relevant context"
-	case "go_file_outline", "rust_file_outline", "ts_file_outline", "python_file_outline", "java_file_outline", "cpp_file_outline":
-		if target == "" {
-			return "scan the file structure before reading details"
-		}
-
-		return "scan " + target + " to find the right symbol or section"
-	case "go_read_symbol", "rust_read_symbol", "ts_read_symbol", "python_read_symbol", "java_read_symbol", "cpp_read_symbol":
-		if target == "" {
-			return "read the exact declaration instead of a broad file slice"
-		}
-
-		return "read the exact declaration around " + target
 	case workspace.ToolNameEditFile:
 		if target == "" {
 			return "apply the planned code change"

@@ -2,14 +2,15 @@ package java
 
 import (
 	"cmp"
-	"idiom/internal/repository/semantic/internal/indexsupport"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
+	"idiom/internal/repository/semantic/internal/indexsupport"
+
 	"idiom/internal/repository/discovery"
 )
 
@@ -229,16 +230,16 @@ func BuildJavaIndexWithOptions(root string, opts indexsupport.IndexOptions) (*Ja
 				continue
 			}
 
-			index.Forward[file.Path] = util.AppendUnique(index.Forward[file.Path], sib)
-			index.Reverse[sib] = util.AppendUnique(index.Reverse[sib], file.Path)
+			index.Forward[file.Path] = textutil.AppendUnique(index.Forward[file.Path], sib)
+			index.Reverse[sib] = textutil.AppendUnique(index.Reverse[sib], file.Path)
 		}
 
 		// Import edges — only those pointing at in-workspace FQNs.
 		for _, imp := range file.Imports {
 			target := strings.TrimSuffix(imp, ".*")
 			if rel, ok := classByFQN[target]; ok {
-				index.Forward[file.Path] = util.AppendUnique(index.Forward[file.Path], rel)
-				index.Reverse[rel] = util.AppendUnique(index.Reverse[rel], file.Path)
+				index.Forward[file.Path] = textutil.AppendUnique(index.Forward[file.Path], rel)
+				index.Reverse[rel] = textutil.AppendUnique(index.Reverse[rel], file.Path)
 
 				continue
 			}
@@ -251,8 +252,8 @@ func BuildJavaIndexWithOptions(root string, opts indexsupport.IndexOptions) (*Ja
 						continue
 					}
 
-					index.Forward[file.Path] = util.AppendUnique(index.Forward[file.Path], rel)
-					index.Reverse[rel] = util.AppendUnique(index.Reverse[rel], file.Path)
+					index.Forward[file.Path] = textutil.AppendUnique(index.Forward[file.Path], rel)
+					index.Reverse[rel] = textutil.AppendUnique(index.Reverse[rel], file.Path)
 				}
 			}
 		}
@@ -494,7 +495,7 @@ func parseJavaFile(rel string, content string) JavaFile {
 		}
 
 		if match := javaImportRe.FindStringSubmatch(trimmed); len(match) == 3 {
-			file.Imports = util.AppendUnique(file.Imports, match[2])
+			file.Imports = textutil.AppendUnique(file.Imports, match[2])
 			continue
 		}
 

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/comprehension"
 )
 
@@ -111,7 +111,7 @@ type discoveryQueryRunner struct {
 }
 
 func (m *Manager) discoveryQuery(ctx context.Context, req ToolRequest) ToolResult {
-	purpose := normalizeDiscoveryQueryPurpose(util.FirstNonEmpty(req.Purpose, req.Query, DiscoveryQueryPurposeImpactAnalysis))
+	purpose := normalizeDiscoveryQueryPurpose(textutil.FirstNonEmpty(req.Purpose, req.Query, DiscoveryQueryPurposeImpactAnalysis))
 	if purpose == "" {
 		return ToolResult{Tool: ToolNameDiscoveryQuery, Summary: "Discovery query rejected", Error: "purpose must be one of " + strings.Join(DiscoveryQueryPurposeValues(), ", ")}
 	}

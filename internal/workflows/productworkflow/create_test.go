@@ -109,7 +109,7 @@ func TestInitializeEffortResumes(t *testing.T) {
 		t.Fatalf("resume init: %v", err)
 	}
 
-	if result.Status != "resumed" {
+	if result.Status != ProductWorkflowStatusResumed {
 		t.Fatalf("expected resumed, got %s", result.Status)
 	}
 

@@ -1,30 +1,25 @@
 package featureplanner
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	"idiom/internal/contracts/plan"
-	"idiom/internal/platform/util"
-	coreplanexecute "idiom/internal/workflows/planexecute"
+	recoverycontract "idiom/internal/contracts/recovery"
+	"idiom/internal/platform/textutil"
+
+	featureplannercontract "idiom/internal/contracts/featureplanner"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/workflows/recovery"
 )
 
-var planExecuteAcceptanceEvidenceTrustRegistry = struct {
-	sync.Mutex
-	fingerprints map[string]struct{}
-}{fingerprints: map[string]struct{}{}}
-
-// PlanExecuteCompletionFields extracts the nested plan-execute terminal
-// contract from JSONL output. Both TUI and headless feature-planner adapters
-// use this parser so degraded review/model-error evidence is interpreted once.
-func PlanExecuteCompletionFields(output string) map[string]any {
+// PlanExecuteCompletionSummaryFromOutput extracts the nested plan-execute
+// terminal contract from JSONL output. Both TUI and headless feature-planner
+// adapters use this parser so degraded review/model-error evidence is
+// interpreted once.
+func PlanExecuteCompletionSummaryFromOutput(output string) PlanExecuteCompletionSummary {
 	summary := PlanExecuteCompletionSummary{}
 	sequence := 0
 
@@ -34,8 +29,12 @@ func PlanExecuteCompletionFields(output string) map[string]any {
 			continue
 		}
 
-		var record planExecuteCompletionRecord
+		var fields map[string]any
+		if err := json.Unmarshal([]byte(line), &fields); err != nil {
+			continue
+		}
 
+		var record planExecuteCompletionRecord
 		if err := json.Unmarshal([]byte(line), &record); err != nil {
 			continue
 		}
@@ -46,22 +45,34 @@ func PlanExecuteCompletionFields(output string) map[string]any {
 
 		sequence++
 
-		recordSummary := planExecuteCompletionSummaryFromRecord(record)
+		recordSummary := planExecuteCompletionSummaryFromRecordFields(record, fields)
 
 		recordSummary.sequence = sequence
 		summary = MergePlanExecuteCompletionSummaries(summary, recordSummary)
 	}
 
-	return summary.Fields()
+	return summary.normalized()
+}
+
+// PlanExecuteCompletionFields is the JSON-emission compatibility shape. New
+// workflow code should pass PlanExecuteCompletionSummary and call Fields only
+// at serialization boundaries.
+func PlanExecuteCompletionFields(output string) map[string]any {
+	return PlanExecuteCompletionSummaryFromOutput(output).Fields()
 }
 
 func PlanExecuteRecoveryRetryPrompt(prompt string, completion map[string]any) (string, bool) {
-	requiredPaths := completionFieldStringSlice(completion, completionFieldRequiredEditPaths)
+	return PlanExecuteRecoveryRetryPromptForSummary(prompt, PlanExecuteCompletionSummaryFromFields(completion))
+}
+
+func PlanExecuteRecoveryRetryPromptForSummary(prompt string, completion PlanExecuteCompletionSummary) (string, bool) {
+	completion = completion.normalized()
+	requiredPaths := append([]string(nil), completion.RequiredEditPaths...)
 	refresh, ok := recovery.PlanExecutePlannerBlockedRetryRefreshResult(
-		CompletionFieldString(completion, completionFieldFailureKind),
-		CompletionFieldString(completion, completionFieldFailureReason)+"\n"+CompletionFieldString(completion, completionFieldSummary),
+		completion.FailureKind,
+		completion.FailureReason+"\n"+completion.Summary,
 		requiredPaths,
-		CompletionFieldString(completion, completionFieldNextValidAction),
+		recoverycontract.NextAction(strings.TrimSpace(completion.NextAction)),
 	)
 	if !ok {
 		return "", false
@@ -89,17 +100,15 @@ func TrustPlanExecuteCompletionFields(fields map[string]any) {
 		return
 	}
 
-	if len(completionFieldStableIDSlice(fields, completionFieldAcceptanceEvidenceIDs)) == 0 {
-		delete(fields, completionFieldAcceptanceEvidenceTrusted)
+	if len(completionFieldStableIDSlice(fields, plancontract.PlanExecuteTerminalFieldAcceptanceEvidenceIDs)) == 0 {
+		delete(fields, featureplannercontract.PlanExecuteCompletionFieldAcceptanceEvidenceTrusted)
 
 		return
 	}
 
-	if fields[completionFieldAcceptanceEvidenceTrusted] != true {
+	if fields[featureplannercontract.PlanExecuteCompletionFieldAcceptanceEvidenceTrusted] != true {
 		return
 	}
-
-	registerPlanExecuteAcceptanceEvidenceTrust(fields)
 }
 
 func TrustObservedPlanExecuteCompletionFields(fields map[string]any) {
@@ -107,296 +116,148 @@ func TrustObservedPlanExecuteCompletionFields(fields map[string]any) {
 		return
 	}
 
-	if len(completionFieldStableIDSlice(fields, completionFieldAcceptanceEvidenceIDs)) == 0 {
-		delete(fields, completionFieldAcceptanceEvidenceTrusted)
-
-		return
+	trusted := TrustObservedPlanExecuteCompletionSummary(PlanExecuteCompletionSummaryFromFields(fields))
+	for key := range fields {
+		delete(fields, key)
 	}
-
-	if PlanExecuteCompletionTerminalClass(fields) != PlanExecuteTerminalCompleted {
-		delete(fields, completionFieldAcceptanceEvidenceTrusted)
-
-		return
+	for key, value := range trusted.Fields() {
+		fields[key] = value
 	}
-
-	fields[completionFieldAcceptanceEvidenceTrusted] = true
-	registerPlanExecuteAcceptanceEvidenceTrust(fields)
 }
 
-func planExecuteAcceptanceEvidenceTrustRegistered(fields map[string]any) bool {
-	fingerprint := planExecuteAcceptanceEvidenceTrustFingerprint(fields)
-	if fingerprint == "" {
-		return false
+func TrustObservedPlanExecuteCompletionSummary(summary PlanExecuteCompletionSummary) PlanExecuteCompletionSummary {
+	summary = summary.normalized()
+
+	if len(summary.AcceptanceEvidenceIDs) == 0 {
+		summary.AcceptanceEvidenceTrusted = false
+		return summary
 	}
 
-	planExecuteAcceptanceEvidenceTrustRegistry.Lock()
-	defer planExecuteAcceptanceEvidenceTrustRegistry.Unlock()
-
-	if _, ok := planExecuteAcceptanceEvidenceTrustRegistry.fingerprints[fingerprint]; !ok {
-		return false
+	if PlanExecuteCompletionTerminalDecision(summary.Fields()).Class != plancontract.PlanExecuteTerminalDecisionCompleted {
+		summary.AcceptanceEvidenceTrusted = false
+		return summary
 	}
 
-	delete(planExecuteAcceptanceEvidenceTrustRegistry.fingerprints, fingerprint)
+	summary.AcceptanceEvidenceTrusted = true
 
-	return true
-}
-
-func registerPlanExecuteAcceptanceEvidenceTrust(fields map[string]any) {
-	fingerprint := planExecuteAcceptanceEvidenceTrustFingerprint(fields)
-	if fingerprint == "" {
-		return
-	}
-
-	planExecuteAcceptanceEvidenceTrustRegistry.Lock()
-	defer planExecuteAcceptanceEvidenceTrustRegistry.Unlock()
-
-	planExecuteAcceptanceEvidenceTrustRegistry.fingerprints[fingerprint] = struct{}{}
-}
-
-func planExecuteAcceptanceEvidenceTrustFingerprint(fields map[string]any) string {
-	summary := PlanExecuteCompletionSummaryFromFields(fields)
-	if len(summary.AcceptanceEvidenceIDs) == 0 || !summary.AcceptanceEvidenceTrusted {
-		return ""
-	}
-
-	body, err := json.Marshal(summary.Fields())
-	if err != nil {
-		return ""
-	}
-
-	sum := sha256.Sum256(body)
-
-	return hex.EncodeToString(sum[:])
+	return summary
 }
 
 type planExecuteCompletionRecord struct {
-	Type                         string                                  `json:"type"`
-	Role                         string                                  `json:"role"`
-	Content                      string                                  `json:"content"`
-	StatePath                    string                                  `json:"state_path"`
-	ProgressPath                 string                                  `json:"progress_path"`
-	TS                           string                                  `json:"ts"`
-	Phase                        string                                  `json:"phase"`
-	Status                       string                                  `json:"status"`
-	ReviewStatus                 string                                  `json:"review_status"`
-	TerminalClass                string                                  `json:"terminal_class"`
-	Outcome                      string                                  `json:"outcome"`
-	ExitCode                     int                                     `json:"exit_code"`
-	ReviewSkipped                bool                                    `json:"review_repair_skipped"`
-	FailureKind                  string                                  `json:"failure_kind"`
-	FailureReason                string                                  `json:"failure_reason"`
-	FailureID                    string                                  `json:"failure_id"`
-	RecordPath                   string                                  `json:"record_path"`
-	PacketPath                   string                                  `json:"packet_path"`
-	NextAction                   string                                  `json:"next_valid_action"`
-	ReasonClass                  string                                  `json:"reason_class"`
-	StopReason                   string                                  `json:"stop_reason"`
-	ContractID                   string                                  `json:"contract_id"`
-	ContractHash                 string                                  `json:"contract_hash"`
-	SnapshotHash                 string                                  `json:"snapshot_hash"`
-	ScopeContractID              string                                  `json:"scope_contract_id"`
-	ScopeContractHash            string                                  `json:"scope_contract_hash"`
-	ValidationFailures           []string                                `json:"validation_failures"`
-	RequiredEditPaths            []string                                `json:"required_edit_paths"`
-	AllowedEditPaths             []string                                `json:"allowed_edit_paths"`
-	SourceSatisfiedEvidencePaths []string                                `json:"source_satisfied_evidence_paths"`
-	SourceSatisfiedEvidence      []PlanExecuteSourceSatisfiedEvidenceRef `json:"source_satisfied_evidence"`
-	ChangedPaths                 []string                                `json:"changed_paths"`
-	SourceSanity                 []coreplanexecute.PhaseEvidenceCheck    `json:"source_sanity"`
-	Verification                 []coreplanexecute.PhaseEvidenceCheck    `json:"verification"`
-	VerificationCommands         []coreplanexecute.VerificationCommand   `json:"verification_commands"`
-	VerificationSkips            []coreplanexecute.VerificationSkip      `json:"verification_skips"`
-	VerificationRejects          []coreplanexecute.VerificationReject    `json:"verification_rejects"`
-	AcceptanceEvidenceIDs        []string                                `json:"acceptance_evidence_ids"`
-	AcceptanceEvidenceTrusted    bool                                    `json:"acceptance_evidence_trusted"`
-}
-
-type PlanExecuteSourceSatisfiedEvidenceRef struct {
-	Path string `json:"path"`
-	Kind string `json:"kind"`
+	Type        string `json:"type"`
+	Role        string `json:"role"`
+	Content     string `json:"content"`
+	ReasonClass string `json:"reason_class"`
+	StopReason  string `json:"stop_reason"`
 }
 
 type PlanExecuteCompletionSummary struct {
-	LaneFamily                   string
-	Summary                      string
-	ProgressPath                 string
-	Status                       string
-	Phase                        string
-	ReviewStatus                 string
-	TerminalClass                string
-	Outcome                      string
-	ExitCode                     int
-	FailureKind                  string
-	FailureReason                string
-	FailureID                    string
-	RecordPath                   string
-	PacketPath                   string
-	NextAction                   string
-	CompletionSource             string
-	ReviewRepairSkipped          bool
-	ContractID                   string
-	ContractHash                 string
-	ScopeContractID              string
-	ScopeContractHash            string
-	SnapshotHash                 string
-	RequiredEditPaths            []string
-	AllowedEditPaths             []string
-	SourceSatisfiedEvidencePaths []string
-	SourceSatisfiedEvidence      []PlanExecuteSourceSatisfiedEvidenceRef
-	ChangedPaths                 []string
-	SourceSanity                 []coreplanexecute.PhaseEvidenceCheck
-	Verification                 []coreplanexecute.PhaseEvidenceCheck
-	VerificationCommands         []coreplanexecute.VerificationCommand
-	VerificationSkips            []coreplanexecute.VerificationSkip
-	VerificationRejects          []coreplanexecute.VerificationReject
-	AcceptanceEvidenceIDs        []string
-	AcceptanceEvidenceTrusted    bool
-	ValidationFailures           []string
+	Tool                         string                                    `json:"tool,omitempty"`
+	LaneFamily                   string                                    `json:"lane_family,omitempty"`
+	Summary                      string                                    `json:"summary,omitempty"`
+	ProgressPath                 string                                    `json:"progress_path,omitempty"`
+	Status                       string                                    `json:"status,omitempty"`
+	Phase                        string                                    `json:"phase,omitempty"`
+	ReviewStatus                 string                                    `json:"review_status,omitempty"`
+	TerminalClass                string                                    `json:"terminal_class,omitempty"`
+	Outcome                      string                                    `json:"outcome,omitempty"`
+	ExitCode                     int                                       `json:"exit_code,omitempty"`
+	FailureKind                  string                                    `json:"failure_kind,omitempty"`
+	FailureReason                string                                    `json:"failure_reason,omitempty"`
+	FailureID                    string                                    `json:"failure_id,omitempty"`
+	RecordPath                   string                                    `json:"record_path,omitempty"`
+	PacketPath                   string                                    `json:"packet_path,omitempty"`
+	NextAction                   string                                    `json:"next_valid_action,omitempty"`
+	CompletionSource             string                                    `json:"completion_source,omitempty"`
+	ReviewRepairSkipped          bool                                      `json:"review_repair_skipped,omitempty"`
+	ContractID                   string                                    `json:"contract_id,omitempty"`
+	ContractHash                 string                                    `json:"contract_hash,omitempty"`
+	ScopeContractID              string                                    `json:"scope_contract_id,omitempty"`
+	ScopeContractHash            string                                    `json:"scope_contract_hash,omitempty"`
+	SnapshotHash                 string                                    `json:"snapshot_hash,omitempty"`
+	RequiredEditPaths            []string                                  `json:"required_edit_paths,omitempty"`
+	AllowedEditPaths             []string                                  `json:"allowed_edit_paths,omitempty"`
+	WriteAllowedPaths            []string                                  `json:"write_allowed_paths,omitempty"`
+	SourceSatisfiedEvidencePaths []string                                  `json:"source_satisfied_evidence_paths,omitempty"`
+	SourceSatisfiedEvidence      []plancontract.SourceSatisfiedEvidenceRef `json:"source_satisfied_evidence,omitempty"`
+	ChangedPaths                 []string                                  `json:"changed_paths,omitempty"`
+	SourceSanity                 []plancontract.PhaseEvidenceCheck         `json:"source_sanity,omitempty"`
+	Verification                 []plancontract.PhaseEvidenceCheck         `json:"verification,omitempty"`
+	VerificationCommands         []plancontract.VerificationCommand        `json:"verification_commands,omitempty"`
+	VerificationSkips            []plancontract.VerificationSkip           `json:"verification_skips,omitempty"`
+	VerificationRejects          []plancontract.VerificationReject         `json:"verification_rejects,omitempty"`
+	AcceptanceEvidenceIDs        []string                                  `json:"acceptance_evidence_ids,omitempty"`
+	AcceptanceEvidenceTrusted    bool                                      `json:"acceptance_evidence_trusted,omitempty"`
+	ValidationFailures           []string                                  `json:"validation_failures,omitempty"`
 
-	timestamp    time.Time
-	hasTimestamp bool
-	sequence     int
+	timestamp      time.Time                                         `json:"-"`
+	hasTimestamp   bool                                              `json:"-"`
+	sequence       int                                               `json:"-"`
+	terminalRecord *plancontract.PlanExecuteTerminalCompletionRecord `json:"-"`
 }
 
 const (
-	completionFieldAcceptanceEvidenceIDs     = "acceptance_evidence_ids"
-	completionFieldAcceptanceEvidenceTrusted = "acceptance_evidence_trusted"
-	completionFieldActiveContractHash        = "active_contract_hash"
-	completionFieldActiveContractID          = "active_contract_id"
-	completionFieldAllowedEditPaths          = "allowed_edit_paths"
-	completionFieldChangedPaths              = "changed_paths"
-	completionFieldCompletionSource          = "completion_source"
-	completionFieldContractHash              = "contract_hash"
-	completionFieldContractID                = "contract_id"
-	completionFieldContractSnapshotHash      = "contract_snapshot_hash"
-	completionFieldExitCode                  = "exit_code"
-	completionFieldFailureID                 = "failure_id"
-	completionFieldFailureKind               = "failure_kind"
-	completionFieldFailureReason             = "failure_reason"
-	completionFieldLaneFamily                = "lane_family"
-	completionFieldNextValidAction           = "next_valid_action"
-	completionFieldOutcome                   = "outcome"
-	completionFieldPacketPath                = "packet_path"
-	completionFieldPhase                     = "phase"
-	completionFieldProgressPath              = "progress_path"
-	completionFieldRecordPath                = "record_path"
-	completionFieldRequiredEditPaths         = "required_edit_paths"
-	completionFieldReviewRepairSkipped       = "review_repair_skipped"
-	completionFieldReviewStatus              = "review_status"
-	completionFieldScopeContractHash         = "scope_contract_hash"
-	completionFieldScopeContractID           = "scope_contract_id"
-	completionFieldSnapshotHash              = "snapshot_hash"
-	completionFieldSourceSanity              = "source_sanity"
-	completionFieldSourceSatisfiedEvidence   = "source_satisfied_evidence"
-	completionFieldSourceSatisfiedPaths      = "source_satisfied_evidence_paths"
-	completionFieldStatePath                 = "state_path"
-	completionFieldStatus                    = "status"
-	completionFieldSummary                   = "summary"
-	completionFieldTerminalClass             = "terminal_class"
-	completionFieldTool                      = "tool"
-	completionFieldTS                        = "ts"
-	completionFieldValidationFailures        = "validation_failures"
-	completionFieldVerification              = "verification"
-	completionFieldVerificationCommandsKey   = "verification_commands"
-	completionFieldVerificationRejectsKey    = "verification_rejects"
-	completionFieldVerificationSkipsKey      = "verification_skips"
-	completionFieldWriteAllowedPaths         = "write_allowed_paths"
-	completionFieldCompletionPath            = "completion_path"
-)
-
-const (
-	PlanExecuteCompletionFieldCompletionSource          = completionFieldCompletionSource
-	PlanExecuteCompletionFieldAcceptanceEvidenceIDs     = completionFieldAcceptanceEvidenceIDs
-	PlanExecuteCompletionFieldAcceptanceEvidenceTrusted = completionFieldAcceptanceEvidenceTrusted
-	PlanExecuteCompletionFieldContractID                = completionFieldContractID
-	PlanExecuteCompletionFieldExitCode                  = completionFieldExitCode
-	PlanExecuteCompletionFieldFailureKind               = completionFieldFailureKind
-	PlanExecuteCompletionFieldFailureID                 = completionFieldFailureID
-	PlanExecuteCompletionFieldFailureReason             = completionFieldFailureReason
-	PlanExecuteCompletionFieldLaneFamily                = completionFieldLaneFamily
-	PlanExecuteCompletionFieldNextValidAction           = completionFieldNextValidAction
-	PlanExecuteCompletionFieldPacketPath                = completionFieldPacketPath
-	PlanExecuteCompletionFieldPhase                     = completionFieldPhase
-	PlanExecuteCompletionFieldProgressPath              = completionFieldProgressPath
-	PlanExecuteCompletionFieldRecordPath                = completionFieldRecordPath
-	PlanExecuteCompletionFieldRequiredEditPaths         = completionFieldRequiredEditPaths
-	PlanExecuteCompletionFieldReviewStatus              = completionFieldReviewStatus
-	PlanExecuteCompletionFieldScopeContractID           = completionFieldScopeContractID
-	PlanExecuteCompletionFieldScopeContractHash         = completionFieldScopeContractHash
-	PlanExecuteCompletionFieldSnapshotHash              = completionFieldSnapshotHash
-	PlanExecuteCompletionFieldStatePath                 = completionFieldStatePath
-	PlanExecuteCompletionFieldStatus                    = completionFieldStatus
-	PlanExecuteCompletionFieldSummary                   = completionFieldSummary
-	PlanExecuteCompletionFieldTool                      = completionFieldTool
-	PlanExecuteCompletionFieldReviewRepairSkipped       = completionFieldReviewRepairSkipped
-)
-
-const (
-	PlanExecuteCompletionLaneFamily                 = "plan-execute"
-	PlanExecuteCompletionSourceHeadlessReturned     = "headless_plan_execute_returned"
-	PlanExecuteCompletionSourceTUIReturned          = "tui_plan_execute_returned"
-	PlanExecuteCompletionSourceDurableTerminal      = "durable_plan_execute_terminal_completion"
-	PlanExecuteCompletionSourceDurableProgress      = "durable_plan_execute_progress"
 	PlanExecuteCompletionStatusAmbiguous            = "ambiguous"
-	PlanExecuteCompletionMissingStatusFailureKind   = "missing_nested_plan_execute_status"
+	PlanExecuteCompletionMissingStatusFailureKind   = string(plancontract.PlanExecuteFailureMissingNestedStatus)
 	PlanExecuteCompletionMissingStatusFailureReason = "nested plan-execute returned without typed completion status"
 )
 
 var PlanExecuteProgressPreservedFieldKeys = []string{
-	completionFieldRequiredEditPaths,
-	completionFieldAllowedEditPaths,
-	completionFieldChangedPaths,
-	completionFieldSourceSanity,
+	plancontract.PlanExecuteTerminalFieldRequiredEditPaths,
+	plancontract.PlanExecuteTerminalFieldAllowedEditPaths,
+	plancontract.PlanExecuteTerminalFieldChangedPaths,
+	plancontract.PlanExecuteTerminalFieldSourceSanity,
 }
 
 var PlanExecuteTerminalPreservedFieldKeys = []string{
-	completionFieldRequiredEditPaths,
-	completionFieldAllowedEditPaths,
-	completionFieldWriteAllowedPaths,
-	completionFieldChangedPaths,
-	completionFieldSourceSanity,
-	completionFieldSourceSatisfiedPaths,
-	completionFieldSourceSatisfiedEvidence,
-	completionFieldContractHash,
-	completionFieldCompletionPath,
+	plancontract.PlanExecuteTerminalFieldRequiredEditPaths,
+	plancontract.PlanExecuteTerminalFieldAllowedEditPaths,
+	plancontract.PlanExecuteTerminalFieldWriteAllowedPaths,
+	plancontract.PlanExecuteTerminalFieldChangedPaths,
+	plancontract.PlanExecuteTerminalFieldSourceSanity,
+	plancontract.PlanExecuteTerminalFieldSourceSatisfiedEvidencePaths,
+	plancontract.PlanExecuteTerminalFieldSourceSatisfiedEvidence,
+	plancontract.PlanExecuteTerminalFieldContractHash,
+	plancontract.PlanExecuteTerminalFieldCompletionPath,
 }
 
 var planExecuteCompletionOverlayFieldKeys = []string{
-	completionFieldStatus,
-	completionFieldPhase,
-	completionFieldReviewStatus,
-	completionFieldTerminalClass,
-	completionFieldOutcome,
-	completionFieldExitCode,
-	completionFieldFailureKind,
-	completionFieldFailureReason,
-	completionFieldFailureID,
-	completionFieldRecordPath,
-	completionFieldPacketPath,
-	completionFieldNextValidAction,
-	completionFieldProgressPath,
-	completionFieldReviewRepairSkipped,
-	completionFieldChangedPaths,
-	completionFieldLaneFamily,
-	completionFieldSummary,
-	completionFieldCompletionSource,
-	completionFieldContractID,
-	completionFieldContractHash,
-	completionFieldScopeContractID,
-	completionFieldScopeContractHash,
-	completionFieldSnapshotHash,
-	completionFieldRequiredEditPaths,
-	completionFieldAllowedEditPaths,
-	completionFieldSourceSatisfiedPaths,
-	completionFieldSourceSatisfiedEvidence,
-	completionFieldSourceSanity,
-	completionFieldVerification,
-	completionFieldVerificationCommandsKey,
-	completionFieldVerificationSkipsKey,
-	completionFieldVerificationRejectsKey,
-	completionFieldAcceptanceEvidenceIDs,
-	completionFieldAcceptanceEvidenceTrusted,
-	completionFieldValidationFailures,
+	plancontract.PlanExecuteTerminalFieldStatus,
+	plancontract.PlanExecuteTerminalFieldPhase,
+	plancontract.PlanExecuteTerminalFieldReviewStatus,
+	plancontract.PlanExecuteTerminalFieldTerminalClass,
+	plancontract.PlanExecuteTerminalFieldOutcome,
+	plancontract.PlanExecuteTerminalFieldExitCode,
+	plancontract.PlanExecuteTerminalFieldFailureKind,
+	plancontract.PlanExecuteTerminalFieldFailureReason,
+	plancontract.PlanExecuteTerminalFieldFailureID,
+	plancontract.PlanExecuteTerminalFieldRecordPath,
+	plancontract.PlanExecuteTerminalFieldPacketPath,
+	plancontract.PlanExecuteTerminalFieldNextAction,
+	plancontract.PlanExecuteTerminalFieldProgressPath,
+	plancontract.PlanExecuteTerminalFieldReviewRepairSkipped,
+	plancontract.PlanExecuteTerminalFieldChangedPaths,
+	featureplannercontract.PlanExecuteCompletionFieldLaneFamily,
+	featureplannercontract.PlanExecuteCompletionFieldSummary,
+	featureplannercontract.PlanExecuteCompletionFieldCompletionSource,
+	plancontract.PlanExecuteTerminalFieldContractID,
+	plancontract.PlanExecuteTerminalFieldContractHash,
+	plancontract.PlanExecuteTerminalFieldScopeContractID,
+	plancontract.PlanExecuteTerminalFieldScopeContractHash,
+	plancontract.PlanExecuteTerminalFieldSnapshotHash,
+	plancontract.PlanExecuteTerminalFieldRequiredEditPaths,
+	plancontract.PlanExecuteTerminalFieldAllowedEditPaths,
+	plancontract.PlanExecuteTerminalFieldWriteAllowedPaths,
+	plancontract.PlanExecuteTerminalFieldSourceSatisfiedEvidencePaths,
+	plancontract.PlanExecuteTerminalFieldSourceSatisfiedEvidence,
+	plancontract.PlanExecuteTerminalFieldSourceSanity,
+	plancontract.PlanExecuteTerminalFieldVerification,
+	plancontract.PlanExecuteTerminalFieldVerificationCommands,
+	plancontract.PlanExecuteTerminalFieldVerificationSkips,
+	plancontract.PlanExecuteTerminalFieldVerificationRejects,
+	plancontract.PlanExecuteTerminalFieldAcceptanceEvidenceIDs,
+	featureplannercontract.PlanExecuteCompletionFieldAcceptanceEvidenceTrusted,
+	plancontract.PlanExecuteTerminalFieldValidationFailures,
 }
 
 func PlanExecuteCompletionSummaryFromFields(fields map[string]any) PlanExecuteCompletionSummary {
@@ -405,47 +266,52 @@ func PlanExecuteCompletionSummaryFromFields(fields map[string]any) PlanExecuteCo
 	}
 
 	summary := PlanExecuteCompletionSummary{
-		LaneFamily:                   CompletionFieldString(fields, completionFieldLaneFamily),
-		Summary:                      CompletionFieldString(fields, completionFieldSummary),
-		ProgressPath:                 util.FirstNonEmpty(CompletionFieldString(fields, completionFieldProgressPath), CompletionFieldString(fields, completionFieldStatePath)),
-		Status:                       CompletionFieldString(fields, completionFieldStatus),
-		Phase:                        CompletionFieldString(fields, completionFieldPhase),
-		ReviewStatus:                 CompletionFieldString(fields, completionFieldReviewStatus),
-		TerminalClass:                CompletionFieldString(fields, completionFieldTerminalClass),
-		Outcome:                      CompletionFieldString(fields, completionFieldOutcome),
-		ExitCode:                     completionFieldInt(fields, completionFieldExitCode),
-		FailureKind:                  CompletionFieldString(fields, completionFieldFailureKind),
-		FailureReason:                CompletionFieldString(fields, completionFieldFailureReason),
-		FailureID:                    CompletionFieldString(fields, completionFieldFailureID),
-		RecordPath:                   CompletionFieldString(fields, completionFieldRecordPath),
-		PacketPath:                   CompletionFieldString(fields, completionFieldPacketPath),
-		NextAction:                   CompletionFieldString(fields, completionFieldNextValidAction),
-		CompletionSource:             CompletionFieldString(fields, completionFieldCompletionSource),
-		ReviewRepairSkipped:          completionFieldBool(fields, completionFieldReviewRepairSkipped),
-		ContractID:                   util.FirstNonEmpty(CompletionFieldString(fields, completionFieldContractID), CompletionFieldString(fields, completionFieldActiveContractID)),
-		ContractHash:                 util.FirstNonEmpty(CompletionFieldString(fields, completionFieldContractHash), CompletionFieldString(fields, completionFieldActiveContractHash)),
-		ScopeContractID:              CompletionFieldString(fields, completionFieldScopeContractID),
-		ScopeContractHash:            CompletionFieldString(fields, completionFieldScopeContractHash),
-		SnapshotHash:                 util.FirstNonEmpty(CompletionFieldString(fields, completionFieldSnapshotHash), CompletionFieldString(fields, completionFieldContractSnapshotHash)),
-		RequiredEditPaths:            completionFieldStringSlice(fields, completionFieldRequiredEditPaths),
-		AllowedEditPaths:             completionFieldStringSlice(fields, completionFieldAllowedEditPaths),
-		SourceSatisfiedEvidencePaths: completionFieldStringSlice(fields, completionFieldSourceSatisfiedPaths),
-		SourceSatisfiedEvidence:      completionFieldSourceSatisfiedEvidenceRefs(fields, completionFieldSourceSatisfiedEvidence),
-		ChangedPaths:                 completionFieldStringSlice(fields, completionFieldChangedPaths),
-		SourceSanity:                 completionFieldPhaseEvidenceChecks(fields, completionFieldSourceSanity),
-		Verification:                 completionFieldPhaseEvidenceChecks(fields, completionFieldVerification),
-		VerificationCommands:         completionFieldVerificationCommands(fields, completionFieldVerificationCommandsKey),
-		VerificationSkips:            completionFieldVerificationSkips(fields, completionFieldVerificationSkipsKey),
-		VerificationRejects:          completionFieldVerificationRejects(fields, completionFieldVerificationRejectsKey),
-		AcceptanceEvidenceIDs:        completionFieldStableIDSlice(fields, completionFieldAcceptanceEvidenceIDs),
-		AcceptanceEvidenceTrusted:    completionFieldBool(fields, completionFieldAcceptanceEvidenceTrusted),
-		ValidationFailures:           completionFieldStringSlice(fields, completionFieldValidationFailures),
+		LaneFamily:                   CompletionFieldString(fields, featureplannercontract.PlanExecuteCompletionFieldLaneFamily),
+		Tool:                         CompletionFieldString(fields, featureplannercontract.PlanExecuteCompletionFieldTool),
+		Summary:                      CompletionFieldString(fields, featureplannercontract.PlanExecuteCompletionFieldSummary),
+		ProgressPath:                 textutil.FirstNonEmpty(CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldProgressPath), CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldStatePath)),
+		Status:                       CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldStatus),
+		Phase:                        CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldPhase),
+		ReviewStatus:                 CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldReviewStatus),
+		TerminalClass:                CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldTerminalClass),
+		Outcome:                      CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldOutcome),
+		ExitCode:                     completionFieldInt(fields, plancontract.PlanExecuteTerminalFieldExitCode),
+		FailureKind:                  CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldFailureKind),
+		FailureReason:                CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldFailureReason),
+		FailureID:                    CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldFailureID),
+		RecordPath:                   CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldRecordPath),
+		PacketPath:                   CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldPacketPath),
+		NextAction:                   CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldNextAction),
+		CompletionSource:             CompletionFieldString(fields, featureplannercontract.PlanExecuteCompletionFieldCompletionSource),
+		ReviewRepairSkipped:          completionFieldBool(fields, plancontract.PlanExecuteTerminalFieldReviewRepairSkipped),
+		ContractID:                   textutil.FirstNonEmpty(CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldContractID), CompletionFieldString(fields, featureplannercontract.PlanExecuteCompletionFieldActiveContractID)),
+		ContractHash:                 textutil.FirstNonEmpty(CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldContractHash), CompletionFieldString(fields, featureplannercontract.PlanExecuteCompletionFieldActiveContractHash)),
+		ScopeContractID:              CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldScopeContractID),
+		ScopeContractHash:            CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldScopeContractHash),
+		SnapshotHash:                 textutil.FirstNonEmpty(CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldSnapshotHash), CompletionFieldString(fields, featureplannercontract.PlanExecuteCompletionFieldContractSnapshotHash)),
+		RequiredEditPaths:            completionFieldStringSlice(fields, plancontract.PlanExecuteTerminalFieldRequiredEditPaths),
+		AllowedEditPaths:             completionFieldStringSlice(fields, plancontract.PlanExecuteTerminalFieldAllowedEditPaths),
+		WriteAllowedPaths:            completionFieldStringSlice(fields, plancontract.PlanExecuteTerminalFieldWriteAllowedPaths),
+		SourceSatisfiedEvidencePaths: completionFieldStringSlice(fields, plancontract.PlanExecuteTerminalFieldSourceSatisfiedEvidencePaths),
+		SourceSatisfiedEvidence:      completionFieldSourceSatisfiedEvidenceRefs(fields, plancontract.PlanExecuteTerminalFieldSourceSatisfiedEvidence),
+		ChangedPaths:                 completionFieldStringSlice(fields, plancontract.PlanExecuteTerminalFieldChangedPaths),
+		SourceSanity:                 completionFieldPhaseEvidenceChecks(fields, plancontract.PlanExecuteTerminalFieldSourceSanity),
+		Verification:                 completionFieldPhaseEvidenceChecks(fields, plancontract.PlanExecuteTerminalFieldVerification),
+		VerificationCommands:         completionFieldVerificationCommands(fields, plancontract.PlanExecuteTerminalFieldVerificationCommands),
+		VerificationSkips:            completionFieldVerificationSkips(fields, plancontract.PlanExecuteTerminalFieldVerificationSkips),
+		VerificationRejects:          completionFieldVerificationRejects(fields, plancontract.PlanExecuteTerminalFieldVerificationRejects),
+		AcceptanceEvidenceIDs:        completionFieldStableIDSlice(fields, plancontract.PlanExecuteTerminalFieldAcceptanceEvidenceIDs),
+		AcceptanceEvidenceTrusted:    completionFieldBool(fields, featureplannercontract.PlanExecuteCompletionFieldAcceptanceEvidenceTrusted),
+		ValidationFailures:           completionFieldStringSlice(fields, plancontract.PlanExecuteTerminalFieldValidationFailures),
 	}
-	if ts := CompletionFieldString(fields, completionFieldTS); ts != "" {
+	if ts := CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldTS); ts != "" {
 		if parsed, err := time.Parse(time.RFC3339Nano, ts); err == nil {
 			summary.timestamp = parsed
 			summary.hasTimestamp = true
 		}
+	}
+	if record, ok := planExecuteTerminalCompletionRecordFromFields(fields); ok {
+		summary.terminalRecord = &record
 	}
 
 	return summary.normalized()
@@ -520,209 +386,228 @@ func (summary PlanExecuteCompletionSummary) Fields() map[string]any {
 	summary = summary.normalized()
 
 	fields := map[string]any{}
+	if summary.terminalRecord != nil {
+		for key, value := range plancontract.PlanExecuteTerminalCompletionEventFields(*summary.terminalRecord, "") {
+			fields[key] = value
+		}
+	}
+
+	if summary.Tool != "" {
+		fields[featureplannercontract.PlanExecuteCompletionFieldTool] = summary.Tool
+	}
 
 	if summary.LaneFamily != "" {
-		fields[completionFieldLaneFamily] = summary.LaneFamily
+		fields[featureplannercontract.PlanExecuteCompletionFieldLaneFamily] = summary.LaneFamily
 	}
 
 	if summary.Summary != "" {
-		fields[completionFieldSummary] = summary.Summary
-	}
-
-	if summary.ProgressPath != "" {
-		fields[completionFieldProgressPath] = summary.ProgressPath
-	}
-
-	if summary.Status != "" {
-		fields[completionFieldStatus] = summary.Status
-	}
-
-	if summary.Phase != "" {
-		fields[completionFieldPhase] = summary.Phase
-	}
-
-	if summary.ReviewStatus != "" {
-		fields[completionFieldReviewStatus] = summary.ReviewStatus
-	}
-
-	if summary.TerminalClass != "" {
-		fields[completionFieldTerminalClass] = summary.TerminalClass
-	}
-
-	if summary.Outcome != "" {
-		fields[completionFieldOutcome] = summary.Outcome
-	}
-
-	if summary.ExitCode != 0 {
-		fields[completionFieldExitCode] = summary.ExitCode
-	}
-
-	if summary.FailureKind != "" {
-		fields[completionFieldFailureKind] = summary.FailureKind
-	}
-
-	if summary.FailureReason != "" {
-		fields[completionFieldFailureReason] = summary.FailureReason
-	}
-
-	if summary.FailureID != "" {
-		fields[completionFieldFailureID] = summary.FailureID
-	}
-
-	if summary.RecordPath != "" {
-		fields[completionFieldRecordPath] = summary.RecordPath
-	}
-
-	if summary.PacketPath != "" {
-		fields[completionFieldPacketPath] = summary.PacketPath
-	}
-
-	if summary.NextAction != "" {
-		fields[completionFieldNextValidAction] = summary.NextAction
+		fields[featureplannercontract.PlanExecuteCompletionFieldSummary] = summary.Summary
 	}
 
 	if summary.CompletionSource != "" {
-		fields[completionFieldCompletionSource] = summary.CompletionSource
+		fields[featureplannercontract.PlanExecuteCompletionFieldCompletionSource] = summary.CompletionSource
 	}
 
-	if summary.ReviewRepairSkipped {
-		fields[completionFieldReviewRepairSkipped] = true
-	}
+	if summary.terminalRecord == nil {
+		if summary.ProgressPath != "" {
+			fields[plancontract.PlanExecuteTerminalFieldProgressPath] = summary.ProgressPath
+		}
 
-	if summary.ContractID != "" {
-		fields[completionFieldContractID] = summary.ContractID
-	}
+		if summary.Status != "" {
+			fields[plancontract.PlanExecuteTerminalFieldStatus] = summary.Status
+		}
 
-	if summary.ScopeContractID != "" {
-		fields[completionFieldScopeContractID] = summary.ScopeContractID
-	}
+		if summary.Phase != "" {
+			fields[plancontract.PlanExecuteTerminalFieldPhase] = summary.Phase
+		}
 
-	if summary.ScopeContractHash != "" {
-		fields[completionFieldScopeContractHash] = summary.ScopeContractHash
-	}
+		if summary.ReviewStatus != "" {
+			fields[plancontract.PlanExecuteTerminalFieldReviewStatus] = summary.ReviewStatus
+		}
 
-	if summary.SnapshotHash != "" {
-		fields[completionFieldSnapshotHash] = summary.SnapshotHash
-	}
+		if summary.TerminalClass != "" {
+			fields[plancontract.PlanExecuteTerminalFieldTerminalClass] = summary.TerminalClass
+		}
 
-	if len(summary.RequiredEditPaths) > 0 {
-		fields[completionFieldRequiredEditPaths] = append([]string(nil), summary.RequiredEditPaths...)
-	}
+		if summary.Outcome != "" {
+			fields[plancontract.PlanExecuteTerminalFieldOutcome] = summary.Outcome
+		}
 
-	if len(summary.AllowedEditPaths) > 0 {
-		fields[completionFieldAllowedEditPaths] = append([]string(nil), summary.AllowedEditPaths...)
-	}
+		if summary.ExitCode != 0 {
+			fields[plancontract.PlanExecuteTerminalFieldExitCode] = summary.ExitCode
+		}
 
-	if len(summary.SourceSatisfiedEvidencePaths) > 0 {
-		fields[completionFieldSourceSatisfiedPaths] = append([]string(nil), summary.SourceSatisfiedEvidencePaths...)
-	}
+		if summary.FailureKind != "" {
+			fields[plancontract.PlanExecuteTerminalFieldFailureKind] = summary.FailureKind
+		}
 
-	if len(summary.SourceSatisfiedEvidence) > 0 {
-		fields[completionFieldSourceSatisfiedEvidence] = append([]PlanExecuteSourceSatisfiedEvidenceRef(nil), summary.SourceSatisfiedEvidence...)
-	}
+		if summary.FailureReason != "" {
+			fields[plancontract.PlanExecuteTerminalFieldFailureReason] = summary.FailureReason
+		}
 
-	if len(summary.ChangedPaths) > 0 {
-		fields[completionFieldChangedPaths] = append([]string(nil), summary.ChangedPaths...)
-	}
+		if summary.FailureID != "" {
+			fields[plancontract.PlanExecuteTerminalFieldFailureID] = summary.FailureID
+		}
 
-	if len(summary.SourceSanity) > 0 {
-		fields[completionFieldSourceSanity] = append([]coreplanexecute.PhaseEvidenceCheck(nil), summary.SourceSanity...)
-	}
+		if summary.RecordPath != "" {
+			fields[plancontract.PlanExecuteTerminalFieldRecordPath] = summary.RecordPath
+		}
 
-	if len(summary.Verification) > 0 {
-		fields[completionFieldVerification] = append([]coreplanexecute.PhaseEvidenceCheck(nil), summary.Verification...)
-	}
+		if summary.PacketPath != "" {
+			fields[plancontract.PlanExecuteTerminalFieldPacketPath] = summary.PacketPath
+		}
 
-	if len(summary.VerificationCommands) > 0 {
-		fields[completionFieldVerificationCommandsKey] = append([]coreplanexecute.VerificationCommand(nil), summary.VerificationCommands...)
-	}
+		if summary.NextAction != "" {
+			fields[plancontract.PlanExecuteTerminalFieldNextAction] = summary.NextAction
+		}
 
-	if len(summary.VerificationSkips) > 0 {
-		fields[completionFieldVerificationSkipsKey] = append([]coreplanexecute.VerificationSkip(nil), summary.VerificationSkips...)
-	}
+		if summary.ReviewRepairSkipped {
+			fields[plancontract.PlanExecuteTerminalFieldReviewRepairSkipped] = true
+		}
 
-	if len(summary.VerificationRejects) > 0 {
-		fields[completionFieldVerificationRejectsKey] = append([]coreplanexecute.VerificationReject(nil), summary.VerificationRejects...)
-	}
+		if summary.ContractID != "" {
+			fields[plancontract.PlanExecuteTerminalFieldContractID] = summary.ContractID
+		}
 
-	if len(summary.AcceptanceEvidenceIDs) > 0 {
-		fields[completionFieldAcceptanceEvidenceIDs] = append([]string(nil), summary.AcceptanceEvidenceIDs...)
+		if summary.ScopeContractID != "" {
+			fields[plancontract.PlanExecuteTerminalFieldScopeContractID] = summary.ScopeContractID
+		}
+
+		if summary.ScopeContractHash != "" {
+			fields[plancontract.PlanExecuteTerminalFieldScopeContractHash] = summary.ScopeContractHash
+		}
+
+		if summary.SnapshotHash != "" {
+			fields[plancontract.PlanExecuteTerminalFieldSnapshotHash] = summary.SnapshotHash
+		}
+
+		if len(summary.RequiredEditPaths) > 0 {
+			fields[plancontract.PlanExecuteTerminalFieldRequiredEditPaths] = append([]string(nil), summary.RequiredEditPaths...)
+		}
+
+		if len(summary.AllowedEditPaths) > 0 {
+			fields[plancontract.PlanExecuteTerminalFieldAllowedEditPaths] = append([]string(nil), summary.AllowedEditPaths...)
+		}
+
+		if len(summary.WriteAllowedPaths) > 0 {
+			fields[plancontract.PlanExecuteTerminalFieldWriteAllowedPaths] = append([]string(nil), summary.WriteAllowedPaths...)
+		}
+
+		if len(summary.SourceSatisfiedEvidencePaths) > 0 {
+			fields[plancontract.PlanExecuteTerminalFieldSourceSatisfiedEvidencePaths] = append([]string(nil), summary.SourceSatisfiedEvidencePaths...)
+		}
+
+		if len(summary.SourceSatisfiedEvidence) > 0 {
+			fields[plancontract.PlanExecuteTerminalFieldSourceSatisfiedEvidence] = append([]plancontract.SourceSatisfiedEvidenceRef(nil), summary.SourceSatisfiedEvidence...)
+		}
+
+		if len(summary.ChangedPaths) > 0 {
+			fields[plancontract.PlanExecuteTerminalFieldChangedPaths] = append([]string(nil), summary.ChangedPaths...)
+		}
+
+		if len(summary.SourceSanity) > 0 {
+			fields[plancontract.PlanExecuteTerminalFieldSourceSanity] = append([]plancontract.PhaseEvidenceCheck(nil), summary.SourceSanity...)
+		}
+
+		if len(summary.Verification) > 0 {
+			fields[plancontract.PlanExecuteTerminalFieldVerification] = append([]plancontract.PhaseEvidenceCheck(nil), summary.Verification...)
+		}
+
+		if len(summary.VerificationCommands) > 0 {
+			fields[plancontract.PlanExecuteTerminalFieldVerificationCommands] = append([]plancontract.VerificationCommand(nil), summary.VerificationCommands...)
+		}
+
+		if len(summary.VerificationSkips) > 0 {
+			fields[plancontract.PlanExecuteTerminalFieldVerificationSkips] = append([]plancontract.VerificationSkip(nil), summary.VerificationSkips...)
+		}
+
+		if len(summary.VerificationRejects) > 0 {
+			fields[plancontract.PlanExecuteTerminalFieldVerificationRejects] = append([]plancontract.VerificationReject(nil), summary.VerificationRejects...)
+		}
+
+		if len(summary.AcceptanceEvidenceIDs) > 0 {
+			fields[plancontract.PlanExecuteTerminalFieldAcceptanceEvidenceIDs] = append([]string(nil), summary.AcceptanceEvidenceIDs...)
+		}
+
+		if len(summary.ValidationFailures) > 0 {
+			fields[plancontract.PlanExecuteTerminalFieldValidationFailures] = append([]string(nil), summary.ValidationFailures...)
+		}
 	}
 
 	if summary.AcceptanceEvidenceTrusted {
-		fields[completionFieldAcceptanceEvidenceTrusted] = true
-	}
-
-	if len(summary.ValidationFailures) > 0 {
-		fields[completionFieldValidationFailures] = append([]string(nil), summary.ValidationFailures...)
+		fields[featureplannercontract.PlanExecuteCompletionFieldAcceptanceEvidenceTrusted] = true
 	}
 
 	return fields
 }
 
-func planExecuteCompletionSummaryFromRecord(record planExecuteCompletionRecord) PlanExecuteCompletionSummary {
-	summary := PlanExecuteCompletionSummary{
-		ProgressPath:                 util.FirstNonEmpty(record.ProgressPath, record.StatePath),
-		Status:                       record.Status,
-		Phase:                        record.Phase,
-		ReviewStatus:                 record.ReviewStatus,
-		TerminalClass:                record.TerminalClass,
-		Outcome:                      record.Outcome,
-		ExitCode:                     record.ExitCode,
-		ReviewRepairSkipped:          record.ReviewSkipped,
-		FailureKind:                  util.FirstNonEmpty(record.FailureKind, record.ReasonClass),
-		FailureReason:                record.FailureReason,
-		FailureID:                    record.FailureID,
-		RecordPath:                   record.RecordPath,
-		PacketPath:                   record.PacketPath,
-		NextAction:                   record.NextAction,
-		ContractID:                   record.ContractID,
-		ContractHash:                 record.ContractHash,
-		ScopeContractID:              record.ScopeContractID,
-		ScopeContractHash:            record.ScopeContractHash,
-		SnapshotHash:                 record.SnapshotHash,
-		RequiredEditPaths:            record.RequiredEditPaths,
-		AllowedEditPaths:             record.AllowedEditPaths,
-		SourceSatisfiedEvidencePaths: record.SourceSatisfiedEvidencePaths,
-		SourceSatisfiedEvidence:      append([]PlanExecuteSourceSatisfiedEvidenceRef(nil), record.SourceSatisfiedEvidence...),
-		ChangedPaths:                 append([]string(nil), record.ChangedPaths...),
-		SourceSanity:                 append([]coreplanexecute.PhaseEvidenceCheck(nil), record.SourceSanity...),
-		Verification:                 append([]coreplanexecute.PhaseEvidenceCheck(nil), record.Verification...),
-		VerificationCommands:         append([]coreplanexecute.VerificationCommand(nil), record.VerificationCommands...),
-		VerificationSkips:            append([]coreplanexecute.VerificationSkip(nil), record.VerificationSkips...),
-		VerificationRejects:          append([]coreplanexecute.VerificationReject(nil), record.VerificationRejects...),
-		AcceptanceEvidenceIDs:        append([]string(nil), record.AcceptanceEvidenceIDs...),
-		AcceptanceEvidenceTrusted:    len(record.AcceptanceEvidenceIDs) > 0 && planExecuteCompletionRecordTrustsAcceptanceEvidence(record.Type),
-		ValidationFailures:           append([]string(nil), record.ValidationFailures...),
+func (summary PlanExecuteCompletionSummary) FeaturePlannerPayloadFields() map[string]any {
+	summary = summary.normalized()
+	fields := summary.Fields()
+	if strings.TrimSpace(summary.ContractHash) != "" {
+		fields[plancontract.PlanExecuteTerminalFieldContractHash] = strings.TrimSpace(summary.ContractHash)
 	}
-	if ts := strings.TrimSpace(record.TS); ts != "" {
-		if parsed, err := time.Parse(time.RFC3339Nano, ts); err == nil {
-			summary.timestamp = parsed
-			summary.hasTimestamp = true
-		}
+	return fields
+}
+
+func planExecuteCompletionSummaryFromRecordFields(record planExecuteCompletionRecord, fields map[string]any) PlanExecuteCompletionSummary {
+	summary := PlanExecuteCompletionSummaryFromFields(fields)
+	if terminalRecord, ok := planExecuteTerminalCompletionRecordFromFields(fields); ok {
+		summary.terminalRecord = &terminalRecord
 	}
 
-	if record.Type == "idiom.plan_execute.review_repair_degraded" {
-		summary.Status = "degraded"
-		summary.ReviewStatus = util.FirstNonEmpty(record.ReviewStatus, record.Status, "degraded")
-		summary.FailureKind = util.FirstNonEmpty(record.FailureKind, record.ReasonClass, "review_repair_degraded")
+	if len(summary.AcceptanceEvidenceIDs) > 0 && planExecuteCompletionRecordTrustsAcceptanceEvidence(record.Type) {
+		summary.AcceptanceEvidenceTrusted = true
 	}
 
-	if record.Type == "idiom.plan_execute.source_satisfied" || record.Type == "idiom.plan_execute.auto_exact_plan_source_satisfied" {
-		summary.Status = "source-satisfied"
-		summary.Outcome = "source_satisfied"
+	if eventType, ok := plancontract.ParsePlanExecuteInvalidEventName(record.Type); ok {
+		summary.Status = textutil.FirstNonEmpty(summary.Status, string(plancontract.PlanExecuteTerminalStatusFailed))
+		summary.TerminalClass = textutil.FirstNonEmpty(summary.TerminalClass, string(plancontract.PlanExecuteTerminalClassFailed))
+		summary.FailureKind = textutil.FirstNonEmpty(summary.FailureKind, string(plancontract.PlanExecuteFailureTerminalCompletionContractFailed))
+		summary.ValidationFailures = append(summary.ValidationFailures, "invalid_plan_execute_event:"+string(eventType))
+	}
+
+	if record.Type == plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventReviewRepairDegraded) {
+		reviewStatus := summary.Status
+		summary.Status = string(plancontract.PlanExecuteTerminalStatusDegraded)
+		summary.ReviewStatus = textutil.FirstNonEmpty(summary.ReviewStatus, reviewStatus, string(plancontract.PlanExecuteTerminalStatusDegraded))
+		summary.FailureKind = textutil.FirstNonEmpty(summary.FailureKind, record.ReasonClass, string(plancontract.PlanExecuteFailureReviewRepairDegraded))
+	}
+
+	if planExecuteCompletionSourceSatisfiedEvent(record.Type) && summary.terminalRecord == nil {
+		summary.Status = ""
+		summary.Outcome = ""
 	}
 
 	if planExecuteCompletionModelError(record.StopReason, record.Content) {
-		summary.Status = util.FirstNonEmpty(summary.Status, "failed")
-		summary.FailureKind = util.FirstNonEmpty(summary.FailureKind, "model_error")
-		summary.FailureReason = util.FirstNonEmpty(summary.FailureReason, "nested plan-execute stopped with model_error")
+		summary.Status = textutil.FirstNonEmpty(summary.Status, string(plancontract.PlanExecuteTerminalStatusFailed))
+		summary.FailureKind = textutil.FirstNonEmpty(summary.FailureKind, string(plancontract.PlanExecuteFailureModelError))
+		summary.FailureReason = textutil.FirstNonEmpty(summary.FailureReason, "nested plan-execute stopped with model_error")
 	}
 
 	return summary.normalized()
 }
 
+func planExecuteCompletionSourceSatisfiedEvent(recordType string) bool {
+	return recordType == plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventSourceSatisfied) ||
+		recordType == plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventAutoExactPlanSourceSatisfied)
+}
+
+func planExecuteTerminalCompletionRecordFromFields(fields map[string]any) (plancontract.PlanExecuteTerminalCompletionRecord, bool) {
+	if fields == nil {
+		return plancontract.PlanExecuteTerminalCompletionRecord{}, false
+	}
+	recordType := CompletionFieldString(fields, "type")
+	if recordType != plancontract.PlanExecuteTerminalCompletionRecordType {
+		return plancontract.PlanExecuteTerminalCompletionRecord{}, false
+	}
+
+	record := plancontract.PlanExecuteTerminalCompletionRecordFromFields(fields)
+	return record, true
+}
+
 func (summary PlanExecuteCompletionSummary) normalized() PlanExecuteCompletionSummary {
+	summary.Tool = strings.TrimSpace(summary.Tool)
 	summary.LaneFamily = strings.TrimSpace(summary.LaneFamily)
 	summary.Summary = strings.TrimSpace(summary.Summary)
 	summary.ProgressPath = strings.TrimSpace(summary.ProgressPath)
@@ -732,15 +617,15 @@ func (summary PlanExecuteCompletionSummary) normalized() PlanExecuteCompletionSu
 	summary.TerminalClass = strings.TrimSpace(summary.TerminalClass)
 	summary.Outcome = strings.TrimSpace(summary.Outcome)
 
-	if strings.EqualFold(summary.Status, "source-satisfied") && summary.Outcome == "" {
-		summary.Outcome = "source_satisfied"
+	if strings.EqualFold(summary.Status, string(plancontract.PlanExecuteTerminalStatusSourceSatisfied)) && summary.Outcome == "" {
+		summary.Outcome = string(plancontract.PlanExecuteTerminalOutcomeSourceSatisfied)
 	}
 
 	summary.FailureKind = strings.TrimSpace(summary.FailureKind)
 	summary.FailureReason = strings.TrimSpace(summary.FailureReason)
 
-	if strings.EqualFold(summary.Outcome, "source_satisfied") && summary.FailureKind == "" && summary.FailureReason == "" {
-		summary.Status = "source-satisfied"
+	if strings.EqualFold(summary.Outcome, string(plancontract.PlanExecuteTerminalOutcomeSourceSatisfied)) && summary.FailureKind == "" && summary.FailureReason == "" {
+		summary.Status = string(plancontract.PlanExecuteTerminalStatusSourceSatisfied)
 	}
 
 	summary.FailureID = strings.TrimSpace(summary.FailureID)
@@ -760,8 +645,9 @@ func (summary PlanExecuteCompletionSummary) normalized() PlanExecuteCompletionSu
 	summary.ScopeContractHash = strings.TrimSpace(summary.ScopeContractHash)
 	summary.RequiredEditPaths = normalizeCompletionStringList(summary.RequiredEditPaths)
 	summary.AllowedEditPaths = normalizeCompletionStringList(summary.AllowedEditPaths)
+	summary.WriteAllowedPaths = normalizeCompletionStringList(summary.WriteAllowedPaths)
 	summary.SourceSatisfiedEvidencePaths = normalizeCompletionStringList(summary.SourceSatisfiedEvidencePaths)
-	summary.SourceSatisfiedEvidence = normalizePlanExecuteSourceSatisfiedEvidenceRefs(summary.SourceSatisfiedEvidence)
+	summary.SourceSatisfiedEvidence = plancontract.NormalizeSourceSatisfiedEvidenceRefs(summary.SourceSatisfiedEvidence)
 	summary.ChangedPaths = normalizeCompletionStringList(summary.ChangedPaths)
 	summary.SourceSanity = normalizeCompletionPhaseEvidenceChecks(summary.SourceSanity)
 	summary.Verification = normalizeCompletionPhaseEvidenceChecks(summary.Verification)
@@ -775,6 +661,10 @@ func (summary PlanExecuteCompletionSummary) normalized() PlanExecuteCompletionSu
 	}
 
 	summary.ValidationFailures = normalizeCompletionStringList(summary.ValidationFailures)
+	if summary.terminalRecord != nil {
+		normalized := plancontract.NormalizePlanExecuteTerminalCompletionRecord(*summary.terminalRecord)
+		summary.terminalRecord = &normalized
+	}
 
 	return summary
 }
@@ -870,20 +760,28 @@ func (summary PlanExecuteCompletionSummary) withInheritedContext(other PlanExecu
 		summary.AllowedEditPaths = append([]string(nil), other.AllowedEditPaths...)
 	}
 
+	if len(summary.WriteAllowedPaths) == 0 {
+		summary.WriteAllowedPaths = append([]string(nil), other.WriteAllowedPaths...)
+	}
+
 	if len(summary.SourceSatisfiedEvidencePaths) == 0 {
 		summary.SourceSatisfiedEvidencePaths = append([]string(nil), other.SourceSatisfiedEvidencePaths...)
 	}
 
 	if len(summary.SourceSatisfiedEvidence) == 0 {
-		summary.SourceSatisfiedEvidence = append([]PlanExecuteSourceSatisfiedEvidenceRef(nil), other.SourceSatisfiedEvidence...)
+		summary.SourceSatisfiedEvidence = append([]plancontract.SourceSatisfiedEvidenceRef(nil), other.SourceSatisfiedEvidence...)
 	}
 
 	if len(summary.ChangedPaths) == 0 {
 		summary.ChangedPaths = append([]string(nil), other.ChangedPaths...)
 	}
 
-	if planExecuteCompletionStatusSkipped(summary.Status) || planExecuteCompletionStatusSkipped(summary.ReviewStatus) {
+	if plancontract.PlanExecuteTerminalStatusIsSkipped(summary.Status) || plancontract.PlanExecuteTerminalStatusIsSkipped(summary.ReviewStatus) {
 		summary.ReviewRepairSkipped = summary.ReviewRepairSkipped || other.ReviewRepairSkipped
+	}
+	if summary.terminalRecord == nil && other.terminalRecord != nil {
+		record := *other.terminalRecord
+		summary.terminalRecord = &record
 	}
 
 	return summary
@@ -929,8 +827,8 @@ func (summary PlanExecuteCompletionSummary) planExecuteCompletionTerminal() bool
 		return true
 	}
 
-	return planExecuteCompletionStatusTerminal(summary.Status) ||
-		planExecuteCompletionStatusTerminal(summary.ReviewStatus) ||
+	return plancontract.PlanExecuteTerminalStatusIsTerminal(summary.Status) ||
+		plancontract.PlanExecuteTerminalStatusIsTerminal(summary.ReviewStatus) ||
 		summary.ExitCode != 0 ||
 		summary.FailureKind != "" ||
 		summary.FailureReason != "" ||
@@ -958,15 +856,15 @@ func (summary PlanExecuteCompletionSummary) hasFailureOutcome() bool {
 		return true
 	}
 
-	record := coreplanexecute.PlanExecuteTerminalCompletionRecordFromFields(summary.Fields())
+	record := plancontract.PlanExecuteTerminalCompletionRecordFromFields(summary.Fields())
 
-	return record.TerminalClass != coreplanexecute.PlanExecuteTerminalClassSuccess
+	return record.TerminalClass != plancontract.PlanExecuteTerminalClassSuccess
 }
 
 func planExecuteCompletionSourceSanityValidationFailures(summary PlanExecuteCompletionSummary) []string {
-	record := coreplanexecute.PlanExecuteTerminalCompletionRecordFromFields(summary.Fields())
+	record := plancontract.PlanExecuteTerminalCompletionRecordFromFields(summary.Fields())
 
-	return normalizeCompletionStringList(coreplanexecute.PlanExecuteTerminalSourceSanityValidationFailures(record))
+	return normalizeCompletionStringList(plancontract.PlanExecuteTerminalSourceSanityValidationFailures(record))
 }
 
 func planExecuteCompletionVerificationValidationFailures(summary PlanExecuteCompletionSummary) []string {
@@ -977,7 +875,7 @@ func planExecuteCompletionVerificationValidationFailures(summary PlanExecuteComp
 		failures = append(failures, "verification_rejected:"+firstCompletionString(reject.Command, reject.Reason))
 	}
 
-	evidenceByCommand := map[string]coreplanexecute.PhaseEvidenceCheck{}
+	evidenceByCommand := map[string]plancontract.PhaseEvidenceCheck{}
 	for _, check := range summary.Verification {
 		if !planExecuteCompletionVerificationCheckPassed(check) {
 			failures = append(failures, "verification_failed:"+firstCompletionString(check.Command, "(unknown)"))
@@ -1010,9 +908,8 @@ func planExecuteCompletionVerificationValidationFailures(summary PlanExecuteComp
 	return normalizeCompletionStringList(failures)
 }
 
-func planExecuteCompletionVerificationCheckPassed(check coreplanexecute.PhaseEvidenceCheck) bool {
-	status := strings.ToLower(strings.TrimSpace(check.Status))
-	return strings.TrimSpace(check.Error) == "" && (status == "ok" || status == "passed")
+func planExecuteCompletionVerificationCheckPassed(check plancontract.PhaseEvidenceCheck) bool {
+	return plancontract.PhaseEvidenceCheckIsPassed(check)
 }
 
 func firstCompletionString(values ...string) string {
@@ -1064,20 +961,6 @@ func (summary PlanExecuteCompletionSummary) completionSpecificityScore() int {
 	return score
 }
 
-func planExecuteCompletionStatusTerminal(status string) bool {
-	status = canonicalPlanExecuteCompletionStatus(status)
-	switch status {
-	case "completed", "success", "succeeded", "skipped", "source-satisfied", "failed", "failure", "blocked":
-		return true
-	default:
-		return containsBlockingPlanExecuteCompletionSignal(status) && status != coreplanexecute.ProgressStatusRunning
-	}
-}
-
-func planExecuteCompletionStatusSkipped(status string) bool {
-	return canonicalPlanExecuteCompletionStatus(status) == "skipped"
-}
-
 func planExecuteCompletionPhaseRank(phase string) int {
 	switch canonicalPlanExecuteCompletionStatus(phase) {
 	case "complete", "completed":
@@ -1093,77 +976,28 @@ func planExecuteCompletionPhaseRank(phase string) int {
 	}
 }
 
-type PlanExecuteTerminalClass string
-
-const (
-	PlanExecuteTerminalCompleted PlanExecuteTerminalClass = "completed"
-	PlanExecuteTerminalBlocked   PlanExecuteTerminalClass = "blocked"
-)
-
-type PlanExecuteCompletionDecision struct {
-	Class  PlanExecuteTerminalClass
-	Reason string
+func PlanExecuteCompletionEventTypeForSummary(summary PlanExecuteCompletionSummary) featureplannercontract.NestedPlanExecuteCompletionEventName {
+	return PlanExecuteCompletionEventTypeForFields(summary.Fields())
 }
 
-func PlanExecuteCompletionTerminalClass(fields map[string]any) PlanExecuteTerminalClass {
-	return PlanExecuteCompletionTerminalDecision(fields).Class
+func PlanExecuteCompletionEventTypeForFields(fields map[string]any) featureplannercontract.NestedPlanExecuteCompletionEventName {
+	if CompletionFieldString(fields, featureplannercontract.PlanExecuteCompletionFieldTool) != string(featureplannercontract.ToolPlanExecuteComplete) {
+		return featureplannercontract.NestedPlanExecuteCompletionEventBlocked
+	}
+
+	switch PlanExecuteCompletionTerminalDecision(fields).Class {
+	case plancontract.PlanExecuteTerminalDecisionCompleted:
+		return featureplannercontract.NestedPlanExecuteCompletionEventCompleted
+	default:
+		return featureplannercontract.NestedPlanExecuteCompletionEventBlocked
+	}
 }
 
-func PlanExecuteCompletionTerminalDecision(fields map[string]any) PlanExecuteCompletionDecision {
-	record := coreplanexecute.PlanExecuteTerminalCompletionRecordFromFields(fields)
-	status := canonicalPlanExecuteCompletionStatus(CompletionFieldString(fields, completionFieldStatus))
-	reviewStatus := canonicalPlanExecuteCompletionStatus(CompletionFieldString(fields, completionFieldReviewStatus))
-	terminalClass := strings.TrimSpace(CompletionFieldString(fields, completionFieldTerminalClass))
-
-	if status == "" && reviewStatus == "" && terminalClass == "" && CompletionFieldString(fields, completionFieldOutcome) == "" {
-		return PlanExecuteCompletionDecision{Class: PlanExecuteTerminalBlocked, Reason: "missing required nested plan-execute status"}
-	}
-
-	if status == "skipped" && !completionFieldBool(fields, completionFieldReviewRepairSkipped) {
-		return PlanExecuteCompletionDecision{Class: PlanExecuteTerminalBlocked, Reason: "nested plan-execute skipped status is not explicitly marked as review-repair skipped by design"}
-	}
-
-	if reviewStatus == "skipped" && !completionFieldBool(fields, completionFieldReviewRepairSkipped) {
-		return PlanExecuteCompletionDecision{Class: PlanExecuteTerminalBlocked, Reason: "nested plan-execute skipped review is not explicitly marked by design"}
-	}
-
+func PlanExecuteCompletionTerminalDecision(fields map[string]any) plancontract.PlanExecuteTerminalDecision {
 	summary := PlanExecuteCompletionSummaryFromFields(fields)
 	derivedFailures := append(planExecuteCompletionSourceSanityValidationFailures(summary), planExecuteCompletionVerificationValidationFailures(summary)...)
-	if failures := normalizeCompletionStringList(append(completionFieldStringSlice(fields, completionFieldValidationFailures), derivedFailures...)); len(failures) > 0 {
-		return PlanExecuteCompletionDecision{Class: PlanExecuteTerminalBlocked, Reason: "nested plan-execute terminal validation failed: " + strings.Join(failures, "; ")}
-	}
-
-	class, _ := coreplanexecute.ClassifyPlanExecuteTerminalCompletion(record)
-	if class == coreplanexecute.PlanExecuteTerminalClassSuccess {
-		return PlanExecuteCompletionDecision{Class: PlanExecuteTerminalCompleted}
-	}
-
-	if record.ExitCode != 0 {
-		return PlanExecuteCompletionDecision{Class: PlanExecuteTerminalBlocked, Reason: "nested plan-execute reported non-zero exit code"}
-	}
-
-	if CompletionFieldString(fields, completionFieldFailureKind) != "" || CompletionFieldString(fields, completionFieldFailureReason) != "" {
-		return PlanExecuteCompletionDecision{Class: PlanExecuteTerminalBlocked, Reason: "nested plan-execute reported failure details"}
-	}
-
-	switch terminalClass {
-	case "recovery_required", "failed":
-		return PlanExecuteCompletionDecision{Class: PlanExecuteTerminalBlocked, Reason: "nested plan-execute terminal class requires recovery"}
-	}
-
-	if containsBlockingPlanExecuteCompletionSignal(status) ||
-		containsBlockingPlanExecuteCompletionSignal(CompletionFieldString(fields, completionFieldPhase)) ||
-		containsBlockingPlanExecuteCompletionSignal(CompletionFieldString(fields, completionFieldReviewStatus)) ||
-		containsBlockingPlanExecuteCompletionSignal(CompletionFieldString(fields, completionFieldOutcome)) {
-
-		return PlanExecuteCompletionDecision{Class: PlanExecuteTerminalBlocked, Reason: "nested plan-execute status is not success-shaped"}
-	}
-
-	if status != "" {
-		return PlanExecuteCompletionDecision{Class: PlanExecuteTerminalBlocked, Reason: fmt.Sprintf("ambiguous nested plan-execute status %q", CompletionFieldString(fields, completionFieldStatus))}
-	}
-
-	return PlanExecuteCompletionDecision{Class: PlanExecuteTerminalBlocked, Reason: "nested plan-execute status is not success-shaped"}
+	failures := normalizeCompletionStringList(append(completionFieldStringSlice(fields, plancontract.PlanExecuteTerminalFieldValidationFailures), derivedFailures...))
+	return plancontract.DecidePlanExecuteTerminalCompletionFields(fields, failures)
 }
 
 func canonicalPlanExecuteCompletionStatus(status string) string {
@@ -1180,27 +1014,6 @@ func canonicalPlanExecuteCompletionStatus(status string) string {
 	}
 }
 
-func containsBlockingPlanExecuteCompletionSignal(value string) bool {
-	value = canonicalPlanExecuteCompletionStatus(value)
-	for _, signal := range []string{
-		"failed",
-		"failure",
-		"model-error",
-		"review-model-error",
-		"recovery-open",
-		"blocked",
-		"blocker",
-		"degraded",
-		coreplanexecute.ProgressStatusRunning,
-	} {
-		if strings.Contains(value, signal) {
-			return true
-		}
-	}
-
-	return false
-}
-
 func completionFieldBool(fields map[string]any, key string) bool {
 	value, ok := fields[key]
 	if !ok || value == nil {
@@ -1211,9 +1024,9 @@ func completionFieldBool(fields map[string]any, key string) bool {
 	case bool:
 		return typed
 	case string:
-		return util.EqualTrimFold(typed, "true")
+		return textutil.EqualTrimFold(typed, "true")
 	default:
-		return util.EqualTrimFold(fmt.Sprint(value), "true")
+		return textutil.EqualTrimFold(fmt.Sprint(value), "true")
 	}
 }
 
@@ -1277,7 +1090,7 @@ func completionFieldStringSlice(fields map[string]any, key string) []string {
 	}
 }
 
-func completionFieldSourceSatisfiedEvidenceRefs(fields map[string]any, key string) []PlanExecuteSourceSatisfiedEvidenceRef {
+func completionFieldSourceSatisfiedEvidenceRefs(fields map[string]any, key string) []plancontract.SourceSatisfiedEvidenceRef {
 	value, ok := fields[key]
 	if !ok || value == nil {
 		return nil
@@ -1288,16 +1101,16 @@ func completionFieldSourceSatisfiedEvidenceRefs(fields map[string]any, key strin
 		return nil
 	}
 
-	var refs []PlanExecuteSourceSatisfiedEvidenceRef
+	var refs []plancontract.SourceSatisfiedEvidenceRef
 
 	if err := json.Unmarshal(body, &refs); err != nil {
 		return nil
 	}
 
-	return normalizePlanExecuteSourceSatisfiedEvidenceRefs(refs)
+	return plancontract.NormalizeSourceSatisfiedEvidenceRefs(refs)
 }
 
-func completionFieldPhaseEvidenceChecks(fields map[string]any, key string) []coreplanexecute.PhaseEvidenceCheck {
+func completionFieldPhaseEvidenceChecks(fields map[string]any, key string) []plancontract.PhaseEvidenceCheck {
 	value, ok := fields[key]
 	if !ok || value == nil {
 		return nil
@@ -1308,7 +1121,7 @@ func completionFieldPhaseEvidenceChecks(fields map[string]any, key string) []cor
 		return nil
 	}
 
-	var checks []coreplanexecute.PhaseEvidenceCheck
+	var checks []plancontract.PhaseEvidenceCheck
 
 	if err := json.Unmarshal(body, &checks); err != nil {
 		return nil
@@ -1317,7 +1130,7 @@ func completionFieldPhaseEvidenceChecks(fields map[string]any, key string) []cor
 	return normalizeCompletionPhaseEvidenceChecks(checks)
 }
 
-func completionFieldVerificationCommands(fields map[string]any, key string) []coreplanexecute.VerificationCommand {
+func completionFieldVerificationCommands(fields map[string]any, key string) []plancontract.VerificationCommand {
 	value, ok := fields[key]
 	if !ok || value == nil {
 		return nil
@@ -1328,7 +1141,7 @@ func completionFieldVerificationCommands(fields map[string]any, key string) []co
 		return nil
 	}
 
-	var commands []coreplanexecute.VerificationCommand
+	var commands []plancontract.VerificationCommand
 	if err := json.Unmarshal(body, &commands); err != nil {
 		return nil
 	}
@@ -1336,7 +1149,7 @@ func completionFieldVerificationCommands(fields map[string]any, key string) []co
 	return normalizeCompletionVerificationCommands(commands)
 }
 
-func completionFieldVerificationSkips(fields map[string]any, key string) []coreplanexecute.VerificationSkip {
+func completionFieldVerificationSkips(fields map[string]any, key string) []plancontract.VerificationSkip {
 	value, ok := fields[key]
 	if !ok || value == nil {
 		return nil
@@ -1347,7 +1160,7 @@ func completionFieldVerificationSkips(fields map[string]any, key string) []corep
 		return nil
 	}
 
-	var skips []coreplanexecute.VerificationSkip
+	var skips []plancontract.VerificationSkip
 	if err := json.Unmarshal(body, &skips); err != nil {
 		return nil
 	}
@@ -1355,7 +1168,7 @@ func completionFieldVerificationSkips(fields map[string]any, key string) []corep
 	return normalizeCompletionVerificationSkips(skips)
 }
 
-func completionFieldVerificationRejects(fields map[string]any, key string) []coreplanexecute.VerificationReject {
+func completionFieldVerificationRejects(fields map[string]any, key string) []plancontract.VerificationReject {
 	value, ok := fields[key]
 	if !ok || value == nil {
 		return nil
@@ -1366,7 +1179,7 @@ func completionFieldVerificationRejects(fields map[string]any, key string) []cor
 		return nil
 	}
 
-	var rejects []coreplanexecute.VerificationReject
+	var rejects []plancontract.VerificationReject
 	if err := json.Unmarshal(body, &rejects); err != nil {
 		return nil
 	}
@@ -1374,14 +1187,14 @@ func completionFieldVerificationRejects(fields map[string]any, key string) []cor
 	return normalizeCompletionVerificationRejects(rejects)
 }
 
-func normalizeCompletionPhaseEvidenceChecks(checks []coreplanexecute.PhaseEvidenceCheck) []coreplanexecute.PhaseEvidenceCheck {
-	out := make([]coreplanexecute.PhaseEvidenceCheck, 0, len(checks))
+func normalizeCompletionPhaseEvidenceChecks(checks []plancontract.PhaseEvidenceCheck) []plancontract.PhaseEvidenceCheck {
+	out := make([]plancontract.PhaseEvidenceCheck, 0, len(checks))
 	seen := map[string]bool{}
 
 	for _, check := range checks {
-		check.Kind = strings.TrimSpace(check.Kind)
+		check.Kind = plancontract.PhaseEvidenceKind(strings.TrimSpace(string(check.Kind)))
 		check.Path = plancontract.NormalizeScopePath(check.Path)
-		check.Status = strings.TrimSpace(check.Status)
+		check.Status = plancontract.PhaseEvidenceStatus(strings.TrimSpace(string(check.Status)))
 		check.Summary = strings.TrimSpace(check.Summary)
 		check.Error = strings.TrimSpace(check.Error)
 		check.Command = strings.TrimSpace(check.Command)
@@ -1390,7 +1203,7 @@ func normalizeCompletionPhaseEvidenceChecks(checks []coreplanexecute.PhaseEviden
 			continue
 		}
 
-		key := strings.Join([]string{check.Kind, check.Path, check.Command, check.Status}, "\x00")
+		key := strings.Join([]string{string(check.Kind), check.Path, check.Command, string(check.Status)}, "\x00")
 		if seen[key] {
 			continue
 		}
@@ -1403,8 +1216,8 @@ func normalizeCompletionPhaseEvidenceChecks(checks []coreplanexecute.PhaseEviden
 	return out
 }
 
-func normalizeCompletionVerificationCommands(commands []coreplanexecute.VerificationCommand) []coreplanexecute.VerificationCommand {
-	out := make([]coreplanexecute.VerificationCommand, 0, len(commands))
+func normalizeCompletionVerificationCommands(commands []plancontract.VerificationCommand) []plancontract.VerificationCommand {
+	out := make([]plancontract.VerificationCommand, 0, len(commands))
 	seen := map[string]bool{}
 
 	for _, command := range commands {
@@ -1440,8 +1253,8 @@ func normalizeCompletionVerificationCommands(commands []coreplanexecute.Verifica
 	return out
 }
 
-func normalizeCompletionVerificationSkips(skips []coreplanexecute.VerificationSkip) []coreplanexecute.VerificationSkip {
-	out := make([]coreplanexecute.VerificationSkip, 0, len(skips))
+func normalizeCompletionVerificationSkips(skips []plancontract.VerificationSkip) []plancontract.VerificationSkip {
+	out := make([]plancontract.VerificationSkip, 0, len(skips))
 	seen := map[string]bool{}
 
 	for _, skip := range skips {
@@ -1465,8 +1278,8 @@ func normalizeCompletionVerificationSkips(skips []coreplanexecute.VerificationSk
 	return out
 }
 
-func normalizeCompletionVerificationRejects(rejects []coreplanexecute.VerificationReject) []coreplanexecute.VerificationReject {
-	out := make([]coreplanexecute.VerificationReject, 0, len(rejects))
+func normalizeCompletionVerificationRejects(rejects []plancontract.VerificationReject) []plancontract.VerificationReject {
+	out := make([]plancontract.VerificationReject, 0, len(rejects))
 	seen := map[string]bool{}
 
 	for _, reject := range rejects {
@@ -1485,31 +1298,6 @@ func normalizeCompletionVerificationRejects(rejects []coreplanexecute.Verificati
 
 		seen[key] = true
 		out = append(out, reject)
-	}
-
-	return out
-}
-
-func normalizePlanExecuteSourceSatisfiedEvidenceRefs(refs []PlanExecuteSourceSatisfiedEvidenceRef) []PlanExecuteSourceSatisfiedEvidenceRef {
-	out := make([]PlanExecuteSourceSatisfiedEvidenceRef, 0, len(refs))
-	seen := map[string]bool{}
-
-	for _, ref := range refs {
-		ref.Path = plancontract.NormalizeScopePath(ref.Path)
-		ref.Kind = strings.TrimSpace(ref.Kind)
-
-		if ref.Path == "" || ref.Kind == "" {
-			continue
-		}
-
-		key := ref.Path + "\x00" + ref.Kind
-		if seen[key] {
-			continue
-		}
-
-		seen[key] = true
-
-		out = append(out, ref)
 	}
 
 	return out
@@ -1555,7 +1343,10 @@ func normalizeCompletionStableIDList(values []string) []string {
 
 func planExecuteCompletionRecordRelevant(recordType string, role string, content string, stopReason string) bool {
 	recordType = strings.TrimSpace(recordType)
-	if strings.HasPrefix(recordType, "idiom.plan_execute.") {
+	if _, ok := plancontract.ParsePlanExecuteEventName(recordType); ok {
+		return true
+	}
+	if _, ok := plancontract.ParsePlanExecuteInvalidEventName(recordType); ok {
 		return true
 	}
 
@@ -1567,7 +1358,7 @@ func planExecuteCompletionRecordRelevant(recordType string, role string, content
 }
 
 func planExecuteCompletionRecordTrustsAcceptanceEvidence(recordType string) bool {
-	return strings.TrimSpace(recordType) == coreplanexecute.PlanExecuteTerminalCompletionRecordType
+	return strings.TrimSpace(recordType) == plancontract.PlanExecuteTerminalCompletionRecordType
 }
 
 func planExecuteCompletionModelError(stopReason string, content string) bool {

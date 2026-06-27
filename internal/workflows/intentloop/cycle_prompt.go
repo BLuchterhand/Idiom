@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	intentloopcontract "idiom/internal/contracts/intentloop"
 )
 
 const maxPromptGapDetailRunes = 2000
@@ -134,7 +136,7 @@ func renderRemainingRequirements(cycles []CycleRecord) string {
 func completedCycles(cycles []CycleRecord) []CycleRecord {
 	var out []CycleRecord
 	for _, cycle := range cycles {
-		if cycle.Status == "completed" || cycle.Status == "failed" {
+		if cycle.Status == intentloopcontract.CycleStatusCompleted || cycle.Status == intentloopcontract.CycleStatusFailed {
 			out = append(out, cycle)
 		}
 	}

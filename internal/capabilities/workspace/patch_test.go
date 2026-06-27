@@ -29,6 +29,69 @@ func patchWorkspaceConfig(t *testing.T) (*Manager, string) {
 	return NewManager(cfg), dir
 }
 
+func TestWorkspaceWriteRejectsSymlinkedParent(t *testing.T) {
+	mgr, dir := patchWorkspaceConfig(t)
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(dir, "linked")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    ToolNameWriteFile,
+		Path:    "linked/escape.txt",
+		Content: "outside\n",
+	})
+	if result.Error == "" || !strings.Contains(result.Error, "symlinked directories") {
+		t.Fatalf("expected symlinked parent rejection, got %#v", result)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "escape.txt")); !os.IsNotExist(err) {
+		t.Fatalf("write_file should not create outside target, stat err=%v", err)
+	}
+}
+
+func TestWorkspaceWriteRejectsSymlinkTarget(t *testing.T) {
+	mgr, dir := patchWorkspaceConfig(t)
+	outside := filepath.Join(t.TempDir(), "target.txt")
+	if err := os.WriteFile(outside, []byte("original\n"), 0o644); err != nil {
+		t.Fatalf("seed outside target: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "target.txt")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    ToolNameWriteFile,
+		Path:    "target.txt",
+		Content: "mutated\n",
+	})
+	if result.Error == "" || !strings.Contains(result.Error, "must not be a symlink") {
+		t.Fatalf("expected symlink target rejection, got %#v", result)
+	}
+	if data, err := os.ReadFile(outside); err != nil || string(data) != "original\n" {
+		t.Fatalf("outside target mutated: data=%q err=%v", data, err)
+	}
+}
+
+func TestApplyPatchRejectsSymlinkedParentBeforeMutation(t *testing.T) {
+	mgr, dir := patchWorkspaceConfig(t)
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(dir, "linked")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	patch := "*** Begin Patch\n" +
+		"*** Add File: linked/escape.txt\n" +
+		"+outside\n" +
+		"*** End Patch"
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: ToolNameApplyPatch, Content: patch})
+	if result.Error == "" || !strings.Contains(result.Error, "symlinked directories") {
+		t.Fatalf("expected symlinked parent rejection, got %#v", result)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "escape.txt")); !os.IsNotExist(err) {
+		t.Fatalf("apply_patch should not create outside target, stat err=%v", err)
+	}
+}
+
 func TestApplyPatchAddUpdateDelete(t *testing.T) {
 	mgr, dir := patchWorkspaceConfig(t)
 	if err := os.WriteFile(filepath.Join(dir, "existing.txt"), []byte("alpha\nbeta\ngamma\n"), 0o644); err != nil {

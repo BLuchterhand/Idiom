@@ -12,7 +12,7 @@ import (
 
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/comprehension"
 )
 
@@ -97,7 +97,7 @@ func runNudge(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.
 		return 2
 	}
 
-	files := util.UniqueNonEmpty(fs.Args())
+	files := textutil.UniqueNonEmpty(fs.Args())
 	if len(files) == 0 {
 		fmt.Fprintf(stderr, "ranker %s: at least one file path is required\n", action)
 

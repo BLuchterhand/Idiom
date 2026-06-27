@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 
+	recoverycontract "idiom/internal/contracts/recovery"
+
 	"idiom/internal/runtime/localops"
 	"idiom/internal/workflows/recovery"
 )
@@ -86,7 +88,7 @@ func loadProductEvidenceRecovery(root string) (productEvidenceRecovery, productE
 		summary.FailureRecordCount++
 
 		summary.ArtifactIDs = append(summary.ArtifactIDs, recoveryEvidenceArtifactID("failure_record", recordRel))
-		summary.FailureClasses[localops.SafeToken(record.Failure.Class)]++
+		summary.FailureClasses[localops.SafeToken(string(record.Failure.Class))]++
 
 		packetFull, packetRel, err := recovery.DecompositionPacketPath(root, record.FailureID, "")
 		if err != nil {
@@ -109,7 +111,7 @@ func loadProductEvidenceRecovery(root string) (productEvidenceRecovery, productE
 			summary.BlockedPacketCount++
 
 			summary.Blockers = append(summary.Blockers, "missing decomposition packet:"+recoveryEvidenceArtifactID("failure_record", recordRel))
-			summary.addNextAction(record.NextAction)
+			summary.addNextAction(string(record.NextAction))
 
 			continue
 		}
@@ -133,7 +135,7 @@ func loadProductEvidenceRecovery(root string) (productEvidenceRecovery, productE
 	return summary, ref
 }
 
-func (summary *productEvidenceRecovery) summarizeRecoveryPacket(root string, packet recovery.DecompositionPacket) {
+func (summary *productEvidenceRecovery) summarizeRecoveryPacket(root string, packet recoverycontract.DecompositionPacket) {
 	reconciliation, reconciliationRel, found, err := recovery.TryLoadReconciliationForPacket(root, packet)
 	if err != nil {
 		summary.addMalformedRecoveryArtifact("reconciliation_decode_failed", reconciliationRel)
@@ -145,7 +147,7 @@ func (summary *productEvidenceRecovery) summarizeRecoveryPacket(root string, pac
 		summary.OpenPacketCount++
 
 		summary.RemainingAtomCount += len(packet.CandidateAtoms)
-		summary.addNextAction(packet.NextAction)
+		summary.addNextAction(string(packet.NextAction))
 
 		if blockers := recoveryEvidencePacketBlockers(packet); len(blockers) > 0 {
 			summary.BlockedPacketCount++
@@ -174,12 +176,12 @@ func (summary *productEvidenceRecovery) summarizeRecoveryPacket(root string, pac
 
 	summary.CompletedAtomCount += len(reconciliation.CompletedAtoms)
 	summary.RemainingAtomCount += len(reconciliation.RemainingAtoms)
-	summary.addNextAction(reconciliation.NextAction)
+	summary.addNextAction(string(reconciliation.NextAction))
 
 	switch reconciliation.Status {
-	case recovery.ReconciliationStatusRecovered:
+	case recoverycontract.ReconciliationStatusRecovered:
 		summary.RecoveredPacketCount++
-	case recovery.ReconciliationStatusPartial:
+	case recoverycontract.ReconciliationStatusPartial:
 		summary.PartialPacketCount++
 
 		summary.OpenPacketCount++
@@ -257,22 +259,22 @@ func recoveryEvidenceArtifactID(kind string, relPath string) string {
 	return kind + ":" + localops.StableID(relPath)
 }
 
-func recoveryEvidencePacketBlockers(packet recovery.DecompositionPacket) []string {
+func recoveryEvidencePacketBlockers(packet recoverycontract.DecompositionPacket) []string {
 	var blockers []string
 
-	if packet.NextAction != recovery.NextActionReviewDecomposition {
-		blockers = append(blockers, "packet next action requires operator:"+localops.SafeToken(packet.NextAction))
+	if packet.NextAction != recoverycontract.NextActionReviewDecomposition {
+		blockers = append(blockers, "packet next action requires operator:"+localops.SafeToken(string(packet.NextAction)))
 	}
 
 	if len(packet.CandidateAtoms) == 0 {
 		blockers = append(blockers, "packet has no candidate recovery atoms")
 	}
 
-	if packet.PartialState.DirtyStatus == recovery.DirtyStatusDirtyOutScope {
+	if packet.PartialState.DirtyStatus == recoverycontract.DirtyStatusDirtyOutScope {
 		blockers = append(blockers, "partial state includes out-of-scope dirty paths")
 	}
 
-	if packet.PartialState.ScopeStatus == recovery.ScopeStatusOutOfScope {
+	if packet.PartialState.ScopeStatus == recoverycontract.ScopeStatusOutOfScope {
 		blockers = append(blockers, "partial state is out of recovery scope")
 	}
 

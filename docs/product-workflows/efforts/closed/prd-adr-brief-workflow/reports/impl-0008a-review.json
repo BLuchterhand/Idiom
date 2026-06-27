@@ -20,7 +20,7 @@
     "json_jsonl": "passed",
     "privacy_scan": "passed",
     "diff_whitespace": "passed",
-    "timestamp_correction": "applied"
+    "timestamp_correction": "passed"
   },
   "reviewed_at": "2026-05-17T18:12:17Z",
   "commands_reviewed": [

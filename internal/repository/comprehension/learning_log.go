@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/jsonl"
 )
 
 // LearningLogEntry is one record in the per-workspace ranker learning log.
@@ -693,7 +693,7 @@ func ReadLearningLog(root string) ([]LearningLogEntry, error) {
 
 	var out []LearningLogEntry
 
-	err := util.ScanFile(path, func(raw json.RawMessage) error {
+	err := jsonl.ScanFile(path, func(raw json.RawMessage) error {
 		var entry LearningLogEntry
 
 		if err := json.Unmarshal(raw, &entry); err != nil {

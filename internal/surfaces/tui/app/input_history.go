@@ -5,7 +5,8 @@ import (
 	"strings"
 
 	"idiom/internal/platform/config"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/jsonl"
+	"idiom/internal/runtime/sessionlog"
 )
 
 const maxInputHistoryEntries = 50
@@ -95,7 +96,7 @@ func inputHistoryFromRecordedSessions(cfg config.Config, limit int) ([]string, e
 		return nil, nil
 	}
 
-	sessions, err := listRecordedSessionFiles(cfg)
+	sessions, err := sessionlog.ListRecordedSessionFiles(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +128,7 @@ func inputHistoryValuesFromSessionLog(path string, includeMessageFallback bool) 
 		messages    []string
 	)
 
-	err := util.ScanFile(path, func(raw json.RawMessage) error {
+	err := jsonl.ScanFile(path, func(raw json.RawMessage) error {
 		var record map[string]any
 
 		if err := json.Unmarshal(raw, &record); err != nil {

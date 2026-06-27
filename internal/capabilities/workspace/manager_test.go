@@ -6,9 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	planartifact "idiom/internal/contracts/planartifact"
 	"idiom/internal/platform/config"
 	"idiom/internal/repository/semantic"
 )
@@ -1029,7 +1031,7 @@ func TestReadFileLineCountMatchesSubmitPlanLineRange(t *testing.T) {
 	plan := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "update value",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:      "value.go",
 			StartLine: 3,
 			EndLine:   5,
@@ -1660,6 +1662,60 @@ func TestWriteFileAndAppendRejectInvalidStructuredContent(t *testing.T) {
 
 	if got := readTestFile(t, jsonPath); got != original {
 		t.Fatalf("invalid append should not touch disk\ngot:\n%s\nwant:\n%s", got, original)
+	}
+}
+
+func TestAppendFilePreservesConcurrentAppends(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+	})
+
+	const count = 64
+	var wg sync.WaitGroup
+	errs := make(chan string, count)
+
+	for i := 0; i < count; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result := mgr.Execute(context.Background(), ToolRequest{
+				Tool:    ToolNameAppendFile,
+				Path:    "events.log",
+				Content: fmt.Sprintf("line-%02d\n", i),
+			})
+			if result.Error != "" {
+				errs <- result.Error
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("append_file failed: %s", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(readTestFile(t, filepath.Join(dir, "events.log"))), "\n")
+	if len(lines) != count {
+		t.Fatalf("line count = %d, want %d; lines=%q", len(lines), count, lines)
+	}
+
+	seen := map[string]bool{}
+	for _, line := range lines {
+		if seen[line] {
+			t.Fatalf("duplicate appended line %q in %q", line, lines)
+		}
+		seen[line] = true
+	}
+	for i := 0; i < count; i++ {
+		line := fmt.Sprintf("line-%02d", i)
+		if !seen[line] {
+			t.Fatalf("missing appended line %q in %q", line, lines)
+		}
 	}
 }
 

@@ -17,15 +17,28 @@ import (
 	"time"
 
 	"idiom/internal/capabilities/workspace"
+	atomintakecontract "idiom/internal/contracts/atomintake"
+	"idiom/internal/contracts/autonomy"
+	lanecontract "idiom/internal/contracts/lane"
+	plancontract "idiom/internal/contracts/plan"
+	"idiom/internal/contracts/workflowstate"
 	"idiom/internal/contracts/writerroute"
+	"idiom/internal/evidence/lanehistory"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
+	"idiom/internal/platform/jsonevents"
+	"idiom/internal/platform/markdownsection"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/backends"
-	atomcmd "idiom/internal/surfaces/cli/atom"
+	"idiom/internal/runtime/writerrouting"
+	briefcmd "idiom/internal/surfaces/cli/brief"
+	implementcmd "idiom/internal/surfaces/cli/implement"
+	planexecutecmd "idiom/internal/surfaces/cli/planexecute"
+	refinecmd "idiom/internal/surfaces/cli/refine"
+	cmdruntime "idiom/internal/surfaces/cli/runtime"
 	"idiom/internal/surfaces/cliassets"
-	"idiom/internal/surfaces/tui/app"
-	"idiom/internal/workflows/workflowstate"
+	"idiom/internal/workflows/atomintake"
 )
 
 // briefBodyStartMarker / briefBodyEndMarker bracket the project
@@ -121,11 +134,11 @@ type laneOptions struct {
 // laneBriefLintRunner is the package-level indirection tests stub
 // out so the lane wrapper's default-on lint preflight doesn't need
 // python3 in the test environment. Production callers leave it as
-// runBriefLint; tests reassign before exercising the lane and
+// briefcmd.RunLint; tests reassign before exercising the lane and
 // restore on cleanup. Mirrors the backendLaunch / backendStop
 // pattern from internal/surfaces/cli/backend/backend.go.
 var laneBriefLintRunner = func(args []string, stdout io.Writer, stderr io.Writer) int {
-	return runBriefLint(args, stdout, stderr, nil)
+	return briefcmd.RunLint(args, stdout, stderr, nil)
 }
 
 var lanePostflightRunner = func(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -151,12 +164,12 @@ func runLaneMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer,
 	deps := laneDeps{
 		loadConfig: config.Load,
 		runPlanExecute: func(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner) int {
-			return runPlanExecuteMainWithTelemetry(args, stdout, stderr, promptRun, rec)
+			return planexecutecmd.RunMainWithTelemetry(args, stdout, stderr, promptRun, rec)
 		},
 		runImplement: func(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner) int {
-			return runImplementMainWithTelemetry(args, stdout, stderr, promptRun, rec)
+			return implementcmd.RunMainWithTelemetry(args, stdout, stderr, promptRun, rec)
 		},
-		defaultPromptRun: runPromptOnce,
+		defaultPromptRun: cmdruntime.RunPromptOnce,
 		buildContextPack: buildLaneContextPackSection,
 		telemetry:        rec,
 	}
@@ -237,7 +250,7 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 			return 2
 		}
 
-		if err := printLaneHistorySummary(opts.ProjectRoot, stdout, filter); err != nil {
+		if err := lanehistory.PrintSummary(opts.ProjectRoot, stdout, filter); err != nil {
 			fmt.Fprintf(stderr, "lane: history: %v\n", err)
 
 			return 1
@@ -260,10 +273,10 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 			Mode:        opts.RefineMode,
 		}
 		dispatch := func(metaBriefPath string, stdout, stderr io.Writer) int {
-			return defaultRefineDispatchWithConfig(metaBriefPath, opts.ConfigPath, stdout, stderr)
+			return refinecmd.DefaultDispatchWithConfig(metaBriefPath, opts.ConfigPath, stdout, stderr)
 		}
 
-		return runLaneRefine(refineOpts, dispatch, stdout, stderr)
+		return refinecmd.Run(refineOpts, dispatch, stdout, stderr)
 	}
 
 	handled, code, atomReport := runLaneAtomIntakePreflight(opts, stdout, stderr)
@@ -309,7 +322,7 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 	}
 
 	laneStartFields := laneStartTelemetryFields(opts, cfg)
-	logCLIPhase(deps.telemetry, "lane_start", laneStartFields)
+	telemetry.LogPhase(deps.telemetry, "lane_start", laneStartFields)
 
 	composedPath, err := composeLanePromptToFile(opts, contextPackSection)
 	if err != nil {
@@ -330,13 +343,19 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 			"title": opts.Title,
 		}
 		maps.Copy(fields, laneStartFields)
-		emitLaneJSONEvent(stdout, "start", fields)
+		if err := emitLaneJSONEvent(stdout, lanecontract.EventStart, fields); err != nil {
+			fmt.Fprintf(stderr, "lane: write json event: %v\n", err)
+			return 1
+		}
 	}
 
 	requiredEditPaths := laneForwardedRequiredEditPaths(opts, atomReport, stderr)
 	if opts.JSONEvents {
 		decision := buildLaneWriterRouteDecision(cfg, opts, requiredEditPaths)
-		emitLaneJSONEvent(stdout, "writer_route_decision", decision.EventFields())
+		if err := emitLaneWriterRouteJSONEvent(stdout, writerroute.EventWriterRouteDecision, decision.EventFields()); err != nil {
+			fmt.Fprintf(stderr, "lane: write json event: %v\n", err)
+			return 1
+		}
 	}
 
 	forwardArgs := buildForwardedArgs(opts, composedPath, requiredEditPaths)
@@ -351,9 +370,9 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 	sessionCapture := &lanePromptSessionCapture{}
 
 	switch opts.Mode {
-	case "plan-execute":
+	case string(lanecontract.LanePlanExecute):
 		subcode = deps.runPlanExecute(forwardArgs, tee, stderr, deps.defaultPromptRun)
-	case "implement":
+	case string(lanecontract.LaneImplement):
 		subcode = deps.runImplement(forwardArgs, tee, stderr, sessionCapture.wrap(deps.defaultPromptRun))
 	default:
 		// parseLaneOptions already rejects unknown modes; defensive
@@ -382,7 +401,7 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		Mode:            opts.Mode,
 		Brief:           opts.BriefPath,
 		BriefMtime:      briefMtime,
-		BriefProvenance: detectBriefProvenance(opts.BriefPath),
+		BriefProvenance: lanehistory.DetectBriefProvenance(opts.BriefPath),
 		Title:           opts.Title,
 		ExitCode:        subcode,
 		FinalState:      laneRunFinalState(subcode, degraded, tee.Bytes()),
@@ -407,15 +426,18 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		historyEvt.SessionID = sessionCapture.SessionID()
 	}
 
-	if err := appendLaneHistory(opts.ProjectRoot, historyEvt); err != nil {
+	if err := lanehistory.Append(opts.ProjectRoot, historyEvt); err != nil {
 		fmt.Fprintf(stderr, "lane: history append failed: %v\n", err)
 	}
 
 	if opts.JSONEvents {
-		emitLaneJSONEvent(stdout, "run_ledger", laneHistoryEventFields(historyEvt))
+		if err := emitLaneJSONEvent(stdout, lanecontract.EventRunLedger, lanehistory.EventFields(historyEvt)); err != nil {
+			fmt.Fprintf(stderr, "lane: write json event: %v\n", err)
+			return 1
+		}
 	}
 
-	if opts.Mode == "implement" && subcommandExit != 0 {
+	if opts.Mode == string(lanecontract.LaneImplement) && subcommandExit != 0 {
 		writeLaneImplementRecovery(opts, historyEvt, subcommandExit, stderr)
 	}
 
@@ -425,11 +447,14 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 	// to drive their own audit ledger (e.g. Colony's
 	// harness_feedback). Idiom doesn't reach into project policy.
 	for _, d := range degraded {
-		emitLaneJSONEvent(stdout, "degraded", map[string]any{
-			"kind":    d.kind,
-			"details": d.details,
-			"mode":    opts.Mode,
-		})
+		if err := emitLaneJSONEvent(stdout, lanecontract.EventDegraded, map[string]any{
+			string(lanecontract.EventFieldKind):    d.kind,
+			string(lanecontract.EventFieldDetails): d.details,
+			string(lanecontract.EventFieldMode):    opts.Mode,
+		}); err != nil {
+			fmt.Fprintf(stderr, "lane: write json event: %v\n", err)
+			return 1
+		}
 		fmt.Fprintf(stderr, "lane: degraded kind=%s details=%s\n", d.kind, d.details)
 	}
 
@@ -449,7 +474,7 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 // for --lane-mode filter validation in history.
 func isKnownLaneMode(mode string) bool {
 	switch strings.TrimSpace(mode) {
-	case "plan-execute", "implement", "history", "refine", "explain":
+	case string(lanecontract.LanePlanExecute), string(lanecontract.LaneImplement), "history", "refine", "explain":
 		return true
 	}
 
@@ -467,9 +492,12 @@ func runLaneAtomIntakePreflight(opts laneOptions, stdout io.Writer, stderr io.Wr
 		return false, 0, nil
 	}
 
-	report := evaluateAtomIntake(string(body), opts.BriefPath, opts.ProjectRoot, opts.AllowDirtyAtomScope)
+	report := atomintake.EvaluateIntake(string(body), opts.BriefPath, opts.ProjectRoot, opts.AllowDirtyAtomScope, atomintake.DefaultScopePaths(string(body)))
 	if opts.JSONEvents {
-		emitLaneJSONEvent(stdout, "atom_intake", laneAtomIntakeReportFields(report, projection))
+		if err := emitLaneJSONEvent(stdout, lanecontract.EventAtomIntake, laneAtomIntakeReportFields(report, projection)); err != nil {
+			fmt.Fprintf(stderr, "lane: write json event: %v\n", err)
+			return true, 1, nil
+		}
 	}
 
 	if report.Dispatchable {
@@ -480,23 +508,56 @@ func runLaneAtomIntakePreflight(opts laneOptions, stdout io.Writer, stderr io.Wr
 		Mode:            opts.Mode,
 		Brief:           opts.BriefPath,
 		BriefMtime:      laneBriefMtime(opts.BriefPath),
-		BriefProvenance: detectBriefProvenance(opts.BriefPath),
+		BriefProvenance: lanehistory.DetectBriefProvenance(opts.BriefPath),
 		Title:           opts.Title,
 		ExitCode:        1,
 		FinalState:      string(report.State),
 	}
-	if err := appendLaneHistory(opts.ProjectRoot, historyEvt); err != nil {
+	if err := lanehistory.Append(opts.ProjectRoot, historyEvt); err != nil {
 		fmt.Fprintf(stderr, "lane: history append failed: %v\n", err)
 	}
 
 	if opts.JSONEvents {
-		emitLaneJSONEvent(stdout, "run_ledger", laneHistoryEventFields(historyEvt))
+		if err := emitLaneJSONEvent(stdout, lanecontract.EventRunLedger, lanehistory.EventFields(historyEvt)); err != nil {
+			fmt.Fprintf(stderr, "lane: write json event: %v\n", err)
+			return true, 1, &report
+		}
 	}
 
 	fmt.Fprintln(stderr, "lane: atom intake blocked dispatch")
-	printAtomIntakeReport(report, stderr)
+	printLaneAtomIntakeReport(report, stderr)
 
 	return true, 1, &report
+}
+
+func printLaneAtomIntakeReport(report atomIntakeReport, w io.Writer) {
+	fmt.Fprintf(w, "state: %s\n", report.State)
+
+	if report.Status != "" {
+		fmt.Fprintf(w, "status: %s\n", report.Status)
+	}
+
+	fmt.Fprintf(w, "dispatchable: %t\n", report.Dispatchable)
+
+	if len(report.ScopePaths) > 0 {
+		fmt.Fprintf(w, "scope: %s\n", strings.Join(report.ScopePaths, ", "))
+	}
+
+	if len(report.Dirty) > 0 {
+		fmt.Fprintf(w, "dirty: %s\n", strings.Join(report.Dirty, ", "))
+	}
+
+	if len(report.Invalid) > 0 {
+		fmt.Fprintf(w, "invalid: %s\n", strings.Join(report.Invalid, ", "))
+	}
+
+	for _, reason := range report.Reasons {
+		fmt.Fprintf(w, "reason: %s\n", reason)
+	}
+
+	for _, action := range report.NextActions {
+		fmt.Fprintf(w, "next: %s\n", action)
+	}
 }
 
 func laneBriefMtime(path string) string {
@@ -508,37 +569,41 @@ func laneBriefMtime(path string) string {
 }
 
 type laneBriefIntakeProjectionResult struct {
-	WorkflowID            workflowstate.WorkflowID `json:"workflow_id"`
-	State                 workflowstate.StateID    `json:"state"`
-	Dispatchable          bool                     `json:"dispatchable"`
-	NeedsAtomIntake       bool                     `json:"needs_atom_intake"`
-	LegacyHeadingFallback bool                     `json:"legacy_heading_fallback"`
-	Reason                string                   `json:"reason,omitempty"`
+	WorkflowID            workflowstate.WorkflowID    `json:"workflow_id"`
+	State                 workflowstate.StateID       `json:"state"`
+	TerminalState         workflowstate.TerminalState `json:"terminal_state,omitempty"`
+	Dispatchable          bool                        `json:"dispatchable"`
+	NeedsAtomIntake       bool                        `json:"needs_atom_intake"`
+	LegacyHeadingFallback bool                        `json:"legacy_heading_fallback"`
+	Reason                string                      `json:"reason,omitempty"`
 }
 
 func laneBriefIntakeProjection(body string) laneBriefIntakeProjectionResult {
 	projection := laneBriefIntakeProjectionResult{
-		WorkflowID: workflowstate.WorkflowAtomIntake,
-		State:      workflowstate.StateTerminal,
+		WorkflowID:    workflowstate.WorkflowAtomIntake,
+		State:         workflowstate.StateTerminal,
+		TerminalState: workflowstate.TerminalStateMissingScope,
 	}
 
-	if _, ok := atomSpecStatus(body); ok {
+	if _, ok := atomintake.SpecStatus(body); ok {
 		projection.State = workflowstate.StateDispatchable
+		projection.TerminalState = ""
 		projection.Dispatchable = true
 		projection.NeedsAtomIntake = true
 		projection.Reason = "atom_spec_status"
 		return projection
 	}
 
-	if _, ok := atomRefineDraftReason(body); ok {
+	if _, ok := atomintake.RefineDraftReason(body); ok {
 		projection.State = workflowstate.StateDispatchable
+		projection.TerminalState = ""
 		projection.Dispatchable = true
 		projection.NeedsAtomIntake = true
 		projection.Reason = "atom_refine_draft"
 		return projection
 	}
 
-	targets := atomcmd.DefaultScopePaths(body)
+	targets := atomintake.DefaultScopePaths(body)
 	if len(targets) == 0 {
 		if laneBriefHasAtomIntakeMarker(body) {
 			projection.NeedsAtomIntake = true
@@ -548,15 +613,16 @@ func laneBriefIntakeProjection(body string) laneBriefIntakeProjectionResult {
 	}
 
 	projection.State = workflowstate.StateDispatchable
+	projection.TerminalState = ""
 	projection.Dispatchable = true
 
-	if atomSpecHasAcceptedResult(body) {
+	if atomintake.SpecHasAcceptedResult(body) {
 		projection.NeedsAtomIntake = true
 		projection.Reason = "accepted_result"
 		return projection
 	}
 
-	if len(atomRequiredEditSnippetsFromSpec(body, targets)) > 0 {
+	if len(atomintake.RequiredEditSnippetsFromSpec(body, targets)) > 0 {
 		projection.NeedsAtomIntake = true
 		projection.Reason = "required_edit_snippet"
 		return projection
@@ -565,7 +631,7 @@ func laneBriefIntakeProjection(body string) laneBriefIntakeProjectionResult {
 	projection.LegacyHeadingFallback = true
 	if projection.Dispatchable && projection.LegacyHeadingFallback {
 		for _, heading := range []string{"required edits", "edits to apply", "implementation shape"} {
-			if strings.TrimSpace(atomMarkdownSectionByHeading(body, heading)) != "" {
+			if strings.TrimSpace(markdownsection.ByHeading(body, heading)) != "" {
 				projection.NeedsAtomIntake = true
 				projection.Reason = "legacy_heading:" + heading
 				return projection
@@ -578,18 +644,18 @@ func laneBriefIntakeProjection(body string) laneBriefIntakeProjectionResult {
 }
 
 func laneBriefHasAtomIntakeMarker(body string) bool {
-	if _, ok := atomSpecStatus(body); ok {
+	if _, ok := atomintake.SpecStatus(body); ok {
 		return true
 	}
-	if _, ok := atomRefineDraftReason(body); ok {
+	if _, ok := atomintake.RefineDraftReason(body); ok {
 		return true
 	}
-	if atomSpecHasAcceptedResult(body) {
+	if atomintake.SpecHasAcceptedResult(body) {
 		return true
 	}
-	if strings.TrimSpace(atomMarkdownSectionByHeading(body, "required edits")) != "" ||
-		strings.TrimSpace(atomMarkdownSectionByHeading(body, "edits to apply")) != "" ||
-		strings.TrimSpace(atomMarkdownSectionByHeading(body, "implementation shape")) != "" {
+	if strings.TrimSpace(markdownsection.ByHeading(body, "required edits")) != "" ||
+		strings.TrimSpace(markdownsection.ByHeading(body, "edits to apply")) != "" ||
+		strings.TrimSpace(markdownsection.ByHeading(body, "implementation shape")) != "" {
 		return true
 	}
 
@@ -609,12 +675,56 @@ func laneAtomIntakeReportFields(report atomIntakeReport, projection laneBriefInt
 	}
 
 	delete(fields, "type")
-	fields["workflow_id"] = string(projection.WorkflowID)
-	fields["workflow_state"] = string(projection.State)
-	fields["workflow_dispatchable"] = projection.Dispatchable
-	fields["workflow_reason"] = projection.Reason
+	workflowProjection := laneAtomIntakeWorkflowProjection(report, projection.Reason)
+	fields["workflow_id"] = string(workflowProjection.WorkflowID)
+	fields["workflow_state"] = string(workflowProjection.State)
+	if workflowProjection.TerminalState != "" {
+		fields["workflow_terminal_state"] = string(workflowProjection.TerminalState)
+	}
+	fields["workflow_dispatchable"] = workflowProjection.Dispatchable
+	fields["workflow_reason"] = workflowProjection.Reason
+	workflowstate.MustValidateStateProjection(workflowProjection.WorkflowID, workflowProjection.State, workflowProjection.TerminalState, workflowProjection.Dispatchable)
 
 	return fields
+}
+
+func laneAtomIntakeWorkflowProjection(report atomIntakeReport, reason string) laneBriefIntakeProjectionResult {
+	projection := laneBriefIntakeProjectionResult{
+		WorkflowID: workflowstate.WorkflowAtomIntake,
+		Reason:     strings.TrimSpace(reason),
+	}
+
+	switch report.State {
+	case atomintakecontract.StateDispatchable:
+		projection.State = workflowstate.StateDispatchable
+		projection.Dispatchable = true
+	case atomintakecontract.StateComplete:
+		projection.State = workflowstate.StateTerminal
+		projection.TerminalState = workflowstate.TerminalStateComplete
+	case atomintakecontract.StateSourceSatisfied:
+		projection.State = workflowstate.StateTerminal
+		projection.TerminalState = workflowstate.TerminalStateSourceSatisfied
+	case atomintakecontract.StateStaleNeedsRebase:
+		projection.State = workflowstate.StateTerminal
+		projection.TerminalState = workflowstate.TerminalStateStaleNeedsRebase
+	case atomintakecontract.StateFailedRefine:
+		projection.State = workflowstate.StateTerminal
+		projection.TerminalState = workflowstate.TerminalStateFailedRefineDraft
+	case atomintakecontract.StateBlockedDirty:
+		projection.State = workflowstate.StateTerminal
+		projection.TerminalState = workflowstate.TerminalStateBlockedDirtyFiles
+	case atomintakecontract.StateMissingScope:
+		projection.State = workflowstate.StateTerminal
+		projection.TerminalState = workflowstate.TerminalStateMissingScope
+	case atomintakecontract.StateInvalidScope:
+		projection.State = workflowstate.StateTerminal
+		projection.TerminalState = workflowstate.TerminalStateInvalidScope
+	default:
+		projection.State = workflowstate.StateTerminal
+		projection.TerminalState = workflowstate.TerminalStateBlocked
+	}
+
+	return projection
 }
 
 // parseLaneOptions parses lane-specific flags + the positional brief
@@ -696,7 +806,7 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	if opts.IntentLoopBudgetTokens < 0 {
 		return laneOptions{}, fmt.Errorf("lane: --total-budget-tokens must be greater than or equal to 0")
 	}
-	if opts.IntentLoop && opts.Mode != "plan-execute" {
+	if opts.IntentLoop && opts.Mode != string(lanecontract.LanePlanExecute) {
 		return laneOptions{}, fmt.Errorf("lane: --intent-loop is only supported for plan-execute mode")
 	}
 
@@ -755,7 +865,7 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	// opts.Model stays empty and the subcommand falls through to
 	// cfg.LlamaServer — i.e. the lane runs on the single configured
 	// model, which is the desired behavior for single-model projects.
-	if opts.Mode == "plan-execute" && strings.TrimSpace(opts.Model) == "" {
+	if opts.Mode == string(lanecontract.LanePlanExecute) && strings.TrimSpace(opts.Model) == "" {
 		opts.coderRequested = true
 	}
 
@@ -794,7 +904,7 @@ func runLanePostflightAfterLane(opts laneOptions, stdout io.Writer, stderr io.Wr
 }
 
 func resolveLaneModelAlias(opts laneOptions, stderr io.Writer) string {
-	if opts.Mode == "plan-execute" && !opts.explicitCoderRequested && strings.TrimSpace(opts.BackendProfile) != "" {
+	if opts.Mode == string(lanecontract.LanePlanExecute) && !opts.explicitCoderRequested && strings.TrimSpace(opts.BackendProfile) != "" {
 		if alias := resolveRoleAlias(opts.ProjectRoot, opts.BackendProfile, backends.RolePlanner, stderr); alias != "" {
 			return alias
 		}
@@ -898,7 +1008,7 @@ func shouldAutoPreloadLaneContextPack(opts laneOptions) bool {
 	}
 
 	switch strings.TrimSpace(opts.Mode) {
-	case "implement", "plan-execute":
+	case string(lanecontract.LaneImplement), string(lanecontract.LanePlanExecute):
 		return strings.TrimSpace(opts.BriefPath) != ""
 	default:
 		return false
@@ -984,7 +1094,7 @@ func buildLaneContextPackSection(opts laneOptions, cfg config.Config, stderr io.
 
 	wsCfg := cfg.Workspace
 
-	wsCfg.Root = firstNonEmptyString(strings.TrimSpace(opts.ProjectRoot), strings.TrimSpace(wsCfg.Root), filepath.Dir(opts.BriefPath))
+	wsCfg.Root = textutil.FirstNonEmpty(strings.TrimSpace(opts.ProjectRoot), strings.TrimSpace(wsCfg.Root), filepath.Dir(opts.BriefPath))
 
 	if strings.TrimSpace(wsCfg.CWD) == "" {
 		wsCfg.CWD = wsCfg.Root
@@ -998,12 +1108,12 @@ func buildLaneContextPackSection(opts laneOptions, cfg config.Config, stderr io.
 	defer cancel()
 
 	result := mgr.Execute(ctx, workspace.ToolRequest{
-		Tool:              "context_pack",
+		Tool:              workspace.ToolNameContextPack,
 		Task:              laneContextPackTask(opts, string(briefBody)),
 		Mode:              laneContextPackMode(opts.Mode),
 		Limit:             8,
 		BudgetTokens:      1200,
-		RequiredEditPaths: app.RequiredEditPathsFromPrompt(string(briefBody)),
+		RequiredEditPaths: plancontract.RequiredEditPathsFromPrompt(string(briefBody)),
 	})
 	if strings.TrimSpace(result.Error) != "" {
 		fmt.Fprintf(stderr, "lane: context_pack skipped: %s\n", result.Error)
@@ -1042,9 +1152,9 @@ func briefAlreadyHasContextPack(body []byte) bool {
 
 func laneContextPackMode(mode string) string {
 	switch strings.TrimSpace(mode) {
-	case "plan-execute":
+	case string(lanecontract.LanePlanExecute):
 		return "plan"
-	case "implement":
+	case string(lanecontract.LaneImplement):
 		return "implement"
 	default:
 		return "plan"
@@ -1195,7 +1305,7 @@ func writeLaneContextFiles(b *strings.Builder, files []laneContextPackFile, limi
 			break
 		}
 
-		role := firstNonEmptyString(file.Role, "candidate")
+		role := textutil.FirstNonEmpty(file.Role, "candidate")
 		score := ""
 
 		if file.Score > 0 {
@@ -1207,7 +1317,7 @@ func writeLaneContextFiles(b *strings.Builder, files []laneContextPackFile, limi
 			hub = ", hub"
 		}
 
-		fmt.Fprintf(b, "- `%s` (%s%s%s): %s\n", file.Path, role, score, hub, firstNonEmptyString(file.Reason, file.Confidence, file.Language))
+		fmt.Fprintf(b, "- `%s` (%s%s%s): %s\n", file.Path, role, score, hub, textutil.FirstNonEmpty(file.Reason, file.Confidence, file.Language))
 	}
 }
 
@@ -1223,14 +1333,14 @@ func writeLaneContextSymbols(b *strings.Builder, symbols []laneContextPackSymbol
 			break
 		}
 
-		name := firstNonEmptyString(sym.QualifiedName, sym.ID)
+		name := textutil.FirstNonEmpty(sym.QualifiedName, sym.ID)
 		loc := sym.Path
 
 		if sym.StartLine > 0 {
 			loc = fmt.Sprintf("%s:%d", loc, sym.StartLine)
 		}
 
-		fmt.Fprintf(b, "- `%s` in `%s` (%s): %s\n", name, loc, firstNonEmptyString(sym.Kind, "symbol"), firstNonEmptyString(sym.Reason, sym.Confidence))
+		fmt.Fprintf(b, "- `%s` in `%s` (%s): %s\n", name, loc, textutil.FirstNonEmpty(sym.Kind, "symbol"), textutil.FirstNonEmpty(sym.Reason, sym.Confidence))
 	}
 }
 
@@ -1246,7 +1356,7 @@ func writeLaneContextTests(b *strings.Builder, tests []laneContextPackTest, limi
 			break
 		}
 
-		target := firstNonEmptyString(test.Symbol, test.Path)
+		target := textutil.FirstNonEmpty(test.Symbol, test.Path)
 		if target != "" {
 			target = " — " + target
 		}
@@ -1517,7 +1627,7 @@ func projectRulesExtras(projectRoot string, canonical map[string]struct{}) []str
 }
 
 func laneForwardedRequiredEditPaths(opts laneOptions, atomReport *atomIntakeReport, stderr io.Writer) []string {
-	if opts.Mode != "plan-execute" {
+	if opts.Mode != string(lanecontract.LanePlanExecute) {
 		return nil
 	}
 
@@ -1525,7 +1635,7 @@ func laneForwardedRequiredEditPaths(opts laneOptions, atomReport *atomIntakeRepo
 
 	body, err := os.ReadFile(opts.BriefPath)
 	if err == nil {
-		paths = append(paths, app.RequiredEditPathsFromPrompt(string(body))...)
+		paths = append(paths, plancontract.RequiredEditPathsFromPrompt(string(body))...)
 	} else if stderr != nil {
 		fmt.Fprintf(stderr, "lane: required_edit_paths forwarding skipped: read brief: %v\n", err)
 	}
@@ -1534,36 +1644,36 @@ func laneForwardedRequiredEditPaths(opts laneOptions, atomReport *atomIntakeRepo
 		paths = append(paths, atomReport.ScopePaths...)
 	}
 
-	return planExecuteUniqueRequiredPaths(paths)
+	return plancontract.UniqueScopePaths(paths)
 }
 
 func buildLaneWriterRouteDecision(cfg config.Config, opts laneOptions, requiredEditPaths []string) writerroute.Decision {
 	mode := writerroute.ModeAgenticGuarded
-	taskFamily := "implementation"
-	reason := "route.local_model_default"
-	verificationOwner := "executor"
+	taskFamily := string(autonomy.TaskFamilyImplementation)
+	reason := writerroute.ReasonLocalModelDefault
+	verificationOwner := writerroute.VerificationOwnerExecutor
 
-	if opts.Mode == "plan-execute" {
+	if opts.Mode == string(lanecontract.LanePlanExecute) {
 		mode = writerroute.ModePlanSubmission
 		taskFamily = agent.PlanThenExecutePlannerTaskFamily
-		reason = "route.multi_file_plan_execute"
-		verificationOwner = "planner_owned"
+		reason = writerroute.ReasonMultiFilePlanExecute
+		verificationOwner = writerroute.VerificationOwnerPlannerOwned
 	} else if opts.PlannerOwnedVerification && !opts.AllowBuildTests {
-		verificationOwner = "planner_owned"
+		verificationOwner = writerroute.VerificationOwnerPlannerOwned
 	}
 
-	aliases := cliWriterRouteRoleAliases(opts.ProjectRoot, opts.BackendProfile)
+	aliases := writerrouting.RoleAliases(opts.ProjectRoot, opts.BackendProfile)
 	plannerModel := ""
 	executorModel := ""
 
 	switch opts.Mode {
-	case "plan-execute":
+	case string(lanecontract.LanePlanExecute):
 		plannerModel = strings.TrimSpace(opts.Model)
-	case "implement":
+	case string(lanecontract.LaneImplement):
 		executorModel = strings.TrimSpace(opts.Model)
 	}
 
-	return buildCLIWriterRouteDecision(cfg, cliWriterRouteOptions{
+	return writerrouting.BuildDecision(cfg, writerrouting.DecisionOptions{
 		Mode:              mode,
 		Lane:              opts.Mode,
 		TaskFamily:        taskFamily,
@@ -1571,7 +1681,7 @@ func buildLaneWriterRouteDecision(cfg config.Config, opts laneOptions, requiredE
 		ExecutorModel:     executorModel,
 		ReviewerModel:     executorModel,
 		RequiredEditPaths: requiredEditPaths,
-		ReasonCodes:       []string{reason},
+		ReasonCodes:       []writerroute.ReasonCode{reason},
 		VerificationOwner: verificationOwner,
 		RoleAliases:       aliases,
 	})
@@ -1587,8 +1697,8 @@ func buildForwardedArgs(opts laneOptions, composedPath string, requiredEditPaths
 		"--config", opts.ConfigPath,
 		"--prompt-file", composedPath,
 	}
-	if opts.Mode == "plan-execute" {
-		for _, path := range planExecuteUniqueRequiredPaths(requiredEditPaths) {
+	if opts.Mode == string(lanecontract.LanePlanExecute) {
+		for _, path := range plancontract.UniqueScopePaths(requiredEditPaths) {
 			out = append(out, "--required-edit-path", path)
 		}
 	}
@@ -1621,7 +1731,7 @@ func buildForwardedArgs(opts laneOptions, composedPath string, requiredEditPaths
 		out = append(out, "--max-tokens", strconv.Itoa(opts.MaxTokens))
 	}
 
-	if opts.Mode == "plan-execute" && opts.IntentLoop {
+	if opts.Mode == string(lanecontract.LanePlanExecute) && opts.IntentLoop {
 		out = append(out, "--intent-loop", "--max-cycles", strconv.Itoa(opts.IntentLoopMaxCycles))
 		if opts.IntentLoopBudgetTokens > 0 {
 			out = append(out, "--total-budget-tokens", strconv.Itoa(opts.IntentLoopBudgetTokens))
@@ -1631,22 +1741,20 @@ func buildForwardedArgs(opts laneOptions, composedPath string, requiredEditPaths
 	return out
 }
 
-// emitLaneJSONEvent writes one JSONL line to stdout for downstream
-// telemetry consumers. Mirrors emitPlanExecuteJSONEvent in
-// plan_execute.go but namespaces the event type as idiom.lane.* so
-// consumers can correlate the lane wrapper's events with the
-// orchestrator's idiom.plan_execute.* events.
-func emitLaneJSONEvent(stdout io.Writer, eventType string, fields map[string]any) {
-	payload := map[string]any{
-		"type": "idiom.lane." + eventType,
-		"ts":   time.Now().UTC().Format(time.RFC3339Nano),
+func emitLaneJSONEvent(stdout io.Writer, eventType lanecontract.EventType, fields map[string]any) error {
+	eventType = lanecontract.EventType(strings.TrimSpace(string(eventType)))
+	if !lanecontract.KnownEventType(eventType) {
+		return fmt.Errorf("unknown lane json event type %q", eventType)
 	}
-	maps.Copy(payload, fields)
 
-	body, err := json.Marshal(payload)
+	return jsonevents.Emit(stdout, true, lanecontract.EventName(eventType), fields)
+}
+
+func emitLaneWriterRouteJSONEvent(stdout io.Writer, eventType writerroute.EventType, fields map[string]any) error {
+	eventName, err := writerroute.CommandEventName(writerroute.CommandSurfaceLane, eventType)
 	if err != nil {
-		return
+		return err
 	}
 
-	fmt.Fprintln(stdout, string(body))
+	return jsonevents.Emit(stdout, true, eventName, fields)
 }

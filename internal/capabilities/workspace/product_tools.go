@@ -67,8 +67,6 @@ func (m *Manager) productStatus(req ToolRequest) ToolResult {
 
 	view, workflowState, statusErr := productworkflow.LoadCheckedProductStatus(absRoot)
 
-	view.NextValidActions = productStatusNextValidActions(view, statusErr != nil)
-
 	var payload any = view
 
 	if req.OperatorView {
@@ -90,40 +88,6 @@ func (m *Manager) productStatus(req ToolRequest) ToolResult {
 	}
 
 	return result
-}
-
-func productStatusNextValidActions(view productworkflow.ProductStatusView, workflowStateErr bool) []string {
-	if workflowStateErr {
-		if len(view.NextValidActions) > 0 {
-			return view.NextValidActions
-		}
-
-		return []string{"restore a valid workflow_state.json, then rerun product_status"}
-	}
-
-	if view.AuditStatus != "" && view.AuditStatus != "pass" {
-		action := "fix product workflow findings, then rerun product_status"
-		if len(view.NextValidActions) == 0 {
-			return []string{action}
-		}
-
-		if view.NextValidActions[0] == action {
-			return view.NextValidActions
-		}
-
-		next := make([]string, 0, len(view.NextValidActions)+1)
-
-		next = append(next, action)
-		next = append(next, view.NextValidActions...)
-
-		return next
-	}
-
-	if len(view.NextValidActions) > 0 {
-		return view.NextValidActions
-	}
-
-	return []string{"run product_status with operator_view=true to inspect continuation state"}
 }
 
 func encodeProductToolOutput(value any) (string, error) {

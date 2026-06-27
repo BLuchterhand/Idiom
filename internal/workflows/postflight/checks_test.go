@@ -352,24 +352,6 @@ func TestCommentBodyParsesMultipleSyntaxes(t *testing.T) {
 	}
 }
 
-// TestNormalizePathBehavior verifies the helper used by the
-// allowlist comparison so a regression there shows up in unit
-// tests rather than in a confusing allowlist false positive.
-func TestNormalizePathBehavior(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"a/b.go", "a/b.go"},
-		{"./a/b.go", "a/b.go"},
-		{"a/b/", "a/b"},
-		{`a\b.go`, "a/b.go"},
-	}
-	for _, c := range cases {
-		got := normalizePath(c.in)
-		if got != c.want {
-			t.Fatalf("normalizePath(%q) = %q, want %q", c.in, got, c.want)
-		}
-	}
-}
-
 // TestGenericChecksReturnsCanonicalSet verifies the always-on set.
 // Keeping it explicit prevents accidental check-set drift — any new
 // generic check must be added here alongside the docs.

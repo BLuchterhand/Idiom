@@ -264,7 +264,7 @@ func TestBuildImplementationHandoffRequiresAcceptedPromotionEvent(t *testing.T) 
 	input.CoverageEvaluation = CoverageGateEvaluation{Status: ProductWorkflowStatusPass, CoverageTier: "behavior_standard"}
 
 	handoff := BuildImplementationHandoff(input)
-	if handoff.CoverageContract == nil || handoff.CoverageContract.Status != ProductWorkflowStatusBlocked {
+	if handoff.CoverageContract == nil || handoff.CoverageContract.Status != string(ProductWorkflowStatusBlocked) {
 		t.Fatalf("expected missing promotion event to block accepted coverage, got %+v", handoff.CoverageContract)
 	}
 	if handoff.CoverageContract.EventID != "" {
@@ -331,7 +331,7 @@ func TestBuildImplementationHandoffBlocksAcceptedCoverageWithOpenQuestionSurface
 	}
 
 	handoff := BuildImplementationHandoff(input)
-	if handoff.CoverageContract == nil || handoff.CoverageContract.Status != ProductWorkflowStatusBlocked {
+	if handoff.CoverageContract == nil || handoff.CoverageContract.Status != string(ProductWorkflowStatusBlocked) {
 		t.Fatalf("open surface question should block accepted coverage contract, got %+v", handoff.CoverageContract)
 	}
 	if handoff.AcceptedCoverage != nil {
@@ -426,7 +426,7 @@ func TestBuildImplementationHandoffDoesNotExposeBlockedBehavioralCoverageAsAccep
 	input.CoverageEvaluation = CoverageGateEvaluation{Status: ProductWorkflowStatusPass, CoverageTier: "behavior_standard"}
 
 	handoff := BuildImplementationHandoff(input)
-	if handoff.CoverageContract == nil || handoff.CoverageContract.Status != ProductWorkflowStatusBlocked {
+	if handoff.CoverageContract == nil || handoff.CoverageContract.Status != string(ProductWorkflowStatusBlocked) {
 		t.Fatalf("blocked behavioral coverage should still expose a non-accepted diagnostic ref, got %+v", handoff.CoverageContract)
 	}
 	if handoff.AcceptedCoverage != nil {
@@ -475,7 +475,7 @@ func implementationHandoffInput(root string) BriefGenerationInput {
 			Title:            "Implementation handoff",
 			StatusBucket:     "started",
 			CurrentPhase:     "phase-4",
-			CurrentState:     "planning",
+			CurrentState:     WorkflowStatePlanned,
 			ArtifactPaths:    map[string]string{"events": "events.jsonl"},
 			Coverage:         CoverageState{CoverageTier: "unit"},
 			Privacy:          PrivacyState{RedactionStatus: "applied"},

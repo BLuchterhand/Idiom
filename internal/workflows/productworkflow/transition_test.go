@@ -387,6 +387,69 @@ func TestCloseTransitionSucceedsWithAllPreconditionsMet(t *testing.T) {
 	}
 }
 
+func TestApplyCloseTransitionPersistsClosedBucketAndState(t *testing.T) {
+	root := writeMetricsFixture(t)
+	data, err := os.ReadFile(filepath.Join(root, WorkflowStateFileName))
+	if err != nil {
+		t.Fatalf("read workflow state: %v", err)
+	}
+
+	wsJSON := string(data)
+	wsJSON = strings.Replace(wsJSON, `"current_state":"implementing"`, `"current_state":"reviewing"`, 1)
+	wsJSON = strings.Replace(wsJSON, `"gate_results":[{"gate":"scope","status":"pass"},{"gate":"verify","status":"fail"}]`, `"gate_results":[{"gate":"verification","status":"passed"},{"gate":"review","status":"passed"},{"gate":"investigation","status":"passed"}]`, 1)
+	wsJSON = strings.Replace(wsJSON, `"open_obligations":["OB-1","OB-2"]`, `"open_obligations":[]`, 1)
+	wsJSON = strings.Replace(wsJSON, `"blockers":["review pending"]`, `"blockers":[]`, 1)
+	wsJSON = strings.Replace(wsJSON, `"next_valid_actions":["close","retest"]`, `"next_valid_actions":["approve"]`, 1)
+
+	if err := os.WriteFile(filepath.Join(root, WorkflowStateFileName), []byte(wsJSON), 0o644); err != nil {
+		t.Fatalf("write workflow state: %v", err)
+	}
+	writeFixtureFile(t, root, "briefs/test.md", "# Brief\n\nClose the workflow.\n")
+	writeFixtureFile(t, root, "reports/r.json", "{}\n")
+	writeFixtureFile(t, root, "implementation_ledger.jsonl", `{"record_type":"atom_planned","task_id":"impl-metrics","effort_id":"metrics-effort","timestamp":"2026-05-17T00:00:00Z","complexity_tier":"C1","context_pack_id":"pack","implementor":{"id":"impl","runtime":"opencode","model":"m","command":"c"},"reviewer":{"id":"rev","model":"m","reasoning_effort":"medium","runtime":"codex"},"scope":{"expected_files":["a.go"],"forbidden_patterns":["docs/**"]},"required_verification":["go test"],"report_paths":{"implementation":"reports/i-implementation.json","review":"reports/r-review.json","investigation":"reports/x-investigation.json"}}`+"\n"+`{"record_type":"verification_completed","task_id":"impl-metrics","effort_id":"metrics-effort","timestamp":"2026-05-17T00:01:00Z","tdd_obligations_satisfied":["TDD-1","TDD-2"],"verification_status":"pass","verification_commands_run":["go test"],"actor":"verifier"}`+"\n")
+
+	result := ApplyProductWorkflowTransition(ProductWorkflowTransitionApplyOptions{
+		EffortRoot:            root,
+		Action:                ProductWorkflowActionApprove,
+		Actor:                 ProductWorkflowActionOwnerReviewer,
+		UpdatedAt:             "2026-06-26T12:00:00Z",
+		EventID:               "evt-close-test",
+		ExpectedStateRevision: 7,
+	})
+	if result.Status != ProductWorkflowStatusApplied {
+		t.Fatalf("expected applied transition, got status=%q blockers=%v", result.Status, result.Blockers)
+	}
+	if result.UpdatedWorkflowState.StatusBucket != WorkflowStatusBucketClosed {
+		t.Fatalf("expected result status_bucket closed, got %q", result.UpdatedWorkflowState.StatusBucket)
+	}
+	if result.UpdatedWorkflowState.CurrentState != WorkflowStateClosed {
+		t.Fatalf("expected result current_state closed, got %q", result.UpdatedWorkflowState.CurrentState)
+	}
+	if len(result.UpdatedWorkflowState.NextValidActions) != 0 {
+		t.Fatalf("expected no next actions for closed workflow, got %v", result.UpdatedWorkflowState.NextValidActions)
+	}
+
+	persisted, err := LoadWorkflowState(root)
+	if err != nil {
+		t.Fatalf("reload workflow state: %v", err)
+	}
+	if persisted.StatusBucket != WorkflowStatusBucketClosed || persisted.CurrentState != WorkflowStateClosed {
+		t.Fatalf("expected persisted closed bucket/state, got bucket=%q state=%q", persisted.StatusBucket, persisted.CurrentState)
+	}
+
+	statusView, workflowState, err := LoadCheckedProductStatus(root)
+	if err != nil {
+		t.Fatalf("load checked status: %v", err)
+	}
+	operatorStatus := BuildProductOperatorStatusView(statusView, workflowState)
+	if operatorStatus.Dispatchable {
+		t.Fatal("closed workflow must not be dispatchable")
+	}
+	if operatorStatus.WorkflowTerminalState == "" {
+		t.Fatal("closed workflow should have a terminal projection")
+	}
+}
+
 func TestCloseTransitionBlockedByAllPreconditionsFailing(t *testing.T) {
 	result := EvaluateTransition(TransitionInput{
 		StatusBucket:    "started",

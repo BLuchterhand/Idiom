@@ -8,8 +8,10 @@ import (
 	"slices"
 	"strings"
 
-	"idiom/internal/contracts/plan"
-	"idiom/internal/platform/util"
+	planartifact "idiom/internal/contracts/planartifact"
+	"idiom/internal/platform/textutil"
+
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/repository/comprehension"
 )
 
@@ -52,10 +54,10 @@ type PlanArtifactAuditFinding struct {
 	Evidence []string `json:"evidence,omitempty"`
 }
 
-func AuditPlanArtifact(root string, artifact PlanArtifact, opts PlanArtifactAuditOptions) PlanArtifactAuditResult {
+func AuditPlanArtifact(root string, artifact planartifact.PlanArtifact, opts PlanArtifactAuditOptions) PlanArtifactAuditResult {
 	audit := planArtifactAuditor{
 		root:     strings.TrimSpace(root),
-		artifact: NormalizeLoadedPlanArtifact(artifact),
+		artifact: planartifact.NormalizeLoadedPlanArtifact(artifact),
 		opts:     opts,
 	}
 	audit.checkPacketEvidence()
@@ -92,8 +94,8 @@ func (r PlanArtifactAuditResult) SummaryLine() string {
 		"audit_ok=%t findings=%d packet_state=%s packet_reason=%s packet_identity_mismatches=%d packet_freshness_mismatches=%d scope_path_mismatches=%d evidence_mismatches=%d unresolved_question_mismatches=%d verification_obligation_signals=%d approval_handoff_mismatches=%d approval_scope_mismatches=%d",
 		r.OK,
 		len(r.Findings),
-		util.FirstNonEmpty(r.Metrics.PacketState, "unknown"),
-		util.FirstNonEmpty(r.Metrics.PacketReason, "unknown"),
+		textutil.FirstNonEmpty(r.Metrics.PacketState, "unknown"),
+		textutil.FirstNonEmpty(r.Metrics.PacketReason, "unknown"),
 		r.Metrics.PacketIdentityMismatches,
 		r.Metrics.PacketFreshnessMismatches,
 		r.Metrics.ScopePathMismatches,
@@ -107,7 +109,7 @@ func (r PlanArtifactAuditResult) SummaryLine() string {
 
 type planArtifactAuditor struct {
 	root        string
-	artifact    PlanArtifact
+	artifact    planartifact.PlanArtifact
 	opts        PlanArtifactAuditOptions
 	packet      comprehension.PackResult
 	packetFound bool
@@ -116,10 +118,10 @@ type planArtifactAuditor struct {
 }
 
 func (a *planArtifactAuditor) checkPacketEvidence() {
-	packID := util.FirstNonEmpty(a.artifact.Packet.PackID, a.artifact.PackID)
+	packID := textutil.FirstNonEmpty(a.artifact.Packet.PackID, a.artifact.PackID)
 	a.markPacketState("missing", "not_provided", false)
 
-	a.metrics.PackID = sanitizePlanArtifactPackID(packID)
+	a.metrics.PackID = planartifact.SanitizePackID(packID)
 	a.metrics.PacketIndexID = sanitizePlanArtifactToken(a.artifact.Packet.IndexID)
 
 	if a.artifact.Packet.PackID != "" && a.artifact.PackID != "" && a.artifact.Packet.PackID != a.artifact.PackID {
@@ -142,7 +144,7 @@ func (a *planArtifactAuditor) checkPacketEvidence() {
 
 	if packID == "" {
 		if packetStatusClaimsAvailable(a.artifact.Packet) {
-			a.add(enforcedSeverity(a.opts), "packet_identity_mismatch", "plan artifact claims packet availability without a packet id", []string{"packet_status=" + a.artifact.Packet.Status})
+			a.add(enforcedSeverity(a.opts), "packet_identity_mismatch", "plan artifact claims packet availability without a packet id", []string{"packet_status=" + string(a.artifact.Packet.Status)})
 
 			a.metrics.PacketIdentityMismatches++
 			a.markPacketState("missing", "availability_claim_without_packet_id", true)
@@ -174,7 +176,7 @@ func (a *planArtifactAuditor) checkPacketEvidence() {
 	a.packetFound = true
 	a.metrics.PacketAvailable = true
 	a.metrics.PacketFresh = packet.Fresh
-	a.metrics.PacketIndexID = sanitizePlanArtifactToken(util.FirstNonEmpty(packet.IndexID, a.artifact.Packet.IndexID))
+	a.metrics.PacketIndexID = sanitizePlanArtifactToken(textutil.FirstNonEmpty(packet.IndexID, a.artifact.Packet.IndexID))
 
 	if packet.Fresh {
 		a.markPacketState("inherited", "fresh_graph_view", a.metrics.PacketState != "overridden")
@@ -202,7 +204,7 @@ func (a *planArtifactAuditor) checkPacketEvidence() {
 
 	for _, evidence := range a.artifact.Evidence {
 		if evidence.Freshness == "fresh" && !packet.Fresh {
-			a.add(enforcedSeverity(a.opts), "packet_freshness_mismatch", "plan evidence claims fresh facts while loaded packet is stale", []string{util.FirstNonEmpty(evidence.ID, evidence.Kind)})
+			a.add(enforcedSeverity(a.opts), "packet_freshness_mismatch", "plan evidence claims fresh facts while loaded packet is stale", []string{textutil.FirstNonEmpty(evidence.ID, string(evidence.Kind))})
 
 			a.metrics.PacketFreshnessMismatches++
 		}
@@ -226,7 +228,7 @@ func (a *planArtifactAuditor) markPacketState(state string, reason string, overw
 }
 
 func (a *planArtifactAuditor) checkScopeEvidence() {
-	editPaths := planArtifactEditPaths(a.artifact.Edits)
+	editPaths := planartifact.EditPaths(a.artifact.Edits)
 
 	a.metrics.SubmittedEditPaths = len(editPaths)
 
@@ -240,7 +242,7 @@ func (a *planArtifactAuditor) checkScopeEvidence() {
 	sourceSatisfiedViolations := plancontract.ValidateSourceSatisfiedPathCoverage(plancontract.SourceSatisfiedPathCoverageInput{
 		RequiredPaths:        planArtifactAuditSetStrings(required),
 		SourceSatisfiedPaths: a.artifact.Paths.SourceSatisfied,
-		Evidence:             PlanArtifactSourceSatisfiedEvidenceRefs(a.artifact),
+		Evidence:             planartifact.SourceSatisfiedEvidenceRefs(a.artifact),
 		ApprovedPaths:        a.artifact.Approval.ApprovedPaths,
 		PendingPaths:         a.artifact.Approval.PendingPaths,
 		RequireEvidence:      true,
@@ -371,7 +373,7 @@ func (a *planArtifactAuditor) checkUnresolvedQuestions() {
 		}
 
 		if question.RequiredBeforeHandoff && a.artifact.Handoff.Ready {
-			a.add(enforcedSeverity(a.opts), "unresolved_question_mismatch", "handoff is marked ready while a required unresolved question remains open", []string{util.FirstNonEmpty(question.ID, question.Claim)})
+			a.add(enforcedSeverity(a.opts), "unresolved_question_mismatch", "handoff is marked ready while a required unresolved question remains open", []string{textutil.FirstNonEmpty(question.ID, question.Claim)})
 
 			a.metrics.UnresolvedQuestionMismatches++
 		}
@@ -380,15 +382,15 @@ func (a *planArtifactAuditor) checkUnresolvedQuestions() {
 
 func (a *planArtifactAuditor) checkVerificationObligations() {
 	for _, obligation := range a.artifact.VerificationObligations {
-		if obligation.Required && !planArtifactVerificationClosed(obligation.Status) {
+		if obligation.Required && !planArtifactVerificationClosed(string(obligation.Status)) {
 			a.metrics.RequiredVerificationOpenCount++
 
 			a.metrics.VerificationObligationSignals++
-			a.add("warning", "verification_obligation_open", "required verification obligation remains open for executor or reviewer", []string{util.FirstNonEmpty(obligation.ID, obligation.Kind, obligation.Command, obligation.Path)})
+			a.add("warning", "verification_obligation_open", "required verification obligation remains open for executor or reviewer", []string{textutil.FirstNonEmpty(obligation.ID, string(obligation.Kind), obligation.Command, obligation.Path)})
 		}
 
 		if obligation.Required && obligation.Kind == "" && obligation.Command == "" && obligation.Path == "" {
-			a.add(enforcedSeverity(a.opts), "verification_obligation_mismatch", "required verification obligation has no bounded kind, command, or path", []string{util.FirstNonEmpty(obligation.ID, "verification")})
+			a.add(enforcedSeverity(a.opts), "verification_obligation_mismatch", "required verification obligation has no bounded kind, command, or path", []string{textutil.FirstNonEmpty(obligation.ID, "verification")})
 
 			a.metrics.VerificationObligationSignals++
 		}
@@ -417,9 +419,21 @@ func (a *planArtifactAuditor) checkApprovalAndHandoff() {
 		a.metrics.ApprovalHandoffMismatches++
 	}
 
-	if a.artifact.Approval.Required && planArtifactApprovalPartial(a.artifact.Approval.Status) {
+	if status := strings.TrimSpace(string(a.artifact.Handoff.Status)); status != "" && !planartifact.KnownHandoffStatus(status) {
+		a.add(enforcedSeverity(a.opts), "approval_handoff_mismatch", "handoff status is unsupported", []string{"handoff_status=" + status})
+
+		a.metrics.ApprovalHandoffMismatches++
+	}
+
+	if a.artifact.Handoff.Ready && strings.TrimSpace(string(a.artifact.Handoff.Status)) != string(planartifact.HandoffStatusReady) {
+		a.add(enforcedSeverity(a.opts), "approval_handoff_mismatch", "handoff is marked ready with a non-ready status", []string{"handoff_status=" + textutil.FirstNonEmpty(string(a.artifact.Handoff.Status), "missing_handoff_status")})
+
+		a.metrics.ApprovalHandoffMismatches++
+	}
+
+	if a.artifact.Approval.Required && planartifact.IsApprovalStatusPartial(string(a.artifact.Approval.Status)) {
 		a.checkPartialApprovalScope()
-	} else if a.artifact.Approval.Required && !planArtifactApprovalSatisfied(a.artifact.Approval.Status) {
+	} else if a.artifact.Approval.Required && !planArtifactApprovalSatisfied(string(a.artifact.Approval.Status)) {
 		severity := "warning"
 		message := "approval is required but not satisfied"
 
@@ -428,13 +442,13 @@ func (a *planArtifactAuditor) checkApprovalAndHandoff() {
 			message = "handoff is marked ready while required approval is not satisfied"
 		}
 
-		a.add(severity, "approval_handoff_mismatch", message, []string{util.FirstNonEmpty(a.artifact.Approval.Status, "missing_approval_status")})
+		a.add(severity, "approval_handoff_mismatch", message, []string{textutil.FirstNonEmpty(string(a.artifact.Approval.Status), "missing_approval_status")})
 
 		a.metrics.ApprovalHandoffMismatches++
 	}
 
-	if a.artifact.Handoff.Ready && a.artifact.Approval.ExecutionPermission == "blocked" {
-		a.add(enforcedSeverity(a.opts), "approval_scope_mismatch", "handoff is marked ready while approval execution permission is blocked", []string{util.FirstNonEmpty(a.artifact.Approval.ScopeID, "missing_approval_scope_id")})
+	if a.artifact.Handoff.Ready && a.artifact.Approval.ExecutionPermission == planartifact.ExecutionPermissionBlocked {
+		a.add(enforcedSeverity(a.opts), "approval_scope_mismatch", "handoff is marked ready while approval execution permission is blocked", []string{textutil.FirstNonEmpty(a.artifact.Approval.ScopeID, "missing_approval_scope_id")})
 
 		a.metrics.ApprovalScopeMismatches++
 	}
@@ -445,8 +459,14 @@ func (a *planArtifactAuditor) checkApprovalAndHandoff() {
 		a.metrics.ApprovalHandoffMismatches++
 	}
 
-	if strings.TrimSpace(a.artifact.Handoff.Status) == "ready" && !a.artifact.Handoff.Ready {
-		a.add("warning", "approval_handoff_mismatch", "handoff status is ready but ready flag is false", []string{a.artifact.Handoff.ID})
+	if strings.TrimSpace(string(a.artifact.Handoff.Status)) == string(planartifact.HandoffStatusReady) && !a.artifact.Handoff.Ready {
+		a.add(enforcedSeverity(a.opts), "approval_handoff_mismatch", "handoff status is ready but ready flag is false", []string{a.artifact.Handoff.ID})
+
+		a.metrics.ApprovalHandoffMismatches++
+	}
+
+	if strings.TrimSpace(string(a.artifact.Handoff.Status)) == string(planartifact.HandoffStatusBlocked) && !a.artifact.Handoff.Ready && len(a.artifact.Handoff.Blockers) == 0 {
+		a.add(enforcedSeverity(a.opts), "approval_handoff_mismatch", "blocked handoff has no blocker reason", []string{a.artifact.Handoff.ID})
 
 		a.metrics.ApprovalHandoffMismatches++
 	}
@@ -459,33 +479,33 @@ func (a *planArtifactAuditor) checkPartialApprovalScope() {
 	}
 
 	if len(a.artifact.Approval.ApprovedPaths) == 0 {
-		a.add(severity, "approval_scope_mismatch", "partial approval is missing approved scope paths", []string{util.FirstNonEmpty(a.artifact.Approval.ScopeID, "missing_approval_scope_id")})
+		a.add(severity, "approval_scope_mismatch", "partial approval is missing approved scope paths", []string{textutil.FirstNonEmpty(a.artifact.Approval.ScopeID, "missing_approval_scope_id")})
 
 		a.metrics.ApprovalScopeMismatches++
 	}
 
 	if len(a.artifact.Approval.PendingPaths) == 0 {
-		a.add(severity, "approval_scope_mismatch", "partial approval is missing pending scope paths", []string{util.FirstNonEmpty(a.artifact.Approval.ScopeID, "missing_approval_scope_id")})
+		a.add(severity, "approval_scope_mismatch", "partial approval is missing pending scope paths", []string{textutil.FirstNonEmpty(a.artifact.Approval.ScopeID, "missing_approval_scope_id")})
 
 		a.metrics.ApprovalScopeMismatches++
 	}
 
 	switch a.artifact.Approval.ExecutionPermission {
-	case "execute_approved_scope":
-	case "blocked":
+	case planartifact.ExecutionPermissionExecuteApprovedScope:
+	case planartifact.ExecutionPermissionBlocked:
 		if a.artifact.Handoff.Ready {
-			a.add("error", "approval_scope_mismatch", "partial approval cannot execute while execution permission is blocked", []string{util.FirstNonEmpty(a.artifact.Approval.ScopeID, "missing_approval_scope_id")})
+			a.add("error", "approval_scope_mismatch", "partial approval cannot execute while execution permission is blocked", []string{textutil.FirstNonEmpty(a.artifact.Approval.ScopeID, "missing_approval_scope_id")})
 
 			a.metrics.ApprovalScopeMismatches++
 		}
 	default:
-		a.add(severity, "approval_scope_mismatch", "partial approval has ambiguous execution permission", []string{util.FirstNonEmpty(a.artifact.Approval.ExecutionPermission, "missing_execution_permission")})
+		a.add(severity, "approval_scope_mismatch", "partial approval has ambiguous execution permission", []string{textutil.FirstNonEmpty(string(a.artifact.Approval.ExecutionPermission), "missing_execution_permission")})
 
 		a.metrics.ApprovalScopeMismatches++
 	}
 
 	if !a.artifact.Handoff.Ready {
-		a.add("warning", "approval_handoff_mismatch", "partial approval is not executable until handoff is ready", []string{util.FirstNonEmpty(a.artifact.Approval.ScopeID, "missing_approval_scope_id")})
+		a.add("warning", "approval_handoff_mismatch", "partial approval is not executable until handoff is ready", []string{textutil.FirstNonEmpty(a.artifact.Approval.ScopeID, "missing_approval_scope_id")})
 
 		a.metrics.ApprovalHandoffMismatches++
 
@@ -495,7 +515,7 @@ func (a *planArtifactAuditor) checkPartialApprovalScope() {
 	approved := planArtifactAuditStringSet(a.artifact.Approval.ApprovedPaths)
 	pending := planArtifactAuditStringSet(a.artifact.Approval.PendingPaths)
 
-	for _, path := range planArtifactEditPaths(a.artifact.Edits) {
+	for _, path := range planartifact.EditPaths(a.artifact.Edits) {
 		if _, ok := pending[path]; ok {
 			a.add("error", "approval_scope_mismatch", "plan edit path is still pending approval", []string{path})
 
@@ -529,7 +549,7 @@ func (a *planArtifactAuditor) result() PlanArtifactAuditResult {
 
 func (a *planArtifactAuditor) add(severity string, kind string, message string, evidence []string) {
 	item := PlanArtifactAuditFinding{
-		Severity: sanitizePlanArtifactToken(util.FirstNonEmpty(severity, "warning")),
+		Severity: sanitizePlanArtifactToken(textutil.FirstNonEmpty(severity, "warning")),
 		Kind:     sanitizePlanArtifactToken(kind),
 		Message:  sanitizePlanArtifactText(message, 240),
 		Evidence: normalizePlanArtifactAuditEvidence(evidence),
@@ -594,7 +614,7 @@ func planArtifactPacketScopePaths(packet comprehension.PackResult) map[string]st
 	return out
 }
 
-func planArtifactEditCreatesNewPath(root string, edits []PlanEdit, path string) bool {
+func planArtifactEditCreatesNewPath(root string, edits []planartifact.PlanEdit, path string) bool {
 	for _, edit := range edits {
 		if edit.Path != path || !planEditIsWholeFileWrite(edit) {
 			continue
@@ -613,13 +633,13 @@ func planArtifactEditCreatesNewPath(root string, edits []PlanEdit, path string) 
 	return false
 }
 
-func packetStatusClaimsAvailable(packet PlanArtifactPacket) bool {
-	status := strings.TrimSpace(packet.Status)
+func packetStatusClaimsAvailable(packet planartifact.PlanArtifactPacket) bool {
+	status := strings.TrimSpace(string(packet.Status))
 	return status == "available" || status == "provided" || status == "fresh"
 }
 
-func packetStatusClaimsFresh(packet PlanArtifactPacket) bool {
-	return strings.TrimSpace(packet.Freshness) == "fresh" || strings.TrimSpace(packet.Status) == "fresh"
+func packetStatusClaimsFresh(packet planartifact.PlanArtifactPacket) bool {
+	return strings.TrimSpace(packet.Freshness) == "fresh" || strings.TrimSpace(string(packet.Status)) == "fresh"
 }
 
 func planArtifactQuestionClosed(status string) bool {

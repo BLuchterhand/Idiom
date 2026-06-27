@@ -1,4 +1,4 @@
-package plancontract
+package plan
 
 import "testing"
 
@@ -20,6 +20,18 @@ func TestVerificationCommandArgsAllowsCanonicalTestCommands(t *testing.T) {
 				t.Fatalf("canonical command = %q, want %q", got, command)
 			}
 		})
+	}
+}
+
+func TestVerificationCommandPrefixReturnsMatchedAllowedPrefix(t *testing.T) {
+	args, ok := VerificationCommandArgs("python -m pytest tests/unit")
+	if !ok {
+		t.Fatal("VerificationCommandArgs rejected pytest command")
+	}
+
+	prefix := VerificationCommandPrefix(args)
+	if len(prefix) != 3 || prefix[0] != "python" || prefix[1] != "-m" || prefix[2] != "pytest" {
+		t.Fatalf("VerificationCommandPrefix = %#v, want python -m pytest", prefix)
 	}
 }
 

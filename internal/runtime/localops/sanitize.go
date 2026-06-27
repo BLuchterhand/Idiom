@@ -9,10 +9,11 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"idiom/internal/contracts/sensitivity"
 )
 
 var (
-	secretValuePattern = regexp.MustCompile(`(?i)\b(secret|token|credential|password|api[_-]?key)\b\s*[:= ]\s*\S+`)
 	customerPattern    = regexp.MustCompile(`(?i)\bcustomer[a-z0-9_-]*\b|\b[a-z0-9_-]*customer[a-z0-9_-]*\b`)
 	privateRepoPattern = regexp.MustCompile(`(?i)\bprivate\s+(repo|repository|workspace|project|customer)\b|\b[a-z0-9_-]*private[a-z0-9_-]*(repo|repository|workspace|project|customer)[a-z0-9_-]*\b|\b[a-z0-9_-]*(repo|repository|workspace|project|customer)[a-z0-9_-]*private[a-z0-9_-]*\b`)
 )
@@ -240,7 +241,7 @@ func SensitiveStringClasses(value string) []string {
 }
 
 func ContainsSecretValue(value string) bool {
-	return secretValuePattern.MatchString(value)
+	return sensitivity.ContainsSecretMarker(value)
 }
 
 func TokenNeedsRedaction(token string) bool {

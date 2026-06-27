@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	queuecontract "idiom/internal/contracts/queue"
 )
 
 // HeldPoolsEnv names the env var that carries the colon-separated
@@ -24,17 +26,8 @@ import (
 // repro.
 const HeldPoolsEnv = "IDIOM_QUEUE_HELD_POOLS"
 
-type MaybeAcquireState string
-
-const (
-	MaybeAcquireStateAcquired    MaybeAcquireState = "acquired"
-	MaybeAcquireStateUnavailable MaybeAcquireState = "unavailable"
-	MaybeAcquireStateDegraded    MaybeAcquireState = "degraded"
-	MaybeAcquireStateError       MaybeAcquireState = "error"
-)
-
 type MaybeAcquireResult struct {
-	State   MaybeAcquireState
+	State   queuecontract.AdmissionState
 	Pool    string
 	Reason  string
 	Release func()
@@ -103,7 +96,7 @@ func MaybeAcquireWithResult(ctx context.Context, socketPath, pool, label, client
 			fmt.Fprintf(statusOut, "[idiom queue %s] ancestor holds slot in same pool; nested acquire is no-op\n", pool)
 		}
 
-		return MaybeAcquireResult{State: MaybeAcquireStateDegraded, Pool: pool, Reason: "nested_same_pool", Release: func() {}}
+		return MaybeAcquireResult{State: queuecontract.AdmissionStateNestedSamePool, Pool: pool, Reason: string(queuecontract.ReasonClassNestedSamePool), Release: func() {}}
 	}
 
 	if strings.TrimSpace(heldPools) != "" {
@@ -111,7 +104,7 @@ func MaybeAcquireWithResult(ctx context.Context, socketPath, pool, label, client
 			fmt.Fprintf(statusOut, "[idiom queue %s] ancestor holds slot in different pool(s) (%s); skipping nested acquire to prevent cross-pool deadlock — wrap the outer command with the pool the inner inference actually uses\n", pool, heldPools)
 		}
 
-		return MaybeAcquireResult{State: MaybeAcquireStateDegraded, Pool: pool, Reason: "nested_cross_pool", Release: func() {}}
+		return MaybeAcquireResult{State: queuecontract.AdmissionStateNestedCrossPool, Pool: pool, Reason: string(queuecontract.ReasonClassNestedCrossPool), Release: func() {}}
 	}
 
 	socketPath = strings.TrimSpace(socketPath)
@@ -120,7 +113,7 @@ func MaybeAcquireWithResult(ctx context.Context, socketPath, pool, label, client
 	}
 
 	if !socketReachable(socketPath) {
-		return MaybeAcquireResult{State: MaybeAcquireStateUnavailable, Pool: pool, Reason: "daemon_unreachable", Release: func() {}}
+		return MaybeAcquireResult{State: queuecontract.AdmissionStateUnavailable, Pool: pool, Reason: string(queuecontract.ReasonClassDaemonUnreachable), Release: func() {}}
 	}
 
 	lease, err := Acquire(ctx, socketPath, pool, label, client)
@@ -128,14 +121,14 @@ func MaybeAcquireWithResult(ctx context.Context, socketPath, pool, label, client
 		// Reachable but acquire failed (unknown pool, daemon error
 		// mid-handshake). Surface so the caller can decide whether to
 		// fail loud or proceed un-gated; current callers proceed.
-		return MaybeAcquireResult{State: MaybeAcquireStateError, Pool: pool, Reason: err.Error(), Release: func() {}, Err: err}
+		return MaybeAcquireResult{State: queuecontract.AdmissionStateError, Pool: pool, Reason: err.Error(), Release: func() {}, Err: err}
 	}
 
 	for {
 		select {
 		case <-lease.Granted():
 			closer := lease
-			return MaybeAcquireResult{State: MaybeAcquireStateAcquired, Pool: lease.Pool, Release: func() { _ = closer.Close() }}
+			return MaybeAcquireResult{State: queuecontract.AdmissionStateAcquired, Pool: lease.Pool, Release: func() { _ = closer.Close() }}
 		case pos := <-lease.Updates():
 			if statusOut != nil {
 				fmt.Fprintf(statusOut, "[idiom queue %s] waiting at position %d\n", lease.Pool, pos)
@@ -143,18 +136,18 @@ func MaybeAcquireWithResult(ctx context.Context, socketPath, pool, label, client
 		case e := <-lease.Err():
 			_ = lease.Close()
 			if e != nil {
-				return MaybeAcquireResult{State: MaybeAcquireStateError, Pool: lease.Pool, Reason: e.Error(), Release: func() {}, Err: e}
+				return MaybeAcquireResult{State: queuecontract.AdmissionStateError, Pool: lease.Pool, Reason: e.Error(), Release: func() {}, Err: e}
 			}
 
 			err := queueConnectionClosedError()
 
-			return MaybeAcquireResult{State: MaybeAcquireStateError, Pool: lease.Pool, Reason: err.Error(), Release: func() {}, Err: err}
+			return MaybeAcquireResult{State: queuecontract.AdmissionStateError, Pool: lease.Pool, Reason: err.Error(), Release: func() {}, Err: err}
 		case <-ctx.Done():
 			_ = lease.Close()
 
 			err := ctx.Err()
 
-			return MaybeAcquireResult{State: MaybeAcquireStateError, Pool: lease.Pool, Reason: err.Error(), Release: func() {}, Err: err}
+			return MaybeAcquireResult{State: queuecontract.AdmissionStateError, Pool: lease.Pool, Reason: err.Error(), Release: func() {}, Err: err}
 		}
 	}
 }

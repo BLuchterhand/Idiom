@@ -43,11 +43,11 @@ func (m *Model) slashProductCreate(_ string, fields []string) bool {
 	})
 
 	switch result.Status {
-	case "ok":
+	case productworkflow.ProductWorkflowStatusOK:
 		m.status = fmt.Sprintf("Product effort created at %s: %s", displayRoot, result.CurrentPhase)
-	case "resumed":
+	case productworkflow.ProductWorkflowStatusResumed:
 		m.status = fmt.Sprintf("Product effort resumed at %s: %s", displayRoot, result.CurrentPhase)
-	case "blocked":
+	case productworkflow.ProductWorkflowStatusBlocked:
 		m.status = fmt.Sprintf("Product create blocked at %s: %s", displayRoot, result.CurrentPhase)
 	default:
 		m.status = fmt.Sprintf("Product create %s: %s", result.Status, displayRoot)

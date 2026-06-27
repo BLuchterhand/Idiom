@@ -10,7 +10,11 @@ import (
 	"time"
 	"unicode"
 
-	"idiom/internal/platform/util"
+	featureplannercontract "idiom/internal/contracts/featureplanner"
+	lanecontract "idiom/internal/contracts/lane"
+	plancontract "idiom/internal/contracts/plan"
+	"idiom/internal/platform/sessionid"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/featureplanner"
@@ -54,10 +58,10 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 	m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: operatorCommand})
 	m.logMessage("user", operatorCommand)
 	m.logMessage("route_plan", "initial=feature-planner reason=typed_feature_planner_command route_source=typed_command")
-	m.logFeaturePlannerInternalEvent("idiom.feature_planner.start", objective)
+	m.logFeaturePlannerInternalEvent(featureplannercontract.EventName(featureplannercontract.EventStart), objective)
 
 	if productBrief != nil {
-		m.logFeaturePlannerInternalEvent("idiom.feature_planner.product_context", fmt.Sprintf("effort_id=%s effort_root=%s", productBrief.EffortID, effortRoot))
+		m.logFeaturePlannerInternalEvent(featureplannercontract.EventName(featureplannercontract.EventProductContext), fmt.Sprintf("effort_id=%s effort_root=%s", productBrief.EffortID, effortRoot))
 
 		if productBrief.IsClosedSourceSatisfied() {
 			return m.closeFeaturePlannerTUISourceSatisfied(state, *productBrief)
@@ -691,8 +695,8 @@ func (m *Model) runFeaturePlannerAtomPlanExecuteWithRunner(ctx context.Context, 
 		answer = err.Error()
 	}
 
-	fields := m.featurePlannerPlanExecuteCompletionFields(answer)
-	if retryPrompt, ok := featureplanner.PlanExecuteRecoveryRetryPrompt(prompt, fields); ok {
+	summary := m.featurePlannerPlanExecuteCompletionSummary(answer)
+	if retryPrompt, ok := featureplanner.PlanExecuteRecoveryRetryPromptForSummary(prompt, summary); ok {
 		answer, err = runOnce(ctx, retryPrompt)
 		if err != nil {
 			if m.lastPlanExecuteRunResult == nil {
@@ -702,20 +706,20 @@ func (m *Model) runFeaturePlannerAtomPlanExecuteWithRunner(ctx context.Context, 
 			answer = err.Error()
 		}
 
-		fields = m.featurePlannerPlanExecuteCompletionFields(answer)
+		summary = m.featurePlannerPlanExecuteCompletionSummary(answer)
 	}
 
-	completion, err := encodeFeaturePlannerPlanExecuteCompletionFields(fields)
+	completion, err := encodeFeaturePlannerPlanExecuteCompletionSummary(summary)
 	if err != nil {
 		return "", err
 	}
 
-	m.logFeaturePlannerInternalEvent(featurePlannerPlanExecuteCompletionLogType(completion), completion)
+	m.logFeaturePlannerInternalEvent(string(featurePlannerPlanExecuteCompletionLogType(completion)), completion)
 
 	return completion, nil
 }
 
-const featurePlannerPlanExecuteGitHistoryRequirementRole = "idiom.feature_planner.plan_execute_git_history_requirement"
+var featurePlannerPlanExecuteGitHistoryRequirementRole = featureplannercontract.EventName(featureplannercontract.EventPlanExecuteGitHistoryRequirement)
 
 func (m *Model) logFeaturePlannerPlanExecuteGitHistoryRequirement() {
 	m.logFeaturePlannerInternalEvent(featurePlannerPlanExecuteGitHistoryRequirementRole, featurePlannerPlanExecuteGitHistoryRequirementPayload())
@@ -723,10 +727,10 @@ func (m *Model) logFeaturePlannerPlanExecuteGitHistoryRequirement() {
 
 func featurePlannerPlanExecuteGitHistoryRequirementPayload() string {
 	body, _ := json.Marshal(map[string]any{
-		"tool": "git_history_requirement",
-		featureplanner.PlanExecuteCompletionFieldLaneFamily: featureplanner.PlanExecuteCompletionLaneFamily,
-		"commit_descriptions_required":                      true,
-		"evidence_tools":                                    []string{"history_range", "history_symbol"},
+		featureplannercontract.PlanExecuteCompletionFieldTool:       string(featureplannercontract.ToolGitHistoryRequirement),
+		featureplannercontract.PlanExecuteCompletionFieldLaneFamily: string(lanecontract.LanePlanExecute),
+		"commit_descriptions_required":                              true,
+		"evidence_tools":                                            []string{"history_range", "history_symbol"},
 	})
 
 	return string(body)
@@ -761,35 +765,37 @@ func planExecuteAnswerIsBlocked(answer string) bool {
 }
 
 func (m *Model) encodeFeaturePlannerPlanExecuteCompletion(summary string) (string, error) {
-	return encodeFeaturePlannerPlanExecuteCompletionFields(m.featurePlannerPlanExecuteCompletionFields(summary))
+	return encodeFeaturePlannerPlanExecuteCompletionSummary(m.featurePlannerPlanExecuteCompletionSummary(summary))
 }
 
-func (m *Model) featurePlannerPlanExecuteCompletionFields(summary string) map[string]any {
-	fields := featureplanner.PlanExecuteCompletionFields(summary)
+func (m *Model) featurePlannerPlanExecuteCompletionSummary(text string) featureplanner.PlanExecuteCompletionSummary {
+	summary := featureplanner.PlanExecuteCompletionSummaryFromOutput(text)
 	if m != nil {
-		overlayFeaturePlannerPlanExecuteRunResult(fields, m.cfg.Workspace.Root, m.lastPlanExecuteRunResult)
+		summary = overlayFeaturePlannerPlanExecuteRunResult(summary, m.cfg.Workspace.Root, m.lastPlanExecuteRunResult)
 	}
 
-	fields[featureplanner.PlanExecuteCompletionFieldTool] = featureplanner.ToolPlanExecuteComplete
-	fields[featureplanner.PlanExecuteCompletionFieldLaneFamily] = featureplanner.PlanExecuteCompletionLaneFamily
+	summary.Tool = string(featureplannercontract.ToolPlanExecuteComplete)
+	summary.LaneFamily = string(lanecontract.LanePlanExecute)
 
-	if featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldStatus) == "" {
-		fields[featureplanner.PlanExecuteCompletionFieldStatus] = featureplanner.PlanExecuteCompletionStatusAmbiguous
-		fields[featureplanner.PlanExecuteCompletionFieldFailureKind] = util.FirstNonEmpty(featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldFailureKind), featureplanner.PlanExecuteCompletionMissingStatusFailureKind)
-		fields[featureplanner.PlanExecuteCompletionFieldFailureReason] = util.FirstNonEmpty(featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldFailureReason), featureplanner.PlanExecuteCompletionMissingStatusFailureReason)
+	if strings.TrimSpace(summary.Status) == "" {
+		summary.Status = featureplanner.PlanExecuteCompletionStatusAmbiguous
+		summary.FailureKind = textutil.FirstNonEmpty(summary.FailureKind, featureplanner.PlanExecuteCompletionMissingStatusFailureKind)
+		summary.FailureReason = textutil.FirstNonEmpty(summary.FailureReason, featureplanner.PlanExecuteCompletionMissingStatusFailureReason)
 	}
 
-	if featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldCompletionSource) == "" {
-		fields[featureplanner.PlanExecuteCompletionFieldCompletionSource] = featureplanner.PlanExecuteCompletionSourceTUIReturned
+	if strings.TrimSpace(summary.CompletionSource) == "" {
+		summary.CompletionSource = string(featureplannercontract.PlanExecuteCompletionSourceTUIReturned)
 	}
 
-	fields[featureplanner.PlanExecuteCompletionFieldSummary] = featurePlannerPlanExecuteCompletionSummary(fields)
-	featureplanner.TrustObservedPlanExecuteCompletionFields(fields)
+	summary.Summary = featurePlannerPlanExecuteCompletionText(summary)
+	summary = featureplanner.TrustObservedPlanExecuteCompletionSummary(summary)
 
-	return fields
+	return summary
 }
 
-func encodeFeaturePlannerPlanExecuteCompletionFields(fields map[string]any) (string, error) {
+func encodeFeaturePlannerPlanExecuteCompletionSummary(summary featureplanner.PlanExecuteCompletionSummary) (string, error) {
+	fields := summary.FeaturePlannerPayloadFields()
+
 	body, err := json.Marshal(fields)
 	if err != nil {
 		return "", err
@@ -798,18 +804,21 @@ func encodeFeaturePlannerPlanExecuteCompletionFields(fields map[string]any) (str
 	return string(body), nil
 }
 
-func featurePlannerPlanExecuteCompletionSummary(fields map[string]any) string {
+func featurePlannerPlanExecuteCompletionText(summary featureplanner.PlanExecuteCompletionSummary) string {
 	var parts []string
 
-	for _, key := range []string{
-		featureplanner.PlanExecuteCompletionFieldStatus,
-		featureplanner.PlanExecuteCompletionFieldPhase,
-		featureplanner.PlanExecuteCompletionFieldReviewStatus,
-		featureplanner.PlanExecuteCompletionFieldFailureKind,
-		featureplanner.PlanExecuteCompletionFieldProgressPath,
+	for _, item := range []struct {
+		key   string
+		value string
+	}{
+		{plancontract.PlanExecuteTerminalFieldStatus, summary.Status},
+		{plancontract.PlanExecuteTerminalFieldPhase, summary.Phase},
+		{plancontract.PlanExecuteTerminalFieldReviewStatus, summary.ReviewStatus},
+		{plancontract.PlanExecuteTerminalFieldFailureKind, summary.FailureKind},
+		{plancontract.PlanExecuteTerminalFieldProgressPath, summary.ProgressPath},
 	} {
-		if value := featureplanner.CompletionFieldString(fields, key); value != "" {
-			parts = append(parts, key+"="+value)
+		if value := strings.TrimSpace(item.value); value != "" {
+			parts = append(parts, item.key+"="+value)
 		}
 	}
 
@@ -822,8 +831,8 @@ func featurePlannerPlanExecuteCompletionSummary(fields map[string]any) string {
 
 func encodeFeaturePlannerSiblingDispatchPaused() string {
 	body, _ := json.Marshal(map[string]any{
-		"tool": featureplanner.ToolQuestionForPlanner,
-		featureplanner.PlanExecuteCompletionFieldLaneFamily: featureplanner.PlanExecuteCompletionLaneFamily,
+		"tool": featureplannercontract.ToolQuestionForPlanner,
+		featureplannercontract.PlanExecuteCompletionFieldLaneFamily: string(lanecontract.LanePlanExecute),
 		"question_summary": "sibling atom dispatch paused because an earlier implementor child opened a blocker in this feature-planner run",
 		"blocking_claim":   "resolve the first blocked child session before dispatching additional sibling atoms",
 	})
@@ -836,77 +845,57 @@ func featurePlannerPlanExecuteOutputBlocks(answer string) bool {
 		Tool string `json:"tool"`
 	}
 
-	if err := json.Unmarshal([]byte(strings.TrimSpace(answer)), &envelope); err == nil && strings.TrimSpace(envelope.Tool) == featureplanner.ToolQuestionForPlanner {
+	if err := json.Unmarshal([]byte(strings.TrimSpace(answer)), &envelope); err == nil && strings.TrimSpace(envelope.Tool) == string(featureplannercontract.ToolQuestionForPlanner) {
 		return true
 	}
 
 	return planExecuteAnswerIsBlocked(answer)
 }
 
-func featurePlannerPlanExecuteCompletionLogType(payload string) string {
+func featurePlannerPlanExecuteCompletionLogType(payload string) featureplannercontract.NestedPlanExecuteCompletionEventName {
 	var fields map[string]any
 
 	if err := json.Unmarshal([]byte(strings.TrimSpace(payload)), &fields); err != nil {
-		return "idiom.plan_execute.blocked"
+		return featureplannercontract.NestedPlanExecuteCompletionEventBlocked
 	}
 
-	if featurePlannerPlanExecuteLogStringField(fields, featureplanner.PlanExecuteCompletionFieldTool) != featureplanner.ToolPlanExecuteComplete {
-		return "idiom.plan_execute.blocked"
-	}
-
-	switch featureplanner.PlanExecuteCompletionTerminalClass(fields) {
-	case featureplanner.PlanExecuteTerminalCompleted:
-		return "idiom.plan_execute.completed"
-	default:
-		return "idiom.plan_execute.blocked"
-	}
+	return featureplanner.PlanExecuteCompletionEventTypeForFields(fields)
 }
 
-func featurePlannerPlanExecuteLogStringField(fields map[string]any, key string) string {
-	value, ok := fields[key]
-	if !ok || value == nil {
-		return ""
+func overlayFeaturePlannerPlanExecuteRunResult(summary featureplanner.PlanExecuteCompletionSummary, root string, result *planexecute.RunResult) featureplanner.PlanExecuteCompletionSummary {
+	if result == nil {
+		return summary
 	}
 
-	return strings.TrimSpace(fmt.Sprint(value))
-}
-
-func overlayFeaturePlannerPlanExecuteRunResult(fields map[string]any, root string, result *planexecute.RunResult) {
-	if fields == nil || result == nil {
-		return
+	if strings.TrimSpace(result.ResumeStatePath) != "" && strings.TrimSpace(summary.ProgressPath) == "" {
+		summary.ProgressPath = strings.TrimSpace(result.ResumeStatePath)
 	}
 
-	if strings.TrimSpace(result.ResumeStatePath) != "" && featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldProgressPath) == "" {
-		fields[featureplanner.PlanExecuteCompletionFieldProgressPath] = strings.TrimSpace(result.ResumeStatePath)
+	if strings.TrimSpace(result.FailureKind) != "" && strings.TrimSpace(summary.FailureKind) == "" {
+		summary.FailureKind = strings.TrimSpace(result.FailureKind)
 	}
 
-	if strings.TrimSpace(result.FailureKind) != "" && featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldFailureKind) == "" {
-		fields[featureplanner.PlanExecuteCompletionFieldFailureKind] = strings.TrimSpace(result.FailureKind)
-	}
-
-	if strings.TrimSpace(result.FailureReason) != "" && featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldFailureReason) == "" {
-		fields[featureplanner.PlanExecuteCompletionFieldFailureReason] = strings.TrimSpace(result.FailureReason)
+	if strings.TrimSpace(result.FailureReason) != "" && strings.TrimSpace(summary.FailureReason) == "" {
+		summary.FailureReason = strings.TrimSpace(result.FailureReason)
 	}
 
 	if result.ExitCode != 0 {
-		if _, ok := fields[featureplanner.PlanExecuteCompletionFieldExitCode]; !ok {
-			fields[featureplanner.PlanExecuteCompletionFieldExitCode] = result.ExitCode
+		if summary.ExitCode == 0 {
+			summary.ExitCode = result.ExitCode
 		}
-		if featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldStatus) == "" {
-			fields[featureplanner.PlanExecuteCompletionFieldStatus] = "failed"
+		if strings.TrimSpace(summary.Status) == "" {
+			summary.Status = "failed"
 		}
 	}
 
 	if result.Completion != nil {
-		overlayFeaturePlannerPlanExecuteTerminalFields(fields, planexecute.PlanExecuteTerminalCompletionEventFields(*result.Completion, result.CompletionPath))
-
-		return
+		return overlayFeaturePlannerPlanExecuteTerminalSummary(summary, plancontract.PlanExecuteTerminalCompletionEventFields(*result.Completion, result.CompletionPath))
 	}
 
-	overlayFeaturePlannerRecoverySidecarFields(fields, root, strings.TrimSpace(result.SessionID))
+	summary = overlayFeaturePlannerRecoverySidecarSummary(summary, root, strings.TrimSpace(result.SessionID))
 
 	if strings.TrimSpace(root) == "" || (strings.TrimSpace(result.SessionID) == "" && strings.TrimSpace(result.ResumeStatePath) == "") {
-		return
+		return summary
 	}
 
 	stateID := strings.TrimSpace(result.SessionID)
@@ -915,90 +904,77 @@ func overlayFeaturePlannerPlanExecuteRunResult(fields map[string]any, root strin
 	}
 
 	if record, completionPath, found, err := planexecute.TryLoadPlanExecuteTerminalCompletionRecord(root, stateID); err == nil && found {
-		overlayFeaturePlannerPlanExecuteTerminalFields(fields, planexecute.PlanExecuteTerminalCompletionEventFields(record, completionPath))
-		overlayFeaturePlannerRecoverySidecarFields(fields, root, stateID)
+		summary = overlayFeaturePlannerPlanExecuteTerminalSummary(summary, plancontract.PlanExecuteTerminalCompletionEventFields(record, completionPath))
+		summary = overlayFeaturePlannerRecoverySidecarSummary(summary, root, stateID)
 
-		return
+		return summary
 	}
 
 	state, statePath, found, err := planexecute.TryLoadProgressState(root, stateID)
 	if err != nil || !found {
-		return
+		return summary
 	}
 
 	if record, ok := planexecute.PlanExecuteTerminalCompletionRecordFromProgressState(state, planexecute.PlanExecuteTerminalCompletionInput{ProgressPath: statePath}); ok {
-		overlayFeaturePlannerPlanExecuteTerminalFields(fields, planexecute.PlanExecuteTerminalCompletionEventFields(record, ""))
+		summary = overlayFeaturePlannerPlanExecuteTerminalSummary(summary, plancontract.PlanExecuteTerminalCompletionEventFields(record, ""))
 	} else {
 		progressFields := planexecute.ProgressStateEventFields(state, statePath)
 		if result.ExitCode != 0 {
-			progressFields[featureplanner.PlanExecuteCompletionFieldExitCode] = result.ExitCode
+			progressFields[plancontract.PlanExecuteTerminalFieldExitCode] = result.ExitCode
 		}
-		overlayFeaturePlannerPlanExecuteProgressFields(fields, progressFields)
+		summary = featureplanner.MergePlanExecuteCompletionSummaries(summary, featureplanner.PlanExecuteCompletionSummaryFromFields(progressFields))
 	}
 
-	overlayFeaturePlannerRecoverySidecarFields(fields, root, stateID)
+	return overlayFeaturePlannerRecoverySidecarSummary(summary, root, stateID)
 }
 
-func overlayFeaturePlannerRecoverySidecarFields(fields map[string]any, root string, sessionID string) {
-	if fields == nil || strings.TrimSpace(root) == "" || strings.TrimSpace(sessionID) == "" {
-		return
+func overlayFeaturePlannerRecoverySidecarSummary(summary featureplanner.PlanExecuteCompletionSummary, root string, sessionID string) featureplanner.PlanExecuteCompletionSummary {
+	if strings.TrimSpace(root) == "" || strings.TrimSpace(sessionID) == "" {
+		return summary
 	}
 
 	record, recordPath, found, err := recovery.TryLoadFailureRecordForSession(root, sessionID)
 	if err != nil || !found {
-		return
+		return summary
 	}
 
-	if strings.TrimSpace(record.FailureID) != "" && featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldFailureID) == "" {
-		fields[featureplanner.PlanExecuteCompletionFieldFailureID] = strings.TrimSpace(record.FailureID)
+	if strings.TrimSpace(record.FailureID) != "" && strings.TrimSpace(summary.FailureID) == "" {
+		summary.FailureID = strings.TrimSpace(record.FailureID)
 	}
 
-	if strings.TrimSpace(recordPath) != "" && featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldRecordPath) == "" {
-		fields[featureplanner.PlanExecuteCompletionFieldRecordPath] = strings.TrimSpace(recordPath)
+	if strings.TrimSpace(recordPath) != "" && strings.TrimSpace(summary.RecordPath) == "" {
+		summary.RecordPath = strings.TrimSpace(recordPath)
 	}
 
 	packetPath := filepath.ToSlash(filepath.Join(".idiom", "recovery", strings.TrimSpace(record.FailureID), "packet.json"))
-	if strings.TrimSpace(record.FailureID) != "" && featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldPacketPath) == "" {
+	if strings.TrimSpace(record.FailureID) != "" && strings.TrimSpace(summary.PacketPath) == "" {
 		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(packetPath))); err == nil {
-			fields[featureplanner.PlanExecuteCompletionFieldPacketPath] = packetPath
+			summary.PacketPath = packetPath
 		}
 	}
 
-	if strings.TrimSpace(record.NextAction) != "" && featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldNextValidAction) == "" {
-		fields[featureplanner.PlanExecuteCompletionFieldNextValidAction] = strings.TrimSpace(record.NextAction)
+	if strings.TrimSpace(string(record.NextAction)) != "" && strings.TrimSpace(summary.NextAction) == "" {
+		summary.NextAction = strings.TrimSpace(string(record.NextAction))
 	}
+
+	return summary
 }
 
-func overlayFeaturePlannerPlanExecuteProgressFields(fields map[string]any, progressFields map[string]any) {
-	featureplanner.OverlayPlanExecuteCompletionFields(fields, progressFields)
-
-	for _, key := range featureplanner.PlanExecuteProgressPreservedFieldKeys {
-		if value, ok := progressFields[key]; ok {
-			fields[key] = value
-		}
-	}
-}
-
-func overlayFeaturePlannerPlanExecuteTerminalFields(fields map[string]any, terminalFields map[string]any) {
-	featureplanner.OverlayPlanExecuteCompletionFields(fields, terminalFields)
-
-	for _, key := range featureplanner.PlanExecuteTerminalPreservedFieldKeys {
-		if value, ok := terminalFields[key]; ok {
-			fields[key] = value
-		}
-	}
+func overlayFeaturePlannerPlanExecuteTerminalSummary(summary featureplanner.PlanExecuteCompletionSummary, terminalFields map[string]any) featureplanner.PlanExecuteCompletionSummary {
+	return featureplanner.MergePlanExecuteCompletionSummaries(summary, featureplanner.PlanExecuteCompletionSummaryFromFields(terminalFields))
 }
 
 func (m *Model) featurePlannerSessionID() string {
-	stamp := time.Now().UTC().Format("20060102-150405.000000")
+	stamp := time.Now().UTC().Format("20060102-150405000000")
 
 	if m.debugLogPath != "" {
 		base := filepath.Base(m.debugLogPath)
 		ext := filepath.Ext(base)
-		sessionID := strings.TrimSuffix(base, ext)
-
-		if sessionID != "" {
-			return sessionID + "-feature-planner-" + stamp
+		if sessionID, ok := sessionid.Normalize(strings.TrimSuffix(base, ext)); ok {
+			candidate := sessionID + "-feature-planner-" + stamp
+			if sessionid.Valid(candidate) {
+				return candidate
+			}
 		}
 	}
 
@@ -1079,17 +1055,17 @@ func featurePlannerConversationDiagnosticFieldAllowed(key string) bool {
 func featurePlannerTUITerminalRole(status string) string {
 	switch status {
 	case featureplanner.FeatureStateComplete:
-		return "idiom.feature_planner.complete"
+		return featureplannercontract.EventName(featureplannercontract.EventComplete)
 	case featureplanner.FeatureStateRecoveryOpen:
-		return "idiom.feature_planner.recovery_open"
+		return featureplannercontract.EventName(featureplannercontract.EventRecoveryOpen)
 	case featureplanner.FeatureStatePlanningQuestion:
-		return "idiom.feature_planner.question_open"
+		return featureplannercontract.EventName(featureplannercontract.EventQuestionOpen)
 	case featureplanner.FeatureStatePlanningStuck:
-		return "idiom.feature_planner.planning_stuck"
+		return featureplannercontract.EventName(featureplannercontract.EventPlanningStuck)
 	case featureplanner.FeatureStateFailed:
-		return "idiom.feature_planner.failed"
+		return featureplannercontract.EventName(featureplannercontract.EventFailed)
 	default:
-		return "idiom.feature_planner.terminal"
+		return featureplannercontract.EventName(featureplannercontract.EventTerminal)
 	}
 }
 

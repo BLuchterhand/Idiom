@@ -5,15 +5,21 @@
   "status": "complete",
   "created_at": "2026-05-18T09:55:00Z",
   "scope": {
-    "merge_logic": "Typed research card documents, deterministic evidence merge, conflict preservation, policy-derived findings.",
-    "cli_surface": "product research --merge-evidence with effort-relative output directory and explicit --profile selection for multi-profile projects.",
-    "durable_policy": "GPT Codex worker/reviewer model policy and Idiom discovery-first requirement recorded in effort README and design doc.",
-    "carry_forward_reconciliation": "impl-0019 commit_hash_missing enforcement changes were committed with this atom so the verified tree matched durable state."
+    "changed_paths_checked": true,
+    "legacy_details": {
+      "merge_logic": "Typed research card documents, deterministic evidence merge, conflict preservation, policy-derived findings.",
+      "cli_surface": "product research --merge-evidence with effort-relative output directory and explicit --profile selection for multi-profile projects.",
+      "durable_policy": "GPT Codex worker/reviewer model policy and Idiom discovery-first requirement recorded in effort README and design doc.",
+      "carry_forward_reconciliation": "impl-0019 commit_hash_missing enforcement changes were committed with this atom so the verified tree matched durable state."
+    }
   },
   "tests": {
-    "productworkflow": "research card parsing, deterministic merge, explicit conflict preservation, unsupported/stale policy findings, traversal and symlink boundary rejection",
-    "cmd_idiom": "merge writes clean ledger, blocks conflicts, blocks invalid output, defers unsupported claims per policy, requires explicit profile for multi-profile merge, applies selected profile policy",
-    "durable_gates": "product lint, product audit, JSON/JSONL parse validation, privacy credential-value scan, git diff --check, full go test ./..."
+    "status": "passed",
+    "legacy_details": {
+      "productworkflow": "research card parsing, deterministic merge, explicit conflict preservation, unsupported/stale policy findings, traversal and symlink boundary rejection",
+      "cmd_idiom": "merge writes clean ledger, blocks conflicts, blocks invalid output, defers unsupported claims per policy, requires explicit profile for multi-profile merge, applies selected profile policy",
+      "durable_gates": "product lint, product audit, JSON/JSONL parse validation, privacy credential-value scan, git diff --check, full go test ./..."
+    }
   },
   "coverage": {
     "tier": "unit",
@@ -29,9 +35,12 @@
     "full_suite": "go test ./... passed"
   },
   "traceability": {
-    "README": "Current-state and model-selection policy updated for impl-0020.",
-    "design_doc": "Implementation operating model and explicit merge-profile command updated.",
-    "ledger": "implementation_completed references checkpoint commit hash 3b7e7794e205f531a8d5507bd265e39daedfffa0"
+    "checked": true,
+    "legacy_details": {
+      "README": "Current-state and model-selection policy updated for impl-0020.",
+      "design_doc": "Implementation operating model and explicit merge-profile command updated.",
+      "ledger": "implementation_completed references checkpoint commit hash 3b7e7794e205f531a8d5507bd265e39daedfffa0"
+    }
   },
   "privacy_audit": {
     "raw_prompts_stored": false,

@@ -3,11 +3,6 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
-	"idiom/internal/capabilities/workspace"
-	"idiom/internal/contracts/pathparse"
-	"idiom/internal/platform/config"
-	"idiom/internal/platform/util"
-	"idiom/internal/runtime/workerruntime"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,6 +11,13 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/autonomy"
+	"idiom/internal/contracts/pathparse"
+	"idiom/internal/platform/config"
+	"idiom/internal/platform/textutil"
+	"idiom/internal/runtime/workerruntime"
 )
 
 type readOnlyEvidenceKind string
@@ -87,7 +89,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 	}
 	namedTargets := readOnlyObjectiveEvidencePaths(brief)
 
-	ledger.CandidatePaths = util.Merge(ledger.CandidatePaths, readOnlyBriefCandidateEvidencePaths(brief))
+	ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, readOnlyBriefCandidateEvidencePaths(brief))
 
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) != "" {
@@ -108,7 +110,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 				Summary:        strings.TrimSpace(result.Summary),
 			})
 
-			ledger.GeneratedArtifactPaths = util.Merge(ledger.GeneratedArtifactPaths, paths)
+			ledger.GeneratedArtifactPaths = textutil.Merge(ledger.GeneratedArtifactPaths, paths)
 
 			continue
 		}
@@ -118,7 +120,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 			relevant := readOnlyDiagnosticEvidenceMatchesObjective(ledger.Objective, namedTargets, result, paths)
 
 			ledger.DiagnosticEvidence = true
-			ledger.DiagnosticPaths = util.Merge(ledger.DiagnosticPaths, paths)
+			ledger.DiagnosticPaths = textutil.Merge(ledger.DiagnosticPaths, paths)
 
 			if relevant {
 				ledger.DiagnosticRelevant = true
@@ -138,7 +140,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 			relevant := featurePlannerPlanArtifactMatchesObjective(ledger.Objective, result)
 
 			ledger.PlanArtifactEvidence = true
-			ledger.PlanArtifactPaths = util.Merge(ledger.PlanArtifactPaths, paths)
+			ledger.PlanArtifactPaths = textutil.Merge(ledger.PlanArtifactPaths, paths)
 
 			if relevant {
 				ledger.PlanArtifactRelevant = true
@@ -165,7 +167,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 					Summary: strings.TrimSpace(result.Summary),
 				})
 
-				ledger.SourceBodyPaths = util.Merge(ledger.SourceBodyPaths, []string{path})
+				ledger.SourceBodyPaths = textutil.Merge(ledger.SourceBodyPaths, []string{path})
 				ledger.observeSourceBodyObjectiveSupport(path, result.Output)
 			}
 
@@ -182,7 +184,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 						ledger.observeSourceOwnerEvidence(evidence)
 
 						if evidence.OwnerEligible() {
-							ledger.SourceBodyObjectivePaths = util.Merge(ledger.SourceBodyObjectivePaths, []string{evidence.Path})
+							ledger.SourceBodyObjectivePaths = textutil.Merge(ledger.SourceBodyObjectivePaths, []string{evidence.Path})
 						}
 					}
 
@@ -196,15 +198,15 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 						})
 					}
 
-					ledger.SourceBodyPaths = util.Merge(ledger.SourceBodyPaths, sourcePaths)
-					ledger.SourceBodyTaskPaths = util.Merge(ledger.SourceBodyTaskPaths, sourcePaths)
+					ledger.SourceBodyPaths = textutil.Merge(ledger.SourceBodyPaths, sourcePaths)
+					ledger.SourceBodyTaskPaths = textutil.Merge(ledger.SourceBodyTaskPaths, sourcePaths)
 
 					if !ledger.directAnswerConversation() || !agentutil.ObjectiveAsksImplementationShape(ledger.Objective) {
-						ledger.SourceBodyObjectivePaths = util.Merge(ledger.SourceBodyObjectivePaths, sourcePaths)
+						ledger.SourceBodyObjectivePaths = textutil.Merge(ledger.SourceBodyObjectivePaths, sourcePaths)
 					}
 				}
 
-				ledger.CandidatePaths = util.Merge(ledger.CandidatePaths, packet.CandidatePaths, packet.InspectedPaths, sourcePaths)
+				ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, packet.CandidatePaths, packet.InspectedPaths, sourcePaths)
 
 				continue
 			}
@@ -217,7 +219,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 				inspectedPathFallback = len(sourcePaths) > 0
 			}
 
-			ledger.CandidatePaths = util.Merge(ledger.CandidatePaths, sourcePaths)
+			ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, sourcePaths)
 
 			sourcePathsAnswerable := childPacketContainsGroundedAnswerEvidence(ledger.Objective, result.Output) ||
 				(inspectedPathFallback && delegatedPacketAddressesObjective(ledger.Objective, result.Output))
@@ -236,11 +238,11 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 				}
 
 				if inspectedPathFallback {
-					ledger.SourceBodyObjectivePaths = util.Merge(ledger.SourceBodyObjectivePaths, sourcePaths)
+					ledger.SourceBodyObjectivePaths = textutil.Merge(ledger.SourceBodyObjectivePaths, sourcePaths)
 				}
 
-				ledger.SourceBodyPaths = util.Merge(ledger.SourceBodyPaths, sourcePaths)
-				ledger.SourceBodyTaskPaths = util.Merge(ledger.SourceBodyTaskPaths, sourcePaths)
+				ledger.SourceBodyPaths = textutil.Merge(ledger.SourceBodyPaths, sourcePaths)
+				ledger.SourceBodyTaskPaths = textutil.Merge(ledger.SourceBodyTaskPaths, sourcePaths)
 			}
 
 			continue
@@ -256,7 +258,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 				Summary:        strings.TrimSpace(result.Summary),
 			})
 
-			ledger.CandidatePaths = util.Merge(ledger.CandidatePaths, candidates)
+			ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, candidates)
 		case "search_content", "search_files", "rg", "grep":
 			candidates := readOnlySourceLikePaths(sourceLikePathsFromText(result.Summary+"\n"+result.Output, 128), 128)
 			objectiveCandidates := readOnlyObjectiveCandidatePathsFromSearch(result, ledger.Objective, 128)
@@ -278,8 +280,8 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 				Summary:        strings.TrimSpace(result.Summary),
 			})
 
-			ledger.CandidatePaths = util.Merge(ledger.CandidatePaths, candidates)
-			ledger.CandidateObjectivePaths = util.Merge(ledger.CandidateObjectivePaths, objectiveCandidates)
+			ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, candidates)
+			ledger.CandidateObjectivePaths = textutil.Merge(ledger.CandidateObjectivePaths, objectiveCandidates)
 		case "discovery_query", "context_query", "context_zoom", "context_impact", "structural_search",
 			"go_workspace_symbol", "cpp_workspace_symbol", "python_workspace_symbol", "ts_workspace_symbol", "rust_workspace_symbol", "java_workspace_symbol":
 			candidates := readOnlySourceLikePaths(discoveryConsumptionCandidatesFromResult(result, 16), 16)
@@ -291,7 +293,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 					Summary:        strings.TrimSpace(result.Summary),
 				})
 
-				ledger.CandidatePaths = util.Merge(ledger.CandidatePaths, candidates)
+				ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, candidates)
 			}
 		default:
 			if readOnlyOutlineEvidenceResult(result) {
@@ -303,13 +305,13 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 					Summary:        strings.TrimSpace(result.Summary),
 				})
 
-				ledger.CandidatePaths = util.Merge(ledger.CandidatePaths, candidates)
+				ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, candidates)
 			}
 		}
 	}
 
-	ledger.CandidatePaths = util.Merge(namedTargets, ledger.CandidatePaths)
-	ledger.SourceBodyPaths = util.Merge(ledger.SourceBodyPaths, sourceEvidenceBodyPaths(results), delegatedReadOnlySourceBodyReadinessPaths(ledger.Objective, results))
+	ledger.CandidatePaths = textutil.Merge(namedTargets, ledger.CandidatePaths)
+	ledger.SourceBodyPaths = textutil.Merge(ledger.SourceBodyPaths, sourceEvidenceBodyPaths(results), delegatedReadOnlySourceBodyReadinessPaths(ledger.Objective, results))
 	ledger.promoteCollectiveSourceBodyObjectiveSupport(namedTargets)
 	ledger.markRelevantSourceBodies(namedTargets)
 
@@ -399,7 +401,7 @@ func (l *readOnlyAnswerabilityLedger) observeSourceBodyObjectiveSupport(path str
 		l.observeSourceOwnerEvidence(evidence)
 
 		if evidence.OwnerEligible() && sourceBodyHasStrongObjectiveToken(body, l.Objective) {
-			l.SourceBodyObjectivePaths = util.Merge(l.SourceBodyObjectivePaths, []string{path})
+			l.SourceBodyObjectivePaths = textutil.Merge(l.SourceBodyObjectivePaths, []string{path})
 		}
 
 		terms := l.sourceBodyObjectiveTerms(body)
@@ -417,12 +419,12 @@ func (l *readOnlyAnswerabilityLedger) observeSourceBodyObjectiveSupport(path str
 			!agentutil.ObjectiveAsksImplementationShape(l.Objective) ||
 			implementationShapeSourceBodyCanClose(l.Objective, body)) {
 
-		l.SourceBodyObjectivePaths = util.Merge(l.SourceBodyObjectivePaths, []string{path})
+		l.SourceBodyObjectivePaths = textutil.Merge(l.SourceBodyObjectivePaths, []string{path})
 	}
 
 	terms := l.sourceBodyObjectiveTerms(body)
 	if l.sourceBodyObjectiveTermSupportSatisfies(path, terms, body) {
-		l.SourceBodyObjectivePaths = util.Merge(l.SourceBodyObjectivePaths, []string{path})
+		l.SourceBodyObjectivePaths = textutil.Merge(l.SourceBodyObjectivePaths, []string{path})
 	}
 
 	if len(terms) == 0 {
@@ -435,7 +437,7 @@ func (l *readOnlyAnswerabilityLedger) observeSourceBodyObjectiveSupport(path str
 func (l *readOnlyAnswerabilityLedger) observeSourceBodyObjectiveTerms(path string, terms []string) {
 	for i := range l.SourceBodyObjectiveTerms {
 		if l.SourceBodyObjectiveTerms[i].Path == path {
-			l.SourceBodyObjectiveTerms[i].Terms = util.Sorted(util.Merge(l.SourceBodyObjectiveTerms[i].Terms, terms))
+			l.SourceBodyObjectiveTerms[i].Terms = textutil.Sorted(textutil.Merge(l.SourceBodyObjectiveTerms[i].Terms, terms))
 			return
 		}
 	}
@@ -488,7 +490,7 @@ func (l readOnlyAnswerabilityLedger) sourceBodyObjectiveTerms(body string) []str
 		}
 	}
 
-	return util.Sorted(terms)
+	return textutil.Sorted(terms)
 }
 
 func (l readOnlyAnswerabilityLedger) sourceBodyObjectiveTermSupportSatisfies(path string, terms []string, body string) bool {
@@ -647,7 +649,7 @@ func (l *readOnlyAnswerabilityLedger) promoteCollectiveSourceBodyObjectiveSuppor
 				continue
 			}
 
-			termPaths[term] = util.Merge(termPaths[term], []string{path})
+			termPaths[term] = textutil.Merge(termPaths[term], []string{path})
 			supportingPaths[path] = struct{}{}
 			pathTermCount[path]++
 		}
@@ -675,7 +677,7 @@ func (l *readOnlyAnswerabilityLedger) promoteCollectiveSourceBodyObjectiveSuppor
 					continue
 				}
 
-				collectivePaths = util.Merge(collectivePaths, []string{path})
+				collectivePaths = textutil.Merge(collectivePaths, []string{path})
 			}
 		}
 	}
@@ -688,7 +690,7 @@ func (l *readOnlyAnswerabilityLedger) promoteCollectiveSourceBodyObjectiveSuppor
 		return
 	}
 
-	l.SourceBodyObjectivePaths = util.Merge(l.SourceBodyObjectivePaths, collectivePaths)
+	l.SourceBodyObjectivePaths = textutil.Merge(l.SourceBodyObjectivePaths, collectivePaths)
 }
 
 func (l *readOnlyAnswerabilityLedger) promoteCollectiveImplementationOwnerSupport(namedTargets []string, requiredTerms []string) {
@@ -709,7 +711,7 @@ func (l *readOnlyAnswerabilityLedger) promoteCollectiveImplementationOwnerSuppor
 				continue
 			}
 
-			termPaths[term] = util.Merge(termPaths[term], []string{path})
+			termPaths[term] = textutil.Merge(termPaths[term], []string{path})
 		}
 	}
 
@@ -737,14 +739,14 @@ func (l *readOnlyAnswerabilityLedger) promoteCollectiveImplementationOwnerSuppor
 			continue
 		}
 
-		ownerPaths = util.Merge(ownerPaths, []string{path})
+		ownerPaths = textutil.Merge(ownerPaths, []string{path})
 	}
 
 	if len(ownerPaths) == 0 {
 		return
 	}
 
-	l.SourceBodyObjectivePaths = util.Merge(l.SourceBodyObjectivePaths, ownerPaths)
+	l.SourceBodyObjectivePaths = textutil.Merge(l.SourceBodyObjectivePaths, ownerPaths)
 }
 
 func (l readOnlyAnswerabilityLedger) collectiveSourceBodyPromotionPathAllowed(path string, candidateSet map[string]struct{}, objectiveCandidateSet map[string]struct{}, namedSet map[string]struct{}) bool {
@@ -944,7 +946,7 @@ func readOnlyObjectiveCandidatePathsFromSearch(result workspace.ToolResult, obje
 
 		linePaths := readOnlySourceLikePaths(sourceLikePathsFromText(line, max), max)
 
-		paths = util.Merge(paths, linePaths)
+		paths = textutil.Merge(paths, linePaths)
 
 		if len(paths) >= max {
 			return paths[:max]
@@ -1115,7 +1117,7 @@ func sourceOwnerSpecificObjectiveTerms(terms []string) []string {
 		filtered = append(filtered, term)
 	}
 
-	return util.Sorted(filtered)
+	return textutil.Sorted(filtered)
 }
 
 func implementationShapeSourceBodyCanClose(objective string, body string) bool {
@@ -1368,7 +1370,7 @@ func (l readOnlyAnswerabilityLedger) ImplementationOwnerPaths() []string {
 			}
 		}
 
-		paths = util.Merge(paths, []string{path})
+		paths = textutil.Merge(paths, []string{path})
 	}
 
 	return readOnlySourceLikePaths(paths, 16)
@@ -1412,7 +1414,7 @@ func readOnlyObjectiveEvidencePaths(brief workerruntime.WorkerRuntimeBrief) []st
 		brief.TargetRefs,
 		pathparse.MentionedWorkspacePaths(brief.Objective),
 	} {
-		paths = util.Merge(paths, readOnlySourceLikePaths(group, 64))
+		paths = textutil.Merge(paths, readOnlySourceLikePaths(group, 64))
 	}
 
 	return paths
@@ -1500,7 +1502,7 @@ func readOnlyDiagnosticEvidencePaths(result workspace.ToolResult, max int) []str
 		max = 8
 	}
 
-	return readOnlySourceLikePaths(util.Merge(
+	return readOnlySourceLikePaths(textutil.Merge(
 		agentutil.ReadPathsFromToolResult(result),
 		readOnlyDiagnosticLocationPaths(result.Summary+"\n"+result.Output, max),
 	), max)
@@ -1524,7 +1526,7 @@ func readOnlyDiagnosticLocationPaths(text string, max int) []string {
 				continue
 			}
 
-			paths = util.Merge(paths, []string{path})
+			paths = textutil.Merge(paths, []string{path})
 			if len(paths) >= max {
 				return paths
 			}
@@ -1722,7 +1724,7 @@ func exactProbeCallNames(symbol string, output string, max int) []string {
 			continue
 		}
 
-		calls = util.AppendUnique(calls, candidate)
+		calls = textutil.AppendUnique(calls, candidate)
 		if len(calls) >= max {
 			return calls
 		}
@@ -1800,7 +1802,7 @@ func ExplicitAnswerCodeSymbols(reply string) []string {
 			return
 		}
 
-		symbols = util.AppendUnique(symbols, raw)
+		symbols = textutil.AppendUnique(symbols, raw)
 	}
 
 	for _, match := range backtickedTokenPattern.FindAllStringSubmatch(reply, -1) {
@@ -2319,7 +2321,7 @@ func (d ReadOnlyCloseout) ConversationUncertaintyFallback() string {
 	} else {
 		b.WriteString("\n\nEvidence paths:\n")
 
-		for _, path := range util.Prefix(inspectedPaths, 6) {
+		for _, path := range textutil.Prefix(inspectedPaths, 6) {
 			b.WriteString("- `")
 			b.WriteString(path)
 			b.WriteString("`\n")
@@ -2329,7 +2331,7 @@ func (d ReadOnlyCloseout) ConversationUncertaintyFallback() string {
 	if len(anchors) > 0 {
 		b.WriteString("\nSource anchors:\n")
 
-		for _, anchor := range util.Prefix(anchors, 6) {
+		for _, anchor := range textutil.Prefix(anchors, 6) {
 			b.WriteString("- ")
 			b.WriteString(anchor)
 			b.WriteString("\n")
@@ -2422,8 +2424,8 @@ func (d ReadOnlyCloseout) FinalAnswerDecision(answer string) readOnlyFinalAnswer
 	answerSupportedPaths := answerCitedCollectiveSourceBodySupportPaths(answer, ledger)
 
 	if len(answerSupportedPaths) > 0 {
-		ledger.SourceBodyObjectivePaths = util.Merge(ledger.SourceBodyObjectivePaths, answerSupportedPaths)
-		ledger.RelevantSourceBodyPaths = util.Merge(ledger.RelevantSourceBodyPaths, answerSupportedPaths)
+		ledger.SourceBodyObjectivePaths = textutil.Merge(ledger.SourceBodyObjectivePaths, answerSupportedPaths)
+		ledger.RelevantSourceBodyPaths = textutil.Merge(ledger.RelevantSourceBodyPaths, answerSupportedPaths)
 	}
 
 	decision := readOnlyFinalAnswerDecision{
@@ -2756,7 +2758,7 @@ func answerObjectiveTerms(answer string, objective string) []string {
 		}
 	}
 
-	return util.Sorted(matches)
+	return textutil.Sorted(matches)
 }
 
 func readOnlySharedObjectiveSupportTerms(answer string, objective string) []string {
@@ -2772,7 +2774,7 @@ func readOnlySharedObjectiveSupportTerms(answer string, objective string) []stri
 		}
 	}
 
-	return util.Sorted(matches)
+	return textutil.Sorted(matches)
 }
 
 func readOnlyObjectiveSupportTerms(objective string) []string {
@@ -2807,7 +2809,7 @@ func readOnlyObjectiveSupportTerms(objective string) []string {
 		terms = append(terms, term)
 	}
 
-	return util.Sorted(terms)
+	return textutil.Sorted(terms)
 }
 
 func readOnlyLowConfidenceObjectiveSupportStopWord(term string) bool {
@@ -3101,7 +3103,7 @@ func (d ReadOnlyCloseout) hostOwnedAnswerAddressesObjective(answer string) bool 
 
 func delegatedChildReadOnlyHostCloseoutApplies(brief workerruntime.WorkerRuntimeBrief, agentName string, closeout ReadOnlyCloseout) bool {
 	return strings.HasPrefix(strings.TrimSpace(agentName), "child:") &&
-		workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyDelegatedReadOnly) &&
+		workerruntime.TaskFamilyMatches(brief.TaskFamily, autonomy.TaskFamilyDelegatedReadOnly) &&
 		workerruntime.RuntimeContractMatches(brief.Contract, workerruntime.ContractGroundedEvidence) &&
 		workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) &&
 		closeout.Answerable()
@@ -3305,7 +3307,7 @@ func (d ReadOnlyCloseout) HasObjectiveRelevantEvidence() bool {
 }
 
 func readOnlyClosureKnownEvidencePaths(evidence readOnlyAnswerabilityLedger) []string {
-	paths := util.Merge(evidence.CandidatePaths, evidence.SourceBodyPaths, evidence.NamedSourcePaths)
+	paths := textutil.Merge(evidence.CandidatePaths, evidence.SourceBodyPaths, evidence.NamedSourcePaths)
 	return readOnlySourceLikePaths(paths, 8)
 }
 
@@ -3330,7 +3332,7 @@ func (d ReadOnlyCloseout) PrioritizedCandidatePaths() []string {
 		}
 	}
 
-	return util.Merge(priority, rest)
+	return textutil.Merge(priority, rest)
 }
 
 func presentableUnsupportedFinalAnswerLead() string {
@@ -3735,7 +3737,7 @@ func renderReadOnlyEvidencePacketForToolOutput(packet ReadOnlyEvidencePacket, an
 	if len(packet.CandidatePaths) > 0 {
 		b.WriteString("Candidate paths:\n")
 
-		for _, path := range util.Prefix(packet.CandidatePaths, 4) {
+		for _, path := range textutil.Prefix(packet.CandidatePaths, 4) {
 			b.WriteString("- `")
 			b.WriteString(path)
 			b.WriteString("`\n")
@@ -3764,8 +3766,8 @@ func synthesizeReadOnlyEvidencePacketAnswer(objective string, packets []ReadOnly
 			continue
 		}
 
-		sourcePaths = util.Merge(sourcePaths, packet.SourceBodyPaths)
-		candidatePaths = util.Merge(candidatePaths, packet.CandidatePaths, packet.InspectedPaths)
+		sourcePaths = textutil.Merge(sourcePaths, packet.SourceBodyPaths)
+		candidatePaths = textutil.Merge(candidatePaths, packet.CandidatePaths, packet.InspectedPaths)
 
 		for _, finding := range packet.Findings {
 			if strings.TrimSpace(finding.Text) == "" {
@@ -3785,7 +3787,7 @@ func synthesizeReadOnlyEvidencePacketAnswer(objective string, packets []ReadOnly
 		return "", false
 	}
 
-	paths := util.Merge(sourcePaths, candidatePaths)
+	paths := textutil.Merge(sourcePaths, candidatePaths)
 
 	paths = closurePromptEvidencePaths(paths, 8)
 
@@ -5185,7 +5187,7 @@ func sourceEvidenceObjectiveLineTerms(objective string) []string {
 		add("user")
 	}
 
-	return util.Sorted(terms)
+	return textutil.Sorted(terms)
 }
 
 func sourceEvidenceLineObjectiveScore(line string, terms []string) int {
@@ -5551,7 +5553,7 @@ func sourceOwnerMatchedTerms(text string, terms []string) []string {
 		}
 	}
 
-	return util.Sorted(matches)
+	return textutil.Sorted(matches)
 }
 
 func sourceOwnerMatchedWeakTerms(text string, terms []string) []string {
@@ -5568,7 +5570,7 @@ func sourceOwnerMatchedWeakTerms(text string, terms []string) []string {
 		}
 	}
 
-	return util.Sorted(matches)
+	return textutil.Sorted(matches)
 }
 
 func sourceOwnerSupportTerms(text string) []string {
@@ -5582,7 +5584,7 @@ func sourceOwnerSupportTerms(text string) []string {
 		}
 	}
 
-	return util.Sorted(matches)
+	return textutil.Sorted(matches)
 }
 
 func sourceOwnerConflictTerms(text string, path string, symbol string, objective string) []string {
@@ -5598,7 +5600,7 @@ func sourceOwnerConflictTerms(text string, path string, symbol string, objective
 		matches = append(matches, term)
 	}
 
-	return util.Sorted(matches)
+	return textutil.Sorted(matches)
 }
 
 func sourceOwnerLooksLikeDisplaySupport(text string) bool {
@@ -5685,7 +5687,7 @@ func sourceOwnerIdentityTerms(path string, symbol string, text string) []string 
 		}
 	}
 
-	return util.Sorted(terms)
+	return textutil.Sorted(terms)
 }
 
 func sourceOwnerBodyIdentityText(text string) string {
@@ -6501,7 +6503,7 @@ func sourceCitationCanonicalPath(r *Runner, path string, results []workspace.Too
 
 	var matches []string
 
-	for _, candidate := range util.Merge(sourceEvidenceBodyPaths(results), delegatedReadOnlySourceBodyEvidencePaths(results)) {
+	for _, candidate := range textutil.Merge(sourceEvidenceBodyPaths(results), delegatedReadOnlySourceBodyEvidencePaths(results)) {
 		candidate = agentutil.NormalizeRunnerPath(candidate)
 		if candidate == "" || strings.EqualFold(candidate, path) {
 			continue
@@ -7893,7 +7895,7 @@ func defaultRunnerStateSlice(values []string, defaults []string) []string {
 
 func appendRunnerTools(values []string, tools ...string) []string {
 	for _, tool := range tools {
-		values = util.AppendUnique(values, tool)
+		values = textutil.AppendUnique(values, tool)
 	}
 
 	return values

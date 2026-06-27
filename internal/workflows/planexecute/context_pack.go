@@ -9,13 +9,15 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/capabilities/workspace"
+	lanecontract "idiom/internal/contracts/lane"
 	"idiom/internal/contracts/pathparse"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/platform/config"
 	"idiom/internal/repository/comprehension"
 )
 
 type PromptContextPackOptions struct {
+	Context           context.Context
 	Mode              string
 	Title             string
 	Brief             string
@@ -25,6 +27,32 @@ type PromptContextPackOptions struct {
 	BudgetTokens      int
 	Timeout           time.Duration
 }
+
+type PromptContextToolRequest struct {
+	Tool              string
+	Task              string
+	Mode              string
+	Language          string
+	Refresh           bool
+	Limit             int
+	FreshnessMaxFiles int
+	BudgetTokens      int
+	RequiredEditPaths []string
+}
+
+type PromptContextToolResult struct {
+	Tool    string
+	Summary string
+	Output  string
+	Error   string
+}
+
+type PromptContextToolRunner func(context.Context, config.Workspace, PromptContextToolRequest) PromptContextToolResult
+
+const (
+	promptContextToolContextPack   = "context_pack"
+	promptContextToolContextStatus = "context_status"
+)
 
 // promptContextPackHasTargets checks whether a PackResult contains at least
 // one candidate file, symbol, or test.
@@ -47,7 +75,8 @@ func ComposePlannerPromptWithContextPack(brief string, contextPackSection string
 	return strings.TrimSpace(contextPackSection) + "\n\n" + body
 }
 
-func BuildPromptContextPackSection(cfg config.Config, opts PromptContextPackOptions, stderr io.Writer) string {
+func BuildPromptContextPackSectionWithRunner(cfg config.Config, opts PromptContextPackOptions, stderr io.Writer, runner PromptContextToolRunner) string {
+	runner = normalizeDependencies(Dependencies{RunPromptContextTool: runner}).RunPromptContextTool
 	brief := strings.TrimSpace(opts.Brief)
 	if brief == "" || PromptAlreadyHasContextPack(brief) {
 		return ""
@@ -78,16 +107,16 @@ func BuildPromptContextPackSection(cfg config.Config, opts PromptContextPackOpti
 		timeout = 90 * time.Second
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(planExecuteContext(opts.Context), timeout)
 	defer cancel()
 
-	result := executePromptContextPackWithFreshnessRecovery(ctx, workspace.NewManager(wsCfg), workspace.ToolRequest{
-		Tool:              "context_pack",
+	result := executePromptContextPackWithFreshnessRecovery(ctx, wsCfg, runner, PromptContextToolRequest{
+		Tool:              promptContextToolContextPack,
 		Task:              promptContextPackTask(opts, brief),
 		Mode:              promptContextPackMode(opts.Mode),
 		Limit:             limit,
 		BudgetTokens:      budgetTokens,
-		RequiredEditPaths: planExecuteUniqueRequiredPaths(opts.RequiredEditPaths),
+		RequiredEditPaths: plancontract.UniqueScopePaths(opts.RequiredEditPaths),
 	}, stderr)
 	if strings.TrimSpace(result.Error) != "" {
 		if stderr != nil {
@@ -113,8 +142,8 @@ func BuildPromptContextPackSection(cfg config.Config, opts PromptContextPackOpti
 	return section
 }
 
-func executePromptContextPackWithFreshnessRecovery(ctx context.Context, mgr *workspace.Manager, req workspace.ToolRequest, stderr io.Writer) workspace.ToolResult {
-	result := mgr.Execute(ctx, req)
+func executePromptContextPackWithFreshnessRecovery(ctx context.Context, wsCfg config.Workspace, runner PromptContextToolRunner, req PromptContextToolRequest, stderr io.Writer) PromptContextToolResult {
+	result := runner(ctx, wsCfg, req)
 	if !promptContextPackNeedsFreshnessRecovery(result) {
 		return result
 	}
@@ -123,8 +152,8 @@ func executePromptContextPackWithFreshnessRecovery(ctx context.Context, mgr *wor
 		fmt.Fprintln(stderr, "context_pack freshness blocked; refreshing context status before retry")
 	}
 
-	refresh := workspace.ToolRequest{
-		Tool:              "context_status",
+	refresh := PromptContextToolRequest{
+		Tool:              promptContextToolContextStatus,
 		Refresh:           true,
 		Limit:             50,
 		FreshnessMaxFiles: 2000,
@@ -134,7 +163,7 @@ func executePromptContextPackWithFreshnessRecovery(ctx context.Context, mgr *wor
 		refresh.Language = req.Language
 	}
 
-	refreshResult := mgr.Execute(ctx, refresh)
+	refreshResult := runner(ctx, wsCfg, refresh)
 	if stderr != nil {
 		summary := strings.TrimSpace(refreshResult.Summary)
 		if summary == "" {
@@ -146,7 +175,7 @@ func executePromptContextPackWithFreshnessRecovery(ctx context.Context, mgr *wor
 		}
 	}
 
-	retry := mgr.Execute(ctx, req)
+	retry := runner(ctx, wsCfg, req)
 	if strings.TrimSpace(retry.Error) == "" || strings.TrimSpace(refreshResult.Error) == "" {
 		return retry
 	}
@@ -154,7 +183,7 @@ func executePromptContextPackWithFreshnessRecovery(ctx context.Context, mgr *wor
 	return result
 }
 
-func promptContextPackNeedsFreshnessRecovery(result workspace.ToolResult) bool {
+func promptContextPackNeedsFreshnessRecovery(result PromptContextToolResult) bool {
 	if strings.TrimSpace(result.Error) == "freshness_blocker" {
 		return true
 	}
@@ -166,7 +195,7 @@ func promptContextPackNeedsFreshnessRecovery(result workspace.ToolResult) bool {
 		strings.Contains(text, "context freshness")
 }
 
-func RenderPromptContextPackSection(result workspace.ToolResult) (string, error) {
+func RenderPromptContextPackSection(result PromptContextToolResult) (string, error) {
 	return RenderPromptContextPackSectionWithOptions(result, PromptContextPackOptions{})
 }
 
@@ -186,7 +215,7 @@ func PromptAlreadyHasContextPack(body string) bool {
 		strings.HasPrefix(trimmed, "context packet:")
 }
 
-func RenderPromptContextPackSectionWithOptions(result workspace.ToolResult, opts PromptContextPackOptions) (string, error) {
+func RenderPromptContextPackSectionWithOptions(result PromptContextToolResult, opts PromptContextPackOptions) (string, error) {
 	var packResult comprehension.PackResult
 
 	if err := json.Unmarshal([]byte(result.Output), &packResult); err != nil {
@@ -250,7 +279,7 @@ func RenderPromptContextDiscoveryFallbackSection(opts PromptContextPackOptions, 
 	}
 
 	if len(opts.RequiredEditPaths) > 0 {
-		fmt.Fprintf(&b, "- Required edit paths from brief: %s\n", strings.Join(planExecuteUniqueRequiredPaths(opts.RequiredEditPaths), ", "))
+		fmt.Fprintf(&b, "- Required edit paths from brief: %s\n", strings.Join(plancontract.UniqueScopePaths(opts.RequiredEditPaths), ", "))
 	}
 
 	b.WriteString("\n### Required Fallback Discovery Phase\n\n")
@@ -264,7 +293,7 @@ func RenderPromptContextDiscoveryFallbackSection(opts PromptContextPackOptions, 
 
 func promptContextPackMode(mode string) string {
 	switch strings.TrimSpace(mode) {
-	case "implement":
+	case string(lanecontract.LaneImplement):
 		return "implement"
 	default:
 		return "plan"

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	recoverycontract "idiom/internal/contracts/recovery"
 )
 
 func TestBuildDecompositionPacketCreatesCandidateAtom(t *testing.T) {
@@ -28,11 +30,11 @@ func TestBuildDecompositionPacketCreatesCandidateAtom(t *testing.T) {
 		t.Fatalf("BuildDecompositionPacket: %v", err)
 	}
 
-	if packet.SchemaVersion != DecompositionPacketSchemaVersion {
+	if packet.SchemaVersion != recoverycontract.DecompositionPacketSchemaVersion {
 		t.Fatalf("schema=%q", packet.SchemaVersion)
 	}
 
-	if packet.NextAction != NextActionReviewDecomposition {
+	if packet.NextAction != recoverycontract.NextActionReviewDecomposition {
 		t.Fatalf("next action=%q", packet.NextAction)
 	}
 
@@ -45,12 +47,68 @@ func TestBuildDecompositionPacketCreatesCandidateAtom(t *testing.T) {
 		t.Fatalf("candidate atom=%#v", atom)
 	}
 
-	if !stringSlicesEqual(atom.Gates, []string{GateWorkspaceState, GateBriefLint, GateAtomIntake, GateScope, GateRequiredTests}) {
+	if !stringSlicesEqual(atom.Gates, []string{recoverycontract.GateWorkspaceState, recoverycontract.GateBriefLint, recoverycontract.GateAtomIntake, recoverycontract.GateScope, recoverycontract.GateRequiredTests}) {
 		t.Fatalf("gates=%#v", atom.Gates)
 	}
 
 	if !stringSlicesEqual(atom.RequiredTests, []string{"go test ./internal/workflows/recovery"}) {
 		t.Fatalf("required tests=%#v", atom.RequiredTests)
+	}
+}
+
+func TestBuildDecompositionPacketRejectsInvalidAuthorityPaths(t *testing.T) {
+	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{
+		SessionID:         "session-invalid-scope",
+		FailureKind:       "executor_failed",
+		FailureReason:     "edit failed",
+		RequiredEditPaths: []string{"../outside.go", "/tmp/outside.go"},
+		ChangedPaths:      []string{"../dirty.go"},
+	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+
+	packet, err := BuildDecompositionPacket(record, DecompositionOptions{
+		Now:          time.Date(2026, 5, 18, 12, 1, 0, 0, time.UTC),
+		PartialState: PartialStateForDirtyPaths(nil, []string{"../dirty.go"}, []string{"../outside.go"}, nil, 1),
+	})
+	if err != nil {
+		t.Fatalf("BuildDecompositionPacket: %v", err)
+	}
+
+	if len(packet.CandidateAtoms) != 0 || len(packet.ResidualWork) != 0 {
+		t.Fatalf("invalid authority paths must not produce dispatchable atoms: %#v", packet)
+	}
+	if packet.NextAction != recoverycontract.NextActionInspectFailure {
+		t.Fatalf("recoverycontract.NextAction = %q, want %q", packet.NextAction, recoverycontract.NextActionInspectFailure)
+	}
+}
+
+func TestBuildDecompositionPacketDropsInvalidPathsWithoutExpandingScope(t *testing.T) {
+	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{
+		SessionID:         "session-mixed-scope",
+		FailureKind:       "executor_failed",
+		FailureReason:     "edit failed",
+		RequiredEditPaths: []string{"pkg/feature.go", "../outside.go", "/tmp/outside.go"},
+		ChangedPaths:      []string{"pkg/feature.go", "../dirty.go"},
+	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+
+	packet, err := BuildDecompositionPacket(record, DecompositionOptions{
+		Now:          time.Date(2026, 5, 18, 12, 1, 0, 0, time.UTC),
+		PartialState: PartialStateForDirtyPaths(nil, []string{"pkg/feature.go", "../dirty.go"}, []string{"pkg/feature.go", "../outside.go"}, nil, 1),
+	})
+	if err != nil {
+		t.Fatalf("BuildDecompositionPacket: %v", err)
+	}
+
+	if len(packet.CandidateAtoms) != 1 {
+		t.Fatalf("candidate atoms=%#v", packet.CandidateAtoms)
+	}
+	if !stringSlicesEqual(packet.CandidateAtoms[0].RequiredPaths, []string{"pkg/feature.go"}) {
+		t.Fatalf("invalid paths survived recovery authority: %#v", packet.CandidateAtoms[0].RequiredPaths)
 	}
 }
 
@@ -106,13 +164,13 @@ func TestBuildDecompositionPacketUsesInvariantFailuresBeforeBroadPathInference(t
 		FailureReason:     "submit_plan did not satisfy locked coverage",
 		RequiredEditPaths: []string{"pkg/feature.go", "pkg/feature_test.go"},
 		ChangedPaths:      []string{"pkg/feature_test.go"},
-		LockedContract: &ContractSnapshot{
+		LockedContract: &recoverycontract.ContractSnapshot{
 			ContractID:   "contract_plan_execute_456",
 			ContractHash: "sha256:locked",
 			SnapshotID:   "snapshot-456",
 			SnapshotPath: ".idiom/contracts/contract_plan_execute_456.json",
 		},
-		InvariantFailures: []InvariantFailure{{
+		InvariantFailures: []recoverycontract.InvariantFailure{{
 			InvariantID:            "contract.required_edit_coverage",
 			FieldPath:              "submit_plan.edits[0].path",
 			Path:                   "pkg/feature.go",
@@ -150,7 +208,7 @@ func TestBuildDecompositionPacketUsesInvariantFailuresBeforeBroadPathInference(t
 		t.Fatalf("residual invariant failures=%#v", residual.InvariantFailures)
 	}
 
-	if !evidenceRefsContain(residual.EvidenceRefs, EvidenceRef{Kind: "invariant_failure", Path: "pkg/feature.go", ID: "contract.required_edit_coverage"}) {
+	if !evidenceRefsContain(residual.EvidenceRefs, recoverycontract.EvidenceRef{Kind: "invariant_failure", Path: "pkg/feature.go", ID: "contract.required_edit_coverage"}) {
 		t.Fatalf("expected invariant evidence ref in %#v", residual.EvidenceRefs)
 	}
 
@@ -233,7 +291,7 @@ func TestBuildDecompositionPacketAddsResidualEvidenceRefs(t *testing.T) {
 	}
 
 	refs := packet.ResidualWork[0].EvidenceRefs
-	for _, want := range []EvidenceRef{
+	for _, want := range []recoverycontract.EvidenceRef{
 		{Kind: "required_path", Path: "internal/workflows/recovery/record.go"},
 		{Kind: "changed_path", Path: "internal/workflows/recovery/record.go"},
 		{Kind: "required_path", Path: "internal/workflows/recovery/packet.go"},
@@ -296,11 +354,11 @@ func TestBuildDecompositionPacketScopesChangedPathEvidenceToResidualGroup(t *tes
 		t.Fatalf("missing internal/surfaces/tui/app residual in %#v", packet.ResidualWork)
 	}
 
-	if !evidenceRefsContain(appResidual.EvidenceRefs, EvidenceRef{Kind: "changed_path", Path: "internal/surfaces/tui/app/model.go"}) {
+	if !evidenceRefsContain(appResidual.EvidenceRefs, recoverycontract.EvidenceRef{Kind: "changed_path", Path: "internal/surfaces/tui/app/model.go"}) {
 		t.Fatalf("expected app changed-path evidence in %#v", appResidual.EvidenceRefs)
 	}
 
-	if evidenceRefsContain(appResidual.EvidenceRefs, EvidenceRef{Kind: "changed_path", Path: "internal/workflows/recovery/packet.go"}) {
+	if evidenceRefsContain(appResidual.EvidenceRefs, recoverycontract.EvidenceRef{Kind: "changed_path", Path: "internal/workflows/recovery/packet.go"}) {
 		t.Fatalf("app residual should not cite recovery changed-path evidence: %#v", appResidual.EvidenceRefs)
 	}
 }
@@ -347,6 +405,32 @@ func TestWriteAndLoadDecompositionPacket(t *testing.T) {
 		loaded.CandidateAtoms[0].ParentAtomID != "atom-5" ||
 		loaded.CandidateAtoms[0].OriginalTitle != "Write/load recovery" {
 		t.Fatalf("loaded candidate provenance mismatch: %#v", loaded.CandidateAtoms)
+	}
+}
+
+func TestTryLoadDecompositionPacketRejectsInvalidDurableContractValues(t *testing.T) {
+	root := t.TempDir()
+	packetPath := filepath.Join(root, ".idiom", "recovery", "plan-execute-invalid-packet", "packet.json")
+	if err := os.MkdirAll(filepath.Dir(packetPath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	body := `{
+  "schema_version":"idiom.recovery.decomposition_packet.v1",
+  "packet_id":"packet-plan-execute-invalid-packet",
+  "failure_id":"plan-execute-invalid-packet",
+  "source_run":{"lane":"plan-execute","session_id":"invalid-packet"},
+  "failure":{"class":"plan_invalid","summary":"bad packet"},
+  "partial_state":{"dirty_status":"clean","scope_status":"none"},
+  "next_valid_action":"review_decomposition",
+  "residual_work":[{"id":"residual-001","title":"Fix","reason":"bad","paths":["pkg/feature.go"]}],
+  "candidate_atoms":[{"id":"recovery-001","title":"Fix","required_paths":["../escape.go"],"residual_work_ids":["residual-missing"]}]
+}`
+	if err := os.WriteFile(packetPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("write packet: %v", err)
+	}
+
+	if _, _, _, err := TryLoadDecompositionPacket(packetPath); err == nil || !strings.Contains(err.Error(), "invalid recovery decomposition packet") {
+		t.Fatalf("TryLoadDecompositionPacket should reject malformed durable packet, got %v", err)
 	}
 }
 
@@ -506,7 +590,7 @@ func TestBuildWriteAndLoadReconciliation(t *testing.T) {
 		t.Fatalf("BuildReconciliation: %v", err)
 	}
 
-	if reconciliation.Status != ReconciliationStatusRecovered || reconciliation.NextAction != NextActionNone {
+	if reconciliation.Status != recoverycontract.ReconciliationStatusRecovered || reconciliation.NextAction != recoverycontract.NextActionNone {
 		t.Fatalf("unexpected reconciliation: %#v", reconciliation)
 	}
 
@@ -532,12 +616,16 @@ func TestBuildWriteAndLoadReconciliation(t *testing.T) {
 		t.Fatalf("rel path=%q want %q", relPath, wantRel)
 	}
 
+	if _, _, err := WriteReconciliation(root, reconciliation, "logs/reconciliation.json"); err == nil {
+		t.Fatal("WriteReconciliation accepted protected reconciliation output path")
+	}
+
 	loaded, _, found, err := TryLoadReconciliationForPacket(root, packet)
 	if err != nil || !found {
 		t.Fatalf("TryLoadReconciliationForPacket found=%v err=%v", found, err)
 	}
 
-	if loaded.Status != ReconciliationStatusRecovered || loaded.CompletedAtoms[0].ID != "recovery-001" {
+	if loaded.Status != recoverycontract.ReconciliationStatusRecovered || loaded.CompletedAtoms[0].ID != "recovery-001" {
 		t.Fatalf("loaded reconciliation mismatch: %#v", loaded)
 	}
 }
@@ -547,14 +635,14 @@ func TestReconciliationPreservesLockedContractAndBlocksScopeWideningWithoutDelta
 		SessionID:         "session-reconcile-contract",
 		FailureKind:       "executor_failed",
 		RequiredEditPaths: []string{"pkg/feature.go"},
-		LockedContract: &ContractSnapshot{
+		LockedContract: &recoverycontract.ContractSnapshot{
 			ContractID:        "contract_plan_execute_789",
 			ContractHash:      "sha256:locked-reconcile",
 			SnapshotID:        "snapshot-789",
 			RuntimeContractID: "runtime-789",
 			RequiredEditPaths: []string{"pkg/feature.go"},
 		},
-		InvariantFailures: []InvariantFailure{{
+		InvariantFailures: []recoverycontract.InvariantFailure{{
 			InvariantID:            "contract.scope",
 			FieldPath:              "submit_plan.edits[0].path",
 			Path:                   "pkg/feature.go",
@@ -610,7 +698,7 @@ func TestReconciliationPreservesLockedContractAndBlocksScopeWideningWithoutDelta
 		t.Fatalf("expected scope widening finding, got %#v", findings)
 	}
 
-	reconciliation.AuthorityDeltas = []ScopeAuthorityDelta{{
+	reconciliation.AuthorityDeltas = []recoverycontract.ScopeAuthorityDelta{{
 		DeltaID:          "delta-path-only",
 		AllowedEditPaths: []string{"pkg/extra.go"},
 		Reason:           "path without locked contract identity is not enough",
@@ -621,7 +709,7 @@ func TestReconciliationPreservesLockedContractAndBlocksScopeWideningWithoutDelta
 		t.Fatalf("path-only authority delta should not widen a locked contract, got %#v", findings)
 	}
 
-	reconciliation.AuthorityDeltas = []ScopeAuthorityDelta{{
+	reconciliation.AuthorityDeltas = []recoverycontract.ScopeAuthorityDelta{{
 		DeltaID:          "delta-add-extra",
 		ContractID:       "contract_plan_execute_789",
 		ContractHash:     "sha256:locked-reconcile",
@@ -664,7 +752,7 @@ func TestBuildReconciliationTracksRemainingAtoms(t *testing.T) {
 		t.Fatalf("BuildReconciliation: %v", err)
 	}
 
-	if reconciliation.Status != ReconciliationStatusPartial || reconciliation.NextAction != NextActionReviewDecomposition {
+	if reconciliation.Status != recoverycontract.ReconciliationStatusPartial || reconciliation.NextAction != recoverycontract.NextActionReviewDecomposition {
 		t.Fatalf("expected partial reconciliation, got %#v", reconciliation)
 	}
 
@@ -816,7 +904,7 @@ func stringSlicesEqual(a []string, b []string) bool {
 	return true
 }
 
-func evidenceRefsContain(refs []EvidenceRef, want EvidenceRef) bool {
+func evidenceRefsContain(refs []recoverycontract.EvidenceRef, want recoverycontract.EvidenceRef) bool {
 	for _, ref := range refs {
 		if ref == want {
 			return true
@@ -826,7 +914,7 @@ func evidenceRefsContain(refs []EvidenceRef, want EvidenceRef) bool {
 	return false
 }
 
-func evidenceRefsContainKind(refs []EvidenceRef, kind string) bool {
+func evidenceRefsContainKind(refs []recoverycontract.EvidenceRef, kind string) bool {
 	for _, ref := range refs {
 		if ref.Kind == kind {
 			return true
@@ -836,7 +924,7 @@ func evidenceRefsContainKind(refs []EvidenceRef, kind string) bool {
 	return false
 }
 
-func evidenceRefsContainText(refs []EvidenceRef, text string) bool {
+func evidenceRefsContainText(refs []recoverycontract.EvidenceRef, text string) bool {
 	for _, ref := range refs {
 		if strings.Contains(ref.Kind, text) ||
 			strings.Contains(ref.Path, text) ||
@@ -850,7 +938,7 @@ func evidenceRefsContainText(refs []EvidenceRef, text string) bool {
 	return false
 }
 
-func residualWorkForPath(packet DecompositionPacket, path string) (ResidualWork, bool) {
+func residualWorkForPath(packet recoverycontract.DecompositionPacket, path string) (recoverycontract.ResidualWork, bool) {
 	for _, residual := range packet.ResidualWork {
 		for _, residualPath := range residual.Paths {
 			if residualPath == path {
@@ -859,10 +947,10 @@ func residualWorkForPath(packet DecompositionPacket, path string) (ResidualWork,
 		}
 	}
 
-	return ResidualWork{}, false
+	return recoverycontract.ResidualWork{}, false
 }
 
-func reconciliationFindingsContain(findings []ReconciliationValidationFinding, code string) bool {
+func reconciliationFindingsContain(findings []recoverycontract.ReconciliationValidationFinding, code string) bool {
 	for _, finding := range findings {
 		if finding.Code == code {
 			return true
@@ -872,7 +960,7 @@ func reconciliationFindingsContain(findings []ReconciliationValidationFinding, c
 	return false
 }
 
-func reconciliationVerificationForPacket(packet DecompositionPacket, atomIDs ...string) ReconciliationVerification {
+func reconciliationVerificationForPacket(packet recoverycontract.DecompositionPacket, atomIDs ...string) recoverycontract.ReconciliationVerification {
 	completed := map[string]bool{}
 	for _, id := range atomIDs {
 		completed[id] = true
@@ -881,7 +969,7 @@ func reconciliationVerificationForPacket(packet DecompositionPacket, atomIDs ...
 	seen := map[string]bool{}
 
 	var (
-		commands []ReconciliationCommandResult
+		commands []recoverycontract.ReconciliationCommandResult
 		required []string
 	)
 
@@ -897,16 +985,16 @@ func reconciliationVerificationForPacket(packet DecompositionPacket, atomIDs ...
 
 			seen[test] = true
 			required = append(required, test)
-			commands = append(commands, ReconciliationCommandResult{
+			commands = append(commands, recoverycontract.ReconciliationCommandResult{
 				Command:  test,
-				Status:   ReconciliationVerificationPass,
+				Status:   recoverycontract.ReconciliationVerificationPass,
 				ExitCode: 0,
 			})
 		}
 	}
 
-	return ReconciliationVerification{
-		Status:        ReconciliationVerificationPass,
+	return recoverycontract.ReconciliationVerification{
+		Status:        recoverycontract.ReconciliationVerificationPass,
 		RequiredTests: required,
 		Commands:      commands,
 	}

@@ -5,15 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"idiom/internal/capabilities/workspace"
-	"idiom/internal/contracts/autonomy"
-	"idiom/internal/contracts/compile"
-	"idiom/internal/platform/config"
-	"idiom/internal/platform/util"
-	"idiom/internal/runtime/instructions"
-	"idiom/internal/runtime/llama"
-	"idiom/internal/runtime/modepolicy"
-	"idiom/internal/runtime/workerruntime"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +16,16 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/autonomy"
+	contractcompile "idiom/internal/contracts/compile"
+	"idiom/internal/platform/config"
+	"idiom/internal/platform/textutil"
+	"idiom/internal/runtime/instructions"
+	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/modepolicy"
+	"idiom/internal/runtime/workerruntime"
 )
 
 type recordingGateEngine struct {
@@ -273,7 +274,7 @@ func TestRunnerSourceGroundingUsesRunnerGateEngine(t *testing.T) {
 	runner := &Runner{
 		GateEngine: engine,
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        string(workerruntime.TaskFamilyArchitecture),
+			TaskFamily:        string(autonomy.TaskFamilyArchitecture),
 			Contract:          string(workerruntime.ContractArchitecture),
 			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
 		},
@@ -1420,8 +1421,8 @@ func TestPlanExecuteHistoryPendingModelProtocolUsesCanonicalReadAction(t *testin
 		t.Fatalf("phase = %q, want %q", phase.PhaseID, turnPhaseHistoryPending)
 	}
 
-	phase.AllowedTools = util.Unique(append(phase.AllowedTools, "blame_range", "context_impact", "harness_feedback"))
-	phase.ActionPolicy.CallableToolNames = util.Unique(append(phase.ActionPolicy.CallableToolNames, "blame_range", "context_impact", "harness_feedback"))
+	phase.AllowedTools = textutil.Unique(append(phase.AllowedTools, "blame_range", "context_impact", "harness_feedback"))
+	phase.ActionPolicy.CallableToolNames = textutil.Unique(append(phase.ActionPolicy.CallableToolNames, "blame_range", "context_impact", "harness_feedback"))
 
 	protocol, ok := runner.compileModelProtocolProjection(brief, results, phase, RunPolicy{}, true)
 
@@ -1552,7 +1553,7 @@ func TestPlanExecuteModelProtocolDropsContradictoryCallableActionClasses(t *test
 	})
 
 	phase.ActionPolicy.AllowedActionClasses = []string{actionSubmitPlan, actionBlocker}
-	phase.ActionPolicy.InvalidActionClasses = util.Unique(append(phase.ActionPolicy.InvalidActionClasses, actionBlocker))
+	phase.ActionPolicy.InvalidActionClasses = textutil.Unique(append(phase.ActionPolicy.InvalidActionClasses, actionBlocker))
 
 	protocol, ok := runner.compileModelProtocolProjection(brief, results, phase, RunPolicy{}, true)
 	if !ok {
@@ -2690,7 +2691,7 @@ func TestRunnerAutonomyRecorderDoesNotReportClosedObligationsOpenAtLaterGate(t *
 	}
 	brief := workerruntime.WorkerRuntimeBrief{
 		Lane:              "main",
-		TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+		TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 		Contract:          string(workerruntime.ContractDirectAnswer),
 		PermissionProfile: "read_only_workspace",
 	}
@@ -3139,6 +3140,10 @@ func TestRunnerAutonomyRecorderRejectedCompletionEmitsGuardFriction(t *testing.T
 
 	if completionDecision == nil {
 		t.Fatalf("expected completion decision event: %#v", completionDecision)
+	}
+
+	if completionDecision.ProtocolHash == "" {
+		t.Fatalf("completion decision must carry stored protocol hash for audit correlation: %#v", completionDecision)
 	}
 
 	if friction.GuardSurface != autonomy.GuardFrictionSurfaceCompletionGate ||
@@ -4534,7 +4539,7 @@ func TestMainReadOnlyBroadSearchBootstrapsContextPack(t *testing.T) {
 	runner := &Runner{
 		AgentName: "main",
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			Contract:          string(workerruntime.ContractDirectAnswer),
 			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
 			AllowedTools:      []string{workspace.ToolNameContextPack, workspace.ToolNameSearchContent, workspace.ToolNameReadFile},
@@ -5111,7 +5116,7 @@ func TestPostReadinessReadinessWithoutAnswerableEvidenceRemainsAdvisory(t *testi
 		Symbol: "DebugLogger.sanitizeValue",
 	}
 
-	if gap := util.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering); gap != "" {
+	if gap := textutil.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering); gap != "" {
 		t.Fatalf("test setup should omit post-readiness gap fields, got %q", gap)
 	}
 
@@ -5960,6 +5965,65 @@ func TestAutoSalvageExtractsStructuredMarkdownFromReplyProse(t *testing.T) {
 
 	if !strings.Contains(text, "# Corrected atom brief") || !strings.Contains(text, "## Problem") || !strings.Contains(text, "## Required Edits") {
 		t.Fatalf("salvaged file missing corrected draft shape: %s", text)
+	}
+}
+
+func TestAutoSalvageHonorsCanceledContextBeforeSyntheticWrite(t *testing.T) {
+	dir := t.TempDir()
+	mgr := workspace.NewManager(config.Workspace{Root: dir, CWD: dir, EnableWrites: true})
+
+	required := "draft.md"
+	reply := "# Corrected atom brief\n\n" +
+		"## Problem\n\nUse the exact anchors already provided.\n\n" +
+		strings.Repeat("Evidence line keeps this close to the long refine drafts seen in practice.\n", 20) +
+		"## Files To Modify\n\n| File | Change |\n|------|--------|\n| `a.go` | MODIFY: add guard |\n\n" +
+		"## Required Edits\n\n1. Replace the guard with checked behavior.\n\n" +
+		"## Acceptance\n\n- Planner-owned verification remains pending.\n"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	r := &Runner{
+		Workspace: mgr,
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			RequiredEditPaths: []string{required},
+		},
+	}
+
+	if _, _, ok := r.autoSalvageMarkdownDeliverable(ctx, reply); ok {
+		t.Fatal("canceled run context must prevent auto-salvage writes")
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, required)); !os.IsNotExist(err) {
+		t.Fatalf("draft.md should not exist after canceled salvage, stat err=%v", err)
+	}
+}
+
+func TestAutoSalvageRejectionEventsDoNotEchoCandidateBody(t *testing.T) {
+	dir := t.TempDir()
+	mgr := workspace.NewManager(config.Workspace{Root: dir, CWD: dir, EnableWrites: true})
+	secret := "SECRET_BODY_SHOULD_NOT_BE_LOGGED"
+	reply := "# Draft\n\n" + strings.Repeat(secret+" ", 8)
+
+	var events []RunEvent
+	r := &Runner{
+		Workspace: mgr,
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			RequiredEditPaths: []string{"draft.md"},
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+
+	if _, _, ok := r.autoSalvageMarkdownDeliverable(context.Background(), reply); ok {
+		t.Fatal("unrecognized markdown shape should not be salvaged")
+	}
+
+	for _, event := range events {
+		if event.Role == "auto_salvage" && strings.Contains(event.Content, secret) {
+			t.Fatalf("auto-salvage event echoed candidate body: %#v", event)
+		}
 	}
 }
 
@@ -9264,7 +9328,7 @@ func TestTextualToolProtocolEntriesPrioritizeWriteAliasExamples(t *testing.T) {
 			"apply_patch",
 		},
 		RequiredTools: []string{"edit_file_or_apply_patch", "semantic_discovery_or_narrow_read_for_named_gap"},
-		ToolManifest: workerruntime.BuildToolManifest([]string{
+		ToolManifest: workerruntime.ToolManifestFromWorkspace(workspace.BuildToolManifest([]string{
 			"read_file",
 			"code_navigate",
 			"source_sanity",
@@ -9280,7 +9344,7 @@ func TestTextualToolProtocolEntriesPrioritizeWriteAliasExamples(t *testing.T) {
 			"write_file",
 			"append_file",
 			"apply_patch",
-		}),
+		})),
 	}
 
 	entries := textualToolProtocolEntries(brief)
@@ -14932,7 +14996,7 @@ func TestRunnerReadOnlyReviewClosesAfterReplayedSourceEvidence(t *testing.T) {
 		}),
 		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8},
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        string(workerruntime.TaskFamilySecurityReview),
+			TaskFamily:        string(autonomy.TaskFamilySecurityReview),
 			Contract:          string(workerruntime.ContractReviewFindings),
 			Objective:         "Audit runner recovery and final answer contracts for repeated source-probe drift.",
 			PermissionProfile: "read_only_workspace",
@@ -16762,7 +16826,7 @@ func TestArchitectureToolBudgetDoesNotHostCloseoutAnswerableEvidence(t *testing.
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
 			Contract:          string(workerruntime.ContractArchitecture),
-			TaskFamily:        string(workerruntime.TaskFamilyArchitecture),
+			TaskFamily:        string(autonomy.TaskFamilyArchitecture),
 			Objective:         "Can you tell me how this harness uses subagents through child tasks?",
 			AllowedTools:      []string{"read_file"},
 		},
@@ -21193,7 +21257,7 @@ func TestPlanExecuteSalvagesVisibleMissingTargetReadForTypedRecovery(t *testing.
 		t.Fatalf("salvaged raw request must preserve read_file request, got %s", raw)
 	}
 
-	reason, _, lowValue := planThenExecuteCandidateLowValueAction(nil, req, runner.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	reason, _, lowValue := planThenExecuteCandidateLowValueAction(planExecuteRecoveryHooks{}, req, runner.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
 	if !lowValue || reason != "candidate_read_missing_target" {
 		t.Fatalf("expected typed missing-target recovery, got lowValue=%v reason=%q", lowValue, reason)
 	}
@@ -26532,7 +26596,7 @@ func TestReadOnlyCompletionGateRepeatedBlockerPreservesReasonWithoutStrategy(t *
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Contract:          string(workerruntime.ContractDirectAnswer),
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
 			Objective:         "Review normalizeDelegatedDiscoveryEvidencePath for Unicode panics.",
 		},
@@ -28795,7 +28859,7 @@ func TestDelegatedReadOnlyChildModelAnswersAfterAnswerReadyEvidence(t *testing.T
 		}),
 		Policy: RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 3},
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        string(workerruntime.TaskFamilyDelegatedReadOnly),
+			TaskFamily:        string(autonomy.TaskFamilyDelegatedReadOnly),
 			Contract:          string(workerruntime.ContractGroundedEvidence),
 			Objective:         "Can you tell me how this harness uses subagents through child tasks?",
 			PermissionProfile: "read_only_workspace",
@@ -29205,7 +29269,7 @@ func TestEmitAcceptedAnswerSignalsDirectAnswerAliasBlocksUnrelatedEvidence(t *te
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Lane:              "main",
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			Contract:          string(workerruntime.ContractDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			Objective:         "Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.",
@@ -29292,7 +29356,7 @@ func TestFinalAnswerOverrideLogsOriginalObjectiveRejection(t *testing.T) {
 		Client: llama.NewClient(server.URL, time.Second),
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Lane:              "main",
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			Contract:          string(workerruntime.ContractDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			Objective:         "Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.",
@@ -29387,7 +29451,7 @@ func TestTerminalAnswerDecisionBlocksTransportProtocolOutput(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Lane:              "main",
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			Contract:          string(workerruntime.ContractDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			Objective:         "Explain the finish boundary.",
@@ -29485,7 +29549,7 @@ func TestReadOnlySourceGroundingRejectionRetriesEvidenceLoop(t *testing.T) {
 		Policy: RunPolicy{MaxToolSteps: 6, MaxNoProgressTurns: 4},
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Lane:              "main",
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			Contract:          string(workerruntime.ContractDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			Objective:         "Explain where up/down previous-message navigation would live.",
@@ -29589,7 +29653,7 @@ func TestReadOnlyAnswerObjectiveRejectionRetriesEvidenceLoop(t *testing.T) {
 		Policy: RunPolicy{MaxToolSteps: 6, MaxNoProgressTurns: 4},
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Lane:              "main",
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			Contract:          string(workerruntime.ContractDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			Objective:         objective,
@@ -29651,7 +29715,7 @@ func TestReadOnlyAnswerObjectiveRejectionRetriesEvidenceLoop(t *testing.T) {
 func TestFinalAnswerAcceptanceRetryPolicyKeepsNonRetryableBoundaries(t *testing.T) {
 	readOnlyRunner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			Contract:          string(workerruntime.ContractDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			AllowedTools:      []string{"read_file", "search_content"},
@@ -29682,7 +29746,7 @@ func TestFinalAnswerAcceptanceRetryPolicyKeepsNonRetryableBoundaries(t *testing.
 func TestDirectAnswerQuestionProtocolIsRetryableNotUserVisibleBlocker(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			Contract:          string(workerruntime.ContractDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			AllowedTools:      []string{"read_file", "search_content"},
@@ -29702,7 +29766,7 @@ func TestDirectAnswerQuestionProtocolIsRetryableNotUserVisibleBlocker(t *testing
 func TestHostReadOnlyCloseoutIsDisabledForReadOnlyEvidence(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			Contract:          string(workerruntime.ContractDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			Objective:         "Why did the latest run fail?",
@@ -29721,7 +29785,7 @@ func TestHostReadOnlyCloseoutIsDisabledForReadOnlyEvidence(t *testing.T) {
 func TestFinalAnswerAcceptanceRetryPolicyRequiresToolsAndNoMutation(t *testing.T) {
 	noToolsRunner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			Contract:          string(workerruntime.ContractDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 		},
@@ -29732,7 +29796,7 @@ func TestFinalAnswerAcceptanceRetryPolicyRequiresToolsAndNoMutation(t *testing.T
 
 	readOnlyRunner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			Contract:          string(workerruntime.ContractDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			AllowedTools:      []string{"read_file"},
@@ -29752,7 +29816,7 @@ func TestFinalAnswerAcceptanceRetryPolicyRequiresToolsAndNoMutation(t *testing.T
 
 	architectureRunner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        string(workerruntime.TaskFamilyArchitecture),
+			TaskFamily:        string(autonomy.TaskFamilyArchitecture),
 			Contract:          string(workerruntime.ContractArchitecture),
 			PermissionProfile: "read_only_workspace",
 			AllowedTools:      []string{"read_file", "context_query"},
@@ -29774,7 +29838,7 @@ func TestFinalAnswerAcceptanceRetryPolicyRequiresToolsAndNoMutation(t *testing.T
 
 	malformedRequiredPathRunner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			Contract:          string(workerruntime.ContractDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			RequiredEditPaths: []string{"internal/surfaces/tui/app/model.go"},
@@ -29787,7 +29851,7 @@ func TestFinalAnswerAcceptanceRetryPolicyRequiresToolsAndNoMutation(t *testing.T
 
 	mutationRunner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        string(workerruntime.TaskFamilyImplementation),
+			TaskFamily:        string(autonomy.TaskFamilyImplementation),
 			Contract:          "implementation_result",
 			PermissionProfile: "guarded_workspace_write",
 			RequiredEditPaths: []string{"internal/surfaces/tui/app/model.go"},
@@ -29892,7 +29956,7 @@ func TestReadOnlyExplanationCompletionRejectionRejectsMetaScopeSummary(t *testin
 func TestReadOnlySourceGroundingUnmetRecoveryPromptMentionsPathsAndOptions(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			Contract:          string(workerruntime.ContractDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			AllowedTools:      []string{"read_file", "search_content"},
@@ -29931,7 +29995,7 @@ func TestReadOnlySourceGroundingUnmetRecoveryPromptMentionsPathsAndOptions(t *te
 func TestReadOnlySourceGroundingUnmetRecoveryPromptSkippedWhenNoLastError(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			Contract:          string(workerruntime.ContractDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			AllowedTools:      []string{"read_file", "search_content"},
@@ -29962,7 +30026,7 @@ func TestReadOnlySourceGroundingUnmetRecoveryPromptSkippedWhenNoLastError(t *tes
 func TestSourceGroundingProseRetriesLeftSetToTwo(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			Contract:          string(workerruntime.ContractDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			AllowedTools:      []string{"read_file", "code_navigate", "search_content"},
@@ -30021,7 +30085,7 @@ func TestSourceGroundingProseRetriesLeftSetToTwo(t *testing.T) {
 func TestReadOnlyRecoveryPromptMentionsToolRestriction(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			Contract:          string(workerruntime.ContractDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			AllowedTools:      []string{"read_file", "search_content"},
@@ -30052,7 +30116,7 @@ func TestReadOnlyRecoveryPromptMentionsToolRestriction(t *testing.T) {
 func TestCompoundRejectionReasonIncludesObjectiveUnmet(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			Contract:          string(workerruntime.ContractDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			AllowedTools:      []string{"read_file", "search_content"},
@@ -30165,7 +30229,7 @@ func TestReadOnlyEvidenceCompletionRejectionAppliesToDirectAnswerAliasWithoutRea
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Contract:          "direct_answer",
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			AllowedTools:      []string{"context_pack", "search_content", "read_file"},
 			Objective:         "Find why the TUI chat input first wraps to a newline.",
@@ -30209,7 +30273,7 @@ func TestReadOnlyEvidenceCompletionRejectionAllowsSourceBackedInsufficientEviden
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Contract:          "direct_answer",
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			AllowedTools:      []string{"context_pack", "search_content", "read_file"},
 			Objective:         "Find why the TUI chat input first wraps to a newline.",
@@ -30233,7 +30297,7 @@ func TestReadOnlyEvidenceCompletionRejectionAllowsFeaturePlannerPlanArtifact(t *
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Contract:          "direct_answer",
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			AllowedTools:      []string{"context_pack", "search_content", "read_file"},
 			Objective:         "How are we planning on retaining memory?",
@@ -30262,7 +30326,7 @@ func TestReadOnlyEvidenceCompletionRejectionAllowsReadFeaturePlannerPlanMarkdown
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Contract:          "direct_answer",
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			AllowedTools:      []string{"context_pack", "search_content", "read_file"},
 			Objective:         "What tests do we have planned? Should we expand the intended test suite?",
@@ -30284,7 +30348,7 @@ func TestReadOnlyEvidenceCompletionRejectionAllowsReadFeaturePlannerPlanMarkdown
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Contract:          "direct_answer",
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			AllowedTools:      []string{"context_pack", "search_content", "read_file"},
 			Objective:         "What tests do we have planned? Should we expand the intended test suite?",
@@ -30306,7 +30370,7 @@ func TestReadOnlyEvidenceCompletionRejectionRejectsUnrelatedFeaturePlannerPlanAr
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Contract:          "direct_answer",
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			AllowedTools:      []string{"context_pack", "search_content", "read_file"},
 			Objective:         "Why does src/model_wrapper.py define ModelWrapper?",
@@ -30338,7 +30402,7 @@ func TestReadOnlyEvidenceCompletionRejectionRejectsOverlappingNonPlanQuestion(t 
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Contract:          "direct_answer",
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			AllowedTools:      []string{"context_pack", "search_content", "read_file"},
 			Objective:         "Why does the model wrapper fail tests?",
@@ -31900,7 +31964,7 @@ func TestPromptEvidencePathsFromToolResultsPrefersExactProbePathsOverEarlyScaffo
 func TestReadOnlyDirectAnswerPresentationUsesLedgerRelevantSourcePaths(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		Lane:              "main",
-		TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+		TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 		Contract:          string(workerruntime.ContractDirectAnswer),
 		PermissionProfile: "read_only_workspace",
 		Objective:         "Explain chat input newline rendering.",
@@ -31944,7 +32008,7 @@ func TestReadOnlyDirectAnswerPresentationUsesLedgerRelevantSourcePaths(t *testin
 func TestRuntimeBriefDirectAnswerPreservesAdvisoryEvidenceBeforeAnswerability(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		Lane:              "main",
-		TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+		TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 		Contract:          string(workerruntime.ContractDirectAnswer),
 		PermissionProfile: "read_only_workspace",
 		Objective:         "Explain chat input newline rendering.",
@@ -31993,7 +32057,7 @@ func TestEmitAcceptedAnswerSignalsDirectAnswerBlockedUsesLedgerRelevantSourcePat
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Lane:              "main",
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			Contract:          string(workerruntime.ContractDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			Objective:         "Explain chat input newline rendering.",
@@ -32054,7 +32118,7 @@ func TestEmitReadOnlyAnswerReadyEventDirectAnswerUsesLedgerRelevantSourcePaths(t
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Lane:              "main",
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			Contract:          string(workerruntime.ContractDirectAnswer),
 			PermissionProfile: "read_only_workspace",
 			Objective:         "Explain chat input newline rendering.",
@@ -32111,7 +32175,7 @@ func TestEmitReadOnlyAnswerReadyEventDirectAnswerUsesLedgerRelevantSourcePaths(t
 func TestReadOnlyAnswerReadyPresentationUsesImplementationOwnerPaths(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		Lane:              "main",
-		TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+		TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 		Contract:          string(workerruntime.ContractDirectAnswer),
 		PermissionProfile: "read_only_workspace",
 		Objective:         "what would it take to enable the up and down arrows to fill the chat input with history entries?",
@@ -37713,7 +37777,7 @@ func TestRecoveredReadOnlyTerminalCloseoutAnswersRepeatedCompletionGateRejection
 func TestRecoveredReadOnlyTerminalCloseoutSupportsDirectAnswerTaskFamily(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
 			Contract:          string(workerruntime.ContractDirectAnswer),
 			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
 			Objective:         "What is the role of evidence in this harness? Where does it come from and what is it used for?",
@@ -37837,7 +37901,7 @@ func TestClassifyTerminalAnswerDoesNotRecoverReadOnlyNonAnswerFromSearchOnlyEvid
 }
 
 func TestToolParseErrorFeedbackExplainsSubmitPlanEditsArrayShape(t *testing.T) {
-	got := toolParseErrorFeedback(`{"edits":"[]"}`, errors.New("json: cannot unmarshal string into Go struct field ToolRequest.edits of type []workspace.PlanEdit"))
+	got := toolParseErrorFeedback(`{"edits":"[]"}`, errors.New("json: cannot unmarshal string into Go struct field ToolRequest.edits of type []planartifact.PlanEdit"))
 	for _, want := range []string{
 		"submit_plan.edits was emitted as a quoted string",
 		"JSON array value, not a string",
@@ -37856,7 +37920,7 @@ func TestToolParseErrorFeedbackExplainsSubmitPlanEditsArrayShape(t *testing.T) {
 func TestMalformedToolPolicyRejectsParserFailureWithTypedMetadata(t *testing.T) {
 	decision := newMalformedToolPolicyEngine().EvaluateParseFailure(
 		`{"edits":"[]"}`,
-		errors.New("json: cannot unmarshal string into Go struct field ToolRequest.edits of type []workspace.PlanEdit"),
+		errors.New("json: cannot unmarshal string into Go struct field ToolRequest.edits of type []planartifact.PlanEdit"),
 	)
 
 	if decision.Request.Tool != "tool_parse" || decision.Result.Tool != "tool_parse" {
@@ -37923,7 +37987,7 @@ func TestRunnerTurnControllerRecordParseFailureEmitsParserGuardFriction(t *testi
 		recorder:         &recorder,
 		autonomyRecorder: autonomyRecorder,
 	}
-	controller.recordParseFailure(1, nil, `{"edits":"[]"}`, errors.New("json: cannot unmarshal string into Go struct field ToolRequest.edits of type []workspace.PlanEdit"))
+	controller.recordParseFailure(1, nil, `{"edits":"[]"}`, errors.New("json: cannot unmarshal string into Go struct field ToolRequest.edits of type []planartifact.PlanEdit"))
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
 

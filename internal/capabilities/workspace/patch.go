@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace/patching"
+	"idiom/internal/platform/atomicfile"
 	"idiom/internal/platform/failures"
 )
 
@@ -60,7 +61,7 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 	summaries := make([]string, 0, len(ops))
 
 	for opIdx, op := range ops {
-		path, err := m.resolvePath(op.Path, req.Workdir)
+		path, err := m.resolveWritePath(op.Path, req.Workdir)
 		if err != nil {
 			return toolFailureFromErrorResult(ToolNameApplyPatch, "Failed to resolve path", fmt.Errorf("op %d (%s %s): %w", opIdx+1, op.Kind, op.Path, err), failures.InvalidArgument, reasonToolPathResolutionFailed)
 		}
@@ -105,7 +106,7 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 			summary := fmt.Sprintf("update %s", m.displayPath(path))
 
 			if op.MoveTo != "" {
-				destPath, err = m.resolvePath(op.MoveTo, req.Workdir)
+				destPath, err = m.resolveWritePath(op.MoveTo, req.Workdir)
 				if err != nil {
 					return toolFailureFromErrorResult(ToolNameApplyPatch, "Failed to resolve move destination", fmt.Errorf("Move to %s: %w", op.MoveTo, err), failures.InvalidArgument, reasonToolPathResolutionFailed)
 				}
@@ -114,7 +115,9 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 					return toolFailureResult(ToolNameApplyPatch, "Patch request rejected", fmt.Sprintf("Move to destination %s already exists", m.displayPath(destPath)), failures.AlreadyExists, reasonPlanSubmissionRejected)
 				}
 
-				planned = append(planned, plannedWrite{path: path, remove: true})
+				if filepath.Clean(destPath) != filepath.Clean(path) {
+					planned = append(planned, plannedWrite{path: path, remove: true})
+				}
 				summary = fmt.Sprintf("update+move %s -> %s", m.displayPath(path), m.displayPath(destPath))
 			}
 
@@ -135,10 +138,6 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 
 	for _, write := range planned {
 		if write.remove {
-			if err := os.Remove(write.path); err != nil && !os.IsNotExist(err) {
-				return toolFailureFromErrorResult(ToolNameApplyPatch, "Patch apply failed mid-stream", fmt.Errorf("delete %s: %w", m.displayPath(write.path), err), failures.Internal, reasonToolWriteFailed)
-			}
-
 			continue
 		}
 
@@ -146,8 +145,17 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 			return toolFailureFromErrorResult(ToolNameApplyPatch, "Patch apply failed", fmt.Errorf("mkdir %s: %w", m.displayPath(filepath.Dir(write.path)), err), failures.Internal, reasonToolWriteFailed)
 		}
 
-		if err := os.WriteFile(write.path, write.contents, 0o644); err != nil {
+		if err := atomicfile.WriteFile(write.path, write.contents, 0o644); err != nil {
 			return toolFailureFromErrorResult(ToolNameApplyPatch, "Patch apply failed", fmt.Errorf("write %s: %w", m.displayPath(write.path), err), failures.Internal, reasonToolWriteFailed)
+		}
+	}
+
+	for _, write := range planned {
+		if !write.remove {
+			continue
+		}
+		if err := os.Remove(write.path); err != nil && !os.IsNotExist(err) {
+			return toolFailureFromErrorResult(ToolNameApplyPatch, "Patch apply failed", fmt.Errorf("delete %s: %w", m.displayPath(write.path), err), failures.Internal, reasonToolWriteFailed)
 		}
 	}
 

@@ -3,7 +3,7 @@ package eval
 import (
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 func BuildFailingScenarioSuite(name string, source SWESuite, report SWESuiteReport, recordsByTask map[string][]Record) SWESuite {
@@ -47,11 +47,11 @@ func BuildFailingScenarioSuite(name string, source SWESuite, report SWESuiteRepo
 			prompt = strings.TrimSpace(sourceTask.Turns[len(sourceTask.Turns)-1])
 		}
 
-		tags := util.UniqueNonEmpty(append(append([]string(nil), sourceTask.Tags...), "generated-regression"))
+		tags := textutil.UniqueNonEmpty(append(append([]string(nil), sourceTask.Tags...), "generated-regression"))
 
 		out.Tasks = append(out.Tasks, SWETask{
 			ID:       id + "-regression",
-			Family:   util.FirstNonEmpty(sourceTask.Family, taskReport.Family, "regression"),
+			Family:   textutil.FirstNonEmpty(sourceTask.Family, taskReport.Family, "regression"),
 			Prompt:   prompt,
 			Turns:    append([]string(nil), sourceTask.Turns...),
 			Tags:     tags,

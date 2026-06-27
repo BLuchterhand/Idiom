@@ -54,7 +54,9 @@ func TestFindMatchingPriorSessionFindsRecordsWrittenByStore(t *testing.T) {
 	prompt := "explain the runner evidence flow"
 	objective := "objective with customer context"
 
-	WriteSessionEvidenceRecord(root, "session-1", prompt, objective, []string{"b.go", "a.go", "a.go"}, false, "")
+	if err := WriteSessionEvidenceRecord(root, "session-1", prompt, objective, []string{"b.go", "a.go", "a.go"}, false, ""); err != nil {
+		t.Fatalf("write session evidence record: %v", err)
+	}
 
 	record := FindMatchingPriorSession(root, prompt)
 	if record == nil {
@@ -73,6 +75,30 @@ func TestFindMatchingPriorSessionFindsRecordsWrittenByStore(t *testing.T) {
 	}
 	if record.PromptHash != sha256Hex(prompt) {
 		t.Fatalf("PromptHash = %q, want hash of prompt", record.PromptHash)
+	}
+}
+
+func TestWriteSessionEvidenceRecordRejectsUnsafeSessionID(t *testing.T) {
+	root := t.TempDir()
+
+	if err := WriteSessionEvidenceRecord(root, "../escape", "prompt", "", []string{"a.go"}, false, ""); err == nil {
+		t.Fatal("expected unsafe session id to be rejected")
+	}
+
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "sessions", "escape.json")); !os.IsNotExist(err) {
+		t.Fatalf("unexpected escaped evidence file: %v", err)
+	}
+}
+
+func TestWriteSessionEvidenceRecordUsesUnpredictableAtomicTempFile(t *testing.T) {
+	root := t.TempDir()
+	if err := WriteSessionEvidenceRecord(root, "session-atomic", "prompt", "", []string{"a.go"}, false, ""); err != nil {
+		t.Fatalf("write session evidence record: %v", err)
+	}
+
+	predictableTemp := filepath.Join(sessionEvidenceDir(root), ".session-atomic.tmp")
+	if _, err := os.Stat(predictableTemp); !os.IsNotExist(err) {
+		t.Fatalf("predictable temp file should not remain or be used as the target: %v", err)
 	}
 }
 

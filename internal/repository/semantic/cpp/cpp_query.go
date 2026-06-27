@@ -2,12 +2,12 @@ package cpp
 
 import (
 	"cmp"
-	"idiom/internal/repository/semantic/internal/indexsupport"
 	"regexp"
 	"slices"
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
+	"idiom/internal/repository/semantic/internal/indexsupport"
 )
 
 type CppSymbolMatch struct {
@@ -165,7 +165,7 @@ func (idx *CppIndex) FindCallsInto(pattern string, limit int) []CppCallMatch {
 						StartLine: symbol.StartLine,
 						EndLine:   symbol.EndLine,
 					},
-					CalleeName: util.FirstNonEmpty(target.Qualified, target.Name),
+					CalleeName: textutil.FirstNonEmpty(target.Qualified, target.Name),
 					Line:       call.Line,
 					Score:      target.Score,
 				})

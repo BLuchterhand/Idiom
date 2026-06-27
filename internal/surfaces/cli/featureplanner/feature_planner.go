@@ -3,30 +3,33 @@ package featureplanner
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"maps"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	featureplannercontract "idiom/internal/contracts/featureplanner"
+	lanecontract "idiom/internal/contracts/lane"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/jsonevents"
+	"idiom/internal/platform/sessionid"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
-	toolcmd "idiom/internal/surfaces/cli/tool"
 	"idiom/internal/workflows/featureplanner"
 	planexecuteadapter "idiom/internal/workflows/featureplanner/adapters/planexecute"
 	"idiom/internal/workflows/featureplannerproduct"
 	"idiom/internal/workflows/featureplannerruntime"
 	coreplanexecute "idiom/internal/workflows/planexecute"
 	"idiom/internal/workflows/productworkflow"
-	"path/filepath"
 )
 
 type featurePlannerOptions struct {
@@ -73,8 +76,10 @@ type Dependencies struct {
 type featurePlannerRunner func(context.Context, featurePlannerRequest, io.Writer) (featurePlannerResult, error)
 
 var runHeadlessFeaturePlanner featurePlannerRunner = defaultHeadlessFeaturePlanner
-var runFeaturePlannerModelTurn = defaultFeaturePlannerModelTurn
+var runFeaturePlannerModelTurn featurePlannerModelTurnRunner = defaultFeaturePlannerModelTurn
 var runFeaturePlannerPlanExecute = defaultFeaturePlannerPlanExecute
+
+type featurePlannerModelTurnRunner func(context.Context, featurePlannerRequest, string, string, io.Writer) (string, error)
 
 func RunMain(args []string, stdout io.Writer, stderr io.Writer) int {
 	return RunMainWithTelemetry(args, stdout, stderr, nil)
@@ -120,9 +125,15 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec
 		"session_id":  cfg.Workspace.SessionID,
 		"local_ops":   deps.LocalOpsTelemetryFields(cfg, "feature-planner"),
 	}
-	logFeaturePlannerPhase(rec, "feature_planner_start", startFields)
-	emitFeaturePlannerJSONEvent(stdout, opts.JSONEvents, "start", startFields)
-	emitFeaturePlannerMessage(stdout, opts.JSONEvents, "user", prompt, cfg.Workspace.SessionID)
+	telemetry.LogPhase(rec, "feature_planner_start", startFields)
+	if err := emitFeaturePlannerJSONEvent(stdout, opts.JSONEvents, featureplannercontract.EventStart, startFields); err != nil {
+		fmt.Fprintf(stderr, "feature-planner: write json event: %v\n", err)
+		return 1
+	}
+	if err := emitFeaturePlannerMessage(stdout, opts.JSONEvents, "user", prompt, cfg.Workspace.SessionID); err != nil {
+		fmt.Fprintf(stderr, "feature-planner: write json message: %v\n", err)
+		return 1
+	}
 
 	result, err := runHeadlessFeaturePlanner(context.Background(), featurePlannerRequest{
 		Config:                cfg,
@@ -143,8 +154,10 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec
 			"session_id": cfg.Workspace.SessionID,
 			"error":      err.Error(),
 		}
-		logFeaturePlannerPhase(rec, "feature_planner_error", fields)
-		emitFeaturePlannerJSONEvent(stdout, opts.JSONEvents, "error", fields)
+		telemetry.LogPhase(rec, "feature_planner_error", fields)
+		if emitErr := emitFeaturePlannerJSONEvent(stdout, opts.JSONEvents, featureplannercontract.EventError, fields); emitErr != nil {
+			fmt.Fprintf(stderr, "feature-planner: write json event: %v\n", emitErr)
+		}
 		fmt.Fprintln(stderr, err)
 
 		return 1
@@ -157,9 +170,15 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec
 		completeFields[key] = value
 	}
 
-	logFeaturePlannerPhase(rec, "feature_planner_complete", completeFields)
-	emitFeaturePlannerJSONEvent(stdout, opts.JSONEvents, "complete", completeFields)
-	emitFeaturePlannerMessage(stdout, opts.JSONEvents, "assistant", result.Answer, cfg.Workspace.SessionID)
+	telemetry.LogPhase(rec, "feature_planner_complete", completeFields)
+	if err := emitFeaturePlannerJSONEvent(stdout, opts.JSONEvents, featureplannercontract.EventComplete, completeFields); err != nil {
+		fmt.Fprintf(stderr, "feature-planner: write json event: %v\n", err)
+		return 1
+	}
+	if err := emitFeaturePlannerMessage(stdout, opts.JSONEvents, "assistant", result.Answer, cfg.Workspace.SessionID); err != nil {
+		fmt.Fprintf(stderr, "feature-planner: write json message: %v\n", err)
+		return 1
+	}
 
 	if !opts.JSONEvents && strings.TrimSpace(result.Answer) != "" {
 		fmt.Fprintln(stdout, result.Answer)
@@ -210,7 +229,7 @@ func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerReques
 		}
 
 		state.EffortRoot = strings.TrimSpace(effortRoot)
-		state.EffortID = firstNonEmpty(strings.TrimSpace(req.EffortID), strings.TrimSpace(pwBrief.EffortID), strings.TrimSpace(state.EffortID))
+		state.EffortID = textutil.FirstNonEmpty(strings.TrimSpace(req.EffortID), strings.TrimSpace(pwBrief.EffortID), strings.TrimSpace(state.EffortID))
 		req.ProductWriteEnvelope = featureplanner.ProductWriteEnvelopePaths(pwBrief)
 		req.ProductWriteEnvelopeExplicit = true
 
@@ -236,7 +255,7 @@ func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerReques
 			return runFeaturePlannerPlanExecute(ctx, req, prompt, stdout)
 		}
 
-		return runFeaturePlannerModelTurn(req, prompt, taskFamily, stdout)
+		return runFeaturePlannerModelTurn(ctx, req, prompt, taskFamily, stdout)
 	})
 	if err != nil {
 		return featurePlannerResult{}, err
@@ -246,11 +265,13 @@ func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerReques
 		featureplanner.WriteEvents(stdout, result.Events)
 
 		if len(result.State.Blockers) > 0 {
-			emitFeaturePlannerJSONEvent(stdout, true, "blocked", map[string]any{
+			if err := emitFeaturePlannerJSONEvent(stdout, true, featureplannercontract.EventBlocked, map[string]any{
 				"session_id": result.State.SessionID,
 				"status":     result.State.Status,
 				"blockers":   result.State.Blockers,
-			})
+			}); err != nil {
+				return featurePlannerResult{}, fmt.Errorf("write feature-planner blocked json event: %w", err)
+			}
 		}
 	}
 
@@ -339,17 +360,7 @@ func validateFeaturePlannerProductContext(req featurePlannerRequest, state featu
 	return nil
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-
-	return ""
-}
-
-func defaultFeaturePlannerModelTurn(req featurePlannerRequest, prompt string, taskFamily string, stdout io.Writer) (string, error) {
+func defaultFeaturePlannerModelTurn(ctx context.Context, req featurePlannerRequest, prompt string, taskFamily string, stdout io.Writer) (string, error) {
 	timeout := time.Duration(req.Config.Chat.RequestTimeoutSeconds) * time.Second
 	if timeout <= 0 {
 		timeout = 120 * time.Second
@@ -366,9 +377,22 @@ func defaultFeaturePlannerModelTurn(req featurePlannerRequest, prompt string, ta
 		RepetitionPenalty: req.Config.Chat.RepetitionPenalty,
 	}
 
-	return featureplannerruntime.CompleteModelTurn(context.Background(), client, prompt, opts, taskFamily, func(role string, content string) {
-		emitFeaturePlannerMessage(stdout, req.JSONEvents, role, content, req.SessionID)
+	var emitErr error
+	answer, err := featureplannerruntime.CompleteModelTurn(ctx, client, prompt, opts, taskFamily, func(role string, content string) {
+		if emitErr != nil {
+			return
+		}
+		if err := emitFeaturePlannerMessage(stdout, req.JSONEvents, role, content, req.SessionID); err != nil {
+			emitErr = err
+		}
 	})
+	if err != nil {
+		return answer, err
+	}
+	if emitErr != nil {
+		return answer, emitErr
+	}
+	return answer, nil
 }
 
 func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerRequest, prompt string, stdout io.Writer) (string, error) {
@@ -435,10 +459,10 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 		_, _ = io.Copy(stdout, bytes.NewReader(planStdout.Bytes()))
 	}
 
-	completion := featurePlannerPlanExecuteCompletionFields(planStdout.String())
-	completion = overlayFeaturePlannerPlanExecuteTerminalCompletion(req.Config.Workspace.Root, planExecuteSessionID, planExecuteStartedAt, completion)
+	completion := featureplanner.PlanExecuteCompletionSummaryFromOutput(planStdout.String())
+	completion = overlayFeaturePlannerPlanExecuteTerminalCompletion(req.Config.Workspace.Root, planExecuteSessionID, completion, planExecuteStartedAt)
 	if code != 0 {
-		if retryPrompt, ok := featureplanner.PlanExecuteRecoveryRetryPrompt(prompt, completion); ok {
+		if retryPrompt, ok := featureplanner.PlanExecuteRecoveryRetryPromptForSummary(prompt, completion); ok {
 			if err := os.WriteFile(promptPath, []byte(retryPrompt), 0o600); err != nil {
 				return "", fmt.Errorf("write plan-execute retry prompt file: %w", err)
 			}
@@ -451,52 +475,55 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 				_, _ = io.Copy(stdout, bytes.NewReader(planStdout.Bytes()))
 			}
 
-			completion = featurePlannerPlanExecuteCompletionFields(planStdout.String())
-			completion = overlayFeaturePlannerPlanExecuteTerminalCompletion(req.Config.Workspace.Root, planExecuteSessionID, planExecuteStartedAt, completion)
+			completion = featureplanner.PlanExecuteCompletionSummaryFromOutput(planStdout.String())
+			completion = overlayFeaturePlannerPlanExecuteTerminalCompletion(req.Config.Workspace.Root, planExecuteSessionID, completion, planExecuteStartedAt)
 		}
 	}
 
-	completion[featureplanner.PlanExecuteCompletionFieldTool] = featureplanner.ToolPlanExecuteComplete
-	completion[featureplanner.PlanExecuteCompletionFieldLaneFamily] = featureplanner.PlanExecuteCompletionLaneFamily
-	completion[featureplanner.PlanExecuteCompletionFieldSummary] = strings.TrimSpace(planStdout.String())
+	completion.Tool = string(featureplannercontract.ToolPlanExecuteComplete)
+	completion.LaneFamily = string(lanecontract.LanePlanExecute)
+	completion.Summary = strings.TrimSpace(planStdout.String())
 
-	if featureplanner.CompletionFieldString(completion, featureplanner.PlanExecuteCompletionFieldCompletionSource) == "" {
-		completion[featureplanner.PlanExecuteCompletionFieldCompletionSource] = featureplanner.PlanExecuteCompletionSourceHeadlessReturned
+	if strings.TrimSpace(completion.CompletionSource) == "" {
+		completion.CompletionSource = string(featureplannercontract.PlanExecuteCompletionSourceHeadlessReturned)
 	}
 
 	if code != 0 {
-		if _, ok := completion[featureplanner.PlanExecuteCompletionFieldExitCode]; !ok {
-			completion[featureplanner.PlanExecuteCompletionFieldExitCode] = code
+		if completion.ExitCode == 0 {
+			completion.ExitCode = code
 		}
-		completion[featureplanner.PlanExecuteCompletionFieldStatus] = util.FirstNonEmpty(featureplanner.CompletionFieldString(completion, featureplanner.PlanExecuteCompletionFieldStatus), "failed")
-		completion[featureplanner.PlanExecuteCompletionFieldFailureReason] = util.FirstNonEmpty(
-			featureplanner.CompletionFieldString(completion, featureplanner.PlanExecuteCompletionFieldFailureReason),
+		completion.Status = textutil.FirstNonEmpty(completion.Status, "failed")
+		completion.FailureReason = textutil.FirstNonEmpty(
+			completion.FailureReason,
 			strings.TrimSpace(fmt.Sprintf("plan-execute atom dispatch failed with exit %d: %s", code, strings.TrimSpace(planStderr.String()))),
 		)
-		featureplanner.TrustObservedPlanExecuteCompletionFields(completion)
+		completion = featureplanner.TrustObservedPlanExecuteCompletionSummary(completion)
 
 		return encodeHeadlessPlanExecuteCompletion(req, stdout, completion)
 	}
 
-	if featureplanner.CompletionFieldString(completion, featureplanner.PlanExecuteCompletionFieldStatus) == "" {
-		completion[featureplanner.PlanExecuteCompletionFieldStatus] = featureplanner.PlanExecuteCompletionStatusAmbiguous
-		completion[featureplanner.PlanExecuteCompletionFieldFailureKind] = util.FirstNonEmpty(featureplanner.CompletionFieldString(completion, featureplanner.PlanExecuteCompletionFieldFailureKind), featureplanner.PlanExecuteCompletionMissingStatusFailureKind)
-		completion[featureplanner.PlanExecuteCompletionFieldFailureReason] = util.FirstNonEmpty(featureplanner.CompletionFieldString(completion, featureplanner.PlanExecuteCompletionFieldFailureReason), featureplanner.PlanExecuteCompletionMissingStatusFailureReason)
+	if strings.TrimSpace(completion.Status) == "" {
+		completion.Status = featureplanner.PlanExecuteCompletionStatusAmbiguous
+		completion.FailureKind = textutil.FirstNonEmpty(completion.FailureKind, featureplanner.PlanExecuteCompletionMissingStatusFailureKind)
+		completion.FailureReason = textutil.FirstNonEmpty(completion.FailureReason, featureplanner.PlanExecuteCompletionMissingStatusFailureReason)
 	}
 
-	featureplanner.TrustObservedPlanExecuteCompletionFields(completion)
+	completion = featureplanner.TrustObservedPlanExecuteCompletionSummary(completion)
 
 	return encodeHeadlessPlanExecuteCompletion(req, stdout, completion)
 }
 
-func encodeHeadlessPlanExecuteCompletion(req featurePlannerRequest, stdout io.Writer, completion map[string]any) (string, error) {
+func encodeHeadlessPlanExecuteCompletion(req featurePlannerRequest, stdout io.Writer, completion featureplanner.PlanExecuteCompletionSummary) (string, error) {
+	fields := completion.FeaturePlannerPayloadFields()
 	if req.JSONEvents && stdout != nil {
 		eventFields := map[string]any{"session_id": req.SessionID}
-		maps.Copy(eventFields, completion)
-		emitFeaturePlannerInternalJSONEvent(stdout, featurePlannerPlanExecuteCompletionEventType(completion), eventFields)
+		maps.Copy(eventFields, fields)
+		if err := emitFeaturePlannerInternalJSONEvent(stdout, featureplanner.PlanExecuteCompletionEventTypeForSummary(completion), eventFields); err != nil {
+			return "", fmt.Errorf("write feature-planner internal json event: %w", err)
+		}
 	}
 
-	body, err := json.Marshal(completion)
+	body, err := json.Marshal(fields)
 	if err != nil {
 		return "", err
 	}
@@ -532,47 +559,27 @@ func appendUniqueFeaturePlannerStrings(base []string, values ...string) []string
 	return base
 }
 
-func featurePlannerPlanExecuteCompletionEventType(fields map[string]any) string {
-	switch featureplanner.PlanExecuteCompletionTerminalClass(fields) {
-	case featureplanner.PlanExecuteTerminalCompleted:
-		return "internal_idiom.plan_execute.completed"
-	default:
-		return "internal_idiom.plan_execute.blocked"
-	}
-}
-
-func featurePlannerPlanExecuteCompletionFields(output string) map[string]any {
-	return featureplanner.PlanExecuteCompletionFields(output)
-}
-
-func overlayFeaturePlannerPlanExecuteTerminalCompletion(root string, sessionID string, invocationStartedAt time.Time, fields map[string]any) map[string]any {
-	if fields == nil {
-		fields = map[string]any{}
-	}
+func overlayFeaturePlannerPlanExecuteTerminalCompletion(root string, sessionID string, summary featureplanner.PlanExecuteCompletionSummary, invocationStartedAt time.Time) featureplanner.PlanExecuteCompletionSummary {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
-		return fields
+		return summary
 	}
 
 	record, path, found, err := coreplanexecute.TryLoadPlanExecuteTerminalCompletionRecord(root, sessionID)
 	if err != nil || !found {
-		return fields
+		return summary
 	}
 	if !featurePlannerPlanExecuteTerminalCompletionFresh(root, record, path, invocationStartedAt) {
-		return fields
+		return summary
 	}
 
-	terminalFields := coreplanexecute.PlanExecuteTerminalCompletionEventFields(record, path)
-	for key, value := range terminalFields {
-		if _, ok := fields[key]; !ok || featurePlannerEmptyCompletionField(fields[key]) {
-			fields[key] = value
-		}
-	}
-
-	return fields
+	return featureplanner.MergePlanExecuteCompletionSummaries(
+		summary,
+		featureplanner.PlanExecuteCompletionSummaryFromFields(plancontract.PlanExecuteTerminalCompletionEventFields(record, path)),
+	)
 }
 
-func featurePlannerPlanExecuteTerminalCompletionFresh(root string, record coreplanexecute.PlanExecuteTerminalCompletionRecord, path string, invocationStartedAt time.Time) bool {
+func featurePlannerPlanExecuteTerminalCompletionFresh(root string, record plancontract.PlanExecuteTerminalCompletionRecord, path string, invocationStartedAt time.Time) bool {
 	if invocationStartedAt.IsZero() {
 		return true
 	}
@@ -597,40 +604,26 @@ func featurePlannerPlanExecuteTerminalCompletionFresh(root string, record corepl
 	return !info.ModTime().Before(invocationStartedAt)
 }
 
-func featurePlannerEmptyCompletionField(value any) bool {
-	switch typed := value.(type) {
-	case nil:
-		return true
-	case string:
-		return strings.TrimSpace(typed) == ""
-	case []string:
-		return len(typed) == 0
-	case []any:
-		return len(typed) == 0
-	default:
-		return false
-	}
-}
-
-func emitFeaturePlannerMessage(stdout io.Writer, jsonEvents bool, role string, content string, sessionID string) {
-	if !jsonEvents {
-		return
+func emitFeaturePlannerMessage(stdout io.Writer, jsonEvents bool, role string, content string, sessionID string) error {
+	if jsonEvents {
+		return jsonevents.Emit(stdout, true, "message", map[string]any{
+			"role":           role,
+			"content_hash":   featurePlannerContentHash(content),
+			"content_length": len(content),
+			"session_id":     sessionID,
+		})
 	}
 
-	payload := map[string]any{
-		"type":       "message",
+	return jsonevents.Emit(stdout, jsonEvents, "message", map[string]any{
 		"role":       role,
 		"content":    content,
 		"session_id": sessionID,
-		"ts":         time.Now().UTC().Format(time.RFC3339Nano),
-	}
+	})
+}
 
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return
-	}
-
-	fmt.Fprintln(stdout, string(body))
+func featurePlannerContentHash(content string) string {
+	sum := sha256.Sum256([]byte(content))
+	return fmt.Sprintf("sha256:%x", sum)
 }
 
 func loadOrCreateFeaturePlannerState(req featurePlannerRequest) (featureplanner.FeatureState, error) {
@@ -723,45 +716,25 @@ func featurePlannerPrompt(opts featurePlannerOptions) (string, error) {
 	return strings.TrimRight(string(data), "\r\n"), nil
 }
 
-func emitFeaturePlannerJSONEvent(stdout io.Writer, jsonEvents bool, eventType string, fields map[string]any) {
-	if !jsonEvents {
-		return
+func emitFeaturePlannerJSONEvent(stdout io.Writer, jsonEvents bool, eventType featureplannercontract.FeaturePlannerEventType, fields map[string]any) error {
+	if !featureplannercontract.KnownEventType(eventType) {
+		return fmt.Errorf("unknown feature planner event type %q", eventType)
 	}
 
-	payload := map[string]any{
-		"type": "idiom.feature_planner." + eventType,
-		"ts":   time.Now().UTC().Format(time.RFC3339Nano),
-	}
-	for key, value := range fields {
-		payload[key] = value
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return
-	}
-
-	fmt.Fprintln(stdout, string(body))
+	return jsonevents.Emit(stdout, jsonEvents, featureplannercontract.EventName(eventType), fields)
 }
 
-func emitFeaturePlannerInternalJSONEvent(stdout io.Writer, eventType string, fields map[string]any) {
-	payload := map[string]any{
-		"type": strings.TrimSpace(eventType),
-		"ts":   time.Now().UTC().Format(time.RFC3339Nano),
-	}
-	maps.Copy(payload, fields)
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return
+func emitFeaturePlannerInternalJSONEvent(stdout io.Writer, eventType featureplannercontract.NestedPlanExecuteCompletionEventName, fields map[string]any) error {
+	if !featureplannercontract.KnownNestedPlanExecuteCompletionEventName(string(eventType)) {
+		return fmt.Errorf("unknown nested plan-execute completion event type %q", eventType)
 	}
 
-	fmt.Fprintln(stdout, string(body))
+	return jsonevents.Emit(stdout, true, string(eventType), fields)
 }
 
 func resolveDependencies(overrides ...Dependencies) Dependencies {
 	deps := Dependencies{
-		NewSessionID:            defaultFeaturePlannerSessionID,
+		NewSessionID:            sessionid.New,
 		LocalOpsTelemetryFields: func(config.Config, string) map[string]any { return nil },
 	}
 
@@ -781,18 +754,4 @@ func resolveDependencies(overrides ...Dependencies) Dependencies {
 	}
 
 	return deps
-}
-
-func defaultFeaturePlannerSessionID() string {
-	var buf [8]byte
-
-	if _, err := rand.Read(buf[:]); err != nil {
-		return fmt.Sprintf("ts%016x", time.Now().UnixNano())
-	}
-
-	return hex.EncodeToString(buf[:])
-}
-
-func logFeaturePlannerPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	toolcmd.LogCLIPhase(rec, eventType, fields)
 }

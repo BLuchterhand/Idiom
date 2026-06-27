@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	planartifact "idiom/internal/contracts/planartifact"
+
 	"idiom/internal/capabilities/workspace"
 )
 
@@ -16,7 +18,7 @@ func TestRecordSubmittedPlanAppendsChecklist(t *testing.T) {
 
 	req := workspace.ToolRequest{
 		Tool: "submit_plan",
-		Edits: []workspace.PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{Path: "a.go", Purpose: "add the new handler", OldText: "old", NewText: "new"},
 			{Path: "b.go", Purpose: "wire the route", OldText: "old2", NewText: "new2"},
 		},
@@ -64,13 +66,13 @@ func TestRecordSubmittedPlanReplacesExistingSection(t *testing.T) {
 
 	first := workspace.ToolRequest{
 		Tool:  "submit_plan",
-		Edits: []workspace.PlanEdit{{Path: "old.go", Purpose: "old edit", OldText: "a", NewText: "b"}},
+		Edits: []planartifact.PlanEdit{{Path: "old.go", Purpose: "old edit", OldText: "a", NewText: "b"}},
 	}
 	m.recordSubmittedPlan(first, workspace.ToolResult{Tool: "submit_plan", Summary: "ok"})
 
 	second := workspace.ToolRequest{
 		Tool: "submit_plan",
-		Edits: []workspace.PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{Path: "new.go", Purpose: "new edit 1", OldText: "c", NewText: "d"},
 			{Path: "new2.go", Purpose: "new edit 2", OldText: "e", NewText: "f"},
 		},
@@ -97,7 +99,7 @@ func TestRecordSubmittedPlanSkipsErrors(t *testing.T) {
 
 	req := workspace.ToolRequest{
 		Tool:  "submit_plan",
-		Edits: []workspace.PlanEdit{{Path: "a.go", Purpose: "x", OldText: "a", NewText: "b"}},
+		Edits: []planartifact.PlanEdit{{Path: "a.go", Purpose: "x", OldText: "a", NewText: "b"}},
 	}
 	m.recordSubmittedPlan(req, workspace.ToolResult{Tool: "submit_plan", Error: "rejected"})
 
@@ -113,7 +115,7 @@ func TestRecordSubmittedPlanSkipsSuppressedReviewNoopPlan(t *testing.T) {
 
 	req := workspace.ToolRequest{
 		Tool:  "submit_plan",
-		Edits: []workspace.PlanEdit{{Purpose: "verification pass"}},
+		Edits: []planartifact.PlanEdit{{Purpose: "verification pass"}},
 	}
 	m.recordSubmittedPlan(req, workspace.ToolResult{
 		Tool:    "review_repair_noop_plan",
@@ -132,8 +134,8 @@ func TestRecordSubmittedPlanUsesPlanArtifact(t *testing.T) {
 
 	req := workspace.ToolRequest{
 		Tool: "submit_plan",
-		PlanArtifact: &workspace.PlanArtifact{
-			Edits: []workspace.PlanEdit{
+		PlanArtifact: &planartifact.PlanArtifact{
+			Edits: []planartifact.PlanEdit{
 				{Path: "x.go", Purpose: "from artifact", OldText: "o", NewText: "n"},
 			},
 		},
@@ -166,7 +168,7 @@ func TestAttachWriteToSubmittedEdit(t *testing.T) {
 
 	req := workspace.ToolRequest{
 		Tool: "submit_plan",
-		Edits: []workspace.PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{Path: "a.go", Purpose: "first edit", OldText: "a", NewText: "b"},
 			{Path: "b.go", Purpose: "second edit", OldText: "c", NewText: "d"},
 		},
@@ -196,7 +198,7 @@ func TestAttachWriteToSubmittedEditNoMatch(t *testing.T) {
 
 	req := workspace.ToolRequest{
 		Tool:  "submit_plan",
-		Edits: []workspace.PlanEdit{{Path: "a.go", Purpose: "x", OldText: "a", NewText: "b"}},
+		Edits: []planartifact.PlanEdit{{Path: "a.go", Purpose: "x", OldText: "a", NewText: "b"}},
 	}
 	m.recordSubmittedPlan(req, workspace.ToolResult{Tool: "submit_plan", Summary: "ok"})
 
@@ -241,12 +243,12 @@ func TestUpdatePlanItemCheckboxInProgress(t *testing.T) {
 
 func TestPlanEditLabelFallbacks(t *testing.T) {
 	cases := []struct {
-		edit workspace.PlanEdit
+		edit planartifact.PlanEdit
 		want string
 	}{
-		{workspace.PlanEdit{Path: "a.go", Purpose: "fix the bug"}, "fix the bug (a.go)"},
-		{workspace.PlanEdit{Purpose: "no path given"}, "no path given"},
-		{workspace.PlanEdit{Path: "a.go"}, "a.go"},
+		{planartifact.PlanEdit{Path: "a.go", Purpose: "fix the bug"}, "fix the bug (a.go)"},
+		{planartifact.PlanEdit{Purpose: "no path given"}, "no path given"},
+		{planartifact.PlanEdit{Path: "a.go"}, "a.go"},
 	}
 	for _, tc := range cases {
 		got := planEditLabel(tc.edit)

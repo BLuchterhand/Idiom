@@ -105,15 +105,19 @@ func AppendBehavioralCoveragePromotionEvent(effortRoot string, result Behavioral
 	if err := ValidateBehavioralCoveragePromotionEventTarget(effortRoot, result); err != nil {
 		return err
 	}
+	eventType, ok := ProductWorkflowBehavioralCoverageEvent(result.State)
+	if !ok {
+		return fmt.Errorf("behavioral coverage promotion state %q has no declared event type", strings.TrimSpace(result.State))
+	}
 	event := BehavioralCoveragePromotionEvent{
-		Event:            "behavioral_coverage_" + strings.TrimSpace(result.State),
+		Event:            string(eventType),
 		EventID:          strings.TrimSpace(result.EventID),
 		State:            strings.TrimSpace(result.State),
 		CommitStatus:     strings.TrimSpace(result.CommitStatus),
 		Digest:           strings.TrimSpace(result.Digest),
 		SupersededDigest: strings.TrimSpace(result.SupersededDigest),
 		Timestamp:        time.Now().UTC().Format(time.RFC3339Nano),
-		Source:           "product_tdd_promote_coverage",
+		Source:           string(ProductWorkflowEventSourceTDDBriefPromotion),
 	}
 	if result.Ledger.BehavioralCoverage != nil {
 		event.EffortID = strings.TrimSpace(result.Ledger.BehavioralCoverage.EffortID)
@@ -172,8 +176,13 @@ func ParseBehavioralCoveragePromotionEventsJSONL(data []byte) ([]BehavioralCover
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
 			return nil, fmt.Errorf("line %d: %w", lineNo, err)
 		}
-		if strings.HasPrefix(strings.TrimSpace(event.Event), "behavioral_coverage_") {
+		eventType := ProductWorkflowEventType(strings.TrimSpace(event.Event))
+		if KnownProductWorkflowBehavioralCoverageEvent(eventType) {
 			events = append(events, event)
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(event.Event), string(ProductWorkflowEventSourceBehavioralCoverage)+"_") {
+			return nil, fmt.Errorf("line %d: unknown behavioral coverage event %q", lineNo, event.Event)
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -187,7 +196,8 @@ func AcceptedBehavioralCoveragePromotionEvent(events []BehavioralCoveragePromoti
 	digest = strings.TrimSpace(digest)
 	for i := len(events) - 1; i >= 0; i-- {
 		event := events[i]
-		if strings.TrimSpace(event.Event) != "behavioral_coverage_"+BehavioralCoveragePromotionStateAccepted {
+		acceptedEvent, _ := ProductWorkflowBehavioralCoverageEvent(BehavioralCoveragePromotionStateAccepted)
+		if strings.TrimSpace(event.Event) != string(acceptedEvent) {
 			continue
 		}
 		if strings.TrimSpace(event.State) != BehavioralCoveragePromotionStateAccepted {

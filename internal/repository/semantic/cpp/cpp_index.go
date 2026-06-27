@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/discovery"
 	"idiom/internal/repository/semantic/internal/indexsupport"
 )
@@ -145,7 +145,7 @@ func BuildCppIndexWithOptions(root string, opts indexsupport.IndexOptions) (*Cpp
 		}
 
 		paths = append(paths, rel)
-		byName[filepath.Base(rel)] = util.AppendUnique(byName[filepath.Base(rel)], rel)
+		byName[filepath.Base(rel)] = textutil.AppendUnique(byName[filepath.Base(rel)], rel)
 		byRel[rel] = rel
 
 		if opts.MaxFiles > 0 && len(paths) >= opts.MaxFiles {
@@ -221,8 +221,8 @@ func BuildCppIndexWithOptions(root string, opts indexsupport.IndexOptions) (*Cpp
 		}
 
 		for _, include := range file.Includes {
-			index.Forward[file.Path] = util.AppendUnique(index.Forward[file.Path], include)
-			index.Reverse[include] = util.AppendUnique(index.Reverse[include], file.Path)
+			index.Forward[file.Path] = textutil.AppendUnique(index.Forward[file.Path], include)
+			index.Reverse[include] = textutil.AppendUnique(index.Reverse[include], file.Path)
 		}
 	}
 
@@ -335,7 +335,7 @@ func parseCppIncludes(rel string, content string, byName map[string][]string, by
 			include = filepath.ToSlash(strings.TrimSpace(match[1]))
 		}
 
-		includes = util.AppendUnique(includes, include)
+		includes = textutil.AppendUnique(includes, include)
 	}
 
 	slices.Sort(includes)

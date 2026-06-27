@@ -12,6 +12,13 @@ import (
 
 const RelPath = ".idiom/lane-history.jsonl"
 
+const (
+	FinalStateFailed          = "failed"
+	FinalStateDegraded        = "degraded"
+	FinalStateSourceSatisfied = "source-satisfied"
+	FinalStateSuccess         = "success"
+)
+
 type Event struct {
 	Timestamp        string   `json:"ts"`
 	Mode             string   `json:"mode"`

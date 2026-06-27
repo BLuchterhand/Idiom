@@ -7,10 +7,10 @@ import (
 
 func TestLaneSwitchReferralFromReplyMatchesConservativePatterns(t *testing.T) {
 	cases := []struct {
-		name        string
-		reply       string
-		wantMatch   bool
-		wantRecKey  string
+		name       string
+		reply      string
+		wantMatch  bool
+		wantRecKey string
 	}{
 		{
 			name:       "read-only mode refusal",
@@ -55,24 +55,24 @@ func TestLaneSwitchReferralFromReplyMatchesConservativePatterns(t *testing.T) {
 			wantRecKey: laneSwitchPlanExecute,
 		},
 		{
-			name:       "plain status answer no refusal",
-			reply:      "The auth middleware checks tokens in read-only fashion before delegating.",
-			wantMatch:  false,
+			name:      "plain status answer no refusal",
+			reply:     "The auth middleware checks tokens in read-only fashion before delegating.",
+			wantMatch: false,
 		},
 		{
-			name:       "architecture explanation not refusal-shaped",
-			reply:      "The conversation lane is read-only by design; it never writes.",
-			wantMatch:  false, // "read-only by design" is descriptive, not a lane-refusal
+			name:      "architecture explanation not refusal-shaped",
+			reply:     "The conversation lane is read-only by design; it never writes.",
+			wantMatch: false, // "read-only by design" is descriptive, not a lane-refusal
 		},
 		{
-			name:       "empty reply",
-			reply:      "",
-			wantMatch:  false,
+			name:      "empty reply",
+			reply:     "",
+			wantMatch: false,
 		},
 		{
-			name:       "bare single word implement not a signal",
-			reply:      "You can implement this by calling foo() in your code.",
-			wantMatch:  false,
+			name:      "bare single word implement not a signal",
+			reply:     "You can implement this by calling foo() in your code.",
+			wantMatch: false,
 		},
 	}
 

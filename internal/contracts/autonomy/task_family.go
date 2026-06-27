@@ -20,6 +20,7 @@ const (
 	TaskFamilyFeaturePlannerPlanner     TaskFamilyID = "feature_planner_planner"
 	TaskFamilyFeaturePlannerImplementor TaskFamilyID = "feature_planner_implementor"
 	TaskFamilyPlanThenExecutePlanner    TaskFamilyID = "plan_then_execute_planner"
+	TaskFamilyPlanThenExecuteExecutor   TaskFamilyID = "plan_then_execute_executor"
 	TaskFamilyPlanThenExecuteReview     TaskFamilyID = "plan_then_execute_review_repair"
 	TaskFamilyImplementation            TaskFamilyID = "implementation"
 	TaskFamilyTestAuthoring             TaskFamilyID = "test_authoring"
@@ -34,4 +35,29 @@ const (
 	TaskFamilyDelegatedIsolatedImpl     TaskFamilyID = "delegated_isolated_implementation"
 	TaskFamilyDelegatedReadOnly         TaskFamilyID = "delegated_read_only"
 	TaskFamilyImplementationRepair      TaskFamilyID = "implementation_repair"
+
+	RouteReasonPlanThenExecuteRequest TaskFamilyRouteReason = "plan_then_execute_request"
+	RouteReasonPlanArtifactDispatch   TaskFamilyRouteReason = "plan_artifact_dispatch"
+
+	RuntimeContractExecutorDispatchResult TaskFamilyRuntimeContract = "executor_dispatch_result"
 )
+
+type TaskFamilyRouteReason string
+type TaskFamilyRuntimeContract string
+
+func TaskFamilyUsesImplementationLane(value TaskFamilyID) bool {
+	switch value {
+	case TaskFamilyImplementation,
+		TaskFamilyTestAuthoring,
+		TaskFamilyConfigEdit,
+		TaskFamilyScriptEdit,
+		TaskFamilyGDScriptEdit,
+		TaskFamilyDocsEdit,
+		TaskFamilyPromptEditSecurity,
+		TaskFamilyFailureInjection,
+		TaskFamilyPlanThenExecutePlanner:
+		return true
+	default:
+		return false
+	}
+}

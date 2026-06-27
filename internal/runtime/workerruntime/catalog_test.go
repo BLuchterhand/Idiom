@@ -3,12 +3,14 @@ package workerruntime
 import (
 	"slices"
 	"testing"
+
+	"idiom/internal/contracts/autonomy"
 )
 
 func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 	t.Run("artifact final answer", func(t *testing.T) {
 		spec := RuntimeContractForTaskFamily(ArtifactFinalAnswerTaskFamily)
-		if spec.TaskFamily != TaskFamilyArtifactFinalAnswer || spec.Contract != ContractArtifactFinalAnswer {
+		if spec.TaskFamily != autonomy.TaskFamilyArtifactFinalAnswer || spec.Contract != ContractArtifactFinalAnswer {
 			t.Fatalf("unexpected artifact final-answer contract: %#v", spec)
 		}
 
@@ -23,7 +25,7 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 
 	t.Run("artifact distiller", func(t *testing.T) {
 		spec := RuntimeContractForTaskFamily(ArtifactDistillerTaskFamily)
-		if spec.TaskFamily != TaskFamilyArtifactDistiller || spec.Contract != ContractEditIntentDistill {
+		if spec.TaskFamily != autonomy.TaskFamilyArtifactDistiller || spec.Contract != ContractEditIntentDistill {
 			t.Fatalf("unexpected artifact distiller contract: %#v", spec)
 		}
 
@@ -46,7 +48,7 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 
 	t.Run("conversation", func(t *testing.T) {
 		spec := RuntimeContractForTaskFamily("conversation")
-		if spec.TaskFamily != TaskFamilyConversation || spec.ToolProfile != CapabilityConversationReadOnly {
+		if spec.TaskFamily != autonomy.TaskFamilyConversation || spec.ToolProfile != CapabilityConversationReadOnly {
 			t.Fatalf("unexpected conversation contract: %#v", spec)
 		}
 
@@ -65,7 +67,7 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 
 	t.Run("direct question alias", func(t *testing.T) {
 		spec := RuntimeContractForTaskFamily("direct_question")
-		if spec.TaskFamily != TaskFamilyConversation || spec.Contract != ContractDirectAnswer || spec.PermissionProfile != PermissionReadOnlyWorkspace {
+		if spec.TaskFamily != autonomy.TaskFamilyConversation || spec.Contract != ContractDirectAnswer || spec.PermissionProfile != PermissionReadOnlyWorkspace {
 			t.Fatalf("direct_question should normalize to conversation contract, got %#v", spec)
 		}
 	})
@@ -111,8 +113,8 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 	})
 
 	t.Run("feature planner planner", func(t *testing.T) {
-		spec := RuntimeContractForTaskFamily(string(TaskFamilyFeaturePlannerPlanner))
-		if spec.TaskFamily != TaskFamilyFeaturePlannerPlanner || spec.Contract != ContractFeaturePlan {
+		spec := RuntimeContractForTaskFamily(string(autonomy.TaskFamilyFeaturePlannerPlanner))
+		if spec.TaskFamily != autonomy.TaskFamilyFeaturePlannerPlanner || spec.Contract != ContractFeaturePlan {
 			t.Fatalf("feature planner planner must be first-class, got %#v", spec)
 		}
 
@@ -126,8 +128,8 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 	})
 
 	t.Run("feature planner implementor", func(t *testing.T) {
-		spec := RuntimeContractForTaskFamily(string(TaskFamilyFeaturePlannerImplementor))
-		if spec.TaskFamily != TaskFamilyFeaturePlannerImplementor || spec.Contract != ContractImplementationResult {
+		spec := RuntimeContractForTaskFamily(string(autonomy.TaskFamilyFeaturePlannerImplementor))
+		if spec.TaskFamily != autonomy.TaskFamilyFeaturePlannerImplementor || spec.Contract != ContractImplementationResult {
 			t.Fatalf("feature planner implementor must be first-class, got %#v", spec)
 		}
 
@@ -142,7 +144,7 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 
 	t.Run("unknown family", func(t *testing.T) {
 		spec := RuntimeContractForTaskFamily("unknown_family")
-		if spec.TaskFamily != TaskFamilyConversation || spec.Contract != ContractDirectAnswer {
+		if spec.TaskFamily != autonomy.TaskFamilyConversation || spec.Contract != ContractDirectAnswer {
 			t.Fatalf("unexpected unknown-family fallback: %#v", spec)
 		}
 

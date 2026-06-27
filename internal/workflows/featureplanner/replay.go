@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	coreplanexecute "idiom/internal/workflows/planexecute"
+	featureplannercontract "idiom/internal/contracts/featureplanner"
+	plancontract "idiom/internal/contracts/plan"
 )
 
 type ReplayBundle struct {
@@ -39,52 +40,52 @@ func Replay(initial FeatureState, events []Event) (ReplayBundle, error) {
 		}
 
 		switch event.Type {
-		case EventPlannerQuestionAnswered:
+		case featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionAnswered):
 			if delta, ok := replayPlanAuthorityDelta(event); ok {
 				replayUpsertPlanAuthorityDelta(&state, delta)
 			}
-		case EventPlannerQuestionSupersededByRevision:
+		case featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionSupersededByRevision):
 			replaySupersedePlannerQuestionByRevision(&state, event)
-		case EventPlannerQuestionOpened, EventImplementorQuestionOpened:
+		case featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionOpened), featureplannercontract.EventName(featureplannercontract.EventImplementorQuestionOpened):
 			state.Status = FeatureStatePlanningQuestion
 			state.PlanningLoop.State = FeatureStatePlanningQuestion
-		case "idiom.feature_planner.plan_accepted", "idiom.feature_planner.atom_dispatched":
+		case featureplannercontract.EventName(featureplannercontract.EventPlanAccepted), featureplannercontract.EventName(featureplannercontract.EventAtomDispatched):
 			if state.Status != FeatureStatePlanningQuestion {
 				state.Status = FeatureStateDispatching
 			}
-		case "idiom.feature_planner.tdd_pre_execution_checked":
+		case featureplannercontract.EventName(featureplannercontract.EventTDDPreExecutionChecked):
 			upsertTDDEvidence(&state, replayTDDEvidence(event))
-		case "idiom.feature_planner.atom_completed":
+		case featureplannercontract.EventName(featureplannercontract.EventAtomCompleted):
 			markReplayAtomState(&state, event.AtomID, AtomStateComplete)
 			if closure, ok := replayVerificationClosure(event); ok {
 				upsertVerificationClosure(&state, closure)
 			}
-		case "idiom.feature_planner.atom_source_satisfied":
+		case featureplannercontract.EventName(featureplannercontract.EventAtomSourceSatisfied):
 			markReplayAtomState(&state, event.AtomID, AtomStateSourceSatisfied)
 			if closure, ok := replayVerificationClosure(event); ok {
 				upsertVerificationClosure(&state, closure)
 			}
-		case "idiom.feature_planner.release_ready", "idiom.feature_planner.release_blocked":
+		case featureplannercontract.EventName(featureplannercontract.EventReleaseReady), featureplannercontract.EventName(featureplannercontract.EventReleaseBlocked):
 			if decision, ok := replayReleaseReadiness(event); ok {
 				state.ReleaseReadiness = decision
 			}
-		case EventProductSourceSatisfied:
+		case featureplannercontract.EventName(featureplannercontract.EventProductSourceSatisfied):
 			ApplyProductSourceSatisfiedCloseout(&state)
-		case "idiom.feature.atom_started":
+		case string(featureplannercontract.LegacyEventAtomStarted):
 			state.Status = firstNonEmpty(event.FeatureTo, FeatureStateDispatching)
 			markReplayAtomState(&state, event.AtomID, firstNonEmpty(event.AtomTo, AtomStateDispatching))
-		case "idiom.feature.atom_progressed", "idiom.feature.atom_reviewed", "idiom.feature.atom_verified":
+		case string(featureplannercontract.LegacyEventAtomProgressed), string(featureplannercontract.LegacyEventAtomReviewed), string(featureplannercontract.LegacyEventAtomVerified):
 			state.Status = firstNonEmpty(event.FeatureTo, state.Status)
 			markReplayAtomState(&state, event.AtomID, event.AtomTo)
-		case "idiom.feature.planner_question_opened":
+		case string(featureplannercontract.LegacyEventPlannerQuestionOpened):
 			state.Status = firstNonEmpty(event.FeatureTo, FeatureStatePlanningRepair)
 			markReplayAtomState(&state, event.AtomID, firstNonEmpty(event.AtomTo, AtomStateQuestionForPlanner))
-		case "idiom.feature_planner.tdd_pre_execution_blocked":
+		case featureplannercontract.EventName(featureplannercontract.EventTDDPreExecutionBlocked):
 			state.Status = FeatureStatePlanningRepair
 			markReplayAtomState(&state, event.AtomID, AtomStateBlockedMissingTDD)
-		case "idiom.feature_planner.malformed_structured_output":
+		case featureplannercontract.EventName(featureplannercontract.EventMalformedStructuredOutput):
 			state.Status = FeatureStateMalformedOutput
-		case "idiom.feature_planner.planning_stuck":
+		case featureplannercontract.EventName(featureplannercontract.EventPlanningStuck):
 			state.Status = FeatureStatePlanningStuck
 		}
 
@@ -104,7 +105,7 @@ func Replay(initial FeatureState, events []Event) (ReplayBundle, error) {
 		}
 	}
 
-	if state.Status == FeatureStateComplete && strings.TrimSpace(state.ReleaseReadiness.Status) == "" {
+	if state.Status == FeatureStateComplete && strings.TrimSpace(string(state.ReleaseReadiness.Status)) == "" {
 		state.ReleaseReadiness = EvaluateReleaseReadiness(state, "")
 	}
 	state.DerivedNextValidActions = DeriveNextValidActions(state)
@@ -135,36 +136,36 @@ func replayVerificationClosure(event Event) (VerificationClosure, bool) {
 		return VerificationClosure{}, false
 	}
 
-	status := CompletionFieldString(fields, "verification_status")
+	status := VerificationClosureStatus(CompletionFieldString(fields, featureplannercontract.EventFieldVerificationStatus))
 	if status == "" {
 		switch event.Type {
-		case "idiom.feature_planner.atom_source_satisfied":
-			status = "source_satisfied"
-		case "idiom.feature_planner.atom_completed":
-			status = "passed"
+		case featureplannercontract.EventName(featureplannercontract.EventAtomSourceSatisfied):
+			status = VerificationClosureStatusSourceSatisfied
+		case featureplannercontract.EventName(featureplannercontract.EventAtomCompleted):
+			status = VerificationClosureStatusPassed
 		}
 	}
 
 	closure := VerificationClosure{
-		EventID:                      firstNonEmpty(CompletionFieldString(fields, "verification_closure_event_id"), event.EventID),
+		EventID:                      firstNonEmpty(CompletionFieldString(fields, featureplannercontract.EventFieldVerificationClosureEventID), event.EventID),
 		AtomID:                       firstNonEmpty(event.AtomID, CompletionFieldString(fields, "atom_id")),
 		Status:                       status,
 		Outcome:                      CompletionFieldString(fields, "outcome"),
-		PlanArtifactID:               CompletionFieldString(fields, "plan_artifact_id"),
-		PlanRevision:                 completionFieldInt(fields, "plan_revision"),
-		PlanDigest:                   CompletionFieldString(fields, "plan_digest"),
-		ApprovalEventID:              CompletionFieldString(fields, "approval_event_id"),
-		WorkspaceFingerprint:         CompletionFieldString(fields, "workspace_fingerprint"),
+		PlanArtifactID:               CompletionFieldString(fields, featureplannercontract.EventFieldPlanArtifactID),
+		PlanRevision:                 completionFieldInt(fields, featureplannercontract.EventFieldPlanRevision),
+		PlanDigest:                   CompletionFieldString(fields, featureplannercontract.EventFieldPlanDigest),
+		ApprovalEventID:              CompletionFieldString(fields, featureplannercontract.EventFieldApprovalEventID),
+		WorkspaceFingerprint:         CompletionFieldString(fields, featureplannercontract.EventFieldWorkspaceFingerprint),
 		ContractID:                   CompletionFieldString(fields, "contract_id"),
 		ContractHash:                 firstNonEmpty(CompletionFieldString(fields, "snapshot_hash"), CompletionFieldString(fields, "contract_hash")),
 		ScopeContractID:              CompletionFieldString(fields, "scope_contract_id"),
 		ScopeContractHash:            CompletionFieldString(fields, "scope_contract_hash"),
 		ChangedPaths:                 completionFieldStringSlice(fields, "changed_paths"),
-		SourceSatisfiedEvidencePaths: completionFieldStringSlice(fields, "source_satisfied_evidence_paths"),
-		RequiredTestResults:          replayVerificationCommandResults(fields, "required_test_results"),
-		TDDCommandResults:            replayVerificationCommandResults(fields, "tdd_command_results"),
-		SourceSanity:                 replayVerificationCheckResults(completionFieldPhaseEvidenceChecks(fields, "source_sanity")),
-		Verification:                 replayVerificationCheckResults(completionFieldPhaseEvidenceChecks(fields, "verification")),
+		SourceSatisfiedEvidencePaths: completionFieldStringSlice(fields, plancontract.PlanExecuteTerminalFieldSourceSatisfiedEvidencePaths),
+		RequiredTestResults:          replayVerificationCommandResults(fields, featureplannercontract.EventFieldRequiredTestResults),
+		TDDCommandResults:            replayVerificationCommandResults(fields, featureplannercontract.EventFieldTDDCommandResults),
+		SourceSanity:                 replayVerificationCheckResults(completionFieldPhaseEvidenceChecks(fields, plancontract.PlanExecuteTerminalFieldSourceSanity)),
+		Verification:                 replayVerificationCheckResults(completionFieldPhaseEvidenceChecks(fields, plancontract.PlanExecuteTerminalFieldVerification)),
 		CreatedAt:                    event.CreatedAt,
 	}
 	closure = normalizeVerificationClosure(closure)
@@ -182,26 +183,26 @@ func replayReleaseReadiness(event Event) (ReleaseReadinessDecision, bool) {
 		return ReleaseReadinessDecision{}, false
 	}
 
-	status := CompletionFieldString(fields, "release_status")
+	status := CompletionFieldString(fields, featureplannercontract.EventFieldReleaseStatus)
 	if status == "" {
 		switch event.Type {
-		case "idiom.feature_planner.release_ready":
-			status = "ready"
-		case "idiom.feature_planner.release_blocked":
-			status = "blocked"
+		case featureplannercontract.EventName(featureplannercontract.EventReleaseReady):
+			status = string(ReleaseReadinessStatusReady)
+		case featureplannercontract.EventName(featureplannercontract.EventReleaseBlocked):
+			status = string(ReleaseReadinessStatusBlocked)
 		}
 	}
 	decision := ReleaseReadinessDecision{
-		Status:                      strings.TrimSpace(status),
-		EventID:                     firstNonEmpty(strings.TrimSpace(event.EventID), CompletionFieldString(fields, "release_event_id")),
-		PlanArtifactID:              CompletionFieldString(fields, "plan_artifact_id"),
-		PlanRevision:                completionFieldInt(fields, "plan_revision"),
-		PlanDigest:                  CompletionFieldString(fields, "plan_digest"),
-		WorkspaceFingerprint:        CompletionFieldString(fields, "workspace_fingerprint"),
-		ApprovalEventID:             CompletionFieldString(fields, "approval_event_id"),
-		VerificationClosureEventIDs: completionFieldStringSlice(fields, "verification_closure_event_ids"),
-		OpenObligations:             completionFieldStringSlice(fields, "open_obligations"),
-		Blockers:                    completionFieldStringSlice(fields, "blockers"),
+		Status:                      ReleaseReadinessStatus(strings.TrimSpace(status)),
+		EventID:                     firstNonEmpty(strings.TrimSpace(event.EventID), CompletionFieldString(fields, featureplannercontract.EventFieldReleaseEventID)),
+		PlanArtifactID:              CompletionFieldString(fields, featureplannercontract.EventFieldPlanArtifactID),
+		PlanRevision:                completionFieldInt(fields, featureplannercontract.EventFieldPlanRevision),
+		PlanDigest:                  CompletionFieldString(fields, featureplannercontract.EventFieldPlanDigest),
+		WorkspaceFingerprint:        CompletionFieldString(fields, featureplannercontract.EventFieldWorkspaceFingerprint),
+		ApprovalEventID:             CompletionFieldString(fields, featureplannercontract.EventFieldApprovalEventID),
+		VerificationClosureEventIDs: completionFieldStringSlice(fields, featureplannercontract.EventFieldVerificationClosureEventIDs),
+		OpenObligations:             completionFieldStringSlice(fields, featureplannercontract.EventFieldOpenObligations),
+		Blockers:                    completionFieldStringSlice(fields, featureplannercontract.EventFieldBlockers),
 		DecidedAt:                   event.CreatedAt,
 	}
 
@@ -214,7 +215,7 @@ func replayReleaseReadiness(event Event) (ReleaseReadinessDecision, bool) {
 	if decision.Status == "" || decision.PlanArtifactID == "" {
 		return ReleaseReadinessDecision{}, false
 	}
-	if decision.Status == "ready" && len(decision.VerificationClosureEventIDs) == 0 {
+	if decision.Status == ReleaseReadinessStatusReady && len(decision.VerificationClosureEventIDs) == 0 {
 		return ReleaseReadinessDecision{}, false
 	}
 
@@ -240,15 +241,15 @@ func replayVerificationCommandResults(fields map[string]any, key string) []Verif
 	return normalizeVerificationCommandResults(results)
 }
 
-func replayVerificationCheckResults(checks []coreplanexecute.PhaseEvidenceCheck) []VerificationCheckResult {
+func replayVerificationCheckResults(checks []plancontract.PhaseEvidenceCheck) []VerificationCheckResult {
 	var out []VerificationCheckResult
 	for _, check := range checks {
 		out = append(out, VerificationCheckResult{
-			Kind:       check.Kind,
+			Kind:       string(check.Kind),
 			Path:       check.Path,
 			Command:    check.Command,
 			WorkingDir: strings.TrimSpace(check.WorkingDir),
-			Status:     check.Status,
+			Status:     string(check.Status),
 			Summary:    check.Summary,
 			Error:      check.Error,
 		})
@@ -262,7 +263,7 @@ func replayPlanAuthorityDelta(event Event) (PlanAuthorityDelta, bool) {
 		return PlanAuthorityDelta{}, false
 	}
 
-	value, ok := event.Fields["authority_delta"]
+	value, ok := event.Fields[featureplannercontract.EventFieldAuthorityDelta]
 	if !ok || value == nil {
 		return PlanAuthorityDelta{}, false
 	}
@@ -286,7 +287,7 @@ func replaySupersedePlannerQuestionByRevision(state *FeatureState, event Event) 
 		return
 	}
 
-	questionID := strings.TrimSpace(replayStringField(event.Fields["question_id"]))
+	questionID := strings.TrimSpace(replayStringField(event.Fields[featureplannercontract.EventFieldQuestionID]))
 	if questionID == "" {
 		return
 	}
@@ -296,9 +297,9 @@ func replaySupersedePlannerQuestionByRevision(state *FeatureState, event Event) 
 			continue
 		}
 
-		state.OpenQuestions[i].Status = "answered"
-		state.OpenQuestions[i].AnswerSourceKind = "plan_revision"
-		state.OpenQuestions[i].EvidenceRefs = normalizedStringList(append(state.OpenQuestions[i].EvidenceRefs, "operator_plan_revision"))
+		state.OpenQuestions[i].Status = featureplannercontract.PlannerQuestionStatusAnswered
+		state.OpenQuestions[i].AnswerSourceKind = featureplannercontract.PlannerQuestionAnswerSourcePlanRevision
+		state.OpenQuestions[i].EvidenceRefs = normalizedStringList(append(state.OpenQuestions[i].EvidenceRefs, featureplannercontract.PlannerQuestionEvidenceOperatorPlanRevision))
 		clearAnsweredPlannerQuestionBlockers(state, questionID)
 		state.Status = FeatureStatePlanning
 		state.PlanningLoop.State = FeatureStatePlanning
@@ -357,6 +358,12 @@ func replayStringSlice(value any) []string {
 func validateReplayEvent(state FeatureState, event Event) error {
 	if event.SchemaVersion != "" && event.SchemaVersion != FeatureEventSchemaVersion {
 		return fmt.Errorf("unsupported feature event schema %q", event.SchemaVersion)
+	}
+	if strings.TrimSpace(event.Type) == "" {
+		return fmt.Errorf("feature event missing type")
+	}
+	if !featureplannercontract.KnownDurableEventName(event.Type) {
+		return fmt.Errorf("unsupported feature event type %q", event.Type)
 	}
 
 	if event.FeatureID != "" && state.FeatureID != "" && event.FeatureID != state.FeatureID {
@@ -418,7 +425,7 @@ func validateReplayEvent(state FeatureState, event Event) error {
 		}
 	}
 
-	if event.Type == "idiom.feature_planner.tdd_pre_execution_checked" {
+	if event.Type == featureplannercontract.EventName(featureplannercontract.EventTDDPreExecutionChecked) {
 		if err := validateReplayTDDEvidence(replayTDDEvidence(event)); err != nil {
 			return ReplayError{Message: fmt.Sprintf("event %q invalid pre-execution TDD evidence: %v", event.EventID, err)}
 		}

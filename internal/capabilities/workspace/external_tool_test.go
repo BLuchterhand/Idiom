@@ -51,6 +51,37 @@ func TestManagerDoesNotAdvertiseUnavailableExternalTools(t *testing.T) {
 	}
 }
 
+func TestManagerBoundsExternalToolOutput(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0o755); err != nil {
+		t.Fatalf("mkdir scripts: %v", err)
+	}
+
+	script := filepath.Join(root, "scripts", "chatty.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf 'abcdefghijklmnopqrstuvwxyz'\n"), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	reg, err := NewExternalToolRegistry([]ExternalTool{{Name: "chatty_tool", Command: "./scripts/chatty.sh"}})
+	if err != nil {
+		t.Fatalf("NewExternalToolRegistry: %v", err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root, MaxOutputBytes: 8})
+	mgr.SetExternalToolsRegistry(reg)
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "chatty_tool"})
+	if result.Error != "" {
+		t.Fatalf("external tool failed: %#v", result)
+	}
+	if !strings.HasPrefix(result.Output, "abcdefgh") || !strings.Contains(result.Output, "...[truncated]") {
+		t.Fatalf("external tool output was not bounded: %#v", result.Output)
+	}
+	if !strings.Contains(result.Summary, "output truncated") {
+		t.Fatalf("external tool summary missing truncation signal: %#v", result.Summary)
+	}
+}
+
 func hasString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

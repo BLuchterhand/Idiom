@@ -3,14 +3,20 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	recoverycontract "idiom/internal/contracts/recovery"
+
 	"github.com/charmbracelet/bubbles/viewport"
 
 	"idiom/internal/capabilities/workspace"
+	featureplannercontract "idiom/internal/contracts/featureplanner"
+	lanecontract "idiom/internal/contracts/lane"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/platform/config"
 	"idiom/internal/workflows/featureplanner"
 	"idiom/internal/workflows/planexecute"
@@ -218,7 +224,7 @@ func TestFeaturePlannerTUIPlanExecuteCompletionPreservesNestedDegradedStatus(t *
 	model := &Model{}
 
 	payload, err := model.encodeFeaturePlannerPlanExecuteCompletion(strings.Join([]string{
-		`{"type":"idiom.plan_execute.review_repair_degraded","status":"review_unavailable","reason_class":"review_model_error"}`,
+		`{"type":"idiom.plan_execute.review_repair_degraded","status":"degraded","reason_class":"review_model_error","status_detail":"review unavailable"}`,
 		`{"type":"message","content":"review unavailable"}`,
 	}, "\n"))
 	if err != nil {
@@ -227,7 +233,7 @@ func TestFeaturePlannerTUIPlanExecuteCompletionPreservesNestedDegradedStatus(t *
 
 	for _, want := range []string{
 		`"status":"degraded"`,
-		`"review_status":"review_unavailable"`,
+		`"review_status":"degraded"`,
 		`"failure_kind":"review_model_error"`,
 		`"completion_source":"tui_plan_execute_returned"`,
 	} {
@@ -241,12 +247,13 @@ func TestFeaturePlannerTUIPlanExecuteCompletionRequiresTypedNestedStatus(t *test
 	root := t.TempDir()
 	state := planexecute.NewProgressState("nested_missing_status", "prompt", "", nil, nil, time.Now().UTC())
 
-	state.Phase = "planner"
-	state.Status = ""
-
 	statePath, err := planexecute.SaveProgressState(root, &state)
 	if err != nil {
 		t.Fatalf("SaveProgressState: %v", err)
+	}
+	rawState := fmt.Sprintf(`{"schema_version":%q,"session_id":%q,"phase":"planner","status":""}`+"\n", planexecute.ProgressStateSchemaVersion, state.SessionID)
+	if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(statePath)), []byte(rawState), 0o600); err != nil {
+		t.Fatalf("write invalid progress state: %v", err)
 	}
 
 	model := &Model{
@@ -286,7 +293,7 @@ func TestFeaturePlannerTUIPlanExecuteCompletionEncodesNonzeroRunResult(t *testin
 	state.Status = "failed"
 	state.FailureKind = "review_model_error"
 	state.FailureReason = "model returned malformed review"
-	state.Review.Status = "review_model_error"
+	state.Review.Status = plancontract.PlanExecuteReviewStatusFailed
 
 	statePath, err := planexecute.SaveProgressState(root, &state)
 	if err != nil {
@@ -313,7 +320,7 @@ func TestFeaturePlannerTUIPlanExecuteCompletionEncodesNonzeroRunResult(t *testin
 		`"tool":"plan_execute_completed"`,
 		`"status":"failed"`,
 		`"phase":"review_repair"`,
-		`"review_status":"review_model_error"`,
+		`"review_status":"failed"`,
 		`"failure_kind":"review_model_error"`,
 		`"failure_reason":"model returned malformed review"`,
 		`"progress_path":"` + statePath + `"`,
@@ -328,9 +335,9 @@ func TestFeaturePlannerTUIPlanExecuteCompletionUsesDurableProgressStateForSparse
 	root := t.TempDir()
 	state := planexecute.NewProgressState("nested_planner_blocked", "prompt", "", []string{"pkg/feature.go"}, []string{"pkg/feature_test.go"}, time.Now().UTC())
 
-	state.Phase = planexecute.ProgressPhasePlanning
-	state.Status = planexecute.ProgressStatusFailed
-	state.FailureKind = planexecute.RunFailurePlannerBlocked
+	state.Phase = plancontract.PlanExecuteProgressPhasePlanning
+	state.Status = plancontract.PlanExecuteProgressStatusFailed
+	state.FailureKind = plancontract.PlanExecuteFailurePlannerBlocked
 	state.FailureReason = "<<QUESTION>>: pkg/feature.go source evidence unavailable"
 	state.ChangedPaths = []string{"pkg/feature.go"}
 
@@ -387,12 +394,12 @@ func TestFeaturePlannerTUIPlanExecuteCompletionPrefersDurableReviewRepairProgres
 	root := t.TempDir()
 	state := planexecute.NewProgressState("active_review_repair", "prompt", "", []string{"pkg/feature.go"}, nil, time.Now().UTC())
 
-	state.Phase = planexecute.ProgressPhaseReviewRepair
-	state.Status = planexecute.ProgressStatusBlocked
+	state.Phase = plancontract.PlanExecuteProgressPhaseReviewRepair
+	state.Status = plancontract.PlanExecuteProgressStatusBlocked
 	state.FailureKind = "review_repair_blocked"
 	state.FailureReason = "review repair remained blocked"
 	state.ChangedPaths = []string{"pkg/feature.go"}
-	state.Review.Status = planexecute.ProgressStatusBlocked
+	state.Review.Status = plancontract.PlanExecuteReviewStatusBlocked
 
 	statePath, err := planexecute.SaveProgressState(root, &state)
 	if err != nil {
@@ -447,15 +454,15 @@ func TestFeaturePlannerTUIPlanExecuteCompletionUsesDurableSkippedReviewState(t *
 	root := t.TempDir()
 	state := planexecute.NewProgressState("nested_review_skipped", "prompt", "", nil, nil, time.Now().UTC())
 
-	state.Phase = planexecute.ProgressPhaseComplete
-	state.Status = planexecute.ProgressStatusCompleted
+	state.Phase = plancontract.PlanExecuteProgressPhaseComplete
+	state.Status = plancontract.PlanExecuteProgressStatusCompleted
 	state.ChangedPaths = []string{"pkg/feature.go"}
-	state.Executor.SourceSanity = []planexecute.PhaseEvidenceCheck{{
+	state.Executor.SourceSanity = []plancontract.PhaseEvidenceCheck{{
 		Kind:   "source_sanity",
 		Path:   "pkg/feature.go",
 		Status: "ok",
 	}}
-	state.Review.Status = planexecute.ProgressStatusSkipped
+	state.Review.Status = plancontract.PlanExecuteReviewStatusSkipped
 
 	statePath, err := planexecute.SaveProgressState(root, &state)
 	if err != nil {
@@ -497,7 +504,7 @@ func TestFeaturePlannerTUIPlanExecuteCompletionUsesDurableSkippedReviewState(t *
 		t.Fatalf("review_repair_skipped = %v, want true in payload %s", got, payload)
 	}
 
-	if got := featureplanner.PlanExecuteCompletionTerminalClass(fields); got != featureplanner.PlanExecuteTerminalCompleted {
+	if got := featureplanner.PlanExecuteCompletionTerminalDecision(fields).Class; got != plancontract.PlanExecuteTerminalDecisionCompleted {
 		t.Fatalf("terminal class = %q, want completed; fields=%+v", got, fields)
 	}
 }
@@ -506,15 +513,15 @@ func TestFeaturePlannerTUIPlanExecuteCompletionPreservesTerminalParentAuthority(
 	root := t.TempDir()
 	state := planexecute.NewProgressState("nested_wrong_parent", "prompt", "", []string{"pkg/feature.go"}, nil, time.Now().UTC())
 
-	state.Phase = planexecute.ProgressPhaseComplete
-	state.Status = planexecute.ProgressStatusCompleted
+	state.Phase = plancontract.PlanExecuteProgressPhaseComplete
+	state.Status = plancontract.PlanExecuteProgressStatusCompleted
 	state.ChangedPaths = []string{"pkg/feature.go"}
-	state.Executor.SourceSanity = []planexecute.PhaseEvidenceCheck{{
+	state.Executor.SourceSanity = []plancontract.PhaseEvidenceCheck{{
 		Kind:   "source_sanity",
 		Path:   "pkg/feature.go",
 		Status: "ok",
 	}}
-	state.Review.Status = planexecute.ProgressStatusSkipped
+	state.Review.Status = plancontract.PlanExecuteReviewStatusSkipped
 
 	record := planexecute.NewPlanExecuteTerminalCompletionRecord(state, planexecute.PlanExecuteTerminalCompletionInput{
 		ProgressPath: ".idiom/plan-execute/sessions/nested_wrong_parent.json",
@@ -567,22 +574,22 @@ func TestFeaturePlannerTUIPlanExecuteCompletionLogTypeIsStatusAware(t *testing.T
 	tests := []struct {
 		name string
 		body string
-		want string
+		want featureplannercontract.NestedPlanExecuteCompletionEventName
 	}{
 		{
 			name: "completed",
 			body: `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"completed"}`,
-			want: "idiom.plan_execute.completed",
+			want: featureplannercontract.NestedPlanExecuteCompletionEventBlocked,
 		},
 		{
 			name: "ambiguous",
 			body: `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"ambiguous","failure_kind":"missing_nested_plan_execute_status"}`,
-			want: "idiom.plan_execute.blocked",
+			want: featureplannercontract.NestedPlanExecuteCompletionEventBlocked,
 		},
 		{
 			name: "failed",
 			body: `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"failed"}`,
-			want: "idiom.plan_execute.blocked",
+			want: featureplannercontract.NestedPlanExecuteCompletionEventBlocked,
 		},
 	}
 	for _, tt := range tests {
@@ -603,11 +610,11 @@ func TestFeaturePlannerPlanExecuteGitHistoryRequirementPayload(t *testing.T) {
 		t.Fatalf("payload is not json: %v", err)
 	}
 
-	if fields["tool"] != "git_history_requirement" {
+	if fields[featureplannercontract.PlanExecuteCompletionFieldTool] != string(featureplannercontract.ToolGitHistoryRequirement) {
 		t.Fatalf("tool = %#v", fields["tool"])
 	}
 
-	if fields["lane_family"] != "plan-execute" {
+	if fields[featureplannercontract.PlanExecuteCompletionFieldLaneFamily] != string(lanecontract.LanePlanExecute) {
 		t.Fatalf("lane_family = %#v", fields["lane_family"])
 	}
 
@@ -688,38 +695,46 @@ func TestSlashRecoverStatusRejectsOutsidePacketPath(t *testing.T) {
 	}
 }
 
-func appRecoverStatusTestPacket() recovery.DecompositionPacket {
+func appRecoverStatusTestPacket() recoverycontract.DecompositionPacket {
 	stamp := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
 
-	return recovery.DecompositionPacket{
-		SchemaVersion: recovery.DecompositionPacketSchemaVersion,
+	return recoverycontract.DecompositionPacket{
+		SchemaVersion: recoverycontract.DecompositionPacketSchemaVersion,
 		PacketID:      "packet-failure-app-recover-status",
 		FailureID:     "failure-app-recover-status",
 		CreatedAt:     stamp,
 		UpdatedAt:     stamp,
-		PartialState: recovery.PartialState{
-			DirtyStatus: recovery.DirtyStatusClean,
-			ScopeStatus: recovery.ScopeStatusInScope,
+		SourceRun: recoverycontract.SourceRun{
+			Lane:              string(recoverycontract.SourceLaneImplement),
+			SessionID:         "session-app-recover-status",
+			RequiredEditPaths: []string{"internal/surfaces/tui/app/recover_status.go"},
 		},
-		Failure: recovery.Failure{Class: recovery.FailureClassExecutorEdit},
-		ResidualWork: []recovery.ResidualWork{{
+		PartialState: recoverycontract.PartialState{
+			DirtyStatus: recoverycontract.DirtyStatusClean,
+			ScopeStatus: recoverycontract.ScopeStatusInScope,
+		},
+		Failure: recoverycontract.Failure{
+			Class:   recoverycontract.FailureClassExecutorEdit,
+			Summary: "recover status fixture failure",
+		},
+		ResidualWork: []recoverycontract.ResidualWork{{
 			ID:     "residual-001",
 			Title:  "App recover status",
-			Reason: recovery.FailureClassExecutorEdit,
+			Reason: string(recoverycontract.FailureClassExecutorEdit),
 			Paths:  []string{"internal/surfaces/tui/app/recover_status.go"},
-			EvidenceRefs: []recovery.EvidenceRef{
+			EvidenceRefs: []recoverycontract.EvidenceRef{
 				{Kind: "required_path", Path: "internal/surfaces/tui/app/recover_status.go"},
 				{Kind: "required_test", ID: "go test ./internal/surfaces/tui/app"},
 			},
 		}},
-		CandidateAtoms: []recovery.CandidateAtom{{
+		CandidateAtoms: []recoverycontract.CandidateAtom{{
 			ID:              "recovery-001",
 			Title:           "App recover status",
 			RequiredPaths:   []string{"internal/surfaces/tui/app/recover_status.go"},
 			RequiredTests:   []string{"go test ./internal/surfaces/tui/app"},
-			Gates:           []string{recovery.GateWorkspaceState, recovery.GateBriefLint},
+			Gates:           []string{recoverycontract.GateWorkspaceState, recoverycontract.GateBriefLint},
 			ResidualWorkIDs: []string{"residual-001"},
 		}},
-		NextAction: recovery.NextActionReviewDecomposition,
+		NextAction: recoverycontract.NextActionReviewDecomposition,
 	}
 }

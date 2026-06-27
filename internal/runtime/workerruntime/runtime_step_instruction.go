@@ -1,41 +1,40 @@
 package workerruntime
 
 import (
-	"slices"
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 func BuildStepInstruction(state RunState) StepInstruction {
 	state = MergeRuntimeBriefIntoState(WorkerRuntimeBrief{}, state)
-	state.TargetRefs = uniqueNonEmpty(state.TargetRefs)
-	state.RequiredEditPaths = uniqueNonEmpty(state.RequiredEditPaths)
-	state.AllowedEditPaths = uniqueNonEmpty(state.AllowedEditPaths)
-	state.EvidencePaths = uniqueNonEmpty(state.EvidencePaths)
-	state.ChangedPaths = uniqueNonEmpty(state.ChangedPaths)
-	state.Constraints = uniqueNonEmpty(state.Constraints)
-	state.AllowedTools = uniqueNonEmpty(state.AllowedTools)
-	state.ForbiddenTools = uniqueNonEmpty(state.ForbiddenTools)
-	state.EvidenceCapabilities = uniqueNonEmpty(state.EvidenceCapabilities)
-	state.RequiredEvidence = uniqueNonEmpty(state.RequiredEvidence)
-	state.RequiredTools = uniqueNonEmpty(state.RequiredTools)
-	state.ReadinessGate = uniqueNonEmpty(state.ReadinessGate)
-	state.EvidenceContract = uniqueNonEmpty(state.EvidenceContract)
-	state.SearchPolicy = uniqueNonEmpty(state.SearchPolicy)
-	state.VerificationPlan = uniqueNonEmpty(state.VerificationPlan)
-	state.StopConditions = uniqueNonEmpty(state.StopConditions)
-	state.FinalCritic = uniqueNonEmpty(state.FinalCritic)
-	state.TargetPacket = uniqueNonEmpty(state.TargetPacket)
-	state.UserBoundaries = uniqueNonEmpty(state.UserBoundaries)
-	state.NextActions = uniqueNonEmpty(state.NextActions)
-	state.InvalidActions = uniqueNonEmpty(state.InvalidActions)
+	state.TargetRefs = textutil.UniqueNonEmpty(state.TargetRefs)
+	state.RequiredEditPaths = textutil.UniqueNonEmpty(state.RequiredEditPaths)
+	state.AllowedEditPaths = textutil.UniqueNonEmpty(state.AllowedEditPaths)
+	state.EvidencePaths = textutil.UniqueNonEmpty(state.EvidencePaths)
+	state.ChangedPaths = textutil.UniqueNonEmpty(state.ChangedPaths)
+	state.Constraints = textutil.UniqueNonEmpty(state.Constraints)
+	state.AllowedTools = textutil.UniqueNonEmpty(state.AllowedTools)
+	state.ForbiddenTools = textutil.UniqueNonEmpty(state.ForbiddenTools)
+	state.EvidenceCapabilities = textutil.UniqueNonEmpty(state.EvidenceCapabilities)
+	state.RequiredEvidence = textutil.UniqueNonEmpty(state.RequiredEvidence)
+	state.RequiredTools = textutil.UniqueNonEmpty(state.RequiredTools)
+	state.ReadinessGate = textutil.UniqueNonEmpty(state.ReadinessGate)
+	state.EvidenceContract = textutil.UniqueNonEmpty(state.EvidenceContract)
+	state.SearchPolicy = textutil.UniqueNonEmpty(state.SearchPolicy)
+	state.VerificationPlan = textutil.UniqueNonEmpty(state.VerificationPlan)
+	state.StopConditions = textutil.UniqueNonEmpty(state.StopConditions)
+	state.FinalCritic = textutil.UniqueNonEmpty(state.FinalCritic)
+	state.TargetPacket = textutil.UniqueNonEmpty(state.TargetPacket)
+	state.UserBoundaries = textutil.UniqueNonEmpty(state.UserBoundaries)
+	state.NextActions = textutil.UniqueNonEmpty(state.NextActions)
+	state.InvalidActions = textutil.UniqueNonEmpty(state.InvalidActions)
 	state.Readiness = NormalizeReadinessState(state.Readiness)
 
 	directive := "Use this current-state packet for the next action. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
 
-	if planThenExecutePlannerState(state) && slices.Contains(state.Constraints, "plan_then_execute_submit_plan_ready") {
+	if planThenExecutePlannerState(state) && ConstraintPresent(state.Constraints, ConstraintPlanThenExecuteSubmitPlanReady) {
 		directive = "Use this current-state packet for the next action. Plan-execute source obligations are closed: do not read, search, shell, verify, or use per-edit write tools. Emit one parser-readable submit_plan with complete executable final edit bodies. Use Decision: source-satisfied only when every required path already contains the requested final state with per-path evidence, or <<QUESTION>> only with exact path-specific blockers. Do not repeat invalid actions."
 	} else if implementationStateHasRequiredPathsForMutation(state) && len(state.ChangedPaths) == 0 {
 		directive = "Use this current-state packet for the next action. Required edit paths define the implementation scope. Contract outcomes are an in-scope required-path edit, semantic/context/declared project discovery or a narrow required-path source read with named_gap for an exact edit-safety fact, or <<QUESTION>> naming the exact missing anchor or stale fact that blocks the edit. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
@@ -49,7 +48,7 @@ func BuildStepInstruction(state RunState) StepInstruction {
 		directive = "Use this current-state packet for the next action. The readiness state says writing is supported by the current packet/evidence; the contract outcome is an edit or <<QUESTION>> with the exact edit blocker. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
 	} else if state.Readiness != nil && state.Readiness.ReadyToAnswer {
 		directive = "Use this current-state packet for the next action. The readiness state says a final answer is available if the evidence supports it; continue only for one exact missing claim and one exact probe. Treat next_actions as options, not mandatory commands. Do not repeat invalid actions."
-	} else if slices.Contains(state.Constraints, "answer_readiness_reached") || slices.Contains(state.Constraints, "child_packet_available") {
+	} else if ConstraintPresent(state.Constraints, ConstraintAnswerReadinessReached) || ConstraintPresent(state.Constraints, ConstraintChildPacketAvailable) {
 		directive = "Use this current-state packet for the next action. A final answer is available if the evidence supports it; continue only for one exact missing claim and one exact probe. Treat next_actions as options, not mandatory commands. Do not repeat invalid actions."
 	}
 
@@ -76,7 +75,7 @@ func BuildInitialStepInstruction(brief WorkerRuntimeBrief, isFollowUp ...bool) S
 	}
 
 	if TaskFamilyIsConversation(state.TaskFamily) && RuntimeContractIsDirectAnswer(state.Contract) && !skipConversationDirective {
-		directive += " Conversation lane: every response must either (a) contain tool calls that investigate the codebase, or (b) deliver a final prose answer to the user. Answer the user's actual specific question — do not begin new investigation on neighboring topics once you have the evidence to answer. For factual or yes/no questions, answer directly from the evidence gathered; for explanatory questions, investigate until you can support the answer with file:line evidence from at least one inspected source location. For mechanism or architecture questions — where thresholds, constants, and type relationships form part of the answer — expect to use 10-35 targeted tool calls; each must have one exact purpose and you must stop when the evidence is sufficient. Never re-read the same range or repeat a search with the same scope. Use context_pack to localize, context_query for graph questions, code_navigate for symbol bodies, read_file for bounded source reads, search_content for literal text. Use the note tool to capture key findings (file paths, function names, mechanism descriptions) as you discover them — notes persist across context compactions and help you build your answer scaffold. When ready, name the evidence paths and file:line citations you inspected. Do not return raw tool summaries, function signatures, or JSON envelopes."
+		directive += " Conversation lane: every response must either (a) contain tool calls that investigate the codebase, or (b) deliver a final prose answer to the user. Answer the user's actual specific question — do not begin new investigation on neighboring topics once you have the evidence to answer. For factual or yes/no questions, answer directly from the evidence gathered; for explanatory questions, investigate until you can support the answer with file:line evidence from at least one inspected source location. For mechanism or architecture questions — where thresholds, constants, and type relationships form part of the answer — gather enough targeted evidence to support those claims, give each probe one exact purpose, and stop when the evidence is sufficient. Never re-read the same range or repeat a search with the same scope. Choose from the available evidence capabilities according to the specific gap: localization, graph questions, symbol bodies, bounded source reads, or literal text. When ready, name the evidence paths and file:line citations you inspected. Do not return raw tool summaries, function signatures, or JSON envelopes."
 		directive += " Acceptance criteria for your final answer: (1) echo at least two key nouns or terms from the user's question in your answer — this is required for the intent check; (2) every file path, function name, or symbol you cite must be backed by a `read_file` or `code_navigate` call from this session — uncited assertions cause a source-grounding rejection; (3) use `<<QUESTION>>:` only when you have already gathered evidence AND can name the exact missing path, file, or claim — generic blockers like \"I can't answer\" are rejected. These checks apply when you deliver your final answer, not during investigation."
 	}
 
@@ -126,11 +125,11 @@ func initialEvidenceContract(state RunState) []string {
 	var contract []string
 
 	if len(state.RequiredEvidence) > 0 {
-		contract = append(contract, "required evidence before contract fulfillment: "+strings.Join(uniqueNonEmpty(state.RequiredEvidence), ", "))
+		contract = append(contract, "required evidence before contract fulfillment: "+strings.Join(textutil.UniqueNonEmpty(state.RequiredEvidence), ", "))
 	}
 
 	if len(state.ReadinessGate) > 0 {
-		contract = append(contract, "readiness gates to close or explicitly block: "+strings.Join(uniqueNonEmpty(state.ReadinessGate), ", "))
+		contract = append(contract, "readiness gates to close or explicitly block: "+strings.Join(textutil.UniqueNonEmpty(state.ReadinessGate), ", "))
 	}
 
 	if conversationDirectAnswerReadOnlyState(state) {
@@ -142,10 +141,10 @@ func initialEvidenceContract(state RunState) []string {
 	}
 
 	if len(state.StopConditions) > 0 {
-		contract = append(contract, "terminal stop conditions: "+strings.Join(uniqueNonEmpty(state.StopConditions), ", "))
+		contract = append(contract, "terminal stop conditions: "+strings.Join(textutil.UniqueNonEmpty(state.StopConditions), ", "))
 	}
 
-	return uniqueNonEmpty(contract)
+	return textutil.UniqueNonEmpty(contract)
 }
 
 func conversationDirectAnswerReadOnlyState(state RunState) bool {
@@ -218,7 +217,7 @@ func genericGuardedMutationNeedsTargetContract(state RunState) bool {
 		return false
 	}
 
-	if util.EqualTrimFold(state.TaskFamily, "delegated_isolated_implementation") {
+	if textutil.EqualTrimFold(state.TaskFamily, "delegated_isolated_implementation") {
 		return false
 	}
 
@@ -365,36 +364,36 @@ func NormalizeRuntimeBrief(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
 	brief.Lane = strings.TrimSpace(brief.Lane)
 	brief.TaskFamily = strings.TrimSpace(brief.TaskFamily)
 	brief.Contract = strings.TrimSpace(brief.Contract)
-	brief.Objective = util.Truncate(strings.TrimSpace(brief.Objective), 500)
+	brief.Objective = textutil.Truncate(strings.TrimSpace(brief.Objective), 500)
 	brief.RequestedOutcome = strings.TrimSpace(brief.RequestedOutcome)
 	brief.WriteIntent = strings.TrimSpace(brief.WriteIntent)
 	brief.EvidenceIntent = strings.TrimSpace(brief.EvidenceIntent)
 	brief.PermissionProfile = strings.TrimSpace(brief.PermissionProfile)
 	brief.VerificationContract = strings.TrimSpace(brief.VerificationContract)
-	brief.TargetRefs = uniqueNonEmpty(brief.TargetRefs)
-	brief.RequiredEditPaths = uniqueNonEmpty(brief.RequiredEditPaths)
-	brief.AllowedEditPaths = uniqueNonEmpty(brief.AllowedEditPaths)
+	brief.TargetRefs = textutil.UniqueNonEmpty(brief.TargetRefs)
+	brief.RequiredEditPaths = textutil.UniqueNonEmpty(brief.RequiredEditPaths)
+	brief.AllowedEditPaths = textutil.UniqueNonEmpty(brief.AllowedEditPaths)
 	brief.RequiredEditSnippets = normalizeRequiredEditSnippets(brief.RequiredEditSnippets)
-	brief.EvidencePaths = uniqueNonEmpty(brief.EvidencePaths)
-	brief.ChangedPaths = uniqueNonEmpty(brief.ChangedPaths)
-	brief.UserBoundaries = uniqueNonEmpty(brief.UserBoundaries)
-	brief.AllowedTools = uniqueNonEmpty(brief.AllowedTools)
-	brief.ForbiddenTools = uniqueNonEmpty(brief.ForbiddenTools)
-	brief.EvidenceCapabilities = uniqueNonEmpty(brief.EvidenceCapabilities)
-	brief.RequiredEvidence = uniqueNonEmpty(brief.RequiredEvidence)
-	brief.RequiredTools = uniqueNonEmpty(brief.RequiredTools)
-	brief.ReadinessGate = uniqueNonEmpty(brief.ReadinessGate)
-	brief.SearchPolicy = uniqueNonEmpty(brief.SearchPolicy)
-	brief.DiscoveryExamples = uniqueNonEmpty(brief.DiscoveryExamples)
-	brief.VerificationPlan = uniqueNonEmpty(brief.VerificationPlan)
-	brief.StopConditions = uniqueNonEmpty(brief.StopConditions)
-	brief.FinalCritic = uniqueNonEmpty(brief.FinalCritic)
-	brief.TargetPacket = uniqueNonEmpty(brief.TargetPacket)
-	brief.Constraints = uniqueNonEmpty(brief.Constraints)
-	brief.RequiredNext = uniqueNonEmpty(brief.RequiredNext)
-	brief.InvalidActions = uniqueNonEmpty(brief.InvalidActions)
+	brief.EvidencePaths = textutil.UniqueNonEmpty(brief.EvidencePaths)
+	brief.ChangedPaths = textutil.UniqueNonEmpty(brief.ChangedPaths)
+	brief.UserBoundaries = textutil.UniqueNonEmpty(brief.UserBoundaries)
+	brief.AllowedTools = textutil.UniqueNonEmpty(brief.AllowedTools)
+	brief.ForbiddenTools = textutil.UniqueNonEmpty(brief.ForbiddenTools)
+	brief.EvidenceCapabilities = textutil.UniqueNonEmpty(brief.EvidenceCapabilities)
+	brief.RequiredEvidence = textutil.UniqueNonEmpty(brief.RequiredEvidence)
+	brief.RequiredTools = textutil.UniqueNonEmpty(brief.RequiredTools)
+	brief.ReadinessGate = textutil.UniqueNonEmpty(brief.ReadinessGate)
+	brief.SearchPolicy = textutil.UniqueNonEmpty(brief.SearchPolicy)
+	brief.DiscoveryExamples = textutil.UniqueNonEmpty(brief.DiscoveryExamples)
+	brief.VerificationPlan = textutil.UniqueNonEmpty(brief.VerificationPlan)
+	brief.StopConditions = textutil.UniqueNonEmpty(brief.StopConditions)
+	brief.FinalCritic = textutil.UniqueNonEmpty(brief.FinalCritic)
+	brief.TargetPacket = textutil.UniqueNonEmpty(brief.TargetPacket)
+	brief.Constraints = textutil.UniqueNonEmpty(brief.Constraints)
+	brief.RequiredNext = textutil.UniqueNonEmpty(brief.RequiredNext)
+	brief.InvalidActions = textutil.UniqueNonEmpty(brief.InvalidActions)
 	brief.Readiness = NormalizeReadinessState(brief.Readiness)
-	brief.ToolManifest = workspace.SanitizeToolManifestRequests(brief.ToolManifest)
+	brief.ToolManifest = SanitizeToolManifestRequests(brief.ToolManifest)
 
 	if PermissionProfileIsConversationOnly(brief.PermissionProfile) {
 		brief.AllowedTools = nil
@@ -405,7 +404,7 @@ func NormalizeRuntimeBrief(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
 	}
 
 	if len(brief.ToolManifest) == 0 && len(brief.AllowedTools) > 0 {
-		brief.ToolManifest = BuildToolManifest(brief.AllowedTools)
+		brief.ToolManifest = ToolManifestFromWorkspace(workspace.BuildToolManifest(brief.AllowedTools))
 	}
 
 	if len(brief.EvidenceCapabilities) == 0 && len(brief.ToolManifest) > 0 {
@@ -413,6 +412,74 @@ func NormalizeRuntimeBrief(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
 	}
 
 	return brief
+}
+
+func ToolManifestFromWorkspace(manifest []workspace.ToolManifestEntry) []ToolManifestEntry {
+	if len(manifest) == 0 {
+		return nil
+	}
+
+	out := make([]ToolManifestEntry, 0, len(manifest))
+	for _, entry := range manifest {
+		out = append(out, ToolManifestEntry{
+			Tool:                     entry.Tool,
+			Request:                  entry.Request,
+			Purpose:                  entry.Purpose,
+			EvidenceCapabilities:     append([]string(nil), entry.EvidenceCapabilities...),
+			CapabilityClassification: entry.CapabilityClassification,
+		})
+	}
+	return out
+}
+
+func SanitizeToolManifestRequests(manifest []ToolManifestEntry) []ToolManifestEntry {
+	if len(manifest) == 0 {
+		return nil
+	}
+
+	out := append([]ToolManifestEntry(nil), manifest...)
+	for i := range out {
+		if toolManifestRequestLooksPlaceholder(out[i].Request) {
+			out[i].Request = ""
+		}
+	}
+	return out
+}
+
+func toolManifestRequestLooksPlaceholder(request string) bool {
+	lower := strings.ToLower(strings.TrimSpace(request))
+
+	return textutil.ContainsAny(lower,
+		"relative/file",
+		"candidate/path.go",
+		"symbol|text",
+		`"pattern":"name"`,
+		`"pattern":"funcname"`,
+		`"pattern":"functionname"`,
+		`"pattern":"typename"`,
+		`"pattern":"constname"`,
+		`"pattern":"interfacename"`,
+		`"pattern":"classname`,
+		`"pattern":"methodname"`,
+		`"path":"file.go"`,
+		`"path":"source.go"`,
+		`"destination":"target.go"`,
+		`"path":"src/file`,
+		`"path":"src/pkg/file.py"`,
+		`"path":"src/main/java/com/example/file.java"`,
+		`"path":"include/file.h"`,
+		`"path":"relative/dir"`,
+		`"path":"optional/path"`,
+		"session-001",
+		"session.jsonl",
+		"exact current",
+		"exact substring",
+		"replacement text",
+		"complete replacement",
+		"one paragraph",
+		"why this edit",
+		"<",
+	)
 }
 
 func normalizeRequiredEditSnippets(snippets []RequiredEditSnippet) []RequiredEditSnippet {
@@ -459,9 +526,9 @@ func NormalizeReadinessState(readiness *ReadinessState) *ReadinessState {
 		ReadyToAnswer:       readiness.ReadyToAnswer,
 		ReadyToWrite:        readiness.ReadyToWrite,
 		ReadyToVerify:       readiness.ReadyToVerify,
-		ClosedClaims:        uniqueNonEmpty(readiness.ClosedClaims),
-		OpenObligations:     uniqueNonEmpty(readiness.OpenObligations),
-		EvidenceSources:     uniqueNonEmpty(readiness.EvidenceSources),
+		ClosedClaims:        textutil.UniqueNonEmpty(readiness.ClosedClaims),
+		OpenObligations:     textutil.UniqueNonEmpty(readiness.OpenObligations),
+		EvidenceSources:     textutil.UniqueNonEmpty(readiness.EvidenceSources),
 		FurtherReadsRequire: strings.TrimSpace(readiness.FurtherReadsRequire),
 	}
 	if !normalized.ReadyToAnswer &&

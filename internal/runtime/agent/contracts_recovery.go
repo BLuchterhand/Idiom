@@ -3,21 +3,23 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
-	"idiom/internal/capabilities/workspace"
-	"idiom/internal/contracts/autonomy"
-	"idiom/internal/contracts/compile"
-	"idiom/internal/contracts/pathparse"
-	"idiom/internal/platform/util"
-	"idiom/internal/runtime/llama"
-	"idiom/internal/runtime/workerruntime"
-	"idiom/internal/workflows/planintent"
 	"slices"
 	"sort"
 	"strings"
 	"time"
+
+	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/autonomy"
+	contractcompile "idiom/internal/contracts/compile"
+	lanecontract "idiom/internal/contracts/lane"
+	"idiom/internal/contracts/pathparse"
+	plancontract "idiom/internal/contracts/plan"
+	"idiom/internal/platform/textutil"
+	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/workflows/planintent"
 )
 
-// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmp2gciuor1.go ---
 type CompletionGateCheck = Check
 type CompletionGatePipeline = Pipeline
 
@@ -190,11 +192,11 @@ func runnerPlanExecutePlannerInput(brief workerruntime.WorkerRuntimeBrief, resul
 
 	if phaseSpecified && (len(visibleTools) == 0 || len(callableTools) == 0) {
 		state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{
-			TextualToolParser: util.EqualTrimFold(phase.RuntimeCall.ToolTransportMode, "textual") ||
-				util.EqualTrimFold(phase.RuntimeCall.ParserContract, "source_refresh"),
-			SupportsNativeTools: util.EqualTrimFold(phase.RuntimeCall.ToolTransportMode, "native"),
-			ForceNativeTools:    util.EqualTrimFold(phase.RuntimeCall.ToolTransportMode, "native") && util.EqualTrimFold(phase.RuntimeCall.ToolChoice, "required"),
-			ResponseFormatJSON:  util.EqualTrimFold(phase.RuntimeCall.ResponseFormat, "json"),
+			TextualToolParser: textutil.EqualTrimFold(phase.RuntimeCall.ToolTransportMode, "textual") ||
+				textutil.EqualTrimFold(phase.RuntimeCall.ParserContract, "source_refresh"),
+			SupportsNativeTools: textutil.EqualTrimFold(phase.RuntimeCall.ToolTransportMode, "native"),
+			ForceNativeTools:    textutil.EqualTrimFold(phase.RuntimeCall.ToolTransportMode, "native") && textutil.EqualTrimFold(phase.RuntimeCall.ToolChoice, "required"),
+			ResponseFormatJSON:  textutil.EqualTrimFold(phase.RuntimeCall.ResponseFormat, "json"),
 			EffectiveMaxTokens:  phase.RuntimeCall.MaxTokens,
 		})
 		if len(visibleTools) == 0 {
@@ -223,12 +225,12 @@ func runnerPlanExecutePlannerInput(brief workerruntime.WorkerRuntimeBrief, resul
 	}
 
 	callableActionClasses := actionClassesAllowedByPolicy(phase.ActionPolicy.AllowedActionClasses, phase.ActionPolicy.InvalidActionClasses)
-	invalidActionClasses := util.Unique(phase.ActionPolicy.InvalidActionClasses)
+	invalidActionClasses := textutil.Unique(phase.ActionPolicy.InvalidActionClasses)
 
 	return contractcompile.PlanExecutePlannerInput{
 		ParentID:             strings.TrimSpace(parentID),
 		LaneRunID:            time.Now().UTC().Format(time.RFC3339Nano),
-		Lane:                 util.FirstNonEmpty(strings.TrimSpace(brief.Lane), contractcompile.DefaultPlanExecuteLane),
+		Lane:                 textutil.FirstNonEmpty(strings.TrimSpace(brief.Lane), contractcompile.DefaultPlanExecuteLane),
 		Phase:                contractcompile.DefaultPlannerPhase,
 		TaskFamily:           contractcompile.InvocationPlanExecutePlanner,
 		RuntimeContract:      strings.TrimSpace(brief.Contract),
@@ -267,7 +269,7 @@ func runnerPlanExecutePlannerInput(brief workerruntime.WorkerRuntimeBrief, resul
 			ParserContract:      phase.RuntimeCall.ParserContract,
 			NativeToolPolicy:    modelProtocolNativeToolPolicy(phase, supportsNativeTools),
 			SupportsNativeTools: supportsNativeTools,
-			ForceNativeTools:    util.EqualTrimFold(phase.RuntimeCall.ToolTransportMode, "native") && util.EqualTrimFold(phase.RuntimeCall.ToolChoice, "required"),
+			ForceNativeTools:    textutil.EqualTrimFold(phase.RuntimeCall.ToolTransportMode, "native") && textutil.EqualTrimFold(phase.RuntimeCall.ToolChoice, "required"),
 			ToolChoice:          modelProtocolToolChoice(phase.RuntimeCall.ToolChoice),
 			ResponseFormat:      phase.RuntimeCall.ResponseFormat,
 			ThinkingPolicy:      phase.RuntimeCall.ThinkingPolicy,
@@ -342,16 +344,16 @@ func modelProtocolProjectionTools(groups ...[]string) []string {
 		}
 	}
 
-	return util.Unique(tools)
+	return textutil.Unique(tools)
 }
 
 func modelProtocolKnownReadOnlyPlannerTool(tool string) bool {
-	return contractcompile.IsPlanExecutePlannerToolAllowed(tool)
+	return autonomy.IsPlanExecutePlannerToolAllowed(tool)
 }
 
 func modelProtocolKnownPlannerTools(values []string) []string {
 	known := make(map[string]struct{})
-	for _, entry := range contractcompile.PlanExecutePlannerToolVocabulary() {
+	for _, entry := range autonomy.PlanExecutePlannerToolMetadataEntries() {
 		known[strings.TrimSpace(entry.Tool)] = struct{}{}
 	}
 
@@ -370,7 +372,7 @@ func modelProtocolKnownPlannerTools(values []string) []string {
 		tools = append(tools, value)
 	}
 
-	return util.Unique(tools)
+	return textutil.Unique(tools)
 }
 
 func modelProtocolRequiredTools(required []string, phase TurnPhaseContract) []string {
@@ -379,7 +381,7 @@ func modelProtocolRequiredTools(required []string, phase TurnPhaseContract) []st
 		tools = append(tools, "submit_plan")
 	}
 
-	return util.Unique(tools)
+	return textutil.Unique(tools)
 }
 
 func modelProtocolVisibleTools(phase TurnPhaseContract) []string {
@@ -390,7 +392,7 @@ func modelProtocolVisibleTools(phase TurnPhaseContract) []string {
 		tools = append(tools, "submit_plan")
 	}
 
-	return util.Unique(tools)
+	return textutil.Unique(tools)
 }
 
 func modelProtocolStructuredSchemas(phase TurnPhaseContract) []string {
@@ -465,11 +467,11 @@ func modelProtocolRecoveryBudget(phase TurnPhaseContract) int {
 }
 
 func modelProtocolParserTransportMode(phase TurnPhaseContract) string {
-	if util.EqualTrimFold(phase.RuntimeCall.ToolTransportMode, "native") {
+	if textutil.EqualTrimFold(phase.RuntimeCall.ToolTransportMode, "native") {
 		return "native_tools"
 	}
 
-	if util.EqualTrimFold(phase.RuntimeCall.ResponseFormat, "json") {
+	if textutil.EqualTrimFold(phase.RuntimeCall.ResponseFormat, "json") {
 		return "textual_json_terminal"
 	}
 
@@ -485,7 +487,7 @@ func modelProtocolToolTransportMode(phase TurnPhaseContract) string {
 }
 
 func modelProtocolNativeToolPolicy(phase TurnPhaseContract, supportsNativeTools bool) string {
-	if util.EqualTrimFold(phase.RuntimeCall.ToolTransportMode, "native") {
+	if textutil.EqualTrimFold(phase.RuntimeCall.ToolTransportMode, "native") {
 		return "native_required"
 	}
 
@@ -567,21 +569,21 @@ func modelMessagesWithProtocolProjection(messages []llama.ChatMessage, protocol 
 const turnPhaseContractSchemaVersion = "idiom.turn_phase_contract.v1"
 
 const (
-	turnPhaseRequiredSource              = "plan_execute.required_source"
-	turnPhaseCandidateSource             = "plan_execute.candidate_source"
-	turnPhaseHistoryPending              = "plan_execute.history_pending"
-	turnPhaseSubmitReadyNativeRequired   = "plan_execute.submit_ready.native_required"
-	turnPhaseSubmitReadyTextual          = "plan_execute.submit_ready.textual"
-	turnPhaseSourceSatisfiedTerminal     = "plan_execute.source_satisfied_terminal"
-	turnPhaseMalformedSubmitPlanRecovery = "plan_execute.malformed_submit_plan_recovery"
-	turnPhaseStaleAnchorRefresh          = "plan_execute.stale_anchor_refresh"
-	turnPhaseReviewRepairTerminal        = "plan_execute.review_repair_terminal"
-	turnPhaseImplementationTargetSource  = "implementation.target_source"
-	turnPhaseImplementationWriteReady    = "implementation.write_ready"
-	turnPhaseImplementationVerifyReady   = "implementation.verify_ready"
-	turnPhaseProductAcceptanceCloseout   = "product.acceptance_closeout"
-	turnPhaseArtifactFinalAnswer         = "artifact.final_answer"
-	turnPhaseGeneric                     = "generic"
+	turnPhaseRequiredSource              = string(contractcompile.TurnPhaseRequiredSource)
+	turnPhaseCandidateSource             = string(contractcompile.TurnPhaseCandidateSource)
+	turnPhaseHistoryPending              = string(contractcompile.TurnPhaseHistoryPending)
+	turnPhaseSubmitReadyNativeRequired   = string(contractcompile.TurnPhaseSubmitReadyNativeRequired)
+	turnPhaseSubmitReadyTextual          = string(contractcompile.TurnPhaseSubmitReadyTextual)
+	turnPhaseSourceSatisfiedTerminal     = string(contractcompile.TurnPhaseSourceSatisfiedTerminal)
+	turnPhaseMalformedSubmitPlanRecovery = string(contractcompile.TurnPhaseMalformedSubmitPlanRecovery)
+	turnPhaseStaleAnchorRefresh          = string(contractcompile.TurnPhaseStaleAnchorRefresh)
+	turnPhaseReviewRepairTerminal        = string(contractcompile.TurnPhaseReviewRepairTerminal)
+	turnPhaseImplementationTargetSource  = string(contractcompile.TurnPhaseImplementationTargetSource)
+	turnPhaseImplementationWriteReady    = string(contractcompile.TurnPhaseImplementationWriteReady)
+	turnPhaseImplementationVerifyReady   = string(contractcompile.TurnPhaseImplementationVerifyReady)
+	turnPhaseProductAcceptanceCloseout   = string(contractcompile.TurnPhaseProductAcceptanceCloseout)
+	turnPhaseArtifactFinalAnswer         = string(contractcompile.TurnPhaseArtifactFinalAnswer)
+	turnPhaseGeneric                     = string(contractcompile.TurnPhaseGeneric)
 )
 
 const (
@@ -696,8 +698,8 @@ func (contract TurnPhaseContract) RuntimeProjection() TurnContract {
 		ContractID:    strings.TrimSpace(contract.ContractID),
 		ProtocolHash:  strings.TrimSpace(contract.ModelCallID),
 		PhaseID:       strings.TrimSpace(contract.PhaseID),
-		InvariantIDs:  util.Unique(contract.InvariantIDs),
-		ObligationIDs: util.Unique(obligations),
+		InvariantIDs:  textutil.Unique(contract.InvariantIDs),
+		ObligationIDs: textutil.Unique(obligations),
 	}
 }
 
@@ -879,12 +881,12 @@ func deriveTurnPhaseContract(input TurnPhaseContractInput) TurnPhaseContract {
 		ModelCallID:       strings.TrimSpace(input.ModelCallID),
 		Step:              input.Step,
 		PermissionProfile: brief.PermissionProfile,
-		AllowedTools:      util.Unique(baseTools),
-		HiddenTools:       util.Unique(input.HiddenTools),
-		RequiredNext:      util.Unique(brief.RequiredNext),
-		InvalidNext:       util.Unique(brief.InvalidActions),
-		StopConditions:    util.Unique(brief.StopConditions),
-		Constraints:       util.Unique(brief.Constraints),
+		AllowedTools:      textutil.Unique(baseTools),
+		HiddenTools:       textutil.Unique(input.HiddenTools),
+		RequiredNext:      textutil.Unique(brief.RequiredNext),
+		InvalidNext:       textutil.Unique(brief.InvalidActions),
+		StopConditions:    textutil.Unique(brief.StopConditions),
+		Constraints:       textutil.Unique(brief.Constraints),
 		RuntimeCall: RuntimeCallContract{
 			BackendKind:            strings.TrimSpace(input.BackendKind),
 			ModelAlias:             strings.TrimSpace(input.ModelAlias),
@@ -905,17 +907,17 @@ func deriveTurnPhaseContract(input TurnPhaseContractInput) TurnPhaseContract {
 			ExpectedVisibleOutput:  expectedVisibleOutput(input),
 		},
 		EvidenceState: PhaseEvidenceState{
-			AcceptanceRefs:           util.Unique(input.AcceptanceRefs),
-			TDDObligationRefs:        util.Unique(input.TDDObligationRefs),
-			VerificationEvidenceRefs: util.Unique(input.VerificationEvidenceRefs),
+			AcceptanceRefs:           textutil.Unique(input.AcceptanceRefs),
+			TDDObligationRefs:        textutil.Unique(input.TDDObligationRefs),
+			VerificationEvidenceRefs: textutil.Unique(input.VerificationEvidenceRefs),
 			VerificationStatus:       strings.TrimSpace(input.VerificationStatus),
 			ProductWorkflowState:     strings.TrimSpace(input.ProductWorkflowState),
 			AtomStatus:               strings.TrimSpace(input.AtomStatus),
-			RecoveryPacketRefs:       util.Unique(input.RecoveryPacketRefs),
-			ResidualBlockers:         util.Unique(input.ResidualBlockers),
-			SourceBodyObligations:    util.Unique(input.SourceBodyObligations),
-			CompletedGitHistoryPaths: util.Unique(input.CompletedGitHistoryPaths),
-			PendingGitHistoryPaths:   util.Unique(input.PendingGitHistoryPaths),
+			RecoveryPacketRefs:       textutil.Unique(input.RecoveryPacketRefs),
+			ResidualBlockers:         textutil.Unique(input.ResidualBlockers),
+			SourceBodyObligations:    textutil.Unique(input.SourceBodyObligations),
+			CompletedGitHistoryPaths: textutil.Unique(input.CompletedGitHistoryPaths),
+			PendingGitHistoryPaths:   textutil.Unique(input.PendingGitHistoryPaths),
 		},
 		EnforcementMode: "observe_only",
 	}
@@ -943,7 +945,7 @@ func deriveTurnPhaseContract(input TurnPhaseContractInput) TurnPhaseContract {
 		contract.ActiveSurface = input.ActiveSurface
 		contract.AllowedTools = contract.ActiveSurface.FilterVisible(contract.AllowedTools)
 		contract.ActionPolicy.CallableToolNames = contract.ActiveSurface.FilterVisible(contract.ActionPolicy.CallableToolNames)
-		contract.HiddenTools = util.Unique(append(contract.HiddenTools, contract.ActiveSurface.HiddenTools...))
+		contract.HiddenTools = textutil.Unique(append(contract.HiddenTools, contract.ActiveSurface.HiddenTools...))
 	}
 
 	if len(contract.ActionPolicy.InvalidActionClasses) > 0 {
@@ -956,19 +958,19 @@ func deriveTurnPhaseContract(input TurnPhaseContractInput) TurnPhaseContract {
 		contract.RuntimeCall.ExpressibleActionClasses = pruneToolActionClassesWithoutCallableTool(contract.RuntimeCall.ExpressibleActionClasses, contract.ActionPolicy.CallableToolNames)
 	}
 
-	contract.AllowedTools = util.Unique(contract.AllowedTools)
-	contract.HiddenTools = util.Unique(append(contract.HiddenTools, hiddenPhaseTools(baseTools, contract.AllowedTools)...))
-	contract.RequiredNext = util.Unique(contract.RequiredNext)
-	contract.InvalidNext = util.Unique(contract.InvalidNext)
-	contract.StopConditions = util.Unique(contract.StopConditions)
-	contract.TerminalOutcomes = util.Unique(contract.TerminalOutcomes)
-	contract.Constraints = util.Unique(contract.Constraints)
-	contract.ActionPolicy.AllowedActionClasses = util.Unique(contract.ActionPolicy.AllowedActionClasses)
-	contract.ActionPolicy.InvalidActionClasses = util.Unique(contract.ActionPolicy.InvalidActionClasses)
+	contract.AllowedTools = textutil.Unique(contract.AllowedTools)
+	contract.HiddenTools = textutil.Unique(append(contract.HiddenTools, hiddenPhaseTools(baseTools, contract.AllowedTools)...))
+	contract.RequiredNext = textutil.Unique(contract.RequiredNext)
+	contract.InvalidNext = textutil.Unique(contract.InvalidNext)
+	contract.StopConditions = textutil.Unique(contract.StopConditions)
+	contract.TerminalOutcomes = textutil.Unique(contract.TerminalOutcomes)
+	contract.Constraints = textutil.Unique(contract.Constraints)
+	contract.ActionPolicy.AllowedActionClasses = textutil.Unique(contract.ActionPolicy.AllowedActionClasses)
+	contract.ActionPolicy.InvalidActionClasses = textutil.Unique(contract.ActionPolicy.InvalidActionClasses)
 	contract.ActionPolicy.AllowedActionClasses = actionClassesAllowedByPolicy(contract.ActionPolicy.AllowedActionClasses, contract.ActionPolicy.InvalidActionClasses)
-	contract.ActionPolicy.TerminalResponseShapes = util.Unique(contract.ActionPolicy.TerminalResponseShapes)
-	contract.ActionPolicy.CallableToolNames = util.Unique(contract.ActionPolicy.CallableToolNames)
-	contract.RuntimeCall.ExpressibleActionClasses = util.Unique(contract.RuntimeCall.ExpressibleActionClasses)
+	contract.ActionPolicy.TerminalResponseShapes = textutil.Unique(contract.ActionPolicy.TerminalResponseShapes)
+	contract.ActionPolicy.CallableToolNames = textutil.Unique(contract.ActionPolicy.CallableToolNames)
+	contract.RuntimeCall.ExpressibleActionClasses = textutil.Unique(contract.RuntimeCall.ExpressibleActionClasses)
 	contract.RuntimeCall.ExpressibleActionClasses = actionClassesAllowedByPolicy(contract.RuntimeCall.ExpressibleActionClasses, contract.ActionPolicy.InvalidActionClasses)
 	if !activeSurfaceProvided(contract.ActiveSurface) {
 		contract.ActiveSurface = NewActiveSurface(contract.AllowedTools, contract.HiddenTools)
@@ -1009,9 +1011,9 @@ func deriveTypedRouteContract(brief workerruntime.WorkerRuntimeBrief, contract T
 		ActorRole:             actorRoleForBrief(brief),
 		CommandMode:           commandModeForBrief(brief),
 		RouteSource:           strings.TrimSpace(contract.DerivationReason),
-		RequiredCoveragePaths: util.Unique(brief.RequiredEditPaths),
-		AllowedCandidatePaths: util.Unique(brief.AllowedEditPaths),
-		EvidencePaths:         util.Unique(brief.EvidencePaths),
+		RequiredCoveragePaths: textutil.Unique(brief.RequiredEditPaths),
+		AllowedCandidatePaths: textutil.Unique(brief.AllowedEditPaths),
+		EvidencePaths:         textutil.Unique(brief.EvidencePaths),
 		ExactSnippets:         requiredSnippetIDs(brief.RequiredEditSnippets),
 		TerminalOutcomeFamily: terminalOutcomeFamilyForContract(contract),
 	}
@@ -1023,11 +1025,11 @@ func workflowKindForBrief(brief workerruntime.WorkerRuntimeBrief) string {
 	switch {
 	case strings.TrimSpace(brief.TaskFamily) == PlanThenExecutePlannerTaskFamily,
 		strings.TrimSpace(brief.TaskFamily) == PlanThenExecuteReviewRepairTaskFamily,
-		strings.TrimSpace(brief.Lane) == "plan-execute",
+		strings.TrimSpace(brief.Lane) == string(lanecontract.LanePlanExecute),
 		strings.TrimSpace(brief.Contract) == "submit_plan":
 		return "plan_execute"
-	case workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyImplementation),
-		workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyDelegatedIsolatedImpl):
+	case workerruntime.TaskFamilyMatches(brief.TaskFamily, autonomy.TaskFamilyImplementation),
+		workerruntime.TaskFamilyMatches(brief.TaskFamily, autonomy.TaskFamilyDelegatedIsolatedImpl):
 		return "implementation"
 	case workerruntime.RuntimeContractIsDirectAnswer(brief.Contract):
 		return "direct_answer"
@@ -1082,7 +1084,7 @@ func requiredSnippetIDs(snippets []workerruntime.RequiredEditSnippet) []string {
 			ids = append(ids, id)
 		}
 	}
-	return util.Unique(ids)
+	return textutil.Unique(ids)
 }
 
 func editSetObligationsForBrief(brief workerruntime.WorkerRuntimeBrief) []string {
@@ -1097,7 +1099,7 @@ func editSetObligationsForBrief(brief workerruntime.WorkerRuntimeBrief) []string
 			obligations = append(obligations, "required_snippet:"+path)
 		}
 	}
-	return util.Unique(obligations)
+	return textutil.Unique(obligations)
 }
 
 func deriveLifecycleState(brief workerruntime.WorkerRuntimeBrief, contract TurnPhaseContract, input TurnPhaseContractInput) LifecycleState {
@@ -1122,7 +1124,7 @@ func lifecycleAllowedTransitions(contract TurnPhaseContract) []string {
 	if len(contract.TerminalOutcomes) > 0 {
 		transitions = append(transitions, "terminal_outcome")
 	}
-	return util.Unique(transitions)
+	return textutil.Unique(transitions)
 }
 
 func lifecycleCloseoutOwner(brief workerruntime.WorkerRuntimeBrief, contract TurnPhaseContract) string {
@@ -1158,7 +1160,7 @@ func actionClassesAllowedByPolicy(allowed []string, invalid []string) []string {
 		out = append(out, value)
 	}
 
-	return util.Unique(out)
+	return textutil.Unique(out)
 }
 
 func applyTurnPhase(contract *TurnPhaseContract, input TurnPhaseContractInput, brief workerruntime.WorkerRuntimeBrief, baseTools []string) {
@@ -1508,7 +1510,7 @@ func applyImplementationTargetWriteReady(contract *TurnPhaseContract, brief work
 		contract.RuntimeCall.ParserContract = "target_write_or_bounded_source_refresh"
 		contract.RuntimeCall.ExpectedVisibleOutput = "parser_readable_bounded_source_refresh_write_or_blocker"
 		contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionSearch, actionPerEditWrite, actionBlocker}
-		contract.Constraints = util.Unique(append([]string{"bounded_source_refresh_allowance: read_file/search_content require named_gap and exact scope"}, contract.Constraints...))
+		contract.Constraints = textutil.Unique(append([]string{"bounded_source_refresh_allowance: read_file/search_content require named_gap and exact scope"}, contract.Constraints...))
 	}
 
 	if len(pendingTools) > 0 {
@@ -1523,7 +1525,7 @@ func applyImplementationTargetWriteReady(contract *TurnPhaseContract, brief work
 		contract.RuntimeCall.ParserContract = "target_write_or_source_refresh"
 		contract.RuntimeCall.ExpectedVisibleOutput = "parser_readable_pending_source_refresh_write_or_blocker"
 		contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionPerEditWrite, actionBlocker}
-		contract.Constraints = util.Unique(append([]string{"pending_redirected_source_body_obligation: " + pendingSummary}, contract.Constraints...))
+		contract.Constraints = textutil.Unique(append([]string{"pending_redirected_source_body_obligation: " + pendingSummary}, contract.Constraints...))
 	}
 }
 
@@ -1695,7 +1697,7 @@ func applyGenericTurnPhase(contract *TurnPhaseContract, brief workerruntime.Work
 			contract.InvalidNext = []string{"workspace write", "shell/mutating command", "unsupported factual final answer"}
 			contract.TerminalOutcomes = []string{"final answer", "<<QUESTION>>:"}
 			contract.ActionPolicy = TurnActionClassPolicy{
-				AllowedActionClasses:   util.Unique([]string{actionFinalAnswer, actionRead, actionSearch, actionBlocker}),
+				AllowedActionClasses:   textutil.Unique([]string{actionFinalAnswer, actionRead, actionSearch, actionBlocker}),
 				InvalidActionClasses:   []string{actionPerEditWrite, actionVerify},
 				TerminalResponseShapes: []string{"final answer", "<<QUESTION>>:"},
 				CallableToolNames:      contract.AllowedTools,
@@ -1725,7 +1727,7 @@ func genericAllowedActionClasses(tools []string) []string {
 		}
 	}
 
-	return util.Unique(classes)
+	return textutil.Unique(classes)
 }
 
 func pruneToolActionClassesWithoutCallableTool(classes []string, callableTools []string) []string {
@@ -1758,7 +1760,7 @@ func pruneToolActionClassesWithoutCallableTool(classes []string, callableTools [
 		out = append(out, class)
 	}
 
-	return util.Unique(out)
+	return textutil.Unique(out)
 }
 
 func removePhaseToolsForInvalidActionClasses(tools []string, invalidClasses []string) []string {
@@ -1786,7 +1788,7 @@ func removePhaseToolsForInvalidActionClasses(tools []string, invalidClasses []st
 		}
 		out = append(out, tool)
 	}
-	return util.Unique(out)
+	return textutil.Unique(out)
 }
 
 func isToolActionClass(class string) bool {
@@ -1804,7 +1806,7 @@ func removePhaseActionClass(classes []string, remove string) []string {
 		out = append(out, class)
 	}
 
-	return util.Unique(out)
+	return textutil.Unique(out)
 }
 
 func removePhaseTerminalShape(shapes []string, remove string) []string {
@@ -1818,7 +1820,7 @@ func removePhaseTerminalShape(shapes []string, remove string) []string {
 		out = append(out, shape)
 	}
 
-	return util.Unique(out)
+	return textutil.Unique(out)
 }
 
 func readOnlySourceBodyEvidenceSummary(results []workspace.ToolResult) string {
@@ -1895,7 +1897,7 @@ func genericReadOnlyAnswerEvidenceReady(brief workerruntime.WorkerRuntimeBrief, 
 		return true
 	}
 
-	if workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyDirectAnswer) &&
+	if workerruntime.TaskFamilyMatches(brief.TaskFamily, autonomy.TaskFamilyDirectAnswer) &&
 		workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) &&
 		strings.TrimSpace(brief.Objective) != "" {
 
@@ -1962,7 +1964,7 @@ func implementationTargetWriteReadyAllowedToolsForBrief(baseTools []string, brie
 		allowed = append(allowed, implementationTargetWriteReadySourceRefreshTools(baseTools)...)
 	}
 
-	return util.Unique(allowed)
+	return textutil.Unique(allowed)
 }
 
 func implementationTargetWriteReadySourceRefreshTools(baseTools []string) []string {
@@ -2099,7 +2101,7 @@ func targetPacketWritableMentionedPaths(lines []string) []string {
 		}
 	}
 
-	return util.Unique(paths)
+	return textutil.Unique(paths)
 }
 
 func implementationPathTerms(path string) []string {
@@ -2137,7 +2139,7 @@ func implementationPathTerms(path string) []string {
 }
 
 func guardedMutationBriefRequiresTargetSourceContract(brief workerruntime.WorkerRuntimeBrief) bool {
-	if workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyDelegatedIsolatedImpl) {
+	if workerruntime.TaskFamilyMatches(brief.TaskFamily, autonomy.TaskFamilyDelegatedIsolatedImpl) {
 		return false
 	}
 
@@ -2146,15 +2148,15 @@ func guardedMutationBriefRequiresTargetSourceContract(brief workerruntime.Worker
 	return workerruntime.PermissionProfileMatches(permission, workerruntime.PermissionGuardedWorkspaceWrite) ||
 		permission == "workspace_write" ||
 		permission == "write_enabled" ||
-		workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyImplementation)
+		workerruntime.TaskFamilyMatches(brief.TaskFamily, autonomy.TaskFamilyImplementation)
 }
 
 func phaseContractBaseTools(input TurnPhaseContractInput, brief workerruntime.WorkerRuntimeBrief) []string {
 	if len(input.BaseAllowedTools) > 0 {
-		return util.Unique(input.BaseAllowedTools)
+		return textutil.Unique(input.BaseAllowedTools)
 	}
 
-	return util.Unique(brief.AllowedTools)
+	return textutil.Unique(brief.AllowedTools)
 }
 
 func filterPhaseTools(tools []string, allowed ...string) []string {
@@ -2179,7 +2181,7 @@ func filterPhaseTools(tools []string, allowed ...string) []string {
 		}
 	}
 
-	return util.Unique(out)
+	return textutil.Unique(out)
 }
 
 func filterPhaseTerminalShapes(values []string, allowed ...string) []string {
@@ -2204,7 +2206,7 @@ func filterPhaseTerminalShapes(values []string, allowed ...string) []string {
 		}
 	}
 
-	return util.Unique(out)
+	return textutil.Unique(out)
 }
 
 func removePhaseTools(tools []string, hidden []string) []string {
@@ -2235,7 +2237,7 @@ func removePhaseTools(tools []string, hidden []string) []string {
 		out = append(out, tool)
 	}
 
-	return util.Unique(out)
+	return textutil.Unique(out)
 }
 
 func implementationTargetSourceAllowedTools(baseTools []string) []string {
@@ -2249,7 +2251,7 @@ func implementationTargetSourceAllowedTools(baseTools []string) []string {
 		"history_range", "history_symbol", "blame_range",
 	)
 
-	return util.Unique(append(writes, reads...))
+	return textutil.Unique(append(writes, reads...))
 }
 
 func hiddenPhaseTools(baseTools []string, allowedTools []string) []string {
@@ -2291,7 +2293,7 @@ func expectedVisibleOutput(input TurnPhaseContractInput) string {
 	switch {
 	case input.SupportsNativeTools && !input.TextualToolParser:
 		return "native_tool_call"
-	case input.TextualToolParser || util.EqualTrimFold(input.ToolTransportMode, "textual"):
+	case input.TextualToolParser || textutil.EqualTrimFold(input.ToolTransportMode, "textual"):
 		return "visible_text_tool_request"
 	default:
 		return ""
@@ -2299,7 +2301,7 @@ func expectedVisibleOutput(input TurnPhaseContractInput) string {
 }
 
 func phaseContractTextualOnly(input TurnPhaseContractInput, contract TurnPhaseContract) bool {
-	if !input.TextualToolParser && !util.EqualTrimFold(input.ToolTransportMode, "textual") {
+	if !input.TextualToolParser && !textutil.EqualTrimFold(input.ToolTransportMode, "textual") {
 		return false
 	}
 
@@ -2365,13 +2367,24 @@ const (
 	PlanExecuteRecoverySurfaceSourceSatisfiedTerminal PlanExecuteRecoverySurfaceKind = "source_satisfied_terminal"
 )
 
-type PlanExecuteTransportMode string
+type ToolCallTransportMode string
 
 const (
-	PlanExecuteTransportModeTextual     PlanExecuteTransportMode = "textual_tools"
-	PlanExecuteTransportModeTextualJSON PlanExecuteTransportMode = "textual_json_terminal"
-	PlanExecuteTransportModeNative      PlanExecuteTransportMode = "native_tools"
+	ToolCallTransportModeTextual     ToolCallTransportMode = "textual_tools"
+	ToolCallTransportModeTextualJSON ToolCallTransportMode = "textual_json_terminal"
+	ToolCallTransportModeNative      ToolCallTransportMode = "native_tools"
+
+	PlanExecuteTransportModeTextual     PlanExecuteTransportMode = ToolCallTransportModeTextual
+	PlanExecuteTransportModeTextualJSON PlanExecuteTransportMode = ToolCallTransportModeTextualJSON
+	PlanExecuteTransportModeNative      PlanExecuteTransportMode = ToolCallTransportModeNative
+
+	RuntimeCallTransportModeTextual     RuntimeCallTransportMode = ToolCallTransportModeTextual
+	RuntimeCallTransportModeTextualJSON RuntimeCallTransportMode = ToolCallTransportModeTextualJSON
+	RuntimeCallTransportModeNative      RuntimeCallTransportMode = ToolCallTransportModeNative
 )
+
+type PlanExecuteTransportMode = ToolCallTransportMode
+type RuntimeCallTransportMode = ToolCallTransportMode
 
 type PlanExecutePlanningTransport struct {
 	SupportsNativeTools bool
@@ -2439,16 +2452,16 @@ type PlanExecuteRecoverySurface struct {
 	State PlanExecutePlanningState
 }
 
-func (state PlanExecutePlanningState) Decision(contractID string, invariantID string) Decision {
-	mode := ModeRequiredSource
+func (state PlanExecutePlanningState) Decision(contractID string, invariantID string) plancontract.SubmitPlanCoverageDecision {
+	mode := plancontract.ModeRequiredSource
 	switch state.Mode {
 	case PlanExecutePlanningModeSubmitReady, PlanExecutePlanningModeSubmitCorrection:
-		mode = ModeSubmitReady
+		mode = plancontract.ModeSubmitReady
 	case PlanExecutePlanningModeDone:
-		mode = ModeSourceSatisfied
+		mode = plancontract.ModeSourceSatisfied
 	}
 
-	return Decision{
+	return plancontract.SubmitPlanCoverageDecision{
 		Mode:          mode,
 		ContractID:    strings.TrimSpace(contractID),
 		InvariantID:   strings.TrimSpace(invariantID),
@@ -2669,7 +2682,7 @@ func recoveryStateVisibleSafeAlternatives(contract TurnPhaseContract) []string {
 			out = append(out, class)
 		}
 	}
-	return util.Unique(out)
+	return textutil.Unique(out)
 }
 
 func recoveryPhaseIDFromSurface(kind PlanExecuteRecoverySurfaceKind) string {
@@ -2828,7 +2841,7 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 		state.TerminalOptions = append(state.TerminalOptions, "submit_plan")
 	}
 
-	state.TerminalOptions = util.Unique(state.TerminalOptions)
+	state.TerminalOptions = textutil.Unique(state.TerminalOptions)
 	state.applyProjection(transport)
 
 	return state
@@ -2939,11 +2952,11 @@ func (state *PlanExecutePlanningState) applyProjection(transport PlanExecutePlan
 		}
 	}
 
-	state.ParserVisibleTools = util.Unique(state.ParserVisibleTools)
-	state.CallableTools = util.Unique(state.CallableTools)
-	state.AllowedActionClasses = util.Unique(state.AllowedActionClasses)
-	state.InvalidActionClasses = util.Unique(state.InvalidActionClasses)
-	state.TerminalResponseShapes = util.Unique(state.TerminalResponseShapes)
+	state.ParserVisibleTools = textutil.Unique(state.ParserVisibleTools)
+	state.CallableTools = textutil.Unique(state.CallableTools)
+	state.AllowedActionClasses = textutil.Unique(state.AllowedActionClasses)
+	state.InvalidActionClasses = textutil.Unique(state.InvalidActionClasses)
+	state.TerminalResponseShapes = textutil.Unique(state.TerminalResponseShapes)
 }
 
 func planExecuteSubmitReadyNativeRequired(transport PlanExecutePlanningTransport) bool {
@@ -3629,7 +3642,7 @@ type PlanExecuteRuntimeCallPolicy struct {
 }
 
 func DerivePlanExecuteRuntimeCallPolicy(input PlanExecuteRuntimeCallPolicyInput) PlanExecuteRuntimeCallPolicy {
-	terminalOnly := input.TerminalOnly || util.EqualTrimFold(input.ParserContract, "submit_plan_json")
+	terminalOnly := input.TerminalOnly || textutil.EqualTrimFold(input.ParserContract, "submit_plan_json")
 	runtimePolicy := DeriveRuntimeCallPolicy(RuntimeCallPolicyInput{
 		SupportsNativeTools:      input.SupportsNativeTools,
 		ForceNativeTools:         input.ForceNativeTools,
@@ -3689,7 +3702,7 @@ func DerivePlanExecuteRuntimeCallPolicy(input PlanExecuteRuntimeCallPolicyInput)
 		MaxTokens:                runtimePolicy.MaxTokens,
 		TimeoutMillis:            runtimePolicy.TimeoutMillis,
 		TransportMode:            planExecuteTransportModeFromRuntime(runtimePolicy.TransportMode),
-		ExpressibleActionClasses: util.Unique(expressibleActionClasses),
+		ExpressibleActionClasses: textutil.Unique(expressibleActionClasses),
 	}
 
 	return policy
@@ -3723,7 +3736,7 @@ func planExecuteRuntimeCallPolicyFromPhaseInput(input TurnPhaseContractInput) Pl
 		SupportsNativeTools: input.SupportsNativeTools,
 		TextualToolParser:   input.TextualToolParser,
 		TerminalOnly:        false,
-		ResponseFormatJSON:  util.EqualTrimFold(input.ResponseFormat, "json"),
+		ResponseFormatJSON:  textutil.EqualTrimFold(input.ResponseFormat, "json"),
 		Temperature:         input.Temperature,
 		TopP:                input.TopP,
 		TopK:                input.TopK,
@@ -3821,7 +3834,7 @@ func (policy PlanExecuteRuntimeCallPolicy) TelemetryFields() map[string]any {
 		fields["effective_timeout_ms"] = policy.TimeoutMillis
 	}
 
-	if classes := util.Unique(policy.ExpressibleActionClasses); len(classes) > 0 {
+	if classes := textutil.Unique(policy.ExpressibleActionClasses); len(classes) > 0 {
 		fields["expressible_action_classes"] = classes
 	}
 
@@ -4510,7 +4523,7 @@ func quoteRecoveryCardValue(value string) string {
 }
 
 func uniqueRecoveryCardStrings(values []string) []string {
-	return util.Unique(values)
+	return textutil.Unique(values)
 }
 
 func recoveryCardInvariantID(input RecoveryCardInput) string {
@@ -4767,7 +4780,7 @@ func recoveryCardCallableTools(contract TurnPhaseContract, currentAllowedTools [
 }
 
 func removeRecoveryCardStrings(values []string, remove []string) []string {
-	return util.Remove(values, remove)
+	return textutil.Remove(values, remove)
 }
 
 func recoveryCardActionPolicyHasNoToolClasses(classes []string) bool {
@@ -4985,7 +4998,7 @@ func firstNonEmptyRecoveryCardStrings(groups ...[]string) []string {
 }
 
 func mergeRecoveryCardStrings(groups ...[]string) []string {
-	return util.Merge(groups...)
+	return textutil.Merge(groups...)
 }
 
 func slicesContainRecoveryCardString(values []string, needle string) bool {
@@ -5061,7 +5074,7 @@ func applyTurnPhaseContractToNextActionState(state runnerNextActionState, contra
 		state.InvalidNextActions = append([]string(nil), contract.InvalidNext...)
 	}
 
-	state.Constraints = util.Merge(state.Constraints, contract.Constraints)
+	state.Constraints = textutil.Merge(state.Constraints, contract.Constraints)
 	state.StateSummary = runnerStateSummary(state)
 
 	return state
@@ -5072,6 +5085,8 @@ func turnPhaseSurfaceSummaryFromNextActionState(state runnerNextActionState, con
 	advertisedClasses := turnPhaseSurfaceActionClassesFromText(state.NextValidActions)
 	invalidClasses := turnPhaseSurfaceInvalidActionClassesFromText(state.InvalidNextActions)
 
+	invalidClasses = append(invalidClasses, turnPhaseSurfaceInvalidAdvertisedActionClasses(advertisedClasses, contract.ActionPolicy.InvalidActionClasses)...)
+	advertisedClasses = turnPhaseSurfaceActionClassesAllowedByContract(advertisedClasses, contract)
 	invalidClasses = removeAllowedTurnPhaseInvalidActionClasses(invalidClasses, contract.ActionPolicy.AllowedActionClasses)
 
 	return autonomy.TurnPhaseSurfaceSummaryEvent{
@@ -5084,7 +5099,58 @@ func turnPhaseSurfaceSummaryFromNextActionState(state runnerNextActionState, con
 		AdvertisedActionClasses: advertisedClasses,
 		InvalidActionClasses:    invalidClasses,
 		ObligationRefs:          append([]string(nil), state.EvidencePaths...),
+		RuntimeCall:             payload.RuntimeCall,
 	}
+}
+
+func turnPhaseSurfaceInvalidAdvertisedActionClasses(classes []string, invalidClasses []string) []string {
+	return actionClassIntersection(classes, invalidClasses)
+}
+
+func turnPhaseSurfaceActionClassesAllowedByContract(classes []string, contract TurnPhaseContract) []string {
+	if len(classes) == 0 {
+		return nil
+	}
+
+	allowed := actionClassesAllowedByPolicy(contract.ActionPolicy.AllowedActionClasses, contract.ActionPolicy.InvalidActionClasses)
+	if len(contract.RuntimeCall.ExpressibleActionClasses) > 0 {
+		allowed = actionClassIntersection(allowed, contract.RuntimeCall.ExpressibleActionClasses)
+	}
+	if len(allowed) == 0 {
+		return nil
+	}
+
+	return actionClassIntersection(classes, allowed)
+}
+
+func actionClassIntersection(values []string, allowed []string) []string {
+	if len(values) == 0 || len(allowed) == 0 {
+		return nil
+	}
+
+	allowedSet := map[string]struct{}{}
+	for _, value := range allowed {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			allowedSet[value] = struct{}{}
+		}
+	}
+
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+
+		if _, ok := allowedSet[value]; !ok {
+			continue
+		}
+
+		out = append(out, value)
+	}
+
+	return textutil.Unique(out)
 }
 
 func turnPhaseSurfaceActionClassesFromText(values []string) []string {
@@ -5133,7 +5199,7 @@ func turnPhaseSurfaceActionClassesFromText(values []string) []string {
 		}
 	}
 
-	return util.Unique(classes)
+	return textutil.Unique(classes)
 }
 
 func phaseActionTextHasTerm(value string, term string) bool {
@@ -5337,7 +5403,7 @@ func runnerVerificationEvidenceRefs(results []workspace.ToolResult) []string {
 		}
 	}
 
-	return util.Unique(refs)
+	return textutil.Unique(refs)
 }
 
 func runnerTurnPhaseResidualBlockers(results []workspace.ToolResult) []string {
@@ -5353,10 +5419,9 @@ func runnerTurnPhaseResidualBlockers(results []workspace.ToolResult) []string {
 		}
 	}
 
-	return util.Unique(blockers)
+	return textutil.Unique(blockers)
 }
 
-// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmprt5msfdh.go ---
 type CompletionDecision string
 
 const (
@@ -5519,7 +5584,6 @@ func mergeStrings(left []string, right []string) []string {
 	return out
 }
 
-// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmpfgqlrrkk.go ---
 // Check inspects a model reply and accumulated results, returning a rejection
 // ToolResult with shouldReject=true, or an empty ToolResult with false.
 type Check func(reply string, results []workspace.ToolResult) (rejection workspace.ToolResult, shouldReject bool)
@@ -5548,7 +5612,6 @@ func (p *Pipeline) Evaluate(reply string, results []workspace.ToolResult) (works
 	return workspace.ToolResult{}, false
 }
 
-// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmpx9hymb9q.go ---
 type Projection struct {
 	Lane       string
 	TaskFamily string
@@ -5563,7 +5626,6 @@ func (p Projection) RouteKey() string {
 	return p.Lane + ":" + p.TaskFamily + ":" + p.Phase
 }
 
-// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmp56vzod9u.go ---
 type Violation struct {
 	ContractID    string
 	InvariantID   string
@@ -5583,15 +5645,6 @@ func (v Violation) IsZero() bool {
 		v.ReasonCode == "" &&
 		len(v.EvidenceRefs) == 0
 }
-
-// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmp900fqest.go ---
-type RuntimeCallTransportMode string
-
-const (
-	RuntimeCallTransportModeTextual     RuntimeCallTransportMode = "textual_tools"
-	RuntimeCallTransportModeTextualJSON RuntimeCallTransportMode = "textual_json_terminal"
-	RuntimeCallTransportModeNative      RuntimeCallTransportMode = "native_tools"
-)
 
 type RuntimeCallPolicyInput struct {
 	SupportsNativeTools      bool
@@ -5646,7 +5699,7 @@ type RuntimeCallPolicy struct {
 }
 
 func DeriveRuntimeCallPolicy(input RuntimeCallPolicyInput) RuntimeCallPolicy {
-	responseFormatJSON := input.ResponseFormatJSON || util.EqualTrimFold(input.ResponseFormat, "json")
+	responseFormatJSON := input.ResponseFormatJSON || textutil.EqualTrimFold(input.ResponseFormat, "json")
 	textualParser := input.TextualToolParser || responseFormatJSON || (!input.SupportsNativeTools && !input.ForceNativeTools)
 	policy := RuntimeCallPolicy{
 		SupportsNativeTools:      input.SupportsNativeTools,
@@ -5661,7 +5714,7 @@ func DeriveRuntimeCallPolicy(input RuntimeCallPolicyInput) RuntimeCallPolicy {
 		PresencePenalty:          input.PresencePenalty,
 		RepetitionPenalty:        input.RepetitionPenalty,
 		ToolChoice:               strings.TrimSpace(input.ToolChoice),
-		ToolChoiceRequired:       util.EqualTrimFold(input.ToolChoice, "required"),
+		ToolChoiceRequired:       textutil.EqualTrimFold(input.ToolChoice, "required"),
 		ParserContract:           strings.TrimSpace(input.ParserContract),
 		ResponseFormat:           strings.TrimSpace(input.ResponseFormat),
 		ThinkingPolicy:           strings.TrimSpace(input.ThinkingPolicy),
@@ -5729,10 +5782,9 @@ func cloneBoolPtr(value *bool) *bool {
 }
 
 func UniqueStrings(values []string) []string {
-	return util.Unique(values)
+	return textutil.Unique(values)
 }
 
-// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmp437gf5wr.go ---
 type Owner string
 
 const (
@@ -5944,7 +5996,6 @@ func mapKeysSorted(values map[string]map[Owner]struct{}) []string {
 	return keys
 }
 
-// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmpplp2jd8s.go ---
 const InvariantPostWrite = "verification.post_write"
 
 // Decision is the neutral runtime verification decision passed from

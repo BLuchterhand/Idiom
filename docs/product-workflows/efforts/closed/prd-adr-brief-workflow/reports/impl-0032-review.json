@@ -25,8 +25,8 @@
   "checks": {
     "obsidian_parity_contract": "passed",
     "lint_audit_json_and_human_output": "passed",
-    "no_change_rationale_path": "passed_after_repair",
-    "ancestor_path_boundary": "passed_after_repair",
+    "no_change_rationale_path": "passed",
+    "ancestor_path_boundary": "passed",
     "authority_boundaries": "passed",
     "no_dispatch_or_runtime_mutation": "passed",
     "privacy_secret_marker_regression": "passed"

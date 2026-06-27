@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	recoverycontract "idiom/internal/contracts/recovery"
+
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/repository/comprehension"
 	"idiom/internal/workflows/planexecute"
 	"idiom/internal/workflows/recoverstatus"
@@ -22,8 +25,8 @@ func TestRunMainRecoverInspectReadsFailureRecord(t *testing.T) {
 	root := filepath.Dir(configPath)
 	state := planexecute.NewProgressState("recover-session-1", "make a change", "", []string{"a.go"}, nil, time.Now().UTC())
 
-	state.Status = planexecute.ProgressStatusFailed
-	state.FailureKind = planexecute.RunFailurePlannerBlocked
+	state.Status = plancontract.PlanExecuteProgressStatusFailed
+	state.FailureKind = plancontract.PlanExecuteFailurePlannerBlocked
 	state.FailureReason = "<<QUESTION>>: answer needed before editing"
 
 	statePath, err := planexecute.SaveProgressState(root, &state)
@@ -58,11 +61,11 @@ func TestRunMainRecoverInspectReadsFailureRecord(t *testing.T) {
 		t.Fatalf("record identity mismatch: %#v want id=%s path=%s", report, record.FailureID, recordPath)
 	}
 
-	if report.FailureClass != recovery.FailureClassPlannerBlocked {
+	if report.FailureClass != string(recoverycontract.FailureClassPlannerBlocked) {
 		t.Fatalf("failure class=%q", report.FailureClass)
 	}
 
-	if report.NextAction != recovery.NextActionAnswerBlocker {
+	if report.NextAction != string(recoverycontract.NextActionAnswerBlocker) {
 		t.Fatalf("next action=%q", report.NextAction)
 	}
 }
@@ -72,8 +75,8 @@ func TestRunMainRecoverShowAcceptsFailureIDAndPrintsTerminalSummary(t *testing.T
 	root := filepath.Dir(configPath)
 	state := planexecute.NewProgressState("recover-session-show", "make a change", "", []string{"a.go"}, nil, time.Now().UTC())
 
-	state.Status = planexecute.ProgressStatusFailed
-	state.FailureKind = planexecute.RunFailurePlannerBlocked
+	state.Status = plancontract.PlanExecuteProgressStatusFailed
+	state.FailureKind = plancontract.PlanExecuteFailurePlannerBlocked
 	state.FailureReason = "no launchable backend controller configured"
 
 	statePath, err := planexecute.SaveProgressState(root, &state)
@@ -86,15 +89,15 @@ func TestRunMainRecoverShowAcceptsFailureIDAndPrintsTerminalSummary(t *testing.T
 		t.Fatalf("write recovery record: %v", err)
 	}
 
-	terminalPath, err := planexecute.SavePlanExecuteTerminalCompletionRecord(root, planexecute.PlanExecuteTerminalCompletionRecord{
+	terminalPath, err := planexecute.SavePlanExecuteTerminalCompletionRecord(root, plancontract.PlanExecuteTerminalCompletionRecord{
 		SessionID:         state.SessionID,
-		Status:            planexecute.ProgressStatusFailed,
-		FailureKind:       state.FailureKind,
+		Status:            plancontract.PlanExecuteTerminalStatusFailed,
+		FailureKind:       plancontract.PlanExecuteFailureKind(state.FailureKind),
 		FailureReason:     state.FailureReason,
 		FailureID:         record.FailureID,
 		RecordPath:        ".idiom/recovery/" + record.FailureID + "/failure.json",
 		PacketPath:        ".idiom/recovery/" + record.FailureID + "/packet.json",
-		NextAction:        recovery.NextActionAnswerBlocker,
+		NextAction:        recoverycontract.NextActionAnswerBlocker,
 		RequiredEditPaths: []string{"a.go"},
 	})
 	if err != nil {
@@ -121,6 +124,60 @@ func TestRunMainRecoverShowAcceptsFailureIDAndPrintsTerminalSummary(t *testing.T
 	}
 }
 
+func TestRunMainRecoverShowDoesNotTrustUncorrelatedTerminalCompletion(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	state := planexecute.NewProgressState("recover-session-show", "make a change", "", []string{"a.go"}, nil, time.Now().UTC())
+
+	state.Status = plancontract.PlanExecuteProgressStatusFailed
+	state.FailureKind = plancontract.PlanExecuteFailurePlannerBlocked
+	state.FailureReason = "durable failure record reason"
+
+	statePath, err := planexecute.SaveProgressState(root, &state)
+	if err != nil {
+		t.Fatalf("save progress: %v", err)
+	}
+
+	record, _, err := recovery.WritePlanExecuteFailureRecord(root, planexecute.RecoveryInputFromProgress(state, statePath), time.Now().UTC())
+	if err != nil {
+		t.Fatalf("write recovery record: %v", err)
+	}
+
+	terminalPath, err := planexecute.SavePlanExecuteTerminalCompletionRecord(root, plancontract.PlanExecuteTerminalCompletionRecord{
+		SessionID:         state.SessionID,
+		Status:            plancontract.PlanExecuteTerminalStatusFailed,
+		FailureKind:       plancontract.PlanExecuteFailureExecutorFailed,
+		FailureReason:     "stale terminal reason",
+		FailureID:         "different-failure-id",
+		RecordPath:        ".idiom/recovery/different-failure-id/failure.json",
+		NextAction:        recoverycontract.NextActionInspectFailure,
+		RequiredEditPaths: []string{"a.go"},
+	})
+	if err != nil {
+		t.Fatalf("save terminal completion: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := RunMain([]string{"show", "--config", configPath, "--json", record.FailureID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("recover show exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+
+	var report recoverInspectReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode report: %v\n%s", err, stdout.String())
+	}
+	if report.TerminalCompletionPath != "" {
+		t.Fatalf("uncorrelated terminal path should not be trusted, got %q from %q", report.TerminalCompletionPath, terminalPath)
+	}
+	if report.FailureID != record.FailureID || report.FailureReason != "durable failure record reason" {
+		t.Fatalf("uncorrelated terminal completion contaminated report: %#v", report)
+	}
+	if len(report.RequiredPathCoverage) != 0 {
+		t.Fatalf("uncorrelated terminal coverage must not be trusted: %#v", report.RequiredPathCoverage)
+	}
+}
+
 func TestRunRecoverInspectAndDecomposeReadImplementFailureRecord(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
 	root := filepath.Dir(configPath)
@@ -131,13 +188,13 @@ func TestRunRecoverInspectAndDecomposeReadImplementFailureRecord(t *testing.T) {
 
 	record, _, err := recovery.WriteFailureRecord(root, recovery.FailureRecordInput{
 		FailureID: recovery.ImplementFailureID("implement-session-1"),
-		SourceRun: recovery.SourceRun{
-			Lane:              recovery.SourceLaneImplement,
+		SourceRun: recoverycontract.SourceRun{
+			Lane:              string(recoverycontract.SourceLaneImplement),
 			SessionID:         "implement-session-1",
 			PromptFile:        "brief.md",
 			RequiredEditPaths: []string{"allowed.go"},
 		},
-		FailureClass:   recovery.FailureClassExecutorEdit,
+		FailureClass:   recoverycontract.FailureClassExecutorEdit,
 		FailureKind:    "implement_process_failed",
 		FailureSummary: "implement process failed: exit_code=1",
 	}, time.Now().UTC())
@@ -159,7 +216,7 @@ func TestRunRecoverInspectAndDecomposeReadImplementFailureRecord(t *testing.T) {
 		t.Fatalf("decode inspect report: %v\n%s", err, stdout.String())
 	}
 
-	if inspectReport.FailureID != record.FailureID || inspectReport.FailureClass != recovery.FailureClassExecutorEdit || inspectReport.NextAction != recovery.NextActionReviewDecomposition {
+	if inspectReport.FailureID != record.FailureID || inspectReport.FailureClass != string(recoverycontract.FailureClassExecutorEdit) || inspectReport.NextAction != string(recoverycontract.NextActionReviewDecomposition) {
 		t.Fatalf("unexpected inspect report: %#v", inspectReport)
 	}
 
@@ -203,7 +260,7 @@ func TestRunRecoverInspectComputesLegacyFailedProgressWithoutWriting(t *testing.
 	root := filepath.Dir(configPath)
 	state := planexecute.NewProgressState("recover-session-2", "make a change", "", []string{"a.go"}, nil, time.Now().UTC())
 
-	state.Status = planexecute.ProgressStatusFailed
+	state.Status = plancontract.PlanExecuteProgressStatusFailed
 	state.FailureKind = "plan_artifact_missing"
 	state.FailureReason = "no plan artifact"
 
@@ -229,12 +286,54 @@ func TestRunRecoverInspectComputesLegacyFailedProgressWithoutWriting(t *testing.
 		t.Fatalf("legacy progress fallback must not write during inspect: %#v", report)
 	}
 
-	if report.FailureClass != recovery.FailureClassPlanMissing {
+	if report.FailureClass != string(recoverycontract.FailureClassPlanMissing) {
 		t.Fatalf("failure class=%q", report.FailureClass)
 	}
 
 	if _, _, found, err := recovery.TryLoadPlanExecuteFailureRecord(root, state.SessionID); err != nil || found {
 		t.Fatalf("inspect should not persist fallback record, found=%v err=%v", found, err)
+	}
+}
+
+func TestRunRecoverInspectComputesRecoveryRequiredProgressWithoutWriting(t *testing.T) {
+	for _, status := range []plancontract.PlanExecuteProgressStatus{plancontract.PlanExecuteProgressStatusBlocked, plancontract.PlanExecuteProgressStatusDegraded} {
+		t.Run(string(status), func(t *testing.T) {
+			configPath := writePlanExecuteConfig(t)
+			root := filepath.Dir(configPath)
+			state := planexecute.NewProgressState("recover-"+string(status)+"-session", "make a change", "", []string{"a.go"}, nil, time.Now().UTC())
+			state.Phase = plancontract.PlanExecuteProgressPhaseReviewRepair
+			state.Status = status
+			state.FailureKind = plancontract.PlanExecuteFailureReviewRepairBlocked
+			if status == plancontract.PlanExecuteProgressStatusDegraded {
+				state.FailureKind = plancontract.PlanExecuteFailureReviewRepairDegraded
+			}
+			state.FailureReason = "review repair " + string(status)
+
+			if _, err := planexecute.SaveProgressState(root, &state); err != nil {
+				t.Fatalf("save progress: %v", err)
+			}
+
+			var stdout, stderr bytes.Buffer
+			code := RunMain([]string{"inspect", "--config", configPath, "--session", state.SessionID, "--json"}, &stdout, &stderr)
+			if code != 0 {
+				t.Fatalf("recover inspect exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+			}
+
+			var report recoverInspectReport
+			if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+				t.Fatalf("decode report: %v\n%s", err, stdout.String())
+			}
+
+			if report.Recorded {
+				t.Fatalf("legacy progress fallback must not write during inspect: %#v", report)
+			}
+			if report.NextAction == string(recoverycontract.NextActionNone) {
+				t.Fatalf("recovery-required status %q must produce an actionable fallback report: %#v", status, report)
+			}
+			if _, _, found, err := recovery.TryLoadPlanExecuteFailureRecord(root, state.SessionID); err != nil || found {
+				t.Fatalf("inspect should not persist fallback record, found=%v err=%v", found, err)
+			}
+		})
 	}
 }
 
@@ -287,7 +386,7 @@ func TestRunRecoverInspectClassifiesOutOfScopeDirtyWorkspace(t *testing.T) {
 
 	state := planexecute.NewProgressState("recover-session-3", "make a change", "", []string{"allowed.go"}, nil, time.Now().UTC())
 
-	state.Status = planexecute.ProgressStatusFailed
+	state.Status = plancontract.PlanExecuteProgressStatusFailed
 	state.FailureKind = "executor_failed"
 	state.FailureReason = "edit failed"
 	state.ChangedPaths = []string{"allowed.go"}
@@ -320,15 +419,15 @@ func TestRunRecoverInspectClassifiesOutOfScopeDirtyWorkspace(t *testing.T) {
 		t.Fatalf("decode report: %v\n%s", err, stdout.String())
 	}
 
-	if report.PartialState.DirtyStatus != recovery.DirtyStatusDirtyOutScope {
+	if report.PartialState.DirtyStatus != recoverycontract.DirtyStatusDirtyOutScope {
 		t.Fatalf("dirty status=%q report=%#v", report.PartialState.DirtyStatus, report)
 	}
 
-	if report.PartialState.ScopeStatus != recovery.ScopeStatusOutOfScope {
+	if report.PartialState.ScopeStatus != recoverycontract.ScopeStatusOutOfScope {
 		t.Fatalf("scope status=%q report=%#v", report.PartialState.ScopeStatus, report)
 	}
 
-	if report.NextAction != recovery.NextActionHumanIntervention {
+	if report.NextAction != string(recoverycontract.NextActionHumanIntervention) {
 		t.Fatalf("next action=%q", report.NextAction)
 	}
 }
@@ -344,7 +443,7 @@ func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 
 	state := planexecute.NewProgressState("recover-session-4", "make a change", "", []string{"allowed.go"}, nil, time.Now().UTC())
 
-	state.Status = planexecute.ProgressStatusFailed
+	state.Status = plancontract.PlanExecuteProgressStatusFailed
 	state.FailureKind = "executor_failed"
 	state.FailureReason = "edit failed"
 
@@ -393,13 +492,13 @@ func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 		t.Fatalf("decode status report: %v\n%s", err, statusOut.String())
 	}
 
-	if statusReport.Status != "ready" || statusReport.NextAction != recovery.NextActionReviewDecomposition {
+	if statusReport.Status != "ready" || statusReport.NextAction != recoverycontract.NextActionReviewDecomposition {
 		t.Fatalf("unexpected status report: %#v", statusReport)
 	}
 
 	if len(statusReport.ResidualWork) != 1 ||
-		!recoveryEvidenceRefsContain(statusReport.ResidualWork[0].EvidenceRefs, recovery.EvidenceRef{Kind: "required_path", Path: "allowed.go"}) ||
-		!recoveryEvidenceRefsContain(statusReport.ResidualWork[0].EvidenceRefs, recovery.EvidenceRef{Kind: "required_test", ID: "go test ./..."}) {
+		!recoveryEvidenceRefsContain(statusReport.ResidualWork[0].EvidenceRefs, recoverycontract.EvidenceRef{Kind: "required_path", Path: "allowed.go"}) ||
+		!recoveryEvidenceRefsContain(statusReport.ResidualWork[0].EvidenceRefs, recoverycontract.EvidenceRef{Kind: "required_test", ID: "go test ./..."}) {
 
 		t.Fatalf("expected residual evidence refs in status report: %#v", statusReport.ResidualWork)
 	}
@@ -441,7 +540,9 @@ func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 		t.Fatalf("decode promote report: %v\n%s", err, promoteOut.String())
 	}
 
-	if promoteReport.Status != "promoted" || promoteReport.NextAction != "dispatch_atom" {
+	if promoteReport.Status != "promoted" ||
+		promoteReport.NextAction != string(recoverycontract.NextActionNone) ||
+		promoteReport.PromotionNextAction != string(recoverycontract.PromotionNextActionDispatchAtom) {
 		t.Fatalf("unexpected promote report: %#v", promoteReport)
 	}
 
@@ -450,7 +551,7 @@ func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 	}
 
 	for _, gate := range promoteReport.Gates {
-		if gate.Status != "pass" {
+		if gate.Status != recoverycontract.GateStatusPass {
 			t.Fatalf("gate did not pass: %#v report=%#v", gate, promoteReport)
 		}
 	}
@@ -469,7 +570,7 @@ func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 		t.Fatalf("decode reconcile report: %v\n%s", err, reconcileOut.String())
 	}
 
-	if reconcileReport.Status != recovery.ReconciliationStatusRecovered || reconcileReport.NextAction != recovery.NextActionNone {
+	if reconcileReport.Status != recoverycontract.ReconciliationStatusRecovered || reconcileReport.NextAction != string(recoverycontract.NextActionNone) {
 		t.Fatalf("unexpected reconcile report: %#v", reconcileReport)
 	}
 
@@ -525,7 +626,7 @@ func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 		t.Fatalf("decode reconciled status report: %v\n%s", err, statusOut.String())
 	}
 
-	if statusReport.Status != "recovered" || statusReport.NextAction != recovery.NextActionNone || len(statusReport.CandidateAtoms) != 0 || statusReport.Reconciliation == nil {
+	if statusReport.Status != "recovered" || statusReport.NextAction != recoverycontract.NextActionNone || len(statusReport.CandidateAtoms) != 0 || statusReport.Reconciliation == nil {
 		t.Fatalf("expected recovered status after reconcile, got %#v", statusReport)
 	}
 
@@ -539,7 +640,7 @@ func TestRecoverStatusScrubsPersistedResidualEvidenceSummaries(t *testing.T) {
 	root := filepath.Dir(configPath)
 	packet := writeRecoverTestPacket(t, root, "recover-session-summary-scrub", "packet.json")
 
-	packet.ResidualWork[0].EvidenceRefs = append(packet.ResidualWork[0].EvidenceRefs, recovery.EvidenceRef{
+	packet.ResidualWork[0].EvidenceRefs = append(packet.ResidualWork[0].EvidenceRefs, recoverycontract.EvidenceRef{
 		Kind:    "legacy_failure",
 		Path:    "allowed.go",
 		Summary: "raw_prompt: persisted legacy detail",
@@ -567,7 +668,7 @@ func TestRecoverStatusScrubsPersistedResidualEvidenceSummaries(t *testing.T) {
 		t.Fatalf("status JSON leaked residual evidence summary: %s", stdout.String())
 	}
 
-	if !recoveryEvidenceRefsContain(report.ResidualWork[0].EvidenceRefs, recovery.EvidenceRef{Kind: "legacy_failure", Path: "allowed.go"}) {
+	if !recoveryEvidenceRefsContain(report.ResidualWork[0].EvidenceRefs, recoverycontract.EvidenceRef{Kind: "legacy_failure", Path: "allowed.go"}) {
 		t.Fatalf("expected sanitized legacy evidence ref in %#v", report.ResidualWork)
 	}
 }
@@ -591,8 +692,63 @@ func TestRecoverStatusRejectsPacketOutsideWorkspaceRoot(t *testing.T) {
 		t.Fatalf("decode report: %v\n%s", err, stdout.String())
 	}
 
-	if !strings.Contains(report.Error, "workspace root") || report.NextAction != recovery.NextActionInspectFailure {
+	if !strings.Contains(report.Error, "workspace root") || report.NextAction != recoverycontract.NextActionInspectFailure {
 		t.Fatalf("unexpected outside packet status report: %#v", report)
+	}
+}
+
+func TestRecoverPromoteRejectsPacketOutsideWorkspaceRoot(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	outsideRoot := t.TempDir()
+	writeRecoverTestPacket(t, outsideRoot, "recover-session-outside-promote-packet", "packet.json")
+
+	var stdout, stderr bytes.Buffer
+	code := RunMain([]string{
+		"promote",
+		"--config", configPath,
+		"--packet", filepath.Join(outsideRoot, "packet.json"),
+		"--atom", "recovery-001",
+		"--output", "briefs/recovery-001.md",
+		"--json",
+	}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Fatalf("recover promote should reject outside packet, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+
+	var report recoverPromoteReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode report: %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(report.Error, "workspace root") {
+		t.Fatalf("unexpected outside packet promote report: %#v", report)
+	}
+}
+
+func TestRecoverReconcileRejectsPacketOutsideWorkspaceRoot(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	outsideRoot := t.TempDir()
+	writeRecoverTestPacket(t, outsideRoot, "recover-session-outside-reconcile-packet", "packet.json")
+
+	var stdout, stderr bytes.Buffer
+	code := RunMain([]string{
+		"reconcile",
+		"--config", configPath,
+		"--packet", filepath.Join(outsideRoot, "packet.json"),
+		"--completed", "recovery-001",
+		"--json",
+	}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Fatalf("recover reconcile should reject outside packet, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+
+	var report recoverReconcileReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode report: %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(report.Error, "workspace root") {
+		t.Fatalf("unexpected outside packet reconcile report: %#v", report)
 	}
 }
 
@@ -617,7 +773,7 @@ func TestRecoverDecomposeRejectsOutsideOutputPath(t *testing.T) {
 		t.Fatalf("decode report: %v\n%s", err, stdout.String())
 	}
 
-	if !strings.Contains(report.Error, "workspace root") || report.NextAction != recovery.NextActionInspectFailure {
+	if !strings.Contains(report.Error, "workspace root") || report.NextAction != string(recoverycontract.NextActionInspectFailure) {
 		t.Fatalf("unexpected outside output report: %#v", report)
 	}
 
@@ -650,7 +806,7 @@ func TestRecoverDecomposeRejectsProtectedOutputPath(t *testing.T) {
 		t.Fatalf("decode report: %v\n%s", err, stdout.String())
 	}
 
-	if !strings.Contains(report.Error, "protected") || report.NextAction != recovery.NextActionInspectFailure {
+	if !strings.Contains(report.Error, "protected") || report.NextAction != string(recoverycontract.NextActionInspectFailure) {
 		t.Fatalf("unexpected protected output report: %#v", report)
 	}
 
@@ -897,11 +1053,11 @@ func TestRecoverReconcileMergesCompletedAtoms(t *testing.T) {
 
 func TestRecoveryReconciliationLearningRejectsRankerStatePaths(t *testing.T) {
 	root := t.TempDir()
-	packet := recovery.DecompositionPacket{
-		SchemaVersion: recovery.DecompositionPacketSchemaVersion,
+	packet := recoverycontract.DecompositionPacket{
+		SchemaVersion: recoverycontract.DecompositionPacketSchemaVersion,
 		FailureID:     "failure-ranker-path",
 		PacketID:      "packet-failure-ranker-path",
-		CandidateAtoms: []recovery.CandidateAtom{{
+		CandidateAtoms: []recoverycontract.CandidateAtom{{
 			ID:            "recovery-001",
 			RequiredPaths: []string{".idiom\\ranker\\weights.json"},
 			RequiredTests: []string{"go test ./cmd/idiom"},
@@ -910,12 +1066,12 @@ func TestRecoveryReconciliationLearningRejectsRankerStatePaths(t *testing.T) {
 
 	reconciliation, err := recovery.BuildReconciliation(packet, recovery.ReconciliationOptions{
 		CompletedAtomIDs: []string{"recovery-001"},
-		Verification: recovery.ReconciliationVerification{
-			Status:        recovery.ReconciliationVerificationPass,
+		Verification: recoverycontract.ReconciliationVerification{
+			Status:        recoverycontract.ReconciliationVerificationPass,
 			RequiredTests: []string{"go test ./cmd/idiom"},
-			Commands: []recovery.ReconciliationCommandResult{{
+			Commands: []recoverycontract.ReconciliationCommandResult{{
 				Command:  "go test ./cmd/idiom",
-				Status:   recovery.ReconciliationVerificationPass,
+				Status:   recoverycontract.ReconciliationVerificationPass,
 				ExitCode: 0,
 			}},
 		},
@@ -973,7 +1129,7 @@ func TestRecoverReconcileRejectsOutsideOutputPath(t *testing.T) {
 		t.Fatalf("decode report: %v\n%s", err, stdout.String())
 	}
 
-	if !strings.Contains(report.Error, "workspace root") || report.NextAction != recovery.NextActionInspectFailure {
+	if !strings.Contains(report.Error, "workspace root") || report.NextAction != string(recoverycontract.NextActionInspectFailure) {
 		t.Fatalf("unexpected outside output report: %#v", report)
 	}
 
@@ -1021,14 +1177,9 @@ func TestRecoverReconcileRejectsSymlinkedOutputParent(t *testing.T) {
 	}
 }
 
-func TestRecoverReconcileDefaultOutputAvoidsSymlinkedPacketDirectory(t *testing.T) {
+func TestRecoverReconcileRejectsSymlinkedPacketDirectory(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
 	root := filepath.Dir(configPath)
-	writeRecoverTestGoModule(t, root)
-
-	if err := os.WriteFile(filepath.Join(root, "allowed.go"), []byte("package recover_test\n"), 0o644); err != nil {
-		t.Fatalf("write scoped source: %v", err)
-	}
 
 	packet := writeRecoverTestPacket(t, root, "recover-session-reconcile-symlink-default", "")
 	outsideDir := t.TempDir()
@@ -1045,7 +1196,7 @@ func TestRecoverReconcileDefaultOutputAvoidsSymlinkedPacketDirectory(t *testing.
 
 	code := RunMain([]string{"reconcile", "--config", configPath, "--packet", "link-packet/packet.json", "--completed", packet.CandidateAtoms[0].ID, "--json"}, &stdout, &stderr)
 
-	if code != 0 {
+	if code != 1 {
 		t.Fatalf("recover reconcile exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 
@@ -1055,9 +1206,8 @@ func TestRecoverReconcileDefaultOutputAvoidsSymlinkedPacketDirectory(t *testing.
 		t.Fatalf("decode report: %v\n%s", err, stdout.String())
 	}
 
-	wantPrefix := filepath.ToSlash(filepath.Join(".idiom", "recovery", packet.FailureID))
-	if !strings.HasPrefix(report.ReconciliationPath, wantPrefix) {
-		t.Fatalf("expected fallback under .idiom/recovery, got %#v", report)
+	if !strings.Contains(report.Error, "symlink") {
+		t.Fatalf("expected symlink packet rejection, got %#v", report)
 	}
 
 	if _, err := os.Stat(filepath.Join(outsideDir, "reconciliation.json")); !os.IsNotExist(err) {
@@ -1109,7 +1259,7 @@ func TestRecoverPromoteRequiresExplicitAllowDirtyForDirtyPacket(t *testing.T) {
 		t.Fatalf("decode promote report: %v\n%s", err, stdout.String())
 	}
 
-	if report.Status != "blocked" || !recoverGateBlocked(report.Gates, recovery.GateWorkspaceState) {
+	if report.Status != "blocked" || !recoverGateBlocked(report.Gates, recoverycontract.GateWorkspaceState) {
 		t.Fatalf("expected workspace-state block: %#v", report)
 	}
 
@@ -1161,7 +1311,7 @@ func TestRecoverPromoteRejectsOutsideOutputPath(t *testing.T) {
 		t.Fatalf("decode promote report: %v\n%s", err, stdout.String())
 	}
 
-	if !strings.Contains(report.Error, "workspace root") || report.NextAction != recovery.NextActionHumanIntervention {
+	if !strings.Contains(report.Error, "workspace root") || report.NextAction != string(recoverycontract.NextActionHumanIntervention) {
 		t.Fatalf("unexpected outside output report: %#v", report)
 	}
 
@@ -1170,14 +1320,102 @@ func TestRecoverPromoteRejectsOutsideOutputPath(t *testing.T) {
 	}
 }
 
+func TestRecoverPromoteRejectsSymlinkedOutputParent(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	packet := writePromotableRecoverPacket(t, root, "recover-session-promote-symlink-parent")
+
+	outsideDir := t.TempDir()
+	if err := os.Symlink(outsideDir, filepath.Join(root, "brief-link")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := RunMain([]string{"promote", "--config", configPath, "--packet", "packet.json", "--atom", packet.CandidateAtoms[0].ID, "--output", "brief-link/recovery.md", "--json"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("recover promote should reject symlinked parent, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+
+	var report recoverPromoteReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode promote report: %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(report.Error, "symlinked directories") || report.NextAction != string(recoverycontract.NextActionHumanIntervention) {
+		t.Fatalf("unexpected symlink parent report: %#v", report)
+	}
+	if _, err := os.Stat(filepath.Join(outsideDir, "recovery.md")); !os.IsNotExist(err) {
+		t.Fatalf("symlink parent output should not be written outside root, stat err=%v", err)
+	}
+}
+
+func TestRecoverPromoteRejectsSymlinkedOutputFile(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	packet := writePromotableRecoverPacket(t, root, "recover-session-promote-symlink-file")
+
+	outsidePath := filepath.Join(t.TempDir(), "outside.md")
+	if err := os.MkdirAll(filepath.Join(root, "briefs"), 0o755); err != nil {
+		t.Fatalf("mkdir briefs: %v", err)
+	}
+	if err := os.Symlink(outsidePath, filepath.Join(root, "briefs", "recovery.md")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := RunMain([]string{"promote", "--config", configPath, "--packet", "packet.json", "--atom", packet.CandidateAtoms[0].ID, "--output", "briefs/recovery.md", "--json"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("recover promote should reject symlinked output file, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+
+	var report recoverPromoteReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode promote report: %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(report.Error, "symlink") || report.NextAction != string(recoverycontract.NextActionHumanIntervention) {
+		t.Fatalf("unexpected symlink target report: %#v", report)
+	}
+	if _, err := os.Stat(outsidePath); !os.IsNotExist(err) {
+		t.Fatalf("symlink target output should not be written outside root, stat err=%v", err)
+	}
+}
+
 func recoverGateBlocked(gates []recoverGateReport, name string) bool {
 	for _, gate := range gates {
-		if gate.Name == name && gate.Status == "block" {
+		if gate.Name == name && gate.Status == recoverycontract.GateStatusBlock {
 			return true
 		}
 	}
 
 	return false
+}
+
+func writePromotableRecoverPacket(t *testing.T, root string, sessionID string) recoverycontract.DecompositionPacket {
+	t.Helper()
+
+	if err := os.WriteFile(filepath.Join(root, "allowed.go"), []byte("package allowed\n"), 0o644); err != nil {
+		t.Fatalf("write scoped source: %v", err)
+	}
+
+	record, err := recovery.BuildPlanExecuteFailureRecord(recovery.PlanExecuteFailureInput{
+		SessionID:         sessionID,
+		FailureKind:       string(plancontract.PlanExecuteFailureExecutorFailed),
+		FailureReason:     "edit failed",
+		RequiredEditPaths: []string{"allowed.go"},
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+
+	packet, err := recovery.BuildDecompositionPacket(record, recovery.DecompositionOptions{Now: time.Now().UTC()})
+	if err != nil {
+		t.Fatalf("BuildDecompositionPacket: %v", err)
+	}
+
+	if _, _, err := recovery.WriteDecompositionPacket(root, packet, "packet.json"); err != nil {
+		t.Fatalf("WriteDecompositionPacket: %v", err)
+	}
+
+	return packet
 }
 
 func recoverAtomIDsContain(ids []string, want string) bool {
@@ -1190,7 +1428,7 @@ func recoverAtomIDsContain(ids []string, want string) bool {
 	return false
 }
 
-func recoveryEvidenceRefsContain(refs []recovery.EvidenceRef, want recovery.EvidenceRef) bool {
+func recoveryEvidenceRefsContain(refs []recoverycontract.EvidenceRef, want recoverycontract.EvidenceRef) bool {
 	for _, ref := range refs {
 		if ref == want {
 			return true
@@ -1229,7 +1467,7 @@ func writeRecoverFailedPlanExecuteRecord(t *testing.T, root string, sessionID st
 
 	state := planexecute.NewProgressState(sessionID, "make a change", "", requiredPaths, nil, time.Now().UTC())
 
-	state.Status = planexecute.ProgressStatusFailed
+	state.Status = plancontract.PlanExecuteProgressStatusFailed
 	state.FailureKind = "executor_failed"
 	state.FailureReason = "edit failed"
 
@@ -1243,7 +1481,7 @@ func writeRecoverFailedPlanExecuteRecord(t *testing.T, root string, sessionID st
 	}
 }
 
-func writeRecoverTestPacket(t *testing.T, root string, sessionID string, outputPath string) recovery.DecompositionPacket {
+func writeRecoverTestPacket(t *testing.T, root string, sessionID string, outputPath string) recoverycontract.DecompositionPacket {
 	t.Helper()
 
 	record, err := recovery.BuildPlanExecuteFailureRecord(recovery.PlanExecuteFailureInput{

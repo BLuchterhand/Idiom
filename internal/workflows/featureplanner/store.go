@@ -4,10 +4,13 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"idiom/internal/platform/util"
 	"os"
 	"path/filepath"
 	"strings"
+
+	featureplannercontract "idiom/internal/contracts/featureplanner"
+	"idiom/internal/platform/atomicfile"
+	"idiom/internal/platform/jsonfile"
 )
 
 type Bundle struct {
@@ -51,11 +54,11 @@ func LoadBundle(dir string) (Bundle, error) {
 
 	var bundle Bundle
 
-	if err := util.ReadJSON(filepath.Join(dir, DefaultFeatureStateName), &bundle.State); err != nil {
+	if err := jsonfile.ReadJSON(filepath.Join(dir, DefaultFeatureStateName), &bundle.State); err != nil {
 		return Bundle{}, err
 	}
 
-	if err := util.ReadJSON(filepath.Join(dir, DefaultFeaturePlanName), &bundle.Plan); err != nil {
+	if err := jsonfile.ReadJSON(filepath.Join(dir, DefaultFeaturePlanName), &bundle.Plan); err != nil {
 		return Bundle{}, err
 	}
 
@@ -160,14 +163,8 @@ func writeFileAtomic(path string, body []byte) error {
 		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
 	}
 
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, body, 0o600); err != nil {
+	if err := atomicfile.WriteFile(path, body, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", filepath.Base(path), err)
-	}
-
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("replace %s: %w", filepath.Base(path), err)
 	}
 
 	return nil
@@ -226,6 +223,9 @@ func validateStoredEvent(event Event) error {
 
 	if strings.TrimSpace(event.Type) == "" {
 		return fmt.Errorf("feature event missing type")
+	}
+	if !featureplannercontract.KnownDurableEventName(event.Type) {
+		return fmt.Errorf("unsupported feature event type %q", event.Type)
 	}
 
 	if event.FeatureRevisionAfter > 0 && event.FeatureRevisionAfter != event.FeatureRevisionBefore+1 {

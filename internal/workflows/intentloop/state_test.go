@@ -1,8 +1,14 @@
 package intentloop
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	intentloopcontract "idiom/internal/contracts/intentloop"
 )
 
 func TestStateJSONRoundTripPreservesCycleArtifacts(t *testing.T) {
@@ -78,5 +84,138 @@ func TestStateJSONRoundTripPreservesCycleArtifacts(t *testing.T) {
 func TestLoadStateRejectsInvalidSessionID(t *testing.T) {
 	if _, _, err := StatePath(t.TempDir(), "../bad"); err == nil {
 		t.Fatal("StatePath accepted invalid session id")
+	}
+}
+
+func TestLoadStateRejectsEmbeddedSessionMismatch(t *testing.T) {
+	root := t.TempDir()
+	state := NewState("other-session", "prompt", IntentLoopContract{}, 1, time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC))
+
+	fullPath, _, err := StatePath(root, "requested-session")
+	if err != nil {
+		t.Fatalf("StatePath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		t.Fatalf("mkdir state dir: %v", err)
+	}
+	body, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("marshal state: %v", err)
+	}
+	if err := os.WriteFile(fullPath, append(body, '\n'), 0o600); err != nil {
+		t.Fatalf("write mismatched state: %v", err)
+	}
+
+	_, _, err = LoadState(root, "requested-session")
+	if err == nil {
+		t.Fatal("LoadState accepted embedded session mismatch")
+	}
+}
+
+func TestLoadStateRejectsUnknownStatus(t *testing.T) {
+	root := t.TempDir()
+	state := NewState("bad-status", "prompt", IntentLoopContract{}, 1, time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC))
+	state.Status = intentloopcontract.Status("typo")
+	writeIntentLoopStateForTest(t, root, state)
+
+	_, _, err := LoadState(root, state.SessionID)
+	if err == nil || !strings.Contains(err.Error(), "invalid intent loop status") {
+		t.Fatalf("expected invalid status error, got %v", err)
+	}
+}
+
+func TestLoadStateRejectsUnknownCycleStatus(t *testing.T) {
+	root := t.TempDir()
+	state := NewState("bad-cycle-status", "prompt", IntentLoopContract{}, 1, time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC))
+	state.Cycles = []CycleRecord{{
+		CycleNumber:          1,
+		PlanExecuteSessionID: "child",
+		Status:               intentloopcontract.CycleStatus("typo"),
+	}}
+	writeIntentLoopStateForTest(t, root, state)
+
+	_, _, err := LoadState(root, state.SessionID)
+	if err == nil || !strings.Contains(err.Error(), "invalid intent loop cycle status") {
+		t.Fatalf("expected invalid cycle status error, got %v", err)
+	}
+}
+
+func TestLoadStateRejectsTerminalStatusWithDispatchedCycle(t *testing.T) {
+	root := t.TempDir()
+	state := NewState("terminal-with-dispatched-child", "prompt", IntentLoopContract{}, 1, time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC))
+	state.Status = intentloopcontract.StatusCompleted
+	state.Cycles = []CycleRecord{{
+		CycleNumber:          1,
+		PlanExecuteSessionID: "child",
+		Status:               intentloopcontract.CycleStatusDispatched,
+	}}
+	writeIntentLoopStateForTest(t, root, state)
+
+	_, _, err := LoadState(root, state.SessionID)
+	if err == nil || !strings.Contains(err.Error(), "invalid intent loop lifecycle") {
+		t.Fatalf("expected invalid lifecycle error, got %v", err)
+	}
+}
+
+func TestLoadStateRejectsMultipleDispatchedCycles(t *testing.T) {
+	root := t.TempDir()
+	state := NewState("multiple-dispatched-children", "prompt", IntentLoopContract{}, 2, time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC))
+	state.Cycles = []CycleRecord{
+		{CycleNumber: 1, PlanExecuteSessionID: "child-1", Status: intentloopcontract.CycleStatusDispatched},
+		{CycleNumber: 2, PlanExecuteSessionID: "child-2", Status: intentloopcontract.CycleStatusDispatched},
+	}
+	writeIntentLoopStateForTest(t, root, state)
+
+	_, _, err := LoadState(root, state.SessionID)
+	if err == nil || !strings.Contains(err.Error(), "multiple dispatched cycles") {
+		t.Fatalf("expected multiple dispatched lifecycle error, got %v", err)
+	}
+}
+
+func TestLoadStateRejectsNonCurrentDispatchedCycle(t *testing.T) {
+	root := t.TempDir()
+	state := NewState("non-current-dispatched-child", "prompt", IntentLoopContract{}, 2, time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC))
+	state.Cycles = []CycleRecord{
+		{CycleNumber: 1, PlanExecuteSessionID: "child-1", Status: intentloopcontract.CycleStatusDispatched},
+		{CycleNumber: 2, PlanExecuteSessionID: "child-2", Status: intentloopcontract.CycleStatusCompleted},
+	}
+	writeIntentLoopStateForTest(t, root, state)
+
+	_, _, err := LoadState(root, state.SessionID)
+	if err == nil || !strings.Contains(err.Error(), "non-current dispatched cycle") {
+		t.Fatalf("expected non-current dispatched lifecycle error, got %v", err)
+	}
+}
+
+func TestSaveStateRejectsTerminalStatusWithDispatchedCycle(t *testing.T) {
+	state := NewState("save-terminal-with-dispatched-child", "prompt", IntentLoopContract{}, 1, time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC))
+	state.Status = intentloopcontract.StatusBlocked
+	state.Cycles = []CycleRecord{{
+		CycleNumber:          1,
+		PlanExecuteSessionID: "child",
+		Status:               intentloopcontract.CycleStatusDispatched,
+	}}
+
+	if _, err := SaveState(t.TempDir(), &state); err == nil || !strings.Contains(err.Error(), "invalid intent loop lifecycle") {
+		t.Fatalf("expected invalid lifecycle error, got %v", err)
+	}
+}
+
+func writeIntentLoopStateForTest(t *testing.T, root string, state IntentLoopState) {
+	t.Helper()
+
+	fullPath, _, err := StatePath(root, state.SessionID)
+	if err != nil {
+		t.Fatalf("StatePath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		t.Fatalf("mkdir state dir: %v", err)
+	}
+	body, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("marshal state: %v", err)
+	}
+	if err := os.WriteFile(fullPath, append(body, '\n'), 0o600); err != nil {
+		t.Fatalf("write state: %v", err)
 	}
 }

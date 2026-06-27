@@ -8,73 +8,19 @@ import (
 	"sort"
 	"strings"
 	"time"
-)
 
-const DecompositionPacketSchemaVersion = "idiom.recovery.decomposition_packet.v1"
-
-const (
-	GateBriefLint      = "brief_lint"
-	GateAtomIntake     = "atom_intake"
-	GateScope          = "scope_gate"
-	GateWorkspaceState = "workspace_state"
-	GateRequiredTests  = "required_tests"
+	recoverycontract "idiom/internal/contracts/recovery"
+	"idiom/internal/platform/atomicfile"
 )
 
 type DecompositionOptions struct {
 	Now          time.Time
-	PartialState PartialState
+	PartialState recoverycontract.PartialState
 }
 
-type DecompositionPacket struct {
-	SchemaVersion  string            `json:"schema_version"`
-	PacketID       string            `json:"packet_id"`
-	FailureID      string            `json:"failure_id"`
-	CreatedAt      string            `json:"created_at"`
-	UpdatedAt      string            `json:"updated_at"`
-	SourceRun      SourceRun         `json:"source_run"`
-	LockedContract *ContractSnapshot `json:"locked_contract,omitempty"`
-	Failure        Failure           `json:"failure"`
-	PartialState   PartialState      `json:"partial_state"`
-	ProductLinks   ProductLinks      `json:"product_links,omitempty"`
-	ResidualWork   []ResidualWork    `json:"residual_work,omitempty"`
-	CandidateAtoms []CandidateAtom   `json:"candidate_atoms,omitempty"`
-	EvidenceRefs   []EvidenceRef     `json:"evidence_refs,omitempty"`
-	NextAction     string            `json:"next_valid_action"`
-}
-
-type ProductLinks struct {
-	PRDPaths    []string `json:"prd_paths,omitempty"`
-	ADRPaths    []string `json:"adr_paths,omitempty"`
-	TDDPaths    []string `json:"tdd_paths,omitempty"`
-	LedgerPaths []string `json:"ledger_paths,omitempty"`
-}
-
-type ResidualWork struct {
-	ID                string             `json:"id"`
-	Title             string             `json:"title"`
-	Reason            string             `json:"reason"`
-	Paths             []string           `json:"paths,omitempty"`
-	EvidenceRefs      []EvidenceRef      `json:"evidence_refs,omitempty"`
-	InvariantFailures []InvariantFailure `json:"invariant_failures,omitempty"`
-}
-
-type CandidateAtom struct {
-	ID              string   `json:"id"`
-	Title           string   `json:"title"`
-	Complexity      string   `json:"complexity"`
-	RequiredPaths   []string `json:"required_paths,omitempty"`
-	ForbiddenPaths  []string `json:"forbidden_paths,omitempty"`
-	RequiredTests   []string `json:"required_tests,omitempty"`
-	Gates           []string `json:"gates,omitempty"`
-	ResidualWorkIDs []string `json:"residual_work_ids,omitempty"`
-	InvariantIDs    []string `json:"invariant_ids,omitempty"`
-	ParentAtomID    string   `json:"parent_atom_id,omitempty"`
-	OriginalTitle   string   `json:"original_title,omitempty"`
-}
-
-func BuildDecompositionPacket(record FailureRecord, opts DecompositionOptions) (DecompositionPacket, error) {
-	if !validRecoveryComponent(record.FailureID) {
-		return DecompositionPacket{}, fmt.Errorf("invalid recovery failure id %q", record.FailureID)
+func BuildDecompositionPacket(record recoverycontract.FailureRecord, opts DecompositionOptions) (recoverycontract.DecompositionPacket, error) {
+	if !recoverycontract.ValidFailureRecordComponent(record.FailureID) {
+		return recoverycontract.DecompositionPacket{}, fmt.Errorf("invalid recovery failure id %q", record.FailureID)
 	}
 
 	now := opts.Now
@@ -89,8 +35,8 @@ func BuildDecompositionPacket(record FailureRecord, opts DecompositionOptions) (
 
 	stamp := now.UTC().Format(time.RFC3339Nano)
 	action := NextActionForPartialState(record, partial)
-	packet := DecompositionPacket{
-		SchemaVersion:  DecompositionPacketSchemaVersion,
+	packet := recoverycontract.DecompositionPacket{
+		SchemaVersion:  recoverycontract.DecompositionPacketSchemaVersion,
 		PacketID:       "packet-" + record.FailureID,
 		FailureID:      record.FailureID,
 		CreatedAt:      stamp,
@@ -104,7 +50,7 @@ func BuildDecompositionPacket(record FailureRecord, opts DecompositionOptions) (
 		NextAction:     action,
 	}
 
-	if action != NextActionReviewDecomposition {
+	if action != recoverycontract.NextActionReviewDecomposition {
 		return packet, nil
 	}
 
@@ -119,7 +65,7 @@ func BuildDecompositionPacket(record FailureRecord, opts DecompositionOptions) (
 	}
 
 	if len(paths) == 0 {
-		packet.NextAction = NextActionInspectFailure
+		packet.NextAction = recoverycontract.NextActionInspectFailure
 		return packet, nil
 	}
 
@@ -131,7 +77,7 @@ func BuildDecompositionPacket(record FailureRecord, opts DecompositionOptions) (
 		title := residualTitle(record, group, groupInvariantFailures)
 		requiredTests := requiredTestsForPaths(group)
 
-		packet.ResidualWork = append(packet.ResidualWork, ResidualWork{
+		packet.ResidualWork = append(packet.ResidualWork, recoverycontract.ResidualWork{
 			ID:                residualID,
 			Title:             title,
 			Reason:            residualReason(record, groupInvariantFailures),
@@ -139,13 +85,13 @@ func BuildDecompositionPacket(record FailureRecord, opts DecompositionOptions) (
 			EvidenceRefs:      residualEvidenceRefs(record, partial, group, requiredTests, groupInvariantFailures),
 			InvariantFailures: groupInvariantFailures,
 		})
-		packet.CandidateAtoms = append(packet.CandidateAtoms, CandidateAtom{
+		packet.CandidateAtoms = append(packet.CandidateAtoms, recoverycontract.CandidateAtom{
 			ID:              atomID,
 			Title:           title,
 			Complexity:      complexityForPaths(group),
 			RequiredPaths:   group,
 			RequiredTests:   requiredTests,
-			Gates:           []string{GateWorkspaceState, GateBriefLint, GateAtomIntake, GateScope, GateRequiredTests},
+			Gates:           []string{recoverycontract.GateWorkspaceState, recoverycontract.GateBriefLint, recoverycontract.GateAtomIntake, recoverycontract.GateScope, recoverycontract.GateRequiredTests},
 			ResidualWorkIDs: []string{residualID},
 			InvariantIDs:    invariantIDsForFailures(groupInvariantFailures),
 			ParentAtomID:    strings.TrimSpace(record.SourceRun.ParentAtomID),
@@ -156,31 +102,31 @@ func BuildDecompositionPacket(record FailureRecord, opts DecompositionOptions) (
 	return packet, nil
 }
 
-func WriteDecompositionPacketForFailureRecord(root string, record FailureRecord, now time.Time) (DecompositionPacket, string, error) {
+func WriteDecompositionPacketForFailureRecord(root string, record recoverycontract.FailureRecord, now time.Time) (recoverycontract.DecompositionPacket, string, error) {
 	packet, err := BuildDecompositionPacket(record, DecompositionOptions{
 		Now:          now,
 		PartialState: record.PartialState,
 	})
 	if err != nil {
-		return DecompositionPacket{}, "", err
+		return recoverycontract.DecompositionPacket{}, "", err
 	}
 
 	_, relPath, err := WriteDecompositionPacket(root, packet, "")
 	if err != nil {
-		return DecompositionPacket{}, "", err
+		return recoverycontract.DecompositionPacket{}, "", err
 	}
 
 	return packet, relPath, nil
 }
 
-func WriteDecompositionPacket(root string, packet DecompositionPacket, outputPath string) (string, string, error) {
+func WriteDecompositionPacket(root string, packet recoverycontract.DecompositionPacket, outputPath string) (string, string, error) {
 	fullPath, relPath, err := DecompositionPacketPath(root, packet.FailureID, outputPath)
 	if err != nil {
 		return "", "", err
 	}
 
 	if err := ensureRecoveryWritePath(root, fullPath); err != nil {
-		return "", "", fmt.Errorf("recovery decomposition packet path rejected: %w", err)
+		return "", "", fmt.Errorf("write recovery decomposition packet: %w", err)
 	}
 
 	if existing, _, found, err := TryLoadDecompositionPacket(fullPath); err == nil && found && strings.TrimSpace(existing.CreatedAt) != "" {
@@ -196,45 +142,128 @@ func WriteDecompositionPacket(root string, packet DecompositionPacket, outputPat
 		return "", "", fmt.Errorf("marshal recovery decomposition packet: %w", err)
 	}
 
-	tmpPath := fullPath + ".tmp"
-	if err := writeRecoveryTempFileExclusive(tmpPath, append(body, '\n')); err != nil {
-		return "", "", fmt.Errorf("write recovery decomposition packet: %w", err)
-	}
-
-	if err := os.Rename(tmpPath, fullPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return "", "", fmt.Errorf("replace recovery decomposition packet: %w", err)
+	if err := atomicfile.WriteFile(fullPath, append(body, '\n'), 0o600); err != nil {
+		return fullPath, relPath, fmt.Errorf("write recovery decomposition packet: %w", err)
 	}
 
 	return fullPath, relPath, nil
 }
 
-func TryLoadDecompositionPacket(path string) (DecompositionPacket, string, bool, error) {
+func TryLoadDecompositionPacket(path string) (recoverycontract.DecompositionPacket, string, bool, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
-		return DecompositionPacket{}, "", false, fmt.Errorf("recovery packet path is empty")
+		return recoverycontract.DecompositionPacket{}, "", false, fmt.Errorf("recovery packet path is empty")
 	}
 
 	body, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return DecompositionPacket{}, filepath.ToSlash(path), false, nil
+		return recoverycontract.DecompositionPacket{}, filepath.ToSlash(path), false, nil
 	}
 
 	if err != nil {
-		return DecompositionPacket{}, filepath.ToSlash(path), false, fmt.Errorf("read recovery decomposition packet %s: %w", path, err)
+		return recoverycontract.DecompositionPacket{}, filepath.ToSlash(path), false, fmt.Errorf("read recovery decomposition packet %s: %w", path, err)
 	}
 
-	var packet DecompositionPacket
+	var packet recoverycontract.DecompositionPacket
 
 	if err := json.Unmarshal(body, &packet); err != nil {
-		return DecompositionPacket{}, filepath.ToSlash(path), false, fmt.Errorf("decode recovery decomposition packet %s: %w", path, err)
+		return recoverycontract.DecompositionPacket{}, filepath.ToSlash(path), false, fmt.Errorf("decode recovery decomposition packet %s: %w", path, err)
 	}
 
-	if packet.SchemaVersion != DecompositionPacketSchemaVersion {
-		return DecompositionPacket{}, filepath.ToSlash(path), false, fmt.Errorf("unsupported recovery decomposition packet schema %q in %s", packet.SchemaVersion, path)
+	if packet.SchemaVersion != recoverycontract.DecompositionPacketSchemaVersion {
+		return recoverycontract.DecompositionPacket{}, filepath.ToSlash(path), false, fmt.Errorf("unsupported recovery decomposition packet schema %q in %s", packet.SchemaVersion, path)
+	}
+	if err := ValidateDecompositionPacket(packet); err != nil {
+		return recoverycontract.DecompositionPacket{}, filepath.ToSlash(path), false, fmt.Errorf("invalid recovery decomposition packet %s: %w", path, err)
 	}
 
 	return packet, filepath.ToSlash(path), true, nil
+}
+
+func ValidateDecompositionPacket(packet recoverycontract.DecompositionPacket) error {
+	if packet.SchemaVersion != recoverycontract.DecompositionPacketSchemaVersion {
+		return fmt.Errorf("unsupported schema %q", packet.SchemaVersion)
+	}
+	if !recoverycontract.ValidFailureRecordComponent(packet.FailureID) {
+		return fmt.Errorf("invalid failure_id %q", packet.FailureID)
+	}
+	if strings.TrimSpace(packet.PacketID) == "" {
+		return fmt.Errorf("packet_id is required")
+	}
+	record := recoverycontract.FailureRecord{
+		SchemaVersion:  recoverycontract.FailureRecordSchemaVersion,
+		FailureID:      packet.FailureID,
+		SourceRun:      packet.SourceRun,
+		LockedContract: packet.LockedContract,
+		Failure:        packet.Failure,
+		PartialState:   packet.PartialState,
+		NextAction:     packet.NextAction,
+	}
+	if err := recoverycontract.ValidateFailureRecord(record); err != nil {
+		return err
+	}
+	if err := recoverycontract.ValidateRecoveryPaths("product_links.prd_paths", packet.ProductLinks.PRDPaths); err != nil {
+		return err
+	}
+	if err := recoverycontract.ValidateRecoveryPaths("product_links.adr_paths", packet.ProductLinks.ADRPaths); err != nil {
+		return err
+	}
+	if err := recoverycontract.ValidateRecoveryPaths("product_links.tdd_paths", packet.ProductLinks.TDDPaths); err != nil {
+		return err
+	}
+	if err := recoverycontract.ValidateRecoveryPaths("product_links.ledger_paths", packet.ProductLinks.LedgerPaths); err != nil {
+		return err
+	}
+	residuals := map[string]bool{}
+	for i, residual := range packet.ResidualWork {
+		if strings.TrimSpace(residual.ID) == "" {
+			return fmt.Errorf("residual_work[%d].id is required", i)
+		}
+		residuals[residual.ID] = true
+		if strings.TrimSpace(residual.Title) == "" {
+			return fmt.Errorf("residual_work[%d].title is required", i)
+		}
+		if err := recoverycontract.ValidateRecoveryPaths(fmt.Sprintf("residual_work[%d].paths", i), residual.Paths); err != nil {
+			return err
+		}
+		if err := recoverycontract.ValidateEvidenceRefs(fmt.Sprintf("residual_work[%d].evidence_refs", i), residual.EvidenceRefs); err != nil {
+			return err
+		}
+	}
+	for i, atom := range packet.CandidateAtoms {
+		if strings.TrimSpace(atom.ID) == "" {
+			return fmt.Errorf("candidate_atoms[%d].id is required", i)
+		}
+		if strings.TrimSpace(atom.Title) == "" {
+			return fmt.Errorf("candidate_atoms[%d].title is required", i)
+		}
+		if err := recoverycontract.ValidateRecoveryPaths(fmt.Sprintf("candidate_atoms[%d].required_paths", i), atom.RequiredPaths); err != nil {
+			return err
+		}
+		if err := recoverycontract.ValidateRecoveryPaths(fmt.Sprintf("candidate_atoms[%d].forbidden_paths", i), atom.ForbiddenPaths); err != nil {
+			return err
+		}
+		for _, residualID := range atom.ResidualWorkIDs {
+			if !residuals[strings.TrimSpace(residualID)] {
+				return fmt.Errorf("candidate_atoms[%d].residual_work_ids references unknown residual %q", i, residualID)
+			}
+		}
+	}
+	return recoverycontract.ValidateEvidenceRefs("evidence_refs", packet.EvidenceRefs)
+}
+
+func TryLoadSafeDecompositionPacket(root string, packetPath string) (recoverycontract.DecompositionPacket, string, bool, error) {
+	fullPath, relPath, err := SafePacketPath(root, packetPath)
+	if err != nil {
+		return recoverycontract.DecompositionPacket{}, "", false, err
+	}
+
+	packet, _, found, err := TryLoadDecompositionPacket(fullPath)
+	if err != nil {
+		return recoverycontract.DecompositionPacket{}, relPath, false, err
+	}
+
+	return packet, relPath, found, nil
 }
 
 func DecompositionPacketPath(root string, failureID string, outputPath string) (string, string, error) {
@@ -243,7 +272,7 @@ func DecompositionPacketPath(root string, failureID string, outputPath string) (
 		return "", "", fmt.Errorf("workspace root is empty")
 	}
 
-	if !validRecoveryComponent(failureID) {
+	if !recoverycontract.ValidFailureRecordComponent(failureID) {
 		return "", "", fmt.Errorf("invalid recovery failure id %q", failureID)
 	}
 
@@ -265,7 +294,7 @@ func DecompositionPacketPath(root string, failureID string, outputPath string) (
 	return fullPath, filepath.ToSlash(relPath), nil
 }
 
-func FindCandidateAtom(packet DecompositionPacket, atomID string) (CandidateAtom, bool) {
+func FindCandidateAtom(packet recoverycontract.DecompositionPacket, atomID string) (recoverycontract.CandidateAtom, bool) {
 	atomID = strings.TrimSpace(atomID)
 	for _, atom := range packet.CandidateAtoms {
 		if atom.ID == atomID {
@@ -273,10 +302,10 @@ func FindCandidateAtom(packet DecompositionPacket, atomID string) (CandidateAtom
 		}
 	}
 
-	return CandidateAtom{}, false
+	return recoverycontract.CandidateAtom{}, false
 }
 
-func RenderRecoveryBrief(root string, packet DecompositionPacket, atom CandidateAtom) string {
+func RenderRecoveryBrief(root string, packet recoverycontract.DecompositionPacket, atom recoverycontract.CandidateAtom) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "# Brief: %s\n\n", atom.Title)
@@ -357,7 +386,7 @@ func RenderRecoveryBrief(root string, packet DecompositionPacket, atom Candidate
 	return b.String()
 }
 
-func hasProductLinks(links ProductLinks) bool {
+func hasProductLinks(links recoverycontract.ProductLinks) bool {
 	return len(links.PRDPaths)+len(links.ADRPaths)+len(links.TDDPaths)+len(links.LedgerPaths) > 0
 }
 
@@ -367,7 +396,7 @@ func writeBriefProductLinks(b *strings.Builder, label string, paths []string) {
 	}
 }
 
-func writeBriefContractSnapshot(b *strings.Builder, snapshot *ContractSnapshot) {
+func writeBriefContractSnapshot(b *strings.Builder, snapshot *recoverycontract.ContractSnapshot) {
 	if snapshot == nil {
 		return
 	}
@@ -405,11 +434,11 @@ func writeBriefContractSnapshot(b *strings.Builder, snapshot *ContractSnapshot) 
 	}
 }
 
-func residualCandidatePaths(record FailureRecord, partial PartialState) []string {
+func residualCandidatePaths(record recoverycontract.FailureRecord, partial recoverycontract.PartialState) []string {
 	return cleanPathList(append(append([]string{}, record.SourceRun.RequiredEditPaths...), partial.ChangedPaths...))
 }
 
-func residualCandidatePathsForInvariantFailures(failures []InvariantFailure) []string {
+func residualCandidatePathsForInvariantFailures(failures []recoverycontract.InvariantFailure) []string {
 	var paths []string
 
 	for _, failure := range failures {
@@ -421,20 +450,20 @@ func residualCandidatePathsForInvariantFailures(failures []InvariantFailure) []s
 	return cleanPathList(paths)
 }
 
-func residualEvidenceRefs(record FailureRecord, partial PartialState, paths []string, requiredTests []string, failures []InvariantFailure) []EvidenceRef {
+func residualEvidenceRefs(record recoverycontract.FailureRecord, partial recoverycontract.PartialState, paths []string, requiredTests []string, failures []recoverycontract.InvariantFailure) []recoverycontract.EvidenceRef {
 	requiredPaths := pathSet(record.SourceRun.RequiredEditPaths)
 	changedPaths := pathSet(partial.ChangedPaths)
 	groupPaths := pathSet(paths)
 
-	var refs []EvidenceRef
+	var refs []recoverycontract.EvidenceRef
 
 	for _, path := range cleanPathList(paths) {
 		if requiredPaths[path] {
-			refs = appendUniqueEvidenceRef(refs, EvidenceRef{Kind: "required_path", Path: path})
+			refs = appendUniqueEvidenceRef(refs, recoverycontract.EvidenceRef{Kind: "required_path", Path: path})
 		}
 
 		if changedPaths[path] {
-			refs = appendUniqueEvidenceRef(refs, EvidenceRef{Kind: "changed_path", Path: path})
+			refs = appendUniqueEvidenceRef(refs, recoverycontract.EvidenceRef{Kind: "changed_path", Path: path})
 		}
 	}
 
@@ -446,12 +475,12 @@ func residualEvidenceRefs(record FailureRecord, partial PartialState, paths []st
 
 	for _, test := range requiredTests {
 		if test = strings.TrimSpace(test); test != "" {
-			refs = appendUniqueEvidenceRef(refs, EvidenceRef{Kind: "required_test", ID: test})
+			refs = appendUniqueEvidenceRef(refs, recoverycontract.EvidenceRef{Kind: "required_test", ID: test})
 		}
 	}
 
 	for _, failure := range failures {
-		refs = appendUniqueEvidenceRef(refs, EvidenceRef{Kind: "invariant_failure", ID: failure.InvariantID, Path: failure.Path})
+		refs = appendUniqueEvidenceRef(refs, recoverycontract.EvidenceRef{Kind: "invariant_failure", ID: failure.InvariantID, Path: failure.Path})
 	}
 
 	return refs
@@ -466,7 +495,7 @@ func pathSet(paths []string) map[string]bool {
 	return set
 }
 
-func evidenceRefAppliesToResidual(ref EvidenceRef, paths map[string]bool) bool {
+func evidenceRefAppliesToResidual(ref recoverycontract.EvidenceRef, paths map[string]bool) bool {
 	if strings.TrimSpace(ref.Kind) == "" {
 		return false
 	}
@@ -489,7 +518,7 @@ func evidenceRefAppliesToResidual(ref EvidenceRef, paths map[string]bool) bool {
 	return strings.Contains(kind, "test") || strings.Contains(kind, "verification")
 }
 
-func appendUniqueEvidenceRef(refs []EvidenceRef, ref EvidenceRef) []EvidenceRef {
+func appendUniqueEvidenceRef(refs []recoverycontract.EvidenceRef, ref recoverycontract.EvidenceRef) []recoverycontract.EvidenceRef {
 	ref = normalizeEvidenceRef(ref)
 	if strings.TrimSpace(ref.Kind) == "" {
 		return refs
@@ -504,8 +533,8 @@ func appendUniqueEvidenceRef(refs []EvidenceRef, ref EvidenceRef) []EvidenceRef 
 	return append(refs, ref)
 }
 
-func normalizeEvidenceRef(ref EvidenceRef) EvidenceRef {
-	return EvidenceRef{
+func normalizeEvidenceRef(ref recoverycontract.EvidenceRef) recoverycontract.EvidenceRef {
+	return recoverycontract.EvidenceRef{
 		Kind:    strings.TrimSpace(ref.Kind),
 		Path:    cleanRelPath(ref.Path),
 		ID:      strings.TrimSpace(ref.ID),
@@ -547,7 +576,7 @@ func groupResidualPaths(paths []string) [][]string {
 	return groups
 }
 
-func residualTitle(record FailureRecord, paths []string, failures []InvariantFailure) string {
+func residualTitle(record recoverycontract.FailureRecord, paths []string, failures []recoverycontract.InvariantFailure) string {
 	if title := strings.TrimSpace(record.SourceRun.ParentAtomTitle); title != "" {
 		return fmt.Sprintf("Recover %s", title)
 	}
@@ -572,19 +601,19 @@ func residualTitle(record FailureRecord, paths []string, failures []InvariantFai
 	return fmt.Sprintf("Recover residual paths after %s", record.Failure.Class)
 }
 
-func residualReason(record FailureRecord, failures []InvariantFailure) string {
+func residualReason(record recoverycontract.FailureRecord, failures []recoverycontract.InvariantFailure) string {
 	ids := invariantIDsForFailures(failures)
 	if len(ids) > 0 {
 		return strings.Join(ids, ", ")
 	}
 
-	return record.Failure.Class
+	return string(record.Failure.Class)
 }
 
-func invariantFailuresForResidualGroup(failures []InvariantFailure, paths []string) []InvariantFailure {
+func invariantFailuresForResidualGroup(failures []recoverycontract.InvariantFailure, paths []string) []recoverycontract.InvariantFailure {
 	groupPaths := pathSet(paths)
 
-	var out []InvariantFailure
+	var out []recoverycontract.InvariantFailure
 
 	for _, failure := range failures {
 		if path := cleanRelPath(failure.Path); path != "" && groupPaths[path] {
@@ -595,7 +624,7 @@ func invariantFailuresForResidualGroup(failures []InvariantFailure, paths []stri
 	return out
 }
 
-func invariantIDsForFailures(failures []InvariantFailure) []string {
+func invariantIDsForFailures(failures []recoverycontract.InvariantFailure) []string {
 	seen := map[string]bool{}
 
 	var ids []string
@@ -613,7 +642,7 @@ func invariantIDsForFailures(failures []InvariantFailure) []string {
 	return ids
 }
 
-func invariantFailuresForAtom(packet DecompositionPacket, atom CandidateAtom) []InvariantFailure {
+func invariantFailuresForAtom(packet recoverycontract.DecompositionPacket, atom recoverycontract.CandidateAtom) []recoverycontract.InvariantFailure {
 	neededResiduals := map[string]bool{}
 
 	for _, id := range atom.ResidualWorkIDs {
@@ -622,7 +651,7 @@ func invariantFailuresForAtom(packet DecompositionPacket, atom CandidateAtom) []
 		}
 	}
 
-	var failures []InvariantFailure
+	var failures []recoverycontract.InvariantFailure
 
 	for _, residual := range packet.ResidualWork {
 		if neededResiduals[residual.ID] {
@@ -637,7 +666,7 @@ func invariantFailuresForAtom(packet DecompositionPacket, atom CandidateAtom) []
 	return cleanInvariantFailures(packet.Failure.InvariantFailures)
 }
 
-func recoveryBriefChangeForPath(packet DecompositionPacket, atom CandidateAtom, path string) string {
+func recoveryBriefChangeForPath(packet recoverycontract.DecompositionPacket, atom recoverycontract.CandidateAtom, path string) string {
 	failures := invariantFailuresForAtom(packet, atom)
 
 	var ids []string
@@ -653,10 +682,10 @@ func recoveryBriefChangeForPath(packet DecompositionPacket, atom CandidateAtom, 
 		return "invariant " + strings.Join(ids, ", ")
 	}
 
-	return "`" + packet.Failure.Class + "`"
+	return "`" + string(packet.Failure.Class) + "`"
 }
 
-func briefInvariantFieldPath(failure InvariantFailure) string {
+func briefInvariantFieldPath(failure recoverycontract.InvariantFailure) string {
 	if failure.FieldPath != "" && failure.Path != "" {
 		return failure.FieldPath + " / " + failure.Path
 	}
@@ -730,8 +759,8 @@ func requiredTestsForPaths(paths []string) []string {
 	return tests
 }
 
-func productLinksForRecord(record FailureRecord, partial PartialState) ProductLinks {
-	var links ProductLinks
+func productLinksForRecord(record recoverycontract.FailureRecord, partial recoverycontract.PartialState) recoverycontract.ProductLinks {
+	var links recoverycontract.ProductLinks
 
 	paths := cleanPathList(append([]string{
 		record.SourceRun.PromptFile,

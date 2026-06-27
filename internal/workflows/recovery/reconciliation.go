@@ -9,94 +9,30 @@ import (
 	"sort"
 	"strings"
 	"time"
-)
 
-const ReconciliationSchemaVersion = "idiom.recovery.reconciliation.v1"
-
-const (
-	ReconciliationStatusPartial   = "partial"
-	ReconciliationStatusRecovered = "recovered"
-)
-
-const (
-	ReconciliationVerificationPass        = "pass"
-	ReconciliationVerificationFail        = "fail"
-	ReconciliationVerificationNotRecorded = "not_recorded"
+	recoverycontract "idiom/internal/contracts/recovery"
+	"idiom/internal/platform/atomicfile"
 )
 
 type ReconciliationOptions struct {
 	Now              time.Time
 	CompletedAtomIDs []string
-	Verification     ReconciliationVerification
-	AuthorityDeltas  []ScopeAuthorityDelta
+	Verification     recoverycontract.ReconciliationVerification
+	AuthorityDeltas  []recoverycontract.ScopeAuthorityDelta
 }
 
-type Reconciliation struct {
-	SchemaVersion   string                     `json:"schema_version"`
-	FailureID       string                     `json:"failure_id"`
-	PacketID        string                     `json:"packet_id"`
-	PacketDigest    string                     `json:"packet_digest"`
-	CreatedAt       string                     `json:"created_at"`
-	UpdatedAt       string                     `json:"updated_at"`
-	LockedContract  *ContractSnapshot          `json:"locked_contract,omitempty"`
-	AuthorityDeltas []ScopeAuthorityDelta      `json:"authority_deltas,omitempty"`
-	Status          string                     `json:"status"`
-	CompletedAtoms  []ReconciledAtom           `json:"completed_atoms,omitempty"`
-	RemainingAtoms  []string                   `json:"remaining_atoms,omitempty"`
-	Blockers        []string                   `json:"blockers,omitempty"`
-	Verification    ReconciliationVerification `json:"verification"`
-	NextAction      string                     `json:"next_valid_action"`
-}
-
-type ReconciledAtom struct {
-	ID              string   `json:"id"`
-	Title           string   `json:"title,omitempty"`
-	ResidualWorkIDs []string `json:"residual_work_ids,omitempty"`
-	RequiredPaths   []string `json:"required_paths,omitempty"`
-	RequiredTests   []string `json:"required_tests,omitempty"`
-	InvariantIDs    []string `json:"invariant_ids,omitempty"`
-}
-
-type ScopeAuthorityDelta struct {
-	DeltaID           string   `json:"delta_id"`
-	ContractID        string   `json:"contract_id,omitempty"`
-	ContractHash      string   `json:"contract_hash,omitempty"`
-	Reason            string   `json:"reason,omitempty"`
-	RequiredEditPaths []string `json:"required_edit_paths,omitempty"`
-	AllowedEditPaths  []string `json:"allowed_edit_paths,omitempty"`
-}
-
-type ReconciliationVerification struct {
-	Status        string                        `json:"status"`
-	RequiredTests []string                      `json:"required_tests,omitempty"`
-	Commands      []ReconciliationCommandResult `json:"commands,omitempty"`
-}
-
-type ReconciliationCommandResult struct {
-	Command     string `json:"command"`
-	Status      string `json:"status"`
-	ExitCode    int    `json:"exit_code"`
-	StartedAt   string `json:"started_at,omitempty"`
-	CompletedAt string `json:"completed_at,omitempty"`
-}
-
-type ReconciliationValidationFinding struct {
-	Code    string
-	Message string
-}
-
-func BuildReconciliation(packet DecompositionPacket, opts ReconciliationOptions) (Reconciliation, error) {
-	if !validRecoveryComponent(packet.FailureID) {
-		return Reconciliation{}, fmt.Errorf("invalid recovery failure id %q", packet.FailureID)
+func BuildReconciliation(packet recoverycontract.DecompositionPacket, opts ReconciliationOptions) (recoverycontract.Reconciliation, error) {
+	if !recoverycontract.ValidFailureRecordComponent(packet.FailureID) {
+		return recoverycontract.Reconciliation{}, fmt.Errorf("invalid recovery failure id %q", packet.FailureID)
 	}
 
 	if strings.TrimSpace(packet.PacketID) == "" {
-		return Reconciliation{}, fmt.Errorf("recovery packet id is empty")
+		return recoverycontract.Reconciliation{}, fmt.Errorf("recovery packet id is empty")
 	}
 
 	completedIDs := cleanRecoveryAtomIDs(opts.CompletedAtomIDs)
 	if len(completedIDs) == 0 {
-		return Reconciliation{}, fmt.Errorf("at least one completed recovery atom is required")
+		return recoverycontract.Reconciliation{}, fmt.Errorf("at least one completed recovery atom is required")
 	}
 
 	now := opts.Now
@@ -112,8 +48,8 @@ func BuildReconciliation(packet DecompositionPacket, opts ReconciliationOptions)
 		completedSet[id] = true
 	}
 
-	reconciliation := Reconciliation{
-		SchemaVersion:   ReconciliationSchemaVersion,
+	reconciliation := recoverycontract.Reconciliation{
+		SchemaVersion:   recoverycontract.ReconciliationSchemaVersion,
 		FailureID:       packet.FailureID,
 		PacketID:        packet.PacketID,
 		PacketDigest:    PacketDigest(packet),
@@ -121,12 +57,12 @@ func BuildReconciliation(packet DecompositionPacket, opts ReconciliationOptions)
 		UpdatedAt:       stamp,
 		LockedContract:  cleanContractSnapshot(packet.LockedContract, packet.SourceRun),
 		AuthorityDeltas: cleanScopeAuthorityDeltas(opts.AuthorityDeltas),
-		Status:          ReconciliationStatusRecovered,
-		NextAction:      NextActionNone,
+		Status:          recoverycontract.ReconciliationStatusRecovered,
+		NextAction:      recoverycontract.NextActionNone,
 	}
 	for _, atom := range packet.CandidateAtoms {
 		if completedSet[atom.ID] {
-			reconciliation.CompletedAtoms = append(reconciliation.CompletedAtoms, ReconciledAtom{
+			reconciliation.CompletedAtoms = append(reconciliation.CompletedAtoms, recoverycontract.ReconciledAtom{
 				ID:              atom.ID,
 				Title:           atom.Title,
 				ResidualWorkIDs: append([]string{}, atom.ResidualWorkIDs...),
@@ -150,12 +86,12 @@ func BuildReconciliation(packet DecompositionPacket, opts ReconciliationOptions)
 
 		sort.Strings(unknown)
 
-		return Reconciliation{}, fmt.Errorf("completed recovery atom(s) not found in packet: %s", strings.Join(unknown, ", "))
+		return recoverycontract.Reconciliation{}, fmt.Errorf("completed recovery atom(s) not found in packet: %s", strings.Join(unknown, ", "))
 	}
 
 	if len(remaining) > 0 {
-		reconciliation.Status = ReconciliationStatusPartial
-		reconciliation.NextAction = NextActionReviewDecomposition
+		reconciliation.Status = recoverycontract.ReconciliationStatusPartial
+		reconciliation.NextAction = recoverycontract.NextActionReviewDecomposition
 		reconciliation.RemainingAtoms = remaining
 	}
 
@@ -164,17 +100,17 @@ func BuildReconciliation(packet DecompositionPacket, opts ReconciliationOptions)
 	return reconciliation, nil
 }
 
-func ValidateReconciliation(packet DecompositionPacket, reconciliation Reconciliation) []ReconciliationValidationFinding {
-	var findings []ReconciliationValidationFinding
+func ValidateReconciliation(packet recoverycontract.DecompositionPacket, reconciliation recoverycontract.Reconciliation) []recoverycontract.ReconciliationValidationFinding {
+	var findings []recoverycontract.ReconciliationValidationFinding
 
 	add := func(code string, format string, args ...any) {
-		findings = append(findings, ReconciliationValidationFinding{
+		findings = append(findings, recoverycontract.ReconciliationValidationFinding{
 			Code:    code,
 			Message: fmt.Sprintf(format, args...),
 		})
 	}
 
-	if reconciliation.SchemaVersion != ReconciliationSchemaVersion {
+	if reconciliation.SchemaVersion != recoverycontract.ReconciliationSchemaVersion {
 		add("recovery_reconciliation_schema_mismatch", "unsupported recovery reconciliation schema %q", reconciliation.SchemaVersion)
 	}
 
@@ -197,13 +133,13 @@ func ValidateReconciliation(packet DecompositionPacket, reconciliation Reconcili
 	}
 
 	switch reconciliation.Status {
-	case ReconciliationStatusPartial:
-		if reconciliation.NextAction != NextActionReviewDecomposition {
-			add("recovery_reconciliation_invalid_next_action", "partial recovery reconciliation must use next_valid_action %q", NextActionReviewDecomposition)
+	case recoverycontract.ReconciliationStatusPartial:
+		if reconciliation.NextAction != recoverycontract.NextActionReviewDecomposition {
+			add("recovery_reconciliation_invalid_next_action", "partial recovery reconciliation must use next_valid_action %q", recoverycontract.NextActionReviewDecomposition)
 		}
-	case ReconciliationStatusRecovered:
-		if reconciliation.NextAction != NextActionNone {
-			add("recovery_reconciliation_invalid_next_action", "recovered reconciliation must use next_valid_action %q", NextActionNone)
+	case recoverycontract.ReconciliationStatusRecovered:
+		if reconciliation.NextAction != recoverycontract.NextActionNone {
+			add("recovery_reconciliation_invalid_next_action", "recovered reconciliation must use next_valid_action %q", recoverycontract.NextActionNone)
 		}
 
 		if len(reconciliation.Blockers) > 0 {
@@ -217,7 +153,7 @@ func ValidateReconciliation(packet DecompositionPacket, reconciliation Reconcili
 		add("recovery_reconciliation_missing_completed_atoms", "recovery reconciliation must name at least one completed atom")
 	}
 
-	packetAtoms := map[string]CandidateAtom{}
+	packetAtoms := map[string]recoverycontract.CandidateAtom{}
 	for _, atom := range packet.CandidateAtoms {
 		packetAtoms[atom.ID] = atom
 	}
@@ -260,7 +196,7 @@ func ValidateReconciliation(packet DecompositionPacket, reconciliation Reconcili
 	}
 
 	gotRemaining := cleanRecoveryAtomIDs(reconciliation.RemainingAtoms)
-	if reconciliation.Status == ReconciliationStatusRecovered {
+	if reconciliation.Status == recoverycontract.ReconciliationStatusRecovered {
 		if len(wantRemaining) != 0 || len(gotRemaining) != 0 {
 			add("recovery_reconciliation_incomplete_recovered", "recovered reconciliation must complete every packet atom")
 		}
@@ -270,7 +206,7 @@ func ValidateReconciliation(packet DecompositionPacket, reconciliation Reconcili
 
 	requiredTests := requiredTestsForReconciledAtoms(reconciliation.CompletedAtoms)
 	if len(requiredTests) > 0 {
-		if reconciliation.Verification.Status != ReconciliationVerificationPass {
+		if reconciliation.Verification.Status != recoverycontract.ReconciliationVerificationPass {
 			add("recovery_reconciliation_missing_verification", "recovery reconciliation must record passing verification for completed atoms")
 		}
 
@@ -282,20 +218,20 @@ func ValidateReconciliation(packet DecompositionPacket, reconciliation Reconcili
 	return findings
 }
 
-func PacketDigest(packet DecompositionPacket) string {
+func PacketDigest(packet recoverycontract.DecompositionPacket) string {
 	input := struct {
-		SchemaVersion  string            `json:"schema_version"`
-		PacketID       string            `json:"packet_id"`
-		FailureID      string            `json:"failure_id"`
-		SourceRun      SourceRun         `json:"source_run"`
-		Failure        Failure           `json:"failure"`
-		LockedContract *ContractSnapshot `json:"locked_contract,omitempty"`
-		PartialState   PartialState      `json:"partial_state"`
-		ProductLinks   ProductLinks      `json:"product_links,omitempty"`
-		ResidualWork   []ResidualWork    `json:"residual_work,omitempty"`
-		CandidateAtoms []CandidateAtom   `json:"candidate_atoms,omitempty"`
-		EvidenceRefs   []EvidenceRef     `json:"evidence_refs,omitempty"`
-		NextAction     string            `json:"next_valid_action"`
+		SchemaVersion  string                             `json:"schema_version"`
+		PacketID       string                             `json:"packet_id"`
+		FailureID      string                             `json:"failure_id"`
+		SourceRun      recoverycontract.SourceRun         `json:"source_run"`
+		Failure        recoverycontract.Failure           `json:"failure"`
+		LockedContract *recoverycontract.ContractSnapshot `json:"locked_contract,omitempty"`
+		PartialState   recoverycontract.PartialState      `json:"partial_state"`
+		ProductLinks   recoverycontract.ProductLinks      `json:"product_links,omitempty"`
+		ResidualWork   []recoverycontract.ResidualWork    `json:"residual_work,omitempty"`
+		CandidateAtoms []recoverycontract.CandidateAtom   `json:"candidate_atoms,omitempty"`
+		EvidenceRefs   []recoverycontract.EvidenceRef     `json:"evidence_refs,omitempty"`
+		NextAction     recoverycontract.NextAction        `json:"next_valid_action"`
 	}{
 		SchemaVersion:  packet.SchemaVersion,
 		PacketID:       packet.PacketID,
@@ -316,7 +252,7 @@ func PacketDigest(packet DecompositionPacket) string {
 	return fmt.Sprintf("sha256:%x", sum[:])
 }
 
-func ReconciliationCompletedAtomIDs(reconciliation Reconciliation) []string {
+func ReconciliationCompletedAtomIDs(reconciliation recoverycontract.Reconciliation) []string {
 	ids := make([]string, 0, len(reconciliation.CompletedAtoms))
 	for _, atom := range reconciliation.CompletedAtoms {
 		ids = append(ids, atom.ID)
@@ -325,10 +261,10 @@ func ReconciliationCompletedAtomIDs(reconciliation Reconciliation) []string {
 	return cleanRecoveryAtomIDs(ids)
 }
 
-func normalizeReconciliationVerification(verification ReconciliationVerification, requiredTests []string) ReconciliationVerification {
+func normalizeReconciliationVerification(verification recoverycontract.ReconciliationVerification, requiredTests []string) recoverycontract.ReconciliationVerification {
 	verification.Status = strings.TrimSpace(verification.Status)
 	if verification.Status == "" {
-		verification.Status = ReconciliationVerificationNotRecorded
+		verification.Status = recoverycontract.ReconciliationVerificationNotRecorded
 	}
 
 	verification.RequiredTests = cleanRecoveryCommandList(append(verification.RequiredTests, requiredTests...))
@@ -337,14 +273,14 @@ func normalizeReconciliationVerification(verification ReconciliationVerification
 		verification.Commands[i].Status = strings.TrimSpace(verification.Commands[i].Status)
 	}
 
-	if len(requiredTests) > 0 && len(missingVerifiedRecoveryCommands(requiredTests, verification.Commands)) > 0 && verification.Status == ReconciliationVerificationPass {
-		verification.Status = ReconciliationVerificationFail
+	if len(requiredTests) > 0 && len(missingVerifiedRecoveryCommands(requiredTests, verification.Commands)) > 0 && verification.Status == recoverycontract.ReconciliationVerificationPass {
+		verification.Status = recoverycontract.ReconciliationVerificationFail
 	}
 
 	return verification
 }
 
-func requiredTestsForReconciledAtoms(atoms []ReconciledAtom) []string {
+func requiredTestsForReconciledAtoms(atoms []recoverycontract.ReconciledAtom) []string {
 	var tests []string
 
 	for _, atom := range atoms {
@@ -354,11 +290,11 @@ func requiredTestsForReconciledAtoms(atoms []ReconciledAtom) []string {
 	return cleanRecoveryCommandList(tests)
 }
 
-func missingVerifiedRecoveryCommands(requiredTests []string, commands []ReconciliationCommandResult) []string {
+func missingVerifiedRecoveryCommands(requiredTests []string, commands []recoverycontract.ReconciliationCommandResult) []string {
 	passed := map[string]bool{}
 
 	for _, command := range commands {
-		if command.Status == ReconciliationVerificationPass && command.ExitCode == 0 {
+		if command.Status == recoverycontract.ReconciliationVerificationPass && command.ExitCode == 0 {
 			passed[strings.Join(strings.Fields(command.Command), " ")] = true
 		}
 	}
@@ -374,12 +310,20 @@ func missingVerifiedRecoveryCommands(requiredTests []string, commands []Reconcil
 	return missing
 }
 
-func WriteReconciliation(root string, reconciliation Reconciliation, outputPath string) (string, string, error) {
-	fullPath, relPath, err := ReconciliationPath(root, reconciliation.FailureID, outputPath)
+func WriteReconciliation(root string, reconciliation recoverycontract.Reconciliation, outputPath string) (string, string, error) {
+	var (
+		fullPath string
+		relPath  string
+		err      error
+	)
+	if strings.TrimSpace(outputPath) == "" {
+		fullPath, relPath, err = SafeDefaultReconciliationPath(root, reconciliation.FailureID)
+	} else {
+		fullPath, relPath, err = SafeReconciliationOutputPath(root, "", reconciliation.FailureID, outputPath)
+	}
 	if err != nil {
 		return "", "", err
 	}
-
 	if err := ensureRecoveryWritePath(root, fullPath); err != nil {
 		return "", "", fmt.Errorf("recovery reconciliation path rejected: %w", err)
 	}
@@ -397,51 +341,45 @@ func WriteReconciliation(root string, reconciliation Reconciliation, outputPath 
 		return "", "", fmt.Errorf("marshal recovery reconciliation: %w", err)
 	}
 
-	tmpPath := fullPath + ".tmp"
-	if err := writeRecoveryTempFileExclusive(tmpPath, append(body, '\n')); err != nil {
-		return "", "", fmt.Errorf("write recovery reconciliation: %w", err)
-	}
-
-	if err := os.Rename(tmpPath, fullPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return "", "", fmt.Errorf("replace recovery reconciliation: %w", err)
+	if err := atomicfile.WriteFile(fullPath, append(body, '\n'), 0o600); err != nil {
+		return fullPath, relPath, fmt.Errorf("write recovery reconciliation: %w", err)
 	}
 
 	return fullPath, relPath, nil
 }
 
-func TryLoadReconciliation(path string) (Reconciliation, string, bool, error) {
+func TryLoadReconciliation(path string) (recoverycontract.Reconciliation, string, bool, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
-		return Reconciliation{}, "", false, fmt.Errorf("recovery reconciliation path is empty")
+		return recoverycontract.Reconciliation{}, "", false, fmt.Errorf("recovery reconciliation path is empty")
 	}
 
 	body, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return Reconciliation{}, filepath.ToSlash(path), false, nil
+		return recoverycontract.Reconciliation{}, filepath.ToSlash(path), false, nil
 	}
 
 	if err != nil {
-		return Reconciliation{}, filepath.ToSlash(path), false, fmt.Errorf("read recovery reconciliation %s: %w", path, err)
+		return recoverycontract.Reconciliation{}, filepath.ToSlash(path), false, fmt.Errorf("read recovery reconciliation %s: %w", path, err)
 	}
 
-	var reconciliation Reconciliation
+	var reconciliation recoverycontract.Reconciliation
 
 	if err := json.Unmarshal(body, &reconciliation); err != nil {
-		return Reconciliation{}, filepath.ToSlash(path), false, fmt.Errorf("decode recovery reconciliation %s: %w", path, err)
+		return recoverycontract.Reconciliation{}, filepath.ToSlash(path), false, fmt.Errorf("decode recovery reconciliation %s: %w", path, err)
 	}
 
-	if reconciliation.SchemaVersion != ReconciliationSchemaVersion {
-		return Reconciliation{}, filepath.ToSlash(path), false, fmt.Errorf("unsupported recovery reconciliation schema %q in %s", reconciliation.SchemaVersion, path)
+	if reconciliation.SchemaVersion != recoverycontract.ReconciliationSchemaVersion {
+		return recoverycontract.Reconciliation{}, filepath.ToSlash(path), false, fmt.Errorf("unsupported recovery reconciliation schema %q in %s", reconciliation.SchemaVersion, path)
 	}
 
 	return reconciliation, filepath.ToSlash(path), true, nil
 }
 
-func TryLoadReconciliationForPacket(root string, packet DecompositionPacket) (Reconciliation, string, bool, error) {
+func TryLoadReconciliationForPacket(root string, packet recoverycontract.DecompositionPacket) (recoverycontract.Reconciliation, string, bool, error) {
 	fullPath, relPath, err := ReconciliationPath(root, packet.FailureID, "")
 	if err != nil {
-		return Reconciliation{}, "", false, err
+		return recoverycontract.Reconciliation{}, "", false, err
 	}
 
 	reconciliation, _, found, err := TryLoadReconciliation(fullPath)
@@ -458,7 +396,7 @@ func ReconciliationPath(root string, failureID string, outputPath string) (strin
 		return "", "", fmt.Errorf("workspace root is empty")
 	}
 
-	if !validRecoveryComponent(failureID) {
+	if !recoverycontract.ValidFailureRecordComponent(failureID) {
 		return "", "", fmt.Errorf("invalid recovery failure id %q", failureID)
 	}
 
@@ -500,7 +438,7 @@ func cleanRecoveryAtomIDs(ids []string) []string {
 	return out
 }
 
-func reconciledAtomMatchesPacket(atom ReconciledAtom, packetAtom CandidateAtom, lockedContract *ContractSnapshot, deltas []ScopeAuthorityDelta) bool {
+func reconciledAtomMatchesPacket(atom recoverycontract.ReconciledAtom, packetAtom recoverycontract.CandidateAtom, lockedContract *recoverycontract.ContractSnapshot, deltas []recoverycontract.ScopeAuthorityDelta) bool {
 	scopeMatches := reconciliationStringSlicesEqual(cleanPathList(atom.RequiredPaths), cleanPathList(packetAtom.RequiredPaths))
 	if !scopeMatches && scopeWideningAuthorized(packetAtom.RequiredPaths, atom.RequiredPaths, lockedContract, deltas) {
 		scopeMatches = true
@@ -513,13 +451,13 @@ func reconciledAtomMatchesPacket(atom ReconciledAtom, packetAtom CandidateAtom, 
 		reconciliationStringSlicesEqual(cleanRecoveryCommandList(atom.InvariantIDs), cleanRecoveryCommandList(packetAtom.InvariantIDs))
 }
 
-func cleanScopeAuthorityDeltas(deltas []ScopeAuthorityDelta) []ScopeAuthorityDelta {
+func cleanScopeAuthorityDeltas(deltas []recoverycontract.ScopeAuthorityDelta) []recoverycontract.ScopeAuthorityDelta {
 	seen := map[string]bool{}
 
-	var out []ScopeAuthorityDelta
+	var out []recoverycontract.ScopeAuthorityDelta
 
 	for _, delta := range deltas {
-		clean := ScopeAuthorityDelta{
+		clean := recoverycontract.ScopeAuthorityDelta{
 			DeltaID:           strings.TrimSpace(delta.DeltaID),
 			ContractID:        strings.TrimSpace(delta.ContractID),
 			ContractHash:      strings.TrimSpace(delta.ContractHash),
@@ -544,7 +482,7 @@ func cleanScopeAuthorityDeltas(deltas []ScopeAuthorityDelta) []ScopeAuthorityDel
 	return out
 }
 
-func authorityDeltasAuthorizeContractChange(before *ContractSnapshot, after *ContractSnapshot, deltas []ScopeAuthorityDelta) bool {
+func authorityDeltasAuthorizeContractChange(before *recoverycontract.ContractSnapshot, after *recoverycontract.ContractSnapshot, deltas []recoverycontract.ScopeAuthorityDelta) bool {
 	if after == nil || len(deltas) == 0 {
 		return false
 	}
@@ -576,7 +514,7 @@ func authorityDeltasAuthorizeContractChange(before *ContractSnapshot, after *Con
 	return false
 }
 
-func scopeWideningAuthorized(original []string, updated []string, lockedContract *ContractSnapshot, deltas []ScopeAuthorityDelta) bool {
+func scopeWideningAuthorized(original []string, updated []string, lockedContract *recoverycontract.ContractSnapshot, deltas []recoverycontract.ScopeAuthorityDelta) bool {
 	if reconciliationStringSlicesEqual(cleanPathList(original), cleanPathList(updated)) {
 		return true
 	}
@@ -595,7 +533,7 @@ func scopeWideningAuthorized(original []string, updated []string, lockedContract
 	return false
 }
 
-func authorityDeltaMatchesContract(delta ScopeAuthorityDelta, snapshot *ContractSnapshot) bool {
+func authorityDeltaMatchesContract(delta recoverycontract.ScopeAuthorityDelta, snapshot *recoverycontract.ContractSnapshot) bool {
 	if snapshot == nil {
 		return true
 	}
@@ -611,7 +549,7 @@ func authorityDeltaMatchesContract(delta ScopeAuthorityDelta, snapshot *Contract
 	return delta.ContractID != "" || delta.ContractHash != ""
 }
 
-func pathsCoveredByAuthorityDelta(paths []string, delta ScopeAuthorityDelta) bool {
+func pathsCoveredByAuthorityDelta(paths []string, delta recoverycontract.ScopeAuthorityDelta) bool {
 	authorized := pathSet(append(delta.RequiredEditPaths, delta.AllowedEditPaths...))
 	for _, path := range cleanPathList(paths) {
 		if !authorized[path] {

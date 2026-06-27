@@ -12,7 +12,7 @@ func TestWriterRouteDecision_NormalizationAndStableID(t *testing.T) {
 		Lane:               " implement ",
 		RequiredEditPaths:  []string{" internal/contracts/writerroute/decision.go ", "internal/contracts/writerroute/decision_test.go"},
 		EvidencePacketIDs:  []string{"pkt-2", " pkt-1 "},
-		ReasonCodes:        []string{"route.single_file_guarded_write", " route.local_model_default "},
+		ReasonCodes:        []ReasonCode{ReasonSingleFileGuardedWrite, ReasonLocalModelDefault},
 		EscalationTriggers: []string{"hosted_review", " stale_anchor "},
 		TaskFamily:         " artifact_final_answer ",
 	})
@@ -21,7 +21,7 @@ func TestWriterRouteDecision_NormalizationAndStableID(t *testing.T) {
 		Lane:               "implement",
 		RequiredEditPaths:  []string{"internal/contracts/writerroute/decision_test.go", "internal/contracts/writerroute/decision.go"},
 		EvidencePacketIDs:  []string{"pkt-1", "pkt-2"},
-		ReasonCodes:        []string{"route.local_model_default", "route.single_file_guarded_write"},
+		ReasonCodes:        []ReasonCode{ReasonLocalModelDefault, ReasonSingleFileGuardedWrite},
 		EscalationTriggers: []string{"stale_anchor", "hosted_review"},
 		TaskFamily:         "artifact_final_answer",
 	})
@@ -62,10 +62,10 @@ func TestWriterRouteDecision_EventFields(t *testing.T) {
 		RoleAliases:        map[string]string{" Planner ": "planner-model", "executor": "executor-model"},
 		RiskTier:           "low",
 		ScopeTier:          "single_atom",
-		VerificationOwner:  "planner_owned",
+		VerificationOwner:  VerificationOwnerPlannerOwned,
 		RequiredEditPaths:  []string{"b.go", "a.go"},
 		EvidencePacketIDs:  []string{"pkt-1"},
-		ReasonCodes:        []string{"route.multi_file_plan_execute"},
+		ReasonCodes:        []ReasonCode{ReasonMultiFilePlanExecute},
 		EscalationTriggers: []string{"hosted_review"},
 		UserOverride:       true,
 		TaskFamily:         "plan_then_execute_planner",
@@ -149,6 +149,23 @@ func TestWriterRouteDecision_ModeConstants(t *testing.T) {
 	}
 }
 
+func TestWriterRouteCommandEventNameValidatesSurfaceAndEvent(t *testing.T) {
+	got, err := CommandEventName(CommandSurfaceImplement, EventWriterRouteDecision)
+	if err != nil {
+		t.Fatalf("CommandEventName returned error: %v", err)
+	}
+	if got != "idiom.implement.writer_route_decision" {
+		t.Fatalf("CommandEventName = %q, want idiom.implement.writer_route_decision", got)
+	}
+
+	if _, err := CommandEventName(CommandSurface("idiom.unknown"), EventWriterRouteDecision); err == nil {
+		t.Fatal("expected unknown surface error")
+	}
+	if _, err := CommandEventName(CommandSurfaceLane, EventType("not_real")); err == nil {
+		t.Fatal("expected unknown event type error")
+	}
+}
+
 func TestWriterRouteDecision_JSONEventFieldMapping(t *testing.T) {
 	d := NewDecisionFromParams(DecisionParams{
 		Mode:               ModeAgenticGuarded,
@@ -158,10 +175,10 @@ func TestWriterRouteDecision_JSONEventFieldMapping(t *testing.T) {
 		CostTier:           "local_first",
 		ReviewPolicy:       "local_first",
 		ScopeTier:          "single_atom",
-		VerificationOwner:  "executor",
+		VerificationOwner:  VerificationOwnerExecutor,
 		RequiredEditPaths:  []string{"main.go"},
 		EvidencePacketIDs:  []string{"pkt-1"},
-		ReasonCodes:        []string{"route.single_file_guarded_write"},
+		ReasonCodes:        []ReasonCode{ReasonSingleFileGuardedWrite},
 		EscalationTriggers: []string{"stale_anchor"},
 		UserOverride:       true,
 		TaskFamily:         "artifact_final_answer",

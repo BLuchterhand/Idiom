@@ -11,6 +11,7 @@ import (
 
 	"idiom/internal/platform/config"
 	"idiom/internal/surfaces/cli/runrecord"
+	cmdruntime "idiom/internal/surfaces/cli/runtime"
 )
 
 func TestRunMainHeadlessInvalidSessionRejectsBeforeModel(t *testing.T) {
@@ -46,7 +47,7 @@ func TestHeadlessRunAdapterE2EWritesCompletionWithoutRawDurableAnswer(t *testing
 		"--prompt", "secret prompt text",
 		"--output", "json",
 		"--session", "e2e-run",
-	}, &stdout, &stderr, func(cfg config.Config, prompt string, opts runOptions, _ io.Writer) (string, error) {
+	}, &stdout, &stderr, func(cfg config.Config, prompt string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
 		if cfg.Workspace.SessionID != "e2e-run" {
 			t.Fatalf("workspace session id = %q, want e2e-run", cfg.Workspace.SessionID)
 		}
@@ -97,11 +98,11 @@ func TestLegacyPromptAdapterE2EWritesCompletionForJSONMode(t *testing.T) {
 	configPath := writeMainConfigRoot(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := runWithTelemetry(
+	code := cmdruntime.RunWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "legacy secret prompt", "-json"},
 		&stdout,
 		&stderr,
-		func(cfg config.Config, prompt string, opts runOptions, w io.Writer) (string, error) {
+		func(cfg config.Config, prompt string, opts cmdruntime.RunOptions, w io.Writer) (string, error) {
 			if cfg.Workspace.SessionID == "" {
 				t.Fatal("legacy path should stamp workspace session id before prompt runner")
 			}
@@ -113,15 +114,16 @@ func TestLegacyPromptAdapterE2EWritesCompletionForJSONMode(t *testing.T) {
 			return "legacy secret answer", nil
 		},
 		nopPrompts,
-		func(config.Config, runOptions) error {
+		func(config.Config, cmdruntime.RunOptions) error {
 			t.Fatal("TUI runner should not run in legacy prompt e2e")
 			return nil
 		},
-		func(config.Config, runOptions) error {
+		func(config.Config, cmdruntime.RunOptions) error {
 			t.Fatal("server runner should not run in legacy prompt e2e")
 			return nil
 		},
 		nopList,
+		runVersionMain,
 		nil,
 	)
 

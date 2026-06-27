@@ -1,6 +1,7 @@
 package comprehension
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -98,6 +99,33 @@ func TestNewCompactPackProjection_FromPackResult(t *testing.T) {
 	// TotalCandidates
 	if p.TotalCandidates != 4 { // 2 files + 1 symbol + 1 test
 		t.Errorf("expected TotalCandidates 4, got %d", p.TotalCandidates)
+	}
+}
+
+func TestAttachPackResultCompactProjectionIncludesLateQualityGaps(t *testing.T) {
+	result := PackResult{
+		PackID:       "weak-source-owner",
+		Fresh:        true,
+		BudgetTokens: 500,
+		Quality: PackQuality{
+			LocalizationConfidence: "low",
+			SourceOwnerFound:       false,
+		},
+		CandidateFiles: []PackFile{
+			{Path: "internal/related.go", Role: "related", Reason: "term overlap"},
+		},
+	}
+
+	addPackResultGaps(&packContext{status: StatusReport{Fresh: true}}, packCandidates{}, &result)
+	attachPackResultCompactProjection(&result)
+
+	if !slices.Contains(result.CompactProjection.UnresolvedGaps, "reason=weak_source_owner localization_confidence=low") {
+		t.Fatalf("CompactProjection.UnresolvedGaps = %#v, want weak_source_owner", result.CompactProjection.UnresolvedGaps)
+	}
+
+	rendered, _ := RenderCompactPackProjection(result.CompactProjection, result.BudgetTokens)
+	if !strings.Contains(rendered, "weak_source_owner") {
+		t.Fatalf("rendered compact projection missing weak_source_owner:\n%s", rendered)
 	}
 }
 

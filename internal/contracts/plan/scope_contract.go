@@ -1,4 +1,4 @@
-package plancontract
+package plan
 
 import (
 	"crypto/sha256"
@@ -110,6 +110,10 @@ func UniqueScopePaths(paths []string) []string {
 	}
 
 	return out
+}
+
+func AllowedScopePathsExcludingRequired(paths []string, required []string) []string {
+	return scopePathsExcludingRequired(UniqueScopePaths(paths), UniqueScopePaths(required))
 }
 
 func scopePathsExcludingRequired(paths []string, required []string) []string {

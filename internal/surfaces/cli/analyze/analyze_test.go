@@ -40,3 +40,22 @@ func TestParseSessionAcceptsDirectDebugLogRecords(t *testing.T) {
 		t.Fatalf("unexpected first prompt: %q", summary.FirstPrompt)
 	}
 }
+
+func TestParseSessionRedactsSensitiveFirstPrompt(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "session.jsonl")
+	data := `{"type":"message","role":"user","content":"raw_prompt: token=abc123 /Users/alice/private/repo customer-acme"}`
+
+	if err := os.WriteFile(logPath, []byte(data+"\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	var summary sessionSummary
+	if _, err := parseSession(logPath, "session", &summary); err != nil {
+		t.Fatalf("parseSession: %v", err)
+	}
+
+	if summary.FirstPrompt != "[redacted prompt summary]" {
+		t.Fatalf("first prompt = %q, want redacted marker", summary.FirstPrompt)
+	}
+}

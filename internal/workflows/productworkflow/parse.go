@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 // parseAndValidate unmarshals JSON data into T and validates the result.
@@ -264,7 +264,7 @@ func TrySplitAndParseADRs(output string, prd PRDDocument) ([]ADRDocument, []ADRI
 		if err != nil {
 			failures = append(failures, ADRParseFailure{
 				ChunkIndex: i,
-				RawChunk:   util.Truncate(chunk, 200),
+				RawChunk:   textutil.Truncate(chunk, 200),
 				Error:      err.Error(),
 			})
 

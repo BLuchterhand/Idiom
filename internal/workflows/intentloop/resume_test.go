@@ -3,6 +3,7 @@ package intentloop
 import (
 	"testing"
 
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/workflows/planexecute"
 )
 
@@ -27,7 +28,11 @@ func TestAssessResumeReloadsIncompleteCyclePromptAndChildProgress(t *testing.T) 
 	}}
 
 	progress := planexecute.NewProgressState("child-1", prompt, promptPath, nil, nil, testNow())
-	progress.Phase = planexecute.ProgressPhaseReviewRepair
+	progress.Phase = plancontract.PlanExecuteProgressPhaseReviewRepair
+	progress.Status = plancontract.PlanExecuteProgressStatusRunning
+	progress.PlanPath = "plan.json"
+	progress.Executor.Status = plancontract.PlanExecuteProgressStatusCompleted
+	progress.ChangedPaths = []string{"a.go"}
 	if _, err := planexecute.SaveProgressState(root, &progress); err != nil {
 		t.Fatalf("SaveProgressState: %v", err)
 	}
@@ -52,6 +57,80 @@ func TestAssessResumeReloadsIncompleteCyclePromptAndChildProgress(t *testing.T) 
 	}
 	if assessment.ChildResumeID != "child-1" || assessment.ChildProgressPath == "" {
 		t.Fatalf("child resume metadata missing: %#v", assessment)
+	}
+}
+
+func TestAssessResumeUsesPlanExecuteResumeReadiness(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		phase          plancontract.PlanExecuteProgressPhase
+		status         plancontract.PlanExecuteProgressStatus
+		executorStatus plancontract.PlanExecuteProgressStatus
+		wantResume     bool
+	}{
+		{
+			name:           "review repair ready",
+			phase:          plancontract.PlanExecuteProgressPhaseReviewRepair,
+			status:         plancontract.PlanExecuteProgressStatusRunning,
+			executorStatus: plancontract.PlanExecuteProgressStatusCompleted,
+			wantResume:     true,
+		},
+		{
+			name:           "planning is not resumable",
+			phase:          plancontract.PlanExecuteProgressPhasePlanning,
+			status:         plancontract.PlanExecuteProgressStatusRunning,
+			executorStatus: "",
+			wantResume:     false,
+		},
+		{
+			name:           "executor in progress is not review resumable",
+			phase:          plancontract.PlanExecuteProgressPhaseExecutor,
+			status:         plancontract.PlanExecuteProgressStatusRunning,
+			executorStatus: plancontract.PlanExecuteProgressStatusRunning,
+			wantResume:     false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			prompt := "cycle prompt"
+			state := NewState("resume-session", "original", IntentLoopContract{}, 3, testNow())
+			promptPath, promptHash, err := SaveCyclePrompt(root, state.SessionID, 1, prompt)
+			if err != nil {
+				t.Fatalf("SaveCyclePrompt: %v", err)
+			}
+
+			identity := testChildIdentity()
+			state.Cycles = []CycleRecord{{
+				CycleNumber:          1,
+				Status:               "dispatched",
+				PlanExecuteSessionID: "child-1",
+				CyclePromptPath:      promptPath,
+				CyclePromptSHA256:    promptHash,
+				ChildIdentity:        &identity,
+			}}
+
+			progress := planexecute.NewProgressState("child-1", prompt, promptPath, nil, nil, testNow())
+			progress.Phase = tc.phase
+			progress.Status = tc.status
+			progress.PlanPath = "plan.json"
+			progress.Executor.Status = tc.executorStatus
+			progress.ChangedPaths = []string{"a.go"}
+			if _, err := planexecute.SaveProgressState(root, &progress); err != nil {
+				t.Fatalf("SaveProgressState: %v", err)
+			}
+
+			assessment, err := AssessResume(ResumeAssessmentInput{
+				Root:                 root,
+				State:                state,
+				CurrentChildIdentity: &identity,
+			})
+			if err != nil {
+				t.Fatalf("AssessResume error = %v", err)
+			}
+			if assessment.CanResumeChild != tc.wantResume {
+				t.Fatalf("CanResumeChild = %v, want %v; assessment=%#v", assessment.CanResumeChild, tc.wantResume, assessment)
+			}
+		})
 	}
 }
 

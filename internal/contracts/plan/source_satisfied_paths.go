@@ -1,10 +1,50 @@
-package plancontract
+package plan
 
 import "strings"
 
 type SourceSatisfiedEvidenceRef struct {
-	Path string
-	Kind string
+	Path string                      `json:"path"`
+	Kind SourceSatisfiedEvidenceKind `json:"kind"`
+}
+
+type SourceSatisfiedEvidenceKind string
+
+const SourceSatisfiedEvidenceKindHarnessObservedSource SourceSatisfiedEvidenceKind = "harness_observed_source"
+
+func ParseSourceSatisfiedEvidenceKind(raw string) (SourceSatisfiedEvidenceKind, bool) {
+	kind := SourceSatisfiedEvidenceKind(strings.ReplaceAll(strings.ToLower(strings.TrimSpace(raw)), "-", "_"))
+	switch kind {
+	case SourceSatisfiedEvidenceKindHarnessObservedSource:
+		return kind, true
+	default:
+		return "", false
+	}
+}
+
+func NormalizeSourceSatisfiedEvidenceRefs(refs []SourceSatisfiedEvidenceRef) []SourceSatisfiedEvidenceRef {
+	out := make([]SourceSatisfiedEvidenceRef, 0, len(refs))
+	seen := map[string]struct{}{}
+
+	for _, ref := range refs {
+		ref.Path = NormalizeScopePath(ref.Path)
+		ref.Kind = SourceSatisfiedEvidenceKind(strings.TrimSpace(string(ref.Kind)))
+		if parsed, ok := ParseSourceSatisfiedEvidenceKind(string(ref.Kind)); ok {
+			ref.Kind = parsed
+		}
+		if ref.Path == "" || ref.Kind == "" {
+			continue
+		}
+
+		key := ref.Path + "\x00" + string(ref.Kind)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+
+		seen[key] = struct{}{}
+		out = append(out, ref)
+	}
+
+	return out
 }
 
 type SourceSatisfiedPathCoverageInput struct {
@@ -107,7 +147,7 @@ func sourceSatisfiedCurrentStateEvidenceSet(evidence []SourceSatisfiedEvidenceRe
 
 	for _, ref := range evidence {
 		path := NormalizeScopePath(ref.Path)
-		if path == "" || !sourceSatisfiedEvidenceKindProvesCurrentState(ref.Kind) {
+		if path == "" || !SourceSatisfiedEvidenceKindProvesCurrentState(ref.Kind) {
 			continue
 		}
 
@@ -117,20 +157,22 @@ func sourceSatisfiedCurrentStateEvidenceSet(evidence []SourceSatisfiedEvidenceRe
 	return out
 }
 
-func sourceSatisfiedEvidenceKindProvesCurrentState(kind string) bool {
-	kind = strings.ToLower(strings.TrimSpace(kind))
-	kind = strings.ReplaceAll(kind, "-", "_")
-
-	switch kind {
-	case "harness_observed_source":
-		return true
+func SourceSatisfiedEvidenceKindProvesCurrentState(kind SourceSatisfiedEvidenceKind) bool {
+	switch parsed, ok := ParseSourceSatisfiedEvidenceKind(string(kind)); {
+	case ok:
+		return parsed == SourceSatisfiedEvidenceKindHarnessObservedSource
 	default:
 		return false
 	}
 }
 
-func SourceSatisfiedEvidenceKindProvesCurrentState(kind string) bool {
-	return sourceSatisfiedEvidenceKindProvesCurrentState(kind)
+func KnownSourceSatisfiedEvidenceKind(kind SourceSatisfiedEvidenceKind) bool {
+	switch parsed, ok := ParseSourceSatisfiedEvidenceKind(string(kind)); {
+	case ok:
+		return parsed == kind
+	default:
+		return false
+	}
 }
 
 func scopePathSet(paths []string) map[string]struct{} {

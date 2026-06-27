@@ -257,10 +257,10 @@ func TestHandleMouseDispatchesToLaneSwitchPopupWhenOpen(t *testing.T) {
 	clickX := m.laneSwitchPopup.boxLeft + 2
 
 	_, handled := m.handleMouse(tea.MouseMsg{
-		Button:  tea.MouseButtonLeft,
-		Action:  tea.MouseActionPress,
-		X:       clickX,
-		Y:       clickY,
+		Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+		X:      clickX,
+		Y:      clickY,
 	})
 
 	if !handled {

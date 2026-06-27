@@ -87,51 +87,51 @@ var orderedTransitionTable = []orderedStateEntry{
 	{
 		State: WorkflowStatePlanned,
 		Actions: []orderedAction{
-			{Action: "submit_for_human_verification", Rule: transitionRule{ToState: WorkflowStateHumanVerification, Owner: "planner"}},
-			{Action: "start_investigation", Rule: transitionRule{ToState: WorkflowStateInvestigating, Owner: "investigator"}},
+			{Action: ProductWorkflowActionSubmitForHumanVerification, Rule: transitionRule{ToState: WorkflowStateHumanVerification, Owner: ProductWorkflowActionOwnerPlanner}},
+			{Action: ProductWorkflowActionStartInvestigation, Rule: transitionRule{ToState: WorkflowStateInvestigating, Owner: ProductWorkflowActionOwnerInvestigator}},
 		},
 	},
 	{
 		State: WorkflowStateHumanVerification,
 		Actions: []orderedAction{
-			{Action: "approve_for_implementation", Rule: transitionRule{ToState: WorkflowStateImplementing, Owner: "operator"}},
-			{Action: "request_changes", Rule: transitionRule{ToState: WorkflowStatePlanned, Owner: "operator"}},
-			{Action: "request_investigation", Rule: transitionRule{ToState: WorkflowStateInvestigating, Owner: "operator"}},
+			{Action: ProductWorkflowActionApproveForImplementation, Rule: transitionRule{ToState: WorkflowStateImplementing, Owner: ProductWorkflowActionOwnerOperator}},
+			{Action: ProductWorkflowActionRequestChanges, Rule: transitionRule{ToState: WorkflowStatePlanned, Owner: ProductWorkflowActionOwnerOperator}},
+			{Action: ProductWorkflowActionRequestInvestigation, Rule: transitionRule{ToState: WorkflowStateInvestigating, Owner: ProductWorkflowActionOwnerOperator}},
 		},
 	},
 	{
 		State: WorkflowStateImplementing,
 		Actions: []orderedAction{
-			{Action: "submit_for_verification", Rule: transitionRule{ToState: WorkflowStateVerifying, Owner: "implementor"}},
-			{Action: "mark_blocked", Rule: transitionRule{ToState: WorkflowStateBlocked, Owner: "orchestrator"}},
+			{Action: ProductWorkflowActionSubmitForVerification, Rule: transitionRule{ToState: WorkflowStateVerifying, Owner: ProductWorkflowActionOwnerImplementor}},
+			{Action: ProductWorkflowActionMarkBlocked, Rule: transitionRule{ToState: WorkflowStateBlocked, Owner: ProductWorkflowActionOwnerOrchestrator}},
 		},
 	},
 	{
 		State: WorkflowStateVerifying,
 		Actions: []orderedAction{
-			{Action: "submit_for_review", Rule: transitionRule{ToState: WorkflowStateReviewing, Owner: "reviewer"}},
-			{Action: "mark_blocked", Rule: transitionRule{ToState: WorkflowStateBlocked, Owner: "orchestrator"}},
+			{Action: ProductWorkflowActionSubmitForReview, Rule: transitionRule{ToState: WorkflowStateReviewing, Owner: ProductWorkflowActionOwnerReviewer}},
+			{Action: ProductWorkflowActionMarkBlocked, Rule: transitionRule{ToState: WorkflowStateBlocked, Owner: ProductWorkflowActionOwnerOrchestrator}},
 		},
 	},
 	{
 		State: WorkflowStateReviewing,
 		Actions: []orderedAction{
-			{Action: "approve", Rule: transitionRule{ToState: WorkflowStateClosed, Owner: "reviewer"}},
-			{Action: "request_changes", Rule: transitionRule{ToState: WorkflowStateImplementing, Owner: "reviewer"}},
-			{Action: "request_investigation", Rule: transitionRule{ToState: WorkflowStateInvestigating, Owner: "orchestrator"}},
+			{Action: ProductWorkflowActionApprove, Rule: transitionRule{ToState: WorkflowStateClosed, Owner: ProductWorkflowActionOwnerReviewer}},
+			{Action: ProductWorkflowActionRequestChanges, Rule: transitionRule{ToState: WorkflowStateImplementing, Owner: ProductWorkflowActionOwnerReviewer}},
+			{Action: ProductWorkflowActionRequestInvestigation, Rule: transitionRule{ToState: WorkflowStateInvestigating, Owner: ProductWorkflowActionOwnerOrchestrator}},
 		},
 	},
 	{
 		State: WorkflowStateInvestigating,
 		Actions: []orderedAction{
-			{Action: "complete_investigation", Rule: transitionRule{ToState: WorkflowStateReviewing, Owner: "investigator"}},
-			{Action: "mark_blocked", Rule: transitionRule{ToState: WorkflowStateBlocked, Owner: "orchestrator"}},
+			{Action: ProductWorkflowActionCompleteInvestigation, Rule: transitionRule{ToState: WorkflowStateReviewing, Owner: ProductWorkflowActionOwnerInvestigator}},
+			{Action: ProductWorkflowActionMarkBlocked, Rule: transitionRule{ToState: WorkflowStateBlocked, Owner: ProductWorkflowActionOwnerOrchestrator}},
 		},
 	},
 	{
 		State: WorkflowStateBlocked,
 		Actions: []orderedAction{
-			{Action: "resolve_blocker", Rule: transitionRule{ToState: WorkflowStatePlanned, Owner: "orchestrator"}},
+			{Action: ProductWorkflowActionResolveBlocker, Rule: transitionRule{ToState: WorkflowStatePlanned, Owner: ProductWorkflowActionOwnerOrchestrator}},
 		},
 	},
 	{
@@ -161,7 +161,7 @@ func findActionRule(entry *orderedStateEntry, action string) (transitionRule, bo
 }
 
 var unstartedActions = []TransitionAction{
-	{Action: "start", Owner: "orchestrator"},
+	{Action: ProductWorkflowActionStart, Owner: ProductWorkflowActionOwnerOrchestrator},
 }
 
 var closePreconditionGates = []string{"verification", "review", "investigation"}
@@ -203,7 +203,7 @@ func EvaluateTransition(input TransitionInput) TransitionResult {
 	}
 
 	if input.StatusBucket == WorkflowStatusBucketUnstarted {
-		if input.RequestedAction == "start" {
+		if input.RequestedAction == ProductWorkflowActionStart {
 			return TransitionResult{
 				FromState:        input.CurrentState,
 				ToState:          WorkflowStatePlanned,
@@ -340,7 +340,7 @@ func nextActionsFor(state string, gateResults []GateResult) []TransitionAction {
 
 	actions := make([]TransitionAction, 0, len(entry.Actions))
 	for _, a := range entry.Actions {
-		if a.Action == "approve" && state == WorkflowStateReviewing {
+		if a.Action == ProductWorkflowActionApprove && state == WorkflowStateReviewing {
 			if !closePreconditionsMet(nil, nil, gateResults) {
 				continue
 			}
@@ -380,7 +380,7 @@ func checkClosePreconditions(openBlockers, openObligations []string, gateResults
 		} else if status != ProductWorkflowStatusPassed {
 			blockers = append(blockers, TransitionBlocker{
 				Code:    "gate_not_passed",
-				Message: "close requires " + gate + " gate passed, got " + status,
+				Message: "close requires " + gate + " gate passed, got " + string(status),
 			})
 		}
 	}
@@ -392,8 +392,8 @@ func closePreconditionsMet(openBlockers, openObligations []string, gateResults [
 	return len(checkClosePreconditions(openBlockers, openObligations, gateResults)) == 0
 }
 
-func gateStatusMap(gateResults []GateResult) map[string]string {
-	m := make(map[string]string, len(gateResults))
+func gateStatusMap(gateResults []GateResult) map[string]ProductWorkflowStatus {
+	m := make(map[string]ProductWorkflowStatus, len(gateResults))
 	for _, g := range gateResults {
 		m[g.Gate] = g.Status
 	}

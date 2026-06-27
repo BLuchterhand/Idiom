@@ -44,6 +44,37 @@ func IsReadTool(name string) bool {
 	return c == CategoryRead || c == CategorySearch || c == CategoryDiscovery
 }
 
+// IsReadClassToolName reports whether name is a read-class tool that narrows
+// workspace evidence after readiness. This is intentionally narrower than
+// IsReadTool: broad context-pack/status tools are discovery setup, while this
+// class covers follow-up reads/searches that must explain the exact remaining
+// evidence gap.
+func IsReadClassToolName(name string) bool {
+	switch strings.TrimSpace(name) {
+	case ToolNameReadFile, ToolNameSearchContent, ToolNameSearchFiles, ToolNameListFiles,
+		ToolNameHarnessAudit, ToolNameDiscoveryQuery, ToolNameStructuralSearch, ToolNameCtagsSymbols,
+		ToolNameDependencyGraph, ToolNameHistoryRange, ToolNameHistorySymbol, ToolNameBlameRange,
+		ToolNameSemgrepScan, ToolNameJoernScan:
+		return true
+	default:
+		return IsLanguageReadClassToolName(name)
+	}
+}
+
+func IsLanguageReadClassToolName(name string) bool {
+	return LanguageToolHasAnyCapability(name,
+		CapReadSymbol,
+		CapFileOutline,
+		CapExtractBody,
+		CapWorkspaceSymbol,
+		CapReferences,
+		CapDefinition,
+		CapCallsFrom,
+		CapCallsInto,
+		CapRelatedFiles,
+	)
+}
+
 // IsRuntimeInspectionRequest reports whether a request gathers or narrows
 // workspace evidence rather than verifying, mutating, or updating harness state.
 func IsRuntimeInspectionRequest(req ToolRequest) bool {

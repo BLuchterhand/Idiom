@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	plancontract "idiom/internal/contracts/plan"
+	queuecontract "idiom/internal/contracts/queue"
 )
 
 // teeBuffer wraps an io.Writer so the lane wrapper can both stream
@@ -184,12 +186,17 @@ func hasPlanExecuteEditEvent(out []byte) bool {
 			continue
 		}
 
-		switch jsonString(ev["type"]) {
-		case "idiom.plan_execute.auto_exact_plan_submitted", "auto_exact_plan_submitted":
+		eventType, ok := plancontract.ParsePlanExecuteEventType(jsonString(ev["type"]))
+		if !ok {
+			continue
+		}
+
+		switch eventType {
+		case plancontract.PlanExecuteEventAutoExactPlanSubmitted:
 			return true
-		case "idiom.plan_execute.executor_edit", "executor_edit":
+		case plancontract.PlanExecuteEventExecutorEdit:
 			return true
-		case "idiom.plan_execute.executor_complete", "executor_complete":
+		case plancontract.PlanExecuteEventExecutorComplete:
 			if jsonNumberPositive(ev["total"]) || jsonNumberPositive(ev["succeeded"]) || jsonNumberPositive(ev["failed"]) {
 				return true
 			}
@@ -235,8 +242,8 @@ func hasSourceSatisfiedEvent(out []byte) bool {
 			continue
 		}
 
-		eventType := jsonString(ev["type"])
-		if eventType == "idiom.plan_execute.source_satisfied" || eventType == "source_satisfied" {
+		eventType, ok := plancontract.ParsePlanExecuteEventType(jsonString(ev["type"]))
+		if ok && eventType == plancontract.PlanExecuteEventSourceSatisfied {
 			return true
 		}
 	}
@@ -261,8 +268,8 @@ func hasReviewRepairDegradedEvent(out []byte) bool {
 			continue
 		}
 
-		eventType := jsonString(ev["type"])
-		if eventType == "idiom.plan_execute.review_repair_degraded" || eventType == "review_repair_degraded" {
+		eventType, ok := plancontract.ParsePlanExecuteEventType(jsonString(ev["type"]))
+		if ok && eventType == plancontract.PlanExecuteEventReviewRepairDegraded {
 			return true
 		}
 	}
@@ -390,7 +397,8 @@ func parseLaneQueuePool(out []byte) string {
 		}
 
 		eventType := jsonString(ev["type"])
-		if eventType != "idiom.plan_execute.queue_acquired" && eventType != "idiom.implement.queue_acquired" {
+		if eventType != queuecontract.CommandAdmissionEventName(queuecontract.CommandEventPrefixPlanExecute, queuecontract.AdmissionEventQueueAcquired) &&
+			eventType != queuecontract.CommandAdmissionEventName(queuecontract.CommandEventPrefixImplement, queuecontract.AdmissionEventQueueAcquired) {
 			continue
 		}
 

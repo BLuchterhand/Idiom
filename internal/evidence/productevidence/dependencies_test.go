@@ -138,7 +138,7 @@ func TestSummarizeLaneHistoryNilDeps(t *testing.T) {
 	}
 }
 
-func TestLogCLIPhaseNilSafe(t *testing.T) {
+func TestLogPhaseNilSafe(t *testing.T) {
 	deps := Dependencies{}
 	// Should not panic with nil recorder and nil fields
 	deps.logCLIPhase(nil, "test_event", nil)

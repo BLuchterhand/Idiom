@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/redaction"
 )
 
 type DebugLogMode string
@@ -148,6 +148,48 @@ type TurnSummary struct {
 	DurationMillis             int64
 	StopReason                 string
 	BudgetExhausted            bool
+}
+
+type TurnSummaryRecordOptions struct {
+	IncludeZeroBudgetLimits bool
+}
+
+func BuildTurnSummaryRecord(s TurnSummary, timestamp time.Time, options ...TurnSummaryRecordOptions) map[string]any {
+	includeZeroBudgetLimits := false
+	if len(options) > 0 {
+		includeZeroBudgetLimits = options[0].IncludeZeroBudgetLimits
+	}
+
+	record := map[string]any{
+		"ts":                            timestamp.Format(time.RFC3339Nano),
+		"type":                          "turn_summary",
+		"lane":                          s.Lane,
+		"used_model_calls":              s.UsedModelCalls,
+		"used_tool_results":             s.UsedToolResults,
+		"prompt_tokens":                 s.PromptTokens,
+		"completion_tokens":             s.CompletionTokens,
+		"total_tokens":                  s.TotalTokens,
+		"prompt_cache_hit_tokens":       s.PromptCacheHitTokens,
+		"prompt_cache_miss_tokens":      s.PromptCacheMissTokens,
+		"prompt_cache_accounting_known": s.PromptCacheAccountingKnown,
+		"reasoning_tokens":              s.ReasoningTokens,
+		"progress_turns":                s.ProgressTurns,
+		"rejected_actions":              s.RejectedActions,
+		"completion_gate_rejections":    s.CompletionGateRejections,
+		"context_compactions":           s.ContextCompactions,
+		"duration_ms":                   s.DurationMillis,
+		"stop_reason":                   s.StopReason,
+		"budget_exhausted":              s.BudgetExhausted,
+	}
+	if s.MaxModelCalls > 0 || includeZeroBudgetLimits {
+		record["max_model_calls"] = s.MaxModelCalls
+	}
+
+	if s.MaxToolSteps > 0 || includeZeroBudgetLimits {
+		record["max_tool_steps"] = s.MaxToolSteps
+	}
+
+	return record
 }
 
 // SessionSummary is the end-of-session aggregate written on shutdown.
@@ -497,36 +539,7 @@ func (l *DebugLogger) LogModelCall(c ModelCall) error {
 }
 
 func (l *DebugLogger) LogTurnSummary(s TurnSummary) error {
-	record := map[string]any{
-		"ts":                            time.Now().Format(time.RFC3339Nano),
-		"type":                          "turn_summary",
-		"lane":                          s.Lane,
-		"used_model_calls":              s.UsedModelCalls,
-		"used_tool_results":             s.UsedToolResults,
-		"prompt_tokens":                 s.PromptTokens,
-		"completion_tokens":             s.CompletionTokens,
-		"total_tokens":                  s.TotalTokens,
-		"prompt_cache_hit_tokens":       s.PromptCacheHitTokens,
-		"prompt_cache_miss_tokens":      s.PromptCacheMissTokens,
-		"prompt_cache_accounting_known": s.PromptCacheAccountingKnown,
-		"reasoning_tokens":              s.ReasoningTokens,
-		"progress_turns":                s.ProgressTurns,
-		"rejected_actions":              s.RejectedActions,
-		"completion_gate_rejections":    s.CompletionGateRejections,
-		"context_compactions":           s.ContextCompactions,
-		"duration_ms":                   s.DurationMillis,
-		"stop_reason":                   s.StopReason,
-		"budget_exhausted":              s.BudgetExhausted,
-	}
-	if s.MaxModelCalls > 0 {
-		record["max_model_calls"] = s.MaxModelCalls
-	}
-
-	if s.MaxToolSteps > 0 {
-		record["max_tool_steps"] = s.MaxToolSteps
-	}
-
-	return l.writeRecord(record)
+	return l.writeRecord(BuildTurnSummaryRecord(s, time.Now()))
 }
 
 func (l *DebugLogger) LogSessionSummary(s SessionSummary) error {
@@ -707,7 +720,7 @@ func (l *DebugLogger) sanitizeText(text string) string {
 	}
 
 	text = redactWorkspacePaths(text, l.workspaceRoot)
-	text = util.RedactSecrets(text)
+	text = redaction.RedactSecrets(text)
 
 	return text
 }

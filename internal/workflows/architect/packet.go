@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 const (
@@ -324,7 +324,7 @@ func readRuleEvidence(root string, rules []RuleSource, defaultMaxBytes int) []Ev
 			limit = defaultMaxBytes
 		}
 
-		ev.Content = util.TruncateBytes(string(data), limit, "\n[truncated]")
+		ev.Content = textutil.TruncateBytes(string(data), limit, "\n[truncated]")
 		out = append(out, ev)
 	}
 
@@ -354,7 +354,7 @@ func readContextViewEvidence(root string, paths []string, defaultMaxBytes int) [
 			continue
 		}
 
-		ev.Content = util.TruncateBytes(string(data), defaultMaxBytes, "\n[truncated]")
+		ev.Content = textutil.TruncateBytes(string(data), defaultMaxBytes, "\n[truncated]")
 		out = append(out, ev)
 	}
 
@@ -404,7 +404,7 @@ func runCollectorEvidence(ctx context.Context, root string, collectors []Collect
 			limit = defaultMaxBytes
 		}
 
-		ev.Content = util.TruncateBytes(stripANSI(string(outBytes)), limit, "\n[truncated]")
+		ev.Content = textutil.TruncateBytes(stripANSI(string(outBytes)), limit, "\n[truncated]")
 
 		if err != nil {
 			if runCtx.Err() == context.DeadlineExceeded {

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"idiom/internal/contracts/plan"
+	plancontract "idiom/internal/contracts/plan"
 )
 
 const (
@@ -12,7 +12,7 @@ const (
 	planExecuteTypedAtomContractMarker = "Typed plan authority projection:"
 )
 
-func ExtractRequiredAcceptanceEvidenceIDs(prompt string) []string {
+func planExecuteRequiredAcceptanceEvidenceIDsFromPrompt(prompt string) []string {
 	if body := planExecuteJSONAfterPromptMarker(prompt, planExecuteTypedAtomContractMarker); body != "" {
 		var atom plancontract.AtomExecutionContract
 
@@ -35,10 +35,6 @@ func ExtractRequiredAcceptanceEvidenceIDs(prompt string) []string {
 	}
 
 	return nil
-}
-
-func planExecuteRequiredAcceptanceEvidenceIDsFromPrompt(prompt string) []string {
-	return ExtractRequiredAcceptanceEvidenceIDs(prompt)
 }
 
 func planExecuteRequiredAcceptanceEvidenceIDsFromAtom(atom plancontract.AtomExecutionContract) []string {

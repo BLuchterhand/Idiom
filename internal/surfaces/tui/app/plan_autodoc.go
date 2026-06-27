@@ -2,8 +2,6 @@ package app
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,7 +10,10 @@ import (
 	"strings"
 	"time"
 
+	planartifact "idiom/internal/contracts/planartifact"
+
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/platform/shortid"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/workflows/planexecute"
 )
@@ -481,13 +482,7 @@ func (m *Model) appendPlanDiffEntry(entry planDiffEntry) {
 // a session's worth of writes while staying visually compact inside
 // the HTML comment marker.
 func newPlanEntryID() string {
-	var buf [8]byte
-
-	if _, err := rand.Read(buf[:]); err != nil {
-		return fmt.Sprintf("ts%d", time.Now().UnixNano())
-	}
-
-	return hex.EncodeToString(buf[:])
+	return shortid.New()
 }
 
 // recordTaskLedger merges a task_ledger tool result into the in-memory
@@ -1091,7 +1086,7 @@ func (m *Model) recordSubmittedPlan(req workspace.ToolRequest, result workspace.
 		return
 	}
 
-	var edits []workspace.PlanEdit
+	var edits []planartifact.PlanEdit
 
 	if req.PlanArtifact != nil {
 		edits = req.PlanArtifact.Edits
@@ -1108,7 +1103,7 @@ func (m *Model) recordSubmittedPlan(req workspace.ToolRequest, result workspace.
 	m.ensurePlanSessionHeading()
 
 	if m.plan.submittedEdits == nil {
-		m.plan.submittedEdits = map[string]workspace.PlanEdit{}
+		m.plan.submittedEdits = map[string]planartifact.PlanEdit{}
 	}
 
 	path := m.ensurePlanPath()
@@ -1164,7 +1159,7 @@ func cutPlanSection(content, heading string) (string, bool) {
 
 // planEditLabel builds a human-readable label for a PlanEdit, using its
 // Purpose field with a path fallback.
-func planEditLabel(edit workspace.PlanEdit) string {
+func planEditLabel(edit planartifact.PlanEdit) string {
 	desc := strings.TrimSpace(edit.Purpose)
 	p := strings.TrimSpace(edit.Path)
 

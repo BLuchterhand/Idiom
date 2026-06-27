@@ -4,29 +4,9 @@ import (
 	"slices"
 	"testing"
 
-	"idiom/internal/capabilities/workspace"
-	"idiom/internal/contracts/plan"
+	plancontract "idiom/internal/contracts/plan"
+	planartifact "idiom/internal/contracts/planartifact"
 )
-
-func TestPlanContractCompatibilityAliasesMatchPlanContract(t *testing.T) {
-	var contract plancontract.PlanScopeContract = NewPlanScopeContract(
-		[]string{"pkg/a.go"},
-		nil,
-		EditSetObligations{}.With(EditSetObligationKindTestEdit, "test"),
-	)
-
-	if contract.ContractID == "" || !contract.EditSetObligations.Has(plancontract.EditSetObligationKindTestEdit) {
-		t.Fatalf("scope contract wrapper did not return plancontract-owned value: %#v", contract)
-	}
-
-	var obligations plancontract.EditSetObligations = MergeEditSetObligations(
-		EditSetObligations{{Kind: EditSetObligationKindImplementationEdit}},
-	)
-
-	if !obligations.Has(plancontract.EditSetObligationKindImplementationEdit) {
-		t.Fatalf("edit-set wrapper did not return plancontract-owned obligations: %#v", obligations)
-	}
-}
 
 func TestPlanScopeContractResolvesAllowedCandidateWithoutRequiredCoverage(t *testing.T) {
 	opts := Options{
@@ -63,7 +43,7 @@ func TestPlanScopeContractResolvesAllowedCandidateWithoutRequiredCoverage(t *tes
 
 func TestPlanScopeContractWriteEnvelopeIsNotExpandedByPromptScope(t *testing.T) {
 	opts := Options{
-		ScopeContract: NewPlanScopeContract(
+		ScopeContract: plancontract.NewPlanScopeContract(
 			[]string{"pkg/approved.go"},
 			nil,
 			nil,
@@ -119,7 +99,7 @@ func TestPlanScopeContractWriteAllowedFlagIsNotExpandedByPromptScope(t *testing.
 
 func TestPlanScopeContractFrozenSkipsPromptDerivedScope(t *testing.T) {
 	opts := Options{
-		ScopeContract: NewPlanScopeContract(
+		ScopeContract: plancontract.NewPlanScopeContract(
 			[]string{"pkg/frozen.go"},
 			[]string{"pkg/allowed.go"},
 			nil,
@@ -156,7 +136,7 @@ Failure mentions pkg/failure.go.
 
 func TestPlanScopeContractFrozenIgnoresContextPackCandidates(t *testing.T) {
 	opts := Options{
-		ScopeContract: NewPlanScopeContract(
+		ScopeContract: plancontract.NewPlanScopeContract(
 			[]string{"pkg/target.go"},
 			nil,
 			nil,
@@ -243,8 +223,8 @@ func TestPlanScopeContractExplicitEmptyWriteEnvelopeDisablesFallback(t *testing.
 }
 
 func TestPreflightExplicitEmptyWriteEnvelopeRejectsEdits(t *testing.T) {
-	plan := workspace.PlanArtifact{
-		Edits: []workspace.PlanEdit{{Path: "pkg/generated.go", NewText: "package pkg\n"}},
+	plan := planartifact.PlanArtifact{
+		Edits: []planartifact.PlanEdit{{Path: "pkg/generated.go", NewText: "package pkg\n"}},
 	}
 
 	mismatch := preflightPlanWriteAllowedPaths(nil, true, plan)
@@ -254,54 +234,5 @@ func TestPreflightExplicitEmptyWriteEnvelopeRejectsEdits(t *testing.T) {
 
 	if mismatch.Path != "pkg/generated.go" {
 		t.Fatalf("mismatch path = %q, want pkg/generated.go", mismatch.Path)
-	}
-}
-
-func TestPlanExecutePathCompatibilityWrappersMatchPlanContract(t *testing.T) {
-	paths := []string{
-		" ./pkg/a.go ",
-		"pkg/a.go",
-		"pkg\\b.go",
-		"../escape.go",
-		"/tmp/outside.go",
-		"pkg//bad.go",
-		"pkg/./bad.go",
-		"pkg/../bad.go",
-		"",
-	}
-	if got, want := PlanExecuteUniqueRequiredPaths(paths), plancontract.UniqueScopePaths(paths); !slices.Equal(got, want) {
-		t.Fatalf("unique required paths = %#v, want %#v", got, want)
-	}
-
-	for _, path := range paths {
-		if got, want := NormalizePlanExecutePath(path), plancontract.NormalizeScopePath(path); got != want {
-			t.Fatalf("NormalizePlanExecutePath(%q) = %q, want %q", path, got, want)
-		}
-	}
-
-	classificationPaths := []string{
-		"pkg/feature.go",
-		"pkg/feature_test.go",
-		"docs/feature.md",
-		"prompts/agent.md",
-		"tests/feature.ts",
-		"pkg/feature.spec.ts",
-	}
-	if got, want := planExecuteChangedPathsIncludeTest(classificationPaths), plancontract.ChangedPathsIncludeTest(classificationPaths); got != want {
-		t.Fatalf("test path classification = %t, want %t", got, want)
-	}
-
-	if got, want := planExecuteChangedPathsIncludeImplementation(classificationPaths), plancontract.ChangedPathsIncludeImplementation(classificationPaths); got != want {
-		t.Fatalf("implementation path classification = %t, want %t", got, want)
-	}
-
-	for _, path := range classificationPaths {
-		if got, want := planExecutePathLooksLikeTest(path), plancontract.PathLooksLikeTest(path); got != want {
-			t.Fatalf("test predicate for %q = %t, want %t", path, got, want)
-		}
-
-		if got, want := planExecutePathLooksLikeImplementation(path), plancontract.PathLooksLikeImplementation(path); got != want {
-			t.Fatalf("implementation predicate for %q = %t, want %t", path, got, want)
-		}
 	}
 }

@@ -15,10 +15,10 @@ import (
 	"text/tabwriter"
 	"time"
 
+	queuecontract "idiom/internal/contracts/queue"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/failures"
 	"idiom/internal/runtime/runner"
-	toolcmd "idiom/internal/surfaces/cli/tool"
 )
 
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
@@ -153,13 +153,13 @@ func runQueueRunWithTelemetry(args []string, stdout, stderr io.Writer, rec *tele
 	heldPoolsEnv := os.Getenv(runner.HeldPoolsEnv)
 
 	if runner.PoolHeldByAncestor(heldPoolsEnv, *pool) {
-		logQueuePhase(rec, "queue_admission", map[string]any{"state": "nested_same_pool", "pool": *pool, "degraded": false})
+		logQueuePhase(rec, "queue_admission", map[string]any{"state": string(queuecontract.AdmissionStateNestedSamePool), "pool": *pool, "degraded": false})
 
 		if !*quiet {
 			fmt.Fprintf(stderr, "[idiom queue %s] ancestor holds slot in same pool; skipping nested acquire\n", *pool)
 		}
 	} else if strings.TrimSpace(heldPoolsEnv) != "" {
-		logQueuePhase(rec, "queue_admission", map[string]any{"state": "nested_cross_pool", "pool": *pool, "degraded": true})
+		logQueuePhase(rec, "queue_admission", map[string]any{"state": string(queuecontract.AdmissionStateNestedCrossPool), "pool": *pool, "degraded": true})
 
 		if !*quiet {
 			fmt.Fprintf(stderr, "[idiom queue %s] ancestor holds slot in different pool(s) (%s); skipping nested acquire to prevent cross-pool deadlock — wrap the outer command with the pool the inner inference actually uses\n", *pool, heldPoolsEnv)
@@ -169,7 +169,7 @@ func runQueueRunWithTelemetry(args []string, stdout, stderr io.Writer, rec *tele
 
 		l, err := runner.Acquire(ctx, *socketPath, *pool, *label, *clientID)
 		if err != nil {
-			logQueuePhase(rec, "queue_admission", map[string]any{"state": "failed", "pool": *pool, "wait_ms": time.Since(startedAt).Milliseconds(), "reason_class": queueReasonClass(err), "degraded": true})
+			logQueuePhase(rec, "queue_admission", map[string]any{"state": string(queuecontract.AdmissionStateFailed), "pool": *pool, "wait_ms": time.Since(startedAt).Milliseconds(), "reason_class": queueReasonClass(err), "degraded": true})
 
 			if errors.Is(err, runner.ErrDaemonUnreachable) {
 				fmt.Fprintf(stderr, "queue run: %v\nstart the daemon with `idiom queue serve` (or set IDIOM_RUNNER_SOCKET).\n", err)
@@ -195,14 +195,14 @@ func runQueueRunWithTelemetry(args []string, stdout, stderr io.Writer, rec *tele
 
 		select {
 		case <-lease.Granted():
-			logQueuePhase(rec, "queue_admission", map[string]any{"state": "granted", "pool": lease.Pool, "wait_ms": time.Since(startedAt).Milliseconds(), "degraded": false})
+			logQueuePhase(rec, "queue_admission", map[string]any{"state": string(queuecontract.AdmissionStateGranted), "pool": lease.Pool, "wait_ms": time.Since(startedAt).Milliseconds(), "degraded": false})
 		case err := <-lease.Err():
-			logQueuePhase(rec, "queue_admission", map[string]any{"state": "failed_before_grant", "pool": resolvedPool, "wait_ms": time.Since(startedAt).Milliseconds(), "reason_class": queueReasonClass(err), "degraded": true})
+			logQueuePhase(rec, "queue_admission", map[string]any{"state": string(queuecontract.AdmissionStateFailedBeforeGrant), "pool": resolvedPool, "wait_ms": time.Since(startedAt).Milliseconds(), "reason_class": queueReasonClass(err), "degraded": true})
 			fmt.Fprintf(stderr, "queue run: lease error before grant: %v\n", err)
 
 			return 1
 		case <-ctx.Done():
-			logQueuePhase(rec, "queue_admission", map[string]any{"state": "canceled_before_grant", "pool": resolvedPool, "wait_ms": time.Since(startedAt).Milliseconds(), "reason_class": "timeout_or_canceled", "degraded": true})
+			logQueuePhase(rec, "queue_admission", map[string]any{"state": string(queuecontract.AdmissionStateCanceledBeforeGrant), "pool": resolvedPool, "wait_ms": time.Since(startedAt).Milliseconds(), "reason_class": string(queuecontract.ReasonClassTimeoutOrCanceled), "degraded": true})
 			fmt.Fprintln(stderr, "queue run: canceled before grant")
 
 			return 130
@@ -484,42 +484,27 @@ func printQueueUsage(stderr io.Writer) {
 }
 
 func logQueuePhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	toolcmd.LogCLIPhase(rec, eventType, fields)
+	telemetry.LogPhase(rec, eventType, fields)
 }
 
 func queueReasonClass(err error) string {
 	if err == nil {
-		return "unknown"
+		return string(queuecontract.ReasonClassUnknown)
 	}
 
 	if errors.Is(err, runner.ErrDaemonUnreachable) {
-		return "daemon_unreachable"
+		return string(queuecontract.ReasonClassDaemonUnreachable)
 	}
 
-	switch failures.CodeOf(err) {
-	case failures.Unavailable:
-		return "queue_unavailable"
-	case failures.DeadlineExceeded, failures.Canceled:
-		return "timeout_or_canceled"
-	case failures.InvalidArgument:
-		return "unknown_pool"
-	case failures.FailedPrecondition:
-		return "queue_error"
+	if code := failures.CodeOf(err); code != failures.Unknown {
+		if class := queuecontract.ClassifyFailureCode(code.String()); class != "" {
+			return string(class)
+		}
 	}
 
-	reason := strings.ToLower(strings.TrimSpace(err.Error()))
-	switch {
-	case strings.Contains(reason, "unreachable"), strings.Contains(reason, "connection refused"), strings.Contains(reason, "no such file"):
-		return "daemon_unreachable"
-	case strings.Contains(reason, "timeout"), strings.Contains(reason, "deadline"), strings.Contains(reason, "canceled"):
-		return "timeout_or_canceled"
-	case strings.Contains(reason, "unknown pool"):
-		return "unknown_pool"
-	case strings.Contains(reason, "held"):
-		return "nested_lease"
-	case reason == "":
-		return "unknown"
-	default:
-		return "queue_error"
+	if strings.TrimSpace(err.Error()) == "" {
+		return string(queuecontract.ReasonClassUnknown)
 	}
+
+	return string(queuecontract.ClassifyReason(err.Error()))
 }

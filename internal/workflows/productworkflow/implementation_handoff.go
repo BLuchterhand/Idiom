@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 type ImplementationHandoff struct {
@@ -201,7 +201,7 @@ func LoadBriefGenerationInput(effortRoot string) (BriefGenerationInput, []string
 func LoadCoverageGateEvaluation(effortRoot string) CoverageGateEffortEvaluation {
 	input, blockers := LoadBriefGenerationInput(effortRoot)
 	eval := input.CoverageEvaluation
-	if strings.TrimSpace(eval.Status) == "" {
+	if strings.TrimSpace(string(eval.Status)) == "" {
 		eval = CoverageGateEvaluation{
 			EffortID:     input.TDD.EffortID,
 			TaskID:       input.TDD.TaskID,
@@ -302,7 +302,7 @@ func PrepareBriefGenerationInput(input BriefGenerationInput) BriefGenerationInpu
 	if input.ArtifactRootPath == "" && input.EffortRoot != "" {
 		input.ArtifactRootPath = artifactRootPathForEffort(input.EffortRoot)
 	}
-	if strings.TrimSpace(input.CoverageEvaluation.Status) == "" {
+	if strings.TrimSpace(string(input.CoverageEvaluation.Status)) == "" {
 		satisfiedTDDIDs := BuildSatisfiedTDDObligationIDs(input.TDD, input.ImplementationRecords)
 		if briefGenerationInputHasEffortArtifacts(input.EffortRoot) {
 			lintResult := LintEffortFolder(input.EffortRoot)
@@ -357,7 +357,7 @@ func BuildImplementationHandoff(input BriefGenerationInput) ImplementationHandof
 		CurrentState:              strings.TrimSpace(input.WorkflowState.CurrentState),
 		NextValidActions:          append([]string{}, input.WorkflowState.NextValidActions...),
 		CoverageTier:              coverageTier,
-		CoverageGatePassed:        util.EqualTrimFold(input.CoverageEvaluation.Status, ProductWorkflowStatusPass),
+		CoverageGatePassed:        textutil.EqualTrimFold(string(input.CoverageEvaluation.Status), string(ProductWorkflowStatusPass)),
 		CoverageContract:          implementationHandoffCoverageContract(input),
 		AcceptedCoverage:          implementationHandoffAcceptedCoverage(input),
 		CoverageBlockers:          coverageBlockerMessages(input.CoverageEvaluation),
@@ -450,7 +450,7 @@ func implementationHandoffCoverageContract(input BriefGenerationInput) *Implemen
 	}
 	ref.EventID = implementationHandoffCoverageEventID(contract, input, ref.Digest)
 	if strings.TrimSpace(ref.Status) == "" {
-		ref.Status = ProductWorkflowStatusBlocked
+		ref.Status = string(ProductWorkflowStatusBlocked)
 	}
 
 	return &ref
@@ -465,17 +465,17 @@ func implementationHandoffCoverageEventID(contract BehavioralCoverageContract, i
 
 func implementationHandoffBehavioralCoverageStatus(contract BehavioralCoverageContract, input BriefGenerationInput) string {
 	if err := ValidateBehavioralCoverageContract(contract); err != nil {
-		return ProductWorkflowStatusBlocked
+		return string(ProductWorkflowStatusBlocked)
 	}
 	if projected := ProjectBehavioralCoverageContract(contract); behavioralCoverageHasAcceptedHandoffBlockingGate(projected) {
-		return ProductWorkflowStatusBlocked
+		return string(ProductWorkflowStatusBlocked)
 	}
 	if err := ValidateBehavioralCoverageProjection(contract, input.TDD.Coverage); err != nil {
-		return ProductWorkflowStatusBlocked
+		return string(ProductWorkflowStatusBlocked)
 	}
 	digest := BehavioralCoverageContractDigest(contract)
 	if AcceptedBehavioralCoveragePromotionEvent(input.PromotionEvents, digest) == nil {
-		return ProductWorkflowStatusBlocked
+		return string(ProductWorkflowStatusBlocked)
 	}
 	return BehavioralCoverageStatusAccepted
 }
@@ -510,7 +510,7 @@ func implementationHandoffAcceptedCoverage(input BriefGenerationInput) *Implemen
 
 func implementationHandoffAcceptedCoverageStatus(status string) bool {
 	switch strings.TrimSpace(status) {
-	case BehavioralCoverageStatusAccepted, ProductWorkflowStatusPass:
+	case BehavioralCoverageStatusAccepted, string(ProductWorkflowStatusPass):
 		return true
 	default:
 		return false

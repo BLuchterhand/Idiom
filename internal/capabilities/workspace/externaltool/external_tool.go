@@ -1,6 +1,7 @@
 package externaltool
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -183,24 +184,24 @@ func definitionForTool(tool Tool) Definition {
 }
 
 // Invoke runs the registered tool with the provided JSON-encoded input.
-func (r *Registry) Invoke(ctx context.Context, name string, input json.RawMessage, baseDir string) (string, error) {
+func (r *Registry) Invoke(ctx context.Context, name string, input json.RawMessage, baseDir string, maxOutputBytes int) (string, bool, error) {
 	if r == nil {
-		return "", fmt.Errorf("external tool %q: registry not initialised", name)
+		return "", false, fmt.Errorf("external tool %q: registry not initialised", name)
 	}
 
 	tool, ok := r.tools[name]
 	if !ok {
-		return "", fmt.Errorf("external tool %q: not registered", name)
+		return "", false, fmt.Errorf("external tool %q: not registered", name)
 	}
 
 	if ok, reason := r.Availability(name, baseDir); !ok {
-		return "", fmt.Errorf("external tool %q: unavailable: %s", name, reason)
+		return "", false, fmt.Errorf("external tool %q: unavailable: %s", name, reason)
 	}
 
 	parsed := map[string]any{}
 	if len(input) > 0 {
 		if err := json.Unmarshal(input, &parsed); err != nil {
-			return "", fmt.Errorf("external tool %q: invalid input JSON: %w", name, err)
+			return "", false, fmt.Errorf("external tool %q: invalid input JSON: %w", name, err)
 		}
 	}
 
@@ -230,18 +231,60 @@ func (r *Registry) Invoke(ctx context.Context, name string, input json.RawMessag
 		fmt.Fprintf(os.Stderr, "[idiom-debug] external tool=%s argv=%v cwd=%s\n", name, args, cmd.Dir)
 	}
 
-	out, err := cmd.CombinedOutput()
-	output := string(out)
+	outputBuffer := newLimitedOutputBuffer(maxOutputBytes)
+	cmd.Stdout = outputBuffer
+	cmd.Stderr = outputBuffer
+	err := cmd.Run()
+	output, truncated := outputBuffer.String()
 
 	if err != nil {
 		if runCtx.Err() == context.DeadlineExceeded {
-			return output, fmt.Errorf("external tool %q: timed out after %s", name, timeout)
+			return output, truncated, fmt.Errorf("external tool %q: timed out after %s", name, timeout)
 		}
 
-		return output, fmt.Errorf("external tool %q: %w", name, err)
+		return output, truncated, fmt.Errorf("external tool %q: %w", name, err)
 	}
 
-	return output, nil
+	return output, truncated, nil
+}
+
+type limitedOutputBuffer struct {
+	buf       bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func newLimitedOutputBuffer(limit int) *limitedOutputBuffer {
+	return &limitedOutputBuffer{limit: limit}
+}
+
+func (b *limitedOutputBuffer) Write(p []byte) (int, error) {
+	if b.limit <= 0 {
+		return b.buf.Write(p)
+	}
+
+	remaining := b.limit - b.buf.Len()
+	if remaining <= 0 {
+		b.truncated = true
+		return len(p), nil
+	}
+
+	if len(p) > remaining {
+		_, _ = b.buf.Write(p[:remaining])
+		b.truncated = true
+		return len(p), nil
+	}
+
+	return b.buf.Write(p)
+}
+
+func (b *limitedOutputBuffer) String() (string, bool) {
+	output := b.buf.String()
+	if b.truncated {
+		output += "\n...[truncated]"
+	}
+
+	return output, b.truncated
 }
 
 func unavailableReason(tool Tool, baseDir string) string {

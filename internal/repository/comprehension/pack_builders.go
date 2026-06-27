@@ -1,10 +1,11 @@
 package comprehension
 
 import (
-	"idiom/internal/platform/util"
 	"slices"
 	"sort"
 	"strings"
+
+	"idiom/internal/platform/textutil"
 )
 
 type packFileBuilder struct {
@@ -236,7 +237,7 @@ func (b *packTestBuilder) add(test PackTest) {
 		return
 	}
 
-	key := util.FirstNonEmpty(test.Command, test.Path+"\x00"+test.Symbol)
+	key := textutil.FirstNonEmpty(test.Command, test.Path+"\x00"+test.Symbol)
 	if existing := b.tests[key]; existing.Command != "" || existing.Path != "" || existing.Symbol != "" {
 		if !existing.Required && test.Required {
 			existing.Required = true
@@ -336,7 +337,7 @@ func addPackTestFromNode(source Node, target Node, tests *packTestBuilder) {
 	test := PackTest{
 		Path:   source.Path,
 		Symbol: source.QualifiedName,
-		Reason: "context graph test edge covers " + util.FirstNonEmpty(target.QualifiedName, target.Path, target.ID),
+		Reason: "context graph test edge covers " + textutil.FirstNonEmpty(target.QualifiedName, target.Path, target.ID),
 	}
 	if source.Language == "go" {
 		test.Command = goTestCommandForPath(source.Path)

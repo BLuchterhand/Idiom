@@ -11,12 +11,12 @@
   "status": "pass",
   "findings": [],
   "checks": {
-    "discovery_first_review": "Reviewer used Idiom discovery before localized patch review.",
-    "cli_surface": "product adr --render-prompt requires effort root, reads the evidence ledger and PRD, and writes only the configured prompt file on pass.",
-    "prompt_plan_contract": "Planning and prompt rendering are deterministic, model-free, evidence-ledger and PRD-backed, and do not include rendered prompt bodies in JSON metadata.",
-    "fail_closed_boundaries": "Missing or invalid evidence/PRD, traversal paths, prompt target symlinks, and prompt ancestor symlink escapes block before prompt writes.",
-    "no_model_execution_or_artifact_writes": "The CLI emits an idiom artifact --no-tools command recipe but does not execute it or write ADR markdown, ADR index, PRD, traceability, event, report, or evidence artifacts.",
-    "durable_privacy": "Durable reports and workflow state exclude rendered prompt bodies, raw transcripts, file bodies, secrets, and customer-identifying data.",
+    "discovery_first_review": "passed",
+    "cli_surface": "passed",
+    "prompt_plan_contract": "passed",
+    "fail_closed_boundaries": "passed",
+    "no_model_execution_or_artifact_writes": "passed",
+    "durable_privacy": "passed",
     "verdict": "pass"
   },
   "reviewed_at": "2026-05-18T12:40:00Z",

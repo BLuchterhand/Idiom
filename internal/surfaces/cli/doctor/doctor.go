@@ -13,7 +13,6 @@ import (
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/autodetect"
 	"idiom/internal/runtime/readiness"
-	toolcmd "idiom/internal/surfaces/cli/tool"
 )
 
 // checkResult is one diagnostic outcome. Status is "pass" | "warn" |
@@ -119,7 +118,7 @@ func logDoctorReadinessTelemetry(rec *telemetry.Recorder, profiles []readinessPr
 }
 
 func logDoctorPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	toolcmd.LogCLIPhase(rec, eventType, fields)
+	telemetry.LogPhase(rec, eventType, fields)
 }
 
 // checkBackends looks for at least one supported runner on $PATH. A
@@ -469,7 +468,7 @@ func readinessHostChecks(results []checkResult) []readiness.HostCheck {
 	for _, result := range results {
 		out = append(out, readiness.HostCheck{
 			Name:   result.name,
-			Status: result.status,
+			Status: readiness.HostCheckStatus(result.status),
 			Detail: result.detail,
 			Remedy: result.remedy,
 		})

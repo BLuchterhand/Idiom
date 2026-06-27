@@ -10,7 +10,7 @@ import (
 	"slices"
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 type Config struct {
@@ -24,7 +24,21 @@ type Config struct {
 	RouteClassifier RouteClassifier `json:"route_classifier"`
 }
 
-var processHomeDir = currentUserHomeDir()
+type LoadOptions struct {
+	DisableGlobalConfigFallback          bool
+	AllowProcessHomeGlobalConfigFallback bool
+}
+
+var processHomeForGlobalConfigFallback = initialProcessHomeForGlobalConfigFallback()
+
+func initialProcessHomeForGlobalConfigFallback() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	return filepath.Clean(strings.TrimSpace(home))
+}
 
 // TUI holds terminal-UI behaviour flags.
 type TUI struct {
@@ -172,7 +186,7 @@ type LlamaServer struct {
 // IsMLX reports whether this backend is an MLX-based server (mlx_lm.server or
 // equivalent) rather than llama.cpp. Empty Kind defaults to llama.
 func (l LlamaServer) IsMLX() bool {
-	return util.EqualTrimFold(l.Kind, BackendMLX)
+	return textutil.EqualTrimFold(l.Kind, BackendMLX)
 }
 
 func (l LlamaServer) IsOpenAIResponses() bool {
@@ -185,19 +199,19 @@ func (l LlamaServer) IsOpenAIResponses() bool {
 }
 
 func (l LlamaServer) IsZAI() bool {
-	return util.EqualTrimFold(l.Kind, BackendZAI)
+	return textutil.EqualTrimFold(l.Kind, BackendZAI)
 }
 
 func (l LlamaServer) IsGLM() bool {
-	return util.EqualTrimFold(l.Kind, BackendGLM)
+	return textutil.EqualTrimFold(l.Kind, BackendGLM)
 }
 
 func (l LlamaServer) IsMiniMax() bool {
-	return util.EqualTrimFold(l.Kind, BackendMiniMax)
+	return textutil.EqualTrimFold(l.Kind, BackendMiniMax)
 }
 
 func (l LlamaServer) IsDeepSeek() bool {
-	return util.EqualTrimFold(l.Kind, BackendDeepSeek)
+	return textutil.EqualTrimFold(l.Kind, BackendDeepSeek)
 }
 
 func (l LlamaServer) IsHosted() bool {
@@ -422,7 +436,7 @@ func Default() Config {
 			MinP:                   0.0,
 			PresencePenalty:        0.0,
 			RepetitionPenalty:      1.0,
-			EnableThinking:         util.Ptr(true),
+			EnableThinking:         boolPtr(true),
 			PreserveThinking:       true,
 			MaxTokens:              8192,
 			MaxHistory:             20,
@@ -450,6 +464,10 @@ func Default() Config {
 }
 
 func Load(path string) (Config, error) {
+	return LoadWithOptions(path, LoadOptions{})
+}
+
+func LoadWithOptions(path string, opts LoadOptions) (Config, error) {
 	// Try the specified config file first.
 	data, err := os.ReadFile(path)
 	if err == nil {
@@ -460,7 +478,7 @@ func Load(path string) (Config, error) {
 	}
 
 	// Local config missing — try ~/.idiom/config.json.
-	if home, homeErr := os.UserHomeDir(); homeErr == nil && shouldUseGlobalConfigFallback(home) {
+	if home, homeErr := os.UserHomeDir(); homeErr == nil && shouldUseGlobalConfigFallback(home, opts) {
 		globalPath := filepath.Join(home, ".idiom", "config.json")
 		data, err = os.ReadFile(globalPath)
 		if err == nil {
@@ -479,30 +497,30 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
-func currentUserHomeDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-
-	return filepath.Clean(home)
-}
-
-func shouldUseGlobalConfigFallback(home string) bool {
+func shouldUseGlobalConfigFallback(home string, opts LoadOptions) bool {
 	home = filepath.Clean(strings.TrimSpace(home))
 	if home == "" {
 		return false
 	}
 
-	if !util.RunningUnderGoTest() {
-		return true
+	if opts.DisableGlobalConfigFallback ||
+		strings.TrimSpace(os.Getenv("IDIOM_DISABLE_GLOBAL_CONFIG_FALLBACK")) != "" {
+		return false
 	}
 
-	if strings.TrimSpace(os.Getenv("IDIOM_TEST_ALLOW_GLOBAL_CONFIG_FALLBACK")) != "" {
-		return true
+	if isGoTestProcess() &&
+		!opts.AllowProcessHomeGlobalConfigFallback &&
+		strings.TrimSpace(os.Getenv("IDIOM_ALLOW_PROCESS_HOME_GLOBAL_CONFIG_FALLBACK")) == "" &&
+		home == filepath.Clean(strings.TrimSpace(processHomeForGlobalConfigFallback)) {
+		return false
 	}
 
-	return processHomeDir != "" && home != processHomeDir
+	return true
+}
+
+func isGoTestProcess() bool {
+	executable := strings.TrimSpace(os.Args[0])
+	return strings.HasSuffix(executable, ".test")
 }
 
 // loadConfigFromData unmarshals config data, resolves paths relative to
@@ -1167,7 +1185,7 @@ func BuiltinChatPresets() map[string]ChatPreset {
 			MinP:              0.0,
 			PresencePenalty:   0.0,
 			RepetitionPenalty: 1.0,
-			EnableThinking:    util.Ptr(true),
+			EnableThinking:    boolPtr(true),
 			PreserveThinking:  false,
 			MaxTokens:         8192,
 		},
@@ -1179,7 +1197,7 @@ func BuiltinChatPresets() map[string]ChatPreset {
 			MinP:              0.0,
 			PresencePenalty:   0.0,
 			RepetitionPenalty: 1.0,
-			EnableThinking:    util.Ptr(true),
+			EnableThinking:    boolPtr(true),
 			PreserveThinking:  true,
 			MaxTokens:         8192,
 		},
@@ -1191,7 +1209,7 @@ func BuiltinChatPresets() map[string]ChatPreset {
 			MinP:              0.0,
 			PresencePenalty:   1.5,
 			RepetitionPenalty: 1.0,
-			EnableThinking:    util.Ptr(true),
+			EnableThinking:    boolPtr(true),
 			PreserveThinking:  false,
 			MaxTokens:         8192,
 		},
@@ -1203,7 +1221,7 @@ func BuiltinChatPresets() map[string]ChatPreset {
 			MinP:              0.0,
 			PresencePenalty:   1.5,
 			RepetitionPenalty: 1.0,
-			EnableThinking:    util.Ptr(false),
+			EnableThinking:    boolPtr(false),
 			PreserveThinking:  false,
 			MaxTokens:         4096,
 		},
@@ -1215,7 +1233,7 @@ func BuiltinChatPresets() map[string]ChatPreset {
 			MinP:              0.0,
 			PresencePenalty:   1.5,
 			RepetitionPenalty: 1.0,
-			EnableThinking:    util.Ptr(false),
+			EnableThinking:    boolPtr(false),
 			PreserveThinking:  false,
 			MaxTokens:         4096,
 		},
@@ -1259,12 +1277,24 @@ func applyChatPreset(chat *Chat, preset ChatPreset) {
 	chat.MinP = preset.MinP
 	chat.PresencePenalty = preset.PresencePenalty
 	chat.RepetitionPenalty = preset.RepetitionPenalty
-	chat.EnableThinking = util.ClonePtr(preset.EnableThinking)
+	chat.EnableThinking = clonePtr(preset.EnableThinking)
 	chat.PreserveThinking = preset.PreserveThinking
 
 	if preset.MaxTokens > 0 {
 		chat.MaxTokens = preset.MaxTokens
 	}
+}
+
+func boolPtr(value bool) *bool {
+	return &value
+}
+
+func clonePtr[T any](value *T) *T {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func knownBackendKinds() []string {

@@ -3,8 +3,10 @@ package lane
 import (
 	"strings"
 
+	lanecontract "idiom/internal/contracts/lane"
 	"idiom/internal/platform/config"
-	"idiom/internal/surfaces/cli/telemetry"
+	"idiom/internal/runtime/readiness"
+	cmdtelemetry "idiom/internal/surfaces/cli/telemetry"
 )
 
 func laneStartTelemetryFields(opts laneOptions, cfg config.Config) map[string]any {
@@ -59,7 +61,7 @@ func laneDoctorReadinessProfile(opts laneOptions) (readinessProfileReport, bool)
 		return readinessProfileReport{}, false
 	}
 
-	profiles, err := buildDoctorReadinessProfiles(opts.ConfigPath, profileName, nil)
+	profiles, err := readiness.BuildProfiles(opts.ConfigPath, profileName, nil)
 	if err != nil || len(profiles) != 1 {
 		return readinessProfileReport{}, false
 	}
@@ -69,10 +71,10 @@ func laneDoctorReadinessProfile(opts laneOptions) (readinessProfileReport, bool)
 
 func laneReadinessProfileName(mode string) string {
 	switch strings.TrimSpace(mode) {
-	case "plan-execute":
+	case string(lanecontract.LanePlanExecute):
 		return "plan"
-	case "implement":
-		return "implement"
+	case string(lanecontract.LaneImplement):
+		return string(lanecontract.LaneImplement)
 	default:
 		return ""
 	}

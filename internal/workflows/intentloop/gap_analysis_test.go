@@ -1,6 +1,10 @@
 package intentloop
 
-import "testing"
+import (
+	"testing"
+
+	plancontract "idiom/internal/contracts/plan"
+)
 
 func TestGapFingerprintUsesFullDetailHash(t *testing.T) {
 	truncated := "same first 2000 bytes"
@@ -59,5 +63,18 @@ func TestChildIdentityMismatchClassification(t *testing.T) {
 	}
 	if outcome.Reason != "blocked_child_identity_mismatch:scope_contract_sha256" {
 		t.Fatalf("Reason = %q", outcome.Reason)
+	}
+}
+
+func TestClassifyCycleOutcomeUsesPlanFailureKindContract(t *testing.T) {
+	for _, failureKind := range []plancontract.PlanExecuteFailureKind{
+		plancontract.PlanExecuteFailurePlannerBlocked,
+		plancontract.PlanExecuteFailurePlanArtifactMissing,
+		plancontract.PlanExecuteFailurePlanArtifactInvalid,
+	} {
+		outcome := ClassifyCycleOutcome(CycleRecord{FailureKind: string(failureKind)}, nil)
+		if !outcome.Blocking || outcome.Reason != string(failureKind) {
+			t.Fatalf("ClassifyCycleOutcome(%q) = %#v, want blocking reason from plan contract", failureKind, outcome)
+		}
 	}
 }

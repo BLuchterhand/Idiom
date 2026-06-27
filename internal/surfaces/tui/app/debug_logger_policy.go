@@ -3,12 +3,12 @@ package app
 import (
 	"path/filepath"
 	"strings"
-
-	"idiom/internal/platform/util"
 )
 
-func suppressDebugLoggerForTestProcess(dir string) bool {
-	if !util.RunningUnderGoTest() {
+var defaultDebugLoggerSuppressed bool
+
+func suppressDefaultDebugLogger(dir string) bool {
+	if !defaultDebugLoggerSuppressed {
 		return false
 	}
 

@@ -9,15 +9,18 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/contracts/autonomy"
 	"idiom/internal/contracts/pathparse"
-	"idiom/internal/contracts/plan"
-	"idiom/internal/platform/util"
+	plancontract "idiom/internal/contracts/plan"
+	"idiom/internal/contracts/workflowstate"
+	"idiom/internal/platform/markdownsection"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/modepolicy"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/planexecute"
-	"idiom/internal/workflows/workflowstate"
+	planexecuteadapters "idiom/internal/workflows/planexecute/adapters"
 )
 
 // promptExecutionPlan is the minimal OpenCode-aligned carrier for a turn.
@@ -125,7 +128,7 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 	if suppressTranscript {
 		history = append(history, llama.ChatMessage{Role: "user", Content: prompt})
 	}
-	if activePlanContext := m.activeFeaturePlannerPlanContext(); activePlanContext != "" && (plan.route.Family == "conversation" || plan.route.Contract == "direct_answer") {
+	if activePlanContext := m.activeFeaturePlannerPlanContext(); activePlanContext != "" && (plan.route.Family == string(autonomy.TaskFamilyConversation) || plan.route.Contract == string(workerruntime.ContractDirectAnswer)) {
 		history = append(history, llama.ChatMessage{Role: "system", Content: activePlanContext})
 		m.logMessage("active_feature_planner_plan_context", activePlanContext)
 	}
@@ -207,14 +210,14 @@ func (m *Model) recoverDirectImplementationContext(prompt string, plan promptExe
 
 	var diagnostics strings.Builder
 
-	section := planexecute.BuildPromptContextPackSection(m.cfg, planexecute.PromptContextPackOptions{
+	section := planexecute.BuildPromptContextPackSectionWithRunner(m.cfg, planexecute.PromptContextPackOptions{
 		Mode:        "implement",
 		Title:       prompt,
 		Brief:       prompt,
 		ProjectRoot: m.projectRoot(),
 		Limit:       8,
 		Timeout:     directImplementContextPreloadTimeout,
-	}, &diagnostics)
+	}, &diagnostics, planexecuteadapters.Dependencies().RunPromptContextTool)
 
 	if diag := strings.TrimSpace(diagnostics.String()); diag != "" {
 		m.logMessage("direct_context_recovery", truncateImplementationDispatchText(diag, 700))
@@ -397,9 +400,9 @@ func validateRouteFamilyAgainstExplicitEditScope(route turnRoutePlan, prompt str
 		return route
 	}
 
-	paths := appendUniqueBriefStrings(nil, RequiredEditPathsFromPrompt(prompt)...)
+	paths := appendUniqueBriefStrings(nil, plancontract.RequiredEditPathsFromPrompt(prompt)...)
 
-	paths = appendUniqueBriefStrings(paths, AllowedEditPathsFromPrompt(prompt)...)
+	paths = appendUniqueBriefStrings(paths, plancontract.AllowedEditPathsFromPrompt(prompt)...)
 	paths = appendUniqueBriefStrings(paths, pathparse.MentionedWorkspacePaths(prompt)...)
 
 	if len(paths) == 0 {
@@ -425,7 +428,7 @@ func routePathLooksLikeGDScript(path string) bool {
 func (m *Model) planExecuteCommandExecutionPlan(objective string) promptExecutionPlan {
 	mode := modepolicy.BuildMode()
 	route := normalizeTurnRoutePlan(turnRoutePlan{
-		Family:      string(workerruntime.TaskFamilyPlanThenExecutePlanner),
+		Family:      string(autonomy.TaskFamilyPlanThenExecutePlanner),
 		Reason:      "typed_plan_execute_command",
 		RouteSource: routeSourceTypedCommand,
 	}, mode)
@@ -567,8 +570,8 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 
 func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode modepolicy.Mode, prompt string) workerruntime.WorkerRuntimeBrief {
 	brief := turnRoutePlanRuntimeBrief(route, mode, m.workspaceAllowedTools())
-	if m != nil && m.planExecuteActive && strings.TrimSpace(m.forcedTaskFamily) == "direct_question" {
-		brief.PermissionProfile = "conversation_only"
+	if m != nil && m.planExecuteActive && strings.TrimSpace(m.forcedTaskFamily) == string(autonomy.TaskFamilyDirectQuestion) {
+		brief.PermissionProfile = string(workerruntime.PermissionConversationOnly)
 		brief.AllowedTools = nil
 		brief.RequiredEvidence = nil
 	}
@@ -589,8 +592,8 @@ func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode modepolicy.Mo
 	brief.TargetPacket = appendUniqueBriefStrings(brief.TargetPacket, promptContextPacketMarkers(prompt)...)
 
 	scopeContract, useTypedPlanExecuteScope := m.planExecuteRuntimeScopeContract(route)
-	allowed := AllowedEditPathsFromPrompt(prompt)
-	required := RequiredEditPathsFromPrompt(prompt)
+	allowed := plancontract.AllowedEditPathsFromPrompt(prompt)
+	required := plancontract.RequiredEditPathsFromPrompt(prompt)
 
 	if useTypedPlanExecuteScope {
 		required = scopeContract.RequiredCoveragePaths
@@ -806,15 +809,15 @@ func filterBriefStrings(values []string, keep func(string) bool) []string {
 	return out
 }
 
-func runtimeBriefWithPlanExecuteEditSetObligations(brief workerruntime.WorkerRuntimeBrief, obligations planexecute.EditSetObligations) workerruntime.WorkerRuntimeBrief {
+func runtimeBriefWithPlanExecuteEditSetObligations(brief workerruntime.WorkerRuntimeBrief, obligations plancontract.EditSetObligations) workerruntime.WorkerRuntimeBrief {
 	obligations = obligations.Normalized()
-	if !runtimeBriefHasNonPromptEditSetObligation(obligations, planexecute.EditSetObligationKindTestEdit) &&
-		!runtimeBriefHasNonPromptEditSetObligation(obligations, planexecute.EditSetObligationKindImplementationEdit) {
+	if !runtimeBriefHasNonPromptEditSetObligation(obligations, plancontract.EditSetObligationKindTestEdit) &&
+		!runtimeBriefHasNonPromptEditSetObligation(obligations, plancontract.EditSetObligationKindImplementationEdit) {
 
 		return brief
 	}
 
-	if runtimeBriefHasNonPromptEditSetObligation(obligations, planexecute.EditSetObligationKindTestEdit) {
+	if runtimeBriefHasNonPromptEditSetObligation(obligations, plancontract.EditSetObligationKindTestEdit) {
 		brief.Constraints = appendUniqueBriefStrings(brief.Constraints, "missing_requested_test_edit_recovery")
 		brief.RequiredEvidence = appendUniqueBriefStrings(brief.RequiredEvidence, "test_edit_or_test_path_source_satisfied_evidence")
 		brief.RequiredNext = appendUniqueBriefStrings(brief.RequiredNext,
@@ -822,7 +825,7 @@ func runtimeBriefWithPlanExecuteEditSetObligations(brief workerruntime.WorkerRun
 		)
 	}
 
-	if runtimeBriefHasNonPromptEditSetObligation(obligations, planexecute.EditSetObligationKindImplementationEdit) {
+	if runtimeBriefHasNonPromptEditSetObligation(obligations, plancontract.EditSetObligationKindImplementationEdit) {
 		brief.Constraints = appendUniqueBriefStrings(brief.Constraints, "missing_requested_implementation_edit_recovery")
 		brief.RequiredEvidence = appendUniqueBriefStrings(brief.RequiredEvidence, "implementation_edit_or_implementation_path_source_satisfied_evidence")
 		brief.RequiredNext = appendUniqueBriefStrings(brief.RequiredNext,
@@ -833,7 +836,7 @@ func runtimeBriefWithPlanExecuteEditSetObligations(brief workerruntime.WorkerRun
 	return brief
 }
 
-func runtimeBriefHasNonPromptEditSetObligation(obligations planexecute.EditSetObligations, kind planexecute.EditSetObligationKind) bool {
+func runtimeBriefHasNonPromptEditSetObligation(obligations plancontract.EditSetObligations, kind plancontract.EditSetObligationKind) bool {
 	for _, obligation := range obligations.Normalized() {
 		if obligation.Kind != kind {
 			continue
@@ -847,24 +850,14 @@ func runtimeBriefHasNonPromptEditSetObligation(obligations planexecute.EditSetOb
 	return false
 }
 
-func (m *Model) planExecuteRuntimeScopeContract(route turnRoutePlan) (planexecute.PlanScopeContract, bool) {
+func (m *Model) planExecuteRuntimeScopeContract(route turnRoutePlan) (plancontract.PlanScopeContract, bool) {
 	if m == nil || !m.planExecuteActive || !workerruntime.TaskFamilyIsPlanThenExecutePlanner(route.Family) {
-		return planexecute.PlanScopeContract{}, false
+		return plancontract.PlanScopeContract{}, false
 	}
 
 	contract := m.planExecuteScopeContract.Normalized()
 
 	return contract, true
-}
-
-// RequiredEditPathsFromPrompt is the exported view of the brief-
-// parsing logic the runner uses to populate brief.RequiredEditPaths.
-// External callers (today: cmd/idiom's `idiom lane postflight`) use
-// this so the postflight allowlist check matches exactly what the
-// runner saw — diverging implementations would produce different
-// allowlists for the same brief, which is a footgun.
-func RequiredEditPathsFromPrompt(prompt string) []string {
-	return plancontract.RequiredEditPathsFromPrompt(prompt)
 }
 
 func promptHasRequiredEditPayload(prompt string) bool {
@@ -895,13 +888,6 @@ func requiredEditPayloadPathsFromPrompt(prompt string, candidatePaths []string) 
 	}
 
 	return paths
-}
-
-// AllowedEditPathsFromPrompt returns explicit candidate write-scope paths from
-// prompts. Unlike RequiredEditPathsFromPrompt, these paths are not completion
-// coverage obligations.
-func AllowedEditPathsFromPrompt(prompt string) []string {
-	return plancontract.AllowedEditPathsFromPrompt(prompt)
 }
 
 func looksLikePromptSectionBoundary(line string) bool {
@@ -1030,7 +1016,7 @@ func promptContextEvidencePaths(prompt string) []string {
 	paths := workspacePathsUnderPromptHeadings(prompt, headings)
 
 	for _, heading := range headings {
-		section := markdownSectionByHeading(prompt, heading)
+		section := markdownsection.ByHeading(prompt, heading)
 		if strings.TrimSpace(section) == "" {
 			continue
 		}
@@ -1044,6 +1030,7 @@ func promptContextEvidencePaths(prompt string) []string {
 type promptContextPacketProjectionResult struct {
 	WorkflowID            workflowstate.WorkflowID
 	State                 workflowstate.StateID
+	TerminalState         workflowstate.TerminalState
 	Dispatchable          bool
 	StructuredPacket      bool
 	LegacyHeadingFallback bool
@@ -1078,27 +1065,44 @@ func promptContextPacketProjection(prompt string) promptContextPacketProjectionR
 	projection := promptContextPacketProjectionResult{
 		WorkflowID:       workflowstate.WorkflowPromptContextPacket,
 		State:            workflowstate.StateTerminal,
+		TerminalState:    workflowstate.TerminalStateBlocked,
 		LegacyHeadings:   headings,
 		StructuredPacket: promptHasStructuredPacketMarker(prompt),
 	}
 	if projection.StructuredPacket {
 		projection.State = workflowstate.StateDispatchable
+		projection.TerminalState = ""
 		projection.Dispatchable = true
 		projection.Markers = appendUniqueBriefStrings(projection.Markers, "prompt_context:structured_packet")
 		projection.Reason = "structured_packet"
 		return projection
 	}
 
+	if !promptHasAnySectionHeading(prompt, headings) {
+		projection.Reason = "missing_structured_packet_or_legacy_heading"
+		return projection
+	}
+
 	projection.LegacyHeadingFallback = true
 	projection.State = workflowstate.StateDispatchable
+	projection.TerminalState = ""
 	projection.Dispatchable = true
 	projection.Reason = "legacy_heading_fallback"
 
 	return projection
 }
 
+func promptHasAnySectionHeading(prompt string, headings []string) bool {
+	for _, heading := range headings {
+		if promptHasSectionHeading(prompt, heading) {
+			return true
+		}
+	}
+	return false
+}
+
 func promptHasSectionHeading(prompt string, heading string) bool {
-	if strings.TrimSpace(markdownSectionByHeading(prompt, heading)) != "" {
+	if strings.TrimSpace(markdownsection.ByHeading(prompt, heading)) != "" {
 		return true
 	}
 
@@ -1227,7 +1231,7 @@ func promptContextPacketMarkers(prompt string) []string {
 
 func promptHasStructuredPacketMarker(prompt string) bool {
 	lower := strings.ToLower(prompt)
-	if util.ContainsAny(lower, `"context_packet"`, `"context_pack"`) ||
+	if textutil.ContainsAny(lower, `"context_packet"`, `"context_pack"`) ||
 		(strings.Contains(lower, `"planning_packet`) && strings.Contains(lower, `"schema"`)) {
 
 		return true
@@ -1263,7 +1267,7 @@ func requiredEditSnippetsFromPrompt(prompt string, requiredPaths []string) []wor
 	var blocks []requiredEditBlock
 
 	for _, heading := range headings {
-		candidate := markdownSectionByHeading(prompt, heading)
+		candidate := markdownsection.ByHeading(prompt, heading)
 		if strings.TrimSpace(candidate) == "" {
 			continue
 		}
@@ -1313,117 +1317,6 @@ func requiredEditSnippetsFromPrompt(prompt string, requiredPaths []string) []wor
 	}
 
 	return snippets
-}
-
-func markdownSectionByHeading(markdown string, headingName string) string {
-	want := normalizeMarkdownHeadingText(headingName)
-	lines := strings.Split(markdown, "\n")
-	start := -1
-	startLevel := 0
-	inFence := false
-	fence := ""
-
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if marker, _, ok := markdownFenceOpen(trimmed); ok {
-			if !inFence {
-				inFence = true
-				fence = marker
-			} else if strings.HasPrefix(trimmed, fence) {
-				inFence = false
-				fence = ""
-			}
-
-			continue
-		}
-
-		if inFence {
-			continue
-		}
-
-		level, text, ok := markdownHeading(trimmed)
-		if !ok || !markdownHeadingMatches(normalizeMarkdownHeadingText(text), want) {
-			continue
-		}
-
-		start = i + 1
-		startLevel = level
-
-		break
-	}
-
-	if start < 0 {
-		return ""
-	}
-
-	end := len(lines)
-
-	inFence = false
-	fence = ""
-
-	for i := start; i < len(lines); i++ {
-		trimmed := strings.TrimSpace(lines[i])
-		if marker, _, ok := markdownFenceOpen(trimmed); ok {
-			if !inFence {
-				inFence = true
-				fence = marker
-			} else if strings.HasPrefix(trimmed, fence) {
-				inFence = false
-				fence = ""
-			}
-
-			continue
-		}
-
-		if inFence {
-			continue
-		}
-
-		level, _, ok := markdownHeading(trimmed)
-		if ok && level <= startLevel {
-			end = i
-			break
-		}
-	}
-
-	return strings.Join(lines[start:end], "\n")
-}
-
-func markdownHeading(line string) (int, string, bool) {
-	if !strings.HasPrefix(line, "#") {
-		return 0, "", false
-	}
-
-	level := 0
-	for level < len(line) && line[level] == '#' {
-		level++
-	}
-
-	if level == 0 || level > 6 || level >= len(line) || line[level] != ' ' {
-		return 0, "", false
-	}
-
-	text := strings.TrimSpace(line[level+1:])
-
-	text = strings.TrimSpace(strings.TrimRight(text, "#"))
-
-	if text == "" {
-		return 0, "", false
-	}
-
-	return level, text, true
-}
-
-func normalizeMarkdownHeadingText(text string) string {
-	text = strings.Trim(strings.ToLower(strings.TrimSpace(text)), ": ")
-	return strings.Join(strings.Fields(text), " ")
-}
-
-func markdownHeadingMatches(candidate string, want string) bool {
-	candidate = trimPromptHeadingQualifier(candidate)
-	want = trimPromptHeadingQualifier(want)
-
-	return candidate == want
 }
 
 func normalizePromptSectionHeading(text string) string {
@@ -1772,7 +1665,7 @@ func defaultVerificationPlan(root string) []string {
 
 func appendUniqueBriefStrings(dst []string, values ...string) []string {
 	for _, v := range values {
-		dst = util.AppendUnique(dst, v)
+		dst = textutil.AppendUnique(dst, v)
 	}
 
 	return dst
@@ -1803,12 +1696,12 @@ func tuneChatOptionsForPlan(opts llama.ChatOptions, plan promptExecutionPlan) ll
 		}
 	}
 
-	readOnly := profile == "conversation_only" || profile == "read_only_workspace" || profile == "read_only_verification_shell"
+	readOnly := profile == string(workerruntime.PermissionConversationOnly) || profile == string(workerruntime.PermissionReadOnlyWorkspace) || profile == string(workerruntime.PermissionReadOnlyVerificationShell)
 	if readOnly && !opts.ModelThinkingFloor {
 		// direct_answer (conversation lane) preserves thinking so the model
 		// maintains context across turns; other read-only contracts
 		// still disable it to reduce token overhead on focused probes.
-		if contract != "direct_answer" {
+		if contract != string(workerruntime.ContractDirectAnswer) {
 			thinkingOff := false
 
 			opts.EnableThinking = &thinkingOff
@@ -1827,7 +1720,7 @@ func tuneChatOptionsForPlan(opts llama.ChatOptions, plan promptExecutionPlan) ll
 	// a separate nothink server. Older MLX builds may ignore the field;
 	// launcher-level --chat-template-args remains the fallback there.
 	switch contract {
-	case "direct_answer":
+	case string(workerruntime.ContractDirectAnswer):
 		if opts.ModelThinkingFloor {
 			opts.MaxTokens = clampPositiveMin(opts.MaxTokens, 4096)
 		} else {

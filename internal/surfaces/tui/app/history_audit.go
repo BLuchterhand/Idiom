@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/agent"
 )
 
@@ -164,7 +164,7 @@ func historyAuditEventsForToolResult(event agent.ToolResultEvent) []historyAudit
 			files = intMapValue(fields, "context_freshness_refresh_files_indexed")
 		}
 
-		reason := util.FirstNonEmpty(stringMapValue(fields, "context_auto_refresh_reason"), stringMapValue(fields, "context_freshness_refresh_reason"))
+		reason := textutil.FirstNonEmpty(stringMapValue(fields, "context_auto_refresh_reason"), stringMapValue(fields, "context_freshness_refresh_reason"))
 		label := "context freshness refresh"
 
 		if files > 0 {
@@ -257,7 +257,7 @@ func historyAuditChildToolResult(content string) (historyAuditEvent, bool) {
 		return historyAuditEvent{}, false
 	}
 
-	tool := strings.TrimSpace(util.FirstNonEmpty(payload.Result.Tool, payload.Request.Tool))
+	tool := strings.TrimSpace(textutil.FirstNonEmpty(payload.Result.Tool, payload.Request.Tool))
 	if tool == "" {
 		return historyAuditEvent{}, false
 	}
@@ -293,7 +293,7 @@ func historyAuditModelCall(content string) (historyAuditEvent, bool) {
 		label = "model selected tool " + payload.ChosenTool
 	}
 
-	detail := joinNonEmpty("; ", keyValue("agent", util.FirstNonEmpty(payload.Agent, payload.Label)), intKeyValue("tokens", payload.TotalTokens))
+	detail := joinNonEmpty("; ", keyValue("agent", textutil.FirstNonEmpty(payload.Agent, payload.Label)), intKeyValue("tokens", payload.TotalTokens))
 
 	return historyAuditEvent{kind: "model", label: label, detail: detail, step: payload.Step}, true
 }
@@ -333,7 +333,7 @@ func historyAuditCompletionStatus(content string) (historyAuditEvent, bool) {
 		return historyAuditEvent{}, false
 	}
 
-	status := util.FirstNonEmpty(payload.Status, "updated")
+	status := textutil.FirstNonEmpty(payload.Status, "updated")
 	label := "contract " + status
 
 	if payload.Contract != "" {
@@ -538,7 +538,7 @@ func historyAuditAutonomyEvent(content string) (historyAuditEvent, bool) {
 			return historyAuditEvent{}, false
 		}
 
-		tool := util.FirstNonEmpty(payload.Policy.ToolName, payload.Correlation.ToolName)
+		tool := textutil.FirstNonEmpty(payload.Policy.ToolName, payload.Correlation.ToolName)
 		label := joinNonEmpty(" ", "tool policy", payload.Policy.Decision, tool)
 		detail := joinNonEmpty("; ", keyValue("reason", payload.Policy.ReasonCode), keyValue("result", payload.Policy.Result))
 
@@ -548,7 +548,7 @@ func historyAuditAutonomyEvent(content string) (historyAuditEvent, bool) {
 			return historyAuditEvent{}, false
 		}
 
-		label := strings.ReplaceAll(payload.Type, "_", " ") + ": " + util.FirstNonEmpty(payload.Obligation.Kind, payload.Obligation.ObligationID)
+		label := strings.ReplaceAll(payload.Type, "_", " ") + ": " + textutil.FirstNonEmpty(payload.Obligation.Kind, payload.Obligation.ObligationID)
 		detail := joinNonEmpty("; ", keyValue("target", payload.Obligation.TargetRef), keyValue("resolution", payload.Obligation.Resolution))
 
 		return historyAuditEvent{kind: "obligation", label: label, detail: detail, status: payload.Obligation.Status}, true
@@ -696,7 +696,7 @@ func historyAuditRouteDigest(events []historyAuditEvent) string {
 		}
 
 		if strings.EqualFold(event.label, "route selected") {
-			initial := util.FirstNonEmpty(auditDetailValue(event.detail, "initial"), event.status)
+			initial := textutil.FirstNonEmpty(auditDetailValue(event.detail, "initial"), event.status)
 			followup := auditDetailValue(event.detail, "followup")
 			contract := auditDetailValue(event.detail, "contract")
 			route := initial
@@ -874,9 +874,9 @@ func historySignalDigest(events []historyAuditEvent) string {
 			if event.status == "refresh" || strings.Contains(event.label, "refresh") {
 				add("cache refreshed")
 			} else if strings.Contains(event.label, "cache") {
-				add("cache " + util.FirstNonEmpty(event.status, "checked"))
+				add("cache " + textutil.FirstNonEmpty(event.status, "checked"))
 			} else {
-				add("freshness " + util.FirstNonEmpty(event.status, "checked"))
+				add("freshness " + textutil.FirstNonEmpty(event.status, "checked"))
 			}
 		case "routing":
 			add("redirected")
@@ -885,7 +885,7 @@ func historySignalDigest(events []historyAuditEvent) string {
 		case "delegation":
 			add("delegated check")
 		case "permission":
-			add("permission " + util.FirstNonEmpty(event.status, "checked"))
+			add("permission " + textutil.FirstNonEmpty(event.status, "checked"))
 		case "tool surface":
 			add("tool surface changed")
 		}

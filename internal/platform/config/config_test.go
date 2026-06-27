@@ -71,24 +71,114 @@ func TestLoadAppliesDefaultsAndResolvesWorkspacePaths(t *testing.T) {
 	}
 }
 
-func TestGlobalConfigFallbackSkipsProcessHomeDuringTests(t *testing.T) {
-	if processHomeDir == "" {
-		t.Skip("process home unavailable")
+func TestGlobalConfigFallbackPolicyIsExplicit(t *testing.T) {
+	home := t.TempDir()
+
+	if !shouldUseGlobalConfigFallback(home, LoadOptions{}) {
+		t.Fatal("default load policy should allow global config fallback")
 	}
 
-	t.Setenv("IDIOM_TEST_ALLOW_GLOBAL_CONFIG_FALLBACK", "")
-
-	if shouldUseGlobalConfigFallback(processHomeDir) {
-		t.Fatal("tests must not fall back to the process user's global config by default")
+	if shouldUseGlobalConfigFallback(home, LoadOptions{DisableGlobalConfigFallback: true}) {
+		t.Fatal("explicit load option should disable global config fallback")
 	}
 
-	if tempHome := t.TempDir(); !shouldUseGlobalConfigFallback(tempHome) {
-		t.Fatal("tests that explicitly replace HOME should still be able to exercise global config fallback")
+	t.Setenv("IDIOM_DISABLE_GLOBAL_CONFIG_FALLBACK", "1")
+	if shouldUseGlobalConfigFallback(home, LoadOptions{}) {
+		t.Fatal("explicit environment policy should disable global config fallback")
+	}
+}
+
+func TestGlobalConfigFallbackRejectsProcessHomeDuringTests(t *testing.T) {
+	home := t.TempDir()
+	originalHome := processHomeForGlobalConfigFallback
+	processHomeForGlobalConfigFallback = filepath.Clean(home)
+	t.Cleanup(func() { processHomeForGlobalConfigFallback = originalHome })
+
+	if shouldUseGlobalConfigFallback(home, LoadOptions{}) {
+		t.Fatal("default test load policy should reject process-home global config fallback")
 	}
 
-	t.Setenv("IDIOM_TEST_ALLOW_GLOBAL_CONFIG_FALLBACK", "1")
-	if !shouldUseGlobalConfigFallback(processHomeDir) {
-		t.Fatal("explicit test opt-in should allow process-home global config fallback")
+	if !shouldUseGlobalConfigFallback(home, LoadOptions{AllowProcessHomeGlobalConfigFallback: true}) {
+		t.Fatal("explicit load option should allow process-home global config fallback")
+	}
+
+	t.Setenv("IDIOM_ALLOW_PROCESS_HOME_GLOBAL_CONFIG_FALLBACK", "1")
+	if !shouldUseGlobalConfigFallback(home, LoadOptions{}) {
+		t.Fatal("explicit environment policy should allow process-home global config fallback")
+	}
+}
+
+func TestLoadDoesNotUseProcessHomeGlobalFallbackDuringTests(t *testing.T) {
+	home := t.TempDir()
+	globalDir := filepath.Join(home, ".idiom")
+	if err := os.MkdirAll(globalDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(globalDir, "config.json"), []byte(`{"app_name":"process-home-fixture"}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	originalHome := processHomeForGlobalConfigFallback
+	processHomeForGlobalConfigFallback = filepath.Clean(home)
+	t.Cleanup(func() { processHomeForGlobalConfigFallback = originalHome })
+	t.Setenv("HOME", home)
+
+	cfg, err := Load(filepath.Join(t.TempDir(), "missing-config.json"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.AppName == "process-home-fixture" {
+		t.Fatal("plain Load loaded process-home global config during test")
+	}
+}
+
+func TestLoadAllowsSyntheticHomeGlobalFallbackDuringTests(t *testing.T) {
+	originalHome := processHomeForGlobalConfigFallback
+	processHomeForGlobalConfigFallback = filepath.Clean(t.TempDir())
+	t.Cleanup(func() { processHomeForGlobalConfigFallback = originalHome })
+
+	home := t.TempDir()
+	globalDir := filepath.Join(home, ".idiom")
+	if err := os.MkdirAll(globalDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(globalDir, "config.json"), []byte(`{"app_name":"synthetic-home-fixture"}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	t.Setenv("HOME", home)
+
+	cfg, err := Load(filepath.Join(t.TempDir(), "missing-config.json"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if cfg.AppName != "synthetic-home-fixture" {
+		t.Fatalf("Load did not use synthetic HOME fallback, app_name=%q", cfg.AppName)
+	}
+}
+
+func TestLoadWithOptionsCanDisableGlobalConfigFallback(t *testing.T) {
+	home := t.TempDir()
+	globalDir := filepath.Join(home, ".idiom")
+	if err := os.MkdirAll(globalDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(globalDir, "config.json"), []byte(`{"app_name":"global-fixture"}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	t.Setenv("HOME", home)
+
+	cfg, err := LoadWithOptions(filepath.Join(t.TempDir(), "missing-config.json"), LoadOptions{
+		DisableGlobalConfigFallback: true,
+	})
+	if err != nil {
+		t.Fatalf("LoadWithOptions: %v", err)
+	}
+
+	if cfg.AppName == "global-fixture" {
+		t.Fatal("disabled fallback still loaded the global config")
 	}
 }
 

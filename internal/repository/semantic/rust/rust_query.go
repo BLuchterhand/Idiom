@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 // RustSymbolMatch is the public shape returned by FindSymbols: a flat
@@ -180,7 +180,7 @@ func (idx *RustIndex) FindCallsInto(pattern string, limit int) []RustCallMatch {
 						StartLine: symbol.StartLine,
 						EndLine:   symbol.EndLine,
 					},
-					CalleeName: util.FirstNonEmpty(target.Qualified, target.Name),
+					CalleeName: textutil.FirstNonEmpty(target.Qualified, target.Name),
 					Line:       call.Line,
 					Score:      target.Score,
 				})
@@ -232,7 +232,7 @@ func (idx *RustIndex) TraitImplementers(traitName string, limit int) []RustSymbo
 				continue
 			}
 
-			if !util.EqualTrimFold(parts[0], traitName) {
+			if !textutil.EqualTrimFold(parts[0], traitName) {
 				// Allow fuzzy match on the leading segment (e.g.
 				// `MyTrait<'a>` should match `MyTrait`).
 				if !strings.HasPrefix(strings.TrimSpace(parts[0]), traitName) {

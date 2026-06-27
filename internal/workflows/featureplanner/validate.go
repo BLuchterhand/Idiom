@@ -14,14 +14,15 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	featureplannercontract "idiom/internal/contracts/featureplanner"
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/workflows/productworkflow"
 )
 
 type ParsedPlannerOutput struct {
-	Kind            string
+	Kind            featureplannercontract.ToolName
 	Plan            FeaturePlan
 	Question        PlannerQuestion
 	SourceSatisfied SourceSatisfiedCloseout
@@ -53,7 +54,7 @@ func ParsePlannerOutput(raw string) (ParsedPlannerOutput, error) {
 
 	if strings.HasPrefix(trimmed, "<<QUESTION>>:") {
 		return ParsedPlannerOutput{
-			Kind: ToolAskPlannerQuestion,
+			Kind: featureplannercontract.ToolAskPlannerQuestion,
 			Question: PlannerQuestion{
 				QuestionSummary: strings.TrimSpace(strings.TrimPrefix(trimmed, "<<QUESTION>>:")),
 				Status:          "open",
@@ -70,26 +71,26 @@ func ParsePlannerOutput(raw string) (ParsedPlannerOutput, error) {
 		return ParsedPlannerOutput{}, fmt.Errorf("planner output must be JSON or <<QUESTION>>: %w", err)
 	}
 
-	switch strings.TrimSpace(envelope.Tool) {
-	case ToolSubmitFeaturePlan:
+	switch tool := featureplannercontract.ToolName(strings.TrimSpace(envelope.Tool)); tool {
+	case featureplannercontract.ToolSubmitFeaturePlan:
 		var plan FeaturePlan
 
 		if err := json.Unmarshal([]byte(trimmed), &plan); err != nil {
 			return ParsedPlannerOutput{}, fmt.Errorf("decode submit_feature_plan: %w", err)
 		}
 
-		return ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: plan, Raw: trimmed}, nil
-	case ToolSourceSatisfied:
+		return ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: plan, Raw: trimmed}, nil
+	case featureplannercontract.ToolSourceSatisfied:
 		var closeout SourceSatisfiedCloseout
 
 		if err := json.Unmarshal([]byte(trimmed), &closeout); err != nil {
 			return ParsedPlannerOutput{}, fmt.Errorf("decode source_satisfied: %w", err)
 		}
 
-		closeout.Tool = ToolSourceSatisfied
+		closeout.Tool = string(featureplannercontract.ToolSourceSatisfied)
 
-		return ParsedPlannerOutput{Kind: ToolSourceSatisfied, SourceSatisfied: closeout, Raw: trimmed}, nil
-	case ToolAskPlannerQuestion:
+		return ParsedPlannerOutput{Kind: featureplannercontract.ToolSourceSatisfied, SourceSatisfied: closeout, Raw: trimmed}, nil
+	case featureplannercontract.ToolAskPlannerQuestion:
 		var question PlannerQuestion
 
 		if err := json.Unmarshal([]byte(trimmed), &question); err != nil {
@@ -99,7 +100,7 @@ func ParsePlannerOutput(raw string) (ParsedPlannerOutput, error) {
 		question = plannerQuestionFromAliasFields(trimmed, question)
 		question.Status = "open"
 
-		return ParsedPlannerOutput{Kind: ToolAskPlannerQuestion, Question: question, Raw: trimmed}, nil
+		return ParsedPlannerOutput{Kind: featureplannercontract.ToolAskPlannerQuestion, Question: question, Raw: trimmed}, nil
 	default:
 		return ParsedPlannerOutput{}, fmt.Errorf("unsupported feature planner tool %q", envelope.Tool)
 	}
@@ -228,7 +229,7 @@ func validatePlan(plan FeaturePlan, contract plancontract.PlanExecutionContract)
 		errs = append(errs, errors.New("feature plan missing top_level_scope.success_criteria"))
 	}
 
-	if plan.CoverageGateResult != nil && plan.CoverageGateResult.Status != "pass" {
+	if plan.CoverageGateResult != nil && !productworkflow.ProductWorkflowStatusIsPass(plan.CoverageGateResult.Status) {
 		errs = append(errs, errors.New("feature plan blocked: upstream coverage gate has not passed"))
 	}
 
@@ -864,9 +865,10 @@ func validateProductAcceptedCoverageAuthority(brief ProductWorkflowBrief) []erro
 		errs = append(errs, fmt.Errorf("product workflow accepted_coverage.authority must be product_workflow, got %q", accepted.Authority))
 	}
 
-	switch strings.TrimSpace(accepted.Status) {
-	case "accepted", "pass":
-	case "":
+	status := strings.TrimSpace(accepted.Status)
+	switch {
+	case productworkflow.ProductWorkflowStatusIsAccepted(status):
+	case status == "":
 		errs = append(errs, errors.New("product workflow accepted_coverage missing accepted status"))
 	default:
 		errs = append(errs, fmt.Errorf("product workflow accepted_coverage status is not accepted: %s", accepted.Status))
@@ -893,7 +895,7 @@ func validateProductCoverageContractRef(planRef *CoverageContractRef, briefRef C
 	for _, missing := range missingProductCoverageContractAuthorityFields(briefRef) {
 		errs = append(errs, fmt.Errorf("product workflow coverage_contract missing %s", missing))
 	}
-	if status := strings.TrimSpace(briefRef.Status); status != "" && status != "pass" && status != "accepted" {
+	if status := strings.TrimSpace(briefRef.Status); status != "" && !productworkflow.ProductWorkflowStatusIsAccepted(status) {
 		errs = append(errs, fmt.Errorf("product workflow coverage contract is not accepted: %s", status))
 	}
 	if want := strings.TrimSpace(briefRef.ContractID); want != "" && strings.TrimSpace(planRef.ContractID) != want {
@@ -2242,11 +2244,11 @@ func validateStandaloneTestArtifactReadiness(root string, atom FeatureAtomPlan, 
 }
 
 func atomClaimsRedConfirmed(atom FeatureAtomPlan) bool {
-	if util.EqualTrimFold(atom.TestFirst.ExpectedPreExecutionResult, "red-confirmed") {
+	if textutil.EqualTrimFold(atom.TestFirst.ExpectedPreExecutionResult, "red-confirmed") {
 		return true
 	}
 	for _, value := range atom.PlannedTDDSnapshot.ExpectedPreExecutionResults {
-		if util.EqualTrimFold(value, "red-confirmed") {
+		if textutil.EqualTrimFold(value, "red-confirmed") {
 			return true
 		}
 	}
@@ -2459,7 +2461,7 @@ func compileAtomAuthorityContract(plan FeaturePlan, atom FeatureAtomPlan) planco
 
 	required = normalizeEditScopeList(append(required, requiredTDDTestArtifactPaths(atom)...))
 
-	allowed := featurePlannerAllowedScopeExcludingRequired(normalizeEditScopeList(atom.AllowedEditPaths), required)
+	allowed := plancontract.AllowedScopePathsExcludingRequired(atom.AllowedEditPaths, required)
 	obligations := atomEditSetObligations(atom, required)
 	tddByID := featurePlannerTDDObligationsByID(plan.TDDContract.Obligations)
 	scope := plancontract.NewPlanScopeContract(required, allowed, obligations)
@@ -2477,7 +2479,7 @@ func compileAtomAuthorityContract(plan FeaturePlan, atom FeatureAtomPlan) planco
 	}
 
 	for _, command := range normalizedStringList(atom.TestFirst.Commands) {
-		tddID := util.FirstNonEmpty(atom.TestFirst.ObligationRefs...)
+		tddID := textutil.FirstNonEmpty(atom.TestFirst.ObligationRefs...)
 		tdd := tddByID[strings.TrimSpace(tddID)]
 
 		contract.TDDObligations = append(contract.TDDObligations, plancontract.TDDObligation{
@@ -3142,7 +3144,7 @@ func requiredTDDTestArtifactPaths(atom FeatureAtomPlan) []string {
 	if atom.TestFirst.BaselineRequired ||
 		len(atom.TestFirst.ObligationRefs) > 0 ||
 		len(atom.TDDObligations) > 0 ||
-		util.EqualTrimFold(atom.TestFirst.ExpectedPreExecutionResult, "red-confirmed") {
+		textutil.EqualTrimFold(atom.TestFirst.ExpectedPreExecutionResult, "red-confirmed") {
 
 		paths = append(paths, atom.TestFirst.TestArtifactPaths...)
 	}
@@ -3580,6 +3582,8 @@ func ValidateDurableState(state FeatureState) error {
 
 		if strings.TrimSpace(run.State) == "" {
 			errs = append(errs, fmt.Errorf("active run %d missing state", i))
+		} else if !ActiveRunStateAllowed(run.State) {
+			errs = append(errs, fmt.Errorf("active run %d has unknown state %q", i, run.State))
 		}
 	}
 
@@ -3612,10 +3616,10 @@ func ValidateDurableState(state FeatureState) error {
 		if strings.TrimSpace(closure.AtomID) == "" {
 			errs = append(errs, fmt.Errorf("verification closure %d missing atom_id", i))
 		}
-		if strings.TrimSpace(closure.Status) == "" {
+		if strings.TrimSpace(string(closure.Status)) == "" {
 			errs = append(errs, fmt.Errorf("verification closure %d missing status", i))
 		}
-		if closure.Status != "" && closure.Status != "passed" && closure.Status != "source_satisfied" {
+		if closure.Status != "" && !VerificationClosureStatusAllowed(closure.Status) {
 			errs = append(errs, fmt.Errorf("verification closure %d has unsupported status %q", i, closure.Status))
 		}
 		if state.Plan.Artifact.ArtifactID != "" {
@@ -3679,16 +3683,14 @@ func ValidateDurableState(state FeatureState) error {
 			}
 		}
 	}
-	if state.Status == FeatureStateComplete && strings.TrimSpace(state.ReleaseReadiness.Status) == "" {
+	if state.Status == FeatureStateComplete && strings.TrimSpace(string(state.ReleaseReadiness.Status)) == "" {
 		errs = append(errs, errors.New("complete feature-planner state missing release readiness decision"))
 	}
-	if strings.TrimSpace(state.ReleaseReadiness.Status) != "" {
-		switch state.ReleaseReadiness.Status {
-		case "ready", "blocked":
-		default:
+	if strings.TrimSpace(string(state.ReleaseReadiness.Status)) != "" {
+		if !ReleaseReadinessStatusAllowed(state.ReleaseReadiness.Status) {
 			errs = append(errs, fmt.Errorf("release readiness has unsupported status %q", state.ReleaseReadiness.Status))
 		}
-		if state.ReleaseReadiness.Status == "ready" && (len(state.ReleaseReadiness.Blockers) > 0 || len(state.ReleaseReadiness.OpenObligations) > 0) {
+		if state.ReleaseReadiness.Status == ReleaseReadinessStatusReady && (len(state.ReleaseReadiness.Blockers) > 0 || len(state.ReleaseReadiness.OpenObligations) > 0) {
 			errs = append(errs, errors.New("release readiness cannot be ready with blockers or open obligations"))
 		}
 		for _, closureID := range state.ReleaseReadiness.VerificationClosureEventIDs {
@@ -3696,7 +3698,7 @@ func ValidateDurableState(state FeatureState) error {
 				errs = append(errs, fmt.Errorf("release readiness references unknown verification closure %q", closureID))
 			}
 		}
-		if state.ReleaseReadiness.Status == "ready" {
+		if state.ReleaseReadiness.Status == ReleaseReadinessStatusReady {
 			if len(state.ReleaseReadiness.VerificationClosureEventIDs) == 0 {
 				errs = append(errs, errors.New("release readiness ready state requires verification closure ids"))
 			}
@@ -3767,7 +3769,7 @@ func ApplyPlannerOutput(state *FeatureState, parsed ParsedPlannerOutput, now tim
 	state.PlanningLoop.Iteration++
 
 	switch parsed.Kind {
-	case ToolAskPlannerQuestion:
+	case featureplannercontract.ToolAskPlannerQuestion:
 		question := normalizePlannerQuestion(parsed.Question, fmt.Sprintf("q-%03d", len(state.OpenQuestions)+1), "", now)
 		question = demoteUnanchoredPathAuthorityQuestion(question)
 		if err := ValidatePlannerQuestion(question); err != nil {
@@ -3775,22 +3777,22 @@ func ApplyPlannerOutput(state *FeatureState, parsed ParsedPlannerOutput, now tim
 			state.PlanningLoop.State = FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, err.Error())
 
-			return []Event{{Type: "idiom.feature_planner.planner_question_rejected", SessionID: state.SessionID, Message: err.Error()}}
+			return []Event{{Type: featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionRejected), SessionID: state.SessionID, Message: err.Error()}}
 		}
 
 		state.OpenQuestions = append(state.OpenQuestions, question)
 		state.Status = FeatureStatePlanningQuestion
 		state.PlanningLoop.State = FeatureStatePlanningQuestion
 
-		return []Event{{Type: "idiom.feature_planner.planner_question_opened", SessionID: state.SessionID, Message: question.QuestionSummary}}
-	case ToolSourceSatisfied:
+		return []Event{{Type: featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionOpened), SessionID: state.SessionID, Message: question.QuestionSummary}}
+	case featureplannercontract.ToolSourceSatisfied:
 		closeout := normalizeSourceSatisfiedCloseout(parsed.SourceSatisfied)
 		if err := ValidateSourceSatisfiedCloseout(closeout); err != nil {
 			state.Status = FeatureStatePlanningRepair
 			state.PlanningLoop.State = FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, err.Error())
 
-			return []Event{{Type: "idiom.feature_planner.source_satisfied_rejected", SessionID: state.SessionID, Message: err.Error()}}
+			return []Event{{Type: featureplannercontract.EventName(featureplannercontract.EventSourceSatisfiedRejected), SessionID: state.SessionID, Message: err.Error()}}
 		}
 
 		state.Status = FeatureStateSourceSatisfied
@@ -3817,8 +3819,8 @@ func ApplyPlannerOutput(state *FeatureState, parsed ParsedPlannerOutput, now tim
 			fields["anchors"] = closeout.Anchors
 		}
 
-		return []Event{{Type: EventPlannerSourceSatisfied, SessionID: state.SessionID, FeatureTo: FeatureStateSourceSatisfied, Message: closeout.Summary, Fields: fields}}
-	case ToolSubmitFeaturePlan:
+		return []Event{{Type: featureplannercontract.EventName(featureplannercontract.EventPlannerSourceSatisfied), SessionID: state.SessionID, FeatureTo: FeatureStateSourceSatisfied, Message: closeout.Summary, Fields: fields}}
+	case featureplannercontract.ToolSubmitFeaturePlan:
 		parsed.Plan = NormalizePlanPromptDeclarations(parsed.Plan)
 		hydrateDurablePlanDefaults(&parsed.Plan, state, now)
 		stampFeaturePlanArtifact(&parsed.Plan, state, now)
@@ -3829,9 +3831,9 @@ func ApplyPlannerOutput(state *FeatureState, parsed ParsedPlannerOutput, now tim
 			state.Status = FeatureStatePlanningRepair
 			state.PlanningLoop.State = FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, err.Error())
-			candidate := recordRejectedPlanCandidate(state, parsed.Plan, "idiom.feature_planner.tdd_pre_execution_blocked", err.Error(), now)
+			candidate := recordRejectedPlanCandidate(state, parsed.Plan, featureplannercontract.EventName(featureplannercontract.EventTDDPreExecutionBlocked), err.Error(), now)
 
-			return []Event{rejectedPlanEvent(state.SessionID, "idiom.feature_planner.tdd_pre_execution_blocked", err.Error(), candidate)}
+			return []Event{rejectedPlanEvent(state.SessionID, featureplannercontract.EventName(featureplannercontract.EventTDDPreExecutionBlocked), err.Error(), candidate)}
 		}
 
 		state.Plan = parsed.Plan
@@ -3856,14 +3858,14 @@ func ApplyPlannerOutput(state *FeatureState, parsed ParsedPlannerOutput, now tim
 		}
 
 		events := []Event{
-			{Type: "idiom.feature_planner.plan_accepted", SessionID: state.SessionID, FeatureTo: FeatureStatePlanReview, Fields: featurePlanArtifactEventFields(state.Plan, map[string]any{"atom_count": len(state.Atoms)})},
-			{Type: "idiom.feature_planner.plan_reviewed", SessionID: state.SessionID, FeatureFrom: FeatureStatePlanReview, FeatureTo: FeatureStateAwaitingApproval, Fields: featurePlanArtifactEventFields(state.Plan, map[string]any{"review": "durable_plan_contract_passed"})},
-			{Type: "idiom.feature_planner.plan_approved", EventID: state.Plan.Approval.EventID, SessionID: state.SessionID, FeatureFrom: FeatureStateAwaitingApproval, FeatureTo: FeatureStateAtomizing, Fields: featurePlanArtifactEventFields(state.Plan, map[string]any{"approval": "harness_contract_approval"})},
-			{Type: "idiom.feature_planner.atoms_compiled", SessionID: state.SessionID, FeatureFrom: FeatureStateAtomizing, FeatureTo: FeatureStateReady, Fields: featurePlanArtifactEventFields(state.Plan, map[string]any{"atom_count": len(state.Atoms)})},
+			{Type: featureplannercontract.EventName(featureplannercontract.EventPlanAccepted), SessionID: state.SessionID, FeatureTo: FeatureStatePlanReview, Fields: featurePlanArtifactEventFields(state.Plan, map[string]any{"atom_count": len(state.Atoms)})},
+			{Type: featureplannercontract.EventName(featureplannercontract.EventPlanReviewed), SessionID: state.SessionID, FeatureFrom: FeatureStatePlanReview, FeatureTo: FeatureStateAwaitingApproval, Fields: featurePlanArtifactEventFields(state.Plan, map[string]any{"review": "durable_plan_contract_passed"})},
+			{Type: featureplannercontract.EventName(featureplannercontract.EventPlanApproved), EventID: state.Plan.Approval.EventID, SessionID: state.SessionID, FeatureFrom: FeatureStateAwaitingApproval, FeatureTo: FeatureStateAtomizing, Fields: featurePlanArtifactEventFields(state.Plan, map[string]any{"approval": "harness_contract_approval"})},
+			{Type: featureplannercontract.EventName(featureplannercontract.EventAtomsCompiled), SessionID: state.SessionID, FeatureFrom: FeatureStateAtomizing, FeatureTo: FeatureStateReady, Fields: featurePlanArtifactEventFields(state.Plan, map[string]any{"atom_count": len(state.Atoms)})},
 		}
 
 		events = append(events, recordTDDPreExecutionEvidence(state, now)...)
-		events = append(events, Event{Type: "idiom.feature_planner.dispatch_ready", SessionID: state.SessionID, FeatureFrom: FeatureStateReady, FeatureTo: FeatureStateDispatching})
+		events = append(events, Event{Type: featureplannercontract.EventName(featureplannercontract.EventDispatchReady), SessionID: state.SessionID, FeatureFrom: FeatureStateReady, FeatureTo: FeatureStateDispatching})
 
 		return events
 	default:
@@ -3871,12 +3873,12 @@ func ApplyPlannerOutput(state *FeatureState, parsed ParsedPlannerOutput, now tim
 		state.PlanningLoop.State = FeatureStateMalformedOutput
 		state.LastError = "unsupported parsed planner output"
 
-		return []Event{{Type: "idiom.feature_planner.malformed_structured_output", SessionID: state.SessionID, Message: state.LastError}}
+		return []Event{{Type: featureplannercontract.EventName(featureplannercontract.EventMalformedStructuredOutput), SessionID: state.SessionID, Message: state.LastError}}
 	}
 }
 
 func normalizeSourceSatisfiedCloseout(closeout SourceSatisfiedCloseout) SourceSatisfiedCloseout {
-	closeout.Tool = ToolSourceSatisfied
+	closeout.Tool = string(featureplannercontract.ToolSourceSatisfied)
 	closeout.Summary = strings.TrimSpace(closeout.Summary)
 	closeout.Reason = strings.TrimSpace(closeout.Reason)
 	closeout.EvidencePaths = nonEmptyFeaturePlannerStrings(closeout.EvidencePaths)
@@ -3963,7 +3965,7 @@ func recordTDDPreExecutionEvidence(state *FeatureState, now time.Time) []Event {
 		upsertTDDEvidence(state, evidence)
 
 		events = append(events, Event{
-			Type:      "idiom.feature_planner.tdd_pre_execution_checked",
+			Type:      featureplannercontract.EventName(featureplannercontract.EventTDDPreExecutionChecked),
 			SessionID: state.SessionID,
 			AtomID:    atom.ID,
 			EventID:   evidence.EventID,
@@ -4004,19 +4006,19 @@ func featurePlanArtifactEventFields(plan FeaturePlan, fields map[string]any) map
 	}
 
 	if artifactID := strings.TrimSpace(plan.Artifact.ArtifactID); artifactID != "" {
-		fields["plan_artifact_id"] = artifactID
+		fields[featureplannercontract.EventFieldPlanArtifactID] = artifactID
 	}
 	if plan.Artifact.Revision > 0 {
-		fields["plan_revision"] = plan.Artifact.Revision
+		fields[featureplannercontract.EventFieldPlanRevision] = plan.Artifact.Revision
 	}
 	if digest := strings.TrimSpace(plan.Artifact.Digest); digest != "" {
-		fields["plan_digest"] = digest
+		fields[featureplannercontract.EventFieldPlanDigest] = digest
 	}
 	if fingerprint := strings.TrimSpace(plan.Artifact.WorkspaceFingerprint); fingerprint != "" {
-		fields["workspace_fingerprint"] = fingerprint
+		fields[featureplannercontract.EventFieldWorkspaceFingerprint] = fingerprint
 	}
 	if approval := strings.TrimSpace(plan.Approval.EventID); approval != "" {
-		fields["approval_event_id"] = approval
+		fields[featureplannercontract.EventFieldApprovalEventID] = approval
 	}
 	if mode := strings.TrimSpace(plan.Approval.Mode); mode != "" {
 		fields["approval_mode"] = mode
@@ -4044,7 +4046,7 @@ func upsertTDDEvidence(state *FeatureState, evidence TDDPreExecutionEvidence) {
 func normalizeVerificationClosure(closure VerificationClosure) VerificationClosure {
 	closure.EventID = strings.TrimSpace(closure.EventID)
 	closure.AtomID = strings.TrimSpace(closure.AtomID)
-	closure.Status = strings.TrimSpace(strings.ToLower(closure.Status))
+	closure.Status = VerificationClosureStatus(strings.TrimSpace(strings.ToLower(string(closure.Status))))
 	closure.Outcome = strings.TrimSpace(closure.Outcome)
 	closure.PlanArtifactID = strings.TrimSpace(closure.PlanArtifactID)
 	if closure.PlanRevision < 0 {
@@ -4070,7 +4072,7 @@ func normalizeVerificationClosure(closure VerificationClosure) VerificationClosu
 
 func EvaluateReleaseReadiness(state FeatureState, decidedAt string) ReleaseReadinessDecision {
 	decision := ReleaseReadinessDecision{
-		Status:               "ready",
+		Status:               ReleaseReadinessStatusReady,
 		PlanArtifactID:       strings.TrimSpace(state.Plan.Artifact.ArtifactID),
 		PlanRevision:         state.Plan.Artifact.Revision,
 		PlanDigest:           strings.TrimSpace(state.Plan.Artifact.Digest),
@@ -4103,7 +4105,7 @@ func EvaluateReleaseReadiness(state FeatureState, decidedAt string) ReleaseReadi
 	if decision.WorkspaceFingerprint == "" {
 		addBlocker("workspace fingerprint missing")
 	}
-	if decision.ApprovalEventID == "" || !util.EqualTrimFold(state.Plan.Approval.Status, "approved") {
+	if decision.ApprovalEventID == "" || !textutil.EqualTrimFold(state.Plan.Approval.Status, "approved") {
 		addBlocker("approved plan artifact missing")
 	}
 	if state.Plan.Approval.PlanRevision > 0 && state.Plan.Approval.PlanRevision != decision.PlanRevision {
@@ -4130,13 +4132,13 @@ func EvaluateReleaseReadiness(state FeatureState, decidedAt string) ReleaseReadi
 	}
 	if len(state.OpenQuestions) > 0 {
 		for _, question := range state.OpenQuestions {
-			if strings.TrimSpace(question.Status) == "" || util.EqualTrimFold(question.Status, "open") {
+			if strings.TrimSpace(question.Status) == "" || textutil.EqualTrimFold(question.Status, "open") {
 				addBlocker("open planner question: " + firstNonEmpty(question.ID, question.QuestionSummary, "unknown"))
 			}
 		}
 	}
 	for _, run := range state.ActiveRuns {
-		if strings.TrimSpace(run.State) != "" && !util.EqualTrimFold(run.State, "complete") && !util.EqualTrimFold(run.State, "completed") && !util.EqualTrimFold(run.State, "source-satisfied") {
+		if strings.TrimSpace(run.State) != "" && !textutil.EqualTrimFold(run.State, "complete") && !textutil.EqualTrimFold(run.State, "completed") && !textutil.EqualTrimFold(run.State, "source-satisfied") {
 			addBlocker("active implementation run: " + firstNonEmpty(run.AtomID, run.RunID, "unknown"))
 		}
 	}
@@ -4167,7 +4169,7 @@ func EvaluateReleaseReadiness(state FeatureState, decidedAt string) ReleaseReadi
 		if closure.EventID != "" {
 			decision.VerificationClosureEventIDs = append(decision.VerificationClosureEventIDs, closure.EventID)
 		}
-		if closure.Status != "passed" && closure.Status != "source_satisfied" {
+		if !VerificationClosureStatusAllowed(closure.Status) {
 			addBlocker("verification closure not passed for atom: " + firstNonEmpty(atom.ID, atom.Title, "unknown"))
 		}
 		if closure.PlanArtifactID != decision.PlanArtifactID {
@@ -4190,7 +4192,7 @@ func EvaluateReleaseReadiness(state FeatureState, decidedAt string) ReleaseReadi
 		}
 		if atom.State == AtomStateComplete {
 			for _, result := range append(append([]VerificationCommandResult(nil), closure.RequiredTestResults...), closure.TDDCommandResults...) {
-				if result.Status != "passed" && result.Status != "source_satisfied" {
+				if result.Status != string(VerificationClosureStatusPassed) && result.Status != string(VerificationClosureStatusSourceSatisfied) {
 					addBlocker("verification command not passed for atom: " + firstNonEmpty(atom.ID, atom.Title, "unknown"))
 				}
 			}
@@ -4201,7 +4203,7 @@ func EvaluateReleaseReadiness(state FeatureState, decidedAt string) ReleaseReadi
 	decision.OpenObligations = uniqueSortedStrings(decision.OpenObligations)
 	decision.Blockers = uniqueSortedStrings(decision.Blockers)
 	if len(decision.Blockers) > 0 {
-		decision.Status = "blocked"
+		decision.Status = ReleaseReadinessStatusBlocked
 	}
 
 	return decision
@@ -4254,9 +4256,9 @@ func normalizeVerificationCommandResults(results []VerificationCommandResult) []
 			result.Status = "unknown"
 		}
 		if result.Status == "ok" {
-			result.Status = "passed"
+			result.Status = string(VerificationClosureStatusPassed)
 		}
-		if result.Status == "passed" || result.Status == "source_satisfied" {
+		if result.Status == string(VerificationClosureStatusPassed) || result.Status == string(VerificationClosureStatusSourceSatisfied) {
 			result.Passed = true
 		}
 
@@ -4640,7 +4642,13 @@ func MissingPreDispatchPlanTDD(atom FeatureAtomPlan) []string {
 
 func isTerminalFeatureState(status string) bool {
 	switch status {
-	case FeatureStateReleased, FeatureStateClosedWithRisk, FeatureStateCanceled, FeatureStateComplete, FeatureStateSourceSatisfied:
+	case FeatureStateReleased,
+		FeatureStateClosedWithRisk,
+		FeatureStateCanceled,
+		FeatureStateComplete,
+		FeatureStateSourceSatisfied,
+		FeatureStateFailed,
+		FeatureStatePlanningStuck:
 		return true
 	default:
 		return false

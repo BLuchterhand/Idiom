@@ -1,11 +1,12 @@
 package cpp
 
 import (
-	"idiom/internal/repository/semantic/internal/indexsupport"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"idiom/internal/repository/semantic/internal/indexsupport"
 )
 
 func TestBuildCppIndexAndQueries(t *testing.T) {

@@ -1,4 +1,4 @@
-package plancontract
+package plan
 
 import (
 	"slices"
@@ -42,7 +42,7 @@ func TestEditSetObligationRejectionReasonClassifiesChangedPaths(t *testing.T) {
 		t.Fatalf("source and test edits should satisfy obligations, got %q", got)
 	}
 
-	if got := obligations.RejectionReason([]string{"docs/feature.md", "pkg/feature_test.go"}); got != EditSetFailureMissingRequestedImplementationEdit {
+	if got := obligations.RejectionReason([]string{"docs/feature.md", "pkg/feature_test.go"}); got != PlanExecuteFailureMissingRequestedImplementationEdit {
 		t.Fatalf("docs plus tests must not satisfy implementation obligation, got %q", got)
 	}
 
@@ -62,7 +62,7 @@ func TestEditSetObligationsReportNormalizedOpenExactPaths(t *testing.T) {
 		t.Fatalf("open obligations = %#v, want one missing test path", open)
 	}
 
-	if got := open[0]; got.Code != "requested_test_edit_missing" || got.Kind != EditSetObligationKindTestEdit || got.Path != "pkg/feature_test.go" || got.Source != "required_scope" {
+	if got := open[0]; got.Code != EditSetOpenObligationRequestedTestEditMissing || got.Kind != EditSetObligationKindTestEdit || got.Path != "pkg/feature_test.go" || got.Source != "required_scope" {
 		t.Fatalf("open obligation = %#v, want normalized missing test path", got)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -44,7 +45,7 @@ func TestCleanupStalePlanArtifacts(t *testing.T) {
 
 	var logBuf bytes.Buffer
 
-	CleanupStalePlanArtifacts(root, 7*24*time.Hour, &logBuf)
+	cleanupStalePlanArtifacts(root, 7*24*time.Hour, &logBuf)
 
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
 		t.Fatalf("stale plan should have been removed; stat err=%v", err)
@@ -56,5 +57,24 @@ func TestCleanupStalePlanArtifacts(t *testing.T) {
 
 	if _, err := os.Stat(pointer); err != nil {
 		t.Fatalf("last.plan.json must survive regardless of mtime; stat err=%v", err)
+	}
+}
+
+func TestFindLatestPlanArtifactRejectsSymlinkedPlanDir(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir .idiom: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "latest.plan.json"), []byte(`{"session_id":"s1"}`), 0o644); err != nil {
+		t.Fatalf("seed outside plan: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, ".idiom", "plans")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	if _, err := findLatestPlanArtifactForTest(root, time.Time{}, "s1"); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("FindLatestPlanArtifact should reject symlinked plan dir, got %v", err)
 	}
 }

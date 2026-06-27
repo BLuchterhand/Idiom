@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	featureplannercontract "idiom/internal/contracts/featureplanner"
 	"idiom/internal/workflows/featureplanner"
 	. "idiom/internal/workflows/productworkflow"
 )
@@ -368,7 +369,7 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 		}
 
 		if taskFamily == "feature_planner_implementor" {
-			return fmt.Sprintf(`{"tool":%q,"summary":"atom-1 implemented","status":"completed","review_status":"skipped","review_repair_skipped":true}`, featureplanner.ToolPlanExecuteComplete), nil
+			return fmt.Sprintf(`{"tool":%q,"summary":"atom-1 implemented","status":"completed","review_status":"skipped","review_repair_skipped":true}`, featureplannercontract.ToolPlanExecuteComplete), nil
 		}
 
 		return "", fmt.Errorf("unknown task family: %s", taskFamily)

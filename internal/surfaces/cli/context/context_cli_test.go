@@ -404,7 +404,7 @@ func TestContextCommandsWriteStructuredTelemetry(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
 	code := Run([]string{"build", "--config", configPath, "--language", "go"}, &stdout, &stderr, rec, Deps{
-		LogPhase:       toolcmd.LogCLIPhase,
+		LogPhase:       telemetry.LogPhase,
 		LogToolRequest: toolcmd.LogDirectToolRequest,
 		LogToolResult:  toolcmd.LogDirectToolResult,
 	})

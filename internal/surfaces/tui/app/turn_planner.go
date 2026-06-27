@@ -9,7 +9,8 @@ import (
 	"time"
 	"unicode"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/contracts/autonomy"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/modepolicy"
 	"idiom/internal/runtime/workerruntime"
@@ -50,7 +51,7 @@ func routeClassifierFamilyEnumList() string {
 		"architecture",
 		"architecture_then_implement",
 		"implementation",
-		string(workerruntime.TaskFamilyPlanThenExecutePlanner),
+		string(autonomy.TaskFamilyPlanThenExecutePlanner),
 		"test_authoring",
 		"config_edit",
 		"script_edit",
@@ -118,11 +119,11 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 				"Prefer verification_only for requests to run checks/tests and report results without editing.",
 				"Prefer locate for finding where something is, and locate_then_implement when the user wants to find then change it.",
 				"Prefer implementation-like families when the user gives a directive to perform file changes, tests, docs, config, scripts, prompts, or repairs.",
-				fmt.Sprintf("Prefer %s when the requested outcome is to dispatch a durable implementation atom or brief through the plan-execute workflow, where valid terminal outcomes include a submit_plan artifact, source-satisfied closeout, or typed blocker before execution.", workerruntime.TaskFamilyPlanThenExecutePlanner),
+				fmt.Sprintf("Prefer %s when the requested outcome is to dispatch a durable implementation atom or brief through the plan-execute workflow, where valid terminal outcomes include a submit_plan artifact, source-satisfied closeout, or typed blocker before execution.", autonomy.TaskFamilyPlanThenExecutePlanner),
 				"Question-shaped wording is not a lane signal by itself. Classify by requested outcome: a polite request such as 'can you implement/fix/update/add...' is implementation when it asks the agent to perform the change now; a deliberative question such as 'can we/should we/how would we...' stays conversation when it asks about whether or how to change.",
 				"Do not let can/could/would/should/how/what/why/whether/explain wording override an explicit implementation directive.",
 				"After a completed implementation, do not keep a sticky implementation state. Route the new prompt from its requested_outcome: 'what did you change?' => answer/read-only; 'why did it fail?' => diagnose/read-only; 'it still goes off-screen, fix it' or 'that did not fix it' => change_workspace/prior_change/write_intent=yes unless a read-only constraint is present.",
-				fmt.Sprintf("Semantic examples, not trigger terms: 'Can you implement this feature: docs/tdd-feature.md' => implementation; 'Can you send this product workflow atom through the TUI plan-execute flow?' => %s; 'Can we shorten this label?' => conversation; 'Shorten this label.' => implementation; 'I want to test the implementation lane.' => conversation.", workerruntime.TaskFamilyPlanThenExecutePlanner),
+				fmt.Sprintf("Semantic examples, not trigger terms: 'Can you implement this feature: docs/tdd-feature.md' => implementation; 'Can you send this product workflow atom through the TUI plan-execute flow?' => %s; 'Can we shorten this label?' => conversation; 'Shorten this label.' => implementation; 'I want to test the implementation lane.' => conversation.", autonomy.TaskFamilyPlanThenExecutePlanner),
 				"Prefer gdscript_edit for edits limited to .gd GDScript files.",
 				"Prefer architecture for broad design, boundary, cross-component assessment, or repo-internal subsystem explanations where the answer depends on harness/tool/control-flow implementation evidence. Use conversation for ordinary explanation-only questions that do not need repository architecture evidence.",
 				"Prefer conversation for deliberative design or planning questions such as 'can you help me work out a design', 'how should we design', 'let's figure out how to build', or 'design a plan for' — these are about shaping ideas, not performing file changes. Only route to implementation or plan-execute families when the user gives an explicit directive to create or modify files now.",
@@ -462,7 +463,7 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode modepolicy.Mode) turnRouteP
 
 	switch plan.Family {
 	case "plan_execute", "plan_execute_planner", "plan_then_execute":
-		plan.Family = string(workerruntime.TaskFamilyPlanThenExecutePlanner)
+		plan.Family = string(autonomy.TaskFamilyPlanThenExecutePlanner)
 	}
 
 	if plan.Family == "" {
@@ -477,71 +478,71 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode modepolicy.Mode) turnRouteP
 	case workerruntime.ArtifactFinalAnswerTaskFamily:
 		plan.InitialLane = "main"
 		plan.FollowupLane = ""
-		plan.Contract = "artifact_final_answer"
-		plan.Reason = util.FirstNonEmpty(plan.Reason, "artifact_final_answer")
+		plan.Contract = string(workerruntime.ContractArtifactFinalAnswer)
+		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "artifact_final_answer")
 	case "direct_question", "conversation":
 		plan.Family = "conversation"
 		plan.InitialLane = "main"
 		plan.FollowupLane = ""
-		plan.Contract = "direct_answer"
-		plan.Reason = util.FirstNonEmpty(plan.Reason, "conversation")
+		plan.Contract = string(workerruntime.ContractDirectAnswer)
+		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "conversation")
 	case "debug_logs":
 		plan.Family = "conversation"
 		plan.InitialLane = "main"
 		plan.FollowupLane = ""
-		plan.Contract = "direct_answer"
-		plan.Reason = util.FirstNonEmpty(plan.Reason, "legacy_debug_logs_collapsed_to_conversation")
+		plan.Contract = string(workerruntime.ContractDirectAnswer)
+		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "legacy_debug_logs_collapsed_to_conversation")
 	case "verification_only":
 		plan.InitialLane = "main"
 		plan.FollowupLane = ""
-		plan.Contract = "direct_answer"
-		plan.Reason = util.FirstNonEmpty(plan.Reason, "verification_request")
+		plan.Contract = string(workerruntime.ContractDirectAnswer)
+		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "verification_request")
 	case "locate":
 		plan.InitialLane = "locate"
 		plan.FollowupLane = ""
-		plan.Contract = "locate_targets"
-		plan.Reason = util.FirstNonEmpty(plan.Reason, "locate_request")
+		plan.Contract = string(workerruntime.ContractLocateTargets)
+		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "locate_request")
 	case "locate_then_implement":
 		plan.InitialLane = "locate"
 		plan.FollowupLane = "implement"
-		plan.Contract = "implementation_result"
-		plan.Reason = util.FirstNonEmpty(plan.Reason, "locate_request")
+		plan.Contract = string(workerruntime.ContractImplementationResult)
+		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "locate_request")
 	case "explore_then_implement", "investigate_then_implement":
 		plan.InitialLane = "explore"
 		plan.FollowupLane = "implement"
-		plan.Contract = "implementation_result"
-		plan.Reason = util.FirstNonEmpty(plan.Reason, "explore_request")
+		plan.Contract = string(workerruntime.ContractImplementationResult)
+		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "explore_request")
 	case "review_then_implement":
 		plan.InitialLane = "review"
 		plan.FollowupLane = "implement"
-		plan.Contract = "implementation_result"
-		plan.Reason = util.FirstNonEmpty(plan.Reason, "review_request")
+		plan.Contract = string(workerruntime.ContractImplementationResult)
+		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "review_request")
 	case "security_review":
 		plan.InitialLane = "review"
 		plan.FollowupLane = ""
-		plan.Contract = "review_findings"
-		plan.Reason = util.FirstNonEmpty(plan.Reason, "security_review")
+		plan.Contract = string(workerruntime.ContractReviewFindings)
+		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "security_review")
 	case "performance_review":
 		plan.InitialLane = "review"
 		plan.FollowupLane = ""
-		plan.Contract = "review_findings"
-		plan.Reason = util.FirstNonEmpty(plan.Reason, "performance_review")
+		plan.Contract = string(workerruntime.ContractReviewFindings)
+		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "performance_review")
 	case "architecture":
 		plan.InitialLane = "architecture"
 		plan.FollowupLane = ""
-		plan.Contract = "architecture_assessment"
-		plan.Reason = util.FirstNonEmpty(plan.Reason, "architecture_request")
+		plan.Contract = string(workerruntime.ContractArchitecture)
+		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "architecture_request")
 	case "architecture_then_implement":
 		plan.InitialLane = "architecture"
 		plan.FollowupLane = "implement"
-		plan.Contract = "implementation_result"
-		plan.Reason = util.FirstNonEmpty(plan.Reason, "architecture_request")
+		plan.Contract = string(workerruntime.ContractImplementationResult)
+		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "architecture_request")
 	case "implementation", "test_authoring", "config_edit", "script_edit", "gdscript_edit", "docs_edit", "prompt_edit_security", "failure_injection":
 		plan.InitialLane = "implement"
 		plan.FollowupLane = ""
-		plan.Contract = "implementation_result"
-		plan.Reason = util.FirstNonEmpty(plan.Reason, "direct_implementation")
-	case string(workerruntime.TaskFamilyPlanThenExecutePlanner):
+		plan.Contract = string(workerruntime.ContractImplementationResult)
+		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "direct_implementation")
+	case string(autonomy.TaskFamilyPlanThenExecutePlanner):
 		// Planner phase of `idiom plan-execute`. Same lane shape as
 		// implementation (write-capable contract, single turn) but the
 		// only exposed write tool is submit_plan; per-edit writes are
@@ -551,22 +552,22 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode modepolicy.Mode) turnRouteP
 		// submit a plan.
 		plan.InitialLane = "implement"
 		plan.FollowupLane = ""
-		plan.Contract = "implementation_result"
-		plan.Reason = util.FirstNonEmpty(plan.Reason, string(workerruntime.TaskFamilyPlanThenExecutePlanner))
-	case string(workerruntime.TaskFamilyPlanThenExecuteReview):
+		plan.Contract = string(workerruntime.ContractImplementationResult)
+		plan.Reason = textutil.FirstNonEmpty(plan.Reason, string(autonomy.TaskFamilyPlanThenExecutePlanner))
+	case string(autonomy.TaskFamilyPlanThenExecuteReview):
 		// Post-executor review phase for `idiom plan-execute`. This is
 		// review-shaped, not implementation-shaped: the model may close
 		// with a checklist-backed pass, or use submit_plan only for
 		// corrective edits found by the review.
 		plan.InitialLane = "review"
 		plan.FollowupLane = ""
-		plan.Contract = "review_findings"
-		plan.Reason = util.FirstNonEmpty(plan.Reason, string(workerruntime.TaskFamilyPlanThenExecuteReview))
+		plan.Contract = string(workerruntime.ContractReviewFindings)
+		plan.Reason = textutil.FirstNonEmpty(plan.Reason, string(autonomy.TaskFamilyPlanThenExecuteReview))
 	case "multi_turn_state":
 		plan.Family = "conversation"
 		plan.InitialLane = "main"
-		plan.Contract = "direct_answer"
-		plan.Reason = util.FirstNonEmpty(plan.Reason, "context_followup")
+		plan.Contract = string(workerruntime.ContractDirectAnswer)
+		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "context_followup")
 	default:
 		return fallbackTurnRoute("", mode)
 	}
@@ -580,10 +581,10 @@ func correctTurnRoutePlanForPrompt(plan turnRoutePlan, prompt string, mode modep
 		normalized.Family = "architecture"
 		normalized.InitialLane = "architecture"
 		normalized.FollowupLane = ""
-		normalized.Contract = "architecture_assessment"
+		normalized.Contract = string(workerruntime.ContractArchitecture)
 		normalized.WriteIntent = "no"
 		normalized.ReadOnlyConstraint = true
-		normalized.Reason = util.FirstNonEmpty(normalized.Reason, "route_prompt_requests_architecture_evidence")
+		normalized.Reason = textutil.FirstNonEmpty(normalized.Reason, "route_prompt_requests_architecture_evidence")
 		normalized.ReasonCodes = appendUniqueBriefStrings(normalized.ReasonCodes, "route_prompt_requests_architecture_evidence")
 		normalized = normalizeTurnRoutePlan(normalized, mode)
 	}
@@ -592,7 +593,7 @@ func correctTurnRoutePlanForPrompt(plan turnRoutePlan, prompt string, mode modep
 		normalized.RequestedOutcome = "diagnose"
 		normalized.WriteIntent = "no"
 		normalized.ReadOnlyConstraint = true
-		normalized.Reason = util.FirstNonEmpty(normalized.Reason, "route_prompt_requests_evidence_report")
+		normalized.Reason = textutil.FirstNonEmpty(normalized.Reason, "route_prompt_requests_evidence_report")
 		normalized.ReasonCodes = appendUniqueBriefStrings(normalized.ReasonCodes, "route_prompt_requests_evidence_report")
 
 		if isImplementationLikeFamily(normalized.Family) {
@@ -673,9 +674,9 @@ func routePlanCorrectedByOutcomeContract(plan turnRoutePlan, mode modepolicy.Mod
 			plan.Family = "implementation"
 			plan.InitialLane = "implement"
 			plan.FollowupLane = ""
-			plan.Contract = "implementation_result"
+			plan.Contract = string(workerruntime.ContractImplementationResult)
 			plan.WriteIntent = "yes"
-			plan.Reason = util.FirstNonEmpty(plan.Reason, "route_outcome_change_workspace")
+			plan.Reason = textutil.FirstNonEmpty(plan.Reason, "route_outcome_change_workspace")
 			plan.ReasonCodes = appendUniqueBriefStrings(plan.ReasonCodes, "route_outcome_change_workspace")
 
 			return normalizeTurnRoutePlan(plan, mode), true
@@ -685,9 +686,9 @@ func routePlanCorrectedByOutcomeContract(plan turnRoutePlan, mode modepolicy.Mod
 			plan.Family = "explore_then_implement"
 			plan.InitialLane = "explore"
 			plan.FollowupLane = "implement"
-			plan.Contract = "implementation_result"
+			plan.Contract = string(workerruntime.ContractImplementationResult)
 			plan.WriteIntent = "yes"
-			plan.Reason = util.FirstNonEmpty(plan.Reason, "route_outcome_diagnose_then_change")
+			plan.Reason = textutil.FirstNonEmpty(plan.Reason, "route_outcome_diagnose_then_change")
 			plan.ReasonCodes = appendUniqueBriefStrings(plan.ReasonCodes, "route_outcome_diagnose_then_change")
 
 			return normalizeTurnRoutePlan(plan, mode), true
@@ -697,8 +698,8 @@ func routePlanCorrectedByOutcomeContract(plan turnRoutePlan, mode modepolicy.Mod
 			plan.Family = "verification_only"
 			plan.InitialLane = "main"
 			plan.FollowupLane = ""
-			plan.Contract = "direct_answer"
-			plan.Reason = util.FirstNonEmpty(plan.Reason, "route_outcome_verify")
+			plan.Contract = string(workerruntime.ContractDirectAnswer)
+			plan.Reason = textutil.FirstNonEmpty(plan.Reason, "route_outcome_verify")
 			plan.ReasonCodes = appendUniqueBriefStrings(plan.ReasonCodes, "route_outcome_verify")
 
 			return normalizeTurnRoutePlan(plan, mode), true
@@ -709,9 +710,9 @@ func routePlanCorrectedByOutcomeContract(plan turnRoutePlan, mode modepolicy.Mod
 		plan.Family = "implementation"
 		plan.InitialLane = "implement"
 		plan.FollowupLane = ""
-		plan.Contract = "implementation_result"
-		plan.RequestedOutcome = util.FirstNonEmpty(plan.RequestedOutcome, "change_workspace")
-		plan.Reason = util.FirstNonEmpty(plan.Reason, "route_write_intent_yes")
+		plan.Contract = string(workerruntime.ContractImplementationResult)
+		plan.RequestedOutcome = textutil.FirstNonEmpty(plan.RequestedOutcome, "change_workspace")
+		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "route_write_intent_yes")
 		plan.ReasonCodes = appendUniqueBriefStrings(plan.ReasonCodes, "route_write_intent_yes")
 
 		return normalizeTurnRoutePlan(plan, mode), true
@@ -736,7 +737,7 @@ func readOnlyRouteForOutcome(plan turnRoutePlan, mode modepolicy.Mode, reasonCod
 	plan.FollowupLane = ""
 	plan.Contract = ""
 	plan.WriteIntent = "no"
-	plan.Reason = util.FirstNonEmpty(plan.Reason, reasonCode)
+	plan.Reason = textutil.FirstNonEmpty(plan.Reason, reasonCode)
 	plan.ReasonCodes = appendUniqueBriefStrings(plan.ReasonCodes, reasonCode)
 
 	return normalizeTurnRoutePlan(plan, mode)
@@ -969,7 +970,7 @@ func normalizeRouteOutcome(value string) string {
 		return "diagnose_then_change"
 	case "verify", "verification", "verification_only", "test":
 		return "verify"
-	case "plan", "planner", "plan_then_execute", string(workerruntime.TaskFamilyPlanThenExecutePlanner):
+	case "plan", "planner", "plan_then_execute", string(autonomy.TaskFamilyPlanThenExecutePlanner):
 		return "plan"
 	case "review", "security_review", "performance_review", "architecture":
 		return "review"
@@ -1052,7 +1053,7 @@ func familyForRouteOutcome(outcome, writeIntent string) string {
 	case "verify":
 		return "verification_only"
 	case "plan":
-		return string(workerruntime.TaskFamilyPlanThenExecutePlanner)
+		return string(autonomy.TaskFamilyPlanThenExecutePlanner)
 	case "review":
 		return "security_review"
 	case "locate":
@@ -1082,7 +1083,7 @@ func fallbackTurnRoute(prompt string, mode modepolicy.Mode) turnRoutePlan {
 		return normalizeTurnRoutePlan(turnRoutePlan{
 			Family:           "implementation",
 			InitialLane:      "implement",
-			Contract:         "implementation_result",
+			Contract:         string(workerruntime.ContractImplementationResult),
 			RequestedOutcome: "change_workspace",
 			WriteIntent:      "yes",
 			Reason:           "route_fallback_concrete_workspace_creation",
@@ -1095,7 +1096,7 @@ func fallbackTurnRoute(prompt string, mode modepolicy.Mode) turnRoutePlan {
 		return normalizeTurnRoutePlan(turnRoutePlan{
 			Family:           "implementation",
 			InitialLane:      "implement",
-			Contract:         "implementation_result",
+			Contract:         string(workerruntime.ContractImplementationResult),
 			RequestedOutcome: "change_workspace",
 			WriteIntent:      "yes",
 			Reason:           "route_fallback_explicit_file_delete_followup",
@@ -1215,7 +1216,7 @@ func isImplementationLikeFamily(family string) bool {
 		"investigate_then_implement",
 		"review_then_implement",
 		"architecture_then_implement",
-		string(workerruntime.TaskFamilyPlanThenExecutePlanner):
+		string(autonomy.TaskFamilyPlanThenExecutePlanner):
 		return true
 	default:
 		return false
@@ -1315,7 +1316,7 @@ func renderTurnRoutePlan(plan turnRoutePlan) string {
 func turnRoutePlanRuntimeBrief(plan turnRoutePlan, mode modepolicy.Mode, workspaceAllowed []string) workerruntime.WorkerRuntimeBrief {
 	plan = normalizeTurnRoutePlan(plan, mode)
 
-	brief := workerruntime.RuntimeBriefForTaskFamily(plan.Family, util.FirstNonEmpty(plan.InitialLane, "main"), workspaceAllowed)
+	brief := workerruntime.RuntimeBriefForTaskFamily(plan.Family, textutil.FirstNonEmpty(plan.InitialLane, "main"), workspaceAllowed)
 
 	if plan.FollowupLane != "" {
 		brief.Constraints = append(brief.Constraints, "followup_lane="+plan.FollowupLane)

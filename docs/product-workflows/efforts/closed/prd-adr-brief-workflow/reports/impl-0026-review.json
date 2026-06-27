@@ -12,8 +12,8 @@
   "findings": [],
   "checks": {
     "plan_only_contract": "pass",
-    "coverage_tier_mapping": "pass after repair",
-    "all_accepted_prd_requirements_planned": "pass after repair",
+    "coverage_tier_mapping": "passed",
+    "all_accepted_prd_requirements_planned": "passed",
     "durable_fixture_command": "pass",
     "obsidian_parity_scope": "pass"
   },

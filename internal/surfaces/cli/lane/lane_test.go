@@ -12,9 +12,15 @@ import (
 	"time"
 
 	"idiom/internal/capabilities/workspace"
+	atomintakecontract "idiom/internal/contracts/atomintake"
+	lanecontract "idiom/internal/contracts/lane"
+	"idiom/internal/contracts/workflowstate"
+	"idiom/internal/contracts/writerroute"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
+	"idiom/internal/platform/jsonevents/jsoneventstest"
 	"idiom/internal/runtime/agent"
+	"idiom/internal/runtime/readiness"
 	canonicalprompts "idiom/prompts"
 )
 
@@ -44,6 +50,64 @@ func TestLaneBriefIntakeProjectionAllowsLegacyHeadingsAfterScope(t *testing.T) {
 		!strings.HasPrefix(projection.Reason, "legacy_heading:") {
 
 		t.Fatalf("scoped legacy heading brief should trigger atom intake through compatibility fallback: %#v", projection)
+	}
+}
+
+func TestLaneAtomIntakeReportFieldsProjectFinalNonDispatchableStates(t *testing.T) {
+	tests := []struct {
+		name         string
+		state        atomintakecontract.IntakeState
+		wantTerminal workflowstate.TerminalState
+	}{
+		{
+			name:         "source satisfied",
+			state:        atomintakecontract.StateSourceSatisfied,
+			wantTerminal: workflowstate.TerminalStateSourceSatisfied,
+		},
+		{
+			name:         "stale needs rebase",
+			state:        atomintakecontract.StateStaleNeedsRebase,
+			wantTerminal: workflowstate.TerminalStateStaleNeedsRebase,
+		},
+		{
+			name:         "invalid scope",
+			state:        atomintakecontract.StateInvalidScope,
+			wantTerminal: workflowstate.TerminalStateInvalidScope,
+		},
+		{
+			name:         "blocked dirty files",
+			state:        atomintakecontract.StateBlockedDirty,
+			wantTerminal: workflowstate.TerminalStateBlockedDirtyFiles,
+		},
+		{
+			name:         "failed refine draft",
+			state:        atomintakecontract.StateFailedRefine,
+			wantTerminal: workflowstate.TerminalStateFailedRefineDraft,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			report := atomIntakeReport{
+				State:        tc.state,
+				Dispatchable: false,
+			}
+			preflight := laneBriefIntakeProjectionResult{
+				WorkflowID:   workflowstate.WorkflowAtomIntake,
+				State:        workflowstate.StateDispatchable,
+				Dispatchable: true,
+				Reason:       "preflight_marker",
+			}
+
+			fields := laneAtomIntakeReportFields(report, preflight)
+
+			if fields["workflow_state"] != string(workflowstate.StateTerminal) ||
+				fields["workflow_terminal_state"] != string(tc.wantTerminal) ||
+				fields["workflow_dispatchable"] != false {
+
+				t.Fatalf("workflow fields = %#v, want terminal %q and dispatchable=false", fields, tc.wantTerminal)
+			}
+		})
 	}
 }
 
@@ -275,7 +339,7 @@ func TestRunLaneMainAtomIntakeBlocksNonDispatchableBeforeRunner(t *testing.T) {
 		t.Fatalf("stderr should explain intake block, got:\n%s", stderr.String())
 	}
 
-	if !strings.Contains(stdout.String(), `"type":"idiom.lane.atom_intake"`) || !strings.Contains(stdout.String(), `"dispatchable":false`) {
+	if !strings.Contains(stdout.String(), `"type":"`+lanecontract.EventName(lanecontract.EventAtomIntake)+`"`) || !strings.Contains(stdout.String(), `"dispatchable":false`) {
 		t.Fatalf("stdout should include atom intake event, got:\n%s", stdout.String())
 	}
 }
@@ -301,10 +365,11 @@ func TestRunLaneMainAtomIntakeOwnsMissingScopeBeforeRunner(t *testing.T) {
 		t.Fatalf("fake runner should not be called, got mode %q", fake.calledMode)
 	}
 	for _, want := range []string{
-		`"type":"idiom.lane.atom_intake"`,
+		`"type":"` + lanecontract.EventName(lanecontract.EventAtomIntake) + `"`,
 		`"state":"missing-scope"`,
 		`"workflow_id":"atom_intake"`,
 		`"workflow_state":"terminal"`,
+		`"workflow_terminal_state":"missing-scope"`,
 		`"workflow_reason":"missing_scope"`,
 	} {
 		if !strings.Contains(stdout.String(), want) {
@@ -375,7 +440,7 @@ func TestRunLaneMainAtomIntakeBlocksDirtyScopedPathBeforeRunner(t *testing.T) {
 		t.Fatalf("stderr should explain dirty scope block, got:\n%s", stderr.String())
 	}
 
-	if !strings.Contains(stdout.String(), `"state":"blocked-dirty-files"`) || !strings.Contains(stdout.String(), `"type":"idiom.lane.run_ledger"`) {
+	if !strings.Contains(stdout.String(), `"state":"blocked-dirty-files"`) || !strings.Contains(stdout.String(), `"type":"`+lanecontract.EventName(lanecontract.EventRunLedger)+`"`) {
 		t.Fatalf("stdout should include intake and ledger events, got:\n%s", stdout.String())
 	}
 }
@@ -623,7 +688,12 @@ func TestRunLaneMainTelemetryMatchesDoctorReadinessProfile(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 
-	if !strings.Contains(stdout.String(), `"type":"idiom.lane.writer_route_decision"`) ||
+	writerRouteEventName, err := writerroute.CommandEventName(writerroute.CommandSurfaceLane, writerroute.EventWriterRouteDecision)
+	if err != nil {
+		t.Fatalf("writer route event name: %v", err)
+	}
+
+	if !strings.Contains(stdout.String(), `"type":"`+writerRouteEventName+`"`) ||
 		!strings.Contains(stdout.String(), `"writer_mode":"agentic_guarded"`) ||
 		!strings.Contains(stdout.String(), `"role_aliases"`) {
 
@@ -634,7 +704,7 @@ func TestRunLaneMainTelemetryMatchesDoctorReadinessProfile(t *testing.T) {
 		t.Fatalf("rec.Close: %v", err)
 	}
 
-	doctorProfiles, err := buildDoctorReadinessProfiles(configPath, "implement", nil)
+	doctorProfiles, err := readiness.BuildProfiles(configPath, "implement", nil)
 	if err != nil {
 		t.Fatalf("build doctor readiness: %v", err)
 	}
@@ -707,8 +777,13 @@ func TestRunLaneMainPlanExecuteJSONEmitsWriterRouteDecision(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 
-	events := planExecuteJSONEvents(t, stdout.String())
-	event, ok := planExecuteEventByType(events, "idiom.lane.writer_route_decision")
+	writerRouteEventName, err := writerroute.CommandEventName(writerroute.CommandSurfaceLane, writerroute.EventWriterRouteDecision)
+	if err != nil {
+		t.Fatalf("writer route event name: %v", err)
+	}
+
+	events := jsoneventstest.DecodeLines(t, stdout.String())
+	event, ok := jsoneventstest.FindByType(events, writerRouteEventName)
 
 	if !ok {
 		t.Fatalf("missing lane writer route event in %s", stdout.String())
@@ -1483,7 +1558,7 @@ func TestCanonicalProfileSeedsStayInSync(t *testing.T) {
 	}
 }
 
-func TestClaudeQwenProfileCarriesPlanExecuteSubmitPlanQualityBar(t *testing.T) {
+func TestClaudeQwenProfileDefersPlanExecuteProtocolToRuntimeBrief(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join(laneTestRepoRoot(t), "prompts", "profiles", "claude-qwen-worker.md"))
 	if err != nil {
 		t.Fatalf("read claude-qwen profile: %v", err)
@@ -1494,31 +1569,28 @@ func TestClaudeQwenProfileCarriesPlanExecuteSubmitPlanQualityBar(t *testing.T) {
 
 	for _, want := range []string{
 		"The model owns strategy and proposed content",
+		"does not define plan-execute planner protocol",
+		"compiled into the runtime brief and visible tool schema",
+		"runtime brief remains authoritative for lane protocol",
+		"follow that brief and the visible tool schema exactly",
 		"Hidden reasoning is not a tool call",
-		"insert_after_line",
-		"Use `old_text` + `new_text` only for a tiny exact snippet",
-		"Every edit body must be",
-		"executable final content",
-		"quoted string containing",
-		"Line-range `content` is",
-		"replacement for the inclusive range",
 	} {
 		if !strings.Contains(normalizedText, strings.Join(strings.Fields(want), " ")) {
-			t.Fatalf("claude-qwen profile missing submit_plan quality bar %q:\n%s", want, text)
+			t.Fatalf("claude-qwen profile missing runtime-brief ownership wording %q:\n%s", want, text)
 		}
 	}
 
-	if !strings.Contains(text, "**Line-range**") || !strings.Contains(text, "**Substring**") {
-		t.Fatalf("claude-qwen profile missing edit-shape headings:\n%s", text)
-	}
-
-	if !strings.Contains(text, "**Insertion**") || strings.Index(text, "**Insertion**") > strings.Index(text, "**Line-range**") {
-		t.Fatalf("claude-qwen profile should present typed insertion before replacement shapes:\n%s", text)
-	}
-
-	for _, stale := range []string{"accepts three edit shapes", "line-range first"} {
+	for _, stale := range []string{
+		"submit_plan",
+		"Edit Shapes (plan-execute)",
+		"source-satisfied",
+		"Decision:",
+		"planner-owned",
+		"accepts three edit shapes",
+		"line-range first",
+	} {
 		if strings.Contains(text, stale) {
-			t.Fatalf("claude-qwen profile retained stale submit_plan wording %q:\n%s", stale, text)
+			t.Fatalf("claude-qwen profile retained static plan-execute protocol wording %q:\n%s", stale, text)
 		}
 	}
 }
@@ -1900,7 +1972,7 @@ func TestRunLaneMainEmitsLaneStartEvent(t *testing.T) {
 	}
 
 	out := stdout.String()
-	if !strings.Contains(out, `"type":"idiom.lane.start"`) {
+	if !strings.Contains(out, `"type":"`+lanecontract.EventName(lanecontract.EventStart)+`"`) {
 		t.Fatalf("expected idiom.lane.start event in JSON stream; got: %s", out)
 	}
 

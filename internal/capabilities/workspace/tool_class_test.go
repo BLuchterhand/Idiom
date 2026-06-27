@@ -26,3 +26,31 @@ func TestClassifyToolKeepsLegacyLanguageHelpers(t *testing.T) {
 		}
 	}
 }
+
+func TestIsReadClassToolNameUsesPostReadinessEvidencePolicy(t *testing.T) {
+	for _, name := range []string{
+		ToolNameReadFile,
+		ToolNameSearchContent,
+		ToolNameDiscoveryQuery,
+		"go_read_symbol",
+		"java_references",
+		ToolNameHistoryRange,
+		ToolNameSemgrepScan,
+	} {
+		if !IsReadClassToolName(name) {
+			t.Fatalf("IsReadClassToolName(%q) = false, want true", name)
+		}
+	}
+
+	for _, name := range []string{
+		ToolNameContextPack,
+		ToolNameContextStatus,
+		ToolNameWriteFile,
+		ToolNameSubmitPlan,
+		"mcp:exa/web_search_exa",
+	} {
+		if IsReadClassToolName(name) {
+			t.Fatalf("IsReadClassToolName(%q) = true, want false", name)
+		}
+	}
+}

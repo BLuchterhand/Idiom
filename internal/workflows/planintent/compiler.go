@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"idiom/internal/capabilities/workspace"
+	planartifact "idiom/internal/contracts/planartifact"
 )
 
 const (
@@ -44,7 +44,7 @@ func (err *CompileError) Error() string {
 	return fmt.Sprintf("%s: intents[%d] %s: %s", err.Code, err.IntentIndex, path, err.Message)
 }
 
-func Compile(artifact Artifact, opts CompileOptions) ([]workspace.PlanEdit, error) {
+func Compile(artifact Artifact, opts CompileOptions) ([]planartifact.PlanEdit, error) {
 	if strings.TrimSpace(opts.WorkspaceRoot) == "" {
 		return nil, &CompileError{Code: CodeCompilerBug, IntentIndex: -1, Message: "workspace root is required"}
 	}
@@ -57,7 +57,7 @@ func Compile(artifact Artifact, opts CompileOptions) ([]workspace.PlanEdit, erro
 		return nil, &CompileError{Code: CodeIntentBlocker, IntentIndex: -1, Message: "edit intent contains only typed blocker(s); no candidate plan edits were compiled"}
 	}
 
-	edits := make([]workspace.PlanEdit, 0, len(artifact.Intents))
+	edits := make([]planartifact.PlanEdit, 0, len(artifact.Intents))
 	for i, intent := range artifact.Intents {
 		edit, err := compileIntent(i, intent, opts.WorkspaceRoot)
 		if err != nil {
@@ -72,10 +72,10 @@ func Compile(artifact Artifact, opts CompileOptions) ([]workspace.PlanEdit, erro
 	return edits, nil
 }
 
-func compileIntent(index int, intent Intent, root string) (workspace.PlanEdit, error) {
+func compileIntent(index int, intent Intent, root string) (planartifact.PlanEdit, error) {
 	path, err := normalizePath(intent.Path)
 	if err != nil {
-		return workspace.PlanEdit{}, compileError(CodeScopeRejected, index, intent.Path, err.Error())
+		return planartifact.PlanEdit{}, compileError(CodeScopeRejected, index, intent.Path, err.Error())
 	}
 
 	switch intent.Operation {
@@ -86,26 +86,26 @@ func compileIntent(index int, intent Intent, root string) (workspace.PlanEdit, e
 	case OperationAddNewFile:
 		return compileAddNewFile(index, path, intent, root)
 	default:
-		return workspace.PlanEdit{}, compileError(CodeUnsupportedOperation, index, path, fmt.Sprintf("%s is valid edit_intent.v1 but not supported by the deterministic compiler MVP", intent.Operation))
+		return planartifact.PlanEdit{}, compileError(CodeUnsupportedOperation, index, path, fmt.Sprintf("%s is valid edit_intent.v1 but not supported by the deterministic compiler MVP", intent.Operation))
 	}
 }
 
-func compileReplaceExactText(index int, path string, intent Intent, root string) (workspace.PlanEdit, error) {
+func compileReplaceExactText(index int, path string, intent Intent, root string) (planartifact.PlanEdit, error) {
 	current, err := readWorkspaceFile(root, path)
 	if err != nil {
-		return workspace.PlanEdit{}, compileError(CodeMissingSourceEvidence, index, path, err.Error())
+		return planartifact.PlanEdit{}, compileError(CodeMissingSourceEvidence, index, path, err.Error())
 	}
 
 	matches := strings.Count(current, intent.OldText)
 	if matches == 0 {
-		return workspace.PlanEdit{}, compileError(CodeAmbiguousAnchor, index, path, "old_text does not appear in current source")
+		return planartifact.PlanEdit{}, compileError(CodeAmbiguousAnchor, index, path, "old_text does not appear in current source")
 	}
 
 	if matches > 1 {
-		return workspace.PlanEdit{}, compileError(CodeNonUniqueAnchor, index, path, fmt.Sprintf("old_text matched %d locations", matches))
+		return planartifact.PlanEdit{}, compileError(CodeNonUniqueAnchor, index, path, fmt.Sprintf("old_text matched %d locations", matches))
 	}
 
-	return workspace.PlanEdit{
+	return planartifact.PlanEdit{
 		Path:    path,
 		OldText: intent.OldText,
 		NewText: intent.NewText,
@@ -113,22 +113,22 @@ func compileReplaceExactText(index int, path string, intent Intent, root string)
 	}, nil
 }
 
-func compileInsertAfterLineAnchor(index int, path string, intent Intent, root string) (workspace.PlanEdit, error) {
+func compileInsertAfterLineAnchor(index int, path string, intent Intent, root string) (planartifact.PlanEdit, error) {
 	current, err := readWorkspaceFile(root, path)
 	if err != nil {
-		return workspace.PlanEdit{}, compileError(CodeMissingSourceEvidence, index, path, err.Error())
+		return planartifact.PlanEdit{}, compileError(CodeMissingSourceEvidence, index, path, err.Error())
 	}
 
 	line, matches := findUniqueLineAnchor(current, intent.LineAnchor)
 	if matches == 0 {
-		return workspace.PlanEdit{}, compileError(CodeAmbiguousAnchor, index, path, "line_anchor does not appear in current source")
+		return planartifact.PlanEdit{}, compileError(CodeAmbiguousAnchor, index, path, "line_anchor does not appear in current source")
 	}
 
 	if matches > 1 {
-		return workspace.PlanEdit{}, compileError(CodeNonUniqueAnchor, index, path, fmt.Sprintf("line_anchor matched %d lines", matches))
+		return planartifact.PlanEdit{}, compileError(CodeNonUniqueAnchor, index, path, fmt.Sprintf("line_anchor matched %d lines", matches))
 	}
 
-	return workspace.PlanEdit{
+	return planartifact.PlanEdit{
 		Path:            path,
 		InsertAfterLine: line,
 		Content:         intent.Content,
@@ -136,19 +136,19 @@ func compileInsertAfterLineAnchor(index int, path string, intent Intent, root st
 	}, nil
 }
 
-func compileAddNewFile(index int, path string, intent Intent, root string) (workspace.PlanEdit, error) {
+func compileAddNewFile(index int, path string, intent Intent, root string) (planartifact.PlanEdit, error) {
 	abs, err := workspacePath(root, path)
 	if err != nil {
-		return workspace.PlanEdit{}, compileError(CodeScopeRejected, index, path, err.Error())
+		return planartifact.PlanEdit{}, compileError(CodeScopeRejected, index, path, err.Error())
 	}
 
 	if _, err := os.Stat(abs); err == nil {
-		return workspace.PlanEdit{}, compileError(CodeScopeRejected, index, path, "add_new_file target already exists")
+		return planartifact.PlanEdit{}, compileError(CodeScopeRejected, index, path, "add_new_file target already exists")
 	} else if !os.IsNotExist(err) {
-		return workspace.PlanEdit{}, compileError(CodeMissingSourceEvidence, index, path, err.Error())
+		return planartifact.PlanEdit{}, compileError(CodeMissingSourceEvidence, index, path, err.Error())
 	}
 
-	return workspace.PlanEdit{
+	return planartifact.PlanEdit{
 		Path:       path,
 		NewText:    intent.NewFileContent,
 		ReplaceAll: true,

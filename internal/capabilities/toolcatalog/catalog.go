@@ -37,17 +37,23 @@ type ToolSurfaceSpec struct {
 
 // ToolSurfaceCatalog is a clone-safe catalog for neutral tool-surface facts.
 type ToolSurfaceCatalog struct {
-	specs []ToolSurfaceSpec
+	specs  []ToolSurfaceSpec
+	byTool map[string]ToolSurfaceSpec
 }
 
 func NewToolSurfaceCatalog(specs []ToolSurfaceSpec) ToolSurfaceCatalog {
 	out := make([]ToolSurfaceSpec, 0, len(specs))
+	byTool := make(map[string]ToolSurfaceSpec, len(specs))
 	for _, spec := range specs {
 		spec.Tool = strings.TrimSpace(spec.Tool)
-		out = append(out, cloneSpec(spec))
+		cloned := cloneSpec(spec)
+		out = append(out, cloned)
+		if cloned.Tool != "" {
+			byTool[cloned.Tool] = cloneSpec(cloned)
+		}
 	}
 
-	return ToolSurfaceCatalog{specs: out}
+	return ToolSurfaceCatalog{specs: out, byTool: byTool}
 }
 
 func MustNewToolSurfaceCatalog(specs []ToolSurfaceSpec) ToolSurfaceCatalog {
@@ -74,10 +80,8 @@ func (c ToolSurfaceCatalog) Lookup(tool string) (ToolSurfaceSpec, bool) {
 		return ToolSurfaceSpec{}, false
 	}
 
-	for _, spec := range c.specs {
-		if spec.Tool == tool {
-			return cloneSpec(spec), true
-		}
+	if spec, ok := c.byTool[tool]; ok {
+		return cloneSpec(spec), true
 	}
 
 	return ToolSurfaceSpec{}, false

@@ -23,10 +23,14 @@ import (
 	"sync"
 	"time"
 
+	planartifact "idiom/internal/contracts/planartifact"
+
 	"idiom/internal/capabilities/mcp"
+	"idiom/internal/platform/atomicfile"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/failures"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/safepath"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/comprehension"
 	"idiom/internal/repository/discovery"
 	"idiom/internal/repository/semantic/languagetools"
@@ -1053,8 +1057,11 @@ func (m *Manager) executeExternal(ctx context.Context, req ToolRequest) ToolResu
 		args = json.RawMessage(`{}`)
 	}
 
-	output, err := registry.Invoke(ctx, req.Tool, args, m.cfg.CWD)
+	output, truncated, err := registry.Invoke(ctx, req.Tool, args, m.cfg.CWD, m.cfg.MaxOutputBytes)
 	out := ToolResult{Tool: req.Tool, Summary: "External tool " + req.Tool, Output: output}
+	if truncated {
+		out.Summary += " (output truncated)"
+	}
 
 	if err != nil {
 		out.Error = err.Error()
@@ -1384,7 +1391,7 @@ func decodeFlatToolRequestJSON(payload []byte) (ToolRequest, error) {
 			}
 		}
 
-		return ToolRequest{}, errors.New("json: cannot unmarshal string into Go struct field ToolRequest.edits of type []workspace.PlanEdit")
+		return ToolRequest{}, errors.New("json: cannot unmarshal string into Go struct field ToolRequest.edits of type []planartifact.PlanEdit")
 	}
 
 	if err := json.Unmarshal(payload, &req); err != nil {
@@ -1682,7 +1689,7 @@ func repairEmbeddedQwenXMLToolParameters(req *ToolRequest) {
 		switch name {
 		case "edits":
 			if len(req.Edits) == 0 {
-				var edits []PlanEdit
+				var edits []planartifact.PlanEdit
 
 				if err := json.Unmarshal(raw, &edits); err == nil {
 					req.Edits = edits
@@ -1966,7 +1973,7 @@ func decodeSourceSatisfiedPathsField(raw json.RawMessage, allowPathKeyedObject b
 		return nil, false
 	}
 
-	paths = util.Unique(paths)
+	paths = textutil.Unique(paths)
 	if len(paths) == 0 {
 		return nil, false
 	}
@@ -2005,7 +2012,7 @@ func decodeSourceSatisfiedPathsObject(raw json.RawMessage, allowPathKeyedObject 
 		}
 	}
 
-	paths = util.Unique(paths)
+	paths = textutil.Unique(paths)
 	if len(paths) == 0 {
 		return nil, false
 	}
@@ -4621,7 +4628,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 		}
 	}
 
-	lines := util.SplitWorkspaceFileLines(data)
+	lines := textutil.SplitWorkspaceFileLines(data)
 	start := req.StartLine
 	end := req.EndLine
 	requestedStart := start
@@ -4671,7 +4678,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 		}
 	}
 
-	start, end, clampedToFileBounds := util.ClampRequestedLineRange(len(lines), start, end, requestedStart, requestedEnd)
+	start, end, clampedToFileBounds := textutil.ClampRequestedLineRange(len(lines), start, end, requestedStart, requestedEnd)
 	if start > end {
 		return ToolResult{Tool: ToolNameReadFile, Summary: "Invalid line range", Error: "start_line must be <= end_line"}
 	}
@@ -4697,7 +4704,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 	for i := start - 1; i < end && i < len(lines); i++ {
 		line := lines[i]
 		if logLike {
-			line = util.TruncateBytes(strings.TrimRight(line, "\r\n"), defaultLogLineCharCap, "...[line truncated]")
+			line = textutil.TruncateBytes(strings.TrimRight(line, "\r\n"), defaultLogLineCharCap, "...[line truncated]")
 		}
 
 		fmt.Fprintf(&b, "%d:%s\n", i+1, line)
@@ -4746,7 +4753,7 @@ func (m *Manager) readLogTail(path string, description string, lineCap int) (Too
 	var b strings.Builder
 
 	for i, line := range lines {
-		line = util.TruncateBytes(strings.TrimRight(line, "\r\n"), defaultLogLineCharCap, "...[line truncated]")
+		line = textutil.TruncateBytes(strings.TrimRight(line, "\r\n"), defaultLogLineCharCap, "...[line truncated]")
 		fmt.Fprintf(&b, "%d:%s\n", start+i, line)
 	}
 
@@ -5065,7 +5072,7 @@ func (m *Manager) makeDir(req ToolRequest) ToolResult {
 		return toolWriteDisabledResult(ToolNameMkdir, "Write request rejected", "workspace writes are disabled")
 	}
 
-	path, err := m.resolvePath(req.Path, req.Workdir)
+	path, err := m.resolveWritePath(req.Path, req.Workdir)
 	if err != nil {
 		return toolPathResolutionFailureResult(ToolNameMkdir, "Failed to resolve path", err)
 	}
@@ -5094,7 +5101,7 @@ func (m *Manager) writeFile(req ToolRequest, appendMode bool) ToolResult {
 		return toolWriteDisabledResult(toolName, "Write request rejected", "workspace writes are disabled")
 	}
 
-	path, err := m.resolvePath(req.Path, req.Workdir)
+	path, err := m.resolveWritePath(req.Path, req.Workdir)
 	if err != nil {
 		return toolPathResolutionFailureResult(toolName, "Failed to resolve path", err)
 	}
@@ -5129,19 +5136,11 @@ func (m *Manager) writeFile(req ToolRequest, appendMode bool) ToolResult {
 	}
 
 	if appendMode {
-		file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-		if err != nil {
-			return toolWriteFailureResult(toolName, "Failed to open file", err)
-		}
-		defer file.Close()
-
-		if _, err := file.WriteString(req.Content); err != nil {
+		if err := appendFileContent(path, []byte(req.Content)); err != nil {
 			return toolWriteFailureResult(toolName, "Failed to append file", err)
 		}
-	} else {
-		if err := os.WriteFile(path, updated, 0o644); err != nil {
-			return toolWriteFailureResult(toolName, "Failed to write file", err)
-		}
+	} else if err := atomicfile.WriteFile(path, updated, 0o644); err != nil {
+		return toolWriteFailureResult(toolName, "Failed to write file", err)
 	}
 
 	action := "Wrote"
@@ -5159,12 +5158,46 @@ func (m *Manager) writeFile(req ToolRequest, appendMode bool) ToolResult {
 	}
 }
 
+func appendFileContent(path string, content []byte) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+
+	writeErr := writeFull(f, content)
+	syncErr := f.Sync()
+	closeErr := f.Close()
+
+	if writeErr != nil {
+		return writeErr
+	}
+	if syncErr != nil {
+		return syncErr
+	}
+	return closeErr
+}
+
+func writeFull(w io.Writer, content []byte) error {
+	for len(content) > 0 {
+		n, err := w.Write(content)
+		if err != nil {
+			return err
+		}
+		if n <= 0 {
+			return io.ErrShortWrite
+		}
+		content = content[n:]
+	}
+
+	return nil
+}
+
 func (m *Manager) editFile(req ToolRequest) ToolResult {
 	if !m.cfg.EnableWrites {
 		return toolWriteDisabledResult(ToolNameEditFile, "Edit request rejected", "workspace writes are disabled")
 	}
 
-	path, err := m.resolvePath(req.Path, req.Workdir)
+	path, err := m.resolveWritePath(req.Path, req.Workdir)
 	if err != nil {
 		result := toolPathResolutionFailureResult(ToolNameEditFile, "Failed to resolve path", err)
 		if strings.TrimSpace(req.Path) != "" {
@@ -5276,7 +5309,7 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 
 	matchCount := strings.Count(current, req.OldText)
 	if matchCount == 0 {
-		if util.ContainsFold(current, req.OldText) {
+		if textutil.ContainsFold(current, req.OldText) {
 			return withToolFailure(ToolResult{
 				Tool:    ToolNameEditFile,
 				Summary: "Edit request rejected",
@@ -5319,7 +5352,7 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 		return *rejected
 	}
 
-	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+	if err := atomicfile.WriteFile(path, []byte(updated), 0o644); err != nil {
 		return toolWriteFailureResult(ToolNameEditFile, "Failed to write edited file", err)
 	}
 
@@ -5442,7 +5475,7 @@ func (m *Manager) editFileByLineRange(path string, current string, req ToolReque
 		return *rejected
 	}
 
-	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+	if err := atomicfile.WriteFile(path, []byte(updated), 0o644); err != nil {
 		return toolWriteFailureResult(ToolNameEditFile, "Failed to write edited file", err)
 	}
 
@@ -5475,8 +5508,8 @@ func lineRangeReplacementDuplicatesPrecedingContext(current string, spans []line
 	}
 
 	context := current[spans[contextStartLine-1].start:spans[startLine-2].end]
-	contextLines := util.NonEmptyTrimmedLines(context)
-	replacementLines := util.NonEmptyTrimmedLines(replacement)
+	contextLines := textutil.NonEmptyTrimmedLines(context)
+	replacementLines := textutil.NonEmptyTrimmedLines(replacement)
 	maxCompare := min(len(contextLines), len(replacementLines), 6)
 
 	for n := maxCompare; n >= 3; n-- {
@@ -5921,7 +5954,7 @@ func plannedWriteLineContext(contents []byte, line int, radius int) string {
 			marker = ">"
 		}
 
-		fmt.Fprintf(&b, "%s %d:%s\n", marker, i, util.TruncateBytes(strings.TrimRight(lines[i-1], "\r\n"), searchContentLineCap, "...[line truncated]"))
+		fmt.Fprintf(&b, "%s %d:%s\n", marker, i, textutil.TruncateBytes(strings.TrimRight(lines[i-1], "\r\n"), searchContentLineCap, "...[line truncated]"))
 	}
 
 	return strings.TrimRight(b.String(), "\n")
@@ -6261,6 +6294,43 @@ func (m *Manager) resolvePath(path string, workdir string) (string, error) {
 	}
 
 	return candidate, nil
+}
+
+func (m *Manager) resolveWritePath(path string, workdir string) (string, error) {
+	if !m.Enabled() {
+		return "", fmt.Errorf("workspace root is not configured")
+	}
+
+	if strings.TrimSpace(path) == "" {
+		return "", fmt.Errorf("path is required")
+	}
+
+	var candidate string
+
+	switch {
+	case filepath.IsAbs(path):
+		candidate = filepath.Clean(path)
+	case workdir != "":
+		base, err := m.resolveWorkdir(workdir)
+		if err != nil {
+			return "", err
+		}
+
+		candidate = filepath.Clean(filepath.Join(base, path))
+	default:
+		candidate = filepath.Clean(filepath.Join(m.cfg.CWD, path))
+	}
+
+	fullPath, _, err := safepath.UnderRoot(m.cfg.Root, candidate, "workspace write path", safepath.Options{
+		AllowMissing:           true,
+		RejectSymlinkAncestors: true,
+		RejectSymlinkTarget:    true,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return fullPath, nil
 }
 
 func (m *Manager) resolveReadTarget(req ToolRequest) (string, string, error) {

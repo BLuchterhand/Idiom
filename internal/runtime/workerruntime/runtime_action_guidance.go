@@ -1,7 +1,6 @@
 package workerruntime
 
 import (
-	"slices"
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
@@ -13,9 +12,9 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 	closureScope := closureGuidanceScope(input.Constraints, statusCombined)
 	closureActive := closureScope != ""
 	writeReadyPacket := implementationPacketWriteReady(input.Constraints)
-	planExecuteSubmitReady := slices.Contains(input.Constraints, "plan_then_execute_submit_plan_ready")
-	exactAnchorPacket := slices.Contains(input.Constraints, "exact_anchor_implementation") ||
-		slices.Contains(input.Constraints, "exact_anchor_prewrite_write_first")
+	planExecuteSubmitReady := ConstraintPresent(input.Constraints, ConstraintPlanThenExecuteSubmitPlanReady)
+	exactAnchorPacket := ConstraintPresent(input.Constraints, ConstraintExactAnchorImplementation) ||
+		ConstraintPresent(input.Constraints, ConstraintExactAnchorPrewriteWriteFirst)
 	requiredPathsRemaining := implementationRequiredPathsRemaining(input.Constraints)
 	guidance := ActionGuidance{}
 
@@ -199,26 +198,26 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 	}
 
 	if !closureActive {
-		switch tool {
-		case "go_file_outline", "cpp_overview":
-			if strings.TrimSpace(input.Result.Error) == "" {
-				if input.EvidenceIntent == "refactor" {
-					// Refactoring objective — outline's built-in
-					// go_move_declarations hint is the right next step.
-					guidance.ValidNext = appendUnique(guidance.ValidNext, "declaration-move write capability for a tagged group of declarations")
-					guidance.ValidNext = appendUnique(guidance.ValidNext, "read-symbol capability if one declaration still needs inspection before moving")
-				} else {
-					// Default (explanatory/relational/unknown): reading a
-					// specific declaration is the high-value next step.
-					// The outline summary itself may suggest
-					// go_move_declarations — that advice only lands for
-					// refactor objectives, so we override here.
-					guidance.ValidNext = appendUnique(guidance.ValidNext, "read-symbol capability with one outlined declaration name to inspect its body")
-					guidance.ValidNext = appendUnique(guidance.ValidNext, "references or calls-into capability on a named declaration to trace how it is used")
-					guidance.ValidNext = appendUnique(guidance.ValidNext, "ignore the outline's go_move_declarations suggestion unless the objective is actually a refactor")
-				}
+		if languageOutlineGuidanceTool(tool) && strings.TrimSpace(input.Result.Error) == "" {
+			if input.EvidenceIntent == "refactor" {
+				// Refactoring objective — outline's built-in
+				// go_move_declarations hint is the right next step.
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "declaration-move write capability for a tagged group of declarations")
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "read-symbol capability if one declaration still needs inspection before moving")
+			} else {
+				// Default (explanatory/relational/unknown): reading a
+				// specific declaration is the high-value next step.
+				// The outline summary itself may suggest
+				// go_move_declarations — that advice only lands for
+				// refactor objectives, so we override here.
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "read-symbol capability with one outlined declaration name to inspect its body")
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "references or calls-into capability on a named declaration to trace how it is used")
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "ignore the outline's go_move_declarations suggestion unless the objective is actually a refactor")
 			}
-		case workspace.ToolNameReadFile, workspace.ToolNameCodeNavigate, "go_extract_body", "go_read_symbol":
+		}
+
+		switch tool {
+		case workspace.ToolNameReadFile, workspace.ToolNameCodeNavigate:
 			if strings.TrimSpace(input.Result.Error) == "" {
 				if writeReadyPacket {
 					guidance.ValidNext = appendUnique(guidance.ValidNext, "required-path edit from the packet and inspected evidence")
@@ -273,6 +272,16 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 				guidance.ValidNext = appendUnique(guidance.ValidNext, "answer if all required ledger items are complete")
 			}
 		}
+
+		if languageBodyInspectionGuidanceTool(tool) && strings.TrimSpace(input.Result.Error) == "" {
+			if writeReadyPacket {
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "required-path edit from the packet and inspected evidence")
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with <<QUESTION>> only if the edit still has a path-specific blocker")
+			} else {
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "answer if the inspected body already resolves the question")
+				guidance.ValidNext = appendUnique(guidance.ValidNext, "if one exact missing claim remains, request one exact symbol, reference, or narrow range capability that would resolve it")
+			}
+		}
 	}
 
 	if len(guidance.ValidNext) == 0 {
@@ -312,32 +321,32 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 
 func closureGuidanceScope(constraints []string, statusCombined string) string {
 	switch {
-	case slices.Contains(constraints, "child_packet_available"):
-		return "child_packet_available"
-	case slices.Contains(constraints, "answer_readiness_reached"):
-		return "answer_readiness_reached"
+	case ConstraintPresent(constraints, ConstraintChildPacketAvailable):
+		return string(ConstraintChildPacketAvailable)
+	case ConstraintPresent(constraints, ConstraintAnswerReadinessReached):
+		return string(ConstraintAnswerReadinessReached)
 	}
 
 	switch {
 	case containsAny(statusCombined,
 		"child packet already contains sufficient evidence",
 		"post-child follow-up missing named gap",
-		"child_packet_available",
+		string(ConstraintChildPacketAvailable),
 	):
-		return "child_packet_available"
+		return string(ConstraintChildPacketAvailable)
 	case containsAny(statusCombined,
-		"answer_readiness_reached",
+		string(ConstraintAnswerReadinessReached),
 		"post-readiness follow-up missing named gap",
-		"answer_readiness_reached",
+		string(ConstraintAnswerReadinessReached),
 	):
-		return "answer_readiness_reached"
+		return string(ConstraintAnswerReadinessReached)
 	default:
 		return ""
 	}
 }
 
 func exactAnchorWriteFailure(constraints []string, tool string, statusCombined string) bool {
-	if !slices.Contains(constraints, "exact_anchor_implementation") {
+	if !ConstraintPresent(constraints, ConstraintExactAnchorImplementation) {
 		return false
 	}
 
@@ -358,7 +367,7 @@ func exactAnchorWriteFailure(constraints []string, tool string, statusCombined s
 }
 
 func exactAnchorHiddenPrewriteTool(constraints []string, tool string, statusCombined string) bool {
-	if !slices.Contains(constraints, "exact_anchor_implementation") {
+	if !ConstraintPresent(constraints, ConstraintExactAnchorImplementation) {
 		return false
 	}
 
@@ -373,15 +382,15 @@ func exactAnchorHiddenPrewriteTool(constraints []string, tool string, statusComb
 }
 
 func implementationPacketWriteReady(constraints []string) bool {
-	return slices.Contains(constraints, "implementation_packet_write_ready")
+	return ConstraintPresent(constraints, ConstraintImplementationPacketWriteReady)
 }
 
 func implementationRequiredPathsRemaining(constraints []string) bool {
-	return slices.Contains(constraints, "implementation_required_paths_remaining")
+	return ConstraintPresent(constraints, ConstraintImplementationRequiredPathsRemain)
 }
 
 func scopeSpecificClosureLabel(scope string) string {
-	if strings.TrimSpace(scope) == "child_packet_available" {
+	if strings.TrimSpace(scope) == string(ConstraintChildPacketAvailable) {
 		return "child packet"
 	}
 
@@ -462,4 +471,12 @@ func isDiscoveryTool(tool string) bool {
 	}
 
 	return false
+}
+
+func languageOutlineGuidanceTool(tool string) bool {
+	return workspace.LanguageToolHasAnyCapability(tool, workspace.CapFileOutline, workspace.CapOverview)
+}
+
+func languageBodyInspectionGuidanceTool(tool string) bool {
+	return workspace.LanguageToolHasAnyCapability(tool, workspace.CapReadSymbol, workspace.CapExtractBody)
 }

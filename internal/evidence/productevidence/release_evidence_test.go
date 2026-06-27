@@ -1115,11 +1115,11 @@ func TestReleaseStatusFromExit(t *testing.T) {
 		blocker string
 		want    string
 	}{
-		{"0", "", "pass"},
-		{"1", "", "fail"},
-		{"", "", "partial"},
-		{"0", "blocked reason", "blocked"},
-		{"1", "safety", "blocked"},
+		{"0", "", releaseEvidenceStatusPass},
+		{"1", "", releaseEvidenceStatusFail},
+		{"", "", releaseEvidenceStatusPartial},
+		{"0", "blocked reason", releaseEvidenceStatusBlocked},
+		{"1", "safety", releaseEvidenceStatusBlocked},
 	}
 	for _, tt := range tests {
 		got := releaseStatusFromExit(tt.exit, tt.blocker)

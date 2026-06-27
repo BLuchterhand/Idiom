@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	planartifact "idiom/internal/contracts/planartifact"
+
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
 )
@@ -214,7 +216,7 @@ func TestCompileDoesNotTurnTypedBlockerIntoEmptyPlan(t *testing.T) {
 	}
 }
 
-func compileOK(t *testing.T, root string, artifact Artifact, contract Contract) []workspace.PlanEdit {
+func compileOK(t *testing.T, root string, artifact Artifact, contract Contract) []planartifact.PlanEdit {
 	t.Helper()
 
 	edits, err := Compile(artifact, CompileOptions{WorkspaceRoot: root, Contract: contract})
@@ -225,7 +227,7 @@ func compileOK(t *testing.T, root string, artifact Artifact, contract Contract) 
 	return edits
 }
 
-func assertSubmitPlanAccepts(t *testing.T, root string, edits []workspace.PlanEdit) {
+func assertSubmitPlanAccepts(t *testing.T, root string, edits []planartifact.PlanEdit) {
 	t.Helper()
 
 	mgr := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true})

@@ -1,4 +1,4 @@
-package plancontract
+package plan
 
 import (
 	"reflect"
@@ -17,6 +17,16 @@ func TestSourceSatisfiedAnswerCoversPathsRequiresExplicitDecision(t *testing.T) 
 
 	if SourceSatisfiedAnswerCoversPaths(answer, []string{"a.txt", "c.txt"}) {
 		t.Fatalf("missing path mention must not cover required paths")
+	}
+}
+
+func TestSourceSatisfiedAnswerRejectsStaleAnchorIntent(t *testing.T) {
+	answer := "Decision: source-satisfied\n- pkg/x.go: stale anchor; old_text no longer applies."
+	if SourceSatisfiedAnswerIntent(answer) {
+		t.Fatalf("stale-anchor prose must not satisfy source-satisfied intent")
+	}
+	if SourceSatisfiedAnswerCoversPaths(answer, []string{"pkg/x.go"}) {
+		t.Fatalf("stale-anchor prose must not cover required paths")
 	}
 }
 

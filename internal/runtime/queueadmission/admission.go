@@ -2,37 +2,55 @@ package queueadmission
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 	"time"
 
+	queuecontract "idiom/internal/contracts/queue"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
+	"idiom/internal/platform/jsonevents"
 	"idiom/internal/runtime/runner"
 )
 
+const defaultQueueAdmissionWaitTimeout = 30 * time.Minute
+
 type Options struct {
 	Command        string
-	EventPrefix    string
+	EventPrefix    queuecontract.CommandEventPrefix
 	TelemetryEvent string
 	Label          string
 	Client         string
 	JSONEvents     bool
+	WaitTimeout    time.Duration
+	Mode           queuecontract.AdmissionMode
+}
+
+type Result struct {
+	Allowed bool
+	State   queuecontract.AdmissionState
+	Pool    string
+	Reason  string
+	Err     error
+	Release func()
 }
 
 func Acquire(cfg config.Config, opts Options, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer) func() {
+	return AcquireWithResult(cfg, opts, rec, stdout, stderr).Release
+}
+
+func AcquireWithResult(cfg config.Config, opts Options, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer) Result {
 	pool := strings.TrimSpace(os.Getenv("IDIOM_QUEUE_POOL"))
 	if pool == "" {
 		pool = runner.PoolForModelAlias(cfg.LlamaServer.Model)
 	}
 
 	if pool == "" {
-		emit(rec, stdout, opts, "disabled", "", 0, "pool_disabled", false)
+		emit(rec, stdout, stderr, opts, queuecontract.AdmissionStateDisabled, "", 0, string(queuecontract.ReasonClassPoolDisabled), false)
 
-		return func() {}
+		return Result{Allowed: true, State: queuecontract.AdmissionStateDisabled, Reason: string(queuecontract.ReasonClassPoolDisabled), Release: func() {}}
 	}
 
 	socket := strings.TrimSpace(os.Getenv("IDIOM_QUEUE_SOCKET"))
@@ -49,41 +67,66 @@ func Acquire(cfg config.Config, opts Options, rec *telemetry.Recorder, stdout io
 	}
 
 	startedAt := time.Now()
-	result := runner.MaybeAcquireWithResult(context.Background(), socket, pool, label, client, stderr)
+	ctx, cancel := context.WithTimeout(context.Background(), queueAdmissionWaitTimeout(opts))
+	defer cancel()
+
+	result := runner.MaybeAcquireWithResult(ctx, socket, pool, label, client, stderr)
 	waitMillis := time.Since(startedAt).Milliseconds()
 
-	if result.Err != nil {
-		fmt.Fprintf(stderr, "[idiom queue %s] acquire failed: %v - proceeding un-gated\n", pool, result.Err)
-	}
-
-	state := string(result.State)
+	state := result.State
 	if state == "" {
-		state = "error"
+		state = queuecontract.AdmissionStateError
 	}
 
-	degraded := state == "unavailable" || state == "degraded" || state == "error"
-	emit(rec, stdout, opts, state, pool, waitMillis, result.Reason, degraded)
+	degraded := state == queuecontract.AdmissionStateUnavailable ||
+		state == queuecontract.AdmissionStateDegraded ||
+		state == queuecontract.AdmissionStateNestedCrossPool ||
+		state == queuecontract.AdmissionStateError
+	emit(rec, stdout, stderr, opts, state, pool, waitMillis, result.Reason, degraded)
+
+	required := queuecontract.NormalizeAdmissionMode(opts.Mode) == queuecontract.AdmissionModeRequired
+	allowed := !required || queuecontract.AdmissionStateAllowsDispatch(state)
+	if result.Err != nil {
+		if required {
+			fmt.Fprintf(stderr, "[idiom queue %s] acquire failed: %v - queue admission is required\n", pool, result.Err)
+		} else {
+			fmt.Fprintf(stderr, "[idiom queue %s] acquire failed: %v - proceeding un-gated\n", pool, result.Err)
+		}
+	}
 
 	if result.Release == nil {
-		return func() {}
+		return Result{Allowed: allowed, State: state, Pool: pool, Reason: result.Reason, Err: result.Err, Release: func() {}}
 	}
 
-	return result.Release
+	return Result{Allowed: allowed, State: state, Pool: pool, Reason: result.Reason, Err: result.Err, Release: result.Release}
 }
 
-func emit(rec *telemetry.Recorder, stdout io.Writer, opts Options, state string, pool string, waitMillis int64, reason string, degraded bool) {
+func queueAdmissionWaitTimeout(opts Options) time.Duration {
+	if opts.WaitTimeout > 0 {
+		return opts.WaitTimeout
+	}
+	return defaultQueueAdmissionWaitTimeout
+}
+
+func emit(rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer, opts Options, state queuecontract.AdmissionState, pool string, waitMillis int64, reason string, degraded bool) {
 	fields := map[string]any{
-		"state":        state,
+		"state":        string(state),
 		"pool":         pool,
 		"wait_ms":      waitMillis,
 		"degraded":     degraded,
-		"reason_class": ReasonClass(reason),
+		"reason_class": string(queuecontract.ClassifyReason(reason)),
 	}
 	if strings.TrimSpace(opts.Label) != "" {
 		fields["label"] = strings.TrimSpace(opts.Label)
 	}
 
-	emitJSONEvent(stdout, opts, EventName(state), fields)
+	prefix := opts.EventPrefix
+	if prefix == "" {
+		prefix = queuecontract.CommandEventPrefix("idiom." + strings.TrimSpace(opts.Command))
+	}
+	if err := jsonevents.Emit(stdout, opts.JSONEvents, queuecontract.CommandAdmissionEventName(prefix, queuecontract.AdmissionEventName(state)), fields); err != nil && stderr != nil {
+		fmt.Fprintf(stderr, "queue admission: write json event: %v\n", err)
+	}
 
 	if rec != nil {
 		eventType := strings.TrimSpace(opts.TelemetryEvent)
@@ -94,68 +137,5 @@ func emit(rec *telemetry.Recorder, stdout io.Writer, opts Options, state string,
 		if eventType != "_queue" {
 			_ = rec.Log(eventType, fields)
 		}
-	}
-}
-
-func EventName(state string) string {
-	switch state {
-	case "acquired":
-		return "queue_acquired"
-	case "unavailable":
-		return "queue_unavailable"
-	case "disabled":
-		return "queue_disabled"
-	case "degraded":
-		return "queue_degraded"
-	default:
-		return "queue_error"
-	}
-}
-
-func emitJSONEvent(stdout io.Writer, opts Options, eventType string, fields map[string]any) {
-	if !opts.JSONEvents {
-		return
-	}
-
-	prefix := strings.TrimSpace(opts.EventPrefix)
-	if prefix == "" {
-		prefix = "idiom." + strings.TrimSpace(opts.Command)
-	}
-
-	payload := map[string]any{
-		"type": prefix + "." + eventType,
-		"ts":   time.Now().UTC().Format(time.RFC3339Nano),
-	}
-	for key, value := range fields {
-		payload[key] = value
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return
-	}
-
-	fmt.Fprintln(stdout, string(body))
-}
-
-func ReasonClass(reason string) string {
-	reason = strings.ToLower(strings.TrimSpace(reason))
-	switch {
-	case reason == "":
-		return ""
-	case strings.Contains(reason, "pool_disabled"):
-		return "pool_disabled"
-	case strings.Contains(reason, "nested_same_pool"):
-		return "nested_same_pool"
-	case strings.Contains(reason, "nested_cross_pool"):
-		return "nested_cross_pool"
-	case strings.Contains(reason, "unknown pool"):
-		return "unknown_pool"
-	case strings.Contains(reason, "daemon_unreachable"), strings.Contains(reason, "unreachable"), strings.Contains(reason, "connection refused"):
-		return "daemon_unreachable"
-	case strings.Contains(reason, "context canceled"), strings.Contains(reason, "deadline"):
-		return "timeout_or_canceled"
-	default:
-		return "queue_error"
 	}
 }

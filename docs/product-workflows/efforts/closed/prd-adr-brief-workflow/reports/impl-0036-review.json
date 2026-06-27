@@ -33,8 +33,8 @@
   "checks": {
     "read_only_effort_browser": "passed",
     "status_and_query_filters": "passed",
-    "malformed_state_findings": "passed_after_repair",
-    "cli_json_and_text_parity": "passed_after_repair",
+    "malformed_state_findings": "passed",
+    "cli_json_and_text_parity": "passed",
     "no_mutation_or_migration": "passed"
   },
   "reviewed_at": "2026-05-18T21:25:00Z",

@@ -9,7 +9,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/contracts/sourcekind"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/discovery"
 )
 
@@ -179,7 +180,7 @@ func (m *Manager) sourceSanityOne(ctx context.Context, absPath string, workdir s
 				Path:   rel,
 				Method: tool,
 				Detail: oneLineSourceSanityDetail(result),
-				Error:  util.FirstNonEmpty(strings.TrimSpace(result.Error), strings.TrimSpace(result.Output), strings.TrimSpace(result.Summary)),
+				Error:  textutil.FirstNonEmpty(strings.TrimSpace(result.Error), strings.TrimSpace(result.Output), strings.TrimSpace(result.Summary)),
 			}
 		}
 
@@ -236,21 +237,11 @@ func sourceSanityDiagnosticToolForPath(path string) string {
 }
 
 func sourceSanityRequiresConcreteDiagnosticsForPath(path string) bool {
-	lang, ok := LanguageForFile(path)
-	return ok && strings.EqualFold(strings.TrimSpace(lang.Name), "cpp")
+	return sourcekind.RequiresConcreteSourceSanityDiagnostics(path)
 }
 
 func sourceSanityCoversPath(path string) bool {
-	if _, ok := LanguageForFile(path); ok {
-		return true
-	}
-
-	switch strings.ToLower(filepath.Ext(strings.TrimSpace(path))) {
-	case ".gd":
-		return true
-	default:
-		return false
-	}
+	return sourcekind.CoversSourceSanity(path)
 }
 
 // SourceSanityCoversPath reports whether source_sanity has a concrete
@@ -294,7 +285,7 @@ func diagnosticsUnavailableDetail(result ToolResult) string {
 }
 
 func oneLineSourceSanityDetail(result ToolResult) string {
-	detail := util.FirstNonEmpty(strings.TrimSpace(result.Output), strings.TrimSpace(result.Summary))
+	detail := textutil.FirstNonEmpty(strings.TrimSpace(result.Output), strings.TrimSpace(result.Summary))
 
 	detail = strings.ReplaceAll(detail, "\r\n", "\n")
 	detail = strings.TrimSpace(strings.Split(detail, "\n")[0])

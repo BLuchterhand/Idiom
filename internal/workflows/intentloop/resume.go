@@ -5,15 +5,20 @@ import (
 	"io"
 	"strings"
 
+	intentloopcontract "idiom/internal/contracts/intentloop"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
 	"idiom/internal/workflows/planexecute"
 )
 
 const (
-	ResumeBlockPromptMismatch        = "blocked_cycle_prompt_mismatch"
-	ResumeBlockChildIdentityMismatch = "blocked_child_identity_mismatch"
-	ResumeBlockExternalScopedChange  = "blocked_external_scoped_change"
+	ResumeBlockPromptMismatch            = "blocked_cycle_prompt_mismatch"
+	ResumeBlockChildIdentityMismatch     = "blocked_child_identity_mismatch"
+	ResumeBlockExternalScopedChange      = "blocked_external_scoped_change"
+	ResumeBlockChildProgressNotResumable = "blocked_child_progress_not_resumable"
+	ResumeBlockAssessmentFailed          = "blocked_resume_assessment_failed"
+	ResumeBlockTerminalCompletionLoad    = "blocked_terminal_completion_load_failed"
 )
 
 type ResumeAssessmentInput struct {
@@ -91,13 +96,11 @@ func AssessResume(input ResumeAssessmentInput) (ResumeAssessment, error) {
 	}
 
 	assessment.ChildProgressPath = progressPath
-	assessment.CanResumeChild = progress.Phase == planexecute.ProgressPhaseReviewRepair ||
-		progress.Phase == planexecute.ProgressPhaseExecutor ||
-		progress.Phase == planexecute.ProgressPhasePlanning
+	assessment.CanResumeChild = progress.ReviewResumeReady()
 	return assessment, nil
 }
 
-func resumeIncompleteCycle(cfg config.Config, opts IntentLoopOptions, promptRun planexecute.PromptRunner, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer, state *IntentLoopState) (IntentLoopResult, *planexecute.PlanExecuteTerminalCompletionRecord) {
+func resumeIncompleteCycle(cfg config.Config, opts IntentLoopOptions, promptRun planexecute.PromptRunner, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer, state *IntentLoopState) (IntentLoopResult, *plancontract.PlanExecuteTerminalCompletionRecord) {
 	if state == nil {
 		return IntentLoopResult{}, nil
 	}
@@ -111,27 +114,28 @@ func resumeIncompleteCycle(cfg config.Config, opts IntentLoopOptions, promptRun 
 		CurrentScopedFingerprint: scopedWorkspaceFingerprint(cfg.Workspace.Root, state.Contract.ScopeContract),
 	})
 	if err != nil {
-		state.Status = StatusBlocked
-		state.TerminationReason = err.Error()
-		statePath, _ := SaveState(cfg.Workspace.Root, state)
+		statePath, saveErr := blockIncompleteResumeCycle(cfg.Workspace.Root, state, assessment, ResumeBlockAssessmentFailed, err.Error())
+		if saveErr != nil {
+			return intentLoopJSONEventFailureResult(state.SessionID, statePath, fmt.Errorf("persist blocked intent loop state: %w", saveErr), stderr), nil
+		}
 		return resultFromState(*state, statePath, 1, nil, ""), nil
 	}
 	if !assessment.HasIncompleteCycle {
 		return IntentLoopResult{}, nil
 	}
 	if assessment.Blocked {
-		state.Status = StatusBlocked
-		state.TerminationReason = assessment.BlockReason
-		if assessment.BlockDetail != "" {
-			state.TerminationReason += ":" + assessment.BlockDetail
+		statePath, saveErr := blockIncompleteResumeCycle(cfg.Workspace.Root, state, assessment, assessment.BlockReason, assessment.BlockDetail)
+		if saveErr != nil {
+			return intentLoopJSONEventFailureResult(state.SessionID, statePath, fmt.Errorf("persist blocked intent loop state: %w", saveErr), stderr), nil
 		}
-		statePath, _ := SaveState(cfg.Workspace.Root, state)
-		emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, "blocked", map[string]any{
+		if err := emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, intentloopcontract.EventBlocked, map[string]any{
 			"session_id":       state.SessionID,
 			"cycle_number":     assessment.Cycle.CycleNumber,
 			"blocker_summary":  state.TerminationReason,
 			"child_session_id": assessment.ChildResumeID,
-		})
+		}); err != nil {
+			return intentLoopJSONEventFailureResult(state.SessionID, statePath, err, stderr), nil
+		}
 		if stderr != nil {
 			fmt.Fprintln(stderr, state.TerminationReason)
 		}
@@ -142,12 +146,72 @@ func resumeIncompleteCycle(cfg config.Config, opts IntentLoopOptions, promptRun 
 	if assessment.CanResumeChild {
 		childOpts.Resume = assessment.ChildResumeID
 	}
+
+	if assessment.ChildResumeID != "" {
+		record, completionPath, found, err := planexecute.TryLoadPlanExecuteTerminalCompletionRecord(cfg.Workspace.Root, assessment.ChildResumeID)
+		if err != nil {
+			statePath, saveErr := blockIncompleteResumeCycle(cfg.Workspace.Root, state, assessment, ResumeBlockTerminalCompletionLoad, err.Error())
+			if saveErr != nil {
+				return intentLoopJSONEventFailureResult(state.SessionID, statePath, fmt.Errorf("persist blocked intent loop state: %w", saveErr), stderr), nil
+			}
+			return resultFromState(*state, statePath, 1, nil, completionPath), nil
+		}
+		if found {
+			terminal := plancontract.NormalizePlanExecuteTerminalCompletionRecord(record)
+			childResult := planexecute.RunResult{
+				ExitCode:       terminal.ExitCode,
+				SessionID:      assessment.ChildResumeID,
+				FailureKind:    string(terminal.FailureKind),
+				FailureReason:  terminal.FailureReason,
+				Completion:     &terminal,
+				CompletionPath: completionPath,
+			}
+			gaps := AnalyzeEvidenceGaps(state.Contract, terminal)
+			finalizeCycleRecord(&state.Cycles[assessment.CycleIndex], childResult, terminal, completionPath, gaps, cfg.Workspace.Root)
+			state.Cycles[assessment.CycleIndex].TokensUsed = estimatedCycleTokens(opts, assessment.CyclePrompt, childResult, terminal)
+			state.TokensUsed += state.Cycles[assessment.CycleIndex].TokensUsed
+			if err := emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, intentloopcontract.EventCycleComplete, map[string]any{
+				"session_id":      state.SessionID,
+				"cycle_number":    state.Cycles[assessment.CycleIndex].CycleNumber,
+				"remaining_gaps":  sanitizedGapSummaries(gaps),
+				"gap_count":       len(gaps),
+				"tokens_used":     state.TokensUsed,
+				"child_exit_code": childResult.ExitCode,
+			}); err != nil {
+				return intentLoopJSONEventFailureResult(state.SessionID, "", err, stderr), nil
+			}
+			if result, terminalResult := foldCompletedCycle(cfg, opts, stdout, stderr, state, assessment.CycleIndex, &identity, &terminal, completionPath, gaps, childResult.ExitCode); terminalResult {
+				return result, &terminal
+			}
+			return IntentLoopResult{}, &terminal
+		}
+	}
+	if assessment.ChildProgressPath != "" && !assessment.CanResumeChild {
+		statePath, saveErr := blockIncompleteResumeCycle(cfg.Workspace.Root, state, assessment, ResumeBlockChildProgressNotResumable, assessment.ChildProgressPath)
+		if saveErr != nil {
+			return intentLoopJSONEventFailureResult(state.SessionID, statePath, fmt.Errorf("persist blocked intent loop state: %w", saveErr), stderr), nil
+		}
+		if err := emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, intentloopcontract.EventBlocked, map[string]any{
+			"session_id":       state.SessionID,
+			"cycle_number":     assessment.Cycle.CycleNumber,
+			"blocker_summary":  state.TerminationReason,
+			"child_session_id": assessment.ChildResumeID,
+			"child_state_path": assessment.ChildProgressPath,
+		}); err != nil {
+			return intentLoopJSONEventFailureResult(state.SessionID, statePath, err, stderr), nil
+		}
+		if stderr != nil {
+			fmt.Fprintln(stderr, state.TerminationReason)
+		}
+		return resultFromState(*state, statePath, 1, nil, ""), nil
+	}
+
 	childResult := opts.RunPlanExecute(cfg, childOpts, promptRun, rec, stdout, stderr)
 	terminal, completionPath, completionErr := loadChildTerminalCompletion(cfg.Workspace.Root, childResult)
 	if completionErr != nil {
 		state.Cycles[assessment.CycleIndex].FailureKind = "missing_terminal_record"
 		state.Cycles[assessment.CycleIndex].FailureReason = completionErr.Error()
-		state.Cycles[assessment.CycleIndex].Status = "failed"
+		state.Cycles[assessment.CycleIndex].Status = intentloopcontract.CycleStatusFailed
 		state.Cycles[assessment.CycleIndex].ExitCode = 1
 		statePath, _ := SaveState(cfg.Workspace.Root, state)
 		return resultFromState(*state, statePath, 1, nil, completionPath), nil
@@ -157,15 +221,54 @@ func resumeIncompleteCycle(cfg config.Config, opts IntentLoopOptions, promptRun 
 	finalizeCycleRecord(&state.Cycles[assessment.CycleIndex], childResult, *terminal, completionPath, gaps, cfg.Workspace.Root)
 	state.Cycles[assessment.CycleIndex].TokensUsed = estimatedCycleTokens(opts, assessment.CyclePrompt, childResult, *terminal)
 	state.TokensUsed += state.Cycles[assessment.CycleIndex].TokensUsed
-	emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, "cycle_complete", map[string]any{
+	if err := emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, intentloopcontract.EventCycleComplete, map[string]any{
 		"session_id":      state.SessionID,
 		"cycle_number":    state.Cycles[assessment.CycleIndex].CycleNumber,
 		"remaining_gaps":  sanitizedGapSummaries(gaps),
 		"gap_count":       len(gaps),
 		"tokens_used":     state.TokensUsed,
 		"child_exit_code": childResult.ExitCode,
-	})
+	}); err != nil {
+		return intentLoopJSONEventFailureResult(state.SessionID, "", err, stderr), nil
+	}
+	if result, terminalResult := foldCompletedCycle(cfg, opts, stdout, stderr, state, assessment.CycleIndex, &identity, terminal, completionPath, gaps, childResult.ExitCode); terminalResult {
+		return result, terminal
+	}
 	return IntentLoopResult{}, terminal
+}
+
+func blockIncompleteResumeCycle(root string, state *IntentLoopState, assessment ResumeAssessment, failureKind string, detail string) (string, error) {
+	if state == nil {
+		return "", fmt.Errorf("intent loop state is nil")
+	}
+	failureKind = strings.TrimSpace(failureKind)
+	detail = strings.TrimSpace(detail)
+	reason := failureKind
+	if detail != "" {
+		if reason != "" {
+			reason += ":" + detail
+		} else {
+			reason = detail
+		}
+	}
+	if reason == "" {
+		reason = "blocked_incomplete_resume_cycle"
+	}
+
+	state.Status = intentloopcontract.StatusBlocked
+	state.TerminationReason = reason
+	if assessment.CycleIndex >= 0 && assessment.CycleIndex < len(state.Cycles) {
+		cycle := &state.Cycles[assessment.CycleIndex]
+		if cycle.Status == intentloopcontract.CycleStatusDispatched {
+			cycle.Status = intentloopcontract.CycleStatusFailed
+		}
+		cycle.FailureKind = firstNonEmpty(failureKind, reason)
+		cycle.FailureReason = reason
+		if cycle.ExitCode == 0 {
+			cycle.ExitCode = 1
+		}
+	}
+	return SaveState(root, state)
 }
 
 func IncompleteCycle(state IntentLoopState) (int, CycleRecord, bool) {
@@ -175,7 +278,7 @@ func IncompleteCycle(state IntentLoopState) (int, CycleRecord, bool) {
 
 	index := len(state.Cycles) - 1
 	cycle := state.Cycles[index]
-	if strings.TrimSpace(cycle.Status) != "dispatched" {
+	if cycle.Status != intentloopcontract.CycleStatusDispatched {
 		return -1, CycleRecord{}, false
 	}
 	return index, cycle, true

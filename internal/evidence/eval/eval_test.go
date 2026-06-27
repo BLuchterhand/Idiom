@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"idiom/internal/contracts/autonomy"
+	planartifactcontract "idiom/internal/contracts/planartifact"
 )
 
 func TestAnalyzeExtractsMetricsFromRecords(t *testing.T) {
@@ -308,7 +311,7 @@ func TestAnalyzeIgnoresNoopWriteResultChangedFiles(t *testing.T) {
 func TestAnalyzeRoutePlanFromPlanExecuteWriterRouteDecision(t *testing.T) {
 	records := []Record{
 		{Type: "idiom.plan_execute.writer_route_decision", Data: map[string]any{
-			"task_family":  "plan_then_execute_planner",
+			"task_family":  string(autonomy.TaskFamilyPlanThenExecutePlanner),
 			"writer_mode":  "plan_submission",
 			"reason_codes": []any{"route.multi_file_plan_execute"},
 		}},
@@ -320,8 +323,27 @@ func TestAnalyzeRoutePlanFromPlanExecuteWriterRouteDecision(t *testing.T) {
 	}
 
 	plan := metrics.RoutePlans[0]
-	if plan.InitialLane != "plan_then_execute_planner" || plan.Reason != "plan_then_execute_request" || plan.Contract != "implementation_result" {
+	if plan.InitialLane != string(autonomy.TaskFamilyPlanThenExecutePlanner) || plan.Reason != string(autonomy.RouteReasonPlanThenExecuteRequest) || plan.Contract != string(planartifactcontract.ContractKindImplementationResult) {
 		t.Fatalf("unexpected plan-execute route plan: %#v", plan)
+	}
+}
+
+func TestAnalyzeRoutePlanFromPlanExecuteExecutorWriterRouteDecision(t *testing.T) {
+	records := []Record{
+		{Type: "idiom.plan_execute.writer_route_decision", Data: map[string]any{
+			"task_family": string(autonomy.TaskFamilyPlanThenExecuteExecutor),
+			"writer_mode": "executor_dispatch",
+		}},
+	}
+
+	metrics := Analyze(records)
+	if len(metrics.RoutePlans) != 1 {
+		t.Fatalf("expected executor route plan from writer route event, got %#v", metrics.RoutePlans)
+	}
+
+	plan := metrics.RoutePlans[0]
+	if plan.InitialLane != string(autonomy.TaskFamilyPlanThenExecuteExecutor) || plan.Reason != string(autonomy.RouteReasonPlanArtifactDispatch) || plan.Contract != string(autonomy.RuntimeContractExecutorDispatchResult) {
+		t.Fatalf("unexpected plan-execute executor route plan: %#v", plan)
 	}
 }
 

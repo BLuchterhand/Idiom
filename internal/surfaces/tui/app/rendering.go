@@ -11,7 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"idiom/internal/capabilities/workspace"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/llama"
 )
 
@@ -33,7 +33,7 @@ func (m *Model) View() string {
 	}
 
 	leftTitle := titleStyle.Render("◆ " + m.cfg.AppName)
-	rightInfo := statusStyle.Render(serverState + "  " + util.Fallback(m.activeModelDisplayID(), "unknown"))
+	rightInfo := statusStyle.Render(serverState + "  " + textutil.Fallback(m.activeModelDisplayID(), "unknown"))
 	headerGap := w - lipgloss.Width(leftTitle) - lipgloss.Width(rightInfo)
 
 	if headerGap < 0 {
@@ -134,7 +134,7 @@ func (m *Model) operatorStatusText(width int) string {
 		status = status + " · " + hint
 	}
 
-	return util.Truncate(strings.TrimSpace(status), available)
+	return textutil.Truncate(strings.TrimSpace(status), available)
 }
 
 func (m *Model) operatorHintText() string {

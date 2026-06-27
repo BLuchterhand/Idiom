@@ -11,12 +11,12 @@
   "status": "pass",
   "findings": [],
   "checks": {
-    "discovery_first_review": "Reviewer used Idiom discovery before localized patch review.",
-    "acceptance_metadata": "Accepted PRD and ADR artifacts require accepted_at, accepted_by, and acceptance_profile; nonaccepted states keep those fields optional.",
-    "no_fixture_bypass": "The durable accepted PRD fixture carries acceptance metadata instead of bypassing accepted-state validation by schema suffix.",
-    "supersession_links": "ADR markdown and ADR index parse supersedes/superseded_by and reject broken, duplicate, self-referential, and non-reciprocal links.",
-    "no_model_acceptance_authority": "No model-accept command, auto-accept behavior, promotion, TUI/operator behavior, or execution path was added.",
-    "durable_privacy": "Reports and workflow state exclude raw prompts, raw transcripts, file bodies, secrets, and customer-identifying data.",
+    "discovery_first_review": "passed",
+    "acceptance_metadata": "passed",
+    "no_fixture_bypass": "passed",
+    "supersession_links": "passed",
+    "no_model_acceptance_authority": "passed",
+    "durable_privacy": "passed",
     "verdict": "pass"
   },
   "reviewed_at": "2026-05-18T13:05:00Z",

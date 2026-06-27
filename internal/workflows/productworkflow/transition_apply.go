@@ -19,7 +19,7 @@ type ProductWorkflowTransitionApplyOptions struct {
 }
 
 type ProductWorkflowTransitionApplyResult struct {
-	Status               string                             `json:"status"`
+	Status               ProductWorkflowStatus              `json:"status"`
 	EffortRoot           string                             `json:"effort_root"`
 	Action               string                             `json:"action"`
 	FromState            string                             `json:"from_state"`
@@ -155,6 +155,9 @@ func ApplyProductWorkflowTransition(options ProductWorkflowTransitionApplyOption
 	updated := *workflowState
 
 	updated.CurrentState = transition.ToState
+	if bucket, ok := validStates[transition.ToState]; ok {
+		updated.StatusBucket = bucket
+	}
 	updated.CurrentPhase = productWorkflowTransitionPhase(updated.CurrentPhase, transition.ToState)
 	updated.UpdatedAt = updatedAt
 	updated.StateRevision++
@@ -163,12 +166,12 @@ func ApplyProductWorkflowTransition(options ProductWorkflowTransitionApplyOption
 	updated.NextValidActions = transitionActionNames(nextActionsFor(transition.ToState, updated.Coverage.GateResults))
 
 	event := ProductWorkflowTransitionEvent{
-		Event:     "product_workflow_transition_applied",
+		Event:     string(ProductWorkflowEventTransitionApplied),
 		EventID:   eventID,
 		EffortID:  updated.EffortID,
 		TaskID:    updated.TaskID,
 		Timestamp: updatedAt,
-		Source:    "product_workflow_transition_apply",
+		Source:    string(ProductWorkflowEventSourceTransitionApply),
 		Actor:     strings.TrimSpace(options.Actor),
 		Action:    result.Action,
 		Details: ProductWorkflowTransitionEventDetail{

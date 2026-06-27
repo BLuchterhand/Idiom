@@ -17,7 +17,9 @@ func TestDebugListModels(t *testing.T) {
 		t.Skip("set IDIOM_RUN_DEBUG_TESTS=1 to run local debug smoke tests")
 	}
 
-	cfg, err := config.Load("/workspace/idiom/.idiom/config.json")
+	cfg, err := config.LoadWithOptions("/workspace/idiom/.idiom/config.json", config.LoadOptions{
+		DisableGlobalConfigFallback: true,
+	})
 	if err != nil {
 		t.Fatal("config load error:", err)
 	}
@@ -54,7 +56,9 @@ func TestDebugRoleSpec(t *testing.T) {
 
 	projectRoot := "/workspace/idiom"
 
-	cfg, err := config.Load("/workspace/idiom/.idiom/config.json")
+	cfg, err := config.LoadWithOptions("/workspace/idiom/.idiom/config.json", config.LoadOptions{
+		DisableGlobalConfigFallback: true,
+	})
 	if err != nil {
 		t.Fatal("config load error:", err)
 	}

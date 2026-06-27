@@ -15,7 +15,7 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
-	"idiom/internal/platform/util"
+	"idiom/internal/surfaces/cli/cliflag"
 )
 
 type ConfigLoader func(path string) (config.Config, error)
@@ -52,9 +52,9 @@ type options struct {
 	IncludeSource     bool
 	IncludeFiles      bool
 	Refresh           bool
-	RequiredTests     util.MultiFlag
-	RequiredEditPaths util.MultiFlag
-	ForbiddenPaths    util.MultiFlag
+	RequiredTests     cliflag.MultiFlag
+	RequiredEditPaths cliflag.MultiFlag
+	ForbiddenPaths    cliflag.MultiFlag
 }
 
 func Run(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder, deps Deps) int {

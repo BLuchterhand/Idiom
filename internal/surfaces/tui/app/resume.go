@@ -9,8 +9,10 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/evidence/transcript"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/jsonl"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/sessionlog"
 	"idiom/internal/workflows/featureplanner"
 )
 
@@ -40,7 +42,7 @@ func (m *Model) ResumeSession(id string) error {
 		return fmt.Errorf("session id is required")
 	}
 
-	path := ResolveSessionLogPath(m.cfg, id)
+	path := sessionlog.ResolveSessionLogPath(m.cfg, id)
 	if path == "" {
 		return fmt.Errorf("could not resolve session log path for %q", id)
 	}
@@ -70,7 +72,7 @@ func (m *Model) ResumeSession(id string) error {
 	// new-session log that initDebugLogger just created.
 	newLogger, err := transcript.NewDebugLogger(transcript.DebugLoggerOptions{
 		Dir:           m.cfg.Chat.DebugLogDir,
-		Mode:          transcript.DebugLogMode(util.FirstNonEmpty(m.cfg.Chat.DebugLogMode, "redacted")),
+		Mode:          transcript.DebugLogMode(textutil.FirstNonEmpty(m.cfg.Chat.DebugLogMode, "redacted")),
 		WorkspaceRoot: m.workspace.Root(),
 		ResumePath:    path,
 	})
@@ -191,7 +193,7 @@ func featurePlannerSessionIDsFromSessionLog(path string) []string {
 		ids = append(ids, id)
 	}
 
-	_ = util.ScanFile(path, func(raw json.RawMessage) error {
+	_ = jsonl.ScanFile(path, func(raw json.RawMessage) error {
 		var record map[string]any
 		if err := json.Unmarshal(raw, &record); err != nil {
 			return nil
@@ -249,7 +251,7 @@ func featurePlannerStatePathMatchIsRelative(content string, start int) bool {
 func replaySessionMessages(path string) ([]llama.ChatMessage, error) {
 	var out []llama.ChatMessage
 
-	err := util.ScanFile(path, func(raw json.RawMessage) error {
+	err := jsonl.ScanFile(path, func(raw json.RawMessage) error {
 		var rec map[string]any
 
 		if err := json.Unmarshal(raw, &rec); err != nil {
@@ -453,7 +455,7 @@ func loadDiffPathIndex(path string) map[string]string {
 		return out
 	}
 
-	_ = util.ScanFile(path, func(raw json.RawMessage) error {
+	_ = jsonl.ScanFile(path, func(raw json.RawMessage) error {
 		var rec planDiffEntry
 
 		if err := json.Unmarshal(raw, &rec); err != nil {
@@ -474,7 +476,7 @@ func loadDiffPathIndex(path string) map[string]string {
 // debug-log directory, newest first. Exposed so the TUI `/resume`
 // handler can surface a short list when the user doesn't pass an id.
 func (m *Model) AvailableSessionIDs(limit int) []string {
-	sessions, err := ListRecordedSessions(m.cfg)
+	sessions, err := sessionlog.ListRecordedSessions(m.cfg)
 	if err != nil {
 		return nil
 	}

@@ -11,12 +11,12 @@
   "status": "pass",
   "findings": [],
   "checks": {
-    "discovery_first_review": "All implementation and review passes used Idiom context_pack before localized reads.",
-    "unsupported_claim_policy": "block_prd_audit maps to warning and block_research_merge maps to error.",
-    "research_output_boundary": "literal traversal, symlinked output directories outside effort root, and symlinked output files block before reading researcher output.",
-    "explicit_profile_selection": "multi-profile merge blocks without --profile and applies the selected profile policy when supplied.",
-    "durable_bookkeeping": "closeout records now reference checkpoint commit hash and all impl-0020 blockers are cleared.",
-    "verdict": "pass_after_repairs"
+    "discovery_first_review": "passed",
+    "unsupported_claim_policy": "passed",
+    "research_output_boundary": "passed",
+    "explicit_profile_selection": "passed",
+    "durable_bookkeeping": "passed",
+    "verdict": "passed"
   },
   "reviewed_at": "2026-05-18T10:58:00Z",
   "commands_reviewed": [

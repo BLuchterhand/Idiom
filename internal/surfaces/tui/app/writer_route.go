@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"strings"
 
+	lanecontract "idiom/internal/contracts/lane"
 	"idiom/internal/contracts/writerroute"
 	"idiom/internal/runtime/backends"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/runtime/writerrouting"
 )
 
 func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecutionPlan) writerroute.Decision {
@@ -23,36 +25,36 @@ func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecution
 	}
 
 	taskFamily := strings.TrimSpace(plan.route.Family)
-	reasonCodes := []string{"route.read_only_question"}
-	verificationOwner := ""
+	reasonCodes := []writerroute.ReasonCode{writerroute.ReasonReadOnlyQuestion}
+	verificationOwner := writerroute.VerificationOwner("")
 
 	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(taskFamily) {
 		mode = writerroute.ModePlanSubmission
-		lane = "plan-execute"
-		reasonCodes = []string{"route.plan_execute_planner"}
-		verificationOwner = "planner_owned"
+		lane = string(lanecontract.LanePlanExecute)
+		reasonCodes = []writerroute.ReasonCode{writerroute.ReasonPlanExecutePlanner}
+		verificationOwner = writerroute.VerificationOwnerPlannerOwned
 	} else if workerruntime.TaskFamilyIsPlanThenExecuteReview(taskFamily) {
 		mode = writerroute.ModePlanSubmission
-		lane = "plan-execute"
-		reasonCodes = []string{"route.plan_execute_review_repair"}
-		verificationOwner = "planner_owned"
+		lane = string(lanecontract.LanePlanExecute)
+		reasonCodes = []writerroute.ReasonCode{writerroute.ReasonPlanExecuteReviewRepair}
+		verificationOwner = writerroute.VerificationOwnerPlannerOwned
 	} else if isImplementationLikeFamily(plan.route.Family) {
 		mode = writerroute.ModeAgenticGuarded
 		lane = "implement"
-		reasonCodes = []string{"route.local_model_default"}
+		reasonCodes = []writerroute.ReasonCode{writerroute.ReasonLocalModelDefault}
 
 		if strings.TrimSpace(plan.route.Reason) == "typed_implement_command" {
-			reasonCodes = []string{"route.typed_implement_command"}
+			reasonCodes = []writerroute.ReasonCode{writerroute.ReasonTypedImplementCommand}
 		}
 
 		if m.plannerOwnedVerification {
-			verificationOwner = "planner_owned"
+			verificationOwner = writerroute.VerificationOwnerPlannerOwned
 		} else {
-			verificationOwner = "executor"
+			verificationOwner = writerroute.VerificationOwnerExecutor
 		}
 	}
 
-	aliases := appWriterRouteRoleAliases(m.projectRoot())
+	aliases := writerrouting.RoleAliases(m.projectRoot(), "")
 	plannerModel := m.writerRouteModelForRole(aliases, backends.RolePlanner)
 	executorModel := m.writerRouteModelForRole(aliases, backends.RoleExecutor)
 	classifierModel := m.writerRouteModelForRole(aliases, backends.RoleClassifier)
@@ -76,67 +78,20 @@ func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecution
 func (m *Model) emitWriterRouteDecision(decision writerroute.Decision) {
 	fields := decision.EventFields()
 
-	fields["type"] = "writer_route_decision"
+	fields["type"] = string(writerroute.EventWriterRouteDecision)
 	m.emitJSONEvent(fields)
 
 	if body, err := json.Marshal(fields); err == nil {
-		m.logMessage("writer_route_decision", string(body))
+		m.logMessage(string(writerroute.EventWriterRouteDecision), string(body))
 	}
-}
-
-func appWriterRouteRoleAliases(projectRoot string) map[string]string {
-	file, ok, err := backends.LoadFromProjectRoot(projectRoot)
-	if err != nil || !ok {
-		return nil
-	}
-
-	profile, found := file.Profile("")
-	if !found {
-		return nil
-	}
-
-	aliases := make(map[string]string, 3)
-
-	for _, role := range []string{backends.RolePlanner, backends.RoleExecutor, backends.RoleClassifier} {
-		if alias, ok := profile.AliasForRole(role); ok && strings.TrimSpace(alias) != "" {
-			aliases[role] = strings.TrimSpace(alias)
-		}
-	}
-
-	if len(aliases) == 0 {
-		return nil
-	}
-
-	return aliases
 }
 
 func (m *Model) writerRouteModelForRole(aliases map[string]string, role string) string {
-	switch role {
-	case backends.RoleExecutor:
-		if model := strings.TrimSpace(m.executorSpec.Model); model != "" {
-			return model
-		}
-
-		if m.cfg.Implementer != nil && strings.TrimSpace(m.cfg.Implementer.Model) != "" {
-			return strings.TrimSpace(m.cfg.Implementer.Model)
-		}
-	case backends.RoleClassifier:
-		if model := strings.TrimSpace(m.cfg.RouteClassifier.Model); model != "" {
-			return model
-		}
-	default:
-		if model := strings.TrimSpace(m.plannerSpec.Model); model != "" {
-			return model
-		}
-	}
-
-	if model := strings.TrimSpace(m.cfg.LlamaServer.Model); model != "" {
-		return model
-	}
-
-	if alias := strings.TrimSpace(aliases[role]); alias != "" {
-		return alias
-	}
-
-	return ""
+	return writerrouting.ModelForRole(writerrouting.ModelSelection{
+		Config:                    m.cfg,
+		Aliases:                   aliases,
+		PlannerModel:              m.plannerSpec.Model,
+		ExecutorModel:             m.executorSpec.Model,
+		UseBaseModelForClassifier: true,
+	}, role)
 }

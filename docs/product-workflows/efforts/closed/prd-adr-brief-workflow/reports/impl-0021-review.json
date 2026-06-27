@@ -11,13 +11,13 @@
   "status": "pass",
   "findings": [],
   "checks": {
-    "discovery_first_review": "Reviewer used Idiom context_pack before localized raw file reads.",
-    "mutual_exclusion": "--plan-runs rejects --merge-evidence before either execution path can write.",
-    "profile_selection_copy": "Shared ambiguous profile-selection copy is mode-neutral and applies to plan-runs and merge-evidence.",
-    "run_plan_contract": "PlanResearchRuns emits deterministic sorted run specs with safe effort-relative output paths and research-card output contract metadata.",
-    "fail_closed_ids": "Unsafe profile ids and researcher ids produce typed error findings; unsafe researcher ids produce zero runs.",
-    "durable_bookkeeping": "Implementation report references checkpoint commit hash and impl-0021 blockers are cleared.",
-    "verdict": "pass_after_repairs"
+    "discovery_first_review": "passed",
+    "mutual_exclusion": "passed",
+    "profile_selection_copy": "passed",
+    "run_plan_contract": "passed",
+    "fail_closed_ids": "passed",
+    "durable_bookkeeping": "passed",
+    "verdict": "passed"
   },
   "reviewed_at": "2026-05-18T11:46:00Z",
   "commands_reviewed": [

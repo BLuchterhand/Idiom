@@ -11,7 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/llama"
 )
 
@@ -1065,7 +1065,7 @@ func (m *Model) handleServerStatus(msg serverStatusMsg) (tea.Cmd, bool) {
 		}
 
 		m.modelID = msg.modelID
-		m.modelDisplayID = util.Fallback(strings.TrimSpace(msg.displayID), strings.TrimSpace(msg.modelID))
+		m.modelDisplayID = textutil.Fallback(strings.TrimSpace(msg.displayID), strings.TrimSpace(msg.modelID))
 		m.managedServer = m.managedServer || msg.owned
 		m.clearRuntimeErrorIfServerRelated()
 

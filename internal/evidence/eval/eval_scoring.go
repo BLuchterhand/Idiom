@@ -8,7 +8,10 @@ import (
 	"time"
 
 	"idiom/internal/contracts/autonomy"
-	"idiom/internal/platform/util"
+	featureplannercontract "idiom/internal/contracts/featureplanner"
+	plancontract "idiom/internal/contracts/plan"
+	planartifactcontract "idiom/internal/contracts/planartifact"
+	"idiom/internal/platform/textutil"
 )
 
 func legacyDiscoveryProfile(tool string) (class string, scope string, cost string) {
@@ -434,7 +437,7 @@ func Analyze(records []Record) Metrics {
 				State:  stringField(record.Data, "state"),
 				Detail: stringField(record.Data, "detail"),
 			})
-		case "idiom.plan_execute.executor_handoff_packet":
+		case plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventExecutorHandoffPacket):
 			metrics.PlanExecutionHandoffs = append(metrics.PlanExecutionHandoffs, PlanExecutionHandoffSnapshot{
 				PlanID:              stringField(record.Data, "plan_id"),
 				HandoffID:           stringField(record.Data, "handoff_id"),
@@ -449,17 +452,17 @@ func Analyze(records []Record) Metrics {
 				PacketFreshness:     stringField(record.Data, "packet_freshness_state"),
 				Reason:              stringField(record.Data, "reason"),
 			})
-		case "idiom.plan_execute.writer_route_decision":
+		case plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventWriterRouteDecision):
 			if plan := routePlanFromWriterRouteDecision(record.Data); plan.Raw != "" {
 				metrics.RoutePlans = append(metrics.RoutePlans, plan)
 			}
-		case "idiom.plan_execute.planner_blocked":
+		case plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventPlannerBlocked):
 			metrics.TypedBlockers++
-		case "idiom.plan_execute.source_satisfied", "idiom.plan_execute.auto_exact_plan_source_satisfied":
+		case plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventSourceSatisfied), plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventAutoExactPlanSourceSatisfied):
 			metrics.SourceSatisfiedOutcomes++
 		case "idiom.live_contract.timeout":
 			metrics.LiveContractTimeouts++
-		case "idiom.plan_execute.plan_scope_drift":
+		case plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventPlanScopeDrift):
 			metrics.PlanExecutionDrift = append(metrics.PlanExecutionDrift, PlanExecutionDriftSnapshot{
 				Path:            stringField(record.Data, "path"),
 				Reason:          stringField(record.Data, "reason"),
@@ -471,10 +474,10 @@ func Analyze(records []Record) Metrics {
 				PacketNotUsed:   boolField(record.Data, "packet_not_used_by_design"),
 				PacketFreshness: stringField(record.Data, "packet_freshness_state"),
 			})
-		case "idiom.plan_execute.verification":
+		case plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventVerification):
 			metrics.VerificationChecks++
 			recordVerificationStatus(&metrics, stringField(record.Data, "status"))
-		case "idiom.plan_execute.executor_complete":
+		case plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventExecutorComplete):
 			metrics.ExecutorCompletes++
 			if checked := intField(record.Data, "verification_checked"); checked > metrics.VerificationChecks {
 				metrics.VerificationChecks = checked
@@ -552,18 +555,18 @@ func Analyze(records []Record) Metrics {
 	}
 
 	if rollbackEvidenceSeen {
-		metrics.ChangedFiles = util.UniqueNonEmpty(rollbackChangedFiles)
+		metrics.ChangedFiles = textutil.UniqueNonEmpty(rollbackChangedFiles)
 	} else {
-		metrics.ChangedFiles = util.UniqueNonEmpty(writeChangedFiles)
+		metrics.ChangedFiles = textutil.UniqueNonEmpty(writeChangedFiles)
 	}
 
 	if !firstTS.IsZero() && !lastTS.IsZero() && !lastTS.Before(firstTS) {
 		metrics.DurationMillis = lastTS.Sub(firstTS).Milliseconds()
 	}
 
-	metrics.Errors = util.UniqueNonEmpty(metrics.Errors)
-	metrics.EvidencePaths = util.UniqueNonEmpty(metrics.EvidencePaths)
-	metrics.SummaryRejectionLanes = util.UniqueNonEmpty(metrics.SummaryRejectionLanes)
+	metrics.Errors = textutil.UniqueNonEmpty(metrics.Errors)
+	metrics.EvidencePaths = textutil.UniqueNonEmpty(metrics.EvidencePaths)
+	metrics.SummaryRejectionLanes = textutil.UniqueNonEmpty(metrics.SummaryRejectionLanes)
 	metrics.LanguageCapabilities = mergeLanguageCapabilities(nil, metrics.LanguageCapabilities)
 
 	if len(autonomyEvents) > 0 {
@@ -1029,8 +1032,8 @@ func contractReplayViolations(replay autonomy.ReplayReport, audit autonomy.Event
 			ID:          violation.ID,
 			Severity:    "medium",
 			Evidence:    violation.Evidence,
-			EventIDs:    util.UniqueNonEmpty([]string{violation.EventID}),
-			ContractIDs: util.UniqueNonEmpty([]string{violation.ContractID}),
+			EventIDs:    textutil.UniqueNonEmpty([]string{violation.EventID}),
+			ContractIDs: textutil.UniqueNonEmpty([]string{violation.ContractID}),
 		})
 	}
 
@@ -1049,8 +1052,8 @@ func contractReplayViolations(replay autonomy.ReplayReport, audit autonomy.Event
 			ID:          "contract_event_unresolved_obligation",
 			Severity:    "medium",
 			Evidence:    fmt.Sprintf("obligation %q remained open", obligation.ObligationID),
-			EventIDs:    util.UniqueNonEmpty([]string{obligation.EventID}),
-			ContractIDs: util.UniqueNonEmpty([]string{obligation.ContractID}),
+			EventIDs:    textutil.UniqueNonEmpty([]string{obligation.EventID}),
+			ContractIDs: textutil.UniqueNonEmpty([]string{obligation.ContractID}),
 		})
 	}
 
@@ -1684,7 +1687,7 @@ func mapCountFold(values map[string]int, target string) int {
 	}
 
 	for key, count := range values {
-		if util.EqualTrimFold(key, target) {
+		if textutil.EqualTrimFold(key, target) {
 			return count
 		}
 	}
@@ -1699,7 +1702,7 @@ func contractReplayHasViolation(violations []ContractReplayViolation, id string)
 	}
 
 	for _, violation := range violations {
-		if util.EqualTrimFold(violation.ID, id) {
+		if textutil.EqualTrimFold(violation.ID, id) {
 			return true
 		}
 	}
@@ -1934,8 +1937,8 @@ func runEventObserved(metrics Metrics, required string) bool {
 
 func runEventAliases(required string) []string {
 	switch required {
-	case "idiom.feature_planner.atom_completed":
-		return []string{"idiom.feature_planner.atom_source_satisfied"}
+	case featureplannercontract.EventName(featureplannercontract.EventAtomCompleted):
+		return []string{featureplannercontract.EventName(featureplannercontract.EventAtomSourceSatisfied)}
 	default:
 		return nil
 	}
@@ -1992,11 +1995,11 @@ func routePlanFromWriterRouteDecision(data map[string]any) RoutePlanSnapshot {
 	}
 	switch taskFamily {
 	case string(autonomy.TaskFamilyPlanThenExecutePlanner):
-		plan.Reason = "plan_then_execute_request"
-		plan.Contract = "implementation_result"
-	case "plan_then_execute_executor":
-		plan.Reason = "plan_artifact_dispatch"
-		plan.Contract = "executor_dispatch_result"
+		plan.Reason = string(autonomy.RouteReasonPlanThenExecuteRequest)
+		plan.Contract = string(planartifactcontract.ContractKindImplementationResult)
+	case string(autonomy.TaskFamilyPlanThenExecuteExecutor):
+		plan.Reason = string(autonomy.RouteReasonPlanArtifactDispatch)
+		plan.Contract = string(autonomy.RuntimeContractExecutorDispatchResult)
 	default:
 		reasonCodes := stringSliceField(data, "reason_codes")
 		if len(reasonCodes) > 0 {
@@ -2104,9 +2107,9 @@ func parseVerificationPlan(content string) VerificationPlanSnapshot {
 	}
 
 	plan.Raw = content
-	plan.Commands = util.UniqueNonEmpty(plan.Commands)
-	plan.Reasons = util.UniqueNonEmpty(plan.Reasons)
-	plan.ExpectedFailures = util.UniqueNonEmpty(plan.ExpectedFailures)
+	plan.Commands = textutil.UniqueNonEmpty(plan.Commands)
+	plan.Reasons = textutil.UniqueNonEmpty(plan.Reasons)
+	plan.ExpectedFailures = textutil.UniqueNonEmpty(plan.ExpectedFailures)
 	plan.Coverage = strings.TrimSpace(plan.Coverage)
 	plan.Confidence = strings.TrimSpace(plan.Confidence)
 	plan.RiskLevel = strings.TrimSpace(plan.RiskLevel)
@@ -2164,7 +2167,7 @@ func parseReadinessCheck(content string) ReadinessSnapshot {
 	readiness.Confidence = strings.TrimSpace(readiness.Confidence)
 	readiness.Action = strings.TrimSpace(readiness.Action)
 	readiness.Reason = strings.TrimSpace(readiness.Reason)
-	readiness.EvidencePaths = util.UniqueNonEmpty(readiness.EvidencePaths)
+	readiness.EvidencePaths = textutil.UniqueNonEmpty(readiness.EvidencePaths)
 
 	return readiness
 }
@@ -2217,7 +2220,7 @@ func parseDeepeningAttempt(content string) DeepeningSnapshot {
 	deepening.Lane = strings.TrimSpace(deepening.Lane)
 	deepening.Action = strings.TrimSpace(deepening.Action)
 	deepening.Reason = strings.TrimSpace(deepening.Reason)
-	deepening.EvidencePaths = util.UniqueNonEmpty(deepening.EvidencePaths)
+	deepening.EvidencePaths = textutil.UniqueNonEmpty(deepening.EvidencePaths)
 
 	return deepening
 }
@@ -2269,8 +2272,8 @@ func parseFinalAnswerCritic(content string) FinalAnswerCriticSnapshot {
 	critic.Raw = content
 	critic.Contract = strings.TrimSpace(critic.Contract)
 	critic.Action = strings.TrimSpace(critic.Action)
-	critic.Findings = util.UniqueNonEmpty(critic.Findings)
-	critic.EvidencePaths = util.UniqueNonEmpty(critic.EvidencePaths)
+	critic.Findings = textutil.UniqueNonEmpty(critic.Findings)
+	critic.EvidencePaths = textutil.UniqueNonEmpty(critic.EvidencePaths)
 
 	return critic
 }
@@ -2377,13 +2380,13 @@ func parseLongHorizonState(content string) LongHorizonStateSnapshot {
 	state.MemoryKind = strings.TrimSpace(state.MemoryKind)
 	state.SourceLane = strings.TrimSpace(state.SourceLane)
 	state.FocusPath = strings.TrimSpace(state.FocusPath)
-	state.Changed = util.UniqueNonEmpty(state.Changed)
-	state.Remaining = util.UniqueNonEmpty(state.Remaining)
-	state.OpenGaps = util.UniqueNonEmpty(state.OpenGaps)
-	state.AttemptedSearches = util.UniqueNonEmpty(state.AttemptedSearches)
-	state.ChosenTargets = util.UniqueNonEmpty(state.ChosenTargets)
-	state.VerificationHistory = util.UniqueNonEmpty(state.VerificationHistory)
-	state.NextActions = util.UniqueNonEmpty(state.NextActions)
+	state.Changed = textutil.UniqueNonEmpty(state.Changed)
+	state.Remaining = textutil.UniqueNonEmpty(state.Remaining)
+	state.OpenGaps = textutil.UniqueNonEmpty(state.OpenGaps)
+	state.AttemptedSearches = textutil.UniqueNonEmpty(state.AttemptedSearches)
+	state.ChosenTargets = textutil.UniqueNonEmpty(state.ChosenTargets)
+	state.VerificationHistory = textutil.UniqueNonEmpty(state.VerificationHistory)
+	state.NextActions = textutil.UniqueNonEmpty(state.NextActions)
 	state.NextStep = strings.TrimSpace(state.NextStep)
 	state.Verification = strings.TrimSpace(state.Verification)
 	state.Reason = strings.TrimSpace(state.Reason)
@@ -2485,13 +2488,13 @@ func parseWorkflowState(content string) WorkflowStateSnapshot {
 	state.Phase = strings.TrimSpace(state.Phase)
 	state.SourceLane = strings.TrimSpace(state.SourceLane)
 	state.Objective = strings.TrimSpace(state.Objective)
-	state.TargetRefs = util.UniqueNonEmpty(state.TargetRefs)
-	state.EditableTargets = util.UniqueNonEmpty(state.EditableTargets)
-	state.ReadOnlyEvidence = util.UniqueNonEmpty(state.ReadOnlyEvidence)
-	state.EvidencePaths = util.UniqueNonEmpty(state.EvidencePaths)
-	state.AllowedDestinations = util.UniqueNonEmpty(state.AllowedDestinations)
-	state.Verification = util.UniqueNonEmpty(state.Verification)
-	state.NextActions = util.UniqueNonEmpty(state.NextActions)
+	state.TargetRefs = textutil.UniqueNonEmpty(state.TargetRefs)
+	state.EditableTargets = textutil.UniqueNonEmpty(state.EditableTargets)
+	state.ReadOnlyEvidence = textutil.UniqueNonEmpty(state.ReadOnlyEvidence)
+	state.EvidencePaths = textutil.UniqueNonEmpty(state.EvidencePaths)
+	state.AllowedDestinations = textutil.UniqueNonEmpty(state.AllowedDestinations)
+	state.Verification = textutil.UniqueNonEmpty(state.Verification)
+	state.NextActions = textutil.UniqueNonEmpty(state.NextActions)
 	state.Reason = strings.TrimSpace(state.Reason)
 
 	return state
@@ -2579,7 +2582,7 @@ func parseBudgetLedger(content string) BudgetLedgerSnapshot {
 	ledger.Lane = strings.TrimSpace(ledger.Lane)
 	ledger.Level = strings.TrimSpace(ledger.Level)
 	ledger.StopReason = strings.TrimSpace(ledger.StopReason)
-	ledger.NextAllowedActions = util.UniqueNonEmpty(ledger.NextAllowedActions)
+	ledger.NextAllowedActions = textutil.UniqueNonEmpty(ledger.NextAllowedActions)
 	ledger.MarginalEvidencePolicy = strings.TrimSpace(ledger.MarginalEvidencePolicy)
 	ledger.UserVisibleUncertainty = strings.TrimSpace(ledger.UserVisibleUncertainty)
 
@@ -2632,7 +2635,7 @@ func parseEvidenceDelta(content string) EvidenceDeltaSnapshot {
 
 	delta.Raw = content
 	delta.Lane = strings.TrimSpace(delta.Lane)
-	delta.NewEvidencePaths = util.UniqueNonEmpty(delta.NewEvidencePaths)
+	delta.NewEvidencePaths = textutil.UniqueNonEmpty(delta.NewEvidencePaths)
 	delta.MarginalValue = strings.TrimSpace(delta.MarginalValue)
 
 	return delta
@@ -2677,9 +2680,9 @@ func parseClaimConfidence(content string) ClaimConfidenceSnapshot {
 	confidence.Raw = content
 	confidence.Lane = strings.TrimSpace(confidence.Lane)
 	confidence.Confidence = strings.TrimSpace(confidence.Confidence)
-	confidence.EvidencePaths = util.UniqueNonEmpty(confidence.EvidencePaths)
-	confidence.UnresolvedUncertainty = util.UniqueNonEmpty(confidence.UnresolvedUncertainty)
-	confidence.Contradictions = util.UniqueNonEmpty(confidence.Contradictions)
+	confidence.EvidencePaths = textutil.UniqueNonEmpty(confidence.EvidencePaths)
+	confidence.UnresolvedUncertainty = textutil.UniqueNonEmpty(confidence.UnresolvedUncertainty)
+	confidence.Contradictions = textutil.UniqueNonEmpty(confidence.Contradictions)
 	confidence.CalibrationBasis = strings.TrimSpace(confidence.CalibrationBasis)
 
 	return confidence
@@ -2722,7 +2725,7 @@ func parseContextCompaction(content string) ContextCompactionSnapshot {
 	}
 
 	compaction.Raw = content
-	compaction.PinnedPaths = util.UniqueNonEmpty(compaction.PinnedPaths)
+	compaction.PinnedPaths = textutil.UniqueNonEmpty(compaction.PinnedPaths)
 	compaction.PinnedMemoryKind = strings.TrimSpace(compaction.PinnedMemoryKind)
 	compaction.Strategy = strings.TrimSpace(compaction.Strategy)
 
@@ -2778,7 +2781,7 @@ func parseRouteAmbiguity(content string) RouteAmbiguitySnapshot {
 	ambiguity.Raw = content
 	ambiguity.SelectedLane = strings.TrimSpace(ambiguity.SelectedLane)
 	ambiguity.Reason = strings.TrimSpace(ambiguity.Reason)
-	ambiguity.Signals = util.UniqueNonEmpty(ambiguity.Signals)
+	ambiguity.Signals = textutil.UniqueNonEmpty(ambiguity.Signals)
 	ambiguity.TieBreak = strings.TrimSpace(ambiguity.TieBreak)
 
 	return ambiguity
@@ -2826,9 +2829,9 @@ func parseVerificationFeedback(content string) VerificationFeedbackSnapshot {
 	feedback.RiskLevel = strings.TrimSpace(feedback.RiskLevel)
 	feedback.Coverage = strings.TrimSpace(feedback.Coverage)
 	feedback.Confidence = strings.TrimSpace(feedback.Confidence)
-	feedback.Commands = util.UniqueNonEmpty(feedback.Commands)
-	feedback.FailedCommands = util.UniqueNonEmpty(feedback.FailedCommands)
-	feedback.FailureClasses = util.UniqueNonEmpty(feedback.FailureClasses)
+	feedback.Commands = textutil.UniqueNonEmpty(feedback.Commands)
+	feedback.FailedCommands = textutil.UniqueNonEmpty(feedback.FailedCommands)
+	feedback.FailureClasses = textutil.UniqueNonEmpty(feedback.FailureClasses)
 	feedback.LearnedRecommendation = strings.TrimSpace(feedback.LearnedRecommendation)
 
 	return feedback
@@ -2921,17 +2924,17 @@ func parseControlRails(content string) ControlRailsSnapshot {
 	rails.WorkflowPhase = strings.TrimSpace(rails.WorkflowPhase)
 	rails.TaskFamily = strings.TrimSpace(rails.TaskFamily)
 	rails.PermissionProfile = strings.TrimSpace(rails.PermissionProfile)
-	rails.TargetRefs = util.UniqueNonEmpty(rails.TargetRefs)
-	rails.RequiredEditPaths = util.UniqueNonEmpty(rails.RequiredEditPaths)
-	rails.RequiredEvidence = util.UniqueNonEmpty(rails.RequiredEvidence)
-	rails.RequiredTools = util.UniqueNonEmpty(rails.RequiredTools)
-	rails.AllowedTools = util.UniqueNonEmpty(rails.AllowedTools)
-	rails.ForbiddenTools = util.UniqueNonEmpty(rails.ForbiddenTools)
-	rails.ReadinessGate = util.UniqueNonEmpty(rails.ReadinessGate)
-	rails.SearchPolicy = util.UniqueNonEmpty(rails.SearchPolicy)
+	rails.TargetRefs = textutil.UniqueNonEmpty(rails.TargetRefs)
+	rails.RequiredEditPaths = textutil.UniqueNonEmpty(rails.RequiredEditPaths)
+	rails.RequiredEvidence = textutil.UniqueNonEmpty(rails.RequiredEvidence)
+	rails.RequiredTools = textutil.UniqueNonEmpty(rails.RequiredTools)
+	rails.AllowedTools = textutil.UniqueNonEmpty(rails.AllowedTools)
+	rails.ForbiddenTools = textutil.UniqueNonEmpty(rails.ForbiddenTools)
+	rails.ReadinessGate = textutil.UniqueNonEmpty(rails.ReadinessGate)
+	rails.SearchPolicy = textutil.UniqueNonEmpty(rails.SearchPolicy)
 	rails.VerificationContract = strings.TrimSpace(rails.VerificationContract)
-	rails.StopConditions = util.UniqueNonEmpty(rails.StopConditions)
-	rails.FinalCritic = util.UniqueNonEmpty(rails.FinalCritic)
+	rails.StopConditions = textutil.UniqueNonEmpty(rails.StopConditions)
+	rails.FinalCritic = textutil.UniqueNonEmpty(rails.FinalCritic)
 
 	return rails
 }
@@ -3106,8 +3109,8 @@ func parseLanguageCapabilities(content string) []LanguageCapabilitySnapshot {
 
 		caps = append(caps, LanguageCapabilitySnapshot{
 			Language: language,
-			Tools:    util.UniqueNonEmpty(tools),
-			Signals:  util.UniqueNonEmpty(signals),
+			Tools:    textutil.UniqueNonEmpty(tools),
+			Signals:  textutil.UniqueNonEmpty(signals),
 		})
 	}
 
@@ -3151,8 +3154,8 @@ func mergeLanguageCapabilities(existing []LanguageCapabilitySnapshot, incoming [
 			current = &copy
 		}
 
-		current.Tools = util.UniqueNonEmpty(append(current.Tools, cap.Tools...))
-		current.Signals = util.UniqueNonEmpty(append(current.Signals, cap.Signals...))
+		current.Tools = textutil.UniqueNonEmpty(append(current.Tools, cap.Tools...))
+		current.Signals = textutil.UniqueNonEmpty(append(current.Signals, cap.Signals...))
 	}
 
 	for _, cap := range existing {
@@ -3259,7 +3262,7 @@ func evidencePathsFromJSONContent(content string) []string {
 		return nil
 	}
 
-	return util.UniqueNonEmpty(payload.EvidencePaths)
+	return textutil.UniqueNonEmpty(payload.EvidencePaths)
 }
 
 func looksLikeEvidencePath(path string) bool {

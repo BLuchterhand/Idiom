@@ -3,6 +3,9 @@ package app
 import (
 	"time"
 
+	planartifact "idiom/internal/contracts/planartifact"
+	"idiom/internal/runtime/sessionlog"
+
 	"github.com/charmbracelet/bubbles/viewport"
 
 	"idiom/internal/capabilities/workspace"
@@ -18,7 +21,7 @@ type planState struct {
 	overlayID             string
 	overlayBody           string
 	autoShown             bool
-	submittedEdits        map[string]workspace.PlanEdit
+	submittedEdits        map[string]planartifact.PlanEdit
 	cachedItemsContent    string
 	cachedItems           []planItemMeta
 	collapsedHeadings     map[string]bool
@@ -31,15 +34,15 @@ type docViewerState struct {
 	expanded      map[int]bool
 	artifactPath  string
 	artifactMTime time.Time
-	artifact      workspace.PlanArtifact
+	artifact      planartifact.PlanArtifact
 	loadError     string
 	loaded        bool
 }
 
 type sessionsState struct {
 	viewport      viewport.Model
-	list          []SessionInfo
-	rawCache      []SessionInfo
+	list          []sessionlog.SessionInfo
+	rawCache      []sessionlog.SessionInfo
 	rawCacheDir   string
 	rawCacheMTime time.Time
 	rawCacheValid bool

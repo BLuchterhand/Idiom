@@ -5,14 +5,20 @@
   "status": "complete",
   "created_at": "2026-05-18T12:50:00Z",
   "scope": {
-    "acceptance_metadata": "Parser and validation support for PRD/ADR accepted_at, accepted_by, and acceptance_profile fields, with accepted-state requirements.",
-    "supersession_links": "ADR markdown and ADR index parsing plus deterministic validation for supersedes and superseded_by links.",
-    "safety": "No model acceptance command, auto-accept behavior, promotion path, TUI/operator behavior, or execution path was added."
+    "changed_paths_checked": true,
+    "legacy_details": {
+      "acceptance_metadata": "Parser and validation support for PRD/ADR accepted_at, accepted_by, and acceptance_profile fields, with accepted-state requirements.",
+      "supersession_links": "ADR markdown and ADR index parsing plus deterministic validation for supersedes and superseded_by links.",
+      "safety": "No model acceptance command, auto-accept behavior, promotion path, TUI/operator behavior, or execution path was added."
+    }
   },
   "tests": {
-    "productworkflow": "accepted PRD/ADR metadata requirements, optional metadata for nonaccepted states, ADR/index supersession broken/self/duplicate/non-reciprocal failures, durable PRD/ADR fixture parsing",
-    "cmd_idiom": "product lint/audit accepted metadata failures, ADR markdown supersession failures, ADR index supersession failures, and durable fixture pass coverage",
-    "durable_gates": "product lint, product audit, JSON/JSONL parse validation, privacy secret-pattern scan, git diff --check, and full go test ./..."
+    "status": "passed",
+    "legacy_details": {
+      "productworkflow": "accepted PRD/ADR metadata requirements, optional metadata for nonaccepted states, ADR/index supersession broken/self/duplicate/non-reciprocal failures, durable PRD/ADR fixture parsing",
+      "cmd_idiom": "product lint/audit accepted metadata failures, ADR markdown supersession failures, ADR index supersession failures, and durable fixture pass coverage",
+      "durable_gates": "product lint, product audit, JSON/JSONL parse validation, privacy secret-pattern scan, git diff --check, and full go test ./..."
+    }
   },
   "coverage": {
     "tier": "unit",
@@ -25,9 +31,12 @@
     "full_suite": "go test ./... passed"
   },
   "traceability": {
-    "README": "Current-state and next-action notes updated for impl-0025 and the next Phase 4 TDD obligation synthesis atom.",
-    "ledger": "implementation_completed references checkpoint commit hash f5de816a267f95f427f389bfc66b701772d5ce85; a partial checkpoint record preserves planning commit eda2ca621763e7dcfe1bfcab5086881d97a55b2d for scope coverage.",
-    "design_doc": "Implements the Phase 3 acceptance state and supersession link requirement while preserving human acceptance as default for material decisions."
+    "checked": true,
+    "legacy_details": {
+      "README": "Current-state and next-action notes updated for impl-0025 and the next Phase 4 TDD obligation synthesis atom.",
+      "ledger": "implementation_completed references checkpoint commit hash f5de816a267f95f427f389bfc66b701772d5ce85; a partial checkpoint record preserves planning commit eda2ca621763e7dcfe1bfcab5086881d97a55b2d for scope coverage.",
+      "design_doc": "Implements the Phase 3 acceptance state and supersession link requirement while preserving human acceptance as default for material decisions."
+    }
   },
   "privacy_audit": {
     "raw_prompts_stored": false,

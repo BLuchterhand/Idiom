@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"idiom/internal/platform/util"
 	"os"
 	pathpkg "path"
 	"path/filepath"
@@ -17,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"idiom/internal/platform/textutil"
 )
 
 const (
@@ -1156,7 +1157,7 @@ func updateTraceManifest(root string, result TraceResult, written []byte) error 
 	info, _ := os.Stat(path)
 	entry := traceManifestEntry{
 		TraceID:      traceID,
-		ArtifactPath: util.FirstNonEmpty(strings.TrimSpace(result.ArtifactPath), filepath.ToSlash(filepath.Join(".idiom", "comprehension", "traces", traceID+".json"))),
+		ArtifactPath: textutil.FirstNonEmpty(strings.TrimSpace(result.ArtifactPath), filepath.ToSlash(filepath.Join(".idiom", "comprehension", "traces", traceID+".json"))),
 		GeneratedAt:  strings.TrimSpace(result.GeneratedAt),
 		Fingerprint:  shortSHA256Hex(written),
 	}

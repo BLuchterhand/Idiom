@@ -236,6 +236,29 @@ func TestAuditWatchSanitizesSensitiveTriggerSessionAndReproducerEvidence(t *test
 	}
 }
 
+func TestAuditWatchSanitizesTokenCredentialJSONKeys(t *testing.T) {
+	value := map[string]any{
+		"access_token":  "sk-live-value",
+		"authorization": "Bearer live-value",
+		"credential":    "plain-value",
+		"client_secret": "client-live-value",
+		"nested": map[string]any{
+			"private_key": "-----BEGIN PRIVATE KEY-----",
+		},
+	}
+
+	sanitized := auditWatchSanitizeJSONValue("", value).(map[string]any)
+	for _, key := range []string{"access_token", "authorization", "credential", "client_secret"} {
+		if got := sanitized[key]; got != "[redacted]" {
+			t.Fatalf("%s was not redacted: %#v", key, got)
+		}
+	}
+	nested := sanitized["nested"].(map[string]any)
+	if got := nested["private_key"]; got != "[redacted]" {
+		t.Fatalf("private_key was not redacted: %#v", got)
+	}
+}
+
 func TestAuditWatchSanitizesCustomerAndRawTranscriptEvidence(t *testing.T) {
 	t.Setenv("IDIOM_TELEMETRY", "0")
 

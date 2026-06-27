@@ -9,17 +9,38 @@ import (
 	"slices"
 	"strings"
 
+	"idiom/internal/contracts/autonomy"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/backends"
 	"idiom/internal/runtime/runner"
 	"idiom/internal/runtime/workerruntime"
 )
 
+type HostCheckStatus string
+
+const (
+	HostCheckStatusPass HostCheckStatus = "pass"
+	HostCheckStatusWarn HostCheckStatus = "warn"
+	HostCheckStatusFail HostCheckStatus = "fail"
+)
+
+func ParseHostCheckStatus(status string) (HostCheckStatus, bool) {
+	switch HostCheckStatus(strings.TrimSpace(status)) {
+	case HostCheckStatusPass:
+		return HostCheckStatusPass, true
+	case HostCheckStatusWarn:
+		return HostCheckStatusWarn, true
+	case HostCheckStatusFail:
+		return HostCheckStatusFail, true
+	default:
+		return "", false
+	}
+}
+
 // HostCheck is a command-level diagnostic result folded into readiness reports.
-// Status accepts "pass", "warn", or "fail".
 type HostCheck struct {
 	Name   string
-	Status string
+	Status HostCheckStatus
 	Detail string
 	Remedy string
 }
@@ -191,11 +212,11 @@ type profileSpec struct {
 }
 
 var profileSpecs = []profileSpec{
-	{name: "discovery", taskFamily: "architecture", needsContext: true},
-	{name: "plan", taskFamily: string(workerruntime.TaskFamilyPlanThenExecutePlanner), requiredRoles: []string{backends.RolePlanner, backends.RoleExecutor}, needsContext: true},
-	{name: "implement", taskFamily: "implementation", requiredRoles: []string{backends.RoleExecutor}, needsContext: true},
-	{name: "eval", taskFamily: "verification_only", requiredRoles: []string{backends.RoleExecutor}},
-	{name: "sidecar", taskFamily: "debug_logs", requiredRoles: []string{backends.RoleClassifier}},
+	{name: "discovery", taskFamily: string(autonomy.TaskFamilyArchitecture), needsContext: true},
+	{name: "plan", taskFamily: string(autonomy.TaskFamilyPlanThenExecutePlanner), requiredRoles: []string{backends.RolePlanner, backends.RoleExecutor}, needsContext: true},
+	{name: "implement", taskFamily: string(autonomy.TaskFamilyImplementation), requiredRoles: []string{backends.RoleExecutor}, needsContext: true},
+	{name: "eval", taskFamily: string(autonomy.TaskFamilyVerificationOnly), requiredRoles: []string{backends.RoleExecutor}},
+	{name: "sidecar", taskFamily: string(autonomy.TaskFamilyDebugLogs), requiredRoles: []string{backends.RoleClassifier}},
 }
 
 func ProfileCount() int {
@@ -760,18 +781,27 @@ func checksFromHost(hostChecks []HostCheck) []Check {
 	out := make([]Check, 0, len(hostChecks))
 	for _, check := range hostChecks {
 		state := "pass"
+		detail := check.Detail
 
-		switch check.Status {
-		case "fail":
+		switch status, ok := ParseHostCheckStatus(string(check.Status)); {
+		case !ok:
 			state = "blocked"
-		case "warn":
+			detail = strings.TrimSpace(detail)
+			if detail == "" {
+				detail = fmt.Sprintf("unknown host check status %q", check.Status)
+			} else {
+				detail += fmt.Sprintf("; unknown host check status %q", check.Status)
+			}
+		case status == HostCheckStatusFail:
+			state = "blocked"
+		case status == HostCheckStatusWarn:
 			state = "degraded"
 		}
 
 		out = append(out, Check{
 			Name:   check.Name,
 			State:  state,
-			Detail: check.Detail,
+			Detail: detail,
 			Remedy: check.Remedy,
 		})
 	}

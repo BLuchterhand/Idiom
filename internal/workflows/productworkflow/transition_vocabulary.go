@@ -1,0 +1,41 @@
+package productworkflow
+
+const (
+	WorkflowStatusBucketUnstarted = "unstarted"
+	WorkflowStatusBucketStarted   = "started"
+	WorkflowStatusBucketClosed    = "closed"
+
+	WorkflowStatePlanned           = "planned"
+	WorkflowStateHumanVerification = "human_verification"
+	WorkflowStateImplementing      = "implementing"
+	WorkflowStateVerifying         = "verifying"
+	WorkflowStateReviewing         = "reviewing"
+	WorkflowStateInvestigating     = "investigating"
+	WorkflowStateBlocked           = "blocked"
+	WorkflowStateClosed            = "closed"
+
+	ProductWorkflowActionSubmitForHumanVerification = "submit_for_human_verification"
+	ProductWorkflowActionStart                      = "start"
+	ProductWorkflowActionStartInvestigation         = "start_investigation"
+	ProductWorkflowActionApproveForImplementation   = "approve_for_implementation"
+	ProductWorkflowActionRequestChanges             = "request_changes"
+	ProductWorkflowActionRequestInvestigation       = "request_investigation"
+	ProductWorkflowActionSubmitForVerification      = "submit_for_verification"
+	ProductWorkflowActionMarkBlocked                = "mark_blocked"
+	ProductWorkflowActionSubmitForReview            = "submit_for_review"
+	ProductWorkflowActionApprove                    = "approve"
+	ProductWorkflowActionCompleteInvestigation      = "complete_investigation"
+	ProductWorkflowActionResolveBlocker             = "resolve_blocker"
+	ProductWorkflowActionStartImplementation        = "start_implementation"
+	ProductWorkflowActionInspectOperatorBlockers    = "inspect_operator_blockers"
+	ProductWorkflowActionInspectFailure             = "inspect_failure"
+
+	ProductWorkflowActionOwnerPlanner      = "planner"
+	ProductWorkflowActionOwnerInvestigator = "investigator"
+	ProductWorkflowActionOwnerOperator     = "operator"
+	ProductWorkflowActionOwnerImplementor  = "implementor"
+	ProductWorkflowActionOwnerOrchestrator = "orchestrator"
+	ProductWorkflowActionOwnerProduct      = "product_workflow"
+	ProductWorkflowActionOwnerReviewer     = "reviewer"
+	ProductWorkflowActionOwnerVerifier     = "verifier"
+)

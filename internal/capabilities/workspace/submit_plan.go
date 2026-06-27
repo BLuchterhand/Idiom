@@ -10,143 +10,18 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/contracts/plan"
+	plancontract "idiom/internal/contracts/plan"
+	planartifact "idiom/internal/contracts/planartifact"
+	"idiom/internal/platform/atomicfile"
 	"idiom/internal/platform/failures"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
+	"idiom/internal/repository/planartifactstore"
 )
 
 const (
 	SubmitPlanEmptyEditsCode                      = "submit_plan.empty_edits"
 	SubmitPlanSourceSatisfiedTerminalRequiredCode = "submit_plan.source_satisfied_terminal_required"
 )
-
-// PlanEdit is one edit spec inside a plan-then-execute artifact. The
-// planner emits these via the submit_plan tool; the executor phase
-// iterates and dispatches each one against the workspace.
-//
-// The edit shapes mirror edit_file's shapes plus plan-execute-only shapes:
-// substring (OldText/NewText; empty NewText deletes OldText), range
-// (StartLine/EndLine/Content), insertion (InsertAfterLine/Content), or
-// ReplaceAll with NewText and empty OldText. A spec must populate one of the
-// shapes; submit_plan validates this before persisting the plan.
-type PlanEdit struct {
-	Path             string                    `json:"path"`
-	OldText          string                    `json:"old_text,omitempty"`
-	NewText          string                    `json:"new_text"`
-	NewTextRef       string                    `json:"new_text_ref,omitempty"`
-	StartLine        int                       `json:"start_line,omitempty"`
-	EndLine          int                       `json:"end_line,omitempty"`
-	InsertAfterLine  int                       `json:"insert_after_line,omitempty"`
-	Content          string                    `json:"content,omitempty"`
-	ContentRef       string                    `json:"content_ref,omitempty"`
-	ReplaceAll       bool                      `json:"replace_all,omitempty"`
-	Purpose          string                    `json:"purpose,omitempty"`
-	AnchorProvenance *PlanEditAnchorProvenance `json:"anchor_provenance,omitempty"`
-
-	decodedFromJSON bool
-	newTextSet      bool
-}
-
-func (edit *PlanEdit) UnmarshalJSON(data []byte) error {
-	type planEditAlias PlanEdit
-
-	var decoded planEditAlias
-
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return err
-	}
-
-	var fields map[string]json.RawMessage
-
-	_ = json.Unmarshal(data, &fields)
-	*edit = PlanEdit(decoded)
-	edit.decodedFromJSON = true
-	_, edit.newTextSet = fields["new_text"]
-
-	return nil
-}
-
-// PlanEditHasExplicitReplacementText reports whether a substring edit includes
-// the replacement half of the old_text/new_text contract. JSON-decoded tool
-// requests can distinguish omitted new_text from explicit empty new_text, which
-// is required for deletion edits. Programmatic tests and internal constructors
-// cannot carry that field-presence bit, so they retain the historical Go struct
-// behavior.
-func PlanEditHasExplicitReplacementText(edit PlanEdit) bool {
-	if strings.TrimSpace(edit.NewText) != "" || strings.TrimSpace(edit.NewTextRef) != "" {
-		return true
-	}
-
-	if edit.decodedFromJSON {
-		return edit.newTextSet
-	}
-
-	return true
-}
-
-// PlanEditAnchorProvenance is harness-authored evidence that a
-// substring edit was validated against specific current file bytes.
-// Planners may submit old_text/new_text; submit_plan overwrites this
-// field before persisting so executors can reject stale plans even
-// when old_text still appears somewhere in a changed file.
-type PlanEditAnchorProvenance struct {
-	SchemaVersion string `json:"schema_version"`
-	Source        string `json:"source"`
-	Path          string `json:"path"`
-	FileSHA256    string `json:"file_sha256"`
-	AnchorSHA256  string `json:"anchor_sha256"`
-	StartByte     int    `json:"start_byte"`
-	EndByte       int    `json:"end_byte"`
-	StartLine     int    `json:"start_line"`
-	EndLine       int    `json:"end_line"`
-	MatchCount    int    `json:"match_count"`
-}
-
-// PlanArtifact is the persisted shape of a submit_plan call. It
-// captures the full ordered edit list plus the planner's rationale
-// so the executor (and any reviewer) can read the plan as a single
-// document.
-//
-// PackID, when non-empty, is the content-addressed handle of the
-// graph_views cache row the planner used when drafting the plan. The
-// executor can rehydrate that packet via comprehension.LoadView
-// instead of re-discovering the same files. Optional and additive —
-// older v1 artifacts without it remain readable.
-//
-// SessionID identifies the idiom session that produced this plan.
-// Two concurrent plan-execute runs in the same workspace race on the
-// shared `.idiom/plans/` directory; without an explicit session
-// attribution, the executor phase's findLatestPlanArtifact would
-// return whichever plan happened to be written most recently — even
-// if it came from another session entirely. Stamping the SessionID
-// here lets findLatestPlanArtifact filter to plans this session
-// produced. Optional and additive: legacy artifacts have an empty
-// SessionID and are still loadable when the executor isn't filtering.
-type PlanArtifact struct {
-	SchemaVersion           string                               `json:"schema_version"`
-	PlanID                  string                               `json:"plan_id,omitempty"`
-	Created                 string                               `json:"created"`
-	Rationale               string                               `json:"rationale,omitempty"`
-	PackID                  string                               `json:"pack_id,omitempty"`
-	SessionID               string                               `json:"session_id,omitempty"`
-	Task                    PlanArtifactTask                     `json:"task"`
-	Contract                PlanArtifactContract                 `json:"contract"`
-	Packet                  PlanArtifactPacket                   `json:"packet"`
-	Paths                   PlanArtifactPaths                    `json:"paths"`
-	Evidence                []PlanArtifactEvidence               `json:"evidence,omitempty"`
-	UnresolvedQuestions     []PlanArtifactQuestion               `json:"unresolved_questions,omitempty"`
-	VerificationObligations []PlanArtifactVerificationObligation `json:"verification_obligations"`
-	Approval                PlanArtifactApproval                 `json:"approval"`
-	Handoff                 PlanArtifactHandoff                  `json:"handoff"`
-	LegacyProse             string                               `json:"legacy_prose,omitempty"`
-	Edits                   []PlanEdit                           `json:"edits"`
-}
-
-// PlanArtifactSchemaVersion is the version stamp written to every
-// plan artifact. Bump when the field set changes.
-const PlanArtifactSchemaVersion = "idiom.plan.v3"
-
-const PlanArtifactPreviousSchemaVersion = "idiom.plan.v2"
 
 const PlanEditAnchorProvenanceSchemaVersion = "idiom.plan_edit_anchor.v1"
 
@@ -223,9 +98,13 @@ func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 
 	validationArtifact := artifact
 
-	validationArtifact.Edits = append([]PlanEdit(nil), artifact.Edits...)
+	validationArtifact.Edits = append([]planartifact.PlanEdit(nil), artifact.Edits...)
 
-	if err := hydratePlanArtifactRefs(m.planArtifactDir(), &validationArtifact); err != nil {
+	refDir, err := m.planArtifactDir()
+	if err != nil {
+		return toolFailureFromErrorResult(ToolNameSubmitPlan, "submit_plan failed", fmt.Errorf("resolve plan dir: %w", err), failures.Internal, reasonToolWriteFailed)
+	}
+	if err := planartifactstore.HydrateRefs(refDir, &validationArtifact); err != nil {
 		return toolFailureFromMaybeTypedErrorResult(ToolNameSubmitPlan, "submit_plan rejected", err, failures.InvalidArgument, reasonPlanSubmissionRejected)
 	}
 
@@ -243,7 +122,7 @@ func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 		}
 
 		if err := m.validatePlanEditAgainstWorkspace(edit); err != nil {
-			return toolFailureFromMaybeTypedErrorResult(ToolNameSubmitPlan, "submit_plan rejected", fmt.Errorf("edits[%d]: %w", i, err), failures.FailedPrecondition, reasonPlanSubmissionRejected)
+			return toolFailureFromMaybeTypedErrorResult(ToolNameSubmitPlan, "submit_plan rejected", fmt.Errorf("edits[%d] path %q: %w", i, edit.Path, err), failures.FailedPrecondition, reasonPlanSubmissionRejected)
 		}
 	}
 
@@ -256,7 +135,7 @@ func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 		return toolFailureFromMaybeTypedErrorResult(ToolNameSubmitPlan, "submit_plan rejected", err, failures.FailedPrecondition, reasonPlanSubmissionRejected)
 	}
 
-	if err := ValidatePlanArtifact(artifact); err != nil {
+	if err := planartifact.ValidatePlanArtifact(artifact); err != nil {
 		return toolFailureFromMaybeTypedErrorResult(ToolNameSubmitPlan, "submit_plan rejected", err, failures.InvalidArgument, reasonPlanArtifactSchemaInvalid)
 	}
 
@@ -265,48 +144,64 @@ func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 		return withToolFailure(ToolResult{Tool: ToolNameSubmitPlan, Summary: "submit_plan rejected", Output: audit.SummaryLine(), Error: audit.ErrorSummary()}, failures.FailedPrecondition, reasonPlanSubmissionRejected)
 	}
 
-	dir := m.planArtifactDir()
+	dir, err := m.planArtifactDir()
+	if err != nil {
+		return toolFailureFromErrorResult(ToolNameSubmitPlan, "submit_plan failed", fmt.Errorf("resolve plan dir: %w", err), failures.Internal, reasonToolWriteFailed)
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return toolFailureFromErrorResult(ToolNameSubmitPlan, "submit_plan failed", fmt.Errorf("create plan dir: %w", err), failures.Internal, reasonToolWriteFailed)
 	}
 
-	edits, spilled, err := spillLargePlanEditBodies(dir, stamp, artifact.Edits)
+	edits, spilled, err := spillLargePlanEditBodies(m.cfg.Root, dir, stamp, artifact.Edits)
 	if err != nil {
 		return toolFailureFromMaybeTypedErrorResult(ToolNameSubmitPlan, "submit_plan failed", err, failures.Internal, reasonToolWriteFailed)
 	}
 
 	artifact.Edits = edits
-	artifact = normalizePlanArtifactForSubmit(artifact, m.cfg.SessionID, created, planID, req.PlanArtifact == nil)
+	artifact = planartifact.NormalizeForSubmit(artifact, planartifact.NormalizeForSubmitOptions{
+		SessionID:     m.cfg.SessionID,
+		Created:       created,
+		PlanID:        planID,
+		LegacyRequest: req.PlanArtifact == nil,
+	})
 
-	if err := ValidatePlanArtifact(artifact); err != nil {
-		cleanupPlanEditBodyRefs(dir, artifact.Edits)
+	if err := planartifact.ValidatePlanArtifact(artifact); err != nil {
+		cleanupPlanEditBodyRefs(m.cfg.Root, dir, artifact.Edits)
 
 		return toolFailureFromMaybeTypedErrorResult(ToolNameSubmitPlan, "submit_plan rejected", err, failures.InvalidArgument, reasonPlanArtifactSchemaInvalid)
 	}
 
-	path := filepath.Join(dir, stamp+".plan.json")
+	path, _, err := planartifactstore.StoreFilePath(m.cfg.Root, stamp+".plan.json")
+	if err != nil {
+		cleanupPlanEditBodyRefs(m.cfg.Root, dir, artifact.Edits)
+
+		return toolFailureFromErrorResult(ToolNameSubmitPlan, "submit_plan failed", fmt.Errorf("resolve artifact path: %w", err), failures.Internal, reasonToolWriteFailed)
+	}
 
 	body, err := json.MarshalIndent(artifact, "", "  ")
 	if err != nil {
-		cleanupPlanEditBodyRefs(dir, artifact.Edits)
+		cleanupPlanEditBodyRefs(m.cfg.Root, dir, artifact.Edits)
 
 		return toolFailureFromErrorResult(ToolNameSubmitPlan, "submit_plan failed", fmt.Errorf("marshal artifact: %w", err), failures.Internal, reasonToolInternalFailure)
 	}
 
-	if err := os.WriteFile(path, body, 0o644); err != nil {
-		cleanupPlanEditBodyRefs(dir, artifact.Edits)
+	if err := atomicfile.WriteFile(path, body, 0o644); err != nil {
+		cleanupPlanEditBodyRefs(m.cfg.Root, dir, artifact.Edits)
 
 		return toolFailureFromErrorResult(ToolNameSubmitPlan, "submit_plan failed", fmt.Errorf("write artifact: %w", err), failures.Internal, reasonToolWriteFailed)
 	}
 
-	pointer := filepath.Join(dir, "last.plan.json")
+	pointer, _, err := planartifactstore.StoreFilePath(m.cfg.Root, "last.plan.json")
+	if err != nil {
+		return toolFailureFromErrorResult(ToolNameSubmitPlan, "submit_plan failed", fmt.Errorf("resolve plan pointer: %w", err), failures.Internal, reasonToolWriteFailed)
+	}
 
-	_ = os.WriteFile(pointer, body, 0o644)
+	_ = atomicfile.WriteFile(pointer, body, 0o644)
 
 	return ToolResult{
 		Tool:    ToolNameSubmitPlan,
 		Summary: fmt.Sprintf("Plan submitted with %d edit(s); the executor phase will dispatch them.", len(artifact.Edits)),
-		Output:  fmt.Sprintf("plan_path: %s\nedits: %d\nschema_version: %s\ncontent_refs: %d\n%s", path, len(artifact.Edits), PlanArtifactSchemaVersion, spilled, audit.SummaryLine()),
+		Output:  fmt.Sprintf("plan_path: %s\nedits: %d\nschema_version: %s\ncontent_refs: %d\n%s", path, len(artifact.Edits), planartifact.SchemaVersion, spilled, audit.SummaryLine()),
 	}
 }
 
@@ -325,7 +220,7 @@ func SubmitPlanRequestClaimsSourceSatisfied(req ToolRequest) bool {
 	return planRationaleClaimsNoEditsNeeded(req.Rationale)
 }
 
-func planArtifactAllowsMixedSourceSatisfiedRationale(artifact PlanArtifact) bool {
+func planArtifactAllowsMixedSourceSatisfiedRationale(artifact planartifact.PlanArtifact) bool {
 	if len(artifact.Edits) == 0 || len(artifact.Paths.SourceSatisfied) == 0 {
 		return false
 	}
@@ -342,13 +237,12 @@ func planArtifactAllowsMixedSourceSatisfiedRationale(artifact PlanArtifact) bool
 	return planRationaleClaimsSourceSatisfied(rationale)
 }
 
-// validatePlanEdit ensures one of the recognized edit shapes is
-// populated. Mirrors the contract delegate_edit and edit_file
-// enforce — if the planner's spec is malformed, fail loudly here so
-// the executor never sees a half-formed edit.
-func validatePlanEdit(edit PlanEdit) error {
-	if strings.TrimSpace(edit.Path) == "" {
-		return fmt.Errorf("path is required")
+// validatePlanEdit delegates executable edit-shape ownership to the durable
+// plan artifact contract, then layers submit_plan intake constraints that
+// depend on workspace policy or planner repair guidance.
+func validatePlanEdit(edit planartifact.PlanEdit) error {
+	if err := planartifact.ValidatePlanEditShape(edit); err != nil {
+		return err
 	}
 
 	if err := validatePlanEditAnchorProvenanceShape(edit.AnchorProvenance); err != nil {
@@ -356,46 +250,12 @@ func validatePlanEdit(edit PlanEdit) error {
 	}
 
 	hasOldText := strings.TrimSpace(edit.OldText) != ""
-	hasNewText := strings.TrimSpace(edit.NewText) != "" || strings.TrimSpace(edit.NewTextRef) != ""
-	hasContent := strings.TrimSpace(edit.Content) != "" || strings.TrimSpace(edit.ContentRef) != ""
-	hasInlineContent := strings.TrimSpace(edit.Content) != ""
-	hasSubstring := hasOldText && PlanEditHasExplicitReplacementText(edit)
-	hasRange := edit.StartLine > 0 && edit.EndLine >= edit.StartLine && hasContent
-	hasInsert := edit.InsertAfterLine > 0 && hasInlineContent
-	hasReplace := hasNewText && edit.ReplaceAll
-
-	if edit.InsertAfterLine < 0 {
-		return fmt.Errorf("insert_after_line must be >= 1")
-	}
+	hasSubstring := hasOldText && planartifact.PlanEditHasExplicitReplacementText(edit)
 
 	if edit.InsertAfterLine > 0 {
-		if strings.TrimSpace(edit.ContentRef) != "" {
-			return fmt.Errorf("insert_after_line edits do not support content_ref in this submit_plan shape; inline non-empty content is required")
-		}
-
-		if !hasInlineContent {
-			return fmt.Errorf("insert_after_line edits require non-empty content")
-		}
-
 		if len(edit.Content) > planInlineTextSpillThreshold {
 			return fmt.Errorf("insert_after_line content exceeds inline submit_plan limit (%d bytes); content_ref is not supported for insert_after_line in this schema; for large insertions in existing files, use a line-range replacement that includes the unchanged anchor line(s) plus inserted content", planInlineTextSpillThreshold)
 		}
-
-		if hasOldText || strings.TrimSpace(edit.NewText) != "" || strings.TrimSpace(edit.NewTextRef) != "" || edit.StartLine > 0 || edit.EndLine > 0 || edit.ReplaceAll {
-			return fmt.Errorf("insert_after_line edits are mutually exclusive with old_text/new_text, start_line/end_line, and replace_all shapes")
-		}
-	}
-
-	if hasOldText && !hasSubstring {
-		return fmt.Errorf("substring edits require `new_text` or `new_text_ref`; use explicit empty `new_text` to delete old_text")
-	}
-
-	if (edit.StartLine > 0 || edit.EndLine > 0) && !hasContent {
-		return fmt.Errorf("line-range edits require non-empty content; to delete text, use old_text with empty new_text instead")
-	}
-
-	if !hasSubstring && !hasRange && !hasInsert && !hasReplace {
-		return fmt.Errorf("requires one executable edit shape: old_text+new_text, start_line+end_line+content, insert_after_line+content, or replace_all=true with new_text and empty old_text for missing/new-file writes. Existing source/test files need bounded anchors. If already final, remove it from edits[] and use source_satisfied_paths")
 	}
 
 	if hasSubstring && strings.TrimSpace(edit.NewTextRef) == "" && edit.OldText == edit.NewText {
@@ -417,7 +277,7 @@ func validatePlanEdit(edit PlanEdit) error {
 // make the submitted artifact incapable of proving the requested behavior. Keep
 // this at submit_plan intake so planners can repair the edit before executor
 // handoff rather than failing after the artifact is accepted.
-func PlanEditUnsupportedProofClaimReason(edit PlanEdit) string {
+func PlanEditUnsupportedProofClaimReason(edit planartifact.PlanEdit) string {
 	path := strings.TrimSpace(edit.Path)
 	if path == "" || !SourceSanityCoversPath(path) {
 		return ""
@@ -432,7 +292,7 @@ func PlanEditUnsupportedProofClaimReason(edit PlanEdit) string {
 }
 
 // PlanEditAddedText returns the final content a plan edit contributes.
-func PlanEditAddedText(edit PlanEdit) string {
+func PlanEditAddedText(edit planartifact.PlanEdit) string {
 	if strings.TrimSpace(edit.Content) != "" {
 		return edit.Content
 	}
@@ -549,7 +409,7 @@ func verificationClaimContext(line string, phrase string) bool {
 		strings.Contains(lower, "test")
 }
 
-func planEditPlaceholderField(edit PlanEdit) (string, string) {
+func planEditPlaceholderField(edit planartifact.PlanEdit) (string, string) {
 	fields := []struct {
 		name       string
 		value      string
@@ -606,8 +466,8 @@ func planEditPlaceholderMarker(value string, allowTODO bool, sourceLike bool) st
 // provenance attached to bounded existing-file edit anchors. Existing
 // provenance is ignored and overwritten; missing/new-file edits get nil
 // provenance because they intentionally create the full file body.
-func AttachPlanEditAnchorProvenance(workspaceRoot string, edits []PlanEdit) ([]PlanEdit, error) {
-	out := append([]PlanEdit(nil), edits...)
+func AttachPlanEditAnchorProvenance(workspaceRoot string, edits []planartifact.PlanEdit) ([]planartifact.PlanEdit, error) {
+	out := append([]planartifact.PlanEdit(nil), edits...)
 	for i, edit := range out {
 		if !planEditNeedsAnchorProvenance(edit) {
 			out[i].AnchorProvenance = nil
@@ -616,7 +476,7 @@ func AttachPlanEditAnchorProvenance(workspaceRoot string, edits []PlanEdit) ([]P
 
 		provenance, err := buildPlanEditAnchorProvenance(workspaceRoot, edit)
 		if err != nil {
-			return nil, fmt.Errorf("edits[%d]: %w", i, err)
+			return nil, fmt.Errorf("edits[%d] path %q: %w", i, edit.Path, err)
 		}
 
 		out[i].AnchorProvenance = &provenance
@@ -629,7 +489,7 @@ func AttachPlanEditAnchorProvenance(workspaceRoot string, edits []PlanEdit) ([]P
 // targets the same file bytes submit_plan validated. Missing provenance is
 // accepted for legacy artifacts; malformed or stale provenance is rejected
 // before executor writes.
-func ValidatePlanEditAnchorProvenance(workspaceRoot string, edit PlanEdit) error {
+func ValidatePlanEditAnchorProvenance(workspaceRoot string, edit planartifact.PlanEdit) error {
 	provenance := edit.AnchorProvenance
 	if provenance == nil {
 		return nil
@@ -685,31 +545,31 @@ func ValidatePlanEditAnchorProvenance(workspaceRoot string, edit PlanEdit) error
 	return nil
 }
 
-func buildPlanEditAnchorProvenance(workspaceRoot string, edit PlanEdit) (PlanEditAnchorProvenance, error) {
+func buildPlanEditAnchorProvenance(workspaceRoot string, edit planartifact.PlanEdit) (planartifact.PlanEditAnchorProvenance, error) {
 	abs, rel, err := planEditWorkspacePath(workspaceRoot, edit.Path)
 	if err != nil {
-		return PlanEditAnchorProvenance{}, err
+		return planartifact.PlanEditAnchorProvenance{}, err
 	}
 
 	body, err := os.ReadFile(abs)
 	if err != nil {
-		return PlanEditAnchorProvenance{}, fmt.Errorf("anchor provenance could not read %s: %w", rel, err)
+		return planartifact.PlanEditAnchorProvenance{}, fmt.Errorf("anchor provenance could not read %s: %w", rel, err)
 	}
 
 	current := string(body)
 
 	anchor, err := planEditCurrentAnchorText(current, edit)
 	if err != nil {
-		return PlanEditAnchorProvenance{}, fmt.Errorf("anchor provenance could not select edit anchor in %s: %w", rel, err)
+		return planartifact.PlanEditAnchorProvenance{}, fmt.Errorf("anchor provenance could not select edit anchor in %s: %w", rel, err)
 	}
 
 	matchCount := strings.Count(current, anchor)
 	if matchCount == 0 {
-		return PlanEditAnchorProvenance{}, fmt.Errorf("anchor provenance could not find edit anchor in %s", rel)
+		return planartifact.PlanEditAnchorProvenance{}, fmt.Errorf("anchor provenance could not find edit anchor in %s", rel)
 	}
 
 	if matchCount > 1 && strings.TrimSpace(edit.OldText) != "" && !edit.ReplaceAll {
-		return PlanEditAnchorProvenance{}, fmt.Errorf("anchor provenance found %d matches in %s; exact substring edits must be unique unless replace_all=true", matchCount, rel)
+		return planartifact.PlanEditAnchorProvenance{}, fmt.Errorf("anchor provenance found %d matches in %s; exact substring edits must be unique unless replace_all=true", matchCount, rel)
 	}
 
 	startByte := strings.Index(current, anchor)
@@ -728,7 +588,7 @@ func buildPlanEditAnchorProvenance(workspaceRoot string, edit PlanEdit) (PlanEdi
 		endLine = planEditLineNumberAtByte(current, endByte-1)
 	}
 
-	return PlanEditAnchorProvenance{
+	return planartifact.PlanEditAnchorProvenance{
 		SchemaVersion: PlanEditAnchorProvenanceSchemaVersion,
 		Source:        ToolNameSubmitPlan,
 		Path:          rel,
@@ -742,7 +602,7 @@ func buildPlanEditAnchorProvenance(workspaceRoot string, edit PlanEdit) (PlanEdi
 	}, nil
 }
 
-func planEditNeedsAnchorProvenance(edit PlanEdit) bool {
+func planEditNeedsAnchorProvenance(edit planartifact.PlanEdit) bool {
 	if strings.TrimSpace(edit.OldText) != "" {
 		return true
 	}
@@ -754,11 +614,11 @@ func planEditNeedsAnchorProvenance(edit PlanEdit) bool {
 	return false
 }
 
-func PlanEditNeedsAnchorProvenance(edit PlanEdit) bool {
+func PlanEditNeedsAnchorProvenance(edit planartifact.PlanEdit) bool {
 	return planEditNeedsAnchorProvenance(edit)
 }
 
-func planEditCurrentAnchorText(current string, edit PlanEdit) (string, error) {
+func planEditCurrentAnchorText(current string, edit planartifact.PlanEdit) (string, error) {
 	if strings.TrimSpace(edit.OldText) != "" {
 		return edit.OldText, nil
 	}
@@ -775,7 +635,7 @@ func planEditCurrentAnchorText(current string, edit PlanEdit) (string, error) {
 	return current[start:end], nil
 }
 
-func planEditAnchorLineOffsets(current string, edit PlanEdit) (int, int, bool) {
+func planEditAnchorLineOffsets(current string, edit planartifact.PlanEdit) (int, int, bool) {
 	spans := lineSpans(current)
 	if len(spans) == 0 {
 		return 0, 0, false
@@ -806,7 +666,7 @@ func planEditAnchorLineOffsets(current string, edit PlanEdit) (int, int, bool) {
 	return spans[startLine-1].start, spans[endLine-1].end, true
 }
 
-func validatePlanEditAnchorProvenanceShape(provenance *PlanEditAnchorProvenance) error {
+func validatePlanEditAnchorProvenanceShape(provenance *planartifact.PlanEditAnchorProvenance) error {
 	if provenance == nil {
 		return nil
 	}
@@ -819,7 +679,7 @@ func validatePlanEditAnchorProvenanceShape(provenance *PlanEditAnchorProvenance)
 		return fmt.Errorf("anchor_provenance source must be submit_plan")
 	}
 
-	if !planArtifactPathIsSafe(provenance.Path) {
+	if !planartifact.PathIsSafe(provenance.Path) {
 		return fmt.Errorf("anchor_provenance path must stay relative to the workspace")
 	}
 
@@ -855,7 +715,7 @@ func planEditWorkspacePath(workspaceRoot string, rawPath string) (string, string
 		rel = strings.TrimPrefix(rel, "./")
 	}
 
-	if !planArtifactPathIsSafe(rel) {
+	if !planartifact.PathIsSafe(rel) {
 		return "", "", fmt.Errorf("plan edit path must stay relative to the workspace: %q", rawPath)
 	}
 
@@ -1031,7 +891,7 @@ func containsUnnegatedPlanRationalePhrase(text, phrase string) bool {
 	}
 }
 
-func planEditsAreVerificationOnly(edits []PlanEdit) bool {
+func planEditsAreVerificationOnly(edits []planartifact.PlanEdit) bool {
 	if len(edits) == 0 {
 		return false
 	}
@@ -1069,7 +929,7 @@ func planEditPurposeIsVerificationOnly(purpose string) bool {
 	return false
 }
 
-func (m *Manager) validatePlanEditAgainstWorkspace(edit PlanEdit) error {
+func (m *Manager) validatePlanEditAgainstWorkspace(edit planartifact.PlanEdit) error {
 	path, err := m.resolvePath(edit.Path, "")
 	if err != nil {
 		return fmt.Errorf("plan edit preflight could not resolve path %q: %w", edit.Path, err)
@@ -1141,7 +1001,7 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit PlanEdit) error {
 	matchCount := strings.Count(current, oldText)
 
 	if matchCount == 0 {
-		if util.ContainsFold(current, oldText) {
+		if textutil.ContainsFold(current, oldText) {
 			return fmt.Errorf("old_text did not appear in %s, but a case-insensitive match exists; preserve exact casing from the file or use start_line/end_line+content", edit.Path)
 		}
 
@@ -1176,7 +1036,7 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit PlanEdit) error {
 	return nil
 }
 
-func (m *Manager) validatePlanEditSequenceAgainstWorkspace(edits []PlanEdit) error {
+func (m *Manager) validatePlanEditSequenceAgainstWorkspace(edits []planartifact.PlanEdit) error {
 	projected := make(map[string][]byte)
 
 	for i, edit := range edits {
@@ -1241,7 +1101,7 @@ func (m *Manager) validatePlanEditSequenceAgainstWorkspace(edits []PlanEdit) err
 	return nil
 }
 
-func validateContentOnlyPlanEditAgainstCurrentSource(path string, current string, edit PlanEdit) error {
+func validateContentOnlyPlanEditAgainstCurrentSource(path string, current string, edit planartifact.PlanEdit) error {
 	if !isSourceLikePath(path) || strings.TrimSpace(current) == "" || strings.TrimSpace(edit.OldText) != "" {
 		return nil
 	}
@@ -1263,7 +1123,7 @@ func validateContentOnlyPlanEditAgainstCurrentSource(path string, current string
 // existing source/test file. New files still use replace_all:true, but existing
 // source edits need bounded anchors so destructive rewrites carry provenance and
 // cannot erase unrelated code by accident.
-func RejectExistingSourceWholeFileRewrite(path string, current []byte, edit PlanEdit) error {
+func RejectExistingSourceWholeFileRewrite(path string, current []byte, edit planartifact.PlanEdit) error {
 	if !planEditIsWholeFileWrite(edit) || len(current) == 0 || !isSourceLikePath(path) {
 		return nil
 	}
@@ -1271,7 +1131,7 @@ func RejectExistingSourceWholeFileRewrite(path string, current []byte, edit Plan
 	return fmt.Errorf("whole-file replace_all edit would rewrite existing source file %s; use a bounded anchored edit with old_text/new_text or start_line/end_line/content, or answer <<QUESTION>> with the exact missing body/anchor blocker", filepath.ToSlash(path))
 }
 
-func validateSourceLineRangePlanEdit(path string, current string, edit PlanEdit) error {
+func validateSourceLineRangePlanEdit(path string, current string, edit planartifact.PlanEdit) error {
 	if strings.TrimSpace(edit.Content) == "" {
 		return nil
 	}
@@ -1299,8 +1159,8 @@ func validateSourceLineRangePlanEdit(path string, current string, edit PlanEdit)
 		return fmt.Errorf("line-range replacement for %s lines %d-%d appears to duplicate context immediately before the selected range; use old_text/new_text with a unique current-source anchor for insertions", filepath.ToSlash(path), edit.StartLine, edit.EndLine)
 	}
 
-	selectedLines := util.NonEmptyTrimmedLines(selected)
-	replacementLines := util.NonEmptyTrimmedLines(edit.Content)
+	selectedLines := textutil.NonEmptyTrimmedLines(selected)
+	replacementLines := textutil.NonEmptyTrimmedLines(edit.Content)
 
 	if len(selectedLines) == 0 || len(replacementLines) <= len(selectedLines) {
 		return nil
@@ -1321,7 +1181,7 @@ func validateSourceLineRangePlanEdit(path string, current string, edit PlanEdit)
 // smuggle a whole-file or broad destructive rewrite through an anchored range.
 // Small replacements are valid; broad source changes need smaller anchors or an
 // explicit blocker because they can silently erase unrelated code.
-func RejectExistingSourceDestructiveLineRangeRewrite(path string, current string, edit PlanEdit) error {
+func RejectExistingSourceDestructiveLineRangeRewrite(path string, current string, edit planartifact.PlanEdit) error {
 	if !isSourceLikePath(path) || strings.TrimSpace(current) == "" ||
 		strings.TrimSpace(edit.Content) == "" ||
 		edit.StartLine <= 0 || edit.EndLine < edit.StartLine {
@@ -1339,8 +1199,8 @@ func RejectExistingSourceDestructiveLineRangeRewrite(path string, current string
 		return fmt.Errorf("line-range replacement for %s lines %d-%d would rewrite the entire existing source file; use bounded old_text/new_text or smaller start_line/end_line anchors, or answer <<QUESTION>> with the exact missing body/anchor blocker", filepath.ToSlash(path), edit.StartLine, edit.EndLine)
 	}
 
-	selectedNonEmpty := len(util.NonEmptyTrimmedLines(current[spans[edit.StartLine-1].start:spans[edit.EndLine-1].end]))
-	replacementNonEmpty := len(util.NonEmptyTrimmedLines(edit.Content))
+	selectedNonEmpty := len(textutil.NonEmptyTrimmedLines(current[spans[edit.StartLine-1].start:spans[edit.EndLine-1].end]))
+	replacementNonEmpty := len(textutil.NonEmptyTrimmedLines(edit.Content))
 
 	if selectedLineCount >= 40 && selectedNonEmpty >= 20 && replacementNonEmpty*2 < selectedNonEmpty {
 		return fmt.Errorf("line-range replacement for %s lines %d-%d would collapse %d non-empty source lines to %d; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker", filepath.ToSlash(path), edit.StartLine, edit.EndLine, selectedNonEmpty, replacementNonEmpty)
@@ -1349,7 +1209,7 @@ func RejectExistingSourceDestructiveLineRangeRewrite(path string, current string
 	return nil
 }
 
-func RejectSourceLineRangeTopLevelConstructDrift(path string, selected string, edit PlanEdit) error {
+func RejectSourceLineRangeTopLevelConstructDrift(path string, selected string, edit planartifact.PlanEdit) error {
 	if !cLikeSourcePath(path) || strings.TrimSpace(edit.Content) == "" {
 		return nil
 	}
@@ -1455,9 +1315,9 @@ func cLikeSourcePath(path string) bool {
 	}
 }
 
-func sourceEditContentDuplicatesExistingBlock(current string, edit PlanEdit) bool {
+func sourceEditContentDuplicatesExistingBlock(current string, edit planartifact.PlanEdit) bool {
 	content := strings.TrimSpace(edit.Content)
-	if content == "" || len(util.NonEmptyTrimmedLines(content)) < 2 {
+	if content == "" || len(textutil.NonEmptyTrimmedLines(content)) < 2 {
 		return false
 	}
 
@@ -1482,7 +1342,7 @@ func sourceEditContentDuplicatesExistingBlock(current string, edit PlanEdit) boo
 	return strings.Contains(search, content)
 }
 
-func (m *Manager) repairPlanArtifactOldTextAnchors(artifact *PlanArtifact) {
+func (m *Manager) repairPlanArtifactOldTextAnchors(artifact *planartifact.PlanArtifact) {
 	if m == nil || artifact == nil {
 		return
 	}
@@ -1565,10 +1425,10 @@ func leadingWhitespaceInsensitiveLinesMatch(currentLines []string, oldLines []st
 	return true
 }
 
-// PreviewPlanEditContent applies one PlanEdit to current content without
+// PreviewPlanEditContent applies one planartifact.PlanEdit to current content without
 // touching disk. It is shared by submit_plan validation and the deterministic
 // executor preflight so malformed or suspicious plans fail before writes land.
-func PreviewPlanEditContent(current string, edit PlanEdit) (string, bool, error) {
+func PreviewPlanEditContent(current string, edit planartifact.PlanEdit) (string, bool, error) {
 	if planEditIsWholeFileWrite(edit) {
 		return edit.NewText, edit.NewText != current, nil
 	}
@@ -1606,11 +1466,11 @@ func PreviewPlanEditContent(current string, edit PlanEdit) (string, bool, error)
 	return current, false, nil
 }
 
-func planEditIsWholeFileWrite(edit PlanEdit) bool {
+func planEditIsWholeFileWrite(edit planartifact.PlanEdit) bool {
 	return edit.ReplaceAll && strings.TrimSpace(edit.OldText) == "" && strings.TrimSpace(edit.NewText) != ""
 }
 
-func planEditReplacementAlreadyPresent(current string, edit PlanEdit) bool {
+func planEditReplacementAlreadyPresent(current string, edit planartifact.PlanEdit) bool {
 	replacement := strings.TrimSpace(edit.NewText)
 	if replacement == "" || strings.TrimSpace(edit.NewTextRef) != "" {
 		return false
@@ -1619,7 +1479,7 @@ func planEditReplacementAlreadyPresent(current string, edit PlanEdit) bool {
 	return strings.Contains(current, edit.NewText)
 }
 
-func previewPlanLineRangeEdit(current string, edit PlanEdit) (string, error) {
+func previewPlanLineRangeEdit(current string, edit planartifact.PlanEdit) (string, error) {
 	startLine := edit.StartLine
 	endLine := edit.EndLine
 
@@ -1656,7 +1516,7 @@ func previewPlanLineRangeEdit(current string, edit PlanEdit) (string, error) {
 	return current[:startOffset] + replacement + current[endOffset:], nil
 }
 
-func previewPlanInsertAfterLineEdit(current string, edit PlanEdit) (string, error) {
+func previewPlanInsertAfterLineEdit(current string, edit planartifact.PlanEdit) (string, error) {
 	line := edit.InsertAfterLine
 	if line <= 0 {
 		return current, fmt.Errorf("insert_after_line must be >= 1 for %s", edit.Path)
@@ -1712,15 +1572,15 @@ func preferredLineEnding(text string) string {
 	return "\n"
 }
 
-func spillLargePlanEditBodies(dir string, stamp string, edits []PlanEdit) ([]PlanEdit, int, error) {
-	out := append([]PlanEdit(nil), edits...)
+func spillLargePlanEditBodies(root string, dir string, stamp string, edits []planartifact.PlanEdit) ([]planartifact.PlanEdit, int, error) {
+	out := append([]planartifact.PlanEdit(nil), edits...)
 	spilled := 0
 
 	for i := range out {
 		if shouldSpillPlanInlineText(out[i].NewText) {
-			ref, err := writePlanEditBodyRef(dir, stamp, i, "new_text", out[i].NewText)
+			ref, err := writePlanEditBodyRef(root, dir, stamp, i, "new_text", out[i].NewText)
 			if err != nil {
-				cleanupPlanEditBodyRefs(dir, out)
+				cleanupPlanEditBodyRefs(root, dir, out)
 
 				return nil, 0, err
 			}
@@ -1735,9 +1595,9 @@ func spillLargePlanEditBodies(dir string, stamp string, edits []PlanEdit) ([]Pla
 				return nil, 0, fmt.Errorf("edits[%d]: insert_after_line content exceeds inline submit_plan limit (%d bytes); content_ref is not supported for insert_after_line in this schema; for large insertions in existing files, use a line-range replacement that includes the unchanged anchor line(s) plus inserted content", i, planInlineTextSpillThreshold)
 			}
 
-			ref, err := writePlanEditBodyRef(dir, stamp, i, "content", out[i].Content)
+			ref, err := writePlanEditBodyRef(root, dir, stamp, i, "content", out[i].Content)
 			if err != nil {
-				cleanupPlanEditBodyRefs(dir, out)
+				cleanupPlanEditBodyRefs(root, dir, out)
 
 				return nil, 0, err
 			}
@@ -1755,10 +1615,10 @@ func shouldSpillPlanInlineText(value string) bool {
 	return len(value) > planInlineTextSpillThreshold
 }
 
-func cleanupPlanEditBodyRefs(dir string, edits []PlanEdit) {
+func cleanupPlanEditBodyRefs(root string, dir string, edits []planartifact.PlanEdit) {
 	for _, edit := range edits {
 		for _, ref := range []string{edit.NewTextRef, edit.ContentRef} {
-			path, ok := planEditBodyRefPath(dir, ref)
+			path, ok := planEditBodyRefPath(root, dir, ref)
 			if !ok {
 				continue
 			}
@@ -1768,16 +1628,19 @@ func cleanupPlanEditBodyRefs(dir string, edits []PlanEdit) {
 	}
 }
 
-func writePlanEditBodyRef(dir string, stamp string, index int, field string, content string) (string, error) {
+func writePlanEditBodyRef(root string, dir string, stamp string, index int, field string, content string) (string, error) {
 	assetDir := filepath.Join(dir, "assets")
 	if err := os.MkdirAll(assetDir, 0o755); err != nil {
 		return "", fmt.Errorf("create plan asset dir: %w", err)
 	}
 
 	name := fmt.Sprintf("%s-edit-%03d-%s.txt", stamp, index+1, field)
-	path := filepath.Join(assetDir, name)
+	path, _, err := planartifactstore.StoreAssetPath(root, name)
+	if err != nil {
+		return "", fmt.Errorf("resolve plan asset %s: %w", name, err)
+	}
 
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	if err := atomicfile.WriteFile(path, []byte(content), 0o644); err != nil {
 		return "", fmt.Errorf("write plan asset %s: %w", name, err)
 	}
 
@@ -1786,49 +1649,46 @@ func writePlanEditBodyRef(dir string, stamp string, index int, field string, con
 
 // planArtifactDir returns the directory plan artifacts live in,
 // rooted at the workspace's repo root.
-func (m *Manager) planArtifactDir() string {
+func (m *Manager) planArtifactDir() (string, error) {
 	root := strings.TrimSpace(m.cfg.Root)
 	if root == "" {
 		root = "."
 	}
 
-	return filepath.Join(root, ".idiom", "plans")
+	dir, _, err := planartifactstore.StoreDir(root)
+	if err != nil {
+		return "", err
+	}
+	return dir, nil
 }
 
 // LoadPlanArtifact reads a plan artifact from disk and returns it.
 // Used by the plan-execute orchestrator's executor phase.
-func LoadPlanArtifact(path string) (PlanArtifact, error) {
-	body, err := os.ReadFile(path)
+func LoadPlanArtifact(path string) (planartifact.PlanArtifact, error) {
+	artifact, err := planartifactstore.Load(path)
 	if err != nil {
-		return PlanArtifact{}, err
+		return planartifact.PlanArtifact{}, err
 	}
 
-	artifact, err := ParsePlanArtifactJSON(body)
-	if err != nil {
-		return PlanArtifact{}, fmt.Errorf("plan artifact %q: %w", path, err)
-	}
-
-	if len(artifact.Edits) == 0 {
-		return PlanArtifact{}, fmt.Errorf("plan artifact %q is empty", path)
-	}
-
-	if err := hydratePlanArtifactRefs(filepath.Dir(path), &artifact); err != nil {
-		return PlanArtifact{}, fmt.Errorf("plan artifact %q: %w", path, err)
+	for i, edit := range artifact.Edits {
+		if err := validatePlanEdit(edit); err != nil {
+			return planartifact.PlanArtifact{}, fmt.Errorf("plan artifact %q: edits[%d] path %q: %w", path, i, edit.Path, err)
+		}
 	}
 
 	if err := attachMissingLoadedPlanAnchorProvenance(path, &artifact); err != nil {
-		return PlanArtifact{}, fmt.Errorf("plan artifact %q: %w", path, err)
+		return planartifact.PlanArtifact{}, fmt.Errorf("plan artifact %q: %w", path, err)
 	}
 
-	if err := ValidatePlanArtifact(artifact); err != nil {
-		return PlanArtifact{}, fmt.Errorf("plan artifact %q: %w", path, err)
+	if err := planartifact.ValidatePlanArtifact(artifact); err != nil {
+		return planartifact.PlanArtifact{}, fmt.Errorf("plan artifact %q: %w", path, err)
 	}
 
 	return artifact, nil
 }
 
-func attachMissingLoadedPlanAnchorProvenance(planPath string, artifact *PlanArtifact) error {
-	if artifact == nil || artifact.SchemaVersion != PlanArtifactSchemaVersion || !planArtifactHasMissingAnchorProvenance(*artifact) {
+func attachMissingLoadedPlanAnchorProvenance(planPath string, artifact *planartifact.PlanArtifact) error {
+	if artifact == nil || artifact.SchemaVersion != planartifact.SchemaVersion || !planArtifactHasMissingAnchorProvenance(*artifact) {
 		return nil
 	}
 
@@ -1846,7 +1706,7 @@ func attachMissingLoadedPlanAnchorProvenance(planPath string, artifact *PlanArti
 			continue
 		}
 
-		edits, err := AttachPlanEditAnchorProvenance(root, []PlanEdit{edit})
+		edits, err := AttachPlanEditAnchorProvenance(root, []planartifact.PlanEdit{edit})
 		if err == nil && len(edits) == 1 {
 			artifact.Edits[i] = edits[0]
 		}
@@ -1855,7 +1715,7 @@ func attachMissingLoadedPlanAnchorProvenance(planPath string, artifact *PlanArti
 	return nil
 }
 
-func planArtifactHasMissingAnchorProvenance(artifact PlanArtifact) bool {
+func planArtifactHasMissingAnchorProvenance(artifact planartifact.PlanArtifact) bool {
 	for _, edit := range artifact.Edits {
 		if planEditNeedsAnchorProvenance(edit) && edit.AnchorProvenance == nil {
 			return true
@@ -1865,10 +1725,10 @@ func planArtifactHasMissingAnchorProvenance(artifact PlanArtifact) bool {
 	return false
 }
 
-func PlanArtifactRequiresSubmitPlanAnchorProvenance(artifact PlanArtifact) bool {
-	return strings.TrimSpace(artifact.SchemaVersion) == PlanArtifactSchemaVersion &&
-		strings.TrimSpace(artifact.Handoff.From) == "planner" &&
-		strings.TrimSpace(artifact.Handoff.To) == "plan_execute_executor"
+func PlanArtifactRequiresSubmitPlanAnchorProvenance(artifact planartifact.PlanArtifact) bool {
+	return strings.TrimSpace(artifact.SchemaVersion) == planartifact.SchemaVersion &&
+		strings.TrimSpace(string(artifact.Handoff.From)) == string(planartifact.OwnerPlanner) &&
+		artifact.Handoff.To == planartifact.HandoffTargetPlanExecuteExecutor
 }
 
 func workspaceRootFromPlanArtifactPath(planPath string) string {
@@ -1892,70 +1752,7 @@ func workspaceRootFromPlanArtifactPath(planPath string) string {
 	return root
 }
 
-func hydratePlanArtifactRefs(baseDir string, artifact *PlanArtifact) error {
-	if artifact == nil {
-		return nil
-	}
-
-	for i := range artifact.Edits {
-		edit := &artifact.Edits[i]
-		if strings.TrimSpace(edit.NewText) == "" && strings.TrimSpace(edit.NewTextRef) != "" {
-			content, err := readPlanEditBodyRef(baseDir, edit.NewTextRef)
-			if err != nil {
-				return fmt.Errorf("edits[%d].new_text_ref: %w", i, err)
-			}
-
-			edit.NewText = content
-		}
-
-		if strings.TrimSpace(edit.Content) == "" && strings.TrimSpace(edit.ContentRef) != "" {
-			content, err := readPlanEditBodyRef(baseDir, edit.ContentRef)
-			if err != nil {
-				return fmt.Errorf("edits[%d].content_ref: %w", i, err)
-			}
-
-			edit.Content = content
-		}
-
-		if err := validatePlanEdit(*edit); err != nil {
-			return fmt.Errorf("edits[%d]: %w", i, err)
-		}
-	}
-
-	return nil
-}
-
-func readPlanEditBodyRef(baseDir string, ref string) (string, error) {
-	ref = strings.TrimSpace(ref)
-	if ref == "" {
-		return "", fmt.Errorf("empty ref")
-	}
-
-	if filepath.IsAbs(ref) {
-		return "", fmt.Errorf("absolute refs are not allowed")
-	}
-
-	clean := filepath.Clean(filepath.FromSlash(ref))
-	if clean == "." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) || clean == ".." {
-		return "", fmt.Errorf("ref escapes plan artifact directory")
-	}
-
-	path := filepath.Join(baseDir, clean)
-	rel, err := filepath.Rel(baseDir, path)
-
-	if err != nil || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
-		return "", fmt.Errorf("ref escapes plan artifact directory")
-	}
-
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-
-	return string(body), nil
-}
-
-func planEditBodyRefPath(baseDir string, ref string) (string, bool) {
+func planEditBodyRefPath(root string, baseDir string, ref string) (string, bool) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" || filepath.IsAbs(ref) {
 		return "", false
@@ -1971,6 +1768,14 @@ func planEditBodyRefPath(baseDir string, ref string) (string, bool) {
 
 	if err != nil || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
 		return "", false
+	}
+
+	if filepath.Dir(clean) == "assets" {
+		safePath, _, err := planartifactstore.StoreAssetPath(root, filepath.Base(clean))
+		if err != nil {
+			return "", false
+		}
+		path = safePath
 	}
 
 	return path, true

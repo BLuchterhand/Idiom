@@ -1,7 +1,6 @@
 package intentloop
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -10,22 +9,17 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/contracts/plan"
+	intentloopcontract "idiom/internal/contracts/intentloop"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
+	"idiom/internal/platform/jsonevents"
+	"idiom/internal/platform/sessionid"
 	"idiom/internal/workflows/planexecute"
 )
 
 const (
 	DefaultMaxCycles = 5
-
-	StatusRunning           = "running"
-	StatusCompleted         = "completed"
-	StatusBlocked           = "blocked"
-	StatusNoProgress        = "no_progress"
-	StatusBudgetExhausted   = "budget_exhausted"
-	StatusMaxCyclesExceeded = "max_cycles_exceeded"
-	StatusFailed            = "failed"
 )
 
 type PlanExecuteRunner func(config.Config, planexecute.Options, planexecute.PromptRunner, *telemetry.Recorder, io.Writer, io.Writer) planexecute.RunResult
@@ -45,7 +39,7 @@ type IntentLoopOptions struct {
 	ToolManifestHash            string
 	Now                         func() time.Time
 	NewChildSessionID           func() string
-	EstimateCycleTokens         func(string, planexecute.RunResult, planexecute.PlanExecuteTerminalCompletionRecord) int
+	EstimateCycleTokens         func(string, planexecute.RunResult, plancontract.PlanExecuteTerminalCompletionRecord) int
 	RunPlanExecute              PlanExecuteRunner
 }
 
@@ -53,41 +47,52 @@ type IntentLoopResult struct {
 	ExitCode          int
 	SessionID         string
 	StatePath         string
-	Status            string
+	Status            intentloopcontract.Status
 	TerminationReason string
 	State             IntentLoopState
-	Completion        *planexecute.PlanExecuteTerminalCompletionRecord
+	Completion        *plancontract.PlanExecuteTerminalCompletionRecord
 	CompletionPath    string
 }
 
 func Run(cfg config.Config, opts IntentLoopOptions, promptRun planexecute.PromptRunner, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer) IntentLoopResult {
 	if opts.RunPlanExecute == nil {
-		opts.RunPlanExecute = planexecute.Run
+		return failedResult(opts.SessionID, "", intentloopcontract.StatusFailed, "intent-loop requires an injected plan-execute runner", stderr)
 	}
 	if opts.Now == nil {
 		opts.Now = func() time.Time { return time.Now().UTC() }
 	}
 	if opts.NewChildSessionID == nil {
-		opts.NewChildSessionID = planexecute.NewPlanExecuteSessionID
+		opts.NewChildSessionID = sessionid.New
 	}
 	if opts.MaxCycles <= 0 {
 		opts.MaxCycles = DefaultMaxCycles
 	}
 	if opts.CycleBudgetTokens < 0 {
-		return failedResult("", "", StatusFailed, "cycle budget must be >= 0", stderr)
+		return failedResult("", "", intentloopcontract.StatusFailed, "cycle budget must be >= 0", stderr)
 	}
 
 	originalPrompt, err := resolveOriginalPrompt(opts)
 	if err != nil {
-		return failedResult("", "", StatusFailed, err.Error(), stderr)
+		return failedResult("", "", intentloopcontract.StatusFailed, err.Error(), stderr)
 	}
 
 	state, statePath, err := loadOrCreateLoopState(cfg, opts, originalPrompt)
 	if err != nil {
-		return failedResult(opts.SessionID, "", StatusFailed, err.Error(), stderr)
+		return failedResult(opts.SessionID, "", intentloopcontract.StatusFailed, err.Error(), stderr)
 	}
 
-	emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, "start", map[string]any{
+	if strings.TrimSpace(opts.Resume) != "" && intentloopcontract.StatusTerminal(state.Status) {
+		if err := emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, intentloopcontract.EventResumeTerminal, map[string]any{
+			"session_id": state.SessionID,
+			"status":     state.Status,
+			"reason":     state.TerminationReason,
+		}); err != nil {
+			return intentLoopJSONEventFailureResult(state.SessionID, statePath, err, stderr)
+		}
+		return resultFromState(state, statePath, intentloopcontract.TerminalExitCode(state.Status), nil, "")
+	}
+
+	if err := emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, intentloopcontract.EventStart, map[string]any{
 		"session_id":             state.SessionID,
 		"max_cycles":             state.MaxCycles,
 		"budget_tokens":          state.BudgetTokens,
@@ -95,7 +100,9 @@ func Run(cfg config.Config, opts IntentLoopOptions, promptRun planexecute.Prompt
 		"contract_hash":          state.Contract.ContractHash,
 		"required_tests":         len(state.Contract.RequiredTestCommands),
 		"acceptance_obligations": len(state.Contract.AcceptanceObligations),
-	})
+	}); err != nil {
+		return intentLoopJSONEventFailureResult(state.SessionID, statePath, err, stderr)
+	}
 
 	if result, terminal := resumeIncompleteCycle(cfg, opts, promptRun, rec, stdout, stderr, &state); result.Status != "" {
 		return result
@@ -105,13 +112,15 @@ func Run(cfg config.Config, opts IntentLoopOptions, promptRun planexecute.Prompt
 
 	if opts.DetectExternalScopedChanges {
 		if reason := externalScopedChangeReason(cfg.Workspace.Root, state); reason != "" {
-			state.Status = StatusBlocked
+			state.Status = intentloopcontract.StatusBlocked
 			state.TerminationReason = reason
 			statePath, _ = SaveState(cfg.Workspace.Root, &state)
-			emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, "blocked", map[string]any{
+			if err := emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, intentloopcontract.EventBlocked, map[string]any{
 				"session_id": state.SessionID,
 				"reason":     reason,
-			})
+			}); err != nil {
+				return intentLoopJSONEventFailureResult(state.SessionID, statePath, err, stderr)
+			}
 			return resultFromState(state, statePath, 1, nil, "")
 		}
 	}
@@ -124,25 +133,27 @@ func Run(cfg config.Config, opts IntentLoopOptions, promptRun planexecute.Prompt
 			return result
 		}
 		if terminal == nil {
-			state.Status = StatusBlocked
+			state.Status = intentloopcontract.StatusBlocked
 			state.TerminationReason = "missing_terminal_record"
 			statePath, _ = SaveState(cfg.Workspace.Root, &state)
-			emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, "blocked", map[string]any{
+			if err := emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, intentloopcontract.EventBlocked, map[string]any{
 				"session_id":      state.SessionID,
 				"cycle_number":    cycle,
 				"blocker_summary": state.TerminationReason,
-			})
+			}); err != nil {
+				return intentLoopJSONEventFailureResult(state.SessionID, statePath, err, stderr)
+			}
 			return resultFromState(state, statePath, 1, nil, completionPath)
 		}
 	}
 
-	state.Status = StatusMaxCyclesExceeded
+	state.Status = intentloopcontract.StatusMaxCyclesExceeded
 	state.TerminationReason = "max cycles exceeded"
 	statePath, _ = SaveState(cfg.Workspace.Root, &state)
 	return resultFromState(state, statePath, 1, nil, "")
 }
 
-func runOneCycle(cfg config.Config, opts IntentLoopOptions, promptRun planexecute.PromptRunner, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer, state *IntentLoopState, cycle int) (IntentLoopResult, *planexecute.PlanExecuteTerminalCompletionRecord, string) {
+func runOneCycle(cfg config.Config, opts IntentLoopOptions, promptRun planexecute.PromptRunner, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer, state *IntentLoopState, cycle int) (IntentLoopResult, *plancontract.PlanExecuteTerminalCompletionRecord, string) {
 	childSessionID := opts.NewChildSessionID()
 	commands := childVerificationCommands(*state, opts)
 	identity := childIdentity(cfg, opts, state.Contract, commands)
@@ -152,13 +163,13 @@ func runOneCycle(cfg config.Config, opts IntentLoopOptions, promptRun planexecut
 		CycleNumber:             cycle,
 		PlanExecuteSessionID:    childSessionID,
 		Phase:                   "dispatched",
-		Status:                  "dispatched",
+		Status:                  intentloopcontract.CycleStatusDispatched,
 		PreRunScopedFingerprint: preFingerprint,
 		ChildIdentity:           &identity,
 	}
 	state.Cycles = append(state.Cycles, record)
 	cycleIndex := len(state.Cycles) - 1
-	state.Status = StatusRunning
+	state.Status = intentloopcontract.StatusRunning
 	_, _ = SaveState(cfg.Workspace.Root, state)
 
 	cyclePrompt := BuildCyclePrompt(state.OriginalPrompt, *state)
@@ -170,12 +181,14 @@ func runOneCycle(cfg config.Config, opts IntentLoopOptions, promptRun planexecut
 	state.Cycles[cycleIndex].CyclePromptSHA256 = promptHash
 	_, _ = SaveState(cfg.Workspace.Root, state)
 
-	emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, "cycle_start", map[string]any{
+	if err := emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, intentloopcontract.EventCycleStart, map[string]any{
 		"session_id":          state.SessionID,
 		"cycle_number":        cycle,
 		"cycle_prompt_sha256": promptHash,
 		"child_session_id":    childSessionID,
-	})
+	}); err != nil {
+		return intentLoopJSONEventFailureResult(state.SessionID, "", err, stderr), nil, ""
+	}
 
 	childOpts := childPlanExecuteOptions(opts, *state, cyclePrompt, childSessionID, commands)
 	childResult := opts.RunPlanExecute(cfg, childOpts, promptRun, rec, stdout, stderr)
@@ -183,7 +196,7 @@ func runOneCycle(cfg config.Config, opts IntentLoopOptions, promptRun planexecut
 	if completionErr != nil {
 		state.Cycles[cycleIndex].FailureKind = "missing_terminal_record"
 		state.Cycles[cycleIndex].FailureReason = completionErr.Error()
-		state.Cycles[cycleIndex].Status = "failed"
+		state.Cycles[cycleIndex].Status = intentloopcontract.CycleStatusFailed
 		state.Cycles[cycleIndex].ExitCode = 1
 		return IntentLoopResult{}, nil, completionPath
 	}
@@ -193,55 +206,76 @@ func runOneCycle(cfg config.Config, opts IntentLoopOptions, promptRun planexecut
 	state.Cycles[cycleIndex].TokensUsed = estimatedCycleTokens(opts, cyclePrompt, childResult, *terminal)
 	state.TokensUsed += state.Cycles[cycleIndex].TokensUsed
 
-	emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, "cycle_complete", map[string]any{
+	if err := emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, intentloopcontract.EventCycleComplete, map[string]any{
 		"session_id":      state.SessionID,
 		"cycle_number":    cycle,
 		"remaining_gaps":  sanitizedGapSummaries(gaps),
 		"gap_count":       len(gaps),
 		"tokens_used":     state.TokensUsed,
 		"child_exit_code": childResult.ExitCode,
-	})
+	}); err != nil {
+		return intentLoopJSONEventFailureResult(state.SessionID, "", err, stderr), nil, completionPath
+	}
 
-	if len(gaps) == 0 && childResult.ExitCode == 0 {
-		state.Status = StatusCompleted
+	if result, terminalResult := foldCompletedCycle(cfg, opts, stdout, stderr, state, cycleIndex, &identity, terminal, completionPath, gaps, childResult.ExitCode); terminalResult {
+		return result, terminal, completionPath
+	}
+
+	return IntentLoopResult{}, terminal, completionPath
+}
+
+func foldCompletedCycle(cfg config.Config, opts IntentLoopOptions, stdout io.Writer, stderr io.Writer, state *IntentLoopState, cycleIndex int, identity *ChildRunIdentity, terminal *plancontract.PlanExecuteTerminalCompletionRecord, completionPath string, gaps []EvidenceGap, childExitCode int) (IntentLoopResult, bool) {
+	if state == nil || cycleIndex < 0 || cycleIndex >= len(state.Cycles) {
+		return IntentLoopResult{}, false
+	}
+	cycle := state.Cycles[cycleIndex].CycleNumber
+
+	if len(gaps) == 0 && childExitCode == 0 {
+		state.Status = intentloopcontract.StatusCompleted
 		state.TerminationReason = ""
 		_, _ = CompactChildArtifacts(cfg.Workspace.Root, state)
-		emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, "complete", map[string]any{
+		if err := emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, intentloopcontract.EventComplete, map[string]any{
 			"session_id":    state.SessionID,
 			"total_cycles":  len(state.Cycles),
 			"total_tokens":  state.TokensUsed,
 			"changed_paths": cumulativeChangedPaths(state.Cycles),
-		})
+		}); err != nil {
+			return intentLoopJSONEventFailureResult(state.SessionID, "", err, stderr), true
+		}
 		statePath, _ := SaveState(cfg.Workspace.Root, state)
-		return resultFromState(*state, statePath, 0, terminal, completionPath), terminal, completionPath
+		return resultFromState(*state, statePath, 0, terminal, completionPath), true
 	}
 
-	outcome := ClassifyCycleOutcome(state.Cycles[cycleIndex], &identity)
+	outcome := ClassifyCycleOutcome(state.Cycles[cycleIndex], identity)
 	if outcome.Blocking {
-		state.Status = StatusBlocked
+		state.Status = intentloopcontract.StatusBlocked
 		state.TerminationReason = outcome.Reason
-		emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, "blocked", map[string]any{
+		if err := emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, intentloopcontract.EventBlocked, map[string]any{
 			"session_id":         state.SessionID,
 			"cycle_number":       cycle,
 			"blocker_summary":    outcome.Reason,
 			"child_failure_kind": state.Cycles[cycleIndex].FailureKind,
-		})
+		}); err != nil {
+			return intentLoopJSONEventFailureResult(state.SessionID, "", err, stderr), true
+		}
 		statePath, _ := SaveState(cfg.Workspace.Root, state)
-		return resultFromState(*state, statePath, 1, terminal, completionPath), terminal, completionPath
+		return resultFromState(*state, statePath, 1, terminal, completionPath), true
 	}
 
 	failureSet := GapFingerprint(gaps)
 	if failureSet != "" {
 		if state.SeenFailureSets[failureSet] {
-			state.Status = StatusNoProgress
+			state.Status = intentloopcontract.StatusNoProgress
 			state.TerminationReason = "failure set " + failureSet + " seen in prior cycle"
-			emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, "convergence_detected", map[string]any{
+			if err := emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, intentloopcontract.EventConvergenceDetected, map[string]any{
 				"session_id":   state.SessionID,
 				"cycle_number": cycle,
 				"failure_set":  failureSet,
-			})
+			}); err != nil {
+				return intentLoopJSONEventFailureResult(state.SessionID, "", err, stderr), true
+			}
 			statePath, _ := SaveState(cfg.Workspace.Root, state)
-			return resultFromState(*state, statePath, 1, terminal, completionPath), terminal, completionPath
+			return resultFromState(*state, statePath, 1, terminal, completionPath), true
 		}
 		state.SeenFailureSets[failureSet] = true
 	}
@@ -250,31 +284,35 @@ func runOneCycle(cfg config.Config, opts IntentLoopOptions, promptRun planexecut
 		remainingCycles := max(1, state.MaxCycles-cycle+1)
 		softCap := opts.CycleBudgetTokens / remainingCycles
 		if softCap > 0 && state.Cycles[cycleIndex].TokensUsed > softCap*2 {
-			emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, "cycle_budget_warning", map[string]any{
+			if err := emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, intentloopcontract.EventCycleBudgetWarning, map[string]any{
 				"session_id":      state.SessionID,
 				"cycle_number":    cycle,
 				"cycle_tokens":    state.Cycles[cycleIndex].TokensUsed,
 				"soft_cap_tokens": softCap,
 				"tokens_used":     state.TokensUsed,
 				"budget_tokens":   opts.CycleBudgetTokens,
-			})
+			}); err != nil {
+				return intentLoopJSONEventFailureResult(state.SessionID, "", err, stderr), true
+			}
 		}
 		if state.TokensUsed >= opts.CycleBudgetTokens {
-			state.Status = StatusBudgetExhausted
+			state.Status = intentloopcontract.StatusBudgetExhausted
 			state.BudgetExhausted = true
 			state.TerminationReason = "cycle budget exhausted"
-			emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, "budget_exhausted", map[string]any{
+			if err := emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, intentloopcontract.EventBudgetExhausted, map[string]any{
 				"session_id":    state.SessionID,
 				"tokens_used":   state.TokensUsed,
 				"budget_tokens": opts.CycleBudgetTokens,
-			})
+			}); err != nil {
+				return intentLoopJSONEventFailureResult(state.SessionID, "", err, stderr), true
+			}
 			statePath, _ := SaveState(cfg.Workspace.Root, state)
-			return resultFromState(*state, statePath, 1, terminal, completionPath), terminal, completionPath
+			return resultFromState(*state, statePath, 1, terminal, completionPath), true
 		}
 	}
 
 	_, _ = SaveState(cfg.Workspace.Root, state)
-	return IntentLoopResult{}, terminal, completionPath
+	return IntentLoopResult{}, false
 }
 
 func childPlanExecuteOptions(opts IntentLoopOptions, state IntentLoopState, cyclePrompt string, childSessionID string, commands []string) planexecute.Options {
@@ -315,7 +353,7 @@ func loadOrCreateLoopState(cfg config.Config, opts IntentLoopOptions, originalPr
 	}
 
 	if sessionID == "" {
-		sessionID = planexecute.NewPlanExecuteSessionID()
+		sessionID = sessionid.New()
 	}
 	contract, err := ExtractContract(ContractExtractionInput{
 		OriginalPrompt:        originalPrompt,
@@ -349,9 +387,9 @@ func resolveOriginalPrompt(opts IntentLoopOptions) (string, error) {
 	return "", fmt.Errorf("intent loop requires a prompt or prompt file")
 }
 
-func loadChildTerminalCompletion(root string, result planexecute.RunResult) (*planexecute.PlanExecuteTerminalCompletionRecord, string, error) {
+func loadChildTerminalCompletion(root string, result planexecute.RunResult) (*plancontract.PlanExecuteTerminalCompletionRecord, string, error) {
 	if result.Completion != nil {
-		completion := planexecute.NormalizePlanExecuteTerminalCompletionRecord(*result.Completion)
+		completion := plancontract.NormalizePlanExecuteTerminalCompletionRecord(*result.Completion)
 		return &completion, result.CompletionPath, nil
 	}
 	sessionID := strings.TrimSpace(result.SessionID)
@@ -368,15 +406,19 @@ func loadChildTerminalCompletion(root string, result planexecute.RunResult) (*pl
 	return &record, path, nil
 }
 
-func finalizeCycleRecord(record *CycleRecord, result planexecute.RunResult, terminal planexecute.PlanExecuteTerminalCompletionRecord, completionPath string, gaps []EvidenceGap, root string) {
-	record.Phase = strings.TrimSpace(terminal.Phase)
-	record.Status = "completed"
-	if result.ExitCode != 0 || strings.TrimSpace(result.FailureKind) != "" {
-		record.Status = "failed"
+func finalizeCycleRecord(record *CycleRecord, result planexecute.RunResult, terminal plancontract.PlanExecuteTerminalCompletionRecord, completionPath string, gaps []EvidenceGap, root string) {
+	record.Phase = strings.TrimSpace(string(terminal.Phase))
+	record.Status = intentloopcontract.CycleStatusCompleted
+	if result.ExitCode != 0 || strings.TrimSpace(result.FailureKind) != "" ||
+		strings.TrimSpace(string(terminal.Status)) == string(plancontract.PlanExecuteProgressStatusFailed) ||
+		strings.TrimSpace(string(terminal.FailureKind)) != "" ||
+		strings.TrimSpace(terminal.FailureReason) != "" ||
+		terminalValidationFailuresBlockIntentLoop(terminal.ValidationFailures) {
+		record.Status = intentloopcontract.CycleStatusFailed
 	}
 	record.TerminalCompletionPath = completionPath
 	record.ExitCode = result.ExitCode
-	record.FailureKind = firstNonEmpty(result.FailureKind, terminal.FailureKind)
+	record.FailureKind = firstNonEmpty(result.FailureKind, string(terminal.FailureKind))
 	record.FailureReason = firstNonEmpty(result.FailureReason, terminal.FailureReason)
 	record.ChangedPaths = append([]string(nil), terminal.ChangedPaths...)
 	record.MutationDeltas = mutationDeltas(root, terminal.ChangedPaths)
@@ -388,7 +430,7 @@ func finalizeCycleRecord(record *CycleRecord, result planexecute.RunResult, term
 	record.PostRunScopedFingerprint = scopedWorkspaceFingerprint(root, plancontract.NewPlanScopeContract(terminal.RequiredEditPaths, terminal.AllowedEditPaths, nil).WithWriteAllowedPaths(terminal.WriteAllowedPaths))
 }
 
-func estimatedCycleTokens(opts IntentLoopOptions, cyclePrompt string, result planexecute.RunResult, terminal planexecute.PlanExecuteTerminalCompletionRecord) int {
+func estimatedCycleTokens(opts IntentLoopOptions, cyclePrompt string, result planexecute.RunResult, terminal plancontract.PlanExecuteTerminalCompletionRecord) int {
 	if opts.EstimateCycleTokens != nil {
 		if tokens := opts.EstimateCycleTokens(cyclePrompt, result, terminal); tokens > 0 {
 			return tokens
@@ -405,7 +447,7 @@ func estimatedCycleTokens(opts IntentLoopOptions, cyclePrompt string, result pla
 	return (chars + 3) / 4
 }
 
-func allPhaseChecksPassed(checks []planexecute.PhaseEvidenceCheck) bool {
+func allPhaseChecksPassed(checks []plancontract.PhaseEvidenceCheck) bool {
 	if len(checks) == 0 {
 		return false
 	}
@@ -533,22 +575,19 @@ func sanitizedGapSummaries(gaps []EvidenceGap) []map[string]any {
 	return out
 }
 
-func emitIntentLoopJSONEvent(stdout io.Writer, jsonEvents bool, eventType string, fields map[string]any) {
-	if !jsonEvents {
-		return
+func emitIntentLoopJSONEvent(stdout io.Writer, jsonEvents bool, eventType intentloopcontract.EventType, fields map[string]any) error {
+	if !intentloopcontract.KnownEventType(eventType) {
+		return fmt.Errorf("unknown intent-loop event type %q", eventType)
 	}
-	if fields == nil {
-		fields = map[string]any{}
-	}
-	fields["type"] = "idiom.intent_loop." + strings.TrimPrefix(eventType, "idiom.intent_loop.")
-	body, err := json.Marshal(fields)
-	if err != nil {
-		return
-	}
-	fmt.Fprintln(stdout, string(body))
+
+	return jsonevents.Emit(stdout, jsonEvents, intentloopcontract.EventName(eventType), fields)
 }
 
-func failedResult(sessionID string, statePath string, status string, reason string, stderr io.Writer) IntentLoopResult {
+func intentLoopJSONEventFailureResult(sessionID string, statePath string, err error, stderr io.Writer) IntentLoopResult {
+	return failedResult(sessionID, statePath, intentloopcontract.StatusFailed, fmt.Sprintf("json_event_write_failed: %v", err), stderr)
+}
+
+func failedResult(sessionID string, statePath string, status intentloopcontract.Status, reason string, stderr io.Writer) IntentLoopResult {
 	if reason != "" && stderr != nil {
 		fmt.Fprintln(stderr, reason)
 	}
@@ -562,17 +601,19 @@ func failedResult(sessionID string, statePath string, status string, reason stri
 }
 
 func finishLoopFailure(cfg config.Config, opts IntentLoopOptions, stdout io.Writer, stderr io.Writer, state *IntentLoopState, cycleIndex int, kind string, reason string) IntentLoopResult {
-	state.Cycles[cycleIndex].Status = "failed"
+	state.Cycles[cycleIndex].Status = intentloopcontract.CycleStatusFailed
 	state.Cycles[cycleIndex].FailureKind = kind
 	state.Cycles[cycleIndex].FailureReason = reason
-	state.Status = StatusFailed
+	state.Status = intentloopcontract.StatusFailed
 	state.TerminationReason = reason
-	emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, "blocked", map[string]any{
+	if err := emitIntentLoopJSONEvent(stdout, opts.PlanExecuteOptions.JSONEvents, intentloopcontract.EventBlocked, map[string]any{
 		"session_id":         state.SessionID,
 		"cycle_number":       state.Cycles[cycleIndex].CycleNumber,
 		"blocker_summary":    reason,
 		"child_failure_kind": kind,
-	})
+	}); err != nil {
+		return intentLoopJSONEventFailureResult(state.SessionID, "", err, stderr)
+	}
 	statePath, _ := SaveState(cfg.Workspace.Root, state)
 	if stderr != nil && reason != "" {
 		fmt.Fprintln(stderr, reason)
@@ -580,7 +621,7 @@ func finishLoopFailure(cfg config.Config, opts IntentLoopOptions, stdout io.Writ
 	return resultFromState(*state, statePath, 1, nil, "")
 }
 
-func resultFromState(state IntentLoopState, statePath string, exitCode int, completion *planexecute.PlanExecuteTerminalCompletionRecord, completionPath string) IntentLoopResult {
+func resultFromState(state IntentLoopState, statePath string, exitCode int, completion *plancontract.PlanExecuteTerminalCompletionRecord, completionPath string) IntentLoopResult {
 	return IntentLoopResult{
 		ExitCode:          exitCode,
 		SessionID:         state.SessionID,

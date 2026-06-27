@@ -5,11 +5,14 @@
   "status": "complete",
   "created_at": "2026-05-18T13:15:00Z",
   "scope": {
-    "implementation_checkpoint": "b93270c",
-    "expected_paths_changed": true,
-    "forbidden_paths_changed": false,
-    "obsidian_parity_updated": true,
-    "plan_only_mutation_check": "cmd/idiom test asserts tdd.json, prd.md, and ADR markdown remain unchanged"
+    "changed_paths_checked": true,
+    "legacy_details": {
+      "implementation_checkpoint": "b93270c",
+      "expected_paths_changed": "true",
+      "forbidden_paths_changed": "false",
+      "obsidian_parity_updated": "true",
+      "plan_only_mutation_check": "cmd/idiom test asserts tdd.json, prd.md, and ADR markdown remain unchanged"
+    }
   },
   "tests": {
     "focused_internal": "go test ./internal/workflows/productworkflow -run TestTDDObligationPlan",

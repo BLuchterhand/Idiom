@@ -1,40 +1,12 @@
 package productworkflow
 
+import (
+	"encoding/json"
+	"strings"
+)
+
 const (
 	WorkflowStateFileName = "workflow_state.json"
-
-	WorkflowStatusBucketUnstarted = "unstarted"
-	WorkflowStatusBucketStarted   = "started"
-	WorkflowStatusBucketClosed    = "closed"
-
-	WorkflowStatePlanned           = "planned"
-	WorkflowStateHumanVerification = "human_verification"
-	WorkflowStateImplementing      = "implementing"
-	WorkflowStateVerifying         = "verifying"
-	WorkflowStateReviewing         = "reviewing"
-	WorkflowStateInvestigating     = "investigating"
-	WorkflowStateBlocked           = "blocked"
-	WorkflowStateClosed            = "closed"
-
-	ProductWorkflowStatusApplied         = "applied"
-	ProductWorkflowStatusBlocked         = "blocked"
-	ProductWorkflowStatusClosed          = "closed"
-	ProductWorkflowStatusComplete        = "complete"
-	ProductWorkflowStatusError           = "error"
-	ProductWorkflowStatusFail            = "fail"
-	ProductWorkflowStatusFailed          = "failed"
-	ProductWorkflowStatusNeedsInspection = "needs_inspection"
-	ProductWorkflowStatusOK              = "ok"
-	ProductWorkflowStatusPartial         = "partial"
-	ProductWorkflowStatusPass            = "pass"
-	ProductWorkflowStatusPassed          = "passed"
-	ProductWorkflowStatusPending         = "pending"
-	ProductWorkflowStatusPlanned         = "planned"
-	ProductWorkflowStatusReady           = "ready"
-
-	ProductWorkflowSeverityError = "error"
-
-	productStatusMigrationTempSuffix = ".status-migration.tmp"
 )
 
 type EffortIndex struct {
@@ -107,9 +79,9 @@ type CoverageState struct {
 }
 
 type GateResult struct {
-	Gate      string `json:"gate"`
-	Status    string `json:"status"`
-	CheckedAt string `json:"checked_at"`
+	Gate      string                `json:"gate"`
+	Status    ProductWorkflowStatus `json:"status"`
+	CheckedAt string                `json:"checked_at"`
 }
 
 type PrivacyState struct {
@@ -240,42 +212,69 @@ type TraceabilityRow struct {
 }
 
 type ImplementationLedgerRecord struct {
-	RecordType              string                 `json:"record_type"`
-	TaskID                  string                 `json:"task_id"`
-	EffortID                string                 `json:"effort_id"`
-	Timestamp               string                 `json:"timestamp"`
-	ComplexityTier          string                 `json:"complexity_tier,omitempty"`
-	Phase                   string                 `json:"phase,omitempty"`
-	ContextPackID           string                 `json:"context_pack_id,omitempty"`
-	Implementor             *ImplementorAssignment `json:"implementor,omitempty"`
-	Reviewer                *ReviewerAssignment    `json:"reviewer,omitempty"`
-	Scope                   *AtomScope             `json:"scope,omitempty"`
-	RequiredVerification    []string               `json:"required_verification,omitempty"`
-	ReportPaths             *ReportPaths           `json:"report_paths,omitempty"`
-	StandardImplementor     string                 `json:"standard_implementor,omitempty"`
-	FallbackActor           string                 `json:"fallback_actor,omitempty"`
-	Reason                  string                 `json:"reason,omitempty"`
-	AllowedScope            string                 `json:"allowed_scope,omitempty"`
-	CompensatingChecks      []string               `json:"compensating_checks,omitempty"`
-	Actor                   string                 `json:"actor,omitempty"`
-	ImplementorID           string                 `json:"implementor_id,omitempty"`
-	ReviewerID              string                 `json:"reviewer_id,omitempty"`
-	ChangedPaths            []string               `json:"changed_paths,omitempty"`
-	CommitHash              string                 `json:"commit_hash,omitempty"`
-	CodeChanges             bool                   `json:"code_changes,omitempty"`
-	VerificationCommandsRun []string               `json:"verification_commands_run,omitempty"`
-	VerificationStatus      string                 `json:"verification_status,omitempty"`
-	TDDObligationsSatisfied []string               `json:"tdd_obligations_satisfied,omitempty"`
-	Commands                []string               `json:"commands,omitempty"`
-	Status                  string                 `json:"status,omitempty"`
-	Model                   string                 `json:"model,omitempty"`
-	ReasoningEffort         string                 `json:"reasoning_effort,omitempty"`
-	Decision                string                 `json:"decision,omitempty"`
-	Findings                []any                  `json:"findings,omitempty"`
-	State                   string                 `json:"state,omitempty"`
-	CloseReason             string                 `json:"close_reason,omitempty"`
-	OpenBlockers            []string               `json:"open_blockers,omitempty"`
-	Extra                   map[string]any         `json:"-"`
+	RecordType              string                        `json:"record_type"`
+	TaskID                  string                        `json:"task_id"`
+	EffortID                string                        `json:"effort_id"`
+	Timestamp               string                        `json:"timestamp"`
+	ComplexityTier          string                        `json:"complexity_tier,omitempty"`
+	Phase                   string                        `json:"phase,omitempty"`
+	ContextPackID           string                        `json:"context_pack_id,omitempty"`
+	Implementor             *ImplementorAssignment        `json:"implementor,omitempty"`
+	Reviewer                *ReviewerAssignment           `json:"reviewer,omitempty"`
+	Scope                   *AtomScope                    `json:"scope,omitempty"`
+	RequiredVerification    []string                      `json:"required_verification,omitempty"`
+	ReportPaths             *ReportPaths                  `json:"report_paths,omitempty"`
+	StandardImplementor     string                        `json:"standard_implementor,omitempty"`
+	FallbackActor           string                        `json:"fallback_actor,omitempty"`
+	Reason                  string                        `json:"reason,omitempty"`
+	AllowedScope            string                        `json:"allowed_scope,omitempty"`
+	CompensatingChecks      []string                      `json:"compensating_checks,omitempty"`
+	Actor                   string                        `json:"actor,omitempty"`
+	ImplementorID           string                        `json:"implementor_id,omitempty"`
+	ReviewerID              string                        `json:"reviewer_id,omitempty"`
+	ChangedPaths            []string                      `json:"changed_paths,omitempty"`
+	CommitHash              string                        `json:"commit_hash,omitempty"`
+	CodeChanges             bool                          `json:"code_changes,omitempty"`
+	VerificationCommandsRun []string                      `json:"verification_commands_run,omitempty"`
+	VerificationStatus      string                        `json:"verification_status,omitempty"`
+	TDDObligationsSatisfied []string                      `json:"tdd_obligations_satisfied,omitempty"`
+	Commands                []string                      `json:"commands,omitempty"`
+	Status                  string                        `json:"status,omitempty"`
+	Model                   string                        `json:"model,omitempty"`
+	ReasoningEffort         string                        `json:"reasoning_effort,omitempty"`
+	Decision                string                        `json:"decision,omitempty"`
+	Findings                []ImplementationLedgerFinding `json:"findings,omitempty"`
+	State                   string                        `json:"state,omitempty"`
+	CloseReason             string                        `json:"close_reason,omitempty"`
+	OpenBlockers            []string                      `json:"open_blockers,omitempty"`
+	Extra                   map[string]any                `json:"-"`
+}
+
+type ImplementationLedgerFinding struct {
+	Kind     string `json:"kind,omitempty"`
+	Source   string `json:"source,omitempty"`
+	Severity string `json:"severity,omitempty"`
+	Message  string `json:"message,omitempty"`
+	Path     string `json:"path,omitempty"`
+}
+
+func (f *ImplementationLedgerFinding) UnmarshalJSON(data []byte) error {
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		*f = ImplementationLedgerFinding{
+			Kind:    "legacy_text",
+			Message: strings.TrimSpace(text),
+		}
+		return nil
+	}
+
+	type finding ImplementationLedgerFinding
+	var out finding
+	if err := json.Unmarshal(data, &out); err != nil {
+		return err
+	}
+	*f = ImplementationLedgerFinding(out)
+	return nil
 }
 
 type ImplementorAssignment struct {

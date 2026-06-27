@@ -9,8 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/discovery"
+	"idiom/internal/repository/semantic/language"
 )
 
 const (
@@ -73,7 +74,7 @@ func (m *Manager) codeNavigate(ctx context.Context, req ToolRequest) ToolResult 
 		return ToolResult{Tool: "code_navigate", Summary: "Code navigation rejected", Error: err.Error()}
 	}
 
-	req.Pattern = util.FirstNonEmpty(req.Pattern, req.Query, req.Symbol)
+	req.Pattern = textutil.FirstNonEmpty(req.Pattern, req.Query, req.Symbol)
 	if spec.RequiresPattern && strings.TrimSpace(req.Pattern) == "" {
 		return ToolResult{Tool: "code_navigate", Summary: "Code navigation rejected", Error: fmt.Sprintf("pattern is required for %s", spec.Name)}
 	}
@@ -166,7 +167,7 @@ func codeNavigateGraphResolutionOnly(value string) bool {
 
 func (m *Manager) codeNavigationLanguage(req ToolRequest) (LanguageSupport, bool, string) {
 	if path := strings.TrimSpace(req.Path); path != "" {
-		if lang, ok := LanguageForFile(path); ok {
+		if lang, ok := language.LanguageForFile(path); ok {
 			return lang, true, ""
 		}
 
@@ -175,12 +176,12 @@ func (m *Manager) codeNavigationLanguage(req ToolRequest) (LanguageSupport, bool
 		}
 	}
 
-	if language := strings.TrimSpace(req.Language); language != "" {
-		if lang, ok := LanguageForName(language); ok {
+	if languageName := strings.TrimSpace(req.Language); languageName != "" {
+		if lang, ok := language.LanguageForName(languageName); ok {
 			return lang, true, ""
 		}
 
-		return LanguageSupport{}, false, fmt.Sprintf("unsupported language %q", language)
+		return LanguageSupport{}, false, fmt.Sprintf("unsupported language %q", languageName)
 	}
 
 	if m != nil {
@@ -251,7 +252,7 @@ func codeNavigationWrapResult(spec codeNavigationSpec, language string, routedTo
 }
 
 func codeNavigationResultDetail(result ToolResult) string {
-	return util.FirstNonEmpty(result.Error, result.Summary, result.Output)
+	return textutil.FirstNonEmpty(result.Error, result.Summary, result.Output)
 }
 
 func (m *Manager) genericCodeNavigationFallback(req ToolRequest, spec codeNavigationSpec, reason string) ToolResult {
@@ -527,8 +528,8 @@ func genericCodeNavigationFileMatches(path string, pattern string, remaining int
 func codeNavigationDiscoveryProfile(req ToolRequest) ToolDiscoveryProfile {
 	spec, err := codeNavigationSpecFor(req.Capability)
 	if err != nil {
-		return discoveryProfile("language_symbol", scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Pattern, req.Query)), "low", true)
+		return discoveryProfile("language_symbol", scopeFromPathAndPattern(req.Path, textutil.FirstNonEmpty(req.Pattern, req.Query)), "low", true)
 	}
 
-	return discoveryProfile(spec.Class, scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Pattern, req.Query)), spec.Cost, true)
+	return discoveryProfile(spec.Class, scopeFromPathAndPattern(req.Path, textutil.FirstNonEmpty(req.Pattern, req.Query)), spec.Cost, true)
 }

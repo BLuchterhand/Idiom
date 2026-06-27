@@ -1,0 +1,38 @@
+package jsoneventstest
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+func DecodeLines(t *testing.T, stdout string) []map[string]any {
+	t.Helper()
+
+	var events []map[string]any
+	for _, line := range strings.Split(stdout, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || !strings.HasPrefix(line, "{") {
+			continue
+		}
+
+		var event map[string]any
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("decode JSON event %q: %v", line, err)
+		}
+
+		events = append(events, event)
+	}
+
+	return events
+}
+
+func FindByType(events []map[string]any, eventType string) (map[string]any, bool) {
+	for _, event := range events {
+		if event["type"] == eventType {
+			return event, true
+		}
+	}
+
+	return nil, false
+}

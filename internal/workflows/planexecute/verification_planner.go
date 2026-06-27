@@ -6,23 +6,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-)
 
-const (
-	VerificationCommandSourcePrompt   = "prompt"
-	VerificationCommandSourceExplicit = "explicit"
-	VerificationCommandSourceInferred = "touched_path"
-
-	VerificationSkipEmptyPath        = "empty_path"
-	VerificationSkipAbsolutePath     = "absolute_path"
-	VerificationSkipParentTraversal  = "parent_traversal"
-	VerificationSkipEmptySegment     = "empty_path_segment"
-	VerificationSkipVendorPath       = "vendor_path"
-	VerificationSkipGeneratedPath    = "generated_path"
-	VerificationSkipGeneratedFile    = "generated_file"
-	VerificationSkipNonGoPath        = "non_go_path"
-	VerificationSkipNoGoModuleRoot   = "no_go_module_root"
-	VerificationRejectUnsupportedCmd = "unsupported_verification_command"
+	plancontract "idiom/internal/contracts/plan"
 )
 
 type VerificationPlannerInput struct {
@@ -37,30 +22,9 @@ type VerificationPlanner struct {
 }
 
 type VerificationPlan struct {
-	Commands []VerificationCommand `json:"commands,omitempty"`
-	Skips    []VerificationSkip    `json:"skips,omitempty"`
-	Rejects  []VerificationReject  `json:"rejects,omitempty"`
-}
-
-type VerificationCommand struct {
-	Command    string   `json:"command"`
-	Argv       []string `json:"argv,omitempty"`
-	WorkingDir string   `json:"working_dir,omitempty"`
-	Source     string   `json:"source,omitempty"`
-	Path       string   `json:"path,omitempty"`
-	Reason     string   `json:"reason,omitempty"`
-}
-
-type VerificationSkip struct {
-	Path   string `json:"path,omitempty"`
-	Reason string `json:"reason"`
-	Detail string `json:"detail,omitempty"`
-}
-
-type VerificationReject struct {
-	Command string `json:"command,omitempty"`
-	Source  string `json:"source,omitempty"`
-	Reason  string `json:"reason"`
+	Commands []plancontract.VerificationCommand `json:"commands,omitempty"`
+	Skips    []plancontract.VerificationSkip    `json:"skips,omitempty"`
+	Rejects  []plancontract.VerificationReject  `json:"rejects,omitempty"`
 }
 
 func NewVerificationPlanner(root string) VerificationPlanner {
@@ -87,11 +51,11 @@ func (p VerificationPlanner) Plan(input VerificationPlannerInput) VerificationPl
 	seen := map[string]struct{}{}
 
 	for _, command := range planExecuteRequestedVerificationCommands(input.Prompt) {
-		plan.addExplicitCommand(command, VerificationCommandSourcePrompt, seen)
+		plan.addExplicitCommand(command, plancontract.VerificationCommandSourcePrompt, seen)
 	}
 
 	for _, command := range input.ExplicitCommands {
-		plan.addExplicitCommand(command, VerificationCommandSourceExplicit, seen)
+		plan.addExplicitCommand(command, plancontract.VerificationCommandSourceExplicit, seen)
 	}
 
 	for _, rawPath := range input.ChangedPaths {
@@ -113,18 +77,18 @@ func (p *VerificationPlan) addExplicitCommand(command string, source string, see
 		return
 	}
 
-	args, ok := VerificationCommandArgs(command)
+	args, ok := plancontract.VerificationCommandArgs(command)
 	if !ok {
-		p.Rejects = append(p.Rejects, VerificationReject{
+		p.Rejects = append(p.Rejects, plancontract.VerificationReject{
 			Command: command,
 			Source:  source,
-			Reason:  VerificationRejectUnsupportedCmd,
+			Reason:  plancontract.VerificationRejectUnsupportedCmd,
 		})
 
 		return
 	}
 
-	p.addCommand(VerificationCommand{
+	p.addCommand(plancontract.VerificationCommand{
 		Command: command,
 		Argv:    args,
 		Source:  source,
@@ -132,21 +96,21 @@ func (p *VerificationPlan) addExplicitCommand(command string, source string, see
 	}, seen)
 }
 
-func (p *VerificationPlan) addCommand(command VerificationCommand, seen map[string]struct{}) {
+func (p *VerificationPlan) addCommand(command plancontract.VerificationCommand, seen map[string]struct{}) {
 	command.Command = strings.TrimSpace(command.Command)
-	command.Argv = normalizeVerificationArgv(command.Argv)
+	command.Argv = plancontract.NormalizeVerificationArgv(command.Argv)
 
 	if len(command.Argv) == 0 {
-		if args, ok := VerificationCommandArgs(command.Command); ok {
+		if args, ok := plancontract.VerificationCommandArgs(command.Command); ok {
 			command.Argv = args
 		}
 	}
 
-	if len(command.Argv) == 0 || !VerificationArgvAllowed(command.Argv) {
-		p.Rejects = append(p.Rejects, VerificationReject{
+	if len(command.Argv) == 0 || !plancontract.VerificationArgvAllowed(command.Argv) {
+		p.Rejects = append(p.Rejects, plancontract.VerificationReject{
 			Command: command.Command,
 			Source:  command.Source,
-			Reason:  VerificationRejectUnsupportedCmd,
+			Reason:  plancontract.VerificationRejectUnsupportedCmd,
 		})
 
 		return
@@ -158,7 +122,7 @@ func (p *VerificationPlan) addCommand(command VerificationCommand, seen map[stri
 
 	workingDir, ok := cleanVerificationWorkingDir(command.WorkingDir)
 	if !ok {
-		p.Rejects = append(p.Rejects, VerificationReject{
+		p.Rejects = append(p.Rejects, plancontract.VerificationReject{
 			Command: command.Command,
 			Source:  command.Source,
 			Reason:  "unsafe_working_dir",
@@ -197,23 +161,23 @@ func (p VerificationPlan) CommandStrings() []string {
 	return out
 }
 
-func (p VerificationPlanner) inferTouchedPathCommand(rawPath string) (VerificationCommand, VerificationSkip, bool) {
+func (p VerificationPlanner) inferTouchedPathCommand(rawPath string) (plancontract.VerificationCommand, plancontract.VerificationSkip, bool) {
 	cleaned, skip, ok := cleanVerificationChangedPath(rawPath)
 	if !ok {
-		return VerificationCommand{}, skip, false
+		return plancontract.VerificationCommand{}, skip, false
 	}
 
 	if verificationPathGeneratedByName(cleaned) {
-		return VerificationCommand{}, VerificationSkip{Path: cleaned, Reason: VerificationSkipGeneratedPath}, false
+		return plancontract.VerificationCommand{}, plancontract.VerificationSkip{Path: cleaned, Reason: plancontract.VerificationSkipGeneratedPath}, false
 	}
 
 	if verificationFileHasGeneratedHeader(p.root, cleaned) {
-		return VerificationCommand{}, VerificationSkip{Path: cleaned, Reason: VerificationSkipGeneratedFile}, false
+		return plancontract.VerificationCommand{}, plancontract.VerificationSkip{Path: cleaned, Reason: plancontract.VerificationSkipGeneratedFile}, false
 	}
 
 	moduleRoot, ok := p.closestGoModuleRoot(cleaned)
 	if !ok {
-		return VerificationCommand{}, VerificationSkip{Path: cleaned, Reason: VerificationSkipNoGoModuleRoot}, false
+		return plancontract.VerificationCommand{}, plancontract.VerificationSkip{Path: cleaned, Reason: plancontract.VerificationSkipNoGoModuleRoot}, false
 	}
 
 	rootAbs := cleanAbsPath(p.root)
@@ -225,7 +189,7 @@ func (p VerificationPlanner) inferTouchedPathCommand(rawPath string) (Verificati
 
 	pkgRel, err := filepath.Rel(moduleRoot, pkgDirAbs)
 	if err != nil {
-		return VerificationCommand{}, VerificationSkip{Path: cleaned, Reason: VerificationSkipNoGoModuleRoot, Detail: err.Error()}, false
+		return plancontract.VerificationCommand{}, plancontract.VerificationSkip{Path: cleaned, Reason: plancontract.VerificationSkipNoGoModuleRoot, Detail: err.Error()}, false
 	}
 
 	packageArg := "."
@@ -233,55 +197,55 @@ func (p VerificationPlanner) inferTouchedPathCommand(rawPath string) (Verificati
 		packageArg = "./" + filepath.ToSlash(pkgRel)
 	}
 
-	return VerificationCommand{
+	return plancontract.VerificationCommand{
 		Command:    "go test " + packageArg,
 		Argv:       []string{"go", "test", packageArg},
 		WorkingDir: moduleRel,
-		Source:     VerificationCommandSourceInferred,
+		Source:     plancontract.VerificationCommandSourceInferred,
 		Path:       cleaned,
 		Reason:     "changed Go package",
-	}, VerificationSkip{}, true
+	}, plancontract.VerificationSkip{}, true
 }
 
-func cleanVerificationChangedPath(rawPath string) (string, VerificationSkip, bool) {
+func cleanVerificationChangedPath(rawPath string) (string, plancontract.VerificationSkip, bool) {
 	rawPath = strings.TrimSpace(rawPath)
 	if rawPath == "" {
-		return "", VerificationSkip{Reason: VerificationSkipEmptyPath}, false
+		return "", plancontract.VerificationSkip{Reason: plancontract.VerificationSkipEmptyPath}, false
 	}
 
 	if filepath.IsAbs(rawPath) {
-		return "", VerificationSkip{Path: rawPath, Reason: VerificationSkipAbsolutePath}, false
+		return "", plancontract.VerificationSkip{Path: rawPath, Reason: plancontract.VerificationSkipAbsolutePath}, false
 	}
 
 	slashPath := filepath.ToSlash(rawPath)
 	if strings.Contains(slashPath, "//") {
-		return "", VerificationSkip{Path: slashPath, Reason: VerificationSkipEmptySegment}, false
+		return "", plancontract.VerificationSkip{Path: slashPath, Reason: plancontract.VerificationSkipEmptySegment}, false
 	}
 
 	parts := strings.Split(slashPath, "/")
 	for _, part := range parts {
 		switch part {
 		case "":
-			return "", VerificationSkip{Path: slashPath, Reason: VerificationSkipEmptySegment}, false
+			return "", plancontract.VerificationSkip{Path: slashPath, Reason: plancontract.VerificationSkipEmptySegment}, false
 		case "..":
-			return "", VerificationSkip{Path: slashPath, Reason: VerificationSkipParentTraversal}, false
+			return "", plancontract.VerificationSkip{Path: slashPath, Reason: plancontract.VerificationSkipParentTraversal}, false
 		}
 	}
 
 	cleaned := filepath.ToSlash(filepath.Clean(rawPath))
 	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return "", VerificationSkip{Path: slashPath, Reason: VerificationSkipParentTraversal}, false
+		return "", plancontract.VerificationSkip{Path: slashPath, Reason: plancontract.VerificationSkipParentTraversal}, false
 	}
 
 	if !strings.HasSuffix(cleaned, ".go") {
-		return "", VerificationSkip{Path: cleaned, Reason: VerificationSkipNonGoPath}, false
+		return "", plancontract.VerificationSkip{Path: cleaned, Reason: plancontract.VerificationSkipNonGoPath}, false
 	}
 
 	if verificationPathHasSegment(cleaned, "vendor") {
-		return "", VerificationSkip{Path: cleaned, Reason: VerificationSkipVendorPath}, false
+		return "", plancontract.VerificationSkip{Path: cleaned, Reason: plancontract.VerificationSkipVendorPath}, false
 	}
 
-	return cleaned, VerificationSkip{}, true
+	return cleaned, plancontract.VerificationSkip{}, true
 }
 
 func (p VerificationPlanner) closestGoModuleRoot(cleanedPath string) (string, bool) {

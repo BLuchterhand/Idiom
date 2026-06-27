@@ -3,7 +3,8 @@ package recovery
 import (
 	"testing"
 
-	"idiom/internal/workflows/workflowstate"
+	recoverycontract "idiom/internal/contracts/recovery"
+	"idiom/internal/contracts/workflowstate"
 )
 
 func TestProjectPacketStatusReportsBasePacketState(t *testing.T) {
@@ -11,15 +12,16 @@ func TestProjectPacketStatusReportsBasePacketState(t *testing.T) {
 
 	projection := ProjectPacketStatus(packet, nil)
 
-	if projection.Status != PacketStatusReady || projection.NextAction != NextActionReviewDecomposition {
+	if projection.Status != recoverycontract.PacketStatusReady || projection.NextAction != recoverycontract.NextActionReviewDecomposition {
 		t.Fatalf("unexpected projection: %#v", projection)
 	}
 
 	if projection.WorkflowID != workflowstate.WorkflowRecovery ||
-		projection.WorkflowTerminalState != workflowstate.TerminalStateRecoveryOpen ||
-		!projection.Dispatchable {
+		projection.WorkflowState != workflowstate.StateDecomposing ||
+		projection.WorkflowTerminalState != "" ||
+		projection.Dispatchable {
 
-		t.Fatalf("ready packet should be dispatchable recovery-open workflow state, got %#v", projection)
+		t.Fatalf("ready packet should be a nonterminal decomposing workflow state, got %#v", projection)
 	}
 
 	if len(projection.Blockers) != 0 {
@@ -36,11 +38,11 @@ func TestProjectPacketStatusAppliesPartialReconciliationRemainingWork(t *testing
 
 	reconciliation, err := BuildReconciliation(packet, ReconciliationOptions{
 		CompletedAtomIDs: []string{"recovery-001"},
-		Verification: ReconciliationVerification{
-			Status: ReconciliationVerificationPass,
-			Commands: []ReconciliationCommandResult{{
+		Verification: recoverycontract.ReconciliationVerification{
+			Status: recoverycontract.ReconciliationVerificationPass,
+			Commands: []recoverycontract.ReconciliationCommandResult{{
 				Command:  "go test ./internal/workflows/recovery",
-				Status:   ReconciliationVerificationPass,
+				Status:   recoverycontract.ReconciliationVerificationPass,
 				ExitCode: 0,
 			}},
 		},
@@ -51,7 +53,7 @@ func TestProjectPacketStatusAppliesPartialReconciliationRemainingWork(t *testing
 
 	projection := ProjectPacketStatus(packet, &reconciliation)
 
-	if projection.Status != PacketStatusPartial || projection.NextAction != NextActionReviewDecomposition {
+	if projection.Status != recoverycontract.PacketStatusPartial || projection.NextAction != recoverycontract.NextActionReviewDecomposition {
 		t.Fatalf("unexpected reconciled projection: %#v", projection)
 	}
 
@@ -59,8 +61,8 @@ func TestProjectPacketStatusAppliesPartialReconciliationRemainingWork(t *testing
 		t.Fatalf("expected only remaining atom, got %#v", projection.CandidateAtoms)
 	}
 
-	if projection.WorkflowTerminalState != workflowstate.TerminalStateRecoveryOpen || !projection.Dispatchable {
-		t.Fatalf("partial recovery should remain dispatchable recovery-open, got %#v", projection)
+	if projection.WorkflowState != workflowstate.StateReconciling || projection.WorkflowTerminalState != "" || projection.Dispatchable {
+		t.Fatalf("partial recovery should remain nonterminal reconciling, got %#v", projection)
 	}
 
 	if len(projection.ResidualWork) != 1 || projection.ResidualWork[0].ID != "residual-002" {
@@ -77,11 +79,11 @@ func TestProjectPacketStatusBlocksInvalidReconciliation(t *testing.T) {
 
 	reconciliation, err := BuildReconciliation(packet, ReconciliationOptions{
 		CompletedAtomIDs: []string{"recovery-001"},
-		Verification: ReconciliationVerification{
-			Status: ReconciliationVerificationPass,
-			Commands: []ReconciliationCommandResult{{
+		Verification: recoverycontract.ReconciliationVerification{
+			Status: recoverycontract.ReconciliationVerificationPass,
+			Commands: []recoverycontract.ReconciliationCommandResult{{
 				Command:  "go test ./internal/workflows/recovery",
-				Status:   ReconciliationVerificationPass,
+				Status:   recoverycontract.ReconciliationVerificationPass,
 				ExitCode: 0,
 			}},
 		},
@@ -95,11 +97,11 @@ func TestProjectPacketStatusBlocksInvalidReconciliation(t *testing.T) {
 
 	projection := ProjectPacketStatus(packet, &reconciliation)
 
-	if projection.Status != PacketStatusBlocked || projection.NextAction != NextActionInspectFailure {
+	if projection.Status != recoverycontract.PacketStatusBlocked || projection.NextAction != recoverycontract.NextActionInspectFailure {
 		t.Fatalf("invalid reconciliation should block inspection, got %#v", projection)
 	}
 
-	if projection.WorkflowTerminalState != workflowstate.TerminalStateBlocked || projection.Dispatchable {
+	if projection.WorkflowState != workflowstate.StateTerminal || projection.WorkflowTerminalState != workflowstate.TerminalStateBlocked || projection.Dispatchable {
 		t.Fatalf("invalid reconciliation should not be dispatchable, got %#v", projection)
 	}
 
@@ -117,19 +119,19 @@ func TestProjectPacketStatusBlocksInvalidReconciliation(t *testing.T) {
 func TestProjectPacketStatusClearsRecoveredBlockers(t *testing.T) {
 	packet := recoveryStatusProjectionTestPacket()
 
-	packet.PartialState.DirtyStatus = DirtyStatusDirtyOutScope
+	packet.PartialState.DirtyStatus = recoverycontract.DirtyStatusDirtyOutScope
 
 	reconciliation, err := BuildReconciliation(packet, ReconciliationOptions{
 		CompletedAtomIDs: []string{"recovery-001", "recovery-002"},
-		Verification: ReconciliationVerification{
-			Status: ReconciliationVerificationPass,
-			Commands: []ReconciliationCommandResult{{
+		Verification: recoverycontract.ReconciliationVerification{
+			Status: recoverycontract.ReconciliationVerificationPass,
+			Commands: []recoverycontract.ReconciliationCommandResult{{
 				Command:  "go test ./internal/workflows/recovery",
-				Status:   ReconciliationVerificationPass,
+				Status:   recoverycontract.ReconciliationVerificationPass,
 				ExitCode: 0,
 			}, {
 				Command:  "go test ./internal/workflows/recoverstatus",
-				Status:   ReconciliationVerificationPass,
+				Status:   recoverycontract.ReconciliationVerificationPass,
 				ExitCode: 0,
 			}},
 		},
@@ -140,11 +142,11 @@ func TestProjectPacketStatusClearsRecoveredBlockers(t *testing.T) {
 
 	projection := ProjectPacketStatus(packet, &reconciliation)
 
-	if projection.Status != PacketStatusRecovered || projection.NextAction != NextActionNone {
+	if projection.Status != recoverycontract.PacketStatusRecovered || projection.NextAction != recoverycontract.NextActionNone {
 		t.Fatalf("expected recovered projection, got %#v", projection)
 	}
 
-	if projection.WorkflowTerminalState != workflowstate.TerminalStateComplete || projection.Dispatchable {
+	if projection.WorkflowState != workflowstate.StateTerminal || projection.WorkflowTerminalState != workflowstate.TerminalStateComplete || projection.Dispatchable {
 		t.Fatalf("recovered packet should be complete and not dispatchable, got %#v", projection)
 	}
 
@@ -155,25 +157,47 @@ func TestProjectPacketStatusClearsRecoveredBlockers(t *testing.T) {
 
 func TestProjectPacketStatusReportsDirtyScope(t *testing.T) {
 	packet := recoveryStatusProjectionTestPacket()
-	packet.PartialState.DirtyStatus = DirtyStatusDirtyOutScope
+	packet.PartialState.DirtyStatus = recoverycontract.DirtyStatusDirtyOutScope
 
 	projection := ProjectPacketStatus(packet, nil)
 
-	if projection.WorkflowTerminalState != workflowstate.TerminalStateDirtyScope || projection.Dispatchable {
+	if projection.WorkflowState != workflowstate.StateTerminal || projection.WorkflowTerminalState != workflowstate.TerminalStateDirtyScope || projection.Dispatchable {
 		t.Fatalf("dirty out-of-scope packet should be dirty-scope and not dispatchable, got %#v", projection)
 	}
 }
 
-func recoveryStatusProjectionTestPacket() DecompositionPacket {
-	return DecompositionPacket{
-		SchemaVersion: DecompositionPacketSchemaVersion,
+func TestBlockedPacketStatusProjectionRecordsProjectionValidationError(t *testing.T) {
+	projection := blockedPacketStatusProjection(recoverycontract.PacketStatusProjection{
+		Status:        recoverycontract.PacketStatusReady,
+		WorkflowID:    workflowstate.WorkflowRecovery,
+		WorkflowState: workflowstate.StateDecomposing,
+		Dispatchable:  true,
+	}, workflowstate.ValidateStateProjection(workflowstate.WorkflowRecovery, workflowstate.StateDecomposing, "", true))
+
+	if projection.Status != recoverycontract.PacketStatusBlocked ||
+		projection.WorkflowState != workflowstate.StateTerminal ||
+		projection.WorkflowTerminalState != workflowstate.TerminalStateBlocked ||
+		projection.Dispatchable ||
+		projection.NextAction != recoverycontract.NextActionInspectFailure {
+
+		t.Fatalf("invalid projection should become blocked inspect projection, got %#v", projection)
+	}
+
+	if !statusProjectionBlockersContain(projection.Blockers, "workflow projection invalid:") {
+		t.Fatalf("projection validation error missing from blockers: %#v", projection.Blockers)
+	}
+}
+
+func recoveryStatusProjectionTestPacket() recoverycontract.DecompositionPacket {
+	return recoverycontract.DecompositionPacket{
+		SchemaVersion: recoverycontract.DecompositionPacketSchemaVersion,
 		PacketID:      "packet-status-projection",
 		FailureID:     "failure-status-projection",
-		PartialState: PartialState{
-			DirtyStatus: DirtyStatusClean,
-			ScopeStatus: ScopeStatusInScope,
+		PartialState: recoverycontract.PartialState{
+			DirtyStatus: recoverycontract.DirtyStatusClean,
+			ScopeStatus: recoverycontract.ScopeStatusInScope,
 		},
-		ResidualWork: []ResidualWork{{
+		ResidualWork: []recoverycontract.ResidualWork{{
 			ID:    "residual-001",
 			Title: "First residual",
 			Paths: []string{"internal/workflows/recovery/status_projection.go"},
@@ -182,7 +206,7 @@ func recoveryStatusProjectionTestPacket() DecompositionPacket {
 			Title: "Second residual",
 			Paths: []string{"internal/workflows/recoverstatus/status.go"},
 		}},
-		CandidateAtoms: []CandidateAtom{{
+		CandidateAtoms: []recoverycontract.CandidateAtom{{
 			ID:              "recovery-001",
 			Title:           "First residual",
 			RequiredPaths:   []string{"internal/workflows/recovery/status_projection.go"},
@@ -195,7 +219,7 @@ func recoveryStatusProjectionTestPacket() DecompositionPacket {
 			RequiredTests:   []string{"go test ./internal/workflows/recoverstatus"},
 			ResidualWorkIDs: []string{"residual-002"},
 		}},
-		NextAction: NextActionReviewDecomposition,
+		NextAction: recoverycontract.NextActionReviewDecomposition,
 	}
 }
 

@@ -3,13 +3,14 @@ package comprehension
 import (
 	"encoding/json"
 	"fmt"
-	"idiom/internal/platform/util"
 	"os"
 	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 	"time"
+
+	"idiom/internal/platform/textutil"
 )
 
 const (
@@ -151,17 +152,9 @@ func Pack(opts PackOptions) (PackResult, error) {
 
 	candidates := collectPackCandidates(ctx)
 	result := buildPackResult(ctx, candidates)
-	// Compute the budget-enforced compact projection while the full
-	// PackResult is still in hand. Store it on the result so all
-	// downstream consumers — direct tool output, plan-execute preload,
-	// executor handoff, phase evidence, sidecar, telemetry, and audit —
-	// share one canonical projection with consistent omitted-item counts.
-	proj := NewCompactPackProjection(result)
-	_, compactProj := RenderCompactPackProjection(proj, result.BudgetTokens)
-
-	result.CompactProjection = compactProj
 	addPackResultGaps(ctx, candidates, &result)
 	addPackResultEvidence(&result)
+	attachPackResultCompactProjection(&result)
 
 	AttachPackResultContract(&result)
 
@@ -290,16 +283,9 @@ func loadCachedPack(ctx *packContext) (PackResult, bool) {
 		_ = err
 		ctx.cacheState = GraphViewCacheStateForKey(ctx.cacheKey, ctx.graph.StoreKind, "fallback_recompute", "cache_load_error")
 	} else if hit {
-		cached.Cache = GraphViewCacheStateForKey(ctx.cacheKey, util.FirstNonEmpty(cached.StoreKind, ctx.graph.StoreKind), "hit", "fresh_cached_row")
+		cached.Cache = GraphViewCacheStateForKey(ctx.cacheKey, textutil.FirstNonEmpty(cached.StoreKind, ctx.graph.StoreKind), "hit", "fresh_cached_row")
 		cached.Provenance.Operation = "context_pack"
-		// Recompute the compact projection if the cached pack was
-		// created before Atom 5 budget enforcement wiring.
-		if cached.CompactProjection.PackID == "" {
-			cp := NewCompactPackProjection(cached)
-			_, compactProj := RenderCompactPackProjection(cp, cached.BudgetTokens)
-
-			cached.CompactProjection = compactProj
-		}
+		attachPackResultCompactProjection(&cached)
 
 		AttachPackResultContract(&cached)
 
@@ -335,6 +321,21 @@ func collectPackCandidates(ctx *packContext) packCandidates {
 		candidateFiles: candidateFiles,
 		runtimeOverlay: runtimeOverlay,
 	}
+}
+
+func attachPackResultCompactProjection(result *PackResult) {
+	if result == nil {
+		return
+	}
+
+	// Compute the budget-enforced compact projection after freshness,
+	// localization-quality, and no-match gaps are attached. Downstream
+	// consumers then share one model-facing projection with the same
+	// evidence-integrity warnings as the full PackResult.
+	proj := NewCompactPackProjection(*result)
+	_, compactProj := RenderCompactPackProjection(proj, result.BudgetTokens)
+
+	result.CompactProjection = compactProj
 }
 
 func preparePackDiscovery(ctx *packContext) {
@@ -475,7 +476,7 @@ func buildPackResult(ctx *packContext, candidates packCandidates) PackResult {
 	result.ArtifactPath = filepath.ToSlash(filepath.Join(".idiom", "comprehension", "views", result.PackID+".json"))
 	result.Provenance.ArtifactPath = result.ArtifactPath
 	result.Cache.PackID = result.PackID
-	result.Cache.StoreKind = util.FirstNonEmpty(result.Cache.StoreKind, result.StoreKind)
+	result.Cache.StoreKind = textutil.FirstNonEmpty(result.Cache.StoreKind, result.StoreKind)
 
 	return result
 }

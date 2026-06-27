@@ -3,7 +3,6 @@ package featureplanner
 import (
 	"encoding/json"
 	"errors"
-	"idiom/internal/platform/failures"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,6 +10,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	featureplannercontract "idiom/internal/contracts/featureplanner"
+	"idiom/internal/platform/failures"
 )
 
 func TestValidateDurablePlanRequiresPreDispatchBaseline(t *testing.T) {
@@ -62,7 +64,7 @@ func TestReplayRejectsStaleFeatureRevision(t *testing.T) {
 			SchemaVersion:         FeatureEventSchemaVersion,
 			EventID:               "evt-stale",
 			IdempotencyKey:        "feature-one/rev-0/dispatch",
-			Type:                  "idiom.feature.atom_started",
+			Type:                  string(featureplannercontract.LegacyEventAtomStarted),
 			SessionID:             "session",
 			FeatureID:             "feature-one",
 			FeatureRevisionBefore: 0,
@@ -88,7 +90,7 @@ func TestReplayErrorClassifiesReplayInvariantViolations(t *testing.T) {
 		SchemaVersion:         FeatureEventSchemaVersion,
 		EventID:               "evt-stale",
 		IdempotencyKey:        "feature-one/rev-0/dispatch",
-		Type:                  "idiom.feature.atom_started",
+		Type:                  string(featureplannercontract.LegacyEventAtomStarted),
 		SessionID:             "session",
 		FeatureID:             "feature-one",
 		FeatureRevisionBefore: 0,
@@ -126,7 +128,7 @@ func TestReplayPreservesMalformedAuthorityDeltaForDurableValidation(t *testing.T
 		SchemaVersion:         FeatureEventSchemaVersion,
 		EventID:               "evt-authority",
 		IdempotencyKey:        "feature-one/rev-0/authority",
-		Type:                  EventPlannerQuestionAnswered,
+		Type:                  featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionAnswered),
 		SessionID:             "session",
 		FeatureID:             "feature-one",
 		FeatureRevisionBefore: 0,
@@ -163,7 +165,7 @@ func TestReplayPreservesNewFileAuthorityForContractRecompile(t *testing.T) {
 		SchemaVersion:         FeatureEventSchemaVersion,
 		EventID:               "evt-authority",
 		IdempotencyKey:        "feature-one/rev-0/authority",
-		Type:                  EventPlannerQuestionAnswered,
+		Type:                  featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionAnswered),
 		SessionID:             "session",
 		FeatureID:             "feature-one",
 		FeatureRevisionBefore: 0,
@@ -216,7 +218,7 @@ func TestReplaySupersedesPlannerQuestionByRevision(t *testing.T) {
 		SchemaVersion:         FeatureEventSchemaVersion,
 		EventID:               "evt-supersede",
 		IdempotencyKey:        "feature-one/rev-0/question-supersede",
-		Type:                  EventPlannerQuestionSupersededByRevision,
+		Type:                  featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionSupersededByRevision),
 		SessionID:             "session",
 		FeatureID:             "feature-one",
 		FeatureRevisionBefore: 0,
@@ -295,7 +297,7 @@ func TestApplyPlannerOutputStampsCanonicalPlanArtifactAndApproval(t *testing.T) 
 	plan.Artifact = FeaturePlanArtifact{}
 	plan.Approval = FeaturePlanApproval{}
 
-	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: plan}, mustParseFeaturePlannerTime(t, "2026-06-22T19:01:00Z"))
+	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: plan}, mustParseFeaturePlannerTime(t, "2026-06-22T19:01:00Z"))
 
 	if state.Status != FeatureStateDispatching {
 		t.Fatalf("state status = %q, want dispatching; blockers=%v events=%+v", state.Status, state.Blockers, events)
@@ -327,9 +329,9 @@ func TestApplyPlannerOutputStampsCanonicalPlanArtifactAndApproval(t *testing.T) 
 	if approved.EventID != state.Plan.Approval.EventID {
 		t.Fatalf("approval event id = %q, want %q", approved.EventID, state.Plan.Approval.EventID)
 	}
-	if approved.Fields["plan_digest"] != state.Plan.Artifact.Digest ||
-		approved.Fields["plan_revision"] != state.Plan.Artifact.Revision ||
-		approved.Fields["workspace_fingerprint"] != state.Plan.Artifact.WorkspaceFingerprint {
+	if approved.Fields[featureplannercontract.EventFieldPlanDigest] != state.Plan.Artifact.Digest ||
+		approved.Fields[featureplannercontract.EventFieldPlanRevision] != state.Plan.Artifact.Revision ||
+		approved.Fields[featureplannercontract.EventFieldWorkspaceFingerprint] != state.Plan.Artifact.WorkspaceFingerprint {
 		t.Fatalf("approval event does not carry artifact binding: %+v", approved.Fields)
 	}
 }
@@ -337,7 +339,7 @@ func TestApplyPlannerOutputStampsCanonicalPlanArtifactAndApproval(t *testing.T) 
 func TestValidateDurablePlanRejectsApprovalAfterPlanDigestDrift(t *testing.T) {
 	state := NewState("session", "Implement durable feature planner.", "", 3, mustParseFeaturePlannerTime(t, "2026-06-22T19:00:00Z"))
 	plan := durablePlan()
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: plan}, mustParseFeaturePlannerTime(t, "2026-06-22T19:01:00Z"))
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: plan}, mustParseFeaturePlannerTime(t, "2026-06-22T19:01:00Z"))
 
 	state.Plan.TopLevelScope.SuccessCriteria = append(state.Plan.TopLevelScope.SuccessCriteria, "unapproved new criterion")
 
@@ -349,7 +351,7 @@ func TestValidateDurablePlanRejectsApprovalAfterPlanDigestDrift(t *testing.T) {
 
 func TestValidateDurableStateRequiresVerificationClosureForApprovedTerminalAtom(t *testing.T) {
 	state := NewState("session", "Implement durable feature planner.", "", 3, mustParseFeaturePlannerTime(t, "2026-06-22T19:00:00Z"))
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: durablePlan()}, mustParseFeaturePlannerTime(t, "2026-06-22T19:01:00Z"))
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: durablePlan()}, mustParseFeaturePlannerTime(t, "2026-06-22T19:01:00Z"))
 	state.Atoms[0].State = AtomStateComplete
 	state.Status = FeatureStateComplete
 	state.ActiveRuns = nil
@@ -366,7 +368,7 @@ func TestValidateDurableStateRequiresVerificationClosureForApprovedTerminalAtom(
 
 func TestEvaluateReleaseReadinessBlocksOpenVerificationObligations(t *testing.T) {
 	state := NewState("session", "Implement durable feature planner.", "", 3, mustParseFeaturePlannerTime(t, "2026-06-22T19:00:00Z"))
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: durablePlan()}, mustParseFeaturePlannerTime(t, "2026-06-22T19:01:00Z"))
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: durablePlan()}, mustParseFeaturePlannerTime(t, "2026-06-22T19:01:00Z"))
 	state.Status = FeatureStateComplete
 	state.Atoms[0].State = AtomStateComplete
 	state.ActiveRuns = nil
@@ -395,7 +397,7 @@ func TestEvaluateReleaseReadinessBlocksOpenVerificationObligations(t *testing.T)
 
 func TestValidateDurableStateRequiresReleaseDecisionForCompleteState(t *testing.T) {
 	state := NewState("session", "Implement durable feature planner.", "", 3, mustParseFeaturePlannerTime(t, "2026-06-22T19:00:00Z"))
-	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: durablePlan()}, mustParseFeaturePlannerTime(t, "2026-06-22T19:01:00Z"))
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: durablePlan()}, mustParseFeaturePlannerTime(t, "2026-06-22T19:01:00Z"))
 	state.Status = FeatureStateComplete
 	state.Atoms[0].State = AtomStateComplete
 	state.ActiveRuns = nil
@@ -446,7 +448,7 @@ func TestReplayAppliesDurableDispatchEvent(t *testing.T) {
 			SchemaVersion:         FeatureEventSchemaVersion,
 			EventID:               "evt-dispatch",
 			IdempotencyKey:        "feature-one/rev-0/dispatch",
-			Type:                  "idiom.feature.atom_started",
+			Type:                  string(featureplannercontract.LegacyEventAtomStarted),
 			SessionID:             "session",
 			FeatureID:             "feature-one",
 			FeatureRevisionBefore: 0,
@@ -683,7 +685,7 @@ func TestReplayRejectsUnknownSingularAtomEvent(t *testing.T) {
 	_, err := Replay(state, []Event{{
 		SchemaVersion: FeatureEventSchemaVersion,
 		EventID:       "evt-unknown-atom",
-		Type:          "idiom.feature.atom_progressed",
+		Type:          string(featureplannercontract.LegacyEventAtomProgressed),
 		SessionID:     "session",
 		AtomID:        "atom-missing",
 		AtomTo:        AtomStateDispatching,
@@ -712,7 +714,7 @@ func TestReplayRejectsInvalidSingularAtomTo(t *testing.T) {
 	_, err := Replay(state, []Event{{
 		SchemaVersion: FeatureEventSchemaVersion,
 		EventID:       "evt-invalid-atom-to",
-		Type:          "idiom.feature.atom_progressed",
+		Type:          string(featureplannercontract.LegacyEventAtomProgressed),
 		SessionID:     "session",
 		AtomID:        "atom-1",
 		AtomTo:        "invented",
@@ -744,7 +746,7 @@ func TestSaveLoadBundleRoundTrip(t *testing.T) {
 	bundle := Bundle{
 		State:  durableState(),
 		Plan:   durablePlan(),
-		Events: []Event{{Type: "idiom.feature.created", SessionID: "session"}},
+		Events: []Event{{Type: featureplannercontract.EventName(featureplannercontract.EventStart), SessionID: "session"}},
 	}
 
 	dir := t.TempDir()
@@ -771,7 +773,7 @@ func TestSaveStateAndAppendEventsRoundTripDurablePaths(t *testing.T) {
 
 	dir := t.TempDir()
 
-	eventsPath, err := AppendEvents(dir, state.SessionID, []Event{{Type: "idiom.feature.created", SessionID: state.SessionID}})
+	eventsPath, err := AppendEvents(dir, state.SessionID, []Event{{Type: featureplannercontract.EventName(featureplannercontract.EventStart), SessionID: state.SessionID}})
 	if err != nil {
 		t.Fatalf("append events: %v", err)
 	}
@@ -786,6 +788,9 @@ func TestSaveStateAndAppendEventsRoundTripDurablePaths(t *testing.T) {
 	if statePath == "" || eventsPath == "" {
 		t.Fatalf("expected durable paths, state=%q events=%q", statePath, eventsPath)
 	}
+	if _, err := os.Stat(filepath.Join(dir, statePath+".tmp")); err == nil || !os.IsNotExist(err) {
+		t.Fatalf("SaveState should not leave predictable temp file, stat err=%v", err)
+	}
 
 	events, loadedEventsPath, err := LoadEvents(dir, state.SessionID)
 	if err != nil {
@@ -794,6 +799,18 @@ func TestSaveStateAndAppendEventsRoundTripDurablePaths(t *testing.T) {
 
 	if loadedEventsPath != eventsPath || len(events) != 1 {
 		t.Fatalf("unexpected loaded events path=%q events=%+v", loadedEventsPath, events)
+	}
+}
+
+func TestFeaturePlannerStatePathsRejectDotSessionIDs(t *testing.T) {
+	root := t.TempDir()
+	for _, sessionID := range []string{".", "..", "nested/session", `nested\session`, "a/../b"} {
+		if _, _, err := statePath(root, sessionID); err == nil {
+			t.Fatalf("statePath accepted invalid session id %q", sessionID)
+		}
+		if _, _, err := EventLogPath(root, sessionID); err == nil {
+			t.Fatalf("EventLogPath accepted invalid session id %q", sessionID)
+		}
 	}
 }
 
@@ -830,6 +847,35 @@ func TestLoadStateRejectsInvalidDurableStatus(t *testing.T) {
 	}
 }
 
+func TestLoadStateRejectsEmbeddedSessionMismatch(t *testing.T) {
+	state := durableState()
+	state.SchemaVersion = SchemaVersion
+	requestedSessionID := state.SessionID
+	state.SessionID = "other-session"
+
+	dir := t.TempDir()
+
+	fullPath, _, err := statePath(dir, requestedSessionID)
+	if err != nil {
+		t.Fatalf("state path: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		t.Fatalf("mkdir state dir: %v", err)
+	}
+	body, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("marshal state: %v", err)
+	}
+	if err := os.WriteFile(fullPath, body, 0o600); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+
+	_, _, err = LoadState(dir, requestedSessionID)
+	if err == nil || !strings.Contains(err.Error(), "does not match requested session") {
+		t.Fatalf("expected session mismatch load error, got %v", err)
+	}
+}
+
 func durableState() FeatureState {
 	return FeatureState{
 		SchemaVersion:    FeatureStateSchemaVersion,
@@ -848,7 +894,7 @@ func durablePlan() FeaturePlan {
 	return FeaturePlan{
 		SchemaVersion: FeaturePlanSchemaVersion,
 		FeatureID:     "feature-one",
-		Tool:          ToolSubmitFeaturePlan,
+		Tool:          string(featureplannercontract.ToolSubmitFeaturePlan),
 		SourceTask: SourceTask{
 			Kind:    "design_doc",
 			Path:    "docs/design-feature-planner-orchestration.md",

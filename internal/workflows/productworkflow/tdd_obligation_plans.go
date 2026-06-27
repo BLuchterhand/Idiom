@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 func PlanTDDObligations(prd PRDDocument, adrs []ParsedADR, ledger TDDLedger, adrPathByID map[string]string) TDDObligationSynthesisPlan {
@@ -240,7 +240,7 @@ func isContractTier(coverageTier string) bool {
 }
 
 func isAcceptedArtifact(status string) bool {
-	return util.EqualTrimFold(status, "accepted")
+	return textutil.EqualTrimFold(status, "accepted")
 }
 
 func stableUniqueStrings(values []string) []string {

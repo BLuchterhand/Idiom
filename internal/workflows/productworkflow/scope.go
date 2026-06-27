@@ -4,7 +4,7 @@ import (
 	"slices"
 	"strings"
 
-	"idiom/internal/contracts/plan"
+	plancontract "idiom/internal/contracts/plan"
 )
 
 type ScopeGateInput struct {
@@ -119,7 +119,7 @@ func ValidatePerAtomCoverage(atoms []AtomCommitCoverage, commitPaths map[string]
 }
 
 type ScopeGateResult struct {
-	Status             string
+	Status             ProductWorkflowStatus
 	Blockers           []ScopeGateBlocker
 	ExpectedFiles      []string
 	ActualChangedPaths []string

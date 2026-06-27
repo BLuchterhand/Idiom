@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	recoverycontract "idiom/internal/contracts/recovery"
+
 	"idiom/internal/platform/config"
 	"idiom/internal/workflows/recovery"
 )
@@ -43,11 +45,11 @@ func TestRecoveryToolsInspectDecomposeAndStatus(t *testing.T) {
 		t.Fatalf("decode inspect report: %v\n%s", err, inspect.Output)
 	}
 
-	if inspectReport.FailureID != record.FailureID || inspectReport.FailureClass != recovery.FailureClassExecutorEdit {
+	if inspectReport.FailureID != record.FailureID || inspectReport.FailureClass != string(recoverycontract.FailureClassExecutorEdit) {
 		t.Fatalf("unexpected inspect report: %#v", inspectReport)
 	}
 
-	if inspectReport.NextAction != recovery.NextActionReviewDecomposition {
+	if inspectReport.NextAction != string(recoverycontract.NextActionReviewDecomposition) {
 		t.Fatalf("unexpected next action: %#v", inspectReport)
 	}
 
@@ -81,7 +83,7 @@ func TestRecoveryToolsInspectDecomposeAndStatus(t *testing.T) {
 		t.Fatalf("decode status report: %v\n%s", err, status.Output)
 	}
 
-	if statusReport.Status != "ready" || statusReport.NextAction != recovery.NextActionReviewDecomposition {
+	if statusReport.Status != "ready" || statusReport.NextAction != string(recoverycontract.NextActionReviewDecomposition) {
 		t.Fatalf("unexpected status report: %#v", statusReport)
 	}
 
@@ -95,7 +97,7 @@ func TestRecoveryToolsInspectDecomposeAndStatus(t *testing.T) {
 		}
 	}
 
-	for _, gate := range []string{recovery.GateWorkspaceState, recovery.GateBriefLint, recovery.GateAtomIntake, recovery.GateScope, recovery.GateRequiredTests} {
+	for _, gate := range []string{recoverycontract.GateWorkspaceState, recoverycontract.GateBriefLint, recoverycontract.GateAtomIntake, recoverycontract.GateScope, recoverycontract.GateRequiredTests} {
 		if !stringSliceContains(statusReport.Gates, gate) {
 			t.Fatalf("status report missing gate %q: %#v", gate, statusReport.Gates)
 		}
@@ -108,13 +110,13 @@ func TestRecoveryToolsInspectDecomposeAndStatusImplementRecord(t *testing.T) {
 
 	record, _, err := recovery.WriteFailureRecord(root, recovery.FailureRecordInput{
 		FailureID: recovery.ImplementFailureID("sid-implement"),
-		SourceRun: recovery.SourceRun{
-			Lane:              recovery.SourceLaneImplement,
+		SourceRun: recoverycontract.SourceRun{
+			Lane:              string(recoverycontract.SourceLaneImplement),
 			SessionID:         "sid-implement",
 			RequiredEditPaths: []string{"internal/surfaces/tui/app/foo.go"},
 			AllowedEditPaths:  []string{"internal/surfaces/tui/app/foo.go"},
 		},
-		FailureClass:   recovery.FailureClassExecutorEdit,
+		FailureClass:   recoverycontract.FailureClassExecutorEdit,
 		FailureKind:    "implement_process_failed",
 		FailureSummary: "implement process failed: exit_code=1",
 	}, time.Now().UTC())
@@ -135,7 +137,7 @@ func TestRecoveryToolsInspectDecomposeAndStatusImplementRecord(t *testing.T) {
 		t.Fatalf("decode inspect report: %v\n%s", err, inspect.Output)
 	}
 
-	if inspectReport.FailureID != record.FailureID || inspectReport.FailureClass != recovery.FailureClassExecutorEdit {
+	if inspectReport.FailureID != record.FailureID || inspectReport.FailureClass != string(recoverycontract.FailureClassExecutorEdit) {
 		t.Fatalf("unexpected inspect report: %#v", inspectReport)
 	}
 
@@ -373,7 +375,7 @@ func TestRecoveryStatusToolReflectsReconciliation(t *testing.T) {
 		t.Fatalf("decode status report: %v\n%s", err, status.Output)
 	}
 
-	if report.Status != "recovered" || report.NextAction != recovery.NextActionNone || report.Reconciliation == nil || len(report.CandidateAtoms) != 0 {
+	if report.Status != "recovered" || report.NextAction != string(recoverycontract.NextActionNone) || report.Reconciliation == nil || len(report.CandidateAtoms) != 0 {
 		t.Fatalf("expected recovered status, got %#v", report)
 	}
 
@@ -404,7 +406,7 @@ func TestRecoveryStatusToolScrubsPersistedResidualEvidenceSummaries(t *testing.T
 		t.Fatalf("write packet: %v", err)
 	}
 
-	packet.ResidualWork[0].EvidenceRefs = append(packet.ResidualWork[0].EvidenceRefs, recovery.EvidenceRef{
+	packet.ResidualWork[0].EvidenceRefs = append(packet.ResidualWork[0].EvidenceRefs, recoverycontract.EvidenceRef{
 		Kind:    "legacy_failure",
 		Path:    "internal/surfaces/tui/app/foo.go",
 		Summary: "raw_prompt: persisted legacy detail",
@@ -434,7 +436,7 @@ func TestRecoveryStatusToolScrubsPersistedResidualEvidenceSummaries(t *testing.T
 		t.Fatalf("status report missing residual work: %#v", report.Packet)
 	}
 
-	if !recoveryToolEvidenceRefsContain(report.Packet.ResidualWork[0].EvidenceRefs, recovery.EvidenceRef{Kind: "legacy_failure", Path: "internal/surfaces/tui/app/foo.go"}) {
+	if !recoveryToolEvidenceRefsContain(report.Packet.ResidualWork[0].EvidenceRefs, recoverycontract.EvidenceRef{Kind: "legacy_failure", Path: "internal/surfaces/tui/app/foo.go"}) {
 		t.Fatalf("expected sanitized legacy evidence ref: %#v", report.Packet.ResidualWork[0].EvidenceRefs)
 	}
 }
@@ -495,6 +497,43 @@ func TestRecoveryStatusToolBlocksInvalidReconciliation(t *testing.T) {
 	}
 }
 
+func TestRecoveryStatusToolRejectsSymlinkedPacketPath(t *testing.T) {
+	root := t.TempDir()
+	writeRecoveryWorkspaceFile(t, root, "internal/surfaces/tui/app/foo.go", "package app\n")
+
+	record, _, err := recovery.WritePlanExecuteFailureRecord(root, recovery.PlanExecuteFailureInput{
+		SessionID:         "sid-symlink-packet",
+		Phase:             "executor",
+		Status:            "failed",
+		FailureKind:       "executor_failed",
+		FailureReason:     "exact edit did not apply",
+		RequiredEditPaths: []string{"internal/surfaces/tui/app/foo.go"},
+		AllowedEditPaths:  []string{"internal/surfaces/tui/app/foo.go"},
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("write failure record: %v", err)
+	}
+
+	_, packetPath, err := recovery.WriteDecompositionPacketForFailureRecord(root, record, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("write packet: %v", err)
+	}
+
+	linkPath := filepath.Join(root, ".idiom", "recovery", "packet-link.json")
+	if err := os.Symlink(filepath.Join(root, filepath.FromSlash(packetPath)), linkPath); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	status := mgr.Execute(context.Background(), ToolRequest{Tool: "recovery_status", PacketPath: ".idiom/recovery/packet-link.json"})
+	if status.Error == "" {
+		t.Fatalf("recovery_status should reject symlinked packet path, got output: %s", status.Output)
+	}
+	if !strings.Contains(status.Error, "symlink") {
+		t.Fatalf("expected symlink error, got %q", status.Error)
+	}
+}
+
 func TestRecoveryToolProfileParity(t *testing.T) {
 	for _, tool := range []string{"recovery_inspect", "recovery_status"} {
 		if decision := ToolAllowedForProfile(tool, ToolProfileDiscovery); !decision.Allowed {
@@ -511,7 +550,7 @@ func TestRecoveryToolProfileParity(t *testing.T) {
 	}
 }
 
-func recoveryToolTestVerification(packet recovery.DecompositionPacket, atomIDs ...string) recovery.ReconciliationVerification {
+func recoveryToolTestVerification(packet recoverycontract.DecompositionPacket, atomIDs ...string) recoverycontract.ReconciliationVerification {
 	completed := map[string]bool{}
 	for _, id := range atomIDs {
 		completed[id] = true
@@ -521,7 +560,7 @@ func recoveryToolTestVerification(packet recovery.DecompositionPacket, atomIDs .
 
 	var (
 		required []string
-		commands []recovery.ReconciliationCommandResult
+		commands []recoverycontract.ReconciliationCommandResult
 	)
 
 	for _, atom := range packet.CandidateAtoms {
@@ -536,16 +575,16 @@ func recoveryToolTestVerification(packet recovery.DecompositionPacket, atomIDs .
 
 			seen[test] = true
 			required = append(required, test)
-			commands = append(commands, recovery.ReconciliationCommandResult{
+			commands = append(commands, recoverycontract.ReconciliationCommandResult{
 				Command:  test,
-				Status:   recovery.ReconciliationVerificationPass,
+				Status:   recoverycontract.ReconciliationVerificationPass,
 				ExitCode: 0,
 			})
 		}
 	}
 
-	return recovery.ReconciliationVerification{
-		Status:        recovery.ReconciliationVerificationPass,
+	return recoverycontract.ReconciliationVerification{
+		Status:        recoverycontract.ReconciliationVerificationPass,
 		RequiredTests: required,
 		Commands:      commands,
 	}
@@ -574,7 +613,7 @@ func stringSliceContains(values []string, want string) bool {
 	return false
 }
 
-func recoveryToolEvidenceRefsContain(refs []recovery.EvidenceRef, want recovery.EvidenceRef) bool {
+func recoveryToolEvidenceRefsContain(refs []recoverycontract.EvidenceRef, want recoverycontract.EvidenceRef) bool {
 	for _, ref := range refs {
 		if ref == want {
 			return true

@@ -12,8 +12,7 @@ import (
 	"time"
 
 	"idiom/internal/evidence/telemetry"
-	"idiom/internal/platform/util"
-	toolcmd "idiom/internal/surfaces/cli/tool"
+	"idiom/internal/surfaces/cli/cliflag"
 	"idiom/internal/workflows/architect"
 )
 
@@ -30,14 +29,14 @@ type architectOptions struct {
 	MaxRuleBytes   int
 	MaxOutputBytes int
 
-	Constraints  util.MultiFlag
-	Files        util.MultiFlag
-	Tests        util.MultiFlag
-	Anchors      util.MultiFlag
-	Risks        util.MultiFlag
-	Unknowns     util.MultiFlag
-	ContextViews util.MultiFlag
-	Metadata     util.MultiFlag
+	Constraints  cliflag.MultiFlag
+	Files        cliflag.MultiFlag
+	Tests        cliflag.MultiFlag
+	Anchors      cliflag.MultiFlag
+	Risks        cliflag.MultiFlag
+	Unknowns     cliflag.MultiFlag
+	ContextViews cliflag.MultiFlag
+	Metadata     cliflag.MultiFlag
 }
 
 func Run(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -85,7 +84,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 }
 
 func logArchitectPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	toolcmd.LogCLIPhase(rec, eventType, fields)
+	telemetry.LogPhase(rec, eventType, fields)
 }
 
 func withPromptKind(kind string, args []string) []string {
@@ -155,7 +154,7 @@ func runArchitectPacket(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 1
 	}
 
-	if err := writeArchitectOutput(opts.OutputPath, data, stdout); err != nil {
+	if err := WriteOutput(opts.OutputPath, data, stdout); err != nil {
 		fmt.Fprintln(stderr, err)
 
 		return 1
@@ -248,7 +247,7 @@ func runArchitectPlanAudit(args []string, stdout io.Writer, stderr io.Writer) in
 	}
 
 	data = append(data, '\n')
-	if err := writeArchitectOutput(*outputPath, data, stdout); err != nil {
+	if err := WriteOutput(*outputPath, data, stdout); err != nil {
 		fmt.Fprintln(stderr, err)
 
 		return 1
@@ -296,7 +295,7 @@ func runArchitectBudget(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	data = append(data, '\n')
-	if err := writeArchitectOutput(*outputPath, data, stdout); err != nil {
+	if err := WriteOutput(*outputPath, data, stdout); err != nil {
 		fmt.Fprintln(stderr, err)
 
 		return 1
@@ -353,7 +352,7 @@ func runArchitectPacketCompare(args []string, stdout io.Writer, stderr io.Writer
 	}
 
 	data = append(data, '\n')
-	if err := writeArchitectOutput(*outputPath, data, stdout); err != nil {
+	if err := WriteOutput(*outputPath, data, stdout); err != nil {
 		fmt.Fprintln(stderr, err)
 
 		return 1
@@ -426,7 +425,7 @@ func runArchitectReplayCompare(args []string, stdout io.Writer, stderr io.Writer
 	}
 
 	data = append(data, '\n')
-	if err := writeArchitectOutput(*outputPath, data, stdout); err != nil {
+	if err := WriteOutput(*outputPath, data, stdout); err != nil {
 		fmt.Fprintln(stderr, err)
 
 		return 1
@@ -526,7 +525,7 @@ func runArchitectPrompt(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 1
 	}
 
-	if err := writeArchitectOutput(*outputPath, []byte(prompt), stdout); err != nil {
+	if err := WriteOutput(*outputPath, []byte(prompt), stdout); err != nil {
 		fmt.Fprintln(stderr, err)
 
 		return 1
@@ -742,10 +741,6 @@ func readTextFile(path string, label string) (string, error) {
 	}
 
 	return string(data), nil
-}
-
-func writeArchitectOutput(path string, data []byte, stdout io.Writer) error {
-	return WriteOutput(path, data, stdout)
 }
 
 func WriteOutput(path string, data []byte, stdout io.Writer) error {

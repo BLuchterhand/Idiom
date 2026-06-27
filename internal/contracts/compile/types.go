@@ -1,8 +1,16 @@
 // Package contractcompile turns plain lane and runtime inputs into passive
 // autonomy contracts and protocol projections.
+//
+// The directory is internal/contracts/compile for import-path locality with
+// other contract packages. The package name and schema vocabulary keep the
+// older contractcompile term because those identifiers are already part of
+// test fixtures, audit output, and durable diagnostic records.
 package contractcompile
 
-import "idiom/internal/contracts/autonomy"
+import (
+	"idiom/internal/contracts/autonomy"
+	lanecontract "idiom/internal/contracts/lane"
+)
 
 const (
 	CompilerSchemaVersion = "idiom.contractcompile.result.v1"
@@ -10,7 +18,7 @@ const (
 	InvariantActiveAuthority = "contract.active_authority"
 
 	InvocationPlanExecutePlanner = "plan_execute_planner"
-	DefaultPlanExecuteLane       = "plan-execute"
+	DefaultPlanExecuteLane       = string(lanecontract.LanePlanExecute)
 	DefaultPlannerPhase          = "planner"
 )
 
@@ -28,8 +36,6 @@ type ActiveAuthorityBinding struct {
 	ProtocolHash      string `json:"protocol_hash"`
 	ActiveInvariantID string `json:"active_invariant_id"`
 }
-
-type ToolVocabularyEntry = autonomy.PlanExecutePlannerToolMetadata
 
 type PlanExecutePlannerInput struct {
 	ParentID             string

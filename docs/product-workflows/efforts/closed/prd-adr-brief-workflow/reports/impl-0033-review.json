@@ -20,8 +20,8 @@
   "checks": {
     "human_readable_cli_parity": "passed",
     "next_valid_action_json_parity": "passed",
-    "status_failure_remediation_priority": "passed_after_repair",
-    "workflow_state_error_privacy": "passed_after_repair",
+    "status_failure_remediation_priority": "passed",
+    "workflow_state_error_privacy": "passed",
     "exit_code_compatibility": "passed",
     "authority_boundaries": "passed",
     "privacy_secret_marker_regression": "passed"

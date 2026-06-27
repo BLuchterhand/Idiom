@@ -9,7 +9,7 @@ import (
 
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/platform/failures"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 const ToolSidecarEnvelopeVersion = "idiom.tool.v1"
@@ -212,16 +212,16 @@ func toolSidecarInspectionMetadataKeyForbidden(key string) bool {
 
 func normalizeToolSidecarInspectionArtifact(artifact ToolSidecarInspectionArtifact) ToolSidecarInspectionArtifact {
 	artifact.ID = strings.TrimSpace(artifact.ID)
-	artifact.Kind = util.FirstNonEmpty(strings.TrimSpace(artifact.Kind), "artifact")
+	artifact.Kind = textutil.FirstNonEmpty(strings.TrimSpace(artifact.Kind), "artifact")
 	artifact.Path = strings.TrimSpace(artifact.Path)
-	artifact.Status = util.FirstNonEmpty(strings.TrimSpace(artifact.Status), "unknown")
+	artifact.Status = textutil.FirstNonEmpty(strings.TrimSpace(artifact.Status), "unknown")
 
 	return artifact
 }
 
 func normalizeToolSidecarInspectionStatus(status ToolSidecarInspectionStatus) ToolSidecarInspectionStatus {
 	return ToolSidecarInspectionStatus{
-		Status:   util.FirstNonEmpty(strings.TrimSpace(status.Status), "unknown"),
+		Status:   textutil.FirstNonEmpty(strings.TrimSpace(status.Status), "unknown"),
 		Message:  strings.TrimSpace(status.Message),
 		Evidence: normalizeToolSidecarStringList(status.Evidence),
 	}
@@ -256,7 +256,7 @@ func normalizeToolSidecarWarnings(warnings []ToolSidecarWarning) []ToolSidecarWa
 		}
 
 		normalized = append(normalized, ToolSidecarWarning{
-			Code:    util.FirstNonEmpty(strings.TrimSpace(warning.Code), "tool_warning"),
+			Code:    textutil.FirstNonEmpty(strings.TrimSpace(warning.Code), "tool_warning"),
 			Message: message,
 		})
 	}
@@ -299,9 +299,9 @@ func normalizeToolSidecarStringList(values []string) []string {
 }
 
 func BuildToolSidecarEnvelopeWithOptions(req ToolRequest, result ToolResult, profile string, opts ToolSidecarOptions) ToolSidecarEnvelope {
-	tool := util.FirstNonEmpty(strings.TrimSpace(result.Tool), strings.TrimSpace(req.Tool))
+	tool := textutil.FirstNonEmpty(strings.TrimSpace(result.Tool), strings.TrimSpace(req.Tool))
 
-	profile = util.FirstNonEmpty(strings.TrimSpace(profile), "default")
+	profile = textutil.FirstNonEmpty(strings.TrimSpace(profile), "default")
 
 	structuredOutput := toolSidecarStructuredOutput(result.Output)
 	outputObject := toolSidecarOutputObject(structuredOutput)
@@ -525,13 +525,13 @@ func normalizeToolSidecarTransport(transport string) string {
 
 func BuildToolSidecarContract(tool string, profile string, transport string) ToolSidecarContract {
 	tool = strings.TrimSpace(tool)
-	profile = util.FirstNonEmpty(strings.TrimSpace(profile), ToolProfileDefault)
+	profile = textutil.FirstNonEmpty(strings.TrimSpace(profile), ToolProfileDefault)
 	transport = normalizeToolSidecarTransport(transport)
 	metadata := autonomy.DefaultContractMetadata("p7.1", "tool_sidecar_envelope")
 	policy := toolSchemaPolicyForTool(tool)
 
 	return ToolSidecarContract{
-		ID:                "idiom.tool.v1:" + tool,
+		ID:                ToolSidecarContractID(tool),
 		Kind:              "workspace_tool_result",
 		Tool:              tool,
 		Profile:           profile,
@@ -541,6 +541,10 @@ func BuildToolSidecarContract(tool string, profile string, transport string) Too
 		Policy:            policy,
 		Metadata:          metadata,
 	}
+}
+
+func ToolSidecarContractID(tool string) string {
+	return "idiom.tool.v1:" + strings.TrimSpace(tool)
 }
 
 func toolSidecarStructuredOutput(output string) any {
@@ -607,10 +611,10 @@ func toolSidecarWarnings(output map[string]any) []ToolSidecarWarning {
 					warnings = append(warnings, ToolSidecarWarning{Code: "tool_warning", Message: message})
 				}
 			case map[string]any:
-				message := util.FirstNonEmpty(stringFromAny(value["message"]), stringFromAny(value["summary"]), stringFromAny(value["reason"]))
+				message := textutil.FirstNonEmpty(stringFromAny(value["message"]), stringFromAny(value["summary"]), stringFromAny(value["reason"]))
 				if message != "" {
 					warnings = append(warnings, ToolSidecarWarning{
-						Code:    util.FirstNonEmpty(stringFromAny(value["code"]), "tool_warning"),
+						Code:    textutil.FirstNonEmpty(stringFromAny(value["code"]), "tool_warning"),
 						Message: message,
 					})
 				}

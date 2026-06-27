@@ -103,7 +103,7 @@ type RankerLearningEvidenceRef struct {
 }
 
 type RankerLearningEvidenceResult struct {
-	Status               string                         `json:"status"`
+	Status               ProductWorkflowStatus          `json:"status"`
 	SummaryReferencePath string                         `json:"summary_reference_path,omitempty"`
 	Summary              RankerLearningEvidenceSummary  `json:"summary"`
 	Request              *RankerLearningEvidenceRequest `json:"request,omitempty"`
@@ -312,7 +312,7 @@ func SummarizeExecutionFeedback(input ExecutionFeedbackInput) ExecutionFeedbackS
 
 func executionFeedbackPassingStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case ProductWorkflowStatusPass, ProductWorkflowStatusPassed, ProductWorkflowStatusComplete, "completed", "success", "source-satisfied":
+	case string(ProductWorkflowStatusPass), string(ProductWorkflowStatusPassed), string(ProductWorkflowStatusComplete), "completed", "success", "source-satisfied":
 		return true
 	default:
 		return false
@@ -528,7 +528,7 @@ func ReconcileExecutionFeedback(input ExecutionFeedbackReconciliationInput) Exec
 		}
 	}
 
-	if !executionFeedbackPassingStatus(summary.Status) {
+	if !executionFeedbackPassingStatus(string(summary.Status)) {
 		addBlocker("feedback_not_pass", fmt.Sprintf("feedback summary status is %q", summary.Status), "re-run `idiom product feedback` until the summary status is pass")
 	}
 
@@ -913,7 +913,7 @@ func AdaptExecutionFeedbackToRankerLearning(input RankerLearningEvidenceInput) R
 		}
 	}
 
-	if !executionFeedbackPassingStatus(summary.Status) {
+	if !executionFeedbackPassingStatus(string(summary.Status)) {
 		addBlocker(
 			"feedback_not_pass",
 			fmt.Sprintf("feedback summary status is %q", summary.Status),

@@ -2,14 +2,15 @@ package rust
 
 import (
 	"cmp"
-	"idiom/internal/repository/semantic/internal/indexsupport"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
+	"idiom/internal/repository/semantic/internal/indexsupport"
+
 	"idiom/internal/repository/discovery"
 )
 
@@ -275,8 +276,8 @@ func BuildRustIndexWithOptions(root string, opts indexsupport.IndexOptions) (*Ru
 	// that is what `related_files` needs to walk.
 	for _, file := range index.Files {
 		for _, mod := range file.Modules {
-			index.Forward[file.Path] = util.AppendUnique(index.Forward[file.Path], mod)
-			index.Reverse[mod] = util.AppendUnique(index.Reverse[mod], file.Path)
+			index.Forward[file.Path] = textutil.AppendUnique(index.Forward[file.Path], mod)
+			index.Reverse[mod] = textutil.AppendUnique(index.Reverse[mod], file.Path)
 		}
 	}
 
@@ -477,12 +478,12 @@ func parseRustUsesAndMods(content string) ([]string, []string) {
 
 	for _, line := range lines {
 		if match := rustModRe.FindStringSubmatch(line); len(match) == 2 {
-			mods = util.AppendUnique(mods, match[1])
+			mods = textutil.AppendUnique(mods, match[1])
 			continue
 		}
 
 		if match := rustUseRe.FindStringSubmatch(line); len(match) == 2 {
-			uses = util.AppendUnique(uses, match[1])
+			uses = textutil.AppendUnique(uses, match[1])
 		}
 	}
 

@@ -6,7 +6,7 @@ import (
 	"sync"
 
 	"idiom/internal/capabilities/workspace"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 // pendingApproval holds a tool request that hit a ToolRuleAsk decision and
@@ -27,19 +27,19 @@ func (p *pendingApproval) summary() string {
 
 	req := p.request
 	switch strings.TrimSpace(req.Tool) {
-	case "shell", "bash":
-		return fmt.Sprintf("%s: %s", req.Tool, util.Truncate(strings.TrimSpace(req.Command), 120))
-	case "edit_file", "write_file", "append_file":
+	case workspace.ToolNameShell, "bash":
+		return fmt.Sprintf("%s: %s", req.Tool, textutil.Truncate(strings.TrimSpace(req.Command), 120))
+	case workspace.ToolNameEditFile, workspace.ToolNameWriteFile, workspace.ToolNameAppendFile:
 		return fmt.Sprintf("%s: %s", req.Tool, req.Path)
-	case "apply_patch":
+	case workspace.ToolNameApplyPatch:
 		return fmt.Sprintf("apply_patch (%d bytes)", len(req.Content))
 	default:
-		target := util.FirstNonEmpty(req.Path, req.Command)
+		target := textutil.FirstNonEmpty(req.Path, req.Command)
 		if target == "" {
 			return req.Tool
 		}
 
-		return fmt.Sprintf("%s: %s", req.Tool, util.Truncate(strings.TrimSpace(target), 120))
+		return fmt.Sprintf("%s: %s", req.Tool, textutil.Truncate(strings.TrimSpace(target), 120))
 	}
 }
 

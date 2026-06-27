@@ -6,16 +6,17 @@ import (
 	"path/filepath"
 	"strings"
 
-	"idiom/internal/capabilities/workspace"
+	planartifact "idiom/internal/contracts/planartifact"
+
 	"idiom/internal/contracts/pathparse"
-	"idiom/internal/contracts/plan"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/platform/config"
 )
 
 type planExecuteAutoExactPlanResult struct {
 	Submitted       bool
 	SourceSatisfied bool
-	Result          workspace.ToolResult
+	Result          AutoPlanSubmitResult
 	Reason          string
 	EditCount       int
 	AppliedCount    int
@@ -26,7 +27,19 @@ type planExecuteAutoExactPlanResult struct {
 	UnknownPaths    []string
 }
 
-func planExecuteTryAutoExactPlan(cfg config.Config, prompt string, requiredEditPaths []string) planExecuteAutoExactPlanResult {
+type AutoPlanSubmitRequest struct {
+	Rationale string
+	Edits     []planartifact.PlanEdit
+}
+
+type AutoPlanSubmitResult struct {
+	Summary string
+	Error   string
+}
+
+type AutoPlanSubmitter func(context.Context, config.Workspace, AutoPlanSubmitRequest) AutoPlanSubmitResult
+
+func planExecuteTryAutoExactPlan(ctx context.Context, cfg config.Config, prompt string, requiredEditPaths []string, submit AutoPlanSubmitter) planExecuteAutoExactPlanResult {
 	edits, reason := planExecuteExactPlanEditsForWorkspace(prompt, requiredEditPaths, cfg.Workspace.Root)
 	if len(edits) == 0 {
 		return planExecuteAutoExactPlanResult{Reason: reason}
@@ -48,9 +61,8 @@ func planExecuteTryAutoExactPlan(cfg config.Config, prompt string, requiredEditP
 		return classified
 	}
 
-	mgr := workspace.NewManager(cfg.Workspace)
-	result := mgr.Execute(context.Background(), workspace.ToolRequest{
-		Tool:      "submit_plan",
+	submit = normalizeDependencies(Dependencies{SubmitAutoPlan: submit}).SubmitAutoPlan
+	result := submit(planExecuteContext(ctx), cfg.Workspace, AutoPlanSubmitRequest{
 		Rationale: "Deterministic exact-anchor plan synthesized from the Required Edits packet.",
 		Edits:     planExecutePendingAutoExactEdits(cfg.Workspace.Root, edits),
 	})
@@ -76,7 +88,7 @@ func planExecuteTryAutoExactPlan(cfg config.Config, prompt string, requiredEditP
 	return classified
 }
 
-func planExecuteClassifyAutoExactPlanEdits(root string, edits []workspace.PlanEdit) planExecuteAutoExactPlanResult {
+func planExecuteClassifyAutoExactPlanEdits(root string, edits []planartifact.PlanEdit) planExecuteAutoExactPlanResult {
 	var (
 		result       planExecuteAutoExactPlanResult
 		appliedPaths []string
@@ -86,14 +98,14 @@ func planExecuteClassifyAutoExactPlanEdits(root string, edits []workspace.PlanEd
 
 	for _, edit := range edits {
 		status := planExecuteAutoExactEditStatus(root, edit)
-		path := normalizePlanExecutePath(edit.Path)
+		path := plancontract.NormalizeScopePath(edit.Path)
 
 		switch status {
-		case "applied":
+		case plancontract.PhaseEvidenceStatusApplied:
 			result.AppliedCount++
 
 			appliedPaths = append(appliedPaths, path)
-		case "pending":
+		case plancontract.PhaseEvidenceStatusPending:
 			result.PendingCount++
 
 			pendingPaths = append(pendingPaths, path)
@@ -111,11 +123,11 @@ func planExecuteClassifyAutoExactPlanEdits(root string, edits []workspace.PlanEd
 	return result
 }
 
-func planExecutePendingAutoExactEdits(root string, edits []workspace.PlanEdit) []workspace.PlanEdit {
-	var pending []workspace.PlanEdit
+func planExecutePendingAutoExactEdits(root string, edits []planartifact.PlanEdit) []planartifact.PlanEdit {
+	var pending []planartifact.PlanEdit
 
 	for _, edit := range edits {
-		if planExecuteAutoExactEditStatus(root, edit) == "pending" {
+		if planExecuteAutoExactEditStatus(root, edit) == plancontract.PhaseEvidenceStatusPending {
 			pending = append(pending, edit)
 		}
 	}
@@ -123,10 +135,10 @@ func planExecutePendingAutoExactEdits(root string, edits []workspace.PlanEdit) [
 	return pending
 }
 
-func planExecuteAutoExactEditStatus(root string, edit workspace.PlanEdit) string {
-	path := normalizePlanExecutePath(edit.Path)
+func planExecuteAutoExactEditStatus(root string, edit planartifact.PlanEdit) plancontract.PhaseEvidenceStatus {
+	path := plancontract.NormalizeScopePath(edit.Path)
 	if path == "" {
-		return "unknown"
+		return plancontract.PhaseEvidenceStatusUnknown
 	}
 
 	fullPath := path
@@ -137,10 +149,10 @@ func planExecuteAutoExactEditStatus(root string, edit workspace.PlanEdit) string
 	body, err := os.ReadFile(filepath.Clean(fullPath))
 	if err != nil {
 		if os.IsNotExist(err) && edit.ReplaceAll && strings.TrimSpace(edit.OldText) == "" && strings.TrimSpace(edit.NewText) != "" {
-			return "pending"
+			return plancontract.PhaseEvidenceStatusPending
 		}
 
-		return "unknown"
+		return plancontract.PhaseEvidenceStatusUnknown
 	}
 
 	status, _ := submittedPlanEditStatus(string(body), edit)
@@ -149,7 +161,7 @@ func planExecuteAutoExactEditStatus(root string, edit workspace.PlanEdit) string
 }
 
 func planExecuteAutoSourceSatisfiedAnswer(requiredEditPaths []string) string {
-	paths := planExecuteUniqueRequiredPaths(requiredEditPaths)
+	paths := plancontract.UniqueScopePaths(requiredEditPaths)
 
 	var b strings.Builder
 
@@ -170,17 +182,13 @@ func planExecuteAutoSourceSatisfiedAnswer(requiredEditPaths []string) string {
 	return strings.TrimSpace(b.String())
 }
 
-func PlanExecuteAutoSourceSatisfiedAnswer(requiredEditPaths []string) string {
-	return planExecuteAutoSourceSatisfiedAnswer(requiredEditPaths)
-}
-
 func planExecuteSourceSatisfiedEvidencePaths(answer string, requiredEditPaths []string, allowedEditPaths []string) []string {
-	paths := planExecuteUniqueRequiredPaths(requiredEditPaths)
+	paths := plancontract.UniqueScopePaths(requiredEditPaths)
 	if len(paths) > 0 {
 		return paths
 	}
 
-	evidencePaths := planExecuteUniqueRequiredPaths(plancontract.SourceSatisfiedEvidencePaths(answer))
+	evidencePaths := plancontract.UniqueScopePaths(plancontract.SourceSatisfiedEvidencePaths(answer))
 	allowed := planExecutePathSet(allowedEditPaths)
 
 	if len(allowed) == 0 {
@@ -198,16 +206,8 @@ func planExecuteSourceSatisfiedEvidencePaths(answer string, requiredEditPaths []
 	return scoped
 }
 
-func PlanExecuteSourceSatisfiedEvidencePaths(answer string, requiredEditPaths []string, allowedEditPaths []string) []string {
-	return planExecuteSourceSatisfiedEvidencePaths(answer, requiredEditPaths, allowedEditPaths)
-}
-
 func planExecuteMissingSourceSatisfiedCoveragePaths(answer string, requiredEditPaths []string) []string {
 	return plancontract.SourceSatisfiedMissingCoveragePaths(answer, requiredEditPaths)
-}
-
-func PlanExecuteMissingSourceSatisfiedCoveragePaths(answer string, requiredEditPaths []string) []string {
-	return planExecuteMissingSourceSatisfiedCoveragePaths(answer, requiredEditPaths)
 }
 
 func planExecuteSourceSatisfiedUnsupportedEvidenceMarkers() []string {
@@ -221,6 +221,9 @@ func planExecuteSourceSatisfiedUnsupportedEvidenceMarkers() []string {
 		"appears to",
 		"seems to",
 		"should already",
+		"stale anchor",
+		"stale old_text",
+		"stale spec",
 	}
 }
 
@@ -228,7 +231,7 @@ func planExecuteSourceSatisfiedUnsupportedEvidenceMarker(answer string, evidence
 	pathSet := planExecutePathSet(evidencePaths)
 	for _, line := range strings.Split(answer, "\n") {
 		if len(pathSet) > 0 {
-			linePaths := planExecuteUniqueRequiredPaths(pathparse.MentionedWorkspacePaths(line))
+			linePaths := plancontract.UniqueScopePaths(pathparse.MentionedWorkspacePaths(line))
 			matchesEvidencePath := false
 
 			for _, path := range linePaths {

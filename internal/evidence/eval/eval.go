@@ -9,7 +9,8 @@ import (
 	"time"
 
 	"idiom/internal/contracts/autonomy"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/jsonl"
+	"idiom/internal/platform/textutil"
 )
 
 type Record struct {
@@ -670,7 +671,7 @@ func (m Metrics) TotalErrorEvents() int {
 func LoadRecords(path string) ([]Record, error) {
 	records := make([]Record, 0, 64)
 
-	err := util.ScanFile(filepath.Clean(path), func(raw json.RawMessage) error {
+	err := jsonl.ScanFile(filepath.Clean(path), func(raw json.RawMessage) error {
 		payload := make(map[string]any)
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return fmt.Errorf("decode log record: %w", err)
@@ -751,7 +752,7 @@ func WriteScenario(path string, scenario Scenario) error {
 func containsStringFold(items []string, target string) bool {
 	target = strings.TrimSpace(target)
 	for _, item := range items {
-		if util.EqualTrimFold(item, target) {
+		if textutil.EqualTrimFold(item, target) {
 			return true
 		}
 	}

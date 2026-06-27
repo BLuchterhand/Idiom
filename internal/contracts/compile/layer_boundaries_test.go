@@ -21,6 +21,7 @@ type goPackage struct {
 
 func TestCoreContractPackagesKeepNarrowDirectImports(t *testing.T) {
 	packages := loadPackages(t)
+	assertAllDirectContractPackagesCovered(t, packages, coreContractPackageDirectImports())
 
 	for importPath, allowed := range coreContractPackageDirectImports() {
 		assertDirectInternalImports(t, packages, importPath, allowed)
@@ -51,11 +52,44 @@ func TestCoreContractPackagesDoNotDependOnOuterLayers(t *testing.T) {
 
 func coreContractPackageDirectImports() map[string][]string {
 	return map[string][]string{
-		"idiom/internal/contracts/autonomy":    {"idiom/internal/platform/util"},
-		"idiom/internal/contracts/compile":     {"idiom/internal/contracts/autonomy", "idiom/internal/platform/util"},
-		"idiom/internal/contracts/pathparse":   {},
-		"idiom/internal/contracts/plan":        {"idiom/internal/contracts/pathparse"},
-		"idiom/internal/contracts/writerroute": {},
+		"idiom/internal/contracts/atomintake":     {},
+		"idiom/internal/contracts/autonomy":       {"idiom/internal/contracts/lane"},
+		"idiom/internal/contracts/compile":        {"idiom/internal/contracts/autonomy", "idiom/internal/contracts/lane"},
+		"idiom/internal/contracts/featureplanner": {},
+		"idiom/internal/contracts/intentloop":     {},
+		"idiom/internal/contracts/lane":           {},
+		"idiom/internal/contracts/pathparse":      {},
+		"idiom/internal/contracts/plan":           {"idiom/internal/contracts/lane", "idiom/internal/contracts/pathparse", "idiom/internal/contracts/recovery", "idiom/internal/contracts/sourcekind", "idiom/internal/contracts/workflowstate"},
+		"idiom/internal/contracts/planartifact":   {"idiom/internal/contracts/plan", "idiom/internal/contracts/sensitivity"},
+		"idiom/internal/contracts/queue":          {},
+		"idiom/internal/contracts/readapproval":   {},
+		"idiom/internal/contracts/recovery":       {"idiom/internal/contracts/lane", "idiom/internal/contracts/workflowstate"},
+		"idiom/internal/contracts/sensitivity":    {},
+		"idiom/internal/contracts/sourcekind":     {},
+		"idiom/internal/contracts/workflowstate":  {},
+		"idiom/internal/contracts/writerroute":    {},
+	}
+}
+
+func assertAllDirectContractPackagesCovered(t *testing.T, packages map[string]goPackage, allowed map[string][]string) {
+	t.Helper()
+
+	var missing []string
+	for importPath := range packages {
+		if !strings.HasPrefix(importPath, "idiom/internal/contracts/") {
+			continue
+		}
+		rest := strings.TrimPrefix(importPath, "idiom/internal/contracts/")
+		if rest == "" || strings.Contains(rest, "/") {
+			continue
+		}
+		if _, ok := allowed[importPath]; !ok {
+			missing = append(missing, importPath)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Fatalf("direct contract packages missing explicit import policy: %s", strings.Join(missing, ", "))
 	}
 }
 
@@ -70,6 +104,7 @@ func coreContractForbiddenOuterPackages() []string {
 		"idiom/internal/runtime/workerruntime",
 		"idiom/internal/runtime/llama",
 		"idiom/internal/capabilities/mcp",
+		"idiom/internal/platform/",
 		"idiom/internal/workflows/planexecute",
 		"idiom/internal/workflows/productworkflow",
 		"idiom/internal/capabilities/workspace",
@@ -155,6 +190,21 @@ func TestRuntimeAndCapabilitiesDoNotDependOnSurfaces(t *testing.T) {
 		"idiom/internal/surfaces/tui/app",
 		"idiom/internal/workflows/planexecute",
 	})
+}
+
+func TestWorkflowAndEvidencePackagesDoNotDependOnSurfacesInProductionImports(t *testing.T) {
+	packages := loadPackages(t)
+
+	for importPath := range packages {
+		if !strings.HasPrefix(importPath, "idiom/internal/workflows/") &&
+			!strings.HasPrefix(importPath, "idiom/internal/evidence/") {
+			continue
+		}
+
+		assertNoDependencyOn(t, packages, importPath, []string{
+			"idiom/internal/surfaces/",
+		})
+	}
 }
 
 func TestContractAuthorityVocabularyIsNotRedefinedOutsideAutonomy(t *testing.T) {
@@ -275,12 +325,10 @@ func TestArchitectureAssertionsCatchExpectedViolations(t *testing.T) {
 		"idiom/internal/contracts/autonomy": {
 			ImportPath: "idiom/internal/contracts/autonomy",
 			Imports: []string{
-				"idiom/internal/platform/util",
 				"idiom/internal/capabilities/workspace",
 				"net/http/httptest",
 			},
 			Deps: []string{
-				"idiom/internal/platform/util",
 				"idiom/internal/capabilities/workspace",
 			},
 		},
@@ -294,7 +342,7 @@ func TestArchitectureAssertionsCatchExpectedViolations(t *testing.T) {
 		},
 	}
 
-	if got := directInternalImportViolations(packages["idiom/internal/contracts/autonomy"], []string{"idiom/internal/platform/util"}); !containsString(got, "idiom/internal/capabilities/workspace") {
+	if got := directInternalImportViolations(packages["idiom/internal/contracts/autonomy"], nil); !containsString(got, "idiom/internal/capabilities/workspace") {
 		t.Fatalf("directInternalImportViolations = %#v, want workspace violation", got)
 	}
 

@@ -4,11 +4,10 @@ import (
 	"strings"
 
 	"idiom/internal/contracts/autonomy"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 type RoleName string
-type TaskFamilyID = autonomy.TaskFamilyID
 type RuntimeContractID string
 type PermissionProfileID string
 type EvidenceRequirementID string
@@ -24,40 +23,6 @@ const (
 	RoleRepair        RoleName = "repair"
 	RoleImplement     RoleName = "implement"
 	RoleMain          RoleName = "main"
-)
-
-const (
-	TaskFamilyArtifactFinalAnswer       TaskFamilyID = autonomy.TaskFamilyArtifactFinalAnswer
-	TaskFamilyArtifactDistiller         TaskFamilyID = autonomy.TaskFamilyArtifactDistiller
-	TaskFamilyConversation              TaskFamilyID = autonomy.TaskFamilyConversation
-	TaskFamilyDebugLogs                 TaskFamilyID = autonomy.TaskFamilyDebugLogs
-	TaskFamilyVerificationOnly          TaskFamilyID = autonomy.TaskFamilyVerificationOnly
-	TaskFamilyLocate                    TaskFamilyID = autonomy.TaskFamilyLocate
-	TaskFamilyLocateThenImplement       TaskFamilyID = autonomy.TaskFamilyLocateThenImplement
-	TaskFamilyExploreThenImplement      TaskFamilyID = autonomy.TaskFamilyExploreThenImplement
-	TaskFamilyInvestigateThenImplement  TaskFamilyID = autonomy.TaskFamilyInvestigateThenImplement
-	TaskFamilyReviewThenImplement       TaskFamilyID = autonomy.TaskFamilyReviewThenImplement
-	TaskFamilyArchitectureThenImplement TaskFamilyID = autonomy.TaskFamilyArchitectureThenImplement
-	TaskFamilySecurityReview            TaskFamilyID = autonomy.TaskFamilySecurityReview
-	TaskFamilyPerformanceReview         TaskFamilyID = autonomy.TaskFamilyPerformanceReview
-	TaskFamilyArchitecture              TaskFamilyID = autonomy.TaskFamilyArchitecture
-	TaskFamilyFeaturePlannerPlanner     TaskFamilyID = autonomy.TaskFamilyFeaturePlannerPlanner
-	TaskFamilyFeaturePlannerImplementor TaskFamilyID = autonomy.TaskFamilyFeaturePlannerImplementor
-	TaskFamilyPlanThenExecutePlanner    TaskFamilyID = autonomy.TaskFamilyPlanThenExecutePlanner
-	TaskFamilyPlanThenExecuteReview     TaskFamilyID = autonomy.TaskFamilyPlanThenExecuteReview
-	TaskFamilyImplementation            TaskFamilyID = autonomy.TaskFamilyImplementation
-	TaskFamilyTestAuthoring             TaskFamilyID = autonomy.TaskFamilyTestAuthoring
-	TaskFamilyConfigEdit                TaskFamilyID = autonomy.TaskFamilyConfigEdit
-	TaskFamilyScriptEdit                TaskFamilyID = autonomy.TaskFamilyScriptEdit
-	TaskFamilyGDScriptEdit              TaskFamilyID = autonomy.TaskFamilyGDScriptEdit
-	TaskFamilyDocsEdit                  TaskFamilyID = autonomy.TaskFamilyDocsEdit
-	TaskFamilyPromptEditSecurity        TaskFamilyID = autonomy.TaskFamilyPromptEditSecurity
-	TaskFamilyFailureInjection          TaskFamilyID = autonomy.TaskFamilyFailureInjection
-	TaskFamilyDirectQuestion            TaskFamilyID = autonomy.TaskFamilyDirectQuestion
-	TaskFamilyDirectAnswer              TaskFamilyID = autonomy.TaskFamilyDirectAnswer
-	TaskFamilyDelegatedIsolatedImpl     TaskFamilyID = autonomy.TaskFamilyDelegatedIsolatedImpl
-	TaskFamilyDelegatedReadOnly         TaskFamilyID = autonomy.TaskFamilyDelegatedReadOnly
-	TaskFamilyImplementationRepair      TaskFamilyID = autonomy.TaskFamilyImplementationRepair
 )
 
 const (
@@ -196,16 +161,8 @@ func roleName(value string) RoleName {
 	}
 }
 
-func taskFamilyID(value string) TaskFamilyID {
-	return TaskFamilyID(strings.TrimSpace(value))
-}
-
-func permissionProfileString(profile PermissionProfileID) string {
-	return string(profile)
-}
-
-func verificationContractString(contract VerificationContractID) string {
-	return string(contract)
+func taskFamilyID(value string) autonomy.TaskFamilyID {
+	return autonomy.TaskFamilyID(strings.TrimSpace(value))
 }
 
 func evidenceRequirementStrings(values []EvidenceRequirementID) []string {
@@ -272,51 +229,51 @@ func finalCriticStrings(values []FinalCriticID) []string {
 }
 
 func PermissionProfileMatches(value string, profile PermissionProfileID) bool {
-	return util.EqualTrimFold(value, string(profile))
+	return textutil.EqualTrimFold(value, string(profile))
 }
 
-func TaskFamilyMatches(value string, family TaskFamilyID) bool {
-	return util.EqualTrimFold(value, string(family))
+func TaskFamilyMatches(value string, family autonomy.TaskFamilyID) bool {
+	return textutil.EqualTrimFold(value, string(family))
 }
 
 func RuntimeContractMatches(value string, contract RuntimeContractID) bool {
-	return util.EqualTrimFold(value, string(contract))
+	return textutil.EqualTrimFold(value, string(contract))
 }
 
 func TaskFamilyIsConversation(value string) bool {
-	return TaskFamilyMatches(value, TaskFamilyConversation)
+	return TaskFamilyMatches(value, autonomy.TaskFamilyConversation)
 }
 
 func TaskFamilyIsPlanThenExecutePlanner(value string) bool {
-	return TaskFamilyMatches(value, TaskFamilyPlanThenExecutePlanner)
+	return TaskFamilyMatches(value, autonomy.TaskFamilyPlanThenExecutePlanner)
 }
 
 func TaskFamilyIsPlanThenExecuteReview(value string) bool {
-	return TaskFamilyMatches(value, TaskFamilyPlanThenExecuteReview)
+	return TaskFamilyMatches(value, autonomy.TaskFamilyPlanThenExecuteReview)
 }
 
 func TaskFamilyIsFeaturePlannerPlanner(value string) bool {
-	return TaskFamilyMatches(value, TaskFamilyFeaturePlannerPlanner)
+	return TaskFamilyMatches(value, autonomy.TaskFamilyFeaturePlannerPlanner)
 }
 
 func TaskFamilyIsFeaturePlannerImplementor(value string) bool {
-	return TaskFamilyMatches(value, TaskFamilyFeaturePlannerImplementor)
+	return TaskFamilyMatches(value, autonomy.TaskFamilyFeaturePlannerImplementor)
 }
 
 func TaskFamilyIsArchitecture(value string) bool {
-	return TaskFamilyMatches(value, TaskFamilyArchitecture)
+	return TaskFamilyMatches(value, autonomy.TaskFamilyArchitecture)
 }
 
 func TaskFamilyIsVerificationOnly(value string) bool {
-	return TaskFamilyMatches(value, TaskFamilyVerificationOnly)
+	return TaskFamilyMatches(value, autonomy.TaskFamilyVerificationOnly)
 }
 
 func TaskFamilyRequiresInitialActionContract(value string) bool {
 	switch strings.TrimSpace(value) {
-	case string(TaskFamilyImplementation),
-		string(TaskFamilyImplementationRepair),
-		string(TaskFamilyDelegatedIsolatedImpl),
-		string(TaskFamilyDocsEdit):
+	case string(autonomy.TaskFamilyImplementation),
+		string(autonomy.TaskFamilyImplementationRepair),
+		string(autonomy.TaskFamilyDelegatedIsolatedImpl),
+		string(autonomy.TaskFamilyDocsEdit):
 		return true
 	default:
 		return false

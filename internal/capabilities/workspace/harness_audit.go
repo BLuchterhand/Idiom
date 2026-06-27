@@ -18,8 +18,11 @@ import (
 	"time"
 
 	"idiom/internal/contracts/autonomy"
+	featureplannercontract "idiom/internal/contracts/featureplanner"
+	intentloopcontract "idiom/internal/contracts/intentloop"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/evidence/eval"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/comprehension"
 	"idiom/internal/repository/discovery"
 )
@@ -1355,15 +1358,14 @@ func pruneEmptyAuditCounts(out *harnessAuditMalformedOutput) {
 	}
 }
 
-var intentLoopAuditEvents = map[string]struct{}{
-	"idiom.intent_loop.start":                {},
-	"idiom.intent_loop.cycle_start":          {},
-	"idiom.intent_loop.cycle_complete":       {},
-	"idiom.intent_loop.convergence_detected": {},
-	"idiom.intent_loop.cycle_budget_warning": {},
-	"idiom.intent_loop.budget_exhausted":     {},
-	"idiom.intent_loop.complete":             {},
-	"idiom.intent_loop.blocked":              {},
+var intentLoopAuditEvents = intentLoopAuditEventSet()
+
+func intentLoopAuditEventSet() map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, name := range intentloopcontract.EventNames() {
+		out[name] = struct{}{}
+	}
+	return out
 }
 
 func auditIntentLoopEvents(paths []string) *harnessAuditIntentLoop {
@@ -1451,53 +1453,37 @@ func appendIntentLoopEventCandidate(candidates []map[string]any, event map[strin
 
 func auditIntentLoopEvent(out *harnessAuditIntentLoop, eventType string, event map[string]any) {
 	switch eventType {
-	case "idiom.intent_loop.start":
+	case intentloopcontract.EventName(intentloopcontract.EventStart):
 		out.Starts++
-	case "idiom.intent_loop.cycle_start":
+	case intentloopcontract.EventName(intentloopcontract.EventCycleStart):
 		out.CycleStarts++
-	case "idiom.intent_loop.cycle_complete":
+	case intentloopcontract.EventName(intentloopcontract.EventCycleComplete):
 		out.CycleCompletes++
 		out.TotalReportedGaps += auditIntField(event, "gap_count")
 		auditIntentLoopGaps(out, event["remaining_gaps"])
-	case "idiom.intent_loop.convergence_detected":
+	case intentloopcontract.EventName(intentloopcontract.EventConvergenceDetected):
 		out.NoProgress++
-	case "idiom.intent_loop.cycle_budget_warning":
+	case intentloopcontract.EventName(intentloopcontract.EventCycleBudgetWarning):
 		out.BudgetWarnings++
-	case "idiom.intent_loop.budget_exhausted":
+	case intentloopcontract.EventName(intentloopcontract.EventBudgetExhausted):
 		out.BudgetExhausted++
-	case "idiom.intent_loop.complete":
+	case intentloopcontract.EventName(intentloopcontract.EventComplete):
 		out.Completions++
 		out.TotalReportedCycles += auditIntField(event, "total_cycles")
-	case "idiom.intent_loop.blocked":
+	case intentloopcontract.EventName(intentloopcontract.EventBlocked):
 		out.Blocked++
 	}
 }
 
-const (
-	featurePlannerAuditEventQuestionAnswered             = "idiom.feature_planner.planner_question_answered"
-	featurePlannerAuditEventQuestionSupersededByRevision = "idiom.feature_planner.planner_question_superseded_by_revision"
-)
+var featurePlannerAuditEvents = featurePlannerAuditEventSet()
 
-var featurePlannerAuditEvents = map[string]struct{}{
-	"idiom.feature_planner.plan_accepted":                    {},
-	"idiom.feature_planner.plan_reviewed":                    {},
-	"idiom.feature_planner.plan_approved":                    {},
-	"idiom.feature_planner.tdd_pre_execution_checked":        {},
-	"idiom.feature_planner.dispatch_ready":                   {},
-	"idiom.feature_planner.atom_dispatched":                  {},
-	"idiom.feature_planner.atom_completed":                   {},
-	"idiom.feature_planner.atom_source_satisfied":            {},
-	"idiom.feature_planner.planner_question_opened":          {},
-	"idiom.feature_planner.implementor_question_opened":      {},
-	featurePlannerAuditEventQuestionAnswered:                 {},
-	featurePlannerAuditEventQuestionSupersededByRevision:     {},
-	"idiom.feature_planner.standalone_context_blocked":       {},
-	"idiom.feature_planner.product_context_blocked":          {},
-	"idiom.feature_planner.plan_contract_blocked":            {},
-	"idiom.feature_planner.tdd_pre_execution_blocked":        {},
-	"idiom.feature_planner.plan_execute_completion_rejected": {},
-	"idiom.feature_planner.release_ready":                    {},
-	"idiom.feature_planner.release_blocked":                  {},
+func featurePlannerAuditEventSet() map[string]struct{} {
+	events := featureplannercontract.EventNames()
+	out := make(map[string]struct{}, len(events))
+	for _, eventName := range events {
+		out[eventName] = struct{}{}
+	}
+	return out
 }
 
 func auditFeaturePlannerEvents(paths []string, displayPath func(string) string) *harnessAuditFeaturePlanner {
@@ -1633,41 +1619,41 @@ func auditFeaturePlannerEvent(out *harnessAuditFeaturePlanner, eventType string,
 	}
 
 	switch eventType {
-	case "idiom.feature_planner.plan_approved":
+	case featureplannercontract.EventName(featureplannercontract.EventPlanApproved):
 		out.PlanApprovedEvents++
 		if artifactID == "" || planDigest == "" || workspaceFingerprint == "" {
 			out.MissingArtifactBindings = append(out.MissingArtifactBindings, harnessAuditRef{Type: eventType, Path: path, Line: line, Problem: "plan approval event missing artifact revision, digest, or workspace fingerprint"})
 		}
-	case "idiom.feature_planner.plan_accepted", "idiom.feature_planner.plan_reviewed":
+	case featureplannercontract.EventName(featureplannercontract.EventPlanAccepted), featureplannercontract.EventName(featureplannercontract.EventPlanReviewed):
 		if artifactID == "" || planDigest == "" || workspaceFingerprint == "" {
 			out.MissingArtifactBindings = append(out.MissingArtifactBindings, harnessAuditRef{Type: eventType, Path: path, Line: line, Problem: "plan lifecycle event missing artifact revision, digest, or workspace fingerprint"})
 		}
-	case "idiom.feature_planner.planner_question_opened", "idiom.feature_planner.implementor_question_opened":
+	case featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionOpened), featureplannercontract.EventName(featureplannercontract.EventImplementorQuestionOpened):
 		out.OpenQuestionEvents++
-	case featurePlannerAuditEventQuestionAnswered, featurePlannerAuditEventQuestionSupersededByRevision:
+	case featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionAnswered), featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionSupersededByRevision):
 		out.QuestionAnswerEvents++
-	case "idiom.feature_planner.tdd_pre_execution_blocked", "idiom.feature_planner.plan_execute_completion_rejected", "idiom.feature_planner.standalone_context_blocked", "idiom.feature_planner.product_context_blocked", "idiom.feature_planner.plan_contract_blocked":
+	case featureplannercontract.EventName(featureplannercontract.EventTDDPreExecutionBlocked), featureplannercontract.EventName(featureplannercontract.EventPlanExecuteCompletionRejected), featureplannercontract.EventName(featureplannercontract.EventStandaloneContextBlocked), featureplannercontract.EventName(featureplannercontract.EventProductContextBlocked), featureplannercontract.EventName(featureplannercontract.EventPlanContractBlocked):
 		out.PlanRejectedEvents++
 		if featurePlannerEventIndicatesCoverageAuthorityBlock(fields, event) {
 			out.CoverageAuthorityBlocks++
 		}
-	case "idiom.feature_planner.atom_dispatched":
+	case featureplannercontract.EventName(featureplannercontract.EventAtomDispatched):
 		out.ExecutionHandoffEvents++
-	case "idiom.feature_planner.atom_completed", "idiom.feature_planner.atom_source_satisfied":
+	case featureplannercontract.EventName(featureplannercontract.EventAtomCompleted), featureplannercontract.EventName(featureplannercontract.EventAtomSourceSatisfied):
 		out.AtomTerminalEvents++
 		if closureID == "" {
 			out.MissingArtifactBindings = append(out.MissingArtifactBindings, harnessAuditRef{Type: eventType, Path: path, Line: line, Problem: "terminal atom event missing verification closure"})
 		} else {
 			out.terminalClosures[closureID] = binding
 		}
-	case "idiom.feature_planner.release_ready":
+	case featureplannercontract.EventName(featureplannercontract.EventReleaseReady):
 		out.ReleaseReadyEvents++
 		closureIDs := auditStringList(fields["verification_closure_event_ids"])
 		if artifactID == "" || planDigest == "" || workspaceFingerprint == "" || approvalEvent == "" || len(closureIDs) == 0 {
 			out.MissingArtifactBindings = append(out.MissingArtifactBindings, harnessAuditRef{Type: eventType, Path: path, Line: line, Problem: "release-ready event missing artifact, approval, or verification closure bindings"})
 		}
 		out.releaseDecisions = append(out.releaseDecisions, featurePlannerAuditRelease{Binding: binding, ClosureIDs: closureIDs})
-	case "idiom.feature_planner.release_blocked":
+	case featureplannercontract.EventName(featureplannercontract.EventReleaseBlocked):
 		out.ReleaseBlockedEvents++
 		if artifactID == "" || planDigest == "" || workspaceFingerprint == "" {
 			out.MissingArtifactBindings = append(out.MissingArtifactBindings, harnessAuditRef{Type: eventType, Path: path, Line: line, Problem: "release-blocked event missing artifact binding"})
@@ -2239,13 +2225,13 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 			prefixes = append(prefixes, prefix[:len("20060102-1504")])
 		}
 
-		prefixes = util.UniqueNonEmpty(prefixes)
+		prefixes = textutil.UniqueNonEmpty(prefixes)
 
 		displayConversationPath := m.displayPath(conversationPath)
 
 		var candidates []string
 
-		for _, base := range util.UniqueNonEmpty([]string{m.cfg.CWD, m.cfg.Root}) {
+		for _, base := range textutil.UniqueNonEmpty([]string{m.cfg.CWD, m.cfg.Root}) {
 			for _, dir := range []string{
 				filepath.Join(base, "logs", "telemetry"),
 				filepath.Join(base, ".idiom", "logs", "telemetry"),
@@ -2262,7 +2248,7 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 			}
 		}
 
-		candidates = util.UniqueNonEmpty(candidates)
+		candidates = textutil.UniqueNonEmpty(candidates)
 		sortAuditLogPaths(candidates)
 
 		cleanConversationPath := filepath.Clean(conversationPath)
@@ -2299,7 +2285,7 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 		facts := log.facts
 		displayPath := log.displayPath
 
-		if facts.HasProcessStart && util.EqualTrimFold(facts.Command, "implement") {
+		if facts.HasProcessStart && textutil.EqualTrimFold(facts.Command, "implement") {
 			if !facts.HasProcessExit && processIDAppearsRunning(facts.PID) {
 				session := harnessAuditInProgressSession{
 					TelemetryLog: displayPath,
@@ -2387,8 +2373,8 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 					appendInProgress(harnessAuditInProgressSession{
 						TelemetryLog:    telemetryLog.displayPath,
 						ConversationLog: displayPath,
-						SessionID:       util.FirstNonEmpty(strings.TrimSpace(facts.SessionID), strings.TrimSpace(telemetryFacts.SessionID)),
-						Command:         util.FirstNonEmpty(strings.TrimSpace(telemetryFacts.Command), "tui"),
+						SessionID:       textutil.FirstNonEmpty(strings.TrimSpace(facts.SessionID), strings.TrimSpace(telemetryFacts.SessionID)),
+						Command:         textutil.FirstNonEmpty(strings.TrimSpace(telemetryFacts.Command), "tui"),
 						PID:             telemetryFacts.PID,
 					})
 
@@ -2411,8 +2397,8 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 				session := harnessAuditIncompleteSession{
 					TelemetryLog:    telemetryLog.displayPath,
 					ConversationLog: displayPath,
-					SessionID:       util.FirstNonEmpty(strings.TrimSpace(facts.SessionID), strings.TrimSpace(telemetryFacts.SessionID)),
-					Command:         util.FirstNonEmpty(strings.TrimSpace(telemetryFacts.Command), "tui"),
+					SessionID:       textutil.FirstNonEmpty(strings.TrimSpace(facts.SessionID), strings.TrimSpace(telemetryFacts.SessionID)),
+					Command:         textutil.FirstNonEmpty(strings.TrimSpace(telemetryFacts.Command), "tui"),
 					Missing:         missing,
 				}
 				key := session.TelemetryLog + "|" + session.ConversationLog
@@ -2529,24 +2515,24 @@ func readHarnessAuditLogFacts(path string) (harnessAuditLogFacts, error) {
 		switch eventType {
 		case "process_start":
 			facts.HasProcessStart = true
-			facts.Command = util.FirstNonEmpty(facts.Command, auditStringField(record, "command"))
-			facts.WorkspaceRoot = util.FirstNonEmpty(facts.WorkspaceRoot, auditStringField(record, "workspace_root"))
+			facts.Command = textutil.FirstNonEmpty(facts.Command, auditStringField(record, "command"))
+			facts.WorkspaceRoot = textutil.FirstNonEmpty(facts.WorkspaceRoot, auditStringField(record, "workspace_root"))
 			facts.PID = auditIntField(record, "pid")
 		case "session_start":
-			facts.Command = util.FirstNonEmpty(facts.Command, auditStringField(record, "command"))
-			facts.WorkspaceRoot = util.FirstNonEmpty(facts.WorkspaceRoot, auditStringField(record, "workspace_root"))
+			facts.Command = textutil.FirstNonEmpty(facts.Command, auditStringField(record, "command"))
+			facts.WorkspaceRoot = textutil.FirstNonEmpty(facts.WorkspaceRoot, auditStringField(record, "workspace_root"))
 		case "process_exit":
 			facts.HasProcessExit = true
 		case "model_session":
 			facts.HasModelSession = true
-			facts.SessionID = util.FirstNonEmpty(facts.SessionID, auditStringField(record, "session_id"))
-			facts.DebugLogPath = util.FirstNonEmpty(facts.DebugLogPath, auditStringField(record, "debug_log_path"))
+			facts.SessionID = textutil.FirstNonEmpty(facts.SessionID, auditStringField(record, "session_id"))
+			facts.DebugLogPath = textutil.FirstNonEmpty(facts.DebugLogPath, auditStringField(record, "debug_log_path"))
 		case "session_summary":
 			facts.HasSessionSummary = true
 		case "model_session_closeout", "implement_session_closeout":
 			facts.HasModelSessionCloseout = true
-			facts.SessionID = util.FirstNonEmpty(facts.SessionID, auditStringField(record, "session_id"))
-			facts.DebugLogPath = util.FirstNonEmpty(facts.DebugLogPath, auditStringField(record, "debug_log_path"))
+			facts.SessionID = textutil.FirstNonEmpty(facts.SessionID, auditStringField(record, "session_id"))
+			facts.DebugLogPath = textutil.FirstNonEmpty(facts.DebugLogPath, auditStringField(record, "debug_log_path"))
 		}
 
 		if role == "control_rails" || eventType == "control_rails" {
@@ -3320,13 +3306,12 @@ func decodeHarnessAuditChildLifecycleLine(line []byte, path string, lineNumber i
 
 func decodeHarnessAuditPlanExecuteInvalidChildLifecycleRecord(wrapper map[string]json.RawMessage, path string, lineNumber int) (harnessAuditChildLifecycleDecoded, bool) {
 	eventType := auditStringFromRaw(wrapper["type"])
-	const prefix = "idiom.plan_execute."
-	const suffix = "_invalid"
-	if !strings.HasPrefix(eventType, prefix) || !strings.HasSuffix(eventType, suffix) {
+	kindEvent, ok := plancontract.ParsePlanExecuteInvalidEventName(eventType)
+	if !ok {
 		return harnessAuditChildLifecycleDecoded{}, false
 	}
 
-	kind := strings.TrimSuffix(strings.TrimPrefix(eventType, prefix), suffix)
+	kind := string(kindEvent)
 	if !harnessAuditChildLifecycleRole(kind) {
 		return harnessAuditChildLifecycleDecoded{}, false
 	}
@@ -3344,7 +3329,7 @@ func decodeHarnessAuditPlanExecuteVerificationResultRefs(line []byte) []string {
 	if err := json.Unmarshal(line, &wrapper); err != nil {
 		return nil
 	}
-	if auditStringFromRaw(wrapper["type"]) != "idiom.plan_execute.verification" {
+	if auditStringFromRaw(wrapper["type"]) != plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventVerification) {
 		return nil
 	}
 
@@ -3786,7 +3771,7 @@ func toolSurfaceFindings(surface harnessAuditToolSurface) []harnessAuditFinding 
 
 		tools = append(tools, surface.SchemaWithoutExportedSchema...)
 		tools = append(tools, surface.ExportedSchemaWithoutSchema...)
-		tools = util.UniqueNonEmpty(tools)
+		tools = textutil.UniqueNonEmpty(tools)
 
 		evidence := fmt.Sprintf("%d exported-schema drift item(s) detected", len(tools))
 
@@ -3876,7 +3861,7 @@ func unsafeCapabilityAdapterTools(adapters []ReadOnlyCapabilityUnsafeAdapterSpec
 		}
 	}
 
-	return util.UniqueNonEmpty(tools)
+	return textutil.UniqueNonEmpty(tools)
 }
 
 func backendFindings(backends []harnessAuditBackend) []harnessAuditFinding {
@@ -4534,7 +4519,7 @@ func boundedAuditIdentifiers(ids []string, limit int) []string {
 		return nil
 	}
 
-	uniq := util.Sorted(ids)
+	uniq := textutil.Sorted(ids)
 	if len(uniq) > limit {
 		uniq = uniq[:limit]
 	}
@@ -4662,7 +4647,7 @@ func planningQualityRecommendedSurfaces(report *harnessAuditPlanningQuality) []s
 		surfaces = append(surfaces, ToolNameHarnessFeedback)
 	}
 
-	return util.UniqueNonEmpty(surfaces)
+	return textutil.UniqueNonEmpty(surfaces)
 }
 
 func staticImprovementQuestions(report harnessAuditReport) []harnessAuditQuestion {

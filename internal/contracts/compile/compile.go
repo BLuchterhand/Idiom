@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"idiom/internal/contracts/autonomy"
-	"idiom/internal/platform/util"
 )
 
 func CompilePlanExecutePlanner(input PlanExecutePlannerInput) (CompileResult, error) {
@@ -40,7 +39,7 @@ func compileActiveAuthorityBinding(contract autonomy.AutonomyContract, runtime R
 		ContractID:        contract.ContractID,
 		RuntimeContractID: runtime.RuntimeContractID,
 		ProtocolHash:      protocol.ProtocolHash,
-		ActiveInvariantID: util.FirstNonEmpty(protocol.ActiveInvariantID, runtime.ActiveInvariantID, InvariantActiveAuthority),
+		ActiveInvariantID: firstNonEmptyString(protocol.ActiveInvariantID, runtime.ActiveInvariantID, InvariantActiveAuthority),
 	}
 }
 
@@ -115,7 +114,7 @@ func compileProtocolProjection(input PlanExecutePlannerInput, runtime RuntimeEnv
 		ContractVersion:          contract.SchemaVersion,
 		SchemaNames:              compileProtocolSchemaNames(input.Protocol.StructuredSchemaNames),
 		PhaseID:                  input.Protocol.PhaseID,
-		ParserMode:               util.FirstNonEmpty(input.Protocol.ParserMode, runtime.ParserContract, runtime.ParserTransportMode),
+		ParserMode:               firstNonEmptyString(input.Protocol.ParserMode, runtime.ParserContract, runtime.ParserTransportMode),
 		ToolTransportMode:        runtime.ToolTransportMode,
 		ParserTransportMode:      runtime.ParserTransportMode,
 		ParserContract:           runtime.ParserContract,
@@ -156,7 +155,7 @@ func compileProtocolProjection(input PlanExecutePlannerInput, runtime RuntimeEnv
 	}
 
 	if protocol.PhaseID == "" {
-		protocol.PhaseID = "plan_execute.required_source"
+		protocol.PhaseID = string(TurnPhaseRequiredSource)
 	}
 
 	if protocol.ExpectedVisibleOutput == "" {
@@ -239,7 +238,7 @@ func containsProtocolString(values []string, want string) bool {
 }
 
 func compileProtocolSchemaNames(structuredSchemas []string) []string {
-	return util.Sorted(append([]string{
+	return sortedStrings(append([]string{
 		autonomy.ContractEnvelopeSchemaVersion,
 		autonomy.ContextPacketSchemaVersion,
 		autonomy.ModelResponseSchemaVersion,
@@ -250,7 +249,7 @@ func compileCompactPacketProjection(input PlanExecutePlannerInput, contract auto
 	packet := autonomy.ContextPacket{
 		SchemaVersion:    autonomy.ContextPacketSchemaVersion,
 		ContractID:       protocol.ContractID,
-		TargetRefs:       util.Sorted(append(append([]string(nil), input.TargetRefs...), input.TargetPacket...)),
+		TargetRefs:       sortedStrings(append(append([]string(nil), input.TargetRefs...), input.TargetPacket...)),
 		PathRefs:         compileCompactPacketPathRefs(input),
 		EvidenceRefs:     compileCompactPacketEvidenceRefs(input, contract),
 		ObligationRefs:   obligationIDs(contract.Obligations),
@@ -289,7 +288,7 @@ func compileCompactPacketEvidenceRefs(input PlanExecutePlannerInput, contract au
 		}
 	}
 
-	return util.Sorted(refs)
+	return sortedStrings(refs)
 }
 
 func compileProtocolPathRoleSummary(roles []autonomy.PathRole) []string {
@@ -302,7 +301,7 @@ func compileProtocolPathRoleSummary(roles []autonomy.PathRole) []string {
 		out = append(out, string(role.Role)+":"+strings.TrimSpace(role.PathPattern))
 	}
 
-	return util.Sorted(out)
+	return sortedStrings(out)
 }
 
 func compileProtocolVerificationObligations(input PlanExecutePlannerInput) []string {
@@ -316,7 +315,7 @@ func compileProtocolVerificationObligations(input PlanExecutePlannerInput) []str
 		out = append(out, "command:"+strings.TrimSpace(command))
 	}
 
-	return util.Sorted(out)
+	return sortedStrings(out)
 }
 
 func compileProtocolSafeAlternatives(terminalShapes []string, actionClasses []string) []string {
@@ -336,7 +335,7 @@ func compileProtocolSafeAlternatives(terminalShapes []string, actionClasses []st
 		}
 	}
 
-	return util.Sorted(alternatives)
+	return sortedStrings(alternatives)
 }
 
 func compileAuthority(input PlanExecutePlannerInput, runtime RuntimeEnvelope) []autonomy.AuthoritySource {
@@ -488,7 +487,7 @@ func compileObligations(input PlanExecutePlannerInput) []autonomy.Obligation {
 	evidenceRefs = append(evidenceRefs, input.Protocol.CompletedGitHistoryPaths...)
 	evidenceRefs = append(evidenceRefs, input.Protocol.PendingGitHistoryPaths...)
 
-	for _, evidence := range util.Sorted(evidenceRefs) {
+	for _, evidence := range sortedStrings(evidenceRefs) {
 		evidence = strings.TrimSpace(evidence)
 		if evidence == "" {
 			continue
@@ -592,7 +591,7 @@ func compilePolicyDecisions(input PlanExecutePlannerInput, runtime RuntimeEnvelo
 		ReasonCode:     "passive_contract_compiled_before_dispatch",
 		ObligationRefs: obligationIDs(obligations),
 		EvidenceRefs:   []string{runtime.RuntimeContractID},
-		Source:         "internal/contracts/contractcompile",
+		Source:         "internal/contracts/compile",
 	}}
 }
 
@@ -602,7 +601,7 @@ func compileEvidence(input PlanExecutePlannerInput, runtime RuntimeEnvelope) []a
 		Kind:       "runtime_envelope",
 		Freshness:  autonomy.FreshnessFresh,
 		Confidence: "compiled",
-		Source:     "internal/contracts/contractcompile",
+		Source:     "internal/contracts/compile",
 		Summary:    "passive model runtime envelope",
 	}}
 

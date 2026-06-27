@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"idiom/internal/contracts/plan"
+	plancontract "idiom/internal/contracts/plan"
 )
 
 // Severity classifies how seriously a Finding should be treated.
@@ -118,13 +118,13 @@ func (c FileAllowlistMismatch) Run(d Diff, ctx RunContext) ([]Finding, error) {
 
 	allow := make(map[string]struct{}, len(ctx.RequiredEditPaths))
 	for _, p := range ctx.RequiredEditPaths {
-		allow[normalizePath(p)] = struct{}{}
+		allow[plancontract.NormalizeWorkspacePath(p)] = struct{}{}
 	}
 
 	var findings []Finding
 
 	for _, p := range d.ModifiedPaths() {
-		if _, ok := allow[normalizePath(p)]; !ok {
+		if _, ok := allow[plancontract.NormalizeWorkspacePath(p)]; !ok {
 			findings = append(findings, Finding{
 				Check:    c.Name(),
 				Severity: SeverityError,
@@ -231,12 +231,4 @@ func looksLikeTestFile(path string) bool {
 	}
 
 	return false
-}
-
-// normalizePath canonicalizes a path for allowlist comparison —
-// strips a leading `./`, drops trailing slashes, and replaces `\`
-// with `/` so allowlist entries don't have to anticipate Windows-
-// flavored input.
-func normalizePath(p string) string {
-	return plancontract.NormalizeWorkspacePath(p)
 }

@@ -22,8 +22,9 @@ import (
 	"time"
 
 	"idiom/internal/platform/config"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/sessionlog"
 )
 
 // clusterThreshold is the fixed low bar: a shape must occur at least this
@@ -214,7 +215,7 @@ func parseSession(path, session string, summary *sessionSummary) ([]toolCall, er
 				}
 
 				if json.Unmarshal(payload, &p) == nil && p.Role == "user" {
-					summary.FirstPrompt = p.Content
+					summary.FirstPrompt = sessionlog.SafePromptSummary(p.Content, 80)
 				}
 			}
 		case "user_turn":
@@ -224,7 +225,7 @@ func parseSession(path, session string, summary *sessionSummary) ([]toolCall, er
 				}
 
 				_ = json.Unmarshal(payload, &p)
-				summary.FirstPrompt = p.Prompt
+				summary.FirstPrompt = sessionlog.SafePromptSummary(p.Prompt, 80)
 			}
 		case "tool_request":
 			var p toolRequestPayload
@@ -560,7 +561,7 @@ func clusterByShape(calls []toolCall) []shapeCluster {
 		cl.Sessions[c.Session]++
 
 		if len(cl.Examples) < 12 {
-			cl.Examples = append(cl.Examples, util.TruncateBytes(strings.ReplaceAll(c.Raw, "\n", " "), 180, "…"))
+			cl.Examples = append(cl.Examples, textutil.TruncateBytes(strings.ReplaceAll(c.Raw, "\n", " "), 180, "…"))
 		}
 	}
 

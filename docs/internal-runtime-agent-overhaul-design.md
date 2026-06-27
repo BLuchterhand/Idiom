@@ -87,7 +87,7 @@ recovery specific to plan-execute flows.
 
 Root-level plan-execute behavior remains in this file because it depends on
 live runner state, tool surfaces, recovery cards, and phase transitions. Pure
-submit-plan decision and coverage helpers live in `plan_execute_contracts.go`
+submit-plan decision and coverage helpers live in `internal/contracts/plan/submit_plan_coverage.go`
 inside the same flat package.
 
 ### Implementation Flow
@@ -109,8 +109,8 @@ is allowed to mutate the workspace.
 | `evidence_readonly.go` | evidence and read-only closure |
 | `evidence_registry.go` | path evidence registry, snapshots, and session evidence |
 | `implementation_flow.go` | implementation flow |
+| `note_tool.go` | note tool validation and file safety |
 | `plan_execute.go` | plan-execute runtime |
-| `plan_execute_contracts.go` | plan-execute decision, coverage, and terminal-shape helpers |
 | `read_approval.go` | read-approval gate bridging the post-readiness rejection to the shared readapproval contract |
 | `runner_core.go` | runner core |
 | `tools_surface.go` | tool surface |
@@ -179,6 +179,9 @@ Use the surface owner before adding a new file:
   runner state.
 - Add to `implementation_flow.go` for mutation, safety, verification,
   workbranch, scratch-note, or implementation-lane behavior.
+- Add to `note_tool.go` only for note-tool validation, storage safety, or
+  workspace-tool adapter behavior. Do not add pass-through wrappers that only
+  rename another package's function, constant, or type.
 
 A new subfolder is acceptable only when it introduces a reusable boundary with
 more than one likely consumer, a stable public API, and tests that can run

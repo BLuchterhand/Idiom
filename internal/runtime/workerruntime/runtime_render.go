@@ -2,11 +2,10 @@ package workerruntime
 
 import (
 	"encoding/json"
-	"slices"
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 func RenderStepInstruction(instruction StepInstruction) string {
@@ -50,30 +49,30 @@ func withDeterministicDiscoveryExamples(brief WorkerRuntimeBrief) WorkerRuntimeB
 		return brief
 	}
 
-	brief.DiscoveryExamples = uniqueNonEmpty(append(brief.DiscoveryExamples,
+	brief.DiscoveryExamples = textutil.UniqueNonEmpty(append(brief.DiscoveryExamples,
 		`For broad architecture, impact, tracing, security, or history questions, the bounded discovery-packet capability is available before ad hoc list/search/read; choose purpose from the tool schema and follow with targeted reads only for named gaps.`,
 	))
 	if toolAllowedInBrief(brief.AllowedTools, workspace.ToolNameContextPack) && !discoveryExamplesWouldCompeteWithWriteReadyPacket(brief) {
-		brief.DiscoveryExamples = uniqueNonEmpty(append(brief.DiscoveryExamples,
+		brief.DiscoveryExamples = textutil.UniqueNonEmpty(append(brief.DiscoveryExamples,
 			`For repo-localization questions, call context_pack with the task string first to get a ranked cached packet of candidate files, symbols, and tests.`,
 		))
 	}
 
 	if toolAllowedInBrief(brief.AllowedTools, workspace.ToolNameContextQuery) {
-		brief.DiscoveryExamples = uniqueNonEmpty(append(brief.DiscoveryExamples,
+		brief.DiscoveryExamples = textutil.UniqueNonEmpty(append(brief.DiscoveryExamples,
 			`For graph-shaped questions (what calls X? what tests cover Y? what depends on Z?), use context_query — it answers structured questions without dumping raw files. Prefer context_query over search_content for codebase questions.`,
 		))
 	}
 
-	// Universal tool-ordering hierarchy: structured tools before text search.
-	// The ordering text adapts to which tools the lane actually has.
+	// Capability guidance adapts to which tools the lane actually has without
+	// forcing a universal investigation sequence.
 	if toolAllowedInBrief(brief.AllowedTools, workspace.ToolNameContextPack) {
-		brief.DiscoveryExamples = uniqueNonEmpty(append(brief.DiscoveryExamples,
-			`For workspace investigation prefer this order: context_pack to localize, context_query for graph questions, code_navigate for symbol bodies, read_file for bounded reads, search_content as last resort for literal text.`,
+		brief.DiscoveryExamples = textutil.UniqueNonEmpty(append(brief.DiscoveryExamples,
+			`For workspace investigation, choose the capability that matches the named gap: context_pack for localization, context_query for graph questions, code_navigate for symbol bodies, read_file for bounded reads, and search_content for exact literal text.`,
 		))
 	} else if toolAllowedInBrief(brief.AllowedTools, workspace.ToolNameContextQuery) {
-		brief.DiscoveryExamples = uniqueNonEmpty(append(brief.DiscoveryExamples,
-			`For workspace investigation prefer this order: context_query for graph and symbol questions, code_navigate for symbol bodies, read_file for bounded reads, search_content as last resort for literal text.`,
+		brief.DiscoveryExamples = textutil.UniqueNonEmpty(append(brief.DiscoveryExamples,
+			`For workspace investigation, choose the capability that matches the named gap: context_query for graph and symbol questions, code_navigate for symbol bodies, read_file for bounded reads, and search_content for exact literal text.`,
 		))
 	}
 
@@ -94,9 +93,9 @@ func discoveryExamplesWouldCompeteWithWriteReadyPacket(brief WorkerRuntimeBrief)
 		return true
 	}
 
-	if slices.Contains(state.Constraints, "implementation_packet_write_ready") ||
-		slices.Contains(state.Constraints, "exact_anchor_implementation") ||
-		slices.Contains(state.Constraints, "required_edit_paths_define_write_scope") {
+	if ConstraintPresent(state.Constraints, ConstraintImplementationPacketWriteReady) ||
+		ConstraintPresent(state.Constraints, ConstraintExactAnchorImplementation) ||
+		ConstraintPresent(state.Constraints, ConstraintRequiredEditPathsDefineWriteScope) {
 
 		return true
 	}
@@ -111,7 +110,7 @@ func toolAllowedInBrief(tools []string, want string) bool {
 	}
 
 	for _, tool := range tools {
-		if util.EqualTrimFold(tool, want) {
+		if textutil.EqualTrimFold(tool, want) {
 			return true
 		}
 	}
@@ -171,7 +170,7 @@ func compactEvidenceCapabilitySummary(manifest []ToolManifestEntry) []string {
 		summary = append(summary, formatEvidenceCapabilitySummary(capability, *info))
 	}
 
-	return uniqueNonEmpty(summary)
+	return textutil.UniqueNonEmpty(summary)
 }
 
 func evidenceCapabilityDisplayOrder() []string {
@@ -196,7 +195,7 @@ func evidenceCapabilityDisplayOrder() []string {
 func formatEvidenceCapabilitySummary(capability string, info evidenceCapabilitySummaryInfo) string {
 	parts := []string{strings.TrimSpace(capability)}
 	if len(info.classes) > 0 {
-		parts = append(parts, strings.Join(uniqueNonEmpty(info.classes), "+"))
+		parts = append(parts, strings.Join(textutil.UniqueNonEmpty(info.classes), "+"))
 	}
 
 	if len(parts) == 1 {
@@ -277,22 +276,22 @@ func recoveryStateSummary(reason string, tool string, target string, result work
 	}
 
 	if summary := strings.TrimSpace(result.Summary); summary != "" {
-		parts = append(parts, "summary: "+util.Truncate(summary, 180))
+		parts = append(parts, "summary: "+textutil.Truncate(summary, 180))
 	}
 
 	if errText := strings.TrimSpace(result.Error); errText != "" {
-		parts = append(parts, "error: "+util.Truncate(errText, 220))
+		parts = append(parts, "error: "+textutil.Truncate(errText, 220))
 	}
 
 	if len(evidencePaths) > 0 {
-		parts = append(parts, "evidence: "+strings.Join(uniqueNonEmpty(evidencePaths), ", "))
+		parts = append(parts, "evidence: "+strings.Join(textutil.UniqueNonEmpty(evidencePaths), ", "))
 	}
 
-	return strings.Join(uniqueNonEmpty(parts), "; ")
+	return strings.Join(textutil.UniqueNonEmpty(parts), "; ")
 }
 
 func ToolRequestTarget(req workspace.ToolRequest) string {
-	target := firstNonEmpty(
+	target := textutil.FirstNonEmpty(
 		strings.TrimSpace(req.Path),
 		strings.TrimSpace(req.ID),
 		strings.TrimSpace(req.Destination),
@@ -303,7 +302,7 @@ func ToolRequestTarget(req workspace.ToolRequest) string {
 		strings.TrimSpace(req.Command),
 	)
 
-	return util.Truncate(target, 180)
+	return textutil.Truncate(target, 180)
 }
 
 func combinedLower(parts ...string) string {
@@ -357,7 +356,7 @@ func zeroHitText(text string) bool {
 }
 
 func containsAny(value string, needles ...string) bool {
-	return util.ContainsAny(value, needles...)
+	return textutil.ContainsAny(value, needles...)
 }
 
 func appendUnique(values []string, value string) []string {
@@ -382,16 +381,4 @@ func mergeStrings(base []string, extra []string) []string {
 	}
 
 	return out
-}
-
-func uniqueNonEmpty(values []string) []string {
-	return util.UniqueNonEmpty(values)
-}
-
-func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
-	return workspace.SanitizeToolManifestRequests(workspace.BuildToolManifest(allowedTools))
-}
-
-func firstNonEmpty(values ...string) string {
-	return util.FirstNonEmpty(values...)
 }

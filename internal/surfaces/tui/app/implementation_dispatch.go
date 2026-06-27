@@ -14,11 +14,15 @@ import (
 	"time"
 
 	"idiom/internal/contracts/pathparse"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/platform/config"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/safepath"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/surfaces/tui/implementationdispatch"
 	"idiom/internal/workflows/featureplanner"
+	"idiom/internal/workflows/planexecute"
+	"idiom/internal/workflows/recovery"
 )
 
 type implementationDispatchPlanDocument = implementationdispatch.PlanDocument
@@ -58,12 +62,7 @@ type implementationDispatchPlanDocumentAtom struct {
 	TestObligations []string
 }
 
-type implementationDispatchRecoveryDecision struct {
-	Decision      string `json:"decision"`
-	Reason        string `json:"reason"`
-	Message       string `json:"message"`
-	RetryAddendum string `json:"retry_addendum"`
-}
+type implementationDispatchRecoveryDecision = recovery.PlanExecuteRecoveryDecision
 
 var implementationDispatchPlanDocumentPreflightRunner = defaultImplementationDispatchPlanDocumentPreflight
 var implementationDispatchPlanDocumentRefineRunner = defaultImplementationDispatchPlanDocumentRefine
@@ -790,7 +789,7 @@ func implementationDispatchBriefLintBlockers(cmd implementationDispatchPreflight
 	var blockers []string
 
 	for _, finding := range report.Findings {
-		if util.EqualTrimFold(finding.Severity, "WARN") || util.EqualTrimFold(finding.Severity, "INFO") {
+		if textutil.EqualTrimFold(finding.Severity, "WARN") || textutil.EqualTrimFold(finding.Severity, "INFO") {
 			continue
 		}
 
@@ -821,7 +820,7 @@ func implementationDispatchBriefLintWarnings(cmd implementationDispatchPreflight
 	var warnings []string
 
 	for _, finding := range report.Findings {
-		if !util.EqualTrimFold(finding.Severity, "WARN") {
+		if !textutil.EqualTrimFold(finding.Severity, "WARN") {
 			continue
 		}
 
@@ -2215,7 +2214,7 @@ func implementationDispatchAtomDocumentStatus(content string) (string, bool) {
 
 		parts := strings.SplitN(line, ":", 2)
 
-		if len(parts) != 2 || !util.EqualTrimFold(parts[0], "status") {
+		if len(parts) != 2 || !textutil.EqualTrimFold(parts[0], "status") {
 			continue
 		}
 
@@ -3034,12 +3033,17 @@ func implementationDispatchMarkPreflightSourceSatisfiedAtomDocuments(cfg config.
 }
 
 func implementationDispatchMarkCompletedAtomDocument(cfg config.Config, doc implementationDispatchPlanDocument, answer string) {
+	implementationDispatchMarkCompletedAtomDocumentForResult(cfg, doc, answer, nil)
+}
+
+func implementationDispatchMarkCompletedAtomDocumentForResult(cfg config.Config, doc implementationDispatchPlanDocument, answer string, result *planexecute.RunResult) {
 	root := implementationDispatchWorkspaceRoot(cfg)
 	if strings.TrimSpace(root) == "" {
 		return
 	}
 
-	if implementationDispatchAnswerLooksBlocked(answer) {
+	if implementationDispatchPlanExecuteResultBlocksAtomCompletion(result) ||
+		(result == nil && implementationDispatchAnswerLooksBlocked(answer)) {
 		return
 	}
 
@@ -3056,6 +3060,26 @@ func implementationDispatchMarkCompletedAtomDocument(cfg config.Config, doc impl
 	}
 
 	implementationDispatchCloseAtomDocument(root, doc.Path, status, summary, implementationDispatchCloseoutEvidenceFromAnswer(answer))
+}
+
+func implementationDispatchPlanExecuteResultBlocksAtomCompletion(result *planexecute.RunResult) bool {
+	if result == nil {
+		return false
+	}
+	if result.ExitCode != 0 || strings.TrimSpace(result.FailureKind) != "" || strings.TrimSpace(result.FailureReason) != "" {
+		return true
+	}
+	if result.Completion == nil {
+		return false
+	}
+
+	record := plancontract.NormalizePlanExecuteTerminalCompletionRecord(*result.Completion)
+	if len(record.ValidationFailures) > 0 {
+		return true
+	}
+
+	terminalClass, _ := plancontract.ClassifyPlanExecuteTerminalCompletion(record)
+	return terminalClass != plancontract.PlanExecuteTerminalClassSuccess
 }
 
 func implementationDispatchCloseAtomDocument(root string, relPath string, status string, summary string, evidence []string) {
@@ -3091,7 +3115,7 @@ func implementationDispatchSetAtomStatusLine(content string, status string) stri
 		trimmed := strings.Trim(strings.TrimSpace(line), "* ")
 		parts := strings.SplitN(trimmed, ":", 2)
 
-		if len(parts) == 2 && util.EqualTrimFold(parts[0], "status") {
+		if len(parts) == 2 && textutil.EqualTrimFold(parts[0], "status") {
 			lines[i] = statusLine
 			return strings.Join(lines, "\n")
 		}
@@ -3685,30 +3709,15 @@ func implementationDispatchWorkspaceRoot(cfg config.Config) string {
 }
 
 func implementationDispatchWorkspaceFile(root string, rel string) (string, bool) {
-	root = strings.TrimSpace(root)
-	rel = strings.TrimSpace(rel)
-
-	if root == "" || rel == "" || filepath.IsAbs(rel) {
+	if strings.TrimSpace(rel) == "" || filepath.IsAbs(rel) {
 		return "", false
 	}
 
-	cleanRel := filepath.Clean(rel)
-	if cleanRel == "." || cleanRel == ".." || strings.HasPrefix(cleanRel, ".."+string(filepath.Separator)) {
-		return "", false
-	}
-
-	rootAbs, err := filepath.Abs(root)
+	abs, _, err := safepath.UnderRoot(root, rel, "implementation dispatch workspace file", safepath.Options{
+		AllowMissing:           true,
+		RejectSymlinkAncestors: true,
+	})
 	if err != nil {
-		return "", false
-	}
-
-	abs, err := filepath.Abs(filepath.Join(rootAbs, cleanRel))
-	if err != nil {
-		return "", false
-	}
-
-	back, err := filepath.Rel(rootAbs, abs)
-	if err != nil || back == ".." || strings.HasPrefix(back, ".."+string(filepath.Separator)) {
 		return "", false
 	}
 

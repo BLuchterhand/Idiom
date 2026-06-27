@@ -18,11 +18,11 @@ import (
 	"time"
 
 	"idiom/internal/capabilities/workspace"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/evidence/auditenum"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
-	"idiom/internal/surfaces/cli/config"
-	toolcmd "idiom/internal/surfaces/cli/tool"
+	cmdconfig "idiom/internal/surfaces/cli/config"
 )
 
 const auditWatchPacketSchemaVersion = "idiom.audit_watch_packet.v1"
@@ -859,13 +859,13 @@ func auditWatchRecoverySummaryFromTriggers(triggers []auditWatchTriggerFile) *au
 			summary.EventCount++
 
 			switch event.Type {
-			case "idiom.plan_execute.recovery_failure_record_written":
+			case plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventRecoveryFailureRecordWritten):
 				summary.FailureRecordCount++
-			case "idiom.plan_execute.recovery_decomposition_packet_written":
+			case plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventRecoveryDecompositionWritten):
 				summary.DecompositionPacketCount++
 
 				summary.CandidateAtomCount += event.CandidateAtoms
-			case "idiom.plan_execute.recovery_failure_record_failed", "idiom.plan_execute.recovery_decomposition_packet_failed":
+			case plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventRecoveryFailureRecordFailed), plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventRecoveryDecompositionFailed):
 				summary.FailedRecoveryEventCount++
 
 				summary.Status = "blocked"
@@ -1296,7 +1296,7 @@ func auditWatchTriggerReasons(record map[string]any) []string {
 	}
 
 	switch eventType {
-	case "idiom.plan_execute.recovery_failure_record_written":
+	case plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventRecoveryFailureRecordWritten):
 		class := auditWatchString(record, "failure_class")
 		if class == "" {
 			class = "unknown_failure"
@@ -1305,9 +1305,9 @@ func auditWatchTriggerReasons(record map[string]any) []string {
 		}
 
 		reasons = append(reasons, "recovery_failure_record_written:"+class)
-	case "idiom.plan_execute.recovery_decomposition_packet_written":
+	case plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventRecoveryDecompositionWritten):
 		reasons = append(reasons, "recovery_decomposition_packet_written")
-	case "idiom.plan_execute.recovery_failure_record_failed", "idiom.plan_execute.recovery_decomposition_packet_failed":
+	case plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventRecoveryFailureRecordFailed), plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventRecoveryDecompositionFailed):
 		reasons = append(reasons, "recovery_artifact_write_failed")
 	}
 
@@ -1333,13 +1333,13 @@ func auditWatchRecoveryEventForRecord(record map[string]any) (auditWatchRecovery
 	artifactPath := ""
 
 	switch eventType {
-	case "idiom.plan_execute.recovery_failure_record_written":
+	case plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventRecoveryFailureRecordWritten):
 		status = "recorded"
 		artifactPath = auditWatchString(record, "record_path")
-	case "idiom.plan_execute.recovery_decomposition_packet_written":
+	case plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventRecoveryDecompositionWritten):
 		status = "decomposed"
 		artifactPath = auditWatchString(record, "packet_path")
-	case "idiom.plan_execute.recovery_failure_record_failed", "idiom.plan_execute.recovery_decomposition_packet_failed":
+	case plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventRecoveryFailureRecordFailed), plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventRecoveryDecompositionFailed):
 		status = "artifact_write_failed"
 		artifactPath = firstAuditWatchString(auditWatchString(record, "record_path"), auditWatchString(record, "packet_path"))
 	default:
@@ -1459,7 +1459,14 @@ func auditWatchSensitiveJSONKey(key string) bool {
 		strings.Contains(lower, "file_body") ||
 		strings.Contains(lower, "secret") ||
 		strings.Contains(lower, "api_key") ||
-		strings.Contains(lower, "password")
+		strings.Contains(lower, "password") ||
+		strings.Contains(lower, "token") ||
+		strings.Contains(lower, "authorization") ||
+		strings.Contains(lower, "credential") ||
+		strings.Contains(lower, "private_key") ||
+		strings.Contains(lower, "private-key") ||
+		strings.Contains(lower, "client_secret") ||
+		strings.Contains(lower, "client-secret")
 }
 
 func auditWatchSanitizeText(root string, value string, limit int) string {
@@ -1874,5 +1881,5 @@ func auditWatchHelpRequested(args []string) bool {
 }
 
 func logAuditPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	toolcmd.LogCLIPhase(rec, eventType, fields)
+	telemetry.LogPhase(rec, eventType, fields)
 }

@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"idiom/internal/surfaces/tui/app"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/workflows/postflight"
 )
 
@@ -102,7 +102,7 @@ func runLanePostflight(args []string, stdout io.Writer, stderr io.Writer) int {
 			return 1
 		}
 
-		allow = app.RequiredEditPathsFromPrompt(string(body))
+		allow = plancontract.RequiredEditPathsFromPrompt(string(body))
 	}
 
 	checks := postflight.GenericChecks()

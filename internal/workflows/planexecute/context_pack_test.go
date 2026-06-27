@@ -8,9 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
-	"idiom/internal/contracts/plan"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/platform/config"
 )
 
@@ -34,7 +33,7 @@ func TestComposePlannerPromptWithContextPackScopesBriefBody(t *testing.T) {
 }
 
 func TestPromptContextPackNeedsFreshnessRecovery(t *testing.T) {
-	cases := []workspace.ToolResult{
+	cases := []PromptContextToolResult{
 		{Tool: "context_pack", Error: "freshness_blocker"},
 		{Tool: "context_pack", Summary: "context_pack blocked by context freshness (stale_unbounded_graph)"},
 		{Tool: "context_pack", Output: `{"error":"freshness_blocker"}`},
@@ -45,7 +44,7 @@ func TestPromptContextPackNeedsFreshnessRecovery(t *testing.T) {
 		}
 	}
 
-	if promptContextPackNeedsFreshnessRecovery(workspace.ToolResult{Tool: "context_pack", Summary: "Context pack wrote view"}) {
+	if promptContextPackNeedsFreshnessRecovery(PromptContextToolResult{Tool: "context_pack", Summary: "Context pack wrote view"}) {
 		t.Fatal("successful context_pack summary should not trigger freshness recovery")
 	}
 }
@@ -179,15 +178,15 @@ func TestPlanExecuteAllowedEditPathsIncludesPromptAllowedScope(t *testing.T) {
   "allowed_edit_paths": ["pkg/target.go"],
   "evidence": ["pkg/evidence.go"]
 }`
-	required := planExecuteRequiredEditPaths(Options{}, prompt)
+	required := planExecuteScopeContract(Options{}, prompt).RequiredCoveragePaths
 
 	if len(required) != 0 {
 		t.Fatalf("allowed_edit_paths must not define required coverage, got %#v", required)
 	}
 
-	allowed := planExecuteAllowedEditPaths(Options{
+	allowed := planExecuteScopeContract(Options{
 		AllowedEditPaths: []string{"pkg/explicit.go"},
-	}, prompt)
+	}, prompt).AllowedCandidatePaths
 	for _, want := range []string{"pkg/explicit.go", "pkg/target.go"} {
 		if !slices.Contains(allowed, want) {
 			t.Fatalf("missing allowed path %q, got %#v", want, allowed)
@@ -202,12 +201,12 @@ func TestPlanExecuteAllowedEditPathsIncludesPromptAllowedScope(t *testing.T) {
 func TestPlanExecuteAllowedEditPathsIncludesInlineNaturalLanguageScope(t *testing.T) {
 	prompt := "Implement the behavior, but only edit pkg/feature.go and pkg/feature_test.go. Use pkg/evidence.go as read-only evidence."
 
-	required := planExecuteRequiredEditPaths(Options{}, prompt)
+	required := planExecuteScopeContract(Options{}, prompt).RequiredCoveragePaths
 	if len(required) != 0 {
 		t.Fatalf("inline candidate scope must not define required coverage, got %#v", required)
 	}
 
-	allowed := planExecuteAllowedEditPaths(Options{}, prompt)
+	allowed := planExecuteScopeContract(Options{}, prompt).AllowedCandidatePaths
 	for _, want := range []string{"pkg/feature.go", "pkg/feature_test.go"} {
 		if !slices.Contains(allowed, want) {
 			t.Fatalf("missing inline allowed path %q, got %#v", want, allowed)
@@ -219,16 +218,58 @@ func TestPlanExecuteAllowedEditPathsIncludesInlineNaturalLanguageScope(t *testin
 	}
 }
 
+func TestPlanExecuteScopeContractDoesNotReinferPromptObligationsWhenTypedScopePresent(t *testing.T) {
+	prompt := strings.Join([]string{
+		"## Context Pack",
+		"",
+		"Generated context mentions feature fallback and add tests.",
+		"",
+		pathparse.WrapBriefBody("# Objective\n\nImplement the feature and add tests."),
+	}, "\n")
+	opts := Options{
+		ScopeContract: plancontract.NewPlanScopeContract(nil, []string{"pkg/feature.go", "pkg/feature_test.go"}, nil),
+	}
+
+	contract := planExecuteScopeContract(opts, prompt)
+	if len(contract.EditSetObligations) != 0 {
+		t.Fatalf("typed scope owns edit-set obligations; prompt prose must not re-infer them: %#v", contract.EditSetObligations)
+	}
+}
+
+func TestPlanExecuteScopeContractPreservesTypedObligationSources(t *testing.T) {
+	opts := Options{
+		ScopeContract: plancontract.PlanScopeContract{
+			EditSetObligations: plancontract.EditSetObligations{{Kind: plancontract.EditSetObligationKindTestEdit}},
+		},
+		EditSetObligations: plancontract.EditSetObligations{{Kind: plancontract.EditSetObligationKindImplementationEdit}},
+	}
+
+	contract := planExecuteScopeContract(opts, "")
+	got := map[plancontract.EditSetObligationKind]string{}
+
+	for _, obligation := range contract.EditSetObligations {
+		got[obligation.Kind] = obligation.Source
+	}
+
+	if got[plancontract.EditSetObligationKindTestEdit] != "scope_contract" {
+		t.Fatalf("scope contract obligation source = %q, want scope_contract; obligations=%#v", got[plancontract.EditSetObligationKindTestEdit], contract.EditSetObligations)
+	}
+
+	if got[plancontract.EditSetObligationKindImplementationEdit] != "options" {
+		t.Fatalf("options obligation source = %q, want options; obligations=%#v", got[plancontract.EditSetObligationKindImplementationEdit], contract.EditSetObligations)
+	}
+}
+
 func TestPlanExecuteEditableFilesHeadingIsCandidateScopeOnly(t *testing.T) {
 	prompt := `Editable Files:
 - pkg/feature.go
 - pkg/feature_test.go
 `
-	if required := planExecuteRequiredEditPaths(Options{}, prompt); len(required) != 0 {
+	if required := planExecuteScopeContract(Options{}, prompt).RequiredCoveragePaths; len(required) != 0 {
 		t.Fatalf("editable files must not define required coverage, got %#v", required)
 	}
 
-	allowed := planExecuteAllowedEditPaths(Options{}, prompt)
+	allowed := planExecuteScopeContract(Options{}, prompt).AllowedCandidatePaths
 	for _, want := range []string{"pkg/feature.go", "pkg/feature_test.go"} {
 		if !slices.Contains(allowed, want) {
 			t.Fatalf("editable files heading missing allowed path %q, got %#v", want, allowed)
@@ -239,11 +280,11 @@ func TestPlanExecuteEditableFilesHeadingIsCandidateScopeOnly(t *testing.T) {
 func TestPlanExecuteUnscopedObjectiveMentionedPathsBecomeCandidateScope(t *testing.T) {
 	prompt := "Add the atom_spec lane to cmd/idiom/lane.go and the registry in internal/runtime/agent/runner_plan_then_execute_guard.go."
 
-	if required := planExecuteRequiredEditPaths(Options{}, prompt); len(required) != 0 {
+	if required := planExecuteScopeContract(Options{}, prompt).RequiredCoveragePaths; len(required) != 0 {
 		t.Fatalf("plain objective path mentions must not define required coverage, got %#v", required)
 	}
 
-	allowed := planExecuteAllowedEditPaths(Options{}, prompt)
+	allowed := planExecuteScopeContract(Options{}, prompt).AllowedCandidatePaths
 	for _, want := range []string{"cmd/idiom/lane.go", "internal/runtime/agent/runner_plan_then_execute_guard.go"} {
 		if !slices.Contains(allowed, want) {
 			t.Fatalf("missing objective-mentioned candidate path %q, got %#v", want, allowed)
@@ -316,7 +357,7 @@ func mustWritePlanExecuteTestFile(t *testing.T, root string, rel string, body st
 }
 
 func TestPlanScopeContractIDTracksNormalizedContent(t *testing.T) {
-	contract := NewPlanScopeContract([]string{"pkg/a.go"}, nil, nil)
+	contract := plancontract.NewPlanScopeContract([]string{"pkg/a.go"}, nil, nil)
 	originalID := contract.ContractID
 
 	contract.ContractID = "stale"
@@ -335,20 +376,20 @@ func TestPlanExecuteEditSetObligationsDoNotPromoteAllowedPathsToRequiredPaths(t 
 - pkg/feature.go
 - pkg/feature_test.go
 `
-	required := planExecuteRequiredEditPaths(Options{}, prompt)
+	required := planExecuteScopeContract(Options{}, prompt).RequiredCoveragePaths
 
 	if len(required) != 0 {
 		t.Fatalf("edit-set obligations and allowed scope must not define required paths, got %#v", required)
 	}
 
-	allowed := planExecuteAllowedEditPaths(Options{}, prompt)
+	allowed := planExecuteScopeContract(Options{}, prompt).AllowedCandidatePaths
 	for _, want := range []string{"pkg/feature.go", "pkg/feature_test.go"} {
 		if !slices.Contains(allowed, want) {
 			t.Fatalf("missing allowed path %q, got %#v", want, allowed)
 		}
 	}
 
-	obligations := planExecuteEditSetObligations(Options{}, prompt)
+	obligations := planExecuteScopeContract(Options{}, prompt).EditSetObligations
 	if len(obligations) != 0 {
 		t.Fatalf("prompt prose must not create edit-set obligations, got %#v", obligations)
 	}
@@ -433,7 +474,7 @@ func TestRenderPromptContextPackSectionOmitsCacheArtifactPath(t *testing.T) {
   ]
 }`
 
-	section, err := RenderPromptContextPackSection(workspace.ToolResult{
+	section, err := RenderPromptContextPackSection(PromptContextToolResult{
 		Tool:    "context_pack",
 		Summary: "Context pack wrote .idiom/comprehension/views/abc123.json with 1 candidate file(s)",
 		Output:  output,
@@ -504,7 +545,7 @@ func TestRenderPromptContextPackSectionIncludesQualityInPreload(t *testing.T) {
   ]
 }`
 
-	section, err := RenderPromptContextPackSectionWithOptions(workspace.ToolResult{
+	section, err := RenderPromptContextPackSectionWithOptions(PromptContextToolResult{
 		Tool:    "context_pack",
 		Summary: "Context pack wrote .idiom/comprehension/views/abc123.json with 2 candidate file(s)",
 		Output:  output,
@@ -542,7 +583,7 @@ func TestRenderPromptContextPackSectionIncludesQualityInPreload(t *testing.T) {
 }
 
 func TestRenderPromptContextPackSectionAddsFallbackWhenNoTargets(t *testing.T) {
-	section, err := RenderPromptContextPackSection(workspace.ToolResult{
+	section, err := RenderPromptContextPackSection(PromptContextToolResult{
 		Tool:    "context_pack",
 		Summary: "Context pack wrote .idiom/comprehension/views/empty.json with 0 candidate file(s)",
 		Output:  `{"pack_id":"empty","candidate_files":[],"candidate_symbols":[],"tests":[]}`,
@@ -608,7 +649,7 @@ func TestBuildPromptContextPackSectionSeedsRequiredEditPaths(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	section := BuildPromptContextPackSection(config.Config{Workspace: config.Workspace{Root: root, CWD: root}}, PromptContextPackOptions{
+	section := buildPromptContextPackSectionForTest(config.Config{Workspace: config.Workspace{Root: root, CWD: root}}, PromptContextPackOptions{
 		Mode:              "plan-execute",
 		Title:             "Plan-execute atom",
 		Brief:             brief,

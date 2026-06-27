@@ -620,4 +620,3 @@ func (b *graphBuilder) addGDScriptIndex(ctx context.Context, root string, repoID
 
 	return filesIndexed, symbolsIndexed, nil
 }
-

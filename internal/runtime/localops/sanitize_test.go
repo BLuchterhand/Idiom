@@ -123,7 +123,7 @@ func TestRedactForbiddenStringsRedactsMapStringAnyValuesAndKeys(t *testing.T) {
 }
 
 func TestTaskEvidenceClassifiesSensitiveTaskWithoutRawCapture(t *testing.T) {
-	got := TaskEvidence("CustomerX-private-repo secret abc123 /workspace/project")
+	got := TaskEvidence("CustomerX-private-repo secret=abc123 /workspace/project")
 	if got.RawTaskCaptured {
 		t.Fatalf("task evidence must not capture raw task: %#v", got)
 	}

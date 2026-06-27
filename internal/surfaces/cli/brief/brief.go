@@ -14,7 +14,6 @@ import (
 	"strings"
 
 	"idiom/internal/evidence/telemetry"
-	toolcmd "idiom/internal/surfaces/cli/tool"
 	"idiom/internal/surfaces/cliassets"
 )
 
@@ -670,5 +669,5 @@ func writeEmbeddedBriefPreflight() (path string, cleanup func(), err error) {
 }
 
 func logBriefPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	toolcmd.LogCLIPhase(rec, eventType, fields)
+	telemetry.LogPhase(rec, eventType, fields)
 }

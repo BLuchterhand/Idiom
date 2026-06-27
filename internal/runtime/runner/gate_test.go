@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	queuecontract "idiom/internal/contracts/queue"
 )
 
 func TestMaybeAcquireNoOpWhenDaemonAbsent(t *testing.T) {
@@ -45,8 +47,8 @@ func TestMaybeAcquireWithResultReportsUnavailableWhenDaemonAbsent(t *testing.T) 
 	defer cancel()
 
 	result := MaybeAcquireWithResult(ctx, missing, "qwen-35b", "label", "test", nil)
-	if result.State != MaybeAcquireStateUnavailable {
-		t.Fatalf("State = %q, want %q", result.State, MaybeAcquireStateUnavailable)
+	if result.State != queuecontract.AdmissionStateUnavailable {
+		t.Fatalf("State = %q, want %q", result.State, queuecontract.AdmissionStateUnavailable)
 	}
 
 	if result.Err != nil {
@@ -123,8 +125,8 @@ func TestMaybeAcquireWithResultReportsAcquiredWhenSlotGranted(t *testing.T) {
 		t.Fatalf("MaybeAcquireWithResult: %v", result.Err)
 	}
 
-	if result.State != MaybeAcquireStateAcquired {
-		t.Fatalf("State = %q, want %q", result.State, MaybeAcquireStateAcquired)
+	if result.State != queuecontract.AdmissionStateAcquired {
+		t.Fatalf("State = %q, want %q", result.State, queuecontract.AdmissionStateAcquired)
 	}
 
 	if result.Release == nil {
@@ -246,6 +248,22 @@ func TestMaybeAcquireSkipsWhenAncestorHoldsPool(t *testing.T) {
 	}
 }
 
+func TestMaybeAcquireWithResultReportsNestedSamePoolState(t *testing.T) {
+	t.Setenv(HeldPoolsEnv, "qwen-coder")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	result := MaybeAcquireWithResult(ctx, "unused.sock", "qwen-coder", "child", "test-child", nil)
+	if result.State != queuecontract.AdmissionStateNestedSamePool {
+		t.Fatalf("State = %q, want %q", result.State, queuecontract.AdmissionStateNestedSamePool)
+	}
+	if result.Reason != string(queuecontract.ReasonClassNestedSamePool) {
+		t.Fatalf("Reason = %q, want %q", result.Reason, queuecontract.ReasonClassNestedSamePool)
+	}
+	result.Release()
+}
+
 func TestMaybeAcquireSkipsCrossPoolNestedAcquire(t *testing.T) {
 	// Cross-pool nested acquire: IDIOM_QUEUE_HELD_POOLS lists pool
 	// A; nested call requests pool B. The previous behavior was to
@@ -298,6 +316,22 @@ func TestMaybeAcquireSkipsCrossPoolNestedAcquire(t *testing.T) {
 	if len(snap.Waiting) != 0 {
 		t.Fatalf("nested call must not appear as a waiter; got %+v", snap.Waiting)
 	}
+}
+
+func TestMaybeAcquireWithResultReportsNestedCrossPoolState(t *testing.T) {
+	t.Setenv(HeldPoolsEnv, "qwen-35b")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	result := MaybeAcquireWithResult(ctx, "unused.sock", "qwen-coder", "child", "test-child", nil)
+	if result.State != queuecontract.AdmissionStateNestedCrossPool {
+		t.Fatalf("State = %q, want %q", result.State, queuecontract.AdmissionStateNestedCrossPool)
+	}
+	if result.Reason != string(queuecontract.ReasonClassNestedCrossPool) {
+		t.Fatalf("Reason = %q, want %q", result.Reason, queuecontract.ReasonClassNestedCrossPool)
+	}
+	result.Release()
 }
 
 func TestPoolHeldByAncestorParsesColonList(t *testing.T) {

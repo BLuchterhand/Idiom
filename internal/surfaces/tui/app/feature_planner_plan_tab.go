@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	featureplannercontract "idiom/internal/contracts/featureplanner"
 	"idiom/internal/workflows/featureplanner"
 )
 
@@ -64,7 +65,7 @@ func (m *Model) writeFeaturePlannerPlanTabArtifact(state featureplanner.FeatureS
 	m.planContent = ""
 	m.planLoadError = ""
 	m.renderPlanPanelContent()
-	m.logFeaturePlannerInternalEvent("idiom.feature_planner.plan_tab_updated", featurePlannerDisplayPath(m.projectRoot(), path))
+	m.logFeaturePlannerInternalEvent(featureplannercontract.EventName(featureplannercontract.EventPlanTabUpdated), featurePlannerDisplayPath(m.projectRoot(), path))
 
 	return featurePlannerRelPath(m.projectRoot(), path), nil
 }
@@ -299,7 +300,7 @@ func writeFeaturePlannerPlanTabVerificationClosures(b *strings.Builder, closures
 	b.WriteString("## Verification Closures\n\n")
 	for _, closure := range closures {
 		title := firstNonEmptyFeaturePlannerPlanText(closure.AtomID, closure.EventID, "atom")
-		fmt.Fprintf(b, "- %s: %s", title, featurePlannerInlineMarkdown(closure.Status))
+		fmt.Fprintf(b, "- %s: %s", title, featurePlannerInlineMarkdown(string(closure.Status)))
 		if closure.PlanRevision > 0 {
 			fmt.Fprintf(b, " (plan r%d)", closure.PlanRevision)
 		}
@@ -344,7 +345,7 @@ func featurePlannerVerificationClosuresForPlan(plan featureplanner.FeaturePlan, 
 func featurePlannerReleaseReadinessForPlan(plan featureplanner.FeaturePlan, decision featureplanner.ReleaseReadinessDecision) (featureplanner.ReleaseReadinessDecision, bool) {
 	artifactID := strings.TrimSpace(plan.Artifact.ArtifactID)
 	digest := strings.TrimSpace(plan.Artifact.Digest)
-	if artifactID == "" || digest == "" || strings.TrimSpace(decision.Status) == "" {
+	if artifactID == "" || digest == "" || strings.TrimSpace(string(decision.Status)) == "" {
 		return featureplanner.ReleaseReadinessDecision{}, false
 	}
 	if strings.TrimSpace(decision.PlanArtifactID) != artifactID || strings.TrimSpace(decision.PlanDigest) != digest {
@@ -354,12 +355,12 @@ func featurePlannerReleaseReadinessForPlan(plan featureplanner.FeaturePlan, deci
 }
 
 func writeFeaturePlannerPlanTabReleaseReadiness(b *strings.Builder, decision featureplanner.ReleaseReadinessDecision) {
-	if strings.TrimSpace(decision.Status) == "" {
+	if strings.TrimSpace(string(decision.Status)) == "" {
 		return
 	}
 
 	b.WriteString("## Release Readiness\n\n")
-	fmt.Fprintf(b, "- Status: %s\n", featurePlannerInlineMarkdown(decision.Status))
+	fmt.Fprintf(b, "- Status: %s\n", featurePlannerInlineMarkdown(string(decision.Status)))
 	if decision.EventID != "" {
 		fmt.Fprintf(b, "- Decision: %s\n", featurePlannerInlineMarkdown(decision.EventID))
 	}

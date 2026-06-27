@@ -11,15 +11,15 @@
   "status": "pass",
   "findings": [],
   "checks": {
-    "scope_adherence": "pass: only 4 expected files changed, no forbidden files touched",
-    "forbidden_file_check": "pass: types.go, validate.go, main.go, design doc unchanged",
-    "code_quality": "pass: clean Go, no comments, no spillover, proper error handling",
-    "test_coverage": "pass: 9 store tests + 3 CLI tests, all pass",
-    "full_suite": "pass: go test ./... all green",
-    "product_lint": "pass: 0 findings over 72 durable files",
-    "privacy_scan": "pass: no secrets in new files",
-    "json_jsonl_validation": "pass: all durable artifacts valid",
-    "whitespace_check": "pass: git diff --check clean"
+    "scope_adherence": "passed",
+    "forbidden_file_check": "passed",
+    "code_quality": "passed",
+    "test_coverage": "passed",
+    "full_suite": "passed",
+    "product_lint": "passed",
+    "privacy_scan": "passed",
+    "json_jsonl_validation": "passed",
+    "whitespace_check": "passed"
   },
   "reviewed_at": "2026-05-17T22:12:00Z",
   "commands_reviewed": [

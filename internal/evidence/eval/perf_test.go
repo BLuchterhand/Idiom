@@ -348,6 +348,19 @@ func TestAnalyzeLogIngestsLocalOpsTelemetryFields(t *testing.T) {
 	}
 }
 
+func TestAnalyzeLogCountsPlanExecuteQueueEvents(t *testing.T) {
+	rep := analyzeRecords("test", []Record{{
+		Type: "idiom.plan_execute.queue_unavailable",
+		Data: map[string]any{"state": "unavailable", "pool": "qwen-coder", "wait_ms": 17, "degraded": true},
+	}})
+	if rep.LocalOps == nil {
+		t.Fatal("expected local ops telemetry summary")
+	}
+	if rep.LocalOps.QueueEvents != 1 || rep.LocalOps.QueueDegraded != 1 || rep.LocalOps.QueueMaxWaitMillis != 17 {
+		t.Fatalf("unexpected queue telemetry: %#v", rep.LocalOps)
+	}
+}
+
 func TestDetectPromptSurfaceOverlap(t *testing.T) {
 	records := []Record{
 		{Type: "session_start", Data: map[string]any{

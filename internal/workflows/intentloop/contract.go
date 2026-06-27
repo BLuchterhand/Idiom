@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"idiom/internal/contracts/plan"
+	plancontract "idiom/internal/contracts/plan"
 )
 
 const typedPlanExecutionContractMarker = "Typed plan execution contract:"

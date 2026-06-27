@@ -93,7 +93,7 @@ func TestPlanExecuteScopeIntakeReferenceMarkdownDoesNotBecomeRequired(t *testing
 	}
 }
 
-func TestPlanExecuteScopeIntakeAuthorizesOnlyExplicitNewFilePaths(t *testing.T) {
+func TestPlanExecuteScopeIntakeAuthorizesOnlyTypedRuntimeBriefNewFilePaths(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.Default()
 	cfg.Workspace.Root = root
@@ -107,8 +107,19 @@ func TestPlanExecuteScopeIntakeAuthorizesOnlyExplicitNewFilePaths(t *testing.T) 
 	if !slices.Contains(explicit.RequiredTargets, "docs/new-note.md") {
 		t.Fatalf("explicit new file path missing from required targets: %#v", explicit.RequiredTargets)
 	}
-	if !slices.Contains(explicit.AuthorizedNewFiles, "docs/new-note.md") {
-		t.Fatalf("explicit new file path missing from authorized new files: %#v", explicit.AuthorizedNewFiles)
+	if len(explicit.AuthorizedNewFiles) != 0 {
+		t.Fatalf("prompt prose must not authorize new files: %#v", explicit.AuthorizedNewFiles)
+	}
+
+	typed := scopeIntakePlanExecutePlan()
+	typed.runtimeBrief.AuthorizedNewFiles = []string{"docs/new-note.md"}
+	authorized := implementationDispatchCompilePlanExecuteScopeIntake(
+		"Create new file docs/new-note.md with the smoke result. Do not edit any other files.",
+		typed,
+		cfg,
+	)
+	if !slices.Contains(authorized.AuthorizedNewFiles, "docs/new-note.md") {
+		t.Fatalf("typed runtime brief new file path missing from authorized new files: %#v", authorized.AuthorizedNewFiles)
 	}
 
 	unspecified := implementationDispatchCompilePlanExecuteScopeIntake(

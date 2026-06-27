@@ -12,10 +12,12 @@ import (
 	"time"
 
 	"idiom/internal/contracts/autonomy"
+	featureplannercontract "idiom/internal/contracts/featureplanner"
+	lanecontract "idiom/internal/contracts/lane"
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
-	"idiom/internal/platform/util"
-	coreplanexecute "idiom/internal/workflows/planexecute"
+	recoverycontract "idiom/internal/contracts/recovery"
+	"idiom/internal/platform/textutil"
 )
 
 type PromptRunner func(prompt string, taskFamily string) (string, error)
@@ -82,7 +84,7 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 		return RunResult{
 			State: state,
 			Events: append(events, Event{
-				Type:      "idiom.feature_planner.resume_active_run",
+				Type:      featureplannercontract.EventName(featureplannercontract.EventResumeActiveRun),
 				SessionID: state.SessionID,
 				Fields:    map[string]any{"active_runs": len(state.ActiveRuns)},
 			}),
@@ -104,7 +106,7 @@ plannerRetry:
 
 		return RunResult{
 			State:  state,
-			Events: append(events, Event{Type: "idiom.feature_planner.planning_stuck", SessionID: state.SessionID, Message: state.PlanningLoop.StuckReason}),
+			Events: append(events, Event{Type: featureplannercontract.EventName(featureplannercontract.EventPlanningStuck), SessionID: state.SessionID, Message: state.PlanningLoop.StuckReason}),
 		}, nil
 	}
 
@@ -126,11 +128,11 @@ plannerRetry:
 
 		return RunResult{
 			State:  state,
-			Events: append(events, Event{Type: "idiom.feature_planner.malformed_structured_output", SessionID: state.SessionID, Message: err.Error()}),
+			Events: append(events, Event{Type: featureplannercontract.EventName(featureplannercontract.EventMalformedStructuredOutput), SessionID: state.SessionID, Message: err.Error()}),
 		}, nil
 	}
 
-	if parsed.Kind == ToolSubmitFeaturePlan && opts.ProductWorkflowBrief != nil {
+	if parsed.Kind == featureplannercontract.ToolSubmitFeaturePlan && opts.ProductWorkflowBrief != nil {
 		PreserveSourceSatisfiedGate(&parsed.Plan, opts.Prompt)
 		parsed.Plan = NormalizePlanPromptDeclarations(parsed.Plan)
 
@@ -138,11 +140,11 @@ plannerRetry:
 			state.Status = FeatureStatePlanningRepair
 			state.PlanningLoop.State = FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, err.Error())
-			candidate := recordRejectedPlanCandidate(&state, parsed.Plan, "idiom.feature_planner.product_context_blocked", err.Error(), opts.Now)
+			candidate := recordRejectedPlanCandidate(&state, parsed.Plan, featureplannercontract.EventName(featureplannercontract.EventProductContextBlocked), err.Error(), opts.Now)
 
 			return RunResult{
 				State:  state,
-				Events: append(events, rejectedPlanEvent(state.SessionID, "idiom.feature_planner.product_context_blocked", err.Error(), candidate)),
+				Events: append(events, rejectedPlanEvent(state.SessionID, featureplannercontract.EventName(featureplannercontract.EventProductContextBlocked), err.Error(), candidate)),
 			}, nil
 		}
 
@@ -151,18 +153,18 @@ plannerRetry:
 			state.Status = FeatureStatePlanningRepair
 			state.PlanningLoop.State = FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, err.Error())
-			candidate := recordRejectedPlanCandidate(&state, parsed.Plan, "idiom.feature_planner.plan_contract_blocked", err.Error(), opts.Now)
+			candidate := recordRejectedPlanCandidate(&state, parsed.Plan, featureplannercontract.EventName(featureplannercontract.EventPlanContractBlocked), err.Error(), opts.Now)
 
 			return RunResult{
 				State:  state,
-				Events: append(events, rejectedPlanEvent(state.SessionID, "idiom.feature_planner.plan_contract_blocked", err.Error(), candidate)),
+				Events: append(events, rejectedPlanEvent(state.SessionID, featureplannercontract.EventName(featureplannercontract.EventPlanContractBlocked), err.Error(), candidate)),
 			}, nil
 		}
 
 		StampPlanAuthorityContract(&parsed.Plan, state.AuthorityDeltas)
 	}
 
-	if parsed.Kind == ToolSubmitFeaturePlan && opts.ProductWorkflowBrief == nil {
+	if parsed.Kind == featureplannercontract.ToolSubmitFeaturePlan && opts.ProductWorkflowBrief == nil {
 		parsed.Plan = NormalizePlanPromptDeclarations(parsed.Plan)
 		PreserveSourceSatisfiedGate(&parsed.Plan, opts.Prompt)
 
@@ -170,11 +172,11 @@ plannerRetry:
 			state.Status = FeatureStatePlanningRepair
 			state.PlanningLoop.State = FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, err.Error())
-			candidate := recordRejectedPlanCandidate(&state, parsed.Plan, "idiom.feature_planner.plan_contract_blocked", err.Error(), opts.Now)
+			candidate := recordRejectedPlanCandidate(&state, parsed.Plan, featureplannercontract.EventName(featureplannercontract.EventPlanContractBlocked), err.Error(), opts.Now)
 
 			return RunResult{
 				State:  state,
-				Events: append(events, rejectedPlanEvent(state.SessionID, "idiom.feature_planner.plan_contract_blocked", err.Error(), candidate)),
+				Events: append(events, rejectedPlanEvent(state.SessionID, featureplannercontract.EventName(featureplannercontract.EventPlanContractBlocked), err.Error(), candidate)),
 			}, nil
 		}
 
@@ -187,11 +189,11 @@ plannerRetry:
 			state.Status = FeatureStatePlanningRepair
 			state.PlanningLoop.State = FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, err.Error())
-			candidate := recordRejectedPlanCandidate(&state, parsed.Plan, "idiom.feature_planner.standalone_context_blocked", err.Error(), opts.Now)
-			rejectedEvents := []Event{rejectedPlanEvent(state.SessionID, "idiom.feature_planner.standalone_context_blocked", err.Error(), candidate)}
+			candidate := recordRejectedPlanCandidate(&state, parsed.Plan, featureplannercontract.EventName(featureplannercontract.EventStandaloneContextBlocked), err.Error(), opts.Now)
+			rejectedEvents := []Event{rejectedPlanEvent(state.SessionID, featureplannercontract.EventName(featureplannercontract.EventStandaloneContextBlocked), err.Error(), candidate)}
 			if question, ok := standaloneContextRepairQuestion(err, opts.Prompt, opts.WorkspaceRoot); ok {
 				rejectedEvents = append(rejectedEvents, ApplyPlannerOutput(&state, ParsedPlannerOutput{
-					Kind:     ToolAskPlannerQuestion,
+					Kind:     featureplannercontract.ToolAskPlannerQuestion,
 					Question: question,
 				}, opts.Now)...)
 
@@ -207,13 +209,13 @@ plannerRetry:
 			if standaloneValidationCanRetryPlanner(err) {
 				if state.PlanningLoop.Iteration >= state.PlanningLoop.MaxIterations {
 					MarkPlanningStuck(&state, "")
-					events = append(events, Event{Type: "idiom.feature_planner.planning_stuck", SessionID: state.SessionID, Message: state.PlanningLoop.StuckReason})
+					events = append(events, Event{Type: featureplannercontract.EventName(featureplannercontract.EventPlanningStuck), SessionID: state.SessionID, Message: state.PlanningLoop.StuckReason})
 
 					return RunResult{State: state, Events: events}, nil
 				}
 
 				events = append(events, Event{
-					Type:      "idiom.feature_planner.standalone_context_repair_retry",
+					Type:      featureplannercontract.EventName(featureplannercontract.EventStandaloneContextRepairRetry),
 					SessionID: state.SessionID,
 					Message:   "retrying planner after model-repairable standalone context rejection",
 					Fields: map[string]any{
@@ -228,7 +230,7 @@ plannerRetry:
 		}
 	}
 
-	if parsed.Kind == ToolSourceSatisfied {
+	if parsed.Kind == featureplannercontract.ToolSourceSatisfied {
 		if err := ValidateSourceSatisfiedWorkspaceContext(parsed.SourceSatisfied, opts.WorkspaceRoot); err != nil {
 			state.Status = FeatureStatePlanningRepair
 			state.PlanningLoop.State = FeatureStatePlanningRepair
@@ -236,7 +238,7 @@ plannerRetry:
 
 			return RunResult{
 				State:  state,
-				Events: append(events, Event{Type: "idiom.feature_planner.source_satisfied_rejected", SessionID: state.SessionID, Message: err.Error()}),
+				Events: append(events, Event{Type: featureplannercontract.EventName(featureplannercontract.EventSourceSatisfiedRejected), SessionID: state.SessionID, Message: err.Error()}),
 			}, nil
 		}
 	}
@@ -282,7 +284,7 @@ func applyLatestRejectedCandidateAfterAuthority(state *FeatureState, opts RunOpt
 	}
 
 	candidate := state.RejectedPlanCandidates[len(state.RejectedPlanCandidates)-1]
-	if strings.TrimSpace(candidate.EventType) != "idiom.feature_planner.standalone_context_blocked" {
+	if strings.TrimSpace(candidate.EventType) != featureplannercontract.EventName(featureplannercontract.EventStandaloneContextBlocked) {
 		return nil, false
 	}
 
@@ -303,7 +305,7 @@ func applyLatestRejectedCandidateAfterAuthority(state *FeatureState, opts RunOpt
 	}
 
 	events := []Event{{
-		Type:      "idiom.feature_planner.rejected_candidate_revalidated",
+		Type:      featureplannercontract.EventName(featureplannercontract.EventRejectedCandidateRevalidated),
 		SessionID: state.SessionID,
 		Message:   "answered planner authority satisfied the latest rejected candidate",
 		Fields: map[string]any{
@@ -311,7 +313,7 @@ func applyLatestRejectedCandidateAfterAuthority(state *FeatureState, opts RunOpt
 			"rejected_event_type":  candidate.EventType,
 		},
 	}}
-	events = append(events, ApplyPlannerOutput(state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: plan}, opts.Now)...)
+	events = append(events, ApplyPlannerOutput(state, ParsedPlannerOutput{Kind: featureplannercontract.ToolSubmitFeaturePlan, Plan: plan}, opts.Now)...)
 	return events, true
 }
 
@@ -711,7 +713,7 @@ func DispatchReadyAtoms(state *FeatureState, maxAtoms int, runner PromptRunner) 
 			state.Status = FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, missing...)
 			events = append(events, Event{
-				Type:        "idiom.feature_planner.tdd_pre_execution_blocked",
+				Type:        featureplannercontract.EventName(featureplannercontract.EventTDDPreExecutionBlocked),
 				SessionID:   state.SessionID,
 				AtomID:      atom.ID,
 				FeatureFrom: featureFrom,
@@ -748,7 +750,7 @@ func DispatchReadyAtoms(state *FeatureState, maxAtoms int, runner PromptRunner) 
 			AtomID:               atom.ID,
 			Actor:                "implementor",
 			LaneSessionID:        runID,
-			LaneFamily:           PlanExecuteCompletionLaneFamily,
+			LaneFamily:           string(lanecontract.LanePlanExecute),
 			InvocationContractID: atomContract.Scope.ContractID,
 			RuntimeEnvelopeID:    contract.ContractHash,
 			State:                ActiveRunStateRunning,
@@ -756,7 +758,7 @@ func DispatchReadyAtoms(state *FeatureState, maxAtoms int, runner PromptRunner) 
 			UpdatedAt:            startedAt,
 		})
 		events = append(events, Event{
-			Type:        "idiom.feature_planner.atom_dispatched",
+			Type:        featureplannercontract.EventName(featureplannercontract.EventAtomDispatched),
 			SessionID:   state.SessionID,
 			AtomID:      atom.ID,
 			FeatureFrom: featureFrom,
@@ -768,7 +770,7 @@ func DispatchReadyAtoms(state *FeatureState, maxAtoms int, runner PromptRunner) 
 				Op:                   "insert",
 				AtomID:               atom.ID,
 				LaneSessionID:        runID,
-				LaneFamily:           PlanExecuteCompletionLaneFamily,
+				LaneFamily:           string(lanecontract.LanePlanExecute),
 				InvocationContractID: atomContract.Scope.ContractID,
 				RuntimeEnvelopeID:    contract.ContractHash,
 				AfterState:           ActiveRunStateRunning,
@@ -786,7 +788,7 @@ func DispatchReadyAtoms(state *FeatureState, maxAtoms int, runner PromptRunner) 
 			foldActiveRun(state, atom.ID, runID)
 
 			events = append(events, Event{
-				Type:       "idiom.feature_planner.atom_failed",
+				Type:       featureplannercontract.EventName(featureplannercontract.EventAtomFailed),
 				SessionID:  state.SessionID,
 				AtomID:     atom.ID,
 				AtomFrom:   atomFrom,
@@ -1071,7 +1073,7 @@ func planExecuteRunIDForAtom(atomID string, attempt int) string {
 
 func buildFeaturePlannerAtomScopeSection(requiredEditPaths []string, allowedEditPaths []string) string {
 	required := normalizeEditScopeList(requiredEditPaths)
-	allowed := featurePlannerAllowedScopeExcludingRequired(normalizeEditScopeList(allowedEditPaths), required)
+	allowed := plancontract.AllowedScopePathsExcludingRequired(allowedEditPaths, required)
 
 	if len(required) == 0 && len(allowed) == 0 {
 		return ""
@@ -1108,21 +1110,6 @@ func buildFeaturePlannerAtomScopeSection(requiredEditPaths []string, allowedEdit
 	return strings.TrimSpace(b.String())
 }
 
-func featurePlannerAllowedScopeExcludingRequired(paths []string, required []string) []string {
-	requiredSet := normalizedStringSet(required)
-	out := make([]string, 0, len(paths))
-
-	for _, path := range paths {
-		if requiredSet[path] {
-			continue
-		}
-
-		out = append(out, path)
-	}
-
-	return out
-}
-
 func ApplyImplementorOutput(state *FeatureState, atom *FeatureAtomState, raw string) []Event {
 	if atom == nil || state == nil {
 		return nil
@@ -1136,16 +1123,11 @@ func ApplyImplementorOutput(state *FeatureState, atom *FeatureAtomState, raw str
 			return rejectUnverifiedCompletion(state, atom, "implementor returned malformed JSON completion envelope: "+err.Error())
 		}
 
-		var envelopeFields map[string]any
-
-		_ = json.Unmarshal([]byte(trimmed), &envelopeFields)
-		applyRegisteredAcceptanceEvidenceTrust(&envelope, envelopeFields)
+		applyObservedAcceptanceEvidenceTrust(&envelope)
 
 		tool := strings.TrimSpace(envelope.Tool)
-		if tool == ToolPlanExecuteComplete {
+		if tool == string(featureplannercontract.ToolPlanExecuteComplete) {
 			completion := planExecuteCompletionFromEnvelope(envelope)
-
-			completion = bindPlanExecuteCompletionToActiveAuthority(completion, *state, *atom)
 
 			if ok, reason := planExecuteCompletionIsSuccess(completion, *state, *atom); !ok {
 				if planExecuteCompletionRetryable(completion) {
@@ -1158,12 +1140,12 @@ func ApplyImplementorOutput(state *FeatureState, atom *FeatureAtomState, raw str
 			return completeAtomFromPlanExecute(state, atom, completion)
 		}
 
-		if tool != "" && tool != ToolQuestionForPlanner {
-			return rejectUnverifiedCompletion(state, atom, fmt.Sprintf("implementor returned unsupported completion tool %q; expected %q with typed status or %q for blockers", tool, ToolPlanExecuteComplete, ToolQuestionForPlanner))
+		if tool != "" && tool != string(featureplannercontract.ToolQuestionForPlanner) {
+			return rejectUnverifiedCompletion(state, atom, fmt.Sprintf("implementor returned unsupported completion tool %q; expected %q with typed status or %q for blockers", tool, featureplannercontract.ToolPlanExecuteComplete, featureplannercontract.ToolQuestionForPlanner))
 		}
 
 		if tool == "" {
-			return rejectUnverifiedCompletion(state, atom, fmt.Sprintf("implementor returned JSON without a supported tool; expected %q with typed status or %q for blockers", ToolPlanExecuteComplete, ToolQuestionForPlanner))
+			return rejectUnverifiedCompletion(state, atom, fmt.Sprintf("implementor returned JSON without a supported tool; expected %q with typed status or %q for blockers", featureplannercontract.ToolPlanExecuteComplete, featureplannercontract.ToolQuestionForPlanner))
 		}
 
 		var question PlannerQuestion
@@ -1172,7 +1154,7 @@ func ApplyImplementorOutput(state *FeatureState, atom *FeatureAtomState, raw str
 			atom.Blockers = append(atom.Blockers, err.Error())
 			state.Status = FeatureStatePlanningRepair
 
-			return []Event{{Type: "idiom.feature_planner.planner_question_rejected", SessionID: state.SessionID, AtomID: atom.ID, Message: err.Error()}}
+			return []Event{{Type: featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionRejected), SessionID: state.SessionID, AtomID: atom.ID, Message: err.Error()}}
 		}
 
 		return openImplementorPlannerQuestion(state, atom, question)
@@ -1186,14 +1168,14 @@ func ApplyImplementorOutput(state *FeatureState, atom *FeatureAtomState, raw str
 	}
 
 	if strings.Contains(strings.ToLower(trimmed), "decision: source-satisfied") {
-		return rejectUnverifiedCompletion(state, atom, fmt.Sprintf("implementor reported source-satisfied without typed %q plan-execute completion evidence", ToolPlanExecuteComplete))
+		return rejectUnverifiedCompletion(state, atom, fmt.Sprintf("implementor reported source-satisfied without typed %q plan-execute completion evidence", featureplannercontract.ToolPlanExecuteComplete))
 	}
 
 	if claimsUnverifiedEditOrTestEvidence(trimmed) {
 		return rejectUnverifiedCompletion(state, atom, "implementor claimed edit/test evidence that was not observed by the feature-planner harness")
 	}
 
-	return rejectUnverifiedCompletion(state, atom, fmt.Sprintf("implementor returned raw text without typed %q plan-execute completion evidence", ToolPlanExecuteComplete))
+	return rejectUnverifiedCompletion(state, atom, fmt.Sprintf("implementor returned raw text without typed %q plan-execute completion evidence", featureplannercontract.ToolPlanExecuteComplete))
 }
 
 func openImplementorPlannerQuestion(state *FeatureState, atom *FeatureAtomState, question PlannerQuestion) []Event {
@@ -1207,7 +1189,7 @@ func openImplementorPlannerQuestion(state *FeatureState, atom *FeatureAtomState,
 		atom.Blockers = append(atom.Blockers, err.Error())
 		state.Status = FeatureStatePlanningRepair
 
-		return []Event{{Type: "idiom.feature_planner.planner_question_rejected", SessionID: state.SessionID, AtomID: atom.ID, Message: err.Error()}}
+		return []Event{{Type: featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionRejected), SessionID: state.SessionID, AtomID: atom.ID, Message: err.Error()}}
 	}
 
 	atomFrom := atom.State
@@ -1220,7 +1202,7 @@ func openImplementorPlannerQuestion(state *FeatureState, atom *FeatureAtomState,
 	state.Status = FeatureStatePlanningQuestion
 
 	return []Event{{
-		Type:       "idiom.feature_planner.implementor_question_opened",
+		Type:       featureplannercontract.EventName(featureplannercontract.EventImplementorQuestionOpened),
 		SessionID:  state.SessionID,
 		AtomID:     atom.ID,
 		AtomFrom:   atomFrom,
@@ -1237,145 +1219,48 @@ func openImplementorPlannerQuestion(state *FeatureState, atom *FeatureAtomState,
 	}}
 }
 
-func applyRegisteredAcceptanceEvidenceTrust(envelope *implementorOutputEnvelope, fields map[string]any) {
+func applyObservedAcceptanceEvidenceTrust(envelope *implementorOutputEnvelope) {
 	if envelope == nil {
 		return
 	}
 
-	envelope.AcceptanceEvidenceTrusted = planExecuteAcceptanceEvidenceTrustRegistered(fields)
-	if nestedFields, ok := fields["plan_execute"].(map[string]any); ok && envelope.PlanExecute != nil {
-		envelope.PlanExecute.AcceptanceEvidenceTrusted = planExecuteAcceptanceEvidenceTrustRegistered(nestedFields)
+	envelope.AcceptanceEvidenceTrusted = planExecuteCompletionObservedAcceptanceTrust(envelope.PlanExecuteCompletionSummary)
+	if envelope.PlanExecute != nil {
+		envelope.PlanExecute.AcceptanceEvidenceTrusted = planExecuteCompletionObservedAcceptanceTrust(envelope.PlanExecute.PlanExecuteCompletionSummary)
 	}
 
-	if nestedFields, ok := fields["nested"].(map[string]any); ok && envelope.Nested != nil {
-		envelope.Nested.AcceptanceEvidenceTrusted = planExecuteAcceptanceEvidenceTrustRegistered(nestedFields)
+	if envelope.Nested != nil {
+		envelope.Nested.AcceptanceEvidenceTrusted = planExecuteCompletionObservedAcceptanceTrust(envelope.Nested.PlanExecuteCompletionSummary)
 	}
+}
+
+func planExecuteCompletionObservedAcceptanceTrust(summary PlanExecuteCompletionSummary) bool {
+	summary = summary.normalized()
+	return len(summary.AcceptanceEvidenceIDs) > 0 &&
+		summary.AcceptanceEvidenceTrusted &&
+		featureplannercontract.CompletionSourceCarriesDurableAcceptanceEvidence(summary.CompletionSource) &&
+		PlanExecuteCompletionTerminalDecision(summary.Fields()).Class == plancontract.PlanExecuteTerminalDecisionCompleted
 }
 
 type implementorOutputEnvelope struct {
-	Tool                         string                                  `json:"tool"`
-	LaneFamily                   string                                  `json:"lane_family"`
-	Summary                      string                                  `json:"summary"`
-	ProgressPath                 string                                  `json:"progress_path"`
-	Status                       string                                  `json:"status"`
-	Phase                        string                                  `json:"phase"`
-	ReviewStatus                 string                                  `json:"review_status"`
-	TerminalClass                string                                  `json:"terminal_class"`
-	Outcome                      string                                  `json:"outcome"`
-	ExitCode                     int                                     `json:"exit_code"`
-	FailureKind                  string                                  `json:"failure_kind"`
-	FailureReason                string                                  `json:"failure_reason"`
-	FailureID                    string                                  `json:"failure_id"`
-	RecordPath                   string                                  `json:"record_path"`
-	PacketPath                   string                                  `json:"packet_path"`
-	NextAction                   string                                  `json:"next_valid_action"`
-	CompletionSource             string                                  `json:"completion_source"`
-	ReviewRepairSkipped          bool                                    `json:"review_repair_skipped"`
-	ContractID                   string                                  `json:"contract_id"`
-	ContractHash                 string                                  `json:"contract_hash"`
-	SnapshotHash                 string                                  `json:"snapshot_hash"`
-	ScopeContractID              string                                  `json:"scope_contract_id"`
-	ScopeContractHash            string                                  `json:"scope_contract_hash"`
-	ActiveContractID             string                                  `json:"active_contract_id"`
-	ActiveContractHash           string                                  `json:"active_contract_hash"`
-	ContractSnapshotHash         string                                  `json:"contract_snapshot_hash"`
-	RequiredEditPaths            []string                                `json:"required_edit_paths"`
-	AllowedEditPaths             []string                                `json:"allowed_edit_paths"`
-	SourceSatisfiedEvidencePaths []string                                `json:"source_satisfied_evidence_paths"`
-	SourceSatisfiedEvidence      []PlanExecuteSourceSatisfiedEvidenceRef `json:"source_satisfied_evidence"`
-	ChangedPaths                 []string                                `json:"changed_paths"`
-	SourceSanity                 []coreplanexecute.PhaseEvidenceCheck    `json:"source_sanity"`
-	Verification                 []coreplanexecute.PhaseEvidenceCheck    `json:"verification"`
-	VerificationCommands         []coreplanexecute.VerificationCommand   `json:"verification_commands"`
-	VerificationSkips            []coreplanexecute.VerificationSkip      `json:"verification_skips"`
-	VerificationRejects          []coreplanexecute.VerificationReject    `json:"verification_rejects"`
-	AcceptanceEvidenceIDs        []string                                `json:"acceptance_evidence_ids"`
-	AcceptanceEvidenceTrusted    bool                                    `json:"acceptance_evidence_trusted"`
-	ValidationFailures           []string                                `json:"validation_failures"`
-	PlanExecute                  *nestedPlanExecuteCompletion            `json:"plan_execute,omitempty"`
-	Nested                       *nestedPlanExecuteCompletion            `json:"nested,omitempty"`
-	QuestionSummary              string                                  `json:"question_summary"`
-	BlockingClaim                string                                  `json:"blocking_claim"`
+	PlanExecuteCompletionSummary
+	ActiveContractID     string                       `json:"active_contract_id"`
+	ActiveContractHash   string                       `json:"active_contract_hash"`
+	ContractSnapshotHash string                       `json:"contract_snapshot_hash"`
+	PlanExecute          *nestedPlanExecuteCompletion `json:"plan_execute,omitempty"`
+	Nested               *nestedPlanExecuteCompletion `json:"nested,omitempty"`
+	QuestionSummary      string                       `json:"question_summary"`
+	BlockingClaim        string                       `json:"blocking_claim"`
 }
 
 type nestedPlanExecuteCompletion struct {
-	LaneFamily                   string                                  `json:"lane_family"`
-	Summary                      string                                  `json:"summary"`
-	ProgressPath                 string                                  `json:"progress_path"`
-	Status                       string                                  `json:"status"`
-	Phase                        string                                  `json:"phase"`
-	ReviewStatus                 string                                  `json:"review_status"`
-	TerminalClass                string                                  `json:"terminal_class"`
-	Outcome                      string                                  `json:"outcome"`
-	ExitCode                     int                                     `json:"exit_code"`
-	FailureKind                  string                                  `json:"failure_kind"`
-	FailureReason                string                                  `json:"failure_reason"`
-	FailureID                    string                                  `json:"failure_id"`
-	RecordPath                   string                                  `json:"record_path"`
-	PacketPath                   string                                  `json:"packet_path"`
-	NextAction                   string                                  `json:"next_valid_action"`
-	CompletionSource             string                                  `json:"completion_source"`
-	ReviewRepairSkipped          bool                                    `json:"review_repair_skipped"`
-	ContractID                   string                                  `json:"contract_id"`
-	ContractHash                 string                                  `json:"contract_hash"`
-	SnapshotHash                 string                                  `json:"snapshot_hash"`
-	ScopeContractID              string                                  `json:"scope_contract_id"`
-	ScopeContractHash            string                                  `json:"scope_contract_hash"`
-	ActiveContractID             string                                  `json:"active_contract_id"`
-	ActiveContractHash           string                                  `json:"active_contract_hash"`
-	ContractSnapshotHash         string                                  `json:"contract_snapshot_hash"`
-	RequiredEditPaths            []string                                `json:"required_edit_paths"`
-	AllowedEditPaths             []string                                `json:"allowed_edit_paths"`
-	SourceSatisfiedEvidencePaths []string                                `json:"source_satisfied_evidence_paths"`
-	SourceSatisfiedEvidence      []PlanExecuteSourceSatisfiedEvidenceRef `json:"source_satisfied_evidence"`
-	ChangedPaths                 []string                                `json:"changed_paths"`
-	SourceSanity                 []coreplanexecute.PhaseEvidenceCheck    `json:"source_sanity"`
-	Verification                 []coreplanexecute.PhaseEvidenceCheck    `json:"verification"`
-	VerificationCommands         []coreplanexecute.VerificationCommand   `json:"verification_commands"`
-	VerificationSkips            []coreplanexecute.VerificationSkip      `json:"verification_skips"`
-	VerificationRejects          []coreplanexecute.VerificationReject    `json:"verification_rejects"`
-	AcceptanceEvidenceIDs        []string                                `json:"acceptance_evidence_ids"`
-	AcceptanceEvidenceTrusted    bool                                    `json:"acceptance_evidence_trusted"`
-	ValidationFailures           []string                                `json:"validation_failures"`
+	PlanExecuteCompletionSummary
+	ActiveContractID     string `json:"active_contract_id"`
+	ActiveContractHash   string `json:"active_contract_hash"`
+	ContractSnapshotHash string `json:"contract_snapshot_hash"`
 }
 
-type planExecuteCompletion struct {
-	LaneFamily                   string
-	Summary                      string
-	ProgressPath                 string
-	Status                       string
-	Phase                        string
-	ReviewStatus                 string
-	TerminalClass                string
-	Outcome                      string
-	ExitCode                     int
-	FailureKind                  string
-	FailureReason                string
-	FailureID                    string
-	RecordPath                   string
-	PacketPath                   string
-	NextAction                   string
-	CompletionSource             string
-	ReviewRepairSkipped          bool
-	ContractID                   string
-	ContractHash                 string
-	SnapshotHash                 string
-	ScopeContractID              string
-	ScopeContractHash            string
-	RequiredEditPaths            []string
-	AllowedEditPaths             []string
-	SourceSatisfiedEvidencePaths []string
-	SourceSatisfiedEvidence      []PlanExecuteSourceSatisfiedEvidenceRef
-	ChangedPaths                 []string
-	SourceSanity                 []coreplanexecute.PhaseEvidenceCheck
-	Verification                 []coreplanexecute.PhaseEvidenceCheck
-	VerificationCommands         []coreplanexecute.VerificationCommand
-	VerificationSkips            []coreplanexecute.VerificationSkip
-	VerificationRejects          []coreplanexecute.VerificationReject
-	AcceptanceEvidenceIDs        []string
-	AcceptanceEvidenceTrusted    bool
-	ValidationFailures           []string
-}
+type planExecuteCompletion PlanExecuteCompletionSummary
 
 func planExecuteCompletionFromEnvelope(envelope implementorOutputEnvelope) planExecuteCompletion {
 	completion := planExecuteCompletionFromSummary(planExecuteCompletionSummaryFromEnvelope(envelope))
@@ -1390,284 +1275,65 @@ func planExecuteCompletionFromEnvelope(envelope implementorOutputEnvelope) planE
 	return completion.normalized()
 }
 
-func bindPlanExecuteCompletionToActiveAuthority(completion planExecuteCompletion, state FeatureState, atom FeatureAtomState) planExecuteCompletion {
-	completion = completion.normalized()
-	if completion.ContractID == "" {
-		completion.ContractID = firstActiveRunAuthorityString(state, atom.ID,
-			func(run ActiveRun) string { return run.InvocationContractID },
-			atom.RuntimeEnvelope.ContractID,
-		)
-	}
-
-	if completion.SnapshotHash == "" {
-		completion.SnapshotHash = firstActiveRunAuthorityString(state, atom.ID,
-			func(run ActiveRun) string { return run.RuntimeEnvelopeID },
-			atom.RuntimeEnvelope.ProtocolHash,
-		)
-	}
-
-	return completion.normalized()
-}
-
-func firstActiveRunAuthorityString(state FeatureState, atomID string, selector func(ActiveRun) string, fallback string) string {
-	for _, run := range state.ActiveRuns {
-		if strings.TrimSpace(run.AtomID) != strings.TrimSpace(atomID) {
-			continue
-		}
-
-		if value := strings.TrimSpace(selector(run)); value != "" {
-			return value
-		}
-	}
-
-	return strings.TrimSpace(fallback)
-}
-
 func (completion *planExecuteCompletion) overlay(nested nestedPlanExecuteCompletion) {
+	summary := nested.PlanExecuteCompletionSummary
+	summary.ContractID = textutil.FirstNonEmpty(summary.ContractID, nested.ActiveContractID)
+	summary.ContractHash = textutil.FirstNonEmpty(summary.ContractHash, nested.ActiveContractHash)
+	summary.SnapshotHash = textutil.FirstNonEmpty(summary.SnapshotHash, nested.ContractSnapshotHash)
+
 	merged := MergePlanExecuteCompletionSummaries(
 		completion.summary(),
-		PlanExecuteCompletionSummary{
-			LaneFamily:                   nested.LaneFamily,
-			Summary:                      nested.Summary,
-			ProgressPath:                 nested.ProgressPath,
-			Status:                       nested.Status,
-			Phase:                        nested.Phase,
-			ReviewStatus:                 nested.ReviewStatus,
-			TerminalClass:                nested.TerminalClass,
-			Outcome:                      nested.Outcome,
-			ExitCode:                     nested.ExitCode,
-			FailureKind:                  nested.FailureKind,
-			FailureReason:                nested.FailureReason,
-			FailureID:                    nested.FailureID,
-			RecordPath:                   nested.RecordPath,
-			PacketPath:                   nested.PacketPath,
-			NextAction:                   nested.NextAction,
-			CompletionSource:             nested.CompletionSource,
-			ReviewRepairSkipped:          nested.ReviewRepairSkipped,
-			ContractID:                   util.FirstNonEmpty(nested.ContractID, nested.ActiveContractID),
-			ContractHash:                 util.FirstNonEmpty(nested.ContractHash, nested.ActiveContractHash),
-			SnapshotHash:                 util.FirstNonEmpty(nested.SnapshotHash, nested.ContractSnapshotHash),
-			ScopeContractID:              nested.ScopeContractID,
-			ScopeContractHash:            nested.ScopeContractHash,
-			RequiredEditPaths:            nested.RequiredEditPaths,
-			AllowedEditPaths:             nested.AllowedEditPaths,
-			SourceSatisfiedEvidencePaths: nested.SourceSatisfiedEvidencePaths,
-			SourceSatisfiedEvidence:      nested.SourceSatisfiedEvidence,
-			ChangedPaths:                 nested.ChangedPaths,
-			SourceSanity:                 nested.SourceSanity,
-			Verification:                 nested.Verification,
-			VerificationCommands:         nested.VerificationCommands,
-			VerificationSkips:            nested.VerificationSkips,
-			VerificationRejects:          nested.VerificationRejects,
-			AcceptanceEvidenceIDs:        nested.AcceptanceEvidenceIDs,
-			AcceptanceEvidenceTrusted:    nested.AcceptanceEvidenceTrusted,
-			ValidationFailures:           nested.ValidationFailures,
-		},
+		summary,
 	)
 
 	*completion = planExecuteCompletionFromSummary(merged)
 }
 
 func (completion planExecuteCompletion) normalized() planExecuteCompletion {
-	completion.LaneFamily = strings.TrimSpace(completion.LaneFamily)
-	if completion.LaneFamily == "" {
-		completion.LaneFamily = PlanExecuteCompletionLaneFamily
+	normalized := PlanExecuteCompletionSummary(completion).normalized()
+	if len(normalized.AcceptanceEvidenceIDs) == 0 || !featureplannercontract.CompletionSourceTrustsAcceptanceEvidence(normalized.CompletionSource) {
+		normalized.AcceptanceEvidenceTrusted = false
+	}
+	if normalized.LaneFamily == "" {
+		normalized.LaneFamily = string(lanecontract.LanePlanExecute)
 	}
 
-	completion.Summary = strings.TrimSpace(completion.Summary)
-	completion.ProgressPath = strings.TrimSpace(completion.ProgressPath)
-	completion.Status = strings.TrimSpace(completion.Status)
-	completion.Phase = strings.TrimSpace(completion.Phase)
-	completion.ReviewStatus = strings.TrimSpace(completion.ReviewStatus)
-	completion.TerminalClass = strings.TrimSpace(completion.TerminalClass)
-	completion.Outcome = strings.TrimSpace(completion.Outcome)
-
-	if strings.EqualFold(completion.Status, "source-satisfied") && completion.Outcome == "" {
-		completion.Outcome = "source_satisfied"
-	}
-
-	completion.FailureKind = strings.TrimSpace(completion.FailureKind)
-	completion.FailureReason = strings.TrimSpace(completion.FailureReason)
-
-	if planExecuteCompletionSourceSatisfied(completion) && completion.FailureKind == "" && completion.FailureReason == "" {
-		completion.Status = "source-satisfied"
-	}
-
-	completion.FailureID = strings.TrimSpace(completion.FailureID)
-	completion.RecordPath = strings.TrimSpace(completion.RecordPath)
-	completion.PacketPath = strings.TrimSpace(completion.PacketPath)
-	completion.NextAction = strings.TrimSpace(completion.NextAction)
-	completion.CompletionSource = strings.TrimSpace(completion.CompletionSource)
-	completion.ContractID = strings.TrimSpace(completion.ContractID)
-	completion.ContractHash = strings.TrimSpace(completion.ContractHash)
-	completion.SnapshotHash = strings.TrimSpace(completion.SnapshotHash)
-
-	if completion.SnapshotHash == "" {
-		completion.SnapshotHash = completion.ContractHash
-	}
-
-	completion.ScopeContractID = strings.TrimSpace(completion.ScopeContractID)
-	completion.ScopeContractHash = strings.TrimSpace(completion.ScopeContractHash)
-	completion.RequiredEditPaths = normalizeCompletionStringList(completion.RequiredEditPaths)
-	completion.AllowedEditPaths = normalizeCompletionStringList(completion.AllowedEditPaths)
-	completion.SourceSatisfiedEvidencePaths = normalizeCompletionStringList(completion.SourceSatisfiedEvidencePaths)
-	completion.SourceSatisfiedEvidence = normalizePlanExecuteSourceSatisfiedEvidenceRefs(completion.SourceSatisfiedEvidence)
-	completion.ChangedPaths = normalizeCompletionStringList(completion.ChangedPaths)
-	completion.SourceSanity = normalizeCompletionPhaseEvidenceChecks(completion.SourceSanity)
-	completion.Verification = normalizeCompletionPhaseEvidenceChecks(completion.Verification)
-	completion.VerificationCommands = normalizeCompletionVerificationCommands(completion.VerificationCommands)
-	completion.VerificationSkips = normalizeCompletionVerificationSkips(completion.VerificationSkips)
-	completion.VerificationRejects = normalizeCompletionVerificationRejects(completion.VerificationRejects)
-	completion.AcceptanceEvidenceIDs = normalizeCompletionStableIDList(completion.AcceptanceEvidenceIDs)
-
-	if len(completion.AcceptanceEvidenceIDs) == 0 || !planExecuteCompletionSourceTrustsAcceptanceEvidence(completion.CompletionSource) {
-		completion.AcceptanceEvidenceTrusted = false
-	}
-
-	completion.ValidationFailures = normalizeCompletionStringList(completion.ValidationFailures)
-
-	return completion
+	return planExecuteCompletion(normalized)
 }
 
 func planExecuteCompletionSummaryFromEnvelope(envelope implementorOutputEnvelope) PlanExecuteCompletionSummary {
-	return PlanExecuteCompletionSummary{
-		LaneFamily:                   envelope.LaneFamily,
-		Summary:                      envelope.Summary,
-		ProgressPath:                 envelope.ProgressPath,
-		Status:                       envelope.Status,
-		Phase:                        envelope.Phase,
-		ReviewStatus:                 envelope.ReviewStatus,
-		TerminalClass:                envelope.TerminalClass,
-		Outcome:                      envelope.Outcome,
-		ExitCode:                     envelope.ExitCode,
-		FailureKind:                  envelope.FailureKind,
-		FailureReason:                envelope.FailureReason,
-		FailureID:                    envelope.FailureID,
-		RecordPath:                   envelope.RecordPath,
-		PacketPath:                   envelope.PacketPath,
-		NextAction:                   envelope.NextAction,
-		CompletionSource:             envelope.CompletionSource,
-		ReviewRepairSkipped:          envelope.ReviewRepairSkipped,
-		ContractID:                   util.FirstNonEmpty(envelope.ContractID, envelope.ActiveContractID),
-		ContractHash:                 util.FirstNonEmpty(envelope.ContractHash, envelope.ActiveContractHash),
-		SnapshotHash:                 util.FirstNonEmpty(envelope.SnapshotHash, envelope.ContractSnapshotHash),
-		ScopeContractID:              envelope.ScopeContractID,
-		ScopeContractHash:            envelope.ScopeContractHash,
-		RequiredEditPaths:            envelope.RequiredEditPaths,
-		AllowedEditPaths:             envelope.AllowedEditPaths,
-		SourceSatisfiedEvidencePaths: envelope.SourceSatisfiedEvidencePaths,
-		SourceSatisfiedEvidence:      envelope.SourceSatisfiedEvidence,
-		ChangedPaths:                 envelope.ChangedPaths,
-		SourceSanity:                 envelope.SourceSanity,
-		Verification:                 envelope.Verification,
-		VerificationCommands:         envelope.VerificationCommands,
-		VerificationSkips:            envelope.VerificationSkips,
-		VerificationRejects:          envelope.VerificationRejects,
-		AcceptanceEvidenceIDs:        envelope.AcceptanceEvidenceIDs,
-		AcceptanceEvidenceTrusted:    envelope.AcceptanceEvidenceTrusted,
-		ValidationFailures:           envelope.ValidationFailures,
-	}
+	summary := envelope.PlanExecuteCompletionSummary
+	summary.ContractID = textutil.FirstNonEmpty(summary.ContractID, envelope.ActiveContractID)
+	summary.ContractHash = textutil.FirstNonEmpty(summary.ContractHash, envelope.ActiveContractHash)
+	summary.SnapshotHash = textutil.FirstNonEmpty(summary.SnapshotHash, envelope.ContractSnapshotHash)
+
+	return summary
 }
 
 func (completion planExecuteCompletion) summary() PlanExecuteCompletionSummary {
-	return PlanExecuteCompletionSummary{
-		LaneFamily:                   completion.LaneFamily,
-		Summary:                      completion.Summary,
-		ProgressPath:                 completion.ProgressPath,
-		Status:                       completion.Status,
-		Phase:                        completion.Phase,
-		ReviewStatus:                 completion.ReviewStatus,
-		TerminalClass:                completion.TerminalClass,
-		Outcome:                      completion.Outcome,
-		ExitCode:                     completion.ExitCode,
-		FailureKind:                  completion.FailureKind,
-		FailureReason:                completion.FailureReason,
-		FailureID:                    completion.FailureID,
-		RecordPath:                   completion.RecordPath,
-		PacketPath:                   completion.PacketPath,
-		NextAction:                   completion.NextAction,
-		CompletionSource:             completion.CompletionSource,
-		ReviewRepairSkipped:          completion.ReviewRepairSkipped,
-		ContractID:                   completion.ContractID,
-		ContractHash:                 completion.ContractHash,
-		SnapshotHash:                 completion.SnapshotHash,
-		ScopeContractID:              completion.ScopeContractID,
-		ScopeContractHash:            completion.ScopeContractHash,
-		RequiredEditPaths:            completion.RequiredEditPaths,
-		AllowedEditPaths:             completion.AllowedEditPaths,
-		SourceSatisfiedEvidencePaths: completion.SourceSatisfiedEvidencePaths,
-		SourceSatisfiedEvidence:      completion.SourceSatisfiedEvidence,
-		ChangedPaths:                 completion.ChangedPaths,
-		SourceSanity:                 completion.SourceSanity,
-		Verification:                 completion.Verification,
-		VerificationCommands:         completion.VerificationCommands,
-		VerificationSkips:            completion.VerificationSkips,
-		VerificationRejects:          completion.VerificationRejects,
-		AcceptanceEvidenceIDs:        completion.AcceptanceEvidenceIDs,
-		AcceptanceEvidenceTrusted:    completion.AcceptanceEvidenceTrusted,
-		ValidationFailures:           completion.ValidationFailures,
-	}
+	return PlanExecuteCompletionSummary(completion)
 }
 
 func planExecuteCompletionFromSummary(summary PlanExecuteCompletionSummary) planExecuteCompletion {
-	return planExecuteCompletion{
-		LaneFamily:                   summary.LaneFamily,
-		Summary:                      summary.Summary,
-		ProgressPath:                 summary.ProgressPath,
-		Status:                       summary.Status,
-		Phase:                        summary.Phase,
-		ReviewStatus:                 summary.ReviewStatus,
-		TerminalClass:                summary.TerminalClass,
-		Outcome:                      summary.Outcome,
-		ExitCode:                     summary.ExitCode,
-		FailureKind:                  summary.FailureKind,
-		FailureReason:                summary.FailureReason,
-		FailureID:                    summary.FailureID,
-		RecordPath:                   summary.RecordPath,
-		PacketPath:                   summary.PacketPath,
-		NextAction:                   summary.NextAction,
-		CompletionSource:             summary.CompletionSource,
-		ReviewRepairSkipped:          summary.ReviewRepairSkipped,
-		ContractID:                   summary.ContractID,
-		ContractHash:                 summary.ContractHash,
-		SnapshotHash:                 summary.SnapshotHash,
-		ScopeContractID:              summary.ScopeContractID,
-		ScopeContractHash:            summary.ScopeContractHash,
-		RequiredEditPaths:            summary.RequiredEditPaths,
-		AllowedEditPaths:             summary.AllowedEditPaths,
-		SourceSatisfiedEvidencePaths: summary.SourceSatisfiedEvidencePaths,
-		SourceSatisfiedEvidence:      summary.SourceSatisfiedEvidence,
-		ChangedPaths:                 summary.ChangedPaths,
-		SourceSanity:                 summary.SourceSanity,
-		Verification:                 summary.Verification,
-		VerificationCommands:         summary.VerificationCommands,
-		VerificationSkips:            summary.VerificationSkips,
-		VerificationRejects:          summary.VerificationRejects,
-		AcceptanceEvidenceIDs:        summary.AcceptanceEvidenceIDs,
-		AcceptanceEvidenceTrusted:    summary.AcceptanceEvidenceTrusted,
-		ValidationFailures:           summary.ValidationFailures,
-	}.normalized()
+	return planExecuteCompletion(summary).normalized()
 }
 
 func planExecuteCompletionIsSuccess(completion planExecuteCompletion, state FeatureState, atom FeatureAtomState) (bool, string) {
-	decision := PlanExecuteCompletionTerminalDecision(map[string]any{
-		"status":                completion.Status,
-		"outcome":               completion.Outcome,
-		"phase":                 completion.Phase,
-		"review_status":         completion.ReviewStatus,
-		"terminal_class":        completion.TerminalClass,
-		"exit_code":             completion.ExitCode,
-		"failure_kind":          completion.FailureKind,
-		"failure_reason":        completion.FailureReason,
-		"review_repair_skipped": completion.ReviewRepairSkipped,
-		"validation_failures":   completion.ValidationFailures,
-	})
-	if decision.Class != PlanExecuteTerminalCompleted {
+	if planExecuteCompletionSourceSatisfied(completion) {
+		if reason := validateCompletionAgainstActiveContract(completion, state, atom); reason != "" {
+			return false, reason
+		}
+	}
+
+	decision := PlanExecuteCompletionTerminalDecision(completion.summary().Fields())
+	if decision.Class != plancontract.PlanExecuteTerminalDecisionCompleted {
 		return false, decision.Reason
 	}
 
-	if reason := validateCompletionAgainstActiveContract(completion, state, atom); reason != "" {
-		return false, reason
+	if !planExecuteCompletionSourceSatisfied(completion) {
+		if reason := validateCompletionAgainstActiveContract(completion, state, atom); reason != "" {
+			return false, reason
+		}
 	}
 
 	return true, ""
@@ -1726,6 +1392,10 @@ func validateCompletionAgainstActiveContract(completion planExecuteCompletion, s
 			return "source-satisfied completion does not cover required edit paths: " + strings.Join(missing, ", ")
 		}
 
+		if failures := planExecuteTerminalValidationFailures(completion); len(failures) > 0 {
+			return "nested plan-execute terminal validation failed: " + strings.Join(failures, "; ")
+		}
+
 		if reason := untrustedAcceptanceEvidenceReason(atomContract, completion, "source-satisfied completion"); reason != "" {
 			return reason
 		}
@@ -1735,6 +1405,10 @@ func validateCompletionAgainstActiveContract(completion planExecuteCompletion, s
 		}
 
 		return ""
+	}
+
+	if failures := planExecuteTerminalValidationFailures(completion); len(failures) > 0 {
+		return "nested plan-execute terminal validation failed: " + strings.Join(failures, "; ")
 	}
 
 	if len(changed) == 0 {
@@ -1749,10 +1423,6 @@ func validateCompletionAgainstActiveContract(completion planExecuteCompletion, s
 	scope := plancontract.UniqueScopePaths(append(append([]string(nil), required...), allowed...))
 	if len(scope) > 0 && !completionPathsWithinScope(changed, scope) {
 		return "completed plan-execute terminal completion changed paths outside active contract scope"
-	}
-
-	if failures := planExecuteTerminalValidationFailures(completion); len(failures) > 0 {
-		return "nested plan-execute terminal validation failed: " + strings.Join(failures, "; ")
 	}
 
 	if reason := untrustedAcceptanceEvidenceReason(atomContract, completion, "completed plan-execute terminal completion"); reason != "" {
@@ -1852,8 +1522,8 @@ func missingObservedVerificationCommands(atom plancontract.AtomExecutionContract
 	return normalizedStringList(missing)
 }
 
-func observedVerificationCommandSet(completion planExecuteCompletion) map[string]coreplanexecute.VerificationCommand {
-	observed := map[string]coreplanexecute.VerificationCommand{}
+func observedVerificationCommandSet(completion planExecuteCompletion) map[string]plancontract.VerificationCommand {
+	observed := map[string]plancontract.VerificationCommand{}
 	for _, command := range completion.VerificationCommands {
 		key := plancontract.VerificationCommandEvidenceKey(command.Command, command.Argv, command.WorkingDir)
 		if key == "" {
@@ -1866,7 +1536,7 @@ func observedVerificationCommandSet(completion planExecuteCompletion) map[string
 
 func planExecuteTerminalValidationFailures(completion planExecuteCompletion) []string {
 	fields := completion.summary().Fields()
-	record := coreplanexecute.PlanExecuteTerminalCompletionRecordFromFields(fields)
+	record := plancontract.PlanExecuteTerminalCompletionRecordFromFields(fields)
 
 	return normalizeCompletionStringList(record.ValidationFailures)
 }
@@ -1929,11 +1599,11 @@ func completionPathsWithinScope(paths []string, scope []string) bool {
 func completeAtomFromPlanExecute(state *FeatureState, atom *FeatureAtomState, completion planExecuteCompletion) []Event {
 	atomFrom := atom.State
 	atomTo := AtomStateComplete
-	eventType := "idiom.feature_planner.atom_completed"
+	eventType := featureplannercontract.EventName(featureplannercontract.EventAtomCompleted)
 
 	if planExecuteCompletionSourceSatisfied(completion) {
 		atomTo = AtomStateSourceSatisfied
-		eventType = "idiom.feature_planner.atom_source_satisfied"
+		eventType = featureplannercontract.EventName(featureplannercontract.EventAtomSourceSatisfied)
 	}
 
 	atom.State = atomTo
@@ -1955,17 +1625,17 @@ func completeAtomFromPlanExecute(state *FeatureState, atom *FeatureAtomState, co
 
 	fields := planExecuteCompletionFields(completion)
 	if closure.EventID != "" {
-		fields["verification_closure_event_id"] = closure.EventID
-		fields["verification_status"] = closure.Status
-		fields["plan_artifact_id"] = closure.PlanArtifactID
-		fields["plan_revision"] = closure.PlanRevision
-		fields["plan_digest"] = closure.PlanDigest
-		fields["approval_event_id"] = closure.ApprovalEventID
+		fields[featureplannercontract.EventFieldVerificationClosureEventID] = closure.EventID
+		fields[featureplannercontract.EventFieldVerificationStatus] = closure.Status
+		fields[featureplannercontract.EventFieldPlanArtifactID] = closure.PlanArtifactID
+		fields[featureplannercontract.EventFieldPlanRevision] = closure.PlanRevision
+		fields[featureplannercontract.EventFieldPlanDigest] = closure.PlanDigest
+		fields[featureplannercontract.EventFieldApprovalEventID] = closure.ApprovalEventID
 		if len(closure.RequiredTestResults) > 0 {
-			fields["required_test_results"] = append([]VerificationCommandResult(nil), closure.RequiredTestResults...)
+			fields[featureplannercontract.EventFieldRequiredTestResults] = append([]VerificationCommandResult(nil), closure.RequiredTestResults...)
 		}
 		if len(closure.TDDCommandResults) > 0 {
-			fields["tdd_command_results"] = append([]VerificationCommandResult(nil), closure.TDDCommandResults...)
+			fields[featureplannercontract.EventFieldTDDCommandResults] = append([]VerificationCommandResult(nil), closure.TDDCommandResults...)
 		}
 	}
 
@@ -1983,7 +1653,7 @@ func completeAtomFromPlanExecute(state *FeatureState, atom *FeatureAtomState, co
 			LaneSessionID: atom.LastRunID,
 			BeforeState:   ActiveRunStateRunning,
 			AfterState:    atomTo,
-			ResultSource:  PlanExecuteCompletionLaneFamily,
+			ResultSource:  string(lanecontract.LanePlanExecute),
 			ProgressPath:  completion.ProgressPath,
 		}},
 		Fields: fields,
@@ -1991,9 +1661,9 @@ func completeAtomFromPlanExecute(state *FeatureState, atom *FeatureAtomState, co
 
 	if featureTo == FeatureStateComplete {
 		state.ReleaseReadiness = EvaluateReleaseReadiness(*state, atom.CompletedAt)
-		releaseEventType := "idiom.feature_planner.release_blocked"
-		if state.ReleaseReadiness.Status == "ready" {
-			releaseEventType = "idiom.feature_planner.release_ready"
+		releaseEventType := featureplannercontract.EventName(featureplannercontract.EventReleaseBlocked)
+		if state.ReleaseReadiness.Status == ReleaseReadinessStatusReady {
+			releaseEventType = featureplannercontract.EventName(featureplannercontract.EventReleaseReady)
 		}
 		events = append(events, Event{
 			Type:      releaseEventType,
@@ -2008,9 +1678,9 @@ func completeAtomFromPlanExecute(state *FeatureState, atom *FeatureAtomState, co
 }
 
 func verificationClosureFromCompletion(state FeatureState, atom FeatureAtomState, completion planExecuteCompletion, createdAt string) VerificationClosure {
-	status := "passed"
+	status := VerificationClosureStatusPassed
 	if planExecuteCompletionSourceSatisfied(completion) {
-		status = "source_satisfied"
+		status = VerificationClosureStatusSourceSatisfied
 	}
 
 	closure := VerificationClosure{
@@ -2029,8 +1699,8 @@ func verificationClosureFromCompletion(state FeatureState, atom FeatureAtomState
 		ScopeContractHash:            completion.ScopeContractHash,
 		ChangedPaths:                 normalizeCompletionStringList(completion.ChangedPaths),
 		SourceSatisfiedEvidencePaths: normalizeCompletionStringList(completion.SourceSatisfiedEvidencePaths),
-		RequiredTestResults:          verificationCommandResultsFromCompletion(atom, completion, false, status),
-		TDDCommandResults:            verificationCommandResultsFromCompletion(atom, completion, true, status),
+		RequiredTestResults:          verificationCommandResultsFromCompletion(atom, completion, false, string(status)),
+		TDDCommandResults:            verificationCommandResultsFromCompletion(atom, completion, true, string(status)),
 		SourceSanity:                 verificationCheckResultsFromPhaseChecks(completion.SourceSanity),
 		Verification:                 verificationCheckResultsFromPhaseChecks(completion.Verification),
 		CreatedAt:                    strings.TrimSpace(createdAt),
@@ -2089,8 +1759,8 @@ func verificationCommandResultsFromCompletion(atom FeatureAtomState, completion 
 		}
 		out = append(out, VerificationCommandResult{
 			Command:           command,
-			Status:            status,
-			Passed:            status == "passed" || status == "source_satisfied",
+			Status:            string(status),
+			Passed:            VerificationClosureStatusAllowed(VerificationClosureStatus(status)),
 			Source:            source,
 			ObligationRefs:    normalizeCompletionStableIDList(obligationRefs),
 			TestArtifactPaths: normalizeEditScopeList(artifactPaths),
@@ -2100,15 +1770,15 @@ func verificationCommandResultsFromCompletion(atom FeatureAtomState, completion 
 	return out
 }
 
-func verificationCheckResultsFromPhaseChecks(checks []coreplanexecute.PhaseEvidenceCheck) []VerificationCheckResult {
+func verificationCheckResultsFromPhaseChecks(checks []plancontract.PhaseEvidenceCheck) []VerificationCheckResult {
 	var out []VerificationCheckResult
 	for _, check := range normalizeCompletionPhaseEvidenceChecks(checks) {
 		out = append(out, VerificationCheckResult{
-			Kind:       check.Kind,
+			Kind:       string(check.Kind),
 			Path:       check.Path,
 			Command:    check.Command,
 			WorkingDir: strings.TrimSpace(check.WorkingDir),
-			Status:     check.Status,
+			Status:     string(check.Status),
 			Summary:    check.Summary,
 			Error:      check.Error,
 		})
@@ -2119,31 +1789,31 @@ func verificationCheckResultsFromPhaseChecks(checks []coreplanexecute.PhaseEvide
 
 func releaseReadinessEventFields(decision ReleaseReadinessDecision) map[string]any {
 	fields := map[string]any{
-		"release_status": decision.Status,
+		featureplannercontract.EventFieldReleaseStatus: decision.Status,
 	}
 	if decision.PlanArtifactID != "" {
-		fields["plan_artifact_id"] = decision.PlanArtifactID
+		fields[featureplannercontract.EventFieldPlanArtifactID] = decision.PlanArtifactID
 	}
 	if decision.PlanRevision > 0 {
-		fields["plan_revision"] = decision.PlanRevision
+		fields[featureplannercontract.EventFieldPlanRevision] = decision.PlanRevision
 	}
 	if decision.PlanDigest != "" {
-		fields["plan_digest"] = decision.PlanDigest
+		fields[featureplannercontract.EventFieldPlanDigest] = decision.PlanDigest
 	}
 	if decision.WorkspaceFingerprint != "" {
-		fields["workspace_fingerprint"] = decision.WorkspaceFingerprint
+		fields[featureplannercontract.EventFieldWorkspaceFingerprint] = decision.WorkspaceFingerprint
 	}
 	if decision.ApprovalEventID != "" {
-		fields["approval_event_id"] = decision.ApprovalEventID
+		fields[featureplannercontract.EventFieldApprovalEventID] = decision.ApprovalEventID
 	}
 	if len(decision.VerificationClosureEventIDs) > 0 {
-		fields["verification_closure_event_ids"] = append([]string(nil), decision.VerificationClosureEventIDs...)
+		fields[featureplannercontract.EventFieldVerificationClosureEventIDs] = append([]string(nil), decision.VerificationClosureEventIDs...)
 	}
 	if len(decision.OpenObligations) > 0 {
-		fields["open_obligation_count"] = len(decision.OpenObligations)
+		fields[featureplannercontract.EventFieldOpenObligationCount] = len(decision.OpenObligations)
 	}
 	if len(decision.Blockers) > 0 {
-		fields["blocker_count"] = len(decision.Blockers)
+		fields[featureplannercontract.EventFieldBlockerCount] = len(decision.Blockers)
 	}
 	return fields
 }
@@ -2165,20 +1835,8 @@ func upsertVerificationClosure(state *FeatureState, closure VerificationClosure)
 }
 
 func planExecuteCompletionSourceSatisfied(completion planExecuteCompletion) bool {
-	return util.EqualTrimFold(completion.Outcome, "source_satisfied") ||
-		util.EqualTrimFold(completion.Status, "source-satisfied")
-}
-
-func planExecuteCompletionSourceTrustsAcceptanceEvidence(source string) bool {
-	switch strings.TrimSpace(source) {
-	case PlanExecuteCompletionSourceHeadlessReturned,
-		PlanExecuteCompletionSourceTUIReturned,
-		PlanExecuteCompletionSourceDurableTerminal,
-		PlanExecuteCompletionSourceDurableProgress:
-		return true
-	default:
-		return false
-	}
+	return textutil.EqualTrimFold(completion.Outcome, string(plancontract.PlanExecuteTerminalOutcomeSourceSatisfied)) ||
+		textutil.EqualTrimFold(completion.Status, string(plancontract.PlanExecuteTerminalStatusSourceSatisfied))
 }
 
 func rejectPlanExecuteCompletion(state *FeatureState, atom *FeatureAtomState, completion planExecuteCompletion, reason string) []Event {
@@ -2187,11 +1845,11 @@ func rejectPlanExecuteCompletion(state *FeatureState, atom *FeatureAtomState, co
 		reason = strings.TrimSpace(reason + ": " + detail)
 	}
 
-	return recoverAtom(state, atom, reason, "repair_nested_plan_execute_completion", "idiom.feature_planner.plan_execute_completion_rejected", fields)
+	return recoverAtom(state, atom, reason, "repair_nested_plan_execute_completion", featureplannercontract.EventName(featureplannercontract.EventPlanExecuteCompletionRejected), fields)
 }
 
 func planExecuteCompletionRetryable(completion planExecuteCompletion) bool {
-	return strings.TrimSpace(completion.NextAction) == "retry_plan_execute"
+	return strings.TrimSpace(completion.NextAction) == string(recoverycontract.NextActionRetryPlanExecute)
 }
 
 func markPlanExecuteRetryPending(state *FeatureState, atom *FeatureAtomState, completion planExecuteCompletion, reason string) []Event {
@@ -2205,7 +1863,7 @@ func markPlanExecuteRetryPending(state *FeatureState, atom *FeatureAtomState, co
 	state.Status = FeatureStateDispatching
 	atom.State = AtomStateImplementing
 	state.Continuation.ResumeAtomID = atom.ID
-	state.Continuation.ResumeAction = "retry_plan_execute"
+	state.Continuation.ResumeAction = string(recoverycontract.NextActionRetryPlanExecute)
 	state.Continuation.ResumeReason = reason
 	state.Continuation.BlockedAtoms = removeFeaturePlannerString(state.Continuation.BlockedAtoms, atom.ID)
 	state.Blockers = removeFeaturePlannerString(state.Blockers, reason)
@@ -2213,7 +1871,7 @@ func markPlanExecuteRetryPending(state *FeatureState, atom *FeatureAtomState, co
 	foldActiveRun(state, atom.ID, atom.LastRunID)
 
 	return []Event{{
-		Type:        "idiom.feature_planner.plan_execute_retry_pending",
+		Type:        featureplannercontract.EventName(featureplannercontract.EventPlanExecuteRetryPending),
 		SessionID:   state.SessionID,
 		FeatureFrom: featureFrom,
 		FeatureTo:   FeatureStateDispatching,
@@ -2226,7 +1884,7 @@ func markPlanExecuteRetryPending(state *FeatureState, atom *FeatureAtomState, co
 			AtomID:        atom.ID,
 			LaneSessionID: atom.LastRunID,
 			BeforeState:   ActiveRunStateRunning,
-			AfterState:    "retry_plan_execute",
+			AfterState:    string(recoverycontract.NextActionRetryPlanExecute),
 		}},
 		Message: reason,
 		Fields:  fields,
@@ -2251,7 +1909,7 @@ func removeFeaturePlannerString(values []string, target string) []string {
 }
 
 func rejectUnverifiedCompletion(state *FeatureState, atom *FeatureAtomState, reason string) []Event {
-	return recoverAtom(state, atom, reason, "repair_unverified_completion", "idiom.feature_planner.unverified_completion_rejected", nil)
+	return recoverAtom(state, atom, reason, "repair_unverified_completion", featureplannercontract.EventName(featureplannercontract.EventUnverifiedCompletionRejected), nil)
 }
 
 func recoverAtom(state *FeatureState, atom *FeatureAtomState, reason string, resumeAction string, eventType string, fields map[string]any) []Event {
@@ -2272,7 +1930,7 @@ func recoverAtom(state *FeatureState, atom *FeatureAtomState, reason string, res
 		fields = map[string]any{}
 	}
 
-	if packetPath := CompletionFieldString(fields, completionFieldPacketPath); packetPath != "" {
+	if packetPath := CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldPacketPath); packetPath != "" {
 		state.OpenRecoveryPackets = appendUnique(state.OpenRecoveryPackets, packetPath)
 	}
 
@@ -2299,63 +1957,63 @@ func recoverAtom(state *FeatureState, atom *FeatureAtomState, reason string, res
 
 func planExecuteCompletionFields(completion planExecuteCompletion) map[string]any {
 	fields := map[string]any{
-		completionFieldLaneFamily:              completion.LaneFamily,
-		planExecuteCompletionEventNestedStatus: completion.Status,
+		featureplannercontract.PlanExecuteCompletionFieldLaneFamily:   completion.LaneFamily,
+		featureplannercontract.PlanExecuteCompletionFieldNestedStatus: completion.Status,
 	}
 	if completion.Phase != "" {
-		fields[planExecuteCompletionEventNestedPhase] = completion.Phase
+		fields[featureplannercontract.PlanExecuteCompletionFieldNestedPhase] = completion.Phase
 	}
 
 	if completion.ReviewStatus != "" {
-		fields[planExecuteCompletionEventNestedReviewStatus] = completion.ReviewStatus
+		fields[featureplannercontract.PlanExecuteCompletionFieldNestedReviewStatus] = completion.ReviewStatus
 	}
 
 	if completion.Outcome != "" {
-		fields[completionFieldOutcome] = completion.Outcome
+		fields[plancontract.PlanExecuteTerminalFieldOutcome] = completion.Outcome
 	}
 
 	if completion.TerminalClass != "" {
-		fields[completionFieldTerminalClass] = completion.TerminalClass
+		fields[plancontract.PlanExecuteTerminalFieldTerminalClass] = completion.TerminalClass
 	}
 
 	if completion.FailureKind != "" {
-		fields[planExecuteCompletionEventNestedFailureKind] = completion.FailureKind
+		fields[featureplannercontract.PlanExecuteCompletionFieldNestedFailureKind] = completion.FailureKind
 	}
 
 	if completion.FailureReason != "" {
-		fields[planExecuteCompletionEventNestedFailureReason] = completion.FailureReason
+		fields[featureplannercontract.PlanExecuteCompletionFieldNestedFailureReason] = completion.FailureReason
 	}
 
 	if completion.FailureID != "" {
-		fields[completionFieldFailureID] = completion.FailureID
+		fields[plancontract.PlanExecuteTerminalFieldFailureID] = completion.FailureID
 	}
 
 	if completion.RecordPath != "" {
-		fields[completionFieldRecordPath] = completion.RecordPath
+		fields[plancontract.PlanExecuteTerminalFieldRecordPath] = completion.RecordPath
 	}
 
 	if completion.PacketPath != "" {
-		fields[completionFieldPacketPath] = completion.PacketPath
+		fields[plancontract.PlanExecuteTerminalFieldPacketPath] = completion.PacketPath
 	}
 
 	if completion.NextAction != "" {
-		fields[completionFieldNextValidAction] = completion.NextAction
+		fields[plancontract.PlanExecuteTerminalFieldNextAction] = completion.NextAction
 	}
 
 	if completion.ProgressPath != "" {
-		fields[completionFieldProgressPath] = completion.ProgressPath
+		fields[plancontract.PlanExecuteTerminalFieldProgressPath] = completion.ProgressPath
 	}
 
 	if completion.Summary != "" {
-		fields[completionFieldSummary] = completion.Summary
+		fields[featureplannercontract.PlanExecuteCompletionFieldSummary] = completion.Summary
 	}
 
 	if completion.CompletionSource != "" {
-		fields[completionFieldCompletionSource] = completion.CompletionSource
+		fields[featureplannercontract.PlanExecuteCompletionFieldCompletionSource] = completion.CompletionSource
 	}
 
 	if completion.ReviewRepairSkipped {
-		fields[completionFieldReviewRepairSkipped] = true
+		fields[plancontract.PlanExecuteTerminalFieldReviewRepairSkipped] = true
 	}
 
 	addPlanExecuteCompletionEvidenceFields(fields, completion)
@@ -2363,84 +2021,76 @@ func planExecuteCompletionFields(completion planExecuteCompletion) map[string]an
 	return fields
 }
 
-const (
-	planExecuteCompletionEventNestedFailureKind   = "nested_failure_kind"
-	planExecuteCompletionEventNestedFailureReason = "nested_failure_reason"
-	planExecuteCompletionEventNestedPhase         = "nested_phase"
-	planExecuteCompletionEventNestedReviewStatus  = "nested_review_status"
-	planExecuteCompletionEventNestedStatus        = "nested_status"
-)
-
 func addPlanExecuteCompletionEvidenceFields(fields map[string]any, completion planExecuteCompletion) {
 	if completion.ContractID != "" {
-		fields[completionFieldContractID] = completion.ContractID
+		fields[plancontract.PlanExecuteTerminalFieldContractID] = completion.ContractID
 	}
 
 	if completion.SnapshotHash != "" {
-		fields[completionFieldSnapshotHash] = completion.SnapshotHash
+		fields[plancontract.PlanExecuteTerminalFieldSnapshotHash] = completion.SnapshotHash
 	}
 
 	if completion.ScopeContractID != "" {
-		fields[completionFieldScopeContractID] = completion.ScopeContractID
+		fields[plancontract.PlanExecuteTerminalFieldScopeContractID] = completion.ScopeContractID
 	}
 
 	if completion.ScopeContractHash != "" {
-		fields[completionFieldScopeContractHash] = completion.ScopeContractHash
+		fields[plancontract.PlanExecuteTerminalFieldScopeContractHash] = completion.ScopeContractHash
 	}
 
 	if len(completion.RequiredEditPaths) > 0 {
-		fields[completionFieldRequiredEditPaths] = append([]string(nil), completion.RequiredEditPaths...)
+		fields[plancontract.PlanExecuteTerminalFieldRequiredEditPaths] = append([]string(nil), completion.RequiredEditPaths...)
 	}
 
 	if len(completion.AllowedEditPaths) > 0 {
-		fields[completionFieldAllowedEditPaths] = append([]string(nil), completion.AllowedEditPaths...)
+		fields[plancontract.PlanExecuteTerminalFieldAllowedEditPaths] = append([]string(nil), completion.AllowedEditPaths...)
 	}
 
 	if len(completion.SourceSatisfiedEvidencePaths) > 0 {
-		fields[completionFieldSourceSatisfiedPaths] = append([]string(nil), completion.SourceSatisfiedEvidencePaths...)
+		fields[plancontract.PlanExecuteTerminalFieldSourceSatisfiedEvidencePaths] = append([]string(nil), completion.SourceSatisfiedEvidencePaths...)
 	}
 
 	if len(completion.SourceSatisfiedEvidence) > 0 {
-		fields[completionFieldSourceSatisfiedEvidence] = append([]PlanExecuteSourceSatisfiedEvidenceRef(nil), completion.SourceSatisfiedEvidence...)
+		fields[plancontract.PlanExecuteTerminalFieldSourceSatisfiedEvidence] = append([]plancontract.SourceSatisfiedEvidenceRef(nil), completion.SourceSatisfiedEvidence...)
 	}
 
 	if len(completion.ChangedPaths) > 0 {
-		fields[completionFieldChangedPaths] = append([]string(nil), completion.ChangedPaths...)
+		fields[plancontract.PlanExecuteTerminalFieldChangedPaths] = append([]string(nil), completion.ChangedPaths...)
 	}
 
 	if len(completion.SourceSanity) > 0 {
-		fields[completionFieldSourceSanity] = append([]coreplanexecute.PhaseEvidenceCheck(nil), completion.SourceSanity...)
+		fields[plancontract.PlanExecuteTerminalFieldSourceSanity] = append([]plancontract.PhaseEvidenceCheck(nil), completion.SourceSanity...)
 	}
 
 	if len(completion.Verification) > 0 {
-		fields[completionFieldVerification] = append([]coreplanexecute.PhaseEvidenceCheck(nil), completion.Verification...)
+		fields[plancontract.PlanExecuteTerminalFieldVerification] = append([]plancontract.PhaseEvidenceCheck(nil), completion.Verification...)
 	}
 
 	if len(completion.VerificationCommands) > 0 {
-		fields[completionFieldVerificationCommandsKey] = append([]coreplanexecute.VerificationCommand(nil), completion.VerificationCommands...)
+		fields[plancontract.PlanExecuteTerminalFieldVerificationCommands] = append([]plancontract.VerificationCommand(nil), completion.VerificationCommands...)
 	}
 
 	if len(completion.VerificationSkips) > 0 {
-		fields[completionFieldVerificationSkipsKey] = append([]coreplanexecute.VerificationSkip(nil), completion.VerificationSkips...)
+		fields[plancontract.PlanExecuteTerminalFieldVerificationSkips] = append([]plancontract.VerificationSkip(nil), completion.VerificationSkips...)
 	}
 
 	if len(completion.VerificationRejects) > 0 {
-		fields[completionFieldVerificationRejectsKey] = append([]coreplanexecute.VerificationReject(nil), completion.VerificationRejects...)
+		fields[plancontract.PlanExecuteTerminalFieldVerificationRejects] = append([]plancontract.VerificationReject(nil), completion.VerificationRejects...)
 	}
 
 	if len(completion.AcceptanceEvidenceIDs) > 0 {
-		fields[completionFieldAcceptanceEvidenceIDs] = append([]string(nil), completion.AcceptanceEvidenceIDs...)
+		fields[plancontract.PlanExecuteTerminalFieldAcceptanceEvidenceIDs] = append([]string(nil), completion.AcceptanceEvidenceIDs...)
 	}
 
 	if completion.AcceptanceEvidenceTrusted {
-		fields[completionFieldAcceptanceEvidenceTrusted] = true
+		fields[featureplannercontract.PlanExecuteCompletionFieldAcceptanceEvidenceTrusted] = true
 	}
 }
 
-func missingSourceSatisfiedEvidenceRefs(paths []string, refs []PlanExecuteSourceSatisfiedEvidenceRef) []string {
+func missingSourceSatisfiedEvidenceRefs(paths []string, refs []plancontract.SourceSatisfiedEvidenceRef) []string {
 	covered := map[string]bool{}
 
-	for _, ref := range normalizePlanExecuteSourceSatisfiedEvidenceRefs(refs) {
+	for _, ref := range plancontract.NormalizeSourceSatisfiedEvidenceRefs(refs) {
 		if !plancontract.SourceSatisfiedEvidenceKindProvesCurrentState(ref.Kind) {
 			continue
 		}
@@ -2583,7 +2233,7 @@ func answerOpenQuestion(state *FeatureState, answer string) []Event {
 				state.PlanningLoop.State = FeatureStatePlanningQuestion
 				state.Blockers = append(state.Blockers, err.Error())
 
-				return []Event{{Type: "idiom.feature_planner.planner_question_answer_rejected", SessionID: state.SessionID, Message: err.Error()}}
+				return []Event{{Type: featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionAnswerRejected), SessionID: state.SessionID, Message: err.Error()}}
 			}
 
 			upsertPlanAuthorityDelta(state, delta)
@@ -2591,11 +2241,11 @@ func answerOpenQuestion(state *FeatureState, answer string) []Event {
 			clearAnsweredNewFileAuthorizationBlockers(state, delta)
 			clearAnsweredAcceptedSourceBlockers(state, delta)
 
-			state.OpenQuestions[i].Status = "answered"
+			state.OpenQuestions[i].Status = featureplannercontract.PlannerQuestionStatusAnswered
 			state.Status = FeatureStatePlanning
 			state.PlanningLoop.State = FeatureStatePlanning
 
-			return []Event{{Type: EventPlannerQuestionAnswered, SessionID: state.SessionID, Message: state.OpenQuestions[i].QuestionSummary, Fields: map[string]any{"authority_delta": delta}}}
+			return []Event{{Type: featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionAnswered), SessionID: state.SessionID, Message: state.OpenQuestions[i].QuestionSummary, Fields: map[string]any{featureplannercontract.EventFieldAuthorityDelta: delta}}}
 		}
 	}
 
@@ -2616,17 +2266,17 @@ func supersedeOpenQuestionsForPlanRevision(state *FeatureState, revision string)
 		if !PlannerQuestionOpen(state.OpenQuestions[i]) {
 			continue
 		}
-		state.OpenQuestions[i].Status = "answered"
+		state.OpenQuestions[i].Status = featureplannercontract.PlannerQuestionStatusAnswered
 		state.OpenQuestions[i].Answer = revision
-		state.OpenQuestions[i].AnswerSourceKind = "plan_revision"
-		state.OpenQuestions[i].EvidenceRefs = normalizedStringList(append(state.OpenQuestions[i].EvidenceRefs, "operator_plan_revision"))
+		state.OpenQuestions[i].AnswerSourceKind = featureplannercontract.PlannerQuestionAnswerSourcePlanRevision
+		state.OpenQuestions[i].EvidenceRefs = normalizedStringList(append(state.OpenQuestions[i].EvidenceRefs, featureplannercontract.PlannerQuestionEvidenceOperatorPlanRevision))
 		clearAnsweredPlannerQuestionBlockers(state, state.OpenQuestions[i].ID)
 		events = append(events, Event{
-			Type:      EventPlannerQuestionSupersededByRevision,
+			Type:      featureplannercontract.EventName(featureplannercontract.EventPlannerQuestionSupersededByRevision),
 			SessionID: state.SessionID,
 			Message:   state.OpenQuestions[i].QuestionSummary,
 			Fields: map[string]any{
-				"question_id": state.OpenQuestions[i].ID,
+				featureplannercontract.EventFieldQuestionID: state.OpenQuestions[i].ID,
 			},
 		})
 	}
@@ -3424,7 +3074,7 @@ func shouldResumeDispatch(state FeatureState) bool {
 }
 
 func resumePlanExecuteRetryPending(state *FeatureState) (Event, bool) {
-	if state == nil || strings.TrimSpace(state.Continuation.ResumeAction) != "retry_plan_execute" {
+	if state == nil || strings.TrimSpace(state.Continuation.ResumeAction) != string(recoverycontract.NextActionRetryPlanExecute) {
 		return Event{}, false
 	}
 
@@ -3446,7 +3096,7 @@ func resumePlanExecuteRetryPending(state *FeatureState) (Event, bool) {
 		atom.State = AtomStateDispatchable
 
 		return Event{
-			Type:        "idiom.feature_planner.plan_execute_retry_resumed",
+			Type:        featureplannercontract.EventName(featureplannercontract.EventPlanExecuteRetryResumed),
 			SessionID:   state.SessionID,
 			AtomID:      atom.ID,
 			FeatureFrom: state.Status,

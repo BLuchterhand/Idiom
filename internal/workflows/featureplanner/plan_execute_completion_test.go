@@ -5,59 +5,59 @@ import (
 	"strings"
 	"testing"
 
-	coreplanexecute "idiom/internal/workflows/planexecute"
+	plancontract "idiom/internal/contracts/plan"
 )
 
-func TestPlanExecuteCompletionTerminalClass(t *testing.T) {
+func TestPlanExecuteCompletionTerminalDecisionClass(t *testing.T) {
 	tests := []struct {
 		name   string
 		fields map[string]any
-		want   PlanExecuteTerminalClass
+		want   plancontract.PlanExecuteTerminalDecisionClass
 	}{
 		{
 			name:   "completed status",
 			fields: map[string]any{"status": "completed"},
-			want:   PlanExecuteTerminalCompleted,
+			want:   plancontract.PlanExecuteTerminalDecisionBlocked,
 		},
 		{
 			name:   "skipped review repair",
 			fields: map[string]any{"status": "skipped", "review_repair_skipped": true},
-			want:   PlanExecuteTerminalCompleted,
+			want:   plancontract.PlanExecuteTerminalDecisionCompleted,
 		},
 		{
 			name:   "source satisfied status",
 			fields: map[string]any{"status": "source-satisfied", "outcome": "source_satisfied"},
-			want:   PlanExecuteTerminalCompleted,
+			want:   plancontract.PlanExecuteTerminalDecisionCompleted,
 		},
 		{
 			name:   "failure details override degraded status",
 			fields: map[string]any{"status": "degraded", "failure_kind": "review_model_error"},
-			want:   PlanExecuteTerminalBlocked,
+			want:   plancontract.PlanExecuteTerminalDecisionBlocked,
 		},
 		{
 			name:   "failure details override success terminal class",
 			fields: map[string]any{"terminal_class": "success", "status": "completed", "failure_kind": "review_model_error"},
-			want:   PlanExecuteTerminalBlocked,
+			want:   plancontract.PlanExecuteTerminalDecisionBlocked,
 		},
 		{
 			name:   "degraded outcome overrides success terminal class",
 			fields: map[string]any{"terminal_class": "success", "status": "completed", "outcome": "review_degraded"},
-			want:   PlanExecuteTerminalBlocked,
+			want:   plancontract.PlanExecuteTerminalDecisionBlocked,
 		},
 		{
 			name:   "nonzero exit code blocks completed terminal class",
 			fields: map[string]any{"terminal_class": "success", "status": "completed", "exit_code": 1},
-			want:   PlanExecuteTerminalBlocked,
+			want:   plancontract.PlanExecuteTerminalDecisionBlocked,
 		},
 		{
 			name:   "ambiguous status",
 			fields: map[string]any{"status": "ambiguous"},
-			want:   PlanExecuteTerminalBlocked,
+			want:   plancontract.PlanExecuteTerminalDecisionBlocked,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := PlanExecuteCompletionTerminalClass(tt.fields); got != tt.want {
+			if got := PlanExecuteCompletionTerminalDecision(tt.fields).Class; got != tt.want {
 				t.Fatalf("PlanExecuteCompletionTerminalClass = %q, want %q", got, tt.want)
 			}
 		})
@@ -68,43 +68,49 @@ func TestPlanExecuteCompletionTerminalDecisionReasons(t *testing.T) {
 	tests := []struct {
 		name       string
 		fields     map[string]any
-		wantClass  PlanExecuteTerminalClass
+		wantClass  plancontract.PlanExecuteTerminalDecisionClass
 		wantReason string
 	}{
 		{
 			name:       "missing status",
 			fields:     map[string]any{},
-			wantClass:  PlanExecuteTerminalBlocked,
+			wantClass:  plancontract.PlanExecuteTerminalDecisionBlocked,
 			wantReason: "missing required nested plan-execute status",
 		},
 		{
 			name:       "skipped without explicit marker",
 			fields:     map[string]any{"status": "skipped"},
-			wantClass:  PlanExecuteTerminalBlocked,
+			wantClass:  plancontract.PlanExecuteTerminalDecisionBlocked,
 			wantReason: "nested plan-execute skipped status is not explicitly marked as review-repair skipped by design",
 		},
 		{
 			name:       "running phase blocks completed status",
 			fields:     map[string]any{"status": "completed", "phase": "running"},
-			wantClass:  PlanExecuteTerminalBlocked,
-			wantReason: "nested plan-execute status is not success-shaped",
+			wantClass:  plancontract.PlanExecuteTerminalDecisionBlocked,
+			wantReason: `nested plan-execute terminal record invalid: invalid plan-execute terminal completion phase "running"`,
 		},
 		{
 			name:       "failure details block success terminal class",
 			fields:     map[string]any{"terminal_class": "success", "status": "completed", "failure_reason": "review repair failed"},
-			wantClass:  PlanExecuteTerminalBlocked,
+			wantClass:  plancontract.PlanExecuteTerminalDecisionBlocked,
 			wantReason: "nested plan-execute reported failure details",
+		},
+		{
+			name:       "failed review blocks completed status",
+			fields:     map[string]any{"phase": "complete", "status": "completed", "review_status": "failed"},
+			wantClass:  plancontract.PlanExecuteTerminalDecisionBlocked,
+			wantReason: "nested plan-execute status is not success-shaped",
 		},
 		{
 			name:       "skipped status blocks success terminal class without marker",
 			fields:     map[string]any{"terminal_class": "success", "status": "skipped"},
-			wantClass:  PlanExecuteTerminalBlocked,
+			wantClass:  plancontract.PlanExecuteTerminalDecisionBlocked,
 			wantReason: "nested plan-execute skipped status is not explicitly marked as review-repair skipped by design",
 		},
 		{
 			name:      "skipped review with explicit marker succeeds",
 			fields:    map[string]any{"status": "completed", "review_status": "skipped", "review_repair_skipped": true},
-			wantClass: PlanExecuteTerminalCompleted,
+			wantClass: plancontract.PlanExecuteTerminalDecisionCompleted,
 		},
 	}
 	for _, tt := range tests {
@@ -122,28 +128,90 @@ func TestPlanExecuteCompletionFieldsPreservesExitCodeForTerminalDecision(t *test
 
 	fields := PlanExecuteCompletionFields(output)
 
-	if got := fields["exit_code"]; got != 1 {
+	if got := completionFieldInt(fields, "exit_code"); got != 1 {
 		t.Fatalf("exit_code = %#v, want 1; fields=%+v", got, fields)
 	}
-	if got := PlanExecuteCompletionTerminalClass(fields); got != PlanExecuteTerminalBlocked {
-		t.Fatalf("terminal class = %q, want %q; fields=%+v", got, PlanExecuteTerminalBlocked, fields)
+	if got := PlanExecuteCompletionTerminalDecision(fields).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
+		t.Fatalf("terminal class = %q, want %q; fields=%+v", got, plancontract.PlanExecuteTerminalDecisionBlocked, fields)
 	}
 }
 
-func TestPlanExecuteCompletionFieldsDerivesSourceSatisfiedOutcome(t *testing.T) {
+func TestPlanExecuteCompletionFieldsUsesTerminalRecordAsSerializationSource(t *testing.T) {
+	record := plancontract.NormalizePlanExecuteTerminalCompletionRecord(plancontract.PlanExecuteTerminalCompletionRecord{
+		Status:        plancontract.PlanExecuteTerminalStatusCompleted,
+		Phase:         plancontract.PlanExecuteProgressPhaseComplete,
+		ReviewStatus:  plancontract.PlanExecuteReviewStatusPassed,
+		TerminalClass: plancontract.PlanExecuteTerminalClassSuccess,
+		Outcome:       plancontract.PlanExecuteTerminalOutcomeCompleted,
+		ChangedPaths:  []string{"a.go"},
+	})
+	summary := PlanExecuteCompletionSummary{
+		Status:         "failed",
+		FailureKind:    "stale_summary_should_not_win",
+		terminalRecord: &record,
+	}
+
+	fields := summary.Fields()
+
+	if got := CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldStatus); got != string(plancontract.PlanExecuteTerminalStatusCompleted) {
+		t.Fatalf("status = %q, want terminal record status; fields=%#v", got, fields)
+	}
+	if got := CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldFailureKind); got != "" {
+		t.Fatalf("failure_kind = %q, want terminal record to suppress stale summary failure; fields=%#v", got, fields)
+	}
+	if got := completionFieldStringSlice(fields, plancontract.PlanExecuteTerminalFieldChangedPaths); len(got) != 1 || got[0] != "a.go" {
+		t.Fatalf("changed_paths = %#v, want terminal record paths; fields=%#v", got, fields)
+	}
+}
+
+func TestPlanExecuteCompletionFieldsIgnoresUnknownPlanExecuteEventName(t *testing.T) {
+	output := `{"type":"idiom.plan_execute.not_real","terminal_class":"success","status":"completed","phase":"complete","review_status":"passed"}`
+
+	fields := PlanExecuteCompletionFields(output)
+
+	if got := CompletionFieldString(fields, "status"); got != "" {
+		t.Fatalf("status = %q, want unknown event ignored; fields=%+v", got, fields)
+	}
+	if got := PlanExecuteCompletionTerminalDecision(fields).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
+		t.Fatalf("decision = %q, want blocked for ignored unknown event; fields=%+v", got, fields)
+	}
+}
+
+func TestPlanExecuteCompletionFieldsBlocksInvalidPlanExecuteEventName(t *testing.T) {
+	output := fmt.Sprintf(`{"type":%q,"terminal_class":"success","status":"completed","phase":"complete","review_status":"passed"}`,
+		plancontract.PlanExecuteInvalidEventName(plancontract.PlanExecuteEventVerification))
+
+	fields := PlanExecuteCompletionFields(output)
+
+	if got := PlanExecuteCompletionTerminalDecision(fields).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
+		t.Fatalf("decision = %q, want blocked for invalid event; fields=%+v", got, fields)
+	}
+	if got := completionFieldStringSlice(fields, "validation_failures"); len(got) != 1 || got[0] != "invalid_plan_execute_event:verification" {
+		t.Fatalf("validation_failures = %#v, want invalid event marker; fields=%+v", got, fields)
+	}
+}
+
+func TestPlanExecuteCompletionFieldsTreatsSourceSatisfiedEventAsEvidenceOnly(t *testing.T) {
 	output := strings.Join([]string{
-		`{"type":"idiom.plan_execute.resume_state_saved","state_path":".idiom/plan-execute/sessions/source/state.json","phase":"complete","status":"completed"}`,
 		`{"type":"idiom.plan_execute.source_satisfied","source_satisfied_evidence_paths":["pkg/feature.go"],"reason":"planner reported requested final state already present"}`,
 	}, "\n")
 
 	fields := PlanExecuteCompletionFields(output)
 
-	if got := CompletionFieldString(fields, "status"); got != "source-satisfied" {
-		t.Fatalf("status = %q, want source-satisfied; fields=%+v", got, fields)
+	if got := CompletionFieldString(fields, "status"); got != "" {
+		t.Fatalf("status = %q, want no terminal status from intermediate source_satisfied event; fields=%+v", got, fields)
 	}
 
-	if got := CompletionFieldString(fields, "outcome"); got != "source_satisfied" {
-		t.Fatalf("outcome = %q, want source_satisfied; fields=%+v", got, fields)
+	if got := CompletionFieldString(fields, "outcome"); got != "" {
+		t.Fatalf("outcome = %q, want no terminal outcome from intermediate source_satisfied event; fields=%+v", got, fields)
+	}
+
+	if got := PlanExecuteCompletionTerminalDecision(fields).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
+		t.Fatalf("terminal class = %q, want blocked without terminal_completion record; fields=%+v", got, fields)
+	}
+
+	if got := completionFieldStringSlice(fields, "source_satisfied_evidence_paths"); len(got) != 1 || got[0] != "pkg/feature.go" {
+		t.Fatalf("source satisfied evidence paths = %#v", got)
 	}
 }
 
@@ -239,15 +307,15 @@ func TestPlanExecuteCompletionFieldsLaterCompletedStateClearsEarlierFailure(t *t
 		t.Fatalf("progress_path = %q, want active progress path; fields=%+v", got, fields)
 	}
 
-	if got := PlanExecuteCompletionTerminalClass(fields); got != PlanExecuteTerminalCompleted {
+	if got := PlanExecuteCompletionTerminalDecision(fields).Class; got != plancontract.PlanExecuteTerminalDecisionCompleted {
 		t.Fatalf("terminal class = %q, want completed; fields=%+v", got, fields)
 	}
 }
 
-func TestPlanExecuteCompletionFieldsKeepsNestedSourceSatisfiedTerminal(t *testing.T) {
+func TestPlanExecuteCompletionFieldsKeepsTerminalCompletionSourceSatisfied(t *testing.T) {
 	output := strings.Join([]string{
 		`{"type":"idiom.plan_execute.completed","status":"completed","phase":"review_repair"}`,
-		`{"type":"idiom.plan_execute.source_satisfied","status":"source-satisfied","phase":"complete"}`,
+		`{"type":"idiom.plan_execute.terminal_completion","terminal_class":"success","status":"source-satisfied","outcome":"source_satisfied","phase":"complete","required_edit_paths":["pkg/feature.go"],"source_satisfied_evidence_paths":["pkg/feature.go"],"source_satisfied_evidence":[{"path":"pkg/feature.go","kind":"harness_observed_source"}]}`,
 	}, "\n")
 
 	fields := PlanExecuteCompletionFields(output)
@@ -256,7 +324,7 @@ func TestPlanExecuteCompletionFieldsKeepsNestedSourceSatisfiedTerminal(t *testin
 		t.Fatalf("status = %q, want source-satisfied; fields=%+v", got, fields)
 	}
 
-	if got := PlanExecuteCompletionTerminalClass(fields); got != PlanExecuteTerminalCompleted {
+	if got := PlanExecuteCompletionTerminalDecision(fields).Class; got != plancontract.PlanExecuteTerminalDecisionCompleted {
 		t.Fatalf("terminal class = %q, want completed; fields=%+v", got, fields)
 	}
 }
@@ -392,7 +460,7 @@ func TestPlanExecuteCompletionMergeAndOverlayPreserveNonzeroExitCode(t *testing.
 	if got := merged["exit_code"]; got != 1 {
 		t.Fatalf("merged exit_code = %#v, want 1; fields=%+v", got, merged)
 	}
-	if got := PlanExecuteCompletionTerminalClass(merged); got != PlanExecuteTerminalBlocked {
+	if got := PlanExecuteCompletionTerminalDecision(merged).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
 		t.Fatalf("merged terminal class = %q, want blocked; fields=%+v", got, merged)
 	}
 
@@ -408,7 +476,7 @@ func TestPlanExecuteCompletionMergeAndOverlayPreserveNonzeroExitCode(t *testing.
 	if got := fields["exit_code"]; got != 1 {
 		t.Fatalf("overlaid exit_code = %#v, want 1; fields=%+v", got, fields)
 	}
-	if got := PlanExecuteCompletionTerminalClass(fields); got != PlanExecuteTerminalBlocked {
+	if got := PlanExecuteCompletionTerminalDecision(fields).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
 		t.Fatalf("overlaid terminal class = %q, want blocked; fields=%+v", got, fields)
 	}
 }
@@ -428,7 +496,7 @@ func TestPlanExecuteCompletionMergePreservesSparseValidationFailure(t *testing.T
 	if got := completionFieldStringSlice(merged, "validation_failures"); len(got) != 1 || got[0] != "exit_code_nonzero" {
 		t.Fatalf("validation_failures = %#v, want sparse failure preserved; fields=%+v", got, merged)
 	}
-	if got := PlanExecuteCompletionTerminalClass(merged); got != PlanExecuteTerminalBlocked {
+	if got := PlanExecuteCompletionTerminalDecision(merged).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
 		t.Fatalf("terminal class = %q, want blocked; fields=%+v", got, merged)
 	}
 }
@@ -441,18 +509,18 @@ func TestPlanExecuteCompletionMergePreservesSparseVerificationReject(t *testing.
 			TerminalClass: "success",
 		},
 		PlanExecuteCompletionSummary{
-			VerificationRejects: []coreplanexecute.VerificationReject{{
+			VerificationRejects: []plancontract.VerificationReject{{
 				Command: "go test ./pkg",
-				Reason:  coreplanexecute.VerificationRejectUnsupportedCmd,
+				Reason:  plancontract.VerificationRejectUnsupportedCmd,
 			}},
 		},
 	).Fields()
 
-	rejects, _ := merged["verification_rejects"].([]coreplanexecute.VerificationReject)
+	rejects, _ := merged["verification_rejects"].([]plancontract.VerificationReject)
 	if len(rejects) != 1 || rejects[0].Command != "go test ./pkg" {
 		t.Fatalf("verification_rejects = %#v, want sparse reject preserved; fields=%+v", merged["verification_rejects"], merged)
 	}
-	if got := PlanExecuteCompletionTerminalClass(merged); got != PlanExecuteTerminalBlocked {
+	if got := PlanExecuteCompletionTerminalDecision(merged).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
 		t.Fatalf("terminal class = %q, want blocked; fields=%+v", got, merged)
 	}
 }
@@ -465,7 +533,7 @@ func TestPlanExecuteCompletionMergePreservesSparseSourceSanityFailure(t *testing
 			TerminalClass: "success",
 		},
 		PlanExecuteCompletionSummary{
-			SourceSanity: []coreplanexecute.PhaseEvidenceCheck{{
+			SourceSanity: []plancontract.PhaseEvidenceCheck{{
 				Kind:   "source_sanity",
 				Path:   "pkg/feature.go",
 				Status: "failed",
@@ -474,11 +542,11 @@ func TestPlanExecuteCompletionMergePreservesSparseSourceSanityFailure(t *testing
 		},
 	).Fields()
 
-	checks, _ := merged["source_sanity"].([]coreplanexecute.PhaseEvidenceCheck)
+	checks, _ := merged["source_sanity"].([]plancontract.PhaseEvidenceCheck)
 	if len(checks) != 1 || checks[0].Path != "pkg/feature.go" {
 		t.Fatalf("source_sanity = %#v, want sparse failure preserved; fields=%+v", merged["source_sanity"], merged)
 	}
-	if got := PlanExecuteCompletionTerminalClass(merged); got != PlanExecuteTerminalBlocked {
+	if got := PlanExecuteCompletionTerminalDecision(merged).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
 		t.Fatalf("terminal class = %q, want blocked; fields=%+v", got, merged)
 	}
 }
@@ -505,12 +573,9 @@ func TestTrustPlanExecuteCompletionFieldsDoesNotMintTrustForHarnessReturnSource(
 		t.Fatalf("consumer-side trust should not be minted from completion_source alone; fields=%+v", fields)
 	}
 
-	if planExecuteAcceptanceEvidenceTrustRegistered(fields) {
-		t.Fatalf("completion_source-only trust should not be registered; fields=%+v", fields)
-	}
 }
 
-func TestTrustObservedPlanExecuteCompletionFieldsRegistersProducerTrust(t *testing.T) {
+func TestTrustObservedPlanExecuteCompletionFieldsMarksProducerTrust(t *testing.T) {
 	fields := map[string]any{
 		"status":                  "completed",
 		"terminal_class":          "completed",
@@ -524,9 +589,6 @@ func TestTrustObservedPlanExecuteCompletionFieldsRegistersProducerTrust(t *testi
 		t.Fatalf("observed terminal completion should trust acceptance evidence; fields=%+v", fields)
 	}
 
-	if !planExecuteAcceptanceEvidenceTrustRegistered(fields) {
-		t.Fatalf("observed terminal completion was not registered; fields=%+v", fields)
-	}
 }
 
 func TestTrustObservedPlanExecuteCompletionFieldsDoesNotRegisterFailedTerminal(t *testing.T) {
@@ -542,9 +604,6 @@ func TestTrustObservedPlanExecuteCompletionFieldsDoesNotRegisterFailedTerminal(t
 		t.Fatalf("failed terminal completion should not trust acceptance evidence; fields=%+v", fields)
 	}
 
-	if planExecuteAcceptanceEvidenceTrustRegistered(fields) {
-		t.Fatalf("failed terminal completion should not be registered; fields=%+v", fields)
-	}
 }
 
 func TestPlanExecuteCompletionFieldsDoesNotTrustLegacyAcceptanceEvidence(t *testing.T) {
@@ -572,7 +631,7 @@ func TestOverlayPlanExecuteCompletionFieldsReplacesSourceSanityEvidence(t *testi
 		},
 	})
 
-	checks, ok := fields["source_sanity"].([]coreplanexecute.PhaseEvidenceCheck)
+	checks, ok := fields["source_sanity"].([]plancontract.PhaseEvidenceCheck)
 	if !ok || len(checks) != 1 || checks[0].Path != "pkg/feature.go" {
 		t.Fatalf("source_sanity overlay = %#v, want only current terminal evidence; fields=%+v", fields["source_sanity"], fields)
 	}
@@ -596,6 +655,24 @@ func TestOverlayPlanExecuteCompletionFieldsReplacesAcceptanceEvidence(t *testing
 
 	if _, ok := fields["acceptance_evidence_trusted"]; ok {
 		t.Fatalf("stale acceptance_evidence_trusted survived overlay: fields=%+v", fields)
+	}
+}
+
+func TestOverlayPlanExecuteCompletionFieldsReplacesWriteAllowedPaths(t *testing.T) {
+	fields := map[string]any{
+		"status":              "running",
+		"write_allowed_paths": []any{"pkg/stale.go"},
+	}
+
+	OverlayPlanExecuteCompletionFields(fields, map[string]any{
+		"status":              "completed",
+		"phase":               "complete",
+		"write_allowed_paths": []any{"pkg/feature.go"},
+	})
+
+	paths, ok := fields["write_allowed_paths"].([]string)
+	if !ok || len(paths) != 1 || paths[0] != "pkg/feature.go" {
+		t.Fatalf("write_allowed_paths overlay = %#v, want only current terminal envelope; fields=%+v", fields["write_allowed_paths"], fields)
 	}
 }
 
@@ -625,7 +702,7 @@ func TestOverlayPlanExecuteCompletionFieldsNestedFailureOverridesWrapperComplete
 		}
 	}
 
-	if got := PlanExecuteCompletionTerminalClass(fields); got != PlanExecuteTerminalBlocked {
+	if got := PlanExecuteCompletionTerminalDecision(fields).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
 		t.Fatalf("terminal class = %q, want blocked; fields=%+v", got, fields)
 	}
 }
@@ -649,6 +726,36 @@ func TestPlanExecuteCompletionFieldsDegradedInheritsEarlierProgressPath(t *testi
 
 	if got := fmt.Sprint(fields["failure_kind"]); got != "review_model_error" {
 		t.Fatalf("failure_kind = %q, want review_model_error; fields=%+v", got, fields)
+	}
+}
+
+func TestPlanExecuteCompletionFieldsPreserveOwnerTerminalProjection(t *testing.T) {
+	summary := PlanExecuteCompletionSummaryFromFields(map[string]any{
+		"type":                             plancontract.PlanExecuteTerminalCompletionRecordType,
+		"status":                           "failed",
+		"workflow_id":                      "plan_execute",
+		"workflow_terminal_state":          "blocked",
+		"dispatchable":                     false,
+		"required_edit_paths":              []any{"pkg/a.go"},
+		"changed_paths":                    []any{"pkg/a.go"},
+		"required_path_coverage":           []any{map[string]any{"path": "pkg/a.go", "status": "covered", "evidence": "read_file"}},
+		"required_acceptance_evidence_ids": []any{"eval-1"},
+		"acceptance_evidence_claims":       []any{map[string]any{"id": "eval-1", "status": "satisfied"}},
+		"failure_invariants":               []any{map[string]any{"code": "recovery_record_missing", "status": "failed", "reason": "record missing"}},
+	})
+
+	fields := summary.Fields()
+	for _, key := range []string{
+		"workflow_id",
+		"workflow_terminal_state",
+		"required_path_coverage",
+		"required_acceptance_evidence_ids",
+		"acceptance_evidence_claims",
+		"failure_invariants",
+	} {
+		if _, ok := fields[key]; !ok {
+			t.Fatalf("owner terminal field %q was dropped: %#v", key, fields)
+		}
 	}
 }
 

@@ -15,7 +15,8 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/autonomy"
-	"idiom/internal/contracts/plan"
+	plancontract "idiom/internal/contracts/plan"
+	"idiom/internal/contracts/workflowstate"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/backends"
@@ -682,7 +683,7 @@ func TestPlanExecuteRuntimeBriefUsesTypedCandidateScopeInsteadOfPromptSchema(t *
 	}
 	restore := model.applyPlanExecutePromptRunnerState(config.Default(), planexecute.RunOptions{
 		TaskFamily: agent.PlanThenExecutePlannerTaskFamily,
-		ScopeContract: planexecute.NewPlanScopeContract(nil, []string{
+		ScopeContract: plancontract.NewPlanScopeContract(nil, []string{
 			"internal/surfaces/tui/app/rendering.go",
 			"internal/workflows/productworkflow/status.go",
 		}, nil),
@@ -746,7 +747,7 @@ func TestPlanExecuteRuntimeBriefKeepsRealCandidateScopeExactSnippets(t *testing.
 	}
 	restore := model.applyPlanExecutePromptRunnerState(config.Default(), planexecute.RunOptions{
 		TaskFamily: agent.PlanThenExecutePlannerTaskFamily,
-		ScopeContract: planexecute.NewPlanScopeContract(nil, []string{
+		ScopeContract: plancontract.NewPlanScopeContract(nil, []string{
 			"native/src/feature.cpp",
 		}, nil),
 	}, io.Discard)
@@ -1229,6 +1230,16 @@ func TestPromptContextPacketProjectionMarksHeadingScanAsCompatibilityFallback(t 
 	}
 }
 
+func TestPromptContextPacketProjectionRequiresStructuredOrLegacyEvidence(t *testing.T) {
+	projection := promptContextPacketProjection("Explain the prompt router without any attached packet.")
+	if projection.StructuredPacket || projection.LegacyHeadingFallback || projection.Dispatchable || projection.State != workflowstate.StateTerminal {
+		t.Fatalf("plain prompt should not be context-packet dispatchable: %#v", projection)
+	}
+	if projection.Reason != "missing_structured_packet_or_legacy_heading" {
+		t.Fatalf("unexpected projection reason: %#v", projection)
+	}
+}
+
 func TestPromptContextPacketMarkerRequiresSectionContent(t *testing.T) {
 	prompt := `
 Context Packet:
@@ -1323,11 +1334,11 @@ Editable Files:
 - native/tests/test_transport_system.cpp
 - native/src/simulation/transport/route_graph.cpp
 `
-	if got := RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
+	if got := plancontract.RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
 		t.Fatalf("editable files must not define required edit coverage, got %#v", got)
 	}
 
-	allowed := AllowedEditPathsFromPrompt(prompt)
+	allowed := plancontract.AllowedEditPathsFromPrompt(prompt)
 	for _, want := range []string{"native/tests/test_transport_system.cpp", "native/src/simulation/transport/route_graph.cpp"} {
 		if !slices.Contains(allowed, want) {
 			t.Fatalf("editable files missing allowed path %q, got %#v", want, allowed)
@@ -1363,11 +1374,11 @@ func TestRequiredEditPathsIgnoreAllowedEditPaths(t *testing.T) {
 
 - docs/design.md
 `
-	if got := RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
+	if got := plancontract.RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
 		t.Fatalf("allowed edit paths must not define required coverage, got %#v", got)
 	}
 
-	allowed := AllowedEditPathsFromPrompt(prompt)
+	allowed := plancontract.AllowedEditPathsFromPrompt(prompt)
 	for _, want := range []string{
 		"native/tests/test_transport_system.cpp",
 		"native/src/simulation/transport/route_graph.cpp",
@@ -1384,7 +1395,7 @@ func TestRequiredEditPathsIgnoreAllowedEditPaths(t *testing.T) {
 
 func TestRequiredEditPathsCaptureInlineColonList(t *testing.T) {
 	prompt := "Implement the change. Required edit paths: cmd/idiom/product_workflow.go, cmd/idiom/product_workflow_test.go"
-	got := RequiredEditPathsFromPrompt(prompt)
+	got := plancontract.RequiredEditPathsFromPrompt(prompt)
 
 	for _, want := range []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"} {
 		if !slices.Contains(got, want) {
@@ -1443,7 +1454,7 @@ func TestRequiredEditPathsRejectDirectoryLikeObligations(t *testing.T) {
 - cmd/idiom/product_workflow.go
 - Makefile
 `
-	got := RequiredEditPathsFromPrompt(prompt)
+	got := plancontract.RequiredEditPathsFromPrompt(prompt)
 	want := []string{"cmd/idiom/product_workflow.go", "Makefile"}
 
 	if len(got) != len(want) {
@@ -1517,7 +1528,7 @@ func TestRequiredEditPathsIgnoreStructuredKeysInsideEvidenceCommands(t *testing.
 
 - idiom tool context_status --config .idiom/config.json --input '{"refresh":true,"required_edit_paths":["native/src/a.cpp","native/tests/test_a.cpp"],"limit":20}'
 `
-	got := RequiredEditPathsFromPrompt(prompt)
+	got := plancontract.RequiredEditPathsFromPrompt(prompt)
 
 	for _, want := range []string{"native/src/a.cpp", "native/tests/test_a.cpp"} {
 		if !slices.Contains(got, want) {
@@ -1554,7 +1565,7 @@ Exhaustive allowlist for this atom:
 |---|---|
 | ` + "`scripts/ui/shaft_panel.gd`" + ` | Evidence only. |
 `
-	got := RequiredEditPathsFromPrompt(prompt)
+	got := plancontract.RequiredEditPathsFromPrompt(prompt)
 	want := []string{
 		"tests/e2e/suites/binding_surface_suite.gd",
 		".planning/campaigns/testing-coverage-expansion.md",
@@ -1583,7 +1594,7 @@ Files To Modify:
 Evidence:
 - native/src/simulation/transport/route_graph.cpp
 `
-	if got := RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
+	if got := plancontract.RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
 		t.Fatalf("empty edit section should not borrow evidence paths, got %#v", got)
 	}
 }
@@ -1593,7 +1604,7 @@ func TestRequiredEditPathsCapturesTrailingColonPathLine(t *testing.T) {
 Files To Modify:
 - internal/surfaces/tui/app/prompt_routing.go:
 `
-	got := RequiredEditPathsFromPrompt(prompt)
+	got := plancontract.RequiredEditPathsFromPrompt(prompt)
 
 	if !slices.Contains(got, "internal/surfaces/tui/app/prompt_routing.go") {
 		t.Fatalf("expected trailing-colon path to count as required edit path, got %#v", got)
@@ -1617,7 +1628,7 @@ func TestRuntimeBriefCapturesHostCurrentStateAnchorEvidence(t *testing.T) {
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
 	}
-	model.SetPlanExecuteScopeContract(planexecute.NewPlanScopeContract([]string{"pkg/a.go"}, nil, nil))
+	model.SetPlanExecuteScopeContract(plancontract.NewPlanScopeContract([]string{"pkg/a.go"}, nil, nil))
 
 	prompt := `
 # Atom
@@ -1647,7 +1658,7 @@ func TestRuntimeBriefScopeContractResolvesTUIDispatchPathRoles(t *testing.T) {
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
 	}
-	model.SetPlanExecuteScopeContract(planexecute.NewPlanScopeContract(
+	model.SetPlanExecuteScopeContract(plancontract.NewPlanScopeContract(
 		[]string{"pkg/feature.go"},
 		[]string{"pkg/feature_test.go"},
 		nil,
@@ -1998,7 +2009,7 @@ Implement the patch in the named files only.
 func TestAllowedEditPathsFromPromptKeepsInlineScopeSentenceBounded(t *testing.T) {
 	prompt := "Implement the behavior, but only edit pkg/feature.go and pkg/feature_test.go. Use pkg/evidence.go as read-only evidence."
 
-	allowed := AllowedEditPathsFromPrompt(prompt)
+	allowed := plancontract.AllowedEditPathsFromPrompt(prompt)
 	for _, want := range []string{"pkg/feature.go", "pkg/feature_test.go"} {
 		if !slices.Contains(allowed, want) {
 			t.Fatalf("missing inline allowed path %q, got %#v", want, allowed)

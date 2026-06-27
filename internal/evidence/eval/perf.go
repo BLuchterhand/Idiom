@@ -14,7 +14,8 @@ import (
 	"slices"
 	"strings"
 
-	"idiom/internal/platform/util"
+	queuecontract "idiom/internal/contracts/queue"
+	"idiom/internal/platform/textutil"
 )
 
 // ToolCounts breaks down the tool mix used in a single turn. The
@@ -334,7 +335,7 @@ func analyzeRecords(path string, records []Record) PerfReport {
 					tool:     tool,
 					action:   stringField(rec.Data, "action"),
 					rawArgs:  stringField(rec.Data, "raw"),
-					target:   util.FirstNonEmpty(targetFromAction(stringField(rec.Data, "action")), stringField(rec.Data, "path")),
+					target:   textutil.FirstNonEmpty(targetFromAction(stringField(rec.Data, "action")), stringField(rec.Data, "path")),
 					hasError: true,
 					errText:  errMsg,
 				}
@@ -647,7 +648,10 @@ func ingestLocalOpsTelemetry(rep *PerfReport, eventType string, data map[string]
 
 	localOpsPayload, _ := data["local_ops"].(map[string]any)
 	hasLocalOps := localOpsPayload != nil
-	isQueue := eventType == "implement_queue" || eventType == "queue_admission" || strings.HasPrefix(eventType, "idiom.implement.queue_")
+	isQueue := eventType == "implement_queue" ||
+		eventType == "queue_admission" ||
+		strings.HasPrefix(eventType, string(queuecontract.CommandEventPrefixImplement)+".queue_") ||
+		strings.HasPrefix(eventType, string(queuecontract.CommandEventPrefixPlanExecute)+".queue_")
 	isDoctor := eventType == "doctor_readiness_profile"
 	isCloseout := eventType == "implement_session_closeout"
 
@@ -1141,7 +1145,7 @@ func detectNamedGapReadWalk(rep *PerfReport, steps []toolStep, records []Record)
 			continue
 		}
 
-		path := util.FirstNonEmpty(perfRawJSONStringField(s.rawArgs, "path"), s.target)
+		path := textutil.FirstNonEmpty(perfRawJSONStringField(s.rawArgs, "path"), s.target)
 		if path == "" {
 			continue
 		}
@@ -1512,7 +1516,7 @@ func detectCompletionGateReopenedDiscovery(rep *PerfReport, records []Record) {
 			reopened++
 
 			if len(examples) < 3 {
-				target := util.FirstNonEmpty(stringField(rec.Data, "path"), targetFromAction(stringField(rec.Data, "action")), stringField(rec.Data, "tool"))
+				target := textutil.FirstNonEmpty(stringField(rec.Data, "path"), targetFromAction(stringField(rec.Data, "action")), stringField(rec.Data, "tool"))
 
 				examples = append(examples, fmt.Sprintf("after completion gate step %d: %s %s", armedStep, tool, target))
 			}
@@ -1553,7 +1557,7 @@ func completionGateExpectedSourceRecovery(gateData map[string]any, requestData m
 		return false
 	}
 
-	target := strings.ToLower(strings.TrimSpace(util.FirstNonEmpty(
+	target := strings.ToLower(strings.TrimSpace(textutil.FirstNonEmpty(
 		stringField(requestData, "path"),
 		targetFromAction(stringField(requestData, "action")),
 		stringField(requestData, "handle"),
@@ -1579,7 +1583,7 @@ func detectRequiredPathsBlockedWithoutWrite(rep *PerfReport, records []Record) {
 			continue
 		}
 
-		reason := strings.ToLower(util.FirstNonEmpty(stringField(rec.Data, "reason"), stringField(rec.Data, "blocker_kind")))
+		reason := strings.ToLower(textutil.FirstNonEmpty(stringField(rec.Data, "reason"), stringField(rec.Data, "blocker_kind")))
 		if !strings.Contains(reason, "required_edit_paths_remaining") {
 			continue
 		}

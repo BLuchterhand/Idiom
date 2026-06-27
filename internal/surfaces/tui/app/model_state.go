@@ -18,15 +18,16 @@ import (
 
 	"idiom/internal/capabilities/mcp"
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/autonomy"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/evidence/transcript"
 	"idiom/internal/platform/config"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/instructions"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/modepolicy"
 	"idiom/internal/runtime/promptstack"
-	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/planexecute"
 
 	"cmp"
@@ -250,7 +251,7 @@ type Model struct {
 	lastTurnSourceResults            []workspace.ToolResult
 	lastTurnSourceObjective          string
 	planExecuteActive                bool
-	planExecuteScopeContract         planexecute.PlanScopeContract
+	planExecuteScopeContract         plancontract.PlanScopeContract
 	planExecuteAuthorizedNewFiles    []string
 	planExecuteWriteEnvelope         []string
 	planExecuteWriteEnvelopeExplicit bool
@@ -488,7 +489,7 @@ func (m *Model) Close() {
 }
 
 func (m *Model) chatOptions() llama.ChatOptions {
-	enableThinking := util.ClonePtr(m.cfg.Chat.EnableThinking)
+	enableThinking := cloneChatBoolPtr(m.cfg.Chat.EnableThinking)
 	preserveThinking := m.cfg.Chat.PreserveThinking
 	chatTemplateKwargs := false
 
@@ -518,6 +519,14 @@ func (m *Model) chatOptions() llama.ChatOptions {
 		ModelThinkingFloor: m.modelThinkingFloor,
 		MaxTokens:          m.cfg.Chat.MaxTokens,
 	}
+}
+
+func cloneChatBoolPtr(value *bool) *bool {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func (m *Model) samplingSummary() string {
@@ -584,7 +593,7 @@ func (m *Model) activeModelDisplayID() string {
 		return ""
 	}
 
-	return util.Fallback(strings.TrimSpace(m.modelDisplayID), strings.TrimSpace(m.modelID))
+	return textutil.Fallback(strings.TrimSpace(m.modelDisplayID), strings.TrimSpace(m.modelID))
 }
 
 func (m *Model) bootstrap() {
@@ -1401,7 +1410,7 @@ func (m *Model) logRunEvent(event agent.RunEvent) {
 			if m.debugLogger != nil {
 				_ = m.debugLogger.LogModelCall(transcript.ModelCall{
 					Step:                       payload.Step,
-					Agent:                      util.FirstNonEmpty(payload.Agent, payload.Label),
+					Agent:                      textutil.FirstNonEmpty(payload.Agent, payload.Label),
 					PromptTokens:               payload.PromptTokens,
 					CompletionTokens:           payload.CompletionTokens,
 					TotalTokens:                payload.TotalTokens,
@@ -1756,7 +1765,7 @@ func (m *Model) SetForcedTaskFamily(family string) {
 	// the manager flag here, where forced family is set.
 	if m.workspace != nil {
 		switch m.forcedTaskFamily {
-		case string(workerruntime.TaskFamilyPlanThenExecutePlanner), string(workerruntime.TaskFamilyPlanThenExecuteReview):
+		case string(autonomy.TaskFamilyPlanThenExecutePlanner), string(autonomy.TaskFamilyPlanThenExecuteReview):
 			m.workspace.SetPlanThenExecutePlannerMode(true)
 		default:
 			m.workspace.SetPlanThenExecutePlannerMode(false)
@@ -1887,7 +1896,7 @@ func turnObjectiveCarryTerms(text string) map[string]struct{} {
 	return terms
 }
 
-func (m *Model) SetPlanExecuteScopeContract(contract planexecute.PlanScopeContract) {
+func (m *Model) SetPlanExecuteScopeContract(contract plancontract.PlanScopeContract) {
 	m.planExecuteActive = true
 	m.planExecuteScopeContract = contract.Normalized()
 }

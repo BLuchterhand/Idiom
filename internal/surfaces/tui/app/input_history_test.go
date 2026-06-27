@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
+
 	"idiom/internal/evidence/transcript"
 	"idiom/internal/platform/config"
 )

@@ -3,35 +3,38 @@ package planexecute
 import (
 	"strings"
 
-	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
-	"idiom/internal/workflows/workflowstate"
+	plancontract "idiom/internal/contracts/plan"
+	planartifact "idiom/internal/contracts/planartifact"
+	"idiom/internal/contracts/workflowstate"
+	"idiom/internal/platform/markdownsection"
 )
 
 const planExecuteExpectedArtifactExactPlan = "exact_plan_edits"
 
 type PlanExecuteDispatchState struct {
-	WorkflowID            workflowstate.WorkflowID `json:"workflow_id"`
-	State                 workflowstate.StateID    `json:"state"`
-	Dispatchable          bool                     `json:"dispatchable"`
-	ExpectedArtifact      string                   `json:"expected_artifact,omitempty"`
-	LegacyHeadingFallback bool                     `json:"legacy_heading_fallback"`
-	Reason                string                   `json:"reason,omitempty"`
+	WorkflowID            workflowstate.WorkflowID    `json:"workflow_id"`
+	State                 workflowstate.StateID       `json:"state"`
+	TerminalState         workflowstate.TerminalState `json:"terminal_state,omitempty"`
+	Dispatchable          bool                        `json:"dispatchable"`
+	ExpectedArtifact      string                      `json:"expected_artifact,omitempty"`
+	LegacyHeadingFallback bool                        `json:"legacy_heading_fallback"`
+	Reason                string                      `json:"reason,omitempty"`
 }
 
-func planExecuteExactPlanEdits(prompt string, requiredEditPaths []string) ([]workspace.PlanEdit, string) {
+func planExecuteExactPlanEdits(prompt string, requiredEditPaths []string) ([]planartifact.PlanEdit, string) {
 	return planExecuteExactPlanEditsForWorkspace(prompt, requiredEditPaths, "")
 }
 
-func planExecuteExactPlanEditsForWorkspace(prompt string, requiredEditPaths []string, workspaceRoot string) ([]workspace.PlanEdit, string) {
-	required := planExecuteUniqueRequiredPaths(requiredEditPaths)
+func planExecuteExactPlanEditsForWorkspace(prompt string, requiredEditPaths []string, workspaceRoot string) ([]planartifact.PlanEdit, string) {
+	required := plancontract.UniqueScopePaths(requiredEditPaths)
 	state := planExecuteExactPlanDispatchState(required)
 
 	return planExecuteExactPlanEditsForWorkspaceWithDispatchState(prompt, required, workspaceRoot, state)
 }
 
-func planExecuteExactPlanEditsForWorkspaceWithDispatchState(prompt string, required []string, workspaceRoot string, state PlanExecuteDispatchState) ([]workspace.PlanEdit, string) {
-	required = planExecuteUniqueRequiredPaths(required)
+func planExecuteExactPlanEditsForWorkspaceWithDispatchState(prompt string, required []string, workspaceRoot string, state PlanExecuteDispatchState) ([]planartifact.PlanEdit, string) {
+	required = plancontract.UniqueScopePaths(required)
 	state = normalizePlanExecuteDispatchState(state)
 	if !state.Dispatchable {
 		return nil, firstPlanExecuteTerminalString(state.Reason, "plan-execute dispatch state is not dispatchable")
@@ -44,7 +47,7 @@ func planExecuteExactPlanEditsForWorkspaceWithDispatchState(prompt string, requi
 	if planExecuteDispatchStateAllowsLegacyHeadingScan(state) {
 		for _, candidatePrompt := range planExecuteAutoPlanScanTexts(prompt) {
 			for _, heading := range []string{"required edits", "edits to apply", "edits"} {
-				if candidate := atomMarkdownSectionByHeading(candidatePrompt, heading); strings.TrimSpace(candidate) != "" {
+				if candidate := markdownsection.ByHeading(candidatePrompt, heading); strings.TrimSpace(candidate) != "" {
 					section = candidate
 					break
 				}
@@ -75,11 +78,12 @@ func planExecuteExactPlanEditsForWorkspaceWithDispatchState(prompt string, requi
 }
 
 func planExecuteExactPlanDispatchState(required []string) PlanExecuteDispatchState {
-	if len(planExecuteUniqueRequiredPaths(required)) == 0 {
+	if len(plancontract.UniqueScopePaths(required)) == 0 {
 		return PlanExecuteDispatchState{
-			WorkflowID: workflowstate.WorkflowPlanExecutePlanner,
-			State:      workflowstate.StateTerminal,
-			Reason:     "no required_edit_paths",
+			WorkflowID:    workflowstate.WorkflowPlanExecutePlanner,
+			State:         workflowstate.StateTerminal,
+			TerminalState: workflowstate.TerminalStateMissingScope,
+			Reason:        "no required_edit_paths",
 		}
 	}
 
@@ -96,6 +100,9 @@ func normalizePlanExecuteDispatchState(state PlanExecuteDispatchState) PlanExecu
 	if state.WorkflowID == "" {
 		state.WorkflowID = workflowstate.WorkflowPlanExecutePlanner
 	}
+	if state.State == workflowstate.StateTerminal && state.TerminalState == "" {
+		state.TerminalState = workflowstate.TerminalStateBlocked
+	}
 	state.ExpectedArtifact = strings.TrimSpace(state.ExpectedArtifact)
 	state.Reason = strings.TrimSpace(state.Reason)
 
@@ -111,14 +118,14 @@ func planExecuteDispatchStateAllowsLegacyHeadingScan(state PlanExecuteDispatchSt
 		state.ExpectedArtifact == planExecuteExpectedArtifactExactPlan
 }
 
-func planExecuteExactPlanEditsFromSection(section string, required []string, workspaceRoot string) ([]workspace.PlanEdit, string) {
+func planExecuteExactPlanEditsFromSection(section string, required []string, workspaceRoot string) ([]planartifact.PlanEdit, string) {
 	type pendingOldBlock struct {
 		paths []string
 		text  string
 	}
 
 	var (
-		edits        []workspace.PlanEdit
+		edits        []planartifact.PlanEdit
 		pending      pendingOldBlock
 		current      []string
 		currentPaths []string
@@ -179,7 +186,7 @@ func planExecuteExactPlanEditsFromSection(section string, required []string, wor
 						continue
 					}
 
-					edits = append(edits, workspace.PlanEdit{
+					edits = append(edits, planartifact.PlanEdit{
 						Path:    path,
 						OldText: pending.text,
 						NewText: block,
@@ -200,7 +207,7 @@ func planExecuteExactPlanEditsFromSection(section string, required []string, wor
 						continue
 					}
 
-					edits = append(edits, workspace.PlanEdit{
+					edits = append(edits, planartifact.PlanEdit{
 						Path:       path,
 						OldText:    "",
 						NewText:    block,
@@ -234,9 +241,9 @@ func planExecuteExactPlanEditsFromSection(section string, required []string, wor
 	return edits, ""
 }
 
-func planExecuteImplicitNewFileBodyEdits(prompt string, required []string, workspaceRoot string) ([]workspace.PlanEdit, string) {
+func planExecuteImplicitNewFileBodyEdits(prompt string, required []string, workspaceRoot string) ([]planartifact.PlanEdit, string) {
 	for _, candidatePrompt := range planExecuteAutoPlanScanTexts(prompt) {
-		section := atomMarkdownSectionByHeading(candidatePrompt, "required behavior")
+		section := markdownsection.ByHeading(candidatePrompt, "required behavior")
 		if strings.TrimSpace(section) == "" {
 			continue
 		}
@@ -256,9 +263,9 @@ func planExecuteImplicitNewFileBodyEdits(prompt string, required []string, works
 	return nil, "no exact-edit section"
 }
 
-func planExecuteImplicitNewFileBodyEditsFromSection(section string, required []string, workspaceRoot string) []workspace.PlanEdit {
+func planExecuteImplicitNewFileBodyEditsFromSection(section string, required []string, workspaceRoot string) []planartifact.PlanEdit {
 	var (
-		edits      []workspace.PlanEdit
+		edits      []planartifact.PlanEdit
 		recent     []string
 		current    []string
 		blockPaths []string
@@ -300,7 +307,7 @@ func planExecuteImplicitNewFileBodyEditsFromSection(section string, required []s
 			if capture {
 				for _, path := range blockPaths {
 					if planExecuteImplicitBodyLooksSafeForPath(path, block) {
-						edits = append(edits, workspace.PlanEdit{
+						edits = append(edits, planartifact.PlanEdit{
 							Path:       path,
 							OldText:    "",
 							NewText:    block,

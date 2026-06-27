@@ -1,11 +1,12 @@
 package comprehension
 
 import (
-	"idiom/internal/platform/util"
 	"path"
 	"regexp"
 	"sort"
 	"strings"
+
+	"idiom/internal/platform/textutil"
 )
 
 // Intent classifies what the user is trying to do with the query so the ranker
@@ -455,7 +456,7 @@ func RankPackFiles(in RankInputs) []PackFile {
 		base := roleFloor(file.Role, weights)
 		reasons := []RankerReason{{
 			Reason:     "role_floor",
-			State:      util.FirstNonEmpty(file.Role, "default"),
+			State:      textutil.FirstNonEmpty(file.Role, "default"),
 			ScoreDelta: roundScore(base),
 		}}
 		bonus := 0.0

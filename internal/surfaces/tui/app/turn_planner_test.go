@@ -17,15 +17,21 @@ import (
 	"testing"
 	"time"
 
+	planartifact "idiom/internal/contracts/planartifact"
+	recoverycontract "idiom/internal/contracts/recovery"
+
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/contracts/writerroute"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/modepolicy"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/surfaces/tui/implementationdispatch"
 	"idiom/internal/workflows/planexecute"
+	planexecuteadapters "idiom/internal/workflows/planexecute/adapters"
 	"idiom/internal/workflows/recovery"
 )
 
@@ -229,7 +235,7 @@ func TestImplementationDispatchDirtyAllowanceMarksOnlyNamedScopedDocument(t *tes
 		{Path: "atom-a.md", EditPaths: []string{"internal/contracts/writerroute/decision_test.go"}},
 		{Path: "atom-b.md", EditPaths: []string{"internal/contracts/writerroute/decision.go"}},
 	}
-	got := implementationDispatchPlanDocumentsWithDirtyAllowance(
+	got := implementationdispatch.PlanDocumentsWithDirtyAllowance(
 		"implement atom and explicitly allow dirty scoped path internal/contracts/writerroute/decision_test.go for this run",
 		docs,
 	)
@@ -247,7 +253,7 @@ func TestImplementationDispatchDirtyAllowanceIgnoresQuotedNextAction(t *testing.
 	docs := []implementationDispatchPlanDocument{
 		{Path: "atom-a.md", EditPaths: []string{"internal/contracts/writerroute/decision_test.go"}},
 	}
-	got := implementationDispatchPlanDocumentsWithDirtyAllowance(
+	got := implementationdispatch.PlanDocumentsWithDirtyAllowance(
 		"atom intake said next: finish, commit, or explicitly allow the dirty scoped paths before dispatch",
 		docs,
 	)
@@ -256,7 +262,7 @@ func TestImplementationDispatchDirtyAllowanceIgnoresQuotedNextAction(t *testing.
 		t.Fatalf("quoted blocker next-action must not grant dirty scoped path allowance: %#v", got)
 	}
 
-	got = implementationDispatchPlanDocumentsWithDirtyAllowance(
+	got = implementationdispatch.PlanDocumentsWithDirtyAllowance(
 		"atom intake state=blocked-dirty-files - existing scoped paths have uncommitted changes - dirty paths: internal/contracts/writerroute/decision_test.go - next: finish, commit, or explicitly allow the dirty scoped paths before dispatch",
 		docs,
 	)
@@ -264,7 +270,7 @@ func TestImplementationDispatchDirtyAllowanceIgnoresQuotedNextAction(t *testing.
 		t.Fatalf("pasted dirty-path blocker must not grant dirty scoped path allowance: %#v", got)
 	}
 
-	got = implementationDispatchPlanDocumentsWithDirtyAllowance(
+	got = implementationdispatch.PlanDocumentsWithDirtyAllowance(
 		"explicitly allow the dirty scoped paths before dispatch. Stay inside internal/contracts/writerroute/decision_test.go.",
 		docs,
 	)
@@ -272,7 +278,7 @@ func TestImplementationDispatchDirtyAllowanceIgnoresQuotedNextAction(t *testing.
 		t.Fatalf("scope path in a later sentence must not grant dirty scoped path allowance: %#v", got)
 	}
 
-	got = implementationDispatchPlanDocumentsWithDirtyAllowance(
+	got = implementationdispatch.PlanDocumentsWithDirtyAllowance(
 		"do not explicitly allow dirty scoped path internal/contracts/writerroute/decision_test.go",
 		docs,
 	)
@@ -287,13 +293,13 @@ func TestImplementationDispatchDirtyAllowanceIgnoresQuotedNextAction(t *testing.
 		"can't allow dirty path internal/contracts/writerroute/decision_test.go",
 		"can’t allow dirty path internal/contracts/writerroute/decision_test.go",
 	} {
-		got = implementationDispatchPlanDocumentsWithDirtyAllowance(prompt, docs)
+		got = implementationdispatch.PlanDocumentsWithDirtyAllowance(prompt, docs)
 		if got[0].AllowDirtyAtomScope {
 			t.Fatalf("negated dirty scoped path allowance %q must not grant authority: %#v", prompt, got)
 		}
 	}
 
-	got = implementationDispatchPlanDocumentsWithDirtyAllowance(
+	got = implementationdispatch.PlanDocumentsWithDirtyAllowance(
 		"atom intake blocked; next: allow dirty path internal/contracts/writerroute/decision_test.go",
 		docs,
 	)
@@ -307,7 +313,7 @@ func TestImplementationDispatchDirtyAllowanceBroadFlagAllowsAllScopedDocuments(t
 		{Path: "atom-a.md", EditPaths: []string{"internal/contracts/writerroute/decision_test.go"}},
 		{Path: "atom-b.md", EditPaths: []string{"internal/contracts/writerroute/decision.go"}},
 	}
-	got := implementationDispatchPlanDocumentsWithDirtyAllowance("rerun with --allow-dirty for these atom scopes", docs)
+	got := implementationdispatch.PlanDocumentsWithDirtyAllowance("rerun with --allow-dirty for these atom scopes", docs)
 
 	if !got[0].AllowDirtyAtomScope || !got[1].AllowDirtyAtomScope {
 		t.Fatalf("--allow-dirty should explicitly allow all atom documents in the turn: %#v", got)
@@ -326,13 +332,13 @@ func TestImplementationDispatchDirtyAllowanceBroadFlagRequiresAffirmativeContext
 		"avoid --allow-dirty-scope unless the user says so",
 		"atom intake blocked; next: rerun with --allow-dirty",
 	} {
-		got := implementationDispatchPlanDocumentsWithDirtyAllowance(prompt, docs)
+		got := implementationdispatch.PlanDocumentsWithDirtyAllowance(prompt, docs)
 		if got[0].AllowDirtyAtomScope || got[1].AllowDirtyAtomScope {
 			t.Fatalf("non-affirmative broad dirty allowance %q must not allow documents: %#v", prompt, got)
 		}
 	}
 
-	got := implementationDispatchPlanDocumentsWithDirtyAllowance("rerun with `--allow-dirty` for these atom scopes", docs)
+	got := implementationdispatch.PlanDocumentsWithDirtyAllowance("rerun with `--allow-dirty` for these atom scopes", docs)
 	if !got[0].AllowDirtyAtomScope || !got[1].AllowDirtyAtomScope {
 		t.Fatalf("affirmative broad dirty allowance should allow all atom documents: %#v", got)
 	}
@@ -1423,14 +1429,14 @@ func TestImplementationDispatchFallbackSearchKeepsNonGoSourcePaths(t *testing.T)
 
 func TestAppendDiscoveredCandidateScopeStaysInsideBriefBody(t *testing.T) {
 	prompt := pathparse.WrapBriefBody("# Objective\n\nUpdate the banner.")
-	got := appendDiscoveredCandidateScopeAddendum(prompt, []string{"internal/surfaces/tui/app/rendering.go"})
+	got := recovery.AppendDiscoveredCandidateScopeAddendum(prompt, []string{"internal/surfaces/tui/app/rendering.go"})
 	scoped := pathparse.ScopeToBriefBody(got)
 
 	if !strings.Contains(scoped, "allowed_edit_paths:") || !strings.Contains(scoped, "internal/surfaces/tui/app/rendering.go") {
 		t.Fatalf("discovered candidate scope was not inserted inside brief body:\n%s", got)
 	}
 
-	if allowed := AllowedEditPathsFromPrompt(got); len(allowed) != 1 || allowed[0] != "internal/surfaces/tui/app/rendering.go" {
+	if allowed := plancontract.AllowedEditPathsFromPrompt(got); len(allowed) != 1 || allowed[0] != "internal/surfaces/tui/app/rendering.go" {
 		t.Fatalf("discovered candidate scope is not parseable as allowed paths: %#v\n%s", allowed, got)
 	}
 }
@@ -1676,13 +1682,13 @@ func TestImplementationDispatchAllowedPathsFromBuildContextPackSection_Integrati
 
 	var stderr bytes.Buffer
 
-	section := planexecute.BuildPromptContextPackSection(config.Config{Workspace: config.Workspace{Root: root, CWD: root}}, planexecute.PromptContextPackOptions{
+	section := planexecute.BuildPromptContextPackSectionWithRunner(config.Config{Workspace: config.Workspace{Root: root, CWD: root}}, planexecute.PromptContextPackOptions{
 		Mode:              "plan",
 		Title:             "Plan-execute atom",
 		Brief:             brief,
 		ProjectRoot:       root,
 		RequiredEditPaths: []string{"pkg/target.go"},
-	}, &stderr)
+	}, &stderr, planexecuteadapters.Dependencies().RunPromptContextTool)
 
 	if strings.TrimSpace(section) == "" {
 		t.Fatalf("BuildPromptContextPackSection returned empty; stderr=%s", stderr.String())
@@ -1834,6 +1840,8 @@ func TestImplementationDispatchMissingTestRetryPreservesCandidateScope(t *testin
 	state := planexecute.ProgressState{
 		SchemaVersion: planexecute.ProgressStateSchemaVersion,
 		SessionID:     "missing-test-retry",
+		Phase:         plancontract.PlanExecuteProgressPhaseComplete,
+		Status:        plancontract.PlanExecuteProgressStatusCompleted,
 		ChangedPaths:  []string{"internal/workflows/productworkflow/migration_apply.go"},
 	}
 
@@ -1875,7 +1883,7 @@ func TestImplementationDispatchMissingTestRetryPreservesCandidateScope(t *testin
 		},
 		Result: planexecute.RunResult{
 			SessionID:   "missing-test-retry",
-			FailureKind: string(implementationDispatchFailureMissingRequestedTestEdit),
+			FailureKind: string(plancontract.PlanExecuteFailureMissingRequestedTestEdit),
 		},
 	})
 
@@ -1916,6 +1924,8 @@ func TestImplementationDispatchMissingImplementationRetryPreservesCandidateScope
 	state := planexecute.ProgressState{
 		SchemaVersion: planexecute.ProgressStateSchemaVersion,
 		SessionID:     "missing-implementation-retry",
+		Phase:         plancontract.PlanExecuteProgressPhaseComplete,
+		Status:        plancontract.PlanExecuteProgressStatusCompleted,
 		ChangedPaths:  []string{"internal/workflows/productworkflow/migration_apply_test.go"},
 	}
 
@@ -1945,7 +1955,7 @@ func TestImplementationDispatchMissingImplementationRetryPreservesCandidateScope
 		},
 		Result: planexecute.RunResult{
 			SessionID:   "missing-implementation-retry",
-			FailureKind: string(implementationDispatchFailureMissingRequestedImplementation),
+			FailureKind: string(plancontract.PlanExecuteFailureMissingRequestedImplementationEdit),
 		},
 	})
 
@@ -1984,6 +1994,8 @@ func TestImplementationDispatchMissingImplementationRetryKeepsSubmittedSiblingAn
 	state := planexecute.ProgressState{
 		SchemaVersion: planexecute.ProgressStateSchemaVersion,
 		SessionID:     "product-workflow-missing-implementation",
+		Phase:         plancontract.PlanExecuteProgressPhaseComplete,
+		Status:        plancontract.PlanExecuteProgressStatusCompleted,
 		ChangedPaths:  []string{"internal/surfaces/cli/product/product_workflow_test.go"},
 	}
 
@@ -2018,7 +2030,7 @@ func TestImplementationDispatchMissingImplementationRetryKeepsSubmittedSiblingAn
 		},
 		Result: planexecute.RunResult{
 			SessionID:   "product-workflow-missing-implementation",
-			FailureKind: string(implementationDispatchFailureMissingRequestedImplementation),
+			FailureKind: string(plancontract.PlanExecuteFailureMissingRequestedImplementationEdit),
 		},
 	}
 	allowedPaths := model.implementationDispatchAllowedPathsForMissingRequestedImplementationEdit(failure)
@@ -2035,7 +2047,7 @@ func TestImplementationDispatchMissingImplementationRetryKeepsSubmittedSiblingAn
 
 	retryOptions := implementationDispatchRetryOptionsWithCandidateScope(failure.Options, allowedPaths)
 
-	retryOptions = implementationDispatchRetryOptionsWithEditSetObligation(retryOptions, planexecute.EditSetObligationKindImplementationEdit)
+	retryOptions = implementationDispatchRetryOptionsWithEditSetObligation(retryOptions, plancontract.EditSetObligationKindImplementationEdit)
 
 	if len(retryOptions.RequiredEditPaths) != 0 {
 		t.Fatalf("retry required paths must remain empty for candidate-only recovery, got %#v", []string(retryOptions.RequiredEditPaths))
@@ -2051,7 +2063,7 @@ func TestImplementationDispatchMissingImplementationRetryKeepsSubmittedSiblingAn
 		}
 	}
 
-	if !retryOptions.EditSetObligations.Has(planexecute.EditSetObligationKindImplementationEdit) {
+	if !retryOptions.EditSetObligations.Has(plancontract.EditSetObligationKindImplementationEdit) {
 		t.Fatalf("retry options missing implementation edit obligation: %#v", retryOptions.EditSetObligations)
 	}
 }
@@ -2086,20 +2098,27 @@ func TestImplementationDispatchMissingEditRetryKeepsCandidateScopeAllowed(t *tes
 
 func TestImplementationDispatchRecoveryLoopGuardIgnoresPromptObligations(t *testing.T) {
 	promptOpts := planexecute.Options{
-		EditSetObligations: planexecute.EditSetObligations{}.With(planexecute.EditSetObligationKindTestEdit, "prompt"),
+		EditSetObligations: plancontract.EditSetObligations{}.With(plancontract.EditSetObligationKindTestEdit, "prompt"),
 	}
-	if implementationDispatchOptionsAlreadyCarriedEditSetObligation(promptOpts, planexecute.EditSetObligationKindTestEdit) {
+	if implementationDispatchOptionsAlreadyCarriedEditSetObligation(promptOpts, plancontract.EditSetObligationKindTestEdit) {
 		t.Fatalf("initial prompt-derived obligations should still allow one recovery retry")
 	}
 
-	retryOpts := implementationDispatchRetryOptionsWithEditSetObligation(promptOpts, planexecute.EditSetObligationKindTestEdit)
-	if !implementationDispatchOptionsAlreadyCarriedEditSetObligation(retryOpts, planexecute.EditSetObligationKindTestEdit) {
+	retryOpts := implementationDispatchRetryOptionsWithEditSetObligation(promptOpts, plancontract.EditSetObligationKindTestEdit)
+	if !implementationDispatchOptionsAlreadyCarriedEditSetObligation(retryOpts, plancontract.EditSetObligationKindTestEdit) {
 		t.Fatalf("recovery-added obligations should trip the loop guard")
 	}
 }
 
+func TestImplementationDispatchPlanExecuteFailureKindParsesLegacyHyphenatedValues(t *testing.T) {
+	got := implementationDispatchPlanExecuteFailureKindFromString("planner-blocked")
+	if got != plancontract.PlanExecuteFailurePlannerBlocked {
+		t.Fatalf("failure kind = %q, want %q", got, plancontract.PlanExecuteFailurePlannerBlocked)
+	}
+}
+
 func TestMissingRequestedImplementationAddendumMarksPathsAsCandidateScope(t *testing.T) {
-	got := appendMissingRequestedImplementationEditRecoveryAddendum("Implement feature.", []string{
+	got := recovery.AppendMissingRequestedImplementationEditRecoveryAddendum("Implement feature.", []string{
 		"pkg/feature_test.go",
 		"pkg/feature.go",
 	})
@@ -2121,7 +2140,7 @@ func TestMissingRequestedImplementationAddendumMarksPathsAsCandidateScope(t *tes
 }
 
 func TestMissingRequestedTestAddendumMarksPathsAsCandidateScope(t *testing.T) {
-	got := appendMissingRequestedTestEditRecoveryAddendum("Implement feature and add tests.", []string{
+	got := recovery.AppendMissingRequestedTestEditRecoveryAddendum("Implement feature and add tests.", []string{
 		"pkg/feature.go",
 		"pkg/feature_test.go",
 	})
@@ -2219,14 +2238,14 @@ func TestImplementationDispatchPlanExecuteMaxTokensDoesNotUsePlanDocTestHeuristi
 
 func TestAppendMissingRequestedTestEditRecoveryAddendumStaysInsideBriefBody(t *testing.T) {
 	prompt := pathparse.WrapBriefBody("# Objective\n\nUpdate the banner and add regression tests.")
-	got := appendMissingRequestedTestEditRecoveryAddendum(prompt, []string{"internal/surfaces/tui/app/rendering.go", "internal/surfaces/tui/app/rendering_test.go"})
+	got := recovery.AppendMissingRequestedTestEditRecoveryAddendum(prompt, []string{"internal/surfaces/tui/app/rendering.go", "internal/surfaces/tui/app/rendering_test.go"})
 	scoped := pathparse.ScopeToBriefBody(got)
 
 	if !strings.Contains(scoped, "Missing Requested Test Edit Recovery") || !strings.Contains(scoped, "internal/surfaces/tui/app/rendering_test.go") {
 		t.Fatalf("missing-test recovery scope was not inserted inside brief body:\n%s", got)
 	}
 
-	if allowed := AllowedEditPathsFromPrompt(got); !slices.Contains(allowed, "internal/surfaces/tui/app/rendering_test.go") {
+	if allowed := plancontract.AllowedEditPathsFromPrompt(got); !slices.Contains(allowed, "internal/surfaces/tui/app/rendering_test.go") {
 		t.Fatalf("missing-test recovery scope is not parseable as allowed paths: %#v\n%s", allowed, got)
 	}
 }
@@ -2930,7 +2949,7 @@ func TestPlanExecutePlannerBlockedNoScopeSurfacesWithoutRetry(t *testing.T) {
 			runtimeBrief: workerruntime.WorkerRuntimeBrief{},
 		},
 		Result: planexecute.RunResult{
-			FailureKind:   planexecute.RunFailurePlannerBlocked,
+			FailureKind:   string(plancontract.PlanExecuteFailurePlannerBlocked),
 			FailureReason: "completion gate rejected final answer before submit_plan",
 		},
 	})
@@ -3030,7 +3049,7 @@ func TestPlanExecutePlannerBlockedMessageNamesExecutorRejectedSubmittedPlan(t *t
 	answer := humanPlanExecutePlannerBlockedMessage(implementationDispatchPlanExecuteFailure{
 		Result: planexecute.RunResult{
 			ExitCode:      1,
-			FailureKind:   string(implementationDispatchFailureExecutorFailed),
+			FailureKind:   string(plancontract.PlanExecuteFailureExecutorFailed),
 			FailureReason: "executor phase aborted on edit 0 (pkg/feature_test.go): preflight syntax validation failed",
 		},
 	}, implementationDispatchRecoveryDecision{
@@ -3053,7 +3072,7 @@ func TestPlanExecuteRepeatedCompletionGateSurfacesDeterministicMessage(t *testin
 	failure := implementationDispatchPlanExecuteFailure{
 		Result: planexecute.RunResult{
 			ExitCode:      1,
-			FailureKind:   planexecute.RunFailurePlannerBlocked,
+			FailureKind:   string(plancontract.PlanExecuteFailurePlannerBlocked),
 			FailureReason: "<<QUESTION>>: Completion gate rejected the final answer repeatedly before the required completion evidence was produced.",
 			PlannerAnswer: "Missing completion evidence: gate retry 3/3 requires a successful submit_plan tool result",
 		},
@@ -3088,19 +3107,19 @@ func TestPlanExecutePlannerBlockedCanRetryOnActiveModel(t *testing.T) {
 	failure := implementationDispatchPlanExecuteFailure{
 		RequiredPaths: []string{"internal/surfaces/cli/product/product_workflow.go"},
 		Result: planexecute.RunResult{
-			FailureKind:   planexecute.RunFailurePlannerBlocked,
+			FailureKind:   string(plancontract.PlanExecuteFailurePlannerBlocked),
 			FailureReason: "<<QUESTION>>: completion_gate_required_paths_remaining_repeated",
 			PlannerAnswer: "Missing completion evidence: plan-execute planner phase requires a successful submit_plan tool result before final answer.",
 		},
 	}
-	if !planExecutePlannerBlockedCanRetryOnActiveModel(failure) {
+	if !recovery.PlanExecutePlannerBlockedCanRetryOnActiveModel(implementationDispatchPlanExecuteRetryInput(failure)) {
 		t.Fatalf("expected repeated submit_plan completion failure with exact scope to retry on active model")
 	}
 
 	failure.Result.FailureReason = "<<QUESTION>>: required_edit_paths_remaining"
 	failure.Result.PlannerAnswer = "Planner failed after submit_plan rejected: required edit path coverage mismatch; missing required edit path(s): `internal/surfaces/cli/product/product_workflow_test.go`; invalid edit anchor(s): `internal/surfaces/cli/product/product_workflow.go: old_text not found in current source`."
 
-	if !planExecutePlannerBlockedCanRetryOnActiveModel(failure) {
+	if !recovery.PlanExecutePlannerBlockedCanRetryOnActiveModel(implementationDispatchPlanExecuteRetryInput(failure)) {
 		t.Fatalf("expected invalid submit_plan with exact scope to retry on active model")
 	}
 
@@ -3108,19 +3127,19 @@ func TestPlanExecutePlannerBlockedCanRetryOnActiveModel(t *testing.T) {
 	failure.Result.PlannerAnswer = ""
 	failure.Stdout = "Blocker:\n- Plan submission required: every required_edit_path has satisfied its source-body obligation. Do not use more read/search discovery. Submit one parser-readable `submit_plan` request whose `edits[]` coverage includes every required path."
 
-	if !planExecutePlannerBlockedCanRetryOnActiveModel(failure) {
+	if !recovery.PlanExecutePlannerBlockedCanRetryOnActiveModel(implementationDispatchPlanExecuteRetryInput(failure)) {
 		t.Fatalf("expected post-readiness discovery loop with exact scope to retry on active model")
 	}
 
 	failure.Options.UseActiveModel = true
-	if planExecutePlannerBlockedCanRetryOnActiveModel(failure) {
+	if recovery.PlanExecutePlannerBlockedCanRetryOnActiveModel(implementationDispatchPlanExecuteRetryInput(failure)) {
 		t.Fatalf("active-model retry must not recursively retry on active model")
 	}
 
 	failure.Options.UseActiveModel = false
 	failure.RequiredPaths = nil
 
-	if planExecutePlannerBlockedCanRetryOnActiveModel(failure) {
+	if recovery.PlanExecutePlannerBlockedCanRetryOnActiveModel(implementationDispatchPlanExecuteRetryInput(failure)) {
 		t.Fatalf("unscoped planner blocker should not use active-model fallback")
 	}
 }
@@ -3129,7 +3148,7 @@ func TestPlanExecutePlannerBlockedMessageDoesNotClaimUnreadSourcesAfterSourceSat
 	failure := implementationDispatchPlanExecuteFailure{
 		RequiredPaths: []string{"internal/surfaces/cli/product/product_workflow.go"},
 		Result: planexecute.RunResult{
-			FailureKind:   planexecute.RunFailurePlannerBlocked,
+			FailureKind:   string(plancontract.PlanExecuteFailurePlannerBlocked),
 			FailureReason: "<<QUESTION>>: Implementation incomplete; required edit path(s) remain unchanged.",
 		},
 		Stdout: "Blocker:\n- Plan submission required: every required_edit_path has satisfied its source-body obligation. Submit one parser-readable `submit_plan` request.",
@@ -3151,7 +3170,7 @@ func TestPlanExecutePlannerBlockedMessageDoesNotClaimUnreadSourcesAfterSourceSat
 
 func TestPlanExecuteActiveModelFallbackAddendumInsertedBeforeBriefEnd(t *testing.T) {
 	prompt := "# Objective\n\nUpdate files.\n\n" + pathparse.BriefBodyEndMarker + "\n\n# Tooling"
-	got := appendPlanExecuteActiveModelFallbackAddendum(prompt)
+	got := recovery.AppendPlanExecuteActiveModelFallbackAddendum(prompt)
 
 	if !strings.Contains(got, "## Active Model Fallback") {
 		t.Fatalf("fallback addendum missing:\n%s", got)
@@ -3273,7 +3292,7 @@ func TestPlanExecutePlannerRecoveryAddendumPrioritizesRequiredSourceReadBlocker(
 			RequiredEditPaths: []string{"internal/surfaces/cli/product/product_workflow.go", "internal/surfaces/cli/product/product_workflow_test.go"},
 		},
 		Result: planexecute.RunResult{
-			FailureKind:   planexecute.RunFailurePlannerBlocked,
+			FailureKind:   string(plancontract.PlanExecuteFailurePlannerBlocked),
 			FailureReason: "Required edit path source read required: read source for internal/surfaces/cli/product/product_workflow_test.go before attempting to submit_plan.",
 		},
 	}
@@ -3309,7 +3328,7 @@ func TestPlanExecutePlannerRecoveryDetectsAnchorRefreshBlocker(t *testing.T) {
 			RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp", "native/src/simulation/world/collapse_event.h"},
 		},
 		Result: planexecute.RunResult{
-			FailureKind: planexecute.RunFailurePlannerBlocked,
+			FailureKind: string(plancontract.PlanExecuteFailurePlannerBlocked),
 			FailureReason: strings.Join([]string{
 				"<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.",
 				"",
@@ -3339,10 +3358,10 @@ func TestPlanExecutePlannerRecoveryDetectsTruncatedAnchorRefreshBlocker(t *testi
 			RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp", "native/src/simulation/world/collapse_event.h"},
 		},
 		Result: planexecute.RunResult{
-			FailureKind:   planexecute.RunFailurePlannerBlocked,
+			FailureKind:   string(plancontract.PlanExecuteFailurePlannerBlocked),
 			FailureReason: "<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.",
-			Completion: &planexecute.PlanExecuteTerminalCompletionRecord{
-				NextAction: recovery.NextActionAnswerBlocker,
+			Completion: &plancontract.PlanExecuteTerminalCompletionRecord{
+				NextAction: recoverycontract.NextActionAnswerBlocker,
 			},
 		},
 	}
@@ -3379,14 +3398,14 @@ func TestFeaturePlannerAtomPlanExecuteRetriesTypedAnchorRefreshCompletion(t *tes
 		if calls == 1 {
 			model.lastPlanExecuteRunResult = &planexecute.RunResult{
 				ExitCode:      1,
-				FailureKind:   planexecute.RunFailurePlannerBlocked,
+				FailureKind:   string(plancontract.PlanExecuteFailurePlannerBlocked),
 				FailureReason: "<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.\n\nRemaining bounded refresh paths:\n- native/src/simulation/world/collapse_event.h\nNext valid action: re-run with enough budget and issue exactly one bounded read_file or code_navigate source-body request for a remaining refresh path; do not answer source-satisfied or blocker before that refresh returns.",
-				Completion: &planexecute.PlanExecuteTerminalCompletionRecord{
+				Completion: &plancontract.PlanExecuteTerminalCompletionRecord{
 					Status:            "failed",
-					Phase:             planexecute.ProgressPhasePlanning,
-					FailureKind:       planexecute.RunFailurePlannerBlocked,
+					Phase:             plancontract.PlanExecuteProgressPhasePlanning,
+					FailureKind:       plancontract.PlanExecuteFailurePlannerBlocked,
 					FailureReason:     "<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.\n\nRemaining bounded refresh paths:\n- native/src/simulation/world/collapse_event.h\nNext valid action: re-run with enough budget and issue exactly one bounded read_file or code_navigate source-body request for a remaining refresh path; do not answer source-satisfied or blocker before that refresh returns.",
-					NextAction:        recovery.NextActionRetryPlanExecute,
+					NextAction:        recoverycontract.NextActionRetryPlanExecute,
 					RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp", "native/src/simulation/world/collapse_event.cpp", "native/src/simulation/world/collapse_event.h", "native/tests/test_collapse_event.cpp"},
 				},
 			}
@@ -3396,10 +3415,10 @@ func TestFeaturePlannerAtomPlanExecuteRetriesTypedAnchorRefreshCompletion(t *tes
 		retryPrompt = prompt
 		model.lastPlanExecuteRunResult = &planexecute.RunResult{
 			ExitCode: 0,
-			Completion: &planexecute.PlanExecuteTerminalCompletionRecord{
-				Status:       planexecute.ProgressStatusCompleted,
-				Phase:        planexecute.ProgressPhaseComplete,
-				ReviewStatus: planexecute.ProgressStatusCompleted,
+			Completion: &plancontract.PlanExecuteTerminalCompletionRecord{
+				Status:       plancontract.PlanExecuteTerminalStatusCompleted,
+				Phase:        plancontract.PlanExecuteProgressPhaseComplete,
+				ReviewStatus: plancontract.PlanExecuteReviewStatusCompleted,
 			},
 		}
 		return `{"type":"idiom.plan_execute.completed","status":"completed","phase":"complete","review_status":"passed","state_path":".idiom/plan-execute/sessions/atom-1-run-1.json"}`, nil
@@ -3444,14 +3463,14 @@ func TestFeaturePlannerAtomPlanExecuteDoesNotRetryHumanBlocker(t *testing.T) {
 		calls++
 		model.lastPlanExecuteRunResult = &planexecute.RunResult{
 			ExitCode:      1,
-			FailureKind:   planexecute.RunFailurePlannerBlocked,
+			FailureKind:   string(plancontract.PlanExecuteFailurePlannerBlocked),
 			FailureReason: "<<QUESTION>>: product owner must clarify scope",
-			Completion: &planexecute.PlanExecuteTerminalCompletionRecord{
+			Completion: &plancontract.PlanExecuteTerminalCompletionRecord{
 				Status:            "failed",
-				Phase:             planexecute.ProgressPhasePlanning,
-				FailureKind:       planexecute.RunFailurePlannerBlocked,
+				Phase:             plancontract.PlanExecuteProgressPhasePlanning,
+				FailureKind:       plancontract.PlanExecuteFailurePlannerBlocked,
 				FailureReason:     "<<QUESTION>>: product owner must clarify scope",
-				NextAction:        recovery.NextActionAnswerBlocker,
+				NextAction:        recoverycontract.NextActionAnswerBlocker,
 				RequiredEditPaths: []string{"docs/feature.md"},
 			},
 		}
@@ -3471,7 +3490,7 @@ func TestFeaturePlannerAtomPlanExecuteDoesNotRetryHumanBlocker(t *testing.T) {
 	if err := json.Unmarshal([]byte(completion), &fields); err != nil {
 		t.Fatalf("decode completion: %v", err)
 	}
-	if got := fmt.Sprint(fields["next_valid_action"]); got != recovery.NextActionAnswerBlocker {
+	if got := fmt.Sprint(fields["next_valid_action"]); got != string(recoverycontract.NextActionAnswerBlocker) {
 		t.Fatalf("next_valid_action = %q, want answer_blocker; fields=%+v", got, fields)
 	}
 }
@@ -3486,14 +3505,14 @@ func TestFeaturePlannerAtomPlanExecuteReturnsSecondFailureAfterRetry(t *testing.
 		if calls == 1 {
 			model.lastPlanExecuteRunResult = &planexecute.RunResult{
 				ExitCode:      1,
-				FailureKind:   planexecute.RunFailurePlannerBlocked,
+				FailureKind:   string(plancontract.PlanExecuteFailurePlannerBlocked),
 				FailureReason: "<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.\n\nRemaining bounded refresh paths:\n- native/src/simulation/world/collapse_event.h",
-				Completion: &planexecute.PlanExecuteTerminalCompletionRecord{
+				Completion: &plancontract.PlanExecuteTerminalCompletionRecord{
 					Status:            "failed",
-					Phase:             planexecute.ProgressPhasePlanning,
-					FailureKind:       planexecute.RunFailurePlannerBlocked,
+					Phase:             plancontract.PlanExecuteProgressPhasePlanning,
+					FailureKind:       plancontract.PlanExecuteFailurePlannerBlocked,
 					FailureReason:     "<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.\n\nRemaining bounded refresh paths:\n- native/src/simulation/world/collapse_event.h",
-					NextAction:        recovery.NextActionRetryPlanExecute,
+					NextAction:        recoverycontract.NextActionRetryPlanExecute,
 					RequiredEditPaths: []string{"native/src/simulation/world/collapse_event.h"},
 				},
 			}
@@ -3504,9 +3523,9 @@ func TestFeaturePlannerAtomPlanExecuteReturnsSecondFailureAfterRetry(t *testing.
 			ExitCode:      1,
 			FailureKind:   "verification_failed",
 			FailureReason: "collapse_event tests failed",
-			Completion: &planexecute.PlanExecuteTerminalCompletionRecord{
+			Completion: &plancontract.PlanExecuteTerminalCompletionRecord{
 				Status:        "failed",
-				Phase:         planexecute.ProgressPhasePlanning,
+				Phase:         plancontract.PlanExecuteProgressPhasePlanning,
 				FailureKind:   "verification_failed",
 				FailureReason: "collapse_event tests failed",
 			},
@@ -3581,30 +3600,30 @@ func TestPlanExecuteMissingEditRecoveryUsesTypedFailureKindOnly(t *testing.T) {
 		name           string
 		result         planexecute.RunResult
 		wantChain      bool
-		wantObligation planexecute.EditSetObligationKind
+		wantObligation plancontract.EditSetObligationKind
 	}{
 		{
 			name: "typed missing test edit chains without prompt wording",
 			result: planexecute.RunResult{
-				FailureKind:   string(implementationDispatchFailureMissingRequestedTestEdit),
+				FailureKind:   string(plancontract.PlanExecuteFailureMissingRequestedTestEdit),
 				FailureReason: "edit-set contract rejected the submitted artifact",
 			},
 			wantChain:      true,
-			wantObligation: planexecute.EditSetObligationKindTestEdit,
+			wantObligation: plancontract.EditSetObligationKindTestEdit,
 		},
 		{
 			name: "typed missing implementation edit chains without prompt wording",
 			result: planexecute.RunResult{
-				FailureKind:   "  " + string(implementationDispatchFailureMissingRequestedImplementation) + "  ",
+				FailureKind:   "  " + string(plancontract.PlanExecuteFailureMissingRequestedImplementationEdit) + "  ",
 				FailureReason: "edit-set contract rejected the submitted artifact",
 			},
 			wantChain:      true,
-			wantObligation: planexecute.EditSetObligationKindImplementationEdit,
+			wantObligation: plancontract.EditSetObligationKindImplementationEdit,
 		},
 		{
 			name: "prompt-like wording does not chain without typed failure kind",
 			result: planexecute.RunResult{
-				FailureKind:   planexecute.RunFailurePlannerBlocked,
+				FailureKind:   string(plancontract.PlanExecuteFailurePlannerBlocked),
 				FailureReason: "the original prompt said to add regression tests and implement the product workflow",
 				PlannerAnswer: "missing_requested_test_edit",
 			},
@@ -3613,7 +3632,7 @@ func TestPlanExecuteMissingEditRecoveryUsesTypedFailureKindOnly(t *testing.T) {
 		{
 			name: "executor failure does not chain from wording",
 			result: planexecute.RunResult{
-				FailureKind:   string(implementationDispatchFailureExecutorFailed),
+				FailureKind:   string(plancontract.PlanExecuteFailureExecutorFailed),
 				FailureReason: "executor failed after a request to add tests and implementation edits",
 			},
 			wantChain: false,
@@ -3667,7 +3686,7 @@ func TestPlanExecuteTerminalOutcomeMatrixForTUIWrapper(t *testing.T) {
 				RequiredPaths: []string{"internal/workflows/productworkflow/migration_apply.go", "internal/workflows/productworkflow/migration_apply_test.go"},
 				Result: planexecute.RunResult{
 					ExitCode:      1,
-					FailureKind:   string(implementationDispatchFailurePlanArtifactMissing),
+					FailureKind:   string(plancontract.PlanExecuteFailurePlanArtifactMissing),
 					FailureReason: "source-satisfied evidence named no test path",
 					PlannerAnswer: "Decision: source-satisfied\n- internal/workflows/productworkflow/migration_apply.go: no changes needed.",
 				},
@@ -3688,7 +3707,7 @@ func TestPlanExecuteTerminalOutcomeMatrixForTUIWrapper(t *testing.T) {
 				AllowedPaths: []string{"internal/surfaces/tui/app/rendering.go"},
 				Result: planexecute.RunResult{
 					ExitCode:      1,
-					FailureKind:   planexecute.RunFailurePlannerBlocked,
+					FailureKind:   string(plancontract.PlanExecuteFailurePlannerBlocked),
 					FailureReason: "completion gate rejected final answer before submit_plan",
 				},
 			},
@@ -3700,7 +3719,7 @@ func TestPlanExecuteTerminalOutcomeMatrixForTUIWrapper(t *testing.T) {
 			failure: implementationDispatchPlanExecuteFailure{
 				Result: planexecute.RunResult{
 					ExitCode:      1,
-					FailureKind:   string(implementationDispatchFailureExecutorFailed),
+					FailureKind:   string(plancontract.PlanExecuteFailureExecutorFailed),
 					FailureReason: "edit failed",
 				},
 			},
@@ -3712,7 +3731,7 @@ func TestPlanExecuteTerminalOutcomeMatrixForTUIWrapper(t *testing.T) {
 			failure: implementationDispatchPlanExecuteFailure{
 				Result: planexecute.RunResult{
 					ExitCode:      1,
-					FailureKind:   string(implementationDispatchFailureMissingRequestedTestEdit),
+					FailureKind:   string(plancontract.PlanExecuteFailureMissingRequestedTestEdit),
 					FailureReason: "typed test-edit obligation is unsatisfied because plan named no test path",
 				},
 			},
@@ -3724,7 +3743,7 @@ func TestPlanExecuteTerminalOutcomeMatrixForTUIWrapper(t *testing.T) {
 			failure: implementationDispatchPlanExecuteFailure{
 				Result: planexecute.RunResult{
 					ExitCode:      1,
-					FailureKind:   string(implementationDispatchFailureMissingRequestedImplementation),
+					FailureKind:   string(plancontract.PlanExecuteFailureMissingRequestedImplementationEdit),
 					FailureReason: "typed implementation-edit obligation is unsatisfied because plan named only test paths",
 				},
 			},
@@ -3763,7 +3782,7 @@ func TestPlanExecuteSourceSatisfiedCoverageIgnoresAllowedCandidatePaths(t *testi
 		AllowedPaths: []string{"internal/workflows/productworkflow/migration_apply.go", "internal/workflows/productworkflow/migration_apply_test.go"},
 		Result: planexecute.RunResult{
 			ExitCode:      1,
-			FailureKind:   string(implementationDispatchFailurePlanArtifactMissing),
+			FailureKind:   string(plancontract.PlanExecuteFailurePlanArtifactMissing),
 			FailureReason: "source-satisfied evidence named one candidate path",
 			PlannerAnswer: "Decision: source-satisfied\n- internal/workflows/productworkflow/migration_apply.go: no changes needed.",
 		},
@@ -3780,7 +3799,7 @@ func TestPlanExecuteSourceSatisfiedCoverageBlockerUsesExactMissingPaths(t *testi
 		RequiredPaths: []string{"pkg/parser.go", "pkg/parser_test.go"},
 		Result: planexecute.RunResult{
 			ExitCode:      1,
-			FailureKind:   string(implementationDispatchFailurePlanArtifactMissing),
+			FailureKind:   string(plancontract.PlanExecuteFailurePlanArtifactMissing),
 			FailureReason: "source-satisfied evidence missed one required path",
 			PlannerAnswer: "Decision: source-satisfied\n- pkg/parser.go.bak: already present.\n- pkg/parser_test.go: already present.",
 		},
@@ -3801,7 +3820,7 @@ func TestPlanExecuteSourceSatisfiedCoverageBlockerReportsExtensionlessCoveredPat
 		RequiredPaths: []string{"BUILD", "Dockerfile"},
 		Result: planexecute.RunResult{
 			ExitCode:      1,
-			FailureKind:   string(implementationDispatchFailurePlanArtifactMissing),
+			FailureKind:   string(plancontract.PlanExecuteFailurePlanArtifactMissing),
 			FailureReason: "source-satisfied evidence missed one required path",
 			PlannerAnswer: "Decision: source-satisfied\n- Dockerfile: already present.",
 		},
@@ -4347,8 +4366,8 @@ func TestRunPromptOnceDispatchesStartImplementingPlanDocToPlanExecute(t *testing
 	}
 
 	planArtifact := loadOnlyTimestampedPlanArtifactForTest(t, root)
-	if planArtifact.SchemaVersion != workspace.PlanArtifactSchemaVersion {
-		t.Fatalf("plan artifact schema = %q, want %q", planArtifact.SchemaVersion, workspace.PlanArtifactSchemaVersion)
+	if planArtifact.SchemaVersion != planartifact.SchemaVersion {
+		t.Fatalf("plan artifact schema = %q, want %q", planArtifact.SchemaVersion, planartifact.SchemaVersion)
 	}
 
 	if planArtifact.SessionID == "" {
@@ -4852,6 +4871,27 @@ func TestRunPromptOnceRefinesPlanDocBeforePlanExecuteDispatch(t *testing.T) {
 	planArtifact := loadOnlyTimestampedPlanArtifactForTest(t, root)
 	if len(planArtifact.Edits) != 1 || planArtifact.Edits[0].Path != "target.txt" {
 		t.Fatalf("plan artifact edits = %#v, want one target.txt edit", planArtifact.Edits)
+	}
+}
+
+func TestImplementationDispatchWorkspaceFileRejectsEscapesAndSymlinkAncestors(t *testing.T) {
+	root := t.TempDir()
+
+	if _, ok := implementationDispatchWorkspaceFile(root, "../outside.md"); ok {
+		t.Fatal("parent traversal path should be rejected")
+	}
+
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "linked")); err != nil {
+		t.Skipf("symlink unavailable on this platform: %v", err)
+	}
+
+	if _, ok := implementationDispatchWorkspaceFile(root, "linked/escape.md"); ok {
+		t.Fatal("path through symlinked workspace ancestor should be rejected")
+	}
+
+	if _, ok := implementationDispatchWorkspaceFile(root, "docs/new.md"); !ok {
+		t.Fatal("missing in-scope file should remain valid for new-file dispatch")
 	}
 }
 
@@ -6879,7 +6919,7 @@ func TestRunPromptOncePlanExecuteDoesNotInferMissingRequestedTestSourceSatisfied
 	}
 }
 
-func loadOnlyTimestampedPlanArtifactForTest(t *testing.T, root string) workspace.PlanArtifact {
+func loadOnlyTimestampedPlanArtifactForTest(t *testing.T, root string) planartifact.PlanArtifact {
 	t.Helper()
 
 	paths, err := filepath.Glob(filepath.Join(root, ".idiom", "plans", "*.plan.json"))
@@ -7170,11 +7210,11 @@ func TestComposeImplementationBriefTreatsDesignDocScopeAsCandidatePaths(t *testi
 		}
 	}
 
-	if got := RequiredEditPathsFromPrompt(brief); slices.Contains(got, "target.txt") {
+	if got := plancontract.RequiredEditPathsFromPrompt(brief); slices.Contains(got, "target.txt") {
 		t.Fatalf("design-doc scope must not become required edit paths, got %#v\n%s", got, brief)
 	}
 
-	if got := AllowedEditPathsFromPrompt(brief); !slices.Contains(got, "target.txt") {
+	if got := plancontract.AllowedEditPathsFromPrompt(brief); !slices.Contains(got, "target.txt") {
 		t.Fatalf("design-doc scope must become candidate edit paths, got %#v\n%s", got, brief)
 	}
 }
@@ -7283,11 +7323,11 @@ func TestComposeImplementationBriefResolvesUniquePlanDocumentBasenameAsCandidate
 		}
 	}
 
-	if got := RequiredEditPathsFromPrompt(brief); slices.Contains(got, "internal/surfaces/tui/app/writer_route.go") {
+	if got := plancontract.RequiredEditPathsFromPrompt(brief); slices.Contains(got, "internal/surfaces/tui/app/writer_route.go") {
 		t.Fatalf("resolved design-doc scope must not become required edit paths, got %#v\n%s", got, brief)
 	}
 
-	if got := AllowedEditPathsFromPrompt(brief); !slices.Contains(got, "internal/surfaces/tui/app/writer_route.go") {
+	if got := plancontract.AllowedEditPathsFromPrompt(brief); !slices.Contains(got, "internal/surfaces/tui/app/writer_route.go") {
 		t.Fatalf("resolved design-doc scope must become candidate edit paths, got %#v\n%s", got, brief)
 	}
 }
@@ -7329,7 +7369,7 @@ func TestComposeImplementationBriefKeepsAtomScopeAsRequiredPaths(t *testing.T) {
 		t.Fatalf("atom scope must remain active required edit scope:\n%s", brief)
 	}
 
-	if got := RequiredEditPathsFromPrompt(brief); !slices.Contains(got, "target.txt") {
+	if got := plancontract.RequiredEditPathsFromPrompt(brief); !slices.Contains(got, "target.txt") {
 		t.Fatalf("atom scope must become required edit paths, got %#v\n%s", got, brief)
 	}
 }
@@ -7374,7 +7414,7 @@ func TestImplementationDispatchInlineRequiredPathsBecomePlanExecuteRequiredScope
 func TestImplementationDispatchRetryCandidateScopePreservesCompiledWriteEnvelope(t *testing.T) {
 	opts := planexecute.Options{
 		RequiredEditPaths:     planexecute.MultiFlag{"pkg/target.go"},
-		ScopeContract:         planexecute.NewPlanScopeContract([]string{"pkg/target.go"}, nil, nil).WithWriteAllowedPaths([]string{"pkg/target.go"}),
+		ScopeContract:         plancontract.NewPlanScopeContract([]string{"pkg/target.go"}, nil, nil).WithWriteAllowedPaths([]string{"pkg/target.go"}),
 		ScopeExtractionPolicy: planexecute.ScopeExtractionFrozen,
 	}
 

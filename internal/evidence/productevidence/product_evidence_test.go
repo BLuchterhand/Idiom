@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	recoverycontract "idiom/internal/contracts/recovery"
+
 	"idiom/internal/repository/comprehension"
 	"idiom/internal/runtime/localops"
 	"idiom/internal/workflows/recovery"
@@ -208,8 +210,8 @@ func TestProductEvidenceSummarizesRecoveryRollups(t *testing.T) {
 		t.Fatalf("recovery rollup should remain metadata-only/redacted, got %#v", report.Recovery)
 	}
 
-	if report.Recovery.FailureClasses[recovery.FailureClassExecutorEdit] != 1 ||
-		report.Recovery.NextActions[recovery.NextActionReviewDecomposition] != 1 {
+	if report.Recovery.FailureClasses[string(recoverycontract.FailureClassExecutorEdit)] != 1 ||
+		report.Recovery.NextActions[string(recoverycontract.NextActionReviewDecomposition)] != 1 {
 
 		t.Fatalf("recovery rollup missing failure class or next action: %#v", report.Recovery)
 	}
@@ -2923,7 +2925,7 @@ func p711TestBlockerContains(blockers []string, needle string) bool {
 	return false
 }
 
-func stageProductEvidenceRecoveryPacket(t *testing.T, root string, sessionID string) recovery.DecompositionPacket {
+func stageProductEvidenceRecoveryPacket(t *testing.T, root string, sessionID string) recoverycontract.DecompositionPacket {
 	t.Helper()
 
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
@@ -2956,22 +2958,22 @@ func stageProductEvidenceRecoveryPacket(t *testing.T, root string, sessionID str
 	return packet
 }
 
-func stageProductEvidenceRecoveredPacket(t *testing.T, root string, sessionID string) recovery.DecompositionPacket {
+func stageProductEvidenceRecoveredPacket(t *testing.T, root string, sessionID string) recoverycontract.DecompositionPacket {
 	t.Helper()
 
 	packet := stageProductEvidenceRecoveryPacket(t, root, sessionID)
 
 	var (
 		completed []string
-		commands  []recovery.ReconciliationCommandResult
+		commands  []recoverycontract.ReconciliationCommandResult
 	)
 
 	for _, atom := range packet.CandidateAtoms {
 		completed = append(completed, atom.ID)
 		for _, command := range atom.RequiredTests {
-			commands = append(commands, recovery.ReconciliationCommandResult{
+			commands = append(commands, recoverycontract.ReconciliationCommandResult{
 				Command:  command,
-				Status:   recovery.ReconciliationVerificationPass,
+				Status:   recoverycontract.ReconciliationVerificationPass,
 				ExitCode: 0,
 			})
 		}
@@ -2980,8 +2982,8 @@ func stageProductEvidenceRecoveredPacket(t *testing.T, root string, sessionID st
 	reconciliation, err := recovery.BuildReconciliation(packet, recovery.ReconciliationOptions{
 		Now:              time.Date(2026, 5, 18, 12, 5, 0, 0, time.UTC),
 		CompletedAtomIDs: completed,
-		Verification: recovery.ReconciliationVerification{
-			Status:   recovery.ReconciliationVerificationPass,
+		Verification: recoverycontract.ReconciliationVerification{
+			Status:   recoverycontract.ReconciliationVerificationPass,
 			Commands: commands,
 		},
 	})

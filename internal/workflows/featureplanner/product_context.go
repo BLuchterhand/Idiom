@@ -3,8 +3,8 @@ package featureplanner
 import (
 	"strings"
 
-	"idiom/internal/contracts/plan"
-	"idiom/internal/platform/util"
+	plancontract "idiom/internal/contracts/plan"
+	"idiom/internal/platform/textutil"
 )
 
 // ProductWorkflowBrief carries the product-workflow evidence the planner
@@ -101,7 +101,7 @@ func (brief ProductWorkflowBrief) AllowsFeaturePlanDispatch() bool {
 }
 
 func (brief ProductWorkflowBrief) IsClosedSourceSatisfied() bool {
-	if !util.EqualTrimFold(brief.StatusBucket, "closed") {
+	if !textutil.EqualTrimFold(brief.StatusBucket, "closed") {
 		return false
 	}
 

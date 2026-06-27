@@ -84,22 +84,14 @@ const (
 	ActiveRunStateRunning = "running"
 )
 
-const (
-	ToolSubmitFeaturePlan   = "submit_feature_plan"
-	ToolSourceSatisfied     = "source_satisfied"
-	ToolAskPlannerQuestion  = "ask_planner_question"
-	ToolQuestionForPlanner  = "question_for_planner"
-	ToolPlanExecuteComplete = "plan_execute_completed"
-)
-
-const (
-	EventPlannerSourceSatisfied              = "idiom.feature_planner.planner_source_satisfied"
-	EventProductSourceSatisfied              = "idiom.feature_planner.product_source_satisfied"
-	EventPlannerQuestionOpened               = "idiom.feature_planner.planner_question_opened"
-	EventImplementorQuestionOpened           = "idiom.feature_planner.implementor_question_opened"
-	EventPlannerQuestionAnswered             = "idiom.feature_planner.planner_question_answered"
-	EventPlannerQuestionSupersededByRevision = "idiom.feature_planner.planner_question_superseded_by_revision"
-)
+func ActiveRunStateAllowed(state string) bool {
+	switch strings.TrimSpace(state) {
+	case ActiveRunStateRunning:
+		return true
+	default:
+		return false
+	}
+}
 
 type FeatureState struct {
 	SchemaVersion           string                    `json:"schema_version"`
@@ -213,18 +205,34 @@ type FeaturePlanApproval struct {
 	WorkspaceFingerprint string `json:"workspace_fingerprint,omitempty"`
 }
 
+type ReleaseReadinessStatus string
+
+const (
+	ReleaseReadinessStatusReady   ReleaseReadinessStatus = "ready"
+	ReleaseReadinessStatusBlocked ReleaseReadinessStatus = "blocked"
+)
+
+func ReleaseReadinessStatusAllowed(status ReleaseReadinessStatus) bool {
+	switch strings.TrimSpace(string(status)) {
+	case string(ReleaseReadinessStatusReady), string(ReleaseReadinessStatusBlocked):
+		return true
+	default:
+		return false
+	}
+}
+
 type ReleaseReadinessDecision struct {
-	Status                      string   `json:"status,omitempty"` // ready or blocked
-	EventID                     string   `json:"event_id,omitempty"`
-	PlanArtifactID              string   `json:"plan_artifact_id,omitempty"`
-	PlanRevision                int      `json:"plan_revision,omitempty"`
-	PlanDigest                  string   `json:"plan_digest,omitempty"`
-	WorkspaceFingerprint        string   `json:"workspace_fingerprint,omitempty"`
-	ApprovalEventID             string   `json:"approval_event_id,omitempty"`
-	VerificationClosureEventIDs []string `json:"verification_closure_event_ids,omitempty"`
-	OpenObligations             []string `json:"open_obligations,omitempty"`
-	Blockers                    []string `json:"blockers,omitempty"`
-	DecidedAt                   string   `json:"decided_at,omitempty"`
+	Status                      ReleaseReadinessStatus `json:"status,omitempty"`
+	EventID                     string                 `json:"event_id,omitempty"`
+	PlanArtifactID              string                 `json:"plan_artifact_id,omitempty"`
+	PlanRevision                int                    `json:"plan_revision,omitempty"`
+	PlanDigest                  string                 `json:"plan_digest,omitempty"`
+	WorkspaceFingerprint        string                 `json:"workspace_fingerprint,omitempty"`
+	ApprovalEventID             string                 `json:"approval_event_id,omitempty"`
+	VerificationClosureEventIDs []string               `json:"verification_closure_event_ids,omitempty"`
+	OpenObligations             []string               `json:"open_obligations,omitempty"`
+	Blockers                    []string               `json:"blockers,omitempty"`
+	DecidedAt                   string                 `json:"decided_at,omitempty"`
 }
 
 type SourceSatisfiedCloseout struct {
@@ -1080,10 +1088,26 @@ type TDDPreExecutionEvidence struct {
 	CreatedAt                  string   `json:"created_at,omitempty"`
 }
 
+type VerificationClosureStatus string
+
+const (
+	VerificationClosureStatusPassed          VerificationClosureStatus = "passed"
+	VerificationClosureStatusSourceSatisfied VerificationClosureStatus = "source_satisfied"
+)
+
+func VerificationClosureStatusAllowed(status VerificationClosureStatus) bool {
+	switch strings.TrimSpace(string(status)) {
+	case string(VerificationClosureStatusPassed), string(VerificationClosureStatusSourceSatisfied):
+		return true
+	default:
+		return false
+	}
+}
+
 type VerificationClosure struct {
 	EventID                      string                      `json:"event_id"`
 	AtomID                       string                      `json:"atom_id"`
-	Status                       string                      `json:"status"`
+	Status                       VerificationClosureStatus   `json:"status"`
 	Outcome                      string                      `json:"outcome,omitempty"`
 	PlanArtifactID               string                      `json:"plan_artifact_id,omitempty"`
 	PlanRevision                 int                         `json:"plan_revision,omitempty"`

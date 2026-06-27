@@ -8,13 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"idiom/internal/platform/util"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"idiom/internal/platform/textutil"
 )
 
 // ViewQueryInputs captures the request shape that, together with the
@@ -254,7 +255,7 @@ func LoadView(root string, key ViewKey) (PackResult, bool, error) {
 	viewCacheHits.Add(1)
 	recordRediscoveryTokensAvoided(result)
 
-	result.Cache = GraphViewCacheStateForKey(key, util.FirstNonEmpty(result.StoreKind, result.Provenance.StoreKind), "hit", "fresh_cached_row")
+	result.Cache = GraphViewCacheStateForKey(key, textutil.FirstNonEmpty(result.StoreKind, result.Provenance.StoreKind), "hit", "fresh_cached_row")
 	AttachPackResultContract(&result)
 
 	return result, true, nil
@@ -334,7 +335,7 @@ func LoadViewByIDStatus(root string, packID string) (PackResult, ViewLoadStatus,
 		return PackResult{}, status, fmt.Errorf("decode cached view %s: %w", packID, err)
 	}
 
-	status.RowIndexID = util.FirstNonEmpty(row.IndexID, result.IndexID)
+	status.RowIndexID = textutil.FirstNonEmpty(row.IndexID, result.IndexID)
 	status.CurrentIndexID = cachedViewCurrentIndexID(root)
 
 	if row.Stale != 0 {
@@ -369,7 +370,7 @@ func LoadViewByIDStatus(root string, packID string) (PackResult, ViewLoadStatus,
 
 	key := cachedViewKeyFromRow(row, packID)
 
-	result.Cache = GraphViewCacheStateForKey(key, util.FirstNonEmpty(result.StoreKind, result.Provenance.StoreKind), "hit", "fresh_cached_row")
+	result.Cache = GraphViewCacheStateForKey(key, textutil.FirstNonEmpty(result.StoreKind, result.Provenance.StoreKind), "hit", "fresh_cached_row")
 	result.Cache.CacheKey = packID
 	result.Cache.PackID = packID
 	AttachPackResultContract(&result)
@@ -707,7 +708,7 @@ func validateCachedViewFreshnessStatus(root string, row cachedViewRow, result Pa
 		Operation:         operation,
 		Policy:            FreshnessRequire,
 		ReferencedPaths:   references,
-		Mode:              util.FirstNonEmpty(result.Mode, row.Mode),
+		Mode:              textutil.FirstNonEmpty(result.Mode, row.Mode),
 		MaxFiles:          viewFreshnessMaxFiles,
 		ExactScopeRefresh: true,
 	})
@@ -716,7 +717,7 @@ func validateCachedViewFreshnessStatus(root string, row cachedViewRow, result Pa
 	}
 
 	if !decision.FreshForScope {
-		return result, false, util.FirstNonEmpty(decision.Reason, decision.Blocker, FreshnessReasonStaleGraph), nil
+		return result, false, textutil.FirstNonEmpty(decision.Reason, decision.Blocker, FreshnessReasonStaleGraph), nil
 	}
 
 	if decision.Refresh != nil && decision.Refresh.Attempted {
@@ -771,7 +772,7 @@ func filterSourceReferencePaths(paths []string) []string {
 }
 
 func cachedViewIndexMatchesCurrent(root string, row cachedViewRow, result PackResult) bool {
-	rowIndexID := util.FirstNonEmpty(row.IndexID, result.IndexID)
+	rowIndexID := textutil.FirstNonEmpty(row.IndexID, result.IndexID)
 	if rowIndexID == "" {
 		return false
 	}
@@ -807,8 +808,8 @@ func cachedViewFingerprintsMatch(root string, row cachedViewRow) bool {
 func staleCachedViewResult(result PackResult, status ViewLoadStatus) PackResult {
 	reason := cachedViewStaleReason(status.Reason)
 
-	result.PackID = util.FirstNonEmpty(strings.TrimSpace(result.PackID), strings.TrimSpace(status.PackID))
-	result.IndexID = util.FirstNonEmpty(strings.TrimSpace(result.IndexID), strings.TrimSpace(status.RowIndexID))
+	result.PackID = textutil.FirstNonEmpty(strings.TrimSpace(result.PackID), strings.TrimSpace(status.PackID))
+	result.IndexID = textutil.FirstNonEmpty(strings.TrimSpace(result.IndexID), strings.TrimSpace(status.RowIndexID))
 	result.Fresh = false
 	result.Confidence = GraphResultConfidence{Level: "low", Source: "graph_view_cache", Reason: reason}
 	result.StaleEvidence = StaleEvidenceSafety{
@@ -824,7 +825,7 @@ func staleCachedViewResult(result PackResult, status ViewLoadStatus) PackResult 
 		Reason:    reason,
 		CacheKey:  strings.TrimSpace(status.PackID),
 		PackID:    strings.TrimSpace(status.PackID),
-		StoreKind: util.FirstNonEmpty(strings.TrimSpace(result.StoreKind), strings.TrimSpace(result.Provenance.StoreKind)),
+		StoreKind: textutil.FirstNonEmpty(strings.TrimSpace(result.StoreKind), strings.TrimSpace(result.Provenance.StoreKind)),
 		Invalidation: GraphViewInvalidationSemantics{
 			Policy:          "content_addressed_read_through",
 			State:           "stale",

@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	recoverycontract "idiom/internal/contracts/recovery"
+
+	"idiom/internal/contracts/workflowstate"
 	"idiom/internal/workflows/recovery"
-	"idiom/internal/workflows/workflowstate"
 )
 
 func TestLoadProductStatusMissingWorkflowState(t *testing.T) {
@@ -339,28 +341,17 @@ func TestProductStatusInvalidClosedBucketStateFailsClosed(t *testing.T) {
 		Status:       "pass",
 		CheckedFiles: []string{"workflow_state.json"},
 	})
-	if err != nil {
-		t.Fatalf("unexpected status error: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "invalid_state_bucket") {
+		t.Fatalf("expected invalid_state_bucket status error, got %v", err)
 	}
 
-	workflowState, err := ParseWorkflowStateJSON([]byte(wsJSON))
-	if err != nil {
-		t.Fatalf("unexpected workflow state parse error: %v", err)
-	}
-
-	view := BuildProductOperatorStatusView(status, &workflowState)
 	if status.WorkflowTerminalState != workflowstate.TerminalStateInvalidScope ||
 		status.Dispatchable {
 
 		t.Fatalf("invalid closed bucket/current_state should fail closed before operator view, got %#v", status)
 	}
-	if view.WorkflowTerminalState != workflowstate.TerminalStateInvalidScope ||
-		view.Dispatchable {
-
-		t.Fatalf("operator view should preserve invalid closed bucket/current_state as non-dispatchable, got %#v", view)
-	}
-	if !hasOperatorBlockerCode(view.Blockers, "invalid_state_bucket") {
-		t.Fatalf("operator view should expose transition blocker for invalid bucket/state, got %#v", view.Blockers)
+	if len(status.Blockers) == 0 || status.Blockers[0].Code != "invalid_workflow_state" {
+		t.Fatalf("status view should expose invalid workflow state blocker, got %#v", status.Blockers)
 	}
 }
 
@@ -427,6 +418,41 @@ func TestProductOperatorStatusViewBlocksStartImplementationShortcut(t *testing.T
 	}
 }
 
+func TestProductOperatorStatusViewBlocksStaleDurableActionVocabulary(t *testing.T) {
+	dir := t.TempDir()
+	wsJSON := strings.Replace(statusTestWorkflowStateJSON(), `"current_state":"implementing"`, `"current_state":"planned"`, 1)
+
+	wsJSON = strings.Replace(wsJSON, `"open_obligations":["TDD-001"]`, `"open_obligations":[]`, 1)
+	wsJSON = strings.Replace(wsJSON, `"next_valid_actions":["complete"]`, `"next_valid_actions":["approve_prd"]`, 1)
+	writeStatusTestFile(t, dir, "workflow_state.json", wsJSON)
+
+	status, err := LoadProductStatus(dir, &LintSummaryResult{Status: "pass"})
+	if err != nil {
+		t.Fatalf("unexpected status error: %v", err)
+	}
+
+	workflowState, err := ParseWorkflowStateJSON([]byte(wsJSON))
+	if err != nil {
+		t.Fatalf("unexpected workflow state parse error: %v", err)
+	}
+
+	view := BuildProductOperatorStatusView(status, &workflowState)
+	if status.Dispatchable || status.WorkflowState == workflowstate.StateDispatchable {
+		t.Fatalf("status view must not be globally dispatchable for stale durable action vocabulary, got %#v", status)
+	}
+	if view.Dispatchable || view.WorkflowState == workflowstate.StateDispatchable {
+		t.Fatalf("operator view must not be globally dispatchable for stale durable action vocabulary, got %#v", view)
+	}
+
+	action := findOperatorContinuationAction(t, view.NextValidActions, "approve_prd")
+	if action.Dispatchable || action.RunnableNow {
+		t.Fatalf("expected stale durable action to be blocked, got %#v", action)
+	}
+	if !statusStringsContain(action.BlockedBy, "invalid_transition_action") {
+		t.Fatalf("expected invalid_transition_action blocker, got %#v", action)
+	}
+}
+
 func TestProductOperatorStatusViewIncludesRecoveryPacketState(t *testing.T) {
 	dir := t.TempDir()
 	writeStatusTestFile(t, dir, "references/recovery_packet.json", statusTestRecoveryPacketJSON(t))
@@ -434,6 +460,7 @@ func TestProductOperatorStatusViewIncludesRecoveryPacketState(t *testing.T) {
 	wsJSON := strings.Replace(statusTestWorkflowStateJSON(), `"open_obligations":["TDD-001"]`, `"open_obligations":[]`, 1)
 
 	wsJSON = strings.Replace(wsJSON, `"artifact_paths":{"events":"events.jsonl"}`, `"artifact_paths":{"events":"events.jsonl","recovery_packet":"references/recovery_packet.json"}`, 1)
+	wsJSON = strings.Replace(wsJSON, `"next_valid_actions":["complete"]`, `"next_valid_actions":["submit_for_verification"]`, 1)
 	writeStatusTestFile(t, dir, "workflow_state.json", wsJSON)
 
 	status, err := LoadProductStatus(dir, &LintSummaryResult{Status: "pass"})
@@ -445,11 +472,11 @@ func TestProductOperatorStatusViewIncludesRecoveryPacketState(t *testing.T) {
 		t.Fatal("expected recovery projection")
 	}
 
-	if status.Recovery.Status != "ready" || status.Recovery.FailureClass != recovery.FailureClassExecutorEdit {
+	if status.Recovery.Status != "ready" || status.Recovery.FailureClass != string(recoverycontract.FailureClassExecutorEdit) {
 		t.Fatalf("expected ready executor recovery status, got %#v", status.Recovery)
 	}
 
-	if status.Recovery.CandidateAtomCount != 1 || !statusStringsContain(status.Recovery.Gates, recovery.GateWorkspaceState) {
+	if status.Recovery.CandidateAtomCount != 1 || !statusStringsContain(status.Recovery.Gates, recoverycontract.GateWorkspaceState) {
 		t.Fatalf("expected recovery candidate gate summary, got %#v", status.Recovery)
 	}
 
@@ -475,7 +502,7 @@ func TestProductOperatorStatusViewIncludesRecoveryPacketState(t *testing.T) {
 		t.Fatalf("expected open recovery packet to block workflow dispatch, got %#v", view.Blockers)
 	}
 
-	workflowAction := findOperatorContinuationAction(t, view.NextValidActions, "complete")
+	workflowAction := findOperatorContinuationAction(t, view.NextValidActions, "submit_for_verification")
 	if workflowAction.Dispatchable || workflowAction.RunnableNow {
 		t.Fatalf("expected normal workflow action blocked while recovery packet is open, got %#v", workflowAction)
 	}
@@ -541,7 +568,7 @@ func TestProductOperatorStatusViewUnblocksClosedRecoveryPacket(t *testing.T) {
 	packetJSON := statusTestRecoveryPacketJSON(t)
 	writeStatusTestFile(t, dir, "references/recovery_packet.json", packetJSON)
 
-	var packet recovery.DecompositionPacket
+	var packet recoverycontract.DecompositionPacket
 
 	if err := json.Unmarshal([]byte(packetJSON), &packet); err != nil {
 		t.Fatalf("decode recovery packet fixture: %v", err)
@@ -566,6 +593,7 @@ func TestProductOperatorStatusViewUnblocksClosedRecoveryPacket(t *testing.T) {
 	wsJSON := strings.Replace(statusTestWorkflowStateJSON(), `"open_obligations":["TDD-001"]`, `"open_obligations":[]`, 1)
 
 	wsJSON = strings.Replace(wsJSON, `"artifact_paths":{"events":"events.jsonl"}`, `"artifact_paths":{"events":"events.jsonl","recovery_packet":"references/recovery_packet.json"}`, 1)
+	wsJSON = strings.Replace(wsJSON, `"next_valid_actions":["complete"]`, `"next_valid_actions":["submit_for_verification"]`, 1)
 	writeStatusTestFile(t, dir, "workflow_state.json", wsJSON)
 
 	status, err := LoadProductStatus(dir, &LintSummaryResult{Status: "pass"})
@@ -573,7 +601,7 @@ func TestProductOperatorStatusViewUnblocksClosedRecoveryPacket(t *testing.T) {
 		t.Fatalf("unexpected status error: %v", err)
 	}
 
-	if status.Recovery == nil || status.Recovery.Status != "closed" || status.Recovery.CompletedAtomCount != 1 || status.Recovery.NextValidAction != recovery.NextActionNone {
+	if status.Recovery == nil || status.Recovery.Status != "closed" || status.Recovery.CompletedAtomCount != 1 || status.Recovery.NextValidAction != string(recoverycontract.NextActionNone) {
 		t.Fatalf("expected closed recovery projection, got %#v", status.Recovery)
 	}
 
@@ -591,7 +619,7 @@ func TestProductOperatorStatusViewUnblocksClosedRecoveryPacket(t *testing.T) {
 		t.Fatalf("closed recovery packet should not add recovery review action, got %#v", view.NextValidActions)
 	}
 
-	workflowAction := findOperatorContinuationAction(t, view.NextValidActions, "complete")
+	workflowAction := findOperatorContinuationAction(t, view.NextValidActions, "submit_for_verification")
 	if !workflowAction.Dispatchable || !workflowAction.RunnableNow {
 		t.Fatalf("expected workflow action to dispatch after recovery closes, got %#v", workflowAction)
 	}
@@ -602,7 +630,7 @@ func TestProductOperatorStatusViewRejectsInvalidRecoveryReconciliation(t *testin
 	packetJSON := statusTestRecoveryPacketJSON(t)
 	writeStatusTestFile(t, dir, "references/recovery_packet.json", packetJSON)
 
-	var packet recovery.DecompositionPacket
+	var packet recoverycontract.DecompositionPacket
 
 	if err := json.Unmarshal([]byte(packetJSON), &packet); err != nil {
 		t.Fatalf("decode recovery packet fixture: %v", err)
@@ -1119,7 +1147,7 @@ func productRecoveryBlocksContain(blockers []ProductRecoveryBlock, code string) 
 	return false
 }
 
-func statusTestRecoveryVerification(packet recovery.DecompositionPacket, atomIDs ...string) recovery.ReconciliationVerification {
+func statusTestRecoveryVerification(packet recoverycontract.DecompositionPacket, atomIDs ...string) recoverycontract.ReconciliationVerification {
 	completed := map[string]bool{}
 	for _, id := range atomIDs {
 		completed[id] = true
@@ -1129,7 +1157,7 @@ func statusTestRecoveryVerification(packet recovery.DecompositionPacket, atomIDs
 
 	var (
 		required []string
-		commands []recovery.ReconciliationCommandResult
+		commands []recoverycontract.ReconciliationCommandResult
 	)
 
 	for _, atom := range packet.CandidateAtoms {
@@ -1144,16 +1172,16 @@ func statusTestRecoveryVerification(packet recovery.DecompositionPacket, atomIDs
 
 			seen[test] = true
 			required = append(required, test)
-			commands = append(commands, recovery.ReconciliationCommandResult{
+			commands = append(commands, recoverycontract.ReconciliationCommandResult{
 				Command:  test,
-				Status:   recovery.ReconciliationVerificationPass,
+				Status:   recoverycontract.ReconciliationVerificationPass,
 				ExitCode: 0,
 			})
 		}
 	}
 
-	return recovery.ReconciliationVerification{
-		Status:        recovery.ReconciliationVerificationPass,
+	return recoverycontract.ReconciliationVerification{
+		Status:        recoverycontract.ReconciliationVerificationPass,
 		RequiredTests: required,
 		Commands:      commands,
 	}

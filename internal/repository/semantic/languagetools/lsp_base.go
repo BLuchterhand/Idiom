@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"idiom/internal/platform/failures"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 type lspBaseClient struct {
@@ -253,7 +253,7 @@ func (c *lspBaseClient) readMessage() ([]byte, error) {
 			continue
 		}
 
-		if util.EqualTrimFold(parts[0], "Content-Length") {
+		if textutil.EqualTrimFold(parts[0], "Content-Length") {
 			n, err := strconv.Atoi(strings.TrimSpace(parts[1]))
 			if err != nil {
 				return nil, err

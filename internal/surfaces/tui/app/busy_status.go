@@ -34,6 +34,22 @@ func busyStatusForToolRequest(event agent.ToolRequestEvent, fallback string) str
 		}
 	}
 
+	if workspace.LanguageToolHasCapability(tool, workspace.CapFileOutline) {
+		if topic == "" {
+			return "Qwen is reading the relevant code"
+		}
+
+		return "Qwen is reading code related to " + topic
+	}
+
+	if workspace.LanguageToolHasCapability(tool, workspace.CapReadSymbol) {
+		if topic == "" {
+			return "Qwen is inspecting a source symbol"
+		}
+
+		return "Qwen is inspecting " + topic
+	}
+
 	switch tool {
 	case workspace.ToolNameContextPack, workspace.ToolNameDiscoveryQuery:
 		if topic == "" {
@@ -53,13 +69,13 @@ func busyStatusForToolRequest(event agent.ToolRequestEvent, fallback string) str
 		}
 
 		return "Qwen is searching for code related to " + topic
-	case workspace.ToolNameReadFile, workspace.ToolNameFileStats, "go_file_outline", "rust_file_outline", "ts_file_outline", "python_file_outline", "java_file_outline", "cpp_file_outline":
+	case workspace.ToolNameReadFile, workspace.ToolNameFileStats:
 		if topic == "" {
 			return "Qwen is reading the relevant code"
 		}
 
 		return "Qwen is reading code related to " + topic
-	case workspace.ToolNameCodeNavigate, "go_read_symbol", "rust_read_symbol", "ts_read_symbol", "python_read_symbol", "java_read_symbol", "cpp_read_symbol":
+	case workspace.ToolNameCodeNavigate:
 		if topic == "" {
 			return "Qwen is inspecting a source symbol"
 		}

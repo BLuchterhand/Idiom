@@ -1,11 +1,10 @@
 package workspace
 
 import (
-	"slices"
 	"strings"
 
 	"idiom/internal/contracts/autonomy"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 type ToolManifestEntry struct {
@@ -150,7 +149,7 @@ func toolManifestToolsAcrossBuiltInSurfaces() []string {
 	opts.IncludePlanThenExecute = true
 	tools = append(tools, ToolManifestTools(opts)...)
 
-	return util.UniqueNonEmpty(tools)
+	return textutil.UniqueNonEmpty(tools)
 }
 
 func WorkspaceWriteToolNames() []string {
@@ -162,7 +161,21 @@ func workspaceWriteToolNamesWithoutLanguageSpecific() []string {
 }
 
 func IsWorkspaceWriteTool(tool string) bool {
-	return slices.Contains(WorkspaceWriteToolNames(), strings.TrimSpace(tool))
+	_, ok := workspaceWriteToolNameSet[strings.TrimSpace(tool)]
+	return ok
+}
+
+var workspaceWriteToolNameSet = toolNameSet(WorkspaceWriteToolNames())
+
+func toolNameSet(tools []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(tools))
+	for _, tool := range tools {
+		tool = strings.TrimSpace(tool)
+		if tool != "" {
+			out[tool] = struct{}{}
+		}
+	}
+	return out
 }
 
 func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
@@ -293,7 +306,7 @@ func SanitizeToolManifestRequests(manifest []ToolManifestEntry) []ToolManifestEn
 func toolManifestRequestLooksPlaceholder(request string) bool {
 	lower := strings.ToLower(strings.TrimSpace(request))
 
-	return util.ContainsAny(lower,
+	return textutil.ContainsAny(lower,
 		"relative/file",
 		"candidate/path.go",
 		"symbol|text",

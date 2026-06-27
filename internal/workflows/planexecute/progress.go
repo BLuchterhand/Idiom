@@ -10,92 +10,83 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/capabilities/workspace"
+	planartifact "idiom/internal/contracts/planartifact"
+
+	plancontract "idiom/internal/contracts/plan"
+	"idiom/internal/platform/atomicfile"
+	"idiom/internal/platform/sessionid"
 	"idiom/internal/workflows/recovery"
 )
 
 const ProgressStateSchemaVersion = "idiom.plan_execute.progress.v1"
 
-const (
-	ProgressPhasePlanning     = "planning"
-	ProgressPhaseExecutor     = "executor"
-	ProgressPhaseReviewRepair = "review_repair"
-	ProgressPhaseComplete     = "complete"
-
-	ProgressStatusRunning   = "running"
-	ProgressStatusCompleted = "completed"
-	ProgressStatusFailed    = "failed"
-	ProgressStatusDegraded  = "degraded"
-	ProgressStatusBlocked   = "blocked"
-	ProgressStatusSkipped   = "skipped"
-)
-
 type ProgressState struct {
-	SchemaVersion                 string               `json:"schema_version"`
-	SessionID                     string               `json:"session_id"`
-	CreatedAt                     string               `json:"created_at"`
-	UpdatedAt                     string               `json:"updated_at"`
-	PromptSHA256                  string               `json:"prompt_sha256,omitempty"`
-	PromptFile                    string               `json:"prompt_file,omitempty"`
-	Phase                         string               `json:"phase"`
-	Status                        string               `json:"status"`
-	FailureKind                   string               `json:"failure_kind,omitempty"`
-	FailureReason                 string               `json:"failure_reason,omitempty"`
-	PlanPath                      string               `json:"plan_path,omitempty"`
-	PlanID                        string               `json:"plan_id,omitempty"`
-	PackID                        string               `json:"pack_id,omitempty"`
-	ParentAtomID                  string               `json:"parent_atom_id,omitempty"`
-	ParentAtomTitle               string               `json:"parent_atom_title,omitempty"`
-	RequiredEditPaths             []string             `json:"required_edit_paths,omitempty"`
-	AllowedEditPaths              []string             `json:"allowed_edit_paths,omitempty"`
-	WriteAllowedPaths             []string             `json:"write_allowed_paths,omitempty"`
-	WriteAllowedExplicit          bool                 `json:"write_allowed_explicit,omitempty"`
-	ScopeContractID               string               `json:"scope_contract_id,omitempty"`
-	ScopeContractHash             string               `json:"scope_contract_hash,omitempty"`
-	RequiredAcceptanceEvidenceIDs []string             `json:"required_acceptance_evidence_ids,omitempty"`
-	AcceptanceEvidenceIDs         []string             `json:"acceptance_evidence_ids,omitempty"`
-	EditSetObligations            EditSetObligations   `json:"edit_set_obligations,omitempty"`
-	ChangedPaths                  []string             `json:"changed_paths,omitempty"`
-	TotalEdits                    int                  `json:"total_edits,omitempty"`
-	Edits                         []ProgressEdit       `json:"edits,omitempty"`
-	Executor                      ProgressExecutor     `json:"executor,omitempty"`
-	Review                        ProgressReviewRepair `json:"review_repair,omitempty"`
-	ReviewBaseline                ReviewRepairBaseline `json:"review_baseline,omitempty"`
+	SchemaVersion                 string                                 `json:"schema_version"`
+	SessionID                     string                                 `json:"session_id"`
+	CreatedAt                     string                                 `json:"created_at"`
+	UpdatedAt                     string                                 `json:"updated_at"`
+	PromptSHA256                  string                                 `json:"prompt_sha256,omitempty"`
+	PromptFile                    string                                 `json:"prompt_file,omitempty"`
+	Phase                         plancontract.PlanExecuteProgressPhase  `json:"phase"`
+	Status                        plancontract.PlanExecuteProgressStatus `json:"status"`
+	FailureKind                   plancontract.PlanExecuteFailureKind    `json:"failure_kind,omitempty"`
+	FailureReason                 string                                 `json:"failure_reason,omitempty"`
+	PlanPath                      string                                 `json:"plan_path,omitempty"`
+	PlanID                        string                                 `json:"plan_id,omitempty"`
+	PackID                        string                                 `json:"pack_id,omitempty"`
+	ParentAtomID                  string                                 `json:"parent_atom_id,omitempty"`
+	ParentAtomTitle               string                                 `json:"parent_atom_title,omitempty"`
+	RequiredEditPaths             []string                               `json:"required_edit_paths,omitempty"`
+	AllowedEditPaths              []string                               `json:"allowed_edit_paths,omitempty"`
+	WriteAllowedPaths             []string                               `json:"write_allowed_paths,omitempty"`
+	WriteAllowedExplicit          bool                                   `json:"write_allowed_explicit,omitempty"`
+	ScopeContractID               string                                 `json:"scope_contract_id,omitempty"`
+	ScopeContractHash             string                                 `json:"scope_contract_hash,omitempty"`
+	RequiredAcceptanceEvidenceIDs []string                               `json:"required_acceptance_evidence_ids,omitempty"`
+	AcceptanceEvidenceIDs         []string                               `json:"acceptance_evidence_ids,omitempty"`
+	EditSetObligations            plancontract.EditSetObligations        `json:"edit_set_obligations,omitempty"`
+	ChangedPaths                  []string                               `json:"changed_paths,omitempty"`
+	TotalEdits                    int                                    `json:"total_edits,omitempty"`
+	Edits                         []ProgressEdit                         `json:"edits,omitempty"`
+	Executor                      ProgressExecutor                       `json:"executor,omitempty"`
+	Review                        ProgressReviewRepair                   `json:"review_repair,omitempty"`
+	ReviewBaseline                ReviewRepairBaseline                   `json:"review_baseline,omitempty"`
 }
 
 type ProgressEdit struct {
-	Step      int    `json:"step"`
-	Total     int    `json:"total"`
-	Path      string `json:"path"`
-	Status    string `json:"status"`
-	UpdatedAt string `json:"updated_at"`
+	Step      int                                    `json:"step"`
+	Total     int                                    `json:"total"`
+	Path      string                                 `json:"path"`
+	Status    plancontract.PlanExecuteProgressStatus `json:"status"`
+	UpdatedAt string                                 `json:"updated_at"`
 }
 
 type ProgressExecutor struct {
-	Status               string                `json:"status,omitempty"`
-	Total                int                   `json:"total,omitempty"`
-	Succeeded            int                   `json:"succeeded,omitempty"`
-	Failed               int                   `json:"failed,omitempty"`
-	Failures             []string              `json:"failures,omitempty"`
-	SourceSanity         []PhaseEvidenceCheck  `json:"source_sanity,omitempty"`
-	Verification         []PhaseEvidenceCheck  `json:"verification,omitempty"`
-	VerificationCommands []VerificationCommand `json:"verification_commands,omitempty"`
-	VerificationSkips    []VerificationSkip    `json:"verification_skips,omitempty"`
-	VerificationRejects  []VerificationReject  `json:"verification_rejects,omitempty"`
-	Handoff              ExecutorHandoffPacket `json:"handoff,omitempty"`
+	Status               plancontract.PlanExecuteProgressStatus `json:"status,omitempty"`
+	Total                int                                    `json:"total,omitempty"`
+	Succeeded            int                                    `json:"succeeded,omitempty"`
+	Failed               int                                    `json:"failed,omitempty"`
+	Failures             []string                               `json:"failures,omitempty"`
+	SourceSanity         []plancontract.PhaseEvidenceCheck      `json:"source_sanity,omitempty"`
+	Verification         []plancontract.PhaseEvidenceCheck      `json:"verification,omitempty"`
+	VerificationCommands []plancontract.VerificationCommand     `json:"verification_commands,omitempty"`
+	VerificationSkips    []plancontract.VerificationSkip        `json:"verification_skips,omitempty"`
+	VerificationRejects  []plancontract.VerificationReject      `json:"verification_rejects,omitempty"`
+	Handoff              ExecutorHandoffPacket                  `json:"handoff,omitempty"`
 }
 
 type ProgressReviewRepair struct {
-	SessionID      string `json:"session_id,omitempty"`
-	Status         string `json:"status,omitempty"`
-	ReviewPlan     string `json:"review_plan,omitempty"`
-	Repairs        int    `json:"repairs,omitempty"`
-	AutoRepairs    int    `json:"auto_repairs,omitempty"`
-	ChecklistFound bool   `json:"checklist_found,omitempty"`
-	ReasonClass    string `json:"reason_class,omitempty"`
-	Error          string `json:"error,omitempty"`
-	StartedAt      string `json:"started_at,omitempty"`
-	CompletedAt    string `json:"completed_at,omitempty"`
+	SessionID      string                               `json:"session_id,omitempty"`
+	Status         plancontract.PlanExecuteReviewStatus `json:"status,omitempty"`
+	StatusDetail   string                               `json:"status_detail,omitempty"`
+	ReviewPlan     string                               `json:"review_plan,omitempty"`
+	Repairs        int                                  `json:"repairs,omitempty"`
+	AutoRepairs    int                                  `json:"auto_repairs,omitempty"`
+	ChecklistFound bool                                 `json:"checklist_found,omitempty"`
+	ReasonClass    string                               `json:"reason_class,omitempty"`
+	Error          string                               `json:"error,omitempty"`
+	StartedAt      string                               `json:"started_at,omitempty"`
+	CompletedAt    string                               `json:"completed_at,omitempty"`
 }
 
 func NewProgressState(sessionID string, prompt string, promptFile string, requiredEditPaths []string, allowedEditPaths []string, now time.Time) ProgressState {
@@ -112,8 +103,8 @@ func NewProgressState(sessionID string, prompt string, promptFile string, requir
 		UpdatedAt:         stamp,
 		PromptSHA256:      ProgressPromptSHA256(prompt),
 		PromptFile:        strings.TrimSpace(promptFile),
-		Phase:             ProgressPhasePlanning,
-		Status:            ProgressStatusRunning,
+		Phase:             plancontract.PlanExecuteProgressPhasePlanning,
+		Status:            plancontract.PlanExecuteProgressStatusRunning,
 		RequiredEditPaths: append([]string(nil), requiredEditPaths...),
 		AllowedEditPaths:  append([]string(nil), allowedEditPaths...),
 	}
@@ -172,6 +163,10 @@ func SaveProgressState(root string, state *ProgressState) (string, error) {
 		return "", fmt.Errorf("unsupported plan-execute progress schema %q", state.SchemaVersion)
 	}
 
+	if err := validateProgressLifecycle(*state, ""); err != nil {
+		return "", err
+	}
+
 	sanitizeProgressState(state)
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -195,14 +190,8 @@ func SaveProgressState(root string, state *ProgressState) (string, error) {
 		return "", fmt.Errorf("marshal plan-execute progress state: %w", err)
 	}
 
-	tmpPath := fullPath + ".tmp"
-	if err := os.WriteFile(tmpPath, append(body, '\n'), 0o600); err != nil {
-		return "", fmt.Errorf("write plan-execute progress state: %w", err)
-	}
-
-	if err := os.Rename(tmpPath, fullPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return "", fmt.Errorf("replace plan-execute progress state: %w", err)
+	if err := atomicfile.WriteFile(fullPath, append(body, '\n'), 0o600); err != nil {
+		return relPath, fmt.Errorf("write plan-execute progress state: %w", err)
 	}
 
 	return relPath, nil
@@ -235,6 +224,8 @@ func TryLoadProgressState(root string, resumeID string) (ProgressState, string, 
 
 	if strings.TrimSpace(state.SessionID) == "" {
 		state.SessionID = strings.TrimSpace(resumeID)
+	} else if strings.TrimSpace(state.SessionID) != strings.TrimSpace(resumeID) {
+		return ProgressState{}, relPath, false, fmt.Errorf("plan-execute progress session id %q does not match requested session %q in %s", state.SessionID, resumeID, relPath)
 	}
 
 	if !validProgressSessionID(state.SessionID) {
@@ -245,7 +236,78 @@ func TryLoadProgressState(root string, resumeID string) (ProgressState, string, 
 		state.SchemaVersion = ProgressStateSchemaVersion
 	}
 
+	if err := validateProgressLifecycle(state, relPath); err != nil {
+		return ProgressState{}, relPath, false, err
+	}
+
 	return state, relPath, true, nil
+}
+
+func validateProgressLifecycle(state ProgressState, relPath string) error {
+	phase, ok := plancontract.ParsePlanExecuteProgressPhase(string(state.Phase))
+	if !ok {
+		if strings.TrimSpace(relPath) == "" {
+			return fmt.Errorf("invalid plan-execute progress phase %q", state.Phase)
+		}
+		return fmt.Errorf("invalid plan-execute progress phase %q in %s", state.Phase, relPath)
+	}
+	status, ok := plancontract.ParsePlanExecuteProgressStatus(string(state.Status))
+	if !ok {
+		if strings.TrimSpace(relPath) == "" {
+			return fmt.Errorf("invalid plan-execute progress status %q", state.Status)
+		}
+		return fmt.Errorf("invalid plan-execute progress status %q in %s", state.Status, relPath)
+	}
+	if !progressPhaseAllowsStatus(phase, status) {
+		if strings.TrimSpace(relPath) == "" {
+			return fmt.Errorf("invalid plan-execute progress lifecycle phase=%q status=%q", state.Phase, state.Status)
+		}
+		return fmt.Errorf("invalid plan-execute progress lifecycle phase=%q status=%q in %s", state.Phase, state.Status, relPath)
+	}
+	if strings.TrimSpace(string(state.FailureKind)) != "" {
+		if _, ok := plancontract.ParsePlanExecuteFailureKind(string(state.FailureKind)); !ok {
+			if strings.TrimSpace(relPath) == "" {
+				return fmt.Errorf("invalid plan-execute progress failure_kind %q", state.FailureKind)
+			}
+			return fmt.Errorf("invalid plan-execute progress failure_kind %q in %s", state.FailureKind, relPath)
+		}
+	}
+	if strings.TrimSpace(string(state.Review.Status)) != "" {
+		if _, ok := plancontract.ParsePlanExecuteReviewStatus(string(state.Review.Status)); !ok {
+			if strings.TrimSpace(relPath) == "" {
+				return fmt.Errorf("invalid plan-execute progress review status %q", state.Review.Status)
+			}
+			return fmt.Errorf("invalid plan-execute progress review status %q in %s", state.Review.Status, relPath)
+		}
+	}
+	return nil
+}
+
+func progressPhaseAllowsStatus(phase plancontract.PlanExecuteProgressPhase, status plancontract.PlanExecuteProgressStatus) bool {
+	switch phase {
+	case plancontract.PlanExecuteProgressPhasePlanning:
+		return status == plancontract.PlanExecuteProgressStatusRunning ||
+			status == plancontract.PlanExecuteProgressStatusFailed
+	case plancontract.PlanExecuteProgressPhaseExecutor:
+		return status == plancontract.PlanExecuteProgressStatusRunning ||
+			status == plancontract.PlanExecuteProgressStatusCompleted ||
+			status == plancontract.PlanExecuteProgressStatusFailed
+	case plancontract.PlanExecuteProgressPhaseReviewRepair:
+		return status == plancontract.PlanExecuteProgressStatusRunning ||
+			status == plancontract.PlanExecuteProgressStatusCompleted ||
+			status == plancontract.PlanExecuteProgressStatusFailed ||
+			status == plancontract.PlanExecuteProgressStatusDegraded ||
+			status == plancontract.PlanExecuteProgressStatusBlocked ||
+			status == plancontract.PlanExecuteProgressStatusSkipped
+	case plancontract.PlanExecuteProgressPhaseComplete:
+		return status == plancontract.PlanExecuteProgressStatusCompleted ||
+			status == plancontract.PlanExecuteProgressStatusFailed ||
+			status == plancontract.PlanExecuteProgressStatusDegraded ||
+			status == plancontract.PlanExecuteProgressStatusBlocked ||
+			status == plancontract.PlanExecuteProgressStatusSkipped
+	default:
+		return false
+	}
 }
 
 func LoadProgressState(root string, resumeID string) (ProgressState, string, error) {
@@ -261,9 +323,9 @@ func LoadProgressState(root string, resumeID string) (ProgressState, string, err
 	return state, relPath, nil
 }
 
-func (s *ProgressState) MarkPlanLoaded(root string, planPath string, plan workspace.PlanArtifact, baseline ReviewRepairBaseline) {
-	s.Phase = ProgressPhaseExecutor
-	s.Status = ProgressStatusRunning
+func (s *ProgressState) MarkPlanLoaded(root string, planPath string, plan planartifact.PlanArtifact, baseline ReviewRepairBaseline) {
+	s.Phase = plancontract.PlanExecuteProgressPhaseExecutor
+	s.Status = plancontract.PlanExecuteProgressStatusRunning
 	s.PlanPath = progressRelPath(root, planPath)
 	s.PlanID = strings.TrimSpace(plan.PlanID)
 	s.PackID = strings.TrimSpace(plan.PackID)
@@ -277,9 +339,9 @@ func (s *ProgressState) MarkPlanLoaded(root string, planPath string, plan worksp
 }
 
 func (s *ProgressState) MarkPlanningFailed(kind string, reason string) {
-	s.Phase = ProgressPhasePlanning
-	s.Status = ProgressStatusFailed
-	s.FailureKind = strings.TrimSpace(kind)
+	s.Phase = plancontract.PlanExecuteProgressPhasePlanning
+	s.Status = plancontract.PlanExecuteProgressStatusFailed
+	s.FailureKind = plancontract.PlanExecuteFailureKind(strings.TrimSpace(kind))
 	s.FailureReason = sanitizeProgressReason(reason)
 }
 
@@ -288,16 +350,16 @@ func (s *ProgressState) MarkEditProgress(step int, total int, path string, succe
 		return
 	}
 
-	s.Phase = ProgressPhaseExecutor
-	s.Status = ProgressStatusRunning
-	s.Executor.Status = ProgressStatusRunning
+	s.Phase = plancontract.PlanExecuteProgressPhaseExecutor
+	s.Status = plancontract.PlanExecuteProgressStatusRunning
+	s.Executor.Status = plancontract.PlanExecuteProgressStatusRunning
 	s.TotalEdits = total
 	s.Executor.Total = total
 
-	status := ProgressStatusCompleted
+	status := plancontract.PlanExecuteProgressStatusCompleted
 
 	if !succeeded {
-		status = ProgressStatusFailed
+		status = plancontract.PlanExecuteProgressStatusFailed
 	}
 
 	edit := ProgressEdit{
@@ -317,32 +379,35 @@ func (s *ProgressState) MarkEditProgress(step int, total int, path string, succe
 }
 
 func (s *ProgressState) MarkExecutorComplete(report ExecutorPhaseReport, runErr error) {
-	s.Phase = ProgressPhaseExecutor
+	s.Phase = plancontract.PlanExecuteProgressPhaseExecutor
 	s.Executor = ProgressExecutor{
-		Status:               ProgressStatusCompleted,
+		Status:               plancontract.PlanExecuteProgressStatusCompleted,
 		Total:                report.Total,
 		Succeeded:            report.Succeeded,
 		Failed:               report.Failed,
 		Failures:             sanitizeProgressReasons(report.Failures),
-		SourceSanity:         append([]PhaseEvidenceCheck(nil), report.SourceSanity...),
-		Verification:         append([]PhaseEvidenceCheck(nil), report.Verification...),
-		VerificationCommands: append([]VerificationCommand(nil), report.VerificationCommands...),
-		VerificationSkips:    append([]VerificationSkip(nil), report.VerificationSkips...),
-		VerificationRejects:  append([]VerificationReject(nil), report.VerificationRejects...),
+		SourceSanity:         append([]plancontract.PhaseEvidenceCheck(nil), report.SourceSanity...),
+		Verification:         append([]plancontract.PhaseEvidenceCheck(nil), report.Verification...),
+		VerificationCommands: append([]plancontract.VerificationCommand(nil), report.VerificationCommands...),
+		VerificationSkips:    append([]plancontract.VerificationSkip(nil), report.VerificationSkips...),
+		VerificationRejects:  append([]plancontract.VerificationReject(nil), report.VerificationRejects...),
 		Handoff:              report.Handoff,
 	}
 
 	if runErr != nil {
-		s.Status = ProgressStatusFailed
-		if ExecutorSourceSanityFailed(report, runErr) {
-			s.Executor.Status = ProgressStatusCompleted
-			s.FailureKind = RunFailureSourceSanityFailed
+		s.Status = plancontract.PlanExecuteProgressStatusFailed
+		if isPlanExecuteJSONEventWriteFailure(runErr) {
+			s.Executor.Status = plancontract.PlanExecuteProgressStatusFailed
+			s.FailureKind = plancontract.PlanExecuteFailureJSONEventWriteFailed
+		} else if ExecutorSourceSanityFailed(report, runErr) {
+			s.Executor.Status = plancontract.PlanExecuteProgressStatusCompleted
+			s.FailureKind = plancontract.PlanExecuteFailureSourceSanityFailed
 		} else if ExecutorVerificationFailed(report, runErr) {
-			s.Executor.Status = ProgressStatusCompleted
-			s.FailureKind = RunFailureVerificationRequired
+			s.Executor.Status = plancontract.PlanExecuteProgressStatusCompleted
+			s.FailureKind = plancontract.PlanExecuteFailureVerificationFailed
 		} else {
-			s.Executor.Status = ProgressStatusFailed
-			s.FailureKind = "executor_failed"
+			s.Executor.Status = plancontract.PlanExecuteProgressStatusFailed
+			s.FailureKind = plancontract.PlanExecuteFailureExecutorFailed
 		}
 
 		s.FailureReason = sanitizeProgressReason(runErr.Error())
@@ -350,7 +415,7 @@ func (s *ProgressState) MarkExecutorComplete(report ExecutorPhaseReport, runErr 
 		return
 	}
 
-	s.Status = ProgressStatusCompleted
+	s.Status = plancontract.PlanExecuteProgressStatusCompleted
 	s.FailureKind = ""
 	s.FailureReason = ""
 }
@@ -358,69 +423,79 @@ func (s *ProgressState) MarkExecutorComplete(report ExecutorPhaseReport, runErr 
 func (s *ProgressState) MarkReviewStarted(reviewSessionID string) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 
-	s.Phase = ProgressPhaseReviewRepair
-	s.Status = ProgressStatusRunning
+	s.Phase = plancontract.PlanExecuteProgressPhaseReviewRepair
+	s.Status = plancontract.PlanExecuteProgressStatusRunning
 	s.Review.SessionID = strings.TrimSpace(reviewSessionID)
-	s.Review.Status = ProgressStatusRunning
+	s.Review.Status = plancontract.PlanExecuteReviewStatusRunning
+	s.Review.StatusDetail = ""
 	s.Review.StartedAt = now
 	s.Review.CompletedAt = ""
 	s.Review.Error = ""
 }
 
 func (s *ProgressState) MarkReviewComplete(report ReviewRepairPhaseReport, reviewErr error) {
-	s.Phase = ProgressPhaseReviewRepair
+	s.Phase = plancontract.PlanExecuteProgressPhaseReviewRepair
 	s.Review.ReviewPlan = progressRelPath("", report.ReviewPlan)
 	s.Review.Repairs = report.Repairs
 	s.Review.AutoRepairs = report.AutoRepairs
 	s.Review.ChecklistFound = report.ChecklistFound
 	s.Review.ReasonClass = report.ReasonClass
 	s.Review.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	s.Review.Status = strings.TrimSpace(report.Status)
+	s.Review.Status = report.Status
+	s.Review.StatusDetail = sanitizeProgressReason(report.StatusDetail)
+	if len(report.CombinedChangedPaths) > 0 {
+		s.ChangedPaths = mergePlanExecutePaths(append(append([]string(nil), s.ChangedPaths...), report.CombinedChangedPaths...))
+	} else if len(report.RepairPaths) > 0 {
+		s.ChangedPaths = mergePlanExecutePaths(append(append([]string(nil), s.ChangedPaths...), report.RepairPaths...))
+	}
 
 	if s.Review.Status == "" {
-		s.Review.Status = ProgressStatusCompleted
+		s.Review.Status = plancontract.PlanExecuteReviewStatusCompleted
 	}
 
 	if reviewErr != nil {
-		s.Status = ProgressStatusFailed
-		s.Review.Status = ProgressStatusFailed
+		s.Status = plancontract.PlanExecuteProgressStatusFailed
+		s.Review.Status = plancontract.PlanExecuteReviewStatusFailed
 		s.Review.Error = sanitizeProgressReason(reviewErr.Error())
-		s.FailureKind = "review_repair_failed"
+		if isPlanExecuteJSONEventWriteFailure(reviewErr) {
+			s.FailureKind = plancontract.PlanExecuteFailureJSONEventWriteFailed
+		} else {
+			s.FailureKind = plancontract.PlanExecuteFailureReviewRepairFailed
+		}
 		s.FailureReason = sanitizeProgressReason(reviewErr.Error())
 
 		return
 	}
 
-	if strings.Contains(strings.ToLower(report.Status), "degraded") {
-		s.Status = ProgressStatusDegraded
-		s.FailureKind = firstProgressNonEmptyString(report.ReasonClass, "review_repair_degraded")
-		s.FailureReason = sanitizeProgressReason(report.Status)
+	switch report.Status {
+	case plancontract.PlanExecuteReviewStatusDegraded:
+		s.Status = plancontract.PlanExecuteProgressStatusDegraded
+		s.FailureKind = plancontract.PlanExecuteFailureReviewRepairDegraded
+		s.FailureReason = sanitizeProgressReason(firstProgressNonEmptyString(report.FailureReason, report.StatusDetail, string(s.Review.Status)))
 
 		return
-	}
-
-	if strings.Contains(strings.ToLower(report.Status), "blocked") {
-		s.Status = ProgressStatusBlocked
-		s.FailureKind = "review_repair_blocked"
-		s.FailureReason = sanitizeProgressReason(firstProgressNonEmptyString(report.FailureReason, s.Review.Status))
+	case plancontract.PlanExecuteReviewStatusBlocked:
+		s.Status = plancontract.PlanExecuteProgressStatusBlocked
+		s.FailureKind = plancontract.PlanExecuteFailureReviewRepairBlocked
+		s.FailureReason = sanitizeProgressReason(firstProgressNonEmptyString(report.FailureReason, report.StatusDetail, string(s.Review.Status)))
 
 		return
 	}
 
 	if report.Skipped {
-		s.Status = ProgressStatusSkipped
+		s.Status = plancontract.PlanExecuteProgressStatusSkipped
 		return
 	}
 
-	s.Status = ProgressStatusCompleted
+	s.Status = plancontract.PlanExecuteProgressStatusCompleted
 	s.FailureKind = ""
 	s.FailureReason = ""
 }
 
 func (s *ProgressState) MarkSkippedReview() {
-	s.Phase = ProgressPhaseComplete
-	s.Status = ProgressStatusCompleted
-	s.Review.Status = ProgressStatusSkipped
+	s.Phase = plancontract.PlanExecuteProgressPhaseComplete
+	s.Status = plancontract.PlanExecuteProgressStatusCompleted
+	s.Review.Status = plancontract.PlanExecuteReviewStatusSkipped
 }
 
 func (s ProgressState) PromptMatches(prompt string) bool {
@@ -433,7 +508,7 @@ func (s ProgressState) ReviewResumeReady() bool {
 		return false
 	}
 
-	if s.Executor.Status != ProgressStatusCompleted {
+	if s.Executor.Status != plancontract.PlanExecuteProgressStatusCompleted {
 		return false
 	}
 
@@ -442,17 +517,17 @@ func (s ProgressState) ReviewResumeReady() bool {
 	}
 
 	switch s.Phase {
-	case ProgressPhaseExecutor:
-		return s.Status == ProgressStatusCompleted ||
-			(s.Status == ProgressStatusFailed &&
-				s.FailureKind == RunFailureSourceSanityFailed &&
-				s.Executor.Status == ProgressStatusCompleted) ||
-			(s.Status == ProgressStatusFailed &&
-				s.FailureKind == RunFailureVerificationRequired &&
-				s.Executor.Status == ProgressStatusCompleted)
-	case ProgressPhaseReviewRepair:
+	case plancontract.PlanExecuteProgressPhaseExecutor:
+		return s.Status == plancontract.PlanExecuteProgressStatusCompleted ||
+			(s.Status == plancontract.PlanExecuteProgressStatusFailed &&
+				s.FailureKind == plancontract.PlanExecuteFailureSourceSanityFailed &&
+				s.Executor.Status == plancontract.PlanExecuteProgressStatusCompleted) ||
+			(s.Status == plancontract.PlanExecuteProgressStatusFailed &&
+				s.FailureKind == plancontract.PlanExecuteFailureVerificationFailed &&
+				s.Executor.Status == plancontract.PlanExecuteProgressStatusCompleted)
+	case plancontract.PlanExecuteProgressPhaseReviewRepair:
 		switch s.Status {
-		case ProgressStatusRunning, ProgressStatusFailed, ProgressStatusDegraded, ProgressStatusBlocked:
+		case plancontract.PlanExecuteProgressStatusRunning, plancontract.PlanExecuteProgressStatusFailed, plancontract.PlanExecuteProgressStatusDegraded, plancontract.PlanExecuteProgressStatusBlocked:
 			return true
 		}
 	}
@@ -466,11 +541,11 @@ func (s ProgressState) ExecutorPhaseReport() ExecutorPhaseReport {
 		Succeeded:            s.Executor.Succeeded,
 		Failed:               s.Executor.Failed,
 		Failures:             append([]string(nil), s.Executor.Failures...),
-		SourceSanity:         append([]PhaseEvidenceCheck(nil), s.Executor.SourceSanity...),
-		Verification:         append([]PhaseEvidenceCheck(nil), s.Executor.Verification...),
-		VerificationCommands: append([]VerificationCommand(nil), s.Executor.VerificationCommands...),
-		VerificationSkips:    append([]VerificationSkip(nil), s.Executor.VerificationSkips...),
-		VerificationRejects:  append([]VerificationReject(nil), s.Executor.VerificationRejects...),
+		SourceSanity:         append([]plancontract.PhaseEvidenceCheck(nil), s.Executor.SourceSanity...),
+		Verification:         append([]plancontract.PhaseEvidenceCheck(nil), s.Executor.Verification...),
+		VerificationCommands: append([]plancontract.VerificationCommand(nil), s.Executor.VerificationCommands...),
+		VerificationSkips:    append([]plancontract.VerificationSkip(nil), s.Executor.VerificationSkips...),
+		VerificationRejects:  append([]plancontract.VerificationReject(nil), s.Executor.VerificationRejects...),
 		Handoff:              s.Executor.Handoff,
 	}
 }
@@ -486,33 +561,33 @@ func (s ProgressState) ResolvedPlanPath(root string) string {
 
 func ProgressStateEventFields(state ProgressState, statePath string) map[string]any {
 	fields := map[string]any{
-		"session_id": state.SessionID,
-		"phase":      state.Phase,
-		"status":     state.Status,
-		"state_path": statePath,
+		plancontract.PlanExecuteEventFieldSessionID:    state.SessionID,
+		plancontract.PlanExecuteTerminalFieldPhase:     state.Phase,
+		plancontract.PlanExecuteTerminalFieldStatus:    state.Status,
+		plancontract.PlanExecuteTerminalFieldStatePath: statePath,
 	}
 	if state.PlanPath != "" {
-		fields["plan_path"] = state.PlanPath
+		fields[plancontract.PlanExecuteEventFieldPlanPath] = state.PlanPath
 	}
 
 	if state.FailureKind != "" {
-		fields["failure_kind"] = state.FailureKind
+		fields[plancontract.PlanExecuteTerminalFieldFailureKind] = string(state.FailureKind)
 	}
 
 	if state.FailureReason != "" {
-		fields["failure_reason"] = state.FailureReason
+		fields[plancontract.PlanExecuteTerminalFieldFailureReason] = state.FailureReason
 	}
 
 	if len(state.RequiredEditPaths) > 0 {
-		fields["required_edit_paths"] = append([]string(nil), state.RequiredEditPaths...)
+		fields[plancontract.PlanExecuteTerminalFieldRequiredEditPaths] = append([]string(nil), state.RequiredEditPaths...)
 	}
 
 	if len(state.AllowedEditPaths) > 0 {
-		fields["allowed_edit_paths"] = append([]string(nil), state.AllowedEditPaths...)
+		fields[plancontract.PlanExecuteTerminalFieldAllowedEditPaths] = append([]string(nil), state.AllowedEditPaths...)
 	}
 
 	if len(state.WriteAllowedPaths) > 0 {
-		fields["write_allowed_paths"] = append([]string(nil), state.WriteAllowedPaths...)
+		fields[plancontract.PlanExecuteTerminalFieldWriteAllowedPaths] = append([]string(nil), state.WriteAllowedPaths...)
 	}
 
 	if state.WriteAllowedExplicit {
@@ -520,19 +595,19 @@ func ProgressStateEventFields(state ProgressState, statePath string) map[string]
 	}
 
 	if state.ScopeContractID != "" {
-		fields["scope_contract_id"] = state.ScopeContractID
+		fields[plancontract.PlanExecuteTerminalFieldScopeContractID] = state.ScopeContractID
 	}
 
 	if state.ScopeContractHash != "" {
-		fields["scope_contract_hash"] = state.ScopeContractHash
+		fields[plancontract.PlanExecuteTerminalFieldScopeContractHash] = state.ScopeContractHash
 	}
 
 	if len(state.AcceptanceEvidenceIDs) > 0 {
-		fields["acceptance_evidence_ids"] = append([]string(nil), state.AcceptanceEvidenceIDs...)
+		fields[plancontract.PlanExecuteTerminalFieldAcceptanceEvidenceIDs] = append([]string(nil), state.AcceptanceEvidenceIDs...)
 	}
 
 	if len(state.ChangedPaths) > 0 {
-		fields["changed_paths"] = append([]string(nil), state.ChangedPaths...)
+		fields[plancontract.PlanExecuteTerminalFieldChangedPaths] = append([]string(nil), state.ChangedPaths...)
 	}
 
 	if state.TotalEdits > 0 {
@@ -548,11 +623,11 @@ func ProgressStateEventFields(state ProgressState, statePath string) map[string]
 	}
 
 	if state.Review.Status != "" {
-		fields["review_status"] = state.Review.Status
+		fields[plancontract.PlanExecuteTerminalFieldReviewStatus] = string(state.Review.Status)
 	}
 
-	if state.Review.Status == ProgressStatusSkipped {
-		fields["review_repair_skipped"] = true
+	if state.Review.Status == plancontract.PlanExecuteReviewStatusSkipped {
+		fields[plancontract.PlanExecuteTerminalFieldReviewRepairSkipped] = true
 	}
 
 	if state.Review.Repairs > 0 {
@@ -585,22 +660,7 @@ func progressStatePath(root string, sessionID string) (string, string, error) {
 }
 
 func validProgressSessionID(sessionID string) bool {
-	if sessionID == "" || len(sessionID) > 128 {
-		return false
-	}
-
-	for _, r := range sessionID {
-		switch {
-		case r >= 'a' && r <= 'z':
-		case r >= 'A' && r <= 'Z':
-		case r >= '0' && r <= '9':
-		case r == '-' || r == '_':
-		default:
-			return false
-		}
-	}
-
-	return !strings.Contains(sessionID, "..")
+	return sessionid.Valid(sessionID)
 }
 
 func progressRelPath(root string, path string) string {
@@ -659,7 +719,7 @@ func sanitizeProgressReasons(values []string) []string {
 }
 
 func sanitizeProgressReason(reason string) string {
-	return truncateProgressReason(recovery.RedactRecoveryText(reason))
+	return truncateProgressReason(recovery.RedactText(reason))
 }
 
 func firstProgressNonEmptyString(values ...string) string {

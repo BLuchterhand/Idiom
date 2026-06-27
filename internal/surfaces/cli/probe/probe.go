@@ -10,12 +10,12 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/autonomy"
+	lanecontract "idiom/internal/contracts/lane"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
-	"idiom/internal/runtime/modepolicy"
+	"idiom/internal/runtime/routeprobe"
 	"idiom/internal/runtime/workerruntime"
-	toolcmd "idiom/internal/surfaces/cli/tool"
-	"idiom/internal/surfaces/tui/app"
 )
 
 // Run dispatches `idiom probe <subcommand>`. Phase 6 ships
@@ -104,7 +104,7 @@ func runProbeLane(args []string, stdout io.Writer, stderr io.Writer) int {
 		// path still gets exercised.
 		fmt.Fprintf(stderr, "probe lane: config load failed (%v); falling back to synthetic tool surface\n", loadErr)
 
-		allowed = []string{"read_file", "write_file"}
+		allowed = []string{workspace.ToolNameReadFile, workspace.ToolNameWriteFile}
 	} else {
 		fmt.Fprintf(stderr, "probe lane: tool surface from %s=%s (n=%d)\n", source, resolved, len(allowed))
 	}
@@ -119,8 +119,7 @@ func runProbeLane(args []string, stdout io.Writer, stderr io.Writer) int {
 	exit := 0
 
 	for _, p := range probes {
-		res, err := app.ProbeLane(app.ProbeLaneOptions{
-			Mode:         p.mode,
+		res, err := routeprobe.Lane(routeprobe.LaneOptions{
 			TaskFamily:   p.taskFamily,
 			AllowedTools: allowed,
 		})
@@ -134,14 +133,14 @@ func runProbeLane(args []string, stdout io.Writer, stderr io.Writer) int {
 
 		if violations := assertProbeShape(p, res); len(violations) > 0 {
 			fmt.Fprintf(stdout, "FAIL %s — %s\n", p.label, strings.Join(violations, "; "))
-			fmt.Fprintln(stdout, "      "+app.FormatProbeResult("got:", res))
+			fmt.Fprintln(stdout, "      "+routeprobe.FormatResult("got:", res))
 
 			exit = 1
 
 			continue
 		}
 
-		fmt.Fprintln(stdout, app.FormatProbeResult("PASS "+p.label, res))
+		fmt.Fprintln(stdout, routeprobe.FormatResult("PASS "+p.label, res))
 	}
 
 	return exit
@@ -151,17 +150,9 @@ func runProbeLane(args []string, stdout io.Writer, stderr io.Writer) int {
 // expected route+brief shape. Centralizing the expectations here
 // keeps the assertion code generic — future probes can land by
 // adding one row to selectedProbes.
-//
-// `mode` is the modepolicy.Mode the probe runs under; the assertion is
-// that explicit_task_family routing produces the same shape under
-// every shipped mode (BuildMode, PlanMode, etc.). If a future
-// refactor makes normalizeTurnRoutePlan mode-dependent for an
-// explicit family, the cross-mode probes here flip from PASS to
-// FAIL — that's the regression class this layer guards.
 type probeCase struct {
 	label        string
 	taskFamily   string
-	mode         modepolicy.Mode
 	wantInitial  string
 	wantContract string
 	wantBriefFam string
@@ -171,43 +162,29 @@ type probeCase struct {
 }
 
 func selectedProbes(modeFlag string) []probeCase {
-	// Each user-facing probe runs under both BuildMode and PlanMode
-	// so we catch a routing refactor that introduces mode sensitivity
-	// for explicit_task_family. Today the routing is mode-independent
-	// for that path, so all four cases pass; the cross-mode coverage
-	// is defense-in-depth, not a "this varies" assertion.
-	makeCases := func(label, family, briefFam string) []probeCase {
-		base := probeCase{
+	makeCase := func(label, family, briefFam string) probeCase {
+		return probeCase{
+			label:        label,
 			taskFamily:   family,
-			wantInitial:  "implement",
-			wantContract: "implementation_result",
+			wantInitial:  string(lanecontract.LaneImplement),
+			wantContract: string(workerruntime.ContractImplementationResult),
 			wantBriefFam: briefFam,
 			wantReason:   "explicit_task_family",
 			wantToolsMin: 1,
 		}
-		buildCase := base
-
-		buildCase.label = label + "(build)"
-		buildCase.mode = modepolicy.BuildMode()
-
-		planCase := base
-
-		planCase.label = label + "(plan)"
-		planCase.mode = modepolicy.PlanMode()
-
-		return []probeCase{buildCase, planCase}
 	}
-	implement := makeCases("implement", "implementation", "implementation")
-	planExecuteFamily := string(workerruntime.TaskFamilyPlanThenExecutePlanner)
-	planExecute := makeCases("plan-execute", planExecuteFamily, planExecuteFamily)
+	implementationFamily := string(autonomy.TaskFamilyImplementation)
+	implement := makeCase(string(lanecontract.LaneImplement), implementationFamily, implementationFamily)
+	planExecuteFamily := string(autonomy.TaskFamilyPlanThenExecutePlanner)
+	planExecute := makeCase(string(lanecontract.LanePlanExecute), planExecuteFamily, planExecuteFamily)
 
 	switch strings.TrimSpace(strings.ToLower(modeFlag)) {
-	case "implement":
-		return implement
-	case "plan-execute":
-		return planExecute
+	case string(lanecontract.LaneImplement):
+		return []probeCase{implement}
+	case string(lanecontract.LanePlanExecute):
+		return []probeCase{planExecute}
 	case "", "all":
-		return append(implement, planExecute...)
+		return []probeCase{implement, planExecute}
 	default:
 		return nil
 	}
@@ -217,7 +194,7 @@ func selectedProbes(modeFlag string) []probeCase {
 // expectation. An empty slice means the probe matched. Returning a
 // list (rather than failing on first mismatch) lets the operator see
 // every drift in one report.
-func assertProbeShape(want probeCase, got app.ProbeLaneResult) []string {
+func assertProbeShape(want probeCase, got routeprobe.LaneResult) []string {
 	var v []string
 
 	if got.InitialLane != want.wantInitial {
@@ -318,5 +295,5 @@ func printProbeUsage(stderr io.Writer) {
 }
 
 func logProbePhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	toolcmd.LogCLIPhase(rec, eventType, fields)
+	telemetry.LogPhase(rec, eventType, fields)
 }

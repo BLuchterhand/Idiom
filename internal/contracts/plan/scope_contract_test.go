@@ -1,4 +1,4 @@
-package plancontract
+package plan
 
 import (
 	"slices"
@@ -89,13 +89,13 @@ func TestOpenEditSetObligationsUseRequiredPathsNotAllowedCandidates(t *testing.T
 
 	want := []EditSetOpenObligation{
 		{
-			Code:   "requested_test_edit_missing",
+			Code:   EditSetOpenObligationRequestedTestEditMissing,
 			Kind:   EditSetObligationKindTestEdit,
 			Path:   "pkg/required_test.go",
 			Source: "required_coverage_path",
 		},
 		{
-			Code:   "requested_implementation_edit_missing",
+			Code:   EditSetOpenObligationRequestedImplementationEditMissing,
 			Kind:   EditSetObligationKindImplementationEdit,
 			Path:   "pkg/required.go",
 			Source: "required_coverage_path",

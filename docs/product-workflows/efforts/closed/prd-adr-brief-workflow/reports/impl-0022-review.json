@@ -11,13 +11,13 @@
   "status": "pass",
   "findings": [],
   "checks": {
-    "discovery_first_review": "Reviewer used Idiom context_pack, context_query, and context_zoom before localized file reads.",
-    "prompt_rendering_contract": "Prompt rendering is deterministic, role-specific, JSON-only, and includes researcher metadata, evidence boundaries, output path, and output contract metadata.",
-    "artifact_command_recipe": "Each prompt run includes a deterministic idiom artifact --no-tools command recipe with prompt, output, events, report, and mechanical repair flags.",
-    "no_model_execution": "Render mode plans, validates, and writes prompt files only; it does not execute idiom artifact or write researcher outputs, evidence, PRD, or ADR artifacts.",
-    "fail_closed_boundaries": "Missing profiles, invalid prompt directories, symlinked prompt parents, and symlink prompt files block before prompt writes.",
-    "durable_privacy_wording": "Durable reports and workflow state do not embed rendered prompt bodies; prompt files are intentional generated artifacts.",
-    "verdict": "pass_after_repairs"
+    "discovery_first_review": "passed",
+    "prompt_rendering_contract": "passed",
+    "artifact_command_recipe": "passed",
+    "no_model_execution": "passed",
+    "fail_closed_boundaries": "passed",
+    "durable_privacy_wording": "passed",
+    "verdict": "passed"
   },
   "reviewed_at": "2026-05-18T12:06:00Z",
   "commands_reviewed": [

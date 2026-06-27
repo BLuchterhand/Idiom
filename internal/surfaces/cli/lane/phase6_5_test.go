@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	lanecontract "idiom/internal/contracts/lane"
 	"idiom/internal/platform/config"
 )
 
@@ -300,7 +301,7 @@ func TestAnalyzeLaneOutputAcceptsSourceSatisfiedEvent(t *testing.T) {
 func TestLaneHistoryRecordsReviewRepairDegradedAfterExecutorEdit(t *testing.T) {
 	out := []byte(strings.Join([]string{
 		`{"type":"idiom.plan_execute.executor_edit","path":"a.go","status":"applied"}`,
-		`{"type":"idiom.plan_execute.review_repair_degraded","status":"review_unavailable","reason_class":"backend_eof"}`,
+		`{"type":"idiom.plan_execute.review_repair_degraded","status":"degraded","reason_class":"backend_eof","status_detail":"review unavailable"}`,
 	}, "\n"))
 	deg := analyzeLaneOutput(out, 0)
 
@@ -353,7 +354,7 @@ func TestRunLaneMainEmitsDegradedEventOnReadOnlyLane(t *testing.T) {
 		t.Fatalf("read-only lane must surface as exit 4, got %d (stderr=%s)", code, stderr.String())
 	}
 
-	if !strings.Contains(stdout.String(), `"type":"idiom.lane.degraded"`) {
+	if !strings.Contains(stdout.String(), `"type":"`+lanecontract.EventName(lanecontract.EventDegraded)+`"`) {
 		t.Fatalf("expected idiom.lane.degraded event on stdout: %s", stdout.String())
 	}
 

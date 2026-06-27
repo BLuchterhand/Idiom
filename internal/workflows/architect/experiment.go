@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"slices"
 	"strings"
+
+	"idiom/internal/platform/textutil"
 )
 
 type BudgetExperiment struct {
@@ -123,7 +125,7 @@ type PacketVariantSummary struct {
 
 func ComparePacketVariants(base Packet, candidate Packet) PacketVariantComparison {
 	comparison := PacketVariantComparison{
-		Task: firstNonEmpty(base.Task, candidate.Task),
+		Task: textutil.FirstNonEmpty(base.Task, candidate.Task),
 		Variants: []PacketVariantSummary{
 			packetVariantSummary("base", base),
 			packetVariantSummary("candidate", candidate),
@@ -224,7 +226,7 @@ func ComparePacketReplay(base Packet, candidate Packet, basePlan string, candida
 	baseAudit := planVariantAuditSummary("base", base, basePlan)
 	candidateAudit := planVariantAuditSummary("candidate", candidate, candidatePlan)
 	out := PacketReplayComparison{
-		Task:             firstNonEmpty(base.Task, candidate.Task),
+		Task:             textutil.FirstNonEmpty(base.Task, candidate.Task),
 		PacketComparison: ComparePacketVariants(base, candidate),
 		PlanAudits:       []PlanVariantAuditSummary{baseAudit, candidateAudit},
 	}

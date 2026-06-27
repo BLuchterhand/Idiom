@@ -3,18 +3,29 @@ package implement
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"idiom/internal/contracts/writerroute"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
+	"idiom/internal/platform/jsonevents/jsoneventstest"
 	"idiom/internal/runtime/runner"
-	"idiom/internal/surfaces/cli/runtime"
+	cmdruntime "idiom/internal/surfaces/cli/runtime"
 	"idiom/internal/surfaces/tui/app"
 )
+
+type implementFailingWriter struct {
+	err error
+}
+
+func (w implementFailingWriter) Write([]byte) (int, error) {
+	return 0, w.err
+}
 
 func TestRunImplementMainForcesImplementationTaskFamily(t *testing.T) {
 	configPath := writeMainConfig(t)
@@ -181,14 +192,19 @@ func TestRunImplementMainReadsPromptFileAndHonorsJSON(t *testing.T) {
 		t.Fatalf("JSON mode should only emit runner JSONL, got %q", stdout.String())
 	}
 
-	if !strings.Contains(stdout.String(), `"type":"idiom.implement.writer_route_decision"`) ||
+	writerRouteEventName, err := writerroute.CommandEventName(writerroute.CommandSurfaceImplement, writerroute.EventWriterRouteDecision)
+	if err != nil {
+		t.Fatalf("writer route event name: %v", err)
+	}
+
+	if !strings.Contains(stdout.String(), `"type":"`+writerRouteEventName+`"`) ||
 		!strings.Contains(stdout.String(), `"writer_mode":"agentic_guarded"`) {
 
 		t.Fatalf("implement JSON should report writer route decision, got %q", stdout.String())
 	}
 
-	events := planExecuteJSONEvents(t, stdout.String())
-	event, ok := planExecuteEventByType(events, "idiom.implement.writer_route_decision")
+	events := jsoneventstest.DecodeLines(t, stdout.String())
+	event, ok := jsoneventstest.FindByType(events, writerRouteEventName)
 
 	if !ok {
 		t.Fatalf("missing direct implement writer route event in %q", stdout.String())
@@ -200,6 +216,29 @@ func TestRunImplementMainReadsPromptFileAndHonorsJSON(t *testing.T) {
 
 	if !jsonEventStringSliceContains(event["reason_codes"], "route.local_model_default") {
 		t.Fatalf("direct implement route should explain local model default: %#v", event)
+	}
+}
+
+func TestRunImplementMainReturnsJSONEventWriterError(t *testing.T) {
+	configPath := writeMainConfig(t)
+	want := errors.New("stdout closed")
+	var stderr bytes.Buffer
+
+	code := runImplementMain(
+		[]string{"-config", configPath, "-prompt", "implement this", "-json"},
+		implementFailingWriter{err: want},
+		&stderr,
+		func(config.Config, string, runOptions, io.Writer) (string, error) {
+			t.Fatal("prompt runner should not run after json event writer failure")
+			return "", nil
+		},
+	)
+
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "implement: write json event") || !strings.Contains(stderr.String(), want.Error()) {
+		t.Fatalf("stderr = %q, want actionable writer error", stderr.String())
 	}
 }
 
@@ -297,8 +336,8 @@ func TestImplementQueueTelemetryReportsUnavailableAsDegraded(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	release := implementAcquireQueueSlot(config.Config{}, "session", &stdout, &stderr, true, rec)
-	release()
+	queueResult := implementAcquireQueueSlot(config.Config{}, "session", &stdout, &stderr, true, rec)
+	queueResult.Release()
 
 	if err := rec.Close(0); err != nil {
 		t.Fatalf("rec.Close: %v", err)
@@ -345,8 +384,8 @@ func TestImplementQueueTelemetryReportsRealAcquire(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	release := implementAcquireQueueSlot(config.Config{}, "session", &stdout, &stderr, true, rec)
-	release()
+	queueResult := implementAcquireQueueSlot(config.Config{}, "session", &stdout, &stderr, true, rec)
+	queueResult.Release()
 
 	if err := rec.Close(0); err != nil {
 		t.Fatalf("rec.Close: %v", err)

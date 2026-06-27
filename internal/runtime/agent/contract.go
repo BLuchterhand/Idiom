@@ -1,10 +1,11 @@
 package agent
 
 import (
-	"idiom/internal/contracts/autonomy"
-	contractcompile "idiom/internal/contracts/compile"
 	"slices"
 	"strings"
+
+	"idiom/internal/contracts/autonomy"
+	contractcompile "idiom/internal/contracts/compile"
 )
 
 // --- contract parity ---

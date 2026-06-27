@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 const ToolNamePrefetch = "prefetch"
@@ -213,7 +213,7 @@ func (m *Manager) prefetchReadFile(requested string, opts PrefetchReadOptions, r
 
 	outputBytes := len(excerpt)
 	truncated := int64(outputBytes) < info.Size()
-	lines := util.SplitWorkspaceFileLines(excerpt)
+	lines := textutil.SplitWorkspaceFileLines(excerpt)
 
 	if len(lines) == 0 {
 		lines = []string{""}
@@ -222,7 +222,7 @@ func (m *Manager) prefetchReadFile(requested string, opts PrefetchReadOptions, r
 	var b strings.Builder
 
 	for i, line := range lines {
-		line = util.TruncateBytes(strings.TrimRight(line, "\r\n"), defaultLogLineCharCap, "...[line truncated]")
+		line = textutil.TruncateBytes(strings.TrimRight(line, "\r\n"), defaultLogLineCharCap, "...[line truncated]")
 		fmt.Fprintf(&b, "%d:%s\n", i+1, line)
 	}
 

@@ -71,7 +71,7 @@ func TestCompilePlanExecutePlannerBindsAuthorityRuntimeAndProtocol(t *testing.T)
 		}
 	}
 
-	if result.Protocol.PhaseID != "plan_execute.required_source" {
+	if result.Protocol.PhaseID != string(TurnPhaseRequiredSource) {
 		t.Fatalf("protocol phase id = %q", result.Protocol.PhaseID)
 	}
 
@@ -113,7 +113,7 @@ func TestCompilePlanExecutePlannerBindsAuthorityRuntimeAndProtocol(t *testing.T)
 		t.Fatalf("path role summary missing required path: %#v", result.Protocol.PathRoleSummary)
 	}
 
-	if !slices.Contains(result.Protocol.VerificationObligations, "command:go test ./internal/contracts/contractcompile") {
+	if !slices.Contains(result.Protocol.VerificationObligations, "command:go test ./internal/contracts/compile") {
 		t.Fatalf("verification obligations missing command: %#v", result.Protocol.VerificationObligations)
 	}
 
@@ -302,7 +302,7 @@ func TestCompilePlanExecutePlannerIDsAreStableForEquivalentInput(t *testing.T) {
 		RuntimeContract:      "legacy.contract.v1",
 		PermissionProfile:    "workspace_write",
 		RequiredEditPaths:    []string{"./internal/runtime/agent/runner.go", "internal/contracts/autonomy/contract.go", "internal/runtime/agent/runner.go"},
-		AllowedEditPaths:     []string{"internal/runtime/agent/runner.go", "internal/contracts/contractcompile/types.go"},
+		AllowedEditPaths:     []string{"internal/runtime/agent/runner.go", "internal/contracts/compile/types.go"},
 		EvidencePaths:        []string{"internal/runtime/agent/phase_contract.go", "internal/runtime/agent/runner_autonomy.go"},
 		ChangedPaths:         []string{"internal/contracts/autonomy/contract.go"},
 		UserBoundaries:       []string{"do not wire runner yet", "no behavior changes"},
@@ -311,8 +311,8 @@ func TestCompilePlanExecutePlannerIDsAreStableForEquivalentInput(t *testing.T) {
 		RequiredEvidence:     []string{"source body for required edits"},
 		RequiredTools:        []string{"submit_plan"},
 		ReadinessGate:        []string{"source_body_before_submit_plan"},
-		VerificationContract: "go test ./internal/contracts/contractcompile",
-		VerificationPlan:     []string{"go test ./internal/contracts/contractcompile"},
+		VerificationContract: "go test ./internal/contracts/compile",
+		VerificationPlan:     []string{"go test ./internal/contracts/compile"},
 		StopConditions:       []string{"submit_plan accepted", "source_satisfied"},
 		FinalCritic:          []string{"protocol hash cited by prompt and gate"},
 		TargetPacket:         []string{"pack:e7818bd1b0006176"},
@@ -352,7 +352,7 @@ func TestCompilePlanExecutePlannerIDsAreStableForEquivalentInput(t *testing.T) {
 			AuthorizedFallback:  []string{"direct_model_call"},
 		},
 		Protocol: ProtocolInput{
-			PhaseID:                "plan_execute.required_source",
+			PhaseID:                string(TurnPhaseRequiredSource),
 			ExpectedVisibleOutput:  "visible_text_tool_request",
 			VisibleTools:           []string{"context_pack", "read_file", "search_content", "submit_plan"},
 			HiddenTools:            []string{"apply_patch", "shell"},
@@ -413,7 +413,7 @@ func TestCompilePlanExecutePlannerDefaultsKeepRequiredEditsDistinctFromSourceBod
 
 func TestCompilePlanExecutePlannerAcceptsPlannerToolVocabulary(t *testing.T) {
 	input := plannerFixtureInput()
-	plannerTools := PlanExecutePlannerToolNames()
+	plannerTools := autonomy.PlanExecutePlannerToolNames()
 
 	input.AllowedTools = plannerTools
 	input.RequiredTools = []string{"history_range", "history_symbol", "submit_plan"}
@@ -820,7 +820,7 @@ func TestPackageImportBoundaries(t *testing.T) {
 		forbidden []string
 	}{
 		{
-			dir: "internal/contracts/contractcompile",
+			dir: "internal/contracts/compile",
 			forbidden: []string{
 				"idiom/cmd/idiom",
 				"idiom/internal/runtime/agent",
@@ -871,7 +871,7 @@ func plannerFixtureInput() PlanExecutePlannerInput {
 		RuntimeContract:      "legacy.contract.v1",
 		PermissionProfile:    "workspace_write",
 		RequiredEditPaths:    []string{"internal/runtime/agent/runner.go", "internal/contracts/autonomy/contract.go"},
-		AllowedEditPaths:     []string{"internal/contracts/contractcompile/types.go", "internal/runtime/agent/runner.go"},
+		AllowedEditPaths:     []string{"internal/contracts/compile/types.go", "internal/runtime/agent/runner.go"},
 		EvidencePaths:        []string{"internal/runtime/agent/runner_autonomy.go", "internal/runtime/agent/phase_contract.go"},
 		ChangedPaths:         []string{"internal/contracts/autonomy/contract.go"},
 		UserBoundaries:       []string{"do not wire runner yet", "no behavior changes"},
@@ -880,8 +880,8 @@ func plannerFixtureInput() PlanExecutePlannerInput {
 		RequiredEvidence:     []string{"source body for required edits"},
 		RequiredTools:        []string{"submit_plan"},
 		ReadinessGate:        []string{"source_body_before_submit_plan"},
-		VerificationContract: "go test ./internal/contracts/contractcompile",
-		VerificationPlan:     []string{"go test ./internal/contracts/contractcompile"},
+		VerificationContract: "go test ./internal/contracts/compile",
+		VerificationPlan:     []string{"go test ./internal/contracts/compile"},
 		StopConditions:       []string{"submit_plan accepted", "source_satisfied"},
 		FinalCritic:          []string{"protocol hash cited by prompt and gate"},
 		TargetPacket:         []string{"pack:e7818bd1b0006176"},
@@ -918,7 +918,7 @@ func plannerFixtureInput() PlanExecutePlannerInput {
 			AuthorizedFallback:  []string{"direct_model_call"},
 		},
 		Protocol: ProtocolInput{
-			PhaseID:                "plan_execute.required_source",
+			PhaseID:                string(TurnPhaseRequiredSource),
 			ExpectedVisibleOutput:  "visible_text_tool_request",
 			VisibleTools:           []string{"context_pack", "read_file", "search_content", "submit_plan"},
 			HiddenTools:            []string{"apply_patch", "shell"},
@@ -1028,12 +1028,6 @@ func degradationDecisionsByInvariant(decisions []DegradationDecision) map[string
 		out[decision.InvariantID] = decision
 	}
 
-	return out
-}
-
-func sortedStrings(values []string) []string {
-	out := slices.Clone(values)
-	slices.Sort(out)
 	return out
 }
 

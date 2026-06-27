@@ -9,6 +9,10 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	planartifact "idiom/internal/contracts/planartifact"
+	"idiom/internal/contracts/sensitivity"
+	"idiom/internal/platform/textutil"
 )
 
 type PlanAuditResult struct {
@@ -492,7 +496,7 @@ func auditPlanReadiness(packet Packet, plan string) []PlanAuditFinding {
 
 func auditArtifactPacketIdentity(packet Packet, artifact PlanArtifactAuditSubject) []PlanAuditFinding {
 	knownPackIDs := packetPackIDs(packet)
-	packID := firstNonEmpty(artifact.Packet.PackID, artifact.PackID)
+	packID := textutil.FirstNonEmpty(artifact.Packet.PackID, artifact.PackID)
 
 	var findings []PlanAuditFinding
 
@@ -678,7 +682,7 @@ func auditArtifactUnresolvedQuestions(artifact PlanArtifactAuditSubject) []PlanA
 			Severity:            "error",
 			Kind:                "unresolved_question_mismatch",
 			Message:             "submitted plan handoff is ready while a required unresolved question remains open",
-			Evidence:            []string{firstNonEmpty(question.ID, question.Claim)},
+			Evidence:            []string{textutil.FirstNonEmpty(question.ID, question.Claim)},
 			SuggestedResolution: "Close the question with evidence or mark the handoff blocked.",
 		})
 	}
@@ -711,7 +715,7 @@ func auditArtifactVerificationObligations(packet Packet, artifact PlanArtifactAu
 				Severity:            "warning",
 				Kind:                "verification_obligation_open",
 				Message:             "submitted plan carries an open required verification obligation",
-				Evidence:            []string{firstNonEmpty(obligation.ID, obligation.Kind, obligation.Command, obligation.Path)},
+				Evidence:            []string{textutil.FirstNonEmpty(obligation.ID, obligation.Kind, obligation.Command, obligation.Path)},
 				SuggestedResolution: "Keep this obligation visible through executor and review evidence.",
 			})
 		}
@@ -749,9 +753,9 @@ func auditArtifactApprovalHandoff(artifact PlanArtifactAuditSubject) []PlanAudit
 		})
 	}
 
-	if artifact.Approval.Required && artifactApprovalPartial(artifact.Approval.Status) {
+	if artifact.Approval.Required && planartifact.IsApprovalStatusPartial(artifact.Approval.Status) {
 		findings = append(findings, auditArtifactPartialApproval(artifact)...)
-	} else if artifact.Approval.Required && !artifactApprovalSatisfied(artifact.Approval.Status) {
+	} else if artifact.Approval.Required && !planartifact.ApprovalStatusSatisfied(artifact.Approval.Status) {
 		severity := "warning"
 		message := "submitted plan approval is required but not satisfied"
 
@@ -764,17 +768,17 @@ func auditArtifactApprovalHandoff(artifact PlanArtifactAuditSubject) []PlanAudit
 			Severity:            severity,
 			Kind:                "approval_handoff_mismatch",
 			Message:             message,
-			Evidence:            []string{firstNonEmpty(artifact.Approval.Status, "missing_approval_status")},
+			Evidence:            []string{textutil.FirstNonEmpty(artifact.Approval.Status, "missing_approval_status")},
 			SuggestedResolution: "Approve the bounded scope or mark the handoff blocked.",
 		})
 	}
 
-	if artifact.Handoff.Ready && strings.TrimSpace(artifact.Approval.ExecutionPermission) == "blocked" {
+	if artifact.Handoff.Ready && strings.TrimSpace(artifact.Approval.ExecutionPermission) == string(planartifact.ExecutionPermissionBlocked) {
 		findings = append(findings, PlanAuditFinding{
 			Severity:            "error",
 			Kind:                "approval_scope_mismatch",
 			Message:             "submitted plan handoff is ready while approval execution permission is blocked",
-			Evidence:            []string{firstNonEmpty(artifact.Approval.ScopeID, "missing_approval_scope_id")},
+			Evidence:            []string{textutil.FirstNonEmpty(artifact.Approval.ScopeID, "missing_approval_scope_id")},
 			SuggestedResolution: "Mark handoff blocked or change execution permission only after approval evidence exists.",
 		})
 	}
@@ -806,7 +810,7 @@ func auditArtifactPartialApproval(artifact PlanArtifactAuditSubject) []PlanAudit
 			Severity:            severity,
 			Kind:                "approval_scope_mismatch",
 			Message:             "partial approval is missing approved scope paths",
-			Evidence:            []string{firstNonEmpty(artifact.Approval.ScopeID, "missing_approval_scope_id")},
+			Evidence:            []string{textutil.FirstNonEmpty(artifact.Approval.ScopeID, "missing_approval_scope_id")},
 			SuggestedResolution: "List the workspace-relative paths approved for execution.",
 		})
 	}
@@ -816,20 +820,20 @@ func auditArtifactPartialApproval(artifact PlanArtifactAuditSubject) []PlanAudit
 			Severity:            severity,
 			Kind:                "approval_scope_mismatch",
 			Message:             "partial approval is missing pending scope paths",
-			Evidence:            []string{firstNonEmpty(artifact.Approval.ScopeID, "missing_approval_scope_id")},
+			Evidence:            []string{textutil.FirstNonEmpty(artifact.Approval.ScopeID, "missing_approval_scope_id")},
 			SuggestedResolution: "List the workspace-relative paths that still require approval.",
 		})
 	}
 
 	switch strings.TrimSpace(artifact.Approval.ExecutionPermission) {
-	case "execute_approved_scope":
-	case "blocked":
+	case string(planartifact.ExecutionPermissionExecuteApprovedScope):
+	case string(planartifact.ExecutionPermissionBlocked):
 		if artifact.Handoff.Ready {
 			findings = append(findings, PlanAuditFinding{
 				Severity:            "error",
 				Kind:                "approval_scope_mismatch",
 				Message:             "partial approval cannot execute while execution permission is blocked",
-				Evidence:            []string{firstNonEmpty(artifact.Approval.ScopeID, "missing_approval_scope_id")},
+				Evidence:            []string{textutil.FirstNonEmpty(artifact.Approval.ScopeID, "missing_approval_scope_id")},
 				SuggestedResolution: "Mark the handoff blocked or restrict execution to approved scope.",
 			})
 		}
@@ -838,7 +842,7 @@ func auditArtifactPartialApproval(artifact PlanArtifactAuditSubject) []PlanAudit
 			Severity:            severity,
 			Kind:                "approval_scope_mismatch",
 			Message:             "partial approval has ambiguous execution permission",
-			Evidence:            []string{firstNonEmpty(artifact.Approval.ExecutionPermission, "missing_execution_permission")},
+			Evidence:            []string{textutil.FirstNonEmpty(artifact.Approval.ExecutionPermission, "missing_execution_permission")},
 			SuggestedResolution: "Use execute_approved_scope for executable partial approvals or blocked for non-executable approvals.",
 		})
 	}
@@ -848,7 +852,7 @@ func auditArtifactPartialApproval(artifact PlanArtifactAuditSubject) []PlanAudit
 			Severity:            "warning",
 			Kind:                "approval_handoff_mismatch",
 			Message:             "partial approval is not executable until handoff is ready",
-			Evidence:            []string{firstNonEmpty(artifact.Approval.ScopeID, "missing_approval_scope_id")},
+			Evidence:            []string{textutil.FirstNonEmpty(artifact.Approval.ScopeID, "missing_approval_scope_id")},
 			SuggestedResolution: "Keep the handoff blocked until approved scope can execute.",
 		})
 
@@ -1281,7 +1285,7 @@ func artifactClaimsFresh(packet PlanArtifactPacketAuditSubject) bool {
 }
 
 func auditArtifactPacketState(packet Packet, artifact PlanArtifactAuditSubject, findings []PlanAuditFinding) (string, string) {
-	packID := firstNonEmpty(artifact.Packet.PackID, artifact.PackID)
+	packID := textutil.FirstNonEmpty(artifact.Packet.PackID, artifact.PackID)
 	if artifact.Packet.PackID != "" && artifact.PackID != "" && artifact.Packet.PackID != artifact.PackID {
 		return "overridden", "packet_id_mirror"
 	}
@@ -1369,24 +1373,6 @@ func artifactVerificationClosed(status string) bool {
 	}
 }
 
-func artifactApprovalSatisfied(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "approved", "implicit", "not_required", "n_a":
-		return true
-	default:
-		return false
-	}
-}
-
-func artifactApprovalPartial(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "partial", "partially_approved":
-		return true
-	default:
-		return false
-	}
-}
-
 func artifactVerificationMentionsCommand(obligations []PlanArtifactVerifyAuditSubject, command string) bool {
 	for _, obligation := range obligations {
 		if strings.TrimSpace(obligation.Command) == strings.TrimSpace(command) {
@@ -1401,7 +1387,7 @@ func sanitizePlanAuditFindings(findings []PlanAuditFinding) []PlanAuditFinding {
 	out := make([]PlanAuditFinding, 0, len(findings))
 	for _, finding := range findings {
 		item := PlanAuditFinding{
-			Severity:            sanitizePlanAuditToken(firstNonEmpty(finding.Severity, "warning")),
+			Severity:            sanitizePlanAuditToken(textutil.FirstNonEmpty(finding.Severity, "warning")),
 			Kind:                sanitizePlanAuditToken(finding.Kind),
 			Message:             sanitizePlanAuditText(finding.Message, 240),
 			Evidence:            sanitizePlanAuditEvidence(finding.Evidence),
@@ -1482,37 +1468,7 @@ func sanitizePlanAuditToken(value string) string {
 }
 
 func planAuditTextLooksSensitive(value string) bool {
-	lower := strings.ToLower(value)
-	markers := []string{
-		"raw_prompt", "raw prompt", "raw_body", "raw body", "raw_content", "raw content",
-		"prompt_body", "prompt body", "transcript", "file_body", "file body", "file-body",
-		"private key", "secret", "token=", "token:", "access_token", "api token",
-		"secret=", "api_key", "api-key", "password=", "bearer ", "customer-",
-		"customer_", "secrets/", "/secrets/", "\\secrets\\",
-	}
-
-	for _, marker := range markers {
-		if strings.Contains(lower, marker) {
-			return true
-		}
-	}
-
-	for _, token := range strings.FieldsFunc(lower, func(r rune) bool {
-		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
-	}) {
-		if token == "token" || token == "tokens" || token == "customer" || token == "customers" {
-			return true
-		}
-	}
-
-	normalized := strings.ReplaceAll(lower, "\\", "/")
-	for _, marker := range []string{"/users/", "/home/", "/volumes/", "/private/", "c:/users/"} {
-		if strings.Contains(normalized, marker) {
-			return true
-		}
-	}
-
-	return false
+	return sensitivity.ContainsSensitiveText(value)
 }
 
 func planAuditHash(value string) string {

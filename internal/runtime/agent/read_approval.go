@@ -6,16 +6,26 @@ import (
 	"time"
 
 	"idiom/internal/capabilities/workspace"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/contracts/readapproval"
 	"idiom/internal/runtime/workerruntime"
 )
 
-const planExecuteReadScopeRejectionSummary = "Plan-execute read outside allowed candidate scope"
-
 type ReadApprovalGate struct {
-	Decider   readapproval.Decider
-	Cache     readapproval.Cache
-	OnEvent   func(readapproval.Request, readapproval.Decision)
+	Decider ReadApprovalDecider
+	Cache   ReadApprovalCache
+	OnEvent func(readapproval.Request, readapproval.Decision, string)
+}
+
+type ReadApprovalDecider interface {
+	DecideRead(ctx context.Context, req readapproval.Request) (readapproval.Decision, error)
+}
+
+type ReadApprovalCache interface {
+	Lookup(sessionID, path string) (readapproval.Decision, bool, error)
+	Record(sessionID string, decision readapproval.Decision) error
+	ApprovedPaths(sessionID string) []string
+	DeniedPaths(sessionID string) []string
 }
 
 func (g *ReadApprovalGate) active() bool {
@@ -27,18 +37,18 @@ func (g *ReadApprovalGate) MaybeOverrideRejection(
 	sessionID string,
 	req workspace.ToolRequest,
 	brief workerruntime.WorkerRuntimeBrief,
-	summary string,
+	rejectionCode plancontract.PlanExecuteRejectionCode,
 	errorText string,
 ) (override bool, denialContext string) {
 	if !g.active() {
 		return false, ""
 	}
 
-	if summary != planExecuteReadScopeRejectionSummary {
+	if rejectionCode != plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope {
 		return false, ""
 	}
 
-	path := strings.TrimSpace(req.Path)
+	path := NormalizeRunnerPath(req.Path)
 	if path == "" {
 		return false, ""
 	}
@@ -51,8 +61,20 @@ func (g *ReadApprovalGate) MaybeOverrideRejection(
 	}
 
 	if g.Cache != nil {
-		if decision, ok := g.Cache.Lookup(sessionID, path); ok {
-			g.emit(request, decision)
+		decision, ok, err := g.Cache.Lookup(sessionID, path)
+		if err != nil {
+			decision = readapproval.Decision{
+				Outcome: readapproval.OutcomeDenied,
+				Reason:  readapproval.ReasonCacheUnavailable,
+				Source:  readapproval.SourceCache,
+				At:      time.Now(),
+				Path:    path,
+			}
+			g.emit(request, decision, readapproval.EventOriginCacheLookup)
+			return false, " Read approval cache could not be loaded for the current session; fail closed and do not retry this read."
+		}
+		if ok {
+			g.emit(request, decision, readapproval.EventOriginCacheLookup)
 			switch decision.Outcome {
 			case readapproval.OutcomeApproved:
 				return true, ""
@@ -75,15 +97,23 @@ func (g *ReadApprovalGate) MaybeOverrideRejection(
 	if decision.At.IsZero() {
 		decision.At = time.Now()
 	}
-	if decision.Path == "" {
-		decision.Path = path
-	}
+	decision.Path = path
 
 	if g.Cache != nil {
-		_ = g.Cache.Record(sessionID, decision)
+		if err := g.Cache.Record(sessionID, decision); err != nil {
+			denial := readapproval.Decision{
+				Outcome: readapproval.OutcomeDenied,
+				Reason:  readapproval.ReasonCacheUnavailable,
+				Source:  readapproval.SourceCache,
+				At:      time.Now(),
+				Path:    path,
+			}
+			g.emit(request, denial, readapproval.EventOriginCacheRecord)
+			return false, " Read approval could not be recorded for the current session; fail closed and do not retry this read."
+		}
 	}
 
-	g.emit(request, decision)
+	g.emit(request, decision, readapproval.EventOriginLiveDecision)
 
 	switch decision.Outcome {
 	case readapproval.OutcomeApproved:
@@ -95,9 +125,9 @@ func (g *ReadApprovalGate) MaybeOverrideRejection(
 	}
 }
 
-func (g *ReadApprovalGate) emit(req readapproval.Request, decision readapproval.Decision) {
+func (g *ReadApprovalGate) emit(req readapproval.Request, decision readapproval.Decision, origin string) {
 	if g == nil || g.OnEvent == nil {
 		return
 	}
-	g.OnEvent(req, decision)
+	g.OnEvent(req, decision, origin)
 }

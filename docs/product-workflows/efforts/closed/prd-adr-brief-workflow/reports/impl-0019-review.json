@@ -23,15 +23,15 @@
     "go test ./internal/workflows/productworkflow/... -run TestTransitionPurity"
   ],
   "checks": {
-    "types_commit_hash_field": "CommitHash string with omitempty correctly placed after ChangedPaths",
-    "validate_commit_hash_format": "isValidCommitHash uses manual loop validated on 3 applicable record types",
-    "scope_purity_constraint": "AtomCommitCoverage and ValidatePerAtomCoverage are pure no git/os/exec/flag imports",
-    "scope_purity_test": "TestTransitionPurity_NoForbiddenImports passes",
-    "product_workflow_git_helper": "gitCommitPaths follows gitChangedPaths pattern graceful on git failure",
-    "lint_wiring_placement": "per-atom coverage block correctly placed after ValidateLedgerCoverage union check",
-    "forbidden_files_untouched": "transition.go status.go research_profile_store.go zero diffs",
-    "existing_union_check_preserved": "ValidateLedgerCoverage not modified",
-    "test_coverage": "15 new tests covering valid invalid hex empty missing uppercase per-record-type matching under-reporting missing-hash backward-compatible skip mixed atoms lint end-to-end",
-    "backward_compatible": "omitempty field atoms without commit_hash skipped incremental adoption path"
+    "types_commit_hash_field": "passed",
+    "validate_commit_hash_format": "passed",
+    "scope_purity_constraint": "passed",
+    "scope_purity_test": "passed",
+    "product_workflow_git_helper": "passed",
+    "lint_wiring_placement": "passed",
+    "forbidden_files_untouched": "passed",
+    "existing_union_check_preserved": "passed",
+    "test_coverage": "passed",
+    "backward_compatible": "passed"
   }
 }

@@ -3,6 +3,8 @@ package productworkflow
 import (
 	"errors"
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -25,6 +27,17 @@ func validateEffortIndex(idx EffortIndex) error {
 		require(&errs, entry.CurrentState, prefix+" missing current_state")
 		require(&errs, entry.FolderPath, prefix+" missing folder_path")
 		require(&errs, entry.TaskID, prefix+" missing task_id")
+		if entry.StatusBucket != "" && !validStatusBuckets[entry.StatusBucket] {
+			errs = append(errs, fmt.Errorf("%s invalid status_bucket %q", prefix, entry.StatusBucket))
+		}
+		if entry.CurrentState != "" {
+			if _, ok := validStates[entry.CurrentState]; !ok {
+				errs = append(errs, fmt.Errorf("%s invalid current_state %q", prefix, entry.CurrentState))
+			}
+		}
+		if consistencyBlocker := validateStateBucketConsistency(entry.StatusBucket, entry.CurrentState); consistencyBlocker != nil {
+			errs = append(errs, fmt.Errorf("%s %s: %s", prefix, consistencyBlocker.Code, consistencyBlocker.Message))
+		}
 	}
 
 	return errors.Join(errs...)
@@ -46,7 +59,18 @@ func validateWorkflowState(ws WorkflowState) error {
 	require(&errs, ws.Coverage.CoverageTier, "workflow state missing coverage.coverage_tier")
 	require(&errs, ws.Privacy.RedactionStatus, "workflow state missing privacy.redaction_status")
 
-	if len(ws.NextValidActions) == 0 {
+	if ws.StatusBucket != "" && !validStatusBuckets[ws.StatusBucket] {
+		errs = append(errs, fmt.Errorf("workflow state invalid status_bucket %q", ws.StatusBucket))
+	}
+	if ws.CurrentState != "" {
+		if _, ok := validStates[ws.CurrentState]; !ok {
+			errs = append(errs, fmt.Errorf("workflow state invalid current_state %q", ws.CurrentState))
+		}
+	}
+	if consistencyBlocker := validateStateBucketConsistency(ws.StatusBucket, ws.CurrentState); consistencyBlocker != nil {
+		errs = append(errs, fmt.Errorf("workflow state %s: %s", consistencyBlocker.Code, consistencyBlocker.Message))
+	}
+	if len(ws.NextValidActions) == 0 && !(ws.StatusBucket == WorkflowStatusBucketClosed && ws.CurrentState == WorkflowStateClosed) {
 		errs = append(errs, errors.New("workflow state missing next_valid_actions"))
 	}
 
@@ -68,6 +92,12 @@ var allowedCoverageTiers = map[string]bool{
 	"contract_high":     true,
 	"formal_optional":   true,
 	"unit":              true,
+}
+
+var coverageTierPromptOrder = []string{"documentation", "unit", "local_low", "behavior_standard", "contract_high", "formal_optional"}
+
+func AllowedCoverageTiers() []string {
+	return orderedAllowedValues(allowedCoverageTiers, coverageTierPromptOrder)
 }
 
 var allowedObligationTypes = map[string]bool{
@@ -99,6 +129,38 @@ var allowedObligationTypes = map[string]bool{
 	"scripted_e2e":        true,
 	"e2e_journey":         true,
 	"manual":              true,
+}
+
+func AllowedObligationTypes() []string {
+	return orderedAllowedValues(allowedObligationTypes, nil)
+}
+
+func orderedAllowedValues(values map[string]bool, preferred []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, value := range preferred {
+		if !values[value] {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+
+	var rest []string
+	for value, allowed := range values {
+		if !allowed {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		rest = append(rest, value)
+	}
+	sort.Strings(rest)
+	return append(out, rest...)
 }
 
 func validateTDDLedger(ledger TDDLedger) error {
@@ -760,7 +822,11 @@ func validateImplementationReport(r ImplementationReport) error {
 		errs = append(errs, errors.New("implementation report missing open_blockers (must be present, may be empty)"))
 	}
 
-	if r.Verification.Status != "" && r.Verification.Status != ProductWorkflowStatusPending {
+	if r.Verification.Status != "" && !ImplementationVerificationStatusAllowed(r.Verification.Status) {
+		errs = append(errs, fmt.Errorf("implementation report invalid verification.status %q", r.Verification.Status))
+	}
+
+	if r.Verification.Status != "" && r.Verification.Status != string(ProductWorkflowStatusPending) {
 		if len(r.Verification.Commands) == 0 {
 			errs = append(errs, fmt.Errorf("implementation report verification.status %q requires verification.commands", r.Verification.Status))
 		}
@@ -777,6 +843,26 @@ func validateImplementationReport(r ImplementationReport) error {
 	return errors.Join(errs...)
 }
 
+func ImplementationVerificationStatusAllowed(status string) bool {
+	switch strings.TrimSpace(status) {
+	case string(ProductWorkflowStatusPending),
+		"pending_reviewer",
+		string(ProductWorkflowStatusPass),
+		string(ProductWorkflowStatusPassed),
+		"passed_after_codex_review",
+		"passed_after_orchestrator_review",
+		"passed_full_suite_and_product_gates",
+		"passed_full_suite_and_product_gates_after_final_review_repair",
+		string(ProductWorkflowStatusFail),
+		string(ProductWorkflowStatusFailed),
+		string(ProductWorkflowStatusBlocked),
+		string(ProductWorkflowStatusComplete):
+		return true
+	default:
+		return false
+	}
+}
+
 func validateReviewReport(r ReviewReport) error {
 	var errs []error
 
@@ -788,7 +874,11 @@ func validateReviewReport(r ReviewReport) error {
 	require(&errs, r.Reviewer.ReasoningEffort, "review report missing reviewer.reasoning_effort")
 	require(&errs, r.Status, "review report missing status")
 
-	if r.Status != "" && r.Status != ProductWorkflowStatusPending {
+	if r.Status != "" && !ReviewReportStatusAllowed(r.Status) {
+		errs = append(errs, fmt.Errorf("review report invalid status %q", r.Status))
+	}
+
+	if r.Status != "" && r.Status != string(ProductWorkflowStatusPending) {
 		require(&errs, r.ReviewedAt, "review report missing reviewed_at (required when status is not pending)")
 
 		if len(r.CommandsReviewed) == 0 {
@@ -800,11 +890,37 @@ func validateReviewReport(r ReviewReport) error {
 		}
 	}
 
+	for name, status := range r.Checks {
+		if strings.TrimSpace(name) == "" {
+			errs = append(errs, errors.New("review report checks contains empty check name"))
+			continue
+		}
+		if !KnownReviewCheckStatus(status) {
+			errs = append(errs, fmt.Errorf("review report check %q has unsupported status %q", name, status))
+		}
+	}
+
 	if !r.Reviewer.IndependentFromImplementor {
 		errs = append(errs, errors.New("review report reviewer.independent_from_implementor must be true"))
 	}
 
 	return errors.Join(errs...)
+}
+
+func ReviewReportStatusAllowed(status string) bool {
+	switch strings.TrimSpace(status) {
+	case string(ProductWorkflowStatusPending),
+		string(ProductWorkflowStatusPass),
+		string(ProductWorkflowStatusPassed),
+		string(ProductWorkflowStatusPassAfterRepair),
+		string(ProductWorkflowStatusFail),
+		string(ProductWorkflowStatusFailed),
+		string(ProductWorkflowStatusBlocked),
+		string(ProductWorkflowStatusComplete):
+		return true
+	default:
+		return false
+	}
 }
 
 func validateInvestigationReport(r InvestigationReport) error {
@@ -815,27 +931,31 @@ func validateInvestigationReport(r InvestigationReport) error {
 	require(&errs, r.TaskID, "investigation report missing task_id")
 	require(&errs, r.Status, "investigation report missing status")
 
-	if r.Status == "complete" {
+	if r.Status != "" && !InvestigationReportStatusAllowed(r.Status) {
+		errs = append(errs, fmt.Errorf("investigation report invalid status %q", r.Status))
+	}
+
+	if r.Status == string(ProductWorkflowStatusComplete) {
 		require(&errs, r.CompletedAt, "investigation report missing completed_at (required when status is complete)")
 		require(&errs, r.NextValidAction, "investigation report missing next_valid_action (required when status is complete)")
 
-		if len(r.Scope) == 0 {
+		if !r.Scope.HasContent() {
 			errs = append(errs, errors.New("investigation report missing scope (required when status is complete)"))
 		}
 
-		if len(r.Tests) == 0 {
+		if !r.Tests.HasContent() {
 			errs = append(errs, errors.New("investigation report missing tests (required when status is complete)"))
 		}
 
-		if len(r.Coverage) == 0 {
+		if !r.Coverage.HasContent() {
 			errs = append(errs, errors.New("investigation report missing coverage (required when status is complete)"))
 		}
 
-		if len(r.Traceability) == 0 {
+		if !r.Traceability.HasContent() {
 			errs = append(errs, errors.New("investigation report missing traceability (required when status is complete)"))
 		}
 
-		if len(r.PrivacyAudit) == 0 {
+		if !r.PrivacyAudit.HasContent() {
 			errs = append(errs, errors.New("investigation report missing privacy_audit (required when status is complete)"))
 		}
 
@@ -844,7 +964,7 @@ func validateInvestigationReport(r InvestigationReport) error {
 		}
 	}
 
-	if len(r.PrivacyAudit) > 0 {
+	if r.PrivacyAudit.HasContent() {
 		if err := validatePrivacyAudit(r.PrivacyAudit); err != nil {
 			errs = append(errs, err)
 		}
@@ -853,50 +973,79 @@ func validateInvestigationReport(r InvestigationReport) error {
 	return errors.Join(errs...)
 }
 
-var privacyAuditStoredTrue = []string{
-	"raw_prompts_stored",
-	"raw_transcripts_stored",
-	"file_bodies_stored",
-	"secrets_stored",
-	"customer_identifying_data_stored",
+func InvestigationReportStatusAllowed(status string) bool {
+	switch strings.TrimSpace(status) {
+	case string(ProductWorkflowStatusPlanned),
+		string(ProductWorkflowStatusPending),
+		string(ProductWorkflowStatusComplete),
+		string(ProductWorkflowStatusBlocked),
+		string(ProductWorkflowStatusPass),
+		string(ProductWorkflowStatusPassed),
+		string(ProductWorkflowStatusFail),
+		string(ProductWorkflowStatusFailed):
+		return true
+	default:
+		return false
+	}
 }
 
-var privacyAuditNoFalse = []string{
-	"no_raw_prompts",
-	"no_raw_transcripts",
-	"no_file_bodies",
-	"no_secrets",
-	"no_customer_data",
-}
-
-func validatePrivacyAudit(audit map[string]any) error {
+func validatePrivacyAudit(audit InvestigationPrivacyAudit) error {
 	var errs []error
 
-	for _, key := range privacyAuditStoredTrue {
-		if val, ok := audit[key]; ok {
-			if b, _ := val.(bool); b {
-				errs = append(errs, fmt.Errorf("investigation report privacy_audit: %s must not be true", key))
-			}
+	for _, claim := range investigationPrivacyStoredClaims(audit) {
+		if claim.value != nil && *claim.value {
+			errs = append(errs, fmt.Errorf("investigation report privacy_audit: %s must not be true", claim.key))
 		}
 	}
 
-	for _, key := range privacyAuditNoFalse {
-		if val, ok := audit[key]; ok {
-			if b, _ := val.(bool); !b {
-				errs = append(errs, fmt.Errorf("investigation report privacy_audit: %s must not be false", key))
-			}
+	for _, claim := range investigationPrivacyNoClaims(audit) {
+		if claim.value != nil && !*claim.value {
+			errs = append(errs, fmt.Errorf("investigation report privacy_audit: %s must not be false", claim.key))
 		}
 	}
 
 	return errors.Join(errs...)
 }
 
+type investigationPrivacyBoolClaim struct {
+	key   string
+	value *bool
+}
+
+func investigationPrivacyStoredClaims(audit InvestigationPrivacyAudit) []investigationPrivacyBoolClaim {
+	return []investigationPrivacyBoolClaim{
+		{key: "raw_prompts_stored", value: audit.RawPromptsStored},
+		{key: "raw_transcripts_stored", value: audit.RawTranscriptsStored},
+		{key: "transcripts_stored", value: audit.TranscriptsStored},
+		{key: "file_bodies_stored", value: audit.FileBodiesStored},
+		{key: "secrets_stored", value: audit.SecretsStored},
+		{key: "customer_identifying_data_stored", value: audit.CustomerIdentifyingDataStored},
+		{key: "tui_transcript_bodies_stored", value: audit.TUITranscriptBodiesStored},
+		{key: "generated_brief_bodies_stored_in_durable_reports", value: audit.GeneratedBriefBodiesStoredDurableReports},
+		{key: "ranker_weight_payloads_stored", value: audit.RankerWeightPayloadsStored},
+	}
+}
+
+func investigationPrivacyNoClaims(audit InvestigationPrivacyAudit) []investigationPrivacyBoolClaim {
+	return []investigationPrivacyBoolClaim{
+		{key: "no_raw_prompts", value: audit.NoRawPrompts},
+		{key: "no_raw_transcripts", value: audit.NoRawTranscripts},
+		{key: "no_file_bodies", value: audit.NoFileBodies},
+		{key: "no_secrets", value: audit.NoSecrets},
+		{key: "no_customer_data", value: audit.NoCustomerData},
+	}
+}
+
 var privacyForbiddenClaims = []string{
 	"raw_prompts_stored",
 	"raw_transcripts_stored",
+	"transcripts_stored",
 	"file_bodies_stored",
 	"secrets_stored",
 	"customer_identifying_data_stored",
+	"tui_transcript_bodies_stored",
+	"generated_brief_bodies_stored_in_durable_reports",
+	"ranker_weight_payloads_stored",
 }
 
 func validateReportPrivacyNote(note string) error {
@@ -906,10 +1055,14 @@ func validateReportPrivacyNote(note string) error {
 
 	lower := strings.ToLower(note)
 	for _, claim := range privacyForbiddenClaims {
-		if strings.Contains(lower, claim+": true") || strings.Contains(lower, claim+"\":true") {
+		if privacyForbiddenTrueClaimPattern(claim).MatchString(lower) {
 			return fmt.Errorf("implementation report privacy_note claims %s was stored", claim)
 		}
 	}
 
 	return nil
+}
+
+func privacyForbiddenTrueClaimPattern(claim string) *regexp.Regexp {
+	return regexp.MustCompile(`(?i)(?:^|[^a-z0-9_])"?` + regexp.QuoteMeta(claim) + `"?\s*:\s*true(?:[^a-z0-9_]|$)`)
 }

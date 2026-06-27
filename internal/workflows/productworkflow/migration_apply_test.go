@@ -271,6 +271,7 @@ func TestProductStatusMigrationApplyFailsClosedWithoutPartialMutation(t *testing
 				index := fixture.index
 
 				index.Efforts[0].StatusBucket = "unstarted"
+				index.Efforts[0].CurrentState = "planned"
 				writeMigrationApplyJSON(t, filepath.Join(fixture.effortsRoot, "index.json"), index)
 			},
 			options: func(fixture *migrationApplyFixture) ProductStatusMigrationApplyOptions {

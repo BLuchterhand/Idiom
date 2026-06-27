@@ -1,6 +1,10 @@
 package workspace
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	planartifact "idiom/internal/contracts/planartifact"
+)
 
 // ToolRequest is the normalized, typed form of a workspace tool call.
 type ToolRequest struct {
@@ -103,7 +107,7 @@ type ToolRequest struct {
 	// Edits carries the structured edit list for a submit_plan call
 	// (the planner phase of plan-then-execute mode). Each entry is
 	// one edit the executor phase should dispatch in order.
-	Edits []PlanEdit `json:"edits,omitempty"`
+	Edits []planartifact.PlanEdit `json:"edits,omitempty"`
 	// SourceSatisfiedPaths declares required edit paths whose requested final
 	// state is already present. These paths satisfy submit_plan coverage but
 	// are not executable edits.
@@ -121,7 +125,7 @@ type ToolRequest struct {
 	// optional so legacy callers can keep sending rationale, pack_id, and edits
 	// at the top level; submit_plan normalizes that legacy shape into the same
 	// persisted artifact contract.
-	PlanArtifact *PlanArtifact `json:"plan_artifact,omitempty"`
+	PlanArtifact *planartifact.PlanArtifact `json:"plan_artifact,omitempty"`
 }
 
 type GoDeclarationMove struct {

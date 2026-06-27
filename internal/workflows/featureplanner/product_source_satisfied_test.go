@@ -1,6 +1,10 @@
 package featureplanner
 
-import "testing"
+import (
+	"testing"
+
+	featureplannercontract "idiom/internal/contracts/featureplanner"
+)
 
 func TestProductSourceSatisfiedCloseoutBuildsTerminalStateAndEvent(t *testing.T) {
 	state := FeatureState{
@@ -44,7 +48,7 @@ func TestProductSourceSatisfiedCloseoutBuildsTerminalStateAndEvent(t *testing.T)
 		t.Fatalf("closeout should clear terminal-incompatible state: %#v", next)
 	}
 
-	if event.Type != EventProductSourceSatisfied || event.SessionID != "session-1" || event.FeatureTo != FeatureStateSourceSatisfied {
+	if event.Type != featureplannercontract.EventName(featureplannercontract.EventProductSourceSatisfied) || event.SessionID != "session-1" || event.FeatureTo != FeatureStateSourceSatisfied {
 		t.Fatalf("unexpected event identity: %#v", event)
 	}
 

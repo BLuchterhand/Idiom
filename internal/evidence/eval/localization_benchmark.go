@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 const (
@@ -548,13 +548,13 @@ func localizationCompetitiveConditionFailureReasons(metric LocalizationCompetiti
 			for _, reason := range coverage.FailureReasons {
 				if reason == localizationFailureCompetitiveCandidates || reason == localizationFailurePartialCompetitiveCandidates {
 					reasons = append(reasons, reason)
-					return util.UniqueNonEmpty(reasons)
+					return textutil.UniqueNonEmpty(reasons)
 				}
 			}
 		}
 	}
 
-	return util.UniqueNonEmpty(reasons)
+	return textutil.UniqueNonEmpty(reasons)
 }
 
 func localizationCompetitiveCondition(task LocalizationCorpusTask, baseline string) (LocalizationCompetitiveConditionInput, bool) {

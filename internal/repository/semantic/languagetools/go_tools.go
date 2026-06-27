@@ -10,8 +10,8 @@ import (
 	"slices"
 	"strings"
 
+	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/semantic"
-	"idiom/internal/platform/util"
 )
 
 func (m *Manager) goOverview() ToolResult {
@@ -1085,7 +1085,7 @@ func (m *Manager) readFileLines(path string, start, end int) (string, error) {
 		return "", err
 	}
 
-	lines := util.SplitWorkspaceFileLines(data)
+	lines := textutil.SplitWorkspaceFileLines(data)
 
 	if start <= 0 {
 		start = 1
@@ -1095,7 +1095,7 @@ func (m *Manager) readFileLines(path string, start, end int) (string, error) {
 		end = len(lines)
 	}
 
-	start, end, _ = util.ClampRequestedLineRange(len(lines), start, end, start, end)
+	start, end, _ = textutil.ClampRequestedLineRange(len(lines), start, end, start, end)
 	if start > end {
 		return "", fmt.Errorf("start_line must be <= end_line")
 	}
@@ -1108,8 +1108,6 @@ func (m *Manager) readFileLines(path string, start, end int) (string, error) {
 
 	return strings.TrimRight(b.String(), "\n"), nil
 }
-
-
 
 func (m *Manager) goPathFilter(path string) string {
 	path = strings.TrimSpace(path)

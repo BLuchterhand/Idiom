@@ -10,7 +10,7 @@ import (
 	"slices"
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 // laneExplainSummary is the diagnostic payload runLaneExplain renders.
@@ -472,5 +472,5 @@ func renderLaneExplain(s laneExplainSummary, w io.Writer) {
 }
 
 func truncateForExplain(s string, n int) string {
-	return util.TruncateBytes(strings.ReplaceAll(s, "\n", " "), n, "…")
+	return textutil.TruncateBytes(strings.ReplaceAll(s, "\n", " "), n, "…")
 }

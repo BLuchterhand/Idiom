@@ -1,10 +1,10 @@
 package workerruntime
 
 import (
-	"slices"
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	recoverycontract "idiom/internal/contracts/recovery"
 )
 
 func BuildRecoveryPlan(input RecoveryInput) RecoveryPlan {
@@ -58,7 +58,7 @@ func BuildRecoveryPlan(input RecoveryInput) RecoveryPlan {
 	}
 
 	if containsAny(combined, "malformed tool", "tool_parse") {
-		if slices.Contains(input.Constraints, "plan_then_execute_submit_plan_ready") {
+		if ConstraintPresent(input.Constraints, ConstraintPlanThenExecuteSubmitPlanReady) {
 			plan.RequiredNext = appendUnique(plan.RequiredNext, "emit exactly one parser-readable submit_plan JSON object")
 		} else {
 			plan.RequiredNext = appendUnique(plan.RequiredNext, "emit exactly one valid JSON tool object")
@@ -66,18 +66,18 @@ func BuildRecoveryPlan(input RecoveryInput) RecoveryPlan {
 	}
 
 	if verificationToolFailure(tool, combined, input.Result) {
-		plan.FailureClass = "verification_failed"
+		plan.FailureClass = recoverycontract.FailureClassVerification
 		plan.RequiredNext = appendUnique(plan.RequiredNext, "repair the failed verification or report an external blocker before final answer")
 	}
 
 	if exactAnchorWriteFailure(input.Constraints, tool, combined) {
-		plan.FailureClass = "exact_anchor_write_failure"
+		plan.FailureClass = recoverycontract.FailureClassExactAnchorWriteFailure
 		plan.DoNotRepeat = appendUnique(plan.DoNotRepeat, "read/search after an exact-anchor write failed")
 		plan.RequiredNext = appendUnique(plan.RequiredNext, "retry one corrected write shape from the target packet, or answer with <<QUESTION>> naming the missing anchor")
 	}
 
 	if exactAnchorHiddenPrewriteTool(input.Constraints, tool, combined) {
-		plan.FailureClass = "exact_anchor_prewrite_hidden_tool"
+		plan.FailureClass = recoverycontract.FailureClassExactAnchorPrewriteHiddenTool
 		plan.DoNotRepeat = appendUnique(plan.DoNotRepeat, "read/search/shell before first exact-anchor write")
 		plan.RequiredNext = appendUnique(plan.RequiredNext, "exact-anchor write capability with the supplied anchor, or answer with <<QUESTION>> naming the missing anchor")
 	}
@@ -97,39 +97,39 @@ func BuildRecoveryPlan(input RecoveryInput) RecoveryPlan {
 	return plan
 }
 
-func ClassifyFailure(reason string, req workspace.ToolRequest, result workspace.ToolResult) string {
+func ClassifyFailure(reason string, req workspace.ToolRequest, result workspace.ToolResult) recoverycontract.FailureClass {
 	combined := combinedLower(reason, result.Summary, result.Error, result.Output)
 	tool := strings.TrimSpace(req.Tool)
 
 	switch {
 	case containsAny(combined, "tool_parse", "malformed tool request", "valid json tool object"):
-		return "tool_parse_error"
+		return recoverycontract.FailureClassToolParseError
 	case containsAny(combined, "approval required", "write approval required", "permission denied", "permission"):
-		return "permission_boundary"
+		return recoverycontract.FailureClassPermissionBoundary
 	case containsAny(combined, "guard", "rejected by guard", "approved editable target", "implementation target packet", "bootstrap already inspected"):
-		return "guard_rejection"
+		return recoverycontract.FailureClassGuardRejection
 	case containsAny(combined, "completion gate", "final answer rejected"):
-		return "completion_gate"
+		return recoverycontract.FailureClassCompletionGate
 	case verificationToolFailure(tool, combined, result):
-		return "verification_failed"
+		return recoverycontract.FailureClassVerification
 	case isActualVerificationRecoverySignal(combined):
-		return "verification_unresolved"
+		return recoverycontract.FailureClassVerificationUnresolved
 	case containsAny(combined, "same tool request", "repeated tool request", "replayed", "already failed earlier", "repeated dead-end"):
-		return "repeated_action"
+		return recoverycontract.FailureClassRepeatedAction
 	case strings.Contains(combined, "broad inspection"):
-		return "broad_inspection_loop"
+		return recoverycontract.FailureClassBroadInspectionLoop
 	case containsAny(combined, "target scope", "outside approved", "approved target"):
-		return "target_scope_violation"
+		return recoverycontract.FailureClassTargetScopeViolation
 	case containsAny(combined, "post-edit", "workspace edit already landed"):
-		return "post_edit_focus"
+		return recoverycontract.FailureClassPostEditFocus
 	case tool == "task" || strings.Contains(combined, "child task"):
-		return "child_task_failure"
+		return recoverycontract.FailureClassChildTaskFailure
 	case strings.Contains(combined, "checkpoint"):
-		return "checkpoint_failure"
+		return recoverycontract.FailureClassCheckpointFailure
 	case strings.TrimSpace(result.Error) != "":
-		return "tool_failure"
+		return recoverycontract.FailureClassToolFailure
 	default:
-		return "unknown"
+		return recoverycontract.FailureClassUnknown
 	}
 }
 

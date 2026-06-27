@@ -9,11 +9,25 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"idiom/internal/platform/sessionid"
 )
 
 const (
 	RunCompletionSchemaVersion = "idiom.headless.run_completion.v1"
 	RunCompletionRecordType    = "idiom.headless.run_completion"
+)
+
+type TerminalClass string
+
+const (
+	TerminalClassCompleted          TerminalClass = "completed"
+	TerminalClassFailed             TerminalClass = "failed"
+	TerminalClassDegraded           TerminalClass = "degraded"
+	TerminalClassOutputSchemaFailed TerminalClass = "output_schema_failed"
+	TerminalClassVerificationFailed TerminalClass = "verification_failed"
+	TerminalClassArtifactFailed     TerminalClass = "artifact_failed"
+	TerminalClassCommitFailed       TerminalClass = "commit_failed"
 )
 
 type RunCompletionRecord struct {
@@ -27,7 +41,7 @@ type RunCompletionRecord struct {
 	OutputMode       string              `json:"output_mode"`
 	OutputSchema     string              `json:"output_schema,omitempty"`
 	ExitCode         int                 `json:"exit_code"`
-	TerminalClass    string              `json:"terminal_class"`
+	TerminalClass    TerminalClass       `json:"terminal_class"`
 	Error            string              `json:"error,omitempty"`
 	ConfigPath       string              `json:"config_path,omitempty"`
 	WorkspaceRoot    string              `json:"workspace_root,omitempty"`
@@ -94,28 +108,9 @@ func RunCompletionRelPath(runID string) string {
 }
 
 func ValidateRunID(runID string) error {
-	runID = strings.TrimSpace(runID)
-	if runID == "" {
-		return fmt.Errorf("run id is required")
+	if err := sessionid.Validate(strings.TrimSpace(runID)); err != nil {
+		return fmt.Errorf("invalid run id %q: %w", runID, err)
 	}
-	if len(runID) > 128 {
-		return fmt.Errorf("invalid run id %q: length exceeds 128 characters", runID)
-	}
-	if strings.Contains(runID, "..") || strings.ContainsAny(runID, `/\`) || filepath.IsAbs(runID) {
-		return fmt.Errorf("invalid run id %q: must not contain path components", runID)
-	}
-
-	for _, r := range runID {
-		switch {
-		case r >= 'a' && r <= 'z':
-		case r >= 'A' && r <= 'Z':
-		case r >= '0' && r <= '9':
-		case r == '-' || r == '_' || r == '.':
-		default:
-			return fmt.Errorf("invalid run id %q: allowed characters are A-Z, a-z, 0-9, dot, underscore, and dash", runID)
-		}
-	}
-
 	return nil
 }
 
@@ -127,7 +122,7 @@ func AddArtifact(record *RunCompletionRecord, name string, path string) {
 }
 
 func NewRunID() string {
-	return time.Now().UTC().Format("20060102-150405.000")
+	return time.Now().UTC().Format("20060102-150405000")
 }
 
 func SHA256Hex(value string) string {

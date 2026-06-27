@@ -1,4 +1,4 @@
-package plancontract
+package plan
 
 import (
 	"strings"
@@ -21,10 +21,10 @@ func VerificationCommandArgs(command string) ([]string, bool) {
 	return args, true
 }
 
-func VerificationArgvAllowed(args []string) bool {
+func VerificationCommandPrefix(args []string) []string {
 	args = NormalizeVerificationArgv(args)
 	if len(args) == 0 {
-		return false
+		return nil
 	}
 
 	for _, prefix := range VerificationCommandAllowedPrefixes() {
@@ -33,7 +33,6 @@ func VerificationArgvAllowed(args []string) bool {
 		}
 
 		matches := true
-
 		for i := range prefix {
 			if args[i] != prefix[i] {
 				matches = false
@@ -42,11 +41,15 @@ func VerificationArgvAllowed(args []string) bool {
 		}
 
 		if matches {
-			return true
+			return append([]string(nil), prefix...)
 		}
 	}
 
-	return false
+	return nil
+}
+
+func VerificationArgvAllowed(args []string) bool {
+	return len(VerificationCommandPrefix(args)) > 0
 }
 
 func NormalizeVerificationArgv(args []string) []string {

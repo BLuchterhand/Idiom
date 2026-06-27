@@ -17,9 +17,22 @@ import (
 
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/runtime/localops"
+	"idiom/internal/workflows/productworkflow"
 )
 
 const releaseEvidenceSchemaVersion = "idiom.release_evidence_bundle.v1"
+
+const (
+	releaseEvidenceStatusBlocked         = string(productworkflow.ProductWorkflowStatusBlocked)
+	releaseEvidenceStatusEvidencePresent = "evidence_present"
+	releaseEvidenceStatusFail            = string(productworkflow.ProductWorkflowStatusFail)
+	releaseEvidenceStatusMissing         = "missing"
+	releaseEvidenceStatusNeedsEvidence   = "needs_evidence"
+	releaseEvidenceStatusPartial         = string(productworkflow.ProductWorkflowStatusPartial)
+	releaseEvidenceStatusPass            = string(productworkflow.ProductWorkflowStatusPass)
+	releaseEvidenceStatusPresent         = "present"
+	releaseEvidenceStatusNoGo            = "no-go"
+)
 
 var releaseEvidenceClientClassifications = []string{
 	"finance",
@@ -379,7 +392,7 @@ func runReleaseEvidenceWithDeps(args []string, stdout io.Writer, stderr io.Write
 func blockReleaseEvidencePrivacy(report *releaseEvidenceBundle, forbidden string) {
 	localops.RedactForbiddenStrings(report)
 
-	report.Status = "blocked"
+	report.Status = releaseEvidenceStatusBlocked
 	report.Privacy.ForbiddenFieldCheck = "failed:" + forbidden
 	report.Blockers = append(report.Blockers, releaseEvidenceBlocker{Section: "privacy", Reason: "release bundle failed forbidden evidence scan", Evidence: forbidden})
 	report.ArtifactHash = releaseEvidenceHash(*report)
@@ -414,7 +427,7 @@ func buildReleaseEvidenceBundleWithDeps(root string, laneSummary LaneHistorySumm
 		Build:         releaseEvidenceBuildInfoWithDeps(deps),
 		Privacy: releaseEvidencePrivacy{
 			MetadataOnly:           true,
-			ForbiddenFieldCheck:    "pass",
+			ForbiddenFieldCheck:    releaseEvidenceStatusPass,
 			RawPromptsIncluded:     false,
 			RawProtocolBodies:      false,
 			RawFileBodiesIncluded:  false,
@@ -466,7 +479,7 @@ func loadReleaseEvidenceInputBundle(root string, dir string, label string) relea
 	path := resolveReleaseEvidencePath(root, dir)
 	out := releaseEvidenceInputBundle{
 		Label:     label,
-		Status:    "missing",
+		Status:    releaseEvidenceStatusMissing,
 		Directory: releaseEvidencePath(root, path),
 	}
 
@@ -476,7 +489,7 @@ func loadReleaseEvidenceInputBundle(root string, dir string, label string) relea
 		return out
 	}
 
-	out.Status = "present"
+	out.Status = releaseEvidenceStatusPresent
 
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -493,7 +506,7 @@ func loadReleaseEvidenceInputBundle(root string, dir string, label string) relea
 			artifact := releaseEvidenceArtifact{
 				ID:           "artifact:" + localops.StableID(full),
 				Kind:         releaseArtifactKind(entry.Name()),
-				Status:       "present",
+				Status:       releaseEvidenceStatusPresent,
 				Path:         releaseEvidencePath(root, full),
 				ArtifactHash: releaseEvidenceFileHash(full),
 			}
@@ -509,7 +522,7 @@ func loadReleaseEvidenceInputBundle(root string, dir string, label string) relea
 	out.ArtifactCount = len(out.Artifacts)
 
 	if out.CommandCount == 0 {
-		out.Status = "partial"
+		out.Status = releaseEvidenceStatusPartial
 		out.Blockers = append(out.Blockers, releaseEvidenceBlocker{Section: label, Reason: "no command metadata artifacts found", Evidence: out.Directory.PathID})
 	}
 
@@ -520,7 +533,7 @@ func readReleaseCommandMetadata(root string, dir string, path string) releaseEvi
 	body, err := os.ReadFile(path)
 	cmd := releaseEvidenceCommand{
 		ID:     "command:" + localops.StableID(path),
-		Status: "missing",
+		Status: releaseEvidenceStatusMissing,
 	}
 
 	if err != nil {
@@ -583,16 +596,16 @@ func buildReleaseValidationSection(current releaseEvidenceInputBundle, product p
 		releaseValidationCommand("git_diff_check", "git diff --check", current),
 		{ID: "product_evidence_export", Command: "idiom product-evidence export", Status: product.Status, Source: "product_evidence"},
 	}
-	status := "pass"
+	status := releaseEvidenceStatusPass
 
 	var blockers []releaseEvidenceBlocker
 
 	for _, cmd := range commands {
-		if cmd.Status == "pass" || cmd.Status == "evidence_present" {
+		if cmd.Status == releaseEvidenceStatusPass || cmd.Status == releaseEvidenceStatusEvidencePresent {
 			continue
 		}
 
-		status = "partial"
+		status = releaseEvidenceStatusPartial
 
 		blockers = append(blockers, releaseEvidenceBlocker{Section: "validation", Reason: "validation command evidence missing or incomplete", Evidence: cmd.ID})
 	}
@@ -603,8 +616,8 @@ func buildReleaseValidationSection(current releaseEvidenceInputBundle, product p
 func releaseValidationCommand(id string, command string, current releaseEvidenceInputBundle) releaseEvidenceCommandStatus {
 	for _, cmd := range current.Commands {
 		if releaseCommandsMatch(cmd.Command, command) {
-			status := "pass"
-			if cmd.Status != "pass" {
+			status := releaseEvidenceStatusPass
+			if cmd.Status != releaseEvidenceStatusPass {
 				status = cmd.Status
 			}
 
@@ -612,7 +625,7 @@ func releaseValidationCommand(id string, command string, current releaseEvidence
 		}
 	}
 
-	return releaseEvidenceCommandStatus{ID: id, Command: command, Status: "missing", Blockers: []string{"current evidence artifact not supplied"}}
+	return releaseEvidenceCommandStatus{ID: id, Command: command, Status: releaseEvidenceStatusMissing, Blockers: []string{"current evidence artifact not supplied"}}
 }
 
 func buildReleaseAuditSecuritySection(current releaseEvidenceInputBundle, product productEvidenceExportReport, securityRef productEvidenceSourceReference) releaseEvidenceAuditSecuritySection {
@@ -630,7 +643,7 @@ func buildReleaseAuditSecuritySection(current releaseEvidenceInputBundle, produc
 	var blockers []releaseEvidenceBlocker
 
 	if len(artifacts) == 0 {
-		status = "needs_evidence"
+		status = releaseEvidenceStatusNeedsEvidence
 
 		blockers = append(blockers, releaseEvidenceBlocker{Section: "audit_security", Reason: "current harness audit artifacts not supplied"})
 	}
@@ -653,7 +666,7 @@ func buildReleaseAuditSecuritySection(current releaseEvidenceInputBundle, produc
 
 func buildReleaseBenchmarkSection(root string, opts releaseEvidenceOptions, localOps *localops.BenchmarkReport, ref productEvidenceSourceReference, competitiveCoverage productEvidenceReleaseGateLinkage) releaseEvidenceBenchmarkSection {
 	out := releaseEvidenceBenchmarkSection{
-		Status:              "needs_evidence",
+		Status:              releaseEvidenceStatusNeedsEvidence,
 		CompetitiveCoverage: competitiveCoverage,
 		LocalOps: releaseEvidenceLocalOps{
 			Status:       "not_available",
@@ -679,7 +692,7 @@ func buildReleaseBenchmarkSection(root string, opts releaseEvidenceOptions, loca
 			out.LocalOps.QuickstartStatus = localOps.Quickstart.Status
 		}
 
-		if localOps.Replay.Status != "pass" {
+		if localOps.Replay.Status != releaseEvidenceStatusPass {
 			out.Blockers = append(out.Blockers, releaseEvidenceBlocker{Section: "benchmark_local_ops", Reason: "local-ops replay evidence did not pass", Evidence: localOps.Replay.Status})
 		}
 
@@ -702,14 +715,14 @@ func buildReleaseBenchmarkSection(root string, opts releaseEvidenceOptions, loca
 
 		out.CompetitiveSignals = append(out.CompetitiveSignals, artifact)
 
-		if artifact.Status != "present" {
+		if artifact.Status != releaseEvidenceStatusPresent {
 			out.Blockers = append(out.Blockers, releaseEvidenceBlocker{Section: "benchmark_local_ops", Reason: "competitive benchmark artifact missing", Evidence: artifact.ID})
 		}
 	} else {
 		out.Blockers = append(out.Blockers, releaseEvidenceBlocker{Section: "benchmark_local_ops", Reason: "competitive benchmark artifact not supplied; P9.10 owns external-baseline gate"})
 	}
 
-	if competitiveCoverage.Status != "evidence_present" {
+	if competitiveCoverage.Status != releaseEvidenceStatusEvidencePresent {
 		for _, blocker := range competitiveCoverage.Blockers {
 			out.Blockers = append(out.Blockers, releaseEvidenceBlocker{Section: "benchmark_local_ops", Reason: "P9.10 competitive benchmark coverage incomplete", Evidence: blocker})
 		}
@@ -732,14 +745,14 @@ func buildReleaseSidecarSection(root string, opts releaseEvidenceOptions, proofs
 
 	var paths []releaseEvidenceIntegrationPath
 
-	status := "pass"
+	status := releaseEvidenceStatusPass
 
 	var blockers []releaseEvidenceBlocker
 
 	for _, required := range p711RequiredIntegrationPathTypes {
-		row := releaseEvidenceIntegrationPath{Path: required, Status: "missing"}
+		row := releaseEvidenceIntegrationPath{Path: required, Status: releaseEvidenceStatusMissing}
 		for _, proof := range byPath[required] {
-			row.Status = "pass"
+			row.Status = releaseEvidenceStatusPass
 			row.EvidenceIDs = append(row.EvidenceIDs, proof.ID)
 
 			if proof.ReplayFixture != "" {
@@ -757,13 +770,13 @@ func buildReleaseSidecarSection(root string, opts releaseEvidenceOptions, proofs
 			}
 
 			if !hasParity {
-				row.Status = "partial"
+				row.Status = releaseEvidenceStatusPartial
 				row.Blocker = "MCP stdio replay parity evidence missing"
 			}
 		}
 
-		if row.Status != "pass" {
-			status = "partial"
+		if row.Status != releaseEvidenceStatusPass {
+			status = releaseEvidenceStatusPartial
 
 			if row.Blocker == "" {
 				row.Blocker = "required sidecar integration proof missing"
@@ -784,8 +797,8 @@ func buildReleaseSidecarSection(root string, opts releaseEvidenceOptions, proofs
 		ArtifactHash: releaseEvidenceFileHash(smokePath),
 	}
 
-	if smoke.Status != "present" {
-		status = "partial"
+	if smoke.Status != releaseEvidenceStatusPresent {
+		status = releaseEvidenceStatusPartial
 
 		blockers = append(blockers, releaseEvidenceBlocker{Section: "sidecar_integration", Reason: "sidecar smoke transcript not supplied", Evidence: smoke.Path.PathID})
 	}
@@ -805,7 +818,7 @@ func buildReleaseClientReadiness(rows []productEvidenceClassCoverage) []releaseE
 		status := row.Status
 
 		if status == "" {
-			status = "missing"
+			status = releaseEvidenceStatusMissing
 		}
 
 		var missing []string
@@ -845,19 +858,19 @@ func releaseClientReadinessStatus(status string, missing []string) string {
 	status = strings.TrimSpace(status)
 	if len(missing) == 0 {
 		if status == "" {
-			return "missing"
+			return releaseEvidenceStatusMissing
 		}
 
 		return status
 	}
 
 	switch status {
-	case "partial", "needs_evidence":
+	case releaseEvidenceStatusPartial, releaseEvidenceStatusNeedsEvidence:
 		return status
-	case "blocked", "fail":
+	case releaseEvidenceStatusBlocked, "fail":
 		return status
 	default:
-		return "needs_evidence"
+		return releaseEvidenceStatusNeedsEvidence
 	}
 }
 
@@ -872,14 +885,14 @@ func collectReleaseEvidenceBlockers(report releaseEvidenceBundle) []releaseEvide
 	blockers = append(blockers, report.ActivationOnboarding.Blockers...)
 	blockers = append(blockers, report.SidecarIntegration.Blockers...)
 
-	if report.ProductEvidence.Status != "pass" {
+	if report.ProductEvidence.Status != releaseEvidenceStatusPass {
 		blockers = append(blockers, releaseEvidenceBlocker{Section: "product_evidence", Reason: "product-evidence export is not complete", Evidence: report.ProductEvidence.Status})
 	}
 
 	switch report.Recovery.Status {
-	case "blocked":
+	case releaseEvidenceStatusBlocked:
 		blockers = append(blockers, releaseEvidenceBlocker{Section: "recovery", Reason: "recovery evidence is blocked by malformed, missing, or stale artifacts", Evidence: report.Recovery.ReleaseImpact})
-	case "partial":
+	case releaseEvidenceStatusPartial:
 		blockers = append(blockers, releaseEvidenceBlocker{Section: "recovery", Reason: "open recovery packets remain release-impact evidence", Evidence: report.Recovery.ReleaseImpact})
 	}
 
@@ -889,33 +902,33 @@ func collectReleaseEvidenceBlockers(report releaseEvidenceBundle) []releaseEvide
 			continue
 		}
 
-		if row.Status != "pass" {
+		if row.Status != releaseEvidenceStatusPass {
 			blockers = append(blockers, releaseEvidenceBlocker{Section: "client_readiness", Reason: "classification evidence incomplete", Evidence: row.Classification})
 		}
 	}
 
 	for _, gate := range report.ReleaseReadiness {
-		if gate.Gate == "P9.7" && gate.Status != "evidence_present" {
+		if gate.Gate == "P9.7" && gate.Status != releaseEvidenceStatusEvidencePresent {
 			blockers = append(blockers, releaseEvidenceBlocker{Section: "release_readiness", Reason: "P9.7 design-partner demand evidence incomplete", Evidence: gate.Status})
 		}
 
-		if gate.Gate == "P9.8" && gate.Status != "evidence_present" {
+		if gate.Gate == "P9.8" && gate.Status != releaseEvidenceStatusEvidencePresent {
 			blockers = append(blockers, releaseEvidenceBlocker{Section: "release_readiness", Reason: "P9.8 integration proof evidence incomplete", Evidence: gate.Status})
 		}
 
-		if gate.Gate == "P9.9" && gate.Status != "evidence_present" {
+		if gate.Gate == "P9.9" && gate.Status != releaseEvidenceStatusEvidencePresent {
 			blockers = append(blockers, releaseEvidenceBlocker{Section: "release_readiness", Reason: "P9.9 security/privacy posture evidence incomplete", Evidence: gate.Status})
 		}
 
-		if gate.Gate == "P9.10" && gate.Status != "evidence_present" {
+		if gate.Gate == "P9.10" && gate.Status != releaseEvidenceStatusEvidencePresent {
 			blockers = append(blockers, releaseEvidenceBlocker{Section: "release_readiness", Reason: "P9.10 competitive benchmark evidence incomplete", Evidence: gate.Status})
 		}
 
-		if gate.Gate == "P9.11" && gate.Status != "evidence_present" {
+		if gate.Gate == "P9.11" && gate.Status != releaseEvidenceStatusEvidencePresent {
 			blockers = append(blockers, releaseEvidenceBlocker{Section: "release_readiness", Reason: "P9.11 client demo transcript evidence incomplete", Evidence: gate.Status})
 		}
 
-		if gate.Gate == "P9.12" && gate.Status != "evidence_present" {
+		if gate.Gate == "P9.12" && gate.Status != releaseEvidenceStatusEvidencePresent {
 			blockers = append(blockers, releaseEvidenceBlocker{Section: "release_readiness", Reason: "P9.12 packaging/support decision evidence incomplete", Evidence: gate.Status})
 		}
 	}
@@ -924,15 +937,15 @@ func collectReleaseEvidenceBlockers(report releaseEvidenceBundle) []releaseEvide
 }
 
 func releaseEvidenceStatus(report releaseEvidenceBundle) string {
-	if report.Privacy.ForbiddenFieldCheck != "pass" || report.ProductEvidence.Status == "blocked" || report.Recovery.Status == "blocked" {
-		return "blocked"
+	if report.Privacy.ForbiddenFieldCheck != releaseEvidenceStatusPass || report.ProductEvidence.Status == releaseEvidenceStatusBlocked || report.Recovery.Status == releaseEvidenceStatusBlocked {
+		return releaseEvidenceStatusBlocked
 	}
 
 	if len(report.Blockers) > 0 {
-		return "partial"
+		return releaseEvidenceStatusPartial
 	}
 
-	return "pass"
+	return releaseEvidenceStatusPass
 }
 
 func releaseEvidenceDeltas(baseline releaseEvidenceInputBundle, current releaseEvidenceInputBundle) []releaseEvidenceDelta {
@@ -944,32 +957,32 @@ func releaseEvidenceDeltas(baseline releaseEvidenceInputBundle, current releaseE
 
 func releaseDeltaStatus(baseline int, current int) string {
 	if baseline == 0 || current == 0 {
-		return "needs_evidence"
+		return releaseEvidenceStatusNeedsEvidence
 	}
 
-	return "present"
+	return releaseEvidenceStatusPresent
 }
 
 func releaseBenchmarkSectionStatus(localOpsPresent bool, localOpsStatus string, blockers []releaseEvidenceBlocker) string {
 	if !localOpsPresent {
-		return "needs_evidence"
+		return releaseEvidenceStatusNeedsEvidence
 	}
 
 	if len(blockers) > 0 {
-		return "partial"
+		return releaseEvidenceStatusPartial
 	}
 
-	if localOpsStatus == "pass" {
-		return "pass"
+	if localOpsStatus == releaseEvidenceStatusPass {
+		return releaseEvidenceStatusPass
 	}
 
-	return "partial"
+	return releaseEvidenceStatusPartial
 }
 
 func buildReleaseActivationSection(localOps *localops.BenchmarkReport, ref productEvidenceSourceReference, validation releaseEvidenceValidationSection, clients []releaseEvidenceClientReadiness) releaseEvidenceActivationSection {
 	out := releaseEvidenceActivationSection{
-		Status:           "needs_evidence",
-		Classification:   "no-go",
+		Status:           releaseEvidenceStatusNeedsEvidence,
+		Classification:   releaseEvidenceStatusNoGo,
 		ReportSource:     ref,
 		ValidationStatus: validation.Status,
 	}
@@ -1009,8 +1022,8 @@ func buildReleaseActivationSection(localOps *localops.BenchmarkReport, ref produ
 	out.Blockers = releaseEvidenceCompactBlockers(out.Blockers)
 
 	if len(out.Blockers) == 0 {
-		out.Status = "pass"
-		out.Classification = "pass"
+		out.Status = releaseEvidenceStatusPass
+		out.Classification = releaseEvidenceStatusPass
 
 		return out
 	}
@@ -1022,20 +1035,20 @@ func buildReleaseActivationSection(localOps *localops.BenchmarkReport, ref produ
 
 func p96ActivationReleaseGateStatus(localOps *localops.BenchmarkReport) string {
 	if localOps == nil || localOps.Quickstart == nil {
-		return "needs_evidence"
+		return releaseEvidenceStatusNeedsEvidence
 	}
 
 	status := p96ActivationStatusFromBlockers(releaseActivationBlockers(localOps.Quickstart))
-	if status == "blocked" {
-		return "blocked"
+	if status == releaseEvidenceStatusBlocked {
+		return releaseEvidenceStatusBlocked
 	}
 
-	return "needs_evidence"
+	return releaseEvidenceStatusNeedsEvidence
 }
 
 func p96ActivationStatusFromBlockers(blockers []releaseEvidenceBlocker) string {
 	if len(blockers) == 0 {
-		return "pass"
+		return releaseEvidenceStatusPass
 	}
 
 	for _, blocker := range blockers {
@@ -1043,11 +1056,11 @@ func p96ActivationStatusFromBlockers(blockers []releaseEvidenceBlocker) string {
 		case "privacy-safe activation evidence failed",
 			"privacy/redaction status is not release-safe",
 			"quickstart activation smoke did not pass":
-			return "blocked"
+			return releaseEvidenceStatusBlocked
 		}
 	}
 
-	return "needs_evidence"
+	return releaseEvidenceStatusNeedsEvidence
 }
 
 func releaseActivationBlockers(q *localops.QuickstartSmoke) []releaseEvidenceBlocker {
@@ -1058,58 +1071,58 @@ func releaseActivationBlockers(q *localops.QuickstartSmoke) []releaseEvidenceBlo
 	}
 
 	if q == nil {
-		add("quickstart activation smoke not supplied", "missing")
+		add("quickstart activation smoke not supplied", releaseEvidenceStatusMissing)
 
 		return blockers
 	}
 
-	if q.Status != "pass" {
-		add("quickstart activation smoke did not pass", firstNonEmptyString(q.Status, "missing"))
+	if q.Status != releaseEvidenceStatusPass {
+		add("quickstart activation smoke did not pass", firstNonEmptyString(q.Status, releaseEvidenceStatusMissing))
 	}
 
 	if !releaseActivationApprovedEnvironmentClass(q.EnvironmentClass) {
-		add("activation environment class missing or not approved", firstNonEmptyString(q.EnvironmentClass, "missing"))
+		add("activation environment class missing or not approved", firstNonEmptyString(q.EnvironmentClass, releaseEvidenceStatusMissing))
 	}
 
-	if q.SetupInstallReadiness.Status != "pass" {
-		add("setup/source-build readiness did not pass", firstNonEmptyString(q.SetupInstallReadiness.Status, "missing"))
+	if q.SetupInstallReadiness.Status != releaseEvidenceStatusPass {
+		add("setup/source-build readiness did not pass", firstNonEmptyString(q.SetupInstallReadiness.Status, releaseEvidenceStatusMissing))
 	}
 
 	if !releaseActivationApprovedSetupProof(q) {
-		add("release binary clean-install proof or scoped clean-setup proof not supplied", firstNonEmptyString(q.SetupInstallReadiness.ReleaseInstallProof, q.SetupInstallReadiness.InstallSetupPath, "missing"))
+		add("release binary clean-install proof or scoped clean-setup proof not supplied", firstNonEmptyString(q.SetupInstallReadiness.ReleaseInstallProof, q.SetupInstallReadiness.InstallSetupPath, releaseEvidenceStatusMissing))
 	}
 
 	if q.DurationSource != "measured_wall_clock" {
-		add("install-to-first-value timing is not measured wall-clock evidence", firstNonEmptyString(q.DurationSource, "missing"))
+		add("install-to-first-value timing is not measured wall-clock evidence", firstNonEmptyString(q.DurationSource, releaseEvidenceStatusMissing))
 	}
 
 	if q.TimeToFirstPacketSeconds <= 0 || q.TimeToTrustEvidenceSeconds <= 0 || q.TimeToTrustEvidenceSeconds < q.TimeToFirstPacketSeconds {
 		add("install-to-first-value timings missing or inconsistent", fmt.Sprintf("first:%g trust:%g", q.TimeToFirstPacketSeconds, q.TimeToTrustEvidenceSeconds))
 	}
 
-	if q.FirstUsefulPacket.Status != "pass" || q.FirstUsefulPacket.PacketID == "" || q.FirstUsefulPacket.IndexID == "" || q.FirstUsefulPacket.FreshnessState == "" ||
+	if q.FirstUsefulPacket.Status != releaseEvidenceStatusPass || q.FirstUsefulPacket.PacketID == "" || q.FirstUsefulPacket.IndexID == "" || q.FirstUsefulPacket.FreshnessState == "" ||
 		!localops.ActivationPacketHasUsefulEvidence(q.FirstUsefulPacket) {
 
-		add("first useful packet evidence incomplete", firstNonEmptyString(q.FirstUsefulPacket.Status, "missing"))
+		add("first useful packet evidence incomplete", firstNonEmptyString(q.FirstUsefulPacket.Status, releaseEvidenceStatusMissing))
 	}
 
-	if q.FreshnessCheck.Status != "pass" || q.FreshnessCheck.State == "" {
-		add("freshness evidence incomplete", firstNonEmptyString(q.FreshnessCheck.Status, "missing"))
+	if q.FreshnessCheck.Status != releaseEvidenceStatusPass || q.FreshnessCheck.State == "" {
+		add("freshness evidence incomplete", firstNonEmptyString(q.FreshnessCheck.Status, releaseEvidenceStatusMissing))
 	}
 
-	if q.AuditReport.Status != "pass" || q.AuditReport.AuditReportID == "" {
-		add("audit evidence incomplete", firstNonEmptyString(q.AuditReport.Status, "missing"))
+	if q.AuditReport.Status != releaseEvidenceStatusPass || q.AuditReport.AuditReportID == "" {
+		add("audit evidence incomplete", firstNonEmptyString(q.AuditReport.Status, releaseEvidenceStatusMissing))
 	}
 
-	if q.SuggestedVerification.Status != "pass" || len(q.SuggestedVerification.SuggestedCommands) == 0 {
-		add("suggested verification evidence incomplete", firstNonEmptyString(q.SuggestedVerification.Status, "missing"))
+	if q.SuggestedVerification.Status != releaseEvidenceStatusPass || len(q.SuggestedVerification.SuggestedCommands) == 0 {
+		add("suggested verification evidence incomplete", firstNonEmptyString(q.SuggestedVerification.Status, releaseEvidenceStatusMissing))
 	}
 
-	if q.ProductEvidenceSafeOutput.Status != "pass" || q.ProductEvidenceSafeOutput.ForbiddenFieldCheck != "pass" {
+	if q.ProductEvidenceSafeOutput.Status != releaseEvidenceStatusPass || q.ProductEvidenceSafeOutput.ForbiddenFieldCheck != releaseEvidenceStatusPass {
 		add("privacy-safe activation evidence failed", firstNonEmptyString(q.ProductEvidenceSafeOutput.ForbiddenFieldCheck, q.ProductEvidenceSafeOutput.Status))
 	}
 
-	if q.PrivacyRedactionStatus.Status != "pass" || q.PrivacyRedactionStatus.ForbiddenFieldCheck != "pass" ||
+	if q.PrivacyRedactionStatus.Status != releaseEvidenceStatusPass || q.PrivacyRedactionStatus.ForbiddenFieldCheck != releaseEvidenceStatusPass ||
 		q.PrivacyRedactionStatus.RawPromptCaptured || q.PrivacyRedactionStatus.RawFileBodyCaptured ||
 		q.PrivacyRedactionStatus.SecretCaptured || q.PrivacyRedactionStatus.PrivatePathCaptured ||
 		q.PrivacyRedactionStatus.PrivateRepoURLCaptured || q.PrivacyRedactionStatus.UnredactedLogCaptured ||
@@ -1119,21 +1132,21 @@ func releaseActivationBlockers(q *localops.QuickstartSmoke) []releaseEvidenceBlo
 	}
 
 	if !releaseActivationFailureReasonExplicit(q.FailureReason) {
-		add("failure reason semantics missing or unresolved", firstNonEmptyString(q.FailureReason.Status, q.FailureReason.PrimaryClass, "missing"))
+		add("failure reason semantics missing or unresolved", firstNonEmptyString(q.FailureReason.Status, q.FailureReason.PrimaryClass, releaseEvidenceStatusMissing))
 	}
 
 	if !releaseActivationDocsGapExplicit(q.DocsGap) {
-		add("docs gap semantics missing or unresolved", firstNonEmptyString(q.DocsGap.Status, "missing"))
+		add("docs gap semantics missing or unresolved", firstNonEmptyString(q.DocsGap.Status, releaseEvidenceStatusMissing))
 	}
 
 	if !releaseActivationCleanupSemanticsPass(q.Cleanup) {
-		add("cleanup evidence missing full cleanup or reviewed retained-state semantics", firstNonEmptyString(q.Cleanup.Status, q.Cleanup.ExitStatus, q.Cleanup.Mode, "missing"))
+		add("cleanup evidence missing full cleanup or reviewed retained-state semantics", firstNonEmptyString(q.Cleanup.Status, q.Cleanup.ExitStatus, q.Cleanup.Mode, releaseEvidenceStatusMissing))
 	}
 
 	switch q.AssistanceClass {
 	case "none", "docs-only", "operator typo correction":
 	default:
-		add("assistance class missing or exceeds release activation threshold", firstNonEmptyString(q.AssistanceClass, "missing"))
+		add("assistance class missing or exceeds release activation threshold", firstNonEmptyString(q.AssistanceClass, releaseEvidenceStatusMissing))
 	}
 
 	return releaseEvidenceCompactBlockers(blockers)
@@ -1142,11 +1155,11 @@ func releaseActivationBlockers(q *localops.QuickstartSmoke) []releaseEvidenceBlo
 func releaseActivationValidationBlockers(validation releaseEvidenceValidationSection, clients []releaseEvidenceClientReadiness) []releaseEvidenceBlocker {
 	var blockers []releaseEvidenceBlocker
 
-	if validation.Status != "pass" {
+	if validation.Status != releaseEvidenceStatusPass {
 		blockers = append(blockers, releaseEvidenceBlocker{
 			Section:  "activation_onboarding",
 			Reason:   "current release validation evidence missing or incomplete",
-			Evidence: firstNonEmptyString(validation.Status, "missing"),
+			Evidence: firstNonEmptyString(validation.Status, releaseEvidenceStatusMissing),
 		})
 	}
 
@@ -1159,7 +1172,7 @@ func releaseActivationValidationBlockers(validation releaseEvidenceValidationSec
 	}
 
 	if missingValidationRecords > 0 || len(clients) == 0 {
-		evidence := "missing"
+		evidence := releaseEvidenceStatusMissing
 		if missingValidationRecords > 0 {
 			evidence = fmt.Sprintf("missing_classification_records:%d", missingValidationRecords)
 		}
@@ -1199,7 +1212,7 @@ func releaseActivationApprovedSetupProof(q *localops.QuickstartSmoke) bool {
 
 	switch installPath {
 	case "release-binary":
-		return proof == "pass"
+		return proof == releaseEvidenceStatusPass
 	case "clean-setup", "documented-clean-setup", "source-build":
 		return q.EnvironmentClass == "clean-setup" && proof == "scoped_clean_setup"
 	default:
@@ -1232,7 +1245,7 @@ func releaseActivationDocsGapExplicit(gap localops.ActivationDocsGap) bool {
 }
 
 func releaseActivationCleanupSemanticsPass(cleanup localops.ActivationCleanupEvidence) bool {
-	if cleanup.Status != "pass" || cleanup.ExitStatus != "pass" || strings.TrimSpace(cleanup.Mode) == "" || strings.TrimSpace(cleanup.RemainingState) == "" {
+	if cleanup.Status != releaseEvidenceStatusPass || cleanup.ExitStatus != releaseEvidenceStatusPass || strings.TrimSpace(cleanup.Mode) == "" || strings.TrimSpace(cleanup.RemainingState) == "" {
 		return false
 	}
 
@@ -1295,7 +1308,7 @@ func releaseGateLinkageByGate(rows []productEvidenceReleaseGateLinkage, gate str
 
 	return productEvidenceReleaseGateLinkage{
 		Gate:        gate,
-		Status:      "needs_evidence",
+		Status:      releaseEvidenceStatusNeedsEvidence,
 		Evidence:    "release gate linkage missing",
 		ClaimImpact: "release claims remain no-go until gate evidence is present",
 		Blockers:    []string{"release gate linkage missing: " + gate},
@@ -1303,7 +1316,7 @@ func releaseGateLinkageByGate(rows []productEvidenceReleaseGateLinkage, gate str
 }
 
 func releaseGateLinkageFromProduct(rows []productEvidenceReleaseGateLinkage, clients []releaseEvidenceClientReadiness, activation releaseEvidenceActivationSection) []productEvidenceReleaseGateLinkage {
-	p911Status := "needs_evidence"
+	p911Status := releaseEvidenceStatusNeedsEvidence
 
 	for _, row := range rows {
 		if row.Gate == "P9.11" {
@@ -1343,7 +1356,7 @@ func releaseGateLinkageFromProduct(rows []productEvidenceReleaseGateLinkage, cli
 	if !foundP96 {
 		out = append(out, releaseP96GateLinkage(productEvidenceReleaseGateLinkage{
 			Gate:        "P9.6",
-			Status:      "needs_evidence",
+			Status:      releaseEvidenceStatusNeedsEvidence,
 			Evidence:    "activation quickstart smoke or blocker summary",
 			ClaimImpact: "activation claims depend on pass status",
 		}, activation))
@@ -1357,16 +1370,16 @@ func releaseP912GateLinkage(row productEvidenceReleaseGateLinkage, releaseStatus
 		row.Counts = map[string]int{}
 	}
 
-	if row.Status != "evidence_present" {
+	if row.Status != releaseEvidenceStatusEvidencePresent {
 		row.Counts["blockers"] = len(row.Blockers)
 		return row
 	}
 
-	if releaseStatus == "evidence_present" {
+	if releaseStatus == releaseEvidenceStatusEvidencePresent {
 		return row
 	}
 
-	row.Status = "needs_evidence"
+	row.Status = releaseEvidenceStatusNeedsEvidence
 	row.Evidence = strings.TrimSpace(row.Evidence + "; downgraded client readiness rows and limitations")
 	row.ClaimImpact = "packaging/support thesis must cite downgraded classification statuses before release claims"
 	row.Blockers = localops.CompactStrings(append(row.Blockers, "release client readiness or P9.11 evidence incomplete")...)
@@ -1378,18 +1391,18 @@ func releaseP912GateLinkage(row productEvidenceReleaseGateLinkage, releaseStatus
 }
 
 func releaseP96GateLinkage(row productEvidenceReleaseGateLinkage, activation releaseEvidenceActivationSection) productEvidenceReleaseGateLinkage {
-	if activation.Status == "pass" {
-		row.Status = "evidence_present"
+	if activation.Status == releaseEvidenceStatusPass {
+		row.Status = releaseEvidenceStatusEvidencePresent
 		row.Evidence = "measured activation/onboarding evidence with cleanup"
 		row.ClaimImpact = "activation claims may cite measured clean-install evidence"
 
 		return row
 	}
 
-	if activation.Status == "blocked" {
-		row.Status = "blocked"
+	if activation.Status == releaseEvidenceStatusBlocked {
+		row.Status = releaseEvidenceStatusBlocked
 	} else {
-		row.Status = "needs_evidence"
+		row.Status = releaseEvidenceStatusNeedsEvidence
 	}
 
 	row.Evidence = "activation/onboarding evidence incomplete or downgraded"
@@ -1399,17 +1412,17 @@ func releaseP96GateLinkage(row productEvidenceReleaseGateLinkage, activation rel
 }
 
 func releaseP912ReadinessStatus(clients []releaseEvidenceClientReadiness, p911Status string) string {
-	if len(clients) == 0 || p911Status != "evidence_present" {
-		return "needs_evidence"
+	if len(clients) == 0 || p911Status != releaseEvidenceStatusEvidencePresent {
+		return releaseEvidenceStatusNeedsEvidence
 	}
 
 	for _, row := range clients {
-		if row.Status != "pass" || len(row.MissingEvidence) > 0 {
-			return "needs_evidence"
+		if row.Status != releaseEvidenceStatusPass || len(row.MissingEvidence) > 0 {
+			return releaseEvidenceStatusNeedsEvidence
 		}
 	}
 
-	return "evidence_present"
+	return releaseEvidenceStatusEvidencePresent
 }
 
 func releaseArchitecturePrimitives(class string) []string {
@@ -1443,25 +1456,25 @@ func releaseMetadataValue(value string) string {
 
 func releaseStatusFromExit(exit string, blocker string) string {
 	if strings.TrimSpace(blocker) != "" {
-		return "blocked"
+		return releaseEvidenceStatusBlocked
 	}
 
 	switch strings.TrimSpace(exit) {
 	case "0":
-		return "pass"
+		return releaseEvidenceStatusPass
 	case "":
-		return "partial"
+		return releaseEvidenceStatusPartial
 	default:
-		return "fail"
+		return releaseEvidenceStatusFail
 	}
 }
 
 func releaseFileStatus(path string) string {
 	if _, err := os.Stat(path); err == nil {
-		return "present"
+		return releaseEvidenceStatusPresent
 	}
 
-	return "missing"
+	return releaseEvidenceStatusMissing
 }
 
 func releaseArtifactKind(name string) string {

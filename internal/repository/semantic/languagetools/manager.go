@@ -10,9 +10,9 @@ import (
 	"sync"
 
 	"idiom/internal/platform/failures"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/semantic"
 	"idiom/internal/repository/semantic/language"
-	"idiom/internal/platform/util"
 )
 
 type Capability = language.Capability
@@ -66,13 +66,19 @@ type Host interface {
 type Manager struct {
 	host Host
 
-	mu            sync.Mutex
-	goIndex       *semantic.GoIndex
-	goIndexToken  string
-	cppIndex      *semantic.CppIndex
-	cppIndexToken string
-	goplsPath     string
-	goplsChecked  bool
+	mu             sync.Mutex
+	goIndex        *semantic.GoIndex
+	goIndexToken   string
+	cppIndex       *semantic.CppIndex
+	cppIndexToken  string
+	rustIndex      *semantic.RustIndex
+	rustIndexToken string
+	tsIndex        *semantic.TsIndex
+	tsIndexToken   string
+	javaIndex      *semantic.JavaIndex
+	javaIndexToken string
+	goplsPath      string
+	goplsChecked   bool
 }
 
 func NewManager(host Host) *Manager {
@@ -406,14 +412,6 @@ func (m *Manager) relativeWorkspacePath(path string) (string, bool) {
 	return rel, true
 }
 
-func LanguageForFile(path string) (LanguageSupport, bool) {
-	return language.LanguageForFile(path)
-}
-
-func LanguageForName(name string) (LanguageSupport, bool) {
-	return language.LanguageForName(name)
-}
-
 func sourceSanityCoversPath(path string) bool {
 	if _, ok := language.LanguageForFile(path); ok {
 		return true
@@ -441,7 +439,7 @@ func readFileLinesDirect(path string, start, end int) (string, error) {
 		return "", err
 	}
 
-	lines := util.SplitWorkspaceFileLines(data)
+	lines := textutil.SplitWorkspaceFileLines(data)
 
 	if start <= 0 {
 		start = 1

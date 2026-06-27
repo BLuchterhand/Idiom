@@ -2,10 +2,66 @@ package autonomy
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+type memoryEventSink struct {
+	mu     sync.Mutex
+	events []Event
+}
+
+func newMemoryEventSink() *memoryEventSink {
+	return &memoryEventSink{}
+}
+
+func (s *memoryEventSink) Emit(event Event) error {
+	if s == nil {
+		return fmt.Errorf("autonomy event sink is nil")
+	}
+
+	event.Normalize()
+	if event.EventID == "" {
+		event.EventID = event.stableID()
+	}
+	if err := event.Validate(); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(s.events) > 0 {
+		last := s.events[len(s.events)-1]
+		if event.Sequence <= last.Sequence {
+			return fmt.Errorf("autonomy event sequence must increase: got %d after %d", event.Sequence, last.Sequence)
+		}
+		if event.OccurredAt.Before(last.OccurredAt) {
+			return fmt.Errorf("autonomy event timestamp moved backwards: got %s after %s", event.OccurredAt.Format(time.RFC3339Nano), last.OccurredAt.Format(time.RFC3339Nano))
+		}
+	}
+
+	s.events = append(s.events, copyEvent(event))
+	return nil
+}
+
+func (s *memoryEventSink) Events() []Event {
+	if s == nil {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	out := make([]Event, 0, len(s.events))
+	for _, event := range s.events {
+		out = append(out, copyEvent(event))
+	}
+	return out
+}
 
 func TestContractCompiledEventSerializesStableLifecyclePayload(t *testing.T) {
 	contract := newEventTestPhaseContract(t)
@@ -92,7 +148,7 @@ func TestMemoryEventSinkPreservesOrderingAndCopiesEvents(t *testing.T) {
 		t.Fatalf("NewObligationStateEvent returned error: %v", err)
 	}
 
-	sink := NewMemoryEventSink()
+	sink := newMemoryEventSink()
 	if err := sink.Emit(first); err != nil {
 		t.Fatalf("emit first event: %v", err)
 	}
@@ -258,7 +314,7 @@ func TestGateDecisionEventSerializesTypedGatePayload(t *testing.T) {
 		t.Fatalf("gate safe alternatives should be copied: %#v", event.Gate.SafeAlternatives)
 	}
 
-	sink := NewMemoryEventSink()
+	sink := newMemoryEventSink()
 	if err := sink.Emit(event); err != nil {
 		t.Fatalf("emit gate event: %v", err)
 	}

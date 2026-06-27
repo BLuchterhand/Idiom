@@ -8,39 +8,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 
 	"idiom/internal/repository/discovery"
 	"idiom/internal/repository/semantic"
 )
-
-// javaCache holds per-Manager Java index + token data. Mirrors the
-// rustCache pattern so we don't have to touch the centralized
-// manager.go struct to add caching. Invalidation shares the same
-// HEAD/dirty-status token the other caches use.
-type javaCache struct {
-	mu    sync.Mutex
-	index *semantic.JavaIndex
-	token string
-}
-
-var (
-	javaCachesMu sync.Mutex
-	javaCaches   = make(map[*Manager]*javaCache)
-)
-
-func managerJavaCache(m *Manager) *javaCache {
-	javaCachesMu.Lock()
-	defer javaCachesMu.Unlock()
-
-	cache, ok := javaCaches[m]
-	if !ok {
-		cache = &javaCache{}
-		javaCaches[m] = cache
-	}
-
-	return cache
-}
 
 // -- Detection --------------------------------------------------------------
 
@@ -102,12 +73,10 @@ func (m *Manager) getJavaIndex() (*semantic.JavaIndex, error) {
 	}
 
 	token := m.currentGoIndexToken()
-	cache := managerJavaCache(m)
-	cache.mu.Lock()
-
-	cached := cache.index
-	cachedToken := cache.token
-	cache.mu.Unlock()
+	m.mu.Lock()
+	cached := m.javaIndex
+	cachedToken := m.javaIndexToken
+	m.mu.Unlock()
 
 	if cached != nil && (token == "" || token == cachedToken) {
 		return cached, nil
@@ -122,11 +91,10 @@ func (m *Manager) getJavaIndex() (*semantic.JavaIndex, error) {
 		return nil, fmt.Errorf("no Java files were indexed under the workspace")
 	}
 
-	cache.mu.Lock()
-
-	cache.index = index
-	cache.token = token
-	cache.mu.Unlock()
+	m.mu.Lock()
+	m.javaIndex = index
+	m.javaIndexToken = token
+	m.mu.Unlock()
 
 	return index, nil
 }

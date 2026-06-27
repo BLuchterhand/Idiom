@@ -51,14 +51,11 @@ func TestTuiReadApprovalDeciderAutoDeniesInHeadlessMode(t *testing.T) {
 	if !strings.Contains(emitted, "read_approval_requested") {
 		t.Fatalf("expected read_approval_requested event in JSON stream, got: %s", emitted)
 	}
-	if !strings.Contains(emitted, "read_approval_decision") {
-		t.Fatalf("expected read_approval_decision event in JSON stream, got: %s", emitted)
+	if strings.Contains(emitted, "read_approval_decision") {
+		t.Fatalf("decider should not emit read_approval_decision; gate owns decision provenance, got: %s", emitted)
 	}
 	if !strings.Contains(emitted, `"path":"docs/design-intent-loop-mutation-cycle.md"`) {
 		t.Fatalf("event should name the requested path, got: %s", emitted)
-	}
-	if !strings.Contains(emitted, `"outcome":"denied"`) {
-		t.Fatalf("event should report denied outcome, got: %s", emitted)
 	}
 }
 

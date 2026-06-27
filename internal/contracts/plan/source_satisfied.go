@@ -1,4 +1,4 @@
-package plancontract
+package plan
 
 import (
 	"sort"
@@ -56,22 +56,11 @@ func sourceSatisfiedCoveragePathSet(answer string, requiredPaths map[string]stru
 }
 
 func SourceSatisfiedAnswerIntent(answer string) bool {
-	trimmed := strings.TrimSpace(answer)
-	if trimmed == "" {
+	if !SourceSatisfiedAnswerDeclaresDecision(answer) {
 		return false
 	}
 
-	firstLine := trimmed
-	if idx := strings.IndexAny(firstLine, "\r\n"); idx >= 0 {
-		firstLine = firstLine[:idx]
-	}
-
-	firstLine = strings.ToLower(strings.TrimSpace(firstLine))
-	if firstLine != strings.ToLower(SourceSatisfiedDecision) && firstLine != "decision: source satisfied" {
-		return false
-	}
-
-	lower := strings.ToLower(trimmed)
+	lower := strings.ToLower(strings.TrimSpace(answer))
 
 	return containsAnySourceSatisfiedIntent(lower,
 		"already contains",
@@ -86,10 +75,22 @@ func SourceSatisfiedAnswerIntent(answer string) bool {
 		"no-op",
 		"no op",
 		"nothing to change",
-		"stale anchor",
-		"stale old_text",
-		"stale spec",
 	)
+}
+
+func SourceSatisfiedAnswerDeclaresDecision(answer string) bool {
+	trimmed := strings.TrimSpace(answer)
+	if trimmed == "" {
+		return false
+	}
+
+	firstLine := trimmed
+	if idx := strings.IndexAny(firstLine, "\r\n"); idx >= 0 {
+		firstLine = firstLine[:idx]
+	}
+
+	firstLine = strings.ToLower(strings.TrimSpace(firstLine))
+	return firstLine == strings.ToLower(SourceSatisfiedDecision) || firstLine == "decision: source satisfied"
 }
 
 func sourceSatisfiedPathSet(paths []string) map[string]struct{} {

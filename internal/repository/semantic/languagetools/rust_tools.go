@@ -9,39 +9,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 
 	"idiom/internal/repository/discovery"
 	"idiom/internal/repository/semantic"
 )
-
-// rustCache holds per-Manager Rust index + token data. We keep this out of
-// the Manager struct so the Rust tooling can be a surgical add-on without
-// touching the centralized manager.go file. Entries are cleared on the
-// same signal the cpp cache invalidates on (workspace HEAD/dirty change).
-type rustCache struct {
-	mu    sync.Mutex
-	index *semantic.RustIndex
-	token string
-}
-
-var (
-	rustCachesMu sync.Mutex
-	rustCaches   = make(map[*Manager]*rustCache)
-)
-
-func managerRustCache(m *Manager) *rustCache {
-	rustCachesMu.Lock()
-	defer rustCachesMu.Unlock()
-
-	cache, ok := rustCaches[m]
-	if !ok {
-		cache = &rustCache{}
-		rustCaches[m] = cache
-	}
-
-	return cache
-}
 
 // -- Detection --------------------------------------------------------------
 
@@ -91,12 +62,10 @@ func (m *Manager) getRustIndex() (*semantic.RustIndex, error) {
 	}
 
 	token := m.currentGoIndexToken()
-	cache := managerRustCache(m)
-	cache.mu.Lock()
-
-	cached := cache.index
-	cachedToken := cache.token
-	cache.mu.Unlock()
+	m.mu.Lock()
+	cached := m.rustIndex
+	cachedToken := m.rustIndexToken
+	m.mu.Unlock()
 
 	if cached != nil && (token == "" || token == cachedToken) {
 		return cached, nil
@@ -111,11 +80,10 @@ func (m *Manager) getRustIndex() (*semantic.RustIndex, error) {
 		return nil, fmt.Errorf("no Rust files were indexed under the workspace")
 	}
 
-	cache.mu.Lock()
-
-	cache.index = index
-	cache.token = token
-	cache.mu.Unlock()
+	m.mu.Lock()
+	m.rustIndex = index
+	m.rustIndexToken = token
+	m.mu.Unlock()
 
 	return index, nil
 }

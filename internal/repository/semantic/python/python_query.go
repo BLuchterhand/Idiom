@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 type PythonSymbolMatch struct {
@@ -167,7 +167,7 @@ func (idx *PythonIndex) FindCallsInto(pattern string, limit int) []PythonCallMat
 						StartLine: symbol.StartLine,
 						EndLine:   symbol.EndLine,
 					},
-					CalleeName: util.FirstNonEmpty(target.Qualified, target.Name),
+					CalleeName: textutil.FirstNonEmpty(target.Qualified, target.Name),
 					Line:       call.Line,
 					Score:      target.Score,
 				})

@@ -1,4 +1,4 @@
-package plancontract
+package plan
 
 import (
 	"crypto/sha256"

@@ -6,8 +6,9 @@ import (
 	"sync"
 
 	"idiom/internal/contracts/autonomy"
+	"idiom/internal/platform/config"
 	"idiom/internal/platform/failures"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 const ToolProfileDefault = "default"
@@ -23,6 +24,11 @@ type ToolProfileDecision struct {
 	Allowed bool
 	Code    string
 	Reason  string
+}
+
+type ToolProfilePolicyContext struct {
+	Workspace     config.Workspace
+	ExternalTools *ExternalToolRegistry
 }
 
 func NormalizeToolProfile(profile string) (string, error) {
@@ -100,11 +106,36 @@ func ToolRequestAllowedForProfile(req ToolRequest, profile string) ToolProfileDe
 	return discoveryProfileRequestAllowed(req)
 }
 
-func ToolProfileDeniedResult(tool string, profile string, decision ToolProfileDecision) ToolResult {
-	profile = util.FirstNonEmpty(strings.TrimSpace(profile), ToolProfileDefault)
+func ToolRequestAllowedForWorkspaceProfile(req ToolRequest, profile string, policy ToolProfilePolicyContext) ToolProfileDecision {
+	decision := ToolRequestAllowedForProfile(req, profile)
+	if decision.Allowed {
+		return decision
+	}
 
-	code := util.FirstNonEmpty(strings.TrimSpace(decision.Code), "profile_denied")
-	reason := util.FirstNonEmpty(strings.TrimSpace(decision.Reason), "tool is not allowed by profile")
+	profile, err := NormalizeToolProfile(profile)
+	if err != nil {
+		return ToolProfileDecision{Allowed: false, Code: "invalid_profile", Reason: err.Error()}
+	}
+	if profile != ToolProfileDiscovery || IsBuiltInToolName(req.Tool) {
+		return decision
+	}
+
+	if policy.ExternalTools != nil && policy.ExternalTools.IsReadOnlyDiscovery(req.Tool) {
+		return ToolProfileDecision{Allowed: true}
+	}
+
+	if strings.HasPrefix(strings.TrimSpace(req.Tool), "mcp:") && MatchConfiguredToolRule(req.Tool, req, policy.Workspace.ToolRules) == ToolRuleAllow {
+		return ToolProfileDecision{Allowed: true}
+	}
+
+	return decision
+}
+
+func ToolProfileDeniedResult(tool string, profile string, decision ToolProfileDecision) ToolResult {
+	profile = textutil.FirstNonEmpty(strings.TrimSpace(profile), ToolProfileDefault)
+
+	code := textutil.FirstNonEmpty(strings.TrimSpace(decision.Code), "profile_denied")
+	reason := textutil.FirstNonEmpty(strings.TrimSpace(decision.Reason), "tool is not allowed by profile")
 
 	return ToolResult{
 		Tool:    strings.TrimSpace(tool),

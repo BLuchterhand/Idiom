@@ -15,11 +15,11 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/contracts/pathparse"
 	"idiom/internal/evidence/telemetry"
-	atomcmd "idiom/internal/surfaces/cli/atom"
 	briefcmd "idiom/internal/surfaces/cli/brief"
 	"idiom/internal/surfaces/cliassets"
-	"idiom/internal/workflows/refinescope"
+	"idiom/internal/workflows/atomintake"
 )
 
 // refineIterMetrics captures observable per-iteration data and is
@@ -105,7 +105,7 @@ func DefaultDispatchWithConfig(metaBriefPath string, configPath string, stdout, 
 }
 
 func atomSpecDispatchBlocker(specBody string) string {
-	return atomcmd.SpecDispatchBlocker(specBody)
+	return atomintake.SpecDispatchBlocker(specBody)
 }
 
 func runBriefLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
@@ -312,7 +312,7 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 
 	mode := strings.TrimSpace(opts.Mode)
 	if mode == "" {
-		mode = refineDetectMode(string(specBody))
+		mode = pathparse.DetectMode(string(specBody))
 	}
 
 	fmt.Fprintf(stderr, "refine: mode=%s (auto-detected from spec)\n", mode)
@@ -325,7 +325,7 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 	// harness-extracted routing targets without re-parsing the brief.
 	// Empty target list = no sidecars (extraction failed at spec-parse
 	// time).
-	specDeliverableTargets := extractDeliverableTargets(string(specBody), mode)
+	specDeliverableTargets := pathparse.ExtractDeliverableTargets(string(specBody), mode)
 	if len(specDeliverableTargets) > 0 {
 		targetBody := strings.Join(specDeliverableTargets, "\n") + "\n"
 		if err := os.WriteFile(filepath.Join(stateDir, "deliverable_targets.txt"), []byte(targetBody), 0o644); err != nil {
@@ -690,8 +690,8 @@ func writeRefineDraftMeta(metaPath, draftPath string, opts laneRefineOptions, sp
 	// so the model doesn't have to re-parse the spec. Anchored specs
 	// prefer the explicit Files To Modify table; markdown specs retain
 	// the older verb+path fallback.
-	targets := extractDeliverableTargets(specBody, mode)
-	target := firstRefineDeliverableTarget(targets)
+	targets := pathparse.ExtractDeliverableTargets(specBody, mode)
+	target := pathparse.FirstDeliverableTarget(targets)
 	deliverableContext := refineDeliverableContextBlock(targets)
 
 	if len(targets) > 0 {
@@ -770,7 +770,7 @@ func refineDraftArtifactOutputBlock(draftPath string) string {
 // `<!-- idiom:harness-deliverable-block -->` marker instead, which
 // refineInjectDeliverableBlock substitutes at finalize time.
 func refineDeliverableContextBlock(targets []string) string {
-	targets = normalizeRefineTargets(targets)
+	targets = pathparse.NormalizeTargets(targets)
 	if len(targets) == 0 {
 		return "(no deliverable target detected in spec — harness will not pre-fill the deliverable block; model still owns content sections only)"
 	}
@@ -811,7 +811,7 @@ const refineDeliverableMarker = "<!-- idiom:harness-deliverable-block -->"
 //
 // Stderr-logs the substitution outcome for debugging.
 func refineInjectDeliverableBlock(body []byte, mode string, targets []string, projectRoot string, stderr io.Writer) []byte {
-	targets = normalizeRefineTargets(targets)
+	targets = pathparse.NormalizeTargets(targets)
 	if len(targets) == 0 {
 		fmt.Fprintf(stderr, "refine: deliverable injection skipped (no target extracted from spec)\n")
 
@@ -842,7 +842,7 @@ func refineInjectDeliverableBlock(body []byte, mode string, targets []string, pr
 // modes outside the canonical set so the caller can preserve the
 // marker as a visible defect rather than silently corrupt the brief.
 func refineRenderDeliverableBlock(mode string, targets []string, projectRoot string) string {
-	targets = normalizeRefineTargets(targets)
+	targets = pathparse.NormalizeTargets(targets)
 	if len(targets) == 0 {
 		return ""
 	}
@@ -1174,7 +1174,7 @@ func tagsIntersect(want []string, have map[string]bool) bool {
 // minimal and language-agnostic; project-specific tags live in
 // overlay traps' applies_to fields, not here.
 func classifyBriefAtomShape(body []byte) []string {
-	files := extractFilesToModify(string(body))
+	files := pathparse.ExtractFilesToModify(string(body))
 	tags := []string{}
 	seen := map[string]bool{}
 	add := func(t string) {
@@ -1201,21 +1201,6 @@ func classifyBriefAtomShape(body []byte) []string {
 	}
 
 	return tags
-}
-
-// extractFilesToModify pulls the file paths out of a brief's
-// "Files To Modify" table. The table shape is enforced by lint:
-//
-//	| File | Change |
-//	|------|--------|
-//	| `path/to/file.go` | ADD/MODIFY/NEW FILE: ... |
-//
-// Returns paths in document order, deduplicated. Skips meta-brief
-// paths (e.g. the refine output itself) by exempting paths under
-// the project's .idiom/ tree from the result — those are scaffolding,
-// not deliverables.
-func extractFilesToModify(text string) []string {
-	return refinescope.ExtractFilesToModify(text)
 }
 
 func filesContainTestCode(files []string) bool {
@@ -1335,38 +1320,9 @@ func ensureRefineDraftArtifactClosure(body string, stderr io.Writer, source stri
 // markdown is the §2.2 new mode for NEW markdown deliverables where
 // anchors don't apply and the brief just inlines the file content.
 const (
-	refineModeAnchored = refinescope.ModeAnchored
-	refineModeMarkdown = refinescope.ModeMarkdown
+	refineModeAnchored = pathparse.ModeAnchored
+	refineModeMarkdown = pathparse.ModeMarkdown
 )
-
-// refineDetectMode classifies the spec's deliverable shape. Returns
-// refineModeMarkdown ONLY when every cited path is a markdown-class
-// extension AND no source-class extension appears. Falls back to
-// anchored mode (the safer default) for mixed shapes or specs with
-// no path mentions at all. Heuristic — escape hatch via opts.Mode
-// override is the design's safety valve (see docs §2.2).
-func refineDetectMode(specBody string) string {
-	return refinescope.DetectMode(specBody)
-}
-
-// extractDeliverableTargets returns the harness-owned path allowlist
-// implied by a spec. Anchored specs are table-first: an explicit
-// Files To Modify table is already the planner's edit contract, so
-// preserve every path rather than guessing one prose target. Markdown
-// specs retain the legacy verb+path extraction because many one-shot
-// docs specs name a single deliverable inline.
-//
-// Examples:
-//   - Files table with `a.cpp`, `a_test.cpp` → []string{"a.cpp", "a_test.cpp"}
-//   - "audit `lane_postflight.sh` and produce `docs/foo.md`" → []string{"docs/foo.md"}
-//   - "modify `foo.go`" → []string{"foo.go"} in anchored mode when tableless
-//   - "add `EventClass` mapping" → nil (symbol, not a path)
-//
-// Heuristic — the override `--mode` flag and the safety-lint check
-// at meta-draft load time backstop wrong guesses.
-func extractDeliverableTargets(specBody, mode string) []string {
-	return refinescope.ExtractDeliverableTargets(specBody, mode)
-}
 
 // refineDeliverableTargetMismatch returns a formatted BLOCK string
 // (suitable for prepending to lint output) when the brief's Files To
@@ -1387,7 +1343,7 @@ func extractDeliverableTargets(specBody, mode string) []string {
 // AND the patcher (Gap 1 — patcher sees lint preload directly) gets
 // the mismatch as an explicit edit target.
 func refineDeliverableTargetMismatch(draftPath string, specTargets []string) string {
-	specTargets = normalizeRefineTargets(specTargets)
+	specTargets = pathparse.NormalizeTargets(specTargets)
 	if len(specTargets) == 0 {
 		return ""
 	}
@@ -1404,7 +1360,7 @@ func refineDeliverableTargetMismatch(draftPath string, specTargets []string) str
 		return ""
 	}
 
-	files := extractFilesToModify(string(body))
+	files := pathparse.ExtractFilesToModify(string(body))
 	if len(files) == 0 {
 		// Markdown-deliverable mode often has no Files To Modify;
 		// the deliverable target lives in `## Deliverable Path:`
@@ -1425,14 +1381,6 @@ func refineDeliverableTargetMismatch(draftPath string, specTargets []string) str
 	return fmt.Sprintf("- [BLOCK] (deliverable-target-mismatch) brief's Files To Modify lists %v but spec asks for deliverable target(s) %s; missing %s. The canonical templates emit a `%s` marker after `## Problem` so the harness owns the path — emit the marker verbatim instead of authoring the block yourself.", files, refineFormatBacktickList(specTargets), refineFormatBacktickList(missing), refineDeliverableMarker)
 }
 
-func firstRefineDeliverableTarget(targets []string) string {
-	return refinescope.FirstDeliverableTarget(targets)
-}
-
-func normalizeRefineTargets(targets []string) []string {
-	return refinescope.NormalizeTargets(targets)
-}
-
 func bodyContainsAnyRefineTarget(body string, targets []string) bool {
 	for _, target := range targets {
 		if strings.Contains(body, target) {
@@ -1450,7 +1398,7 @@ func missingRefineTargets(files, targets []string) []string {
 		found := false
 
 		for _, file := range files {
-			if pathsEquivalent(file, target) {
+			if pathparse.PathsEquivalent(file, target) {
 				found = true
 				break
 			}
@@ -1465,7 +1413,7 @@ func missingRefineTargets(files, targets []string) []string {
 }
 
 func refineFormatBacktickList(targets []string) string {
-	targets = normalizeRefineTargets(targets)
+	targets = pathparse.NormalizeTargets(targets)
 	if len(targets) == 0 {
 		return "(none)"
 	}
@@ -1476,15 +1424,6 @@ func refineFormatBacktickList(targets []string) string {
 	}
 
 	return strings.Join(quoted, ", ")
-}
-
-// pathsEquivalent compares two path strings tolerantly: trim
-// whitespace, normalize slashes, ignore leading "./". Two paths that
-// reduce to the same string are equivalent. Used by the deliverable-
-// target mismatch check so cosmetic differences ("./foo.md" vs
-// "foo.md") don't trip the BLOCK.
-func pathsEquivalent(a, b string) bool {
-	return refinescope.PathsEquivalent(a, b)
 }
 
 func writeRefineReviewMeta(metaPath, draftPath, reviewPath, projectRoot, lintOutput string) error {
@@ -1763,7 +1702,7 @@ func writeRefinePatchMeta(metaPath, prevDraftPath, prevReviewPath, newDraftPath,
 }
 
 func refineEvidencePathList(paths []string) string {
-	paths = normalizeRefineTargets(paths)
+	paths = pathparse.NormalizeTargets(paths)
 	if len(paths) == 0 {
 		return "- (none)\n"
 	}
@@ -1782,7 +1721,7 @@ var refineEvidenceTermRe = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-
 const refinePatchSourceEvidenceAnchorsPerPath = 12
 
 func refinePatchSourceEvidence(projectRoot, prevDraftPath, prevReviewPath, lintOutput string, evidencePaths []string) string {
-	paths := normalizeRefineTargets(evidencePaths)
+	paths := pathparse.NormalizeTargets(evidencePaths)
 	if len(paths) == 0 {
 		return "- (none)\n"
 	}

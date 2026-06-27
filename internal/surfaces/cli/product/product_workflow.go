@@ -14,7 +14,6 @@ import (
 
 	"idiom/internal/evidence/telemetry"
 	briefcmd "idiom/internal/surfaces/cli/brief"
-	toolcmd "idiom/internal/surfaces/cli/tool"
 	"idiom/internal/workflows/productworkflow"
 )
 
@@ -103,11 +102,11 @@ func printProductUsage(w io.Writer) {
 }
 
 type productValidateArtifactOutput struct {
-	Status          string `json:"status"`
-	Kind            string `json:"kind"`
-	Path            string `json:"path"`
-	Error           string `json:"error,omitempty"`
-	NextValidAction string `json:"next_valid_action"`
+	Status          productworkflow.ProductWorkflowStatus `json:"status"`
+	Kind            string                                `json:"kind"`
+	Path            string                                `json:"path"`
+	Error           string                                `json:"error,omitempty"`
+	NextValidAction string                                `json:"next_valid_action"`
 }
 
 func runProductValidateArtifact(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
@@ -152,14 +151,14 @@ func runProductValidateArtifact(args []string, stdout io.Writer, stderr io.Write
 	cleanPath := filepath.Clean(path)
 	data, err := os.ReadFile(cleanPath)
 	out := productValidateArtifactOutput{
-		Status:          "pass",
+		Status:          productworkflow.ProductWorkflowStatusPass,
 		Kind:            kind,
 		Path:            cleanPath,
 		NextValidAction: "artifact is parser-valid for product workflow intake",
 	}
 
 	if err != nil {
-		out.Status = "fail"
+		out.Status = productworkflow.ProductWorkflowStatusFail
 		out.Error = fmt.Sprintf("read artifact: %v", err)
 		out.NextValidAction = "regenerate or repair the artifact before continuing"
 	} else {
@@ -174,15 +173,7 @@ func runProductValidateArtifact(args []string, stdout io.Writer, stderr io.Write
 
 				tdd, err = parseProductValidatorTDDLedger(tddLedgerPath)
 				if err == nil {
-					tddIDs := map[string]bool{}
-
-					for _, obligation := range tdd.Obligations {
-						id := strings.TrimSpace(obligation.ID)
-						if id != "" {
-							tddIDs[id] = true
-						}
-					}
-
+					tddIDs := productworkflow.BuildKnownTDDObligationIDs(tdd, nil)
 					if linkErrs := productworkflow.ValidatePRDTDDObligationCrossLinks(prd.Requirements, tddIDs); len(linkErrs) > 0 {
 						err = errors.New(linkErrs[0].Message)
 					}
@@ -201,14 +192,7 @@ func runProductValidateArtifact(args []string, stdout io.Writer, stderr io.Write
 
 					prd, err = parseProductValidatorPRD(prdPath)
 					if err == nil {
-						prdIDs = map[string]bool{}
-
-						for _, req := range prd.Requirements {
-							id := strings.TrimSpace(req.ID)
-							if id != "" {
-								prdIDs[id] = true
-							}
-						}
+						prdIDs = productworkflow.PRDRequirementIDSet(prd.Requirements)
 					}
 				}
 
@@ -219,14 +203,7 @@ func runProductValidateArtifact(args []string, stdout io.Writer, stderr io.Write
 
 					tdd, err = parseProductValidatorTDDLedger(tddLedgerPath)
 					if err == nil {
-						tddIDs = map[string]bool{}
-
-						for _, obligation := range tdd.Obligations {
-							id := strings.TrimSpace(obligation.ID)
-							if id != "" {
-								tddIDs[id] = true
-							}
-						}
+						tddIDs = productworkflow.BuildKnownTDDObligationIDs(tdd, nil)
 					}
 				}
 
@@ -240,7 +217,7 @@ func runProductValidateArtifact(args []string, stdout io.Writer, stderr io.Write
 		}
 
 		if err != nil {
-			out.Status = "fail"
+			out.Status = productworkflow.ProductWorkflowStatusFail
 			out.Error = err.Error()
 			out.NextValidAction = "regenerate or repair the artifact before continuing"
 		}
@@ -260,7 +237,7 @@ func runProductValidateArtifact(args []string, stdout io.Writer, stderr io.Write
 
 			return 1
 		}
-	} else if out.Status == "pass" {
+	} else if out.Status == productworkflow.ProductWorkflowStatusPass {
 		fmt.Fprintf(stdout, "product validate-artifact: %s %s OK\n", out.Kind, out.Path)
 		fmt.Fprintf(stdout, "  next: %s\n", out.NextValidAction)
 	} else {
@@ -269,7 +246,7 @@ func runProductValidateArtifact(args []string, stdout io.Writer, stderr io.Write
 		fmt.Fprintf(stdout, "  next: %s\n", out.NextValidAction)
 	}
 
-	if out.Status != "pass" {
+	if out.Status != productworkflow.ProductWorkflowStatusPass {
 		return 1
 	}
 
@@ -345,7 +322,7 @@ func runProductLint(args []string, stdout io.Writer, stderr io.Writer, rec *tele
 			return 1
 		}
 	} else {
-		if result.Status == "pass" {
+		if result.Status == productworkflow.ProductWorkflowStatusPass {
 			fmt.Fprintf(stdout, "product lint: %s OK (%d files checked)\n", filepath.Base(absRoot), len(result.CheckedFiles))
 			fmt.Fprintln(stdout, "  status: PASS")
 		} else {
@@ -360,7 +337,7 @@ func runProductLint(args []string, stdout io.Writer, stderr io.Writer, rec *tele
 		fmt.Fprintf(stdout, "  next: %s\n", result.NextValidAction)
 	}
 
-	if result.Status != "pass" {
+	if result.Status != productworkflow.ProductWorkflowStatusPass {
 		return 1
 	}
 
@@ -368,13 +345,13 @@ func runProductLint(args []string, stdout io.Writer, stderr io.Writer, rec *tele
 }
 
 type productAuditSection struct {
-	Name     string                               `json:"name"`
-	Status   string                               `json:"status"`
-	Findings []productworkflow.LintSummaryFinding `json:"findings"`
+	Name     string                                `json:"name"`
+	Status   productworkflow.ProductWorkflowStatus `json:"status"`
+	Findings []productworkflow.LintSummaryFinding  `json:"findings"`
 }
 
 type productAuditResult struct {
-	Status          string                                  `json:"status"`
+	Status          productworkflow.ProductWorkflowStatus   `json:"status"`
 	EffortRoot      string                                  `json:"effort_root"`
 	CheckedFiles    []string                                `json:"checked_files"`
 	Sections        []productAuditSection                   `json:"sections"`
@@ -385,14 +362,14 @@ type productAuditResult struct {
 
 func buildAuditResult(lintResult productworkflow.LintSummaryResult) productAuditResult {
 	sectionMap := map[string]*productAuditSection{
-		"prd":          {Name: "prd", Status: "pass"},
-		"adr":          {Name: "adr", Status: "pass"},
-		"tdd":          {Name: "tdd", Status: "pass"},
-		"traceability": {Name: "traceability", Status: "pass"},
-		"reports":      {Name: "reports", Status: "pass"},
-		"obsidian":     {Name: "obsidian", Status: "pass"},
-		"scope_gate":   {Name: "scope_gate", Status: "pass"},
-		"metrics":      {Name: "metrics", Status: "pass"},
+		"prd":          {Name: "prd", Status: productworkflow.ProductWorkflowStatusPass},
+		"adr":          {Name: "adr", Status: productworkflow.ProductWorkflowStatusPass},
+		"tdd":          {Name: "tdd", Status: productworkflow.ProductWorkflowStatusPass},
+		"traceability": {Name: "traceability", Status: productworkflow.ProductWorkflowStatusPass},
+		"reports":      {Name: "reports", Status: productworkflow.ProductWorkflowStatusPass},
+		"obsidian":     {Name: "obsidian", Status: productworkflow.ProductWorkflowStatusPass},
+		"scope_gate":   {Name: "scope_gate", Status: productworkflow.ProductWorkflowStatusPass},
+		"metrics":      {Name: "metrics", Status: productworkflow.ProductWorkflowStatusPass},
 	}
 
 	for _, f := range lintResult.Findings {
@@ -412,7 +389,7 @@ func buildAuditResult(lintResult productworkflow.LintSummaryResult) productAudit
 		sec := sectionMap[section]
 
 		sec.Findings = append(sec.Findings, f)
-		sec.Status = "fail"
+		sec.Status = productworkflow.ProductWorkflowStatusFail
 	}
 
 	sections := make([]productAuditSection, 0, len(sectionMap))
@@ -420,9 +397,9 @@ func buildAuditResult(lintResult productworkflow.LintSummaryResult) productAudit
 		sections = append(sections, *sectionMap[name])
 	}
 
-	status := "pass"
-	if lintResult.Status == "fail" {
-		status = "fail"
+	status := productworkflow.ProductWorkflowStatusPass
+	if lintResult.Status == productworkflow.ProductWorkflowStatusFail {
+		status = productworkflow.ProductWorkflowStatusFail
 	}
 
 	return productAuditResult{
@@ -474,7 +451,7 @@ func runProductAudit(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 	if metricsErr != nil {
 		finding := productMetricsFinding(metricsErr)
 
-		auditResult.Status = "fail"
+		auditResult.Status = productworkflow.ProductWorkflowStatusFail
 		auditResult.Findings = append(auditResult.Findings, finding)
 		markAuditSectionFailure(&auditResult, "metrics", finding)
 	} else {
@@ -497,7 +474,7 @@ func runProductAudit(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 			return 1
 		}
 	} else {
-		if auditResult.Status == "pass" {
+		if auditResult.Status == productworkflow.ProductWorkflowStatusPass {
 			fmt.Fprintf(stdout, "product audit: %s OK (%d files checked)\n", filepath.Base(absRoot), len(auditResult.CheckedFiles))
 			fmt.Fprintln(stdout, "  status: PASS")
 		} else {
@@ -535,7 +512,7 @@ func runProductAudit(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 		fmt.Fprintf(stdout, "  next: %s\n", auditResult.NextValidAction)
 	}
 
-	if auditResult.Status != "pass" {
+	if auditResult.Status != productworkflow.ProductWorkflowStatusPass {
 		return 1
 	}
 
@@ -561,7 +538,7 @@ func productMetricsFinding(err error) productworkflow.LintSummaryFinding {
 func markAuditSectionFailure(result *productAuditResult, name string, finding productworkflow.LintSummaryFinding) {
 	for i := range result.Sections {
 		if result.Sections[i].Name == name {
-			result.Sections[i].Status = "fail"
+			result.Sections[i].Status = productworkflow.ProductWorkflowStatusFail
 			result.Sections[i].Findings = append(result.Sections[i].Findings, finding)
 
 			return
@@ -570,7 +547,7 @@ func markAuditSectionFailure(result *productAuditResult, name string, finding pr
 
 	result.Sections = append(result.Sections, productAuditSection{
 		Name:     name,
-		Status:   "fail",
+		Status:   productworkflow.ProductWorkflowStatusFail,
 		Findings: []productworkflow.LintSummaryFinding{finding},
 	})
 }
@@ -636,7 +613,7 @@ func runProductEfforts(args []string, stdout io.Writer, stderr io.Writer, rec *t
 		return productEffortsErrorCode(result)
 	}
 
-	if result.Status != "pass" {
+	if result.Status != productworkflow.ProductWorkflowStatusPass {
 		return 1
 	}
 
@@ -656,7 +633,7 @@ func productEffortsErrorCode(result productworkflow.ProductEffortsResult) int {
 
 func printProductEfforts(w io.Writer, result productworkflow.ProductEffortsResult) {
 	label := "OK"
-	if result.Status != "pass" {
+	if result.Status != productworkflow.ProductWorkflowStatusPass {
 		label = "FAILED"
 	}
 
@@ -868,7 +845,7 @@ func writeProductStatusMigrationUsageError(stdout io.Writer, stderr io.Writer, j
 
 func productStatusMigrationUsageResult(code, path, message, targetStatus string) productworkflow.ProductStatusMigrationPlan {
 	return productworkflow.ProductStatusMigrationPlan{
-		Status:             "blocked",
+		Status:             productworkflow.ProductWorkflowStatusBlocked,
 		TargetStatusBucket: strings.ToLower(strings.TrimSpace(targetStatus)),
 		Blockers: []productworkflow.ProductStatusMigrationBlocker{{
 			Code:    code,
@@ -880,9 +857,9 @@ func productStatusMigrationUsageResult(code, path, message, targetStatus string)
 }
 
 type productStatusUsageJSONResult struct {
-	Status          string                      `json:"status"`
-	Blockers        []productStatusUsageBlocker `json:"blockers"`
-	NextValidAction string                      `json:"next_valid_action"`
+	Status          productworkflow.ProductWorkflowStatus `json:"status"`
+	Blockers        []productStatusUsageBlocker           `json:"blockers"`
+	NextValidAction string                                `json:"next_valid_action"`
 }
 
 type productStatusUsageBlocker struct {
@@ -897,7 +874,7 @@ func productStatusUsageResult(code, path, message string) productStatusUsageJSON
 
 func productUsageResult(code, path, message, nextValidAction string) productStatusUsageJSONResult {
 	return productStatusUsageJSONResult{
-		Status: "blocked",
+		Status: productworkflow.ProductWorkflowStatusBlocked,
 		Blockers: []productStatusUsageBlocker{{
 			Code:    code,
 			Path:    path,
@@ -931,7 +908,7 @@ func productStatusMigrationArgsRequestJSON(args []string) bool {
 }
 
 func productStatusMigrationExitCode(result productworkflow.ProductStatusMigrationPlan) int {
-	if result.Status == "planned" || result.Status == "applied" {
+	if result.Status == productworkflow.ProductWorkflowStatusPlanned || result.Status == productworkflow.ProductWorkflowStatusApplied {
 		return 0
 	}
 
@@ -946,7 +923,7 @@ func productStatusMigrationExitCode(result productworkflow.ProductStatusMigratio
 }
 
 func printProductStatusMigration(w io.Writer, mode string, result productworkflow.ProductStatusMigrationPlan) {
-	fmt.Fprintf(w, "product status-migration: %s %s\n", mode, strings.ToUpper(result.Status))
+	fmt.Fprintf(w, "product status-migration: %s %s\n", mode, strings.ToUpper(string(result.Status)))
 
 	if result.EffortID != "" {
 		fmt.Fprintf(w, "  effort_id: %s\n", result.EffortID)
@@ -1047,15 +1024,12 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		exitCode = 1
 	}
 
-	if view.AuditStatus != "pass" {
+	if view.AuditStatus != productworkflow.ProductWorkflowStatusPass {
 		exitCode = 1
 	}
 
-	operatorInputView := view
-
-	view.NextValidActions = productStatusNextValidActions(view, exitCode, wsErr != nil)
-
-	operatorStatus := productworkflow.BuildProductOperatorStatusView(operatorInputView, workflowState)
+	displayNextActions := productStatusNextValidActions(view, exitCode, wsErr != nil)
+	operatorStatus := productworkflow.BuildProductOperatorStatusView(view, workflowState)
 
 	logProductPhase(rec, "product_status", map[string]any{
 		"audit_status":  view.AuditStatus,
@@ -1103,13 +1077,15 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 			fmt.Fprintf(stdout, "  [%s] %s\n", b.Code, b.Message)
 		}
 
-		fmt.Fprintf(stdout, "  next: %s\n", view.NextValidActions[0])
+		if len(displayNextActions) > 0 {
+			fmt.Fprintf(stdout, "  next: %s\n", displayNextActions[0])
+		}
 
 		return exitCode
 	}
 
 	auditLabel := "OK"
-	if view.AuditStatus != "pass" {
+	if view.AuditStatus != productworkflow.ProductWorkflowStatusPass {
 		auditLabel = "FAILED"
 	}
 
@@ -1136,8 +1112,8 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		fmt.Fprintf(stdout, "  open_obligations (%d): %s\n", len(view.OpenObligations), strings.Join(view.OpenObligations, ", "))
 	}
 
-	if len(view.NextValidActions) > 0 {
-		fmt.Fprintf(stdout, "  next_actions: %s\n", strings.Join(view.NextValidActions, ", "))
+	if len(displayNextActions) > 0 {
+		fmt.Fprintf(stdout, "  next_actions: %s\n", strings.Join(displayNextActions, ", "))
 	}
 
 	if view.CheckedFileCount > 0 {
@@ -1167,7 +1143,9 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		fmt.Fprintln(stdout)
 	}
 
-	fmt.Fprintf(stdout, "  next: %s\n", view.NextValidActions[0])
+	if len(displayNextActions) > 0 {
+		fmt.Fprintf(stdout, "  next: %s\n", displayNextActions[0])
+	}
 
 	return exitCode
 }
@@ -1378,16 +1356,16 @@ func printProductRecoveryStatus(stdout io.Writer, recoveryStatus *productworkflo
 	fmt.Fprint(stdout, productworkflow.FormatProductRecoveryStatusText(recoveryStatus))
 }
 
-func productLintNextValidAction(status string) string {
-	if status == "pass" {
+func productLintNextValidAction(status productworkflow.ProductWorkflowStatus) string {
+	if status == productworkflow.ProductWorkflowStatusPass {
 		return "run `idiom product audit --effort-root <path>` for section-level checks"
 	}
 
 	return "fix findings, then rerun `idiom product lint --effort-root <path>`"
 }
 
-func productAuditNextValidAction(status string) string {
-	if status == "pass" {
+func productAuditNextValidAction(status productworkflow.ProductWorkflowStatus) string {
+	if status == productworkflow.ProductWorkflowStatusPass {
 		return "run `idiom product status --effort-root <path>` to inspect workflow state"
 	}
 
@@ -1404,7 +1382,7 @@ func productStatusNextValidActions(view productworkflow.ProductStatusView, exitC
 	}
 
 	if exitCode != 0 {
-		action := "fix product workflow findings, then rerun `idiom product status --effort-root <path>`"
+		action := productworkflow.ProductStatusAuditRemediationAction
 		if len(view.NextValidActions) == 0 {
 			return []string{action}
 		}
@@ -1700,16 +1678,16 @@ func runProductPRD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		"prompt_write_count":  promptWriteCount,
 	})
 
-	status := "pass"
+	status := productworkflow.ProductWorkflowStatusPass
 	if writeBlocked {
-		status = "blocked"
+		status = productworkflow.ProductWorkflowStatusBlocked
 	}
 
 	type prdOutput struct {
-		Status           string                             `json:"status"`
-		EffortRoot       string                             `json:"effort_root"`
-		PromptWriteCount int                                `json:"prompt_write_count"`
-		Plan             productworkflow.PRDDraftPromptPlan `json:"plan"`
+		Status           productworkflow.ProductWorkflowStatus `json:"status"`
+		EffortRoot       string                                `json:"effort_root"`
+		PromptWriteCount int                                   `json:"prompt_write_count"`
+		Plan             productworkflow.PRDDraftPromptPlan    `json:"plan"`
 	}
 
 	out := prdOutput{
@@ -1866,16 +1844,16 @@ func runProductADR(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		"prompt_write_count":    promptWriteCount,
 	})
 
-	status := "pass"
+	status := productworkflow.ProductWorkflowStatusPass
 	if writeBlocked {
-		status = "blocked"
+		status = productworkflow.ProductWorkflowStatusBlocked
 	}
 
 	type adrOutput struct {
-		Status           string                             `json:"status"`
-		EffortRoot       string                             `json:"effort_root"`
-		PromptWriteCount int                                `json:"prompt_write_count"`
-		Plan             productworkflow.ADRDraftPromptPlan `json:"plan"`
+		Status           productworkflow.ProductWorkflowStatus `json:"status"`
+		EffortRoot       string                                `json:"effort_root"`
+		PromptWriteCount int                                   `json:"prompt_write_count"`
+		Plan             productworkflow.ADRDraftPromptPlan    `json:"plan"`
 	}
 
 	out := adrOutput{
@@ -2047,13 +2025,6 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 			out.Evaluation.Blockers = []productworkflow.CoverageGateBlocker{}
 		}
 
-		logProductPhase(rec, "product_tdd_coverage_gate_evaluated", map[string]any{
-			"status":         out.Evaluation.Status,
-			"finding_count":  len(out.Evaluation.Findings),
-			"blocker_count":  len(out.Evaluation.Blockers),
-			"criteria_count": len(out.Evaluation.Criteria),
-		})
-
 		coverageGateEvent := productworkflow.BuildCoverageGateEvaluatedEvent(out.Evaluation, loaded.TDD)
 		logProductPhase(rec, coverageGateEvent.Event, map[string]any{
 			"event":           coverageGateEvent.Event,
@@ -2078,7 +2049,7 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 			fmt.Fprintf(stdout, "product tdd evaluate-coverage: %s (%d criteria, %d blockers)\n", out.Status, len(out.Evaluation.Criteria), len(out.Evaluation.Blockers))
 		}
 
-		if out.Status != "pass" {
+		if out.Status != productworkflow.ProductWorkflowStatusPass {
 			return 1
 		}
 
@@ -2183,7 +2154,7 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 			}
 		}
 
-		status := "blocked"
+		status := productworkflow.ProductWorkflowStatusBlocked
 		promoted := ledger
 		promotion := productworkflow.BehavioralCoveragePromotionResult{State: productworkflow.BehavioralCoveragePromotionStateProposed}
 		if len(findings) == 0 {
@@ -2208,10 +2179,10 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 				}
 			} else {
 				promoted = promotion.Ledger
-				status = "pass"
+				status = productworkflow.ProductWorkflowStatusPass
 			}
 			if len(findings) > 0 {
-				status = "blocked"
+				status = productworkflow.ProductWorkflowStatusBlocked
 				if promotion.LedgerCommitted {
 					promoted = promotion.Ledger
 				} else {
@@ -2233,7 +2204,7 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		})
 
 		type promotionOutput struct {
-			Status           string                                     `json:"status"`
+			Status           productworkflow.ProductWorkflowStatus      `json:"status"`
 			EffortRoot       string                                     `json:"effort_root"`
 			PromoteCoverage  string                                     `json:"promote_coverage"`
 			State            string                                     `json:"state"`
@@ -2284,7 +2255,7 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 			fmt.Fprintf(stdout, "product tdd promote-coverage: %s (%d findings, write=%v)\n", out.Status, len(out.Findings), out.Write)
 		}
 
-		if out.Status != "pass" {
+		if out.Status != productworkflow.ProductWorkflowStatusPass {
 			return 1
 		}
 
@@ -2295,12 +2266,12 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		Obligations: []productworkflow.TDDObligationPlanItem{},
 		Findings:    []productworkflow.TDDObligationPlanFinding{},
 	}
-	status := "blocked"
+	status := productworkflow.ProductWorkflowStatusBlocked
 
 	if len(findings) == 0 {
 		plan = productworkflow.PlanTDDObligations(prdDoc, parsedADRs, ledger, adrPathByID)
 		if !productworkflow.TDDObligationPlanHasBlockers(plan) {
-			status = "pass"
+			status = productworkflow.ProductWorkflowStatusPass
 		}
 	} else {
 		plan.Findings = append(plan.Findings, findings...)
@@ -2313,7 +2284,7 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 	})
 
 	type tddOutput struct {
-		Status     string                                     `json:"status"`
+		Status     productworkflow.ProductWorkflowStatus      `json:"status"`
 		EffortRoot string                                     `json:"effort_root"`
 		Plan       productworkflow.TDDObligationSynthesisPlan `json:"plan"`
 	}
@@ -2341,7 +2312,7 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		fmt.Fprintf(stdout, "product tdd plan-obligations: %s (%d obligations, %d findings)\n", out.Status, len(out.Plan.Obligations), len(out.Plan.Findings))
 	}
 
-	if out.Status != "pass" {
+	if out.Status != productworkflow.ProductWorkflowStatusPass {
 		return 1
 	}
 
@@ -2349,20 +2320,20 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 }
 
 type productFeedbackOutput struct {
-	Status          string                                   `json:"status"`
+	Status          productworkflow.ProductWorkflowStatus    `json:"status"`
 	EffortRoot      string                                   `json:"effort_root"`
 	Summary         productworkflow.ExecutionFeedbackSummary `json:"summary"`
 	NextValidAction string                                   `json:"next_valid_action"`
 }
 
 type productCoverageOutput struct {
-	Status     string                                 `json:"status"`
+	Status     productworkflow.ProductWorkflowStatus  `json:"status"`
 	EffortRoot string                                 `json:"effort_root"`
 	Evaluation productworkflow.CoverageGateEvaluation `json:"evaluation"`
 }
 
 type productFeedbackReconcileOutput struct {
-	Status                string                                                `json:"status"`
+	Status                productworkflow.ProductWorkflowStatus                 `json:"status"`
 	EffortRoot            string                                                `json:"effort_root"`
 	SummaryReferencePath  string                                                `json:"summary_reference_path"`
 	ReconciledStateOutput string                                                `json:"reconciled_state_output"`
@@ -2371,7 +2342,7 @@ type productFeedbackReconcileOutput struct {
 }
 
 type productFeedbackRankerLearningOutput struct {
-	Status                 string                                       `json:"status"`
+	Status                 productworkflow.ProductWorkflowStatus        `json:"status"`
 	EffortRoot             string                                       `json:"effort_root"`
 	SummaryReferencePath   string                                       `json:"summary_reference_path"`
 	RankerLearningEvidence productworkflow.RankerLearningEvidenceResult `json:"ranker_learning_evidence"`
@@ -2694,7 +2665,7 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 			fmt.Fprintf(stdout, "next: %s\n", out.NextValidAction)
 		}
 
-		if out.Status != "pass" {
+		if out.Status != productworkflow.ProductWorkflowStatusPass {
 			return 1
 		}
 
@@ -2799,7 +2770,7 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 			"next_valid_step": out.NextValidAction,
 		})
 
-		if out.Status == "pass" {
+		if out.Status == productworkflow.ProductWorkflowStatusPass {
 			stateBytes, err := json.MarshalIndent(reconciled.WorkflowState, "", "  ")
 			if err != nil {
 				fmt.Fprintf(stderr, "product feedback: marshal reconciled workflow state: %v\n", err)
@@ -2841,7 +2812,7 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 			fmt.Fprintf(stdout, "next: %s\n", out.NextValidAction)
 		}
 
-		if out.Status != "pass" {
+		if out.Status != productworkflow.ProductWorkflowStatusPass {
 			return 1
 		}
 
@@ -2961,7 +2932,7 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 		fmt.Fprintf(stdout, "next: %s\n", summary.NextValidAction)
 	}
 
-	if out.Status != "pass" {
+	if out.Status != productworkflow.ProductWorkflowStatusPass {
 		return 1
 	}
 
@@ -2980,13 +2951,13 @@ func mustJSONMarshal(v any) []byte {
 func parseProductFeedbackSummaryDocument(data []byte) (productworkflow.ExecutionFeedbackSummary, string, error) {
 	var wrapped productFeedbackOutput
 
-	if err := json.Unmarshal(data, &wrapped); err == nil && strings.TrimSpace(wrapped.Summary.Status) != "" {
-		return wrapped.Summary, strings.TrimSpace(wrapped.Status), nil
+	if err := json.Unmarshal(data, &wrapped); err == nil && strings.TrimSpace(string(wrapped.Summary.Status)) != "" {
+		return wrapped.Summary, strings.TrimSpace(string(wrapped.Status)), nil
 	}
 
 	var summary productworkflow.ExecutionFeedbackSummary
 
-	if err := json.Unmarshal(data, &summary); err == nil && strings.TrimSpace(summary.Status) != "" {
+	if err := json.Unmarshal(data, &summary); err == nil && strings.TrimSpace(string(summary.Status)) != "" {
 		return summary, "", nil
 	}
 
@@ -3080,8 +3051,8 @@ func findProductFeedbackPrivacyMarker(value string) string {
 	return ""
 }
 
-// multiValueFlag is intentionally separate from util.MultiFlag:
-// it trims whitespace and rejects empty values, which util.MultiFlag does not.
+// multiValueFlag is intentionally separate from cliflag.MultiFlag:
+// it trims whitespace and rejects empty values, which cliflag.MultiFlag does not.
 type multiValueFlag struct {
 	values []string
 }
@@ -3102,7 +3073,7 @@ func (m *multiValueFlag) Set(value string) error {
 }
 
 type productBriefOutput struct {
-	Status             string                                  `json:"status"`
+	Status             productworkflow.ProductWorkflowStatus   `json:"status"`
 	EffortRoot         string                                  `json:"effort_root"`
 	BriefOutputPath    string                                  `json:"brief_output_path,omitempty"`
 	Generated          productworkflow.BriefGenerationResult   `json:"generated"`
@@ -3163,11 +3134,11 @@ func runProductBrief(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 	allBlockers = append(allBlockers, gen.Blockers...)
 
 	out := productBriefOutput{
-		Status:     "blocked",
+		Status:     productworkflow.ProductWorkflowStatusBlocked,
 		EffortRoot: absRoot,
 		Generated:  gen,
 	}
-	if strings.TrimSpace(input.CoverageEvaluation.Status) != "" {
+	if strings.TrimSpace(string(input.CoverageEvaluation.Status)) != "" {
 		coverageEvaluation := input.CoverageEvaluation
 
 		out.CoverageEvaluation = &coverageEvaluation
@@ -3247,11 +3218,11 @@ func runProductBrief(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 	}
 
 	if len(allBlockers) == 0 {
-		out.Status = "pass"
-		gen.Status = "pass"
+		out.Status = productworkflow.ProductWorkflowStatusPass
+		gen.Status = productworkflow.ProductWorkflowStatusPass
 	} else {
 		out.Blocker = strings.Join(allBlockers, "; ")
-		gen.Status = "blocked"
+		gen.Status = productworkflow.ProductWorkflowStatusBlocked
 
 		gen.Blockers = append([]string{}, allBlockers...)
 	}
@@ -3281,14 +3252,14 @@ func runProductBrief(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 			fmt.Fprintf(stdout, "brief_output: %s\n", out.BriefOutputPath)
 		}
 
-		if out.Status != "pass" {
+		if out.Status != productworkflow.ProductWorkflowStatusPass {
 			fmt.Fprintf(stdout, "blocker: %s\nnext: %s\n", out.Blocker, out.NextValidAction)
 		} else if strings.TrimSpace(briefOutput) == "" {
 			fmt.Fprintln(stdout, out.Generated.RenderedBrief)
 		}
 	}
 
-	if out.Status != "pass" {
+	if out.Status != productworkflow.ProductWorkflowStatusPass {
 		return 1
 	}
 
@@ -3317,8 +3288,8 @@ func resolveProductBriefOutputPath(effortRoot, relPath string) (string, string, 
 	return absPath, clean, ""
 }
 
-func productBriefNextValidAction(status, briefOutputPath string) string {
-	if status != "pass" {
+func productBriefNextValidAction(status productworkflow.ProductWorkflowStatus, briefOutputPath string) string {
+	if status != productworkflow.ProductWorkflowStatusPass {
 		return "resolve blockers before running `idiom brief lint <brief.md>` or dispatching this brief"
 	}
 
@@ -3357,7 +3328,7 @@ func writeProductFeedbackReconciledState(effortRoot, relPath string, data []byte
 
 func executionFeedbackStatusPass(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "pass", "passed", "complete", "completed", "success", "source-satisfied":
+	case string(productworkflow.ProductWorkflowStatusPass), "passed", "complete", "completed", "success", "source-satisfied":
 		return true
 	default:
 		return false
@@ -3495,16 +3466,16 @@ func runProductResearchRenderPrompts(profiles *productworkflow.ProfileStoreResul
 	})
 
 	type renderOutput struct {
-		Status           string                                     `json:"status"`
+		Status           productworkflow.ProductWorkflowStatus      `json:"status"`
 		EffortRoot       string                                     `json:"effort_root"`
 		PromptWriteCount int                                        `json:"prompt_write_count"`
 		Plan             productworkflow.ResearchArtifactPromptPlan `json:"plan"`
 	}
 
-	status := "pass"
+	status := productworkflow.ProductWorkflowStatusPass
 
 	if writeBlocked {
-		status = "blocked"
+		status = productworkflow.ProductWorkflowStatusBlocked
 	}
 
 	out := renderOutput{
@@ -3643,7 +3614,7 @@ func runProductResearchMergeEvidence(profiles *productworkflow.ProfileStoreResul
 	})
 
 	type mergeOutput struct {
-		Status              string                                     `json:"status"`
+		Status              productworkflow.ProductWorkflowStatus      `json:"status"`
 		EffortRoot          string                                     `json:"effort_root"`
 		ResearchOutputDir   string                                     `json:"research_output_dir"`
 		Profile             string                                     `json:"profile"`
@@ -3656,10 +3627,10 @@ func runProductResearchMergeEvidence(profiles *productworkflow.ProfileStoreResul
 		WroteEvidenceLedger bool                                       `json:"wrote_evidence_ledger"`
 	}
 
-	status := "pass"
+	status := productworkflow.ProductWorkflowStatusPass
 
 	if writeBlocked {
-		status = "blocked"
+		status = productworkflow.ProductWorkflowStatusBlocked
 	}
 
 	out := mergeOutput{
@@ -3750,5 +3721,5 @@ func writeEvidenceCardsJSONL(path string, cards []productworkflow.EvidenceCard) 
 }
 
 func logProductPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	toolcmd.LogCLIPhase(rec, eventType, fields)
+	telemetry.LogPhase(rec, eventType, fields)
 }

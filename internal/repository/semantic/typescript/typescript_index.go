@@ -10,14 +10,15 @@ package typescript
 
 import (
 	"cmp"
-	"idiom/internal/repository/semantic/internal/indexsupport"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
+	"idiom/internal/repository/semantic/internal/indexsupport"
+
 	"idiom/internal/repository/discovery"
 )
 
@@ -259,8 +260,8 @@ func BuildTsIndexWithOptions(root string, opts indexsupport.IndexOptions) (*TsIn
 		}
 
 		for _, imp := range file.Imports {
-			index.Forward[file.Path] = util.AppendUnique(index.Forward[file.Path], imp)
-			index.Reverse[imp] = util.AppendUnique(index.Reverse[imp], file.Path)
+			index.Forward[file.Path] = textutil.AppendUnique(index.Forward[file.Path], imp)
+			index.Reverse[imp] = textutil.AppendUnique(index.Reverse[imp], file.Path)
 		}
 	}
 
@@ -389,7 +390,7 @@ func parseTsImports(rel string, content string, byName map[string]string, byRel 
 			resolved = filepath.ToSlash(strings.TrimSpace(spec))
 		}
 
-		includes = util.AppendUnique(includes, resolved)
+		includes = textutil.AppendUnique(includes, resolved)
 	}
 
 	slices.Sort(includes)

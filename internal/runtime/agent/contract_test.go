@@ -1,9 +1,10 @@
 package agent
 
 import (
+	"testing"
+
 	"idiom/internal/contracts/autonomy"
 	contractcompile "idiom/internal/contracts/compile"
-	"testing"
 )
 
 // --- contract parity tests ---

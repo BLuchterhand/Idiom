@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
-)
 
-var validSessionID = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	"idiom/internal/platform/atomicfile"
+	"idiom/internal/platform/sessionid"
+)
 
 func NewState(sessionID string, prompt string, promptFile string, maxPlanningIterations int, now time.Time) FeatureState {
 	if now.IsZero() {
@@ -50,9 +50,11 @@ func SaveState(root string, state *FeatureState) (string, error) {
 		return "", fmt.Errorf("feature planner state is nil")
 	}
 
-	if strings.TrimSpace(state.SessionID) == "" || !validSessionID.MatchString(state.SessionID) {
+	sessionID, ok := cleanSessionID(state.SessionID)
+	if !ok {
 		return "", fmt.Errorf("invalid feature planner session id %q", state.SessionID)
 	}
+	state.SessionID = sessionID
 
 	if state.SchemaVersion == "" {
 		state.SchemaVersion = SchemaVersion
@@ -92,14 +94,8 @@ func SaveState(root string, state *FeatureState) (string, error) {
 		return "", fmt.Errorf("marshal feature planner state: %w", err)
 	}
 
-	tmpPath := fullPath + ".tmp"
-	if err := os.WriteFile(tmpPath, append(body, '\n'), 0o600); err != nil {
+	if err := atomicfile.WriteFile(fullPath, append(body, '\n'), 0o600); err != nil {
 		return "", fmt.Errorf("write feature planner state: %w", err)
-	}
-
-	if err := os.Rename(tmpPath, fullPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return "", fmt.Errorf("replace feature planner state: %w", err)
 	}
 
 	return relPath, nil
@@ -123,6 +119,10 @@ func TryLoadState(root string, sessionID string) (FeatureState, string, bool, er
 	if err != nil {
 		return FeatureState{}, "", false, err
 	}
+	requestedSessionID, ok := cleanSessionID(sessionID)
+	if !ok {
+		return FeatureState{}, "", false, fmt.Errorf("invalid feature planner session id %q", sessionID)
+	}
 
 	body, err := os.ReadFile(fullPath)
 	if os.IsNotExist(err) {
@@ -144,12 +144,16 @@ func TryLoadState(root string, sessionID string) (FeatureState, string, bool, er
 	}
 
 	if strings.TrimSpace(state.SessionID) == "" {
-		state.SessionID = strings.TrimSpace(sessionID)
+		state.SessionID = requestedSessionID
+	} else if strings.TrimSpace(state.SessionID) != requestedSessionID {
+		return FeatureState{}, relPath, false, fmt.Errorf("feature planner state session id %q does not match requested session %q in %s", state.SessionID, requestedSessionID, relPath)
 	}
 
-	if !validSessionID.MatchString(state.SessionID) {
+	cleanedSessionID, ok := cleanSessionID(state.SessionID)
+	if !ok {
 		return FeatureState{}, relPath, false, fmt.Errorf("invalid feature planner session id %q in %s", state.SessionID, relPath)
 	}
+	state.SessionID = cleanedSessionID
 
 	if state.SchemaVersion == "" {
 		state.SchemaVersion = SchemaVersion
@@ -164,8 +168,8 @@ func TryLoadState(root string, sessionID string) (FeatureState, string, bool, er
 }
 
 func statePath(root string, sessionID string) (string, string, error) {
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" || !validSessionID.MatchString(sessionID) {
+	sessionID, ok := cleanSessionID(sessionID)
+	if !ok {
 		return "", "", fmt.Errorf("invalid feature planner session id %q", sessionID)
 	}
 
@@ -183,8 +187,8 @@ func EventLogPath(root string, sessionID string) (string, string, error) {
 }
 
 func eventLogPath(root string, sessionID string) (string, string, error) {
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" || !validSessionID.MatchString(sessionID) {
+	sessionID, ok := cleanSessionID(sessionID)
+	if !ok {
 		return "", "", fmt.Errorf("invalid feature planner session id %q", sessionID)
 	}
 
@@ -195,6 +199,10 @@ func eventLogPath(root string, sessionID string) (string, string, error) {
 	}
 
 	return filepath.Join(root, filepath.FromSlash(relPath)), relPath, nil
+}
+
+func cleanSessionID(raw string) (string, bool) {
+	return sessionid.Normalize(raw)
 }
 
 func promptSHA256(prompt string) string {

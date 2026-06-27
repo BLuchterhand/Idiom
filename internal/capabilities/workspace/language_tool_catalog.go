@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 const CodeNavigateToolName = ToolNameCodeNavigate
@@ -396,6 +396,21 @@ func LanguageToolHasCapability(tool string, capability Capability) bool {
 	return ok && found == capability
 }
 
+func LanguageToolHasAnyCapability(tool string, capabilities ...Capability) bool {
+	found, ok := LanguageToolCapability(tool)
+	if !ok {
+		return false
+	}
+
+	for _, capability := range capabilities {
+		if found == capability {
+			return true
+		}
+	}
+
+	return false
+}
+
 func LanguageToolForCapability(language string, capability Capability) string {
 	lang, ok := LanguageForName(language)
 	if !ok {
@@ -582,7 +597,7 @@ func CodeNavigateCapabilityPredicate(capability Capability) func(string) bool {
 	want := CodeNavigateCapabilityName(capability)
 
 	return func(candidate string) bool {
-		return util.EqualTrimFold(candidate, want)
+		return textutil.EqualTrimFold(candidate, want)
 	}
 }
 

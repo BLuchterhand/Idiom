@@ -20,14 +20,14 @@ import (
 	"golang.org/x/term"
 
 	"idiom/internal/capabilities/workspace"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/sessionlog"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/surfaces/cli/runrecord"
-	toolcmd "idiom/internal/surfaces/cli/tool"
 	"idiom/internal/surfaces/tui/app"
-	"idiom/internal/workflows/planexecute"
 )
 
 type RunOptions struct {
@@ -40,7 +40,7 @@ type RunOptions struct {
 	ReviewRepairOpenObligations []string
 	UseActiveModel              bool
 	Telemetry                   *telemetry.Recorder
-	ScopeContract               planexecute.PlanScopeContract
+	ScopeContract               plancontract.PlanScopeContract
 }
 
 type ApplicationRequestMode string
@@ -170,7 +170,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptR
 		if err != nil {
 			record := legacyRunCompletionRecord(cfg, req, runID, started, "idiom --turns-file", "", nil)
 			record.ExitCode = 1
-			record.TerminalClass = "failed"
+			record.TerminalClass = runrecord.TerminalClassFailed
 			record.Error = err.Error()
 			if saveErr := saveLegacyRunCompletion(record); saveErr != nil {
 				fmt.Fprintln(stderr, saveErr)
@@ -186,7 +186,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptR
 		record := legacyRunCompletionRecord(cfg, req, runID, started, "idiom --turns-file", strings.Join(prompts, "\n\n"), answers)
 		if err != nil {
 			record.ExitCode = 1
-			record.TerminalClass = "failed"
+			record.TerminalClass = runrecord.TerminalClassFailed
 			record.Error = err.Error()
 			if saveErr := saveLegacyRunCompletion(record); saveErr != nil {
 				fmt.Fprintln(stderr, saveErr)
@@ -199,7 +199,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptR
 		}
 
 		record.ExitCode = 0
-		record.TerminalClass = "completed"
+		record.TerminalClass = runrecord.TerminalClassCompleted
 		if saveErr := saveLegacyRunCompletion(record); saveErr != nil {
 			fmt.Fprintln(stderr, saveErr)
 
@@ -228,7 +228,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptR
 		record := legacyRunCompletionRecord(cfg, req, runID, started, "idiom --prompt", req.Prompt, []string{answer})
 		if err != nil {
 			record.ExitCode = 1
-			record.TerminalClass = "failed"
+			record.TerminalClass = runrecord.TerminalClassFailed
 			record.Error = err.Error()
 			if saveErr := saveLegacyRunCompletion(record); saveErr != nil {
 				fmt.Fprintln(stderr, saveErr)
@@ -241,7 +241,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptR
 		}
 
 		record.ExitCode = 0
-		record.TerminalClass = "completed"
+		record.TerminalClass = runrecord.TerminalClassCompleted
 		if saveErr := saveLegacyRunCompletion(record); saveErr != nil {
 			fmt.Fprintln(stderr, saveErr)
 
@@ -485,7 +485,7 @@ func RunPromptOnce(cfg config.Config, prompt string, opts RunOptions, stdout io.
 	LogModelSessionLink(opts.Telemetry, "prompt", model.DebugLogPath())
 
 	if opts.Resume != "" {
-		path := app.ResolveSessionLogPath(cfg, opts.Resume)
+		path := sessionlog.ResolveSessionLogPath(cfg, opts.Resume)
 		if err := model.LoadHistoryFromSession(path); err != nil {
 			return "", fmt.Errorf("resume %q: %w", opts.Resume, err)
 		}
@@ -494,7 +494,7 @@ func RunPromptOnce(cfg config.Config, prompt string, opts RunOptions, stdout io.
 	if opts.JSONEvents {
 		sessionID := ""
 		if path := model.DebugLogPath(); path != "" {
-			sessionID = SessionIDFromPath(path)
+			sessionID = sessionlog.SessionIDFromPath(path)
 		}
 
 		model.SetJSONEventStream(stdout, sessionID)
@@ -523,7 +523,7 @@ func RunPromptsOnce(cfg config.Config, prompts []string, opts RunOptions, stdout
 	LogModelSessionLink(opts.Telemetry, "turns_file", model.DebugLogPath())
 
 	if opts.Resume != "" {
-		path := app.ResolveSessionLogPath(cfg, opts.Resume)
+		path := sessionlog.ResolveSessionLogPath(cfg, opts.Resume)
 		if err := model.LoadHistoryFromSession(path); err != nil {
 			return nil, fmt.Errorf("resume %q: %w", opts.Resume, err)
 		}
@@ -532,7 +532,7 @@ func RunPromptsOnce(cfg config.Config, prompts []string, opts RunOptions, stdout
 	if opts.JSONEvents {
 		sessionID := ""
 		if path := model.DebugLogPath(); path != "" {
-			sessionID = SessionIDFromPath(path)
+			sessionID = sessionlog.SessionIDFromPath(path)
 		}
 
 		model.SetJSONEventStream(stdout, sessionID)
@@ -566,7 +566,7 @@ func ModelCloseout(rec *telemetry.Recorder, model *app.Model, mode string, taskF
 			if model != nil {
 				debugLogPath = model.DebugLogPath()
 				if debugLogPath != "" {
-					sessionID = SessionIDFromPath(debugLogPath)
+					sessionID = sessionlog.SessionIDFromPath(debugLogPath)
 				}
 			}
 
@@ -595,15 +595,6 @@ func ModelCloseout(rec *telemetry.Recorder, model *app.Model, mode string, taskF
 	}
 }
 
-func SessionIDFromPath(path string) string {
-	base := filepath.Base(path)
-	if ext := filepath.Ext(base); ext != "" {
-		base = base[:len(base)-len(ext)]
-	}
-
-	return base
-}
-
 func LogModelSessionLink(rec *telemetry.Recorder, mode string, debugLogPath string) {
 	if rec == nil || strings.TrimSpace(debugLogPath) == "" {
 		return
@@ -612,12 +603,12 @@ func LogModelSessionLink(rec *telemetry.Recorder, mode string, debugLogPath stri
 	_ = rec.Log("model_session", map[string]any{
 		"mode":           mode,
 		"debug_log_path": filepath.Clean(debugLogPath),
-		"session_id":     SessionIDFromPath(debugLogPath),
+		"session_id":     sessionlog.SessionIDFromPath(debugLogPath),
 	})
 }
 
 func RunListSessions(cfg config.Config, stdout io.Writer) error {
-	sessions, err := app.ListRecordedSessions(cfg)
+	sessions, err := sessionlog.ListRecordedSessions(cfg)
 	if err != nil {
 		return err
 	}
@@ -701,5 +692,5 @@ func RunServerOnlyWithTelemetry(cfg config.Config, opts RunOptions) error {
 }
 
 func logPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	toolcmd.LogCLIPhase(rec, eventType, fields)
+	telemetry.LogPhase(rec, eventType, fields)
 }

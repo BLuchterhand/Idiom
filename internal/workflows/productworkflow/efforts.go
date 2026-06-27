@@ -18,7 +18,7 @@ type ProductEffortsOptions struct {
 }
 
 type ProductEffortsResult struct {
-	Status          string                 `json:"status"`
+	Status          ProductWorkflowStatus  `json:"status"`
 	Root            string                 `json:"root"`
 	StatusFilter    string                 `json:"status_filter"`
 	Query           string                 `json:"query,omitempty"`

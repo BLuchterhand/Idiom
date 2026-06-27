@@ -2,14 +2,15 @@ package python
 
 import (
 	"cmp"
-	"idiom/internal/repository/semantic/internal/indexsupport"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
+	"idiom/internal/repository/semantic/internal/indexsupport"
+
 	"idiom/internal/repository/discovery"
 )
 
@@ -220,8 +221,8 @@ func BuildPythonIndexWithOptions(root string, opts indexsupport.IndexOptions) (*
 				continue
 			}
 
-			index.Forward[file.Path] = util.AppendUnique(index.Forward[file.Path], dep)
-			index.Reverse[dep] = util.AppendUnique(index.Reverse[dep], file.Path)
+			index.Forward[file.Path] = textutil.AppendUnique(index.Forward[file.Path], dep)
+			index.Reverse[dep] = textutil.AppendUnique(index.Reverse[dep], file.Path)
 		}
 	}
 

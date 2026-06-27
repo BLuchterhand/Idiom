@@ -3,6 +3,7 @@ package readiness
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -33,6 +34,24 @@ func TestWorkspaceRootFromConfigResolvesRelativeRoot(t *testing.T) {
 	got := WorkspaceRootFromConfig(configPath)
 	if got != filepath.Clean(dir) {
 		t.Fatalf("WorkspaceRootFromConfig() = %q, want %q", got, filepath.Clean(dir))
+	}
+}
+
+func TestChecksFromHostBlocksUnknownStatus(t *testing.T) {
+	checks := checksFromHost([]HostCheck{{
+		Name:   "doctor typo",
+		Status: HostCheckStatus("failed"),
+		Detail: "raw host status drifted",
+	}})
+
+	if len(checks) != 1 {
+		t.Fatalf("checks len=%d, want 1", len(checks))
+	}
+	if checks[0].State != "blocked" {
+		t.Fatalf("unknown host status state=%q, want blocked", checks[0].State)
+	}
+	if !strings.Contains(checks[0].Detail, "unknown host check status") {
+		t.Fatalf("unknown host status detail=%q", checks[0].Detail)
 	}
 }
 

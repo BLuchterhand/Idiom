@@ -11,6 +11,66 @@ import (
 // SchemaVersion is the current version of the WriterRouteDecision schema.
 const SchemaVersion = "idiom.writer_route.v1"
 
+type EventType string
+type CommandSurface string
+
+const (
+	EventWriterRouteDecision EventType = "writer_route_decision"
+)
+
+const (
+	CommandSurfaceImplement CommandSurface = "idiom.implement"
+	CommandSurfaceLane      CommandSurface = "idiom.lane"
+)
+
+func KnownEventType(eventType EventType) bool {
+	switch eventType {
+	case EventWriterRouteDecision:
+		return true
+	default:
+		return false
+	}
+}
+
+func KnownCommandSurface(surface CommandSurface) bool {
+	switch surface {
+	case CommandSurfaceImplement, CommandSurfaceLane:
+		return true
+	default:
+		return false
+	}
+}
+
+func CommandEventName(surface CommandSurface, eventType EventType) (string, error) {
+	if !KnownCommandSurface(surface) {
+		return "", fmt.Errorf("unknown writer-route command surface %q", surface)
+	}
+	if !KnownEventType(eventType) {
+		return "", fmt.Errorf("unknown writer-route event type %q", eventType)
+	}
+
+	return string(surface) + "." + string(eventType), nil
+}
+
+type VerificationOwner string
+
+const (
+	VerificationOwnerExecutor     VerificationOwner = "executor"
+	VerificationOwnerPlannerOwned VerificationOwner = "planner_owned"
+)
+
+type ReasonCode string
+
+const (
+	ReasonLocalModelDefault       ReasonCode = "route.local_model_default"
+	ReasonMultiFilePlanExecute    ReasonCode = "route.multi_file_plan_execute"
+	ReasonReadOnlyQuestion        ReasonCode = "route.read_only_question"
+	ReasonPlanExecutePlanner      ReasonCode = "route.plan_execute_planner"
+	ReasonPlanExecuteReviewRepair ReasonCode = "route.plan_execute_review_repair"
+	ReasonSingleFileGuardedWrite  ReasonCode = "route.single_file_guarded_write"
+	ReasonTypedImplementCommand   ReasonCode = "route.typed_implement_command"
+)
+
 // WriterMode represents the routing mode for a decision.
 type WriterMode string
 
@@ -59,11 +119,11 @@ type DecisionParams struct {
 	RiskTier           string
 	CostTier           string
 	ScopeTier          string
-	VerificationOwner  string
+	VerificationOwner  VerificationOwner
 	ReviewPolicy       string
 	RequiredEditPaths  []string
 	EvidencePacketIDs  []string
-	ReasonCodes        []string
+	ReasonCodes        []ReasonCode
 	EscalationTriggers []string
 	UserOverride       bool
 	TaskFamily         string
@@ -124,11 +184,11 @@ func NewDecisionFromParams(params DecisionParams) Decision {
 		RiskTier:           strings.TrimSpace(params.RiskTier),
 		CostTier:           costTier,
 		ScopeTier:          scopeTier,
-		VerificationOwner:  strings.TrimSpace(params.VerificationOwner),
+		VerificationOwner:  strings.TrimSpace(string(params.VerificationOwner)),
 		ReviewPolicy:       reviewPolicy,
 		RequiredEditPaths:  normalizedRequiredEditPaths,
 		EvidencePacketIDs:  normalizeAndSort(params.EvidencePacketIDs),
-		ReasonCodes:        normalizeAndSort(params.ReasonCodes),
+		ReasonCodes:        normalizeReasonCodes(params.ReasonCodes),
 		EscalationTriggers: normalizeAndSort(params.EscalationTriggers),
 		UserOverride:       params.UserOverride,
 		TaskFamily:         strings.TrimSpace(params.TaskFamily),
@@ -160,6 +220,19 @@ func normalizeAndSort(items []string) []string {
 	sort.Strings(unique)
 
 	return unique
+}
+
+func normalizeReasonCodes(items []ReasonCode) []string {
+	if items == nil {
+		return nil
+	}
+
+	values := make([]string, 0, len(items))
+	for _, item := range items {
+		values = append(values, string(item))
+	}
+
+	return normalizeAndSort(values)
 }
 
 func normalizeStringMap(items map[string]string) map[string]string {

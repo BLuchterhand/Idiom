@@ -54,7 +54,7 @@ func validatePlanExecutePlannerInput(input PlanExecutePlannerInput) error {
 }
 
 func plannerForbiddenTool(tool string) bool {
-	return !IsPlanExecutePlannerToolAllowed(tool)
+	return !autonomy.IsPlanExecutePlannerToolAllowed(tool)
 }
 
 func validateProtocolProjection(protocol ModelProtocolProjection) error {

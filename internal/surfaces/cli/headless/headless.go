@@ -21,9 +21,9 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
+	"idiom/internal/runtime/sessionlog"
 	"idiom/internal/surfaces/cli/runrecord"
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
-	"idiom/internal/surfaces/tui/app"
 	"idiom/internal/workflows/planexecute"
 )
 
@@ -149,16 +149,16 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 	if runErr != nil {
 		exitCode = 1
 		record.Error = runErr.Error()
-		record.TerminalClass = "failed"
+		record.TerminalClass = runrecord.TerminalClassFailed
 	} else {
-		record.TerminalClass = "completed"
+		record.TerminalClass = runrecord.TerminalClassCompleted
 	}
 
 	if runErr == nil && strings.TrimSpace(req.OutputSchema) != "" {
 		if err := validateOutputSchema(answer, req.OutputSchema); err != nil {
 			exitCode = 1
 			record.Error = err.Error()
-			record.TerminalClass = "output_schema_failed"
+			record.TerminalClass = runrecord.TerminalClassOutputSchemaFailed
 		}
 	}
 
@@ -168,7 +168,7 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 		for _, check := range record.Checks {
 			if check.ExitCode != 0 {
 				exitCode = 1
-				record.TerminalClass = "verification_failed"
+				record.TerminalClass = runrecord.TerminalClassVerificationFailed
 				if record.Error == "" {
 					record.Error = fmt.Sprintf("%s command failed with exit code %d", check.Name, check.ExitCode)
 				}
@@ -179,7 +179,7 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 	if req.PatchOut != "" {
 		if err := writeGitDiff(req.PatchOut, cfg); err != nil && record.Error == "" {
 			exitCode = 1
-			record.TerminalClass = "artifact_failed"
+			record.TerminalClass = runrecord.TerminalClassArtifactFailed
 			record.Error = err.Error()
 		} else if err == nil {
 			runrecord.AddArtifact(&record, "patch", req.PatchOut)
@@ -191,7 +191,7 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 		record.Checks = append(record.Checks, check)
 		if check.ExitCode != 0 {
 			exitCode = 1
-			record.TerminalClass = "commit_failed"
+			record.TerminalClass = runrecord.TerminalClassCommitFailed
 			record.Error = "git commit failed"
 		}
 	}
@@ -203,7 +203,7 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 	if req.FailOnDegraded && len(req.UnsupportedIntent) > 0 {
 		exitCode = 1
 		record.ExitCode = exitCode
-		record.TerminalClass = "degraded"
+		record.TerminalClass = runrecord.TerminalClassDegraded
 	}
 
 	completionRecord := record
@@ -215,7 +215,7 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 	} else if record.Error == "" {
 		exitCode = 1
 		record.ExitCode = exitCode
-		record.TerminalClass = "artifact_failed"
+		record.TerminalClass = runrecord.TerminalClassArtifactFailed
 		record.Error = saveErr.Error()
 	}
 
@@ -426,7 +426,7 @@ func applyRunRequestToConfig(cfg *config.Config, req runRequest) {
 		}
 	}
 
-	writeTools := []string{"edit_file", "write_file", "append_file", "apply_patch"}
+	writeTools := []string{workspace.ToolNameEditFile, workspace.ToolNameWriteFile, workspace.ToolNameAppendFile, workspace.ToolNameApplyPatch}
 	for _, path := range req.Policy.DenyPaths {
 		path = strings.TrimSpace(path)
 		if path == "" {
@@ -490,7 +490,7 @@ func runSessionList(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 1
 	}
 
-	sessions, err := app.ListRecordedSessions(cfg)
+	sessions, err := sessionlog.ListRecordedSessions(cfg)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 
@@ -563,7 +563,7 @@ func runSessionExport(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 1
 	}
 
-	path := app.ResolveSessionLogPath(cfg, sessionID)
+	path := sessionlog.ResolveSessionLogPath(cfg, sessionID)
 	records, err := sanitizedSessionRecords(path)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -588,7 +588,7 @@ func runSessionReplay(args []string, stdout io.Writer, stderr io.Writer) int {
 		return code
 	}
 
-	prompts, err := sessionUserPrompts(app.ResolveSessionLogPath(cfg, sessionID))
+	prompts, err := sessionUserPrompts(sessionlog.ResolveSessionLogPath(cfg, sessionID))
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 
@@ -709,7 +709,7 @@ func RunDecision(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 1
 	}
 
-	report, err := decisionWhy(app.ResolveSessionLogPath(cfg, sessionID), index)
+	report, err := decisionWhy(sessionlog.ResolveSessionLogPath(cfg, sessionID), index)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 
@@ -797,7 +797,7 @@ func parseSessionIDCommand(name string, args []string, stderr io.Writer) (config
 }
 
 func inspectSession(cfg config.Config, sessionID string) (map[string]any, error) {
-	path := app.ResolveSessionLogPath(cfg, sessionID)
+	path := sessionlog.ResolveSessionLogPath(cfg, sessionID)
 	count := 0
 	lastType := ""
 	err := scanJSONL(path, func(record map[string]any) {

@@ -13,8 +13,9 @@ import (
 	"strings"
 	"testing"
 
+	"idiom/internal/contracts/pathparse"
+	plancontract "idiom/internal/contracts/plan"
 	briefcmd "idiom/internal/surfaces/cli/brief"
-	"idiom/internal/surfaces/tui/app"
 )
 
 // nonTrivialDraftBody returns a canned draft body sized to clear the
@@ -492,7 +493,7 @@ Change the real implementation file.
 	}
 
 	wantDraft := ".idiom/refine/atom/iter-1/draft.md"
-	paths := app.RequiredEditPathsFromPrompt(string(body))
+	paths := plancontract.RequiredEditPathsFromPrompt(string(body))
 
 	if len(paths) != 0 {
 		t.Fatalf("artifact draft prompt should not expose implementation required edit paths: got %#v\nmeta:\n%s", paths, body)
@@ -2194,7 +2195,7 @@ func TestExtractDeliverableTargetExtractsFirstNonSourcePath(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := firstRefineDeliverableTarget(extractDeliverableTargets(tc.spec, refineDetectMode(tc.spec)))
+			got := pathparse.FirstDeliverableTarget(pathparse.ExtractDeliverableTargets(tc.spec, pathparse.DetectMode(tc.spec)))
 			if got != tc.want {
 				t.Fatalf("first extracted deliverable target for %q = %q, want %q", tc.spec, got, tc.want)
 			}
@@ -2218,7 +2219,7 @@ func TestExtractDeliverableTargetsPrefersFilesToModifyTable(t *testing.T) {
 
 Add ` + "`valence > 0.0f`" + ` handling and populate ` + "`EventClass`" + ` mappings.
 `
-	got := extractDeliverableTargets(spec, refineModeAnchored)
+	got := pathparse.ExtractDeliverableTargets(spec, refineModeAnchored)
 	want := []string{
 		"native/src/simulation/ai/appraisal.cpp",
 		"native/src/core/constants/individuated_mood.h",
@@ -2226,7 +2227,7 @@ Add ` + "`valence > 0.0f`" + ` handling and populate ` + "`EventClass`" + ` mapp
 	}
 
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("extractDeliverableTargets() = %#v, want %#v", got, want)
+		t.Fatalf("pathparse.ExtractDeliverableTargets() = %#v, want %#v", got, want)
 	}
 }
 
@@ -2244,7 +2245,7 @@ func TestExtractDeliverableTargetsPrefersExpectedFileScope(t *testing.T) {
 
 - Do not add ` + "`idiom.code_draft.v1`" + ` implementation.
 `
-	got := extractDeliverableTargets(spec, refineModeAnchored)
+	got := pathparse.ExtractDeliverableTargets(spec, refineModeAnchored)
 	want := []string{
 		"internal/contracts/writerroute/decision.go",
 		"internal/surfaces/tui/app/prompt_routing.go",
@@ -2252,7 +2253,7 @@ func TestExtractDeliverableTargetsPrefersExpectedFileScope(t *testing.T) {
 	}
 
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("extractDeliverableTargets() = %#v, want %#v", got, want)
+		t.Fatalf("pathparse.ExtractDeliverableTargets() = %#v, want %#v", got, want)
 	}
 }
 
@@ -2271,11 +2272,11 @@ Acceptance-only context:
 
 - update the anomaly scan tests
 `
-	got := extractDeliverableTargets(spec, refineModeAnchored)
+	got := pathparse.ExtractDeliverableTargets(spec, refineModeAnchored)
 	want := []string{"scripts/test_anomaly_scan.py"}
 
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("extractDeliverableTargets() = %#v, want %#v", got, want)
+		t.Fatalf("pathparse.ExtractDeliverableTargets() = %#v, want %#v", got, want)
 	}
 }
 
@@ -2292,11 +2293,11 @@ func TestExtractDeliverableTargetsPrefersFilesTableOverScope(t *testing.T) {
 
 - ` + "`src/legacy.go`" + `
 `
-	got := extractDeliverableTargets(spec, refineModeAnchored)
+	got := pathparse.ExtractDeliverableTargets(spec, refineModeAnchored)
 	want := []string{"src/real.go"}
 
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("extractDeliverableTargets() = %#v, want %#v", got, want)
+		t.Fatalf("pathparse.ExtractDeliverableTargets() = %#v, want %#v", got, want)
 	}
 }
 
@@ -2314,14 +2315,14 @@ func TestExtractDeliverableTargetsRejectsSlashSeparatedProseAndCommands(t *testi
 | ` + "`native/src/simulation/hazards/collapse_event.cpp`" + ` | Create source file. |
 | ` + "`docs/research/collapse-event.md`" + ` | Create design note. |
 `
-	got := extractDeliverableTargets(spec, refineModeAnchored)
+	got := pathparse.ExtractDeliverableTargets(spec, refineModeAnchored)
 	want := []string{
 		"native/src/simulation/hazards/collapse_event.cpp",
 		"docs/research/collapse-event.md",
 	}
 
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("extractDeliverableTargets() = %#v, want %#v", got, want)
+		t.Fatalf("pathparse.ExtractDeliverableTargets() = %#v, want %#v", got, want)
 	}
 }
 
@@ -3473,9 +3474,9 @@ func TestRefineDetectModeClassifiesSpecShape(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := refineDetectMode(tc.spec)
+			got := pathparse.DetectMode(tc.spec)
 			if got != tc.want {
-				t.Fatalf("refineDetectMode(%q) = %q, want %q", tc.spec, got, tc.want)
+				t.Fatalf("pathparse.DetectMode(%q) = %q, want %q", tc.spec, got, tc.want)
 			}
 		})
 	}

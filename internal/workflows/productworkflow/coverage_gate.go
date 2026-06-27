@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 func EvaluateCoverageGate(prd PRDDocument, adrIndex ADRIndex, adrs []ParsedADR, ledger TDDLedger, traceability TraceabilityMatrix, knownTDDIDs ...map[string]bool) CoverageGateEvaluation {
@@ -25,7 +25,7 @@ func EvaluateCoverageGate(prd PRDDocument, adrIndex ADRIndex, adrs []ParsedADR, 
 	record := func(key string, required bool, pass bool, detail string, file string, findingKind string) {
 		status := ProductWorkflowStatusPass
 		if !required {
-			status = "not_applicable"
+			status = ProductWorkflowStatusNotApplicable
 		}
 
 		if required && !pass {
@@ -264,7 +264,7 @@ func BuildSatisfiedTDDObligationIDs(ledger TDDLedger, records []ImplementationLe
 }
 
 func CoverageGateHasBlockers(eval CoverageGateEvaluation) bool {
-	return util.EqualTrimFold(eval.Status, ProductWorkflowStatusBlocked) || len(eval.Blockers) > 0
+	return textutil.EqualTrimFold(string(eval.Status), string(ProductWorkflowStatusBlocked)) || len(eval.Blockers) > 0
 }
 
 func CoverageGateHasOnlyTDDEvidenceBlockers(eval CoverageGateEvaluation) bool {
@@ -301,13 +301,13 @@ func BuildCoverageGateEvaluatedEvent(eval CoverageGateEvaluation, ledger TDDLedg
 		taskID = strings.TrimSpace(ledger.TaskID)
 	}
 
-	gateResult := strings.TrimSpace(eval.Status)
+	gateResult := strings.TrimSpace(string(eval.Status))
 	if gateResult == "" {
-		gateResult = ProductWorkflowStatusBlocked
+		gateResult = string(ProductWorkflowStatusBlocked)
 	}
 
 	return CoverageGateEvaluatedEvent{
-		Event:    "coverage_gate_evaluated",
+		Event:    string(ProductWorkflowEventCoverageGateEvaluated),
 		EffortID: effortID,
 		TaskID:   taskID,
 		Coverage: CoverageGateEventCoverage{
@@ -598,7 +598,7 @@ func gatePasses(name string, passed []string, blocked []string) bool {
 
 func hasGateName(name string, values []string) bool {
 	for _, v := range values {
-		if util.EqualTrimFold(v, name) {
+		if textutil.EqualTrimFold(v, name) {
 			return true
 		}
 	}

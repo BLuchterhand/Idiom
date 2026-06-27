@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"idiom/internal/contracts/autonomy"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/semantic/languagetools"
 )
 
@@ -278,7 +278,7 @@ func CodeNavigationEvidenceCapabilities() []string {
 		}
 	}
 
-	return util.UniqueNonEmpty(out)
+	return textutil.UniqueNonEmpty(out)
 }
 
 func ReadOnlyCapabilityEvidenceCapability(capability string) string {
@@ -610,7 +610,7 @@ func ReadOnlyCapabilityCoverageForTools(tools []string) ReadOnlyCapabilityCovera
 }
 
 func (m *Manager) readOnlyCapability(ctx context.Context, req ToolRequest) ToolResult {
-	requested := strings.TrimSpace(util.FirstNonEmpty(req.Capability, req.ID))
+	requested := strings.TrimSpace(textutil.FirstNonEmpty(req.Capability, req.ID))
 	target := readOnlyCapabilityResolvedTarget(req)
 
 	if requested == "" {
@@ -669,7 +669,7 @@ func readOnlyCapabilityResolverTools(req ToolRequest) []string {
 		}
 	}
 
-	return util.UniqueNonEmpty(tools)
+	return textutil.UniqueNonEmpty(tools)
 }
 
 func readOnlyCapabilityRequestLanguage(req ToolRequest) (LanguageSupport, bool) {
@@ -720,7 +720,7 @@ func readOnlyCapabilityFallbackResult(requested string, target ReadOnlyCapabilit
 		Tool:    readOnlyCapabilityToolName,
 		Summary: "Read-only capability not routed",
 		Output:  marshalReadOnlyCapabilityExecutionResult(payload),
-		Error:   strings.TrimSpace(util.FirstNonEmpty(detail, reason)),
+		Error:   strings.TrimSpace(textutil.FirstNonEmpty(detail, reason)),
 	}
 }
 
@@ -1657,7 +1657,7 @@ func readOnlyCapabilityMetricAdapters(tools []string) []string {
 		tools = toolManifestToolsAcrossBuiltInSurfaces()
 	}
 
-	unique := util.UniqueNonEmpty(tools)
+	unique := textutil.UniqueNonEmpty(tools)
 	out := make([]string, 0, len(unique))
 
 	for _, tool := range unique {

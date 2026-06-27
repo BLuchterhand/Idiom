@@ -10,9 +10,11 @@ import (
 	"strings"
 	"time"
 
+	recoverycontract "idiom/internal/contracts/recovery"
+
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
-	toolcmd "idiom/internal/surfaces/cli/tool"
 	"idiom/internal/workflows/planexecute"
 	"idiom/internal/workflows/recovery"
 )
@@ -24,23 +26,23 @@ type recoverInspectOptions struct {
 }
 
 type recoverInspectReport struct {
-	Type                   string                                        `json:"type"`
-	Status                 string                                        `json:"status"`
-	SessionID              string                                        `json:"session_id,omitempty"`
-	FailureID              string                                        `json:"failure_id,omitempty"`
-	RecordPath             string                                        `json:"record_path,omitempty"`
-	ProgressStatePath      string                                        `json:"progress_state_path,omitempty"`
-	TerminalCompletionPath string                                        `json:"terminal_completion_path,omitempty"`
-	Recorded               bool                                          `json:"recorded"`
-	FailureClass           string                                        `json:"failure_class,omitempty"`
-	FailureKind            string                                        `json:"failure_kind,omitempty"`
-	FailureReason          string                                        `json:"failure_reason,omitempty"`
-	NextAction             string                                        `json:"next_valid_action"`
-	Summary                string                                        `json:"summary,omitempty"`
-	RequiredPathCoverage   []planexecute.PlanExecuteRequiredPathCoverage `json:"required_path_coverage,omitempty"`
-	PartialState           recovery.PartialState                         `json:"partial_state"`
-	Record                 *recovery.FailureRecord                       `json:"record,omitempty"`
-	Error                  string                                        `json:"error,omitempty"`
+	Type                   string                                         `json:"type"`
+	Status                 string                                         `json:"status"`
+	SessionID              string                                         `json:"session_id,omitempty"`
+	FailureID              string                                         `json:"failure_id,omitempty"`
+	RecordPath             string                                         `json:"record_path,omitempty"`
+	ProgressStatePath      string                                         `json:"progress_state_path,omitempty"`
+	TerminalCompletionPath string                                         `json:"terminal_completion_path,omitempty"`
+	Recorded               bool                                           `json:"recorded"`
+	FailureClass           string                                         `json:"failure_class,omitempty"`
+	FailureKind            string                                         `json:"failure_kind,omitempty"`
+	FailureReason          string                                         `json:"failure_reason,omitempty"`
+	NextAction             string                                         `json:"next_valid_action"`
+	Summary                string                                         `json:"summary,omitempty"`
+	RequiredPathCoverage   []plancontract.PlanExecuteRequiredPathCoverage `json:"required_path_coverage,omitempty"`
+	PartialState           recoverycontract.PartialState                  `json:"partial_state"`
+	Record                 *recoverycontract.FailureRecord                `json:"record,omitempty"`
+	Error                  string                                         `json:"error,omitempty"`
 }
 
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
@@ -50,7 +52,7 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec
 	}
 
 	code := RunMain(args, stdout, stderr)
-	toolcmd.LogCLIPhase(rec, "recover", map[string]any{"subcommand": subcommand, "exit_code": code})
+	telemetry.LogPhase(rec, "recover", map[string]any{"subcommand": subcommand, "exit_code": code})
 
 	return code
 }
@@ -125,10 +127,10 @@ func runRecoverInspectMain(args []string, stdout io.Writer, stderr io.Writer) in
 	report, err := buildRecoverInspectReport(cfg.Workspace.Root, opts.SessionID)
 	if err != nil {
 		report = recoverInspectReport{
-			Type:       "idiom.recover.inspect.v1",
-			Status:     "error",
+			Type:       string(recoverycontract.ReportTypeInspect),
+			Status:     string(recoverycontract.ReportStatusError),
 			SessionID:  strings.TrimSpace(opts.SessionID),
-			NextAction: recovery.NextActionInspectFailure,
+			NextAction: string(recoverycontract.NextActionInspectFailure),
 			Error:      err.Error(),
 		}
 
@@ -172,10 +174,10 @@ func runRecoverShowMain(args []string, stdout io.Writer, stderr io.Writer) int {
 	report, err := buildRecoverInspectReport(cfg.Workspace.Root, opts.SessionID)
 	if err != nil {
 		report = recoverInspectReport{
-			Type:       "idiom.recover.inspect.v1",
-			Status:     "error",
+			Type:       string(recoverycontract.ReportTypeInspect),
+			Status:     string(recoverycontract.ReportStatusError),
 			SessionID:  strings.TrimSpace(opts.SessionID),
-			NextAction: recovery.NextActionInspectFailure,
+			NextAction: string(recoverycontract.NextActionInspectFailure),
 			Error:      err.Error(),
 		}
 
@@ -213,15 +215,15 @@ func buildRecoverInspectReport(root string, sessionID string) (recoverInspectRep
 		return recoverInspectReport{}, fmt.Errorf("no recovery record or plan-execute progress state found for session %s", sessionID)
 	}
 
-	if state.Status != planexecute.ProgressStatusFailed {
+	if !planexecute.ProgressRequiresRecovery(state) {
 		report := recoverInspectReport{
-			Type:              "idiom.recover.inspect.v1",
-			Status:            state.Status,
+			Type:              string(recoverycontract.ReportTypeInspect),
+			Status:            string(state.Status),
 			SessionID:         state.SessionID,
 			ProgressStatePath: statePath,
 			Recorded:          false,
-			NextAction:        recovery.NextActionNone,
-			Summary:           fmt.Sprintf("plan-execute session is %s, not failed", state.Status),
+			NextAction:        string(recoverycontract.NextActionNone),
+			Summary:           fmt.Sprintf("plan-execute session is %s, not recovery-required", state.Status),
 		}
 		attachRecoverInspectTerminalCompletion(root, &report)
 
@@ -240,24 +242,24 @@ func buildRecoverInspectReport(root string, sessionID string) (recoverInspectRep
 	return report, nil
 }
 
-func recoverInspectReportFromRecord(root string, record recovery.FailureRecord, recordPath string, recorded bool) recoverInspectReport {
+func recoverInspectReportFromRecord(root string, record recoverycontract.FailureRecord, recordPath string, recorded bool) recoverInspectReport {
 	partial := inspectRecoveryPartialState(root, record)
 
 	record.PartialState = partial
 	record.NextAction = recovery.NextActionForPartialState(record, partial)
 
 	report := recoverInspectReport{
-		Type:              "idiom.recover.inspect.v1",
-		Status:            "failed",
+		Type:              string(recoverycontract.ReportTypeInspect),
+		Status:            string(recoverycontract.ReportStatusFailed),
 		SessionID:         record.SourceRun.SessionID,
 		FailureID:         record.FailureID,
 		RecordPath:        recordPath,
 		ProgressStatePath: record.SourceRun.ProgressStatePath,
 		Recorded:          recorded,
-		FailureClass:      record.Failure.Class,
+		FailureClass:      string(record.Failure.Class),
 		FailureKind:       record.Failure.Kind,
 		FailureReason:     record.Failure.Summary,
-		NextAction:        record.NextAction,
+		NextAction:        string(record.NextAction),
 		Summary:           record.Failure.Summary,
 		PartialState:      partial,
 		Record:            &record,
@@ -277,9 +279,12 @@ func attachRecoverInspectTerminalCompletion(root string, report *recoverInspectR
 		return
 	}
 
+	if !recoverInspectTerminalCompletionCorrelates(*report, record) {
+		return
+	}
 	report.TerminalCompletionPath = path
 	if report.FailureKind == "" {
-		report.FailureKind = record.FailureKind
+		report.FailureKind = string(record.FailureKind)
 	}
 	if strings.TrimSpace(record.FailureReason) != "" {
 		report.FailureReason = record.FailureReason
@@ -291,16 +296,34 @@ func attachRecoverInspectTerminalCompletion(root string, report *recoverInspectR
 		report.RecordPath = record.RecordPath
 	}
 	if report.NextAction == "" {
-		report.NextAction = record.NextAction
+		report.NextAction = string(record.NextAction)
 	}
-	report.RequiredPathCoverage = append([]planexecute.PlanExecuteRequiredPathCoverage(nil), record.RequiredPathCoverage...)
+	report.RequiredPathCoverage = append([]plancontract.PlanExecuteRequiredPathCoverage(nil), record.RequiredPathCoverage...)
+}
+
+func recoverInspectTerminalCompletionCorrelates(report recoverInspectReport, record plancontract.PlanExecuteTerminalCompletionRecord) bool {
+	reportFailureID := strings.TrimSpace(report.FailureID)
+	recordFailureID := strings.TrimSpace(record.FailureID)
+	if reportFailureID != "" && recordFailureID != "" {
+		return reportFailureID == recordFailureID
+	}
+
+	reportPath := strings.TrimSpace(report.RecordPath)
+	recordPath := strings.TrimSpace(record.RecordPath)
+	if reportPath != "" && recordPath != "" {
+		return reportPath == recordPath
+	}
+
+	progressPath := strings.TrimSpace(report.ProgressStatePath)
+	recordProgressPath := strings.TrimSpace(record.ProgressPath)
+	return progressPath != "" && recordProgressPath != "" && progressPath == recordProgressPath
 }
 
 func emitRecoverInspectError(stdout io.Writer, stderr io.Writer, jsonOut bool, code int, message string) int {
 	report := recoverInspectReport{
-		Type:       "idiom.recover.inspect.v1",
-		Status:     "error",
-		NextAction: recovery.NextActionInspectFailure,
+		Type:       string(recoverycontract.ReportTypeInspect),
+		Status:     string(recoverycontract.ReportStatusError),
+		NextAction: string(recoverycontract.NextActionInspectFailure),
 		Error:      message,
 	}
 
@@ -388,7 +411,7 @@ func writeRecoverInspectReport(stdout io.Writer, stderr io.Writer, jsonOut bool,
 	return code
 }
 
-func inspectRecoveryPartialState(root string, record recovery.FailureRecord) recovery.PartialState {
+func inspectRecoveryPartialState(root string, record recoverycontract.FailureRecord) recoverycontract.PartialState {
 	dirtyPaths, err := gitDirtyPaths(root)
 	if err != nil {
 		return record.PartialState

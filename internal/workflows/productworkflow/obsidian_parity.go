@@ -119,13 +119,7 @@ func HasObsidianNoChangeRationale(taskID string, investigations []InvestigationR
 			continue
 		}
 
-		raw, ok := report.Scope["obsidian_no_change_rationale"]
-		if !ok {
-			continue
-		}
-
-		reason, ok := raw.(string)
-		if ok && strings.TrimSpace(reason) != "" {
+		if strings.TrimSpace(report.Scope.ObsidianNoChangeRationale) != "" {
 			return true
 		}
 	}

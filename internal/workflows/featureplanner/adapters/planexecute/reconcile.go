@@ -2,11 +2,14 @@ package planexecute
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"idiom/internal/contracts/plan"
+	featureplannercontract "idiom/internal/contracts/featureplanner"
+	lanecontract "idiom/internal/contracts/lane"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/workflows/featureplanner"
 	coreplanexecute "idiom/internal/workflows/planexecute"
 )
@@ -19,7 +22,7 @@ func ReconcileActiveRuns(state *featureplanner.FeatureState, root string) []feat
 	var events []featureplanner.Event
 
 	for _, run := range append([]featureplanner.ActiveRun(nil), state.ActiveRuns...) {
-		if strings.TrimSpace(run.LaneFamily) != "" && strings.TrimSpace(run.LaneFamily) != featureplanner.PlanExecuteCompletionLaneFamily {
+		if strings.TrimSpace(run.LaneFamily) != "" && strings.TrimSpace(run.LaneFamily) != string(lanecontract.LanePlanExecute) {
 			continue
 		}
 
@@ -28,7 +31,16 @@ func ReconcileActiveRuns(state *featureplanner.FeatureState, root string) []feat
 			continue
 		}
 
-		payload, ok := findTerminalCompletionForActiveRun(root, run, *atom)
+		payload, encodeErr, ok := findTerminalCompletionForActiveRun(root, run, *atom)
+		if encodeErr != nil {
+			events = append(events, featureplanner.Event{
+				Type:      featureplannercontract.EventName(featureplannercontract.EventMalformedStructuredOutput),
+				SessionID: state.SessionID,
+				AtomID:    atom.ID,
+				Message:   encodeErr.Error(),
+			})
+			continue
+		}
 		if !ok {
 			continue
 		}
@@ -54,20 +66,22 @@ func atomForActiveRun(state *featureplanner.FeatureState, run featureplanner.Act
 	return nil
 }
 
-func findTerminalCompletionForActiveRun(root string, run featureplanner.ActiveRun, atom featureplanner.FeatureAtomState) (string, bool) {
+func findTerminalCompletionForActiveRun(root string, run featureplanner.ActiveRun, atom featureplanner.FeatureAtomState) (string, error, bool) {
 	for _, sessionID := range progressSessionCandidates(run) {
 		record, completionPath, found, err := coreplanexecute.TryLoadPlanExecuteTerminalCompletionRecord(root, sessionID)
 		if err == nil && found && terminalCompletionForActiveRun(record, run, atom) {
-			return encodeTerminalCompletion(record, completionPath, run), true
+			payload, err := encodeTerminalCompletion(record, completionPath, run)
+			return payload, err, err == nil
 		}
 
 		state, relPath, found, err := coreplanexecute.TryLoadProgressState(root, sessionID)
 		if err == nil && found && terminalProgressForActiveRun(state, run, atom) {
-			return encodeProgressCompletion(state, relPath, run), true
+			payload, err := encodeProgressCompletion(state, relPath, run)
+			return payload, err, err == nil
 		}
 	}
 
-	return "", false
+	return "", nil, false
 }
 
 func progressSessionCandidates(run featureplanner.ActiveRun) []string {
@@ -128,8 +142,8 @@ func terminalProgressForActiveRun(progress coreplanexecute.ProgressState, run fe
 	return len(atomPaths) == 0 || stringSetsOverlap(atomPaths, recordPaths)
 }
 
-func terminalCompletionForActiveRun(record coreplanexecute.PlanExecuteTerminalCompletionRecord, run featureplanner.ActiveRun, atom featureplanner.FeatureAtomState) bool {
-	record = coreplanexecute.NormalizePlanExecuteTerminalCompletionRecord(record)
+func terminalCompletionForActiveRun(record plancontract.PlanExecuteTerminalCompletionRecord, run featureplanner.ActiveRun, atom featureplanner.FeatureAtomState) bool {
+	record = plancontract.NormalizePlanExecuteTerminalCompletionRecord(record)
 
 	completedAt, ok := parseRequiredTime(record.TS)
 
@@ -182,25 +196,28 @@ func parseRequiredTime(value string) (time.Time, bool) {
 	return parsed, true
 }
 
-func encodeTerminalCompletion(record coreplanexecute.PlanExecuteTerminalCompletionRecord, completionPath string, run featureplanner.ActiveRun) string {
-	fields := coreplanexecute.PlanExecuteTerminalCompletionEventFields(record, completionPath)
+func encodeTerminalCompletion(record plancontract.PlanExecuteTerminalCompletionRecord, completionPath string, run featureplanner.ActiveRun) (string, error) {
+	fields := plancontract.PlanExecuteTerminalCompletionEventFields(record, completionPath)
 	if fields == nil {
 		fields = map[string]any{}
 	}
 
 	addActiveRunParentEvidence(fields, run)
 
-	fields[featureplanner.PlanExecuteCompletionFieldTool] = featureplanner.ToolPlanExecuteComplete
-	fields[featureplanner.PlanExecuteCompletionFieldLaneFamily] = featureplanner.PlanExecuteCompletionLaneFamily
-	fields[featureplanner.PlanExecuteCompletionFieldCompletionSource] = featureplanner.PlanExecuteCompletionSourceDurableTerminal
+	fields[featureplannercontract.PlanExecuteCompletionFieldTool] = featureplannercontract.ToolPlanExecuteComplete
+	fields[featureplannercontract.PlanExecuteCompletionFieldLaneFamily] = string(lanecontract.LanePlanExecute)
+	fields[featureplannercontract.PlanExecuteCompletionFieldCompletionSource] = string(featureplannercontract.PlanExecuteCompletionSourceDurableTerminal)
 	markTrustedAcceptanceEvidence(fields)
 
-	body, _ := json.Marshal(fields)
+	body, err := json.Marshal(fields)
+	if err != nil {
+		return "", fmt.Errorf("encode terminal completion payload: %w", err)
+	}
 
-	return string(body)
+	return string(body), nil
 }
 
-func encodeProgressCompletion(progress coreplanexecute.ProgressState, progressPath string, run featureplanner.ActiveRun) string {
+func encodeProgressCompletion(progress coreplanexecute.ProgressState, progressPath string, run featureplanner.ActiveRun) (string, error) {
 	record, ok := coreplanexecute.PlanExecuteTerminalCompletionRecordFromProgressState(progress, coreplanexecute.PlanExecuteTerminalCompletionInput{
 		ProgressPath: strings.TrimSpace(progressPath),
 	})
@@ -210,47 +227,50 @@ func encodeProgressCompletion(progress coreplanexecute.ProgressState, progressPa
 			fields = map[string]any{}
 		}
 
-		return encodePlanExecuteCompletionFields(fields, progressPath, featureplanner.PlanExecuteCompletionSourceDurableProgress, run)
+		return encodePlanExecuteCompletionFields(fields, progressPath, string(featureplannercontract.PlanExecuteCompletionSourceDurableProgress), run)
 	}
 
-	fields := coreplanexecute.PlanExecuteTerminalCompletionEventFields(record, "")
+	fields := plancontract.PlanExecuteTerminalCompletionEventFields(record, "")
 	if fields == nil {
 		fields = map[string]any{}
 	}
 
-	return encodePlanExecuteCompletionFields(fields, progressPath, featureplanner.PlanExecuteCompletionSourceDurableProgress, run)
+	return encodePlanExecuteCompletionFields(fields, progressPath, string(featureplannercontract.PlanExecuteCompletionSourceDurableProgress), run)
 }
 
-func encodePlanExecuteCompletionFields(fields map[string]any, progressPath string, source string, run featureplanner.ActiveRun) string {
+func encodePlanExecuteCompletionFields(fields map[string]any, progressPath string, source string, run featureplanner.ActiveRun) (string, error) {
 	if strings.TrimSpace(progressPath) == "" {
-		progressPath = strings.TrimSpace(featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldStatePath))
+		progressPath = strings.TrimSpace(featureplanner.CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldStatePath))
 	}
 
-	delete(fields, featureplanner.PlanExecuteCompletionFieldStatePath)
+	delete(fields, plancontract.PlanExecuteTerminalFieldStatePath)
 	addActiveRunParentEvidence(fields, run)
 
-	fields[featureplanner.PlanExecuteCompletionFieldTool] = featureplanner.ToolPlanExecuteComplete
-	fields[featureplanner.PlanExecuteCompletionFieldLaneFamily] = featureplanner.PlanExecuteCompletionLaneFamily
-	fields[featureplanner.PlanExecuteCompletionFieldCompletionSource] = source
+	fields[featureplannercontract.PlanExecuteCompletionFieldTool] = featureplannercontract.ToolPlanExecuteComplete
+	fields[featureplannercontract.PlanExecuteCompletionFieldLaneFamily] = string(lanecontract.LanePlanExecute)
+	fields[featureplannercontract.PlanExecuteCompletionFieldCompletionSource] = source
 
 	if strings.TrimSpace(progressPath) != "" {
-		fields[featureplanner.PlanExecuteCompletionFieldProgressPath] = strings.TrimSpace(progressPath)
+		fields[plancontract.PlanExecuteTerminalFieldProgressPath] = strings.TrimSpace(progressPath)
 	}
 
 	markTrustedAcceptanceEvidence(fields)
 
-	body, _ := json.Marshal(fields)
+	body, err := json.Marshal(fields)
+	if err != nil {
+		return "", fmt.Errorf("encode progress completion payload: %w", err)
+	}
 
-	return string(body)
+	return string(body), nil
 }
 
 func addActiveRunParentEvidence(fields map[string]any, run featureplanner.ActiveRun) {
-	if strings.TrimSpace(featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldContractID)) == "" && strings.TrimSpace(run.InvocationContractID) != "" {
-		fields[featureplanner.PlanExecuteCompletionFieldContractID] = strings.TrimSpace(run.InvocationContractID)
+	if strings.TrimSpace(featureplanner.CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldContractID)) == "" && strings.TrimSpace(run.InvocationContractID) != "" {
+		fields[plancontract.PlanExecuteTerminalFieldContractID] = strings.TrimSpace(run.InvocationContractID)
 	}
 
-	if strings.TrimSpace(featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldSnapshotHash)) == "" && strings.TrimSpace(run.RuntimeEnvelopeID) != "" {
-		fields[featureplanner.PlanExecuteCompletionFieldSnapshotHash] = strings.TrimSpace(run.RuntimeEnvelopeID)
+	if strings.TrimSpace(featureplanner.CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldSnapshotHash)) == "" && strings.TrimSpace(run.RuntimeEnvelopeID) != "" {
+		fields[plancontract.PlanExecuteTerminalFieldSnapshotHash] = strings.TrimSpace(run.RuntimeEnvelopeID)
 	}
 }
 
@@ -259,13 +279,13 @@ func markTrustedAcceptanceEvidence(fields map[string]any) {
 		return
 	}
 
-	if featureplanner.PlanExecuteCompletionTerminalClass(fields) != featureplanner.PlanExecuteTerminalCompleted {
-		delete(fields, featureplanner.PlanExecuteCompletionFieldAcceptanceEvidenceTrusted)
+	if featureplanner.PlanExecuteCompletionTerminalDecision(fields).Class != plancontract.PlanExecuteTerminalDecisionCompleted {
+		delete(fields, featureplannercontract.PlanExecuteCompletionFieldAcceptanceEvidenceTrusted)
 
 		return
 	}
 
-	if _, ok := fields[featureplanner.PlanExecuteCompletionFieldAcceptanceEvidenceIDs]; ok {
+	if _, ok := fields[plancontract.PlanExecuteTerminalFieldAcceptanceEvidenceIDs]; ok {
 		featureplanner.TrustObservedPlanExecuteCompletionFields(fields)
 	}
 }

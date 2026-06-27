@@ -12,15 +12,23 @@ import (
 	"testing"
 	"time"
 
+	recoverycontract "idiom/internal/contracts/recovery"
+
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
+	"idiom/internal/runtime/sessionlog"
 	"idiom/internal/surfaces/cli/runrecord"
+	cmdruntime "idiom/internal/surfaces/cli/runtime"
 	"idiom/internal/workflows/recovery"
 )
 
 func nopList(config.Config, io.Writer) error { return nil }
-func nopPrompts(config.Config, []string, runOptions, io.Writer) ([]string, error) {
+func nopPrompts(config.Config, []string, cmdruntime.RunOptions, io.Writer) ([]string, error) {
 	return nil, nil
+}
+
+func run(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdruntime.PromptRunner, promptsRun cmdruntime.PromptsRunner, tuiRun cmdruntime.ModeRunner, serverRun cmdruntime.ModeRunner, listSessions cmdruntime.ListSessionsRunner) int {
+	return cmdruntime.Run(args, stdout, stderr, promptRun, promptsRun, tuiRun, serverRun, listSessions, runVersionMain)
 }
 
 func TestRunPromptModeUsesInjectedRunner(t *testing.T) {
@@ -30,26 +38,26 @@ func TestRunPromptModeUsesInjectedRunner(t *testing.T) {
 	var (
 		stdout, stderr bytes.Buffer
 		gotPrompt      string
-		gotOpts        runOptions
+		gotOpts        cmdruntime.RunOptions
 	)
 
 	code := run(
 		[]string{"-config", configPath, "-prompt", "explain routing"},
 		&stdout,
 		&stderr,
-		func(_ config.Config, prompt string, opts runOptions, _ io.Writer) (string, error) {
+		func(_ config.Config, prompt string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			gotPrompt = prompt
 			gotOpts = opts
 
 			return "answer text", nil
 		},
 		nopPrompts,
-		func(config.Config, runOptions) error {
+		func(config.Config, cmdruntime.RunOptions) error {
 			t.Fatal("TUI runner should not be called in prompt mode")
 
 			return nil
 		},
-		func(config.Config, runOptions) error {
+		func(config.Config, cmdruntime.RunOptions) error {
 			t.Fatal("server runner should not be called in prompt mode")
 
 			return nil
@@ -87,22 +95,22 @@ func TestRunPromptModeJSONSuppressesFinalPrint(t *testing.T) {
 
 	var (
 		stdout, stderr bytes.Buffer
-		gotOpts        runOptions
+		gotOpts        cmdruntime.RunOptions
 	)
 
 	code := run(
 		[]string{"-config", configPath, "-prompt", "x", "-json"},
 		&stdout,
 		&stderr,
-		func(_ config.Config, _ string, opts runOptions, w io.Writer) (string, error) {
+		func(_ config.Config, _ string, opts cmdruntime.RunOptions, w io.Writer) (string, error) {
 			gotOpts = opts
 			_, _ = w.Write([]byte("{\"type\":\"final\",\"content\":\"ok\"}\n"))
 
 			return "ok", nil
 		},
 		nopPrompts,
-		func(config.Config, runOptions) error { return nil },
-		func(config.Config, runOptions) error { return nil },
+		func(config.Config, cmdruntime.RunOptions) error { return nil },
+		func(config.Config, cmdruntime.RunOptions) error { return nil },
 		nopList,
 	)
 
@@ -128,20 +136,20 @@ func TestRunPromptModeForwardsResume(t *testing.T) {
 
 	var (
 		stdout, stderr bytes.Buffer
-		gotOpts        runOptions
+		gotOpts        cmdruntime.RunOptions
 	)
 
 	code := run(
 		[]string{"-config", configPath, "-prompt", "x", "-resume", "20260101-000000.000"},
 		&stdout,
 		&stderr,
-		func(_ config.Config, _ string, opts runOptions, _ io.Writer) (string, error) {
+		func(_ config.Config, _ string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			gotOpts = opts
 			return "ok", nil
 		},
 		nopPrompts,
-		func(config.Config, runOptions) error { return nil },
-		func(config.Config, runOptions) error { return nil },
+		func(config.Config, cmdruntime.RunOptions) error { return nil },
+		func(config.Config, cmdruntime.RunOptions) error { return nil },
 		nopList,
 	)
 
@@ -163,12 +171,12 @@ func TestRunPromptModeWritesFailureCompletion(t *testing.T) {
 		[]string{"-config", configPath, "-prompt", "fail this"},
 		&stdout,
 		&stderr,
-		func(config.Config, string, runOptions, io.Writer) (string, error) {
+		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
 			return "", errors.New("prompt failed")
 		},
 		nopPrompts,
-		func(config.Config, runOptions) error { return nil },
-		func(config.Config, runOptions) error { return nil },
+		func(config.Config, cmdruntime.RunOptions) error { return nil },
+		func(config.Config, cmdruntime.RunOptions) error { return nil },
 		nopList,
 	)
 
@@ -193,27 +201,27 @@ func TestRunTurnsFileUsesSingleSessionRunner(t *testing.T) {
 	var (
 		stdout, stderr bytes.Buffer
 		gotPrompts     []string
-		gotOpts        runOptions
+		gotOpts        cmdruntime.RunOptions
 	)
 
 	code := run(
 		[]string{"-config", configPath, "-turns-file", turnsPath, "-json", "-resume", "prior-session"},
 		&stdout,
 		&stderr,
-		func(config.Config, string, runOptions, io.Writer) (string, error) {
+		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
 			t.Fatal("single prompt runner should not be called for --turns-file")
 
 			return "", nil
 		},
-		func(_ config.Config, prompts []string, opts runOptions, w io.Writer) ([]string, error) {
+		func(_ config.Config, prompts []string, opts cmdruntime.RunOptions, w io.Writer) ([]string, error) {
 			gotPrompts = append([]string(nil), prompts...)
 			gotOpts = opts
 			_, _ = w.Write([]byte("{\"type\":\"final\",\"content\":\"second answer\"}\n"))
 
 			return []string{"first answer", "second answer"}, nil
 		},
-		func(config.Config, runOptions) error { return nil },
-		func(config.Config, runOptions) error { return nil },
+		func(config.Config, cmdruntime.RunOptions) error { return nil },
+		func(config.Config, cmdruntime.RunOptions) error { return nil },
 		nopList,
 	)
 
@@ -248,10 +256,10 @@ func TestRunTurnsFileRejectsPromptConflict(t *testing.T) {
 		[]string{"-config", configPath, "-prompt", "x", "-turns-file", turnsPath},
 		&stdout,
 		&stderr,
-		func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
+		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) { return "", nil },
 		nopPrompts,
-		func(config.Config, runOptions) error { return nil },
-		func(config.Config, runOptions) error { return nil },
+		func(config.Config, cmdruntime.RunOptions) error { return nil },
+		func(config.Config, cmdruntime.RunOptions) error { return nil },
 		nopList,
 	)
 
@@ -270,18 +278,18 @@ func TestRunListSessionsCallsListRunner(t *testing.T) {
 		[]string{"-config", configPath, "-list-sessions"},
 		&stdout,
 		&stderr,
-		func(config.Config, string, runOptions, io.Writer) (string, error) {
+		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
 			t.Fatal("prompt runner should not be called")
 
 			return "", nil
 		},
 		nopPrompts,
-		func(config.Config, runOptions) error {
+		func(config.Config, cmdruntime.RunOptions) error {
 			t.Fatal("TUI runner should not be called")
 
 			return nil
 		},
-		func(config.Config, runOptions) error {
+		func(config.Config, cmdruntime.RunOptions) error {
 			t.Fatal("server runner should not be called")
 
 			return nil
@@ -309,18 +317,18 @@ func TestRunServerOnlyUsesInjectedRunner(t *testing.T) {
 		[]string{"-config", configPath, "-server-only"},
 		&stdout,
 		&stderr,
-		func(config.Config, string, runOptions, io.Writer) (string, error) {
+		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
 			t.Fatal("prompt runner should not be called in server-only mode")
 
 			return "", nil
 		},
 		nopPrompts,
-		func(config.Config, runOptions) error {
+		func(config.Config, cmdruntime.RunOptions) error {
 			t.Fatal("TUI runner should not be called in server-only mode")
 
 			return nil
 		},
-		func(config.Config, runOptions) error {
+		func(config.Config, cmdruntime.RunOptions) error {
 			called = true
 			return nil
 		},
@@ -342,17 +350,17 @@ func TestRunDefaultUsesTUIRunner(t *testing.T) {
 		[]string{"-config", configPath},
 		&stdout,
 		&stderr,
-		func(config.Config, string, runOptions, io.Writer) (string, error) {
+		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
 			t.Fatal("prompt runner should not be called in default mode")
 
 			return "", nil
 		},
 		nopPrompts,
-		func(config.Config, runOptions) error {
+		func(config.Config, cmdruntime.RunOptions) error {
 			called = true
 			return nil
 		},
-		func(config.Config, runOptions) error {
+		func(config.Config, cmdruntime.RunOptions) error {
 			t.Fatal("server runner should not be called in default mode")
 
 			return nil
@@ -394,17 +402,17 @@ func TestRunDefaultLoadsWorkspaceToolRulesFromRootConfig(t *testing.T) {
 		[]string{"-config", configPath},
 		&stdout,
 		&stderr,
-		func(config.Config, string, runOptions, io.Writer) (string, error) {
+		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
 			t.Fatal("prompt runner should not be called in default mode")
 
 			return "", nil
 		},
 		nopPrompts,
-		func(cfg config.Config, _ runOptions) error {
+		func(cfg config.Config, _ cmdruntime.RunOptions) error {
 			gotCfg = cfg
 			return nil
 		},
-		func(config.Config, runOptions) error {
+		func(config.Config, cmdruntime.RunOptions) error {
 			t.Fatal("server runner should not be called in default mode")
 
 			return nil
@@ -437,10 +445,10 @@ func TestRunReportsConfigAndRunnerErrors(t *testing.T) {
 		[]string{"-config", badPath},
 		&stdout,
 		&stderr,
-		func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
+		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) { return "", nil },
 		nopPrompts,
-		func(config.Config, runOptions) error { return nil },
-		func(config.Config, runOptions) error { return nil },
+		func(config.Config, cmdruntime.RunOptions) error { return nil },
+		func(config.Config, cmdruntime.RunOptions) error { return nil },
 		nopList,
 	)
 
@@ -457,12 +465,12 @@ func TestRunReportsConfigAndRunnerErrors(t *testing.T) {
 		[]string{"-config", configPath, "-prompt", "fail"},
 		&stdout,
 		&stderr,
-		func(config.Config, string, runOptions, io.Writer) (string, error) {
+		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
 			return "", errors.New("prompt failed")
 		},
 		nopPrompts,
-		func(config.Config, runOptions) error { return nil },
-		func(config.Config, runOptions) error { return nil },
+		func(config.Config, cmdruntime.RunOptions) error { return nil },
+		func(config.Config, cmdruntime.RunOptions) error { return nil },
 		nopList,
 	)
 	if code != 1 || !strings.Contains(stderr.String(), "prompt failed") {
@@ -477,10 +485,10 @@ func TestRunRejectsInvalidFlags(t *testing.T) {
 		[]string{"-does-not-exist"},
 		&stdout,
 		&stderr,
-		func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
+		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) { return "", nil },
 		nopPrompts,
-		func(config.Config, runOptions) error { return nil },
-		func(config.Config, runOptions) error { return nil },
+		func(config.Config, cmdruntime.RunOptions) error { return nil },
+		func(config.Config, cmdruntime.RunOptions) error { return nil },
 		nopList,
 	)
 
@@ -501,18 +509,18 @@ func TestRunVersionFlagShortCircuits(t *testing.T) {
 		[]string{"--version"},
 		&stdout,
 		&stderr,
-		func(config.Config, string, runOptions, io.Writer) (string, error) {
+		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
 			t.Fatal("prompt runner must not be called for --version")
 
 			return "", nil
 		},
 		nopPrompts,
-		func(config.Config, runOptions) error {
+		func(config.Config, cmdruntime.RunOptions) error {
 			t.Fatal("TUI runner must not be called for --version")
 
 			return nil
 		},
-		func(config.Config, runOptions) error {
+		func(config.Config, cmdruntime.RunOptions) error {
 			t.Fatal("server runner must not be called for --version")
 
 			return nil
@@ -547,10 +555,10 @@ func TestRunSingleDashVersionFlagAlsoWorks(t *testing.T) {
 		[]string{"-version"},
 		&stdout,
 		&stderr,
-		func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
+		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) { return "", nil },
 		nopPrompts,
-		func(config.Config, runOptions) error { return nil },
-		func(config.Config, runOptions) error { return nil },
+		func(config.Config, cmdruntime.RunOptions) error { return nil },
+		func(config.Config, cmdruntime.RunOptions) error { return nil },
 		nopList,
 	)
 
@@ -570,7 +578,7 @@ func TestSessionIDFromPath(t *testing.T) {
 		"plain":                                        "plain",
 	}
 	for in, want := range cases {
-		if got := sessionIDFromPath(in); got != want {
+		if got := sessionlog.SessionIDFromPath(in); got != want {
 			t.Errorf("sessionIDFromPath(%q) = %q, want %q", in, got, want)
 		}
 	}
@@ -829,7 +837,7 @@ func TestRunMainDirectToolDiscoveryProfileAllowsRecoveryInspect(t *testing.T) {
 	}
 
 	if payload.Sidecar.StructuredOutput["failure_id"] != "plan-execute-sid-cli" ||
-		payload.Sidecar.StructuredOutput["next_valid_action"] != recovery.NextActionReviewDecomposition {
+		payload.Sidecar.StructuredOutput["next_valid_action"] != string(recoverycontract.NextActionReviewDecomposition) {
 
 		t.Fatalf("recovery structured output missing state: %#v", payload.Sidecar.StructuredOutput)
 	}

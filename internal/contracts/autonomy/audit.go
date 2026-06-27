@@ -6,8 +6,6 @@ import (
 	"reflect"
 	"slices"
 	"strings"
-
-	"idiom/internal/platform/util"
 )
 
 const AuditReportSchemaVersion = "idiom.autonomy.audit.v1"
@@ -495,7 +493,7 @@ func (s *eventAuditState) addAuditGroup(event Event) {
 
 	existing.EventCount++
 	if event.EventID != "" {
-		existing.EventIDs = util.AppendUnique(existing.EventIDs, event.EventID)
+		existing.EventIDs = appendUniqueString(existing.EventIDs, event.EventID)
 	}
 }
 
@@ -914,11 +912,11 @@ func (s *eventAuditState) addObligation(event Event) {
 
 		switch event.Type {
 		case EventObligationOpened:
-			coverage.OpenObligations = util.AppendUnique(coverage.OpenObligations, event.Obligation.ObligationID)
+			coverage.OpenObligations = appendUniqueString(coverage.OpenObligations, event.Obligation.ObligationID)
 		case EventObligationResolved:
-			coverage.ResolvedObligations = util.AppendUnique(coverage.ResolvedObligations, event.Obligation.ObligationID)
+			coverage.ResolvedObligations = appendUniqueString(coverage.ResolvedObligations, event.Obligation.ObligationID)
 		case EventObligationWaived:
-			coverage.WaivedObligations = util.AppendUnique(coverage.WaivedObligations, event.Obligation.ObligationID)
+			coverage.WaivedObligations = appendUniqueString(coverage.WaivedObligations, event.Obligation.ObligationID)
 		}
 	}
 
@@ -1346,7 +1344,7 @@ func (s *eventAuditState) addSidecarToolCorrelation(event Event) {
 			if event.ContractID != "" {
 				coverage := s.contractCoverage(event.ContractID)
 
-				coverage.SidecarRequestIDs = util.AppendUnique(coverage.SidecarRequestIDs, event.Correlation.SidecarRequestID)
+				coverage.SidecarRequestIDs = appendUniqueString(coverage.SidecarRequestIDs, event.Correlation.SidecarRequestID)
 			}
 		}
 	}
@@ -1358,7 +1356,7 @@ func (s *eventAuditState) addSidecarToolCorrelation(event Event) {
 			if event.ContractID != "" {
 				coverage := s.contractCoverage(event.ContractID)
 
-				coverage.ToolCallIDs = util.AppendUnique(coverage.ToolCallIDs, toolCallID)
+				coverage.ToolCallIDs = appendUniqueString(coverage.ToolCallIDs, toolCallID)
 			}
 		}
 	}
@@ -1906,7 +1904,7 @@ func gateAuditExtendedFields(gate *ContractGateEvent) gateAuditFieldSnapshot {
 }
 
 func gateDecisionNeedsSafeAlternatives(decision ToolPolicyDecision, enforcementMode string) bool {
-	if !util.EqualTrimFold(enforcementMode, "enforce") {
+	if !equalTrimFold(enforcementMode, "enforce") {
 		return false
 	}
 
@@ -2016,7 +2014,7 @@ func stringSetContains(values []string, want string) bool {
 }
 
 func firstNonEmptyAuditValue(values ...string) string {
-	return util.FirstNonEmpty(values...)
+	return firstNonEmptyString(values...)
 }
 
 func removeString(values []string, remove string) []string {

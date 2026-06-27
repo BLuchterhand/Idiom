@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	plancontract "idiom/internal/contracts/plan"
-	"idiom/internal/workflows/planexecute"
 )
 
 type CycleOutcome struct {
@@ -13,10 +12,11 @@ type CycleOutcome struct {
 	Reason   string
 }
 
-func AnalyzeEvidenceGaps(contract IntentLoopContract, record planexecute.PlanExecuteTerminalCompletionRecord) []EvidenceGap {
-	record = planexecute.NormalizePlanExecuteTerminalCompletionRecord(record)
+func AnalyzeEvidenceGaps(contract IntentLoopContract, record plancontract.PlanExecuteTerminalCompletionRecord) []EvidenceGap {
+	record = plancontract.NormalizePlanExecuteTerminalCompletionRecord(record)
 
 	var gaps []EvidenceGap
+	gaps = append(gaps, terminalAuthorityGaps(record)...)
 	if strings.TrimSpace(record.SessionID) == "" {
 		gaps = append(gaps, EvidenceGap{
 			Requirement: "terminal_completion",
@@ -58,6 +58,61 @@ func AnalyzeEvidenceGaps(contract IntentLoopContract, record planexecute.PlanExe
 	return normalizeEvidenceGaps(gaps)
 }
 
+func terminalAuthorityGaps(record plancontract.PlanExecuteTerminalCompletionRecord) []EvidenceGap {
+	var gaps []EvidenceGap
+
+	if strings.TrimSpace(string(record.Status)) == string(plancontract.PlanExecuteProgressStatusFailed) ||
+		strings.TrimSpace(string(record.FailureKind)) != "" ||
+		strings.TrimSpace(record.FailureReason) != "" {
+		detail := firstNonEmpty(record.FailureReason, string(record.FailureKind), string(record.Outcome), "plan-execute terminal completion is failed")
+		gaps = append(gaps, EvidenceGap{
+			Requirement: "terminal_completion",
+			Status:      "failed",
+			Detail:      detail,
+			DetailHash:  sha256Prefixed(detail),
+		})
+	}
+
+	for _, failure := range record.ValidationFailures {
+		failure = strings.TrimSpace(failure)
+		if !terminalValidationFailureBlocksIntentLoop(failure) {
+			continue
+		}
+		detail := "terminal completion validation failure: " + failure
+		gaps = append(gaps, EvidenceGap{
+			Requirement: "terminal_completion",
+			Status:      "failed",
+			Detail:      detail,
+			DetailHash:  sha256Prefixed(detail),
+		})
+	}
+
+	return gaps
+}
+
+func terminalValidationFailureBlocksIntentLoop(failure string) bool {
+	failure = strings.TrimSpace(failure)
+	if failure == "" {
+		return false
+	}
+
+	switch failure {
+	case "changed_paths_missing", "changed_path_coverage_missing":
+		return false
+	default:
+		return true
+	}
+}
+
+func terminalValidationFailuresBlockIntentLoop(failures []string) bool {
+	for _, failure := range failures {
+		if terminalValidationFailureBlocksIntentLoop(failure) {
+			return true
+		}
+	}
+	return false
+}
+
 func GapFingerprint(gaps []EvidenceGap) string {
 	if len(gaps) == 0 {
 		return ""
@@ -90,18 +145,27 @@ func ClassifyCycleOutcome(record CycleRecord, currentIdentity *ChildRunIdentity)
 		return CycleOutcome{Blocking: true, Reason: "blocked_child_identity_mismatch:" + mismatch}
 	}
 
-	switch strings.TrimSpace(record.FailureKind) {
-	case "permission_denied", "protected_path", "outside_write_envelope", "unsupported_verification_command",
-		"unknown_tool", "tool_schema_mismatch", "missing_terminal_record", "malformed_terminal_record",
-		"planner_blocker", "planner_blocked", "plan_artifact_missing", "plan_artifact_invalid",
-		"external_scoped_change":
-		return CycleOutcome{Blocking: true, Reason: record.FailureKind}
-	default:
-		return CycleOutcome{}
+	failureKind := strings.TrimSpace(record.FailureKind)
+	if planFailureKind, ok := plancontract.ParsePlanExecuteFailureKind(failureKind); ok {
+		switch planFailureKind {
+		case plancontract.PlanExecuteFailurePlannerBlocked,
+			plancontract.PlanExecuteFailurePlanArtifactMissing,
+			plancontract.PlanExecuteFailurePlanArtifactInvalid:
+			return CycleOutcome{Blocking: true, Reason: failureKind}
+		}
 	}
+
+	switch failureKind {
+	case "permission_denied", "protected_path", "outside_write_envelope", plancontract.VerificationRejectUnsupportedCmd,
+		"unknown_tool", "tool_schema_mismatch", "missing_terminal_record", "malformed_terminal_record",
+		"planner_blocker", "external_scoped_change":
+		return CycleOutcome{Blocking: true, Reason: failureKind}
+	}
+
+	return CycleOutcome{}
 }
 
-func sourceSanityGaps(record planexecute.PlanExecuteTerminalCompletionRecord) []EvidenceGap {
+func sourceSanityGaps(record plancontract.PlanExecuteTerminalCompletionRecord) []EvidenceGap {
 	var gaps []EvidenceGap
 	if len(record.SourceSanity) == 0 && len(record.ChangedPaths) > 0 {
 		detail := "source sanity evidence is missing"
@@ -129,7 +193,7 @@ func sourceSanityGaps(record planexecute.PlanExecuteTerminalCompletionRecord) []
 	return gaps
 }
 
-func requiredTestGap(test plancontract.RequiredTest, record planexecute.PlanExecuteTerminalCompletionRecord) (EvidenceGap, bool) {
+func requiredTestGap(test plancontract.RequiredTest, record plancontract.PlanExecuteTerminalCompletionRecord) (EvidenceGap, bool) {
 	command := strings.TrimSpace(test.Command)
 	if command == "" {
 		return EvidenceGap{}, false
@@ -161,7 +225,7 @@ func requiredTestGap(test plancontract.RequiredTest, record planexecute.PlanExec
 	}, true
 }
 
-func requiredPathCoverageGaps(contract IntentLoopContract, record planexecute.PlanExecuteTerminalCompletionRecord) []EvidenceGap {
+func requiredPathCoverageGaps(contract IntentLoopContract, record plancontract.PlanExecuteTerminalCompletionRecord) []EvidenceGap {
 	covered := map[string]struct{}{}
 	for _, path := range record.ChangedPaths {
 		if path = plancontract.NormalizeScopePath(path); path != "" {
@@ -202,7 +266,7 @@ func requiredPathCoverageGaps(contract IntentLoopContract, record planexecute.Pl
 	return gaps
 }
 
-func acceptanceEvidenceGaps(contract IntentLoopContract, record planexecute.PlanExecuteTerminalCompletionRecord) []EvidenceGap {
+func acceptanceEvidenceGaps(contract IntentLoopContract, record plancontract.PlanExecuteTerminalCompletionRecord) []EvidenceGap {
 	if len(contract.AcceptanceObligations) == 0 {
 		return nil
 	}
@@ -266,21 +330,21 @@ func acceptanceEvidenceGaps(contract IntentLoopContract, record planexecute.Plan
 	return gaps
 }
 
-func reviewPassed(record planexecute.PlanExecuteTerminalCompletionRecord) bool {
+func reviewPassed(record plancontract.PlanExecuteTerminalCompletionRecord) bool {
 	if record.ReviewRepairSkipped {
 		return true
 	}
-	status := strings.ToLower(strings.TrimSpace(record.ReviewStatus))
+	status := strings.ToLower(strings.TrimSpace(string(record.ReviewStatus)))
 	return status == "passed" || status == "pass" || status == "repaired" || status == "completed"
 }
 
-func phaseCheckPassed(check planexecute.PhaseEvidenceCheck) bool {
-	status := strings.ToLower(strings.TrimSpace(check.Status))
+func phaseCheckPassed(check plancontract.PhaseEvidenceCheck) bool {
+	status := strings.ToLower(strings.TrimSpace(string(check.Status)))
 	return strings.TrimSpace(check.Error) == "" && (status == "ok" || status == "passed" || status == "pass" || status == "success")
 }
 
-func phaseCheckDetail(check planexecute.PhaseEvidenceCheck) string {
-	return strings.TrimSpace(firstNonEmpty(check.Error, check.Summary, check.Status))
+func phaseCheckDetail(check plancontract.PhaseEvidenceCheck) string {
+	return strings.TrimSpace(firstNonEmpty(check.Error, check.Summary, string(check.Status)))
 }
 
 func normalizeEvidenceGaps(gaps []EvidenceGap) []EvidenceGap {

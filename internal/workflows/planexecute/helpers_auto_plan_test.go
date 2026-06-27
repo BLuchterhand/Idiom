@@ -1,12 +1,13 @@
 package planexecute
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"idiom/internal/capabilities/workspace"
+	planartifact "idiom/internal/contracts/planartifact"
 	"idiom/internal/platform/config"
 )
 
@@ -141,7 +142,7 @@ func TestPlanExecuteClassifyAutoExactPlanEditsDetectsAlreadyAppliedAndPending(t 
 		t.Fatalf("write pending: %v", err)
 	}
 
-	result := planExecuteClassifyAutoExactPlanEdits(root, []workspace.PlanEdit{
+	result := planExecuteClassifyAutoExactPlanEdits(root, []planartifact.PlanEdit{
 		{Path: "applied.txt", OldText: "old\n", NewText: "new\n"},
 		{Path: "pending.txt", OldText: "old\n", NewText: "new\n"},
 	})
@@ -175,7 +176,7 @@ func TestPlanExecuteTryAutoExactPlanSourceSatisfiedWhenAllEditsAlreadyApplied(t 
 		"old_text:\n\n```text\nold a\n```\n\n" +
 		"new_text:\n\n```text\nnew a\n```\n"
 
-	result := planExecuteTryAutoExactPlan(cfg, prompt, []string{"a.txt"})
+	result := planExecuteTryAutoExactPlan(context.Background(), cfg, prompt, []string{"a.txt"}, planExecuteTestDependencies().SubmitAutoPlan)
 
 	if !result.SourceSatisfied || result.Submitted {
 		t.Fatalf("expected source-satisfied without submission, got %#v", result)

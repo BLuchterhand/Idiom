@@ -9,8 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	recoverycontract "idiom/internal/contracts/recovery"
+
 	"idiom/internal/platform/config"
-	"idiom/internal/workflows/recovery"
 )
 
 func TestRunLaneImplementRecoveryWritesFailureAndPacket(t *testing.T) {
@@ -54,15 +55,15 @@ func TestRunLaneImplementRecoveryWritesFailureAndPacket(t *testing.T) {
 	}
 
 	record := readRecoveryRecord(t, filepath.Join(root, ".idiom", "recovery", "implement-impl-session", "failure.json"))
-	if record.SourceRun.Lane != recovery.SourceLaneImplement || record.SourceRun.SessionID != "impl-session" {
+	if record.SourceRun.Lane != string(recoverycontract.SourceLaneImplement) || record.SourceRun.SessionID != "impl-session" {
 		t.Fatalf("unexpected source run: %#v", record.SourceRun)
 	}
 
-	if record.Failure.Kind != "implement_process_failed" || record.Failure.Class != recovery.FailureClassExecutorEdit {
+	if record.Failure.Kind != "implement_process_failed" || record.Failure.Class != recoverycontract.FailureClassExecutorEdit {
 		t.Fatalf("unexpected failure: %#v", record.Failure)
 	}
 
-	if record.NextAction != recovery.NextActionReviewDecomposition {
+	if record.NextAction != recoverycontract.NextActionReviewDecomposition {
 		t.Fatalf("next action=%q", record.NextAction)
 	}
 
@@ -79,7 +80,7 @@ func TestRunLaneImplementRecoveryWritesFailureAndPacket(t *testing.T) {
 	assertEvidenceRef(t, record.Failure.EvidenceRefs, "planning_failures", ".planning/impl-session.failures.jsonl", "")
 
 	packet := readRecoveryPacket(t, filepath.Join(root, ".idiom", "recovery", "implement-impl-session", "packet.json"))
-	if packet.FailureID != record.FailureID || packet.NextAction != recovery.NextActionReviewDecomposition {
+	if packet.FailureID != record.FailureID || packet.NextAction != recoverycontract.NextActionReviewDecomposition {
 		t.Fatalf("unexpected packet: %#v", packet)
 	}
 
@@ -92,8 +93,8 @@ func TestRunLaneImplementRecoveryWritesFailureAndPacket(t *testing.T) {
 	}
 
 	rendered, _ := json.Marshal(struct {
-		Record recovery.FailureRecord
-		Packet recovery.DecompositionPacket
+		Record recoverycontract.FailureRecord
+		Packet recoverycontract.DecompositionPacket
 	}{Record: record, Packet: packet})
 	for _, forbidden := range []string{"SECRET_PROMPT_BODY", "SECRET_TRANSCRIPT_BODY", "raw_prompt", "transcript", "idiom-lane-"} {
 		if strings.Contains(string(rendered), forbidden) {
@@ -137,11 +138,11 @@ func TestLaneImplementFailureClassUsesBoundedFailureSignals(t *testing.T) {
 	tests := []struct {
 		name    string
 		summary string
-		want    string
+		want    recoverycontract.FailureClass
 	}{
-		{name: "default", summary: "implement process failed: exit_code=1 stop_reason=model_error", want: recovery.FailureClassExecutorEdit},
-		{name: "budget", summary: "implement process failed: context length exceeded", want: recovery.FailureClassBudgetExhausted},
-		{name: "verification", summary: "implement process failed: required tests failed", want: recovery.FailureClassVerification},
+		{name: "default", summary: "implement process failed: exit_code=1 stop_reason=model_error", want: recoverycontract.FailureClassExecutorEdit},
+		{name: "budget", summary: "implement process failed: context length exceeded", want: recoverycontract.FailureClassBudgetExhausted},
+		{name: "verification", summary: "implement process failed: required tests failed", want: recoverycontract.FailureClassVerification},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -202,7 +203,7 @@ func runLaneRecoveryTest(t *testing.T, root string, args []string, implement lan
 	return runLaneMainWithDeps(args, stdout, stderr, deps)
 }
 
-func readRecoveryRecord(t *testing.T, path string) recovery.FailureRecord {
+func readRecoveryRecord(t *testing.T, path string) recoverycontract.FailureRecord {
 	t.Helper()
 
 	body, err := os.ReadFile(path)
@@ -210,7 +211,7 @@ func readRecoveryRecord(t *testing.T, path string) recovery.FailureRecord {
 		t.Fatalf("read recovery record: %v", err)
 	}
 
-	var record recovery.FailureRecord
+	var record recoverycontract.FailureRecord
 
 	if err := json.Unmarshal(body, &record); err != nil {
 		t.Fatalf("decode recovery record: %v", err)
@@ -219,7 +220,7 @@ func readRecoveryRecord(t *testing.T, path string) recovery.FailureRecord {
 	return record
 }
 
-func readRecoveryPacket(t *testing.T, path string) recovery.DecompositionPacket {
+func readRecoveryPacket(t *testing.T, path string) recoverycontract.DecompositionPacket {
 	t.Helper()
 
 	body, err := os.ReadFile(path)
@@ -227,7 +228,7 @@ func readRecoveryPacket(t *testing.T, path string) recovery.DecompositionPacket 
 		t.Fatalf("read recovery packet: %v", err)
 	}
 
-	var packet recovery.DecompositionPacket
+	var packet recoverycontract.DecompositionPacket
 
 	if err := json.Unmarshal(body, &packet); err != nil {
 		t.Fatalf("decode recovery packet: %v", err)
@@ -236,7 +237,7 @@ func readRecoveryPacket(t *testing.T, path string) recovery.DecompositionPacket 
 	return packet
 }
 
-func assertEvidenceRef(t *testing.T, refs []recovery.EvidenceRef, kind string, path string, id string) {
+func assertEvidenceRef(t *testing.T, refs []recoverycontract.EvidenceRef, kind string, path string, id string) {
 	t.Helper()
 
 	for _, ref := range refs {

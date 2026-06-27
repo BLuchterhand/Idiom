@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 func GenerateImplementationBrief(input BriefGenerationInput) BriefGenerationResult {
@@ -134,7 +134,7 @@ func GenerateImplementationBrief(input BriefGenerationInput) BriefGenerationResu
 			continue
 		}
 
-		if !util.EqualTrimFold(obligation.Status, ProductWorkflowStatusPassed) {
+		if !textutil.EqualTrimFold(obligation.Status, string(ProductWorkflowStatusPassed)) {
 			if strings.TrimSpace(obligation.Behavior) != "" {
 				out.RequiredBehavior = append(out.RequiredBehavior, fmt.Sprintf("%s: %s", obID, strings.TrimSpace(obligation.Behavior)))
 			}
@@ -473,7 +473,7 @@ func markdownSectionExcerpt(markdown string, section string) string {
 				break
 			}
 
-			inSection = util.EqualTrimFold(strings.TrimPrefix(trimmed, "## "), section)
+			inSection = textutil.EqualTrimFold(strings.TrimPrefix(trimmed, "## "), section)
 
 			continue
 		}

@@ -1,13 +1,15 @@
 package planexecute
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
 
+	plancontract "idiom/internal/contracts/plan"
+	planartifact "idiom/internal/contracts/planartifact"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
-	"idiom/internal/repository/comprehension"
 )
 
 type PromptRunner func(config.Config, string, RunOptions, io.Writer) (string, error)
@@ -23,7 +25,7 @@ type RunOptions struct {
 	UseActiveModel              bool
 	Telemetry                   *telemetry.Recorder
 	ConfigSourcePath            string
-	ScopeContract               PlanScopeContract
+	ScopeContract               plancontract.PlanScopeContract
 	AuthorizedNewFiles          []string
 }
 
@@ -54,6 +56,7 @@ const (
 )
 
 type Options struct {
+	Context                          context.Context
 	ConfigPath                       string
 	Prompt                           string
 	PromptFile                       string
@@ -68,8 +71,8 @@ type Options struct {
 	AllowedEditPaths                 MultiFlag
 	WriteAllowedPaths                MultiFlag
 	WriteAllowedPathsExplicit        bool
-	EditSetObligations               EditSetObligations
-	ScopeContract                    PlanScopeContract
+	EditSetObligations               plancontract.EditSetObligations
+	ScopeContract                    plancontract.PlanScopeContract
 	ScopeExtractionPolicy            ScopeExtractionPolicy
 	AuthorizedNewFiles               []string
 	VerificationPlanExplicitCommands []string
@@ -81,28 +84,13 @@ type Options struct {
 	OnEditProgress                   EditProgressFunc
 }
 
-const (
-	ExecutorHandoffStateInherited  = "inherited"
-	ExecutorHandoffStateMissing    = "missing"
-	ExecutorHandoffStateStale      = "stale"
-	ExecutorHandoffStateOverridden = "overridden"
-)
-
-const (
-	ExecutorPacketFreshnessFresh           = "fresh"
-	ExecutorPacketFreshnessStale           = "stale"
-	ExecutorPacketFreshnessMissing         = "missing"
-	ExecutorPacketFreshnessNotUsedByDesign = "not_used_by_design"
-	ExecutorPacketFreshnessUnknown         = "unknown"
-)
-
 type ExecutorHandoffPacket struct {
-	State                   string
+	State                   plancontract.ExecutorHandoffState
 	Reason                  string
 	HandoffCreated          bool
 	PacketPresent           bool
 	PacketNotUsedByDesign   bool
-	PacketFreshnessState    string
+	PacketFreshnessState    plancontract.ExecutorPacketFreshnessState
 	PlanID                  string
 	HandoffID               string
 	HandoffStatus           string
@@ -118,9 +106,16 @@ type ExecutorHandoffPacket struct {
 	CandidateFiles          int
 	CandidateSymbols        int
 	Tests                   int
-	Quality                 comprehension.CompactPackQuality
+	Quality                 PackQuality
 	ApprovedPathCount       int
 	PendingPathCount        int
+}
+
+type PackQuality struct {
+	LocalizationConfidence string   `json:"localization_confidence"`
+	SourceOwnerFound       bool     `json:"source_owner_found"`
+	EvidencePaths          []string `json:"evidence_paths"`
+	Reasons                []string `json:"reasons"`
 }
 
 type ExecutorPhaseReport struct {
@@ -128,12 +123,44 @@ type ExecutorPhaseReport struct {
 	Succeeded            int
 	Failed               int
 	Failures             []string
-	SourceSanity         []PhaseEvidenceCheck
-	Verification         []PhaseEvidenceCheck
-	VerificationCommands []VerificationCommand
-	VerificationSkips    []VerificationSkip
-	VerificationRejects  []VerificationReject
+	SourceSanity         []plancontract.PhaseEvidenceCheck
+	Verification         []plancontract.PhaseEvidenceCheck
+	VerificationCommands []plancontract.VerificationCommand
+	VerificationSkips    []plancontract.VerificationSkip
+	VerificationRejects  []plancontract.VerificationReject
 	Handoff              ExecutorHandoffPacket
+}
+
+type ExecutorPhaseOptions struct {
+	Context              context.Context
+	RequiredEditPaths    []string
+	AllowedEditPaths     []string
+	WriteAllowedPaths    []string
+	WriteAllowedExplicit bool
+	AuthorizedNewFiles   []string
+	VerificationCommands []string
+	VerificationPlan     *VerificationPlan
+	JSONEvents           bool
+	Stdout               io.Writer
+	Progress             []EditProgressFunc
+}
+
+type ExecutorScope struct {
+	RequiredEditPaths    []string
+	AllowedEditPaths     []string
+	WriteAllowedPaths    []string
+	WriteAllowedExplicit bool
+	AuthorizedNewFiles   []string
+}
+
+func ExecutorScopeFromOptions(opts ExecutorPhaseOptions) ExecutorScope {
+	return ExecutorScope{
+		RequiredEditPaths:    append([]string(nil), opts.RequiredEditPaths...),
+		AllowedEditPaths:     append([]string(nil), opts.AllowedEditPaths...),
+		WriteAllowedPaths:    append([]string(nil), opts.WriteAllowedPaths...),
+		WriteAllowedExplicit: opts.WriteAllowedExplicit,
+		AuthorizedNewFiles:   append([]string(nil), opts.AuthorizedNewFiles...),
+	}
 }
 
 func ExecutorSourceSanityFailed(report ExecutorPhaseReport, err error) bool {
@@ -144,8 +171,7 @@ func ExecutorSourceSanityFailed(report ExecutorPhaseReport, err error) bool {
 	hasFailedSourceSanity := false
 
 	for _, check := range report.SourceSanity {
-		status := strings.ToLower(strings.TrimSpace(check.Status))
-		if strings.TrimSpace(check.Error) != "" || (status != "" && status != "ok" && status != "passed") {
+		if strings.TrimSpace(check.Error) != "" || (check.Status != "" && !plancontract.PhaseEvidenceStatusIsPassed(check.Status)) {
 			hasFailedSourceSanity = true
 			break
 		}
@@ -164,8 +190,7 @@ func ExecutorVerificationFailed(report ExecutorPhaseReport, err error) bool {
 	}
 
 	for _, check := range report.Verification {
-		status := strings.ToLower(strings.TrimSpace(check.Status))
-		if strings.TrimSpace(check.Error) != "" || (status != "" && status != "ok" && status != "passed") {
+		if strings.TrimSpace(check.Error) != "" || (check.Status != "" && !plancontract.PhaseEvidenceStatusIsPassed(check.Status)) {
 			return strings.Contains(strings.ToLower(err.Error()), "verification failed")
 		}
 	}
@@ -197,30 +222,23 @@ type PatchHygieneAutoRepairReport struct {
 	Lines    int
 }
 
-type PhaseEvidenceCheck struct {
-	Kind       string `json:"kind"`
-	Path       string `json:"path,omitempty"`
-	Command    string `json:"command,omitempty"`
-	WorkingDir string `json:"working_dir,omitempty"`
-	Status     string `json:"status"`
-	Summary    string `json:"summary,omitempty"`
-	Error      string `json:"error,omitempty"`
-}
-
 type ReviewRepairPhaseReport struct {
 	Skipped              bool
-	Status               string
+	Status               plancontract.PlanExecuteReviewStatus
+	StatusDetail         string
 	FailureReason        string
 	Repairs              int
 	AutoRepairs          int
 	ReviewPlan           string
+	RepairPaths          []string
+	CombinedChangedPaths []string
 	ChecklistFound       bool
 	ReasonClass          string
-	SourceSanity         []PhaseEvidenceCheck
-	Verification         []PhaseEvidenceCheck
-	VerificationCommands []VerificationCommand
-	VerificationSkips    []VerificationSkip
-	VerificationRejects  []VerificationReject
+	SourceSanity         []plancontract.PhaseEvidenceCheck
+	Verification         []plancontract.PhaseEvidenceCheck
+	VerificationCommands []plancontract.VerificationCommand
+	VerificationSkips    []plancontract.VerificationSkip
+	VerificationRejects  []plancontract.VerificationReject
 }
 
 func (r ReviewRepairPhaseReport) String() string {
@@ -228,9 +246,12 @@ func (r ReviewRepairPhaseReport) String() string {
 		return "review-repair: skipped"
 	}
 
-	status := strings.TrimSpace(r.Status)
+	status := strings.TrimSpace(string(r.Status))
 	if status == "" {
 		status = "not run"
+	}
+	if detail := strings.TrimSpace(r.StatusDetail); detail != "" {
+		status += " (" + detail + ")"
 	}
 
 	if r.Repairs == 0 {
@@ -249,7 +270,7 @@ func (r ReviewRepairPhaseReport) String() string {
 }
 
 func ReviewRepairResolvedVerificationFailure(report ReviewRepairPhaseReport) bool {
-	return strings.TrimSpace(report.Status) == "repaired"
+	return report.Status == plancontract.PlanExecuteReviewStatusRepaired
 }
 
 type ReviewRepairEvidence struct {
@@ -261,59 +282,84 @@ type ReviewRepairEvidence struct {
 
 const PhaseEvidenceSchemaVersion = "idiom.phase_evidence.v1"
 
+type PhaseEvidencePhase string
+type PhaseEvidencePacketStatus string
+type PhaseEvidenceSummaryKind string
+
+const (
+	PhaseEvidencePhaseUnknown      PhaseEvidencePhase = "unknown"
+	PhaseEvidencePhasePlanning     PhaseEvidencePhase = PhaseEvidencePhase(plancontract.PlanExecuteProgressPhasePlanning)
+	PhaseEvidencePhaseExecutor     PhaseEvidencePhase = PhaseEvidencePhase(plancontract.PlanExecuteProgressPhaseExecutor)
+	PhaseEvidencePhaseReviewRepair PhaseEvidencePhase = PhaseEvidencePhase(plancontract.PlanExecuteProgressPhaseReviewRepair)
+	PhaseEvidencePhaseComplete     PhaseEvidencePhase = PhaseEvidencePhase(plancontract.PlanExecuteProgressPhaseComplete)
+
+	PhaseEvidencePacketStatusNotProvided    PhaseEvidencePacketStatus = "not_provided"
+	PhaseEvidencePacketStatusInvalidPackID  PhaseEvidencePacketStatus = "invalid_pack_id"
+	PhaseEvidencePacketStatusError          PhaseEvidencePacketStatus = "error"
+	PhaseEvidencePacketStatusAvailable      PhaseEvidencePacketStatus = "available"
+	PhaseEvidencePacketStatusAvailableStale PhaseEvidencePacketStatus = "available_stale"
+	PhaseEvidencePacketStatusMiss           PhaseEvidencePacketStatus = "miss"
+
+	PhaseEvidenceSummaryKindContextPacket PhaseEvidenceSummaryKind = "context_packet"
+	PhaseEvidenceSummaryKindPatchHygiene  PhaseEvidenceSummaryKind = "patch_hygiene"
+	PhaseEvidenceSummaryKindSubmittedPlan PhaseEvidenceSummaryKind = "submitted_plan"
+	PhaseEvidenceSummaryKindSourceSanity  PhaseEvidenceSummaryKind = "source_sanity"
+	PhaseEvidenceSummaryKindVerification  PhaseEvidenceSummaryKind = "verification"
+)
+
 type PhaseEvidenceBundle struct {
-	SchemaVersion      string                 `json:"schema_version"`
-	Phase              string                 `json:"phase"`
-	GeneratedAt        string                 `json:"generated_at"`
-	ChangedPaths       []string               `json:"changed_paths,omitempty"`
-	RequiredPaths      []string               `json:"required_paths,omitempty"`
-	AllowedPaths       []string               `json:"allowed_paths,omitempty"`
-	EditSetObligations EditSetObligations     `json:"edit_set_obligations,omitempty"`
-	Packet             PhaseEvidencePacket    `json:"packet"`
-	ExecutorHandoff    phaseEvidenceHandoff   `json:"executor_handoff"`
-	SubmittedPlan      []PhaseEvidenceCheck   `json:"submitted_plan_state,omitempty"`
-	SourceSanity       []PhaseEvidenceCheck   `json:"source_sanity,omitempty"`
-	Verification       []PhaseEvidenceCheck   `json:"verification,omitempty"`
-	PatchHygiene       PhaseEvidenceCheck     `json:"patch_hygiene"`
-	SuggestedTests     []PhaseEvidenceTest    `json:"suggested_tests,omitempty"`
-	UnresolvedGaps     []string               `json:"unresolved_gaps,omitempty"`
-	OpenObligations    []string               `json:"open_obligations,omitempty"`
-	DecisionEvidence   []phaseEvidenceSummary `json:"decision_evidence,omitempty"`
+	SchemaVersion      string                            `json:"schema_version"`
+	Phase              PhaseEvidencePhase                `json:"phase"`
+	GeneratedAt        string                            `json:"generated_at"`
+	ChangedPaths       []string                          `json:"changed_paths,omitempty"`
+	RequiredPaths      []string                          `json:"required_paths,omitempty"`
+	AllowedPaths       []string                          `json:"allowed_paths,omitempty"`
+	EditSetObligations plancontract.EditSetObligations   `json:"edit_set_obligations,omitempty"`
+	Packet             PhaseEvidencePacket               `json:"packet"`
+	ExecutorHandoff    phaseEvidenceHandoff              `json:"executor_handoff"`
+	SubmittedPlan      []plancontract.PhaseEvidenceCheck `json:"submitted_plan_state,omitempty"`
+	SourceSanity       []plancontract.PhaseEvidenceCheck `json:"source_sanity,omitempty"`
+	Verification       []plancontract.PhaseEvidenceCheck `json:"verification,omitempty"`
+	PatchHygiene       plancontract.PhaseEvidenceCheck   `json:"patch_hygiene"`
+	SuggestedTests     []PhaseEvidenceTest               `json:"suggested_tests,omitempty"`
+	UnresolvedGaps     []string                          `json:"unresolved_gaps,omitempty"`
+	OpenObligations    []string                          `json:"open_obligations,omitempty"`
+	DecisionEvidence   []phaseEvidenceSummary            `json:"decision_evidence,omitempty"`
 }
 
 type PhaseEvidencePacket struct {
-	PackID           string                           `json:"pack_id,omitempty"`
-	Status           string                           `json:"status"`
-	Error            string                           `json:"error,omitempty"`
-	IndexID          string                           `json:"index_id,omitempty"`
-	Fresh            bool                             `json:"fresh,omitempty"`
-	Confidence       string                           `json:"confidence,omitempty"`
-	Quality          comprehension.CompactPackQuality `json:"quality"`
-	StoreKind        string                           `json:"store_kind,omitempty"`
-	CandidateFiles   []PhaseEvidenceFile              `json:"candidate_files,omitempty"`
-	CandidateSymbols []PhaseEvidenceSymbol            `json:"candidate_symbols,omitempty"`
-	SuggestedTests   []PhaseEvidenceTest              `json:"suggested_tests,omitempty"`
-	UnresolvedGaps   []string                         `json:"unresolved_gaps,omitempty"`
+	PackID           string                    `json:"pack_id,omitempty"`
+	Status           PhaseEvidencePacketStatus `json:"status"`
+	Error            string                    `json:"error,omitempty"`
+	IndexID          string                    `json:"index_id,omitempty"`
+	Fresh            bool                      `json:"fresh,omitempty"`
+	Confidence       string                    `json:"confidence,omitempty"`
+	Quality          PackQuality               `json:"quality"`
+	StoreKind        string                    `json:"store_kind,omitempty"`
+	CandidateFiles   []PhaseEvidenceFile       `json:"candidate_files,omitempty"`
+	CandidateSymbols []PhaseEvidenceSymbol     `json:"candidate_symbols,omitempty"`
+	SuggestedTests   []PhaseEvidenceTest       `json:"suggested_tests,omitempty"`
+	UnresolvedGaps   []string                  `json:"unresolved_gaps,omitempty"`
 }
 
 type phaseEvidenceHandoff struct {
-	PacketState      string                           `json:"packet_state"`
-	Reason           string                           `json:"reason,omitempty"`
-	HandoffCreated   bool                             `json:"handoff_created,omitempty"`
-	PacketPresent    bool                             `json:"packet_present,omitempty"`
-	PacketNotUsed    bool                             `json:"packet_not_used_by_design,omitempty"`
-	PacketFreshness  string                           `json:"packet_freshness_state,omitempty"`
-	PlanID           string                           `json:"plan_id,omitempty"`
-	HandoffID        string                           `json:"handoff_id,omitempty"`
-	HandoffStatus    string                           `json:"handoff_status,omitempty"`
-	PackID           string                           `json:"pack_id,omitempty"`
-	DeclaredPackID   string                           `json:"declared_pack_id,omitempty"`
-	IndexID          string                           `json:"index_id,omitempty"`
-	Fresh            bool                             `json:"fresh,omitempty"`
-	Quality          comprehension.CompactPackQuality `json:"quality"`
-	CandidateFiles   int                              `json:"candidate_files,omitempty"`
-	CandidateSymbols int                              `json:"candidate_symbols,omitempty"`
-	Tests            int                              `json:"tests,omitempty"`
+	PacketState      plancontract.ExecutorHandoffState         `json:"packet_state"`
+	Reason           string                                    `json:"reason,omitempty"`
+	HandoffCreated   bool                                      `json:"handoff_created,omitempty"`
+	PacketPresent    bool                                      `json:"packet_present,omitempty"`
+	PacketNotUsed    bool                                      `json:"packet_not_used_by_design,omitempty"`
+	PacketFreshness  plancontract.ExecutorPacketFreshnessState `json:"packet_freshness_state,omitempty"`
+	PlanID           string                                    `json:"plan_id,omitempty"`
+	HandoffID        string                                    `json:"handoff_id,omitempty"`
+	HandoffStatus    planartifact.HandoffStatus                `json:"handoff_status,omitempty"`
+	PackID           string                                    `json:"pack_id,omitempty"`
+	DeclaredPackID   string                                    `json:"declared_pack_id,omitempty"`
+	IndexID          string                                    `json:"index_id,omitempty"`
+	Fresh            bool                                      `json:"fresh,omitempty"`
+	Quality          PackQuality                               `json:"quality"`
+	CandidateFiles   int                                       `json:"candidate_files,omitempty"`
+	CandidateSymbols int                                       `json:"candidate_symbols,omitempty"`
+	Tests            int                                       `json:"tests,omitempty"`
 }
 
 type PhaseEvidenceFile struct {
@@ -343,9 +389,9 @@ type PhaseEvidenceTest struct {
 }
 
 type phaseEvidenceSummary struct {
-	Kind    string `json:"kind"`
-	Status  string `json:"status"`
-	Summary string `json:"summary,omitempty"`
+	Kind    PhaseEvidenceSummaryKind                `json:"kind"`
+	Status  plancontract.PhaseEvidenceSummaryStatus `json:"status"`
+	Summary string                                  `json:"summary,omitempty"`
 }
 
 type PlanEditPreflightMismatch struct {

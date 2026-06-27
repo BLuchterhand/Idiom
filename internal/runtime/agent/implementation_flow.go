@@ -6,16 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"idiom/internal/capabilities/workspace"
-	"idiom/internal/contracts/autonomy"
-	"idiom/internal/contracts/pathparse"
-	"idiom/internal/contracts/plan"
-	"idiom/internal/platform/config"
-	"idiom/internal/platform/util"
-	"idiom/internal/runtime/instructions"
-	"idiom/internal/runtime/llama"
-	"idiom/internal/runtime/modepolicy"
-	"idiom/internal/runtime/workerruntime"
 	"io"
 	"os"
 	"os/exec"
@@ -26,9 +16,19 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/autonomy"
+	"idiom/internal/contracts/pathparse"
+	plancontract "idiom/internal/contracts/plan"
+	"idiom/internal/platform/config"
+	"idiom/internal/platform/textutil"
+	"idiom/internal/runtime/instructions"
+	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/modepolicy"
+	"idiom/internal/runtime/workerruntime"
 )
 
-// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmpi3q9pyjb.go ---
 // AnswerComposer is the presentation boundary between deterministic evidence
 // packets and user-facing prose. Runner/discovery code can stay telemetry-rich;
 // final answers should read like an explanation, not like an eval artifact.
@@ -545,15 +545,15 @@ func (r *Runner) beginWorkbranchChildLifecycle(agentName string, opts llama.Chat
 }
 
 func (r *Runner) beginDelegateEditLifecycle(req workspace.ToolRequest, opts llama.ChatOptions, deterministic bool, client llama.LLMClient) childLifecycleContext {
-	role := "executor:" + util.FirstNonEmpty(strings.TrimSpace(req.Agent), "delegate_edit")
+	role := "executor:" + textutil.FirstNonEmpty(strings.TrimSpace(req.Agent), "delegate_edit")
 	return r.beginChildLifecycle(role, "delegate_edit", autonomy.ChildWorkspaceMain, opts, RunPolicy{}, deterministic, client)
 }
 
 func (r *Runner) beginChildLifecycle(role string, phase string, mode autonomy.ChildWorkspaceMode, opts llama.ChatOptions, policy RunPolicy, deterministic bool, client llama.LLMClient) childLifecycleContext {
 	now := time.Now().UTC()
-	lane := util.FirstNonEmpty(r.runtimeChildLifecycleLane(), "runner")
-	phase = util.FirstNonEmpty(phase, r.runtimeChildLifecyclePhase(), "child")
-	role = util.FirstNonEmpty(role, "child")
+	lane := textutil.FirstNonEmpty(r.runtimeChildLifecycleLane(), "runner")
+	phase = textutil.FirstNonEmpty(phase, r.runtimeChildLifecyclePhase(), "child")
+	role = textutil.FirstNonEmpty(role, "child")
 	parentContractID := r.childLifecycleParentContractID()
 	childContractID := r.childLifecycleChildContractID(parentContractID, lane, phase, role)
 	invocationID := childLifecycleID("child_invocation", parentContractID, childContractID, lane, phase, role, now.Format(time.RFC3339Nano))
@@ -621,7 +621,7 @@ func (r *Runner) emitWorkbranchChildTerminal(ctx childLifecycleContext, checkout
 			PatchID:         patchID,
 			InvocationID:    ctx.InvocationID,
 			ChildContractID: ctx.ChildContractID,
-			BaseSHA:         util.FirstNonEmpty(checkout.BaseSHA, "unknown"),
+			BaseSHA:         textutil.FirstNonEmpty(checkout.BaseSHA, "unknown"),
 			WorktreePathRef: "workbranch:" + childLifecycleHash(checkout.Path),
 			ChangedPaths:    append([]string(nil), diff.ChangedPaths...),
 			DiffStat:        childLifecycleDiffStat(diff),
@@ -695,7 +695,7 @@ func (r *Runner) emitDelegateEditLifecycle(ctx childLifecycleContext, req worksp
 		PathGateRef:                metadata.PathGateRef,
 		PathGateDecision:           metadata.PathGateDecision,
 		Route:                      route,
-		ReasonCode:                 util.FirstNonEmpty(reasonCode, "delegate_edit_recorded"),
+		ReasonCode:                 textutil.FirstNonEmpty(reasonCode, "delegate_edit_recorded"),
 	}
 	r.emitChildLifecycleRecord(childLifecycleAcceptanceEventRole, &acceptance)
 }
@@ -781,7 +781,7 @@ func (r *Runner) emitChildTerminalAcceptance(ctx childLifecycleContext, terminal
 		acceptedPatchRefs = append([]string(nil), terminal.ArtifactRefs...)
 		if len(acceptedEvidenceRefs) == 0 && len(acceptedPatchRefs) == 0 {
 			decision = autonomy.ChildAcceptanceRecordedOnly
-			reasonCode = util.FirstNonEmpty(reasonCode, "accepted_refs_missing")
+			reasonCode = textutil.FirstNonEmpty(reasonCode, "accepted_refs_missing")
 		}
 	}
 
@@ -799,7 +799,7 @@ func (r *Runner) emitChildTerminalAcceptance(ctx childLifecycleContext, terminal
 		RequiredRepairPaths:  append([]string(nil), terminal.ChangedPaths...),
 		RuntimeEnvelopeRef:   "runtime_envelope:" + ctx.InvocationID,
 		AlignmentBasis:       childLifecycleAlignmentBasis(ctx, terminal, acceptedEvidenceRefs, acceptedPatchRefs),
-		ReasonCode:           util.FirstNonEmpty(reasonCode, "child_terminal_recorded"),
+		ReasonCode:           textutil.FirstNonEmpty(reasonCode, "child_terminal_recorded"),
 		PathGateDecision:     autonomy.ChildPathGateNotApplicable,
 		Route:                autonomy.ChildRouteChildModel,
 		ExecutionMetadataRef: "terminal_execution:" + terminal.TerminalID,
@@ -910,7 +910,7 @@ func (r *Runner) childLifecycleChildContractID(parentContractID string, lane str
 			InvocationKind:    autonomy.InvocationChild,
 			Lane:              lane,
 			Phase:             phase,
-			TaskFamily:        util.FirstNonEmpty(r.runtimeChildLifecycleTaskFamily(), phase),
+			TaskFamily:        textutil.FirstNonEmpty(r.runtimeChildLifecycleTaskFamily(), phase),
 			RuntimeContract:   r.runtimeChildLifecycleContract(),
 			PermissionProfile: r.runtimeChildLifecyclePermissionProfile(),
 		},
@@ -924,7 +924,7 @@ func (r *Runner) childLifecycleChildContractID(parentContractID string, lane str
 }
 
 func (r *Runner) childRuntimeEnvelope(role string, opts llama.ChatOptions, policy RunPolicy, deterministic bool, client llama.LLMClient) autonomy.ChildRuntimeEnvelope {
-	modelAlias := util.FirstNonEmpty(safeModelAliasForTelemetry(opts.Model), "default")
+	modelAlias := textutil.FirstNonEmpty(safeModelAliasForTelemetry(opts.Model), "default")
 	backendKind := "llm_client"
 	if deterministic {
 		modelAlias = "deterministic"
@@ -952,10 +952,10 @@ func (r *Runner) childRuntimeEnvelope(role string, opts llama.ChatOptions, polic
 	return autonomy.ChildRuntimeEnvelope{
 		BackendKind: backendKind,
 		ModelAlias:  modelAlias,
-		ModelRole:   util.FirstNonEmpty(role, "child"),
+		ModelRole:   textutil.FirstNonEmpty(role, "child"),
 		RoleResolution: autonomy.ChildRoleResolution{
-			RequestedRole: util.FirstNonEmpty(role, "child"),
-			ResolvedRole:  util.FirstNonEmpty(role, "child"),
+			RequestedRole: textutil.FirstNonEmpty(role, "child"),
+			ResolvedRole:  textutil.FirstNonEmpty(role, "child"),
 			Alias:         modelAlias,
 			Source:        autonomy.RoleResolutionSourceRoleTag,
 			OK:            true,
@@ -1005,7 +1005,7 @@ func childLifecycleEvidenceRefs(results []workspace.ToolResult) []string {
 		if strings.TrimSpace(result.Error) != "" {
 			continue
 		}
-		tool := util.FirstNonEmpty(strings.TrimSpace(result.Tool), "tool")
+		tool := textutil.FirstNonEmpty(strings.TrimSpace(result.Tool), "tool")
 		refs = append(refs, fmt.Sprintf("tool_result:%s:%d", tool, i+1))
 	}
 	return refs
@@ -1058,11 +1058,11 @@ func childLifecycleVerificationObligationRefs(r *Runner) []string {
 }
 
 func childLifecycleToolRef(req workspace.ToolRequest) string {
-	return util.FirstNonEmpty("tool_request:"+strings.TrimSpace(req.Tool)+":"+agentutil.NormalizeRunnerPath(req.Path), "tool_request:delegate_edit")
+	return textutil.FirstNonEmpty("tool_request:"+strings.TrimSpace(req.Tool)+":"+agentutil.NormalizeRunnerPath(req.Path), "tool_request:delegate_edit")
 }
 
 func childLifecyclePathGateRef(req workspace.ToolRequest) string {
-	return util.FirstNonEmpty("path_gate:"+agentutil.NormalizeRunnerPath(req.Path), "path_gate:delegate_edit")
+	return textutil.FirstNonEmpty("path_gate:"+agentutil.NormalizeRunnerPath(req.Path), "path_gate:delegate_edit")
 }
 
 func childLifecycleFailureClass(err error) string {
@@ -1100,7 +1100,7 @@ func (r *Runner) runtimeChildLifecyclePhase() string {
 	if r == nil {
 		return ""
 	}
-	return util.FirstNonEmpty(r.RuntimeBrief.TaskFamily, r.RuntimeBrief.Contract)
+	return textutil.FirstNonEmpty(r.RuntimeBrief.TaskFamily, r.RuntimeBrief.Contract)
 }
 
 func (r *Runner) runtimeChildLifecycleTaskFamily() string {
@@ -1469,7 +1469,7 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 		}
 
 		if missing := unresolvedRejectedMutationPaths(results, r.RuntimeBrief.RequiredEditPaths); len(missing) > 0 {
-			acceptance.EvidencePaths = util.Merge(acceptance.EvidencePaths, missing)
+			acceptance.EvidencePaths = textutil.Merge(acceptance.EvidencePaths, missing)
 			return reject("rejected_mutation_paths_remaining", "rejected_mutation_paths_remaining")
 		}
 	}
@@ -1591,7 +1591,7 @@ func readOnlyDirectAnswerLane(brief workerruntime.WorkerRuntimeBrief) bool {
 
 func readOnlyDirectAnswerTaskFamily(family string) bool {
 	return workerruntime.TaskFamilyIsConversation(family) ||
-		workerruntime.TaskFamilyMatches(family, workerruntime.TaskFamilyDirectAnswer)
+		workerruntime.TaskFamilyMatches(family, autonomy.TaskFamilyDirectAnswer)
 }
 
 // hasSourceBodyEvidence reports whether the model has gathered any
@@ -1650,8 +1650,8 @@ func isSpecificQuestionBlocker(answer string) bool {
 
 func readOnlyDirectAnswerAcceptanceLedgerBrief(brief workerruntime.WorkerRuntimeBrief) workerruntime.WorkerRuntimeBrief {
 	brief = workerruntime.NormalizeRuntimeBrief(brief)
-	if workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyDirectAnswer) {
-		brief.TaskFamily = string(workerruntime.TaskFamilyConversation)
+	if workerruntime.TaskFamilyMatches(brief.TaskFamily, autonomy.TaskFamilyDirectAnswer) {
+		brief.TaskFamily = string(autonomy.TaskFamilyConversation)
 	}
 
 	return brief
@@ -1680,14 +1680,14 @@ func readOnlyAcceptedDirectAnswerEvidencePaths(answer string, ledger readOnlyAns
 
 	paths := intersectRunnerPaths(mentioned, relevant)
 
-	paths = util.Merge(paths, objectivePaths, relevant)
-	paths = util.Merge(paths, answerCitedCollectiveSourceBodySupportPaths(answer, ledger))
+	paths = textutil.Merge(paths, objectivePaths, relevant)
+	paths = textutil.Merge(paths, answerCitedCollectiveSourceBodySupportPaths(answer, ledger))
 	if ledger.planArtifactAnswerable() {
-		paths = util.Merge(paths, acceptedFeaturePlannerPlanArtifactPaths(answer, ledger))
+		paths = textutil.Merge(paths, acceptedFeaturePlannerPlanArtifactPaths(answer, ledger))
 	}
 
 	if len(paths) == 0 && ledger.DiagnosticRelevant {
-		paths = util.Merge(paths, mentionedEvidencePathsFromToolResults(results, 8))
+		paths = textutil.Merge(paths, mentionedEvidencePathsFromToolResults(results, 8))
 	}
 
 	return closurePromptEvidencePaths(paths, 8)
@@ -1704,7 +1704,7 @@ func acceptedFeaturePlannerPlanArtifactPaths(answer string, ledger readOnlyAnswe
 	for _, path := range readOnlySourceLikePaths(mentioned, 16) {
 		authority := featurePlannerPlanArtifactPathCitationAuthority(answer, path, ctx)
 		if authority.Kind == featurePlannerPlanCitationArtifactProposed {
-			paths = util.Merge(paths, []string{authority.ResolvedPlanPath})
+			paths = textutil.Merge(paths, []string{authority.ResolvedPlanPath})
 		}
 	}
 
@@ -1848,7 +1848,7 @@ func finalAnswerAcceptanceEventFields(acceptance finalAnswerAcceptance) map[stri
 	}
 
 	if len(acceptance.RelevantSourceBodyPaths) > 0 {
-		fields["relevant_source_body_paths"] = util.LimitSlice(acceptance.RelevantSourceBodyPaths, 8)
+		fields["relevant_source_body_paths"] = textutil.LimitSlice(acceptance.RelevantSourceBodyPaths, 8)
 	}
 
 	return fields
@@ -2066,10 +2066,10 @@ func questionBlockerContextPaths(brief workerruntime.WorkerRuntimeBrief, results
 	} else if readOnlyDirectAnswerLane(brief) {
 		ledger = readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
 
-		paths := util.Merge(ledger.RelevantSourceBodyPaths, ledger.SourceBodyObjectivePaths)
+		paths := textutil.Merge(ledger.RelevantSourceBodyPaths, ledger.SourceBodyObjectivePaths)
 
 		if ledger.DiagnosticRelevant {
-			paths = util.Merge(paths, ledger.DiagnosticPaths)
+			paths = textutil.Merge(paths, ledger.DiagnosticPaths)
 		}
 
 		paths = closurePromptEvidencePaths(paths, max)
@@ -2294,7 +2294,7 @@ func canonicalMutationBlockerFinalAnswer(brief workerruntime.WorkerRuntimeBrief,
 	missing := missingRequiredEditPaths(brief.RequiredEditPaths, changed)
 
 	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(brief.TaskFamily) &&
-		PlanThenExecuteSourceSatisfiedAnswerCoversPaths(answer, missing) &&
+		plancontract.SourceSatisfiedAnswerCoversPaths(answer, missing) &&
 		planThenExecuteSourceSatisfiedResultsCoverPaths(missing, results) {
 
 		return "", false
@@ -3202,7 +3202,7 @@ func sourceBodyObjectiveStringLiterals(line string, objective string, limit int)
 			inQuote = false
 
 			if sourceBodyLiteralSupportsObjective(value, objective) {
-				literals = util.AppendUnique(literals, "`\""+value+"\"`")
+				literals = textutil.AppendUnique(literals, "`\""+value+"\"`")
 				if len(literals) >= limit {
 					return literals
 				}
@@ -3388,7 +3388,7 @@ func sourceBodyCallFact(functionName string, line string) string {
 			continue
 		}
 
-		calls = util.AppendUnique(calls, "`"+candidate+"`")
+		calls = textutil.AppendUnique(calls, "`"+candidate+"`")
 		if len(calls) >= 2 {
 			break
 		}
@@ -3573,12 +3573,12 @@ func sourceEvidenceAnswerLinesForObjective(output string, objective string, maxL
 	}
 
 	if strings.TrimSpace(objective) == "" || len(all) <= maxLines {
-		return util.Prefix(all, maxLines)
+		return textutil.Prefix(all, maxLines)
 	}
 
 	terms := sourceEvidenceObjectiveLineTerms(objective)
 	if len(terms) == 0 {
-		return util.Prefix(all, maxLines)
+		return textutil.Prefix(all, maxLines)
 	}
 
 	selected := make([]string, 0, maxLines)
@@ -3626,7 +3626,7 @@ func sourceEvidenceAnswerLinesForObjective(output string, objective string, maxL
 	}
 
 	if len(selected) == 0 {
-		return util.Prefix(all, maxLines)
+		return textutil.Prefix(all, maxLines)
 	}
 
 	return selected
@@ -4973,7 +4973,7 @@ func planThenExecuteSubmitPlanHistoryMissing(brief workerruntime.WorkerRuntimeBr
 		}
 	}
 
-	paths = util.Unique(paths)
+	paths = textutil.Unique(paths)
 	for _, path := range paths {
 		if !successfulGitHistoryResultForPath(path, results) {
 			return true
@@ -5267,7 +5267,7 @@ func LanePolicyForBrief(brief workerruntime.WorkerRuntimeBrief) LanePolicy {
 		return ConversationLanePolicy{}
 	}
 
-	if workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyDelegatedReadOnly) {
+	if workerruntime.TaskFamilyMatches(brief.TaskFamily, autonomy.TaskFamilyDelegatedReadOnly) {
 		return DelegatedReadOnlyLanePolicy{}
 	}
 
@@ -5425,8 +5425,8 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 			"rust_overview", "rust_entrypoints",
 			"java_overview", "java_entrypoints",
 		)
-		childBrief.SearchPolicy = util.AppendUnique(childBrief.SearchPolicy, "start_from_named_paths_before_workspace_overview")
-		childBrief.Constraints = util.AppendUnique(childBrief.Constraints, "named_paths_scoped")
+		childBrief.SearchPolicy = textutil.AppendUnique(childBrief.SearchPolicy, "start_from_named_paths_before_workspace_overview")
+		childBrief.Constraints = textutil.AppendUnique(childBrief.Constraints, "named_paths_scoped")
 	}
 
 	child := &Runner{
@@ -5624,16 +5624,16 @@ func normalizeReadOnlyChildPrompt(prompt string) string {
 			strings.HasPrefix(lower, "named workspace scope:") ||
 			strings.HasPrefix(lower, "key terms:") {
 
-			kept = util.AppendUnique(kept, line)
+			kept = textutil.AppendUnique(kept, line)
 		}
 	}
 
 	if namedPaths := pathparse.MentionedWorkspacePaths(prompt); len(namedPaths) > 0 {
-		kept = util.AppendUnique(kept, "Named workspace scope: "+strings.Join(namedPaths, ", "))
+		kept = textutil.AppendUnique(kept, "Named workspace scope: "+strings.Join(namedPaths, ", "))
 	}
 
 	if keyTerms := readOnlyChildKeyTerms(prompt); len(keyTerms) > 0 {
-		kept = util.AppendUnique(kept, "Key terms: "+strings.Join(keyTerms, ", "))
+		kept = textutil.AppendUnique(kept, "Key terms: "+strings.Join(keyTerms, ", "))
 	}
 
 	if len(kept) == 0 {
@@ -6068,7 +6068,7 @@ func workbranchDeniedShellPrefixes(spec workerruntime.RoleSpec) []string {
 		}
 	}
 
-	return util.Merge(denied)
+	return textutil.Merge(denied)
 }
 
 // runDelegateEdit handles a delegate_edit tool call from the planner.
@@ -6456,7 +6456,7 @@ func augmentDelegatedReadOnlyPacket(answer string, objective string, results []w
 	if len(sourceBodyPaths) > 0 && len(sourceBodyEvidencePathsFromDelegatedPacket(answer)) == 0 {
 		b.WriteString("\n\nSource-body evidence paths:\n")
 
-		for _, path := range util.Prefix(sourceBodyPaths, 4) {
+		for _, path := range textutil.Prefix(sourceBodyPaths, 4) {
 			b.WriteString("- `")
 			b.WriteString(path)
 			b.WriteString("`\n")
@@ -6466,7 +6466,7 @@ func augmentDelegatedReadOnlyPacket(answer string, objective string, results []w
 	if len(missing) > 0 {
 		b.WriteString("\n\nAdditional inspected paths:\n")
 
-		for _, path := range util.Prefix(missing, 4) {
+		for _, path := range textutil.Prefix(missing, 4) {
 			b.WriteString("- `")
 			b.WriteString(path)
 			b.WriteString("`\n")
@@ -6476,7 +6476,7 @@ func augmentDelegatedReadOnlyPacket(answer string, objective string, results []w
 	if len(missingCandidates) > 0 {
 		b.WriteString("\nExact probes already inspected:\n")
 
-		for _, candidate := range util.Prefix(missingCandidates, 3) {
+		for _, candidate := range textutil.Prefix(missingCandidates, 3) {
 			b.WriteString("- `")
 			b.WriteString(candidate)
 			b.WriteString("`\n")
@@ -6839,7 +6839,7 @@ func prioritizedDelegatedEvidencePaths(paths []string, max int) []string {
 		return pi < pj
 	})
 
-	return util.Prefix(paths, max)
+	return textutil.Prefix(paths, max)
 }
 
 func prioritizedClosureEvidencePaths(paths []string, results []workspace.ToolResult, max int) []string {
@@ -6874,7 +6874,7 @@ func prioritizedClosureEvidencePaths(paths []string, results []workspace.ToolRes
 		return false
 	})
 
-	return util.Prefix(paths, max)
+	return textutil.Prefix(paths, max)
 }
 
 func delegatedDiscoverySummaryIsBroadCountOnly(lower string) bool {
@@ -6910,7 +6910,7 @@ func closurePromptEvidencePaths(paths []string, max int) []string {
 		cleaned = append(cleaned, path)
 	}
 
-	return util.Prefix(cleaned, max)
+	return textutil.Prefix(cleaned, max)
 }
 
 func closureEvidenceProbeScores(results []workspace.ToolResult) (map[string]int, map[string]int) {
@@ -7000,15 +7000,15 @@ func implementationPreWriteRuntimeBrief(brief workerruntime.WorkerRuntimeBrief) 
 	}
 
 	brief.RequiredTools = []string{"edit_file_or_apply_patch"}
-	brief.Constraints = util.Merge([]string{"implementation_prewrite_write_only"}, brief.Constraints)
-	brief.RequiredNext = util.Merge([]string{
+	brief.Constraints = textutil.Merge([]string{"implementation_prewrite_write_only"}, brief.Constraints)
+	brief.RequiredNext = textutil.Merge([]string{
 		"exact-anchor required-path write capability",
 		"answer <<QUESTION>> only if the packet lacks the exact anchor needed for that required path",
 	}, brief.RequiredNext)
-	brief.InvalidActions = util.Merge([]string{
+	brief.InvalidActions = textutil.Merge([]string{
 		"read/search/task_ledger/shell before first exact-anchor required-path write",
 	}, brief.InvalidActions)
-	brief.SearchPolicy = util.Merge([]string{
+	brief.SearchPolicy = textutil.Merge([]string{
 		"the exact target packet and required_edit_paths are the pre-write evidence surface",
 		"do not use discovery or task planning before the first exact-anchor required-path write",
 	}, brief.SearchPolicy)
@@ -7027,15 +7027,15 @@ func implementationScopedEditRuntimeBrief(brief workerruntime.WorkerRuntimeBrief
 	}
 
 	brief.RequiredTools = []string{"edit_file_or_apply_patch", "semantic_discovery_or_narrow_read_for_named_gap"}
-	brief.Constraints = util.Merge([]string{"implementation_required_path_scoped_surface"}, brief.Constraints)
-	brief.RequiredNext = util.Merge([]string{
+	brief.Constraints = textutil.Merge([]string{"implementation_required_path_scoped_surface"}, brief.Constraints)
+	brief.RequiredNext = textutil.Merge([]string{
 		"required-path edit, semantic/context/project discovery or narrow required-path read with named_gap for an exact edit-safety fact, or <<QUESTION>> with the exact blocker",
 	}, brief.RequiredNext)
-	brief.InvalidActions = util.Merge([]string{
+	brief.InvalidActions = textutil.Merge([]string{
 		"task_ledger or broad discovery before resolving the required-path contract",
 		"raw read/search outside required edit paths before resolving the required-path contract",
 	}, brief.InvalidActions)
-	brief.SearchPolicy = util.Merge([]string{
+	brief.SearchPolicy = textutil.Merge([]string{
 		"required edit paths define the implementation scope",
 		"prefer context, language, and declared read-only project discovery tools for named edit-safety gaps before raw source reads",
 		"raw source reads are only for exact anchor confirmation on required paths or explicit evidence paths",
@@ -7060,49 +7060,49 @@ func implementationTargetWriteReadyRuntimeBrief(brief workerruntime.WorkerRuntim
 	}
 
 	brief.RequiredTools = []string{"edit_file_or_apply_patch"}
-	brief.Constraints = util.Merge([]string{"implementation_target_write_ready"}, brief.Constraints)
-	brief.RequiredNext = util.Merge([]string{
+	brief.Constraints = textutil.Merge([]string{"implementation_target_write_ready"}, brief.Constraints)
+	brief.RequiredNext = textutil.Merge([]string{
 		"parser-readable write to the sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence",
 		"for delete/remove-file objectives, use apply_patch with `*** Delete File: <path>` after source evidence; do not use write_file with empty content as deletion",
 	}, brief.RequiredNext)
 
 	if sourceRefresh {
-		brief.RequiredNext = util.Merge([]string{
+		brief.RequiredNext = textutil.Merge([]string{
 			"parser-readable write to the sourced target path, bounded read_file/search_content source refresh with named_gap for a precise edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence",
 		}, brief.RequiredNext)
-		brief.InvalidActions = util.Merge([]string{
+		brief.InvalidActions = textutil.Merge([]string{
 			"broad read/search after source-body evidence",
 			"read/search for already-sourced paths unless the request adds a bounded missing range or exact named_gap",
 			"verification before a successful write",
 		}, brief.InvalidActions)
-		brief.SearchPolicy = util.Merge([]string{
+		brief.SearchPolicy = textutil.Merge([]string{
 			"the gathered source-body evidence is the pre-write target surface",
 			"use bounded source refresh only when an exact missing edit-safety fact remains; otherwise write or block",
 			"read_file/search_content refreshes must name the gap and stay scoped to source code, not docs or broad discovery",
 		}, brief.SearchPolicy)
-		brief.Constraints = util.Merge([]string{"bounded_source_refresh_allowance"}, brief.Constraints)
+		brief.Constraints = textutil.Merge([]string{"bounded_source_refresh_allowance"}, brief.Constraints)
 	} else {
-		brief.InvalidActions = util.Merge([]string{
+		brief.InvalidActions = textutil.Merge([]string{
 			"additional read/search after source-body evidence",
 			"verification before a successful write",
 		}, brief.InvalidActions)
-		brief.SearchPolicy = util.Merge([]string{
+		brief.SearchPolicy = textutil.Merge([]string{
 			"the gathered source-body evidence is the pre-write target surface",
 			"do not inspect further before the first write",
 		}, brief.SearchPolicy)
 	}
 
 	if sourcedSummary != "" {
-		brief.RequiredNext = util.Merge([]string{
+		brief.RequiredNext = textutil.Merge([]string{
 			"write using the already-read source-body evidence for: " + sourcedSummary,
 		}, brief.RequiredNext)
-		brief.InvalidActions = util.Merge([]string{
+		brief.InvalidActions = textutil.Merge([]string{
 			"read/search/navigation for already-sourced path(s): " + sourcedSummary,
 		}, brief.InvalidActions)
-		brief.SearchPolicy = util.Merge([]string{
+		brief.SearchPolicy = textutil.Merge([]string{
 			"already-sourced path(s) must not be read, searched, or navigated again before the first write: " + sourcedSummary,
 		}, brief.SearchPolicy)
-		brief.Constraints = util.Merge([]string{"source_body_evidence_paths: " + sourcedSummary}, brief.Constraints)
+		brief.Constraints = textutil.Merge([]string{"source_body_evidence_paths: " + sourcedSummary}, brief.Constraints)
 	}
 
 	if len(pendingTools) > 0 {
@@ -7110,18 +7110,18 @@ func implementationTargetWriteReadyRuntimeBrief(brief workerruntime.WorkerRuntim
 		pendingActionSummary := sourceEvidencePendingRedirectActionSummary(pending, 3)
 
 		brief.RequiredTools = []string{"exact_pending_source_body_followup_or_edit_file_or_apply_patch"}
-		brief.RequiredNext = util.Merge([]string{
+		brief.RequiredNext = textutil.Merge([]string{
 			"resolve the pending redirected source-body obligation (" + pendingActionSummary + "), then make one parser-readable write to a sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence",
 		}, brief.RequiredNext)
-		brief.InvalidActions = util.Merge([]string{
+		brief.InvalidActions = textutil.Merge([]string{
 			"broad read/search while a redirected source-body obligation is pending",
 			"read/navigation for any path except the exact pending redirected source-body follow-up: " + pendingActionSummary,
 		}, brief.InvalidActions)
-		brief.SearchPolicy = util.Merge([]string{
+		brief.SearchPolicy = textutil.Merge([]string{
 			"one redirected source-body obligation remains open: " + pendingActionSummary,
 			"use only the pending redirect's symbol/body follow-up, with at most one same-path outline first when the symbol is unknown; do not use references, broad discovery, or unrelated navigation",
 		}, brief.SearchPolicy)
-		brief.Constraints = util.Merge([]string{"pending_redirected_source_body_obligation: " + pendingSummary}, brief.Constraints)
+		brief.Constraints = textutil.Merge([]string{"pending_redirected_source_body_obligation: " + pendingSummary}, brief.Constraints)
 	}
 
 	return workerruntime.NormalizeRuntimeBrief(brief)
@@ -7138,23 +7138,23 @@ func implementationTargetSourceRuntimeBrief(brief workerruntime.WorkerRuntimeBri
 	}
 
 	brief.RequiredTools = []string{"bounded_workspace_evidence_tool", "edit_file_or_apply_patch"}
-	brief.Constraints = util.Merge([]string{"implementation_target_source_pending"}, brief.Constraints)
-	brief.RequiredNext = util.Merge([]string{
+	brief.Constraints = textutil.Merge([]string{"implementation_target_source_pending"}, brief.Constraints)
+	brief.RequiredNext = textutil.Merge([]string{
 		"localize the concrete edit target, read bounded source-body evidence with named_gap for the missing edit-safety fact, write only after exact source-body evidence and replacement shape are known, or <<QUESTION>> with the exact blocker/no-op evidence",
 		"for a genuinely new (non-existent) file, write_file directly with full content; source-body evidence and replacement shape are not required for an additive new-file write",
 		"for delete/remove-file objectives, read bounded existence/source evidence, then use apply_patch with `*** Delete File: <path>`; do not use write_file with empty content as deletion",
 	}, brief.RequiredNext)
-	brief.InvalidActions = util.Merge([]string{
+	brief.InvalidActions = textutil.Merge([]string{
 		"final answer before a successful write, no-op, or blocker",
 		"write that modifies existing source before exact source-body evidence and replacement shape",
 		"write_file with empty content to simulate deleting a file",
 		"verification before a successful write",
 	}, brief.InvalidActions)
-	brief.SearchPolicy = util.Merge([]string{
+	brief.SearchPolicy = textutil.Merge([]string{
 		"do not run verification before the first write",
 		"use bounded read/search/context only for a named missing target or edit-safety fact",
 	}, brief.SearchPolicy)
-	brief.ForbiddenTools = util.Merge(brief.ForbiddenTools, []string{workspace.ToolNameSourceSanity, workspace.ToolNameShell, workspace.ToolNameGitDiff, workspace.ToolNameGitStatus})
+	brief.ForbiddenTools = textutil.Merge(brief.ForbiddenTools, []string{workspace.ToolNameSourceSanity, workspace.ToolNameShell, workspace.ToolNameGitDiff, workspace.ToolNameGitStatus})
 
 	return workerruntime.NormalizeRuntimeBrief(brief)
 }
@@ -7170,16 +7170,16 @@ func exactAnchorPreWriteRuntimeBrief(brief workerruntime.WorkerRuntimeBrief) wor
 	}
 
 	brief.RequiredTools = []string{"edit_file_or_apply_patch"}
-	brief.Constraints = util.Merge([]string{"exact_anchor_prewrite_write_first"}, brief.Constraints)
-	brief.RequiredNext = util.Merge([]string{
+	brief.Constraints = textutil.Merge([]string{"exact_anchor_prewrite_write_first"}, brief.Constraints)
+	brief.RequiredNext = textutil.Merge([]string{
 		"exact-anchor write capability with the supplied target-packet anchor",
 		"answer <<QUESTION>> only if the supplied anchor is missing or stale",
 	}, brief.RequiredNext)
-	brief.InvalidActions = util.Merge([]string{
+	brief.InvalidActions = textutil.Merge([]string{
 		"read/search/shell before first exact-anchor write",
 		"verification before first exact-anchor write",
 	}, brief.InvalidActions)
-	brief.SearchPolicy = util.Merge([]string{
+	brief.SearchPolicy = textutil.Merge([]string{
 		"target-packet exact anchors count as current-state path and source evidence for the first write",
 		"do not inspect before the first exact-anchor write",
 	}, brief.SearchPolicy)
@@ -7944,7 +7944,7 @@ func (r *Runner) deterministicPlanExecuteSourceSatisfiedEvidenceRead(reply strin
 		return workspace.ToolRequest{}, "", false
 	}
 
-	evidencePaths := PlanThenExecuteSourceSatisfiedEvidencePaths(reply)
+	evidencePaths := plancontract.SourceSatisfiedEvidencePaths(reply)
 	if len(evidencePaths) == 0 {
 		return workspace.ToolRequest{}, "", false
 	}
@@ -8907,18 +8907,18 @@ func applyScratchpadDeliverableCloseoutBias(state runnerNextActionState, brief w
 		target = "the required deliverable"
 	}
 
-	state.Constraints = util.Merge(state.Constraints, []string{
+	state.Constraints = textutil.Merge(state.Constraints, []string{
 		"scratchpad_deliverable_closeout_ready",
 		"non_source_deliverable_path_unwritten",
 	})
-	state.EvidenceStatus = util.Merge(state.EvidenceStatus, []string{
+	state.EvidenceStatus = textutil.Merge(state.EvidenceStatus, []string{
 		fmt.Sprintf("non-source deliverable still unwritten: %s; gathered evidence and accepted gaps should be recorded in the deliverable", target),
 	})
 	state.NextValidActions = []string{
 		fmt.Sprintf("deliverable-write capability for %s with the corrected content, recording source uncertainty as Source verification pending or Scope Correction Required", target),
 		"answer <<QUESTION>> only if the deliverable cannot be written from the gathered evidence plus recorded uncertainty",
 	}
-	state.InvalidNextActions = util.Merge(state.InvalidNextActions, []string{
+	state.InvalidNextActions = textutil.Merge(state.InvalidNextActions, []string{
 		"new source discovery after completion gate rejected a prose-only non-source deliverable",
 		"repairing an optional evidence lookup instead of recording the gap in the scratchpad deliverable",
 		"final answer without write_file for the required non-source deliverable",
@@ -9507,7 +9507,7 @@ func shellOutputVerifiesPendingHTMLArtifacts(output string, pendingPaths []strin
 		if path == "" {
 			continue
 		}
-		normalized = util.AppendUniqueMulti(normalized, path)
+		normalized = textutil.AppendUniqueMulti(normalized, path)
 	}
 	if len(normalized) == 0 {
 		return false
@@ -9750,7 +9750,7 @@ func sourceEditCloseoutPrompt(req workspace.ToolRequest, brief workerruntime.Wor
 		return "", false
 	}
 
-	if util.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering) != "" {
+	if textutil.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering) != "" {
 		return "", false
 	}
 
@@ -9875,7 +9875,7 @@ func failedVerificationAfterLatestWrite(results []workspace.ToolResult, brief wo
 			}
 
 			pending = true
-			pendingPaths = util.AppendUniqueMulti(pendingPaths, changedPathsFromToolResult(result)...)
+			pendingPaths = textutil.AppendUniqueMulti(pendingPaths, changedPathsFromToolResult(result)...)
 			failed = false
 			latestFailed = workspace.ToolResult{}
 
@@ -10776,13 +10776,13 @@ func (s PermissionDecisionSnapshot) ToolResult() workspace.ToolResult {
 		return workspace.ToolResult{
 			Tool:    s.Tool,
 			Summary: "Tool permission denied",
-			Error:   fmt.Sprintf("permission policy denied %s on %s", s.Tool, util.FirstNonEmpty(s.Target, "this target")),
+			Error:   fmt.Sprintf("permission policy denied %s on %s", s.Tool, textutil.FirstNonEmpty(s.Target, "this target")),
 		}
 	case PermissionAsk:
 		return workspace.ToolResult{
 			Tool:    s.Tool,
 			Summary: "Tool approval required",
-			Error:   fmt.Sprintf("permission policy requires approval for %s on %s", s.Tool, util.FirstNonEmpty(s.Target, "this target")),
+			Error:   fmt.Sprintf("permission policy requires approval for %s on %s", s.Tool, textutil.FirstNonEmpty(s.Target, "this target")),
 		}
 	default:
 		return workspace.ToolResult{}

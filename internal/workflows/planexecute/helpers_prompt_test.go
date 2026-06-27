@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"idiom/internal/capabilities/workspace"
+	planartifact "idiom/internal/contracts/planartifact"
 )
 
 func TestPlanExecutePlannerSystemAddendumFrontloadsPlannerProtocol(t *testing.T) {
@@ -54,11 +54,11 @@ func TestPlanExecutePlannerSystemAddendumFrontloadsPlannerProtocol(t *testing.T)
 }
 
 func TestPlanExecuteReviewRepairPromptCarriesSubmitPlanQualityBar(t *testing.T) {
-	got := planExecuteReviewRepairPrompt(
+	got := PlanExecuteReviewRepairPrompt(
 		"Implement behavior.",
-		workspace.PlanArtifact{
+		planartifact.PlanArtifact{
 			Rationale: "change behavior",
-			Edits:     []workspace.PlanEdit{{Path: "a.go", Purpose: "update behavior"}},
+			Edits:     []planartifact.PlanEdit{{Path: "a.go", Purpose: "update behavior"}},
 		},
 		[]string{"a.go"},
 		[]string{"a.go"},

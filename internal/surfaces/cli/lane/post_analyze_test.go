@@ -1,6 +1,10 @@
 package lane
 
-import "testing"
+import (
+	"testing"
+
+	queuecontract "idiom/internal/contracts/queue"
+)
 
 func TestParseSessionSummaryExtractsTokens(t *testing.T) {
 	out := []byte(`{"type":"start","prompt":"x"}
@@ -86,7 +90,7 @@ also not json
 }
 
 func TestParseLaneQueuePool(t *testing.T) {
-	out := []byte(`{"type":"idiom.plan_execute.queue_acquired","pool":"qwen-35b"}
+	out := []byte(`{"type":"` + queuecontract.CommandAdmissionEventName(queuecontract.CommandEventPrefixPlanExecute, queuecontract.AdmissionEventQueueAcquired) + `","pool":"qwen-35b"}
 {"type":"session_summary","total_tokens":50}
 `)
 	if got := parseLaneQueuePool(out); got != "qwen-35b" {

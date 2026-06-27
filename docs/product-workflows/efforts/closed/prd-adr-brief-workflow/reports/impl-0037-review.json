@@ -29,7 +29,7 @@
     "index_and_workflow_state_plan": "passed",
     "invalid_bucket_and_path_fail_closed": "passed",
     "no_folder_move_or_dispatch": "passed",
-    "cli_json_and_text_contract_if_added": "not_applicable_library_contract_only"
+    "cli_json_and_text_contract_if_added": "skipped"
   },
   "reviewed_at": "2026-05-18T21:55:00Z",
   "commands_reviewed": [

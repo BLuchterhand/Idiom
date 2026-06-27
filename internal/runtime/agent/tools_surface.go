@@ -4,12 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"idiom/internal/capabilities/workspace"
-	"idiom/internal/contracts/autonomy"
-	"idiom/internal/contracts/pathparse"
-	"idiom/internal/platform/util"
-	"idiom/internal/runtime/llama"
-	"idiom/internal/runtime/workerruntime"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,9 +11,16 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/autonomy"
+	"idiom/internal/contracts/pathparse"
+	planartifact "idiom/internal/contracts/planartifact"
+	"idiom/internal/platform/textutil"
+	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/workerruntime"
 )
 
-// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmpv0l6gng0.go ---
 // DiscoveryRedirect inspects an about-to-run tool request and, if a more
 // deterministic language-specific tool exists for the same question,
 // returns a synthesized redirect ToolResult that points the model at the
@@ -133,7 +134,7 @@ func (d *DiscoveryRedirect) Consider(req workspace.ToolRequest, ws *workspace.Ma
 
 	// Shell has its own handler because some replacements (sed -n → read_file)
 	// aren't language-specific — they don't fit the LanguageSupport pipeline.
-	if util.EqualTrimFold(req.Tool, "shell") {
+	if textutil.EqualTrimFold(req.Tool, "shell") {
 		return d.considerShell(req, ws)
 	}
 
@@ -524,7 +525,7 @@ func (d *DiscoveryRedirect) considerConversationReadFileRedirect(req workspace.T
 		return RedirectDecision{}
 	}
 
-	if !util.EqualTrimFold(req.Tool, "read_file") {
+	if !textutil.EqualTrimFold(req.Tool, "read_file") {
 		return RedirectDecision{}
 	}
 
@@ -2082,7 +2083,7 @@ func debugLogTailRequest(selection debugLogFileSelection) workspace.ToolRequest 
 func debugLogRequestTargetsSelection(req workspace.ToolRequest, selection debugLogFileSelection) bool {
 	switch strings.TrimSpace(req.Tool) {
 	case workspace.ToolNameReadFile:
-		if selection.Handle != "" && util.FirstNonEmpty(strings.TrimSpace(req.ID), strings.TrimSpace(req.Handle)) == selection.Handle {
+		if selection.Handle != "" && textutil.FirstNonEmpty(strings.TrimSpace(req.ID), strings.TrimSpace(req.Handle)) == selection.Handle {
 			return true
 		}
 
@@ -2109,7 +2110,7 @@ func concreteDebugLogArtifactPathForRequest(req workspace.ToolRequest, results [
 		}
 	}
 
-	handle := util.FirstNonEmpty(strings.TrimSpace(req.ID), strings.TrimSpace(req.Handle))
+	handle := textutil.FirstNonEmpty(strings.TrimSpace(req.ID), strings.TrimSpace(req.Handle))
 	if handle == "" {
 		return "", false
 	}
@@ -2295,7 +2296,7 @@ func generatedEvidenceArtifactReadRedirectResult(req workspace.ToolRequest, resu
 	fmt.Fprintf(&b, "Generated evidence artifact %s was not read because generated discovery/context JSON is not source-body evidence.\n", path)
 	b.WriteString("Use the source paths already named by the current discovery packet instead:\n")
 
-	for _, sourcePath := range util.Prefix(paths, 6) {
+	for _, sourcePath := range textutil.Prefix(paths, 6) {
 		fmt.Fprintf(&b, "- %s\n", sourcePath)
 	}
 
@@ -2334,8 +2335,8 @@ func generatedEvidenceArtifactReadRedirectRequest(req workspace.ToolRequest, res
 	redirected.Path = paths[0]
 	redirected.StartLine = 0
 	redirected.EndLine = 0
-	redirected.NamedGap = util.FirstNonEmpty(strings.TrimSpace(req.NamedGap), "source-body evidence named by generated discovery artifact")
-	redirected.WhyNotAnswering = util.FirstNonEmpty(strings.TrimSpace(req.WhyNotAnswering), "generated discovery/context JSON is provenance, not source-body evidence")
+	redirected.NamedGap = textutil.FirstNonEmpty(strings.TrimSpace(req.NamedGap), "source-body evidence named by generated discovery artifact")
+	redirected.WhyNotAnswering = textutil.FirstNonEmpty(strings.TrimSpace(req.WhyNotAnswering), "generated discovery/context JSON is provenance, not source-body evidence")
 
 	return redirected, marshalToolRequestRaw(redirected), "generated discovery/context artifact redirected to source-body path", true
 }
@@ -2381,12 +2382,12 @@ func pathlessReadSymbolAfterOutlineRewriteRequest(req workspace.ToolRequest, res
 		return workspace.ToolRequest{}, "", "", false
 	}
 
-	capability := strings.TrimSpace(util.FirstNonEmpty(req.Capability, req.Operation, req.Action))
+	capability := strings.TrimSpace(textutil.FirstNonEmpty(req.Capability, req.Operation, req.Action))
 	if capability != "read_symbol" && capability != "symbol_body" && capability != "inspect_symbol" {
 		return workspace.ToolRequest{}, "", "", false
 	}
 
-	symbol := strings.TrimSpace(util.FirstNonEmpty(req.Pattern, req.Symbol, req.Query))
+	symbol := strings.TrimSpace(textutil.FirstNonEmpty(req.Pattern, req.Symbol, req.Query))
 	if symbol == "" {
 		return workspace.ToolRequest{}, "", "", false
 	}
@@ -2451,7 +2452,7 @@ func repeatedFileOutlineToReadSymbolRewriteRequest(req workspace.ToolRequest, re
 		return workspace.ToolRequest{}, "", "", false
 	}
 
-	capability := strings.TrimSpace(util.FirstNonEmpty(req.Capability, req.Operation, req.Action))
+	capability := strings.TrimSpace(textutil.FirstNonEmpty(req.Capability, req.Operation, req.Action))
 	if capability != "file_outline" && capability != "outline" {
 		return workspace.ToolRequest{}, "", "", false
 	}
@@ -2473,8 +2474,8 @@ func repeatedFileOutlineToReadSymbolRewriteRequest(req workspace.ToolRequest, re
 	redirected.Action = ""
 	redirected.Pattern = symbol
 	redirected.Symbol = symbol
-	redirected.NamedGap = util.FirstNonEmpty(strings.TrimSpace(req.NamedGap), "source-body evidence for repeated outline path")
-	redirected.WhyNotAnswering = util.FirstNonEmpty(strings.TrimSpace(req.WhyNotAnswering), "need a declaration body from the outlined file rather than another outline")
+	redirected.NamedGap = textutil.FirstNonEmpty(strings.TrimSpace(req.NamedGap), "source-body evidence for repeated outline path")
+	redirected.WhyNotAnswering = textutil.FirstNonEmpty(strings.TrimSpace(req.WhyNotAnswering), "need a declaration body from the outlined file rather than another outline")
 
 	raw := marshalToolRequestRaw(redirected)
 
@@ -2523,13 +2524,13 @@ func readOnlyDefinitionToReadSymbolRewriteRequest(req workspace.ToolRequest, bri
 		return workspace.ToolRequest{}, "", "", false
 	}
 
-	capability := strings.TrimSpace(util.FirstNonEmpty(req.Capability, req.Operation, req.Action))
+	capability := strings.TrimSpace(textutil.FirstNonEmpty(req.Capability, req.Operation, req.Action))
 	if capability != "find_definition" && capability != "definition" {
 		return workspace.ToolRequest{}, "", "", false
 	}
 
 	path := agentutil.NormalizeRunnerPath(req.Path)
-	symbol := strings.TrimSpace(util.FirstNonEmpty(req.Pattern, req.Symbol, req.Query))
+	symbol := strings.TrimSpace(textutil.FirstNonEmpty(req.Pattern, req.Symbol, req.Query))
 
 	if path == "" || symbol == "" {
 		return workspace.ToolRequest{}, "", "", false
@@ -2543,8 +2544,8 @@ func readOnlyDefinitionToReadSymbolRewriteRequest(req workspace.ToolRequest, bri
 	redirected.Action = ""
 	redirected.Pattern = symbol
 	redirected.Symbol = symbol
-	redirected.NamedGap = util.FirstNonEmpty(strings.TrimSpace(req.NamedGap), "source-body evidence for definition target")
-	redirected.WhyNotAnswering = util.FirstNonEmpty(strings.TrimSpace(req.WhyNotAnswering), "definition location is anchor evidence; the answer needs the declaration body")
+	redirected.NamedGap = textutil.FirstNonEmpty(strings.TrimSpace(req.NamedGap), "source-body evidence for definition target")
+	redirected.WhyNotAnswering = textutil.FirstNonEmpty(strings.TrimSpace(req.WhyNotAnswering), "definition location is anchor evidence; the answer needs the declaration body")
 
 	raw := marshalToolRequestRaw(redirected)
 
@@ -3156,7 +3157,7 @@ func (r *Runner) retryInvalidFinalAnswer(
 	retryMessages := append([]llama.ChatMessage(nil), turnMessages...)
 	if strings.TrimSpace(reply.Content) != "" || strings.TrimSpace(reply.ReasoningContent) != "" {
 		retryMessages = append(retryMessages, assistantHistoryMessageForOptions(llama.ChatMessage{
-			Role:             util.FirstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
+			Role:             textutil.FirstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
 			Content:          reply.Content,
 			ReasoningContent: reply.ReasoningContent,
 		}, opts))
@@ -3779,7 +3780,7 @@ func requiredNewFileProbeMatches(target string, requiredPaths []string) []string
 		}
 
 		if path == target || strings.HasPrefix(path, target+"/") || filepath.Dir(path) == target {
-			matches = util.AppendUniqueMulti(matches, path)
+			matches = textutil.AppendUniqueMulti(matches, path)
 		}
 	}
 
@@ -3934,7 +3935,7 @@ func (r *Runner) ensureNonEmptyAnswer(
 	retryMessages := append([]llama.ChatMessage(nil), turnMessages...)
 	if strings.TrimSpace(reply.Content) != "" || strings.TrimSpace(reply.ReasoningContent) != "" {
 		retryMessages = append(retryMessages, assistantHistoryMessageForOptions(llama.ChatMessage{
-			Role:             util.FirstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
+			Role:             textutil.FirstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
 			Content:          reply.Content,
 			ReasoningContent: reply.ReasoningContent,
 		}, opts))
@@ -4848,7 +4849,7 @@ func toolManifestHasTool(manifest []workerruntime.ToolManifestEntry, name string
 }
 
 func runnerSanitizedToolManifest(tools []string) []workerruntime.ToolManifestEntry {
-	return workerruntime.BuildToolManifest(tools)
+	return workerruntime.ToolManifestFromWorkspace(workspace.BuildToolManifest(tools))
 }
 
 func textualToolProtocolEntries(brief workerruntime.WorkerRuntimeBrief) []workerruntime.ToolManifestEntry {
@@ -5288,7 +5289,7 @@ func readRequestTargetsRequiredEditPath(req workspace.ToolRequest, requiredPaths
 
 func scopedReadRecoveryRejectionKey(req workspace.ToolRequest) string {
 	tool := strings.TrimSpace(req.Tool)
-	target := agentutil.NormalizeRunnerPath(util.FirstNonEmpty(req.Path, req.ID, req.Handle, req.Query, req.Pattern, req.Task, req.Command))
+	target := agentutil.NormalizeRunnerPath(textutil.FirstNonEmpty(req.Path, req.ID, req.Handle, req.Query, req.Pattern, req.Task, req.Command))
 
 	if target == "" {
 		target = "<empty-target>"
@@ -5608,7 +5609,7 @@ func toolActionClass(req workspace.ToolRequest) string {
 	case workspace.ToolNameShell:
 		return shellActionClass(req.Command)
 	case workspace.ToolNameReadFile:
-		if target := util.FirstNonEmpty(strings.TrimSpace(req.ID), strings.TrimSpace(req.Path)); target != "" {
+		if target := textutil.FirstNonEmpty(strings.TrimSpace(req.ID), strings.TrimSpace(req.Path)); target != "" {
 			action := "read_file:" + normalizeActionToken(target)
 			if strings.TrimSpace(req.ID) == "" && (req.StartLine > 0 || req.EndLine > 0) {
 				action += fmt.Sprintf(":%d-%d", req.StartLine, req.EndLine)
@@ -5621,10 +5622,10 @@ func toolActionClass(req workspace.ToolRequest) string {
 	case workspace.ToolNameSourceSanity:
 		return tool + ":" + normalizeActionToken(req.Path)
 	case workspace.ToolNameCodeNavigate:
-		target := util.FirstNonEmpty(strings.TrimSpace(req.Pattern), strings.TrimSpace(req.Query), strings.TrimSpace(req.Path), strings.TrimSpace(req.Language))
+		target := textutil.FirstNonEmpty(strings.TrimSpace(req.Pattern), strings.TrimSpace(req.Query), strings.TrimSpace(req.Path), strings.TrimSpace(req.Language))
 		return tool + ":" + normalizeActionToken(req.Capability) + ":" + normalizeActionToken(target)
 	case workspace.ToolNameReadOnlyCapability:
-		target := util.FirstNonEmpty(strings.TrimSpace(req.Pattern), strings.TrimSpace(req.Query), strings.TrimSpace(req.Path), strings.TrimSpace(req.Language))
+		target := textutil.FirstNonEmpty(strings.TrimSpace(req.Pattern), strings.TrimSpace(req.Query), strings.TrimSpace(req.Path), strings.TrimSpace(req.Language))
 		return tool + ":" + normalizeActionToken(req.Capability) + ":" + normalizeActionToken(target)
 	case workspace.ToolNameEditFile:
 		shape := strings.TrimSpace(req.OldText) + "->" + strings.TrimSpace(req.NewText)
@@ -5636,7 +5637,7 @@ func toolActionClass(req workspace.ToolRequest) string {
 	case workspace.ToolNameSearchFiles, workspace.ToolNameSearchContent, workspace.ToolNameRg:
 		return tool + ":" + normalizeActionToken(req.Path) + ":" + normalizeActionToken(req.Pattern) + ":" + normalizeActionToken(req.Glob)
 	case workspace.ToolNameDiscoveryQuery:
-		purpose := util.FirstNonEmpty(strings.TrimSpace(req.Purpose), strings.TrimSpace(req.Query))
+		purpose := textutil.FirstNonEmpty(strings.TrimSpace(req.Purpose), strings.TrimSpace(req.Query))
 		return tool + ":" + normalizeActionToken(purpose) + ":" + normalizeActionToken(req.Path) + ":" + normalizeActionToken(req.Pattern) + ":" + normalizeActionToken(req.Language)
 	case workspace.ToolNameStructuralSearch:
 		return tool + ":" + normalizeActionToken(req.Path) + ":" + normalizeActionToken(req.Pattern) + ":" + normalizeActionToken(req.Language)
@@ -5652,10 +5653,10 @@ func toolActionClass(req workspace.ToolRequest) string {
 		"go_find_package", "go_related_files", "go_workspace_symbol",
 		"go_definition", "go_references", "go_implementations",
 		"go_calls_from", "go_calls_into", "go_extract_body", "go_importers", "go_diagnostics":
-		target := util.FirstNonEmpty(strings.TrimSpace(req.Pattern), strings.TrimSpace(req.Path), strings.TrimSpace(req.ID))
+		target := textutil.FirstNonEmpty(strings.TrimSpace(req.Pattern), strings.TrimSpace(req.Path), strings.TrimSpace(req.ID))
 		return tool + ":" + normalizeActionToken(target)
 	case workspace.ToolNameGoMoveDeclarations:
-		target := util.FirstNonEmpty(strings.TrimSpace(req.Path)+"->"+strings.TrimSpace(req.Destination), strings.TrimSpace(req.Pattern))
+		target := textutil.FirstNonEmpty(strings.TrimSpace(req.Path)+"->"+strings.TrimSpace(req.Destination), strings.TrimSpace(req.Pattern))
 		if len(req.Moves) > 0 {
 			target = strings.TrimSpace(req.Path) + "->batch"
 		}
@@ -5806,7 +5807,7 @@ func runnerPlanExecuteTextualAllowedTools(currentAllowedTools []string, brief wo
 	}
 
 	if taskFamily != PlanThenExecutePlannerTaskFamily {
-		if len(util.Unique(currentAllowedTools)) > 0 {
+		if len(textutil.Unique(currentAllowedTools)) > 0 {
 			return currentAllowedTools
 		}
 
@@ -5821,7 +5822,7 @@ func runnerPlanExecuteTextualAllowedTools(currentAllowedTools []string, brief wo
 		return allowed
 	}
 
-	if len(util.Unique(currentAllowedTools)) > 0 {
+	if len(textutil.Unique(currentAllowedTools)) > 0 {
 		return currentAllowedTools
 	}
 
@@ -5838,7 +5839,7 @@ func runnerPlanExecuteTextualAllowedToolsForRequest(currentAllowedTools []string
 		return allowed
 	}
 
-	if len(util.Unique(allowed)) == 1 && slices.Contains(allowed, workspace.ToolNameSubmitPlan) {
+	if len(textutil.Unique(allowed)) == 1 && slices.Contains(allowed, workspace.ToolNameSubmitPlan) {
 		return allowed
 	}
 
@@ -5859,7 +5860,7 @@ func runnerPlanExecuteTextualAllowedToolsForRequest(currentAllowedTools []string
 		return allowed
 	}
 
-	return util.Unique(append(append([]string(nil), allowed...), tool))
+	return textutil.Unique(append(append([]string(nil), allowed...), tool))
 }
 
 func runnerPlanExecuteTextualContractDisablesTools(contract TurnPhaseContract) bool {
@@ -5867,13 +5868,13 @@ func runnerPlanExecuteTextualContractDisablesTools(contract TurnPhaseContract) b
 }
 
 func runnerPlanExecuteTextualPlanningProjection(currentAllowedTools []string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (PlanExecutePlanningState, TurnPhaseContract, []string) {
-	baseTools := util.Unique(append(append([]string(nil), brief.AllowedTools...), currentAllowedTools...))
+	baseTools := textutil.Unique(append(append([]string(nil), brief.AllowedTools...), currentAllowedTools...))
 	if strings.TrimSpace(brief.TaskFamily) == PlanThenExecutePlannerTaskFamily {
-		baseTools = util.Unique(append(baseTools, workspace.ToolNameSubmitPlan))
+		baseTools = textutil.Unique(append(baseTools, workspace.ToolNameSubmitPlan))
 	}
 	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
 	if state.Mode == PlanExecutePlanningModeAnchorRefresh && len(state.RefreshPaths) > 0 {
-		baseTools = util.Unique(append(baseTools, planThenExecuteAnchorRefreshToolNames()...))
+		baseTools = textutil.Unique(append(baseTools, planThenExecuteAnchorRefreshToolNames()...))
 	}
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief:             brief,
@@ -5903,7 +5904,7 @@ func runnerPlanExecuteTextualAllowedToolsFromProjection(state PlanExecutePlannin
 }
 
 func runnerFilterPlanExecuteProjectionTools(baseTools []string, projectionTools []string) []string {
-	projectionTools = util.Unique(projectionTools)
+	projectionTools = textutil.Unique(projectionTools)
 	if len(projectionTools) == 0 {
 		return nil
 	}
@@ -6169,7 +6170,7 @@ func parseVisibleLineToolRequest(text string) (workspace.ToolRequest, string, bo
 		}
 
 		key, _, ok := strings.Cut(line, ":")
-		if ok && util.EqualTrimFold(key, "tool") {
+		if ok && textutil.EqualTrimFold(key, "tool") {
 			toolLineIdx = i
 			break
 		}
@@ -6485,7 +6486,7 @@ func (r *Runner) safeReasoningToolRequest(req workspace.ToolRequest, results []w
 }
 
 func safeDiscoveryQueryRequest(req workspace.ToolRequest) bool {
-	if strings.TrimSpace(util.FirstNonEmpty(req.Purpose, req.Query, req.Pattern, req.Path)) == "" {
+	if strings.TrimSpace(textutil.FirstNonEmpty(req.Purpose, req.Query, req.Pattern, req.Path)) == "" {
 		return false
 	}
 
@@ -6658,7 +6659,7 @@ func reasoningSubmitPlanHasConcreteEdit(req workspace.ToolRequest) bool {
 		hasRange := edit.StartLine > 0 && edit.EndLine >= edit.StartLine && hasContent
 		hasReplace := edit.ReplaceAll && (strings.TrimSpace(edit.NewText) != "" || strings.TrimSpace(edit.NewTextRef) != "")
 
-		if (hasOldText && workspace.PlanEditHasExplicitReplacementText(edit)) || hasRange || hasReplace {
+		if (hasOldText && planartifact.PlanEditHasExplicitReplacementText(edit)) || hasRange || hasReplace {
 			return true
 		}
 	}
@@ -6666,12 +6667,12 @@ func reasoningSubmitPlanHasConcreteEdit(req workspace.ToolRequest) bool {
 	return false
 }
 
-func reasoningSubmitPlanEdits(req workspace.ToolRequest) []workspace.PlanEdit {
+func reasoningSubmitPlanEdits(req workspace.ToolRequest) []planartifact.PlanEdit {
 	if req.PlanArtifact != nil && len(req.PlanArtifact.Edits) > 0 {
-		return append([]workspace.PlanEdit(nil), req.PlanArtifact.Edits...)
+		return append([]planartifact.PlanEdit(nil), req.PlanArtifact.Edits...)
 	}
 
-	return append([]workspace.PlanEdit(nil), req.Edits...)
+	return append([]planartifact.PlanEdit(nil), req.Edits...)
 }
 
 const (
@@ -6701,7 +6702,7 @@ type toolRequestSyntaxNormalization struct {
 	ParseErr           error
 	EventOutcome       string
 	EventTransport     string
-	ParserFailureClass string
+	ParserFailureClass autonomy.ParserFailureClass
 	ActiveToolCall     *llama.ToolCall
 	Repaired           bool
 }
@@ -6760,13 +6761,13 @@ func runnerAutonomyPolicyInputFromNormalization(n toolRequestSyntaxNormalization
 	input := runnerAutonomyPolicyEventInput{
 		EventType:     autonomy.EventToolIntentClassified,
 		Transport:     toolRequestAutonomyTransport(n.EventTransport),
-		ParserFailure: runnerAutonomyParserFailureClass(n.Raw, n.ParseErr),
+		ParserFailure: toolRequestParserFailureClass(n.Raw, n.ParseErr),
 		RepairSource:  autonomy.RepairSourceNone,
 		Result:        strings.TrimSpace(n.EventOutcome),
 		Source:        "tooling.intent",
 	}
-	if strings.TrimSpace(n.ParserFailureClass) != "" {
-		input.ParserFailure = toolRequestParserFailureToAutonomy(n.ParserFailureClass)
+	if strings.TrimSpace(string(n.ParserFailureClass)) != "" {
+		input.ParserFailure = autonomy.CanonicalParserFailureClass(n.ParserFailureClass)
 	}
 	if n.Repaired {
 		input.RepairSource = autonomy.RepairSourceHostNormalizer
@@ -6790,23 +6791,6 @@ func toolRequestAutonomyTransport(transport string) autonomy.ToolTransport {
 		return autonomy.ToolTransportTextualCall
 	default:
 		return autonomy.ToolTransportUnknown
-	}
-}
-
-func toolRequestParserFailureToAutonomy(class string) autonomy.ParserFailureClass {
-	switch strings.TrimSpace(class) {
-	case "malformed_json":
-		return autonomy.ParserFailureMalformedJSON
-	case "submit_plan_edits_string", "schema_type_mismatch", "nested_tool_mismatch":
-		return autonomy.ParserFailureSchemaMismatch
-	case "missing_tool":
-		return autonomy.ParserFailureMissingToolName
-	case "transport_mismatch":
-		return autonomy.ParserFailureTransportMismatch
-	case "":
-		return autonomy.ParserFailureNone
-	default:
-		return autonomy.ParserFailureAmbiguousToolCall
 	}
 }
 
@@ -6969,7 +6953,7 @@ func repairToolRequestSyntax(result toolRequestSyntaxNormalization) toolRequestS
 		result.ParseErr = nil
 		result.EventOutcome = toolRequestNormalizerOutcomeNormalized
 		result.EventTransport = toolRequestNormalizerTransportNestedArguments
-		result.ParserFailureClass = ""
+		result.ParserFailureClass = autonomy.ParserFailureNone
 		result.Repaired = true
 		normalizeParsedToolRequestSyntax(&result)
 
@@ -6987,7 +6971,7 @@ func repairToolRequestSyntax(result toolRequestSyntaxNormalization) toolRequestS
 	result.ParseErr = nil
 	result.EventOutcome = toolRequestNormalizerOutcomeNormalized
 	result.EventTransport = toolRequestNormalizerTransportStringifiedSubmitRepair
-	result.ParserFailureClass = ""
+	result.ParserFailureClass = autonomy.ParserFailureNone
 	result.Repaired = true
 	normalizeParsedToolRequestSyntax(&result)
 
@@ -7023,9 +7007,9 @@ func repairNestedArgumentsToolRequest(raw string) (workspace.ToolRequest, string
 	return req, string(args), true
 }
 
-func toolRequestParserFailureClass(raw string, parseErr error) string {
+func toolRequestParserFailureClass(raw string, parseErr error) autonomy.ParserFailureClass {
 	if parseErr == nil {
-		return ""
+		return autonomy.ParserFailureNone
 	}
 
 	lower := strings.ToLower(parseErr.Error())
@@ -7033,21 +7017,21 @@ func toolRequestParserFailureClass(raw string, parseErr error) string {
 
 	switch {
 	case nativeToolCallTransportMismatch(parseErr):
-		return "transport_mismatch"
+		return autonomy.ParserFailureTransportMismatch
 	case strings.Contains(combined, "toolrequest.edits") && strings.Contains(combined, "string"):
-		return "submit_plan_edits_string"
+		return autonomy.ParserFailureSchemaMismatch
 	case strings.Contains(lower, "unexpected end of json") ||
 		strings.Contains(lower, "invalid character") ||
 		strings.Contains(lower, "syntax error"):
-		return "malformed_json"
+		return autonomy.ParserFailureMalformedJSON
 	case strings.Contains(lower, "cannot unmarshal"):
-		return "schema_type_mismatch"
+		return autonomy.ParserFailureSchemaMismatch
 	case strings.Contains(lower, "missing tool"):
-		return "missing_tool"
+		return autonomy.ParserFailureMissingToolName
 	case strings.Contains(lower, "nested request tool") && strings.Contains(lower, "does not match"):
-		return "nested_tool_mismatch"
+		return autonomy.ParserFailureSchemaMismatch
 	default:
-		return "unknown"
+		return autonomy.ParserFailureAmbiguousToolCall
 	}
 }
 
@@ -7088,7 +7072,7 @@ func repairStringifiedSubmitPlanEditsToolRequest(raw string, activeToolCall *lla
 		return workspace.ToolRequest{}, "", false
 	}
 
-	var edits []workspace.PlanEdit
+	var edits []planartifact.PlanEdit
 
 	if err := json.Unmarshal([]byte(decodedEdits), &edits); err != nil || len(edits) == 0 {
 		return workspace.ToolRequest{}, "", false
@@ -7148,7 +7132,7 @@ func parseIdiomCLIToolRequestSyntax(text string) (workspace.ToolRequest, string,
 		req.Tool = parts[2]
 	}
 
-	if !util.EqualTrimFold(req.Tool, parts[2]) {
+	if !textutil.EqualTrimFold(req.Tool, parts[2]) {
 		return workspace.ToolRequest{}, "", false, true
 	}
 
@@ -7456,7 +7440,7 @@ func normalizeCodeNavigateMissingCapability(req *workspace.ToolRequest) bool {
 	pattern := strings.TrimSpace(req.Pattern)
 	query := strings.TrimSpace(req.Query)
 	symbol := strings.TrimSpace(req.Symbol)
-	target := util.FirstNonEmpty(pattern, query, symbol)
+	target := textutil.FirstNonEmpty(pattern, query, symbol)
 
 	if target != "" && workspace.CodeNavigateCapabilityAlias(target) == "" {
 		req.Capability = "read_symbol"
@@ -8085,7 +8069,7 @@ func (keyValueToolRequestTokenizer) Tokenize(text string) ToolRequestTokenizatio
 		}
 
 		key, _, ok := strings.Cut(line, ":")
-		if ok && util.EqualTrimFold(key, "tool") {
+		if ok && textutil.EqualTrimFold(key, "tool") {
 			toolLineIdx = i
 			break
 		}
@@ -8764,7 +8748,7 @@ func applyPostReadinessSchemaRequirements(tools []llama.Tool) []llama.Tool {
 
 	out := make([]llama.Tool, len(tools))
 	for i, tool := range tools {
-		if !isPostReadinessGapTool(tool.Function.Name) {
+		if !workspace.IsReadClassToolName(tool.Function.Name) {
 			out[i] = tool
 			continue
 		}
@@ -8934,40 +8918,6 @@ func mutateSchemaRequireLineRange(raw json.RawMessage) (json.RawMessage, bool) {
 	}
 
 	return json.RawMessage(updated), true
-}
-
-// isPostReadinessGapTool reports whether a tool name is read-class — i.e.
-// the kind of call that, after readiness or a child packet, must carry a
-// named_gap. Mirrors workspace.IsReadClassRequest's tool list at the name
-// level so we don't need to reconstruct ToolRequest shapes here.
-func isPostReadinessGapTool(name string) bool {
-	switch name {
-	case "read_file", "search_content", "search_files", "list_files",
-		"harness_audit", "discovery_query", "structural_search", "ctags_symbols",
-		"go_read_symbol", "go_file_outline", "go_extract_body",
-		"go_workspace_symbol", "go_references", "go_definition",
-		"go_calls_from", "go_calls_into", "go_related_files",
-		"cpp_read_symbol", "cpp_file_outline", "cpp_extract_body",
-		"cpp_workspace_symbol", "cpp_references", "cpp_definition",
-		"cpp_calls_from", "cpp_calls_into", "cpp_related_files",
-		"python_read_symbol", "python_file_outline",
-		"python_workspace_symbol", "python_references", "python_definition",
-		"python_calls_from", "python_calls_into", "python_related_files",
-		"ts_read_symbol", "ts_file_outline",
-		"ts_workspace_symbol", "ts_references", "ts_definition",
-		"ts_calls_from", "ts_calls_into", "ts_related_files",
-		"rust_read_symbol", "rust_file_outline",
-		"rust_workspace_symbol", "rust_references", "rust_definition",
-		"rust_calls_from", "rust_calls_into", "rust_related_files",
-		"java_read_symbol", "java_file_outline",
-		"java_workspace_symbol", "java_references", "java_definition",
-		"java_calls_from", "java_calls_into", "java_related_files",
-		"dependency_graph", "history_range", "history_symbol", "blame_range",
-		"semgrep_scan", "joern_scan":
-		return true
-	default:
-		return false
-	}
 }
 
 func isPostReadinessLineRangeTool(name string) bool {
@@ -9182,7 +9132,6 @@ func parseToolCall(call llama.ToolCall) (workspace.ToolRequest, bool, error) {
 	return req, true, nil
 }
 
-// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmp0lxi6ip3.go ---
 // NormalizeRunnerPath cleans a workspace-relative path for consistent comparison.
 func NormalizeRunnerPath(path string) string {
 	path = strings.TrimSpace(path)
@@ -9643,7 +9592,6 @@ var agentutil = struct {
 	IsNonSourceEvidenceArtifactPath:  IsNonSourceEvidenceArtifactPath,
 }
 
-// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmp_ojc8zuu.go ---
 type Intent struct {
 	ToolName    string
 	ActionClass string

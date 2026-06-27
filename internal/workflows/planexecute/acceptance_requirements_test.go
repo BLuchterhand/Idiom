@@ -5,10 +5,10 @@ import (
 	"slices"
 	"testing"
 
-	"idiom/internal/contracts/plan"
+	plancontract "idiom/internal/contracts/plan"
 )
 
-func TestExtractRequiredAcceptanceEvidenceIDsFromTypedAtomContract(t *testing.T) {
+func TestRequiredAcceptanceEvidenceIDsFromTypedAtomContract(t *testing.T) {
 	body, err := json.Marshal(plancontract.AtomExecutionContract{
 		AcceptanceObligations: []plancontract.AcceptanceEvidenceRequired{
 			{ID: "coverage-threshold", Required: true},
@@ -21,7 +21,7 @@ func TestExtractRequiredAcceptanceEvidenceIDsFromTypedAtomContract(t *testing.T)
 	}
 
 	prompt := "brief\n\n" + planExecuteTypedAtomContractMarker + "\n" + string(body)
-	got := ExtractRequiredAcceptanceEvidenceIDs(prompt)
+	got := planExecuteRequiredAcceptanceEvidenceIDsFromPrompt(prompt)
 	want := []string{"coverage-threshold", "optional-note", "review-evidence"}
 
 	if !slices.Equal(got, want) {

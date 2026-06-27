@@ -11,7 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/platform/util"
+	featureplannercontract "idiom/internal/contracts/featureplanner"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/featureplanner"
@@ -204,7 +205,7 @@ func (m *Model) generatePRDWithRepair(ctx context.Context, prompt string, opts l
 
 func featurePlannerAnswerIsDirectPlan(answer string) bool {
 	parsed, err := featureplanner.ParsePlannerOutput(answer)
-	return err == nil && parsed.Kind == featureplanner.ToolSubmitFeaturePlan
+	return err == nil && parsed.Kind == featureplannercontract.ToolSubmitFeaturePlan
 }
 
 func (m *Model) runDirectFeaturePlannerPlanFromDraft(ctx context.Context, rawPlan string, effortRoot string, hasExisting bool) (string, error) {
@@ -223,14 +224,14 @@ func (m *Model) runDirectFeaturePlannerPlanFromDraft(ctx context.Context, rawPla
 		state.Status = featureplanner.FeatureStatePlanningRepair
 		state.PlanningLoop.State = featureplanner.FeatureStatePlanningRepair
 		state.Blockers = append(state.Blockers, briefErr.Error())
-		events = append(events, featureplanner.Event{Type: "idiom.feature_planner.product_context_blocked", SessionID: state.SessionID, Message: briefErr.Error()})
-	} else if parsed.Kind == featureplanner.ToolSubmitFeaturePlan && brief != nil {
+		events = append(events, featureplanner.Event{Type: featureplannercontract.EventName(featureplannercontract.EventProductContextBlocked), SessionID: state.SessionID, Message: briefErr.Error()})
+	} else if parsed.Kind == featureplannercontract.ToolSubmitFeaturePlan && brief != nil {
 		workspaceRoot := m.projectRoot()
 		if err := featureplanner.ValidatePlanProductWorkflowContext(parsed.Plan, *brief, workspaceRoot); err != nil {
 			state.Status = featureplanner.FeatureStatePlanningRepair
 			state.PlanningLoop.State = featureplanner.FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, err.Error())
-			events = append(events, featureplanner.Event{Type: "idiom.feature_planner.product_context_blocked", SessionID: state.SessionID, Message: err.Error()})
+			events = append(events, featureplanner.Event{Type: featureplannercontract.EventName(featureplannercontract.EventProductContextBlocked), SessionID: state.SessionID, Message: err.Error()})
 		} else {
 			parsed.Plan = featureplanner.NormalizePlanProductWorkflowContext(parsed.Plan, *brief, workspaceRoot)
 			events = featureplanner.ApplyPlannerOutput(&state, parsed, time.Now().UTC())
@@ -239,7 +240,7 @@ func (m *Model) runDirectFeaturePlannerPlanFromDraft(ctx context.Context, rawPla
 		state.Status = featureplanner.FeatureStatePlanningRepair
 		state.PlanningLoop.State = featureplanner.FeatureStatePlanningRepair
 		state.Blockers = append(state.Blockers, "direct product feature plan is missing product workflow context")
-		events = append(events, featureplanner.Event{Type: "idiom.feature_planner.product_context_blocked", SessionID: state.SessionID, Message: "direct product feature plan is missing product workflow context"})
+		events = append(events, featureplanner.Event{Type: featureplannercontract.EventName(featureplannercontract.EventProductContextBlocked), SessionID: state.SessionID, Message: "direct product feature plan is missing product workflow context"})
 	}
 
 	writeEnvelope := featureplanner.ProductWriteEnvelopePaths(brief)
@@ -939,7 +940,7 @@ func (m *Model) approveADRAndPlan(effortRoot string) (string, error) {
 	}
 
 	if recoveryMessage, blocked := formatProductWorkflowFeaturePlannerRecovery(plannerState, statePath); blocked {
-		m.logFeaturePlannerInternalEvent("idiom.feature_planner.recovery_open", recoveryMessage)
+		m.logFeaturePlannerInternalEvent(featureplannercontract.EventName(featureplannercontract.EventRecoveryOpen), recoveryMessage)
 
 		return strings.TrimSpace(planResult + "\n\n" + recoveryMessage), nil
 	}
@@ -1063,7 +1064,7 @@ func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, featurepl
 	sessionID := m.featurePlannerSessionID()
 	state := featureplanner.NewState(sessionID, "Implement feature from PRD/ADR artifacts", "", 3, time.Now().UTC())
 
-	m.logFeaturePlannerInternalEvent("idiom.feature_planner.start", "Planning from product workflow artifacts")
+	m.logFeaturePlannerInternalEvent(featureplannercontract.EventName(featureplannercontract.EventStart), "Planning from product workflow artifacts")
 
 	writeEnvelope := featureplanner.ProductWriteEnvelopePaths(brief)
 	implementorBlocked := false
@@ -1656,7 +1657,7 @@ func adrSectionExcerpt(markdown string, section string) string {
 				break
 			}
 
-			inSection = util.EqualTrimFold(strings.TrimPrefix(trimmed, "## "), section)
+			inSection = textutil.EqualTrimFold(strings.TrimPrefix(trimmed, "## "), section)
 
 			continue
 		}
@@ -1666,7 +1667,7 @@ func adrSectionExcerpt(markdown string, section string) string {
 		}
 	}
 
-	return util.Truncate(strings.Join(parts, " "), 220)
+	return textutil.Truncate(strings.Join(parts, " "), 220)
 }
 
 func normalizedOpenQuestions(text string) string {

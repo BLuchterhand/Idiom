@@ -17,20 +17,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 
 	"idiom/internal/repository/discovery"
 	"idiom/internal/repository/semantic"
-)
-
-type tsIndexCacheEntry struct {
-	index *semantic.TsIndex
-	token string
-}
-
-var (
-	tsIndexCacheMu sync.Mutex
-	tsIndexCache   = make(map[*Manager]tsIndexCacheEntry)
 )
 
 // isTsWorkspace returns true if the workspace root looks like a
@@ -87,14 +76,13 @@ func (m *Manager) getTsIndex() (*semantic.TsIndex, error) {
 	}
 
 	token := m.currentGoIndexToken()
+	m.mu.Lock()
+	cached := m.tsIndex
+	cachedToken := m.tsIndexToken
+	m.mu.Unlock()
 
-	tsIndexCacheMu.Lock()
-
-	cached, ok := tsIndexCache[m]
-	tsIndexCacheMu.Unlock()
-
-	if ok && cached.index != nil && (token == "" || token == cached.token) {
-		return cached.index, nil
+	if cached != nil && (token == "" || token == cachedToken) {
+		return cached, nil
 	}
 
 	index, err := semantic.BuildTsIndex(m.Root())
@@ -106,10 +94,10 @@ func (m *Manager) getTsIndex() (*semantic.TsIndex, error) {
 		return nil, fmt.Errorf("no TypeScript/JavaScript files were indexed under the workspace")
 	}
 
-	tsIndexCacheMu.Lock()
-
-	tsIndexCache[m] = tsIndexCacheEntry{index: index, token: token}
-	tsIndexCacheMu.Unlock()
+	m.mu.Lock()
+	m.tsIndex = index
+	m.tsIndexToken = token
+	m.mu.Unlock()
 
 	return index, nil
 }
@@ -118,9 +106,13 @@ func (m *Manager) getTsIndex() (*semantic.TsIndex, error) {
 // for callers that know they mutated TS files and want the next query to
 // rebuild. Safe to call concurrently.
 func (m *Manager) InvalidateTsIndex() {
-	tsIndexCacheMu.Lock()
-	delete(tsIndexCache, m)
-	tsIndexCacheMu.Unlock()
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.tsIndex = nil
+	m.tsIndexToken = ""
+	m.mu.Unlock()
 }
 
 func (m *Manager) tsOverview() ToolResult {

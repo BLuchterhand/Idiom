@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/redaction"
 )
 
 const (
@@ -40,6 +40,18 @@ type Recorder struct {
 	closeoutMu      sync.Mutex
 	closeouts       []func()
 	closeoutsCalled bool
+}
+
+func LogPhase(rec *Recorder, eventType string, fields map[string]any) {
+	if rec == nil {
+		return
+	}
+
+	if fields == nil {
+		fields = map[string]any{}
+	}
+
+	_ = rec.Log(eventType, fields)
 }
 
 func Open(opts Options) (*Recorder, error) {
@@ -300,7 +312,7 @@ func sanitizeArgs(args []string) []string {
 
 		if flag, value, ok := strings.Cut(arg, "="); ok && strings.HasPrefix(flag, "-") {
 			if isSensitiveFlag(flag) {
-				out = append(out, flag+"="+util.RedactedValue(value))
+				out = append(out, flag+"="+redaction.RedactedValue(value))
 			} else {
 				out = append(out, flag+"="+sanitizeArgValue(value))
 			}
@@ -312,7 +324,7 @@ func sanitizeArgs(args []string) []string {
 		if isSensitiveFlag(arg) && i+1 < len(args) {
 			i++
 
-			out = append(out, util.RedactedValue(args[i]))
+			out = append(out, redaction.RedactedValue(args[i]))
 		}
 	}
 
@@ -336,7 +348,7 @@ func sanitizeArgValue(value string) string {
 	}
 
 	if len(value) > 240 {
-		return util.RedactedValue(value)
+		return redaction.RedactedValue(value)
 	}
 
 	return value

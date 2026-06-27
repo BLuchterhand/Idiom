@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	planartifact "idiom/internal/contracts/planartifact"
+
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -367,7 +369,7 @@ func TestDocViewerRendersPlanArtifactMetadataAndCollapsedEdits(t *testing.T) {
 	for _, want := range []string{
 		"Doc Viewer",
 		"Plan: plan_test",
-		"Schema: " + workspace.PlanArtifactSchemaVersion,
+		"Schema: " + planartifact.SchemaVersion,
 		"Contract: plan_then_execute",
 		"Approval: implicit",
 		"▸ Edit 1",
@@ -540,43 +542,43 @@ func writeDocViewerPlanArtifact(t *testing.T, root string) {
 		t.Fatalf("mkdir plan dir: %v", err)
 	}
 
-	artifact := workspace.PlanArtifact{
-		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+	artifact := planartifact.PlanArtifact{
+		SchemaVersion: planartifact.SchemaVersion,
 		PlanID:        "plan_test",
 		Created:       "2026-06-05T17:00:00Z",
 		Rationale:     "Update the visible value.",
 		SessionID:     "session-test",
-		Task: workspace.PlanArtifactTask{
+		Task: planartifact.PlanArtifactTask{
 			Summary: "doc viewer fixture",
 		},
-		Contract: workspace.PlanArtifactContract{
+		Contract: planartifact.PlanArtifactContract{
 			Kind:              "plan_then_execute",
 			StrategyOwner:     "model",
 			ContractOwner:     "harness",
 			PermissionProfile: "plan_then_execute",
 			VerificationOwner: "planner",
 		},
-		Packet: workspace.PlanArtifactPacket{
+		Packet: planartifact.PlanArtifactPacket{
 			Status: "not_provided",
 		},
-		Paths: workspace.PlanArtifactPaths{
+		Paths: planartifact.PlanArtifactPaths{
 			Editable: []string{"app.txt"},
 			Changed:  []string{"app.txt"},
 		},
-		Evidence: []workspace.PlanArtifactEvidence{{
+		Evidence: []planartifact.PlanArtifactEvidence{{
 			ID:      "evidence-1",
 			Kind:    "source_body",
 			Path:    "app.txt",
 			Summary: "read app.txt",
 		}},
-		VerificationObligations: []workspace.PlanArtifactVerificationObligation{{
+		VerificationObligations: []planartifact.PlanArtifactVerificationObligation{{
 			ID:       "verification-1",
 			Kind:     "executor_lane_sanity",
 			Owner:    "planner",
 			Status:   "open",
 			Required: true,
 		}},
-		Approval: workspace.PlanArtifactApproval{
+		Approval: planartifact.PlanArtifactApproval{
 			Required:            false,
 			Status:              "implicit",
 			ScopeID:             "plan_test:submit_plan",
@@ -584,14 +586,14 @@ func writeDocViewerPlanArtifact(t *testing.T, root string) {
 			ExpirationPolicy:    "workspace_fingerprint",
 			ExecutionPermission: "execute_all",
 		},
-		Handoff: workspace.PlanArtifactHandoff{
+		Handoff: planartifact.PlanArtifactHandoff{
 			ID:     "plan_test:handoff",
 			From:   "planner",
 			To:     "plan_execute_executor",
 			Status: "ready",
 			Ready:  true,
 		},
-		Edits: []workspace.PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:    "app.txt",
 			OldText: "old value",
 			NewText: "new value",

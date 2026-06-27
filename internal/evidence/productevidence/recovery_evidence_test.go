@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"idiom/internal/workflows/recovery"
+	recoverycontract "idiom/internal/contracts/recovery"
 )
 
 func TestAddMalformedRecoveryArtifact(t *testing.T) {
@@ -294,13 +294,13 @@ func TestRecoveryEvidenceArtifactID(t *testing.T) {
 
 func TestRecoveryEvidencePacketBlockers(t *testing.T) {
 	t.Run("packet with non-review next action blocks", func(t *testing.T) {
-		packet := recovery.DecompositionPacket{
-			NextAction: recovery.NextActionInspectFailure,
-			PartialState: recovery.PartialState{
-				DirtyStatus: recovery.DirtyStatusClean,
-				ScopeStatus: recovery.ScopeStatusInScope,
+		packet := recoverycontract.DecompositionPacket{
+			NextAction: recoverycontract.NextActionInspectFailure,
+			PartialState: recoverycontract.PartialState{
+				DirtyStatus: recoverycontract.DirtyStatusClean,
+				ScopeStatus: recoverycontract.ScopeStatusInScope,
 			},
-			CandidateAtoms: []recovery.CandidateAtom{{ID: "atom-1"}},
+			CandidateAtoms: []recoverycontract.CandidateAtom{{ID: "atom-1"}},
 		}
 		blockers := recoveryEvidencePacketBlockers(packet)
 
@@ -314,8 +314,8 @@ func TestRecoveryEvidencePacketBlockers(t *testing.T) {
 	})
 
 	t.Run("empty candidate atoms blocks", func(t *testing.T) {
-		packet := recovery.DecompositionPacket{
-			NextAction:     recovery.NextActionReviewDecomposition,
+		packet := recoverycontract.DecompositionPacket{
+			NextAction:     recoverycontract.NextActionReviewDecomposition,
 			CandidateAtoms: nil,
 		}
 		blockers := recoveryEvidencePacketBlockers(packet)
@@ -330,13 +330,13 @@ func TestRecoveryEvidencePacketBlockers(t *testing.T) {
 	})
 
 	t.Run("dirty out of scope blocks", func(t *testing.T) {
-		packet := recovery.DecompositionPacket{
-			NextAction: recovery.NextActionReviewDecomposition,
-			PartialState: recovery.PartialState{
-				DirtyStatus: recovery.DirtyStatusDirtyOutScope,
-				ScopeStatus: recovery.ScopeStatusInScope,
+		packet := recoverycontract.DecompositionPacket{
+			NextAction: recoverycontract.NextActionReviewDecomposition,
+			PartialState: recoverycontract.PartialState{
+				DirtyStatus: recoverycontract.DirtyStatusDirtyOutScope,
+				ScopeStatus: recoverycontract.ScopeStatusInScope,
 			},
-			CandidateAtoms: []recovery.CandidateAtom{{ID: "atom-1"}},
+			CandidateAtoms: []recoverycontract.CandidateAtom{{ID: "atom-1"}},
 		}
 		blockers := recoveryEvidencePacketBlockers(packet)
 
@@ -346,13 +346,13 @@ func TestRecoveryEvidencePacketBlockers(t *testing.T) {
 	})
 
 	t.Run("scope out of scope blocks", func(t *testing.T) {
-		packet := recovery.DecompositionPacket{
-			NextAction: recovery.NextActionReviewDecomposition,
-			PartialState: recovery.PartialState{
-				DirtyStatus: recovery.DirtyStatusClean,
-				ScopeStatus: recovery.ScopeStatusOutOfScope,
+		packet := recoverycontract.DecompositionPacket{
+			NextAction: recoverycontract.NextActionReviewDecomposition,
+			PartialState: recoverycontract.PartialState{
+				DirtyStatus: recoverycontract.DirtyStatusClean,
+				ScopeStatus: recoverycontract.ScopeStatusOutOfScope,
 			},
-			CandidateAtoms: []recovery.CandidateAtom{{ID: "atom-1"}},
+			CandidateAtoms: []recoverycontract.CandidateAtom{{ID: "atom-1"}},
 		}
 		blockers := recoveryEvidencePacketBlockers(packet)
 
@@ -362,13 +362,13 @@ func TestRecoveryEvidencePacketBlockers(t *testing.T) {
 	})
 
 	t.Run("clean in-scope packet with review action has no blockers", func(t *testing.T) {
-		packet := recovery.DecompositionPacket{
-			NextAction: recovery.NextActionReviewDecomposition,
-			PartialState: recovery.PartialState{
-				DirtyStatus: recovery.DirtyStatusClean,
-				ScopeStatus: recovery.ScopeStatusInScope,
+		packet := recoverycontract.DecompositionPacket{
+			NextAction: recoverycontract.NextActionReviewDecomposition,
+			PartialState: recoverycontract.PartialState{
+				DirtyStatus: recoverycontract.DirtyStatusClean,
+				ScopeStatus: recoverycontract.ScopeStatusInScope,
 			},
-			CandidateAtoms: []recovery.CandidateAtom{{ID: "atom-1"}},
+			CandidateAtoms: []recoverycontract.CandidateAtom{{ID: "atom-1"}},
 		}
 		blockers := recoveryEvidencePacketBlockers(packet)
 

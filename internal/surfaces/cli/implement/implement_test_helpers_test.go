@@ -6,13 +6,26 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"idiom/internal/runtime/runner"
 )
 
 func writeMainConfig(t *testing.T) string {
 	t.Helper()
 
 	root := t.TempDir()
-	t.Setenv("IDIOM_QUEUE_SOCKET", filepath.Join(root, "missing-runner.sock"))
+	socket := filepath.Join("/tmp", "idiom-"+strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())+".sock")
+	_ = os.Remove(socket)
+	srv := runner.NewServer(runner.Config{Pools: map[string]runner.PoolConfig{"qwen-35b": {MaxInFlight: 1}}}, socket)
+	if err := srv.Start(); err != nil {
+		t.Fatalf("start queue server: %v", err)
+	}
+	t.Cleanup(func() {
+		srv.Stop()
+		_ = os.Remove(socket)
+	})
+	t.Setenv("IDIOM_QUEUE_POOL", "qwen-35b")
+	t.Setenv("IDIOM_QUEUE_SOCKET", socket)
 
 	path := filepath.Join(root, "config.json")
 	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
@@ -44,39 +57,6 @@ func readMainTelemetryRecords(t *testing.T, path string) []map[string]any {
 	}
 
 	return records
-}
-
-func planExecuteJSONEvents(t *testing.T, stdout string) []map[string]any {
-	t.Helper()
-
-	var events []map[string]any
-
-	for _, line := range strings.Split(stdout, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || !strings.HasPrefix(line, "{") {
-			continue
-		}
-
-		var event map[string]any
-
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			t.Fatalf("decode JSON event %q: %v", line, err)
-		}
-
-		events = append(events, event)
-	}
-
-	return events
-}
-
-func planExecuteEventByType(events []map[string]any, eventType string) (map[string]any, bool) {
-	for _, event := range events {
-		if event["type"] == eventType {
-			return event, true
-		}
-	}
-
-	return nil, false
 }
 
 func jsonEventStringSliceContains(value any, want string) bool {

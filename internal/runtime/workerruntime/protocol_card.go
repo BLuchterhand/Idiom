@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"idiom/internal/contracts/autonomy"
-	"idiom/internal/contracts/compile"
+	contractcompile "idiom/internal/contracts/compile"
 )
 
 // RenderActiveProtocolCard renders the model-visible active protocol card from

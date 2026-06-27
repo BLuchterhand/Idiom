@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"idiom/internal/contracts/pathparse"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,6 +12,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"idiom/internal/contracts/pathparse"
+	"idiom/internal/platform/atomicfile"
+	"idiom/internal/platform/sessionid"
 )
 
 // --- path evidence registry ---
@@ -578,14 +581,19 @@ func sha256Hex(s string) string {
 // readPaths are the paths that were body-read during the session (obtained from
 // PathEvidenceRegistry.BodyReadPaths()). The record is used by subsequent
 // sessions to seed candidate paths via MergeFromPriorSession.
-func WriteSessionEvidenceRecord(workspaceRoot, sessionID, prompt, objective string, readPaths []string, wasBlocked bool, blockedBy string) {
-	if workspaceRoot == "" || sessionID == "" {
-		return
+func WriteSessionEvidenceRecord(workspaceRoot, sessionID, prompt, objective string, readPaths []string, wasBlocked bool, blockedBy string) error {
+	workspaceRoot = strings.TrimSpace(workspaceRoot)
+	if workspaceRoot == "" {
+		return fmt.Errorf("workspace root is required")
+	}
+	normalizedSessionID, ok := sessionid.Normalize(sessionID)
+	if !ok {
+		return fmt.Errorf("invalid session id %q", sessionID)
 	}
 
 	dir := sessionEvidenceDir(workspaceRoot)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return
+		return fmt.Errorf("create session evidence dir: %w", err)
 	}
 
 	// Deduplicate and sort read paths for deterministic output.
@@ -603,7 +611,7 @@ func WriteSessionEvidenceRecord(workspaceRoot, sessionID, prompt, objective stri
 	sort.Strings(sorted)
 
 	record := SessionEvidenceRecord{
-		SessionID:  sessionID,
+		SessionID:  normalizedSessionID,
 		PromptHash: sha256Hex(prompt),
 		ReadPaths:  sorted,
 		WasBlocked: wasBlocked,
@@ -613,15 +621,13 @@ func WriteSessionEvidenceRecord(workspaceRoot, sessionID, prompt, objective stri
 
 	data, err := json.Marshal(record)
 	if err != nil {
-		return
+		return fmt.Errorf("marshal session evidence record: %w", err)
 	}
 
-	// Write atomically: write to a temp file then rename.
-	tmpPath := filepath.Join(dir, "."+sessionID+".tmp")
-	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
-		return
+	if err := atomicfile.WriteFile(filepath.Join(dir, normalizedSessionID+".json"), data, 0o600); err != nil {
+		return fmt.Errorf("write session evidence record: %w", err)
 	}
-	_ = os.Rename(tmpPath, filepath.Join(dir, sessionID+".json"))
+	return nil
 }
 
 // levenshteinDistance computes the Levenshtein edit distance between two strings.

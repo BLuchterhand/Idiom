@@ -14,15 +14,17 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/autonomy"
 	"idiom/internal/evidence/transcript"
 	"idiom/internal/platform/config"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/backends"
 	"idiom/internal/runtime/instructions"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/modepolicy"
 	"idiom/internal/runtime/promptstack"
+	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/projectartifacts"
 )
 
@@ -175,7 +177,7 @@ func explicitAliasCanOverrideRole(model backends.Model, role string) bool {
 	}
 
 	for _, r := range model.Roles {
-		if util.EqualTrimFold(r, backends.RoleExecutor) {
+		if textutil.EqualTrimFold(r, backends.RoleExecutor) {
 			return true
 		}
 	}
@@ -393,7 +395,7 @@ func New(cfg config.Config) *Model {
 		m.setContextError("MCP setup: " + strings.Join(mcpFailures, "; "))
 	}
 
-	if extReg, extErr := setupExternalToolsRegistry(cfg.Workspace); extErr != nil {
+	if extReg, extErr := workspace.LoadExternalToolsRegistry(cfg.Workspace); extErr != nil {
 		m.setContextError("External tools setup: " + extErr.Error())
 	} else if extReg != nil {
 		m.workspace.SetExternalToolsRegistry(extReg)
@@ -916,7 +918,25 @@ func toolRequestIntent(event agent.ToolRequestEvent) string {
 	}
 
 	target := truncateRunes(collapseWhitespace(toolRequestTraceTarget(req)), 96)
-	switch strings.TrimSpace(req.Tool) {
+	tool := strings.TrimSpace(req.Tool)
+
+	if workspace.LanguageToolHasCapability(tool, workspace.CapFileOutline) {
+		if target == "" {
+			return "scan the file structure before reading details"
+		}
+
+		return "scan " + target + " to find the right symbol or section"
+	}
+
+	if workspace.LanguageToolHasCapability(tool, workspace.CapReadSymbol) {
+		if target == "" {
+			return "read the exact declaration instead of a broad file slice"
+		}
+
+		return "read the exact declaration around " + target
+	}
+
+	switch tool {
 	case workspace.ToolNameContextPack:
 		if target == "" {
 			target = strings.TrimSpace(req.Task)
@@ -968,18 +988,6 @@ func toolRequestIntent(event agent.ToolRequestEvent) string {
 		}
 
 		return "inspect " + target + " for the relevant context"
-	case "go_file_outline", "rust_file_outline", "ts_file_outline", "python_file_outline", "java_file_outline", "cpp_file_outline":
-		if target == "" {
-			return "scan the file structure before reading details"
-		}
-
-		return "scan " + target + " to find the right symbol or section"
-	case "go_read_symbol", "rust_read_symbol", "ts_read_symbol", "python_read_symbol", "java_read_symbol", "cpp_read_symbol":
-		if target == "" {
-			return "read the exact declaration instead of a broad file slice"
-		}
-
-		return "read the exact declaration around " + target
 	case workspace.ToolNameEditFile, workspace.ToolNameWriteFile, workspace.ToolNameAppendFile, workspace.ToolNameApplyPatch:
 		if target == "" {
 			return "apply the planned code change"
@@ -1077,7 +1085,7 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 	// thresholds. Structured discovery tools return compact results
 	// but the default 40-message limit compacts every ~13 tool calls,
 	// destroying working memory before the model can synthesize.
-	if plan.route.Family == "conversation" || plan.route.Contract == "direct_answer" {
+	if plan.route.Family == string(autonomy.TaskFamilyConversation) || plan.route.Contract == string(workerruntime.ContractDirectAnswer) {
 		budget := NewContextBudget(m.compactionContextSize())
 		maxMsgs, maxChars := budget.ConvMaxMessages, budget.ConvMaxChars
 
@@ -1098,7 +1106,7 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 	}
 
 	seedResults := m.LastTurnSourceResultsForObjective(prompt)
-	if activePlanSeed, ok := m.activeFeaturePlannerPlanSeedResult(); ok && (plan.route.Family == "conversation" || plan.route.Contract == "direct_answer") {
+	if activePlanSeed, ok := m.activeFeaturePlannerPlanSeedResult(); ok && (plan.route.Family == string(autonomy.TaskFamilyConversation) || plan.route.Contract == string(workerruntime.ContractDirectAnswer)) {
 		seedResults = append(seedResults, activePlanSeed)
 	}
 
@@ -1209,7 +1217,7 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 	// Store source-body results for follow-up turns only in conversation
 	// and direct-answer lanes — these are the routes where the user may
 	// ask a follow-up question without re-reading source files.
-	if plan.route.Family == "conversation" || plan.route.Family == "direct_answer" || plan.route.Contract == "direct_answer" {
+	if plan.route.Family == string(autonomy.TaskFamilyConversation) || plan.route.Family == string(autonomy.TaskFamilyDirectAnswer) || plan.route.Contract == string(workerruntime.ContractDirectAnswer) {
 		m.SetLastTurnSourceResults(prompt, turnSourceResults)
 	} else {
 		m.ClearLastTurnSourceResults()
@@ -1223,8 +1231,8 @@ func shouldUnboundDirectPromptBudgets(nonInteractive bool, route turnRoutePlan) 
 		return false
 	}
 
-	return route.Family == "conversation" || route.Family == "direct_answer" ||
-		route.Contract == "direct_answer" || route.Contract == "grounded_evidence_summary"
+	return route.Family == string(autonomy.TaskFamilyConversation) || route.Family == string(autonomy.TaskFamilyDirectAnswer) ||
+		route.Contract == string(workerruntime.ContractDirectAnswer) || route.Contract == string(workerruntime.ContractGroundedEvidence)
 }
 
 func (m *Model) preExecuteToolRequest(step int, req workspace.ToolRequest, mode modepolicy.Mode) *workspace.ToolResult {
@@ -1274,9 +1282,13 @@ func (m *Model) pinPathsFromToolResult(result workspace.ToolResult) {
 		return
 	}
 
-	switch strings.TrimSpace(result.Tool) {
-	case workspace.ToolNameReadFile, workspace.ToolNameEditFile, workspace.ToolNameWriteFile, workspace.ToolNameAppendFile,
-		"go_read_symbol", "go_extract_body", "go_file_outline":
+	tool := strings.TrimSpace(result.Tool)
+	if tool == workspace.ToolNameReadFile ||
+		tool == workspace.ToolNameEditFile ||
+		tool == workspace.ToolNameWriteFile ||
+		tool == workspace.ToolNameAppendFile ||
+		workspace.LanguageToolHasAnyCapability(tool, workspace.CapReadSymbol, workspace.CapExtractBody, workspace.CapFileOutline) {
+
 		if path := extractPinnablePathFromSummary(result.Summary); path != "" {
 			registry.Pin(path)
 		}
@@ -1337,13 +1349,13 @@ func looksLikeFileHandle(token string) bool {
 }
 
 func (m *Model) initDebugLogger() {
-	if suppressDebugLoggerForTestProcess(m.cfg.Chat.DebugLogDir) {
+	if suppressDefaultDebugLogger(m.cfg.Chat.DebugLogDir) {
 		return
 	}
 
 	logger, err := transcript.NewDebugLogger(transcript.DebugLoggerOptions{
 		Dir:           m.cfg.Chat.DebugLogDir,
-		Mode:          transcript.DebugLogMode(util.FirstNonEmpty(m.cfg.Chat.DebugLogMode, "redacted")),
+		Mode:          transcript.DebugLogMode(textutil.FirstNonEmpty(m.cfg.Chat.DebugLogMode, "redacted")),
 		WorkspaceRoot: m.workspace.Root(),
 		SessionID:     m.cfg.Workspace.SessionID,
 	})
@@ -1400,7 +1412,7 @@ func (m *Model) composedSystemPrompt() (string, []promptstack.Source) {
 	}
 
 	mode := m.currentMode()
-	overlayModel := util.FirstNonEmpty(m.plannerSpec.Model, m.cfg.LlamaServer.Model)
+	overlayModel := textutil.FirstNonEmpty(m.plannerSpec.Model, m.cfg.LlamaServer.Model)
 	stack := promptstack.AppendOverlays(
 		m.promptStack,
 		promptstack.ModelCompatibilityOverlays(m.cfg.Chat.ModelFamily, overlayModel),
@@ -1436,7 +1448,7 @@ func (m *Model) composedPromptKey() string {
 	return strings.Join([]string{
 		m.currentMode().Name,
 		strings.TrimSpace(m.cfg.Chat.ModelFamily),
-		strings.TrimSpace(util.FirstNonEmpty(m.plannerSpec.Model, m.cfg.LlamaServer.Model)),
+		strings.TrimSpace(textutil.FirstNonEmpty(m.plannerSpec.Model, m.cfg.LlamaServer.Model)),
 	}, "\x00")
 }
 

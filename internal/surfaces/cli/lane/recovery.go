@@ -8,8 +8,10 @@ import (
 	"strings"
 	"time"
 
+	plancontract "idiom/internal/contracts/plan"
+	recoverycontract "idiom/internal/contracts/recovery"
 	"idiom/internal/platform/config"
-	"idiom/internal/surfaces/tui/app"
+	"idiom/internal/platform/sessionid"
 	"idiom/internal/workflows/recovery"
 )
 
@@ -38,7 +40,7 @@ func (c *lanePromptSessionCapture) SessionID() string {
 func writeLaneImplementRecovery(opts laneOptions, history laneHistoryEvent, subcommandExit int, stderr io.Writer) {
 	sessionID := strings.TrimSpace(history.SessionID)
 	if sessionID == "" {
-		sessionID = newPlanExecuteSessionID()
+		sessionID = sessionid.New()
 	}
 
 	now := time.Now().UTC()
@@ -46,8 +48,8 @@ func writeLaneImplementRecovery(opts laneOptions, history laneHistoryEvent, subc
 	failureClass := laneImplementFailureClass(summary)
 	input := recovery.FailureRecordInput{
 		FailureID: recovery.ImplementFailureID(sessionID),
-		SourceRun: recovery.SourceRun{
-			Lane:              recovery.SourceLaneImplement,
+		SourceRun: recoverycontract.SourceRun{
+			Lane:              string(recoverycontract.SourceLaneImplement),
 			SessionID:         sessionID,
 			PromptFile:        laneWorkspaceRelPath(opts.ProjectRoot, opts.BriefPath),
 			RequiredEditPaths: laneRecoveryRequiredEditPaths(opts, stderr),
@@ -95,38 +97,33 @@ func laneImplementFailureSummary(history laneHistoryEvent, subcommandExit int) s
 	return strings.Join(parts, " ")
 }
 
-func laneImplementFailureClass(summary string) string {
-	failureClass := recovery.ClassifyPlanExecuteFailure("unknown", summary, "")
-	if failureClass == recovery.FailureClassUnknown {
-		return recovery.FailureClassExecutorEdit
-	}
-
-	return failureClass
+func laneImplementFailureClass(summary string) recoverycontract.FailureClass {
+	return recovery.ClassifyImplementFailure(summary)
 }
 
-func laneImplementEvidenceRefs(opts laneOptions, history laneHistoryEvent) []recovery.EvidenceRef {
-	refs := []recovery.EvidenceRef{
+func laneImplementEvidenceRefs(opts laneOptions, history laneHistoryEvent) []recoverycontract.EvidenceRef {
+	refs := []recoverycontract.EvidenceRef{
 		{Kind: "lane_history", Path: laneHistoryRelPath},
 	}
 	if brief := laneWorkspaceRelPath(opts.ProjectRoot, opts.BriefPath); brief != "" {
-		refs = append(refs, recovery.EvidenceRef{Kind: "original_brief", Path: brief})
+		refs = append(refs, recoverycontract.EvidenceRef{Kind: "original_brief", Path: brief})
 	}
 
 	if sessionID := strings.TrimSpace(history.SessionID); sessionID != "" {
-		ref := recovery.EvidenceRef{Kind: "session_summary", ID: sessionID}
+		ref := recoverycontract.EvidenceRef{Kind: "session_summary", ID: sessionID}
 		if stopReason := strings.TrimSpace(history.StopReason); stopReason != "" {
 			ref.Summary = "stop_reason=" + stopReason
 		}
 
 		refs = append(refs, ref)
 		if failures := lanePlanningFailuresPath(opts.ProjectRoot, sessionID); failures != "" {
-			refs = append(refs, recovery.EvidenceRef{Kind: "planning_failures", Path: failures})
+			refs = append(refs, recoverycontract.EvidenceRef{Kind: "planning_failures", Path: failures})
 		}
 	}
 
 	for _, kind := range history.Degradations {
 		if kind = strings.TrimSpace(kind); kind != "" {
-			refs = append(refs, recovery.EvidenceRef{Kind: "lane_degradation", ID: kind})
+			refs = append(refs, recoverycontract.EvidenceRef{Kind: "lane_degradation", ID: kind})
 		}
 	}
 
@@ -143,7 +140,7 @@ func laneRecoveryRequiredEditPaths(opts laneOptions, stderr io.Writer) []string 
 		return nil
 	}
 
-	return planExecuteUniqueRequiredPaths(app.RequiredEditPathsFromPrompt(string(body)))
+	return plancontract.UniqueScopePaths(plancontract.RequiredEditPathsFromPrompt(string(body)))
 }
 
 func lanePlanningFailuresPath(projectRoot, sessionID string) string {

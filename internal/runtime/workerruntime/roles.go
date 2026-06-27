@@ -1,10 +1,14 @@
 package workerruntime
 
-import "strings"
+import (
+	"strings"
+
+	"idiom/internal/contracts/autonomy"
+)
 
 type RoleSpec struct {
 	Name                 RoleName
-	TaskFamily           TaskFamilyID
+	TaskFamily           autonomy.TaskFamilyID
 	Contract             RuntimeContractID
 	PermissionProfile    PermissionProfileID
 	AllowedTools         []string
@@ -21,7 +25,7 @@ func RoleSpecFor(name string) RoleSpec {
 	case RoleChildWrite:
 		return RoleSpec{
 			Name:                 RoleChildWrite,
-			TaskFamily:           TaskFamilyDelegatedIsolatedImpl,
+			TaskFamily:           autonomy.TaskFamilyDelegatedIsolatedImpl,
 			Contract:             ContractPatchSummary,
 			PermissionProfile:    PermissionIsolatedWorkbranchWrite,
 			AllowedTools:         ManifestToolsForCapabilityProfile(CapabilityIsolatedWrite),
@@ -35,7 +39,7 @@ func RoleSpecFor(name string) RoleSpec {
 	case RoleChildReadOnly:
 		return RoleSpec{
 			Name:                 RoleChildReadOnly,
-			TaskFamily:           TaskFamilyDelegatedReadOnly,
+			TaskFamily:           autonomy.TaskFamilyDelegatedReadOnly,
 			Contract:             ContractGroundedEvidence,
 			PermissionProfile:    PermissionReadOnlyWorkspace,
 			AllowedTools:         filterAllowedTools(ManifestToolsForCapabilityProfile(CapabilityConversationReadOnly), CapabilityConversationReadOnly, readOnlyChildAllowedTools()...),
@@ -48,7 +52,7 @@ func RoleSpecFor(name string) RoleSpec {
 	case RoleRepair:
 		return RoleSpec{
 			Name:                 RoleRepair,
-			TaskFamily:           TaskFamilyImplementationRepair,
+			TaskFamily:           autonomy.TaskFamilyImplementationRepair,
 			Contract:             ContractRepairSummary,
 			PermissionProfile:    PermissionGuardedWorkspaceWrite,
 			AllowedTools:         ManifestToolsForCapabilityProfile(CapabilityGuardedWrite),
@@ -62,7 +66,7 @@ func RoleSpecFor(name string) RoleSpec {
 	case RoleImplement:
 		return RoleSpec{
 			Name:                 RoleImplement,
-			TaskFamily:           TaskFamilyImplementation,
+			TaskFamily:           autonomy.TaskFamilyImplementation,
 			Contract:             ContractImplementationResult,
 			PermissionProfile:    PermissionGuardedWorkspaceWrite,
 			AllowedTools:         ManifestToolsForCapabilityProfile(CapabilityGuardedWrite),
@@ -76,7 +80,7 @@ func RoleSpecFor(name string) RoleSpec {
 	default:
 		return RoleSpec{
 			Name:                 RoleMain,
-			TaskFamily:           TaskFamilyConversation,
+			TaskFamily:           autonomy.TaskFamilyConversation,
 			Contract:             ContractDirectAnswer,
 			PermissionProfile:    PermissionConversationOnly,
 			AllowedTools:         nil,
@@ -116,13 +120,13 @@ func RuntimeBriefForRole(role string, lane string, objective string) WorkerRunti
 		TaskFamily:           string(spec.TaskFamily),
 		Contract:             string(spec.Contract),
 		Objective:            objective,
-		PermissionProfile:    permissionProfileString(spec.PermissionProfile),
+		PermissionProfile:    string(spec.PermissionProfile),
 		AllowedTools:         append([]string(nil), spec.AllowedTools...),
 		ForbiddenTools:       append([]string(nil), spec.ForbiddenTools...),
 		RequiredEvidence:     evidenceRequirementStrings(spec.RequiredEvidence),
 		ReadinessGate:        readinessGateStrings(spec.ReadinessGate),
 		SearchPolicy:         searchPolicyStrings(spec.SearchPolicy),
-		VerificationContract: verificationContractString(spec.VerificationContract),
+		VerificationContract: string(spec.VerificationContract),
 		StopConditions:       stopConditionStrings(spec.StopConditions),
 	})
 }

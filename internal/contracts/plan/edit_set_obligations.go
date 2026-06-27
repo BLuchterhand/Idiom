@@ -1,4 +1,4 @@
-package plancontract
+package plan
 
 import (
 	"path/filepath"
@@ -11,9 +11,13 @@ type EditSetObligationKind string
 const (
 	EditSetObligationKindTestEdit           EditSetObligationKind = "test_edit_required"
 	EditSetObligationKindImplementationEdit EditSetObligationKind = "implementation_edit_required"
+)
 
-	EditSetFailureMissingRequestedTestEdit           = "missing_requested_test_edit"
-	EditSetFailureMissingRequestedImplementationEdit = "missing_requested_implementation_edit"
+type EditSetOpenObligationCode string
+
+const (
+	EditSetOpenObligationRequestedTestEditMissing           EditSetOpenObligationCode = "requested_test_edit_missing"
+	EditSetOpenObligationRequestedImplementationEditMissing EditSetOpenObligationCode = "requested_implementation_edit_missing"
 )
 
 type EditSetObligation struct {
@@ -25,14 +29,10 @@ type EditSetObligation struct {
 type EditSetObligations []EditSetObligation
 
 type EditSetOpenObligation struct {
-	Code   string                `json:"code"`
-	Kind   EditSetObligationKind `json:"kind"`
-	Path   string                `json:"path,omitempty"`
-	Source string                `json:"source,omitempty"`
-}
-
-func EditSetObligationsFromPrompt(prompt string) EditSetObligations {
-	return nil
+	Code   EditSetOpenObligationCode `json:"code"`
+	Kind   EditSetObligationKind     `json:"kind"`
+	Path   string                    `json:"path,omitempty"`
+	Source string                    `json:"source,omitempty"`
 }
 
 func (obligations EditSetObligations) Has(kind EditSetObligationKind) bool {
@@ -125,17 +125,17 @@ func (obligations EditSetObligations) WithPath(kind EditSetObligationKind, path 
 	return obligations.with(EditSetObligation{Kind: kind, Path: path, Source: source}).Normalized()
 }
 
-func (obligations EditSetObligations) RejectionReason(changedPaths []string) string {
+func (obligations EditSetObligations) RejectionReason(changedPaths []string) PlanExecuteFailureKind {
 	open := obligations.Open(changedPaths)
 	if len(open) == 0 {
 		return ""
 	}
 
 	switch open[0].Code {
-	case "requested_test_edit_missing":
-		return EditSetFailureMissingRequestedTestEdit
-	case "requested_implementation_edit_missing":
-		return EditSetFailureMissingRequestedImplementationEdit
+	case EditSetOpenObligationRequestedTestEditMissing:
+		return PlanExecuteFailureMissingRequestedTestEdit
+	case EditSetOpenObligationRequestedImplementationEditMissing:
+		return PlanExecuteFailureMissingRequestedImplementationEdit
 	default:
 		return ""
 	}
@@ -144,14 +144,14 @@ func (obligations EditSetObligations) RejectionReason(changedPaths []string) str
 func (obligations EditSetObligations) MissingOpenObligations(changedPaths []string) []string {
 	open := obligations.Open(changedPaths)
 	out := make([]string, 0, len(open))
-	seen := map[string]struct{}{}
+	seen := map[EditSetOpenObligationCode]struct{}{}
 	for _, obligation := range open {
 		if _, ok := seen[obligation.Code]; ok {
 			continue
 		}
 
 		seen[obligation.Code] = struct{}{}
-		out = append(out, obligation.Code)
+		out = append(out, string(obligation.Code))
 	}
 
 	return out
@@ -191,14 +191,14 @@ func EditSetObligationsForRequiredPaths(paths []string, source string) EditSetOb
 	return obligations.Normalized()
 }
 
-func EditSetObligationFailureMessage(reason string) string {
+func EditSetObligationFailureMessage(reason PlanExecuteFailureKind) string {
 	switch reason {
-	case EditSetFailureMissingRequestedTestEdit:
-		return reason + ": typed test-edit obligation is unsatisfied because submitted evidence changed no test path"
-	case EditSetFailureMissingRequestedImplementationEdit:
-		return reason + ": typed implementation-edit obligation is unsatisfied because submitted evidence changed only test paths"
+	case PlanExecuteFailureMissingRequestedTestEdit:
+		return string(reason) + ": typed test-edit obligation is unsatisfied because submitted evidence changed no test path"
+	case PlanExecuteFailureMissingRequestedImplementationEdit:
+		return string(reason) + ": typed implementation-edit obligation is unsatisfied because submitted evidence changed only test paths"
 	default:
-		return reason
+		return string(reason)
 	}
 }
 
@@ -234,12 +234,12 @@ func editSetObligationSatisfied(obligation EditSetObligation, changedPaths []str
 	}
 }
 
-func editSetObligationMissingCode(kind EditSetObligationKind) string {
+func editSetObligationMissingCode(kind EditSetObligationKind) EditSetOpenObligationCode {
 	switch kind {
 	case EditSetObligationKindTestEdit:
-		return "requested_test_edit_missing"
+		return EditSetOpenObligationRequestedTestEditMissing
 	case EditSetObligationKindImplementationEdit:
-		return "requested_implementation_edit_missing"
+		return EditSetOpenObligationRequestedImplementationEditMissing
 	default:
 		return ""
 	}

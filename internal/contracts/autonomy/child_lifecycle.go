@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	lanecontract "idiom/internal/contracts/lane"
 )
 
 const (
@@ -139,6 +141,28 @@ const (
 	AlignmentEvaluatorHostContract      AlignmentEvaluator = "host_contract"
 	AlignmentEvaluatorReviewerFinding   AlignmentEvaluator = "reviewer_finding"
 	AlignmentEvaluatorDeterministicRule AlignmentEvaluator = "deterministic_rule"
+)
+
+type ChildLifecycleRole string
+type ChildLifecycleLane string
+type ChildLifecyclePhase string
+type ChildBackendKind string
+type ChildModelRole string
+type ChildParserContract string
+
+const (
+	ChildLifecycleRoleReviewRepair  ChildLifecycleRole  = "review_repair"
+	ChildLifecycleLanePlanExecute   ChildLifecycleLane  = ChildLifecycleLane(lanecontract.LanePlanExecute)
+	ChildLifecyclePhaseReviewRepair ChildLifecyclePhase = "review_repair"
+
+	ChildBackendKindPromptRunner ChildBackendKind = "prompt_runner"
+	ChildModelRoleReviewRepair   ChildModelRole   = "review_repair"
+
+	ChildParserContractReviewRepairTerminal ChildParserContract = "review_repair_terminal"
+
+	ChildLifecycleReasonReviewRepairAccepted = "review_repair_accepted"
+	ChildScopeRefLanePlanExecute             = lanecontract.ScopeRefPlanExecute
+	ChildScopeRefPhaseReviewRepair           = "phase:review_repair"
 )
 
 type VerificationAcceptanceDecision string

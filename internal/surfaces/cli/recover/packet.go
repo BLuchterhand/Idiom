@@ -9,22 +9,25 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	recoverycontract "idiom/internal/contracts/recovery"
+
+	plancontract "idiom/internal/contracts/plan"
+	"idiom/internal/platform/atomicfile"
 	"idiom/internal/platform/config"
 	"idiom/internal/repository/comprehension"
 	"idiom/internal/runtime/localops"
-	atomcmd "idiom/internal/surfaces/cli/atom"
 	briefcmd "idiom/internal/surfaces/cli/brief"
+	"idiom/internal/workflows/atomintake"
 	"idiom/internal/workflows/recoverstatus"
 	"idiom/internal/workflows/recovery"
 )
 
-type atomIntakeReport = atomcmd.IntakeReport
+type atomIntakeReport = atomintake.IntakeReport
 type briefLintFinding = briefcmd.LintFinding
 
 type recoverDecomposeOptions struct {
@@ -58,44 +61,45 @@ type recoverReconcileOptions struct {
 }
 
 type recoverDecomposeReport struct {
-	Type           string                        `json:"type"`
-	Status         string                        `json:"status"`
-	SessionID      string                        `json:"session_id,omitempty"`
-	FailureID      string                        `json:"failure_id,omitempty"`
-	PacketID       string                        `json:"packet_id,omitempty"`
-	PacketPath     string                        `json:"packet_path,omitempty"`
-	CandidateAtoms []recovery.CandidateAtom      `json:"candidate_atoms,omitempty"`
-	NextAction     string                        `json:"next_valid_action"`
-	Packet         *recovery.DecompositionPacket `json:"packet,omitempty"`
-	Error          string                        `json:"error,omitempty"`
+	Type           string                                `json:"type"`
+	Status         string                                `json:"status"`
+	SessionID      string                                `json:"session_id,omitempty"`
+	FailureID      string                                `json:"failure_id,omitempty"`
+	PacketID       string                                `json:"packet_id,omitempty"`
+	PacketPath     string                                `json:"packet_path,omitempty"`
+	CandidateAtoms []recoverycontract.CandidateAtom      `json:"candidate_atoms,omitempty"`
+	NextAction     string                                `json:"next_valid_action"`
+	Packet         *recoverycontract.DecompositionPacket `json:"packet,omitempty"`
+	Error          string                                `json:"error,omitempty"`
 }
 
 type recoverStatusReport = recoverstatus.Report
 
 type recoverPromoteReport struct {
-	Type       string              `json:"type"`
-	Status     string              `json:"status"`
-	PacketPath string              `json:"packet_path,omitempty"`
-	AtomID     string              `json:"atom_id,omitempty"`
-	OutputPath string              `json:"output_path,omitempty"`
-	Gates      []recoverGateReport `json:"gates,omitempty"`
-	NextAction string              `json:"next_valid_action"`
-	Error      string              `json:"error,omitempty"`
+	Type                string              `json:"type"`
+	Status              string              `json:"status"`
+	PacketPath          string              `json:"packet_path,omitempty"`
+	AtomID              string              `json:"atom_id,omitempty"`
+	OutputPath          string              `json:"output_path,omitempty"`
+	Gates               []recoverGateReport `json:"gates,omitempty"`
+	NextAction          string              `json:"next_valid_action"`
+	PromotionNextAction string              `json:"promotion_next_action,omitempty"`
+	Error               string              `json:"error,omitempty"`
 }
 
 type recoverReconcileReport struct {
-	Type               string                   `json:"type"`
-	Status             string                   `json:"status"`
-	PacketPath         string                   `json:"packet_path,omitempty"`
-	ReconciliationPath string                   `json:"reconciliation_path,omitempty"`
-	FailureID          string                   `json:"failure_id,omitempty"`
-	PacketID           string                   `json:"packet_id,omitempty"`
-	CompletedAtoms     []string                 `json:"completed_atoms,omitempty"`
-	RemainingAtoms     []string                 `json:"remaining_atoms,omitempty"`
-	RankerLearning     *recoverRankerLearning   `json:"ranker_learning,omitempty"`
-	NextAction         string                   `json:"next_valid_action"`
-	Reconciliation     *recovery.Reconciliation `json:"reconciliation,omitempty"`
-	Error              string                   `json:"error,omitempty"`
+	Type               string                           `json:"type"`
+	Status             string                           `json:"status"`
+	PacketPath         string                           `json:"packet_path,omitempty"`
+	ReconciliationPath string                           `json:"reconciliation_path,omitempty"`
+	FailureID          string                           `json:"failure_id,omitempty"`
+	PacketID           string                           `json:"packet_id,omitempty"`
+	CompletedAtoms     []string                         `json:"completed_atoms,omitempty"`
+	RemainingAtoms     []string                         `json:"remaining_atoms,omitempty"`
+	RankerLearning     *recoverRankerLearning           `json:"ranker_learning,omitempty"`
+	NextAction         string                           `json:"next_valid_action"`
+	Reconciliation     *recoverycontract.Reconciliation `json:"reconciliation,omitempty"`
+	Error              string                           `json:"error,omitempty"`
 }
 
 type recoverRankerLearning struct {
@@ -112,12 +116,12 @@ type recoverRankerLearning struct {
 }
 
 type recoverGateReport struct {
-	Name       string             `json:"name"`
-	Status     string             `json:"status"`
-	Summary    string             `json:"summary,omitempty"`
-	Findings   []briefLintFinding `json:"findings,omitempty"`
-	Intake     *atomIntakeReport  `json:"intake,omitempty"`
-	ScopePaths []string           `json:"scope_paths,omitempty"`
+	Name       string                      `json:"name"`
+	Status     recoverycontract.GateStatus `json:"status"`
+	Summary    string                      `json:"summary,omitempty"`
+	Findings   []briefLintFinding          `json:"findings,omitempty"`
+	Intake     *atomIntakeReport           `json:"intake,omitempty"`
+	ScopePaths []string                    `json:"scope_paths,omitempty"`
 }
 
 func runRecoverDecomposeMain(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -160,7 +164,7 @@ func buildRecoverDecomposeReport(root string, opts recoverDecomposeOptions) (rec
 		return recoverDecomposeReport{}, err
 	}
 
-	if inspectReport.Record == nil || inspectReport.Status != "failed" {
+	if inspectReport.Record == nil || inspectReport.Status != string(recoverycontract.ReportStatusFailed) {
 		return recoverDecomposeReport{}, fmt.Errorf("recover decompose requires a failed recovery session")
 	}
 
@@ -172,7 +176,7 @@ func buildRecoverDecomposeReport(root string, opts recoverDecomposeOptions) (rec
 		return recoverDecomposeReport{}, err
 	}
 
-	outputPath, _, err := resolveRecoveryDecompositionOutputPath(root, packet.FailureID, opts.OutputPath)
+	outputPath, _, err := recovery.SafeDecompositionOutputPath(root, packet.FailureID, opts.OutputPath)
 	if err != nil {
 		return recoverDecomposeReport{}, err
 	}
@@ -183,14 +187,14 @@ func buildRecoverDecomposeReport(root string, opts recoverDecomposeOptions) (rec
 	}
 
 	return recoverDecomposeReport{
-		Type:           "idiom.recover.decompose.v1",
+		Type:           string(recoverycontract.ReportTypeDecompose),
 		Status:         string(recovery.StatusForPacket(packet)),
 		SessionID:      inspectReport.SessionID,
 		FailureID:      packet.FailureID,
 		PacketID:       packet.PacketID,
 		PacketPath:     relPath,
 		CandidateAtoms: packet.CandidateAtoms,
-		NextAction:     packet.NextAction,
+		NextAction:     string(packet.NextAction),
 		Packet:         &packet,
 	}, nil
 }
@@ -220,16 +224,12 @@ func runRecoverStatusMain(args []string, stdout io.Writer, stderr io.Writer) int
 		return emitRecoverStatusError(stdout, stderr, opts.JSON, 1, err.Error())
 	}
 
-	report, err := buildRecoverStatusReport(cfg.Workspace.Root, opts.PacketPath)
+	report, err := recoverstatus.Build(cfg.Workspace.Root, opts.PacketPath)
 	if err != nil {
 		return emitRecoverStatusError(stdout, stderr, opts.JSON, 1, err.Error())
 	}
 
 	return writeRecoverStatusReport(stdout, stderr, opts.JSON, report, 0)
-}
-
-func buildRecoverStatusReport(root string, packetPath string) (recoverStatusReport, error) {
-	return recoverstatus.Build(root, packetPath)
 }
 
 func runRecoverPromoteMain(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -274,7 +274,7 @@ func runRecoverPromoteMain(args []string, stdout io.Writer, stderr io.Writer) in
 	}
 
 	code := 0
-	if report.Status != "promoted" {
+	if report.Status != string(recoverycontract.ReportStatusPromoted) {
 		code = 1
 	}
 
@@ -323,7 +323,7 @@ func runRecoverReconcileMain(args []string, stdout io.Writer, stderr io.Writer) 
 func buildRecoverPromoteReport(root string, opts recoverPromoteOptions) (recoverPromoteReport, error) {
 	packetPath := resolveRecoveryPath(root, opts.PacketPath)
 
-	packet, relPacketPath, found, err := recovery.TryLoadDecompositionPacket(packetPath)
+	packet, relPacketPath, found, err := recovery.TryLoadSafeDecompositionPacket(root, packetPath)
 	if err != nil {
 		return recoverPromoteReport{}, err
 	}
@@ -332,13 +332,13 @@ func buildRecoverPromoteReport(root string, opts recoverPromoteOptions) (recover
 		return recoverPromoteReport{}, fmt.Errorf("recovery decomposition packet not found: %s", opts.PacketPath)
 	}
 
-	if packet.NextAction != recovery.NextActionReviewDecomposition {
+	if packet.NextAction != recoverycontract.NextActionReviewDecomposition {
 		return recoverPromoteReport{
-			Type:       "idiom.recover.promote.v1",
-			Status:     "blocked",
+			Type:       string(recoverycontract.ReportTypePromote),
+			Status:     string(recoverycontract.ReportStatusBlocked),
 			PacketPath: relDisplayPath(root, relPacketPath),
 			AtomID:     strings.TrimSpace(opts.AtomID),
-			NextAction: packet.NextAction,
+			NextAction: string(packet.NextAction),
 			Error:      "packet is not ready for candidate promotion",
 		}, nil
 	}
@@ -366,18 +366,18 @@ func buildRecoverPromoteReport(root string, opts recoverPromoteOptions) (recover
 		runRecoveryRequiredTestsGate(atom),
 	}
 	report := recoverPromoteReport{
-		Type:       "idiom.recover.promote.v1",
-		Status:     "blocked",
+		Type:       string(recoverycontract.ReportTypePromote),
+		Status:     string(recoverycontract.ReportStatusBlocked),
 		PacketPath: relDisplayPath(root, relPacketPath),
 		AtomID:     atom.ID,
 		Gates:      gates,
-		NextAction: recovery.NextActionInspectFailure,
+		NextAction: string(recoverycontract.NextActionInspectFailure),
 	}
 
-	outputPath, outputRelPath, err := resolveRecoveryPromotionOutputPath(root, opts.OutputPath)
+	outputPath, outputRelPath, err := recovery.SafePromotionOutputPath(root, opts.OutputPath)
 	if err != nil {
 		report.Error = err.Error()
-		report.NextAction = recovery.NextActionHumanIntervention
+		report.NextAction = string(recoverycontract.NextActionHumanIntervention)
 
 		return report, nil
 	}
@@ -385,8 +385,9 @@ func buildRecoverPromoteReport(root string, opts recoverPromoteOptions) (recover
 	report.OutputPath = outputRelPath
 
 	for _, gate := range gates {
-		if gate.Status != "pass" {
-			report.NextAction = "fix_promotion_gate"
+		if gate.Status != recoverycontract.GateStatusPass {
+			report.NextAction = string(recoverycontract.NextActionHumanIntervention)
+			report.PromotionNextAction = string(recoverycontract.PromotionNextActionFixGate)
 			return report, nil
 		}
 	}
@@ -395,12 +396,13 @@ func buildRecoverPromoteReport(root string, opts recoverPromoteOptions) (recover
 		return recoverPromoteReport{}, fmt.Errorf("mkdir promotion output dir: %w", err)
 	}
 
-	if err := os.WriteFile(outputPath, []byte(brief), 0o644); err != nil {
+	if err := atomicfile.WriteFile(outputPath, []byte(brief), 0o644); err != nil {
 		return recoverPromoteReport{}, fmt.Errorf("write promotion brief: %w", err)
 	}
 
-	report.Status = "promoted"
-	report.NextAction = "dispatch_atom"
+	report.Status = string(recoverycontract.ReportStatusPromoted)
+	report.NextAction = string(recoverycontract.NextActionNone)
+	report.PromotionNextAction = string(recoverycontract.PromotionNextActionDispatchAtom)
 
 	return report, nil
 }
@@ -408,7 +410,7 @@ func buildRecoverPromoteReport(root string, opts recoverPromoteOptions) (recover
 func buildRecoverReconcileReport(root string, opts recoverReconcileOptions) (recoverReconcileReport, error) {
 	packetPath := resolveRecoveryPath(root, opts.PacketPath)
 
-	packet, relPacketPath, found, err := recovery.TryLoadDecompositionPacket(packetPath)
+	packet, relPacketPath, found, err := recovery.TryLoadSafeDecompositionPacket(root, packetPath)
 	if err != nil {
 		return recoverReconcileReport{}, err
 	}
@@ -417,7 +419,7 @@ func buildRecoverReconcileReport(root string, opts recoverReconcileOptions) (rec
 		return recoverReconcileReport{}, fmt.Errorf("recovery decomposition packet not found: %s", opts.PacketPath)
 	}
 
-	outputPath, _, err := resolveRecoveryReconciliationOutputPath(root, packetPath, packet.FailureID, opts.OutputPath)
+	outputPath, _, err := recovery.SafeReconciliationOutputPath(root, packetPath, packet.FailureID, opts.OutputPath)
 	if err != nil {
 		return recoverReconcileReport{}, err
 	}
@@ -467,7 +469,7 @@ func buildRecoverReconcileReport(root string, opts recoverReconcileOptions) (rec
 	}
 
 	return recoverReconcileReport{
-		Type:               "idiom.recover.reconcile.v1",
+		Type:               string(recoverycontract.ReportTypeReconcile),
 		Status:             reconciliation.Status,
 		PacketPath:         relDisplayPath(root, relPacketPath),
 		ReconciliationPath: relReconciliationPath,
@@ -476,12 +478,12 @@ func buildRecoverReconcileReport(root string, opts recoverReconcileOptions) (rec
 		CompletedAtoms:     completed,
 		RemainingAtoms:     append([]string{}, reconciliation.RemainingAtoms...),
 		RankerLearning:     rankerLearning,
-		NextAction:         reconciliation.NextAction,
+		NextAction:         string(reconciliation.NextAction),
 		Reconciliation:     &reconciliation,
 	}, nil
 }
 
-func recordRecoverReconciliationLearning(root string, packet recovery.DecompositionPacket, reconciliation recovery.Reconciliation) *recoverRankerLearning {
+func recordRecoverReconciliationLearning(root string, packet recoverycontract.DecompositionPacket, reconciliation recoverycontract.Reconciliation) *recoverRankerLearning {
 	files := recoverLearningCompletedPaths(reconciliation)
 	metrics := recoverLearningMetrics(packet, reconciliation)
 	score := metrics["packet_quality"]
@@ -535,7 +537,7 @@ func recordRecoverReconciliationLearning(root string, packet recovery.Decomposit
 	return report
 }
 
-func recoverLearningCompletedPaths(reconciliation recovery.Reconciliation) []string {
+func recoverLearningCompletedPaths(reconciliation recoverycontract.Reconciliation) []string {
 	seen := map[string]bool{}
 
 	var files []string
@@ -570,10 +572,10 @@ func normalizeRecoverLearningPath(path string) string {
 	return filepath.ToSlash(filepath.Clean(path))
 }
 
-func recoverLearningMetrics(packet recovery.DecompositionPacket, reconciliation recovery.Reconciliation) map[string]float64 {
+func recoverLearningMetrics(packet recoverycontract.DecompositionPacket, reconciliation recoverycontract.Reconciliation) map[string]float64 {
 	packetQuality := 0.5
-	if reconciliation.Status == recovery.ReconciliationStatusRecovered &&
-		reconciliation.Verification.Status == recovery.ReconciliationVerificationPass &&
+	if reconciliation.Status == recoverycontract.ReconciliationStatusRecovered &&
+		reconciliation.Verification.Status == recoverycontract.ReconciliationVerificationPass &&
 		len(reconciliation.Blockers) == 0 {
 
 		packetQuality = 1
@@ -595,7 +597,7 @@ func recoverLearningMetrics(packet recovery.DecompositionPacket, reconciliation 
 	}
 }
 
-func recoverLearningResultID(packet recovery.DecompositionPacket, reconciliation recovery.Reconciliation) string {
+func recoverLearningResultID(packet recoverycontract.DecompositionPacket, reconciliation recoverycontract.Reconciliation) string {
 	parts := []string{
 		packet.FailureID,
 		packet.PacketID,
@@ -609,9 +611,9 @@ func recoverLearningResultID(packet recovery.DecompositionPacket, reconciliation
 	return "recovery_reconciliation_" + sum
 }
 
-func failureRecordFromPacket(packet recovery.DecompositionPacket) recovery.FailureRecord {
-	return recovery.FailureRecord{
-		SchemaVersion: recovery.FailureRecordSchemaVersion,
+func failureRecordFromPacket(packet recoverycontract.DecompositionPacket) recoverycontract.FailureRecord {
+	return recoverycontract.FailureRecord{
+		SchemaVersion: recoverycontract.FailureRecordSchemaVersion,
 		FailureID:     packet.FailureID,
 		CreatedAt:     packet.CreatedAt,
 		UpdatedAt:     packet.UpdatedAt,
@@ -622,25 +624,25 @@ func failureRecordFromPacket(packet recovery.DecompositionPacket) recovery.Failu
 	}
 }
 
-func runRecoveryWorkspaceStateGate(partial recovery.PartialState, allowDirty bool) recoverGateReport {
+func runRecoveryWorkspaceStateGate(partial recoverycontract.PartialState, allowDirty bool) recoverGateReport {
 	report := recoverGateReport{
-		Name:    recovery.GateWorkspaceState,
-		Status:  "pass",
+		Name:    recoverycontract.GateWorkspaceState,
+		Status:  recoverycontract.GateStatusPass,
 		Summary: fmt.Sprintf("dirty_status=%s scope_status=%s", partial.DirtyStatus, partial.ScopeStatus),
 	}
 	switch partial.DirtyStatus {
-	case recovery.DirtyStatusDirtyOutScope:
-		report.Status = "block"
+	case recoverycontract.DirtyStatusDirtyOutScope:
+		report.Status = recoverycontract.GateStatusBlock
 		report.Summary = "out-of-scope dirty workspace state must be inspected before promotion"
-	case recovery.DirtyStatusDirtyInScope:
+	case recoverycontract.DirtyStatusDirtyInScope:
 		if !allowDirty {
-			report.Status = "block"
+			report.Status = recoverycontract.GateStatusBlock
 			report.Summary = "in-scope dirty workspace state requires explicit --allow-dirty before promotion"
 		}
 	}
 
-	if report.Status == "pass" && partial.ScopeStatus == recovery.ScopeStatusOutOfScope {
-		report.Status = "block"
+	if report.Status == recoverycontract.GateStatusPass && partial.ScopeStatus == recoverycontract.ScopeStatusOutOfScope {
+		report.Status = recoverycontract.GateStatusBlock
 		report.Summary = "out-of-scope workspace state must be inspected before promotion"
 	}
 
@@ -650,7 +652,7 @@ func runRecoveryWorkspaceStateGate(partial recovery.PartialState, allowDirty boo
 func runRecoveryBriefLintGate(root string, briefPath string) recoverGateReport {
 	scriptPath, cleanup, err := briefcmd.WriteEmbeddedPreflight()
 	if err != nil {
-		return recoverGateReport{Name: recovery.GateBriefLint, Status: "error", Summary: err.Error()}
+		return recoverGateReport{Name: recoverycontract.GateBriefLint, Status: recoverycontract.GateStatusError, Summary: err.Error()}
 	}
 	defer cleanup()
 
@@ -670,33 +672,33 @@ func runRecoveryBriefLintGate(root string, briefPath string) recoverGateReport {
 		if exitErr, ok := runErr.(*exec.ExitError); ok {
 			exit = exitErr.ExitCode()
 		} else {
-			return recoverGateReport{Name: recovery.GateBriefLint, Status: "error", Summary: fmt.Sprintf("python3 failed: %v", runErr)}
+			return recoverGateReport{Name: recoverycontract.GateBriefLint, Status: recoverycontract.GateStatusError, Summary: fmt.Sprintf("python3 failed: %v", runErr)}
 		}
 	}
 
 	findings := briefcmd.ParseLintFindings(briefPath, outBuf.String()+errBuf.String())
-	status := "pass"
+	status := recoverycontract.GateStatusPass
 
 	if exit != 0 {
-		status = "block"
+		status = recoverycontract.GateStatusBlock
 	}
 
-	return recoverGateReport{Name: recovery.GateBriefLint, Status: status, Findings: findings, Summary: fmt.Sprintf("brief lint exit %d", exit)}
+	return recoverGateReport{Name: recoverycontract.GateBriefLint, Status: status, Findings: findings, Summary: fmt.Sprintf("brief lint exit %d", exit)}
 }
 
 func runRecoveryAtomIntakeGate(root string, specPath string, body string, allowDirty bool) recoverGateReport {
-	report := atomcmd.EvaluateIntake(body, specPath, root, allowDirty, atomcmd.DefaultScopePaths(body))
-	status := "pass"
+	report := atomintake.EvaluateIntake(body, specPath, root, allowDirty, atomintake.DefaultScopePaths(body))
+	status := recoverycontract.GateStatusPass
 
 	if !report.Dispatchable {
-		status = "block"
+		status = recoverycontract.GateStatusBlock
 	}
 
-	return recoverGateReport{Name: recovery.GateAtomIntake, Status: status, Intake: &report, Summary: string(report.State)}
+	return recoverGateReport{Name: recoverycontract.GateAtomIntake, Status: status, Intake: &report, Summary: string(report.State)}
 }
 
-func runRecoveryScopeGate(body string, atom recovery.CandidateAtom) recoverGateReport {
-	scopePaths := atomcmd.DefaultScopePaths(body)
+func runRecoveryScopeGate(body string, atom recoverycontract.CandidateAtom) recoverGateReport {
+	scopePaths := atomintake.DefaultScopePaths(body)
 	missing, extra := comparePathSets(atom.RequiredPaths, scopePaths)
 
 	var blocked []string
@@ -709,24 +711,24 @@ func runRecoveryScopeGate(body string, atom recovery.CandidateAtom) recoverGateR
 		}
 	}
 
-	status := "pass"
+	status := recoverycontract.GateStatusPass
 
 	var parts []string
 
 	if len(missing) > 0 {
-		status = "block"
+		status = recoverycontract.GateStatusBlock
 
 		parts = append(parts, "missing required paths: "+strings.Join(missing, ", "))
 	}
 
 	if len(extra) > 0 {
-		status = "block"
+		status = recoverycontract.GateStatusBlock
 
 		parts = append(parts, "extra scoped paths: "+strings.Join(extra, ", "))
 	}
 
 	if len(blocked) > 0 {
-		status = "block"
+		status = recoverycontract.GateStatusBlock
 
 		parts = append(parts, "forbidden paths: "+strings.Join(blocked, ", "))
 	}
@@ -735,15 +737,15 @@ func runRecoveryScopeGate(body string, atom recovery.CandidateAtom) recoverGateR
 		parts = append(parts, "scope matches candidate atom")
 	}
 
-	return recoverGateReport{Name: recovery.GateScope, Status: status, Summary: strings.Join(parts, "; "), ScopePaths: scopePaths}
+	return recoverGateReport{Name: recoverycontract.GateScope, Status: status, Summary: strings.Join(parts, "; "), ScopePaths: scopePaths}
 }
 
-func runRecoveryRequiredTestsGate(atom recovery.CandidateAtom) recoverGateReport {
+func runRecoveryRequiredTestsGate(atom recoverycontract.CandidateAtom) recoverGateReport {
 	if len(atom.RequiredTests) == 0 {
-		return recoverGateReport{Name: recovery.GateRequiredTests, Status: "block", Summary: "candidate atom has no required tests"}
+		return recoverGateReport{Name: recoverycontract.GateRequiredTests, Status: recoverycontract.GateStatusBlock, Summary: "candidate atom has no required tests"}
 	}
 
-	return recoverGateReport{Name: recovery.GateRequiredTests, Status: "pass", Summary: strings.Join(atom.RequiredTests, "; ")}
+	return recoverGateReport{Name: recoverycontract.GateRequiredTests, Status: recoverycontract.GateStatusPass, Summary: strings.Join(atom.RequiredTests, "; ")}
 }
 
 func writeRecoveryPromotionTempBrief(root string, failureID string, content string) (string, func(), error) {
@@ -822,10 +824,10 @@ func recoverCompletedAtomIDs(value string) []string {
 	return out
 }
 
-func runRecoveryReconciliationVerification(root string, packet recovery.DecompositionPacket, completedIDs []string) (recovery.ReconciliationVerification, error) {
+func runRecoveryReconciliationVerification(root string, packet recoverycontract.DecompositionPacket, completedIDs []string) (recoverycontract.ReconciliationVerification, error) {
 	requiredTests := recoverRequiredTestsForCompletedAtoms(packet, completedIDs)
-	verification := recovery.ReconciliationVerification{
-		Status:        recovery.ReconciliationVerificationPass,
+	verification := recoverycontract.ReconciliationVerification{
+		Status:        recoverycontract.ReconciliationVerificationPass,
 		RequiredTests: requiredTests,
 	}
 
@@ -839,7 +841,7 @@ func runRecoveryReconciliationVerification(root string, packet recovery.Decompos
 		verification.Commands = append(verification.Commands, result)
 
 		if err != nil {
-			verification.Status = recovery.ReconciliationVerificationFail
+			verification.Status = recoverycontract.ReconciliationVerificationFail
 			return verification, err
 		}
 	}
@@ -847,7 +849,7 @@ func runRecoveryReconciliationVerification(root string, packet recovery.Decompos
 	return verification, nil
 }
 
-func recoverRequiredTestsForCompletedAtoms(packet recovery.DecompositionPacket, completedIDs []string) []string {
+func recoverRequiredTestsForCompletedAtoms(packet recoverycontract.DecompositionPacket, completedIDs []string) []string {
 	completed := map[string]bool{}
 
 	for _, id := range completedIDs {
@@ -882,13 +884,13 @@ func recoverRequiredTestsForCompletedAtoms(packet recovery.DecompositionPacket, 
 	return tests
 }
 
-func runRecoveryVerificationCommand(root string, command string) (recovery.ReconciliationCommandResult, error) {
+func runRecoveryVerificationCommand(root string, command string) (recoverycontract.ReconciliationCommandResult, error) {
 	command = strings.Join(strings.Fields(command), " ")
 
 	startedAt := time.Now().UTC()
-	result := recovery.ReconciliationCommandResult{
+	result := recoverycontract.ReconciliationCommandResult{
 		Command:   command,
-		Status:    recovery.ReconciliationVerificationFail,
+		Status:    recoverycontract.ReconciliationVerificationFail,
 		ExitCode:  -1,
 		StartedAt: startedAt.Format(time.RFC3339Nano),
 	}
@@ -924,7 +926,7 @@ func runRecoveryVerificationCommand(root string, command string) (recovery.Recon
 		return result, fmt.Errorf("recovery verification command failed: %s: %s", command, strings.TrimSpace(stderr.String()))
 	}
 
-	result.Status = recovery.ReconciliationVerificationPass
+	result.Status = recoverycontract.ReconciliationVerificationPass
 	result.ExitCode = 0
 	result.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
 
@@ -932,23 +934,13 @@ func runRecoveryVerificationCommand(root string, command string) (recovery.Recon
 }
 
 func parseRecoveryVerificationCommand(command string) ([]string, error) {
-	if strings.ContainsAny(command, ";&|><$`\n\r") {
-		return nil, fmt.Errorf("recovery verification command contains unsupported shell syntax: %s", command)
-	}
-
-	args := strings.Fields(command)
-	if len(args) < 2 || args[0] != "go" || args[1] != "test" {
+	args, ok := plancontract.VerificationCommandArgs(command)
+	if !ok {
 		return nil, fmt.Errorf("unsupported recovery verification command: %s", command)
 	}
 
-	if len(args) == 2 {
+	if len(args) == len(plancontract.VerificationCommandPrefix(args)) {
 		return nil, fmt.Errorf("recovery verification command must name a package pattern: %s", command)
-	}
-
-	for _, arg := range args[2:] {
-		if arg != "." && !strings.HasPrefix(arg, "./") {
-			return nil, fmt.Errorf("unsupported recovery verification argument %q in %s", arg, command)
-		}
 	}
 
 	return args, nil
@@ -963,284 +955,7 @@ func resolveRecoveryPath(root string, path string) string {
 	return filepath.Join(root, path)
 }
 
-func resolveRecoveryDecompositionOutputPath(root string, failureID string, outputPath string) (string, string, error) {
-	outputPath = strings.TrimSpace(outputPath)
-
-	fullPath := outputPath
-
-	if outputPath == "" {
-		var err error
-
-		fullPath, _, err = recovery.DecompositionPacketPath(root, failureID, "")
-		if err != nil {
-			return "", "", err
-		}
-	} else if !filepath.IsAbs(fullPath) {
-		fullPath = filepath.Join(root, fullPath)
-	}
-
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve workspace root: %w", err)
-	}
-
-	absPath, err := filepath.Abs(fullPath)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve recovery decomposition output path: %w", err)
-	}
-
-	rel, err := filepath.Rel(absRoot, absPath)
-	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." || filepath.IsAbs(rel) {
-		return "", "", fmt.Errorf("recovery decomposition output path must stay under workspace root")
-	}
-
-	rel = filepath.ToSlash(filepath.Clean(rel))
-	if isProtectedRecoveryReconciliationOutputPath(rel) {
-		return "", "", fmt.Errorf("recovery decomposition output path is protected: %s", rel)
-	}
-
-	if isRecoveryControlArtifactPath(rel) {
-		return "", "", fmt.Errorf("recovery decomposition output path would overwrite a recovery control artifact: %s", rel)
-	}
-
-	if hasRecoverySymlinkAncestor(absRoot, absPath) {
-		return "", "", fmt.Errorf("recovery decomposition output path must not traverse symlinked directories")
-	}
-
-	return absPath, rel, nil
-}
-
-func resolveRecoveryPromotionOutputPath(root string, path string) (string, string, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return "", "", fmt.Errorf("promotion output path is empty")
-	}
-
-	fullPath := path
-	if !filepath.IsAbs(fullPath) {
-		fullPath = filepath.Join(root, fullPath)
-	}
-
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve workspace root: %w", err)
-	}
-
-	absPath, err := filepath.Abs(fullPath)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve promotion output path: %w", err)
-	}
-
-	rel, err := filepath.Rel(absRoot, absPath)
-	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." || filepath.IsAbs(rel) {
-		return "", "", fmt.Errorf("promotion output path must stay under workspace root")
-	}
-
-	rel = filepath.ToSlash(filepath.Clean(rel))
-	if isProtectedPromotionOutputPath(rel) {
-		return "", "", fmt.Errorf("promotion output path is protected: %s", rel)
-	}
-
-	return absPath, rel, nil
-}
-
-func resolveRecoveryReconciliationOutputPath(root string, packetPath string, failureID string, outputPath string) (string, string, error) {
-	outputPath = strings.TrimSpace(outputPath)
-	if outputPath == "" {
-		if fullPath, relPath, ok := defaultRecoveryReconciliationSiblingPath(root, packetPath); ok {
-			return fullPath, relPath, nil
-		}
-
-		return recovery.ReconciliationPath(root, failureID, "")
-	}
-
-	fullPath := outputPath
-	if !filepath.IsAbs(fullPath) {
-		fullPath = filepath.Join(root, fullPath)
-	}
-
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve workspace root: %w", err)
-	}
-
-	absPath, err := filepath.Abs(fullPath)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve recovery reconciliation output path: %w", err)
-	}
-
-	rel, err := filepath.Rel(absRoot, absPath)
-	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." || filepath.IsAbs(rel) {
-		return "", "", fmt.Errorf("recovery reconciliation output path must stay under workspace root")
-	}
-
-	rel = filepath.ToSlash(filepath.Clean(rel))
-	if isProtectedRecoveryReconciliationOutputPath(rel) {
-		return "", "", fmt.Errorf("recovery reconciliation output path is protected: %s", rel)
-	}
-
-	if hasRecoverySymlinkAncestor(absRoot, absPath) {
-		return "", "", fmt.Errorf("recovery reconciliation output path must not traverse symlinked directories")
-	}
-
-	return absPath, rel, nil
-}
-
-func defaultRecoveryReconciliationSiblingPath(root string, packetPath string) (string, string, bool) {
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return "", "", false
-	}
-
-	absPacketPath, err := filepath.Abs(packetPath)
-	if err != nil {
-		return "", "", false
-	}
-
-	relPacketPath, err := filepath.Rel(absRoot, absPacketPath)
-	if err != nil || relPacketPath == "." || strings.HasPrefix(relPacketPath, ".."+string(filepath.Separator)) || relPacketPath == ".." || filepath.IsAbs(relPacketPath) {
-		return "", "", false
-	}
-
-	fullPath := filepath.Join(filepath.Dir(absPacketPath), "reconciliation.json")
-
-	relPath, err := filepath.Rel(absRoot, fullPath)
-	if err != nil {
-		return "", "", false
-	}
-
-	relPath = filepath.ToSlash(filepath.Clean(relPath))
-	if isProtectedRecoveryReconciliationOutputPath(relPath) {
-		return "", "", false
-	}
-
-	if hasRecoverySymlinkAncestor(absRoot, fullPath) {
-		return "", "", false
-	}
-
-	return fullPath, relPath, true
-}
-
-func hasRecoverySymlinkAncestor(absRoot string, absPath string) bool {
-	absRoot = filepath.Clean(absRoot)
-	absPath = filepath.Clean(absPath)
-
-	rel, err := filepath.Rel(absRoot, absPath)
-
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return true
-	}
-
-	parentRel := filepath.Dir(rel)
-	if parentRel == "." {
-		return false
-	}
-
-	current := absRoot
-
-	for _, part := range strings.Split(parentRel, string(filepath.Separator)) {
-		if part == "" || part == "." {
-			continue
-		}
-
-		current = filepath.Join(current, part)
-
-		info, err := os.Lstat(current)
-
-		if os.IsNotExist(err) {
-			return false
-		}
-
-		if err != nil {
-			return true
-		}
-
-		if info.Mode()&os.ModeSymlink != 0 {
-			return true
-		}
-	}
-
-	return false
-}
-
-func isProtectedRecoveryReconciliationOutputPath(rel string) bool {
-	rel = filepath.ToSlash(filepath.Clean(strings.TrimSpace(rel)))
-	if rel == "" || rel == "." {
-		return true
-	}
-
-	canonical := strings.ToLower(rel)
-	if canonical == ".idiom" || strings.HasPrefix(canonical, ".idiom/") {
-		return canonical != ".idiom/recovery" && !strings.HasPrefix(canonical, ".idiom/recovery/")
-	}
-
-	protectedPrefixes := []string{
-		".git/",
-		"logs/",
-	}
-	for _, prefix := range protectedPrefixes {
-		if canonical == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(canonical, prefix) {
-			return true
-		}
-	}
-
-	switch canonical {
-	case ".env", "config.json":
-		return true
-	}
-
-	return false
-}
-
-func isProtectedPromotionOutputPath(rel string) bool {
-	rel = filepath.ToSlash(filepath.Clean(strings.TrimSpace(rel)))
-	if rel == "" || rel == "." {
-		return true
-	}
-
-	canonical := strings.ToLower(rel)
-	protectedPrefixes := []string{
-		".git/",
-		".idiom/",
-		"logs/",
-	}
-
-	for _, prefix := range protectedPrefixes {
-		if canonical == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(canonical, prefix) {
-			return true
-		}
-	}
-
-	switch canonical {
-	case ".env", "config.json":
-		return true
-	}
-
-	return false
-}
-
-func isRecoveryControlArtifactPath(rel string) bool {
-	rel = filepath.ToSlash(filepath.Clean(strings.TrimSpace(rel)))
-
-	canonical := strings.ToLower(rel)
-
-	if canonical == "" || canonical == "." {
-		return true
-	}
-
-	if canonical != ".idiom/recovery" && !strings.HasPrefix(canonical, ".idiom/recovery/") {
-		return false
-	}
-
-	switch path.Base(canonical) {
-	case "failure.json", "reconciliation.json":
-		return true
-	default:
-		return false
-	}
-}
-
-func recoverReconciliationFindingMessages(findings []recovery.ReconciliationValidationFinding) string {
+func recoverReconciliationFindingMessages(findings []recoverycontract.ReconciliationValidationFinding) string {
 	messages := make([]string, 0, len(findings))
 	for _, finding := range findings {
 		messages = append(messages, finding.Code+": "+finding.Message)
@@ -1268,9 +983,9 @@ func relDisplayPath(root string, path string) string {
 
 func emitRecoverDecomposeError(stdout io.Writer, stderr io.Writer, jsonOut bool, code int, message string) int {
 	report := recoverDecomposeReport{
-		Type:       "idiom.recover.decompose.v1",
-		Status:     "error",
-		NextAction: recovery.NextActionInspectFailure,
+		Type:       string(recoverycontract.ReportTypeDecompose),
+		Status:     string(recoverycontract.ReportStatusError),
+		NextAction: string(recoverycontract.NextActionInspectFailure),
 		Error:      message,
 	}
 
@@ -1283,9 +998,9 @@ func emitRecoverStatusError(stdout io.Writer, stderr io.Writer, jsonOut bool, co
 
 func emitRecoverPromoteError(stdout io.Writer, stderr io.Writer, jsonOut bool, code int, message string) int {
 	report := recoverPromoteReport{
-		Type:       "idiom.recover.promote.v1",
-		Status:     "error",
-		NextAction: recovery.NextActionInspectFailure,
+		Type:       string(recoverycontract.ReportTypePromote),
+		Status:     string(recoverycontract.ReportStatusError),
+		NextAction: string(recoverycontract.NextActionInspectFailure),
 		Error:      message,
 	}
 
@@ -1294,9 +1009,9 @@ func emitRecoverPromoteError(stdout io.Writer, stderr io.Writer, jsonOut bool, c
 
 func emitRecoverReconcileError(stdout io.Writer, stderr io.Writer, jsonOut bool, code int, message string) int {
 	report := recoverReconcileReport{
-		Type:       "idiom.recover.reconcile.v1",
-		Status:     "error",
-		NextAction: recovery.NextActionInspectFailure,
+		Type:       string(recoverycontract.ReportTypeReconcile),
+		Status:     string(recoverycontract.ReportStatusError),
+		NextAction: string(recoverycontract.NextActionInspectFailure),
 		Error:      message,
 	}
 
@@ -1350,6 +1065,9 @@ func writeRecoverPromoteReport(stdout io.Writer, stderr io.Writer, jsonOut bool,
 	if report.Error != "" {
 		fmt.Fprintln(stderr, report.Error)
 		fmt.Fprintf(stderr, "next_valid_action: %s\n", report.NextAction)
+		if report.PromotionNextAction != "" {
+			fmt.Fprintf(stderr, "promotion_next_action: %s\n", report.PromotionNextAction)
+		}
 
 		return code
 	}
@@ -1361,6 +1079,9 @@ func writeRecoverPromoteReport(stdout io.Writer, stderr io.Writer, jsonOut bool,
 	}
 
 	fmt.Fprintf(stdout, "next_valid_action: %s\n", report.NextAction)
+	if report.PromotionNextAction != "" {
+		fmt.Fprintf(stdout, "promotion_next_action: %s\n", report.PromotionNextAction)
+	}
 
 	for _, gate := range report.Gates {
 		fmt.Fprintf(stdout, "- %s: %s", gate.Name, gate.Status)

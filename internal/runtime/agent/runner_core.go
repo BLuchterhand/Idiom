@@ -6,15 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"idiom/internal/capabilities/workspace"
-	"idiom/internal/contracts/autonomy"
-	"idiom/internal/contracts/compile"
-	"idiom/internal/contracts/pathparse"
-	plancontract "idiom/internal/contracts/plan"
-	"idiom/internal/platform/failures"
-	"idiom/internal/platform/util"
-	"idiom/internal/runtime/llama"
-	"idiom/internal/runtime/workerruntime"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -24,9 +15,18 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/autonomy"
+	contractcompile "idiom/internal/contracts/compile"
+	"idiom/internal/contracts/pathparse"
+	plancontract "idiom/internal/contracts/plan"
+	"idiom/internal/platform/failures"
+	"idiom/internal/platform/textutil"
+	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/workerruntime"
 )
 
-// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmpzjdc3g8j.go ---
 const (
 	planExecuteTerminalSubmitPlan      = "submit_plan"
 	planExecuteTerminalSourceSatisfied = plancontract.SourceSatisfiedDecision
@@ -47,68 +47,6 @@ func planExecuteTerminalSubmitPlanQuestion() []string {
 
 func planExecuteTerminalSubmitPlanOnly() []string {
 	return []string{planExecuteTerminalSubmitPlan}
-}
-
-const (
-	noteToolName            = ToolName
-	noteToolMaxKeyLength    = MaxKeyLength
-	noteToolMaxContentBytes = MaxContentBytes
-)
-
-type noteToolArgs struct {
-	Key     string `json:"key"`
-	Content string `json:"content"`
-}
-
-func noteToolDefinition() llama.Tool {
-	return ToolDefinition()
-}
-
-func runNoteTool(workspaceRoot string, raw string) workspace.ToolResult {
-	result := workspace.ToolResult{Tool: noteToolName}
-	var args noteToolArgs
-	if err := json.Unmarshal([]byte(raw), &args); err != nil {
-		result.Summary = "Note rejected: invalid arguments"
-		result.Error = "note requires JSON arguments with non-empty key and content"
-		return result
-	}
-	key, err := validateNoteToolKey(args.Key)
-	if err != nil {
-		result.Summary = "Note rejected: invalid key"
-		result.Error = err.Error()
-		return result
-	}
-	content, err := validateNoteToolContent(args.Content)
-	if err != nil {
-		result.Summary = "Note rejected: invalid content"
-		result.Error = err.Error()
-		return result
-	}
-	relPath, err := writeNoteToolFile(workspaceRoot, key, content)
-	if err != nil {
-		result.Summary = "Note failed: write rejected"
-		result.Error = err.Error()
-		return result
-	}
-	result.Summary = fmt.Sprintf("Note saved: %s", key)
-	result.Output = fmt.Sprintf("Recorded finding %q at %s (%d bytes)", key, relPath, len([]byte(content)))
-	return result
-}
-
-func writeAutoFindingsNote(workspaceRoot string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, error) {
-	return WriteAutoFindingsFromResults(workspaceRoot, brief.Objective, results)
-}
-
-func validateNoteToolKey(raw string) (string, error) {
-	return ValidateKey(raw)
-}
-
-func validateNoteToolContent(raw string) (string, error) {
-	return ValidateContent(raw)
-}
-
-func writeNoteToolFile(workspaceRoot string, key string, content string) (string, error) {
-	return WriteFile(workspaceRoot, key, content)
 }
 
 type toolResultEvidenceView struct {
@@ -739,34 +677,28 @@ func (e defaultGuidanceEngine) ScratchpadCloseoutReady(brief workerruntime.Worke
 type CardEngine interface {
 	BuildRecoveryCard(RecoveryCardInput) RecoveryCard
 	RenderRecoveryCard(RecoveryCard) string
-	PlanExecuteLowValueActionPlan(PlanExecutePlanningState) PlanExecuteRecoveryPlan
-	PlanExecuteGroundingRequiredPlan() PlanExecuteRecoveryPlan
-	PlanExecuteUnscopedEmptySubmitPlanPlan() PlanExecuteRecoveryPlan
-	PlanExecuteSubmitPlanParseRecoveryPlan(bool, []string) PlanExecuteRecoveryPlan
-	PlanExecuteSubmitCorrectionPlan(workerruntime.WorkerRuntimeBrief, workspace.ToolResult, string) PlanExecuteRecoveryPlan
-	PlanExecuteNativeSubmitCorrectionPlan(workerruntime.WorkerRuntimeBrief, workspace.ToolResult) PlanExecuteRecoveryPlan
-	PlanExecuteNativeSubmitCorrectionPrompt(workerruntime.WorkerRuntimeBrief, workspace.ToolResult) string
-	PlanExecuteAnchorRefreshPlan(workerruntime.WorkerRuntimeBrief, []workspace.ToolResult, workspace.ToolResult, int) PlanExecuteRecoveryPlan
-	PlanExecuteAnchorRefreshPrompt(workerruntime.WorkerRuntimeBrief, []workspace.ToolResult, workspace.ToolResult, int) string
-	PlanExecuteRepeatedCorrectionPlan(workspace.ToolResult) PlanExecuteRecoveryPlan
-	PlanExecuteRepeatedCorrectionExhausted(workspace.ToolResult) (string, string)
-	PlanExecuteCorrectionHiddenOnlyPrompt(string) string
-	PlanExecuteNativeNoCallFallbackPlan([]string) PlanExecuteRecoveryPlan
-	PlanExecuteNativeNoCallFallbackPrompt([]string) string
-	PlanExecuteAnchorRefreshRequiredError([]string, workspace.ToolResult) string
-	PlanExecuteAnchorRefreshRequiredPathError(string, string) string
-	PlanExecuteAnchorRefreshWriteOnlyError(string, []string) string
-	PlanExecuteSubmitCorrectionRequiredError(workerruntime.WorkerRuntimeBrief, []workspace.ToolResult, workspace.ToolResult, string) string
-	PlanExecuteSubmitCorrectionReadyNudge(workerruntime.WorkerRuntimeBrief, []workspace.ToolResult, workspace.ToolResult) string
-	PlanExecuteSubmitCorrectionWrongToolRejection(string, bool) (string, string, string)
-	PlanExecuteRepeatedCorrectionPlanForState(workspace.ToolResult, bool) PlanExecuteRecoveryPlan
-	PlanExecuteRepeatedCorrectionExhaustedForState(workspace.ToolResult, bool) (string, string)
-	PlanExecuteCorrectionHiddenOnlyPromptForState(string, bool) string
+}
+
+type planExecuteRecoveryHooks struct {
+	onLowValueActionPlan             func(PlanExecutePlanningState) PlanExecuteRecoveryPlan
+	onUnscopedEmptySubmitPlan        func() PlanExecuteRecoveryPlan
+	onSubmitPlanParseRecoveryPlan    func(bool, []string) PlanExecuteRecoveryPlan
+	onNativeSubmitCorrectionPrompt   func(workerruntime.WorkerRuntimeBrief, workspace.ToolResult) string
+	onNativeNoCallFallbackPrompt     func([]string) string
+	onAnchorRefreshRequiredError     func([]string, workspace.ToolResult) string
+	onAnchorRefreshRequiredPathError func(string, string) string
+	onAnchorRefreshWriteOnlyError    func(string, []string) string
+	onSubmitCorrectionRequiredError  func(workerruntime.WorkerRuntimeBrief, []workspace.ToolResult, workspace.ToolResult, string) string
+	onSubmitCorrectionReadyNudge     func(workerruntime.WorkerRuntimeBrief, []workspace.ToolResult, workspace.ToolResult) string
+	onSubmitCorrectionWrongTool      func(string, bool) (string, string, string)
+	onRepeatedCorrectionPlan         func(workspace.ToolResult, bool) PlanExecuteRecoveryPlan
+	onRepeatedCorrectionExhausted    func(workspace.ToolResult, bool) (string, string)
+	onCorrectionHiddenOnlyPrompt     func(string, bool) string
 }
 
 type defaultCardEngine struct{}
 
-func newCardEngine() CardEngine { return defaultCardEngine{} }
+func newCardEngine() defaultCardEngine { return defaultCardEngine{} }
 
 func (r *Runner) cardEngine() CardEngine {
 	if r != nil && r.CardEngine != nil {
@@ -775,80 +707,103 @@ func (r *Runner) cardEngine() CardEngine {
 	return newCardEngine()
 }
 
+func (r *Runner) planExecuteRecoveryHooks() planExecuteRecoveryHooks {
+	if r == nil {
+		return planExecuteRecoveryHooks{}
+	}
+	return r.planExecuteRecoveryHookOverrides
+}
+
 func (defaultCardEngine) BuildRecoveryCard(input RecoveryCardInput) RecoveryCard {
 	return BuildRecoveryCard(input)
 }
 func (defaultCardEngine) RenderRecoveryCard(card RecoveryCard) string {
 	return RenderRecoveryCard(card)
 }
-func (defaultCardEngine) PlanExecuteLowValueActionPlan(state PlanExecutePlanningState) PlanExecuteRecoveryPlan {
+
+func (hooks planExecuteRecoveryHooks) lowValueActionPlan(state PlanExecutePlanningState) PlanExecuteRecoveryPlan {
+	if hooks.onLowValueActionPlan != nil {
+		return hooks.onLowValueActionPlan(state)
+	}
 	return planThenExecuteLowValueActionRecoveryPlan(state)
 }
-func (defaultCardEngine) PlanExecuteGroundingRequiredPlan() PlanExecuteRecoveryPlan {
-	return planThenExecuteGroundingRequiredRecoveryPlan()
-}
-func (defaultCardEngine) PlanExecuteUnscopedEmptySubmitPlanPlan() PlanExecuteRecoveryPlan {
+func (hooks planExecuteRecoveryHooks) unscopedEmptySubmitPlan() PlanExecuteRecoveryPlan {
+	if hooks.onUnscopedEmptySubmitPlan != nil {
+		return hooks.onUnscopedEmptySubmitPlan()
+	}
 	return planThenExecuteUnscopedEmptySubmitPlanRecoveryPlan()
 }
-func (defaultCardEngine) PlanExecuteSubmitPlanParseRecoveryPlan(stringifiedEdits bool, requiredPaths []string) PlanExecuteRecoveryPlan {
+func (hooks planExecuteRecoveryHooks) submitPlanParseRecoveryPlan(stringifiedEdits bool, requiredPaths []string) PlanExecuteRecoveryPlan {
+	if hooks.onSubmitPlanParseRecoveryPlan != nil {
+		return hooks.onSubmitPlanParseRecoveryPlan(stringifiedEdits, requiredPaths)
+	}
 	return planThenExecuteSubmitPlanParseRecoveryPlan(stringifiedEdits, requiredPaths)
 }
-func (defaultCardEngine) PlanExecuteSubmitCorrectionPlan(brief workerruntime.WorkerRuntimeBrief, result workspace.ToolResult, refreshNote string) PlanExecuteRecoveryPlan {
-	return planThenExecuteSubmitCorrectionRecoveryPlan(brief, result, refreshNote)
-}
-func (defaultCardEngine) PlanExecuteNativeSubmitCorrectionPlan(brief workerruntime.WorkerRuntimeBrief, result workspace.ToolResult) PlanExecuteRecoveryPlan {
-	return planThenExecuteNativeSubmitPlanCorrectionRecoveryPlan(brief, result)
-}
-func (defaultCardEngine) PlanExecuteNativeSubmitCorrectionPrompt(brief workerruntime.WorkerRuntimeBrief, result workspace.ToolResult) string {
+func (hooks planExecuteRecoveryHooks) nativeSubmitCorrectionPrompt(brief workerruntime.WorkerRuntimeBrief, result workspace.ToolResult) string {
+	if hooks.onNativeSubmitCorrectionPrompt != nil {
+		return hooks.onNativeSubmitCorrectionPrompt(brief, result)
+	}
 	return planThenExecuteNativeSubmitPlanCorrectionPrompt(brief, result)
 }
-func (defaultCardEngine) PlanExecuteAnchorRefreshPlan(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, rejected workspace.ToolResult, rejectedAt int) PlanExecuteRecoveryPlan {
-	return planThenExecuteAnchorRefreshRecoveryPlan(brief, results, rejected, rejectedAt)
+func (hooks planExecuteRecoveryHooks) nativeNoCallFallbackPrompt(requiredPaths []string) string {
+	if hooks.onNativeNoCallFallbackPrompt != nil {
+		return hooks.onNativeNoCallFallbackPrompt(requiredPaths)
+	}
+	return RenderPlanExecuteRecoveryPlan(planThenExecuteNativeNoCallFallbackRecoveryPlan(requiredPaths))
 }
-func (e defaultCardEngine) PlanExecuteAnchorRefreshPrompt(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, rejected workspace.ToolResult, rejectedAt int) string {
-	return RenderPlanExecuteRecoveryPlan(e.PlanExecuteAnchorRefreshPlan(brief, results, rejected, rejectedAt))
-}
-func (defaultCardEngine) PlanExecuteRepeatedCorrectionPlan(result workspace.ToolResult) PlanExecuteRecoveryPlan {
-	return planThenExecuteRepeatedSubmitCorrectionRecoveryPlan(result)
-}
-func (defaultCardEngine) PlanExecuteRepeatedCorrectionExhausted(result workspace.ToolResult) (string, string) {
-	return planThenExecuteRepeatedCorrectionExhaustedRejection(result)
-}
-func (defaultCardEngine) PlanExecuteCorrectionHiddenOnlyPrompt(base string) string {
-	return planThenExecuteCorrectionHiddenOnlyRecoveryPrompt(base)
-}
-func (defaultCardEngine) PlanExecuteNativeNoCallFallbackPlan(requiredPaths []string) PlanExecuteRecoveryPlan {
-	return planThenExecuteNativeNoCallFallbackRecoveryPlan(requiredPaths)
-}
-func (e defaultCardEngine) PlanExecuteNativeNoCallFallbackPrompt(requiredPaths []string) string {
-	return RenderPlanExecuteRecoveryPlan(e.PlanExecuteNativeNoCallFallbackPlan(requiredPaths))
-}
-func (defaultCardEngine) PlanExecuteAnchorRefreshRequiredError(refreshPaths []string, result workspace.ToolResult) string {
+func (hooks planExecuteRecoveryHooks) anchorRefreshRequiredError(refreshPaths []string, result workspace.ToolResult) string {
+	if hooks.onAnchorRefreshRequiredError != nil {
+		return hooks.onAnchorRefreshRequiredError(refreshPaths, result)
+	}
 	return "the previous `submit_plan` was rejected before it became a valid plan artifact, and the corrected plan still needs bounded source-body refresh for: " + strings.Join(nonEmptyRunnerStrings(refreshPaths, 4), ", ") + ". " + lastSubmitPlanRejectionBrief(result) + planThenExecuteAnchorRefreshReadFallbackInstruction(refreshPaths) + " Do not call `submit_plan` until the remaining anchor refresh returns."
 }
-func (defaultCardEngine) PlanExecuteAnchorRefreshRequiredPathError(_ string, nextInstruction string) string {
+func (hooks planExecuteRecoveryHooks) anchorRefreshRequiredPathError(target string, nextInstruction string) string {
+	if hooks.onAnchorRefreshRequiredPathError != nil {
+		return hooks.onAnchorRefreshRequiredPathError(target, nextInstruction)
+	}
 	return "the previous submit_plan named an invalid edit anchor outside required_edit_paths. Do not refresh out-of-scope anchors; " + nextInstruction + ". Then submit_plan, source-satisfied, or <<QUESTION>> with the exact blocker."
 }
-func (defaultCardEngine) PlanExecuteAnchorRefreshWriteOnlyError(tool string, refreshPaths []string) string {
+func (hooks planExecuteRecoveryHooks) anchorRefreshWriteOnlyError(tool string, refreshPaths []string) string {
+	if hooks.onAnchorRefreshWriteOnlyError != nil {
+		return hooks.onAnchorRefreshWriteOnlyError(tool, refreshPaths)
+	}
 	targets := strings.Join(nonEmptyRunnerStrings(refreshPaths, 4), ", ")
 	return fmt.Sprintf("%s is not available in its requested form while plan-execute anchor-refresh mode is still open for: %s. Issue exactly one bounded source-body request for a remaining refresh path: `read_file` with explicit `start_line`/`end_line`, or `%s` with %s plus `pattern`. Do not call `submit_plan` until that refresh returns.", strings.TrimSpace(tool), targets, workspace.CodeNavigateToolName, workspace.CodeNavigateSourceBodyCapabilityPhrase())
 }
-func (defaultCardEngine) PlanExecuteSubmitCorrectionRequiredError(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, result workspace.ToolResult, refreshNote string) string {
+func (hooks planExecuteRecoveryHooks) submitCorrectionRequiredError(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, result workspace.ToolResult, refreshNote string) string {
+	if hooks.onSubmitCorrectionRequiredError != nil {
+		return hooks.onSubmitCorrectionRequiredError(brief, results, result, refreshNote)
+	}
 	return "The previous `submit_plan` was rejected before it became a valid plan artifact. " + lastSubmitPlanCorrectionRejectionBrief(result) + planThenExecuteSubmitCorrectionOutcomeInstruction(brief, results) + " " + planThenExecuteSubmitPlanCoverageSentence() + " " + planThenExecuteSubmitPlanCorrectionInstructionForBrief(brief, result) + " " + refreshNote
 }
-func (defaultCardEngine) PlanExecuteSubmitCorrectionReadyNudge(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, _ workspace.ToolResult) string {
+func (hooks planExecuteRecoveryHooks) submitCorrectionReadyNudge(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, result workspace.ToolResult) string {
+	if hooks.onSubmitCorrectionReadyNudge != nil {
+		return hooks.onSubmitCorrectionReadyNudge(brief, results, result)
+	}
 	return planThenExecuteReadyToSubmitNudge(brief, results)
 }
-func (defaultCardEngine) PlanExecuteSubmitCorrectionWrongToolRejection(tool string, blockerAllowed bool) (string, string, string) {
+func (hooks planExecuteRecoveryHooks) submitCorrectionWrongToolRejection(tool string, blockerAllowed bool) (string, string, string) {
+	if hooks.onSubmitCorrectionWrongTool != nil {
+		return hooks.onSubmitCorrectionWrongTool(tool, blockerAllowed)
+	}
 	return planThenExecuteSubmitCorrectionWrongToolRejection(tool, blockerAllowed)
 }
-func (defaultCardEngine) PlanExecuteRepeatedCorrectionPlanForState(result workspace.ToolResult, _ bool) PlanExecuteRecoveryPlan {
+func (hooks planExecuteRecoveryHooks) repeatedCorrectionPlan(result workspace.ToolResult, blockerAllowed bool) PlanExecuteRecoveryPlan {
+	if hooks.onRepeatedCorrectionPlan != nil {
+		return hooks.onRepeatedCorrectionPlan(result, blockerAllowed)
+	}
 	return planThenExecuteRepeatedSubmitCorrectionRecoveryPlan(result)
 }
-func (defaultCardEngine) PlanExecuteRepeatedCorrectionExhaustedForState(result workspace.ToolResult, _ bool) (string, string) {
+func (hooks planExecuteRecoveryHooks) repeatedCorrectionExhausted(result workspace.ToolResult, blockerAllowed bool) (string, string) {
+	if hooks.onRepeatedCorrectionExhausted != nil {
+		return hooks.onRepeatedCorrectionExhausted(result, blockerAllowed)
+	}
 	return planThenExecuteRepeatedCorrectionExhaustedRejection(result)
 }
-func (defaultCardEngine) PlanExecuteCorrectionHiddenOnlyPromptForState(base string, _ bool) string {
+func (hooks planExecuteRecoveryHooks) correctionHiddenOnlyPrompt(base string, blockerAllowed bool) string {
+	if hooks.onCorrectionHiddenOnlyPrompt != nil {
+		return hooks.onCorrectionHiddenOnlyPrompt(base, blockerAllowed)
+	}
 	return planThenExecuteCorrectionHiddenOnlyRecoveryPrompt(base)
 }
 
@@ -1491,71 +1446,59 @@ func (a finalAnswerAcceptance) CompletionDecision() completionDecisionProjection
 	return completionDecisionProjection{Decision: string(a.Decision), PolicyDecision: a.PolicyDecision}
 }
 
-func planThenExecutePostReadinessDiscoveryRejectionWithCardEngine(engine CardEngine, req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, string, bool) {
+func planThenExecutePostReadinessDiscoveryRejectionWithRecoveryEngine(hooks planExecuteRecoveryHooks, req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, string, bool) {
 	summary, errorText, rejected := planThenExecutePostReadinessDiscoveryRejection(req, brief, results)
 	if !rejected {
 		return "", "", false
 	}
-	if engine == nil {
-		engine = newCardEngine()
-	}
 	if rejectedResult, _, ok := lastRejectedSubmitPlanCoverageResult(results); ok {
 		if refreshPaths := planThenExecuteRejectedPlanRefreshPaths(brief, results, rejectedResult, len(results)-1); len(refreshPaths) > 0 && strings.Contains(strings.ToLower(summary), "anchor refresh") {
-			return summary, engine.PlanExecuteAnchorRefreshRequiredError(refreshPaths, rejectedResult), true
+			return summary, hooks.onAnchorRefreshRequiredError(refreshPaths, rejectedResult), true
 		}
 		refreshNote := planThenExecutePostSubmitRejectionRefreshNote(brief, results, rejectedResult, len(results)-1)
-		return summary, engine.PlanExecuteSubmitCorrectionRequiredError(brief, results, rejectedResult, refreshNote), true
+		return summary, hooks.onSubmitCorrectionRequiredError(brief, results, rejectedResult, refreshNote), true
 	}
 	return summary, errorText, true
 }
 
-func planThenExecuteRequiredPathDiscoveryRejectionWithCardEngine(engine CardEngine, req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, string, bool) {
+func planThenExecuteRequiredPathDiscoveryRejectionWithRecoveryEngine(hooks planExecuteRecoveryHooks, req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, string, bool) {
 	summary, _, rejected := planThenExecuteRequiredPathDiscoveryRejection(req, brief, results)
 	if !rejected {
 		return "", "", false
 	}
-	if engine == nil {
-		engine = newCardEngine()
-	}
 	target := firstPlanThenExecuteUnreadRequiredPath(brief.RequiredEditPaths, planThenExecuteUnreadRequiredPaths(brief, results))
 	next := planThenExecuteSourceReadInstruction(target, results)
-	return summary, engine.PlanExecuteAnchorRefreshRequiredPathError(target, next), true
+	return summary, hooks.onAnchorRefreshRequiredPathError(target, next), true
 }
 
-func planThenExecuteSubmitCorrectionCurrentSurfaceRejectionWithCardEngine(engine CardEngine, req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, string, string, bool) {
-	if engine == nil {
-		engine = newCardEngine()
-	}
+func planThenExecuteSubmitCorrectionCurrentSurfaceRejectionWithRecoveryEngine(hooks planExecuteRecoveryHooks, req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, string, string, bool) {
 	if strings.TrimSpace(req.Tool) == "" || strings.TrimSpace(req.Tool) == workspace.ToolNameSubmitPlan || !planThenExecuteSubmitCorrectionActive(brief, results) {
 		return "", "", "", false
 	}
-	summary, errorText, prompt := engine.PlanExecuteSubmitCorrectionWrongToolRejection(req.Tool, planThenExecuteSubmitCorrectionBlockerAllowed(brief, results))
+	summary, errorText, prompt := hooks.onSubmitCorrectionWrongTool(req.Tool, planThenExecuteSubmitCorrectionBlockerAllowed(brief, results))
 	return summary, errorText, prompt, true
 }
 
-func planThenExecuteReadyToSubmitNudgeWithCardEngine(engine CardEngine, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
-	if engine == nil {
-		engine = newCardEngine()
-	}
+func planThenExecuteReadyToSubmitNudgeWithRecoveryEngine(hooks planExecuteRecoveryHooks, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
 	rejected, _, ok := lastRejectedSubmitPlanCoverageResult(results)
 	if !ok {
 		return planThenExecuteReadyToSubmitNudge(brief, results)
 	}
-	return engine.PlanExecuteSubmitCorrectionReadyNudge(brief, results, rejected)
+	return hooks.onSubmitCorrectionReadyNudge(brief, results, rejected)
 }
 
 func (r *Runner) planThenExecuteSubmitCorrectionHiddenOnlyVisiblePromptForState(base string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
 	if r == nil {
 		return planThenExecuteSubmitCorrectionHiddenOnlyVisiblePromptForState(base, brief, results)
 	}
-	return r.cardEngine().PlanExecuteCorrectionHiddenOnlyPromptForState(base, planThenExecuteSubmitCorrectionBlockerAllowed(brief, results))
+	return r.planExecuteRecoveryHooks().correctionHiddenOnlyPrompt(base, planThenExecuteSubmitCorrectionBlockerAllowed(brief, results))
 }
 
 func (r *Runner) planThenExecuteUnscopedEmptySubmitPlanRecoveryPrompt() string {
 	if r == nil {
 		return RenderPlanExecuteRecoveryPlan(planThenExecuteUnscopedEmptySubmitPlanRecoveryPlan())
 	}
-	return RenderPlanExecuteRecoveryPlan(r.cardEngine().PlanExecuteUnscopedEmptySubmitPlanPlan())
+	return RenderPlanExecuteRecoveryPlan(r.planExecuteRecoveryHooks().unscopedEmptySubmitPlan())
 }
 
 func initRunnerRuntimeSurfaceForCompile() {
@@ -1602,17 +1545,18 @@ type Runner struct {
 	// single dispatch point. When nil, falls back to DefaultLanePolicy.
 	LanePolicy LanePolicy
 
-	StateStore                     StateStore
-	stateStoreOwnedBySession       bool
-	EvidenceEngine                 EvidenceEngine
-	GateEngine                     GateEngine
-	CardEngine                     CardEngine
-	GuidanceEngine                 GuidanceEngine
-	FinalAnswerPolicyEngine        FinalAnswerPolicyEngine
-	VerificationPolicyEngine       VerificationPolicyEngine
-	LifecycleCloseoutPolicyEngine  LifecycleCloseoutPolicyEngine
-	ModelCallReadinessPolicyEngine ModelCallReadinessPolicyEngine
-	ToolAuthorizationPolicyEngine  ToolAuthorizationPolicyEngine
+	StateStore                       StateStore
+	stateStoreOwnedBySession         bool
+	EvidenceEngine                   EvidenceEngine
+	GateEngine                       GateEngine
+	CardEngine                       CardEngine
+	planExecuteRecoveryHookOverrides planExecuteRecoveryHooks
+	GuidanceEngine                   GuidanceEngine
+	FinalAnswerPolicyEngine          FinalAnswerPolicyEngine
+	VerificationPolicyEngine         VerificationPolicyEngine
+	LifecycleCloseoutPolicyEngine    LifecycleCloseoutPolicyEngine
+	ModelCallReadinessPolicyEngine   ModelCallReadinessPolicyEngine
+	ToolAuthorizationPolicyEngine    ToolAuthorizationPolicyEngine
 
 	// PathEvidenceRegistry is the consolidated path-existence, body-read,
 	// candidate, and basename-resolution service. Populated once per turn
@@ -2263,11 +2207,11 @@ func (r *Runner) runLegacySessionBody(
 				req, raw, ok = intentReq, intentRaw, true
 			} else if salvagedReq, salvagedRaw, salvaged := r.salvageVisibleToolRequestFromProse(reply, collectedResults); salvaged {
 				req, raw, ok = salvagedReq, salvagedRaw, true
-				r.emitToolRequestNormalizerEvent("missing_tool_inferred", "visible_prose_salvage", req, nil, "")
+				r.emitToolRequestNormalizerEvent("missing_tool_inferred", "visible_prose_salvage", req, nil, autonomy.ParserFailureNone)
 				r.emitEvent(RunEvent{Role: "visible_tool_salvage", Content: fmt.Sprintf("model wrapped parser-readable %s request in prose; executing the request", req.Tool)})
 			} else if salvagedReq, salvagedRaw, salvaged := r.salvageToolRequestFromReasoning(assistantMessage, collectedResults); salvaged {
 				req, raw, ok = salvagedReq, salvagedRaw, true
-				r.emitToolRequestNormalizerEvent("missing_tool_inferred", "reasoning_salvage", req, nil, "")
+				r.emitToolRequestNormalizerEvent("missing_tool_inferred", "reasoning_salvage", req, nil, autonomy.ParserFailureNone)
 				r.emitEvent(RunEvent{Role: "reasoning_tool_salvage", Content: fmt.Sprintf("model emitted parser-readable %s request in hidden reasoning while visible content was empty; executing the request", req.Tool)})
 			} else if answerText, salvaged := r.salvageAnswerFromReasoning(assistantMessage, collectedResults); salvaged {
 				r.emitEvent(RunEvent{Role: "reasoning_answer_salvage", Content: fmt.Sprintf("model emitted answer prose in hidden reasoning while visible content was empty; extracted %d chars", len(answerText))})
@@ -2275,25 +2219,25 @@ func (r *Runner) runLegacySessionBody(
 				return finish(answerText, nil, "reasoning_answer_salvage", false)
 			} else if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteRejectedRequiredSourceRead(reply, collectedResults); recovered {
 				req, raw, ok = recoveredReq, recoveredRaw, true
-				r.emitToolRequestNormalizerEvent("requires_terminal_action", "deterministic_required_source_recovery", req, nil, "")
+				r.emitToolRequestNormalizerEvent("requires_terminal_action", "deterministic_required_source_recovery", req, nil, autonomy.ParserFailureNone)
 				r.emitEvent(RunEvent{Role: "completion_recovery_auto_required_read", Content: fmt.Sprintf("completion recovery ignored non-tool planner text and issued source read for unread required edit path %s", req.Path)})
 			} else if recoveredReq, recoveredRaw, recovered := r.deterministicImplementationRejectedRequiredPathRead(reply, collectedResults); recovered {
 				req, raw, ok = recoveredReq, recoveredRaw, true
-				r.emitToolRequestNormalizerEvent("requires_terminal_action", "deterministic_required_source_recovery", req, nil, "")
+				r.emitToolRequestNormalizerEvent("requires_terminal_action", "deterministic_required_source_recovery", req, nil, autonomy.ParserFailureNone)
 				r.emitEvent(RunEvent{Role: "completion_recovery_auto_required_read", Content: fmt.Sprintf("completion recovery ignored non-tool implementation text and issued bounded read for unread required edit path %s", req.Path)})
 			} else if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteSourceSatisfiedEvidenceRead(reply, collectedResults); recovered {
 				req, raw, ok = recoveredReq, recoveredRaw, true
 				deterministicPlanExecuteEvidenceRead = true
 
-				r.emitToolRequestNormalizerEvent("requires_terminal_action", "deterministic_source_satisfied_evidence_recovery", req, nil, "")
+				r.emitToolRequestNormalizerEvent("requires_terminal_action", "deterministic_source_satisfied_evidence_recovery", req, nil, autonomy.ParserFailureNone)
 				r.emitEvent(RunEvent{Role: "completion_recovery_auto_source_satisfied_read", Content: fmt.Sprintf("completion recovery read source-satisfied evidence path %s before accepting the closeout", req.Path)})
 			} else if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteGroundingRecoveryRequest(reply, collectedResults); recovered {
 				req, raw, ok = recoveredReq, recoveredRaw, true
-				r.emitToolRequestNormalizerEvent("requires_terminal_action", "deterministic_grounding_recovery", req, nil, "")
+				r.emitToolRequestNormalizerEvent("requires_terminal_action", "deterministic_grounding_recovery", req, nil, autonomy.ParserFailureNone)
 				r.emitEvent(RunEvent{Role: "completion_recovery_auto_grounding", Content: fmt.Sprintf("completion recovery ignored non-tool planner text after ungrounded submit_plan and issued %s", req.Tool)})
 			} else if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteNonToolCandidateRecovery(reply, collectedResults); recovered {
 				req, raw, ok = recoveredReq, recoveredRaw, true
-				r.emitToolRequestNormalizerEvent("requires_terminal_action", "deterministic_candidate_recovery", req, nil, "")
+				r.emitToolRequestNormalizerEvent("requires_terminal_action", "deterministic_candidate_recovery", req, nil, autonomy.ParserFailureNone)
 				r.emitEvent(RunEvent{Role: "completion_recovery_auto_candidate", Content: fmt.Sprintf("completion recovery ignored non-terminal planner prose and issued %s for %s", req.Tool, planThenExecuteRequestTargetPath(req))})
 			} else if strings.TrimSpace(reply) == "" {
 				if recoveredReq, recoveredRaw, event, recovered := r.deterministicEmptyReplyRecovery(collectedResults); recovered {
@@ -2508,7 +2452,7 @@ func (r *Runner) runLegacySessionBody(
 
 		if !ok {
 			if len(changedPathsFromToolResults(collectedResults)) == 0 {
-				if req, result, salvaged := r.autoSalvageMarkdownDeliverable(reply); salvaged {
+				if req, result, salvaged := r.autoSalvageMarkdownDeliverable(ctx, reply); salvaged {
 					metrics.ToolCalls++
 
 					if onToolRequest != nil {
@@ -3425,7 +3369,7 @@ func (r *Runner) runLegacySessionBody(
 		planningState := DerivePlanExecutePlanningActionState(r.RuntimeBrief, collectedResults, planningTransport, req)
 
 		if !recoveryReadAllowanceGrantedThisRequest {
-			if reason, prompt, ok := planThenExecuteCandidateLowValueAction(r.cardEngine(), req, r.RuntimeBrief, collectedResults, planningTransport); ok {
+			if reason, prompt, ok := planThenExecuteCandidateLowValueAction(r.planExecuteRecoveryHooks(), req, r.RuntimeBrief, collectedResults, planningTransport); ok {
 				r.emitEvent(marshalRunEvent("plan_then_execute_low_value_action", map[string]any{
 					"agent":             r.agentName(),
 					"tool":              strings.TrimSpace(req.Tool),
@@ -3872,8 +3816,8 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		if summary, errorText, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(req, r.RuntimeBrief, collectedResults); reject {
-			if override, denialContext := r.ReadApprovalGate.MaybeOverrideRejection(ctx, r.sessionID(), req, r.RuntimeBrief, summary, errorText); override {
+		if summary, errorText, rejectionCode, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(req, r.RuntimeBrief, collectedResults); reject {
+			if override, denialContext := r.ReadApprovalGate.MaybeOverrideRejection(ctx, r.sessionID(), req, r.RuntimeBrief, rejectionCode, errorText); override {
 				// Gate approved the read — fall through to normal tool dispatch
 			} else {
 				if denialContext != "" {
@@ -3982,7 +3926,7 @@ func (r *Runner) runLegacySessionBody(
 				}
 
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: decision.Nudge})
-				r.emitEvent(RunEvent{Role: decision.EventRole, Content: util.FirstNonEmpty(decision.EventContent, decision.Nudge)})
+				r.emitEvent(RunEvent{Role: decision.EventRole, Content: textutil.FirstNonEmpty(decision.EventContent, decision.Nudge)})
 
 				continue
 			}
@@ -4392,7 +4336,7 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		if util.EqualTrimFold(req.Tool, workspace.ToolNameListFiles) && executionState.consecutiveListFiles >= 2 {
+		if textutil.EqualTrimFold(req.Tool, workspace.ToolNameListFiles) && executionState.consecutiveListFiles >= 2 {
 			// Hide list_files from the manifest for the rest of the turn
 			// — at this point we've told the model "stop walking dirs"
 			// once already, and keeping list_files in the tool list just
@@ -4639,11 +4583,11 @@ func (r *Runner) runLegacySessionBody(
 					evidencePaths := postChildClosureEvidencePaths(r.RuntimeBrief.Objective, []workspace.ToolResult{result}, 4)
 
 					requestBudget.broadEvidenceDelegationSatisfied = true
-					r.RuntimeBrief.Constraints = util.Merge(r.RuntimeBrief.Constraints, []string{"child_packet_available"})
+					r.RuntimeBrief.Constraints = textutil.Merge(r.RuntimeBrief.Constraints, []string{"child_packet_available"})
 					postChildPacketActive = true
 					postChildFollowupReads = 0
 					postChildDiminishingNudgeStage = 0
-					r.RuntimeBrief.EvidencePaths = util.Merge(r.RuntimeBrief.EvidencePaths, evidencePaths)
+					r.RuntimeBrief.EvidencePaths = textutil.Merge(r.RuntimeBrief.EvidencePaths, evidencePaths)
 					requestBudget.noteReadOnlyChildPacket(evidencePaths)
 					hideBroadDiscoveryTools(turnHiddenTools)
 					rebuildTools()
@@ -5586,7 +5530,7 @@ func (r *Runner) runLegacySessionBody(
 			justBecameReady := !delegatedReadOnlyAnswerReady
 
 			delegatedReadOnlyAnswerReady = true
-			r.RuntimeBrief.Constraints = util.Merge(r.RuntimeBrief.Constraints, []string{"answer_readiness_reached"})
+			r.RuntimeBrief.Constraints = textutil.Merge(r.RuntimeBrief.Constraints, []string{"answer_readiness_reached"})
 
 			if becameReadyFromDelegated {
 				r.emitDelegatedReadOnlyAnswerReadyEvent(req, collectedResults)
@@ -5662,7 +5606,7 @@ func (r *Runner) runLegacySessionBody(
 		if r.lanePolicy().AutoCaptureFindings() &&
 			metrics.ToolCalls == convFirstMilestone && strings.TrimSpace(result.Error) == "" && r.Workspace != nil {
 
-			if _, err := writeAutoFindingsNote(r.Workspace.Root(), r.RuntimeBrief, collectedResults); err == nil {
+			if _, err := writeAutoFindingsNoteFromResults(r.Workspace.Root(), r.RuntimeBrief.Objective, collectedResults); err == nil {
 				turnMessages = append(turnMessages, llama.ChatMessage{
 					Role:    "system",
 					Content: "The harness has captured your findings so far to .idiom/notes/auto-findings.md. This note persists across context compactions — review it if your working memory is refreshed. Continue investigating, or answer if you have enough evidence.",
@@ -6020,10 +5964,10 @@ func (r *Runner) planThenExecuteRepeatedSubmitPlanCorrectionPrompt(req workspace
 	}
 
 	if nativeSubmitPlan {
-		return r.cardEngine().PlanExecuteNativeSubmitCorrectionPrompt(r.RuntimeBrief, *lastResult), true
+		return r.planExecuteRecoveryHooks().nativeSubmitCorrectionPrompt(r.RuntimeBrief, *lastResult), true
 	}
 
-	return RenderPlanExecuteRecoveryPlan(r.cardEngine().PlanExecuteRepeatedCorrectionPlanForState(*lastResult, planThenExecuteSubmitCorrectionBlockerAllowed(r.RuntimeBrief, results))), true
+	return RenderPlanExecuteRecoveryPlan(r.planExecuteRecoveryHooks().repeatedCorrectionPlan(*lastResult, planThenExecuteSubmitCorrectionBlockerAllowed(r.RuntimeBrief, results))), true
 }
 
 func (r *Runner) planThenExecuteRepeatedSubmitPlanCorrectionExhaustedRejection(req workspace.ToolRequest, lastResult *workspace.ToolResult, results []workspace.ToolResult) (string, string, bool) {
@@ -6031,7 +5975,7 @@ func (r *Runner) planThenExecuteRepeatedSubmitPlanCorrectionExhaustedRejection(r
 		return "", "", false
 	}
 
-	summary, errorText := r.cardEngine().PlanExecuteRepeatedCorrectionExhaustedForState(*lastResult, planThenExecuteSubmitCorrectionBlockerAllowed(r.RuntimeBrief, results))
+	summary, errorText := r.planExecuteRecoveryHooks().repeatedCorrectionExhausted(*lastResult, planThenExecuteSubmitCorrectionBlockerAllowed(r.RuntimeBrief, results))
 	return summary, errorText, true
 }
 
@@ -6077,9 +6021,9 @@ func mentionedEvidencePathsFromToolResultsForObjective(results []workspace.ToolR
 			continue
 		}
 
-		paths = util.Merge(paths, pathparse.MentionedWorkspacePaths(result.Summary))
-		paths = util.Merge(paths, pathparse.MentionedWorkspacePaths(result.Output))
-		paths = util.Merge(paths, pathparse.MentionedWorkspacePaths(result.Error))
+		paths = textutil.Merge(paths, pathparse.MentionedWorkspacePaths(result.Summary))
+		paths = textutil.Merge(paths, pathparse.MentionedWorkspacePaths(result.Output))
+		paths = textutil.Merge(paths, pathparse.MentionedWorkspacePaths(result.Error))
 
 		if len(paths) >= max {
 			break
@@ -6149,8 +6093,8 @@ func readOnlyExplanationGateApplies(brief workerruntime.WorkerRuntimeBrief) bool
 	case string(workerruntime.ContractReviewFindings):
 		return readOnlyPermission ||
 			family == "review" ||
-			family == string(workerruntime.TaskFamilySecurityReview) ||
-			family == string(workerruntime.TaskFamilyPerformanceReview)
+			family == string(autonomy.TaskFamilySecurityReview) ||
+			family == string(autonomy.TaskFamilyPerformanceReview)
 	}
 
 	if !readOnlyPermission {
@@ -6158,7 +6102,7 @@ func readOnlyExplanationGateApplies(brief workerruntime.WorkerRuntimeBrief) bool
 	}
 
 	switch family {
-	case string(workerruntime.TaskFamilyArchitecture), "review":
+	case string(autonomy.TaskFamilyArchitecture), "review":
 		return true
 	default:
 		return false
@@ -6310,7 +6254,7 @@ func architectureUnsupportedExactDetail(reply string, results []workspace.ToolRe
 			continue
 		}
 
-		unsupported = util.AppendUnique(unsupported, symbol)
+		unsupported = textutil.AppendUnique(unsupported, symbol)
 	}
 
 	return unsupported
@@ -7100,7 +7044,7 @@ func (a *runnerAutonomyRecorder) activeAuthorityForProtocol(protocol contractcom
 		}
 
 		if strings.TrimSpace(binding.ActiveInvariantID) == "" {
-			binding.ActiveInvariantID = util.FirstNonEmpty(strings.TrimSpace(protocol.ActiveInvariantID), contractcompile.InvariantActiveAuthority)
+			binding.ActiveInvariantID = textutil.FirstNonEmpty(strings.TrimSpace(protocol.ActiveInvariantID), contractcompile.InvariantActiveAuthority)
 		}
 
 		return binding
@@ -7174,7 +7118,7 @@ func runnerAutonomyContract(r *Runner, policy RunPolicy, brief workerruntime.Wor
 func legacyRunnerAutonomyContract(r *Runner, policy RunPolicy, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (autonomy.AutonomyContract, []autonomy.Obligation, bool) {
 	brief = workerruntime.NormalizeRuntimeBrief(brief)
 
-	lane := util.FirstNonEmpty(strings.TrimSpace(brief.Lane), r.agentName())
+	lane := textutil.FirstNonEmpty(strings.TrimSpace(brief.Lane), r.agentName())
 
 	if lane == "" {
 		lane = "main"
@@ -7448,7 +7392,7 @@ func runnerAutonomyObligations(brief workerruntime.WorkerRuntimeBrief, policy Ru
 			Status:                 autonomy.ObligationOpen,
 			Owner:                  autonomy.OwnerHost,
 			RequiredBy:             "completion_gate",
-			FinalAnswerRequirement: util.FirstNonEmpty(strings.TrimSpace(brief.Contract), string(workerruntime.ContractDirectAnswer)),
+			FinalAnswerRequirement: textutil.FirstNonEmpty(strings.TrimSpace(brief.Contract), string(workerruntime.ContractDirectAnswer)),
 		},
 		autonomy.Obligation{
 			ObligationID: "obl-loop-fuse",
@@ -7604,13 +7548,13 @@ func (a *runnerAutonomyRecorder) emitContractStarted(brief workerruntime.WorkerR
 		case autonomy.ObligationOpen:
 			a.openObligations[obligation.ObligationID] = opened
 		case autonomy.ObligationResolved:
-			obligation.SourceEvent = util.FirstNonEmpty(strings.TrimSpace(obligation.SourceEvent), compiledEvent.EventID)
-			obligation.EvidenceRef = util.FirstNonEmpty(strings.TrimSpace(obligation.EvidenceRef), compiledEvent.EventID)
+			obligation.SourceEvent = textutil.FirstNonEmpty(strings.TrimSpace(obligation.SourceEvent), compiledEvent.EventID)
+			obligation.EvidenceRef = textutil.FirstNonEmpty(strings.TrimSpace(obligation.EvidenceRef), compiledEvent.EventID)
 			a.emitNewEvent(autonomy.NewObligationStateEvent(autonomy.EventObligationResolved, a.contract, obligation, a.nextTime(), a.nextSequence()))
 
 			a.closedObligations[obligation.ObligationID] = struct{}{}
 		case autonomy.ObligationWaived:
-			obligation.SourceEvent = util.FirstNonEmpty(strings.TrimSpace(obligation.SourceEvent), compiledEvent.EventID)
+			obligation.SourceEvent = textutil.FirstNonEmpty(strings.TrimSpace(obligation.SourceEvent), compiledEvent.EventID)
 			a.emitNewEvent(autonomy.NewObligationStateEvent(autonomy.EventObligationWaived, a.contract, obligation, a.nextTime(), a.nextSequence()))
 
 			a.closedObligations[obligation.ObligationID] = struct{}{}
@@ -7858,10 +7802,11 @@ func (a *runnerAutonomyRecorder) emitGateDecision(input runnerAutonomyGateDecisi
 	}
 
 	if input.Gate == autonomy.GateCompletion {
+		completionProtocolHash := textutil.FirstNonEmpty(gate.ProtocolHash, a.activeProtocolHash())
 		a.emitNewEvent(autonomy.NewCompletionGateDecisionEvent(a.contract, autonomy.ContractCompletionEvent{
 			Decision:             input.Decision,
 			InvariantID:          input.InvariantID,
-			ProtocolHash:         gate.ProtocolHash,
+			ProtocolHash:         completionProtocolHash,
 			RemainingObligations: gate.OpenObligations,
 			VerificationStatus:   input.VerificationStatus,
 			ChangedPaths:         input.ChangedPaths,
@@ -8097,8 +8042,8 @@ func (a *runnerAutonomyRecorder) resolvedAndOpenObligationsForGate(input runnerA
 	case autonomy.GateCompletion:
 		return a.completionGateResolvedAndOpenObligations(input, obligationRefs)
 	case autonomy.GateVerification:
-		if util.EqualTrimFold(input.VerificationStatus, "passed") ||
-			util.EqualTrimFold(input.VerificationStatus, "observed") {
+		if textutil.EqualTrimFold(input.VerificationStatus, "passed") ||
+			textutil.EqualTrimFold(input.VerificationStatus, "observed") {
 
 			return a.openObligationIDsForRefs(obligationRefs), nil
 		}
@@ -8841,7 +8786,7 @@ func (a *runnerAutonomyRecorder) emitContextPacket(contract TurnPhaseContract, p
 		return
 	}
 
-	protocolHash = util.FirstNonEmpty(strings.TrimSpace(protocol.ProtocolHash), strings.TrimSpace(protocolHash))
+	protocolHash = textutil.FirstNonEmpty(strings.TrimSpace(protocol.ProtocolHash), strings.TrimSpace(protocolHash))
 
 	packet := protocol.CompactPacket
 
@@ -8873,7 +8818,7 @@ func (a *runnerAutonomyRecorder) emitContextPacket(contract TurnPhaseContract, p
 		Kind:          "context_packet",
 		ContractID:    a.contract.ContractID,
 		ProtocolHash:  protocolHash,
-		PhaseID:       util.FirstNonEmpty(strings.TrimSpace(contract.PhaseID), strings.TrimSpace(protocol.PhaseID)),
+		PhaseID:       textutil.FirstNonEmpty(strings.TrimSpace(contract.PhaseID), strings.TrimSpace(protocol.PhaseID)),
 		ModelCallID:   strings.TrimSpace(contract.ModelCallID),
 		InvariantID:   firstRunnerAutonomyString(contract.InvariantIDs),
 		ContextPacket: &packet,
@@ -8882,7 +8827,7 @@ func (a *runnerAutonomyRecorder) emitContextPacket(contract TurnPhaseContract, p
 		Kind:         "trace_store_policy",
 		ContractID:   a.contract.ContractID,
 		ProtocolHash: protocolHash,
-		PhaseID:      util.FirstNonEmpty(strings.TrimSpace(contract.PhaseID), strings.TrimSpace(protocol.PhaseID)),
+		PhaseID:      textutil.FirstNonEmpty(strings.TrimSpace(contract.PhaseID), strings.TrimSpace(protocol.PhaseID)),
 		ModelCallID:  strings.TrimSpace(contract.ModelCallID),
 		TraceStorePolicy: &autonomy.TraceStorePolicy{
 			ContractID:      a.contract.ContractID,
@@ -8954,7 +8899,7 @@ func (a *runnerAutonomyRecorder) emitFailureDeltaIntentFromPolicy(policy autonom
 		FailureDelta: &autonomy.FailureDelta{
 			ContractID:   a.contract.ContractID,
 			ProtocolHash: protocolHash,
-			FailureClass: util.FirstNonEmpty(runnerAutonomyReasonCode(policy.ErrorClass), runnerAutonomyReasonCode(policy.ReasonCode), strings.TrimSpace(string(policy.Decision))),
+			FailureClass: textutil.FirstNonEmpty(runnerAutonomyReasonCode(policy.ErrorClass), runnerAutonomyReasonCode(policy.ReasonCode), strings.TrimSpace(string(policy.Decision))),
 			BeforeRef:    "policy:before",
 			AfterRef:     "policy:" + strings.TrimSpace(string(policy.Decision)),
 			EvidenceRefs: []string{"event:" + sourceEventID, "surface:tool_policy"},
@@ -8968,7 +8913,7 @@ func (a *runnerAutonomyRecorder) emitFailureDeltaIntentFromGate(input runnerAuto
 		return
 	}
 
-	protocolHash := util.FirstNonEmpty(strings.TrimSpace(gate.ProtocolHash), a.activeProtocolHash())
+	protocolHash := textutil.FirstNonEmpty(strings.TrimSpace(gate.ProtocolHash), a.activeProtocolHash())
 	if strings.TrimSpace(protocolHash) == "" {
 		return
 	}
@@ -8985,7 +8930,7 @@ func (a *runnerAutonomyRecorder) emitFailureDeltaIntentFromGate(input runnerAuto
 		FailureDelta: &autonomy.FailureDelta{
 			ContractID:   a.contract.ContractID,
 			ProtocolHash: protocolHash,
-			FailureClass: util.FirstNonEmpty(string(input.Gate), runnerAutonomyReasonCode(input.ReasonCode), strings.TrimSpace(string(input.Decision))),
+			FailureClass: textutil.FirstNonEmpty(string(input.Gate), runnerAutonomyReasonCode(input.ReasonCode), strings.TrimSpace(string(input.Decision))),
 			BeforeRef:    "gate:before",
 			AfterRef:     "gate:" + strings.TrimSpace(string(input.Decision)),
 			EvidenceRefs: []string{"event:" + sourceEventID, "surface:" + string(input.Gate)},
@@ -9029,7 +8974,7 @@ func (a *runnerAutonomyRecorder) emitModelResponseObservationFromGate(input runn
 		return
 	}
 
-	protocolHash := util.FirstNonEmpty(strings.TrimSpace(gate.ProtocolHash), a.activeProtocolHash())
+	protocolHash := textutil.FirstNonEmpty(strings.TrimSpace(gate.ProtocolHash), a.activeProtocolHash())
 	if strings.TrimSpace(protocolHash) == "" {
 		return
 	}
@@ -9059,7 +9004,7 @@ func (a *runnerAutonomyRecorder) emitRollbackControlIfDisabled(protocolHash stri
 		return
 	}
 
-	protocolHash = util.FirstNonEmpty(strings.TrimSpace(protocolHash), a.activeProtocolHash())
+	protocolHash = textutil.FirstNonEmpty(strings.TrimSpace(protocolHash), a.activeProtocolHash())
 	if protocolHash == "" {
 		return
 	}
@@ -9104,7 +9049,7 @@ func (a *runnerAutonomyRecorder) emitModelExchangeEventIgnoringRollback(event au
 		return
 	}
 
-	event.ContractID = util.FirstNonEmpty(strings.TrimSpace(event.ContractID), a.contract.ContractID)
+	event.ContractID = textutil.FirstNonEmpty(strings.TrimSpace(event.ContractID), a.contract.ContractID)
 	if strings.TrimSpace(event.ProtocolHash) == "" || strings.TrimSpace(event.Kind) == "" {
 		return
 	}
@@ -9172,7 +9117,7 @@ func runnerAutonomyPermissionPathRoleRefs(policy autonomy.ContractPolicyEvent) [
 	refs := []string{}
 
 	for _, match := range policy.PathRoles {
-		path := util.FirstNonEmpty(match.Path, match.MatchedPattern, match.PacketID)
+		path := textutil.FirstNonEmpty(match.Path, match.MatchedPattern, match.PacketID)
 		if path != "" && match.Role != "" {
 			refs = append(refs, string(match.Role)+":"+path)
 		}
@@ -9198,7 +9143,7 @@ func (a *runnerAutonomyRecorder) activeProtocolHash() string {
 		return ""
 	}
 
-	return util.FirstNonEmpty(a.currentModelProtocolHash(), strings.TrimSpace(a.lastTurnPhaseEvent.ProtocolHash), a.lastStoredProtocolHash)
+	return textutil.FirstNonEmpty(a.currentModelProtocolHash(), strings.TrimSpace(a.lastTurnPhaseEvent.ProtocolHash), a.lastStoredProtocolHash)
 }
 
 func runnerAutonomyPolicyDecisionIsFailure(decision autonomy.ToolPolicyDecision) bool {
@@ -10050,96 +9995,96 @@ func runnerBriefWithPhaseHints(brief workerruntime.WorkerRuntimeBrief, results [
 
 	switch phase := debugLogPhase(brief, results); phase {
 	case "latest_log_selection":
-		brief.Constraints = util.Merge([]string{"latest_log_selection_phase"}, brief.Constraints)
-		brief.RequiredNext = util.Merge([]string{
+		brief.Constraints = textutil.Merge([]string{"latest_log_selection_phase"}, brief.Constraints)
+		brief.RequiredNext = textutil.Merge([]string{
 			"select the newest real log artifact before inspecting source files",
 			"prefer log directories and log extensions over source files whose names merely mention logging",
 		}, brief.RequiredNext)
-		brief.InvalidActions = util.Merge([]string{
+		brief.InvalidActions = textutil.Merge([]string{
 			"source-code inspection before selecting a concrete log artifact",
 		}, brief.InvalidActions)
-		brief.SearchPolicy = util.Merge([]string{
+		brief.SearchPolicy = textutil.Merge([]string{
 			"prefer newest actual log artifacts over source files with log-like names",
 		}, brief.SearchPolicy)
 	case "latest_log_tail":
-		brief.Constraints = util.Merge([]string{"latest_log_tail_phase"}, brief.Constraints)
-		brief.RequiredNext = util.Merge([]string{
+		brief.Constraints = textutil.Merge([]string{"latest_log_tail_phase"}, brief.Constraints)
+		brief.RequiredNext = textutil.Merge([]string{
 			"selected-log tail evidence is required before source inspection or broader log expansion",
 			"the selected log remains the evidence boundary until it supports a weird decision or an explicit missing datum",
 		}, brief.RequiredNext)
-		brief.InvalidActions = util.Merge([]string{
+		brief.InvalidActions = textutil.Merge([]string{
 			"additional workspace discovery before selected-log tail evidence",
 		}, brief.InvalidActions)
-		brief.SearchPolicy = util.Merge([]string{
+		brief.SearchPolicy = textutil.Merge([]string{
 			"selected-log tail evidence must precede deeper search or source inspection",
 		}, brief.SearchPolicy)
 	case "selected_log_analysis":
-		brief.Constraints = util.Merge([]string{"selected_log_analysis_phase"}, brief.Constraints)
-		brief.RequiredNext = util.Merge([]string{
+		brief.Constraints = textutil.Merge([]string{"selected_log_analysis_phase"}, brief.Constraints)
+		brief.RequiredNext = textutil.Merge([]string{
 			"answer from the selected log if the weird decision is already clear",
 			"otherwise close one named missing selected-log fact before answering",
 		}, brief.RequiredNext)
-		brief.InvalidActions = util.Merge([]string{
+		brief.InvalidActions = textutil.Merge([]string{
 			"source-code inspection outside the selected log before answering",
 			"another blind selected-log reread before a concrete marker",
 		}, brief.InvalidActions)
-		brief.SearchPolicy = util.Merge([]string{
+		brief.SearchPolicy = textutil.Merge([]string{
 			"stay inside the selected log until the answer is supported or the gap is explicit",
 		}, brief.SearchPolicy)
 	case "failure_window":
-		brief.Constraints = util.Merge([]string{"failure_window_phase"}, brief.Constraints)
-		brief.RequiredNext = util.Merge([]string{
+		brief.Constraints = textutil.Merge([]string{"failure_window_phase"}, brief.Constraints)
+		brief.RequiredNext = textutil.Merge([]string{
 			"bounded failure-window evidence is required around the concrete failure hit",
 		}, brief.RequiredNext)
-		brief.InvalidActions = util.Merge([]string{
+		brief.InvalidActions = textutil.Merge([]string{
 			"more log searching before failure-window evidence",
 		}, brief.InvalidActions)
-		brief.SearchPolicy = util.Merge([]string{
+		brief.SearchPolicy = textutil.Merge([]string{
 			"failure-window evidence must follow a concrete hit before broader log expansion",
 		}, brief.SearchPolicy)
 	case "log_analysis":
-		brief.Constraints = util.Merge([]string{"log_analysis_phase"}, brief.Constraints)
-		brief.RequiredNext = util.Merge([]string{
+		brief.Constraints = textutil.Merge([]string{"log_analysis_phase"}, brief.Constraints)
+		brief.RequiredNext = textutil.Merge([]string{
 			"answer from the gathered log evidence now unless one specific missing datum remains",
 		}, brief.RequiredNext)
 	}
 
 	switch phase := evidenceFirstMutationPhase(brief, results); phase {
 	case "source_evidence":
-		brief.Constraints = util.Merge([]string{"source_evidence_phase"}, brief.Constraints)
-		brief.RequiredNext = util.Merge([]string{
+		brief.Constraints = textutil.Merge([]string{"source_evidence_phase"}, brief.Constraints)
+		brief.RequiredNext = textutil.Merge([]string{
 			"non-target implementation evidence is required before named-target evidence",
 			"after concrete non-target evidence, one bounded named-target evidence window satisfies the target-entry contract",
 		}, brief.RequiredNext)
-		brief.InvalidActions = util.Merge([]string{
+		brief.InvalidActions = textutil.Merge([]string{
 			"open-ended named-target read before source evidence",
 		}, brief.InvalidActions)
-		brief.SearchPolicy = util.Merge([]string{
+		brief.SearchPolicy = textutil.Merge([]string{
 			"prefer semantic inspection of discovered implementation files before target reads",
 		}, brief.SearchPolicy)
 	case "target_entry":
-		brief.Constraints = util.Merge([]string{"first_target_read_pending"}, brief.Constraints)
-		brief.RequiredNext = util.Merge([]string{
+		brief.Constraints = textutil.Merge([]string{"first_target_read_pending"}, brief.Constraints)
+		brief.RequiredNext = textutil.Merge([]string{
 			"one bounded named-target evidence window is required before renewed source discovery",
 			"the named target remains the evidence boundary for the next step",
 		}, brief.RequiredNext)
-		brief.InvalidActions = util.Merge([]string{
+		brief.InvalidActions = textutil.Merge([]string{
 			"additional source discovery before the first target read",
 		}, brief.InvalidActions)
-		brief.SearchPolicy = util.Merge([]string{
+		brief.SearchPolicy = textutil.Merge([]string{
 			"enter the named target as soon as concrete source evidence exists",
 		}, brief.SearchPolicy)
 	case "target_inspection":
-		brief.Constraints = util.Merge([]string{"target_inspection_phase"}, brief.Constraints)
-		brief.RequiredNext = util.Merge([]string{
+		brief.Constraints = textutil.Merge([]string{"target_inspection_phase"}, brief.Constraints)
+		brief.RequiredNext = textutil.Merge([]string{
 			"make the edit in the named target once the change is supported by the target evidence",
 			"additional inspection is valid only for a named missing target fact and must stay scoped to named-target evidence",
 		}, brief.RequiredNext)
-		brief.InvalidActions = util.Merge([]string{
+		brief.InvalidActions = textutil.Merge([]string{
 			"source discovery outside the named target during target inspection",
 			"open-ended target-body read during target inspection",
 		}, brief.InvalidActions)
-		brief.SearchPolicy = util.Merge([]string{
+		brief.SearchPolicy = textutil.Merge([]string{
 			"prefer target-scoped follow-up over renewed source discovery; do not keep reading once the edit is clear",
 		}, brief.SearchPolicy)
 	}
@@ -10158,7 +10103,7 @@ func runnerBriefWithRequiredEditPathHints(brief workerruntime.WorkerRuntimeBrief
 		}
 
 		brief = clearPlanThenExecuteRequiredSourceHints(brief)
-		brief.Constraints = util.Merge([]string{"plan_then_execute_submit_plan_pending"}, brief.Constraints)
+		brief.Constraints = textutil.Merge([]string{"plan_then_execute_submit_plan_pending"}, brief.Constraints)
 
 		unread := planThenExecuteUnreadRequiredPaths(brief, results)
 
@@ -10176,8 +10121,8 @@ func runnerBriefWithRequiredEditPathHints(brief workerruntime.WorkerRuntimeBrief
 				readInstruction = fmt.Sprintf("read required_edit_path %s with source-body evidence before submit_plan; after every existing required_edit_path has satisfied its source-body obligation, submit_plan using edits[] for changed paths and source_satisfied_paths for already-final paths, Decision: source-satisfied with per-path evidence, or <<QUESTION>> with the exact path-specific blocker", next)
 			}
 
-			brief.RequiredNext = util.Merge([]string{readInstruction}, brief.RequiredNext)
-			brief.InvalidActions = util.Merge([]string{
+			brief.RequiredNext = textutil.Merge([]string{readInstruction}, brief.RequiredNext)
+			brief.InvalidActions = textutil.Merge([]string{
 				"submit_plan before every existing required_edit_path has satisfied its source-body obligation",
 				"final answer before submit_plan succeeds unless it is a source-satisfied closeout with current-state evidence for every required path",
 				"prose final answer while required source evidence is pending",
@@ -10185,7 +10130,7 @@ func runnerBriefWithRequiredEditPathHints(brief workerruntime.WorkerRuntimeBrief
 				"shell/git/source-sanity verification in plan-execute planner phase",
 				"new orientation read/search before the next unread required_edit_path source-body read",
 			}, brief.InvalidActions)
-			brief.SearchPolicy = util.Merge([]string{
+			brief.SearchPolicy = textutil.Merge([]string{
 				"required_edit_paths plus packet evidence define the submit_plan scope",
 				"progress through unread required_edit_paths one source-body read at a time before submit_plan",
 				"outline/search hits orient but do not satisfy required source-body evidence",
@@ -10204,18 +10149,18 @@ func runnerBriefWithRequiredEditPathHints(brief workerruntime.WorkerRuntimeBrief
 				next = refreshPaths[0]
 			}
 
-			brief.RequiredNext = util.Merge([]string{
+			brief.RequiredNext = textutil.Merge([]string{
 				fmt.Sprintf("refresh bounded source-body evidence for %s before corrected submit_plan; then submit a corrected plan using anchors copied from the refreshed source", next),
 			}, rejectRunnerStateStrings(brief.RequiredNext, planThenExecuteSubmitReadySourceHint))
-			brief.Constraints = util.Merge([]string{"plan_then_execute_submit_anchor_refresh_required"}, brief.Constraints)
-			brief.InvalidActions = util.Merge([]string{
+			brief.Constraints = textutil.Merge([]string{"plan_then_execute_submit_anchor_refresh_required"}, brief.Constraints)
+			brief.InvalidActions = textutil.Merge([]string{
 				"corrected submit_plan before refreshing the stale or missing edit anchor",
 				"final answer, Decision: source-satisfied, or <<QUESTION>> before bounded anchor refresh returns",
 				"per-edit write tool in plan-execute planner phase",
 				"shell/git/source-sanity verification in plan-execute planner phase",
 				"open-ended read/search/discovery outside the invalid-anchor source refresh",
 			}, rejectRunnerStateStrings(brief.InvalidActions, planThenExecuteSubmitReadySourceHint))
-			brief.SearchPolicy = util.Merge([]string{
+			brief.SearchPolicy = textutil.Merge([]string{
 				"stale submit_plan anchors require a bounded source-body refresh before corrected submit_plan",
 				"refresh only the rejected required path named by the submit_plan guard",
 				"after the refresh, use insert_after_line/content or old_text/new_text copied from fresh source; do not reuse stale anchors",
@@ -10224,17 +10169,17 @@ func runnerBriefWithRequiredEditPathHints(brief workerruntime.WorkerRuntimeBrief
 			return brief
 		}
 
-		brief.RequiredNext = util.Merge([]string{
+		brief.RequiredNext = textutil.Merge([]string{
 			"submit_plan using edits[] for changed paths and top-level source_satisfied_paths for already-final paths, Decision: source-satisfied with per-path evidence, or <<QUESTION>> with the exact path-specific blocker",
 		}, rejectRunnerStateStrings(brief.RequiredNext, planThenExecuteSubmitReadySourceHint))
-		brief.Constraints = util.Merge([]string{"plan_then_execute_submit_plan_ready"}, brief.Constraints)
-		brief.InvalidActions = util.Merge([]string{
+		brief.Constraints = textutil.Merge([]string{"plan_then_execute_submit_plan_ready"}, brief.Constraints)
+		brief.InvalidActions = textutil.Merge([]string{
 			"final answer before submit_plan succeeds unless it is a source-satisfied closeout with current-state evidence for every required path",
 			"per-edit write tool in plan-execute planner phase",
 			"shell/git/source-sanity verification in plan-execute planner phase",
 			"new orientation read/search after enough anchor evidence to draft submit_plan",
 		}, brief.InvalidActions)
-		brief.SearchPolicy = util.Merge([]string{
+		brief.SearchPolicy = textutil.Merge([]string{
 			"required_edit_paths plus packet evidence define the submit_plan scope",
 			"if current source already matches requested final state, close as source-satisfied instead of submitting stale edits",
 			"no read/search/discovery action is valid after submit_plan readiness before the first terminal outcome",
@@ -10248,30 +10193,30 @@ func runnerBriefWithRequiredEditPathHints(brief workerruntime.WorkerRuntimeBrief
 
 	if len(changed) == 0 {
 		if briefHasUsableEditAnchors(brief) {
-			brief.Constraints = util.Merge([]string{"implementation_packet_write_ready"}, brief.Constraints)
+			brief.Constraints = textutil.Merge([]string{"implementation_packet_write_ready"}, brief.Constraints)
 		}
 
 		if exactAnchorPreWriteSurfaceActive(brief, results) {
-			brief.RequiredNext = util.Merge([]string{
+			brief.RequiredNext = textutil.Merge([]string{
 				"required-path write capability from the exact target-packet anchor",
 				"answer <<QUESTION>> only if the supplied exact anchor is stale or missing",
 			}, brief.RequiredNext)
-			brief.InvalidActions = util.Merge([]string{
+			brief.InvalidActions = textutil.Merge([]string{
 				"read/search/task_ledger/shell before first exact-anchor write",
 			}, brief.InvalidActions)
-			brief.SearchPolicy = util.Merge([]string{
+			brief.SearchPolicy = textutil.Merge([]string{
 				"required_edit_paths plus exact target-packet anchors establish the first write surface",
 			}, brief.SearchPolicy)
 		} else {
-			brief.RequiredNext = util.Merge([]string{
+			brief.RequiredNext = textutil.Merge([]string{
 				"resolve a required path with packet evidence, semantic/context/declared project discovery or a narrow required-path source read with named_gap for an exact edit-safety fact, or answer <<QUESTION>> with the exact path-specific blocker",
 			}, brief.RequiredNext)
-			brief.InvalidActions = util.Merge([]string{
+			brief.InvalidActions = textutil.Merge([]string{
 				"orientation read/search after required edit paths and packet evidence without a named missing fact",
 				"raw read/search outside required edit paths before resolving the required-path contract",
 				"task_ledger planning before the first required-path write",
 			}, brief.InvalidActions)
-			brief.SearchPolicy = util.Merge([]string{
+			brief.SearchPolicy = textutil.Merge([]string{
 				"required_edit_paths plus packet evidence establish the edit scope; prefer semantic/context/declared project discovery for named edit-safety gaps before raw source reads",
 			}, brief.SearchPolicy)
 		}
@@ -10280,11 +10225,11 @@ func runnerBriefWithRequiredEditPathHints(brief workerruntime.WorkerRuntimeBrief
 	}
 
 	if len(missing) > 0 {
-		brief.Constraints = util.Merge([]string{"implementation_required_paths_remaining"}, brief.Constraints)
-		brief.RequiredNext = util.Merge([]string{
+		brief.Constraints = textutil.Merge([]string{"implementation_required_paths_remaining"}, brief.Constraints)
+		brief.RequiredNext = textutil.Merge([]string{
 			"resolve each remaining required path with an edit, semantic/context/declared project discovery or a narrow required-path source read with named_gap for an exact edit-safety fact, or <<QUESTION>> with the exact blocker for that path",
 		}, brief.RequiredNext)
-		brief.InvalidActions = util.Merge([]string{
+		brief.InvalidActions = textutil.Merge([]string{
 			"final answer while required edit paths remain unchanged",
 			"new orientation read/search outside remaining required edit paths before resolving the required-path contract",
 		}, brief.InvalidActions)
@@ -10405,20 +10350,20 @@ func readOnlyEvidencePendingRuntimeBrief(brief workerruntime.WorkerRuntimeBrief)
 		brief.ToolManifest = runnerSanitizedToolManifest(allowed)
 	}
 
-	brief.RequiredTools = util.Merge([]string{"bounded_workspace_evidence_tool"}, brief.RequiredTools)
-	brief.ReadinessGate = util.Merge([]string{"bounded_workspace_evidence_before_final_answer"}, brief.ReadinessGate)
-	brief.RequiredNext = util.Merge([]string{
+	brief.RequiredTools = textutil.Merge([]string{"bounded_workspace_evidence_tool"}, brief.RequiredTools)
+	brief.ReadinessGate = textutil.Merge([]string{"bounded_workspace_evidence_before_final_answer"}, brief.ReadinessGate)
+	brief.RequiredNext = textutil.Merge([]string{
 		"exactly one parser-readable bounded read/search/context tool call for the user's question, or <<QUESTION>> with the exact evidence blocker",
 	}, brief.RequiredNext)
-	brief.InvalidActions = util.Merge([]string{
+	brief.InvalidActions = textutil.Merge([]string{
 		"prose/final answer before a successful bounded evidence tool result",
 		"workspace write",
 		"shell/mutating command",
 	}, brief.InvalidActions)
-	brief.SearchPolicy = util.Merge([]string{
+	brief.SearchPolicy = textutil.Merge([]string{
 		"use the narrowest bounded evidence tool that can answer the user's question; answer only after evidence returns",
 	}, brief.SearchPolicy)
-	brief.Constraints = util.Merge([]string{"read_only_evidence_pending"}, brief.Constraints)
+	brief.Constraints = textutil.Merge([]string{"read_only_evidence_pending"}, brief.Constraints)
 
 	return workerruntime.NormalizeRuntimeBrief(brief)
 }
@@ -10580,7 +10525,7 @@ func unresolvedRejectedMutationPaths(results []workspace.ToolResult, requiredPat
 
 		paths := readOnlySourceLikePaths(agentutil.ReadPathsFromToolResult(result), 8)
 
-		paths = util.Merge(paths, readOnlySourceLikePaths(sourceLikePathsFromText(result.Summary+"\n"+result.Output+"\n"+result.Error, 8), 8))
+		paths = textutil.Merge(paths, readOnlySourceLikePaths(sourceLikePathsFromText(result.Summary+"\n"+result.Output+"\n"+result.Error, 8), 8))
 
 		for _, path := range paths {
 			path = agentutil.NormalizeRunnerPath(path)
@@ -10598,7 +10543,7 @@ func unresolvedRejectedMutationPaths(results []workspace.ToolResult, requiredPat
 				continue
 			}
 
-			rejected = util.AppendUniqueMulti(rejected, path)
+			rejected = textutil.AppendUniqueMulti(rejected, path)
 		}
 	}
 
@@ -11327,7 +11272,7 @@ func hasPendingVerificationAfterWrites(results []workspace.ToolResult, brief wor
 			}
 
 			pending = true
-			pendingPaths = util.AppendUniqueMulti(pendingPaths, changedPathsFromToolResult(result)...)
+			pendingPaths = textutil.AppendUniqueMulti(pendingPaths, changedPathsFromToolResult(result)...)
 
 			continue
 		}
@@ -11370,7 +11315,7 @@ func runnerGuidanceConstraints(agent string, brief workerruntime.WorkerRuntimeBr
 func runnerGuidanceConstraintsWithEngine(agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, engine GuidanceEngine) []string {
 	constraints := append([]string(nil), brief.Constraints...)
 	if planThenExecuteSubmitPlanOnlyReady(brief, results) {
-		constraints = util.Merge(constraints, []string{"plan_then_execute_submit_plan_ready"})
+		constraints = textutil.Merge(constraints, []string{"plan_then_execute_submit_plan_ready"})
 	}
 
 	if strings.HasPrefix(strings.TrimSpace(agent), "child:") &&
@@ -11378,11 +11323,11 @@ func runnerGuidanceConstraintsWithEngine(agent string, brief workerruntime.Worke
 		engine != nil &&
 		engine.DelegatedReadOnlyClosureReady(brief, results) {
 
-		constraints = util.Merge(constraints, []string{"answer_readiness_reached"})
+		constraints = textutil.Merge(constraints, []string{"answer_readiness_reached"})
 	}
 
 	if !strings.HasPrefix(strings.TrimSpace(agent), "child:") && postChildPacketClosureReadyWithBrief(brief, results) {
-		constraints = util.Merge(constraints, []string{"child_packet_available"})
+		constraints = textutil.Merge(constraints, []string{"child_packet_available"})
 	}
 
 	return constraints
@@ -11396,7 +11341,7 @@ func applyDelegatedReadOnlyClosureBias(state runnerNextActionState, agent string
 		return state
 	}
 
-	state.Constraints = util.Merge(state.Constraints, []string{"answer_readiness_reached"})
+	state.Constraints = textutil.Merge(state.Constraints, []string{"answer_readiness_reached"})
 	state.InvalidNextActions = filterRunnerStateStrings(state.InvalidNextActions, func(value string) bool {
 		return value == "final_answer_without_satisfying_completion_gate"
 	})
@@ -11408,7 +11353,7 @@ func applyDelegatedReadOnlyClosureBias(state runnerNextActionState, agent string
 		"final answer from the evidence already gathered is available",
 		"if one exact missing claim remains, use one bounded probe against a named path, symbol, discovered handle, or narrow range",
 	}, state.NextValidActions)
-	state.InvalidNextActions = util.Merge(state.InvalidNextActions, []string{
+	state.InvalidNextActions = textutil.Merge(state.InvalidNextActions, []string{
 		"open-ended discovery after answer readiness without naming a concrete gap",
 	})
 
@@ -11436,12 +11381,12 @@ func applyPostChildClosureBias(state runnerNextActionState, agent string, brief 
 		return state
 	}
 
-	state.Constraints = util.Merge(state.Constraints, []string{"child_packet_available"})
+	state.Constraints = textutil.Merge(state.Constraints, []string{"child_packet_available"})
 	state.NextValidActions = prependRunnerStateStrings([]string{
 		"final answer from the child packet evidence is available",
 		"if one exact missing claim remains, use one bounded probe against a named path, symbol, discovered handle, or narrow range",
 	}, state.NextValidActions)
-	state.InvalidNextActions = util.Merge(state.InvalidNextActions, []string{
+	state.InvalidNextActions = textutil.Merge(state.InvalidNextActions, []string{
 		"open-ended discovery after a child packet without naming a concrete gap",
 	})
 
@@ -11579,7 +11524,7 @@ func (r *Runner) readOnlyEvidenceCompletionRejection(reply string, results []wor
 	directCandidateOnlyLedger, directCandidateOnly := readOnlyDirectAnswerCandidateOnlyLedger(brief, results)
 	if brief.Readiness == nil &&
 		!readOnlyExplanationGateApplies(brief) &&
-		!workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyDirectAnswer) &&
+		!workerruntime.TaskFamilyMatches(brief.TaskFamily, autonomy.TaskFamilyDirectAnswer) &&
 		!directCandidateOnly {
 
 		return workspace.ToolResult{}, false
@@ -11939,7 +11884,7 @@ func looksLikeUnexecutedToolRequestAnswer(reply string) bool {
 
 	lower := " " + strings.ToLower(outside) + " "
 
-	return util.ContainsAny(lower,
+	return textutil.ContainsAny(lower,
 		" let me ",
 		" i need ",
 		" i will ",
@@ -12134,7 +12079,7 @@ func syntheticLegacyParseToolCall(step int, raw string) llama.ToolCall {
 	args := "{}"
 
 	if trimmed := strings.TrimSpace(raw); trimmed != "" {
-		if data, err := json.Marshal(map[string]string{"raw": util.Truncate(strings.TrimSpace(trimmed), 1000)}); err == nil {
+		if data, err := json.Marshal(map[string]string{"raw": textutil.Truncate(strings.TrimSpace(trimmed), 1000)}); err == nil {
 			args = string(data)
 		}
 	}
@@ -12151,7 +12096,7 @@ func syntheticLegacyParseToolCall(step int, raw string) llama.ToolCall {
 
 func legacyToolCallHistoryMessage(reply llama.ChatMessage, call llama.ToolCall) llama.ChatMessage {
 	return llama.ChatMessage{
-		Role:             util.FirstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
+		Role:             textutil.FirstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
 		ReasoningContent: reply.ReasoningContent,
 		ToolCalls:        []llama.ToolCall{call},
 	}
@@ -12166,7 +12111,7 @@ func textualToolRequestHistoryMessage(reply llama.ChatMessage, req workspace.Too
 	content = strings.TrimSpace(content)
 
 	message := llama.ChatMessage{
-		Role:             util.FirstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
+		Role:             textutil.FirstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
 		Content:          content,
 		ReasoningContent: reply.ReasoningContent,
 	}
@@ -12256,9 +12201,9 @@ func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) ru
 	}
 
 	rails := runnerControlRails{
-		Lane:                 util.FirstNonEmpty(strings.TrimSpace(brief.Lane), r.agentName()),
-		Contract:             util.FirstNonEmpty(strings.TrimSpace(brief.Contract), string(workerruntime.ContractDirectAnswer)),
-		TaskFamily:           util.FirstNonEmpty(strings.TrimSpace(brief.TaskFamily), string(workerruntime.TaskFamilyDirectAnswer)),
+		Lane:                 textutil.FirstNonEmpty(strings.TrimSpace(brief.Lane), r.agentName()),
+		Contract:             textutil.FirstNonEmpty(strings.TrimSpace(brief.Contract), string(workerruntime.ContractDirectAnswer)),
+		TaskFamily:           textutil.FirstNonEmpty(strings.TrimSpace(brief.TaskFamily), string(autonomy.TaskFamilyDirectAnswer)),
 		PermissionProfile:    profile,
 		RequiredEditPaths:    append([]string(nil), brief.RequiredEditPaths...),
 		RequiredEvidence:     append([]string(nil), brief.RequiredEvidence...),
@@ -12267,7 +12212,7 @@ func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) ru
 		ForbiddenTools:       append([]string(nil), brief.ForbiddenTools...),
 		ReadinessGate:        append([]string(nil), brief.ReadinessGate...),
 		SearchPolicy:         append([]string(nil), brief.SearchPolicy...),
-		VerificationContract: util.FirstNonEmpty(strings.TrimSpace(brief.VerificationContract), string(workerruntime.VerificationNotRequiredConversation)),
+		VerificationContract: textutil.FirstNonEmpty(strings.TrimSpace(brief.VerificationContract), string(workerruntime.VerificationNotRequiredConversation)),
 		StopConditions:       append([]string(nil), brief.StopConditions...),
 		FinalCritic:          append([]string(nil), brief.FinalCritic...),
 		DynamicInstructions:  r.InstructionAttacher != nil,
@@ -12281,19 +12226,19 @@ func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) ru
 	}
 
 	if runnerBriefRequiresMutation(brief) {
-		rails.Lane = util.FirstNonEmpty(strings.TrimSpace(brief.Lane), "main")
-		rails.Contract = util.FirstNonEmpty(strings.TrimSpace(brief.Contract), string(workerruntime.ContractImplementationResult))
-		rails.TaskFamily = util.FirstNonEmpty(strings.TrimSpace(brief.TaskFamily), string(workerruntime.TaskFamilyImplementation))
-		rails.PermissionProfile = util.FirstNonEmpty(strings.TrimSpace(brief.PermissionProfile), string(workerruntime.PermissionGuardedWorkspaceWrite))
+		rails.Lane = textutil.FirstNonEmpty(strings.TrimSpace(brief.Lane), "main")
+		rails.Contract = textutil.FirstNonEmpty(strings.TrimSpace(brief.Contract), string(workerruntime.ContractImplementationResult))
+		rails.TaskFamily = textutil.FirstNonEmpty(strings.TrimSpace(brief.TaskFamily), string(autonomy.TaskFamilyImplementation))
+		rails.PermissionProfile = textutil.FirstNonEmpty(strings.TrimSpace(brief.PermissionProfile), string(workerruntime.PermissionGuardedWorkspaceWrite))
 
 		if planThenExecutePlannerBrief(brief) {
-			rails.RequiredEvidence = util.Merge([]string{string(workerruntime.RequiredEvidencePlanSubmittedOrSourceSatisfied)}, rails.RequiredEvidence)
-			rails.RequiredTools = util.Merge([]string{workspace.ToolNameSubmitPlan}, rails.RequiredTools)
-			rails.ForbiddenTools = util.AppendUnique(rails.ForbiddenTools, "unbounded_write")
-			rails.ReadinessGate = util.Merge([]string{string(workerruntime.ReadinessSubmitPlanOrSourceSatisfiedOrBlocker)}, rails.ReadinessGate)
-			rails.SearchPolicy = util.Merge([]string{"consume_target_packet_first", "trust_preloaded_current_state_anchors_for_scope_not_source_body", "required_existing_paths_need_source_body_before_submit_plan", "submit_plan_when_edit_set_is_supported", "source_satisfied_when_current_state_already_matches", "do_not_call_per_edit_writes"}, rails.SearchPolicy)
-			rails.VerificationContract = util.FirstNonEmpty(strings.TrimSpace(rails.VerificationContract), string(workerruntime.VerificationNotRequiredTextMutation))
-			rails.StopConditions = util.Merge([]string{string(workerruntime.StopSubmitPlanReturnedOrSourceSatisfiedOrBlocker), string(workerruntime.StopBlockedByMissingPermissionOrInformation)}, rails.StopConditions)
+			rails.RequiredEvidence = textutil.Merge([]string{string(workerruntime.RequiredEvidencePlanSubmittedOrSourceSatisfied)}, rails.RequiredEvidence)
+			rails.RequiredTools = textutil.Merge([]string{workspace.ToolNameSubmitPlan}, rails.RequiredTools)
+			rails.ForbiddenTools = textutil.AppendUnique(rails.ForbiddenTools, "unbounded_write")
+			rails.ReadinessGate = textutil.Merge([]string{string(workerruntime.ReadinessSubmitPlanOrSourceSatisfiedOrBlocker)}, rails.ReadinessGate)
+			rails.SearchPolicy = textutil.Merge([]string{"consume_target_packet_first", "trust_preloaded_current_state_anchors_for_scope_not_source_body", "required_existing_paths_need_source_body_before_submit_plan", "submit_plan_when_edit_set_is_supported", "source_satisfied_when_current_state_already_matches", "do_not_call_per_edit_writes"}, rails.SearchPolicy)
+			rails.VerificationContract = textutil.FirstNonEmpty(strings.TrimSpace(rails.VerificationContract), string(workerruntime.VerificationNotRequiredTextMutation))
+			rails.StopConditions = textutil.Merge([]string{string(workerruntime.StopSubmitPlanReturnedOrSourceSatisfiedOrBlocker), string(workerruntime.StopBlockedByMissingPermissionOrInformation)}, rails.StopConditions)
 			rails.FinalCritic = []string{"answers_actual_user_request", "submit_plan_called", "source_satisfied_or_blocker_only_with_per_path_evidence"}
 
 			return rails
@@ -12308,10 +12253,10 @@ func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) ru
 			rails.RequiredTools = defaultRunnerStateSlice(rails.RequiredTools, []string{"edit_file_or_apply_patch", "source_sanity_or_verification_shell"})
 		}
 
-		rails.ForbiddenTools = util.AppendUnique(rails.ForbiddenTools, "unbounded_write")
+		rails.ForbiddenTools = textutil.AppendUnique(rails.ForbiddenTools, "unbounded_write")
 		rails.ReadinessGate = defaultRunnerStateSlice(rails.ReadinessGate, []string{string(workerruntime.ReadinessChangedPathsReported), string(workerruntime.ReadinessVerificationStatusReported)})
 		rails.SearchPolicy = defaultRunnerStateSlice(rails.SearchPolicy, []string{"consume_target_packet_first", "prefer_small_bounded_edits", "verify_changed_surface"})
-		rails.VerificationContract = util.FirstNonEmpty(strings.TrimSpace(rails.VerificationContract), string(workerruntime.VerificationTestsPassedFailedSkipped))
+		rails.VerificationContract = textutil.FirstNonEmpty(strings.TrimSpace(rails.VerificationContract), string(workerruntime.VerificationTestsPassedFailedSkipped))
 		rails.StopConditions = defaultRunnerStateSlice(rails.StopConditions, []string{string(workerruntime.StopChangeVerified), string(workerruntime.StopBlockedWithFailedVerificationOrScope)})
 		rails.FinalCritic = []string{"answers_actual_user_request", "changed_paths_reported", "verification_status_reported"}
 
@@ -12319,9 +12264,9 @@ func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) ru
 	}
 
 	if slices.Contains(rails.AllowedTools, workspace.ToolNameShell) && !runnerHasWorkspaceWriteCapability(brief, rails.AllowedTools) && runnerVerificationRequired(brief) {
-		rails.TaskFamily = util.FirstNonEmpty(strings.TrimSpace(brief.TaskFamily), "verification")
-		rails.Contract = util.FirstNonEmpty(strings.TrimSpace(brief.Contract), string(workerruntime.ContractGroundedExplanation))
-		rails.PermissionProfile = util.FirstNonEmpty(strings.TrimSpace(brief.PermissionProfile), string(workerruntime.PermissionReadOnlyVerificationShell))
+		rails.TaskFamily = textutil.FirstNonEmpty(strings.TrimSpace(brief.TaskFamily), "verification")
+		rails.Contract = textutil.FirstNonEmpty(strings.TrimSpace(brief.Contract), string(workerruntime.ContractGroundedExplanation))
+		rails.PermissionProfile = textutil.FirstNonEmpty(strings.TrimSpace(brief.PermissionProfile), string(workerruntime.PermissionReadOnlyVerificationShell))
 		rails.RequiredEvidence = defaultRunnerStateSlice(rails.RequiredEvidence, []string{string(workerruntime.RequiredEvidenceVerificationCommand), string(workerruntime.RequiredEvidencePassFailStatus)})
 		rails.RequiredTools = defaultRunnerStateSlice(rails.RequiredTools, []string{workspace.ToolNameShell})
 		rails.ForbiddenTools = appendRunnerTools(rails.ForbiddenTools, workspace.ToolNameEditFile, workspace.ToolNameWriteFile, workspace.ToolNameAppendFile, workspace.ToolNameMkdir, "mutating_shell")
@@ -12332,7 +12277,7 @@ func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) ru
 		return rails
 	}
 
-	if util.EqualTrimFold(rails.TaskFamily, "debug_logs") {
+	if textutil.EqualTrimFold(rails.TaskFamily, "debug_logs") {
 		rails.FailureToEval = true
 		rails.ReadinessGate = defaultRunnerStateSlice(rails.ReadinessGate, []string{"latest_log_selected", "failure_cause_supported_by_log", "low_confidence_triggers_deepening"})
 
@@ -12356,14 +12301,14 @@ func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) ru
 	}
 
 	if rails.Contract == string(workerruntime.ContractDirectAnswer) {
-		rails.TaskFamily = util.FirstNonEmpty(strings.TrimSpace(brief.TaskFamily), string(workerruntime.TaskFamilyDirectAnswer))
+		rails.TaskFamily = textutil.FirstNonEmpty(strings.TrimSpace(brief.TaskFamily), string(autonomy.TaskFamilyDirectAnswer))
 		if len(rails.AllowedTools) == 0 {
 			rails.PermissionProfile = string(workerruntime.PermissionConversationOnly)
-			rails.ForbiddenTools = util.AppendUnique(rails.ForbiddenTools, workspace.ToolNameShell)
+			rails.ForbiddenTools = textutil.AppendUnique(rails.ForbiddenTools, workspace.ToolNameShell)
 		}
 
 		rails.RequiredEvidence = defaultRunnerStateSlice(rails.RequiredEvidence, []string{string(workerruntime.RequiredEvidenceAnswerAddressesPrompt)})
-		rails.VerificationContract = util.FirstNonEmpty(strings.TrimSpace(rails.VerificationContract), string(workerruntime.VerificationNotRequiredReadOnlyLane))
+		rails.VerificationContract = textutil.FirstNonEmpty(strings.TrimSpace(rails.VerificationContract), string(workerruntime.VerificationNotRequiredReadOnlyLane))
 		rails.StopConditions = defaultRunnerStateSlice(rails.StopConditions, []string{string(workerruntime.StopRequiredEvidenceSatisfied)})
 
 		if runnerUsesSoftReadOnlyShapingOnly(brief, rails) {
@@ -12385,7 +12330,7 @@ func runnerUsesSoftReadOnlyShapingOnly(brief workerruntime.WorkerRuntimeBrief, r
 		return false
 	}
 
-	if util.EqualTrimFold(rails.TaskFamily, "debug_logs") {
+	if textutil.EqualTrimFold(rails.TaskFamily, "debug_logs") {
 		return false
 	}
 
@@ -12753,7 +12698,7 @@ func (s *runnerExecutionState) applyResult(req workspace.ToolRequest, result wor
 		s.needsNarrowingAfterBroad = false
 	}
 
-	if util.EqualTrimFold(req.Tool, "list_files") {
+	if textutil.EqualTrimFold(req.Tool, "list_files") {
 		s.consecutiveListFiles++
 	} else if isContentInspectionTool(req.Tool) {
 		s.consecutiveListFiles = 0
@@ -14475,11 +14420,11 @@ func delegatedDiscoveryLineCandidatePaths(line string) []string {
 	var paths []string
 
 	for _, path := range pathparse.MentionedWorkspacePaths(line) {
-		paths = util.AppendUnique(paths, path)
+		paths = textutil.AppendUnique(paths, path)
 	}
 
 	for _, match := range delegatedPacketPathLinePattern.FindAllString(line, -1) {
-		paths = util.AppendUnique(paths, match)
+		paths = textutil.AppendUnique(paths, match)
 	}
 
 	return paths
@@ -14535,7 +14480,7 @@ func appendDelegatedDiscoveryCandidateTerm(terms []string, raw string) []string 
 		return terms
 	}
 
-	return util.AppendUnique(terms, term)
+	return textutil.AppendUnique(terms, term)
 }
 
 func (p delegatedDiscoveryPlan) consumableCandidateScore(path string, layerName string, line string, summary string, terms []string) int {
@@ -14802,7 +14747,7 @@ func (p delegatedDiscoveryPlan) parseNamedScopes() []string {
 			}
 
 			candidate = filepath.ToSlash(strings.TrimSuffix(strings.TrimPrefix(candidate, "./"), "/"))
-			scopes = util.AppendUnique(scopes, candidate)
+			scopes = textutil.AppendUnique(scopes, candidate)
 		}
 	}
 
@@ -14874,7 +14819,7 @@ func (p delegatedDiscoveryPlan) computeDetailedNamedScopes() []string {
 			continue
 		}
 
-		scopes = util.Merge(scopes, []string{candidate})
+		scopes = textutil.Merge(scopes, []string{candidate})
 	}
 
 	return scopes
@@ -14944,21 +14889,21 @@ func (p delegatedDiscoveryPlan) computeSearchPattern() string {
 
 		for _, candidate := range strings.Split(line[len("Key terms:"):], ",") {
 			if term, ok := delegatedReadOnlySearchTerm(candidate); ok {
-				terms = util.AppendUnique(terms, term)
+				terms = textutil.AppendUnique(terms, term)
 			}
 		}
 	}
 
 	for _, fragment := range pathparse.QuotedFragments(p.objective) {
 		if term, ok := delegatedReadOnlySearchTerm(fragment); ok {
-			terms = util.AppendUnique(terms, term)
+			terms = textutil.AppendUnique(terms, term)
 		}
 	}
 
 	if len(terms) == 0 {
 		for _, candidate := range strings.Fields(p.questionText) {
 			if term, ok := delegatedReadOnlySearchTerm(candidate); ok {
-				terms = util.AppendUnique(terms, term)
+				terms = textutil.AppendUnique(terms, term)
 			}
 
 			if len(terms) >= 4 {
@@ -14969,7 +14914,7 @@ func (p delegatedDiscoveryPlan) computeSearchPattern() string {
 
 	for _, term := range delegatedReadOnlyMechanismTerms(p.objective) {
 		if normalized, ok := delegatedReadOnlySearchTerm(term); ok {
-			terms = util.AppendUnique(terms, normalized)
+			terms = textutil.AppendUnique(terms, normalized)
 		}
 	}
 
@@ -14990,14 +14935,14 @@ func (p delegatedDiscoveryPlan) computeSymbolPattern() string {
 
 		for _, candidate := range strings.Split(line[len("Key terms:"):], ",") {
 			if symbol, ok := delegatedReadOnlyLiteralSymbolCandidate(candidate); ok {
-				candidates = util.AppendUnique(candidates, symbol)
+				candidates = textutil.AppendUnique(candidates, symbol)
 			}
 		}
 	}
 
 	for _, fragment := range pathparse.QuotedFragments(p.objective) {
 		if symbol, ok := delegatedReadOnlyLiteralSymbolCandidate(fragment); ok {
-			candidates = util.AppendUnique(candidates, symbol)
+			candidates = textutil.AppendUnique(candidates, symbol)
 		}
 	}
 
@@ -15022,7 +14967,7 @@ func (p delegatedDiscoveryPlan) computePromptKeyTerms() []string {
 			continue
 		}
 
-		terms = util.AppendUnique(terms, fragment)
+		terms = textutil.AppendUnique(terms, fragment)
 	}
 
 	for _, candidate := range strings.Fields(p.objective) {
@@ -15040,7 +14985,7 @@ func (p delegatedDiscoveryPlan) computePromptKeyTerms() []string {
 			continue
 		}
 
-		terms = util.AppendUnique(terms, lower)
+		terms = textutil.AppendUnique(terms, lower)
 		if len(terms) >= 8 {
 			break
 		}
@@ -15441,12 +15386,12 @@ func conversationTargetedContentSearch(req workspace.ToolRequest) bool {
 		return false
 	}
 
-	pattern := strings.TrimSpace(util.FirstNonEmpty(req.Pattern, req.Query))
+	pattern := strings.TrimSpace(textutil.FirstNonEmpty(req.Pattern, req.Query))
 	if pattern == "" {
 		return false
 	}
 
-	return util.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering) != "" || conversationConcreteSearchScope(req.Path)
+	return textutil.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering) != "" || conversationConcreteSearchScope(req.Path)
 }
 
 func conversationTargetedContextZoom(req workspace.ToolRequest) bool {
@@ -15458,7 +15403,7 @@ func conversationTargetedContextZoom(req workspace.ToolRequest) bool {
 		return false
 	}
 
-	return strings.TrimSpace(req.Resolution) != "" || req.IncludeSource || util.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering) != ""
+	return strings.TrimSpace(req.Resolution) != "" || req.IncludeSource || textutil.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering) != ""
 }
 
 func conversationTargetedFileNameSearch(req workspace.ToolRequest) bool {
@@ -15466,11 +15411,11 @@ func conversationTargetedFileNameSearch(req workspace.ToolRequest) bool {
 		return false
 	}
 
-	pattern := util.FirstNonEmpty(req.Pattern, req.Glob, req.Query)
+	pattern := textutil.FirstNonEmpty(req.Pattern, req.Glob, req.Query)
 
 	pattern = filepath.ToSlash(strings.TrimSpace(pattern))
 
-	if util.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering) != "" {
+	if textutil.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering) != "" {
 		return true
 	}
 
@@ -15824,7 +15769,7 @@ func (r *Runner) mainReadOnlyBroadSearchContextPackRequest(results []workspace.T
 		return workspace.ToolRequest{}, false
 	}
 
-	pattern := strings.TrimSpace(util.FirstNonEmpty(req.Pattern, req.Query))
+	pattern := strings.TrimSpace(textutil.FirstNonEmpty(req.Pattern, req.Query))
 	if pattern == "" {
 		return workspace.ToolRequest{}, false
 	}
@@ -16484,7 +16429,7 @@ func delegatedReadOnlyImplementationPattern(objective string, targetPath string)
 			continue
 		}
 
-		terms = util.AppendUnique(terms, part)
+		terms = textutil.AppendUnique(terms, part)
 	}
 
 	base := strings.TrimSuffix(filepath.Base(targetPath), filepath.Ext(targetPath))
@@ -16495,7 +16440,7 @@ func delegatedReadOnlyImplementationPattern(objective string, targetPath string)
 		return r == '_' || r == '-' || unicode.IsSpace(r)
 	}) {
 		if term, ok := delegatedReadOnlySearchTerm(fragment); ok {
-			terms = util.AppendUnique(terms, term)
+			terms = textutil.AppendUnique(terms, term)
 		}
 	}
 
@@ -16518,13 +16463,13 @@ func delegatedReadOnlyMechanismTerms(objective string) []string {
 
 	if agentutil.ContainsAny(lower, "invoke", "invoked", "execute", "executed", "run", "runner", "workflow", "wired") {
 		for _, term := range []string{"invoke", "execute"} {
-			terms = util.AppendUnique(terms, term)
+			terms = textutil.AppendUnique(terms, term)
 		}
 	}
 
 	if agentutil.ContainsAny(lower, "subagent", "sub-agent", "sub agent") {
 		for _, term := range []string{"child task", "task tool", "delegate", "delegation"} {
-			terms = util.AppendUnique(terms, term)
+			terms = textutil.AppendUnique(terms, term)
 		}
 	}
 
@@ -16663,7 +16608,7 @@ func (r *Runner) delegatedReadOnlyAnswerReadyAfterResult(req workspace.ToolReque
 		return false
 	}
 
-	tool := strings.TrimSpace(util.FirstNonEmpty(result.Tool, req.Tool))
+	tool := strings.TrimSpace(textutil.FirstNonEmpty(result.Tool, req.Tool))
 	closure := readOnlyClosureDecisionForResults(r.RuntimeBrief, results)
 
 	switch {
@@ -16743,7 +16688,7 @@ func readOnlyAnalysisHasObjectiveRelevantSourceBody(brief workerruntime.WorkerRu
 		}
 	}
 
-	for _, path := range util.Merge(evidence.SourceBodyObjectivePaths, evidence.SourceBodyPaths) {
+	for _, path := range textutil.Merge(evidence.SourceBodyObjectivePaths, evidence.SourceBodyPaths) {
 		if implementationSourcePathOverlapsObjective(path, brief.Objective) ||
 			sourceEvidencePathSharesObjectiveTerm(path, brief.Objective) {
 
@@ -16982,7 +16927,7 @@ func toolResultMentionsPath(result workspace.ToolResult, path string) bool {
 }
 
 func allowRecoverablePostReadinessRepairExecution(req workspace.ToolRequest, lastToolResult workspace.ToolResult) bool {
-	if util.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering) == "" {
+	if textutil.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering) == "" {
 		return false
 	}
 
@@ -17021,7 +16966,7 @@ func (r *Runner) emitThinkingTrace(step int, reason string, message llama.ChatMe
 		PreservedInHistory: preservedInHistory && strings.TrimSpace(message.ReasoningContent) != "",
 	}
 	if strings.TrimSpace(reason) == "completion_gate_reply_preserved" {
-		trace.ContentPreview = util.Truncate(strings.TrimSpace(message.Content), 500)
+		trace.ContentPreview = textutil.Truncate(strings.TrimSpace(message.Content), 500)
 	}
 
 	data, err := json.Marshal(trace)
@@ -17320,8 +17265,8 @@ func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step in
 		Reason:            strings.TrimSpace(reason),
 		LastTool:          tool,
 		LastTarget:        workerruntime.ToolRequestTarget(req),
-		ResultSummary:     util.Truncate(strings.TrimSpace(result.Summary), 220),
-		ResultError:       util.Truncate(strings.TrimSpace(result.Error), 260),
+		ResultSummary:     textutil.Truncate(strings.TrimSpace(result.Summary), 220),
+		ResultError:       textutil.Truncate(strings.TrimSpace(result.Error), 260),
 		ResultOutputChars: len(result.Output),
 		EvidencePaths:     runnerEvidencePathsForBrief(brief, results, 6),
 	}
@@ -17343,9 +17288,9 @@ func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step in
 		state.EvidencePaths = postChildClosureEvidencePaths(brief.Objective, results, 6)
 	}
 
-	state.Constraints = util.Merge(brief.Constraints, guidance.Constraints)
-	state.InvalidNextActions = util.Merge(brief.InvalidActions, guidance.InvalidNext)
-	state.NextValidActions = util.Merge(brief.RequiredNext, guidance.ValidNext)
+	state.Constraints = textutil.Merge(brief.Constraints, guidance.Constraints)
+	state.InvalidNextActions = textutil.Merge(brief.InvalidActions, guidance.InvalidNext)
+	state.NextValidActions = textutil.Merge(brief.RequiredNext, guidance.ValidNext)
 
 	phaseHint := ""
 
@@ -17381,7 +17326,7 @@ func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step in
 	}
 
 	if reviewRepairTerminalOutcomeRequiredState(brief, result) {
-		state.Constraints = util.Merge(state.Constraints, []string{
+		state.Constraints = textutil.Merge(state.Constraints, []string{
 			"review_repair_closeout_gate_fired",
 			"terminal_review_repair_outcome_required",
 		})
@@ -17447,33 +17392,33 @@ func applyReadOnlyDiscoveryPendingGuidance(state runnerNextActionState, brief wo
 
 	candidateSummary := strings.Join(candidates, ", ")
 
-	state.Constraints = util.Merge(state.Constraints, []string{"source_body_evidence_missing_after_discovery"})
-	state.InvalidNextActions = util.Merge(state.InvalidNextActions, []string{
+	state.Constraints = textutil.Merge(state.Constraints, []string{"source_body_evidence_missing_after_discovery"})
+	state.InvalidNextActions = textutil.Merge(state.InvalidNextActions, []string{
 		"final answer before source-body evidence",
 		"treating discovery candidates, context packets, or search hits as source-body evidence",
 	})
 
 	switch strength {
 	case discoveryConsumptionCandidateOnly:
-		state.EvidenceStatus = util.Merge(state.EvidenceStatus, []string{
+		state.EvidenceStatus = textutil.Merge(state.EvidenceStatus, []string{
 			"discovery_status: candidate-only; source owner and source-body evidence are still missing",
 		})
 		state.NextValidActions = prependRunnerStateStrings([]string{
 			"source owner was not established by " + tool + "; use one materially different source-owner or source-body probe scoped to the question, or <<QUESTION>> with the exact unavailable evidence",
 			"if candidates are plausible, inspect one returned path with source-body evidence; otherwise switch to an exact lexical/symbol/source-owner probe drawn from the user's claim and the code vocabulary",
 		}, state.NextValidActions)
-		state.InvalidNextActions = util.Merge(state.InvalidNextActions, []string{
+		state.InvalidNextActions = textutil.Merge(state.InvalidNextActions, []string{
 			"exact replay of the same weak discovery request",
 		})
 	case discoveryConsumptionSourceOwner:
-		state.EvidenceStatus = util.Merge(state.EvidenceStatus, []string{
+		state.EvidenceStatus = textutil.Merge(state.EvidenceStatus, []string{
 			"discovery_status: candidate owner paths returned, but source-body evidence is still missing",
 		})
 		state.NextValidActions = prependRunnerStateStrings([]string{
 			"inspect one returned path or handle with source-body evidence, take one targeted refinement with concrete scope or named_gap only if the returned owner does not establish the claim, or <<QUESTION>> with the exact blocker",
 			"candidate path(s): " + candidateSummary,
 		}, state.NextValidActions)
-		state.InvalidNextActions = util.Merge(state.InvalidNextActions, []string{
+		state.InvalidNextActions = textutil.Merge(state.InvalidNextActions, []string{
 			"repeated broad or identical rediscovery before inspecting or materially refining returned candidates",
 		})
 	}
@@ -17505,8 +17450,8 @@ func buildRunnerFailureFeedbackPacketWithAllowedToolsAndTransport(agent string, 
 	})
 
 	if scratchpadFailedEvidenceFeedbackApplies(brief, req, result, results) {
-		recovery.DoNotRepeat = util.AppendUnique(recovery.DoNotRepeat, "same failed evidence lookup through a lower-level or raw read")
-		recovery.RequiredNext = util.AppendUnique(recovery.RequiredNext, "record the failed, stale, ambiguous, or out-of-scope evidence as a deliverable gap")
+		recovery.DoNotRepeat = textutil.AppendUnique(recovery.DoNotRepeat, "same failed evidence lookup through a lower-level or raw read")
+		recovery.RequiredNext = textutil.AppendUnique(recovery.RequiredNext, "record the failed, stale, ambiguous, or out-of-scope evidence as a deliverable gap")
 		recovery.ValidNext = []string{
 			"write the non-source deliverable with the evidence gap recorded",
 			"answer with <<QUESTION>> only if the evidence gap makes the deliverable impossible",
@@ -17529,7 +17474,7 @@ func buildRunnerFailureFeedbackPacketWithAllowedToolsAndTransport(agent string, 
 		Reason:             state.Reason,
 		FailedTool:         state.LastTool,
 		FailedTarget:       state.LastTarget,
-		FailureClass:       recovery.FailureClass,
+		FailureClass:       string(recovery.FailureClass),
 		ResultSummary:      state.ResultSummary,
 		ResultError:        state.ResultError,
 		EvidenceStatus:     append([]string(nil), state.EvidenceStatus...),
@@ -17759,7 +17704,7 @@ func closureProbeCandidates(results []workspace.ToolResult, max int) []string {
 	candidates := make([]string, 0, max)
 	add := func(raw string) {
 		if symbol, ok := delegatedReadOnlyLiteralSymbolCandidate(raw); ok {
-			candidates = util.AppendUnique(candidates, symbol)
+			candidates = textutil.AppendUnique(candidates, symbol)
 		}
 	}
 
@@ -18008,7 +17953,7 @@ func applyClosurePromptRefinement(state runnerNextActionState) runnerNextActionS
 			return false
 		}
 	}))
-	state.InvalidNextActions = util.Merge(state.InvalidNextActions, closurePromptInvalidActions(scope))
+	state.InvalidNextActions = textutil.Merge(state.InvalidNextActions, closurePromptInvalidActions(scope))
 
 	return state
 }
@@ -18646,7 +18591,7 @@ func evidenceFirstTargetInspectionRecoveryNudge(in recoveryNudgeInputs) (string,
 		return "", false
 	}
 
-	target := util.FirstNonEmpty(in.brief.TargetRefs...)
+	target := textutil.FirstNonEmpty(in.brief.TargetRefs...)
 	if target == "" {
 		target = strings.TrimSpace(in.req.Path)
 	}
@@ -19321,7 +19266,7 @@ func (d runnerRequestBudgetDecision) apply(ctx budgetDecisionContext) budgetDeci
 	}
 
 	if d.EventRole != "" {
-		ctx.controller.runner.emitEvent(RunEvent{Role: d.EventRole, Content: util.FirstNonEmpty(d.EventContent, d.Nudge)})
+		ctx.controller.runner.emitEvent(RunEvent{Role: d.EventRole, Content: textutil.FirstNonEmpty(d.EventContent, d.Nudge)})
 	}
 
 	if d.ForceAnswerPrompt != "" {
@@ -19653,7 +19598,7 @@ func zeroHitSearchFamilyTerms(text string) []string {
 			continue
 		}
 
-		terms = util.AppendUnique(terms, word)
+		terms = textutil.AppendUnique(terms, word)
 		if len(terms) >= 3 {
 			break
 		}
@@ -19680,7 +19625,7 @@ func splitZeroHitSearchWords(text string) []string {
 			return
 		}
 
-		words = util.AppendUnique(words, word)
+		words = textutil.AppendUnique(words, word)
 	}
 	prevLower := false
 
@@ -20516,7 +20461,7 @@ func (r *Runner) emitTerminalAnswerSignalsOnce(state *runnerRunState, decision t
 
 		r.emitFinalAnswerTelemetry(decision.RawAnswer, state.collectedResults, decision.Acceptance)
 	case terminalAnswerBlocked, terminalAnswerTransportBlocked:
-		blockerKind := util.FirstNonEmpty(strings.TrimSpace(decision.Acceptance.BlockerKind), strings.TrimSpace(decision.StopReason))
+		blockerKind := textutil.FirstNonEmpty(strings.TrimSpace(decision.Acceptance.BlockerKind), strings.TrimSpace(decision.StopReason))
 		if state.autonomyRecorder != nil {
 			state.autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyReject, blockerKind, state.collectedResults, state.completionGateRejections)
 		}
@@ -21028,7 +20973,7 @@ func (r *Runner) runtimeBriefWithLiveState(policy RunPolicy, messages []llama.Ch
 	}
 
 	if strings.TrimSpace(brief.TaskFamily) == PlanThenExecuteReviewRepairTaskFamily {
-		brief.TargetPacket = util.Merge(brief.TargetPacket, reviewRepairPhaseEvidencePacket(brief.Objective))
+		brief.TargetPacket = textutil.Merge(brief.TargetPacket, reviewRepairPhaseEvidencePacket(brief.Objective))
 	}
 
 	if brief.Budget == (workerruntime.BudgetBrief{}) {
@@ -21046,10 +20991,10 @@ func (r *Runner) runtimeBriefWithLiveState(policy RunPolicy, messages []llama.Ch
 			brief.EvidencePaths = liveEvidencePaths
 		}
 	} else {
-		brief.EvidencePaths = util.Merge(brief.EvidencePaths, liveEvidencePaths)
+		brief.EvidencePaths = textutil.Merge(brief.EvidencePaths, liveEvidencePaths)
 	}
 
-	brief.ChangedPaths = util.Merge(brief.ChangedPaths, mapKeys(changedPathsFromToolResults(results)))
+	brief.ChangedPaths = textutil.Merge(brief.ChangedPaths, mapKeys(changedPathsFromToolResults(results)))
 	brief = runnerBriefWithPhaseHints(brief, results)
 	brief.Readiness = runnerReadinessStateWithEngine(r.agentName(), brief, results, r.guidanceEngine(), r.evidenceEngine())
 
@@ -21078,13 +21023,13 @@ func runnerReadinessStateWithEngine(agent string, brief workerruntime.WorkerRunt
 
 	readOnlyLedger := evidence.Answerability(readOnlyBrief, results)
 	addClosed := func(values ...string) {
-		readiness.ClosedClaims = util.Merge(readiness.ClosedClaims, values)
+		readiness.ClosedClaims = textutil.Merge(readiness.ClosedClaims, values)
 	}
 	addOpen := func(values ...string) {
-		readiness.OpenObligations = util.Merge(readiness.OpenObligations, values)
+		readiness.OpenObligations = textutil.Merge(readiness.OpenObligations, values)
 	}
 	addSource := func(values ...string) {
-		readiness.EvidenceSources = util.Merge(readiness.EvidenceSources, values)
+		readiness.EvidenceSources = textutil.Merge(readiness.EvidenceSources, values)
 	}
 
 	if len(brief.TargetRefs) > 0 {
@@ -21322,7 +21267,7 @@ func readOnlyAnalysisReadyFromEvidence(results []workspace.ToolResult) bool {
 }
 
 func runnerCurrentAllowedOrBriefTools(currentAllowedTools []string, briefAllowedTools []string) []string {
-	if len(util.Unique(currentAllowedTools)) > 0 {
+	if len(textutil.Unique(currentAllowedTools)) > 0 {
 		return append([]string(nil), currentAllowedTools...)
 	}
 
@@ -21345,17 +21290,17 @@ func runnerStateSummary(state runnerNextActionState) string {
 		parts = append(parts, state.ResultSummary)
 	}
 
-	return util.Truncate(strings.TrimSpace(strings.Join(parts, " | ")), 320)
+	return textutil.Truncate(strings.TrimSpace(strings.Join(parts, " | ")), 320)
 }
 
 func prependRunnerStateStrings(preferred []string, existing []string) []string {
 	out := make([]string, 0, len(preferred)+len(existing))
 	for _, value := range preferred {
-		out = util.AppendUnique(out, value)
+		out = textutil.AppendUnique(out, value)
 	}
 
 	for _, value := range existing {
-		out = util.AppendUnique(out, value)
+		out = textutil.AppendUnique(out, value)
 	}
 
 	return out
@@ -21555,7 +21500,7 @@ func (r *Runner) emitModelCallTraceWithOptions(step int, label string, prompt []
 	r.OnEvent(RunEvent{Role: "model_call", Content: string(data)})
 }
 
-func (r *Runner) emitToolRequestNormalizerEvent(outcome string, transport string, req workspace.ToolRequest, parseErr error, parserFailureClass string) {
+func (r *Runner) emitToolRequestNormalizerEvent(outcome string, transport string, req workspace.ToolRequest, parseErr error, parserFailureClass autonomy.ParserFailureClass) {
 	if r == nil || r.OnEvent == nil {
 		return
 	}
@@ -21573,12 +21518,12 @@ func (r *Runner) emitToolRequestNormalizerEvent(outcome string, transport string
 
 	if parseErr != nil {
 		payload["error"] = strings.TrimSpace(parseErr.Error())
-		if parserFailureClass == "" {
+		if parserFailureClass == "" || parserFailureClass == autonomy.ParserFailureNone {
 			parserFailureClass = toolRequestParserFailureClass("", parseErr)
 		}
 
-		if parserFailureClass != "" {
-			payload["parser_failure_class"] = parserFailureClass
+		if parserFailureClass != "" && parserFailureClass != autonomy.ParserFailureNone {
+			payload["parser_failure_class"] = string(parserFailureClass)
 		}
 	}
 
@@ -21634,7 +21579,7 @@ func safeModelAliasForTelemetry(model string) string {
 		alias = filepath.Base(alias)
 	}
 
-	return util.Truncate(alias, 96)
+	return textutil.Truncate(alias, 96)
 }
 
 func (r *Runner) emitEvent(event RunEvent) {
@@ -21873,7 +21818,7 @@ func (r *Runner) runnerCompactionSummary(policy RunPolicy, ledger *taskLedgerSta
 
 		if detail := strings.TrimSpace(failed.Error); detail != "" {
 			b.WriteString("- error: ")
-			b.WriteString(util.Truncate(strings.TrimSpace(detail), 500))
+			b.WriteString(textutil.Truncate(strings.TrimSpace(detail), 500))
 			b.WriteString("\n")
 		}
 
@@ -22095,7 +22040,7 @@ func latestUserObjective(messages []llama.ChatMessage) string {
 				content = scoped
 			}
 
-			return util.Truncate(strings.TrimSpace(content), 500)
+			return textutil.Truncate(strings.TrimSpace(content), 500)
 		}
 	}
 
@@ -22122,7 +22067,7 @@ func pinnedPathsFromToolResults(results []workspace.ToolResult, max int) []strin
 
 	paths = prioritizedClosureEvidencePaths(paths, results, len(paths))
 
-	return util.Prefix(paths, max)
+	return textutil.Prefix(paths, max)
 }
 
 func directProbePathsFromToolResults(results []workspace.ToolResult, max int) []string {
@@ -22179,7 +22124,7 @@ func promptEvidencePathsFromToolResults(results []workspace.ToolResult, max int)
 	paths = append(paths, pinnedPathsFromToolResults(results, max*6)...)
 	paths = prioritizedClosureEvidencePaths(paths, results, max*3)
 
-	return util.Prefix(uniqueDelegatedDiscoveryPaths(append(directPaths, closurePromptEvidencePaths(paths, max*2)...)), max)
+	return textutil.Prefix(uniqueDelegatedDiscoveryPaths(append(directPaths, closurePromptEvidencePaths(paths, max*2)...)), max)
 }
 
 func runnerEvidencePathsForBrief(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
@@ -22236,11 +22181,11 @@ func readOnlyDirectAnswerPresentationEvidencePaths(brief workerruntime.WorkerRun
 	paths := append([]string{}, ledger.RelevantSourceBodyPaths...)
 
 	if agentutil.ObjectiveAsksImplementationShape(ledger.Objective) {
-		paths = util.Merge(paths, ledger.ImplementationOwnerPaths())
+		paths = textutil.Merge(paths, ledger.ImplementationOwnerPaths())
 	}
 
 	if ledger.DiagnosticRelevant {
-		paths = util.Merge(paths, readOnlySourceLikePaths(ledger.DiagnosticPaths, max*2))
+		paths = textutil.Merge(paths, readOnlySourceLikePaths(ledger.DiagnosticPaths, max*2))
 	}
 
 	return closurePromptEvidencePaths(paths, max)
@@ -22621,8 +22566,8 @@ func (r *Runner) emitFinalAnswerTelemetry(answer string, results []workspace.Too
 		return
 	}
 
-	lane := util.FirstNonEmpty(strings.TrimSpace(r.RuntimeBrief.Lane), strings.TrimSpace(r.RuntimeBrief.TaskFamily), r.agentName())
-	contract := util.FirstNonEmpty(strings.TrimSpace(r.RuntimeBrief.Contract), string(workerruntime.ContractDirectAnswer))
+	lane := textutil.FirstNonEmpty(strings.TrimSpace(r.RuntimeBrief.Lane), strings.TrimSpace(r.RuntimeBrief.TaskFamily), r.agentName())
+	contract := textutil.FirstNonEmpty(strings.TrimSpace(r.RuntimeBrief.Contract), string(workerruntime.ContractDirectAnswer))
 	evidencePaths := acceptance.EvidencePaths
 
 	var presentationEvidencePaths []string
@@ -22674,7 +22619,7 @@ func (r *Runner) emitFinalAnswerTelemetry(answer string, results []workspace.Too
 
 		rails := map[string]any{
 			"lane":           lane,
-			"task_family":    util.FirstNonEmpty(strings.TrimSpace(r.RuntimeBrief.TaskFamily), contract),
+			"task_family":    textutil.FirstNonEmpty(strings.TrimSpace(r.RuntimeBrief.TaskFamily), contract),
 			"contract":       contract,
 			"passed":         false,
 			"action":         "block",
@@ -22738,7 +22683,7 @@ func (r *Runner) emitFinalAnswerTelemetry(answer string, results []workspace.Too
 
 	rails := map[string]any{
 		"lane":           lane,
-		"task_family":    util.FirstNonEmpty(strings.TrimSpace(r.RuntimeBrief.TaskFamily), contract),
+		"task_family":    textutil.FirstNonEmpty(strings.TrimSpace(r.RuntimeBrief.TaskFamily), contract),
 		"contract":       contract,
 		"passed":         true,
 		"action":         "accept",
@@ -22774,7 +22719,7 @@ func (r *Runner) emitFinalAnswerBlockerOverride(acceptance finalAnswerAcceptance
 	}
 
 	if len(acceptance.RelevantSourceBodyPaths) > 0 {
-		payload["relevant_source_body_paths"] = util.LimitSlice(acceptance.RelevantSourceBodyPaths, 8)
+		payload["relevant_source_body_paths"] = textutil.LimitSlice(acceptance.RelevantSourceBodyPaths, 8)
 	}
 
 	r.emitEvent(marshalRunEvent("final_answer_blocker_override", payload))
@@ -23131,16 +23076,16 @@ func acceptedAnswerEvidencePaths(answer string, results []workspace.ToolResult, 
 	}
 
 	if readOnlyExplanationGateApplies(brief) {
-		paths := util.Merge(exactProbeEvidencePaths(results), pathparse.MentionedWorkspacePaths(answer))
+		paths := textutil.Merge(exactProbeEvidencePaths(results), pathparse.MentionedWorkspacePaths(answer))
 		for _, packet := range readOnlyEvidencePacketsFromResults(results) {
 			if readOnlyEvidencePacketAnswerableForObjective(packet, brief.Objective) {
-				paths = util.Merge(paths, packet.SourceBodyPaths, packet.InspectedPaths)
+				paths = textutil.Merge(paths, packet.SourceBodyPaths, packet.InspectedPaths)
 			}
 		}
 
-		paths = util.Merge(paths, delegatedReadOnlyInspectedImplementationPaths(results))
+		paths = textutil.Merge(paths, delegatedReadOnlyInspectedImplementationPaths(results))
 		if len(paths) == 0 {
-			paths = util.Merge(paths, mentionedEvidencePathsFromToolResultsForObjective(results, brief.Objective, 24))
+			paths = textutil.Merge(paths, mentionedEvidencePathsFromToolResultsForObjective(results, brief.Objective, 24))
 		}
 
 		paths = prioritizedClosureEvidencePaths(paths, results, 8)
@@ -23151,10 +23096,10 @@ func acceptedAnswerEvidencePaths(answer string, results []workspace.ToolResult, 
 		}
 	}
 
-	paths := util.Merge(pinnedPathsFromToolResults(results, 8), pathparse.MentionedWorkspacePaths(answer))
+	paths := textutil.Merge(pinnedPathsFromToolResults(results, 8), pathparse.MentionedWorkspacePaths(answer))
 	for _, packet := range readOnlyEvidencePacketsFromResults(results) {
 		if readOnlyEvidencePacketAnswerableForObjective(packet, brief.Objective) {
-			paths = util.Merge(paths, packet.SourceBodyPaths, packet.InspectedPaths)
+			paths = textutil.Merge(paths, packet.SourceBodyPaths, packet.InspectedPaths)
 		}
 	}
 
@@ -23216,7 +23161,7 @@ func closurePromptEvidencePathsPreservingTests(paths []string, max int) []string
 		cleaned = append(cleaned, path)
 	}
 
-	return util.Prefix(cleaned, max)
+	return textutil.Prefix(cleaned, max)
 }
 
 func exactProbeEvidencePaths(results []workspace.ToolResult) []string {
@@ -23325,7 +23270,7 @@ func prefersEarlyReadOnlyDelegation(brief workerruntime.WorkerRuntimeBrief) bool
 	}
 
 	for _, policy := range brief.SearchPolicy {
-		if util.EqualTrimFold(policy, "delegate_broad_discovery_when_needed") {
+		if textutil.EqualTrimFold(policy, "delegate_broad_discovery_when_needed") {
 			return true
 		}
 	}
@@ -23468,7 +23413,7 @@ func (c *runnerTurnController) rejectCompletion(step int, activeToolCall *llama.
 
 func completionGateRejectedHistoryMessage(r *Runner, reply llama.ChatMessage, result workspace.ToolResult, results []workspace.ToolResult) llama.ChatMessage {
 	message := llama.ChatMessage{
-		Role:             util.FirstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
+		Role:             textutil.FirstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
 		Content:          reply.Content,
 		ReasoningContent: reply.ReasoningContent,
 	}
@@ -23481,8 +23426,8 @@ func completionGateRejectedHistoryMessage(r *Runner, reply llama.ChatMessage, re
 	message.Content = fmt.Sprintf(
 		"[omitted rejected final answer: %d chars. The completion gate rejected it before required workspace changes were recorded: %s. Next action must satisfy the gate with an allowed tool call or a concrete blocker. Preview: %s]",
 		len(content),
-		util.Truncate(strings.TrimSpace(result.Error), 240),
-		util.Truncate(strings.TrimSpace(content), 500),
+		textutil.Truncate(strings.TrimSpace(result.Error), 240),
+		textutil.Truncate(strings.TrimSpace(content), 500),
 	)
 	message.ReasoningContent = ""
 
@@ -23555,28 +23500,11 @@ func (malformedToolPolicyEngine) EvaluateParseFailure(raw string, parseErr error
 			InvariantID:   malformedToolPolicyInvariantToolRequest,
 			ReasonCode:    "malformed_tool_request",
 			Transport:     autonomy.ToolTransportTextualCall,
-			ParserFailure: runnerAutonomyParserFailureClass(raw, parseErr),
+			ParserFailure: toolRequestParserFailureClass(raw, parseErr),
 			Result:        "rejected",
 			ErrorClass:    "tool_parse",
 			Source:        "malformed_tool_policy",
 		},
-	}
-}
-
-func runnerAutonomyParserFailureClass(raw string, parseErr error) autonomy.ParserFailureClass {
-	switch toolRequestParserFailureClass(raw, parseErr) {
-	case "malformed_json":
-		return autonomy.ParserFailureMalformedJSON
-	case "submit_plan_edits_string", "schema_type_mismatch", "nested_tool_mismatch":
-		return autonomy.ParserFailureSchemaMismatch
-	case "missing_tool":
-		return autonomy.ParserFailureMissingToolName
-	case "transport_mismatch":
-		return autonomy.ParserFailureTransportMismatch
-	case "":
-		return autonomy.ParserFailureNone
-	default:
-		return autonomy.ParserFailureAmbiguousToolCall
 	}
 }
 
@@ -23651,7 +23579,6 @@ func (c *runnerTurnController) completeWithoutMoreToolsWithReason(prompt string)
 	return c.runner.completeWithoutMoreToolsWithReason(c.ctx, c.currentMessages(), c.currentOpts(), c.snapshotResults(), prompt, c.metrics)
 }
 
-// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmpjb97fdkr.go ---
 const (
 	ReasonCompletionGateRejected failures.Reason = 2001 + iota
 	ReasonAgentTextualToolCall
@@ -23666,7 +23593,6 @@ var (
 	ErrAgentEmptyResponse     = failures.New(failures.FailedPrecondition, ReasonAgentEmptyResponse, "agent returned an empty response")
 )
 
-// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmp1bs0_yws.go ---
 type WriteDecision struct {
 	Allowed       bool
 	InvariantID   string
@@ -23691,7 +23617,6 @@ func (d WriteDecision) PendingRequiredPaths() []string {
 	return pending
 }
 
-// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmpp0mddy17.go ---
 // TurnState is the authoritative mutable state holder target for the runner
 // loop migration. It starts as a small boundary type while legacy state remains
 // in the root runner.
@@ -23762,227 +23687,4 @@ func RunSession(ctx context.Context, cfg SessionConfig, controller SessionContro
 	}
 
 	return controller.Finish(ctx, state, StepResult{Done: true})
-}
-
-// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmpfyomo6mo.go ---
-const (
-	MaxKeyLength    = 80
-	MaxContentBytes = 64 * 1024
-)
-
-var keyPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
-
-func ValidateKey(raw string) (string, error) {
-	key := strings.TrimSpace(raw)
-	if key == "" {
-		return "", fmt.Errorf("note key is required")
-	}
-
-	if len(key) > MaxKeyLength {
-		return "", fmt.Errorf("note key is too long (max %d bytes)", MaxKeyLength)
-	}
-
-	if strings.Contains(key, "..") || strings.ContainsAny(key, `/\`) || filepath.IsAbs(key) {
-		return "", fmt.Errorf("note key must be a slug, not a path")
-	}
-
-	if !keyPattern.MatchString(key) {
-		return "", fmt.Errorf("note key must start with an ASCII letter or digit and contain only ASCII letters, digits, '.', '_' or '-'")
-	}
-
-	return key, nil
-}
-
-func ValidateContent(raw string) (string, error) {
-	if strings.TrimSpace(raw) == "" {
-		return "", fmt.Errorf("note content is required")
-	}
-
-	if len([]byte(raw)) > MaxContentBytes {
-		return "", fmt.Errorf("note content is too large (max %d bytes)", MaxContentBytes)
-	}
-
-	return raw, nil
-}
-
-func WriteFile(workspaceRoot string, key string, content string) (string, error) {
-	root := strings.TrimSpace(workspaceRoot)
-	if root == "" {
-		return "", fmt.Errorf("workspace root is required for note writes")
-	}
-
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return "", err
-	}
-
-	idiomDir := filepath.Join(absRoot, ".idiom")
-	if err := ensureDirectory(idiomDir, 0o700, ".idiom"); err != nil {
-		return "", err
-	}
-
-	noteDir := filepath.Join(idiomDir, "notes")
-	if err := ensureDirectory(noteDir, 0o700, ".idiom/notes"); err != nil {
-		return "", err
-	}
-
-	target := filepath.Join(noteDir, key+".md")
-	if rel, err := filepath.Rel(noteDir, target); err != nil || rel != key+".md" {
-		return "", fmt.Errorf("note path escaped notes directory")
-	}
-
-	if info, err := os.Lstat(target); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("note target is a symlink: %s", filepath.ToSlash(filepath.Join(".idiom", "notes", key+".md")))
-	} else if err != nil && !os.IsNotExist(err) {
-		return "", err
-	}
-
-	tmp, err := os.CreateTemp(noteDir, "."+key+"-*.tmp")
-	if err != nil {
-		return "", err
-	}
-
-	tmpPath := tmp.Name()
-	cleanup := true
-
-	defer func() {
-		if cleanup {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return "", err
-	}
-
-	if _, err := tmp.WriteString(content + "\n"); err != nil {
-		_ = tmp.Close()
-		return "", err
-	}
-
-	if err := tmp.Close(); err != nil {
-		return "", err
-	}
-
-	if err := os.Rename(tmpPath, target); err != nil {
-		return "", err
-	}
-
-	cleanup = false
-
-	return filepath.ToSlash(filepath.Join(".idiom", "notes", key+".md")), nil
-}
-
-func WriteAutoFindings(workspaceRoot string, objective string, summaries []string) (string, error) {
-	var b strings.Builder
-
-	b.WriteString("# Auto-captured findings\n\n")
-	b.WriteString(fmt.Sprintf("Question: %s\n\n", objective))
-	b.WriteString("## Inspected paths\n\n")
-
-	for _, summary := range summaries {
-		if strings.TrimSpace(summary) != "" {
-			b.WriteString(fmt.Sprintf("- %s\n", summary))
-		}
-	}
-
-	return WriteFile(workspaceRoot, "auto-findings", b.String())
-}
-
-func ensureDirectory(path string, perm os.FileMode, label string) error {
-	if info, err := os.Lstat(path); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("%s is a symlink; note writes require a real directory", label)
-		}
-
-		if !info.IsDir() {
-			return fmt.Errorf("%s exists but is not a directory", label)
-		}
-
-		return nil
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-
-	if err := os.Mkdir(path, perm); err != nil {
-		return err
-	}
-
-	info, err := os.Lstat(path)
-	if err != nil {
-		return err
-	}
-
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return fmt.Errorf("%s was not created as a real directory", label)
-	}
-
-	return nil
-}
-
-// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmpb6v622rm.go ---
-const ToolName = "note"
-
-type toolArgs struct {
-	Key     string `json:"key"`
-	Content string `json:"content"`
-}
-
-func ToolDefinition() llama.Tool {
-	return llama.Tool{
-		Type: "function",
-		Function: llama.ToolFunction{
-			Name:        ToolName,
-			Description: "Record an intermediate finding as harness scratch metadata. Notes are stored under .idiom/notes/ and never count as workspace mutations or task evidence.",
-			Parameters:  json.RawMessage(`{"type":"object","properties":{"key":{"type":"string","description":"ASCII slug for this finding, using letters, numbers, dot, underscore, or dash; no paths."},"content":{"type":"string","description":"What you learned. Include file paths, function names, line numbers, and uncertainty."}},"required":["key","content"]}`),
-		},
-	}
-}
-
-func RunTool(workspaceRoot string, raw string) workspace.ToolResult {
-	result := workspace.ToolResult{Tool: ToolName}
-
-	var args toolArgs
-	if err := json.Unmarshal([]byte(raw), &args); err != nil {
-		result.Summary = "Note rejected: invalid arguments"
-		result.Error = "note requires JSON arguments with non-empty key and content"
-		return result
-	}
-
-	key, err := ValidateKey(args.Key)
-	if err != nil {
-		result.Summary = "Note rejected: invalid key"
-		result.Error = err.Error()
-		return result
-	}
-
-	content, err := ValidateContent(args.Content)
-	if err != nil {
-		result.Summary = "Note rejected: invalid content"
-		result.Error = err.Error()
-		return result
-	}
-
-	relPath, err := WriteFile(workspaceRoot, key, content)
-	if err != nil {
-		result.Summary = "Note failed: write rejected"
-		result.Error = err.Error()
-		return result
-	}
-
-	result.Summary = fmt.Sprintf("Note saved: %s", key)
-	result.Output = fmt.Sprintf("Recorded finding %q at %s (%d bytes)", key, relPath, len([]byte(content)))
-	return result
-}
-
-func WriteAutoFindingsFromResults(workspaceRoot string, objective string, results []workspace.ToolResult) (string, error) {
-	summaries := make([]string, 0, len(results))
-	for _, result := range results {
-		if strings.TrimSpace(result.Error) == "" && strings.TrimSpace(result.Summary) != "" {
-			summaries = append(summaries, result.Summary)
-		}
-	}
-
-	return WriteAutoFindings(workspaceRoot, objective, summaries)
 }

@@ -13,7 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -652,13 +652,70 @@ func (m *Model) prepareEditPlanCmd() (tea.Cmd, string, error) {
 		}
 	}
 
-	editor := util.FirstNonEmpty(os.Getenv("VISUAL"), os.Getenv("EDITOR"), "vi")
-	c := exec.Command("sh", "-c", fmt.Sprintf("%s %q", editor, path))
+	editor := textutil.FirstNonEmpty(os.Getenv("VISUAL"), os.Getenv("EDITOR"), "vi")
+	editorArgs, err := splitEditorCommand(editor)
+	if err != nil {
+		return nil, "", err
+	}
+	c := exec.Command(editorArgs[0], append(editorArgs[1:], path)...)
 	teaCmd := tea.ExecProcess(c, func(err error) tea.Msg {
 		return planEditorDoneMsg{err: err}
 	})
 
 	return teaCmd, "Opening plan in editor: " + m.displayPath(path), nil
+}
+
+func splitEditorCommand(command string) ([]string, error) {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return []string{"vi"}, nil
+	}
+
+	var (
+		args    []string
+		current strings.Builder
+		quote   rune
+		escape  bool
+	)
+
+	for _, r := range command {
+		switch {
+		case escape:
+			current.WriteRune(r)
+			escape = false
+		case r == '\\':
+			escape = true
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				current.WriteRune(r)
+			}
+		case r == '\'' || r == '"':
+			quote = r
+		case r == ' ' || r == '\t' || r == '\n':
+			if current.Len() > 0 {
+				args = append(args, current.String())
+				current.Reset()
+			}
+		default:
+			current.WriteRune(r)
+		}
+	}
+
+	if escape {
+		current.WriteRune('\\')
+	}
+	if quote != 0 {
+		return nil, fmt.Errorf("editor command has unterminated quote")
+	}
+	if current.Len() > 0 {
+		args = append(args, current.String())
+	}
+	if len(args) == 0 {
+		return nil, fmt.Errorf("editor command is empty")
+	}
+	return args, nil
 }
 
 // planEditorDoneMsg fires when the external editor exits; Update handles it

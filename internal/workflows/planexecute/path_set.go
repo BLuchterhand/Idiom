@@ -1,6 +1,10 @@
 package planexecute
 
-import "sort"
+import (
+	"sort"
+
+	plancontract "idiom/internal/contracts/plan"
+)
 
 func mergePlanExecutePaths(groups ...[]string) []string {
 	seen := make(map[string]struct{})
@@ -9,7 +13,7 @@ func mergePlanExecutePaths(groups ...[]string) []string {
 
 	for _, group := range groups {
 		for _, path := range group {
-			normalized := normalizePlanExecutePath(path)
+			normalized := plancontract.NormalizeScopePath(path)
 			if normalized == "" {
 				continue
 			}
@@ -26,8 +30,4 @@ func mergePlanExecutePaths(groups ...[]string) []string {
 	sort.Strings(out)
 
 	return out
-}
-
-func MergePlanExecutePaths(groups ...[]string) []string {
-	return mergePlanExecutePaths(groups...)
 }

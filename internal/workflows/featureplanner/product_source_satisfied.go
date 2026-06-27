@@ -3,6 +3,8 @@ package featureplanner
 import (
 	"fmt"
 	"strings"
+
+	featureplannercontract "idiom/internal/contracts/featureplanner"
 )
 
 // ApplyProductSourceSatisfiedCloseout folds a product workflow effort that is
@@ -37,7 +39,7 @@ func ProductSourceSatisfiedCloseout(state FeatureState, brief ProductWorkflowBri
 	}
 
 	event := Event{
-		Type:            EventProductSourceSatisfied,
+		Type:            featureplannercontract.EventName(featureplannercontract.EventProductSourceSatisfied),
 		SessionID:       state.SessionID,
 		Message:         productSourceSatisfiedMessage(brief),
 		FeatureTo:       FeatureStateSourceSatisfied,

@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 type ToolDiscoveryProfile struct {
@@ -43,13 +43,13 @@ func DiscoveryProfileForRequest(req ToolRequest) ToolDiscoveryProfile {
 	case ToolNameContextStatus:
 		return discoveryProfile(ToolNameContextStatus, "targeted", "low", true)
 	case ToolNameContextQuery:
-		return discoveryProfile(ToolNameContextQuery, scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Pattern, req.Query)), "low", true)
+		return discoveryProfile(ToolNameContextQuery, scopeFromPathAndPattern(req.Path, textutil.FirstNonEmpty(req.Pattern, req.Query)), "low", true)
 	case ToolNameContextZoom:
 		return discoveryProfile(ToolNameContextZoom, "targeted", "low", true)
 	case ToolNameContextPack:
-		return discoveryProfile(ToolNameContextPack, scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Task, req.Query, req.Pattern)), "medium", true)
+		return discoveryProfile(ToolNameContextPack, scopeFromPathAndPattern(req.Path, textutil.FirstNonEmpty(req.Task, req.Query, req.Pattern)), "medium", true)
 	case ToolNameContextImpact:
-		return discoveryProfile(ToolNameContextImpact, scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Task, req.Query, req.Pattern)), "medium", true)
+		return discoveryProfile(ToolNameContextImpact, scopeFromPathAndPattern(req.Path, textutil.FirstNonEmpty(req.Task, req.Query, req.Pattern)), "medium", true)
 	case ToolNameContextTracePack:
 		return discoveryProfile("runtime_trace", scopeFromPathAndPattern(req.Path, req.Command), "medium", true)
 	case ToolNameDiscoveryQuery:
@@ -101,7 +101,7 @@ func readOnlyCapabilityDiscoveryProfile(req ToolRequest) ToolDiscoveryProfile {
 	case string(ReadOnlyCapabilityRelatedFiles):
 		routed.Capability = string(CapRelatedFiles)
 	default:
-		return discoveryProfile(ToolNameReadOnlyCapability, scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Pattern, req.Query)), "medium", true)
+		return discoveryProfile(ToolNameReadOnlyCapability, scopeFromPathAndPattern(req.Path, textutil.FirstNonEmpty(req.Pattern, req.Query)), "medium", true)
 	}
 
 	return codeNavigationDiscoveryProfile(routed)
@@ -117,7 +117,7 @@ func codeNavigationDiscoveryProfile(req ToolRequest) ToolDiscoveryProfile {
 		cost = "medium"
 	}
 
-	return discoveryProfile(class, scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Pattern, req.Query)), cost, true)
+	return discoveryProfile(class, scopeFromPathAndPattern(req.Path, textutil.FirstNonEmpty(req.Pattern, req.Query)), cost, true)
 }
 
 func normalizeCodeNavigationCapability(value string) string {

@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"idiom/internal/contracts/autonomy"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 const ToolSchemaExportVersion = "idiom.tool_schema_export.v1"
@@ -393,5 +393,5 @@ func exportedToolSchemaHasCapability(tool ExportedToolSchema, want autonomy.Capa
 }
 
 func compactToolExportStrings(values []string) []string {
-	return util.Sorted(values)
+	return textutil.Sorted(values)
 }

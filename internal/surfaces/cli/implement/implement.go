@@ -1,23 +1,24 @@
 package implement
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"strings"
-	"time"
 
+	"idiom/internal/contracts/autonomy"
+	lanecontract "idiom/internal/contracts/lane"
+	queuecontract "idiom/internal/contracts/queue"
 	"idiom/internal/contracts/writerroute"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
+	"idiom/internal/platform/jsonevents"
+	"idiom/internal/platform/sessionid"
 	"idiom/internal/runtime/queueadmission"
-	"idiom/internal/surfaces/cli/route"
-	"idiom/internal/surfaces/cli/runtime"
-	"idiom/internal/surfaces/cli/telemetry"
-	toolcmd "idiom/internal/surfaces/cli/tool"
-	"idiom/internal/workflows/planexecute"
+	"idiom/internal/runtime/writerrouting"
+	cmdruntime "idiom/internal/surfaces/cli/runtime"
+	cmdtelemetry "idiom/internal/surfaces/cli/telemetry"
 )
 
 type runOptions = cmdruntime.RunOptions
@@ -72,29 +73,32 @@ func runImplementMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wr
 	// same workspace produce attributable conversation logs and (if
 	// they ever submit a plan) attributable plan artifacts. Mirrors
 	// the equivalent generation in runPlanExecuteMain.
-	cfg.Workspace.SessionID = planexecute.NewPlanExecuteSessionID()
-	toolcmd.LogCLIPhase(rec, "implement_start", map[string]any{
+	cfg.Workspace.SessionID = sessionid.New()
+	telemetry.LogPhase(rec, "implement_start", map[string]any{
 		"json_events": opts.JSONEvents,
 		"resume":      strings.TrimSpace(opts.Resume) != "",
 		"session_id":  cfg.Workspace.SessionID,
 		"local_ops":   cmdtelemetry.LocalOpsFields(cfg, "implement"),
 	})
 
-	decision := cmdroute.BuildDecision(cfg, cmdroute.Options{
+	decision := writerrouting.BuildDecision(cfg, writerrouting.DecisionOptions{
 		Mode:              writerroute.ModeAgenticGuarded,
-		Lane:              "implement",
-		TaskFamily:        "implementation",
-		ReasonCodes:       []string{"route.local_model_default"},
+		Lane:              string(lanecontract.LaneImplement),
+		TaskFamily:        string(autonomy.TaskFamilyImplementation),
+		ReasonCodes:       []writerroute.ReasonCode{writerroute.ReasonLocalModelDefault},
 		VerificationOwner: implementWriterRouteVerificationOwner(opts),
 	})
-	emitImplementJSONEvent(stdout, opts.JSONEvents, "writer_route_decision", decision.EventFields())
+	if err := emitImplementJSONEvent(stdout, opts.JSONEvents, writerroute.EventWriterRouteDecision, decision.EventFields()); err != nil {
+		fmt.Fprintf(stderr, "implement: write json event: %v\n", err)
+		return 1
+	}
 
-	// Queue gate: same opportunistic acquire pattern as plan-execute.
-	// When the queue daemon is up, concurrent `idiom implement` runs
-	// serialize through the configured pool instead of trampling the
-	// MLX backend at once.
-	queueRelease := implementAcquireQueueSlot(cfg, cfg.Workspace.SessionID, stdout, stderr, opts.JSONEvents, rec)
-	defer queueRelease()
+	queueResult := implementAcquireQueueSlot(cfg, cfg.Workspace.SessionID, stdout, stderr, opts.JSONEvents, rec)
+	defer queueResult.Release()
+	if !queueResult.Allowed {
+		fmt.Fprintf(stderr, "implement: queue admission required but unavailable: state=%s pool=%s reason=%s\n", queueResult.State, queueResult.Pool, queueResult.Reason)
+		return 1
+	}
 
 	prompt, err := implementPrompt(opts)
 	if err != nil {
@@ -106,7 +110,7 @@ func runImplementMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wr
 	answer, err := promptRun(cfg, prompt, runOptions{
 		JSONEvents:               opts.JSONEvents,
 		Resume:                   opts.Resume,
-		TaskFamily:               "implementation",
+		TaskFamily:               string(autonomy.TaskFamilyImplementation),
 		PlannerOwnedVerification: opts.PlannerOwnedVerification && !opts.AllowBuildTests,
 		MaxTokensOverride:        opts.MaxTokens,
 		DisableThinking:          opts.DisableThinking,
@@ -125,49 +129,38 @@ func runImplementMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wr
 	return 0
 }
 
-func implementWriterRouteVerificationOwner(opts implementOptions) string {
+func implementWriterRouteVerificationOwner(opts implementOptions) writerroute.VerificationOwner {
 	if opts.PlannerOwnedVerification && !opts.AllowBuildTests {
-		return "planner_owned"
+		return writerroute.VerificationOwnerPlannerOwned
 	}
 
-	return "executor"
+	return writerroute.VerificationOwnerExecutor
 }
 
 // implementAcquireQueueSlot wraps the shared queue admission contract with
 // implement-specific labels and event names.
-func implementAcquireQueueSlot(cfg config.Config, sessionID string, stdout io.Writer, stderr io.Writer, jsonEvents bool, rec *telemetry.Recorder) func() {
+func implementAcquireQueueSlot(cfg config.Config, sessionID string, stdout io.Writer, stderr io.Writer, jsonEvents bool, rec *telemetry.Recorder) queueadmission.Result {
 	label := "implement:" + sessionID
 	client := fmt.Sprintf("idiom-implement/%d", os.Getpid())
 
-	return queueadmission.Acquire(cfg, queueadmission.Options{
+	return queueadmission.AcquireWithResult(cfg, queueadmission.Options{
 		Command:        "implement",
-		EventPrefix:    "idiom.implement",
+		EventPrefix:    queuecontract.CommandEventPrefixImplement,
 		TelemetryEvent: "implement_queue",
 		Label:          label,
 		Client:         client,
 		JSONEvents:     jsonEvents,
+		Mode:           queuecontract.AdmissionModeRequired,
 	}, rec, stdout, stderr)
 }
 
-func emitImplementJSONEvent(stdout io.Writer, jsonEvents bool, eventType string, fields map[string]any) {
-	if !jsonEvents {
-		return
-	}
-
-	payload := map[string]any{
-		"type": "idiom.implement." + eventType,
-		"ts":   time.Now().UTC().Format(time.RFC3339Nano),
-	}
-	for key, value := range fields {
-		payload[key] = value
-	}
-
-	body, err := json.Marshal(payload)
+func emitImplementJSONEvent(stdout io.Writer, jsonEvents bool, eventType writerroute.EventType, fields map[string]any) error {
+	eventName, err := writerroute.CommandEventName(writerroute.CommandSurfaceImplement, eventType)
 	if err != nil {
-		return
+		return err
 	}
 
-	fmt.Fprintln(stdout, string(body))
+	return jsonevents.Emit(stdout, jsonEvents, eventName, fields)
 }
 
 func parseImplementOptions(args []string, stderr io.Writer) (implementOptions, error) {

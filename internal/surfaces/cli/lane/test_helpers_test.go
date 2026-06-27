@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"idiom/internal/surfaces/cli/telemetry"
+	cmdtelemetry "idiom/internal/surfaces/cli/telemetry"
 )
 
 func cliAssetPath(elem ...string) string {
@@ -93,39 +93,6 @@ func readMainTelemetryRecords(t *testing.T, path string) []map[string]any {
 	}
 
 	return records
-}
-
-func planExecuteJSONEvents(t *testing.T, stdout string) []map[string]any {
-	t.Helper()
-
-	var events []map[string]any
-
-	for _, line := range strings.Split(stdout, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || !strings.HasPrefix(line, "{") {
-			continue
-		}
-
-		var event map[string]any
-
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			t.Fatalf("decode JSON event %q: %v", line, err)
-		}
-
-		events = append(events, event)
-	}
-
-	return events
-}
-
-func planExecuteEventByType(events []map[string]any, eventType string) (map[string]any, bool) {
-	for _, event := range events {
-		if event["type"] == eventType {
-			return event, true
-		}
-	}
-
-	return nil, false
 }
 
 func jsonEventStringSliceContains(value any, want string) bool {

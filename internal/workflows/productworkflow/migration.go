@@ -25,7 +25,7 @@ type ProductStatusMigrationContractInput struct {
 }
 
 type ProductStatusMigrationPlan struct {
-	Status               string                          `json:"status"`
+	Status               ProductWorkflowStatus           `json:"status"`
 	EffortID             string                          `json:"effort_id"`
 	SourceStatusBucket   string                          `json:"source_status_bucket"`
 	TargetStatusBucket   string                          `json:"target_status_bucket"`
@@ -260,12 +260,12 @@ func PlanProductStatusMigration(workflowState WorkflowState, effortIndex EffortI
 	plan.UpdatedEffortIndex = updatedIndex
 	plan.UpdatedIndexEntry = updatedIndexEntry
 	plan.Event = ProductStatusMigrationEvent{
-		Event:     "status_migration_planned",
+		Event:     string(ProductWorkflowEventStatusMigrationPlanned),
 		EventID:   strings.TrimSpace(options.MigrationEventID),
 		EffortID:  workflowState.EffortID,
 		TaskID:    workflowState.TaskID,
 		Timestamp: strings.TrimSpace(options.UpdatedAt),
-		Source:    "product_status_migration_planner",
+		Source:    string(ProductWorkflowEventSourceStatusMigrationPlanner),
 		Details: ProductStatusMigrationEventDetail{
 			FromStatusBucket: workflowState.StatusBucket,
 			ToStatusBucket:   targetBucket,

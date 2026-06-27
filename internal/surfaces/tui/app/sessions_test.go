@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
+
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/llama"
+	"idiom/internal/runtime/sessionlog"
 	"idiom/internal/workflows/featureplanner"
 )
 
@@ -37,7 +39,7 @@ func writeSessionLog(t *testing.T, dir string, name string, lines []string) stri
 
 func TestResolveSessionLogPathFromID(t *testing.T) {
 	cfg := config.Config{Chat: config.Chat{DebugLogDir: "/tmp/conv"}}
-	got := ResolveSessionLogPath(cfg, "20260418-055543.504")
+	got := sessionlog.ResolveSessionLogPath(cfg, "20260418-055543.504")
 	want := filepath.Join("/tmp/conv", "20260418-055543.504.jsonl")
 
 	if got != want {
@@ -47,11 +49,11 @@ func TestResolveSessionLogPathFromID(t *testing.T) {
 
 func TestResolveSessionLogPathFromPath(t *testing.T) {
 	cfg := config.Config{Chat: config.Chat{DebugLogDir: "/tmp/conv"}}
-	if got := ResolveSessionLogPath(cfg, "logs/conversations/foo.jsonl"); got != "logs/conversations/foo.jsonl" {
+	if got := sessionlog.ResolveSessionLogPath(cfg, "logs/conversations/foo.jsonl"); got != "logs/conversations/foo.jsonl" {
 		t.Errorf("path-form unchanged but got %q", got)
 	}
 
-	if got := ResolveSessionLogPath(cfg, "/abs/foo"); got != "/abs/foo.jsonl" {
+	if got := sessionlog.ResolveSessionLogPath(cfg, "/abs/foo"); got != "/abs/foo.jsonl" {
 		t.Errorf("abs-form should append .jsonl: %q", got)
 	}
 }
@@ -74,7 +76,7 @@ func TestListRecordedSessionsSummarizesNewestFirst(t *testing.T) {
 	})
 	writeSessionLog(t, dir, "skipme.txt", []string{"not a session"})
 
-	got, err := ListRecordedSessions(cfg)
+	got, err := sessionlog.ListRecordedSessions(cfg)
 	if err != nil {
 		t.Fatalf("ListRecordedSessions: %v", err)
 	}
@@ -101,26 +103,26 @@ func TestListRecordedSessionsCapsSummarizedHistory(t *testing.T) {
 	dir := t.TempDir()
 	cfg := config.Config{Chat: config.Chat{DebugLogDir: dir}}
 
-	for i := 0; i < maxRecordedSessionsScanned+1; i++ {
+	for i := 0; i < sessionlog.MaxRecordedSessionsScanned+1; i++ {
 		writeSessionLog(t, dir, fmt.Sprintf("20260419-100000.%03d.jsonl", i), []string{
 			`{"type":"message","role":"user","content":"prompt"}`,
 		})
 	}
 
-	got, err := ListRecordedSessions(cfg)
+	got, err := sessionlog.ListRecordedSessions(cfg)
 	if err != nil {
 		t.Fatalf("ListRecordedSessions: %v", err)
 	}
 
-	if len(got) != maxRecordedSessionsScanned {
-		t.Fatalf("expected capped session count %d, got %d", maxRecordedSessionsScanned, len(got))
+	if len(got) != sessionlog.MaxRecordedSessionsScanned {
+		t.Fatalf("expected capped session count %d, got %d", sessionlog.MaxRecordedSessionsScanned, len(got))
 	}
 }
 
 func TestListRecordedSessionsMissingDir(t *testing.T) {
 	cfg := config.Config{Chat: config.Chat{DebugLogDir: filepath.Join(t.TempDir(), "does-not-exist")}}
 
-	got, err := ListRecordedSessions(cfg)
+	got, err := sessionlog.ListRecordedSessions(cfg)
 	if err != nil {
 		t.Fatalf("missing dir should not error: %v", err)
 	}

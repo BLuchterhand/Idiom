@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/comprehension"
 )
 
@@ -370,22 +370,18 @@ func diagnosticToolForGraphLanguage(language string) string {
 }
 
 func relationshipToolsForGraphLanguage(language string) map[string]string {
-	switch language {
-	case "go":
-		return map[string]string{string(CapReferences): "go_references", string(CapCallsFrom): "go_calls_from", string(CapCallsInto): "go_calls_into", string(CapImplementations): "go_implementations"}
-	case "cpp":
-		return map[string]string{string(CapReferences): "cpp_references", string(CapCallsFrom): "cpp_calls_from", string(CapCallsInto): "cpp_calls_into", string(CapImplementations): "cpp_implementations"}
-	case "python":
-		return map[string]string{string(CapReferences): "python_references", string(CapCallsFrom): "python_calls_from", string(CapCallsInto): "python_calls_into", string(CapImplementations): "python_implementations"}
-	case "typescript", "javascript":
-		return map[string]string{string(CapReferences): "ts_references", string(CapCallsFrom): "ts_calls_from", string(CapCallsInto): "ts_calls_into", string(CapImplementations): "ts_implementations"}
-	case "rust":
-		return map[string]string{string(CapReferences): "rust_references", string(CapCallsFrom): "rust_calls_from", string(CapCallsInto): "rust_calls_into", string(CapImplementations): "rust_implementations"}
-	case "java":
-		return map[string]string{string(CapReferences): "java_references", string(CapCallsFrom): "java_calls_from", string(CapCallsInto): "java_calls_into", string(CapImplementations): "java_implementations"}
-	default:
+	lang, ok := LanguageForName(language)
+	if !ok {
 		return nil
 	}
+
+	out := map[string]string{}
+	for _, capability := range []Capability{CapReferences, CapCallsFrom, CapCallsInto, CapImplementations} {
+		if tool := strings.TrimSpace(lang.Tool(capability)); tool != "" {
+			out[string(capability)] = tool
+		}
+	}
+	return out
 }
 
 func languageEnrichmentTools(language string) []string {
@@ -631,7 +627,7 @@ func (lookup graphRelationshipLookup) resolveSymbolFromText(text string) string 
 	if name, location, ok := strings.Cut(text, " in "); ok {
 		path, line, rest, found := parseToolLocationText(location, lookup.root)
 		if found {
-			if node, ok := lookup.symbolAt(path, line, util.FirstNonEmpty(strings.TrimSpace(name), firstToolName(rest))); ok {
+			if node, ok := lookup.symbolAt(path, line, textutil.FirstNonEmpty(strings.TrimSpace(name), firstToolName(rest))); ok {
 				return node.ID
 			}
 		}
@@ -868,7 +864,7 @@ func graphNameLookupKeys(values ...string) []string {
 		}
 	}
 
-	return util.UniqueNonEmpty(keys)
+	return textutil.UniqueNonEmpty(keys)
 }
 
 func graphSymbolMatchesName(node comprehension.Node, name string) bool {

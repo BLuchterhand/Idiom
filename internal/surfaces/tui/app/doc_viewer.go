@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	planartifact "idiom/internal/contracts/planartifact"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -30,24 +32,24 @@ func (m *Model) currentPlanArtifactPath() string {
 	return filepath.Join(root, ".idiom", "plans", "last.plan.json")
 }
 
-func (m *Model) loadDocViewerArtifact() (workspace.PlanArtifact, string, error) {
+func (m *Model) loadDocViewerArtifact() (planartifact.PlanArtifact, string, error) {
 	path := m.currentPlanArtifactPath()
 
 	info, err := os.Stat(path)
 	if err != nil {
 		m.docViewer.artifactPath = path
 		m.docViewer.artifactMTime = time.Time{}
-		m.docViewer.artifact = workspace.PlanArtifact{}
+		m.docViewer.artifact = planartifact.PlanArtifact{}
 		m.docViewer.loaded = false
 
 		if os.IsNotExist(err) {
 			m.docViewer.loadError = ""
-			return workspace.PlanArtifact{}, path, nil
+			return planartifact.PlanArtifact{}, path, nil
 		}
 
 		m.docViewer.loadError = err.Error()
 
-		return workspace.PlanArtifact{}, path, err
+		return planartifact.PlanArtifact{}, path, err
 	}
 
 	if m.docViewer.loaded && m.docViewer.artifactPath == path && info.ModTime().Equal(m.docViewer.artifactMTime) {
@@ -58,11 +60,11 @@ func (m *Model) loadDocViewerArtifact() (workspace.PlanArtifact, string, error) 
 	if err != nil {
 		m.docViewer.artifactPath = path
 		m.docViewer.artifactMTime = info.ModTime()
-		m.docViewer.artifact = workspace.PlanArtifact{}
+		m.docViewer.artifact = planartifact.PlanArtifact{}
 		m.docViewer.loaded = false
 		m.docViewer.loadError = err.Error()
 
-		return workspace.PlanArtifact{}, path, err
+		return planartifact.PlanArtifact{}, path, err
 	}
 
 	m.docViewer.artifactPath = path
@@ -137,17 +139,17 @@ func (m *Model) renderDocViewerEmpty(b *strings.Builder, w int, path string, det
 	}
 }
 
-func (m *Model) renderDocViewerMetadata(b *strings.Builder, w int, artifact workspace.PlanArtifact, path string) {
+func (m *Model) renderDocViewerMetadata(b *strings.Builder, w int, artifact planartifact.PlanArtifact, path string) {
 	rows := []string{
 		"Plan: " + firstNonEmptyDocValue(artifact.PlanID, "(no plan id)"),
 		"Schema: " + firstNonEmptyDocValue(artifact.SchemaVersion, "(unknown)"),
 		"Created: " + firstNonEmptyDocValue(artifact.Created, "(unknown)"),
 		"Session: " + firstNonEmptyDocValue(artifact.SessionID, "(none)"),
-		"Contract: " + firstNonEmptyDocValue(artifact.Contract.Kind, "(none)") +
+		"Contract: " + firstNonEmptyDocValue(string(artifact.Contract.Kind), "(none)") +
 			" · permission " + firstNonEmptyDocValue(artifact.Contract.PermissionProfile, "(none)"),
-		"Approval: " + firstNonEmptyDocValue(artifact.Approval.Status, "(none)") +
-			" · " + firstNonEmptyDocValue(artifact.Approval.ExecutionPermission, "(none)"),
-		"Handoff: " + firstNonEmptyDocValue(artifact.Handoff.Status, "(none)") +
+		"Approval: " + firstNonEmptyDocValue(string(artifact.Approval.Status), "(none)") +
+			" · " + firstNonEmptyDocValue(string(artifact.Approval.ExecutionPermission), "(none)"),
+		"Handoff: " + firstNonEmptyDocValue(string(artifact.Handoff.Status), "(none)") +
 			" · ready " + fmt.Sprint(artifact.Handoff.Ready),
 		"Pack: " + firstNonEmptyDocValue(artifact.PackID, firstNonEmptyDocValue(artifact.Packet.PackID, "(none)")),
 		"Path: " + m.displayPath(path),
@@ -161,7 +163,7 @@ func (m *Model) renderDocViewerMetadata(b *strings.Builder, w int, artifact work
 	}
 }
 
-func (m *Model) renderDocViewerEdits(b *strings.Builder, w int, edits []workspace.PlanEdit) {
+func (m *Model) renderDocViewerEdits(b *strings.Builder, w int, edits []planartifact.PlanEdit) {
 	if len(edits) == 0 {
 		writeDocViewerWrappedLine(b, w, panelDetailStyle, "No edits in artifact.")
 
@@ -266,7 +268,7 @@ func (m *Model) handleDocViewerPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	return false, nil
 }
 
-func planEditUnifiedDiff(edit workspace.PlanEdit) string {
+func planEditUnifiedDiff(edit planartifact.PlanEdit) string {
 	var b strings.Builder
 
 	path := firstNonEmptyDocValue(edit.Path, "unknown")
@@ -320,7 +322,7 @@ func splitDiffBody(body string) []string {
 	return strings.Split(body, "\n")
 }
 
-func editShapeLabel(edit workspace.PlanEdit) string {
+func editShapeLabel(edit planartifact.PlanEdit) string {
 	switch {
 	case edit.ReplaceAll:
 		return "replace_all"

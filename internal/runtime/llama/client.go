@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"idiom/internal/platform/config"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 const loadingModelRetryDelay = 500 * time.Millisecond
@@ -270,10 +270,18 @@ func buildChatTemplateKwargs(opts ChatOptions, backend string) *chatTemplateKwar
 	}
 
 	return &chatTemplateKwargs{
-		EnableThinking:   util.ClonePtr(opts.EnableThinking),
+		EnableThinking:   clonePtr(opts.EnableThinking),
 		PreserveThinking: opts.PreserveThinking,
 		ThinkingBudget:   opts.ThinkingBudget,
 	}
+}
+
+func clonePtr[T any](value *T) *T {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func normalizeChatRequestForBackend(req *chatRequest, opts ChatOptions, backend string) {
@@ -621,7 +629,7 @@ func hostedChatRequestPayload(messages []ChatMessage, opts ChatOptions, stream b
 }
 
 func hostedBackendSupportsThinkingToggle(backend string) bool {
-	return isZAIFamilyBackend(backend) || util.EqualTrimFold(backend, config.BackendDeepSeek)
+	return isZAIFamilyBackend(backend) || textutil.EqualTrimFold(backend, config.BackendDeepSeek)
 }
 
 func hostedBackendSupportsReasoningEffort(backend string) bool {
@@ -629,7 +637,7 @@ func hostedBackendSupportsReasoningEffort(backend string) bool {
 }
 
 func isZAIFamilyBackend(backend string) bool {
-	return util.EqualTrimFold(backend, config.BackendZAI) || util.EqualTrimFold(backend, config.BackendGLM)
+	return textutil.EqualTrimFold(backend, config.BackendZAI) || textutil.EqualTrimFold(backend, config.BackendGLM)
 }
 
 // repairMessageToolPairing ensures every assistant message with tool_calls
@@ -712,7 +720,7 @@ func hostedChatMessages(messages []ChatMessage, backend string) []ChatMessage {
 	// DeepSeek hosted-chat requires reasoning_content continuity in history
 	// when the prior response was in thinking mode. Preserve the field on
 	// assistant messages; other roles should not carry it.
-	preserveReasoning := util.EqualTrimFold(backend, config.BackendDeepSeek)
+	preserveReasoning := textutil.EqualTrimFold(backend, config.BackendDeepSeek)
 	out := make([]ChatMessage, len(messages))
 
 	for i, msg := range messages {

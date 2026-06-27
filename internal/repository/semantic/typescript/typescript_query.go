@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 type TsSymbolMatch struct {
@@ -174,7 +174,7 @@ func (idx *TsIndex) FindCallsInto(pattern string, limit int) []TsCallMatch {
 						StartLine: symbol.StartLine,
 						EndLine:   symbol.EndLine,
 					},
-					CalleeName: util.FirstNonEmpty(target.Qualified, target.Name),
+					CalleeName: textutil.FirstNonEmpty(target.Qualified, target.Name),
 					Line:       call.Line,
 					Score:      target.Score,
 				})

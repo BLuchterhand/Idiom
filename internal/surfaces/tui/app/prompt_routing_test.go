@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/workflowstate"
 	"idiom/internal/platform/config"
 )
 
@@ -53,6 +54,20 @@ func TestHasReadableWorkspaceFilesDetectsProjectEvidence(t *testing.T) {
 				t.Fatalf("hasReadableWorkspaceFiles()=%t, want %t", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestPromptContextPacketProjectionCarriesTerminalStateWhenBlocked(t *testing.T) {
+	projection := promptContextPacketProjection("plain prompt without packet headings")
+
+	if projection.State != workflowstate.StateTerminal {
+		t.Fatalf("state = %q, want terminal", projection.State)
+	}
+	if projection.TerminalState != workflowstate.TerminalStateBlocked {
+		t.Fatalf("terminal_state = %q, want blocked", projection.TerminalState)
+	}
+	if projection.Dispatchable {
+		t.Fatal("missing context packet must not be dispatchable")
 	}
 }
 

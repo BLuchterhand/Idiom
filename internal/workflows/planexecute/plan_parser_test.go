@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"idiom/internal/workflows/workflowstate"
+	"idiom/internal/contracts/workflowstate"
 )
 
 func TestPlanExecuteExactPlanEditsRequiresDispatchableStateBeforeHeadingScan(t *testing.T) {
@@ -42,5 +42,19 @@ func TestPlanExecuteExactPlanEditsUsesLegacyHeadingOnlyWhenDispatchable(t *testi
 		!strings.Contains(edits[0].NewText, "return 2") {
 
 		t.Fatalf("unexpected parsed edit: %#v", edits[0])
+	}
+}
+
+func TestPlanExecuteExactPlanDispatchStateCarriesTerminalStateForMissingScope(t *testing.T) {
+	state := planExecuteExactPlanDispatchState(nil)
+
+	if state.State != workflowstate.StateTerminal {
+		t.Fatalf("state = %q, want terminal", state.State)
+	}
+	if state.TerminalState != workflowstate.TerminalStateMissingScope {
+		t.Fatalf("terminal_state = %q, want missing-scope", state.TerminalState)
+	}
+	if state.Dispatchable {
+		t.Fatal("missing required paths must not be dispatchable")
 	}
 }

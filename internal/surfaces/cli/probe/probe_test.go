@@ -8,12 +8,11 @@ import (
 	"testing"
 )
 
-// TestRunProbeLanePassesForBothModesByDefault is the canonical
+// TestRunProbeLanePassesForAllFamiliesByDefault is the canonical
 // happy path: with --mode all (the default), the probe runs both
-// implement and plan-execute under both BuildMode and PlanMode (4
-// cases total) and exits 0 when all pass. The PASS lines hit
+// implement and plan-execute once and exits 0 when all pass. The PASS lines hit
 // stdout so shell wrappers can grep the result.
-func TestRunProbeLanePassesForBothModesByDefault(t *testing.T) {
+func TestRunProbeLanePassesForAllFamiliesByDefault(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
 	code := Run([]string{"lane"}, &stdout, &stderr)
@@ -23,7 +22,7 @@ func TestRunProbeLanePassesForBothModesByDefault(t *testing.T) {
 	}
 
 	out := stdout.String()
-	for _, want := range []string{"PASS implement(build)", "PASS plan-execute(build)"} {
+	for _, want := range []string{"PASS implement", "PASS plan-execute"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in output: %s", want, out)
 		}
@@ -31,9 +30,8 @@ func TestRunProbeLanePassesForBothModesByDefault(t *testing.T) {
 }
 
 // TestRunProbeLaneAcceptsExplicitModeFlag verifies the filter:
-// passing --mode implement runs only the implement family (still
-// covering both agent modes within it). plan-execute output must
-// be absent.
+// passing --mode implement runs only the implement family. plan-execute output
+// must be absent.
 func TestRunProbeLaneAcceptsExplicitModeFlag(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
@@ -44,8 +42,8 @@ func TestRunProbeLaneAcceptsExplicitModeFlag(t *testing.T) {
 	}
 
 	out := stdout.String()
-	if !strings.Contains(out, "PASS implement(build)") {
-		t.Fatalf("expected PASS implement(build): %s", out)
+	if !strings.Contains(out, "PASS implement") {
+		t.Fatalf("expected PASS implement: %s", out)
 	}
 
 	if strings.Contains(out, "plan-execute") {
@@ -89,7 +87,7 @@ func TestRunProbeLaneFallsBackWhenConfigMissing(t *testing.T) {
 		t.Fatalf("stderr should explain the resolved source: %s", stderr.String())
 	}
 
-	if !strings.Contains(stdout.String(), "PASS implement(build)") {
+	if !strings.Contains(stdout.String(), "PASS implement") {
 		t.Fatalf("probe should still PASS via the default surface: %s", stdout.String())
 	}
 }
@@ -156,7 +154,7 @@ func TestRunProbeLaneResolvesConfigUnderProjectRoot(t *testing.T) {
 		t.Fatalf("project-root config must NOT trigger the synthetic fallback: %s", stderr.String())
 	}
 
-	if !strings.Contains(stdout.String(), "PASS implement(build)") {
+	if !strings.Contains(stdout.String(), "PASS implement") {
 		t.Fatalf("probe must PASS with the resolved config: %s", stdout.String())
 	}
 }
@@ -191,31 +189,18 @@ func TestRunProbeLaneExplicitConfigOverridesProjectRoot(t *testing.T) {
 	}
 }
 
-// TestRunProbeLaneCrossModeCoverage verifies the regression-class
-// guard added in this pass: every user-facing probe runs under both
-// BuildMode and PlanMode so a future refactor that makes
-// normalizeTurnRoutePlan mode-dependent for explicit_task_family
-// flips this from PASS to FAIL. Today the routing is mode-stable
-// for that family and all four cases pass.
-func TestRunProbeLaneCrossModeCoverage(t *testing.T) {
+func TestRunProbeLaneDoesNotClaimCrossModeCoverage(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
 	code := Run([]string{"lane"}, &stdout, &stderr)
 
 	if code != 0 {
-		t.Fatalf("cross-mode probe must exit 0; got %d (stderr=%s)", code, stderr.String())
+		t.Fatalf("probe must exit 0; got %d (stderr=%s)", code, stderr.String())
 	}
 
 	out := stdout.String()
-	for _, want := range []string{
-		"PASS implement(build)",
-		"PASS implement(plan)",
-		"PASS plan-execute(build)",
-		"PASS plan-execute(plan)",
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("missing %q in output: %s", want, out)
-		}
+	if strings.Contains(out, "(build)") || strings.Contains(out, "(plan)") {
+		t.Fatalf("probe must not claim cross-mode coverage: %s", out)
 	}
 }
 

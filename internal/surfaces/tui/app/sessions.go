@@ -1,179 +1,16 @@
 package app
 
 import (
-	"cmp"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-	"slices"
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
-	"idiom/internal/platform/config"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/jsonl"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/llama"
 )
-
-// SessionInfo describes a recorded session under the chat debug-log directory.
-type SessionInfo struct {
-	ID            string
-	Path          string
-	UserMessages  int
-	AssistMessage int
-	FirstPrompt   string
-}
-
-const maxRecordedSessionsScanned = 200
-
-// ResolveSessionLogPath returns the JSONL path for the given session id under
-// the configured debug-log directory. If id already looks like a path it is
-// returned unchanged. The .jsonl extension is appended when missing.
-func ResolveSessionLogPath(cfg config.Config, id string) string {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return ""
-	}
-
-	if strings.ContainsAny(id, string(os.PathSeparator)+"/") || strings.HasSuffix(id, ".jsonl") {
-		if !strings.HasSuffix(id, ".jsonl") {
-			id += ".jsonl"
-		}
-
-		return id
-	}
-
-	dir := recordedSessionLogDir(cfg)
-
-	return filepath.Join(dir, id+".jsonl")
-}
-
-// ListRecordedSessions returns the recorded sessions in the configured
-// debug-log directory, sorted newest-first by id (id is a sortable timestamp).
-func ListRecordedSessions(cfg config.Config) ([]SessionInfo, error) {
-	sessionFiles, err := listRecordedSessionFiles(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	sessions := make([]SessionInfo, 0, len(sessionFiles))
-	for _, sessionFile := range sessionFiles {
-		info := summarizeSessionLog(sessionFile.Path)
-		info.ID = sessionFile.ID
-		info.Path = sessionFile.Path
-		if !isUserVisibleSession(info) {
-			continue
-		}
-
-		sessions = append(sessions, info)
-	}
-
-	return sessions, nil
-}
-
-func recordedSessionLogDir(cfg config.Config) string {
-	dir := strings.TrimSpace(cfg.Chat.DebugLogDir)
-	if dir == "" {
-		dir = "logs/conversations"
-	}
-
-	return dir
-}
-
-func listRecordedSessionFiles(cfg config.Config) ([]SessionInfo, error) {
-	dir := recordedSessionLogDir(cfg)
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-
-		return nil, fmt.Errorf("read debug log dir %q: %w", dir, err)
-	}
-
-	sessionFiles := make([]SessionInfo, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-
-		name := entry.Name()
-		if !strings.HasSuffix(name, ".jsonl") {
-			continue
-		}
-
-		id := strings.TrimSuffix(name, ".jsonl")
-		path := filepath.Join(dir, name)
-		sessionFiles = append(sessionFiles, SessionInfo{ID: id, Path: path})
-	}
-
-	slices.SortFunc(sessionFiles, func(a, b SessionInfo) int {
-		return -cmp.Compare(a.ID, b.ID)
-	})
-
-	if len(sessionFiles) > maxRecordedSessionsScanned {
-		sessionFiles = sessionFiles[:maxRecordedSessionsScanned]
-	}
-
-	return sessionFiles, nil
-}
-
-func summarizeSessionLog(path string) SessionInfo {
-	info := SessionInfo{}
-
-	_ = util.ScanFile(path, func(raw json.RawMessage) error {
-		var record map[string]any
-
-		if err := json.Unmarshal(raw, &record); err != nil {
-			return nil
-		}
-
-		if record["type"] != "message" {
-			return nil
-		}
-
-		role, _ := record["role"].(string)
-		content, _ := record["content"].(string)
-
-		switch role {
-		case "user":
-			info.UserMessages++
-			if info.FirstPrompt == "" {
-				info.FirstPrompt = oneLineSummary(content, 80)
-			}
-		case "assistant":
-			info.AssistMessage++
-		}
-
-		return nil
-	})
-
-	return info
-}
-
-func isUserVisibleSession(info SessionInfo) bool {
-	return info.UserMessages > 0
-}
-
-func oneLineSummary(text string, max int) string {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return ""
-	}
-
-	if idx := strings.IndexByte(text, '\n'); idx >= 0 {
-		text = text[:idx]
-	}
-
-	text = strings.TrimSpace(text)
-	if len(text) > max {
-		text = text[:max-1] + "…"
-	}
-
-	return text
-}
 
 type sessionReplay struct {
 	messages []llama.ChatMessage
@@ -283,7 +120,7 @@ func replaySessionLog(path string) (sessionReplay, error) {
 		entry.summary = localFallbackSummary(entry)
 	}
 
-	err := util.ScanFile(path, func(raw json.RawMessage) error {
+	err := jsonl.ScanFile(path, func(raw json.RawMessage) error {
 		var record map[string]any
 
 		if err := json.Unmarshal(raw, &record); err != nil {
@@ -326,7 +163,7 @@ func replaySessionLog(path string) (sessionReplay, error) {
 		case "tool_request":
 			entry := ensureAgent()
 			event := sessionToolRequestEvent(record)
-			line := sessionToolLine(event.Request.Tool, util.FirstNonEmpty(event.Request.Description, sessionStringField(record, "action"), sessionStringField(record, "raw")))
+			line := sessionToolLine(event.Request.Tool, textutil.FirstNonEmpty(event.Request.Description, sessionStringField(record, "action"), sessionStringField(record, "raw")))
 			entry.upsertToolCall(event.Step, line, toolRequestIntent(event), true, historyToolAuditKind(event), "")
 
 			entry.summary = localFallbackSummary(entry)
@@ -335,7 +172,7 @@ func replaySessionLog(path string) (sessionReplay, error) {
 			step := sessionIntField(record, "step")
 			tool := sessionStringField(record, "tool")
 			summary := sessionStringField(record, "summary")
-			line := sessionToolLine(tool, util.FirstNonEmpty(summary, sessionStringField(record, "path"), "completed"))
+			line := sessionToolLine(tool, textutil.FirstNonEmpty(summary, sessionStringField(record, "path"), "completed"))
 			entry.upsertToolCall(step, line, "", false, "", sessionToolResultOutcome(record))
 
 			entry.auditEvents = append(entry.auditEvents, sessionContextAuditEvents(record)...)
@@ -458,7 +295,7 @@ func sessionContextAuditEvents(record map[string]any) []historyAuditEvent {
 			files = sessionIntField(record, "context_freshness_refresh_files_indexed")
 		}
 
-		reason := util.FirstNonEmpty(sessionStringField(record, "context_auto_refresh_reason"), sessionStringField(record, "context_freshness_reason"))
+		reason := textutil.FirstNonEmpty(sessionStringField(record, "context_auto_refresh_reason"), sessionStringField(record, "context_freshness_reason"))
 		label := "context freshness refresh"
 
 		if files > 0 {

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"idiom/internal/evidence/telemetry"
-	"idiom/internal/surfaces/cli/telemetry"
+	cmdtelemetry "idiom/internal/surfaces/cli/telemetry"
 	"idiom/internal/workflows/productworkflow"
 	"idiom/internal/workflows/recovery"
 )
@@ -6928,13 +6928,17 @@ func TestProductTDDCoverageGateEmitsCoverageGateEvaluatedTelemetry(t *testing.T)
 	}
 
 	records := readMainTelemetryRecords(t, rec.Path())
-	record := findTelemetryRecord(records, "coverage_gate_evaluated")
+	if legacy := findTelemetryRecord(records, "product_tdd_coverage_gate_evaluated"); legacy != nil {
+		t.Fatalf("coverage gate must not emit legacy raw telemetry event: %#v", legacy)
+	}
+
+	record := findTelemetryRecord(records, string(productworkflow.ProductWorkflowEventCoverageGateEvaluated))
 
 	if record == nil {
 		t.Fatalf("missing coverage_gate_evaluated telemetry: %#v", records)
 	}
 
-	if record["event"] != "coverage_gate_evaluated" || record["task_id"] != "impl-test" || record["gate_result"] != "pass" {
+	if record["event"] != string(productworkflow.ProductWorkflowEventCoverageGateEvaluated) || record["task_id"] != "impl-test" || record["gate_result"] != "pass" {
 		t.Fatalf("unexpected coverage gate event identity: %#v", record)
 	}
 

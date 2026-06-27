@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	featureplannercontract "idiom/internal/contracts/featureplanner"
+	lanecontract "idiom/internal/contracts/lane"
 	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/workflows/featureplanner"
 	coreplanexecute "idiom/internal/workflows/planexecute"
@@ -18,11 +20,11 @@ func TestReconcileActiveRunsFoldsBoundTerminalCompletion(t *testing.T) {
 	state := featureStateWithActivePlanExecuteRunForTest("atom-1-run-1")
 	progress := coreplanexecute.NewProgressState("atom-1-run-1", "prompt", "", []string{"pkg/feature.go"}, nil, time.Now().UTC())
 
-	progress.Phase = coreplanexecute.ProgressPhaseComplete
-	progress.Status = coreplanexecute.ProgressStatusCompleted
+	progress.Phase = plancontract.PlanExecuteProgressPhaseComplete
+	progress.Status = plancontract.PlanExecuteProgressStatusCompleted
 	progress.ChangedPaths = []string{"pkg/feature.go"}
-	progress.Review.Status = coreplanexecute.ProgressStatusCompleted
-	progress.Executor.SourceSanity = []coreplanexecute.PhaseEvidenceCheck{{
+	progress.Review.Status = plancontract.PlanExecuteReviewStatusCompleted
+	progress.Executor.SourceSanity = []plancontract.PhaseEvidenceCheck{{
 		Kind:   "source_sanity",
 		Path:   "pkg/feature.go",
 		Status: "ok",
@@ -60,8 +62,8 @@ func TestReconcileActiveRunsOverlaysActiveParentAuthorityForDivergentTerminalSco
 	run := state.ActiveRuns[0]
 	progress := coreplanexecute.NewProgressState("atom-1-run-1", "prompt", "", []string{"pkg/feature.go"}, nil, time.Now().UTC())
 
-	progress.Phase = coreplanexecute.ProgressPhaseComplete
-	progress.Status = coreplanexecute.ProgressStatusCompleted
+	progress.Phase = plancontract.PlanExecuteProgressPhaseComplete
+	progress.Status = plancontract.PlanExecuteProgressStatusCompleted
 	progress.ChangedPaths = []string{"pkg/feature.go"}
 	progress.ScopeContractID = "child-scope-contract"
 	progress.ScopeContractHash = "child-scope-hash"
@@ -77,22 +79,25 @@ func TestReconcileActiveRunsOverlaysActiveParentAuthorityForDivergentTerminalSco
 		t.Fatalf("SavePlanExecuteTerminalCompletionRecord: %v", err)
 	}
 
-	payload := encodeTerminalCompletion(record, completionPath, run)
+	payload, err := encodeTerminalCompletion(record, completionPath, run)
+	if err != nil {
+		t.Fatalf("encodeTerminalCompletion: %v", err)
+	}
 	fields := decodeCompletionPayloadForTest(t, payload)
 
-	if got := featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldContractID); got != run.InvocationContractID {
+	if got := featureplanner.CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldContractID); got != run.InvocationContractID {
 		t.Fatalf("contract_id = %q, want active invocation %q; payload=%s", got, run.InvocationContractID, payload)
 	}
 
-	if got := featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldSnapshotHash); got != run.RuntimeEnvelopeID {
+	if got := featureplanner.CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldSnapshotHash); got != run.RuntimeEnvelopeID {
 		t.Fatalf("snapshot_hash = %q, want active snapshot %q; payload=%s", got, run.RuntimeEnvelopeID, payload)
 	}
 
-	if got := featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldScopeContractID); got != "child-scope-contract" {
+	if got := featureplanner.CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldScopeContractID); got != "child-scope-contract" {
 		t.Fatalf("scope_contract_id = %q, want preserved child scope; payload=%s", got, payload)
 	}
 
-	if got := featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldScopeContractHash); got != "child-scope-hash" {
+	if got := featureplanner.CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldScopeContractHash); got != "child-scope-hash" {
 		t.Fatalf("scope_contract_hash = %q, want preserved child scope hash; payload=%s", got, payload)
 	}
 
@@ -112,8 +117,8 @@ func TestEncodeTerminalCompletionDoesNotTrustFailedAcceptanceEvidence(t *testing
 	run := state.ActiveRuns[0]
 	progress := coreplanexecute.NewProgressState("atom-1-run-1", "prompt", "", []string{"pkg/feature.go"}, nil, time.Now().UTC())
 
-	progress.Phase = coreplanexecute.ProgressPhaseComplete
-	progress.Status = coreplanexecute.ProgressStatusFailed
+	progress.Phase = plancontract.PlanExecuteProgressPhaseComplete
+	progress.Status = plancontract.PlanExecuteProgressStatusFailed
 	progress.ChangedPaths = []string{"pkg/feature.go"}
 
 	record := coreplanexecute.NewPlanExecuteTerminalCompletionRecord(progress, coreplanexecute.PlanExecuteTerminalCompletionInput{
@@ -122,13 +127,16 @@ func TestEncodeTerminalCompletionDoesNotTrustFailedAcceptanceEvidence(t *testing
 		CompletedAt:           time.Now().UTC(),
 	})
 
-	record.TerminalClass = coreplanexecute.PlanExecuteTerminalClassFailed
-	record.Outcome = coreplanexecute.PlanExecuteTerminalOutcomeFailed
+	record.TerminalClass = plancontract.PlanExecuteTerminalClassFailed
+	record.Outcome = plancontract.PlanExecuteTerminalOutcomeFailed
 
-	payload := encodeTerminalCompletion(record, ".idiom/plan-execute/completions/atom-1-run-1.json", run)
+	payload, err := encodeTerminalCompletion(record, ".idiom/plan-execute/completions/atom-1-run-1.json", run)
+	if err != nil {
+		t.Fatalf("encodeTerminalCompletion: %v", err)
+	}
 	fields := decodeCompletionPayloadForTest(t, payload)
 
-	if fields[featureplanner.PlanExecuteCompletionFieldAcceptanceEvidenceTrusted] == true {
+	if fields[featureplannercontract.PlanExecuteCompletionFieldAcceptanceEvidenceTrusted] == true {
 		t.Fatalf("failed terminal completion should not trust acceptance evidence: %s", payload)
 	}
 }
@@ -139,8 +147,8 @@ func TestReconcileActiveRunsOverlaysActiveParentAuthorityForDivergentProgressSco
 	run := state.ActiveRuns[0]
 	progress := coreplanexecute.NewProgressState("atom-1-run-1", "prompt", "", []string{"pkg/feature.go"}, nil, time.Now().UTC())
 
-	progress.Phase = coreplanexecute.ProgressPhaseComplete
-	progress.Status = coreplanexecute.ProgressStatusCompleted
+	progress.Phase = plancontract.PlanExecuteProgressPhaseComplete
+	progress.Status = plancontract.PlanExecuteProgressStatusCompleted
 	progress.ChangedPaths = []string{"pkg/feature.go"}
 	progress.ScopeContractID = "child-progress-scope-contract"
 	progress.ScopeContractHash = "child-progress-scope-hash"
@@ -150,18 +158,21 @@ func TestReconcileActiveRunsOverlaysActiveParentAuthorityForDivergentProgressSco
 		t.Fatalf("SaveProgressState: %v", err)
 	}
 
-	payload := encodeProgressCompletion(progress, ".idiom/plan-execute/sessions/atom-1-run-1.json", run)
+	payload, err := encodeProgressCompletion(progress, ".idiom/plan-execute/sessions/atom-1-run-1.json", run)
+	if err != nil {
+		t.Fatalf("encodeProgressCompletion: %v", err)
+	}
 	fields := decodeCompletionPayloadForTest(t, payload)
 
-	if got := featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldContractID); got != run.InvocationContractID {
+	if got := featureplanner.CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldContractID); got != run.InvocationContractID {
 		t.Fatalf("contract_id = %q, want active invocation %q; payload=%s", got, run.InvocationContractID, payload)
 	}
 
-	if got := featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldSnapshotHash); got != run.RuntimeEnvelopeID {
+	if got := featureplanner.CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldSnapshotHash); got != run.RuntimeEnvelopeID {
 		t.Fatalf("snapshot_hash = %q, want active snapshot %q; payload=%s", got, run.RuntimeEnvelopeID, payload)
 	}
 
-	if got := featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldScopeContractID); got != "child-progress-scope-contract" {
+	if got := featureplanner.CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldScopeContractID); got != "child-progress-scope-contract" {
 		t.Fatalf("scope_contract_id = %q, want preserved child scope; payload=%s", got, payload)
 	}
 
@@ -176,26 +187,89 @@ func TestReconcileActiveRunsOverlaysActiveParentAuthorityForDivergentProgressSco
 	}
 }
 
+func TestReconcileActiveRunsKeepsExecutorCompletedProgressActive(t *testing.T) {
+	root := t.TempDir()
+	state := featureStateWithActivePlanExecuteRunForTest("atom-1-run-1")
+	progress := coreplanexecute.NewProgressState("atom-1-run-1", "prompt", "plans/atom-1.json", []string{"pkg/feature.go"}, nil, time.Now().UTC())
+
+	progress.Phase = plancontract.PlanExecuteProgressPhaseExecutor
+	progress.Status = plancontract.PlanExecuteProgressStatusCompleted
+	progress.PlanPath = "plans/atom-1.json"
+	progress.Executor.Status = plancontract.PlanExecuteProgressStatusCompleted
+	progress.ChangedPaths = []string{"pkg/feature.go"}
+	progress.TotalEdits = 1
+	progress.Executor.SourceSanity = []plancontract.PhaseEvidenceCheck{{
+		Kind:   "source_sanity",
+		Path:   "pkg/feature.go",
+		Status: "ok",
+	}}
+
+	if _, err := coreplanexecute.SaveProgressState(root, &progress); err != nil {
+		t.Fatalf("SaveProgressState: %v", err)
+	}
+
+	events := ReconcileActiveRuns(&state, root)
+
+	if state.Atoms[0].State == featureplanner.AtomStateComplete {
+		t.Fatalf("executor checkpoint should not complete atom; events=%+v", events)
+	}
+	if len(state.ActiveRuns) != 1 {
+		t.Fatalf("active run should remain resumable, got %+v", state.ActiveRuns)
+	}
+}
+
+func TestReconcileActiveRunsKeepsRepairableExecutorFailureActive(t *testing.T) {
+	root := t.TempDir()
+	state := featureStateWithActivePlanExecuteRunForTest("atom-1-run-1")
+	progress := coreplanexecute.NewProgressState("atom-1-run-1", "prompt", "plans/atom-1.json", []string{"pkg/feature.go"}, nil, time.Now().UTC())
+
+	progress.Phase = plancontract.PlanExecuteProgressPhaseExecutor
+	progress.Status = plancontract.PlanExecuteProgressStatusFailed
+	progress.PlanPath = "plans/atom-1.json"
+	progress.FailureKind = plancontract.PlanExecuteFailureSourceSanityFailed
+	progress.Executor.Status = plancontract.PlanExecuteProgressStatusCompleted
+	progress.ChangedPaths = []string{"pkg/feature.go"}
+	progress.TotalEdits = 1
+	progress.Executor.SourceSanity = []plancontract.PhaseEvidenceCheck{{
+		Kind:   "source_sanity",
+		Path:   "pkg/feature.go",
+		Status: "failed",
+	}}
+
+	if _, err := coreplanexecute.SaveProgressState(root, &progress); err != nil {
+		t.Fatalf("SaveProgressState: %v", err)
+	}
+
+	events := ReconcileActiveRuns(&state, root)
+
+	if state.Atoms[0].State == featureplanner.AtomStateComplete {
+		t.Fatalf("repairable executor checkpoint should not complete atom; events=%+v", events)
+	}
+	if len(state.ActiveRuns) != 1 {
+		t.Fatalf("active run should remain resumable, got %+v", state.ActiveRuns)
+	}
+}
+
 func TestReconcileActiveRunsRejectsStaleOrMissingTimestampTerminalSidecar(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
-		mutateTS func(*coreplanexecute.PlanExecuteTerminalCompletionRecord)
+		mutateTS func(*plancontract.PlanExecuteTerminalCompletionRecord)
 	}{
 		{
 			name: "missing ts",
-			mutateTS: func(record *coreplanexecute.PlanExecuteTerminalCompletionRecord) {
+			mutateTS: func(record *plancontract.PlanExecuteTerminalCompletionRecord) {
 				record.TS = ""
 			},
 		},
 		{
 			name: "unparseable ts",
-			mutateTS: func(record *coreplanexecute.PlanExecuteTerminalCompletionRecord) {
+			mutateTS: func(record *plancontract.PlanExecuteTerminalCompletionRecord) {
 				record.TS = "not-a-timestamp"
 			},
 		},
 		{
 			name: "stale ts",
-			mutateTS: func(record *coreplanexecute.PlanExecuteTerminalCompletionRecord) {
+			mutateTS: func(record *plancontract.PlanExecuteTerminalCompletionRecord) {
 				record.TS = time.Now().Add(-10 * time.Second).UTC().Format(time.RFC3339Nano)
 			},
 		},
@@ -205,8 +279,8 @@ func TestReconcileActiveRunsRejectsStaleOrMissingTimestampTerminalSidecar(t *tes
 			state := featureStateWithActivePlanExecuteRunForTest("atom-1-run-1")
 			progress := coreplanexecute.NewProgressState("atom-1-run-1", "prompt", "", []string{"pkg/feature.go"}, nil, time.Now().UTC())
 
-			progress.Phase = coreplanexecute.ProgressPhaseComplete
-			progress.Status = coreplanexecute.ProgressStatusCompleted
+			progress.Phase = plancontract.PlanExecuteProgressPhaseComplete
+			progress.Status = plancontract.PlanExecuteProgressStatusCompleted
 			progress.ChangedPaths = []string{"pkg/feature.go"}
 			markProgressTerminalEvidenceForTest(&progress)
 
@@ -242,8 +316,8 @@ func TestReconcileActiveRunsPreservesExplicitWrongParentAuthorityForRejection(t 
 	state := featureStateWithActivePlanExecuteRunForTest("atom-1-run-1")
 	progress := coreplanexecute.NewProgressState("atom-1-run-1", "prompt", "", []string{"pkg/feature.go"}, nil, time.Now().UTC())
 
-	progress.Phase = coreplanexecute.ProgressPhaseComplete
-	progress.Status = coreplanexecute.ProgressStatusCompleted
+	progress.Phase = plancontract.PlanExecuteProgressPhaseComplete
+	progress.Status = plancontract.PlanExecuteProgressStatusCompleted
 	progress.ChangedPaths = []string{"pkg/feature.go"}
 	markProgressTerminalEvidenceForTest(&progress)
 
@@ -281,8 +355,8 @@ func TestReconcileActiveRunsRejectsWrongLegacyContractHashAfterOverlay(t *testin
 	state := featureStateWithActivePlanExecuteRunForTest("atom-1-run-1")
 	progress := coreplanexecute.NewProgressState("atom-1-run-1", "prompt", "", []string{"pkg/feature.go"}, nil, time.Now().UTC())
 
-	progress.Phase = coreplanexecute.ProgressPhaseComplete
-	progress.Status = coreplanexecute.ProgressStatusCompleted
+	progress.Phase = plancontract.PlanExecuteProgressPhaseComplete
+	progress.Status = plancontract.PlanExecuteProgressStatusCompleted
 	progress.ChangedPaths = []string{"pkg/feature.go"}
 	markProgressTerminalEvidenceForTest(&progress)
 
@@ -317,8 +391,8 @@ func TestReconcileActiveRunsIgnoresUnboundOverlappingTerminalCompletion(t *testi
 	state := featureStateWithActivePlanExecuteRunForTest("atom-1-run-1")
 	progress := coreplanexecute.NewProgressState("other-run", "prompt", "", []string{"pkg/feature.go"}, nil, time.Now().UTC())
 
-	progress.Phase = coreplanexecute.ProgressPhaseComplete
-	progress.Status = coreplanexecute.ProgressStatusCompleted
+	progress.Phase = plancontract.PlanExecuteProgressPhaseComplete
+	progress.Status = plancontract.PlanExecuteProgressStatusCompleted
 
 	record := coreplanexecute.NewPlanExecuteTerminalCompletionRecord(progress, coreplanexecute.PlanExecuteTerminalCompletionInput{
 		ProgressPath: ".idiom/plan-execute/sessions/other-run.json",
@@ -349,8 +423,8 @@ func TestReconcileActiveRunsIgnoresUnboundOverlappingTerminalProgress(t *testing
 	state := featureStateWithActivePlanExecuteRunForTest("atom-1-run-1")
 	progress := coreplanexecute.NewProgressState("generated-session", "prompt", "", []string{"pkg/feature.go"}, nil, time.Now().UTC())
 
-	progress.Phase = coreplanexecute.ProgressPhaseComplete
-	progress.Status = coreplanexecute.ProgressStatusCompleted
+	progress.Phase = plancontract.PlanExecuteProgressPhaseComplete
+	progress.Status = plancontract.PlanExecuteProgressStatusCompleted
 
 	if _, err := coreplanexecute.SaveProgressState(root, &progress); err != nil {
 		t.Fatalf("SaveProgressState: %v", err)
@@ -406,7 +480,7 @@ func featureStateWithActivePlanExecuteRunForTest(runID string) featureplanner.Fe
 			RunID:                runID,
 			AtomID:               "atom-1",
 			LaneSessionID:        runID,
-			LaneFamily:           featureplanner.PlanExecuteCompletionLaneFamily,
+			LaneFamily:           string(lanecontract.LanePlanExecute),
 			InvocationContractID: atomContract.Scope.ContractID,
 			RuntimeEnvelopeID:    contract.ContractHash,
 			State:                featureplanner.ActiveRunStateRunning,
@@ -426,8 +500,8 @@ func contractAtomForTest(contract plancontract.PlanExecutionContract, atomID str
 }
 
 func markProgressTerminalEvidenceForTest(progress *coreplanexecute.ProgressState) {
-	progress.Review.Status = coreplanexecute.ProgressStatusCompleted
-	progress.Executor.SourceSanity = []coreplanexecute.PhaseEvidenceCheck{{
+	progress.Review.Status = plancontract.PlanExecuteReviewStatusCompleted
+	progress.Executor.SourceSanity = []plancontract.PhaseEvidenceCheck{{
 		Kind:   "source_sanity",
 		Path:   "pkg/feature.go",
 		Status: "ok",

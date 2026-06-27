@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/discovery"
 )
 
@@ -140,7 +140,7 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 		lineNumber, _ := strconv.Atoi(parts[1])
 
 		matches = append(matches, searchContentMatch{
-			formatted: fmt.Sprintf("%s %s:%s:%s", handle, display, parts[1], util.TruncateBytes(strings.TrimRight(parts[2], "\r\n"), searchContentLineCap, "...[line truncated]")),
+			formatted: fmt.Sprintf("%s %s:%s:%s", handle, display, parts[1], textutil.TruncateBytes(strings.TrimRight(parts[2], "\r\n"), searchContentLineCap, "...[line truncated]")),
 			display:   display,
 			line:      lineNumber,
 			termScore: searchContentTermScore(display, parts[2], rankingTerms),
@@ -406,7 +406,7 @@ func (m *Manager) searchContextSnippet(path string, lineNumber int, radius int) 
 		segment := string(content[spans[i-1].start:spans[i-1].end])
 
 		segment = strings.TrimRight(segment, "\n")
-		segment = util.TruncateBytes(segment, searchContentLineCap, "...[line truncated]")
+		segment = textutil.TruncateBytes(segment, searchContentLineCap, "...[line truncated]")
 		b.WriteString(fmt.Sprintf("%d:%s\n", i, segment))
 	}
 
@@ -453,7 +453,7 @@ func (m *Manager) readFileLines(path string, start, end int) (string, error) {
 		return "", err
 	}
 
-	lines := util.SplitWorkspaceFileLines(data)
+	lines := textutil.SplitWorkspaceFileLines(data)
 
 	if start <= 0 {
 		start = 1
@@ -463,7 +463,7 @@ func (m *Manager) readFileLines(path string, start, end int) (string, error) {
 		end = len(lines)
 	}
 
-	start, end, _ = util.ClampRequestedLineRange(len(lines), start, end, start, end)
+	start, end, _ = textutil.ClampRequestedLineRange(len(lines), start, end, start, end)
 	if start > end {
 		return "", fmt.Errorf("start_line must be <= end_line")
 	}
@@ -476,5 +476,3 @@ func (m *Manager) readFileLines(path string, start, end int) (string, error) {
 
 	return strings.TrimRight(b.String(), "\n"), nil
 }
-
-

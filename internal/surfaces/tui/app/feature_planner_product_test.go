@@ -17,10 +17,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/autonomy"
+	featureplannercontract "idiom/internal/contracts/featureplanner"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/platform/config"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/llama"
-	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/featureplanner"
 	"idiom/internal/workflows/featureplannerproduct"
 	"idiom/internal/workflows/planexecute"
@@ -65,47 +67,46 @@ func TestFeaturePlannerTUIDirectCommandUsesProductContextFromMentionedEffortRoot
 }
 
 func TestOverlayFeaturePlannerPlanExecuteRunResultPreservesExitCode(t *testing.T) {
-	fields := map[string]any{}
-
-	overlayFeaturePlannerPlanExecuteRunResult(fields, "", &planexecute.RunResult{
+	summary := overlayFeaturePlannerPlanExecuteRunResult(featureplanner.PlanExecuteCompletionSummary{}, "", &planexecute.RunResult{
 		ExitCode:      7,
 		FailureReason: "plan-execute failed",
 	})
+	fields := summary.Fields()
 
-	if got := fields[featureplanner.PlanExecuteCompletionFieldExitCode]; got != 7 {
+	if got := fields[plancontract.PlanExecuteTerminalFieldExitCode]; got != 7 {
 		t.Fatalf("exit_code = %#v, want 7; fields=%+v", got, fields)
 	}
 
-	if got := featureplanner.CompletionFieldString(fields, featureplanner.PlanExecuteCompletionFieldStatus); got != "failed" {
+	if got := featureplanner.CompletionFieldString(fields, plancontract.PlanExecuteTerminalFieldStatus); got != "failed" {
 		t.Fatalf("status = %q, want failed; fields=%+v", got, fields)
 	}
 
-	if got := featureplanner.PlanExecuteCompletionTerminalClass(fields); got != featureplanner.PlanExecuteTerminalBlocked {
+	if got := featureplanner.PlanExecuteCompletionTerminalDecision(fields).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
 		t.Fatalf("terminal class = %q, want blocked; fields=%+v", got, fields)
 	}
 
 	root := t.TempDir()
 	progress := planexecute.NewProgressState("pe-session", "prompt", "", []string{"pkg/feature.go"}, nil, time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC))
-	progress.Phase = planexecute.ProgressPhasePlanning
-	progress.Status = planexecute.ProgressStatusRunning
+	progress.Phase = plancontract.PlanExecuteProgressPhasePlanning
+	progress.Status = plancontract.PlanExecuteProgressStatusRunning
 	statePath, err := planexecute.SaveProgressState(root, &progress)
 	if err != nil {
 		t.Fatalf("SaveProgressState: %v", err)
 	}
 
-	fields = map[string]any{}
-	overlayFeaturePlannerPlanExecuteRunResult(fields, root, &planexecute.RunResult{
+	summary = overlayFeaturePlannerPlanExecuteRunResult(featureplanner.PlanExecuteCompletionSummary{}, root, &planexecute.RunResult{
 		ExitCode:        7,
 		SessionID:       "pe-session",
 		ResumeStatePath: statePath,
 		FailureReason:   "plan-execute failed",
 	})
+	fields = summary.Fields()
 
-	if got := fields[featureplanner.PlanExecuteCompletionFieldExitCode]; got != 7 {
+	if got := fields[plancontract.PlanExecuteTerminalFieldExitCode]; got != 7 {
 		t.Fatalf("durable progress exit_code = %#v, want 7; fields=%+v", got, fields)
 	}
 
-	if got := featureplanner.PlanExecuteCompletionTerminalClass(fields); got != featureplanner.PlanExecuteTerminalBlocked {
+	if got := featureplanner.PlanExecuteCompletionTerminalDecision(fields).Class; got != plancontract.PlanExecuteTerminalDecisionBlocked {
 		t.Fatalf("durable progress terminal class = %q, want blocked; fields=%+v", got, fields)
 	}
 }
@@ -857,7 +858,7 @@ func TestFeaturePlannerPlanExecuteRunnerDoesNotFeedPromptToDirectFeaturePlanner(
 
 	runner := m.newPlanExecutePromptRunner(context.Background())
 	_, _ = runner(m.cfg, "# Plan-then-execute (planner phase)\n\nmodel-facing child prompt", planexecute.RunOptions{
-		TaskFamily: string(workerruntime.TaskFamilyPlanThenExecutePlanner),
+		TaskFamily: string(autonomy.TaskFamilyPlanThenExecutePlanner),
 	}, nil)
 
 	if m.directFeaturePlannerSessionID != state.SessionID {
@@ -2611,7 +2612,7 @@ func TestFeaturePlannerTUIE2EProductCoveragePromotionContextResumePlanDisplay(t 
 	handoff := productworkflow.BuildImplementationHandoff(productworkflow.BriefGenerationInput{
 		EffortRoot:       filepath.Join(projectRoot, "docs", "product-workflows", "efforts", "started", "collapse-effort"),
 		ArtifactRootPath: "docs/product-workflows/efforts/started/collapse-effort",
-		WorkflowState:    productworkflow.WorkflowState{EffortID: "collapse-effort", TaskID: "collapse-task", StatusBucket: "started", CurrentPhase: productworkflow.PhaseTDDSynthesis, CurrentState: "planning"},
+		WorkflowState:    productworkflow.WorkflowState{EffortID: "collapse-effort", TaskID: "collapse-task", StatusBucket: "started", CurrentPhase: productworkflow.PhaseTDDSynthesis, CurrentState: productworkflow.WorkflowStatePlanned},
 		PRD:              prd,
 		ADRIndex:         adrIndex,
 		ADRs:             adrs,
@@ -2717,7 +2718,7 @@ func TestFeaturePlannerTUITurnRetriesEmptyPlannerResponse(t *testing.T) {
 	}
 	m := &Model{client: client}
 
-	answer, err := m.runFeaturePlannerTUITurn(context.Background(), "Plan one feature atom.", string(workerruntime.TaskFamilyFeaturePlannerPlanner))
+	answer, err := m.runFeaturePlannerTUITurn(context.Background(), "Plan one feature atom.", string(autonomy.TaskFamilyFeaturePlannerPlanner))
 	if err != nil {
 		t.Fatalf("runFeaturePlannerTUITurn: %v", err)
 	}
@@ -3572,7 +3573,7 @@ func writeNativeQualityEffort(t *testing.T, effortRoot string) {
 		UpdatedAt:     "2026-06-05T00:00:00Z",
 		StatusBucket:  "started",
 		CurrentPhase:  productworkflow.PhaseTDDSynthesis,
-		CurrentState:  "planning",
+		CurrentState:  productworkflow.WorkflowStatePlanned,
 		ArtifactPaths: map[string]string{"prd": "prd.md", "tdd": "tdd.json"},
 		Context: productworkflow.WorkflowContext{
 			ContextPackID:   "native-pack",
@@ -3735,7 +3736,7 @@ func featurePlannerCommandBadGoPlanJSON(t *testing.T) string {
 	t.Helper()
 
 	plan := featureplanner.FeaturePlan{
-		Tool:          featureplanner.ToolSubmitFeaturePlan,
+		Tool:          string(featureplannercontract.ToolSubmitFeaturePlan),
 		SchemaVersion: featureplanner.FeaturePlanSchemaVersion,
 		FeatureID:     "feature-qcb",
 		SourceTask:    featureplanner.SourceTask{Kind: "operator_prompt", Summary: "native quality contributor breakdown"},
@@ -3807,7 +3808,7 @@ func featurePlannerCommandDemotedFilesPlanJSON(t *testing.T) string {
 
 func featurePlannerCommandNativePlan() featureplanner.FeaturePlan {
 	return featureplanner.FeaturePlan{
-		Tool:          featureplanner.ToolSubmitFeaturePlan,
+		Tool:          string(featureplannercontract.ToolSubmitFeaturePlan),
 		SchemaVersion: featureplanner.FeaturePlanSchemaVersion,
 		FeatureID:     "feature-qcb",
 		SourceTask:    featureplanner.SourceTask{Kind: "operator_prompt", Summary: "native quality contributor breakdown"},
@@ -4054,7 +4055,7 @@ func featurePlannerCommandNewFileQuestionJSON(t *testing.T) string {
 		Tool string `json:"tool"`
 		featureplanner.PlannerQuestion
 	}{
-		Tool:            featureplanner.ToolAskPlannerQuestion,
+		Tool:            string(featureplannercontract.ToolAskPlannerQuestion),
 		PlannerQuestion: question,
 	})
 	if err != nil {
@@ -4079,7 +4080,7 @@ func featurePlannerCommandAcceptedSourceQuestionJSON(t *testing.T) string {
 		Tool string `json:"tool"`
 		featureplanner.PlannerQuestion
 	}{
-		Tool:            featureplanner.ToolAskPlannerQuestion,
+		Tool:            string(featureplannercontract.ToolAskPlannerQuestion),
 		PlannerQuestion: question,
 	})
 	if err != nil {
@@ -4564,9 +4565,9 @@ func TestFeaturePlannerReconcilesStaleActiveRunFromTerminalPlanExecuteProgress(t
 
 	progress := planexecute.NewProgressState("atom-1-run-1", "prompt", "", []string{"pkg/feature.go"}, nil, startedAt.Add(time.Minute))
 
-	progress.Phase = planexecute.ProgressPhasePlanning
-	progress.Status = planexecute.ProgressStatusFailed
-	progress.FailureKind = planexecute.RunFailurePlannerBlocked
+	progress.Phase = plancontract.PlanExecuteProgressPhasePlanning
+	progress.Status = plancontract.PlanExecuteProgressStatusFailed
+	progress.FailureKind = plancontract.PlanExecuteFailurePlannerBlocked
 	progress.FailureReason = "<<QUESTION>>: pkg/feature.go source evidence unavailable"
 
 	progressPath, err := planexecute.SaveProgressState(root, &progress)
@@ -4646,15 +4647,15 @@ func TestFeaturePlannerReconcilesSkippedReviewProgressAsComplete(t *testing.T) {
 
 	progress := planexecute.NewProgressState("atom-1-run-1", "prompt", "", []string{"pkg/feature.go"}, nil, startedAt.Add(time.Minute))
 
-	progress.Phase = planexecute.ProgressPhaseComplete
-	progress.Status = planexecute.ProgressStatusCompleted
+	progress.Phase = plancontract.PlanExecuteProgressPhaseComplete
+	progress.Status = plancontract.PlanExecuteProgressStatusCompleted
 	progress.ChangedPaths = []string{"pkg/feature.go"}
-	progress.Executor.SourceSanity = []planexecute.PhaseEvidenceCheck{{
+	progress.Executor.SourceSanity = []plancontract.PhaseEvidenceCheck{{
 		Kind:   "source_sanity",
 		Path:   "pkg/feature.go",
 		Status: "ok",
 	}}
-	progress.Review.Status = planexecute.ProgressStatusSkipped
+	progress.Review.Status = plancontract.PlanExecuteReviewStatusSkipped
 
 	progressPath, err := planexecute.SaveProgressState(root, &progress)
 	if err != nil {
@@ -4695,11 +4696,11 @@ func TestPlanExecuteExecutionRecoveryOpenMessageSurfacesSourceSanity(t *testing.
 	root := t.TempDir()
 	state := planexecute.NewProgressState("pe-session", "prompt", "", []string{"internal/surfaces/tui/app/product_status.go"}, nil, time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC))
 
-	state.Phase = planexecute.ProgressPhaseReviewRepair
-	state.Status = planexecute.ProgressStatusFailed
-	state.FailureKind = planexecute.RunFailureSourceSanityFailed
+	state.Phase = plancontract.PlanExecuteProgressPhaseReviewRepair
+	state.Status = plancontract.PlanExecuteProgressStatusFailed
+	state.FailureKind = plancontract.PlanExecuteFailureSourceSanityFailed
 	state.FailureReason = "source_sanity failed for generated source"
-	state.Executor.SourceSanity = []planexecute.PhaseEvidenceCheck{{
+	state.Executor.SourceSanity = []plancontract.PhaseEvidenceCheck{{
 		Kind:   "source_sanity",
 		Path:   "internal/surfaces/tui/app/product_status.go",
 		Status: "failed",
@@ -4715,7 +4716,7 @@ func TestPlanExecuteExecutionRecoveryOpenMessageSurfacesSourceSanity(t *testing.
 		ExitCode:        1,
 		SessionID:       "pe-session",
 		ResumeStatePath: statePath,
-		FailureKind:     planexecute.RunFailureSourceSanityFailed,
+		FailureKind:     string(plancontract.PlanExecuteFailureSourceSanityFailed),
 		FailureReason:   "source_sanity failed for generated source",
 	}, nil)
 	if !ok {
@@ -5262,15 +5263,15 @@ func TestFirstNonEmpty(t *testing.T) {
 }
 
 func TestTruncate(t *testing.T) {
-	if got := util.Truncate("hello", 10); got != "hello" {
+	if got := textutil.Truncate("hello", 10); got != "hello" {
 		t.Errorf("expected hello, got %s", got)
 	}
 
-	if got := util.Truncate("hello world", 5); got != "he..." {
+	if got := textutil.Truncate("hello world", 5); got != "he..." {
 		t.Errorf("expected he..., got %s", got)
 	}
 
-	if got := util.Truncate("hello world", 11); got != "hello world" {
+	if got := textutil.Truncate("hello world", 11); got != "hello world" {
 		t.Errorf("expected hello world, got %s", got)
 	}
 }

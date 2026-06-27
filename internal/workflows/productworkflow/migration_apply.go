@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"idiom/internal/platform/atomicfile"
 )
 
 type ProductStatusMigrationApplyOptions struct {
@@ -324,7 +326,7 @@ func ApplyProductStatusMigration(options ProductStatusMigrationApplyOptions) Pro
 
 	indexReplaced = true
 
-	if err := atomicWriteFile(indexPath, updatedIndexBytes, 0o644); err != nil {
+	if err := atomicfile.WriteFile(indexPath, updatedIndexBytes, 0o644); err != nil {
 		return rollback(err)
 	}
 
@@ -370,19 +372,19 @@ func rollbackProductStatusMigrationFiles(input productStatusMigrationRollback) e
 	}
 
 	if input.workflowReplaced {
-		if err := atomicWriteFile(filepath.Join(input.sourceRoot, WorkflowStateFileName), input.originalWorkflow, 0o644); err != nil {
+		if err := atomicfile.WriteFile(filepath.Join(input.sourceRoot, WorkflowStateFileName), input.originalWorkflow, 0o644); err != nil {
 			return fmt.Errorf("restore %s: %w", WorkflowStateFileName, err)
 		}
 	}
 
 	if input.eventsReplaced {
-		if err := atomicWriteFile(filepath.Join(input.sourceRoot, filepath.FromSlash(input.eventsPath)), input.originalEvents, 0o644); err != nil {
+		if err := atomicfile.WriteFile(filepath.Join(input.sourceRoot, filepath.FromSlash(input.eventsPath)), input.originalEvents, 0o644); err != nil {
 			return fmt.Errorf("restore %s: %w", input.eventsPath, err)
 		}
 	}
 
 	if input.indexReplaced {
-		if err := atomicWriteFile(input.indexPath, input.originalIndex, 0o644); err != nil {
+		if err := atomicfile.WriteFile(input.indexPath, input.originalIndex, 0o644); err != nil {
 			return fmt.Errorf("restore efforts/index.json: %w", err)
 		}
 	}
@@ -665,28 +667,6 @@ func writeMigrationTempFile(path string, data []byte) error {
 	}
 
 	return syncDirBestEffort(filepath.Dir(path))
-}
-
-func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
-	tempPath := path + ".status-migration.tmp"
-	if err := writeMigrationTempFile(tempPath, data); err != nil {
-		return err
-	}
-
-	if err := os.Rename(tempPath, path); err != nil {
-		_ = os.Remove(tempPath)
-		return err
-	}
-
-	if err := syncFileBestEffort(path); err != nil {
-		return err
-	}
-
-	if err := syncDirBestEffort(filepath.Dir(path)); err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func rejectProductStatusMigrationTempSymlink(path string) error {

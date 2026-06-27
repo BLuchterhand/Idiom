@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"idiom/internal/platform/textutil"
 )
 
 type ContextBudgetOptions struct {
@@ -193,7 +195,7 @@ func budgetWarnings(packet Packet, report *ContextBudgetReport) []string {
 
 	for _, ev := range packet.Evidence {
 		name := evidenceName(ev)
-		location := firstNonEmpty(ev.Path, ev.Command)
+		location := textutil.FirstNonEmpty(ev.Path, ev.Command)
 
 		if location != "" {
 			if prior := seenLocations[location]; prior != "" {

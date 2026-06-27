@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/runtime/sessionlog"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -16,7 +18,7 @@ import (
 type sessionSummaryCacheEntry struct {
 	modTime time.Time
 	size    int64
-	info    SessionInfo
+	info    sessionlog.SessionInfo
 }
 
 // refreshSessionsList rescans the debug-log directory and caches the
@@ -57,7 +59,7 @@ func (m *Model) refreshSessionsList() {
 	}
 
 	nextCache := make(map[string]sessionSummaryCacheEntry, len(entries))
-	sessions := make([]SessionInfo, 0, len(entries))
+	sessions := make([]sessionlog.SessionInfo, 0, len(entries))
 
 	var dirMTime time.Time
 
@@ -86,11 +88,11 @@ func (m *Model) refreshSessionsList() {
 		size := info.Size()
 		modTime := info.ModTime()
 
-		session := SessionInfo{ID: id, Path: path}
+		session := sessionlog.SessionInfo{ID: id, Path: path}
 		if cached, ok := m.sessions.summaryCache[path]; ok && cached.size == size && cached.modTime.Equal(modTime) {
 			session = cached.info
 		} else {
-			session = summarizeSessionLog(path)
+			session = sessionlog.SummarizeSessionLog(path)
 			session.ID = id
 			session.Path = path
 		}
@@ -100,14 +102,14 @@ func (m *Model) refreshSessionsList() {
 			size:    size,
 			info:    session,
 		}
-		if !isUserVisibleSession(session) {
+		if !sessionlog.IsUserVisibleSession(session) {
 			continue
 		}
 
 		sessions = append(sessions, session)
 	}
 
-	slices.SortFunc(sessions, func(a, b SessionInfo) int {
+	slices.SortFunc(sessions, func(a, b sessionlog.SessionInfo) int {
 		return -cmp.Compare(a.ID, b.ID)
 	})
 
@@ -120,7 +122,7 @@ func (m *Model) refreshSessionsList() {
 	// adds nothing and invites confusion. Empty debugLogPath (pre-init
 	// race) falls through harmlessly.
 	currentID := m.sessionID()
-	filtered := make([]SessionInfo, 0, len(sessions))
+	filtered := make([]sessionlog.SessionInfo, 0, len(sessions))
 
 	for _, s := range sessions {
 		if s.ID == currentID {

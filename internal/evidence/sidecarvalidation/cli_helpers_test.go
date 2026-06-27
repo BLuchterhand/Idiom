@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 
 	"idiom/internal/evidence/productevidence"
-	"idiom/internal/surfaces/cli/config"
+	cmdconfig "idiom/internal/surfaces/cli/config"
 	localopscmd "idiom/internal/surfaces/cli/localops"
 	toolcmd "idiom/internal/surfaces/cli/tool"
 )

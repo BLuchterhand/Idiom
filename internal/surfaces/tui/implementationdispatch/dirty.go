@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"idiom/internal/contracts/plan"
+	plancontract "idiom/internal/contracts/plan"
 )
 
 type DirtyAllowance struct {

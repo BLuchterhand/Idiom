@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"idiom/internal/evidence/eval"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 var output io.Writer = os.Stdout
@@ -92,7 +92,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	liveLogPaths := map[string]string(nil)
 
 	if runLive {
-		liveLogsDir := firstNonEmpty(generatedLogsDir, logsDir, filepath.Join(filepath.Dir(suitePath), "generated-logs"))
+		liveLogsDir := textutil.FirstNonEmpty(generatedLogsDir, logsDir, filepath.Join(filepath.Dir(suitePath), "generated-logs"))
 		if isTrackedSWEGeneratedLogsDir(suitePath, liveLogsDir) && !allowTrackedGeneratedLogs {
 			fmt.Fprintln(stderr, "refusing to write live generated logs to tracked testdata/swe/generated-logs; pass -allow-tracked-generated-logs for an intentional fixture refresh or choose -generated-logs outside testdata")
 
@@ -173,10 +173,6 @@ func writeSWESuite(path string, suite eval.SWESuite) error {
 	return nil
 }
 
-func firstNonEmpty(values ...string) string {
-	return util.FirstNonEmpty(values...)
-}
-
 func printOrEncodeReport(report eval.SWESuiteReport, jsonOut bool, stdout io.Writer) {
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
@@ -229,7 +225,7 @@ func printSuiteReport(report eval.SWESuiteReport) {
 		status = "FAIL"
 	}
 
-	fmt.Fprintf(output, "%s %s (%d tasks)\n", status, util.Fallback(report.Suite, "<unnamed suite>"), reportTaskCount(report))
+	fmt.Fprintf(output, "%s %s (%d tasks)\n", status, textutil.Fallback(report.Suite, "<unnamed suite>"), reportTaskCount(report))
 	printCoverage(report.Coverage)
 	printLint(report.LintFindings)
 	printSummary(report.Summary)
@@ -241,7 +237,7 @@ func printSuiteReport(report eval.SWESuiteReport) {
 			taskStatus = "FAIL"
 		}
 
-		fmt.Fprintf(output, "- %s %s", taskStatus, util.Fallback(task.TaskID, "<unnamed task>"))
+		fmt.Fprintf(output, "- %s %s", taskStatus, textutil.Fallback(task.TaskID, "<unnamed task>"))
 
 		if strings.TrimSpace(task.Family) != "" {
 			fmt.Fprintf(output, " [%s]", task.Family)
@@ -343,8 +339,8 @@ func printControlRailsDashboard(tasks []eval.SWETaskReport) {
 
 		rails := task.Metrics.ControlRails[len(task.Metrics.ControlRails)-1]
 		failed := !task.Passed
-		addDashboardBucket(byFamily, firstNonEmpty(rails.TaskFamily, "<unknown>"), failed)
-		addDashboardBucket(byPermission, firstNonEmpty(rails.PermissionProfile, "<unknown>"), failed)
+		addDashboardBucket(byFamily, textutil.FirstNonEmpty(rails.TaskFamily, "<unknown>"), failed)
+		addDashboardBucket(byPermission, textutil.FirstNonEmpty(rails.PermissionProfile, "<unknown>"), failed)
 	}
 
 	if len(byFamily) == 0 && len(byPermission) == 0 {

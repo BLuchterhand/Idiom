@@ -41,10 +41,10 @@
     }
   ],
   "checks": {
-    "atomic_folder_state_index_event_update": "pass_after_sync_failure_repair",
+    "atomic_folder_state_index_event_update": "passed",
     "stable_effort_id_and_prior_paths_preserved": "pass",
-    "stale_unsafe_conflicting_state_fails_closed": "pass_after_symlink_and_sync_repair",
-    "cli_json_and_text_contract": "pass_after_json_parse_repair",
+    "stale_unsafe_conflicting_state_fails_closed": "passed",
+    "cli_json_and_text_contract": "passed",
     "no_dispatch_model_execution_or_runtime_mutation": "pass"
   },
   "reviewed_at": "2026-05-18T22:55:00Z",

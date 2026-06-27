@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"idiom/internal/platform/atomicfile"
 )
 
 // Phase constants for the artifact creation workflow.
@@ -41,12 +43,12 @@ type CreateEffortOptions struct {
 
 // CreateResult reports the outcome of an effort creation or phase transition.
 type CreateResult struct {
-	Status          string   `json:"status"`
-	EffortRoot      string   `json:"effort_root"`
-	EffortID        string   `json:"effort_id"`
-	CurrentPhase    string   `json:"current_phase"`
-	Blockers        []string `json:"blockers,omitempty"`
-	NextValidAction string   `json:"next_valid_action"`
+	Status          ProductWorkflowStatus `json:"status"`
+	EffortRoot      string                `json:"effort_root"`
+	EffortID        string                `json:"effort_id"`
+	CurrentPhase    string                `json:"current_phase"`
+	Blockers        []string              `json:"blockers,omitempty"`
+	NextValidAction string                `json:"next_valid_action"`
 }
 
 // InitializeEffort creates the effort directory structure and a
@@ -629,7 +631,7 @@ func loadExistingCreatePhase(absRoot string) (CreateResult, bool) {
 	switch ws.CurrentPhase {
 	case PhasePRDDrafting, PhasePRDReview, PhaseADRDrafting, PhaseADRReview, PhaseTDDSynthesis, PhaseComplete:
 		return CreateResult{
-			Status:          "resumed",
+			Status:          ProductWorkflowStatusResumed,
 			EffortRoot:      absRoot,
 			EffortID:        ws.EffortID,
 			CurrentPhase:    ws.CurrentPhase,
@@ -640,8 +642,8 @@ func loadExistingCreatePhase(absRoot string) (CreateResult, bool) {
 	}
 }
 
-// atomicWriteWorkflowState writes workflow_state.json using a staging file
-// and atomic rename, matching the pattern in transition_apply.go.
+// atomicWriteWorkflowState writes workflow_state.json through the shared
+// atomic writer after applying product-workflow JSON formatting.
 func atomicWriteWorkflowState(absRoot string, ws WorkflowState) error {
 	workflowPath := filepath.Join(absRoot, WorkflowStateFileName)
 
@@ -652,19 +654,8 @@ func atomicWriteWorkflowState(absRoot string, ws WorkflowState) error {
 
 	data = append(data, '\n')
 
-	tmpPath := workflowPath + ".create.tmp"
-	if _, statErr := os.Lstat(tmpPath); statErr == nil {
-		return fmt.Errorf("staging file %s already exists", filepath.Base(tmpPath))
-	}
-
-	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("stage %s: %w", WorkflowStateFileName, err)
-	}
-
-	if err := os.Rename(tmpPath, workflowPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("replace %s: %w", WorkflowStateFileName, err)
+	if err := atomicfile.WriteFile(workflowPath, data, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", WorkflowStateFileName, err)
 	}
 
 	return nil

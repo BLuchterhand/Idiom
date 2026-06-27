@@ -114,7 +114,7 @@ func RenderADRDraftPromptText(plan ADRDraftPromptPlan) string {
 	b.WriteString("- Follow the existing ADR parser/audit contract.\n")
 	b.WriteString("- Include front matter fields: schema_version, adr_id, status, prd_refs, evidence_refs, tdd_obligations, coverage_tier.\n")
 	b.WriteString("- Use status: draft. Keep acceptance metadata fields empty unless a human explicitly provided them: accepted_at, accepted_by, acceptance_profile.\n")
-	b.WriteString("- coverage_tier must be one of: documentation, unit, local_low, behavior_standard, contract_high, formal_optional. Do not use priority words such as must, should, or could as coverage tiers.\n")
+	b.WriteString("- coverage_tier must be one of: " + strings.Join(AllowedCoverageTiers(), ", ") + ". Do not use priority words such as must, should, or could as coverage tiers.\n")
 	b.WriteString("- prd_refs, evidence_refs, and tdd_obligations must use IDs from the supplied PRD requirements and evidence lists. Do not invent prose obligations or new IDs.\n")
 	b.WriteString("- Preserve every supplied PRD requirement statement semantically, including behavior details such as normalization, casing, imports, paths, and exact return strings.\n")
 	b.WriteString("- When the PRD requires source file creation, include one concrete fenced code block for each required source file, immediately preceded by a line naming the file path. Use code fences even for short files.\n")

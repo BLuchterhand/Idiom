@@ -19,7 +19,8 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
-	toolcmd "idiom/internal/surfaces/cli/tool"
+	"idiom/internal/platform/textutil"
+	cmdconfig "idiom/internal/surfaces/cli/config"
 )
 
 const DiscoveryProfile = workspace.ToolProfileMCPDiscovery
@@ -115,7 +116,7 @@ func RunWithTelemetryAndVersion(args []string, stdout io.Writer, stderr io.Write
 		return 2
 	}
 
-	cfg, err := toolcmd.LoadConfig(*configPath)
+	cfg, err := cmdconfig.Load(*configPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 
@@ -278,7 +279,7 @@ func (s *DiscoveryServer) handleFrame(ctx context.Context, payload []byte) (mcpR
 
 		return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{"resources": s.mcpResources()}}, true
 	case "resources/read":
-		result, err := s.readResource(req.Params)
+		result, err := s.readResource(ctx, req.Params)
 		if err != nil {
 			return mcpRPCResponse{JSONRPC: "2.0", ID: req.ID, Error: &mcpRPCError{Code: -32602, Message: err.Error()}}, true
 		}
@@ -369,7 +370,7 @@ func (s *DiscoveryServer) mcpResources() []map[string]any {
 	}
 }
 
-func (s *DiscoveryServer) readResource(params json.RawMessage) (mcppkg.ResourceReadResult, error) {
+func (s *DiscoveryServer) readResource(ctx context.Context, params json.RawMessage) (mcppkg.ResourceReadResult, error) {
 	var req mcppkg.ResourceReadParams
 
 	if len(params) == 0 {
@@ -385,7 +386,7 @@ func (s *DiscoveryServer) readResource(params json.RawMessage) (mcppkg.ResourceR
 		return mcppkg.ResourceReadResult{}, fmt.Errorf("resources/read uri is required")
 	}
 
-	payload, err := s.resourcePayload(uri)
+	payload, err := s.resourcePayload(ctx, uri)
 	if err != nil {
 		return mcppkg.ResourceReadResult{}, err
 	}
@@ -402,7 +403,7 @@ func (s *DiscoveryServer) readResource(params json.RawMessage) (mcppkg.ResourceR
 	}}}, nil
 }
 
-func (s *DiscoveryServer) resourcePayload(uri string) (map[string]any, error) {
+func (s *DiscoveryServer) resourcePayload(ctx context.Context, uri string) (map[string]any, error) {
 	switch strings.TrimSpace(uri) {
 	case "idiom://workspace/root":
 		return map[string]any{
@@ -412,7 +413,7 @@ func (s *DiscoveryServer) resourcePayload(uri string) (map[string]any, error) {
 			"absolute_path":     "<redacted_path>",
 			"metadata_only":     true,
 			"content_available": false,
-			"freshness":         s.resourceFreshness("."),
+			"freshness":         s.resourceFreshness(ctx, "."),
 		}, nil
 	case "idiom://workspace/discovery-tools":
 		names := make([]string, 0, len(s.tools))
@@ -427,7 +428,7 @@ func (s *DiscoveryServer) resourcePayload(uri string) (map[string]any, error) {
 			"tool_count":     len(names),
 			"tools":          names,
 			"metadata_only":  true,
-			"freshness":      s.resourceFreshness("."),
+			"freshness":      s.resourceFreshness(ctx, "."),
 		}, nil
 	case "idiom://workspace/resource-policy":
 		return map[string]any{
@@ -475,7 +476,7 @@ func (s *DiscoveryServer) resourcePayload(uri string) (map[string]any, error) {
 				"size_bytes":        info.Size(),
 				"metadata_only":     true,
 				"content_available": false,
-				"freshness":         s.resourceFreshness(rel),
+				"freshness":         s.resourceFreshness(ctx, rel),
 			}, nil
 		case os.IsNotExist(err):
 			return nil, fmt.Errorf("resource not found or unavailable")
@@ -485,7 +486,7 @@ func (s *DiscoveryServer) resourcePayload(uri string) (map[string]any, error) {
 	}
 }
 
-func (s *DiscoveryServer) resourceFreshness(rel string) map[string]any {
+func (s *DiscoveryServer) resourceFreshness(ctx context.Context, rel string) map[string]any {
 	req := workspace.ToolRequest{
 		Tool:            "context_status",
 		Path:            filepath.ToSlash(rel),
@@ -496,13 +497,27 @@ func (s *DiscoveryServer) resourceFreshness(rel string) map[string]any {
 		req.Path = "."
 	}
 
-	result := s.manager.Execute(context.Background(), req)
 	evidence := map[string]any{
 		"policy":            "report_only",
 		"source_operation":  "context_status",
 		"refresh_allowed":   false,
 		"refresh_attempted": false,
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case <-ctx.Done():
+		evidence["state"] = "unavailable"
+		evidence["error_class"] = "context_canceled"
+		return evidence
+	default:
+	}
+
+	freshnessCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	result := s.manager.Execute(freshnessCtx, req)
 
 	if result.Error != "" {
 		evidence["state"] = "unavailable"
@@ -830,9 +845,9 @@ func (s *DiscoveryServer) callerForToolCall(meta json.RawMessage) (workspace.Too
 			decoded = *decoded.Idiom
 		}
 
-		callerID = toolcmd.FirstNonEmptyString(decoded.CallerID, callerID)
-		requestID = toolcmd.FirstNonEmptyString(decoded.RequestID, requestID)
-		traceID = toolcmd.FirstNonEmptyString(decoded.TraceID, traceID)
+		callerID = textutil.FirstNonEmpty(decoded.CallerID, callerID)
+		requestID = textutil.FirstNonEmpty(decoded.RequestID, requestID)
+		traceID = textutil.FirstNonEmpty(decoded.TraceID, traceID)
 	}
 
 	caller, err := workspace.NewToolSidecarCaller(callerID, requestID, traceID)
@@ -866,7 +881,7 @@ func (s *DiscoveryServer) logMCPToolRequest(req workspace.ToolRequest, rawInputB
 		"limit":           req.Limit,
 		"recursive":       req.Recursive,
 	}
-	toolcmd.AddToolAttributionTelemetry(fields, workspace.ToolSidecarEnvelopeVersion, StdioTransport, s.profile, caller, strings.TrimSpace(req.Tool))
+	workspace.AddToolTelemetryAttribution(fields, workspace.ToolSidecarEnvelopeVersion, StdioTransport, s.profile, caller, strings.TrimSpace(req.Tool))
 
 	if caller.RequestID != "" {
 		fields["telemetry_event_id"] = caller.RequestID + ":request"
@@ -887,7 +902,7 @@ func (s *DiscoveryServer) logMCPToolResult(req workspace.ToolRequest, result wor
 		return
 	}
 
-	tool := toolcmd.FirstNonEmptyString(result.Tool, req.Tool)
+	tool := textutil.FirstNonEmpty(result.Tool, req.Tool)
 	fields := map[string]any{
 		"step":        1,
 		"agent":       "mcp",
@@ -896,7 +911,7 @@ func (s *DiscoveryServer) logMCPToolResult(req workspace.ToolRequest, result wor
 		"error":       s.redactText(result.Error),
 		"duration_ms": durationMillis,
 	}
-	toolcmd.AddToolAttributionTelemetry(fields, workspace.ToolSidecarEnvelopeVersion, StdioTransport, s.profile, caller, tool)
+	workspace.AddToolTelemetryAttribution(fields, workspace.ToolSidecarEnvelopeVersion, StdioTransport, s.profile, caller, tool)
 
 	if caller.RequestID != "" {
 		fields["telemetry_event_id"] = caller.RequestID + ":result"
@@ -904,7 +919,7 @@ func (s *DiscoveryServer) logMCPToolResult(req workspace.ToolRequest, result wor
 
 	if result.Output != "" {
 		fields["output_chars"] = len(result.Output)
-		fields["output_lines"] = toolcmd.OutputLineCount(result.Output)
+		fields["output_lines"] = workspace.ToolOutputLineCount(result.Output)
 	}
 
 	if result.PrecisionTier != "" {

@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	recoverycontract "idiom/internal/contracts/recovery"
+
+	"idiom/internal/contracts/workflowstate"
 	"idiom/internal/workflows/recovery"
-	"idiom/internal/workflows/workflowstate"
 )
 
 func TestBuildAndFormatTextReportsRecoveryPacketStatus(t *testing.T) {
@@ -17,7 +19,7 @@ func TestBuildAndFormatTextReportsRecoveryPacketStatus(t *testing.T) {
 	packet := recoverStatusTestPacket(t)
 
 	packet.ProductLinks.PRDPaths = []string{"docs/prd.md"}
-	packet.ResidualWork[0].EvidenceRefs = append(packet.ResidualWork[0].EvidenceRefs, recovery.EvidenceRef{
+	packet.ResidualWork[0].EvidenceRefs = append(packet.ResidualWork[0].EvidenceRefs, recoverycontract.EvidenceRef{
 		Kind:    "legacy_failure",
 		Path:    "internal/workflows/recoverstatus/status.go",
 		Summary: "raw transcript details must not leak",
@@ -32,13 +34,14 @@ func TestBuildAndFormatTextReportsRecoveryPacketStatus(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 
-	if report.Status != "ready" || report.NextAction != recovery.NextActionReviewDecomposition {
+	if report.Status != recoverycontract.PacketStatusReady || report.NextAction != recoverycontract.NextActionReviewDecomposition {
 		t.Fatalf("unexpected report status: %#v", report)
 	}
 
 	if report.WorkflowID != workflowstate.WorkflowRecovery ||
-		report.WorkflowTerminalState != workflowstate.TerminalStateRecoveryOpen ||
-		!report.Dispatchable {
+		report.WorkflowState != workflowstate.StateDecomposing ||
+		report.WorkflowTerminalState != "" ||
+		report.Dispatchable {
 
 		t.Fatalf("unexpected workflow classification: %#v", report)
 	}
@@ -63,8 +66,9 @@ func TestBuildAndFormatTextReportsRecoveryPacketStatus(t *testing.T) {
 	text := FormatText(report)
 	for _, want := range []string{
 		"recover status: ready",
-		"workflow_terminal_state: recovery-open",
-		"dispatchable: true",
+		"workflow_state: decomposing",
+		"workflow_terminal_state: ",
+		"dispatchable: false",
 		"packet: packet.json",
 		"failure_id: failure-status-test",
 		"dirty_status: clean",
@@ -91,18 +95,18 @@ func TestBuildUsesValidSiblingReconciliationForRemainingStatus(t *testing.T) {
 	root := t.TempDir()
 	packet := recoverStatusTestPacket(t)
 
-	packet.ResidualWork = append(packet.ResidualWork, recovery.ResidualWork{
+	packet.ResidualWork = append(packet.ResidualWork, recoverycontract.ResidualWork{
 		ID:     "residual-002",
 		Title:  "Second residual",
-		Reason: recovery.FailureClassExecutorEdit,
+		Reason: string(recoverycontract.FailureClassExecutorEdit),
 		Paths:  []string{"internal/surfaces/tui/app/recover_status.go"},
 	})
-	packet.CandidateAtoms = append(packet.CandidateAtoms, recovery.CandidateAtom{
+	packet.CandidateAtoms = append(packet.CandidateAtoms, recoverycontract.CandidateAtom{
 		ID:              "recovery-002",
 		Title:           "Second residual",
 		RequiredPaths:   []string{"internal/surfaces/tui/app/recover_status.go"},
 		RequiredTests:   []string{"go test ./internal/surfaces/tui/app"},
-		Gates:           []string{recovery.GateWorkspaceState},
+		Gates:           []string{recoverycontract.GateWorkspaceState},
 		ResidualWorkIDs: []string{"residual-002"},
 	})
 
@@ -113,11 +117,11 @@ func TestBuildUsesValidSiblingReconciliationForRemainingStatus(t *testing.T) {
 	reconciliation, err := recovery.BuildReconciliation(packet, recovery.ReconciliationOptions{
 		Now:              time.Date(2026, 5, 18, 13, 0, 0, 0, time.UTC),
 		CompletedAtomIDs: []string{"recovery-001"},
-		Verification: recovery.ReconciliationVerification{
-			Status: recovery.ReconciliationVerificationPass,
-			Commands: []recovery.ReconciliationCommandResult{{
+		Verification: recoverycontract.ReconciliationVerification{
+			Status: recoverycontract.ReconciliationVerificationPass,
+			Commands: []recoverycontract.ReconciliationCommandResult{{
 				Command:  "go test ./internal/workflows/recoverstatus",
-				Status:   recovery.ReconciliationVerificationPass,
+				Status:   recoverycontract.ReconciliationVerificationPass,
 				ExitCode: 0,
 			}},
 		},
@@ -140,12 +144,12 @@ func TestBuildUsesValidSiblingReconciliationForRemainingStatus(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 
-	if report.Status != "partial" || report.ReconciliationPath != "nested/reconciliation.json" {
+	if report.Status != recoverycontract.PacketStatusPartial || report.ReconciliationPath != "nested/reconciliation.json" {
 		t.Fatalf("expected partial sibling reconciliation status, got %#v", report)
 	}
 
-	if report.WorkflowTerminalState != workflowstate.TerminalStateRecoveryOpen || !report.Dispatchable {
-		t.Fatalf("expected partial recovery report to remain dispatchable, got %#v", report)
+	if report.WorkflowState != workflowstate.StateReconciling || report.WorkflowTerminalState != "" || report.Dispatchable {
+		t.Fatalf("expected partial recovery report to remain nonterminal reconciling, got %#v", report)
 	}
 
 	if len(report.CandidateAtoms) != 1 || report.CandidateAtoms[0].ID != "recovery-002" {
@@ -168,11 +172,11 @@ func TestBuildReportsInvalidSiblingReconciliationAsBlocked(t *testing.T) {
 	reconciliation, err := recovery.BuildReconciliation(packet, recovery.ReconciliationOptions{
 		Now:              time.Date(2026, 5, 18, 13, 0, 0, 0, time.UTC),
 		CompletedAtomIDs: []string{"recovery-001"},
-		Verification: recovery.ReconciliationVerification{
-			Status: recovery.ReconciliationVerificationPass,
-			Commands: []recovery.ReconciliationCommandResult{{
+		Verification: recoverycontract.ReconciliationVerification{
+			Status: recoverycontract.ReconciliationVerificationPass,
+			Commands: []recoverycontract.ReconciliationCommandResult{{
 				Command:  "go test ./internal/workflows/recoverstatus",
-				Status:   recovery.ReconciliationVerificationPass,
+				Status:   recoverycontract.ReconciliationVerificationPass,
 				ExitCode: 0,
 			}},
 		},
@@ -197,11 +201,11 @@ func TestBuildReportsInvalidSiblingReconciliationAsBlocked(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 
-	if report.Status != "blocked" || report.NextAction != recovery.NextActionInspectFailure {
+	if report.Status != recoverycontract.PacketStatusBlocked || report.NextAction != recoverycontract.NextActionInspectFailure {
 		t.Fatalf("expected blocked invalid reconciliation report, got %#v", report)
 	}
 
-	if report.WorkflowTerminalState != workflowstate.TerminalStateBlocked || report.Dispatchable {
+	if report.WorkflowState != workflowstate.StateTerminal || report.WorkflowTerminalState != workflowstate.TerminalStateBlocked || report.Dispatchable {
 		t.Fatalf("blocked reconciliation should not be dispatchable, got %#v", report)
 	}
 
@@ -271,11 +275,11 @@ func TestBuildRejectsSymlinkedDefaultReconciliationPath(t *testing.T) {
 	reconciliation, err := recovery.BuildReconciliation(packet, recovery.ReconciliationOptions{
 		Now:              time.Date(2026, 5, 18, 13, 0, 0, 0, time.UTC),
 		CompletedAtomIDs: []string{"recovery-001"},
-		Verification: recovery.ReconciliationVerification{
-			Status: recovery.ReconciliationVerificationPass,
-			Commands: []recovery.ReconciliationCommandResult{{
+		Verification: recoverycontract.ReconciliationVerification{
+			Status: recoverycontract.ReconciliationVerificationPass,
+			Commands: []recoverycontract.ReconciliationCommandResult{{
 				Command:  "go test ./internal/workflows/recoverstatus",
-				Status:   recovery.ReconciliationVerificationPass,
+				Status:   recoverycontract.ReconciliationVerificationPass,
 				ExitCode: 0,
 			}},
 		},
@@ -309,38 +313,46 @@ func TestBuildRejectsSymlinkedDefaultReconciliationPath(t *testing.T) {
 	}
 }
 
-func recoverStatusTestPacket(t *testing.T) recovery.DecompositionPacket {
+func recoverStatusTestPacket(t *testing.T) recoverycontract.DecompositionPacket {
 	t.Helper()
 
-	return recovery.DecompositionPacket{
-		SchemaVersion: recovery.DecompositionPacketSchemaVersion,
+	return recoverycontract.DecompositionPacket{
+		SchemaVersion: recoverycontract.DecompositionPacketSchemaVersion,
 		PacketID:      "packet-failure-status-test",
 		FailureID:     "failure-status-test",
 		CreatedAt:     time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
 		UpdatedAt:     time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
-		PartialState: recovery.PartialState{
-			DirtyStatus: recovery.DirtyStatusClean,
-			ScopeStatus: recovery.ScopeStatusInScope,
+		SourceRun: recoverycontract.SourceRun{
+			Lane:              string(recoverycontract.SourceLaneImplement),
+			SessionID:         "session-status-test",
+			RequiredEditPaths: []string{"internal/workflows/recoverstatus/status.go"},
 		},
-		Failure: recovery.Failure{Class: recovery.FailureClassExecutorEdit},
-		ResidualWork: []recovery.ResidualWork{{
+		PartialState: recoverycontract.PartialState{
+			DirtyStatus: recoverycontract.DirtyStatusClean,
+			ScopeStatus: recoverycontract.ScopeStatusInScope,
+		},
+		Failure: recoverycontract.Failure{
+			Class:   recoverycontract.FailureClassExecutorEdit,
+			Summary: "recover status test failure",
+		},
+		ResidualWork: []recoverycontract.ResidualWork{{
 			ID:     "residual-001",
 			Title:  "Recover status test",
-			Reason: recovery.FailureClassExecutorEdit,
+			Reason: string(recoverycontract.FailureClassExecutorEdit),
 			Paths:  []string{"internal/workflows/recoverstatus/status.go"},
-			EvidenceRefs: []recovery.EvidenceRef{
+			EvidenceRefs: []recoverycontract.EvidenceRef{
 				{Kind: "required_path", Path: "internal/workflows/recoverstatus/status.go"},
 				{Kind: "required_test", ID: "go test ./internal/workflows/recoverstatus"},
 			},
 		}},
-		CandidateAtoms: []recovery.CandidateAtom{{
+		CandidateAtoms: []recoverycontract.CandidateAtom{{
 			ID:              "recovery-001",
 			Title:           "Recover status test",
 			RequiredPaths:   []string{"internal/workflows/recoverstatus/status.go"},
 			RequiredTests:   []string{"go test ./internal/workflows/recoverstatus"},
-			Gates:           []string{recovery.GateWorkspaceState, recovery.GateBriefLint},
+			Gates:           []string{recoverycontract.GateWorkspaceState, recoverycontract.GateBriefLint},
 			ResidualWorkIDs: []string{"residual-001"},
 		}},
-		NextAction: recovery.NextActionReviewDecomposition,
+		NextAction: recoverycontract.NextActionReviewDecomposition,
 	}
 }

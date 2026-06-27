@@ -6,7 +6,8 @@ import (
 	"testing"
 
 	"idiom/internal/capabilities/workspace"
-	"idiom/internal/contracts/compile"
+	contractcompile "idiom/internal/contracts/compile"
+	recoverycontract "idiom/internal/contracts/recovery"
 )
 
 func TestBuildActionGuidanceForBootstrappedReadBlocker(t *testing.T) {
@@ -707,7 +708,7 @@ func TestBuildRecoveryPlanClassifiesFailure(t *testing.T) {
 	cases := []struct {
 		name   string
 		input  RecoveryInput
-		want   string
+		want   recoverycontract.FailureClass
 		needle string
 	}{
 		{
@@ -717,7 +718,7 @@ func TestBuildRecoveryPlanClassifiesFailure(t *testing.T) {
 				Request: workspace.ToolRequest{Tool: "tool_parse"},
 				Result:  workspace.ToolResult{Tool: "tool_parse", Summary: "Malformed tool request rejected", Error: "Emit exactly one valid JSON tool object."},
 			},
-			want:   "tool_parse_error",
+			want:   recoverycontract.FailureClassToolParseError,
 			needle: "markdown-wrapped or malformed tool JSON",
 		},
 		{
@@ -727,7 +728,7 @@ func TestBuildRecoveryPlanClassifiesFailure(t *testing.T) {
 				Request: workspace.ToolRequest{Tool: "edit_file", Path: "README.md"},
 				Result:  workspace.ToolResult{Tool: "edit_file", Summary: "Write approval required", Error: "approval required before editing README.md"},
 			},
-			want:   "permission_boundary",
+			want:   recoverycontract.FailureClassPermissionBoundary,
 			needle: "stop and report that write approval is required",
 		},
 		{
@@ -737,7 +738,7 @@ func TestBuildRecoveryPlanClassifiesFailure(t *testing.T) {
 				Request: workspace.ToolRequest{Tool: "completion_gate"},
 				Result:  workspace.ToolResult{Tool: "completion_gate", Summary: "Task ledger completion gate rejected final answer", Error: "completion gate still requires pending work"},
 			},
-			want:   "completion_gate",
+			want:   recoverycontract.FailureClassCompletionGate,
 			needle: "satisfy the completion gate before final answer",
 		},
 		{
@@ -747,7 +748,7 @@ func TestBuildRecoveryPlanClassifiesFailure(t *testing.T) {
 				Request: workspace.ToolRequest{Tool: "read_file", Path: "README.md"},
 				Result:  workspace.ToolResult{Tool: "read_file", Summary: "Repeated tool request replayed prior evidence", Error: "this exact request already replayed prior evidence once"},
 			},
-			want:   "repeated_action",
+			want:   recoverycontract.FailureClassRepeatedAction,
 			needle: "same read_file request on README.md",
 		},
 	}
@@ -1294,10 +1295,16 @@ func TestBuildInitialStepInstructionConversationNamesDefaultReadOnlyAnswerLane(t
 	})
 	if !strings.Contains(step.Directive, "Conversation lane") ||
 		!strings.Contains(step.Directive, "every response must either") ||
-		!strings.Contains(step.Directive, "context_pack to localize") ||
+		!strings.Contains(step.Directive, "Choose from the available evidence capabilities according to the specific gap") ||
 		!strings.Contains(step.Directive, "Do not return raw tool summaries") {
 
 		t.Fatalf("conversation initial directive should explain the default read-only answer contract:\n%s", step.Directive)
+	}
+
+	for _, forbidden := range []string{"10-35", "prefer this order", "Use context_pack to localize", "Use the note tool"} {
+		if strings.Contains(step.Directive, forbidden) {
+			t.Fatalf("conversation initial directive should not prescribe strategy cue %q:\n%s", forbidden, step.Directive)
+		}
 	}
 
 	for _, want := range []string{
@@ -1431,11 +1438,11 @@ func TestNormalizeRuntimeBriefSuppressesPlaceholderManifestRequests(t *testing.T
 	}
 }
 
-func TestBuildToolManifestSuppressesWorkspacePlaceholderRequests(t *testing.T) {
-	manifest := BuildToolManifest([]string{"submit_plan", "pwd"})
+func TestNormalizeRuntimeBriefBuildsWorkspaceOwnedToolManifest(t *testing.T) {
+	brief := NormalizeRuntimeBrief(WorkerRuntimeBrief{AllowedTools: []string{"submit_plan", "pwd"}})
 
 	byTool := map[string]ToolManifestEntry{}
-	for _, entry := range manifest {
+	for _, entry := range brief.ToolManifest {
 		byTool[entry.Tool] = entry
 	}
 

@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	plancontract "idiom/internal/contracts/plan"
 )
 
 func TestVerificationPlannerDedupeExplicitAndInferredCommands(t *testing.T) {
@@ -23,7 +25,7 @@ func TestVerificationPlannerDedupeExplicitAndInferredCommands(t *testing.T) {
 		t.Fatalf("commands = %#v, want one deduped command", plan.Commands)
 	}
 
-	if got := plan.Commands[0]; got.Command != "go test ./pkg/feature" || got.WorkingDir != "" || got.Source != VerificationCommandSourcePrompt {
+	if got := plan.Commands[0]; got.Command != "go test ./pkg/feature" || got.WorkingDir != "" || got.Source != plancontract.VerificationCommandSourcePrompt {
 		t.Fatalf("unexpected command = %#v", got)
 	}
 
@@ -49,7 +51,7 @@ func TestVerificationPlannerRejectsUnsafePromptCommand(t *testing.T) {
 		t.Fatalf("unsafe prompt command must not be executable: %#v", plan.Commands)
 	}
 
-	if len(plan.Rejects) != 1 || plan.Rejects[0].Reason != VerificationRejectUnsupportedCmd {
+	if len(plan.Rejects) != 1 || plan.Rejects[0].Reason != plancontract.VerificationRejectUnsupportedCmd {
 		t.Fatalf("unsafe prompt command should be a structured reject, got %#v", plan.Rejects)
 	}
 }
@@ -69,10 +71,10 @@ func TestVerificationPlannerAcceptsRequestedPytestCommands(t *testing.T) {
 		t.Fatalf("commands = %#v, want requested pytest commands", plan.Commands)
 	}
 
-	if got := plan.Commands[0]; got.Command != "pytest tests/test_query_handler.py" || got.Source != VerificationCommandSourcePrompt {
+	if got := plan.Commands[0]; got.Command != "pytest tests/test_query_handler.py" || got.Source != plancontract.VerificationCommandSourcePrompt {
 		t.Fatalf("unexpected pytest command = %#v", got)
 	}
-	if got := plan.Commands[1]; got.Command != "python -m pytest tests/test_memory.py" || got.Source != VerificationCommandSourcePrompt {
+	if got := plan.Commands[1]; got.Command != "python -m pytest tests/test_memory.py" || got.Source != plancontract.VerificationCommandSourcePrompt {
 		t.Fatalf("unexpected python -m pytest command = %#v", got)
 	}
 	if len(plan.Rejects) != 0 {
@@ -91,7 +93,7 @@ func TestVerificationPlannerRejectsUnsafePytestCommand(t *testing.T) {
 	if len(plan.Commands) != 0 {
 		t.Fatalf("unsafe pytest command must not be executable: %#v", plan.Commands)
 	}
-	if len(plan.Rejects) != 1 || plan.Rejects[0].Reason != VerificationRejectUnsupportedCmd {
+	if len(plan.Rejects) != 1 || plan.Rejects[0].Reason != plancontract.VerificationRejectUnsupportedCmd {
 		t.Fatalf("unsafe pytest command should be a structured reject, got %#v", plan.Rejects)
 	}
 }
@@ -111,7 +113,7 @@ func TestVerificationPlannerUsesClosestGoModuleRoot(t *testing.T) {
 		},
 	})
 
-	got := map[string]VerificationCommand{}
+	got := map[string]plancontract.VerificationCommand{}
 	for _, command := range plan.Commands {
 		got[command.Path] = command
 	}
@@ -139,7 +141,7 @@ func TestVerificationPlannerDoesNotInferFromGoWorkAlone(t *testing.T) {
 		t.Fatalf("go.work without a go.mod must not infer verification commands: %#v", plan.Commands)
 	}
 
-	if !collectVerificationPlannerSkipReasons(plan.Skips).contains(VerificationSkipNoGoModuleRoot) {
+	if !collectVerificationPlannerSkipReasons(plan.Skips).contains(plancontract.VerificationSkipNoGoModuleRoot) {
 		t.Fatalf("missing no-module skip, got %#v", plan.Skips)
 	}
 }
@@ -168,13 +170,13 @@ func TestVerificationPlannerSkipsUnsafeAndUnsupportedPaths(t *testing.T) {
 
 	reasons := collectVerificationPlannerSkipReasons(plan.Skips)
 	for _, want := range []string{
-		VerificationSkipVendorPath,
-		VerificationSkipGeneratedPath,
-		VerificationSkipGeneratedFile,
-		VerificationSkipAbsolutePath,
-		VerificationSkipParentTraversal,
-		VerificationSkipEmptySegment,
-		VerificationSkipNonGoPath,
+		plancontract.VerificationSkipVendorPath,
+		plancontract.VerificationSkipGeneratedPath,
+		plancontract.VerificationSkipGeneratedFile,
+		plancontract.VerificationSkipAbsolutePath,
+		plancontract.VerificationSkipParentTraversal,
+		plancontract.VerificationSkipEmptySegment,
+		plancontract.VerificationSkipNonGoPath,
 	} {
 		if !reasons.contains(want) {
 			t.Fatalf("missing skip reason %q in %#v", want, plan.Skips)
@@ -185,7 +187,7 @@ func TestVerificationPlannerSkipsUnsafeAndUnsupportedPaths(t *testing.T) {
 		t.Fatalf("expected only safe explicit command, got %#v", plan.Commands)
 	}
 
-	if len(plan.Rejects) != 1 || plan.Rejects[0].Reason != VerificationRejectUnsupportedCmd {
+	if len(plan.Rejects) != 1 || plan.Rejects[0].Reason != plancontract.VerificationRejectUnsupportedCmd {
 		t.Fatalf("expected structured reject for unsafe command, got %#v", plan.Rejects)
 	}
 }
@@ -196,7 +198,7 @@ func (reasons verificationPlannerSkipReasons) contains(reason string) bool {
 	return slices.Contains(reasons, reason)
 }
 
-func collectVerificationPlannerSkipReasons(skips []VerificationSkip) verificationPlannerSkipReasons {
+func collectVerificationPlannerSkipReasons(skips []plancontract.VerificationSkip) verificationPlannerSkipReasons {
 	reasons := make(verificationPlannerSkipReasons, 0, len(skips))
 	for _, skip := range skips {
 		reasons = append(reasons, skip.Reason)

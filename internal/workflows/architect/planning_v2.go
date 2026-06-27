@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 type PlanningPacketV2Options struct {
@@ -225,7 +225,7 @@ func buildRepositoryView(views []contextViewSummary) []RepositoryViewItem {
 func buildCandidateScope(packet Packet, views []contextViewSummary) []RankedScopeItem {
 	items := make(map[string]RankedScopeItem)
 	add := func(item RankedScopeItem) {
-		key := firstNonEmpty(item.Handle, item.Kind+"\x00"+item.Path+"\x00"+item.Symbol)
+		key := textutil.FirstNonEmpty(item.Handle, item.Kind+"\x00"+item.Path+"\x00"+item.Symbol)
 		if key == "" {
 			return
 		}
@@ -266,7 +266,7 @@ func buildCandidateScope(packet Packet, views []contextViewSummary) []RankedScop
 			Signals: []ScopeSignal{{
 				Kind:   "explicit_file_ref",
 				Weight: 0.50,
-				Detail: firstNonEmpty(file.Reason, file.Role),
+				Detail: textutil.FirstNonEmpty(file.Reason, file.Role),
 			}},
 		})
 	}
@@ -280,7 +280,7 @@ func buildCandidateScope(packet Packet, views []contextViewSummary) []RankedScop
 			Signals: []ScopeSignal{{
 				Kind:   "validation_requirement",
 				Weight: 0.42,
-				Detail: firstNonEmpty(test.Reason, test.Command),
+				Detail: textutil.FirstNonEmpty(test.Reason, test.Command),
 			}},
 		})
 	}
@@ -306,12 +306,12 @@ func buildCandidateScope(packet Packet, views []contextViewSummary) []RankedScop
 				Path:        file.Path,
 				Kind:        "file",
 				Rank:        0.74,
-				Confidence:  firstNonEmpty(file.Confidence, "heuristic"),
+				Confidence:  textutil.FirstNonEmpty(file.Confidence, "heuristic"),
 				Limitations: limitations,
 				Signals: []ScopeSignal{{
 					Kind:   "context_view_candidate",
 					Weight: 0.32,
-					Detail: firstNonEmpty(file.Reason, file.Role),
+					Detail: textutil.FirstNonEmpty(file.Reason, file.Role),
 				}},
 			})
 		}
@@ -327,12 +327,12 @@ func buildCandidateScope(packet Packet, views []contextViewSummary) []RankedScop
 			}
 
 			add(RankedScopeItem{
-				Handle:      firstNonEmpty(symbol.ID, "symbol://"+symbol.Path+"#"+symbol.QualifiedName),
+				Handle:      textutil.FirstNonEmpty(symbol.ID, "symbol://"+symbol.Path+"#"+symbol.QualifiedName),
 				Path:        symbol.Path,
 				Symbol:      symbol.QualifiedName,
-				Kind:        firstNonEmpty(symbol.Kind, "symbol"),
+				Kind:        textutil.FirstNonEmpty(symbol.Kind, "symbol"),
 				Rank:        0.68,
-				Confidence:  firstNonEmpty(symbol.Confidence, "heuristic"),
+				Confidence:  textutil.FirstNonEmpty(symbol.Confidence, "heuristic"),
 				Limitations: limitations,
 				Signals: []ScopeSignal{{
 					Kind:   "context_view_symbol",
@@ -364,7 +364,7 @@ func buildCandidateScope(packet Packet, views []contextViewSummary) []RankedScop
 				Signals: []ScopeSignal{{
 					Kind:   "context_view_test",
 					Weight: 0.25,
-					Detail: firstNonEmpty(test.Reason, test.Command),
+					Detail: textutil.FirstNonEmpty(test.Reason, test.Command),
 				}},
 			})
 		}
@@ -583,7 +583,7 @@ func summarizeContextViews(root string, evidence []Evidence) []contextViewSummar
 
 		for _, symbol := range view.CandidateSymbols {
 			if symbol.Stale {
-				view.StaleNodes = append(view.StaleNodes, firstNonEmpty(symbol.ID, symbol.Path))
+				view.StaleNodes = append(view.StaleNodes, textutil.FirstNonEmpty(symbol.ID, symbol.Path))
 			}
 		}
 
@@ -624,7 +624,7 @@ func testsFromContextViews(views []contextViewSummary) []CommandRef {
 	for _, view := range views {
 		for _, test := range view.Tests {
 			if test.Command != "" {
-				out = append(out, CommandRef{Command: test.Command, Reason: firstNonEmpty(test.Reason, "context view validation candidate")})
+				out = append(out, CommandRef{Command: test.Command, Reason: textutil.FirstNonEmpty(test.Reason, "context view validation candidate")})
 			}
 		}
 	}
@@ -850,10 +850,6 @@ func precisionRank(confidence string) int {
 	default:
 		return 0
 	}
-}
-
-func firstNonEmpty(values ...string) string {
-	return util.FirstNonEmpty(values...)
 }
 
 func pluralCount(count int, label string) string {

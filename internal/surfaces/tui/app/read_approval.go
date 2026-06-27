@@ -6,6 +6,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/readapproval"
+	"idiom/internal/repository/readapprovalcache"
 	"idiom/internal/runtime/agent"
 )
 
@@ -13,7 +14,7 @@ const readApprovalModeName = "read-scope"
 
 type tuiReadApprovalDecider struct {
 	model *Model
-	cache readapproval.Cache
+	cache agent.ReadApprovalCache
 }
 
 func newTuiReadApprovalDecider(m *Model) *tuiReadApprovalDecider {
@@ -21,7 +22,7 @@ func newTuiReadApprovalDecider(m *Model) *tuiReadApprovalDecider {
 		model: m,
 	}
 	if m != nil && m.workspace != nil {
-		d.cache = readapproval.NewFileCache(m.workspace.Root())
+		d.cache = readapprovalcache.NewFileCache(m.workspace.Root())
 	}
 	return d
 }
@@ -58,7 +59,6 @@ func (d *tuiReadApprovalDecider) DecideRead(ctx context.Context, req readapprova
 		decision.Source = readapproval.SourceOperator
 	}
 
-	d.emitDecision(req, decision)
 	return decision, nil
 }
 
@@ -67,28 +67,11 @@ func (d *tuiReadApprovalDecider) emitRequested(req readapproval.Request) {
 		return
 	}
 	d.model.emitJSONEvent(map[string]any{
-		"event":      "read_approval_requested",
+		"event":      readapproval.EventReadApprovalRequested,
 		"tool":       req.Tool,
 		"path":       req.Path,
 		"lane":       req.Lane,
 		"session_id": req.SessionID,
-		"mode":       readApprovalModeName,
-	})
-}
-
-func (d *tuiReadApprovalDecider) emitDecision(req readapproval.Request, decision readapproval.Decision) {
-	if d == nil || d.model == nil || d.model.eventStream == nil {
-		return
-	}
-	d.model.emitJSONEvent(map[string]any{
-		"event":      "read_approval_decision",
-		"tool":       req.Tool,
-		"path":       req.Path,
-		"lane":       req.Lane,
-		"session_id": req.SessionID,
-		"outcome":    decision.Outcome.String(),
-		"reason":     decision.Reason,
-		"source":     decision.Source,
 		"mode":       readApprovalModeName,
 	})
 }
@@ -101,12 +84,12 @@ func (m *Model) newReadApprovalGate() *agent.ReadApprovalGate {
 	return &agent.ReadApprovalGate{
 		Decider: decider,
 		Cache:   decider.cache,
-		OnEvent: func(req readapproval.Request, decision readapproval.Decision) {
+		OnEvent: func(req readapproval.Request, decision readapproval.Decision, origin string) {
 			if m.eventStream == nil {
 				return
 			}
 			m.emitJSONEvent(map[string]any{
-				"event":      "read_approval_decision",
+				"event":      readapproval.EventReadApprovalDecision,
 				"tool":       req.Tool,
 				"path":       req.Path,
 				"lane":       req.Lane,
@@ -114,7 +97,7 @@ func (m *Model) newReadApprovalGate() *agent.ReadApprovalGate {
 				"outcome":    decision.Outcome.String(),
 				"reason":     decision.Reason,
 				"source":     decision.Source,
-				"origin":     "cache_lookup",
+				"origin":     origin,
 			})
 		},
 	}

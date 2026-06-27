@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"testing"
 
+	featureplannercontract "idiom/internal/contracts/featureplanner"
 	"idiom/internal/workflows/featureplanner"
 	"idiom/internal/workflows/productworkflow"
 )
@@ -410,7 +411,7 @@ func TestBDDTTDPipelineCarriesAcceptedCoverageThroughPlannerValidation(t *testin
 
 	plan := featureplanner.FeaturePlan{
 		SchemaVersion: featureplanner.FeaturePlanSchemaVersion,
-		Tool:          featureplanner.ToolSubmitFeaturePlan,
+		Tool:          string(featureplannercontract.ToolSubmitFeaturePlan),
 		FeatureID:     "feature-pipeline",
 		SourceTask:    featureplanner.SourceTask{Kind: "product_workflow", Summary: "Implement accepted BDD-TDD pipeline coverage."},
 		Summary:       "Implement accepted BDD-TDD pipeline coverage.",

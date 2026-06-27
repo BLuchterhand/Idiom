@@ -14,8 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"idiom/internal/contracts/autonomy"
+	featureplannercontract "idiom/internal/contracts/featureplanner"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/platform/config"
-	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/featureplanner"
 	coreplanexecute "idiom/internal/workflows/planexecute"
 	"idiom/internal/workflows/productworkflow"
@@ -71,6 +73,39 @@ func TestRunFeaturePlannerMainReadsPromptFileAndHonorsJSON(t *testing.T) {
 
 	if strings.Contains(stdout.String(), "planned\n") && !strings.Contains(stdout.String(), `"content":"planned"`) {
 		t.Fatalf("JSON mode should not append plain final answer, got %q", stdout.String())
+	}
+}
+
+func TestRunFeaturePlannerMainJSONMessagesDoNotLeakRawPromptOrAnswer(t *testing.T) {
+	configPath := writeMainConfig(t)
+	secret := "secret-feature-planner-token"
+	promptPath := filepath.Join(t.TempDir(), "feature.md")
+	if err := os.WriteFile(promptPath, []byte("plan feature "+secret+"\n"), 0o644); err != nil {
+		t.Fatalf("write prompt: %v", err)
+	}
+
+	originalRunner := runHeadlessFeaturePlanner
+	t.Cleanup(func() { runHeadlessFeaturePlanner = originalRunner })
+	runHeadlessFeaturePlanner = func(_ context.Context, req featurePlannerRequest, _ io.Writer) (featurePlannerResult, error) {
+		if !strings.Contains(req.Prompt, secret) {
+			t.Fatalf("runner should still receive raw prompt")
+		}
+		return featurePlannerResult{
+			Answer: "assistant answer " + secret,
+			Fields: map[string]any{"status": "ok"},
+		}, nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := RunMain([]string{"--config", configPath, "--prompt-file", promptPath, "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("RunMain code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if strings.Contains(stdout.String(), secret) || strings.Contains(stdout.String(), "assistant answer") || strings.Contains(stdout.String(), "plan feature") {
+		t.Fatalf("json stdout leaked raw prompt or answer:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"content_hash"`) || !strings.Contains(stdout.String(), `"content_length"`) {
+		t.Fatalf("json message metadata missing:\n%s", stdout.String())
 	}
 }
 
@@ -158,7 +193,7 @@ func TestDefaultFeaturePlannerModelTurnRetriesEmptyPlannerResponse(t *testing.T)
 
 	var stdout bytes.Buffer
 
-	answer, err := defaultFeaturePlannerModelTurn(featurePlannerRequest{
+	answer, err := defaultFeaturePlannerModelTurn(context.Background(), featurePlannerRequest{
 		Config: config.Config{
 			LlamaServer: config.LlamaServer{
 				Kind:    config.BackendLlama,
@@ -169,7 +204,7 @@ func TestDefaultFeaturePlannerModelTurnRetriesEmptyPlannerResponse(t *testing.T)
 		},
 		JSONEvents: true,
 		SessionID:  "retry-empty-planner",
-	}, "Plan one feature atom.", string(workerruntime.TaskFamilyFeaturePlannerPlanner), &stdout)
+	}, "Plan one feature atom.", string(autonomy.TaskFamilyFeaturePlannerPlanner), &stdout)
 	if err != nil {
 		t.Fatalf("defaultFeaturePlannerModelTurn: %v", err)
 	}
@@ -205,14 +240,51 @@ func TestDefaultFeaturePlannerModelTurnRetriesEmptyPlannerResponse(t *testing.T)
 		}
 	}
 	for _, want := range []string{
-		`\"raw_omitted\":true`,
-		`\"tool\":\"submit_feature_plan\"`,
-		`\"sha256\":\"sha256:`,
+		`"content_hash":"sha256:`,
+		`"content_length":`,
 	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("feature-planner JSON stream missing bounded diagnostic %q: %s", want, stdout.String())
 		}
 	}
+}
+
+func TestDefaultFeaturePlannerModelTurnReportsMessageEmitError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		body, _ := json.Marshal(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]any{
+					"role":    "assistant",
+					"content": featurePlannerPlanExecuteDispatchPlanJSON(),
+				},
+				"finish_reason": "stop",
+			}},
+		})
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+
+	_, err := defaultFeaturePlannerModelTurn(context.Background(), featurePlannerRequest{
+		Config: config.Config{
+			LlamaServer: config.LlamaServer{
+				Kind:    config.BackendLlama,
+				BaseURL: server.URL,
+				Model:   "planner-model",
+			},
+			Chat: config.Chat{RequestTimeoutSeconds: 5},
+		},
+		JSONEvents: true,
+		SessionID:  "emit-error",
+	}, "Plan one feature atom.", string(autonomy.TaskFamilyFeaturePlannerPlanner), failingWriter{})
+	if err == nil || !strings.Contains(err.Error(), io.ErrClosedPipe.Error()) {
+		t.Fatalf("expected emit error, got %v", err)
+	}
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, io.ErrClosedPipe
 }
 
 func TestFeaturePlannerMainDispatchesThroughAdapter(t *testing.T) {
@@ -261,10 +333,10 @@ func TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute(t *testi
 	modelCalls := 0
 	planExecuteCalls := 0
 
-	runFeaturePlannerModelTurn = func(_ featurePlannerRequest, _ string, taskFamily string, _ io.Writer) (string, error) {
+	runFeaturePlannerModelTurn = func(_ context.Context, _ featurePlannerRequest, _ string, taskFamily string, _ io.Writer) (string, error) {
 		modelCalls++
 
-		if taskFamily != string(workerruntime.TaskFamilyFeaturePlannerPlanner) {
+		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerPlanner) {
 			t.Fatalf("feature-planner execution must not use direct model task family %q", taskFamily)
 		}
 
@@ -289,7 +361,7 @@ func TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute(t *testi
 		}
 
 		body, _ := json.Marshal(map[string]any{
-			"tool":              featureplanner.ToolPlanExecuteComplete,
+			"tool":              featureplannercontract.ToolPlanExecuteComplete,
 			"lane_family":       "plan-execute",
 			"status":            "completed",
 			"completion_source": "test_plan_execute_adapter",
@@ -328,6 +400,39 @@ func TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute(t *testi
 	}
 }
 
+func TestDefaultHeadlessFeaturePlannerPassesContextToModelTurn(t *testing.T) {
+	root := t.TempDir()
+	writeFeaturePlannerFixtureFile(t, filepath.Join(root, "go.mod"), "module idiom.test\n")
+
+	originalModelTurn := runFeaturePlannerModelTurn
+	t.Cleanup(func() { runFeaturePlannerModelTurn = originalModelTurn })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	runFeaturePlannerModelTurn = func(ctx context.Context, _ featurePlannerRequest, _ string, _ string, _ io.Writer) (string, error) {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		default:
+			t.Fatal("model turn did not receive canceled run context")
+			return "", nil
+		}
+	}
+
+	_, err := defaultHeadlessFeaturePlanner(ctx, featurePlannerRequest{
+		Config: config.Config{
+			Workspace: config.Workspace{Root: root, CWD: root},
+		},
+		Prompt:                "plan canceled feature",
+		SessionID:             "feature-planner-canceled",
+		MaxPlanningIterations: 1,
+	}, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "context canceled") {
+		t.Fatalf("expected context cancellation from model turn, got %v", err)
+	}
+}
+
 func TestDefaultHeadlessFeaturePlannerBlocksDispatchForInScopeSurfaceWithoutTDDObligation(t *testing.T) {
 	root := t.TempDir()
 	configPath := writeMainConfigRoot(t, root)
@@ -346,7 +451,7 @@ func TestDefaultHeadlessFeaturePlannerBlocksDispatchForInScopeSurfaceWithoutTDDO
 	modelCalls := 0
 	planExecuteCalls := 0
 
-	runFeaturePlannerModelTurn = func(_ featurePlannerRequest, _ string, _ string, _ io.Writer) (string, error) {
+	runFeaturePlannerModelTurn = func(_ context.Context, _ featurePlannerRequest, _ string, _ string, _ io.Writer) (string, error) {
 		modelCalls++
 		return featurePlannerPlanExecuteDispatchPlanJSONWithEvidenceOnlySurface(t), nil
 	}
@@ -387,7 +492,7 @@ func TestFeaturePlannerPlanExecuteProgressPathUsesLatestStateEvent(t *testing.T)
 		`{"type":"message","state_path":"ignored"}`,
 	}, "\n")
 
-	fields := featurePlannerPlanExecuteCompletionFields(output)
+	fields := featureplanner.PlanExecuteCompletionFields(output)
 	if got := featureplanner.CompletionFieldString(fields, "progress_path"); got != ".idiom/plan-execute/final/state.json" {
 		t.Fatalf("progress path = %q", got)
 	}
@@ -411,18 +516,18 @@ func TestFeaturePlannerPlanExecuteProgressPathUsesLatestStateEvent(t *testing.T)
 
 func TestFeaturePlannerPlanExecuteCompletionFieldsMarksReviewDegradedWithoutStatePath(t *testing.T) {
 	output := strings.Join([]string{
-		`{"type":"idiom.plan_execute.review_repair_degraded","status":"review_unavailable","reason_class":"review_model_error"}`,
+		`{"type":"idiom.plan_execute.review_repair_degraded","status":"degraded","reason_class":"review_model_error","status_detail":"review unavailable"}`,
 		`{"type":"message","content":"review unavailable"}`,
 	}, "\n")
 
-	fields := featurePlannerPlanExecuteCompletionFields(output)
+	fields := featureplanner.PlanExecuteCompletionFields(output)
 
 	if got := fmt.Sprint(fields["status"]); got != "degraded" {
 		t.Fatalf("status = %q, want degraded; fields=%+v", got, fields)
 	}
 
-	if got := fmt.Sprint(fields["review_status"]); got != "review_unavailable" {
-		t.Fatalf("review_status = %q, want review_unavailable; fields=%+v", got, fields)
+	if got := fmt.Sprint(fields["review_status"]); got != "degraded" {
+		t.Fatalf("review_status = %q, want degraded; fields=%+v", got, fields)
 	}
 
 	if got := fmt.Sprint(fields["failure_kind"]); got != "review_model_error" {
@@ -915,11 +1020,11 @@ func TestDefaultFeaturePlannerPlanExecuteRetriesFromDurableTerminalCompletion(t 
 					return 0
 				}
 
-				_, err := coreplanexecute.SavePlanExecuteTerminalCompletionRecord(root, coreplanexecute.PlanExecuteTerminalCompletionRecord{
+				_, err := coreplanexecute.SavePlanExecuteTerminalCompletionRecord(root, plancontract.PlanExecuteTerminalCompletionRecord{
 					SessionID:         sessionID,
-					Status:            "failed",
-					Phase:             coreplanexecute.ProgressPhasePlanning,
-					FailureKind:       coreplanexecute.RunFailurePlannerBlocked,
+					Status:            plancontract.PlanExecuteTerminalStatusFailed,
+					Phase:             plancontract.PlanExecuteProgressPhasePlanning,
+					FailureKind:       plancontract.PlanExecuteFailurePlannerBlocked,
 					FailureReason:     "<<QUESTION>>: source refresh needed",
 					NextAction:        "retry_plan_execute",
 					RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp", "native/src/simulation/world/collapse_event.h"},
@@ -957,11 +1062,11 @@ func TestDefaultFeaturePlannerPlanExecuteRetriesFromDurableTerminalCompletion(t 
 func TestDefaultFeaturePlannerPlanExecuteIgnoresStaleDurableTerminalCompletion(t *testing.T) {
 	root := t.TempDir()
 	sessionID := "atom-1-run-1"
-	stalePath, err := coreplanexecute.SavePlanExecuteTerminalCompletionRecord(root, coreplanexecute.PlanExecuteTerminalCompletionRecord{
+	stalePath, err := coreplanexecute.SavePlanExecuteTerminalCompletionRecord(root, plancontract.PlanExecuteTerminalCompletionRecord{
 		SessionID:         sessionID,
-		Status:            "failed",
-		Phase:             coreplanexecute.ProgressPhasePlanning,
-		FailureKind:       coreplanexecute.RunFailurePlannerBlocked,
+		Status:            plancontract.PlanExecuteTerminalStatusFailed,
+		Phase:             plancontract.PlanExecuteProgressPhasePlanning,
+		FailureKind:       plancontract.PlanExecuteFailurePlannerBlocked,
 		FailureReason:     "<<QUESTION>>: stale source refresh needed",
 		NextAction:        "retry_plan_execute",
 		RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp"},
@@ -1041,11 +1146,11 @@ func TestDefaultFeaturePlannerPlanExecuteEmitsBlockedTelemetryForFailure(t *test
 		t.Fatalf("completion should preserve failed status: %s", raw)
 	}
 
-	if !strings.Contains(stdout.String(), `"type":"internal_idiom.plan_execute.blocked"`) {
+	if !strings.Contains(stdout.String(), `"type":"`+string(featureplannercontract.NestedPlanExecuteCompletionEventBlocked)+`"`) {
 		t.Fatalf("expected blocked telemetry, stdout=%s", stdout.String())
 	}
 
-	if strings.Contains(stdout.String(), `"type":"internal_idiom.plan_execute.completed"`) {
+	if strings.Contains(stdout.String(), `"type":"`+string(featureplannercontract.NestedPlanExecuteCompletionEventCompleted)+`"`) {
 		t.Fatalf("failure completion must not emit completed telemetry, stdout=%s", stdout.String())
 	}
 }
@@ -1056,7 +1161,7 @@ func TestDefaultHeadlessFeaturePlannerRequiresExplicitProductContext(t *testing.
 
 	t.Cleanup(func() { runFeaturePlannerModelTurn = originalModelTurn })
 
-	runFeaturePlannerModelTurn = func(_ featurePlannerRequest, _ string, _ string, _ io.Writer) (string, error) {
+	runFeaturePlannerModelTurn = func(_ context.Context, _ featurePlannerRequest, _ string, _ string, _ io.Writer) (string, error) {
 		t.Fatal("model planner must not run when explicit product effort context cannot load")
 
 		return "", nil
@@ -1098,7 +1203,7 @@ func TestDefaultHeadlessFeaturePlannerClosedSourceSatisfiedSkipsDispatch(t *test
 		runFeaturePlannerPlanExecute = originalPlanExecute
 	})
 
-	runFeaturePlannerModelTurn = func(_ featurePlannerRequest, _ string, _ string, _ io.Writer) (string, error) {
+	runFeaturePlannerModelTurn = func(_ context.Context, _ featurePlannerRequest, _ string, _ string, _ io.Writer) (string, error) {
 		t.Fatal("closed/source-satisfied product effort must not call planner model")
 
 		return "", nil
@@ -1163,8 +1268,8 @@ func TestDefaultHeadlessFeaturePlannerResumeUsesSavedProductContext(t *testing.T
 
 	var resumedPrompt string
 
-	runFeaturePlannerModelTurn = func(_ featurePlannerRequest, prompt string, taskFamily string, _ io.Writer) (string, error) {
-		if taskFamily != string(workerruntime.TaskFamilyFeaturePlannerPlanner) {
+	runFeaturePlannerModelTurn = func(_ context.Context, _ featurePlannerRequest, prompt string, taskFamily string, _ io.Writer) (string, error) {
+		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerPlanner) {
 			t.Fatalf("unexpected task family %q", taskFamily)
 		}
 
@@ -1235,7 +1340,7 @@ func TestDefaultHeadlessFeaturePlannerResumeFailsClosedWithMissingSavedProductCo
 
 	t.Cleanup(func() { runFeaturePlannerModelTurn = originalModelTurn })
 
-	runFeaturePlannerModelTurn = func(_ featurePlannerRequest, _ string, _ string, _ io.Writer) (string, error) {
+	runFeaturePlannerModelTurn = func(_ context.Context, _ featurePlannerRequest, _ string, _ string, _ io.Writer) (string, error) {
 		t.Fatal("resumed product workflow state must not fall back to standalone planning when saved effort context cannot load")
 
 		return "", nil
@@ -1271,7 +1376,7 @@ func TestDefaultHeadlessFeaturePlannerResumeRejectsMismatchedProductContext(t *t
 
 	t.Cleanup(func() { runFeaturePlannerModelTurn = originalModelTurn })
 
-	runFeaturePlannerModelTurn = func(_ featurePlannerRequest, _ string, _ string, _ io.Writer) (string, error) {
+	runFeaturePlannerModelTurn = func(_ context.Context, _ featurePlannerRequest, _ string, _ string, _ io.Writer) (string, error) {
 		t.Fatal("mismatched product context must fail before planner model call")
 
 		return "", nil
@@ -1577,7 +1682,7 @@ func writeFeaturePlannerResumeEffort(t *testing.T, root string, effortID string)
 		Title:            "Resume product context",
 		StatusBucket:     "started",
 		CurrentPhase:     "phase-test",
-		CurrentState:     "planning",
+		CurrentState:     productworkflow.WorkflowStatePlanned,
 		ArtifactPaths:    map[string]string{"events": "events.jsonl"},
 		Coverage:         productworkflow.CoverageState{CoverageTier: "unit"},
 		Privacy:          productworkflow.PrivacyState{RedactionStatus: "applied"},
@@ -1927,6 +2032,18 @@ func TestFeaturePlanner_ProductWorkflowIntegration_JSONRoundTrip(t *testing.T) {
 
 	if roundTripped.PRDRequirements[0].ID != "REQ-001" {
 		t.Errorf("PRDRequirements[0].ID: got %q want REQ-001", roundTripped.PRDRequirements[0].ID)
+	}
+}
+
+func TestEmitFeaturePlannerJSONEventRejectsUnknownContractEvent(t *testing.T) {
+	var stdout bytes.Buffer
+
+	if err := emitFeaturePlannerJSONEvent(&stdout, true, featureplannercontract.FeaturePlannerEventType("not_real"), nil); err == nil {
+		t.Fatal("expected unknown event type error")
+	}
+
+	if stdout.Len() != 0 {
+		t.Fatalf("unexpected JSON output for rejected event: %s", stdout.String())
 	}
 }
 

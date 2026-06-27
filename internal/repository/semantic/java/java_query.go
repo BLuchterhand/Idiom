@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 )
 
 type JavaSymbolMatch struct {
@@ -187,7 +187,7 @@ func (idx *JavaIndex) FindCallsInto(pattern string, limit int) []JavaCallMatch {
 						StartLine: sym.StartLine,
 						EndLine:   sym.EndLine,
 					},
-					CalleeName: util.FirstNonEmpty(target.Qualified, target.Name),
+					CalleeName: textutil.FirstNonEmpty(target.Qualified, target.Name),
 					Line:       call.Line,
 					Score:      target.Score,
 				})

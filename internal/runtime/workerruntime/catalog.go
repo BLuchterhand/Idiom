@@ -29,7 +29,7 @@ const (
 )
 
 type RuntimeContractSpec struct {
-	TaskFamily           TaskFamilyID
+	TaskFamily           autonomy.TaskFamilyID
 	Contract             RuntimeContractID
 	PermissionProfile    PermissionProfileID
 	ToolProfile          ToolCapabilityProfile
@@ -44,15 +44,15 @@ type RuntimeContractSpec struct {
 }
 
 const (
-	ArtifactFinalAnswerTaskFamily = string(TaskFamilyArtifactFinalAnswer)
-	ArtifactDistillerTaskFamily   = string(TaskFamilyArtifactDistiller)
+	ArtifactFinalAnswerTaskFamily = string(autonomy.TaskFamilyArtifactFinalAnswer)
+	ArtifactDistillerTaskFamily   = string(autonomy.TaskFamilyArtifactDistiller)
 )
 
 func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 	switch strings.TrimSpace(family) {
 	case ArtifactFinalAnswerTaskFamily:
 		return RuntimeContractSpec{
-			TaskFamily:           TaskFamilyArtifactFinalAnswer,
+			TaskFamily:           autonomy.TaskFamilyArtifactFinalAnswer,
 			Contract:             ContractArtifactFinalAnswer,
 			PermissionProfile:    PermissionConversationOnly,
 			ToolProfile:          CapabilityConversationReadOnly,
@@ -64,7 +64,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 		}
 	case ArtifactDistillerTaskFamily:
 		return RuntimeContractSpec{
-			TaskFamily:           TaskFamilyArtifactDistiller,
+			TaskFamily:           autonomy.TaskFamilyArtifactDistiller,
 			Contract:             ContractEditIntentDistill,
 			PermissionProfile:    PermissionConversationOnly,
 			ToolProfile:          CapabilityArtifactDistiller,
@@ -76,7 +76,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 		}
 	case "conversation", "direct_question":
 		return RuntimeContractSpec{
-			TaskFamily:           TaskFamilyConversation,
+			TaskFamily:           autonomy.TaskFamilyConversation,
 			Contract:             ContractDirectAnswer,
 			PermissionProfile:    PermissionReadOnlyWorkspace,
 			ToolProfile:          CapabilityConversationReadOnly,
@@ -88,7 +88,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 		}
 	case "debug_logs":
 		return RuntimeContractSpec{
-			TaskFamily:           TaskFamilyDebugLogs,
+			TaskFamily:           autonomy.TaskFamilyDebugLogs,
 			Contract:             ContractGroundedExplanation,
 			PermissionProfile:    PermissionReadOnlyWorkspace,
 			ToolProfile:          CapabilityDebugLogInvestigator,
@@ -103,7 +103,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 		}
 	case "verification_only":
 		return RuntimeContractSpec{
-			TaskFamily:           TaskFamilyVerificationOnly,
+			TaskFamily:           autonomy.TaskFamilyVerificationOnly,
 			Contract:             ContractDirectAnswer,
 			PermissionProfile:    PermissionReadOnlyVerificationShell,
 			ToolProfile:          CapabilityVerificationOnly,
@@ -118,7 +118,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 		}
 	case "locate":
 		return RuntimeContractSpec{
-			TaskFamily:           TaskFamilyLocate,
+			TaskFamily:           autonomy.TaskFamilyLocate,
 			Contract:             ContractLocateTargets,
 			PermissionProfile:    PermissionReadOnlyWorkspace,
 			ToolProfile:          CapabilityLocateOnly,
@@ -162,7 +162,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 		}
 	case "architecture":
 		return RuntimeContractSpec{
-			TaskFamily:           TaskFamilyArchitecture,
+			TaskFamily:           autonomy.TaskFamilyArchitecture,
 			Contract:             ContractArchitecture,
 			PermissionProfile:    PermissionReadOnlyWorkspace,
 			ToolProfile:          CapabilityReadOnlyDiscovery,
@@ -174,9 +174,9 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			StopConditions:       []StopConditionID{StopRequiredEvidenceSatisfied, StopBudgetExhaustedWithUncertainty},
 			FinalCritic:          []FinalCriticID{"answers_actual_user_request", "required_evidence_cited"},
 		}
-	case string(TaskFamilyFeaturePlannerPlanner):
+	case string(autonomy.TaskFamilyFeaturePlannerPlanner):
 		return RuntimeContractSpec{
-			TaskFamily:           TaskFamilyFeaturePlannerPlanner,
+			TaskFamily:           autonomy.TaskFamilyFeaturePlannerPlanner,
 			Contract:             ContractFeaturePlan,
 			PermissionProfile:    PermissionConversationOnly,
 			ToolProfile:          CapabilityConversationReadOnly,
@@ -187,9 +187,9 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			StopConditions:       []StopConditionID{StopFeaturePlanReturnedOrQuestion, StopBlockedByMissingInformation},
 			FinalCritic:          []FinalCriticID{"feature_plan_schema_or_planner_question", "no_tool_calls"},
 		}
-	case string(TaskFamilyFeaturePlannerImplementor):
+	case string(autonomy.TaskFamilyFeaturePlannerImplementor):
 		return RuntimeContractSpec{
-			TaskFamily:           TaskFamilyFeaturePlannerImplementor,
+			TaskFamily:           autonomy.TaskFamilyFeaturePlannerImplementor,
 			Contract:             ContractImplementationResult,
 			PermissionProfile:    PermissionGuardedWorkspaceWrite,
 			ToolProfile:          CapabilityPlanSubmissionPlanner,
@@ -200,7 +200,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			StopConditions:       []StopConditionID{StopPlanExecuteCompletionReturned, StopBlockedByMissingPermissionOrInformation},
 			FinalCritic:          []FinalCriticID{"plan_execute_completion_reported"},
 		}
-	case string(TaskFamilyPlanThenExecutePlanner):
+	case string(autonomy.TaskFamilyPlanThenExecutePlanner):
 		// Planner phase of `idiom plan-execute`. The model has read
 		// access plus the submit_plan tool; per-edit writes are
 		// runtime-rejected by the runner's plan-then-execute write
@@ -211,7 +211,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 		// tests), so the contract reflects "plan submitted, no per-
 		// edit verification needed in this phase."
 		return RuntimeContractSpec{
-			TaskFamily:           TaskFamilyPlanThenExecutePlanner,
+			TaskFamily:           autonomy.TaskFamilyPlanThenExecutePlanner,
 			Contract:             ContractImplementationResult,
 			PermissionProfile:    PermissionGuardedWorkspaceWrite,
 			ToolProfile:          CapabilityPlanSubmissionPlanner,
@@ -223,14 +223,14 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			StopConditions:       []StopConditionID{StopSubmitPlanReturnedOrSourceSatisfiedOrBlocker, StopBlockedByMissingPermissionOrInformation},
 			FinalCritic:          []FinalCriticID{"answers_actual_user_request", "submit_plan_called", "source_satisfied_or_blocker_only_with_per_path_evidence"},
 		}
-	case string(TaskFamilyPlanThenExecuteReview):
+	case string(autonomy.TaskFamilyPlanThenExecuteReview):
 		// Action-capable review for plan-execute. This lane receives
 		// executor diff/evidence and may submit a corrective plan, but
 		// a clean review closes with a direct checklist-backed pass. Keep
 		// it review-shaped so generic mutation gates do not force a
 		// submit_plan when no repair is needed.
 		return RuntimeContractSpec{
-			TaskFamily:           TaskFamilyPlanThenExecuteReview,
+			TaskFamily:           autonomy.TaskFamilyPlanThenExecuteReview,
 			Contract:             ContractReviewFindings,
 			PermissionProfile:    PermissionPlanSubmissionReview,
 			ToolProfile:          CapabilityPlanSubmissionReview,
@@ -275,7 +275,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 		}
 	default:
 		return RuntimeContractSpec{
-			TaskFamily:           TaskFamilyConversation,
+			TaskFamily:           autonomy.TaskFamilyConversation,
 			Contract:             ContractDirectAnswer,
 			PermissionProfile:    PermissionReadOnlyWorkspace,
 			ToolProfile:          CapabilityConversationReadOnly,
@@ -298,14 +298,14 @@ func RuntimeBriefForTaskFamily(family string, lane string, allowedWorkspaceTools
 		Lane:                 strings.TrimSpace(lane),
 		TaskFamily:           string(spec.TaskFamily),
 		Contract:             string(spec.Contract),
-		PermissionProfile:    permissionProfileString(spec.PermissionProfile),
+		PermissionProfile:    string(spec.PermissionProfile),
 		AllowedTools:         AllowedToolsForCapabilityProfile(allowedWorkspaceTools, spec.ToolProfile),
 		ForbiddenTools:       append([]string(nil), spec.ForbiddenTools...),
 		RequiredEvidence:     evidenceRequirementStrings(spec.RequiredEvidence),
 		RequiredTools:        append([]string(nil), spec.RequiredTools...),
 		ReadinessGate:        readinessGateStrings(spec.ReadinessGate),
 		SearchPolicy:         searchPolicyStrings(spec.SearchPolicy),
-		VerificationContract: verificationContractString(spec.VerificationContract),
+		VerificationContract: string(spec.VerificationContract),
 		StopConditions:       stopConditionStrings(spec.StopConditions),
 		FinalCritic:          finalCriticStrings(spec.FinalCritic),
 	}

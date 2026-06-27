@@ -16,7 +16,7 @@ import (
 
 	idiomeval "idiom/internal/evidence/eval"
 	"idiom/internal/evidence/telemetry"
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/jsonfile"
 	"idiom/internal/repository/comprehension"
 	"idiom/internal/runtime/localops"
 )
@@ -817,7 +817,7 @@ func loadP711IntegrationProofs(root string) (p711IntegrationProofSet, productEvi
 
 	var out p711IntegrationProofSet
 
-	if util.ReadJSON(path, &out) != nil {
+	if jsonfile.ReadJSON(path, &out) != nil {
 		return out, ref
 	}
 
@@ -832,7 +832,7 @@ func loadP711SecurityPosture(root string) (p711SecurityPosture, productEvidenceS
 
 	var out p711SecurityPosture
 
-	if util.ReadJSON(path, &out) != nil {
+	if jsonfile.ReadJSON(path, &out) != nil {
 		return out, ref
 	}
 

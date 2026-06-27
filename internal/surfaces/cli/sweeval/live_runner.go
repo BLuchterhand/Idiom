@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"idiom/internal/evidence/eval"
+	"idiom/internal/platform/textutil"
 )
 
 type liveSuiteRunner struct {
@@ -128,7 +129,7 @@ func (r liveSuiteRunner) runTask(index int, total int, task eval.SWETask, logPat
 
 	cmd := exec.CommandContext(cmdCtx, "/bin/sh", "-lc", command)
 
-	cmd.Dir = firstNonEmpty(fixture, filepath.Dir(r.suitePath))
+	cmd.Dir = textutil.FirstNonEmpty(fixture, filepath.Dir(r.suitePath))
 
 	cmd.Env = append(os.Environ(), taskEnvEntries(task.Env)...)
 	cmd.Env = append(cmd.Env,

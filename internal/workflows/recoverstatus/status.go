@@ -4,43 +4,64 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
+	recoverycontract "idiom/internal/contracts/recovery"
+
+	"idiom/internal/contracts/workflowstate"
 	"idiom/internal/workflows/recovery"
-	"idiom/internal/workflows/workflowstate"
 )
 
-const ReportType = "idiom.recover.status.v1"
+const ReportType = string(recoverycontract.ReportTypeStatus)
 
 type Report struct {
-	Type                  string                      `json:"type"`
-	Status                string                      `json:"status"`
-	WorkflowID            workflowstate.WorkflowID    `json:"workflow_id,omitempty"`
-	WorkflowTerminalState workflowstate.TerminalState `json:"workflow_terminal_state,omitempty"`
-	Dispatchable          bool                        `json:"dispatchable"`
-	PacketPath            string                      `json:"packet_path,omitempty"`
-	ReconciliationPath    string                      `json:"reconciliation_path,omitempty"`
-	FailureID             string                      `json:"failure_id,omitempty"`
-	PacketID              string                      `json:"packet_id,omitempty"`
-	PartialState          recovery.PartialState       `json:"partial_state"`
-	ProductLinks          recovery.ProductLinks       `json:"product_links,omitempty"`
-	Blockers              []string                    `json:"blockers,omitempty"`
-	ResidualWork          []recovery.ResidualWork     `json:"residual_work,omitempty"`
-	CandidateAtoms        []recovery.CandidateAtom    `json:"candidate_atoms,omitempty"`
-	Reconciliation        *recovery.Reconciliation    `json:"reconciliation,omitempty"`
-	NextAction            string                      `json:"next_valid_action"`
-	Error                 string                      `json:"error,omitempty"`
+	Type                   string                                             `json:"type"`
+	Status                 recoverycontract.PacketStatus                      `json:"status"`
+	WorkflowID             workflowstate.WorkflowID                           `json:"workflow_id,omitempty"`
+	WorkflowState          workflowstate.StateID                              `json:"workflow_state,omitempty"`
+	WorkflowTerminalState  workflowstate.TerminalState                        `json:"workflow_terminal_state,omitempty"`
+	Dispatchable           bool                                               `json:"dispatchable"`
+	PacketPath             string                                             `json:"packet_path,omitempty"`
+	ReconciliationPath     string                                             `json:"reconciliation_path,omitempty"`
+	FailureID              string                                             `json:"failure_id,omitempty"`
+	PacketID               string                                             `json:"packet_id,omitempty"`
+	FailureClass           string                                             `json:"failure_class,omitempty"`
+	FailureKind            string                                             `json:"failure_kind,omitempty"`
+	SourceSessionID        string                                             `json:"source_session_id,omitempty"`
+	CandidateAtomCount     int                                                `json:"candidate_atom_count,omitempty"`
+	CompletedAtomCount     int                                                `json:"completed_atom_count,omitempty"`
+	RemainingAtomCount     int                                                `json:"remaining_atom_count,omitempty"`
+	ResidualWorkCount      int                                                `json:"residual_work_count,omitempty"`
+	Gates                  []string                                           `json:"gates,omitempty"`
+	RequiredTests          []string                                           `json:"required_tests,omitempty"`
+	PartialState           recoverycontract.PartialState                      `json:"partial_state"`
+	ProductLinks           recoverycontract.ProductLinks                      `json:"product_links,omitempty"`
+	Blockers               []string                                           `json:"blockers,omitempty"`
+	ResidualWork           []recoverycontract.ResidualWork                    `json:"residual_work,omitempty"`
+	CandidateAtoms         []recoverycontract.CandidateAtom                   `json:"candidate_atoms,omitempty"`
+	Reconciliation         *recoverycontract.Reconciliation                   `json:"reconciliation,omitempty"`
+	ReconciliationFindings []recoverycontract.ReconciliationValidationFinding `json:"reconciliation_findings,omitempty"`
+	NextAction             recoverycontract.NextAction                        `json:"next_valid_action"`
+	Error                  string                                             `json:"error,omitempty"`
+}
+
+type BuildOptions struct {
+	ReconciliationPath string
 }
 
 func Build(root string, packetPath string) (Report, error) {
-	packetPath, err := resolvePacketPath(root, packetPath)
+	return BuildWithOptions(root, packetPath, BuildOptions{})
+}
+
+func BuildWithOptions(root string, packetPath string, opts BuildOptions) (Report, error) {
+	safePacketPath, _, err := recovery.SafePacketPath(root, packetPath)
 	if err != nil {
 		return Report{}, err
 	}
 
-	packet, relPath, found, err := recovery.TryLoadDecompositionPacket(packetPath)
+	packet, relPath, found, err := recovery.TryLoadSafeDecompositionPacket(root, packetPath)
 	if err != nil {
 		return Report{}, err
 	}
@@ -49,12 +70,12 @@ func Build(root string, packetPath string) (Report, error) {
 		return Report{}, fmt.Errorf("recovery decomposition packet not found: %s", packetPath)
 	}
 
-	reconciliation, reconciliationPath, reconciliationFound, err := tryLoadReconciliation(root, packetPath, packet)
+	reconciliation, reconciliationPath, reconciliationFound, err := tryLoadReconciliation(root, safePacketPath, packet, opts.ReconciliationPath)
 	if err != nil {
 		return Report{}, err
 	}
 
-	var reconciliationRef *recovery.Reconciliation
+	var reconciliationRef *recoverycontract.Reconciliation
 
 	reconciliationDisplayPath := ""
 
@@ -64,34 +85,50 @@ func Build(root string, packetPath string) (Report, error) {
 	}
 
 	projection := recovery.ProjectPacketStatus(packet, reconciliationRef)
+	completedAtomCount := 0
+	if reconciliationRef != nil {
+		completedAtomCount = len(reconciliationRef.CompletedAtoms)
+	}
 
 	return Report{
-		Type:                  ReportType,
-		Status:                string(projection.Status),
-		WorkflowID:            projection.WorkflowID,
-		WorkflowTerminalState: projection.WorkflowTerminalState,
-		Dispatchable:          projection.Dispatchable,
-		PacketPath:            relDisplayPath(root, relPath),
-		ReconciliationPath:    reconciliationDisplayPath,
-		FailureID:             packet.FailureID,
-		PacketID:              packet.PacketID,
-		PartialState:          packet.PartialState,
-		ProductLinks:          packet.ProductLinks,
-		Blockers:              projection.Blockers,
-		ResidualWork:          sanitizeResidualWork(projection.ResidualWork),
-		CandidateAtoms:        projection.CandidateAtoms,
-		Reconciliation:        projection.Reconciliation,
-		NextAction:            projection.NextAction,
+		Type:                   ReportType,
+		Status:                 projection.Status,
+		WorkflowID:             projection.WorkflowID,
+		WorkflowState:          projection.WorkflowState,
+		WorkflowTerminalState:  projection.WorkflowTerminalState,
+		Dispatchable:           projection.Dispatchable,
+		PacketPath:             relDisplayPath(root, relPath),
+		ReconciliationPath:     reconciliationDisplayPath,
+		FailureID:              packet.FailureID,
+		PacketID:               packet.PacketID,
+		FailureClass:           string(packet.Failure.Class),
+		FailureKind:            packet.Failure.Kind,
+		SourceSessionID:        packet.SourceRun.SessionID,
+		CandidateAtomCount:     len(packet.CandidateAtoms),
+		CompletedAtomCount:     completedAtomCount,
+		RemainingAtomCount:     len(projection.CandidateAtoms),
+		ResidualWorkCount:      len(projection.ResidualWork),
+		Gates:                  packetGates(packet),
+		RequiredTests:          packetRequiredTests(packet),
+		PartialState:           packet.PartialState,
+		ProductLinks:           packet.ProductLinks,
+		Blockers:               projection.Blockers,
+		ResidualWork:           sanitizeResidualWork(projection.ResidualWork),
+		CandidateAtoms:         projection.CandidateAtoms,
+		Reconciliation:         projection.Reconciliation,
+		ReconciliationFindings: append([]recoverycontract.ReconciliationValidationFinding(nil), projection.ReconciliationFindings...),
+		NextAction:             projection.NextAction,
 	}, nil
 }
 
 func ErrorReport(message string) Report {
 	return Report{
 		Type:                  ReportType,
-		Status:                "error",
+		Status:                recoverycontract.PacketStatusBlocked,
 		WorkflowID:            workflowstate.WorkflowRecovery,
+		WorkflowState:         workflowstate.StateTerminal,
 		WorkflowTerminalState: workflowstate.TerminalStateBlocked,
-		NextAction:            recovery.NextActionInspectFailure,
+		NextAction:            recoverycontract.NextActionInspectFailure,
 		Error:                 message,
 	}
 }
@@ -113,6 +150,7 @@ func WriteText(w io.Writer, report Report) {
 	}
 
 	fmt.Fprintf(w, "recover status: %s\n", report.Status)
+	fmt.Fprintf(w, "workflow_state: %s\n", report.WorkflowState)
 	fmt.Fprintf(w, "workflow_terminal_state: %s\n", report.WorkflowTerminalState)
 	fmt.Fprintf(w, "dispatchable: %v\n", report.Dispatchable)
 	fmt.Fprintf(w, "packet: %s\n", report.PacketPath)
@@ -160,7 +198,7 @@ func WriteText(w io.Writer, report Report) {
 	}
 }
 
-func EvidenceRefLabels(refs []recovery.EvidenceRef) []string {
+func EvidenceRefLabels(refs []recoverycontract.EvidenceRef) []string {
 	labels := make([]string, 0, len(refs))
 	for _, ref := range refs {
 		kind := strings.TrimSpace(ref.Kind)
@@ -181,12 +219,12 @@ func EvidenceRefLabels(refs []recovery.EvidenceRef) []string {
 	return labels
 }
 
-func sanitizeResidualWork(residuals []recovery.ResidualWork) []recovery.ResidualWork {
+func sanitizeResidualWork(residuals []recoverycontract.ResidualWork) []recoverycontract.ResidualWork {
 	if len(residuals) == 0 {
 		return nil
 	}
 
-	out := make([]recovery.ResidualWork, 0, len(residuals))
+	out := make([]recoverycontract.ResidualWork, 0, len(residuals))
 	for _, residual := range residuals {
 		residual.EvidenceRefs = sanitizeEvidenceRefs(residual.EvidenceRefs)
 		out = append(out, residual)
@@ -195,13 +233,13 @@ func sanitizeResidualWork(residuals []recovery.ResidualWork) []recovery.Residual
 	return out
 }
 
-func sanitizeEvidenceRefs(refs []recovery.EvidenceRef) []recovery.EvidenceRef {
+func sanitizeEvidenceRefs(refs []recoverycontract.EvidenceRef) []recoverycontract.EvidenceRef {
 	if len(refs) == 0 {
 		return nil
 	}
 
-	out := make([]recovery.EvidenceRef, 0, len(refs))
-	seen := map[recovery.EvidenceRef]bool{}
+	out := make([]recoverycontract.EvidenceRef, 0, len(refs))
+	seen := map[recoverycontract.EvidenceRef]bool{}
 
 	for _, ref := range refs {
 		ref.Kind = strings.TrimSpace(ref.Kind)
@@ -225,7 +263,7 @@ func sanitizeEvidenceRefs(refs []recovery.EvidenceRef) []recovery.EvidenceRef {
 	return out
 }
 
-func printProductLinks(w io.Writer, links recovery.ProductLinks) {
+func printProductLinks(w io.Writer, links recoverycontract.ProductLinks) {
 	printProductLinkList(w, "prd", links.PRDPaths)
 	printProductLinkList(w, "adr", links.ADRPaths)
 	printProductLinkList(w, "tdd", links.TDDPaths)
@@ -238,215 +276,79 @@ func printProductLinkList(w io.Writer, label string, paths []string) {
 	}
 }
 
-func tryLoadReconciliation(root string, packetPath string, packet recovery.DecompositionPacket) (recovery.Reconciliation, string, bool, error) {
-	if siblingPath, siblingRel, ok := defaultReconciliationSiblingPath(root, packetPath); ok {
-		if err := rejectSymlinkedFile(siblingPath, "recovery reconciliation path"); err != nil {
-			return recovery.Reconciliation{}, "", false, err
+func tryLoadReconciliation(root string, packetPath string, packet recoverycontract.DecompositionPacket, configuredPath string) (recoverycontract.Reconciliation, string, bool, error) {
+	if strings.TrimSpace(configuredPath) != "" {
+		fullPath, relPath, err := recovery.SafePacketPath(root, configuredPath)
+		if err != nil {
+			return recoverycontract.Reconciliation{}, "", false, err
 		}
 
+		reconciliation, _, found, err := recovery.TryLoadReconciliation(fullPath)
+		if err != nil || !found {
+			return reconciliation, relPath, found, err
+		}
+
+		return reconciliation, relDisplayPath(root, fullPath), true, nil
+	}
+
+	if siblingPath, siblingRel, ok := recovery.SafeSiblingReconciliationPath(root, packetPath); ok {
 		reconciliation, _, found, err := recovery.TryLoadReconciliation(siblingPath)
 		if err != nil || found {
 			return reconciliation, siblingRel, found, err
 		}
 	}
 
-	defaultPath, defaultRel, err := safeDefaultReconciliationPath(root, packet.FailureID)
+	defaultPath, defaultRel, err := recovery.SafeDefaultReconciliationPath(root, packet.FailureID)
 	if err != nil {
-		return recovery.Reconciliation{}, "", false, err
+		return recoverycontract.Reconciliation{}, "", false, err
 	}
 
 	reconciliation, _, found, err := recovery.TryLoadReconciliation(defaultPath)
 	if err != nil || !found {
 		return reconciliation, defaultRel, found, err
 	}
-
 	return reconciliation, defaultRel, true, nil
 }
 
-func safeDefaultReconciliationPath(root string, failureID string) (string, string, error) {
-	fullPath, relPath, err := recovery.ReconciliationPath(root, failureID, "")
-	if err != nil {
-		return "", "", err
-	}
-
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve workspace root: %w", err)
-	}
-
-	absPath, err := filepath.Abs(fullPath)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve recovery reconciliation path: %w", err)
-	}
-
-	rel, err := filepath.Rel(absRoot, absPath)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return "", "", fmt.Errorf("recovery reconciliation path must stay under workspace root")
-	}
-
-	if hasSymlinkAncestor(absRoot, absPath) {
-		return "", "", fmt.Errorf("recovery reconciliation path must not traverse symlinked directories")
-	}
-
-	if err := rejectSymlinkedFile(absPath, "recovery reconciliation path"); err != nil {
-		return "", "", err
-	}
-
-	return absPath, relPath, nil
-}
-
-func rejectSymlinkedFile(path string, label string) error {
-	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("%s must not be a symlink", label)
-	} else if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("inspect %s: %w", label, err)
-	}
-
-	return nil
-}
-
-func defaultReconciliationSiblingPath(root string, packetPath string) (string, string, bool) {
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return "", "", false
-	}
-
-	absPacketPath, err := filepath.Abs(packetPath)
-	if err != nil {
-		return "", "", false
-	}
-
-	relPacketPath, err := filepath.Rel(absRoot, absPacketPath)
-	if err != nil || relPacketPath == "." || strings.HasPrefix(relPacketPath, ".."+string(filepath.Separator)) || relPacketPath == ".." || filepath.IsAbs(relPacketPath) {
-		return "", "", false
-	}
-
-	fullPath := filepath.Join(filepath.Dir(absPacketPath), "reconciliation.json")
-
-	relPath, err := filepath.Rel(absRoot, fullPath)
-	if err != nil {
-		return "", "", false
-	}
-
-	relPath = filepath.ToSlash(filepath.Clean(relPath))
-	if isProtectedReconciliationOutputPath(relPath) {
-		return "", "", false
-	}
-
-	if hasSymlinkAncestor(absRoot, fullPath) {
-		return "", "", false
-	}
-
-	return fullPath, relPath, true
-}
-
-func hasSymlinkAncestor(absRoot string, absPath string) bool {
-	absRoot = filepath.Clean(absRoot)
-	absPath = filepath.Clean(absPath)
-
-	rel, err := filepath.Rel(absRoot, absPath)
-
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return true
-	}
-
-	parentRel := filepath.Dir(rel)
-	if parentRel == "." {
-		return false
-	}
-
-	current := absRoot
-	for _, part := range strings.Split(parentRel, string(filepath.Separator)) {
-		current = filepath.Join(current, part)
-
-		info, err := os.Lstat(current)
-
-		if os.IsNotExist(err) {
-			return false
-		}
-
-		if err != nil {
-			return true
-		}
-
-		if info.Mode()&os.ModeSymlink != 0 {
-			return true
+func packetGates(packet recoverycontract.DecompositionPacket) []string {
+	seen := map[string]bool{}
+	var gates []string
+	for _, atom := range packet.CandidateAtoms {
+		for _, gate := range atom.Gates {
+			gate = strings.TrimSpace(gate)
+			if gate == "" || seen[gate] {
+				continue
+			}
+			seen[gate] = true
+			gates = append(gates, gate)
 		}
 	}
-
-	return false
+	return sortedStrings(gates)
 }
 
-func isProtectedReconciliationOutputPath(rel string) bool {
-	rel = filepath.ToSlash(filepath.Clean(strings.TrimSpace(rel)))
-	if rel == "" || rel == "." {
-		return true
-	}
-
-	canonical := strings.ToLower(rel)
-	if canonical == ".idiom" || strings.HasPrefix(canonical, ".idiom/") {
-		return canonical != ".idiom/recovery" && !strings.HasPrefix(canonical, ".idiom/recovery/")
-	}
-
-	protectedPrefixes := []string{
-		".git/",
-		"logs/",
-	}
-	for _, prefix := range protectedPrefixes {
-		if canonical == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(canonical, prefix) {
-			return true
+func packetRequiredTests(packet recoverycontract.DecompositionPacket) []string {
+	seen := map[string]bool{}
+	var tests []string
+	for _, atom := range packet.CandidateAtoms {
+		for _, test := range atom.RequiredTests {
+			test = strings.TrimSpace(test)
+			if test == "" || seen[test] {
+				continue
+			}
+			seen[test] = true
+			tests = append(tests, test)
 		}
 	}
-
-	switch canonical {
-	case ".env", "config.json":
-		return true
-	}
-
-	return false
+	return sortedStrings(tests)
 }
 
-func resolvePacketPath(root string, path string) (string, error) {
-	root = strings.TrimSpace(root)
-	if root == "" {
-		return "", fmt.Errorf("workspace root is empty")
+func sortedStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
 	}
-
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		return "", fmt.Errorf("resolve workspace root: %w", err)
-	}
-
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return "", fmt.Errorf("recovery packet path is empty")
-	}
-
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(absRoot, path)
-	}
-
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return "", fmt.Errorf("resolve recovery packet path: %w", err)
-	}
-
-	rel, err := filepath.Rel(absRoot, absPath)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return "", fmt.Errorf("recovery packet path must stay under workspace root")
-	}
-
-	if hasSymlinkAncestor(absRoot, absPath) {
-		return "", fmt.Errorf("recovery packet path must not traverse symlinked directories")
-	}
-
-	if info, err := os.Lstat(absPath); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("recovery packet path must not be a symlink")
-	} else if err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("inspect recovery packet path: %w", err)
-	}
-
-	return filepath.Clean(absPath), nil
+	out := append([]string(nil), values...)
+	sort.Strings(out)
+	return out
 }
 
 func relDisplayPath(root string, path string) string {

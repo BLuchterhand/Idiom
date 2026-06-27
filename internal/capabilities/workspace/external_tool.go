@@ -97,6 +97,6 @@ func externalToolDefinitions(defs []externaltool.Definition) []ToolDefinition {
 }
 
 // Invoke runs the registered tool with the provided JSON-encoded input.
-func (r *ExternalToolRegistry) Invoke(ctx context.Context, name string, input json.RawMessage, baseDir string) (string, error) {
-	return r.inner().Invoke(ctx, name, input, baseDir)
+func (r *ExternalToolRegistry) Invoke(ctx context.Context, name string, input json.RawMessage, baseDir string, maxOutputBytes int) (string, bool, error) {
+	return r.inner().Invoke(ctx, name, input, baseDir, maxOutputBytes)
 }

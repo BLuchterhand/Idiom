@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"idiom/internal/platform/util"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -14,6 +13,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"idiom/internal/platform/textutil"
 )
 
 const (
@@ -500,9 +501,9 @@ func learningEvidenceRef(req VerifiedRankerLearningRequest, files []string, inva
 	}
 
 	evidence.Verified = evidence.Verified || req.Verified
-	evidence.TaskID = util.FirstNonEmpty(sanitizeLearningCorrelationID("task", evidence.TaskID), sanitizeLearningCorrelationID("task", req.TaskID))
-	evidence.CorpusID = util.FirstNonEmpty(sanitizeLearningCorrelationID("corpus", evidence.CorpusID), sanitizeLearningCorrelationID("corpus", req.CorpusID))
-	evidence.ResultID = util.FirstNonEmpty(sanitizeLearningCorrelationID("result", evidence.ResultID), sanitizeLearningCorrelationID("result", req.ResultID))
+	evidence.TaskID = textutil.FirstNonEmpty(sanitizeLearningCorrelationID("task", evidence.TaskID), sanitizeLearningCorrelationID("task", req.TaskID))
+	evidence.CorpusID = textutil.FirstNonEmpty(sanitizeLearningCorrelationID("corpus", evidence.CorpusID), sanitizeLearningCorrelationID("corpus", req.CorpusID))
+	evidence.ResultID = textutil.FirstNonEmpty(sanitizeLearningCorrelationID("result", evidence.ResultID), sanitizeLearningCorrelationID("result", req.ResultID))
 	evidence.Files = sanitizeLearningPathList(firstNonEmptyStrings(evidence.Files, files))
 
 	evidence.InvalidPathCount += invalidPathCount

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"idiom/internal/capabilities/workspace"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/contracts/readapproval"
 	"idiom/internal/runtime/workerruntime"
 )
@@ -38,18 +39,26 @@ func (f *fakeDecider) DecideRead(ctx context.Context, req readapproval.Request) 
 type fakeCache struct {
 	decisions map[string]readapproval.Decision
 	recorded  []readapproval.Decision
+	err       error
+	recordErr error
 }
 
 func newFakeCache() *fakeCache {
 	return &fakeCache{decisions: map[string]readapproval.Decision{}}
 }
 
-func (c *fakeCache) Lookup(sessionID, path string) (readapproval.Decision, bool) {
+func (c *fakeCache) Lookup(sessionID, path string) (readapproval.Decision, bool, error) {
+	if c.err != nil {
+		return readapproval.Decision{}, false, c.err
+	}
 	d, ok := c.decisions[path]
-	return d, ok
+	return d, ok, nil
 }
 
 func (c *fakeCache) Record(sessionID string, decision readapproval.Decision) error {
+	if c.recordErr != nil {
+		return c.recordErr
+	}
 	c.recorded = append(c.recorded, decision)
 	c.decisions[decision.Path] = decision
 	return nil
@@ -82,7 +91,7 @@ func TestReadApprovalGateInactiveWhenDeciderMissing(t *testing.T) {
 		"session-1",
 		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "docs/foo.md"},
 		workerruntime.WorkerRuntimeBrief{},
-		planExecuteReadScopeRejectionSummary,
+		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
 		"original error",
 	)
 	if override {
@@ -102,7 +111,7 @@ func TestReadApprovalGateIgnoresNonScopeRejection(t *testing.T) {
 		"session-1",
 		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "docs/foo.md"},
 		workerruntime.WorkerRuntimeBrief{},
-		"Anchor refresh capability required",
+		plancontract.PlanExecuteRejectionAnchorRefreshCapabilityRequired,
 		"some anchor refresh text",
 	)
 	if override {
@@ -123,14 +132,21 @@ func TestReadApprovalGateOverridesWhenOperatorApproves(t *testing.T) {
 		Source:  readapproval.SourceOperator,
 	}}
 	cache := newFakeCache()
-	gate := &ReadApprovalGate{Decider: decider, Cache: cache}
+	var origins []string
+	gate := &ReadApprovalGate{
+		Decider: decider,
+		Cache:   cache,
+		OnEvent: func(_ readapproval.Request, _ readapproval.Decision, origin string) {
+			origins = append(origins, origin)
+		},
+	}
 
 	override, denialContext := gate.MaybeOverrideRejection(
 		context.Background(),
 		"session-1",
 		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "docs/design-intent-loop-mutation-cycle.md"},
 		workerruntime.WorkerRuntimeBrief{TaskFamily: "plan-then-execute-planner"},
-		planExecuteReadScopeRejectionSummary,
+		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
 		"docs/design-intent-loop-mutation-cycle.md is not an explicit allowed candidate path.",
 	)
 	if !override {
@@ -144,6 +160,54 @@ func TestReadApprovalGateOverridesWhenOperatorApproves(t *testing.T) {
 	}
 	if len(cache.recorded) != 1 || cache.recorded[0].Outcome != readapproval.OutcomeApproved {
 		t.Fatalf("approved decision must be recorded once, got %+v", cache.recorded)
+	}
+	if len(origins) != 1 || origins[0] != readapproval.EventOriginLiveDecision {
+		t.Fatalf("expected live decision origin, got %#v", origins)
+	}
+}
+
+func TestReadApprovalGateFailsClosedWhenLiveDecisionCannotBeRecorded(t *testing.T) {
+	decider := &fakeDecider{decision: readapproval.Decision{
+		Outcome: readapproval.OutcomeApproved,
+		Reason:  readapproval.ReasonOperatorApprovedLive,
+		Source:  readapproval.SourceOperator,
+	}}
+	cache := newFakeCache()
+	cache.recordErr = errors.New("disk full")
+	var gotOrigin string
+	var gotDecision readapproval.Decision
+	gate := &ReadApprovalGate{
+		Decider: decider,
+		Cache:   cache,
+		OnEvent: func(_ readapproval.Request, decision readapproval.Decision, origin string) {
+			gotDecision = decision
+			gotOrigin = origin
+		},
+	}
+
+	override, denialContext := gate.MaybeOverrideRejection(
+		context.Background(),
+		"session-1",
+		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "docs/not-durable.md"},
+		workerruntime.WorkerRuntimeBrief{TaskFamily: "plan-then-execute-planner"},
+		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
+		"docs/not-durable.md is not an explicit allowed candidate path.",
+	)
+
+	if override {
+		t.Fatal("read must remain denied when live approval cannot be durably recorded")
+	}
+	if !strings.Contains(denialContext, "could not be recorded") {
+		t.Fatalf("denial context = %q", denialContext)
+	}
+	if gotOrigin != readapproval.EventOriginCacheRecord {
+		t.Fatalf("origin = %q, want %q", gotOrigin, readapproval.EventOriginCacheRecord)
+	}
+	if gotDecision.Outcome != readapproval.OutcomeDenied || gotDecision.Reason != readapproval.ReasonCacheUnavailable {
+		t.Fatalf("decision = %+v, want cache unavailable denial", gotDecision)
+	}
+	if _, ok, err := cache.Lookup("session-1", "docs/not-durable.md"); err != nil || ok {
+		t.Fatalf("failed record must not publish cached approval, ok=%v err=%v", ok, err)
 	}
 }
 
@@ -161,7 +225,7 @@ func TestReadApprovalGateAppendsOperatorDenialContext(t *testing.T) {
 		"session-1",
 		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "docs/foo.md"},
 		workerruntime.WorkerRuntimeBrief{},
-		planExecuteReadScopeRejectionSummary,
+		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
 		"docs/foo.md is not an explicit allowed candidate path.",
 	)
 	if override {
@@ -196,7 +260,7 @@ func TestReadApprovalGateCacheShortCircuitsApproved(t *testing.T) {
 		"session-1",
 		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "docs/cached-approved.md"},
 		workerruntime.WorkerRuntimeBrief{},
-		planExecuteReadScopeRejectionSummary,
+		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
 		"docs/cached-approved.md is not an explicit allowed candidate path.",
 	)
 	if !override {
@@ -207,6 +271,36 @@ func TestReadApprovalGateCacheShortCircuitsApproved(t *testing.T) {
 	}
 	if decider.calls != 0 {
 		t.Fatalf("decider must not be called when cache has approved decision; got %d calls", decider.calls)
+	}
+}
+
+func TestReadApprovalGateCacheShortCircuitsApprovedEquivalentPath(t *testing.T) {
+	decider := &fakeDecider{decision: readapproval.Decision{Outcome: readapproval.OutcomeDenied}}
+	cache := newFakeCache()
+	cache.decisions["docs/cached-approved.md"] = readapproval.Decision{
+		Outcome: readapproval.OutcomeApproved,
+		Reason:  readapproval.ReasonOperatorApprovedLive,
+		Source:  readapproval.SourceOperator,
+		Path:    "docs/cached-approved.md",
+	}
+	gate := &ReadApprovalGate{Decider: decider, Cache: cache}
+
+	override, denialContext := gate.MaybeOverrideRejection(
+		context.Background(),
+		"session-1",
+		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "./docs/cached-approved.md"},
+		workerruntime.WorkerRuntimeBrief{},
+		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
+		"./docs/cached-approved.md is not an explicit allowed candidate path.",
+	)
+	if !override {
+		t.Fatal("cached-approved equivalent path must override rejection without calling decider")
+	}
+	if denialContext != "" {
+		t.Fatalf("cached-approved equivalent path must not append denial context, got %q", denialContext)
+	}
+	if decider.calls != 0 {
+		t.Fatalf("decider must not be called when normalized cache has approved decision; got %d calls", decider.calls)
 	}
 }
 
@@ -228,7 +322,7 @@ func TestReadApprovalGateCacheShortCircuitsDenied(t *testing.T) {
 		"session-1",
 		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "docs/cached-denied.md"},
 		workerruntime.WorkerRuntimeBrief{},
-		planExecuteReadScopeRejectionSummary,
+		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
 		"docs/cached-denied.md is not an explicit allowed candidate path.",
 	)
 	if override {
@@ -242,6 +336,78 @@ func TestReadApprovalGateCacheShortCircuitsDenied(t *testing.T) {
 	}
 }
 
+func TestReadApprovalGateCacheShortCircuitsDeniedEquivalentPath(t *testing.T) {
+	decider := &fakeDecider{decision: readapproval.Decision{Outcome: readapproval.OutcomeApproved}}
+	cache := newFakeCache()
+	cache.decisions["docs/cached-denied.md"] = readapproval.Decision{
+		Outcome: readapproval.OutcomeDenied,
+		Reason:  readapproval.ReasonOperatorDeniedLive,
+		Source:  readapproval.SourceOperator,
+		Path:    "docs/cached-denied.md",
+	}
+	gate := &ReadApprovalGate{Decider: decider, Cache: cache}
+
+	override, denialContext := gate.MaybeOverrideRejection(
+		context.Background(),
+		"session-1",
+		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "./docs/cached-denied.md"},
+		workerruntime.WorkerRuntimeBrief{},
+		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
+		"./docs/cached-denied.md is not an explicit allowed candidate path.",
+	)
+	if override {
+		t.Fatal("cached-denied equivalent path must not override rejection")
+	}
+	if !strings.Contains(denialContext, "previously denied") {
+		t.Fatalf("cached-denied equivalent context must mention previous denial, got %q", denialContext)
+	}
+	if decider.calls != 0 {
+		t.Fatalf("decider must not be called when normalized cache has denied decision; got %d calls", decider.calls)
+	}
+}
+
+func TestReadApprovalGateFailsClosedWhenCacheLookupErrors(t *testing.T) {
+	decider := &fakeDecider{decision: readapproval.Decision{
+		Outcome: readapproval.OutcomeApproved,
+	}}
+	cache := newFakeCache()
+	cache.err = errors.New("corrupt read approval cache")
+	var events []readapproval.Decision
+	var origins []string
+	gate := &ReadApprovalGate{
+		Decider: decider,
+		Cache:   cache,
+		OnEvent: func(_ readapproval.Request, decision readapproval.Decision, origin string) {
+			events = append(events, decision)
+			origins = append(origins, origin)
+		},
+	}
+
+	override, denialContext := gate.MaybeOverrideRejection(
+		context.Background(),
+		"session-1",
+		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "docs/corrupt.md"},
+		workerruntime.WorkerRuntimeBrief{},
+		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
+		"docs/corrupt.md is not an explicit allowed candidate path.",
+	)
+	if override {
+		t.Fatal("cache error must fail closed")
+	}
+	if !strings.Contains(denialContext, "cache could not be loaded") {
+		t.Fatalf("cache-error context must mention cache load failure, got %q", denialContext)
+	}
+	if decider.calls != 0 {
+		t.Fatalf("decider must not be called when cache lookup errors; got %d calls", decider.calls)
+	}
+	if len(events) != 1 || events[0].Reason != readapproval.ReasonCacheUnavailable || events[0].Source != readapproval.SourceCache {
+		t.Fatalf("cache-error event mismatch: %#v", events)
+	}
+	if len(origins) != 1 || origins[0] != readapproval.EventOriginCacheLookup {
+		t.Fatalf("cache-error origin mismatch: %#v", origins)
+	}
+}
+
 func TestReadApprovalGateHandlesDeciderErrorAsDenied(t *testing.T) {
 	decider := &fakeDecider{err: errors.New("transport failed")}
 	cache := newFakeCache()
@@ -252,7 +418,7 @@ func TestReadApprovalGateHandlesDeciderErrorAsDenied(t *testing.T) {
 		"session-1",
 		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "docs/foo.md"},
 		workerruntime.WorkerRuntimeBrief{},
-		planExecuteReadScopeRejectionSummary,
+		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
 		"docs/foo.md is not an explicit allowed candidate path.",
 	)
 	if override {
@@ -278,7 +444,7 @@ func TestReadApprovalGateIgnoresEmptyPath(t *testing.T) {
 		"session-1",
 		workspace.ToolRequest{Tool: workspace.ToolNameSearchContent, Pattern: "foo"},
 		workerruntime.WorkerRuntimeBrief{},
-		planExecuteReadScopeRejectionSummary,
+		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
 		"some text",
 	)
 	if override {

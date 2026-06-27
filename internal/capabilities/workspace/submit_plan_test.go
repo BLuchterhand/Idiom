@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	planartifact "idiom/internal/contracts/planartifact"
 	"idiom/internal/platform/config"
 )
 
@@ -195,7 +196,7 @@ func TestSubmitPlanRejectsUnsupportedProofClaimsAtIntake(t *testing.T) {
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "add a real behavior test",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:    "tests/panel_contract.gd",
 			OldText: "func test_contract():\n\tpass\n",
 			NewText: "func test_contract():\n\t# simplified check: for now we just verify that it exists and can be called\n\tpass\n",
@@ -221,7 +222,7 @@ func TestSubmitPlanRejectsSetupOnlyTestEditsAtIntake(t *testing.T) {
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "add a real behavior test",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:    "native/tests/test_fluid_brewery_cascade.cpp",
 			OldText: "TEST_CASE(\"FET-3\") {\n    CHECK(true);\n}\n",
 			NewText: "TEST_CASE(\"FET-3\") {\n    // Setup-only: verify preconditions before behavior is implemented.\n    CHECK(cistern_exists);\n}\n",
@@ -244,7 +245,7 @@ func TestSubmitPlanUnsupportedProofClaimsIgnoreProseFiles(t *testing.T) {
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "document review limitation",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:    "docs/review.md",
 			OldText: "before",
 			NewText: "This retrospective says we cannot easily test the old behavior.\n",
@@ -271,7 +272,7 @@ func TestSubmitPlanRejectsSourceLineRangeExpansionWithoutSelectedAnchor(t *testi
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "insert inventory quality fields",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:      "native/src/core/colony_sim.h",
 			StartLine: 4,
 			EndLine:   4,
@@ -311,7 +312,7 @@ func TestSubmitPlanRejectsGoLineRangeExpansionWithoutSelectedAnchorAfterSyntaxPr
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "add replacement helpers",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:      "pkg/feature.go",
 			StartLine: 3,
 			EndLine:   3,
@@ -354,7 +355,7 @@ func TestSubmitPlanRejectsContentOnlyDuplicateExistingSourceBlock(t *testing.T) 
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "add quality score helpers",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:      "native/src/core/constants/environment.h",
 			StartLine: 2,
 			EndLine:   2,
@@ -387,7 +388,7 @@ func TestSubmitPlanAllowsSourceLineRangeReplacementWithoutGrowth(t *testing.T) {
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "replace return value",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:      "native/src/sim.cpp",
 			StartLine: 2,
 			EndLine:   2,
@@ -417,7 +418,7 @@ func TestSubmitPlanRejectsLineRangeWholeExistingSourceRewrite(t *testing.T) {
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "Rewrite collapse event header.",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:      path,
 			StartLine: 1,
 			EndLine:   7,
@@ -449,7 +450,7 @@ func TestSubmitPlanRejectsLargeSourceLineRangeCollapse(t *testing.T) {
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "Add collapse helper integration.",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:      "native/src/core/colony_sim_tick.cpp",
 			StartLine: 1,
 			EndLine:   80,
@@ -486,7 +487,7 @@ func TestSubmitPlanRejectsMidFilePreprocessorLineRangeDrift(t *testing.T) {
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "Add collapse event include.",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:      "native/src/core/colony_sim_tick.cpp",
 			StartLine: 3,
 			EndLine:   5,
@@ -519,7 +520,7 @@ func TestSubmitPlanRejectsAnchorPreservingMidFilePreprocessorLineRangeDrift(t *t
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "Add collapse event include.",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:      "native/src/core/colony_sim_tick.cpp",
 			StartLine: 3,
 			EndLine:   5,
@@ -555,7 +556,7 @@ func TestSubmitPlanAllowsReplacingExistingConditionalPreprocessorContext(t *test
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "Update feature guard.",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:      "native/src/core/feature.h",
 			StartLine: 3,
 			EndLine:   3,
@@ -584,7 +585,7 @@ func TestSubmitPlanAllowsIntroducingInBodyConditionalCompilation(t *testing.T) {
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "Add debug-only logging.",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:      "native/src/core/feature.cpp",
 			StartLine: 2,
 			EndLine:   2,
@@ -618,7 +619,7 @@ func TestSubmitPlanAllowsStartLineOneInBodyConditionalCompilation(t *testing.T) 
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "Add debug-only logging.",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:      "native/src/core/feature.cpp",
 			StartLine: 1,
 			EndLine:   3,
@@ -652,7 +653,7 @@ func TestSubmitPlanAllowsIntroducingInBodyPragma(t *testing.T) {
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "Parallelize the local loop.",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:      "native/src/core/feature.cpp",
 			StartLine: 2,
 			EndLine:   4,
@@ -688,7 +689,7 @@ func TestSubmitPlanRejectsHeaderGuardWithoutSelectingExistingPrologue(t *testing
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "Rewrite collapse event header prologue.",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:      "native/src/simulation/world/collapse_event.h",
 			StartLine: 1,
 			EndLine:   3,
@@ -725,7 +726,7 @@ func TestSubmitPlanRejectsHeaderGuardAfterLeadingBlockComment(t *testing.T) {
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "Rewrite collapse event header prologue.",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:      "native/src/simulation/world/collapse_event.h",
 			StartLine: 1,
 			EndLine:   3,
@@ -762,7 +763,7 @@ func TestSubmitPlanAllowsTopOfFileIncludeEditSelectingIncludeContext(t *testing.
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "Add collapse event include.",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:      "native/src/core/colony_sim_tick.cpp",
 			StartLine: 1,
 			EndLine:   1,
@@ -799,7 +800,7 @@ func submitPlanTestAnyOfRequires(anyOf []map[string][]string, fields ...string) 
 	return false
 }
 
-func assertSubmitPlanNoSensitiveMarkers(t *testing.T, root string, result ToolResult, forbidden []string) PlanArtifact {
+func assertSubmitPlanNoSensitiveMarkers(t *testing.T, root string, result ToolResult, forbidden []string) planartifact.PlanArtifact {
 	t.Helper()
 
 	body, err := os.ReadFile(filepath.Join(root, ".idiom", "plans", "last.plan.json"))
@@ -814,7 +815,7 @@ func assertSubmitPlanNoSensitiveMarkers(t *testing.T, root string, result ToolRe
 		}
 	}
 
-	var artifact PlanArtifact
+	var artifact planartifact.PlanArtifact
 
 	if err := json.Unmarshal(body, &artifact); err != nil {
 		t.Fatalf("last.plan.json is not valid plan JSON: %v", err)
@@ -868,7 +869,7 @@ func TestSubmitPlanWritesArtifactWithSchemaVersion(t *testing.T) {
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "add feature across the codebase",
-		Edits: []PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{Path: "a.txt", OldText: "before", NewText: "after", Purpose: "first edit"},
 			{Path: "b.txt", StartLine: 1, EndLine: 1, Content: "rewritten\n", Purpose: "second edit"},
 		},
@@ -905,14 +906,14 @@ func TestSubmitPlanWritesArtifactWithSchemaVersion(t *testing.T) {
 		t.Fatalf("read artifact: %v", err)
 	}
 
-	var artifact PlanArtifact
+	var artifact planartifact.PlanArtifact
 
 	if err := json.Unmarshal(body, &artifact); err != nil {
 		t.Fatalf("artifact JSON invalid: %v", err)
 	}
 
-	if artifact.SchemaVersion != PlanArtifactSchemaVersion {
-		t.Fatalf("schema_version mismatch: got %q, want %q", artifact.SchemaVersion, PlanArtifactSchemaVersion)
+	if artifact.SchemaVersion != planartifact.SchemaVersion {
+		t.Fatalf("schema_version mismatch: got %q, want %q", artifact.SchemaVersion, planartifact.SchemaVersion)
 	}
 
 	if len(artifact.Edits) != 2 {
@@ -990,11 +991,39 @@ func TestSubmitPlanWritesArtifactWithSchemaVersion(t *testing.T) {
 	}
 }
 
+func TestSubmitPlanRejectsSymlinkedPlanArtifactDir(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
+
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir .idiom: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, ".idiom", "plans")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "edit safely",
+		Edits: []planartifact.PlanEdit{{
+			Path:    "a.txt",
+			OldText: "before",
+			NewText: "after",
+			Purpose: "safe write",
+		}},
+	})
+
+	if strings.TrimSpace(result.Error) == "" || !strings.Contains(result.Error, "symlink") {
+		t.Fatalf("submit_plan should reject symlinked plan dir, got result=%#v", result)
+	}
+}
+
 func TestValidatePlanEditAnchorProvenanceRejectsStaleFileState(t *testing.T) {
 	root := t.TempDir()
 	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
 
-	edits, err := AttachPlanEditAnchorProvenance(root, []PlanEdit{
+	edits, err := AttachPlanEditAnchorProvenance(root, []planartifact.PlanEdit{
 		{Path: "a.txt", OldText: "before", NewText: "after"},
 	})
 	if err != nil {
@@ -1017,7 +1046,7 @@ func TestValidatePlanEditAnchorProvenanceCoversRangeAndInsertAnchors(t *testing.
 	root := t.TempDir()
 	writeSubmitPlanFixture(t, root, "a.txt", "one\ntwo\nthree\n")
 
-	edits, err := AttachPlanEditAnchorProvenance(root, []PlanEdit{
+	edits, err := AttachPlanEditAnchorProvenance(root, []planartifact.PlanEdit{
 		{Path: "a.txt", StartLine: 2, EndLine: 2, Content: "TWO\n"},
 		{Path: "a.txt", InsertAfterLine: 3, Content: "four\n"},
 	})
@@ -1049,11 +1078,11 @@ func TestSubmitPlanOverwritesModelSuppliedAnchorProvenance(t *testing.T) {
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "update a",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:    "a.txt",
 			OldText: "before",
 			NewText: "after",
-			AnchorProvenance: &PlanEditAnchorProvenance{
+			AnchorProvenance: &planartifact.PlanEditAnchorProvenance{
 				SchemaVersion: "model.supplied",
 				Source:        "model",
 				Path:          "../escape.txt",
@@ -1084,7 +1113,7 @@ func TestSubmitPlanOverwritesModelSuppliedAnchorProvenance(t *testing.T) {
 }
 
 func TestPlanEditAnchorProvenanceShapeRejectsMalformedDigest(t *testing.T) {
-	err := validatePlanEditAnchorProvenanceShape(&PlanEditAnchorProvenance{
+	err := validatePlanEditAnchorProvenanceShape(&planartifact.PlanEditAnchorProvenance{
 		SchemaVersion: PlanEditAnchorProvenanceSchemaVersion,
 		Source:        "submit_plan",
 		Path:          "a.txt",
@@ -1124,7 +1153,7 @@ func TestSubmitPlanRepairsUniqueLeadingWhitespaceAnchor(t *testing.T) {
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "add JSON status usage error",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:    "status.go",
 			OldText: anchorWithoutOuterIndent,
 			NewText: strings.Join([]string{
@@ -1170,7 +1199,7 @@ func TestSubmitPlanRejectsLineRangeEditThatBreaksGoSyntax(t *testing.T) {
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "add regression coverage",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:      "pkg/feature_test.go",
 			StartLine: 7,
 			EndLine:   7,
@@ -1208,7 +1237,7 @@ func TestSubmitPlanRejectsSequentialLineRangeEditsThatBreakGoSyntax(t *testing.T
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "add helper functions",
-		Edits: []PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{
 				Path:            "pkg/feature.go",
 				InsertAfterLine: 2,
@@ -1246,35 +1275,35 @@ func TestSubmitPlanAcceptsStructuredDurablePlanArtifact(t *testing.T) {
 
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
-		PlanArtifact: &PlanArtifact{
-			SchemaVersion: PlanArtifactSchemaVersion,
+		PlanArtifact: &planartifact.PlanArtifact{
+			SchemaVersion: planartifact.SchemaVersion,
 			PlanID:        "plan-structured",
-			Task: PlanArtifactTask{
+			Task: planartifact.PlanArtifactTask{
 				ID:                    "task-structured",
 				Summary:               "Add auditable handoff metadata",
 				ClientClassifications: []string{"finance"},
 			},
-			Contract: PlanArtifactContract{
+			Contract: planartifact.PlanArtifactContract{
 				Kind:              "plan_then_execute",
 				StrategyOwner:     "model",
 				ContractOwner:     "harness",
 				PermissionProfile: "plan_then_execute",
 				VerificationOwner: "executor",
 			},
-			Packet: PlanArtifactPacket{PackID: "feedfacecafebeef", Status: "available", Freshness: "fresh"},
-			Paths:  PlanArtifactPaths{Editable: []string{"a.txt"}, Required: []string{"a.txt"}},
-			Evidence: []PlanArtifactEvidence{{
+			Packet: planartifact.PlanArtifactPacket{PackID: "feedfacecafebeef", Status: "available", Freshness: "fresh"},
+			Paths:  planartifact.PlanArtifactPaths{Editable: []string{"a.txt"}, Required: []string{"a.txt"}},
+			Evidence: []planartifact.PlanArtifactEvidence{{
 				ID:        "evidence-1",
 				Kind:      "context_packet",
 				Handle:    "context_pack://feedfacecafebeef",
 				Freshness: "fresh",
 			}},
-			UnresolvedQuestions: []PlanArtifactQuestion{{
+			UnresolvedQuestions: []planartifact.PlanArtifactQuestion{{
 				ID:     "question-1",
 				Claim:  "No blocker remains before handoff",
 				Status: "closed",
 			}},
-			VerificationObligations: []PlanArtifactVerificationObligation{{
+			VerificationObligations: []planartifact.PlanArtifactVerificationObligation{{
 				ID:       "verification-1",
 				Kind:     "focused_tests",
 				Command:  "go test ./internal/capabilities/workspace",
@@ -1282,9 +1311,9 @@ func TestSubmitPlanAcceptsStructuredDurablePlanArtifact(t *testing.T) {
 				Status:   "open",
 				Required: true,
 			}},
-			Approval: PlanArtifactApproval{Required: true, Status: "approved", ScopeID: "scope-1", Mode: "local"},
-			Handoff:  PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "ready", Ready: true},
-			Edits: []PlanEdit{
+			Approval: planartifact.PlanArtifactApproval{Required: true, Status: "approved", ScopeID: "scope-1", Mode: "local"},
+			Handoff:  planartifact.PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "ready", Ready: true},
+			Edits: []planartifact.PlanEdit{
 				{Path: "a.txt", OldText: "before", NewText: "after", Purpose: "Update the fixture."},
 			},
 		},
@@ -1322,10 +1351,10 @@ func TestSubmitPlanRejectsSourceSatisfiedOutsideOriginalRequiredScope(t *testing
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:                 "submit_plan",
 		SourceSatisfiedPaths: []string{"b.txt"},
-		PlanArtifact: &PlanArtifact{
-			SchemaVersion: PlanArtifactSchemaVersion,
-			Task:          PlanArtifactTask{Summary: "mixed structured coverage"},
-			Contract: PlanArtifactContract{
+		PlanArtifact: &planartifact.PlanArtifact{
+			SchemaVersion: planartifact.SchemaVersion,
+			Task:          planartifact.PlanArtifactTask{Summary: "mixed structured coverage"},
+			Contract: planartifact.PlanArtifactContract{
 				Kind:              "plan_then_execute",
 				RequiredEditPaths: []string{"a.txt"},
 				StrategyOwner:     "model",
@@ -1333,15 +1362,15 @@ func TestSubmitPlanRejectsSourceSatisfiedOutsideOriginalRequiredScope(t *testing
 				PermissionProfile: "plan_then_execute",
 				VerificationOwner: "planner",
 			},
-			Paths: PlanArtifactPaths{
+			Paths: planartifact.PlanArtifactPaths{
 				Editable: []string{"a.txt"},
 				Changed:  []string{"a.txt"},
 			},
-			Evidence: []PlanArtifactEvidence{{
+			Evidence: []planartifact.PlanArtifactEvidence{{
 				Kind: "harness_observed_source",
 				Path: "b.txt",
 			}},
-			VerificationObligations: []PlanArtifactVerificationObligation{{
+			VerificationObligations: []planartifact.PlanArtifactVerificationObligation{{
 				ID:       "verification-1",
 				Kind:     "focused_tests",
 				Command:  "go test ./...",
@@ -1349,9 +1378,9 @@ func TestSubmitPlanRejectsSourceSatisfiedOutsideOriginalRequiredScope(t *testing
 				Status:   "open",
 				Required: true,
 			}},
-			Approval: PlanArtifactApproval{Required: true, Status: "approved", ScopeID: "scope-1", Mode: "local"},
-			Handoff:  PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "ready", Ready: true},
-			Edits: []PlanEdit{
+			Approval: planartifact.PlanArtifactApproval{Required: true, Status: "approved", ScopeID: "scope-1", Mode: "local"},
+			Handoff:  planartifact.PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "ready", Ready: true},
+			Edits: []planartifact.PlanEdit{
 				{Path: "a.txt", OldText: "before", NewText: "after", Purpose: "Update the fixture."},
 			},
 		},
@@ -1376,30 +1405,30 @@ func TestSubmitPlanBlocksReadyHandoffWhenRequiredApprovalPending(t *testing.T) {
 
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
-		PlanArtifact: &PlanArtifact{
-			SchemaVersion: PlanArtifactSchemaVersion,
+		PlanArtifact: &planartifact.PlanArtifact{
+			SchemaVersion: planartifact.SchemaVersion,
 			PlanID:        "plan-pending-approval",
-			Task: PlanArtifactTask{
+			Task: planartifact.PlanArtifactTask{
 				ID:                    "task-pending-approval",
 				Summary:               "Block dispatch until approval is satisfied",
 				ClientClassifications: []string{"finance", "healthcare_life_sciences", "public_sector", "enterprise_saas", "tooling_vendor", "local_model_private_code", "open_source"},
 			},
-			Contract: PlanArtifactContract{
+			Contract: planartifact.PlanArtifactContract{
 				Kind:              "plan_then_execute",
 				StrategyOwner:     "model",
 				ContractOwner:     "harness",
 				PermissionProfile: "plan_then_execute",
 				VerificationOwner: "executor",
 			},
-			Packet: PlanArtifactPacket{PackID: "feedfacecafebeef", Status: "available", Freshness: "fresh"},
-			Paths:  PlanArtifactPaths{Editable: []string{"a.txt"}, Required: []string{"a.txt"}},
-			Evidence: []PlanArtifactEvidence{{
+			Packet: planartifact.PlanArtifactPacket{PackID: "feedfacecafebeef", Status: "available", Freshness: "fresh"},
+			Paths:  planartifact.PlanArtifactPaths{Editable: []string{"a.txt"}, Required: []string{"a.txt"}},
+			Evidence: []planartifact.PlanArtifactEvidence{{
 				ID:        "evidence-1",
 				Kind:      "context_packet",
 				Handle:    "context_pack://feedfacecafebeef",
 				Freshness: "fresh",
 			}},
-			VerificationObligations: []PlanArtifactVerificationObligation{{
+			VerificationObligations: []planartifact.PlanArtifactVerificationObligation{{
 				ID:       "verification-1",
 				Kind:     "focused_tests",
 				Command:  "go test ./internal/capabilities/workspace",
@@ -1407,9 +1436,9 @@ func TestSubmitPlanBlocksReadyHandoffWhenRequiredApprovalPending(t *testing.T) {
 				Status:   "open",
 				Required: true,
 			}},
-			Approval: PlanArtifactApproval{Required: true, Status: "pending", ScopeID: "scope-1", Mode: "local"},
-			Handoff:  PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "ready", Ready: true},
-			Edits: []PlanEdit{{
+			Approval: planartifact.PlanArtifactApproval{Required: true, Status: "pending", ScopeID: "scope-1", Mode: "local"},
+			Handoff:  planartifact.PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "ready", Ready: true},
+			Edits: []planartifact.PlanEdit{{
 				Path:    "a.txt",
 				OldText: "before",
 				NewText: "after",
@@ -1421,14 +1450,14 @@ func TestSubmitPlanBlocksReadyHandoffWhenRequiredApprovalPending(t *testing.T) {
 		t.Fatalf("submit_plan should block handoff-ready artifact with pending required approval")
 	}
 
-	for _, want := range []string{"plan_artifact.audit_errors", "approval_handoff_mismatch"} {
+	for _, want := range []string{"plan_artifact.schema_errors", "handoff.status:not_executable"} {
 		if !strings.Contains(result.Error, want) {
 			t.Fatalf("approval handoff rejection should include %q, got %q", want, result.Error)
 		}
 	}
 
-	if !strings.Contains(result.Output, "audit_ok=false") || !strings.Contains(result.Output, "approval_handoff_mismatches=1") {
-		t.Fatalf("approval handoff rejection should expose bounded audit status, got %q", result.Output)
+	if result.Output != "" {
+		t.Fatalf("schema rejection should happen before audit output, got %q", result.Output)
 	}
 
 	if strings.Contains(result.Summary+result.Output+result.Error, "executor phase will dispatch") {
@@ -1447,30 +1476,30 @@ func TestSubmitPlanBlocksPendingApprovalBeforeSpillingLargeEditBodies(t *testing
 	sensitiveBody := strings.Repeat("P5_8_SECRET_BODY raw_prompt transcript token customer acme\n", 120)
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
-		PlanArtifact: &PlanArtifact{
-			SchemaVersion: PlanArtifactSchemaVersion,
+		PlanArtifact: &planartifact.PlanArtifact{
+			SchemaVersion: planartifact.SchemaVersion,
 			PlanID:        "plan-pending-approval-large-edit",
-			Task: PlanArtifactTask{
+			Task: planartifact.PlanArtifactTask{
 				ID:                    "task-pending-approval-large-edit",
 				Summary:               "Block private large edit body until approval is satisfied",
 				ClientClassifications: []string{"finance", "healthcare_life_sciences", "public_sector", "enterprise_saas", "tooling_vendor", "local_model_private_code", "open_source"},
 			},
-			Contract: PlanArtifactContract{
+			Contract: planartifact.PlanArtifactContract{
 				Kind:              "plan_then_execute",
 				StrategyOwner:     "model",
 				ContractOwner:     "harness",
 				PermissionProfile: "plan_then_execute",
 				VerificationOwner: "executor",
 			},
-			Packet: PlanArtifactPacket{PackID: "feedfacecafebeef", Status: "available", Freshness: "fresh"},
-			Paths:  PlanArtifactPaths{Editable: []string{"large.txt"}, Required: []string{"large.txt"}},
-			Evidence: []PlanArtifactEvidence{{
+			Packet: planartifact.PlanArtifactPacket{PackID: "feedfacecafebeef", Status: "available", Freshness: "fresh"},
+			Paths:  planartifact.PlanArtifactPaths{Editable: []string{"large.txt"}, Required: []string{"large.txt"}},
+			Evidence: []planartifact.PlanArtifactEvidence{{
 				ID:        "evidence-1",
 				Kind:      "context_packet",
 				Handle:    "context_pack://feedfacecafebeef",
 				Freshness: "fresh",
 			}},
-			VerificationObligations: []PlanArtifactVerificationObligation{{
+			VerificationObligations: []planartifact.PlanArtifactVerificationObligation{{
 				ID:       "verification-1",
 				Kind:     "focused_tests",
 				Command:  "go test ./internal/capabilities/workspace",
@@ -1478,9 +1507,9 @@ func TestSubmitPlanBlocksPendingApprovalBeforeSpillingLargeEditBodies(t *testing
 				Status:   "open",
 				Required: true,
 			}},
-			Approval: PlanArtifactApproval{Required: true, Status: "pending", ScopeID: "scope-1", Mode: "local"},
-			Handoff:  PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "ready", Ready: true},
-			Edits: []PlanEdit{{
+			Approval: planartifact.PlanArtifactApproval{Required: true, Status: "pending", ScopeID: "scope-1", Mode: "local"},
+			Handoff:  planartifact.PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "ready", Ready: true},
+			Edits: []planartifact.PlanEdit{{
 				Path:       "large.txt",
 				NewText:    sensitiveBody,
 				ReplaceAll: true,
@@ -1493,7 +1522,7 @@ func TestSubmitPlanBlocksPendingApprovalBeforeSpillingLargeEditBodies(t *testing
 		t.Fatalf("submit_plan should block handoff-ready large edit artifact with pending required approval")
 	}
 
-	if !strings.Contains(result.Output, "audit_ok=false") || !strings.Contains(result.Error, "approval_handoff_mismatch") {
+	if result.Output != "" || !strings.Contains(result.Error, "handoff.status:not_executable") {
 		t.Fatalf("approval handoff rejection should expose bounded audit status, got output=%q error=%q", result.Output, result.Error)
 	}
 
@@ -1525,33 +1554,86 @@ func TestSubmitPlanBlocksPendingApprovalBeforeSpillingLargeEditBodies(t *testing
 	})
 }
 
+func TestSubmitPlanRejectsReadyHandoffWithNonReadyStatus(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		PlanArtifact: &planartifact.PlanArtifact{
+			SchemaVersion: planartifact.SchemaVersion,
+			Task:          planartifact.PlanArtifactTask{Summary: "Reject contradictory handoff readiness"},
+			Contract: planartifact.PlanArtifactContract{
+				Kind:              "plan_then_execute",
+				StrategyOwner:     "model",
+				ContractOwner:     "harness",
+				PermissionProfile: "plan_then_execute",
+				VerificationOwner: "executor",
+			},
+			Packet: planartifact.PlanArtifactPacket{Status: "not_provided"},
+			Paths:  planartifact.PlanArtifactPaths{Editable: []string{"a.txt"}, Required: []string{"a.txt"}},
+			Evidence: []planartifact.PlanArtifactEvidence{{
+				ID:        "evidence-1",
+				Kind:      "context_packet",
+				Path:      "a.txt",
+				Freshness: "current",
+			}},
+			VerificationObligations: []planartifact.PlanArtifactVerificationObligation{{
+				ID:       "verification-1",
+				Kind:     "focused_tests",
+				Command:  "go test ./internal/capabilities/workspace",
+				Owner:    "executor",
+				Status:   "open",
+				Required: true,
+			}},
+			Approval: planartifact.PlanArtifactApproval{Required: true, Status: "approved", ScopeID: "scope-1", Mode: "local", ExecutionPermission: "execute_all"},
+			Handoff:  planartifact.PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "blocked", Ready: true},
+			Edits: []planartifact.PlanEdit{{
+				Path:    "a.txt",
+				OldText: "before",
+				NewText: "after",
+				Purpose: "Update the fixture.",
+			}},
+		},
+	})
+	if result.Error == "" {
+		t.Fatalf("submit_plan should reject ready handoff with non-ready status")
+	}
+	if !strings.Contains(result.Error, "handoff.ready:invalid_status") {
+		t.Fatalf("expected handoff ready/status schema error, got %q", result.Error)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("rejected artifact should not persist last.plan.json, stat err=%v", err)
+	}
+}
+
 func TestPlanArtifactAuditKeepsPendingApprovalNonBlockingWhenHandoffNotReady(t *testing.T) {
 	root := t.TempDir()
-	result := AuditPlanArtifact(root, PlanArtifact{
-		SchemaVersion: PlanArtifactSchemaVersion,
+	result := AuditPlanArtifact(root, planartifact.PlanArtifact{
+		SchemaVersion: planartifact.SchemaVersion,
 		PlanID:        "plan-non-ready-handoff",
 		Created:       "2026-05-13T00:00:00Z",
-		Task: PlanArtifactTask{
+		Task: planartifact.PlanArtifactTask{
 			Summary:               "Keep non-ready approval handoff visible",
 			ClientClassifications: []string{"enterprise_saas"},
 		},
-		Contract: PlanArtifactContract{
+		Contract: planartifact.PlanArtifactContract{
 			Kind:              "plan_then_execute",
 			StrategyOwner:     "model",
 			ContractOwner:     "harness",
 			PermissionProfile: "plan_then_execute",
 			VerificationOwner: "executor",
 		},
-		Paths: PlanArtifactPaths{Editable: []string{"a.txt"}, Required: []string{"a.txt"}},
-		VerificationObligations: []PlanArtifactVerificationObligation{{
+		Paths: planartifact.PlanArtifactPaths{Editable: []string{"a.txt"}, Required: []string{"a.txt"}},
+		VerificationObligations: []planartifact.PlanArtifactVerificationObligation{{
 			ID:       "verification-1",
 			Kind:     "focused_tests",
 			Status:   "open",
 			Required: true,
 		}},
-		Approval: PlanArtifactApproval{Required: true, Status: "pending", ScopeID: "scope-1", Mode: "local"},
-		Handoff:  PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "blocked", Ready: false},
-		Edits: []PlanEdit{{
+		Approval: planartifact.PlanArtifactApproval{Required: true, Status: "pending", ScopeID: "scope-1", Mode: "local"},
+		Handoff:  planartifact.PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "blocked", Ready: false},
+		Edits: []planartifact.PlanEdit{{
 			Path:    "a.txt",
 			OldText: "before",
 			NewText: "after",
@@ -1575,24 +1657,32 @@ func TestPlanArtifactAuditKeepsPendingApprovalNonBlockingWhenHandoffNotReady(t *
 }
 
 func TestPlanArtifactSynthesizesStableApprovalScopeAndHandoffIDs(t *testing.T) {
-	base := PlanArtifact{
-		SchemaVersion: PlanArtifactSchemaVersion,
+	base := planartifact.PlanArtifact{
+		SchemaVersion: planartifact.SchemaVersion,
 		PlanID:        "plan-stable-ids",
-		Task:          PlanArtifactTask{Summary: "derive stable governance ids"},
-		Contract:      PlanArtifactContract{Kind: "plan_then_execute"},
-		Paths:         PlanArtifactPaths{Editable: []string{"b.txt", "a.txt"}},
-		Evidence:      []PlanArtifactEvidence{{Kind: "schema_example", Summary: "bounded evidence"}},
-		VerificationObligations: []PlanArtifactVerificationObligation{{
+		Task:          planartifact.PlanArtifactTask{Summary: "derive stable governance ids"},
+		Contract:      planartifact.PlanArtifactContract{Kind: "plan_then_execute"},
+		Paths:         planartifact.PlanArtifactPaths{Editable: []string{"b.txt", "a.txt"}},
+		Evidence:      []planartifact.PlanArtifactEvidence{{Kind: "schema_example", Summary: "bounded evidence"}},
+		VerificationObligations: []planartifact.PlanArtifactVerificationObligation{{
 			Kind:     "focused_tests",
 			Status:   "open",
 			Required: true,
 		}},
-		Approval: PlanArtifactApproval{Required: true, Status: "approved", Mode: "local"},
-		Handoff:  PlanArtifactHandoff{Status: "ready", Ready: true, To: "executor"},
-		Edits:    []PlanEdit{{Path: "a.txt", OldText: "a", NewText: "b"}},
+		Approval: planartifact.PlanArtifactApproval{Required: true, Status: "approved", Mode: "local"},
+		Handoff:  planartifact.PlanArtifactHandoff{Status: "ready", Ready: true, To: "executor"},
+		Edits:    []planartifact.PlanEdit{{Path: "a.txt", OldText: "a", NewText: "b"}},
 	}
-	first := normalizePlanArtifactForSubmit(base, "session-1", "2026-05-13T00:00:00Z", "plan-stable-ids", false)
-	second := normalizePlanArtifactForSubmit(base, "session-2", "2026-05-13T00:00:01Z", "plan-stable-ids", false)
+	first := planartifact.NormalizeForSubmit(base, planartifact.NormalizeForSubmitOptions{
+		SessionID: "session-1",
+		Created:   "2026-05-13T00:00:00Z",
+		PlanID:    "plan-stable-ids",
+	})
+	second := planartifact.NormalizeForSubmit(base, planartifact.NormalizeForSubmitOptions{
+		SessionID: "session-2",
+		Created:   "2026-05-13T00:00:01Z",
+		PlanID:    "plan-stable-ids",
+	})
 
 	if first.Approval.ScopeID == "" || second.Approval.ScopeID == "" || first.Approval.ScopeID != second.Approval.ScopeID {
 		t.Fatalf("approval scope id should be deterministic, first=%q second=%q", first.Approval.ScopeID, second.Approval.ScopeID)
@@ -1613,22 +1703,22 @@ func TestPlanArtifactSynthesizesStableApprovalScopeAndHandoffIDs(t *testing.T) {
 
 func TestPlanArtifactPartialApprovalSemanticsAreClientClassAgnostic(t *testing.T) {
 	for _, class := range approvedPlanArtifactClientClasses() {
-		result := AuditPlanArtifact(t.TempDir(), PlanArtifact{
-			SchemaVersion: PlanArtifactSchemaVersion,
+		result := AuditPlanArtifact(t.TempDir(), planartifact.PlanArtifact{
+			SchemaVersion: planartifact.SchemaVersion,
 			PlanID:        "plan-partial-" + class,
-			Task: PlanArtifactTask{
+			Task: planartifact.PlanArtifactTask{
 				Summary:               "Execute only approved partial scope",
 				ClientClassifications: []string{class},
 			},
-			Contract: PlanArtifactContract{Kind: "plan_then_execute"},
-			Paths:    PlanArtifactPaths{Editable: []string{"a.txt"}, Changed: []string{"a.txt"}},
-			Evidence: []PlanArtifactEvidence{{Kind: "schema_example", Summary: "bounded partial approval evidence"}},
-			VerificationObligations: []PlanArtifactVerificationObligation{{
+			Contract: planartifact.PlanArtifactContract{Kind: "plan_then_execute"},
+			Paths:    planartifact.PlanArtifactPaths{Editable: []string{"a.txt"}, Changed: []string{"a.txt"}},
+			Evidence: []planartifact.PlanArtifactEvidence{{Kind: "schema_example", Summary: "bounded partial approval evidence"}},
+			VerificationObligations: []planartifact.PlanArtifactVerificationObligation{{
 				Kind:     "focused_tests",
 				Status:   "open",
 				Required: true,
 			}},
-			Approval: PlanArtifactApproval{
+			Approval: planartifact.PlanArtifactApproval{
 				Required:            true,
 				Status:              "partial",
 				ScopeID:             "scope-" + class,
@@ -1637,8 +1727,8 @@ func TestPlanArtifactPartialApprovalSemanticsAreClientClassAgnostic(t *testing.T
 				PendingPaths:        []string{"b.txt"},
 				ExecutionPermission: "execute_approved_scope",
 			},
-			Handoff: PlanArtifactHandoff{ID: "handoff-" + class, Status: "ready", Ready: true},
-			Edits:   []PlanEdit{{Path: "a.txt", OldText: "a", NewText: "b"}},
+			Handoff: planartifact.PlanArtifactHandoff{ID: "handoff-" + class, Status: "ready", Ready: true},
+			Edits:   []planartifact.PlanEdit{{Path: "a.txt", OldText: "a", NewText: "b"}},
 		}, PlanArtifactAuditOptions{})
 		if !result.OK {
 			t.Fatalf("partial approval should allow approved scope for class %q: %#v", class, result)
@@ -1651,19 +1741,19 @@ func TestPlanArtifactPartialApprovalSemanticsAreClientClassAgnostic(t *testing.T
 }
 
 func TestPlanArtifactPartialApprovalBlocksPendingScopePrivately(t *testing.T) {
-	result := AuditPlanArtifact(t.TempDir(), PlanArtifact{
-		SchemaVersion: PlanArtifactSchemaVersion,
+	result := AuditPlanArtifact(t.TempDir(), planartifact.PlanArtifact{
+		SchemaVersion: planartifact.SchemaVersion,
 		PlanID:        "plan-partial-private",
-		Task:          PlanArtifactTask{Summary: "Block pending partial approval scope"},
-		Contract:      PlanArtifactContract{Kind: "plan_then_execute"},
-		Paths:         PlanArtifactPaths{Editable: []string{"a.txt", "b.txt"}, Changed: []string{"b.txt"}},
-		Evidence:      []PlanArtifactEvidence{{Kind: "schema_example", Summary: "bounded partial approval evidence"}},
-		VerificationObligations: []PlanArtifactVerificationObligation{{
+		Task:          planartifact.PlanArtifactTask{Summary: "Block pending partial approval scope"},
+		Contract:      planartifact.PlanArtifactContract{Kind: "plan_then_execute"},
+		Paths:         planartifact.PlanArtifactPaths{Editable: []string{"a.txt", "b.txt"}, Changed: []string{"b.txt"}},
+		Evidence:      []planartifact.PlanArtifactEvidence{{Kind: "schema_example", Summary: "bounded partial approval evidence"}},
+		VerificationObligations: []planartifact.PlanArtifactVerificationObligation{{
 			Kind:     "focused_tests",
 			Status:   "open",
 			Required: true,
 		}},
-		Approval: PlanArtifactApproval{
+		Approval: planartifact.PlanArtifactApproval{
 			Required:            true,
 			Status:              "partial",
 			ScopeID:             "scope raw_prompt customer-acme token=/home/example/private/client",
@@ -1671,8 +1761,8 @@ func TestPlanArtifactPartialApprovalBlocksPendingScopePrivately(t *testing.T) {
 			PendingPaths:        []string{"b.txt"},
 			ExecutionPermission: "execute_approved_scope",
 		},
-		Handoff: PlanArtifactHandoff{ID: "handoff raw_prompt customer-acme", Status: "ready", Ready: true},
-		Edits:   []PlanEdit{{Path: "b.txt", OldText: "a", NewText: "b"}},
+		Handoff: planartifact.PlanArtifactHandoff{ID: "handoff raw_prompt customer-acme", Status: "ready", Ready: true},
+		Edits:   []planartifact.PlanEdit{{Path: "b.txt", OldText: "a", NewText: "b"}},
 	}, PlanArtifactAuditOptions{})
 	if result.OK {
 		t.Fatalf("partial approval should block pending edit scope")
@@ -1695,24 +1785,24 @@ func TestPlanArtifactPartialApprovalBlocksPendingScopePrivately(t *testing.T) {
 }
 
 func TestPlanArtifactAuditRejectsPendingPartialApprovalSourceSatisfiedPath(t *testing.T) {
-	result := AuditPlanArtifact(t.TempDir(), PlanArtifact{
-		SchemaVersion: PlanArtifactSchemaVersion,
+	result := AuditPlanArtifact(t.TempDir(), planartifact.PlanArtifact{
+		SchemaVersion: planartifact.SchemaVersion,
 		PlanID:        "plan-partial-source-satisfied",
-		Task:          PlanArtifactTask{Summary: "Block pending partial approval source-satisfied scope"},
-		Contract:      PlanArtifactContract{Kind: "plan_then_execute"},
-		Paths: PlanArtifactPaths{
+		Task:          planartifact.PlanArtifactTask{Summary: "Block pending partial approval source-satisfied scope"},
+		Contract:      planartifact.PlanArtifactContract{Kind: "plan_then_execute"},
+		Paths: planartifact.PlanArtifactPaths{
 			Editable:        []string{"b.txt"},
 			Changed:         []string{"b.txt"},
 			Required:        []string{"a.txt", "b.txt"},
 			SourceSatisfied: []string{"a.txt"},
 		},
-		Evidence: []PlanArtifactEvidence{{Kind: "harness_observed_source", Path: "a.txt"}},
-		VerificationObligations: []PlanArtifactVerificationObligation{{
+		Evidence: []planartifact.PlanArtifactEvidence{{Kind: "harness_observed_source", Path: "a.txt"}},
+		VerificationObligations: []planartifact.PlanArtifactVerificationObligation{{
 			Kind:     "focused_tests",
 			Status:   "open",
 			Required: true,
 		}},
-		Approval: PlanArtifactApproval{
+		Approval: planartifact.PlanArtifactApproval{
 			Required:            true,
 			Status:              "partial",
 			ScopeID:             "scope-1",
@@ -1720,8 +1810,8 @@ func TestPlanArtifactAuditRejectsPendingPartialApprovalSourceSatisfiedPath(t *te
 			PendingPaths:        []string{"a.txt"},
 			ExecutionPermission: "execute_approved_scope",
 		},
-		Handoff: PlanArtifactHandoff{ID: "handoff-1", Status: "ready", Ready: true},
-		Edits:   []PlanEdit{{Path: "b.txt", OldText: "before", NewText: "after"}},
+		Handoff: planartifact.PlanArtifactHandoff{ID: "handoff-1", Status: "ready", Ready: true},
+		Edits:   []planartifact.PlanEdit{{Path: "b.txt", OldText: "before", NewText: "after"}},
 	}, PlanArtifactAuditOptions{})
 	if result.OK {
 		t.Fatalf("pending partial approval source_satisfied_paths should fail audit")
@@ -1747,26 +1837,26 @@ func TestPlanArtifactAuditReportsPacketStates(t *testing.T) {
   "candidate_files": [{"path":"a.txt","role":"editable"}]
 }`)
 
-	base := PlanArtifact{
-		SchemaVersion: PlanArtifactSchemaVersion,
+	base := planartifact.PlanArtifact{
+		SchemaVersion: planartifact.SchemaVersion,
 		PlanID:        "plan-packet-state",
-		Task:          PlanArtifactTask{Summary: "audit packet state"},
-		Contract:      PlanArtifactContract{Kind: "plan_then_execute"},
-		Paths:         PlanArtifactPaths{Editable: []string{"a.txt"}, Changed: []string{"a.txt"}},
-		Evidence:      []PlanArtifactEvidence{{Kind: "planner_submission", Summary: "bounded evidence"}},
-		VerificationObligations: []PlanArtifactVerificationObligation{{
+		Task:          planartifact.PlanArtifactTask{Summary: "audit packet state"},
+		Contract:      planartifact.PlanArtifactContract{Kind: "plan_then_execute"},
+		Paths:         planartifact.PlanArtifactPaths{Editable: []string{"a.txt"}, Changed: []string{"a.txt"}},
+		Evidence:      []planartifact.PlanArtifactEvidence{{Kind: "planner_submission", Summary: "bounded evidence"}},
+		VerificationObligations: []planartifact.PlanArtifactVerificationObligation{{
 			Kind:     "focused_tests",
 			Status:   "open",
 			Required: true,
 		}},
-		Approval: PlanArtifactApproval{Status: "implicit"},
-		Handoff:  PlanArtifactHandoff{ID: "handoff-1", Status: "ready", Ready: true},
-		Edits:    []PlanEdit{{Path: "a.txt", OldText: "alpha", NewText: "ALPHA"}},
+		Approval: planartifact.PlanArtifactApproval{Status: "implicit"},
+		Handoff:  planartifact.PlanArtifactHandoff{ID: "handoff-1", Status: "ready", Ready: true},
+		Edits:    []planartifact.PlanEdit{{Path: "a.txt", OldText: "alpha", NewText: "ALPHA"}},
 	}
 	inherited := base
 
 	inherited.PackID = "feedfacecafebeef"
-	inherited.Packet = PlanArtifactPacket{PackID: "feedfacecafebeef", Status: "available", Freshness: "fresh"}
+	inherited.Packet = planartifact.PlanArtifactPacket{PackID: "feedfacecafebeef", Status: "available", Freshness: "fresh"}
 
 	if result := AuditPlanArtifact(root, inherited, PlanArtifactAuditOptions{}); result.Metrics.PacketState != "inherited" || !result.Metrics.PacketFresh {
 		t.Fatalf("expected inherited packet state, got %#v", result.Metrics)
@@ -1775,7 +1865,7 @@ func TestPlanArtifactAuditReportsPacketStates(t *testing.T) {
 	stale := base
 
 	stale.PackID = "deadc0decafef00d"
-	stale.Packet = PlanArtifactPacket{PackID: "deadc0decafef00d", Status: "available", Freshness: "fresh"}
+	stale.Packet = planartifact.PlanArtifactPacket{PackID: "deadc0decafef00d", Status: "available", Freshness: "fresh"}
 
 	if result := AuditPlanArtifact(root, stale, PlanArtifactAuditOptions{}); result.Metrics.PacketState != "stale" || result.Metrics.PacketFresh {
 		t.Fatalf("expected stale packet state, got %#v", result.Metrics)
@@ -1783,7 +1873,7 @@ func TestPlanArtifactAuditReportsPacketStates(t *testing.T) {
 
 	missing := base
 
-	missing.Packet = PlanArtifactPacket{Status: "not_provided"}
+	missing.Packet = planartifact.PlanArtifactPacket{Status: "not_provided"}
 
 	if result := AuditPlanArtifact(root, missing, PlanArtifactAuditOptions{}); result.Metrics.PacketState != "missing" || result.Metrics.PacketReason != "not_provided" {
 		t.Fatalf("expected missing packet state, got %#v", result.Metrics)
@@ -1805,30 +1895,30 @@ func TestSubmitPlanSanitizesStructuredEditPurposeMetadata(t *testing.T) {
 
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
-		PlanArtifact: &PlanArtifact{
-			SchemaVersion: PlanArtifactSchemaVersion,
+		PlanArtifact: &planartifact.PlanArtifact{
+			SchemaVersion: planartifact.SchemaVersion,
 			PlanID:        "plan-structured-purpose-privacy",
-			Task: PlanArtifactTask{
+			Task: planartifact.PlanArtifactTask{
 				ID:                    "task-structured-purpose-privacy",
 				Summary:               "Bound edit-purpose metadata before durable persistence",
 				ClientClassifications: []string{"finance", "local_model_private_code"},
 			},
-			Contract: PlanArtifactContract{
+			Contract: planartifact.PlanArtifactContract{
 				Kind:              "plan_then_execute",
 				StrategyOwner:     "model",
 				ContractOwner:     "harness",
 				PermissionProfile: "plan_then_execute",
 				VerificationOwner: "executor",
 			},
-			Packet: PlanArtifactPacket{PackID: "feedfacecafebeef", Status: "available", Freshness: "fresh"},
-			Paths:  PlanArtifactPaths{Editable: []string{"a.txt"}, Required: []string{"a.txt"}},
-			Evidence: []PlanArtifactEvidence{{
+			Packet: planartifact.PlanArtifactPacket{PackID: "feedfacecafebeef", Status: "available", Freshness: "fresh"},
+			Paths:  planartifact.PlanArtifactPaths{Editable: []string{"a.txt"}, Required: []string{"a.txt"}},
+			Evidence: []planartifact.PlanArtifactEvidence{{
 				ID:        "evidence-1",
 				Kind:      "context_packet",
 				Handle:    "context_pack://feedfacecafebeef",
 				Freshness: "fresh",
 			}},
-			VerificationObligations: []PlanArtifactVerificationObligation{{
+			VerificationObligations: []planartifact.PlanArtifactVerificationObligation{{
 				ID:       "verification-1",
 				Kind:     "focused_tests",
 				Command:  "go test ./internal/capabilities/workspace",
@@ -1836,9 +1926,9 @@ func TestSubmitPlanSanitizesStructuredEditPurposeMetadata(t *testing.T) {
 				Status:   "open",
 				Required: true,
 			}},
-			Approval: PlanArtifactApproval{Required: true, Status: "approved", ScopeID: "scope-1", Mode: "local"},
-			Handoff:  PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "ready", Ready: true},
-			Edits: []PlanEdit{{
+			Approval: planartifact.PlanArtifactApproval{Required: true, Status: "approved", ScopeID: "scope-1", Mode: "local"},
+			Handoff:  planartifact.PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "ready", Ready: true},
+			Edits: []planartifact.PlanEdit{{
 				Path:    "a.txt",
 				OldText: "before",
 				NewText: "after",
@@ -1886,7 +1976,7 @@ func TestSubmitPlanSanitizesLegacyEditPurposeMetadata(t *testing.T) {
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "legacy path purpose privacy",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:    "a.txt",
 			OldText: "before",
 			NewText: "after",
@@ -1933,15 +2023,15 @@ func TestSubmitPlanStructuredAuditRejectsPacketAndScopeMismatchPrivately(t *test
 
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
-		PlanArtifact: &PlanArtifact{
-			SchemaVersion: PlanArtifactSchemaVersion,
+		PlanArtifact: &planartifact.PlanArtifact{
+			SchemaVersion: planartifact.SchemaVersion,
 			PlanID:        "plan-audit-scope",
-			Task: PlanArtifactTask{
+			Task: planartifact.PlanArtifactTask{
 				ID:                    "task-audit-scope",
 				Summary:               "Check submitted scope against packet evidence",
 				ClientClassifications: []string{"enterprise_saas"},
 			},
-			Contract: PlanArtifactContract{
+			Contract: planartifact.PlanArtifactContract{
 				Kind:              "plan_then_execute",
 				StrategyOwner:     "model",
 				ContractOwner:     "harness",
@@ -1949,22 +2039,22 @@ func TestSubmitPlanStructuredAuditRejectsPacketAndScopeMismatchPrivately(t *test
 				VerificationOwner: "executor",
 				RequiredEditPaths: []string{"a.txt"},
 			},
-			Packet: PlanArtifactPacket{PackID: "feedfacecafebeef", Status: "available", Freshness: "fresh"},
-			Paths:  PlanArtifactPaths{Editable: []string{"a.txt"}, Required: []string{"a.txt"}},
-			Evidence: []PlanArtifactEvidence{{
+			Packet: planartifact.PlanArtifactPacket{PackID: "feedfacecafebeef", Status: "available", Freshness: "fresh"},
+			Paths:  planartifact.PlanArtifactPaths{Editable: []string{"a.txt"}, Required: []string{"a.txt"}},
+			Evidence: []planartifact.PlanArtifactEvidence{{
 				ID:        "evidence-1",
 				Kind:      "context_packet",
 				Handle:    "context_pack://feedfacecafebeef",
 				Path:      "logs/telemetry/secrets/customer-acme/feedback.jsonl",
 				Freshness: "fresh",
 			}},
-			UnresolvedQuestions: []PlanArtifactQuestion{{
+			UnresolvedQuestions: []planartifact.PlanArtifactQuestion{{
 				ID:                    "question-1",
 				Claim:                 "raw_prompt customer transcript body",
 				Status:                "open",
 				RequiredBeforeHandoff: true,
 			}},
-			VerificationObligations: []PlanArtifactVerificationObligation{{
+			VerificationObligations: []planartifact.PlanArtifactVerificationObligation{{
 				ID:       "verification-1",
 				Kind:     "focused_tests",
 				Command:  "go test ./internal/capabilities/workspace",
@@ -1972,9 +2062,9 @@ func TestSubmitPlanStructuredAuditRejectsPacketAndScopeMismatchPrivately(t *test
 				Status:   "open",
 				Required: true,
 			}},
-			Approval: PlanArtifactApproval{Required: true, Status: "pending", ScopeID: "scope-1", Mode: "local"},
-			Handoff:  PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "ready", Ready: true},
-			Edits: []PlanEdit{{
+			Approval: planartifact.PlanArtifactApproval{Required: false, Status: "implicit", ScopeID: "scope-1", Mode: "local", ExecutionPermission: "execute_all"},
+			Handoff:  planartifact.PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "ready", Ready: true},
+			Edits: []planartifact.PlanEdit{{
 				Path:    "b.txt",
 				OldText: "before",
 				NewText: "after",
@@ -2007,7 +2097,7 @@ func TestSubmitPlanLegacyPacketMismatchIsReportOnly(t *testing.T) {
 		Tool:      "submit_plan",
 		Rationale: "legacy packet id without graph view remains executable",
 		PackID:    "feedfacecafebeef",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:    "a.txt",
 			OldText: "before",
 			NewText: "after",
@@ -2030,7 +2120,7 @@ func TestSubmitPlanStaleOldTextReportsSourceSatisfiedHintWhenReplacementPresent(
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "stale old text",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:    "a.txt",
 			OldText: "before",
 			NewText: "after",
@@ -2052,14 +2142,14 @@ func TestSubmitPlanStructuredSchemaErrorsAreBoundedAndPrivate(t *testing.T) {
 	mgr, _ := newSubmitPlanTestManager(t)
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
-		PlanArtifact: &PlanArtifact{
-			SchemaVersion: PlanArtifactSchemaVersion,
+		PlanArtifact: &planartifact.PlanArtifact{
+			SchemaVersion: planartifact.SchemaVersion,
 			PlanID:        "token=SECRET",
-			Task: PlanArtifactTask{
+			Task: planartifact.PlanArtifactTask{
 				Summary:               "raw_prompt customer transcript token=SECRET",
 				ClientClassifications: []string{"customer-acme-session"},
 			},
-			Edits: []PlanEdit{{Path: "a.txt"}},
+			Edits: []planartifact.PlanEdit{{Path: "a.txt"}},
 		},
 	})
 
@@ -2080,28 +2170,67 @@ func TestSubmitPlanStructuredSchemaErrorsAreBoundedAndPrivate(t *testing.T) {
 	}
 }
 
+func TestSubmitPlanRejectsUnsupportedVerificationOwnerAndStatus(t *testing.T) {
+	mgr, _ := newSubmitPlanTestManager(t)
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		PlanArtifact: &planartifact.PlanArtifact{
+			SchemaVersion: planartifact.SchemaVersion,
+			PlanID:        "plan-verification-vocabulary",
+			Task:          planartifact.PlanArtifactTask{Summary: "verification vocabulary"},
+			Contract:      planartifact.PlanArtifactContract{Kind: "plan_then_execute"},
+			Packet:        planartifact.PlanArtifactPacket{Status: "not_provided"},
+			Paths:         planartifact.PlanArtifactPaths{Editable: []string{"a.txt"}},
+			Evidence:      []planartifact.PlanArtifactEvidence{{Kind: "schema_example", Summary: "bounded evidence"}},
+			VerificationObligations: []planartifact.PlanArtifactVerificationObligation{{
+				Kind:     "focused_tests",
+				Command:  "go test ./...",
+				Owner:    "future_self",
+				Status:   "trust_me",
+				Required: true,
+			}},
+			Approval: planartifact.PlanArtifactApproval{Status: "implicit", ScopeID: "scope-1", ExecutionPermission: "execute_all"},
+			Handoff:  planartifact.PlanArtifactHandoff{ID: "handoff-1", Status: "ready", Ready: true},
+			Edits:    []planartifact.PlanEdit{{Path: "a.txt", OldText: "old", NewText: "new"}},
+		},
+	})
+
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("unsupported verification vocabulary should be rejected")
+	}
+	for _, want := range []string{"verification_obligations[0].owner", "verification_obligations[0].status"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("schema error should include %q, got %q", want, result.Error)
+		}
+	}
+}
+
 func TestPlanArtifactInvalidEditShapeErrorKeepsFullGuidance(t *testing.T) {
-	artifact := normalizePlanArtifactForSubmit(PlanArtifact{
-		SchemaVersion: PlanArtifactSchemaVersion,
+	artifact := planartifact.NormalizeForSubmit(planartifact.PlanArtifact{
+		SchemaVersion: planartifact.SchemaVersion,
 		PlanID:        "plan-invalid-shape",
 		Created:       "2026-05-17T00:00:00Z",
-		Task:          PlanArtifactTask{Summary: "invalid shape"},
-		Contract:      PlanArtifactContract{Kind: "plan_then_execute"},
-		Packet:        PlanArtifactPacket{Status: "not_provided"},
-		Paths:         PlanArtifactPaths{Editable: []string{"a.txt"}, Changed: []string{"a.txt"}},
-		Evidence:      []PlanArtifactEvidence{{Kind: "schema_example", Summary: "bounded evidence"}},
-		VerificationObligations: []PlanArtifactVerificationObligation{{
+		Task:          planartifact.PlanArtifactTask{Summary: "invalid shape"},
+		Contract:      planartifact.PlanArtifactContract{Kind: "plan_then_execute"},
+		Packet:        planartifact.PlanArtifactPacket{Status: "not_provided"},
+		Paths:         planartifact.PlanArtifactPaths{Editable: []string{"a.txt"}, Changed: []string{"a.txt"}},
+		Evidence:      []planartifact.PlanArtifactEvidence{{Kind: "schema_example", Summary: "bounded evidence"}},
+		VerificationObligations: []planartifact.PlanArtifactVerificationObligation{{
 			Kind:     "test",
 			Command:  "go test ./...",
 			Owner:    "planner",
 			Required: true,
 		}},
-		Approval: PlanArtifactApproval{Status: "implicit"},
-		Handoff:  PlanArtifactHandoff{ID: "handoff-invalid-shape", Status: "ready", Ready: true},
-		Edits:    []PlanEdit{{Path: "a.txt"}},
-	}, "session-1", "2026-05-17T00:00:00Z", "plan-invalid-shape", false)
+		Approval: planartifact.PlanArtifactApproval{Status: "implicit"},
+		Handoff:  planartifact.PlanArtifactHandoff{ID: "handoff-invalid-shape", Status: "ready", Ready: true},
+		Edits:    []planartifact.PlanEdit{{Path: "a.txt"}},
+	}, planartifact.NormalizeForSubmitOptions{
+		SessionID: "session-1",
+		Created:   "2026-05-17T00:00:00Z",
+		PlanID:    "plan-invalid-shape",
+	})
 
-	err := ValidatePlanArtifact(artifact)
+	err := planartifact.ValidatePlanArtifact(artifact)
 	if err == nil {
 		t.Fatal("expected invalid edit shape error")
 	}
@@ -2129,7 +2258,7 @@ func TestSubmitPlanInvalidEditShapePointsSourceSatisfiedPathToTopLevelCoverage(t
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "x.txt already contains the requested final state; y.txt still needs an edit.",
-		Edits: []PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{Path: "x.txt", Purpose: "already source satisfied"},
 			{Path: "y.txt", OldText: "before", NewText: "after", Purpose: "real edit"},
 		},
@@ -2163,7 +2292,7 @@ func TestLoadPlanArtifactAcceptsLegacyV1AndSynthesizesDurableFields(t *testing.T
 		t.Fatalf("legacy v1 artifact should load: %v", err)
 	}
 
-	if plan.SchemaVersion != PlanArtifactLegacySchemaVersion {
+	if plan.SchemaVersion != planartifact.LegacySchemaVersion {
 		t.Fatalf("legacy schema version should be preserved for attribution, got %q", plan.SchemaVersion)
 	}
 
@@ -2192,27 +2321,27 @@ func TestLoadPlanArtifactRejectsNoOpLegacyEdit(t *testing.T) {
 }
 
 func TestValidatePlanArtifactRejectsBackslashTraversalPath(t *testing.T) {
-	artifact := PlanArtifact{
-		SchemaVersion: PlanArtifactSchemaVersion,
+	artifact := planartifact.PlanArtifact{
+		SchemaVersion: planartifact.SchemaVersion,
 		PlanID:        "plan-backslash-traversal",
 		Created:       "2026-05-19T00:00:00Z",
-		Task:          PlanArtifactTask{ID: "task-backslash-traversal"},
-		Contract:      PlanArtifactContract{Kind: "plan_then_execute"},
-		Packet:        PlanArtifactPacket{Status: "not_provided"},
-		Paths:         PlanArtifactPaths{Editable: []string{"safe.txt"}},
-		Evidence:      []PlanArtifactEvidence{{Kind: "planner_submission", Summary: "test"}},
-		VerificationObligations: []PlanArtifactVerificationObligation{{
+		Task:          planartifact.PlanArtifactTask{ID: "task-backslash-traversal"},
+		Contract:      planartifact.PlanArtifactContract{Kind: "plan_then_execute"},
+		Packet:        planartifact.PlanArtifactPacket{Status: "not_provided"},
+		Paths:         planartifact.PlanArtifactPaths{Editable: []string{"safe.txt"}},
+		Evidence:      []planartifact.PlanArtifactEvidence{{Kind: "planner_submission", Summary: "test"}},
+		VerificationObligations: []planartifact.PlanArtifactVerificationObligation{{
 			Kind:     "test",
 			Command:  "go test ./internal/capabilities/workspace",
 			Owner:    "planner",
 			Required: true,
 		}},
-		Approval: PlanArtifactApproval{Status: "implicit", ScopeID: "scope-test", ExecutionPermission: "execute_all"},
-		Handoff:  PlanArtifactHandoff{ID: "handoff-test", Status: "ready"},
-		Edits:    []PlanEdit{{Path: `..\secret.txt`, OldText: "old", NewText: "new"}},
+		Approval: planartifact.PlanArtifactApproval{Status: "implicit", ScopeID: "scope-test", ExecutionPermission: "execute_all"},
+		Handoff:  planartifact.PlanArtifactHandoff{ID: "handoff-test", Status: "ready"},
+		Edits:    []planartifact.PlanEdit{{Path: `..\secret.txt`, OldText: "old", NewText: "new"}},
 	}
 
-	err := ValidatePlanArtifact(artifact)
+	err := planartifact.ValidatePlanArtifact(artifact)
 	if err == nil || !strings.Contains(err.Error(), "edits[0].path") {
 		t.Fatalf("expected invalid edit path error, got %v", err)
 	}
@@ -2220,27 +2349,31 @@ func TestValidatePlanArtifactRejectsBackslashTraversalPath(t *testing.T) {
 
 func TestPlanArtifactClientClassificationExamplesCoverApprovedClasses(t *testing.T) {
 	for _, class := range approvedPlanArtifactClientClasses() {
-		artifact := normalizePlanArtifactForSubmit(PlanArtifact{
-			SchemaVersion: PlanArtifactSchemaVersion,
+		artifact := planartifact.NormalizeForSubmit(planartifact.PlanArtifact{
+			SchemaVersion: planartifact.SchemaVersion,
 			PlanID:        "plan-" + class,
-			Task: PlanArtifactTask{
+			Task: planartifact.PlanArtifactTask{
 				ID:                    "task-" + class,
+				Summary:               "bounded client classification coverage",
 				ClientClassifications: []string{class},
 			},
-			Contract: PlanArtifactContract{Kind: "plan_then_execute"},
-			Packet:   PlanArtifactPacket{Status: "not_provided"},
-			Paths:    PlanArtifactPaths{Editable: []string{"a.txt"}},
-			Evidence: []PlanArtifactEvidence{{Kind: "schema_example", Summary: "bounded client classification coverage"}},
-			VerificationObligations: []PlanArtifactVerificationObligation{{
+			Contract: planartifact.PlanArtifactContract{Kind: "plan_then_execute"},
+			Packet:   planartifact.PlanArtifactPacket{Status: "not_provided"},
+			Paths:    planartifact.PlanArtifactPaths{Editable: []string{"a.txt"}},
+			Evidence: []planartifact.PlanArtifactEvidence{{Kind: "schema_example", Summary: "bounded client classification coverage"}},
+			VerificationObligations: []planartifact.PlanArtifactVerificationObligation{{
 				Kind:     "example_verification",
 				Status:   "open",
 				Required: true,
 			}},
-			Approval: PlanArtifactApproval{Status: "awaiting_approval"},
-			Handoff:  PlanArtifactHandoff{Status: "ready", Ready: true},
-			Edits:    []PlanEdit{{Path: "a.txt", OldText: "a", NewText: "b"}},
-		}, "", "2026-05-13T00:00:00Z", "plan-"+class, false)
-		if err := ValidatePlanArtifact(artifact); err != nil {
+			Approval: planartifact.PlanArtifactApproval{Status: "awaiting_approval"},
+			Handoff:  planartifact.PlanArtifactHandoff{Status: "ready", Ready: true},
+			Edits:    []planartifact.PlanEdit{{Path: "a.txt", OldText: "a", NewText: "b"}},
+		}, planartifact.NormalizeForSubmitOptions{
+			Created: "2026-05-13T00:00:00Z",
+			PlanID:  "plan-" + class,
+		})
+		if err := planartifact.ValidatePlanArtifact(artifact); err != nil {
 			t.Fatalf("approved client classification %q should validate: %v", class, err)
 		}
 	}
@@ -2270,7 +2403,7 @@ func TestSubmitPlanRejectsSourceSatisfiedPlaceholderRationale(t *testing.T) {
 		Tool: "submit_plan",
 		Rationale: "The source files are already in the expected state. " +
 			"I will make minimal placeholder edits to satisfy the requirement that edits be submitted.",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:    "a.txt",
 			OldText: "before",
 			NewText: "after",
@@ -2299,7 +2432,7 @@ func TestSubmitPlanAllowsNegatedSourceSatisfiedRationale(t *testing.T) {
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "The current source is not source-satisfied because it still contains the old value.",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:    "a.txt",
 			OldText: "before",
 			NewText: "after",
@@ -2319,7 +2452,7 @@ func TestSubmitPlanRejectsMixedSourceSatisfiedCoverageWithoutEvidence(t *testing
 		Tool:                 "submit_plan",
 		Rationale:            "Update a.txt; b.txt already contains the requested final state from current source evidence.",
 		SourceSatisfiedPaths: []string{"b.txt"},
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:    "a.txt",
 			OldText: "before",
 			NewText: "after",
@@ -2347,33 +2480,33 @@ func TestSubmitPlanAllowsMixedSourceSatisfiedCoverageWithCurrentStateEvidence(t 
 		Tool:                 "submit_plan",
 		Rationale:            "Update a.txt; b.txt already contains the requested final state from current source evidence.",
 		SourceSatisfiedPaths: []string{"b.txt"},
-		PlanArtifact: &PlanArtifact{
-			SchemaVersion: PlanArtifactSchemaVersion,
-			Task:          PlanArtifactTask{Summary: "mixed source-satisfied coverage"},
-			Contract: PlanArtifactContract{
+		PlanArtifact: &planartifact.PlanArtifact{
+			SchemaVersion: planartifact.SchemaVersion,
+			Task:          planartifact.PlanArtifactTask{Summary: "mixed source-satisfied coverage"},
+			Contract: planartifact.PlanArtifactContract{
 				Kind:              "plan_then_execute",
 				StrategyOwner:     "model",
 				ContractOwner:     "harness",
 				PermissionProfile: "plan_then_execute",
 				VerificationOwner: "planner",
 			},
-			Paths: PlanArtifactPaths{
+			Paths: planartifact.PlanArtifactPaths{
 				Editable: []string{"a.txt"},
 				Changed:  []string{"a.txt"},
 				Required: []string{"a.txt", "b.txt"},
 			},
-			Evidence: []PlanArtifactEvidence{{
+			Evidence: []planartifact.PlanArtifactEvidence{{
 				Kind: "harness_observed_source",
 				Path: "b.txt",
 			}},
-			VerificationObligations: []PlanArtifactVerificationObligation{{
+			VerificationObligations: []planartifact.PlanArtifactVerificationObligation{{
 				Kind:     "focused_tests",
 				Status:   "open",
 				Required: true,
 			}},
-			Approval: PlanArtifactApproval{Required: true, Status: "approved", ScopeID: "scope-1", Mode: "local"},
-			Handoff:  PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "ready", Ready: true},
-			Edits: []PlanEdit{{
+			Approval: planartifact.PlanArtifactApproval{Required: true, Status: "approved", ScopeID: "scope-1", Mode: "local"},
+			Handoff:  planartifact.PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "ready", Ready: true},
+			Edits: []planartifact.PlanEdit{{
 				Path:    "a.txt",
 				OldText: "before",
 				NewText: "after",
@@ -2402,7 +2535,7 @@ func TestSubmitPlanAllowsScopedNoChangesRationale(t *testing.T) {
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "No changes are needed outside the approved scope; update a.txt.",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:    "a.txt",
 			OldText: "before",
 			NewText: "after",
@@ -2421,7 +2554,7 @@ func TestSubmitPlanRejectsVerificationOnlyEditPurposes(t *testing.T) {
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "Check current source evidence.",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:    "a.txt",
 			OldText: "before",
 			NewText: "after",
@@ -2445,12 +2578,12 @@ func TestSubmitPlanRejectsPlaceholderEditBodies(t *testing.T) {
 
 	for _, tc := range []struct {
 		name string
-		edit PlanEdit
+		edit planartifact.PlanEdit
 		want string
 	}{
 		{
 			name: "substring replacement",
-			edit: PlanEdit{
+			edit: planartifact.PlanEdit{
 				Path:    "a.txt",
 				OldText: "func run() {\n}\n",
 				NewText: "func run() {\n\t// ... existing code ...\n}\n",
@@ -2460,7 +2593,7 @@ func TestSubmitPlanRejectsPlaceholderEditBodies(t *testing.T) {
 		},
 		{
 			name: "line range content",
-			edit: PlanEdit{
+			edit: planartifact.PlanEdit{
 				Path:      "a.txt",
 				StartLine: 3,
 				EndLine:   4,
@@ -2471,7 +2604,7 @@ func TestSubmitPlanRejectsPlaceholderEditBodies(t *testing.T) {
 		},
 		{
 			name: "generic todo marker",
-			edit: PlanEdit{
+			edit: planartifact.PlanEdit{
 				Path:    "a.cpp",
 				OldText: "func run() {\n}\n",
 				NewText: "func run() {\n\t// TODO: Implement actual dispatch logic.\n}\n",
@@ -2484,7 +2617,7 @@ func TestSubmitPlanRejectsPlaceholderEditBodies(t *testing.T) {
 			result := mgr.Execute(context.Background(), ToolRequest{
 				Tool:      "submit_plan",
 				Rationale: "Update executable source.",
-				Edits:     []PlanEdit{tc.edit},
+				Edits:     []planartifact.PlanEdit{tc.edit},
 			})
 			if strings.TrimSpace(result.Error) == "" {
 				t.Fatalf("placeholder edit body should be rejected")
@@ -2506,7 +2639,7 @@ func TestSubmitPlanAllowsTodoListInNonSourceGeneratedBody(t *testing.T) {
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "Add planning notes.",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:    "docs/notes.md",
 			OldText: "# Notes\n",
 			NewText: "# Notes\n\nTODO:\n- Follow up with product owner.\n",
@@ -2525,7 +2658,7 @@ func TestSubmitPlanRejectsForNowPlaceholderProofText(t *testing.T) {
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "Update executable source.",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:    "a.cpp",
 			OldText: "int dispatch() {\n    return 0;\n}\n",
 			NewText: "int dispatch() {\n    // For now, return the severity as a placeholder result code.\n    return severity;\n}\n",
@@ -2550,7 +2683,7 @@ func TestSubmitPlanAllowsReplacingExistingTodoAnchorWithFinalCode(t *testing.T) 
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "Replace existing TODO with final dispatch.",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:    "a.cpp",
 			OldText: "int dispatch() {\n    // TODO: Implement actual dispatch logic.\n    return 0;\n}\n",
 			NewText: "int dispatch() {\n    return compute_dispatch_result();\n}\n",
@@ -2569,7 +2702,7 @@ func TestSubmitPlanAllowsReplacingExistingBracketTodoAnchorWithFinalCode(t *test
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "Replace existing bracket TODO with final dispatch.",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:    "a.cpp",
 			OldText: "int dispatch() {\n    <TODO: fill implementation>\n}\n",
 			NewText: "int dispatch() {\n    return compute_dispatch_result();\n}\n",
@@ -2589,7 +2722,7 @@ func TestSubmitPlanRejectsWholeFileReplaceAllForExistingSourceFile(t *testing.T)
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "Rewrite collapse event helper.",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:       path,
 			NewText:    "#ifndef SUROCCUS_SIMULATION_WORLD_COLLAPSE_EVENT_H\n#define SUROCCUS_SIMULATION_WORLD_COLLAPSE_EVENT_H\nnamespace suroccus { class CollapseEvent {}; }\n#endif\n",
 			ReplaceAll: true,
@@ -2615,7 +2748,7 @@ func TestSubmitPlanRejectsEditWithoutShape(t *testing.T) {
 	mgr, _ := newSubmitPlanTestManager(t)
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
-		Edits: []PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{Path: "a.txt", Purpose: "missing both shapes"},
 		},
 	})
@@ -2670,11 +2803,11 @@ func TestLoadPlanArtifactAllowsLegacyDeletionWithoutNewTextField(t *testing.T) {
 		t.Fatalf("legacy deletion artifact should load: %v", err)
 	}
 
-	if artifact.SchemaVersion != PlanArtifactPreviousSchemaVersion {
+	if artifact.SchemaVersion != planartifact.PreviousSchemaVersion {
 		t.Fatalf("loaded schema version = %q, want previous schema", artifact.SchemaVersion)
 	}
 
-	if len(artifact.Edits) != 1 || !PlanEditHasExplicitReplacementText(artifact.Edits[0]) {
+	if len(artifact.Edits) != 1 || !planartifact.PlanEditHasExplicitReplacementText(artifact.Edits[0]) {
 		t.Fatalf("legacy deletion edit should be normalized as explicit replacement: %#v", artifact.Edits)
 	}
 }
@@ -2683,22 +2816,22 @@ func TestLoadPlanArtifactAttachesMissingCurrentAnchorProvenance(t *testing.T) {
 	root := t.TempDir()
 	writeSubmitPlanFixture(t, root, "x.txt", "old\n")
 
-	artifact := PlanArtifact{
-		SchemaVersion: PlanArtifactSchemaVersion,
+	artifact := planartifact.PlanArtifact{
+		SchemaVersion: planartifact.SchemaVersion,
 		PlanID:        "current-no-provenance",
 		Created:       "2026-05-20T00:00:00Z",
-		Task:          PlanArtifactTask{Summary: "update x"},
-		Contract:      PlanArtifactContract{Kind: "implementation"},
-		Packet:        PlanArtifactPacket{Status: "not_used"},
-		Paths:         PlanArtifactPaths{Editable: []string{"x.txt"}},
-		Evidence:      []PlanArtifactEvidence{{Kind: "harness_observed_source", Path: "x.txt", Summary: "current source"}},
-		VerificationObligations: []PlanArtifactVerificationObligation{{
+		Task:          planartifact.PlanArtifactTask{Summary: "update x"},
+		Contract:      planartifact.PlanArtifactContract{Kind: "implementation"},
+		Packet:        planartifact.PlanArtifactPacket{Status: "not_used"},
+		Paths:         planartifact.PlanArtifactPaths{Editable: []string{"x.txt"}},
+		Evidence:      []planartifact.PlanArtifactEvidence{{Kind: "harness_observed_source", Path: "x.txt", Summary: "current source"}},
+		VerificationObligations: []planartifact.PlanArtifactVerificationObligation{{
 			Command: "go test ./...",
 			Kind:    "command",
 		}},
-		Approval: PlanArtifactApproval{Status: "approved", ScopeID: "all", ExecutionPermission: "execute_all"},
-		Handoff:  PlanArtifactHandoff{ID: "handoff-1", Status: "ready", Ready: true},
-		Edits:    []PlanEdit{{Path: "x.txt", OldText: "old", NewText: "new", Purpose: "update x"}},
+		Approval: planartifact.PlanArtifactApproval{Status: "approved", ScopeID: "all", ExecutionPermission: "execute_all"},
+		Handoff:  planartifact.PlanArtifactHandoff{ID: "handoff-1", Status: "ready", Ready: true},
+		Edits:    []planartifact.PlanEdit{{Path: "x.txt", OldText: "old", NewText: "new", Purpose: "update x"}},
 	}
 
 	body, err := json.Marshal(artifact)
@@ -2751,7 +2884,7 @@ func TestSubmitPlanRejectsNoOpSubstringEditBeforeWritingArtifact(t *testing.T) {
 
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
-		Edits: []PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{Path: "x.txt", OldText: "keep\n", NewText: "keep\n", Purpose: "no-op repair"},
 		},
 	})
@@ -2828,7 +2961,7 @@ func TestSubmitPlanRejectsNoOpRangeEditBeforeWritingArtifact(t *testing.T) {
 
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
-		Edits: []PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{Path: "x.txt", StartLine: 1, EndLine: 1, Content: "keep\n", Purpose: "no-op repair"},
 		},
 	})
@@ -2869,7 +3002,7 @@ func TestSubmitPlanAcceptsInsertAfterLineMiddleAndEnd(t *testing.T) {
 		result := mgr.Execute(context.Background(), ToolRequest{
 			Tool:      "submit_plan",
 			Rationale: "Insert a middle line.",
-			Edits: []PlanEdit{{
+			Edits: []planartifact.PlanEdit{{
 				Path:            "x.txt",
 				InsertAfterLine: 1,
 				Content:         "inserted",
@@ -2902,7 +3035,7 @@ func TestSubmitPlanAcceptsInsertAfterLineMiddleAndEnd(t *testing.T) {
 		result := mgr.Execute(context.Background(), ToolRequest{
 			Tool:      "submit_plan",
 			Rationale: "Append after the final line.",
-			Edits: []PlanEdit{{
+			Edits: []planartifact.PlanEdit{{
 				Path:            "x.txt",
 				InsertAfterLine: 2,
 				Content:         "three\n",
@@ -2929,7 +3062,7 @@ func TestSubmitPlanAcceptsInsertAfterLineMiddleAndEnd(t *testing.T) {
 	})
 
 	t.Run("preserves crlf", func(t *testing.T) {
-		updated, changed, err := PreviewPlanEditContent("one\r\ntwo\r\n", PlanEdit{
+		updated, changed, err := PreviewPlanEditContent("one\r\ntwo\r\n", planartifact.PlanEdit{
 			Path:            "x.txt",
 			InsertAfterLine: 1,
 			Content:         "inserted",
@@ -2944,7 +3077,7 @@ func TestSubmitPlanAcceptsInsertAfterLineMiddleAndEnd(t *testing.T) {
 	})
 
 	t.Run("newline terminated end appends newline", func(t *testing.T) {
-		updated, changed, err := PreviewPlanEditContent("one\ntwo\n", PlanEdit{
+		updated, changed, err := PreviewPlanEditContent("one\ntwo\n", planartifact.PlanEdit{
 			Path:            "x.txt",
 			InsertAfterLine: 2,
 			Content:         "three",
@@ -2963,12 +3096,12 @@ func TestSubmitPlanRejectsInvalidInsertAfterLineShapes(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		seed  string
-		edit  PlanEdit
+		edit  planartifact.PlanEdit
 		wants []string
 	}{
 		{
 			name: "missing file",
-			edit: PlanEdit{Path: "missing.txt", InsertAfterLine: 1, Content: "new\n"},
+			edit: planartifact.PlanEdit{Path: "missing.txt", InsertAfterLine: 1, Content: "new\n"},
 			wants: []string{
 				"insert_after_line preflight could not read existing",
 			},
@@ -2976,25 +3109,25 @@ func TestSubmitPlanRejectsInvalidInsertAfterLineShapes(t *testing.T) {
 		{
 			name:  "out of range",
 			seed:  "one\n",
-			edit:  PlanEdit{Path: "x.txt", InsertAfterLine: 2, Content: "new\n"},
+			edit:  planartifact.PlanEdit{Path: "x.txt", InsertAfterLine: 2, Content: "new\n"},
 			wants: []string{"insert_after_line 2 is outside"},
 		},
 		{
 			name:  "combined substring",
 			seed:  "one\n",
-			edit:  PlanEdit{Path: "x.txt", InsertAfterLine: 1, Content: "new\n", OldText: "one\n", NewText: "ONE\n"},
+			edit:  planartifact.PlanEdit{Path: "x.txt", InsertAfterLine: 1, Content: "new\n", OldText: "one\n", NewText: "ONE\n"},
 			wants: []string{"mutually exclusive"},
 		},
 		{
 			name:  "combined range",
 			seed:  "one\n",
-			edit:  PlanEdit{Path: "x.txt", InsertAfterLine: 1, StartLine: 1, EndLine: 1, Content: "new\n"},
+			edit:  planartifact.PlanEdit{Path: "x.txt", InsertAfterLine: 1, StartLine: 1, EndLine: 1, Content: "new\n"},
 			wants: []string{"mutually exclusive"},
 		},
 		{
 			name:  "content ref",
 			seed:  "one\n",
-			edit:  PlanEdit{Path: "x.txt", InsertAfterLine: 1, ContentRef: "assets/body.txt"},
+			edit:  planartifact.PlanEdit{Path: "x.txt", InsertAfterLine: 1, ContentRef: "assets/body.txt"},
 			wants: []string{"do not support content_ref"},
 		},
 	} {
@@ -3007,7 +3140,7 @@ func TestSubmitPlanRejectsInvalidInsertAfterLineShapes(t *testing.T) {
 			result := mgr.Execute(context.Background(), ToolRequest{
 				Tool:      "submit_plan",
 				Rationale: "Try insertion.",
-				Edits:     []PlanEdit{tc.edit},
+				Edits:     []planartifact.PlanEdit{tc.edit},
 			})
 			if strings.TrimSpace(result.Error) == "" {
 				t.Fatalf("invalid insertion should be rejected")
@@ -3033,7 +3166,7 @@ func TestSubmitPlanRejectsNoOpWholeFileEditBeforeWritingArtifactOrAssets(t *test
 
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
-		Edits: []PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{Path: "large.txt", NewText: large, ReplaceAll: true, Purpose: "no-op whole-file repair"},
 		},
 	})
@@ -3074,7 +3207,7 @@ func TestSubmitPlanAcceptsRefBackedEdits(t *testing.T) {
 
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
-		Edits: []PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{Path: "whole.txt", NewTextRef: "assets/whole-body.txt", ReplaceAll: true, Purpose: "Replace whole file from a plan body ref."},
 			{Path: "range.txt", StartLine: 1, EndLine: 1, ContentRef: "assets/range-body.txt", Purpose: "Replace line from a plan body ref."},
 		},
@@ -3090,7 +3223,7 @@ func TestSubmitPlanAcceptsRefBackedEdits(t *testing.T) {
 		t.Fatalf("read raw ref-backed plan: %v", err)
 	}
 
-	var raw PlanArtifact
+	var raw planartifact.PlanArtifact
 
 	if err := json.Unmarshal(body, &raw); err != nil {
 		t.Fatalf("decode raw ref-backed plan: %v", err)
@@ -3121,7 +3254,7 @@ func TestSubmitPlanRejectsNoOpRefBackedEditBeforeWritingArtifact(t *testing.T) {
 
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
-		Edits: []PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{Path: "range.txt", StartLine: 1, EndLine: 1, ContentRef: "assets/range-body.txt", Purpose: "no-op ref-backed repair"},
 		},
 	})
@@ -3144,7 +3277,7 @@ func TestSubmitPlanRejectsLineRangeDeletionWithExactTextGuidance(t *testing.T) {
 
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
-		Edits: []PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{Path: "x.txt", StartLine: 2, EndLine: 2, Content: "", Purpose: "delete obsolete line"},
 		},
 	})
@@ -3169,7 +3302,7 @@ func TestSubmitPlanRejectsAmbiguousOldTextBeforeWritingArtifact(t *testing.T) {
 
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
-		Edits: []PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{Path: "matrix.cpp", OldText: "set_floor(30.0f);", NewText: "floor = 30.0f;"},
 		},
 	})
@@ -3192,7 +3325,7 @@ func TestSubmitPlanRejectsMissingOldTextBeforeWritingArtifact(t *testing.T) {
 
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
-		Edits: []PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{Path: "x.txt", OldText: "expected", NewText: "replacement"},
 		},
 	})
@@ -3215,7 +3348,7 @@ func TestSubmitPlanRejectsAdjacentDuplicateCodeLine(t *testing.T) {
 
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
-		Edits: []PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{
 				Path:    "sim.cpp",
 				OldText: "    c.cultural_work_mult = 1.0f;\n",
@@ -3242,7 +3375,7 @@ func TestSubmitPlanRejectsCompletedPlanningArtifactOverwrite(t *testing.T) {
 
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
-		Edits: []PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{
 				Path:       ".planning/atoms/done.md",
 				NewText:    "# Done\n\nNew draft.\n",
@@ -3269,7 +3402,7 @@ func TestSubmitPlanAllowsReplaceAllForRepeatedOldText(t *testing.T) {
 
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
-		Edits: []PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{Path: "matrix.cpp", OldText: "set_floor(30.0f);", NewText: "floor = 30.0f;", ReplaceAll: true},
 		},
 	})
@@ -3283,7 +3416,7 @@ func TestSubmitPlanAcceptsWholeFileNewFileShape(t *testing.T) {
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "create a new config file",
-		Edits: []PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{
 				Path:       "config/new.json",
 				NewText:    "{\n  \"ok\": true\n}\n",
@@ -3317,7 +3450,7 @@ func TestSubmitPlanSpillsLargeEditBodiesToRefs(t *testing.T) {
 	large := strings.Repeat("line\n", 1200)
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
-		Edits: []PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{Path: "large.txt", NewText: large, ReplaceAll: true, Purpose: "Create the large file body."},
 		},
 	})
@@ -3335,7 +3468,7 @@ func TestSubmitPlanSpillsLargeEditBodiesToRefs(t *testing.T) {
 		t.Fatalf("read plan: %v", err)
 	}
 
-	var raw PlanArtifact
+	var raw planartifact.PlanArtifact
 
 	if err := json.Unmarshal(body, &raw); err != nil {
 		t.Fatalf("decode raw plan: %v", err)
@@ -3373,7 +3506,7 @@ func TestSubmitPlanRejectsLargeInsertAfterLineContentBeforeSpill(t *testing.T) {
 	large := strings.Repeat("inserted line\n", planInlineTextSpillThreshold/len("inserted line\n")+2)
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
-		Edits: []PlanEdit{{
+		Edits: []planartifact.PlanEdit{{
 			Path:            "x.txt",
 			InsertAfterLine: 1,
 			Content:         large,
@@ -3416,7 +3549,7 @@ func TestLoadPlanArtifactRoundTrip(t *testing.T) {
 	mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "test plan",
-		Edits: []PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{Path: "x.txt", OldText: "old", NewText: "new"},
 		},
 	})
@@ -3456,7 +3589,7 @@ func TestSubmitPlanPersistsPackIDForExecutorRehydration(t *testing.T) {
 		Tool:      "submit_plan",
 		Rationale: "exercise pack_id plumbing",
 		PackID:    "feedfacecafebeef",
-		Edits: []PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{Path: "a.txt", OldText: "old", NewText: "new"},
 		},
 	})
@@ -3490,7 +3623,7 @@ func TestSubmitPlanStampsSessionIDFromConfig(t *testing.T) {
 	})
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
-		Edits: []PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{Path: "a.txt", OldText: "x", NewText: "y"},
 		},
 	})
@@ -3518,7 +3651,7 @@ func TestSubmitPlanOmitsEmptySessionID(t *testing.T) {
 
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "submit_plan",
-		Edits: []PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{Path: "a.txt", OldText: "x", NewText: "y"},
 		},
 	})
@@ -3545,7 +3678,7 @@ func TestSubmitPlanOmitsEmptyPackID(t *testing.T) {
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "no pack id provided",
-		Edits: []PlanEdit{
+		Edits: []planartifact.PlanEdit{
 			{Path: "a.txt", OldText: "x", NewText: "y"},
 		},
 	})

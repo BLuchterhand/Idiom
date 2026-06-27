@@ -19,7 +19,8 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/jsonfile"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/discovery"
 	"idiom/internal/repository/semantic"
 )
@@ -353,7 +354,7 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 		}
 
 		graph.StoreKind = sqliteStoreKind
-		graph.ID = util.FirstNonEmpty(statusBefore.IndexID, graphID(graph))
+		graph.ID = textutil.FirstNonEmpty(statusBefore.IndexID, graphID(graph))
 		graph.CollectorReports = collectorReportsExcept(statusBefore.CollectorReports, "summary_index")
 
 		counts, err := patchSQLiteGraphScope(root, graph, scope, statusBefore)
@@ -899,11 +900,11 @@ func loadJSONGraph(root string) (Graph, error) {
 }
 
 func saveGraph(root string, graph Graph) error {
-	return util.WriteJSON(graphPath(root), graph)
+	return jsonfile.WriteJSON(graphPath(root), graph)
 }
 
 func saveManifest(root string, manifest Manifest) error {
-	return util.WriteJSON(manifestPath(root), manifest)
+	return jsonfile.WriteJSON(manifestPath(root), manifest)
 }
 
 func readManifest(root string) (Manifest, error) {
@@ -2075,7 +2076,7 @@ func genericDependencies(language string, content string) []genericDependency {
 		switch normalizeLanguage(language) {
 		case "python":
 			if match := pythonImportRe.FindStringSubmatch(line); len(match) == 3 {
-				add(util.FirstNonEmpty(match[1], match[2]), lineNo)
+				add(textutil.FirstNonEmpty(match[1], match[2]), lineNo)
 			}
 		case "typescript", "javascript":
 			if match := tsImportFromRe.FindStringSubmatch(line); len(match) == 2 {
@@ -2388,7 +2389,7 @@ func gdscriptDependencies(path string, content string, existing map[string]struc
 				continue
 			}
 
-			add(util.FirstNonEmpty(match[1], match[2]), i+1)
+			add(textutil.FirstNonEmpty(match[1], match[2]), i+1)
 		}
 	}
 
@@ -2697,7 +2698,7 @@ func queryTermVariants(value string) []string {
 }
 
 func matchNodes(nodes []Node, terms []string, path string, resolution string, limit int) []Node {
-	var matches []Node
+	var matches []rankedNodeMatch
 
 	path = strings.TrimSpace(filepath.ToSlash(path))
 
@@ -2715,27 +2716,33 @@ func matchNodes(nodes []Node, terms []string, path string, resolution string, li
 			continue
 		}
 
-		node.Properties = cloneProperties(node.Properties)
-		node.Properties["match_score"] = score
-		matches = append(matches, node)
+		matches = append(matches, rankedNodeMatch{
+			node:  node,
+			score: score,
+		})
 	}
 
 	sort.Slice(matches, func(i, j int) bool {
-		left, _ := matches[i].Properties["match_score"].(int)
-		right, _ := matches[j].Properties["match_score"].(int)
+		left := matches[i].score
+		right := matches[j].score
 
 		if left != right {
 			return left > right
 		}
 
-		return matches[i].ID < matches[j].ID
+		return matches[i].node.ID < matches[j].node.ID
 	})
 
 	if limit > 0 && len(matches) > limit {
 		matches = diversifyNodeMatchesByQueryTerms(matches, terms, limit)
 	}
 
-	return matches
+	return unrankNodeMatches(matches)
+}
+
+type rankedNodeMatch struct {
+	node  Node
+	score int
 }
 
 type nodeTermCoverage struct {
@@ -2743,7 +2750,7 @@ type nodeTermCoverage struct {
 	count int
 }
 
-func diversifyNodeMatchesByQueryTerms(matches []Node, terms []string, limit int) []Node {
+func diversifyNodeMatchesByQueryTerms(matches []rankedNodeMatch, terms []string, limit int) []rankedNodeMatch {
 	if limit <= 0 || len(matches) <= limit {
 		return matches
 	}
@@ -2776,39 +2783,48 @@ func diversifyNodeMatchesByQueryTerms(matches []Node, terms []string, limit int)
 
 	selected := make(map[string]struct{}, limit)
 	selectedPaths := make(map[string]struct{}, limit)
-	out := make([]Node, 0, limit)
+	out := make([]rankedNodeMatch, 0, limit)
 
 	for _, candidate := range coverage[:coverageSlots] {
-		node, ok := bestNodeForQueryTerm(matches, candidate.term, selected, selectedPaths)
+		match, ok := bestNodeForQueryTerm(matches, candidate.term, selected, selectedPaths)
 		if !ok {
 			continue
 		}
 
-		selected[node.ID] = struct{}{}
-		if node.Path != "" {
-			selectedPaths[node.Path] = struct{}{}
+		selected[match.node.ID] = struct{}{}
+		if match.node.Path != "" {
+			selectedPaths[match.node.Path] = struct{}{}
 		}
 
-		out = append(out, node)
+		out = append(out, match)
 	}
 
-	for _, node := range matches {
+	for _, match := range matches {
 		if len(out) >= limit {
 			break
 		}
 
-		if _, ok := selected[node.ID]; ok {
+		if _, ok := selected[match.node.ID]; ok {
 			continue
 		}
 
-		selected[node.ID] = struct{}{}
-		out = append(out, node)
+		selected[match.node.ID] = struct{}{}
+		out = append(out, match)
 	}
 
 	return out
 }
 
-func nodeTermCoverageList(matches []Node, terms []string) []nodeTermCoverage {
+func unrankNodeMatches(matches []rankedNodeMatch) []Node {
+	out := make([]Node, 0, len(matches))
+	for _, match := range matches {
+		out = append(out, match.node)
+	}
+
+	return out
+}
+
+func nodeTermCoverageList(matches []rankedNodeMatch, terms []string) []nodeTermCoverage {
 	var coverage []nodeTermCoverage
 
 	for _, term := range terms {
@@ -2818,8 +2834,8 @@ func nodeTermCoverageList(matches []Node, terms []string) []nodeTermCoverage {
 
 		count := 0
 
-		for _, node := range matches {
-			if nodeTermMatchScore(node, term) > 0 {
+		for _, match := range matches {
+			if nodeTermMatchScore(match.node, term) > 0 {
 				count++
 			}
 		}
@@ -2832,15 +2848,17 @@ func nodeTermCoverageList(matches []Node, terms []string) []nodeTermCoverage {
 	return coverage
 }
 
-func bestNodeForQueryTerm(matches []Node, term string, selected map[string]struct{}, selectedPaths map[string]struct{}) (Node, bool) {
-	var best Node
+func bestNodeForQueryTerm(matches []rankedNodeMatch, term string, selected map[string]struct{}, selectedPaths map[string]struct{}) (rankedNodeMatch, bool) {
+	var best rankedNodeMatch
 
 	bestScore := -1
 	bestTotal := -1
 	bestKind := -1
 	bestHasNewPath := false
 
-	for _, node := range matches {
+	for _, match := range matches {
+		node := match.node
+
 		if _, ok := selected[node.ID]; ok {
 			continue
 		}
@@ -2850,7 +2868,7 @@ func bestNodeForQueryTerm(matches []Node, term string, selected map[string]struc
 			continue
 		}
 
-		total, _ := node.Properties["match_score"].(int)
+		total := match.score
 		kindScore := queryMatchKindScore(node.Kind)
 		hasNewPath := node.Path == ""
 
@@ -2865,9 +2883,9 @@ func bestNodeForQueryTerm(matches []Node, term string, selected map[string]struc
 			(hasNewPath == bestHasNewPath && score > bestScore) ||
 			(hasNewPath == bestHasNewPath && score == bestScore && kindScore > bestKind) ||
 			(hasNewPath == bestHasNewPath && score == bestScore && kindScore == bestKind && total > bestTotal) ||
-			(hasNewPath == bestHasNewPath && score == bestScore && kindScore == bestKind && total == bestTotal && node.ID < best.ID) {
+			(hasNewPath == bestHasNewPath && score == bestScore && kindScore == bestKind && total == bestTotal && node.ID < best.node.ID) {
 
-			best = node
+			best = match
 			bestScore = score
 			bestTotal = total
 			bestKind = kindScore
@@ -3104,7 +3122,7 @@ func sortedStringSet(values map[string]struct{}) []string {
 }
 
 func uniqueSortedStrings(values []string) []string {
-	out := util.UniqueNonEmpty(values)
+	out := textutil.UniqueNonEmpty(values)
 	slices.Sort(out)
 
 	return out

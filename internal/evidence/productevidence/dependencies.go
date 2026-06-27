@@ -9,7 +9,6 @@ import (
 
 	"idiom/internal/evidence/lanehistory"
 	"idiom/internal/evidence/telemetry"
-	toolcmd "idiom/internal/surfaces/cli/tool"
 )
 
 const laneHistoryRelPath = lanehistory.RelPath
@@ -108,7 +107,7 @@ func (deps Dependencies) summarizeLaneHistory(projectRoot string) (LaneHistorySu
 }
 
 func (deps Dependencies) logCLIPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	toolcmd.LogCLIPhase(rec, eventType, fields)
+	telemetry.LogPhase(rec, eventType, fields)
 }
 
 func firstNonEmptyString(values ...string) string {

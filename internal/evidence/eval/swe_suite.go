@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"idiom/internal/platform/util"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/comprehension"
 )
 
@@ -1274,11 +1274,11 @@ func evaluateExpectedRecoveries(metrics Metrics, expected []SWEExpectedRecovery)
 }
 
 func expectedRecoveryMatchesEvent(expected SWEExpectedRecovery, event ErrorEventSnapshot) bool {
-	if expected.EventType != "" && !util.EqualTrimFold(event.EventType, expected.EventType) {
+	if expected.EventType != "" && !textutil.EqualTrimFold(event.EventType, expected.EventType) {
 		return false
 	}
 
-	if expected.Tool != "" && !util.EqualTrimFold(event.Tool, expected.Tool) {
+	if expected.Tool != "" && !textutil.EqualTrimFold(event.Tool, expected.Tool) {
 		return false
 	}
 
@@ -1332,7 +1332,7 @@ func containsFold(haystack string, needle string) bool {
 }
 
 func cleanRollbackFinding(rollback LiveContractRollbackSnapshot) string {
-	if !util.EqualTrimFold(rollback.Status, "clean") {
+	if !textutil.EqualTrimFold(rollback.Status, "clean") {
 		return fmt.Sprintf("rollback status was not clean: %q", rollback.Status)
 	}
 
@@ -1411,7 +1411,7 @@ func evaluateGroundednessOracle(metrics Metrics, oracle SWEGroundednessOracle) (
 // groundedness signals the opposite. Scores in the noisy middle band record
 // a no-op so the audit trail still reflects that the eval ran.
 func applyEvalLearnedWeights(workspaceRoot string, oracle SWEGroundednessOracle, score float64, taskID string) *SWELearningUpdateRecord {
-	files := util.UniqueNonEmpty(oracle.ContextFiles)
+	files := textutil.UniqueNonEmpty(oracle.ContextFiles)
 	rec := &SWELearningUpdateRecord{
 		Score:     score,
 		Files:     files,
@@ -1837,7 +1837,7 @@ func taskShapes(task SWETask) []string {
 		shapes = append(shapes, "surface_specific_edit")
 	}
 
-	return util.UniqueNonEmpty(shapes)
+	return textutil.UniqueNonEmpty(shapes)
 }
 
 func taskScenarioAssertions(task SWETask) []string {
@@ -2004,7 +2004,7 @@ func taskScenarioAssertions(task SWETask) []string {
 		assertions = append(assertions, "run_events")
 	}
 
-	return util.UniqueNonEmpty(assertions)
+	return textutil.UniqueNonEmpty(assertions)
 }
 
 func taskReadinessAction(task SWETask) string {
@@ -2148,7 +2148,7 @@ func fileSurfaces(paths []string) []string {
 		}
 	}
 
-	return util.UniqueNonEmpty(surfaces)
+	return textutil.UniqueNonEmpty(surfaces)
 }
 
 func fileSurface(path string) string {
@@ -2289,7 +2289,7 @@ func taskOracleAssertions(task SWETask) []string {
 		assertions = append(assertions, "verification_plan")
 	}
 
-	return util.UniqueNonEmpty(assertions)
+	return textutil.UniqueNonEmpty(assertions)
 }
 
 func taskHasTag(task SWETask, tag string) bool {
@@ -2335,7 +2335,7 @@ func taskStartsInLane(task SWETask, lane string) bool {
 		return false
 	}
 
-	return util.EqualTrimFold(task.Scenario.RequireRoutePlan.InitialLane, lane)
+	return textutil.EqualTrimFold(task.Scenario.RequireRoutePlan.InitialLane, lane)
 }
 
 // VerificationStatus returns a short string describing the verification outcome.

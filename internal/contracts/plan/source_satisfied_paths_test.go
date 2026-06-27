@@ -1,4 +1,4 @@
-package plancontract
+package plan
 
 import "testing"
 
@@ -60,7 +60,7 @@ func TestValidateSourceSatisfiedPathCoverageRejectsNonCanonicalEvidenceKinds(t *
 		got := ValidateSourceSatisfiedPathCoverage(SourceSatisfiedPathCoverageInput{
 			RequiredPaths:        []string{"a.go"},
 			SourceSatisfiedPaths: []string{"a.go"},
-			Evidence:             []SourceSatisfiedEvidenceRef{{Path: "a.go", Kind: kind}},
+			Evidence:             []SourceSatisfiedEvidenceRef{{Path: "a.go", Kind: SourceSatisfiedEvidenceKind(kind)}},
 			RequireEvidence:      true,
 		})
 		if len(got) != 1 || got[0].Code != "missing_current_state_evidence" {

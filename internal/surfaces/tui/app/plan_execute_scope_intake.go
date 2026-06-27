@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"idiom/internal/contracts/pathparse"
@@ -24,19 +23,19 @@ func classifyPlanExecuteScopeIntake(prompt string, plan promptExecutionPlan) pla
 	return implementationDispatchCompilePlanExecuteScopeIntake(prompt, plan, config.Config{})
 }
 
-func implementationDispatchCompilePlanExecuteScopeIntake(prompt string, plan promptExecutionPlan, cfg config.Config) planExecuteScopeIntake {
+func implementationDispatchCompilePlanExecuteScopeIntake(prompt string, plan promptExecutionPlan, _ config.Config) planExecuteScopeIntake {
 	intake := planExecuteScopeIntake{
-		RequiredTargets: appendUniqueBriefStrings(nil, plan.runtimeBrief.RequiredEditPaths...),
-		AllowedTargets:  AllowedEditPathsFromPrompt(prompt),
-		ClosedScope:     implementationDispatchPromptClosesScope(prompt),
+		RequiredTargets:    appendUniqueBriefStrings(nil, plan.runtimeBrief.RequiredEditPaths...),
+		AllowedTargets:     plancontract.AllowedEditPathsFromPrompt(prompt),
+		AuthorizedNewFiles: appendUniqueBriefStrings(nil, plan.runtimeBrief.AuthorizedNewFiles...),
+		ClosedScope:        implementationDispatchPromptClosesScope(prompt),
 	}
 
-	intake.RequiredTargets = appendUniqueBriefStrings(intake.RequiredTargets, RequiredEditPathsFromPrompt(prompt)...)
+	intake.RequiredTargets = appendUniqueBriefStrings(intake.RequiredTargets, plancontract.RequiredEditPathsFromPrompt(prompt)...)
 
 	if strings.TrimSpace(plan.route.Reason) == "typed_plan_execute_command" {
 		directTargets := implementationDispatchPromptMutationTargets(prompt)
 		intake.RequiredTargets = appendUniqueBriefStrings(intake.RequiredTargets, directTargets...)
-		intake.AuthorizedNewFiles = appendUniqueBriefStrings(intake.AuthorizedNewFiles, implementationDispatchPromptAuthorizedNewFiles(prompt, cfg)...)
 	}
 
 	intake.ExpansionPolicy = plancontract.ScopeExpansionPolicyBoundedDiscovery
@@ -84,24 +83,6 @@ func implementationDispatchPromptMutationTargets(prompt string) []string {
 	}
 
 	return targets
-}
-
-func implementationDispatchPromptAuthorizedNewFiles(prompt string, cfg config.Config) []string {
-	var paths []string
-	root := implementationDispatchWorkspaceRoot(cfg)
-	lowerPrompt := strings.ToLower(prompt)
-	for _, path := range implementationDispatchPromptMutationTargets(prompt) {
-		lowerPath := strings.ToLower(filepath.ToSlash(path))
-		if implementationDispatchPromptImpliesNewFilePath(lowerPrompt, lowerPath) {
-			paths = appendUniqueBriefStrings(paths, path)
-			continue
-		}
-		if root != "" && implementationDispatchPathMissing(root, path) && implementationDispatchPromptMentionsPathCreation(lowerPrompt, lowerPath) {
-			paths = appendUniqueBriefStrings(paths, path)
-		}
-	}
-
-	return paths
 }
 
 func implementationDispatchPromptPathRole(prompt string, path string) plancontract.ScopePathRole {

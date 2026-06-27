@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"idiom/internal/platform/config"
+	"idiom/internal/workflows/productworkflow"
 )
 
 func TestProductEffortsToolBrowsesReadOnlyEfforts(t *testing.T) {
@@ -63,6 +65,33 @@ func TestProductStatusToolReadsOperatorView(t *testing.T) {
 
 	if payload.SchemaVersion != "idiom.product_operator_status.v1" || payload.EffortID == "" {
 		t.Fatalf("unexpected product_status operator payload: %#v", payload)
+	}
+}
+
+func TestProductStatusToolPreservesWorkflowNextValidActions(t *testing.T) {
+	repo := workspaceTestRepoRoot(t)
+	effortRoot := "docs/product-workflows/efforts/closed/prd-adr-brief-workflow"
+	wantView, _, err := productworkflow.LoadCheckedProductStatus(filepath.Join(repo, effortRoot))
+	if err != nil {
+		t.Fatalf("load workflow status: %v", err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: repo, CWD: repo})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:       "product_status",
+		EffortRoot: effortRoot,
+	})
+	if result.Error != "" {
+		t.Fatalf("product_status error = %s output=%s", result.Error, result.Output)
+	}
+
+	var payload productworkflow.ProductStatusView
+	if err := json.Unmarshal([]byte(result.Output), &payload); err != nil {
+		t.Fatalf("decode product_status output: %v\n%s", err, result.Output)
+	}
+
+	if !reflect.DeepEqual(payload.NextValidActions, wantView.NextValidActions) {
+		t.Fatalf("workspace adapter must preserve workflow next actions: got %#v want %#v", payload.NextValidActions, wantView.NextValidActions)
 	}
 }
 

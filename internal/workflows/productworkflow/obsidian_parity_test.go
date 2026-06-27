@@ -36,8 +36,8 @@ func TestObsidianParityAllowsNoChangeRationale(t *testing.T) {
 	}
 	investigation := InvestigationReport{
 		TaskID: ws.TaskID,
-		Scope: map[string]any{
-			"obsidian_no_change_rationale": "No updates required because durable and Obsidian statuses already align for this slice.",
+		Scope: InvestigationScope{
+			ObsidianNoChangeRationale: "No updates required because durable and Obsidian statuses already align for this slice.",
 		},
 	}
 	got := EvaluateObsidianParity(root, ws, nil, []InvestigationReport{investigation})
