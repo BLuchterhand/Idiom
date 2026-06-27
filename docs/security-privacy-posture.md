@@ -7,9 +7,9 @@ HIPAA, FINRA, FedRAMP, DoD, or NIST attestation.
 
 The machine-checkable validation matrix is
 [`docs/security-privacy-posture.matrix.json`](security-privacy-posture.matrix.json).
-The P0.9 threat model, data-flow map, and control mapping remain in
-`docs/idiom-implementation-plan.md`; this document does not update tracker
-status.
+This document is the public posture source for release review. Historical
+implementation trackers and private evidence bundles are not part of the public
+documentation set.
 
 ## Evidence Boundary
 
@@ -68,3 +68,52 @@ go test ./internal/contracts/autonomy ./internal/capabilities/workspace ./intern
 
 Release-time posture review should cite the matrix check IDs and command
 results, not raw prompts, file bodies, private paths, secrets, or customer data.
+
+## P9.9 Release Gate Inputs
+
+Source anchors checked on 2026-06-27 UTC.
+
+Product threat model:
+
+- Local-first coding-agent harness with shell, filesystem, model API, sidecar,
+  and MCP integration risk.
+- Primary release risks are protected-path writes, raw prompt or file-body
+  retention, secret leakage, overbroad sidecar effects, and unsupported
+  regulated-use claims.
+- Dependent gate tiebacks: P7.9, P8.4, P9.1, P9.3, and P9.9.
+
+Data-flow map:
+
+- Operator prompts, workspace metadata, tool requests, tool results, telemetry
+  summaries, and evidence records remain local unless the configured model
+  backend or external tool receives the request.
+- Release evidence should preserve IDs, paths, hashes, counts, status fields,
+  and command labels rather than raw prompts or source bodies.
+
+Privacy and retention posture:
+
+- Default debug logs are redacted.
+- Generated logs, transcripts, local models, `.book/`, `.patent/`, and private
+  release evidence are excluded from the public source tree.
+- Hosted telemetry is not a default release requirement.
+
+Control mapping evidence:
+
+- `docs/security-privacy-posture.matrix.json` owns the structured control map.
+- The reviewer commands above provide the reproducible local checks.
+
+Source verification evidence:
+
+- source_id: docs-security-privacy-posture
+  checked_date: 2026-06-27
+  source_status: verified-local-public-doc
+  verification_method: repository file review and `go test ./internal/evidence/sidecarvalidation`
+- source_id: docs-release-checklist
+  checked_date: 2026-06-27
+  source_status: verified-local-public-doc
+  verification_method: repository file review and release-prep verification commands
+
+Downstream go/no-go gates:
+
+- P7.9, P8.4, P9.1, P9.3, and P9.9 remain evidence tiebacks, not compliance
+  claims.

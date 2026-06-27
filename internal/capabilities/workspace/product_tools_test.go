@@ -46,7 +46,7 @@ func TestProductStatusToolReadsOperatorView(t *testing.T) {
 	mgr := NewManager(config.Workspace{Root: repo, CWD: repo})
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:         "product_status",
-		EffortRoot:   "docs/product-workflows/efforts/closed/prd-adr-brief-workflow",
+		EffortRoot:   "testdata/product-workflows/prd-adr-brief-workflow",
 		OperatorView: true,
 	})
 
@@ -70,7 +70,7 @@ func TestProductStatusToolReadsOperatorView(t *testing.T) {
 
 func TestProductStatusToolPreservesWorkflowNextValidActions(t *testing.T) {
 	repo := workspaceTestRepoRoot(t)
-	effortRoot := "docs/product-workflows/efforts/closed/prd-adr-brief-workflow"
+	effortRoot := "testdata/product-workflows/prd-adr-brief-workflow"
 	wantView, _, err := productworkflow.LoadCheckedProductStatus(filepath.Join(repo, effortRoot))
 	if err != nil {
 		t.Fatalf("load workflow status: %v", err)

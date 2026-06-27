@@ -5,14 +5,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"idiom/internal/runtime/llama"
 )
 
 func TestSaveMarkdownWritesTranscriptWithRoleHeadings(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "transcripts")
 
-	path, err := SaveMarkdown(dir, []llama.ChatMessage{
+	path, err := SaveMarkdown(dir, []Message{
 		{Role: "user", Content: "Please inspect evidence."},
 		{Role: "assistant", Content: "The evidence is grounded."},
 		{Content: "Untitled message."},

@@ -1,35 +1,27 @@
-# Idiom Docs
+# Idiom Documentation
 
-Start here for current project direction:
+This directory contains the public release documentation for Idiom. Historical
+planning notes, private evidence bundles, local transcripts, book material, and
+patent material are intentionally excluded from the repository.
 
-- [idiom-strategic-thesis.md](idiom-strategic-thesis.md) — why Idiom exists
-- [idiom-design-roadmap.md](idiom-design-roadmap.md) — active pillar map and
-  cross-pillar designs
-- [decisioning-north-star.md](decisioning-north-star.md) — model strategy /
-  harness contract split
-- [idiom-maintenance-best-practices.md](idiom-maintenance-best-practices.md) —
-  maintenance rules for prompts, rails, lanes, audit, and recovery
-- [software-engineering-ruleset.md](software-engineering-ruleset.md) —
-  implementation and rearchitecture decision rules for paradigms, architectures,
-  patterns, algorithms, data structures, quality practices, and operations
-- [design-harness-optimization-program.md](design-harness-optimization-program.md)
-  — current follow-up program for reducing avoidable guard friction
-- [design-harness-model-boundary.md](design-harness-model-boundary.md) —
-  observe-only rollout and operations runbook for the model strategy / harness
-  contract boundary
+## User Guides
 
-Use [obsidian/README.md](obsidian/README.md) when you want the connected
-knowledge-base view.
+- [Getting started](getting-started.md)
+- [Configuration](configuration.md)
+- [CLI reference](cli.md)
+- [External caller recipes](sidecar-recipes.md)
+- [Troubleshooting](troubleshooting.md)
 
-Historical docs live under [archive/](archive/). Archived docs are retained as
-evidence and rationale, not current instructions. Move a document to the
-archive when it is explicitly complete, superseded by a live design, a landed
-implementation handoff, or a point-in-time review/log.
+## Maintainer Guides
 
-Keep active docs focused:
+- [Architecture](architecture.md)
+- [Development](development.md)
+- [Release](release.md)
+- [Security and privacy posture](security-privacy-posture.md)
+- [Sidecar integration proofs](sidecar-integration-proofs.md)
+- [MCP classification parity](mcp-classification-parity.md)
+- [Client demo transcripts](client-demo-transcripts.md)
 
-- Pillar and cross-pillar designs stay at the top level.
-- Product workflow records stay under `product-workflows/`.
-- Durable implementation/review evidence stays under `evidence/`.
-- Historical plans, completed trackers, and one-off handoff snippets move to
-  `archive/`.
+The repository also carries `security-privacy-posture.matrix.json` because the
+security posture tests validate that structured release evidence stays in sync
+with the written policy.

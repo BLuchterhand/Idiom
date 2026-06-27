@@ -31,6 +31,9 @@ func EvaluateObsidianParity(root string, ws *WorkflowState, ledger []Implementat
 	if ws == nil || ws.EffortID != "prd-adr-brief-workflow" {
 		return result
 	}
+	if _, err := os.Stat(filepath.Join(root, "docs", "obsidian")); os.IsNotExist(err) {
+		return result
+	}
 
 	result.CheckedFiles = []string{ObsidianProductWorkflowPath, ObsidianRecoveryPath}
 

@@ -814,31 +814,24 @@ func lifecycleEventRoles(events []RunEvent, filter string) []string {
 	return roles
 }
 
-func TestDeDriftGuidanceDocumentsBoundaryChecklist(t *testing.T) {
+func TestAgentGuidanceDocumentsHarnessBoundaryChecklist(t *testing.T) {
 	root := agentTestRepoRoot(t)
 	required := map[string][]string{
-		filepath.Join(root, ".codex", "common-traps.md"): {
-			"Drift is cheap",
-			"De-Drift Checklist",
-			"Canonical owner",
-			"Consumer type",
-			"Preserve lanes",
-			"Cleanup lanes",
-			"Negative oracle",
-			"Test contradiction scan",
-			"Machine-consumed plan/repair/mutation terminal phases",
+		filepath.Join(root, "AGENTS.md"): {
+			"model owns strategy",
+			"harness owns contracts",
+			"Avoid pass-through wrappers",
+			"typed contracts",
+			"Evidence tools should report findings",
+			"grounded in code, tests, logs, tool output",
 		},
-		filepath.Join(root, "docs", "idiom-maintenance-best-practices.md"): {
-			"Required De-Drift Gate",
-			"Drift is cheap",
-			"Canonical owner",
-			"Consumer matrix",
-			"Preserve lanes",
-			"Cleanup lanes",
-			"Negative oracle",
-			"machine-consumed protocol remains machine-readable",
-			"canonical owner/duplicate authority",
-			"test-oracle quality",
+		filepath.Join(root, "docs", "architecture.md"): {
+			"model strategy",
+			"harness authority",
+			"tool schemas",
+			"permissions",
+			"evidence freshness",
+			"typed contracts",
 		},
 	}
 
@@ -1487,22 +1480,16 @@ func agentTestRepoRoot(t *testing.T) string {
 	}
 }
 
-func TestInternalRuntimeAgentOverhaulDesignMapsEveryProductionFile(t *testing.T) {
+func TestInternalRuntimeAgentProductionFilesStayFlat(t *testing.T) {
 	root := filepath.Clean("../../..")
 	agentDir := filepath.Join(root, "internal", "runtime", "agent")
-	docPath := filepath.Join(root, "docs", "internal-runtime-agent-overhaul-design.md")
 
 	productionFiles := productionAgentFiles(t, agentDir)
-	mappedFiles := mappedAgentFilesFromDesign(t, docPath)
 
-	if diff := missingFiles(productionFiles, mappedFiles); len(diff) > 0 {
-		t.Fatalf("design movement table is missing production file(s):\n%s", strings.Join(diff, "\n"))
-	}
-	if diff := missingFiles(mappedFiles, productionFiles); len(diff) > 0 {
-		t.Fatalf("design movement table references non-production file(s):\n%s", strings.Join(diff, "\n"))
-	}
-	if duplicates := duplicateEntries(mappedFiles); len(duplicates) > 0 {
-		t.Fatalf("design movement table maps file(s) more than once:\n%s", strings.Join(duplicates, "\n"))
+	for _, file := range productionFiles {
+		if strings.Contains(file, "/") {
+			t.Fatalf("internal/runtime/agent production file moved into nested package without updating architecture guidance: %s", file)
+		}
 	}
 }
 
@@ -10637,7 +10624,7 @@ func TestPlanExecuteRecoveryStateReportsSubmitCorrectionBlockerAllowed(t *testin
 	rejection := workspace.ToolResult{
 		Tool:    workspace.ToolNameSubmitPlan,
 		Summary: "submit_plan rejected",
-		Error:   "edits[0]: whole-file replace_all edit would rewrite existing source file /Users/ben/Documents/GitHub/Colony/native/src/simulation/world/collapse_event.h; use a bounded anchored edit with old_text/new_text or start_line/end_line/content, or answer <<QUESTION>> with the exact missing body/anchor blocker",
+		Error:   "edits[0]: whole-file replace_all edit would rewrite existing source file /workspace/Colony/native/src/simulation/world/collapse_event.h; use a bounded anchored edit with old_text/new_text or start_line/end_line/content, or answer <<QUESTION>> with the exact missing body/anchor blocker",
 	}
 	results := []workspace.ToolResult{
 		{Tool: "read_file", Summary: "Read f1 native/src/simulation/world/collapse_event.h lines 1-63 (total lines: 63)", Output: "1:#pragma once\n63:};\n"},
@@ -15157,7 +15144,7 @@ func TestPlanExecuteRequiredAnchorRefreshRedirectsUnboundedReadFile(t *testing.T
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
-			Error:   "edits[0]: whole-file replace_all edit would rewrite existing source file /Users/ben/Documents/GitHub/Colony/native/src/simulation/world/collapse_event.h; use a bounded anchored edit with old_text/new_text or start_line/end_line/content",
+			Error:   "edits[0]: whole-file replace_all edit would rewrite existing source file /workspace/Colony/native/src/simulation/world/collapse_event.h; use a bounded anchored edit with old_text/new_text or start_line/end_line/content",
 		},
 	}
 	req := workspace.ToolRequest{
@@ -20909,7 +20896,7 @@ func TestPlanExecuteVariedRejectedSubmitPlanStreakForcesAnchorRefresh(t *testing
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
-			Error:   "edits[0]: whole-file replace_all edit would rewrite existing source file /Users/ben/Documents/GitHub/Colony/native/src/simulation/world/collapse_event.h; use a bounded anchored edit instead.",
+			Error:   "edits[0]: whole-file replace_all edit would rewrite existing source file /workspace/Colony/native/src/simulation/world/collapse_event.h; use a bounded anchored edit instead.",
 		},
 		{
 			Tool:    "submit_plan",
@@ -21074,7 +21061,7 @@ func TestPlanExecuteSubmitPlanDiagnosticsKeepExtensionlessPathsAndDropProtocolTo
 	existingSourceRewriteRejected := workspace.ToolResult{
 		Tool:    "submit_plan",
 		Summary: "submit_plan rejected",
-		Error:   "edits[0]: whole-file replace_all edit would rewrite existing source file /Users/ben/Documents/GitHub/Colony/native/src/simulation/world/collapse_event.h; use a bounded anchored edit with old_text/new_text or start_line/end_line/content, or answer <<QUESTION>> with the exact missing body/anchor blocker",
+		Error:   "edits[0]: whole-file replace_all edit would rewrite existing source file /workspace/Colony/native/src/simulation/world/collapse_event.h; use a bounded anchored edit with old_text/new_text or start_line/end_line/content, or answer <<QUESTION>> with the exact missing body/anchor blocker",
 	}
 	if got := sortedRunnerPathKeys(submitPlanInvalidAnchorPaths(existingSourceRewriteRejected)); !slices.Equal(got, []string{"native/src/simulation/world/collapse_event.h"}) {
 		t.Fatalf("whole-file existing source rewrite should become an anchor-refresh path, got %#v", got)
@@ -21083,7 +21070,7 @@ func TestPlanExecuteSubmitPlanDiagnosticsKeepExtensionlessPathsAndDropProtocolTo
 	lineRangeWholeBodyRejected := workspace.ToolResult{
 		Tool:    "submit_plan",
 		Summary: "submit_plan rejected",
-		Error:   "edits[0]: line-range replacement for /Users/ben/Documents/GitHub/Colony/native/src/simulation/world/collapse_event.h lines 1-63 would rewrite the entire existing source file; use bounded old_text/new_text or smaller start_line/end_line anchors",
+		Error:   "edits[0]: line-range replacement for /workspace/Colony/native/src/simulation/world/collapse_event.h lines 1-63 would rewrite the entire existing source file; use bounded old_text/new_text or smaller start_line/end_line anchors",
 	}
 	if got := sortedRunnerPathKeys(submitPlanInvalidAnchorPaths(lineRangeWholeBodyRejected)); !slices.Equal(got, []string{"native/src/simulation/world/collapse_event.h"}) {
 		t.Fatalf("whole-file line-range existing source rewrite should become an anchor-refresh path, got %#v", got)
@@ -21092,7 +21079,7 @@ func TestPlanExecuteSubmitPlanDiagnosticsKeepExtensionlessPathsAndDropProtocolTo
 	lineRangeCollapseRejected := workspace.ToolResult{
 		Tool:    "submit_plan",
 		Summary: "submit_plan rejected",
-		Error:   "edits[2]: line-range replacement for /Users/ben/Documents/GitHub/Colony/native/src/core/colony_sim_tick.cpp lines 1-80 would collapse 73 non-empty source lines to 24; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker",
+		Error:   "edits[2]: line-range replacement for /workspace/Colony/native/src/core/colony_sim_tick.cpp lines 1-80 would collapse 73 non-empty source lines to 24; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker",
 	}
 	if got := sortedRunnerPathKeys(submitPlanInvalidAnchorPaths(lineRangeCollapseRejected)); !slices.Equal(got, []string{"native/src/core/colony_sim_tick.cpp"}) {
 		t.Fatalf("line-range source collapse should become an anchor-refresh path, got %#v", got)
@@ -21101,7 +21088,7 @@ func TestPlanExecuteSubmitPlanDiagnosticsKeepExtensionlessPathsAndDropProtocolTo
 	headerGuardRejected := workspace.ToolResult{
 		Tool:    "submit_plan",
 		Summary: "submit_plan rejected",
-		Error:   "edits[0]: line-range replacement for /Users/ben/Documents/GitHub/Colony/native/src/simulation/world/collapse_event.h lines 1-1 starts a header guard before selecting the existing file prologue/include guard; use a bounded anchor that includes the current guard/include line",
+		Error:   "edits[0]: line-range replacement for /workspace/Colony/native/src/simulation/world/collapse_event.h lines 1-1 starts a header guard before selecting the existing file prologue/include guard; use a bounded anchor that includes the current guard/include line",
 	}
 	if got := sortedRunnerPathKeys(submitPlanInvalidAnchorPaths(headerGuardRejected)); !slices.Equal(got, []string{"native/src/simulation/world/collapse_event.h"}) {
 		t.Fatalf("header-guard line-range rejection should become an anchor-refresh path, got %#v", got)
@@ -21159,13 +21146,13 @@ func TestPlanExecuteRepeatedExistingSourceRewriteAfterRefreshStaysSubmitCorrecti
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
-			Error:   "edits[0]: line-range replacement for /Users/ben/Documents/GitHub/Colony/native/src/simulation/world/collapse_event.h lines 1-63 would rewrite the entire existing source file; use bounded old_text/new_text or smaller start_line/end_line anchors",
+			Error:   "edits[0]: line-range replacement for /workspace/Colony/native/src/simulation/world/collapse_event.h lines 1-63 would rewrite the entire existing source file; use bounded old_text/new_text or smaller start_line/end_line anchors",
 		},
 		{Tool: "read_file", Summary: "Read f2 native/src/simulation/world/collapse_event.h lines 1-63 (total lines: 63)", Output: "1:#pragma once\n63:};\n"},
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
-			Error:   "edits[0]: whole-file replace_all edit would rewrite existing source file /Users/ben/Documents/GitHub/Colony/native/src/simulation/world/collapse_event.h; use a bounded anchored edit with old_text/new_text or start_line/end_line/content",
+			Error:   "edits[0]: whole-file replace_all edit would rewrite existing source file /workspace/Colony/native/src/simulation/world/collapse_event.h; use a bounded anchored edit with old_text/new_text or start_line/end_line/content",
 		},
 	}
 
@@ -21226,18 +21213,18 @@ func TestPlanExecuteRepeatedUnsafeSubmitCorrectionAllowsPathBlocker(t *testing.T
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
-			Error:   "edits[0]: line-range replacement for /Users/ben/Documents/GitHub/Colony/native/src/simulation/world/collapse_event.h lines 1-63 would rewrite the entire existing source file; use bounded old_text/new_text or smaller start_line/end_line anchors, or answer <<QUESTION>> with the exact missing body/anchor blocker",
+			Error:   "edits[0]: line-range replacement for /workspace/Colony/native/src/simulation/world/collapse_event.h lines 1-63 would rewrite the entire existing source file; use bounded old_text/new_text or smaller start_line/end_line anchors, or answer <<QUESTION>> with the exact missing body/anchor blocker",
 		},
 		{Tool: "read_file", Summary: "Read f2 native/src/simulation/world/collapse_event.h lines 1-63 (total lines: 63)", Output: "1:#pragma once\n63:};\n"},
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
-			Error:   "edits[0]: line-range replacement for /Users/ben/Documents/GitHub/Colony/native/src/simulation/world/collapse_event.h lines 1-63 would rewrite the entire existing source file; use bounded old_text/new_text or smaller start_line/end_line anchors, or answer <<QUESTION>> with the exact missing body/anchor blocker",
+			Error:   "edits[0]: line-range replacement for /workspace/Colony/native/src/simulation/world/collapse_event.h lines 1-63 would rewrite the entire existing source file; use bounded old_text/new_text or smaller start_line/end_line anchors, or answer <<QUESTION>> with the exact missing body/anchor blocker",
 		},
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
-			Error:   "edits[0]: whole-file replace_all edit would rewrite existing source file /Users/ben/Documents/GitHub/Colony/native/src/simulation/world/collapse_event.h; use a bounded anchored edit with old_text/new_text or start_line/end_line/content, or answer <<QUESTION>> with the exact missing body/anchor blocker",
+			Error:   "edits[0]: whole-file replace_all edit would rewrite existing source file /workspace/Colony/native/src/simulation/world/collapse_event.h; use a bounded anchored edit with old_text/new_text or start_line/end_line/content, or answer <<QUESTION>> with the exact missing body/anchor blocker",
 		},
 	}
 
@@ -21286,7 +21273,7 @@ func TestPlanExecuteMixedUnsafeRewriteDoesNotBypassOtherInvalidAnchorRefresh(t *
 		},
 	}
 	mixedRejection := "invalid edit anchor(s): `native/src/core/colony_sim_tick.cpp: old_text not found in current source`. " +
-		"edits[1]: whole-file replace_all edit would rewrite existing source file /Users/ben/Documents/GitHub/Colony/native/src/simulation/world/collapse_event.h; use a bounded anchored edit with old_text/new_text or start_line/end_line/content, or answer <<QUESTION>> with the exact missing body/anchor blocker"
+		"edits[1]: whole-file replace_all edit would rewrite existing source file /workspace/Colony/native/src/simulation/world/collapse_event.h; use a bounded anchored edit with old_text/new_text or start_line/end_line/content, or answer <<QUESTION>> with the exact missing body/anchor blocker"
 	results := []workspace.ToolResult{
 		{Tool: "read_file", Summary: "Read f1 native/src/core/colony_sim_tick.cpp lines 1-120 (total lines: 2616)", Output: "1:#include <x>\n120:void a();\n"},
 		{Tool: "read_file", Summary: "Read f2 native/src/simulation/world/collapse_event.h lines 1-63 (total lines: 63)", Output: "1:#pragma once\n63:};\n"},
@@ -21554,7 +21541,7 @@ func TestPlanExecuteRepeatedNoopProofCorrectionAllowsPathBlocker(t *testing.T) {
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
-			Error:   "edits[2]: line-range replacement for /Users/ben/Documents/GitHub/Colony/native/src/core/colony_sim_tick.cpp lines 1-80 would collapse 73 non-empty source lines to 24; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker",
+			Error:   "edits[2]: line-range replacement for /workspace/Colony/native/src/core/colony_sim_tick.cpp lines 1-80 would collapse 73 non-empty source lines to 24; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker",
 		},
 		{Tool: "read_file", Summary: "Read f3 native/src/core/colony_sim_tick.cpp lines 1-120 (total lines: 2616)", Output: "1:#include <x>\n120:void a();\n"},
 		{
@@ -21596,7 +21583,7 @@ func TestPlanExecuteNoopProofBeforeThresholdKeepsPendingRefresh(t *testing.T) {
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
-			Error:   "edits[2]: line-range replacement for /Users/ben/Documents/GitHub/Colony/native/src/core/colony_sim_tick.cpp lines 1-80 would collapse 73 non-empty source lines to 24; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker",
+			Error:   "edits[2]: line-range replacement for /workspace/Colony/native/src/core/colony_sim_tick.cpp lines 1-80 would collapse 73 non-empty source lines to 24; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker",
 		},
 		{
 			Tool:    "submit_plan",
@@ -21629,7 +21616,7 @@ func TestPlanExecutePathlessNoopProofDoesNotSuppressUnresolvedStreakRefresh(t *t
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
-			Error:   "edits[2]: line-range replacement for /Users/ben/Documents/GitHub/Colony/native/src/core/colony_sim_tick.cpp lines 200-260 would collapse 61 non-empty source lines to 20; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker",
+			Error:   "edits[2]: line-range replacement for /workspace/Colony/native/src/core/colony_sim_tick.cpp lines 200-260 would collapse 61 non-empty source lines to 20; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker",
 		},
 		{
 			Tool:    "submit_plan",
@@ -21663,7 +21650,7 @@ func TestPlanExecuteCollapseRangeReadClosesRefresh(t *testing.T) {
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
-			Error:   "edits[2]: line-range replacement for /Users/ben/Documents/GitHub/Colony/native/src/core/colony_sim_tick.cpp lines 1-80 would collapse 73 non-empty source lines to 24; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker",
+			Error:   "edits[2]: line-range replacement for /workspace/Colony/native/src/core/colony_sim_tick.cpp lines 1-80 would collapse 73 non-empty source lines to 24; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker",
 		},
 		{Tool: "read_file", Summary: "Read f1 native/src/core/colony_sim_tick.cpp lines 1-120 (total lines: 2616)", Output: "1:#include <x>\n120:void after();\n"},
 	}

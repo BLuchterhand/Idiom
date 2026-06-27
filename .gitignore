@@ -25,9 +25,8 @@ __pycache__/
 !.idiom/prompts/
 !.idiom/prompts/**
 .planning/
+.book/
 logs/
-!.book/exports/kindle-preview/Logs/
-!.book/exports/kindle-preview/Logs/*.csv
 models/
 outputs/
 transcripts/
@@ -57,10 +56,8 @@ config.*.backup.json
 .env.local
 .env.*.local
 
-# Book workspace local artifacts
-.book/.venv/
-.book/tools/__pycache__/
-.book/**/*.pyc
+# Private book/patent workspaces live outside this repository.
+.patent/
 
 # Ephemeral review / session notes
 REVIEW_*.md
@@ -80,7 +77,6 @@ docs/obsidian-export/
 # Internal working docs (bugs, feature requests)
 BUG_*.md
 FEATURE_REQUEST_*.md
-.patent/
 
 # Agent state
 .qwen/

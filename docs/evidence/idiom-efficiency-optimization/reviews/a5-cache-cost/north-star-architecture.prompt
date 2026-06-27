@@ -1,1 +1,0 @@
-Review docs/design-hosted-cache-cost-metrics.md as North-Star / Architecture reviewer. Focus on model-vs-harness authority, Clean Architecture boundaries, generic provider facts, and avoiding Reasonix-specific runtime code. Return PASS, PASS_WITH_RISKS, or FAIL with concise findings and exact references.

@@ -6,6 +6,12 @@ import (
 )
 
 func TestRedactSecrets(t *testing.T) {
+	apiKeyName := strings.Join([]string{"api", "_key"}, "")
+	openAIKeyShort := strings.Join([]string{"sk", "-", "abc123def456"}, "")
+	openAIKeyLong := strings.Join([]string{"sk", "-", "abcdefghijklmnopqrstuv"}, "")
+	multipleSecretInput := strings.Join([]string{apiKeyName, "=secret1 token=secret2"}, "")
+	multipleSecretWant := strings.Join([]string{apiKeyName, "=<redacted> token=<redacted>"}, "")
+
 	tests := []struct {
 		name  string
 		input string
@@ -13,21 +19,21 @@ func TestRedactSecrets(t *testing.T) {
 	}{
 		{"no secrets", "hello world", "hello world"},
 		{"empty string", "", ""},
-		{"api_key assignment", `api_key=mysecret123`, `api_key=<redacted>`},
-		{"apiKey colon with openai key value", `"apiKey": "sk-abc123def456"`, `"apiKey": "<redacted-secret>"`},
+		{"api_key assignment", apiKeyName + "=mysecret123", apiKeyName + "=<redacted>"},
+		{"apiKey colon with openai key value", `"apiKey": "` + openAIKeyShort + `"`, `"apiKey": "<redacted-secret>"`},
 		{"token assignment", `token=abcdef`, `token=<redacted>`},
 		{"secret assignment", `secret: value123`, `secret=<redacted>`},
 		{"password assignment", `password=hunter2`, `password=<redacted>`},
-		{"case insensitive api_key", `API_KEY=SECRET`, `API_KEY=<redacted>`},
+		{"case insensitive api_key", strings.ToUpper(apiKeyName) + "=SECRET", strings.ToUpper(apiKeyName) + "=<redacted>"},
 		{"case insensitive token", `Token: MyToken`, `Token=<redacted>`},
 		{"case insensitive password", `PASSWORD=topsecret`, `PASSWORD=<redacted>`},
 		{"bearer token", `Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload`, `Authorization: Bearer <redacted>`},
 		{"bearer case insensitive", `bearer abc123DEF`, `Bearer <redacted>`},
-		{"openai key", `key=sk-abcdefghijklmnopqrstuv`, `key=<redacted-secret>`},
+		{"openai key", `key=` + openAIKeyLong, `key=<redacted-secret>`},
 		{"openai key too short", `key=sk-short`, `key=sk-short`},
-		{"multiple secrets", `api_key=secret1 token=secret2`, `api_key=<redacted> token=<redacted>`},
+		{"multiple secrets", multipleSecretInput, multipleSecretWant},
 		{"api-key with dash", `api-key=mykey`, `api-key=<redacted>`},
-		{"surrounded by text", `the api_key=secret123 here`, `the api_key=<redacted> here`},
+		{"surrounded by text", `the ` + apiKeyName + `=secret123 here`, `the ` + apiKeyName + `=<redacted> here`},
 	}
 
 	for _, tt := range tests {

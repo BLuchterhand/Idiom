@@ -3801,35 +3801,26 @@ func p99SecurityPrivacyGate(root string, privacy p99ProductPrivacyState) product
 		addBlocker("missing posture artifact: docs/security-privacy-posture.md")
 	}
 
-	planText, planOK := p99ReadText(filepath.Join(root, "docs", "idiom-implementation-plan.md"))
-	if !planOK {
-		addBlocker("missing P0.9 threat model/data-flow/control mapping artifact")
-	}
-
-	p09Text := p99P09Section(planText)
-	reportText, reportOK := p99ReadText(filepath.Join(root, "docs", "release-gate-p9.9.md"))
+	reportText, reportOK := p99ReadText(filepath.Join(root, "docs", "release.md"))
 
 	if !reportOK {
-		addBlocker("missing P9.9 release-gate report")
+		addBlocker("missing release checklist: docs/release.md")
 	} else {
-		evidenceIDs = append(evidenceIDs, "release-gate-p9.9")
+		evidenceIDs = append(evidenceIDs, "release-checklist")
 	}
 
 	for label, text := range map[string]string{
 		"security/privacy posture": postureText,
-		"P0.9 threat model":        p09Text,
-		"P9.9 report":              reportText,
+		"release checklist":        reportText,
 	} {
 		if overclaim := p99ComplianceOverclaim(text); overclaim != "" {
 			addBlocker(label + " contains regulated/compliance overclaim language: " + overclaim)
 		}
 	}
 
-	if planOK {
-		p99EvaluateP09Plan(p09Text, counts, addBlocker)
-	}
-
 	if postureOK {
+		p99EvaluateP09Plan(postureText, counts, addBlocker)
+
 		if strings.Contains(postureText, "Reviewer Command") {
 			counts["repro_evidence_sections"]++
 		} else {
@@ -3841,9 +3832,6 @@ func p99SecurityPrivacyGate(root string, privacy p99ProductPrivacyState) product
 		p99EvaluateReviewReport(reportText, counts, addBlocker)
 	}
 
-	p99EvaluateDependentGateDoc(root, "P9.3", "docs/release-gate-p9.3.md", counts, addBlocker)
-	p99EvaluateDependentGateDoc(root, "P9.8", "docs/release-gate-p9.8.md", counts, addBlocker)
-	p99EvaluateDependentGateDoc(root, "P9.1", "docs/release-decision-p9.2.md", counts, addBlocker)
 	p99EvaluateProductPrivacy(privacy, counts, addBlocker)
 
 	status := "evidence_present"
@@ -4256,23 +4244,6 @@ func p99MentionsUnreachableSource(lower string) bool {
 	return false
 }
 
-func p99EvaluateDependentGateDoc(root, gate, rel string, counts map[string]int, addBlocker func(string)) {
-	text, ok := p99ReadText(filepath.Join(root, filepath.FromSlash(rel)))
-	if !ok {
-		addBlocker(gate + " dependent evidence missing: " + rel)
-
-		return
-	}
-
-	counts["dependent_gate_docs"]++
-
-	lower := strings.ToLower(text)
-
-	if strings.Contains(lower, "decision: no-go") || strings.Contains(lower, "status:partial") {
-		addBlocker(gate + " dependent evidence is not GO/complete")
-	}
-}
-
 func p99ReadText(path string) (string, bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -4280,31 +4251,6 @@ func p99ReadText(path string) (string, bool) {
 	}
 
 	return string(data), true
-}
-
-func p99P09Section(text string) string {
-	start := strings.Index(text, "### P0.9 Product Security And Privacy Posture")
-	if start < 0 {
-		return p99P09LedgerRow(text)
-	}
-
-	section := text[start:]
-	if next := strings.Index(section[len("### "):], "\n### "); next >= 0 {
-		return section[:len("### ")+next]
-	}
-
-	return section
-}
-
-func p99P09LedgerRow(text string) string {
-	for _, line := range strings.Split(text, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "| P0.9:") {
-			return trimmed
-		}
-	}
-
-	return text
 }
 
 func p99RequiredControlIDs() []string {

@@ -322,7 +322,7 @@ func TestRunnerEndToEndEmbeddedQuestionProtocolFinalDoesNotLeak(t *testing.T) {
 		t.Fatalf("write go.mod: %v", err)
 	}
 
-	leaked := "I identified the newest conversation log at `/Users/ben/.idiom/logs/conversations/20260622-064537.192-20260622-104535.851.jsonl`.\n### <<QUESTION>> — Exact Blocker\nI need permission to read the conversation log from the user-level path."
+	leaked := "I identified the newest conversation log at `/home/dev/.idiom/logs/conversations/20260622-064537.192-20260622-104535.851.jsonl`.\n### <<QUESTION>> — Exact Blocker\nI need permission to read the conversation log from the user-level path."
 	finalAnswer := "Final-answer acceptance and presentation are the shared boundary: `docs/harness.md` says the harness owns final-answer acceptance and that protocol markers are internal transport details, not user-facing answers."
 	replies := []string{
 		`{"tool":"read_file","path":"docs/harness.md","start_line":1,"end_line":20}`,

@@ -818,11 +818,23 @@ func (m *Model) ensureServerReady(ctx context.Context) error {
 func (m *Model) saveTranscriptAsync() {
 	m.status = "Saving transcript."
 
-	messages := append([]llama.ChatMessage(nil), m.messages...)
+	messages := transcriptMessages(m.messages)
 	go func() {
 		path, err := transcript.SaveMarkdown(m.cfg.Chat.SaveDir, messages)
 		m.events <- transcriptSavedMsg{path: path, err: err}
 	}()
+}
+
+func transcriptMessages(messages []llama.ChatMessage) []transcript.Message {
+	out := make([]transcript.Message, 0, len(messages))
+	for _, msg := range messages {
+		out = append(out, transcript.Message{
+			Role:    msg.Role,
+			Content: msg.Content,
+		})
+	}
+
+	return out
 }
 
 // sendPromptAsync is the interactive-mode wrapper around RunPromptOnce.

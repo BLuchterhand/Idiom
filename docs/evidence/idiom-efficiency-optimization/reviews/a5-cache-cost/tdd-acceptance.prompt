@@ -1,1 +1,0 @@
-Review docs/design-hosted-cache-cost-metrics.md as TDD / Acceptance reviewer. Focus on whether each atom has sufficient regression tests, backwards compatibility checks, and acceptance criteria for benchmark rerun. Return PASS, PASS_WITH_RISKS, or FAIL with concise findings and exact references.

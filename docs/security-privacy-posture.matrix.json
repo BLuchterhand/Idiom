@@ -7,7 +7,7 @@
     "decision_boundary": "harness owns privacy, permission, side-effect, telemetry, retention, and readiness contracts; model owns strategy",
     "source_artifacts": [
       "docs/security-privacy-posture.md",
-      "docs/idiom-implementation-plan.md#p09-product-security-and-privacy-posture"
+      "docs/security-privacy-posture.matrix.json"
     ]
   },
   "required_controls": [

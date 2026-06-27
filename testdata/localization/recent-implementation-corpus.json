@@ -527,8 +527,8 @@
             "rationale": "Parses and renders plan diff entries from ledger state."
           },
           {
-            "path": "docs/idiom-implementation-plan.md",
-            "rationale": "Read-only benchmark anchor for work-package row localization; updates remain orchestrator-owned."
+            "path": "docs/release.md",
+            "rationale": "Read-only benchmark anchor for release-prep localization; updates remain maintainer-owned."
           }
         ],
         "symbols": [

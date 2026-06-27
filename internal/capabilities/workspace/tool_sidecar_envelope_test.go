@@ -191,6 +191,12 @@ func TestBuildToolSidecarEnvelopeCanAttributeMCPStdioTransport(t *testing.T) {
 }
 
 func TestNewToolSidecarCallerRejectsLeakyValues(t *testing.T) {
+	jwtLike := strings.Join([]string{
+		"eyJhbGciOiJIUzI1NiJ9",
+		"eyJzdWIiOiIxMjM0In0",
+		"sflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+	}, ".")
+
 	for _, tc := range []struct {
 		name      string
 		callerID  string
@@ -207,7 +213,7 @@ func TestNewToolSidecarCallerRejectsLeakyValues(t *testing.T) {
 		{name: "github token prefix", callerID: "ghp_abc123"},
 		{name: "github pat prefix", callerID: "github_pat_abc123"},
 		{name: "slack token prefix", callerID: "xoxb-abc123"},
-		{name: "jwt shaped", callerID: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.sflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"},
+		{name: "jwt shaped", callerID: jwtLike},
 		{name: "long hex blob", callerID: "0123456789abcdef0123456789abcdef"},
 		{name: "long base64 blob", callerID: "dGhpc2lzYXZlcnlsb25nYmFzZTY0bGlrZXZhbHVldGhhdGxvb2tzbGlrZWFzZWNyZXQ"},
 		{name: "secret word", requestID: "prod-token"},

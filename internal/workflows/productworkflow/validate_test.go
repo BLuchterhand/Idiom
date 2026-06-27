@@ -9,6 +9,18 @@ import (
 	"testing"
 )
 
+const (
+	productWorkflowFixtureIndexPath = "testdata/product-workflows/efforts-index.json"
+	productWorkflowFixtureRoot      = "testdata/product-workflows/prd-adr-brief-workflow"
+)
+
+func productWorkflowFixturePath(t *testing.T, parts ...string) string {
+	t.Helper()
+
+	pathParts := append([]string{repoRoot(t), productWorkflowFixtureRoot}, parts...)
+	return filepath.Join(pathParts...)
+}
+
 func TestParseCommittedPhase0Fixtures(t *testing.T) {
 	root := repoRoot(t)
 	read := func(path string) []byte {
@@ -22,27 +34,27 @@ func TestParseCommittedPhase0Fixtures(t *testing.T) {
 		return data
 	}
 
-	if _, err := ParseEffortIndexJSON(read("docs/product-workflows/efforts/index.json")); err != nil {
+	if _, err := ParseEffortIndexJSON(read(productWorkflowFixtureIndexPath)); err != nil {
 		t.Fatalf("parse effort index: %v", err)
 	}
 
-	if _, err := ParseWorkflowStateJSON(read("docs/product-workflows/efforts/closed/prd-adr-brief-workflow/workflow_state.json")); err != nil {
+	if _, err := ParseWorkflowStateJSON(read(filepath.Join(productWorkflowFixtureRoot, "workflow_state.json"))); err != nil {
 		t.Fatalf("parse workflow state: %v", err)
 	}
 
-	if _, err := ParseTDDLedgerJSON(read("docs/product-workflows/efforts/closed/prd-adr-brief-workflow/tdd.json")); err != nil {
+	if _, err := ParseTDDLedgerJSON(read(filepath.Join(productWorkflowFixtureRoot, "tdd.json"))); err != nil {
 		t.Fatalf("parse tdd ledger: %v", err)
 	}
 
-	if _, err := ParseEvidenceCardsJSONL(read("docs/product-workflows/efforts/closed/prd-adr-brief-workflow/evidence/evidence.jsonl")); err != nil {
+	if _, err := ParseEvidenceCardsJSONL(read(filepath.Join(productWorkflowFixtureRoot, "evidence/evidence.jsonl"))); err != nil {
 		t.Fatalf("parse evidence JSONL: %v", err)
 	}
 
-	if _, err := ParseTraceabilityMatrixJSON(read("docs/product-workflows/efforts/closed/prd-adr-brief-workflow/evidence/traceability_matrix.json")); err != nil {
+	if _, err := ParseTraceabilityMatrixJSON(read(filepath.Join(productWorkflowFixtureRoot, "evidence/traceability_matrix.json"))); err != nil {
 		t.Fatalf("parse traceability matrix: %v", err)
 	}
 
-	if _, err := ParseImplementationLedgerJSONL(read("docs/product-workflows/efforts/closed/prd-adr-brief-workflow/implementation_ledger.jsonl")); err != nil {
+	if _, err := ParseImplementationLedgerJSONL(read(filepath.Join(productWorkflowFixtureRoot, "implementation_ledger.jsonl"))); err != nil {
 		t.Fatalf("parse implementation ledger: %v", err)
 	}
 }
@@ -111,9 +123,7 @@ func TestParseEffortIndexRejectsInvalidLifecycleFields(t *testing.T) {
 }
 
 func TestParsePRDFixturePasses(t *testing.T) {
-	root := repoRoot(t)
-
-	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/prd.md"))
+	data, err := os.ReadFile(productWorkflowFixturePath(t, "prd.md"))
 	if err != nil {
 		t.Fatalf("read prd.md: %v", err)
 	}
@@ -150,9 +160,7 @@ func TestParsePRDFixturePasses(t *testing.T) {
 }
 
 func TestParseADRIndexFixturePasses(t *testing.T) {
-	root := repoRoot(t)
-
-	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/adrs/index.json"))
+	data, err := os.ReadFile(productWorkflowFixturePath(t, "adrs", "index.json"))
 	if err != nil {
 		t.Fatalf("read ADR index: %v", err)
 	}
@@ -172,9 +180,7 @@ func TestParseADRIndexFixturePasses(t *testing.T) {
 }
 
 func TestParseADRMarkdownFixturePasses(t *testing.T) {
-	root := repoRoot(t)
-
-	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/adrs/ADR-0001-durable-workflow-substrate.md"))
+	data, err := os.ReadFile(productWorkflowFixturePath(t, "adrs", "ADR-0001-durable-workflow-substrate.md"))
 	if err != nil {
 		t.Fatalf("read ADR markdown: %v", err)
 	}
@@ -773,9 +779,7 @@ func TestInvalidResearchProfileNoResearchersFailsClosed(t *testing.T) {
 }
 
 func TestValidCurrentDurableTDDFixturePasses(t *testing.T) {
-	root := repoRoot(t)
-
-	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/tdd.json"))
+	data, err := os.ReadFile(productWorkflowFixturePath(t, "tdd.json"))
 	if err != nil {
 		t.Fatalf("read tdd.json: %v", err)
 	}
@@ -1443,7 +1447,7 @@ func TestDurableTraceabilityMatrixPassesCrossLinkValidation(t *testing.T) {
 
 		return data
 	}
-	rel := "docs/product-workflows/efforts/closed/prd-adr-brief-workflow"
+	rel := productWorkflowFixtureRoot
 
 	matrixData := read(filepath.Join(rel, "evidence/traceability_matrix.json"))
 
@@ -1810,9 +1814,7 @@ created_at: 2026-05-17T00:00:00Z
 }
 
 func TestDurablePRDFixtureStillPasses(t *testing.T) {
-	root := repoRoot(t)
-
-	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/prd.md"))
+	data, err := os.ReadFile(productWorkflowFixturePath(t, "prd.md"))
 	if err != nil {
 		t.Fatalf("read prd.md: %v", err)
 	}
@@ -1836,9 +1838,7 @@ func TestInvalidADRIndexStatusFailsClosed(t *testing.T) {
 }
 
 func TestDurableADRIndexFixtureStillPasses(t *testing.T) {
-	root := repoRoot(t)
-
-	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/adrs/index.json"))
+	data, err := os.ReadFile(productWorkflowFixturePath(t, "adrs", "index.json"))
 	if err != nil {
 		t.Fatalf("read ADR index: %v", err)
 	}
@@ -1912,9 +1912,7 @@ None.
 }
 
 func TestDurableADRMarkdownFixtureStillPasses(t *testing.T) {
-	root := repoRoot(t)
-
-	data, err := os.ReadFile(filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/adrs/ADR-0001-durable-workflow-substrate.md"))
+	data, err := os.ReadFile(productWorkflowFixturePath(t, "adrs", "ADR-0001-durable-workflow-substrate.md"))
 	if err != nil {
 		t.Fatalf("read ADR markdown: %v", err)
 	}
@@ -2828,8 +2826,7 @@ func TestClassifyReportFileNameKnownSuffixes(t *testing.T) {
 }
 
 func TestDurableImplementationReportFixturesPassValidation(t *testing.T) {
-	root := repoRoot(t)
-	reportDir := filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/reports")
+	reportDir := productWorkflowFixturePath(t, "reports")
 
 	entries, err := os.ReadDir(reportDir)
 	if err != nil {
@@ -2853,8 +2850,7 @@ func TestDurableImplementationReportFixturesPassValidation(t *testing.T) {
 }
 
 func TestDurableReviewReportFixturesPassValidation(t *testing.T) {
-	root := repoRoot(t)
-	reportDir := filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/reports")
+	reportDir := productWorkflowFixturePath(t, "reports")
 
 	entries, err := os.ReadDir(reportDir)
 	if err != nil {
@@ -2878,8 +2874,7 @@ func TestDurableReviewReportFixturesPassValidation(t *testing.T) {
 }
 
 func TestDurableInvestigationReportFixturesPassValidation(t *testing.T) {
-	root := repoRoot(t)
-	reportDir := filepath.Join(root, "docs/product-workflows/efforts/closed/prd-adr-brief-workflow/reports")
+	reportDir := productWorkflowFixturePath(t, "reports")
 
 	entries, err := os.ReadDir(reportDir)
 	if err != nil {

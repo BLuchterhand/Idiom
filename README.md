@@ -243,8 +243,7 @@ harness workspace contract.
 idiom lane plan-execute --title fix-parser path/to/brief.md
 ```
 
-See [docs/lane-architecture.md](docs/lane-architecture.md) and
-[docs/planner-executor-usage.md](docs/planner-executor-usage.md).
+See [docs/cli.md](docs/cli.md) and [docs/architecture.md](docs/architecture.md).
 
 ### Repository Memory And Discovery
 
@@ -263,8 +262,7 @@ Common direct tools:
 | `semgrep_scan`, `joern_scan` | Run optional security/dataflow discovery. |
 
 The full installer path installs the declared discovery backends and CI smokes
-the installed CLI against the manifest. See
-[docs/install-coverage-tracker.md](docs/install-coverage-tracker.md).
+the installed CLI against the manifest. See [docs/release.md](docs/release.md).
 
 ### Tool Sidecar
 
@@ -280,8 +278,7 @@ The sidecar launchers installed by the `tools` or `full` profile are:
 - `idiom-tool`
 - `idiom-mcp-discovery`
 
-See [docs/tool-sidecar-install.md](docs/tool-sidecar-install.md) and
-[docs/sidecar-recipes.md](docs/sidecar-recipes.md).
+See [docs/cli.md](docs/cli.md).
 
 ### Audit And Eval
 
@@ -294,9 +291,8 @@ idiom audit watch --once --review-existing
 make swe-live-subset
 ```
 
-See [docs/swe-eval-suite.md](docs/swe-eval-suite.md),
-[docs/product-evidence-export.md](docs/product-evidence-export.md), and
-[docs/release-checklist.md](docs/release-checklist.md).
+See [docs/development.md](docs/development.md) and
+[docs/release.md](docs/release.md).
 
 ### Local Queue
 
@@ -323,21 +319,8 @@ Idiom separates model strategy from harness authority.
   model's next step.
 - Audit and eval surfaces make behavior inspectable after the run.
 
-The connected architecture reference lives in the Obsidian-oriented docs:
-
-- [docs/obsidian/00 - Home.md](docs/obsidian/00%20-%20Home.md)
-- [docs/obsidian/01 - System Map.md](docs/obsidian/01%20-%20System%20Map.md)
-- [docs/obsidian/04 - Runtime Lanes.md](docs/obsidian/04%20-%20Runtime%20Lanes.md)
-- [docs/obsidian/06 - Workspace Tools and Capability Routing.md](docs/obsidian/06%20-%20Workspace%20Tools%20and%20Capability%20Routing.md)
-- [docs/obsidian/07 - Repository Memory and Context Graph.md](docs/obsidian/07%20-%20Repository%20Memory%20and%20Context%20Graph.md)
-- [docs/obsidian/10 - Telemetry Audit Eval and Learning.md](docs/obsidian/10%20-%20Telemetry%20Audit%20Eval%20and%20Learning.md)
-
-Project direction and harness policy:
-
-- [docs/idiom-strategic-thesis.md](docs/idiom-strategic-thesis.md)
-- [docs/idiom-design-roadmap.md](docs/idiom-design-roadmap.md)
-- [docs/decisioning-north-star.md](docs/decisioning-north-star.md)
-- [docs/idiom-maintenance-best-practices.md](docs/idiom-maintenance-best-practices.md)
+The maintained architecture reference is [docs/architecture.md](docs/architecture.md).
+Start with [docs/README.md](docs/README.md) for the full public doc index.
 
 ## Repository Layout
 
@@ -351,7 +334,7 @@ Project direction and harness policy:
 | `internal/surfaces/tui` | Terminal UI. |
 | `prompts/` | Baseline prompts and profiles. |
 | `.idiom/` | Project-local Idiom config for this repository. |
-| `docs/` | Architecture, workflows, release gates, and operational notes. |
+| `docs/` | Public architecture, CLI, development, release, and security notes. |
 | `scripts/install/manifest.json` | Installer dependency manifest. |
 
 Generated logs, transcripts, local model files, and local `.idiom` state should
@@ -421,11 +404,9 @@ Release prep should include:
 - full installer dependency smoke on supported platforms
 - installed-CLI discovery smoke for every manifest-declared tool
 - release evidence bundle
-- README, install tracker, and release checklist review
+- README, release notes, and installer documentation review
 
-The active checklist is [docs/release-checklist.md](docs/release-checklist.md).
-Install coverage is tracked in
-[docs/install-coverage-tracker.md](docs/install-coverage-tracker.md).
+The maintained release checklist is [docs/release.md](docs/release.md).
 
 ## Security And Privacy
 
@@ -447,5 +428,6 @@ See [docs/security-privacy-posture.md](docs/security-privacy-posture.md).
 
 ## License
 
-No repository license file is currently declared. Choose and add the license
-before public release or public package-manager distribution.
+No open-source license has been selected yet. Until a license is added, the
+published source is available for inspection only and is not licensed for reuse,
+redistribution, or modification.

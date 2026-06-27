@@ -1,1 +1,0 @@
-Review docs/design-hosted-cache-cost-metrics.md as Harness / Go reviewer. Focus on implementation seams, type ownership, additive JSON compatibility, runner/TUI aggregation, tests, and likely Go package blast radius. Return PASS, PASS_WITH_RISKS, or FAIL with concise findings and exact references.

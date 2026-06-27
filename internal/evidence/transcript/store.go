@@ -6,11 +6,14 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"idiom/internal/runtime/llama"
 )
 
-func SaveMarkdown(dir string, messages []llama.ChatMessage) (string, error) {
+type Message struct {
+	Role    string
+	Content string
+}
+
+func SaveMarkdown(dir string, messages []Message) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("create transcript dir: %w", err)
 	}

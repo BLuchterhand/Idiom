@@ -55,8 +55,7 @@ func findTelemetryRecord(records []map[string]any, eventType string) map[string]
 }
 
 func TestProductLintPassesOnCurrentDurableEffortFixture(t *testing.T) {
-	root := repoRoot(t)
-	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "closed", "prd-adr-brief-workflow")
+	effortRoot := durableProductWorkflowFixtureRoot(t)
 
 	var stdout, stderr bytes.Buffer
 
@@ -166,8 +165,7 @@ func TestProductLintFailsOnInvalidImplementationLedgerCloseout(t *testing.T) {
 }
 
 func TestProductLintIncludesPRDAndADRInCheckedFiles(t *testing.T) {
-	root := repoRoot(t)
-	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "closed", "prd-adr-brief-workflow")
+	effortRoot := durableProductWorkflowFixtureRoot(t)
 
 	var stdout, stderr bytes.Buffer
 
@@ -552,8 +550,7 @@ func TestProductLintAcceptsHistoricalTDDObligationIDs(t *testing.T) {
 }
 
 func TestProductLintTraceabilityMatrixInCheckedFiles(t *testing.T) {
-	root := repoRoot(t)
-	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "closed", "prd-adr-brief-workflow")
+	effortRoot := durableProductWorkflowFixtureRoot(t)
 
 	var stdout, stderr bytes.Buffer
 
@@ -932,8 +929,7 @@ func TestProductLintPassesWithValidReportFixtures(t *testing.T) {
 }
 
 func TestProductAuditPassesOnDurableEffortFixture(t *testing.T) {
-	root := repoRoot(t)
-	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "closed", "prd-adr-brief-workflow")
+	effortRoot := durableProductWorkflowFixtureRoot(t)
 
 	var stdout, stderr bytes.Buffer
 
@@ -1095,8 +1091,11 @@ func TestProductObsidianParityFailsWithoutNoChangeRationale(t *testing.T) {
 	}
 }
 
-func TestProductObsidianParityFailsClosedWithoutGitRoot(t *testing.T) {
+func TestProductObsidianParityFailsClosedWhenVaultIsPresentWithoutNotes(t *testing.T) {
 	dir := writeValidTestEffort(t)
+	if err := os.MkdirAll(filepath.Join(dir, "docs", "obsidian"), 0o755); err != nil {
+		t.Fatalf("mkdir obsidian dir: %v", err)
+	}
 	writeTestFile(t, dir, "workflow_state.json", `{
 		"schema_version":"idiom.product_workflow_state.v0.fixture",
 		"effort_id":"prd-adr-brief-workflow",
@@ -1116,7 +1115,7 @@ func TestProductObsidianParityFailsClosedWithoutGitRoot(t *testing.T) {
 
 	result := productworkflow.LintEffortFolder(dir)
 	if result.Status != "fail" {
-		t.Fatalf("expected lint fail when Obsidian notes are missing without git root, got %q", result.Status)
+		t.Fatalf("expected lint fail when Obsidian vault is present but notes are missing, got %q", result.Status)
 	}
 
 	var readErrors int
@@ -2669,8 +2668,7 @@ created_at: 2026-05-17T00:00:00Z
 }
 
 func TestProductStatusJSONOnDurableFixture(t *testing.T) {
-	root := repoRoot(t)
-	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "closed", "prd-adr-brief-workflow")
+	effortRoot := durableProductWorkflowFixtureRoot(t)
 
 	ws := loadDurableFixtureWorkflowState(t)
 
@@ -2793,8 +2791,7 @@ func TestProductStatusMetricsFailsClosedOnUnknownGateStatus(t *testing.T) {
 }
 
 func TestProductStatusTextIncludesKeyFields(t *testing.T) {
-	root := repoRoot(t)
-	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "closed", "prd-adr-brief-workflow")
+	effortRoot := durableProductWorkflowFixtureRoot(t)
 
 	ws := loadDurableFixtureWorkflowState(t)
 	currentState, _ := ws["current_state"].(string)
@@ -3340,8 +3337,7 @@ func TestProductAuditNextValidActionParity(t *testing.T) {
 
 func TestProductStatusTextOutputIsActionable(t *testing.T) {
 	t.Run("pass", func(t *testing.T) {
-		root := repoRoot(t)
-		effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "closed", "prd-adr-brief-workflow")
+		effortRoot := durableProductWorkflowFixtureRoot(t)
 
 		var jsonStdout, jsonStderr bytes.Buffer
 
@@ -4218,13 +4214,16 @@ func repoRoot(t *testing.T) string {
 	}
 }
 
+func durableProductWorkflowFixtureRoot(t *testing.T) string {
+	t.Helper()
+
+	return filepath.Join(repoRoot(t), "testdata", "product-workflows", "prd-adr-brief-workflow")
+}
+
 func loadDurableFixtureWorkflowState(t *testing.T) map[string]any {
 	t.Helper()
 
-	root := repoRoot(t)
-	wsPath := filepath.Join(root, "docs", "product-workflows", "efforts", "closed", "prd-adr-brief-workflow", "workflow_state.json")
-
-	data, err := os.ReadFile(wsPath)
+	data, err := os.ReadFile(filepath.Join(durableProductWorkflowFixtureRoot(t), "workflow_state.json"))
 	if err != nil {
 		t.Fatalf("failed to read workflow_state.json: %v", err)
 	}
@@ -6953,8 +6952,7 @@ func TestProductTDDCoverageGateEmitsCoverageGateEvaluatedTelemetry(t *testing.T)
 }
 
 func TestProductTDDCoverageGatePassesCurrentDurableEffortFixture(t *testing.T) {
-	root := repoRoot(t)
-	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "closed", "prd-adr-brief-workflow")
+	effortRoot := durableProductWorkflowFixtureRoot(t)
 
 	var stdout, stderr bytes.Buffer
 
@@ -7632,8 +7630,7 @@ func TestProductBriefRenderTextOutputIsActionable(t *testing.T) {
 }
 
 func TestProductBriefRenderPassesCurrentDurableEffortFixture(t *testing.T) {
-	root := repoRoot(t)
-	effortRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "closed", "prd-adr-brief-workflow")
+	effortRoot := durableProductWorkflowFixtureRoot(t)
 
 	var stdout, stderr bytes.Buffer
 

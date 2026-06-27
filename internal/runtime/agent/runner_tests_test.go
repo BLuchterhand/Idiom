@@ -24643,7 +24643,7 @@ func TestPlanThenExecuteFallbackAllowsExactBlockerWhenCorrectionBodiesUnsafe(t *
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
-			Error:   "edits[2]: line-range replacement for /Users/ben/Documents/GitHub/Colony/native/src/core/colony_sim_tick.cpp lines 1-80 would collapse 73 non-empty source lines to 24; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker",
+			Error:   "edits[2]: line-range replacement for /workspace/Colony/native/src/core/colony_sim_tick.cpp lines 1-80 would collapse 73 non-empty source lines to 24; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker",
 		},
 		{Tool: "read_file", Summary: "Read native/src/core/colony_sim_tick.cpp lines 1-120 (total lines: 2616)"},
 		{
@@ -37439,7 +37439,7 @@ func TestFinalAnswerBlockerRejectsProtocolMetaFinalAnswerShapes(t *testing.T) {
 		"The answer above is grounded in the inspected evidence (`.planning/20260621-161128.627.md` lines 25-39 for the planned tests). The proposed additions are explicitly marked as `unverified - proposed` since they don't exist on disk. This satisfies the gate requirements.",
 		"This satisfies the gate requirements because the answer cites the inspected plan artifact and marks proposed additions as unverified.",
 		"This satisfies the gate requirements because the completion gate accepted it.",
-		"Findings so far: I identified the newest conversation log at `/Users/ben/.idiom/logs/conversations/20260622-064537.192-20260622-104535.851.jsonl`.\n<<QUESTION>>: I need permission to read the conversation log from the user-level path.",
+		"Findings so far: I identified the newest conversation log at `/home/dev/.idiom/logs/conversations/20260622-064537.192-20260622-104535.851.jsonl`.\n<<QUESTION>>: I need permission to read the conversation log from the user-level path.",
 		"Findings so far: I identified the newest conversation log.\n### <<QUESTION>> — Exact Blocker\nI need permission to read the conversation log from the user-level path.",
 	}
 
@@ -37503,7 +37503,7 @@ func TestFinishSanitizesEmbeddedQuestionProtocolFinal(t *testing.T) {
 		},
 	}
 	state := &runnerRunState{stopReason: "model_final"}
-	answer := "I identified the newest conversation log at `/Users/ben/.idiom/logs/conversations/20260622-064537.192-20260622-104535.851.jsonl`.\n<<QUESTION>>: I need permission to read the conversation log from the user-level path."
+	answer := "I identified the newest conversation log at `/home/dev/.idiom/logs/conversations/20260622-064537.192-20260622-104535.851.jsonl`.\n<<QUESTION>>: I need permission to read the conversation log from the user-level path."
 
 	returned, err := runner.finish(state, answer, nil, "model_final", false)
 	if err != nil {

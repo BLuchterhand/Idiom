@@ -2725,7 +2725,7 @@ func TestP99ProductEvidenceRejectsHollowSourceVerificationRecords(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			stageP711ProductEvidenceFixtures(t, root)
-			writeP711Text(t, filepath.Join(root, "docs", "idiom-implementation-plan.md"), p99PlanFixtureWithSourceRecords(tc.records))
+			writeP711Text(t, filepath.Join(root, "docs", "security-privacy-posture.md"), "Reviewer Command\n\n"+p99PlanFixtureWithSourceRecords(tc.records))
 
 			report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
 			gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
@@ -2786,7 +2786,7 @@ func TestP99ProductEvidencePrivacyBlockedExportNeedsEvidence(t *testing.T) {
 func TestP99ProductEvidenceContradictoryReportMarkersFailClosed(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
-	writeP711Text(t, filepath.Join(root, "docs", "release-gate-p9.9.md"), "# P9.9 Security Privacy Gate\n\nDecision: no-go\nReviewer signoff: GO\n\nThreat model\nData-flow\nPrivacy\nControl mapping\n\n## Reproduction Commands\n")
+	writeP711Text(t, filepath.Join(root, "docs", "release.md"), p99ReleaseFixtureText("Decision: no-go\nReviewer signoff: GO"))
 
 	report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
@@ -2799,7 +2799,7 @@ func TestP99ProductEvidenceContradictoryReportMarkersFailClosed(t *testing.T) {
 func TestP99ProductEvidenceRequiresStructuredSourceVerificationMethod(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
-	writeP711Text(t, filepath.Join(root, "docs", "idiom-implementation-plan.md"), "### P0.9 Product Security And Privacy Posture\n\nSource anchors checked on 2026-05-14 UTC.\n\nProduct threat model:\nP7.9 P8.4 P9.1 P9.3 P9.9\n\nData-flow map:\n\nPrivacy and retention posture:\n\nControl mapping evidence:\n\nDownstream go/no-go gates:\n")
+	writeP711Text(t, filepath.Join(root, "docs", "security-privacy-posture.md"), "Reviewer Command\n\nSource anchors checked on 2026-05-14 UTC.\n\nProduct threat model:\nP7.9 P8.4 P9.1 P9.3 P9.9\n\nData-flow map:\n\nPrivacy and retention posture:\n\nControl mapping evidence:\n\nDownstream go/no-go gates:\n")
 
 	report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
@@ -2808,7 +2808,7 @@ func TestP99ProductEvidenceRequiresStructuredSourceVerificationMethod(t *testing
 		t.Fatalf("missing structured source verification should fail closed: %#v", gate)
 	}
 
-	writeP711Text(t, filepath.Join(root, "docs", "idiom-implementation-plan.md"), p99PlanFixtureText(false))
+	writeP711Text(t, filepath.Join(root, "docs", "security-privacy-posture.md"), "Reviewer Command\n\n"+p99PlanFixtureText(false))
 
 	report = buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
 	gate = p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
@@ -2889,7 +2889,7 @@ func TestP99ProductAndReleaseEvidenceStructuredStatusAgree(t *testing.T) {
 
 	if len(productGate.Blockers) != 0 || len(releaseGate.Blockers) != 0 ||
 		!stringSliceContains(productGate.EvidenceIDs, "p7.9-security-privacy-posture") ||
-		!stringSliceContains(releaseGate.EvidenceIDs, "release-gate-p9.9") {
+		!stringSliceContains(releaseGate.EvidenceIDs, "release-checklist") {
 
 		t.Fatalf("P9.9 structured fields incomplete: product=%#v release=%#v", productGate, releaseGate)
 	}
@@ -3138,12 +3138,8 @@ func stageP99PostureGateFixtures(t *testing.T, root string, securityRows []map[s
 		"forbidden_evidence_fields":      p99ForbiddenEvidenceFields(),
 		"release_gate_tiebacks":          p99RequiredTiebacks(),
 	})
-	writeP711Text(t, filepath.Join(root, "docs", "security-privacy-posture.md"), "# Security And Privacy Posture\n\nReviewer Command\n\nThis fixture is not a certification or attestation.\n")
-	writeP711Text(t, filepath.Join(root, "docs", "idiom-implementation-plan.md"), p99PlanFixtureText(true))
-	writeP711Text(t, filepath.Join(root, "docs", "release-gate-p9.3.md"), "# P9.3 Release Gate\n\nDecision: GO\n")
-	writeP711Text(t, filepath.Join(root, "docs", "release-gate-p9.8.md"), "# P9.8 Release Gate\n\nDecision: GO\n")
-	writeP711Text(t, filepath.Join(root, "docs", "release-decision-p9.2.md"), "# P9.2 Release Decision\n\nDecision: GO\n")
-	writeP711Text(t, filepath.Join(root, "docs", "release-gate-p9.9.md"), "# P9.9 Security Privacy Gate\n\nReviewer signoff: GO\n\nThreat model\nData-flow\nPrivacy\nControl mapping\n\n## Reproduction Commands\n")
+	writeP711Text(t, filepath.Join(root, "docs", "security-privacy-posture.md"), "# Security And Privacy Posture\n\nReviewer Command\n\nThis fixture is not a certification or attestation.\n\n"+p99PlanFixtureText(true))
+	writeP711Text(t, filepath.Join(root, "docs", "release.md"), p99ReleaseFixtureText("Reviewer signoff: GO"))
 }
 
 func writeP912PackagingSupportThesis(t *testing.T, root string, outcome string) {
@@ -3283,6 +3279,17 @@ func p99PlanFixtureWithSourceRecords(records string) string {
 		"Source verification evidence:\n" +
 		records +
 		"\nDownstream go/no-go gates:\n"
+}
+
+func p99ReleaseFixtureText(decision string) string {
+	return "# Release\n\n" +
+		"## P9.9 Security Privacy Gate\n\n" +
+		decision + "\n\n" +
+		"Threat model\n\n" +
+		"Data-flow\n\n" +
+		"Privacy\n\n" +
+		"Control mapping\n\n" +
+		"## Reproduction Commands\n"
 }
 
 func writeP711IntegrationProofs(t *testing.T, root string, proofs []map[string]any) {

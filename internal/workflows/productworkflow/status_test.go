@@ -921,9 +921,7 @@ func TestLoadProductStatusWithBlockers(t *testing.T) {
 }
 
 func TestLoadProductStatusOnDurableFixture(t *testing.T) {
-	root := statusRepoRoot(t)
-	absRoot := filepath.Join(root, "docs", "product-workflows", "efforts", "closed", "prd-adr-brief-workflow")
-
+	absRoot := productWorkflowFixturePath(t)
 	ws := loadDurableWorkflowState(t)
 	ctx, _ := ws["context"].(map[string]any)
 
@@ -1050,10 +1048,7 @@ func statusRepoRoot(t *testing.T) string {
 func loadDurableWorkflowState(t *testing.T) map[string]any {
 	t.Helper()
 
-	root := statusRepoRoot(t)
-	wsPath := filepath.Join(root, "docs", "product-workflows", "efforts", "closed", "prd-adr-brief-workflow", "workflow_state.json")
-
-	data, err := os.ReadFile(wsPath)
+	data, err := os.ReadFile(productWorkflowFixturePath(t, "workflow_state.json"))
 	if err != nil {
 		t.Fatalf("failed to read workflow_state.json: %v", err)
 	}
