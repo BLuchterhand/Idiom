@@ -152,14 +152,15 @@ const (
 	BackendZAI             = "zai"
 	BackendGLM             = "glm"
 	BackendDeepSeek        = "deepseek"
+	BackendAnthropic       = "anthropic"
 )
 
 // LlamaServer describes an inference backend the harness can talk to. The
 // historic name is retained because most call sites predate hosted providers.
 // Local backends ("llama" and "mlx") can be launched by the harness. Hosted
-// backends ("codex"/"openai_responses", "zai", "glm", "minimax", and
-// "deepseek") are client-only and use API-key authentication from environment
-// variables.
+// backends ("codex"/"openai_responses", "zai", "glm", "minimax",
+// "deepseek", and "anthropic") are client-only and use API-key
+// authentication from environment variables.
 type LlamaServer struct {
 	Kind            string   `json:"kind,omitempty"`
 	Binary          string   `json:"binary"`
@@ -214,8 +215,12 @@ func (l LlamaServer) IsDeepSeek() bool {
 	return textutil.EqualTrimFold(l.Kind, BackendDeepSeek)
 }
 
+func (l LlamaServer) IsAnthropic() bool {
+	return textutil.EqualTrimFold(l.Kind, BackendAnthropic)
+}
+
 func (l LlamaServer) IsHosted() bool {
-	return l.IsOpenAIResponses() || l.IsZAI() || l.IsGLM() || l.IsMiniMax() || l.IsDeepSeek()
+	return l.IsOpenAIResponses() || l.IsZAI() || l.IsGLM() || l.IsMiniMax() || l.IsDeepSeek() || l.IsAnthropic()
 }
 
 func (l LlamaServer) IsLaunchable() bool {
@@ -242,6 +247,8 @@ func (l LlamaServer) EndpointBaseURL() string {
 		return "https://api.minimax.io/v1"
 	case l.IsDeepSeek():
 		return "https://api.deepseek.com"
+	case l.IsAnthropic():
+		return "https://api.anthropic.com"
 	default:
 		return fmt.Sprintf("http://%s:%d", l.Host, l.Port)
 	}
@@ -263,6 +270,8 @@ func (l LlamaServer) APIKeyEnvName() string {
 		return "MINIMAX_API_KEY"
 	case l.IsDeepSeek():
 		return "DEEPSEEK_API_KEY"
+	case l.IsAnthropic():
+		return "ANTHROPIC_API_KEY"
 	default:
 		return ""
 	}
@@ -1298,7 +1307,17 @@ func clonePtr[T any](value *T) *T {
 }
 
 func knownBackendKinds() []string {
-	return []string{BackendLlama, BackendMLX, BackendMiniMax, BackendOpenAIResponses, BackendCodex, BackendZAI, BackendGLM, BackendDeepSeek}
+	return []string{
+		BackendLlama,
+		BackendMLX,
+		BackendMiniMax,
+		BackendOpenAIResponses,
+		BackendCodex,
+		BackendZAI,
+		BackendGLM,
+		BackendDeepSeek,
+		BackendAnthropic,
+	}
 }
 
 func isKnownBackendKind(kind string) bool {

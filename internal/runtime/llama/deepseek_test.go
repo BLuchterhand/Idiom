@@ -341,13 +341,11 @@ func TestDeepSeekStripsReasoningOnNonAssistant(t *testing.T) {
 
 func TestNonDeepSeekBackendsStripReasoningContent(t *testing.T) {
 	// Verify that non-DeepSeek hosted backends (ZAI/GLM, MiniMax) continue to
-	// strip reasoning_content from all messages. These go through the
-	// hostedChatMessages codepath.
+	// strip reasoning_content from all messages through the hosted backend
+	// adapter.
 	//
-	// Local backends (llama, MLX) use a separate codepath (chatRequest
-	// directly, not hostedChatMessages) and preserve reasoning_content
-	// as-received — that is existing, expected behavior and is not changed
-	// by A3.
+	// Local backend adapters preserve reasoning_content as-received; that is
+	// existing, expected behavior.
 	enableThinking := true
 	backends := []struct {
 		name    string
@@ -468,9 +466,8 @@ func TestDeepSeekPreservesReasoningOnToolCallAssistant(t *testing.T) {
 }
 
 func TestLocalBackendsPreserveReasoningContentUnchanged(t *testing.T) {
-	// Local backends (llama, MLX) use the chatRequest code path which does
-	// NOT strip reasoning_content. This is existing behavior and must remain
-	// unchanged by A3.
+	// Local backend adapters build chatRequest payloads without stripping
+	// reasoning_content. This is existing behavior and must remain unchanged.
 	for _, bc := range []struct {
 		name    string
 		backend string

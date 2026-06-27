@@ -604,6 +604,39 @@ func TestLoadAcceptsGLMHostedBackendDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadAcceptsAnthropicHostedBackendDefaults(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+	data := `{
+  "llama_server": {
+    "kind": "anthropic",
+    "model": "claude-sonnet-4-6"
+  },
+  "chat": {"preset": "custom", "max_tokens": 16}
+}`
+
+	if err := os.WriteFile(cfgPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if !cfg.LlamaServer.IsHosted() || !cfg.LlamaServer.IsAnthropic() {
+		t.Fatalf("expected hosted Anthropic planner, got %#v", cfg.LlamaServer)
+	}
+
+	if cfg.LlamaServer.Model != "claude-sonnet-4-6" {
+		t.Fatalf("hosted Anthropic model id should not be path-resolved, got %q", cfg.LlamaServer.Model)
+	}
+
+	if cfg.LlamaServer.EndpointBaseURL() != "https://api.anthropic.com" || cfg.LlamaServer.APIKeyEnvName() != "ANTHROPIC_API_KEY" {
+		t.Fatalf("unexpected Anthropic endpoint/auth defaults: base=%q env=%q", cfg.LlamaServer.EndpointBaseURL(), cfg.LlamaServer.APIKeyEnvName())
+	}
+}
+
 func TestValidateRejectsUnknownBackendKind(t *testing.T) {
 	cfg := Default()
 

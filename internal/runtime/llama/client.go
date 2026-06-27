@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"idiom/internal/platform/config"
-	"idiom/internal/platform/textutil"
 )
 
 const loadingModelRetryDelay = 500 * time.Millisecond
@@ -244,38 +243,6 @@ type chatStreamChunk struct {
 	} `json:"choices"`
 }
 
-func buildChatTemplateKwargs(opts ChatOptions, backend string) *chatTemplateKwargs {
-	// chat_template_kwargs is supported by llama.cpp and current mlx_lm.server
-	// for Jinja-templated chat templates (for example Qwen3's enable_thinking
-	// and preserve_thinking hooks). Other OpenAI-compatible backends may reject
-	// unknown request keys, so keep the field scoped to verified backends.
-	switch backend {
-	case "", config.BackendLlama:
-		// Existing llama.cpp behavior: request-level options are the contract.
-	case config.BackendMLX:
-		// MLX deployments commonly encode the model's default thinking mode in
-		// server-start --chat-template-args. Only send per-request kwargs when
-		// a caller intentionally overrides those defaults; otherwise a generic
-		// config preset can accidentally flip a dedicated "nothink" server back
-		// into thinking mode.
-		if !opts.ChatTemplateKwargs {
-			return nil
-		}
-	default:
-		return nil
-	}
-
-	if opts.EnableThinking == nil && !opts.PreserveThinking && opts.ThinkingBudget <= 0 {
-		return nil
-	}
-
-	return &chatTemplateKwargs{
-		EnableThinking:   clonePtr(opts.EnableThinking),
-		PreserveThinking: opts.PreserveThinking,
-		ThinkingBudget:   opts.ThinkingBudget,
-	}
-}
-
 func clonePtr[T any](value *T) *T {
 	if value == nil {
 		return nil
@@ -284,29 +251,8 @@ func clonePtr[T any](value *T) *T {
 	return &cloned
 }
 
-func normalizeChatRequestForBackend(req *chatRequest, opts ChatOptions, backend string) {
-	if req == nil {
-		return
-	}
-
-	if !BackendSupportsNativeTools(backend) && !opts.ForceNativeTools {
-		// mlx_lm.server owns its own Qwen XML tool parser when a native
-		// OpenAI `tools` array is present. Current MLX parser failures can
-		// close the HTTP connection before idiom receives a structured model
-		// response, so keep tool-call parsing in idiom's JSON protocol for
-		// MLX and let the backend generate plain assistant content.
-		req.Tools = nil
-		req.ToolChoice = ""
-	}
-}
-
 func BackendSupportsNativeTools(backend string) bool {
-	switch strings.ToLower(strings.TrimSpace(backend)) {
-	case config.BackendMLX:
-		return false
-	default:
-		return true
-	}
+	return backendAdapterFor(backend).StructuredOutputCapabilities().NativeTools
 }
 
 // StructuredOutputCapabilities is an explicit capability report for the
@@ -323,61 +269,15 @@ type StructuredOutputCapabilities struct {
 }
 
 func BackendStructuredOutputCapabilities(backend string) StructuredOutputCapabilities {
-	kind := strings.ToLower(strings.TrimSpace(backend))
-	caps := StructuredOutputCapabilities{
-		NativeTools: BackendSupportsNativeTools(kind),
-		JSONObject:  true,
+	adapter, ok := lookupBackendAdapter(backend)
+	if !ok {
+		return StructuredOutputCapabilities{
+			NativeTools: true,
+			JSONObject:  true,
+		}
 	}
 
-	switch kind {
-	case "", config.BackendLlama:
-		caps.ThinkingControls = true
-	case config.BackendMLX:
-		caps.ThinkingControls = true
-	case config.BackendZAI:
-		caps.ThinkingControls = true
-	case config.BackendGLM:
-		caps.ThinkingControls = true
-	case config.BackendDeepSeek:
-		caps.ThinkingControls = true
-	}
-
-	return caps
-}
-
-func isOpenAIResponsesBackend(backend string) bool {
-	switch strings.ToLower(strings.TrimSpace(backend)) {
-	case config.BackendOpenAIResponses, config.BackendCodex:
-		return true
-	default:
-		return false
-	}
-}
-
-func isHostedChatBackend(backend string) bool {
-	b := strings.ToLower(strings.TrimSpace(backend))
-	return b == config.BackendZAI || b == config.BackendGLM || b == config.BackendMiniMax || b == config.BackendDeepSeek
-}
-
-func backendRequiresAuth(backend string) bool {
-	return isOpenAIResponsesBackend(backend) || isHostedChatBackend(backend)
-}
-
-func defaultAPIKeyEnv(backend string) string {
-	switch strings.ToLower(strings.TrimSpace(backend)) {
-	case config.BackendOpenAIResponses, config.BackendCodex:
-		return "OPENAI_API_KEY"
-	case config.BackendZAI:
-		return "ZAI_API_KEY"
-	case config.BackendGLM:
-		return "ZAI_API_KEY"
-	case config.BackendMiniMax:
-		return "MINIMAX_API_KEY"
-	case config.BackendDeepSeek:
-		return "DEEPSEEK_API_KEY"
-	default:
-		return ""
-	}
+	return adapter.StructuredOutputCapabilities()
 }
 
 func NewClient(baseURL string, timeout time.Duration) *Client {
@@ -395,27 +295,7 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 // OpenAI-compatible server that doesn't understand llama.cpp extensions like
 // chat_template_kwargs). Returns the same client for chaining at call sites.
 func (c *Client) WithBackend(backend string) *Client {
-	switch strings.ToLower(strings.TrimSpace(backend)) {
-	case config.BackendMLX:
-		c.backend = config.BackendMLX
-	case config.BackendMiniMax:
-		c.backend = config.BackendMiniMax
-	case config.BackendOpenAIResponses:
-		c.backend = config.BackendOpenAIResponses
-	case config.BackendCodex:
-		c.backend = config.BackendCodex
-	case config.BackendZAI:
-		c.backend = config.BackendZAI
-	case config.BackendGLM:
-		c.backend = config.BackendGLM
-	case config.BackendDeepSeek:
-		c.backend = config.BackendDeepSeek
-	case "", config.BackendLlama:
-		c.backend = config.BackendLlama
-	default:
-		c.backend = config.BackendLlama
-	}
-
+	c.backend = backendAdapterFor(backend).Kind()
 	return c
 }
 
@@ -432,6 +312,25 @@ func (c *Client) WithReasoningEffort(effort string) *Client {
 func (c *Client) WithVerbosity(verbosity string) *Client {
 	c.verbosity = strings.TrimSpace(verbosity)
 	return c
+}
+
+func (c *Client) adapter() backendAdapter {
+	if c == nil {
+		return backendAdapterFor("")
+	}
+
+	return backendAdapterFor(c.Backend())
+}
+
+func (c *Client) requestSettings() backendRequestSettings {
+	if c == nil {
+		return backendRequestSettings{}
+	}
+
+	return backendRequestSettings{
+		ReasoningEffort: c.reasoningEffort,
+		Verbosity:       c.verbosity,
+	}
 }
 
 func (c *Client) WithModel(model string) *Client {
@@ -457,33 +356,44 @@ func (c *Client) SupportsNativeTools() bool {
 }
 
 func (c *Client) modelsURL() string {
-	if isZAIFamilyBackend(c.Backend()) {
-		return c.baseURL + "/models"
-	}
-
-	return c.baseURL + "/v1/models"
+	return c.baseURL + c.adapter().ModelsPath()
 }
 
 func (c *Client) chatCompletionsURL() string {
-	if isZAIFamilyBackend(c.Backend()) {
-		return c.baseURL + "/chat/completions"
+	adapter, ok := c.adapter().(chatCompletionsBackendAdapter)
+	if !ok {
+		return c.baseURL + "/v1/chat/completions"
 	}
 
-	return c.baseURL + "/v1/chat/completions"
+	return c.baseURL + adapter.ChatCompletionsPath()
 }
 
 func (c *Client) responsesURL() string {
 	return c.baseURL + "/v1/responses"
 }
 
+func (c *Client) messagesURL() string {
+	adapter, ok := c.adapter().(messagesBackendAdapter)
+	if !ok {
+		return c.baseURL + "/v1/messages"
+	}
+
+	return c.baseURL + adapter.MessagesPath()
+}
+
 func (c *Client) applyAuth(req *http.Request) error {
-	if c == nil || req == nil || !backendRequiresAuth(c.Backend()) {
+	if c == nil || req == nil {
+		return nil
+	}
+
+	adapter := c.adapter()
+	if !adapter.RequiresAuth() {
 		return nil
 	}
 
 	env := strings.TrimSpace(c.apiKeyEnv)
 	if env == "" {
-		env = defaultAPIKeyEnv(c.Backend())
+		env = adapter.DefaultAPIKeyEnv()
 	}
 
 	key := strings.TrimSpace(os.Getenv(env))
@@ -491,7 +401,9 @@ func (c *Client) applyAuth(req *http.Request) error {
 		return llmAuthMissingError(env, c.Backend())
 	}
 
-	req.Header.Set("Authorization", "Bearer "+key)
+	for name, value := range adapter.AuthHeaders(key) {
+		req.Header.Set(name, value)
+	}
 
 	return nil
 }
@@ -556,7 +468,7 @@ func normalizeHostedTools(tools []Tool) ([]Tool, map[string]string) {
 
 	for i, t := range tools {
 		orig := t.Function.Name
-		sanitized := strings.NewReplacer(":", "_", "/", "_").Replace(orig)
+		sanitized := normalizeHostedToolName(orig)
 
 		if sanitized != orig {
 			reverse[sanitized] = orig
@@ -575,69 +487,8 @@ func normalizeHostedTools(tools []Tool) ([]Tool, map[string]string) {
 	return normalized, reverse
 }
 
-func hostedChatRequestPayload(messages []ChatMessage, opts ChatOptions, stream bool, backend, reasoningEffort string) any {
-	payload := hostedChatPayload{
-		Model:    opts.Model,
-		Messages: hostedChatMessages(repairMessageToolPairing(messages), backend),
-		Stream:   stream,
-	}
-	if opts.MaxTokens > 0 {
-		payload.MaxTokens = opts.MaxTokens
-	}
-
-	if opts.Temperature > 0 {
-		payload.Temperature = opts.Temperature
-	}
-
-	if opts.TopP > 0 {
-		payload.TopP = opts.TopP
-	}
-
-	if opts.PresencePenalty != 0 {
-		payload.PresencePenalty = opts.PresencePenalty
-	}
-
-	if len(opts.Tools) > 0 && BackendSupportsNativeTools(backend) {
-		normalized, rev := normalizeHostedTools(opts.Tools)
-
-		payload.Tools = normalized
-		payload.ToolNameReverse = rev
-	}
-
-	if opts.ToolChoice != "" && BackendSupportsNativeTools(backend) {
-		payload.ToolChoice = opts.ToolChoice
-	}
-
-	if hostedBackendSupportsThinkingToggle(backend) && opts.EnableThinking != nil {
-		mode := "disabled"
-		if *opts.EnableThinking {
-			mode = "enabled"
-		}
-
-		payload.Thinking = map[string]string{"type": mode}
-	}
-
-	if hostedBackendSupportsReasoningEffort(backend) {
-		payload.ReasoningEffort = strings.TrimSpace(reasoningEffort)
-	}
-
-	if opts.ResponseFormatJSON {
-		payload.ResponseFormat = map[string]string{"type": "json_object"}
-	}
-
-	return payload
-}
-
-func hostedBackendSupportsThinkingToggle(backend string) bool {
-	return isZAIFamilyBackend(backend) || textutil.EqualTrimFold(backend, config.BackendDeepSeek)
-}
-
-func hostedBackendSupportsReasoningEffort(backend string) bool {
-	return isZAIFamilyBackend(backend)
-}
-
-func isZAIFamilyBackend(backend string) bool {
-	return textutil.EqualTrimFold(backend, config.BackendZAI) || textutil.EqualTrimFold(backend, config.BackendGLM)
+func normalizeHostedToolName(name string) string {
+	return strings.NewReplacer(":", "_", "/", "_").Replace(name)
 }
 
 // repairMessageToolPairing ensures every assistant message with tool_calls
@@ -706,37 +557,10 @@ func repairMessageToolPairing(messages []ChatMessage) []ChatMessage {
 	return repaired
 }
 
-// hostedChatMessages prepares messages for a hosted chat backend. For most
-// hosted backends it strips reasoning_content from history to avoid
-// re-sending model-internal reasoning as context. For DeepSeek specifically,
-// assistant reasoning_content must be preserved because the hosted API
-// rejects follow-up requests when prior thinking-mode reasoning is missing
-// from history.
-func hostedChatMessages(messages []ChatMessage, backend string) []ChatMessage {
-	if len(messages) == 0 {
-		return nil
-	}
-
-	// DeepSeek hosted-chat requires reasoning_content continuity in history
-	// when the prior response was in thinking mode. Preserve the field on
-	// assistant messages; other roles should not carry it.
-	preserveReasoning := textutil.EqualTrimFold(backend, config.BackendDeepSeek)
-	out := make([]ChatMessage, len(messages))
-
-	for i, msg := range messages {
-		if !preserveReasoning || msg.Role != "assistant" {
-			msg.ReasoningContent = ""
-		}
-
-		out[i] = msg
-	}
-
-	return out
-}
-
 func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts ChatOptions, onDelta func(string) error) error {
+	adapter := c.adapter()
 	if opts.Model == "" {
-		if isHostedChatBackend(c.Backend()) || isOpenAIResponsesBackend(c.Backend()) {
+		if adapter.RequiresAuth() {
 			opts.Model = c.modelName
 		}
 
@@ -745,45 +569,22 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 		}
 	}
 
-	if isOpenAIResponsesBackend(c.Backend()) {
+	if adapter.Protocol() == backendProtocolResponses {
 		return llmUnsupportedError(fmt.Sprintf("streaming is not implemented for %s backend", c.Backend()))
 	}
 
-	var payload any
-
-	if isHostedChatBackend(c.Backend()) {
-		payload = hostedChatRequestPayload(messages, opts, true, c.Backend(), c.reasoningEffort)
-		if hp, ok := payload.(hostedChatPayload); ok {
-			c.toolNameReverse = hp.ToolNameReverse
-		}
-	} else {
-		messages = repairMessageToolPairing(messages)
-
-		reqPayload := chatRequest{
-			Model:              opts.Model,
-			Messages:           messages,
-			Stream:             true,
-			Temperature:        opts.Temperature,
-			TopP:               opts.TopP,
-			TopK:               opts.TopK,
-			MinP:               opts.MinP,
-			PresencePenalty:    opts.PresencePenalty,
-			RepeatPenalty:      opts.RepetitionPenalty,
-			RepetitionPenalty:  opts.RepetitionPenalty,
-			ChatTemplateKwargs: buildChatTemplateKwargs(opts, c.backend),
-			MaxTokens:          opts.MaxTokens,
-			Tools:              opts.Tools,
-			ToolChoice:         opts.ToolChoice,
-		}
-
-		if opts.ResponseFormatJSON {
-			reqPayload.ResponseFormat = map[string]string{"type": "json_object"}
-		}
-
-		normalizeChatRequestForBackend(&reqPayload, opts, c.backend)
-
-		payload = reqPayload
+	if adapter.Protocol() == backendProtocolMessages {
+		return llmUnsupportedError(fmt.Sprintf("streaming is not implemented for %s backend", c.Backend()))
 	}
+
+	chatAdapter, ok := adapter.(chatCompletionsBackendAdapter)
+	if !ok {
+		return llmUnsupportedError(fmt.Sprintf("chat completions are not implemented for %s backend", c.Backend()))
+	}
+
+	prepared := chatAdapter.ChatCompletionsPayload(messages, opts, true, c.requestSettings())
+	c.toolNameReverse = prepared.ToolNameReverse
+	payload := prepared.Body
 
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -1004,31 +805,14 @@ func responsesToolsFromChatTools(tools []Tool) []responsesTool {
 }
 
 func (c *Client) completeResponsesChatMessage(ctx context.Context, messages []ChatMessage, opts ChatOptions) (ChatMessage, error) {
-	temp := opts.Temperature
-	topP := opts.TopP
-	payload := responsesRequest{
-		Model:           opts.Model,
-		Input:           responsesInputFromMessages(messages),
-		Store:           false,
-		Tools:           responsesToolsFromChatTools(opts.Tools),
-		ToolChoice:      opts.ToolChoice,
-		MaxOutputTokens: opts.MaxTokens,
+	responses, ok := c.adapter().(responsesBackendAdapter)
+	if !ok {
+		return ChatMessage{}, llmUnsupportedError(fmt.Sprintf("responses payload is not implemented for %s backend", c.Backend()))
 	}
 
-	if opts.Temperature > 0 {
-		payload.Temperature = &temp
-	}
-
-	if opts.TopP > 0 {
-		payload.TopP = &topP
-	}
-
-	if c.reasoningEffort != "" {
-		payload.Reasoning = &responsesReasoning{Effort: c.reasoningEffort}
-	}
-
-	if c.verbosity != "" {
-		payload.Text = &responsesText{Verbosity: c.verbosity}
+	payload, ok := responses.ResponsesPayload(messages, opts, c.requestSettings())
+	if !ok {
+		return ChatMessage{}, llmUnsupportedError(fmt.Sprintf("responses payload is not implemented for %s backend", c.Backend()))
 	}
 
 	data, err := json.Marshal(payload)
@@ -1130,6 +914,49 @@ func (c *Client) completeResponsesChatMessage(ctx context.Context, messages []Ch
 	}, nil
 }
 
+func (c *Client) completeMessagesChatMessage(ctx context.Context, messages []ChatMessage, opts ChatOptions) (ChatMessage, error) {
+	adapter, ok := c.adapter().(messagesBackendAdapter)
+	if !ok {
+		return ChatMessage{}, llmUnsupportedError(fmt.Sprintf("messages payload is not implemented for %s backend", c.Backend()))
+	}
+
+	prepared := adapter.MessagesPayload(messages, opts, false, c.requestSettings())
+	c.toolNameReverse = prepared.ToolNameReverse
+
+	data, err := json.Marshal(prepared.Body)
+	if err != nil {
+		return ChatMessage{}, llmDecodeError("marshal messages request", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.messagesURL(), bytes.NewReader(data))
+	if err != nil {
+		return ChatMessage{}, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	if err := c.applyAuth(req); err != nil {
+		return ChatMessage{}, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return ChatMessage{}, llmTransportError("messages request transport failed", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 16*1024*1024))
+	if err != nil {
+		return ChatMessage{}, llmTransportError("read messages response", err)
+	}
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		return ChatMessage{}, llmHTTPStatusError("messages request failed", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	return adapter.DecodeMessagesResponse(body, c.toolNameReverse)
+}
+
 // remapToolCalls applies a reverse name mapping to tool calls returned
 // by a hosted API, undoing the sanitization applied in normalizeHostedTools.
 func remapToolCalls(calls []ToolCall, reverse map[string]string) []ToolCall {
@@ -1149,8 +976,9 @@ func remapToolCalls(calls []ToolCall, reverse map[string]string) []ToolCall {
 }
 
 func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage, opts ChatOptions) (ChatMessage, error) {
+	adapter := c.adapter()
 	if opts.Model == "" {
-		if isHostedChatBackend(c.Backend()) || isOpenAIResponsesBackend(c.Backend()) {
+		if adapter.RequiresAuth() {
 			opts.Model = c.modelName
 		}
 
@@ -1159,45 +987,22 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 		}
 	}
 
-	if isOpenAIResponsesBackend(c.Backend()) {
+	if adapter.Protocol() == backendProtocolResponses {
 		return c.completeResponsesChatMessage(ctx, messages, opts)
 	}
 
-	var payload any
-
-	if isHostedChatBackend(c.Backend()) {
-		payload = hostedChatRequestPayload(messages, opts, false, c.Backend(), c.reasoningEffort)
-		if hp, ok := payload.(hostedChatPayload); ok {
-			c.toolNameReverse = hp.ToolNameReverse
-		}
-	} else {
-		messages = repairMessageToolPairing(messages)
-
-		reqPayload := chatRequest{
-			Model:              opts.Model,
-			Messages:           messages,
-			Stream:             false,
-			Temperature:        opts.Temperature,
-			TopP:               opts.TopP,
-			TopK:               opts.TopK,
-			MinP:               opts.MinP,
-			PresencePenalty:    opts.PresencePenalty,
-			RepeatPenalty:      opts.RepetitionPenalty,
-			RepetitionPenalty:  opts.RepetitionPenalty,
-			ChatTemplateKwargs: buildChatTemplateKwargs(opts, c.backend),
-			MaxTokens:          opts.MaxTokens,
-			Tools:              opts.Tools,
-			ToolChoice:         opts.ToolChoice,
-		}
-
-		if opts.ResponseFormatJSON {
-			reqPayload.ResponseFormat = map[string]string{"type": "json_object"}
-		}
-
-		normalizeChatRequestForBackend(&reqPayload, opts, c.backend)
-
-		payload = reqPayload
+	if adapter.Protocol() == backendProtocolMessages {
+		return c.completeMessagesChatMessage(ctx, messages, opts)
 	}
+
+	chatAdapter, ok := adapter.(chatCompletionsBackendAdapter)
+	if !ok {
+		return ChatMessage{}, llmUnsupportedError(fmt.Sprintf("chat completions are not implemented for %s backend", c.Backend()))
+	}
+
+	prepared := chatAdapter.ChatCompletionsPayload(messages, opts, false, c.requestSettings())
+	c.toolNameReverse = prepared.ToolNameReverse
+	payload := prepared.Body
 
 	data, err := json.Marshal(payload)
 	if err != nil {

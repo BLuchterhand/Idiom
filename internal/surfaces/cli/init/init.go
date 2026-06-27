@@ -202,7 +202,7 @@ const initSeedConfigJSON = `{
 `
 
 const initSeedBackendsJSON = `{
-  "_comment": "Portable backend examples. The default hosted profile needs DEEPSEEK_API_KEY. The local example uses a placeholder model path under ignored models/; replace it with your local model.",
+  "_comment": "Portable backend examples. The default hosted profile needs DEEPSEEK_API_KEY. The Anthropic example needs ANTHROPIC_API_KEY. The local example uses a placeholder model path under ignored models/; replace it with your local model.",
   "default_profile": "deepseek-v4-flash",
   "profiles": {
     "deepseek-v4-flash": {
@@ -222,6 +222,24 @@ const initSeedBackendsJSON = `{
         "default_executor": "deepseek-v4-flash",
         "default_coder": "deepseek-v4-flash",
         "default_classifier": "deepseek-v4-flash"
+      }
+    },
+    "claude-sonnet-example": {
+      "models": [
+        {
+          "alias": "claude-sonnet",
+          "kind": "anthropic",
+          "model": "claude-sonnet-4-6",
+          "api_key_env": "ANTHROPIC_API_KEY",
+          "roles": ["planner", "executor", "classifier"]
+        }
+      ],
+      "proxy": {
+        "default_alias": "claude-sonnet",
+        "default_planner": "claude-sonnet",
+        "default_executor": "claude-sonnet",
+        "default_coder": "claude-sonnet",
+        "default_classifier": "claude-sonnet"
       }
     },
     "local-llama-example": {

@@ -132,7 +132,7 @@ func launchSpecUsesDirectVmlxServe(m Model) bool {
 
 func isHostedModelKind(kind string) bool {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "codex", "deepseek", "glm", "minimax", "openai_responses", "zai":
+	case "anthropic", "codex", "deepseek", "glm", "minimax", "openai_responses", "zai":
 		return true
 	default:
 		return false

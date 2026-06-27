@@ -26,6 +26,29 @@
         "default_classifier": "deepseek-v4-flash"
       }
     },
+    "claude-sonnet-example": {
+      "_comment": "Hosted Anthropic example. Set ANTHROPIC_API_KEY in the shell; no local model process is started.",
+      "models": [
+        {
+          "alias": "claude-sonnet",
+          "model": "claude-sonnet-4-6",
+          "kind": "anthropic",
+          "api_key_env": "ANTHROPIC_API_KEY",
+          "roles": [
+            "planner",
+            "executor",
+            "classifier"
+          ]
+        }
+      ],
+      "proxy": {
+        "default_alias": "claude-sonnet",
+        "default_coder": "claude-sonnet",
+        "default_planner": "claude-sonnet",
+        "default_executor": "claude-sonnet",
+        "default_classifier": "claude-sonnet"
+      }
+    },
     "local-llama-example": {
       "_comment": "Local example. Put your GGUF or local model directory under ignored models/, then update model_path. The checked-in placeholder is intentionally not a real model file.",
       "models": [

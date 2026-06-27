@@ -703,6 +703,90 @@ func TestOpenAIResponsesBackendConvertsToolsAndParsesOutput(t *testing.T) {
 	}
 }
 
+func TestAnthropicBackendUsesMessagesEndpointAuthAndNativeToolBlocks(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-test-key")
+
+	var (
+		got              map[string]any
+		apiKey           string
+		anthropicVersion string
+		auth             string
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+
+		apiKey = r.Header.Get("x-api-key")
+		anthropicVersion = r.Header.Get("anthropic-version")
+		auth = r.Header.Get("Authorization")
+
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+
+		_, _ = w.Write([]byte(`{
+			"role": "assistant",
+			"content": [
+				{"type": "text", "text": "Need the file."},
+				{"type": "tool_use", "id": "toolu_1", "name": "read_file", "input": {"path": "README.md"}}
+			],
+			"stop_reason": "tool_use",
+			"usage": {"input_tokens": 8, "output_tokens": 5}
+		}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, time.Second).
+		WithBackend(config.BackendAnthropic).
+		WithAPIKeyEnv("ANTHROPIC_API_KEY")
+
+	reply, err := client.CompleteChatMessage(context.Background(), []ChatMessage{
+		{Role: "system", Content: "Use tools carefully."},
+		{Role: "user", Content: "read README"},
+	}, ChatOptions{
+		Model:      "claude-sonnet",
+		MaxTokens:  128,
+		ToolChoice: "auto",
+		Tools: []Tool{{
+			Type: "function",
+			Function: ToolFunction{
+				Name:        "read_file",
+				Description: "Read a file",
+				Parameters:  json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}}}`),
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CompleteChatMessage: %v", err)
+	}
+
+	if apiKey != "anthropic-test-key" || anthropicVersion != "2023-06-01" || auth != "" {
+		t.Fatalf("unexpected Anthropic auth headers: x-api-key=%q anthropic-version=%q authorization=%q", apiKey, anthropicVersion, auth)
+	}
+
+	if got["model"] != "claude-sonnet" || got["max_tokens"] != float64(128) || got["system"] != "Use tools carefully." {
+		t.Fatalf("unexpected Anthropic request basics: %#v", got)
+	}
+
+	if messages, ok := got["messages"].([]any); !ok || len(messages) != 1 {
+		t.Fatalf("expected one non-system message, got %#v", got["messages"])
+	}
+
+	if tools, ok := got["tools"].([]any); !ok || len(tools) != 1 {
+		t.Fatalf("expected Anthropic tool definition, got %#v", got["tools"])
+	}
+
+	if reply.Content != "Need the file." || reply.FinishReason != "tool_use" || reply.Usage.TotalTokens != 13 {
+		t.Fatalf("unexpected Anthropic reply: %#v", reply)
+	}
+
+	if len(reply.ToolCalls) != 1 || reply.ToolCalls[0].Function.Name != "read_file" || reply.ToolCalls[0].Function.Arguments != `{"path":"README.md"}` {
+		t.Fatalf("unexpected Anthropic tool call: %#v", reply.ToolCalls)
+	}
+}
+
 func TestBackendSupportsNativeTools(t *testing.T) {
 	if BackendSupportsNativeTools(config.BackendMLX) {
 		t.Fatal("MLX should NOT support native tools")
@@ -712,7 +796,7 @@ func TestBackendSupportsNativeTools(t *testing.T) {
 		t.Fatal("llama backend should keep native tools")
 	}
 
-	if !BackendSupportsNativeTools(config.BackendCodex) || !BackendSupportsNativeTools(config.BackendZAI) || !BackendSupportsNativeTools(config.BackendGLM) {
+	if !BackendSupportsNativeTools(config.BackendCodex) || !BackendSupportsNativeTools(config.BackendZAI) || !BackendSupportsNativeTools(config.BackendGLM) || !BackendSupportsNativeTools(config.BackendAnthropic) {
 		t.Fatal("hosted backends should keep native tools")
 	}
 
@@ -738,6 +822,7 @@ func TestBackendStructuredOutputCapabilitiesAreConservative(t *testing.T) {
 		{config.BackendZAI, true, true, true},
 		{config.BackendGLM, true, true, true},
 		{config.BackendDeepSeek, true, true, true},
+		{config.BackendAnthropic, true, false, false},
 	} {
 		t.Run(tc.backend, func(t *testing.T) {
 			caps := BackendStructuredOutputCapabilities(tc.backend)
