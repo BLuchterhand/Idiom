@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -211,6 +212,23 @@ func TestReadApprovalGateAutoApprovesConversationLogReads(t *testing.T) {
 		gotOrigin != readapproval.EventOriginPolicyDefault {
 
 		t.Fatalf("unexpected default approval event: decision=%+v origin=%q", gotDecision, gotOrigin)
+	}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	codexSession := filepath.Join(home, ".codex", "sessions", "2026", "06", "28", "rollout-2026-06-28T12-00-00-session.jsonl")
+
+	override, denialContext = gate.MaybeOverrideRejection(
+		context.Background(),
+		"session-1",
+		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: codexSession},
+		workerruntime.WorkerRuntimeBrief{TaskFamily: "plan-then-execute-planner"},
+		plancontract.PlanExecuteRejectionReadOutsideAllowedCandidateScope,
+		codexSession+" is not an explicit allowed candidate path.",
+	)
+	if !override || denialContext != "" {
+		t.Fatalf("codex session log should be default-approved, override=%v denial=%q", override, denialContext)
 	}
 }
 

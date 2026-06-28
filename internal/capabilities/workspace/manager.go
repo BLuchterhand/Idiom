@@ -4149,7 +4149,11 @@ func (m *Manager) exploreListPriority(entry listedEntry) int {
 func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 	base, err := m.resolvePath(defaultString(req.Path, "."), req.Workdir)
 	if err != nil {
-		return ToolResult{Tool: ToolNameSearchFiles, Summary: "Failed to resolve path", Error: err.Error()}
+		if resolved, ok := resolveUserGlobalConversationLogSearchPath(defaultString(req.Path, ".")); ok {
+			base = resolved
+		} else {
+			return ToolResult{Tool: ToolNameSearchFiles, Summary: "Failed to resolve path", Error: err.Error()}
+		}
 	}
 
 	pattern, interpretedPattern := searchFilesPattern(req)
@@ -4802,7 +4806,11 @@ func (m *Manager) fileStats(req ToolRequest) ToolResult {
 
 	target, err := m.resolvePath(requestPath, req.Workdir)
 	if err != nil {
-		return ToolResult{Tool: ToolNameFileStats, Summary: "Failed to resolve path", Error: err.Error()}
+		if resolved, ok := resolveUserGlobalConversationLogSearchPath(requestPath); ok {
+			target = resolved
+		} else {
+			return ToolResult{Tool: ToolNameFileStats, Summary: "Failed to resolve path", Error: err.Error()}
+		}
 	}
 
 	info, err := os.Stat(target)

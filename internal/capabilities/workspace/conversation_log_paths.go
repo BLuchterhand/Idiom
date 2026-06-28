@@ -12,6 +12,8 @@ const (
 	workspaceConversationLogDir  = "logs/conversations"
 	projectConversationLogDir    = ".idiom/logs/conversations"
 	userGlobalConversationLogDir = ".idiom/logs/conversations"
+	userGlobalCodexSessionDir    = ".codex/sessions"
+	userGlobalCodexArchiveDir    = ".codex/archived_sessions"
 )
 
 // IsDefaultReadableConversationLogPath reports whether path is one of the
@@ -24,13 +26,22 @@ func IsDefaultReadableConversationLogPath(path string) bool {
 	}
 
 	if filepath.IsAbs(path) {
-		return isUserGlobalConversationLogPath(path)
+		_, ok := resolveUserGlobalConversationLogPath(path, false)
+		return ok
 	}
 
 	return isConversationLogRelativePath(path)
 }
 
 func resolveUserGlobalConversationLogReadPath(path string) (string, bool) {
+	return resolveUserGlobalConversationLogPath(path, false)
+}
+
+func resolveUserGlobalConversationLogSearchPath(path string) (string, bool) {
+	return resolveUserGlobalConversationLogPath(path, true)
+}
+
+func resolveUserGlobalConversationLogPath(path string, allowDirectoryScope bool) (string, bool) {
 	path = strings.TrimSpace(path)
 	if path == "" || !filepath.IsAbs(path) {
 		return "", false
@@ -49,36 +60,37 @@ func resolveUserGlobalConversationLogReadPath(path string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	if !pathIsAtOrUnder(rel, userGlobalConversationLogDir) {
+	if !isUserGlobalConversationLogRel(rel, allowDirectoryScope) {
 		return "", false
 	}
 
 	return resolved, true
 }
 
-func isUserGlobalConversationLogPath(path string) bool {
-	path = strings.TrimSpace(path)
-	if path == "" || !filepath.IsAbs(path) {
-		return false
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil || strings.TrimSpace(home) == "" {
-		return false
-	}
-
-	rel, ok := safepath.Rel(filepath.Clean(home), filepath.Clean(path))
-	if !ok {
-		return false
-	}
-
-	return pathIsAtOrUnder(rel, userGlobalConversationLogDir)
-}
-
 func isConversationLogRelativePath(path string) bool {
 	normalized := normalizeConversationLogPath(path)
 	return pathIsAtOrUnder(normalized, workspaceConversationLogDir) ||
 		pathIsAtOrUnder(normalized, projectConversationLogDir)
+}
+
+func isUserGlobalConversationLogRel(path string, allowDirectoryScope bool) bool {
+	normalized := normalizeConversationLogPath(path)
+	if pathIsAtOrUnder(normalized, userGlobalConversationLogDir) {
+		return true
+	}
+
+	if allowDirectoryScope && (pathIsAtOrUnder(normalized, userGlobalCodexSessionDir) ||
+		pathIsAtOrUnder(normalized, userGlobalCodexArchiveDir)) {
+
+		return true
+	}
+
+	if !strings.EqualFold(filepath.Ext(normalized), ".jsonl") {
+		return false
+	}
+
+	return pathIsAtOrUnder(normalized, userGlobalCodexSessionDir) ||
+		pathIsAtOrUnder(normalized, userGlobalCodexArchiveDir)
 }
 
 func normalizeConversationLogPath(path string) string {

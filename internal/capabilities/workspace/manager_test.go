@@ -2542,24 +2542,30 @@ func TestReadFileAllowsUserGlobalConversationLog(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 
-	logPath := filepath.Join(home, ".idiom", "logs", "conversations", "session.jsonl")
-	writeTestFile(t, logPath, "line-001\nline-002\n")
-
 	mgr := NewManager(config.Workspace{
 		Root:         dir,
 		CWD:          dir,
 		MaxFileBytes: 1 << 20,
 	})
-	result := mgr.Execute(context.Background(), ToolRequest{
-		Tool: ToolNameReadFile,
-		Path: logPath,
-	})
 
-	if result.Error != "" {
-		t.Fatalf("read_file should allow user-global conversation log, got %#v", result)
-	}
-	if !strings.Contains(result.Output, "line-002") || !strings.Contains(result.Summary, "session.jsonl") {
-		t.Fatalf("expected conversation log output, summary=%q output=\n%s", result.Summary, result.Output)
+	for _, logPath := range []string{
+		filepath.Join(home, ".idiom", "logs", "conversations", "session.jsonl"),
+		filepath.Join(home, ".codex", "sessions", "2026", "06", "28", "rollout-2026-06-28T12-00-00-session.jsonl"),
+		filepath.Join(home, ".codex", "archived_sessions", "rollout-2026-06-28T12-00-00-session.jsonl"),
+	} {
+		writeTestFile(t, logPath, "line-001\nline-002\n")
+
+		result := mgr.Execute(context.Background(), ToolRequest{
+			Tool: ToolNameReadFile,
+			Path: logPath,
+		})
+
+		if result.Error != "" {
+			t.Fatalf("read_file should allow user-global conversation log %q, got %#v", logPath, result)
+		}
+		if !strings.Contains(result.Output, "line-002") || !strings.Contains(result.Summary, filepath.Base(logPath)) {
+			t.Fatalf("expected conversation log output for %q, summary=%q output=\n%s", logPath, result.Summary, result.Output)
+		}
 	}
 }
 
@@ -2584,6 +2590,86 @@ func TestReadFileRejectsOtherUserGlobalIdiomFiles(t *testing.T) {
 
 	if result.Error == "" || !strings.Contains(result.Error, "escapes workspace root") {
 		t.Fatalf("read_file should reject non-log user-global .idiom path, got %#v", result)
+	}
+}
+
+func TestSearchFilesAllowsUserGlobalConversationLogDirs(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	idiomLog := filepath.Join(home, ".idiom", "logs", "conversations", "session.jsonl")
+	codexSession := filepath.Join(home, ".codex", "sessions", "2026", "06", "28", "rollout-2026-06-28T12-00-00-session.jsonl")
+	codexArchivedSession := filepath.Join(home, ".codex", "archived_sessions", "rollout-2026-06-28T12-00-00-session.jsonl")
+	for _, path := range []string{idiomLog, codexSession, codexArchivedSession} {
+		writeTestFile(t, path, "{}\n")
+	}
+
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		MaxDirectoryEntries: 20,
+	})
+
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{path: filepath.Join(home, ".idiom", "logs", "conversations"), want: filepath.Base(idiomLog)},
+		{path: filepath.Join(home, ".codex", "sessions"), want: filepath.Base(codexSession)},
+		{path: filepath.Join(home, ".codex", "archived_sessions"), want: filepath.Base(codexArchivedSession)},
+	} {
+		result := mgr.Execute(context.Background(), ToolRequest{
+			Tool:    ToolNameSearchFiles,
+			Path:    tc.path,
+			Pattern: ".jsonl",
+		})
+
+		if result.Error != "" {
+			t.Fatalf("search_files should allow global conversation log dir %q, got %#v", tc.path, result)
+		}
+		if !strings.Contains(result.Output, tc.want) {
+			t.Fatalf("search_files output for %q missing %q, summary=%q output=\n%s", tc.path, tc.want, result.Summary, result.Output)
+		}
+
+		stats := mgr.Execute(context.Background(), ToolRequest{
+			Tool:      ToolNameFileStats,
+			Path:      tc.path,
+			Recursive: true,
+			Glob:      "*.jsonl",
+		})
+		if stats.Error != "" {
+			t.Fatalf("file_stats should allow global conversation log dir %q, got %#v", tc.path, stats)
+		}
+		if !strings.Contains(stats.Output, tc.want) {
+			t.Fatalf("file_stats output for %q missing %q, summary=%q output=\n%s", tc.path, tc.want, stats.Summary, stats.Output)
+		}
+	}
+}
+
+func TestSearchFilesRejectsOtherUserGlobalHiddenDirs(t *testing.T) {
+	dir := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	privatePath := filepath.Join(home, ".codex", "config.toml")
+	writeTestFile(t, privatePath, "model = \"example\"\n")
+
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		MaxDirectoryEntries: 20,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    ToolNameSearchFiles,
+		Path:    filepath.Join(home, ".codex"),
+		Pattern: "config",
+	})
+
+	if result.Error == "" || !strings.Contains(result.Error, "escapes workspace root") {
+		t.Fatalf("search_files should reject non-log user-global .codex path, got %#v", result)
 	}
 }
 
