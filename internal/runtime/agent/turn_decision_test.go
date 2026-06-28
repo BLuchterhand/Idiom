@@ -163,19 +163,19 @@ func TestSourceGroundingRejectionContractClassifiesRenderedMessages(t *testing.T
 	}{
 		{
 			name: "candidate only completion gate",
-			text: sourceGroundingCandidateOnlyMessage([]string{"testdata/swe/debug-logs-weird-decisions-suite.json", "docs/configuration.md"}),
+			text: sourceGroundingCandidateOnlyAssessment([]string{"testdata/swe/debug-logs-weird-decisions-suite.json", "docs/configuration.md"}).Message(),
 			kind: sourceGroundingRejectionCandidateOnly,
 			path: "docs/configuration.md",
 		},
 		{
 			name: "missing candidate citation",
-			text: sourceGroundingMissingCandidateMessage([]string{"internal/runtime/agent/implementation_flow.go"}),
+			text: sourceGroundingMissingCandidateAssessment([]string{"internal/runtime/agent/implementation_flow.go"}).Message(),
 			kind: sourceGroundingRejectionMissingCandidate,
 			path: "internal/runtime/agent/implementation_flow.go",
 		},
 		{
 			name: "unsupported source detail",
-			text: sourceGroundingUnsupportedDetailMessage([]string{"internal/runtime/agent/runner_core.go:11456"}),
+			text: sourceGroundingUnsupportedDetailAssessment([]string{"internal/runtime/agent/runner_core.go:11456"}).Message(),
 			kind: sourceGroundingRejectionUnsupportedDetail,
 			path: "internal/runtime/agent/runner_core.go:11456",
 		},
@@ -200,22 +200,29 @@ func TestSourceGroundingRejectionContractClassifiesRenderedMessages(t *testing.T
 	}
 }
 
-func TestSourceGroundingRejectionContractSurvivesGateRetryPrefix(t *testing.T) {
-	base := sourceGroundingCandidateOnlyMessage([]string{"testdata/swe/debug-logs-weird-decisions-suite.json", "docs/configuration.md"})
-	escalated := escalateCompletionGateMessage(base, 1)
+func TestSourceGroundingRejectionContractSurvivesRecoveryPrefixes(t *testing.T) {
+	base := sourceGroundingCandidateOnlyAssessment([]string{"testdata/swe/debug-logs-weird-decisions-suite.json", "docs/configuration.md"}).Message()
 
-	rejection, ok := classifySourceGroundingRejectionText(escalated)
-	if !ok {
-		t.Fatalf("escalated candidate-only message should still classify:\n%s", escalated)
-	}
-	if rejection.Kind != sourceGroundingRejectionCandidateOnly {
-		t.Fatalf("kind = %q, want %q", rejection.Kind, sourceGroundingRejectionCandidateOnly)
-	}
-	if !slices.Contains(rejection.Paths, "docs/configuration.md") {
-		t.Fatalf("paths = %#v, want docs/configuration.md", rejection.Paths)
-	}
-	if strings.Contains(escalated, "use a different tool call") {
-		t.Fatalf("candidate-only source-grounding retry must not use generic recovery text:\n%s", escalated)
+	for _, escalated := range []string{
+		"[gate retry 2/3] " + base,
+		escalateCompletionGateMessage(base, 1),
+	} {
+		rejection, ok := classifySourceGroundingRejectionText(escalated)
+		if !ok {
+			t.Fatalf("escalated candidate-only message should still classify:\n%s", escalated)
+		}
+		if rejection.Kind != sourceGroundingRejectionCandidateOnly {
+			t.Fatalf("kind = %q, want %q", rejection.Kind, sourceGroundingRejectionCandidateOnly)
+		}
+		if !slices.Contains(rejection.Paths, "docs/configuration.md") {
+			t.Fatalf("paths = %#v, want docs/configuration.md", rejection.Paths)
+		}
+		if strings.Contains(escalated, "use a different tool call") {
+			t.Fatalf("candidate-only source-grounding retry must not use generic recovery text:\n%s", escalated)
+		}
+		if detail := rejection.PresentableDetail(); strings.Contains(detail, "[gate retry") || strings.Contains(detail, "[source evidence recovery") {
+			t.Fatalf("presentable detail should not leak gate prefix, got %q", detail)
+		}
 	}
 }
 

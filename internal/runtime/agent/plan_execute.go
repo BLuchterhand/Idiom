@@ -2988,6 +2988,8 @@ func mutationReplyClaimsCompletedWorkspaceChange(reply string) bool {
 	)
 }
 
+const sourceGroundingAdditionalReadRecoveryRetries = 2
+
 // escalateCompletionGateMessage prefixes the gate's existing error
 // text with progressively-firmer instructions so the model gets
 // clearer guidance on each retry instead of the same message N times.
@@ -3008,15 +3010,27 @@ func mutationReplyClaimsCompletedWorkspaceChange(reply string) bool {
 //
 //	concrete tool call by name OR an explicit blocker statement.
 func escalateCompletionGateMessage(base string, priorRejections int) string {
+	return escalateCompletionGateMessageWithSourceRecovery(base, priorRejections, true, 5)
+}
+
+func (r *Runner) escalateCompletionGateMessageForError(base string, priorRejections int, results []workspace.ToolResult, allowedTools []string) string {
+	return escalateCompletionGateMessageWithSourceRecovery(
+		base,
+		priorRejections,
+		r.sourceGroundingReadRecoveryAvailable(base, allowedTools),
+		r.completionGateRetryLimitForError(base, results, allowedTools),
+	)
+}
+
+func escalateCompletionGateMessageWithSourceRecovery(base string, priorRejections int, sourceReadRecoveryAvailable bool, retryLimit int) string {
 	trimmed := strings.TrimSpace(base)
 	if trimmed == "" {
 		return base
 	}
 
-	// Detect source-grounding rejection patterns.  When the gate says the
-	// model cited paths without source-body evidence, the fix is to rewrite
-	// the answer text — not to call more tools (the model already has the
-	// needed evidence in its context).
+	// Detect source-grounding rejection patterns. When the gate says the model
+	// cited paths without source-body evidence, the next valid action is either
+	// a bounded source-body read or an explicitly qualified citation.
 	_, isSourceGrounding := classifySourceGroundingRejectionText(trimmed)
 
 	switch {
@@ -3024,7 +3038,17 @@ func escalateCompletionGateMessage(base string, priorRejections int) string {
 		return base
 	case priorRejections == 1:
 		if isSourceGrounding {
-			return "[gate retry 2/3] " + trimmed +
+			if !sourceReadRecoveryAvailable {
+				return "[gate retry 2/3] " + trimmed +
+					" — the gate already rejected one prior attempt with this error;" +
+					" your next move MUST resolve the stated blocker (qualify unsupported" +
+					" source citations as 'unverified' next to the claim, or state the" +
+					" exact reason source-body evidence cannot be produced)."
+			}
+			if retryLimit <= 0 {
+				retryLimit = 5
+			}
+			return fmt.Sprintf("[source evidence recovery 2/%d] ", retryLimit) + trimmed +
 				" — the gate already rejected one prior attempt with this error;" +
 				" your next move MUST resolve the stated blocker (call one bounded" +
 				" `read_file` or `code_navigate` for each cited unread path, or" +
@@ -3036,11 +3060,25 @@ func escalateCompletionGateMessage(base string, priorRejections int) string {
 			" call or state a concrete reason this cannot proceed)."
 	default:
 		if isSourceGrounding {
-			return "[gate retry 3/3 — last attempt before tools disable] " + trimmed +
-				" — repeated rejections indicate the active reply does not satisfy" +
-				" the contract. Make one bounded `read_file` or `code_navigate` call" +
-				" for each cited unread path, or qualify each as 'unverified' next to" +
-				" the citation. Do not narrate; act."
+			if !sourceReadRecoveryAvailable {
+				return "[gate retry 3/3 — last attempt before tools disable] " + trimmed +
+					" — repeated source-grounding rejections mean the active reply still cites" +
+					" evidence the harness has not seen as source-body support. Qualify the" +
+					" unsupported citation as 'unverified' next to the claim, or answer with" +
+					" the exact blocker. Do not narrate; act."
+			}
+			attempt := priorRejections + 1
+			if retryLimit <= 0 {
+				retryLimit = 5
+			}
+			if attempt > retryLimit {
+				attempt = retryLimit
+			}
+			return fmt.Sprintf("[source evidence recovery %d/%d] ", attempt, retryLimit) + trimmed +
+				" — repeated source-grounding rejections mean the active reply still cites" +
+				" evidence the harness has not seen as source-body support. Make one bounded" +
+				" `read_file` or `code_navigate` call for a cited unread path, or qualify" +
+				" that citation as 'unverified' next to the claim. Do not narrate; act."
 		}
 		return "[gate retry 3/3 — last attempt before tools disable] " + trimmed +
 			" — repeated rejections indicate the active reply does not satisfy" +
@@ -3101,12 +3139,66 @@ func (r *Runner) completionGateRetryLimit(results []workspace.ToolResult) int {
 	return 2 // default retry limit; coupled to the "2/3" and "3/3" labels in escalateCompletionGateMessage
 }
 
+func (r *Runner) sourceGroundingCompletionGateRetryLimit(results []workspace.ToolResult) int {
+	return r.completionGateRetryLimit(results) + sourceGroundingAdditionalReadRecoveryRetries
+}
+
+func (r *Runner) completionGateRetryLimitForError(errorText string, results []workspace.ToolResult, allowedTools []string) int {
+	if r.sourceGroundingReadRecoveryAvailable(errorText, allowedTools) {
+		return r.sourceGroundingCompletionGateRetryLimit(results)
+	}
+
+	return r.completionGateRetryLimit(results)
+}
+
+func (r *Runner) sourceGroundingReadRecoveryAvailable(errorText string, allowedTools []string) bool {
+	if r == nil || !isSourceGroundingError(errorText) {
+		return false
+	}
+
+	return r.sourceGroundingReadRecoveryEligible(allowedTools)
+}
+
+func (r *Runner) sourceGroundingReadRecoveryEligible(allowedTools []string) bool {
+	if r == nil {
+		return false
+	}
+
+	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
+	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) ||
+		len(brief.RequiredEditPaths) > 0 ||
+		runnerBriefRequiresMutation(brief) {
+
+		return false
+	}
+
+	tools := textutil.Unique(append(append([]string(nil), brief.AllowedTools...), allowedTools...))
+
+	return sourceGroundingReadRecoveryToolsAvailable(tools)
+}
+
+func sourceGroundingReadRecoveryToolsAvailable(tools []string) bool {
+	return toolAllowed(tools, workspace.ToolNameReadFile) ||
+		toolAllowed(tools, workspace.ToolNameCodeNavigate)
+}
+
 func (r *Runner) retryableFinalAnswerAcceptanceRejection(acceptance finalAnswerAcceptance, results []workspace.ToolResult, priorGateRejections int, allowedTools []string) bool {
 	if r == nil {
 		return false
 	}
 
-	if priorGateRejections >= r.completionGateRetryLimit(results) {
+	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
+	violationKind, hasViolation := finalAnswerAcceptanceViolationKind(acceptance)
+
+	retryLimit := r.completionGateRetryLimit(results)
+	if hasViolation &&
+		violationKind == turnViolationSourceGroundingUnmet &&
+		r.sourceGroundingReadRecoveryEligible(allowedTools) {
+
+		retryLimit = r.sourceGroundingCompletionGateRetryLimit(results)
+	}
+
+	if priorGateRejections >= retryLimit {
 		return false
 	}
 
@@ -3114,11 +3206,11 @@ func (r *Runner) retryableFinalAnswerAcceptanceRejection(acceptance finalAnswerA
 		return r.planThenExecuteAnchorRefreshFinalAnswerPending(results)
 	}
 
-	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
 	retryPolicy := turnFinalAnswerRejectionRetryPolicyForBrief(brief, acceptance)
 	if !retryPolicy.Retryable {
 		return false
 	}
+
 	if !retryPolicy.RequiresReadOnlyEvidence {
 		return true
 	}
@@ -3441,17 +3533,8 @@ func (r *Runner) readOnlyEvidenceCompletionRecoveryPrompt(results []workspace.To
 	// before the Readiness gate because even a nil/ready Readiness can
 	// produce a source-grounding-unmet rejection on the answer text.
 	if r.lastCompletionGateError != "" {
-		if paths := readOnlySourceGroundingUnsupportedPathsFromError(r.lastCompletionGateError); len(paths) > 0 {
-			lines := []string{
-				"The completion gate rejected the answer because source paths were cited without body evidence: " + formatInlinePathList(paths, 4) + ".",
-				"Valid next strategies: read one unsupported path with a bounded `read_file` or `code_navigate` body request; rewrite the answer so it cites only body-backed evidence; qualify candidate-only paths as `unverified`; or answer `<<QUESTION>>:` with the exact blocker if the evidence source is unavailable.",
-			}
-			if ledger := readOnlyEvidenceLedgerGuidanceForBrief(brief, results); ledger != "" {
-				lines = append(lines, ledger)
-			}
-			lines = append(lines, "Do not broaden into new search/discovery unless you can name the exact missing claim that the current evidence ledger cannot answer.")
-
-			return strings.Join(lines, "\n\n")
+		if assessment, ok := classifySourceGroundingRejectionText(r.lastCompletionGateError); ok && len(assessment.Paths) > 0 {
+			return assessment.RecoveryPrompt(readOnlyEvidenceLedgerGuidanceForBrief(brief, results))
 		}
 	}
 
@@ -3495,24 +3578,6 @@ func (r *Runner) readOnlyEvidenceCompletionRecoveryPrompt(results []workspace.To
 	}
 
 	return "The completion gate rejected a read-only final answer because no bounded workspace evidence has been gathered yet. Make one targeted read/search/discovery request tied to the explicit question, then answer from the returned evidence. Do not edit files, run shell commands, or answer before evidence."
-}
-
-// readOnlySourceGroundingUnsupportedPathsFromError extracts the unsupported
-// path names from a source-grounding rejection error message. The error formats
-// come from sourceGroundingRejectionReason and read:
-//
-//	"the answer cites path(s) that were discovered as index candidates
-//	 but not read as source-body evidence: PATH1, PATH2. Read..."
-//
-//	"the answer cites source path/line/symbol detail not backed by a
-//	 source-body read: PATH1, PATH2. Use one exact read..."
-//
-// or from architectureUnsupportedExactDetail:
-//
-//	"the answer names additional implementation detail PATH1, PATH2
-//	 without an exact inspected probe..."
-func readOnlySourceGroundingUnsupportedPathsFromError(errText string) []string {
-	return sourceGroundingRejectionPaths(errText)
 }
 
 func postWriteVerificationPendingRecoveryPrompt(results []workspace.ToolResult, plannerOwned bool) string {

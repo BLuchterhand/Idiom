@@ -34,7 +34,7 @@ const (
 // body-read status, candidate tracking, and basename resolution.
 //
 // Consolidates the following previously independent concerns:
-//   - sourceCitationExists / sourceCitationCanonicalPath (runner_source_grounding.go)
+//   - sourceCitationExists / sourceCitationCanonicalPath (source_grounding.go)
 //   - sourceEvidenceBodyReadForPath / sourceEvidenceBodyPaths (source_evidence_state.go)
 //   - pendingDiscoveryCandidates / discoveryConsumptionCandidatesFromResult
 //     (runner_execution_state.go)

@@ -1499,12 +1499,6 @@ type Runner struct {
 	// completion-gate rejection so that recovery prompt functions can
 	// inspect it without the result being in collectedResults yet.
 	lastCompletionGateError string
-
-	// sourceGroundingProseRetriesLeft tracks how many additional retries
-	// the model gets after a source-grounding rejection hid non-read tools.
-	// When > 0, a prose retry injects a stricter tool-call message instead
-	// of blocking permanently.
-	sourceGroundingProseRetriesLeft int
 }
 
 func (r *Runner) supportsNativeTools() bool {
@@ -2420,7 +2414,7 @@ func (r *Runner) runLegacySessionBody(
 			if rejected {
 				priorGateRejections := completionGateRejections
 
-				result.Error = escalateCompletionGateMessage(result.Error, priorGateRejections)
+				result.Error = r.escalateCompletionGateMessageForError(result.Error, priorGateRejections, collectedResults, currentAllowedTools)
 
 				if autonomyRecorder != nil {
 					autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyReject, runnerAutonomyReasonCode(result.Summary), collectedResults, priorGateRejections)
@@ -2439,17 +2433,21 @@ func (r *Runner) runLegacySessionBody(
 				// collectedResults.
 				r.lastCompletionGateError = result.Error
 
+				retryLimit := r.completionGateRetryLimitForError(result.Error, collectedResults, currentAllowedTools)
+				sourceGroundingReadRecovery := r.sourceGroundingReadRecoveryAvailable(result.Error, currentAllowedTools) &&
+					priorGateRejections < retryLimit
+
 				shouldAttachRecoveryPrompt := priorGateRejections == 0 ||
 					result.Summary == "Completion gate rejected unresolved process narration" ||
 					(r.planThenExecuteCompletionGateSummaryRetryable(result.Summary, collectedResults, priorGateRejections)) ||
-					(r.textualRequiredPathCompletionRecoveryApplies(collectedResults) && priorGateRejections < r.completionGateRetryLimit(collectedResults)) ||
-					(r.unscopedNoWriteCompletionRecoveryApplies(collectedResults) && priorGateRejections < r.completionGateRetryLimit(collectedResults)) ||
-					(r.completionGateMutationRecoveryApplies(collectedResults) && priorGateRejections < r.completionGateRetryLimit(collectedResults)) ||
+					(r.textualRequiredPathCompletionRecoveryApplies(collectedResults) && priorGateRejections < retryLimit) ||
+					(r.unscopedNoWriteCompletionRecoveryApplies(collectedResults) && priorGateRejections < retryLimit) ||
+					(r.completionGateMutationRecoveryApplies(collectedResults) && priorGateRejections < retryLimit) ||
 					// Read-only workspace lanes get the recovery prompt on every
 					// rejection — the model needs continuous guidance about what
 					// source-body evidence is required and what tools are restricted,
 					// not just on the first failed attempt.
-					(workerruntime.PermissionProfileIsReadOnlyWorkspace(r.RuntimeBrief.PermissionProfile) && priorGateRejections < r.completionGateRetryLimit(collectedResults))
+					(workerruntime.PermissionProfileIsReadOnlyWorkspace(r.RuntimeBrief.PermissionProfile) && priorGateRejections < retryLimit)
 
 				if prompt, hideReads, ok := r.completionGateRecoveryPrompt(collectedResults); ok && shouldAttachRecoveryPrompt {
 					opts = completionGateRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
@@ -2509,7 +2507,7 @@ func (r *Runner) runLegacySessionBody(
 					r.emitEvent(RunEvent{Role: "completion_gate_recovery", Content: prompt})
 				}
 
-				if priorGateRejections >= r.completionGateRetryLimit(collectedResults) {
+				if priorGateRejections >= retryLimit {
 					if recovered, _, ok := r.readOnlyTerminalRecoveryCandidate(completionGateRepeatedRejectionAcceptance(), collectedResults); ok {
 						emitCompletionStatus("accepted", "read_only_terminal_recovery", "", collectedResults, false)
 
@@ -2523,24 +2521,22 @@ func (r *Runner) runLegacySessionBody(
 					return finish(answer, nil, blockerKind, true)
 				}
 
-				if policy.shouldStopForNoProgress(consecutiveNoProgress) {
-					answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
-					return finish(answer, err, "no_progress_budget_exhausted", true)
-				}
-
-				// If the model answered in prose again after tools were hidden for
-				// source-grounding, inject a stricter tool-call requirement message
-				// one time before blocking permanently.
-				if r.sourceGroundingProseRetriesLeft > 0 && r.lastCompletionGateError != "" && isSourceGroundingError(r.lastCompletionGateError) {
-					r.sourceGroundingProseRetriesLeft--
+				if sourceGroundingReadRecovery {
+					hideNonSourceBodyReadTools(turnHiddenTools, currentAllowedTools)
+					rebuildTools()
 
 					turnMessages = append(turnMessages, llama.ChatMessage{
 						Role:    "system",
-						Content: "Your response was rejected because it is a prose answer. The completion gate requires source-body evidence for a cited path. You MUST call `read_file` or `code_navigate` with the exact path, or answer `<<QUESTION>>:` with the specific blocker if the path does not exist on disk. Do not answer in prose again until you have read the cited path.",
+						Content: "Your response was rejected because it cites source evidence that has not been read as source-body support. Your next visible action must be exactly one bounded `read_file` or `code_navigate` call for a cited unread path, or `<<QUESTION>>:` with the specific blocker if that path cannot be read. Do not answer in prose again until the cited path has source-body evidence or is explicitly qualified as unverified.",
 					})
 
-					r.emitEvent(RunEvent{Role: "source_grounding_tool_required", Content: "Prose retry rejected after tool hide — tool call required"})
-					metrics.ModelCalls++
+					r.emitEvent(RunEvent{Role: "source_grounding_tool_required", Content: "Source-grounding rejection kept read tools available and required a bounded source-body read"})
+					continue
+				}
+
+				if policy.shouldStopForNoProgress(consecutiveNoProgress) {
+					answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
+					return finish(answer, err, "no_progress_budget_exhausted", true)
 				}
 
 				continue
@@ -5634,7 +5630,6 @@ func (r *Runner) planThenExecuteCompletionGateSummaryRetryable(summary string, r
 	}
 }
 
-// sourceGroundingProseRetryUsed checks whether the model already received one
 func maxToolStepsExhaustedReason() string {
 	return "Maximum tool steps for this turn have been reached. Tools are now disabled. Respond with a concise, direct, text-only final answer synthesized from the evidence already gathered. If one exact claim remains unsupported, state that uncertainty after the supported answer with the smallest useful next action. Do not leave the response blank."
 }
@@ -11413,7 +11408,7 @@ func (r *Runner) readOnlyEvidenceCompletionRejection(reply string, results []wor
 		return workspace.ToolResult{}, false
 	}
 
-	directCandidateOnlyLedger, directCandidateOnly := readOnlyDirectAnswerCandidateOnlyLedger(brief, results)
+	candidateOnlyAssessment, directCandidateOnly := sourceGroundingCandidateOnlyCompletionAssessment(brief, reply, results)
 	if brief.Readiness == nil &&
 		!readOnlyExplanationGateApplies(brief) &&
 		!workerruntime.TaskFamilyMatches(brief.TaskFamily, autonomy.TaskFamilyDirectAnswer) &&
@@ -11441,32 +11436,30 @@ func (r *Runner) readOnlyEvidenceCompletionRejection(reply string, results []wor
 		}
 	}
 
+	diagnosticArtifactSupported := sourceGroundingDiagnosticArtifactCitationSupportsObjective(brief, reply, results)
 	if readOnlyDirectAnswerLane(brief) &&
 		(readOnlyAnswerHasConcreteEvidence(results) ||
 			readOnlyPlanArtifactEvidenceSupportsReply(brief, reply, results) ||
-			readOnlyAnswerCitesReadDiagnosticArtifact(reply, results)) {
+			diagnosticArtifactSupported) {
 
 		if acceptance := r.evaluateFinalAnswerAcceptance(reply, results); acceptance.BlockerKind == "" {
 			return workspace.ToolResult{}, false
 		}
 	}
 
-	if directCandidateOnly && !readOnlyAnswerCitesReadDiagnosticArtifact(reply, results) {
-		candidates := closurePromptEvidencePaths(directCandidateOnlyLedger.CandidatePaths, 4)
-		if len(candidates) > 0 {
-			return workspace.ToolResult{
-				Tool:    "completion_gate",
-				Summary: "Read-only completion gate rejected final answer",
-				Error:   sourceGroundingCandidateOnlyMessage(candidates),
-			}, true
-		}
+	if candidateOnlyAssessment.BlocksFinalAnswer() {
+		return workspace.ToolResult{
+			Tool:    "completion_gate",
+			Summary: "Read-only completion gate rejected final answer",
+			Error:   candidateOnlyAssessment.Message(),
+		}, true
 	}
 
 	if genericReadOnlyAnswerEvidenceReady(brief, results) {
 		return workspace.ToolResult{}, false
 	}
 
-	if readOnlyAnswerCitesReadDiagnosticArtifact(reply, results) {
+	if diagnosticArtifactSupported {
 		return workspace.ToolResult{}, false
 	}
 
@@ -13980,12 +13973,10 @@ func (r *Runner) retryRejectedFinalAnswerForRun(input runnerFinalAnswerRetryInpu
 	delete(input.turnHiddenTools, workspace.ToolNameCodeNavigate)
 	delete(input.turnHiddenTools, workspace.ToolNameReadFile)
 
-	// When the retry is for a source-grounding rejection (model cited paths
-	// without reading them), hide all non-read tools so the model's only
-	// available action is to call read_file or code_navigate for the missing
-	// path. This prevents the model from trying to fix the answer text in
-	// prose instead of reading the cited file.
-	if input.result.Error != "" && isSourceGroundingError(input.result.Error) {
+	// When source-body read tools are available for a source-grounding
+	// rejection, hide non-read tools so the next action is a bounded source
+	// read instead of another prose answer.
+	if r.sourceGroundingReadRecoveryAvailable(input.result.Error, input.currentAllowedTools) {
 		hideNonSourceBodyReadTools(input.turnHiddenTools, input.currentAllowedTools)
 		if state != nil && len(input.turnHiddenTools) > 0 {
 			if len(state.toolSurface.VisibleTools) == 0 && len(state.toolSurface.HiddenTools) == 0 {
@@ -13994,11 +13985,6 @@ func (r *Runner) retryRejectedFinalAnswerForRun(input runnerFinalAnswerRetryInpu
 			state.toolSurface.Hide(OwnerSourceGrounding, mapTrueKeys(input.turnHiddenTools)...)
 			state.syncToolSurfaceFromBridge()
 		}
-		// Give the model multiple retries to call a read tool before the
-		// session hits the retry limit. The counter is overwritten on each
-		// retry so it tracks how many prose retries remain since the last
-		// tool restriction — not a cumulative budget.
-		r.sourceGroundingProseRetriesLeft = 2
 	}
 	if input.rebuildTools != nil {
 		input.rebuildTools()
@@ -15120,8 +15106,8 @@ func conversationSourceGroundingMissingPaths(results []workspace.ToolResult) []s
 			continue
 		}
 
-		if paths := readOnlySourceGroundingUnsupportedPathsFromError(errorText); len(paths) > 0 {
-			return uniqueSortedRunnerPaths(paths)
+		if assessment, ok := classifySourceGroundingRejectionText(errorText); ok && len(assessment.Paths) > 0 {
+			return uniqueSortedRunnerPaths(assessment.Paths)
 		}
 	}
 
@@ -20368,7 +20354,7 @@ func (r *Runner) retryRejectedFinalAnswer(state *runnerRunState, stepNumber int,
 
 	priorGateRejections := state.completionGateRejections
 
-	result.Error = escalateCompletionGateMessage(result.Error, priorGateRejections)
+	result.Error = r.escalateCompletionGateMessageForError(result.Error, priorGateRejections, state.collectedResults, state.currentAllowedTools)
 
 	if state.autonomyRecorder != nil {
 		state.autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyReject, runnerAutonomyReasonCode(result.Summary), state.collectedResults, priorGateRejections)
@@ -23360,8 +23346,8 @@ func (r *Runner) malformedToolRecoveryPrompt(raw string, parseErr error, results
 			lines = append(lines, ledger)
 		}
 		if r.lastCompletionGateError != "" {
-			if paths := readOnlySourceGroundingUnsupportedPathsFromError(r.lastCompletionGateError); len(paths) > 0 {
-				lines = append(lines, "If the malformed tool text was trying to repair missing source evidence, the unsupported citation path(s) are: "+formatInlinePathList(paths, 4)+". Valid strategies are to read one missing body, cite only body-backed evidence, qualify candidate-only paths as unverified, or state the exact blocker.")
+			if assessment, ok := classifySourceGroundingRejectionText(r.lastCompletionGateError); ok && len(assessment.Paths) > 0 {
+				lines = append(lines, "If the malformed tool text was trying to repair missing source evidence, the unsupported citation path(s) are: "+formatInlinePathList(assessment.Paths, 4)+". Valid strategies are to read one missing body, cite only body-backed evidence, qualify candidate-only paths as unverified, or state the exact blocker.")
 			}
 		}
 	}

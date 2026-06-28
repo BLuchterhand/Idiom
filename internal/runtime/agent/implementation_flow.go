@@ -1457,12 +1457,12 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 	}
 
 	if r != nil {
-		if reason := r.sourceGroundingRejectionReason(answer, results); reason != "" {
+		if assessment := r.assessSourceGrounding(answer, results); assessment.BlocksFinalAnswer() {
 			if len(acceptance.EvidencePaths) == 0 {
 				acceptance.EvidencePaths = closurePromptEvidencePaths(directAnswerRelevance.RelevantSourceBodyPaths, 8)
 			}
 
-			return rejectFinalAnswerAcceptanceWithMessage(acceptance, turnViolationSourceGroundingUnmet, turnReasonSourceGroundingUnmet, reason)
+			return rejectFinalAnswerAcceptanceWithMessage(acceptance, turnViolationSourceGroundingUnmet, turnReasonSourceGroundingUnmet, assessment.Message())
 		}
 	}
 
@@ -2000,15 +2000,10 @@ func questionBlockerContextPaths(brief workerruntime.WorkerRuntimeBrief, results
 		max = 4
 	}
 
-	if ledger, candidateOnly := readOnlyDirectAnswerCandidateOnlyLedger(brief, results); candidateOnly {
-		paths := closurePromptEvidencePaths(ledger.CandidatePaths, max)
-		if len(paths) > 0 {
-			return "Candidate paths surfaced", paths
-		}
-
-		return "", nil
+	if paths := sourceGroundingCandidateOnlyContextPaths(brief, results, max); len(paths) > 0 {
+		return "Candidate paths surfaced", paths
 	} else if readOnlyDirectAnswerLane(brief) {
-		ledger = readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
+		ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
 
 		paths := textutil.Merge(ledger.RelevantSourceBodyPaths, ledger.SourceBodyObjectivePaths)
 
@@ -2090,7 +2085,7 @@ func presentableCompletionGateQuestionBlockerReason(reason string) string {
 		detail = strings.TrimSpace(detail[idx+1:])
 	}
 
-	detail = stripGateRetryPrefix(detail)
+	detail = sourceGroundingStripGateRecoveryPrefix(detail)
 	if sourceGroundingDetail := presentableSourceGroundingGateReason(detail); sourceGroundingDetail != "" {
 		return "the final answer was rejected because " + sourceGroundingDetail
 	}
@@ -2117,20 +2112,11 @@ func presentableCompletionGateQuestionBlockerReason(reason string) string {
 }
 
 func presentableSourceGroundingGateReason(detail string) string {
-	return sourceGroundingRejectionPresentableDetail(detail)
-}
-
-func stripGateRetryPrefix(text string) string {
-	text = strings.TrimSpace(text)
-	if !strings.HasPrefix(text, "[gate retry") {
-		return text
+	assessment, ok := classifySourceGroundingRejectionText(detail)
+	if !ok {
+		return ""
 	}
-
-	if idx := strings.Index(text, "]"); idx >= 0 {
-		return strings.TrimSpace(text[idx+1:])
-	}
-
-	return text
+	return assessment.PresentableDetail()
 }
 
 func firstSentenceBeforeAny(text string, markers ...string) string {

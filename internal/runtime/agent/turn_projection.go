@@ -54,8 +54,8 @@ func turnViolationEventFields(violation turnViolation) map[string]any {
 	if message := strings.TrimSpace(violation.Message); message != "" {
 		fields["message"] = message
 		if violation.Kind == turnViolationSourceGroundingUnmet {
-			if paths := sourceGroundingRejectionPaths(message); len(paths) > 0 {
-				fields["source_grounding_paths"] = paths
+			if assessment, ok := classifySourceGroundingRejectionText(message); ok && len(assessment.Paths) > 0 {
+				fields["source_grounding_paths"] = assessment.Paths
 			}
 		}
 	}

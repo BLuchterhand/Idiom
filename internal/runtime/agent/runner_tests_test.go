@@ -8861,12 +8861,16 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 	// ── Source-grounding (unsupported paths) ──────────────────────
 	sgUnsupported := "the answer cites source path/line/symbol detail not backed by a source-body read: \"foo.go\". Use one exact read/code_navigate body probe for the claim, or qualify it as unverified."
 
-	// Tier 1: should include "rewrite your answer" or "Rewrite your answer"
+	// Tier 1: source-grounding recovery stays in evidence-recovery mode; it
+	// must not imply tools are about to be disabled while read tools are valid.
 	got = escalateCompletionGateMessage(sgUnsupported, 1)
-	for _, want := range []string{"[gate retry 2/3]", "not backed by a source-body read", "call one bounded"} {
+	for _, want := range []string{"[source evidence recovery 2/5]", "not backed by a source-body read", "call one bounded"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("source-grounding unsupported tier 1 expected to contain %q, got: %s", want, got)
 		}
+	}
+	if strings.Contains(got, "tools disable") {
+		t.Errorf("source-grounding unsupported tier 1 must not threaten tool disable; got: %s", got)
 	}
 	if strings.Contains(got, "use a different tool call") {
 		t.Errorf("source-grounding unsupported tier 1 must not contain 'use a different tool call'; got: %s", got)
@@ -8874,10 +8878,13 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 
 	// Tier 2: should include read-file guidance, not "ONE concrete tool call"
 	got = escalateCompletionGateMessage(sgUnsupported, 2)
-	for _, want := range []string{"[gate retry 3/3", "`read_file` or `code_navigate`"} {
+	for _, want := range []string{"[source evidence recovery 3/5]", "`read_file` or `code_navigate`"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("source-grounding unsupported tier 2 expected to contain %q, got: %s", want, got)
 		}
+	}
+	if strings.Contains(got, "tools disable") {
+		t.Errorf("source-grounding unsupported tier 2 must not threaten tool disable; got: %s", got)
 	}
 	if strings.Contains(got, "ONE concrete tool call") {
 		t.Errorf("source-grounding unsupported tier 2 must not contain 'ONE concrete tool call'; got: %s", got)
@@ -8888,10 +8895,13 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 
 	// Tier 1: should include read-file guidance
 	got = escalateCompletionGateMessage(sgMissing, 1)
-	for _, want := range []string{"[gate retry 2/3]", "not read as source-body evidence", "call one bounded"} {
+	for _, want := range []string{"[source evidence recovery 2/5]", "not read as source-body evidence", "call one bounded"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("source-grounding missing tier 1 expected to contain %q, got: %s", want, got)
 		}
+	}
+	if strings.Contains(got, "tools disable") {
+		t.Errorf("source-grounding missing tier 1 must not threaten tool disable; got: %s", got)
 	}
 	if strings.Contains(got, "use a different tool call") {
 		t.Errorf("source-grounding missing tier 1 must not contain 'use a different tool call'; got: %s", got)
@@ -8899,10 +8909,13 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 
 	// Tier 2: should include read-file guidance, not "ONE concrete tool call"
 	got = escalateCompletionGateMessage(sgMissing, 2)
-	for _, want := range []string{"[gate retry 3/3", "`read_file` or `code_navigate`"} {
+	for _, want := range []string{"[source evidence recovery 3/5]", "`read_file` or `code_navigate`"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("source-grounding missing tier 2 expected to contain %q, got: %s", want, got)
 		}
+	}
+	if strings.Contains(got, "tools disable") {
+		t.Errorf("source-grounding missing tier 2 must not threaten tool disable; got: %s", got)
 	}
 	if strings.Contains(got, "ONE concrete tool call") {
 		t.Errorf("source-grounding missing tier 2 must not contain 'ONE concrete tool call'; got: %s", got)
@@ -8911,10 +8924,13 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 	// Source-grounding (candidate-only evidence wording from read-only gate).
 	sgCandidateOnly := "read-only workspace answers require bounded source-body or diagnostic evidence tied to the user's objective before a final answer. Candidate/search/context paths are not source-body evidence. Candidate path(s): testdata/swe/debug-logs-weird-decisions-suite.json, docs/configuration.md. Inspect one candidate with source-body evidence, use one materially different source-owner probe if these candidates do not establish the claim, or answer `<<QUESTION>>:` with the exact unavailable evidence source."
 	got = escalateCompletionGateMessage(sgCandidateOnly, 1)
-	for _, want := range []string{"[gate retry 2/3]", "Candidate/search/context paths are not source-body evidence", "call one bounded"} {
+	for _, want := range []string{"[source evidence recovery 2/5]", "Candidate/search/context paths are not source-body evidence", "call one bounded"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("source-grounding candidate-only tier 1 expected to contain %q, got: %s", want, got)
 		}
+	}
+	if strings.Contains(got, "tools disable") {
+		t.Errorf("source-grounding candidate-only tier 1 must not threaten tool disable; got: %s", got)
 	}
 	if strings.Contains(got, "use a different tool call") {
 		t.Errorf("source-grounding candidate-only tier 1 must not contain generic tool-call advice; got: %s", got)
@@ -30107,8 +30123,28 @@ func TestFinalAnswerAcceptanceRetryPolicyRequiresToolsAndNoMutation(t *testing.T
 		t.Fatal("source_grounding_unmet must remain retryable when prior rejections (2) are within the read-only retry budget (3)")
 	}
 
-	if readOnlyRunner.retryableFinalAnswerAcceptanceRejection(rejectedFinalAnswerAcceptanceForTest(turnViolationSourceGroundingUnmet), nil, 3, nil) {
-		t.Fatal("source_grounding_unmet must become terminal once the retry budget (3) is exhausted")
+	if !readOnlyRunner.retryableFinalAnswerAcceptanceRejection(rejectedFinalAnswerAcceptanceForTest(turnViolationSourceGroundingUnmet), nil, 3, nil) {
+		t.Fatal("source_grounding_unmet must remain retryable for the first source-evidence recovery extension")
+	}
+
+	if !readOnlyRunner.retryableFinalAnswerAcceptanceRejection(rejectedFinalAnswerAcceptanceForTest(turnViolationSourceGroundingUnmet), nil, 4, nil) {
+		t.Fatal("source_grounding_unmet must remain retryable for the second source-evidence recovery extension")
+	}
+
+	if readOnlyRunner.retryableFinalAnswerAcceptanceRejection(rejectedFinalAnswerAcceptanceForTest(turnViolationSourceGroundingUnmet), nil, 5, nil) {
+		t.Fatal("source_grounding_unmet must become terminal once the bounded source-evidence recovery budget is exhausted")
+	}
+
+	noReadToolRunner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"search_content"},
+		},
+	}
+	if noReadToolRunner.retryableFinalAnswerAcceptanceRejection(rejectedFinalAnswerAcceptanceForTest(turnViolationSourceGroundingUnmet), nil, 3, nil) {
+		t.Fatal("source_grounding_unmet must not get extra read-recovery retries when no source-body read tool is available")
 	}
 
 	architectureRunner := &Runner{
@@ -30314,9 +30350,7 @@ func TestReadOnlySourceGroundingUnmetRecoveryPromptSkippedWhenNoLastError(t *tes
 	}
 }
 
-// TestSourceGroundingProseRetriesLeftSetToTwo verifies that the
-// source-grounding prose retry counter is bumped to 2 (not 1).
-func TestSourceGroundingProseRetriesLeftSetToTwo(t *testing.T) {
+func TestSourceGroundingRetryHidesNonReadToolsOnlyWhenReadRecoveryAvailable(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
@@ -30355,9 +30389,6 @@ func TestSourceGroundingProseRetriesLeftSetToTwo(t *testing.T) {
 	if !retried {
 		t.Fatal("source-grounding rejection should be retryable")
 	}
-	if runner.sourceGroundingProseRetriesLeft != 2 {
-		t.Fatalf("sourceGroundingProseRetriesLeft should be 2, got %d", runner.sourceGroundingProseRetriesLeft)
-	}
 	// search tools should be hidden; read tools should not.
 	if !hidden["search_content"] {
 		t.Fatal("search_content should be hidden after source-grounding rejection")
@@ -30370,6 +30401,115 @@ func TestSourceGroundingProseRetriesLeftSetToTwo(t *testing.T) {
 	}
 	if hidden["code_navigate"] {
 		t.Fatal("code_navigate should NOT be hidden after source-grounding rejection")
+	}
+
+	noReadToolRunner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"search_content"},
+		},
+	}
+	noReadHidden := map[string]bool{}
+	noReadRunState := &runnerRunState{
+		currentAllowedTools: []string{"search_content"},
+		turnHiddenTools:     noReadHidden,
+		toolSurface:         NewActiveSurface([]string{"search_content"}, nil),
+	}
+	noReadRejections := 0
+	retried = noReadToolRunner.retryRejectedFinalAnswerForRun(runnerFinalAnswerRetryInput{
+		stepNumber: 1,
+		assistantMessage: llama.ChatMessage{
+			Role:    "assistant",
+			Content: "The renderer uses src/graphics/renderer.rs.",
+		},
+		acceptance:               rejectFinalAnswerAcceptanceWithMessage(newFinalAnswerAcceptance(), turnViolationSourceGroundingUnmet, turnReasonSourceGroundingUnmet, sourceGroundingErr),
+		result:                   workspace.ToolResult{Tool: "completion_gate", Summary: "Rejected", Error: sourceGroundingErr},
+		collectedResults:         nil,
+		currentAllowedTools:      []string{"search_content"},
+		completionGateRejections: &noReadRejections,
+		turnMessages:             &turnMessages,
+		turnHiddenTools:          noReadHidden,
+		runState:                 noReadRunState,
+		controller:               &runnerTurnController{},
+	})
+	if !retried {
+		t.Fatal("source-grounding rejection should still be retryable under the generic read-only retry policy")
+	}
+	if noReadHidden["search_content"] || noReadRunState.surfaceHidesTool("search_content") {
+		t.Fatal("source-grounding retry must not hide the only search tool when no source-body read tool is available")
+	}
+}
+
+func TestSourceGroundingCompletionGateErrorGetsReadRecoveryExtension(t *testing.T) {
+	sourceGroundingErr := "the answer cites source path/line/symbol detail not backed by a source-body read: `internal/runtime/workerruntime/catalog.go`. Use one exact read/code_navigate body probe for the claim, or qualify it as unverified."
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file", "code_navigate", "search_content"},
+		},
+	}
+
+	genericLimit := runner.completionGateRetryLimit(nil)
+	extendedLimit := runner.completionGateRetryLimitForError(sourceGroundingErr, nil, []string{"read_file", "code_navigate", "search_content"})
+	if extendedLimit != genericLimit+sourceGroundingAdditionalReadRecoveryRetries {
+		t.Fatalf("source-grounding retry limit = %d, want generic %d + %d", extendedLimit, genericLimit, sourceGroundingAdditionalReadRecoveryRetries)
+	}
+
+	noReadToolRunner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"search_content"},
+		},
+	}
+	noReadToolLimit := noReadToolRunner.completionGateRetryLimitForError(sourceGroundingErr, nil, []string{"search_content"})
+	if noReadToolLimit != genericLimit {
+		t.Fatalf("source-grounding without read tools should use generic limit %d, got %d", genericLimit, noReadToolLimit)
+	}
+}
+
+func TestSourceGroundingCompletionGateEscalationUsesReadRecoveryAvailability(t *testing.T) {
+	sourceGroundingErr := "the answer cites source path/line/symbol detail not backed by a source-body read: `internal/runtime/workerruntime/catalog.go`. Use one exact read/code_navigate body probe for the claim, or qualify it as unverified."
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file", "code_navigate", "search_content"},
+		},
+	}
+
+	withReadTools := runner.escalateCompletionGateMessageForError(sourceGroundingErr, 1, nil, []string{"read_file", "code_navigate", "search_content"})
+	if !strings.Contains(withReadTools, "[source evidence recovery 2/5]") {
+		t.Fatalf("source-grounding with source-body read tools should use source evidence recovery label, got:\n%s", withReadTools)
+	}
+	if !strings.Contains(withReadTools, "`read_file` or `code_navigate`") {
+		t.Fatalf("source-grounding with source-body read tools should require a bounded source-body read, got:\n%s", withReadTools)
+	}
+
+	noReadToolRunner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"search_content"},
+		},
+	}
+
+	withoutReadTools := noReadToolRunner.escalateCompletionGateMessageForError(sourceGroundingErr, 1, nil, []string{"search_content"})
+	if strings.Contains(withoutReadTools, "source evidence recovery") {
+		t.Fatalf("source-grounding without source-body read tools must not use source evidence recovery label, got:\n%s", withoutReadTools)
+	}
+	if strings.Contains(withoutReadTools, "`read_file`") || strings.Contains(withoutReadTools, "`code_navigate`") {
+		t.Fatalf("source-grounding without source-body read tools must not require unavailable read tools, got:\n%s", withoutReadTools)
+	}
+	if !strings.Contains(withoutReadTools, "unverified") {
+		t.Fatalf("source-grounding without source-body read tools should direct qualification/blocker recovery, got:\n%s", withoutReadTools)
 	}
 }
 

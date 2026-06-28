@@ -34402,6 +34402,37 @@ func TestReadOnlyCompletionGateDiagnosticLogCitationIgnoresStaleSearchCandidates
 	}
 }
 
+func TestReadOnlyCompletionGateDiagnosticLogCitationDoesNotSatisfySourceFailureQuestion(t *testing.T) {
+	brief := directAnswerReadOnlyBrief()
+	brief.Objective = "Why did the runner build fail?"
+	brief.AllowedTools = []string{"search_files", "read_file", "search_content"}
+
+	logPath := "logs/conversations/20260628-081924.685.jsonl"
+	results := []workspace.ToolResult{
+		{
+			Tool:    "search_files",
+			Summary: "Found candidate path internal/runtime/agent/runner_core.go",
+			Output:  "internal/runtime/agent/runner_core.go",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f7 " + logPath + " lines 1-72 (file has 72 lines total)",
+			Output:  "1:{\"type\":\"session_start\"}\n72:{\"type\":\"final\"}\n",
+		},
+	}
+	answer := "The runner build failed according to `" + logPath + "`."
+
+	runner := &Runner{RuntimeBrief: brief}
+	result, rejected := runner.readOnlyEvidenceCompletionRejection(answer, results)
+	if !rejected {
+		t.Fatal("source/build failure questions must still require source-body or relevant diagnostic evidence")
+	}
+	if !strings.Contains(result.Error, "Candidate/search/context paths are not source-body evidence") ||
+		!strings.Contains(result.Error, "internal/runtime/agent/runner_core.go") {
+		t.Fatalf("expected diagnostic log read to remain insufficient for source/build answer, got: %s", result.Error)
+	}
+}
+
 func TestDiscoveryConsumptionStrongContextPackStillBlocksBroadRediscovery(t *testing.T) {
 	state := newRunnerExecutionState(false, 0)
 	state.applyResult(
