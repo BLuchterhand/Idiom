@@ -1839,10 +1839,6 @@ func nextStableDebugLogSelection(results []workspace.ToolResult, current debugLo
 }
 
 func debugLogContractApplies(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	if strings.TrimSpace(brief.TaskFamily) == "debug_logs" {
-		return true
-	}
-
 	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
 		return false
 	}
@@ -2882,7 +2878,7 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 
 	modelStart := time.Now()
 	textOnlyOpts := textOnlyChatOptions(opts, r.RuntimeBrief)
-	requestMessages := chatMessagesForOptions(turnMessages, textOnlyOpts)
+	requestMessages := r.chatMessagesForOptions(turnMessages, textOnlyOpts)
 
 	assistantMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, textOnlyOpts)
 	if err != nil {
@@ -3096,7 +3092,7 @@ func (r *Runner) repairInternalFinalAnswer(
 	repairMessages = stripOrphanedToolCalls(repairMessages)
 
 	modelStart := time.Now()
-	requestMessages := chatMessagesForOptions(repairMessages, opts)
+	requestMessages := r.chatMessagesForOptions(repairMessages, opts)
 
 	repairMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, opts)
 	if err != nil {
@@ -3156,7 +3152,7 @@ func (r *Runner) retryInvalidFinalAnswer(
 
 	retryMessages := append([]llama.ChatMessage(nil), turnMessages...)
 	if strings.TrimSpace(reply.Content) != "" || strings.TrimSpace(reply.ReasoningContent) != "" {
-		retryMessages = append(retryMessages, assistantHistoryMessageForOptions(llama.ChatMessage{
+		retryMessages = append(retryMessages, r.assistantHistoryMessageForOptions(llama.ChatMessage{
 			Role:             textutil.FirstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
 			Content:          reply.Content,
 			ReasoningContent: reply.ReasoningContent,
@@ -3186,7 +3182,7 @@ func (r *Runner) retryInvalidFinalAnswer(
 	retryMessages = stripOrphanedToolCalls(retryMessages)
 
 	modelStart := time.Now()
-	requestMessages := chatMessagesForOptions(retryMessages, opts)
+	requestMessages := r.chatMessagesForOptions(retryMessages, opts)
 
 	retryMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, opts)
 	if err != nil {
@@ -3934,7 +3930,7 @@ func (r *Runner) ensureNonEmptyAnswer(
 
 	retryMessages := append([]llama.ChatMessage(nil), turnMessages...)
 	if strings.TrimSpace(reply.Content) != "" || strings.TrimSpace(reply.ReasoningContent) != "" {
-		retryMessages = append(retryMessages, assistantHistoryMessageForOptions(llama.ChatMessage{
+		retryMessages = append(retryMessages, r.assistantHistoryMessageForOptions(llama.ChatMessage{
 			Role:             textutil.FirstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
 			Content:          reply.Content,
 			ReasoningContent: reply.ReasoningContent,
@@ -3957,7 +3953,7 @@ func (r *Runner) ensureNonEmptyAnswer(
 
 	modelStart := time.Now()
 	textOnlyOpts := textOnlyChatOptions(opts, r.RuntimeBrief)
-	requestMessages := chatMessagesForOptions(retryMessages, textOnlyOpts)
+	requestMessages := r.chatMessagesForOptions(retryMessages, textOnlyOpts)
 
 	retryMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, textOnlyOpts)
 	if err != nil {
@@ -5595,6 +5591,18 @@ func narrowToolFamily(tool string) string {
 // tools that should never be redirected away.
 func narrowToolFamilyAutoRedirect(family string) bool {
 	return family == "code_navigate"
+}
+
+func narrowToolFamilyRedirectTool(family string, allowedTools []string) string {
+	if !narrowToolFamilyAutoRedirect(family) {
+		return ""
+	}
+
+	if toolAllowed(allowedTools, workspace.ToolNameContextQuery) {
+		return workspace.ToolNameContextQuery
+	}
+
+	return ""
 }
 
 func toolActionClass(req workspace.ToolRequest) string {

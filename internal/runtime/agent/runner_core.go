@@ -408,7 +408,7 @@ func (s *stateStore) WriteDecision(invariantID string) WriteDecision {
 		ChangedPaths:  s.ChangedPaths(),
 	}
 	if !decision.Allowed {
-		decision.ReasonCode = "required_edit_paths_remaining"
+		decision.ReasonCode = string(turnReasonRequiredEditPathsRemaining)
 	}
 	return decision
 }
@@ -805,57 +805,6 @@ func (hooks planExecuteRecoveryHooks) correctionHiddenOnlyPrompt(base string, bl
 		return hooks.onCorrectionHiddenOnlyPrompt(base, blockerAllowed)
 	}
 	return planThenExecuteCorrectionHiddenOnlyRecoveryPrompt(base)
-}
-
-type finalAnswerPolicyInput struct {
-	Answer                   string
-	RequiresMutation         bool
-	MissingRequiredEditPaths []string
-	DirectAnswerRelevance    readOnlyDirectAnswerRelevance
-	SourceGroundingReason    string
-}
-
-type FinalAnswerPolicyEngine interface {
-	EvaluateFinalAnswer(finalAnswerPolicyInput) finalAnswerAcceptance
-}
-
-type defaultFinalAnswerPolicyEngine struct{}
-
-func newFinalAnswerPolicyEngine() FinalAnswerPolicyEngine { return defaultFinalAnswerPolicyEngine{} }
-
-func (r *Runner) finalAnswerPolicyEngine() FinalAnswerPolicyEngine {
-	if r != nil && r.FinalAnswerPolicyEngine != nil {
-		return r.FinalAnswerPolicyEngine
-	}
-	return newFinalAnswerPolicyEngine()
-}
-
-func finalAnswerObjectiveRelevanceAdvisoryKind(kind string) bool {
-	trimmed := strings.TrimSpace(kind)
-	return trimmed == "answer_objective_unmet" || strings.HasPrefix(trimmed, "answer_objective_unmet:")
-}
-
-func (defaultFinalAnswerPolicyEngine) EvaluateFinalAnswer(input finalAnswerPolicyInput) finalAnswerAcceptance {
-	acceptance := newFinalAnswerAcceptance()
-	acceptance.EvidencePaths = append([]string(nil), input.DirectAnswerRelevance.RelevantSourceBodyPaths...)
-	if input.DirectAnswerRelevance.Status != "" {
-		acceptance.ObjectiveRelevanceStatus = input.DirectAnswerRelevance.Status
-		acceptance.RelevantSourceBodyPaths = append([]string(nil), input.DirectAnswerRelevance.RelevantSourceBodyPaths...)
-		acceptance.AnswerObjectiveTerms = append([]string(nil), input.DirectAnswerRelevance.AnswerObjectiveTerms...)
-	}
-	if input.RequiresMutation && len(input.MissingRequiredEditPaths) > 0 {
-		return finalAnswerAcceptanceWithPolicy(rejectFinalAnswerAcceptance(acceptance, "required_edit_paths_remaining", "required_edit_paths_remaining"))
-	}
-	hasEnforceableDirectAnswerBlocker := input.DirectAnswerRelevance.BlockerKind != "" &&
-		input.DirectAnswerRelevance.Reason != "" &&
-		!finalAnswerObjectiveRelevanceAdvisoryKind(input.DirectAnswerRelevance.BlockerKind)
-	if input.SourceGroundingReason != "" {
-		return finalAnswerAcceptanceWithPolicy(rejectFinalAnswerAcceptance(acceptance, "source_grounding_unmet", input.SourceGroundingReason))
-	}
-	if hasEnforceableDirectAnswerBlocker {
-		return finalAnswerAcceptanceWithPolicy(rejectFinalAnswerAcceptance(acceptance, input.DirectAnswerRelevance.BlockerKind, input.DirectAnswerRelevance.Reason))
-	}
-	return finalAnswerAcceptanceWithPolicy(acceptance)
 }
 
 type VerificationPolicyDecision struct {
@@ -1280,9 +1229,6 @@ func (s *runnerSession) Bootstrap(_ context.Context, _ *SessionState) error {
 	if r.GuidanceEngine == nil {
 		r.GuidanceEngine = newGuidanceEngine(r.agentName(), r.evidenceEngine())
 	}
-	if r.FinalAnswerPolicyEngine == nil {
-		r.FinalAnswerPolicyEngine = newFinalAnswerPolicyEngine()
-	}
 	if r.VerificationPolicyEngine == nil {
 		r.VerificationPolicyEngine = newVerificationPolicyEngine()
 	}
@@ -1413,61 +1359,6 @@ func (r *Runner) loopTurnState(state *runnerRunState) TurnState {
 	return NewTurnState(step, allowed, changed)
 }
 
-func rejectFinalAnswerAcceptance(acceptance finalAnswerAcceptance, kind string, reason string) finalAnswerAcceptance {
-	acceptance.Decision = finalAnswerAcceptanceRejected
-	acceptance.BlockerKind = strings.TrimSpace(kind)
-	acceptance.Reason = strings.TrimSpace(reason)
-	return acceptance
-}
-
-func finalAnswerAcceptanceWithPolicy(acceptance finalAnswerAcceptance) finalAnswerAcceptance {
-	if acceptance.Decision == "" {
-		acceptance.Decision = finalAnswerAcceptanceAccepted
-	}
-	acceptance.SchemaVersion = finalAnswerAcceptanceSchema
-	acceptance.PackID = autonomy.ContractPackFinalAnswerAcceptance
-	acceptance.InvariantID = finalAnswerPolicyInvariantAcceptance
-	if acceptance.Decision == finalAnswerAcceptanceRejected {
-		acceptance.PolicyDecision = autonomy.PolicyReject
-	} else {
-		acceptance.PolicyDecision = autonomy.PolicyAllow
-	}
-	acceptance.ParityReport = CompareParity(ParityInput{
-		SurfaceID:   "final_answer_acceptance",
-		InvariantID: finalAnswerPolicyInvariantAcceptance,
-		OldDecision: string(acceptance.Decision),
-		NewDecision: string(acceptance.Decision),
-	})
-	return acceptance
-}
-
-func newFinalAnswerAcceptance() finalAnswerAcceptance {
-	return finalAnswerAcceptanceWithPolicy(finalAnswerAcceptance{
-		SchemaVersion: finalAnswerAcceptanceSchema,
-		Decision:      finalAnswerAcceptanceAccepted,
-	})
-}
-
-func finalAnswerAcceptanceWithTerminalOverride(acceptance finalAnswerAcceptance, decision finalAnswerAcceptanceDecision, blockerKind string, reason string) finalAnswerAcceptance {
-	acceptance.Decision = decision
-	acceptance.BlockerKind = strings.TrimSpace(blockerKind)
-	acceptance.Reason = strings.TrimSpace(reason)
-	if decision == finalAnswerAcceptanceAccepted {
-		acceptance.BlockerKind = ""
-	}
-	return finalAnswerAcceptanceWithPolicy(acceptance)
-}
-
-type completionDecisionProjection struct {
-	Decision       string
-	PolicyDecision autonomy.ToolPolicyDecision
-}
-
-func (a finalAnswerAcceptance) CompletionDecision() completionDecisionProjection {
-	a = finalAnswerAcceptanceWithPolicy(a)
-	return completionDecisionProjection{Decision: string(a.Decision), PolicyDecision: a.PolicyDecision}
-}
-
 func planThenExecutePostReadinessDiscoveryRejectionWithRecoveryEngine(hooks planExecuteRecoveryHooks, req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, string, bool) {
 	summary, errorText, rejected := planThenExecutePostReadinessDiscoveryRejection(req, brief, results)
 	if !rejected {
@@ -1574,7 +1465,6 @@ type Runner struct {
 	CardEngine                       CardEngine
 	planExecuteRecoveryHookOverrides planExecuteRecoveryHooks
 	GuidanceEngine                   GuidanceEngine
-	FinalAnswerPolicyEngine          FinalAnswerPolicyEngine
 	VerificationPolicyEngine         VerificationPolicyEngine
 	LifecycleCloseoutPolicyEngine    LifecycleCloseoutPolicyEngine
 	ModelCallReadinessPolicyEngine   ModelCallReadinessPolicyEngine
@@ -1681,7 +1571,6 @@ func (r *Runner) runLegacySessionBody(
 	postChildPacketActive := false
 	postChildFollowupReads := 0
 	postChildDiminishingNudgeStage := 0
-	postReadinessProbeBudget := postReadinessProbeBudgetForBrief(r.RuntimeBrief)
 	implementationWriteOnlyRecoveryActive := false
 	requiredPathCompletionRecoveryActive := false
 	writeDescriptionRepairActive := false
@@ -1982,7 +1871,7 @@ func (r *Runner) runLegacySessionBody(
 	// Investigation lane: recommended strategy to avoid exhaustive
 	// symbol-by-symbol enumeration. One-shot at session start.
 	if _, ok := r.lanePolicy().(ReadOnlyInvestigationLanePolicy); ok {
-		turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: readOnlyInvestigationStrategyPrompt()})
+		turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: readOnlyInvestigationStrategyPrompt(visibleRuntimeBrief.AllowedTools)})
 	}
 
 	r.emitControlRailsForBrief(turnMessages, visibleRuntimeBrief)
@@ -2148,7 +2037,7 @@ func (r *Runner) runLegacySessionBody(
 			}
 		}
 
-		requestMessages = chatMessagesForOptions(requestMessages, modelCallOpts)
+		requestMessages = r.chatMessagesForOptions(requestMessages, modelCallOpts)
 
 		assistantMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, modelCallOpts)
 		if err != nil {
@@ -2302,7 +2191,7 @@ func (r *Runner) runLegacySessionBody(
 			if activeToolCall != nil {
 				assistantToolTurn = legacyToolCallHistoryMessage(assistantMessage, *activeToolCall)
 			} else if !r.supportsNativeTools() {
-				assistantToolTurn = textualToolRequestHistoryMessage(assistantMessage, workspace.ToolRequest{Tool: "tool_parse"}, raw, opts)
+				assistantToolTurn = textualToolRequestHistoryMessage(assistantMessage, workspace.ToolRequest{Tool: "tool_parse"}, raw)
 				activeToolCall = nil
 			} else {
 				call := syntheticLegacyParseToolCall(stepNumber, raw)
@@ -2311,7 +2200,7 @@ func (r *Runner) runLegacySessionBody(
 				assistantToolTurn = legacyToolCallHistoryMessage(assistantMessage, call)
 			}
 
-			assistantToolTurn = assistantHistoryMessageForOptions(assistantToolTurn, opts)
+			assistantToolTurn = r.assistantHistoryMessageForOptions(assistantToolTurn, opts)
 			turnMessages = append(turnMessages, assistantToolTurn)
 			r.emitThinkingTrace(stepNumber, "assistant_turn_preserved", assistantToolTurn, opts, true)
 			controller.recordParseFailure(stepNumber, activeToolCall, raw, err)
@@ -2338,6 +2227,10 @@ func (r *Runner) runLegacySessionBody(
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 				r.emitPlanExecuteSubmitPlanParseRecoveryEvent(recoveryPlan, prompt)
 			} else {
+				if prompt := r.malformedToolRecoveryPrompt(raw, err, collectedResults); prompt != "" {
+					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+					r.emitEvent(RunEvent{Role: "malformed_tool_recovery", Content: prompt})
+				}
 				r.emitPlanExecuteSubmitPlanParseRecoveryEventForParseFailure(raw, err)
 			}
 
@@ -2435,10 +2328,13 @@ func (r *Runner) runLegacySessionBody(
 				if acceptance := r.evaluateFinalAnswerAcceptance(answerContent, collectedResults); acceptance.BlockerKind != "" {
 					blockerKind := acceptance.BlockerKind
 					reason := acceptance.Reason
-					blockerResult := workspace.ToolResult{
-						Tool:    "completion_gate",
-						Summary: "Answer tool rejected by blocker check",
-						Error:   r.finalAnswerBlockerErrorText(blockerKind, reason, answerContent, collectedResults),
+					blockerResult, ok := finalAnswerCompletionGateProjection(
+						acceptance,
+						"Answer tool rejected by blocker check",
+						r.finalAnswerBlockerErrorText(blockerKind, reason, answerContent, collectedResults),
+					)
+					if !ok {
+						return finish(answerContent, nil, "model_answer_tool", false)
 					}
 
 					if r.retryRejectedFinalAnswerForRun(runnerFinalAnswerRetryInput{
@@ -2614,7 +2510,7 @@ func (r *Runner) runLegacySessionBody(
 				}
 
 				if priorGateRejections >= r.completionGateRetryLimit(collectedResults) {
-					if recovered, _, ok := r.readOnlyTerminalRecoveryCandidate("completion_gate_repeated_rejection", collectedResults); ok {
+					if recovered, _, ok := r.readOnlyTerminalRecoveryCandidate(completionGateRepeatedRejectionAcceptance(), collectedResults); ok {
 						emitCompletionStatus("accepted", "read_only_terminal_recovery", "", collectedResults, false)
 
 						return finish(recovered, nil, "read_only_terminal_recovery", false)
@@ -2674,10 +2570,13 @@ func (r *Runner) runLegacySessionBody(
 					// stricter tool-call instruction instead of burning another
 					// gate retry slot.
 
-					blockerResult := workspace.ToolResult{
-						Tool:    "completion_gate",
-						Summary: "Final answer rejected by blocker check",
-						Error:   r.finalAnswerBlockerErrorText(blockerKind, reason, answer, collectedResults),
+					blockerResult, ok := finalAnswerCompletionGateProjection(
+						acceptance,
+						"Final answer rejected by blocker check",
+						r.finalAnswerBlockerErrorText(blockerKind, reason, answer, collectedResults),
+					)
+					if !ok {
+						return finish(answer, err, "model_final", false)
 					}
 					if r.retryRejectedFinalAnswerForRun(runnerFinalAnswerRetryInput{
 						stepNumber:               stepNumber,
@@ -2715,7 +2614,7 @@ func (r *Runner) runLegacySessionBody(
 		if activeToolCall != nil {
 			assistantToolTurn = legacyToolCallHistoryMessage(assistantMessage, *activeToolCall)
 		} else if !r.supportsNativeTools() {
-			assistantToolTurn = textualToolRequestHistoryMessage(assistantMessage, req, raw, modelCallOpts)
+			assistantToolTurn = textualToolRequestHistoryMessage(assistantMessage, req, raw)
 			activeToolCall = nil
 		} else {
 			call := syntheticLegacyToolCall(stepNumber, req, raw)
@@ -2724,7 +2623,7 @@ func (r *Runner) runLegacySessionBody(
 			assistantToolTurn = legacyToolCallHistoryMessage(assistantMessage, call)
 		}
 
-		assistantToolTurn = assistantHistoryMessageForOptions(assistantToolTurn, modelCallOpts)
+		assistantToolTurn = r.assistantHistoryMessageForOptions(assistantToolTurn, modelCallOpts)
 		turnMessages = append(turnMessages, assistantToolTurn)
 		r.emitThinkingTrace(stepNumber, "assistant_turn_preserved", assistantToolTurn, modelCallOpts, true)
 
@@ -3031,8 +2930,6 @@ func (r *Runner) runLegacySessionBody(
 		if r.implementationTargetWriteReadySourceReadAllowed(req, collectedResults, implementationTargetWriteReadySourceRefreshes) {
 			recoveryReadAllowanceGrantedThisRequest = true
 			implementationTargetWriteReadySourceRefreshes++
-
-			implementationTargetWriteReadyNonWriteRejections++
 
 			r.emitEvent(RunEvent{
 				Role:    "implementation_target_write_ready_source_refresh_allowed",
@@ -3751,7 +3648,7 @@ func (r *Runner) runLegacySessionBody(
 			// recently (tracked via discovery tool reset below).
 			if consecutiveNarrowToolCalls >= narrowToolFamilyNudgeAt && !narrowToolFamilyNudgeFired {
 				narrowToolFamilyNudgeFired = true
-				prompt := narrowToolFamilyRepetitionNudgePrompt(narrowFamily, consecutiveNarrowToolCalls)
+				prompt := narrowToolFamilyRepetitionNudgePrompt(narrowFamily, consecutiveNarrowToolCalls, currentAllowedTools)
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 				r.emitEvent(RunEvent{Role: "narrow_tool_repetition_nudge", Content: prompt})
 			}
@@ -3759,21 +3656,21 @@ func (r *Runner) runLegacySessionBody(
 			// Auto-redirect: only for code_navigate families. Redirecting
 			// read_file or search away from their target breaks legitimate
 			// evidence gathering. The model can override by repeating.
-			if narrowToolFamilyNudgeFired && !narrowToolFamilyRedirectIssued && narrowToolFamilyAutoRedirect(narrowFamily) {
+			if redirectTool := narrowToolFamilyRedirectTool(narrowFamily, currentAllowedTools); narrowToolFamilyNudgeFired && !narrowToolFamilyRedirectIssued && redirectTool != "" {
 				narrowToolFamilyRedirectIssued = true
 				narrowToolFamilyRedirectedOriginal = req.Tool + "|" + narrowFamily
 
 				redirected := req
-				redirected.Tool = workspace.ToolNameContextQuery
+				redirected.Tool = redirectTool
 				redirected.Query = r.RuntimeBrief.Objective
 				redirected.Pattern = ""
 				redirected.Path = ""
 				redirected.Capability = ""
 				redirected.Purpose = ""
 
-				req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, "", "narrow_tool_redirect_to_context_query")
+				req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, "", "narrow_tool_redirect_to_"+redirectTool)
 				currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
-				r.emitEvent(RunEvent{Role: "narrow_tool_redirect", Content: fmt.Sprintf("redirected %s to context_query after %d consecutive same-family calls", lastNarrowToolFamily, consecutiveNarrowToolCalls)})
+				r.emitEvent(RunEvent{Role: "narrow_tool_redirect", Content: fmt.Sprintf("redirected %s to %s after %d consecutive same-family calls", lastNarrowToolFamily, redirectTool, consecutiveNarrowToolCalls)})
 			} else if narrowToolFamilyNudgeFired && narrowToolFamilyRedirectIssued {
 				// Model repeated the original call after redirect:
 				// let it through. Reset redirect tracking so the
@@ -4613,8 +4510,8 @@ func (r *Runner) runLegacySessionBody(
 						EvidencePathLabel: "Packet-named paths: ",
 						EvidencePaths:     evidencePaths,
 						Objective:         r.RuntimeBrief.Objective,
+						RuntimeBrief:      r.RuntimeBrief,
 						Results:           []workspace.ToolResult{result},
-						ProbeBudget:       postChildReadBudget,
 						ContinuationScope: "child_packet_available",
 						FooterLines: []string{
 							"Ignore packet artifacts (the `.idiom/discovery/queries/` JSON files) — they are not source paths.",
@@ -5560,8 +5457,8 @@ func (r *Runner) runLegacySessionBody(
 					EvidencePathLabel: "Core evidence paths: ",
 					EvidencePaths:     closurePromptEvidencePaths(delegatedClosureEvidencePaths(r.RuntimeBrief.Objective, collectedResults, 4), 4),
 					Objective:         r.RuntimeBrief.Objective,
+					RuntimeBrief:      r.RuntimeBrief,
 					Results:           collectedResults,
-					ProbeBudget:       postReadinessProbeBudget,
 					ContinuationScope: "delegated_read_only_answer_ready",
 					FooterLines: []string{
 						"Carry forward the inspected paths above and keep the answer minimal; avoid side-path comparison or mode-by-mode breakdown unless the question requires that contrast.",
@@ -5575,8 +5472,8 @@ func (r *Runner) runLegacySessionBody(
 						EvidencePathLabel: "Core evidence paths: ",
 						EvidencePaths:     closurePromptEvidencePaths(readOnlyPresentationEvidencePathsForBrief(r.RuntimeBrief, collectedResults, 4), 4),
 						Objective:         strings.TrimSpace(r.RuntimeBrief.Objective),
+						RuntimeBrief:      r.RuntimeBrief,
 						Results:           collectedResults,
-						ProbeBudget:       postReadinessProbeBudget,
 						ContinuationScope: "answer_readiness_reached",
 						FooterLines: []string{
 							"Anchor the explanation in the inspected paths above and keep any remaining uncertainty explicit.",
@@ -5709,6 +5606,10 @@ func (r *Runner) runLegacySessionBody(
 		}
 	}
 
+	if blocker, ok := r.implementationToolBudgetExhaustedBlocker(collectedResults); ok {
+		return finish(blocker, nil, "implementation_tool_step_budget_blocked", true)
+	}
+
 	answer, err = controller.completeWithoutMoreToolsWithReason(maxToolStepsExhaustedReason())
 
 	return finish(answer, err, "tool_step_budget_exhausted", true)
@@ -5736,6 +5637,35 @@ func (r *Runner) planThenExecuteCompletionGateSummaryRetryable(summary string, r
 // sourceGroundingProseRetryUsed checks whether the model already received one
 func maxToolStepsExhaustedReason() string {
 	return "Maximum tool steps for this turn have been reached. Tools are now disabled. Respond with a concise, direct, text-only final answer synthesized from the evidence already gathered. If one exact claim remains unsupported, state that uncertainty after the supported answer with the smallest useful next action. Do not leave the response blank."
+}
+
+func (r *Runner) implementationToolBudgetExhaustedBlocker(results []workspace.ToolResult) (string, bool) {
+	if r == nil || !runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
+		return "", false
+	}
+
+	if len(changedPathsFromToolResults(results)) > 0 {
+		return "", false
+	}
+
+	var details []string
+	if required := r.remainingRequiredEditPaths(results); len(required) > 0 {
+		details = append(details, "required edit path(s) still unwritten: "+strings.Join(required, ", "))
+	}
+
+	if sourced := implementationTargetWriteReadySourcedPathSummary(results, 5); sourced != "" {
+		details = append(details, "source-body evidence gathered for: "+sourced)
+	}
+
+	if inspected := conversationInspectedPathSummary(results); inspected != "" {
+		details = append(details, "latest inspected evidence: "+inspected)
+	}
+
+	if len(details) == 0 {
+		details = append(details, "no parser-readable workspace write was recorded before the tool budget was exhausted")
+	}
+
+	return "<<QUESTION>>: implementation tool budget was exhausted before a parser-readable edit, source-satisfied decision, or exact blocker was produced; " + strings.Join(details, "; ") + ". Rerun with a narrower edit target or the exact missing file/symbol if more source evidence is required.", true
 }
 
 func (r *Runner) requiredPathCompletionRecoveryRejection(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
@@ -8892,7 +8822,7 @@ func (a *runnerAutonomyRecorder) emitFailureDeltaIntentFromGate(input runnerAuto
 		FailureDelta: &autonomy.FailureDelta{
 			ContractID:   a.contract.ContractID,
 			ProtocolHash: protocolHash,
-			FailureClass: textutil.FirstNonEmpty(string(input.Gate), runnerAutonomyReasonCode(input.ReasonCode), strings.TrimSpace(string(input.Decision))),
+			FailureClass: textutil.FirstNonEmpty(runnerAutonomyReasonCode(input.ReasonCode), string(input.Gate), strings.TrimSpace(string(input.Decision))),
 			BeforeRef:    "gate:before",
 			AfterRef:     "gate:" + strings.TrimSpace(string(input.Decision)),
 			EvidenceRefs: []string{"event:" + sourceEventID, "surface:" + string(input.Gate)},
@@ -11511,24 +11441,32 @@ func (r *Runner) readOnlyEvidenceCompletionRejection(reply string, results []wor
 		}
 	}
 
-	if readOnlyDirectAnswerLane(brief) && (readOnlyAnswerHasConcreteEvidence(results) || readOnlyPlanArtifactEvidenceSupportsReply(brief, reply, results)) {
+	if readOnlyDirectAnswerLane(brief) &&
+		(readOnlyAnswerHasConcreteEvidence(results) ||
+			readOnlyPlanArtifactEvidenceSupportsReply(brief, reply, results) ||
+			readOnlyAnswerCitesReadDiagnosticArtifact(reply, results)) {
+
 		if acceptance := r.evaluateFinalAnswerAcceptance(reply, results); acceptance.BlockerKind == "" {
 			return workspace.ToolResult{}, false
 		}
 	}
 
-	if directCandidateOnly {
+	if directCandidateOnly && !readOnlyAnswerCitesReadDiagnosticArtifact(reply, results) {
 		candidates := closurePromptEvidencePaths(directCandidateOnlyLedger.CandidatePaths, 4)
 		if len(candidates) > 0 {
 			return workspace.ToolResult{
 				Tool:    "completion_gate",
 				Summary: "Read-only completion gate rejected final answer",
-				Error:   "read-only workspace answers require bounded source-body or diagnostic evidence tied to the user's objective before a final answer. Candidate/search/context paths are not source-body evidence. Candidate path(s): " + strings.Join(candidates, ", ") + ". Inspect one candidate with source-body evidence, use one materially different source-owner probe if these candidates do not establish the claim, or answer `<<QUESTION>>:` with the exact unavailable evidence source.",
+				Error:   sourceGroundingCandidateOnlyMessage(candidates),
 			}, true
 		}
 	}
 
 	if genericReadOnlyAnswerEvidenceReady(brief, results) {
+		return workspace.ToolResult{}, false
+	}
+
+	if readOnlyAnswerCitesReadDiagnosticArtifact(reply, results) {
 		return workspace.ToolResult{}, false
 	}
 
@@ -12064,7 +12002,7 @@ func legacyToolCallHistoryMessage(reply llama.ChatMessage, call llama.ToolCall) 
 	}
 }
 
-func textualToolRequestHistoryMessage(reply llama.ChatMessage, req workspace.ToolRequest, raw string, opts llama.ChatOptions) llama.ChatMessage {
+func textualToolRequestHistoryMessage(reply llama.ChatMessage, req workspace.ToolRequest, raw string) llama.ChatMessage {
 	content := strings.TrimSpace(raw)
 	if content == "" || !strings.Contains(content, `"tool"`) {
 		content = marshalToolRequestRaw(req)
@@ -12072,13 +12010,11 @@ func textualToolRequestHistoryMessage(reply llama.ChatMessage, req workspace.Too
 
 	content = strings.TrimSpace(content)
 
-	message := llama.ChatMessage{
+	return llama.ChatMessage{
 		Role:             textutil.FirstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
 		Content:          content,
 		ReasoningContent: reply.ReasoningContent,
 	}
-
-	return assistantHistoryMessageForOptions(message, opts)
 }
 
 type runnerControlRails struct {
@@ -12239,15 +12175,6 @@ func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) ru
 		return rails
 	}
 
-	if textutil.EqualTrimFold(rails.TaskFamily, "debug_logs") {
-		rails.FailureToEval = true
-		rails.ReadinessGate = defaultRunnerStateSlice(rails.ReadinessGate, []string{"latest_log_selected", "failure_cause_supported_by_log", "low_confidence_triggers_deepening"})
-
-		if len(rails.FinalCritic) == 0 {
-			rails.FinalCritic = []string{"answers_actual_user_request", "required_evidence_cited"}
-		}
-	}
-
 	if rails.Contract == string(workerruntime.ContractArchitecture) {
 		rails.ReadinessGate = defaultRunnerStateSlice(rails.ReadinessGate, []string{"inspected_paths_reported", "architecture_boundary_evidence_supported_or_uncertainty_declared"})
 		if len(rails.FinalCritic) == 0 {
@@ -12289,10 +12216,6 @@ func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) ru
 
 func runnerUsesSoftReadOnlyShapingOnly(brief workerruntime.WorkerRuntimeBrief, rails runnerControlRails) bool {
 	if runnerBriefRequiresMutation(brief) {
-		return false
-	}
-
-	if textutil.EqualTrimFold(rails.TaskFamily, "debug_logs") {
 		return false
 	}
 
@@ -14084,21 +14007,99 @@ func (r *Runner) retryRejectedFinalAnswerForRun(input runnerFinalAnswerRetryInpu
 	return true
 }
 
-func readOnlyInvestigationStrategyPrompt() string {
+func readOnlyInvestigationStrategyPrompt(allowedTools []string) string {
+	broadOrientation := "Start with an allowed context or search tool that matches the missing evidence; one well-scoped call is usually better than enumerating symbols one by one."
+	if toolAllowed(allowedTools, workspace.ToolNameContextPack) && toolAllowed(allowedTools, workspace.ToolNameContextQuery) {
+		broadOrientation = "Start with context_pack or context_query for a ranked map of relevant files and symbols. One call replaces 20+ individual symbol lookups."
+	} else if toolAllowed(allowedTools, workspace.ToolNameContextQuery) {
+		broadOrientation = "Start with context_query for graph-shaped or symbol-relationship questions, or use search_content for exact text. One well-scoped call is usually better than enumerating symbols one by one."
+	} else if toolAllowed(allowedTools, workspace.ToolNameSearchContent) {
+		broadOrientation = "Start with search_content or search_files for stable names, labels, symbols, or error text, then read only the highest-confidence result."
+	}
+
+	bundledProbe := "Use the broadest visible read-only tool that matches the named gap, then follow with targeted reads only where needed."
+	if toolAllowed(allowedTools, workspace.ToolNameDiscoveryQuery) {
+		bundledProbe = "Use discovery_query with purpose=\"architecture_trace\" or \"impact_analysis\" to orchestrate multiple probes at once. One call replaces 10+ separate searches."
+	}
+
+	switchText := "If you are reading symbols one by one, pause and use a broader visible context or search tool instead."
+	switch {
+	case toolAllowed(allowedTools, workspace.ToolNameContextQuery) && toolAllowed(allowedTools, workspace.ToolNameDiscoveryQuery):
+		switchText = "If you are reading symbols one by one, pause and use context_query or discovery_query instead."
+	case toolAllowed(allowedTools, workspace.ToolNameContextQuery):
+		switchText = "If you are reading symbols one by one, pause and use context_query, code_navigate, or search_content for the named gap instead."
+	case toolAllowed(allowedTools, workspace.ToolNameSearchContent):
+		switchText = "If you are reading symbols one by one, pause and use search_content or search_files for a stable term before the next targeted read."
+	}
+
 	return "## Investigation Strategy\n\n" +
 		"For read-only investigation questions, an efficient approach:\n\n" +
-		"1. Broad orientation (1 call): Start with context_pack or context_query for a ranked map of relevant files and symbols. One call replaces 20+ individual symbol lookups.\n" +
-		"2. Bundled probe (1 call): Use discovery_query with purpose=\"architecture_trace\" or \"impact_analysis\" to orchestrate multiple probes at once. One call replaces 10+ separate searches.\n" +
+		"1. Broad orientation (1 call): " + broadOrientation + "\n" +
+		"2. Bundled probe (1 call): " + bundledProbe + "\n" +
 		"3. Targeted reads (2-3 calls): Read only the 1-3 key files or symbols identified above. Do not enumerate every symbol in a file.\n" +
 		"4. Answer: Once the evidence answers the question, stop. You do not need to exhaustively verify every related function.\n\n" +
-		"If you are reading a file symbols one by one, pause and use context_query or discovery_query instead."
+		switchText
 }
 
-func narrowToolFamilyRepetitionNudgePrompt(narrowFamily string, consecutiveCalls int) string {
+func narrowToolFamilyRepetitionNudgePrompt(narrowFamily string, consecutiveCalls int, allowedTools []string) string {
+	options := readOnlyStrategyShiftOptions(allowedTools)
+	if options == "" {
+		options = "switch to a different visible read-only tool that directly matches the remaining evidence gap"
+	}
+
 	return fmt.Sprintf(
-		"You have called %s %d times consecutively. If you still lack the evidence to answer, switch strategy: use `context_query` for a graph-shaped question, `discovery_query` for a bundled layered probe, `harness_audit` for harness self-inspection, or re-read the initial context pack. Repeated narrow symbol lookups rarely uncover the high-level answer faster than one broader probe.",
-		narrowFamily, consecutiveCalls,
+		"You have called %s %d times consecutively. If you still lack the evidence to answer, switch strategy: %s. Repeated narrow symbol lookups rarely uncover the high-level answer faster than one broader visible probe.",
+		narrowFamily, consecutiveCalls, options,
 	)
+}
+
+func readOnlyStrategyShiftOptions(allowedTools []string) string {
+	var options []string
+	if toolAllowed(allowedTools, workspace.ToolNameContextQuery) {
+		options = append(options, "use `context_query` for a graph-shaped question")
+	}
+	if toolAllowed(allowedTools, workspace.ToolNameDiscoveryQuery) {
+		options = append(options, "use `discovery_query` for a bundled layered probe")
+	}
+	if toolAllowed(allowedTools, workspace.ToolNameHarnessAudit) {
+		options = append(options, "use `harness_audit` for harness self-inspection")
+	}
+	if toolAllowed(allowedTools, workspace.ToolNameContextPack) {
+		options = append(options, "use `context_pack` for cached workspace localization")
+	}
+	if toolAllowed(allowedTools, workspace.ToolNameSearchContent) {
+		options = append(options, "use `search_content` for a stable term or error text")
+	}
+
+	return joinStrategyOptions(options, "or")
+}
+
+func toolAllowed(allowedTools []string, tool string) bool {
+	tool = strings.TrimSpace(tool)
+	if tool == "" {
+		return false
+	}
+
+	for _, allowed := range allowedTools {
+		if strings.TrimSpace(allowed) == tool {
+			return true
+		}
+	}
+
+	return false
+}
+
+func joinStrategyOptions(options []string, conjunction string) string {
+	switch len(options) {
+	case 0:
+		return ""
+	case 1:
+		return options[0]
+	case 2:
+		return options[0] + " " + conjunction + " " + options[1]
+	default:
+		return strings.Join(options[:len(options)-1], ", ") + ", " + conjunction + " " + options[len(options)-1]
+	}
 }
 
 type runnerLanePreflightInput struct {
@@ -15119,29 +15120,11 @@ func conversationSourceGroundingMissingPaths(results []workspace.ToolResult) []s
 			continue
 		}
 
-		// Detect source-grounding rejection patterns.
-		lower := strings.ToLower(errorText)
-		if !strings.Contains(lower, "source path") && !strings.Contains(lower, "not backed by") &&
-			!strings.Contains(lower, "cites current-workspace") && !strings.Contains(lower, "source-body read") {
-			continue
-		}
-
-		// Extract paths from the error text — they appear in quoted form:
-		// "the answer cites current-workspace path(s) that do not exist: `path1`, `path2`."
-		// or "the answer cites source path/line/symbol detail not backed by a source-body read: `path1`."
-		var paths []string
-		for _, match := range backtickedTokenPattern.FindAllStringSubmatch(errorText, -1) {
-			if len(match) > 1 {
-				p := strings.TrimSpace(match[1])
-				if p != "" {
-					paths = append(paths, p)
-				}
-			}
-		}
-		if len(paths) > 0 {
-			return paths
+		if paths := readOnlySourceGroundingUnsupportedPathsFromError(errorText); len(paths) > 0 {
+			return uniqueSortedRunnerPaths(paths)
 		}
 	}
+
 	return nil
 }
 
@@ -16948,27 +16931,20 @@ func stripOrphanedToolCalls(messages []llama.ChatMessage) []llama.ChatMessage {
 	return out
 }
 
-func chatMessagesForOptions(messages []llama.ChatMessage, opts llama.ChatOptions) []llama.ChatMessage {
-	if opts.PreserveThinking {
-		return messages
-	}
-
-	out := make([]llama.ChatMessage, len(messages))
-	copy(out, messages)
-
-	for i := range out {
-		out[i].ReasoningContent = ""
-	}
-
-	return out
+func (r *Runner) chatMessagesForOptions(messages []llama.ChatMessage, opts llama.ChatOptions) []llama.ChatMessage {
+	return llama.PrepareChatMessagesForBackend(messages, opts, r.clientBackend())
 }
 
-func assistantHistoryMessageForOptions(message llama.ChatMessage, opts llama.ChatOptions) llama.ChatMessage {
-	if !opts.PreserveThinking {
-		message.ReasoningContent = ""
+func (r *Runner) assistantHistoryMessageForOptions(message llama.ChatMessage, opts llama.ChatOptions) llama.ChatMessage {
+	return llama.PrepareAssistantHistoryMessageForBackend(message, opts, r.clientBackend())
+}
+
+func (r *Runner) clientBackend() string {
+	if r == nil || r.Client == nil {
+		return ""
 	}
 
-	return message
+	return r.Client.Backend()
 }
 
 func thinkingOptionForLog(enableThinking *bool) string {
@@ -17420,11 +17396,11 @@ type ReadinessNudge struct {
 	// the closure decision rationale.
 	Objective string
 
+	// RuntimeBrief is the actual lane contract for ledger guidance.
+	RuntimeBrief workerruntime.WorkerRuntimeBrief
+
 	// Results are the collected tool results.
 	Results []workspace.ToolResult
-
-	// ProbeBudget is the remaining probe budget.
-	ProbeBudget int
 
 	// ContinuationScope is passed to postReadinessContinuationContract.
 	ContinuationScope string
@@ -17452,13 +17428,17 @@ func buildReadinessNudge(ctx ReadinessNudge) string {
 		lines = append(lines, ctx.EvidencePathLabel+summarizePostChildEvidencePaths(evidencePaths, 3))
 	}
 
+	if ledger := readOnlyEvidenceLedgerGuidanceForBrief(ctx.RuntimeBrief, ctx.Results); ledger != "" {
+		lines = append(lines, ledger)
+	}
+
 	if ctx.IncludeProbeSuggestions {
 		if suggestion := closureProbeSuggestionLine(ctx.Results, 3); suggestion != "" {
 			lines = append(lines, suggestion)
 		}
 	}
 
-	lines = append(lines, postReadinessContinuationContract(ctx.ContinuationScope, ctx.ProbeBudget))
+	lines = append(lines, postReadinessContinuationContract(ctx.ContinuationScope))
 	lines = append(lines, ctx.FooterLines...)
 
 	return strings.Join(lines, "\n")
@@ -17488,19 +17468,11 @@ func postReadinessToolContractForBrief(brief workerruntime.WorkerRuntimeBrief, r
 	return postReadinessToolContract{Reason: "none"}
 }
 
-func postReadinessProbeBudgetForBrief(brief workerruntime.WorkerRuntimeBrief) int {
-	if workerruntime.RuntimeContractIsArchitectureOrReview(brief.Contract) {
-		return 1
-	}
-
-	return delegatedReadOnlyProbeBudget
-}
-
 // postReadinessContinuationContract returns advisory closeout guidance after
 // readiness or a child packet. It must not describe read-only readiness as a
 // permission gate; explicit source-refresh gates are selected by
 // postReadinessToolContractForBrief.
-func postReadinessContinuationContract(scope string, budget int) string {
+func postReadinessContinuationContract(scope string) string {
 	anchor := "prefer a symbol, branch, body, or narrow line-range probe over file-level raw reads"
 	if strings.TrimSpace(scope) == "child_packet_available" {
 		anchor = "anchor to a named path, symbol, discovered handle, branch, body, or narrow line-range probe"
@@ -17508,20 +17480,10 @@ func postReadinessContinuationContract(scope string, budget int) string {
 		anchor = "target a symbol, call/reference, branch, body, or narrow line-range probe tied to inspected paths"
 	}
 
-	probeBudgetLine := "one targeted probe"
-
-	switch {
-	case budget <= 0:
-		probeBudgetLine = "answer unless the missing claim is exact and material"
-	case budget == 1:
-	default:
-		probeBudgetLine = fmt.Sprintf("at most %d targeted probes", budget)
-	}
-
 	lines := []string{
 		"A final answer is available unless one exact unresolved claim remains.",
-		"If one more source read would materially change the answer, take a bounded follow-up through the normal tool policy; " + anchor + "; " + probeBudgetLine + " before answering.",
-		"The follow-up should target a code-shaped token (symbol name, file path, or narrow line range) and should not paraphrase the original question.",
+		"If one more source read would materially change the answer, take a bounded follow-up through the normal tool policy; " + anchor + ".",
+		"The follow-up should name the missing claim and target a code-shaped token (symbol name, file path, or narrow line range), not paraphrase the original question.",
 	}
 
 	return strings.Join(lines, "\n")
@@ -17534,9 +17496,9 @@ func delegatedReadOnlyDiminishingReturnsNudge(objective string, results []worksp
 
 	// The readiness nudge already disclosed the advisory continuation shape.
 	// Repeating that prose burns context for no behavior change. Emit a
-	// factual probe-budget note instead and let the model decide.
+	// ledger note instead and let the model decide strategy.
 	paths := closurePromptEvidencePaths(delegatedClosureEvidencePaths(objective, results, 4), 3)
-	line := fmt.Sprintf("Post-readiness probes used: %d. You have already used the post-readiness follow-up budget disclosed for this lane. A final answer is available from the evidence above; take another tool call only for an exact material missing claim.", followups)
+	line := "The evidence ledger already supports a final answer. Continue with tools only if you can name an exact material missing claim and a bounded source that would resolve it."
 
 	if len(paths) > 0 {
 		line += " Inspected paths: " + summarizePostChildEvidencePaths(paths, 3) + "."
@@ -17735,10 +17697,10 @@ func postChildDiminishingReturnsNudge(objective string, results []workspace.Tool
 	}
 
 	// The child-packet boundary nudge already disclosed the continuation
-	// contract; this is a factual probe-budget note, not another prose
-	// block telling the model what was already said.
+	// contract; this is a ledger note, not another prose block telling the
+	// model what was already said.
 	paths := postChildClosureEvidencePaths(objective, results, 3)
-	line := fmt.Sprintf("Post-child probes used: %d. You have already used the post-child follow-up budget disclosed for this lane. A final answer is available from the packet above; take another tool call only for an exact material missing claim.", followups)
+	line := "The child-packet evidence ledger already supports a final answer. Continue with tools only if you can name an exact material missing claim and a bounded source that would resolve it."
 
 	if len(paths) > 0 {
 		line += " Packet paths: " + summarizePostChildEvidencePaths(paths, 3) + "."
@@ -18377,7 +18339,7 @@ func pendingVerificationAfterWritesRecoveryNudge(in recoveryNudgeInputs) (string
 }
 
 func debugLogInvestigationRecoveryNudge(in recoveryNudgeInputs) (string, bool) {
-	if strings.TrimSpace(in.brief.TaskFamily) != "debug_logs" {
+	if !debugLogContractApplies(in.brief, in.results) {
 		return "", false
 	}
 
@@ -19773,7 +19735,7 @@ func (s *runnerRequestBudgetState) synthesisDecision(policy RunPolicy, toolCalls
 		nudgeText := fmt.Sprintf("You have used %d tool calls this turn. Before more tool calls, pause: summarize what you've learned so far, state the specific question that remains, and commit to the minimal next step. If the remaining gap is small, answer now with what you have.", toolCalls)
 
 		if mutation {
-			nudgeText = fmt.Sprintf("You have used %d tool calls this turn. Pause: name the exact edit target you've identified (file and line range), and commit to the smallest necessary edit. If you know the target and the change, write it now — do not keep reading. If you're uncertain, state the exact blocker.", toolCalls)
+			nudgeText = fmt.Sprintf("You have used %d tool calls this turn. Pause: name the exact edit target you've identified (file and line range), and commit to the smallest necessary edit. If you know the target and the change, write it now. If one edit-safety fact is still missing, take a bounded target-scoped probe for that fact; if the harness cannot provide it, state the exact blocker.", toolCalls)
 		}
 
 		return runnerRequestBudgetDecision{
@@ -22224,11 +22186,6 @@ func filterChildPacketFollowupAnchors(objective string, paths []string) []string
 	return delegatedDiscoveryAnswerEvidencePaths(objective, filtered)
 }
 
-// delegatedReadOnlyProbeBudget is the soft cap disclosed to post-readiness
-// read-only continuations. It is not a hard tool counter; the runner uses the
-// advisory closeout nudge, loop fuses, and MaxToolSteps for runaway protection.
-const delegatedReadOnlyProbeBudget = 2
-
 const scopedImplementationLargeReadLineThreshold = 800
 const scopedImplementationLargeReadByteThreshold = 96 * 1024
 const scopedImplementationBoundedReadWindowLines = 180
@@ -22271,9 +22228,12 @@ func (r *Runner) classifyTerminalAnswer(answer string, stopReason string, result
 	}
 
 	if terminalAnswerContainsTransportProtocol(answer) {
-		acceptance.Decision = finalAnswerAcceptanceRejected
-		acceptance.BlockerKind = "transport_protocol_output"
-		acceptance.Reason = "the final answer contained tool-call transport markup instead of user-visible answer prose"
+		acceptance = finalAnswerAcceptanceWithTerminalOverride(
+			acceptance,
+			finalAnswerAcceptanceRejected,
+			string(turnViolationTransportProtocolOutput),
+			"the final answer contained tool-call transport markup instead of user-visible answer prose",
+		)
 		decision.Outcome = terminalAnswerTransportBlocked
 		decision.PresentedAnswer = "I wasn't able to produce a clean answer from the evidence. Could you rephrase or narrow the question?"
 		decision.StopReason = acceptance.BlockerKind
@@ -22283,9 +22243,7 @@ func (r *Runner) classifyTerminalAnswer(answer string, stopReason string, result
 	}
 
 	if r.hostOwnedReadOnlyCloseoutAccepted(answer, stopReason, results, acceptance) {
-		acceptance.Decision = finalAnswerAcceptanceAccepted
-		acceptance.BlockerKind = ""
-		acceptance.Reason = "host_read_only_closeout"
+		acceptance = finalAnswerAcceptanceWithTerminalOverride(acceptance, finalAnswerAcceptanceAccepted, "", "host_read_only_closeout")
 		decision.Outcome = terminalAnswerAccepted
 		decision.StopReason = stopReason
 		decision.Acceptance = acceptance
@@ -22307,20 +22265,27 @@ func (r *Runner) classifyTerminalAnswer(answer string, stopReason string, result
 		return decision
 	}
 
+	if _, ok := finalAnswerAcceptanceViolationKind(acceptance); !ok {
+		return decision
+	}
+
 	decision.Outcome = terminalAnswerBlocked
 	decision.StopReason = acceptance.BlockerKind
-	decision.RetryExhausted = retryableReadOnlyFinalAnswerBlockerKind(acceptance.BlockerKind)
+	if stopReason == "implementation_tool_step_budget_blocked" && strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") {
+		decision.StopReason = stopReason
+	}
+	decision.RetryExhausted = turnFinalAnswerAcceptanceRetryable(acceptance)
 
 	if !strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") && r.terminalAnswerShouldOverrideRejectedRaw(answer, acceptance) {
-		blockerResult := workspace.ToolResult{
-			Tool:    "completion_gate",
-			Summary: "Final answer rejected by blocker check",
-			Error:   r.finalAnswerBlockerErrorText(acceptance.BlockerKind, acceptance.Reason, answer, results),
+		if blockerResult, ok := finalAnswerCompletionGateProjection(
+			acceptance,
+			"Final answer rejected by blocker check",
+			r.finalAnswerBlockerErrorText(acceptance.BlockerKind, acceptance.Reason, answer, results),
+		); ok {
+			decision.BlockerResult = blockerResult
+			decision.PresentedAnswer = r.completionGateRepeatedBlockerAnswer(blockerResult, results)
+			decision.OverrideSource = "finish"
 		}
-
-		decision.BlockerResult = blockerResult
-		decision.PresentedAnswer = r.completionGateRepeatedBlockerAnswer(blockerResult, results)
-		decision.OverrideSource = "finish"
 	}
 
 	return decision
@@ -22330,18 +22295,28 @@ func (r *Runner) recoveredReadOnlyTerminalAnswer(answer string, results []worksp
 	if r == nil {
 		return "", finalAnswerAcceptance{}, false
 	}
+	if !turnFinalAnswerAcceptanceRecoverable(acceptance) {
+		return "", finalAnswerAcceptance{}, false
+	}
 
-	return r.readOnlyTerminalRecoveryCandidate(acceptance.BlockerKind, results)
+	return r.readOnlyTerminalRecoveryCandidate(acceptance, results)
 }
 
-func (r *Runner) readOnlyTerminalRecoveryCandidate(blockerKind string, results []workspace.ToolResult) (string, finalAnswerAcceptance, bool) {
+func (r *Runner) readOnlyTerminalRecoveryCandidate(acceptance finalAnswerAcceptance, results []workspace.ToolResult) (string, finalAnswerAcceptance, bool) {
 	if r == nil {
 		return "", finalAnswerAcceptance{}, false
 	}
 
+	if recovered, ok := r.validationStatusTerminalRecoveryAnswer(results); ok {
+		recoveredAcceptance := r.evaluateFinalAnswerAcceptance(recovered, results)
+		if recoveredAcceptance.BlockerKind == "" {
+			return recovered, recoveredAcceptance, true
+		}
+	}
+
 	brief := readOnlyDirectAnswerAcceptanceLedgerBrief(workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief))
 	closeout := readOnlyClosureDecisionForResults(brief, results)
-	recovered, ok := closeout.RecoverableTerminalCandidate(r.agentName(), blockerKind)
+	recovered, ok := closeout.RecoverableTerminalCandidate(r.agentName(), acceptance.ContractAssessment)
 	if !ok {
 		return "", finalAnswerAcceptance{}, false
 	}
@@ -22380,7 +22355,7 @@ func (r *Runner) terminalAnswerShouldOverrideRejectedRaw(answer string, acceptan
 		return false
 	}
 
-	return acceptance.BlockerKind != "non_answer_prose" ||
+	return acceptance.BlockerKind != string(turnViolationNonAnswerProse) ||
 		looksLikeMetaIntentRestatement(answer) ||
 		looksLikeGateSatisfactionMetaFinalAnswer(answer) ||
 		looksLikeEmbeddedQuestionProtocolFinalAnswer(answer) ||
@@ -22827,7 +22802,7 @@ func (r *Runner) finalAnswerBlockerErrorText(kind string, reason string, answer 
 	}
 
 	switch kind {
-	case "required_edit_paths_remaining":
+	case string(turnViolationRequiredEditPathsRemaining):
 		missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results))
 		if r.planThenExecutePlannerPhase() {
 			base := "the plan-execute planner contract is not fulfilled. The final answer claimed completion, but the harness has no successful submit_plan edit entry for the following required edit path(s): "
@@ -22855,26 +22830,28 @@ func (r *Runner) finalAnswerBlockerErrorText(kind string, reason string, answer 
 		}
 
 		return base
-	case "user_visible_blocker":
+	case string(turnViolationUserVisibleBlocker):
 		return "the final answer was a <<QUESTION>>: blocker; surface the path-specific blocker reason for each unfinished required edit path."
-	case "read_only_protocol_blocker":
+	case string(turnViolationReadOnlyProtocolBlocker):
 		return "the final answer exposed internal <<QUESTION>> blocker protocol in a read-only direct-answer lane. Answer in normal prose from gathered evidence, or state the exact unresolved claim and the smallest useful next probe without raw blocker markup."
-	case "protocol_meta_final_answer":
+	case string(turnViolationProtocolMetaFinalAnswer):
 		return "the final answer repeated internal validation status instead of answering the user. Answer in normal prose from the gathered evidence; omit validation status and internal protocol markers."
-	case "unexecuted_tool_request_final_answer":
+	case string(turnViolationUnexecutedToolRequestAnswer):
 		return "the final answer was an unexecuted workspace-tool request payload. Issue the lookup as a parser-readable tool call with the `tool` field, or answer in normal prose from the available evidence."
-	case "non_answer_prose":
+	case string(turnViolationNonAnswerProse):
 		return "the final answer looks like transport-level noise (tool-call markup, echoed user question, or tool-failure language) rather than an actual answer. Reply with substantive prose that addresses the user's request, or use <<QUESTION>>: to state a concrete blocker."
-	case "source_grounding_unmet":
+	case string(turnViolationSourceGroundingUnmet):
 		return reason
-	case "required_evidence_unmet":
+	case string(turnViolationRequiredEvidenceUnmet):
 		if r != nil {
 			missing := missingRequiredEvidence(r.RuntimeBrief.RequiredEvidence, answer, results)
 			return "the answer does not satisfy the required evidence contract. Missing: " + strings.Join(missing, ", ") + ". Address each missing obligation in your answer, or use <<QUESTION>>: to state a concrete blocker."
 		}
 
 		return "the answer does not satisfy the required evidence contract. Address each missing obligation, or use <<QUESTION>>: to state a concrete blocker."
-	case "rejected_mutation_paths_remaining":
+	case string(turnViolationValidationStatusContradictsEvidence):
+		return reason
+	case string(turnViolationRejectedMutationPathsRemaining):
 		var requiredPaths []string
 
 		if r != nil {
@@ -23353,6 +23330,45 @@ func newMalformedToolPolicyEngine() malformedToolPolicyEngine {
 	return malformedToolPolicyEngine{}
 }
 
+func (r *Runner) malformedToolRecoveryPrompt(raw string, parseErr error, results []workspace.ToolResult) string {
+	if r == nil || parseErr == nil {
+		return ""
+	}
+
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+
+	var lines []string
+
+	if looksLikeTextualToolCall(raw) {
+		lines = append(lines,
+			"The last response was rejected by the tool parser because it used XML/HTML/DSML-style tool-call markup instead of the active tool transport.",
+			"Do not emit tags such as `<n_tool_calls>`, `<invoke>`, `<janus_tool>`, or textual tool JSON as answer prose. If a tool is useful, use the normal tool-call mechanism exposed by this runtime; otherwise answer in plain user-visible prose.",
+		)
+	} else {
+		lines = append(lines,
+			"The last response was rejected by the tool parser because it was not one valid tool call.",
+			"If a tool is useful, emit exactly one parser-readable tool call through the active tool transport; otherwise answer in plain user-visible prose.",
+		)
+	}
+
+	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
+	if workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
+		if ledger := readOnlyEvidenceLedgerGuidanceForBrief(brief, results); ledger != "" {
+			lines = append(lines, ledger)
+		}
+		if r.lastCompletionGateError != "" {
+			if paths := readOnlySourceGroundingUnsupportedPathsFromError(r.lastCompletionGateError); len(paths) > 0 {
+				lines = append(lines, "If the malformed tool text was trying to repair missing source evidence, the unsupported citation path(s) are: "+formatInlinePathList(paths, 4)+". Valid strategies are to read one missing body, cite only body-backed evidence, qualify candidate-only paths as unverified, or state the exact blocker.")
+			}
+		}
+	}
+
+	return strings.Join(lines, "\n\n")
+}
+
 func (malformedToolPolicyEngine) EvaluateParseFailure(raw string, parseErr error) malformedToolPolicyDecision {
 	return malformedToolPolicyDecision{
 		Request: workspace.ToolRequest{Tool: "tool_parse"},
@@ -23385,6 +23401,10 @@ func toolParseErrorFeedback(raw string, parseErr error) string {
 
 	if strings.Contains(lower, "toolrequest.edits") && strings.Contains(lower, "string") {
 		return message + ". submit_plan.edits was emitted as a quoted string. Emit `edits` as a real JSON array value, not a string. Each edit object must use a real path and exactly one executable edit shape: insert_after_line/content for small inline insertions, old_text/new_text for exact replacements or deletions, start_line/end_line/content for an inclusive current-source range, or replace_all with full new_text for missing/new files only. Existing source/test files must use bounded anchored edits. For native tool-call backends, pass the submit_plan arguments object directly with `rationale` and an `edits` array. Edit bodies must be complete executable source text, not placeholders or prose."
+	}
+
+	if looksLikeTextualToolCall(raw) {
+		return message + ". The payload looks like XML/HTML/DSML-style tool-call markup. Do not emit tags such as <n_tool_calls>, <invoke>, or <janus_tool>. Use the runtime's active tool-call mechanism for tools, or answer in plain prose."
 	}
 
 	return message + ". Emit exactly one valid tool call or answer normally."

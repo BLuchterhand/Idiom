@@ -74,32 +74,17 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			StopConditions:       []StopConditionID{StopEditIntentOrTypedBlocker},
 			FinalCritic:          []FinalCriticID{"outputs_only_edit_intent_or_typed_blocker", "no_tool_calls", "no_write_authority", "no_submit_plan"},
 		}
-	case "conversation", "direct_question":
+	case "conversation", "direct_question", "debug_logs":
 		return RuntimeContractSpec{
 			TaskFamily:           autonomy.TaskFamilyConversation,
 			Contract:             ContractDirectAnswer,
 			PermissionProfile:    PermissionReadOnlyWorkspace,
 			ToolProfile:          CapabilityConversationReadOnly,
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceAnswerAddressesUserRequest},
-			SearchPolicy:         []SearchPolicyID{"answer_from_visible_context_when_sufficient", "for repo-specific questions use one efficient context/search/read path", "prefer context_pack for initial workspace-localization before ad-hoc search/read", "prefer bounded source reads over broad scans", "stop_after_enough_evidence_to_answer"},
+			SearchPolicy:         []SearchPolicyID{"answer_from_visible_context_when_sufficient", "for repo-specific questions use one efficient allowed context/search/read path", "prefer bounded source reads over broad scans", "stop_after_enough_evidence_to_answer"},
 			VerificationContract: VerificationNotRequiredReadOnlyLane,
 			StopConditions:       []StopConditionID{StopAnsweredUserRequest, StopBlockedByMissingInformation},
 			FinalCritic:          []FinalCriticID{"answers_actual_user_request", "well_formatted_informative_on_topic", "cite_or_name_evidence_when_workspace_used"},
-		}
-	case "debug_logs":
-		return RuntimeContractSpec{
-			TaskFamily:           autonomy.TaskFamilyDebugLogs,
-			Contract:             ContractGroundedExplanation,
-			PermissionProfile:    PermissionReadOnlyWorkspace,
-			ToolProfile:          CapabilityDebugLogInvestigator,
-			ForbiddenTools:       append([]string(nil), workspace.WorkspaceWriteToolNames()...),
-			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceLogRecord, RequiredEvidenceFailureOutput, RequiredEvidenceTimestampOrLatestSelection},
-			RequiredTools:        []string{"log_inspection"},
-			ReadinessGate:        []ReadinessGateID{ReadinessLatestLogSelected, ReadinessFailureCauseSupportedByLog, ReadinessLowConfidenceTriggersDeepening},
-			SearchPolicy:         []SearchPolicyID{"start_with_most_recent_log", "extract_failure_window"},
-			VerificationContract: VerificationNotRequiredReadOnlyLane,
-			StopConditions:       []StopConditionID{StopLogCauseIdentifiedOrGapDeclared},
-			FinalCritic:          []FinalCriticID{"answers_actual_user_request", "required_evidence_cited"},
 		}
 	case "verification_only":
 		return RuntimeContractSpec{
@@ -371,7 +356,7 @@ func AllowedToolsForCapabilityProfile(available []string, profile ToolCapability
 	case CapabilityReadOnlyDiscovery:
 		return filterAllowedTools(available, profile, readOnlyDiscoveryToolNames()...)
 	case CapabilityConversationReadOnly:
-		return filterAllowedTools(available, profile, readOnlyDiscoveryToolNames()...)
+		return filterAllowedTools(available, profile, workspace.RuntimeReadOnlyInvestigationToolNames()...)
 	case CapabilityImplementationScopedEdit:
 		return filterAllowedTools(available, profile, implementationScopedEditToolNames()...)
 	default:

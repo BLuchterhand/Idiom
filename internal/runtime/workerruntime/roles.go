@@ -42,7 +42,7 @@ func RoleSpecFor(name string) RoleSpec {
 			TaskFamily:           autonomy.TaskFamilyDelegatedReadOnly,
 			Contract:             ContractGroundedEvidence,
 			PermissionProfile:    PermissionReadOnlyWorkspace,
-			AllowedTools:         filterAllowedTools(ManifestToolsForCapabilityProfile(CapabilityConversationReadOnly), CapabilityConversationReadOnly, readOnlyChildAllowedTools()...),
+			AllowedTools:         filterAllowedTools(ManifestToolsForCapabilityProfile(CapabilityReadOnlyDiscovery), CapabilityReadOnlyDiscovery, readOnlyChildAllowedTools()...),
 			ForbiddenTools:       []string{"edit_file", "write_file", "append_file", "mkdir", "apply_patch", "go_move_declarations", "mutating_shell", "task"},
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceInspectedPaths, RequiredEvidenceAnswerAddressesDelegatedQuestion, RequiredEvidenceConfidence},
 			SearchPolicy:         []SearchPolicyID{"prefer_discovery_query_for_composite_questions", "prefer_symbol_or_handle_probes_over_raw_path_reads", "answer_when_evidence_is_sufficient", "if_not_answering_name_one_exact_missing_claim_and_probe", "avoid_broad_loops"},

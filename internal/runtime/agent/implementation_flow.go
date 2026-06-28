@@ -1276,44 +1276,11 @@ func directAnswerSurfaceToolNames(_ workerruntime.WorkerRuntimeBrief) []string {
 //   - task_ledger (planning and tracking)
 //   - shell (command execution)
 //
-// Tools kept:
-//   - read_file, search_files, search_content — exact file/path investigation
-//   - code_navigate — language-aware navigation
-//   - context_pack, context_query, context_zoom — context graph discovery
-//   - discovery_query — composite discovery
-//   - structural_search — AST-pattern search
-//   - file_stats — directory/file statistics
-//   - workspace language tools (go_*, cpp_*, python_*, ts_*, rust_*, java_*)
-//   - git history tools (history_range, history_symbol, blame_range)
-//   - harness_audit, read_only_capability — harness self-inspection
-//   - mcp:* — external read-only tools
+// Tools kept are the workspace-owned read-only investigation projection:
+// source inspection, context discovery, git history, harness self-inspection,
+// read-only delegation, and configured read-only external discovery tools.
 func defaultDirectAnswerSurfaceTools() []string {
-	var tools []string
-
-	// Source inspection: exact file reading, search, navigation
-	tools = append(tools, "read_file", "search_files", "search_content",
-		"read_only_capability", "code_navigate")
-
-	// Context graph / discovery
-	tools = append(tools, "context_pack", "context_query", "context_zoom",
-		"discovery_query", "structural_search", "file_stats")
-
-	// Language-aware navigation via code_navigate capabilities,
-	// plus Go-specific structured tools
-	tools = append(tools, workspace.RuntimeSourceInspectionToolNames()...)
-
-	// Context discovery tools (context_pack, context_query, etc.)
-	tools = append(tools, workspace.RuntimeContextDiscoveryToolNames()...)
-
-	// Git history inspection
-	tools = append(tools, workspace.RuntimeHistoryInspectionToolNames()...)
-
-	// Harness self-inspection
-	tools = append(tools, "harness_audit")
-
-	// Read-only task delegation is preserved for direct-answer lanes that
-	// return child packets; existing runtime contracts depend on it.
-	tools = append(tools, "task")
+	tools := workspace.RuntimeReadOnlyInvestigationToolNames()
 
 	// Filter out explicit exclusions
 	excluded := directAnswerSurfaceExcludedTools()
@@ -1386,31 +1353,6 @@ func DirectAnswerSurfaceForBriefTools(brief workerruntime.WorkerRuntimeBrief) []
 	return surface.ToolNames
 }
 
-type finalAnswerAcceptanceDecision string
-
-const (
-	finalAnswerAcceptanceAccepted finalAnswerAcceptanceDecision = "accept"
-	finalAnswerAcceptanceRejected finalAnswerAcceptanceDecision = "reject"
-)
-
-const finalAnswerAcceptanceSchema = "final_answer_acceptance.v1"
-const finalAnswerPolicyInvariantAcceptance = "final_answer.acceptance"
-
-type finalAnswerAcceptance struct {
-	SchemaVersion            string
-	Decision                 finalAnswerAcceptanceDecision
-	BlockerKind              string
-	Reason                   string
-	EvidencePaths            []string
-	ObjectiveRelevanceStatus string
-	RelevantSourceBodyPaths  []string
-	AnswerObjectiveTerms     []string
-	PackID                   autonomy.ContractPackID
-	InvariantID              string
-	PolicyDecision           autonomy.ToolPolicyDecision
-	ParityReport             ParityReport
-}
-
 func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspace.ToolResult) finalAnswerAcceptance {
 	acceptance := newFinalAnswerAcceptance()
 	if r != nil {
@@ -1421,19 +1363,7 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 
 	if r != nil {
 		directAnswerRelevance = r.readOnlyDirectAnswerRelevance(answer, results)
-		if directAnswerRelevance.Status != "" {
-			acceptance.ObjectiveRelevanceStatus = directAnswerRelevance.Status
-			acceptance.RelevantSourceBodyPaths = directAnswerRelevance.RelevantSourceBodyPaths
-			acceptance.AnswerObjectiveTerms = directAnswerRelevance.AnswerObjectiveTerms
-		}
-	}
-
-	reject := func(kind string, reason string) finalAnswerAcceptance {
-		acceptance.Decision = finalAnswerAcceptanceRejected
-		acceptance.BlockerKind = kind
-		acceptance.Reason = reason
-
-		return finalAnswerAcceptanceWithPolicy(acceptance)
+		acceptance = finalAnswerAcceptanceWithDirectAnswerRelevance(acceptance, directAnswerRelevance)
 	}
 
 	// Plan-then-execute planner phase: a successful submit_plan IS the
@@ -1448,29 +1378,29 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 	}
 
 	if r != nil && r.planThenExecuteAnchorRefreshFinalAnswerPending(results) {
-		return reject("plan_execute_anchor_refresh_pending", "plan_execute_anchor_refresh_pending")
+		return rejectFinalAnswerAcceptance(acceptance, turnViolationPlanExecuteAnchorRefreshPending, turnReasonPlanExecuteAnchorRefreshPending)
 	}
 
 	if looksLikeGateSatisfactionMetaFinalAnswer(answer) {
-		return reject("protocol_meta_final_answer", "gate_satisfaction_meta_final_answer")
+		return rejectFinalAnswerAcceptance(acceptance, turnViolationProtocolMetaFinalAnswer, turnReasonGateSatisfactionMetaFinalAnswer)
 	}
 
 	if looksLikeEmbeddedQuestionProtocolFinalAnswer(answer) {
-		return reject("protocol_meta_final_answer", "embedded_question_protocol_marker")
+		return rejectFinalAnswerAcceptance(acceptance, turnViolationProtocolMetaFinalAnswer, turnReasonEmbeddedQuestionProtocolMarker)
 	}
 
 	if looksLikeUnexecutedToolRequestAnswer(answer) {
-		return reject("unexecuted_tool_request_final_answer", "unexecuted_tool_request_final_answer")
+		return rejectFinalAnswerAcceptance(acceptance, turnViolationUnexecutedToolRequestAnswer, turnReasonUnexecutedToolRequestAnswer)
 	}
 
 	if r != nil && runnerBriefRequiresMutation(r.RuntimeBrief) {
 		if missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results)); len(missing) > 0 {
-			return reject("required_edit_paths_remaining", "required_edit_paths_remaining")
+			return rejectFinalAnswerAcceptance(acceptance, turnViolationRequiredEditPathsRemaining, turnReasonRequiredEditPathsRemaining)
 		}
 
 		if missing := unresolvedRejectedMutationPaths(results, r.RuntimeBrief.RequiredEditPaths); len(missing) > 0 {
 			acceptance.EvidencePaths = textutil.Merge(acceptance.EvidencePaths, missing)
-			return reject("rejected_mutation_paths_remaining", "rejected_mutation_paths_remaining")
+			return rejectFinalAnswerAcceptance(acceptance, turnViolationRejectedMutationPathsRemaining, turnReasonRejectedMutationPathsRemaining)
 		}
 	}
 
@@ -1481,19 +1411,20 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 			// This prevents the dead-end loop where the model can't
 			// proceed and can't say "I'm stuck" either.
 			if hasSourceBodyEvidence(results) && isSpecificQuestionBlocker(answer) {
-				return reject("user_visible_blocker", "user_visible_blocker")
+				return rejectFinalAnswerAcceptance(acceptance, turnViolationUserVisibleBlocker, turnReasonUserVisibleBlocker)
 			}
-			return reject("read_only_protocol_blocker", "read_only_protocol_blocker")
+			return rejectFinalAnswerAcceptance(acceptance, turnViolationReadOnlyProtocolBlocker, turnReasonReadOnlyProtocolBlocker)
 		}
 
-		return reject("user_visible_blocker", "user_visible_blocker")
+		return rejectFinalAnswerAcceptance(acceptance, turnViolationUserVisibleBlocker, turnReasonUserVisibleBlocker)
 	}
 
 	if r != nil && !readOnlyDirectAnswerLane(r.RuntimeBrief) &&
 		readOnlyAnswerReportsInsufficientEvidence(answer) &&
+		!acceptance.ContractAssessment.HasDiagnostic(turnDiagnosticObjectiveRelevance) &&
 		r.evidenceEngine().ClosureDecision(r.RuntimeBrief, results).Answerable() {
 
-		return reject("non_answer_prose", "answerable_evidence_reported_as_insufficient")
+		return rejectFinalAnswerAcceptance(acceptance, turnViolationNonAnswerProse, turnReasonAnswerableEvidenceInsufficient)
 	}
 
 	if r != nil &&
@@ -1501,7 +1432,7 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 		workerruntime.RuntimeContractIsArchitectureOrReview(r.RuntimeBrief.Contract) &&
 		unsupportedReadOnlyCloseoutAnswer(answer) {
 
-		return reject("non_answer_prose", "insufficient_evidence_answer")
+		return rejectFinalAnswerAcceptance(acceptance, turnViolationNonAnswerProse, turnReasonInsufficientEvidenceAnswer)
 	}
 
 	if looksLikeNonAnswerProse(answer) {
@@ -1509,11 +1440,19 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 		// not valid answers — always reject them for user-facing agents
 		// regardless of source inventory policy.
 		if r != nil && r.userFacingFinalAnswer() && looksLikeLeakedImplementationBlockerTemplate(strings.ToLower(strings.TrimSpace(answer))) {
-			return reject("non_answer_prose", "leaked_implementation_blocker_template")
+			return rejectFinalAnswerAcceptance(acceptance, turnViolationNonAnswerProse, turnReasonLeakedImplementationBlocker)
 		}
 
-		if !finalAnswerAcceptanceAllowsSourceInventory(acceptance, answer, r, results) {
-			return reject("non_answer_prose", "non_answer_prose")
+		if !finalAnswerAcceptanceAllowsObjectiveDiagnosticNonAnswer(acceptance, answer, r) &&
+			!finalAnswerAcceptanceAllowsSourceInventory(acceptance, answer, r, results) {
+
+			return rejectFinalAnswerAcceptance(acceptance, turnViolationNonAnswerProse, turnReasonNonAnswerProse)
+		}
+	}
+
+	if r != nil {
+		if reason := r.validationStatusAnswerRejectionReason(answer, results); reason != "" {
+			return rejectFinalAnswerAcceptanceWithMessage(acceptance, turnViolationValidationStatusContradictsEvidence, turnReasonValidationStatusContradictsEvidence, reason)
 		}
 	}
 
@@ -1523,18 +1462,27 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 				acceptance.EvidencePaths = closurePromptEvidencePaths(directAnswerRelevance.RelevantSourceBodyPaths, 8)
 			}
 
-			return reject("source_grounding_unmet", reason)
+			return rejectFinalAnswerAcceptanceWithMessage(acceptance, turnViolationSourceGroundingUnmet, turnReasonSourceGroundingUnmet, reason)
 		}
 	}
 
 	if r != nil {
 		missing := missingRequiredEvidence(r.RuntimeBrief.RequiredEvidence, answer, results)
 		if len(missing) > 0 {
-			return reject("required_evidence_unmet", "required_evidence_unmet")
+			return rejectFinalAnswerAcceptance(acceptance, turnViolationRequiredEvidenceUnmet, turnReasonRequiredEvidenceUnmet)
 		}
 	}
 
 	return finalAnswerAcceptanceWithPolicy(acceptance)
+}
+
+func (r *Runner) directAnswerObjectiveDiagnosticLane() bool {
+	if r == nil {
+		return false
+	}
+	return readOnlyDirectAnswerLane(r.RuntimeBrief) ||
+		workerruntime.TaskFamilyMatches(r.RuntimeBrief.TaskFamily, autonomy.TaskFamilyDirectAnswer) ||
+		workerruntime.RuntimeContractIsDirectAnswer(r.RuntimeBrief.Contract)
 }
 
 func finalAnswerAcceptanceAllowsSourceInventory(acceptance finalAnswerAcceptance, answer string, r *Runner, results []workspace.ToolResult) bool {
@@ -1544,6 +1492,13 @@ func finalAnswerAcceptanceAllowsSourceInventory(acceptance finalAnswerAcceptance
 
 	return r.evidenceEngine().ClosureDecision(r.RuntimeBrief, results).
 		AllowsSourceInventoryAnswer(answer, acceptance.Decision == finalAnswerAcceptanceAccepted)
+}
+
+func finalAnswerAcceptanceAllowsObjectiveDiagnosticNonAnswer(acceptance finalAnswerAcceptance, answer string, r *Runner) bool {
+	return r != nil &&
+		readOnlyDirectAnswerLane(r.RuntimeBrief) &&
+		acceptance.ContractAssessment.HasDiagnostic(turnDiagnosticObjectiveRelevance) &&
+		readOnlyAnswerReportsInsufficientEvidence(answer)
 }
 
 type readOnlyDirectAnswerRelevance struct {
@@ -1832,6 +1787,9 @@ func finalAnswerAcceptanceEventFields(acceptance finalAnswerAcceptance) map[stri
 	if acceptance.ObjectiveRelevanceStatus != "" {
 		fields["objective_relevance"] = acceptance.ObjectiveRelevanceStatus
 	}
+	for key, value := range turnContractAssessmentEventFields(acceptance.ContractAssessment) {
+		fields[key] = value
+	}
 
 	if len(acceptance.RelevantSourceBodyPaths) > 0 {
 		fields["relevant_source_body_paths"] = textutil.LimitSlice(acceptance.RelevantSourceBodyPaths, 8)
@@ -1850,7 +1808,7 @@ func (r *Runner) planThenExecuteAnchorRefreshFinalAnswerPending(results []worksp
 }
 
 func planThenExecuteAnchorRefreshFinalAnswerRejection(acceptance finalAnswerAcceptance) bool {
-	return strings.TrimSpace(acceptance.BlockerKind) == "plan_execute_anchor_refresh_pending"
+	return strings.TrimSpace(acceptance.BlockerKind) == string(turnViolationPlanExecuteAnchorRefreshPending)
 }
 
 type FinalAnswerDecorateInput struct {
@@ -2159,15 +2117,7 @@ func presentableCompletionGateQuestionBlockerReason(reason string) string {
 }
 
 func presentableSourceGroundingGateReason(detail string) string {
-	lower := strings.ToLower(detail)
-	switch {
-	case strings.Contains(lower, "source-body evidence") && strings.Contains(lower, "answer cites path"):
-		return "the answer cited path(s) that were not supported by inspected evidence"
-	case strings.Contains(lower, "source path/line/symbol detail not backed"):
-		return "the answer cited source path, line, or symbol detail that was not supported by inspected evidence"
-	default:
-		return ""
-	}
+	return sourceGroundingRejectionPresentableDetail(detail)
 }
 
 func stripGateRetryPrefix(text string) string {
@@ -7064,7 +7014,7 @@ func implementationTargetWriteReadyRuntimeBrief(brief workerruntime.WorkerRuntim
 
 	if sourceRefresh {
 		brief.RequiredNext = textutil.Merge([]string{
-			"parser-readable write to the sourced target path, bounded read_file/search_content source refresh with named_gap for a precise edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence",
+			"parser-readable write to the sourced target path, bounded read_file/source-scoped narrow search_content source refresh for a precise edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence",
 		}, brief.RequiredNext)
 		brief.InvalidActions = textutil.Merge([]string{
 			"broad read/search after source-body evidence",
@@ -7074,17 +7024,17 @@ func implementationTargetWriteReadyRuntimeBrief(brief workerruntime.WorkerRuntim
 		brief.SearchPolicy = textutil.Merge([]string{
 			"the gathered source-body evidence is the pre-write target surface",
 			"use bounded source refresh only when an exact missing edit-safety fact remains; otherwise write or block",
-			"read_file/search_content refreshes must name the gap and stay scoped to source code, not docs or broad discovery",
+			"read_file refreshes should use a bounded range; search_content refreshes must stay scoped to source code with a narrow pattern, and unscoped searches must name the gap",
 		}, brief.SearchPolicy)
 		brief.Constraints = textutil.Merge([]string{"bounded_source_refresh_allowance"}, brief.Constraints)
 	} else {
 		brief.InvalidActions = textutil.Merge([]string{
-			"additional read/search after source-body evidence",
+			"broad or redundant read/search after source-body evidence",
 			"verification before a successful write",
 		}, brief.InvalidActions)
 		brief.SearchPolicy = textutil.Merge([]string{
 			"the gathered source-body evidence is the pre-write target surface",
-			"do not inspect further before the first write",
+			"write when the edit-safety facts are known; otherwise use only a bounded probe that names the missing fact",
 		}, brief.SearchPolicy)
 	}
 
@@ -7093,10 +7043,10 @@ func implementationTargetWriteReadyRuntimeBrief(brief workerruntime.WorkerRuntim
 			"write using the already-read source-body evidence for: " + sourcedSummary,
 		}, brief.RequiredNext)
 		brief.InvalidActions = textutil.Merge([]string{
-			"read/search/navigation for already-sourced path(s): " + sourcedSummary,
+			"redundant read/search/navigation for already-sourced path(s) without a bounded missing range or exact named_gap: " + sourcedSummary,
 		}, brief.InvalidActions)
 		brief.SearchPolicy = textutil.Merge([]string{
-			"already-sourced path(s) must not be read, searched, or navigated again before the first write: " + sourcedSummary,
+			"already-sourced path(s) should be written from current evidence unless a bounded missing range or exact named_gap remains: " + sourcedSummary,
 		}, brief.SearchPolicy)
 		brief.Constraints = textutil.Merge([]string{"source_body_evidence_paths: " + sourcedSummary}, brief.Constraints)
 	}
@@ -7213,9 +7163,9 @@ func (r *Runner) implementationTargetWriteReadyNonWriteRecovery(req workspace.To
 		sourceSentence += " for: " + sourcedSummary
 	}
 
-	summary = "Implementation target write-ready tool rejected"
-	errorText = fmt.Sprintf("%s is outside the unscoped implementation target-write-ready surface. %s; the next valid action is a parser-readable write to a sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence.", tool, sourceSentence)
-	prompt = "The implementation lane is target-write-ready. " + sourceSentence + ". Do not inspect, search, or navigate that source again before the first write. Use a parser-readable write tool for the sourced target path, or answer <<QUESTION>> with the exact blocker/no-op evidence."
+	summary = "Implementation target write-ready non-write guidance"
+	errorText = fmt.Sprintf("%s is outside the implementation target-write-ready surface. %s; use a parser-readable write to a sourced target path, a bounded read/search that names the exact missing edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence.", tool, sourceSentence)
+	prompt = "The implementation lane is target-write-ready. " + sourceSentence + ". Write when the edit-safety facts are known; otherwise take only a bounded read/search probe with `named_gap` for the exact missing fact, or answer <<QUESTION>> with the exact blocker/no-op evidence."
 
 	return summary, errorText, prompt, true
 }
@@ -7320,7 +7270,7 @@ func (r *Runner) implementationTargetWriteReadySourceReadAllowed(req workspace.T
 		return true
 	}
 
-	if implementationTargetWriteReadyTargetedDiscoveryAllowed(req, results, refreshes) {
+	if implementationTargetWriteReadyTargetedDiscoveryAllowed(req, results) {
 		return true
 	}
 
@@ -7345,18 +7295,10 @@ func (r *Runner) implementationTargetWriteReadySourceReadAllowed(req workspace.T
 		return !fullSourceReadFileSeen(path, results)
 	}
 
-	if refreshes >= implementationTargetWriteReadySourceReadAllowanceLimit {
-		return false
-	}
-
 	return implementationTargetWriteReadyNewTargetRead(req)
 }
 
-func implementationTargetWriteReadyTargetedDiscoveryAllowed(req workspace.ToolRequest, results []workspace.ToolResult, refreshes int) bool {
-	if refreshes >= implementationTargetWriteReadySourceReadAllowanceLimit {
-		return false
-	}
-
+func implementationTargetWriteReadyTargetedDiscoveryAllowed(req workspace.ToolRequest, results []workspace.ToolResult) bool {
 	switch strings.TrimSpace(req.Tool) {
 	case workspace.ToolNameCodeNavigate:
 		return implementationTargetWriteReadyTargetedCodeNavigate(req, results)
@@ -7377,8 +7319,8 @@ func implementationTargetWriteReadySourceSymbolTool(tool string) bool {
 }
 
 // targetWriteReadyStagedNudge builds a progressively stronger nudge message
-// as the model accumulates non-write calls without making an edit. Early
-// nudges are soft reminders; late stages require action before more discovery.
+// as the model accumulates rejected non-write calls without making an edit.
+// Targeted information-seeking probes execute without using this pressure path.
 func targetWriteReadyStagedNudge(basePrompt string, req workspace.ToolRequest, nudgeCount int) string {
 	tool := strings.TrimSpace(req.Tool)
 	if tool == "" {
@@ -7396,7 +7338,7 @@ func targetWriteReadyStagedNudge(basePrompt string, req workspace.ToolRequest, n
 		return fmt.Sprintf("%s Either write to a sourced target path, or name the one exact missing claim and one exact probe that would resolve it, then take that probe.%s", evidencePrefix, suffix)
 	}
 
-	return fmt.Sprintf("You have taken %d discovery calls without a write. %s Before more discovery: name the one exact missing claim and one exact probe that would resolve it. If you cannot name both, you have enough evidence — write to a sourced target path or answer <<QUESTION>> with the exact blocker.%s", nudgeCount, evidencePrefix, suffix)
+	return fmt.Sprintf("You have taken %d additional non-write calls without a write. %s Name the one exact missing claim and one exact probe that would resolve it, then take that probe; if no such claim exists, write to a sourced target path or answer <<QUESTION>> with the exact blocker.%s", nudgeCount, evidencePrefix, suffix)
 }
 func implementationTargetWriteReadyTargetedCodeNavigate(req workspace.ToolRequest, results []workspace.ToolResult) bool {
 	path := agentutil.NormalizeRunnerPath(req.Path)
@@ -7431,10 +7373,6 @@ func implementationTargetWriteReadyTargetedSearchContent(req workspace.ToolReque
 		return false
 	}
 
-	if strings.TrimSpace(req.NamedGap) == "" && strings.TrimSpace(req.WhyNotAnswering) == "" {
-		return false
-	}
-
 	if !implementationTargetWriteReadySearchPatternLooksNarrow(pattern) {
 		return false
 	}
@@ -7446,6 +7384,10 @@ func implementationTargetWriteReadyTargetedSearchContent(req workspace.ToolReque
 	path := agentutil.NormalizeRunnerPath(req.Path)
 	if path != "" {
 		return implementationTargetWriteReadySearchPathLooksScoped(path)
+	}
+
+	if strings.TrimSpace(req.NamedGap) == "" && strings.TrimSpace(req.WhyNotAnswering) == "" {
+		return false
 	}
 
 	return true

@@ -3,6 +3,7 @@ package workspace
 import (
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"idiom/internal/contracts/autonomy"
@@ -62,6 +63,65 @@ func TestWorkspaceToolSurfaceListsProjectCatalog(t *testing.T) {
 	}
 }
 
+func TestRuntimeReadOnlyInvestigationToolNamesKeepsGeneralLaneDiagnostics(t *testing.T) {
+	tools := RuntimeReadOnlyInvestigationToolNames()
+	for _, want := range []string{
+		ToolNameReadFile,
+		ToolNameSearchFiles,
+		ToolNameSearchContent,
+		ToolNameReadOnlyCapability,
+		ToolNameHarnessAudit,
+		ToolNameContextStatus,
+		ToolNameContextQuery,
+		ToolNameContextZoom,
+		ToolNameStructuralSearch,
+		ToolNameHistoryRange,
+		ToolNameHistorySymbol,
+		ToolNameBlameRange,
+		ToolNameTask,
+		ToolNameMCPWebFetchExa,
+		ToolNameMCPWebSearchExa,
+	} {
+		if !slices.Contains(tools, want) {
+			t.Fatalf("read-only investigation projection missing %s: %#v", want, tools)
+		}
+	}
+
+	for _, forbidden := range []string{
+		ToolNameSourceSanity,
+		ToolNameContextPack,
+		ToolNameContextImpact,
+		ToolNameContextTracePack,
+		ToolNameDiscoveryQuery,
+		ToolNameSubmitPlan,
+		ToolNameShell,
+		ToolNameEditFile,
+		ToolNameWriteFile,
+		ToolNameApplyPatch,
+	} {
+		if slices.Contains(tools, forbidden) {
+			t.Fatalf("read-only investigation projection exposed non-investigation tool %s: %#v", forbidden, tools)
+		}
+	}
+}
+
+func TestRuntimeReadOnlyInvestigationToolActionClassesMatchAutonomy(t *testing.T) {
+	for _, tool := range RuntimeReadOnlyInvestigationToolNames() {
+		if strings.HasPrefix(tool, "mcp:") {
+			continue
+		}
+
+		actionClass := ToolActionClass(tool)
+		if actionClass == "" {
+			t.Fatalf("%s is in read-only investigation projection without workspace action class", tool)
+		}
+
+		if got := autonomy.TurnPhaseActionClassForTool(tool); got != actionClass {
+			t.Fatalf("%s action class drifted: autonomy=%q workspace=%q", tool, got, actionClass)
+		}
+	}
+}
+
 func TestWorkspaceToolSurfaceMetadataKeepsKeySemanticFlags(t *testing.T) {
 	readFile, ok := BuiltInToolSurfaceMetadata(ToolNameReadFile)
 	if !ok {
@@ -89,6 +149,20 @@ func TestWorkspaceToolSurfaceMetadataKeepsKeySemanticFlags(t *testing.T) {
 	}
 	if !slices.Equal(submitPlan.SideEffects, []autonomy.SideEffectClass{autonomy.SideEffectAdditive}) {
 		t.Fatalf("submit_plan side effects drifted: %#v", submitPlan.SideEffects)
+	}
+
+	harnessAudit, ok := BuiltInToolSurfaceMetadata(ToolNameHarnessAudit)
+	if !ok {
+		t.Fatalf("missing metadata for %s", ToolNameHarnessAudit)
+	}
+	if harnessAudit.Category != CategoryRead || harnessAudit.CapabilityClassification != CapabilityClassRouted || harnessAudit.ActionClass != "search" {
+		t.Fatalf("harness_audit semantic flags drifted: %#v", harnessAudit)
+	}
+	if !slices.Equal(harnessAudit.PolicyCapabilities, []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}) {
+		t.Fatalf("harness_audit policy capabilities drifted: %#v", harnessAudit.PolicyCapabilities)
+	}
+	if !slices.Equal(harnessAudit.SideEffects, []autonomy.SideEffectClass{autonomy.SideEffectReadOnly}) {
+		t.Fatalf("harness_audit side effects drifted: %#v", harnessAudit.SideEffects)
 	}
 
 }

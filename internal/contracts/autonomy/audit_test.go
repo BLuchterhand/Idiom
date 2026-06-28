@@ -1247,6 +1247,7 @@ func TestTurnPhaseActionClassForToolCoversProjectionTools(t *testing.T) {
 		"context_status":       ActionClassToken(ActionClassSearch),
 		"history_range":        ActionClassToken(ActionClassRead),
 		"history_symbol":       ActionClassToken(ActionClassRead),
+		"harness_audit":        ActionClassToken(ActionClassSearch),
 		"submit_plan":          ActionClassToken(ActionClassSubmitPlan),
 		"apply_patch":          ActionClassToken(ActionClassPerEditWrite),
 		"go_diagnostics":       ActionClassToken(ActionClassVerify),

@@ -1693,7 +1693,7 @@ func applyGenericTurnPhase(contract *TurnPhaseContract, brief workerruntime.Work
 		contract.AllowedTools = genericReadOnlyEvidenceTools(contract.AllowedTools)
 
 		if readOnlyDirectAnswerLane(brief) {
-			contract.RequiredNext = []string{"final answer from gathered evidence or explicit uncertainty, one bounded read/search for an exact unsupported claim, or <<QUESTION>> with the exact blocker"}
+			contract.RequiredNext = []string{"one bounded read/search for an exact unsupported claim, or <<QUESTION>> with the exact blocker; answer only if the gathered evidence supports every material claim or explicitly marks unsupported claims as unverified"}
 			contract.InvalidNext = []string{"workspace write", "shell/mutating command", "unsupported factual final answer"}
 			contract.TerminalOutcomes = []string{"final answer", "<<QUESTION>>:"}
 			contract.ActionPolicy = TurnActionClassPolicy{
@@ -1908,13 +1908,7 @@ func genericReadOnlyAnswerEvidenceReady(brief workerruntime.WorkerRuntimeBrief, 
 }
 
 func genericReadOnlyEvidenceTools(tools []string) []string {
-	return filterPhaseTools(tools,
-		"task",
-		"context_pack", "context_query", "context_zoom", "discovery_query",
-		"search_files", "search_content", "read_file", "code_navigate",
-		"file_stats", "structural_search",
-		"mcp:exa/web_fetch_exa", "mcp:exa/web_search_exa",
-	)
+	return filterPhaseTools(tools, workspace.RuntimeReadOnlyInvestigationToolNames()...)
 }
 
 func artifactFinalAnswerBrief(brief workerruntime.WorkerRuntimeBrief) bool {
@@ -4661,6 +4655,10 @@ func recoveryCardStrategyNextActionFromPhaseContract(contract TurnPhaseContract)
 	}
 
 	phase := strings.TrimSpace(contract.Phase)
+	if strings.Contains(phase, "evidence_pending") {
+		return "Produce the missing bounded evidence named by the gate, or answer <<QUESTION>> with the exact unsupported claim and unavailable evidence source."
+	}
+
 	if strings.HasPrefix(phase, "read_only_") ||
 		slicesContainRecoveryCardString(recoveryCardTerminalOutcomes(contract), actionFinalAnswer) {
 
@@ -5420,149 +5418,6 @@ func runnerTurnPhaseResidualBlockers(results []workspace.ToolResult) []string {
 	}
 
 	return textutil.Unique(blockers)
-}
-
-type CompletionDecision string
-
-const (
-	CompletionDecisionAccept CompletionDecision = "accept"
-	CompletionDecisionReject CompletionDecision = "reject"
-)
-
-type Acceptance struct {
-	SchemaVersion            string
-	PackID                   autonomy.ContractPackID
-	InvariantID              string
-	PolicyDecision           autonomy.ToolPolicyDecision
-	Decision                 CompletionDecision
-	BlockerKind              string
-	Reason                   string
-	EvidencePaths            []string
-	ObjectiveRelevanceStatus string
-	RelevantSourceBodyPaths  []string
-	AnswerObjectiveTerms     []string
-}
-
-type CompletionPolicyInput struct {
-	PlanExecutePlanner                   bool
-	SuccessfulSubmitPlanCount            int
-	PlanExecuteSourceSatisfiedCovers     bool
-	PlanExecuteAnchorRefreshPending      bool
-	EvidencePaths                        []string
-	ObjectiveRelevanceStatus             string
-	RelevantSourceBodyPaths              []string
-	AnswerObjectiveTerms                 []string
-	DirectAnswerBlockerKind              string
-	DirectAnswerReason                   string
-	ClosureAnswerable                    bool
-	SourceGroundingReason                string
-	AllowsSourceInventory                bool
-	MissingRequiredEditPaths             []string
-	RejectedMutationPaths                []string
-	MissingRequiredEvidence              []string
-	NonAnswerProse                       bool
-	UnexecutedToolRequestAnswer          bool
-	ReadOnlyInsufficientEvidenceAnswer   bool
-	ReadOnlyInsufficientEvidenceApplies  bool
-	UnsupportedReadOnlyCloseoutAnswer    bool
-	QuestionBlocker                      bool
-	ReadOnlyProtocolQuestionBlocker      bool
-	RequiresMutation                     bool
-	ArchitectureOrReviewReadOnlyContract bool
-}
-
-func NewAcceptance() Acceptance {
-	return Acceptance{
-		SchemaVersion:  "final_answer_acceptance.v1",
-		PackID:         autonomy.ContractPackFinalAnswerAcceptance,
-		InvariantID:    "final_answer.acceptance",
-		PolicyDecision: autonomy.PolicyAllow,
-		Decision:       CompletionDecisionAccept,
-	}
-}
-
-func EvaluateAcceptance(input CompletionPolicyInput) Acceptance {
-	acceptance := NewAcceptance()
-	acceptance.EvidencePaths = append([]string(nil), input.EvidencePaths...)
-	acceptance.ObjectiveRelevanceStatus = input.ObjectiveRelevanceStatus
-	acceptance.RelevantSourceBodyPaths = append([]string(nil), input.RelevantSourceBodyPaths...)
-	acceptance.AnswerObjectiveTerms = append([]string(nil), input.AnswerObjectiveTerms...)
-
-	reject := func(kind string, reason string) Acceptance {
-		acceptance.Decision = CompletionDecisionReject
-		acceptance.PolicyDecision = autonomy.PolicyReject
-		acceptance.BlockerKind = kind
-		acceptance.Reason = reason
-		return acceptance
-	}
-
-	if input.PlanExecutePlanner && input.SuccessfulSubmitPlanCount > 0 {
-		return acceptance
-	}
-
-	if input.PlanExecutePlanner && input.PlanExecuteSourceSatisfiedCovers {
-		return acceptance
-	}
-
-	if input.PlanExecuteAnchorRefreshPending {
-		return reject("plan_execute_anchor_refresh_pending", "plan_execute_anchor_refresh_pending")
-	}
-
-	if input.UnexecutedToolRequestAnswer {
-		return reject("unexecuted_tool_request_final_answer", "unexecuted_tool_request_final_answer")
-	}
-
-	if input.RequiresMutation {
-		if len(input.MissingRequiredEditPaths) > 0 {
-			return reject("required_edit_paths_remaining", "required_edit_paths_remaining")
-		}
-
-		if len(input.RejectedMutationPaths) > 0 {
-			acceptance.EvidencePaths = mergeStrings(acceptance.EvidencePaths, input.RejectedMutationPaths)
-			return reject("rejected_mutation_paths_remaining", "rejected_mutation_paths_remaining")
-		}
-	}
-
-	if input.QuestionBlocker {
-		if input.ReadOnlyProtocolQuestionBlocker {
-			return reject("read_only_protocol_blocker", "read_only_protocol_blocker")
-		}
-
-		return reject("user_visible_blocker", "user_visible_blocker")
-	}
-
-	if input.ReadOnlyInsufficientEvidenceApplies && input.ReadOnlyInsufficientEvidenceAnswer && input.ClosureAnswerable {
-		return reject("non_answer_prose", "answerable_evidence_reported_as_insufficient")
-	}
-
-	if input.ArchitectureOrReviewReadOnlyContract && input.UnsupportedReadOnlyCloseoutAnswer {
-		return reject("non_answer_prose", "insufficient_evidence_answer")
-	}
-
-	if input.NonAnswerProse && !input.AllowsSourceInventory {
-		return reject("non_answer_prose", "non_answer_prose")
-	}
-
-	hasEnforceableDirectAnswerBlocker := input.DirectAnswerBlockerKind != "" &&
-		input.DirectAnswerReason != "" &&
-		!finalAnswerObjectiveRelevanceAdvisoryKind(input.DirectAnswerBlockerKind)
-	if input.SourceGroundingReason != "" {
-		if len(acceptance.EvidencePaths) == 0 {
-			acceptance.EvidencePaths = append([]string(nil), input.RelevantSourceBodyPaths...)
-		}
-
-		return reject("source_grounding_unmet", input.SourceGroundingReason)
-	}
-
-	if hasEnforceableDirectAnswerBlocker {
-		return reject(input.DirectAnswerBlockerKind, input.DirectAnswerReason)
-	}
-
-	if len(input.MissingRequiredEvidence) > 0 {
-		return reject("required_evidence_unmet", "required_evidence_unmet")
-	}
-
-	return acceptance
 }
 
 func mergeStrings(left []string, right []string) []string {

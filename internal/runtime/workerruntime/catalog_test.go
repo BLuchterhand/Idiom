@@ -74,12 +74,12 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 
 	t.Run("debug logs", func(t *testing.T) {
 		spec := RuntimeContractForTaskFamily("debug_logs")
-		if spec.ToolProfile != CapabilityDebugLogInvestigator {
-			t.Fatalf("unexpected debug_logs tool profile: %#v", spec)
+		if spec.TaskFamily != autonomy.TaskFamilyConversation || spec.Contract != ContractDirectAnswer || spec.ToolProfile != CapabilityConversationReadOnly {
+			t.Fatalf("debug_logs should be a compatibility alias for conversation, got %#v", spec)
 		}
 
-		if len(spec.ReadinessGate) == 0 || len(spec.FinalCritic) == 0 {
-			t.Fatalf("expected debug_logs to keep stricter operational gates, got %#v", spec)
+		if len(spec.ReadinessGate) != 0 {
+			t.Fatalf("debug_logs alias should not retain separate operational gates, got %#v", spec)
 		}
 	})
 
@@ -186,7 +186,7 @@ func runtimeLabelContains[T ~string](values []T, want string) bool {
 }
 
 func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
-	available := []string{"task", "pwd", "list_files", "search_files", "search_content", "read_file", "read_only_capability", "context_query", "context_trace_pack", "go_workspace_symbol", "shell", "git_status", "git_diff", "history_range", "history_symbol", "blame_range", "edit_file", "write_file"}
+	available := []string{"task", "pwd", "list_files", "search_files", "search_content", "read_file", "file_stats", "code_navigate", "read_only_capability", "harness_audit", "context_status", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack", "discovery_query", "structural_search", "go_workspace_symbol", "shell", "git_status", "git_diff", "history_range", "history_symbol", "blame_range", "edit_file", "write_file"}
 
 	artifact := RuntimeBriefForTaskFamily(ArtifactFinalAnswerTaskFamily, "main", available)
 	if artifact.Contract != "artifact_final_answer" || artifact.PermissionProfile != "conversation_only" {
@@ -221,16 +221,20 @@ func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
 		t.Fatalf("conversation should carry a tight read-only budget, got %#v", brief.Budget)
 	}
 
-	for _, expected := range []string{"read_file", "search_files", "search_content", "read_only_capability", "context_query"} {
+	for _, expected := range []string{"task", "read_file", "search_files", "search_content", "file_stats", "code_navigate", "read_only_capability", "harness_audit", "context_status", "context_query", "context_zoom", "structural_search", "history_range", "history_symbol", "blame_range"} {
 		if !slices.Contains(brief.AllowedTools, expected) {
 			t.Fatalf("conversation missing read-only tool %q in %#v", expected, brief.AllowedTools)
 		}
 	}
 
-	for _, forbidden := range []string{"edit_file", "write_file", "shell"} {
+	for _, forbidden := range []string{"edit_file", "write_file", "shell", "context_pack", "context_impact", "context_trace_pack", "discovery_query"} {
 		if slices.Contains(brief.AllowedTools, forbidden) {
 			t.Fatalf("conversation should not allow write tool %q in %#v", forbidden, brief.AllowedTools)
 		}
+	}
+
+	if slices.Contains(brief.SearchPolicy, "prefer context_pack for initial workspace-localization before ad-hoc search/read") {
+		t.Fatalf("conversation search policy should not advertise context_pack when it is outside the ordinary read-only surface: %#v", brief.SearchPolicy)
 	}
 
 	verify := RuntimeBriefForTaskFamily("verification_only", "main", available)
@@ -319,8 +323,16 @@ func TestManifestToolsForCapabilityProfileExposeExpectedSurfaces(t *testing.T) {
 		t.Fatalf("conversation read-only manifest should include read_only_capability, got %#v", readOnly)
 	}
 
-	if slices.Contains(readOnly, "edit_file") {
-		t.Fatalf("conversation read-only manifest should not include edit_file, got %#v", readOnly)
+	for _, expected := range []string{"harness_audit", "context_status", "context_query", "context_zoom", "structural_search", "history_range", "history_symbol", "blame_range"} {
+		if !slices.Contains(readOnly, expected) {
+			t.Fatalf("conversation read-only manifest should include diagnostic tool %q, got %#v", expected, readOnly)
+		}
+	}
+
+	for _, forbidden := range []string{"edit_file", "context_pack", "context_impact", "context_trace_pack", "discovery_query"} {
+		if slices.Contains(readOnly, forbidden) {
+			t.Fatalf("conversation read-only manifest should not include %q, got %#v", forbidden, readOnly)
+		}
 	}
 
 	verificationOnly := ManifestToolsForCapabilityProfile(CapabilityVerificationOnly)

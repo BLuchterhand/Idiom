@@ -2831,67 +2831,6 @@ func TestLifecycleEventComplete(t *testing.T) {
 	}
 }
 
-// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmpz8pae7oi.go ---
-func TestAcceptanceCarriesPolicyMetadata(t *testing.T) {
-	acceptance := Acceptance{
-		SchemaVersion:  "final_answer_acceptance.v1",
-		PackID:         autonomy.ContractPackFinalAnswerAcceptance,
-		InvariantID:    "final_answer.acceptance",
-		PolicyDecision: autonomy.PolicyReject,
-		Decision:       CompletionDecisionReject,
-		BlockerKind:    "non_answer_prose",
-	}
-
-	if acceptance.Decision != CompletionDecisionReject || acceptance.PolicyDecision != autonomy.PolicyReject {
-		t.Fatalf("unexpected acceptance metadata: %#v", acceptance)
-	}
-}
-
-func TestEvaluateAcceptanceRejectsRequiredEditPaths(t *testing.T) {
-	acceptance := EvaluateAcceptance(CompletionPolicyInput{
-		RequiresMutation:         true,
-		MissingRequiredEditPaths: []string{"README.md"},
-	})
-
-	if acceptance.Decision != CompletionDecisionReject ||
-		acceptance.PolicyDecision != autonomy.PolicyReject ||
-		acceptance.BlockerKind != "required_edit_paths_remaining" ||
-		acceptance.Reason != "required_edit_paths_remaining" {
-		t.Fatalf("unexpected required-edit rejection: %#v", acceptance)
-	}
-}
-
-func TestEvaluateAcceptanceRejectsGroundingAndKeepsObjectiveAdvisory(t *testing.T) {
-	acceptance := EvaluateAcceptance(CompletionPolicyInput{
-		SourceGroundingReason:   "source grounding missing",
-		DirectAnswerBlockerKind: "answer_objective_unmet",
-		DirectAnswerReason:      "objective evidence missing",
-		RelevantSourceBodyPaths: []string{"internal/runtime/agent/runner_core.go"},
-	})
-
-	if acceptance.Decision != CompletionDecisionReject ||
-		acceptance.BlockerKind != "source_grounding_unmet" ||
-		acceptance.Reason != "source grounding missing" {
-		t.Fatalf("unexpected grounding rejection: %#v", acceptance)
-	}
-	if len(acceptance.EvidencePaths) != 1 || acceptance.EvidencePaths[0] != "internal/runtime/agent/runner_core.go" {
-		t.Fatalf("fallback evidence paths = %#v", acceptance.EvidencePaths)
-	}
-}
-
-func TestEvaluateAcceptanceAcceptsSubmittedPlannerArtifact(t *testing.T) {
-	acceptance := EvaluateAcceptance(CompletionPolicyInput{
-		PlanExecutePlanner:        true,
-		SuccessfulSubmitPlanCount: 1,
-		RequiresMutation:          true,
-		MissingRequiredEditPaths:  []string{"README.md"},
-	})
-
-	if acceptance.Decision != CompletionDecisionAccept || acceptance.PolicyDecision != autonomy.PolicyAllow || acceptance.BlockerKind != "" {
-		t.Fatalf("planner artifact should be accepted before mutation checks: %#v", acceptance)
-	}
-}
-
 // --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmpset4wnqi.go ---
 func TestWriteDecisionPendingRequiredPaths(t *testing.T) {
 	decision := WriteDecision{
@@ -4304,6 +4243,10 @@ func assertObjectiveRelevanceAdvisoryForTest(t *testing.T, runner *Runner, answe
 	if acceptance.Decision != finalAnswerAcceptanceAccepted || acceptance.PolicyDecision != autonomy.PolicyAllow {
 		t.Fatalf("objective relevance advisory must leave acceptance allowed, got %#v", acceptance)
 	}
+	if !acceptance.ContractAssessment.HasDiagnostic(turnDiagnosticObjectiveRelevance) ||
+		len(acceptance.ContractAssessment.Violations) > 0 {
+		t.Fatalf("expected objective diagnostic without enforceable violations, got %#v", acceptance.ContractAssessment)
+	}
 
 	relevance := runner.readOnlyDirectAnswerRelevance(answer, results)
 	if relevance.BlockerKind != wantKind {
@@ -5143,6 +5086,202 @@ func TestReadOnlyAnswerabilityRejectsRetainedContextFinalWithoutSourceBody(t *te
 	}
 }
 
+func TestFinalAnswerAcceptanceRejectsGroundingAndKeepsObjectiveDiagnostic(t *testing.T) {
+	objective := "Would it fit our north star to replace this with model prose? Or do we risk leaking unverified information to the user?"
+	brief := readOnlyConversationBriefForTest(objective)
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote packet",
+			Output:  `{"candidate_files":[{"path":"docs/decisioning-north-star.md"},{"path":"internal/runtime/agent/tools_surface.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read docs/decisioning-north-star.md lines 1-6",
+			Output: strings.Join([]string{
+				"1:# Decisioning North Star",
+				"2:The model owns strategy; the harness owns contracts.",
+				"3:Final answers must be grounded in verified source evidence rather than unverified model prose.",
+			}, "\n"),
+		},
+	}
+	answer := "No. Free-form prose would move deterministic closeout language away from the contract boundary in `internal/runtime/agent/tools_surface.go`."
+	runner := &Runner{RuntimeBrief: brief}
+
+	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
+	if acceptance.Decision != finalAnswerAcceptanceRejected ||
+		acceptance.BlockerKind != "source_grounding_unmet" ||
+		acceptance.Reason == "" {
+		t.Fatalf("candidate-only citation should be rejected by source grounding, got %#v", acceptance)
+	}
+	if !acceptance.ContractAssessment.HasViolation(turnViolationSourceGroundingUnmet) ||
+		!acceptance.ContractAssessment.HasDiagnostic(turnDiagnosticObjectiveRelevance) {
+		t.Fatalf("expected source-grounding violation and objective diagnostic, got %#v", acceptance.ContractAssessment)
+	}
+}
+
+func TestFinalAnswerAcceptanceRejectsFalseBuildAndTestAddedClaim(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Did you verify that it still builds? And added a test to cover this new behavior?")
+	results := []workspace.ToolResult{{
+		Tool:    "source_sanity",
+		Summary: "Source sanity passed for 1 file(s)",
+		Output:  "internal/surfaces/tui/app/model_state.go: no warnings or errors via go_diagnostics",
+	}}
+	answer := "Yes, it still builds, and I added a new test in `internal/surfaces/tui/app/perf_test.go`."
+	runner := &Runner{RuntimeBrief: brief}
+
+	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
+	if acceptance.Decision != finalAnswerAcceptanceRejected ||
+		acceptance.BlockerKind != string(turnViolationValidationStatusContradictsEvidence) ||
+		!acceptance.ContractAssessment.HasViolation(turnViolationValidationStatusContradictsEvidence) {
+		t.Fatalf("false validation status should be rejected by typed validation contract, got %#v", acceptance)
+	}
+	if !strings.Contains(acceptance.Reason, "build/test verification") {
+		t.Fatalf("rejection should name missing build/test evidence, got %q", acceptance.Reason)
+	}
+}
+
+func TestFinalAnswerAcceptanceAllowsHonestSourceSanityButNoBuildOrTestAnswer(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Did you verify that it still builds? And added a test to cover this new behavior?")
+	results := []workspace.ToolResult{{
+		Tool:    "source_sanity",
+		Summary: "Source sanity passed for 1 file(s)",
+		Output:  "internal/surfaces/tui/app/model_state.go: no warnings or errors via go_diagnostics",
+	}}
+	answer := "I ran source_sanity on `internal/surfaces/tui/app/model_state.go`, and it passed. I did not run a build or test command, so I did not verify that the project still builds. I also did not add or change a test path."
+	runner := &Runner{RuntimeBrief: brief}
+
+	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
+	if acceptance.Decision != finalAnswerAcceptanceAccepted ||
+		acceptance.BlockerKind != "" ||
+		len(acceptance.ContractAssessment.Violations) != 0 {
+		t.Fatalf("honest validation status answer should be accepted, got %#v", acceptance)
+	}
+}
+
+func TestValidationStatusEvidencePathsExtractDiagnosticOutputPaths(t *testing.T) {
+	results := []workspace.ToolResult{{
+		Tool:    "source_sanity",
+		Summary: "Source sanity passed for 1 file(s)",
+		Output:  "internal/surfaces/tui/app/model_state.go: no warnings or errors via go_diagnostics",
+	}}
+
+	paths := validationStatusEvidencePaths(results)
+	if !slices.Contains(paths, "internal/surfaces/tui/app/model_state.go") {
+		t.Fatalf("source_sanity output path should be ledger-backed validation evidence, got %#v", paths)
+	}
+	if slices.Contains(paths, "internal/surfaces/tui/app/perf_test.go") {
+		t.Fatalf("unobserved test path must not become validation ledger evidence, got %#v", paths)
+	}
+}
+
+func TestFinalAnswerAcceptanceRejectsUnsupportedCitationInValidationStatusAnswer(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Did you verify that it still builds? And added a test to cover this new behavior?")
+	results := []workspace.ToolResult{{
+		Tool:    "source_sanity",
+		Summary: "Source sanity passed for 1 file(s)",
+		Output:  "internal/surfaces/tui/app/model_state.go: no warnings or errors via go_diagnostics",
+	}}
+	answer := "I ran source_sanity on `internal/surfaces/tui/app/model_state.go`, and it passed. I did not run a build or test command, so I did not verify that the project still builds. I also did not add or change a test path. Separately, `internal/surfaces/tui/app/perf_test.go` covers this behavior."
+	runner := &Runner{RuntimeBrief: brief}
+
+	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
+	if acceptance.Decision != finalAnswerAcceptanceRejected ||
+		acceptance.BlockerKind != string(turnViolationSourceGroundingUnmet) ||
+		!acceptance.ContractAssessment.HasViolation(turnViolationSourceGroundingUnmet) {
+
+		t.Fatalf("unsupported non-ledger citation should still be rejected, got %#v", acceptance)
+	}
+	if !strings.Contains(acceptance.Reason, "perf_test.go") {
+		t.Fatalf("source-grounding rejection should name unsupported citation, got %q", acceptance.Reason)
+	}
+}
+
+func TestFinalAnswerAcceptanceRejectsBuildClaimWhenBuildPredatesLaterWrite(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Did you verify that it still builds? And added a test to cover this new behavior?")
+	results := []workspace.ToolResult{
+		{
+			Tool:    "shell",
+			Summary: "Ran shell command",
+			Output:  "$ go test ./internal/surfaces/tui/app\nok",
+		},
+		{
+			Tool:    "edit_file",
+			Summary: "Edited internal/surfaces/tui/app/model_state.go",
+		},
+		{
+			Tool:    "source_sanity",
+			Summary: "Source sanity passed for 1 file(s)",
+			Output:  "internal/surfaces/tui/app/model_state.go: no warnings or errors via go_diagnostics",
+		},
+	}
+	answer := "The build passed after the change. I did not add or change a test path."
+	runner := &Runner{RuntimeBrief: brief}
+
+	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
+	if acceptance.Decision != finalAnswerAcceptanceRejected ||
+		acceptance.BlockerKind != string(turnViolationValidationStatusContradictsEvidence) {
+		t.Fatalf("stale build command should not satisfy final build claim, got %#v", acceptance)
+	}
+}
+
+func TestFinalAnswerAcceptanceAcceptsBuildClaimWhenBuildFollowsWrite(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Did you verify that it still builds? And added a test to cover this new behavior?")
+	results := []workspace.ToolResult{
+		{
+			Tool:    "edit_file",
+			Summary: "Edited internal/surfaces/tui/app/model_state.go",
+		},
+		{
+			Tool:    "shell",
+			Summary: "Ran shell command",
+			Output:  "$ go test ./internal/surfaces/tui/app\nok",
+		},
+	}
+	answer := "The build/test command passed after the change. I did not add or change a test path."
+	runner := &Runner{RuntimeBrief: brief}
+
+	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
+	if acceptance.Decision != finalAnswerAcceptanceAccepted ||
+		acceptance.BlockerKind != "" ||
+		len(acceptance.ContractAssessment.Violations) != 0 {
+		t.Fatalf("post-write build command should satisfy validation status answer, got %#v", acceptance)
+	}
+}
+
+func TestValidationStatusTerminalRecoveryAnswersFromLedger(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Did you verify that it still builds? And added a test to cover this new behavior?")
+	results := []workspace.ToolResult{{
+		Tool:    "source_sanity",
+		Summary: "Source sanity passed for 1 file(s)",
+		Output:  "internal/surfaces/tui/app/model_state.go: no warnings or errors via go_diagnostics",
+	}}
+	runner := &Runner{RuntimeBrief: brief}
+	acceptance := rejectFinalAnswerAcceptanceWithMessage(
+		newFinalAnswerAcceptance(),
+		turnViolationSourceGroundingUnmet,
+		turnReasonSourceGroundingUnmet,
+		"the answer cites path(s) that were discovered as index candidates but not read as source-body evidence: `perf_test.go`.",
+	)
+
+	recovered, recoveredAcceptance, ok := runner.readOnlyTerminalRecoveryCandidate(acceptance, results)
+	if !ok {
+		t.Fatal("expected validation-status recovery answer")
+	}
+	if recoveredAcceptance.BlockerKind != "" {
+		t.Fatalf("recovered validation answer should pass acceptance, got %#v\nanswer:\n%s", recoveredAcceptance, recovered)
+	}
+	for _, want := range []string{
+		"Source sanity passed for 1 file(s)",
+		"did not run a build or test command",
+		"did not add or change a test path",
+	} {
+		if !strings.Contains(recovered, want) {
+			t.Fatalf("recovered answer missing %q:\n%s", want, recovered)
+		}
+	}
+}
+
 func TestReadOnlyAnswerabilityRejectsScaffoldFinalEvenWithRelevantSourceBody(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Explain runner answer readiness.")
 	results := []workspace.ToolResult{{
@@ -5316,7 +5455,6 @@ func TestFinalAnswerAcceptanceTreatsAliasInsufficientEvidenceWithoutSourceBodyAs
 
 func TestFinalAnswerAcceptanceTreatsAliasInsufficientEvidenceWhenSourceBodyIsAnswerableAsAdvisory(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("What is the role of evidence in the harness?")
-
 	brief.TaskFamily = string(autonomy.TaskFamilyDirectAnswer)
 
 	results := []workspace.ToolResult{{
@@ -5327,10 +5465,26 @@ func TestFinalAnswerAcceptanceTreatsAliasInsufficientEvidenceWhenSourceBodyIsAns
 	answer := "I cannot determine from the available evidence what role evidence has in the harness."
 	runner := &Runner{RuntimeBrief: brief}
 
-	relevance := assertObjectiveRelevanceAdvisoryForTest(t, runner, answer, results, "answer_objective_unmet:insufficient_evidence_claimed")
+	relevance := runner.readOnlyDirectAnswerRelevance(answer, results)
+	if relevance.BlockerKind != answerObjectiveUnmetInsufficientEvidenceClaimed {
+		t.Fatalf("direct answer relevance blocker = %q, want %q", relevance.BlockerKind, answerObjectiveUnmetInsufficientEvidenceClaimed)
+	}
 	if !strings.Contains(relevance.Reason, "evidence appears answerable") ||
 		!strings.Contains(relevance.Reason, "diagnostic is advisory") {
 		t.Fatalf("expected answerable evidence advisory reason, got %q", relevance.Reason)
+	}
+
+	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
+	if acceptance.Decision != finalAnswerAcceptanceAccepted ||
+		acceptance.PolicyDecision != autonomy.PolicyAllow ||
+		acceptance.BlockerKind != "" {
+
+		t.Fatalf("answerable insufficient-evidence closeout must remain advisory, got %#v", acceptance)
+	}
+	if !acceptance.ContractAssessment.HasDiagnostic(turnDiagnosticObjectiveRelevance) ||
+		len(acceptance.ContractAssessment.Violations) != 0 {
+
+		t.Fatalf("expected objective diagnostic without enforceable violations, got %#v", acceptance.ContractAssessment)
 	}
 }
 
@@ -7777,6 +7931,57 @@ func TestDeriveTurnPhaseContractPrunesToolsForInvalidActionClasses(t *testing.T)
 	assertContains(t, contract.ActionPolicy.CallableToolNames, "read_file")
 }
 
+func TestDeriveTurnPhaseContractKeepsDiagnosticToolsInGeneralReadOnlyLane(t *testing.T) {
+	diagnosticTools := generalReadOnlyDiagnosticToolRegressionSet()
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:         string(autonomy.TaskFamilyDirectAnswer),
+			Contract:           string(workerruntime.ContractDirectAnswer),
+			PermissionProfile:  "read_only_workspace",
+			AllowedTools:       append([]string{"read_file", "search_content"}, diagnosticTools...),
+			Objective:          "Investigate the failure from the previous turn.",
+			ReadOnlyConstraint: true,
+		},
+	})
+
+	if contract.Phase != "read_only_evidence_pending" {
+		t.Fatalf("Phase = %q, want read_only_evidence_pending", contract.Phase)
+	}
+
+	for _, tool := range diagnosticTools {
+		assertContains(t, contract.AllowedTools, tool)
+		assertContains(t, contract.ActionPolicy.CallableToolNames, tool)
+		assertNotContains(t, contract.HiddenTools, tool)
+	}
+
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
+}
+
+func TestDirectAnswerSurfaceDiagnosticToolsSurviveTurnPhaseProjection(t *testing.T) {
+	brief := testDirectAnswerSurfaceBrief()
+	surface, ok := DirectAnswerSurfaceForBrief(brief)
+	if !ok {
+		t.Fatal("expected direct-answer surface")
+	}
+
+	brief.AllowedTools = surface.ToolNames
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{Brief: brief})
+
+	for _, tool := range generalReadOnlyDiagnosticToolRegressionSet() {
+		assertContains(t, surface.ToolNames, tool)
+		assertContains(t, contract.AllowedTools, tool)
+		assertContains(t, contract.ActionPolicy.CallableToolNames, tool)
+		assertNotContains(t, contract.HiddenTools, tool)
+	}
+
+	for _, tool := range []string{"submit_plan", "task_ledger", "note", "shell", "edit_file", "write_file", "apply_patch", "context_pack", "context_impact", "discovery_query"} {
+		assertNotContains(t, surface.ToolNames, tool)
+		assertNotContains(t, contract.AllowedTools, tool)
+		assertNotContains(t, contract.ActionPolicy.CallableToolNames, tool)
+	}
+}
+
 func TestDeriveTurnPhaseContractPlanExecuteRequiredSource(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{
@@ -9584,7 +9789,7 @@ func TestDeriveTurnPhaseContractUnscopedImplementationWriteReadyAfterSymbolBody(
 	assertNotContains(t, contract.AllowedTools, "code_navigate")
 }
 
-func TestDeriveTurnPhaseContractReadOnlyWorkspaceAllowsFinalAnswerStrategyWhileEvidencePending(t *testing.T) {
+func TestDeriveTurnPhaseContractReadOnlyWorkspaceNamesEvidenceBeforeAnswerWhilePending(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "direct_answer",
@@ -9604,7 +9809,7 @@ func TestDeriveTurnPhaseContractReadOnlyWorkspaceAllowsFinalAnswerStrategyWhileE
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
 	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
 	assertContains(t, contract.TerminalOutcomes, "final answer")
-	assertContains(t, contract.RequiredNext, "final answer from gathered evidence or explicit uncertainty, one bounded read/search for an exact unsupported claim, or <<QUESTION>> with the exact blocker")
+	assertContains(t, contract.RequiredNext, "one bounded read/search for an exact unsupported claim, or <<QUESTION>> with the exact blocker; answer only if the gathered evidence supports every material claim or explicitly marks unsupported claims as unverified")
 	assertContains(t, contract.AllowedTools, "read_file")
 	assertContains(t, contract.AllowedTools, "search_content")
 	assertNotContains(t, contract.AllowedTools, "edit_file")
@@ -12146,12 +12351,12 @@ func TestRecoveryCardDoesNotSayNoneAvailableWhenFinalAnswerAllowed(t *testing.T)
 	)
 }
 
-func TestRecoveryCardEvidencePendingDoesNotSayNoneAvailableWhenFinalAnswerAllowed(t *testing.T) {
+func TestRecoveryCardEvidencePendingNamesMissingEvidenceInsteadOfAnswerNow(t *testing.T) {
 	contract := TurnPhaseContract{
 		PhaseID: turnPhaseGeneric,
 		Phase:   "read_only_evidence_pending",
 		RequiredNext: []string{
-			"final answer from gathered evidence or explicit uncertainty, one bounded read/search for an exact unsupported claim, or <<QUESTION>> with the exact blocker",
+			"one bounded read/search for an exact unsupported claim, or <<QUESTION>> with the exact blocker; answer only if the gathered evidence supports every material claim or explicitly marks unsupported claims as unverified",
 		},
 		ActionPolicy: TurnActionClassPolicy{
 			AllowedActionClasses: []string{actionBlocker, actionFinalAnswer, actionRead, actionSearch},
@@ -12175,10 +12380,13 @@ func TestRecoveryCardEvidencePendingDoesNotSayNoneAvailableWhenFinalAnswerAllowe
 	if strings.Contains(got, "deterministic safe next action: none available") {
 		t.Fatalf("read-only pending recovery must not claim no safe action remains:\n%s", got)
 	}
+	if strings.Contains(got, "answer from gathered evidence now") {
+		t.Fatalf("read-only pending recovery must not tell the model to answer now when evidence is missing:\n%s", got)
+	}
 
 	assertRecoveryCardContains(t, got,
 		"currently callable action classes: read, search, blocker, final_answer",
-		"deterministic safe next action: Let the model choose strategy: answer from gathered evidence now, or state uncertainty with the exact unsupported claim and evidence source.",
+		"deterministic safe next action: Produce the missing bounded evidence named by the gate, or answer <<QUESTION>> with the exact unsupported claim and unavailable evidence source.",
 	)
 }
 
@@ -24778,7 +24986,7 @@ func TestUnscopedImplementationWriteReadyAllowsOneSamePathSourceRefreshAfterSymb
 		t.Fatal("expected rangeless new-target source read to remain available after one unrelated write-ready source expansion")
 	}
 
-	if runner.implementationTargetWriteReadySourceReadAllowed(
+	if !runner.implementationTargetWriteReadySourceReadAllowed(
 		workspace.ToolRequest{
 			Tool:      "read_file",
 			Path:      "internal/workflows/productworkflow/coverage_gate_test.go",
@@ -24790,7 +24998,7 @@ func TestUnscopedImplementationWriteReadyAllowsOneSamePathSourceRefreshAfterSymb
 		implementationTargetWriteReadySourceReadAllowanceLimit,
 	) {
 
-		t.Fatal("new-target source reads should stop at the write-ready source expansion allowance")
+		t.Fatal("targeted new-target source reads should not fail solely because the old write-ready source expansion allowance is exhausted")
 	}
 
 	for name, req := range map[string]workspace.ToolRequest{
@@ -25165,7 +25373,7 @@ func TestUnscopedImplementationWriteReadyAllowsTargetedLocalizationSearch(t *tes
 	for name, req := range map[string]workspace.ToolRequest{
 		"empty search":        {Tool: "search_content", Path: "internal/surfaces/tui/app", NamedGap: "find related state"},
 		"short search":        {Tool: "search_content", Path: "internal/surfaces/tui/app", Pattern: "ui", NamedGap: "find related state"},
-		"missing named gap":   {Tool: "search_content", Path: "internal/surfaces/tui/app", Pattern: "type sessionsModel"},
+		"missing named gap":   {Tool: "search_content", Pattern: "type sessionsModel"},
 		"broad directory":     {Tool: "search_content", Path: "internal", Pattern: "type sessionsModel", NamedGap: "find related state"},
 		"repo-wide search":    {Tool: "search_content", Path: ".", Pattern: "type sessionsModel", NamedGap: "find related state"},
 		"generic code search": {Tool: "search_content", Path: "internal/surfaces/tui/app", Pattern: "return", NamedGap: "find related state"},
@@ -25179,13 +25387,13 @@ func TestUnscopedImplementationWriteReadyAllowsTargetedLocalizationSearch(t *tes
 		}
 	}
 
-	if runner.implementationTargetWriteReadySourceReadAllowed(
-		workspace.ToolRequest{Tool: "search_content", Path: "internal/surfaces/tui/app", Pattern: "type sessionsModel"},
+	if !runner.implementationTargetWriteReadySourceReadAllowed(
+		workspace.ToolRequest{Tool: "search_content", Path: "internal/surfaces/tui/app", Pattern: "type sessionsModel", NamedGap: "find related state before editing"},
 		results,
 		implementationTargetWriteReadySourceReadAllowanceLimit,
 	) {
 
-		t.Fatal("targeted localization search should stop at the write-ready source expansion allowance")
+		t.Fatal("targeted localization search should not fail solely because the old write-ready source expansion allowance is exhausted")
 	}
 }
 
@@ -25211,7 +25419,7 @@ func TestCompletionGateRetryLimitAllowsTwoTextualRequiredPathRecoveries(t *testi
 	}
 }
 
-func TestCompletionGateRetryLimitAllowsPostWriteVerificationRecovery(t *testing.T) {
+func TestCompletionGateRecoveryPromptSurvivesStaleGateBeforeLatestWrite(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "implementation",
@@ -25224,8 +25432,8 @@ func TestCompletionGateRetryLimitAllowsPostWriteVerificationRecovery(t *testing.
 		{Tool: "edit_file", Summary: "Edited internal/surfaces/tui/app/model_swap.go"},
 	}
 
-	if got := runner.completionGateRetryLimit(results); got != 2 {
-		t.Fatalf("post-write verification recovery retry limit = %d, want 2", got)
+	if got := runner.completionGateRetryLimit(results); got != 1 {
+		t.Fatalf("post-write verification recovery retry limit = %d, want 1", got)
 	}
 
 	prompt, hideReads, ok := runner.completionGateRecoveryPrompt(results)
@@ -25246,6 +25454,76 @@ func TestCompletionGateRetryLimitAllowsPostWriteVerificationRecovery(t *testing.
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("expected recovery prompt to contain %q, got:\n%s", want, prompt)
 		}
+	}
+}
+
+func TestCompletionGateRetryLimitIgnoresStaleGateBeforeLaterTurnEvents(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	staleGate := workspace.ToolResult{
+		Tool:    "completion_gate",
+		Summary: "Mutation completion gate rejected final answer",
+		Error:   "stale completion gate rejection",
+	}
+	edit := workspace.ToolResult{Tool: "edit_file", Summary: "Edited internal/runtime/agent/turn_decision.go"}
+	tests := []struct {
+		name    string
+		results []workspace.ToolResult
+		control []workspace.ToolResult
+	}{
+		{
+			name: "later model answer",
+		},
+		{
+			name:    "later tool result",
+			results: []workspace.ToolResult{staleGate, {Tool: "read_file", Summary: "Read README.md lines 1-5", Output: "1:# Idiom\n"}},
+			control: []workspace.ToolResult{{Tool: "read_file", Summary: "Read README.md lines 1-5", Output: "1:# Idiom\n"}},
+		},
+		{
+			name:    "later write",
+			results: []workspace.ToolResult{staleGate, edit},
+			control: []workspace.ToolResult{edit},
+		},
+		{
+			name: "later verification result",
+			results: []workspace.ToolResult{
+				edit,
+				staleGate,
+				{Tool: "source_sanity", Summary: "source_sanity passed for internal/runtime/agent/turn_decision.go"},
+			},
+			control: []workspace.ToolResult{
+				edit,
+				{Tool: "source_sanity", Summary: "source_sanity passed for internal/runtime/agent/turn_decision.go"},
+			},
+		},
+		{
+			name:    "later permission result",
+			results: []workspace.ToolResult{staleGate, {Tool: "permission_decision", Summary: "Permission denied for edit_file"}},
+			control: []workspace.ToolResult{{Tool: "permission_decision", Summary: "Permission denied for edit_file"}},
+		},
+		{
+			name:    "later child result",
+			results: []workspace.ToolResult{staleGate, {Tool: "task", Summary: "Child task completed", Output: "child result"}},
+			control: []workspace.ToolResult{{Tool: "task", Summary: "Child task completed", Output: "child result"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results := tt.results
+			control := tt.control
+			if results == nil && control == nil {
+				results = []workspace.ToolResult{staleGate}
+			}
+			if got, want := runner.completionGateRetryLimit(results), runner.completionGateRetryLimit(control); got != want {
+				t.Fatalf("stale completion_gate changed retry limit for %s: got %d, want %d", tt.name, got, want)
+			}
+		})
 	}
 }
 
@@ -33329,7 +33607,14 @@ func TestDirectAnswerSurfaceForBriefFiltersProtocolAndMutationTools(t *testing.T
 		}
 	}
 
-	for _, tool := range []string{"read_file", "search_content", "context_pack", "code_navigate", "harness_audit", "task"} {
+	for _, tool := range append([]string{
+		"read_file",
+		"search_content",
+		"context_query",
+		"context_zoom",
+		"code_navigate",
+		"task",
+	}, generalReadOnlyDiagnosticToolRegressionSet()...) {
 		if !tools[tool] {
 			t.Fatalf("direct-answer surface did not expose read-only investigation tool %q; got %#v", tool, surface.ToolNames)
 		}
@@ -33849,6 +34134,17 @@ func testDirectAnswerSurfaceBrief() workerruntime.WorkerRuntimeBrief {
 	}
 }
 
+func generalReadOnlyDiagnosticToolRegressionSet() []string {
+	return []string{
+		"read_only_capability",
+		"harness_audit",
+		"context_status",
+		"history_range",
+		"history_symbol",
+		"blame_range",
+	}
+}
+
 func TestDiscoveryConsumptionCandidateOnlyContextQueryAllowsFollowup(t *testing.T) {
 	state := newRunnerExecutionState(false, 0)
 	state.applyResult(
@@ -34072,6 +34368,37 @@ func TestReadOnlyCompletionGateCandidateOnlyRecoveryNamesSourceBody(t *testing.T
 		Output:  "internal/labels/labels.go:4:\treturn \"Save changes\"",
 	}}); rejected {
 		t.Fatal("candidate-only recovery must not reject an explicit blocker terminal outcome")
+	}
+}
+
+func TestReadOnlyCompletionGateDiagnosticLogCitationIgnoresStaleSearchCandidates(t *testing.T) {
+	brief := directAnswerReadOnlyBrief()
+	brief.Objective = "RCA the most recent harness failure"
+	brief.AllowedTools = []string{"search_files", "read_file", "search_content"}
+
+	logPath := "/Users/ben/.idiom/logs/conversations/20260628-081924.685.jsonl"
+	results := []workspace.ToolResult{
+		{
+			Tool:    "search_files",
+			Summary: "No file matches for \"*.jsonl\". Closest paths in this workspace: f1 internal/platform/jsonl/jsonl.go, f2 testdata/product-workflows/prd-adr-brief-workflow/evidence/evidence.jsonl.",
+			Output:  "",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f6 " + logPath + " lines 4300-4420 (total lines: 4641)",
+			Output:  "4420:{\"role\":\"completion_gate_recovery\",\"content\":\"Candidate/search/context paths are not source-body evidence\"}\n4640:{\"completion_gate_rejections\":4,\"stop_reason\":\"user_visible_blocker\"}\n",
+		},
+	}
+	answer := "The latest failure was a repeated completion-gate rejection in `" + logPath + "` after stale search candidates polluted the source-grounding ledger."
+
+	runner := &Runner{RuntimeBrief: brief}
+	if reason := runner.sourceGroundingRejectionReason(answer, results); reason != "" {
+		t.Fatalf("read diagnostic log citation should satisfy source grounding for the cited log, got %q", reason)
+	}
+
+	result, rejected := runner.readOnlyEvidenceCompletionRejection(answer, results)
+	if rejected {
+		t.Fatalf("stale search candidates must not reject an answer grounded in a read diagnostic log, got: %s", result.Error)
 	}
 }
 
@@ -37444,18 +37771,12 @@ func TestDeterministicNoToolsAnswerDoesNotCombineReadOnlyReadFileFacts(t *testin
 }
 
 func TestFinalAnswerPolicyAcceptsWithTypedMetadata(t *testing.T) {
-	acceptance := newFinalAnswerPolicyEngine().EvaluateFinalAnswer(finalAnswerPolicyInput{
-		Answer: "The inspected source supports the answer.",
-	})
+	acceptance := newFinalAnswerAcceptance()
 
 	if acceptance.Decision != finalAnswerAcceptanceAccepted || acceptance.PolicyDecision != autonomy.PolicyAllow {
 		t.Fatalf("expected accepted policy, got %#v", acceptance)
 	}
 	assertFinalAnswerPolicyMetadata(t, acceptance, autonomy.PolicyAllow)
-	decision := acceptance.CompletionDecision()
-	if decision.Decision != "accept" || decision.PolicyDecision != autonomy.PolicyAllow {
-		t.Fatalf("completion decision projection = %#v", decision)
-	}
 	if acceptance.ParityReport.SurfaceID != "final_answer_acceptance" ||
 		acceptance.ParityReport.InvariantID != finalAnswerPolicyInvariantAcceptance ||
 		acceptance.ParityReport.Diverged {
@@ -37465,9 +37786,7 @@ func TestFinalAnswerPolicyAcceptsWithTypedMetadata(t *testing.T) {
 }
 
 func TestFinalAnswerAcceptanceEventFieldsIncludeParityReport(t *testing.T) {
-	acceptance := newFinalAnswerPolicyEngine().EvaluateFinalAnswer(finalAnswerPolicyInput{
-		Answer: "The inspected source supports the answer.",
-	})
+	acceptance := newFinalAnswerAcceptance()
 	acceptance.ParityReport.ContractID = "contract-1"
 	acceptance.ParityReport.ProtocolHash = "protocol-1"
 
@@ -37484,12 +37803,45 @@ func TestFinalAnswerAcceptanceEventFieldsIncludeParityReport(t *testing.T) {
 	}
 }
 
-func TestFinalAnswerPolicyRejectsRequiredEditPathsWithTypedMetadata(t *testing.T) {
-	acceptance := newFinalAnswerPolicyEngine().EvaluateFinalAnswer(finalAnswerPolicyInput{
-		Answer:                   "Done.",
-		RequiresMutation:         true,
-		MissingRequiredEditPaths: []string{"README.md"},
+func TestFinalAnswerAcceptanceEventFieldsIncludeTypedAssessment(t *testing.T) {
+	acceptance := finalAnswerAcceptanceWithRelevanceForTest(readOnlyDirectAnswerRelevance{
+		BlockerKind:             "answer_objective_unmet",
+		Reason:                  "objective evidence missing",
+		RelevantSourceBodyPaths: []string{"internal/runtime/agent/runner_core.go"},
 	})
+	sourceGroundingMessage := "the answer cites path(s) that were discovered as index candidates but not read as source-body evidence: `internal/runtime/agent/implementation_flow.go`."
+	acceptance = rejectFinalAnswerAcceptanceWithMessage(acceptance, turnViolationSourceGroundingUnmet, turnReasonSourceGroundingUnmet, sourceGroundingMessage)
+
+	fields := finalAnswerAcceptanceEventFields(acceptance)
+	diagnostics, ok := fields["contract_diagnostics"].([]map[string]any)
+	if !ok || len(diagnostics) != 1 {
+		t.Fatalf("expected one typed diagnostic event field, got %#v", fields["contract_diagnostics"])
+	}
+	if diagnostics[0]["kind"] != string(turnDiagnosticObjectiveRelevance) ||
+		diagnostics[0]["reason_code"] != "answer_objective_unmet" {
+		t.Fatalf("unexpected diagnostic field: %#v", diagnostics[0])
+	}
+
+	violations, ok := fields["contract_violations"].([]map[string]any)
+	if !ok || len(violations) != 1 {
+		t.Fatalf("expected one typed violation event field, got %#v", fields["contract_violations"])
+	}
+	if violations[0]["kind"] != string(turnViolationSourceGroundingUnmet) ||
+		violations[0]["reason_code"] != string(turnReasonSourceGroundingUnmet) ||
+		violations[0]["policy_pack_id"] != string(autonomy.ContractPackFinalAnswerAcceptance) {
+		t.Fatalf("unexpected violation field: %#v", violations[0])
+	}
+	if violations[0]["message"] != sourceGroundingMessage {
+		t.Fatalf("violation should carry exact source-grounding message: %#v", violations[0])
+	}
+	paths, ok := violations[0]["source_grounding_paths"].([]string)
+	if !ok || !slices.Contains(paths, "internal/runtime/agent/implementation_flow.go") {
+		t.Fatalf("violation should carry parsed source-grounding paths: %#v", violations[0])
+	}
+}
+
+func TestFinalAnswerPolicyRejectsRequiredEditPathsWithTypedMetadata(t *testing.T) {
+	acceptance := rejectFinalAnswerAcceptance(newFinalAnswerAcceptance(), turnViolationRequiredEditPathsRemaining, turnReasonRequiredEditPathsRemaining)
 
 	if acceptance.Decision != finalAnswerAcceptanceRejected ||
 		acceptance.BlockerKind != "required_edit_paths_remaining" ||
@@ -37501,15 +37853,12 @@ func TestFinalAnswerPolicyRejectsRequiredEditPathsWithTypedMetadata(t *testing.T
 }
 
 func TestFinalAnswerPolicyRejectsGroundingAndKeepsObjectiveAdvisory(t *testing.T) {
-	acceptance := newFinalAnswerPolicyEngine().EvaluateFinalAnswer(finalAnswerPolicyInput{
-		Answer: "Unsupported final answer.",
-		DirectAnswerRelevance: readOnlyDirectAnswerRelevance{
-			BlockerKind:             "answer_objective_unmet",
-			Reason:                  "objective evidence missing",
-			RelevantSourceBodyPaths: []string{"internal/runtime/agent/runner_core.go"},
-		},
-		SourceGroundingReason: "source grounding missing",
+	acceptance := finalAnswerAcceptanceWithRelevanceForTest(readOnlyDirectAnswerRelevance{
+		BlockerKind:             "answer_objective_unmet",
+		Reason:                  "objective evidence missing",
+		RelevantSourceBodyPaths: []string{"internal/runtime/agent/runner_core.go"},
 	})
+	acceptance = rejectFinalAnswerAcceptanceWithMessage(acceptance, turnViolationSourceGroundingUnmet, turnReasonSourceGroundingUnmet, "source grounding missing")
 
 	if acceptance.BlockerKind != "source_grounding_unmet" ||
 		acceptance.Reason != "source grounding missing" ||
@@ -37520,18 +37869,19 @@ func TestFinalAnswerPolicyRejectsGroundingAndKeepsObjectiveAdvisory(t *testing.T
 	if len(acceptance.EvidencePaths) != 1 || acceptance.EvidencePaths[0] != "internal/runtime/agent/runner_core.go" {
 		t.Fatalf("expected fallback evidence path, got %#v", acceptance.EvidencePaths)
 	}
+	if !acceptance.ContractAssessment.HasViolation(turnViolationSourceGroundingUnmet) ||
+		!acceptance.ContractAssessment.HasDiagnostic(turnDiagnosticObjectiveRelevance) {
+		t.Fatalf("expected source-grounding violation and objective diagnostic, got %#v", acceptance.ContractAssessment)
+	}
 	assertFinalAnswerPolicyMetadata(t, acceptance, autonomy.PolicyReject)
 }
 
 func TestFinalAnswerPolicyTreatsObjectiveRelevanceAsAdvisory(t *testing.T) {
-	acceptance := newFinalAnswerPolicyEngine().EvaluateFinalAnswer(finalAnswerPolicyInput{
-		Answer: "The model-authored answer.",
-		DirectAnswerRelevance: readOnlyDirectAnswerRelevance{
-			Status:                  "checked",
-			BlockerKind:             "answer_objective_unmet:citation_mismatch",
-			Reason:                  "objective evidence mismatch",
-			RelevantSourceBodyPaths: []string{"internal/runtime/agent/runner_core.go"},
-		},
+	acceptance := finalAnswerAcceptanceWithRelevanceForTest(readOnlyDirectAnswerRelevance{
+		Status:                  "checked",
+		BlockerKind:             "answer_objective_unmet:citation_mismatch",
+		Reason:                  "objective evidence mismatch",
+		RelevantSourceBodyPaths: []string{"internal/runtime/agent/runner_core.go"},
 	})
 
 	if acceptance.Decision != finalAnswerAcceptanceAccepted ||
@@ -37543,7 +37893,18 @@ func TestFinalAnswerPolicyTreatsObjectiveRelevanceAsAdvisory(t *testing.T) {
 		len(acceptance.RelevantSourceBodyPaths) != 1 {
 		t.Fatalf("objective relevance advisory metadata should be retained, got %#v", acceptance)
 	}
+	if !acceptance.ContractAssessment.HasDiagnostic(turnDiagnosticObjectiveRelevance) ||
+		len(acceptance.ContractAssessment.Violations) > 0 {
+		t.Fatalf("expected objective diagnostic without enforceable violations, got %#v", acceptance.ContractAssessment)
+	}
 	assertFinalAnswerPolicyMetadata(t, acceptance, autonomy.PolicyAllow)
+}
+
+func finalAnswerAcceptanceWithRelevanceForTest(relevance readOnlyDirectAnswerRelevance) finalAnswerAcceptance {
+	acceptance := newFinalAnswerAcceptance()
+	acceptance.EvidencePaths = append([]string(nil), relevance.RelevantSourceBodyPaths...)
+	acceptance = finalAnswerAcceptanceWithDirectAnswerRelevance(acceptance, relevance)
+	return finalAnswerAcceptanceWithPolicy(acceptance)
 }
 
 func TestFinalAnswerAcceptanceTerminalOverrideKeepsPolicyDecisionConsistent(t *testing.T) {
@@ -37555,6 +37916,9 @@ func TestFinalAnswerAcceptanceTerminalOverrideKeepsPolicyDecisionConsistent(t *t
 	)
 	if rejected.PolicyDecision != autonomy.PolicyReject || rejected.Decision != finalAnswerAcceptanceRejected {
 		t.Fatalf("rejected override must carry reject policy metadata: %#v", rejected)
+	}
+	if !rejected.ContractAssessment.HasViolation(turnViolationTransportProtocolOutput) {
+		t.Fatalf("rejected override must carry typed transport violation: %#v", rejected.ContractAssessment)
 	}
 	assertFinalAnswerPolicyMetadata(t, rejected, autonomy.PolicyReject)
 
@@ -37570,6 +37934,9 @@ func TestFinalAnswerAcceptanceTerminalOverrideKeepsPolicyDecisionConsistent(t *t
 		accepted.Reason != "host_read_only_closeout" {
 
 		t.Fatalf("accepted override must carry allow policy metadata: %#v", accepted)
+	}
+	if len(accepted.ContractAssessment.Violations) > 0 {
+		t.Fatalf("accepted override must clear typed violations: %#v", accepted.ContractAssessment)
 	}
 	assertFinalAnswerPolicyMetadata(t, accepted, autonomy.PolicyAllow)
 }

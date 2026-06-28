@@ -1983,7 +1983,7 @@ func TurnPhaseActionClassForToolClass(tool string) ActionClass {
 	switch strings.TrimSpace(tool) {
 	case "read_file", "code_navigate", "go_read_symbol", "go_extract_body", "cpp_read_symbol", "cpp_definition", "file_stats", "read_only_capability", "history_range", "history_symbol":
 		return ActionClassRead
-	case "list_files", "search_files", "search_content", "rg", "grep", "discovery_query", "context_pack", "context_query", "context_zoom", "context_status", "context_impact", "structural_search", "blame_range", "mcp:exa/web_fetch_exa", "mcp:exa/web_search_exa":
+	case "list_files", "search_files", "search_content", "rg", "grep", "discovery_query", "context_pack", "context_query", "context_zoom", "context_status", "context_impact", "structural_search", "blame_range", "harness_audit", "mcp:exa/web_fetch_exa", "mcp:exa/web_search_exa":
 		return ActionClassSearch
 	case "submit_plan":
 		return ActionClassSubmitPlan

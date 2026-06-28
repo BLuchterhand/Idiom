@@ -7,6 +7,7 @@ import (
 
 	"idiom/internal/capabilities/toolcatalog"
 	"idiom/internal/contracts/autonomy"
+	"idiom/internal/platform/textutil"
 )
 
 type builtInToolSurfaceSpec struct {
@@ -63,7 +64,7 @@ var builtInToolSurfaceCatalog = toolcatalog.MustNewToolSurfaceCatalog([]toolcata
 	{Tool: ToolNameCodeNavigate, Category: int(CategoryRead), DefaultManifest: true, Narrowing: true, EvidenceCapabilities: CodeNavigationEvidenceCapabilities(), CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, RuntimeSourceInspection: true, PlannerAllowed: true, ActionClass: "read"},
 	{Tool: readOnlyCapabilityToolName, Category: int(CategoryRead), DefaultManifest: true, Narrowing: true, EvidenceCapabilities: ReadOnlyCapabilityEvidenceCapabilities(), CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, ActionClass: "read"},
 	{Tool: ToolNameSourceSanity, Category: int(CategoryRead), DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{EvidenceCapabilitySourceDiagnostics, EvidenceCapabilityVerifyEdit}, CapabilityClassification: CapabilityClassDeferred, PolicyCapabilities: policyShellVerification, SideEffects: sideEffectReadOnlyUnknown, RuntimeSourceInspection: true, ActionClass: "verify"},
-	{Tool: ToolNameHarnessAudit, Category: int(CategoryRead), DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{EvidenceCapabilityAuditBehavior}, CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly},
+	{Tool: ToolNameHarnessAudit, Category: int(CategoryRead), DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{EvidenceCapabilityAuditBehavior}, CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, ActionClass: "search"},
 	{Tool: ToolNameHarnessFeedback, Category: int(CategoryVerification), DefaultManifest: true, Narrowing: true, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectAdditive, PlannerAllowed: true},
 	{Tool: ToolNameRecoveryInspect, Category: int(CategoryRead), DefaultManifest: true, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, MCPDiscoveryProfile: true, PlannerAllowed: true},
 	{Tool: ToolNameRecoveryStatus, Category: int(CategoryRead), DefaultManifest: true, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, MCPDiscoveryProfile: true, PlannerAllowed: true},
@@ -254,4 +255,34 @@ func RuntimeHistoryInspectionToolNames() []string {
 	return builtInToolSurfaceCatalog.ToolsWhere(func(spec toolcatalog.ToolSurfaceSpec) bool {
 		return spec.RuntimeHistoryInspection
 	})
+}
+
+func RuntimeReadOnlyInvestigationToolNames() []string {
+	tools := builtInToolSurfaceCatalog.ToolsWhere(func(spec toolcatalog.ToolSurfaceSpec) bool {
+		if spec.Tool == ToolNameTask {
+			return true
+		}
+
+		if spec.DiscoveryLocalArtifacts || !slices.Equal(spec.SideEffects, sideEffectReadOnly) {
+			return false
+		}
+
+		actionClass := autonomy.CanonicalActionClass(autonomy.ActionClass(spec.ActionClass))
+		switch actionClass {
+		case autonomy.ActionClassRead, autonomy.ActionClassSearch, autonomy.ActionClassGenericProbe:
+		default:
+			return false
+		}
+
+		return spec.RuntimeSourceInspection ||
+			spec.RuntimeContextDiscovery ||
+			spec.RuntimeHistoryInspection ||
+			spec.Tool == ToolNameReadOnlyCapability ||
+			spec.Tool == ToolNameHarnessAudit ||
+			spec.Tool == ToolNameTask
+	})
+
+	tools = append(tools, ToolNameMCPWebFetchExa, ToolNameMCPWebSearchExa)
+
+	return textutil.UniqueNonEmpty(tools)
 }
