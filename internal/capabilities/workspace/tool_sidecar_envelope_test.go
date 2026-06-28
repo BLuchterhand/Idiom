@@ -1,10 +1,12 @@
 package workspace
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"idiom/internal/platform/failures"
 )
@@ -376,6 +378,24 @@ func TestBuildToolSidecarEnvelopeRendersTypedFailureWithoutLegacyError(t *testin
 
 	if !strings.Contains(envelope.Error.Message, "context_query exceeded its deadline") {
 		t.Fatalf("typed failure message should be rendered when legacy Error is empty, got %#v", envelope.Error)
+	}
+}
+
+func TestBuildToolSidecarEnvelopeIncludesContextPackFallbackStructuredOutput(t *testing.T) {
+	result := contextPackFallbackResult(ToolRequest{Tool: ToolNameContextPack, Task: "locate failure"}, 30*time.Millisecond, context.DeadlineExceeded)
+	envelope := BuildToolSidecarEnvelope(ToolRequest{Tool: ToolNameContextPack}, result, "discovery")
+
+	if envelope.Error == nil || envelope.Error.Class != "timeout" || envelope.Error.Code != "timeout" {
+		t.Fatalf("context_pack fallback should remain a typed timeout, got %#v", envelope.Error)
+	}
+
+	structured, ok := envelope.StructuredOutput.(map[string]any)
+	if !ok {
+		t.Fatalf("context_pack fallback should be structured JSON output, got %#v", envelope.StructuredOutput)
+	}
+
+	if structured["schema"] != ContextPackFallbackSchema || structured["status"] != "unavailable" || structured["retry_same_request"] != false {
+		t.Fatalf("unexpected structured fallback payload: %#v", structured)
 	}
 }
 

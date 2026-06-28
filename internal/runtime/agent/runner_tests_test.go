@@ -2295,6 +2295,55 @@ func TestRunnerAutonomyRecorderModelExchangePermissionAndFailureRefs(t *testing.
 	}
 }
 
+func TestRunnerAutonomyRecorderGateFailureDeltaUsesReasonCode(t *testing.T) {
+	t.Setenv(runnerAutonomyDisableModelExchangeEnv, "")
+
+	var runEvents []RunEvent
+
+	runner := &Runner{
+		AgentName: "main",
+		OnEvent: func(event RunEvent) {
+			runEvents = append(runEvents, event)
+		},
+	}
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		AllowedTools:      []string{"read_file"},
+	}
+	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{MaxToolSteps: 2}, brief, nil)
+	if recorder == nil {
+		t.Fatal("newRunnerAutonomyRecorder returned nil")
+	}
+
+	recorder.emitContractStarted(brief)
+	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
+		ContractID:       recorder.contract.ContractID,
+		ModelCallID:      recorder.contract.ContractID + ":model_call_1",
+		Step:             1,
+		Brief:            brief,
+		BaseAllowedTools: []string{"read_file"},
+	})
+	recorder.emitTurnPhaseContract(phase, contractcompile.ModelProtocolProjection{ProtocolHash: "sha256:protocolref", PhaseID: phase.PhaseID})
+	recorder.emitGateDecision(runnerAutonomyGateDecision{
+		Gate:        autonomy.GateCompletion,
+		Decision:    autonomy.PolicyReject,
+		InvariantID: "completion.source_grounding",
+		ReasonCode:  "source_grounding_unmet",
+		Source:      "completion_gate",
+	})
+
+	intent := mustRunnerAutonomyModelExchangeForTest(t, runEvents, "failure_delta")
+	if intent.ModelExchange.FailureDelta == nil {
+		t.Fatalf("expected failure delta payload: %#v", intent.ModelExchange)
+	}
+
+	if got := intent.ModelExchange.FailureDelta.FailureClass; got != "source_grounding_unmet" {
+		t.Fatalf("failure class = %q, want source_grounding_unmet", got)
+	}
+}
+
 func TestRunnerAutonomyRecorderModelExchangeClassifiesModelResponseAsNonAuthoritativeAndPrivacySafe(t *testing.T) {
 	t.Setenv(runnerAutonomyDisableModelExchangeEnv, "")
 
@@ -8049,7 +8098,7 @@ func TestRunnerSessionBootstrapOwnsEngineInitialization(t *testing.T) {
 		t.Fatalf("required edits = %#v", remaining)
 	}
 	if runner.LanePolicy == nil || runner.EvidenceEngine == nil || runner.GateEngine == nil ||
-		runner.CardEngine == nil || runner.GuidanceEngine == nil || runner.FinalAnswerPolicyEngine == nil ||
+		runner.CardEngine == nil || runner.GuidanceEngine == nil ||
 		runner.VerificationPolicyEngine == nil || runner.LifecycleCloseoutPolicyEngine == nil ||
 		runner.ModelCallReadinessPolicyEngine == nil || runner.ToolAuthorizationPolicyEngine == nil {
 		t.Fatalf("Bootstrap did not initialize runner engines: %#v", runner)
@@ -8857,6 +8906,18 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 	}
 	if strings.Contains(got, "ONE concrete tool call") {
 		t.Errorf("source-grounding missing tier 2 must not contain 'ONE concrete tool call'; got: %s", got)
+	}
+
+	// Source-grounding (candidate-only evidence wording from read-only gate).
+	sgCandidateOnly := "read-only workspace answers require bounded source-body or diagnostic evidence tied to the user's objective before a final answer. Candidate/search/context paths are not source-body evidence. Candidate path(s): testdata/swe/debug-logs-weird-decisions-suite.json, docs/configuration.md. Inspect one candidate with source-body evidence, use one materially different source-owner probe if these candidates do not establish the claim, or answer `<<QUESTION>>:` with the exact unavailable evidence source."
+	got = escalateCompletionGateMessage(sgCandidateOnly, 1)
+	for _, want := range []string{"[gate retry 2/3]", "Candidate/search/context paths are not source-body evidence", "call one bounded"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("source-grounding candidate-only tier 1 expected to contain %q, got: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "use a different tool call") {
+		t.Errorf("source-grounding candidate-only tier 1 must not contain generic tool-call advice; got: %s", got)
 	}
 
 	// ── Non-source-grounding messages still get generic text ──────
@@ -9909,68 +9970,8 @@ func TestRunnerDropsReasoningContentBetweenToolTurnsWhenNotPreserving(t *testing
 }
 
 func TestRunnerForcesVisibleOutputForEmptyReplyRetry(t *testing.T) {
-	root := t.TempDir()
-
-	type requestPayload struct {
-		Messages           []llama.ChatMessage `json:"messages"`
-		ChatTemplateKwargs *struct {
-			EnableThinking *bool `json:"enable_thinking"`
-			Preserve       bool  `json:"preserve_thinking"`
-		} `json:"chat_template_kwargs,omitempty"`
-	}
-
-	var payloads []requestPayload
-
-	replies := []string{
-		`{"choices":[{"message":{"role":"assistant","reasoning_content":"unfinished reasoning","content":""}}]}`,
-		`{"choices":[{"message":{"role":"assistant","content":"Done."}}]}`,
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var payload requestPayload
-
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			t.Fatalf("decode request: %v", err)
-		}
-
-		payloads = append(payloads, payload)
-		if len(payloads) > len(replies) {
-			t.Fatalf("unexpected extra chat request")
-		}
-
-		_, _ = w.Write([]byte(replies[len(payloads)-1]))
-	}))
-
-	defer server.Close()
-
 	enableThinking := true
-	runner := &Runner{
-		Client: llama.NewClient(server.URL, time.Second),
-		Workspace: workspace.NewManager(config.Workspace{
-			Root: root,
-			CWD:  root,
-		}),
-		Policy: RunPolicy{MaxToolSteps: 1, MaxNoProgressTurns: 2},
-	}
-
-	answer, err := runner.Run(
-		context.Background(),
-		[]llama.ChatMessage{{Role: "user", Content: "answer"}},
-		llama.ChatOptions{Model: "model", EnableThinking: &enableThinking, PreserveThinking: true, MaxTokens: 128},
-		nil,
-		nil,
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-
-	if answer != "Done." {
-		t.Fatalf("unexpected answer %q", answer)
-	}
-
-	if len(payloads) != 2 {
-		t.Fatalf("expected two model requests, got %d", len(payloads))
-	}
+	payloads := runEmptyReplyRetry(t, "", llama.ChatOptions{Model: "model", EnableThinking: &enableThinking, PreserveThinking: true, MaxTokens: 128})
 
 	for _, message := range payloads[1].Messages {
 		if message.ReasoningContent != "" {
@@ -9987,22 +9988,131 @@ func TestRunnerForcesVisibleOutputForEmptyReplyRetry(t *testing.T) {
 	}
 }
 
-func TestRunnerDropsEmptyReplyReasoningForRetryWhenNotPreserving(t *testing.T) {
-	root := t.TempDir()
+func TestRunnerDeepSeekEmptyReplyRetryPreservesReasoningContentInHistory(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	enableThinking := true
+	payloads := runEmptyReplyRetry(t, config.BackendDeepSeek, llama.ChatOptions{Model: "deepseek-v4-flash", EnableThinking: &enableThinking, PreserveThinking: true, MaxTokens: 128})
 
-	type requestPayload struct {
-		Messages []llama.ChatMessage `json:"messages"`
+	if got := payloads[1].Thinking["type"]; got != "disabled" {
+		t.Fatalf("DeepSeek empty-answer retry should disable new thinking, got thinking=%#v", payloads[1].Thinking)
 	}
 
-	var payloads []requestPayload
+	var foundReasoning bool
+	for _, message := range payloads[1].Messages {
+		if message.Role == "assistant" && message.ReasoningContent == "unfinished reasoning" {
+			foundReasoning = true
+		}
+		if message.Role != "assistant" && message.ReasoningContent != "" {
+			t.Fatalf("DeepSeek retry should not send non-assistant reasoning_content, got %#v", payloads[1].Messages)
+		}
+	}
+	if !foundReasoning {
+		t.Fatalf("DeepSeek retry should preserve prior assistant reasoning_content, got %#v", payloads[1].Messages)
+	}
+}
 
+func TestRunnerDropsEmptyReplyReasoningForRetryWhenNotPreserving(t *testing.T) {
+	enableThinking := true
+	payloads := runEmptyReplyRetry(t, "", llama.ChatOptions{Model: "model", EnableThinking: &enableThinking, PreserveThinking: false, MaxTokens: 128})
+
+	for _, message := range payloads[1].Messages {
+		if message.ReasoningContent != "" {
+			t.Fatalf("expected retry request to strip empty reply reasoning_content, got %#v", payloads[1].Messages)
+		}
+	}
+}
+
+func TestRunnerDeepSeekInvalidFinalRetryPreservesReasoningContentInHistory(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	root := t.TempDir()
+
+	var payloads []emptyReplyRetryRequestPayload
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload emptyReplyRetryRequestPayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+
+		payloads = append(payloads, payload)
+		if len(payloads) > 1 {
+			t.Fatalf("unexpected extra chat request")
+		}
+
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"Done."}}]}`))
+	}))
+	defer server.Close()
+
+	thinkingOff := false
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second).WithBackend(config.BackendDeepSeek),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 1, MaxNoProgressTurns: 2},
+	}
+
+	answer, ok, err := runner.retryInvalidFinalAnswer(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "answer"}},
+		llama.ChatMessage{
+			Role:             "assistant",
+			Content:          "```tool\n{\"tool\":\"read_file\",\"path\":\"README.md\"}\n```",
+			ReasoningContent: "invalid final reasoning",
+		},
+		llama.ChatOptions{Model: "deepseek-v4-flash", EnableThinking: &thinkingOff, PreserveThinking: false, MaxTokens: 128},
+		nil,
+		nil,
+		"textual tool call",
+	)
+	if err != nil {
+		t.Fatalf("retryInvalidFinalAnswer: %v", err)
+	}
+	if !ok || answer != "Done." {
+		t.Fatalf("unexpected retry result ok=%v answer=%q", ok, answer)
+	}
+	if len(payloads) != 1 {
+		t.Fatalf("expected one model request, got %d", len(payloads))
+	}
+	if got := payloads[0].Thinking["type"]; got != "disabled" {
+		t.Fatalf("DeepSeek invalid-final retry should disable new thinking, got thinking=%#v", payloads[0].Thinking)
+	}
+
+	var foundReasoning bool
+	for _, message := range payloads[0].Messages {
+		if message.Role == "assistant" && message.ReasoningContent == "invalid final reasoning" {
+			foundReasoning = true
+		}
+		if message.Role != "assistant" && message.ReasoningContent != "" {
+			t.Fatalf("DeepSeek retry should not send non-assistant reasoning_content, got %#v", payloads[0].Messages)
+		}
+	}
+	if !foundReasoning {
+		t.Fatalf("DeepSeek invalid-final retry should preserve prior assistant reasoning_content, got %#v", payloads[0].Messages)
+	}
+}
+
+type emptyReplyRetryRequestPayload struct {
+	Messages           []llama.ChatMessage `json:"messages"`
+	Thinking           map[string]string   `json:"thinking,omitempty"`
+	ChatTemplateKwargs *struct {
+		EnableThinking *bool `json:"enable_thinking"`
+		Preserve       bool  `json:"preserve_thinking"`
+	} `json:"chat_template_kwargs,omitempty"`
+}
+
+func runEmptyReplyRetry(t *testing.T, backend string, opts llama.ChatOptions) []emptyReplyRetryRequestPayload {
+	t.Helper()
+
+	root := t.TempDir()
+	var payloads []emptyReplyRetryRequestPayload
 	replies := []string{
 		`{"choices":[{"message":{"role":"assistant","reasoning_content":"unfinished reasoning","content":""}}]}`,
 		`{"choices":[{"message":{"role":"assistant","content":"Done."}}]}`,
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var payload requestPayload
 
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload emptyReplyRetryRequestPayload
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
@@ -10014,12 +10124,15 @@ func TestRunnerDropsEmptyReplyReasoningForRetryWhenNotPreserving(t *testing.T) {
 
 		_, _ = w.Write([]byte(replies[len(payloads)-1]))
 	}))
-
 	defer server.Close()
 
-	enableThinking := true
+	client := llama.NewClient(server.URL, time.Second)
+	if strings.TrimSpace(backend) != "" {
+		client = client.WithBackend(backend)
+	}
+
 	runner := &Runner{
-		Client: llama.NewClient(server.URL, time.Second),
+		Client: client,
 		Workspace: workspace.NewManager(config.Workspace{
 			Root: root,
 			CWD:  root,
@@ -10030,7 +10143,7 @@ func TestRunnerDropsEmptyReplyReasoningForRetryWhenNotPreserving(t *testing.T) {
 	answer, err := runner.Run(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: "answer"}},
-		llama.ChatOptions{Model: "model", EnableThinking: &enableThinking, PreserveThinking: false, MaxTokens: 128},
+		opts,
 		nil,
 		nil,
 		nil,
@@ -10038,20 +10151,14 @@ func TestRunnerDropsEmptyReplyReasoningForRetryWhenNotPreserving(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-
 	if answer != "Done." {
 		t.Fatalf("unexpected answer %q", answer)
 	}
-
 	if len(payloads) != 2 {
 		t.Fatalf("expected two model requests, got %d", len(payloads))
 	}
 
-	for _, message := range payloads[1].Messages {
-		if message.ReasoningContent != "" {
-			t.Fatalf("expected retry request to strip empty reply reasoning_content, got %#v", payloads[1].Messages)
-		}
-	}
+	return payloads
 }
 
 func writeTestFile(root string, path string, content string) error {
@@ -11156,7 +11263,7 @@ func TestVerificationOnlyRedirectsPreCheckExplorationToVerificationCommand(t *te
 }
 
 func TestDebugLogEvidenceSatisfiedAfterSingleHitAndReadWindow(t *testing.T) {
-	brief := workerruntime.WorkerRuntimeBrief{TaskFamily: "debug_logs"}
+	brief := workerruntime.WorkerRuntimeBrief{TaskFamily: "debug_logs", Contract: "direct_answer", PermissionProfile: "read_only_workspace", Objective: "Inspect the newest debug log for why the run failed."}
 	results := []workspace.ToolResult{
 		{
 			Tool:    "search_content",
@@ -11176,7 +11283,7 @@ func TestDebugLogEvidenceSatisfiedAfterSingleHitAndReadWindow(t *testing.T) {
 }
 
 func TestDebugLogFollowupRedirectsSearchToHitWindow(t *testing.T) {
-	brief := workerruntime.WorkerRuntimeBrief{TaskFamily: "debug_logs"}
+	brief := workerruntime.WorkerRuntimeBrief{TaskFamily: "debug_logs", Contract: "direct_answer", PermissionProfile: "read_only_workspace", Objective: "Inspect the newest debug log for why the run failed."}
 	results := []workspace.ToolResult{{
 		Tool:    "search_content",
 		Summary: "Found 1 matching line at logs/llama-server.log:247005.",
@@ -11214,7 +11321,7 @@ func TestDebugLogPreflightRedirectsGenericSearchToNewestLogDiscovery(t *testing.
 			CWD:                 root,
 			MaxDirectoryEntries: 64,
 		}),
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{TaskFamily: "debug_logs"},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{TaskFamily: "debug_logs", Contract: "direct_answer", PermissionProfile: "read_only_workspace", Objective: "Inspect the newest debug log for why the run failed."},
 	}
 	redirected, ok := runner.debugLogPreflightRequest(nil, workspace.ToolRequest{
 		Tool:    "search_files",
@@ -11279,7 +11386,7 @@ func TestDebugLogPreflightRedirectsToSelectedLogTail(t *testing.T) {
 
 	runner := &Runner{
 		Workspace:    mgr,
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{TaskFamily: "debug_logs"},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{TaskFamily: "debug_logs", Contract: "direct_answer", PermissionProfile: "read_only_workspace", Objective: "Inspect the newest debug log for why the run failed."},
 	}
 	redirected, ok := runner.debugLogPreflightRequest([]workspace.ToolResult{search}, workspace.ToolRequest{
 		Tool:    "search_content",
@@ -11544,7 +11651,7 @@ func TestDebugLogPhaseScopeRejectsSourceDriftAfterTail(t *testing.T) {
 	}
 
 	results := []workspace.ToolResult{search, read}
-	brief := workerruntime.WorkerRuntimeBrief{TaskFamily: "debug_logs"}
+	brief := workerruntime.WorkerRuntimeBrief{TaskFamily: "debug_logs", Contract: "direct_answer", PermissionProfile: "read_only_workspace", Objective: "Inspect the newest debug log for why the run failed."}
 
 	if _, _, reject := debugLogPhaseScopeRejection(workspace.ToolRequest{
 		Tool:    "search_content",
@@ -15505,7 +15612,12 @@ func TestApplyLanePreflightRedirectsVerificationOnlyToBootstrapCommand(t *testin
 }
 
 func TestApplyLanePreflightRejectsBlindDebugLogRereadWithoutForcedAnswer(t *testing.T) {
-	brief := workerruntime.WorkerRuntimeBrief{TaskFamily: "debug_logs"}
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "debug_logs",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Inspect the newest debug log for why the run failed.",
+	}
 	results := []workspace.ToolResult{
 		{
 			Tool:    "search_files",
@@ -16688,19 +16800,19 @@ func TestControlRailsBlankPermissionInfersReadOnlyWorkspaceWhenToolsExist(t *tes
 	}
 }
 
-func TestControlRailsKeepStrictCriticForDebugLogs(t *testing.T) {
+func TestControlRailsTreatDebugLogsAsConversationAlias(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "debug_logs",
-			Contract:          "grounded_explanation",
+			Contract:          "direct_answer",
 			PermissionProfile: "read_only_workspace",
 			AllowedTools:      []string{"search_files", "search_content", "read_file"},
 		},
 	}
 	rails := runner.controlRails(nil)
 
-	if len(rails.ReadinessGate) == 0 || len(rails.FinalCritic) == 0 {
-		t.Fatalf("expected debug_logs rails to keep strict operational guidance, got %#v", rails)
+	if len(rails.ReadinessGate) != 0 || len(rails.FinalCritic) != 0 {
+		t.Fatalf("debug_logs compatibility brief should use soft conversation rails, got %#v", rails)
 	}
 }
 
@@ -16864,6 +16976,43 @@ func TestArchitectureToolBudgetDoesNotHostCloseoutAnswerableEvidence(t *testing.
 
 	if !strings.Contains(answer, "task tool child runner") {
 		t.Fatalf("unexpected answer: %q", answer)
+	}
+}
+
+func TestImplementationToolBudgetExhaustedBlockerIsDeterministic(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"internal/runtime/agent/implementation_flow.go"},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/runtime/agent/implementation_flow.go lines 1-80",
+		Output:  "1:package agent\n",
+	}}
+
+	answer, ok := runner.implementationToolBudgetExhaustedBlocker(results)
+	if !ok {
+		t.Fatal("expected mutation tool budget exhaustion to produce deterministic blocker")
+	}
+
+	for _, want := range []string{
+		"<<QUESTION>>:",
+		"tool budget was exhausted",
+		"internal/runtime/agent/implementation_flow.go",
+		"parser-readable edit",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("budget blocker missing %q:\n%s", want, answer)
+		}
+	}
+
+	decision := runner.classifyTerminalAnswer(answer, "implementation_tool_step_budget_blocked", results)
+	if decision.StopReason != "implementation_tool_step_budget_blocked" {
+		t.Fatalf("budget blocker stop reason should be preserved, got %#v", decision)
 	}
 }
 
@@ -27293,7 +27442,6 @@ func TestChildPacketBoundaryNudgeNamesEvidencePaths(t *testing.T) {
 		},
 		Objective:         "Explain how this harness uses subagents.",
 		Results:           nil,
-		ProbeBudget:       2,
 		ContinuationScope: "child_packet_available",
 		FooterLines: []string{
 			"Ignore packet artifacts (the `.idiom/discovery/queries/` JSON files) — they are not source paths.",
@@ -27307,7 +27455,7 @@ func TestChildPacketBoundaryNudgeNamesEvidencePaths(t *testing.T) {
 		"`internal/runtime/agent/discovery_redirect.go`",
 		"normal tool policy",
 		"named path, symbol, discovered handle, branch, body, or narrow line-range",
-		"at most 2 targeted probes",
+		"one exact unresolved claim",
 		"If you answer now, answer from the packet",
 	} {
 		if !strings.Contains(nudge, want) {
@@ -27320,32 +27468,87 @@ func TestChildPacketBoundaryNudgeNamesEvidencePaths(t *testing.T) {
 	}
 }
 
-func TestChildPacketBoundaryNudgeDisclosesActualProbeBudget(t *testing.T) {
-	for _, tc := range []struct {
-		budget int
-		want   string
-	}{
-		{budget: 2, want: "at most 2 targeted probes"},
-		{budget: 1, want: "one targeted probe"},
-		{budget: 0, want: "answer unless the missing claim is exact and material"},
-	} {
-		nudge := buildReadinessNudge(ReadinessNudge{
-			Headline:          "The delegated read_only child result is now available as an evidence packet.",
-			EvidencePathLabel: "Packet-named paths: ",
-			EvidencePaths:     []string{"internal/runtime/agent/runner_core.go"},
-			Objective:         "q",
-			Results:           nil,
-			ProbeBudget:       tc.budget,
-			ContinuationScope: "child_packet_available",
-			FooterLines: []string{
-				"Ignore packet artifacts (the `.idiom/discovery/queries/` JSON files) — they are not source paths.",
-				"If you answer now, answer from the packet and inspected source evidence.",
-			},
-			IncludeProbeSuggestions: true,
-		})
-		if !strings.Contains(nudge, tc.want) {
-			t.Fatalf("budget=%d: expected nudge to contain %q, got:\n%s", tc.budget, tc.want, nudge)
+func TestChildPacketBoundaryNudgeAvoidsProbeCountPressure(t *testing.T) {
+	nudge := buildReadinessNudge(ReadinessNudge{
+		Headline:          "The delegated read_only child result is now available as an evidence packet.",
+		EvidencePathLabel: "Packet-named paths: ",
+		EvidencePaths:     []string{"internal/runtime/agent/runner_core.go"},
+		Objective:         "q",
+		Results:           nil,
+		ContinuationScope: "child_packet_available",
+		FooterLines: []string{
+			"Ignore packet artifacts (the `.idiom/discovery/queries/` JSON files) — they are not source paths.",
+			"If you answer now, answer from the packet and inspected source evidence.",
+		},
+		IncludeProbeSuggestions: true,
+	})
+
+	for _, forbidden := range []string{"at most 2 targeted probes", "Post-readiness probes used", "follow-up budget"} {
+		if strings.Contains(nudge, forbidden) {
+			t.Fatalf("readiness nudge should not hold a probe budget/count over the model, found %q:\n%s", forbidden, nudge)
 		}
+	}
+
+	for _, want := range []string{"A final answer is available", "one exact unresolved claim", "normal tool policy"} {
+		if !strings.Contains(nudge, want) {
+			t.Fatalf("expected advisory readiness nudge to contain %q, got:\n%s", want, nudge)
+		}
+	}
+}
+
+func TestReadinessNudgeUsesRuntimeBriefForLedgerGuidance(t *testing.T) {
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/runtime/agent/runner_core.go lines 1-20",
+		Output:  "1:package agent\n",
+	}}
+	input := ReadinessNudge{
+		Headline:          "The evidence is ready.",
+		EvidencePathLabel: "Core evidence paths: ",
+		EvidencePaths:     []string{"internal/runtime/agent/runner_core.go"},
+		Objective:         "Explain the runner.",
+		Results:           results,
+		ContinuationScope: "answer_readiness_reached",
+	}
+
+	writeLane := input
+	writeLane.RuntimeBrief = workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        string(autonomy.TaskFamilyImplementation),
+		Contract:          string(workerruntime.ContractImplementationResult),
+		PermissionProfile: "guarded_workspace_write",
+	}
+	if got := buildReadinessNudge(writeLane); strings.Contains(got, "Evidence ledger:") {
+		t.Fatalf("non-read-only readiness nudge must not include read-only ledger guidance:\n%s", got)
+	}
+
+	readOnlyLane := input
+	readOnlyLane.RuntimeBrief = workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
+		Contract:          string(workerruntime.ContractDirectAnswer),
+		PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+		Objective:         input.Objective,
+	}
+	if got := buildReadinessNudge(readOnlyLane); !strings.Contains(got, "Evidence ledger:") {
+		t.Fatalf("read-only readiness nudge should include ledger guidance:\n%s", got)
+	}
+}
+
+func TestReadinessNudgeWithoutRuntimeBriefDoesNotInventReadOnlyLedger(t *testing.T) {
+	nudge := buildReadinessNudge(ReadinessNudge{
+		Headline:          "The evidence is ready.",
+		EvidencePathLabel: "Core evidence paths: ",
+		EvidencePaths:     []string{"internal/runtime/agent/runner_core.go"},
+		Objective:         "Explain the runner.",
+		Results: []workspace.ToolResult{{
+			Tool:    "read_file",
+			Summary: "Read internal/runtime/agent/runner_core.go lines 1-20",
+			Output:  "1:package agent\n",
+		}},
+		ContinuationScope: "answer_readiness_reached",
+	})
+
+	if strings.Contains(nudge, "Evidence ledger:") {
+		t.Fatalf("readiness nudge must not synthesize read-only ledger guidance without the actual runtime brief:\n%s", nudge)
 	}
 }
 
@@ -27361,7 +27564,6 @@ func TestChildPacketBoundaryNudgeFiltersNonFileArtifacts(t *testing.T) {
 		},
 		Objective:         "Explain how this harness uses subagents.",
 		Results:           nil,
-		ProbeBudget:       2,
 		ContinuationScope: "child_packet_available",
 		FooterLines: []string{
 			"Ignore packet artifacts (the `.idiom/discovery/queries/` JSON files) — they are not source paths.",
@@ -27400,7 +27602,6 @@ func TestDelegatedReadOnlyAnswerReadyNudgeIncludesClosureJustification(t *testin
 		EvidencePaths:     closurePromptEvidencePaths(delegatedClosureEvidencePaths("Explain how this harness uses subagents.", results, 4), 4),
 		Objective:         "Explain how this harness uses subagents.",
 		Results:           results,
-		ProbeBudget:       2,
 		ContinuationScope: "delegated_read_only_answer_ready",
 		FooterLines: []string{
 			"Carry forward the inspected paths above and keep the answer minimal; avoid side-path comparison or mode-by-mode breakdown unless the question requires that contrast.",
@@ -27466,19 +27667,22 @@ func TestDelegatedReadOnlyDiminishingReturnsNudgeEscalates(t *testing.T) {
 	first := delegatedReadOnlyDiminishingReturnsNudge("Explain how this harness uses subagents.", results, 1)
 	second := delegatedReadOnlyDiminishingReturnsNudge("Explain how this harness uses subagents.", results, 2)
 
-	if !strings.Contains(first, "Post-readiness probes used: 1") {
-		t.Fatalf("expected first diminishing-returns nudge to count one used probe, got:\n%s", first)
+	if !strings.Contains(first, "The evidence ledger already supports a final answer") {
+		t.Fatalf("expected first diminishing-returns nudge to cite ledger readiness, got:\n%s", first)
 	}
 
 	if !strings.Contains(first, "`internal/runtime/agent/runner_core.go`") {
 		t.Fatalf("expected first diminishing-returns nudge to surface inspected paths, got:\n%s", first)
 	}
 
-	if !strings.Contains(second, "Post-readiness probes used: 2") {
-		t.Fatalf("expected second diminishing-returns nudge to count two used probes, got:\n%s", second)
+	if !strings.Contains(second, "exact material missing claim") {
+		t.Fatalf("expected second diminishing-returns nudge to require a concrete missing claim, got:\n%s", second)
 	}
 
-	if strings.Contains(strings.ToLower(first), "disables tools") || strings.Contains(strings.ToLower(second), "disables tools") {
+	if strings.Contains(strings.ToLower(first), "disables tools") ||
+		strings.Contains(strings.ToLower(second), "disables tools") ||
+		strings.Contains(first, "Post-readiness probes used") ||
+		strings.Contains(second, "Post-readiness probes used") {
 		t.Fatalf("diminishing-returns nudge should stay advisory, got:\n%s\n---\n%s", first, second)
 	}
 }
@@ -29562,6 +29766,10 @@ func TestTerminalAnswerDecisionBlocksTransportProtocolOutput(t *testing.T) {
 
 		t.Fatalf("transport decision should be blocked protocol output, got %#v", decision)
 	}
+	if decision.Acceptance.PolicyDecision != autonomy.PolicyReject ||
+		!decision.Acceptance.ContractAssessment.HasViolation(turnViolationTransportProtocolOutput) {
+		t.Fatalf("transport decision should expose typed transport violation, got %#v", decision.Acceptance)
+	}
 
 	if strings.Contains(decision.PresentedAnswer, "<n_tool") || strings.TrimSpace(decision.PresentedAnswer) == "" {
 		t.Fatalf("presented transport blocker should be clean user-facing prose, got %q", decision.PresentedAnswer)
@@ -29808,23 +30016,23 @@ func TestFinalAnswerAcceptanceRetryPolicyKeepsNonRetryableBoundaries(t *testing.
 			AllowedTools:      []string{"read_file", "search_content"},
 		},
 	}
-	retryable := []string{"source_grounding_unmet", "read_only_protocol_blocker", "protocol_meta_final_answer"}
+	retryable := []turnViolationKind{turnViolationSourceGroundingUnmet, turnViolationReadOnlyProtocolBlocker, turnViolationProtocolMetaFinalAnswer}
 
 	for _, kind := range retryable {
-		if !readOnlyRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: kind}, nil, 0, nil) {
+		if !readOnlyRunner.retryableFinalAnswerAcceptanceRejection(rejectedFinalAnswerAcceptanceForTest(kind), nil, 0, nil) {
 			t.Fatalf("%s should be retryable for read-only direct-answer evidence repair", kind)
 		}
 	}
 
-	nonRetryable := []string{
-		"non_answer_prose",
-		"unexecuted_tool_request_final_answer",
-		"required_evidence_unmet",
-		"user_visible_blocker",
-		"required_edit_paths_remaining",
+	nonRetryable := []turnViolationKind{
+		turnViolationNonAnswerProse,
+		turnViolationUnexecutedToolRequestAnswer,
+		turnViolationRequiredEvidenceUnmet,
+		turnViolationUserVisibleBlocker,
+		turnViolationRequiredEditPathsRemaining,
 	}
 	for _, kind := range nonRetryable {
-		if readOnlyRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: kind}, nil, 0, nil) {
+		if readOnlyRunner.retryableFinalAnswerAcceptanceRejection(rejectedFinalAnswerAcceptanceForTest(kind), nil, 0, nil) {
 			t.Fatalf("%s must not enter read-only final-answer retry policy", kind)
 		}
 	}
@@ -29845,7 +30053,7 @@ func TestDirectAnswerQuestionProtocolIsRetryableNotUserVisibleBlocker(t *testing
 		t.Fatalf("read-only direct-answer QUESTION protocol should be retryable protocol drift, got %q", kind)
 	}
 
-	if !runner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: kind}, nil, 0, nil) {
+	if !runner.retryableFinalAnswerAcceptanceRejection(rejectFinalAnswerAcceptanceFromLegacyBlocker(newFinalAnswerAcceptance(), kind, kind), nil, 0, nil) {
 		t.Fatalf("%s should enter read-only final-answer retry policy", kind)
 	}
 }
@@ -29877,7 +30085,9 @@ func TestFinalAnswerAcceptanceRetryPolicyRequiresToolsAndNoMutation(t *testing.T
 			PermissionProfile: "read_only_workspace",
 		},
 	}
-	if noToolsRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: "answer_objective_unmet"}, nil, 0, nil) {
+	if noToolsRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{
+		ContractAssessment: turnContractAssessment{}.withDiagnostic(turnDiagnostic{Kind: turnDiagnosticObjectiveRelevance}),
+	}, nil, 0, nil) {
 		t.Fatal("answer_objective_unmet must not enter retry policy")
 	}
 
@@ -29889,15 +30099,15 @@ func TestFinalAnswerAcceptanceRetryPolicyRequiresToolsAndNoMutation(t *testing.T
 			AllowedTools:      []string{"read_file"},
 		},
 	}
-	if !readOnlyRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: "source_grounding_unmet"}, nil, 1, nil) {
+	if !readOnlyRunner.retryableFinalAnswerAcceptanceRejection(rejectedFinalAnswerAcceptanceForTest(turnViolationSourceGroundingUnmet), nil, 1, nil) {
 		t.Fatal("source_grounding_unmet should remain retryable before the retry limit is exhausted")
 	}
 
-	if !readOnlyRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: "source_grounding_unmet"}, nil, 2, nil) {
+	if !readOnlyRunner.retryableFinalAnswerAcceptanceRejection(rejectedFinalAnswerAcceptanceForTest(turnViolationSourceGroundingUnmet), nil, 2, nil) {
 		t.Fatal("source_grounding_unmet must remain retryable when prior rejections (2) are within the read-only retry budget (3)")
 	}
 
-	if readOnlyRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: "source_grounding_unmet"}, nil, 3, nil) {
+	if readOnlyRunner.retryableFinalAnswerAcceptanceRejection(rejectedFinalAnswerAcceptanceForTest(turnViolationSourceGroundingUnmet), nil, 3, nil) {
 		t.Fatal("source_grounding_unmet must become terminal once the retry budget (3) is exhausted")
 	}
 
@@ -29909,17 +30119,11 @@ func TestFinalAnswerAcceptanceRetryPolicyRequiresToolsAndNoMutation(t *testing.T
 			AllowedTools:      []string{"read_file", "context_query"},
 		},
 	}
-	if !architectureRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{
-		BlockerKind: "non_answer_prose",
-		Reason:      "insufficient_evidence_answer",
-	}, nil, 0, nil) {
+	if !architectureRunner.retryableFinalAnswerAcceptanceRejection(rejectedFinalAnswerAcceptanceForTest(turnViolationNonAnswerProse, turnReasonInsufficientEvidenceAnswer), nil, 0, nil) {
 		t.Fatal("read-only architecture insufficient-evidence non-answer should get a recovery turn")
 	}
 
-	if architectureRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{
-		BlockerKind: "non_answer_prose",
-		Reason:      "generic_non_answer",
-	}, nil, 0, nil) {
+	if architectureRunner.retryableFinalAnswerAcceptanceRejection(rejectedFinalAnswerAcceptanceForTest(turnViolationNonAnswerProse, turnReasonNonAnswerProse), nil, 0, nil) {
 		t.Fatal("generic architecture non-answer prose should remain terminal")
 	}
 
@@ -29932,7 +30136,7 @@ func TestFinalAnswerAcceptanceRetryPolicyRequiresToolsAndNoMutation(t *testing.T
 			AllowedTools:      []string{"read_file"},
 		},
 	}
-	if malformedRequiredPathRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: "source_grounding_unmet"}, nil, 0, nil) {
+	if malformedRequiredPathRunner.retryableFinalAnswerAcceptanceRejection(rejectedFinalAnswerAcceptanceForTest(turnViolationSourceGroundingUnmet), nil, 0, nil) {
 		t.Fatal("required_edit_paths must keep malformed direct-answer/read-only briefs out of final-answer retry policy")
 	}
 
@@ -29945,11 +30149,13 @@ func TestFinalAnswerAcceptanceRetryPolicyRequiresToolsAndNoMutation(t *testing.T
 			AllowedTools:      []string{"read_file", "apply_patch"},
 		},
 	}
-	if mutationRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: "required_edit_paths_remaining"}, nil, 0, nil) {
+	if mutationRunner.retryableFinalAnswerAcceptanceRejection(rejectedFinalAnswerAcceptanceForTest(turnViolationRequiredEditPathsRemaining), nil, 0, nil) {
 		t.Fatal("mutation required_edit_paths_remaining must not enter read-only final-answer retry policy")
 	}
 
-	if mutationRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: "answer_objective_unmet"}, nil, 0, nil) {
+	if mutationRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{
+		ContractAssessment: turnContractAssessment{}.withDiagnostic(turnDiagnostic{Kind: turnDiagnosticObjectiveRelevance}),
+	}, nil, 0, nil) {
 		t.Fatal("objective relevance advisory must not enter mutation retry policy")
 	}
 }
@@ -30136,7 +30342,7 @@ func TestSourceGroundingProseRetriesLeftSetToTwo(t *testing.T) {
 			Role:    "assistant",
 			Content: "The renderer uses src/graphics/renderer.rs.",
 		},
-		acceptance:               finalAnswerAcceptance{BlockerKind: "source_grounding_unmet"},
+		acceptance:               rejectFinalAnswerAcceptanceWithMessage(newFinalAnswerAcceptance(), turnViolationSourceGroundingUnmet, turnReasonSourceGroundingUnmet, sourceGroundingErr),
 		result:                   workspace.ToolResult{Tool: "completion_gate", Summary: "Rejected", Error: sourceGroundingErr},
 		collectedResults:         nil,
 		currentAllowedTools:      []string{"read_file", "code_navigate", "search_content"},
@@ -30167,6 +30373,21 @@ func TestSourceGroundingProseRetriesLeftSetToTwo(t *testing.T) {
 	}
 }
 
+func TestConversationSourceGroundingMissingPathsHandlesCandidateOnlyError(t *testing.T) {
+	results := []workspace.ToolResult{{
+		Tool:    "completion_gate",
+		Summary: "Rejected",
+		Error:   "read-only workspace answers require bounded source-body or diagnostic evidence tied to the user's objective before a final answer. Candidate/search/context paths are not source-body evidence. Candidate path(s): `internal/runtime/agent/implementation_flow.go`, `internal/runtime/promptstack/stack.go`. Inspect one candidate with source-body evidence.",
+	}}
+
+	paths := conversationSourceGroundingMissingPaths(results)
+	if !slices.Contains(paths, "internal/runtime/agent/implementation_flow.go") ||
+		!slices.Contains(paths, "internal/runtime/promptstack/stack.go") {
+
+		t.Fatalf("expected candidate-only source-grounding paths, got %#v", paths)
+	}
+}
+
 // TestReadOnlyRecoveryPromptMentionsToolRestriction verifies the recovery
 // prompt explicitly states the tool restriction.
 func TestReadOnlyRecoveryPromptMentionsToolRestriction(t *testing.T) {
@@ -30189,11 +30410,113 @@ func TestReadOnlyRecoveryPromptMentionsToolRestriction(t *testing.T) {
 	if hideReads {
 		t.Fatal("read-only source-grounding recovery should not hide reads")
 	}
-	if !strings.Contains(prompt, "restricted to `read_file` and `code_navigate`") {
-		t.Fatalf("expected recovery prompt to mention tool restriction, got:\n%s", prompt)
+	if !strings.Contains(prompt, "Valid next strategies") {
+		t.Fatalf("expected recovery prompt to offer valid strategy choices, got:\n%s", prompt)
 	}
 	if !strings.Contains(prompt, "<<QUESTION>>") {
 		t.Fatalf("expected recovery prompt to mention <<QUESTION>>: escape hatch, got:\n%s", prompt)
+	}
+}
+
+func TestReadOnlySourceGroundingRecoveryPromptIncludesLedgerGuidance(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+			AllowedTools:      []string{"read_file", "code_navigate", "search_content"},
+			Objective:         "Does the implement command have hardcoded responses?",
+			Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: false},
+		},
+	}
+	runner.lastCompletionGateError = "the answer cites path(s) that were discovered as index candidates but not read as source-body evidence: `internal/surfaces/cli/implement/implement.go`, `internal/runtime/llama/client.go`."
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/surfaces/cli/implement/implement.go lines 1-120",
+			Output:  "package implement\n\nfunc Run() {}\n",
+		},
+		{
+			Tool:    "search_files",
+			Summary: "Found internal/runtime/llama/client.go",
+			Output:  "internal/runtime/llama/client.go\n",
+		},
+	}
+
+	prompt, hideReads, ok := runner.completionGateRecoveryPrompt(results)
+	if !ok {
+		t.Fatal("expected source-grounding recovery prompt")
+	}
+	if hideReads {
+		t.Fatal("read-only source-grounding recovery should not hide reads")
+	}
+
+	for _, want := range []string{
+		"Evidence ledger:",
+		"source bodies inspected",
+		"candidate-only leads",
+		"Source-body and diagnostic entries can support a final answer",
+		"candidate/search/context entries are leads",
+		"internal/runtime/llama/client.go",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("expected source-grounding prompt to contain %q, got:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestMalformedToolRecoveryPromptRejectsXMLTransportAndShowsLedger(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+			Objective:         "Does the implement command have hardcoded responses?",
+		},
+	}
+	runner.lastCompletionGateError = "the answer cites path(s) that were discovered as index candidates but not read as source-body evidence: `internal/surfaces/cli/implement/implement.go`."
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/runtime/agent/implementation_flow.go lines 1-80",
+		Output:  "package agent\n\nfunc implementationFlow() {}\n",
+	}}
+	raw := "<n_tool_calls><n_invoke name=\"read_file\"><n_parameter name=\"path\">internal/surfaces/cli/implement/implement.go</n_parameter></n_invoke></n_tool_calls>"
+
+	prompt := runner.malformedToolRecoveryPrompt(raw, errors.New("malformed DeepSeek XML tool request"), results)
+
+	for _, want := range []string{
+		"rejected by the tool parser",
+		"XML/HTML/DSML-style tool-call markup",
+		"Do not emit tags",
+		"normal tool-call mechanism",
+		"Evidence ledger:",
+		"body-backed source evidence",
+		"unsupported citation path",
+		"internal/surfaces/cli/implement/implement.go",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("expected malformed-tool recovery prompt to contain %q, got:\n%s", want, prompt)
+		}
+	}
+
+	if strings.Contains(prompt, "Post-readiness probes used") || strings.Contains(prompt, "follow-up budget") {
+		t.Fatalf("malformed-tool recovery should not apply probe-count pressure, got:\n%s", prompt)
+	}
+}
+
+func TestToolParseErrorFeedbackNamesXMLTransportFailure(t *testing.T) {
+	raw := "<invoke name=\"read_file\"><parameter name=\"path\">README.md</parameter></invoke>"
+	got := toolParseErrorFeedback(raw, errors.New("malformed DeepSeek XML tool request"))
+
+	for _, want := range []string{
+		"XML/HTML/DSML-style tool-call markup",
+		"Do not emit tags",
+		"active tool-call mechanism",
+		"answer in plain prose",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected tool parse feedback to contain %q, got:\n%s", want, got)
+		}
 	}
 }
 
@@ -30221,6 +30544,10 @@ func TestSourceGroundingRejectionDoesNotCompoundObjectiveAdvisory(t *testing.T) 
 	}
 	if !strings.Contains(acceptance.Reason, "not read as source-body evidence") {
 		t.Fatalf("expected compound rejection to include source-grounding reason, got:\n%s", acceptance.Reason)
+	}
+	if !acceptance.ContractAssessment.HasViolation(turnViolationSourceGroundingUnmet) ||
+		!acceptance.ContractAssessment.HasDiagnostic(turnDiagnosticObjectiveRelevance) {
+		t.Fatalf("expected source-grounding violation and objective diagnostic, got %#v", acceptance.ContractAssessment)
 	}
 }
 
@@ -32313,7 +32640,6 @@ func TestReadOnlyAnswerReadyPresentationUsesImplementationOwnerPaths(t *testing.
 		EvidencePaths:     closurePromptEvidencePaths(readOnlyPresentationEvidencePathsForBrief(brief, results, 4), 4),
 		Objective:         strings.TrimSpace(brief.Objective),
 		Results:           results,
-		ProbeBudget:       2,
 		ContinuationScope: "answer_readiness_reached",
 		FooterLines: []string{
 			"Anchor the explanation in the inspected paths above and keep any remaining uncertainty explicit.",
@@ -35151,8 +35477,8 @@ func TestTargetWriteReadyStagedNudgeSurfacesBasePrompt(t *testing.T) {
 		t.Fatalf("late nudge should surface basePrompt paths, got: %s", msg)
 	}
 
-	if !strings.Contains(msg, "8 discovery calls without a write") {
-		t.Fatalf("late nudge should mention discovery count, got: %s", msg)
+	if !strings.Contains(msg, "8 additional non-write calls without a write") {
+		t.Fatalf("late nudge should mention additional non-write count, got: %s", msg)
 	}
 
 	t.Logf("early nudge example: %s", targetWriteReadyStagedNudge(basePrompt, req, 3)[:200])
@@ -37744,6 +38070,9 @@ func TestFinishSanitizesSourceGroundingRepairInstructions(t *testing.T) {
 	if !strings.Contains(returnedAnswer, "not supported by inspected evidence") {
 		t.Fatalf("finish should present a plain unsupported-evidence reason, got:\n%s", returnedAnswer)
 	}
+	if !strings.Contains(returnedAnswer, "internal/surfaces/tui/app/lifecycle.go") {
+		t.Fatalf("finish should preserve the exact unsupported path, got:\n%s", returnedAnswer)
+	}
 }
 
 func TestClassifyTerminalAnswerRetryExhaustedFalseForNonRetryableBlocker(t *testing.T) {
@@ -37782,18 +38111,25 @@ func TestClassifyTerminalAnswerRecoversReadOnlyNonAnswerWhenEvidenceAnswerable(t
 			Objective:         "What is the role of evidence in this harness? Where does it come from and what is it used for?",
 		},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read docs/idiom-strategic-thesis.md lines 1-320",
-		Output: strings.Join([]string{
-			"1:# Idiom Strategic Thesis",
-			"5:Idiom sells the missing substrate: repo memory, freshness, contracts, audit, and evals.",
-			"20:Idiom is the local, evidence-first coding-agent harness for teams that need agents to do real work in real repositories.",
-			"21:The model owns strategy; the harness owns contracts, repository memory, verification, auditability, and the learning loop.",
-			"146:The harness decides whether that action is allowed, whether evidence is fresh enough, and whether readiness is satisfied.",
-			"287:Task-scoped repository evidence feeds the runtime brief, including tools, editable paths, evidence paths, verification, and budget.",
-		}, "\n"),
-	}}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "completion_gate",
+			Summary: "Final answer rejected by blocker check",
+			Error:   "completion_gate_repeated_rejection",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read docs/idiom-strategic-thesis.md lines 1-320",
+			Output: strings.Join([]string{
+				"1:# Idiom Strategic Thesis",
+				"5:Idiom sells the missing substrate: repo memory, freshness, contracts, audit, and evals.",
+				"20:Idiom is the local, evidence-first coding-agent harness for teams that need agents to do real work in real repositories.",
+				"21:The model owns strategy; the harness owns contracts, repository memory, verification, auditability, and the learning loop.",
+				"146:The harness decides whether that action is allowed, whether evidence is fresh enough, and whether readiness is satisfied.",
+				"287:Task-scoped repository evidence feeds the runtime brief, including tools, editable paths, evidence paths, verification, and budget.",
+			}, "\n"),
+		},
+	}
 	rawAnswer := "The user is asking me to inspect `docs/idiom-strategic-thesis.md`, but I should gather more evidence before answering."
 
 	decision := runner.classifyTerminalAnswer(rawAnswer, "model_final", results)
@@ -37828,20 +38164,27 @@ func TestRecoveredReadOnlyTerminalCloseoutAnswersRepeatedCompletionGateRejection
 			Objective:         "What is the role of evidence in this harness? Where does it come from and what is it used for?",
 		},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read docs/idiom-strategic-thesis.md lines 1-320",
-		Output: strings.Join([]string{
-			"1:# Idiom Strategic Thesis",
-			"5:Idiom sells the missing substrate: repo memory, freshness, contracts, audit, and evals.",
-			"20:Idiom is the local, evidence-first coding-agent harness for teams that need agents to do real work in real repositories.",
-			"21:The model owns strategy; the harness owns contracts, repository memory, verification, auditability, and the learning loop.",
-			"146:The harness decides whether that action is allowed, whether evidence is fresh enough, and whether readiness is satisfied.",
-			"287:Task-scoped repository evidence feeds the runtime brief, including tools, editable paths, evidence paths, verification, and budget.",
-		}, "\n"),
-	}}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "completion_gate",
+			Summary: "Final answer rejected by blocker check",
+			Error:   "completion_gate_repeated_rejection",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read docs/idiom-strategic-thesis.md lines 1-320",
+			Output: strings.Join([]string{
+				"1:# Idiom Strategic Thesis",
+				"5:Idiom sells the missing substrate: repo memory, freshness, contracts, audit, and evals.",
+				"20:Idiom is the local, evidence-first coding-agent harness for teams that need agents to do real work in real repositories.",
+				"21:The model owns strategy; the harness owns contracts, repository memory, verification, auditability, and the learning loop.",
+				"146:The harness decides whether that action is allowed, whether evidence is fresh enough, and whether readiness is satisfied.",
+				"287:Task-scoped repository evidence feeds the runtime brief, including tools, editable paths, evidence paths, verification, and budget.",
+			}, "\n"),
+		},
+	}
 
-	answer, acceptance, ok := runner.readOnlyTerminalRecoveryCandidate("completion_gate_repeated_rejection", results)
+	answer, acceptance, ok := runner.readOnlyTerminalRecoveryCandidate(completionGateRepeatedRejectionAcceptance(), results)
 	if !ok {
 		t.Fatalf("answerable read-only repeated gate rejection should recover; acceptance=%#v", acceptance)
 	}
@@ -37882,7 +38225,7 @@ func TestRecoveredReadOnlyTerminalCloseoutSupportsDirectAnswerTaskFamily(t *test
 		}, "\n"),
 	}}
 
-	answer, acceptance, ok := runner.readOnlyTerminalRecoveryCandidate("completion_gate_repeated_rejection", results)
+	answer, acceptance, ok := runner.readOnlyTerminalRecoveryCandidate(completionGateRepeatedRejectionAcceptance(), results)
 	if !ok {
 		t.Fatalf("direct_answer task family should recover from answerable read-only terminal blocker; acceptance=%#v", acceptance)
 	}
@@ -37903,6 +38246,44 @@ func TestRecoveredReadOnlyTerminalCloseoutDoesNotOverrideObjectiveAdvisory(t *te
 			Objective:         "What is the role of evidence in this harness? Where does it come from and what is it used for?",
 		},
 	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "completion_gate",
+			Summary: "Final answer rejected by blocker check",
+			Error:   "completion_gate_repeated_rejection",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read docs/idiom-strategic-thesis.md lines 1-320",
+			Output: strings.Join([]string{
+				"1:# Idiom Strategic Thesis",
+				"5:Idiom sells the missing substrate: repo memory, freshness, contracts, audit, and evals.",
+				"20:Idiom is the local, evidence-first coding-agent harness for teams that need agents to do real work in real repositories.",
+				"21:The model owns strategy; the harness owns contracts, repository memory, verification, auditability, and the learning loop.",
+				"146:The harness decides whether that action is allowed, whether evidence is fresh enough, and whether readiness is satisfied.",
+				"287:Task-scoped repository evidence feeds the runtime brief, including tools, editable paths, evidence paths, verification, and budget.",
+			}, "\n"),
+		},
+	}
+
+	advisory := finalAnswerAcceptanceWithDirectAnswerRelevance(newFinalAnswerAcceptance(), readOnlyDirectAnswerRelevance{
+		BlockerKind: answerObjectiveUnmetInsufficientEvidenceClaimed,
+		Reason:      "objective relevance diagnostic",
+	})
+	if answer, acceptance, ok := runner.readOnlyTerminalRecoveryCandidate(advisory, results); ok {
+		t.Fatalf("objective relevance advisory must not trigger host-authored recovery: answer=%q acceptance=%#v", answer, acceptance)
+	}
+}
+
+func TestDirectAnswerInsufficientEvidenceClaimWhenEvidenceIsAnswerableIsAdvisory(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "What is the role of evidence in this harness? Where does it come from and what is it used for?",
+		},
+	}
 	results := []workspace.ToolResult{{
 		Tool:    "read_file",
 		Summary: "Read docs/idiom-strategic-thesis.md lines 1-320",
@@ -37915,9 +38296,27 @@ func TestRecoveredReadOnlyTerminalCloseoutDoesNotOverrideObjectiveAdvisory(t *te
 			"287:Task-scoped repository evidence feeds the runtime brief, including tools, editable paths, evidence paths, verification, and budget.",
 		}, "\n"),
 	}}
+	answer := "I could not produce a supported final answer from this run: the run stopped before it retained enough evidence, so I do not have enough supported evidence to answer that fully."
 
-	if answer, acceptance, ok := runner.readOnlyTerminalRecoveryCandidate("answer_objective_unmet:insufficient_evidence_claimed", results); ok {
-		t.Fatalf("objective relevance advisory must not trigger host-authored recovery: answer=%q acceptance=%#v", answer, acceptance)
+	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
+	if acceptance.Decision != finalAnswerAcceptanceAccepted ||
+		acceptance.PolicyDecision != autonomy.PolicyAllow ||
+		acceptance.BlockerKind != "" {
+
+		t.Fatalf("answerable insufficient-evidence closeout must remain advisory, got %#v", acceptance)
+	}
+	if len(acceptance.ContractAssessment.Violations) != 0 ||
+		!acceptance.ContractAssessment.HasDiagnostic(turnDiagnosticObjectiveRelevance) {
+
+		t.Fatalf("expected objective diagnostic without enforceable violations, got %#v", acceptance.ContractAssessment)
+	}
+
+	decision := runner.classifyTerminalAnswer(answer, "model_final", results)
+	if decision.Outcome != terminalAnswerAccepted ||
+		decision.StopReason != "model_final" ||
+		decision.PresentedAnswer != answer {
+
+		t.Fatalf("terminal answer must accept advisory insufficient-evidence closeout without recovery, got %#v", decision)
 	}
 }
 
@@ -37948,7 +38347,11 @@ func TestRetryAnswerHedgeDoesNotBecomeObjectiveRecovery(t *testing.T) {
 		t.Fatalf("test setup should detect retry hedge")
 	}
 
-	if answer, acceptance, ok := runner.readOnlyTerminalRecoveryCandidate("answer_objective_unmet:insufficient_evidence_claimed", results); ok {
+	advisory := finalAnswerAcceptanceWithDirectAnswerRelevance(newFinalAnswerAcceptance(), readOnlyDirectAnswerRelevance{
+		BlockerKind: answerObjectiveUnmetInsufficientEvidenceClaimed,
+		Reason:      "objective relevance diagnostic",
+	})
+	if answer, acceptance, ok := runner.readOnlyTerminalRecoveryCandidate(advisory, results); ok {
 		t.Fatalf("retry hedge should not route through objective advisory recovery: answer=%q acceptance=%#v", answer, acceptance)
 	}
 }
@@ -37969,7 +38372,7 @@ func TestRecoveredReadOnlyTerminalCloseoutDoesNotAnswerMutationGateRejection(t *
 		Output:  "1:package foo\n",
 	}}
 
-	if answer, _, ok := runner.readOnlyTerminalRecoveryCandidate("completion_gate_repeated_rejection", results); ok {
+	if answer, _, ok := runner.readOnlyTerminalRecoveryCandidate(completionGateRepeatedRejectionAcceptance(), results); ok {
 		t.Fatalf("mutation repeated gate rejection must not use read-only terminal recovery, got:\n%s", answer)
 	}
 }
@@ -38653,6 +39056,7 @@ func TestRetryableModelTransportErrorIsNarrow(t *testing.T) {
 		errors.New("decode chat response: EOF while reading JSON body"),
 		errors.New("model returned invalid tool arguments at end of file"),
 		errors.New("chat request failed: 400 insufficient tool messages"),
+		errors.New("chat request failed: 400 The reasoning_content in the thinking mode must be passed back to the API"),
 	}
 	for _, err := range nonRetryable {
 		if retryableModelTransportError(err) {

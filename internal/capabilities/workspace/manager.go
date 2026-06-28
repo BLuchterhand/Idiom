@@ -683,6 +683,10 @@ func (m *Manager) executeWithTimeoutFn(ctx context.Context, req ToolRequest, tim
 	case res := <-done:
 		return res
 	case <-timeoutCtx.Done():
+		if strings.TrimSpace(req.Tool) == ToolNameContextPack {
+			return contextPackFallbackResult(req, timeout, timeoutCtx.Err())
+		}
+
 		if errors.Is(timeoutCtx.Err(), context.DeadlineExceeded) {
 			return ToolResult{
 				Tool:    req.Tool,

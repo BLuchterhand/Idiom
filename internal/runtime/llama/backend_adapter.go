@@ -39,6 +39,7 @@ type backendAdapter interface {
 type chatCompletionsBackendAdapter interface {
 	backendAdapter
 	ChatCompletionsPath() string
+	ChatMessagesForRequest([]ChatMessage, ChatOptions) []ChatMessage
 	ChatCompletionsPayload([]ChatMessage, ChatOptions, bool, backendRequestSettings) backendChatPayload
 }
 
@@ -128,6 +129,68 @@ func lookupBackendAdapter(backend string) (backendAdapter, bool) {
 	return adapter, ok
 }
 
+func chatMessagesForRequest(messages []ChatMessage, opts ChatOptions, adapter backendAdapter) []ChatMessage {
+	if projector, ok := adapter.(interface {
+		ChatMessagesForRequest([]ChatMessage, ChatOptions) []ChatMessage
+	}); ok {
+		return projector.ChatMessagesForRequest(messages, opts)
+	}
+
+	return chatMessagesForBackend(messages, opts, adapter)
+}
+
+// PrepareChatMessagesForBackend applies backend-owned request-history shaping
+// without requiring callers outside this package to know adapter internals.
+func PrepareChatMessagesForBackend(messages []ChatMessage, opts ChatOptions, backend string) []ChatMessage {
+	return chatMessagesForRequest(messages, opts, backendAdapterFor(backend))
+}
+
+func chatMessagesForBackend(messages []ChatMessage, opts ChatOptions, adapter backendAdapter) []ChatMessage {
+	if len(messages) == 0 {
+		return nil
+	}
+
+	if opts.PreserveThinking {
+		return messages
+	}
+
+	out := make([]ChatMessage, len(messages))
+	copy(out, messages)
+
+	preserveAssistantReasoning := preservesAssistantReasoningContent(adapter)
+	for i := range out {
+		if preserveAssistantReasoning && strings.TrimSpace(out[i].Role) == "assistant" {
+			continue
+		}
+
+		out[i].ReasoningContent = ""
+	}
+
+	return out
+}
+
+// PrepareAssistantHistoryMessageForBackend applies backend reasoning-history
+// ownership to a single assistant history item before it is appended to a turn.
+func PrepareAssistantHistoryMessageForBackend(message ChatMessage, opts ChatOptions, backend string) ChatMessage {
+	if opts.PreserveThinking {
+		return message
+	}
+
+	if preservesAssistantReasoningContent(backendAdapterFor(backend)) && strings.TrimSpace(message.Role) == "assistant" {
+		return message
+	}
+
+	message.ReasoningContent = ""
+
+	return message
+}
+
+func preservesAssistantReasoningContent(adapter backendAdapter) bool {
+	hosted, ok := adapter.(hostedChatAdapter)
+
+	return ok && hosted.preserveReasoning
+}
+
 type localChatAdapter struct {
 	kind        string
 	nativeTools bool
@@ -174,10 +237,14 @@ func (a localChatAdapter) chatTemplateKwargs(opts ChatOptions) *chatTemplateKwar
 	}
 }
 
+func (a localChatAdapter) ChatMessagesForRequest(messages []ChatMessage, opts ChatOptions) []ChatMessage {
+	return chatMessagesForBackend(repairMessageToolPairing(messages), opts, a)
+}
+
 func (a localChatAdapter) ChatCompletionsPayload(messages []ChatMessage, opts ChatOptions, stream bool, _ backendRequestSettings) backendChatPayload {
 	req := chatRequest{
 		Model:              opts.Model,
-		Messages:           repairMessageToolPairing(messages),
+		Messages:           a.ChatMessagesForRequest(messages, opts),
 		Stream:             stream,
 		Temperature:        opts.Temperature,
 		TopP:               opts.TopP,
@@ -254,7 +321,7 @@ func (a hostedChatAdapter) ChatCompletionsPayload(messages []ChatMessage, opts C
 	tools, reverse := normalizeHostedTools(opts.Tools)
 	payload := hostedChatPayload{
 		Model:    opts.Model,
-		Messages: a.messages(messages),
+		Messages: a.ChatMessagesForRequest(messages, opts),
 		Stream:   stream,
 	}
 	if opts.MaxTokens > 0 {
@@ -302,7 +369,7 @@ func (a hostedChatAdapter) ChatCompletionsPayload(messages []ChatMessage, opts C
 	return backendChatPayload{Body: payload, ToolNameReverse: reverse}
 }
 
-func (a hostedChatAdapter) messages(messages []ChatMessage) []ChatMessage {
+func (a hostedChatAdapter) ChatMessagesForRequest(messages []ChatMessage, _ ChatOptions) []ChatMessage {
 	if len(messages) == 0 {
 		return nil
 	}

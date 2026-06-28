@@ -23,17 +23,12 @@
           "smarter"
         ],
         "require_control_rails": {
-          "lane": "explore",
-          "contract": "grounded_explanation",
-          "task_family": "debug_logs",
+          "lane": "main",
+          "contract": "direct_answer",
+          "task_family": "conversation",
           "permission_profile": "read_only_workspace",
           "require_evidence": [
-            "log_record",
-            "failure_output",
-            "timestamp_or_latest_selection"
-          ],
-          "require_tools": [
-            "log_inspection"
+            "answer_addresses_user_request"
           ],
           "require_forbidden_tools": [
             "edit_file",
@@ -42,24 +37,19 @@
             "mkdir",
             "mutating_shell"
           ],
-          "require_readiness_gate": [
-            "latest_log_selected",
-            "failure_cause_supported_by_log",
-            "low_confidence_triggers_deepening"
-          ],
           "require_search_policy": [
-            "start_with_most_recent_log",
-            "extract_failure_window"
+            "answer_from_visible_context_when_sufficient",
+            "for repo-specific questions use one efficient context/search/read path"
           ],
           "verification_contract": "not_required_for_read_only_lane",
           "require_stop_conditions": [
-            "log_cause_identified_or_log_gap_declared"
+            "answered_user_request",
+            "blocked_by_missing_information"
           ],
           "require_final_critic": [
             "answers_actual_user_request",
-            "required_evidence_cited"
-          ],
-          "failure_to_eval": true
+            "well_formatted_informative_on_topic"
+          ]
         },
         "forbid_tools": [
           "edit_file",

@@ -347,6 +347,13 @@ func (c *Client) Backend() string {
 	return c.backend
 }
 
+// ChatMessagesForRequest returns the message history as this client's backend
+// will project it for a request. It is useful for tracing and for callers that
+// need to prepare retry history without duplicating backend wire rules.
+func (c *Client) ChatMessagesForRequest(messages []ChatMessage, opts ChatOptions) []ChatMessage {
+	return chatMessagesForRequest(messages, opts, c.adapter())
+}
+
 func (c *Client) SupportsNativeTools() bool {
 	if c == nil {
 		return true

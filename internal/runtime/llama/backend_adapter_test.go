@@ -291,6 +291,58 @@ func TestHostedAdaptersOwnReasoningHistoryAndToolNameNormalization(t *testing.T)
 	}
 }
 
+func TestPrepareChatMessagesForBackendPreservesDeepSeekAssistantReasoningWhenThinkingDisabled(t *testing.T) {
+	thinkingOff := false
+	messages := []ChatMessage{
+		{Role: "system", Content: "system", ReasoningContent: "strip system"},
+		{Role: "user", Content: "user", ReasoningContent: "strip user"},
+		{Role: "assistant", Content: "prior", ReasoningContent: "must pass back"},
+		{Role: "tool", Content: "tool", ReasoningContent: "strip tool"},
+	}
+	opts := ChatOptions{EnableThinking: &thinkingOff, PreserveThinking: false}
+
+	got := NewClient("http://example.invalid", 0).
+		WithBackend(config.BackendDeepSeek).
+		ChatMessagesForRequest(messages, opts)
+	if len(got) != 3 {
+		t.Fatalf("DeepSeek request history should repair orphaned tool messages, got %#v", got)
+	}
+	if got[0].ReasoningContent != "" || got[1].ReasoningContent != "" {
+		t.Fatalf("DeepSeek request history should strip non-assistant reasoning, got %#v", got)
+	}
+	if got[2].ReasoningContent != "must pass back" {
+		t.Fatalf("DeepSeek request history should preserve assistant reasoning_content, got %#v", got)
+	}
+
+	defaultBackend := NewClient("http://example.invalid", 0).
+		WithBackend(config.BackendLlama).
+		ChatMessagesForRequest(messages, opts)
+	for _, message := range defaultBackend {
+		if message.ReasoningContent != "" {
+			t.Fatalf("non-DeepSeek backend should strip reasoning_content when PreserveThinking=false, got %#v", defaultBackend)
+		}
+	}
+}
+
+func TestPrepareAssistantHistoryMessageForBackendPreservesDeepSeekAssistantReasoningWhenThinkingDisabled(t *testing.T) {
+	opts := ChatOptions{PreserveThinking: false}
+	message := ChatMessage{
+		Role:             "assistant",
+		Content:          "",
+		ReasoningContent: "must pass back",
+	}
+
+	got := PrepareAssistantHistoryMessageForBackend(message, opts, config.BackendDeepSeek)
+	if got.ReasoningContent != "must pass back" {
+		t.Fatalf("DeepSeek assistant history should preserve reasoning_content, got %#v", got)
+	}
+
+	got = PrepareAssistantHistoryMessageForBackend(message, opts, config.BackendLlama)
+	if got.ReasoningContent != "" {
+		t.Fatalf("non-DeepSeek history should strip reasoning_content when PreserveThinking=false, got %#v", got)
+	}
+}
+
 func TestLocalAdaptersOwnThinkingKwargsAndToolSuppression(t *testing.T) {
 	enableThinking := false
 	tools := []Tool{{

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/capabilities/workspace"
 	lanecontract "idiom/internal/contracts/lane"
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
@@ -123,7 +124,7 @@ func BuildPromptContextPackSectionWithRunner(cfg config.Config, opts PromptConte
 			fmt.Fprintf(stderr, "plan-execute: context_pack skipped: %s\n", result.Error)
 		}
 
-		return RenderPromptContextDiscoveryFallbackSection(opts, result.Error)
+		return RenderPromptContextDiscoveryFallbackSectionForResult(opts, result)
 	}
 
 	section, err := RenderPromptContextPackSectionWithOptions(result, opts)
@@ -289,6 +290,75 @@ func RenderPromptContextDiscoveryFallbackSection(opts PromptContextPackOptions, 
 	b.WriteString("- If all bounded discovery misses, answer with `<<QUESTION>>:` and name the exact missing target evidence; do not invent an edit path.\n")
 
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func RenderPromptContextDiscoveryFallbackSectionForResult(opts PromptContextPackOptions, result PromptContextToolResult) string {
+	section := RenderPromptContextDiscoveryFallbackSection(opts, result.Error)
+	payload := promptContextPackFallbackPayloadFromResult(result)
+	if len(payload) == 0 {
+		return section
+	}
+
+	var b strings.Builder
+	b.WriteString(section)
+	b.WriteString("\n\n### Context Pack Fallback Evidence\n\n")
+
+	if reason, _ := payload["reason"].(string); strings.TrimSpace(reason) != "" {
+		fmt.Fprintf(&b, "- Fallback reason: %s\n", collapsePromptContextWhitespace(reason, 80))
+	}
+
+	if retry, ok := payload["retry_same_request"].(bool); ok {
+		fmt.Fprintf(&b, "- Retry same request: %t\n", retry)
+	}
+
+	if uncertainty, _ := payload["uncertainty"].(string); strings.TrimSpace(uncertainty) != "" {
+		fmt.Fprintf(&b, "- Uncertainty: %s\n", collapsePromptContextWhitespace(uncertainty, 220))
+	}
+
+	if capabilities := promptContextPackFallbackStringList(payload["fallback_capabilities"]); len(capabilities) > 0 {
+		fmt.Fprintf(&b, "- Available read-only fallback capabilities: %s\n", strings.Join(capabilities, ", "))
+	}
+
+	if required := promptContextPackFallbackStringList(payload["required_edit_paths"]); len(required) > 0 {
+		fmt.Fprintf(&b, "- Required edit paths carried by failed request: %s\n", strings.Join(required, ", "))
+	}
+
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func promptContextPackFallbackPayloadFromResult(result PromptContextToolResult) map[string]any {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(result.Output)), &payload); err != nil {
+		return nil
+	}
+
+	if schema, _ := payload["schema"].(string); schema != workspace.ContextPackFallbackSchema {
+		return nil
+	}
+
+	if status, _ := payload["status"].(string); status != "unavailable" {
+		return nil
+	}
+
+	return payload
+}
+
+func promptContextPackFallbackStringList(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return append([]string(nil), typed...)
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text, ok := item.(string); ok && strings.TrimSpace(text) != "" {
+				out = append(out, strings.TrimSpace(text))
+			}
+		}
+
+		return out
+	default:
+		return nil
+	}
 }
 
 func promptContextPackMode(mode string) string {

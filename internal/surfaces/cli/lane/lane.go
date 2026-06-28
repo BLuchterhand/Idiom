@@ -39,6 +39,7 @@ import (
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
 	"idiom/internal/surfaces/cliassets"
 	"idiom/internal/workflows/atomintake"
+	"idiom/internal/workflows/planexecute"
 )
 
 // briefBodyStartMarker / briefBodyEndMarker bracket the project
@@ -1107,18 +1108,19 @@ func buildLaneContextPackSection(opts laneOptions, cfg config.Config, stderr io.
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
+	requiredEditPaths := plancontract.RequiredEditPathsFromPrompt(string(briefBody))
 	result := mgr.Execute(ctx, workspace.ToolRequest{
 		Tool:              workspace.ToolNameContextPack,
 		Task:              laneContextPackTask(opts, string(briefBody)),
 		Mode:              laneContextPackMode(opts.Mode),
 		Limit:             8,
 		BudgetTokens:      1200,
-		RequiredEditPaths: plancontract.RequiredEditPathsFromPrompt(string(briefBody)),
+		RequiredEditPaths: requiredEditPaths,
 	})
 	if strings.TrimSpace(result.Error) != "" {
 		fmt.Fprintf(stderr, "lane: context_pack skipped: %s\n", result.Error)
 
-		return renderLaneContextDiscoveryFallbackSection(opts, result.Error)
+		return renderLaneContextDiscoveryFallbackSectionForResult(opts, result, requiredEditPaths)
 	}
 
 	section, err := renderLaneContextPackSection(result)
@@ -1267,26 +1269,24 @@ func renderLaneContextPackSection(result workspace.ToolResult) (string, error) {
 }
 
 func renderLaneContextDiscoveryFallbackSection(opts laneOptions, reason string) string {
-	var b strings.Builder
+	return planexecute.RenderPromptContextDiscoveryFallbackSection(lanePromptContextPackOptions(opts, nil), reason)
+}
 
-	b.WriteString("## Context Discovery Fallback\n\n")
-	b.WriteString("Source: idiom context preload fallback. The ranked context packet was unavailable or did not identify a useful target. Run this bounded discovery phase before the first edit-bearing action; do not repeat the same failed `context_pack` call.\n\n")
+func renderLaneContextDiscoveryFallbackSectionForResult(opts laneOptions, result workspace.ToolResult, requiredEditPaths []string) string {
+	return planexecute.RenderPromptContextDiscoveryFallbackSectionForResult(lanePromptContextPackOptions(opts, requiredEditPaths), planexecute.PromptContextToolResult{
+		Tool:    result.Tool,
+		Summary: result.Summary,
+		Output:  result.Output,
+		Error:   result.Error,
+	})
+}
 
-	if reason = strings.TrimSpace(reason); reason != "" {
-		fmt.Fprintf(&b, "- Context packet status: unavailable (%s)\n", collapseLaneContextWhitespace(reason, 220))
+func lanePromptContextPackOptions(opts laneOptions, requiredEditPaths []string) planexecute.PromptContextPackOptions {
+	return planexecute.PromptContextPackOptions{
+		Mode:              string(opts.Mode),
+		Title:             opts.Title,
+		RequiredEditPaths: requiredEditPaths,
 	}
-
-	if title := strings.TrimSpace(opts.Title); title != "" {
-		fmt.Fprintf(&b, "- Objective: %s\n", collapseLaneContextWhitespace(title, 160))
-	}
-
-	b.WriteString("\n### Required Fallback Discovery Phase\n\n")
-	b.WriteString("- Start with `search_files` for likely filenames, component names, package names, or UI/domain terms from the objective.\n")
-	b.WriteString("- Then use `search_content` for stable labels, symbols, config keys, command names, or error text. If a literal phrase misses, broaden to nearby concepts instead of repeating it.\n")
-	b.WriteString("- Read only the highest-confidence candidate file or symbol range with `read_file` or a language-aware symbol tool before the first `submit_plan` or write action.\n")
-	b.WriteString("- If all bounded discovery misses, answer with `<<QUESTION>>:` and name the exact missing target evidence; do not invent an edit path.\n")
-
-	return strings.TrimRight(b.String(), "\n")
 }
 
 func laneContextPackHasTargets(view laneContextPackView) bool {

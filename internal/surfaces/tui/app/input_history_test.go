@@ -274,6 +274,8 @@ func TestLeakedTerminalMouseReportsDoNotReachTextarea(t *testing.T) {
 		"[64;120;35M",
 		"[65;120;35M",
 		"[<64;",
+		"[<64;1",
+		"[<64;120;3",
 		"[64;120;",
 		"[M`!!",
 		string([]rune{'[', 'M', '`', 128, '!'}),
@@ -324,7 +326,7 @@ func TestLeakedTerminalMouseReportsDoNotResetInputHistoryNavigation(t *testing.T
 		height:            35,
 	}
 
-	for _, leaked := range []string{"[<64;120;35M", "[64;120;35M", "[<64;", "[M`!!"} {
+	for _, leaked := range []string{"[<64;120;35M", "[64;120;35M", "[<64;", "[<64;1", "[<64;120;3", "[M`!!"} {
 		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(leaked)})
 		m = updated.(*Model)
 
@@ -335,21 +337,43 @@ func TestLeakedTerminalMouseReportsDoNotResetInputHistoryNavigation(t *testing.T
 }
 
 func TestMouseReportFilterDoesNotDropBracketedText(t *testing.T) {
+	for _, text := range []string{"[Mary", "[<", "[<3", "[<64"} {
+		in := textarea.New()
+		in.Focus()
+		m := &Model{
+			events: make(chan tea.Msg, 4),
+			input:  in,
+			width:  120,
+			height: 35,
+		}
+
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text)})
+		m = updated.(*Model)
+
+		if got := m.input.Value(); got != text {
+			t.Fatalf("ordinary bracketed text %q should remain editable, got %q", text, got)
+		}
+	}
+}
+
+func TestMouseShapedBracketedTextResetsInputHistoryNavigation(t *testing.T) {
 	in := textarea.New()
 	in.Focus()
 	m := &Model{
-		events: make(chan tea.Msg, 4),
-		input:  in,
-		width:  120,
-		height: 35,
+		events:            make(chan tea.Msg, 4),
+		input:             in,
+		inputHistoryIndex: 1,
+		inputHistoryDraft: "draft",
+		width:             120,
+		height:            35,
 	}
 
-	text := "[Mary"
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text)})
-	m = updated.(*Model)
+	if _, handled := m.handleKeyPress(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[<3")}); handled {
+		t.Fatal("ordinary bracketed text should pass through to textarea handling")
+	}
 
-	if got := m.input.Value(); got != text {
-		t.Fatalf("ordinary bracketed text should remain editable, got %q", got)
+	if m.inputHistoryIndex != -1 || m.inputHistoryDraft != "" {
+		t.Fatalf("ordinary bracketed text should reset history navigation, index=%d draft=%q", m.inputHistoryIndex, m.inputHistoryDraft)
 	}
 }
 

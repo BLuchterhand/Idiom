@@ -39,7 +39,6 @@ func routeClassifierFamilyEnumSentence() string {
 func routeClassifierFamilyEnumList() string {
 	return strings.Join([]string{
 		"conversation",
-		"debug_logs",
 		"verification_only",
 		"locate",
 		"locate_then_implement",

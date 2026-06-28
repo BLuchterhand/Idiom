@@ -344,8 +344,8 @@ func TestNonDeepSeekBackendsStripReasoningContent(t *testing.T) {
 	// strip reasoning_content from all messages through the hosted backend
 	// adapter.
 	//
-	// Local backend adapters preserve reasoning_content as-received; that is
-	// existing, expected behavior.
+	// Local backend adapters strip reasoning_content unless PreserveThinking is
+	// enabled.
 	enableThinking := true
 	backends := []struct {
 		name    string
@@ -465,9 +465,9 @@ func TestDeepSeekPreservesReasoningOnToolCallAssistant(t *testing.T) {
 	}
 }
 
-func TestLocalBackendsPreserveReasoningContentUnchanged(t *testing.T) {
-	// Local backend adapters build chatRequest payloads without stripping
-	// reasoning_content. This is existing behavior and must remain unchanged.
+func TestLocalBackendsPreserveReasoningContentWhenRequested(t *testing.T) {
+	// Local backend adapters preserve reasoning_content when the caller asks
+	// to keep thinking history.
 	for _, bc := range []struct {
 		name    string
 		backend string
@@ -494,8 +494,9 @@ func TestLocalBackendsPreserveReasoningContentUnchanged(t *testing.T) {
 				{Role: "user", Content: "hi", ReasoningContent: "preserved"},
 				{Role: "assistant", Content: "prior", ReasoningContent: "also preserved"},
 			}, ChatOptions{
-				Model:     bc.backend + "-model",
-				MaxTokens: 32,
+				Model:            bc.backend + "-model",
+				PreserveThinking: true,
+				MaxTokens:        32,
 			})
 			if err != nil {
 				t.Fatalf("CompleteChatMessage: %v", err)
@@ -506,7 +507,8 @@ func TestLocalBackendsPreserveReasoningContentUnchanged(t *testing.T) {
 				t.Fatalf("expected 2+ messages in request, got %#v", gotRequest["messages"])
 			}
 
-			// Local backends must preserve reasoning_content as-is
+			// Local backends must preserve reasoning_content as-is when
+			// PreserveThinking is enabled.
 			for _, raw := range messages {
 				msg, ok := raw.(map[string]any)
 				if !ok {
@@ -524,6 +526,57 @@ func TestLocalBackendsPreserveReasoningContentUnchanged(t *testing.T) {
 				if rc == "" {
 					t.Fatalf("local backend %s should preserve reasoning_content on role=%s, got empty",
 						bc.name, role)
+				}
+			}
+		})
+	}
+}
+
+func TestLocalBackendsStripReasoningContentWhenNotPreserving(t *testing.T) {
+	for _, bc := range []struct {
+		name    string
+		backend string
+	}{
+		{"llama", config.BackendLlama},
+		{"mlx", config.BackendMLX},
+	} {
+		t.Run(bc.name, func(t *testing.T) {
+			var gotRequest map[string]any
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := json.NewDecoder(r.Body).Decode(&gotRequest); err != nil {
+					t.Fatalf("decode request: %v", err)
+				}
+
+				_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+			}))
+			defer server.Close()
+
+			client := NewClient(server.URL, time.Second).WithBackend(bc.backend)
+
+			_, err := client.CompleteChatMessage(context.Background(), []ChatMessage{
+				{Role: "user", Content: "hi", ReasoningContent: "strip user"},
+				{Role: "assistant", Content: "prior", ReasoningContent: "strip assistant"},
+			}, ChatOptions{
+				Model:     bc.backend + "-model",
+				MaxTokens: 32,
+			})
+			if err != nil {
+				t.Fatalf("CompleteChatMessage: %v", err)
+			}
+
+			messages, ok := gotRequest["messages"].([]any)
+			if !ok || len(messages) < 2 {
+				t.Fatalf("expected 2+ messages in request, got %#v", gotRequest["messages"])
+			}
+
+			for _, raw := range messages {
+				msg, ok := raw.(map[string]any)
+				if !ok {
+					continue
+				}
+				if rc, hasRC := msg["reasoning_content"]; hasRC && rc != "" {
+					t.Fatalf("local backend %s should strip reasoning_content when PreserveThinking=false, got %q on role=%s", bc.name, rc, msg["role"])
 				}
 			}
 		})

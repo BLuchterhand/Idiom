@@ -26,7 +26,6 @@ func TestLoadRepresentativeSWESuiteCoversFrontierFamilies(t *testing.T) {
 
 	requiredFamilies := []string{
 		"direct_question",
-		"debug_logs",
 		"verification_only",
 		"locate",
 		"locate_then_implement",

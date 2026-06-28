@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -90,6 +91,47 @@ func TestExecuteWithTimeoutFnSynthesizesTimeoutOnStall(t *testing.T) {
 
 	if elapsed > 200*time.Millisecond {
 		t.Fatalf("wrapper should fire the deadline, not wait for the slow dispatch (elapsed=%v)", elapsed)
+	}
+}
+
+func TestExecuteWithTimeoutFnContextPackTimeoutCarriesFallbackPayload(t *testing.T) {
+	mgr := NewManager(testWorkspaceConfig(t))
+	req := ToolRequest{
+		Tool:              ToolNameContextPack,
+		Task:              "locate runtime prompt owner",
+		Path:              "internal/runtime",
+		Mode:              "semantic",
+		Limit:             12,
+		BudgetTokens:      2048,
+		RequiredEditPaths: []string{"internal/runtime/agent/implementation_flow.go"},
+	}
+
+	res := mgr.executeWithTimeoutFn(context.Background(), req, 30*time.Millisecond, func(_ context.Context) ToolResult {
+		time.Sleep(500 * time.Millisecond)
+
+		return ToolResult{Tool: ToolNameContextPack, Summary: "should never be returned"}
+	})
+
+	if res.Tool != ToolNameContextPack || !failures.IsCode(res.Failure, failures.DeadlineExceeded) {
+		t.Fatalf("context_pack timeout should keep tool/failure metadata, got %#v", res)
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(res.Output), &payload); err != nil {
+		t.Fatalf("context_pack timeout should include JSON fallback output: %v\n%s", err, res.Output)
+	}
+
+	if payload["schema"] != ContextPackFallbackSchema || payload["status"] != "unavailable" || payload["reason"] != "timeout" {
+		t.Fatalf("unexpected fallback payload identity: %#v", payload)
+	}
+
+	if payload["retry_same_request"] != false {
+		t.Fatalf("fallback should mark same-request retry unavailable, got %#v", payload["retry_same_request"])
+	}
+
+	capabilities, ok := payload["fallback_capabilities"].([]any)
+	if !ok || len(capabilities) == 0 {
+		t.Fatalf("fallback should expose read-only capability alternatives, got %#v", payload["fallback_capabilities"])
 	}
 }
 

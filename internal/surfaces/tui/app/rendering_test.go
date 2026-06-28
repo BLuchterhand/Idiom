@@ -371,6 +371,59 @@ func TestRenderedMessageBodyCacheInvalidatesWhenMessagesChange(t *testing.T) {
 	}
 }
 
+func TestEnsureMarkdownRendererAlwaysUpdatesWidthAndInvalidatesCache(t *testing.T) {
+	m := &Model{
+		ready:    true,
+		viewport: viewport.New(80, 12),
+		messages: []llama.ChatMessage{{Role: "assistant", Content: "test"}},
+	}
+
+	// First call at width 80.
+	m.ensureMarkdownRenderer(80)
+	if m.mdRendererWrapWidth != 80 {
+		t.Fatalf("expected wrap width 80, got %d", m.mdRendererWrapWidth)
+	}
+
+	// Prime the render cache.
+	_ = m.renderedMessageBody()
+
+	// Call at a different width — should update wrap width and invalidate cache.
+	m.ensureMarkdownRenderer(40)
+	if m.mdRendererWrapWidth != 40 {
+		t.Fatalf("expected wrap width 40 after resize, got %d", m.mdRendererWrapWidth)
+	}
+	if m.messageRenderCache != "" {
+		t.Fatal("expected render cache to be invalidated after width change")
+	}
+
+	// Call again at the same width — must still recreate the renderer and
+	// invalidate the cache.  The old code had a guard that skipped this,
+	// leaving a stale glamour word-wrap cache that produced short lines.
+	m.ensureMarkdownRenderer(40)
+	if m.mdRendererWrapWidth != 40 {
+		t.Fatalf("expected wrap width 40 after second call at same width, got %d", m.mdRendererWrapWidth)
+	}
+	if m.messageRenderCache != "" {
+		t.Fatal("expected render cache to be invalidated even when same width is set again")
+	}
+
+	// Render a long line at a known width to verify no abnormally short lines.
+	m.ensureMarkdownRenderer(40)
+	m.messages = []llama.ChatMessage{{Role: "assistant", Content: "This is a deliberately long sentence that should wrap at roughly forty characters per line inside the glamour term renderer with the current word wrap setting."}}
+	body := m.renderedMessageBody()
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimRight(line, " \t")
+		if len([]rune(trimmed)) > 45 {
+			continue // reasonably long line, no issue
+		}
+		// Short lines are fine if they're blank or just contain a trailing part.
+		if len([]rune(trimmed)) < 10 && trimmed != "" && !strings.HasPrefix(trimmed, " ") {
+			t.Fatalf("line %d is suspiciously short (%d chars): %q — possible stale glamour word-wrap cache", i, len([]rune(trimmed)), trimmed)
+		}
+	}
+}
+
 func containsSystemContent(messages []llama.ChatMessage, needle string) bool {
 	for _, msg := range messages {
 		if msg.Role == "system" && strings.Contains(msg.Content, needle) {

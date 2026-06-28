@@ -262,6 +262,10 @@ func (m *Manager) contextPack(ctx context.Context, req ToolRequest) ToolResult {
 
 	freshness, err := m.contextReadFreshness(ctx, req, ToolNameContextPack)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return contextPackFallbackResult(req, 0, err)
+		}
+
 		return ToolResult{Tool: ToolNameContextPack, Summary: "Context pack freshness check failed", Error: err.Error()}
 	}
 
@@ -283,6 +287,10 @@ func (m *Manager) contextPack(ctx context.Context, req ToolRequest) ToolResult {
 		Freshness:         &freshness,
 	})
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return contextPackFallbackResult(req, 0, err)
+		}
+
 		return ToolResult{Tool: ToolNameContextPack, Summary: "Context pack generation failed", Error: err.Error()}
 	}
 

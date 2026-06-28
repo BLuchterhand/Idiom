@@ -1015,10 +1015,6 @@ func (m *Model) ensureMarkdownRenderer(wrapWidth int) {
 		wrapWidth = 20
 	}
 
-	if m.mdRenderer != nil && m.mdRendererWrapWidth == wrapWidth {
-		return
-	}
-
 	m.mdRenderer, _ = glamour.NewTermRenderer(
 		glamour.WithStyles(mochaStyleConfig),
 		glamour.WithWordWrap(wrapWidth),

@@ -627,6 +627,38 @@ func TestRenderPromptContextDiscoveryFallbackSectionIncludesBriefScope(t *testin
 	}
 }
 
+func TestRenderPromptContextDiscoveryFallbackSectionIncludesTypedPayload(t *testing.T) {
+	result := PromptContextToolResult{
+		Tool:  "context_pack",
+		Error: "context_pack did not return before the active context deadline",
+		Output: `{
+  "schema": "idiom.context_pack.fallback.v1",
+  "status": "unavailable",
+  "reason": "timeout",
+  "tool": "context_pack",
+  "retry_same_request": false,
+  "uncertainty": "The context packet was not produced.",
+  "fallback_capabilities": ["context_status", "search_files", "read_file"],
+  "required_edit_paths": ["internal/runtime/agent/runner_core.go"]
+}`,
+	}
+	section := RenderPromptContextDiscoveryFallbackSectionForResult(PromptContextPackOptions{
+		Title: "Investigate routing failure",
+	}, result)
+
+	for _, want := range []string{
+		"Context Pack Fallback Evidence",
+		"Fallback reason: timeout",
+		"Retry same request: false",
+		"context_status, search_files, read_file",
+		"internal/runtime/agent/runner_core.go",
+	} {
+		if !strings.Contains(section, want) {
+			t.Fatalf("typed fallback section missing %q:\n%s", want, section)
+		}
+	}
+}
+
 func TestBuildPromptContextPackSectionSeedsRequiredEditPaths(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/planexecutecontext\n\ngo 1.22\n"), 0o644); err != nil {

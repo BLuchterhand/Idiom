@@ -2384,10 +2384,8 @@ func (d ReadOnlyCloseout) ConcreteFallbackAnswer() (string, bool) {
 	return "", false
 }
 
-func (d ReadOnlyCloseout) RecoverableTerminalCandidate(agentName string, blockerKind string) (string, bool) {
-	switch strings.TrimSpace(blockerKind) {
-	case "non_answer_prose", "protocol_meta_final_answer", "completion_gate_repeated_rejection":
-	default:
+func (d ReadOnlyCloseout) RecoverableTerminalCandidate(agentName string, assessment turnContractAssessment) (string, bool) {
+	if !turnContractAssessmentCapabilities(assessment).Recoverable {
 		return "", false
 	}
 
@@ -2457,9 +2455,9 @@ func (d ReadOnlyCloseout) FinalAnswerDecision(answer string) readOnlyFinalAnswer
 		AnswerObjectiveTerms:    answerObjectiveTerms(substantiveAnswer, objective),
 	}
 	if readOnlyAnswerReportsInsufficientEvidence(substantiveAnswer) {
-		decision.Status = "insufficient_evidence_answer"
+		decision.Status = string(turnReasonInsufficientEvidenceAnswer)
 		if ledger.Answerable() {
-			decision.BlockerKind = "answer_objective_unmet:insufficient_evidence_claimed"
+			decision.BlockerKind = answerObjectiveUnmetInsufficientEvidenceClaimed
 			decision.Reason = "the final answer says the evidence is insufficient even though the gathered source evidence appears answerable for the user's objective. This objective-relevance diagnostic is advisory."
 
 			return decision
@@ -3332,6 +3330,74 @@ func (d ReadOnlyCloseout) HasObjectiveRelevantEvidence() bool {
 func readOnlyClosureKnownEvidencePaths(evidence readOnlyAnswerabilityLedger) []string {
 	paths := textutil.Merge(evidence.CandidatePaths, evidence.SourceBodyPaths, evidence.NamedSourcePaths)
 	return readOnlySourceLikePaths(paths, 8)
+}
+
+func readOnlyEvidenceLedgerGuidanceForBrief(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
+		return ""
+	}
+
+	ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
+	var parts []string
+
+	if paths := closurePromptEvidencePaths(ledger.RelevantSourceBodyPaths, 3); len(paths) > 0 {
+		parts = append(parts, "body-backed source evidence: "+formatInlinePathList(paths, 3))
+	} else if paths := closurePromptEvidencePaths(ledger.SourceBodyPaths, 3); len(paths) > 0 {
+		parts = append(parts, "source bodies inspected: "+formatInlinePathList(paths, 3))
+	}
+
+	if ledger.DiagnosticRelevant {
+		if paths := closurePromptEvidencePaths(ledger.DiagnosticPaths, 2); len(paths) > 0 {
+			parts = append(parts, "diagnostic evidence: "+formatInlinePathList(paths, 2))
+		} else {
+			parts = append(parts, "diagnostic evidence is present")
+		}
+	}
+
+	if paths := readOnlyCandidateOnlyPaths(ledger, 3); len(paths) > 0 {
+		parts = append(parts, "candidate-only leads: "+formatInlinePathList(paths, 3))
+	}
+
+	if paths := closurePromptEvidencePaths(ledger.MissingNamedSourcePaths, 3); len(paths) > 0 {
+		parts = append(parts, "missing named source-body evidence: "+formatInlinePathList(paths, 3))
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	return "Evidence ledger: " + strings.Join(parts, "; ") + ". Source-body and diagnostic entries can support a final answer; candidate/search/context entries are leads until read as body evidence or explicitly qualified as unverified."
+}
+
+func readOnlyCandidateOnlyPaths(ledger readOnlyAnswerabilityLedger, max int) []string {
+	if max <= 0 {
+		max = 3
+	}
+
+	bodySet := readOnlyPathSet(ledger.SourceBodyPaths)
+	diagnosticSet := readOnlyPathSet(ledger.DiagnosticPaths)
+	var out []string
+
+	for _, candidate := range readOnlySourceLikePaths(ledger.CandidatePaths, 64) {
+		normalized := agentutil.NormalizeRunnerPath(candidate)
+		if normalized == "" {
+			continue
+		}
+		if _, ok := bodySet[normalized]; ok {
+			continue
+		}
+		if _, ok := diagnosticSet[normalized]; ok {
+			continue
+		}
+
+		out = textutil.AppendUnique(out, normalized)
+		if len(out) >= max {
+			return out
+		}
+	}
+
+	return out
 }
 
 func readOnlyCloseoutEvidencePaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
@@ -5909,7 +5975,7 @@ func (r *Runner) initialBootstrapInstruction() string {
 			fmt.Sprintf("Configured verification command: %s", cmd),
 			"After it runs, answer with the observed pass/fail result.",
 		}, "\n")
-	case family == "debug_logs":
+	case debugLogContractApplies(r.RuntimeBrief, nil):
 		return strings.Join([]string{
 			"[debug-log bootstrap]",
 			"Start from the newest relevant log artifact; source-code orientation is lower value until log evidence is exhausted.",
@@ -6427,6 +6493,8 @@ func (r *Runner) sourceGroundingRejectionReason(answer string, results []workspa
 		return "the answer is only a retained-context or evidence-scaffold summary. Final answers must state the concrete behavior supported by relevant source-body or diagnostic evidence, not only list evidence surfaces."
 	}
 
+	validationLedgerEvidence := r.validationStatusAnswerCanUseLedgerEvidence(answer, results)
+
 	paths := sourceGroundingMentionedPaths(answer)
 	if len(paths) == 0 {
 		return ""
@@ -6448,9 +6516,15 @@ func (r *Runner) sourceGroundingRejectionReason(answer string, results []workspa
 			citationPath = resolved
 		}
 
+		if validationLedgerEvidence && validationStatusPathBackedByLedger(path, citationPath, results) {
+			continue
+		}
+
 		if sourceEvidenceHasBody(r.evidenceEngine().EvidenceForPath(results, citationPath)) ||
 			sourceEvidenceBodyReadForPathWithRegistry(citationPath, results, r.PathEvidenceRegistry) ||
-			slices.Contains(delegatedReadOnlySourceBodyEvidencePaths(results), citationPath) {
+			slices.Contains(delegatedReadOnlySourceBodyEvidencePaths(results), citationPath) ||
+			readOnlyDiagnosticArtifactReadForPath(path, results) ||
+			readOnlyDiagnosticArtifactReadForPath(citationPath, results) {
 			continue
 		}
 
@@ -6490,14 +6564,91 @@ func (r *Runner) sourceGroundingRejectionReason(answer string, results []workspa
 	}
 
 	if len(missing) > 0 {
-		return "the answer cites path(s) that were discovered as index candidates but not read as source-body evidence: " + quotedRunnerStrings(uniqueSortedRunnerPaths(missing)) + ". Read the first unread path with one bounded `read_file` or `code_navigate` call and cite the actual evidence from the file body. If the path was from search or graph results and does not need a full read, qualify the claim as `unverified` next to the citation."
+		return sourceGroundingMissingCandidateMessage(missing)
 	}
 
 	if len(unsupported) > 0 {
-		return "the answer cites source path/line/symbol detail not backed by a source-body read: " + quotedRunnerStrings(uniqueSortedRunnerPaths(unsupported)) + ". Use one exact read/code_navigate body probe for the claim, or qualify it as unverified."
+		return sourceGroundingUnsupportedDetailMessage(unsupported)
 	}
 
 	return ""
+}
+
+func readOnlyAnswerCitesReadDiagnosticArtifact(answer string, results []workspace.ToolResult) bool {
+	cited := readOnlyDiagnosticArtifactPathsFromText(answer)
+	if len(cited) == 0 {
+		return false
+	}
+
+	for _, path := range cited {
+		if readOnlyDiagnosticArtifactReadForPath(path, results) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func readOnlyDiagnosticArtifactPathsFromText(text string) []string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+
+	paths := pathparse.MentionedWorkspacePaths(text)
+
+	logRE := regexp.MustCompile(`(?i)(?:^|[\s` + "`" + `'"(])((?:/[^` + "`" + `'"()\s]+)?(?:\.idiom/logs|logs)/(?:conversations|telemetry)/[^` + "`" + `'"()\s,;]+\.jsonl)`)
+	for _, match := range logRE.FindAllStringSubmatch(filepath.ToSlash(text), -1) {
+		if len(match) > 1 {
+			paths = append(paths, match[1])
+		}
+	}
+
+	var out []string
+	for _, path := range paths {
+		path = normalizeDiagnosticArtifactPath(path)
+		if path != "" && agentutil.IsDiagnosticLogArtifactPath(path) {
+			out = append(out, path)
+		}
+	}
+
+	return uniqueSortedRunnerPaths(out)
+}
+
+func readOnlyDiagnosticArtifactReadForPath(path string, results []workspace.ToolResult) bool {
+	needle := normalizeDiagnosticArtifactPath(path)
+	if needle == "" || !agentutil.IsDiagnosticLogArtifactPath(needle) {
+		return false
+	}
+
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" ||
+			strings.TrimSpace(result.Tool) != workspace.ToolNameReadFile ||
+			!readFileResultOnlyMentionsDiagnosticLogArtifacts(result) {
+
+			continue
+		}
+
+		for _, readPath := range agentutil.ReadPathsFromToolResult(result) {
+			if normalizeDiagnosticArtifactPath(readPath) == needle {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func normalizeDiagnosticArtifactPath(path string) string {
+	path = strings.TrimSpace(strings.Trim(path, "`'\" "))
+	if path == "" {
+		return ""
+	}
+
+	path = filepath.ToSlash(path)
+	path = strings.TrimPrefix(path, "./")
+
+	return path
 }
 
 func sourceCitationCanonicalPath(r *Runner, path string, results []workspace.ToolResult) (string, bool) {

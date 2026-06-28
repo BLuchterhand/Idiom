@@ -3017,9 +3017,7 @@ func escalateCompletionGateMessage(base string, priorRejections int) string {
 	// model cited paths without source-body evidence, the fix is to rewrite
 	// the answer text — not to call more tools (the model already has the
 	// needed evidence in its context).
-	hasUnsupportedPaths := strings.Contains(trimmed, "not backed by a source-body read")
-	hasNonExistentPaths := strings.Contains(trimmed, "not read as source-body evidence")
-	isSourceGrounding := hasUnsupportedPaths || hasNonExistentPaths
+	_, isSourceGrounding := classifySourceGroundingRejectionText(trimmed)
 
 	switch {
 	case priorRejections <= 0:
@@ -3056,9 +3054,8 @@ func escalateCompletionGateMessage(base string, priorRejections int) string {
 // source-grounding rejection (the model cited paths without reading them).
 // Used to trigger non-read tool hiding on retry.
 func isSourceGroundingError(errText string) bool {
-	trimmed := strings.TrimSpace(errText)
-	return strings.Contains(trimmed, "not backed by a source-body read") ||
-		strings.Contains(trimmed, "not read as source-body evidence")
+	_, ok := classifySourceGroundingRejectionText(errText)
+	return ok
 }
 
 func planThenExecuteMissingSubmitPlanError(requiredEditPaths []string) string {
@@ -3090,10 +3087,6 @@ func (r *Runner) completionGateRetryLimit(results []workspace.ToolResult) int {
 		if hasPendingVerificationAfterWrites(results, r.RuntimeBrief) ||
 			sourceEditsNeedSemanticVerification(r.RuntimeBrief, results) {
 
-			if completionGateRejectionBeforeLatestWrite(results) {
-				return 2
-			}
-
 			return 1
 		}
 
@@ -3122,10 +3115,11 @@ func (r *Runner) retryableFinalAnswerAcceptanceRejection(acceptance finalAnswerA
 	}
 
 	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
-	// Leaked implementation blocker templates should trigger a repair
-	// retry even in mutation lanes — the model emitted a protocol
-	// artifact instead of a user-facing answer.
-	if acceptance.Reason == "leaked_implementation_blocker_template" {
+	retryPolicy := turnFinalAnswerRejectionRetryPolicyForBrief(brief, acceptance)
+	if !retryPolicy.Retryable {
+		return false
+	}
+	if !retryPolicy.RequiresReadOnlyEvidence {
 		return true
 	}
 
@@ -3136,60 +3130,9 @@ func (r *Runner) retryableFinalAnswerAcceptanceRejection(acceptance finalAnswerA
 		return false
 	}
 
-	if !retryableReadOnlyFinalAnswerRejectionForBrief(brief, acceptance) {
-		return false
-	}
-
 	tools := textutil.Unique(append(append([]string(nil), brief.AllowedTools...), allowedTools...))
 
 	return len(genericReadOnlyEvidenceTools(tools)) > 0
-}
-
-func retryableReadOnlyFinalAnswerRejectionForBrief(brief workerruntime.WorkerRuntimeBrief, acceptance finalAnswerAcceptance) bool {
-	if workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) {
-		return retryableReadOnlyFinalAnswerBlockerKind(acceptance.BlockerKind)
-	}
-
-	if !workerruntime.RuntimeContractIsArchitectureOrReview(brief.Contract) {
-		return false
-	}
-
-	return strings.TrimSpace(acceptance.BlockerKind) == "non_answer_prose" &&
-		agentutil.ContainsAny(acceptance.Reason, "insufficient_evidence_answer", "answerable_evidence_reported_as_insufficient")
-}
-
-func retryableReadOnlyFinalAnswerBlockerKind(kind string) bool {
-	trimmed := strings.TrimSpace(kind)
-	switch {
-	case trimmed == "source_grounding_unmet",
-		trimmed == "read_only_protocol_blocker",
-		trimmed == "protocol_meta_final_answer":
-		return true
-	default:
-		return false
-	}
-}
-
-func completionGateRejectionBeforeLatestWrite(results []workspace.ToolResult) bool {
-	latestWrite := -1
-
-	for i, result := range results {
-		if strings.TrimSpace(result.Error) == "" && workspace.IsWorkspaceWriteTool(result.Tool) {
-			latestWrite = i
-		}
-	}
-
-	if latestWrite <= 0 {
-		return false
-	}
-
-	for _, result := range results[:latestWrite] {
-		if strings.TrimSpace(result.Tool) == "completion_gate" {
-			return true
-		}
-	}
-
-	return false
 }
 
 func (r *Runner) textualRequiredPathCompletionRecoveryApplies(results []workspace.ToolResult) bool {
@@ -3229,41 +3172,45 @@ func (r *Runner) completionGateMutationRecoveryApplies(results []workspace.ToolR
 }
 
 func (r *Runner) completionGateRepeatedBlockerKind(results []workspace.ToolResult) string {
+	return string(r.completionGateRepeatedViolation(results).Kind)
+}
+
+func (r *Runner) completionGateRepeatedViolation(results []workspace.ToolResult) turnViolation {
 	if r == nil || !runnerBriefRequiresMutation(r.RuntimeBrief) {
-		return "completion_gate_repeated_rejection"
+		return turnCompletionGateRepeatedViolation(turnViolationCompletionGateRepeatedRejection)
 	}
 
 	if r.planThenExecutePlannerPhase() && len(r.RuntimeBrief.RequiredEditPaths) > 0 && successfulSubmitPlanResultCount(results) == 0 {
 		if planThenExecuteUnreadRequiredSourceNudge(r.RuntimeBrief, results) != "" {
-			return "completion_gate_required_source_reads_remaining_repeated"
+			return turnCompletionGateRepeatedViolation(turnViolationCompletionGateRequiredSourceReadsRemainingRepeated)
 		}
 
 		if _, _, ok := lastRejectedSubmitPlanCoverageResult(results); ok {
-			return "completion_gate_submit_plan_invalid_repeated"
+			return turnCompletionGateRepeatedViolation(turnViolationCompletionGateSubmitPlanInvalidRepeated)
 		}
 
-		return "completion_gate_submit_plan_missing_repeated"
+		return turnCompletionGateRepeatedViolation(turnViolationCompletionGateSubmitPlanMissingRepeated)
 	}
 
 	if len(r.remainingRequiredEditPaths(results)) > 0 {
-		return "completion_gate_required_paths_remaining_repeated"
+		return turnCompletionGateRepeatedViolation(turnViolationCompletionGateRequiredPathsRemainingRepeated)
 	}
 
 	if len(r.missingRequiredEditSnippets(results)) > 0 {
-		return "completion_gate_required_snippets_missing_repeated"
+		return turnCompletionGateRepeatedViolation(turnViolationCompletionGateRequiredSnippetsMissingRepeated)
 	}
 
 	if hasPendingVerificationAfterWrites(results, r.RuntimeBrief) ||
 		sourceEditsNeedSemanticVerification(r.RuntimeBrief, results) {
 
 		if plannerOwnsVerification(r.RuntimeBrief) {
-			return "completion_gate_lane_sanity_repeated"
+			return turnCompletionGateRepeatedViolation(turnViolationCompletionGateLaneSanityRepeated)
 		}
 
-		return "completion_gate_verification_repeated"
+		return turnCompletionGateRepeatedViolation(turnViolationCompletionGateVerificationRepeated)
 	}
 
-	return "completion_gate_repeated_rejection"
+	return turnCompletionGateRepeatedViolation(turnViolationCompletionGateRepeatedRejection)
 }
 
 func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (prompt string, hideReads bool, ok bool) {
@@ -3495,13 +3442,16 @@ func (r *Runner) readOnlyEvidenceCompletionRecoveryPrompt(results []workspace.To
 	// produce a source-grounding-unmet rejection on the answer text.
 	if r.lastCompletionGateError != "" {
 		if paths := readOnlySourceGroundingUnsupportedPathsFromError(r.lastCompletionGateError); len(paths) > 0 {
-			return fmt.Sprintf(
-				"The completion gate rejected the answer because source paths were cited without body evidence: %s. "+
-					"Tools are currently restricted to `read_file` and `code_navigate` — no search, discovery, or context tools are available until you read the missing path. "+
-					"Call one bounded `read_file` or `code_navigate` for the first unsupported path, read its actual body, then cite that evidence. "+
-					"If the path was from search or graph results and does not need a full read, qualify it as `unverified` next to the citation, or answer `<<QUESTION>>:` with the exact blocker if the path does not exist on disk. No new discovery or search is needed.",
-				strings.Join(paths, ", "),
-			)
+			lines := []string{
+				"The completion gate rejected the answer because source paths were cited without body evidence: " + formatInlinePathList(paths, 4) + ".",
+				"Valid next strategies: read one unsupported path with a bounded `read_file` or `code_navigate` body request; rewrite the answer so it cites only body-backed evidence; qualify candidate-only paths as `unverified`; or answer `<<QUESTION>>:` with the exact blocker if the evidence source is unavailable.",
+			}
+			if ledger := readOnlyEvidenceLedgerGuidanceForBrief(brief, results); ledger != "" {
+				lines = append(lines, ledger)
+			}
+			lines = append(lines, "Do not broaden into new search/discovery unless you can name the exact missing claim that the current evidence ledger cannot answer.")
+
+			return strings.Join(lines, "\n\n")
 		}
 	}
 
@@ -3548,8 +3498,11 @@ func (r *Runner) readOnlyEvidenceCompletionRecoveryPrompt(results []workspace.To
 }
 
 // readOnlySourceGroundingUnsupportedPathsFromError extracts the unsupported
-// path names from a source-grounding rejection error message. The error format
-// comes from sourceGroundingRejectionReason and reads:
+// path names from a source-grounding rejection error message. The error formats
+// come from sourceGroundingRejectionReason and read:
+//
+//	"the answer cites path(s) that were discovered as index candidates
+//	 but not read as source-body evidence: PATH1, PATH2. Read..."
 //
 //	"the answer cites source path/line/symbol detail not backed by a
 //	 source-body read: PATH1, PATH2. Use one exact read..."
@@ -3559,41 +3512,7 @@ func (r *Runner) readOnlyEvidenceCompletionRecoveryPrompt(results []workspace.To
 //	"the answer names additional implementation detail PATH1, PATH2
 //	 without an exact inspected probe..."
 func readOnlySourceGroundingUnsupportedPathsFromError(errText string) []string {
-	errText = strings.TrimSpace(errText)
-	if errText == "" {
-		return nil
-	}
-
-	// Find the colon that separates the message from the path list.
-	_, after, found := strings.Cut(errText, ":")
-	if !found {
-		return nil
-	}
-
-	after = strings.TrimSpace(after)
-	if after == "" {
-		return nil
-	}
-
-	var paths []string
-	for _, token := range strings.Split(after, ",") {
-		token = strings.TrimSpace(token)
-		if token == "" {
-			continue
-		}
-		// Stop at the first sentence boundary.
-		if idx := strings.Index(token, ". "); idx > 0 {
-			token = token[:idx]
-		} else if strings.HasSuffix(token, ".") {
-			token = strings.TrimSuffix(token, ".")
-		}
-		token = strings.TrimSpace(token)
-		if token != "" {
-			paths = append(paths, token)
-		}
-	}
-
-	return paths
+	return sourceGroundingRejectionPaths(errText)
 }
 
 func postWriteVerificationPendingRecoveryPrompt(results []workspace.ToolResult, plannerOwned bool) string {
