@@ -11,6 +11,7 @@ import (
 	auditcmd "idiom/internal/surfaces/cli/audit"
 	backendcmd "idiom/internal/surfaces/cli/backend"
 	briefcmd "idiom/internal/surfaces/cli/brief"
+	codingrulescmd "idiom/internal/surfaces/cli/codingrules"
 	doctorcmd "idiom/internal/surfaces/cli/doctor"
 	headlesscmd "idiom/internal/surfaces/cli/headless"
 	implementcmd "idiom/internal/surfaces/cli/implement"
@@ -113,6 +114,8 @@ func runMainWithTelemetryDir(args []string, stdout io.Writer, stderr io.Writer, 
 			return runRankerMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
 		case "brief":
 			return briefcmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
+		case "coding-rules":
+			return codingrulescmd.RunWithTelemetry(subcommandArgs, stdout, stderr, rec)
 		case "probe":
 			return probecmd.RunWithTelemetry(subcommandArgs, stdout, stderr, rec)
 		case "queue":

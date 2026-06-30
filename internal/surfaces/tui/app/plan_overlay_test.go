@@ -52,6 +52,15 @@ func TestParsePlanItemsSupportsStarBullet(t *testing.T) {
 	}
 }
 
+func TestParsePlanItemsSupportsPlanApprovalAction(t *testing.T) {
+	plan := "- [ ] Approve all edits <!-- plan-approval:all -->\n"
+	got := parsePlanItems(plan)
+
+	if len(got) != 1 || got[0].PlanApprovalAction != "all" {
+		t.Fatalf("plan approval action not recognized: %#v", got)
+	}
+}
+
 func TestParsePlanItemsIgnoresEmpty(t *testing.T) {
 	if got := parsePlanItems(""); len(got) != 0 {
 		t.Fatalf("empty plan should parse to no items, got %#v", got)

@@ -1488,18 +1488,18 @@ func applyImplementationTargetWriteReady(contract *TurnPhaseContract, brief work
 	contract.Phase = "target_write_ready"
 	contract.DerivationReason = "guarded_mutation_target_source_ready"
 	contract.AllowedTools = implementationTargetWriteReadyAllowedToolsForBrief(baseTools, brief, results)
-	contract.RequiredNext = []string{"git history lookup for the intended established logic if not already observed, parser-readable write to the sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
-	contract.InvalidNext = []string{"additional read/search after source-body and git history evidence", "verification before a successful write", "generic probe", "prose-only final answer"}
+	contract.RequiredNext = []string{"git history lookup for the intended established logic if not already observed, parser-readable write to the sourced target path, bounded read_file/search_content source refresh with named_gap for a precise edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
+	contract.InvalidNext = []string{"broad read/search after source-body and git history evidence", "read/search for already-sourced paths unless the request adds a bounded missing range, exact named_gap, or required history lookup", "verification before a successful write", "generic probe", "prose-only final answer"}
 	contract.TerminalOutcomes = []string{"<<QUESTION>>:"}
 	contract.ActionPolicy = TurnActionClassPolicy{
-		AllowedActionClasses:   []string{actionPerEditWrite, actionBlocker},
-		InvalidActionClasses:   []string{actionRead, actionSearch, actionVerify, actionGenericProbe, actionProseFinal, actionFinalAnswer},
+		AllowedActionClasses:   []string{actionRead, actionSearch, actionPerEditWrite, actionBlocker},
+		InvalidActionClasses:   []string{actionVerify, actionGenericProbe, actionProseFinal, actionFinalAnswer},
 		TerminalResponseShapes: []string{"<<QUESTION>>:"},
 		CallableToolNames:      contract.AllowedTools,
 	}
-	contract.RuntimeCall.ParserContract = firstPhaseString(contract.RuntimeCall.ParserContract, "target_write_or_blocker")
-	contract.RuntimeCall.ExpectedVisibleOutput = "parser_readable_write_or_blocker"
-	contract.RuntimeCall.ExpressibleActionClasses = []string{actionPerEditWrite, actionBlocker}
+	contract.RuntimeCall.ParserContract = firstPhaseString(contract.RuntimeCall.ParserContract, "target_write_or_bounded_source_refresh")
+	contract.RuntimeCall.ExpectedVisibleOutput = "parser_readable_bounded_source_refresh_write_or_blocker"
+	contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionSearch, actionPerEditWrite, actionBlocker}
 
 	if sourceRefresh {
 		contract.RequiredNext = []string{"git history lookup for the intended established logic if not already observed, parser-readable write to the sourced target path, bounded read_file/search_content source refresh with named_gap for a precise edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
@@ -1517,14 +1517,14 @@ func applyImplementationTargetWriteReady(contract *TurnPhaseContract, brief work
 		pendingSummary := sourceEvidencePendingRedirectSummary(pending, 3)
 		pendingActionSummary := sourceEvidencePendingRedirectActionSummary(pending, 3)
 
-		contract.RequiredNext = []string{"resolve the pending redirected source-body obligation (" + pendingActionSummary + "), then make one parser-readable write to a sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
-		contract.InvalidNext = []string{"broad read/search while a redirected source-body obligation is pending", "read/navigation for any path except the exact pending redirected source-body follow-up: " + pendingActionSummary, "verification before a successful write", "generic probe", "prose-only final answer"}
-		contract.ActionPolicy.AllowedActionClasses = []string{actionRead, actionPerEditWrite, actionBlocker}
-		contract.ActionPolicy.InvalidActionClasses = []string{actionSearch, actionVerify, actionGenericProbe, actionProseFinal, actionFinalAnswer}
+		contract.RequiredNext = []string{"resolve the pending redirected source-body obligation (" + pendingActionSummary + "), make one parser-readable write to a sourced target path, use bounded read/search only for an exact missing edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
+		contract.InvalidNext = []string{"broad read/search while a redirected source-body obligation is pending", "read/navigation/search for any path except the exact pending redirected source-body follow-up or named edit-safety gap: " + pendingActionSummary, "verification before a successful write", "generic probe", "prose-only final answer"}
+		contract.ActionPolicy.AllowedActionClasses = []string{actionRead, actionSearch, actionPerEditWrite, actionBlocker}
+		contract.ActionPolicy.InvalidActionClasses = []string{actionVerify, actionGenericProbe, actionProseFinal, actionFinalAnswer}
 		contract.ActionPolicy.CallableToolNames = contract.AllowedTools
-		contract.RuntimeCall.ParserContract = "target_write_or_source_refresh"
+		contract.RuntimeCall.ParserContract = "target_write_or_bounded_source_refresh"
 		contract.RuntimeCall.ExpectedVisibleOutput = "parser_readable_pending_source_refresh_write_or_blocker"
-		contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionPerEditWrite, actionBlocker}
+		contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionSearch, actionPerEditWrite, actionBlocker}
 		contract.Constraints = textutil.Unique(append([]string{"pending_redirected_source_body_obligation: " + pendingSummary}, contract.Constraints...))
 	}
 }
@@ -1941,7 +1941,7 @@ func implementationTargetSourcePending(brief workerruntime.WorkerRuntimeBrief, r
 }
 
 func implementationTargetWriteReadyAllowedTools(baseTools []string) []string {
-	allowed := []string{"edit_file", "write_file", "append_file", "apply_patch", "mkdir", "go_move_declarations", "delegate_edit"}
+	allowed := []string{"read_file", "search_content", "edit_file", "write_file", "append_file", "apply_patch", "mkdir", "go_move_declarations", "delegate_edit"}
 
 	allowed = append(allowed, workspace.RuntimeHistoryInspectionToolNames()...)
 

@@ -88,12 +88,12 @@ func RunReviewRepairPhaseWithDependencies(
 	}()
 
 	if err := emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, plancontract.PlanExecuteEventReviewRepairStart, map[string]any{
-		"session_id":                reviewSessionID,
-		"changed_paths":             changedPaths,
-		"allowed_paths":             allowedRepairPaths,
-		"edit_set_obligations":      editSetObligations,
-		"edit_set_obligation_count": len(editSetObligations),
-		"phase_evidence":            phaseEvidenceTelemetry(evidence.PhaseEvidence),
+		plancontract.PlanExecuteEventFieldSessionID:              reviewSessionID,
+		plancontract.PlanExecuteEventFieldChangedPaths:           changedPaths,
+		plancontract.PlanExecuteEventFieldAllowedPaths:           allowedRepairPaths,
+		plancontract.PlanExecuteEventFieldEditSetObligations:     editSetObligations,
+		plancontract.PlanExecuteEventFieldEditSetObligationCount: len(editSetObligations),
+		plancontract.PlanExecuteEventFieldPhaseEvidence:          phaseEvidenceTelemetry(evidence.PhaseEvidence),
 	}); err != nil {
 		return ReviewRepairPhaseReport{Status: plancontract.PlanExecuteReviewStatusFailed}, planExecuteJSONEventWriteError(err)
 	}
@@ -109,9 +109,9 @@ func RunReviewRepairPhaseWithDependencies(
 				return ReviewRepairPhaseReport{Status: plancontract.PlanExecuteReviewStatusFailed}, planExecuteJSONEventWriteError(err)
 			}
 			if err := emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, plancontract.PlanExecuteEventReviewRepairComplete, map[string]any{
-				"status":        "pass",
-				"repairs":       0,
-				"deterministic": true,
+				plancontract.PlanExecuteEventFieldStatus:        "pass",
+				plancontract.PlanExecuteEventFieldRepairs:       0,
+				plancontract.PlanExecuteEventFieldDeterministic: true,
 			}); err != nil {
 				return ReviewRepairPhaseReport{Status: plancontract.PlanExecuteReviewStatusFailed}, planExecuteJSONEventWriteError(err)
 			}
@@ -280,12 +280,44 @@ func RunReviewRepairPhaseWithDependencies(
 		return ReviewRepairPhaseReport{Status: plancontract.PlanExecuteReviewStatusFailed, ReviewPlan: planPath, ChecklistFound: true}, fmt.Errorf("review-repair phase rejected corrective plan: %s", reason)
 	}
 
+	approvedRepairPlan, approvalErr := approvePlanForExecution(opts.Context, planPath, repairPlan, PlanApprovalPhaseReviewRepair, opts, repairPaths)
+	if approvalErr != nil {
+		return ReviewRepairPhaseReport{
+			Status:               plancontract.PlanExecuteReviewStatusBlocked,
+			StatusDetail:         approvalErr.Error(),
+			FailureKind:          plancontract.PlanExecuteFailurePlanApprovalDenied,
+			ReviewPlan:           planPath,
+			RepairPaths:          repairPaths,
+			CombinedChangedPaths: combinedPaths,
+			ChecklistFound:       true,
+			FailureReason:        approvalErr.Error(),
+		}, nil
+	}
+	if err := persistApprovedPlanForExecution(planPath, approvedRepairPlan); err != nil {
+		reason := "plan edit approval unavailable: " + err.Error()
+		return ReviewRepairPhaseReport{
+			Status:               plancontract.PlanExecuteReviewStatusBlocked,
+			StatusDetail:         reason,
+			FailureKind:          plancontract.PlanExecuteFailurePlanApprovalDenied,
+			ReviewPlan:           planPath,
+			RepairPaths:          repairPaths,
+			CombinedChangedPaths: combinedPaths,
+			ChecklistFound:       true,
+			FailureReason:        reason,
+		}, nil
+	}
+	repairPlan = approvedRepairPlan
+	authorizedNewFiles := mergePlanExecutePaths(opts.AuthorizedNewFiles)
+	if opts.OnPlanApproval != nil {
+		authorizedNewFiles = approvedPlanAuthorizedNewFiles(cfg.Workspace.Root, authorizedNewFiles, repairPlan)
+	}
+
 	repairReport, err := RunExecutorPhaseWithDependencies(cfg, repairPlan, ExecutorPhaseOptions{
 		Context:              opts.Context,
 		AllowedEditPaths:     allowedRepairPaths,
 		WriteAllowedPaths:    []string(opts.WriteAllowedPaths),
 		WriteAllowedExplicit: opts.WriteAllowedPathsExplicit,
-		AuthorizedNewFiles:   append([]string(nil), opts.AuthorizedNewFiles...),
+		AuthorizedNewFiles:   authorizedNewFiles,
 		JSONEvents:           opts.JSONEvents,
 		Stdout:               stdout,
 	}, deps)

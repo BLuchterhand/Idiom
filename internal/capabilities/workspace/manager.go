@@ -89,6 +89,8 @@ type Manager struct {
 	observedPaths              map[string]struct{}
 	permissionRules            map[string][]ToolRule
 	protectedWritePaths        map[string]struct{}
+	systemSearchApprover       SystemSearchAccessApprover
+	approvedSystemSearchRoots  map[string]SystemSearchAccessScope
 	mcpRegistry                *mcp.Registry
 	externalToolsRegistry      *ExternalToolRegistry
 	languageTools              *languagetools.Manager
@@ -236,6 +238,15 @@ func (m *Manager) SessionID() string {
 func (m *Manager) SetSessionID(sessionID string) {
 	if m == nil {
 		return
+	}
+
+	sessionID = strings.TrimSpace(sessionID)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if strings.TrimSpace(m.cfg.SessionID) != sessionID {
+		m.approvedSystemSearchRoots = nil
 	}
 
 	m.cfg.SessionID = strings.TrimSpace(sessionID)
@@ -724,7 +735,7 @@ func ToolTimeoutForRequest(req ToolRequest) time.Duration {
 }
 
 func toolTimeoutFor(tool string) time.Duration {
-	spec, ok := builtInToolSurfaceMetadata(tool)
+	spec, ok := BuiltInToolSurfaceMetadata(tool)
 	if !ok {
 		return 30 * time.Second
 	}
@@ -767,12 +778,16 @@ func (m *Manager) executeDispatch(ctx context.Context, req ToolRequest) (result 
 		return m.readFile(req)
 	case ToolNameFileStats:
 		return m.fileStats(req)
+	case ToolNameSystemSearchAccess:
+		return m.requestSystemSearchAccess(ctx, req)
 	case ToolNameCodeNavigate:
 		return m.executeLanguageTool(ctx, req)
 	case ToolNameReadOnlyCapability:
 		return m.readOnlyCapability(ctx, req)
 	case ToolNameSourceSanity:
 		return m.sourceSanity(ctx, req)
+	case ToolNameCodingRulesCheck:
+		return m.codingRulesCheck(ctx, req)
 	case ToolNameHarnessAudit:
 		return m.harnessAudit(req)
 	case ToolNameHarnessFeedback:
@@ -3783,7 +3798,7 @@ func isStructuredNarrowingTool(tool string) bool {
 		return true
 	}
 
-	if metadata, ok := builtInToolSurfaceMetadata(tool); ok {
+	if metadata, ok := BuiltInToolSurfaceMetadata(tool); ok {
 		return metadata.Narrowing
 	}
 
@@ -3908,7 +3923,7 @@ func splitShellSegments(command string) []string {
 }
 
 func (m *Manager) listFiles(req ToolRequest) ToolResult {
-	base, err := m.resolvePath(defaultString(req.Path, "."), req.Workdir)
+	base, err := m.resolveReadPath(defaultString(req.Path, "."), req.Workdir)
 	if err != nil {
 		result := ToolResult{Tool: ToolNameListFiles, Summary: "Failed to resolve path", Error: err.Error()}
 		if strings.TrimSpace(req.Path) != "" {
@@ -3931,6 +3946,9 @@ func (m *Manager) listFiles(req ToolRequest) ToolResult {
 		}
 
 		return result
+	}
+	if req.Recursive && m.selectedSystemSearchDirectoryAccess(base, info) {
+		return selectedSystemSearchDirectoryDeniedResult(ToolNameListFiles, m.displayPath(base))
 	}
 
 	maxDepth := req.MaxDepth
@@ -4151,13 +4169,17 @@ func (m *Manager) exploreListPriority(entry listedEntry) int {
 }
 
 func (m *Manager) searchFiles(req ToolRequest) ToolResult {
-	base, err := m.resolvePath(defaultString(req.Path, "."), req.Workdir)
+	base, err := m.resolveReadPath(defaultString(req.Path, "."), req.Workdir)
 	if err != nil {
 		if resolved, ok := resolveUserGlobalConversationLogSearchPath(defaultString(req.Path, ".")); ok {
 			base = resolved
 		} else {
 			return ToolResult{Tool: ToolNameSearchFiles, Summary: "Failed to resolve path", Error: err.Error()}
 		}
+	}
+
+	if info, statErr := os.Stat(base); statErr == nil && m.selectedSystemSearchDirectoryAccess(base, info) {
+		return selectedSystemSearchDirectoryDeniedResult(ToolNameSearchFiles, m.displayPath(base))
 	}
 
 	pattern, interpretedPattern := searchFilesPattern(req)
@@ -4580,7 +4602,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 		if strings.TrimSpace(req.Path) != "" {
 			parent := filepath.Dir(strings.ReplaceAll(strings.TrimSpace(req.Path), "\\", "/"))
 			if parent != "." && parent != "/" && parent != "" {
-				if parentAbs, parentErr := m.resolvePath(parent, req.Workdir); parentErr == nil {
+				if parentAbs, parentErr := m.resolveReadPath(parent, req.Workdir); parentErr == nil {
 					if _, statErr := os.Stat(parentAbs); os.IsNotExist(statErr) {
 						errMsg = readFileRecoveryError(fmt.Sprintf("parent directory %q does not exist in this workspace, so %q cannot exist either.", parent, req.Path))
 					}
@@ -4606,7 +4628,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 		if os.IsNotExist(err) && strings.TrimSpace(req.Path) != "" {
 			parent := filepath.Dir(strings.ReplaceAll(strings.TrimSpace(req.Path), "\\", "/"))
 			if parent != "." && parent != "/" && parent != "" {
-				if parentAbs, parentErr := m.resolvePath(parent, req.Workdir); parentErr == nil {
+				if parentAbs, parentErr := m.resolveReadPath(parent, req.Workdir); parentErr == nil {
 					if _, statErr := os.Stat(parentAbs); os.IsNotExist(statErr) {
 						errMsg = readFileRecoveryError(fmt.Sprintf("parent directory %q does not exist in this workspace, so %q cannot exist either. (os: %s)", parent, req.Path, err.Error()))
 					}
@@ -4808,7 +4830,7 @@ func (m *Manager) fileStats(req ToolRequest) ToolResult {
 		requestPath = "."
 	}
 
-	target, err := m.resolvePath(requestPath, req.Workdir)
+	target, err := m.resolveReadPath(requestPath, req.Workdir)
 	if err != nil {
 		if resolved, ok := resolveUserGlobalConversationLogSearchPath(requestPath); ok {
 			target = resolved
@@ -4820,6 +4842,9 @@ func (m *Manager) fileStats(req ToolRequest) ToolResult {
 	info, err := os.Stat(target)
 	if err != nil {
 		return ToolResult{Tool: ToolNameFileStats, Summary: "Failed to stat path", Error: err.Error()}
+	}
+	if m.selectedSystemSearchDirectoryAccess(target, info) {
+		return selectedSystemSearchDirectoryDeniedResult(ToolNameFileStats, m.displayPath(target))
 	}
 
 	limit := req.Limit
@@ -6006,14 +6031,14 @@ func (m *Manager) runShell(ctx context.Context, req ToolRequest) ToolResult {
 		return toolPermissionPolicyResult(ToolNameShell, "Shell request rejected", "shell execution is disabled")
 	}
 
-	workdir, err := m.resolveWorkdir(req.Workdir)
-	if err != nil {
-		return toolPathResolutionFailureResult(ToolNameShell, "Failed to resolve workdir", err)
-	}
-
 	command := strings.TrimSpace(req.Command)
 	if command == "" {
 		return toolInvalidArgumentResult(ToolNameShell, "Shell request rejected", "command is required")
+	}
+
+	workdir, err := m.resolveWorkdir(req.Workdir)
+	if err != nil {
+		return toolPathResolutionFailureResult(ToolNameShell, "Failed to resolve workdir", err)
 	}
 
 	if isDirectoryOnlyShellCommand(command) {
@@ -6347,7 +6372,7 @@ func (m *Manager) resolveWritePath(path string, workdir string) (string, error) 
 
 func (m *Manager) resolveReadTarget(req ToolRequest) (string, string, error) {
 	if strings.TrimSpace(req.Path) != "" {
-		pathFromRequest, err := m.resolvePath(req.Path, req.Workdir)
+		pathFromRequest, err := m.resolveReadPath(req.Path, req.Workdir)
 		if err != nil {
 			if resolved, ok := resolveUserGlobalConversationLogReadPath(req.Path); ok {
 				pathFromRequest = resolved

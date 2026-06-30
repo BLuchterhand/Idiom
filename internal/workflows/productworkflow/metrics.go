@@ -141,11 +141,11 @@ func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error)
 	ledgerAtomCount := 0
 
 	for _, record := range ledger {
-		if err := countBoundedMetricValue(ledgerTypeCounts, "implementation_ledger.record_type", record.RecordType, allowedMetricLedgerRecordTypes); err != nil {
+		if err := countBoundedMetricValue(ledgerTypeCounts, "implementation_ledger.record_type", string(record.RecordType), allowedMetricLedgerRecordTypes); err != nil {
 			return ProductWorkflowMetrics{}, metricsArtifactError("validate", "implementation_ledger.jsonl", err)
 		}
 
-		if strings.HasPrefix(record.RecordType, "atom_") {
+		if IsImplementationAtomRecordType(record.RecordType) {
 			ledgerAtomCount++
 		}
 	}
@@ -385,20 +385,4 @@ var allowedMetricTDDTypes = map[string]bool{
 	"privacy":     true,
 }
 
-var allowedMetricLedgerRecordTypes = map[string]bool{
-	"atom_closed":                                  true,
-	"atom_planned":                                 true,
-	"blocker_recorded":                             true,
-	"fallback_completion":                          true,
-	"fallback_exception":                           true,
-	"implementation_completed":                     true,
-	"implementation_guidelines_updated":            true,
-	"implementor_error":                            true,
-	"implementor_interrupted_for_guideline_update": true,
-	"implementor_policy_updated":                   true,
-	"implementor_timeout":                          true,
-	"partial_implementation_recorded":              true,
-	"post_effort_investigation_completed":          true,
-	"review_completed":                             true,
-	"verification_completed":                       true,
-}
+var allowedMetricLedgerRecordTypes = allowedImplementationLedgerRecordTypeMap()

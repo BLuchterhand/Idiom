@@ -1,0 +1,42 @@
+{
+  "schema_version": "idiom.coding_rules.v1",
+  "defaults": {
+    "enabled": true,
+    "enforcement": "advisory",
+    "severity": "warning",
+    "include": ["**/*.go"],
+    "exclude": ["vendor/**", "testdata/**"]
+  },
+  "rules": [
+    {
+      "id": "go.no_pass_through_wrapper",
+      "languages": ["go"],
+      "kind": "structure",
+      "allow_when": [
+        "implements_interface",
+        "compatibility_api",
+        "boundary_adapter",
+        "validation",
+        "error_context",
+        "observability",
+        "permission_check"
+      ],
+      "options": {
+        "pass_through_wrapper": {
+          "max_body_statements": 1,
+          "ignore_tests": true,
+          "ignore_generated": true
+        }
+      }
+    }
+  ],
+  "suppressions": [
+    {
+      "rule_id": "go.no_pass_through_wrapper",
+      "path": "internal/example/compat.go",
+      "symbol": "Save",
+      "reason": "compatibility_api",
+      "rationale": "Preserves an exported API while callers migrate to the concrete service."
+    }
+  ]
+}

@@ -1901,11 +1901,47 @@ func (r *Runner) decorateFinalAnswer(input FinalAnswerDecorateInput) string {
 
 func presentableFinalAnswerForUser(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, answer string) string {
 	answer = strings.TrimSpace(answer)
+	if presentable, ok := presentableMutationQuestionBlocker(brief, results, answer); ok {
+		return presentable
+	}
+
 	if presentable, ok := presentableNonMutationQuestionBlocker(brief, results, answer); ok {
 		return presentable
 	}
 
 	return answer
+}
+
+func presentableMutationQuestionBlocker(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, blocker string) (string, bool) {
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	if !runnerBriefRequiresMutation(brief) {
+		return "", false
+	}
+
+	reason := strings.TrimSpace(blocker)
+	if !strings.HasPrefix(reason, "<<QUESTION>>") {
+		return "", false
+	}
+
+	reason = strings.TrimPrefix(reason, "<<QUESTION>>")
+	reason = strings.TrimLeft(strings.TrimSpace(reason), ": ")
+	lowerReason := strings.ToLower(reason)
+	if reason == "" ||
+		(!strings.Contains(lowerReason, "completion gate") &&
+			!strings.Contains(lowerReason, "missing completion evidence") &&
+			!strings.Contains(lowerReason, "required completion evidence")) ||
+		!questionBlockerReasonLooksInternal(reason) {
+
+		return "", false
+	}
+
+	presentable, ok := synthesizeNoToolsFallbackAnswer("main", brief, results)
+	presentable = strings.TrimSpace(presentable)
+	if !ok || presentable == "" || strings.Contains(strings.ToLower(presentable), "completion gate") {
+		return "", false
+	}
+
+	return presentable, true
 }
 
 func presentableNonMutationQuestionBlocker(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, blocker string) (string, bool) {
@@ -7119,9 +7155,9 @@ func exactAnchorPreWriteRuntimeBrief(brief workerruntime.WorkerRuntimeBrief) wor
 	return workerruntime.NormalizeRuntimeBrief(brief)
 }
 
-func (r *Runner) implementationTargetWriteReadyNonWriteRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, reject bool) {
+func (r *Runner) implementationTargetWriteReadyNonWritePrompt(req workspace.ToolRequest, results []workspace.ToolResult) (string, bool) {
 	if r == nil || !implementationTargetWriteReadySurfaceActive(r.RuntimeBrief, results) || workspace.IsWorkspaceWriteTool(req.Tool) {
-		return "", "", "", false
+		return "", false
 	}
 
 	if pending := r.evidenceEngine().PendingRedirectsForBrief(r.RuntimeBrief, results); len(pending) > 0 {
@@ -7132,11 +7168,7 @@ func (r *Runner) implementationTargetWriteReadyNonWriteRecovery(req workspace.To
 			tool = "requested tool"
 		}
 
-		summary = "Implementation target write-ready pending source-body obligation rejected"
-		errorText = fmt.Sprintf("%s is outside the pending redirected source-body obligation. The only valid read/navigation follow-up is the exact pending source-body request: %s. Otherwise write to a sourced target path or answer <<QUESTION>> with the exact blocker/no-op evidence.", tool, pendingActionSummary)
-		prompt = "The implementation lane is target-write-ready, but a redirected source-body obligation is still pending: " + pendingActionSummary + ". Use only that exact pending source-body follow-up, make one parser-readable write from already gathered source evidence, or answer <<QUESTION>> with the exact blocker/no-op evidence. Do not use references, broad read, search, shell, or unrelated navigation."
-
-		return summary, errorText, prompt, true
+		return fmt.Sprintf("%s is outside the pending redirected source-body obligation. The implementation lane is target-write-ready, but a pending source-body obligation remains: %s. Prefer that exact pending source-body follow-up, make one parser-readable write from already gathered source evidence, or answer <<QUESTION>> with the exact blocker/no-op evidence.", tool, pendingActionSummary), true
 	}
 
 	tool := strings.TrimSpace(req.Tool)
@@ -7149,11 +7181,7 @@ func (r *Runner) implementationTargetWriteReadyNonWriteRecovery(req workspace.To
 		sourceSentence += " for: " + sourcedSummary
 	}
 
-	summary = "Implementation target write-ready non-write guidance"
-	errorText = fmt.Sprintf("%s is outside the implementation target-write-ready surface. %s; use a parser-readable write to a sourced target path, a bounded read/search that names the exact missing edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence.", tool, sourceSentence)
-	prompt = "The implementation lane is target-write-ready. " + sourceSentence + ". Write when the edit-safety facts are known; otherwise take only a bounded read/search probe with `named_gap` for the exact missing fact, or answer <<QUESTION>> with the exact blocker/no-op evidence."
-
-	return summary, errorText, prompt, true
+	return fmt.Sprintf("%s was requested while the implementation target-write-ready state is active. %s. Make a parser-readable write when the edit-safety facts are known; otherwise take a bounded read/search probe with `named_gap` for the exact missing fact, or answer <<QUESTION>> with the exact blocker/no-op evidence.", tool, sourceSentence), true
 }
 
 func (r *Runner) writeDescriptionRepairSynthesizedRequest(req workspace.ToolRequest, repairActive bool) (workspace.ToolRequest, string, bool) {

@@ -42,7 +42,7 @@ func TestBriefGenerationDeterministicAndPassesWhenInputsAccepted(t *testing.T) {
 			},
 		},
 		ImplementationRecords: []ImplementationLedgerRecord{
-			{RecordType: "atom_planned", TaskID: "impl-0028", Scope: &AtomScope{ExpectedFiles: []string{"b.go", "a.go"}, AllowedFiles: []string{"a.go"}}},
+			{RecordType: LedgerRecordAtomPlanned, TaskID: "impl-0028", Scope: &AtomScope{ExpectedFiles: []string{"b.go", "a.go"}, AllowedFiles: []string{"a.go"}}},
 		},
 		CoverageEvaluation: CoverageGateEvaluation{Status: "pass", CoverageTier: "behavior_standard"},
 	}
@@ -118,7 +118,7 @@ func TestBriefGenerationUsesPathAliasesForMovedImplementationFiles(t *testing.T)
 		},
 		TDD: TDDLedger{TaskID: "impl-1", Obligations: []TDDObligation{{ID: "TDD-1", Command: "go test ./internal/productcmd"}}},
 		ImplementationRecords: []ImplementationLedgerRecord{
-			{RecordType: "atom_planned", TaskID: "impl-1", Scope: &AtomScope{ExpectedFiles: []string{"cmd/idiom/product_workflow.go"}}},
+			{RecordType: LedgerRecordAtomPlanned, TaskID: "impl-1", Scope: &AtomScope{ExpectedFiles: []string{"cmd/idiom/product_workflow.go"}}},
 		},
 		CoverageEvaluation: CoverageGateEvaluation{Status: "pass", CoverageTier: "unit"},
 		ExistingWorkspacePath: map[string]bool{
@@ -152,7 +152,7 @@ func TestBriefGenerationBlocksNewFileDispatchWithUnlabeledADRCodeBlock(t *testin
 		},
 		TDD: TDDLedger{TaskID: "impl-1", Obligations: []TDDObligation{{ID: "TDD-1", Owner: "app.test.js", Command: "npm test"}}},
 		ImplementationRecords: []ImplementationLedgerRecord{
-			{RecordType: "atom_planned", TaskID: "impl-1", Scope: &AtomScope{ExpectedFiles: []string{"src/app.js"}}},
+			{RecordType: LedgerRecordAtomPlanned, TaskID: "impl-1", Scope: &AtomScope{ExpectedFiles: []string{"src/app.js"}}},
 		},
 		CoverageEvaluation:    CoverageGateEvaluation{Status: "pass", CoverageTier: "unit"},
 		ExistingWorkspacePath: map[string]bool{},
@@ -192,7 +192,7 @@ func TestBriefGenerationAllowsPendingTDDEvidenceImplementationDispatch(t *testin
 		ADRs: []ParsedADR{{Doc: ADRDocument{FrontMatter: ADRFrontMatter{ADRID: "ADR-1", Status: "accepted"}}}},
 		TDD:  TDDLedger{TaskID: "impl-1", Obligations: []TDDObligation{{ID: "TDD-1", Owner: "thing_test.go", Command: "go test ./internal/thing"}}},
 		ImplementationRecords: []ImplementationLedgerRecord{
-			{RecordType: "atom_planned", TaskID: "impl-1", Scope: &AtomScope{ExpectedFiles: []string{"internal/thing/thing.go", "internal/thing/thing_test.go"}}},
+			{RecordType: LedgerRecordAtomPlanned, TaskID: "impl-1", Scope: &AtomScope{ExpectedFiles: []string{"internal/thing/thing.go", "internal/thing/thing_test.go"}}},
 		},
 		CoverageEvaluation: CoverageGateEvaluation{
 			Status:       "blocked",
@@ -237,7 +237,7 @@ func TestBriefGenerationDoesNotTreatHumanOwnerAsReadPath(t *testing.T) {
 			},
 		},
 		ImplementationRecords: []ImplementationLedgerRecord{
-			{RecordType: "atom_planned", TaskID: "impl-1", Scope: &AtomScope{ExpectedFiles: []string{"src/app.go"}}},
+			{RecordType: LedgerRecordAtomPlanned, TaskID: "impl-1", Scope: &AtomScope{ExpectedFiles: []string{"src/app.go"}}},
 		},
 		CoverageEvaluation: CoverageGateEvaluation{Status: "pass", CoverageTier: "unit"},
 	})
@@ -266,7 +266,7 @@ func TestBriefGenerationBlocksNewFileDispatchWithoutADRCodeBlocks(t *testing.T) 
 		},
 		TDD: TDDLedger{TaskID: "impl-1", Obligations: []TDDObligation{{ID: "TDD-1", Owner: "app.test.js", Command: "npm test"}}},
 		ImplementationRecords: []ImplementationLedgerRecord{
-			{RecordType: "atom_planned", TaskID: "impl-1", Scope: &AtomScope{ExpectedFiles: []string{"src/app.js"}}},
+			{RecordType: LedgerRecordAtomPlanned, TaskID: "impl-1", Scope: &AtomScope{ExpectedFiles: []string{"src/app.js"}}},
 		},
 		CoverageEvaluation:    CoverageGateEvaluation{Status: "pass", CoverageTier: "unit"},
 		ExistingWorkspacePath: map[string]bool{},
@@ -309,7 +309,7 @@ func TestBriefGenerationBlocksUngroundedImplementationAffectingClaims(t *testing
 		},
 		TDD: TDDLedger{TaskID: "impl-1", Obligations: []TDDObligation{{ID: "TDD-1", Owner: "admin_test.go", Command: "go test ./internal/admin"}}},
 		ImplementationRecords: []ImplementationLedgerRecord{
-			{RecordType: "atom_planned", TaskID: "impl-1", Scope: &AtomScope{ExpectedFiles: []string{"internal/admin/admin.go"}}},
+			{RecordType: LedgerRecordAtomPlanned, TaskID: "impl-1", Scope: &AtomScope{ExpectedFiles: []string{"internal/admin/admin.go"}}},
 		},
 		CoverageEvaluation: CoverageGateEvaluation{Status: "pass", CoverageTier: "unit"},
 	})

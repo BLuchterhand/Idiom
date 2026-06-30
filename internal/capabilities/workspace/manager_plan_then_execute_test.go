@@ -63,7 +63,11 @@ func TestManagerPlanThenExecutePlannerModeSwapsManifest(t *testing.T) {
 }
 
 func TestPlanThenExecutePlannerManifestUsesAutonomyMetadata(t *testing.T) {
-	if got, want := planThenExecutePlannerManifestToolNames(), autonomy.PlanExecutePlannerToolNames(); !slices.Equal(got, want) {
+	got := ToolManifestTools(ToolManifestToolOptions{IncludePlanThenExecute: true, PlanThenExecutePlannerSurface: true})
+	want := autonomy.PlanExecutePlannerToolNames()
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
 		t.Fatalf("workspace planner manifest names = %#v, want autonomy metadata names %#v", got, want)
 	}
 }

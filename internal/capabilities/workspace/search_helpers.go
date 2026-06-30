@@ -17,9 +17,13 @@ import (
 )
 
 func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolName string) ToolResult {
-	workdir, err := m.resolveWorkdir(req.Workdir)
+	workdir, err := m.resolveReadWorkdir(req.Workdir)
 	if err != nil {
 		return ToolResult{Tool: toolName, Summary: "Failed to resolve workdir", Error: err.Error()}
+	}
+	requestScope := strings.TrimSpace(req.Path)
+	if info, statErr := os.Stat(workdir); statErr == nil && m.selectedSystemSearchDirectoryAccess(workdir, info) && (requestScope == "" || requestScope == ".") {
+		return selectedSystemSearchDirectoryDeniedResult(toolName, m.displayPath(workdir))
 	}
 
 	pattern := strings.TrimSpace(req.Pattern)
@@ -28,7 +32,7 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 	}
 
 	if scope := strings.TrimSpace(req.Path); scope != "" && scope != "." {
-		resolvedScope, err := m.resolvePath(scope, req.Workdir)
+		resolvedScope, err := m.resolveReadPath(scope, req.Workdir)
 		if err != nil {
 			return ToolResult{Tool: toolName, Summary: "Search scope not found", Output: formatPathSuggestions(m.findPathSuggestions(scope, 5))}
 		}
@@ -46,6 +50,11 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 
 			return result
 		}
+		if info, statErr := os.Stat(resolvedScope); statErr == nil && m.selectedSystemSearchDirectoryAccess(resolvedScope, info) {
+			return selectedSystemSearchDirectoryDeniedResult(toolName, m.displayPath(resolvedScope))
+		}
+
+		req.Path = resolvedScope
 	}
 
 	backend, err := resolveContentSearchBackend()

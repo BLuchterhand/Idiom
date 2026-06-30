@@ -43,6 +43,7 @@ func TestRunLaneImplementRecoveryWritesFailureAndPacket(t *testing.T) {
 	code := runLaneRecoveryTest(t, root, []string{"implement", "--json", "--project-root", root, briefPath},
 		func(args []string, stdout, _ io.Writer, _ promptRunner) int {
 			_, _ = stdout.Write([]byte(`{"type":"session_summary","session_id":"impl-session","stop_reason":"model_error"}` + "\n"))
+			_, _ = stdout.Write([]byte(`{"type":"implementation_lifecycle_state","phase":"implementation.target_write_ready","stop_reason":"model_call_budget_exhausted","remaining_required_edit_paths":["internal/workflows/recovery/record.go"],"sourced_evidence_paths":["internal/workflows/recovery/record.go"],"write_ready_nudge_count":1}` + "\n"))
 			_, _ = stdout.Write([]byte("transcript: SECRET_TRANSCRIPT_BODY\n"))
 
 			return 7
@@ -75,6 +76,23 @@ func TestRunLaneImplementRecoveryWritesFailureAndPacket(t *testing.T) {
 		t.Fatalf("required edit paths should come from original brief, got %#v", record.SourceRun.RequiredEditPaths)
 	}
 
+	if record.Implementation == nil {
+		t.Fatal("expected implementation state in recovery record")
+	}
+
+	if record.Implementation.Phase != "implementation.target_write_ready" ||
+		record.Implementation.StopReason != "model_call_budget_exhausted" ||
+		record.Implementation.WriteReadyNudgeCount != 1 {
+
+		t.Fatalf("unexpected implementation state: %#v", record.Implementation)
+	}
+
+	if len(record.Implementation.RemainingRequiredEditPaths) != 1 ||
+		record.Implementation.RemainingRequiredEditPaths[0] != "internal/workflows/recovery/record.go" {
+
+		t.Fatalf("expected remaining path in implementation state, got %#v", record.Implementation)
+	}
+
 	assertEvidenceRef(t, record.Failure.EvidenceRefs, "lane_history", ".idiom/lane-history.jsonl", "")
 	assertEvidenceRef(t, record.Failure.EvidenceRefs, "original_brief", "brief.md", "")
 	assertEvidenceRef(t, record.Failure.EvidenceRefs, "planning_failures", ".planning/impl-session.failures.jsonl", "")
@@ -90,6 +108,10 @@ func TestRunLaneImplementRecoveryWritesFailureAndPacket(t *testing.T) {
 
 	if paths := packet.CandidateAtoms[0].RequiredPaths; len(paths) != 1 || paths[0] != "internal/workflows/recovery/record.go" {
 		t.Fatalf("expected recovery atom to target original required path, got %#v", paths)
+	}
+
+	if packet.Implementation == nil || packet.Implementation.StopReason != "model_call_budget_exhausted" {
+		t.Fatalf("expected implementation state in recovery packet, got %#v", packet.Implementation)
 	}
 
 	rendered, _ := json.Marshal(struct {

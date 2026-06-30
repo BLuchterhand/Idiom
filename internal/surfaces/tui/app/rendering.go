@@ -49,7 +49,12 @@ func (m *Model) View() string {
 
 	if pending := m.currentApproval(); pending != nil {
 		footerLines = append(footerLines,
-			approvalStyle.Width(w).Render("▲  APPROVAL REQUIRED ("+pending.mode+"):  "+pending.summary()+"  →  /approve or /deny"))
+			approvalStyle.Width(w).Render("▲  APPROVAL REQUIRED ("+pending.mode+"):  "+pending.summary()+"  ->  "+pending.approveHint()))
+	}
+
+	if pending := m.currentPlanApproval(); pending != nil {
+		footerLines = append(footerLines,
+			approvalStyle.Width(w).Render("▲  PLAN EDIT APPROVAL REQUIRED:  "+pending.summary()+"  →  Plan tab Enter approve, or /approve, /approve all, /deny"))
 	}
 
 	if banner := m.errorBanner(); banner != "" {
@@ -171,6 +176,9 @@ func (m *Model) requestMessages() []llama.ChatMessage {
 	// harness always pre-answers orientation questions — which trained it
 	// to skip real discovery.
 	history := m.messages
+	if m.requestHistoryOverride != nil {
+		history = *m.requestHistoryOverride
+	}
 	if len(history) > 0 {
 		last := history[len(history)-1]
 		if last.Role == "assistant" && last.Content == "" {

@@ -58,26 +58,6 @@ func (r *Runner) implementationScopedDisallowedToolRecovery(req workspace.ToolRe
 	return summary, errorText, prompt, true
 }
 
-func (r *Runner) scopedImplementationLastChanceWriteOnlyApplies(policy RunPolicy, usedModelCalls int, results []workspace.ToolResult) bool {
-	if r == nil || policy.MaxModelCalls <= 0 || usedModelCalls <= 0 {
-		return false
-	}
-
-	if !runnerBriefRequiresMutation(r.RuntimeBrief) || r.planThenExecutePlannerPhase() {
-		return false
-	}
-
-	if !implementationScopedEditSurfaceActive(r.RuntimeBrief, results) || len(r.remainingRequiredEditPaths(results)) == 0 {
-		return false
-	}
-
-	if len(changedPathsFromToolResults(results)) > 0 {
-		return false
-	}
-
-	return usedModelCalls+1 >= policy.MaxModelCalls
-}
-
 func (r *Runner) scopedImplementationLastChanceWriteOnlyPrompt(results []workspace.ToolResult) string {
 	target := "the remaining required edit path(s)"
 

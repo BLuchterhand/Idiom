@@ -223,7 +223,7 @@ func baseToolDefinitions() []ToolDefinition {
 			Description: "List files in a directory.",
 			ParametersJSON: schemaObj(
 				[]string{"path"},
-				`"path":`+strProp("relative or absolute workspace path")+`,"recursive":`+boolProp("walk subdirectories")+`,"max_depth":`+intProp("recursion depth limit"),
+				`"path":`+strProp("workspace path to list")+`,"recursive":`+boolProp("walk subdirectories")+`,"max_depth":`+intProp("recursion depth limit"),
 			),
 		},
 		{
@@ -247,7 +247,7 @@ func baseToolDefinitions() []ToolDefinition {
 			Description: "Read a file or a line range.",
 			ParametersJSON: schemaObj(
 				nil,
-				`"path":`+strProp("relative or absolute path")+`,"id":`+strProp("discovered-file handle like f3")+`,"start_line":`+intProp("1-based start")+`,"end_line":`+intProp("1-based end"),
+				`"path":`+strProp("workspace path to read")+`,"id":`+strProp("discovered-file handle like f3")+`,"start_line":`+intProp("1-based start")+`,"end_line":`+intProp("1-based end"),
 			),
 		},
 		{
@@ -256,6 +256,14 @@ func baseToolDefinitions() []ToolDefinition {
 			ParametersJSON: schemaObj(
 				nil,
 				`"path":`+strProp("file or directory to count; defaults to workspace root")+`,"recursive":{"type":"boolean","description":"walk directories recursively"},"glob":`+strProp("optional file glob, e.g. *.go")+`,"max_depth":`+intProp("directory depth limit; default 1, or 8 when recursive=true")+`,"limit":`+intProp("max files to count; default 1000, cap 10000"),
+			),
+		},
+		{
+			Name:        ToolNameSystemSearchAccess,
+			Description: "Ask the operator to approve read-only access to a file or directory outside the configured workspace, such as a sibling repository. Approval is session-scoped, may be limited to the selected path or widened to the selected folder's contents, and does not permit writes or shell outside the workspace.",
+			ParametersJSON: schemaObj(
+				[]string{"path", "purpose"},
+				`"path":`+strProp("operator-approved external path or path relative to the current workspace working directory, e.g. ../idiom, ../another-repo, or ../another-repo/README.md")+`,"purpose":`+strProp("why this external read-only access is necessary for the user request"),
 			),
 		},
 		{
@@ -280,6 +288,14 @@ func baseToolDefinitions() []ToolDefinition {
 			ParametersJSON: schemaObj(
 				[]string{"path"},
 				`"path":`+strProp("source file or narrow source directory")+`,"limit":`+intProp("max files to check when path is a directory; default 24"),
+			),
+		},
+		{
+			Name:        ToolNameCodingRulesCheck,
+			Description: "Run configured coding rules and return typed source-pattern findings without raw source bodies.",
+			ParametersJSON: schemaObj(
+				nil,
+				`"path":`+strProp("optional workspace-relative Go file or directory to check; defaults to workspace root")+`,"config_path":`+strProp("optional workspace-relative policy path; defaults to .idiom/coding_rules.json"),
 			),
 		},
 		{

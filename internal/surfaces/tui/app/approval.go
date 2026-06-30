@@ -15,7 +15,12 @@ import (
 type pendingApproval struct {
 	request  workspace.ToolRequest
 	mode     string
-	response chan bool
+	response chan approvalResponse
+}
+
+type approvalResponse struct {
+	allow bool
+	scope workspace.SystemSearchAccessScope
 }
 
 // summary returns a one-line description the UI can show to the user so
@@ -43,6 +48,17 @@ func (p *pendingApproval) summary() string {
 	}
 }
 
+func (p *pendingApproval) approveHint() string {
+	if p == nil {
+		return "/approve or /deny"
+	}
+	if p.mode == systemSearchApprovalModeName {
+		return "/approve for selected path, /approve all for folder contents, or /deny"
+	}
+
+	return "/approve or /deny"
+}
+
 // requestApproval is called from the runner goroutine when a tool hits
 // an Ask rule. It registers the pending request, signals the UI, and
 // blocks until the UI resolves it via /approve or /deny.
@@ -53,8 +69,12 @@ func (p *pendingApproval) summary() string {
 // invariant that the banner always matches a real request the user is
 // being asked about — no silent clobbers.
 func (m *Model) requestApproval(req workspace.ToolRequest, modeName string) bool {
+	return m.requestApprovalResponse(req, modeName).allow
+}
+
+func (m *Model) requestApprovalResponse(req workspace.ToolRequest, modeName string) approvalResponse {
 	if m == nil {
-		return false
+		return approvalResponse{}
 	}
 
 	// In headless mode (idiom --prompt --json, idiom artifact, idiom
@@ -69,7 +89,7 @@ func (m *Model) requestApproval(req workspace.ToolRequest, modeName string) bool
 		}
 
 		if m.eventStream == nil {
-			return false
+			return approvalResponse{}
 		}
 
 		m.emitJSONEvent(map[string]any{
@@ -80,13 +100,13 @@ func (m *Model) requestApproval(req workspace.ToolRequest, modeName string) bool
 			"session": m.eventStream.sessionID,
 		})
 
-		return false
+		return approvalResponse{}
 	}
 
 	m.approvalSerial.Lock()
 	defer m.approvalSerial.Unlock()
 
-	resp := make(chan bool, 1)
+	resp := make(chan approvalResponse, 1)
 	pending := &pendingApproval{
 		request:  req,
 		mode:     modeName,
@@ -98,7 +118,7 @@ func (m *Model) requestApproval(req workspace.ToolRequest, modeName string) bool
 	m.approvalPending = pending
 	m.approvalMu.Unlock()
 
-	m.events <- infoMsg{text: fmt.Sprintf("Awaiting approval (%s mode): /approve or /deny", modeName)}
+	m.events <- infoMsg{text: fmt.Sprintf("Awaiting approval (%s mode): %s", modeName, pending.approveHint())}
 
 	return <-resp
 }
@@ -107,6 +127,15 @@ func (m *Model) requestApproval(req workspace.ToolRequest, modeName string) bool
 // /approve or /deny. Returns the request summary for the status line,
 // and a bool indicating whether there was a pending request at all.
 func (m *Model) resolveApproval(allow bool) (string, bool) {
+	scope := workspace.SystemSearchAccessScopeSelected
+	if !allow {
+		scope = ""
+	}
+
+	return m.resolveApprovalWithScope(allow, scope)
+}
+
+func (m *Model) resolveApprovalWithScope(allow bool, scope workspace.SystemSearchAccessScope) (string, bool) {
 	if m == nil {
 		return "", false
 	}
@@ -122,7 +151,7 @@ func (m *Model) resolveApproval(allow bool) (string, bool) {
 		return "", false
 	}
 
-	pending.response <- allow
+	pending.response <- approvalResponse{allow: allow, scope: scope}
 
 	return pending.summary(), true
 }

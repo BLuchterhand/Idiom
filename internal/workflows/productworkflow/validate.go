@@ -437,18 +437,21 @@ func validateImplementationLedger(records []ImplementationLedgerRecord) error {
 
 	for i, rec := range records {
 		line := i + 1
-		require(&errs, rec.RecordType, fmt.Sprintf("implementation ledger line %d missing record_type", line))
+		require(&errs, string(rec.RecordType), fmt.Sprintf("implementation ledger line %d missing record_type", line))
+		if rec.RecordType != "" && !KnownImplementationLedgerRecordType(rec.RecordType) {
+			errs = append(errs, fmt.Errorf("implementation ledger line %d: unknown record_type %q", line, rec.RecordType))
+		}
 		require(&errs, rec.TaskID, fmt.Sprintf("implementation ledger line %d missing task_id", line))
 		require(&errs, rec.EffortID, fmt.Sprintf("implementation ledger line %d missing effort_id", line))
 
 		switch rec.RecordType {
-		case "atom_planned":
+		case LedgerRecordAtomPlanned:
 			errs = append(errs, validatePlannedAtom(line, rec)...)
-		case "implementation_completed", "fallback_completion":
+		case LedgerRecordImplementationCompleted, LedgerRecordFallbackCompletion:
 			completed[rec.TaskID] = true
-		case "verification_completed":
+		case LedgerRecordVerificationCompleted:
 			verified[rec.TaskID] = true
-		case "review_completed":
+		case LedgerRecordReviewCompleted:
 			reviewed[rec.TaskID] = true
 			if rec.ReviewerID == "" {
 				errs = append(errs, fmt.Errorf("implementation ledger line %d: review_completed missing reviewer_id", line))
@@ -461,9 +464,9 @@ func validateImplementationLedger(records []ImplementationLedgerRecord) error {
 			if rec.ReasoningEffort == "" {
 				errs = append(errs, fmt.Errorf("implementation ledger line %d: review_completed missing reasoning_effort", line))
 			}
-		case "post_effort_investigation_completed":
+		case LedgerRecordPostEffortInvestigationCompleted:
 			investigated[rec.TaskID] = true
-		case "atom_closed":
+		case LedgerRecordAtomClosed:
 			tid := rec.TaskID
 			if !completed[tid] {
 				errs = append(errs, fmt.Errorf("implementation ledger: atom_closed for %q without implementation_completed or fallback_completion", tid))
@@ -484,14 +487,14 @@ func validateImplementationLedger(records []ImplementationLedgerRecord) error {
 			if len(rec.OpenBlockers) > 0 {
 				errs = append(errs, fmt.Errorf("implementation ledger: atom_closed for %q with open blockers", tid))
 			}
-		case "fallback_exception":
+		case LedgerRecordFallbackException:
 			require(&errs, rec.StandardImplementor, fmt.Sprintf("implementation ledger line %d: fallback_exception missing standard_implementor", line))
 			require(&errs, rec.FallbackActor, fmt.Sprintf("implementation ledger line %d: fallback_exception missing fallback_actor", line))
 			require(&errs, rec.Reason, fmt.Sprintf("implementation ledger line %d: fallback_exception missing reason", line))
 			require(&errs, rec.AllowedScope, fmt.Sprintf("implementation ledger line %d: fallback_exception missing allowed_scope", line))
 		}
 
-		if rec.CommitHash != "" && (rec.RecordType == "implementation_completed" || rec.RecordType == "fallback_completion" || rec.RecordType == "partial_implementation_recorded") {
+		if rec.CommitHash != "" && RequiresImplementationCommitHash(rec.RecordType) {
 			if !isValidCommitHash(rec.CommitHash) {
 				errs = append(errs, fmt.Errorf("implementation ledger line %d: commit_hash must be 40 hex chars, got %q", line, rec.CommitHash))
 			}

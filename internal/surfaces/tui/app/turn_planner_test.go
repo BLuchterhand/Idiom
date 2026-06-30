@@ -4350,6 +4350,7 @@ func TestRunPromptOnceDispatchesStartImplementingPlanDocToPlanExecute(t *testing
 
 	model := New(cfg)
 	defer model.Close()
+	model.planExecuteApproveAllEdits = true
 
 	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "plan.md")
 	if err != nil {
@@ -4441,6 +4442,7 @@ func TestRunPromptOnceBlocksAmbiguousPlanDocBasenameBeforePlanExecute(t *testing
 
 	model := New(cfg)
 	defer model.Close()
+	model.planExecuteApproveAllEdits = true
 
 	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "plan.md")
 	if err != nil {
@@ -4549,6 +4551,7 @@ func TestRunPromptOnceBlocksUnlintedPlanDocBeforePlanExecute(t *testing.T) {
 
 	model := New(cfg)
 	defer model.Close()
+	model.planExecuteApproveAllEdits = true
 
 	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "docs/plan.md")
 	if err != nil {
@@ -4666,6 +4669,7 @@ func TestRunPromptOnceSurfacesRefinedCandidatePreflightBlocker(t *testing.T) {
 
 	model := New(cfg)
 	defer model.Close()
+	model.planExecuteApproveAllEdits = true
 
 	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "docs/plan.md")
 	if err != nil {
@@ -4849,6 +4853,7 @@ func TestRunPromptOnceRefinesPlanDocBeforePlanExecuteDispatch(t *testing.T) {
 
 	model := New(cfg)
 	defer model.Close()
+	model.planExecuteApproveAllEdits = true
 
 	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "docs/plan.md")
 	if err != nil {
@@ -5143,6 +5148,7 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 
 	model := New(cfg)
 	defer model.Close()
+	model.planExecuteApproveAllEdits = true
 
 	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "design.md")
 	if err != nil {
@@ -6310,6 +6316,7 @@ func TestRunPromptOncePlanExecuteCreatesTypedAuthorizedNewFileAfterSubmitReadyRe
 
 	model := New(cfg)
 	defer model.Close()
+	model.planExecuteApproveAllEdits = true
 
 	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "docs/plan.md")
 	if err != nil {
@@ -6331,6 +6338,61 @@ func TestRunPromptOncePlanExecuteCreatesTypedAuthorizedNewFileAfterSubmitReadyRe
 
 	if initialPlannerRequests.Load() != 1 {
 		t.Fatalf("expected one initial package probe before submit-ready recovery, got %d probe request(s)", initialPlannerRequests.Load())
+	}
+}
+
+func TestPlanExecuteMissingNewFileFailureSurfacesAuthorizationMessage(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+
+	planPath := writeScopeIntakeApprovedProgressPlanArtifact(t, root, []planartifact.PlanEdit{{
+		Path:       "src/pages/products.astro",
+		NewText:    "products\n",
+		ReplaceAll: true,
+		Purpose:    "Create products page",
+	}})
+	body, err := os.ReadFile(planPath)
+	if err != nil {
+		t.Fatalf("read plan artifact: %v", err)
+	}
+	var artifact planartifact.PlanArtifact
+	if err := json.Unmarshal(body, &artifact); err != nil {
+		t.Fatalf("decode plan artifact: %v", err)
+	}
+	artifact.Approval.Required = false
+	artifact.Approval.Status = planartifact.ApprovalStatusImplicit
+	artifact.Approval.ApprovedPaths = nil
+	artifact.Approval.ExecutionPermission = planartifact.ExecutionPermissionExecuteAll
+	updated, err := json.MarshalIndent(artifact, "", "  ")
+	if err != nil {
+		t.Fatalf("encode plan artifact: %v", err)
+	}
+	if err := os.WriteFile(planPath, append(updated, '\n'), 0o644); err != nil {
+		t.Fatalf("write plan artifact: %v", err)
+	}
+
+	model := &Model{cfg: cfg}
+	answer, ok := model.humanPlanExecuteMissingNewFileAuthorizationMessage(planexecute.RunResult{
+		SessionID:   "scope-intake-test-session",
+		FailureKind: string(plancontract.PlanExecuteFailureMissingEditPathWithoutNewFileAuth),
+	}, nil)
+	if !ok {
+		t.Fatal("expected missing new-file failure to surface authorization message")
+	}
+
+	for _, want := range []string{
+		"Plan-execute needs approval before creating new files.",
+		"src/pages/products.astro",
+		"authorized_new_files",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("authorization response missing %q:\n%s", want, answer)
+		}
+	}
+	if strings.Contains(answer, "src/pages/index.astro") {
+		t.Fatalf("existing changed path should not require new-file authorization:\n%s", answer)
 	}
 }
 
@@ -6418,6 +6480,7 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanSurfaceThroughRecoveryDecision
 
 	model := New(cfg)
 	defer model.Close()
+	model.planExecuteApproveAllEdits = true
 
 	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "docs/plan.md")
 	if err != nil {
@@ -6578,6 +6641,7 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanRetryAfterRecoveryDecision(t *
 
 	model := New(cfg)
 	defer model.Close()
+	model.planExecuteApproveAllEdits = true
 
 	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "docs/plan.md")
 	if err != nil {
@@ -6724,6 +6788,7 @@ func TestRunPromptOncePlanExecuteDoesNotInferMissingRequestedTestRetry(t *testin
 
 	model := New(cfg)
 	defer model.Close()
+	model.planExecuteApproveAllEdits = true
 
 	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "Implement docs/plan.md: harden the feature behavior and add regression tests proving the edge case is rejected.")
 	if err != nil {
@@ -6890,6 +6955,7 @@ func TestRunPromptOncePlanExecuteDoesNotInferMissingRequestedTestSourceSatisfied
 
 	model := New(cfg)
 	defer model.Close()
+	model.planExecuteApproveAllEdits = true
 
 	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "Implement docs/plan.md: harden the feature behavior and add regression tests proving the edge case is rejected.")
 	if err == nil {
@@ -7118,6 +7184,7 @@ func TestRunPromptOnceReferenceOnlyDesignDocDispatchesPlanExecuteWithoutRefine(t
 
 	model := New(cfg)
 	defer model.Close()
+	model.planExecuteApproveAllEdits = true
 
 	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "Implement one bounded topic from docs/design.md: status migration apply must harden predictable temp-path writes against pre-existing symlinks. Add regression tests proving temp symlinks are rejected.")
 	if err != nil {

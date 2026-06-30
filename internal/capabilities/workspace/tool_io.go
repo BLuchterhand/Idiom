@@ -14,6 +14,7 @@ type ToolRequest struct {
 	Handle            string              `json:"handle,omitempty"`
 	Path              string              `json:"path,omitempty"`
 	Root              string              `json:"root,omitempty"`
+	ConfigPath        string              `json:"config_path,omitempty"`
 	EffortRoot        string              `json:"effort_root,omitempty"`
 	StartLine         int                 `json:"start_line,omitempty"`
 	EndLine           int                 `json:"end_line,omitempty"`

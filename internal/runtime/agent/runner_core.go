@@ -21,6 +21,7 @@ import (
 	contractcompile "idiom/internal/contracts/compile"
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
+	recoverycontract "idiom/internal/contracts/recovery"
 	"idiom/internal/platform/failures"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/llama"
@@ -1606,6 +1607,7 @@ func (r *Runner) runLegacySessionBody(
 	exactAnchorWriteOnlyActive := exactAnchorPreWriteSurfaceActive(r.RuntimeBrief, collectedResults)
 	exactAnchorWriteFailures := 0
 	currentAllowedTools := []string(nil)
+	implementationTargetWriteReadyNudges := 0
 	runState := &runnerRunState{
 		ctx:                                     ctx,
 		opts:                                    opts,
@@ -1620,6 +1622,7 @@ func (r *Runner) runLegacySessionBody(
 		requiredPathCompletionRecoveryActive:    requiredPathCompletionRecoveryActive,
 		exactAnchorWriteOnlyActive:              exactAnchorWriteOnlyActive,
 		planThenExecuteNativeSubmitPlanDisabled: planThenExecuteNativeSubmitPlanDisabled,
+		implementationTargetWriteReadyNudges:    implementationTargetWriteReadyNudges,
 	}
 	syncRunState := func() {
 		runState.opts = opts
@@ -1635,6 +1638,7 @@ func (r *Runner) runLegacySessionBody(
 		runState.requiredPathCompletionRecoveryActive = requiredPathCompletionRecoveryActive
 		runState.exactAnchorWriteOnlyActive = exactAnchorWriteOnlyActive
 		runState.planThenExecuteNativeSubmitPlanDisabled = planThenExecuteNativeSubmitPlanDisabled
+		runState.implementationTargetWriteReadyNudges = implementationTargetWriteReadyNudges
 	}
 	applyRunState := func() {
 		opts = runState.opts
@@ -1642,6 +1646,7 @@ func (r *Runner) runLegacySessionBody(
 		turnMessages = runState.turnMessages
 		currentAllowedTools = runState.currentAllowedTools
 		planThenExecuteNativeSubmitPlanDisabled = runState.planThenExecuteNativeSubmitPlanDisabled
+		implementationTargetWriteReadyNudges = runState.implementationTargetWriteReadyNudges
 	}
 
 	defer func() {
@@ -1734,7 +1739,7 @@ func (r *Runner) runLegacySessionBody(
 		completionStatusEmitted = true
 		completionStatusLastStatus = strings.TrimSpace(status)
 		completionStatusLastBlockerKind = strings.TrimSpace(blockerKind)
-		r.emitCompletionStatusFromParams(status, reason, blockerKind, results, userVisibleBlocker)
+		r.emitCompletionStatusFromParams(status, reason, blockerKind, results, userVisibleBlocker, implementationTargetWriteReadyNudges)
 	}
 
 	defer func() {
@@ -1897,7 +1902,6 @@ func (r *Runner) runLegacySessionBody(
 	var currentFingerprint string
 
 	implementationTargetWriteReadySourceRefreshes := 0
-	implementationTargetWriteReadyNonWriteRejections := 0
 	implementationWriteOnlyNonWriteRejects := 0
 
 	var (
@@ -1949,6 +1953,10 @@ func (r *Runner) runLegacySessionBody(
 			ImplementationScopedLastChancePrompt: r.scopedImplementationLastChanceWriteOnlyPrompt(collectedResults),
 		})
 		if readiness.Stop {
+			if blocker, ok := r.implementationBudgetExhaustedBlocker(collectedResults, readiness.StopReason); ok {
+				r.emitImplementationLifecycleState(collectedResults, readiness.StopReason, implementationTargetWriteReadyNudges)
+				return finish(blocker, nil, readiness.StopReason, readiness.BudgetExhausted)
+			}
 			if readiness.ForceAnswer {
 				answer, err := controller.completeWithoutMoreToolsWithReason(readiness.ForceAnswerPrompt)
 				return finish(answer, err, readiness.StopReason, readiness.BudgetExhausted)
@@ -2931,16 +2939,17 @@ func (r *Runner) runLegacySessionBody(
 				Role:    "implementation_target_write_ready_source_refresh_allowed",
 				Content: fmt.Sprintf("allowed write-ready %s source expansion on target path %q", strings.TrimSpace(req.Tool), agentutil.NormalizeRunnerPath(req.Path)),
 			})
-		} else if _, _, prompt, reject := r.implementationTargetWriteReadyNonWriteRecovery(req, collectedResults); reject {
-			implementationTargetWriteReadyNonWriteRejections++
+		} else if prompt, ok := r.implementationTargetWriteReadyNonWritePrompt(req, collectedResults); ok {
+			implementationTargetWriteReadyNudges++
 
 			requestBudget.writeReadyNudgeActive = true
 
-			nudgeMsg := targetWriteReadyStagedNudge(prompt, req, implementationTargetWriteReadyNonWriteRejections)
+			nudgeMsg := targetWriteReadyStagedNudge(prompt, req, implementationTargetWriteReadyNudges)
 
 			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudgeMsg})
 			r.emitEvent(RunEvent{Role: "implementation_target_write_ready_recovery", Content: nudgeMsg})
 			r.emitEvent(RunEvent{Role: "implementation_target_write_ready_nudge", Content: nudgeMsg})
+			r.emitImplementationLifecycleState(collectedResults, "target_write_ready", implementationTargetWriteReadyNudges)
 		}
 
 		scopedHiddenNonWrite := implementationScopedHiddenTools[strings.TrimSpace(req.Tool)] && !workspace.IsWorkspaceWriteTool(req.Tool)
@@ -5603,6 +5612,7 @@ func (r *Runner) runLegacySessionBody(
 	}
 
 	if blocker, ok := r.implementationToolBudgetExhaustedBlocker(collectedResults); ok {
+		r.emitImplementationLifecycleState(collectedResults, "implementation_tool_step_budget_blocked", implementationTargetWriteReadyNudges)
 		return finish(blocker, nil, "implementation_tool_step_budget_blocked", true)
 	}
 
@@ -5635,6 +5645,10 @@ func maxToolStepsExhaustedReason() string {
 }
 
 func (r *Runner) implementationToolBudgetExhaustedBlocker(results []workspace.ToolResult) (string, bool) {
+	return r.implementationBudgetExhaustedBlocker(results, "implementation_tool_step_budget_blocked")
+}
+
+func (r *Runner) implementationBudgetExhaustedBlocker(results []workspace.ToolResult, stopReason string) (string, bool) {
 	if r == nil || !runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
 		return "", false
 	}
@@ -5656,11 +5670,21 @@ func (r *Runner) implementationToolBudgetExhaustedBlocker(results []workspace.To
 		details = append(details, "latest inspected evidence: "+inspected)
 	}
 
-	if len(details) == 0 {
-		details = append(details, "no parser-readable workspace write was recorded before the tool budget was exhausted")
+	budgetKind := "implementation budget"
+	switch strings.TrimSpace(stopReason) {
+	case "implementation_tool_step_budget_blocked", "tool_step_budget_exhausted":
+		budgetKind = "implementation tool budget"
+	case "model_call_budget_exhausted":
+		budgetKind = "implementation model-call budget"
+	case "duration_budget_exhausted":
+		budgetKind = "implementation duration budget"
 	}
 
-	return "<<QUESTION>>: implementation tool budget was exhausted before a parser-readable edit, source-satisfied decision, or exact blocker was produced; " + strings.Join(details, "; ") + ". Rerun with a narrower edit target or the exact missing file/symbol if more source evidence is required.", true
+	if len(details) == 0 {
+		details = append(details, "no parser-readable workspace write was recorded before the "+budgetKind+" was exhausted")
+	}
+
+	return "<<QUESTION>>: " + budgetKind + " was exhausted before a parser-readable edit, source-satisfied decision, or exact blocker was produced; " + strings.Join(details, "; ") + ". Rerun with a narrower edit target or the exact missing file/symbol if more source evidence is required.", true
 }
 
 func (r *Runner) requiredPathCompletionRecoveryRejection(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
@@ -13171,23 +13195,28 @@ func synthesizeMutationFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 		}
 	}
 
-	for i := range results {
-		if i <= latestProgressIndex {
-			continue
-		}
-
-		result := normalizeFallbackResult(results[i])
-		if strings.TrimSpace(result.Error) == "" {
-			continue
-		}
-
-		if isHarnessRejectionSummary(result.Summary) || isHarnessRejectionErrorText(result.Error) {
-			continue
-		}
-
-		copy := result
-
+	if failed, ok := failedVerificationAfterLatestWrite(results, brief); ok {
+		copy := failed
 		lastError = &copy
+	} else {
+		for i := range results {
+			if i <= latestProgressIndex {
+				continue
+			}
+
+			result := normalizeFallbackResult(results[i])
+			if strings.TrimSpace(result.Error) == "" {
+				continue
+			}
+
+			if isHarnessRejectionSummary(result.Summary) || isHarnessRejectionErrorText(result.Error) {
+				continue
+			}
+
+			copy := result
+
+			lastError = &copy
+		}
 	}
 
 	var b strings.Builder
@@ -19953,12 +19982,13 @@ type runnerRunState struct {
 
 	replayedToolRequests map[string]int
 
-	autonomyRecorder                *runnerAutonomyRecorder
-	completionGateRejections        int
-	completionStatusEmitted         bool
-	completionStatusLastStatus      string
-	completionStatusLastBlockerKind string
-	acceptedAnswerSignalsEmitted    bool
+	autonomyRecorder                     *runnerAutonomyRecorder
+	completionGateRejections             int
+	completionStatusEmitted              bool
+	completionStatusLastStatus           string
+	completionStatusLastBlockerKind      string
+	implementationTargetWriteReadyNudges int
+	acceptedAnswerSignalsEmitted         bool
 
 	controller runnerTurnController
 }
@@ -20273,6 +20303,12 @@ func (r *Runner) emitTerminalAnswerSignalsOnce(state *runnerRunState, decision t
 		r.emitFinalAnswerTelemetry(decision.RawAnswer, state.collectedResults, decision.Acceptance)
 	case terminalAnswerBlocked, terminalAnswerTransportBlocked:
 		blockerKind := textutil.FirstNonEmpty(strings.TrimSpace(decision.Acceptance.BlockerKind), strings.TrimSpace(decision.StopReason))
+		if strings.TrimSpace(state.stopReason) == "implementation_tool_step_budget_blocked" &&
+			runnerBriefRequiresMutation(r.RuntimeBrief) &&
+			len(changedPathsFromToolResults(state.collectedResults)) == 0 {
+
+			blockerKind = "implementation_tool_step_budget_blocked"
+		}
 		if state.autonomyRecorder != nil {
 			state.autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyReject, blockerKind, state.collectedResults, state.completionGateRejections)
 		}
@@ -20283,17 +20319,20 @@ func (r *Runner) emitTerminalAnswerSignalsOnce(state *runnerRunState, decision t
 			// Construct the runnerCompletionStatus once, shared by the legacy event emission below.
 			changedPaths := mapKeys(changedPathsFromToolResults(state.collectedResults))
 			completionPayload := runnerCompletionStatus{
-				Lane:               r.agentName(),
-				TaskFamily:         strings.TrimSpace(r.RuntimeBrief.TaskFamily),
-				Contract:           strings.TrimSpace(r.RuntimeBrief.Contract),
-				Status:             "blocked",
-				Reason:             strings.TrimSpace(decision.Acceptance.Reason),
-				BlockerKind:        strings.TrimSpace(blockerKind),
-				RequiresEdit:       runnerBriefRequiresMutation(r.RuntimeBrief),
-				EditAttempted:      len(changedPaths) > 0,
-				ChangedPaths:       changedPaths,
+				Lane:          r.agentName(),
+				TaskFamily:    strings.TrimSpace(r.RuntimeBrief.TaskFamily),
+				Contract:      strings.TrimSpace(r.RuntimeBrief.Contract),
+				Status:        "blocked",
+				Reason:        strings.TrimSpace(decision.Acceptance.Reason),
+				BlockerKind:   strings.TrimSpace(blockerKind),
+				RequiresEdit:  runnerBriefRequiresMutation(r.RuntimeBrief),
+				EditAttempted: len(changedPaths) > 0,
+				ImplementationState: recoverycontract.ImplementationState{
+					ChangedPaths: changedPaths,
+				},
 				UserVisibleBlocker: true,
 			}
+			r.attachImplementationLifecycleStatus(&completionPayload, state.collectedResults, state.stopReason, state.implementationTargetWriteReadyNudges)
 			r.emitStateCompletionStatus(state, completionPayload)
 		}
 	}
@@ -20650,16 +20689,16 @@ type runnerBudgetLedger struct {
 }
 
 type runnerCompletionStatus struct {
-	Lane               string   `json:"lane"`
-	TaskFamily         string   `json:"task_family,omitempty"`
-	Contract           string   `json:"contract,omitempty"`
-	Status             string   `json:"status"`
-	Reason             string   `json:"reason,omitempty"`
-	BlockerKind        string   `json:"blocker_kind,omitempty"`
-	RequiresEdit       bool     `json:"requires_edit,omitempty"`
-	EditAttempted      bool     `json:"edit_attempted"`
-	ChangedPaths       []string `json:"changed_paths,omitempty"`
-	UserVisibleBlocker bool     `json:"user_visible_blocker,omitempty"`
+	Lane          string `json:"lane"`
+	TaskFamily    string `json:"task_family,omitempty"`
+	Contract      string `json:"contract,omitempty"`
+	Status        string `json:"status"`
+	Reason        string `json:"reason,omitempty"`
+	BlockerKind   string `json:"blocker_kind,omitempty"`
+	RequiresEdit  bool   `json:"requires_edit,omitempty"`
+	EditAttempted bool   `json:"edit_attempted"`
+	recoverycontract.ImplementationState
+	UserVisibleBlocker bool `json:"user_visible_blocker,omitempty"`
 }
 
 func (m *runnerMetrics) addUsage(usage llama.Usage) {
@@ -21186,24 +21225,25 @@ func (r *Runner) emitCompletionStatus(payload runnerCompletionStatus) {
 	r.emitEvent(marshalRunEvent("completion_status", payload))
 }
 
-// emitCompletionStatusFromParams is a convenience wrapper that constructs a runnerCompletionStatus
-// from individual parameters. It is retained so the many call-sites in runner.go's Run() method
-// (and runner_terminal_answer.go) do not all need to be rewritten. The canonical construction
-// happens in runner_runstate.go where both the legacy and autonomy events share the same data.
-func (r *Runner) emitCompletionStatusFromParams(status, reason, blockerKind string, results []workspace.ToolResult, userVisibleBlocker bool) {
+// emitCompletionStatusFromParams constructs the completion-status event from
+// the Run loop's terminal decision fields.
+func (r *Runner) emitCompletionStatusFromParams(status, reason, blockerKind string, results []workspace.ToolResult, userVisibleBlocker bool, writeReadyNudges int) {
 	changedPaths := mapKeys(changedPathsFromToolResults(results))
 	payload := runnerCompletionStatus{
-		Lane:               r.agentName(),
-		TaskFamily:         strings.TrimSpace(r.RuntimeBrief.TaskFamily),
-		Contract:           strings.TrimSpace(r.RuntimeBrief.Contract),
-		Status:             strings.TrimSpace(status),
-		Reason:             strings.TrimSpace(reason),
-		BlockerKind:        strings.TrimSpace(blockerKind),
-		RequiresEdit:       runnerBriefRequiresMutation(r.RuntimeBrief),
-		EditAttempted:      len(changedPaths) > 0,
-		ChangedPaths:       changedPaths,
+		Lane:          r.agentName(),
+		TaskFamily:    strings.TrimSpace(r.RuntimeBrief.TaskFamily),
+		Contract:      strings.TrimSpace(r.RuntimeBrief.Contract),
+		Status:        strings.TrimSpace(status),
+		Reason:        strings.TrimSpace(reason),
+		BlockerKind:   strings.TrimSpace(blockerKind),
+		RequiresEdit:  runnerBriefRequiresMutation(r.RuntimeBrief),
+		EditAttempted: len(changedPaths) > 0,
+		ImplementationState: recoverycontract.ImplementationState{
+			ChangedPaths: changedPaths,
+		},
 		UserVisibleBlocker: userVisibleBlocker,
 	}
+	r.attachImplementationLifecycleStatus(&payload, results, "", writeReadyNudges)
 	r.emitCompletionStatus(payload)
 }
 
@@ -22381,7 +22421,7 @@ func (r *Runner) emitAcceptedAnswerSignals(answer string, results []workspace.To
 	r.emitFinalAnswerTelemetry(answer, results, acceptance)
 
 	if acceptance.BlockerKind != "" {
-		r.emitCompletionStatusFromParams("blocked", acceptance.Reason, acceptance.BlockerKind, results, true)
+		r.emitCompletionStatusFromParams("blocked", acceptance.Reason, acceptance.BlockerKind, results, true, 0)
 	}
 }
 

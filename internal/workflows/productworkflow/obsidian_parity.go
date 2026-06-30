@@ -136,7 +136,7 @@ func obsidianParityAtomCompleted(ledger []ImplementationLedgerRecord) bool {
 			continue
 		}
 
-		if rec.RecordType == "atom_closed" && len(rec.OpenBlockers) == 0 {
+		if rec.RecordType == LedgerRecordAtomClosed && len(rec.OpenBlockers) == 0 {
 			return true
 		}
 	}

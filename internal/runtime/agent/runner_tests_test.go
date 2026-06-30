@@ -16599,8 +16599,8 @@ func TestVisibleBriefForToolSurfaceKeepsPendingRedirectTool(t *testing.T) {
 		t.Fatalf("visible target-write-ready surface dropped pending redirect tool: tools=%#v manifest=%#v", visible.AllowedTools, visible.ToolManifest)
 	}
 
-	if slices.Contains(visible.AllowedTools, "read_file") || slices.Contains(visible.AllowedTools, "search_content") {
-		t.Fatalf("pending redirected source obligation should not expose broad refresh tools: %#v", visible.AllowedTools)
+	if !slices.Contains(visible.AllowedTools, "read_file") || !slices.Contains(visible.AllowedTools, "search_content") {
+		t.Fatalf("pending redirected source obligation should keep bounded refresh tools available: %#v", visible.AllowedTools)
 	}
 }
 
@@ -24765,6 +24765,47 @@ func TestSynthesizeMutationFallbackAnswerDropsErrorsSupersededByLaterWrite(t *te
 
 	if !strings.Contains(answer, "workspace writes are still pending verification") {
 		t.Fatalf("expected verification blocker to remain, got:\n%s", answer)
+	}
+}
+
+func TestSynthesizeMutationFallbackPrefersPostWriteVerificationFailure(t *testing.T) {
+	answer := synthesizeMutationFallbackAnswer(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		PermissionProfile:    "guarded_workspace_write",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}, []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited src/pages/contact.astro"},
+		{
+			Tool:    "source_sanity",
+			Summary: "Source sanity unavailable",
+			Error:   "src/pages/contact.astro is not a supported source file",
+		},
+		{
+			Tool:    "git_diff",
+			Summary: "Read git diff for src/pages/contact.astro",
+			Output:  "diff --git a/src/pages/contact.astro b/src/pages/contact.astro",
+		},
+		{
+			Tool:    "edit_file",
+			Summary: "Edit request rejected",
+			Error:   "old_text did not appear in src/pages/contact.astro",
+		},
+	})
+
+	for _, want := range []string{
+		"Changed paths:",
+		"src/pages/contact.astro",
+		"Verification: blocked; workspace writes are still pending verification.",
+		"Source sanity unavailable: src/pages/contact.astro is not a supported source file",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected mutation fallback to include %q, got:\n%s", want, answer)
+		}
+	}
+
+	if strings.Contains(answer, "old_text did not appear") {
+		t.Fatalf("fallback should report the verification blocker, not a later duplicate edit failure:\n%s", answer)
 	}
 }
 
@@ -33426,6 +33467,23 @@ func countEventsByRole(events []RunEvent, role string) int {
 	return n
 }
 
+func TestImplementationLifecycleSnapshotActiveOnStopReasonOnly(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily: "implementation",
+		},
+	}
+
+	snapshot, ok := runner.implementationLifecycleSnapshot(nil, "model_call_budget_exhausted", 0)
+	if !ok {
+		t.Fatal("expected stop-reason-only lifecycle snapshot to be active")
+	}
+
+	if snapshot.StopReason != "model_call_budget_exhausted" {
+		t.Fatalf("stop reason = %q", snapshot.StopReason)
+	}
+}
+
 // TestToolFailureStreakTerminatesAfterRecoveryNudge verifies the bail
 // path: if a path-stem tool-failure streak continues after the soft
 // recovery nudge has already fired once, the runner terminates the
@@ -36660,6 +36718,50 @@ func TestFinalAnswerBlockerKindAllowsProposedMissingPlanPaths(t *testing.T) {
 	}
 }
 
+func TestFinalAnswerBlockerKindIgnoresSchemaPlaceholderSourcePath(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The source-grounding recovery prompt used `path/file.go` as a schema placeholder; that placeholder is not a repository citation or a missing source file."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, nil)
+	if kind == "source_grounding_unmet" {
+		t.Fatalf("schema placeholder path should not require source-body evidence, reason=%q", reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRequiresEvidenceForRealPlaceholderNamedPath(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "path", "file.go")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("package path\n\nfunc RealFile() {}\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The root cause is in `path/file.go` lines 1-3 where `RealFile` is declared."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, nil)
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("real path/file.go citation got blocker_kind=%q reason=%q, want source_grounding_unmet", kind, reason)
+	}
+}
+
 func TestFinalAnswerBlockerKindAllowsPlannedTestsFromTypedPlanArtifact(t *testing.T) {
 	root := t.TempDir()
 	runner := &Runner{
@@ -37884,6 +37986,11 @@ func TestLooksLikeNonAnswerProseRejectsLiveFailures(t *testing.T) {
 			true,
 		},
 		{
+			"13:19 - evidence-complete answer-above meta final",
+			"I have all the evidence I need. The answer above is complete and grounded in the source files I've read.",
+			true,
+		},
+		{
 			"embedded question protocol marker",
 			"Findings so far: the run found the latest log.\n<<QUESTION>>: Need permission to read the conversation log outside the workspace.",
 			true,
@@ -37991,6 +38098,7 @@ func TestFinalAnswerBlockerRejectsProtocolMetaFinalAnswerShapes(t *testing.T) {
 		"The answer above is grounded in the inspected evidence (`.planning/20260621-161128.627.md` lines 25-39 for the planned tests). The proposed additions are explicitly marked as `unverified - proposed` since they don't exist on disk. This satisfies the gate requirements.",
 		"This satisfies the gate requirements because the answer cites the inspected plan artifact and marks proposed additions as unverified.",
 		"This satisfies the gate requirements because the completion gate accepted it.",
+		"I have all the evidence I need. The answer above is complete and grounded in the source files I've read.",
 		"Findings so far: I identified the newest conversation log at `/home/dev/.idiom/logs/conversations/20260622-064537.192-20260622-104535.851.jsonl`.\n<<QUESTION>>: I need permission to read the conversation log from the user-level path.",
 		"Findings so far: I identified the newest conversation log.\n### <<QUESTION>> — Exact Blocker\nI need permission to read the conversation log from the user-level path.",
 	}

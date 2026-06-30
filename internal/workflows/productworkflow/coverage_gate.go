@@ -240,7 +240,7 @@ func BuildSatisfiedTDDObligationIDs(ledger TDDLedger, records []ImplementationLe
 	}
 
 	for _, rec := range records {
-		if rec.RecordType != "verification_completed" {
+		if rec.RecordType != LedgerRecordVerificationCompleted {
 			continue
 		}
 

@@ -1,6 +1,8 @@
 package postflight
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -128,6 +130,94 @@ func TestFileAllowlistMismatchNoOpsWithoutAllowlist(t *testing.T) {
 
 	if len(findings) != 0 {
 		t.Fatalf("absent allowlist must produce no findings, got %v", findings)
+	}
+}
+
+func TestCodingRulesCheckNoOpsWithoutProjectPolicy(t *testing.T) {
+	d := Diff{Files: []FileChange{{Path: "wrapper.go"}}}
+
+	findings, err := CodingRulesCheck{}.Run(d, RunContext{ProjectRoot: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("coding rules should no-op without project policy, got %#v", findings)
+	}
+}
+
+func TestCodingRulesCheckMapsBlockingFindingToError(t *testing.T) {
+	root := t.TempDir()
+	writePostflightFile(t, root, ".idiom/coding_rules.json", `{
+		"schema_version":"idiom.coding_rules.v1",
+		"rules":[{
+			"id":"go.no_pass_through_wrapper",
+			"enforcement":"blocking",
+			"severity":"error"
+		}]
+	}`)
+	writePostflightFile(t, root, "wrapper.go", `package sample
+
+func target(v string) string { return v }
+
+func Wrapper(v string) string {
+	return target(v)
+}
+`)
+
+	d := Diff{Files: []FileChange{{Path: "wrapper.go"}}}
+	findings, err := CodingRulesCheck{}.Run(d, RunContext{ProjectRoot: root})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %#v, want one", findings)
+	}
+	if findings[0].Severity != SeverityError || findings[0].Check != "coding_rules" {
+		t.Fatalf("unexpected finding: %#v", findings[0])
+	}
+}
+
+func TestCodingRulesCheckKeepsAdvisoryErrorNonBlocking(t *testing.T) {
+	root := t.TempDir()
+	writePostflightFile(t, root, ".idiom/coding_rules.json", `{
+		"schema_version":"idiom.coding_rules.v1",
+		"rules":[{
+			"id":"go.no_pass_through_wrapper",
+			"enforcement":"advisory",
+			"severity":"error"
+		}]
+	}`)
+	writePostflightFile(t, root, "wrapper.go", `package sample
+
+func target(v string) string { return v }
+
+func Wrapper(v string) string {
+	return target(v)
+}
+`)
+
+	d := Diff{Files: []FileChange{{Path: "wrapper.go"}}}
+	findings, err := CodingRulesCheck{}.Run(d, RunContext{ProjectRoot: root})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %#v, want one", findings)
+	}
+	if findings[0].Severity != SeverityWarning {
+		t.Fatalf("advisory coding rule should not fail postflight, got %#v", findings[0])
+	}
+}
+
+func writePostflightFile(t *testing.T, root string, rel string, body string) {
+	t.Helper()
+
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", rel, err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write %s: %v", rel, err)
 	}
 }
 
@@ -357,7 +447,7 @@ func TestCommentBodyParsesMultipleSyntaxes(t *testing.T) {
 // generic check must be added here alongside the docs.
 func TestGenericChecksReturnsCanonicalSet(t *testing.T) {
 	got := GenericChecks()
-	want := []string{"unresolved_question_marker", "file_allowlist_mismatch", "narrating_test_comments", "go_build_passes"}
+	want := []string{"unresolved_question_marker", "file_allowlist_mismatch", "narrating_test_comments", "go_build_passes", "coding_rules"}
 
 	if len(got) != len(want) {
 		t.Fatalf("expected %d generic checks, got %d", len(want), len(got))

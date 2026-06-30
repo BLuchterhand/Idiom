@@ -2798,6 +2798,219 @@ func TestRunExecutorPhaseRejectsMissingPathWithoutNewFileAuthorization(t *testin
 	}
 }
 
+func TestRunPlanApprovalAuthorizesApprovedNewFilePath(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+
+	var stdout, stderr bytes.Buffer
+	approvalRequests := 0
+	sessionID := "approval-new-file-test"
+
+	result := runForTest(cfg, Options{
+		Prompt:            "Create generated.txt.",
+		SessionID:         sessionID,
+		RequiredEditPaths: MultiFlag{"generated.txt"},
+		JSONEvents:        true,
+		OnPlanApproval: func(_ context.Context, req PlanApprovalRequest) PlanApprovalDecision {
+			approvalRequests++
+			if !slices.Equal(req.Paths, []string{"generated.txt"}) {
+				t.Fatalf("approval paths = %#v, want generated.txt", req.Paths)
+			}
+			progressPath, _, err := progressStatePath(root, sessionID)
+			if err != nil {
+				t.Fatalf("progress state path: %v", err)
+			}
+			body, err := os.ReadFile(progressPath)
+			if err != nil {
+				t.Fatalf("approval exposed before durable progress state: %v", err)
+			}
+			var state ProgressState
+			if err := json.Unmarshal(body, &state); err != nil {
+				t.Fatalf("decode progress state during approval: %v", err)
+			}
+			if state.PlanPath == "" {
+				t.Fatalf("approval exposed before progress state recorded plan path: %#v", state)
+			}
+			return PlanApprovalDecision{Approved: true}
+		},
+	}, func(callCfg config.Config, _ string, opts RunOptions, _ io.Writer) (string, error) {
+		switch opts.TaskFamily {
+		case string(autonomy.TaskFamilyPlanThenExecutePlanner):
+			mgr := workspace.NewManager(callCfg.Workspace)
+			res := mgr.Execute(context.Background(), workspace.ToolRequest{
+				Tool:      workspace.ToolNameSubmitPlan,
+				Rationale: "Create generated.txt.",
+				Edits: []planartifact.PlanEdit{{
+					Path:       "generated.txt",
+					ReplaceAll: true,
+					NewText:    "generated\n",
+					Purpose:    "create generated file",
+				}},
+			})
+			if strings.TrimSpace(res.Error) != "" {
+				return "", fmt.Errorf("submit_plan: %s", res.Error)
+			}
+			return "Plan submitted.", nil
+		case string(autonomy.TaskFamilyPlanThenExecuteReview):
+			return "Decision: pass\n\nVerification Checklist:\n- Required behavior: generated.txt exists.\n- Scope safety: changed path is limited to generated.txt.", nil
+		default:
+			return "", fmt.Errorf("unexpected task family %q", opts.TaskFamily)
+		}
+	}, nil, &stdout, &stderr)
+
+	if result.ExitCode != 0 {
+		t.Fatalf("Run exit=%d result=%#v stdout=%s stderr=%s", result.ExitCode, result, stdout.String(), stderr.String())
+	}
+	if approvalRequests != 1 {
+		t.Fatalf("approval requests = %d, want 1", approvalRequests)
+	}
+	if got := readFileStringForRunTest(t, filepath.Join(root, "generated.txt")); got != "generated\n" {
+		t.Fatalf("generated file = %q, want generated", got)
+	}
+
+	storedPlan, err := workspace.LoadPlanArtifact(filepath.Join(root, ".idiom", "plans", "last.plan.json"))
+	if err != nil {
+		t.Fatalf("load approved plan artifact: %v", err)
+	}
+	if storedPlan.Approval.Status != planartifact.ApprovalStatusApproved ||
+		storedPlan.Approval.ExecutionPermission != planartifact.ExecutionPermissionExecuteAll ||
+		!slices.Equal(storedPlan.Approval.ApprovedPaths, []string{"generated.txt"}) {
+		t.Fatalf("stored approval = %#v, want approved generated.txt", storedPlan.Approval)
+	}
+}
+
+func TestReviewRepairNonInteractiveDoesNotTrustSelfApprovedRepairPlanForNewFile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "existing.txt"), []byte("old\n"), 0o644); err != nil {
+		t.Fatalf("seed existing file: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+
+	originalPlan := planartifact.NormalizeForSubmit(planartifact.PlanArtifact{
+		Rationale: "Original implementation missed the generated file.",
+		Task:      planartifact.PlanArtifactTask{Summary: "review repair new file authorization"},
+		Contract: planartifact.PlanArtifactContract{
+			RequiredEditPaths: []string{"existing.txt", "generated.txt"},
+		},
+		Paths: planartifact.PlanArtifactPaths{
+			Required: []string{"existing.txt", "generated.txt"},
+			Editable: []string{"existing.txt"},
+			Changed:  []string{"existing.txt"},
+		},
+		Edits: []planartifact.PlanEdit{{
+			Path:    "existing.txt",
+			OldText: "old\n",
+			NewText: "old\n",
+			Purpose: "leave existing implementation unchanged for fixture",
+		}},
+	}, planartifact.NormalizeForSubmitOptions{
+		PlanID:    "original-plan",
+		SessionID: "original-session",
+		Created:   time.Now().UTC().Format(time.RFC3339Nano),
+	})
+	baseline := CaptureReviewRepairBaseline(root, []string{"existing.txt"})
+	reviewSessionID := "self-approved-repair"
+
+	var stdout bytes.Buffer
+	report, err := runReviewRepairPhaseForTest(
+		cfg,
+		"Create existing.txt and generated.txt.",
+		originalPlan,
+		[]string{"existing.txt", "generated.txt"},
+		&baseline,
+		ExecutorPhaseReport{Succeeded: 1},
+		Options{
+			ReviewSessionID: reviewSessionID,
+			JSONEvents:      true,
+		},
+		&stdout,
+		func(callCfg config.Config, _ string, _ RunOptions, _ io.Writer) (string, error) {
+			created := time.Now().UTC().Format(time.RFC3339Nano)
+			repairPlan := planartifact.NormalizeForSubmit(planartifact.PlanArtifact{
+				Rationale: "Verification Checklist:\n- generated.txt is created.\n- Scope safety: only generated.txt is added.",
+				Task:      planartifact.PlanArtifactTask{Summary: "create missing generated file"},
+				Contract: planartifact.PlanArtifactContract{
+					Kind:              planartifact.ContractKindPlanThenExecute,
+					StrategyOwner:     planartifact.OwnerModel,
+					ContractOwner:     planartifact.OwnerHarness,
+					PermissionProfile: planartifact.PermissionProfilePlanThenExecute,
+					VerificationOwner: planartifact.OwnerPlanner,
+					RequiredEditPaths: []string{"generated.txt"},
+				},
+				Paths: planartifact.PlanArtifactPaths{
+					Required: []string{"generated.txt"},
+					Editable: []string{"generated.txt"},
+					Changed:  []string{"generated.txt"},
+				},
+				Approval: planartifact.PlanArtifactApproval{
+					Required:            true,
+					Status:              planartifact.ApprovalStatusApproved,
+					Mode:                planartifact.ApprovalModePlanThenExecute,
+					ApprovedBy:          "model-authored-fixture",
+					ApprovedAt:          created,
+					ApprovedPaths:       []string{"generated.txt"},
+					ExecutionPermission: planartifact.ExecutionPermissionExecuteAll,
+				},
+				Handoff: planartifact.PlanArtifactHandoff{
+					From:   planartifact.OwnerPlanner,
+					To:     planartifact.HandoffTargetPlanExecuteExecutor,
+					Status: planartifact.HandoffStatusReady,
+					Ready:  true,
+				},
+				VerificationObligations: []planartifact.PlanArtifactVerificationObligation{{
+					ID:       "verification-1",
+					Kind:     planartifact.VerificationKindExecutorLaneSanity,
+					Owner:    planartifact.OwnerPlanner,
+					Status:   planartifact.VerificationStatusOpen,
+					Required: true,
+				}},
+				Edits: []planartifact.PlanEdit{{
+					Path:       "generated.txt",
+					ReplaceAll: true,
+					NewText:    "generated\n",
+					Purpose:    "create the missing required file",
+				}},
+			}, planartifact.NormalizeForSubmitOptions{
+				PlanID:    "self-approved-repair-plan",
+				SessionID: callCfg.Workspace.SessionID,
+				Created:   created,
+			})
+			body, err := json.MarshalIndent(repairPlan, "", "  ")
+			if err != nil {
+				return "", err
+			}
+			planDir := filepath.Join(root, ".idiom", "plans")
+			if err := os.MkdirAll(planDir, 0o755); err != nil {
+				return "", err
+			}
+			planPath := filepath.Join(planDir, "20260628-214652354.plan.json")
+			if err := os.WriteFile(planPath, append(body, '\n'), 0o644); err != nil {
+				return "", err
+			}
+
+			return "Plan submitted.", nil
+		},
+		nil,
+	)
+
+	if err == nil || !strings.Contains(err.Error(), "without new-file authorization") {
+		t.Fatalf("expected noninteractive self-approved repair plan to fail new-file authorization, report=%#v err=%v stdout=%s", report, err, stdout.String())
+	}
+	if report.Status != plancontract.PlanExecuteReviewStatusFailed {
+		t.Fatalf("review repair status = %s, want failed", report.Status)
+	}
+	if _, err := os.Stat(filepath.Join(root, "generated.txt")); !os.IsNotExist(err) {
+		t.Fatalf("generated.txt should not be written, stat err=%v", err)
+	}
+}
+
 func TestVerificationPlanRejectsFailExecutorVerification(t *testing.T) {
 	var stdout bytes.Buffer
 

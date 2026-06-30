@@ -164,6 +164,36 @@ func TestLogRunEventEmitsCompletionStatusJSON(t *testing.T) {
 	}
 }
 
+func TestLogRunEventEmitsImplementationLifecycleStateJSON(t *testing.T) {
+	var buf bytes.Buffer
+
+	model := &Model{}
+	model.SetJSONEventStream(&buf, "sess-1")
+
+	model.logRunEvent(agent.RunEvent{
+		Role:    "implementation_lifecycle_state",
+		Content: `{"phase":"implementation.target_write_ready","stop_reason":"model_call_budget_exhausted","remaining_required_edit_paths":["internal/runtime/agent/runner_core.go"],"write_ready_nudge_count":2}`,
+	})
+
+	events := decodeJSONEvents(t, buf.String())
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d (%v)", len(events), events)
+	}
+
+	event := events[0]
+	if event["type"] != "implementation_lifecycle_state" || event["phase"] != "implementation.target_write_ready" {
+		t.Fatalf("bad lifecycle event: %v", event)
+	}
+
+	if event["stop_reason"] != "model_call_budget_exhausted" || event["write_ready_nudge_count"] != float64(2) {
+		t.Fatalf("missing lifecycle metadata: %v", event)
+	}
+
+	if event["session_id"] != "sess-1" {
+		t.Fatalf("session_id missing on lifecycle event: %v", event)
+	}
+}
+
 func TestLogRunEventStoresInternalRecoveryAsRunEvent(t *testing.T) {
 	logger, err := transcript.NewDebugLogger(transcript.DebugLoggerOptions{
 		Dir:  t.TempDir(),

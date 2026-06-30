@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	recoverycontract "idiom/internal/contracts/recovery"
 )
 
 const RelPath = ".idiom/lane-history.jsonl"
@@ -20,26 +22,27 @@ const (
 )
 
 type Event struct {
-	Timestamp        string   `json:"ts"`
-	Mode             string   `json:"mode"`
-	Brief            string   `json:"brief"`
-	BriefMtime       string   `json:"brief_mtime,omitempty"`
-	BriefProvenance  string   `json:"brief_provenance,omitempty"`
-	Title            string   `json:"title,omitempty"`
-	ExitCode         int      `json:"exit_code"`
-	FinalState       string   `json:"final_state,omitempty"`
-	SessionID        string   `json:"session_id,omitempty"`
-	QueuePool        string   `json:"queue_pool,omitempty"`
-	ModelCalls       int      `json:"model_calls,omitempty"`
-	ToolCalls        int      `json:"tool_calls,omitempty"`
-	PromptTokens     int      `json:"prompt_tokens,omitempty"`
-	CompletionTokens int      `json:"completion_tokens,omitempty"`
-	TotalTokens      int      `json:"total_tokens,omitempty"`
-	PeakPromptTokens int      `json:"peak_prompt_tokens,omitempty"`
-	ContextSize      int      `json:"ctx_size,omitempty"`
-	DurationMS       int      `json:"duration_ms,omitempty"`
-	StopReason       string   `json:"stop_reason,omitempty"`
-	Degradations     []string `json:"degradations,omitempty"`
+	Timestamp        string                                `json:"ts"`
+	Mode             string                                `json:"mode"`
+	Brief            string                                `json:"brief"`
+	BriefMtime       string                                `json:"brief_mtime,omitempty"`
+	BriefProvenance  string                                `json:"brief_provenance,omitempty"`
+	Title            string                                `json:"title,omitempty"`
+	ExitCode         int                                   `json:"exit_code"`
+	FinalState       string                                `json:"final_state,omitempty"`
+	SessionID        string                                `json:"session_id,omitempty"`
+	QueuePool        string                                `json:"queue_pool,omitempty"`
+	ModelCalls       int                                   `json:"model_calls,omitempty"`
+	ToolCalls        int                                   `json:"tool_calls,omitempty"`
+	PromptTokens     int                                   `json:"prompt_tokens,omitempty"`
+	CompletionTokens int                                   `json:"completion_tokens,omitempty"`
+	TotalTokens      int                                   `json:"total_tokens,omitempty"`
+	PeakPromptTokens int                                   `json:"peak_prompt_tokens,omitempty"`
+	ContextSize      int                                   `json:"ctx_size,omitempty"`
+	DurationMS       int                                   `json:"duration_ms,omitempty"`
+	StopReason       string                                `json:"stop_reason,omitempty"`
+	Degradations     []string                              `json:"degradations,omitempty"`
+	Implementation   *recoverycontract.ImplementationState `json:"implementation_state,omitempty"`
 }
 
 const refineDraftedMarker = "<!-- idiom:refine-drafted"

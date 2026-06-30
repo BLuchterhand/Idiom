@@ -48,6 +48,31 @@ type PhaseFunc func(phase, detail string)
 
 type EditProgressFunc func(step, total int, path string, succeeded bool)
 
+type PlanApprovalPhase string
+
+const (
+	PlanApprovalPhaseInitial      PlanApprovalPhase = "initial"
+	PlanApprovalPhaseReviewRepair PlanApprovalPhase = "review_repair"
+)
+
+type PlanApprovalRequest struct {
+	Phase                   PlanApprovalPhase
+	PlanPath                string
+	Plan                    planartifact.PlanArtifact
+	Paths                   []string
+	PreviouslyApprovedPaths []string
+}
+
+type PlanApprovalDecision struct {
+	Approved      bool
+	Blanket       bool
+	ApprovedPaths []string
+	ApprovedBy    string
+	Reason        string
+}
+
+type PlanApprovalFunc func(context.Context, PlanApprovalRequest) PlanApprovalDecision
+
 type ScopeExtractionPolicy string
 
 const (
@@ -82,6 +107,7 @@ type Options struct {
 	SessionID                        string
 	OnPhase                          PhaseFunc
 	OnEditProgress                   EditProgressFunc
+	OnPlanApproval                   PlanApprovalFunc
 }
 
 type ExecutorHandoffPacket struct {
@@ -226,6 +252,7 @@ type ReviewRepairPhaseReport struct {
 	Skipped              bool
 	Status               plancontract.PlanExecuteReviewStatus
 	StatusDetail         string
+	FailureKind          plancontract.PlanExecuteFailureKind
 	FailureReason        string
 	Repairs              int
 	AutoRepairs          int

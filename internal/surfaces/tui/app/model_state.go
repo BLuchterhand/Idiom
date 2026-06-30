@@ -234,6 +234,7 @@ type Model struct {
 	agentModeName                  string
 	forcedTaskFamily               string
 	suppressPromptTranscript       bool
+	requestHistoryOverride         *[]llama.ChatMessage
 	nonInteractive                 bool
 	plannerOwnedVerification       bool
 	lastPlanExecuteRunResult       *planexecute.RunResult
@@ -263,11 +264,15 @@ type Model struct {
 
 	pinnedFiles *PinnedFileRegistry
 
-	approvalMu      sync.Mutex
-	approvalSerial  sync.Mutex
-	approvalPending *pendingApproval
-	modelPopup      modelPopupState
-	laneSwitchPopup laneSwitchPopupState
+	approvalMu                 sync.Mutex
+	approvalSerial             sync.Mutex
+	approvalPending            *pendingApproval
+	planApprovalMu             sync.Mutex
+	planApprovalSerial         sync.Mutex
+	planApprovalPending        *pendingPlanApproval
+	planExecuteApproveAllEdits bool
+	modelPopup                 modelPopupState
+	laneSwitchPopup            laneSwitchPopupState
 	// lastLaneSwitchSelection records the most recent lane command key
 	// chosen from the lane-switch popup. It supports test assertions and
 	// operator telemetry without coupling the popup to the dispatch path.
@@ -366,6 +371,8 @@ type planPhaseMsg struct {
 	phase  string
 	detail string
 }
+
+type planApprovalRequiredMsg struct{}
 
 // ── Evidence container types ─────────────────────────────────────────────────
 
@@ -1435,6 +1442,19 @@ func (m *Model) logRunEvent(event agent.RunEvent) {
 
 		if m.debugLogger != nil {
 			_ = m.debugLogger.LogMessage(event.Role, event.Content)
+		}
+
+		return
+	case "implementation_lifecycle_state":
+		var payload map[string]any
+
+		if err := json.Unmarshal([]byte(event.Content), &payload); err == nil {
+			payload["type"] = "implementation_lifecycle_state"
+			m.emitJSONEvent(payload)
+		}
+
+		if m.debugLogger != nil {
+			_ = m.debugLogger.LogRunEvent(event.Role, event.Content)
 		}
 
 		return

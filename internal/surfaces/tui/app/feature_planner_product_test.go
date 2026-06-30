@@ -2619,7 +2619,7 @@ func TestFeaturePlannerTUIE2EProductCoveragePromotionContextResumePlanDisplay(t 
 		TDD:              promoted,
 		Traceability:     traceability,
 		ImplementationRecords: []productworkflow.ImplementationLedgerRecord{{
-			RecordType: "atom_planned",
+			RecordType: productworkflow.LedgerRecordAtomPlanned,
 			TaskID:     "collapse-task",
 			EffortID:   "collapse-effort",
 			Scope:      &productworkflow.AtomScope{ExpectedFiles: []string{"pkg/collapse_event.go", "pkg/collapse_event_test.go"}},
@@ -3700,7 +3700,7 @@ func writeNativeQualityEffort(t *testing.T, effortRoot string) {
 	})
 
 	records := []productworkflow.ImplementationLedgerRecord{{
-		RecordType:     "atom_planned",
+		RecordType:     productworkflow.LedgerRecordAtomPlanned,
 		TaskID:         "mwe-1.3b-native-quality",
 		EffortID:       "native-quality",
 		Timestamp:      "2026-06-05T00:04:00Z",
@@ -3719,7 +3719,7 @@ func writeNativeQualityEffort(t *testing.T, effortRoot string) {
 			Investigation:  "reports/mwe-1.3b-investigation.json",
 		},
 	}, {
-		RecordType:              "verification_completed",
+		RecordType:              productworkflow.LedgerRecordVerificationCompleted,
 		TaskID:                  "mwe-1.3b-native-quality",
 		EffortID:                "native-quality",
 		Timestamp:               "2026-06-05T00:05:00Z",
@@ -4855,7 +4855,7 @@ func TestBuildProductWorkflowBriefCarriesAcceptedBehavioralCoverageWhileTDDEvide
 
 	workflowState := productworkflow.WorkflowState{LastEventID: "evt-product-coverage"}
 	implementationRecords := []productworkflow.ImplementationLedgerRecord{{
-		RecordType: "atom_planned",
+		RecordType: productworkflow.LedgerRecordAtomPlanned,
 		TaskID:     "task-product",
 		Scope:      &productworkflow.AtomScope{ExpectedFiles: []string{"internal/surfaces/tui/app/feature_planner_product.go"}},
 	}}
@@ -5026,11 +5026,11 @@ func TestBuildProductWorkflowBriefAllowsResolvedImplementationEvidence(t *testin
 			}},
 		},
 		[]productworkflow.ImplementationLedgerRecord{{
-			RecordType: "atom_planned",
+			RecordType: productworkflow.LedgerRecordAtomPlanned,
 			TaskID:     "task-1",
 			Scope:      &productworkflow.AtomScope{ExpectedFiles: []string{"internal/surfaces/tui/app/feature_planner_product.go"}},
 		}, {
-			RecordType:              "verification_completed",
+			RecordType:              productworkflow.LedgerRecordVerificationCompleted,
 			TaskID:                  "task-1",
 			EffortID:                "effort-1",
 			TDDObligationsSatisfied: []string{"TDD-1"},
@@ -5094,11 +5094,11 @@ func TestBuildProductWorkflowBriefUsesVerificationRecordsForCoverageGate(t *test
 			TDDObligation:  "TDD-VERIFIED",
 		}}},
 		[]productworkflow.ImplementationLedgerRecord{{
-			RecordType: "atom_planned",
+			RecordType: productworkflow.LedgerRecordAtomPlanned,
 			TaskID:     "task-verified",
 			Scope:      &productworkflow.AtomScope{ExpectedFiles: []string{"internal/surfaces/tui/app/feature_planner_product.go"}},
 		}, {
-			RecordType:              "verification_completed",
+			RecordType:              productworkflow.LedgerRecordVerificationCompleted,
 			TaskID:                  "task-verified",
 			EffortID:                "effort-verified",
 			TDDObligationsSatisfied: []string{"TDD-VERIFIED"},

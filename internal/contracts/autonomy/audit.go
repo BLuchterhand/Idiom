@@ -1989,7 +1989,7 @@ func TurnPhaseActionClassForToolClass(tool string) ActionClass {
 		return ActionClassSubmitPlan
 	case "edit_file", "write_file", "append_file", "mkdir", "apply_patch", "go_move_declarations", "delegate_edit":
 		return ActionClassPerEditWrite
-	case "shell", "source_sanity", "git_diff", "git_status", "context_trace_pack", "go_diagnostics", "cpp_diagnostics", "java_diagnostics", "python_diagnostics", "rust_diagnostics", "ts_diagnostics":
+	case "shell", "source_sanity", "coding_rules_check", "git_diff", "git_status", "context_trace_pack", "go_diagnostics", "cpp_diagnostics", "java_diagnostics", "python_diagnostics", "rust_diagnostics", "ts_diagnostics":
 		return ActionClassVerify
 	case "task":
 		return ActionClassGenericProbe

@@ -803,7 +803,7 @@ func collectPlannedScopeFiles(records []ImplementationLedgerRecord, taskID strin
 
 	for i := len(records) - 1; i >= 0; i-- {
 		rec := records[i]
-		if rec.RecordType != "atom_planned" || rec.Scope == nil || strings.TrimSpace(rec.TaskID) != strings.TrimSpace(taskID) {
+		if rec.RecordType != LedgerRecordAtomPlanned || rec.Scope == nil || strings.TrimSpace(rec.TaskID) != strings.TrimSpace(taskID) {
 			continue
 		}
 
@@ -862,7 +862,7 @@ func dispatchImplementationPaths(paths []string) []string {
 func collectPlannedVerification(records []ImplementationLedgerRecord, taskID string) []string {
 	for i := len(records) - 1; i >= 0; i-- {
 		rec := records[i]
-		if rec.RecordType == "atom_planned" && strings.TrimSpace(rec.TaskID) == strings.TrimSpace(taskID) {
+		if rec.RecordType == LedgerRecordAtomPlanned && strings.TrimSpace(rec.TaskID) == strings.TrimSpace(taskID) {
 			return rec.RequiredVerification
 		}
 	}

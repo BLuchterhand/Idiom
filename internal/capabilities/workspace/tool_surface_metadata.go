@@ -64,6 +64,7 @@ var builtInToolSurfaceCatalog = toolcatalog.MustNewToolSurfaceCatalog([]toolcata
 	{Tool: ToolNameCodeNavigate, Category: int(CategoryRead), DefaultManifest: true, Narrowing: true, EvidenceCapabilities: CodeNavigationEvidenceCapabilities(), CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, RuntimeSourceInspection: true, PlannerAllowed: true, ActionClass: "read"},
 	{Tool: readOnlyCapabilityToolName, Category: int(CategoryRead), DefaultManifest: true, Narrowing: true, EvidenceCapabilities: ReadOnlyCapabilityEvidenceCapabilities(), CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, ActionClass: "read"},
 	{Tool: ToolNameSourceSanity, Category: int(CategoryRead), DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{EvidenceCapabilitySourceDiagnostics, EvidenceCapabilityVerifyEdit}, CapabilityClassification: CapabilityClassDeferred, PolicyCapabilities: policyShellVerification, SideEffects: sideEffectReadOnlyUnknown, RuntimeSourceInspection: true, ActionClass: "verify"},
+	{Tool: ToolNameCodingRulesCheck, Category: int(CategoryRead), DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{EvidenceCapabilitySourceDiagnostics, EvidenceCapabilityVerifyEdit}, CapabilityClassification: CapabilityClassDeferred, PolicyCapabilities: policyShellVerification, SideEffects: sideEffectReadOnly, RuntimeSourceInspection: true, ActionClass: "verify"},
 	{Tool: ToolNameHarnessAudit, Category: int(CategoryRead), DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{EvidenceCapabilityAuditBehavior}, CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, ActionClass: "search"},
 	{Tool: ToolNameHarnessFeedback, Category: int(CategoryVerification), DefaultManifest: true, Narrowing: true, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectAdditive, PlannerAllowed: true},
 	{Tool: ToolNameRecoveryInspect, Category: int(CategoryRead), DefaultManifest: true, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, MCPDiscoveryProfile: true, PlannerAllowed: true},
@@ -90,6 +91,7 @@ var builtInToolSurfaceCatalog = toolcatalog.MustNewToolSurfaceCatalog([]toolcata
 	{Tool: ToolNameGitStatus, Category: int(CategoryShell), DefaultManifest: true, PolicyCapabilities: policyBoundedRead, SideEffects: sideEffectReadOnly, ActionClass: "verify"},
 	{Tool: ToolNameGitDiff, Category: int(CategoryShell), DefaultManifest: true, PolicyCapabilities: policyBoundedRead, SideEffects: sideEffectReadOnly, ActionClass: "verify"},
 	{Tool: ToolNameShell, Category: int(CategoryShell), DefaultManifest: true, EvidenceCapabilities: []string{EvidenceCapabilityVerifyEdit}, CapabilityClassification: CapabilityClassDeferred, PolicyCapabilities: policyMutatingShell, SideEffects: sideEffectUnknown, ActionClass: "verify"},
+	{Tool: ToolNameSystemSearchAccess, Category: int(CategoryVerification), DefaultManifest: true, PolicyCapabilities: policyBoundedRead, SideEffects: sideEffectReadOnlyAdditive, PlannerAllowed: true, ActionClass: "generic_probe"},
 	{Tool: ToolNameTaskLedger, PolicyCapabilities: policyExternalWrite, SideEffects: sideEffectAdditive},
 	{Tool: ToolNameTask, PolicyCapabilities: policyDelegation, SideEffects: sideEffectReadOnlyAdditive, ActionClass: "generic_probe"},
 	{Tool: ToolNameEditFile, Category: int(CategoryWrite), PolicyCapabilities: policySourceEdit, SideEffects: sideEffectAdditive, ActionClass: "per_edit_write"},
@@ -145,10 +147,6 @@ func builtInToolSurfaceSpecFromCatalog(spec toolcatalog.ToolSurfaceSpec) builtIn
 	}
 }
 
-func builtInToolSurfaceMetadata(tool string) (builtInToolSurfaceSpec, bool) {
-	return BuiltInToolSurfaceMetadata(tool)
-}
-
 // ToolActionClass returns the action class for a tool, or empty string if unknown.
 func ToolActionClass(tool string) string {
 	spec, ok := BuiltInToolSurfaceMetadata(tool)
@@ -187,7 +185,7 @@ func builtInToolSurfaceToolsByCategoryWithoutLanguageSpecific(category ToolCateg
 }
 
 func builtInToolSurfaceEvidenceCapabilities(tool string) []string {
-	spec, ok := builtInToolSurfaceMetadata(tool)
+	spec, ok := BuiltInToolSurfaceMetadata(tool)
 	if !ok || len(spec.EvidenceCapabilities) == 0 {
 		return nil
 	}
@@ -196,7 +194,7 @@ func builtInToolSurfaceEvidenceCapabilities(tool string) []string {
 }
 
 func builtInToolSurfacePolicyCapabilities(tool string) []autonomy.Capability {
-	spec, ok := builtInToolSurfaceMetadata(tool)
+	spec, ok := BuiltInToolSurfaceMetadata(tool)
 	if !ok || len(spec.PolicyCapabilities) == 0 {
 		return nil
 	}
@@ -205,7 +203,7 @@ func builtInToolSurfacePolicyCapabilities(tool string) []autonomy.Capability {
 }
 
 func builtInToolSurfaceSideEffects(tool string) []autonomy.SideEffectClass {
-	spec, ok := builtInToolSurfaceMetadata(tool)
+	spec, ok := BuiltInToolSurfaceMetadata(tool)
 	if !ok || len(spec.SideEffects) == 0 {
 		return nil
 	}
@@ -214,12 +212,12 @@ func builtInToolSurfaceSideEffects(tool string) []autonomy.SideEffectClass {
 }
 
 func builtInToolSurfaceMCPDiscoveryProfileTool(tool string) bool {
-	spec, ok := builtInToolSurfaceMetadata(tool)
+	spec, ok := BuiltInToolSurfaceMetadata(tool)
 	return ok && spec.MCPDiscoveryProfile
 }
 
 func builtInToolSurfaceDiscoveryLocalArtifacts(tool string) bool {
-	spec, ok := builtInToolSurfaceMetadata(tool)
+	spec, ok := BuiltInToolSurfaceMetadata(tool)
 	return ok && spec.DiscoveryLocalArtifacts
 }
 
@@ -230,12 +228,12 @@ func builtInToolSurfaceDiscoveryLocalArtifactTools() []string {
 }
 
 func builtInToolSurfaceStaleContextErrors(tool string) bool {
-	spec, ok := builtInToolSurfaceMetadata(tool)
+	spec, ok := BuiltInToolSurfaceMetadata(tool)
 	return ok && spec.StaleContextErrors
 }
 
 func builtInToolSurfaceMCPDiscoveryReadModelTool(tool string) bool {
-	spec, ok := builtInToolSurfaceMetadata(tool)
+	spec, ok := BuiltInToolSurfaceMetadata(tool)
 	return ok && spec.MCPDiscoveryReadModel
 }
 

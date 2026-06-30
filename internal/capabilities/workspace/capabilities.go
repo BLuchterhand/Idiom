@@ -467,7 +467,7 @@ func CapabilityClassificationForTool(tool string) string {
 		return CapabilityClassDeferred
 	}
 
-	if metadata, ok := builtInToolSurfaceMetadata(tool); ok && metadata.CapabilityClassification != "" {
+	if metadata, ok := BuiltInToolSurfaceMetadata(tool); ok && metadata.CapabilityClassification != "" {
 		return metadata.CapabilityClassification
 	}
 

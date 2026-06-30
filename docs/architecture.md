@@ -34,6 +34,19 @@ flowchart LR
 The key boundary is that tools and audit evidence inform the model, while the
 harness remains responsible for enforcing what the model may do.
 
+## Coding Rule Contracts
+
+Coding rules are project-local harness contracts for recurring source patterns.
+The policy file names rules, languages, severities, enforcement levels, and
+documented suppressions. The analyzer produces typed findings with paths,
+symbols, hashes, and evidence facts instead of source snippets, so the model can
+respond to idiom violations without the harness prescribing a next reasoning
+step.
+
+The default posture is advisory. A repository can promote a rule to blocking
+when the rule represents a genuine invariant; lane postflight then treats
+blocking findings as failed verification.
+
 ## Design Rules
 
 - Keep prompt guidance, runtime gates, telemetry, and tests aligned.

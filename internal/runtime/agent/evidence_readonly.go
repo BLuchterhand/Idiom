@@ -7981,12 +7981,33 @@ func looksLikeGateSatisfactionMetaFinalAnswer(answer string) bool {
 		strings.HasPrefix(normalized, "the previous answer ") ||
 		strings.HasPrefix(normalized, "the prior answer ")
 	if selfReferential && agentutil.ContainsAny(normalized,
+		"complete and grounded",
 		"grounded in the inspected evidence",
 		"grounded in inspected evidence",
 		"satisfies the gate",
 		"satisfies the completion gate",
 		"satisfies the gate requirements",
 		"gate requirements",
+	) {
+		return true
+	}
+
+	if agentutil.ContainsAny(normalized,
+		"the answer above is complete",
+		"the answer above already answers",
+		"the answer above is grounded",
+		"the previous answer is complete",
+		"the previous answer already answers",
+		"the previous answer is grounded",
+		"the prior answer is complete",
+		"the prior answer already answers",
+		"the prior answer is grounded",
+	) && agentutil.ContainsAny(normalized,
+		"i have all the evidence",
+		"i have enough evidence",
+		"i have sufficient evidence",
+		"all the evidence i need",
+		"all the evidence needed",
 	) {
 		return true
 	}

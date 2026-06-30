@@ -395,7 +395,7 @@ func TestBDDTTDPipelineCarriesAcceptedCoverageThroughPlannerValidation(t *testin
 			Digest:  digest,
 		}},
 		ImplementationRecords: []productworkflow.ImplementationLedgerRecord{{
-			RecordType:           "atom_planned",
+			RecordType:           productworkflow.LedgerRecordAtomPlanned,
 			TaskID:               "task-pipeline",
 			Scope:                &productworkflow.AtomScope{ExpectedFiles: []string{"internal/pipeline/coverage.go", "internal/pipeline/coverage_test.go"}},
 			RequiredVerification: []string{"go test ./internal/workflows/featureplannerproduct"},

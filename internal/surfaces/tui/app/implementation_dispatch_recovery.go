@@ -37,14 +37,15 @@ func (m *Model) newPlanExecutePromptRunner(ctx context.Context) planexecute.Prom
 		restoreRoute := m.applyPlanExecutePromptRunnerRoute(ctx, opts)
 		restore := m.applyPlanExecutePromptRunnerState(cfg, opts, stdout)
 
-		priorMessages := append([]llama.ChatMessage(nil), m.messages...)
 		priorReasoning := m.lastAssistantReasoningContent
 		priorPinnedFiles := m.pinnedFiles
 		priorSuppressPromptTranscript := m.suppressPromptTranscript
+		priorRequestHistoryOverride := m.requestHistoryOverride
 		priorSuppressGreenfield := m.suppressGreenfieldConfirmation
 		priorDirectFeaturePlannerSessionID := m.directFeaturePlannerSessionID
 
-		m.messages = nil
+		emptyHistory := []llama.ChatMessage(nil)
+		m.requestHistoryOverride = &emptyHistory
 		m.lastAssistantReasoningContent = ""
 		m.pinnedFiles = nil
 		m.suppressPromptTranscript = true
@@ -52,10 +53,10 @@ func (m *Model) newPlanExecutePromptRunner(ctx context.Context) planexecute.Prom
 		m.directFeaturePlannerSessionID = ""
 
 		defer func() {
-			m.messages = priorMessages
 			m.lastAssistantReasoningContent = priorReasoning
 			m.pinnedFiles = priorPinnedFiles
 			m.suppressPromptTranscript = priorSuppressPromptTranscript
+			m.requestHistoryOverride = priorRequestHistoryOverride
 			m.suppressGreenfieldConfirmation = priorSuppressGreenfield
 			m.directFeaturePlannerSessionID = priorDirectFeaturePlannerSessionID
 
@@ -451,6 +452,14 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 		}
 	}
 
+	if len(requiredPaths) == 0 && len(allowedPaths) == 0 && len(planDocuments) == 0 {
+		if persistedScope, ok := m.persistedPlanExecuteScopeForContinuation(prompt); ok {
+			m.logMessage("dispatch_scope", fmt.Sprintf("executing recovered plan-execute continuation from progress state %s", persistedScope.StatePath))
+
+			return m.runPersistedPlanExecuteContinuation(ctx, prompt, plan, persistedScope)
+		}
+	}
+
 	return m.runSingleImplementationPlanExecute(ctx, prompt, plan, requiredPaths, allowedPaths, planDocuments)
 }
 
@@ -583,8 +592,112 @@ func implementationDispatchAnswerLooksBlocked(answer string) bool {
 		strings.Contains(lower, "still blocked by preflight")
 }
 
+func (m *Model) runPersistedPlanExecuteContinuation(ctx context.Context, prompt string, plan promptExecutionPlan, scope planexecute.ContinuationScope) (string, error) {
+	allow, blanket, ok := planExecuteApprovalDecisionFromOperatorInput(prompt)
+	if !ok || !allow {
+		return "", fmt.Errorf("plan-execute continuation requires operator approval input")
+	}
+
+	if blanket {
+		m.planExecuteApproveAllEdits = true
+	}
+
+	root := implementationDispatchWorkspaceRoot(m.cfg)
+	requiredPaths := appendUniqueBriefStrings(nil, scope.RequiredEditPaths...)
+	authorizedNewFiles := appendUniqueBriefStrings(plan.runtimeBrief.AuthorizedNewFiles, scope.AuthorizedNewFiles...)
+	planExecuteDeps := planexecuteadapters.Dependencies()
+
+	if len(requiredPaths) > 0 {
+		m.recordRollbackSnapshotsForPaths(requiredPaths)
+	}
+
+	opts := planexecute.Options{
+		Context:               ctx,
+		Prompt:                prompt,
+		Model:                 m.implementationDispatchPlanExecuteModelOverride(),
+		Resume:                scope.SessionID,
+		SessionID:             scope.SessionID,
+		RequiredEditPaths:     requiredPaths,
+		ScopeContract:         plancontract.NewPlanScopeContract(requiredPaths, nil, nil),
+		ScopeExtractionPolicy: planexecute.ScopeExtractionFrozen,
+		AuthorizedNewFiles:    authorizedNewFiles,
+		MaxTokens:             implementationDispatchPlanExecuteMaxTokens(root, prompt, requiredPaths, nil, nil),
+		OnPhase: func(phase, detail string) {
+			m.queueUIEvent(planPhaseMsg{phase: phase, detail: detail})
+		},
+		OnEditProgress: func(step, total int, path string, succeeded bool) {
+			if succeeded {
+				m.attachWriteToSubmittedEdit(path, fmt.Sprintf("pe-%d", step-1))
+			}
+
+			m.queueUIEvent(planRefreshMsg{})
+
+			label := "succeeded"
+			if !succeeded {
+				label = "failed"
+			}
+
+			m.queueUIEvent(planPhaseMsg{phase: "executing", detail: fmt.Sprintf("Edit %d/%d %s (%s)", step, total, filepath.Base(path), label)})
+		},
+		OnPlanApproval: func(approvalCtx context.Context, request planexecute.PlanApprovalRequest) planexecute.PlanApprovalDecision {
+			if request.Phase == planexecute.PlanApprovalPhaseInitial {
+				return planexecute.PlanApprovalDecision{
+					Approved:      true,
+					Blanket:       blanket,
+					ApprovedPaths: append([]string(nil), request.Paths...),
+					ApprovedBy:    "operator",
+				}
+			}
+
+			return m.requestPlanExecuteApproval(approvalCtx, request)
+		},
+	}
+
+	promptRun := m.newPlanExecutePromptRunner(ctx)
+
+	m.logMessage("dispatch", "invoking plan-execute continuation in-process")
+	m.queueUIEvent(infoMsg{text: "Executing approved plan-execute continuation..."})
+
+	var outBuf, errBuf bytes.Buffer
+
+	m.beginPlanExecuteApprovalSession()
+	defer m.endPlanExecuteApprovalSession()
+
+	result := planexecute.RunExecutorContinuationWithDependencies(m.cfg, opts, promptRun, nil, &outBuf, &errBuf, planExecuteDeps)
+
+	m.lastPlanExecuteRunResult = &result
+
+	m.logMessage("dispatch_result", fmt.Sprintf("plan-execute continuation finished (code=%d session=%s state=%s stdout=%d stderr=%d)",
+		result.ExitCode, result.SessionID, result.ResumeStatePath, outBuf.Len(), errBuf.Len()))
+
+	if result.ExitCode != 0 {
+		if msg, ok := m.humanPlanExecuteMissingNewFileAuthorizationMessage(result, authorizedNewFiles); ok {
+			return msg, nil
+		}
+
+		if msg, ok := humanPlanExecuteExecutionRecoveryOpenMessage(m.cfg.Workspace.Root, result, requiredPaths); ok {
+			return msg, nil
+		}
+
+		return "", fmt.Errorf("plan-execute continuation exited %d (session=%s state=%s): %s", result.ExitCode, result.SessionID, result.ResumeStatePath, strings.TrimSpace(errBuf.String()))
+	}
+
+	answer := strings.TrimSpace(outBuf.String())
+	if strings.TrimSpace(result.ResumeStatePath) != "" && !strings.Contains(strings.ToLower(answer), "progress_state:") {
+		answer = strings.TrimSpace(answer + "\nprogress_state: " + strings.TrimSpace(result.ResumeStatePath))
+	}
+
+	return answer, nil
+}
+
 func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan, requiredPaths []string, allowedPaths []string, planDocuments []implementationDispatchPlanDocument) (string, error) {
 	brief := composeImplementationBriefWithEditScopeAndPlanDocuments(prompt, plan, m.cfg, requiredPaths, allowedPaths, planDocuments)
+	root := implementationDispatchWorkspaceRoot(m.cfg)
+	intake := implementationDispatchCompilePlanExecuteScopeIntake(prompt, plan, m.cfg)
+	authorizedNewFiles := appendUniqueBriefStrings(
+		implementationDispatchAuthorizedNewFiles(prompt, planDocuments),
+		intake.AuthorizedNewFiles...,
+	)
 
 	var contextPackLog bytes.Buffer
 
@@ -594,7 +707,7 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 		Mode:              "plan-execute",
 		Title:             prompt,
 		Brief:             brief,
-		ProjectRoot:       implementationDispatchWorkspaceRoot(m.cfg),
+		ProjectRoot:       root,
 		RequiredEditPaths: requiredPaths,
 	}, &contextPackLog, planExecuteDeps.RunPromptContextTool)
 
@@ -606,7 +719,6 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 		m.logMessage("dispatch_context", "preloaded context_pack for in-process plan-execute dispatch")
 	}
 
-	intake := implementationDispatchCompilePlanExecuteScopeIntake(prompt, plan, m.cfg)
 	if len(requiredPaths) == 0 && len(allowedPaths) == 0 && strings.TrimSpace(contextPackSection) != "" {
 		discoveredPaths := m.implementationDispatchAllowedPathsFromPreloadedContextPack(prompt, contextPackSection)
 		if len(discoveredPaths) > 0 && intake.ClosedScope {
@@ -699,11 +811,8 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 		EditSetObligations:    editSetObligations,
 		ScopeContract:         scopeContract,
 		ScopeExtractionPolicy: scopeExtractionPolicy,
-		AuthorizedNewFiles: appendUniqueBriefStrings(
-			implementationDispatchAuthorizedNewFiles(prompt, planDocuments),
-			intake.AuthorizedNewFiles...,
-		),
-		MaxTokens: implementationDispatchPlanExecuteMaxTokens(m.cfg.Workspace.Root, prompt, requiredPaths, allowedPaths, planDocuments),
+		AuthorizedNewFiles:    authorizedNewFiles,
+		MaxTokens:             implementationDispatchPlanExecuteMaxTokens(m.cfg.Workspace.Root, prompt, requiredPaths, allowedPaths, planDocuments),
 		OnPhase: func(phase, detail string) {
 			m.queueUIEvent(planPhaseMsg{phase: phase, detail: detail})
 		},
@@ -721,6 +830,7 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 
 			m.queueUIEvent(planPhaseMsg{phase: "executing", detail: fmt.Sprintf("Edit %d/%d %s (%s)", step, total, filepath.Base(path), label)})
 		},
+		OnPlanApproval: m.requestPlanExecuteApproval,
 	}
 	promptRun := m.newPlanExecutePromptRunner(ctx)
 
@@ -730,6 +840,9 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 
 	var outBuf, errBuf bytes.Buffer
 
+	m.beginPlanExecuteApprovalSession()
+	defer m.endPlanExecuteApprovalSession()
+
 	result := planexecute.RunWithDependencies(m.cfg, opts, promptRun, nil, &outBuf, &errBuf, planExecuteDeps)
 
 	m.lastPlanExecuteRunResult = &result
@@ -738,6 +851,10 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 		result.ExitCode, result.SessionID, result.ResumeStatePath, outBuf.Len(), errBuf.Len()))
 
 	if result.ExitCode != 0 {
+		if msg, ok := m.humanPlanExecuteMissingNewFileAuthorizationMessage(result, authorizedNewFiles); ok {
+			return msg, nil
+		}
+
 		if msg, ok := humanPlanExecuteExecutionRecoveryOpenMessage(m.cfg.Workspace.Root, result, requiredPaths); ok {
 			return msg, nil
 		}
@@ -953,8 +1070,61 @@ func implementationDispatchAuthorizedNewFiles(prompt string, planDocuments []imp
 	return uniqueImplementationDispatchPaths(paths)
 }
 
+func humanPlanExecuteNewFileAuthorizationRequiredMessage(paths []string) string {
+	paths = uniqueImplementationDispatchPaths(paths)
+	if len(paths) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("Plan-execute needs approval before creating new files.\n\n")
+	b.WriteString("Proposed new files:\n")
+	for _, path := range paths {
+		fmt.Fprintf(&b, "- %s\n", path)
+	}
+
+	b.WriteString("\nReply with approval using this typed authority shape, revise the request to use existing files, or reject it:\n\n")
+	b.WriteString("```json\n")
+	b.WriteString("{\"authorized_new_files\":[")
+	for i, path := range paths {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, "{\"path\":%q}", path)
+	}
+	b.WriteString("]}\n")
+	b.WriteString("```")
+
+	return strings.TrimSpace(b.String())
+}
+
 func implementationDispatchPlanExecuteFailureCanUseRecovery(result planexecute.RunResult) bool {
 	return recovery.PlanExecuteFailureCanUseRecovery(implementationDispatchPlanExecuteRunFailureKind(result))
+}
+
+func (m *Model) humanPlanExecuteMissingNewFileAuthorizationMessage(result planexecute.RunResult, authorizedNewFiles []string) (string, bool) {
+	if implementationDispatchPlanExecuteRunFailureKind(result) != plancontract.PlanExecuteFailureMissingEditPathWithoutNewFileAuth {
+		return "", false
+	}
+
+	root := implementationDispatchWorkspaceRoot(m.cfg)
+	state, _, found, _ := planexecute.TryLoadProgressState(root, result.SessionID)
+	if !found {
+		return "", false
+	}
+
+	missing, err := planexecute.MissingNewFileAuthorizationPaths(m.cfg, state, authorizedNewFiles, planexecuteadapters.Dependencies())
+	if err != nil {
+		m.logMessage("dispatch_scope", fmt.Sprintf("plan-execute missing new-file authorization detail unavailable: %v", err))
+		return "", false
+	}
+	if len(missing) == 0 {
+		return "", false
+	}
+
+	m.logMessage("dispatch_scope", fmt.Sprintf("plan-execute result requires new-file authorization for %s", strings.Join(missing, ", ")))
+
+	return humanPlanExecuteNewFileAuthorizationRequiredMessage(missing), true
 }
 
 type implementationDispatchPlanExecuteFailure struct {

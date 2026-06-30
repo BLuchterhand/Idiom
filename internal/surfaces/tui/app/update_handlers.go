@@ -257,6 +257,16 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 
 				return cmd, true
 			}
+		} else if m.directPlanExecuteApprovalShouldConsumeOperatorInput(text) {
+			m.appendHistoryMessage("user", text, nil)
+			answer, err := m.runDirectPlanExecuteApprovalAnswerOnce(text)
+			if err != nil {
+				m.status = err.Error()
+			} else {
+				m.status = answer
+				m.insertBeforePendingAssistant(llama.ChatMessage{Role: "assistant", Content: answer})
+			}
+			m.renderPlanPanelContent()
 		} else if !m.streaming {
 			if m.featurePlannerPhase != "" {
 				m.appendHistoryMessage("user", text, nil)

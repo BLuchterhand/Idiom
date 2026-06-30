@@ -470,13 +470,13 @@ func (s *ProgressState) MarkReviewComplete(report ReviewRepairPhaseReport, revie
 	switch report.Status {
 	case plancontract.PlanExecuteReviewStatusDegraded:
 		s.Status = plancontract.PlanExecuteProgressStatusDegraded
-		s.FailureKind = plancontract.PlanExecuteFailureReviewRepairDegraded
+		s.FailureKind = firstProgressFailureKind(report.FailureKind, plancontract.PlanExecuteFailureReviewRepairDegraded)
 		s.FailureReason = sanitizeProgressReason(firstProgressNonEmptyString(report.FailureReason, report.StatusDetail, string(s.Review.Status)))
 
 		return
 	case plancontract.PlanExecuteReviewStatusBlocked:
 		s.Status = plancontract.PlanExecuteProgressStatusBlocked
-		s.FailureKind = plancontract.PlanExecuteFailureReviewRepairBlocked
+		s.FailureKind = firstProgressFailureKind(report.FailureKind, plancontract.PlanExecuteFailureReviewRepairBlocked)
 		s.FailureReason = sanitizeProgressReason(firstProgressNonEmptyString(report.FailureReason, report.StatusDetail, string(s.Review.Status)))
 
 		return
@@ -726,6 +726,16 @@ func firstProgressNonEmptyString(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
 			return strings.TrimSpace(value)
+		}
+	}
+
+	return ""
+}
+
+func firstProgressFailureKind(values ...plancontract.PlanExecuteFailureKind) plancontract.PlanExecuteFailureKind {
+	for _, value := range values {
+		if strings.TrimSpace(string(value)) != "" {
+			return value
 		}
 	}
 

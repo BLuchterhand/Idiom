@@ -10,6 +10,7 @@ import (
 	"idiom/internal/capabilities/workspace"
 	plancontract "idiom/internal/contracts/plan"
 	queuecontract "idiom/internal/contracts/queue"
+	recoverycontract "idiom/internal/contracts/recovery"
 )
 
 // teeBuffer wraps an io.Writer so the lane wrapper can both stream
@@ -408,6 +409,54 @@ func parseLaneQueuePool(out []byte) string {
 	}
 
 	return pool
+}
+
+func parseImplementationState(out []byte) (*recoverycontract.ImplementationState, bool) {
+	var (
+		found bool
+		state recoverycontract.ImplementationState
+	)
+
+	for _, line := range bytes.Split(out, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 || line[0] != '{' {
+			continue
+		}
+
+		projection, ok := decodeImplementationStateProjection(line)
+		if !ok {
+			continue
+		}
+
+		switch projection.Type {
+		case "completion_status", "implementation_lifecycle_state":
+			state = projection.ImplementationState
+			found = true
+		}
+	}
+
+	if !found || !recoverycontract.ImplementationStatePresent(state) {
+		return nil, false
+	}
+
+	return &state, true
+}
+
+type implementationStateProjection struct {
+	Type string `json:"type,omitempty"`
+	recoverycontract.ImplementationState
+}
+
+func decodeImplementationStateProjection(data []byte) (implementationStateProjection, bool) {
+	var projection implementationStateProjection
+	if err := json.Unmarshal(data, &projection); err != nil {
+		return implementationStateProjection{}, false
+	}
+	if !recoverycontract.ImplementationStatePresent(projection.ImplementationState) {
+		return implementationStateProjection{}, false
+	}
+
+	return projection, true
 }
 
 // jsonInt coerces a JSON-decoded value (which arrives as float64

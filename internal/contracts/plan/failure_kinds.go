@@ -27,6 +27,8 @@ const (
 	PlanExecuteFailureMissingRequestedImplementationEdit PlanExecuteFailureKind = "missing_requested_implementation_edit"
 	// PlanExecuteFailureMissingEditPathWithoutNewFileAuth means the plan introduced an unauthorized new edit path.
 	PlanExecuteFailureMissingEditPathWithoutNewFileAuth PlanExecuteFailureKind = "missing_edit_path_without_new_file_authorization"
+	// PlanExecuteFailurePlanApprovalDenied means human approval for planned edits was denied or unavailable.
+	PlanExecuteFailurePlanApprovalDenied PlanExecuteFailureKind = "plan_approval_denied"
 	// PlanExecuteFailureTerminalCompletionContractFailed means the terminal completion record failed invariants.
 	PlanExecuteFailureTerminalCompletionContractFailed PlanExecuteFailureKind = "terminal_completion_contract_failed"
 	// PlanExecuteFailureTerminalCompletionSaveFailed means the harness could not persist the terminal completion.
@@ -97,6 +99,7 @@ func PlanExecuteFailureKinds() []PlanExecuteFailureKind {
 		PlanExecuteFailureMissingRequestedTestEdit,
 		PlanExecuteFailureMissingRequestedImplementationEdit,
 		PlanExecuteFailureMissingEditPathWithoutNewFileAuth,
+		PlanExecuteFailurePlanApprovalDenied,
 		PlanExecuteFailureTerminalCompletionContractFailed,
 		PlanExecuteFailureTerminalCompletionSaveFailed,
 		PlanExecuteFailureJSONEventWriteFailed,

@@ -12,15 +12,16 @@ const (
 )
 
 type FailureRecord struct {
-	SchemaVersion  string            `json:"schema_version"`
-	FailureID      string            `json:"failure_id"`
-	CreatedAt      string            `json:"created_at"`
-	UpdatedAt      string            `json:"updated_at"`
-	SourceRun      SourceRun         `json:"source_run"`
-	LockedContract *ContractSnapshot `json:"locked_contract,omitempty"`
-	Failure        Failure           `json:"failure"`
-	PartialState   PartialState      `json:"partial_state"`
-	NextAction     NextAction        `json:"next_valid_action"`
+	SchemaVersion  string               `json:"schema_version"`
+	FailureID      string               `json:"failure_id"`
+	CreatedAt      string               `json:"created_at"`
+	UpdatedAt      string               `json:"updated_at"`
+	SourceRun      SourceRun            `json:"source_run"`
+	LockedContract *ContractSnapshot    `json:"locked_contract,omitempty"`
+	Failure        Failure              `json:"failure"`
+	PartialState   PartialState         `json:"partial_state"`
+	Implementation *ImplementationState `json:"implementation_state,omitempty"`
+	NextAction     NextAction           `json:"next_valid_action"`
 }
 
 type SourceRun struct {
@@ -83,6 +84,23 @@ type PartialState struct {
 	ScopeStatus  ScopeStatus `json:"scope_status"`
 }
 
+type ImplementationState struct {
+	Phase                      string                          `json:"phase,omitempty"`
+	StopReason                 string                          `json:"stop_reason,omitempty"`
+	RemainingRequiredEditPaths []string                        `json:"remaining_required_edit_paths,omitempty"`
+	ChangedPaths               []string                        `json:"changed_paths,omitempty"`
+	SourcedEvidencePaths       []string                        `json:"sourced_evidence_paths,omitempty"`
+	PendingRedirects           []ImplementationPendingRedirect `json:"pending_redirects,omitempty"`
+	WriteReadyNudgeCount       int                             `json:"write_ready_nudge_count,omitempty"`
+}
+
+type ImplementationPendingRedirect struct {
+	Path        string `json:"path,omitempty"`
+	PendingTool string `json:"pending_tool,omitempty"`
+	Source      string `json:"source,omitempty"`
+	Detail      string `json:"detail,omitempty"`
+}
+
 func ValidateFailureRecord(record FailureRecord) error {
 	if record.SchemaVersion != FailureRecordSchemaVersion {
 		return fmt.Errorf("unsupported schema %q", record.SchemaVersion)
@@ -111,6 +129,9 @@ func ValidateFailureRecord(record FailureRecord) error {
 	if err := validatePartialState(record.PartialState); err != nil {
 		return err
 	}
+	if err := ValidateImplementationState(record.Implementation); err != nil {
+		return err
+	}
 	if err := ValidateRecoveryPaths("source_run.required_edit_paths", record.SourceRun.RequiredEditPaths); err != nil {
 		return err
 	}
@@ -129,6 +150,33 @@ func ValidateFailureRecord(record FailureRecord) error {
 		}
 	}
 	return ValidateEvidenceRefs("failure.evidence_refs", record.Failure.EvidenceRefs)
+}
+
+func ValidateImplementationState(state *ImplementationState) error {
+	if state == nil {
+		return nil
+	}
+	if state.WriteReadyNudgeCount < 0 {
+		return fmt.Errorf("invalid implementation_state.write_ready_nudge_count %d", state.WriteReadyNudgeCount)
+	}
+	if err := ValidateRecoveryPaths("implementation_state.remaining_required_edit_paths", state.RemainingRequiredEditPaths); err != nil {
+		return err
+	}
+	if err := ValidateRecoveryPaths("implementation_state.changed_paths", state.ChangedPaths); err != nil {
+		return err
+	}
+	if err := ValidateRecoveryPaths("implementation_state.sourced_evidence_paths", state.SourcedEvidencePaths); err != nil {
+		return err
+	}
+	for i, redirect := range state.PendingRedirects {
+		if strings.TrimSpace(redirect.Path) == "" {
+			continue
+		}
+		if normalizeRecoveryPath(redirect.Path) == "" {
+			return fmt.Errorf("implementation_state.pending_redirects[%d].path is unsafe: %q", i, redirect.Path)
+		}
+	}
+	return nil
 }
 
 func ValidFailureRecordComponent(value string) bool {

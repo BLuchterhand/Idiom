@@ -367,6 +367,7 @@ func New(cfg config.Config) *Model {
 	}
 
 	m.workspace = workspace.NewManager(cfg.Workspace)
+	m.wireSystemSearchAccessApprover()
 	if cfg.Chat.AttachInstructionFiles {
 		if candidates, explicit := instructionAttachmentCandidates(cfg.Chat); explicit {
 			if len(candidates) > 0 {
@@ -722,6 +723,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case planApprovalRequiredMsg:
+		m.setHistoryPanelOpen(true)
+		m.panelTab = panelTabPlan
+		m.history.focused = true
+		m.renderPlanPanelContent()
 	case nil:
 	default:
 	}

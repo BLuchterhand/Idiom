@@ -54,6 +54,10 @@ func (m *Model) RunPromptOnce(ctx context.Context, prompt string) (string, error
 		return m.runFeaturePlannerCommandOnce(ctx, objective)
 	}
 
+	if m.directPlanExecuteApprovalShouldConsumeOperatorInput(prompt) {
+		return m.runDirectPlanExecuteApprovalAnswerOnce(prompt)
+	}
+
 	m.emitJSONStart(prompt)
 
 	if err := m.ensureServerReady(ctx); err != nil {

@@ -39,6 +39,11 @@ Idiom is a local coding-agent harness. The model owns strategy; the harness owns
 - Do not hard-pick the model's next reasoning step when multiple valid
   strategies remain. Prefer typed contracts, evidence predicates, and advisory
   nudges.
+- Do not restrict read/search availability as a remedy for repeated discovery
+  or delayed writes. The model owns strategy; when a run gathers too much
+  information before acting, investigate budget sizing, budget accounting,
+  recovery behavior, evidence projection, and whether the harness interrupted a
+  valid information-gathering strategy.
 - Evidence tools should report findings, paths, symbols, counts, and
   uncertainty. They should not prescribe the next tool call.
 - All findings and answers must be grounded in code, tests, logs, tool output,

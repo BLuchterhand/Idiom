@@ -23,7 +23,7 @@ const (
 
 // ClassifyTool returns the ToolCategory for a given tool name.
 func ClassifyTool(name string) ToolCategory {
-	if metadata, ok := builtInToolSurfaceMetadata(name); ok && metadata.Category != CategoryUnknown {
+	if metadata, ok := BuiltInToolSurfaceMetadata(name); ok && metadata.Category != CategoryUnknown {
 		return metadata.Category
 	}
 
@@ -87,7 +87,7 @@ func IsRuntimeInspectionRequest(req ToolRequest) bool {
 		return IsNarrowingRequest(req)
 	}
 
-	metadata, ok := builtInToolSurfaceMetadata(tool)
+	metadata, ok := BuiltInToolSurfaceMetadata(tool)
 	if !ok {
 		return isLanguageToolName(tool)
 	}

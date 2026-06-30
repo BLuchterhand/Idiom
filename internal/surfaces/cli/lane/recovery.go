@@ -59,6 +59,7 @@ func writeLaneImplementRecovery(opts laneOptions, history laneHistoryEvent, subc
 		FailurePhase:   "implement",
 		FailureSummary: summary,
 		EvidenceRefs:   laneImplementEvidenceRefs(opts, history),
+		Implementation: history.Implementation,
 	}
 
 	record, recordPath, err := recovery.WriteFailureRecord(opts.ProjectRoot, input, now)

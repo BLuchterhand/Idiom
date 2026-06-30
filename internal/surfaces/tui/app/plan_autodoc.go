@@ -31,6 +31,15 @@ func mutatePlanLines(path string, fn func(lines []string) []string) error {
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
 }
 
+func (m *Model) mutatePlanLines(path string, fn func(lines []string) []string) error {
+	err := mutatePlanLines(path, fn)
+	if err == nil {
+		m.invalidatePlanCache()
+	}
+
+	return err
+}
+
 // planWriteSnapshot captures file content before a write for diff tracking
 // in the plan overlay. Unlike rollbackEntry (which powers /undo), this type
 // is consumed by recordWriteSuccess to compute unified diffs that appear in
@@ -179,6 +188,7 @@ func (m *Model) recordWriteFailure(step int, req workspace.ToolRequest, result w
 		return
 	}
 	defer f.Close()
+	defer m.invalidatePlanCache()
 
 	if _, err := fmt.Fprintln(f, string(line)); err != nil {
 		return
@@ -353,6 +363,7 @@ func (m *Model) appendUnplannedCheckedLine(label, id string) {
 		return
 	}
 	defer f.Close()
+	defer m.invalidatePlanCache()
 
 	if needsHeader {
 		if _, err := f.WriteString("### Unplanned\n"); err != nil {
@@ -880,7 +891,7 @@ func (m *Model) attachWriteToPlannedItem(req workspace.ToolRequest, path, diffID
 
 	var changed bool
 
-	if err := mutatePlanLines(planPath, func(lines []string) []string {
+	if err := m.mutatePlanLines(planPath, func(lines []string) []string {
 		for i, line := range lines {
 			if !strings.Contains(line, anchor) {
 				continue
@@ -971,7 +982,7 @@ func (m *Model) attachWriteToSubmittedEdit(path, diffID string) bool {
 
 	var changed bool
 
-	if err := mutatePlanLines(planPath, func(lines []string) []string {
+	if err := m.mutatePlanLines(planPath, func(lines []string) []string {
 		for i, line := range lines {
 			if !strings.Contains(line, anchor) {
 				continue
@@ -1036,7 +1047,7 @@ func (m *Model) updatePlanItemCheckbox(item workspace.TaskLedgerItem) {
 		return
 	}
 
-	_ = mutatePlanLines(planPath, func(lines []string) []string {
+	_ = m.mutatePlanLines(planPath, func(lines []string) []string {
 		for i, line := range lines {
 			if !strings.Contains(line, anchor) {
 				continue
@@ -1105,6 +1116,11 @@ func (m *Model) recordSubmittedPlan(req workspace.ToolRequest, result workspace.
 	if m.plan.submittedEdits == nil {
 		m.plan.submittedEdits = map[string]planartifact.PlanEdit{}
 	}
+	for id := range m.plan.submittedEdits {
+		if strings.HasPrefix(id, "pe-") {
+			delete(m.plan.submittedEdits, id)
+		}
+	}
 
 	path := m.ensurePlanPath()
 	if path == "" {
@@ -1117,6 +1133,7 @@ func (m *Model) recordSubmittedPlan(req workspace.ToolRequest, result workspace.
 	var b strings.Builder
 
 	rest, _ := cutPlanSection(content, "### Plan")
+	rest, _ = cutPlanSection(rest, "### Approval")
 	b.WriteString(rest)
 
 	if !strings.HasSuffix(rest, "\n") {
@@ -1127,34 +1144,59 @@ func (m *Model) recordSubmittedPlan(req workspace.ToolRequest, result workspace.
 
 	for i, edit := range edits {
 		peID := fmt.Sprintf("pe-%d", i)
-		label := planEditLabel(edit)
+		label := planEditDetailedLabel(edit)
 		b.WriteString(fmt.Sprintf("- [ ] %s <!-- pid:%s -->\n", label, peID))
 
 		m.plan.submittedEdits[peID] = edit
 	}
 
+	b.WriteString("\n### Approval\n")
+	for _, row := range planApprovalRows(planSubmittedEditPathCount(edits)) {
+		b.WriteString(row)
+		b.WriteString("\n")
+	}
+
 	_ = os.WriteFile(path, []byte(b.String()), 0o644)
+	m.invalidatePlanCache()
 }
 
 // cutPlanSection splits content at the "### Plan" heading, returning
 // everything before it (plus anything after the next ### heading or
 // end-of-file). Returns (before, true) when the section exists.
 func cutPlanSection(content, heading string) (string, bool) {
-	idx := strings.Index(content, heading+"\n")
-	if idx < 0 {
+	targetLevel, targetTitle, ok := parsePlanHeading(heading)
+	if !ok {
 		return content, false
 	}
 
-	before := content[:idx]
-	after := content[idx:]
-	nextHeading := strings.Index(after[len(heading)+1:], "\n### ")
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	start := -1
 
-	if nextHeading >= 0 {
-		cut := nextHeading + len(heading) + 1
-		return before + after[cut+1:], true
+	for i, line := range lines {
+		level, title, ok := parsePlanHeading(line)
+		if ok && level == targetLevel && strings.EqualFold(title, targetTitle) {
+			start = i
+			break
+		}
 	}
 
-	return before, true
+	if start < 0 {
+		return content, false
+	}
+
+	end := len(lines)
+	for i := start + 1; i < len(lines); i++ {
+		level, _, ok := parsePlanHeading(lines[i])
+		if ok && level <= targetLevel {
+			end = i
+			break
+		}
+	}
+
+	kept := append([]string{}, lines[:start]...)
+	kept = append(kept, lines[end:]...)
+
+	return strings.Join(kept, "\n"), true
 }
 
 // planEditLabel builds a human-readable label for a PlanEdit, using its
@@ -1173,4 +1215,64 @@ func planEditLabel(edit planartifact.PlanEdit) string {
 	default:
 		return fmt.Sprintf("edit %d", 0)
 	}
+}
+
+func planEditDetailedLabel(edit planartifact.PlanEdit) string {
+	label := planEditLabel(edit)
+	details := planEditDetails(edit)
+	if details == "" {
+		return label
+	}
+
+	return label + " - " + details
+}
+
+func planEditDetails(edit planartifact.PlanEdit) string {
+	var parts []string
+
+	switch {
+	case edit.ReplaceAll:
+		parts = append(parts, "whole-file replacement")
+	case edit.StartLine > 0 && edit.EndLine > 0 && edit.StartLine != edit.EndLine:
+		parts = append(parts, fmt.Sprintf("lines %d-%d", edit.StartLine, edit.EndLine))
+	case edit.StartLine > 0:
+		parts = append(parts, fmt.Sprintf("line %d", edit.StartLine))
+	case edit.InsertAfterLine > 0:
+		parts = append(parts, fmt.Sprintf("insert after line %d", edit.InsertAfterLine))
+	case strings.TrimSpace(edit.OldText) != "":
+		parts = append(parts, "anchored replacement")
+	default:
+		parts = append(parts, "file edit")
+	}
+
+	if chars, ok := planEditReplacementSize(edit); ok {
+		parts = append(parts, fmt.Sprintf("%d replacement char(s)", chars))
+	} else if strings.TrimSpace(edit.NewTextRef) != "" || strings.TrimSpace(edit.ContentRef) != "" {
+		parts = append(parts, "replacement from artifact ref")
+	}
+
+	return strings.Join(parts, ", ")
+}
+
+func planEditReplacementSize(edit planartifact.PlanEdit) (int, bool) {
+	switch {
+	case planartifact.PlanEditHasExplicitReplacementText(edit):
+		return len(edit.NewText), true
+	case strings.TrimSpace(edit.Content) != "":
+		return len(edit.Content), true
+	default:
+		return 0, false
+	}
+}
+
+func planSubmittedEditPathCount(edits []planartifact.PlanEdit) int {
+	seen := map[string]bool{}
+	for _, edit := range edits {
+		p := strings.TrimSpace(edit.Path)
+		if p != "" {
+			seen[p] = true
+		}
+	}
+
+	return len(seen)
 }

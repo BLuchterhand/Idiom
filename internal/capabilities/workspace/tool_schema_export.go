@@ -162,7 +162,7 @@ func buildToolSchemaExportFromSources(manifest []ToolManifestEntry, defs []ToolD
 
 	out := ToolSchemaExport{
 		SchemaVersion: ToolSchemaExportVersion,
-		Source:        "internal/capabilities/workspace.BuildToolManifest + internal/capabilities/workspace.BuildToolDefinitions",
+		Source:        "workspace.BuildToolManifest + workspace.BuildToolDefinitions",
 		Metadata:      autonomy.DefaultContractMetadata("p2.1", "tool_schema_export"),
 		Tools:         make([]ExportedToolSchema, 0, len(names)),
 	}

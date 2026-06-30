@@ -108,12 +108,11 @@ func validationStatusPathBackedByLedger(rawPath string, canonicalPath string, re
 		return false
 	}
 
-	for _, path := range validationStatusEvidencePaths(results) {
-		normalized := agentutil.NormalizeRunnerPath(path)
-		if normalized == "" {
+	for _, path := range validationStatusEvidenceLedgerPaths(results) {
+		if strings.TrimSpace(path) == "" {
 			continue
 		}
-		if _, ok := candidates[normalized]; ok {
+		if _, ok := candidates[path]; ok {
 			return true
 		}
 	}
@@ -340,7 +339,27 @@ func latestObservedVerificationSummary(results []workspace.ToolResult) (string, 
 }
 
 func validationStatusEvidencePaths(results []workspace.ToolResult) []string {
-	paths := changedPathListFromToolResults(results)
+	var paths []string
+	for _, path := range validationStatusEvidenceLedgerPaths(results) {
+		paths = textutil.AppendUnique(paths, path)
+	}
+	return closurePromptEvidencePathsPreservingTests(paths, 8)
+}
+
+func validationStatusEvidenceLedgerPaths(results []workspace.ToolResult) []string {
+	var paths []string
+	add := func(path string) {
+		normalized := agentutil.NormalizeRunnerPath(path)
+		if normalized == "" {
+			return
+		}
+		paths = textutil.AppendUnique(paths, normalized)
+	}
+
+	for _, path := range changedPathListFromToolResults(results) {
+		add(path)
+	}
+
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) != "" {
 			continue
@@ -349,17 +368,12 @@ func validationStatusEvidencePaths(results []workspace.ToolResult) []string {
 			continue
 		}
 		for _, path := range agentutil.ReadPathsFromToolResult(result) {
-			normalized := agentutil.NormalizeRunnerPath(path)
-			if normalized != "" {
-				paths = textutil.AppendUnique(paths, normalized)
-			}
+			add(path)
 		}
 		for _, path := range sourceGroundingMentionedPaths(result.Summary + "\n" + result.Output) {
-			normalized := agentutil.NormalizeRunnerPath(path)
-			if normalized != "" {
-				paths = textutil.AppendUnique(paths, normalized)
-			}
+			add(path)
 		}
 	}
-	return closurePromptEvidencePathsPreservingTests(paths, 8)
+
+	return paths
 }

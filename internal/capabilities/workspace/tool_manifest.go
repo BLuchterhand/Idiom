@@ -54,7 +54,7 @@ func ToolManifestTools(opts ToolManifestToolOptions) []string {
 	}
 
 	if opts.IncludePlanThenExecute {
-		if metadata, ok := builtInToolSurfaceMetadata(ToolNameSubmitPlan); ok {
+		if metadata, ok := BuiltInToolSurfaceMetadata(ToolNameSubmitPlan); ok {
 			tools = append(tools, metadata.Tool)
 		}
 	}
@@ -87,7 +87,7 @@ func ToolManifestTools(opts ToolManifestToolOptions) []string {
 	}
 
 	if opts.PlanThenExecutePlannerSurface {
-		tools = filterManifestToolNames(tools, planThenExecutePlannerManifestToolNames()...)
+		tools = filterManifestToolNames(tools, autonomy.PlanExecutePlannerToolNames()...)
 	}
 
 	return tools
@@ -106,10 +106,6 @@ func appendLanguageManifestTools(tools []string, languageName string) []string {
 	}
 
 	return tools
-}
-
-func planThenExecutePlannerManifestToolNames() []string {
-	return autonomy.PlanExecutePlannerToolNames()
 }
 
 func filterManifestToolNames(tools []string, names ...string) []string {
@@ -200,6 +196,7 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 		{Tool: CodeNavigateToolName, Request: CodeNavigateRequestExample(CapReadSymbol, "relative/file.go", "Run"), Purpose: "request a code navigation capability; the harness routes by file language to the best symbol/navigation tool or a bounded generic fallback"},
 		{Tool: ToolNameReadOnlyCapability, Request: `{"tool":"read_only_capability","capability":"definition","path":"relative/file.go","pattern":"Run"}`, Purpose: "request a stable read-only capability ID; the harness resolves it through existing read-only adapters and reports any fallback reason"},
 		{Tool: ToolNameSourceSanity, Request: `{"tool":"source_sanity","path":"relative/file.cpp"}`, Purpose: "source-aware lane sanity: dispatch to the file language's diagnostics when available; generic fallback is advisory and does not satisfy C/C++ terminal sanity without concrete diagnostics"},
+		{Tool: ToolNameCodingRulesCheck, Request: `{"tool":"coding_rules_check","path":"."}`, Purpose: "run project coding rules and return typed findings without raw source bodies"},
 		{Tool: ToolNameHarnessAudit, Request: `{"tool":"harness_audit","purpose":"all","path":"logs/conversations","limit":25}`, Purpose: "audit idiom's own tool surface, backend availability, and recent behavior logs for evidence-backed improvement questions"},
 		{Tool: ToolNameHarnessFeedback, Request: `{"tool":"harness_feedback","category":"packet_quality","component":"context_pack","expected":"one task-ready packet that made the edit target clear","observed":"the packet lacked the symbol edge needed to choose between two files","workaround":"used exact symbol tools and a narrow file read","impact":"extra read loop before editing","evidence":["logs/conversations/session.jsonl step 8"],"confidence":"verified","severity":"medium"}`, Purpose: "record structured agent-observed idiom harness/tool/prompt gaps into telemetry for later audit triage. REQUIRED fields: category, component, expected, observed, impact, confidence (all strings, all non-empty); evidence must be a non-empty array of repo-relative paths or step ids; category must come from the documented enum exactly. Validation rejects partial submissions silently — fill every required field on the first call."},
 		{Tool: ToolNameRecoveryInspect, Request: `{"tool":"recovery_inspect","session_id":"session-001"}`, Purpose: "read a durable recovery failure record and live workspace state without mutating files"},
@@ -234,6 +231,7 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 		{Tool: ToolNameSubmitPlan, Request: `{"tool":"submit_plan","rationale":"one paragraph on the overall plan","edits":[{"path":"relative/file","old_text":"exact current substring","new_text":"complete replacement text","purpose":"why this edit"}]}`, Purpose: "submit a structured executable edit plan (plan-then-execute mode only). `edits` is a JSON array, not a quoted string. Edit bodies must be complete final content, not placeholders or prose. Use only for supported planner edits or review-repair corrective edits; clean review-repair closes with Decision: pass. Large bodies are spilled to artifact refs after submission."},
 		{Tool: ToolNameGitStatus, Request: `{"tool":"git_status","workdir":"."}`, Purpose: "inspect git state"},
 		{Tool: ToolNameGitDiff, Request: `{"tool":"git_diff","workdir":".","path":"optional/path"}`, Purpose: "inspect git diff"},
+		{Tool: ToolNameSystemSearchAccess, Request: `{"tool":"request_system_search_access","path":"../idiom","purpose":"locate the sibling repository the user asked about before reading or editing anything"}`, Purpose: "ask the operator to approve read-only access to a filesystem file or directory outside the configured workspace. Approval is session-scoped; approve grants only the selected target, while approve all grants the selected directory's contents. It does not permit shell commands or writes outside the workspace."},
 		{Tool: ToolNameShell, Request: `{"tool":"shell","command":"go test ./...","workdir":"."}`, Purpose: "run an allowed shell command"},
 	}
 

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/capabilities/workspace"
+	contextpackcontract "idiom/internal/contracts/contextpack"
 	lanecontract "idiom/internal/contracts/lane"
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
@@ -332,11 +332,11 @@ func promptContextPackFallbackPayloadFromResult(result PromptContextToolResult) 
 		return nil
 	}
 
-	if schema, _ := payload["schema"].(string); schema != workspace.ContextPackFallbackSchema {
+	if schema, _ := payload["schema"].(string); schema != contextpackcontract.FallbackSchema {
 		return nil
 	}
 
-	if status, _ := payload["status"].(string); status != "unavailable" {
+	if status, _ := payload["status"].(string); status != contextpackcontract.FallbackStatusUnavailable {
 		return nil
 	}
 

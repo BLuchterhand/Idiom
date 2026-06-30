@@ -34,6 +34,44 @@ func TestRenderMessagesWrapsLongContentInsideViewport(t *testing.T) {
 	}
 }
 
+func TestRequestHistoryOverrideDoesNotHideVisibleTranscript(t *testing.T) {
+	override := []llama.ChatMessage{{Role: "user", Content: "nested plan-execute prompt"}}
+	m := &Model{
+		ready:                  true,
+		viewport:               viewport.New(80, 12),
+		requestHistoryOverride: &override,
+		messages: []llama.ChatMessage{
+			{Role: "user", Content: "prior visible question"},
+			{Role: "assistant", Content: "prior visible answer"},
+		},
+	}
+
+	payload := m.requestMessages()
+	if !messagesContain(payload, "nested plan-execute prompt") {
+		t.Fatalf("nested payload should use isolated request history: %#v", payload)
+	}
+	if messagesContain(payload, "prior visible answer") {
+		t.Fatalf("visible transcript should not leak into isolated nested payload: %#v", payload)
+	}
+
+	m.renderMessages(true)
+
+	view := m.viewport.View()
+	if !strings.Contains(view, "prior visible question") || !strings.Contains(view, "prior visible answer") {
+		t.Fatalf("visible transcript should remain rendered while nested history is isolated:\n%s", view)
+	}
+}
+
+func messagesContain(messages []llama.ChatMessage, needle string) bool {
+	for _, msg := range messages {
+		if strings.Contains(msg.Content, needle) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func TestProtectControlMarkersForMarkdownPreservesQuestionMarker(t *testing.T) {
 	got := protectControlMarkersForMarkdown("<<QUESTION>>: missing exact anchor")
 	if !strings.Contains(got, "`<<QUESTION>>`:") {

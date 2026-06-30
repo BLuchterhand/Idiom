@@ -423,6 +423,13 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		historyEvt.StopReason = summary.StopReason
 	}
 
+	if implementationState, ok := parseImplementationState(tee.Bytes()); ok {
+		historyEvt.Implementation = implementationState
+		if strings.TrimSpace(historyEvt.StopReason) == "" {
+			historyEvt.StopReason = implementationState.StopReason
+		}
+	}
+
 	if historyEvt.SessionID == "" {
 		historyEvt.SessionID = sessionCapture.SessionID()
 	}

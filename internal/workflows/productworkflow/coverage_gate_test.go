@@ -891,10 +891,10 @@ func TestBuildKnownTDDObligationIDsScopesHistoricalRecords(t *testing.T) {
 			Obligations: []TDDObligation{{ID: "TDD-CURRENT"}},
 		},
 		[]ImplementationLedgerRecord{
-			{RecordType: "verification_completed", EffortID: "effort", TaskID: "artifact-task", TDDObligationsSatisfied: []string{"TDD-HIST"}},
-			{RecordType: "verification_completed", EffortID: "effort", TaskID: "other-task", TDDObligationsSatisfied: []string{"TDD-OTHER"}},
-			{RecordType: "implementation_completed", EffortID: "effort", TaskID: "artifact-task", TDDObligationsSatisfied: []string{"TDD-WRONG-RECORD"}},
-			{RecordType: "verification_completed", EffortID: "other-effort", TaskID: "artifact-task", TDDObligationsSatisfied: []string{"TDD-WRONG-EFFORT"}},
+			{RecordType: LedgerRecordVerificationCompleted, EffortID: "effort", TaskID: "artifact-task", TDDObligationsSatisfied: []string{"TDD-HIST"}},
+			{RecordType: LedgerRecordVerificationCompleted, EffortID: "effort", TaskID: "other-task", TDDObligationsSatisfied: []string{"TDD-OTHER"}},
+			{RecordType: LedgerRecordImplementationCompleted, EffortID: "effort", TaskID: "artifact-task", TDDObligationsSatisfied: []string{"TDD-WRONG-RECORD"}},
+			{RecordType: LedgerRecordVerificationCompleted, EffortID: "other-effort", TaskID: "artifact-task", TDDObligationsSatisfied: []string{"TDD-WRONG-EFFORT"}},
 		},
 		"artifact-task",
 	)

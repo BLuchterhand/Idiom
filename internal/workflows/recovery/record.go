@@ -53,6 +53,7 @@ type FailureRecordInput struct {
 	EvidenceRefs      []recoverycontract.EvidenceRef
 	InvariantFailures []recoverycontract.InvariantFailure
 	PartialState      recoverycontract.PartialState
+	Implementation    *recoverycontract.ImplementationState
 	NextAction        recoverycontract.NextAction
 }
 
@@ -134,8 +135,9 @@ func BuildFailureRecord(input FailureRecordInput, now time.Time) (recoverycontra
 			EvidenceRefs:      cleanEvidenceRefs(input.EvidenceRefs),
 			InvariantFailures: cleanInvariantFailures(input.InvariantFailures),
 		},
-		PartialState: partial,
-		NextAction:   nextAction,
+		PartialState:   partial,
+		Implementation: cleanImplementationState(input.Implementation),
+		NextAction:     nextAction,
 	}, nil
 }
 
@@ -242,6 +244,8 @@ func ClassifyPlanExecuteFailure(kind string, reason string, reviewReasonClass st
 			return recoverycontract.FailureClassPlannerFailed
 		case plancontract.PlanExecuteFailurePlannerBlocked:
 			return recoverycontract.FailureClassPlannerBlocked
+		case plancontract.PlanExecuteFailurePlanApprovalDenied:
+			return recoverycontract.FailureClassNeedsHumanAnswer
 		case plancontract.PlanExecuteFailureMissingEditPathWithoutNewFileAuth,
 			plancontract.PlanExecuteFailurePlanArtifactInvalid,
 			plancontract.PlanExecuteFailureTerminalCompletionContractFailed,
@@ -535,6 +539,57 @@ func cleanEvidenceRefs(refs []recoverycontract.EvidenceRef) []recoverycontract.E
 	return out
 }
 
+func cleanImplementationState(state *recoverycontract.ImplementationState) *recoverycontract.ImplementationState {
+	if state == nil {
+		return nil
+	}
+
+	clean := recoverycontract.ImplementationState{
+		Phase:                      strings.TrimSpace(state.Phase),
+		StopReason:                 strings.TrimSpace(state.StopReason),
+		RemainingRequiredEditPaths: cleanPathList(state.RemainingRequiredEditPaths),
+		ChangedPaths:               cleanPathList(state.ChangedPaths),
+		SourcedEvidencePaths:       cleanPathList(state.SourcedEvidencePaths),
+		PendingRedirects:           cleanImplementationPendingRedirects(state.PendingRedirects),
+		WriteReadyNudgeCount:       state.WriteReadyNudgeCount,
+	}
+	if clean.WriteReadyNudgeCount < 0 {
+		clean.WriteReadyNudgeCount = 0
+	}
+	if !recoverycontract.ImplementationStatePresent(clean) {
+		return nil
+	}
+
+	return &clean
+}
+
+func cleanImplementationPendingRedirects(redirects []recoverycontract.ImplementationPendingRedirect) []recoverycontract.ImplementationPendingRedirect {
+	seen := map[string]bool{}
+
+	var out []recoverycontract.ImplementationPendingRedirect
+	for _, redirect := range redirects {
+		clean := recoverycontract.ImplementationPendingRedirect{
+			Path:        cleanRelPath(redirect.Path),
+			PendingTool: strings.TrimSpace(redirect.PendingTool),
+			Source:      strings.TrimSpace(redirect.Source),
+			Detail:      sanitizeAndTruncate(redirect.Detail, 240),
+		}
+		if clean.Path == "" && clean.PendingTool == "" && clean.Source == "" && clean.Detail == "" {
+			continue
+		}
+
+		key := strings.Join([]string{clean.Path, clean.PendingTool, clean.Source, clean.Detail}, "\x00")
+		if seen[key] {
+			continue
+		}
+
+		seen[key] = true
+		out = append(out, clean)
+	}
+
+	return out
+}
+
 func cleanContractSnapshot(snapshot *recoverycontract.ContractSnapshot, source recoverycontract.SourceRun) *recoverycontract.ContractSnapshot {
 	if snapshot == nil {
 		return nil
@@ -737,7 +792,8 @@ func nextActionForPlanExecuteFailure(input PlanExecuteFailureInput, failureClass
 }
 
 func planExecutePlannerBlockedRequiredToolMissing(kind string, reason string) bool {
-	if !planExecuteFailureKindIs(kind, plancontract.PlanExecuteFailurePlannerBlocked) {
+	failureKind, ok := plancontract.ParsePlanExecuteFailureKind(kind)
+	if !ok || failureKind != plancontract.PlanExecuteFailurePlannerBlocked {
 		return false
 	}
 
@@ -747,7 +803,8 @@ func planExecutePlannerBlockedRequiredToolMissing(kind string, reason string) bo
 }
 
 func PlanExecutePlannerBlockedSourceRefreshResult(kind string, reason string, requiredPaths []string) (PlanExecutePlannerBlockedSourceRefresh, bool) {
-	if !planExecuteFailureKindIs(kind, plancontract.PlanExecuteFailurePlannerBlocked) || len(requiredPaths) == 0 {
+	failureKind, ok := plancontract.ParsePlanExecuteFailureKind(kind)
+	if !ok || failureKind != plancontract.PlanExecuteFailurePlannerBlocked || len(requiredPaths) == 0 {
 		return PlanExecutePlannerBlockedSourceRefresh{}, false
 	}
 
@@ -788,7 +845,11 @@ func PlanExecutePlannerBlockedRetryRefreshResult(kind string, reason string, req
 	}
 
 	paths := cleanPathList(requiredPaths)
-	if !planExecuteFailureKindIs(kind, plancontract.PlanExecuteFailurePlannerBlocked) || !planExecuteNextActionIs(string(nextAction), recoverycontract.NextActionRetryPlanExecute) || len(paths) == 0 {
+	failureKind, failureKindOK := plancontract.ParsePlanExecuteFailureKind(kind)
+	parsedNextAction, nextActionOK := recoverycontract.ParseNextAction(string(nextAction))
+	if !failureKindOK || failureKind != plancontract.PlanExecuteFailurePlannerBlocked ||
+		!nextActionOK || parsedNextAction != recoverycontract.NextActionRetryPlanExecute ||
+		len(paths) == 0 {
 		return PlanExecutePlannerBlockedSourceRefresh{}, false
 	}
 
@@ -798,16 +859,6 @@ func PlanExecutePlannerBlockedRetryRefreshResult(kind string, reason string, req
 		Paths:       paths,
 		Reason:      "retry_action",
 	}, true
-}
-
-func planExecuteFailureKindIs(value string, want plancontract.PlanExecuteFailureKind) bool {
-	got, ok := plancontract.ParsePlanExecuteFailureKind(value)
-	return ok && got == want
-}
-
-func planExecuteNextActionIs(value string, want recoverycontract.NextAction) bool {
-	got, ok := recoverycontract.ParseNextAction(value)
-	return ok && got == want
 }
 
 func PlanExecuteSourceRefreshRetryInstruction(refresh PlanExecutePlannerBlockedSourceRefresh, requiredPaths []string) string {

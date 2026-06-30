@@ -17,6 +17,26 @@ For localized changes, run the focused package tests first, then the full suite
 when the change touches shared runtime, prompts, workspace tools, installers, or
 release behavior.
 
+## Coding Rules
+
+Projects can codify local idioms in `.idiom/coding_rules.json`. The first
+runtime rule checks Go pass-through wrappers: one-statement functions that only
+forward the same arguments to another call without validation, translation,
+error context, observability, or a permission check.
+
+```bash
+idiom coding-rules check --project-root . --fail-on blocking
+idiom tool coding_rules_check --input '{"path":"."}'
+```
+
+Use advisory enforcement while tuning a repository. Switch a rule to `blocking`
+only when the team agrees the pattern is a real invariant. Inline suppressions
+must carry a rationale:
+
+```go
+// idiom:allow go.no_pass_through_wrapper -- compatibility API required by callers
+```
+
 ## Installer Checks
 
 ```bash

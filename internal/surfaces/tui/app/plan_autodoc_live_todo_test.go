@@ -51,6 +51,16 @@ func TestRecordSubmittedPlanAppendsChecklist(t *testing.T) {
 		t.Errorf("missing pid anchor for pe-1:\n%s", got)
 	}
 
+	if !strings.Contains(got, "anchored replacement") {
+		t.Errorf("missing basic edit details:\n%s", got)
+	}
+
+	if !strings.Contains(got, "### Approval") ||
+		!strings.Contains(got, "<!-- plan-approval:current -->") ||
+		!strings.Contains(got, "<!-- plan-approval:all -->") {
+		t.Errorf("missing approval controls:\n%s", got)
+	}
+
 	if m.plan.submittedEdits == nil {
 		t.Fatal("planSubmittedEdits should be initialized")
 	}
@@ -183,11 +193,13 @@ func TestAttachWriteToSubmittedEdit(t *testing.T) {
 	plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 	got := string(plan)
 
-	if !strings.Contains(got, "- [x] first edit (a.go) <!-- pid:pe-0 --> <!-- id:diff-abc123 -->") {
+	if !strings.Contains(got, "- [x] first edit (a.go)") ||
+		!strings.Contains(got, "<!-- pid:pe-0 --> <!-- id:diff-abc123 -->") {
 		t.Errorf("first edit should be checked off with diff anchor:\n%s", got)
 	}
 
-	if !strings.Contains(got, "- [ ] second edit (b.go) <!-- pid:pe-1 -->") {
+	if !strings.Contains(got, "- [ ] second edit (b.go)") ||
+		!strings.Contains(got, "<!-- pid:pe-1 -->") {
 		t.Errorf("second edit should remain unchecked:\n%s", got)
 	}
 }
@@ -276,6 +288,27 @@ func TestCutPlanSection(t *testing.T) {
 
 	if !strings.Contains(before, "### Other") {
 		t.Errorf("before should keep ### Other:\n%s", before)
+	}
+}
+
+func TestCutPlanSectionToleratesCRLFAndTrailingHeadingSpace(t *testing.T) {
+	content := "## Session X\r\n\r\n### Plan  \r\n- [ ] a\r\n\r\n### Approval  \r\n- [ ] old\r\n\r\n### Other\r\nstuff\r\n"
+	withoutPlan, found := cutPlanSection(content, "### Plan")
+	if !found {
+		t.Fatal("should find Plan section")
+	}
+
+	withoutApproval, found := cutPlanSection(withoutPlan, "### Approval")
+	if !found {
+		t.Fatal("should find Approval section")
+	}
+
+	if strings.Contains(withoutApproval, "### Plan") || strings.Contains(withoutApproval, "### Approval") || strings.Contains(withoutApproval, "old") {
+		t.Fatalf("old generated sections were not cut:\n%s", withoutApproval)
+	}
+
+	if !strings.Contains(withoutApproval, "### Other") {
+		t.Fatalf("following section was not preserved:\n%s", withoutApproval)
 	}
 }
 

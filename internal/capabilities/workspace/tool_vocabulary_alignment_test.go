@@ -37,4 +37,18 @@ func TestPlanExecutePlannerVocabularyAlignsWithWorkspacePolicyMetadata(t *testin
 			t.Fatalf("planner vocabulary tool %q side effect = %q, workspace policy side effects = %#v", entry.Tool, entry.SideEffect, policy.SideEffects)
 		}
 	}
+
+	for _, tool := range export.Tools {
+		if !slices.Contains(tool.Profiles, "plan_then_execute") {
+			continue
+		}
+
+		entry, ok := autonomy.LookupPlanExecutePlannerToolMetadata(tool.Name)
+		if !ok {
+			t.Fatalf("workspace planner-profile tool %q missing from autonomy planner metadata", tool.Name)
+		}
+		if !entry.PlannerAllowed {
+			t.Fatalf("workspace planner-profile tool %q is not planner-allowed in autonomy metadata: %#v", tool.Name, entry)
+		}
+	}
 }

@@ -142,6 +142,17 @@ func (m *Model) loadPlanContent() string {
 	return m.planContent
 }
 
+func (m *Model) invalidatePlanCache() {
+	if m == nil {
+		return
+	}
+
+	m.planMTime = time.Time{}
+	m.planContent = ""
+	m.plan.cachedItemsContent = ""
+	m.plan.cachedItems = nil
+}
+
 // renderPlanPanelContent rebuilds the plan viewport from the current plan file.
 func (m *Model) renderPlanPanelContent() {
 	if !m.history.panelOpen {
@@ -176,6 +187,9 @@ func (m *Model) renderPlanPanelContent() {
 		// knows ↑/↓ navigates and Enter opens a diff. Without this hint
 		// the interactivity is invisible.
 		title = "◇ Plan · ↑/↓ select · Enter diff/fold"
+		if m.currentPlanApproval() != nil {
+			title = "◇ Plan · ↑/↓ select · Enter approve/diff/fold"
+		}
 	}
 
 	renderedTitle := panelTitleStyle.Width(w).Render(title)
@@ -220,6 +234,14 @@ func (m *Model) renderPlanPanelContent() {
 	// sections. When the plan panel has focus and there are selectable
 	// rows, highlight the cursor row so the user sees which Enter will
 	// activate.
+	if approvalStatus := m.planApprovalStatusText(); approvalStatus != "" {
+		rendered := panelDetailStyle.Width(w).Render(approvalStatus)
+		b.WriteString(rendered)
+		b.WriteString("\n\n")
+		renderedRows = appendPlanRenderedRows(renderedRows, rendered, -1)
+		renderedRows = append(renderedRows, planRenderedRow{SourceLineIdx: -1})
+	}
+
 	selectableRows := m.currentPlanSelectableRowsForContent(content)
 
 	var cursorLineIdx = -1
@@ -505,6 +527,10 @@ func (m *Model) activateSelectedPlanRow() {
 		}
 		m.renderPlanPanelContent()
 	case planSelectableItem:
+		if m.activatePlanApprovalAction(row.Item.PlanApprovalAction) {
+			return
+		}
+
 		if m.openPlanDiffOverlayForItem(row.Item) {
 			m.renderPlanPanelContent()
 			m.planViewport.GotoTop()

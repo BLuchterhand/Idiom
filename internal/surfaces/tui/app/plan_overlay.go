@@ -15,18 +15,20 @@ import (
 // user clicks through to; for ledger items that haven't been attached
 // yet DiffID is empty and the item is inert.
 type planItemMeta struct {
-	LineIdx    int
-	RawText    string
-	DiffID     string
-	TaskID     string
-	PlanEditID string
-	Checked    bool
+	LineIdx            int
+	RawText            string
+	DiffID             string
+	TaskID             string
+	PlanEditID         string
+	PlanApprovalAction planApprovalAction
+	Checked            bool
 }
 
 var (
-	planDiffAnchorRe = regexp.MustCompile(`<!--\s*id:\s*([^ \t<]+?)\s*-->`)
-	planTaskAnchorRe = regexp.MustCompile(`<!--\s*tid:\s*([^ \t<]+?)\s*-->`)
-	planPEAnchorRe   = regexp.MustCompile(`<!--\s*pid:\s*([^ \t<]+?)\s*-->`)
+	planDiffAnchorRe     = regexp.MustCompile(`<!--\s*id:\s*([^ \t<]+?)\s*-->`)
+	planTaskAnchorRe     = regexp.MustCompile(`<!--\s*tid:\s*([^ \t<]+?)\s*-->`)
+	planPEAnchorRe       = regexp.MustCompile(`<!--\s*pid:\s*([^ \t<]+?)\s*-->`)
+	planApprovalAnchorRe = regexp.MustCompile(`<!--\s*plan-approval:\s*([^ \t<]+?)\s*-->`)
 )
 
 // parsePlanItems walks the plan markdown and returns one entry per
@@ -73,6 +75,10 @@ func parsePlanItemLine(lineIdx int, raw string) (planItemMeta, bool) {
 
 	if m := planPEAnchorRe.FindStringSubmatch(raw); len(m) == 2 {
 		meta.PlanEditID = m[1]
+	}
+
+	if m := planApprovalAnchorRe.FindStringSubmatch(raw); len(m) == 2 {
+		meta.PlanApprovalAction, _ = parsePlanApprovalAction(m[1])
 	}
 
 	return meta, true

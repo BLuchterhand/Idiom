@@ -547,6 +547,19 @@ func TestImplementationLedgerPlannedAtomRequiresModelReviewerAndScope(t *testing
 	}
 }
 
+func TestImplementationLedgerRejectsUnknownRecordType(t *testing.T) {
+	data := []byte(`{"record_type":"surprise","task_id":"impl-0002","effort_id":"prd-adr-brief-workflow","timestamp":"2026-05-17T15:40:22Z"}`)
+
+	_, err := ParseImplementationLedgerJSONL(data)
+	if err == nil {
+		t.Fatal("expected unknown record_type to fail")
+	}
+
+	if !strings.Contains(err.Error(), `unknown record_type "surprise"`) {
+		t.Fatalf("expected unknown record_type error, got %v", err)
+	}
+}
+
 func TestImplementationLedgerCloseoutRequiresVerificationReviewInvestigationAndNoBlockers(t *testing.T) {
 	base := `{"record_type":"atom_planned","task_id":"impl-0002","effort_id":"prd-adr-brief-workflow","timestamp":"2026-05-17T15:40:22Z","complexity_tier":"C1","context_pack_id":"pack","implementor":{"id":"impl","runtime":"opencode_attached_server","model":"zai-coding-plan/glm-5.1","command":"run"},"reviewer":{"id":"review","model":"GPT-5.4","reasoning_effort":"medium","runtime":"codex"},"scope":{"expected_files":["internal/workflows/productworkflow/types.go"],"forbidden_patterns":["cmd/**"]},"required_verification":["go test ./internal/workflows/productworkflow"],"report_paths":{"implementation":"reports/impl.json","review":"reports/review.json","investigation":"reports/investigation.json"}}`
 	closed := `{"record_type":"atom_closed","task_id":"impl-0002","effort_id":"prd-adr-brief-workflow","timestamp":"2026-05-17T15:45:00Z","open_blockers":["review_pending"]}`

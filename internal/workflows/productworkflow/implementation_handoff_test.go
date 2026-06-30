@@ -591,7 +591,7 @@ func implementationHandoffInput(root string) BriefGenerationInput {
 		},
 		ImplementationRecords: []ImplementationLedgerRecord{
 			{
-				RecordType:           "atom_planned",
+				RecordType:           LedgerRecordAtomPlanned,
 				TaskID:               "impl-handoff",
 				EffortID:             "effort-handoff",
 				Timestamp:            "2026-06-03T00:04:00Z",
@@ -604,7 +604,7 @@ func implementationHandoffInput(root string) BriefGenerationInput {
 				Reviewer:             &ReviewerAssignment{ID: "rev", Runtime: "codex", Model: "test", ReasoningEffort: "medium"},
 			},
 			{
-				RecordType:              "verification_completed",
+				RecordType:              LedgerRecordVerificationCompleted,
 				TaskID:                  "impl-handoff",
 				EffortID:                "effort-handoff",
 				Timestamp:               "2026-06-03T00:05:00Z",

@@ -25,11 +25,24 @@ bounded edit plan; the executor applies accepted edits through workspace tools.
 idiom tool list
 idiom tool context_pack --input '{"task":"find parser code","mode":"plan","limit":8}'
 idiom tool context_status --input '{"refresh":true,"limit":20}'
+idiom tool coding_rules_check --input '{"path":"internal/workflows"}'
 ```
 
 Useful discovery tools include `context_pack`, `context_query`,
 `context_status`, `dependency_graph`, `history_range`, `history_symbol`,
-`blame_range`, `semgrep_scan`, and `harness_audit`.
+`blame_range`, `semgrep_scan`, `coding_rules_check`, and `harness_audit`.
+
+## Coding Rules
+
+```bash
+idiom coding-rules check --project-root . --json
+idiom coding-rules check --project-root . --fail-on blocking
+```
+
+Project-local rules live at `.idiom/coding_rules.json`. Reports are typed JSON
+with paths, symbols, hashes, severities, and evidence facts; they do not include
+raw source bodies. Advisory findings inform the model, while blocking findings
+can fail `coding-rules check` or lane postflight.
 
 ## MCP
 

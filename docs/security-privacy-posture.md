@@ -22,6 +22,9 @@ Idiom's posture is contract-first:
   command labels, and policy codes. It should not use raw prompts, raw file
   bodies, secrets, private repo URLs, customer identifiers, patient names,
   account numbers, or unredacted log excerpts.
+- Coding-rule reports follow the same boundary: findings include paths,
+  symbols, line numbers, hashes, severities, and evidence predicates, not raw
+  source bodies.
 
 ## Reviewable Controls
 

@@ -1807,7 +1807,7 @@ func writeFeaturePlannerResumeEffort(t *testing.T, root string, effortID string)
 
 	ledger := []productworkflow.ImplementationLedgerRecord{
 		{
-			RecordType:           "atom_planned",
+			RecordType:           productworkflow.LedgerRecordAtomPlanned,
 			TaskID:               "resume-task",
 			EffortID:             effortID,
 			Timestamp:            "2026-06-07T00:04:00Z",
@@ -1816,7 +1816,7 @@ func writeFeaturePlannerResumeEffort(t *testing.T, root string, effortID string)
 			RequiredVerification: []string{"go test ./internal/cmd/featureplanner"},
 		},
 		{
-			RecordType:              "verification_completed",
+			RecordType:              productworkflow.LedgerRecordVerificationCompleted,
 			TaskID:                  "resume-task",
 			EffortID:                effortID,
 			Timestamp:               "2026-06-07T00:05:00Z",

@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"idiom/internal/capabilities/workspace"
 	"idiom/internal/evidence/transcript"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/textutil"
@@ -67,7 +68,7 @@ func (m *Model) slashHelp(_ string, _ []string) bool {
 func (m *Model) helpText() string {
 	var b strings.Builder
 
-	b.WriteString("Commands: /save /copy [last|all|visible|selected] /select /clear /new /compact /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /product-create [--effort-root <path>] /product-status [--effort-root <path>] /product-continue <action> [--effort-root <path>] /product-approve [--effort-root <path>] /recover-status [--packet <path>|<path>] /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /mode [build|plan|general] /approve /deny /undo /panel /plan /feature-planner <objective> /implement <objective> /plan-execute <objective> /resume [id] /help")
+	b.WriteString("Commands: /save /copy [last|all|visible|selected] /select /clear /new /compact /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /product-create [--effort-root <path>] /product-status [--effort-root <path>] /product-continue <action> [--effort-root <path>] /product-approve [--effort-root <path>] /recover-status [--packet <path>|<path>] /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /mode [build|plan|general] /approve [all] /deny /undo /panel /plan /feature-planner <objective> /implement <objective> /plan-execute <objective> /resume [id] /help")
 	b.WriteString("\nNavigation: Ctrl+T cycles panel tabs | Ctrl+Y copies last assistant response | Ctrl+O toggles terminal selection | transcript: PgUp/PgDn or mouse wheel")
 
 	if strings.TrimSpace(m.featurePlannerPhase) != "" {
@@ -236,21 +237,61 @@ func (m *Model) slashMode(_ string, fields []string) bool {
 	return false
 }
 
-func (m *Model) slashApprove(_ string, _ []string) bool {
+func (m *Model) slashApprove(_ string, fields []string) bool {
+	if len(fields) > 2 || (len(fields) == 2 && !strings.EqualFold(fields[1], "all")) {
+		m.status = "Usage: /approve [all]"
+		return false
+	}
+
+	blanket := len(fields) == 2 && strings.EqualFold(fields[1], "all")
+
+	if summary, ok := m.resolvePlanApproval(true, blanket); ok {
+		if blanket {
+			m.status = "Approved all plan-execute edits: " + summary
+		} else {
+			m.status = "Approved planned edits: " + summary
+		}
+		m.renderPlanPanelContent()
+
+		return false
+	}
+
+	if blanket {
+		if pending := m.currentApproval(); pending != nil && pending.mode == systemSearchApprovalModeName {
+			if summary, ok := m.resolveApprovalWithScope(true, workspace.SystemSearchAccessScopeContents); ok {
+				m.status = "Approved folder contents: " + summary
+			} else {
+				m.status = "No pending approval."
+			}
+
+			return false
+		}
+
+		m.status = "No pending plan approval."
+		return false
+	}
+
 	if summary, ok := m.resolveApproval(true); ok {
 		m.status = "Approved: " + summary
 	} else {
-		m.status = "No pending tool approval."
+		m.status = "No pending approval."
 	}
 
 	return false
 }
 
 func (m *Model) slashDeny(_ string, _ []string) bool {
+	if summary, ok := m.resolvePlanApproval(false, false); ok {
+		m.status = "Denied planned edits: " + summary
+		m.renderPlanPanelContent()
+
+		return false
+	}
+
 	if summary, ok := m.resolveApproval(false); ok {
 		m.status = "Denied: " + summary
 	} else {
-		m.status = "No pending tool approval."
+		m.status = "No pending approval."
 	}
 
 	return false

@@ -638,6 +638,7 @@ func TestClassifyPlanExecuteFailureCoversKnownPlanExecuteFailureKinds(t *testing
 	}{
 		{plancontract.PlanExecuteFailurePlannerBlocked, recoverycontract.FailureClassPlannerBlocked},
 		{plancontract.PlanExecuteFailurePlannerFailed, recoverycontract.FailureClassPlannerFailed},
+		{plancontract.PlanExecuteFailurePlanApprovalDenied, recoverycontract.FailureClassNeedsHumanAnswer},
 		{plancontract.PlanExecuteFailurePlanArtifactMissing, recoverycontract.FailureClassPlanMissing},
 		{plancontract.PlanExecuteFailurePlanArtifactInvalid, recoverycontract.FailureClassPlanInvalid},
 		{plancontract.PlanExecuteFailureSourceSanityFailed, recoverycontract.FailureClassVerification},

@@ -9486,13 +9486,13 @@ func TestDeriveTurnPhaseContractTargetWriteReadyShowsPendingRedirectedSourceObli
 	}
 
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionBlocker)
 	assertContains(t, contract.AllowedTools, "code_navigate")
+	assertContains(t, contract.AllowedTools, "read_file")
+	assertContains(t, contract.AllowedTools, "search_content")
 	assertContains(t, contract.ActionPolicy.CallableToolNames, "code_navigate")
-	assertNotContains(t, contract.AllowedTools, "read_file")
-	assertNotContains(t, contract.AllowedTools, "search_content")
-	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
 
 	joinedNext := strings.Join(contract.RequiredNext, "\n")
 	for _, want := range []string{"internal/surfaces/tui/app/sessions.go", "code_navigate", "source-body", "capability=read_symbol", "pattern/symbol"} {
@@ -24550,7 +24550,7 @@ func TestUnscopedNoWriteRecoveryDoesNotAutoReadAfterWriteReadyGate(t *testing.T)
 	}
 }
 
-func TestUnscopedImplementationWriteReadyRejectsNonWriteTools(t *testing.T) {
+func TestUnscopedImplementationWriteReadyNudgesNonWriteTools(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "implementation",
@@ -24568,26 +24568,26 @@ func TestUnscopedImplementationWriteReadyRejectsNonWriteTools(t *testing.T) {
 		Error:   "this task asks for a workspace change, but no successful write tool result is present",
 	}}
 
-	summary, errorText, prompt, reject := runner.implementationTargetWriteReadyNonWriteRecovery(
+	prompt, ok := runner.implementationTargetWriteReadyNonWritePrompt(
 		workspace.ToolRequest{Tool: "read_file", Path: "internal/workflows/productworkflow/coverage_gate.go"},
 		results,
 	)
-	if !reject {
-		t.Fatal("expected non-write tool to be rejected once unscoped implementation is write-ready")
+	if !ok {
+		t.Fatal("expected non-write tool to receive a write-ready nudge")
 	}
 
-	joined := summary + " " + errorText + " " + prompt
+	joined := prompt
 	for _, want := range []string{"target-write-ready", "parser-readable write", "<<QUESTION>>"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected recovery text to contain %q, got %q", want, joined)
 		}
 	}
 
-	if _, _, _, reject := runner.implementationTargetWriteReadyNonWriteRecovery(
+	if _, ok := runner.implementationTargetWriteReadyNonWritePrompt(
 		workspace.ToolRequest{Tool: "edit_file", Path: "internal/workflows/productworkflow/coverage_gate.go"},
 		results,
-	); reject {
-		t.Fatal("write tools must remain available in target-write-ready recovery")
+	); ok {
+		t.Fatal("write tools must not receive target-write-ready non-write nudges")
 	}
 }
 
@@ -24621,15 +24621,15 @@ func TestUnscopedImplementationWriteReadyDoesNotBlockOnSupersededRedirect(t *tes
 		t.Fatal("test setup should be in implementation write-ready state after plausible source-body evidence")
 	}
 
-	summary, errorText, prompt, reject := runner.implementationTargetWriteReadyNonWriteRecovery(
+	prompt, ok := runner.implementationTargetWriteReadyNonWritePrompt(
 		workspace.ToolRequest{Tool: "code_navigate", Path: "internal/surfaces/tui/app/model_state.go"},
 		results,
 	)
-	if !reject {
+	if !ok {
 		t.Fatal("expected unrelated navigation to be rejected after write-ready")
 	}
 
-	joined := summary + " " + errorText + " " + prompt
+	joined := prompt
 	if strings.Contains(joined, "pending redirected source-body obligation") ||
 		strings.Contains(joined, "implementation_dispatch.go via code_navigate") {
 
@@ -24663,7 +24663,7 @@ func TestImplementationWriteReadyUsesRunnerEvidenceEngineForPendingRedirect(t *t
 		Error:   "this task asks for a workspace change, but no successful write tool result is present",
 	}}
 
-	summary, errorText, _, reject := runner.implementationTargetWriteReadyNonWriteRecovery(
+	prompt, ok := runner.implementationTargetWriteReadyNonWritePrompt(
 		workspace.ToolRequest{Tool: "search_content", Pattern: "EvaluateCoverageGate"},
 		results,
 	)
@@ -24671,11 +24671,11 @@ func TestImplementationWriteReadyUsesRunnerEvidenceEngineForPendingRedirect(t *t
 	if !evidenceEngine.pendingCalled {
 		t.Fatal("expected runner-owned EvidenceEngine to provide pending redirects")
 	}
-	if !reject {
+	if !ok {
 		t.Fatal("expected pending redirect from injected EvidenceEngine to reject unrelated non-write request")
 	}
 
-	joined := summary + " " + errorText
+	joined := prompt
 	for _, want := range []string{"pending source-body obligation", "coverage_gate.go", "code_navigate"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected injected pending redirect detail %q in %q", want, joined)
@@ -24874,10 +24874,10 @@ func TestUnscopedImplementationWrongTargetReadDoesNotRejectFurtherLocalization(t
 		t.Fatal("non-plausible first source read should not lock implementation into write-ready")
 	}
 
-	if _, _, _, reject := runner.implementationTargetWriteReadyNonWriteRecovery(
+	if _, ok := runner.implementationTargetWriteReadyNonWritePrompt(
 		workspace.ToolRequest{Tool: "context_pack", Task: "find session panel scrolling code"},
 		results,
-	); reject {
+	); ok {
 		t.Fatal("target-source localization must remain available after a non-plausible first source read")
 	}
 }
@@ -24910,15 +24910,15 @@ func TestUnscopedImplementationWriteReadyRejectsNonWriteAfterSymbolBody(t *testi
 		t.Fatal("symbol-body evidence should put unscoped implementation into write-ready state")
 	}
 
-	summary, errorText, prompt, reject := runner.implementationTargetWriteReadyNonWriteRecovery(
+	prompt, ok := runner.implementationTargetWriteReadyNonWritePrompt(
 		workspace.ToolRequest{Tool: "read_file", Path: "docs/design-prd-adr-brief-research-workflow.md"},
 		results,
 	)
-	if !reject {
-		t.Fatal("expected broad write-ready read to be rejected after symbol-body source evidence")
+	if !ok {
+		t.Fatal("expected broad write-ready read to receive a write-ready nudge after symbol-body source evidence")
 	}
 
-	joined := summary + " " + errorText + " " + prompt
+	joined := prompt
 	for _, want := range []string{"target-write-ready", "parser-readable write", "<<QUESTION>>"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected recovery text to contain %q, got %q", want, joined)
@@ -25034,33 +25034,33 @@ func TestUnscopedImplementationWriteReadyAllowsOneSamePathSourceRefreshAfterSymb
 		t.Fatal("same-path source refresh should not be allowed after a full read_file result")
 	}
 
-	summary, errorText, prompt, reject := runner.implementationTargetWriteReadyNonWriteRecovery(
+	prompt, ok := runner.implementationTargetWriteReadyNonWritePrompt(
 		workspace.ToolRequest{Tool: "read_file", Path: "internal/workflows/productworkflow/coverage_gate.go"},
 		withFullRead,
 	)
-	if !reject {
-		t.Fatal("range-less full reread after a full source read should be rejected as non-progress")
+	if !ok {
+		t.Fatal("range-less full reread after a full source read should receive a non-progress nudge")
 	}
 
-	joined := summary + " " + errorText + " " + prompt
+	joined := prompt
 	for _, want := range []string{"target-write-ready", "internal/workflows/productworkflow/coverage_gate.go", "already available", "parser-readable write"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected full-reread recovery text to contain %q, got %q", want, joined)
 		}
 	}
 
-	if _, _, _, reject := runner.implementationTargetWriteReadyNonWriteRecovery(
+	if _, ok := runner.implementationTargetWriteReadyNonWritePrompt(
 		workspace.ToolRequest{Tool: "code_navigate", Path: "internal/workflows/productworkflow/coverage_gate.go", Capability: "file_outline"},
 		withFullRead,
-	); !reject {
-		t.Fatal("same-path navigation after a full source read should be rejected as non-progress")
+	); !ok {
+		t.Fatal("same-path navigation after a full source read should receive a non-progress nudge")
 	}
 
-	if _, _, _, reject := runner.implementationTargetWriteReadyNonWriteRecovery(
+	if _, ok := runner.implementationTargetWriteReadyNonWritePrompt(
 		workspace.ToolRequest{Tool: "read_file", Path: "internal/workflows/productworkflow/coverage_gate.go", StartLine: 4, EndLine: 8},
 		withFullRead,
-	); !reject {
-		t.Fatal("new ranged reads after a full source read should be rejected in write-ready state")
+	); !ok {
+		t.Fatal("new ranged reads after a full source read should receive a write-ready nudge")
 	}
 }
 
@@ -25230,16 +25230,16 @@ func TestUnscopedImplementationWriteReadyAllowsRedirectedSourceFollowup(t *testi
 		}
 	}
 
-	summary, errorText, prompt, reject := runner.implementationTargetWriteReadyNonWriteRecovery(
+	prompt, ok := runner.implementationTargetWriteReadyNonWritePrompt(
 		workspace.ToolRequest{Tool: "code_navigate", Path: "internal/surfaces/tui/app/sessions.go", Capability: "references", Pattern: "sessions.viewport"},
 		results,
 	)
-	if !reject {
-		t.Fatal("non-source-body code_navigate follow-up should be rejected while a pending redirect remains")
+	if !ok {
+		t.Fatal("non-source-body code_navigate follow-up should receive a pending-redirect source-body nudge")
 	}
 
-	joined := summary + " " + errorText + " " + prompt
-	for _, want := range []string{"capability=read_symbol", "pattern/symbol", "Do not use references"} {
+	joined := prompt
+	for _, want := range []string{"capability=read_symbol", "pattern/symbol", "pending source-body"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("pending redirect recovery missing executable source-body guidance %q:\n%s", want, joined)
 		}
@@ -36094,6 +36094,248 @@ func TestDecorateFinalAnswerKeepsBlockerWhenRequiredPathsRemaining(t *testing.T)
 	// see the model's blocker prose.
 	if !strings.Contains(strings.ToLower(got), "blocker") {
 		t.Fatalf("decorator must preserve Blocker when required paths remain, got:\n%s", got)
+	}
+}
+
+func TestDecorateFinalAnswerSanitizesMutationCompletionGateBlocker(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		PermissionProfile:    "guarded_workspace_write",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited src/pages/contact.astro"},
+		{
+			Tool:    "source_sanity",
+			Summary: "Source sanity unavailable",
+			Error:   "src/pages/contact.astro is not a supported source file",
+		},
+		{
+			Tool:    "git_diff",
+			Summary: "Read git diff for src/pages/contact.astro",
+			Output:  "diff --git a/src/pages/contact.astro b/src/pages/contact.astro",
+		},
+	}
+	answer := strings.Join([]string{
+		"<<QUESTION>>: Completion gate rejected the final answer repeatedly before the required completion evidence was produced.",
+		"",
+		"Changed paths:",
+		"- src/pages/contact.astro",
+		"",
+		"Missing completion evidence: [gate retry 2/3] workspace changes are present, but the latest successful write is not followed by successful verification.",
+	}, "\n")
+
+	runner := &Runner{}
+	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer:     answer,
+		StopReason: "completion_gate_verification_repeated",
+		Brief:      brief,
+		Results:    results,
+		UserFacing: true,
+	})
+
+	for _, want := range []string{
+		"Changed paths:",
+		"src/pages/contact.astro",
+		"Verification: blocked; workspace writes are still pending verification.",
+		"Source sanity unavailable: src/pages/contact.astro is not a supported source file",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("decorated mutation blocker missing %q:\n%s", want, got)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"<<QUESTION>>",
+		"Completion gate",
+		"Missing completion evidence",
+		"required completion evidence",
+	} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("decorated mutation blocker leaked internal phrase %q:\n%s", forbidden, got)
+		}
+	}
+}
+
+func TestDecorateFinalAnswerPreservesPlanExecuteCompletionGateBlockerSurface(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read a.txt lines 1-10 (total lines: 10)"},
+		{Tool: "read_file", Summary: "Read b.txt lines 1-10 (total lines: 10)"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[1]: edit would not change b.txt; for b.txt: remove no-op edit; use `source_satisfied_paths`: [\"b.txt\"] if final; use `Decision: source-satisfied` only if all paths are final; else submit real edit",
+		},
+	}
+	answer := strings.Join([]string{
+		"<<QUESTION>>: Completion gate rejected the final answer repeatedly before the required completion evidence was produced.",
+		"",
+		"Missing completion evidence: [gate retry 2/3] plan-execute planner phase requires a successful submit_plan tool result before final answer.",
+	}, "\n")
+
+	runner := &Runner{}
+	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer:     answer,
+		StopReason: "completion_gate_submit_plan_invalid_repeated",
+		Brief:      brief,
+		Results:    results,
+		UserFacing: true,
+	})
+
+	for _, want := range []string{
+		"Plan-execute submit correction is still required",
+		"submit_plan",
+		"source_satisfied_paths",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("decorated plan-execute blocker missing %q:\n%s", want, got)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"Implementation incomplete",
+		"Changed paths: none",
+		"Missing completion evidence",
+		"Completion gate",
+	} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("decorated plan-execute blocker used wrong surface or leaked %q:\n%s", forbidden, got)
+		}
+	}
+}
+
+func TestDecorateFinalAnswerKeepsLegitimateMutationQuestionBlocker(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.go"},
+	}
+	answer := "<<QUESTION>>: Cannot edit a.go because the permission policy denied edit_file for that path."
+
+	runner := &Runner{}
+	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer:     answer,
+		StopReason: "model_final",
+		Brief:      brief,
+		UserFacing: true,
+	})
+
+	if got != answer {
+		t.Fatalf("legitimate mutation blocker should pass through unchanged, got:\n%s", got)
+	}
+}
+
+func TestRunnerSanitizesRepeatedMutationCompletionGateBlockerAfterUnsupportedSourceSanity(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "src/pages/contact.astro", "---\n---\n<h1>Contact</h1>\n"); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	internalBlocker := strings.Join([]string{
+		"<<QUESTION>>: Completion gate rejected the final answer repeatedly before the required completion evidence was produced.",
+		"",
+		"Changed paths:",
+		"- src/pages/contact.astro",
+		"",
+		"Missing completion evidence: [gate retry 2/3] workspace changes are present, but the latest successful write is not followed by successful verification.",
+	}, "\n")
+	replies := []string{
+		`{"tool":"read_file","path":"src/pages/contact.astro","start_line":1,"end_line":20,"named_gap":"current contact page before edit"}`,
+		`{"tool":"edit_file","path":"src/pages/contact.astro","old_text":"<h1>Contact</h1>","new_text":"<h1>Contact us</h1>","description":"update contact heading"}`,
+		`{"tool":"source_sanity","path":"src/pages/contact.astro"}`,
+		internalBlocker,
+		internalBlocker,
+		internalBlocker,
+	}
+
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reply := replies[len(replies)-1]
+		if requests < len(replies) {
+			reply = replies[requests]
+		}
+		requests++
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var results []workspace.ToolResult
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 4},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			AllowedTools:         []string{"read_file", "edit_file", "source_sanity"},
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+			RequiredEditPaths:    []string{"src/pages/contact.astro"},
+			EvidencePaths:        []string{"src/pages/contact.astro"},
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Update the contact page heading."}},
+		llama.ChatOptions{MaxTokens: 4096},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			results = append(results, event.Result)
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	for _, want := range []string{
+		"Changed paths:",
+		"src/pages/contact.astro",
+		"Verification: blocked; workspace writes are still pending verification.",
+		"Source sanity unavailable: src/pages/contact.astro is not a supported source file",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("runner answer missing %q:\n%s", want, answer)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"<<QUESTION>>",
+		"Completion gate",
+		"Missing completion evidence",
+		"required completion evidence",
+	} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("runner answer leaked internal phrase %q:\n%s", forbidden, answer)
+		}
+	}
+
+	sawUnsupportedSourceSanity := false
+	for _, result := range results {
+		if result.Tool == "source_sanity" && strings.Contains(result.Error, "src/pages/contact.astro is not a supported source file") {
+			sawUnsupportedSourceSanity = true
+		}
+	}
+	if !sawUnsupportedSourceSanity {
+		t.Fatalf("expected unsupported source_sanity result, got %#v", results)
 	}
 }
 

@@ -167,7 +167,9 @@ func TestProductWorkflowMetrics(t *testing.T) {
 					t.Fatal("expected metrics to fail closed")
 				}
 
-				if !strings.Contains(err.Error(), "unsupported") && !strings.Contains(err.Error(), "invalid status") {
+				if !strings.Contains(err.Error(), "unsupported") &&
+					!strings.Contains(err.Error(), "invalid status") &&
+					!strings.Contains(err.Error(), "unknown record_type") {
 					t.Fatalf("expected unsupported/invalid-status error, got %v", err)
 				}
 

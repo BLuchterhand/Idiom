@@ -348,7 +348,7 @@ func buildRecoverPromoteReport(root string, opts recoverPromoteOptions) (recover
 		return recoverPromoteReport{}, fmt.Errorf("candidate atom %q not found in packet", opts.AtomID)
 	}
 
-	currentPartial := inspectRecoveryPartialState(root, failureRecordFromPacket(packet))
+	currentPartial := inspectRecoveryPartialState(root, recoverycontract.FailureRecordFromDecompositionPacket(packet))
 	brief := recovery.RenderRecoveryBrief(root, packet, atom)
 
 	tmpPath, cleanup, err := writeRecoveryPromotionTempBrief(root, packet.FailureID, brief)
@@ -609,19 +609,6 @@ func recoverLearningResultID(packet recoverycontract.DecompositionPacket, reconc
 	sum := localops.StableID(strings.Join(parts, "\x00"))
 
 	return "recovery_reconciliation_" + sum
-}
-
-func failureRecordFromPacket(packet recoverycontract.DecompositionPacket) recoverycontract.FailureRecord {
-	return recoverycontract.FailureRecord{
-		SchemaVersion: recoverycontract.FailureRecordSchemaVersion,
-		FailureID:     packet.FailureID,
-		CreatedAt:     packet.CreatedAt,
-		UpdatedAt:     packet.UpdatedAt,
-		SourceRun:     packet.SourceRun,
-		Failure:       packet.Failure,
-		PartialState:  packet.PartialState,
-		NextAction:    packet.NextAction,
-	}
 }
 
 func runRecoveryWorkspaceStateGate(partial recoverycontract.PartialState, allowDirty bool) recoverGateReport {

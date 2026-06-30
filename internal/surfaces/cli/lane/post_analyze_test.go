@@ -89,6 +89,66 @@ also not json
 	}
 }
 
+func TestParseImplementationStateUsesLastCompleteSnapshot(t *testing.T) {
+	out := []byte(`{"type":"implementation_lifecycle_state","phase":"implementation.target_write_ready","stop_reason":"model_call_budget_exhausted","remaining_required_edit_paths":["internal/runtime/agent/runner_core.go"],"sourced_evidence_paths":["internal/runtime/agent/implementation_lifecycle.go"],"pending_redirects":[{"path":"internal/runtime/agent/runner_core.go","pending_tool":"read_file","source":"required_edit_path","detail":"refresh source"}],"write_ready_nudge_count":1}
+{"type":"completion_status","status":"blocked","phase":"implementation.target_write_ready","stop_reason":"model_call_budget_exhausted","remaining_required_edit_paths":["internal/runtime/agent/runner_core.go"],"changed_paths":["internal/runtime/agent/implementation_lifecycle.go"],"sourced_evidence_paths":["internal/runtime/agent/implementation_lifecycle.go"],"pending_redirects":[{"path":"internal/runtime/agent/runner_core.go","pending_tool":"read_file","source":"required_edit_path","detail":"refresh source"}],"write_ready_nudge_count":2}
+`)
+	state, ok := parseImplementationState(out)
+	if !ok {
+		t.Fatal("expected implementation state")
+	}
+
+	if state.Phase != "implementation.target_write_ready" || state.StopReason != "model_call_budget_exhausted" {
+		t.Fatalf("unexpected lifecycle state: %#v", state)
+	}
+
+	if state.WriteReadyNudgeCount != 2 {
+		t.Fatalf("expected completion_status to update nudge count, got %#v", state)
+	}
+
+	if len(state.RemainingRequiredEditPaths) != 1 || state.RemainingRequiredEditPaths[0] != "internal/runtime/agent/runner_core.go" {
+		t.Fatalf("missing remaining paths: %#v", state)
+	}
+
+	if len(state.PendingRedirects) != 1 || state.PendingRedirects[0].PendingTool != "read_file" {
+		t.Fatalf("missing pending redirect: %#v", state.PendingRedirects)
+	}
+}
+
+func TestParseImplementationStateLastSnapshotClearsStaleSlices(t *testing.T) {
+	out := []byte(`{"type":"implementation_lifecycle_state","phase":"implementation.target_write_ready","remaining_required_edit_paths":["internal/runtime/agent/runner_core.go"],"pending_redirects":[{"path":"internal/runtime/agent/runner_core.go","pending_tool":"read_file"}]}
+{"type":"completion_status","status":"blocked","changed_paths":["internal/runtime/agent/implementation_lifecycle.go"]}
+`)
+	state, ok := parseImplementationState(out)
+	if !ok {
+		t.Fatal("expected implementation state")
+	}
+
+	if len(state.RemainingRequiredEditPaths) != 0 || len(state.PendingRedirects) != 0 {
+		t.Fatalf("later snapshot should clear stale paths and redirects, got %#v", state)
+	}
+
+	if len(state.ChangedPaths) != 1 || state.ChangedPaths[0] != "internal/runtime/agent/implementation_lifecycle.go" {
+		t.Fatalf("expected changed path from last snapshot, got %#v", state)
+	}
+}
+
+func TestDecodeImplementationStateProjection(t *testing.T) {
+	projection, ok := decodeImplementationStateProjection([]byte(`{"type":"completion_status","phase":"implementation.target_write_ready","stop_reason":"model_call_budget_exhausted","remaining_required_edit_paths":["a.go"],"pending_redirects":[{"path":"a.go","pending_tool":"read_file"}],"write_ready_nudge_count":2}`))
+	if !ok {
+		t.Fatal("expected implementation state projection")
+	}
+
+	if projection.Type != "completion_status" ||
+		projection.Phase != "implementation.target_write_ready" ||
+		projection.StopReason != "model_call_budget_exhausted" ||
+		projection.WriteReadyNudgeCount != 2 ||
+		len(projection.PendingRedirects) != 1 {
+
+		t.Fatalf("unexpected projection: %#v", projection)
+	}
+}
+
 func TestParseLaneQueuePool(t *testing.T) {
 	out := []byte(`{"type":"` + queuecontract.CommandAdmissionEventName(queuecontract.CommandEventPrefixPlanExecute, queuecontract.AdmissionEventQueueAcquired) + `","pool":"qwen-35b"}
 {"type":"session_summary","total_tokens":50}

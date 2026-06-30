@@ -535,7 +535,7 @@ func implementationHandoffExistingWorkspacePaths(effortRoot string, workflowStat
 	workspaceRoot := implementationHandoffWorkspaceRoot(effortRoot)
 
 	for _, rec := range records {
-		if rec.RecordType != "atom_planned" || rec.Scope == nil {
+		if rec.RecordType != LedgerRecordAtomPlanned || rec.Scope == nil {
 			continue
 		}
 

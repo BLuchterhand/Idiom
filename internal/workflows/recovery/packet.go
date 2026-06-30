@@ -45,6 +45,7 @@ func BuildDecompositionPacket(record recoverycontract.FailureRecord, opts Decomp
 		LockedContract: cleanContractSnapshot(record.LockedContract, record.SourceRun),
 		Failure:        record.Failure,
 		PartialState:   partial,
+		Implementation: record.Implementation,
 		ProductLinks:   productLinksForRecord(record, partial),
 		EvidenceRefs:   record.Failure.EvidenceRefs,
 		NextAction:     action,
@@ -190,15 +191,7 @@ func ValidateDecompositionPacket(packet recoverycontract.DecompositionPacket) er
 	if strings.TrimSpace(packet.PacketID) == "" {
 		return fmt.Errorf("packet_id is required")
 	}
-	record := recoverycontract.FailureRecord{
-		SchemaVersion:  recoverycontract.FailureRecordSchemaVersion,
-		FailureID:      packet.FailureID,
-		SourceRun:      packet.SourceRun,
-		LockedContract: packet.LockedContract,
-		Failure:        packet.Failure,
-		PartialState:   packet.PartialState,
-		NextAction:     packet.NextAction,
-	}
+	record := recoverycontract.FailureRecordFromDecompositionPacket(packet)
 	if err := recoverycontract.ValidateFailureRecord(record); err != nil {
 		return err
 	}

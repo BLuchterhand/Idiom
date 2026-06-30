@@ -111,10 +111,11 @@ func (m *Manager) recoveryStatus(ctx context.Context, req ToolRequest) ToolResul
 		return ToolResult{Tool: "recovery_status", Summary: "Recovery decomposition packet not found", Error: "recovery decomposition packet not found"}
 	}
 
-	currentPartial := m.recoveryPartialState(ctx, failureRecordFromRecoveryPacket(packet))
+	record := recoverycontract.FailureRecordFromDecompositionPacket(packet)
+	currentPartial := m.recoveryPartialState(ctx, record)
 	if currentPartial.DirtyStatus != "" && currentPartial.DirtyStatus != recoverycontract.DirtyStatusClean {
 		packet.PartialState = currentPartial
-		packet.NextAction = recovery.NextActionForPartialState(failureRecordFromRecoveryPacket(packet), currentPartial)
+		packet.NextAction = recovery.NextActionForPartialState(record, currentPartial)
 	}
 
 	projection := recovery.ProjectPacketStatus(packet, nil)
@@ -444,19 +445,6 @@ func recoveryPacketGates(packet recoverycontract.DecompositionPacket) []string {
 	sort.Strings(gates)
 
 	return gates
-}
-
-func failureRecordFromRecoveryPacket(packet recoverycontract.DecompositionPacket) recoverycontract.FailureRecord {
-	return recoverycontract.FailureRecord{
-		SchemaVersion: recoverycontract.FailureRecordSchemaVersion,
-		FailureID:     packet.FailureID,
-		CreatedAt:     packet.CreatedAt,
-		UpdatedAt:     packet.UpdatedAt,
-		SourceRun:     packet.SourceRun,
-		Failure:       packet.Failure,
-		PartialState:  packet.PartialState,
-		NextAction:    packet.NextAction,
-	}
 }
 
 func sanitizeRecoveryStatusPacket(packet recoverycontract.DecompositionPacket) recoverycontract.DecompositionPacket {

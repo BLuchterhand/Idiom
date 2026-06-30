@@ -11,6 +11,14 @@ import (
 )
 
 const readApprovalModeName = "read-scope"
+const (
+	systemSearchApprovalModeName      = "system-search"
+	systemSearchAccessRequestedEvent  = "system_search_access_requested"
+	systemSearchAccessDecisionEvent   = "system_search_access_decision"
+	systemSearchAccessDecisionSource  = "operator"
+	systemSearchAccessOutcomeApproved = "approved"
+	systemSearchAccessOutcomeDenied   = "denied"
+)
 
 type tuiReadApprovalDecider struct {
 	model *Model
@@ -101,4 +109,64 @@ func (m *Model) newReadApprovalGate() *agent.ReadApprovalGate {
 			})
 		},
 	}
+}
+
+type tuiSystemSearchAccessApprover struct {
+	model *Model
+}
+
+func newTuiSystemSearchAccessApprover(m *Model) *tuiSystemSearchAccessApprover {
+	return &tuiSystemSearchAccessApprover{model: m}
+}
+
+func (a *tuiSystemSearchAccessApprover) ApproveSystemSearchAccess(_ context.Context, req workspace.SystemSearchAccessRequest) (workspace.SystemSearchAccessDecision, error) {
+	if a == nil || a.model == nil {
+		return workspace.SystemSearchAccessDecision{}, nil
+	}
+
+	if a.model.eventStream != nil {
+		a.model.emitJSONEvent(map[string]any{
+			"event":       systemSearchAccessRequestedEvent,
+			"path":        req.Path,
+			"session_id":  req.SessionID,
+			"reason":      req.RequestReason,
+			"target_kind": req.TargetKind,
+			"mode":        systemSearchApprovalModeName,
+		})
+	}
+
+	response := a.model.requestApprovalResponse(workspace.ToolRequest{
+		Tool:    workspace.ToolNameSystemSearchAccess,
+		Path:    req.Path,
+		Purpose: req.RequestReason,
+	}, systemSearchApprovalModeName)
+
+	if a.model.eventStream != nil {
+		outcome := systemSearchAccessOutcomeDenied
+		if response.allow {
+			outcome = systemSearchAccessOutcomeApproved
+		}
+		a.model.emitJSONEvent(map[string]any{
+			"event":      systemSearchAccessDecisionEvent,
+			"path":       req.Path,
+			"session_id": req.SessionID,
+			"outcome":    outcome,
+			"source":     systemSearchAccessDecisionSource,
+			"scope":      response.scope,
+			"mode":       systemSearchApprovalModeName,
+		})
+	}
+
+	return workspace.SystemSearchAccessDecision{
+		Approved: response.allow,
+		Scope:    response.scope,
+	}, nil
+}
+
+func (m *Model) wireSystemSearchAccessApprover() {
+	if m == nil || m.workspace == nil {
+		return
+	}
+
+	m.workspace.SetSystemSearchAccessApprover(newTuiSystemSearchAccessApprover(m))
 }

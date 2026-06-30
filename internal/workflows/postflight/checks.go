@@ -63,6 +63,7 @@ func GenericChecks() []Check {
 		FileAllowlistMismatch{},
 		NarratingTestComments{},
 		GoBuildPasses{},
+		CodingRulesCheck{},
 	}
 }
 

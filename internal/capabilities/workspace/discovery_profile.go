@@ -34,6 +34,10 @@ func DiscoveryProfileForRequest(req ToolRequest) ToolDiscoveryProfile {
 		return readOnlyCapabilityDiscoveryProfile(req)
 	case ToolNameSourceSanity:
 		return discoveryProfile("diagnostics", "targeted", "medium", false)
+	case ToolNameCodingRulesCheck:
+		return discoveryProfile("coding_rules", scopeFromPath(req.Path), "medium", false)
+	case ToolNameSystemSearchAccess:
+		return discoveryProfile("system_search_access", scopeFromPath(req.Path), "low", false)
 	case ToolNameHarnessAudit:
 		return discoveryProfile("harness_audit", scopeFromPath(req.Path), "medium", true)
 	case ToolNameHarnessFeedback:

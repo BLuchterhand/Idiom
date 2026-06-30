@@ -28,20 +28,21 @@ const (
 )
 
 type DecompositionPacket struct {
-	SchemaVersion  string            `json:"schema_version"`
-	PacketID       string            `json:"packet_id"`
-	FailureID      string            `json:"failure_id"`
-	CreatedAt      string            `json:"created_at"`
-	UpdatedAt      string            `json:"updated_at"`
-	SourceRun      SourceRun         `json:"source_run"`
-	LockedContract *ContractSnapshot `json:"locked_contract,omitempty"`
-	Failure        Failure           `json:"failure"`
-	PartialState   PartialState      `json:"partial_state"`
-	ProductLinks   ProductLinks      `json:"product_links,omitempty"`
-	ResidualWork   []ResidualWork    `json:"residual_work,omitempty"`
-	CandidateAtoms []CandidateAtom   `json:"candidate_atoms,omitempty"`
-	EvidenceRefs   []EvidenceRef     `json:"evidence_refs,omitempty"`
-	NextAction     NextAction        `json:"next_valid_action"`
+	SchemaVersion  string               `json:"schema_version"`
+	PacketID       string               `json:"packet_id"`
+	FailureID      string               `json:"failure_id"`
+	CreatedAt      string               `json:"created_at"`
+	UpdatedAt      string               `json:"updated_at"`
+	SourceRun      SourceRun            `json:"source_run"`
+	LockedContract *ContractSnapshot    `json:"locked_contract,omitempty"`
+	Failure        Failure              `json:"failure"`
+	PartialState   PartialState         `json:"partial_state"`
+	Implementation *ImplementationState `json:"implementation_state,omitempty"`
+	ProductLinks   ProductLinks         `json:"product_links,omitempty"`
+	ResidualWork   []ResidualWork       `json:"residual_work,omitempty"`
+	CandidateAtoms []CandidateAtom      `json:"candidate_atoms,omitempty"`
+	EvidenceRefs   []EvidenceRef        `json:"evidence_refs,omitempty"`
+	NextAction     NextAction           `json:"next_valid_action"`
 }
 
 type ProductLinks struct {
@@ -96,4 +97,19 @@ type PacketStatusProjection struct {
 	CandidateAtoms         []CandidateAtom
 	Reconciliation         *Reconciliation
 	ReconciliationFindings []ReconciliationValidationFinding
+}
+
+func FailureRecordFromDecompositionPacket(packet DecompositionPacket) FailureRecord {
+	return FailureRecord{
+		SchemaVersion:  FailureRecordSchemaVersion,
+		FailureID:      packet.FailureID,
+		CreatedAt:      packet.CreatedAt,
+		UpdatedAt:      packet.UpdatedAt,
+		SourceRun:      packet.SourceRun,
+		LockedContract: packet.LockedContract,
+		Failure:        packet.Failure,
+		PartialState:   packet.PartialState,
+		Implementation: packet.Implementation,
+		NextAction:     packet.NextAction,
+	}
 }

@@ -356,11 +356,11 @@ func LintEffortFolder(root string) LintSummaryResult {
 
 		for _, rec := range parsedLedger {
 			switch rec.RecordType {
-			case "atom_planned":
+			case LedgerRecordAtomPlanned:
 				if rec.Scope != nil {
 					plannedScopes[rec.TaskID] = rec.Scope
 				}
-			case "atom_closed":
+			case LedgerRecordAtomClosed:
 				closedTasks[rec.TaskID] = true
 			}
 		}
@@ -368,7 +368,7 @@ func LintEffortFolder(root string) LintSummaryResult {
 		taskPaths := map[string][]string{}
 
 		for _, rec := range parsedLedger {
-			if rec.RecordType != "implementation_completed" && rec.RecordType != "fallback_completion" {
+			if !IsImplementationCompletionRecordType(rec.RecordType) {
 				continue
 			}
 
@@ -411,7 +411,7 @@ func LintEffortFolder(root string) LintSummaryResult {
 	var atoms []AtomCoverageCheck
 
 	for _, rec := range parsedLedger {
-		if rec.RecordType == "implementation_completed" || rec.RecordType == "fallback_completion" || rec.RecordType == "partial_implementation_recorded" {
+		if IsImplementationChangeRecordType(rec.RecordType) {
 			atoms = append(atoms, AtomCoverageCheck{
 				TaskID:       rec.TaskID,
 				ChangedPaths: rec.ChangedPaths,
@@ -439,7 +439,7 @@ func LintEffortFolder(root string) LintSummaryResult {
 		commitHashSet := map[string]bool{}
 
 		for _, rec := range parsedLedger {
-			if rec.RecordType == "implementation_completed" || rec.RecordType == "fallback_completion" || rec.RecordType == "partial_implementation_recorded" {
+			if IsImplementationChangeRecordType(rec.RecordType) {
 				if rec.Timestamp >= commitHashRequiredAfter {
 					commitAtoms = append(commitAtoms, AtomCommitCoverage{
 						TaskID:       rec.TaskID,
