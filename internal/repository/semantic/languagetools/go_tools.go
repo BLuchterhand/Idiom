@@ -12,6 +12,7 @@ import (
 
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/semantic"
+	semanticgo "idiom/internal/repository/semantic/golang"
 )
 
 func (m *Manager) goOverview() ToolResult {
@@ -256,10 +257,6 @@ func goReadSymbolWindow(match semantic.SymbolMatch, requestedStart, requestedEnd
 	end := match.Line + 20
 
 	return start, end
-}
-
-func GoReadSymbolWindow(match semantic.SymbolMatch, requestedStart, requestedEnd int) (int, int) {
-	return goReadSymbolWindow(match, requestedStart, requestedEnd)
 }
 
 func (m *Manager) goFindPackage(req ToolRequest) ToolResult {
@@ -934,7 +931,7 @@ func (m *Manager) getGoIndex() (*semantic.GoIndex, error) {
 		return cached, nil
 	}
 
-	index, err := semantic.BuildGoIndex(m.Root())
+	index, err := semanticgo.BuildGoIndex(m.Root())
 	if err != nil {
 		return nil, fmt.Errorf("build Go semantic index: %w", err)
 	}
@@ -1404,10 +1401,6 @@ func (m *Manager) goDiagnosticTargets(req ToolRequest) ([]string, error) {
 	}
 
 	return files, nil
-}
-
-func (m *Manager) GoDiagnosticTargets(req ToolRequest) ([]string, error) {
-	return m.goDiagnosticTargets(req)
 }
 
 func (m *Manager) goImportPath(pkgPath string, module string) string {

@@ -49,10 +49,6 @@ func runContextMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writ
 	})
 }
 
-func runFeaturePlannerMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return featureplannercmd.RunMainWithTelemetry(args, stdout, stderr, rec, featurePlannerDependencies())
-}
-
 func runHeadlessMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdruntime.PromptRunner, rec *telemetry.Recorder) int {
 	return headlesscmd.Run(args, os.Stdin, stdout, stderr, headlesscmd.PromptRunner(promptRun), rec)
 }
@@ -62,7 +58,7 @@ func featurePlannerDependencies() featureplannercmd.Dependencies {
 		NewSessionID:            sessionid.New,
 		LocalOpsTelemetryFields: cmdtelemetry.LocalOpsFields,
 		RunPlanExecute: func(args []string, stdout io.Writer, stderr io.Writer) int {
-			return planexecutecmd.RunMain(args, stdout, stderr, cmdruntime.RunPromptOnce)
+			return planexecutecmd.RunMainWithTelemetry(args, stdout, stderr, cmdruntime.RunPromptOnce, nil)
 		},
 	}
 }
@@ -73,14 +69,6 @@ func runLocalOpsMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wri
 		Commit:     commit,
 		LoadConfig: cmdconfig.Load,
 	})
-}
-
-func runProductEvidenceMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return productevidence.RunProductEvidenceMainWithTelemetry(args, stdout, stderr, rec, productEvidenceDeps())
-}
-
-func runReleaseMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return productevidence.RunReleaseMainWithTelemetry(args, stdout, stderr, rec, productEvidenceDeps())
 }
 
 func productEvidenceDeps() productevidence.Dependencies {

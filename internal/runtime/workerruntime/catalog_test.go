@@ -186,7 +186,7 @@ func runtimeLabelContains[T ~string](values []T, want string) bool {
 }
 
 func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
-	available := []string{"task", "pwd", "list_files", "search_files", "search_content", "read_file", "file_stats", "code_navigate", "read_only_capability", "harness_audit", "context_status", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack", "discovery_query", "structural_search", "go_workspace_symbol", "shell", "git_status", "git_diff", "history_range", "history_symbol", "blame_range", "edit_file", "write_file"}
+	available := []string{"task", "pwd", "list_files", "search_files", "search_content", "read_file", "file_stats", "code_navigate", "read_only_capability", "harness_audit", "context_status", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack", "discovery_query", "structural_search", "go_workspace_symbol", "request_system_search_access", "shell", "git_status", "git_diff", "history_range", "history_symbol", "blame_range", "edit_file", "write_file"}
 
 	artifact := RuntimeBriefForTaskFamily(ArtifactFinalAnswerTaskFamily, "main", available)
 	if artifact.Contract != "artifact_final_answer" || artifact.PermissionProfile != "conversation_only" {
@@ -217,11 +217,11 @@ func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
 		t.Fatalf("permission = %q, want read_only_workspace", brief.PermissionProfile)
 	}
 
-	if brief.Budget.MaxToolSteps != 0 || brief.Budget.MaxModelCalls != 0 {
+	if brief.Budget.MaxToolSteps != 0 || brief.Budget.MaxModelCalls != 0 || brief.Budget.MaxOperationalModelCalls != 0 {
 		t.Fatalf("conversation should carry a tight read-only budget, got %#v", brief.Budget)
 	}
 
-	for _, expected := range []string{"task", "read_file", "search_files", "search_content", "file_stats", "code_navigate", "read_only_capability", "harness_audit", "context_status", "context_query", "context_zoom", "structural_search", "history_range", "history_symbol", "blame_range"} {
+	for _, expected := range []string{"task", "read_file", "search_files", "search_content", "file_stats", "code_navigate", "read_only_capability", "harness_audit", "context_status", "context_query", "context_zoom", "structural_search", "history_range", "history_symbol", "blame_range", "request_system_search_access"} {
 		if !slices.Contains(brief.AllowedTools, expected) {
 			t.Fatalf("conversation missing read-only tool %q in %#v", expected, brief.AllowedTools)
 		}

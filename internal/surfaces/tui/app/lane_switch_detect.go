@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	lanecontract "idiom/internal/contracts/lane"
-	"idiom/internal/runtime/workerruntime"
 )
 
 // Lane switch recommendation constants. These are the lane command keys the
@@ -164,21 +163,5 @@ func laneSwitchLabelForHeadless(key string) string {
 		return "stay read-only"
 	default:
 		return "/implement"
-	}
-}
-
-// laneSwitchRecommendationForFamily maps a route Family to a lane command
-// key. Kept for callers that have a typed family signal (e.g. future
-// harness-owned detection paths) and used by the popup's pre-select logic
-// when only the family is known.
-func laneSwitchRecommendationForFamily(family string) string {
-	switch {
-	case workerruntime.TaskFamilyIsPlanThenExecutePlanner(family):
-		return laneSwitchPlanExecute
-	case workerruntime.TaskFamilyIsFeaturePlannerPlanner(family),
-		workerruntime.TaskFamilyIsFeaturePlannerImplementor(family):
-		return laneSwitchFeaturePlanner
-	default:
-		return laneSwitchImplement
 	}
 }

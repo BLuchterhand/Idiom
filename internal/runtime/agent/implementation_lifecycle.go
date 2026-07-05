@@ -19,7 +19,7 @@ func (r *Runner) implementationLifecycleSnapshot(results []workspace.ToolResult,
 		StopReason:                 strings.TrimSpace(stopReason),
 		RemainingRequiredEditPaths: uniqueSortedRunnerPaths(r.remainingRequiredEditPaths(results)),
 		ChangedPaths:               uniqueSortedRunnerPaths(mapKeys(changedPathsFromToolResults(results))),
-		SourcedEvidencePaths:       uniqueSortedRunnerPaths(concreteSourceEvidencePaths(results)),
+		SourcedEvidencePaths:       uniqueSortedRunnerPaths(sourceEvidenceBodyPaths(results)),
 		PendingRedirects:           implementationPendingRedirectSnapshots(r.evidenceEngine().PendingRedirectsForBrief(r.RuntimeBrief, results)),
 		WriteReadyNudgeCount:       writeReadyNudges,
 	}

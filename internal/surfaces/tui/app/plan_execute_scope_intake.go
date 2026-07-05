@@ -174,21 +174,6 @@ func implementationDispatchSegmentMarksReferenceDocument(words string, path stri
 	return false
 }
 
-func implementationDispatchSegmentMarksMutationTarget(words string, path string) bool {
-	pathWords := strings.TrimSpace(plannerWordText(path))
-	if pathWords == "" || !strings.Contains(words, " "+pathWords+" ") {
-		return false
-	}
-
-	for _, verb := range []string{" create ", " add ", " write ", " update ", " edit ", " modify ", " append ", " change "} {
-		if strings.Contains(words, verb) {
-			return true
-		}
-	}
-
-	return false
-}
-
 func planExecutePromptPathIsMutationTarget(prompt string, path string) bool {
 	path = strings.TrimSpace(path)
 	if path == "" {

@@ -58,20 +58,6 @@ func (r *Runner) implementationScopedDisallowedToolRecovery(req workspace.ToolRe
 	return summary, errorText, prompt, true
 }
 
-func (r *Runner) scopedImplementationLastChanceWriteOnlyPrompt(results []workspace.ToolResult) string {
-	target := "the remaining required edit path(s)"
-
-	if r != nil {
-		if paths := r.remainingRequiredEditPaths(results); len(paths) > 0 {
-			target = strings.Join(paths, ", ")
-		} else if paths := nonEmptyRunnerStrings(r.RuntimeBrief.RequiredEditPaths, 3); len(paths) > 0 {
-			target = strings.Join(paths, ", ")
-		}
-	}
-
-	return fmt.Sprintf("This is the final model-call budget slot for the scoped implementation run. Required edit paths remain unchanged: %s. Non-write tools are now hidden. Use one available parser-readable write tool for an in-scope required path from the packet and gathered source evidence, or answer exactly `<<QUESTION>>:` with the concrete path-specific blocker/no-op evidence. Do not read, search, inspect, or narrate a plan.", target)
-}
-
 func lastResultSummaryIs(results []workspace.ToolResult, summary string) bool {
 	if len(results) == 0 {
 		return false
@@ -122,7 +108,7 @@ func (r *Runner) writeReadyPacketReadWithoutGapRecovery(req workspace.ToolReques
 		return "", "", "", false, false
 	}
 
-	hideNonWrite = implementationPreWriteToolSurfaceActive(r.RuntimeBrief, results)
+	hideNonWrite = exactAnchorPreWriteSurfaceActive(r.RuntimeBrief, results)
 
 	missingGap := textutil.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering) == ""
 	// The read scope is the FULL required-edit-paths set plus explicit
@@ -1490,7 +1476,7 @@ func (r *Runner) repeatedRangeLessReadFileRejection(req workspace.ToolRequest, r
 		return "", "", false
 	}
 
-	if rangeLessReadFileWasRedirectedToOutline(path, results) && !concreteSourceEvidenceReadForPath(path, results) {
+	if rangeLessReadFileWasRedirectedToOutline(path, results) && !sourceEvidenceBodyReadForPath(path, results) {
 		followup := r.repeatedRangeLessReadFileFollowup(path, results)
 
 		return "Repeated range-less read_file redirected to bounded source request",
@@ -1730,7 +1716,7 @@ func (r *Runner) repeatedRangeLessReadFileRedirect(req workspace.ToolRequest, re
 	}
 
 	path := agentutil.NormalizeRunnerPath(req.Path)
-	if path == "" || !rangeLessReadFileWasRedirectedToOutline(path, results) || concreteSourceEvidenceReadForPath(path, results) {
+	if path == "" || !rangeLessReadFileWasRedirectedToOutline(path, results) || sourceEvidenceBodyReadForPath(path, results) {
 		return workspace.ToolRequest{}, "", false
 	}
 
@@ -1852,7 +1838,7 @@ func (r *Runner) planThenExecuteRepeatedSymbolReadFallbackRedirect(req workspace
 	}
 
 	path := agentutil.NormalizeRunnerPath(req.Path)
-	if path == "" || concreteSourceEvidenceReadForPath(path, results) {
+	if path == "" || sourceEvidenceBodyReadForPath(path, results) {
 		return workspace.ToolRequest{}, "", false
 	}
 
@@ -1989,10 +1975,6 @@ func rangeLessReadFileWasRedirectedToOutline(path string, results []workspace.To
 	return false
 }
 
-func concreteSourceEvidenceReadForPath(path string, results []workspace.ToolResult) bool {
-	return sourceEvidenceBodyReadForPath(path, results)
-}
-
 func concreteSourceEvidenceResultMatchesPath(result workspace.ToolResult, path string) bool {
 	path = agentutil.NormalizeRunnerPath(path)
 	if path == "" || agentutil.IsNonSourceEvidenceArtifactPath(path) {
@@ -2096,6 +2078,10 @@ func mutationHiddenOnlyNoWriteTerminalRecoveryStall(brief workerruntime.WorkerRu
 		return false
 	}
 
+	if implementationTargetWriteReadySurfaceActive(brief, results) {
+		return false
+	}
+
 	if strings.TrimSpace(reply.Content) != "" || strings.TrimSpace(reply.ReasoningContent) == "" {
 		return false
 	}
@@ -2138,15 +2124,31 @@ func mutationNoWriteCompletionGateRejectionCount(results []workspace.ToolResult)
 func (r *Runner) unscopedNoWriteTerminalRecoveryPrompt(results []workspace.ToolResult) string {
 	lines := []string{
 		"The completion gate has now rejected multiple no-write final answers after source evidence was gathered.",
-		"Read/search/discovery tools are hidden for this turn. Do not inspect, search, navigate, plan, or summarize again.",
-		"Your next visible message must be exactly one terminal action: a parser-readable write tool call using current source evidence, or `<<QUESTION>>:` naming the exact blocker that prevents a write.",
+		"Keep using the active implementation strategy surface: parser-readable write when enough evidence exists, bounded read/search with `named_gap` for one exact missing edit-safety fact, or `<<QUESTION>>:` naming the exact blocker/no-op evidence.",
+		"Do not repeat a prose final answer until a workspace write, no-op, or exact blocker has been recorded.",
 		textualMutationWriteJSONInstruction(),
 	}
 	if sourced := implementationTargetWriteReadySourcedPathSummary(results, 4); sourced != "" {
 		lines = append(lines, "Already-read source-body evidence is available for: "+sourced+".")
 	}
 
-	lines = append(lines, "Choose the path and edit shape from gathered evidence and the active runtime contract. Actions written only in hidden reasoning are ignored by the parser.")
+	lines = append(lines, "The model owns whether more evidence is needed before writing; the harness only requires the next visible action to satisfy the active parser-readable contract. Actions written only in hidden reasoning are ignored by the parser. Do not copy placeholders, schema examples, or prose as edit fields.")
+
+	return strings.Join(lines, "\n\n")
+}
+
+func (r *Runner) implementationTargetWriteReadyTerminalRecoveryPrompt(results []workspace.ToolResult) string {
+	lines := []string{
+		"The final answer was rejected because the implementation lane is already target-write-ready and no workspace write has been recorded.",
+		"Keep using the active target-write-ready strategy surface: parser-readable write when enough evidence exists, bounded read/search with `named_gap` for one exact missing edit-safety fact, or `<<QUESTION>>:` naming the exact blocker/no-op evidence.",
+		"Do not repeat a prose final answer until a workspace write, no-op, or exact blocker has been recorded.",
+		textualMutationWriteJSONInstruction(),
+	}
+	if sourced := implementationTargetWriteReadySourcedPathSummary(results, 4); sourced != "" {
+		lines = append(lines, "Already-read source-body evidence is available for: "+sourced+".")
+	}
+
+	lines = append(lines, "The model owns whether more evidence is needed before writing; the harness only requires the next visible action to satisfy the active parser-readable contract. Actions written only in hidden reasoning are ignored by the parser. Do not copy placeholders, schema examples, or prose as edit fields.")
 
 	return strings.Join(lines, "\n\n")
 }
@@ -2272,7 +2274,7 @@ func concreteSourceEvidenceAlreadyRead(results []workspace.ToolResult) bool {
 }
 
 func implementationTargetWriteReadySourcedPathSummary(results []workspace.ToolResult, max int) string {
-	paths := concreteSourceEvidencePaths(results)
+	paths := sourceEvidenceBodyPaths(results)
 	if len(paths) == 0 {
 		return ""
 	}
@@ -2524,372 +2526,6 @@ func (r *Runner) mutationCompletionRejection(reply string, results []workspace.T
 	return workspace.ToolResult{}, false
 }
 
-// refineReasoningShape captures one recognized markdown structural
-// shape the auto-salvage can recover. anchor is the marker we search
-// for as the "primary" structural section start; corroborator is a
-// second marker that must ALSO appear so we don't extract on a
-// passing mention. Each shape's primary anchor defines where the
-// extracted block begins (we walk back from its last occurrence).
-type refineReasoningShape struct {
-	name         string
-	primary      string
-	corroborator string
-}
-
-var refineReasoningShapes = []refineReasoningShape{
-	// Refine review deliverable: structured bug list + verdict.
-	{name: "review", primary: "## Bugs found", corroborator: "## Verdict"},
-	// Refine markdown-deliverable mode: the draft carries the target
-	// file's content in a dedicated inline-content section.
-	{name: "markdown-deliverable", primary: "## Inline content", corroborator: "## Deliverable"},
-	// Refine draft / patch deliverable: implementation brief layout
-	// (the canonical brief skeleton sections). Required Behavior +
-	// Files To Modify both appear in every well-formed refine draft;
-	// requiring both lets us reject thinking chatter that mentions a
-	// section heading in passing.
-	{name: "draft", primary: "## Files To Modify", corroborator: "## Required Behavior"},
-	// Lowercase variant — the draft template uses "## Files to
-	// Modify" (small 't') in some renderings.
-	{name: "draft-alt", primary: "## Files to Modify", corroborator: "## Required Behavior"},
-	// Some project and refine templates use "Required Edits" for the
-	// concrete implementation section. Treat that as the same
-	// corrected-brief shape so a prose preface does not strand a full
-	// markdown deliverable in the final answer.
-	{name: "draft-required-edits", primary: "## Files To Modify", corroborator: "## Required Edits"},
-	{name: "draft-required-edits-alt", primary: "## Files to Modify", corroborator: "## Required Edits"},
-}
-
-// extractStructuredMarkdownFromReasoning recovers a refine-shaped
-// markdown deliverable (review or draft/patch) from inside a model's
-// reasoning content, used by tryAutoSalvageMarkdownDeliverable as
-// a fallback when the visible reply is empty. Returns "" when no
-// safe extraction is possible — the auto-salvage caller then skips
-// and the completion gate rejects normally.
-//
-// Safety preconditions (all must hold):
-//   - reasoning >= 200 chars (some signal there)
-//   - reasoning matches one of refineReasoningShapes (primary +
-//     corroborator both present)
-//   - extracted block is >= 100 chars
-//
-// Extraction strategy: find the LAST occurrence of the matched
-// shape's primary anchor and take from there to the end (walking
-// back through any preceding `# Title`). Last-occurrence is
-// deliberate — the model's thinking often iterates a few times
-// before settling on the final structure; the last occurrence is
-// closest to the model's final intent.
-func extractStructuredMarkdownFromReasoning(reasoning string) string {
-	r := strings.TrimSpace(reasoning)
-	if len(r) < 200 {
-		return ""
-	}
-
-	var matched refineReasoningShape
-
-	for _, shape := range refineReasoningShapes {
-		if strings.Contains(r, shape.primary) && strings.Contains(r, shape.corroborator) {
-			matched = shape
-			break
-		}
-	}
-
-	if matched.primary == "" {
-		return ""
-	}
-
-	primaryIdx := strings.LastIndex(r, matched.primary)
-	if primaryIdx < 0 {
-		return ""
-	}
-
-	startIdx := primaryIdx
-	if nl := strings.LastIndex(r[:primaryIdx], "\n"); nl >= 0 {
-		startIdx = nl + 1
-	}
-
-	// Walk back to a preceding `# Title` if one is directly above
-	// (within 400 chars). Conservative cap — beyond that we'd risk
-	// grabbing arbitrary thinking.
-	lookbackStart := startIdx - 400
-	if lookbackStart < 0 {
-		lookbackStart = 0
-	}
-
-	preceding := r[lookbackStart:startIdx]
-	if hdr := strings.LastIndex(preceding, "\n# "); hdr >= 0 {
-		startIdx = lookbackStart + hdr + 1
-	}
-
-	candidate := strings.TrimSpace(r[startIdx:])
-	if len(candidate) < 100 {
-		return ""
-	}
-
-	if reasoningCandidateLooksLikeUnfilledTemplate(candidate) {
-		return ""
-	}
-
-	return candidate
-}
-
-// reasoningCandidateLooksLikeUnfilledTemplate rejects salvaged
-// content that's the meta-brief's skeleton placeholder itself —
-// observed during refine v10 (#97): Coder-30B emitted 0 visible
-// content and 69KB of reasoning content that turned out to be the
-// model "thinking about" the template (copy-pasting `<RELATIVE_PATH>`
-// and `<numbered step...>` markers). The salvage matched the
-// structural anchors and would have shipped that garbage as a draft.
-//
-// Markers checked are the exact placeholder strings the refine
-// templates ship. If two or more appear in the candidate, treat it
-// as model-didn't-actually-fill-it and refuse to salvage.
-func reasoningCandidateLooksLikeUnfilledTemplate(candidate string) bool {
-	markers := []string{
-		"RELATIVE_PATH",
-		"<numbered step",
-		"<workspace/relative",
-		"<bracket placeholder>",
-		"<short title>",
-		"<description>",
-		"<how to fix>",
-		"<one or two sentences",
-		"<quote relevant existing code",
-		"<shell command that verifies",
-	}
-	hits := 0
-
-	for _, m := range markers {
-		if strings.Contains(candidate, m) {
-			hits++
-			if hits >= 2 {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
-// extractStructuredMarkdownFromReply recovers a full markdown
-// deliverable from visible final-answer text. Unlike reasoning
-// salvage, visible reply salvage may walk back to a much earlier H1:
-// long refine drafts often place `## Files To Modify` near the end of
-// the document, well beyond the conservative reasoning lookback.
-func extractStructuredMarkdownFromReply(reply string) string {
-	r := strings.TrimSpace(reply)
-	if len(r) < 100 || strings.HasPrefix(r, "<<QUESTION>>") {
-		return ""
-	}
-
-	if recoverableMarkdownDeliverableShape(r) && markdownBodyStartsAsDeliverable(r) && !reasoningCandidateLooksLikeUnfilledTemplate(r) {
-		return r
-	}
-
-	var matched refineReasoningShape
-
-	for _, shape := range refineReasoningShapes {
-		if strings.Contains(r, shape.primary) && strings.Contains(r, shape.corroborator) {
-			matched = shape
-			break
-		}
-	}
-
-	if matched.primary == "" {
-		return ""
-	}
-
-	primaryIdx := strings.LastIndex(r, matched.primary)
-	if primaryIdx < 0 {
-		return ""
-	}
-
-	startIdx := primaryIdx
-	if strings.HasPrefix(r, "# ") {
-		startIdx = 0
-	} else if hdr := strings.LastIndex(r[:primaryIdx], "\n# "); hdr >= 0 {
-		startIdx = hdr + 1
-	} else if nl := strings.LastIndex(r[:primaryIdx], "\n"); nl >= 0 {
-		startIdx = nl + 1
-	}
-
-	candidate := strings.TrimSpace(r[startIdx:])
-	if len(candidate) < 100 || !recoverableMarkdownDeliverableShape(candidate) {
-		return ""
-	}
-
-	if reasoningCandidateLooksLikeUnfilledTemplate(candidate) {
-		return ""
-	}
-
-	return candidate
-}
-
-func recoverableMarkdownDeliverableShape(body string) bool {
-	body = strings.TrimSpace(body)
-	if len(body) < 100 {
-		return false
-	}
-
-	for _, shape := range refineReasoningShapes {
-		if strings.Contains(body, shape.primary) && strings.Contains(body, shape.corroborator) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// autoSalvageMarkdownDeliverable handles a specific Qwen-at-low-temp
-// failure mode: the deliverable is a single new .md file (refine
-// review/draft/patch lanes), the model wrote the entire markdown
-// content into its final-answer text instead of calling write_file,
-// and the completion gate is about to reject for "no successful write."
-//
-// When the brief has exactly one required edit path that ends in .md,
-// the path doesn't yet exist on disk, and the reply is a recognizable
-// refine-shaped markdown payload, we write the reply to that path on
-// behalf of the model and return the synthetic write_file result so
-// the main runner can record it as normal completion evidence.
-//
-// Returns false (no salvage) when the criteria don't match — caller
-// proceeds with the normal rejection. Salvage failures (file write
-// errors) also return false; the original gate rejection wins.
-func (r *Runner) autoSalvageMarkdownDeliverable(ctx context.Context, reply string) (workspace.ToolRequest, workspace.ToolResult, bool) {
-	if r == nil || r.Workspace == nil {
-		return workspace.ToolRequest{}, workspace.ToolResult{}, false
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	if strings.TrimSpace(r.RuntimeBrief.TaskFamily) == PlanThenExecutePlannerTaskFamily {
-		return workspace.ToolRequest{}, workspace.ToolResult{}, false
-	}
-
-	if strings.TrimSpace(r.RuntimeBrief.TaskFamily) == PlanThenExecuteReviewRepairTaskFamily {
-		return workspace.ToolRequest{}, workspace.ToolResult{}, false
-	}
-
-	if len(r.RuntimeBrief.RequiredEditPaths) != 1 {
-		if len(r.RuntimeBrief.RequiredEditPaths) > 0 {
-			r.emitAutoSalvageEvent("skip: required_edit_paths count=%d, want 1", len(r.RuntimeBrief.RequiredEditPaths))
-		}
-
-		return workspace.ToolRequest{}, workspace.ToolResult{}, false
-	}
-
-	path := strings.TrimSpace(r.RuntimeBrief.RequiredEditPaths[0])
-	if path == "" || !strings.HasSuffix(strings.ToLower(path), ".md") {
-		r.emitAutoSalvageEvent("skip: path %q is not a .md file", path)
-
-		return workspace.ToolRequest{}, workspace.ToolResult{}, false
-	}
-
-	cleanPath := filepath.ToSlash(filepath.Clean(path))
-	if filepath.IsAbs(path) || cleanPath == "." || cleanPath == ".." || strings.HasPrefix(cleanPath, "../") {
-		r.emitAutoSalvageEvent("skip: path %q is not a safe relative path", path)
-
-		return workspace.ToolRequest{}, workspace.ToolResult{}, false
-	}
-
-	if root := strings.TrimSpace(r.Workspace.Root()); root != "" {
-		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(cleanPath))); err == nil {
-			r.emitAutoSalvageEvent("skip: path %q already exists", path)
-
-			return workspace.ToolRequest{}, workspace.ToolResult{}, false
-		} else if !os.IsNotExist(err) {
-			r.emitAutoSalvageEvent("skip: cannot stat %q: %v", path, err)
-
-			return workspace.ToolRequest{}, workspace.ToolResult{}, false
-		}
-	}
-
-	body := extractStructuredMarkdownFromReply(reply)
-	source := "reply"
-
-	if body != "" && strings.TrimSpace(body) != strings.TrimSpace(reply) {
-		source = "reply-structured"
-
-		r.emitAutoSalvageEvent("extracted structured markdown from reply prose (%d chars)", len(body))
-	}
-
-	// Fallback path (#95): Qwen3 thinking mode sometimes burns the
-	// entire generation budget inside the <think> block and exits
-	// with empty visible content even when the thinking-text contains
-	// a structured review. Recover by extracting from
-	// LastAssistantMessage.ReasoningContent — bounded to the
-	// review-template structural markers so we don't ship random
-	// reasoning artifacts.
-	if len(body) < 100 {
-		if salvaged := extractStructuredMarkdownFromReasoning(r.LastAssistantMessage.ReasoningContent); salvaged != "" {
-			body = salvaged
-			source = "reasoning"
-
-			r.emitAutoSalvageEvent("recovering from reasoning content (reply was %d chars, reasoning yielded %d)", len(strings.TrimSpace(reply)), len(body))
-		}
-	}
-
-	if len(body) < 100 {
-		r.emitAutoSalvageEvent("skip: body too short (%d chars, source=%s)", len(body), source)
-
-		return workspace.ToolRequest{}, workspace.ToolResult{}, false
-	}
-
-	if !recoverableMarkdownDeliverableShape(body) {
-		r.emitAutoSalvageEvent("skip: body is not a recognized markdown deliverable shape (chars=%d, source=%s, starts_with_heading=%t)", len(body), source, markdownBodyStartsAsDeliverable(body))
-
-		return workspace.ToolRequest{}, workspace.ToolResult{}, false
-	}
-
-	select {
-	case <-ctx.Done():
-		r.emitAutoSalvageEvent("skip: context canceled before synthetic write: %v", ctx.Err())
-
-		return workspace.ToolRequest{}, workspace.ToolResult{}, false
-	default:
-	}
-
-	req := workspace.ToolRequest{
-		Tool:        workspace.ToolNameWriteFile,
-		Path:        path,
-		Content:     body,
-		Description: "auto-salvage: model put deliverable in final-answer text instead of calling write_file",
-	}
-	result := r.Workspace.Execute(ctx, req)
-
-	if strings.TrimSpace(result.Error) != "" {
-		r.emitAutoSalvageEvent("FAILED: write_file %s: %s", path, result.Error)
-
-		return workspace.ToolRequest{}, workspace.ToolResult{}, false
-	}
-
-	r.emitAutoSalvageEvent("SUCCESS: wrote %s (%d bytes)", path, len(body))
-
-	return req, result, true
-}
-
-func (r *Runner) emitAutoSalvageEvent(format string, args ...any) {
-	if r == nil {
-		return
-	}
-
-	r.emitEvent(RunEvent{Role: "auto_salvage", Content: fmt.Sprintf(format, args...)})
-}
-
-// tryAutoSalvageMarkdownDeliverable is retained for focused unit tests
-// and callers that only care whether the recovery wrote a file. The
-// main runner uses autoSalvageMarkdownDeliverable so the synthetic
-// write_file result is recorded in collectedResults.
-func (r *Runner) tryAutoSalvageMarkdownDeliverable(reply string) bool {
-	_, _, ok := r.autoSalvageMarkdownDeliverable(context.Background(), reply)
-	return ok
-}
-
-func markdownBodyStartsAsDeliverable(body string) bool {
-	body = strings.TrimSpace(body)
-	return strings.HasPrefix(body, "# ") || strings.HasPrefix(body, "## ")
-}
-
 func mutationReplyReportsConcreteNoopOrBlocker(lowerReply string) bool {
 	lowerReply = strings.ToLower(strings.TrimSpace(lowerReply))
 	if lowerReply == "" {
@@ -2986,7 +2622,7 @@ const sourceGroundingAdditionalReadRecoveryRetries = 2
 //	the gate already fired once and the next move must address the
 //	stated blocker.
 //
-// Tier 2 (third rejection, last before tools disable): demand a
+// Tier 2 (third rejection): demand a
 //
 //	concrete tool call by name OR an explicit blocker statement.
 func escalateCompletionGateMessage(base string, priorRejections int) string {
@@ -3041,7 +2677,7 @@ func escalateCompletionGateMessageWithSourceRecovery(base string, priorRejection
 	default:
 		if isSourceGrounding {
 			if !sourceReadRecoveryAvailable {
-				return "[gate retry 3/3 — last attempt before tools disable] " + trimmed +
+				return "[gate retry 3/3 — strategy correction required] " + trimmed +
 					" — repeated source-grounding rejections mean the active reply still cites" +
 					" evidence the harness has not seen as source-body support. Qualify the" +
 					" unsupported citation as 'unverified' next to the claim, or answer with" +
@@ -3060,7 +2696,7 @@ func escalateCompletionGateMessageWithSourceRecovery(base string, priorRejection
 				" `read_file` or `code_navigate` call for a cited unread path, or qualify" +
 				" that citation as 'unverified' next to the claim. Do not narrate; act."
 		}
-		return "[gate retry 3/3 — last attempt before tools disable] " + trimmed +
+		return "[gate retry 3/3 — strategy correction required] " + trimmed +
 			" — repeated rejections indicate the active reply does not satisfy" +
 			" the contract. Either issue ONE concrete tool call that produces the" +
 			" missing evidence, or write a final answer that explicitly names the" +
@@ -3180,6 +2816,15 @@ func (r *Runner) retryableFinalAnswerAcceptanceRejection(acceptance finalAnswerA
 
 	if priorGateRejections >= retryLimit {
 		return false
+	}
+
+	if hasViolation &&
+		violationKind == turnViolationRequiredEvidenceUnmet &&
+		runnerBriefRequiresMutation(brief) &&
+		implementationTargetWriteReadySurfaceActive(brief, results) &&
+		len(changedPathsFromToolResults(results)) == 0 {
+
+		return true
 	}
 
 	if r.planThenExecutePlannerPhase() && planThenExecuteAnchorRefreshFinalAnswerRejection(acceptance) {
@@ -3368,7 +3013,7 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 			return fmt.Sprintf("The completion gate rejected a final answer while non-source deliverable path(s) remain unwritten: %s. The deliverable-write contract requires full corrected content with gathered evidence plus any missing, stale, ambiguous, or out-of-scope source fact recorded as `Source verification pending:` or `## Scope Correction Required`. Answer with <<QUESTION>> only if the deliverable cannot be written from the gathered evidence plus recorded uncertainty.", strings.Join(missing, ", ")), false, true
 		}
 
-		if implementationPreWriteToolSurfaceActive(r.RuntimeBrief, results) {
+		if exactAnchorPreWriteSurfaceActive(r.RuntimeBrief, results) {
 			return r.implementationRequiredPathCompletionRecoveryPrompt(missing, results, true), true, true
 		}
 
@@ -3441,8 +3086,12 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 	}
 
 	if r.unscopedNoWriteCompletionRecoveryApplies(results) {
+		if implementationTargetWriteReadySurfaceActive(r.RuntimeBrief, results) && len(changedPathsFromToolResults(results)) == 0 {
+			return r.implementationTargetWriteReadyTerminalRecoveryPrompt(results), false, true
+		}
+
 		if r.unscopedNoWriteTerminalRecoveryReady(results) {
-			return r.unscopedNoWriteTerminalRecoveryPrompt(results), true, true
+			return r.unscopedNoWriteTerminalRecoveryPrompt(results), false, true
 		}
 
 		candidatePaths := concreteRecoveryEvidencePaths(results, 4)
@@ -5957,10 +5606,6 @@ func planThenExecutePostSubmitRejectionRefreshNote(brief workerruntime.WorkerRun
 	return "The only remaining read exception is one bounded source-body refresh for: " + strings.Join(nonEmptyRunnerStrings(refreshable, 4), ", ") + ". For `" + workspace.CodeNavigateToolName + "`, include explicit " + workspace.CodeNavigateSourceBodyCapabilityPhrase() + " plus `pattern`. Otherwise do not call read/search/discovery before the corrected `submit_plan`."
 }
 
-func planThenExecuteRejectedPlanSourceRefreshAllowed(req workspace.ToolRequest, requiredCoveragePaths []string, results []workspace.ToolResult) bool {
-	return planThenExecuteRejectedPlanSourceRefreshAllowedForScope(req, requiredCoveragePaths, results)
-}
-
 func planThenExecuteRejectedPlanSourceRefreshAllowedForScope(req workspace.ToolRequest, scopePaths []string, results []workspace.ToolResult) bool {
 	rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results)
 	if !ok || successfulSubmitPlanResultCount(results) > 0 {
@@ -7914,7 +7559,7 @@ func reviewRepairNoopSubmitPlanCloseoutPrompt(req workspace.ToolRequest, result 
 }
 
 func reviewRepairNoopSubmitPlanCloseoutRejection(brief workerruntime.WorkerRuntimeBrief, answer string) (workspace.ToolResult, bool) {
-	if planThenExecuteReviewRepairAnswerDeclaresBlocker(answer) {
+	if planThenExecuteAnswerDeclaresTypedBlocker(answer) {
 		return workspace.ToolResult{}, false
 	}
 
@@ -8167,10 +7812,6 @@ func successfulSubmitPlanResultCount(results []workspace.ToolResult) int {
 	}
 
 	return count
-}
-
-func planThenExecuteSourceSatisfiedAnswerIntent(answer string) bool {
-	return plancontract.SourceSatisfiedAnswerIntent(answer)
 }
 
 func (r *Runner) planThenExecuteSourceSatisfiedAnswerCovers(reply string, results []workspace.ToolResult) bool {
@@ -9610,15 +9251,6 @@ func planThenExecuteRecoveryResultText(results []workspace.ToolResult) string {
 	return b.String()
 }
 
-func (r *Runner) planThenExecuteSubmitPlanParseRecoveryPrompt(raw string, parseErr error, results []workspace.ToolResult) (string, bool) {
-	plan, ok := r.planThenExecuteSubmitPlanParseRecoveryPlan(raw, parseErr, results)
-	if !ok {
-		return "", false
-	}
-
-	return RenderPlanExecuteRecoveryPlan(plan), true
-}
-
 func (r *Runner) planThenExecuteSubmitPlanParseRecoveryPlan(raw string, parseErr error, results []workspace.ToolResult) (PlanExecuteRecoveryPlan, bool) {
 	if r == nil || !r.planThenExecutePlannerPhase() || parseErr == nil {
 		return PlanExecuteRecoveryPlan{}, false
@@ -10790,7 +10422,7 @@ func (r *Runner) planThenExecuteActiveAnchorRefreshReadAllowed(req workspace.Too
 		return false
 	}
 
-	return planThenExecuteRejectedPlanSourceRefreshAllowed(req, state.RefreshPaths, results)
+	return planThenExecuteRejectedPlanSourceRefreshAllowedForScope(req, state.RefreshPaths, results)
 }
 
 const planThenExecuteReadySourceRefreshLimit = 4
@@ -10808,7 +10440,7 @@ func (r *Runner) planThenExecuteReadySourceRefreshAllowed(req workspace.ToolRequ
 		return false
 	}
 
-	if !planThenExecuteRejectedPlanSourceRefreshAllowed(req, r.requiredEditCoveragePaths(), results) {
+	if !planThenExecuteRejectedPlanSourceRefreshAllowedForScope(req, r.requiredEditCoveragePaths(), results) {
 		return false
 	}
 
@@ -10921,7 +10553,7 @@ func planThenExecuteSubmitReadyParseFailureIndex(brief workerruntime.WorkerRunti
 	last := -1
 
 	for i, result := range results {
-		if strings.TrimSpace(result.Tool) != "tool_parse" || strings.TrimSpace(result.Error) == "" {
+		if strings.TrimSpace(result.Tool) != parserRecoveryToolName || strings.TrimSpace(result.Error) == "" {
 			continue
 		}
 

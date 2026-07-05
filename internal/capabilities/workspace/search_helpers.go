@@ -125,6 +125,7 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 		formatted string
 		display   string
 		line      int
+		truncated bool
 		termScore int
 		pathScore int
 	}
@@ -147,11 +148,14 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 		handle := m.rememberPath(absPath)
 		display := m.displayPath(absPath)
 		lineNumber, _ := strconv.Atoi(parts[1])
+		rawLine := strings.TrimRight(parts[2], "\r\n")
+		renderedLine := textutil.TruncateBytes(rawLine, searchContentLineCap, lineTruncationMarker)
 
 		matches = append(matches, searchContentMatch{
-			formatted: fmt.Sprintf("%s %s:%s:%s", handle, display, parts[1], textutil.TruncateBytes(strings.TrimRight(parts[2], "\r\n"), searchContentLineCap, "...[line truncated]")),
+			formatted: fmt.Sprintf("%s %s:%s:%s", handle, display, parts[1], renderedLine),
 			display:   display,
 			line:      lineNumber,
+			truncated: renderedLine != rawLine,
 			termScore: searchContentTermScore(display, parts[2], rankingTerms),
 			pathScore: searchContentPathPriority(display),
 		})
@@ -186,6 +190,7 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 
 	formatted := make([]string, 0, min(len(matches), searchContentDisplayCap)+1)
 	capped := false
+	truncatedDisplayed := 0
 
 	for _, match := range matches {
 		if len(formatted) >= searchContentDisplayCap {
@@ -194,12 +199,19 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 		}
 
 		formatted = append(formatted, match.formatted)
+		if match.truncated {
+			truncatedDisplayed++
+		}
 	}
 
 	if capped {
 		remaining := totalMatches - searchContentDisplayCap
 
 		formatted = append(formatted, fmt.Sprintf("... and %d more matching line(s) omitted.", remaining))
+	}
+
+	if truncatedDisplayed > 0 {
+		formatted = append(formatted, fmt.Sprintf("note: %d displayed matching line(s) were truncated; truncated output is not an exact old_text anchor. Use read_file around the shown path and line before copying exact source; if a write surface is available and the exact range is known, use that surface's line-range edit shape.", truncatedDisplayed))
 	}
 
 	summary := fmt.Sprintf("Found %d matching line(s).", totalMatches)
@@ -415,7 +427,7 @@ func (m *Manager) searchContextSnippet(path string, lineNumber int, radius int) 
 		segment := string(content[spans[i-1].start:spans[i-1].end])
 
 		segment = strings.TrimRight(segment, "\n")
-		segment = textutil.TruncateBytes(segment, searchContentLineCap, "...[line truncated]")
+		segment = textutil.TruncateBytes(segment, searchContentLineCap, lineTruncationMarker)
 		b.WriteString(fmt.Sprintf("%d:%s\n", i, segment))
 	}
 

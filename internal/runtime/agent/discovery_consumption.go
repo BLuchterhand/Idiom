@@ -35,10 +35,6 @@ func successfulSearchDiscoveryResult(req workspace.ToolRequest, result workspace
 	}
 }
 
-func discoveryConsumptionResultStrength(req workspace.ToolRequest, result workspace.ToolResult) discoveryConsumptionStrength {
-	return discoveryConsumptionResultStrengthFromLegacySemantics(req, result)
-}
-
 func discoveryConsumptionResultStrengthFromLegacySemantics(req workspace.ToolRequest, result workspace.ToolResult) discoveryConsumptionStrength {
 	if strings.TrimSpace(result.Error) != "" || workerruntime.IsZeroHitSearchResult(result) {
 		return discoveryConsumptionNone

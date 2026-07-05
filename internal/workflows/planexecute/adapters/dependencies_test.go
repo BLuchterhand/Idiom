@@ -2,13 +2,11 @@ package adapters
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	planartifact "idiom/internal/contracts/planartifact"
 	"idiom/internal/contracts/writerroute"
 	"idiom/internal/platform/config"
 	"idiom/internal/workflows/planexecute"
@@ -122,65 +120,5 @@ func TestApplyExecutorEditUsesWorkspaceEditAdapter(t *testing.T) {
 	}
 	if string(body) != "after\n" {
 		t.Fatalf("edited body = %q", string(body))
-	}
-}
-
-func TestLoadPlanArtifactUsesWorkspaceLoader(t *testing.T) {
-	root := t.TempDir()
-	planDir := filepath.Join(root, ".idiom", "plans")
-	if err := os.MkdirAll(planDir, 0o755); err != nil {
-		t.Fatalf("mkdir plans: %v", err)
-	}
-
-	artifact := planartifact.NormalizeForSubmit(planartifact.PlanArtifact{
-		SchemaVersion: planartifact.SchemaVersion,
-		Task:          planartifact.PlanArtifactTask{ID: "task-1", Summary: "adapter loader test"},
-		Contract: planartifact.PlanArtifactContract{
-			Kind:              planartifact.ContractKindPlanThenExecute,
-			StrategyOwner:     planartifact.OwnerModel,
-			ContractOwner:     planartifact.OwnerHarness,
-			PermissionProfile: planartifact.PermissionProfilePlanThenExecute,
-			VerificationOwner: planartifact.OwnerExecutor,
-		},
-		Packet: planartifact.PlanArtifactPacket{Status: planartifact.PacketStatusNotProvided},
-		Paths:  planartifact.PlanArtifactPaths{Editable: []string{"a.txt"}, Required: []string{"a.txt"}},
-		Evidence: []planartifact.PlanArtifactEvidence{{
-			Kind:    planartifact.EvidenceKindPlannerSubmission,
-			Summary: "adapter test evidence",
-		}},
-		VerificationObligations: []planartifact.PlanArtifactVerificationObligation{{
-			ID:       "verification-1",
-			Kind:     planartifact.VerificationKindExecutorLaneSanity,
-			Owner:    planartifact.OwnerExecutor,
-			Status:   planartifact.VerificationStatusOpen,
-			Required: true,
-		}},
-		Edits: []planartifact.PlanEdit{{
-			Path:    "a.txt",
-			OldText: "before",
-			NewText: "after",
-			Purpose: "test edit",
-		}},
-	}, planartifact.NormalizeForSubmitOptions{
-		SessionID: "session-1",
-		Created:   "2026-06-27T00:00:00Z",
-		PlanID:    "plan-1",
-	})
-
-	body, err := json.Marshal(artifact)
-	if err != nil {
-		t.Fatalf("marshal artifact: %v", err)
-	}
-	planPath := filepath.Join(planDir, "last.plan.json")
-	if err := os.WriteFile(planPath, body, 0o644); err != nil {
-		t.Fatalf("write artifact: %v", err)
-	}
-
-	loaded, err := LoadPlanArtifact(planPath)
-	if err != nil {
-		t.Fatalf("LoadPlanArtifact error = %v", err)
-	}
-	if loaded.PlanID != "plan-1" || len(loaded.Edits) != 1 || loaded.Edits[0].Path != "a.txt" {
-		t.Fatalf("loaded artifact = %#v", loaded)
 	}
 }

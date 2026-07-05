@@ -24,7 +24,7 @@ func Wrapper(v string) string {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := Run([]string{"check", "--project-root", root, "--json"}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"check", "--project-root", root, "--json"}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
@@ -56,7 +56,7 @@ func Wrapper(v string) string {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := Run([]string{"check", "--project-root", root, "--fail-on", "warning"}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"check", "--project-root", root, "--fail-on", "warning"}, &stdout, &stderr, nil)
 
 	if code != 3 {
 		t.Fatalf("exit code = %d, want 3; stdout = %s stderr = %s", code, stdout.String(), stderr.String())
@@ -69,7 +69,7 @@ func Wrapper(v string) string {
 func TestCheckRejectsUnknownFailOn(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := Run([]string{"check", "--project-root", t.TempDir(), "--fail-on", "always"}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"check", "--project-root", t.TempDir(), "--fail-on", "always"}, &stdout, &stderr, nil)
 
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)

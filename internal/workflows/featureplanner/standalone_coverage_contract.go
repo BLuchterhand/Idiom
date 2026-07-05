@@ -208,7 +208,7 @@ func standaloneBehavioralCoverageDraftContract(plan FeaturePlan) productworkflow
 		contract.SurfaceInventory = append(contract.SurfaceInventory, productworkflow.BehavioralSurfaceCoverage{
 			ID:           strings.TrimSpace(surface.ID),
 			Surface:      strings.TrimSpace(surface.Surface),
-			Status:       standaloneDraftSurfaceStatus(surface.Status),
+			Status:       productworkflow.NormalizeBehavioralSurfaceStatus(surface.Status),
 			Rationale:    strings.TrimSpace(surface.Rationale),
 			EvidenceRefs: nonEmptyFeaturePlannerStrings(surface.EvidenceRefs),
 			Obligations:  nonEmptyFeaturePlannerStrings(surface.Obligations),
@@ -269,10 +269,6 @@ func standaloneDraftCoverageStatus(status string) string {
 	default:
 		return strings.TrimSpace(strings.ToLower(status))
 	}
-}
-
-func standaloneDraftSurfaceStatus(status string) string {
-	return productworkflow.NormalizeBehavioralSurfaceStatus(status)
 }
 
 func standaloneConcreteDataRefs(id string, explicit []string, data map[string]string) []string {

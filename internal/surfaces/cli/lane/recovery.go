@@ -45,7 +45,7 @@ func writeLaneImplementRecovery(opts laneOptions, history laneHistoryEvent, subc
 
 	now := time.Now().UTC()
 	summary := laneImplementFailureSummary(history, subcommandExit)
-	failureClass := laneImplementFailureClass(summary)
+	failureClass := recovery.ClassifyImplementFailure(summary)
 	input := recovery.FailureRecordInput{
 		FailureID: recovery.ImplementFailureID(sessionID),
 		SourceRun: recoverycontract.SourceRun{
@@ -96,10 +96,6 @@ func laneImplementFailureSummary(history laneHistoryEvent, subcommandExit int) s
 	}
 
 	return strings.Join(parts, " ")
-}
-
-func laneImplementFailureClass(summary string) recoverycontract.FailureClass {
-	return recovery.ClassifyImplementFailure(summary)
 }
 
 func laneImplementEvidenceRefs(opts laneOptions, history laneHistoryEvent) []recoverycontract.EvidenceRef {

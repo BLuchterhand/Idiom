@@ -303,7 +303,7 @@ func classifyProductWorkflowProjection(statusBucket string, currentState string,
 	if len(blockers) == 0 &&
 		len(openObligations) == 0 &&
 		(auditStatus == "" || auditStatus == ProductWorkflowStatusPass) &&
-		operatorFreshnessCurrent(freshnessState) &&
+		productWorkflowContextFreshnessCurrent(freshnessState) &&
 		productWorkflowHasKnownTransitionAction(statusBucket, currentState, nextActions) {
 
 		return workflowstate.StateDispatchable, "", true
@@ -313,7 +313,7 @@ func classifyProductWorkflowProjection(statusBucket string, currentState string,
 	for _, blocker := range blockers {
 		codes = append(codes, blocker.Code)
 	}
-	if !operatorFreshnessCurrent(freshnessState) {
+	if !productWorkflowContextFreshnessCurrent(freshnessState) {
 		codes = append(codes, "stale_context")
 	}
 	if len(openObligations) > 0 {
@@ -477,7 +477,7 @@ func BuildProductOperatorStatusView(status ProductStatusView, workflowState *Wor
 		}
 	}
 
-	if !operatorFreshnessCurrent(status.FreshnessState) {
+	if !productWorkflowContextFreshnessCurrent(status.FreshnessState) {
 		view.Blockers = append(view.Blockers, ProductOperatorBlocker{
 			Code:    "stale_context",
 			Message: fmt.Sprintf("workflow freshness_state %q is not current", strings.TrimSpace(status.FreshnessState)),
@@ -906,50 +906,6 @@ func productRecoveryStatusFromReportStatus(status string) ProductWorkflowStatus 
 	}
 }
 
-func productRecoveryPacketGates(packet recoverycontract.DecompositionPacket) []string {
-	seen := map[string]bool{}
-
-	var gates []string
-
-	for _, atom := range packet.CandidateAtoms {
-		for _, gate := range atom.Gates {
-			gate = strings.TrimSpace(gate)
-			if gate == "" || seen[gate] {
-				continue
-			}
-
-			seen[gate] = true
-			gates = append(gates, gate)
-		}
-	}
-
-	sort.Strings(gates)
-
-	return gates
-}
-
-func productRecoveryPacketRequiredTests(packet recoverycontract.DecompositionPacket) []string {
-	seen := map[string]bool{}
-
-	var tests []string
-
-	for _, atom := range packet.CandidateAtoms {
-		for _, test := range atom.RequiredTests {
-			test = strings.TrimSpace(test)
-			if test == "" || seen[test] {
-				continue
-			}
-
-			seen[test] = true
-			tests = append(tests, test)
-		}
-	}
-
-	sort.Strings(tests)
-
-	return tests
-}
-
 func productRecoveryBlocksFromReport(report recoverstatus.Report) []ProductRecoveryBlock {
 	var blocks []ProductRecoveryBlock
 	for _, finding := range report.ReconciliationFindings {
@@ -1153,7 +1109,7 @@ func productOperatorRequestsImplementationDispatch(actions []string) bool {
 	return false
 }
 
-func operatorFreshnessCurrent(state string) bool {
+func productWorkflowContextFreshnessCurrent(state string) bool {
 	switch strings.ToLower(strings.TrimSpace(state)) {
 	case "current", "fresh", "verified":
 		return true

@@ -111,8 +111,8 @@ func TestPrefetchReadFilesTruncatesMultipleLargeFilesAndKeepsSmallFilesStable(t 
 		t.Fatalf("write small: %v", err)
 	}
 
-	largeA := strings.Join([]string{"alpha", strings.Repeat("a", 80), "omega"}, "\n")
-	largeB := strings.Join([]string{"bravo", strings.Repeat("b", 80), "done"}, "\n")
+	largeA := strings.Join([]string{"alpha", strings.Repeat("a", 160), "omega"}, "\n")
+	largeB := strings.Join([]string{"bravo", strings.Repeat("b", 160), "done"}, "\n")
 
 	if err := os.WriteFile(filepath.Join(root, "large-a.md"), []byte(largeA), 0o644); err != nil {
 		t.Fatalf("write large-a: %v", err)
@@ -155,7 +155,7 @@ func TestPrefetchReadFilesTruncatesMultipleLargeFilesAndKeepsSmallFilesStable(t 
 
 func TestPrefetchReadFilesAllowsReadFileFollowupAfterTruncatedExcerpt(t *testing.T) {
 	root := t.TempDir()
-	body := strings.Join([]string{"first", "middle", "last"}, "\n")
+	body := strings.Join([]string{"first", strings.Repeat("middle", 40), "last"}, "\n")
 
 	if err := os.WriteFile(filepath.Join(root, "large.md"), []byte(body), 0o644); err != nil {
 		t.Fatalf("write large: %v", err)
@@ -284,7 +284,7 @@ func TestPrefetchReadFilesHandlesExcerptEdges(t *testing.T) {
 		t.Fatalf("write long-line: %v", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(root, "large-binary.bin"), append([]byte("123456789"), 0x00, 'x'), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "large-binary.bin"), append([]byte{0x00}, []byte("123456789x")...), 0o644); err != nil {
 		t.Fatalf("write binary: %v", err)
 	}
 
@@ -292,7 +292,7 @@ func TestPrefetchReadFilesHandlesExcerptEdges(t *testing.T) {
 	report := mgr.PrefetchReadFiles([]string{"empty.md", "exact.md", "long-line.md", "large-binary.bin"}, PrefetchReadOptions{
 		MaxFiles:        4,
 		MaxBytes:        128,
-		MaxBytesPerFile: 32,
+		MaxBytesPerFile: 8,
 		MaxExcerptBytes: 8,
 	})
 
@@ -318,6 +318,75 @@ func TestPrefetchReadFilesHandlesExcerptEdges(t *testing.T) {
 
 	if len(report.SkippedPaths) != 1 || report.SkippedPaths[0].Reason != "binary" {
 		t.Fatalf("binary should be rejected before excerpt construction, got %#v", report.SkippedPaths)
+	}
+}
+
+func TestPrefetchReadFilesIncludesFullFileWhenItFitsBudget(t *testing.T) {
+	root := t.TempDir()
+	body := "package app\n" + strings.Repeat("var x = 1\n", 1200)
+
+	if len(body) >= DefaultPrefetchMaxBytesPerFile {
+		t.Fatalf("test fixture should fit default per-file prefetch budget, got %d", len(body))
+	}
+
+	if len(body) <= DefaultPrefetchMaxExcerptBytes {
+		t.Fatalf("test fixture should exceed old excerpt-only prefetch cap, got %d", len(body))
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "catalog.go"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write catalog: %v", err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	report := mgr.PrefetchReadFiles([]string{"catalog.go"}, PrefetchReadOptions{})
+
+	if len(report.Results) != 1 {
+		t.Fatalf("expected one result, got %#v", report)
+	}
+
+	if report.TruncatedFiles != 0 {
+		t.Fatalf("file fits prefetch budget and should not be truncated: %#v", report)
+	}
+
+	if strings.Contains(report.Results[0].Summary, "truncated=true") {
+		t.Fatalf("summary should not report truncation for budget-fitting file: %q", report.Results[0].Summary)
+	}
+
+	if !strings.Contains(report.Results[0].Output, "1201:var x = 1") {
+		t.Fatalf("prefetch should include the full file body when it fits budget, got output tail:\n%s", report.Results[0].Output)
+	}
+}
+
+func TestPrefetchReadFilesDoesNotTruncateLongLinesWhenFullFileFitsBudget(t *testing.T) {
+	root := t.TempDir()
+	longLine := "var catalog = \"" + strings.Repeat("x", DefaultPrefetchMaxExcerptBytes+512) + "\""
+	body := "package app\n" + longLine + "\n"
+
+	if len(body) >= DefaultPrefetchMaxBytesPerFile {
+		t.Fatalf("test fixture should fit default per-file prefetch budget, got %d", len(body))
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "catalog.go"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write catalog: %v", err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	report := mgr.PrefetchReadFiles([]string{"catalog.go"}, PrefetchReadOptions{})
+
+	if len(report.Results) != 1 {
+		t.Fatalf("expected one result, got %#v", report)
+	}
+
+	if report.TruncatedFiles != 0 {
+		t.Fatalf("file fits prefetch budget and should not be truncated: %#v", report)
+	}
+
+	if strings.Contains(report.Results[0].Output, lineTruncationMarker) {
+		t.Fatalf("full-file prefetch should not truncate long source lines, got output: %q", report.Results[0].Output)
+	}
+
+	if !strings.Contains(report.Results[0].Output, "2:"+longLine) {
+		t.Fatalf("prefetch should include the full long line when file fits budget, got %d chars", len(report.Results[0].Output))
 	}
 }
 

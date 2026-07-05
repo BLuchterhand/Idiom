@@ -423,33 +423,6 @@ func TestPlanExecutionContractRejectsInvalidEditSetObligationPath(t *testing.T) 
 	}
 }
 
-func TestAtomOpenEditSetObligationsDistinguishSourceEvidenceFromRequiredPaths(t *testing.T) {
-	atom := AtomExecutionContract{
-		AtomID: "source-distinction",
-		Scope: NewPlanScopeContract(
-			[]string{"pkg/feature.go"},
-			[]string{"pkg/source_only_test.go"},
-			nil,
-		),
-		SourceEvidenceObligations: []SourceEvidenceObligation{{
-			ID:       "source-only",
-			Path:     "pkg/source_only_test.go",
-			Kind:     "harness_observed_source",
-			Required: true,
-		}},
-	}
-
-	open := atom.OpenEditSetObligations([]string{"pkg/feature.go"})
-	if len(open) != 0 {
-		t.Fatalf("source evidence path must not create a test edit obligation, got %#v", open)
-	}
-
-	open = atom.OpenEditSetObligations([]string{"pkg/source_only_test.go"})
-	if len(open) != 1 || open[0].Kind != EditSetObligationKindImplementationEdit || open[0].Path != "pkg/feature.go" {
-		t.Fatalf("required implementation path should remain the open obligation, got %#v", open)
-	}
-}
-
 func TestTerminalEvidenceDetectsChangedTDDCommandAndArtifact(t *testing.T) {
 	atom := tddAtom()
 	evidence := validTerminalEvidence()
@@ -561,15 +534,4 @@ func hasViolationCode(violations []PlanExecutionContractViolation, code string) 
 	}
 
 	return false
-}
-
-func authorizedFilePaths(files []AuthorizedNewFile) []string {
-	out := make([]string, 0, len(files))
-	for _, file := range files {
-		out = append(out, file.Path)
-	}
-
-	slices.Sort(out)
-
-	return out
 }

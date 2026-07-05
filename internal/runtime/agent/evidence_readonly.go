@@ -13,7 +13,7 @@ import (
 	"unicode"
 
 	"idiom/internal/capabilities/workspace"
-	"idiom/internal/contracts/autonomy"
+	"idiom/internal/capabilities/workspace/patching"
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/textutil"
@@ -1441,8 +1441,11 @@ func readOnlySourceLikePaths(paths []string, max int) []string {
 	seen := map[string]struct{}{}
 
 	for _, raw := range paths {
+		if readOnlyPathEscapesWorkspace(raw) {
+			continue
+		}
 		path := agentutil.NormalizeRunnerPath(raw)
-		if path == "" || agentutil.IsNonSourceEvidenceArtifactPath(path) || !pathparse.HasWorkspaceFileExtension(path) {
+		if !readOnlyRepoLocalSourcePath(path) {
 			continue
 		}
 
@@ -1459,6 +1462,35 @@ func readOnlySourceLikePaths(paths []string, max int) []string {
 	}
 
 	return out
+}
+
+func readOnlyRepoLocalSourcePath(path string) bool {
+	path = agentutil.NormalizeRunnerPath(path)
+	if path == "" || path == "." || path == ".." {
+		return false
+	}
+	if filepath.IsAbs(path) || strings.HasPrefix(path, "../") || strings.HasPrefix(path, `..\`) {
+		return false
+	}
+	if agentutil.IsNonSourceEvidenceArtifactPath(path) || !pathparse.HasWorkspaceFileExtension(path) {
+		return false
+	}
+
+	return true
+}
+
+func readOnlyPathEscapesWorkspace(raw string) bool {
+	path := strings.TrimSpace(raw)
+	path = strings.Trim(path, "`'\"()[]{}<>,.;")
+	if path == "" {
+		return false
+	}
+	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" || looksLikeWindowsAbsolutePath(path) {
+		return true
+	}
+
+	path = filepath.ToSlash(strings.ReplaceAll(path, `\`, `/`))
+	return path == ".." || strings.HasPrefix(path, "../")
 }
 
 func readOnlyPathSet(paths []string) map[string]struct{} {
@@ -2539,11 +2571,6 @@ func readOnlyLowConfidenceTermMatchAccepted(answer string, objective string, led
 	return len(supportTerms) > 0
 }
 
-func readOnlyAnswerLooksLikeNonFinalProse(answer string) bool {
-	return readOnlyScaffoldFinalAnswer(answer) ||
-		readOnlyAnswerHasHardNonFinalProse(answer)
-}
-
 func readOnlyAnswerHasHardNonFinalProse(answer string) bool {
 	return looksLikeLowValueSourceInventoryNonAnswer(answer) ||
 		looksLikeNonAnswerProseCore(answer)
@@ -2989,31 +3016,6 @@ func (d ReadOnlyCloseout) HostOwnedAnswer(agentName string) (string, bool) {
 	return "", false
 }
 
-func bestObjectiveTaskResultOutputLooksPartial(objective string, results []workspace.ToolResult) bool {
-	output, ok := bestObjectiveAnswerableTaskResultOutput(objective, results)
-	if !ok {
-		return false
-	}
-
-	lower := strings.ToLower(strings.TrimSpace(output))
-
-	return strings.HasPrefix(lower, "partial findings from this turn")
-}
-
-func (d ReadOnlyCloseout) PresentableTaskResultAnswer(agentName string) (string, bool) {
-	if output, ok := bestObjectiveAnswerableTaskResultOutput(d.Brief.Objective, d.Results); ok {
-		if normalized := normalizeDelegatedReadOnlyPacket(output); strings.TrimSpace(normalized) != "" {
-			output = normalized
-		}
-
-		if answer, ok := d.PresentableFallbackCandidate(agentName, output); ok && hostOwnedCloseoutAnswerIsPresentable(answer) {
-			return answer, true
-		}
-	}
-
-	return "", false
-}
-
 func hostOwnedCloseoutAnswerIsPresentable(answer string) bool {
 	answer = strings.TrimSpace(answer)
 	return answer != "" &&
@@ -3058,14 +3060,6 @@ func (d ReadOnlyCloseout) hostOwnedAnswerAddressesObjective(answer string) bool 
 
 	return answerAddressesObjective(answer, objective, d.Evidence, d.Results) &&
 		answerSourceCitationsAreObjectiveRelevant(answer, d.Evidence)
-}
-
-func delegatedChildReadOnlyHostCloseoutApplies(brief workerruntime.WorkerRuntimeBrief, agentName string, closeout ReadOnlyCloseout) bool {
-	return strings.HasPrefix(strings.TrimSpace(agentName), "child:") &&
-		workerruntime.TaskFamilyMatches(brief.TaskFamily, autonomy.TaskFamilyDelegatedReadOnly) &&
-		workerruntime.RuntimeContractMatches(brief.Contract, workerruntime.ContractGroundedEvidence) &&
-		workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) &&
-		closeout.Answerable()
 }
 
 func (d ReadOnlyCloseout) AcceptsHostOwnedAnswer(agentName string, answer string) bool {
@@ -3198,71 +3192,6 @@ func (d ReadOnlyCloseout) NonAnswerReplacement() (string, bool) {
 	}
 
 	return "", false
-}
-
-func architectureObjectiveRelatedPackets(objective string, packets []ReadOnlyEvidencePacket) []ReadOnlyEvidencePacket {
-	objective = strings.TrimSpace(objective)
-	if objective == "" {
-		return nil
-	}
-
-	related := make([]ReadOnlyEvidencePacket, 0, len(packets))
-	for _, packet := range packets {
-		packet = normalizeReadOnlyEvidencePacket(packet)
-		if !readOnlyEvidencePacketAnswerable(packet) {
-			continue
-		}
-
-		var text strings.Builder
-
-		text.WriteString(packet.Objective)
-		text.WriteString("\n")
-		text.WriteString(packet.Question)
-
-		for _, finding := range packet.Findings {
-			text.WriteString("\n")
-			text.WriteString(finding.Text)
-		}
-
-		if TextSharesObjectiveTerm(text.String(), objective) {
-			related = append(related, packet)
-		}
-	}
-
-	return related
-}
-
-func (d ReadOnlyCloseout) HasObjectiveRelevantEvidence() bool {
-	if readOnlyAnalysisHasObjectiveRelevantSourceBody(d.Brief, d.Evidence) {
-		return true
-	}
-
-	objective := strings.ToLower(strings.TrimSpace(delegatedDisplayQuestion(d.Brief.Objective)))
-	if objective == "" {
-		return false
-	}
-
-	for _, result := range d.Results {
-		if strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-
-		if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
-			for _, finding := range packet.Findings {
-				if TextSharesObjectiveTerm(finding.Text, objective) {
-					return true
-				}
-			}
-		}
-
-		if strings.TrimSpace(result.Tool) == "task" {
-			if TextSharesObjectiveTerm(stripDelegatedReadOnlyInternalPacket(result.Output), objective) {
-				return true
-			}
-		}
-	}
-
-	return false
 }
 
 func readOnlyClosureKnownEvidencePaths(evidence readOnlyAnswerabilityLedger) []string {
@@ -3511,6 +3440,10 @@ func isHarnessRejectionErrorText(text string) bool {
 	}
 
 	return agentutil.ContainsAny(lower,
+		"payload was tool-shaped",
+		"unsafe to infer as a tool call",
+		"not an executable tool call",
+		"emit exactly one valid tool call",
 		"include `named_gap`",
 		"include named_gap",
 		"already contains sufficient evidence to bias toward answering",
@@ -3524,8 +3457,29 @@ func isHarnessRejectionErrorText(text string) bool {
 	)
 }
 
+func isHarnessInternalRejectionResult(result workspace.ToolResult) bool {
+	if strings.TrimSpace(result.Tool) == parserRecoveryToolName {
+		return true
+	}
+
+	return isHarnessRejectionSummary(result.Summary) || isHarnessRejectionErrorText(result.Error)
+}
+
+func isParserRecoveryRejectionSummary(summary string) bool {
+	switch strings.TrimSpace(summary) {
+	case parserRecoverySummaryMalformed,
+		parserRecoverySummaryUnsafe:
+		return true
+	default:
+		return false
+	}
+}
+
 func isHarnessRejectionSummary(summary string) bool {
 	summary = normalizedHarnessRejectionSummary(summary)
+	if isParserRecoveryRejectionSummary(summary) {
+		return true
+	}
 	if postReadinessContinuationRejectionSummary(summary) {
 		return true
 	}
@@ -4086,7 +4040,7 @@ func readOnlyEvidencePacketNamesObjectiveSource(packet ReadOnlyEvidencePacket, o
 func readOnlyEvidencePacketSourceBodyPaths(results []workspace.ToolResult) []string {
 	paths := make([]string, 0, 4)
 
-	paths = append(paths, concreteSourceEvidencePaths(results)...)
+	paths = append(paths, sourceEvidenceBodyPaths(results)...)
 	paths = append(paths, sourceEvidenceBodyPaths(results)...)
 
 	return readOnlyEvidencePacketSourceLikePaths(paths, 16)
@@ -4259,6 +4213,10 @@ func readOnlyEvidencePacketSourceLikePaths(paths []string, limit int) []string {
 
 func normalizeReadOnlyEvidencePacketPath(raw string) string {
 	trimmed := strings.TrimSpace(raw)
+	if readOnlyPathEscapesWorkspace(trimmed) {
+		return ""
+	}
+
 	path := normalizeDelegatedDiscoveryEvidencePath(trimmed)
 
 	if strings.HasPrefix(trimmed, "./") && strings.HasPrefix(path, "/") {
@@ -5921,7 +5879,7 @@ func (r *Runner) initialBootstrapInstruction() string {
 			"Stay on that selected log until you can cite the weird decision or declare the missing datum.",
 			"After one bounded log read, answer from the logs if the cause is already clear; otherwise do one targeted follow-up inside the same log.",
 		}, "\n")
-	case isEvidenceFirstMutationTaskFamily(family) && len(r.RuntimeBrief.TargetRefs) > 0:
+	case workerruntime.TaskFamilyEvidenceFirstMutation(family) && len(r.RuntimeBrief.TargetRefs) > 0:
 		return strings.Join([]string{
 			"[evidence-first mutation bootstrap]",
 			fmt.Sprintf("This turn will update named target file(s): %s.", strings.Join(r.RuntimeBrief.TargetRefs, ", ")),
@@ -6040,7 +5998,7 @@ func (r *Runner) debugLogPreflightRequest(results []workspace.ToolResult, req wo
 }
 
 func prematureTargetReadRejection(req workspace.ToolRequest, results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) (string, string, bool) {
-	if !isEvidenceFirstMutationTaskFamily(brief.TaskFamily) || len(brief.TargetRefs) == 0 {
+	if !workerruntime.TaskFamilyEvidenceFirstMutation(brief.TaskFamily) || len(brief.TargetRefs) == 0 {
 		return "", "", false
 	}
 
@@ -6067,7 +6025,7 @@ func prematureTargetReadRejection(req workspace.ToolRequest, results []workspace
 }
 
 func evidenceFirstTargetReadRedirect(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
-	if !isEvidenceFirstMutationTaskFamily(brief.TaskFamily) || len(brief.TargetRefs) == 0 {
+	if !workerruntime.TaskFamilyEvidenceFirstMutation(brief.TaskFamily) || len(brief.TargetRefs) == 0 {
 		return workspace.ToolRequest{}, false
 	}
 
@@ -6102,15 +6060,6 @@ func evidenceFirstTargetReadRedirect(brief workerruntime.WorkerRuntimeBrief, res
 	}
 
 	return boundedFollowupTargetReadRequest(req, results, brief.TargetRefs), true
-}
-
-func isEvidenceFirstMutationTaskFamily(family string) bool {
-	switch strings.TrimSpace(family) {
-	case "explore_then_implement", "investigate_then_implement", "review_then_implement", "architecture_then_implement":
-		return true
-	default:
-		return false
-	}
 }
 
 func isLargeTargetRead(req workspace.ToolRequest) bool {
@@ -6176,7 +6125,7 @@ func successfulTargetReadCount(results []workspace.ToolResult, targetRefs []stri
 }
 
 func evidenceFirstTargetReadUnlocked(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	return isEvidenceFirstMutationTaskFamily(brief.TaskFamily) &&
+	return workerruntime.TaskFamilyEvidenceFirstMutation(brief.TaskFamily) &&
 		len(brief.TargetRefs) > 0 &&
 		hasFocusedNonTargetEvidence(results, brief.TargetRefs) &&
 		!hasSuccessfulTargetRead(results, brief.TargetRefs)
@@ -6432,16 +6381,6 @@ func readOnlyPlanArtifactEvidenceSupportsReply(brief workerruntime.WorkerRuntime
 	return len(mentioned) > 0 && proposedPlanPathCitationsAreRelevant(answer, mentioned, ledger)
 }
 
-func readOnlyPlanArtifactEvidenceAvailable(results []workspace.ToolResult) bool {
-	for _, result := range results {
-		if featurePlannerPlanArtifactResult(result) && len(featurePlannerPlanArtifactProposedPaths(result)) > 0 {
-			return true
-		}
-	}
-
-	return false
-}
-
 func featurePlannerPlanArtifactMatchesObjective(objective string, result workspace.ToolResult) bool {
 	if !featurePlannerPlanArtifactResult(result) || len(featurePlannerPlanArtifactProposedPaths(result)) == 0 {
 		return false
@@ -6637,7 +6576,7 @@ func (r *Runner) implementationTargetSourceWriteBeforeEvidenceRedirect(req works
 	}
 
 	target := agentutil.NormalizeRunnerPath(paths[0])
-	if target == "" || concreteSourceEvidenceReadForPath(target, results) {
+	if target == "" || sourceEvidenceBodyReadForPath(target, results) {
 		return workspace.ToolRequest{}, "", false
 	}
 
@@ -6977,7 +6916,7 @@ func implementationDeferredWriteCoveredBySourceEvidence(req workspace.ToolReques
 		}
 
 		if allowAnchorMismatch {
-			return concreteSourceEvidenceReadForPath(path, results) || implementationDeferredWriteHasExecutableAnchor(req)
+			return sourceEvidenceBodyReadForPath(path, results) || implementationDeferredWriteHasExecutableAnchor(req)
 		}
 
 		return implementationSourceEvidenceTextContains(path, results, oldText)
@@ -6987,7 +6926,7 @@ func implementationDeferredWriteCoveredBySourceEvidence(req workspace.ToolReques
 		return fullSourceReadFileSeen(path, results)
 	case workspace.ToolNameApplyPatch:
 		if implementationApplyPatchDeletesOnlyPath(req, path) {
-			return concreteSourceEvidenceReadForPath(path, results)
+			return sourceEvidenceBodyReadForPath(path, results)
 		}
 
 		return false
@@ -7006,13 +6945,13 @@ func implementationApplyPatchDeletesOnlyPath(req workspace.ToolRequest, path str
 		return false
 	}
 
-	ops, err := workspace.ParsePatch(req.Content)
+	ops, err := patching.Parse(req.Content)
 	if err != nil || len(ops) == 0 {
 		return false
 	}
 
 	for _, op := range ops {
-		if op.Kind != workspace.PatchOpDelete || agentutil.NormalizeRunnerPath(op.Path) != path {
+		if op.Kind != patching.OpDelete || agentutil.NormalizeRunnerPath(op.Path) != path {
 			return false
 		}
 	}
@@ -7151,13 +7090,13 @@ func (r *Runner) writeRequestCreatesOnlyMissingTargets(req workspace.ToolRequest
 	case workspace.ToolNameMkdir:
 		return r.writeRequestTargetsAllMissing(req)
 	case workspace.ToolNameApplyPatch:
-		ops, err := workspace.ParsePatch(req.Content)
+		ops, err := patching.Parse(req.Content)
 		if err != nil || len(ops) == 0 {
 			return false
 		}
 
 		for _, op := range ops {
-			if op.Kind != workspace.PatchOpAdd {
+			if op.Kind != patching.OpAdd {
 				return false
 			}
 		}
@@ -7210,7 +7149,7 @@ func implementationTargetSourceWriteTargetsHaveEvidence(req workspace.ToolReques
 
 	for _, path := range paths {
 		path = agentutil.NormalizeRunnerPath(path)
-		if path == "" || !concreteSourceEvidenceReadForPath(path, results) {
+		if path == "" || !sourceEvidenceBodyReadForPath(path, results) {
 			return false
 		}
 	}
@@ -7425,18 +7364,7 @@ func looksLikeDiscoveryEvidenceInventoryNonAnswer(answer string) bool {
 	normalized := normalizeSourceInventoryClaim(answer)
 	markers := 0
 
-	for _, marker := range []string{
-		" related files:",
-		" symbol index:",
-		" capability:",
-		" language:",
-		" routed_tool:",
-		" route_summary:",
-		" discovery packet:",
-		" relevant source hits:",
-		" evidence used:",
-		" no go workspace symbols matched ",
-	} {
+	for _, marker := range sourceInventoryNonAnswerMarkers() {
 		if strings.Contains(normalized, marker) {
 			markers++
 		}
@@ -7444,6 +7372,13 @@ func looksLikeDiscoveryEvidenceInventoryNonAnswer(answer string) bool {
 
 	if strings.Contains(normalized, " this is grounded in `") && markers > 0 {
 		markers++
+	}
+
+	if sourceInventoryHasPathBulletList(answer) {
+		if markers >= 1 && sourceInventoryAnswerIsPrimarilyInventory(answer) {
+			return true
+		}
+		return false
 	}
 
 	if markers >= 2 {
@@ -7454,6 +7389,70 @@ func looksLikeDiscoveryEvidenceInventoryNonAnswer(answer string) bool {
 		return false
 	}
 
+	return false
+}
+
+func sourceInventoryNonAnswerMarkers() []string {
+	return []string{
+		"evidence paths inspected",
+		"evidence paths inspected body backed",
+		"evidence paths inspected (body-backed)",
+		"body backed source evidence",
+		"body-backed source evidence",
+		"source body evidence available",
+		" related files:",
+		" symbol index:",
+		" capability:",
+		" language:",
+		" routed_tool:",
+		" route_summary:",
+		" discovery packet:",
+		" relevant source hits:",
+		" evidence used:",
+		" no go workspace symbols matched ",
+	}
+}
+
+func sourceInventoryHasPathBulletList(answer string) bool {
+	pathBullets := 0
+	for _, line := range strings.Split(answer, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "- ") {
+			continue
+		}
+		if len(sourceGroundingMentionedPaths(line)) > 0 {
+			pathBullets++
+		}
+	}
+
+	return pathBullets >= 1
+}
+
+func sourceInventoryAnswerIsPrimarilyInventory(answer string) bool {
+	for _, line := range strings.Split(answer, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		normalized := normalizeSourceInventoryClaim(strings.Trim(line, "*_# "))
+		if sourceInventoryLineHasNonAnswerMarker(normalized) {
+			continue
+		}
+		if strings.HasPrefix(line, "- ") && len(sourceGroundingMentionedPaths(line)) > 0 {
+			continue
+		}
+		return false
+	}
+
+	return true
+}
+
+func sourceInventoryLineHasNonAnswerMarker(normalized string) bool {
+	for _, marker := range sourceInventoryNonAnswerMarkers() {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
 	return false
 }
 
@@ -7910,7 +7909,7 @@ func looksLikeNonAnswerProseCore(answer string) bool {
 	}
 
 	// Textual tool-call markup like [Calling tool: ...] in answer prose.
-	if looksLikeTextualToolCall(answer) {
+	if IsTextualToolCall(answer) {
 		return true
 	}
 
@@ -8224,30 +8223,6 @@ func sourceEvidenceCandidatePaths(results []workspace.ToolResult) []string {
 		}
 	}
 
-	return paths
-}
-
-func snapshotFromWorkspaceResults(results []workspace.ToolResult) EvidenceSnapshot {
-	registry := NewPathEvidenceRegistry("")
-	converted := make([]ToolResult, 0, len(results))
-	for _, result := range results {
-		converted = append(converted, FromWorkspaceResult(result))
-	}
-	registry.RegisterToolResults(converted)
-	for _, path := range sourceEvidenceCandidatePaths(results) {
-		registry.RegisterCandidatePath(path, "source_evidence_snapshot")
-	}
-	return NewSnapshot(registry).Freeze()
-}
-
-func sourceEvidenceCandidatePathsFromSnapshot(snapshot EvidenceSnapshot) []string {
-	candidates := snapshot.CandidatePaths()
-	paths := make([]string, 0, len(candidates))
-	for _, candidate := range candidates {
-		if path := agentutil.NormalizeRunnerPath(candidate.Path); path != "" {
-			paths = append(paths, path)
-		}
-	}
 	return paths
 }
 
@@ -8760,8 +8735,8 @@ func sourceEvidencePendingRedirectActionLabel(obligation sourceEvidenceObligatio
 			"%s via %s capability=%s with pattern/symbol, or one %s first when the symbol is unknown",
 			path,
 			workspace.CodeNavigateToolName,
-			workspace.CodeNavigateCapabilityName(workspace.CapReadSymbol),
-			workspace.CodeNavigateCapabilityName(workspace.CapFileOutline),
+			string(workspace.CapReadSymbol),
+			string(workspace.CapFileOutline),
 		)
 	case tool == "read_only_capability":
 		return fmt.Sprintf("%s via read_only_capability inspect-symbol with pattern/symbol, or one outline first when the symbol is unknown", path)
@@ -8847,10 +8822,6 @@ func concreteSourceEvidenceResult(result workspace.ToolResult) bool {
 	}
 }
 
-func concreteSourceEvidencePaths(results []workspace.ToolResult) []string {
-	return sourceEvidenceBodyPaths(results)
-}
-
 func implementationTargetWriteReadyRedirectedSourceTool(tool string) bool {
 	tool = strings.TrimSpace(tool)
 
@@ -8889,25 +8860,12 @@ func implementationTargetWriteReadyRedirectedRelatedSourceTool(result workspace.
 // --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmpmzgeso_j.go ---
 func FromWorkspaceResult(result workspace.ToolResult) ToolResult {
 	paths := workspaceResultPaths(result)
-	facts := make([]EvidenceFact, 0, len(result.Relationships))
-	for _, relationship := range result.Relationships {
-		if value := strings.TrimSpace(relationship.Kind); value != "" {
-			facts = append(facts, EvidenceFact{Key: "relationship.kind", Value: value})
-		}
-		for _, path := range []string{relationship.SourcePath, relationship.TargetPath} {
-			if value := normalizeWorkspaceAdapterPath(path); value != "" {
-				facts = append(facts, EvidenceFact{Key: "candidate_path", Value: value})
-			}
-		}
-	}
-
 	return ToolResult{
-		ToolName:     strings.TrimSpace(result.Tool),
-		Summary:      strings.TrimSpace(result.Summary),
-		Output:       result.Output,
-		Error:        strings.TrimSpace(result.Error),
-		Paths:        paths,
-		SidecarFacts: facts,
+		ToolName: strings.TrimSpace(result.Tool),
+		Summary:  strings.TrimSpace(result.Summary),
+		Output:   result.Output,
+		Error:    strings.TrimSpace(result.Error),
+		Paths:    paths,
 		Metadata: map[string]string{
 			"code":           strings.TrimSpace(result.Code),
 			"precision_tier": strings.TrimSpace(result.PrecisionTier),

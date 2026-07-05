@@ -24,7 +24,7 @@ func TestRunDoctorMainEmitsTextReport(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run(nil, &stdout, &stderr)
+	code := RunWithTelemetry(nil, &stdout, &stderr, nil)
 	out := stdout.String()
 
 	if code != 1 {
@@ -59,7 +59,7 @@ func TestRunDoctorMainJSONFormat(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	_ = Run([]string{"--json"}, &stdout, &stderr)
+	_ = RunWithTelemetry([]string{"--json"}, &stdout, &stderr, nil)
 
 	var got struct {
 		Checks []struct {
@@ -199,7 +199,7 @@ func TestDoctorReadinessGatePolicyBlocksMissingBackendRolesForPlanAndImplement(t
 	for _, profileName := range []string{"plan", "implement"} {
 		var stdout, stderr bytes.Buffer
 
-		_ = Run([]string{"--json", "--profile", profileName}, &stdout, &stderr)
+		_ = RunWithTelemetry([]string{"--json", "--profile", profileName}, &stdout, &stderr, nil)
 
 		profile := decodeSingleDoctorProfile(t, stdout.Bytes())
 
@@ -258,8 +258,8 @@ func TestWorkspaceRootFromConfigResolvesRelativeRootAgainstConfigDir(t *testing.
 	}
 
 	want := filepath.Clean(filepath.Join(dir, "repo"))
-	if got := workspaceRootFromConfig(configPath); got != want {
-		t.Fatalf("workspaceRootFromConfig() = %q, want %q", got, want)
+	if got := readiness.WorkspaceRootFromConfig(configPath); got != want {
+		t.Fatalf("WorkspaceRootFromConfig() = %q, want %q", got, want)
 	}
 }
 
@@ -322,7 +322,7 @@ func TestRunDoctorMainProfileFlagFiltersReadinessProfiles(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	_ = Run([]string{"--json", "--profile", "implement"}, &stdout, &stderr)
+	_ = RunWithTelemetry([]string{"--json", "--profile", "implement"}, &stdout, &stderr, nil)
 
 	var got struct {
 		ReadinessProfiles []struct {
@@ -348,7 +348,7 @@ func TestRunDoctorMainProfileFlagFiltersReadinessProfiles(t *testing.T) {
 func TestRunDoctorMainUnknownProfileExitsTwo(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"--profile", "finance"}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"--profile", "finance"}, &stdout, &stderr, nil)
 
 	if code != 2 {
 		t.Fatalf("unknown readiness profile must exit 2, got %d", code)
@@ -367,7 +367,7 @@ func TestDoctorReadinessProfilesAreGenericAcrossClientClasses(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	_ = Run([]string{"--json"}, &stdout, &stderr)
+	_ = RunWithTelemetry([]string{"--json"}, &stdout, &stderr, nil)
 
 	var got struct {
 		ReadinessProfiles []map[string]any `json:"readiness_profiles"`
@@ -561,7 +561,7 @@ func runDoctorProfileJSON(t *testing.T, profileName string) doctorProfileJSON {
 
 	var stdout, stderr bytes.Buffer
 
-	_ = Run([]string{"--json", "--profile", profileName}, &stdout, &stderr)
+	_ = RunWithTelemetry([]string{"--json", "--profile", profileName}, &stdout, &stderr, nil)
 
 	return decodeSingleDoctorProfile(t, stdout.Bytes())
 }

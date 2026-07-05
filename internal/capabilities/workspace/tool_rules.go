@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"idiom/internal/capabilities/workspace/patching"
 	"idiom/internal/capabilities/workspace/toolpolicy"
 	"idiom/internal/platform/config"
 )
@@ -167,12 +168,12 @@ func protectedWriteRequestPaths(req ToolRequest) []string {
 	tool := strings.TrimSpace(req.Tool)
 	switch tool {
 	case ToolNameApplyPatch:
-		ops, err := ParsePatch(req.Content)
+		ops, err := patching.Parse(req.Content)
 		if err != nil {
 			return nil
 		}
 
-		paths := PatchOpPaths(ops)
+		paths := patching.OpPaths(ops)
 		for _, op := range ops {
 			if strings.TrimSpace(op.MoveTo) != "" {
 				paths = append(paths, op.MoveTo)

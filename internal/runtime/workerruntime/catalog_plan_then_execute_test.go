@@ -99,10 +99,6 @@ func TestRuntimeBriefForPlanThenExecutePlannerKeepsSubmitPlanInAllowedTools(t *t
 
 func TestPlanSubmissionPlannerProfileUsesAutonomyMetadata(t *testing.T) {
 	canonicalTools := autonomy.PlanExecutePlannerToolNames()
-	if got := planSubmissionPlannerToolNames(); !slices.Equal(got, canonicalTools) {
-		t.Fatalf("runtime planner profile names = %#v, want autonomy metadata names %#v", got, canonicalTools)
-	}
-
 	manifestTools := ManifestToolsForCapabilityProfile(CapabilityPlanSubmissionPlanner)
 	for _, tool := range canonicalTools {
 		if !planThenExecuteToolListContains(manifestTools, tool) {

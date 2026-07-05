@@ -409,7 +409,7 @@ func TestPlanExecuteSourceSatisfiedUsesNamedAllowedEvidenceOnly(t *testing.T) {
 
 func TestPlanExecuteMissingSourceSatisfiedCoveragePathsUsesExactCoverage(t *testing.T) {
 	answer := "Decision: source-satisfied\n- pkg/parser.go.bak: already present.\n- pkg/parser_test.go: already present."
-	got := planExecuteMissingSourceSatisfiedCoveragePaths(answer, []string{"pkg/parser.go", "pkg/parser_test.go"})
+	got := plancontract.SourceSatisfiedMissingCoveragePaths(answer, []string{"pkg/parser.go", "pkg/parser_test.go"})
 	want := []string{"pkg/parser.go"}
 
 	if !slices.Equal(got, want) {
@@ -419,7 +419,7 @@ func TestPlanExecuteMissingSourceSatisfiedCoveragePathsUsesExactCoverage(t *test
 
 func TestPlanExecuteAutoSourceSatisfiedAnswerCoversRequiredPaths(t *testing.T) {
 	answer := planExecuteAutoSourceSatisfiedAnswer([]string{"pkg/parser.go", "pkg/parser_test.go"})
-	got := planExecuteMissingSourceSatisfiedCoveragePaths(answer, []string{"pkg/parser.go", "pkg/parser_test.go"})
+	got := plancontract.SourceSatisfiedMissingCoveragePaths(answer, []string{"pkg/parser.go", "pkg/parser_test.go"})
 
 	if len(got) != 0 {
 		t.Fatalf("auto source-satisfied answer should cover required paths, missing %#v in:\n%s", got, answer)

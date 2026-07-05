@@ -12,7 +12,6 @@ import (
 
 func DefaultPolicy() PolicyFile {
 	enabled := true
-
 	return PolicyFile{
 		SchemaVersion: PolicySchemaVersion,
 		Defaults: Defaults{
@@ -22,31 +21,7 @@ func DefaultPolicy() PolicyFile {
 			Include:     []string{"**/*.go"},
 			Exclude:     []string{"vendor/**", ".git/**", ".idiom/**"},
 		},
-		Rules: []RuleConfig{{
-			ID:          RuleNoPassThroughWrapper,
-			Enabled:     &enabled,
-			Languages:   []LanguageID{LanguageGo},
-			Kind:        RuleKindStructure,
-			Enforcement: EnforcementAdvisory,
-			Severity:    SeverityWarning,
-			AllowWhen: []AllowanceReason{
-				AllowImplementsInterface,
-				AllowCompatibilityAPI,
-				AllowBoundaryAdapter,
-				AllowValidation,
-				AllowErrorContext,
-				AllowObservability,
-				AllowPermissionCheck,
-				AllowDomainUseCaseName,
-			},
-			Options: RuleOptions{
-				PassThroughWrapper: &PassThroughWrapperOptions{
-					MaxBodyStatements: 1,
-					IgnoreTests:       true,
-					IgnoreGenerated:   true,
-				},
-			},
-		}},
+		Rules: []RuleConfig{defaultPassThroughRuleConfig()},
 	}
 }
 
@@ -131,11 +106,7 @@ func NormalizePolicy(policy PolicyFile) PolicyFile {
 			rule.Exclude = append([]string(nil), policy.Defaults.Exclude...)
 		}
 		if rule.ID == RuleNoPassThroughWrapper && rule.Options.PassThroughWrapper == nil {
-			rule.Options.PassThroughWrapper = &PassThroughWrapperOptions{
-				MaxBodyStatements: 1,
-				IgnoreTests:       true,
-				IgnoreGenerated:   true,
-			}
+			rule.Options.PassThroughWrapper = defaultPassThroughWrapperOptionsPtr()
 		}
 	}
 
@@ -243,16 +214,7 @@ func validateSeverity(path string, severity FindingSeverity) error {
 }
 
 func knownAllowance(reason AllowanceReason) bool {
-	return slices.Contains([]AllowanceReason{
-		AllowImplementsInterface,
-		AllowCompatibilityAPI,
-		AllowBoundaryAdapter,
-		AllowValidation,
-		AllowErrorContext,
-		AllowObservability,
-		AllowPermissionCheck,
-		AllowDomainUseCaseName,
-	}, reason)
+	return slices.Contains(defaultRuleAllowances(RuleNoPassThroughWrapper), reason)
 }
 
 func UnknownJSONKeys(data []byte, target any) ([]string, error) {

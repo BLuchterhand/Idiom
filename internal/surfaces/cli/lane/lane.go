@@ -158,10 +158,10 @@ var laneGitDiff = func(projectRoot string) ([]byte, error) {
 	return cmd.Output()
 }
 
-// runLaneMainWithTelemetry is the variant the top-level dispatcher
+// RunMainWithTelemetry is the variant the top-level dispatcher
 // uses when telemetry is wired. Behavior is identical apart from
 // passing the recorder through to the underlying subcommand.
-func runLaneMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	deps := laneDeps{
 		loadConfig: config.Load,
 		runPlanExecute: func(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner) int {
@@ -1220,15 +1220,6 @@ func firstMarkdownHeading(body string) string {
 	}
 
 	return ""
-}
-
-func collapseLaneContextWhitespace(value string, limit int) string {
-	value = strings.Join(strings.Fields(value), " ")
-	if limit > 0 && len(value) > limit {
-		return strings.TrimSpace(value[:limit-1]) + "..."
-	}
-
-	return value
 }
 
 func renderLaneContextPackSection(result workspace.ToolResult) (string, error) {

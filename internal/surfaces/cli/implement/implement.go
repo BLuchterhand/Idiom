@@ -43,14 +43,6 @@ type implementOptions struct {
 }
 
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdruntime.PromptRunner, rec *telemetry.Recorder) int {
-	return runImplementMainWithTelemetry(args, stdout, stderr, promptRun, rec)
-}
-
-func runImplementMain(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner) int {
-	return runImplementMainWithTelemetry(args, stdout, stderr, promptRun, nil)
-}
-
-func runImplementMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner, rec *telemetry.Recorder) int {
 	opts, err := parseImplementOptions(args, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err)

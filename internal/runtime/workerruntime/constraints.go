@@ -19,25 +19,6 @@ const (
 	ConstraintChildPacketAvailable              ConstraintID = "child_packet_available"
 )
 
-func ConstraintIDs() []ConstraintID {
-	return []ConstraintID{
-		ConstraintPlanThenExecuteSubmitPlanReady,
-		ConstraintRequiredEditPathsDefineWriteScope,
-		ConstraintPlannerOwnedVerification,
-		ConstraintExactAnchorImplementation,
-		ConstraintExactAnchorPrewriteWriteFirst,
-		ConstraintImplementationPacketWriteReady,
-		ConstraintImplementationRequiredPathsRemain,
-		ConstraintAnswerReadinessReached,
-		ConstraintChildPacketAvailable,
-	}
-}
-
-func KnownConstraintID(value ConstraintID) bool {
-	_, ok := constraintIDSet[value]
-	return ok
-}
-
 func ConstraintPresent(constraints []string, want ConstraintID) bool {
 	return slices.Contains(NormalizeConstraints(constraints), string(want))
 }
@@ -52,19 +33,3 @@ func NormalizeConstraints(constraints []string) []string {
 	}
 	return out
 }
-
-func ConstraintStrings(ids ...ConstraintID) []string {
-	out := make([]string, 0, len(ids))
-	for _, id := range ids {
-		out = append(out, string(id))
-	}
-	return out
-}
-
-var constraintIDSet = func() map[ConstraintID]struct{} {
-	out := make(map[ConstraintID]struct{}, len(ConstraintIDs()))
-	for _, id := range ConstraintIDs() {
-		out[id] = struct{}{}
-	}
-	return out
-}()

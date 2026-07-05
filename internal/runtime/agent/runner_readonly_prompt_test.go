@@ -74,24 +74,3 @@ func TestNarrowToolFamilyRepetitionNudgeOnlyMentionsVisibleDiscoveryTools(t *tes
 		}
 	}
 }
-
-func TestNarrowToolFamilyRedirectOnlyUsesVisibleContextQuery(t *testing.T) {
-	noContextQuery := []string{
-		workspace.ToolNameCodeNavigate,
-		workspace.ToolNameReadFile,
-		workspace.ToolNameSearchContent,
-	}
-
-	if got := narrowToolFamilyRedirectTool("code_navigate", noContextQuery); got != "" {
-		t.Fatalf("redirect should not choose a hidden context_query tool, got %q", got)
-	}
-
-	withContextQuery := append(append([]string(nil), noContextQuery...), workspace.ToolNameContextQuery)
-	if got := narrowToolFamilyRedirectTool("code_navigate", withContextQuery); got != workspace.ToolNameContextQuery {
-		t.Fatalf("redirect should choose visible context_query, got %q", got)
-	}
-
-	if got := narrowToolFamilyRedirectTool("read_file", withContextQuery); got != "" {
-		t.Fatalf("redirect should not redirect non-code narrow family, got %q", got)
-	}
-}

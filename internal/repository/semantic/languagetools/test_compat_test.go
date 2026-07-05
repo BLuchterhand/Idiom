@@ -2,10 +2,8 @@ package languagetools_test
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
@@ -106,18 +104,6 @@ func codeNavigationCapabilityList() string {
 	return languagetools.CodeNavigationCapabilityList()
 }
 
-func validateSymbolPattern(tool, pattern string) error {
-	return languagetools.ValidateSymbolPattern(tool, pattern)
-}
-
-func parseLSPLocations(raw json.RawMessage, serverName string) ([]LSPLocation, error) {
-	return languagetools.ParseLSPLocations(raw, serverName)
-}
-
-func pylspFileURI(path string) string {
-	return languagetools.PylspFileURI(path)
-}
-
 func RustToolNames() []string {
 	return languagetools.RustToolNames()
 }
@@ -151,16 +137,4 @@ func writeTestFile(t testFataler, path string, content string) {
 type testFataler interface {
 	Helper()
 	Fatalf(format string, args ...any)
-}
-
-func writeWorkspaceFile(t testFataler, path string, content string) {
-	t.Helper()
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", path, err)
-	}
-
-	if err := os.WriteFile(path, []byte(strings.TrimSpace(content)+"\n"), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
 }

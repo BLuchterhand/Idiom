@@ -543,7 +543,7 @@ func ProjectBehavioralCoverageContract(contract BehavioralCoverageContract) TDDC
 	coverage := TDDCoverage{}
 
 	for _, requirement := range contract.EARS {
-		if !behavioralCoverageItemIsAccepted(requirement.Status) {
+		if !BehavioralCoverageStatusIsAccepted(requirement.Status) {
 			continue
 		}
 		coverage.EARSTotal++
@@ -553,7 +553,7 @@ func ProjectBehavioralCoverageContract(contract BehavioralCoverageContract) TDDC
 	}
 
 	for _, scenario := range contract.BDDScenarios {
-		if !behavioralCoverageItemIsAccepted(scenario.Status) {
+		if !BehavioralCoverageStatusIsAccepted(scenario.Status) {
 			continue
 		}
 		coverage.BDDTotal++
@@ -571,7 +571,7 @@ func ProjectBehavioralCoverageContract(contract BehavioralCoverageContract) TDDC
 	}
 
 	for _, invariant := range contract.Invariants {
-		if !behavioralCoverageItemIsAccepted(invariant.Status) {
+		if !BehavioralCoverageStatusIsAccepted(invariant.Status) {
 			continue
 		}
 		coverage.InvariantsTotal++
@@ -581,7 +581,7 @@ func ProjectBehavioralCoverageContract(contract BehavioralCoverageContract) TDDC
 	}
 
 	for _, machine := range contract.StateMachines {
-		if !behavioralCoverageItemIsAccepted(machine.Status) {
+		if !BehavioralCoverageStatusIsAccepted(machine.Status) {
 			continue
 		}
 		coverage.StateMachinesTotal++
@@ -591,7 +591,7 @@ func ProjectBehavioralCoverageContract(contract BehavioralCoverageContract) TDDC
 	}
 
 	for _, mode := range contract.FailureModes {
-		if !behavioralCoverageItemIsAccepted(mode.Status) {
+		if !BehavioralCoverageStatusIsAccepted(mode.Status) {
 			continue
 		}
 		coverage.FMEAModesTotal++
@@ -601,7 +601,7 @@ func ProjectBehavioralCoverageContract(contract BehavioralCoverageContract) TDDC
 	}
 
 	for _, deviation := range contract.HAZOPDeviations {
-		if !behavioralCoverageItemIsAccepted(deviation.Status) {
+		if !BehavioralCoverageStatusIsAccepted(deviation.Status) {
 			continue
 		}
 		coverage.HAZOPDeviationsTotal++
@@ -611,7 +611,7 @@ func ProjectBehavioralCoverageContract(contract BehavioralCoverageContract) TDDC
 	}
 
 	for _, table := range contract.DecisionTables {
-		if !behavioralCoverageItemIsAccepted(table.Status) {
+		if !BehavioralCoverageStatusIsAccepted(table.Status) {
 			continue
 		}
 		coverage.DecisionTablesTotal++
@@ -621,7 +621,7 @@ func ProjectBehavioralCoverageContract(contract BehavioralCoverageContract) TDDC
 	}
 
 	for _, boundary := range contract.BoundaryValues {
-		if !behavioralCoverageItemIsAccepted(boundary.Status) {
+		if !BehavioralCoverageStatusIsAccepted(boundary.Status) {
 			continue
 		}
 		coverage.BoundaryValuesTotal++
@@ -631,7 +631,7 @@ func ProjectBehavioralCoverageContract(contract BehavioralCoverageContract) TDDC
 	}
 
 	for _, leaf := range contract.FaultTreeLeaves {
-		if !behavioralCoverageItemIsAccepted(leaf.Status) {
+		if !BehavioralCoverageStatusIsAccepted(leaf.Status) {
 			continue
 		}
 		coverage.FaultTreeLeavesTotal++
@@ -641,7 +641,7 @@ func ProjectBehavioralCoverageContract(contract BehavioralCoverageContract) TDDC
 	}
 
 	for _, incident := range contract.PostMortems {
-		if !behavioralCoverageItemIsAccepted(incident.Status) {
+		if !BehavioralCoverageStatusIsAccepted(incident.Status) {
 			continue
 		}
 		coverage.PostMortemIncidentsTotal++
@@ -651,7 +651,7 @@ func ProjectBehavioralCoverageContract(contract BehavioralCoverageContract) TDDC
 	}
 
 	for _, model := range contract.FormalModels {
-		if !behavioralCoverageItemIsAccepted(model.Status) {
+		if !BehavioralCoverageStatusIsAccepted(model.Status) {
 			continue
 		}
 		coverage.FormalModelsTotal++
@@ -661,7 +661,7 @@ func ProjectBehavioralCoverageContract(contract BehavioralCoverageContract) TDDC
 	}
 
 	for _, target := range contract.FuzzTargets {
-		if !behavioralCoverageItemIsAccepted(target.Status) {
+		if !BehavioralCoverageStatusIsAccepted(target.Status) {
 			continue
 		}
 		coverage.FuzzTargetsTotal++
@@ -671,7 +671,7 @@ func ProjectBehavioralCoverageContract(contract BehavioralCoverageContract) TDDC
 	}
 
 	for _, eval := range contract.RAGEvals {
-		if !behavioralCoverageItemIsAccepted(eval.Status) {
+		if !BehavioralCoverageStatusIsAccepted(eval.Status) {
 			continue
 		}
 		coverage.RAGEvalsTotal++
@@ -681,7 +681,7 @@ func ProjectBehavioralCoverageContract(contract BehavioralCoverageContract) TDDC
 	}
 
 	for _, securityCase := range contract.SecurityCases {
-		if !behavioralCoverageItemIsAccepted(securityCase.Status) {
+		if !BehavioralCoverageStatusIsAccepted(securityCase.Status) {
 			continue
 		}
 		coverage.SecurityCasesTotal++
@@ -691,7 +691,7 @@ func ProjectBehavioralCoverageContract(contract BehavioralCoverageContract) TDDC
 	}
 
 	for _, privacy := range contract.PrivacyControls {
-		if !behavioralCoverageItemIsAccepted(privacy.Status) {
+		if !BehavioralCoverageStatusIsAccepted(privacy.Status) {
 			continue
 		}
 		coverage.PrivacyControlsTotal++
@@ -701,7 +701,7 @@ func ProjectBehavioralCoverageContract(contract BehavioralCoverageContract) TDDC
 	}
 
 	for _, provider := range contract.ProviderContracts {
-		if !behavioralCoverageItemIsAccepted(provider.Status) {
+		if !BehavioralCoverageStatusIsAccepted(provider.Status) {
 			continue
 		}
 		coverage.ProviderContractsTotal++
@@ -711,7 +711,7 @@ func ProjectBehavioralCoverageContract(contract BehavioralCoverageContract) TDDC
 	}
 
 	for _, signal := range contract.Observability {
-		if !behavioralCoverageItemIsAccepted(signal.Status) {
+		if !BehavioralCoverageStatusIsAccepted(signal.Status) {
 			continue
 		}
 		coverage.ObservabilityTotal++
@@ -721,7 +721,7 @@ func ProjectBehavioralCoverageContract(contract BehavioralCoverageContract) TDDC
 	}
 
 	for _, bound := range contract.PerformanceBounds {
-		if !behavioralCoverageItemIsAccepted(bound.Status) {
+		if !BehavioralCoverageStatusIsAccepted(bound.Status) {
 			continue
 		}
 		coverage.PerformanceBoundsTotal++
@@ -731,7 +731,7 @@ func ProjectBehavioralCoverageContract(contract BehavioralCoverageContract) TDDC
 	}
 
 	for _, journey := range contract.E2EJourneys {
-		if !behavioralCoverageItemIsAccepted(journey.Status) {
+		if !BehavioralCoverageStatusIsAccepted(journey.Status) {
 			continue
 		}
 		coverage.E2EJourneysTotal++
@@ -748,8 +748,8 @@ func ProjectBehavioralCoverageContract(contract BehavioralCoverageContract) TDDC
 	}
 
 	projectMutationCoverage(contract.Mutation, &coverage)
-	coverage.GatesPassed = sortedUniqueStrings(coverage.GatesPassed)
-	coverage.GatesBlocked = sortedUniqueStrings(coverage.GatesBlocked)
+	coverage.GatesPassed = uniqueSortedStrings(coverage.GatesPassed)
+	coverage.GatesBlocked = uniqueSortedStrings(coverage.GatesBlocked)
 
 	return coverage
 }
@@ -1431,7 +1431,7 @@ func validateBehavioralSurfaceCoverage(prefix string, surface BehavioralSurfaceC
 	if strings.TrimSpace(surface.Surface) == "" {
 		errs = append(errs, fmt.Errorf("%s missing surface", prefix))
 	}
-	status := normalizeBehavioralSurfaceStatus(surface.Status)
+	status := NormalizeBehavioralSurfaceStatus(surface.Status)
 	if status == "" {
 		errs = append(errs, fmt.Errorf("%s missing status", prefix))
 	}
@@ -1471,7 +1471,7 @@ func validateBehavioralSurfaceInventoryConsistency(surfaces []BehavioralSurfaceC
 		if name == "" {
 			continue
 		}
-		status := normalizeBehavioralSurfaceStatus(surface.Status)
+		status := NormalizeBehavioralSurfaceStatus(surface.Status)
 		if firstStatus, ok := surfaceStatuses[name]; ok && firstStatus != status {
 			errs = append(errs, fmt.Errorf("behavioral coverage surface_inventory[%d] conflicts for surface %q: status %q differs from prior status %q", i, surface.Surface, surface.Status, firstStatus))
 			continue
@@ -1691,7 +1691,7 @@ func bddScenarioCoversRequirement(scenarios []BDDScenarioCoverage, requirementID
 		return false
 	}
 	for _, scenario := range scenarios {
-		if behavioralCoverageItemIsAccepted(scenario.Status) && strings.TrimSpace(scenario.RequirementID) == requirementID {
+		if BehavioralCoverageStatusIsAccepted(scenario.Status) && strings.TrimSpace(scenario.RequirementID) == requirementID {
 			return true
 		}
 	}
@@ -1702,7 +1702,7 @@ func bddScenarioCoversRequirement(scenarios []BDDScenarioCoverage, requirementID
 func allDesignContractsComplete(contracts []DesignContractCoverage) bool {
 	accepted := 0
 	for _, contract := range contracts {
-		if !behavioralCoverageItemIsAccepted(contract.Status) {
+		if !BehavioralCoverageStatusIsAccepted(contract.Status) {
 			continue
 		}
 		accepted++
@@ -1788,7 +1788,7 @@ func allBehavioralSurfacesDecided(surfaces []BehavioralSurfaceCoverage) bool {
 		return false
 	}
 	for _, surface := range surfaces {
-		status := normalizeBehavioralSurfaceStatus(surface.Status)
+		status := NormalizeBehavioralSurfaceStatus(surface.Status)
 		if status == "" || status == "open_question" {
 			return false
 		}
@@ -1927,20 +1927,16 @@ func stateMachineCoverageComplete(machine StateMachineCoverage) bool {
 	return true
 }
 
-func behavioralCoverageItemIsAccepted(status string) bool {
-	return BehavioralCoverageStatusIsAccepted(status)
-}
-
 func BehavioralCoverageStatusIsAccepted(status string) bool {
 	return normalizeBehavioralCoverageStatus(status) == BehavioralCoverageStatusAccepted
 }
 
 func BehavioralCoverageSurfaceStatusIsAccepted(status string) bool {
-	return normalizeBehavioralSurfaceStatus(status) == BehavioralCoverageStatusAccepted
+	return NormalizeBehavioralSurfaceStatus(status) == BehavioralCoverageStatusAccepted
 }
 
 func BehavioralCoverageSurfaceStatusIsClosedDecision(status string) bool {
-	switch normalizeBehavioralSurfaceStatus(status) {
+	switch NormalizeBehavioralSurfaceStatus(status) {
 	case BehavioralCoverageStatusAccepted, BehavioralCoverageStatusWaived, BehavioralCoverageStatusNotRequired:
 		return true
 	default:
@@ -1949,19 +1945,6 @@ func BehavioralCoverageSurfaceStatusIsClosedDecision(status string) bool {
 }
 
 func NormalizeBehavioralSurfaceStatus(status string) string {
-	return normalizeBehavioralSurfaceStatus(status)
-}
-
-func normalizeBehavioralCoverageStatus(status string) string {
-	trimmed := strings.TrimSpace(strings.ToLower(status))
-	if trimmed == "" {
-		return BehavioralCoverageStatusAccepted
-	}
-
-	return trimmed
-}
-
-func normalizeBehavioralSurfaceStatus(status string) string {
 	switch strings.TrimSpace(strings.ToLower(status)) {
 	case "accepted", "covered", "tested", "in_scope", "required":
 		return BehavioralCoverageStatusAccepted
@@ -1976,6 +1959,15 @@ func normalizeBehavioralSurfaceStatus(status string) string {
 	default:
 		return strings.TrimSpace(strings.ToLower(status))
 	}
+}
+
+func normalizeBehavioralCoverageStatus(status string) string {
+	trimmed := strings.TrimSpace(strings.ToLower(status))
+	if trimmed == "" {
+		return BehavioralCoverageStatusAccepted
+	}
+
+	return trimmed
 }
 
 func validBehavioralCoverageStatus(status string) bool {
@@ -2020,8 +2012,4 @@ func appendUniqueString(values []string, value string) []string {
 		return values
 	}
 	return append(values, value)
-}
-
-func sortedUniqueStrings(values []string) []string {
-	return uniqueSortedStrings(values)
 }

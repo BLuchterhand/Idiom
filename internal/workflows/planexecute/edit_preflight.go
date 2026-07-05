@@ -23,7 +23,7 @@ type EditPreflightPolicy struct {
 	SuspiciousAdjacentDuplicateCodeLine             func(string, []byte, []byte) (int, string, bool)
 }
 
-func preflightPlanUnsupportedProofClaims(plan planartifact.PlanArtifact, policy EditPreflightPolicy) *PlanEditPreflightMismatch {
+func PreflightPlanUnsupportedProofClaimsWithPolicy(plan planartifact.PlanArtifact, policy EditPreflightPolicy) *PlanEditPreflightMismatch {
 	policy = normalizeDependencies(Dependencies{EditPreflight: policy}).EditPreflight
 	for i, edit := range plan.Edits {
 		path := plancontract.NormalizeScopePath(edit.Path)
@@ -33,10 +33,6 @@ func preflightPlanUnsupportedProofClaims(plan planartifact.PlanArtifact, policy 
 	}
 
 	return nil
-}
-
-func PreflightPlanUnsupportedProofClaimsWithPolicy(plan planartifact.PlanArtifact, policy EditPreflightPolicy) *PlanEditPreflightMismatch {
-	return preflightPlanUnsupportedProofClaims(plan, policy)
 }
 
 func preflightPlanExistingSourceDestructiveRewrites(workspaceRoot string, plan planartifact.PlanArtifact, policy EditPreflightPolicy) *PlanEditPreflightMismatch {
@@ -96,7 +92,7 @@ func planExecuteSelectedLineRange(current string, edit planartifact.PlanEdit) (s
 	return strings.Join(lines[edit.StartLine-1:edit.EndLine], ""), true
 }
 
-func preflightPlanEdits(workspaceRoot string, plan planartifact.PlanArtifact, policy EditPreflightPolicy) *PlanEditPreflightMismatch {
+func PreflightPlanEditsWithPolicy(workspaceRoot string, plan planartifact.PlanArtifact, policy EditPreflightPolicy) *PlanEditPreflightMismatch {
 	policy = normalizeDependencies(Dependencies{EditPreflight: policy}).EditPreflight
 	cache := make(map[string][]byte)
 
@@ -179,10 +175,6 @@ func preflightPlanEdits(workspaceRoot string, plan planartifact.PlanArtifact, po
 	}
 
 	return nil
-}
-
-func PreflightPlanEditsWithPolicy(workspaceRoot string, plan planartifact.PlanArtifact, policy EditPreflightPolicy) *PlanEditPreflightMismatch {
-	return preflightPlanEdits(workspaceRoot, plan, policy)
 }
 
 func preflightPlanFinalState(workspaceRoot string, plan planartifact.PlanArtifact, policy EditPreflightPolicy) *PlanEditPreflightMismatch {

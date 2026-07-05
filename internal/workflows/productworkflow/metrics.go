@@ -297,42 +297,34 @@ func collectReportMetrics(absRoot string) (map[string]int, map[string]int, error
 		}
 
 		reportTypeCounts[reportType]++
-		switch reportType {
-		case "implementation":
-			report, parseErr := ParseImplementationReportJSON(data)
-			if parseErr != nil {
-				return nil, nil, metricsArtifactError("parse", relPath, parseErr)
-			}
+		report, parseErr := parseKnownReportJSON(reportType, data)
+		if parseErr != nil {
+			return nil, nil, metricsArtifactError("parse", relPath, parseErr)
+		}
 
+		switch report := report.(type) {
+		case ImplementationReport:
 			if strings.TrimSpace(report.CompletedAt) == "" {
 				reportStatusCounts["implementation_pending"]++
 			} else {
 				reportStatusCounts["implementation_completed"]++
 			}
-		case "review":
-			report, parseErr := ParseReviewReportJSON(data)
-			if parseErr != nil {
-				return nil, nil, metricsArtifactError("parse", relPath, parseErr)
-			}
-
+		case ReviewReport:
 			status := strings.TrimSpace(report.Status)
 			if !ReviewReportStatusAllowed(status) {
 				return nil, nil, metricsArtifactError("validate", relPath, fmt.Errorf("review status has unsupported value %q", status))
 			}
 
 			reportStatusCounts["review_"+status]++
-		case "investigation":
-			report, parseErr := ParseInvestigationReportJSON(data)
-			if parseErr != nil {
-				return nil, nil, metricsArtifactError("parse", relPath, parseErr)
-			}
-
+		case InvestigationReport:
 			status := strings.TrimSpace(report.Status)
 			if !InvestigationReportStatusAllowed(status) {
 				return nil, nil, metricsArtifactError("validate", relPath, fmt.Errorf("investigation status has unsupported value %q", status))
 			}
 
 			reportStatusCounts["investigation_"+status]++
+		default:
+			return nil, nil, metricsArtifactError("parse", relPath, fmt.Errorf("report parser returned %T", report))
 		}
 	}
 

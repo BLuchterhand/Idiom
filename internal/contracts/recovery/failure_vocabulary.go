@@ -111,13 +111,7 @@ func FailureClasses() []FailureClass {
 }
 
 func ParseFailureClass(value string) (FailureClass, bool) {
-	candidate := FailureClass(strings.TrimSpace(value))
-	for _, known := range FailureClasses() {
-		if candidate == known {
-			return known, true
-		}
-	}
-	return "", false
+	return parseKnown(value, FailureClasses(), strings.TrimSpace, false)
 }
 
 func KnownFailureClass(value FailureClass) bool {
@@ -135,13 +129,7 @@ func DirtyStatuses() []DirtyStatus {
 }
 
 func ParseDirtyStatus(value string) (DirtyStatus, bool) {
-	candidate := DirtyStatus(strings.TrimSpace(value))
-	for _, known := range DirtyStatuses() {
-		if candidate == known {
-			return known, true
-		}
-	}
-	return "", false
+	return parseKnown(value, DirtyStatuses(), strings.TrimSpace, false)
 }
 
 func ScopeStatuses() []ScopeStatus {
@@ -154,11 +142,20 @@ func ScopeStatuses() []ScopeStatus {
 }
 
 func ParseScopeStatus(value string) (ScopeStatus, bool) {
-	candidate := ScopeStatus(strings.TrimSpace(value))
-	for _, known := range ScopeStatuses() {
-		if candidate == known {
-			return known, true
+	return parseKnown(value, ScopeStatuses(), strings.TrimSpace, false)
+}
+
+func parseKnown[T ~string](value string, known []T, normalize func(string) string, normalizeKnown bool) (T, bool) {
+	candidate := normalize(value)
+	for _, item := range known {
+		itemValue := string(item)
+		if normalizeKnown {
+			itemValue = normalize(itemValue)
+		}
+		if candidate == itemValue {
+			return item, true
 		}
 	}
-	return "", false
+	var zero T
+	return zero, false
 }

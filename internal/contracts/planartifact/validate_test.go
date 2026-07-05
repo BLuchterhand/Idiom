@@ -24,6 +24,45 @@ func TestNormalizeForSubmitAlignsHandoffReadiness(t *testing.T) {
 	}
 }
 
+func TestNormalizeForSubmitRedactsOrDropsSensitiveValues(t *testing.T) {
+	artifact := validPlanArtifactForValidation()
+	artifact.Rationale = "api_key=abcdef123456"
+	artifact.Task.Summary = "secret abc123"
+	artifact.Packet.ArtifactPath = "secrets/plan.json"
+	artifact.Evidence = []PlanArtifactEvidence{{
+		Kind:    EvidenceKindPlannerSubmission,
+		Path:    "secrets/current-state.md",
+		Summary: "authorization: bearer abcdef123456",
+	}}
+	artifact.Edits = []PlanEdit{{
+		Path:    "pkg/feature.go",
+		OldText: "old",
+		NewText: "new",
+		Purpose: "password=abcdef123456",
+	}}
+
+	normalized := NormalizeForSubmit(artifact, NormalizeForSubmitOptions{PlanID: "plan-sensitive", Created: "2026-06-26T00:00:00Z"})
+
+	for field, value := range map[string]string{
+		"rationale":        normalized.Rationale,
+		"task.summary":     normalized.Task.Summary,
+		"evidence.summary": normalized.Evidence[0].Summary,
+		"edit.purpose":     normalized.Edits[0].Purpose,
+	} {
+		if !strings.HasPrefix(value, "redacted:") {
+			t.Fatalf("%s = %q, want redacted hash", field, value)
+		}
+	}
+
+	if normalized.Packet.ArtifactPath != "" {
+		t.Fatalf("packet artifact path = %q, want sensitive path dropped", normalized.Packet.ArtifactPath)
+	}
+
+	if normalized.Evidence[0].Path != "" {
+		t.Fatalf("evidence path = %q, want sensitive path dropped", normalized.Evidence[0].Path)
+	}
+}
+
 func TestValidatePlanArtifactRejectsDivergentHandoffReadiness(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -32,3 +32,16 @@ func TestNextActionsAllParse(t *testing.T) {
 		}
 	}
 }
+
+func TestParseNextActionCanonicalizesTrimCaseAndHyphens(t *testing.T) {
+	for _, raw := range []string{
+		" \tRETRY_PLAN_EXECUTE\n",
+		" \tretry-plan-execute\n",
+		" \tRetry-Plan-Execute\n",
+	} {
+		got, ok := ParseNextAction(raw)
+		if !ok || got != NextActionRetryPlanExecute {
+			t.Fatalf("ParseNextAction(%q) = %q %v, want %q true", raw, got, ok, NextActionRetryPlanExecute)
+		}
+	}
+}

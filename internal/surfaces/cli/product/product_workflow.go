@@ -20,10 +20,6 @@ import (
 type briefLintReport = briefcmd.LintReport
 
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return runProductMainWithTelemetry(args, stdout, stderr, rec)
-}
-
-func runProductMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	if len(args) == 0 {
 		printProductUsage(stderr)
 
@@ -223,7 +219,7 @@ func runProductValidateArtifact(args []string, stdout io.Writer, stderr io.Write
 		}
 	}
 
-	logProductPhase(rec, "product_validate_artifact", map[string]any{
+	telemetry.LogPhase(rec, "product_validate_artifact", map[string]any{
 		"status": out.Status,
 		"kind":   kind,
 	})
@@ -307,7 +303,7 @@ func runProductLint(args []string, stdout io.Writer, stderr io.Writer, rec *tele
 	result := productworkflow.LintEffortFolder(absRoot)
 
 	result.NextValidAction = productLintNextValidAction(result.Status)
-	logProductPhase(rec, "product_lint", map[string]any{
+	telemetry.LogPhase(rec, "product_lint", map[string]any{
 		"status":        result.Status,
 		"finding_count": len(result.Findings),
 	})
@@ -459,7 +455,7 @@ func runProductAudit(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 	}
 
 	auditResult.NextValidAction = productAuditNextValidAction(auditResult.Status)
-	logProductPhase(rec, "product_audit", map[string]any{
+	telemetry.LogPhase(rec, "product_audit", map[string]any{
 		"status":        auditResult.Status,
 		"finding_count": len(auditResult.Findings),
 	})
@@ -589,7 +585,7 @@ func runProductEfforts(args []string, stdout io.Writer, stderr io.Writer, rec *t
 		Query:  query,
 	})
 
-	logProductPhase(rec, "product_efforts", map[string]any{
+	telemetry.LogPhase(rec, "product_efforts", map[string]any{
 		"status":        result.Status,
 		"effort_count":  result.Counts.EffortCount,
 		"finding_count": result.Counts.FindingCount,
@@ -799,7 +795,7 @@ func runProductStatusMigration(args []string, stdout io.Writer, stderr io.Writer
 		logMode = "apply"
 	}
 
-	logProductPhase(rec, "product_status_migration", map[string]any{
+	telemetry.LogPhase(rec, "product_status_migration", map[string]any{
 		"status":        plan.Status,
 		"mode":          logMode,
 		"effort_id":     plan.EffortID,
@@ -1031,7 +1027,7 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 	displayNextActions := productStatusNextValidActions(view, exitCode, wsErr != nil)
 	operatorStatus := productworkflow.BuildProductOperatorStatusView(view, workflowState)
 
-	logProductPhase(rec, "product_status", map[string]any{
+	telemetry.LogPhase(rec, "product_status", map[string]any{
 		"audit_status":  view.AuditStatus,
 		"effort_id":     view.EffortID,
 		"current_state": view.CurrentState,
@@ -1191,7 +1187,7 @@ func runProductCreate(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		result.Blockers = append(result.Blockers, err.Error())
 	}
 
-	logProductPhase(rec, "product_create", map[string]any{
+	telemetry.LogPhase(rec, "product_create", map[string]any{
 		"status":        result.Status,
 		"effort_root":   result.EffortRoot,
 		"effort_id":     result.EffortID,
@@ -1290,7 +1286,7 @@ func runProductTransition(args []string, stdout io.Writer, stderr io.Writer, rec
 		ExpectedStateRevision: expectedRevision,
 	})
 
-	logProductPhase(rec, "product_transition", map[string]any{
+	telemetry.LogPhase(rec, "product_transition", map[string]any{
 		"status":      result.Status,
 		"action":      result.Action,
 		"from_state":  result.FromState,
@@ -1672,7 +1668,7 @@ func runProductPRD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		promptWriteCount = 1
 	}
 
-	logProductPhase(rec, "product_prd_render_prompt", map[string]any{
+	telemetry.LogPhase(rec, "product_prd_render_prompt", map[string]any{
 		"finding_count":       len(plan.Findings),
 		"evidence_card_count": plan.EvidenceCardCount,
 		"prompt_write_count":  promptWriteCount,
@@ -1837,7 +1833,7 @@ func runProductADR(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		promptWriteCount = 1
 	}
 
-	logProductPhase(rec, "product_adr_render_prompt", map[string]any{
+	telemetry.LogPhase(rec, "product_adr_render_prompt", map[string]any{
 		"finding_count":         len(plan.Findings),
 		"evidence_card_count":   plan.EvidenceCardCount,
 		"prd_requirement_count": plan.PRDRequirementCount,
@@ -2026,7 +2022,7 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		}
 
 		coverageGateEvent := productworkflow.BuildCoverageGateEvaluatedEvent(out.Evaluation, loaded.TDD)
-		logProductPhase(rec, coverageGateEvent.Event, map[string]any{
+		telemetry.LogPhase(rec, coverageGateEvent.Event, map[string]any{
 			"event":           coverageGateEvent.Event,
 			"effort_id":       coverageGateEvent.EffortID,
 			"task_id":         coverageGateEvent.TaskID,
@@ -2191,7 +2187,7 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 			}
 		}
 
-		logProductPhase(rec, "product_tdd_behavioral_coverage_promoted", map[string]any{
+		telemetry.LogPhase(rec, "product_tdd_behavioral_coverage_promoted", map[string]any{
 			"status":           status,
 			"state":            promotion.State,
 			"commit_status":    promotion.CommitStatus,
@@ -2277,7 +2273,7 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		plan.Findings = append(plan.Findings, findings...)
 	}
 
-	logProductPhase(rec, "product_tdd_plan_obligations", map[string]any{
+	telemetry.LogPhase(rec, "product_tdd_plan_obligations", map[string]any{
 		"status":           status,
 		"finding_count":    len(plan.Findings),
 		"obligation_count": len(plan.Obligations),
@@ -2600,7 +2596,7 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 			Summary:              summary,
 			SummaryReferencePath: filepath.ToSlash(summaryRel),
 		})
-		logProductPhase(rec, "product_feedback_ranker_learning_evidence", map[string]any{
+		telemetry.LogPhase(rec, "product_feedback_ranker_learning_evidence", map[string]any{
 			"status":          adapted.Status,
 			"finding_count":   len(adapted.Findings),
 			"blocker_count":   len(adapted.Blockers),
@@ -2763,7 +2759,7 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 			Reconciliation:        reconciled,
 			NextValidAction:       reconciled.NextValidAction,
 		}
-		logProductPhase(rec, "product_feedback_reconcile", map[string]any{
+		telemetry.LogPhase(rec, "product_feedback_reconcile", map[string]any{
 			"status":          out.Status,
 			"blocker_count":   len(out.Reconciliation.Blockers),
 			"finding_count":   len(out.Reconciliation.Findings),
@@ -2892,7 +2888,7 @@ func runProductFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *
 		TDDObligationRefs: tddRefs.values,
 	})
 
-	logProductPhase(rec, "product_feedback", map[string]any{
+	telemetry.LogPhase(rec, "product_feedback", map[string]any{
 		"status":          summary.Status,
 		"finding_count":   len(summary.Findings),
 		"blocker_count":   len(summary.Blockers),
@@ -3144,7 +3140,7 @@ func runProductBrief(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 		out.CoverageEvaluation = &coverageEvaluation
 
 		coverageGateEvent := productworkflow.BuildCoverageGateEvaluatedEvent(coverageEvaluation, input.TDD)
-		logProductPhase(rec, coverageGateEvent.Event, map[string]any{
+		telemetry.LogPhase(rec, coverageGateEvent.Event, map[string]any{
 			"event":           coverageGateEvent.Event,
 			"effort_id":       coverageGateEvent.EffortID,
 			"task_id":         coverageGateEvent.TaskID,
@@ -3230,7 +3226,7 @@ func runProductBrief(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 	out.NextValidAction = productBriefNextValidAction(out.Status, out.BriefOutputPath)
 	out.Generated = gen
 
-	logProductPhase(rec, "product_brief_render", map[string]any{
+	telemetry.LogPhase(rec, "product_brief_render", map[string]any{
 		"status":        out.Status,
 		"has_output":    out.BriefOutputPath != "",
 		"blocker_count": len(allBlockers),
@@ -3354,7 +3350,7 @@ func runProductResearchPlanRuns(profiles *productworkflow.ProfileStoreResult, re
 	plan := productworkflow.PlanResearchRuns(profiles.Profiles, researchProfile, researchOutputDir)
 
 	plan.Findings = append(append([]productworkflow.ProfileFinding{}, profiles.Findings...), plan.Findings...)
-	logProductPhase(rec, "product_research_plan_runs", map[string]any{
+	telemetry.LogPhase(rec, "product_research_plan_runs", map[string]any{
 		"profile_count": len(profiles.Profiles),
 		"run_count":     plan.RunCount,
 		"finding_count": len(plan.Findings),
@@ -3458,7 +3454,7 @@ func runProductResearchRenderPrompts(profiles *productworkflow.ProfileStoreResul
 		}
 	}
 
-	logProductPhase(rec, "product_research_render_prompts", map[string]any{
+	telemetry.LogPhase(rec, "product_research_render_prompts", map[string]any{
 		"profile_count":      len(profiles.Profiles),
 		"run_count":          promptPlan.RunCount,
 		"finding_count":      len(promptPlan.Findings),
@@ -3604,7 +3600,7 @@ func runProductResearchMergeEvidence(profiles *productworkflow.ProfileStoreResul
 		wrote = true
 	}
 
-	logProductPhase(rec, "product_research_merge", map[string]any{
+	telemetry.LogPhase(rec, "product_research_merge", map[string]any{
 		"profile_count":      len(profiles.Profiles),
 		"research_run_count": len(docs),
 		"merged_card_count":  len(merge.Cards),
@@ -3718,8 +3714,4 @@ func writeEvidenceCardsJSONL(path string, cards []productworkflow.EvidenceCard) 
 	}
 
 	return os.WriteFile(path, []byte(b.String()), 0o644)
-}
-
-func logProductPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	telemetry.LogPhase(rec, eventType, fields)
 }

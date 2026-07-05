@@ -36,7 +36,7 @@ func TestRunImplementMainForcesImplementationTaskFamily(t *testing.T) {
 		gotOpts        runOptions
 	)
 
-	code := runImplementMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "modify exactly one file; do not run tests"},
 		&stdout,
 		&stderr,
@@ -46,6 +46,7 @@ func TestRunImplementMainForcesImplementationTaskFamily(t *testing.T) {
 
 			return "done", nil
 		},
+		nil,
 	)
 
 	if code != 0 {
@@ -77,7 +78,7 @@ func TestRunImplementMainCanDelegateBuildTestsToPlanner(t *testing.T) {
 		gotOpts        runOptions
 	)
 
-	code := runImplementMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "modify and verify", "-planner-owned-verification"},
 		&stdout,
 		&stderr,
@@ -85,6 +86,7 @@ func TestRunImplementMainCanDelegateBuildTestsToPlanner(t *testing.T) {
 			gotOpts = opts
 			return "done", nil
 		},
+		nil,
 	)
 
 	if code != 0 {
@@ -104,7 +106,7 @@ func TestRunImplementMainCanDisableThinking(t *testing.T) {
 		gotOpts        runOptions
 	)
 
-	code := runImplementMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "write the brief", "-no-thinking"},
 		&stdout,
 		&stderr,
@@ -112,6 +114,7 @@ func TestRunImplementMainCanDisableThinking(t *testing.T) {
 			gotOpts = opts
 			return "done", nil
 		},
+		nil,
 	)
 
 	if code != 0 {
@@ -131,7 +134,7 @@ func TestRunImplementMainAllowBuildTestsOverridesPlannerOwnedVerification(t *tes
 		gotOpts        runOptions
 	)
 
-	code := runImplementMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "modify and verify", "-planner-owned-verification", "-allow-build-tests"},
 		&stdout,
 		&stderr,
@@ -139,6 +142,7 @@ func TestRunImplementMainAllowBuildTestsOverridesPlannerOwnedVerification(t *tes
 			gotOpts = opts
 			return "done", nil
 		},
+		nil,
 	)
 
 	if code != 0 {
@@ -163,7 +167,7 @@ func TestRunImplementMainReadsPromptFileAndHonorsJSON(t *testing.T) {
 		gotOpts        runOptions
 	)
 
-	code := runImplementMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt-file", promptPath, "-json", "-resume", "prior"},
 		&stdout,
 		&stderr,
@@ -178,6 +182,7 @@ func TestRunImplementMainReadsPromptFileAndHonorsJSON(t *testing.T) {
 
 			return "ok", nil
 		},
+		nil,
 	)
 
 	if code != 0 {
@@ -224,7 +229,7 @@ func TestRunImplementMainReturnsJSONEventWriterError(t *testing.T) {
 	want := errors.New("stdout closed")
 	var stderr bytes.Buffer
 
-	code := runImplementMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "implement this", "-json"},
 		implementFailingWriter{err: want},
 		&stderr,
@@ -232,6 +237,7 @@ func TestRunImplementMainReturnsJSONEventWriterError(t *testing.T) {
 			t.Fatal("prompt runner should not run after json event writer failure")
 			return "", nil
 		},
+		nil,
 	)
 
 	if code != 1 {
@@ -247,7 +253,7 @@ func TestRunImplementMainRejectsMissingPrompt(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := runImplementMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath},
 		&stdout,
 		&stderr,
@@ -256,6 +262,7 @@ func TestRunImplementMainRejectsMissingPrompt(t *testing.T) {
 
 			return "", nil
 		},
+		nil,
 	)
 
 	if code != 2 || !strings.Contains(stderr.String(), "provide --prompt") {
@@ -274,7 +281,7 @@ func TestImplementTelemetryIncludesLocalOpsAndQueueMetadataOnly(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := runImplementMainWithTelemetry(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "modify a file", "-json"},
 		&stdout,
 		&stderr,

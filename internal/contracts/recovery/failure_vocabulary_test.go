@@ -71,3 +71,27 @@ func TestRecoveryFailureVocabularyIncludesCanonicalConstants(t *testing.T) {
 		}
 	}
 }
+
+func TestRecoveryFailureVocabularyParsersTrimButRemainCaseSensitive(t *testing.T) {
+	if got, ok := ParseFailureClass(" \t" + string(FailureClassPlannerFailed) + "\n"); !ok || got != FailureClassPlannerFailed {
+		t.Fatalf("ParseFailureClass trimmed planner_failed = %q %v", got, ok)
+	}
+	if got, ok := ParseDirtyStatus(" \t" + string(DirtyStatusDirtyInScope) + "\n"); !ok || got != DirtyStatusDirtyInScope {
+		t.Fatalf("ParseDirtyStatus trimmed dirty_in_scope = %q %v", got, ok)
+	}
+	if got, ok := ParseScopeStatus(" \t" + string(ScopeStatusOutOfScope) + "\n"); !ok || got != ScopeStatusOutOfScope {
+		t.Fatalf("ParseScopeStatus trimmed out_of_scope = %q %v", got, ok)
+	}
+
+	for _, raw := range []string{"PLANNER_FAILED", "DIRTY_IN_SCOPE", "OUT_OF_SCOPE"} {
+		if class, ok := ParseFailureClass(raw); ok {
+			t.Fatalf("ParseFailureClass(%q) = %q, true", raw, class)
+		}
+		if status, ok := ParseDirtyStatus(raw); ok {
+			t.Fatalf("ParseDirtyStatus(%q) = %q, true", raw, status)
+		}
+		if status, ok := ParseScopeStatus(raw); ok {
+			t.Fatalf("ParseScopeStatus(%q) = %q, true", raw, status)
+		}
+	}
+}

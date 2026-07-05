@@ -1,6 +1,10 @@
 package featureplanner
 
-import "strings"
+import (
+	"strings"
+
+	"idiom/internal/workflows/productworkflow"
+)
 
 type FeaturePlanTraceabilityReview struct {
 	Behaviors     []FeaturePlanBehaviorReview
@@ -205,7 +209,7 @@ func appendBehaviorOrderForSurfaceMissingObligations(order []string, rows map[st
 }
 
 func featurePlanSurfaceReviewFromDraft(surface CoverageDraftSurfaceDecision) FeaturePlanSurfaceReview {
-	status := normalizeStandaloneSurfaceStatus(surface.Status)
+	status := productworkflow.NormalizeBehavioralSurfaceStatus(surface.Status)
 	obligations := normalizedStringList(surface.Obligations)
 	return FeaturePlanSurfaceReview{
 		ID:                 strings.TrimSpace(surface.ID),
@@ -221,7 +225,7 @@ func featurePlanSurfaceReviewFromDraft(surface CoverageDraftSurfaceDecision) Fea
 }
 
 func featurePlanSurfaceReviewFromAccepted(surface AcceptedCoverageSurfaceDecision) FeaturePlanSurfaceReview {
-	status := normalizeStandaloneSurfaceStatus(surface.Status)
+	status := productworkflow.NormalizeBehavioralSurfaceStatus(surface.Status)
 	obligations := normalizedStringList(surface.Obligations)
 	return FeaturePlanSurfaceReview{
 		ID:                 strings.TrimSpace(surface.ID),

@@ -475,7 +475,7 @@ func firstNonEmptyStrings(primary []string, fallback []string) []string {
 
 func sanitizePathValue(value string) string {
 	value = strings.TrimSpace(value)
-	if value == "" || textLooksSensitive(value) {
+	if value == "" || sensitivity.ContainsSensitiveText(value) {
 		return ""
 	}
 	value = strings.ReplaceAll(value, "\\", "/")
@@ -493,7 +493,7 @@ func sanitizePathValue(value string) string {
 
 func sanitizeHandle(value string) string {
 	value = strings.TrimSpace(value)
-	if value == "" || textLooksSensitive(value) {
+	if value == "" || sensitivity.ContainsSensitiveText(value) {
 		return ""
 	}
 
@@ -502,7 +502,7 @@ func sanitizeHandle(value string) string {
 
 func sanitizeID(value string) string {
 	value = strings.TrimSpace(value)
-	if value == "" || textLooksSensitive(value) {
+	if value == "" || sensitivity.ContainsSensitiveText(value) {
 		return ""
 	}
 
@@ -524,7 +524,7 @@ func sanitizeID(value string) string {
 
 func sanitizeToken(value string) string {
 	value = strings.TrimSpace(strings.ToLower(value))
-	if value == "" || textLooksSensitive(value) {
+	if value == "" || sensitivity.ContainsSensitiveText(value) {
 		return ""
 	}
 
@@ -554,7 +554,7 @@ func sanitizeText(value string, maxBytes int) string {
 	if value == "" {
 		return ""
 	}
-	if textLooksSensitive(value) {
+	if sensitivity.ContainsSensitiveText(value) {
 		return "redacted:" + hash(value)
 	}
 
@@ -566,7 +566,7 @@ func sanitizeEditPurpose(value string, maxBytes int) string {
 	if value == "" {
 		return ""
 	}
-	if textLooksSensitive(value) || editPurposeLooksSensitive(value) {
+	if sensitivity.ContainsSensitiveText(value) {
 		return "redacted:" + hash(value)
 	}
 
@@ -593,14 +593,6 @@ func sanitizeVisibleText(value string, maxBytes int) string {
 	}
 
 	return strings.TrimSpace(value) + " [truncated]"
-}
-
-func textLooksSensitive(value string) bool {
-	return sensitivity.ContainsSensitiveText(value)
-}
-
-func editPurposeLooksSensitive(value string) bool {
-	return sensitivity.ContainsSensitiveText(value)
 }
 
 func hash(value string) string {

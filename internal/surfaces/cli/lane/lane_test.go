@@ -13,6 +13,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	atomintakecontract "idiom/internal/contracts/atomintake"
+	"idiom/internal/contracts/commandmeta"
 	lanecontract "idiom/internal/contracts/lane"
 	"idiom/internal/contracts/workflowstate"
 	"idiom/internal/contracts/writerroute"
@@ -658,7 +659,7 @@ func TestRunLaneMainTelemetryMatchesDoctorReadinessProfile(t *testing.T) {
 
 	rec, err := telemetry.Open(telemetry.Options{
 		Dir:           filepath.Join(root, "telemetry"),
-		Command:       commandTelemetryName([]string{"lane", "implement", "--config", configPath, "--prompt", "SECRET raw prompt body"}),
+		Command:       commandmeta.TelemetryName([]string{"lane", "implement", "--config", configPath, "--prompt", "SECRET raw prompt body"}),
 		Args:          []string{"lane", "implement", "--config", configPath, "--prompt", "SECRET raw prompt body"},
 		WorkspaceRoot: root,
 	})

@@ -148,7 +148,9 @@ func initialEvidenceContract(state RunState) []string {
 }
 
 func conversationDirectAnswerReadOnlyState(state RunState) bool {
-	return ConversationDirectAnswerReadOnly(state.TaskFamily, state.Contract, state.Permission)
+	return TaskFamilyIsConversation(state.TaskFamily) &&
+		RuntimeContractIsDirectAnswer(state.Contract) &&
+		PermissionProfileIsReadOnlyWorkspace(state.Permission)
 }
 
 func planThenExecutePlannerState(state RunState) bool {

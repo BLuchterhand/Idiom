@@ -32,7 +32,7 @@ func TestAuditWatchOnceWritesReviewForFeedbackTelemetry(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{
+	code := RunMainWithTelemetry([]string{
 		"watch",
 		"--config", configPath,
 		"--paths", "logs/telemetry",
@@ -40,7 +40,7 @@ func TestAuditWatchOnceWritesReviewForFeedbackTelemetry(t *testing.T) {
 		"--once",
 		"--review-existing",
 		"--debounce", "0",
-	}, &stdout, &stderr)
+	}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("audit watch failed code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
@@ -158,7 +158,7 @@ func TestAuditWatchSanitizesSensitiveTriggerSessionAndReproducerEvidence(t *test
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{
+	code := RunMainWithTelemetry([]string{
 		"watch",
 		"--config", configPath,
 		"--paths", "logs/telemetry/token=SECRET",
@@ -166,7 +166,7 @@ func TestAuditWatchSanitizesSensitiveTriggerSessionAndReproducerEvidence(t *test
 		"--once",
 		"--review-existing",
 		"--debounce", "0",
-	}, &stdout, &stderr)
+	}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("audit watch failed code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
@@ -280,7 +280,7 @@ func TestAuditWatchSanitizesCustomerAndRawTranscriptEvidence(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{
+	code := RunMainWithTelemetry([]string{
 		"watch",
 		"--config", configPath,
 		"--paths", "logs/telemetry/secrets/customer-acme",
@@ -288,7 +288,7 @@ func TestAuditWatchSanitizesCustomerAndRawTranscriptEvidence(t *testing.T) {
 		"--once",
 		"--review-existing",
 		"--debounce", "0",
-	}, &stdout, &stderr)
+	}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("audit watch failed code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
@@ -375,14 +375,14 @@ func TestAuditWatchFirstRunBaselinesWithoutReviewExisting(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{
+	code := RunMainWithTelemetry([]string{
 		"watch",
 		"--config", configPath,
 		"--paths", "logs/telemetry",
 		"--output", outputDir,
 		"--once",
 		"--debounce", "0",
-	}, &stdout, &stderr)
+	}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("audit watch failed code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
@@ -415,14 +415,14 @@ func TestAuditWatchDefaultPathsIncludeConversationLogs(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{
+	code := RunMainWithTelemetry([]string{
 		"watch",
 		"--config", configPath,
 		"--output", outputDir,
 		"--once",
 		"--review-existing",
 		"--debounce", "0",
-	}, &stdout, &stderr)
+	}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("audit watch failed code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
@@ -604,7 +604,7 @@ func TestAuditWatchOnlyScansAppendedLogContentAfterReview(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{
+	code := RunMainWithTelemetry([]string{
 		"watch",
 		"--config", configPath,
 		"--paths", "logs/telemetry",
@@ -612,7 +612,7 @@ func TestAuditWatchOnlyScansAppendedLogContentAfterReview(t *testing.T) {
 		"--once",
 		"--review-existing",
 		"--debounce", "0",
-	}, &stdout, &stderr)
+	}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("initial audit watch failed code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
@@ -643,14 +643,14 @@ func TestAuditWatchOnlyScansAppendedLogContentAfterReview(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 
-	code = RunMain([]string{
+	code = RunMainWithTelemetry([]string{
 		"watch",
 		"--config", configPath,
 		"--paths", "logs/telemetry",
 		"--output", outputDir,
 		"--once",
 		"--debounce", "0",
-	}, &stdout, &stderr)
+	}, &stdout, &stderr, nil)
 	if code != 0 {
 		t.Fatalf("second audit watch failed code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
@@ -669,7 +669,7 @@ func TestAuditWatchHelpReturnsCleanly(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"watch", "--help"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"watch", "--help"}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("expected clean help exit, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())

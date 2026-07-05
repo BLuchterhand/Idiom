@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"idiom/internal/platform/textutil"
@@ -292,7 +293,7 @@ func (idx *RustIndex) Summary() string {
 	var b strings.Builder
 
 	b.WriteString("Indexed ")
-	b.WriteString(indexsupport.IntString(len(idx.Files)))
+	b.WriteString(strconv.Itoa(len(idx.Files)))
 	b.WriteString(" Rust files\n")
 
 	anchors := idx.DefaultFiles(4)
@@ -308,13 +309,13 @@ func (idx *RustIndex) Summary() string {
 			b.WriteString("- ")
 			b.WriteString(path)
 			b.WriteString(" (")
-			b.WriteString(indexsupport.IntString(file.Funcs + file.Methods))
+			b.WriteString(strconv.Itoa(file.Funcs + file.Methods))
 			b.WriteString(" fns, ")
-			b.WriteString(indexsupport.IntString(file.Types))
+			b.WriteString(strconv.Itoa(file.Types))
 			b.WriteString(" types, ")
-			b.WriteString(indexsupport.IntString(file.Traits))
+			b.WriteString(strconv.Itoa(file.Traits))
 			b.WriteString(" traits, ")
-			b.WriteString(indexsupport.IntString(file.Impls))
+			b.WriteString(strconv.Itoa(file.Impls))
 			b.WriteString(" impls)\n")
 		}
 	}

@@ -239,7 +239,7 @@ func baseToolDefinitions() []ToolDefinition {
 			Description: "Find text matches in files (prose, config, comments, strings).",
 			ParametersJSON: schemaObj(
 				[]string{"pattern"},
-				`"pattern":`+strProp("regex or plain text")+`,"path":`+strProp("root to search under")+`,"glob":`+strProp("file-name glob filter"),
+				`"pattern":`+strProp("regex by default, or exact literal text when fixed_strings is true")+`,"path":`+strProp("root to search under")+`,"glob":`+strProp("file-name glob filter")+`,"fixed_strings":`+boolProp("treat pattern as exact literal text instead of a regex; useful for punctuation-heavy source snippets and typed IDs"),
 			),
 		},
 		{
@@ -252,10 +252,10 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        ToolNameFileStats,
-			Description: "Count files, directories, bytes, and lines for a file or bounded directory scope. Use for size/count questions instead of shell wc/find pipelines.",
+			Description: "Count files, directories, bytes, lines, and optional line-range byte/character lengths for a file or bounded directory scope. Use for size/count questions instead of shell wc/find pipelines.",
 			ParametersJSON: schemaObj(
 				nil,
-				`"path":`+strProp("file or directory to count; defaults to workspace root")+`,"recursive":{"type":"boolean","description":"walk directories recursively"},"glob":`+strProp("optional file glob, e.g. *.go")+`,"max_depth":`+intProp("directory depth limit; default 1, or 8 when recursive=true")+`,"limit":`+intProp("max files to count; default 1000, cap 10000"),
+				`"path":`+strProp("file or directory to count; defaults to workspace root")+`,"start_line":`+intProp("optional 1-based start line for measuring byte/character length of a line range in one file")+`,"end_line":`+intProp("optional 1-based end line for measuring byte/character length of a line range in one file")+`,"recursive":{"type":"boolean","description":"walk directories recursively"},"glob":`+strProp("optional file glob, e.g. *.go")+`,"max_depth":`+intProp("directory depth limit; default 1, or 8 when recursive=true")+`,"limit":`+intProp("max files to count; default 1000, cap 10000"),
 			),
 		},
 		{

@@ -16,6 +16,7 @@ import (
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
 	briefcmd "idiom/internal/surfaces/cli/brief"
+	"idiom/internal/workflows/atomintake"
 )
 
 // nonTrivialDraftBody returns a canned draft body sized to clear the
@@ -371,7 +372,7 @@ func TestRunLaneRefineDoesNotAcceptStaleDraftOutput(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := runLaneRefine(opts, dispatch, &stdout, &stderr)
+	code := Run(opts, dispatch, &stdout, &stderr)
 
 	if code == 0 {
 		t.Fatalf("expected stale draft to be rejected, stdout=%s stderr=%s", stdout.String(), stderr.String())
@@ -660,7 +661,7 @@ func TestRunLaneRefineConvergesOnShipAsIsVerdict(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	code := Run(opts, dispatch, &bytes.Buffer{}, &stderr)
 
 	if code != 0 {
 		t.Fatalf("expected exit 0 on convergence, got %d; stderr=%s", code, stderr.String())
@@ -735,7 +736,7 @@ func TestRunLaneRefineRefusesCompletedSpecStatus(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	code := Run(opts, dispatch, &bytes.Buffer{}, &stderr)
 
 	if code == 0 {
 		t.Fatalf("expected completed spec to fail closed")
@@ -759,7 +760,7 @@ func TestAtomSpecDispatchBlockerStatusParsing(t *testing.T) {
 		"Status: closed",
 	}
 	for _, spec := range blocked {
-		if got := atomSpecDispatchBlocker(spec); got == "" {
+		if got := atomintake.SpecDispatchBlocker(spec); got == "" {
 			t.Fatalf("expected status blocker for %q", spec)
 		}
 	}
@@ -773,7 +774,7 @@ func TestAtomSpecDispatchBlockerStatusParsing(t *testing.T) {
 		"# No status here",
 	}
 	for _, spec := range allowed {
-		if got := atomSpecDispatchBlocker(spec); got != "" {
+		if got := atomintake.SpecDispatchBlocker(spec); got != "" {
 			t.Fatalf("unexpected status blocker for %q: %s", spec, got)
 		}
 	}
@@ -799,7 +800,7 @@ func TestRunLaneRefineWritesMetricsOnDraftDispatchFailure(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	code := Run(opts, dispatch, &bytes.Buffer{}, &stderr)
 
 	if code != 7 {
 		t.Fatalf("expected hard fail exit=7 (iter-1 dispatch failure with no fallback), got %d", code)
@@ -861,7 +862,7 @@ func TestRunLaneRefineShipsBestDraftOnDivergingLoop(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	code := Run(opts, dispatch, &bytes.Buffer{}, &stderr)
 	// Colony Q4 (2026-05-11): save best draft AND exit non-zero on
 	// non-ship-as-is convergence; orchestrator must inspect before
 	// piping to plan-execute.
@@ -1025,7 +1026,7 @@ func TestRunLaneRefineFailsoftShipsBestDraftWhenLaterReviewWedges(t *testing.T) 
 
 	var stderr bytes.Buffer
 
-	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	code := Run(opts, dispatch, &bytes.Buffer{}, &stderr)
 	// Failsoft saves the best draft AND exits non-zero — orchestrator
 	// inspects before piping (Colony Q4, 2026-05-11).
 	if code == 0 {
@@ -1070,7 +1071,7 @@ func TestRunLaneRefineFailsHardWhenIter1HasNoReviewedDraft(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	code := Run(opts, dispatch, &bytes.Buffer{}, &stderr)
 
 	if code == 0 {
 		t.Fatalf("expected non-zero exit when iter-1 fails with no fallback, got 0")
@@ -1108,7 +1109,7 @@ func TestRunLaneRefineExhaustsMaxItersAndShipsLatest(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	code := Run(opts, dispatch, &bytes.Buffer{}, &stderr)
 	// max-iters-exhausted is non-zero (Colony Q4): unresolved bugs
 	// remained, orchestrator must inspect.
 	if code == 0 {
@@ -1159,7 +1160,7 @@ func TestRunLaneRefineContinuesThroughChangedBugSetUntilMaxIters(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	code := Run(opts, dispatch, &bytes.Buffer{}, &stderr)
 	// max-iters saves best AND exits non-zero — orchestrator inspects.
 	if code == 0 {
 		t.Fatalf("expected non-zero exit on max-iters convergence; got 0. stderr=%s", stderr.String())
@@ -1205,7 +1206,7 @@ func TestRunLaneRefineFinalizesBestDraftNotLatest(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	code := Run(opts, dispatch, &bytes.Buffer{}, &stderr)
 	// max-iters with regressed final → non-zero exit (Colony Q4).
 	if code == 0 {
 		t.Fatalf("expected non-zero exit on max-iters with no ship-as-is; got 0. stderr=%s", stderr.String())
@@ -1392,7 +1393,7 @@ func TestRunLaneRefineAppliesProjectOverlay(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	code := Run(opts, dispatch, &bytes.Buffer{}, &stderr)
 
 	if code != 0 {
 		t.Fatalf("expected exit 0 (ship-as-is), got %d; stderr=%s", code, stderr.String())
@@ -1511,7 +1512,7 @@ func TestRunLaneRefinePatchPhaseSeesLintPreload(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	_ = Run(opts, dispatch, &bytes.Buffer{}, &stderr)
 
 	metaPatchPath := filepath.Join(refineStateDir(root, "patch-lint"), "iter-2", "meta-patch.md")
 
@@ -1945,7 +1946,7 @@ func TestRunBriefLintJSONFlagEmitsEnvelope(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	exit := runBriefLint([]string{briefPath, "--json"}, &stdout, &stderr, nil)
+	exit := briefcmd.RunLint([]string{briefPath, "--json"}, &stdout, &stderr, nil)
 	// The python preflight is expected to return non-zero on this
 	// minimal brief (missing anchors etc.) — we don't care about the
 	// exact exit, just that the JSON envelope is well-formed.
@@ -2114,7 +2115,7 @@ func TestRunLaneRefinePersistLintJSONAlongMetricsJSON(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	code := Run(opts, dispatch, &bytes.Buffer{}, &stderr)
 
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d; stderr=%s", code, stderr.String())
@@ -2808,7 +2809,7 @@ func TestRunLaneRefineOverlayAndOverrideTemplateInteract(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	code := Run(opts, dispatch, &bytes.Buffer{}, &stderr)
 
 	if code != 0 {
 		t.Fatalf("expected exit 0 on clean ship-as-is, got %d; stderr=%s", code, stderr.String())
@@ -2880,7 +2881,7 @@ func TestRunLaneRefineFailsoftPreservesOverlay(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	code := Run(opts, dispatch, &bytes.Buffer{}, &stderr)
 
 	if code == 0 {
 		t.Fatalf("expected non-zero on no-improvement failsoft, got 0; stderr=%s", stderr.String())
@@ -2977,7 +2978,7 @@ func TestRunLaneRefineBareRepoSkipsOverlay(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	_ = Run(opts, dispatch, &bytes.Buffer{}, &stderr)
 
 	if strings.Contains(stderr.String(), "appended hard-prohibitions") {
 		t.Fatalf("bare repo should not log overlay activity, got: %s", stderr.String())
@@ -3357,7 +3358,7 @@ func TestRunLaneRefineAutoAppendsArtifactClosureToOverride(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	_ = Run(opts, dispatch, &bytes.Buffer{}, &stderr)
 
 	if !strings.Contains(stderr.String(), "no artifact closeout; appending canonical artifact closure") {
 		t.Fatalf("expected stderr to log auto-append, got: %s", stderr.String())
@@ -3426,7 +3427,7 @@ func TestRunLaneRefineUsesProjectOverrideTemplate(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	_ = Run(opts, dispatch, &bytes.Buffer{}, &stderr)
 
 	if !strings.Contains(stderr.String(), "project-override:") {
 		t.Fatalf("expected stderr to log project-override source, got: %s", stderr.String())
@@ -3511,7 +3512,7 @@ func TestRunLaneRefineRoutesMarkdownSpecToMarkdownTemplate(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	_ = Run(opts, dispatch, &bytes.Buffer{}, &stderr)
 
 	if !strings.Contains(stderr.String(), "mode=markdown") {
 		t.Fatalf("expected stderr to log markdown mode detection, got: %s", stderr.String())
@@ -3561,7 +3562,7 @@ func TestRunLaneRefineModeOverrideForcesAnchored(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	_ = Run(opts, dispatch, &bytes.Buffer{}, &stderr)
 
 	metaDraftPath := filepath.Join(refineStateDir(root, "override-anchored"), "iter-1", "meta-draft.md")
 
@@ -3609,7 +3610,7 @@ func TestRunLaneRefineInlinesLintOutputIntoReviewMeta(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	_ = Run(opts, dispatch, &bytes.Buffer{}, &stderr)
 
 	metaReviewPath := filepath.Join(refineStateDir(root, "lint-preload"), "iter-1", "meta-review.md")
 
@@ -3693,7 +3694,7 @@ func TestRunLaneRefinePreloadsFinalShapeLintFindings(t *testing.T) {
 		"# Review\n\n## Bugs found\n\n1. **Lint BLOCK**: fix it.\n\n## Lint findings\n\nBLOCK present\n\n## OK\n\n- shape reviewed\n\n## Verdict\n\nfix-bugs-then-ship\n",
 	})
 
-	_ = runLaneRefine(opts, dispatch, &bytes.Buffer{}, &bytes.Buffer{})
+	_ = Run(opts, dispatch, &bytes.Buffer{}, &bytes.Buffer{})
 
 	if !strings.Contains(lintedCandidate, "native/foo.cpp") {
 		t.Fatalf("lint should run against final-shape candidate with injected target, got:\n%s", lintedCandidate)
@@ -3745,7 +3746,7 @@ func TestRunLaneRefineHandlesCleanLintGracefully(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	code := Run(opts, dispatch, &bytes.Buffer{}, &stderr)
 
 	if code != 0 {
 		t.Fatalf("expected exit 0 on clean lint + ship-as-is, got %d; stderr=%s", code, stderr.String())
@@ -3824,7 +3825,7 @@ func TestRunLaneRefineFailsOnTrivialDraft(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	code := runLaneRefine(opts, dispatch, &bytes.Buffer{}, &stderr)
+	code := Run(opts, dispatch, &bytes.Buffer{}, &stderr)
 
 	if code == 0 {
 		t.Fatalf("expected non-zero exit on trivially-empty draft, got 0; stderr=%s", stderr.String())

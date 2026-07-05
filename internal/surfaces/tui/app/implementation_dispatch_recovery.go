@@ -19,8 +19,8 @@ import (
 	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
-	"idiom/internal/surfaces/tui/implementationdispatch"
 	"idiom/internal/workflows/featureplanner"
+	"idiom/internal/workflows/implementationdispatch"
 	"idiom/internal/workflows/planexecute"
 	planexecuteadapters "idiom/internal/workflows/planexecute/adapters"
 	"idiom/internal/workflows/recovery"
@@ -1002,9 +1002,6 @@ func implementationDispatchPlanExecuteNeedsLargeBodyBudget(root string, prompt s
 			return true
 		}
 
-		if root != "" && implementationDispatchPathMissing(root, path) && implementationDispatchPromptMentionsPathCreation(lower, lowerPath) {
-			return true
-		}
 	}
 
 	return false
@@ -1032,39 +1029,16 @@ func implementationDispatchPromptImpliesNewFilePath(lowerPrompt string, lowerPat
 		strings.HasPrefix(lowerPrompt, "add file ")
 }
 
-func implementationDispatchPromptMentionsPathCreation(lowerPrompt string, lowerPath string) bool {
-	if !implementationDispatchPromptImpliesNewFilePath(lowerPrompt, lowerPath) {
-		return false
-	}
-
-	return strings.Contains(lowerPrompt, " file") || strings.Contains(lowerPrompt, lowerPath)
-}
-
-func implementationDispatchPathMissing(root string, path string) bool {
-	path = strings.TrimSpace(path)
-	if root == "" || path == "" || filepath.IsAbs(path) {
-		return false
-	}
-
-	_, err := os.Stat(filepath.Join(root, filepath.FromSlash(path)))
-
-	return os.IsNotExist(err)
-}
-
-func implementationDispatchPlanExecuteFailureKindFromString(kind string) plancontract.PlanExecuteFailureKind {
-	failureKind, _ := plancontract.ParsePlanExecuteFailureKind(kind)
+func implementationDispatchPlanExecuteRunFailureKind(result planexecute.RunResult) plancontract.PlanExecuteFailureKind {
+	failureKind, _ := plancontract.ParsePlanExecuteFailureKind(result.FailureKind)
 	return failureKind
 }
 
-func implementationDispatchPlanExecuteRunFailureKind(result planexecute.RunResult) plancontract.PlanExecuteFailureKind {
-	return implementationDispatchPlanExecuteFailureKindFromString(result.FailureKind)
-}
-
 func implementationDispatchAuthorizedNewFiles(prompt string, planDocuments []implementationDispatchPlanDocument) []string {
-	paths := append([]string{}, featureplanner.PlanExecuteAuthorizedNewFilesFromImplementorPrompt(prompt)...)
+	paths := append([]string{}, plancontract.AuthorizedNewFilePathsFromPrompt(prompt)...)
 	for _, doc := range planDocuments {
 		paths = append(paths, doc.AuthorizedNewFiles...)
-		paths = append(paths, featureplanner.PlanExecuteAuthorizedNewFilesFromImplementorPrompt(doc.Content)...)
+		paths = append(paths, plancontract.AuthorizedNewFilePathsFromPrompt(doc.Content)...)
 	}
 
 	return uniqueImplementationDispatchPaths(paths)
@@ -1138,10 +1112,6 @@ type implementationDispatchPlanExecuteFailure struct {
 	Stdout                   string
 	Stderr                   string
 	PlannerBlockedChainDepth int
-}
-
-func implementationDispatchFailureKindToEditSetObligation(kind string) (plancontract.EditSetObligationKind, bool) {
-	return plancontract.PlanExecuteFailureKindEditSetObligation(implementationDispatchPlanExecuteFailureKindFromString(kind))
 }
 
 func implementationDispatchOptionsAlreadyCarriedEditSetObligation(opts planexecute.Options, kind plancontract.EditSetObligationKind) bool {
@@ -2423,7 +2393,7 @@ func (m *Model) decidePlanExecutePlannerBlocked(ctx context.Context, failure imp
 		return implementationDispatchRecoveryDecision{}, raw, err
 	}
 
-	decision, ok := parseImplementationDispatchRecoveryDecision(raw)
+	decision, ok := recovery.ParsePlanExecuteRecoveryDecision(raw)
 	if !ok {
 		return implementationDispatchRecoveryDecision{}, raw, fmt.Errorf("recovery decision was not valid JSON")
 	}
@@ -2489,10 +2459,6 @@ func planExecutePlannerBlockedDecisionPrompt(failure implementationDispatchPlanE
 	}
 
 	return b.String()
-}
-
-func parseImplementationDispatchRecoveryDecision(raw string) (implementationDispatchRecoveryDecision, bool) {
-	return recovery.ParsePlanExecuteRecoveryDecision(raw)
 }
 
 func appendPlanExecutePlannerRecoveryAddendum(brief string, failure implementationDispatchPlanExecuteFailure, decision implementationDispatchRecoveryDecision, rawDecision string) string {

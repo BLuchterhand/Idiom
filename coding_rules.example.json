@@ -19,7 +19,8 @@
         "validation",
         "error_context",
         "observability",
-        "permission_check"
+        "permission_check",
+        "domain_use_case_name"
       ],
       "options": {
         "pass_through_wrapper": {

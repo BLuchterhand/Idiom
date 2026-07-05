@@ -97,7 +97,7 @@ func featurePlannerPlanTabCandidate(state featureplanner.FeatureState) (featurep
 
 func renderFeaturePlannerPlanTabMarkdown(state featureplanner.FeatureState, statePath string, plan featureplanner.FeaturePlan, candidate featureplanner.RejectedPlanCandidate) string {
 	var b strings.Builder
-	review := buildFeaturePlannerCoverageReview(plan)
+	review := featureplanner.FeaturePlanTraceabilityReviewForPlan(plan)
 
 	b.WriteString("# Feature Planner Candidate\n\n")
 	writeFeaturePlannerMarkdownField(&b, "Status", state.Status)
@@ -125,10 +125,6 @@ func renderFeaturePlannerPlanTabMarkdown(state featureplanner.FeatureState, stat
 
 type featurePlannerCoverageReview = featureplanner.FeaturePlanTraceabilityReview
 type featurePlannerBehaviorReview = featureplanner.FeaturePlanBehaviorReview
-
-func buildFeaturePlannerCoverageReview(plan featureplanner.FeaturePlan) featurePlannerCoverageReview {
-	return featureplanner.FeaturePlanTraceabilityReviewForPlan(plan)
-}
 
 func writeFeaturePlannerCoverageReviewSummary(b *strings.Builder, review featurePlannerCoverageReview) {
 	missingConcreteTests := 0
@@ -496,10 +492,6 @@ func writeFeaturePlannerMarkdownAtoms(b *strings.Builder, atoms []featureplanner
 		}
 		b.WriteString("\n")
 	}
-}
-
-func featurePlannerPlanTabPaths(plan featureplanner.FeaturePlan) []string {
-	return featureplanner.FeaturePlanProposedPaths(plan)
 }
 
 func featurePlannerUniqueStrings(values []string) []string {

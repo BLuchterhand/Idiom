@@ -29,7 +29,7 @@ import (
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/modepolicy"
 	"idiom/internal/runtime/workerruntime"
-	"idiom/internal/surfaces/tui/implementationdispatch"
+	"idiom/internal/workflows/implementationdispatch"
 	"idiom/internal/workflows/planexecute"
 	planexecuteadapters "idiom/internal/workflows/planexecute/adapters"
 	"idiom/internal/workflows/recovery"
@@ -749,7 +749,7 @@ func TestImplementationDispatchBlockedQuestionDoesNotMarkAtomCompleted(t *testin
 		t.Fatalf("question answer should be classified as blocked")
 	}
 
-	implementationDispatchMarkCompletedAtomDocument(cfg, doc, answer)
+	implementationDispatchMarkCompletedAtomDocumentForResult(cfg, doc, answer, nil)
 
 	updated, err := os.ReadFile(atomAbs)
 	if err != nil {
@@ -805,7 +805,7 @@ func TestImplementationDispatchCommandObligationMustBeProvenBeforeAtomComplete(t
 		t.Fatalf("expected pending command, got %#v", pending)
 	}
 
-	implementationDispatchMarkCompletedAtomDocument(cfg, doc, unprovenAnswer)
+	implementationDispatchMarkCompletedAtomDocumentForResult(cfg, doc, unprovenAnswer, nil)
 
 	updated, err := os.ReadFile(atomAbs)
 	if err != nil {
@@ -817,7 +817,7 @@ func TestImplementationDispatchCommandObligationMustBeProvenBeforeAtomComplete(t
 	}
 
 	provenAnswer := "Completed source work.\n\nVerification: `go test ./pkg` passed with exit 0."
-	implementationDispatchMarkCompletedAtomDocument(cfg, doc, provenAnswer)
+	implementationDispatchMarkCompletedAtomDocumentForResult(cfg, doc, provenAnswer, nil)
 
 	updated, err = os.ReadFile(atomAbs)
 	if err != nil {
@@ -1062,6 +1062,76 @@ func TestClassifierSelectedPlanExecuteFamilyActivatesPlanSubmission(t *testing.T
 
 			if decision.TaskFamily != agent.PlanThenExecutePlannerTaskFamily || !slices.Contains(decision.ReasonCodes, "route.plan_execute_planner") {
 				t.Fatalf("classifier-selected planner route missing plan submission metadata, got %#v", decision)
+			}
+		})
+	}
+}
+
+func TestRouteProfileSemanticsCharacterizeFamiliesForRuntimeProfileExtraction(t *testing.T) {
+	cfg := config.Default()
+	cfg.Workspace.EnableWrites = true
+
+	m := &Model{cfg: cfg}
+	cases := []struct {
+		name                 string
+		family               string
+		wantFamily           string
+		wantInitialLane      string
+		wantFollowupLane     string
+		wantContract         string
+		wantMutationCapable  bool
+		wantWriterMode       writerroute.WriterMode
+		wantWriterLane       string
+		wantVerificationOwnr string
+	}{
+		{name: "direct question alias", family: "direct_question", wantFamily: "conversation", wantInitialLane: "main", wantContract: string(workerruntime.ContractDirectAnswer), wantWriterMode: writerroute.ModeReadOnly, wantWriterLane: "main"},
+		{name: "debug logs collapse", family: "debug_logs", wantFamily: "conversation", wantInitialLane: "main", wantContract: string(workerruntime.ContractDirectAnswer), wantWriterMode: writerroute.ModeReadOnly, wantWriterLane: "main"},
+		{name: "conversation", family: "conversation", wantFamily: "conversation", wantInitialLane: "main", wantContract: string(workerruntime.ContractDirectAnswer), wantWriterMode: writerroute.ModeReadOnly, wantWriterLane: "main"},
+		{name: "verification only", family: "verification_only", wantFamily: "verification_only", wantInitialLane: "main", wantContract: string(workerruntime.ContractDirectAnswer), wantWriterMode: writerroute.ModeReadOnly, wantWriterLane: "main"},
+		{name: "locate", family: "locate", wantFamily: "locate", wantInitialLane: "locate", wantContract: string(workerruntime.ContractLocateTargets), wantWriterMode: writerroute.ModeReadOnly, wantWriterLane: "locate"},
+		{name: "locate then implement", family: "locate_then_implement", wantFamily: "locate_then_implement", wantInitialLane: "locate", wantFollowupLane: "implement", wantContract: string(workerruntime.ContractImplementationResult), wantMutationCapable: true, wantWriterMode: writerroute.ModeAgenticGuarded, wantWriterLane: "implement", wantVerificationOwnr: "executor"},
+		{name: "explore then implement", family: "explore_then_implement", wantFamily: "explore_then_implement", wantInitialLane: "explore", wantFollowupLane: "implement", wantContract: string(workerruntime.ContractImplementationResult), wantMutationCapable: true, wantWriterMode: writerroute.ModeAgenticGuarded, wantWriterLane: "implement", wantVerificationOwnr: "executor"},
+		{name: "review then implement", family: "review_then_implement", wantFamily: "review_then_implement", wantInitialLane: "review", wantFollowupLane: "implement", wantContract: string(workerruntime.ContractImplementationResult), wantMutationCapable: true, wantWriterMode: writerroute.ModeAgenticGuarded, wantWriterLane: "implement", wantVerificationOwnr: "executor"},
+		{name: "architecture", family: "architecture", wantFamily: "architecture", wantInitialLane: "architecture", wantContract: string(workerruntime.ContractArchitecture), wantWriterMode: writerroute.ModeReadOnly, wantWriterLane: "architecture"},
+		{name: "architecture then implement", family: "architecture_then_implement", wantFamily: "architecture_then_implement", wantInitialLane: "architecture", wantFollowupLane: "implement", wantContract: string(workerruntime.ContractImplementationResult), wantMutationCapable: true, wantWriterMode: writerroute.ModeAgenticGuarded, wantWriterLane: "implement", wantVerificationOwnr: "executor"},
+		{name: "implementation", family: "implementation", wantFamily: "implementation", wantInitialLane: "implement", wantContract: string(workerruntime.ContractImplementationResult), wantMutationCapable: true, wantWriterMode: writerroute.ModeAgenticGuarded, wantWriterLane: "implement", wantVerificationOwnr: "executor"},
+		{name: "docs edit", family: "docs_edit", wantFamily: "docs_edit", wantInitialLane: "implement", wantContract: string(workerruntime.ContractImplementationResult), wantMutationCapable: true, wantWriterMode: writerroute.ModeAgenticGuarded, wantWriterLane: "implement", wantVerificationOwnr: "executor"},
+		{name: "plan execute alias", family: "plan_execute", wantFamily: agent.PlanThenExecutePlannerTaskFamily, wantInitialLane: "implement", wantContract: string(workerruntime.ContractImplementationResult), wantMutationCapable: true, wantWriterMode: writerroute.ModePlanSubmission, wantWriterLane: "plan-execute", wantVerificationOwnr: "planner_owned"},
+		{name: "plan then execute alias", family: "plan_then_execute", wantFamily: agent.PlanThenExecutePlannerTaskFamily, wantInitialLane: "implement", wantContract: string(workerruntime.ContractImplementationResult), wantMutationCapable: true, wantWriterMode: writerroute.ModePlanSubmission, wantWriterLane: "plan-execute", wantVerificationOwnr: "planner_owned"},
+		{name: "plan execute review repair", family: agent.PlanThenExecuteReviewRepairTaskFamily, wantFamily: agent.PlanThenExecuteReviewRepairTaskFamily, wantInitialLane: "review", wantContract: string(workerruntime.ContractReviewFindings), wantWriterMode: writerroute.ModePlanSubmission, wantWriterLane: "plan-execute", wantVerificationOwnr: "planner_owned"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			route := normalizeTurnRoutePlan(turnRoutePlan{Family: tc.family}, modepolicy.BuildMode())
+			if route.Family != tc.wantFamily || route.InitialLane != tc.wantInitialLane || route.FollowupLane != tc.wantFollowupLane || route.Contract != tc.wantContract {
+				t.Fatalf("normalized route = %#v, want family=%q initial=%q followup=%q contract=%q", route, tc.wantFamily, tc.wantInitialLane, tc.wantFollowupLane, tc.wantContract)
+			}
+
+			projection := projectRouteContract(route, modepolicy.BuildMode())
+			if projection.MutationCapable != tc.wantMutationCapable {
+				t.Fatalf("route contract mutation_capable = %t, want %t for %#v", projection.MutationCapable, tc.wantMutationCapable, projection)
+			}
+
+			rendered := renderRouteContractProjection(projection)
+			var payload map[string]any
+			if err := json.Unmarshal([]byte(rendered), &payload); err != nil {
+				t.Fatalf("route contract projection is not valid JSON: %v\n%s", err, rendered)
+			}
+			if payload["family"] != tc.wantFamily || payload["lane"] != tc.wantInitialLane || payload["contract"] != tc.wantContract {
+				t.Fatalf("rendered route projection = %#v", payload)
+			}
+
+			decision := m.writerRouteDecisionForPrompt("route profile characterization", promptExecutionPlan{
+				mode:         modepolicy.BuildMode(),
+				route:        route,
+				runtimeBrief: turnRoutePlanRuntimeBrief(route, modepolicy.BuildMode(), nil),
+			})
+			if decision.WriterMode != string(tc.wantWriterMode) || decision.Lane != tc.wantWriterLane {
+				t.Fatalf("writer decision = %#v, want mode=%q lane=%q", decision, tc.wantWriterMode, tc.wantWriterLane)
+			}
+			if tc.wantVerificationOwnr != "" && decision.VerificationOwner != tc.wantVerificationOwnr {
+				t.Fatalf("writer verification owner = %q, want %q in %#v", decision.VerificationOwner, tc.wantVerificationOwnr, decision)
 			}
 		})
 	}
@@ -2107,13 +2177,6 @@ func TestImplementationDispatchRecoveryLoopGuardIgnoresPromptObligations(t *test
 	retryOpts := implementationDispatchRetryOptionsWithEditSetObligation(promptOpts, plancontract.EditSetObligationKindTestEdit)
 	if !implementationDispatchOptionsAlreadyCarriedEditSetObligation(retryOpts, plancontract.EditSetObligationKindTestEdit) {
 		t.Fatalf("recovery-added obligations should trip the loop guard")
-	}
-}
-
-func TestImplementationDispatchPlanExecuteFailureKindParsesLegacyHyphenatedValues(t *testing.T) {
-	got := implementationDispatchPlanExecuteFailureKindFromString("planner-blocked")
-	if got != plancontract.PlanExecuteFailurePlannerBlocked {
-		t.Fatalf("failure kind = %q, want %q", got, plancontract.PlanExecuteFailurePlannerBlocked)
 	}
 }
 
@@ -3644,7 +3707,7 @@ func TestPlanExecuteMissingEditRecoveryUsesTypedFailureKindOnly(t *testing.T) {
 				t.Fatalf("chain missing-edit recovery = %t, want %t", got, tt.wantChain)
 			}
 
-			gotObligation, ok := implementationDispatchFailureKindToEditSetObligation(tt.result.FailureKind)
+			gotObligation, ok := plancontract.PlanExecuteFailureKindEditSetObligation(implementationDispatchPlanExecuteRunFailureKind(tt.result))
 			if tt.wantObligation == "" {
 				if ok {
 					t.Fatalf("unexpected obligation %q from failure kind %q", gotObligation, tt.result.FailureKind)
@@ -7218,6 +7281,11 @@ func TestRunPromptOnceReferenceOnlyDesignDocDispatchesPlanExecuteWithoutRefine(t
 	}
 }
 
+func composeImplementationBriefForTest(prompt string, plan promptExecutionPlan, cfg config.Config) string {
+	requiredPaths, allowedPaths, planDocuments, _ := implementationDispatchEditScopePlanDocumentsAndResolution(prompt, plan, cfg)
+	return composeImplementationBriefWithEditScopeAndPlanDocuments(prompt, plan, cfg, requiredPaths, allowedPaths, planDocuments)
+}
+
 func TestComposeImplementationBriefTreatsDesignDocScopeAsCandidatePaths(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
@@ -7255,7 +7323,7 @@ func TestComposeImplementationBriefTreatsDesignDocScopeAsCandidatePaths(t *testi
 		route:        turnRoutePlan{Family: "docs_edit"},
 		runtimeBrief: runtimeBriefForTest([]string{"docs/handoff.md"}),
 	}
-	brief := composeImplementationBrief("start working on docs/handoff.md", plan, cfg)
+	brief := composeImplementationBriefForTest("start working on docs/handoff.md", plan, cfg)
 
 	if strings.Contains(brief, "## Files to Modify\n\n- target.txt") {
 		t.Fatalf("design-doc scope must not become active required edit scope:\n%s", brief)
@@ -7317,7 +7385,7 @@ func TestComposeImplementationBriefExcerptsLongReferenceDocument(t *testing.T) {
 		runtimeBrief: runtimeBriefForTest(nil),
 	}
 	prompt := "Implement status migration apply temp symlink hardening and add regression tests."
-	brief := composeImplementationBrief(prompt+" docs/long-design.md", plan, cfg)
+	brief := composeImplementationBriefForTest(prompt+" docs/long-design.md", plan, cfg)
 
 	if len(brief) > 18000 {
 		t.Fatalf("long reference doc should be compacted, got %d bytes", len(brief))
@@ -7378,7 +7446,7 @@ func TestComposeImplementationBriefResolvesUniquePlanDocumentBasenameAsCandidate
 		route:        turnRoutePlan{Family: "docs_edit"},
 		runtimeBrief: runtimeBriefForTest([]string{docName}),
 	}
-	brief := composeImplementationBrief("start working on "+docName, plan, cfg)
+	brief := composeImplementationBriefForTest("start working on "+docName, plan, cfg)
 
 	for _, want := range []string{
 		"## Candidate Edit Scope From Target References\n\n- internal/surfaces/tui/app/writer_route.go",
@@ -7430,7 +7498,7 @@ func TestComposeImplementationBriefKeepsAtomScopeAsRequiredPaths(t *testing.T) {
 		route:        turnRoutePlan{Family: "docs_edit"},
 		runtimeBrief: runtimeBriefForTest([]string{filepath.ToSlash(atomRel)}),
 	}
-	brief := composeImplementationBrief("start working on "+filepath.ToSlash(atomRel), plan, cfg)
+	brief := composeImplementationBriefForTest("start working on "+filepath.ToSlash(atomRel), plan, cfg)
 
 	if !strings.Contains(brief, "## Files to Modify\n\n- target.txt") {
 		t.Fatalf("atom scope must remain active required edit scope:\n%s", brief)
@@ -7877,7 +7945,7 @@ func TestClassifyTurnRouteKeepsPlanExecuteHowToQuestionReadOnly(t *testing.T) {
 	m := &Model{cfg: config.Config{RouteClassifier: config.RouteClassifier{Enabled: false}}}
 	plan := m.classifyTurnRoute(context.Background(), "How do I run plan-execute without changing files?", modepolicy.BuildMode())
 
-	if isImplementationLikeFamily(plan.Family) {
+	if workerruntime.TaskFamilyMutationCapable(plan.Family) {
 		t.Fatalf("plan-execute how-to question should stay read-only, got %#v", plan)
 	}
 }
@@ -7998,7 +8066,7 @@ func TestClassifyTurnRouteQuestionShapedMutationFallbackIsReadOnly(t *testing.T)
 	m := &Model{cfg: config.Config{RouteClassifier: config.RouteClassifier{Enabled: false}}}
 	plan := m.classifyTurnRoute(context.Background(), "Can we shorten the displayed model label to just the alias?", modepolicy.BuildMode())
 
-	if isImplementationLikeFamily(plan.Family) {
+	if workerruntime.TaskFamilyMutationCapable(plan.Family) {
 		t.Fatalf("question-shaped mutation should stay read-only, got %#v", plan)
 	}
 }
@@ -8011,7 +8079,7 @@ func TestClassifyTurnRouteLaneNameQuestionStaysReadOnly(t *testing.T) {
 		"Can we shorten the displayed model label to just the alias without changing files?",
 	} {
 		plan := m.classifyTurnRoute(context.Background(), prompt, modepolicy.BuildMode())
-		if isImplementationLikeFamily(plan.Family) {
+		if workerruntime.TaskFamilyMutationCapable(plan.Family) {
 			t.Fatalf("%q should stay read-only, got %#v", prompt, plan)
 		}
 	}
@@ -8073,7 +8141,7 @@ func TestClassifyTurnRouteImplementSlashMentionDoesNotBypassClassifier(t *testin
 	prompt := `I want to test the implement lane... can you use /implement to create and write a new file with the text "ben is cool"?`
 	plan := m.classifyTurnRoute(context.Background(), prompt, modepolicy.BuildMode())
 
-	if isImplementationLikeFamily(plan.Family) {
+	if workerruntime.TaskFamilyMutationCapable(plan.Family) {
 		t.Fatalf("slash mention inside prose should not deterministically route implementation, got %#v", plan)
 	}
 

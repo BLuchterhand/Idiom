@@ -2,7 +2,6 @@ package featureplanner
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 )
 
@@ -34,10 +33,6 @@ func FeaturePlanCoveragePresentation(state FeatureState, statePath string, plan 
 	}
 
 	return sections
-}
-
-func FeaturePlanCoverageRowsBySection(sections []CoveragePresentationSection, label string) []string {
-	return CoverageRowsBySection(sections, label)
 }
 
 func planPresentationRequirements(state FeatureState, plan FeaturePlan) []string {
@@ -572,15 +567,4 @@ func uniqueCoveragePresentationRows(rows []CoveragePresentationRow) []CoveragePr
 		out = append(out, CoveragePresentationRow{Text: text})
 	}
 	return out
-}
-
-func sortedPlanPresentationKeys(values map[string]float64) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		if strings.TrimSpace(key) != "" {
-			keys = append(keys, key)
-		}
-	}
-	sort.Strings(keys)
-	return keys
 }

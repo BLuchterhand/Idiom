@@ -1,11 +1,9 @@
 package lane
 
 import (
-	"io"
 	"strings"
 
 	"idiom/internal/evidence/lanehistory"
-	"idiom/internal/evidence/telemetry"
 	"idiom/internal/runtime/readiness"
 	refinecmd "idiom/internal/surfaces/cli/refine"
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
@@ -23,10 +21,6 @@ type laneHistoryEvent = lanehistory.Event
 type laneHistoryFilter = lanehistory.Filter
 type readinessProfileReport = readiness.ProfileReport
 type laneRefineOptions = refinecmd.Options
-
-func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return runLaneMainWithTelemetry(args, stdout, stderr, rec)
-}
 
 func laneRunFinalState(exitCode int, degradations []laneDegradation, out []byte) string {
 	if exitCode != 0 {

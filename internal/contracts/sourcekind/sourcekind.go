@@ -30,10 +30,6 @@ func CoversSourceSanity(path string) bool {
 }
 
 func RequiresConcreteSourceSanityDiagnostics(path string) bool {
-	return IsCppSource(path)
-}
-
-func IsCppSource(path string) bool {
 	switch strings.ToLower(filepath.Ext(strings.TrimSpace(path))) {
 	case ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".ipp", ".inl", ".tpp":
 		return true

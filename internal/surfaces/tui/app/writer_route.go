@@ -38,7 +38,7 @@ func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecution
 		lane = string(lanecontract.LanePlanExecute)
 		reasonCodes = []writerroute.ReasonCode{writerroute.ReasonPlanExecuteReviewRepair}
 		verificationOwner = writerroute.VerificationOwnerPlannerOwned
-	} else if isImplementationLikeFamily(plan.route.Family) {
+	} else if workerruntime.TaskFamilyMutationCapable(plan.route.Family) {
 		mode = writerroute.ModeAgenticGuarded
 		lane = "implement"
 		reasonCodes = []writerroute.ReasonCode{writerroute.ReasonLocalModelDefault}

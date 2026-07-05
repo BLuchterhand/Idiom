@@ -111,7 +111,7 @@ type discoveryQueryRunner struct {
 }
 
 func (m *Manager) discoveryQuery(ctx context.Context, req ToolRequest) ToolResult {
-	purpose := normalizeDiscoveryQueryPurpose(textutil.FirstNonEmpty(req.Purpose, req.Query, DiscoveryQueryPurposeImpactAnalysis))
+	purpose := NormalizeDiscoveryQueryPurpose(textutil.FirstNonEmpty(req.Purpose, req.Query, DiscoveryQueryPurposeImpactAnalysis))
 	if purpose == "" {
 		return ToolResult{Tool: ToolNameDiscoveryQuery, Summary: "Discovery query rejected", Error: "purpose must be one of " + strings.Join(DiscoveryQueryPurposeValues(), ", ")}
 	}
@@ -716,10 +716,6 @@ func NormalizeDiscoveryQueryPurpose(value string) string {
 	}
 }
 
-func normalizeDiscoveryQueryPurpose(value string) string {
-	return NormalizeDiscoveryQueryPurpose(value)
-}
-
 func normalizeDiscoveryQueryLanguage(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	value = strings.TrimPrefix(value, ".")
@@ -828,11 +824,7 @@ func execOutput(dir string, name string, args ...string) (string, error) {
 	return string(out), err
 }
 
-var execCommand = osExecCommand
-
-func osExecCommand(name string, args ...string) *exec.Cmd {
-	return exec.Command(name, args...)
-}
+var execCommand = exec.Command
 
 func ensureDiscoveryArtifactsIgnored(root string) error {
 	excludePath, err := gitInfoExcludePath(root)

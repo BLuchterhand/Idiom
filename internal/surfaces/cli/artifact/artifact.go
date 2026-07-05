@@ -35,10 +35,6 @@ type PromptRunner func(config.Config, string, RunOptions, io.Writer) (string, er
 type runOptions = RunOptions
 type promptRunner = PromptRunner
 
-func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptRun PromptRunner, rec *telemetry.Recorder) int {
-	return runArtifactMainWithTelemetry(args, stdout, stderr, promptRun, rec)
-}
-
 type artifactOptions struct {
 	ConfigPath string
 	Prompt     string
@@ -81,11 +77,7 @@ type artifactReport struct {
 	Error                    string `json:"error,omitempty"`
 }
 
-func runArtifactMain(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner) int {
-	return runArtifactMainWithTelemetry(args, stdout, stderr, promptRun, nil)
-}
-
-func runArtifactMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner, rec *telemetry.Recorder) int {
+func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptRun PromptRunner, rec *telemetry.Recorder) int {
 	opts, err := parseArtifactOptions(args, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -104,7 +96,7 @@ func runArtifactMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wri
 		cfg.LlamaServer.Model = opts.Model
 	}
 
-	logArtifactPhase(rec, "artifact_start", map[string]any{
+	telemetry.LogPhase(rec, "artifact_start", map[string]any{
 		"has_output":          strings.TrimSpace(opts.OutputPath) != "",
 		"has_json_out":        strings.TrimSpace(opts.JSONOut) != "",
 		"has_report_out":      strings.TrimSpace(opts.ReportOut) != "",
@@ -228,7 +220,7 @@ func runArtifactMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wri
 		return 1
 	}
 
-	logArtifactPhase(rec, "artifact_written", map[string]any{
+	telemetry.LogPhase(rec, "artifact_written", map[string]any{
 		"output_path":         strings.TrimSpace(opts.OutputPath),
 		"report_out":          strings.TrimSpace(opts.ReportOut),
 		"answer_len":          len(answer),
@@ -495,8 +487,4 @@ func runArtifactValidator(command string, artifactPath string, stderr io.Writer)
 	}
 
 	return 0, nil
-}
-
-func logArtifactPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	telemetry.LogPhase(rec, eventType, fields)
 }

@@ -294,10 +294,6 @@ func planExecuteFullHash(values ...string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func runPlanExecuteVerificationCommand(root string, command plancontract.VerificationCommand) plancontract.PhaseEvidenceCheck {
-	return runPlanExecuteVerificationCommandWithTimeout(nil, root, command, defaultPlanExecuteVerificationTimeout)
-}
-
 func runPlanExecuteVerificationCommandWithContext(ctx context.Context, root string, command plancontract.VerificationCommand) plancontract.PhaseEvidenceCheck {
 	return runPlanExecuteVerificationCommandWithTimeout(ctx, root, command, defaultPlanExecuteVerificationTimeout)
 }

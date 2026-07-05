@@ -36,7 +36,7 @@ func runMain(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	switch args[0] {
 	case "tool":
-		return toolcmd.Run(args[1:], stdout, stderr)
+		return toolcmd.RunWithTelemetry(args[1:], stdout, stderr, nil)
 	case "local-ops":
 		return localopscmd.RunMainWithTelemetry(args[1:], stdout, stderr, nil, localopscmd.Dependencies{
 			Version:    "test",

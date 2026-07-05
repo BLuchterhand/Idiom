@@ -430,10 +430,6 @@ func parseLSPLocations(raw json.RawMessage, serverName string) ([]LSPLocation, e
 	return nil, fmt.Errorf("unsupported %s location payload", serverName)
 }
 
-func ParseLSPLocations(raw json.RawMessage, serverName string) ([]LSPLocation, error) {
-	return parseLSPLocations(raw, serverName)
-}
-
 func validLSPLocationList(locations []LSPLocation) bool {
 	for _, location := range locations {
 		if location.URI == "" {

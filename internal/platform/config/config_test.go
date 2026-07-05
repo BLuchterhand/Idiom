@@ -62,8 +62,8 @@ func TestLoadAppliesDefaultsAndResolvesWorkspacePaths(t *testing.T) {
 		t.Fatalf("expected project prompt under project root, got %q", got)
 	}
 
-	if cfg.Chat.DebugLogMode != "redacted" || cfg.Chat.MaxToolSteps != 0 {
-		t.Fatalf("expected chat defaults, got mode=%q steps=%d", cfg.Chat.DebugLogMode, cfg.Chat.MaxToolSteps)
+	if cfg.Chat.DebugLogMode != "redacted" || cfg.Chat.MaxToolSteps != 0 || cfg.Chat.MaxOperationalModelCalls != 0 {
+		t.Fatalf("expected chat defaults, got mode=%q steps=%d operational_model_calls=%d", cfg.Chat.DebugLogMode, cfg.Chat.MaxToolSteps, cfg.Chat.MaxOperationalModelCalls)
 	}
 
 	if cfg.Chat.AttachInstructionFiles {

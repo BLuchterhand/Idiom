@@ -11,6 +11,7 @@ import (
 
 	"idiom/internal/repository/discovery"
 	"idiom/internal/repository/semantic"
+	semanticpython "idiom/internal/repository/semantic/python"
 )
 
 // pythonProjectMarkers are the signals we use to distinguish a Python
@@ -96,7 +97,7 @@ func (m *Manager) getPythonIndex() (*semantic.PythonIndex, error) {
 		return nil, fmt.Errorf("python-specific tools require a workspace with Python source files or a project file (pyproject.toml, setup.py, setup.cfg, requirements.txt)")
 	}
 
-	index, err := semantic.BuildPythonIndex(m.Root())
+	index, err := semanticpython.BuildPythonIndex(m.Root())
 	if err != nil {
 		return nil, fmt.Errorf("build Python semantic index: %w", err)
 	}

@@ -138,13 +138,6 @@ func TestSummarizeLaneHistoryNilDeps(t *testing.T) {
 	}
 }
 
-func TestLogPhaseNilSafe(t *testing.T) {
-	deps := Dependencies{}
-	// Should not panic with nil recorder and nil fields
-	deps.logCLIPhase(nil, "test_event", nil)
-	deps.logCLIPhase(nil, "test_event", map[string]any{"key": "value"})
-}
-
 func TestP911RunMainNoTelemetryWithDeps(t *testing.T) {
 	t.Run("sets IDIOM_TELEMETRY=0 and restores", func(t *testing.T) {
 		previous := os.Getenv("IDIOM_TELEMETRY")

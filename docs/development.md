@@ -25,6 +25,7 @@ forward the same arguments to another call without validation, translation,
 error context, observability, or a permission check.
 
 ```bash
+cp coding_rules.example.json .idiom/coding_rules.json
 idiom coding-rules check --project-root . --fail-on blocking
 idiom tool coding_rules_check --input '{"path":"."}'
 ```

@@ -135,13 +135,7 @@ func EventTypes() []FeaturePlannerEventType {
 }
 
 func KnownEventType(eventType FeaturePlannerEventType) bool {
-	for _, known := range EventTypes() {
-		if eventType == known {
-			return true
-		}
-	}
-
-	return false
+	return knownValue(eventType, EventTypes())
 }
 
 func ParseEventName(name string) (FeaturePlannerEventType, bool) {
@@ -167,13 +161,7 @@ func LegacyEventNames() []LegacyEventName {
 }
 
 func KnownLegacyEventName(name string) bool {
-	name = strings.TrimSpace(name)
-	for _, known := range LegacyEventNames() {
-		if name == string(known) {
-			return true
-		}
-	}
-	return false
+	return knownValue(LegacyEventName(strings.TrimSpace(name)), LegacyEventNames())
 }
 
 func KnownDurableEventName(name string) bool {
@@ -193,21 +181,11 @@ func PlanExecuteCompletionSources() []PlanExecuteCompletionSource {
 }
 
 func KnownPlanExecuteCompletionSource(source PlanExecuteCompletionSource) bool {
-	for _, known := range PlanExecuteCompletionSources() {
-		if source == known {
-			return true
-		}
-	}
-
-	return false
+	return knownValue(source, PlanExecuteCompletionSources())
 }
 
 func ParsePlanExecuteCompletionSource(source string) (PlanExecuteCompletionSource, bool) {
-	source = strings.TrimSpace(source)
-	if source == "" {
-		return "", false
-	}
-	typed := PlanExecuteCompletionSource(source)
+	typed := PlanExecuteCompletionSource(strings.TrimSpace(source))
 	if !KnownPlanExecuteCompletionSource(typed) {
 		return "", false
 	}
@@ -215,25 +193,14 @@ func ParsePlanExecuteCompletionSource(source string) (PlanExecuteCompletionSourc
 }
 
 func CompletionSourceCarriesDurableAcceptanceEvidence(source string) bool {
-	switch strings.TrimSpace(source) {
-	case string(PlanExecuteCompletionSourceDurableTerminal),
-		string(PlanExecuteCompletionSourceDurableProgress):
-		return true
-	default:
-		return false
-	}
+	typed := PlanExecuteCompletionSource(strings.TrimSpace(source))
+	return typed == PlanExecuteCompletionSourceDurableTerminal ||
+		typed == PlanExecuteCompletionSourceDurableProgress
 }
 
 func CompletionSourceTrustsAcceptanceEvidence(source string) bool {
-	switch strings.TrimSpace(source) {
-	case string(PlanExecuteCompletionSourceHeadlessReturned),
-		string(PlanExecuteCompletionSourceTUIReturned),
-		string(PlanExecuteCompletionSourceDurableTerminal),
-		string(PlanExecuteCompletionSourceDurableProgress):
-		return true
-	default:
-		return false
-	}
+	_, ok := ParsePlanExecuteCompletionSource(source)
+	return ok
 }
 
 func EventNames() []string {
@@ -266,4 +233,13 @@ func NestedPlanExecuteCompletionEventNames() []string {
 		string(NestedPlanExecuteCompletionEventCompleted),
 		string(NestedPlanExecuteCompletionEventBlocked),
 	}
+}
+
+func knownValue[T comparable](value T, known []T) bool {
+	for _, candidate := range known {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }

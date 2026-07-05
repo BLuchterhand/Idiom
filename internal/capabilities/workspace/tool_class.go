@@ -23,8 +23,8 @@ const (
 
 // ClassifyTool returns the ToolCategory for a given tool name.
 func ClassifyTool(name string) ToolCategory {
-	if metadata, ok := BuiltInToolSurfaceMetadata(name); ok && metadata.Category != CategoryUnknown {
-		return metadata.Category
+	if metadata, ok := builtInToolSurfaceCatalog.Lookup(name); ok && ToolCategory(metadata.Category) != CategoryUnknown {
+		return ToolCategory(metadata.Category)
 	}
 
 	if isLanguageToolName(name) {
@@ -87,14 +87,14 @@ func IsRuntimeInspectionRequest(req ToolRequest) bool {
 		return IsNarrowingRequest(req)
 	}
 
-	metadata, ok := BuiltInToolSurfaceMetadata(tool)
+	metadata, ok := builtInToolSurfaceCatalog.Lookup(tool)
 	if !ok {
 		return isLanguageToolName(tool)
 	}
 
-	actionClass := autonomy.CanonicalActionClass(autonomy.ActionClass(metadata.ActionClass))
-	if metadata.Category == CategoryWrite ||
-		metadata.Category == CategoryVerification ||
+	actionClass := autonomy.CanonicalActionClass(autonomy.TurnPhaseActionClassForToolClass(tool))
+	if ToolCategory(metadata.Category) == CategoryWrite ||
+		ToolCategory(metadata.Category) == CategoryVerification ||
 		actionClass == autonomy.ActionClassVerify ||
 		actionClass == autonomy.ActionClassPerEditWrite ||
 		actionClass == autonomy.ActionClassSubmitPlan {

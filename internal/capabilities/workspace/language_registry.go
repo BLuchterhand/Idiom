@@ -39,10 +39,6 @@ func LanguageForName(name string) (LanguageSupport, bool) {
 	return language.LanguageForName(name)
 }
 
-func DiagnosticToolForLanguage(name string) string {
-	return language.DiagnosticToolForLanguage(name)
-}
-
 func DiagnosticToolNames() []string {
 	return language.DiagnosticToolNames()
 }

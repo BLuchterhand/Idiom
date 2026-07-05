@@ -1015,7 +1015,7 @@ func PlanExecuteTerminalSourceSanityValidationFailures(record PlanExecuteTermina
 	}
 	var failures []string
 	for _, path := range record.ChangedPaths {
-		if !planExecuteTerminalSourceSanityCoversPath(path) {
+		if !sourcekind.CoversSourceSanity(path) {
 			continue
 		}
 		if _, ok := byPath[path]; !ok {
@@ -1157,7 +1157,7 @@ func planExecuteTerminalCoveredPaths(coverage []PlanExecuteRequiredPathCoverage)
 
 func planExecuteTerminalAnySourceSanityPath(paths []string) bool {
 	for _, path := range paths {
-		if planExecuteTerminalSourceSanityCoversPath(path) {
+		if sourcekind.CoversSourceSanity(path) {
 			return true
 		}
 	}
@@ -1433,12 +1433,8 @@ func terminalCheckPassed(check PhaseEvidenceCheck) bool {
 	return strings.TrimSpace(check.Error) == "" && (status == "ok" || status == "passed")
 }
 
-func planExecuteTerminalSourceSanityCoversPath(path string) bool {
-	return sourcekind.CoversSourceSanity(path)
-}
-
 func planExecuteTerminalSourceSanityCheckIsDegraded(path string, check PhaseEvidenceCheck) bool {
-	if !planExecuteTerminalSourceSanityCoversPath(path) || !sourcekind.RequiresConcreteSourceSanityDiagnostics(path) {
+	if !sourcekind.CoversSourceSanity(path) || !sourcekind.RequiresConcreteSourceSanityDiagnostics(path) {
 		return false
 	}
 	return sourcekind.IsGenericSourceSanityFallback(check.Summary, check.Error)

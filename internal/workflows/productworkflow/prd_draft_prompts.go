@@ -110,7 +110,7 @@ func PlanPRDDraftPrompt(effortRoot, promptPath, prdOutputPath string, evidence [
 	sort.Strings(plan.TDDObligationIDs)
 
 	plan.Command = artifactCommandRecipeWithValidator(plan.PromptPath, plan.PRDOutputPath, plan.EventsPath, plan.ReportPath, productArtifactValidatorCommand("prd")+" --tdd-ledger tdd.json")
-	sortProfileFindings(plan.Findings)
+	SortProfileFindings(plan.Findings)
 
 	return plan
 }

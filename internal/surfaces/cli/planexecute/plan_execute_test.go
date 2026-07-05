@@ -39,7 +39,7 @@ func TestRunPlanExecuteMainForwardsThinkingAndMaxTokens(t *testing.T) {
 		gotOpts        cmdruntime.RunOptions
 	)
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "plan this", "-no-thinking", "-max-tokens", "2048"},
 		&stdout,
 		&stderr,
@@ -47,6 +47,7 @@ func TestRunPlanExecuteMainForwardsThinkingAndMaxTokens(t *testing.T) {
 			gotOpts = opts
 			return "no plan", nil
 		},
+		nil,
 	)
 
 	if code != 1 {
@@ -73,13 +74,14 @@ func TestRunPlanExecuteMainDefaultDoesNotRouteIntentLoop(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "plan this"},
 		&stdout,
 		&stderr,
 		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
 			return "no plan", nil
 		},
+		nil,
 	)
 
 	if code != 1 {
@@ -103,7 +105,7 @@ func TestRunPlanExecuteMainIntentLoopFlagsRouteToLoopRunner(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{
 			"-config", configPath,
 			"-prompt", "loop this",
@@ -117,6 +119,7 @@ func TestRunPlanExecuteMainIntentLoopFlagsRouteToLoopRunner(t *testing.T) {
 			t.Fatal("single-cycle prompt runner must not be called for --intent-loop")
 			return "", nil
 		},
+		nil,
 	)
 
 	if code != 7 {
@@ -135,7 +138,7 @@ func TestRunPlanExecuteMainIntentLoopInvalidBudgetExits2(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "loop this", "-intent-loop", "-total-budget-tokens", "-1"},
 		&stdout,
 		&stderr,
@@ -143,6 +146,7 @@ func TestRunPlanExecuteMainIntentLoopInvalidBudgetExits2(t *testing.T) {
 			t.Fatal("prompt runner must not be called after invalid intent-loop budget")
 			return "", nil
 		},
+		nil,
 	)
 
 	if code != 2 {
@@ -216,7 +220,7 @@ Typed plan execution contract:
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{
 			"-config", configPath,
 			"-prompt", prompt,
@@ -230,6 +234,7 @@ Typed plan execution contract:
 			t.Fatal("scripted child runner should avoid live model calls")
 			return "", nil
 		},
+		nil,
 	)
 
 	t.Logf("scripted intent-loop stdout:\n%s", stdout.String())
@@ -298,7 +303,7 @@ func TestRunPlanExecuteMainDelegatesPlannerOptionsAndModelOverride(t *testing.T)
 		gotPrompt      string
 	)
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{
 			"-config", configPath,
 			"-prompt", "plan adapter delegation",
@@ -317,6 +322,7 @@ func TestRunPlanExecuteMainDelegatesPlannerOptionsAndModelOverride(t *testing.T)
 
 			return "no plan", nil
 		},
+		nil,
 	)
 
 	if code != 1 {
@@ -441,7 +447,7 @@ func TestRunPlanExecuteMainModelOverrideBypassesPlannerRoleAlias(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{
 			"-config", configPath,
 			"-prompt", "plan this bounded atom",
@@ -451,6 +457,7 @@ func TestRunPlanExecuteMainModelOverrideBypassesPlannerRoleAlias(t *testing.T) {
 		&stdout,
 		&stderr,
 		cmdruntime.RunPromptOnce,
+		nil,
 	)
 
 	if code != 1 {
@@ -478,7 +485,7 @@ func TestRunPlanExecuteMainUsesSharedExistingFilePlannerTokenBudget(t *testing.T
 		gotOpts        cmdruntime.RunOptions
 	)
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "plan this", "-required-edit-path", "internal/surfaces/tui/app/rendering.go"},
 		&stdout,
 		&stderr,
@@ -486,6 +493,7 @@ func TestRunPlanExecuteMainUsesSharedExistingFilePlannerTokenBudget(t *testing.T
 			gotOpts = opts
 			return "no plan", nil
 		},
+		nil,
 	)
 
 	if code != 1 {
@@ -505,7 +513,7 @@ func TestRunPlanExecuteMainKeepsLargeBudgetForNewFilePlanner(t *testing.T) {
 		gotOpts        cmdruntime.RunOptions
 	)
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "create new file with full file body", "-required-edit-path", "internal/surfaces/tui/app/new_feature.go"},
 		&stdout,
 		&stderr,
@@ -513,6 +521,7 @@ func TestRunPlanExecuteMainKeepsLargeBudgetForNewFilePlanner(t *testing.T) {
 			gotOpts = opts
 			return "no plan", nil
 		},
+		nil,
 	)
 
 	if code != 1 {
@@ -532,7 +541,7 @@ func TestRunPlanExecuteMainKeepsLargeBudgetForCreatedNamedPath(t *testing.T) {
 		gotOpts        cmdruntime.RunOptions
 	)
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "Create internal/contracts/writerroute/decision.go", "-required-edit-path", "internal/contracts/writerroute/decision.go"},
 		&stdout,
 		&stderr,
@@ -540,6 +549,7 @@ func TestRunPlanExecuteMainKeepsLargeBudgetForCreatedNamedPath(t *testing.T) {
 			gotOpts = opts
 			return "no plan", nil
 		},
+		nil,
 	)
 
 	if code != 1 {
@@ -559,7 +569,7 @@ func TestRunPlanExecuteMainKeepsLargeBudgetForMissingRequestedTestPath(t *testin
 		gotOpts        cmdruntime.RunOptions
 	)
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "add regression tests proving the parser rejects invalid routes", "-required-edit-path", "internal/parser/route_test.go"},
 		&stdout,
 		&stderr,
@@ -567,6 +577,7 @@ func TestRunPlanExecuteMainKeepsLargeBudgetForMissingRequestedTestPath(t *testin
 			gotOpts = opts
 			return "no plan", nil
 		},
+		nil,
 	)
 
 	if code != 1 {
@@ -595,13 +606,14 @@ func TestRunPlanExecuteMainJSONEmitsWriterRouteDecision(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "plan this change", "-json"},
 		&stdout,
 		&stderr,
 		func(_ config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			return "no plan", nil
 		},
+		nil,
 	)
 
 	if code != 1 {
@@ -645,13 +657,14 @@ func TestRunPlanExecuteMainModelOverrideUpdatesWriterRouteDecision(t *testing.T)
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "plan this change", "-required-edit-path", "pkg.go", "-model", "deepseek-v4-flash", "-json"},
 		&stdout,
 		&stderr,
 		func(_ config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			return "no plan", nil
 		},
+		nil,
 	)
 
 	if code != 1 {
@@ -703,7 +716,7 @@ func TestRunPlanExecuteMainConfigModelBeatsWorkspaceRoleAliasesInWriterRouteDeci
 		gotCfg         config.Config
 		gotOpts        cmdruntime.RunOptions
 	)
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "plan this change", "-required-edit-path", "pkg.go", "-json"},
 		&stdout,
 		&stderr,
@@ -712,6 +725,7 @@ func TestRunPlanExecuteMainConfigModelBeatsWorkspaceRoleAliasesInWriterRouteDeci
 			gotOpts = opts
 			return "no plan", nil
 		},
+		nil,
 	)
 
 	if code != 1 {
@@ -839,7 +853,7 @@ func TestRunPlanExecuteMainAutoExactPlanSkipsPlannerModel(t *testing.T) {
 
 	modelCalled := false
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", prompt, "-json", "-skip-review-repair"},
 		&stdout,
 		&stderr,
@@ -847,6 +861,7 @@ func TestRunPlanExecuteMainAutoExactPlanSkipsPlannerModel(t *testing.T) {
 			modelCalled = true
 			return "", fmt.Errorf("planner model should not be called for complete exact-anchor packets")
 		},
+		nil,
 	)
 
 	if code != 0 {
@@ -891,7 +906,7 @@ func TestRunPlanExecuteMainAutoExactPlanSourceSatisfiedSkipsPlannerModel(t *test
 
 	modelCalled := false
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", prompt, "-json", "-skip-review-repair"},
 		&stdout,
 		&stderr,
@@ -899,6 +914,7 @@ func TestRunPlanExecuteMainAutoExactPlanSourceSatisfiedSkipsPlannerModel(t *test
 			modelCalled = true
 			return "", fmt.Errorf("planner model should not be called for source-satisfied exact-anchor packets")
 		},
+		nil,
 	)
 
 	if code != 0 {
@@ -953,7 +969,7 @@ func TestRunPlanExecuteMainAutoExactPlanInfersUnlabeledMultiFileAndNewFile(t *te
 
 	modelCalled := false
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", prompt, "-json", "-skip-review-repair", "-authorized-new-file", "c.json"},
 		&stdout,
 		&stderr,
@@ -961,6 +977,7 @@ func TestRunPlanExecuteMainAutoExactPlanInfersUnlabeledMultiFileAndNewFile(t *te
 			modelCalled = true
 			return "", fmt.Errorf("planner model should not be called for inferable exact-anchor packets")
 		},
+		nil,
 	)
 
 	if code != 0 {
@@ -1004,7 +1021,7 @@ func TestRunPlanExecuteMainRequiredEditPathFlagEnablesAutoExactPlan(t *testing.T
 
 	modelCalled := false
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{
 			"-config", configPath,
 			"-prompt", prompt,
@@ -1018,6 +1035,7 @@ func TestRunPlanExecuteMainRequiredEditPathFlagEnablesAutoExactPlan(t *testing.T
 			modelCalled = true
 			return "", fmt.Errorf("planner model should not be called when required-edit-path enables exact-anchor plan")
 		},
+		nil,
 	)
 
 	if code != 0 {
@@ -1048,7 +1066,7 @@ func TestRunPlanExecuteMainTreatsSourceSatisfiedPlannerAnswerAsCleanNoop(t *test
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", prompt},
 		&stdout,
 		&stderr,
@@ -1058,6 +1076,7 @@ func TestRunPlanExecuteMainTreatsSourceSatisfiedPlannerAnswerAsCleanNoop(t *test
 				"- b.go: already implemented; no changes needed.",
 			), nil
 		},
+		nil,
 	)
 
 	if code != 1 {
@@ -1079,7 +1098,7 @@ func TestRunPlanExecuteMainTreatsUnscopedSourceSatisfiedPlannerAnswerAsCleanNoop
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", prompt},
 		&stdout,
 		&stderr,
@@ -1089,6 +1108,7 @@ func TestRunPlanExecuteMainTreatsUnscopedSourceSatisfiedPlannerAnswerAsCleanNoop
 				"- internal/workflows/productworkflow/migration_apply_test.go: no changes needed.",
 			), nil
 		},
+		nil,
 	)
 
 	if code != 1 {
@@ -1110,13 +1130,14 @@ func TestRunPlanExecuteMainDoesNotInferImplementationObligationFromPrompt(t *tes
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", prompt, "-json"},
 		&stdout,
 		&stderr,
 		func(_ config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			return sourceSatisfiedPlannerAnswerForCLITest("- pkg/feature_test.go: feature tests are already present."), nil
 		},
+		nil,
 	)
 
 	if code != 1 {
@@ -1135,13 +1156,14 @@ func TestRunPlanExecuteMainStillFailsMissingArtifactWithoutSourceSatisfiedEviden
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", prompt},
 		&stdout,
 		&stderr,
 		func(_ config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			return sourceSatisfiedPlannerAnswerForCLITest("- a.go: already implemented; no changes needed."), nil
 		},
+		nil,
 	)
 
 	if code != 1 {
@@ -1169,13 +1191,14 @@ func TestRunPlanExecuteMainFailsMissingArtifactDespiteExplicitFullBodyNewFileBri
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", prompt, "-json", "-skip-review-repair"},
 		&stdout,
 		&stderr,
 		func(_ config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			return "I can create docs/generated-note.txt, but I did not call submit_plan.", nil
 		},
+		nil,
 	)
 
 	if code != 1 {
@@ -1214,13 +1237,14 @@ func TestRunPlanExecuteMainDoesNotAutoSubmitRealQuestionBlocker(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", prompt, "-skip-review-repair"},
 		&stdout,
 		&stderr,
 		func(_ config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			return "<<QUESTION>>: docs/generated-note.txt: current API evidence contradicts the requested body; do not create the file until the brief is rebased.", nil
 		},
+		nil,
 	)
 
 	if code != 1 {
@@ -1261,13 +1285,14 @@ func TestRunPlanExecuteMainDoesNotTreatQuestionBlockerMentioningSourceSatisfiedA
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", prompt},
 		&stdout,
 		&stderr,
 		func(_ config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			return fmt.Sprintf("<<QUESTION>>: Completion gate rejected before submit_plan.\n- a.go: no successful edit was recorded; provide submit_plan, %s evidence, or a path-specific blocker.", plancontract.SourceSatisfiedDecision), nil
 		},
+		nil,
 	)
 
 	if code != 1 {
@@ -1328,7 +1353,7 @@ func TestRunPlanExecuteMainInheritsPackBeforeExecutor(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-json", "-skip-review-repair", "-prompt", prompt},
 		&stdout,
 		&stderr,
@@ -1345,6 +1370,7 @@ func TestRunPlanExecuteMainInheritsPackBeforeExecutor(t *testing.T) {
 
 			return "submitted", nil
 		},
+		nil,
 	)
 
 	if code != 0 {
@@ -1370,7 +1396,7 @@ func TestRunPlanExecuteMainDoesNotInferTestEditObligationBeforeWrites(t *testing
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{
 			"-config", configPath,
 			"-prompt", "Implement the hardening and add regression tests proving the edge case is rejected.",
@@ -1396,6 +1422,7 @@ func TestRunPlanExecuteMainDoesNotInferTestEditObligationBeforeWrites(t *testing
 
 			return "submitted production-only plan", nil
 		},
+		nil,
 	)
 
 	if code != 0 {
@@ -1421,7 +1448,7 @@ func TestRunPlanExecuteMainDoesNotInferImplementationObligationBeforeWrites(t *t
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{
 			"-config", configPath,
 			"-prompt", "Implement the feature. Start by adding failing tests, then implement.",
@@ -1447,6 +1474,7 @@ func TestRunPlanExecuteMainDoesNotInferImplementationObligationBeforeWrites(t *t
 
 			return "submitted test-only plan", nil
 		},
+		nil,
 	)
 
 	if code != 0 {
@@ -1550,16 +1578,6 @@ func readFileString(t *testing.T, path string) string {
 	return string(data)
 }
 
-func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-
-	return false
-}
-
 func initGitRepoForStaleness(t *testing.T) string {
 	t.Helper()
 
@@ -1619,16 +1637,6 @@ func mustTime(value string) time.Time {
 
 func sourceSatisfiedPlannerAnswerForCLITest(lines ...string) string {
 	return strings.Join(append([]string{plancontract.SourceSatisfiedDecision}, lines...), "\n")
-}
-
-func slicesContainString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-
-	return false
 }
 
 func jsonEventStringSliceContains(value any, want string) bool {
@@ -3114,7 +3122,7 @@ func TestRunPlanExecuteMainResumeRerunsReviewRepairOnly(t *testing.T) {
 
 	plannerSessionID := ""
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", prompt},
 		&firstStdout,
 		&firstStderr,
@@ -3141,6 +3149,7 @@ func TestRunPlanExecuteMainResumeRerunsReviewRepairOnly(t *testing.T) {
 				return "", nil
 			}
 		},
+		nil,
 	)
 	if code != 1 {
 		t.Fatalf("first run should fail review checklist gate, got %d stdout=%s stderr=%s", code, firstStdout.String(), firstStderr.String())
@@ -3160,7 +3169,7 @@ func TestRunPlanExecuteMainResumeRerunsReviewRepairOnly(t *testing.T) {
 	reviewCalls := 0
 	resumedPrompt := ""
 
-	code = RunMain(
+	code = RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", prompt, "-resume", plannerSessionID},
 		&resumedStdout,
 		&resumedStderr,
@@ -3175,6 +3184,7 @@ func TestRunPlanExecuteMainResumeRerunsReviewRepairOnly(t *testing.T) {
 
 			return "Decision: pass\n\nVerification Checklist:\n- Required behavior: a.txt changed from old to new.\n- Scope safety: no corrective edit needed.", nil
 		},
+		nil,
 	)
 
 	if code != 0 {
@@ -3208,7 +3218,7 @@ func TestRunPlanExecuteMainResumeUsesPersistedTypedEditSetObligations(t *testing
 
 	plannerSessionID := ""
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", prompt},
 		&firstStdout,
 		&firstStderr,
@@ -3235,6 +3245,7 @@ func TestRunPlanExecuteMainResumeUsesPersistedTypedEditSetObligations(t *testing
 				return "", nil
 			}
 		},
+		nil,
 	)
 	if code != 1 {
 		t.Fatalf("first run should fail review checklist gate, got %d stdout=%s stderr=%s", code, firstStdout.String(), firstStderr.String())
@@ -3254,7 +3265,7 @@ func TestRunPlanExecuteMainResumeUsesPersistedTypedEditSetObligations(t *testing
 
 	resumedPrompt := ""
 
-	code = RunMain(
+	code = RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", prompt, "-resume", plannerSessionID, "-json"},
 		&resumedStdout,
 		&resumedStderr,
@@ -3267,6 +3278,7 @@ func TestRunPlanExecuteMainResumeUsesPersistedTypedEditSetObligations(t *testing
 
 			return "Decision: pass\n\nVerification Checklist:\n- Required behavior: test coverage is present.\n- Scope safety: no corrective edit needed.", nil
 		},
+		nil,
 	)
 
 	if code != 1 {
@@ -3287,7 +3299,7 @@ func TestRunPlanExecuteMainResumeRejectsMissingSession(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "resume missing", "-resume", "missing-session"},
 		&stdout,
 		&stderr,
@@ -3296,6 +3308,7 @@ func TestRunPlanExecuteMainResumeRejectsMissingSession(t *testing.T) {
 
 			return "", nil
 		},
+		nil,
 	)
 
 	if code != 1 {

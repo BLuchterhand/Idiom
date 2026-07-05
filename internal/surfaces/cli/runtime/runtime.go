@@ -69,10 +69,6 @@ type ModeRunner func(config.Config, RunOptions) error
 type ListSessionsRunner func(config.Config, io.Writer) error
 type VersionRunner func([]string, io.Writer, io.Writer) int
 
-func Run(args []string, stdout io.Writer, stderr io.Writer, promptRun PromptRunner, promptsRun PromptsRunner, tuiRun ModeRunner, serverRun ModeRunner, listSessions ListSessionsRunner, versionRun VersionRunner) int {
-	return RunWithTelemetry(args, stdout, stderr, promptRun, promptsRun, tuiRun, serverRun, listSessions, versionRun, nil)
-}
-
 func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptRun PromptRunner, promptsRun PromptsRunner, tuiRun ModeRunner, serverRun ModeRunner, listSessions ListSessionsRunner, versionRun VersionRunner, rec *telemetry.Recorder) int {
 	var (
 		configPath       string
@@ -136,7 +132,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptR
 	}
 
 	if req.Mode == ApplicationRequestListSessions {
-		logPhase(rec, "list_sessions", nil)
+		telemetry.LogPhase(rec, "list_sessions", nil)
 
 		if err := listSessions(cfg, stdout); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -586,10 +582,10 @@ func ModelCloseout(rec *telemetry.Recorder, model *app.Model, mode string, taskF
 				fields["model_closed"] = true
 			}
 
-			logPhase(rec, "model_session_closeout", fields)
+			telemetry.LogPhase(rec, "model_session_closeout", fields)
 
 			if strings.TrimSpace(taskFamily) == "implementation" {
-				logPhase(rec, "implement_session_closeout", fields)
+				telemetry.LogPhase(rec, "implement_session_closeout", fields)
 			}
 		})
 	}
@@ -631,10 +627,6 @@ func RunListSessions(cfg config.Config, stdout io.Writer) error {
 	return nil
 }
 
-func RunServerOnly(cfg config.Config, opts RunOptions) error {
-	return RunServerOnlyWithTelemetry(cfg, opts)
-}
-
 func RunServerOnlyWithTelemetry(cfg config.Config, opts RunOptions) error {
 	if !cfg.LlamaServer.IsLaunchable() {
 		return fmt.Errorf("backend kind %q is hosted at %s; --server-only can only launch local llama/mlx backends", cfg.LlamaServer.Kind, cfg.LlamaServer.EndpointBaseURL())
@@ -642,7 +634,7 @@ func RunServerOnlyWithTelemetry(cfg config.Config, opts RunOptions) error {
 
 	client := llama.NewClientForServer(cfg.LlamaServer, 0)
 	controller := llama.NewServerController(cfg.LlamaServer, client)
-	logPhase(opts.Telemetry, "server_starting", map[string]any{
+	telemetry.LogPhase(opts.Telemetry, "server_starting", map[string]any{
 		"base_url": cfg.BaseURL(),
 		"backend":  cfg.LlamaServer.Kind,
 	})
@@ -651,18 +643,18 @@ func RunServerOnlyWithTelemetry(cfg config.Config, opts RunOptions) error {
 	defer cancel()
 
 	if err := controller.Start(ctx); err != nil {
-		logPhase(opts.Telemetry, "server_error", map[string]any{"stage": "start", "error": err.Error()})
+		telemetry.LogPhase(opts.Telemetry, "server_error", map[string]any{"stage": "start", "error": err.Error()})
 
 		return err
 	}
 
 	if err := controller.WaitUntilReady(ctx); err != nil {
-		logPhase(opts.Telemetry, "server_error", map[string]any{"stage": "wait_until_ready", "error": err.Error()})
+		telemetry.LogPhase(opts.Telemetry, "server_error", map[string]any{"stage": "wait_until_ready", "error": err.Error()})
 
 		return err
 	}
 
-	logPhase(opts.Telemetry, "server_ready", map[string]any{
+	telemetry.LogPhase(opts.Telemetry, "server_ready", map[string]any{
 		"base_url": cfg.BaseURL(),
 		"log_path": controller.LogPath(),
 	})
@@ -679,18 +671,14 @@ func RunServerOnlyWithTelemetry(cfg config.Config, opts RunOptions) error {
 	defer stopCancel()
 
 	if err := controller.Stop(stopCtx); err != nil {
-		logPhase(opts.Telemetry, "server_error", map[string]any{"stage": "stop", "error": err.Error()})
+		telemetry.LogPhase(opts.Telemetry, "server_error", map[string]any{"stage": "stop", "error": err.Error()})
 
 		return err
 	}
 
-	logPhase(opts.Telemetry, "server_stopped", map[string]any{
+	telemetry.LogPhase(opts.Telemetry, "server_stopped", map[string]any{
 		"base_url": cfg.BaseURL(),
 	})
 
 	return nil
-}
-
-func logPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	telemetry.LogPhase(rec, eventType, fields)
 }

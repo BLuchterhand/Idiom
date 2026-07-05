@@ -1,6 +1,7 @@
 package autonomy
 
 import (
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -171,9 +172,15 @@ func TestAuditEventsJoinsPolicyAndObligationCoverage(t *testing.T) {
 	if report.PolicyCoverage.DecisionEvents != 1 || report.PolicyCoverage.DecisionCounts[string(PolicyAllow)] != 1 || report.PolicyCoverage.ToolCounts["apply_patch"] != 1 {
 		t.Fatalf("expected joined policy coverage, got %#v", report.PolicyCoverage)
 	}
+	if !slices.Contains(report.PolicyCoverage.ContractsWithPolicy, contract.ContractID) {
+		t.Fatalf("expected contract policy coverage for %q, got %#v", contract.ContractID, report.PolicyCoverage.ContractsWithPolicy)
+	}
 
 	if report.ObligationCoverage.Opened != 1 || report.ObligationCoverage.Resolved != 1 || len(report.ObligationCoverage.UnresolvedObligations) != 0 {
 		t.Fatalf("expected resolved obligation coverage, got %#v", report.ObligationCoverage)
+	}
+	if !slices.Contains(report.ObligationCoverage.ContractsWithObligations, contract.ContractID) {
+		t.Fatalf("expected contract obligation coverage for %q, got %#v", contract.ContractID, report.ObligationCoverage.ContractsWithObligations)
 	}
 
 	if len(report.Contracts) != 1 || report.Contracts[0].PolicyTools["apply_patch"] != 1 || report.Contracts[0].ObligationStatusCounts[string(ObligationResolved)] != 1 {
@@ -356,6 +363,9 @@ func TestAuditEventsReportsGateCoverageAndUnresolvedObligations(t *testing.T) {
 		if !slices.Contains(report.GateCoverage.OpenObligationRefs, want) {
 			t.Fatalf("gate coverage missing open obligation %q: %#v", want, report.GateCoverage.OpenObligationRefs)
 		}
+	}
+	if !slices.Contains(report.GateCoverage.ContractsWithGateEvents, contract.ContractID) {
+		t.Fatalf("expected contract gate coverage for %q, got %#v", contract.ContractID, report.GateCoverage.ContractsWithGateEvents)
 	}
 
 	if len(report.ObligationCoverage.UnresolvedObligations) != 2 || report.AllClear {
@@ -708,6 +718,10 @@ func TestAuditEventsGroupsGuardFrictionWithoutFailingAllClear(t *testing.T) {
 		t.Fatalf("expected lane/phase friction grouping, got %#v", coverage)
 	}
 
+	if len(report.Contracts) != 1 || report.Contracts[0].GuardFrictionCounts[string(EventGuardFriction)] != 2 {
+		t.Fatalf("expected contract guard friction grouping, got %#v", report.Contracts)
+	}
+
 	if coverage.AvoidabilityCounts[string(GuardFrictionAvoidabilityUnknown)] != 1 ||
 		coverage.AvoidabilityCounts[string(GuardFrictionAvoidabilityToolSurfaceGap)] != 1 {
 
@@ -820,6 +834,9 @@ func TestAuditEventsReportsModelExchangeRollbackCoverage(t *testing.T) {
 
 	if len(report.Contracts) != 1 || report.Contracts[0].ModelExchangeCounts[string(EventModelExchange)] != 2 {
 		t.Fatalf("expected per-contract model-exchange counts, got %#v", report.Contracts)
+	}
+	if !slices.Contains(report.ModelExchangeCoverage.ContractsWithModelExchange, contract.ContractID) {
+		t.Fatalf("expected contract model-exchange coverage for %q, got %#v", contract.ContractID, report.ModelExchangeCoverage.ContractsWithModelExchange)
 	}
 }
 
@@ -1242,16 +1259,17 @@ func TestAuditEventsFlagsReadinessForcingIncidents(t *testing.T) {
 
 func TestTurnPhaseActionClassForToolCoversProjectionTools(t *testing.T) {
 	cases := map[string]string{
-		"read_file":            ActionClassToken(ActionClassRead),
-		"read_only_capability": ActionClassToken(ActionClassRead),
-		"context_status":       ActionClassToken(ActionClassSearch),
-		"history_range":        ActionClassToken(ActionClassRead),
-		"history_symbol":       ActionClassToken(ActionClassRead),
-		"harness_audit":        ActionClassToken(ActionClassSearch),
-		"submit_plan":          ActionClassToken(ActionClassSubmitPlan),
-		"apply_patch":          ActionClassToken(ActionClassPerEditWrite),
-		"go_diagnostics":       ActionClassToken(ActionClassVerify),
-		"task":                 ActionClassToken(ActionClassGenericProbe),
+		"read_file":                ActionClassToken(ActionClassRead),
+		"read_only_capability":     ActionClassToken(ActionClassRead),
+		"context_status":           ActionClassToken(ActionClassSearch),
+		"history_range":            ActionClassToken(ActionClassRead),
+		"history_symbol":           ActionClassToken(ActionClassRead),
+		"harness_audit":            ActionClassToken(ActionClassSearch),
+		"submit_plan":              ActionClassToken(ActionClassSubmitPlan),
+		"apply_patch":              ActionClassToken(ActionClassPerEditWrite),
+		"go_diagnostics":           ActionClassToken(ActionClassVerify),
+		"task":                     ActionClassToken(ActionClassGenericProbe),
+		ToolNameSystemSearchAccess: ActionClassToken(ActionClassGenericProbe),
 	}
 	for tool, want := range cases {
 		if got := TurnPhaseActionClassForTool(tool); got != want {
@@ -1918,6 +1936,186 @@ func TestTurnPhaseRequiredNextNormalizesUnsafeProseForReplayPrivacy(t *testing.T
 
 		t.Fatalf("normalized required_next should not trigger privacy finding, privacy=%#v findings=%#v", report.PrivacyChecks, report.Findings)
 	}
+}
+
+func TestAuditFindingsPreserveSpecOrderAndFields(t *testing.T) {
+	state := eventAuditState{report: EventAuditReport{
+		ReferenceCoverage: ContractReferenceCoverage{
+			MissingContractIDEvents: []EventAuditRef{
+				{EventID: "event-missing-contract-id"},
+			},
+			UnmatchedContractReferences: []EventAuditRef{
+				{EventID: "event-unmatched-contract", ContractID: "contract-unmatched"},
+			},
+			StaleContractReferences: []EventAuditRef{
+				{EventID: "event-stale-contract", ContractID: "contract-stale"},
+			},
+			UnmatchedParentReferences: []EventAuditRef{
+				{EventID: "event-unmatched-parent", ContractID: "contract-child"},
+			},
+			MissingExpectedContracts: []string{"contract-expected"},
+		},
+		SidecarToolCorrelation: SidecarToolCorrelationCoverage{
+			UnmatchedCorrelations: []SidecarToolCorrelationIssue{
+				{EventID: "event-sidecar", ContractID: "contract-sidecar"},
+			},
+		},
+		GateCoverage: GateEventCoverage{
+			InconsistentOpenObligationRefs: []EventAuditRef{
+				{EventID: "event-gate-open", ContractID: "contract-gate"},
+			},
+			MissingPackIDRefs: []EventAuditRef{
+				{EventID: "event-gate-pack", ContractID: "contract-gate", Reference: "pack_id"},
+			},
+			MissingEnforcementModeRefs: []EventAuditRef{
+				{EventID: "event-gate-mode", ContractID: "contract-gate"},
+			},
+			MissingSafeAlternativesRefs: []EventAuditRef{
+				{EventID: "event-gate-safe", ContractID: "contract-gate"},
+			},
+		},
+		CompletionCoverage: CompletionEventCoverage{
+			AllowWithRemainingObligationsRefs: []EventAuditRef{
+				{EventID: "event-completion-remaining", ContractID: "contract-completion"},
+			},
+		},
+		ObligationCoverage: ObligationEventCoverage{
+			UnmatchedObligations: []ObligationAuditRef{
+				{EventID: "event-obligation-unmatched", ContractID: "contract-obligation"},
+			},
+		},
+		TurnPhaseCoverage: TurnPhaseEventCoverage{
+			Contradictions: manyTurnPhaseContradictions(26),
+		},
+		ModelExchangeCoverage: ModelExchangeCoverage{
+			EventsMissingProtocolHash: []EventAuditRef{
+				{EventID: "event-model-hash", ContractID: "contract-model"},
+			},
+			EventsMissingHarnessPayload: []EventAuditRef{
+				{EventID: "event-model-payload", ContractID: "contract-model"},
+			},
+		},
+		ReadinessForcing: ReadinessForcingCoverage{
+			ForcedNoToolsTurns: []EventAuditRef{
+				{EventID: "event-forced-no-tools", ContractID: "contract-readiness"},
+			},
+			UsefulToolsHiddenAfterReadiness: []EventAuditRef{
+				{EventID: "event-hidden-tools", ContractID: "contract-readiness"},
+			},
+			HostComposedAfterRelevantProbes: []EventAuditRef{
+				{EventID: "event-host-composed", ContractID: "contract-readiness"},
+			},
+		},
+		PrivacyChecks: ReplayPrivacyChecks{
+			Refs: manyReplayPrivacyRefs(26),
+		},
+	}}
+
+	state.addFindings()
+
+	want := []EventAuditFinding{
+		{ID: "contract_event_missing_contract_id", Severity: "high", Evidence: "1 autonomy event(s) lack contract_id", EventIDs: []string{"event-missing-contract-id"}},
+		{ID: "contract_event_unmatched_contract_reference", Severity: "medium", Evidence: "1 contract reference(s) have no matching lifecycle event or expected contract", ContractIDs: []string{"contract-unmatched"}},
+		{ID: "contract_event_stale_contract_reference", Severity: "medium", Evidence: "1 event(s) reference a stopped or superseded contract", EventIDs: []string{"event-stale-contract"}, ContractIDs: []string{"contract-stale"}},
+		{ID: "contract_event_unmatched_parent_reference", Severity: "low", Evidence: "1 parent contract reference(s) have no matching lifecycle event or expected contract", ContractIDs: []string{"contract-child"}},
+		{ID: "contract_event_expected_contract_missing", Severity: "medium", Evidence: "1 expected contract(s) had no events", ContractIDs: []string{"contract-expected"}},
+		{ID: "contract_event_sidecar_tool_correlation_mismatch", Severity: "medium", Evidence: "1 sidecar/tool-call correlation issue(s)", EventIDs: []string{"event-sidecar"}, ContractIDs: []string{"contract-sidecar"}},
+		{ID: "contract_event_gate_open_obligation_inconsistent", Severity: "medium", Evidence: "1 gate open-obligation reference(s) were not open at the gate sequence", EventIDs: []string{"event-gate-open"}, ContractIDs: []string{"contract-gate"}},
+		{ID: "contract_event_gate_missing_pack_id", Severity: "medium", Evidence: "1 typed gate event(s) lack pack_id", EventIDs: []string{"event-gate-pack"}, ContractIDs: []string{"contract-gate", "pack_id"}},
+		{ID: "contract_event_gate_missing_enforcement_mode", Severity: "medium", Evidence: "1 typed gate event(s) lack enforcement_mode", EventIDs: []string{"event-gate-mode"}, ContractIDs: []string{"contract-gate"}},
+		{ID: "contract_event_gate_missing_safe_alternatives", Severity: "medium", Evidence: "1 enforced reject/deny/stop gate event(s) lack safe_alternatives", EventIDs: []string{"event-gate-safe"}, ContractIDs: []string{"contract-gate"}},
+		{ID: "contract_event_completion_allow_with_remaining_obligations", Severity: "medium", Evidence: "1 completion allow event(s) reported remaining obligations", EventIDs: []string{"event-completion-remaining"}, ContractIDs: []string{"contract-completion"}},
+		{ID: "contract_event_unmatched_obligation_reference", Severity: "low", Evidence: "1 obligation resolution event(s) had no matching opened event", EventIDs: []string{"event-obligation-unmatched"}, ContractIDs: []string{"contract-obligation"}},
+		{ID: "turn_phase_contract_contradiction", Severity: "high", Evidence: "26 turn phase contract contradiction(s)", EventIDs: turnPhaseEventIDs(26), ContractIDs: []string{"contract-turn"}, DetailCount: 26},
+		{ID: "model_exchange_missing_protocol_hash", Severity: "high", Evidence: "1 model_exchange event(s) lack protocol_hash", EventIDs: []string{"event-model-hash"}, ContractIDs: []string{"contract-model"}},
+		{ID: "model_exchange_missing_typed_payload", Severity: "high", Evidence: "1 model_exchange event(s) lack a typed payload", EventIDs: []string{"event-model-payload"}, ContractIDs: []string{"contract-model"}},
+		{ID: "readiness_forced_no_tools_turn", Severity: "medium", Evidence: "1 turn phase event(s) allowed final answer while useful tools were unavailable and source-body obligations remained", EventIDs: []string{"event-forced-no-tools"}, ContractIDs: []string{"contract-readiness"}},
+		{ID: "readiness_useful_tools_hidden", Severity: "medium", Evidence: "1 turn phase event(s) hid useful read/search tools after readiness with open obligations", EventIDs: []string{"event-hidden-tools"}, ContractIDs: []string{"contract-readiness"}},
+		{ID: "readiness_host_composed_after_probe", Severity: "medium", Evidence: "1 completion event(s) allowed a terminal answer after the model requested missing context", EventIDs: []string{"event-host-composed"}, ContractIDs: []string{"contract-readiness"}},
+		{ID: "contract_event_privacy_forbidden_raw_content", Severity: "high", Evidence: "26 forbidden raw-content field(s) or value marker(s) in autonomy event metadata", EventIDs: privacyEventIDs(26), ContractIDs: []string{"contract-privacy"}, DetailCount: 26},
+	}
+
+	if len(state.report.Findings) != len(want) {
+		t.Fatalf("findings len = %d, want %d: %#v", len(state.report.Findings), len(want), state.report.Findings)
+	}
+
+	for i, wantFinding := range want {
+		got := state.report.Findings[i]
+		if got.ID != wantFinding.ID ||
+			got.Severity != wantFinding.Severity ||
+			got.Evidence != wantFinding.Evidence ||
+			got.DetailCount != wantFinding.DetailCount ||
+			!slices.Equal(got.EventIDs, wantFinding.EventIDs) ||
+			!slices.Equal(got.ContractIDs, wantFinding.ContractIDs) {
+
+			t.Fatalf("finding[%d] = %#v, want %#v", i, got, wantFinding)
+		}
+	}
+
+	if len(state.report.Findings[12].Details) != 25 {
+		t.Fatalf("turn phase details cap not preserved: got %d", len(state.report.Findings[12].Details))
+	}
+	if detail := state.report.Findings[12].Details[0]; detail.ToolName != "read_file" || detail.ActionClass != "read" || detail.PhaseID != "phase-00" || detail.ModelCallID != "call-00" || detail.SurfaceID != "surface" || detail.SurfacePair != "contract,surface" || detail.InvariantID != "invariant" || detail.Reason != "invalid read" {
+		t.Fatalf("turn phase detail not preserved: %#v", detail)
+	}
+	if len(state.report.Findings[18].Details) != 25 {
+		t.Fatalf("privacy details cap not preserved: got %d", len(state.report.Findings[18].Details))
+	}
+	if detail := state.report.Findings[18].Details[0]; detail.Field != "metadata.raw.00" || detail.Reason != "raw content" || detail.Type != "event_type" || detail.Sequence != 100 || detail.ContractID != "contract-privacy" {
+		t.Fatalf("privacy detail not preserved: %#v", detail)
+	}
+}
+
+func manyTurnPhaseContradictions(count int) []TurnPhaseContradiction {
+	out := make([]TurnPhaseContradiction, 0, count)
+	for i := 0; i < count; i++ {
+		out = append(out, TurnPhaseContradiction{
+			EventID:     fmt.Sprintf("event-turn-%02d", i),
+			Type:        "event_type",
+			Sequence:    int64(i + 1),
+			ContractID:  "contract-turn",
+			PhaseID:     fmt.Sprintf("phase-%02d", i),
+			ModelCallID: fmt.Sprintf("call-%02d", i),
+			SurfaceID:   "surface",
+			SurfacePair: "contract,surface",
+			InvariantID: "invariant",
+			ToolName:    "read_file",
+			ActionClass: "read",
+			Reason:      "invalid read",
+		})
+	}
+	return out
+}
+
+func manyReplayPrivacyRefs(count int) []ReplayPrivacyRef {
+	out := make([]ReplayPrivacyRef, 0, count)
+	for i := 0; i < count; i++ {
+		out = append(out, ReplayPrivacyRef{
+			EventID:    fmt.Sprintf("event-privacy-%02d", i),
+			Type:       "event_type",
+			Sequence:   int64(100 + i),
+			ContractID: "contract-privacy",
+			Field:      fmt.Sprintf("metadata.raw.%02d", i),
+			Reason:     "raw content",
+		})
+	}
+	return out
+}
+
+func turnPhaseEventIDs(count int) []string {
+	out := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		out = append(out, fmt.Sprintf("event-turn-%02d", i))
+	}
+	return out
+}
+
+func privacyEventIDs(count int) []string {
+	out := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		out = append(out, fmt.Sprintf("event-privacy-%02d", i))
+	}
+	return out
 }
 
 func mustAutonomyEvent(event Event, err error) Event {

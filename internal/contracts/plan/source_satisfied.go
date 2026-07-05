@@ -96,7 +96,7 @@ func SourceSatisfiedAnswerDeclaresDecision(answer string) bool {
 func sourceSatisfiedPathSet(paths []string) map[string]struct{} {
 	out := make(map[string]struct{}, len(paths))
 	for _, path := range paths {
-		normalized := normalizeSourceSatisfiedPath(path)
+		normalized := NormalizeScopePath(path)
 		if normalized != "" {
 			out[normalized] = struct{}{}
 		}
@@ -112,12 +112,8 @@ func uniqueSourceSatisfiedPaths(paths []string) []string {
 	return out
 }
 
-func normalizeSourceSatisfiedPath(path string) string {
-	return NormalizeScopePath(path)
-}
-
 func sourceSatisfiedTextMentionsExactPath(text string, path string) bool {
-	path = normalizeSourceSatisfiedPath(path)
+	path = NormalizeScopePath(path)
 	if path == "" {
 		return false
 	}

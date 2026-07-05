@@ -208,10 +208,6 @@ func TestTargetNormalizer_PreservesLegacyCompatibility(t *testing.T) {
 			if got := normalizer.Normalize(tt.target); got != tt.want {
 				t.Fatalf("TargetNormalizer.Normalize(%q) = %q, want %q", tt.target, got, tt.want)
 			}
-
-			if got := normalizeTarget(tt.target); got != tt.want {
-				t.Fatalf("normalizeTarget(%q) = %q, want %q", tt.target, got, tt.want)
-			}
 		})
 	}
 

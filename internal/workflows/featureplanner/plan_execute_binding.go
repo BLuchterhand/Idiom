@@ -14,14 +14,10 @@ func PlanExecuteSessionIDFromImplementorPrompt(prompt string) string {
 		}
 
 		sessionID := strings.TrimSpace(value)
-		if validPlanExecuteSessionID(sessionID) {
+		if sessionid.Valid(sessionID) {
 			return sessionID
 		}
 	}
 
 	return ""
-}
-
-func validPlanExecuteSessionID(sessionID string) bool {
-	return sessionid.Valid(sessionID)
 }

@@ -294,26 +294,27 @@ type Chat struct {
 	// ModelFamily controls model-specific prompt compatibility overlays.
 	// Empty/"auto" infers from the active model id. Use "generic" or "none"
 	// to suppress auto overlays when an alias looks misleading.
-	ModelFamily            string  `json:"model_family,omitempty"`
-	Preset                 string  `json:"preset"`
-	Temperature            float64 `json:"temperature"`
-	TopP                   float64 `json:"top_p"`
-	TopK                   int     `json:"top_k"`
-	MinP                   float64 `json:"min_p"`
-	PresencePenalty        float64 `json:"presence_penalty"`
-	RepetitionPenalty      float64 `json:"repetition_penalty"`
-	EnableThinking         *bool   `json:"enable_thinking,omitempty"`
-	PreserveThinking       bool    `json:"preserve_thinking"`
-	MaxTokens              int     `json:"max_tokens"`
-	MaxHistory             int     `json:"max_history"`
-	MaxToolSteps           int     `json:"max_tool_steps"`
-	MaxContextMessages     int     `json:"max_context_messages"`
-	MaxContextChars        int     `json:"max_context_chars"`
-	MaxModelCalls          int     `json:"max_model_calls"`
-	MaxDurationSeconds     int     `json:"max_duration_seconds"`
-	RequestTimeoutSeconds  int     `json:"request_timeout_seconds"`
-	ServerStartTimeoutSecs int     `json:"server_start_timeout_seconds"`
-	ImplementationDispatch string  `json:"implementation_dispatch,omitempty"`
+	ModelFamily              string  `json:"model_family,omitempty"`
+	Preset                   string  `json:"preset"`
+	Temperature              float64 `json:"temperature"`
+	TopP                     float64 `json:"top_p"`
+	TopK                     int     `json:"top_k"`
+	MinP                     float64 `json:"min_p"`
+	PresencePenalty          float64 `json:"presence_penalty"`
+	RepetitionPenalty        float64 `json:"repetition_penalty"`
+	EnableThinking           *bool   `json:"enable_thinking,omitempty"`
+	PreserveThinking         bool    `json:"preserve_thinking"`
+	MaxTokens                int     `json:"max_tokens"`
+	MaxHistory               int     `json:"max_history"`
+	MaxToolSteps             int     `json:"max_tool_steps"`
+	MaxContextMessages       int     `json:"max_context_messages"`
+	MaxContextChars          int     `json:"max_context_chars"`
+	MaxModelCalls            int     `json:"max_model_calls"`
+	MaxOperationalModelCalls int     `json:"max_operational_model_calls,omitempty"`
+	MaxDurationSeconds       int     `json:"max_duration_seconds"`
+	RequestTimeoutSeconds    int     `json:"request_timeout_seconds"`
+	ServerStartTimeoutSecs   int     `json:"server_start_timeout_seconds"`
+	ImplementationDispatch   string  `json:"implementation_dispatch,omitempty"`
 	// AgentMode selects which built-in agent profile drives the session.
 	// OpenCode-shaped: the user picks build/plan/general; the harness
 	// never classifies a prompt to pick one on their behalf. Empty falls
@@ -427,36 +428,37 @@ func Default() Config {
 			ExtraArgs:       []string{},
 		},
 		Chat: Chat{
-			AutoStartServer:        true,
-			SaveDir:                "transcripts",
-			DebugLogDir:            "logs/conversations",
-			DebugLogMode:           "redacted",
-			SystemPrompt:           "",
-			SystemPromptFiles:      []string{"prompts/base.md"},
-			ProfilesDir:            "prompts/profiles",
-			DefaultProfiles:        []string{"coding"},
-			ProjectRoot:            "",
-			ProjectPromptFiles:     []string{},
-			AttachInstructionFiles: false,
-			Preset:                 "qwen3-coding-preserve",
-			Temperature:            0.6,
-			TopP:                   0.95,
-			TopK:                   20,
-			MinP:                   0.0,
-			PresencePenalty:        0.0,
-			RepetitionPenalty:      1.0,
-			EnableThinking:         boolPtr(true),
-			PreserveThinking:       true,
-			MaxTokens:              8192,
-			MaxHistory:             20,
-			MaxToolSteps:           0,
-			MaxContextMessages:     40,
-			MaxContextChars:        200000,
-			MaxModelCalls:          0,
-			MaxDurationSeconds:     780,
-			RequestTimeoutSeconds:  900,
-			ServerStartTimeoutSecs: 240,
-			AgentMode:              "build",
+			AutoStartServer:          true,
+			SaveDir:                  "transcripts",
+			DebugLogDir:              "logs/conversations",
+			DebugLogMode:             "redacted",
+			SystemPrompt:             "",
+			SystemPromptFiles:        []string{"prompts/base.md"},
+			ProfilesDir:              "prompts/profiles",
+			DefaultProfiles:          []string{"coding"},
+			ProjectRoot:              "",
+			ProjectPromptFiles:       []string{},
+			AttachInstructionFiles:   false,
+			Preset:                   "qwen3-coding-preserve",
+			Temperature:              0.6,
+			TopP:                     0.95,
+			TopK:                     20,
+			MinP:                     0.0,
+			PresencePenalty:          0.0,
+			RepetitionPenalty:        1.0,
+			EnableThinking:           boolPtr(true),
+			PreserveThinking:         true,
+			MaxTokens:                8192,
+			MaxHistory:               20,
+			MaxToolSteps:             0,
+			MaxContextMessages:       40,
+			MaxContextChars:          200000,
+			MaxModelCalls:            0,
+			MaxOperationalModelCalls: 0,
+			MaxDurationSeconds:       0,
+			RequestTimeoutSeconds:    900,
+			ServerStartTimeoutSecs:   240,
+			AgentMode:                "build",
 		},
 		Workspace: Workspace{
 			Root:                  "",
@@ -731,11 +733,15 @@ func (c Config) Validate() error {
 	}
 
 	if c.Chat.MaxModelCalls < 0 {
-		return fmt.Errorf("chat.max_model_calls must be non-negative (0 disables the soft budget)")
+		return fmt.Errorf("chat.max_model_calls must be non-negative (0 disables the advisory threshold)")
+	}
+
+	if c.Chat.MaxOperationalModelCalls < 0 {
+		return fmt.Errorf("chat.max_operational_model_calls must be non-negative (0 disables the hard operational fuse)")
 	}
 
 	if c.Chat.MaxDurationSeconds < 0 {
-		return fmt.Errorf("chat.max_duration_seconds must be non-negative (0 disables the soft budget)")
+		return fmt.Errorf("chat.max_duration_seconds must be non-negative (duration limits are ignored; use 0)")
 	}
 
 	if c.Chat.RequestTimeoutSeconds <= 0 {
@@ -966,6 +972,10 @@ func (c *Config) applyRuntimeDefaults() {
 
 	if c.Chat.MaxModelCalls < 0 {
 		c.Chat.MaxModelCalls = 0
+	}
+
+	if c.Chat.MaxOperationalModelCalls < 0 {
+		c.Chat.MaxOperationalModelCalls = 0
 	}
 
 	if c.Chat.MaxDurationSeconds < 0 {

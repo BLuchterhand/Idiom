@@ -18,13 +18,9 @@ import (
 	"idiom/internal/runtime/workerruntime"
 )
 
-// Run dispatches `idiom probe <subcommand>`. Phase 6 ships
+// RunWithTelemetry dispatches `idiom probe <subcommand>`. Phase 6 ships
 // `lane`; future probes (`probe backend`, `probe routing`, etc.) plug
 // in here without rewiring main.go.
-func Run(args []string, stdout io.Writer, stderr io.Writer) int {
-	return RunWithTelemetry(args, stdout, stderr, nil)
-}
-
 func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
 		printProbeUsage(stderr)
@@ -32,7 +28,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		return 0
 	}
 
-	logProbePhase(rec, "probe_start", map[string]any{"subcommand": args[0]})
+	telemetry.LogPhase(rec, "probe_start", map[string]any{"subcommand": args[0]})
 
 	switch args[0] {
 	case "lane":
@@ -292,8 +288,4 @@ func printProbeUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "                  flags: --mode implement|plan-execute|all  --project-root <path>  --config <path>  --coder")
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, "Replaces Colony/scripts/idiom_route_probe.sh.")
-}
-
-func logProbePhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	telemetry.LogPhase(rec, eventType, fields)
 }

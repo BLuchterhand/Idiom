@@ -2,6 +2,7 @@ package autonomy
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -814,7 +815,7 @@ func childRecordError(record string, problems validationProblems) error {
 
 func validateChildSafeFields(problems *validationProblems, field string, values ...string) {
 	for _, value := range values {
-		if looksLikeRawContractEventContent(value) {
+		if looksLikeRawGuardFrictionContent(value) {
 			problems.Add(field + " fields must contain redaction-safe metadata only")
 			return
 		}
@@ -823,7 +824,7 @@ func validateChildSafeFields(problems *validationProblems, field string, values 
 
 func validateChildSafeSlice(problems *validationProblems, field string, values []string) {
 	for _, value := range values {
-		if looksLikeRawContractEventContent(value) {
+		if looksLikeRawGuardFrictionContent(value) {
 			problems.Add(field + " must contain redaction-safe metadata only")
 			return
 		}
@@ -831,136 +832,65 @@ func validateChildSafeSlice(problems *validationProblems, field string, values [
 }
 
 func validChildWorkspaceMode(mode ChildWorkspaceMode) bool {
-	switch mode {
-	case ChildWorkspaceMain, ChildWorkspaceWorkbranch, ChildWorkspaceNoWrite:
-		return true
-	default:
-		return false
-	}
+	return validChildEnum(mode, ChildWorkspaceMain, ChildWorkspaceWorkbranch, ChildWorkspaceNoWrite)
 }
 
 func validRoleResolutionSource(source RoleResolutionSource) bool {
-	switch source {
-	case RoleResolutionSourceProxyDefault, RoleResolutionSourceRoleTag, RoleResolutionSourceLoneModel, RoleResolutionSourceExecutorCoderHeuristic, RoleResolutionSourceUnresolved:
-		return true
-	default:
-		return false
-	}
+	return validChildEnum(source, RoleResolutionSourceProxyDefault, RoleResolutionSourceRoleTag, RoleResolutionSourceLoneModel, RoleResolutionSourceExecutorCoderHeuristic, RoleResolutionSourceUnresolved)
 }
 
 func validCapacityAdmissionState(state CapacityAdmissionState) bool {
-	switch state {
-	case CapacityAdmissionAcquired, CapacityAdmissionUnavailable, CapacityAdmissionDisabled, CapacityAdmissionDegraded, CapacityAdmissionError:
-		return true
-	default:
-		return false
-	}
+	return validChildEnum(state, CapacityAdmissionAcquired, CapacityAdmissionUnavailable, CapacityAdmissionDisabled, CapacityAdmissionDegraded, CapacityAdmissionError)
 }
 
 func validCapacityAdmissionEnforcement(enforcement CapacityAdmissionEnforcement) bool {
-	switch enforcement {
-	case CapacityAdmissionBlocking, CapacityAdmissionOpportunistic:
-		return true
-	default:
-		return false
-	}
+	return validChildEnum(enforcement, CapacityAdmissionBlocking, CapacityAdmissionOpportunistic)
 }
 
 func validChildTransportMode(mode ChildTransportMode) bool {
-	switch mode {
-	case ChildTransportNative, ChildTransportTextual, ChildTransportNone:
-		return true
-	default:
-		return false
-	}
+	return validChildEnum(mode, ChildTransportNative, ChildTransportTextual, ChildTransportNone)
 }
 
 func validChildObservedTransport(mode ChildObservedTransport) bool {
-	switch mode {
-	case ChildObservedTransportNative, ChildObservedTransportTextual, ChildObservedTransportDeterministic:
-		return true
-	default:
-		return false
-	}
+	return validChildEnum(mode, ChildObservedTransportNative, ChildObservedTransportTextual, ChildObservedTransportDeterministic)
 }
 
 func validChildNormalizerStatus(status ChildNormalizerStatus) bool {
-	switch status {
-	case ChildNormalizerNotRequired, ChildNormalizerNormalized, ChildNormalizerFailed:
-		return true
-	default:
-		return false
-	}
+	return validChildEnum(status, ChildNormalizerNotRequired, ChildNormalizerNormalized, ChildNormalizerFailed)
 }
 
 func validChildResultKind(kind ChildResultKind) bool {
-	switch kind {
-	case ChildResultEvidencePacket, ChildResultPlanArtifact, ChildResultCandidatePatch, ChildResultFindings, ChildResultSourceSatisfied, ChildResultTypedBlocker, ChildResultAppliedParentEdit:
-		return true
-	default:
-		return false
-	}
+	return validChildEnum(kind, ChildResultEvidencePacket, ChildResultPlanArtifact, ChildResultCandidatePatch, ChildResultFindings, ChildResultSourceSatisfied, ChildResultTypedBlocker, ChildResultAppliedParentEdit)
 }
 
 func validChildTerminalStatus(status ChildTerminalStatus) bool {
-	switch status {
-	case ChildTerminalCompleted, ChildTerminalBlocked, ChildTerminalFailed, ChildTerminalBudgetExhausted, ChildTerminalParseFailed:
-		return true
-	default:
-		return false
-	}
+	return validChildEnum(status, ChildTerminalCompleted, ChildTerminalBlocked, ChildTerminalFailed, ChildTerminalBudgetExhausted, ChildTerminalParseFailed)
 }
 
 func validChildObjectiveAlignment(alignment ChildObjectiveAlignment) bool {
-	switch alignment {
-	case ChildObjectiveAccepted, ChildObjectiveWeak, ChildObjectiveOffObjective, ChildObjectiveNotApplicable:
-		return true
-	default:
-		return false
-	}
+	return validChildEnum(alignment, ChildObjectiveAccepted, ChildObjectiveWeak, ChildObjectiveOffObjective, ChildObjectiveNotApplicable)
 }
 
 func validChildExecutionRoute(route ChildExecutionRoute) bool {
-	switch route {
-	case ChildRouteChildModel, ChildRouteDeterministicDirect, ChildRouteParentExecutor, ChildRouteNotApplicable:
-		return true
-	default:
-		return false
-	}
+	return validChildEnum(route, ChildRouteChildModel, ChildRouteDeterministicDirect, ChildRouteParentExecutor, ChildRouteNotApplicable)
 }
 
 func validChildPathGateDecision(decision ChildPathGateDecision) bool {
-	switch decision {
-	case ChildPathGateAllow, ChildPathGateDeny, ChildPathGateNudge, ChildPathGateReject, ChildPathGateNotApplicable:
-		return true
-	default:
-		return false
-	}
+	return validChildEnum(decision, ChildPathGateAllow, ChildPathGateDeny, ChildPathGateNudge, ChildPathGateReject, ChildPathGateNotApplicable)
 }
 
 func validChildAcceptanceDecision(decision ChildAcceptanceDecision) bool {
-	switch decision {
-	case ChildAcceptanceAccepted, ChildAcceptanceRejected, ChildAcceptanceRepairRequired, ChildAcceptanceBlocked, ChildAcceptanceRecordedOnly:
-		return true
-	default:
-		return false
-	}
+	return validChildEnum(decision, ChildAcceptanceAccepted, ChildAcceptanceRejected, ChildAcceptanceRepairRequired, ChildAcceptanceBlocked, ChildAcceptanceRecordedOnly)
 }
 
 func validAlignmentEvaluator(evaluator AlignmentEvaluator) bool {
-	switch evaluator {
-	case AlignmentEvaluatorHostContract, AlignmentEvaluatorReviewerFinding, AlignmentEvaluatorDeterministicRule:
-		return true
-	default:
-		return false
-	}
+	return validChildEnum(evaluator, AlignmentEvaluatorHostContract, AlignmentEvaluatorReviewerFinding, AlignmentEvaluatorDeterministicRule)
 }
 
 func validVerificationAcceptanceDecision(decision VerificationAcceptanceDecision) bool {
-	switch decision {
-	case VerificationAcceptanceAccepted, VerificationAcceptanceRejected, VerificationAcceptanceRepairRequired, VerificationAcceptanceBlocked:
-		return true
-	default:
-		return false
-	}
+	return validChildEnum(decision, VerificationAcceptanceAccepted, VerificationAcceptanceRejected, VerificationAcceptanceRepairRequired, VerificationAcceptanceBlocked)
+}
+
+func validChildEnum[T ~string](value T, allowed ...T) bool {
+	return slices.Contains(allowed, value)
 }

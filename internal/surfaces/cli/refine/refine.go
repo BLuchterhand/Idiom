@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"idiom/internal/contracts/pathparse"
-	"idiom/internal/evidence/telemetry"
 	briefcmd "idiom/internal/surfaces/cli/brief"
 	"idiom/internal/surfaces/cliassets"
 	"idiom/internal/workflows/atomintake"
@@ -96,24 +95,8 @@ type Options = laneRefineOptions
 type DispatchFunc = refineDispatchFn
 type briefLintReport = briefcmd.LintReport
 
-func Run(opts Options, dispatch DispatchFunc, stdout, stderr io.Writer) int {
-	return runLaneRefine(opts, dispatch, stdout, stderr)
-}
-
-func DefaultDispatchWithConfig(metaBriefPath string, configPath string, stdout, stderr io.Writer) int {
-	return defaultRefineDispatchWithConfig(metaBriefPath, configPath, stdout, stderr)
-}
-
-func atomSpecDispatchBlocker(specBody string) string {
-	return atomintake.SpecDispatchBlocker(specBody)
-}
-
-func runBriefLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return briefcmd.RunLint(args, stdout, stderr, rec)
-}
-
 var laneBriefLintRunner = func(args []string, stdout io.Writer, stderr io.Writer) int {
-	return runBriefLint(args, stdout, stderr, nil)
+	return briefcmd.RunLint(args, stdout, stderr, nil)
 }
 
 // Refine routes all phases to the primary 35B-A3B backend. The
@@ -162,7 +145,7 @@ func refinePhaseRouting(metaBriefPath string) (pool, model string, maxTokens int
 	}
 }
 
-func defaultRefineDispatchWithConfig(metaBriefPath string, configPath string, stdout, stderr io.Writer) int {
+func DefaultDispatchWithConfig(metaBriefPath string, configPath string, stdout, stderr io.Writer) int {
 	binary, err := os.Executable()
 	if err != nil {
 		fmt.Fprintf(stderr, "refine: cannot locate idiom binary: %v\n", err)
@@ -275,7 +258,7 @@ func refineReviewPatchArtifactPaths(metaBriefPath string) (outputPath, jsonOut, 
 	}
 }
 
-func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, stderr io.Writer) int {
+func Run(opts Options, dispatch DispatchFunc, stdout, stderr io.Writer) int {
 	if err := validateRefineOptions(&opts); err != nil {
 		fmt.Fprintf(stderr, "refine: %v\n", err)
 
@@ -304,7 +287,7 @@ func runLaneRefine(opts laneRefineOptions, dispatch refineDispatchFn, stdout, st
 		return 1
 	}
 
-	if blocker := atomSpecDispatchBlocker(string(specBody)); blocker != "" {
+	if blocker := atomintake.SpecDispatchBlocker(string(specBody)); blocker != "" {
 		fmt.Fprintf(stderr, "refine: refusing spec %s: %s\n", opts.SpecPath, blocker)
 
 		return 1

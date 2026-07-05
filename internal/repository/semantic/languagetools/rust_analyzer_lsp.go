@@ -16,12 +16,6 @@ type rustAnalyzerLSPClient struct {
 	lspBaseClient
 }
 
-type raLocation = LSPLocation
-type raSymbolInfo = LSPSymbolInfo
-type raCallHierarchyItem = LSPCallHierarchyItem
-type raIncomingCall = LSPIncomingCall
-type raOutgoingCall = LSPOutgoingCall
-
 func (m *Manager) rustAnalyzerBinary() string {
 	path, _ := exec.LookPath("rust-analyzer")
 	return path
@@ -63,14 +57,14 @@ func (m *Manager) newRustAnalyzerLSPClient(ctx context.Context) (*rustAnalyzerLS
 
 	params := map[string]any{
 		"processId": os.Getpid(),
-		"rootUri":   raFileURI(m.Root()),
+		"rootUri":   LSPFileURI(m.Root()),
 		"capabilities": map[string]any{
 			"general": map[string]any{
 				"positionEncodings": []string{"utf-8"},
 			},
 		},
 		"workspaceFolders": []map[string]any{{
-			"uri":  raFileURI(m.Root()),
+			"uri":  LSPFileURI(m.Root()),
 			"name": filepath.Base(m.Root()),
 		}},
 		"initializationOptions": map[string]any{
@@ -99,10 +93,6 @@ func (c *rustAnalyzerLSPClient) openFile(path string) error {
 	return c.lspBaseClient.openFile(path, "rust")
 }
 
-func raFileURI(path string) string {
-	return LSPFileURI(path)
-}
-
 func raPathFromURI(uri string) (string, error) {
 	return LSPPathFromURI(uri, "rust-analyzer")
 }
@@ -116,7 +106,7 @@ func (m *Manager) rustWorkspaceSymbolsViaRustAnalyzer(ctx context.Context, patte
 	}
 	defer client.close()
 
-	var symbols []raSymbolInfo
+	var symbols []LSPSymbolInfo
 
 	if err := client.request(ctx, "workspace/symbol", map[string]any{"query": pattern}, &symbols); err != nil {
 		return "", err
@@ -131,7 +121,7 @@ func (m *Manager) rustDefinitionViaRustAnalyzer(ctx context.Context, match seman
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
 			return m.newRustAnalyzerLSPClient(ctx)
 		},
-		fileURI: raFileURI,
+		fileURI: LSPFileURI,
 		format:  m.formatRALocations,
 	}, match.Path, func(abs string) map[string]any {
 		return m.rustLSPPosition(abs, match)
@@ -144,7 +134,7 @@ func (m *Manager) rustReferencesViaRustAnalyzer(ctx context.Context, match seman
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
 			return m.newRustAnalyzerLSPClient(ctx)
 		},
-		fileURI: raFileURI,
+		fileURI: LSPFileURI,
 		format:  m.formatRALocations,
 	}, match.Path, func(abs string) map[string]any {
 		return m.rustLSPPosition(abs, match)
@@ -159,7 +149,7 @@ func (m *Manager) rustImplementationsViaRustAnalyzer(ctx context.Context, match 
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
 			return m.newRustAnalyzerLSPClient(ctx)
 		},
-		fileURI: raFileURI,
+		fileURI: LSPFileURI,
 		format:  m.formatRALocations,
 	}, match.Path, func(abs string) map[string]any {
 		return m.rustLSPPosition(abs, match)
@@ -192,7 +182,7 @@ func (m *Manager) rustCallHierarchyViaRustAnalyzer(ctx context.Context, match se
 	}
 
 	if incoming {
-		var calls []raIncomingCall
+		var calls []LSPIncomingCall
 
 		if err := client.request(ctx, "callHierarchy/incomingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
 			return callHierarchyResult{}, err
@@ -201,7 +191,7 @@ func (m *Manager) rustCallHierarchyViaRustAnalyzer(ctx context.Context, match se
 		return m.formatRAIncomingCalls(calls, pathFilter, match), nil
 	}
 
-	var calls []raOutgoingCall
+	var calls []LSPOutgoingCall
 
 	if err := client.request(ctx, "callHierarchy/outgoingCalls", map[string]any{"item": items[0]}, &calls); err != nil {
 		return callHierarchyResult{}, err
@@ -210,13 +200,13 @@ func (m *Manager) rustCallHierarchyViaRustAnalyzer(ctx context.Context, match se
 	return m.formatRAOutgoingCalls(abs, match.Name, calls, pathFilter), nil
 }
 
-func (m *Manager) rustAnalyzerPrepareCallHierarchy(ctx context.Context, client *rustAnalyzerLSPClient, abs string, position map[string]any) ([]raCallHierarchyItem, error) {
+func (m *Manager) rustAnalyzerPrepareCallHierarchy(ctx context.Context, client *rustAnalyzerLSPClient, abs string, position map[string]any) ([]LSPCallHierarchyItem, error) {
 	params := map[string]any{
-		"textDocument": map[string]any{"uri": raFileURI(abs)},
+		"textDocument": map[string]any{"uri": LSPFileURI(abs)},
 		"position":     position,
 	}
 
-	var items []raCallHierarchyItem
+	var items []LSPCallHierarchyItem
 
 	if err := client.request(ctx, "textDocument/prepareCallHierarchy", params, &items); err != nil {
 		return nil, err
@@ -277,19 +267,19 @@ func (m *Manager) rustLSPCharacter(abs string, match semantic.RustSymbolMatch) (
 
 // -- Formatting -------------------------------------------------------------
 
-func (m *Manager) formatRALocations(locations []raLocation, pathFilter string, limit int, includeLineText bool) string {
+func (m *Manager) formatRALocations(locations []LSPLocation, pathFilter string, limit int, includeLineText bool) string {
 	return m.formatLSPLocations(locations, pathFilter, limit, includeLineText, raPathFromURI)
 }
 
-func (m *Manager) formatRAWorkspaceSymbols(symbols []raSymbolInfo, pathFilter string, limit int) string {
+func (m *Manager) formatRAWorkspaceSymbols(symbols []LSPSymbolInfo, pathFilter string, limit int) string {
 	return m.formatLSPWorkspaceSymbols(symbols, pathFilter, limit, raPathFromURI, raSymbolKindName, "::")
 }
 
-func (m *Manager) formatRAIncomingCalls(calls []raIncomingCall, pathFilter string, target semantic.RustSymbolMatch) callHierarchyResult {
+func (m *Manager) formatRAIncomingCalls(calls []LSPIncomingCall, pathFilter string, target semantic.RustSymbolMatch) callHierarchyResult {
 	return m.formatLSPIncomingCalls(calls, pathFilter, lspCallTarget{Path: target.Path, Line: target.Line, Name: target.Name}, raPathFromURI)
 }
 
-func (m *Manager) formatRAOutgoingCalls(callerPath string, callerName string, calls []raOutgoingCall, pathFilter string) callHierarchyResult {
+func (m *Manager) formatRAOutgoingCalls(callerPath string, callerName string, calls []LSPOutgoingCall, pathFilter string) callHierarchyResult {
 	return m.formatLSPOutgoingCalls(callerPath, callerName, calls, pathFilter, raPathFromURI)
 }
 

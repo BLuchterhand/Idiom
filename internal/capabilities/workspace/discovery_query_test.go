@@ -393,8 +393,8 @@ func TestDiscoveryQueryNormalizesArchitectureUsefulnessAliases(t *testing.T) {
 		"usefulness",
 		"Run a deterministic layered discovery recipe to identify subagent definitions and orchestration patterns.",
 	} {
-		if got := normalizeDiscoveryQueryPurpose(purpose); got != "architecture_boundary" {
-			t.Fatalf("normalizeDiscoveryQueryPurpose(%q) = %q, want architecture_boundary", purpose, got)
+		if got := NormalizeDiscoveryQueryPurpose(purpose); got != "architecture_boundary" {
+			t.Fatalf("NormalizeDiscoveryQueryPurpose(%q) = %q, want architecture_boundary", purpose, got)
 		}
 	}
 }

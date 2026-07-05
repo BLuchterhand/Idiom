@@ -37,11 +37,11 @@ func TestToolTimeoutForKnownTools(t *testing.T) {
 }
 
 func TestToolTimeoutForRequestExtendsContextStatusRefresh(t *testing.T) {
-	if got := toolTimeoutForRequest(ToolRequest{Tool: "context_status"}); got != 30*time.Second {
+	if got := ToolTimeoutForRequest(ToolRequest{Tool: "context_status"}); got != 30*time.Second {
 		t.Fatalf("context_status without refresh should keep the normal stall fuse, got %v", got)
 	}
 
-	if got := toolTimeoutForRequest(ToolRequest{Tool: "context_status", Refresh: true}); got != 5*time.Minute {
+	if got := ToolTimeoutForRequest(ToolRequest{Tool: "context_status", Refresh: true}); got != 5*time.Minute {
 		t.Fatalf("context_status refresh should have index-build budget, got %v", got)
 	}
 }

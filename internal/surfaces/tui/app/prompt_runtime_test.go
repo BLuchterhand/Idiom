@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -26,6 +27,20 @@ import (
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/planexecute"
 )
+
+func TestModeRunPolicySeparatesAdvisoryAndOperationalModelCallLimits(t *testing.T) {
+	cfg := config.Default().Chat
+	cfg.MaxModelCalls = 7
+	cfg.MaxOperationalModelCalls = 11
+
+	policy := modeRunPolicy(modepolicy.Mode{}, cfg)
+	if policy.MaxModelCalls != 7 {
+		t.Fatalf("MaxModelCalls should remain advisory config threshold, got %d", policy.MaxModelCalls)
+	}
+	if policy.MaxOperationalModelCalls != 11 {
+		t.Fatalf("MaxOperationalModelCalls should carry hard operational fuse, got %d", policy.MaxOperationalModelCalls)
+	}
+}
 
 func TestSystemPromptSkipsModePromptFilesAlreadyInPromptStack(t *testing.T) {
 	dir := t.TempDir()
@@ -337,6 +352,71 @@ func TestTuneChatOptionsForReadOnlyPlanDisablesThinkingAndCapsTokens(t *testing.
 
 	if tuned.MaxTokens != 8192 {
 		t.Fatalf("expected grounded explanation token floor of 1536 (8192 exceeds floor, should stay 8192), got %d", tuned.MaxTokens)
+	}
+}
+
+func TestTuneChatOptionsForReadOnlyPlanRaisesLowMaxTokensToRouteFloor(t *testing.T) {
+	tests := []struct {
+		name               string
+		contract           string
+		initialMaxTokens   int
+		modelThinkingFloor bool
+		wantMaxTokens      int
+	}{
+		{
+			name:               "direct answer with thinking floor",
+			contract:           string(workerruntime.ContractDirectAnswer),
+			modelThinkingFloor: true,
+			wantMaxTokens:      4096,
+		},
+		{
+			name:             "direct answer without thinking floor",
+			contract:         string(workerruntime.ContractDirectAnswer),
+			initialMaxTokens: 128,
+			wantMaxTokens:    3072,
+		},
+		{
+			name:          "grounded explanation",
+			contract:      "grounded_explanation",
+			wantMaxTokens: 1536,
+		},
+		{
+			name:             "locate targets",
+			contract:         "locate_targets",
+			initialMaxTokens: 128,
+			wantMaxTokens:    1536,
+		},
+		{
+			name:          "review findings",
+			contract:      "review_findings",
+			wantMaxTokens: 2048,
+		},
+		{
+			name:             "architecture assessment",
+			contract:         "architecture_assessment",
+			initialMaxTokens: 256,
+			wantMaxTokens:    2048,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := llama.ChatOptions{
+				MaxTokens:          tt.initialMaxTokens,
+				ModelThinkingFloor: tt.modelThinkingFloor,
+			}
+			plan := promptExecutionPlan{
+				runtimeBrief: workerruntime.WorkerRuntimeBrief{
+					PermissionProfile: "read_only_workspace",
+					Contract:          tt.contract,
+				},
+			}
+
+			tuned := tuneChatOptionsForPlan(opts, plan)
+			if tuned.MaxTokens != tt.wantMaxTokens {
+				t.Fatalf("MaxTokens = %d, want route floor %d", tuned.MaxTokens, tt.wantMaxTokens)
+			}
+		})
 	}
 }
 
@@ -915,6 +995,661 @@ func TestBuildPromptExecutionPlanCarriesObjectiveIntoRuntimeBrief(t *testing.T) 
 	}
 }
 
+func TestImplementationFollowupRuntimeBriefCarriesPreviousRecommendation(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		PermissionProfile:    string(workerruntime.PermissionGuardedWorkspaceWrite),
+		AllowedTools:         []string{"read_file", "search_content", "apply_patch"},
+		ForbiddenTools:       []string{"shell"},
+		RequiredTools:        []string{"edit_file_or_apply_patch"},
+		ToolManifest:         []workerruntime.ToolManifestEntry{{Tool: "read_file", Request: "bounded source read"}},
+		EvidenceCapabilities: []string{"source_body"},
+		SearchPolicy:         []string{"consume_target_packet_first"},
+		TargetPacket:         []string{"prompt_context:structured_packet"},
+	}
+	baseline := workerruntime.NormalizeRuntimeBrief(brief)
+	history := []llama.ChatMessage{
+		{Role: "user", Content: "Which literal strings in internal/runtime/workerruntime/catalog.go should become enums?"},
+		{Role: "assistant", Content: "Move FinalCriticID values and SearchPolicyID values to internal/runtime/workerruntime/vocabulary.go, then replace the corresponding catalog.go literals."},
+		{Role: "user", Content: "move these values to the locations you recommended"},
+	}
+
+	got := implementationFollowupRuntimeBrief(
+		"move these values to the locations you recommended",
+		history,
+		turnRoutePlan{Family: "implementation"},
+		brief,
+	)
+
+	if !slices.Contains(got.TargetPacket, "conversation_context:previous_assistant_recommendation") {
+		t.Fatalf("expected previous recommendation marker, got %#v", got.TargetPacket)
+	}
+
+	packet := strings.Join(got.TargetPacket, "\n")
+	for _, want := range []string{"FinalCriticID", "SearchPolicyID", "vocabulary.go", "catalog.go"} {
+		if !strings.Contains(packet, want) {
+			t.Fatalf("target packet missing %q:\n%s", want, packet)
+		}
+	}
+
+	if !reflect.DeepEqual(got.AllowedTools, baseline.AllowedTools) ||
+		!reflect.DeepEqual(got.ForbiddenTools, baseline.ForbiddenTools) ||
+		!reflect.DeepEqual(got.RequiredTools, baseline.RequiredTools) ||
+		!reflect.DeepEqual(got.ToolManifest, baseline.ToolManifest) ||
+		!reflect.DeepEqual(got.EvidenceCapabilities, baseline.EvidenceCapabilities) {
+
+		t.Fatalf("follow-up context must not mutate tool-control fields:\ngot=%#v\nbaseline=%#v", got, baseline)
+	}
+	if !slices.Contains(got.TargetPacket, "prompt_context:structured_packet") {
+		t.Fatalf("existing target packet entries should be preserved, got %#v", got.TargetPacket)
+	}
+	for _, want := range []string{"internal/runtime/workerruntime/vocabulary.go", "internal/runtime/workerruntime/catalog.go"} {
+		if !slices.Contains(got.AllowedEditPaths, want) {
+			t.Fatalf("expected prior recommendation edit path %q in allowed edit paths, got %#v", want, got.AllowedEditPaths)
+		}
+		if !slices.Contains(got.TargetRefs, want) {
+			t.Fatalf("expected prior recommendation edit path %q in target refs, got %#v", want, got.TargetRefs)
+		}
+		if !strings.Contains(packet, "Editable candidate file from previous assistant recommendation: "+want) {
+			t.Fatalf("target packet should surface editable candidate file %q:\n%s", want, packet)
+		}
+	}
+
+	rendered := workerruntime.RenderInitialRuntimeBrief(got)
+	if !strings.Contains(rendered, "conversation_context:previous_assistant_recommendation") {
+		t.Fatalf("rendered runtime brief should carry previous recommendation context:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "internal/runtime/workerruntime/vocabulary.go") || !strings.Contains(rendered, "internal/runtime/workerruntime/catalog.go") {
+		t.Fatalf("rendered runtime brief should carry prior recommendation edit scope:\n%s", rendered)
+	}
+}
+
+func TestImplementationFollowupRuntimeBriefPromotesRecommendationBackedSourceSurfaces(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: string(workerruntime.PermissionGuardedWorkspaceWrite),
+		AllowedTools:      []string{"read_file", "search_content", "apply_patch"},
+		RequiredTools:     []string{"edit_file_or_apply_patch"},
+	}
+	history := []llama.ChatMessage{
+		{Role: "user", Content: "internal/runtime/workerruntime/catalog.go contains some literal strings that should be enums or constants. Can you identify where those should be going?"},
+		{Role: "assistant", Content: strings.Join([]string{
+			"## Literal strings in `catalog.go` that should be typed constants",
+			"`vocabulary.go` defines the type `FinalCriticID`, but no constants are defined. Every `FinalCriticID` in `catalog.go` is a raw string literal.",
+			"**Where they should go**: a new `const` block in `vocabulary.go`.",
+			"Then `catalog.go` lines 63, 75, and 87 would reference these constants instead of raw strings.",
+			"",
+			"### 2. `SearchPolicyID` values",
+			"`vocabulary.go` defines the type `SearchPolicyID`, but no constants are defined. Every `SearchPolicyID` in `catalog.go` and `roles.go` is a raw string literal.",
+			"Both should get a typed `const` block in `vocabulary.go`, and `catalog.go`/`roles.go` should reference those constants instead of raw strings.",
+		}, "\n")},
+		{Role: "user", Content: "move these values to the locations you recommended"},
+	}
+
+	got := implementationFollowupRuntimeBrief(
+		"move these values to the locations you recommended",
+		history,
+		turnRoutePlan{Family: "implementation"},
+		brief,
+	)
+
+	for _, want := range []string{
+		"internal/runtime/workerruntime/vocabulary.go",
+		"internal/runtime/workerruntime/catalog.go",
+		"internal/runtime/workerruntime/roles.go",
+	} {
+		if !slices.Contains(got.AllowedEditPaths, want) {
+			t.Fatalf("expected recommendation-backed edit path %q in allowed edit paths, got %#v", want, got.AllowedEditPaths)
+		}
+		if !slices.Contains(got.TargetRefs, want) {
+			t.Fatalf("expected recommendation-backed target ref %q, got %#v", want, got.TargetRefs)
+		}
+	}
+}
+
+func TestImplementationFollowupRuntimeBriefPromotesRecommendationSectionPaths(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: string(workerruntime.PermissionGuardedWorkspaceWrite),
+		AllowedTools:      []string{"read_file", "search_content", "apply_patch"},
+		RequiredTools:     []string{"edit_file_or_apply_patch"},
+		TargetPacket:      []string{"prompt_context:structured_packet"},
+		SearchPolicy:      []string{"consume_target_packet_first"},
+	}
+	history := []llama.ChatMessage{
+		{Role: "user", Content: "internal/runtime/workerruntime/catalog.go contains some literal strings that should be enums or constants. Can you identify where those should be going?"},
+		{Role: "assistant", Content: strings.Join([]string{
+			"Here is my analysis of `internal/runtime/workerruntime/catalog.go`:",
+			"`requiredToolGitHistoryLookup` should be a typed constant in `vocabulary.go`.",
+			"Other inline tool and policy strings follow the same pattern.",
+			"",
+			"**Summary of where they should go:**",
+			"All of these should be defined as typed constants in **`internal/runtime/workerruntime/vocabulary.go`**, which already defines the surrounding ID types.",
+			"The `SearchPolicyID` inline strings should become constants in `vocabulary.go`.",
+			"Then replace the corresponding `catalog.go` literals with those constants.",
+		}, "\n")},
+		{Role: "user", Content: "move these values to the locations you recommended"},
+	}
+
+	got := implementationFollowupRuntimeBrief(
+		"move these values to the locations you recommended",
+		history,
+		turnRoutePlan{Family: "implementation"},
+		brief,
+	)
+
+	packet := strings.Join(got.TargetPacket, "\n")
+	for _, want := range []string{
+		"internal/runtime/workerruntime/vocabulary.go",
+		"internal/runtime/workerruntime/catalog.go",
+	} {
+		if !slices.Contains(got.AllowedEditPaths, want) {
+			t.Fatalf("expected recommendation-section edit path %q in allowed edit paths, got %#v", want, got.AllowedEditPaths)
+		}
+		if !slices.Contains(got.TargetRefs, want) {
+			t.Fatalf("expected recommendation-section target ref %q, got %#v", want, got.TargetRefs)
+		}
+		if !strings.Contains(packet, "Editable candidate file from previous assistant recommendation: "+want) {
+			t.Fatalf("target packet should surface editable candidate file %q:\n%s", want, packet)
+		}
+	}
+
+	rendered := workerruntime.RenderInitialRuntimeBrief(got)
+	for _, want := range []string{
+		"\"allowed_edit_paths\"",
+		"\"target_refs\"",
+		"internal/runtime/workerruntime/vocabulary.go",
+		"internal/runtime/workerruntime/catalog.go",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered runtime brief missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestImplementationFollowupRuntimeBriefPromotesPathOnlyRecommendationSection(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: string(workerruntime.PermissionGuardedWorkspaceWrite),
+		AllowedTools:      []string{"read_file", "search_content", "apply_patch"},
+		RequiredTools:     []string{"edit_file_or_apply_patch"},
+	}
+	history := []llama.ChatMessage{
+		{Role: "user", Content: "internal/runtime/workerruntime/catalog.go contains literal strings that should be constants."},
+		{Role: "assistant", Content: strings.Join([]string{
+			"Summary of where they should go:",
+			"`internal/runtime/workerruntime/vocabulary.go`",
+			"`internal/runtime/workerruntime/catalog.go`",
+			"",
+			"Evidence inspected:",
+			"`internal/runtime/workerruntime/roles.go` has related raw strings, but no recommendation is available for that file yet.",
+		}, "\n")},
+		{Role: "user", Content: "move these values to the locations you recommended"},
+	}
+
+	got := implementationFollowupRuntimeBrief(
+		"move these values to the locations you recommended",
+		history,
+		turnRoutePlan{Family: "implementation"},
+		brief,
+	)
+
+	for _, want := range []string{
+		"internal/runtime/workerruntime/vocabulary.go",
+		"internal/runtime/workerruntime/catalog.go",
+	} {
+		if !slices.Contains(got.AllowedEditPaths, want) {
+			t.Fatalf("expected path-only recommendation section to promote %q, got %#v", want, got.AllowedEditPaths)
+		}
+	}
+	if slices.Contains(got.AllowedEditPaths, "internal/runtime/workerruntime/roles.go") {
+		t.Fatalf("recommendation section should stop before later evidence-only path, got %#v", got.AllowedEditPaths)
+	}
+}
+
+func TestImplementationFollowupRuntimeBriefDoesNotPromoteMissingRecommendationPath(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal/runtime/workerruntime"), 0o755); err != nil {
+		t.Fatalf("mkdir fixture: %v", err)
+	}
+	for _, rel := range []string{
+		"internal/runtime/workerruntime/vocabulary.go",
+		"internal/runtime/workerruntime/catalog.go",
+	} {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(rel)), []byte("package workerruntime\n"), 0o644); err != nil {
+			t.Fatalf("write fixture %s: %v", rel, err)
+		}
+	}
+
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: string(workerruntime.PermissionGuardedWorkspaceWrite),
+		AllowedTools:      []string{"read_file", "search_content", "apply_patch"},
+		RequiredTools:     []string{"edit_file_or_apply_patch"},
+	}
+	history := []llama.ChatMessage{
+		{Role: "user", Content: "Which strings in internal/runtime/workerruntime/catalog.go should become constants?"},
+		{Role: "assistant", Content: strings.Join([]string{
+			"Summary of where they should go:",
+			"`internal/runtime/workerruntime/vocabulary.go` for the constants.",
+			"`internal/runtime/workerruntime/analysis_agents.go` for the analysis profile.",
+			"Then update `internal/runtime/workerruntime/catalog.go` references.",
+		}, "\n")},
+		{Role: "user", Content: "move these values to the locations you recommended"},
+	}
+
+	got := implementationFollowupRuntimeBrief(
+		"move these values to the locations you recommended",
+		history,
+		turnRoutePlan{Family: "implementation"},
+		brief,
+		root,
+	)
+
+	for _, want := range []string{
+		"internal/runtime/workerruntime/vocabulary.go",
+		"internal/runtime/workerruntime/catalog.go",
+	} {
+		if !slices.Contains(got.AllowedEditPaths, want) {
+			t.Fatalf("expected existing recommendation path %q to become editable, got %#v", want, got.AllowedEditPaths)
+		}
+	}
+	if slices.Contains(got.AllowedEditPaths, "internal/runtime/workerruntime/analysis_agents.go") ||
+		slices.Contains(got.TargetRefs, "internal/runtime/workerruntime/analysis_agents.go") {
+		t.Fatalf("missing prior recommendation path must not become edit authority:\nallowed=%#v\ntarget_refs=%#v", got.AllowedEditPaths, got.TargetRefs)
+	}
+	if !strings.Contains(strings.Join(got.TargetPacket, "\n"), "Unresolved prior recommendation path; not granted as edit scope until verified or explicitly authorized as a new file: internal/runtime/workerruntime/analysis_agents.go") {
+		t.Fatalf("missing prior recommendation should remain visible as unresolved context, got %#v", got.TargetPacket)
+	}
+}
+
+func TestImplementationFollowupRuntimeBriefDoesNotPromoteEvidenceOnlyPaths(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: string(workerruntime.PermissionGuardedWorkspaceWrite),
+		AllowedTools:      []string{"read_file", "search_content", "apply_patch"},
+		RequiredTools:     []string{"edit_file_or_apply_patch"},
+	}
+	history := []llama.ChatMessage{
+		{Role: "user", Content: "Which strings in internal/runtime/workerruntime/catalog.go should become constants?"},
+		{Role: "assistant", Content: strings.Join([]string{
+			"Evidence inspected:",
+			"- `internal/runtime/workerruntime/catalog.go` defines the current catalog entries.",
+			"- `internal/runtime/workerruntime/roles.go` references related role metadata.",
+			"",
+			"No implementation recommendation is available from that evidence yet.",
+		}, "\n")},
+		{Role: "user", Content: "move these values to the locations you recommended"},
+	}
+
+	got := implementationFollowupRuntimeBrief(
+		"move these values to the locations you recommended",
+		history,
+		turnRoutePlan{Family: "implementation"},
+		brief,
+	)
+
+	if len(got.AllowedEditPaths) != 0 || len(got.TargetRefs) != 0 {
+		t.Fatalf("evidence-only prior paths must not become editable candidates:\nallowed=%#v\ntarget_refs=%#v", got.AllowedEditPaths, got.TargetRefs)
+	}
+	if strings.Contains(strings.Join(got.TargetPacket, "\n"), "Editable candidate file from previous assistant recommendation") {
+		t.Fatalf("evidence-only prior answer should not mark editable candidate files: %#v", got.TargetPacket)
+	}
+}
+
+func TestImplementationFollowupRuntimeBriefDoesNotPromoteRawLiteralEvidenceAsEditScope(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: string(workerruntime.PermissionGuardedWorkspaceWrite),
+		AllowedTools:      []string{"read_file", "search_content", "apply_patch"},
+		RequiredTools:     []string{"edit_file_or_apply_patch"},
+	}
+	history := []llama.ChatMessage{
+		{Role: "user", Content: "Which strings in internal/runtime/workerruntime/catalog.go should become constants?"},
+		{Role: "assistant", Content: strings.Join([]string{
+			"`internal/runtime/workerruntime/vocabulary.go` defines the type `FinalCriticID`, but no constants are defined.",
+			"Every `FinalCriticID` in `internal/runtime/workerruntime/catalog.go` is a raw string literal.",
+			"No destination recommendation is available yet.",
+		}, "\n")},
+		{Role: "user", Content: "move these values to the locations you recommended"},
+	}
+
+	got := implementationFollowupRuntimeBrief(
+		"move these values to the locations you recommended",
+		history,
+		turnRoutePlan{Family: "implementation"},
+		brief,
+	)
+
+	if len(got.AllowedEditPaths) != 0 || len(got.TargetRefs) != 0 {
+		t.Fatalf("raw-literal evidence must not become editable candidate scope without recommendation language:\nallowed=%#v\ntarget_refs=%#v", got.AllowedEditPaths, got.TargetRefs)
+	}
+	if strings.Contains(strings.Join(got.TargetPacket, "\n"), "Editable candidate file from previous assistant recommendation") {
+		t.Fatalf("raw-literal evidence should not mark editable candidate files: %#v", got.TargetPacket)
+	}
+}
+
+func TestImplementationFollowupRuntimeBriefDoesNotOpenSectionFromNegativeDestinationProse(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: string(workerruntime.PermissionGuardedWorkspaceWrite),
+		AllowedTools:      []string{"read_file", "search_content", "apply_patch"},
+		RequiredTools:     []string{"edit_file_or_apply_patch"},
+	}
+	history := []llama.ChatMessage{
+		{Role: "user", Content: "Which strings in internal/runtime/workerruntime/catalog.go should become constants?"},
+		{Role: "assistant", Content: strings.Join([]string{
+			"No destination recommendation is available yet.",
+			"`internal/runtime/workerruntime/roles.go` was inspected only as related evidence.",
+		}, "\n")},
+		{Role: "user", Content: "move these values to the locations you recommended"},
+	}
+
+	got := implementationFollowupRuntimeBrief(
+		"move these values to the locations you recommended",
+		history,
+		turnRoutePlan{Family: "implementation"},
+		brief,
+	)
+
+	if len(got.AllowedEditPaths) != 0 || len(got.TargetRefs) != 0 {
+		t.Fatalf("negative destination prose must not open editable candidate scope:\nallowed=%#v\ntarget_refs=%#v", got.AllowedEditPaths, got.TargetRefs)
+	}
+}
+
+func TestImplementationFollowupRuntimeBriefDoesNotPromoteSameLineNegativeDestinationPath(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: string(workerruntime.PermissionGuardedWorkspaceWrite),
+		AllowedTools:      []string{"read_file", "search_content", "apply_patch"},
+		RequiredTools:     []string{"edit_file_or_apply_patch"},
+	}
+	history := []llama.ChatMessage{
+		{Role: "user", Content: "Which strings in internal/runtime/workerruntime/catalog.go should become constants?"},
+		{Role: "assistant", Content: "No destination recommendation is available for `internal/runtime/workerruntime/roles.go`."},
+		{Role: "user", Content: "move these values to the locations you recommended"},
+	}
+
+	got := implementationFollowupRuntimeBrief(
+		"move these values to the locations you recommended",
+		history,
+		turnRoutePlan{Family: "implementation"},
+		brief,
+	)
+
+	if len(got.AllowedEditPaths) != 0 || len(got.TargetRefs) != 0 {
+		t.Fatalf("same-line negative destination path must not become editable candidate scope:\nallowed=%#v\ntarget_refs=%#v", got.AllowedEditPaths, got.TargetRefs)
+	}
+}
+
+func TestImplementationFollowupRuntimeBriefLeavesStandaloneImplementationAlone(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:       "implementation",
+		Contract:         "implementation_result",
+		AllowedTools:     []string{"read_file", "search_content", "apply_patch"},
+		SearchPolicy:     []string{"consume_target_packet_first"},
+		TargetPacket:     []string{"prompt_context:structured_packet"},
+		AllowedEditPaths: []string{"internal/runtime/workerruntime/catalog.go"},
+		TargetRefs:       []string{"internal/runtime/workerruntime/catalog.go"},
+	}
+	baseline := workerruntime.NormalizeRuntimeBrief(brief)
+	history := []llama.ChatMessage{
+		{Role: "assistant", Content: "Prior answer that should not be carried."},
+		{Role: "user", Content: "rename the qwen model label constant"},
+	}
+
+	got := implementationFollowupRuntimeBrief(
+		"rename the qwen model label constant",
+		history,
+		turnRoutePlan{Family: "implementation"},
+		brief,
+	)
+
+	if !reflect.DeepEqual(got, baseline) {
+		t.Fatalf("standalone implementation should preserve the normalized baseline:\ngot=%#v\nbaseline=%#v", got, baseline)
+	}
+}
+
+func TestImplementationFollowupRuntimeBriefDoesNotWidenExplicitScope(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: string(workerruntime.PermissionGuardedWorkspaceWrite),
+		AllowedEditPaths:  []string{"pkg/a_test.go"},
+		TargetRefs:        []string{"pkg/a_test.go"},
+	}
+	baseline := workerruntime.NormalizeRuntimeBrief(brief)
+	history := []llama.ChatMessage{
+		{Role: "user", Content: "Which literals should move from internal/runtime/workerruntime/catalog.go?"},
+		{Role: "assistant", Content: "Editable candidate file: internal/runtime/workerruntime/vocabulary.go\nMove the constants there and update internal/runtime/workerruntime/catalog.go."},
+		{Role: "user", Content: "move these values to the locations you recommended, but only edit pkg/a_test.go"},
+	}
+
+	got := implementationFollowupRuntimeBrief(
+		"move these values to the locations you recommended, but only edit pkg/a_test.go",
+		history,
+		turnRoutePlan{Family: "implementation"},
+		brief,
+	)
+
+	if !slices.Contains(got.TargetPacket, "conversation_context:previous_assistant_recommendation") {
+		t.Fatalf("explicit-scope follow-up should still carry prior recommendation packet, got %#v", got.TargetPacket)
+	}
+	if !reflect.DeepEqual(got.AllowedEditPaths, baseline.AllowedEditPaths) || !reflect.DeepEqual(got.TargetRefs, baseline.TargetRefs) {
+		t.Fatalf("current-turn explicit scope must not be widened by prior answer candidates:\ngot=%#v\nbaseline=%#v", got, baseline)
+	}
+	packet := strings.Join(got.TargetPacket, "\n")
+	if strings.Contains(packet, "Editable candidate file from previous assistant recommendation") {
+		t.Fatalf("explicit-scope follow-up should not mark prior paths as editable candidate files: %#v", got.TargetPacket)
+	}
+	if strings.Contains(packet, "Editable candidate file: internal/runtime/workerruntime/vocabulary.go") && !strings.Contains(packet, "read_only_evidence") {
+		t.Fatalf("explicit-scope follow-up must neutralize writable prior-answer target-packet phrasing: %#v", got.TargetPacket)
+	}
+}
+
+func TestImplementationFollowupRuntimeBriefIgnoresRecommendedDefaultsFalsePositive(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: string(workerruntime.PermissionGuardedWorkspaceWrite),
+		AllowedTools:      []string{"read_file", "apply_patch"},
+	}
+	baseline := workerruntime.NormalizeRuntimeBrief(brief)
+	history := []llama.ChatMessage{
+		{Role: "assistant", Content: "Move values to internal/runtime/workerruntime/vocabulary.go."},
+		{Role: "user", Content: "use the recommended defaults in internal/runtime/workerruntime/catalog.go"},
+	}
+
+	got := implementationFollowupRuntimeBrief(
+		"use the recommended defaults in internal/runtime/workerruntime/catalog.go",
+		history,
+		turnRoutePlan{Family: "implementation"},
+		brief,
+	)
+
+	if !reflect.DeepEqual(got, baseline) {
+		t.Fatalf("bare recommended wording should not carry unrelated prior answer:\ngot=%#v\nbaseline=%#v", got, baseline)
+	}
+}
+
+func TestImplementationFollowupRuntimeBriefIgnoresNonImplementationAnaphora(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:   "conversation",
+		Contract:     "direct_answer",
+		AllowedTools: []string{"read_file", "search_content"},
+	}
+	baseline := workerruntime.NormalizeRuntimeBrief(brief)
+	history := []llama.ChatMessage{
+		{Role: "assistant", Content: "Move values to internal/runtime/workerruntime/vocabulary.go."},
+		{Role: "user", Content: "move these values to the locations you recommended"},
+	}
+
+	got := implementationFollowupRuntimeBrief(
+		"move these values to the locations you recommended",
+		history,
+		turnRoutePlan{Family: "conversation"},
+		brief,
+	)
+
+	if !reflect.DeepEqual(got, baseline) {
+		t.Fatalf("non-implementation route should not carry prior recommendation context:\ngot=%#v\nbaseline=%#v", got, baseline)
+	}
+}
+
+func TestImplementationFollowupRuntimeBriefDoesNotPromotePlanExecuteScope(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:       agent.PlanThenExecutePlannerTaskFamily,
+		Contract:         "implementation_result",
+		AllowedTools:     []string{"read_file", "submit_plan"},
+		AllowedEditPaths: []string{"internal/runtime/workerruntime/existing.go"},
+		TargetRefs:       []string{"internal/runtime/workerruntime/existing.go"},
+	}
+	baseline := workerruntime.NormalizeRuntimeBrief(brief)
+	history := []llama.ChatMessage{
+		{Role: "user", Content: "Which values should move from internal/runtime/workerruntime/catalog.go?"},
+		{Role: "assistant", Content: "Move values to internal/runtime/workerruntime/vocabulary.go, then replace catalog.go literals."},
+		{Role: "user", Content: "move these values to the locations you recommended"},
+	}
+
+	got := implementationFollowupRuntimeBrief(
+		"move these values to the locations you recommended",
+		history,
+		turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily},
+		brief,
+	)
+
+	if !slices.Contains(got.TargetPacket, "conversation_context:previous_assistant_recommendation") {
+		t.Fatalf("plan-execute follow-up should still carry prior recommendation packet, got %#v", got.TargetPacket)
+	}
+	if !reflect.DeepEqual(got.AllowedEditPaths, baseline.AllowedEditPaths) || !reflect.DeepEqual(got.TargetRefs, baseline.TargetRefs) {
+		t.Fatalf("plan-execute follow-up must not promote prior answer paths into planner scope:\ngot=%#v\nbaseline=%#v", got, baseline)
+	}
+	if strings.Contains(strings.Join(got.TargetPacket, "\n"), "Editable candidate file from previous assistant recommendation") {
+		t.Fatalf("plan-execute follow-up should not mark prior paths as editable candidate files: %#v", got.TargetPacket)
+	}
+}
+
+func TestPlanExecuteCommandFollowupCarriesContextWithoutPromotingScope(t *testing.T) {
+	model := &Model{cfg: config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}}, agentModeName: "build"}
+	objective := "move these values to the locations you recommended"
+	plan := model.planExecuteCommandExecutionPlan(objective)
+	plan.runtimeBrief.AllowedEditPaths = []string{"internal/runtime/workerruntime/existing.go"}
+	plan.runtimeBrief.TargetRefs = []string{"internal/runtime/workerruntime/existing.go"}
+	history := []llama.ChatMessage{
+		{Role: "user", Content: "Which values should move from internal/runtime/workerruntime/catalog.go?"},
+		{Role: "assistant", Content: "Move values to internal/runtime/workerruntime/vocabulary.go, then replace catalog.go literals."},
+		{Role: "user", Content: objective},
+	}
+
+	got := promptExecutionPlanWithConversationContext(objective, history, plan)
+
+	if !slices.Contains(got.runtimeBrief.TargetPacket, implementationFollowupPriorAssistantMarker) {
+		t.Fatalf("plan-execute follow-up should carry prior recommendation context, got %#v", got.runtimeBrief.TargetPacket)
+	}
+	if !reflect.DeepEqual(got.runtimeBrief.AllowedEditPaths, []string{"internal/runtime/workerruntime/existing.go"}) ||
+		!reflect.DeepEqual(got.runtimeBrief.TargetRefs, []string{"internal/runtime/workerruntime/existing.go"}) {
+		t.Fatalf("plan-execute follow-up must not promote prior answer paths into planner scope: %#v", got.runtimeBrief)
+	}
+}
+
+func TestImplementCommandFollowupUsesRawConversationWhenPayloadHistoryIsCompacted(t *testing.T) {
+	model := newTestModelWithWorkspace(t)
+	root := model.workspace.Root()
+	if err := os.MkdirAll(filepath.Join(root, "internal/runtime/workerruntime"), 0o755); err != nil {
+		t.Fatalf("mkdir fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal/runtime/workerruntime/vocabulary.go"), []byte("package workerruntime\n"), 0o644); err != nil {
+		t.Fatalf("write vocabulary fixture: %v", err)
+	}
+
+	objective := "move these values to the locations you recommended"
+	plan := model.implementCommandExecutionPlan(objective)
+	model.messages = []llama.ChatMessage{
+		{Role: "user", Content: "Where should the catalog constants go?"},
+		{Role: "assistant", Content: "Move them to internal/runtime/workerruntime/vocabulary.go."},
+		{Role: "user", Content: objective},
+	}
+	payloadHistory := []llama.ChatMessage{
+		{Role: "system", Content: model.systemPrompt()},
+		{Role: "user", Content: objective},
+	}
+
+	got := promptExecutionPlanWithConversationContext(objective, model.conversationFollowupHistory(objective, false), plan, root)
+	lost := promptExecutionPlanWithConversationContext(objective, payloadHistory, plan, root)
+
+	if !slices.Contains(got.runtimeBrief.AllowedEditPaths, "internal/runtime/workerruntime/vocabulary.go") {
+		t.Fatalf("raw conversation follow-up should recover prior recommendation edit path, got %#v", got.runtimeBrief.AllowedEditPaths)
+	}
+	if slices.Contains(lost.runtimeBrief.AllowedEditPaths, "internal/runtime/workerruntime/vocabulary.go") {
+		t.Fatalf("compacted payload-only history should not be the source of prior recommendation recovery: %#v", lost.runtimeBrief.AllowedEditPaths)
+	}
+}
+
+func TestImplementCommandConversationFollowupProjectsRecommendationIntoRunnerPrompt(t *testing.T) {
+	model := newTestModelWithWorkspace(t)
+	root := model.workspace.Root()
+	if err := os.MkdirAll(filepath.Join(root, "internal/runtime/workerruntime"), 0o755); err != nil {
+		t.Fatalf("mkdir fixture: %v", err)
+	}
+	for _, rel := range []string{
+		"internal/runtime/workerruntime/vocabulary.go",
+		"internal/runtime/workerruntime/catalog.go",
+	} {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(rel)), []byte("package workerruntime\n"), 0o644); err != nil {
+			t.Fatalf("write fixture %s: %v", rel, err)
+		}
+	}
+	model.SetNonInteractive(true)
+	client := &scriptedLLMClient{responses: []string{"I will apply the recommended edit scope."}}
+	model.client = client
+	model.messages = []llama.ChatMessage{
+		{Role: "user", Content: "Which literal strings in internal/runtime/workerruntime/catalog.go should become enums?"},
+		{Role: "assistant", Content: "The fix: add FinalCriticID and SearchPolicyID constants in internal/runtime/workerruntime/vocabulary.go, then replace catalog.go literals."},
+	}
+
+	_, _ = model.RunPromptOnce(context.Background(), "/implement move these values to the locations you recommended")
+
+	if len(client.messages) == 0 {
+		t.Fatal("expected implement command to reach the runner model call")
+	}
+
+	firstRequest := renderMessagesForRuntimeBriefAssertion(client.messages[0])
+	for _, want := range []string{
+		"conversation_context:previous_assistant_recommendation",
+		"FinalCriticID",
+		"SearchPolicyID",
+		"Editable candidate file from previous assistant recommendation: internal/runtime/workerruntime/vocabulary.go",
+		"Editable candidate file from previous assistant recommendation: internal/runtime/workerruntime/catalog.go",
+		"target_refs",
+		"allowed_edit_paths",
+	} {
+		if !strings.Contains(firstRequest, want) {
+			t.Fatalf("runner prompt missing %q:\n%s", want, firstRequest)
+		}
+	}
+}
+
+func renderMessagesForRuntimeBriefAssertion(messages []llama.ChatMessage) string {
+	var b strings.Builder
+	for _, msg := range messages {
+		b.WriteString(msg.Role)
+		b.WriteString(":\n")
+		b.WriteString(msg.Content)
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
 func TestPlanExecutePromptRunnerDirectQuestionUsesConversationOnlyBrief(t *testing.T) {
 	root := t.TempDir()
 	model := &Model{
@@ -1196,25 +1931,25 @@ func TestBuildPromptExecutionPlanCapturesRequiredReadsAsEvidence(t *testing.T) {
 }
 
 func TestPromptStructuredPacketMarkerRequiresPacketShape(t *testing.T) {
-	if promptHasStructuredPacketMarker(`{"evidence":"one incidental field"}`) {
+	if plancontract.PromptHasStructuredPacketMarker(`{"evidence":"one incidental field"}`) {
 		t.Fatal("single generic evidence field should not be enough to mark a structured packet")
 	}
 
-	if promptHasStructuredPacketMarker(`Document how planning_packet_v2 is named in prompts.`) {
+	if plancontract.PromptHasStructuredPacketMarker(`Document how planning_packet_v2 is named in prompts.`) {
 		t.Fatal("bare planning_packet prose should not mark a structured packet")
 	}
 
-	if promptHasStructuredPacketMarker(`Document the "schema" for planning_packet_v2 prompts.`) {
+	if plancontract.PromptHasStructuredPacketMarker(`Document the "schema" for planning_packet_v2 prompts.`) {
 		t.Fatal("planning_packet prose plus quoted schema should not mark a structured packet")
 	}
 
-	if !promptHasStructuredPacketMarker(`{"candidate_scope":[{"path":"a/b.go"}],"evidence":[{"source":"a/c.go"}]}`) {
+	if !plancontract.PromptHasStructuredPacketMarker(`{"candidate_scope":[{"path":"a/b.go"}],"evidence":[{"source":"a/c.go"}]}`) {
 		t.Fatal("candidate scope plus evidence should mark a structured packet")
 	}
 }
 
 func TestPromptContextPacketProjectionPrefersStructuredPacket(t *testing.T) {
-	projection := promptContextPacketProjection(`{"candidate_scope":[{"path":"a/b.go"}],"evidence":[{"source":"a/c.go"}]}`)
+	projection := plancontract.PromptContextPacketProjectionFromPrompt(`{"candidate_scope":[{"path":"a/b.go"}],"evidence":[{"source":"a/c.go"}]}`)
 	if !projection.StructuredPacket || !projection.Dispatchable || projection.LegacyHeadingFallback {
 		t.Fatalf("structured packet should be typed dispatchable without heading fallback: %#v", projection)
 	}
@@ -1224,14 +1959,14 @@ func TestPromptContextPacketProjectionPrefersStructuredPacket(t *testing.T) {
 }
 
 func TestPromptContextPacketProjectionMarksHeadingScanAsCompatibilityFallback(t *testing.T) {
-	projection := promptContextPacketProjection("## Context Pack\n\n- internal/surfaces/tui/app/prompt_routing.go\n")
+	projection := plancontract.PromptContextPacketProjectionFromPrompt("## Context Pack\n\n- internal/surfaces/tui/app/prompt_routing.go\n")
 	if projection.StructuredPacket || !projection.LegacyHeadingFallback || projection.State != "dispatchable" || !projection.Dispatchable {
 		t.Fatalf("heading context should be compatibility fallback, got %#v", projection)
 	}
 }
 
 func TestPromptContextPacketProjectionRequiresStructuredOrLegacyEvidence(t *testing.T) {
-	projection := promptContextPacketProjection("Explain the prompt router without any attached packet.")
+	projection := plancontract.PromptContextPacketProjectionFromPrompt("Explain the prompt router without any attached packet.")
 	if projection.StructuredPacket || projection.LegacyHeadingFallback || projection.Dispatchable || projection.State != workflowstate.StateTerminal {
 		t.Fatalf("plain prompt should not be context-packet dispatchable: %#v", projection)
 	}
@@ -1247,7 +1982,7 @@ Context Packet:
 Required Behavior:
 - Explain the route.
 `
-	if markers := promptContextPacketMarkers(prompt); slices.Contains(markers, "prompt_context:context_packet") {
+	if markers := plancontract.PromptContextPacketMarkersFromPrompt(prompt); slices.Contains(markers, "prompt_context:context_packet") {
 		t.Fatalf("empty context packet heading should not create marker, got %#v", markers)
 	}
 }
@@ -1257,7 +1992,7 @@ func TestPromptContextPacketMarkerAcceptsTrailingColonPathContent(t *testing.T) 
 Context Packet:
 - internal/surfaces/tui/app/prompt_routing.go:
 `
-	if markers := promptContextPacketMarkers(prompt); !slices.Contains(markers, "prompt_context:context_packet") {
+	if markers := plancontract.PromptContextPacketMarkersFromPrompt(prompt); !slices.Contains(markers, "prompt_context:context_packet") {
 		t.Fatalf("path content ending in colon should create context packet marker, got %#v", markers)
 	}
 }
@@ -1268,7 +2003,7 @@ Context Packet:
 Evidence:
 - internal/surfaces/tui/app/prompt_routing.go
 `
-	if markers := promptContextPacketMarkers(prompt); !slices.Contains(markers, "prompt_context:context_packet") {
+	if markers := plancontract.PromptContextPacketMarkersFromPrompt(prompt); !slices.Contains(markers, "prompt_context:context_packet") {
 		t.Fatalf("nested evidence should create context packet marker, got %#v", markers)
 	}
 }
@@ -1618,7 +2353,7 @@ Context Packet:
 Required Behavior:
 - internal/surfaces/tui/app/prompt_routing.go
 `
-	if got := promptContextEvidencePaths(prompt); len(got) != 0 {
+	if got := plancontract.PromptContextEvidencePathsFromPrompt(prompt); len(got) != 0 {
 		t.Fatalf("empty context packet should not borrow later behavior paths, got %#v", got)
 	}
 }
@@ -1745,7 +2480,7 @@ func TestPromptContainsExactEditAnchorRecognizesStructuredJSONFields(t *testing.
   "old_text": "before();",
   "new_text": "after();"
 }`
-	if !promptContainsExactEditAnchor(prompt) {
+	if !plancontract.PromptContainsExactEditAnchor(prompt) {
 		t.Fatal("expected structured old_text/new_text fields to count as an exact edit anchor")
 	}
 }

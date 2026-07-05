@@ -296,35 +296,6 @@ func (m *Manager) recoveryDecomposeOutputPath(failureID string, outputPath strin
 	return "", fmt.Errorf("recovery_decompose output_path must stay under .idiom/recovery")
 }
 
-func (m *Manager) workspaceContainedPath(path string) (string, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return "", fmt.Errorf("path is required")
-	}
-
-	fullPath := path
-	if !filepath.IsAbs(fullPath) {
-		fullPath = filepath.Join(m.cfg.Root, fullPath)
-	}
-
-	absRoot, err := filepath.Abs(m.cfg.Root)
-	if err != nil {
-		return "", fmt.Errorf("resolve workspace root: %w", err)
-	}
-
-	absPath, err := filepath.Abs(fullPath)
-	if err != nil {
-		return "", fmt.Errorf("resolve path: %w", err)
-	}
-
-	rel, err := filepath.Rel(absRoot, absPath)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return "", fmt.Errorf("path must stay under workspace root")
-	}
-
-	return absPath, nil
-}
-
 func (m *Manager) recoveryPartialState(ctx context.Context, record recoverycontract.FailureRecord) recoverycontract.PartialState {
 	dirtyPaths, err := gitDirtyPathsForRecovery(ctx, m.cfg.Root)
 	if err != nil {

@@ -1423,7 +1423,7 @@ func sanitizePlanAuditText(value string, limit int) string {
 		return ""
 	}
 
-	if planAuditTextLooksSensitive(value) {
+	if sensitivity.ContainsSensitiveText(value) {
 		return "redacted:" + planAuditHash(value)
 	}
 
@@ -1437,7 +1437,7 @@ func sanitizePlanAuditText(value string, limit int) string {
 
 func sanitizePlanAuditToken(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
-	if value == "" || planAuditTextLooksSensitive(value) {
+	if value == "" || sensitivity.ContainsSensitiveText(value) {
 		return ""
 	}
 
@@ -1465,10 +1465,6 @@ func sanitizePlanAuditToken(value string) string {
 	}
 
 	return strings.Trim(b.String(), "_")
-}
-
-func planAuditTextLooksSensitive(value string) bool {
-	return sensitivity.ContainsSensitiveText(value)
 }
 
 func planAuditHash(value string) string {

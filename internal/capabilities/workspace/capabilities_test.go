@@ -137,14 +137,14 @@ func TestReadOnlyCapabilityResolverDoesNotFacadeWriteCapabilities(t *testing.T) 
 }
 
 func TestReadOnlyCapabilityRegistryPromotesStableSubsetOfCodeNavigate(t *testing.T) {
-	if implementations, ok := ResolveReadOnlyCapability(CodeNavigateCapabilityName(CapImplementations), nil); !ok ||
+	if implementations, ok := ResolveReadOnlyCapability(string(CapImplementations), nil); !ok ||
 		implementations.Capability.ID != string(ReadOnlyCapabilityImplementations) {
 
 		t.Fatalf("implementations should be promoted as a stable product capability, got ok=%v resolution=%#v", ok, implementations)
 	}
 
 	for _, capability := range []string{
-		CodeNavigateCapabilityName(CapExtractBody),
+		string(CapExtractBody),
 	} {
 		if _, ok := ResolveReadOnlyCapability(capability, nil); ok {
 			t.Fatalf("%s should remain outside read_only_capability until promoted as a stable product capability", capability)

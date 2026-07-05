@@ -44,12 +44,12 @@ func TestP75DiscoveryProfileDeniesPrivatePathMutationWithoutLeakingInput(t *test
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{
+	code := RunWithTelemetry([]string{
 		"write_file",
 		"-config", configPath,
 		"--profile", "discovery",
 		"--input", fmt.Sprintf(`{"path":%q,"content":%q}`, privatePath, secretSentinel),
-	}, &stdout, &stderr)
+	}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -72,12 +72,12 @@ func TestP75DiscoveryProfileDeniesShellBeforeExternalSideEffect(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{
+	code := RunWithTelemetry([]string{
 		"shell",
 		"-config", configPath,
 		"--profile", "discovery",
 		"--input", fmt.Sprintf(`{"command":%q}`, command),
-	}, &stdout, &stderr)
+	}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -99,12 +99,12 @@ func TestP75DiscoveryProfileDeniesArtifactWritingContextRequestBeforeExecution(t
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{
+	code := RunWithTelemetry([]string{
 		"context_pack",
 		"-config", configPath,
 		"--profile", "discovery",
 		"--input", fmt.Sprintf(`{"task":%q,"mode":"plan","limit":1}`, secretTask),
-	}, &stdout, &stderr)
+	}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -139,12 +139,12 @@ func TestP75DiscoveryProfileDeniesExternalSideEffectToolsBeforeExecution(t *test
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{
+	code := RunWithTelemetry([]string{
 		"publish_release",
 		"-config", configPath,
 		"--profile", "discovery",
 		"--input", `{"target":"prod"}`,
-	}, &stdout, &stderr)
+	}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -186,12 +186,12 @@ func TestP75DiscoveryProfileRequiresExternalReadOnlyDiscoveryDeclaration(t *test
 
 			var stdout, stderr bytes.Buffer
 
-			code := Run([]string{
+			code := RunWithTelemetry([]string{
 				tc.name,
 				"-config", configPath,
 				"--profile", "discovery",
 				"--input", `{}`,
-			}, &stdout, &stderr)
+			}, &stdout, &stderr, nil)
 
 			if code != tc.wantCode {
 				t.Fatalf("exit code = %d, want %d stdout=%s stderr=%s", code, tc.wantCode, stdout.String(), stderr.String())

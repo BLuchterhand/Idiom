@@ -323,14 +323,15 @@ type Obligation struct {
 }
 
 type BudgetState struct {
-	MaxToolSteps       int    `json:"max_tool_steps,omitempty"`
-	UsedToolSteps      int    `json:"used_tool_steps,omitempty"`
-	MaxModelCalls      int    `json:"max_model_calls,omitempty"`
-	UsedModelCalls     int    `json:"used_model_calls,omitempty"`
-	MaxContextMessages int    `json:"max_context_messages,omitempty"`
-	MaxContextChars    int    `json:"max_context_chars,omitempty"`
-	Exhausted          bool   `json:"exhausted,omitempty"`
-	ExhaustionReason   string `json:"exhaustion_reason,omitempty"`
+	MaxToolSteps             int    `json:"max_tool_steps,omitempty"`
+	UsedToolSteps            int    `json:"used_tool_steps,omitempty"`
+	MaxModelCalls            int    `json:"max_model_calls,omitempty"`
+	MaxOperationalModelCalls int    `json:"max_operational_model_calls,omitempty"`
+	UsedModelCalls           int    `json:"used_model_calls,omitempty"`
+	MaxContextMessages       int    `json:"max_context_messages,omitempty"`
+	MaxContextChars          int    `json:"max_context_chars,omitempty"`
+	Exhausted                bool   `json:"exhausted,omitempty"`
+	ExhaustionReason         string `json:"exhaustion_reason,omitempty"`
 }
 
 type VerificationRequirement struct {
@@ -920,12 +921,13 @@ func validateCapabilityPolicy(policy CapabilityPolicy, problems *validationProbl
 
 func validateBudget(b BudgetState, problems *validationProblems) {
 	values := map[string]int{
-		"budget.max_tool_steps":       b.MaxToolSteps,
-		"budget.used_tool_steps":      b.UsedToolSteps,
-		"budget.max_model_calls":      b.MaxModelCalls,
-		"budget.used_model_calls":     b.UsedModelCalls,
-		"budget.max_context_messages": b.MaxContextMessages,
-		"budget.max_context_chars":    b.MaxContextChars,
+		"budget.max_tool_steps":              b.MaxToolSteps,
+		"budget.used_tool_steps":             b.UsedToolSteps,
+		"budget.max_model_calls":             b.MaxModelCalls,
+		"budget.max_operational_model_calls": b.MaxOperationalModelCalls,
+		"budget.used_model_calls":            b.UsedModelCalls,
+		"budget.max_context_messages":        b.MaxContextMessages,
+		"budget.max_context_chars":           b.MaxContextChars,
 	}
 	for field, value := range values {
 		if value < 0 {

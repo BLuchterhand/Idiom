@@ -32,10 +32,6 @@ func SelectFeaturePlanProjectionCandidate(state FeatureState) (FeaturePlanProjec
 	return FeaturePlanProjectionCandidate{}, false
 }
 
-func FeaturePlanHasDisplayableContent(plan FeaturePlan) bool {
-	return featurePlanHasDisplayableContent(plan)
-}
-
 func featurePlanHasDisplayableContent(plan FeaturePlan) bool {
 	return strings.TrimSpace(plan.TopLevelScope.Objective) != "" ||
 		strings.TrimSpace(plan.SourceTask.Summary) != "" ||

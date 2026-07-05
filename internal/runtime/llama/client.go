@@ -566,6 +566,7 @@ func repairMessageToolPairing(messages []ChatMessage) []ChatMessage {
 
 func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts ChatOptions, onDelta func(string) error) error {
 	adapter := c.adapter()
+	messages = repairMessageToolPairing(messages)
 	if opts.Model == "" {
 		if adapter.RequiresAuth() {
 			opts.Model = c.modelName
@@ -927,6 +928,7 @@ func (c *Client) completeMessagesChatMessage(ctx context.Context, messages []Cha
 		return ChatMessage{}, llmUnsupportedError(fmt.Sprintf("messages payload is not implemented for %s backend", c.Backend()))
 	}
 
+	messages = repairMessageToolPairing(messages)
 	prepared := adapter.MessagesPayload(messages, opts, false, c.requestSettings())
 	c.toolNameReverse = prepared.ToolNameReverse
 
@@ -984,6 +986,7 @@ func remapToolCalls(calls []ToolCall, reverse map[string]string) []ToolCall {
 
 func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage, opts ChatOptions) (ChatMessage, error) {
 	adapter := c.adapter()
+	messages = repairMessageToolPairing(messages)
 	if opts.Model == "" {
 		if adapter.RequiresAuth() {
 			opts.Model = c.modelName

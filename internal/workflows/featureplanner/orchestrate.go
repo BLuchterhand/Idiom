@@ -911,13 +911,17 @@ func BuildImplementorPromptFromContract(atom FeatureAtomState, plan FeaturePlan,
 	}
 
 	if contract.ContractID != "" {
-		b.WriteString("\nTyped plan execution contract:\n")
+		b.WriteString("\n")
+		b.WriteString(plancontract.PromptPlanExecutionContractMarker)
+		b.WriteString("\n")
 		b.Write(planContractBody)
 		b.WriteString("\n")
 	}
 
 	if atomContract.AtomID != "" {
-		b.WriteString("\nTyped plan authority projection:\n")
+		b.WriteString("\n")
+		b.WriteString(plancontract.PromptAtomExecutionContractMarker)
+		b.WriteString("\n")
 		b.Write(contractBody)
 		b.WriteString("\n")
 	}
@@ -981,48 +985,6 @@ func acceptedSourceContractDeltaConstraint(delta plancontract.AuthorityDelta) st
 	return strings.TrimSpace(strings.Join(parts, " | "))
 }
 
-func PlanExecuteAuthorizedNewFilesFromImplementorPrompt(prompt string) []string {
-	contractJSON := promptSectionAfterMarker(prompt, "Typed plan execution contract:")
-	if strings.TrimSpace(contractJSON) == "" {
-		return nil
-	}
-
-	var contract plancontract.PlanExecutionContract
-
-	if err := json.Unmarshal([]byte(contractJSON), &contract); err != nil {
-		return nil
-	}
-
-	var paths []string
-
-	for _, file := range contract.Normalized().AuthorizedNewFiles {
-		if path := plancontract.NormalizeScopePath(file.Path); path != "" {
-			paths = append(paths, path)
-		}
-	}
-
-	return normalizedStringList(paths)
-}
-
-func promptSectionAfterMarker(prompt string, marker string) string {
-	idx := strings.Index(prompt, marker)
-	if idx < 0 {
-		return ""
-	}
-
-	section := strings.TrimSpace(prompt[idx+len(marker):])
-	for _, next := range []string{
-		"\nTyped plan authority projection:",
-		"\nAtom contract:",
-	} {
-		if nextIdx := strings.Index(section, next); nextIdx >= 0 {
-			section = section[:nextIdx]
-		}
-	}
-
-	return strings.TrimSpace(section)
-}
-
 func planExecuteRunIDForAtom(atomID string, attempt int) string {
 	stem := strings.Trim(strings.Map(func(r rune) rune {
 		switch {
@@ -1072,7 +1034,7 @@ func planExecuteRunIDForAtom(atomID string, attempt int) string {
 }
 
 func buildFeaturePlannerAtomScopeSection(requiredEditPaths []string, allowedEditPaths []string) string {
-	required := normalizeEditScopeList(requiredEditPaths)
+	required := plancontract.UniqueScopePaths(requiredEditPaths)
 	allowed := plancontract.AllowedScopePathsExcludingRequired(allowedEditPaths, required)
 
 	if len(required) == 0 && len(allowed) == 0 {
@@ -1763,7 +1725,7 @@ func verificationCommandResultsFromCompletion(atom FeatureAtomState, completion 
 			Passed:            VerificationClosureStatusAllowed(VerificationClosureStatus(status)),
 			Source:            source,
 			ObligationRefs:    normalizeCompletionStableIDList(obligationRefs),
-			TestArtifactPaths: normalizeEditScopeList(artifactPaths),
+			TestArtifactPaths: plancontract.UniqueScopePaths(artifactPaths),
 		})
 	}
 
@@ -2446,7 +2408,7 @@ func acceptedSourceRepairQuestion(issues []StandaloneValidationIssue, prompt str
 		}
 		paths = append(paths, issue.AffectedPaths...)
 	}
-	paths = normalizeEditScopeList(paths)
+	paths = plancontract.UniqueScopePaths(paths)
 	if len(paths) == 0 {
 		return PlannerQuestion{}, false
 	}
@@ -2491,7 +2453,7 @@ func verificationCommandRepairQuestion(issues []StandaloneValidationIssue, promp
 		RequestedDecision: fmt.Sprintf("For %q, provide the exact verification command to use for this project, or revise the project setup before planning continues. Rejected command candidate(s): %s", request, strings.Join(commands, ", ")),
 		AuthorityRequired: "operator_approval",
 		RequiredBefore:    "plan_approval",
-		AffectedPaths:     normalizeEditScopeList(paths),
+		AffectedPaths:     plancontract.UniqueScopePaths(paths),
 		AffectedFields:    []string{"verification_command"},
 	}, true
 }
@@ -2548,7 +2510,7 @@ func missingNewFileAuthorizationPlannerQuestion(err error, prompt string, option
 		return PlannerQuestion{}, false
 	}
 
-	paths := normalizeEditScopeList(missing.Paths)
+	paths := plancontract.UniqueScopePaths(missing.Paths)
 	if len(paths) == 0 {
 		return PlannerQuestion{}, false
 	}
@@ -2747,7 +2709,7 @@ func missingPathLocalizationQuestion(err error, prompt string) (PlannerQuestion,
 		return PlannerQuestion{}, false
 	}
 
-	paths := normalizeEditScopeList(missing.Paths)
+	paths := plancontract.UniqueScopePaths(missing.Paths)
 	if len(paths) == 0 {
 		return PlannerQuestion{}, false
 	}
@@ -2778,7 +2740,7 @@ func sourceSignatureVerificationQuestion(err error, prompt string) (PlannerQuest
 		return PlannerQuestion{}, false
 	}
 
-	paths := normalizeEditScopeList(append(repoPathsMentionedInText(prompt), repoPathsMentionedInText(errText)...))
+	paths := plancontract.UniqueScopePaths(append(repoPathsMentionedInText(prompt), repoPathsMentionedInText(errText)...))
 
 	return PlannerQuestion{
 		QuestionSummary:   "Provide accepted source facts for helper signatures",
@@ -2851,7 +2813,7 @@ func planAuthorityDeltaFromQuestion(question PlannerQuestion, revision int, now 
 		QuestionID:     firstNonEmpty(question.QuestionID, question.ID),
 		AuthorityKind:  firstNonEmpty(question.AnswerSourceKind, question.AuthorityRequired, "operator_approval"),
 		EvidenceRefs:   evidenceRefs,
-		AffectedPaths:  normalizeEditScopeList(question.AffectedPaths),
+		AffectedPaths:  plancontract.UniqueScopePaths(question.AffectedPaths),
 		AffectedFields: normalizedStringList(question.AffectedFields),
 		Expected:       strings.TrimSpace(question.BlockingClaim),
 		Actual:         strings.TrimSpace(question.Answer),
@@ -2872,8 +2834,8 @@ func deriveAcceptedSourceAuthorityFacts(delta PlanAuthorityDelta) []SourceAuthor
 		return normalizeSourceAuthorityFacts(facts)
 	}
 
-	paths := normalizeEditScopeList(append(append([]string(nil), delta.AffectedPaths...), delta.EvidenceRefs...))
-	paths = normalizeEditScopeList(append(paths, repoPathsMentionedInText(delta.Actual)...))
+	paths := plancontract.UniqueScopePaths(append(append([]string(nil), delta.AffectedPaths...), delta.EvidenceRefs...))
+	paths = plancontract.UniqueScopePaths(append(paths, repoPathsMentionedInText(delta.Actual)...))
 
 	for _, signature := range extractSignatures(delta.Actual) {
 		symbol := signatureSymbol(signature)
@@ -3051,7 +3013,7 @@ func acceptedSourceSignatureBlockerCovered(blocker string, grounding atomPromptG
 
 func normalizedEditScopeSet(paths []string) map[string]struct{} {
 	out := map[string]struct{}{}
-	for _, path := range normalizeEditScopeList(paths) {
+	for _, path := range plancontract.UniqueScopePaths(paths) {
 		out[path] = struct{}{}
 	}
 	return out

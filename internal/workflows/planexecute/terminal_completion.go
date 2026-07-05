@@ -12,6 +12,7 @@ import (
 	plancontract "idiom/internal/contracts/plan"
 	recoverycontract "idiom/internal/contracts/recovery"
 	"idiom/internal/platform/atomicfile"
+	"idiom/internal/platform/sessionid"
 )
 
 type PlanExecuteTerminalCompletionInput struct {
@@ -248,7 +249,7 @@ func planExecuteTerminalCompletionPath(root string, sessionID string) (string, s
 		return "", "", fmt.Errorf("workspace root is empty")
 	}
 
-	if !validProgressSessionID(sessionID) {
+	if !sessionid.Valid(sessionID) {
 		return "", "", fmt.Errorf("invalid plan-execute terminal completion session id %q", sessionID)
 	}
 

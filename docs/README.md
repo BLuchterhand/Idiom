@@ -15,6 +15,7 @@ patent material are intentionally excluded from the repository.
 ## Maintainer Guides
 
 - [Architecture](architecture.md)
+- [Consolidation overhaul design](consolidation-overhaul-design.md)
 - [Development](development.md)
 - [Release](release.md)
 - [Security and privacy posture](security-privacy-posture.md)

@@ -206,10 +206,6 @@ func planExecuteSourceSatisfiedEvidencePaths(answer string, requiredEditPaths []
 	return scoped
 }
 
-func planExecuteMissingSourceSatisfiedCoveragePaths(answer string, requiredEditPaths []string) []string {
-	return plancontract.SourceSatisfiedMissingCoveragePaths(answer, requiredEditPaths)
-}
-
 func planExecuteSourceSatisfiedUnsupportedEvidenceMarkers() []string {
 	return []string{
 		"not shown in full",

@@ -17,6 +17,7 @@ import (
 	"unicode"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/capabilities/workspace/patching"
 	"idiom/internal/contracts/autonomy"
 	contractcompile "idiom/internal/contracts/compile"
 	"idiom/internal/contracts/pathparse"
@@ -534,8 +535,6 @@ type GateEngine interface {
 
 type defaultGateEngine struct{ runner *Runner }
 
-func newGateEngine() GateEngine { return defaultGateEngine{} }
-
 func (r *Runner) gateEngine() GateEngine {
 	if r != nil && r.GateEngine != nil {
 		return r.GateEngine
@@ -596,7 +595,6 @@ func gateDecisionKindForSummary(summary string) (GateDecisionKind, string) {
 
 type EvidenceEngine interface {
 	ClosureDecision(workerruntime.WorkerRuntimeBrief, []workspace.ToolResult) ReadOnlyCloseout
-	Answerability(workerruntime.WorkerRuntimeBrief, []workspace.ToolResult) readOnlyAnswerabilityLedger
 	PendingRedirectsForBrief(workerruntime.WorkerRuntimeBrief, []workspace.ToolResult) []sourceEvidenceObligation
 	EvidenceForPath([]workspace.ToolResult, string) planThenExecuteSourceEvidence
 }
@@ -616,10 +614,6 @@ func (defaultEvidenceEngine) ClosureDecision(brief workerruntime.WorkerRuntimeBr
 	return readOnlyClosureDecisionForResults(brief, results)
 }
 
-func (defaultEvidenceEngine) Answerability(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) readOnlyAnswerabilityLedger {
-	return readOnlyAnswerabilityForResults(brief, results)
-}
-
 func (defaultEvidenceEngine) PendingRedirectsForBrief(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []sourceEvidenceObligation {
 	return sourceEvidencePendingRedirectsForBrief(brief, results)
 }
@@ -631,7 +625,6 @@ func (defaultEvidenceEngine) EvidenceForPath(results []workspace.ToolResult, pat
 type GuidanceEngine interface {
 	ClosureActive(workerruntime.WorkerRuntimeBrief, []workspace.ToolResult) bool
 	DelegatedReadOnlyClosureReady(workerruntime.WorkerRuntimeBrief, []workspace.ToolResult) bool
-	ScratchpadCloseoutReady(workerruntime.WorkerRuntimeBrief, []workspace.ToolResult) bool
 }
 
 type defaultGuidanceEngine struct {
@@ -671,10 +664,6 @@ func (e defaultGuidanceEngine) DelegatedReadOnlyClosureReady(brief workerruntime
 	return e.evidence.ClosureDecision(brief, results).Answerable()
 }
 
-func (e defaultGuidanceEngine) ScratchpadCloseoutReady(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	return scratchpadDeliverableCloseoutReady(brief, results)
-}
-
 type CardEngine interface {
 	BuildRecoveryCard(RecoveryCardInput) RecoveryCard
 	RenderRecoveryCard(RecoveryCard) string
@@ -700,13 +689,6 @@ type planExecuteRecoveryHooks struct {
 type defaultCardEngine struct{}
 
 func newCardEngine() defaultCardEngine { return defaultCardEngine{} }
-
-func (r *Runner) cardEngine() CardEngine {
-	if r != nil && r.CardEngine != nil {
-		return r.CardEngine
-	}
-	return newCardEngine()
-}
 
 func (r *Runner) planExecuteRecoveryHooks() planExecuteRecoveryHooks {
 	if r == nil {
@@ -752,42 +734,12 @@ func (hooks planExecuteRecoveryHooks) nativeNoCallFallbackPrompt(requiredPaths [
 	}
 	return RenderPlanExecuteRecoveryPlan(planThenExecuteNativeNoCallFallbackRecoveryPlan(requiredPaths))
 }
-func (hooks planExecuteRecoveryHooks) anchorRefreshRequiredError(refreshPaths []string, result workspace.ToolResult) string {
-	if hooks.onAnchorRefreshRequiredError != nil {
-		return hooks.onAnchorRefreshRequiredError(refreshPaths, result)
-	}
-	return "the previous `submit_plan` was rejected before it became a valid plan artifact, and the corrected plan still needs bounded source-body refresh for: " + strings.Join(nonEmptyRunnerStrings(refreshPaths, 4), ", ") + ". " + lastSubmitPlanRejectionBrief(result) + planThenExecuteAnchorRefreshReadFallbackInstruction(refreshPaths) + " Do not call `submit_plan` until the remaining anchor refresh returns."
-}
-func (hooks planExecuteRecoveryHooks) anchorRefreshRequiredPathError(target string, nextInstruction string) string {
-	if hooks.onAnchorRefreshRequiredPathError != nil {
-		return hooks.onAnchorRefreshRequiredPathError(target, nextInstruction)
-	}
-	return "the previous submit_plan named an invalid edit anchor outside required_edit_paths. Do not refresh out-of-scope anchors; " + nextInstruction + ". Then submit_plan, source-satisfied, or <<QUESTION>> with the exact blocker."
-}
 func (hooks planExecuteRecoveryHooks) anchorRefreshWriteOnlyError(tool string, refreshPaths []string) string {
 	if hooks.onAnchorRefreshWriteOnlyError != nil {
 		return hooks.onAnchorRefreshWriteOnlyError(tool, refreshPaths)
 	}
 	targets := strings.Join(nonEmptyRunnerStrings(refreshPaths, 4), ", ")
 	return fmt.Sprintf("%s is not available in its requested form while plan-execute anchor-refresh mode is still open for: %s. Issue exactly one bounded source-body request for a remaining refresh path: `read_file` with explicit `start_line`/`end_line`, or `%s` with %s plus `pattern`. Do not call `submit_plan` until that refresh returns.", strings.TrimSpace(tool), targets, workspace.CodeNavigateToolName, workspace.CodeNavigateSourceBodyCapabilityPhrase())
-}
-func (hooks planExecuteRecoveryHooks) submitCorrectionRequiredError(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, result workspace.ToolResult, refreshNote string) string {
-	if hooks.onSubmitCorrectionRequiredError != nil {
-		return hooks.onSubmitCorrectionRequiredError(brief, results, result, refreshNote)
-	}
-	return "The previous `submit_plan` was rejected before it became a valid plan artifact. " + lastSubmitPlanCorrectionRejectionBrief(result) + planThenExecuteSubmitCorrectionOutcomeInstruction(brief, results) + " " + planThenExecuteSubmitPlanCoverageSentence() + " " + planThenExecuteSubmitPlanCorrectionInstructionForBrief(brief, result) + " " + refreshNote
-}
-func (hooks planExecuteRecoveryHooks) submitCorrectionReadyNudge(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, result workspace.ToolResult) string {
-	if hooks.onSubmitCorrectionReadyNudge != nil {
-		return hooks.onSubmitCorrectionReadyNudge(brief, results, result)
-	}
-	return planThenExecuteReadyToSubmitNudge(brief, results)
-}
-func (hooks planExecuteRecoveryHooks) submitCorrectionWrongToolRejection(tool string, blockerAllowed bool) (string, string, string) {
-	if hooks.onSubmitCorrectionWrongTool != nil {
-		return hooks.onSubmitCorrectionWrongTool(tool, blockerAllowed)
-	}
-	return planThenExecuteSubmitCorrectionWrongToolRejection(tool, blockerAllowed)
 }
 func (hooks planExecuteRecoveryHooks) repeatedCorrectionPlan(result workspace.ToolResult, blockerAllowed bool) PlanExecuteRecoveryPlan {
 	if hooks.onRepeatedCorrectionPlan != nil {
@@ -828,13 +780,6 @@ type VerificationPolicyEngine interface {
 type defaultVerificationPolicyEngine struct{}
 
 func newVerificationPolicyEngine() VerificationPolicyEngine { return defaultVerificationPolicyEngine{} }
-
-func (r *Runner) verificationPolicyEngine() VerificationPolicyEngine {
-	if r != nil && r.VerificationPolicyEngine != nil {
-		return r.VerificationPolicyEngine
-	}
-	return newVerificationPolicyEngine()
-}
 
 func (defaultVerificationPolicyEngine) PostWriteRequired(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, writesSinceVerification int) VerificationPolicyDecision {
 	state := &runnerExecutionState{writesSinceVerification: writesSinceVerification}
@@ -920,44 +865,42 @@ func (defaultLifecycleCloseoutPolicyEngine) BudgetCloseout(policy RunPolicy, met
 	if exhausted {
 		decision = autonomy.PolicyStop
 	}
+	budget := &autonomy.BudgetState{
+		MaxToolSteps:             policy.MaxToolSteps,
+		UsedToolSteps:            metrics.ToolCalls,
+		MaxModelCalls:            policy.MaxModelCalls,
+		MaxOperationalModelCalls: policy.MaxOperationalModelCalls,
+		UsedModelCalls:           metrics.ModelCalls,
+		MaxContextMessages:       policy.MaxContextMessages,
+		MaxContextChars:          policy.MaxContextChars,
+		Exhausted:                exhausted,
+	}
+	if exhausted {
+		budget.ExhaustionReason = reason
+	}
+
 	return LifecycleCloseoutPolicyDecision{Handled: true, Gate: runnerAutonomyGateDecision{
 		Gate:        autonomy.GateBudget,
 		Decision:    decision,
 		InvariantID: "budget.run_policy",
 		ReasonCode:  reason,
-		Budget: &autonomy.BudgetState{
-			MaxToolSteps:       policy.MaxToolSteps,
-			UsedToolSteps:      metrics.ToolCalls,
-			MaxModelCalls:      policy.MaxModelCalls,
-			UsedModelCalls:     metrics.ModelCalls,
-			MaxContextMessages: policy.MaxContextMessages,
-			MaxContextChars:    policy.MaxContextChars,
-			Exhausted:          exhausted,
-			ExhaustionReason:   reason,
-		},
-		Source: "runner_budget_gate",
+		Budget:      budget,
+		Source:      "runner_budget_gate",
 	}}
 }
 
 type ModelCallReadinessPolicyInput struct {
-	Policy                               RunPolicy
-	LanePolicy                           LanePolicy
-	Metrics                              runnerMetrics
-	Brief                                workerruntime.WorkerRuntimeBrief
-	ScopedImplementationEditSurface      bool
-	RemainingRequiredEditPaths           []string
-	HasChangedPaths                      bool
-	ImplementationScopedLastChancePrompt string
+	Policy     RunPolicy
+	LanePolicy LanePolicy
+	Metrics    runnerMetrics
 }
 
 type ModelCallReadinessPolicyDecision struct {
-	Stop                                            bool
-	StopReason                                      string
-	BudgetExhausted                                 bool
-	ForceAnswer                                     bool
-	ForceAnswerPrompt                               string
-	ActivateScopedImplementationLastChanceWriteOnly bool
-	LastChancePrompt                                string
+	Stop            bool
+	StopReason      string
+	BudgetExhausted bool
+	CloseoutMode    noToolsCloseoutMode
+	CloseoutPrompt  string
 }
 
 type ModelCallReadinessPolicyEngine interface {
@@ -978,37 +921,13 @@ func (r *Runner) modelCallReadinessPolicyEngine() ModelCallReadinessPolicyEngine
 }
 
 func (defaultModelCallReadinessPolicyEngine) BeforeModelCall(input ModelCallReadinessPolicyInput) ModelCallReadinessPolicyDecision {
-	lane := input.LanePolicy
-	if lane == nil {
-		lane = DefaultLanePolicy{}
-	}
-	if !lane.SkipDurationBudget() && input.Policy.shouldStopForDuration(input.Metrics.startedAt) {
+	if input.Policy.shouldStopForOperationalModelCalls(input.Metrics.ModelCalls) {
 		return ModelCallReadinessPolicyDecision{
-			Stop:              true,
-			StopReason:        "duration_budget_exhausted",
-			BudgetExhausted:   true,
-			ForceAnswer:       true,
-			ForceAnswerPrompt: "Run duration budget is exhausted. Tools are now disabled. " + forceAnswerTailGatheredEvidence,
-		}
-	}
-	if !lane.SkipModelCallBudget() && input.Policy.shouldStopForModelCalls(input.Metrics.ModelCalls) {
-		return ModelCallReadinessPolicyDecision{
-			Stop:              true,
-			StopReason:        "model_call_budget_exhausted",
-			BudgetExhausted:   true,
-			ForceAnswer:       true,
-			ForceAnswerPrompt: "Model-call budget is exhausted. Tools are now disabled. " + forceAnswerTailGatheredEvidence,
-		}
-	}
-	if input.ScopedImplementationEditSurface &&
-		input.Policy.MaxModelCalls > 0 &&
-		input.Metrics.ModelCalls+1 >= input.Policy.MaxModelCalls &&
-		len(input.RemainingRequiredEditPaths) > 0 &&
-		!input.HasChangedPaths {
-
-		return ModelCallReadinessPolicyDecision{
-			ActivateScopedImplementationLastChanceWriteOnly: true,
-			LastChancePrompt: strings.TrimSpace(input.ImplementationScopedLastChancePrompt),
+			Stop:            true,
+			StopReason:      "operational_model_call_limit_exceeded",
+			BudgetExhausted: true,
+			CloseoutMode:    noToolsCloseoutDeterministicRequired,
+			CloseoutPrompt:  "Operational model-call limit is exhausted. Tools are now disabled. " + forceAnswerTailGatheredEvidence,
 		}
 	}
 	return ModelCallReadinessPolicyDecision{}
@@ -1067,7 +986,7 @@ func (r *Runner) readOnlyWriteChildTaskPermissionDecision(req workspace.ToolRequ
 
 	return PermissionDecisionSnapshot{
 		Tool:     strings.TrimSpace(req.Tool),
-		Target:   permissionTarget(req),
+		Target:   PermissionTarget(req),
 		Decision: PermissionAsk,
 		Rule:     "read_only_workspace task.mode=write decision=ask",
 	}, true
@@ -1415,10 +1334,6 @@ func (r *Runner) planThenExecuteUnscopedEmptySubmitPlanRecoveryPrompt() string {
 	return RenderPlanExecuteRecoveryPlan(r.planExecuteRecoveryHooks().unscopedEmptySubmitPlan())
 }
 
-func initRunnerRuntimeSurfaceForCompile() {
-	_ = time.Now
-}
-
 func (r *Runner) sessionID() string {
 	if r == nil || r.Workspace == nil {
 		return ""
@@ -1494,6 +1409,7 @@ type Runner struct {
 	// enforce real invariants and pass through unchanged.
 	ReadApprovalGate    *ReadApprovalGate
 	currentAllowedTools []string
+	currentTransport    PlanExecutePlanningTransport
 	activeAutonomy      *runnerAutonomyRecorder
 
 	// lastCompletionGateError stores the error text from the most recent
@@ -1504,6 +1420,20 @@ type Runner struct {
 
 func (r *Runner) supportsNativeTools() bool {
 	return r == nil || r.Client == nil || r.Client.SupportsNativeTools()
+}
+
+func (r *Runner) currentPlanningTransport() PlanExecutePlanningTransport {
+	if r == nil {
+		return PlanExecutePlanningTransport{TextualToolParser: true}
+	}
+	if r.currentTransport.SupportsNativeTools ||
+		r.currentTransport.ForceNativeTools ||
+		r.currentTransport.TextualToolParser ||
+		r.currentTransport.ResponseFormatJSON ||
+		r.currentTransport.TerminalOnly {
+		return r.currentTransport
+	}
+	return PlanExecutePlanningTransport{TextualToolParser: true}
 }
 
 // lanePolicy returns the lane-specific behavioral policy, falling back
@@ -1573,7 +1503,6 @@ func (r *Runner) runLegacySessionBody(
 	writeDescriptionRepairPath := ""
 	implementationWriteOnlyHiddenTools := make(map[string]bool)
 	scopedHiddenNonWriteRecoveryUsed := false
-	scopedLastChanceWriteOnlyActive := false
 	scratchpadCloseoutNonWriteRejections := 0
 	// recoveryReadAllowanceUsed tracks paths that have already consumed
 	// their one bounded read during the current write-only recovery. The
@@ -1807,8 +1736,6 @@ func (r *Runner) runLegacySessionBody(
 	consecutiveNarrowToolCalls := 0
 	lastNarrowToolFamily := ""
 	narrowToolFamilyNudgeFired := false
-	narrowToolFamilyRedirectIssued := false
-	narrowToolFamilyRedirectedOriginal := ""
 
 	var preimageStore *PreimageCheckpointStore
 
@@ -1913,6 +1840,7 @@ func (r *Runner) runLegacySessionBody(
 	controller := runnerTurnController{
 		runner:                     r,
 		ctx:                        ctx,
+		policy:                     policy,
 		opts:                       &opts,
 		metrics:                    &metrics,
 		requestBudget:              &requestBudget,
@@ -1926,6 +1854,15 @@ func (r *Runner) runLegacySessionBody(
 		consecutiveRejected:        &consecutiveRejectedActions,
 		consecutiveNoProgress:      &consecutiveNoProgress,
 		currentFingerprint:         &currentFingerprint,
+	}
+	finishNoProgressBudgetExhausted := func(results []workspace.ToolResult) (string, error) {
+		if blocker, ok := r.implementationContractCloseoutBlocker(results, "no_progress_budget_exhausted"); ok {
+			r.emitImplementationLifecycleState(results, "no_progress_budget_exhausted", implementationTargetWriteReadyNudges)
+			return finish(blocker, nil, "no_progress_budget_exhausted", false)
+		}
+
+		answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
+		return finish(answer, err, "no_progress_budget_exhausted", false)
 	}
 	if answer, ok := r.runVerificationBootstrap(runnerVerificationBootstrapInput{
 		ctx:              ctx,
@@ -1943,46 +1880,24 @@ func (r *Runner) runLegacySessionBody(
 	for step := 0; policy.unbounded() || step < policy.MaxToolSteps; step++ {
 		stepNumber := step + 1
 		readiness := r.modelCallReadinessPolicyEngine().BeforeModelCall(ModelCallReadinessPolicyInput{
-			Policy:                               policy,
-			LanePolicy:                           r.lanePolicy(),
-			Metrics:                              metrics,
-			Brief:                                r.RuntimeBrief,
-			ScopedImplementationEditSurface:      implementationScopedEditSurfaceActive(r.RuntimeBrief, collectedResults),
-			RemainingRequiredEditPaths:           r.remainingRequiredEditPaths(collectedResults),
-			HasChangedPaths:                      len(changedPathsFromToolResults(collectedResults)) > 0,
-			ImplementationScopedLastChancePrompt: r.scopedImplementationLastChanceWriteOnlyPrompt(collectedResults),
+			Policy:     policy,
+			LanePolicy: r.lanePolicy(),
+			Metrics:    metrics,
 		})
 		if readiness.Stop {
-			if blocker, ok := r.implementationBudgetExhaustedBlocker(collectedResults, readiness.StopReason); ok {
+			if blocker, ok := r.implementationContractCloseoutBlocker(collectedResults, readiness.StopReason); ok {
 				r.emitImplementationLifecycleState(collectedResults, readiness.StopReason, implementationTargetWriteReadyNudges)
 				return finish(blocker, nil, readiness.StopReason, readiness.BudgetExhausted)
 			}
-			if readiness.ForceAnswer {
-				answer, err := controller.completeWithoutMoreToolsWithReason(readiness.ForceAnswerPrompt)
+			if strings.TrimSpace(readiness.CloseoutPrompt) != "" {
+				answer, err := controller.completeWithoutMoreToolsWithReasonMode(readiness.CloseoutPrompt, readiness.CloseoutMode)
 				return finish(answer, err, readiness.StopReason, readiness.BudgetExhausted)
 			}
 			return finish("", nil, readiness.StopReason, readiness.BudgetExhausted)
 		}
 
-		if readiness.ActivateScopedImplementationLastChanceWriteOnly && !scopedLastChanceWriteOnlyActive {
-			scopedLastChanceWriteOnlyActive = true
-			implementationWriteOnlyRecoveryActive = true
-			requiredPathCompletionRecoveryActive = true
-
-			markRuntimeBriefPathsObserved(r.Workspace, r.RuntimeBrief)
-			hideImplementationWriteOnlyToolsForTurn(turnHiddenTools, implementationWriteOnlyHiddenTools, r.Workspace)
-			rebuildTools()
-
-			prompt := readiness.LastChancePrompt
-
-			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
-			opts = forceVisibleActionChatOptions(opts)
-			opts = planExecuteSetExactMaxTokens(opts, 768)
-
-			r.emitEvent(RunEvent{Role: "implementation_scoped_last_chance_write_only", Content: prompt})
-		}
-
 		modelCallOpts := readOnlyEvidenceAvailableTerminalChatOptions(opts, r.RuntimeBrief, collectedResults)
+		r.currentTransport = PlanExecuteRuntimeCallPolicyFromChatOptions(modelCallOpts, terminalSubmitPlanNativeTools(), false).PlanningTransport()
 		if r.compactTurnMessagesIfNeeded(&turnMessages, policy, taskLedger, collectedResults) {
 			metrics.Compactions++
 		}
@@ -2027,8 +1942,6 @@ func (r *Runner) runLegacySessionBody(
 		}
 
 		modelStart := time.Now()
-
-		turnMessages = stripOrphanedToolCalls(turnMessages)
 
 		requestMessages := turnMessages
 
@@ -2103,6 +2016,7 @@ func (r *Runner) runLegacySessionBody(
 		)
 
 		normalization := normalizeToolRequestSyntax(assistantMessage)
+		normalizedPolicyInput := runnerAutonomyPolicyInputFromNormalization(normalization)
 
 		req, raw, ok, parseErr = normalization.Request, normalization.Raw, normalization.OK, normalization.ParseErr
 		activeToolCall = normalization.ActiveToolCall
@@ -2159,6 +2073,25 @@ func (r *Runner) runLegacySessionBody(
 					r.emitEvent(event)
 				}
 			}
+
+			if !ok &&
+				normalization.EventOutcome == toolRequestNormalizerOutcomeUnsafeToInfer &&
+				r.unsafeToolShapeRecoveryBeforeCompletionGateActive(collectedResults) {
+				rebuildTools()
+				if normalization.UnsafeExplicitTool {
+					controller.recordUnsafeToolShape(stepNumber, activeToolCall, normalization, activeToolCall == nil || r.supportsNativeTools())
+					if prompt := r.unsafeToolShapeRecoveryPrompt(normalization, collectedResults); prompt != "" {
+						turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+						r.emitEvent(RunEvent{Role: "unsafe_tool_shape_recovery", Content: prompt})
+					}
+					continue
+				}
+				if prompt := r.ambiguousModelOutputRecoveryPrompt(normalization, collectedResults); prompt != "" {
+					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+					r.emitEvent(RunEvent{Role: "ambiguous_model_output_recovery", Content: prompt})
+				}
+				continue
+			}
 		}
 
 		if parseErr != nil {
@@ -2189,23 +2122,23 @@ func (r *Runner) runLegacySessionBody(
 		err = parseErr
 		if err != nil {
 			var assistantToolTurn llama.ChatMessage
+			suppressParseFailureModelMessage := false
 
 			if activeToolCall != nil {
 				assistantToolTurn = legacyToolCallHistoryMessage(assistantMessage, *activeToolCall)
 			} else if !r.supportsNativeTools() {
-				assistantToolTurn = textualToolRequestHistoryMessage(assistantMessage, workspace.ToolRequest{Tool: "tool_parse"}, raw)
+				assistantToolTurn = textualToolRequestHistoryMessage(assistantMessage, workspace.ToolRequest{Tool: parserRecoveryToolName}, raw)
 				activeToolCall = nil
 			} else {
-				call := syntheticLegacyParseToolCall(stepNumber, raw)
-
-				activeToolCall = &call
-				assistantToolTurn = legacyToolCallHistoryMessage(assistantMessage, call)
+				suppressParseFailureModelMessage = true
 			}
 
-			assistantToolTurn = r.assistantHistoryMessageForOptions(assistantToolTurn, opts)
-			turnMessages = append(turnMessages, assistantToolTurn)
-			r.emitThinkingTrace(stepNumber, "assistant_turn_preserved", assistantToolTurn, opts, true)
-			controller.recordParseFailure(stepNumber, activeToolCall, raw, err)
+			if strings.TrimSpace(assistantToolTurn.Role) != "" {
+				assistantToolTurn = r.assistantHistoryMessageForOptions(assistantToolTurn, opts)
+				turnMessages = append(turnMessages, assistantToolTurn)
+				r.emitThinkingTrace(stepNumber, "assistant_turn_preserved", assistantToolTurn, opts, true)
+			}
+			controller.recordParseFailure(stepNumber, activeToolCall, raw, err, normalization.EventTransport, normalization.ParserFailureClass, suppressParseFailureModelMessage)
 
 			if recoveryPlan, ok := r.planThenExecuteSubmitPlanParseRecoveryPlan(raw, err, collectedResults); ok {
 				prompt := RenderPlanExecuteRecoveryPlan(recoveryPlan)
@@ -2357,7 +2290,7 @@ func (r *Runner) runLegacySessionBody(
 						continue
 					}
 
-					if answer, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok &&
+					if answer, ok := r.deterministicNoToolsFallback(noToolsFallbackAfterRejectedModelCloseout, collectedResults); ok &&
 						!readOnlyAnswerReportsInsufficientEvidence(answer) {
 
 						return finish(answer, nil, "deterministic_final_answer_recovery", false)
@@ -2371,43 +2304,6 @@ func (r *Runner) runLegacySessionBody(
 		}
 
 		if !ok {
-			if len(changedPathsFromToolResults(collectedResults)) == 0 {
-				if req, result, salvaged := r.autoSalvageMarkdownDeliverable(ctx, reply); salvaged {
-					metrics.ToolCalls++
-
-					if onToolRequest != nil {
-						profile := workspace.DiscoveryProfileForRequest(req)
-						onToolRequest(ToolRequestEvent{
-							Step:           stepNumber,
-							Agent:          r.agentName(),
-							Raw:            marshalToolRequestRaw(req),
-							Request:        req,
-							Mode:           r.Workspace.Mode(),
-							Broad:          workspace.IsBroadInspectionRequest(req),
-							Narrowing:      workspace.IsNarrowingRequest(req),
-							Action:         toolActionClass(req),
-							DiscoveryClass: profile.Class,
-							DiscoveryScope: profile.Scope,
-							DiscoveryCost:  profile.Cost,
-						})
-					}
-
-					recorder.activeToolCall = activeToolCall
-					recorder.recordWithOptions(stepNumber, req, result, "auto_salvage_markdown_deliverable", runnerRecordOptions{
-						TrackProgress:  true,
-						ResetRejected:  true,
-						SetLastToolKey: true,
-					})
-					r.emitEvent(RunEvent{
-						Role:    "auto_salvage_markdown_deliverable",
-						Content: fmt.Sprintf("model emitted a single-file markdown deliverable as final-answer text; recorded it through write_file for %s", strings.TrimSpace(req.Path)),
-					})
-					emitCompletionStatus("completed", "auto_salvage_markdown_deliverable", "", collectedResults, false)
-
-					return finish(fmt.Sprintf("Done. Wrote %s via auto-salvage after the model emitted the deliverable as final-answer text.", strings.TrimSpace(req.Path)), nil, "auto_salvage_markdown_deliverable", false)
-				}
-			}
-
 			result, rejected := workspace.ToolResult{}, false
 			if requiredPathCompletionRecoveryActive {
 				result, rejected = r.requiredPathCompletionRecoveryRejection(reply, collectedResults)
@@ -2430,7 +2326,7 @@ func (r *Runner) runLegacySessionBody(
 
 				controller.rejectCompletion(stepNumber, activeToolCall, assistantMessage, result)
 
-				if looksLikeTextualToolCall(reply) {
+				if IsTextualToolCall(reply) {
 					r.LastAssistantMessage.Content = "[XML tool-call markup detected and sanitized — the model emitted its native XML format instead of a proper tool call or prose. The harness recovery path will retry with a corrected prompt.]"
 				}
 
@@ -2507,7 +2403,7 @@ func (r *Runner) runLegacySessionBody(
 
 					refreshPlanThenExecuteTerminalSurface("completion_gate_recovery")
 
-					if card := r.renderRecoveryCardForRejectedAction(workspace.ToolRequest{Tool: "completion_gate"}, result, collectedResults, currentAllowedTools); card != "" {
+					if card := r.renderRecoveryCardForRejectedActionWithTransport(workspace.ToolRequest{Tool: "completion_gate"}, result, collectedResults, currentAllowedTools, r.currentPlanningTransport()); card != "" {
 						prompt = appendRecoveryCardToMessage(prompt, card)
 					}
 
@@ -2543,8 +2439,7 @@ func (r *Runner) runLegacySessionBody(
 				}
 
 				if policy.shouldStopForNoProgress(consecutiveNoProgress) {
-					answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
-					return finish(answer, err, "no_progress_budget_exhausted", true)
+					return finishNoProgressBudgetExhausted(collectedResults)
 				}
 
 				continue
@@ -2600,7 +2495,7 @@ func (r *Runner) runLegacySessionBody(
 						continue
 					}
 
-					if answer, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok &&
+					if answer, ok := r.deterministicNoToolsFallback(noToolsFallbackAfterRejectedModelCloseout, collectedResults); ok &&
 						!readOnlyAnswerReportsInsufficientEvidence(answer) {
 
 						return finish(answer, nil, "deterministic_final_answer_recovery", false)
@@ -2929,6 +2824,16 @@ func (r *Runner) runLegacySessionBody(
 
 				return finish(answer, nil, blockerKind, true)
 			}
+		}
+
+		if decision := r.implementationTargetWriteReadyHiddenShellRedirect(req, collectedResults, currentAllowedTools, discoveryRedirect); decision.ShouldRedirect {
+			result := decision.Result
+
+			recorder.activeToolCall = activeToolCall
+			recorder.record(stepNumber, req, result, "discovery_redirect_target_write_ready_hidden_shell", runnerRecordOptions{})
+			r.emitEvent(RunEvent{Role: "discovery_redirect_target_write_ready_hidden_shell", Content: fmt.Sprintf("%s → %s", req.Tool, decision.Capability)})
+
+			continue
 		}
 
 		if r.implementationTargetWriteReadySourceReadAllowed(req, collectedResults, implementationTargetWriteReadySourceRefreshes) {
@@ -3657,43 +3562,12 @@ func (r *Runner) runLegacySessionBody(
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 				r.emitEvent(RunEvent{Role: "narrow_tool_repetition_nudge", Content: prompt})
 			}
-
-			// Auto-redirect: only for code_navigate families. Redirecting
-			// read_file or search away from their target breaks legitimate
-			// evidence gathering. The model can override by repeating.
-			if redirectTool := narrowToolFamilyRedirectTool(narrowFamily, currentAllowedTools); narrowToolFamilyNudgeFired && !narrowToolFamilyRedirectIssued && redirectTool != "" {
-				narrowToolFamilyRedirectIssued = true
-				narrowToolFamilyRedirectedOriginal = req.Tool + "|" + narrowFamily
-
-				redirected := req
-				redirected.Tool = redirectTool
-				redirected.Query = r.RuntimeBrief.Objective
-				redirected.Pattern = ""
-				redirected.Path = ""
-				redirected.Capability = ""
-				redirected.Purpose = ""
-
-				req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, "", "narrow_tool_redirect_to_"+redirectTool)
-				currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
-				r.emitEvent(RunEvent{Role: "narrow_tool_redirect", Content: fmt.Sprintf("redirected %s to %s after %d consecutive same-family calls", lastNarrowToolFamily, redirectTool, consecutiveNarrowToolCalls)})
-			} else if narrowToolFamilyNudgeFired && narrowToolFamilyRedirectIssued {
-				// Model repeated the original call after redirect:
-				// let it through. Reset redirect tracking so the
-				// pattern can be observed again if needed.
-				redirectKey := req.Tool + "|" + narrowFamily
-				if redirectKey == narrowToolFamilyRedirectedOriginal {
-					narrowToolFamilyRedirectIssued = false
-					narrowToolFamilyRedirectedOriginal = ""
-				}
-			}
 		} else {
 			// Reset on any broad/non-narrow tool — the model tried
 			// something different, so clear the repetition tracking.
 			consecutiveNarrowToolCalls = 0
 			lastNarrowToolFamily = ""
 			narrowToolFamilyNudgeFired = false
-			narrowToolFamilyRedirectIssued = false
-			narrowToolFamilyRedirectedOriginal = ""
 		}
 
 		actionClass := toolActionClass(req)
@@ -3770,6 +3644,7 @@ func (r *Runner) runLegacySessionBody(
 		}
 
 		toolKey := toolRequestKey(req)
+		targetWriteReadyReadLoopDefers := r.implementationTargetWriteReadyReadLoopDefersToEvidenceContract(req, collectedResults)
 		if prompt, ok := r.planThenExecuteRepeatedSubmitPlanCorrectionPrompt(req, lastToolResult, collectedResults, terminalSubmitPlanNativeTools()); ok && toolKey != "" && toolKey == lastToolKey && replayedToolRequests[toolKey] < 2 {
 			replayedToolRequests[toolKey]++
 
@@ -3787,7 +3662,8 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		if shouldRejectExactReplayBeforeLoopGate(req) && toolKey != "" && toolKey == lastToolKey && replayedToolRequests[toolKey] > 0 {
+		if shouldRejectExactReplayBeforeLoopGate(req) && toolKey != "" && toolKey == lastToolKey && replayedToolRequests[toolKey] > 0 &&
+			!targetWriteReadyReadLoopDefers {
 			summary := "Repeated tool request rejected"
 			errorText := "this exact request already replayed prior evidence once. Do not call it again. Choose a materially different tool or target, edit within the approved scope, request a target-scope update, or answer with the concrete blocker."
 
@@ -3817,7 +3693,8 @@ func (r *Runner) runLegacySessionBody(
 		// calls (not just replays/rejections) because the pathology is the
 		// model getting stuck even when the harness doesn't push back.
 		identicalCallRun := requestBudget.noteFingerprint(currentFingerprint)
-		if workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
+		if workspace.IsReadTool(strings.TrimSpace(req.Tool)) &&
+			!targetWriteReadyReadLoopDefers {
 			if decision := attachLoopPolicyDecision(requestBudget.samePathFixationDecision(req, genericReadOnlyEvidenceReady(r.RuntimeBrief, collectedResults))); decision.Handled {
 				if autonomyRecorder != nil && decision.Policy.InvariantID != "" {
 					autonomyRecorder.emitPolicyResult(req, runnerAutonomyPolicyEventInput{
@@ -3845,7 +3722,8 @@ func (r *Runner) runLegacySessionBody(
 		}
 
 		if identicalCallRun >= 3 {
-			if result, prompt, ok := r.mutationNoWriteLoopRecovery(req, collectedResults, identicalCallRun); ok {
+			if result, prompt, ok := r.mutationNoWriteLoopRecovery(req, collectedResults, identicalCallRun); ok &&
+				!targetWriteReadyReadLoopDefers {
 				controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
 
 				implementationWriteOnlyRecoveryActive = true
@@ -3903,19 +3781,20 @@ func (r *Runner) runLegacySessionBody(
 				continue
 			}
 
-			if autonomyRecorder != nil {
-				autonomyRecorder.emitLoopGate(req, autonomy.PolicyStop, "doom_loop_guard", currentFingerprint, identicalCallRun)
-			}
-
 			// Conversation lanes: repeated reads on the same file are
 			// legitimate investigation, not loops. The model is probing
 			// different symbols, line ranges, or patterns — not stuck.
 			// Skip the doom-loop gate for read-class tools in conversation;
 			// same-path fixation is handled by requestBudget before this
 			// exact-argument branch so varied ranges are covered too.
-			if r.lanePolicy().SkipFingerprintHardBlock() && workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
+			if (r.lanePolicy().SkipFingerprintHardBlock() ||
+				targetWriteReadyReadLoopDefers) &&
+				workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
 				requestBudget.fingerprint.identicalRun = 0
 			} else if r.DoomLoopGate != nil {
+				if autonomyRecorder != nil {
+					autonomyRecorder.emitLoopGate(req, autonomy.PolicyStop, "doom_loop_guard", currentFingerprint, identicalCallRun)
+				}
 				r.emitEvent(RunEvent{Role: "doom_loop_guard", Content: fmt.Sprintf("model repeated %s %d times — approval required", req.Tool, identicalCallRun)})
 
 				if r.DoomLoopGate(req, identicalCallRun) {
@@ -3946,6 +3825,9 @@ func (r *Runner) runLegacySessionBody(
 					return finish(answer, err, "doom_loop_guard", true)
 				}
 			} else {
+				if autonomyRecorder != nil {
+					autonomyRecorder.emitLoopGate(req, autonomy.PolicyStop, "doom_loop_guard", currentFingerprint, identicalCallRun)
+				}
 				if answer, reason, exhausted, ok := r.reviewRepairDoomLoopTerminalCloseout(collectedResults); ok {
 					r.emitEvent(RunEvent{Role: "plan_then_execute_review_repair_doom_loop_closeout", Content: reason})
 
@@ -3969,6 +3851,14 @@ func (r *Runner) runLegacySessionBody(
 
 		requestBudget.setRecoveryContext(r.RuntimeBrief, collectedResults)
 		fingerprintDecision := attachLoopPolicyDecision(requestBudget.fingerprintDecision(policy, req, currentFingerprint))
+		if targetWriteReadyReadLoopDefers &&
+			(fingerprintDecision.ForceAnswerReason != "" || fingerprintDecision.RejectSummary != "") {
+			r.emitEvent(RunEvent{
+				Role:    "implementation_target_write_ready_read_loop_policy_deferred",
+				Content: fmt.Sprintf("deferred %s repeated-call terminal decision for read-class tool %s while target-write-ready implementation evidence remains unmet", textutil.FirstNonEmpty(fingerprintDecision.EventRole, fingerprintDecision.ForceAnswerReason, fingerprintDecision.RejectStopReason), strings.TrimSpace(req.Tool)),
+			})
+			fingerprintDecision = runnerRequestBudgetDecision{}
+		}
 		if !planThenExecuteLoopBudgetRecoveryUsed && fingerprintDecision.ForceAnswerReason == "fingerprint_hard_block_exhausted" {
 			if recovery, ok := r.planThenExecuteLoopBudgetRecoveryPrompt(req, collectedResults, fingerprintDecision.ForceAnswerPrompt, chatOptionsExposeTool(opts, workspace.ToolNameSubmitPlan)); ok {
 				planThenExecuteLoopBudgetRecoveryUsed = true
@@ -4317,7 +4207,8 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		if toolKey != "" && toolKey == lastToolKey && strings.TrimSpace(req.Tool) != "go_file_outline" {
+		if toolKey != "" && toolKey == lastToolKey && strings.TrimSpace(req.Tool) != "go_file_outline" &&
+			!targetWriteReadyReadLoopDefers {
 			if lastToolResult != nil {
 				if allowRecoverablePostReadinessRepairExecution(req, *lastToolResult) {
 					delete(replayedToolRequests, toolKey)
@@ -4366,7 +4257,7 @@ func (r *Runner) runLegacySessionBody(
 
 					if policy.shouldStopForNoProgress(consecutiveNoProgress) {
 						answer, err := controller.completeWithoutMoreToolsWithReason("Repeated tool request reused prior evidence, but the no-progress budget is exhausted. Tools are now disabled. Write the normal final answer from the evidence already gathered. If the repeated request leaves one exact claim unsupported, state that uncertainty after the supported answer.")
-						return finish(answer, err, "no_progress_budget_exhausted", true)
+						return finish(answer, err, "no_progress_budget_exhausted", false)
 					}
 
 					continue
@@ -4396,7 +4287,7 @@ func (r *Runner) runLegacySessionBody(
 		if r.Workspace != nil && r.Workspace.EvaluateConfiguredToolRule(req) == workspace.ToolRuleDeny {
 			permissionDecision = PermissionDecisionSnapshot{
 				Tool:     strings.TrimSpace(req.Tool),
-				Target:   permissionTarget(req),
+				Target:   PermissionTarget(req),
 				Decision: PermissionDeny,
 				Rule:     "workspace.tool_rules decision=deny",
 			}
@@ -4407,8 +4298,15 @@ func (r *Runner) runLegacySessionBody(
 		}
 
 		if autonomyRecorder != nil {
-			autonomyRecorder.emitIntentClassified(req)
-			autonomyRecorder.emitPathRolesResolved(req)
+			intentPolicyInput := normalizedPolicyInput
+			intentPolicyInput.EventType = autonomy.EventToolIntentClassified
+			intentPolicyInput.Source = "runner_tool_intent"
+			autonomyRecorder.emitIntentClassified(req, intentPolicyInput)
+
+			pathPolicyInput := normalizedPolicyInput
+			pathPolicyInput.EventType = autonomy.EventPathRolesResolved
+			pathPolicyInput.Source = "runner_path_roles"
+			autonomyRecorder.emitPathRolesResolved(req, pathPolicyInput)
 		}
 
 		if permissionDecision.Decision != PermissionAllow {
@@ -4427,6 +4325,9 @@ func (r *Runner) runLegacySessionBody(
 					PackID:           autonomy.ContractPackToolAuthorization,
 					InvariantID:      toolAuthorizationPolicyInvariant,
 					ReasonCode:       "permission_policy",
+					Transport:        normalizedPolicyInput.Transport,
+					ParserFailure:    normalizedPolicyInput.ParserFailure,
+					RepairSource:     normalizedPolicyInput.RepairSource,
 					ApprovalRequired: permissionDecision.Decision == PermissionAsk,
 					Result:           resultLabel,
 					ErrorClass:       "permission_policy",
@@ -4451,7 +4352,7 @@ func (r *Runner) runLegacySessionBody(
 			}
 
 			if permissionDecision.Decision == PermissionAsk {
-				answer, err := controller.completeWithoutMoreTools()
+				answer, err := controller.completeWithoutMoreToolsWithDefaultCloseout()
 				return finish(answer, err, "permission_approval_required", false)
 			}
 
@@ -4460,12 +4361,15 @@ func (r *Runner) runLegacySessionBody(
 
 		if autonomyRecorder != nil {
 			autonomyRecorder.emitPolicyResult(req, runnerAutonomyPolicyEventInput{
-				Decision:    autonomy.PolicyAllow,
-				PackID:      autonomy.ContractPackToolAuthorization,
-				InvariantID: toolAuthorizationPolicyInvariant,
-				ReasonCode:  "permission_policy",
-				Result:      "no_approval_needed",
-				Source:      strings.TrimSpace(permissionDecision.Rule),
+				Decision:      autonomy.PolicyAllow,
+				PackID:        autonomy.ContractPackToolAuthorization,
+				InvariantID:   toolAuthorizationPolicyInvariant,
+				ReasonCode:    "permission_policy",
+				Transport:     normalizedPolicyInput.Transport,
+				ParserFailure: normalizedPolicyInput.ParserFailure,
+				RepairSource:  normalizedPolicyInput.RepairSource,
+				Result:        "no_approval_needed",
+				Source:        strings.TrimSpace(permissionDecision.Rule),
 			})
 		}
 
@@ -4542,7 +4446,7 @@ func (r *Runner) runLegacySessionBody(
 
 				answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled after the child task. Tools are now disabled. Use the child-task result and gathered evidence to write the normal final answer. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
 
-				return finish(answer, err, "no_progress_budget_exhausted", true)
+				return finish(answer, err, "no_progress_budget_exhausted", false)
 			}
 
 			continue
@@ -4559,7 +4463,7 @@ func (r *Runner) runLegacySessionBody(
 
 			if policy.shouldStopForNoProgress(consecutiveNoProgress) {
 				answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
-				return finish(answer, err, "no_progress_budget_exhausted", true)
+				return finish(answer, err, "no_progress_budget_exhausted", false)
 			}
 
 			continue
@@ -4582,7 +4486,7 @@ func (r *Runner) runLegacySessionBody(
 
 			if policy.shouldStopForNoProgress(consecutiveNoProgress) {
 				answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled after the delegated edit. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
-				return finish(answer, err, "no_progress_budget_exhausted", true)
+				return finish(answer, err, "no_progress_budget_exhausted", false)
 			}
 
 			continue
@@ -4626,26 +4530,26 @@ func (r *Runner) runLegacySessionBody(
 						})
 					}
 
-					answer, err := controller.completeWithoutMoreTools()
+					answer, err := controller.completeWithoutMoreToolsWithDefaultCloseout()
 
 					return finish(answer, err, "write_approval_required", false)
 				}
 
 				if strings.TrimSpace(guarded.Error) != "" && !bootstrapReadReminder && consecutiveRejectedActions >= 2 {
-					answer, err := controller.completeWithoutMoreTools()
+					answer, err := controller.completeWithoutMoreToolsWithDefaultCloseout()
 					return finish(answer, err, "guard_rejection_budget_exhausted", true)
 				}
 
 				if bootstrapReadReminder && policy.shouldStopForNoProgress(consecutiveNoProgress) {
 					answer, err := controller.completeWithoutMoreToolsWithReason("The implementation target was already available from bootstrap evidence, but progress stalled on duplicate reads. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
-					return finish(answer, err, "no_progress_budget_exhausted", true)
+					return finish(answer, err, "no_progress_budget_exhausted", false)
 				}
 
 				continue
 			}
 		}
 
-		if guarded := checkWriteDescription(req); guarded != nil {
+		if guarded := CheckDescription(req); guarded != nil {
 			recorder.activeToolCall = activeToolCall
 			recorder.recordWithOptions(stepNumber, req, *guarded, "write_description_missing", runnerRecordOptions{
 				CountRejected:           true,
@@ -4673,7 +4577,7 @@ func (r *Runner) runLegacySessionBody(
 			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 
 			if consecutiveRejectedActions >= 2 {
-				answer, err := controller.completeWithoutMoreTools()
+				answer, err := controller.completeWithoutMoreToolsWithDefaultCloseout()
 				return finish(answer, err, "write_description_budget_exhausted", true)
 			}
 
@@ -5109,12 +5013,10 @@ func (r *Runner) runLegacySessionBody(
 
 			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 
-			rebuildTools()
-
 			opts = completionGateRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
 			opts = forceVisibleActionChatOptions(opts)
 
-			syncCurrentAllowedToolsFromOptions()
+			rebuildTools()
 			r.emitEvent(RunEvent{Role: "post_write_verification_required", Content: prompt})
 		}
 
@@ -5606,8 +5508,7 @@ func (r *Runner) runLegacySessionBody(
 		}
 
 		if policy.shouldStopForNoProgress(consecutiveNoProgress) {
-			answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
-			return finish(answer, err, "no_progress_budget_exhausted", true)
+			return finishNoProgressBudgetExhausted(collectedResults)
 		}
 	}
 
@@ -5645,11 +5546,21 @@ func maxToolStepsExhaustedReason() string {
 }
 
 func (r *Runner) implementationToolBudgetExhaustedBlocker(results []workspace.ToolResult) (string, bool) {
-	return r.implementationBudgetExhaustedBlocker(results, "implementation_tool_step_budget_blocked")
+	return r.implementationContractCloseoutBlocker(results, "implementation_tool_step_budget_blocked")
 }
 
-func (r *Runner) implementationBudgetExhaustedBlocker(results []workspace.ToolResult, stopReason string) (string, bool) {
-	if r == nil || !runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
+type implementationCloseoutFacts struct {
+	StopLabel           string
+	ChangedPaths        []string
+	RemainingPaths      []string
+	SourcedPaths        string
+	InspectedEvidence   string
+	RepeatedReadPaths   string
+	VerificationPending bool
+}
+
+func (r *Runner) implementationContractCloseoutBlocker(results []workspace.ToolResult, stopReason string) (string, bool) {
+	if r == nil || !runnerBriefRequiresMutation(r.RuntimeBrief) {
 		return "", false
 	}
 
@@ -5657,34 +5568,130 @@ func (r *Runner) implementationBudgetExhaustedBlocker(results []workspace.ToolRe
 		return "", false
 	}
 
-	var details []string
-	if required := r.remainingRequiredEditPaths(results); len(required) > 0 {
-		details = append(details, "required edit path(s) still unwritten: "+strings.Join(required, ", "))
+	facts := implementationCloseoutFacts{
+		StopLabel:           implementationCloseoutStopLabel(stopReason),
+		ChangedPaths:        mapKeys(changedPathsFromToolResults(results)),
+		RemainingPaths:      r.remainingRequiredEditPaths(results),
+		SourcedPaths:        implementationTargetWriteReadySourcedPathSummary(results, 5),
+		InspectedEvidence:   conversationInspectedPathSummary(results),
+		RepeatedReadPaths:   implementationCloseoutRepeatedReadSummary(results, 5),
+		VerificationPending: hasPendingVerificationAfterWrites(results, r.RuntimeBrief),
 	}
 
-	if sourced := implementationTargetWriteReadySourcedPathSummary(results, 5); sourced != "" {
-		details = append(details, "source-body evidence gathered for: "+sourced)
-	}
+	return composeImplementationCloseoutBlocker(facts), true
+}
 
-	if inspected := conversationInspectedPathSummary(results); inspected != "" {
-		details = append(details, "latest inspected evidence: "+inspected)
-	}
-
-	budgetKind := "implementation budget"
+func implementationCloseoutStopLabel(stopReason string) string {
 	switch strings.TrimSpace(stopReason) {
 	case "implementation_tool_step_budget_blocked", "tool_step_budget_exhausted":
-		budgetKind = "implementation tool budget"
+		return "implementation tool budget"
 	case "model_call_budget_exhausted":
-		budgetKind = "implementation model-call budget"
+		return "implementation model-call budget"
+	case "operational_model_call_limit_exceeded":
+		return "implementation operational model-call limit"
+	case "no_progress_budget_exhausted":
+		return "implementation no-progress closeout"
 	case "duration_budget_exhausted":
-		budgetKind = "implementation duration budget"
+		return "implementation duration budget"
+	default:
+		return "implementation closeout"
+	}
+}
+
+func composeImplementationCloseoutBlocker(facts implementationCloseoutFacts) string {
+	var b strings.Builder
+
+	label := strings.TrimSpace(facts.StopLabel)
+	if label == "" {
+		label = "implementation closeout"
 	}
 
-	if len(details) == 0 {
-		details = append(details, "no parser-readable workspace write was recorded before the "+budgetKind+" was exhausted")
+	b.WriteString("<<QUESTION>>: ")
+	b.WriteString(label)
+	b.WriteString(" reached before the implementation contract produced a parser-readable write, no-op evidence, or exact blocker.")
+
+	if len(facts.ChangedPaths) > 0 {
+		b.WriteString("\n\nChanged paths:\n")
+		for _, path := range facts.ChangedPaths {
+			b.WriteString("- ")
+			b.WriteString(path)
+			b.WriteString("\n")
+		}
+	} else {
+		b.WriteString("\n\nChanged paths: none\n")
 	}
 
-	return "<<QUESTION>>: " + budgetKind + " was exhausted before a parser-readable edit, source-satisfied decision, or exact blocker was produced; " + strings.Join(details, "; ") + ". Rerun with a narrower edit target or the exact missing file/symbol if more source evidence is required.", true
+	b.WriteString("\nRemaining obligations:\n")
+	b.WriteString("- no parser-readable workspace write was recorded\n")
+	b.WriteString("- no no-op evidence or exact blocker was produced\n")
+
+	if len(facts.RemainingPaths) > 0 {
+		b.WriteString("- required edit path(s) not changed: ")
+		b.WriteString(strings.Join(facts.RemainingPaths, ", "))
+		b.WriteString("\n")
+	}
+
+	if facts.VerificationPending {
+		b.WriteString("- verification pending after recorded workspace write(s)\n")
+	}
+
+	if sourced := strings.TrimSpace(facts.SourcedPaths); sourced != "" {
+		b.WriteString("\nSource-body evidence already gathered:\n- ")
+		b.WriteString(sourced)
+		b.WriteString("\n")
+	}
+
+	if repeated := strings.TrimSpace(facts.RepeatedReadPaths); repeated != "" {
+		b.WriteString("\nRepeated allowed read evidence observed:\n- ")
+		b.WriteString(repeated)
+		b.WriteString("\n")
+	}
+
+	if inspected := strings.TrimSpace(facts.InspectedEvidence); inspected != "" {
+		b.WriteString("\nLatest inspected evidence:\n- ")
+		b.WriteString(inspected)
+		b.WriteString("\n")
+	}
+
+	return strings.TrimSpace(b.String())
+}
+
+func implementationCloseoutRepeatedReadSummary(results []workspace.ToolResult, limit int) string {
+	counts := make(map[string]int)
+
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+
+		switch strings.TrimSpace(result.Tool) {
+		case workspace.ToolNameReadFile, workspace.ToolNameCodeNavigate, workspace.ToolNameReadOnlyCapability:
+		default:
+			continue
+		}
+
+		for _, path := range agentutil.ReadPathsFromToolResult(result) {
+			path = agentutil.NormalizeRunnerPath(path)
+			if path == "" {
+				continue
+			}
+
+			counts[path]++
+		}
+	}
+
+	var repeated []string
+	for path, count := range counts {
+		if count > 1 {
+			repeated = append(repeated, path)
+		}
+	}
+
+	if len(repeated) == 0 {
+		return ""
+	}
+
+	return summarizeRunnerPaths(uniqueSortedRunnerPaths(repeated), limit)
 }
 
 func (r *Runner) requiredPathCompletionRecoveryRejection(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
@@ -6447,10 +6454,6 @@ func runtimeBriefDefinesWriteReadyReadContract(brief workerruntime.WorkerRuntime
 	return false
 }
 
-func implementationPreWriteToolSurfaceActive(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	return exactAnchorPreWriteSurfaceActive(brief, results)
-}
-
 func implementationScopedEditSurfaceActive(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
 	if planThenExecutePlannerBrief(brief) {
 		return false
@@ -6460,7 +6463,7 @@ func implementationScopedEditSurfaceActive(brief workerruntime.WorkerRuntimeBrie
 		return false
 	}
 
-	if implementationPreWriteToolSurfaceActive(brief, results) {
+	if exactAnchorPreWriteSurfaceActive(brief, results) {
 		return false
 	}
 
@@ -6522,7 +6525,7 @@ func (r *Runner) preflightApplyPatchAgainstChangedPaths(req workspace.ToolReques
 		return pass
 	}
 
-	ops, err := workspace.ParsePatch(content)
+	ops, err := patching.Parse(content)
 	if err != nil {
 		// Let the real applyPatch surface the parse error so the model
 		// gets the actual envelope-grammar problem.
@@ -6535,12 +6538,12 @@ func (r *Runner) preflightApplyPatchAgainstChangedPaths(req workspace.ToolReques
 	}
 
 	var (
-		keptOps []workspace.PatchOp
+		keptOps []patching.Op
 		skipped []string
 	)
 
 	for _, op := range ops {
-		if op.Kind != workspace.PatchOpUpdate && op.Kind != workspace.PatchOpDelete {
+		if op.Kind != patching.OpUpdate && op.Kind != patching.OpDelete {
 			keptOps = append(keptOps, op)
 			continue
 		}
@@ -6602,7 +6605,7 @@ func (r *Runner) preflightApplyPatchAgainstChangedPaths(req workspace.ToolReques
 
 	rewritten := req
 
-	rewritten.Content = workspace.SerializePatch(keptOps)
+	rewritten.Content = patching.Serialize(keptOps)
 
 	return applyPatchPreflightResult{
 		Action:       applyPatchPreflightRewrite,
@@ -6645,6 +6648,14 @@ func (r *Runner) shouldForceAnswerForPostCompletionVerification(req workspace.To
 	*counter++
 
 	return *counter > postCompletionVerificationCutoff
+}
+
+func (r *Runner) implementationTargetWriteReadyReadLoopDefersToEvidenceContract(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+	if r == nil || !workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
+		return false
+	}
+
+	return implementationTargetWriteReadySurfaceActive(r.RuntimeBrief, results)
 }
 
 // consumeRecoveryReadAllowance returns true and marks the path consumed if
@@ -7053,10 +7064,11 @@ func legacyRunnerAutonomyContract(r *Runner, policy RunPolicy, brief workerrunti
 		Capabilities: runnerAutonomyCapabilities(brief),
 		Obligations:  obligations,
 		Budget: autonomy.BudgetState{
-			MaxToolSteps:       policy.MaxToolSteps,
-			MaxModelCalls:      policy.MaxModelCalls,
-			MaxContextMessages: policy.MaxContextMessages,
-			MaxContextChars:    policy.MaxContextChars,
+			MaxToolSteps:             policy.MaxToolSteps,
+			MaxModelCalls:            policy.MaxModelCalls,
+			MaxOperationalModelCalls: policy.MaxOperationalModelCalls,
+			MaxContextMessages:       policy.MaxContextMessages,
+			MaxContextChars:          policy.MaxContextChars,
 		},
 		Verification: autonomy.VerificationRequirement{
 			Required:               runnerVerificationRequired(brief),
@@ -7108,6 +7120,12 @@ func runnerAutonomyPathRoles(brief workerruntime.WorkerRuntimeBrief, results []w
 	for _, path := range brief.RequiredEditPaths {
 		if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
 			roles = append(roles, autonomy.PathRole{Role: autonomy.PathRoleRequiredEdit, PathPattern: normalized, Freshness: autonomy.FreshnessFresh, Reason: "runtime brief required_edit_paths"})
+		}
+	}
+
+	for _, path := range brief.AllowedEditPaths {
+		if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
+			roles = append(roles, autonomy.PathRole{Role: autonomy.PathRoleAllowedEdit, PathPattern: normalized, Freshness: autonomy.FreshnessFresh, Reason: "runtime brief allowed_edit_paths"})
 		}
 	}
 
@@ -7809,6 +7827,7 @@ func runnerAutonomyGateObservedFacts(input runnerAutonomyGateDecision, gate auto
 		addGateFactCount(&facts, "budget_max_tool_steps", gate.Budget.MaxToolSteps)
 		addGateFactCount(&facts, "budget_used_model_calls", gate.Budget.UsedModelCalls)
 		addGateFactCount(&facts, "budget_max_model_calls", gate.Budget.MaxModelCalls)
+		addGateFactCount(&facts, "budget_max_operational_model_calls", gate.Budget.MaxOperationalModelCalls)
 		if gate.Budget.Exhausted {
 			addGateFactValue(&facts, autonomy.ObservedFactReasonCode, "budget_exhaustion_reason", runnerAutonomyReasonCode(gate.Budget.ExhaustionReason))
 		}
@@ -7839,7 +7858,7 @@ func addGateFactCount(facts *[]autonomy.ContractObservedFact, name string, count
 		return
 	}
 
-	*facts = append(*facts, autonomy.ContractObservedFact(string(autonomy.ObservedFactCount)+":"+name+"="+runnerAutonomyIntString(count)))
+	*facts = append(*facts, autonomy.ContractObservedFact(string(autonomy.ObservedFactCount)+":"+name+"="+strconv.Itoa(count)))
 }
 
 func addGateFactValues(facts *[]autonomy.ContractObservedFact, kind autonomy.ObservedFactKind, name string, values []string, limit int) {
@@ -7855,10 +7874,6 @@ func runnerAutonomyBoolStatus(value bool) string {
 	}
 
 	return "false"
-}
-
-func runnerAutonomyIntString(value int) string {
-	return strconv.Itoa(value)
 }
 
 func runnerAutonomyBoundedFactStrings(values []string, limit int) []string {
@@ -8340,15 +8355,25 @@ func (a *runnerAutonomyRecorder) emitIntentClassified(req workspace.ToolRequest,
 	a.emitPolicyEvent(req, input)
 }
 
-func (a *runnerAutonomyRecorder) emitPathRolesResolved(req workspace.ToolRequest) {
+func (a *runnerAutonomyRecorder) emitPathRolesResolved(req workspace.ToolRequest, inputs ...runnerAutonomyPolicyEventInput) {
 	if a == nil || len(runnerAutonomyPolicyPaths(req)) == 0 {
 		return
 	}
 
-	a.emitPolicyEvent(req, runnerAutonomyPolicyEventInput{
+	input := runnerAutonomyPolicyEventInput{
 		EventType: autonomy.EventPathRolesResolved,
 		Source:    "runner_path_roles",
-	})
+	}
+	if len(inputs) > 0 {
+		input = inputs[0]
+		if input.EventType == "" {
+			input.EventType = autonomy.EventPathRolesResolved
+		}
+		if strings.TrimSpace(input.Source) == "" {
+			input.Source = "runner_path_roles"
+		}
+	}
+	a.emitPolicyEvent(req, input)
 }
 
 func (a *runnerAutonomyRecorder) emitPolicyResult(req workspace.ToolRequest, input runnerAutonomyPolicyEventInput) {
@@ -8374,7 +8399,7 @@ func (a *runnerAutonomyRecorder) emitLegacyPermissionDecision(req workspace.Tool
 	decision := permissionDecisionFromAutonomy(input.Decision)
 	snapshot := PermissionDecisionSnapshot{
 		Tool:     strings.TrimSpace(req.Tool),
-		Target:   permissionTarget(req),
+		Target:   PermissionTarget(req),
 		Decision: decision,
 		Rule:     strings.TrimSpace(input.Source),
 	}
@@ -8385,7 +8410,7 @@ func (a *runnerAutonomyRecorder) emitLegacyPermissionDecision(req workspace.Tool
 // PermissionDecision value used by the permission_decision RunEvent.
 func permissionDecisionFromAutonomy(d autonomy.ToolPolicyDecision) PermissionDecision {
 	switch d {
-	case autonomy.PolicyAllow:
+	case autonomy.PolicyAllow, autonomy.PolicyObserve, autonomy.PolicyNudge:
 		return PermissionAllow
 	case autonomy.PolicyAsk:
 		return PermissionAsk
@@ -8598,11 +8623,14 @@ func runnerAutonomyFrictionVisibleTools(protocol contractcompile.ModelProtocolPr
 
 func runnerAutonomyFrictionSafeAlternatives(protocol contractcompile.ModelProtocolProjection, phase TurnPhaseContract, modelProtocolVisible bool) []string {
 	if modelProtocolVisible {
-		return append([]string(nil), protocol.SafeAlternatives...)
+		if len(protocol.SafeAlternatives) > 0 {
+			return append([]string(nil), protocol.SafeAlternatives...)
+		}
+		return recoverySafeActionAlternatives(protocol.CallableActionClasses)
 	}
 
-	if len(phase.TerminalOutcomes) > 0 {
-		return append([]string(nil), phase.TerminalOutcomes...)
+	if alternatives := recoverySafeActionAlternatives(recoveryCardCallableActionClasses(phase, phase.ActionPolicy.CallableToolNames)); len(alternatives) > 0 {
+		return alternatives
 	}
 
 	return append([]string(nil), protocol.SafeAlternatives...)
@@ -9557,6 +9585,10 @@ func runnerAutonomyBudgetTarget(policy RunPolicy) string {
 		parts = append(parts, "max_model_calls")
 	}
 
+	if policy.MaxOperationalModelCalls > 0 {
+		parts = append(parts, "max_operational_model_calls")
+	}
+
 	if policy.MaxContextMessages > 0 {
 		parts = append(parts, "max_context_messages")
 	}
@@ -9708,7 +9740,7 @@ func runnerAutonomyFallbackSideEffectForRequest(req workspace.ToolRequest) auton
 }
 
 func runnerAutonomyPatchSideEffect(patch string) (autonomy.SideEffectClass, bool) {
-	ops, err := workspace.ParsePatch(patch)
+	ops, err := patching.Parse(patch)
 	if err != nil {
 		return "", false
 	}
@@ -10228,10 +10260,6 @@ func runnerVisibleBriefForToolSurface(brief workerruntime.WorkerRuntimeBrief, re
 		return exactAnchorPreWriteRuntimeBrief(brief)
 	}
 
-	if implementationPreWriteToolSurfaceActive(brief, results) {
-		return implementationPreWriteRuntimeBrief(brief)
-	}
-
 	if implementationTargetSourcePending(brief, results) {
 		return implementationTargetSourceRuntimeBrief(brief)
 	}
@@ -10292,7 +10320,9 @@ type briefAuditEvent struct {
 	Contract                     string   `json:"contract,omitempty"`
 	PermissionProfile            string   `json:"permission_profile,omitempty"`
 	Constraints                  []string `json:"constraints,omitempty"`
+	TargetRefs                   []string `json:"target_refs,omitempty"`
 	RequiredEditPaths            []string `json:"required_edit_paths,omitempty"`
+	AllowedEditPaths             []string `json:"allowed_edit_paths,omitempty"`
 	RequiredEditSnippetsCount    int      `json:"required_edit_snippets_count"`
 	RequiredEditSnippetPaths     []string `json:"required_edit_snippet_paths,omitempty"`
 	EvidencePaths                []string `json:"evidence_paths,omitempty"`
@@ -10330,7 +10360,9 @@ func (r *Runner) emitBriefAudit(brief workerruntime.WorkerRuntimeBrief, results 
 		Contract:                  strings.TrimSpace(brief.Contract),
 		PermissionProfile:         strings.TrimSpace(brief.PermissionProfile),
 		Constraints:               append([]string(nil), brief.Constraints...),
+		TargetRefs:                append([]string(nil), brief.TargetRefs...),
 		RequiredEditPaths:         append([]string(nil), brief.RequiredEditPaths...),
+		AllowedEditPaths:          append([]string(nil), brief.AllowedEditPaths...),
 		RequiredEditSnippetsCount: len(brief.RequiredEditSnippets),
 		EvidencePaths:             append([]string(nil), brief.EvidencePaths...),
 		ChangedPaths:              append([]string(nil), brief.ChangedPaths...),
@@ -10627,7 +10659,7 @@ func (r *Runner) removedTestDeclarations(results []workspace.ToolResult) []strin
 	}
 
 	args := append([]string{"diff", "--unified=0", "--"}, paths...)
-	diff, err := gitCombinedOutput(context.Background(), root, args...)
+	diff, err := GitCombinedOutput(context.Background(), root, args...)
 
 	if err != nil || strings.TrimSpace(diff) == "" {
 		return nil
@@ -11219,10 +11251,6 @@ func writeResultMadeNoWorkspaceChange(result workspace.ToolResult) bool {
 // with no specced allowlist still trip the verification gate when they
 // happen to touch a markdown file.
 
-func runnerGuidanceConstraints(agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []string {
-	return runnerGuidanceConstraintsWithEngine(agent, brief, results, newGuidanceEngine(agent, newEvidenceEngine()))
-}
-
 func runnerGuidanceConstraintsWithEngine(agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, engine GuidanceEngine) []string {
 	constraints := append([]string(nil), brief.Constraints...)
 	if planThenExecuteSubmitPlanOnlyReady(brief, results) {
@@ -11760,7 +11788,7 @@ func (r *Runner) unexecutedToolRequestCompletionRejection(reply string) (workspa
 		Summary: "Unexecuted tool request rejected as final answer",
 		Error: strings.Join([]string{
 			"the reply is a workspace-tool request payload, not a final answer.",
-			"If a workspace lookup is needed, issue it as a parser-readable tool call with the `tool` field and wait for the result.",
+			workspaceLookupTransportInstruction(recoveryToolTransportMode(r.currentPlanningTransport())),
 			"If no lookup is needed, answer the user in normal prose.",
 			"Do not stop with raw JSON.",
 		}, " "),
@@ -11992,25 +12020,6 @@ func syntheticLegacyToolCall(step int, req workspace.ToolRequest, raw string) ll
 	}
 }
 
-func syntheticLegacyParseToolCall(step int, raw string) llama.ToolCall {
-	args := "{}"
-
-	if trimmed := strings.TrimSpace(raw); trimmed != "" {
-		if data, err := json.Marshal(map[string]string{"raw": textutil.Truncate(strings.TrimSpace(trimmed), 1000)}); err == nil {
-			args = string(data)
-		}
-	}
-
-	return llama.ToolCall{
-		ID:   fmt.Sprintf("idiom_legacy_tool_%d", step),
-		Type: "function",
-		Function: llama.ToolCallFunc{
-			Name:      "tool_parse",
-			Arguments: args,
-		},
-	}
-}
-
 func legacyToolCallHistoryMessage(reply llama.ChatMessage, call llama.ToolCall) llama.ChatMessage {
 	return llama.ChatMessage{
 		Role:             textutil.FirstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
@@ -12045,6 +12054,7 @@ type runnerControlRails struct {
 	PermissionProfile    string   `json:"permission_profile,omitempty"`
 	TargetRefs           []string `json:"target_refs,omitempty"`
 	RequiredEditPaths    []string `json:"required_edit_paths,omitempty"`
+	AllowedEditPaths     []string `json:"allowed_edit_paths,omitempty"`
 	RequiredEvidence     []string `json:"required_evidence,omitempty"`
 	RequiredTools        []string `json:"required_tools,omitempty"`
 	AllowedTools         []string `json:"allowed_tools,omitempty"`
@@ -12094,7 +12104,7 @@ func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) ru
 		allowedTools = r.Workspace.AllowedTools()
 	}
 
-	if implementationPreWriteToolSurfaceActive(brief, nil) {
+	if exactAnchorPreWriteSurfaceActive(brief, nil) {
 		allowedTools = implementationPreWriteAllowedTools(allowedTools)
 	} else if implementationScopedEditSurfaceActive(brief, nil) {
 		var extReg *workspace.ExternalToolRegistry
@@ -12120,7 +12130,9 @@ func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) ru
 		Contract:             textutil.FirstNonEmpty(strings.TrimSpace(brief.Contract), string(workerruntime.ContractDirectAnswer)),
 		TaskFamily:           textutil.FirstNonEmpty(strings.TrimSpace(brief.TaskFamily), string(autonomy.TaskFamilyDirectAnswer)),
 		PermissionProfile:    profile,
+		TargetRefs:           append([]string(nil), brief.TargetRefs...),
 		RequiredEditPaths:    append([]string(nil), brief.RequiredEditPaths...),
+		AllowedEditPaths:     append([]string(nil), brief.AllowedEditPaths...),
 		RequiredEvidence:     append([]string(nil), brief.RequiredEvidence...),
 		RequiredTools:        append([]string(nil), brief.RequiredTools...),
 		AllowedTools:         allowedTools,
@@ -12160,7 +12172,7 @@ func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) ru
 		}
 
 		rails.RequiredEvidence = defaultRunnerStateSlice(rails.RequiredEvidence, []string{string(workerruntime.RequiredEvidenceChangedPathsOrNoopReason), string(workerruntime.RequiredEvidenceVerificationStatus)})
-		if implementationPreWriteToolSurfaceActive(brief, nil) {
+		if exactAnchorPreWriteSurfaceActive(brief, nil) {
 			rails.RequiredTools = []string{"edit_file_or_apply_patch"}
 		} else if implementationScopedEditSurfaceActive(brief, nil) {
 			rails.RequiredTools = []string{"edit_file_or_apply_patch", "semantic_discovery_or_narrow_read_for_named_gap"}
@@ -12611,7 +12623,7 @@ func (s *runnerExecutionState) applyResult(req workspace.ToolRequest, result wor
 		s.pendingSearchOutput = ""
 	}
 
-	if strength := discoveryConsumptionResultStrength(req, result); strength != discoveryConsumptionNone {
+	if strength := discoveryConsumptionResultStrengthFromLegacySemantics(req, result); strength != discoveryConsumptionNone {
 		if s.shouldReplacePendingDiscovery(strength) {
 			s.pendingDiscoveryConsumption = true
 			s.pendingDiscoveryTool = strings.TrimSpace(req.Tool)
@@ -12867,6 +12879,7 @@ func immediateBudgetFallbackAnswer(agentName string, brief workerruntime.WorkerR
 		"tools are now disabled",
 		"run duration",
 		"model-call budget",
+		"operational model-call",
 	) {
 
 		return "", false
@@ -12902,6 +12915,64 @@ func immediateBudgetFallbackAnswer(agentName string, brief workerruntime.WorkerR
 	}
 
 	return "", false
+}
+
+func budgetDeterministicBlocker(reason string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
+	if runnerBriefRequiresMutation(brief) {
+		return synthesizeMutationFallbackAnswer(brief, results)
+	}
+
+	budgetKind := "Budget"
+	lowerReason := strings.ToLower(strings.TrimSpace(reason))
+	switch {
+	case strings.Contains(lowerReason, "operational model-call"):
+		budgetKind = "Operational model-call limit"
+	case strings.Contains(lowerReason, "model-call budget"):
+		budgetKind = "Model-call budget"
+	case strings.Contains(lowerReason, "duration budget") || strings.Contains(lowerReason, "run duration"):
+		budgetKind = "Run duration budget"
+	case strings.Contains(lowerReason, "tool budget") || strings.Contains(lowerReason, "tool-step"):
+		budgetKind = "Tool budget"
+	}
+
+	var b strings.Builder
+	b.WriteString(budgetKind)
+	b.WriteString(" was exhausted before a final answer could be synthesized from gathered evidence.")
+
+	if len(results) == 0 {
+		b.WriteString(" No tool evidence was recorded before exhaustion.")
+		return b.String()
+	}
+
+	if paths := promptEvidencePathsFromToolResults(results, 6); len(paths) > 0 {
+		b.WriteString("\n\nEvidence paths:\n")
+		for _, path := range paths {
+			b.WriteString("- ")
+			b.WriteString(path)
+			b.WriteString("\n")
+		}
+	}
+
+	if latest := latestSuccessfulToolSummary(results); latest != "" {
+		b.WriteString("\nLatest recorded evidence:\n- ")
+		b.WriteString(latest)
+	}
+
+	return strings.TrimSpace(b.String())
+}
+
+func latestSuccessfulToolSummary(results []workspace.ToolResult) string {
+	for i := len(results) - 1; i >= 0; i-- {
+		result := results[i]
+		if strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		if summary := strings.TrimSpace(result.Summary); summary != "" {
+			return summary
+		}
+	}
+
+	return ""
 }
 
 func synthesizeNoToolsFallbackAnswer(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
@@ -13179,6 +13250,7 @@ func bulletList(values []string) string {
 func synthesizeMutationFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
 	changedPaths := mapKeys(changedPathsFromToolResults(results))
 	missingRequiredPaths := missingRequiredEditPaths(brief.RequiredEditPaths, changedPathsFromToolResults(results))
+	rejectedMutationPaths := unresolvedRejectedMutationPaths(results, brief.RequiredEditPaths)
 
 	var lastError *workspace.ToolResult
 
@@ -13209,7 +13281,7 @@ func synthesizeMutationFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 				continue
 			}
 
-			if isHarnessRejectionSummary(result.Summary) || isHarnessRejectionErrorText(result.Error) {
+			if isHarnessInternalRejectionResult(result) {
 				continue
 			}
 
@@ -13221,10 +13293,10 @@ func synthesizeMutationFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 
 	var b strings.Builder
 
-	if len(missingRequiredPaths) > 0 {
-		b.WriteString("<<QUESTION>>: Implementation incomplete; required edit path(s) remain unchanged.\n\n")
+	if len(missingRequiredPaths) > 0 || len(rejectedMutationPaths) > 0 {
+		b.WriteString("<<QUESTION>>: Implementation incomplete; required mutation path(s) remain unresolved.\n\n")
 	} else if len(changedPaths) > 0 {
-		b.WriteString(mutationFallbackCompletionLead(brief, changedPaths))
+		b.WriteString(mutationFallbackStatusLead(results, brief))
 		b.WriteString("\n\n")
 	}
 
@@ -13246,6 +13318,18 @@ func synthesizeMutationFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 		b.WriteString("Required edit paths not changed:\n")
 
 		for _, path := range missingRequiredPaths {
+			b.WriteString("- ")
+			b.WriteString(path)
+			b.WriteString("\n")
+		}
+
+		b.WriteString("\n")
+	}
+
+	if len(rejectedMutationPaths) > 0 {
+		b.WriteString("Rejected mutation paths still unresolved:\n")
+
+		for _, path := range rejectedMutationPaths {
 			b.WriteString("- ")
 			b.WriteString(path)
 			b.WriteString("\n")
@@ -13298,19 +13382,16 @@ func synthesizeMutationFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 	return strings.TrimSpace(b.String())
 }
 
-func mutationFallbackCompletionLead(brief workerruntime.WorkerRuntimeBrief, changedPaths []string) string {
-	objective := strings.ToLower(strings.TrimSpace(brief.Objective))
-	for _, path := range changedPaths {
-		if strings.Contains(strings.ToLower(path), "label") {
-			return "Implemented the label change."
-		}
+func mutationFallbackStatusLead(results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) string {
+	if hasPendingVerificationAfterWrites(results, brief) {
+		return "Workspace changes were recorded, but post-write verification is still pending."
 	}
 
-	if strings.Contains(objective, "label") {
-		return "Implemented the label change."
+	if _, ok := latestSuccessfulVerificationSummary(results); ok {
+		return "Workspace changes were recorded and verification evidence was found."
 	}
 
-	return "Implemented the requested change."
+	return "Workspace changes were recorded."
 }
 
 func (r *Runner) modelErrorAfterPartialEditBlockerAnswer(modelErr error, results []workspace.ToolResult) (string, bool) {
@@ -13397,7 +13478,7 @@ func synthesizeFallbackAnswer(agentName string, results []workspace.ToolResult) 
 			successfulNarrowing = append(successfulNarrowing, result)
 		}
 
-		if result.Error != "" && !isHarnessRejectionSummary(result.Summary) && !isHarnessRejectionErrorText(result.Error) {
+		if result.Error != "" && !isHarnessInternalRejectionResult(result) {
 			copy := result
 
 			lastError = &copy
@@ -14208,7 +14289,7 @@ func (p delegatedDiscoveryPlan) candidateConsumptionRequest(results []workspace.
 	paths := p.consumableSourceBodyCandidatePaths(results, 6)
 	for _, path := range paths {
 		path = agentutil.NormalizeRunnerPath(path)
-		if path == "" || concreteSourceEvidenceReadForPath(path, results) {
+		if path == "" || sourceEvidenceBodyReadForPath(path, results) {
 			continue
 		}
 
@@ -15412,35 +15493,6 @@ func conversationEvidenceSatisfied(brief workerruntime.WorkerRuntimeBrief, resul
 	return readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results).Answerable()
 }
 
-func conversationEvidenceSatisfiedForObjective(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	return conversationEvidenceSatisfied(brief, results)
-}
-
-func conversationNamedEvidencePaths(brief workerruntime.WorkerRuntimeBrief) []string {
-	candidates := append([]string{}, brief.TargetRefs...)
-
-	candidates = append(candidates, pathparse.MentionedWorkspaceFiles(brief.Objective)...)
-
-	paths := make([]string, 0, len(candidates))
-	seen := map[string]struct{}{}
-
-	for _, candidate := range candidates {
-		path := agentutil.NormalizeRunnerPath(candidate)
-		if path == "" || !pathparse.HasWorkspaceFileExtension(path) {
-			continue
-		}
-
-		if _, ok := seen[path]; ok {
-			continue
-		}
-
-		seen[path] = struct{}{}
-		paths = append(paths, path)
-	}
-
-	return paths
-}
-
 // conversationInspectedPathSummary returns a compact summary of the
 // most recent read/navigation results. It reports evidence without
 // declaring readiness — the model owns the decision of when evidence
@@ -15677,7 +15729,7 @@ func postReadinessSymbolBodyUpgradeRequest(results []workspace.ToolResult, req w
 
 	upgraded := req
 	if tool == workspace.CodeNavigateToolName {
-		upgraded.Capability = workspace.CodeNavigateCapabilityName(workspace.CapExtractBody)
+		upgraded.Capability = string(workspace.CapExtractBody)
 	} else {
 		upgraded.Tool = "go_extract_body"
 	}
@@ -15776,7 +15828,7 @@ func delegatedReadOnlyPostDiscoveryOutlineReadRedirect(results []workspace.ToolR
 	}
 
 	path := agentutil.NormalizeRunnerPath(req.Path)
-	if path == "" || !delegatedDiscoveryConsumableSourcePath(path) || concreteSourceEvidenceReadForPath(path, results) {
+	if path == "" || !delegatedDiscoveryConsumableSourcePath(path) || sourceEvidenceBodyReadForPath(path, results) {
 		return workspace.ToolRequest{}, false
 	}
 
@@ -16792,7 +16844,7 @@ func allowRecoverablePostReadinessRepairExecution(req workspace.ToolRequest, las
 		return false
 	}
 
-	if isRecoverablePostReadinessGapRejection(lastToolResult.Summary) {
+	if postReadinessContinuationRejectionSummary(lastToolResult.Summary) {
 		return true
 	}
 
@@ -16905,45 +16957,6 @@ func extractThinkTagContent(text string) []string {
 
 		text = rest[end+len("</think>"):]
 	}
-}
-
-// stripOrphanedToolCalls returns a copy of messages with any assistant
-// messages removed that have tool_calls but no matching role:"tool"
-// responses. When the budget gate or post-readiness nudge continues
-// the loop without executing a pending tool, the orphaned tool_calls
-// must not reach the model — strict backends (DeepSeek) reject the
-// request with "insufficient tool messages following tool_calls".
-func stripOrphanedToolCalls(messages []llama.ChatMessage) []llama.ChatMessage {
-	// Build lookup: tool_call_id -> has matching tool response
-	hasToolResponse := make(map[string]bool)
-
-	for _, msg := range messages {
-		if msg.Role == "tool" && msg.ToolCallID != "" {
-			hasToolResponse[msg.ToolCallID] = true
-		}
-	}
-
-	out := make([]llama.ChatMessage, 0, len(messages))
-	for _, msg := range messages {
-		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
-			orphaned := false
-
-			for _, tc := range msg.ToolCalls {
-				if tc.ID != "" && !hasToolResponse[tc.ID] {
-					orphaned = true
-					break
-				}
-			}
-
-			if orphaned {
-				continue // drop this assistant message entirely
-			}
-		}
-
-		out = append(out, msg)
-	}
-
-	return out
 }
 
 func (r *Runner) chatMessagesForOptions(messages []llama.ChatMessage, opts llama.ChatOptions) []llama.ChatMessage {
@@ -17064,7 +17077,7 @@ func debugLogPhase(brief workerruntime.WorkerRuntimeBrief, results []workspace.T
 }
 
 func evidenceFirstMutationPhase(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
-	if !isEvidenceFirstMutationTaskFamily(brief.TaskFamily) || len(brief.TargetRefs) == 0 {
+	if !workerruntime.TaskFamilyEvidenceFirstMutation(brief.TaskFamily) || len(brief.TargetRefs) == 0 {
 		return ""
 	}
 
@@ -17094,13 +17107,18 @@ func buildRunnerNextActionStateWithAllowedTools(agent string, step int, reason s
 }
 
 func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step int, reason string, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult, declarationMovesForbidden bool, brief workerruntime.WorkerRuntimeBrief, currentAllowedTools []string, options ...any) (runnerNextActionState, TurnPhaseContract) {
+	planningTransport := runnerNextActionPlanningTransport(options)
+	surfaceReq, surfaceResult := modelFacingParserRejectionSurface(reason, req, result, recoveryToolTransportMode(planningTransport))
 	tool := strings.TrimSpace(req.Tool)
 	if tool == "" {
 		tool = strings.TrimSpace(result.Tool)
 	}
+	surfaceTool := strings.TrimSpace(surfaceReq.Tool)
+	if surfaceTool == "" {
+		surfaceTool = strings.TrimSpace(surfaceResult.Tool)
+	}
 
 	brief = runnerBriefWithPhaseHints(brief, results)
-	planningTransport := runnerNextActionPlanningTransport(options)
 	guidanceEngine := runnerNextActionGuidanceEngine(agent, options)
 
 	guidance := workerruntime.BuildActionGuidance(workerruntime.ActionGuidanceInput{
@@ -17111,17 +17129,18 @@ func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step in
 		DeclarationMovesForbidden: declarationMovesForbidden,
 		EvidenceIntent:            brief.EvidenceIntent,
 		WriteCapable:              runnerHasWorkspaceWriteCapability(brief, brief.AllowedTools),
+		ToolTransportMode:         recoveryToolTransportMode(planningTransport),
 	})
 	state := runnerNextActionState{
 		Lane:              strings.TrimSpace(agent),
-		Phase:             runnerLivePhase(brief, req, result, results),
+		Phase:             runnerLivePhase(brief, surfaceReq, surfaceResult, results),
 		Step:              step,
 		Reason:            strings.TrimSpace(reason),
-		LastTool:          tool,
-		LastTarget:        workerruntime.ToolRequestTarget(req),
-		ResultSummary:     textutil.Truncate(strings.TrimSpace(result.Summary), 220),
-		ResultError:       textutil.Truncate(strings.TrimSpace(result.Error), 260),
-		ResultOutputChars: len(result.Output),
+		LastTool:          surfaceTool,
+		LastTarget:        workerruntime.ToolRequestTarget(surfaceReq),
+		ResultSummary:     textutil.Truncate(strings.TrimSpace(surfaceResult.Summary), 220),
+		ResultError:       textutil.Truncate(strings.TrimSpace(surfaceResult.Error), 260),
+		ResultOutputChars: len(surfaceResult.Output),
 		EvidencePaths:     runnerEvidencePathsForBrief(brief, results, 6),
 	}
 	// When context_pack returns a view with candidate files that carry
@@ -17172,11 +17191,21 @@ func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step in
 		state.RecoveryCard = RenderRecoveryCard(BuildRecoveryCard(RecoveryCardInput{
 			PhaseContract:       phaseContract,
 			CurrentAllowedTools: effectiveRecoveryCardAllowedTools(currentAllowedTools, brief, results, phaseContract),
-			RejectedRequest:     req,
-			RejectedResult:      result,
+			RejectedRequest:     surfaceReq,
+			RejectedResult:      surfaceResult,
 			EvidenceRefs:        state.EvidencePaths,
 			RecoveryState:       state.RecoveryState,
 		}))
+	}
+
+	if strings.TrimSpace(reason) == parserRecoveryRecordReason {
+		state.InvalidNextActions = textutil.Merge(state.InvalidNextActions, guidance.InvalidNext)
+		if len(guidance.ValidNext) > 0 {
+			state.NextValidActions = append([]string(nil), guidance.ValidNext...)
+		}
+		state.StateSummary = runnerStateSummary(state)
+
+		return state, phaseContract
 	}
 
 	if reviewRepairTerminalOutcomeRequiredState(brief, result) {
@@ -17193,7 +17222,7 @@ func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step in
 
 	state = applyDelegatedReadOnlyClosureBias(state, agent, brief, results, guidanceEngine)
 	state = applyPostChildClosureBias(state, agent, brief, results)
-	state = applyScratchpadDeliverableCloseoutBias(state, brief, results, guidanceEngine)
+	state = applyScratchpadDeliverableCloseoutBias(state, brief, results)
 	state = applyReadOnlyDiscoveryPendingGuidance(state, brief, req, result, results)
 	state = applyClosurePromptRefinement(state)
 	state.StateSummary = runnerStateSummary(state)
@@ -17229,7 +17258,7 @@ func applyReadOnlyDiscoveryPendingGuidance(state runnerNextActionState, brief wo
 		return state
 	}
 
-	strength := discoveryConsumptionResultStrength(req, result)
+	strength := discoveryConsumptionResultStrengthFromLegacySemantics(req, result)
 	if strength == discoveryConsumptionNone {
 		return state
 	}
@@ -17290,17 +17319,19 @@ func buildRunnerFailureFeedbackPacketWithAllowedTools(agent string, step int, re
 
 func buildRunnerFailureFeedbackPacketWithAllowedToolsAndTransport(agent string, step int, reason string, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult, declarationMovesForbidden bool, brief workerruntime.WorkerRuntimeBrief, currentAllowedTools []string, transport PlanExecutePlanningTransport) runnerFailureFeedbackPacket {
 	state, _ := buildRunnerNextActionStateWithAllowedToolsAndContract(agent, step, reason, req, result, results, declarationMovesForbidden, brief, currentAllowedTools, transport)
+	recoveryReq, recoveryResult := modelFacingParserRejectionSurface(reason, req, result, recoveryToolTransportMode(transport))
 	recovery := workerruntime.BuildRecoveryPlan(workerruntime.RecoveryInput{
 		Lane:                      agent,
 		Step:                      step,
 		Reason:                    reason,
-		Request:                   req,
-		Result:                    result,
+		Request:                   recoveryReq,
+		Result:                    recoveryResult,
 		EvidencePaths:             state.EvidencePaths,
 		Constraints:               state.Constraints,
 		DeclarationMovesForbidden: declarationMovesForbidden,
 		EvidenceIntent:            brief.EvidenceIntent,
 		WriteCapable:              runnerHasWorkspaceWriteCapability(brief, brief.AllowedTools),
+		ToolTransportMode:         recoveryToolTransportMode(transport),
 	})
 
 	if scratchpadFailedEvidenceFeedbackApplies(brief, req, result, results) {
@@ -17366,6 +17397,60 @@ func buildRunnerFailureFeedbackPacketWithAllowedToolsAndTransport(agent string, 
 	}
 
 	return packet
+}
+
+func modelFacingParserRejectionSurface(reason string, req workspace.ToolRequest, result workspace.ToolResult, transportMode string) (workspace.ToolRequest, workspace.ToolResult) {
+	if strings.TrimSpace(reason) != parserRecoveryRecordReason {
+		return req, result
+	}
+
+	surfaceReq := req
+	surfaceResult := result
+	if recoveryRejectedResultIsSubmitPlan(req, result) {
+		surfaceReq.Tool = workspace.ToolNameSubmitPlan
+		surfaceResult.Tool = workspace.ToolNameSubmitPlan
+	} else {
+		surfaceReq.Tool = ""
+		surfaceResult.Tool = ""
+	}
+	surfaceResult.Error = modelFacingToolParseError(surfaceResult.Error, transportMode)
+
+	return surfaceReq, surfaceResult
+}
+
+func modelFacingToolParseError(message string, transportMode string) string {
+	message = strings.TrimSpace(message)
+	if !strings.EqualFold(strings.TrimSpace(transportMode), workerruntime.RecoveryToolTransportNative) {
+		return message
+	}
+
+	replacements := []string{
+		". Emit exactly one valid tool call or answer normally.",
+		" Emit exactly one valid tool call or answer normally.",
+		". Emit exactly one valid JSON tool object.",
+		" Emit exactly one valid JSON tool object.",
+	}
+	for _, replacement := range replacements {
+		message = strings.ReplaceAll(message, replacement, "")
+	}
+	if message == "" {
+		message = parserRecoverySummaryMalformed + "."
+	}
+	if !strings.Contains(strings.ToLower(message), "native tool-call transport") {
+		message = strings.TrimRight(message, ".") + ". Use the active native tool-call transport for tools, or answer in plain prose if the task is complete."
+	}
+
+	return message
+}
+
+func recoveryToolTransportMode(transport PlanExecutePlanningTransport) string {
+	return DeriveRuntimeCallPolicy(RuntimeCallPolicyInput{
+		SupportsNativeTools: transport.SupportsNativeTools,
+		ForceNativeTools:    transport.ForceNativeTools,
+		TextualToolParser:   transport.TextualToolParser,
+		ResponseFormatJSON:  transport.ResponseFormatJSON,
+		TerminalOnly:        transport.TerminalOnly,
+	}).ToolTransportMode()
 }
 
 func effectiveRecoveryCardAllowedTools(currentAllowedTools []string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, contract TurnPhaseContract) []string {
@@ -17978,6 +18063,7 @@ type runnerRecordOptions struct {
 	IncrementNoProgress     bool
 	IncrementRejectedStreak bool
 	SetLastToolKey          bool
+	SuppressModelMessage    bool
 }
 
 func (r runnerTurnRecorder) record(step int, req workspace.ToolRequest, result workspace.ToolResult, reason string, opts runnerRecordOptions) {
@@ -17986,6 +18072,7 @@ func (r runnerTurnRecorder) record(step int, req workspace.ToolRequest, result w
 }
 
 func (r runnerTurnRecorder) recordWithOptions(step int, req workspace.ToolRequest, result workspace.ToolResult, reason string, opts runnerRecordOptions) {
+	priorResults := r.snapshotResults()
 	result = resultWithRejectedRequestTarget(req, result)
 	if r.collectedResults != nil {
 		*r.collectedResults = append(*r.collectedResults, result)
@@ -18024,12 +18111,13 @@ func (r runnerTurnRecorder) recordWithOptions(step int, req workspace.ToolReques
 	}
 
 	if opts.TrackProgress && r.consecutiveNoProgress != nil {
-		if toolResultMadeProgress(req, result) {
+		switch r.resultProgress(req, result, priorResults) {
+		case runnerResultProgressMade:
 			*r.consecutiveNoProgress = 0
 			if r.metrics != nil {
 				r.metrics.ProgressTurns++
 			}
-		} else {
+		case runnerResultProgressStalled:
 			*r.consecutiveNoProgress++
 		}
 	} else if opts.IncrementNoProgress && r.consecutiveNoProgress != nil {
@@ -18040,7 +18128,7 @@ func (r runnerTurnRecorder) recordWithOptions(step int, req workspace.ToolReques
 		r.onToolResult(ToolResultEvent{Step: step, Agent: r.runner.agentName(), Request: req, Result: result})
 	}
 
-	if r.turnMessages != nil {
+	if r.turnMessages != nil && !opts.SuppressModelMessage {
 		modelResult := r.modelFacingToolResult(step, req, result, reason)
 
 		*r.turnMessages = append(*r.turnMessages, toolResultMessage(r.activeToolCall, modelResult))
@@ -18050,7 +18138,7 @@ func (r runnerTurnRecorder) recordWithOptions(step int, req workspace.ToolReques
 		r.runner.emitNextActionState(step, reason, req, result, r.snapshotResults(), r.declarationMovesForbidden)
 
 		if strings.TrimSpace(result.Error) != "" {
-			packet := buildRunnerFailureFeedbackPacketWithAllowedTools(r.runner.agentName(), step, reason, req, result, r.snapshotResults(), r.declarationMovesForbidden, r.runner.RuntimeBrief, r.runner.currentAllowedTools)
+			packet := buildRunnerFailureFeedbackPacketWithAllowedToolsAndTransport(r.runner.agentName(), step, reason, req, result, r.snapshotResults(), r.declarationMovesForbidden, r.runner.RuntimeBrief, r.runner.currentAllowedTools, r.runner.currentPlanningTransport())
 			if len(packet.DoNotRepeat) > 0 || len(packet.RequiredNext) > 0 || strings.TrimSpace(packet.ResultError) != "" {
 				if data, err := json.Marshal(packet); err == nil {
 					r.runner.emitEvent(RunEvent{Role: "failure_feedback", Content: string(data)})
@@ -18058,6 +18146,31 @@ func (r runnerTurnRecorder) recordWithOptions(step int, req workspace.ToolReques
 			}
 		}
 	}
+}
+
+type runnerResultProgress string
+
+const (
+	runnerResultProgressStalled runnerResultProgress = "stalled"
+	runnerResultProgressMade    runnerResultProgress = "made"
+	runnerResultProgressNeutral runnerResultProgress = "neutral"
+)
+
+func (r runnerTurnRecorder) resultProgress(req workspace.ToolRequest, result workspace.ToolResult, priorResults []workspace.ToolResult) runnerResultProgress {
+	if r.runner != nil {
+		switch implementationTargetWriteReadyReadProgressForResult(r.runner.RuntimeBrief, req, result, priorResults) {
+		case implementationTargetWriteReadyReadProgressAddsSource:
+			return runnerResultProgressMade
+		case implementationTargetWriteReadyReadProgressDuplicate:
+			return runnerResultProgressNeutral
+		}
+	}
+
+	if toolResultMadeProgress(req, result) {
+		return runnerResultProgressMade
+	}
+
+	return runnerResultProgressStalled
 }
 
 func resultWithRejectedRequestTarget(req workspace.ToolRequest, result workspace.ToolResult) workspace.ToolResult {
@@ -18080,11 +18193,23 @@ func resultWithRejectedRequestTarget(req workspace.ToolRequest, result workspace
 }
 
 func (r runnerTurnRecorder) modelFacingToolResult(step int, req workspace.ToolRequest, result workspace.ToolResult, reason string) workspace.ToolResult {
+	if strings.TrimSpace(reason) == parserRecoveryRecordReason && r.activeToolCall != nil {
+		if toolName := strings.TrimSpace(r.activeToolCall.Function.Name); toolName != "" {
+			modelResult := result
+
+			modelResult.Tool = toolName
+			if r.runner != nil {
+				modelResult.Error = modelFacingToolParseError(modelResult.Error, recoveryToolTransportMode(r.runner.currentPlanningTransport()))
+			}
+			return modelResult
+		}
+	}
+
 	if r.runner == nil || strings.TrimSpace(result.Error) == "" || strings.TrimSpace(reason) != "tool_rejected" {
 		return result
 	}
 
-	packet := buildRunnerFailureFeedbackPacketWithAllowedTools(
+	packet := buildRunnerFailureFeedbackPacketWithAllowedToolsAndTransport(
 		r.runner.agentName(),
 		step,
 		reason,
@@ -18094,6 +18219,7 @@ func (r runnerTurnRecorder) modelFacingToolResult(step int, req workspace.ToolRe
 		r.declarationMovesForbidden,
 		r.runner.RuntimeBrief,
 		r.runner.currentAllowedTools,
+		r.runner.currentPlanningTransport(),
 	)
 	feedback := renderModelFacingFailureFeedback(packet)
 
@@ -18419,7 +18545,7 @@ func prematureEvidenceFirstTargetRecoveryNudge(in recoveryNudgeInputs) (string, 
 }
 
 func evidenceFirstTargetInspectionActive(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	return isEvidenceFirstMutationTaskFamily(brief.TaskFamily) &&
+	return workerruntime.TaskFamilyEvidenceFirstMutation(brief.TaskFamily) &&
 		len(brief.TargetRefs) > 0 &&
 		len(changedPathsFromToolResults(results)) == 0 &&
 		hasFocusedNonTargetEvidence(results, brief.TargetRefs) &&
@@ -18512,7 +18638,7 @@ func lastChanceRecoveryNudge(in recoveryNudgeInputs) string {
 }
 
 func isPrematureEvidenceFirstTargetRead(req workspace.ToolRequest, results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) bool {
-	return isEvidenceFirstMutationTaskFamily(brief.TaskFamily) &&
+	return workerruntime.TaskFamilyEvidenceFirstMutation(brief.TaskFamily) &&
 		len(brief.TargetRefs) > 0 &&
 		strings.TrimSpace(req.Tool) == workspace.ToolNameReadFile &&
 		slices.Contains(brief.TargetRefs, strings.TrimSpace(req.Path)) &&
@@ -19009,8 +19135,8 @@ type runnerRequestBudgetState struct {
 	// writeReadyNudgeActive is set by the write-ready nudge path in
 	// runner.go when the model is in a write-ready-but-not-writing
 	// state. When true, the rejection retry budget defers to the
-	// write-ready escalation contract (12-nudge countdown) instead
-	// of force-answering on the first rejection retry.
+	// write-ready escalation contract instead of force-answering on the
+	// first rejection retry.
 	writeReadyNudgeActive bool
 
 	broadEvidenceDelegationRequired  bool
@@ -19528,7 +19654,7 @@ func (s *runnerRequestBudgetState) rejectedFingerprintDecision(req workspace.Too
 	}
 
 	if priorSummary, ok := s.fingerprint.rejected[currentFingerprint]; ok {
-		if isRecoverablePostReadinessGapRejection(priorSummary) {
+		if postReadinessContinuationRejectionSummary(priorSummary) {
 			delete(s.fingerprint.rejected, currentFingerprint)
 			delete(s.fingerprint.rejectedRetries, currentFingerprint)
 
@@ -19657,10 +19783,6 @@ func earlyRejectedFingerprintSummary(summary string) bool {
 	default:
 		return false
 	}
-}
-
-func isRecoverablePostReadinessGapRejection(summary string) bool {
-	return postReadinessContinuationRejectionSummary(summary)
 }
 
 func normalizedHarnessRejectionSummary(summary string) string {
@@ -20093,7 +20215,7 @@ func (r *Runner) rebuildRunTools(state *runnerRunState) {
 	allowed := r.advertisedAllowedTools(r.Workspace.AllowedTools())
 	writeOnlySurface := state.implementationWriteOnlyRecoveryActive ||
 		state.requiredPathCompletionRecoveryActive ||
-		implementationPreWriteToolSurfaceActive(r.RuntimeBrief, state.collectedResults)
+		exactAnchorPreWriteSurfaceActive(r.RuntimeBrief, state.collectedResults)
 	scopedEditSurface := !writeOnlySurface && implementationScopedEditSurfaceActive(r.RuntimeBrief, state.collectedResults)
 
 	if scopedEditSurface {
@@ -20250,19 +20372,6 @@ func (r *Runner) forcePlanThenExecuteTerminalSurface(state *runnerRunState, reas
 	r.refreshPlanThenExecuteTerminalToolSurface(&state.turnMessages, state.collectedResults, reason)
 }
 
-// injectPlanThenExecuteRecoveryTail handles the common boilerplate at the end
-// of every plan-execute recovery injection.
-func (r *Runner) injectPlanThenExecuteRecoveryTail(state *runnerRunState, prompt string, eventRole string, surfaceKey string) {
-	r.refreshPlanThenExecuteTerminalSurface(state, surfaceKey)
-
-	state.turnMessages = append(state.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
-	r.rebuildRunTools(state)
-
-	state.opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(state.opts, r.RuntimeBrief, state.collectedResults, r.terminalSubmitPlanNativeTools(state))
-	r.syncPlanThenExecuteRecoveryAllowedTools(state)
-	r.emitEvent(RunEvent{Role: eventRole, Content: prompt})
-}
-
 // transitionPlanThenExecuteSubmitReadyTerminal applies the full submit-ready
 // runtime surface. Prompt-only transitions are unsafe here: once the model is
 // told to call submit_plan, currentAllowedTools must agree even if stale
@@ -20293,7 +20402,7 @@ func (r *Runner) emitTerminalAnswerSignalsOnce(state *runnerRunState, decision t
 	case terminalAnswerAccepted:
 		if state.autonomyRecorder != nil {
 			reasonCode := "final_answer_accepted"
-			if r.planThenExecutePlannerPhase() && planThenExecuteSourceSatisfiedAnswerIntent(decision.RawAnswer) {
+			if r.planThenExecutePlannerPhase() && plancontract.SourceSatisfiedAnswerIntent(decision.RawAnswer) {
 				reasonCode = "plan_source_satisfied_short_circuit"
 			}
 
@@ -20303,11 +20412,13 @@ func (r *Runner) emitTerminalAnswerSignalsOnce(state *runnerRunState, decision t
 		r.emitFinalAnswerTelemetry(decision.RawAnswer, state.collectedResults, decision.Acceptance)
 	case terminalAnswerBlocked, terminalAnswerTransportBlocked:
 		blockerKind := textutil.FirstNonEmpty(strings.TrimSpace(decision.Acceptance.BlockerKind), strings.TrimSpace(decision.StopReason))
-		if strings.TrimSpace(state.stopReason) == "implementation_tool_step_budget_blocked" &&
+		reason := strings.TrimSpace(decision.Acceptance.Reason)
+		if hostOwnedQuestionCloseoutStopReason(state.stopReason, decision.RawAnswer) &&
 			runnerBriefRequiresMutation(r.RuntimeBrief) &&
 			len(changedPathsFromToolResults(state.collectedResults)) == 0 {
 
-			blockerKind = "implementation_tool_step_budget_blocked"
+			blockerKind = strings.TrimSpace(state.stopReason)
+			reason = blockerKind
 		}
 		if state.autonomyRecorder != nil {
 			state.autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyReject, blockerKind, state.collectedResults, state.completionGateRejections)
@@ -20323,7 +20434,7 @@ func (r *Runner) emitTerminalAnswerSignalsOnce(state *runnerRunState, decision t
 				TaskFamily:    strings.TrimSpace(r.RuntimeBrief.TaskFamily),
 				Contract:      strings.TrimSpace(r.RuntimeBrief.Contract),
 				Status:        "blocked",
-				Reason:        strings.TrimSpace(decision.Acceptance.Reason),
+				Reason:        reason,
 				BlockerKind:   strings.TrimSpace(blockerKind),
 				RequiresEdit:  runnerBriefRequiresMutation(r.RuntimeBrief),
 				EditAttempted: len(changedPaths) > 0,
@@ -20410,7 +20521,7 @@ func (r *Runner) retryRejectedFinalAnswer(state *runnerRunState, stepNumber int,
 	var recoveryPrompt string
 
 	if prompt, _, ok := r.completionGateRecoveryPrompt(state.collectedResults); ok {
-		if card := r.renderRecoveryCardForRejectedAction(workspace.ToolRequest{Tool: "completion_gate"}, result, state.collectedResults, state.currentAllowedTools); card != "" {
+		if card := r.renderRecoveryCardForRejectedActionWithTransport(workspace.ToolRequest{Tool: "completion_gate"}, result, state.collectedResults, state.currentAllowedTools, r.currentPlanningTransport()); card != "" {
 			prompt = appendRecoveryCardToMessage(prompt, card)
 		}
 
@@ -20426,8 +20537,13 @@ type RunPolicy struct {
 	MaxNoProgressTurns int
 	MaxContextMessages int
 	MaxContextChars    int
-	MaxModelCalls      int
-	MaxDuration        time.Duration
+	// MaxModelCalls is an advisory accounting threshold. It may appear in
+	// telemetry and ledgers, but it must not terminally steer model strategy.
+	MaxModelCalls int
+	// MaxOperationalModelCalls is the explicit hard provider/cost fuse. Zero
+	// disables it; callers must opt in when a terminal model-call stop is a
+	// real operational invariant.
+	MaxOperationalModelCalls int
 	// SynthesisNudgeAt injects a one-shot "pause and synthesize" system
 	// message when ToolCalls first reaches this value. 0 disables. Mitigates
 	// long tool chains that produce short answers.
@@ -20530,7 +20646,6 @@ func (r *Runner) effectivePolicy() RunPolicy {
 
 	if runnerBriefRequiresMutation(r.RuntimeBrief) {
 		policy = scaleMaxToolStepsByRequiredPaths(policy, len(r.RuntimeBrief.RequiredEditPaths))
-		policy = scaleMaxModelCallsByRequiredPaths(policy, len(r.RuntimeBrief.RequiredEditPaths))
 	}
 
 	if briefLimit := r.RuntimeBrief.Budget.MaxToolSteps; briefLimit > 0 && (policy.MaxToolSteps <= 0 || briefLimit < policy.MaxToolSteps) {
@@ -20539,6 +20654,10 @@ func (r *Runner) effectivePolicy() RunPolicy {
 
 	if briefLimit := r.RuntimeBrief.Budget.MaxModelCalls; briefLimit > 0 && (policy.MaxModelCalls <= 0 || briefLimit < policy.MaxModelCalls) {
 		policy.MaxModelCalls = briefLimit
+	}
+
+	if briefLimit := r.RuntimeBrief.Budget.MaxOperationalModelCalls; briefLimit > 0 && (policy.MaxOperationalModelCalls <= 0 || briefLimit < policy.MaxOperationalModelCalls) {
+		policy.MaxOperationalModelCalls = briefLimit
 	}
 
 	// Default synthesis nudge: fire at 10 tool calls for any lane that
@@ -20581,28 +20700,6 @@ func scaleMaxToolStepsByRequiredPaths(policy RunPolicy, pathCount int) RunPolicy
 	return policy
 }
 
-// scaleMaxModelCallsByRequiredPaths grows tight model-call ceilings for
-// multi-file implementation atoms. Tool-step scaling alone is not enough:
-// each successful tool result needs a follow-up model call, so a six-path atom
-// capped at three model calls can spend the whole run on legitimate scoped
-// reads and never receive a write/blocker turn.
-func scaleMaxModelCallsByRequiredPaths(policy RunPolicy, pathCount int) RunPolicy {
-	if pathCount <= 1 {
-		return policy
-	}
-
-	scaled := maxModelCallsBase + 2*(pathCount-1)
-	if scaled > maxModelCallsCeiling {
-		scaled = maxModelCallsCeiling
-	}
-
-	if policy.MaxModelCalls >= maxModelCallsBase && policy.MaxModelCalls < scaled {
-		policy.MaxModelCalls = scaled
-	}
-
-	return policy
-}
-
 const (
 	// maxToolStepsBase is the conservative default budget for a single-file
 	// implementation atom. Multi-file briefs scale up via
@@ -20613,13 +20710,6 @@ const (
 	// maxToolStepsCeiling caps the scaled budget so a sprawling brief
 	// can't run away even if it slipped past the brief lint.
 	maxToolStepsCeiling = 56
-	// maxModelCallsBase is the smallest normal mutation-lane model budget.
-	// Values below it are treated as deliberately tight tests or operator
-	// limits; values at or above it scale with required edit paths.
-	maxModelCallsBase = 3
-	// maxModelCallsCeiling keeps scaled model-call budgets bounded while
-	// leaving already-higher explicit policies alone.
-	maxModelCallsCeiling = 24
 	// postCompletionVerificationCutoff bounds how many non-write tool calls
 	// the agent can issue after all required edit paths have been written.
 	// A small budget lets the model do legitimate "did my edit land?" reads
@@ -20637,12 +20727,8 @@ func (p RunPolicy) shouldStopForNoProgress(consecutiveNoProgress int) bool {
 	return p.MaxNoProgressTurns > 0 && consecutiveNoProgress >= p.MaxNoProgressTurns
 }
 
-func (p RunPolicy) shouldStopForModelCalls(used int) bool {
-	return p.MaxModelCalls > 0 && used >= p.MaxModelCalls
-}
-
-func (p RunPolicy) shouldStopForDuration(startedAt time.Time) bool {
-	return p.MaxDuration > 0 && time.Since(startedAt) >= p.MaxDuration
+func (p RunPolicy) shouldStopForOperationalModelCalls(used int) bool {
+	return p.MaxOperationalModelCalls > 0 && used >= p.MaxOperationalModelCalls
 }
 
 type runnerMetrics struct {
@@ -20667,6 +20753,7 @@ type runnerBudgetLedger struct {
 	Lane                       string   `json:"lane"`
 	UsedModelCalls             int      `json:"used_model_calls"`
 	MaxModelCalls              int      `json:"max_model_calls,omitempty"`
+	MaxOperationalModelCalls   int      `json:"max_operational_model_calls,omitempty"`
 	UsedToolResults            int      `json:"used_tool_results"`
 	MaxToolSteps               int      `json:"max_tool_steps,omitempty"`
 	PromptTokens               int      `json:"prompt_tokens,omitempty"`
@@ -20782,7 +20869,7 @@ func (r *Runner) emitNextActionState(step int, reason string, req workspace.Tool
 	}
 
 	brief := r.visibleBriefForToolSurface(r.RuntimeBrief, results)
-	state, phaseContract := buildRunnerNextActionStateWithAllowedToolsAndContract(r.agentName(), step, reason, req, result, results, declarationMovesForbidden, brief, r.currentAllowedTools, r.guidanceEngine())
+	state, phaseContract := buildRunnerNextActionStateWithAllowedToolsAndContract(r.agentName(), step, reason, req, result, results, declarationMovesForbidden, brief, r.currentAllowedTools, r.currentPlanningTransport(), r.guidanceEngine())
 
 	if r.activeAutonomy != nil {
 		r.activeAutonomy.emitTurnPhaseSurfaceSummary(turnPhaseSurfaceSummaryFromNextActionState(state, phaseContract), phaseContract)
@@ -20828,10 +20915,11 @@ func (r *Runner) runtimeBriefWithLiveState(policy RunPolicy, messages []llama.Ch
 
 	if brief.Budget == (workerruntime.BudgetBrief{}) {
 		brief.Budget = workerruntime.BudgetBrief{
-			MaxToolSteps:       policy.MaxToolSteps,
-			MaxModelCalls:      policy.MaxModelCalls,
-			MaxContextMessages: policy.MaxContextMessages,
-			MaxContextChars:    policy.MaxContextChars,
+			MaxToolSteps:             policy.MaxToolSteps,
+			MaxModelCalls:            policy.MaxModelCalls,
+			MaxOperationalModelCalls: policy.MaxOperationalModelCalls,
+			MaxContextMessages:       policy.MaxContextMessages,
+			MaxContextChars:          policy.MaxContextChars,
 		}
 	}
 
@@ -20846,22 +20934,19 @@ func (r *Runner) runtimeBriefWithLiveState(policy RunPolicy, messages []llama.Ch
 
 	brief.ChangedPaths = textutil.Merge(brief.ChangedPaths, mapKeys(changedPathsFromToolResults(results)))
 	brief = runnerBriefWithPhaseHints(brief, results)
-	brief.Readiness = runnerReadinessStateWithEngine(r.agentName(), brief, results, r.guidanceEngine(), r.evidenceEngine())
+	brief.Readiness = runnerReadinessStateWithEngine(r.agentName(), brief, results, r.guidanceEngine())
 
 	return workerruntime.NormalizeRuntimeBrief(brief)
 }
 
 func runnerReadinessState(agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) *workerruntime.ReadinessState {
-	return runnerReadinessStateWithEngine(agent, brief, results, newGuidanceEngine(agent, newEvidenceEngine()), newEvidenceEngine())
+	return runnerReadinessStateWithEngine(agent, brief, results, newGuidanceEngine(agent, newEvidenceEngine()))
 }
 
-func runnerReadinessStateWithEngine(agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, guidance GuidanceEngine, evidence EvidenceEngine) *workerruntime.ReadinessState {
+func runnerReadinessStateWithEngine(agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, guidance GuidanceEngine) *workerruntime.ReadinessState {
 	brief = workerruntime.NormalizeRuntimeBrief(brief)
 	if guidance == nil {
 		guidance = newGuidanceEngine(agent, newEvidenceEngine())
-	}
-	if evidence == nil {
-		evidence = newEvidenceEngine()
 	}
 
 	readiness := &workerruntime.ReadinessState{}
@@ -20871,7 +20956,7 @@ func runnerReadinessStateWithEngine(agent string, brief workerruntime.WorkerRunt
 		readOnlyBrief = readOnlyDirectAnswerAcceptanceLedgerBrief(brief)
 	}
 
-	readOnlyLedger := evidence.Answerability(readOnlyBrief, results)
+	readOnlyLedger := readOnlyAnswerabilityForResults(readOnlyBrief, results)
 	addClosed := func(values ...string) {
 		readiness.ClosedClaims = textutil.Merge(readiness.ClosedClaims, values)
 	}
@@ -21183,6 +21268,7 @@ func (r *Runner) emitBudgetLedger(policy RunPolicy, metrics runnerMetrics, stopR
 		Lane:                       r.agentName(),
 		UsedModelCalls:             metrics.ModelCalls,
 		MaxModelCalls:              policy.MaxModelCalls,
+		MaxOperationalModelCalls:   policy.MaxOperationalModelCalls,
 		UsedToolResults:            metrics.ToolCalls,
 		PromptTokens:               metrics.PromptTokens,
 		CompletionTokens:           metrics.CompletionTokens,
@@ -21257,7 +21343,7 @@ func workspaceToolRulesPermissionDenyAnswer(req workspace.ToolRequest, result wo
 		tool = strings.TrimSpace(result.Tool)
 	}
 
-	target := permissionTarget(req)
+	target := PermissionTarget(req)
 	if target == "" {
 		target = "the requested target"
 	}
@@ -21369,9 +21455,7 @@ func (r *Runner) emitToolRequestNormalizerEvent(outcome string, transport string
 
 	if parseErr != nil {
 		payload["error"] = strings.TrimSpace(parseErr.Error())
-		if parserFailureClass == "" || parserFailureClass == autonomy.ParserFailureNone {
-			parserFailureClass = toolRequestParserFailureClass("", parseErr)
-		}
+		_, parserFailureClass = parserPolicyMetadata("", parseErr, "", parserFailureClass)
 
 		if parserFailureClass != "" && parserFailureClass != autonomy.ParserFailureNone {
 			payload["parser_failure_class"] = string(parserFailureClass)
@@ -21382,20 +21466,7 @@ func (r *Runner) emitToolRequestNormalizerEvent(outcome string, transport string
 }
 
 func toolRequestNormalizerTransportIsModelTextual(transport string) bool {
-	switch strings.TrimSpace(transport) {
-	case toolRequestNormalizerTransportTextual,
-		toolRequestNormalizerTransportFencedJSON,
-		toolRequestNormalizerTransportKeyValue,
-		toolRequestNormalizerTransportKeyValueArgs,
-		toolRequestNormalizerTransportFunctionCall,
-		toolRequestNormalizerTransportNestedArguments,
-		toolRequestNormalizerTransportIdiomCLI,
-		toolRequestNormalizerTransportXMLToolMarkup,
-		toolRequestNormalizerTransportStringifiedSubmitRepair:
-		return true
-	default:
-		return false
-	}
+	return toolRequestAutonomyTransport(transport) == autonomy.ToolTransportTextualCall
 }
 
 func modelCallParsedTextualToolTelemetry(reply llama.ChatMessage) map[string]any {
@@ -21655,6 +21726,28 @@ func (r *Runner) runnerCompactionSummary(policy RunPolicy, ledger *taskLedgerSta
 		}
 	}
 
+	if coverage := implementationSourceCoverageSummary(results, 8); coverage != "" {
+		b.WriteString("\nSource coverage already read:\n")
+		b.WriteString(coverage)
+		b.WriteString("\n")
+	}
+
+	if implementationTargetWriteReadySurfaceActive(r.RuntimeBrief, results) {
+		b.WriteString("\nImplementation write-ready ledger:\n")
+		b.WriteString("- remaining obligation: parser-readable write to a sourced target path, exact no-op evidence, or <<QUESTION>> with the exact blocker\n")
+		b.WriteString("- further reads/searches: allowed only for an exact missing edit-safety fact with bounded scope\n")
+		if sourced := implementationTargetWriteReadySourcedPathSummary(results, 8); sourced != "" {
+			b.WriteString("- source-body evidence paths: ")
+			b.WriteString(sourced)
+			b.WriteString("\n")
+		}
+		if inspected := conversationInspectedPathSummary(results); inspected != "" {
+			b.WriteString("- recent inspected evidence: ")
+			b.WriteString(inspected)
+			b.WriteString("\n")
+		}
+	}
+
 	if failed, ok := failedVerificationAfterLatestWrite(results, r.RuntimeBrief); ok {
 		b.WriteString("\nOpen failed verification repair packet:\n")
 		b.WriteString("- tool: ")
@@ -21880,6 +21973,168 @@ func tailToolResults(results []workspace.ToolResult, max int) []workspace.ToolRe
 	return results[len(results)-max:]
 }
 
+type implementationSourceCoverage struct {
+	Path          string
+	TotalLines    int
+	Ranges        []lineRange
+	UnknownBody   bool
+	CompleteRead  bool
+	LatestSummary string
+}
+
+type lineRange struct {
+	Start int
+	End   int
+}
+
+func implementationSourceCoverageSummary(results []workspace.ToolResult, maxPaths int) string {
+	coverage := implementationSourceCoverageByPath(results)
+	if len(coverage) == 0 {
+		return ""
+	}
+
+	paths := make([]string, 0, len(coverage))
+	for path := range coverage {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+
+	if maxPaths <= 0 || maxPaths > len(paths) {
+		maxPaths = len(paths)
+	}
+
+	var b strings.Builder
+	for _, path := range paths[:maxPaths] {
+		item := coverage[path]
+		b.WriteString("  - ")
+		b.WriteString(path)
+		b.WriteString(": ")
+		b.WriteString(item.describe())
+		b.WriteString("\n")
+	}
+
+	if len(paths) > maxPaths {
+		b.WriteString("  - +")
+		b.WriteString(strconv.Itoa(len(paths) - maxPaths))
+		b.WriteString(" more source-covered path(s)\n")
+	}
+
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func implementationSourceCoverageByPath(results []workspace.ToolResult) map[string]*implementationSourceCoverage {
+	coverage := make(map[string]*implementationSourceCoverage)
+
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+
+		paths := agentutil.ReadPathsFromToolResult(result)
+		if len(paths) == 0 {
+			continue
+		}
+
+		start, end, hasRange := planThenExecuteReadSummaryLineRange(result.Summary)
+		total, hasTotal := planThenExecuteReadSummaryTotalLines(result.Summary)
+
+		for _, rawPath := range paths {
+			path := agentutil.NormalizeRunnerPath(rawPath)
+			if path == "" || agentutil.IsNonSourceEvidenceArtifactPath(path) {
+				continue
+			}
+			hasBody := sourceEvidenceHasBody(planThenExecuteToolResultSourceEvidence(result, path))
+			if !hasBody && !hasRange {
+				continue
+			}
+
+			item := coverage[path]
+			if item == nil {
+				item = &implementationSourceCoverage{Path: path}
+				coverage[path] = item
+			}
+
+			if hasTotal && total > item.TotalLines {
+				item.TotalLines = total
+			}
+			if hasRange {
+				item.Ranges = append(item.Ranges, lineRange{Start: start, End: end})
+			} else if hasBody {
+				item.UnknownBody = true
+			}
+			if summary := strings.TrimSpace(result.Summary); summary != "" {
+				item.LatestSummary = summary
+			}
+		}
+	}
+
+	for _, item := range coverage {
+		item.Ranges = mergeLineRanges(item.Ranges)
+		if item.TotalLines > 0 {
+			for _, r := range item.Ranges {
+				if r.Start <= 1 && r.End >= item.TotalLines {
+					item.CompleteRead = true
+					break
+				}
+			}
+		}
+	}
+
+	return coverage
+}
+
+func mergeLineRanges(ranges []lineRange) []lineRange {
+	if len(ranges) == 0 {
+		return nil
+	}
+
+	sort.Slice(ranges, func(i, j int) bool {
+		if ranges[i].Start == ranges[j].Start {
+			return ranges[i].End < ranges[j].End
+		}
+		return ranges[i].Start < ranges[j].Start
+	})
+
+	merged := make([]lineRange, 0, len(ranges))
+	for _, r := range ranges {
+		if r.Start <= 0 || r.End < r.Start {
+			continue
+		}
+		if len(merged) == 0 || r.Start > merged[len(merged)-1].End+1 {
+			merged = append(merged, r)
+			continue
+		}
+		if r.End > merged[len(merged)-1].End {
+			merged[len(merged)-1].End = r.End
+		}
+	}
+
+	return merged
+}
+
+func (c implementationSourceCoverage) describe() string {
+	parts := make([]string, 0, 4)
+	if len(c.Ranges) > 0 {
+		rangeParts := make([]string, 0, len(c.Ranges))
+		for _, r := range c.Ranges {
+			rangeParts = append(rangeParts, fmt.Sprintf("%d-%d", r.Start, r.End))
+		}
+		parts = append(parts, "lines "+strings.Join(rangeParts, ", "))
+	}
+	if c.TotalLines > 0 {
+		parts = append(parts, fmt.Sprintf("total lines %d", c.TotalLines))
+	}
+	if c.CompleteRead {
+		parts = append(parts, "complete file read")
+	} else if c.UnknownBody {
+		parts = append(parts, "source body observed")
+	}
+	if len(parts) == 0 && strings.TrimSpace(c.LatestSummary) != "" {
+		parts = append(parts, textutil.Truncate(strings.TrimSpace(c.LatestSummary), 180))
+	}
+	return strings.Join(parts, "; ")
+}
+
 func latestUserObjective(messages []llama.ChatMessage) string {
 	for i := len(messages) - 1; i >= 0; i-- {
 		if strings.ToLower(strings.TrimSpace(messages[i].Role)) != "user" {
@@ -22058,6 +22313,9 @@ func runnerPinnedPathsForBrief(brief workerruntime.WorkerRuntimeBrief, results [
 	paths := append([]string{}, brief.RequiredEditPaths...)
 
 	paths = append(paths, mapKeys(changedPathsFromToolResults(results))...)
+	if implementationTargetWriteReadySurfaceActive(brief, results) {
+		paths = append(paths, sourceEvidenceBodyPaths(results)...)
+	}
 	paths = append(paths, runnerEvidencePathsForBrief(brief, results, max*2)...)
 
 	return closurePromptEvidencePathsPreservingTests(paths, max)
@@ -22297,7 +22555,7 @@ func (r *Runner) classifyTerminalAnswer(answer string, stopReason string, result
 
 	decision.Outcome = terminalAnswerBlocked
 	decision.StopReason = acceptance.BlockerKind
-	if stopReason == "implementation_tool_step_budget_blocked" && strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") {
+	if hostOwnedQuestionCloseoutStopReason(stopReason, answer) {
 		decision.StopReason = stopReason
 	}
 	decision.RetryExhausted = turnFinalAnswerAcceptanceRetryable(acceptance)
@@ -22315,6 +22573,24 @@ func (r *Runner) classifyTerminalAnswer(answer string, stopReason string, result
 	}
 
 	return decision
+}
+
+func hostOwnedQuestionCloseoutStopReason(stopReason string, answer string) bool {
+	if !strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") {
+		return false
+	}
+
+	switch strings.TrimSpace(stopReason) {
+	case "implementation_tool_step_budget_blocked",
+		"tool_step_budget_exhausted",
+		"model_call_budget_exhausted",
+		"operational_model_call_limit_exceeded",
+		"duration_budget_exhausted",
+		"no_progress_budget_exhausted":
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *Runner) recoveredReadOnlyTerminalAnswer(answer string, results []workspace.ToolResult, acceptance finalAnswerAcceptance) (string, finalAnswerAcceptance, bool) {
@@ -22390,7 +22666,7 @@ func (r *Runner) terminalAnswerShouldOverrideRejectedRaw(answer string, acceptan
 }
 
 func terminalAnswerContainsTransportProtocol(answer string) bool {
-	return looksLikeTextualToolCall(answer) ||
+	return IsTextualToolCall(answer) ||
 		strings.Contains(answer, "<n_tool") ||
 		strings.Contains(answer, "<n_invoke") ||
 		strings.Contains(answer, "<janus_tool") ||
@@ -22863,7 +23139,7 @@ func (r *Runner) finalAnswerBlockerErrorText(kind string, reason string, answer 
 	case string(turnViolationProtocolMetaFinalAnswer):
 		return "the final answer repeated internal validation status instead of answering the user. Answer in normal prose from the gathered evidence; omit validation status and internal protocol markers."
 	case string(turnViolationUnexecutedToolRequestAnswer):
-		return "the final answer was an unexecuted workspace-tool request payload. Issue the lookup as a parser-readable tool call with the `tool` field, or answer in normal prose from the available evidence."
+		return "the final answer was an unexecuted workspace-tool request payload. " + workspaceLookupTransportInstruction(recoveryToolTransportMode(r.currentPlanningTransport())) + " Or answer in normal prose from the available evidence."
 	case string(turnViolationNonAnswerProse):
 		return "the final answer looks like transport-level noise (tool-call markup, echoed user question, or tool-failure language) rather than an actual answer. Reply with substantive prose that addresses the user's request, or use <<QUESTION>>: to state a concrete blocker."
 	case string(turnViolationSourceGroundingUnmet):
@@ -22910,7 +23186,7 @@ func (r *Runner) decoratedReadOnlyReplyForCompletionGate(reply string, results [
 
 	if (!finalAnswerNeedsDecoration(reply) && !looksLikeGenericEvidenceComposerAnswer(reply)) ||
 		looksLikeRawToolResultTranscript(reply) ||
-		looksLikeTextualToolCall(reply) ||
+		IsTextualToolCall(reply) ||
 		looksLikeUnexecutedToolRequestAnswer(reply) {
 
 		return reply
@@ -23172,6 +23448,7 @@ func hasConcreteReadOnlyInspectionEvidence(results []workspace.ToolResult) bool 
 type runnerTurnController struct {
 	runner                     *Runner
 	ctx                        context.Context
+	policy                     RunPolicy
 	opts                       *llama.ChatOptions
 	metrics                    *runnerMetrics
 	requestBudget              *runnerRequestBudgetState
@@ -23201,7 +23478,7 @@ func (c *runnerTurnController) rejectTool(step int, activeToolCall *llama.ToolCa
 		c.requestBudget.fingerprint.rejected[*c.currentFingerprint] = truncForRetryReason(summary)
 	}
 
-	countAsDeadEnd := !isRecoverablePostReadinessGapRejection(summary)
+	countAsDeadEnd := !postReadinessContinuationRejectionSummary(summary)
 	if countAsDeadEnd {
 		if action := toolActionClass(req); action != "" && c.rejectedActions != nil {
 			c.rejectedActions[action]++
@@ -23242,7 +23519,7 @@ func (c *runnerTurnController) rejectTool(step int, activeToolCall *llama.ToolCa
 			return "", nil, false
 		}
 
-		answer, err := c.runner.completeWithoutMoreTools(c.ctx, c.currentMessages(), c.currentOpts(), c.snapshotResults(), c.metrics)
+		answer, err := c.completeWithoutMoreToolsWithDefaultCloseout()
 
 		return answer, err, true
 	}
@@ -23325,12 +23602,12 @@ func shouldCompactRejectedCompletionReply(r *Runner, reply llama.ChatMessage, re
 	return strings.TrimSpace(result.Error) != ""
 }
 
-func (c *runnerTurnController) recordParseFailure(step int, activeToolCall *llama.ToolCall, raw string, parseErr error) {
+func (c *runnerTurnController) recordParseFailure(step int, activeToolCall *llama.ToolCall, raw string, parseErr error, transport string, parserFailureClass autonomy.ParserFailureClass, suppressModelMessage bool) {
 	if c == nil || c.recorder == nil || parseErr == nil {
 		return
 	}
 
-	decision := newMalformedToolPolicyEngine().EvaluateParseFailure(raw, parseErr)
+	decision := malformedToolPolicyEngine{}.EvaluateParseFailureWithMetadata(raw, parseErr, transport, parserFailureClass)
 
 	c.recorder.activeToolCall = activeToolCall
 
@@ -23338,22 +23615,27 @@ func (c *runnerTurnController) recordParseFailure(step int, activeToolCall *llam
 		c.autonomyRecorder.emitPolicyResult(decision.Request, decision.Policy)
 	}
 
-	c.recorder.recordWithOptions(step, decision.Request, decision.Result, "tool_parse_rejected", runnerRecordOptions{
-		CountRejected:  true,
-		SetLastToolKey: false,
+	c.recorder.recordWithOptions(step, decision.Request, decision.Result, parserRecoveryRecordReason, runnerRecordOptions{
+		CountRejected:        true,
+		SetLastToolKey:       false,
+		SuppressModelMessage: suppressModelMessage,
 	})
 }
 
 type malformedToolPolicyEngine struct{}
+type unsafeToolShapePolicyEngine struct{}
+
+const (
+	parserRecoveryToolName         = "tool_parse"
+	parserRecoveryRecordReason     = "tool_parse_rejected"
+	parserRecoverySummaryMalformed = "Malformed tool request rejected"
+	parserRecoverySummaryUnsafe    = "Unsafe tool-shaped request rejected"
+)
 
 type malformedToolPolicyDecision struct {
 	Request workspace.ToolRequest
 	Result  workspace.ToolResult
 	Policy  runnerAutonomyPolicyEventInput
-}
-
-func newMalformedToolPolicyEngine() malformedToolPolicyEngine {
-	return malformedToolPolicyEngine{}
 }
 
 func (r *Runner) malformedToolRecoveryPrompt(raw string, parseErr error, results []workspace.ToolResult) string {
@@ -23368,15 +23650,15 @@ func (r *Runner) malformedToolRecoveryPrompt(raw string, parseErr error, results
 
 	var lines []string
 
-	if looksLikeTextualToolCall(raw) {
+	if IsTextualToolCall(raw) {
 		lines = append(lines,
 			"The last response was rejected by the tool parser because it used XML/HTML/DSML-style tool-call markup instead of the active tool transport.",
-			"Do not emit tags such as `<n_tool_calls>`, `<invoke>`, `<janus_tool>`, or textual tool JSON as answer prose. If a tool is useful, use the normal tool-call mechanism exposed by this runtime; otherwise answer in plain user-visible prose.",
+			malformedToolRecoveryActionInstruction(recoveryToolTransportMode(r.currentPlanningTransport())),
 		)
 	} else {
 		lines = append(lines,
 			"The last response was rejected by the tool parser because it was not one valid tool call.",
-			"If a tool is useful, emit exactly one parser-readable tool call through the active tool transport; otherwise answer in plain user-visible prose.",
+			malformedToolRecoveryActionInstruction(recoveryToolTransportMode(r.currentPlanningTransport())),
 		)
 	}
 
@@ -23395,31 +23677,123 @@ func (r *Runner) malformedToolRecoveryPrompt(raw string, parseErr error, results
 	return strings.Join(lines, "\n\n")
 }
 
-func (malformedToolPolicyEngine) EvaluateParseFailure(raw string, parseErr error) malformedToolPolicyDecision {
+func (r *Runner) unsafeToolShapeRecoveryPrompt(normalization toolRequestSyntaxNormalization, results []workspace.ToolResult) string {
+	if r == nil || strings.TrimSpace(normalization.EventOutcome) != toolRequestNormalizerOutcomeUnsafeToInfer {
+		return ""
+	}
+
+	lines := []string{
+		"The last response looked like tool-shaped arguments, but the harness cannot safely infer that into an executable tool call.",
+	}
+
+	if implementationTargetWriteReadySurfaceActive(r.RuntimeBrief, results) {
+		lines = append(lines, "Do not put tool arguments in answer prose. The active request is the workspace write follow-up; prose answers to the earlier identification question do not satisfy this phase. Use the active native tool-call transport for one callable write or "+implementationTargetWriteReadySourceProbeToolsPhrase+" tool, or answer <<QUESTION>> with the exact blocker/no-op evidence.")
+		lines = append(lines, "The implementation lane is target-write-ready. "+implementationTargetWriteReadyRecoveryInstruction(results))
+	} else {
+		lines = append(lines, malformedToolRecoveryActionInstruction(recoveryToolTransportMode(r.currentPlanningTransport())))
+	}
+
+	return strings.Join(lines, "\n\n")
+}
+
+func (r *Runner) ambiguousModelOutputRecoveryPrompt(normalization toolRequestSyntaxNormalization, results []workspace.ToolResult) string {
+	if r == nil || strings.TrimSpace(normalization.EventOutcome) != toolRequestNormalizerOutcomeUnsafeToInfer {
+		return ""
+	}
+
+	if implementationTargetWriteReadySurfaceActive(r.RuntimeBrief, results) {
+		lines := []string{
+			"The last response was prose, not an implementation action. The harness did not infer or execute any write from it.",
+			"The active request is the workspace write follow-up; do not answer the earlier identification question again. Prose is invalid in target-write-ready unless it is the exact <<QUESTION>> blocker/no-op shape.",
+			"The implementation lane is target-write-ready. " + implementationTargetWriteReadyRecoveryInstruction(results),
+			"If the previous text was intended as an edit, issue it through one active write tool call. If it was intended as a blocker or no-op, answer <<QUESTION>> with the exact blocker/no-op evidence. If one edit-safety fact is still missing, take one bounded " + implementationTargetWriteReadySourceProbeToolsPhrase + " probe with `named_gap` for that exact fact.",
+		}
+		return strings.Join(lines, "\n\n")
+	}
+
+	lines := []string{
+		"The last response was not an executable tool call and was not accepted as a final answer. The harness did not infer or execute any action from it.",
+	}
+
+	return strings.Join(lines, "\n\n")
+}
+
+func (r *Runner) unsafeToolShapeRecoveryBeforeCompletionGateActive(results []workspace.ToolResult) bool {
+	if r == nil {
+		return false
+	}
+
+	return implementationTargetWriteReadySurfaceActive(r.RuntimeBrief, results)
+}
+
+func (malformedToolPolicyEngine) EvaluateParseFailureWithMetadata(raw string, parseErr error, transport string, parserFailureClass autonomy.ParserFailureClass) malformedToolPolicyDecision {
+	policyTransport, parserFailureClass := parserPolicyMetadata(raw, parseErr, transport, parserFailureClass)
+
 	return malformedToolPolicyDecision{
-		Request: workspace.ToolRequest{Tool: "tool_parse"},
+		Request: workspace.ToolRequest{Tool: parserRecoveryToolName},
 		Result: workspace.ToolResult{
-			Tool:    "tool_parse",
-			Summary: "Malformed tool request rejected",
-			Error:   toolParseErrorFeedback(raw, parseErr),
+			Tool:    parserRecoveryToolName,
+			Summary: parserRecoverySummaryMalformed,
+			Error:   toolParseErrorFeedback(raw, parseErr, ""),
 		},
 		Policy: runnerAutonomyPolicyEventInput{
 			Decision:      autonomy.PolicyReject,
 			PackID:        autonomy.ContractPackParserToolRequest,
 			InvariantID:   malformedToolPolicyInvariantToolRequest,
 			ReasonCode:    "malformed_tool_request",
-			Transport:     autonomy.ToolTransportTextualCall,
-			ParserFailure: toolRequestParserFailureClass(raw, parseErr),
+			Transport:     policyTransport,
+			ParserFailure: parserFailureClass,
 			Result:        "rejected",
-			ErrorClass:    "tool_parse",
+			ErrorClass:    parserRecoveryToolName,
 			Source:        "malformed_tool_policy",
 		},
 	}
 }
 
-func toolParseErrorFeedback(raw string, parseErr error) string {
+func (unsafeToolShapePolicyEngine) Evaluate(normalization toolRequestSyntaxNormalization, targetWriteReady bool) malformedToolPolicyDecision {
+	transport, parserFailureClass := parserPolicyMetadata(normalization.Raw, nil, normalization.EventTransport, autonomy.ParserFailureUnsupportedTransport)
+	if parserFailureClass == "" || parserFailureClass == autonomy.ParserFailureNone {
+		parserFailureClass = autonomy.ParserFailureUnsupportedTransport
+	}
+
+	return malformedToolPolicyDecision{
+		Request: workspace.ToolRequest{Tool: parserRecoveryToolName},
+		Result: workspace.ToolResult{
+			Tool:    parserRecoveryToolName,
+			Summary: parserRecoverySummaryUnsafe,
+			Error:   unsafeToolShapeErrorFeedback(transport, targetWriteReady),
+		},
+		Policy: runnerAutonomyPolicyEventInput{
+			Decision:      autonomy.PolicyReject,
+			PackID:        autonomy.ContractPackParserToolRequest,
+			InvariantID:   malformedToolPolicyInvariantToolRequest,
+			ReasonCode:    "unsafe_tool_shape",
+			Transport:     transport,
+			ParserFailure: parserFailureClass,
+			Result:        "rejected",
+			ErrorClass:    parserRecoveryToolName,
+			Source:        "unsafe_tool_shape_policy",
+		},
+	}
+}
+
+func malformedToolRecoveryActionInstruction(transportMode string) string {
+	if strings.EqualFold(strings.TrimSpace(transportMode), workerruntime.RecoveryToolTransportNative) {
+		return "Do not emit tags such as `<n_tool_calls>`, `<invoke>`, `<janus_tool>`, or textual tool JSON as answer prose. If a tool is useful, use the active native tool-call transport exposed by this runtime; otherwise answer in plain user-visible prose."
+	}
+	return "If a tool is useful, emit exactly one parser-readable tool call through the active tool transport; otherwise answer in plain user-visible prose."
+}
+
+func workspaceLookupTransportInstruction(transportMode string) string {
+	if strings.EqualFold(strings.TrimSpace(transportMode), workerruntime.RecoveryToolTransportNative) {
+		return "If a workspace lookup is needed, use the active native tool-call transport and wait for the result."
+	}
+	return "If a workspace lookup is needed, issue it as a parser-readable tool call with the `tool` field and wait for the result."
+}
+
+func toolParseErrorFeedback(raw string, parseErr error, transportMode string) string {
 	if parseErr == nil {
-		return "Emit exactly one valid tool call or answer normally."
+		return modelFacingToolParseError("Emit exactly one valid tool call or answer normally.", transportMode)
 	}
 
 	message := parseErr.Error()
@@ -23429,11 +23803,44 @@ func toolParseErrorFeedback(raw string, parseErr error) string {
 		return message + ". submit_plan.edits was emitted as a quoted string. Emit `edits` as a real JSON array value, not a string. Each edit object must use a real path and exactly one executable edit shape: insert_after_line/content for small inline insertions, old_text/new_text for exact replacements or deletions, start_line/end_line/content for an inclusive current-source range, or replace_all with full new_text for missing/new files only. Existing source/test files must use bounded anchored edits. For native tool-call backends, pass the submit_plan arguments object directly with `rationale` and an `edits` array. Edit bodies must be complete executable source text, not placeholders or prose."
 	}
 
-	if looksLikeTextualToolCall(raw) {
-		return message + ". The payload looks like XML/HTML/DSML-style tool-call markup. Do not emit tags such as <n_tool_calls>, <invoke>, or <janus_tool>. Use the runtime's active tool-call mechanism for tools, or answer in plain prose."
+	if IsTextualToolCall(raw) {
+		return modelFacingToolParseError(message+". The payload looks like XML/HTML/DSML-style tool-call markup. Do not emit tags such as <n_tool_calls>, <invoke>, or <janus_tool>. Use the runtime's active tool-call mechanism for tools, or answer in plain prose.", transportMode)
 	}
 
-	return message + ". Emit exactly one valid tool call or answer normally."
+	return modelFacingToolParseError(message+". Emit exactly one valid tool call or answer normally.", transportMode)
+}
+
+func unsafeToolShapeErrorFeedback(transport autonomy.ToolTransport, targetWriteReady bool) string {
+	if targetWriteReady {
+		return modelFacingToolParseError("The payload was tool-shaped, but it was not an executable tool call. Use the active native tool-call transport for one callable write/read/search tool, or answer <<QUESTION>> with the exact blocker/no-op evidence. Prose final answers cannot satisfy the current target-write-ready phase.", workerruntime.RecoveryToolTransportNative)
+	}
+
+	switch transport {
+	case autonomy.ToolTransportNativeCall:
+		return modelFacingToolParseError("The payload was tool-shaped, but it was not an executable native tool call. Use the active native tool-call transport for tools, or answer in plain prose.", workerruntime.RecoveryToolTransportNative)
+	default:
+		return modelFacingToolParseError("The payload was tool-shaped, but it was unsafe to infer as a tool call. Emit exactly one valid tool call through the active transport, or answer in plain prose.", "")
+	}
+}
+
+func (c *runnerTurnController) recordUnsafeToolShape(step int, activeToolCall *llama.ToolCall, normalization toolRequestSyntaxNormalization, suppressModelMessage bool) {
+	if c == nil || c.recorder == nil {
+		return
+	}
+
+	decision := unsafeToolShapePolicyEngine{}.Evaluate(normalization, true)
+
+	c.recorder.activeToolCall = activeToolCall
+
+	if c.autonomyRecorder != nil {
+		c.autonomyRecorder.emitPolicyResult(decision.Request, decision.Policy)
+	}
+
+	c.recorder.recordWithOptions(step, decision.Request, decision.Result, parserRecoveryRecordReason, runnerRecordOptions{
+		CountRejected:        true,
+		SetLastToolKey:       false,
+		SuppressModelMessage: suppressModelMessage,
+	})
 }
 
 func (c *runnerTurnController) recordRejectedResult(step int, activeToolCall *llama.ToolCall, req workspace.ToolRequest, result workspace.ToolResult, reason string) {
@@ -23476,12 +23883,18 @@ func (c *runnerTurnController) currentOpts() llama.ChatOptions {
 	return *c.opts
 }
 
-func (c *runnerTurnController) completeWithoutMoreTools() (string, error) {
+func (c *runnerTurnController) completeWithoutMoreToolsWithDefaultCloseout() (string, error) {
 	if c == nil || c.runner == nil {
 		return "", nil
 	}
 
-	return c.runner.completeWithoutMoreTools(c.ctx, c.currentMessages(), c.currentOpts(), c.snapshotResults(), c.metrics)
+	mode := c.noToolsCloseoutMode()
+	reason := "Tool budget is exhausted. Tools are now disabled."
+	if mode == noToolsCloseoutDeterministicRequired && c.metrics != nil && c.policy.shouldStopForOperationalModelCalls(c.metrics.ModelCalls) {
+		reason = "Operational model-call limit is exhausted. Tools are now disabled."
+	}
+
+	return c.runner.completeWithoutMoreToolsWithReasonMode(c.ctx, c.currentMessages(), c.currentOpts(), c.snapshotResults(), reason, c.metrics, mode)
 }
 
 func (c *runnerTurnController) completeWithoutMoreToolsWithReason(prompt string) (string, error) {
@@ -23489,7 +23902,30 @@ func (c *runnerTurnController) completeWithoutMoreToolsWithReason(prompt string)
 		return "", nil
 	}
 
-	return c.runner.completeWithoutMoreToolsWithReason(c.ctx, c.currentMessages(), c.currentOpts(), c.snapshotResults(), prompt, c.metrics)
+	return c.runner.completeWithoutMoreToolsWithReasonMode(c.ctx, c.currentMessages(), c.currentOpts(), c.snapshotResults(), prompt, c.metrics, c.noToolsCloseoutMode())
+}
+
+func (c *runnerTurnController) completeWithoutMoreToolsWithReasonMode(prompt string, mode noToolsCloseoutMode) (string, error) {
+	if c == nil || c.runner == nil {
+		return "", nil
+	}
+	if mode == "" {
+		mode = c.noToolsCloseoutMode()
+	}
+
+	return c.runner.completeWithoutMoreToolsWithReasonMode(c.ctx, c.currentMessages(), c.currentOpts(), c.snapshotResults(), prompt, c.metrics, mode)
+}
+
+func (c *runnerTurnController) noToolsCloseoutMode() noToolsCloseoutMode {
+	if c == nil || c.metrics == nil {
+		return noToolsCloseoutModelAllowed
+	}
+
+	if c.policy.shouldStopForOperationalModelCalls(c.metrics.ModelCalls) {
+		return noToolsCloseoutDeterministicRequired
+	}
+
+	return noToolsCloseoutModelAllowed
 }
 
 const (

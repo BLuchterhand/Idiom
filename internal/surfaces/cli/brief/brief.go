@@ -18,33 +18,17 @@ import (
 )
 
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return runBriefMainWithTelemetry(args, stdout, stderr, rec)
-}
-
-func RunLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return runBriefLint(args, stdout, stderr, rec)
-}
-
-func ParseLintFindings(briefPath, combined string) []LintFinding {
-	return parseBriefLintFindings(briefPath, combined)
-}
-
-func WriteEmbeddedPreflight() (path string, cleanup func(), err error) {
-	return writeEmbeddedBriefPreflight()
-}
-
-func runBriefMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
 		printBriefUsage(stderr)
 
 		return 0
 	}
 
-	logBriefPhase(rec, "brief_start", map[string]any{"subcommand": args[0]})
+	telemetry.LogPhase(rec, "brief_start", map[string]any{"subcommand": args[0]})
 
 	switch args[0] {
 	case "lint":
-		return runBriefLint(args[1:], stdout, stderr, rec)
+		return RunLint(args[1:], stdout, stderr, rec)
 	case "preload":
 		return runBriefPreload(args[1:], stdout, stderr)
 	case "preview":
@@ -266,7 +250,7 @@ type LintReport struct {
 
 type briefLintReport = LintReport
 
-func runBriefLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+func RunLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	emitJSON := false
 	briefArgs := args
 
@@ -301,7 +285,7 @@ func runBriefLint(args []string, stdout io.Writer, stderr io.Writer, rec *teleme
 		return 2
 	}
 
-	scriptPath, cleanup, err := writeEmbeddedBriefPreflight()
+	scriptPath, cleanup, err := WriteEmbeddedPreflight()
 	if err != nil {
 		fmt.Fprintf(stderr, "brief lint: cannot stage preflight script: %v\n", err)
 
@@ -337,7 +321,7 @@ func runBriefLint(args []string, stdout io.Writer, stderr io.Writer, rec *teleme
 		report := briefLintReport{
 			Brief:    briefPath,
 			Exit:     exit,
-			Findings: parseBriefLintFindings(briefPath, combined),
+			Findings: ParseLintFindings(briefPath, combined),
 		}
 
 		blob, err := json.MarshalIndent(report, "", "  ")
@@ -348,7 +332,7 @@ func runBriefLint(args []string, stdout io.Writer, stderr io.Writer, rec *teleme
 		}
 
 		fmt.Fprintln(stdout, string(blob))
-		logBriefPhase(rec, "brief_lint", map[string]any{"exit": exit, "json": true, "findings": len(report.Findings)})
+		telemetry.LogPhase(rec, "brief_lint", map[string]any{"exit": exit, "json": true, "findings": len(report.Findings)})
 
 		return exit
 	}
@@ -359,7 +343,7 @@ func runBriefLint(args []string, stdout io.Writer, stderr io.Writer, rec *teleme
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			code := exitErr.ExitCode()
-			logBriefPhase(rec, "brief_lint", map[string]any{"exit": code})
+			telemetry.LogPhase(rec, "brief_lint", map[string]any{"exit": code})
 
 			return code
 		}
@@ -369,12 +353,12 @@ func runBriefLint(args []string, stdout io.Writer, stderr io.Writer, rec *teleme
 		return 2
 	}
 
-	logBriefPhase(rec, "brief_lint", map[string]any{"exit": 0})
+	telemetry.LogPhase(rec, "brief_lint", map[string]any{"exit": 0})
 
 	return 0
 }
 
-// parseBriefLintFindings extracts structured findings from the
+// ParseLintFindings extracts structured findings from the
 // python preflight script's combined stdout+stderr output. The
 // script's format is line-oriented:
 //
@@ -388,8 +372,8 @@ func runBriefLint(args []string, stdout io.Writer, stderr io.Writer, rec *teleme
 // derived from keyword matching on the message; the taxonomy is
 // stable enough for downstream patch-phase consumers. Unknown
 // shapes fall through to category "other".
-func parseBriefLintFindings(briefPath, combined string) []briefLintFinding {
-	var findings []briefLintFinding
+func ParseLintFindings(briefPath, combined string) []LintFinding {
+	var findings []LintFinding
 
 	for _, raw := range strings.Split(combined, "\n") {
 		line := strings.TrimRight(raw, "\r")
@@ -412,7 +396,7 @@ func parseBriefLintFindings(briefPath, combined string) []briefLintFinding {
 			message = strings.TrimSpace(strings.TrimPrefix(body, "INFO:"))
 		}
 
-		findings = append(findings, briefLintFinding{
+		findings = append(findings, LintFinding{
 			Severity: severity,
 			Category: classifyBriefLintMessage(message),
 			Brief:    briefPath,
@@ -581,13 +565,13 @@ func runBriefPreview(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 		}
 	}
 
-	logBriefPhase(rec, "brief_preview", map[string]any{"path": briefPath})
+	telemetry.LogPhase(rec, "brief_preview", map[string]any{"path": briefPath})
 
 	return 0
 }
 
 func runBriefLintResult(content string, stderr io.Writer) (int, []string) {
-	scriptPath, cleanup, err := writeEmbeddedBriefPreflight()
+	scriptPath, cleanup, err := WriteEmbeddedPreflight()
 	if err != nil {
 		return 2, []string{fmt.Sprintf("cannot stage preflight script: %v", err)}
 	}
@@ -649,7 +633,7 @@ func parseLintFailures(output string) []string {
 	return failures
 }
 
-func writeEmbeddedBriefPreflight() (path string, cleanup func(), err error) {
+func WriteEmbeddedPreflight() (path string, cleanup func(), err error) {
 	tmpDir, err := os.MkdirTemp("", "idiom-brief-")
 	if err != nil {
 		return "", func() {}, err
@@ -666,8 +650,4 @@ func writeEmbeddedBriefPreflight() (path string, cleanup func(), err error) {
 	}
 
 	return scriptPath, cleanup, nil
-}
-
-func logBriefPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	telemetry.LogPhase(rec, eventType, fields)
 }

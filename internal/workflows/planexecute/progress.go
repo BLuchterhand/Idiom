@@ -151,7 +151,7 @@ func SaveProgressState(root string, state *ProgressState) (string, error) {
 	}
 
 	state.SessionID = strings.TrimSpace(state.SessionID)
-	if !validProgressSessionID(state.SessionID) {
+	if !sessionid.Valid(state.SessionID) {
 		return "", fmt.Errorf("invalid plan-execute progress session id %q", state.SessionID)
 	}
 
@@ -228,7 +228,7 @@ func TryLoadProgressState(root string, resumeID string) (ProgressState, string, 
 		return ProgressState{}, relPath, false, fmt.Errorf("plan-execute progress session id %q does not match requested session %q in %s", state.SessionID, resumeID, relPath)
 	}
 
-	if !validProgressSessionID(state.SessionID) {
+	if !sessionid.Valid(state.SessionID) {
 		return ProgressState{}, relPath, false, fmt.Errorf("invalid plan-execute progress session id %q in %s", state.SessionID, relPath)
 	}
 
@@ -650,17 +650,13 @@ func progressStatePath(root string, sessionID string) (string, string, error) {
 		return "", "", fmt.Errorf("workspace root is empty")
 	}
 
-	if !validProgressSessionID(sessionID) {
+	if !sessionid.Valid(sessionID) {
 		return "", "", fmt.Errorf("invalid plan-execute progress session id %q", sessionID)
 	}
 
 	relPath := filepath.ToSlash(filepath.Join(".idiom", "plan-execute", "sessions", sessionID+".json"))
 
 	return filepath.Join(root, filepath.FromSlash(relPath)), relPath, nil
-}
-
-func validProgressSessionID(sessionID string) bool {
-	return sessionid.Valid(sessionID)
 }
 
 func progressRelPath(root string, path string) string {

@@ -23,6 +23,35 @@ func TestRegisterToolResultsUsesEvidenceOwnedDTO(t *testing.T) {
 	}
 }
 
+func TestPathEvidenceRegistryRejectsAbsoluteAndEscapingBodyReadPaths(t *testing.T) {
+	registry := NewPathEvidenceRegistry(t.TempDir())
+
+	registry.RegisterToolResults([]ToolResult{{
+		ToolName: "read_file",
+		Paths: []string{
+			"/tmp/outside.go",
+			`C:\tmp\outside.go`,
+			"C:/tmp/outside.go",
+			"../outside.go",
+			"internal/runtime/agent/evidence_registry.go",
+		},
+		Summary: "Read internal/runtime/agent/evidence_registry.go",
+	}})
+
+	if registry.HasBodyEvidence("/tmp/outside.go") {
+		t.Fatal("absolute body-read path must not be accepted as workspace evidence")
+	}
+	if registry.HasBodyEvidence("../outside.go") {
+		t.Fatal("parent-escaping body-read path must not be accepted as workspace evidence")
+	}
+	if registry.HasBodyEvidence(`C:\tmp\outside.go`) || registry.HasBodyEvidence("C:/tmp/outside.go") {
+		t.Fatal("Windows absolute body-read paths must not be accepted as workspace evidence")
+	}
+	if !registry.HasBodyEvidence("internal/runtime/agent/evidence_registry.go") {
+		t.Fatal("repo-local body-read path should still be accepted")
+	}
+}
+
 func TestCandidatePathExistenceResolvesLazily(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "internal", "runtime", "agent", "evidence_registry.go")
@@ -40,7 +69,7 @@ func TestCandidatePathExistenceResolvesLazily(t *testing.T) {
 		Summary:  "Found internal/runtime/agent/evidence_registry.go",
 	}})
 
-	if !registry.PathExists("internal/runtime/agent/evidence_registry.go") {
+	if !registry.EnsurePathExists("internal/runtime/agent/evidence_registry.go") {
 		t.Fatal("expected candidate path existence to resolve lazily")
 	}
 	if registry.HasBodyEvidence("internal/runtime/agent/evidence_registry.go") {
@@ -49,18 +78,24 @@ func TestCandidatePathExistenceResolvesLazily(t *testing.T) {
 }
 
 // --- session evidence store tests ---
-func TestFindMatchingPriorSessionFindsRecordsWrittenByStore(t *testing.T) {
+func TestFindMatchingPriorSessionFindsPromptHashRecord(t *testing.T) {
 	root := t.TempDir()
 	prompt := "explain the runner evidence flow"
-	objective := "objective with customer context"
-
-	if err := WriteSessionEvidenceRecord(root, "session-1", prompt, objective, []string{"b.go", "a.go", "a.go"}, false, ""); err != nil {
-		t.Fatalf("write session evidence record: %v", err)
+	dir := sessionEvidenceDir(root)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir evidence dir: %v", err)
 	}
+
+	writeSessionRecordForTest(t, dir, SessionEvidenceRecord{
+		SessionID:  "session-1",
+		PromptHash: sha256Hex(prompt),
+		ReadPaths:  []string{"a.go", "b.go"},
+		Timestamp:  time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC).Format(time.RFC3339),
+	})
 
 	record := FindMatchingPriorSession(root, prompt)
 	if record == nil {
-		t.Fatal("expected matching record written by WriteSessionEvidenceRecord")
+		t.Fatal("expected matching prompt-hash record")
 	}
 
 	if record.SessionID != "session-1" {
@@ -78,27 +113,27 @@ func TestFindMatchingPriorSessionFindsRecordsWrittenByStore(t *testing.T) {
 	}
 }
 
-func TestWriteSessionEvidenceRecordRejectsUnsafeSessionID(t *testing.T) {
+func TestFindMatchingPriorSessionFallsBackToLegacyPromptText(t *testing.T) {
 	root := t.TempDir()
-
-	if err := WriteSessionEvidenceRecord(root, "../escape", "prompt", "", []string{"a.go"}, false, ""); err == nil {
-		t.Fatal("expected unsafe session id to be rejected")
+	prompt := "inspect legacy source evidence"
+	dir := sessionEvidenceDir(root)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir evidence dir: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(root, ".idiom", "sessions", "escape.json")); !os.IsNotExist(err) {
-		t.Fatalf("unexpected escaped evidence file: %v", err)
-	}
-}
+	writeSessionRecordForTest(t, dir, SessionEvidenceRecord{
+		SessionID: "legacy",
+		Prompt:    prompt,
+		ReadPaths: []string{"legacy.go"},
+		Timestamp: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC).Format(time.RFC3339),
+	})
 
-func TestWriteSessionEvidenceRecordUsesUnpredictableAtomicTempFile(t *testing.T) {
-	root := t.TempDir()
-	if err := WriteSessionEvidenceRecord(root, "session-atomic", "prompt", "", []string{"a.go"}, false, ""); err != nil {
-		t.Fatalf("write session evidence record: %v", err)
+	record := FindMatchingPriorSession(root, prompt)
+	if record == nil {
+		t.Fatal("expected legacy raw-prompt record")
 	}
-
-	predictableTemp := filepath.Join(sessionEvidenceDir(root), ".session-atomic.tmp")
-	if _, err := os.Stat(predictableTemp); !os.IsNotExist(err) {
-		t.Fatalf("predictable temp file should not remain or be used as the target: %v", err)
+	if record.SessionID != "legacy" || len(record.ReadPaths) != 1 || record.ReadPaths[0] != "legacy.go" {
+		t.Fatalf("legacy record = %#v", record)
 	}
 }
 
@@ -145,158 +180,5 @@ func writeSessionRecordForTest(t *testing.T, dir string, record SessionEvidenceR
 
 	if err := os.WriteFile(filepath.Join(dir, record.SessionID+".json"), body, 0o600); err != nil {
 		t.Fatalf("write record: %v", err)
-	}
-}
-
-// --- evidence snapshot tests ---
-func TestSnapshotPromoteReportsEvidenceDelta(t *testing.T) {
-	registry := NewPathEvidenceRegistry(t.TempDir())
-	snapshot := registry.Snapshot()
-	if snapshot.ID() == "" {
-		t.Fatal("snapshot ID is empty")
-	}
-
-	delta := snapshot.Promote(ToolResult{
-		ToolName: "search_content",
-		Paths:    []string{"internal/runtime/agent/evidence_registry.go"},
-		SidecarFacts: []EvidenceFact{
-			{Key: "relationship.kind", Value: "candidate"},
-		},
-	})
-
-	if len(delta.CandidatePaths) != 1 || delta.CandidatePaths[0] != "internal/runtime/agent/evidence_registry.go" {
-		t.Fatalf("CandidatePaths delta = %#v", delta.CandidatePaths)
-	}
-	if snapshot.Version() != 1 {
-		t.Fatalf("Version after first promote = %d, want 1", snapshot.Version())
-	}
-	if len(delta.Facts) != 1 || delta.Facts[0].Value != "candidate" {
-		t.Fatalf("Facts delta = %#v", delta.Facts)
-	}
-
-	delta = snapshot.Promote(ToolResult{
-		ToolName: "read_file",
-		Paths:    []string{"internal/runtime/agent/evidence_registry.go"},
-	})
-
-	if len(delta.BodyReadPaths) != 1 || delta.BodyReadPaths[0] != "internal/runtime/agent/evidence_registry.go" {
-		t.Fatalf("BodyReadPaths delta = %#v", delta.BodyReadPaths)
-	}
-	if snapshot.Version() != 2 {
-		t.Fatalf("Version after second promote = %d, want 2", snapshot.Version())
-	}
-
-	body := snapshot.BodyRead("internal/runtime/agent/evidence_registry.go")
-	if !body.BodyRead || body.EvidenceLevel < EvidenceBodyWindow {
-		t.Fatalf("BodyRead evidence = %#v", body)
-	}
-}
-
-func TestSnapshotFreezeDetachesReadModel(t *testing.T) {
-	registry := NewPathEvidenceRegistry(t.TempDir())
-	snapshot := registry.Snapshot()
-	snapshot.Promote(ToolResult{ToolName: "search_files", Paths: []string{"a.go"}})
-
-	frozen := snapshot.Freeze()
-	if !frozen.Frozen() || frozen.ID() != snapshot.ID() || frozen.Version() != snapshot.Version() {
-		t.Fatalf("unexpected frozen snapshot metadata: live=%#v frozen=%#v", snapshot, frozen)
-	}
-
-	snapshot.Promote(ToolResult{ToolName: "read_file", Paths: []string{"a.go"}})
-	if snapshot.Version() != 2 {
-		t.Fatalf("live snapshot version = %d, want 2", snapshot.Version())
-	}
-	if frozen.Version() != 1 {
-		t.Fatalf("frozen snapshot version changed to %d", frozen.Version())
-	}
-	if frozen.BodyRead("a.go").BodyRead {
-		t.Fatalf("frozen snapshot observed later live body read: %#v", frozen.BodyRead("a.go"))
-	}
-
-	if delta := frozen.Promote(ToolResult{ToolName: "read_file", Paths: []string{"b.go"}}); len(delta.BodyReadPaths) != 0 || frozen.Version() != 1 {
-		t.Fatalf("frozen promote should be a no-op: delta=%#v version=%d", delta, frozen.Version())
-	}
-}
-
-func TestSnapshotPromoteNoOpDoesNotAdvanceVersion(t *testing.T) {
-	registry := NewPathEvidenceRegistry(t.TempDir())
-	snapshot := registry.Snapshot()
-	snapshot.Promote(ToolResult{ToolName: "search_files", Paths: []string{"a.go"}})
-
-	if snapshot.Version() != 1 {
-		t.Fatalf("initial version = %d, want 1", snapshot.Version())
-	}
-	delta := snapshot.Promote(ToolResult{ToolName: "search_files", Paths: []string{"a.go"}})
-	if snapshot.Version() != 1 {
-		t.Fatalf("duplicate promote advanced version to %d; delta=%#v", snapshot.Version(), delta)
-	}
-}
-
-func TestSnapshotCandidatePaths(t *testing.T) {
-	registry := NewPathEvidenceRegistry(t.TempDir())
-	snapshot := registry.Snapshot()
-	snapshot.Promote(ToolResult{ToolName: "search_files", Paths: []string{"b.go", "a.go"}})
-
-	candidates := snapshot.CandidatePaths()
-	if len(candidates) != 2 || candidates[0].Path != "a.go" || candidates[1].Path != "b.go" {
-		t.Fatalf("CandidatePaths = %#v", candidates)
-	}
-}
-
-func TestSnapshotPromoteCandidatePathFactDoesNotCountAsBodyRead(t *testing.T) {
-	registry := NewPathEvidenceRegistry(t.TempDir())
-	snapshot := registry.Snapshot()
-
-	delta := snapshot.Promote(ToolResult{
-		ToolName: "code_navigate",
-		SidecarFacts: []EvidenceFact{
-			{Key: "candidate_path", Value: "internal/runtime/agent/runner_core.go"},
-		},
-	})
-
-	if len(delta.CandidatePaths) != 1 || delta.CandidatePaths[0] != "internal/runtime/agent/runner_core.go" {
-		t.Fatalf("CandidatePaths delta = %#v", delta.CandidatePaths)
-	}
-	body := snapshot.BodyRead("internal/runtime/agent/runner_core.go")
-	if body.BodyRead || body.EvidenceLevel != EvidenceNone {
-		t.Fatalf("candidate path fact should not count as body evidence: %#v", body)
-	}
-}
-
-func TestSnapshotPromoteTracksDesignFacets(t *testing.T) {
-	registry := NewPathEvidenceRegistry(t.TempDir())
-	snapshot := registry.Snapshot()
-
-	delta := snapshot.Promote(ToolResult{
-		ToolName: "read_file",
-		Paths:    []string{"internal/runtime/agent/evidence_registry.go"},
-		SidecarFacts: []EvidenceFact{
-			{Key: "named_path", Value: "snapshot=internal/runtime/agent/evidence_registry.go"},
-			{Key: "pending_source_obligation", Value: "id=obl-source;path=internal/runtime/agent/evidence_registry.go"},
-			{Key: "source_owner", Value: "path=internal/runtime/agent/evidence_registry.go;symbol=EvidenceSnapshot;role=mechanism;confidence=high"},
-			{Key: "git_history", Value: "path=internal/runtime/agent/evidence_registry.go;satisfied=true;source=history_range"},
-			{Key: "answerability.answerable", Value: "true"},
-			{Key: "answerability.reason", Value: "source_body"},
-			{Key: "answerability.path", Value: "internal/runtime/agent/evidence_registry.go"},
-		},
-	})
-
-	if len(delta.NamedPaths) != 1 || delta.NamedPaths[0].Name != "snapshot" {
-		t.Fatalf("NamedPaths delta = %#v", delta.NamedPaths)
-	}
-	if got := snapshot.NamedPaths(); len(got) != 1 || got[0].Path != "internal/runtime/agent/evidence_registry.go" {
-		t.Fatalf("NamedPaths = %#v", got)
-	}
-	if got := snapshot.PendingSourceObligations(); len(got) != 1 || got[0].ID != "obl-source" {
-		t.Fatalf("PendingSourceObligations = %#v", got)
-	}
-	if got := snapshot.SourceOwner("internal/runtime/agent/evidence_registry.go"); got.Symbol != "EvidenceSnapshot" || got.Role != "mechanism" {
-		t.Fatalf("SourceOwner = %#v", got)
-	}
-	if got := snapshot.GitHistory("internal/runtime/agent/evidence_registry.go"); !got.Satisfied || got.Source != "history_range" {
-		t.Fatalf("GitHistory = %#v", got)
-	}
-	if got := snapshot.ReadOnlyAnswerability(); !got.Answerable || got.Reason != "source_body" || len(got.Paths) != 1 {
-		t.Fatalf("ReadOnlyAnswerability = %#v", got)
 	}
 }

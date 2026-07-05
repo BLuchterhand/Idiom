@@ -12,6 +12,7 @@ import (
 	recoverycontract "idiom/internal/contracts/recovery"
 
 	"idiom/internal/platform/config"
+	"idiom/internal/workflows/recovery"
 )
 
 func TestRunLaneImplementRecoveryWritesFailureAndPacket(t *testing.T) {
@@ -168,7 +169,7 @@ func TestLaneImplementFailureClassUsesBoundedFailureSignals(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := laneImplementFailureClass(tt.summary); got != tt.want {
+			if got := recovery.ClassifyImplementFailure(tt.summary); got != tt.want {
 				t.Fatalf("failure class=%q want %q", got, tt.want)
 			}
 		})

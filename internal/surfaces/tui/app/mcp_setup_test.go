@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"idiom/internal/capabilities/mcp"
 	"idiom/internal/platform/config"
 )
 
@@ -34,7 +35,7 @@ func fakeMCPServer() *httptest.Server {
 }
 
 func TestSetupMCPRegistry_EmptyReturnsNil(t *testing.T) {
-	reg, fails := setupMCPRegistry(context.Background(), nil, false)
+	reg, fails := mcp.SetupRegistry(context.Background(), nil, false)
 	if reg != nil {
 		t.Fatalf("expected nil registry, got %v", reg)
 	}
@@ -52,7 +53,7 @@ func TestSetupMCPRegistry_RegistersHTTPServer(t *testing.T) {
 	defer cancel()
 
 	// httptest binds to 127.0.0.1; allowPrivate=true required to pass SSRF.
-	reg, fails := setupMCPRegistry(ctx, []config.MCPServer{
+	reg, fails := mcp.SetupRegistry(ctx, []config.MCPServer{
 		{Name: "fake", URL: srv.URL, TimeoutSeconds: 5},
 	}, true)
 	if reg == nil {
@@ -75,7 +76,7 @@ func TestSetupMCPRegistry_SSRFBlockedReportsFailure(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	reg, fails := setupMCPRegistry(ctx, []config.MCPServer{
+	reg, fails := mcp.SetupRegistry(ctx, []config.MCPServer{
 		{Name: "blocked", URL: "http://127.0.0.1:9/"},
 	}, false)
 	if reg == nil {
@@ -100,7 +101,7 @@ func TestSetupMCPRegistry_OneFailDoesNotBlockOthers(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	reg, fails := setupMCPRegistry(ctx, []config.MCPServer{
+	reg, fails := mcp.SetupRegistry(ctx, []config.MCPServer{
 		{Name: "blocked", URL: "http://127.0.0.1:9/"},
 		{Name: "fake", URL: srv.URL, TimeoutSeconds: 5},
 	}, true) // allowPrivate so the httptest URL passes; the closed-port one still fails on connect

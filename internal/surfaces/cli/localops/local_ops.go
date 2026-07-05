@@ -44,7 +44,7 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec
 		return 0
 	}
 
-	logLocalOpsPhase(rec, "local_ops_start", map[string]any{"subcommand": args[0]})
+	telemetry.LogPhase(rec, "local_ops_start", map[string]any{"subcommand": args[0]})
 
 	switch args[0] {
 	case "benchmark":
@@ -141,7 +141,7 @@ func buildLocalOpsBenchmarkReportWithDeps(opts BenchmarkOptions, rec *telemetry.
 }
 
 func logLocalOpsBenchmarkTelemetry(rec *telemetry.Recorder, report localops.BenchmarkReport) {
-	logLocalOpsPhase(rec, "local_ops_benchmark", map[string]any{
+	telemetry.LogPhase(rec, "local_ops_benchmark", map[string]any{
 		"schema_version":          report.SchemaVersion,
 		"profile_count":           report.Summary.ProfileCount,
 		"smoke_pass_rate":         report.Summary.SmokePassRate,
@@ -223,8 +223,4 @@ func resolveDependencies(overrides ...Dependencies) Dependencies {
 	}
 
 	return deps
-}
-
-func logLocalOpsPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	telemetry.LogPhase(rec, eventType, fields)
 }

@@ -589,12 +589,8 @@ func sampleLanguagePath(languageName string) string {
 	}
 }
 
-func CodeNavigateCapabilityName(capability Capability) string {
-	return string(capability)
-}
-
 func CodeNavigateCapabilityPredicate(capability Capability) func(string) bool {
-	want := CodeNavigateCapabilityName(capability)
+	want := string(capability)
 
 	return func(candidate string) bool {
 		return textutil.EqualTrimFold(candidate, want)
@@ -603,8 +599,8 @@ func CodeNavigateCapabilityPredicate(capability Capability) func(string) bool {
 
 func CodeNavigateSourceBodyCapabilityNames() []string {
 	return []string{
-		CodeNavigateCapabilityName(CapReadSymbol),
-		CodeNavigateCapabilityName(CapExtractBody),
+		string(CapReadSymbol),
+		string(CapExtractBody),
 	}
 }
 
@@ -620,7 +616,7 @@ func CodeNavigateSourceBodyCapabilityPhrase() string {
 }
 
 func CodeNavigateCapabilityInstruction(capability Capability) string {
-	return fmt.Sprintf("`%s` with `capability:\"%s\"`", CodeNavigateToolName, CodeNavigateCapabilityName(capability))
+	return fmt.Sprintf("`%s` with `capability:\"%s\"`", CodeNavigateToolName, string(capability))
 }
 
 func CodeNavigateRequestExample(capability Capability, path, pattern string) string {
@@ -630,7 +626,7 @@ func CodeNavigateRequestExample(capability Capability, path, pattern string) str
 
 	request := map[string]string{
 		"tool":       CodeNavigateToolName,
-		"capability": CodeNavigateCapabilityName(capability),
+		"capability": string(capability),
 		"path":       path,
 		"pattern":    pattern,
 	}

@@ -79,6 +79,10 @@ func TestCompilePlanExecutePlannerBindsAuthorityRuntimeAndProtocol(t *testing.T)
 		t.Fatalf("protocol active invariant = %q", result.Protocol.ActiveInvariantID)
 	}
 
+	if result.Contract.Budget.MaxOperationalModelCalls != 5 {
+		t.Fatalf("operational model-call budget not preserved: %#v", result.Contract.Budget)
+	}
+
 	if result.Protocol.ParserMode != "submit_plan_json" {
 		t.Fatalf("protocol parser mode = %q", result.Protocol.ParserMode)
 	}
@@ -326,10 +330,11 @@ func TestCompilePlanExecutePlannerIDsAreStableForEquivalentInput(t *testing.T) {
 			FurtherReadsRequire: "one exact missing source-body claim",
 		},
 		Budget: BudgetInput{
-			MaxToolSteps:       12,
-			MaxModelCalls:      3,
-			MaxContextMessages: 40,
-			MaxContextChars:    120000,
+			MaxToolSteps:             12,
+			MaxModelCalls:            3,
+			MaxOperationalModelCalls: 5,
+			MaxContextMessages:       40,
+			MaxContextChars:          120000,
 		},
 		Runtime: RuntimeEnvelopeInput{
 			BackendKind:         "mlx",
@@ -892,10 +897,11 @@ func plannerFixtureInput() PlanExecutePlannerInput {
 			FurtherReadsRequire: "one exact missing source-body claim",
 		},
 		Budget: BudgetInput{
-			MaxToolSteps:       12,
-			MaxModelCalls:      3,
-			MaxContextMessages: 40,
-			MaxContextChars:    120000,
+			MaxToolSteps:             12,
+			MaxModelCalls:            3,
+			MaxOperationalModelCalls: 5,
+			MaxContextMessages:       40,
+			MaxContextChars:          120000,
 		},
 		Runtime: RuntimeEnvelopeInput{
 			BackendKind:         "mlx",

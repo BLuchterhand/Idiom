@@ -315,10 +315,6 @@ func (atom AtomExecutionContract) WriteEnvelopePaths() []string {
 	return atom.Normalized().Scope.WriteEnvelopePaths()
 }
 
-func (atom AtomExecutionContract) OpenEditSetObligations(changedPaths []string) []EditSetOpenObligation {
-	return atom.Normalized().Scope.OpenEditSetObligations(changedPaths)
-}
-
 func StablePlanExecutionContractHash(contract PlanExecutionContract) string {
 	canonical := contract
 
@@ -554,28 +550,6 @@ func ValidateAtomExecutionContractInput(atom AtomExecutionContract) []PlanExecut
 
 	for _, delta := range atom.AuthorityDeltas {
 		violations = append(violations, validateAuthorityDelta(atom.AtomID, delta)...)
-	}
-
-	return violations
-}
-
-func ValidatePlanTerminalEvidenceInput(contract PlanExecutionContract, evidence TerminalEvidenceInput) []PlanExecutionContractViolation {
-	contract = contract.Normalized()
-
-	var violations []PlanExecutionContractViolation
-
-	for _, atom := range contract.Atoms {
-		if evidence.AtomID != "" && NormalizeStableContractIDPart(evidence.AtomID) != atom.AtomID {
-			continue
-		}
-
-		atom.AuthorizedNewFiles = append(append([]AuthorizedNewFile(nil), contract.AuthorizedNewFiles...), atom.AuthorizedNewFiles...)
-		atom.AuthorizedNewRoots = append(append([]AuthorizedNewRoot(nil), contract.AuthorizedNewRoots...), atom.AuthorizedNewRoots...)
-		violations = append(violations, ValidateAtomTerminalEvidenceInput(atom, evidence)...)
-	}
-
-	if evidence.AtomID != "" && len(violations) == 0 && !contractHasAtom(contract, evidence.AtomID) {
-		violations = append(violations, contractViolation("unknown_terminal_evidence_atom", NormalizeStableContractIDPart(evidence.AtomID), "", "", "terminal evidence references an atom outside the plan execution contract"))
 	}
 
 	return violations
@@ -1452,17 +1426,6 @@ func findTDDCommandEvidence(obligation TDDObligation, results []TDDCommandEviden
 	}
 
 	return TDDCommandEvidence{}, false
-}
-
-func contractHasAtom(contract PlanExecutionContract, atomID string) bool {
-	atomID = NormalizeStableContractIDPart(atomID)
-	for _, atom := range contract.Atoms {
-		if atom.AtomID == atomID {
-			return true
-		}
-	}
-
-	return false
 }
 
 func terminalStatusIsSuccess(status string) bool {

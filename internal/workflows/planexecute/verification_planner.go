@@ -42,10 +42,6 @@ func NewVerificationPlanner(root string) VerificationPlanner {
 	return VerificationPlanner{root: trimmed}
 }
 
-func PlanVerification(input VerificationPlannerInput) VerificationPlan {
-	return NewVerificationPlanner(input.WorkspaceRoot).Plan(input)
-}
-
 func (p VerificationPlanner) Plan(input VerificationPlannerInput) VerificationPlan {
 	plan := VerificationPlan{}
 	seen := map[string]struct{}{}

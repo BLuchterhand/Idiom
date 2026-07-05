@@ -1,7 +1,5 @@
 package featureplanner
 
-import "strings"
-
 type ToolName string
 
 const (
@@ -12,25 +10,3 @@ const (
 	ToolQuestionForPlanner    ToolName = "question_for_planner"
 	ToolPlanExecuteComplete   ToolName = "plan_execute_completed"
 )
-
-func ParseToolName(tool string) (ToolName, bool) {
-	value := ToolName(strings.TrimSpace(tool))
-	for _, known := range ToolNames() {
-		if value == known {
-			return known, true
-		}
-	}
-
-	return "", false
-}
-
-func ToolNames() []ToolName {
-	return []ToolName{
-		ToolSubmitFeaturePlan,
-		ToolSourceSatisfied,
-		ToolAskPlannerQuestion,
-		ToolGitHistoryRequirement,
-		ToolQuestionForPlanner,
-		ToolPlanExecuteComplete,
-	}
-}

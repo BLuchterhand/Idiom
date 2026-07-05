@@ -41,7 +41,7 @@ func TestRunMainRecoverInspectReadsFailureRecord(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"inspect", "--config", configPath, "--session", state.SessionID, "--json"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"inspect", "--config", configPath, "--session", state.SessionID, "--json"}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("recover inspect exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -106,7 +106,7 @@ func TestRunMainRecoverShowAcceptsFailureIDAndPrintsTerminalSummary(t *testing.T
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"show", "--config", configPath, record.FailureID}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"show", "--config", configPath, record.FailureID}, &stdout, &stderr, nil)
 	if code != 0 {
 		t.Fatalf("recover show exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
@@ -158,7 +158,7 @@ func TestRunMainRecoverShowDoesNotTrustUncorrelatedTerminalCompletion(t *testing
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := RunMain([]string{"show", "--config", configPath, "--json", record.FailureID}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"show", "--config", configPath, "--json", record.FailureID}, &stdout, &stderr, nil)
 	if code != 0 {
 		t.Fatalf("recover show exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
@@ -204,7 +204,7 @@ func TestRunRecoverInspectAndDecomposeReadImplementFailureRecord(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"inspect", "--config", configPath, "--session", "implement-session-1", "--json"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"inspect", "--config", configPath, "--session", "implement-session-1", "--json"}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("recover inspect exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -223,7 +223,7 @@ func TestRunRecoverInspectAndDecomposeReadImplementFailureRecord(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 
-	code = RunMain([]string{"show", "--config", configPath, "--json", record.FailureID}, &stdout, &stderr)
+	code = RunMainWithTelemetry([]string{"show", "--config", configPath, "--json", record.FailureID}, &stdout, &stderr, nil)
 	if code != 0 {
 		t.Fatalf("recover show implement exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
@@ -239,7 +239,7 @@ func TestRunRecoverInspectAndDecomposeReadImplementFailureRecord(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 
-	code = RunMain([]string{"decompose", "--config", configPath, "--session", "implement-session-1", "--output", "implement-packet.json", "--json"}, &stdout, &stderr)
+	code = RunMainWithTelemetry([]string{"decompose", "--config", configPath, "--session", "implement-session-1", "--output", "implement-packet.json", "--json"}, &stdout, &stderr, nil)
 	if code != 0 {
 		t.Fatalf("recover decompose exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
@@ -270,7 +270,7 @@ func TestRunRecoverInspectComputesLegacyFailedProgressWithoutWriting(t *testing.
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"inspect", "--config", configPath, "--session", state.SessionID, "--json"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"inspect", "--config", configPath, "--session", state.SessionID, "--json"}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("recover inspect exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -314,7 +314,7 @@ func TestRunRecoverInspectComputesRecoveryRequiredProgressWithoutWriting(t *test
 			}
 
 			var stdout, stderr bytes.Buffer
-			code := RunMain([]string{"inspect", "--config", configPath, "--session", state.SessionID, "--json"}, &stdout, &stderr)
+			code := RunMainWithTelemetry([]string{"inspect", "--config", configPath, "--session", state.SessionID, "--json"}, &stdout, &stderr, nil)
 			if code != 0 {
 				t.Fatalf("recover inspect exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 			}
@@ -340,7 +340,7 @@ func TestRunRecoverInspectComputesRecoveryRequiredProgressWithoutWriting(t *test
 func TestRunRecoverUnknownSubcommandExitsTwo(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"wat"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"wat"}, &stdout, &stderr, nil)
 
 	if code != 2 {
 		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -354,7 +354,7 @@ func TestRunRecoverUnknownSubcommandExitsTwo(t *testing.T) {
 func TestRecoverInspectUsageErrorCanBeJSON(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"inspect", "--json"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"inspect", "--json"}, &stdout, &stderr, nil)
 
 	if code != 2 {
 		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -407,7 +407,7 @@ func TestRunRecoverInspectClassifiesOutOfScopeDirtyWorkspace(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"inspect", "--config", configPath, "--session", state.SessionID, "--json"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"inspect", "--config", configPath, "--session", state.SessionID, "--json"}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("recover inspect exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -458,7 +458,7 @@ func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 
 	var decomposeOut, decomposeErr bytes.Buffer
 
-	code := RunMain([]string{"decompose", "--config", configPath, "--session", state.SessionID, "--output", "packet.json", "--json"}, &decomposeOut, &decomposeErr)
+	code := RunMainWithTelemetry([]string{"decompose", "--config", configPath, "--session", state.SessionID, "--output", "packet.json", "--json"}, &decomposeOut, &decomposeErr, nil)
 
 	if code != 0 {
 		t.Fatalf("recover decompose exit=%d stdout=%s stderr=%s", code, decomposeOut.String(), decomposeErr.String())
@@ -480,7 +480,7 @@ func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 
 	var statusOut, statusErr bytes.Buffer
 
-	code = RunMain([]string{"status", "--config", configPath, "--packet", "packet.json", "--json"}, &statusOut, &statusErr)
+	code = RunMainWithTelemetry([]string{"status", "--config", configPath, "--packet", "packet.json", "--json"}, &statusOut, &statusErr, nil)
 
 	if code != 0 {
 		t.Fatalf("recover status exit=%d stdout=%s stderr=%s", code, statusOut.String(), statusErr.String())
@@ -506,7 +506,7 @@ func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 	statusOut.Reset()
 	statusErr.Reset()
 
-	code = RunMain([]string{"status", "--config", configPath, "--packet", "packet.json"}, &statusOut, &statusErr)
+	code = RunMainWithTelemetry([]string{"status", "--config", configPath, "--packet", "packet.json"}, &statusOut, &statusErr, nil)
 	if code != 0 {
 		t.Fatalf("recover status text exit=%d stdout=%s stderr=%s", code, statusOut.String(), statusErr.String())
 	}
@@ -528,7 +528,7 @@ func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 
 	var promoteOut, promoteErr bytes.Buffer
 
-	code = RunMain([]string{"promote", "--config", configPath, "--packet", "packet.json", "--atom", "recovery-001", "--output", "briefs/recovery-001.md", "--json"}, &promoteOut, &promoteErr)
+	code = RunMainWithTelemetry([]string{"promote", "--config", configPath, "--packet", "packet.json", "--atom", "recovery-001", "--output", "briefs/recovery-001.md", "--json"}, &promoteOut, &promoteErr, nil)
 
 	if code != 0 {
 		t.Fatalf("recover promote exit=%d stdout=%s stderr=%s", code, promoteOut.String(), promoteErr.String())
@@ -558,7 +558,7 @@ func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 
 	var reconcileOut, reconcileErr bytes.Buffer
 
-	code = RunMain([]string{"reconcile", "--config", configPath, "--packet", "packet.json", "--completed", "recovery-001", "--json"}, &reconcileOut, &reconcileErr)
+	code = RunMainWithTelemetry([]string{"reconcile", "--config", configPath, "--packet", "packet.json", "--completed", "recovery-001", "--json"}, &reconcileOut, &reconcileErr, nil)
 
 	if code != 0 {
 		t.Fatalf("recover reconcile exit=%d stdout=%s stderr=%s", code, reconcileOut.String(), reconcileErr.String())
@@ -616,7 +616,7 @@ func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 	statusOut.Reset()
 	statusErr.Reset()
 
-	code = RunMain([]string{"status", "--config", configPath, "--packet", "packet.json", "--json"}, &statusOut, &statusErr)
+	code = RunMainWithTelemetry([]string{"status", "--config", configPath, "--packet", "packet.json", "--json"}, &statusOut, &statusErr, nil)
 	if code != 0 {
 		t.Fatalf("recover status after reconcile exit=%d stdout=%s stderr=%s", code, statusOut.String(), statusErr.String())
 	}
@@ -652,7 +652,7 @@ func TestRecoverStatusScrubsPersistedResidualEvidenceSummaries(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"status", "--config", configPath, "--packet", "packet.json", "--json"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"status", "--config", configPath, "--packet", "packet.json", "--json"}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("recover status exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -680,7 +680,7 @@ func TestRecoverStatusRejectsPacketOutsideWorkspaceRoot(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"status", "--config", configPath, "--packet", filepath.Join(outsideRoot, "packet.json"), "--json"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"status", "--config", configPath, "--packet", filepath.Join(outsideRoot, "packet.json"), "--json"}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("recover status should reject outside packet, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -703,14 +703,14 @@ func TestRecoverPromoteRejectsPacketOutsideWorkspaceRoot(t *testing.T) {
 	writeRecoverTestPacket(t, outsideRoot, "recover-session-outside-promote-packet", "packet.json")
 
 	var stdout, stderr bytes.Buffer
-	code := RunMain([]string{
+	code := RunMainWithTelemetry([]string{
 		"promote",
 		"--config", configPath,
 		"--packet", filepath.Join(outsideRoot, "packet.json"),
 		"--atom", "recovery-001",
 		"--output", "briefs/recovery-001.md",
 		"--json",
-	}, &stdout, &stderr)
+	}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("recover promote should reject outside packet, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -731,13 +731,13 @@ func TestRecoverReconcileRejectsPacketOutsideWorkspaceRoot(t *testing.T) {
 	writeRecoverTestPacket(t, outsideRoot, "recover-session-outside-reconcile-packet", "packet.json")
 
 	var stdout, stderr bytes.Buffer
-	code := RunMain([]string{
+	code := RunMainWithTelemetry([]string{
 		"reconcile",
 		"--config", configPath,
 		"--packet", filepath.Join(outsideRoot, "packet.json"),
 		"--completed", "recovery-001",
 		"--json",
-	}, &stdout, &stderr)
+	}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("recover reconcile should reject outside packet, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -761,7 +761,7 @@ func TestRecoverDecomposeRejectsOutsideOutputPath(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"decompose", "--config", configPath, "--session", "recover-session-decompose-outside", "--output", outsidePath, "--json"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"decompose", "--config", configPath, "--session", "recover-session-decompose-outside", "--output", outsidePath, "--json"}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("recover decompose should reject outside output, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -794,7 +794,7 @@ func TestRecoverDecomposeRejectsProtectedOutputPath(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"decompose", "--config", configPath, "--session", "recover-session-decompose-protected", "--output", "config.json", "--json"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"decompose", "--config", configPath, "--session", "recover-session-decompose-protected", "--output", "config.json", "--json"}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("recover decompose should reject protected output, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -822,7 +822,7 @@ func TestRecoverDecomposeRejectsProtectedOutputPath(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 
-	code = RunMain([]string{"decompose", "--config", configPath, "--session", "recover-session-decompose-protected", "--output", "Config.JSON", "--json"}, &stdout, &stderr)
+	code = RunMainWithTelemetry([]string{"decompose", "--config", configPath, "--session", "recover-session-decompose-protected", "--output", "Config.JSON", "--json"}, &stdout, &stderr, nil)
 	if code != 1 {
 		t.Fatalf("recover decompose should reject case-variant protected output, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
@@ -849,7 +849,7 @@ func TestRecoverDecomposeRejectsRecoveryControlArtifactOutput(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"decompose", "--config", configPath, "--session", sessionID, "--output", outputPath, "--json"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"decompose", "--config", configPath, "--session", sessionID, "--output", outputPath, "--json"}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("recover decompose should reject control artifact output, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -882,7 +882,7 @@ func TestRecoverDecomposeRejectsSymlinkedOutputParent(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"decompose", "--config", configPath, "--session", "recover-session-decompose-symlink", "--output", "link-out/packet.json", "--json"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"decompose", "--config", configPath, "--session", "recover-session-decompose-symlink", "--output", "link-out/packet.json", "--json"}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("recover decompose should reject symlinked output parent, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -923,7 +923,7 @@ func TestRecoverDecomposeRejectsSymlinkedDefaultOutputParent(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"decompose", "--config", configPath, "--session", sessionID, "--json"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"decompose", "--config", configPath, "--session", sessionID, "--json"}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("recover decompose should reject symlinked default output parent, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -965,7 +965,7 @@ func TestRecoverDecomposeRejectsPreexistingTempSymlink(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"decompose", "--config", configPath, "--session", sessionID, "--json"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"decompose", "--config", configPath, "--session", sessionID, "--json"}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("recover decompose should reject preexisting temp symlink, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -1026,7 +1026,7 @@ func TestRecoverReconcileMergesCompletedAtoms(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"reconcile", "--config", configPath, "--packet", "packet.json", "--completed", packet.CandidateAtoms[0].ID, "--output", "reconciliation.json", "--json"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"reconcile", "--config", configPath, "--packet", "packet.json", "--completed", packet.CandidateAtoms[0].ID, "--output", "reconciliation.json", "--json"}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("first reconcile exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -1035,7 +1035,7 @@ func TestRecoverReconcileMergesCompletedAtoms(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 
-	code = RunMain([]string{"reconcile", "--config", configPath, "--packet", "packet.json", "--completed", packet.CandidateAtoms[1].ID, "--output", "reconciliation.json", "--json"}, &stdout, &stderr)
+	code = RunMainWithTelemetry([]string{"reconcile", "--config", configPath, "--packet", "packet.json", "--completed", packet.CandidateAtoms[1].ID, "--output", "reconciliation.json", "--json"}, &stdout, &stderr, nil)
 	if code != 0 {
 		t.Fatalf("second reconcile exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
@@ -1117,7 +1117,7 @@ func TestRecoverReconcileRejectsOutsideOutputPath(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"reconcile", "--config", configPath, "--packet", "packet.json", "--completed", "recovery-001", "--output", outsidePath, "--json"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"reconcile", "--config", configPath, "--packet", "packet.json", "--completed", "recovery-001", "--output", outsidePath, "--json"}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("recover reconcile should reject outside output, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -1156,7 +1156,7 @@ func TestRecoverReconcileRejectsSymlinkedOutputParent(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"reconcile", "--config", configPath, "--packet", "packet.json", "--completed", packet.CandidateAtoms[0].ID, "--output", "link-out/reconciliation.json", "--json"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"reconcile", "--config", configPath, "--packet", "packet.json", "--completed", packet.CandidateAtoms[0].ID, "--output", "link-out/reconciliation.json", "--json"}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("recover reconcile should reject symlinked output parent, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -1194,7 +1194,7 @@ func TestRecoverReconcileRejectsSymlinkedPacketDirectory(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"reconcile", "--config", configPath, "--packet", "link-packet/packet.json", "--completed", packet.CandidateAtoms[0].ID, "--json"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"reconcile", "--config", configPath, "--packet", "link-packet/packet.json", "--completed", packet.CandidateAtoms[0].ID, "--json"}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("recover reconcile exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -1247,7 +1247,7 @@ func TestRecoverPromoteRequiresExplicitAllowDirtyForDirtyPacket(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"promote", "--config", configPath, "--packet", "packet.json", "--atom", "recovery-001", "--output", "briefs/recovery-001.md", "--json"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"promote", "--config", configPath, "--packet", "packet.json", "--atom", "recovery-001", "--output", "briefs/recovery-001.md", "--json"}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("recover promote should block dirty packet, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -1299,7 +1299,7 @@ func TestRecoverPromoteRejectsOutsideOutputPath(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"promote", "--config", configPath, "--packet", "packet.json", "--atom", "recovery-001", "--output", outsidePath, "--json"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"promote", "--config", configPath, "--packet", "packet.json", "--atom", "recovery-001", "--output", outsidePath, "--json"}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("recover promote should reject outside output, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -1331,7 +1331,7 @@ func TestRecoverPromoteRejectsSymlinkedOutputParent(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := RunMain([]string{"promote", "--config", configPath, "--packet", "packet.json", "--atom", packet.CandidateAtoms[0].ID, "--output", "brief-link/recovery.md", "--json"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"promote", "--config", configPath, "--packet", "packet.json", "--atom", packet.CandidateAtoms[0].ID, "--output", "brief-link/recovery.md", "--json"}, &stdout, &stderr, nil)
 	if code != 1 {
 		t.Fatalf("recover promote should reject symlinked parent, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
@@ -1362,7 +1362,7 @@ func TestRecoverPromoteRejectsSymlinkedOutputFile(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := RunMain([]string{"promote", "--config", configPath, "--packet", "packet.json", "--atom", packet.CandidateAtoms[0].ID, "--output", "briefs/recovery.md", "--json"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"promote", "--config", configPath, "--packet", "packet.json", "--atom", packet.CandidateAtoms[0].ID, "--output", "briefs/recovery.md", "--json"}, &stdout, &stderr, nil)
 	if code != 1 {
 		t.Fatalf("recover promote should reject symlinked output file, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}

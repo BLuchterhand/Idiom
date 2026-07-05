@@ -13,14 +13,6 @@ import (
 	"idiom/internal/platform/textutil"
 )
 
-func approvedPlanArtifactClientClasses() []string {
-	return planartifact.ApprovedClientClassifications()
-}
-
-func ParsePlanArtifactJSON(body []byte) (planartifact.PlanArtifact, error) {
-	return planartifact.ParseJSON(body)
-}
-
 func newPlanArtifactFromSubmitPlanRequest(req ToolRequest, sessionID string, created string, planID string) (planartifact.PlanArtifact, error) {
 	if req.PlanArtifact != nil {
 		artifact := *req.PlanArtifact
@@ -120,7 +112,7 @@ func planEditsWithoutAnchorProvenance(edits []planartifact.PlanEdit) []planartif
 
 func sanitizePlanArtifactPathValue(value string) string {
 	value = strings.TrimSpace(value)
-	if value == "" || planArtifactTextLooksSensitive(value) {
+	if value == "" || sensitivity.ContainsSensitiveText(value) {
 		return ""
 	}
 
@@ -141,7 +133,7 @@ func sanitizePlanArtifactPathValue(value string) string {
 
 func sanitizePlanArtifactID(value string) string {
 	value = strings.TrimSpace(value)
-	if value == "" || planArtifactTextLooksSensitive(value) {
+	if value == "" || sensitivity.ContainsSensitiveText(value) {
 		return ""
 	}
 
@@ -163,18 +155,9 @@ func sanitizePlanArtifactID(value string) string {
 	return strings.Trim(b.String(), "-_.:")
 }
 
-func sanitizePlanArtifactField(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-
-	return sanitizePlanArtifactVisibleText(value, 120)
-}
-
 func sanitizePlanArtifactToken(value string) string {
 	value = strings.TrimSpace(strings.ToLower(value))
-	if value == "" || planArtifactTextLooksSensitive(value) {
+	if value == "" || sensitivity.ContainsSensitiveText(value) {
 		return ""
 	}
 
@@ -210,7 +193,7 @@ func sanitizePlanArtifactText(value string, maxBytes int) string {
 		return ""
 	}
 
-	if planArtifactTextLooksSensitive(value) {
+	if sensitivity.ContainsSensitiveText(value) {
 		return "redacted:" + planArtifactHash(value)
 	}
 
@@ -242,10 +225,6 @@ func sanitizePlanArtifactVisibleText(value string, maxBytes int) string {
 	}
 
 	return strings.TrimSpace(value) + " [truncated]"
-}
-
-func planArtifactTextLooksSensitive(value string) bool {
-	return sensitivity.ContainsSensitiveText(value)
 }
 
 func planArtifactHash(value string) string {

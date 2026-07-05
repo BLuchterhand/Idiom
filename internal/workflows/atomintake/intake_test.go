@@ -94,6 +94,71 @@ func TestAtomIntakeRefusesSourceSatisfiedStatus(t *testing.T) {
 	}
 }
 
+func TestAtomIntakeTerminalStatusClassifiesTrackerStatuses(t *testing.T) {
+	for _, tc := range []struct {
+		status string
+		want   bool
+	}{
+		{status: "source-satisfied - do not dispatch", want: true},
+		{status: "completed", want: true},
+		{status: "closed", want: true},
+		{status: "accepted", want: true},
+		{status: "pending", want: false},
+		{status: "planned", want: false},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			gotStatus, got := TerminalStatus(tc.status)
+			if got != tc.want {
+				t.Fatalf("TerminalStatus(%q)=%v, want %v", tc.status, got, tc.want)
+			}
+			if got && gotStatus != tc.status {
+				t.Fatalf("status=%q, want %q", gotStatus, tc.status)
+			}
+		})
+	}
+}
+
+func TestAtomIntakeSourceSatisfiedScopePreservesLiteralEventEvidence(t *testing.T) {
+	root := t.TempDir()
+	path := "internal/surfaces/tui/app/writer_route.go"
+	full := filepath.Join(root, filepath.FromSlash(path))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir target: %v", err)
+	}
+
+	body := strings.Join([]string{
+		"package app",
+		"",
+		"func emitWriterRouteDecision() {",
+		"	fields[\"type\"] = \"writer_route_decision\"",
+		"	const namespace = \"idiom.writer_route.\"",
+		"}",
+		"",
+	}, "\n")
+	if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	report, ok := EvaluateSourceSatisfiedScope(SourceSatisfiedScopeOptions{
+		ProjectRoot: root,
+		SpecPath:    ".idiom/atoms/design/atom-007.md",
+		SpecBody:    "# Atom\n",
+		ScopePath:   path,
+		ScopeText:   "Build and emit TUI route decision after `idiom.writer_route_decision.v1` without editing `.idiom/atoms/design/atom-007.md`.",
+	})
+	if !ok {
+		t.Fatalf("expected source-satisfied literal evidence")
+	}
+	if report.Path != path {
+		t.Fatalf("path=%q, want %q", report.Path, path)
+	}
+
+	evidence := strings.Join(report.Evidence, "\n")
+	if !strings.Contains(evidence, "writer_route_decision") || !strings.Contains(evidence, "idiom.writer_route.") {
+		t.Fatalf("expected event leaf and namespace evidence, got %#v", report.Evidence)
+	}
+}
+
 func TestAtomIntakeDetectsSourceSatisfiedRequiredEditSnippets(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "foo.go"), []byte("package main\n\nfunc bounded() int {\n\treturn 42\n}\n"), 0o644); err != nil {

@@ -101,7 +101,7 @@ func PlanADRDraftPrompt(effortRoot, promptPath, adrOutputPath string, evidence [
 	plan.EvidenceCardCount = len(plan.EvidenceCardIDs)
 	plan.PRDRequirementCount = len(plan.PRDRequirementIDs)
 	plan.Command = artifactCommandRecipeWithValidator(plan.PromptPath, plan.ADROutputPath, plan.EventsPath, plan.ReportPath, productArtifactValidatorCommand("adr")+" --prd prd.md --tdd-ledger tdd.json")
-	sortProfileFindings(plan.Findings)
+	SortProfileFindings(plan.Findings)
 
 	return plan
 }

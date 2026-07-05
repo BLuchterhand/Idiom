@@ -61,10 +61,6 @@ func IsImplementationChangeRecordType(recordType ImplementationLedgerRecordType)
 	return IsImplementationCompletionRecordType(recordType) || recordType == LedgerRecordPartialImplementationRecorded
 }
 
-func RequiresImplementationCommitHash(recordType ImplementationLedgerRecordType) bool {
-	return IsImplementationChangeRecordType(recordType)
-}
-
 func IsImplementationAtomRecordType(recordType ImplementationLedgerRecordType) bool {
 	switch recordType {
 	case LedgerRecordAtomPlanned, LedgerRecordAtomClosed:

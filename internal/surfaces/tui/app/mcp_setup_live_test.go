@@ -10,10 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"idiom/internal/capabilities/mcp"
 	"idiom/internal/platform/config"
 )
 
-// TestLive_SetupMCPRegistryAgainstUserConfig drives setupMCPRegistry
+// TestLive_SetupMCPRegistryAgainstUserConfig drives mcp.SetupRegistry
 // against the repo's real config.json. Doubly gated:
 //
 //   - `//go:build integration` keeps it out of `go test ./...`. Run with
@@ -54,7 +55,7 @@ func TestLive_SetupMCPRegistryAgainstUserConfig(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	reg, fails := setupMCPRegistry(ctx, cfg.MCP, cfg.Workspace.AllowPrivateNetwork)
+	reg, fails := mcp.SetupRegistry(ctx, cfg.MCP, cfg.Workspace.AllowPrivateNetwork)
 	if reg != nil {
 		defer reg.Close()
 	}

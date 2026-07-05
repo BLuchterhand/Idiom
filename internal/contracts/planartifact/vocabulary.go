@@ -108,66 +108,32 @@ func ApprovedClientClassifications() []string {
 }
 
 func KnownClientClassification(value string) bool {
-	value = strings.TrimSpace(value)
-	for _, classification := range approvedClientClassifications {
-		if value == string(classification) {
-			return true
-		}
-	}
-
-	return false
+	return knownTrimmed(value, approvedClientClassifications...)
 }
 
 func KnownExecutionPermission(value string) bool {
-	switch ExecutionPermission(strings.TrimSpace(value)) {
-	case ExecutionPermissionExecuteAll,
-		ExecutionPermissionExecuteApprovedScope,
-		ExecutionPermissionBlocked:
-		return true
-	default:
-		return false
-	}
+	return knownTrimmed(value, ExecutionPermissionExecuteAll, ExecutionPermissionExecuteApprovedScope, ExecutionPermissionBlocked)
 }
 
 func KnownContractKind(value string) bool {
-	switch ContractKind(strings.TrimSpace(value)) {
-	case ContractKindPlanThenExecute, ContractKindImplementation, ContractKindImplementationResult:
-		return true
-	default:
-		return false
-	}
+	return knownTrimmed(value, ContractKindPlanThenExecute, ContractKindImplementation, ContractKindImplementationResult)
 }
 
 func KnownOwner(value string) bool {
-	switch Owner(strings.TrimSpace(value)) {
-	case OwnerModel, OwnerHarness, OwnerPlanner, OwnerExecutor:
-		return true
-	default:
-		return false
-	}
+	return knownTrimmed(value, OwnerModel, OwnerHarness, OwnerPlanner, OwnerExecutor)
 }
 
 func KnownApprovalMode(value string) bool {
-	switch ApprovalMode(strings.TrimSpace(value)) {
-	case ApprovalModePlanThenExecute, ApprovalModeLocal, ApprovalModeHarnessPolicy:
-		return true
-	default:
-		return false
-	}
+	return knownTrimmed(value, ApprovalModePlanThenExecute, ApprovalModeLocal, ApprovalModeHarnessPolicy)
 }
 
 func KnownApprovalExpirationPolicy(value string) bool {
-	switch ApprovalExpirationPolicy(strings.TrimSpace(value)) {
-	case ApprovalExpirationWorkspaceDigest:
-		return true
-	default:
-		return false
-	}
+	return knownTrimmed(value, ApprovalExpirationWorkspaceDigest)
 }
 
 func KnownVerificationStatus(value string) bool {
-	switch VerificationStatus(strings.TrimSpace(value)) {
-	case VerificationStatusOpen,
+	return knownTrimmed(value,
+		VerificationStatusOpen,
 		VerificationStatusPending,
 		VerificationStatusPassed,
 		VerificationStatusComplete,
@@ -176,75 +142,51 @@ func KnownVerificationStatus(value string) bool {
 		VerificationStatusFailed,
 		VerificationStatusSkipped,
 		VerificationStatusBlocked,
-		VerificationStatusNotApplicable:
-		return true
-	case "n_a":
-		return true
-	default:
-		return false
-	}
+		VerificationStatusNotApplicable,
+		VerificationStatus("n_a"),
+	)
 }
 
 func KnownPacketStatus(value string) bool {
-	switch PacketStatus(strings.TrimSpace(value)) {
-	case PacketStatusNotProvided, PacketStatusProvided, PacketStatusAvailable, PacketStatusFresh, PacketStatusNotUsed:
-		return true
-	default:
-		return false
-	}
+	return knownTrimmed(value, PacketStatusNotProvided, PacketStatusProvided, PacketStatusAvailable, PacketStatusFresh, PacketStatusNotUsed)
 }
 
 func KnownApprovalStatus(value string) bool {
-	switch ApprovalStatus(strings.TrimSpace(value)) {
-	case ApprovalStatusImplicit,
+	return knownTrimmed(value,
+		ApprovalStatusImplicit,
 		ApprovalStatusPartial,
 		ApprovalStatusPartiallyApproved,
 		ApprovalStatusApproved,
 		ApprovalStatusAutoApproved,
 		ApprovalStatusNotRequired,
 		ApprovalStatusPending,
-		ApprovalStatusAwaitingApproval:
-		return true
-	case "n_a":
-		return true
-	default:
-		return false
-	}
+		ApprovalStatusAwaitingApproval,
+		ApprovalStatus("n_a"),
+	)
 }
 
 func KnownHandoffTarget(value string) bool {
-	switch HandoffTarget(strings.TrimSpace(value)) {
-	case HandoffTargetPlanExecuteExecutor, HandoffTargetExecutor:
-		return true
-	default:
-		return false
-	}
+	return knownTrimmed(value, HandoffTargetPlanExecuteExecutor, HandoffTargetExecutor)
 }
 
 func IsApprovalStatusPartial(value string) bool {
-	switch ApprovalStatus(strings.TrimSpace(value)) {
-	case ApprovalStatusPartial, ApprovalStatusPartiallyApproved:
-		return true
-	default:
-		return false
-	}
+	return knownTrimmed(value, ApprovalStatusPartial, ApprovalStatusPartiallyApproved)
 }
 
 func ApprovalStatusSatisfied(value string) bool {
-	switch strings.TrimSpace(value) {
-	case string(ApprovalStatusImplicit), string(ApprovalStatusApproved), string(ApprovalStatusAutoApproved), string(ApprovalStatusNotRequired), "n_a", string(ApprovalStatusPartial), string(ApprovalStatusPartiallyApproved):
-		return true
-	default:
-		return false
-	}
+	return knownTrimmed(value, ApprovalStatusImplicit, ApprovalStatusApproved, ApprovalStatusAutoApproved, ApprovalStatusNotRequired, ApprovalStatus("n_a"), ApprovalStatusPartial, ApprovalStatusPartiallyApproved)
 }
 
 func KnownHandoffStatus(value string) bool {
-	switch HandoffStatus(strings.TrimSpace(value)) {
-	case HandoffStatusReady,
-		HandoffStatusBlocked:
-		return true
-	default:
-		return false
+	return knownTrimmed(value, HandoffStatusReady, HandoffStatusBlocked)
+}
+
+func knownTrimmed[T ~string](value string, allowed ...T) bool {
+	value = strings.TrimSpace(value)
+	for _, candidate := range allowed {
+		if value == string(candidate) {
+			return true
+		}
 	}
+	return false
 }

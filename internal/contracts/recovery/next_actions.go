@@ -16,14 +16,7 @@ const (
 )
 
 func ParseNextAction(action string) (NextAction, bool) {
-	value := NextAction(action)
-	for _, known := range NextActions() {
-		if value == known || canonicalToken(string(value)) == canonicalToken(string(known)) {
-			return known, true
-		}
-	}
-
-	return "", false
+	return parseKnown(action, NextActions(), canonicalToken, true)
 }
 
 func NextActions() []NextAction {

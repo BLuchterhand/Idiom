@@ -85,7 +85,7 @@ func (m *Manager) newTsLSPClient(ctx context.Context) (*tsLSPClient, error) {
 
 	params := map[string]any{
 		"processId": os.Getpid(),
-		"rootUri":   tsFileURI(m.Root()),
+		"rootUri":   LSPFileURI(m.Root()),
 		"capabilities": map[string]any{
 			"textDocument": map[string]any{
 				"publishDiagnostics": map[string]any{},
@@ -100,7 +100,7 @@ func (m *Manager) newTsLSPClient(ctx context.Context) (*tsLSPClient, error) {
 			},
 		},
 		"workspaceFolders": []map[string]any{{
-			"uri":  tsFileURI(m.Root()),
+			"uri":  LSPFileURI(m.Root()),
 			"name": filepath.Base(m.Root()),
 		}},
 		"initializationOptions": map[string]any{
@@ -168,10 +168,6 @@ func (c *tsLSPClient) waitForDiagnostics(ctx context.Context, uri string, budget
 	}
 
 	return c.pendingDiagnostics[uri]
-}
-
-func tsFileURI(path string) string {
-	return LSPFileURI(path)
 }
 
 func tsPathFromURI(uri string) (string, error) {
@@ -248,7 +244,7 @@ func (m *Manager) tsWorkspaceSymbolsViaLSP(ctx context.Context, pattern string, 
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
 			return m.newTsLSPClient(ctx)
 		},
-		fileURI: tsFileURI,
+		fileURI: LSPFileURI,
 		candidates: func(pattern string, budget int) ([]string, error) {
 			index, err := m.getTsIndex()
 			if err != nil {
@@ -263,7 +259,7 @@ func (m *Manager) tsWorkspaceSymbolsViaLSP(ctx context.Context, pattern string, 
 			return candidates, nil
 		},
 		flatten: flattenTsDocumentSymbols,
-		filter:  filterTsDocumentSymbolMatches,
+		filter:  filterLSPDocumentSymbolMatches,
 		format:  m.formatTsWorkspaceSymbols,
 	}, pattern, pathFilter, limit)
 }
@@ -278,7 +274,7 @@ func (m *Manager) LSPLocationQueryViaLSP(ctx context.Context, match semantic.TsS
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
 			return m.newTsLSPClient(ctx)
 		},
-		fileURI: tsFileURI,
+		fileURI: LSPFileURI,
 		format:  m.formatTsLocations,
 	}, match.Path, func(abs string) map[string]any {
 		return m.tsLSPPosition(abs, match)
@@ -291,7 +287,7 @@ func (m *Manager) tsImplementationsViaLSP(ctx context.Context, match semantic.Ts
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
 			return m.newTsLSPClient(ctx)
 		},
-		fileURI: tsFileURI,
+		fileURI: LSPFileURI,
 		format:  m.formatTsLocations,
 	}, match.Path, func(abs string) map[string]any {
 		return m.tsLSPPosition(abs, match)
@@ -304,7 +300,7 @@ func (m *Manager) tsReferencesViaLSP(ctx context.Context, match semantic.TsSymbo
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
 			return m.newTsLSPClient(ctx)
 		},
-		fileURI: tsFileURI,
+		fileURI: LSPFileURI,
 		format:  m.formatTsLocations,
 	}, match.Path, func(abs string) map[string]any {
 		return m.tsLSPPosition(abs, match)
@@ -325,7 +321,7 @@ func (m *Manager) tsCallHierarchyViaLSP(ctx context.Context, match semantic.TsSy
 		return callHierarchyResult{}, err
 	}
 
-	items, err := prepareLSPCallHierarchy(ctx, client, tsFileURI, abs, m.tsLSPPosition(abs, match))
+	items, err := prepareLSPCallHierarchy(ctx, client, LSPFileURI, abs, m.tsLSPPosition(abs, match))
 	if err != nil {
 		return callHierarchyResult{}, err
 	}
@@ -369,7 +365,7 @@ func (m *Manager) tsDiagnosticsViaLSP(ctx context.Context, rel string) (string, 
 		return "", err
 	}
 
-	diagnostics := client.waitForDiagnostics(ctx, tsFileURI(abs), 2*time.Second)
+	diagnostics := client.waitForDiagnostics(ctx, LSPFileURI(abs), 2*time.Second)
 
 	return m.formatTsDiagnostics(abs, diagnostics), nil
 }
@@ -470,9 +466,5 @@ func tsSeverityName(severity int) string {
 }
 
 func flattenTsDocumentSymbols(path string, container string, symbols []LSPDocumentSymbol) []LSPSymbolInfo {
-	return flattenLSPDocumentSymbols(path, container, symbols, tsFileURI, ".")
-}
-
-func filterTsDocumentSymbolMatches(symbols []LSPSymbolInfo, pattern string) []LSPSymbolInfo {
-	return filterLSPDocumentSymbolMatches(symbols, pattern)
+	return flattenLSPDocumentSymbols(path, container, symbols, LSPFileURI, ".")
 }

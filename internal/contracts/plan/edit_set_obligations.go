@@ -65,14 +65,10 @@ func (obligations EditSetObligations) Kinds() []string {
 }
 
 func (obligations EditSetObligations) Normalized() EditSetObligations {
-	return obligations.normalizedWithDefaultSource("typed")
+	return obligations.WithDefaultSource("typed")
 }
 
 func (obligations EditSetObligations) WithDefaultSource(defaultSource string) EditSetObligations {
-	return obligations.normalizedWithDefaultSource(defaultSource)
-}
-
-func (obligations EditSetObligations) normalizedWithDefaultSource(defaultSource string) EditSetObligations {
 	var out EditSetObligations
 
 	for _, obligation := range obligations {

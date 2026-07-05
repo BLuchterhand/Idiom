@@ -358,6 +358,43 @@ func TestBuildActionGuidanceForPlanExecuteSubmitReady(t *testing.T) {
 	if strings.Contains(joinedRequired, "valid JSON tool object") {
 		t.Fatalf("submit-ready recovery plan must not use generic JSON recovery, got %#v", parsePlan.RequiredNext)
 	}
+
+	nativeParseGuidance := BuildActionGuidance(ActionGuidanceInput{
+		Reason:            "tool_parse_rejected",
+		Request:           workspace.ToolRequest{Tool: "tool_parse"},
+		Result:            workspace.ToolResult{Tool: "tool_parse", Summary: "Malformed tool request rejected", Error: "malformed DeepSeek XML tool request"},
+		Constraints:       []string{"plan_then_execute_submit_plan_ready"},
+		ToolTransportMode: "native",
+	})
+	joinedNativeGuidance := strings.Join(nativeParseGuidance.ValidNext, "\n")
+	if !strings.Contains(joinedNativeGuidance, "active native submit_plan tool call") {
+		t.Fatalf("native submit-ready parse recovery should preserve native submit_plan transport, got %#v", nativeParseGuidance.ValidNext)
+	}
+	if strings.Contains(joinedNativeGuidance, "parser-readable submit_plan JSON object") {
+		t.Fatalf("native submit-ready parse recovery must not ask for textual submit_plan JSON, got %#v", nativeParseGuidance.ValidNext)
+	}
+
+	nativeParsePlan := BuildRecoveryPlan(RecoveryInput{
+		Reason:            "tool_parse_rejected",
+		Request:           workspace.ToolRequest{Tool: "tool_parse"},
+		Result:            workspace.ToolResult{Tool: "tool_parse", Summary: "Malformed tool request rejected", Error: "malformed DeepSeek XML tool request"},
+		Constraints:       []string{"plan_then_execute_submit_plan_ready"},
+		ToolTransportMode: "native",
+	})
+	joinedNativeRequired := strings.Join(nativeParsePlan.RequiredNext, "\n")
+	if !strings.Contains(joinedNativeRequired, "active native submit_plan tool call") {
+		t.Fatalf("native submit-ready recovery plan should preserve native submit_plan transport, got %#v", nativeParsePlan.RequiredNext)
+	}
+	if strings.Contains(joinedNativeRequired, "parser-readable submit_plan JSON object") {
+		t.Fatalf("native submit-ready recovery plan must not ask for textual submit_plan JSON, got %#v", nativeParsePlan.RequiredNext)
+	}
+	joinedNativeValid := strings.Join(nativeParsePlan.ValidNext, "\n")
+	if !strings.Contains(joinedNativeValid, "active native submit_plan tool call") {
+		t.Fatalf("native submit-ready recovery plan should keep submit_plan-specific valid next action, got %#v", nativeParsePlan.ValidNext)
+	}
+	if strings.Contains(joinedNativeValid, "active native tool-call transport for one callable tool") {
+		t.Fatalf("native submit-ready recovery plan must not use generic native tool action, got %#v", nativeParsePlan.ValidNext)
+	}
 }
 
 func TestBuildStepInstructionForPlanExecuteSubmitReady(t *testing.T) {
@@ -705,11 +742,26 @@ func TestBuildActionGuidanceSearchSuccessOmitsEditSuggestionWhenReadOnly(t *test
 }
 
 func TestBuildRecoveryPlanClassifiesFailure(t *testing.T) {
+	nativeParseGuidance := BuildActionGuidance(ActionGuidanceInput{
+		Reason:            "tool_parse_rejected",
+		Request:           workspace.ToolRequest{Tool: "tool_parse"},
+		Result:            workspace.ToolResult{Tool: "tool_parse", Summary: "Malformed tool request rejected", Error: "malformed DeepSeek XML tool request"},
+		ToolTransportMode: "native",
+	})
+	joinedNativeGuidance := strings.Join(nativeParseGuidance.ValidNext, "\n")
+	if !strings.Contains(joinedNativeGuidance, "active native tool-call transport") {
+		t.Fatalf("native action guidance should preserve native tool transport, got %#v", nativeParseGuidance.ValidNext)
+	}
+	if strings.Contains(joinedNativeGuidance, "valid JSON tool object") {
+		t.Fatalf("native action guidance should not ask for textual JSON, got %#v", nativeParseGuidance.ValidNext)
+	}
+
 	cases := []struct {
-		name   string
-		input  RecoveryInput
-		want   recoverycontract.FailureClass
-		needle string
+		name            string
+		input           RecoveryInput
+		want            recoverycontract.FailureClass
+		needle          string
+		wantNoValidJSON bool
 	}{
 		{
 			name: "tool parse",
@@ -720,6 +772,18 @@ func TestBuildRecoveryPlanClassifiesFailure(t *testing.T) {
 			},
 			want:   recoverycontract.FailureClassToolParseError,
 			needle: "markdown-wrapped or malformed tool JSON",
+		},
+		{
+			name: "tool parse native transport",
+			input: RecoveryInput{
+				Reason:            "tool_parse_rejected",
+				Request:           workspace.ToolRequest{Tool: "tool_parse"},
+				Result:            workspace.ToolResult{Tool: "tool_parse", Summary: "Malformed tool request rejected", Error: "malformed DeepSeek XML tool request"},
+				ToolTransportMode: "native",
+			},
+			want:            recoverycontract.FailureClassToolParseError,
+			needle:          "active native tool-call transport",
+			wantNoValidJSON: true,
 		},
 		{
 			name: "permission",
@@ -763,6 +827,12 @@ func TestBuildRecoveryPlanClassifiesFailure(t *testing.T) {
 			joined := strings.Join(append(append([]string{}, plan.DoNotRepeat...), plan.RequiredNext...), "\n")
 			if !strings.Contains(joined, tc.needle) {
 				t.Fatalf("expected %q in recovery guidance, got %#v", tc.needle, plan)
+			}
+			if tc.wantNoValidJSON && strings.Contains(strings.Join(plan.ValidNext, "\n"), "valid JSON tool object") {
+				t.Fatalf("native recovery valid_next should not ask for textual JSON, got %#v", plan.ValidNext)
+			}
+			if tc.wantNoValidJSON && strings.Count(strings.Join(plan.ValidNext, "\n"), "active native tool-call transport") != 1 {
+				t.Fatalf("native recovery valid_next should contain one native transport action, got %#v", plan.ValidNext)
 			}
 		})
 	}
@@ -1137,16 +1207,6 @@ func TestRenderInitialRuntimeBriefAddsRequiredEditPathReadinessDirective(t *test
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("expected required-path readiness directive %q in:\n%s", want, rendered)
 		}
-	}
-}
-
-func TestRenderFailureFeedbackPacketExplainsRequiredVsValid(t *testing.T) {
-	rendered := RenderFailureFeedbackPacket(map[string]any{
-		"required_next": []string{"emit exactly one valid JSON tool object"},
-		"valid_next":    []string{"answer from the current evidence if it already resolves the task"},
-	})
-	if !strings.Contains(rendered, "`required_next` lists hard requirements; `valid_next` lists safe options") {
-		t.Fatalf("expected failure-feedback directive to explain packet semantics, got %q", rendered)
 	}
 }
 

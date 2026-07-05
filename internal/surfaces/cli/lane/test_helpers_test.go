@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	cmdtelemetry "idiom/internal/surfaces/cli/telemetry"
 )
 
 func cliAssetPath(elem ...string) string {
@@ -65,10 +63,6 @@ func stageDoctorBackends(t *testing.T, root string) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("stage backends: %v", err)
 	}
-}
-
-func commandTelemetryName(args []string) string {
-	return cmdtelemetry.CommandName(args)
 }
 
 func readMainTelemetryRecords(t *testing.T, path string) []map[string]any {

@@ -22,10 +22,6 @@ import (
 )
 
 func Run(args []string, stdout, stderr io.Writer) int {
-	return run(args, stdout, stderr)
-}
-
-func run(args []string, stdout, stderr io.Writer) int {
 	var (
 		logPath   string
 		logsGlob  string

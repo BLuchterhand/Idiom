@@ -84,10 +84,9 @@ func (g *recordingGateEngine) SourceGroundingRejection(string, []workspace.ToolR
 }
 
 type recordingGuidanceEngine struct {
-	closureActive   bool
-	delegatedReady  bool
-	scratchpadReady bool
-	delegatedCalls  *int
+	closureActive  bool
+	delegatedReady bool
+	delegatedCalls *int
 }
 
 func (g recordingGuidanceEngine) ClosureActive(workerruntime.WorkerRuntimeBrief, []workspace.ToolResult) bool {
@@ -100,10 +99,6 @@ func (g recordingGuidanceEngine) DelegatedReadOnlyClosureReady(workerruntime.Wor
 	}
 
 	return g.delegatedReady
-}
-
-func (g recordingGuidanceEngine) ScratchpadCloseoutReady(workerruntime.WorkerRuntimeBrief, []workspace.ToolResult) bool {
-	return g.scratchpadReady
 }
 
 type gateEngineInjectionTestClient struct {
@@ -447,7 +442,9 @@ func TestLifecycleCloseoutPolicyBudgetCloseoutCarriesRunPolicyState(t *testing.T
 }
 
 func TestRunnerUsesInjectedLifecycleCloseoutPolicy(t *testing.T) {
-	var events []RunEvent
+	var (
+		events []RunEvent
+	)
 	engine := &recordingLifecycleCloseoutPolicyEngine{}
 	runner := &Runner{
 		Client: lifecycleCloseoutPolicyTestClient{},
@@ -492,7 +489,7 @@ func TestLifecycleCloseoutPolicyBudgetCloseoutDefaultsBlankStopReason(t *testing
 		t.Fatalf("unexpected default budget closeout: %#v", decision)
 	}
 
-	if decision.Gate.Budget == nil || decision.Gate.Budget.Exhausted || decision.Gate.Budget.ExhaustionReason != "completed" {
+	if decision.Gate.Budget == nil || decision.Gate.Budget.Exhausted || decision.Gate.Budget.ExhaustionReason != "" {
 		t.Fatalf("unexpected default budget state: %#v", decision.Gate.Budget)
 	}
 }
@@ -533,38 +530,33 @@ type injectedStopModelCallReadinessPolicyEngine struct{}
 
 func (injectedStopModelCallReadinessPolicyEngine) BeforeModelCall(ModelCallReadinessPolicyInput) ModelCallReadinessPolicyDecision {
 	return ModelCallReadinessPolicyDecision{
-		Stop:              true,
-		StopReason:        "injected_model_call_readiness_stop",
-		BudgetExhausted:   true,
-		ForceAnswer:       true,
-		ForceAnswerPrompt: "Injected model-call readiness stop. Tools are now disabled.",
+		Stop:            true,
+		StopReason:      "injected_model_call_readiness_stop",
+		BudgetExhausted: true,
+		CloseoutMode:    noToolsCloseoutModelAllowed,
+		CloseoutPrompt:  "Injected model-call readiness stop. Tools are now disabled.",
 	}
 }
 
-func TestModelCallReadinessPolicyStopsOnDurationBudgetWhenLaneAllows(t *testing.T) {
+func TestModelCallReadinessPolicyDoesNotStopForElapsedDuration(t *testing.T) {
 	decision := newModelCallReadinessPolicyEngine().BeforeModelCall(ModelCallReadinessPolicyInput{
-		Policy:     RunPolicy{MaxDuration: time.Nanosecond},
+		Policy:     RunPolicy{},
 		LanePolicy: DefaultLanePolicy{},
 		Metrics:    runnerMetrics{startedAt: time.Now().Add(-time.Second)},
 	})
 
-	if !decision.Stop || !decision.BudgetExhausted || decision.StopReason != "duration_budget_exhausted" {
-		t.Fatalf("unexpected duration stop decision: %#v", decision)
-	}
-
-	if !decision.ForceAnswer || !strings.Contains(decision.ForceAnswerPrompt, "Run duration budget is exhausted") {
-		t.Fatalf("duration stop should force answer with legacy prompt, got %#v", decision)
+	if decision.Stop || decision.BudgetExhausted || decision.StopReason != "" {
+		t.Fatalf("elapsed duration must not terminally steer model strategy, got %#v", decision)
 	}
 }
 
-func TestModelCallReadinessPolicySkipsBudgetsWhenLaneOwnsReadiness(t *testing.T) {
+func TestModelCallReadinessPolicyKeepsAdvisoryBudgetsNonTerminalWhenLaneOwnsReadiness(t *testing.T) {
 	for _, lanePolicy := range []LanePolicy{
 		ConversationLanePolicy{},
 		ReadOnlyInvestigationLanePolicy{},
 	} {
 		decision := newModelCallReadinessPolicyEngine().BeforeModelCall(ModelCallReadinessPolicyInput{
 			Policy: RunPolicy{
-				MaxDuration:   time.Nanosecond,
 				MaxModelCalls: 1,
 			},
 			LanePolicy: lanePolicy,
@@ -580,56 +572,78 @@ func TestModelCallReadinessPolicySkipsBudgetsWhenLaneOwnsReadiness(t *testing.T)
 	}
 }
 
-func TestModelCallReadinessPolicyStopsOnModelCallBudget(t *testing.T) {
+func TestModelCallReadinessPolicyDoesNotStopOnAdvisoryModelCallBudget(t *testing.T) {
 	decision := newModelCallReadinessPolicyEngine().BeforeModelCall(ModelCallReadinessPolicyInput{
 		Policy:     RunPolicy{MaxModelCalls: 2},
 		LanePolicy: DefaultLanePolicy{},
 		Metrics:    runnerMetrics{startedAt: time.Now(), ModelCalls: 2},
 	})
 
-	if !decision.Stop || !decision.BudgetExhausted || decision.StopReason != "model_call_budget_exhausted" {
-		t.Fatalf("unexpected model-call stop decision: %#v", decision)
-	}
-
-	if !decision.ForceAnswer || !strings.Contains(decision.ForceAnswerPrompt, "Model-call budget is exhausted") {
-		t.Fatalf("model-call stop should force answer with legacy prompt, got %#v", decision)
+	if decision.Stop || decision.BudgetExhausted || decision.StopReason != "" {
+		t.Fatalf("advisory model-call threshold must not stop the model, got %#v", decision)
 	}
 }
 
-func TestModelCallReadinessPolicyActivatesScopedLastChanceWriteOnly(t *testing.T) {
+func TestModelCallReadinessPolicyStopsOnOperationalModelCallLimit(t *testing.T) {
 	decision := newModelCallReadinessPolicyEngine().BeforeModelCall(ModelCallReadinessPolicyInput{
-		Policy:                               RunPolicy{MaxModelCalls: 3},
-		LanePolicy:                           DefaultLanePolicy{},
-		Metrics:                              runnerMetrics{startedAt: time.Now(), ModelCalls: 2},
-		Brief:                                workerruntime.WorkerRuntimeBrief{TaskFamily: "implementation", Contract: "implementation_result", PermissionProfile: "guarded_workspace_write"},
-		ScopedImplementationEditSurface:      true,
-		RemainingRequiredEditPaths:           []string{"a.txt"},
-		ImplementationScopedLastChancePrompt: "last chance",
+		Policy:     RunPolicy{MaxOperationalModelCalls: 2},
+		LanePolicy: DefaultLanePolicy{},
+		Metrics:    runnerMetrics{startedAt: time.Now(), ModelCalls: 2},
+	})
+
+	if !decision.Stop || !decision.BudgetExhausted || decision.StopReason != "operational_model_call_limit_exceeded" {
+		t.Fatalf("unexpected operational model-call stop decision: %#v", decision)
+	}
+
+	if decision.CloseoutMode != noToolsCloseoutDeterministicRequired || !strings.Contains(decision.CloseoutPrompt, "Operational model-call limit is exhausted") {
+		t.Fatalf("operational model-call stop should require deterministic closeout with budget prompt, got %#v", decision)
+	}
+}
+
+func TestModelCallReadinessPolicyOperationalLimitIsNotSkippedByLane(t *testing.T) {
+	for _, lanePolicy := range []LanePolicy{
+		ConversationLanePolicy{},
+		ReadOnlyInvestigationLanePolicy{},
+	} {
+		decision := newModelCallReadinessPolicyEngine().BeforeModelCall(ModelCallReadinessPolicyInput{
+			Policy:     RunPolicy{MaxOperationalModelCalls: 2},
+			LanePolicy: lanePolicy,
+			Metrics:    runnerMetrics{startedAt: time.Now(), ModelCalls: 2},
+		})
+
+		if !decision.Stop || !decision.BudgetExhausted || decision.StopReason != "operational_model_call_limit_exceeded" {
+			t.Fatalf("%s lane must honor explicit operational model-call limit, got %#v", lanePolicy.Name(), decision)
+		}
+	}
+}
+
+func TestNoToolsCloseoutModeOperationalLimitIsNotSkippedByLane(t *testing.T) {
+	controller := &runnerTurnController{
+		runner: &Runner{
+			RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+				TaskFamily:        "conversation",
+				Contract:          "direct_answer",
+				PermissionProfile: "read_only_workspace",
+			},
+		},
+		policy:  RunPolicy{MaxOperationalModelCalls: 2},
+		metrics: &runnerMetrics{startedAt: time.Now(), ModelCalls: 2},
+	}
+
+	if got := controller.noToolsCloseoutMode(); got != noToolsCloseoutDeterministicRequired {
+		t.Fatalf("operational model-call limit must force deterministic closeout even in skip-budget lanes, got %q", got)
+	}
+}
+
+func TestModelCallReadinessPolicyDoesNotSteerFinalAvailableModelSlot(t *testing.T) {
+	decision := newModelCallReadinessPolicyEngine().BeforeModelCall(ModelCallReadinessPolicyInput{
+		Policy:     RunPolicy{MaxModelCalls: 3},
+		LanePolicy: DefaultLanePolicy{},
+		Metrics:    runnerMetrics{startedAt: time.Now(), ModelCalls: 2},
 	})
 
 	if decision.Stop {
-		t.Fatalf("last chance should activate write-only mode, not stop: %#v", decision)
-	}
-
-	if !decision.ActivateScopedImplementationLastChanceWriteOnly || decision.LastChancePrompt != "last chance" {
-		t.Fatalf("unexpected last-chance decision: %#v", decision)
-	}
-}
-
-func TestModelCallReadinessPolicySuppressesScopedLastChanceAfterMutation(t *testing.T) {
-	decision := newModelCallReadinessPolicyEngine().BeforeModelCall(ModelCallReadinessPolicyInput{
-		Policy:                               RunPolicy{MaxModelCalls: 3},
-		LanePolicy:                           DefaultLanePolicy{},
-		Metrics:                              runnerMetrics{startedAt: time.Now(), ModelCalls: 2},
-		Brief:                                workerruntime.WorkerRuntimeBrief{TaskFamily: "implementation", Contract: "implementation_result", PermissionProfile: "guarded_workspace_write"},
-		ScopedImplementationEditSurface:      true,
-		RemainingRequiredEditPaths:           []string{"a.txt"},
-		HasChangedPaths:                      true,
-		ImplementationScopedLastChancePrompt: "last chance",
-	})
-
-	if decision.ActivateScopedImplementationLastChanceWriteOnly || decision.Stop {
-		t.Fatalf("changed paths should suppress scoped last-chance activation, got %#v", decision)
+		t.Fatalf("final available model slot must remain model-owned, got %#v", decision)
 	}
 }
 
@@ -3228,10 +3242,11 @@ func TestRunnerAutonomyRecorderRejectedCompletionEmitsGuardFriction(t *testing.T
 		t.Fatalf("completion friction must claim model-visible protocol when one was stored: protocol_hash=%q model_contract_visible=%v", friction.ProtocolHash, friction.ModelContractVisible)
 	}
 
-	if !slices.Contains(friction.SafeAlternatives, "Decision: source-satisfied") ||
-		!slices.Contains(friction.SafeAlternatives, "<<QUESTION>>:") {
+	if !slices.Contains(friction.SafeAlternatives, actionSubmitPlan) ||
+		!slices.Contains(friction.SafeAlternatives, actionSourceSatisfied) ||
+		!slices.Contains(friction.SafeAlternatives, actionBlocker) {
 
-		t.Fatalf("friction should carry safe terminal alternatives: %#v", friction.SafeAlternatives)
+		t.Fatalf("friction should carry safe action alternatives: %#v", friction.SafeAlternatives)
 	}
 
 	if strings.Contains(strings.Join(friction.EvidenceRefs, " "), "raw_prompt") {
@@ -3243,6 +3258,33 @@ func TestRunnerAutonomyRecorderRejectedCompletionEmitsGuardFriction(t *testing.T
 		report.GuardFrictionCoverage.GuardSurfaceCounts[string(autonomy.GuardFrictionSurfaceCompletionGate)] != 1 {
 
 		t.Fatalf("expected audit to group completion-gate friction, got %#v", report.GuardFrictionCoverage)
+	}
+}
+
+func TestRunnerAutonomyFrictionFallbackUsesPhaseSafeActionAlternatives(t *testing.T) {
+	phase := TurnPhaseContract{
+		PhaseID:          turnPhaseImplementationWriteReady,
+		TerminalOutcomes: []string{"<<QUESTION>>:"},
+		AllowedTools:     []string{"read_file", "search_content", "apply_patch"},
+		ActionPolicy: TurnActionClassPolicy{
+			AllowedActionClasses: []string{actionRead, actionSearch, actionPerEditWrite, actionBlocker},
+			InvalidActionClasses: []string{actionFinalAnswer, actionVerify},
+			CallableToolNames:    []string{"read_file", "search_content", "apply_patch"},
+		},
+		RuntimeCall: RuntimeCallContract{
+			ExpressibleActionClasses: []string{actionRead, actionSearch, actionPerEditWrite, actionBlocker},
+		},
+	}
+
+	got := runnerAutonomyFrictionSafeAlternatives(contractcompile.ModelProtocolProjection{}, phase, false)
+
+	for _, want := range []string{actionRead, actionSearch, actionPerEditWrite, actionBlocker} {
+		if !slices.Contains(got, want) {
+			t.Fatalf("safe alternatives = %#v, want %q", got, want)
+		}
+	}
+	if slices.Contains(got, "<<QUESTION>>:") {
+		t.Fatalf("fallback safe alternatives should use action classes instead of terminal-only outcomes: %#v", got)
 	}
 }
 
@@ -5767,6 +5809,55 @@ func TestNormalizeToolRequestSyntaxEmptyContentWithReasoning(t *testing.T) {
 	}
 }
 
+func TestNormalizeToolRequestSyntaxClassifiesUnsafeExplicitToolShape(t *testing.T) {
+	tests := []struct {
+		name                 string
+		content              string
+		wantUnsafeExplicit   bool
+		wantNormalizerOutput string
+	}{
+		{
+			name: "ambiguous no-tool key-value prose",
+			content: strings.Join([]string{
+				"path: internal/runtime/workerruntime/vocabulary.go",
+				"old_text: const modeName = \"legacy\"",
+				"new_text: const ModeName = \"modern\"",
+				"description: promote mode literal",
+			}, "\n"),
+			wantUnsafeExplicit:   false,
+			wantNormalizerOutput: toolRequestNormalizerTransportKeyValue,
+		},
+		{
+			name: "explicit malformed key-value tool",
+			content: strings.Join([]string{
+				"tool: write_file",
+				"path: internal/runtime/workerruntime/vocabulary.go",
+				"content: package workerruntime",
+				"",
+				"const ModeName = \"modern\"",
+				"description: promote mode literal",
+			}, "\n"),
+			wantUnsafeExplicit:   true,
+			wantNormalizerOutput: toolRequestNormalizerTransportKeyValue,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := normalizeToolRequestSyntax(llama.ChatMessage{Content: tt.content})
+			if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer {
+				t.Fatalf("expected unsafe_to_infer, got %#v", result)
+			}
+			if result.EventTransport != tt.wantNormalizerOutput {
+				t.Fatalf("expected transport %q, got %#v", tt.wantNormalizerOutput, result)
+			}
+			if result.UnsafeExplicitTool != tt.wantUnsafeExplicit {
+				t.Fatalf("UnsafeExplicitTool=%v, want %v for %#v", result.UnsafeExplicitTool, tt.wantUnsafeExplicit, result)
+			}
+		})
+	}
+}
+
 func TestLooksLikeQwenThinkingToolCall(t *testing.T) {
 	tests := []struct {
 		line string
@@ -5777,7 +5868,9 @@ func TestLooksLikeQwenThinkingToolCall(t *testing.T) {
 		{`<code_navigate capability="find_references" path="foo.go"/>`, true},
 		{`</read_file>`, true},
 		{`<context_pack task="wire cache"/>`, true},
+		{`<file_stats path="."/>`, true},
 		{`<submit_plan>`, true},
+		{`<note key="plan"/>`, true},
 		{`The evidence struct is defined in`, false},
 		{`  <not_a_tool_tag>`, false},
 		{``, false},
@@ -5818,287 +5911,7 @@ func TestLooksLikeInternalMonologue(t *testing.T) {
 	}
 }
 
-func TestExtractStructuredMarkdownFromReasoningHappyPath(t *testing.T) {
-	reasoning := "OK so the brief says X. Let me check Y. Actually let me think...\n" +
-		"Hmm, the draft is missing a few things. Let me write the review:\n\n" +
-		"# Review of task-XYZ\n\n" +
-		"## Bugs found\n\n" +
-		"1. **Off-by-one in loop**: file.go:42 should be < not <=\n" +
-		"2. **Missing import**: stale `time` reference\n\n" +
-		"## OK\n\n" +
-		"- Anchor verification looks complete\n" +
-		"- Test file naming is correct\n\n" +
-		"## Verdict\n\nfix-bugs-then-ship\n"
-	out := extractStructuredMarkdownFromReasoning(reasoning)
-
-	if out == "" {
-		t.Fatal("expected extraction to succeed")
-	}
-
-	if !strings.Contains(out, "## Bugs found") {
-		t.Fatalf("output missing Bugs found section: %s", out)
-	}
-
-	if !strings.Contains(out, "## Verdict") {
-		t.Fatalf("output missing Verdict section: %s", out)
-	}
-
-	if strings.Contains(out, "OK so the brief") {
-		t.Fatalf("output should not include pre-title chatter: %s", out)
-	}
-}
-
-func TestExtractStructuredMarkdownFromReasoningRefusesUnstructuredText(t *testing.T) {
-	cases := map[string]string{
-		"no markers":        "I think the draft is OK. No bugs to find. Done.",
-		"only Bugs found":   "## Bugs found\n\n1. Bug A\n\nThat's all I have time for.",
-		"only Verdict":      "I'll think about this.\n\n## Verdict\n\nship-as-is\n",
-		"too short":         "## Bugs found\n## Verdict\nship-as-is\n",
-		"only Files Modify": "I should put it in ## Files To Modify section. But no Required Behavior to corroborate.",
-		"empty":             "",
-		"whitespace only":   "   \n\n\t   ",
-	}
-	for name, reasoning := range cases {
-		got := extractStructuredMarkdownFromReasoning(reasoning)
-		if got != "" {
-			t.Errorf("case %q: expected empty extraction, got %d chars: %q", name, len(got), got)
-		}
-	}
-}
-
-func TestExtractStructuredMarkdownFromReasoningRecognizesDraftShape(t *testing.T) {
-	reasoning := "OK so the spec asks for a --mode flag. Let me think through the brief...\n\n" +
-		"I'll need to touch lane.go and lane_history.go. Let me write it up:\n\n" +
-		"# Task lane-history-mode — Add `--lane-mode` filter\n\n" +
-		"## Problem\n\n" +
-		"`idiom lane history` lacks a mode filter. Add `--lane-mode <name>` to filter the summary.\n\n" +
-		"## Files To Modify\n\n" +
-		"| File | Change |\n|------|--------|\n" +
-		"| `cmd/idiom/lane.go` | ADD `--lane-mode` flag |\n" +
-		"| `cmd/idiom/lane_history.go` | ADD `ModeFilter` field |\n\n" +
-		"## Verified Current State\n\n" +
-		"`laneHistoryFilter` is at `cmd/idiom/lane_history.go:120`.\n\n" +
-		"## Required Behavior\n\n" +
-		"1. Add `ModeFilter string` to laneHistoryFilter.\n" +
-		"2. Skip events whose Mode doesn't match.\n\n" +
-		"## Acceptance\n\n`go test ./cmd/idiom/` passes.\n"
-	out := extractStructuredMarkdownFromReasoning(reasoning)
-
-	if out == "" {
-		t.Fatal("expected draft-shape extraction to succeed")
-	}
-
-	if !strings.Contains(out, "## Files To Modify") {
-		t.Fatalf("output missing Files To Modify: %s", out)
-	}
-
-	if !strings.Contains(out, "## Required Behavior") {
-		t.Fatalf("output missing Required Behavior: %s", out)
-	}
-
-	if !strings.Contains(out, "# Task lane-history-mode") {
-		t.Fatalf("output should include the # title from look-back: %s", out)
-	}
-
-	if strings.Contains(out, "OK so the spec asks") {
-		t.Fatalf("output should not include pre-title chatter: %s", out)
-	}
-}
-
-func TestExtractStructuredMarkdownFromReasoningRecognizesRequiredEditsDraftShape(t *testing.T) {
-	reasoning := "Now I have both inputs. Let me apply the review comments to the previous draft.\n\n" +
-		"# Corrected implementation brief\n\n" +
-		"## Problem\n\n" +
-		"Use the exact anchors already captured by the packet.\n\n" +
-		"## Files To Modify\n\n" +
-		"| File | Change |\n|------|--------|\n" +
-		"| `native/src/appraisal.cpp` | MODIFY: add symmetric branch |\n\n" +
-		"## Verified Current State\n\n" +
-		"`native/src/appraisal.cpp:12` contains `if (result.valence < 0.0f) {`.\n\n" +
-		"## Required Edits\n\n" +
-		"1. Insert the positive-valence branch after the existing negative branch.\n\n" +
-		"## Acceptance\n\n" +
-		"- focused tests pass\n"
-	out := extractStructuredMarkdownFromReasoning(reasoning)
-
-	if out == "" {
-		t.Fatal("expected required-edits draft-shape extraction to succeed")
-	}
-
-	if strings.Contains(out, "Now I have both inputs") {
-		t.Fatalf("output should not include prose preface: %s", out)
-	}
-
-	if !strings.Contains(out, "## Required Edits") || !strings.Contains(out, "# Corrected implementation brief") {
-		t.Fatalf("output missing corrected brief sections: %s", out)
-	}
-}
-
-func TestExtractStructuredMarkdownFromReasoningPicksLastReviewWhenIterated(t *testing.T) {
-	reasoning := strings.Repeat("filler-thinking-content. ", 30) +
-		"\n\n## Bugs found\n\n1. First attempt bug\n\n## Verdict\n\nfix-bugs\n\n" +
-		"Actually wait, let me reconsider. Hmm.\n\n" +
-		"# Review (revised)\n\n## Bugs found\n\n1. Better bug A\n2. Better bug B\n\n## OK\n- Anchors look right\n\n## Verdict\n\nfix-bugs-then-ship\n"
-	out := extractStructuredMarkdownFromReasoning(reasoning)
-
-	if out == "" {
-		t.Fatal("expected extraction")
-	}
-
-	if !strings.Contains(out, "# Review (revised)") {
-		t.Fatalf("output should pick the revised pass: %s", out)
-	}
-
-	if strings.Contains(out, "First attempt bug") {
-		t.Fatalf("output should not include the earlier iteration: %s", out)
-	}
-}
-
-func TestAutoSalvageRecoversFromReasoningWhenReplyIsEmpty(t *testing.T) {
-	dir := t.TempDir()
-	mgr := workspace.NewManager(config.Workspace{Root: dir, CWD: dir, EnableWrites: true})
-
-	required := "review.md"
-	reasoning := "OK so the brief has 3 file-allowlist rows for a single feature. Let me check the anchors are right.\n\n" +
-		"Looking at lane_history.go around line 100 — the laneHistoryFilter struct exists already from #76. Good.\n\n" +
-		"# Review of test-atom\n\n" +
-		"## Bugs found\n\n" +
-		"1. **Bug A**: needs a fix to anchor at lane.go:200\n" +
-		"2. **Bug B**: another fix to test file at lane_history_test.go:144\n\n" +
-		"## OK\n\n- Anchor verification looks complete\n- Test fixture pattern matches existing helpers\n\n" +
-		"## Verdict\n\nfix-bugs-then-ship\n"
-
-	r := &Runner{
-		Workspace: mgr,
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			RequiredEditPaths: []string{required},
-		},
-		LastAssistantMessage: llama.ChatMessage{
-			Content:          "",
-			ReasoningContent: reasoning,
-		},
-	}
-
-	if !r.tryAutoSalvageMarkdownDeliverable("") {
-		t.Fatal("expected auto-salvage to succeed from reasoning content")
-	}
-
-	body, err := os.ReadFile(filepath.Join(dir, required))
-	if err != nil {
-		t.Fatalf("read salvaged file: %v", err)
-	}
-
-	if !strings.Contains(string(body), "## Bugs found") {
-		t.Fatalf("salvaged file should contain Bugs found: %s", body)
-	}
-
-	if !strings.Contains(string(body), "## Verdict") {
-		t.Fatalf("salvaged file should contain Verdict: %s", body)
-	}
-
-	_ = context.Background()
-}
-
-func TestAutoSalvageExtractsStructuredMarkdownFromReplyProse(t *testing.T) {
-	dir := t.TempDir()
-	mgr := workspace.NewManager(config.Workspace{Root: dir, CWD: dir, EnableWrites: true})
-
-	required := "draft.md"
-	reply := "Now I have both inputs. I will apply the review comments before writing the corrected draft.\n\n" +
-		"# Corrected atom brief\n\n" +
-		"## Problem\n\nUse the exact anchors already provided.\n\n" +
-		strings.Repeat("Long evidence paragraph keeps the H1 far away from the final allowlist section.\n", 20) +
-		"## Files To Modify\n\n| File | Change |\n|------|--------|\n| `a.go` | MODIFY: add guard |\n\n" +
-		"## Verified Current State\n\n`a.go:12` contains `return nil`.\n\n" +
-		"## Required Edits\n\n1. Replace the guard with checked behavior.\n\n" +
-		"## Acceptance\n\n- `go test ./...`\n"
-
-	r := &Runner{
-		Workspace: mgr,
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			RequiredEditPaths: []string{required},
-		},
-	}
-
-	if !r.tryAutoSalvageMarkdownDeliverable(reply) {
-		t.Fatal("expected auto-salvage to extract structured markdown from reply prose")
-	}
-
-	body, err := os.ReadFile(filepath.Join(dir, required))
-	if err != nil {
-		t.Fatalf("read salvaged file: %v", err)
-	}
-
-	text := string(body)
-	if strings.Contains(text, "Now I have both inputs") {
-		t.Fatalf("salvage should omit pre-deliverable prose: %s", text)
-	}
-
-	if !strings.Contains(text, "# Corrected atom brief") || !strings.Contains(text, "## Problem") || !strings.Contains(text, "## Required Edits") {
-		t.Fatalf("salvaged file missing corrected draft shape: %s", text)
-	}
-}
-
-func TestAutoSalvageHonorsCanceledContextBeforeSyntheticWrite(t *testing.T) {
-	dir := t.TempDir()
-	mgr := workspace.NewManager(config.Workspace{Root: dir, CWD: dir, EnableWrites: true})
-
-	required := "draft.md"
-	reply := "# Corrected atom brief\n\n" +
-		"## Problem\n\nUse the exact anchors already provided.\n\n" +
-		strings.Repeat("Evidence line keeps this close to the long refine drafts seen in practice.\n", 20) +
-		"## Files To Modify\n\n| File | Change |\n|------|--------|\n| `a.go` | MODIFY: add guard |\n\n" +
-		"## Required Edits\n\n1. Replace the guard with checked behavior.\n\n" +
-		"## Acceptance\n\n- Planner-owned verification remains pending.\n"
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	r := &Runner{
-		Workspace: mgr,
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			RequiredEditPaths: []string{required},
-		},
-	}
-
-	if _, _, ok := r.autoSalvageMarkdownDeliverable(ctx, reply); ok {
-		t.Fatal("canceled run context must prevent auto-salvage writes")
-	}
-
-	if _, err := os.Stat(filepath.Join(dir, required)); !os.IsNotExist(err) {
-		t.Fatalf("draft.md should not exist after canceled salvage, stat err=%v", err)
-	}
-}
-
-func TestAutoSalvageRejectionEventsDoNotEchoCandidateBody(t *testing.T) {
-	dir := t.TempDir()
-	mgr := workspace.NewManager(config.Workspace{Root: dir, CWD: dir, EnableWrites: true})
-	secret := "SECRET_BODY_SHOULD_NOT_BE_LOGGED"
-	reply := "# Draft\n\n" + strings.Repeat(secret+" ", 8)
-
-	var events []RunEvent
-	r := &Runner{
-		Workspace: mgr,
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			RequiredEditPaths: []string{"draft.md"},
-		},
-		OnEvent: func(event RunEvent) {
-			events = append(events, event)
-		},
-	}
-
-	if _, _, ok := r.autoSalvageMarkdownDeliverable(context.Background(), reply); ok {
-		t.Fatal("unrecognized markdown shape should not be salvaged")
-	}
-
-	for _, event := range events {
-		if event.Role == "auto_salvage" && strings.Contains(event.Content, secret) {
-			t.Fatalf("auto-salvage event echoed candidate body: %#v", event)
-		}
-	}
-}
-
-func TestRunAutoSalvageRecordsMarkdownDeliverableWrite(t *testing.T) {
+func TestRunMarkdownDeliverableFinalAnswerDoesNotSyntheticWrite(t *testing.T) {
 	dir := t.TempDir()
 	required := "draft.md"
 	reply := "# Corrected atom brief\n\n" +
@@ -6121,8 +5934,6 @@ func TestRunAutoSalvageRecordsMarkdownDeliverableWrite(t *testing.T) {
 
 	defer server.Close()
 
-	var completion runnerCompletionStatus
-
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, time.Second),
 		Workspace: workspace.NewManager(config.Workspace{
@@ -6138,16 +5949,9 @@ func TestRunAutoSalvageRecordsMarkdownDeliverableWrite(t *testing.T) {
 			PermissionProfile:    "guarded_workspace_write",
 			RequiredEditPaths:    []string{required},
 		},
-		OnEvent: func(event RunEvent) {
-			if event.Role == "completion_status" {
-				if err := json.Unmarshal([]byte(event.Content), &completion); err != nil {
-					t.Fatalf("decode completion status: %v", err)
-				}
-			}
-		},
 	}
 
-	answer, err := runner.Run(
+	_, err := runner.Run(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: "write the corrected draft"}},
 		llama.ChatOptions{},
@@ -6159,25 +5963,12 @@ func TestRunAutoSalvageRecordsMarkdownDeliverableWrite(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	if strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") {
-		t.Fatalf("auto-salvage should satisfy required path blocker, got: %s", answer)
+	if _, err := os.Stat(filepath.Join(dir, required)); !os.IsNotExist(err) {
+		t.Fatalf("draft.md should not be written without a model-authored write_file call, stat err=%v", err)
 	}
 
-	body, err := os.ReadFile(filepath.Join(dir, required))
-	if err != nil {
-		t.Fatalf("read salvaged file: %v", err)
-	}
-
-	if !strings.Contains(string(body), "## Required Edits") {
-		t.Fatalf("salvaged file missing expected body: %s", body)
-	}
-
-	if completion.Status != "completed" || completion.Reason != "auto_salvage_markdown_deliverable" {
-		t.Fatalf("expected completed auto-salvage status, got %#v", completion)
-	}
-
-	if requests != 1 {
-		t.Fatalf("expected one model request, got %d", requests)
+	if requests < 1 {
+		t.Fatalf("expected at least one model request, got %d", requests)
 	}
 }
 
@@ -6292,28 +6083,6 @@ func TestReasoningWriteSalvageRejectsOutsideRequiredScope(t *testing.T) {
 	}
 }
 
-func TestAutoSalvageSkipsQuestionBlockerEvenWithMarkdownShape(t *testing.T) {
-	dir := t.TempDir()
-	mgr := workspace.NewManager(config.Workspace{Root: dir, CWD: dir, EnableWrites: true})
-	r := &Runner{
-		Workspace: mgr,
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			RequiredEditPaths: []string{"draft.md"},
-		},
-	}
-	reply := "<<QUESTION>>: blocked on missing evidence.\n\n" +
-		"## Files To Modify\n\n| File | Change |\n|------|--------|\n| `a.go` | MODIFY |\n\n" +
-		"## Required Edits\n\n1. Cannot write safely.\n"
-
-	if r.tryAutoSalvageMarkdownDeliverable(reply) {
-		t.Fatal("question blockers must not be salvaged into deliverable files")
-	}
-
-	if _, err := os.Stat(filepath.Join(dir, "draft.md")); !os.IsNotExist(err) {
-		t.Fatalf("draft.md should not exist after skipped salvage, stat err=%v", err)
-	}
-}
-
 func TestMutationCompletionRejectionRequiresQuestionForMissingPathBlocker(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -6353,69 +6122,6 @@ func TestCompletionGateRecoveryKeepsScratchpadDeliverableOutputBudget(t *testing
 	opts = completionGateRecoveryChatOptions(llama.ChatOptions{}, brief, nil)
 	if opts.MaxTokens != 16384 {
 		t.Fatalf("scratchpad recovery should default to full deliverable budget, got %d", opts.MaxTokens)
-	}
-}
-
-func TestAutoSalvageSkipsPlanExecutePlannerPhase(t *testing.T) {
-	dir := t.TempDir()
-	mgr := workspace.NewManager(config.Workspace{Root: dir, CWD: dir, EnableWrites: true})
-	r := &Runner{
-		Workspace: mgr,
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        PlanThenExecutePlannerTaskFamily,
-			RequiredEditPaths: []string{"draft.md"},
-		},
-	}
-	reply := "# Proposed Plan\n\n" +
-		"## Files To Modify\n\n| File | Change |\n|------|--------|\n| `draft.md` | NEW FILE |\n\n" +
-		"## Required Edits\n\n1. Write this markdown file.\n\n" +
-		"## Acceptance\n\n- Review the generated content.\n"
-
-	if r.tryAutoSalvageMarkdownDeliverable(reply) {
-		t.Fatal("plan-execute planner phase must not run markdown deliverable auto-salvage")
-	}
-
-	if _, err := os.Stat(filepath.Join(dir, "draft.md")); !os.IsNotExist(err) {
-		t.Fatalf("draft.md should not exist after skipped plan-execute salvage, stat err=%v", err)
-	}
-}
-
-func TestExtractStructuredMarkdownFromReasoningRejectsUnfilledTemplate(t *testing.T) {
-	// Real shape observed in v10 dispatch: the model emits 0 visible
-	// content and its reasoning contains a copy of the meta-brief
-	// skeleton with `<bracket>` placeholders still unfilled. The
-	// salvage must refuse to ship that as a deliverable.
-	reasoning := "OK so the user wants me to write a brief. Let me look at the template structure.\n\n" +
-		"The skeleton says:\n\n" +
-		"## Files To Modify\n\n" +
-		"| File | Change |\n|------|--------|\n" +
-		"| `RELATIVE_PATH` | <one action per row; NEW FILE rows are exempt from the one-action rule (ADD, MODIFY, or NEW FILE: ...)> |\n\n" +
-		"## Verified Current State\n\n<quote relevant existing code with `<file:LINE>` anchors. Verify line numbers exist before citing.>\n\n" +
-		"## Required Behavior\n\n1. <numbered step with EXACT old_text/new_text or full new-file content in ```text fences>\n2. <next step>\n\n" +
-		"## Acceptance\n\n- `<shell command that verifies the change>`\n\nI need to fill in the placeholders.\n"
-	got := extractStructuredMarkdownFromReasoning(reasoning)
-
-	if got != "" {
-		t.Fatalf("expected salvage to refuse unfilled-template content; got %d chars: %q", len(got), got)
-	}
-}
-
-func TestAutoSalvageStillSkipsWhenNeitherReplyNorReasoningHasMarkdown(t *testing.T) {
-	dir := t.TempDir()
-	mgr := workspace.NewManager(config.Workspace{Root: dir, CWD: dir, EnableWrites: true})
-
-	r := &Runner{
-		Workspace: mgr,
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			RequiredEditPaths: []string{"review.md"},
-		},
-		LastAssistantMessage: llama.ChatMessage{
-			Content:          "",
-			ReasoningContent: "just some chatter, no structure at all",
-		},
-	}
-	if r.tryAutoSalvageMarkdownDeliverable("") {
-		t.Fatal("expected salvage to skip when neither reply nor reasoning is structured")
 	}
 }
 
@@ -6623,62 +6329,37 @@ func TestScaleMaxToolStepsLeavesUnboundedExplicitTightAndAlreadyHighPoliciesAlon
 	}
 }
 
-func TestScaleMaxModelCallsByRequiredPathsCurve(t *testing.T) {
-	cases := []struct {
-		paths    int
-		base     int
-		want     int
-		describe string
-	}{
-		{0, maxModelCallsBase, maxModelCallsBase, "no required paths leaves base alone"},
-		{1, maxModelCallsBase, maxModelCallsBase, "single-file atom uses base"},
-		{2, maxModelCallsBase, 5, "3+2*(N-1) for two paths"},
-		{6, maxModelCallsBase, 13, "6-file atom gets enough calls for reads plus writes"},
-		{20, maxModelCallsBase, maxModelCallsCeiling, "large atoms cap"},
-	}
-	for _, tc := range cases {
-		policy := RunPolicy{MaxModelCalls: tc.base}
-		scaled := scaleMaxModelCallsByRequiredPaths(policy, tc.paths)
-
-		if scaled.MaxModelCalls != tc.want {
-			t.Errorf("%s: got MaxModelCalls=%d, want %d", tc.describe, scaled.MaxModelCalls, tc.want)
-		}
-	}
-}
-
-func TestScaleMaxModelCallsLeavesUnboundedExplicitTightAndAlreadyHighPoliciesAlone(t *testing.T) {
-	if got := scaleMaxModelCallsByRequiredPaths(RunPolicy{MaxModelCalls: 0}, 10); got.MaxModelCalls != 0 {
-		t.Fatalf("unbounded policy must stay unbounded, got %d", got.MaxModelCalls)
-	}
-
-	if got := scaleMaxModelCallsByRequiredPaths(RunPolicy{MaxModelCalls: 60}, 10); got.MaxModelCalls != 60 {
-		t.Fatalf("explicitly-higher policy must not be lowered, got %d", got.MaxModelCalls)
-	}
-
-	if got := scaleMaxModelCallsByRequiredPaths(RunPolicy{MaxModelCalls: 1}, 5); got.MaxModelCalls != 1 {
-		t.Fatalf("explicit tight policy below base must not be raised, got %d", got.MaxModelCalls)
-	}
-
-	if got := scaleMaxModelCallsByRequiredPaths(RunPolicy{MaxModelCalls: 2}, 5); got.MaxModelCalls != 2 {
-		t.Fatalf("explicit tight policy below base must not be raised, got %d", got.MaxModelCalls)
-	}
-}
-
-func TestEffectivePolicyBriefModelCallBudgetCapsScaledMutationBudget(t *testing.T) {
+func TestEffectivePolicyBriefModelCallThresholdCapsConfiguredAdvisory(t *testing.T) {
 	runner := &Runner{
-		Policy: RunPolicy{MaxModelCalls: maxModelCallsBase},
+		Policy: RunPolicy{MaxModelCalls: 20},
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "implementation",
 			Contract:          "implementation_result",
 			PermissionProfile: "workspace_write",
-			RequiredEditPaths: []string{"a.go", "b.go", "c.go", "d.go"},
 			Budget: workerruntime.BudgetBrief{
 				MaxModelCalls: 5,
 			},
 		},
 	}
 	if got := runner.effectivePolicy().MaxModelCalls; got != 5 {
-		t.Fatalf("brief MaxModelCalls must cap scaled mutation budget, got %d", got)
+		t.Fatalf("brief MaxModelCalls must cap configured advisory threshold, got %d", got)
+	}
+}
+
+func TestEffectivePolicyBriefOperationalModelCallLimitCapsConfiguredPolicy(t *testing.T) {
+	runner := &Runner{
+		Policy: RunPolicy{MaxOperationalModelCalls: 20},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "workspace_write",
+			Budget: workerruntime.BudgetBrief{
+				MaxOperationalModelCalls: 6,
+			},
+		},
+	}
+	if got := runner.effectivePolicy().MaxOperationalModelCalls; got != 6 {
+		t.Fatalf("brief MaxOperationalModelCalls must cap configured hard limit, got %d", got)
 	}
 }
 
@@ -6926,6 +6607,115 @@ func TestRunnerCompactionSummaryPreservesFailedVerificationRepairPacket(t *testi
 		"Source sanity failed",
 		"undefined: missingSymbol",
 		"repair the failing changed/required path",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("expected compaction summary to contain %q, got:\n%s", want, summary)
+		}
+	}
+}
+
+func TestRunnerCompactionSummaryPreservesImplementationWriteReadyLedger(t *testing.T) {
+	runner := &Runner{
+		AgentName: "main",
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedEditPaths:  []string{"internal/runtime/workerruntime/vocabulary.go"},
+			TargetRefs:        []string{"internal/runtime/workerruntime/vocabulary.go"},
+			RequiredEvidence:  []string{"changed_paths_or_noop_reason", "verification_status"},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    workspace.ToolNameReadFile,
+		Summary: "Read f1 internal/runtime/workerruntime/vocabulary.go lines 1-3 (total lines: 6)",
+		Output:  "package workerruntime\n\nconst modeName = \"legacy\"",
+	}}
+
+	summary := runner.runnerCompactionSummary(RunPolicy{}, nil, results)
+
+	for _, want := range []string{
+		"Implementation write-ready ledger",
+		"parser-readable write to a sourced target path",
+		"exact missing edit-safety fact",
+		"source-body evidence paths",
+		"internal/runtime/workerruntime/vocabulary.go",
+		"recent inspected evidence",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("expected compaction summary to contain %q, got:\n%s", want, summary)
+		}
+	}
+}
+
+func TestRunnerCompactionSummaryPreservesMergedSourceCoverage(t *testing.T) {
+	runner := &Runner{
+		AgentName: "main",
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedEditPaths:  []string{"internal/runtime/workerruntime/catalog.go"},
+			TargetRefs:        []string{"internal/runtime/workerruntime/catalog.go"},
+			RequiredEvidence:  []string{"changed_paths_or_noop_reason", "verification_status"},
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    workspace.ToolNameReadFile,
+			Summary: "Read f1 internal/runtime/workerruntime/catalog.go lines 1-100 (total lines: 517)",
+			Output:  "1:package workerruntime\n",
+		},
+		{
+			Tool:    workspace.ToolNameReadFile,
+			Summary: "Read f1 internal/runtime/workerruntime/catalog.go lines 100-300 (total lines: 517)",
+			Output:  "100:var runtimeCatalog = []string{}\n",
+		},
+		{
+			Tool:    workspace.ToolNameReadFile,
+			Summary: "Read f1 internal/runtime/workerruntime/catalog.go lines 300-517 (total lines: 517)",
+			Output:  "517:}\n",
+		},
+		{
+			Tool:    workspace.ToolNameReadFile,
+			Summary: "Read f2 internal/runtime/workerruntime/vocabulary.go lines 1-200 (total lines: 338)",
+			Output:  "1:package workerruntime\n",
+		},
+	}
+
+	summary := runner.runnerCompactionSummary(RunPolicy{}, nil, results)
+
+	for _, want := range []string{
+		"Source coverage already read",
+		"internal/runtime/workerruntime/catalog.go: lines 1-517; total lines 517; complete file read",
+		"internal/runtime/workerruntime/vocabulary.go: lines 1-200; total lines 338",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("expected compaction summary to contain %q, got:\n%s", want, summary)
+		}
+	}
+}
+
+func TestRunnerCompactionSummaryPreservesPrefetchSourceCoverage(t *testing.T) {
+	runner := &Runner{
+		AgentName: "main",
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "direct_question",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    workspace.ToolNamePrefetch,
+		Summary: "Read f1 README.md lines 1-12 (total lines: 12; source: prefetch)",
+		Output:  "1:# Project\n12:done\n",
+	}}
+
+	summary := runner.runnerCompactionSummary(RunPolicy{}, nil, results)
+
+	for _, want := range []string{
+		"Source coverage already read",
+		"README.md: lines 1-12; total lines 12; complete file read",
 	} {
 		if !strings.Contains(summary, want) {
 			t.Fatalf("expected compaction summary to contain %q, got:\n%s", want, summary)
@@ -7352,6 +7142,39 @@ func TestRunnerRequestBudgetFingerprintDecisionWarnsThenBlocks(t *testing.T) {
 	assertLoopPolicyDecision(t, decision, autonomy.PolicyStop, "fingerprint_hard_block")
 }
 
+func TestPermissionDecisionFromAutonomyDoesNotReportObserveOnlyAsDeny(t *testing.T) {
+	for _, decision := range []autonomy.ToolPolicyDecision{autonomy.PolicyAllow, autonomy.PolicyObserve, autonomy.PolicyNudge} {
+		if got := permissionDecisionFromAutonomy(decision); got != PermissionAllow {
+			t.Fatalf("%s mapped to %q, want %q", decision, got, PermissionAllow)
+		}
+	}
+
+	if got := permissionDecisionFromAutonomy(autonomy.PolicyReject); got != PermissionDeny {
+		t.Fatalf("reject mapped to %q, want %q", got, PermissionDeny)
+	}
+}
+
+func assertObserveOnlyLoopPolicyLegacyPermissionAllowed(t *testing.T, events []RunEvent) {
+	t.Helper()
+
+	allowCount := 0
+	for _, event := range events {
+		if event.Role != "permission_decision" || !strings.Contains(event.Content, `"rule":"runner_loop_policy"`) {
+			continue
+		}
+		if strings.Contains(event.Content, `"decision":"deny"`) {
+			t.Fatalf("observe-only loop policy nudge must not serialize as legacy deny: %s", event.Content)
+		}
+		if strings.Contains(event.Content, `"decision":"allow"`) {
+			allowCount++
+		}
+	}
+
+	if allowCount == 0 {
+		t.Fatalf("expected observe-only loop policy nudge to emit legacy allow permission_decision; events=%s", formatRunEventsForTest(events))
+	}
+}
+
 func TestRunnerRequestBudgetSamePathFixationNudgesOnVariedRanges(t *testing.T) {
 	state := newRunnerRequestBudgetState(2)
 
@@ -7535,7 +7358,7 @@ func TestRecoverablePostReadinessRejectionSummaryUsesContractNamespace(t *testin
 		"Post-readiness exact probe is not grounded in current evidence (replayed same blocker)",
 		"Post-child follow-up gap is not packet-anchored",
 	} {
-		if !isRecoverablePostReadinessGapRejection(summary) {
+		if !postReadinessContinuationRejectionSummary(summary) {
 			t.Fatalf("expected %q to be recoverable post-readiness rejection", summary)
 		}
 	}
@@ -7544,7 +7367,7 @@ func TestRecoverablePostReadinessRejectionSummaryUsesContractNamespace(t *testin
 		"Repeated dead-end action rejected",
 		"Post-readiness named-gap contract is exhausted. Tools are now disabled.",
 	} {
-		if isRecoverablePostReadinessGapRejection(summary) {
+		if postReadinessContinuationRejectionSummary(summary) {
 			t.Fatalf("expected %q not to be recoverable post-readiness rejection", summary)
 		}
 	}
@@ -8847,10 +8670,13 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 
 	// Tier 2 (third rejection): mention "[gate retry 3/3]" + escalation language.
 	got = escalateCompletionGateMessage(base, 2)
-	for _, want := range []string{"[gate retry 3/3", "tools disable", "ONE concrete tool call", "Do not narrate"} {
+	for _, want := range []string{"[gate retry 3/3", "strategy correction required", "ONE concrete tool call", "Do not narrate"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("tier 2 expected to contain %q, got: %s", want, got)
 		}
+	}
+	if strings.Contains(got, "tools disable") {
+		t.Errorf("tier 2 must not threaten tool disable; got: %s", got)
 	}
 
 	// Empty base: no escalation (defensive).
@@ -8948,6 +8774,23 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 	for _, want := range []string{"[gate retry 3/3", "ONE concrete tool call"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("non-source-grounding tier 2 expected to contain %q, got: %s", want, got)
+		}
+	}
+}
+
+func TestSourceGroundingRecoveryPromptRejectsEvidenceInventoryOnlyAnswer(t *testing.T) {
+	prompt := sourceGroundingAssessment{
+		Kind:  sourceGroundingRejectionMissingCandidate,
+		Paths: []string{"internal/runtime/workerruntime/tool_names.go"},
+	}.RecoveryPrompt("Evidence ledger: body-backed source evidence: `internal/runtime/workerruntime/catalog.go`.")
+
+	for _, want := range []string{
+		"Do not answer with only an evidence-path inventory",
+		"answer the user's actual question",
+		"Evidence ledger:",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("expected recovery prompt to contain %q, got:\n%s", want, prompt)
 		}
 	}
 }
@@ -10540,7 +10383,7 @@ func TestLegacyParsedToolResultUsesToolChannel(t *testing.T) {
 	}
 }
 
-func TestLegacyMalformedToolRequestUsesToolChannel(t *testing.T) {
+func TestNativeMalformedTextUsesSystemRecoveryWithoutSyntheticToolChannel(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "README.md", "hello\n"); err != nil {
 		t.Fatalf("write seed file: %v", err)
@@ -10624,59 +10467,404 @@ func TestLegacyMalformedToolRequestUsesToolChannel(t *testing.T) {
 	messages := payloads[1].Messages
 
 	var (
-		assistantToolCallID string
-		sawToolMessage      bool
+		sawSystemParseFailure bool
 	)
 
 	for _, message := range messages {
 		if message.Role == "assistant" && len(message.ToolCalls) > 0 {
-			assistantToolCallID = message.ToolCalls[0].ID
-			if message.ToolCalls[0].Function.Name != "tool_parse" {
-				t.Fatalf("malformed legacy request should be recorded as tool_parse, got %#v", message.ToolCalls[0])
-			}
-
-			var args map[string]string
-
-			if err := json.Unmarshal([]byte(message.ToolCalls[0].Function.Arguments), &args); err != nil {
-				t.Fatalf("tool_parse synthetic arguments should be valid JSON, got %q: %v", message.ToolCalls[0].Function.Arguments, err)
-			}
-
-			if !strings.Contains(args["raw"], "edit_file") {
-				t.Fatalf("tool_parse synthetic arguments should retain raw malformed request, got %#v", args)
-			}
-
-			if message.Content != "" {
-				t.Fatalf("legacy parse-failure assistant message should not preserve malformed content, got %q", message.Content)
-			}
+			t.Fatalf("native malformed text must not synthesize assistant tool_calls, got %#v", message.ToolCalls)
 		}
 
 		if message.Role == "tool" {
-			sawToolMessage = true
-
-			if assistantToolCallID == "" {
-				t.Fatalf("tool message appeared before assistant tool_call: %#v", messages)
-			}
-
-			if message.ToolCallID != assistantToolCallID {
-				t.Fatalf("tool_call_id = %q, want %q", message.ToolCallID, assistantToolCallID)
-			}
-
-			if !strings.Contains(message.Content, "Malformed tool request rejected") {
-				t.Fatalf("tool message did not contain parse failure, got %q", message.Content)
-			}
-
-			if strings.Contains(message.Content, "edit_file") || strings.Contains(message.Content, malformed) {
-				t.Fatalf("tool message leaked raw malformed request: %q", message.Content)
-			}
+			t.Fatalf("native malformed text must not synthesize tool_parse tool messages, got %#v", message)
 		}
 
-		if message.Role == "system" && strings.Contains(message.Content, "edit_file") {
-			t.Fatalf("malformed tool request leaked through system role: %#v", message)
+		if message.Role == "system" && strings.Contains(message.Content, "rejected by the tool parser") {
+			sawSystemParseFailure = true
+			if strings.Contains(message.Content, "edit_file") || strings.Contains(message.Content, malformed) {
+				t.Fatalf("system parse failure leaked raw malformed request: %#v", message)
+			}
 		}
 	}
 
-	if !sawToolMessage {
-		t.Fatalf("expected legacy parse failure to use role=tool, messages=%#v", messages)
+	if !sawSystemParseFailure {
+		t.Fatalf("expected native malformed text parse failure to use system recovery history, messages=%#v", messages)
+	}
+}
+
+func TestRunnerNativeMalformedDeepSeekXMLHonorsIntendedReadTools(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "a.go", "package main\nconst needle = true\n"); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	responses := []map[string]any{
+		{
+			"choices": []map[string]any{{
+				"message": map[string]any{
+					"role":    "assistant",
+					"content": "",
+					"tool_calls": []map[string]any{{
+						"id":   "call_search",
+						"type": "function",
+						"function": map[string]string{
+							"name":      workspace.ToolNameSearchContent,
+							"arguments": `{"path":"a.go","pattern":"needle"}`,
+						},
+					}},
+				},
+				"finish_reason": "tool_calls",
+			}},
+		},
+		{
+			"choices": []map[string]any{{
+				"message": map[string]string{
+					"role":    "assistant",
+					"content": "<n_tool_calls>\n<n_invoke name=\"search_content\">\n</n_tool_calls>",
+				},
+			}},
+		},
+		{
+			"choices": []map[string]any{{
+				"message": map[string]string{
+					"role":    "assistant",
+					"content": "<n_tool_calls>\n<n_invoke name=\"read_file\">\n</n_tool_calls>",
+				},
+			}},
+		},
+		{
+			"choices": []map[string]any{{
+				"message": map[string]string{
+					"role":    "assistant",
+					"content": "The file contains the requested marker.",
+				},
+			}},
+		},
+	}
+
+	type requestMessage struct {
+		Role       string           `json:"role"`
+		Content    string           `json:"content,omitempty"`
+		ToolCallID string           `json:"tool_call_id,omitempty"`
+		Name       string           `json:"name,omitempty"`
+		ToolCalls  []llama.ToolCall `json:"tool_calls,omitempty"`
+	}
+	type requestPayload struct {
+		Messages []requestMessage `json:"messages"`
+	}
+
+	var payloads []requestPayload
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(responses) {
+			t.Fatalf("unexpected extra chat request %d", requests+1)
+		}
+		var payload requestPayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		payloads = append(payloads, payload)
+		requests++
+		_ = json.NewEncoder(w).Encode(responses[requests-1])
+	}))
+	defer server.Close()
+
+	var (
+		runEvents    []RunEvent
+		toolRequests []ToolRequestEvent
+		toolResults  []ToolResultEvent
+	)
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 4, MaxModelCalls: 4, MaxNoProgressTurns: 5},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Lane:              "main",
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "Find whether a.go contains needle.",
+			AllowedTools:      []string{workspace.ToolNameReadFile, workspace.ToolNameSearchContent, workspace.ToolNameCodeNavigate},
+		},
+		OnEvent: func(event RunEvent) {
+			runEvents = append(runEvents, event)
+		},
+	}
+
+	_, _ = runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "Does a.go contain needle?"}}, llama.ChatOptions{}, nil, func(event ToolRequestEvent) {
+		toolRequests = append(toolRequests, event)
+	}, func(event ToolResultEvent) {
+		toolResults = append(toolResults, event)
+	})
+
+	if requests < 4 {
+		t.Fatalf("expected native search, two honored malformed XML requests, then answer, got %d request(s); roles=%#v", requests, eventRolesFor(runEvents))
+	}
+
+	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
+	for _, eventType := range []autonomy.EventType{
+		autonomy.EventToolIntentClassified,
+		autonomy.EventPathRolesResolved,
+		autonomy.EventToolPolicyResult,
+	} {
+		event := mustAutonomyPolicyEvent(t, events, eventType, workspace.ToolNameSearchContent, "")
+		if event.Policy.Transport != autonomy.ToolTransportNativeCall ||
+			event.Policy.ParserFailure != autonomy.ParserFailureNone {
+
+			t.Fatalf("%s did not preserve native run-loop metadata: %#v", eventType, event.Policy)
+		}
+	}
+
+	var (
+		failures         []runnerFailureFeedbackPacket
+		nextActionStates []runnerNextActionState
+	)
+	for _, event := range runEvents {
+		switch event.Role {
+		case "failure_feedback":
+			var failure runnerFailureFeedbackPacket
+			if err := json.Unmarshal([]byte(event.Content), &failure); err != nil {
+				t.Fatalf("unmarshal failure_feedback: %v\n%s", err, event.Content)
+			}
+			if failure.Reason == "tool_parse_rejected" {
+				failures = append(failures, failure)
+			}
+		case "next_action_state":
+			var state runnerNextActionState
+			if err := json.Unmarshal([]byte(event.Content), &state); err != nil {
+				t.Fatalf("unmarshal next_action_state: %v\n%s", err, event.Content)
+			}
+			if state.Reason == "tool_parse_rejected" {
+				nextActionStates = append(nextActionStates, state)
+			}
+		}
+	}
+
+	if len(failures) != 0 {
+		t.Fatalf("malformed DeepSeek XML with a tool name should run through normal tool validation, got tool_parse failure feedback: %#v", failures)
+	}
+	if len(nextActionStates) != 0 {
+		t.Fatalf("malformed DeepSeek XML with a tool name should not produce tool_parse next_action_state packets: %#v", nextActionStates)
+	}
+
+	var (
+		sawOpenSearchRequest   bool
+		sawOpenReadRequest     bool
+		sawSearchToolRejection bool
+		sawReadArgError        bool
+	)
+	for _, event := range toolRequests {
+		if event.Request.Tool == "tool_parse" {
+			t.Fatalf("malformed DeepSeek XML leaked synthetic tool_parse request: %#v", event)
+		}
+		if event.Request.Tool == workspace.ToolNameSearchContent &&
+			event.Request.Path == "" &&
+			event.Request.Pattern == "" {
+
+			sawOpenSearchRequest = true
+		}
+		if event.Request.Tool == workspace.ToolNameReadFile &&
+			event.Request.Path == "" &&
+			event.Request.ID == "" {
+
+			sawOpenReadRequest = true
+		}
+	}
+	for _, event := range toolResults {
+		if event.Request.Tool == "tool_parse" || event.Result.Tool == "tool_parse" {
+			t.Fatalf("malformed DeepSeek XML leaked synthetic tool_parse result: %#v", event)
+		}
+		if event.Request.Tool == workspace.ToolNameSearchContent &&
+			event.Request.Path == "" &&
+			event.Request.Pattern == "" &&
+			strings.TrimSpace(event.Result.Error) != "" &&
+			!strings.Contains(event.Result.Error, "tool_parse") {
+
+			sawSearchToolRejection = true
+		}
+		if event.Request.Tool == workspace.ToolNameReadFile &&
+			event.Request.Path == "" &&
+			event.Request.ID == "" &&
+			strings.Contains(event.Result.Error, "read_file requires id or path") {
+
+			sawReadArgError = true
+		}
+	}
+
+	if !sawOpenSearchRequest || !sawOpenReadRequest {
+		t.Fatalf("expected malformed XML to preserve intended tool names with missing args, requests=%#v", toolRequests)
+	}
+	if !sawSearchToolRejection || !sawReadArgError {
+		t.Fatalf("expected malformed XML requests to reach normal argument validation, results=%#v", toolResults)
+	}
+
+	assertStrictToolPairing := func(payloadIndex int) {
+		t.Helper()
+
+		messages := payloads[payloadIndex].Messages
+		for i, message := range messages {
+			if message.Role != "assistant" || len(message.ToolCalls) == 0 {
+				continue
+			}
+			for offset, call := range message.ToolCalls {
+				responseIndex := i + 1 + offset
+				if responseIndex >= len(messages) {
+					t.Fatalf("payload %d assistant tool_call %q has no following tool response: %#v", payloadIndex, call.ID, messages)
+				}
+				response := messages[responseIndex]
+				if response.Role != "tool" || response.ToolCallID != call.ID {
+					t.Fatalf("payload %d assistant tool_call %q not immediately paired, got %#v in %#v", payloadIndex, call.ID, response, messages)
+				}
+			}
+		}
+	}
+	assertNoToolParseLeak := func(payloadIndex int) {
+		t.Helper()
+
+		for _, message := range payloads[payloadIndex].Messages {
+			if message.Name == "tool_parse" || strings.Contains(message.Content, "tool_parse") {
+				t.Fatalf("native malformed text recovery leaked tool_parse tool message into retry payload %d: %#v", payloadIndex, message)
+			}
+			for _, call := range message.ToolCalls {
+				if call.Function.Name == "tool_parse" {
+					t.Fatalf("native malformed text recovery leaked synthetic tool_parse assistant call into retry payload %d: %#v", payloadIndex, message)
+				}
+			}
+		}
+	}
+
+	if len(payloads) < 4 {
+		t.Fatalf("expected retry requests after repeated malformed XML recovery, got %d payload(s)", len(payloads))
+	}
+	for _, payloadIndex := range []int{2, 3} {
+		assertStrictToolPairing(payloadIndex)
+		assertNoToolParseLeak(payloadIndex)
+	}
+}
+
+func TestRunnerNativeMalformedToolArgumentsPreserveRealToolHistory(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "a.go", "package main\nconst needle = true\n"); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	responses := []map[string]any{
+		{
+			"choices": []map[string]any{{
+				"message": map[string]any{
+					"role":    "assistant",
+					"content": "",
+					"tool_calls": []map[string]any{{
+						"id":   "call_bad_read",
+						"type": "function",
+						"function": map[string]string{
+							"name":      workspace.ToolNameReadFile,
+							"arguments": `{"path":`,
+						},
+					}},
+				},
+				"finish_reason": "tool_calls",
+			}},
+		},
+		{
+			"choices": []map[string]any{{
+				"message": map[string]string{
+					"role":    "assistant",
+					"content": "I could not inspect the file because my tool call was malformed.",
+				},
+			}},
+		},
+	}
+
+	type requestMessage struct {
+		Role       string           `json:"role"`
+		Content    string           `json:"content,omitempty"`
+		ToolCallID string           `json:"tool_call_id,omitempty"`
+		Name       string           `json:"name,omitempty"`
+		ToolCalls  []llama.ToolCall `json:"tool_calls,omitempty"`
+	}
+	type requestPayload struct {
+		Messages []requestMessage `json:"messages"`
+	}
+
+	var payloads []requestPayload
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(responses) {
+			t.Fatalf("unexpected extra chat request %d", requests+1)
+		}
+		var payload requestPayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		payloads = append(payloads, payload)
+		requests++
+		_ = json.NewEncoder(w).Encode(responses[requests-1])
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 2, MaxModelCalls: 2, MaxNoProgressTurns: 3},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Lane:              "main",
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "Find whether a.go contains needle.",
+			AllowedTools:      []string{workspace.ToolNameReadFile, workspace.ToolNameSearchContent},
+		},
+	}
+
+	_, _ = runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "Does a.go contain needle?"}}, llama.ChatOptions{}, nil, nil, nil)
+
+	if len(payloads) < 2 {
+		t.Fatalf("expected retry request after malformed native arguments, got %d payload(s)", len(payloads))
+	}
+
+	var sawAssistantReadCall, sawReadToolResult bool
+	for i, message := range payloads[1].Messages {
+		for _, call := range message.ToolCalls {
+			if call.Function.Name == "tool_parse" {
+				t.Fatalf("malformed native arguments must not synthesize tool_parse assistant call: %#v", message)
+			}
+			if call.ID == "call_bad_read" && call.Function.Name == workspace.ToolNameReadFile {
+				responseIndex := i + 1
+				if responseIndex >= len(payloads[1].Messages) ||
+					payloads[1].Messages[responseIndex].Role != "tool" ||
+					payloads[1].Messages[responseIndex].ToolCallID != call.ID {
+
+					t.Fatalf("malformed native arguments must keep immediate assistant/tool pairing, payload=%#v", payloads[1].Messages)
+				}
+				sawAssistantReadCall = true
+			}
+		}
+		if message.Role == "tool" && message.ToolCallID == "call_bad_read" {
+			if message.Name != workspace.ToolNameReadFile {
+				t.Fatalf("malformed native argument result should preserve real tool name, got %#v", message)
+			}
+			if !strings.Contains(message.Content, "Malformed tool request rejected") {
+				t.Fatalf("malformed native argument result should explain parser rejection, got %#v", message)
+			}
+			if strings.Contains(message.Content, "tool_parse") {
+				t.Fatalf("malformed native argument model-facing result leaked tool_parse, got %#v", message)
+			}
+			if strings.Contains(message.Content, "valid tool call") {
+				t.Fatalf("malformed native argument model-facing result kept generic parser wording, got %#v", message)
+			}
+			sawReadToolResult = true
+		}
+	}
+
+	if !sawAssistantReadCall || !sawReadToolResult {
+		t.Fatalf("expected malformed native arguments to preserve paired read_file history, saw assistant=%v tool=%v payload=%#v", sawAssistantReadCall, sawReadToolResult, payloads[1].Messages)
 	}
 }
 
@@ -12637,18 +12825,12 @@ func TestPresentableFallbackCandidatePreservesChildDelegatedPacket(t *testing.T)
 
 type closureDecisionSpyEvidenceEngine struct {
 	EvidenceEngine
-	closureCalls       int
-	answerabilityCalls int
+	closureCalls int
 }
 
 func (e *closureDecisionSpyEvidenceEngine) ClosureDecision(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) ReadOnlyCloseout {
 	e.closureCalls++
 	return newEvidenceEngine().ClosureDecision(brief, results)
-}
-
-func (e *closureDecisionSpyEvidenceEngine) Answerability(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) readOnlyAnswerabilityLedger {
-	e.answerabilityCalls++
-	return newEvidenceEngine().Answerability(brief, results)
 }
 
 func TestNoToolsPresentableFallbackUsesRunnerEvidenceEngine(t *testing.T) {
@@ -13459,7 +13641,7 @@ func TestBudgetClosureRunEmitsAcceptanceSignals(t *testing.T) {
 	}
 }
 
-func TestForcedCompletionUsesDeterministicMutationFallback(t *testing.T) {
+func TestForcedCompletionAsksModelBeforeDeterministicMutationFallback(t *testing.T) {
 	var requests int
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -13497,15 +13679,15 @@ func TestForcedCompletionUsesDeterministicMutationFallback(t *testing.T) {
 		[]llama.ChatMessage{{Role: "user", Content: "implement the requested patch"}},
 		llama.ChatOptions{},
 		results,
-		"Tools are now disabled.",
+		"Post-readiness implementation closeout is exhausted. Tools are now disabled.",
 		nil,
 	)
 	if err != nil {
 		t.Fatalf("completeWithoutMoreToolsWithReason: %v", err)
 	}
 
-	if requests != 0 {
-		t.Fatalf("expected deterministic mutation fallback without model call, got %d request(s)", requests)
+	if requests != 1 {
+		t.Fatalf("expected model-owned forced completion before deterministic fallback, got %d request(s)", requests)
 	}
 
 	for _, want := range []string{
@@ -13522,6 +13704,72 @@ func TestForcedCompletionUsesDeterministicMutationFallback(t *testing.T) {
 
 	if strings.Contains(strings.ToLower(answer), "passed") {
 		t.Fatalf("deterministic mutation fallback should not claim unrun verification passed:\n%s", answer)
+	}
+}
+
+func TestForcedCompletionPreservesAcceptedModelMutationCloseout(t *testing.T) {
+	var requests int
+
+	modelAnswer := strings.Join([]string{
+		"I moved the constants into the owning package so the implementation catalog no longer carries duplicated literals.",
+		"",
+		"Changed paths:",
+		"- src/example.cpp",
+		"",
+		"Verification: go test ./... passed.",
+	}, "\n")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": modelAnswer},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+			RequiredEditPaths:    []string{"src/example.cpp"},
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited src/example.cpp"},
+		{Tool: "shell", Summary: "Ran shell command", Output: "$ go test ./...\nok\texample.com/repo\n"},
+	}
+
+	answer, err := runner.completeWithoutMoreToolsWithReason(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "move duplicated constants"}},
+		llama.ChatOptions{},
+		results,
+		"Post-readiness implementation closeout is exhausted. Tools are now disabled.",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("completeWithoutMoreToolsWithReason: %v", err)
+	}
+
+	if requests != 1 {
+		t.Fatalf("expected one model closeout request, got %d", requests)
+	}
+	if answer != modelAnswer {
+		t.Fatalf("expected model-authored closeout to be preserved, got:\n%s", answer)
+	}
+	if strings.Contains(answer, "Workspace changes were recorded") || strings.Contains(answer, "Implemented the requested change") {
+		t.Fatalf("model-authored closeout should not be replaced by deterministic fallback:\n%s", answer)
 	}
 }
 
@@ -13606,8 +13854,8 @@ func TestToolStepBudgetPartialRequiredEditsEmitsBlockedCompletion(t *testing.T) 
 		t.Fatalf("expected blocked completion for missing required path, got %#v", completion)
 	}
 
-	if requests != 1 {
-		t.Fatalf("expected one model tool request before deterministic budget closeout, got %d", requests)
+	if requests != 3 {
+		t.Fatalf("expected initial write, model closeout attempt, and one invalid-closeout retry before deterministic budget closeout, got %d", requests)
 	}
 }
 
@@ -13923,7 +14171,7 @@ func TestWriteReadyPacketReadWithoutNamedGapAllowsInScopeRead(t *testing.T) {
 	}
 }
 
-func TestScopedImplementationLastChanceHidesReadsBeforeModelCallBudgetExhaustion(t *testing.T) {
+func TestScopedImplementationFinalModelSlotKeepsReadsVisibleBeforeBudgetExhaustion(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "a.txt", "before\nmore\n"); err != nil {
 		t.Fatalf("write a: %v", err)
@@ -13931,6 +14179,7 @@ func TestScopedImplementationLastChanceHidesReadsBeforeModelCallBudgetExhaustion
 
 	requests := 0
 	thirdRequestChecked := false
+	thirdToolNames := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Tools []llama.Tool `json:"tools,omitempty"`
@@ -13953,24 +14202,18 @@ func TestScopedImplementationLastChanceHidesReadsBeforeModelCallBudgetExhaustion
 		case 3:
 			thirdRequestChecked = true
 
-			var toolNames []string
-
 			for _, tool := range body.Tools {
-				toolNames = append(toolNames, tool.Function.Name)
+				thirdToolNames = append(thirdToolNames, tool.Function.Name)
 			}
 
-			for _, forbidden := range []string{"read_file", "search_content", "code_navigate", "context_query"} {
-				if slices.Contains(toolNames, forbidden) {
-					t.Fatalf("last-chance scoped implementation call advertised non-write tool %q: %#v", forbidden, toolNames)
+			for _, want := range []string{"read_file", "code_navigate"} {
+				if !slices.Contains(thirdToolNames, want) {
+					t.Fatalf("final available model slot must keep genuine discovery tool %q visible, got %#v", want, thirdToolNames)
 				}
 			}
 
-			if !slices.Contains(toolNames, "write_file") && !slices.Contains(toolNames, "edit_file") && !slices.Contains(toolNames, "apply_patch") {
-				t.Fatalf("last-chance scoped implementation call must retain write tools, got %#v", toolNames)
-			}
-
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"choices": []map[string]any{{"message": map[string]string{"content": "<<QUESTION>>: no safe edit for a.txt without a current replacement anchor"}}},
+				"choices": []map[string]any{{"message": map[string]string{"content": `{"tool":"read_file","path":"a.txt","start_line":1,"end_line":2}`}}},
 			})
 		default:
 			t.Fatalf("unexpected extra chat request %d", requests)
@@ -13988,7 +14231,7 @@ func TestScopedImplementationLastChanceHidesReadsBeforeModelCallBudgetExhaustion
 			CWD:          root,
 			EnableWrites: true,
 		}),
-		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8, MaxModelCalls: 3},
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8, MaxOperationalModelCalls: 3},
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:           "implementation",
 			Contract:             "implementation_result",
@@ -14017,15 +14260,15 @@ func TestScopedImplementationLastChanceHidesReadsBeforeModelCallBudgetExhaustion
 	}
 
 	if !thirdRequestChecked {
-		t.Fatal("expected third model call to exercise last-chance write-only surface")
+		t.Fatal("expected third model call to exercise final available model slot")
 	}
 
-	if !sawLastChance {
-		t.Fatal("expected implementation_scoped_last_chance_write_only event")
+	if sawLastChance {
+		t.Fatal("final available model slot must not activate implementation_scoped_last_chance_write_only")
 	}
 
-	if !strings.Contains(answer, "<<QUESTION>>") || !strings.Contains(answer, "a.txt") {
-		t.Fatalf("expected typed blocker answer for a.txt, got %q", answer)
+	if !strings.Contains(answer, "implementation operational model-call limit") || !strings.Contains(answer, "a.txt") {
+		t.Fatalf("expected deterministic operational model-call blocker for a.txt, got %q", answer)
 	}
 
 	if requests != 3 {
@@ -15034,7 +15277,10 @@ func TestRunnerPostReadinessRepeatedReadDoesNotForceHostCloseout(t *testing.T) {
 
 	defer server.Close()
 
-	var events []RunEvent
+	var (
+		events  []RunEvent
+		results []workspace.ToolResult
+	)
 
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, time.Second),
@@ -15061,7 +15307,9 @@ func TestRunnerPostReadinessRepeatedReadDoesNotForceHostCloseout(t *testing.T) {
 		llama.ChatOptions{},
 		nil,
 		nil,
-		nil,
+		func(event ToolResultEvent) {
+			results = append(results, event.Result)
+		},
 	)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -17017,12 +17265,18 @@ func TestImplementationToolBudgetExhaustedBlockerIsDeterministic(t *testing.T) {
 
 	for _, want := range []string{
 		"<<QUESTION>>:",
-		"tool budget was exhausted",
+		"implementation tool budget reached",
 		"internal/runtime/agent/implementation_flow.go",
-		"parser-readable edit",
+		"parser-readable write",
+		"no no-op evidence or exact blocker was produced",
 	} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("budget blocker missing %q:\n%s", want, answer)
+		}
+	}
+	for _, forbidden := range []string{"source-satisfied", "Rerun with a narrower edit target", "if more source evidence is required"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("budget blocker should not contain stale closeout text %q:\n%s", forbidden, answer)
 		}
 	}
 
@@ -17030,6 +17284,138 @@ func TestImplementationToolBudgetExhaustedBlockerIsDeterministic(t *testing.T) {
 	if decision.StopReason != "implementation_tool_step_budget_blocked" {
 		t.Fatalf("budget blocker stop reason should be preserved, got %#v", decision)
 	}
+}
+
+func TestNoProgressCloseoutQuestionPreservesHostStopReason(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedEditPaths:  []string{"internal/runtime/workerruntime/vocabulary.go"},
+			TargetRefs:        []string{"internal/runtime/workerruntime/vocabulary.go"},
+			RequiredEvidence:  []string{"changed_paths_or_noop_reason", "verification_status"},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/runtime/workerruntime/vocabulary.go lines 1-80",
+		Output:  "package workerruntime\n",
+	}}
+
+	answer, ok := runner.implementationContractCloseoutBlocker(results, "no_progress_budget_exhausted")
+	if !ok {
+		t.Fatal("expected mutation no-progress closeout to produce deterministic blocker")
+	}
+
+	decision := runner.classifyTerminalAnswer(answer, "no_progress_budget_exhausted", results)
+	if decision.StopReason != "no_progress_budget_exhausted" {
+		t.Fatalf("no-progress stop reason should be preserved, got %#v", decision)
+	}
+	for _, forbidden := range []string{"Rerun with a narrower edit target", "if more source evidence is required", "source-satisfied"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("no-progress closeout should not use stale source-evidence or planner language %q:\n%s", forbidden, answer)
+		}
+	}
+}
+
+func TestRunnerNoProgressCloseoutTelemetryIsNotBudgetExhaustion(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "internal/runtime/workerruntime/vocabulary.go", "package workerruntime\n"); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests > 1 {
+			t.Fatalf("unexpected extra chat request")
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": "I cannot complete this."}}},
+		})
+	}))
+	defer server.Close()
+
+	var events []RunEvent
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 1, MaxModelCalls: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "edit_file", "apply_patch", "write_file"},
+			AllowedEditPaths:  []string{"internal/runtime/workerruntime/vocabulary.go"},
+			TargetRefs:        []string{"internal/runtime/workerruntime/vocabulary.go"},
+			RequiredEvidence:  []string{"changed_paths_or_noop_reason", "verification_status"},
+		},
+		CompletionGate: func(input CompletionGateInput) CompletionGateResult {
+			return CompletionGateResult{Summary: "external completion rejected", Error: "no implementation result"}
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "Update the vocabulary file."}}, llama.ChatOptions{}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(answer, "implementation no-progress closeout reached") {
+		t.Fatalf("expected no-progress implementation closeout, got:\n%s", answer)
+	}
+
+	var ledger runnerBudgetLedger
+	if !decodeLastRunEventContent(t, events, "budget_ledger", &ledger) {
+		t.Fatalf("missing budget_ledger event: %s", formatRunEventsForTest(events))
+	}
+	if ledger.StopReason != "no_progress_budget_exhausted" {
+		t.Fatalf("budget ledger stop reason = %q, want no_progress_budget_exhausted", ledger.StopReason)
+	}
+	if ledger.BudgetExhausted {
+		t.Fatalf("no-progress closeout must not report budget exhausted: %#v", ledger)
+	}
+
+	var status runnerCompletionStatus
+	if !decodeLastRunEventContent(t, events, "completion_status", &status) {
+		t.Fatalf("missing completion_status event: %s", formatRunEventsForTest(events))
+	}
+	if status.BlockerKind != "no_progress_budget_exhausted" || status.Reason == "user_visible_blocker" {
+		t.Fatalf("completion status should preserve host no-progress reason, got %#v", status)
+	}
+
+	for _, event := range events {
+		if event.Role != "autonomy_event" || !strings.Contains(event.Content, `"source":"runner_budget_gate"`) {
+			continue
+		}
+		if strings.Contains(event.Content, `"exhaustion_reason"`) ||
+			strings.Contains(event.Content, `budget_exhaustion_reason`) {
+			t.Fatalf("observe-only no-progress budget gate must not report exhaustion reason:\n%s", event.Content)
+		}
+	}
+}
+
+func decodeLastRunEventContent(t *testing.T, events []RunEvent, role string, target any) bool {
+	t.Helper()
+
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Role != role {
+			continue
+		}
+		if err := json.Unmarshal([]byte(events[i].Content), target); err != nil {
+			t.Fatalf("decode %s event %q: %v", role, events[i].Content, err)
+		}
+		return true
+	}
+
+	return false
 }
 
 func TestUnsupportedReadOnlyCloseoutMatchesSentinelLead(t *testing.T) {
@@ -21368,73 +21754,6 @@ func TestRunnerRejectsVisibleNestedEditFileJSONWithoutSourceEvidence(t *testing.
 	}
 }
 
-func TestUnscopedImplementationWriteReadyNonWriteLoopStopsBeforeModelBudget(t *testing.T) {
-	root := t.TempDir()
-	if err := writeTestFile(root, "internal/labels/labels.go", "package labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n"); err != nil {
-		t.Fatalf("write labels.go: %v", err)
-	}
-
-	// First reply is a source-body read to establish evidence.
-	// Remaining 19 are read_file on the same path without the named_gap
-	// marker, which should be rejected as non-write after the source
-	// refresh allowance (3) is exhausted.
-	replies := []string{
-		`{"tool":"read_file","path":"internal/labels/labels.go","start_line":1,"end_line":20,"named_gap":"current target source before edit","why_not_answering":"need source before writing"}`,
-	}
-	for i := 0; i < 20; i++ {
-		replies = append(replies, `{"tool":"read_file","path":"internal/labels/labels.go"}`)
-	}
-
-	var requests int
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if requests >= len(replies) {
-			t.Fatalf("unexpected extra chat request")
-		}
-
-		reply := replies[requests]
-		requests++
-
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{
-				"message": map[string]string{"content": reply},
-			}},
-		})
-	}))
-
-	defer server.Close()
-
-	runner := &Runner{
-		Client: llama.NewClient(server.URL, time.Second),
-		Workspace: workspace.NewManager(config.Workspace{
-			Root:         root,
-			CWD:          root,
-			EnableWrites: true,
-		}),
-		Policy: RunPolicy{MaxToolSteps: 0, MaxNoProgressTurns: 20, MaxModelCalls: 40},
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        "implementation",
-			Contract:          "implementation_result",
-			PermissionProfile: "guarded_workspace_write",
-		},
-	}
-
-	answer, err := runner.Run(
-		context.Background(),
-		[]llama.ChatMessage{{Role: "user", Content: "Update ShortLabel in internal/labels/labels.go."}},
-		llama.ChatOptions{},
-		nil,
-		nil,
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-
-	if !strings.Contains(answer, "<<QUESTION>>") {
-		t.Fatalf("expected write-ready loop blocker with <<QUESTION>>, got: %q", answer)
-	}
-}
 func TestRunnerSalvagesVisibleLineToolRequest(t *testing.T) {
 	runner := &Runner{}
 	req, raw, ok := runner.salvageVisibleToolRequestFromProse(strings.Join([]string{
@@ -23872,38 +24191,38 @@ func TestRunnerConcreteReadSymbolEvidenceDoesNotRestartRangeLessReadLoop(t *test
 
 func TestLooksLikeTextualToolCallRejectsLineOrientedToolPayload(t *testing.T) {
 	payload := "tool: code_navigate\ncapability: read_symbol\npath: internal/surfaces/tui/app/turn_planner.go\npattern: classifyTurnRoute"
-	if !looksLikeTextualToolCall(payload) {
+	if !IsTextualToolCall(payload) {
 		t.Fatalf("expected line-oriented tool payload to be rejected")
 	}
 
 	contextPayload := "tool: context_pack\ntask: plan a bounded change to ShortLabel in internal/labels/labels.go\nmode: plan\nlimit: 8"
-	if !looksLikeTextualToolCall(contextPayload) {
+	if !IsTextualToolCall(contextPayload) {
 		t.Fatalf("expected context-pack line-oriented tool payload to be rejected")
 	}
 
 	multilineJSONPayload := "tool: read_file\n{\n  \"tool\": \"read_file\",\n  \"path\": \"internal/labels/labels.go\"\n}"
-	if !looksLikeTextualToolCall(multilineJSONPayload) {
+	if !IsTextualToolCall(multilineJSONPayload) {
 		t.Fatalf("expected multiline JSON line-oriented tool payload to be rejected")
 	}
 
-	if looksLikeTextualToolCall("Tool: route classifier\n\nThis section explains the classifier in prose.") {
+	if IsTextualToolCall("Tool: route classifier\n\nThis section explains the classifier in prose.") {
 		t.Fatalf("prose heading should not be rejected as a line-oriented tool payload")
 	}
 
 	// <invoke> XML tool-call markup detection
-	if !looksLikeTextualToolCall("<invoke name=\"context_pack\">") {
+	if !IsTextualToolCall("<invoke name=\"context_pack\">") {
 		t.Fatalf("expected <invoke> XML to be detected as textual tool call")
 	}
 
-	if !looksLikeTextualToolCall("</invoke>") {
+	if !IsTextualToolCall("</invoke>") {
 		t.Fatalf("expected </invoke> XML to be detected as textual tool call")
 	}
 
-	if !looksLikeTextualToolCall("<invoke") {
+	if !IsTextualToolCall("<invoke") {
 		t.Fatalf("expected partial <invoke to be detected as textual tool call")
 	}
 
-	if !looksLikeTextualToolCall("<invoke>\n<invoke name=\"search_files\">\n</invoke>") {
+	if !IsTextualToolCall("<invoke>\n<invoke name=\"search_files\">\n</invoke>") {
 		t.Fatalf("expected invoke XML block to be detected as textual tool call")
 	}
 }
@@ -23918,23 +24237,23 @@ func TestLooksLikeTextualToolCallDetectsJanusToolCalls(t *testing.T) {
 <janus_parameter name="path" string="true">internal/runtime/agent</janus_parameter>
 </janus_invoke>
 </janus_tool_calls>`
-	if !looksLikeTextualToolCall(livePayload) {
+	if !IsTextualToolCall(livePayload) {
 		t.Fatal("expected janus_tool_calls XML to be detected as textual tool call")
 	}
 
-	if !looksLikeTextualToolCall("<janus_tool_calls>") {
+	if !IsTextualToolCall("<janus_tool_calls>") {
 		t.Fatal("expected bare janus_tool_calls open tag to be detected")
 	}
 
-	if !looksLikeTextualToolCall("</janus_tool_calls>") {
+	if !IsTextualToolCall("</janus_tool_calls>") {
 		t.Fatal("expected bare janus_tool_calls close tag to be detected")
 	}
 
-	if !looksLikeTextualToolCall("<janus_invoke name=\"code_navigate\">") {
+	if !IsTextualToolCall("<janus_invoke name=\"code_navigate\">") {
 		t.Fatal("expected janus_invoke open tag to be detected")
 	}
 
-	if !looksLikeTextualToolCall("</janus_invoke>") {
+	if !IsTextualToolCall("</janus_invoke>") {
 		t.Fatal("expected janus_invoke close tag to be detected")
 	}
 }
@@ -23949,27 +24268,27 @@ func TestLooksLikeTextualToolCallDetectsNToolCalls(t *testing.T) {
 <n_parameter name="path" string="true">internal/runtime/agent</n_parameter>
 </n_invoke>
 </n_tool_calls>`
-	if !looksLikeTextualToolCall(payload) {
+	if !IsTextualToolCall(payload) {
 		t.Fatal("expected n_tool_calls XML to be detected as textual tool call")
 	}
 
-	if !looksLikeTextualToolCall("<n_tool_calls>") {
+	if !IsTextualToolCall("<n_tool_calls>") {
 		t.Fatal("expected bare n_tool_calls open tag to be detected")
 	}
 
-	if !looksLikeTextualToolCall("</n_tool_calls>") {
+	if !IsTextualToolCall("</n_tool_calls>") {
 		t.Fatal("expected bare n_tool_calls close tag to be detected")
 	}
 
-	if !looksLikeTextualToolCall("<n_invoke name=\"read_file\">") {
+	if !IsTextualToolCall("<n_invoke name=\"read_file\">") {
 		t.Fatal("expected n_invoke open tag to be detected")
 	}
 
-	if !looksLikeTextualToolCall("</n_invoke>") {
+	if !IsTextualToolCall("</n_invoke>") {
 		t.Fatal("expected n_invoke close tag to be detected")
 	}
 
-	if !looksLikeTextualToolCall("<n_parameter name=\"path\" string=\"true\">foo</n_parameter>") {
+	if !IsTextualToolCall("<n_parameter name=\"path\" string=\"true\">foo</n_parameter>") {
 		t.Fatal("expected n_parameter tag to be detected")
 	}
 }
@@ -24178,10 +24497,9 @@ func TestRunnerCountsForcedCompletionUsageInBudgetLedger(t *testing.T) {
 	}
 }
 
-func TestRunnerModelCallBudgetStopsWithLedger(t *testing.T) {
+func TestRunnerOperationalModelCallLimitStopsWithLedger(t *testing.T) {
 	replies := []string{
 		"```tool\n{\"tool\":\"task_ledger\",\"todos\":[{\"id\":\"work\",\"content\":\"Do work\",\"status\":\"in_progress\"}]}\n```",
-		"Budget exhausted with work still in progress.",
 	}
 
 	var requests int
@@ -24212,9 +24530,9 @@ func TestRunnerModelCallBudgetStopsWithLedger(t *testing.T) {
 			CWD:  ".",
 		}),
 		Policy: RunPolicy{
-			MaxToolSteps:       0,
-			MaxNoProgressTurns: 6,
-			MaxModelCalls:      1,
+			MaxToolSteps:             0,
+			MaxNoProgressTurns:       6,
+			MaxOperationalModelCalls: 1,
 		},
 		OnEvent: func(event RunEvent) {
 			if event.Role == "budget_ledger" {
@@ -24228,8 +24546,11 @@ func TestRunnerModelCallBudgetStopsWithLedger(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
-	if !strings.Contains(answer, "Budget exhausted") {
+	if !strings.Contains(answer, "Operational model-call limit") {
 		t.Fatalf("unexpected answer %q", answer)
+	}
+	if requests != 1 {
+		t.Fatalf("operational model-call closeout must not spend another model call, got %d requests", requests)
 	}
 
 	var ledger runnerBudgetLedger
@@ -24238,8 +24559,54 @@ func TestRunnerModelCallBudgetStopsWithLedger(t *testing.T) {
 		t.Fatalf("decode budget ledger %q: %v", budgetEvent, err)
 	}
 
-	if ledger.StopReason != "model_call_budget_exhausted" || !ledger.BudgetExhausted || ledger.MaxModelCalls != 1 {
+	if ledger.StopReason != "operational_model_call_limit_exceeded" || !ledger.BudgetExhausted || ledger.MaxOperationalModelCalls != 1 {
 		t.Fatalf("unexpected budget ledger: %#v", ledger)
+	}
+	if ledger.UsedModelCalls != 1 {
+		t.Fatalf("ledger should not hide an extra closeout call, got %#v", ledger)
+	}
+}
+
+func TestRunnerOperationalModelCallLimitDeterministicCloseoutAfterPartialWrite(t *testing.T) {
+	var requests int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		t.Fatalf("unexpected model request after budget exhaustion")
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.txt"},
+			AllowedTools:      []string{"edit_file", "read_file", "source_sanity"},
+		},
+	}
+
+	answer, err := runner.completeWithoutMoreToolsWithReasonMode(
+		context.Background(),
+		nil,
+		llama.ChatOptions{},
+		[]workspace.ToolResult{{Tool: "edit_file", Summary: "Edited a.txt"}},
+		"Operational model-call limit is exhausted. Tools are now disabled.",
+		&runnerMetrics{ModelCalls: 1},
+		noToolsCloseoutDeterministicRequired,
+	)
+	if err != nil {
+		t.Fatalf("completeWithoutMoreToolsWithReasonMode: %v", err)
+	}
+
+	for _, want := range []string{"Workspace changes were recorded", "a.txt", "Verification:"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected deterministic mutation closeout to contain %q, got:\n%s", want, answer)
+		}
+	}
+	if requests != 0 {
+		t.Fatalf("partial-write closeout must not spend another model call, got %d requests", requests)
 	}
 }
 
@@ -24370,6 +24737,72 @@ func TestRunnerWriteApprovalRequiredEmitsToolAuthorizationPolicy(t *testing.T) {
 	policyEvent := mustAutonomyPolicyEventByInvariantAndReason(t, decodeRunnerAutonomyEventsForTest(t, runEvents), autonomy.EventToolPolicyResult, toolAuthorizationPolicyInvariant, "write_approval_required")
 	if policyEvent.Policy.PackID != autonomy.ContractPackToolAuthorization || policyEvent.Policy.Decision != autonomy.PolicyAsk || !policyEvent.Policy.ApprovalRequired {
 		t.Fatalf("write approval should emit typed authorization policy event, got %#v", policyEvent.Policy)
+	}
+}
+
+func TestRunnerWriteApprovalAfterOperationalModelCallLimitDoesNotSpendCloseoutCall(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests > 1 {
+			t.Fatalf("unexpected closeout model request after operational model-call limit")
+		}
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{
+					"content": "```tool\n{\"tool\":\"edit_file\",\"path\":\"README.md\",\"old_text\":\"hello\",\"new_text\":\"bye\",\"description\":\"change greeting\"}\n```",
+				},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var budgetEvent string
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         t.TempDir(),
+			CWD:          ".",
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3, MaxOperationalModelCalls: 1},
+		PreExecute: func(_ int, req workspace.ToolRequest) *workspace.ToolResult {
+			if req.Tool != "edit_file" {
+				return nil
+			}
+
+			return &workspace.ToolResult{
+				Tool:    req.Tool,
+				Summary: "Write approval required",
+				Error:   "approval is required before applying workspace writes",
+			}
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "budget_ledger" {
+				budgetEvent = event.Content
+			}
+		},
+	}
+
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "edit readme"}}, llama.ChatOptions{}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if requests != 1 {
+		t.Fatalf("operational model-call closeout must not spend another request, got %d", requests)
+	}
+	if !strings.Contains(answer, "Operational model-call limit") {
+		t.Fatalf("expected deterministic operational model-call blocker, got %q", answer)
+	}
+
+	var ledger runnerBudgetLedger
+	if err := json.Unmarshal([]byte(budgetEvent), &ledger); err != nil {
+		t.Fatalf("decode budget ledger %q: %v", budgetEvent, err)
+	}
+	if ledger.UsedModelCalls != 1 {
+		t.Fatalf("ledger should not hide an extra closeout call, got %#v", ledger)
 	}
 }
 
@@ -24718,6 +25151,100 @@ func TestToolResultMadeProgressClassifiesUsefulAndStalledResults(t *testing.T) {
 	}
 }
 
+func TestTargetWriteReadyReadProgressAccountingTreatsDuplicateSourceReadsAsNeutral(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		AllowedEditPaths:  []string{"internal/runtime/workerruntime/vocabulary.go"},
+		TargetRefs:        []string{"internal/runtime/workerruntime/vocabulary.go"},
+		RequiredEvidence:  []string{"changed_paths_or_noop_reason", "verification_status"},
+	}
+	sourceRead := workspace.ToolResult{
+		Tool:    workspace.ToolNameReadFile,
+		Summary: "Read f1 internal/runtime/workerruntime/vocabulary.go lines 1-3 (total lines: 6)",
+		Output:  "package workerruntime\n\nconst modeName = \"legacy\"",
+	}
+	priorResults := []workspace.ToolResult{sourceRead}
+
+	if !implementationTargetWriteReadySurfaceActive(brief, priorResults) {
+		t.Fatalf("expected source read to activate target-write-ready surface")
+	}
+	if got := implementationTargetWriteReadyReadProgressForResult(
+		brief,
+		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "internal/runtime/workerruntime/vocabulary.go"},
+		sourceRead,
+		priorResults,
+	); got != implementationTargetWriteReadyReadProgressDuplicate {
+		t.Fatalf("duplicate already-sourced read_file result should be duplicate progress, got %q", got)
+	}
+
+	newPathRead := workspace.ToolResult{
+		Tool:    workspace.ToolNameReadFile,
+		Summary: "Read f2 internal/runtime/workerruntime/catalog.go lines 1-3 (total lines: 3)",
+		Output:  "package workerruntime\n\nvar runtimeCatalog = []string{\"legacy\"}",
+	}
+	if got := implementationTargetWriteReadyReadProgressForResult(
+		brief,
+		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "internal/runtime/workerruntime/catalog.go"},
+		newPathRead,
+		priorResults,
+	); got != implementationTargetWriteReadyReadProgressAddsSource {
+		t.Fatalf("new source-body path should still count as progress, got %q", got)
+	}
+
+	continuationRead := workspace.ToolResult{
+		Tool:    workspace.ToolNameReadFile,
+		Summary: "Read f1 internal/runtime/workerruntime/vocabulary.go lines 4-6 (total lines: 6)",
+		Output:  "const other = \"legacy\"\nconst another = \"legacy\"\nconst final = \"legacy\"",
+	}
+	if got := implementationTargetWriteReadyReadProgressForResult(
+		brief,
+		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "internal/runtime/workerruntime/vocabulary.go", StartLine: 4, EndLine: 6},
+		continuationRead,
+		priorResults,
+	); got != implementationTargetWriteReadyReadProgressAddsSource {
+		t.Fatalf("bounded unread range on an already-sourced path should still count as progress, got %q", got)
+	}
+
+	collectedResults := append([]workspace.ToolResult(nil), priorResults...)
+	consecutiveNoProgress := 0
+	metrics := &runnerMetrics{}
+	recorder := runnerTurnRecorder{
+		runner:                &Runner{RuntimeBrief: brief},
+		collectedResults:      &collectedResults,
+		consecutiveNoProgress: &consecutiveNoProgress,
+		metrics:               metrics,
+	}
+	recorder.recordWithOptions(
+		2,
+		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "internal/runtime/workerruntime/vocabulary.go"},
+		sourceRead,
+		"test_duplicate_source_read",
+		runnerRecordOptions{TrackProgress: true},
+	)
+	if consecutiveNoProgress != 0 {
+		t.Fatalf("duplicate source read should not advance terminal no-progress accounting, got %d", consecutiveNoProgress)
+	}
+	if metrics.ProgressTurns != 0 {
+		t.Fatalf("duplicate source read should not count as a progress turn, got %d", metrics.ProgressTurns)
+	}
+
+	recorder.recordWithOptions(
+		3,
+		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "internal/runtime/workerruntime/catalog.go"},
+		newPathRead,
+		"test_new_source_read",
+		runnerRecordOptions{TrackProgress: true},
+	)
+	if consecutiveNoProgress != 0 {
+		t.Fatalf("new source read should reset no-progress accounting, got %d", consecutiveNoProgress)
+	}
+	if metrics.ProgressTurns != 1 {
+		t.Fatalf("new source read should count as one progress turn, got %d", metrics.ProgressTurns)
+	}
+}
+
 func TestSynthesizeFallbackAnswerUsesNarrowEvidenceAndFinalBlocker(t *testing.T) {
 	answer, ok := synthesizeFallbackAnswer("explore", []workspace.ToolResult{
 		{Tool: "list_files", Summary: "listed files", Output: "README.md\ninternal/surfaces/tui/app/app.go"},
@@ -24765,6 +25292,110 @@ func TestSynthesizeMutationFallbackAnswerDropsErrorsSupersededByLaterWrite(t *te
 
 	if !strings.Contains(answer, "workspace writes are still pending verification") {
 		t.Fatalf("expected verification blocker to remain, got:\n%s", answer)
+	}
+}
+
+func TestSynthesizeMutationFallbackAnswerSkipsParserRecoveryAsBlocker(t *testing.T) {
+	answer := synthesizeMutationFallbackAnswer(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		RequiredEditPaths: []string{"internal/runtime/workerruntime/vocabulary.go"},
+	}, []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/runtime/workerruntime/vocabulary.go lines 1-3",
+			Output:  "package workerruntime\n\nconst modeName = \"legacy\"\n",
+		},
+		{
+			Tool:    "tool_parse",
+			Summary: "Unsafe tool-shaped request rejected",
+			Error:   "The payload was tool-shaped, but it was not an executable tool call.",
+		},
+	})
+
+	for _, forbidden := range []string{"Unsafe tool-shaped request rejected", "tool_parse", "not an executable tool call"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("parser recovery must not become final mutation blocker (%q), got:\n%s", forbidden, answer)
+		}
+	}
+	for _, want := range []string{"required mutation path(s) remain unresolved", "Changed paths: none", "internal/runtime/workerruntime/vocabulary.go", "ended before a successful workspace edit was recorded"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected fallback to contain %q, got:\n%s", want, answer)
+		}
+	}
+}
+
+func TestImplementationOperationalLimitBlockerReportsNoWriteWithVerificationContract(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			RequiredEditPaths:    []string{"internal/runtime/workerruntime/vocabulary.go"},
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		},
+	}
+
+	answer, ok := runner.implementationContractCloseoutBlocker([]workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/runtime/workerruntime/vocabulary.go lines 1-3",
+			Output:  "package workerruntime\n\nconst modeName = \"legacy\"\n",
+		},
+	}, "operational_model_call_limit_exceeded")
+	if !ok {
+		t.Fatal("expected no-write implementation budget blocker even when verification is configured")
+	}
+
+	for _, want := range []string{"implementation operational model-call limit reached", "before the implementation contract produced a parser-readable write", "required edit path(s) not changed", "Source-body evidence already gathered", "internal/runtime/workerruntime/vocabulary.go"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected budget blocker to contain %q, got:\n%s", want, answer)
+		}
+	}
+	for _, forbidden := range []string{"source-satisfied", "Rerun with a narrower edit target", "if more source evidence is required"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("budget blocker should not contain stale closeout text %q, got:\n%s", forbidden, answer)
+		}
+	}
+}
+
+func TestImplementationNoProgressCloseoutNamesEvidenceAndRepeatedReads(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			RequiredEditPaths:    []string{"internal/runtime/workerruntime/vocabulary.go"},
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		},
+	}
+
+	results := []workspace.ToolResult{
+		{
+			Tool:    workspace.ToolNameReadFile,
+			Summary: "Read f1 internal/runtime/workerruntime/vocabulary.go lines 1-3",
+			Output:  "package workerruntime\n\nconst ModeName = \"legacy\"\n",
+		},
+		{
+			Tool:    workspace.ToolNameReadFile,
+			Summary: "Read f1 internal/runtime/workerruntime/vocabulary.go lines 1-3",
+			Output:  "package workerruntime\n\nconst ModeName = \"legacy\"\n",
+		},
+	}
+
+	answer, ok := runner.implementationContractCloseoutBlocker(results, "no_progress_budget_exhausted")
+	if !ok {
+		t.Fatal("expected no-progress implementation closeout")
+	}
+
+	for _, want := range []string{"implementation no-progress closeout reached", "parser-readable write", "no no-op evidence or exact blocker", "Source-body evidence already gathered", "Repeated allowed read evidence observed", "internal/runtime/workerruntime/vocabulary.go"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected no-progress blocker to contain %q, got:\n%s", want, answer)
+		}
+	}
+	for _, forbidden := range []string{"implementation model-call budget", "evidence is missing", "Rerun with a narrower edit target", "if more source evidence is required", "source-satisfied"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("no-progress closeout should not contain stale text %q, got:\n%s", forbidden, answer)
+		}
 	}
 }
 
@@ -30654,6 +31285,7 @@ func TestMalformedToolRecoveryPromptRejectsXMLTransportAndShowsLedger(t *testing
 			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
 			Objective:         "Does the implement command have hardcoded responses?",
 		},
+		currentTransport: PlanExecutePlanningTransport{SupportsNativeTools: true},
 	}
 	runner.lastCompletionGateError = "the answer cites path(s) that were discovered as index candidates but not read as source-body evidence: `internal/surfaces/cli/implement/implement.go`."
 	results := []workspace.ToolResult{{
@@ -30669,7 +31301,7 @@ func TestMalformedToolRecoveryPromptRejectsXMLTransportAndShowsLedger(t *testing
 		"rejected by the tool parser",
 		"XML/HTML/DSML-style tool-call markup",
 		"Do not emit tags",
-		"normal tool-call mechanism",
+		"active native tool-call transport",
 		"Evidence ledger:",
 		"body-backed source evidence",
 		"unsupported citation path",
@@ -30687,7 +31319,7 @@ func TestMalformedToolRecoveryPromptRejectsXMLTransportAndShowsLedger(t *testing
 
 func TestToolParseErrorFeedbackNamesXMLTransportFailure(t *testing.T) {
 	raw := "<invoke name=\"read_file\"><parameter name=\"path\">README.md</parameter></invoke>"
-	got := toolParseErrorFeedback(raw, errors.New("malformed DeepSeek XML tool request"))
+	got := toolParseErrorFeedback(raw, errors.New("malformed DeepSeek XML tool request"), "")
 
 	for _, want := range []string{
 		"XML/HTML/DSML-style tool-call markup",
@@ -30698,6 +31330,14 @@ func TestToolParseErrorFeedbackNamesXMLTransportFailure(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected tool parse feedback to contain %q, got:\n%s", want, got)
 		}
+	}
+
+	native := modelFacingToolParseError(got, workerruntime.RecoveryToolTransportNative)
+	if strings.Contains(native, "valid tool call") {
+		t.Fatalf("native model-facing parse feedback should not keep generic parser wording:\n%s", native)
+	}
+	if !strings.Contains(native, "active native tool-call transport") {
+		t.Fatalf("native model-facing parse feedback should name native transport:\n%s", native)
 	}
 }
 
@@ -32030,6 +32670,36 @@ func TestMutationCompletionRejectsUnresolvedRejectedWriteTarget(t *testing.T) {
 	}
 }
 
+func TestImplementationFinalAnswerRejectsNoWriteAcrossTransports(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "implementation_result",
+			TaskFamily:        "implementation",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "edit_file", "answer"},
+			TargetRefs:        []string{"internal/runtime/workerruntime/vocabulary.go"},
+			RequiredEvidence:  []string{"changed_paths_or_noop_reason", "verification_status"},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/runtime/workerruntime/vocabulary.go lines 1-100 (total lines: 361)",
+		Output:  "package workerruntime\n\nconst modeName = \"legacy\"\n",
+	}}
+
+	acceptance := runner.evaluateFinalAnswerAcceptance(
+		"Changed paths: none\n\nVerification: not run.\n\nI found the literal but did not edit it.",
+		results,
+	)
+
+	if acceptance.Decision != finalAnswerAcceptanceRejected || acceptance.BlockerKind != string(turnViolationRequiredEvidenceUnmet) {
+		t.Fatalf("implementation no-write final answer should be rejected before transport-specific finish, got %#v", acceptance)
+	}
+	if !runner.retryableFinalAnswerAcceptanceRejection(acceptance, results, 0, []string{"edit_file", "apply_patch", "write_file", "answer"}) {
+		t.Fatalf("target-write-ready no-write final answer should be retryable")
+	}
+}
+
 func TestMutationCompletionIgnoresRecoveredOutOfScopeRejectedWriteTarget(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -32053,7 +32723,7 @@ func TestMutationCompletionIgnoresRecoveredOutOfScopeRejectedWriteTarget(t *test
 	}, {
 		Tool:    "shell",
 		Summary: "Ran shell command in .",
-		Output:  "ok\texample.com/frozen-label-repo/internal/labels\n",
+		Output:  "$ go test ./internal/labels\nok\texample.com/frozen-label-repo/internal/labels\n",
 	}}
 	acceptance := runner.evaluateFinalAnswerAcceptance(
 		"Implemented the requested change.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: go test ./internal/labels passed",
@@ -32615,6 +33285,20 @@ func TestRuntimeBriefDirectAnswerPreservesAdvisoryEvidenceBeforeAnswerability(t 
 	}
 }
 
+func TestRuntimeBriefWithLiveStateProjectsOperationalModelCallLimit(t *testing.T) {
+	live := (&Runner{}).runtimeBriefWithLiveState(RunPolicy{
+		MaxToolSteps:             12,
+		MaxModelCalls:            3,
+		MaxOperationalModelCalls: 5,
+		MaxContextMessages:       40,
+		MaxContextChars:          120000,
+	}, nil, nil)
+
+	if live.Budget.MaxOperationalModelCalls != 5 {
+		t.Fatalf("live runtime brief dropped operational model-call limit: %#v", live.Budget)
+	}
+}
+
 func TestRunnerEvidencePathsPreservesBroadCandidatesForArchitecture(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		Lane:              "architecture",
@@ -32903,6 +33587,49 @@ func TestRunnerEvidencePathsForMutationDoNotPinOutputMentionedFixturePaths(t *te
 	for _, forbidden := range []string{"internal/workflows/productworkflow/analysis_agents.go", "internal/workflows/productworkflow/implementation.go", "cmd/idiom/implementation.go", "tdd.json", "evidence/traceability_matrix.json"} {
 		if slices.Contains(evidence, forbidden) || slices.Contains(pinned, forbidden) {
 			t.Fatalf("did not expect output-mentioned fixture path %q in mutation evidence=%#v pinned=%#v", forbidden, evidence, pinned)
+		}
+	}
+}
+
+func TestRunnerPinnedPathsForTargetWriteReadyIncludesAllSourceBodyEvidence(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		AllowedEditPaths:  []string{"internal/runtime/workerruntime/vocabulary.go"},
+		TargetRefs:        []string{"internal/runtime/workerruntime/vocabulary.go"},
+		RequiredEvidence:  []string{"changed_paths_or_noop_reason", "verification_status"},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    workspace.ToolNameReadFile,
+			Summary: "Read f1 internal/runtime/workerruntime/catalog.go lines 1-3 (total lines: 3)",
+			Output:  "package workerruntime\n\nvar runtimeCatalog = []string{\"legacy\"}",
+		},
+		{
+			Tool:    workspace.ToolNameReadFile,
+			Summary: "Read f2 internal/runtime/workerruntime/roles.go lines 1-3 (total lines: 3)",
+			Output:  "package workerruntime\n\nconst RuntimeRole = \"worker\"",
+		},
+		{
+			Tool:    workspace.ToolNameReadFile,
+			Summary: "Read f3 internal/runtime/workerruntime/vocabulary.go lines 1-3 (total lines: 3)",
+			Output:  "package workerruntime\n\nconst modeName = \"legacy\"",
+		},
+	}
+
+	if !implementationTargetWriteReadySurfaceActive(brief, results) {
+		t.Fatalf("expected source-body evidence to activate target-write-ready surface")
+	}
+
+	pinned := runnerPinnedPathsForBrief(brief, results, 8)
+	for _, want := range []string{
+		"internal/runtime/workerruntime/catalog.go",
+		"internal/runtime/workerruntime/roles.go",
+		"internal/runtime/workerruntime/vocabulary.go",
+	} {
+		if !slices.Contains(pinned, want) {
+			t.Fatalf("expected pinned target-write-ready paths to include source-body evidence path %q, got %#v", want, pinned)
 		}
 	}
 }
@@ -33967,6 +34694,60 @@ func TestPlanExecuteFailureFeedbackUsesRunStateTransportAfterNativeFallback(t *t
 	}
 }
 
+func TestRunnerFailureFeedbackUsesForcedNativeTransportForToolParseRecovery(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "main",
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		AllowedTools:      []string{workspace.ToolNameSearchContent},
+	}
+	rejected := workspace.ToolResult{
+		Tool:    "tool_parse",
+		Summary: "Malformed tool request rejected",
+		Error:   "malformed DeepSeek XML tool request",
+	}
+
+	packet := buildRunnerFailureFeedbackPacketWithAllowedToolsAndTransport(
+		"main",
+		14,
+		"tool_parse_rejected",
+		workspace.ToolRequest{Tool: "tool_parse"},
+		rejected,
+		nil,
+		false,
+		brief,
+		brief.AllowedTools,
+		PlanExecutePlanningTransport{ForceNativeTools: true},
+	)
+
+	requiredNext := strings.Join(packet.RequiredNext, "\n")
+	if !strings.Contains(requiredNext, "active native tool-call transport") {
+		t.Fatalf("forced-native tool_parse feedback required_next did not preserve native transport: %#v", packet.RequiredNext)
+	}
+	if strings.Contains(requiredNext, "valid JSON tool object") {
+		t.Fatalf("forced-native tool_parse feedback still asked for textual JSON: %#v", packet.RequiredNext)
+	}
+	if strings.Contains(strings.Join(packet.ValidNext, "\n"), "valid JSON tool object") {
+		t.Fatalf("forced-native tool_parse valid_next still asked for textual JSON: %#v", packet.ValidNext)
+	}
+	if strings.Count(strings.Join(packet.ValidNext, "\n"), "active native tool-call transport") != 1 {
+		t.Fatalf("forced-native tool_parse valid_next duplicated native guidance: %#v", packet.ValidNext)
+	}
+	if packet.FailedTool == "tool_parse" {
+		t.Fatalf("forced-native tool_parse feedback leaked fake failed tool: %#v", packet)
+	}
+	if strings.Contains(packet.ResultError, "valid tool call") {
+		t.Fatalf("forced-native tool_parse feedback kept generic parser wording: %q", packet.ResultError)
+	}
+	if strings.Contains(strings.Join(packet.DoNotRepeat, "\n"), "same tool_parse request") {
+		t.Fatalf("forced-native tool_parse feedback leaked fake repeat target: %#v", packet.DoNotRepeat)
+	}
+	if strings.Contains(packet.RecoveryCard, "tool=tool_parse") || strings.Contains(packet.RecoveryCard, "action_class=tool_parse") {
+		t.Fatalf("forced-native tool_parse recovery card leaked fake tool/action:\n%s", packet.RecoveryCard)
+	}
+}
+
 func TestPlanExecuteAnchorRefreshAutonomyRecoveryCardAdvertisesDerivedReadTools(t *testing.T) {
 	var events []RunEvent
 
@@ -34331,8 +35112,8 @@ func TestMutationRepeatedFullReadStillAllowsWriteInsteadOfForcedAnswer(t *testin
 		t.Fatalf("Run: %v", err)
 	}
 
-	if requests != len(replies)-1 {
-		t.Fatalf("expected recovery to close immediately after source-aware verification without a redundant final-answer request, got %d requests", requests)
+	if requests != len(replies) {
+		t.Fatalf("expected recovery to ask the model for source-aware verified closeout, got %d/%d requests", requests, len(replies))
 	}
 
 	if got := countEventsByRole(events, "implementation_target_write_ready_source_refresh_allowed") + countEventsByRole(events, "implementation_target_write_ready_nudge"); got == 0 {
@@ -34362,6 +35143,1491 @@ func TestMutationRepeatedFullReadStillAllowsWriteInsteadOfForcedAnswer(t *testin
 
 	if !strings.Contains(strings.ToLower(answer), "verification") {
 		t.Fatalf("expected final answer to report verification status, got:\n%s", answer)
+	}
+}
+
+func TestRunnerTargetWriteReadyProseFinalAnswerRecoversWithEdit(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.com/targetready\n\ngo 1.24\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := writeTestFile(root, "internal/runtime/workerruntime/vocabulary.go", "package workerruntime\n\nconst modeName = \"legacy\"\n"); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go"}`,
+		"I found the literal and should move it into the runtime vocabulary definitions.",
+		`{"tool":"edit_file","path":"internal/runtime/workerruntime/vocabulary.go","old_text":"const modeName = \"legacy\"","new_text":"const ModeName = \"modern\"","description":"promote mode name literal to exported vocabulary constant"}`,
+		`{"tool":"shell","command":"go test ./..."}`,
+		"Changed paths:\n- internal/runtime/workerruntime/vocabulary.go\n\nVerification: go test ./... passed.",
+	}
+
+	requests := 0
+	var recoveryRequestPayload struct {
+		Messages []llama.ChatMessage `json:"messages"`
+		Tools    []llama.Tool        `json:"tools,omitempty"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		if requests == 2 {
+			if err := json.Unmarshal(body, &recoveryRequestPayload); err != nil {
+				t.Fatalf("decode recovery request: %v\n%s", err, string(body))
+			}
+		}
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request (%d): %s", requests, string(body))
+		}
+
+		reply := replies[requests]
+		requests++
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	defer server.Close()
+
+	var (
+		events  []RunEvent
+		results []workspace.ToolResult
+	)
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			Shell:        "/bin/sh",
+			EnableWrites: true,
+			EnableShell:  true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8, MaxModelCalls: 12},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			TargetPacket: []string{
+				"conversation_context:previous_assistant_recommendation",
+				"Editable candidate file from previous assistant recommendation: internal/runtime/workerruntime/vocabulary.go",
+			},
+			AllowedEditPaths: []string{"internal/runtime/workerruntime/vocabulary.go"},
+			TargetRefs:       []string{"internal/runtime/workerruntime/vocabulary.go"},
+			RequiredEvidence: []string{"changed_paths_or_noop_reason", "verification_status"},
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Move the recommended literal into the vocabulary constant location."}},
+		llama.ChatOptions{MaxTokens: 8192},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			results = append(results, event.Result)
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(results) == 0 || !implementationTargetWriteReadySurfaceActive(runner.RuntimeBrief, results[:1]) {
+		t.Fatalf("expected first source read to activate target-write-ready, results=%#v", results)
+	}
+	if got := countEventsByRole(events, "completion_gate_recovery"); got == 0 {
+		t.Fatalf("expected completion_gate_recovery after prose final answer, events=%s", formatRunEventsForTest(events))
+	}
+	recoveryRequestText := ""
+	for _, message := range recoveryRequestPayload.Messages {
+		recoveryRequestText += "\n" + message.Content
+	}
+	for _, want := range []string{"target-write-ready", "parser-readable write", "prose final answer", "bounded read/search", "<<QUESTION>>", "internal/runtime/workerruntime/vocabulary.go"} {
+		if !strings.Contains(recoveryRequestText, want) {
+			t.Fatalf("expected recovery model request to contain %q, got:\n%s", want, recoveryRequestText)
+		}
+	}
+	if !chatOptionsExposeTool(llama.ChatOptions{Tools: recoveryRequestPayload.Tools}, "read_file") {
+		t.Fatalf("target-write-ready recovery should keep bounded reads available, got tools=%#v", recoveryRequestPayload.Tools)
+	}
+	if !chatOptionsExposeTool(llama.ChatOptions{Tools: recoveryRequestPayload.Tools}, "edit_file") &&
+		!chatOptionsExposeTool(llama.ChatOptions{Tools: recoveryRequestPayload.Tools}, "apply_patch") &&
+		!chatOptionsExposeTool(llama.ChatOptions{Tools: recoveryRequestPayload.Tools}, "write_file") {
+		t.Fatalf("target-write-ready recovery should expose at least one write tool, got %#v", recoveryRequestPayload.Tools)
+	}
+	if strings.Contains(answer, "no successful write tool result") || strings.Contains(answer, "no workspace change was made") {
+		t.Fatalf("target-write-ready recovery should not close with no-edit blocker, got:\n%s", answer)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "internal/runtime/workerruntime/vocabulary.go"))
+	if err != nil {
+		t.Fatalf("read edited file: %v", err)
+	}
+	if !strings.Contains(string(data), `const ModeName = "modern"`) || strings.Contains(string(data), `modeName = "legacy"`) {
+		t.Fatalf("expected recovery edit to apply, got:\n%s", string(data))
+	}
+	if !strings.Contains(answer, "internal/runtime/workerruntime/vocabulary.go") || !strings.Contains(strings.ToLower(answer), "verification") {
+		t.Fatalf("expected final implementation answer after recovery, got:\n%s", answer)
+	}
+}
+
+func TestRunnerTargetWriteReadyAllowsAdditionalReadsBeforeEdit(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.com/targetready\n\ngo 1.24\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := writeTestFile(root, "internal/runtime/workerruntime/vocabulary.go", "package workerruntime\n\nconst modeName = \"legacy\"\n"); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+	if err := writeTestFile(root, "internal/runtime/workerruntime/catalog.go", "package workerruntime\n\nvar runtimeCatalog = []string{\"legacy\"}\n"); err != nil {
+		t.Fatalf("write catalog seed: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go"}`,
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/catalog.go","named_gap":"check whether the catalog already owns the vocabulary literal"}`,
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go","start_line":1,"end_line":3,"named_gap":"confirm exact anchor for the vocabulary constant replacement"}`,
+		`{"tool":"edit_file","path":"internal/runtime/workerruntime/vocabulary.go","old_text":"const modeName = \"legacy\"","new_text":"const ModeName = \"modern\"","description":"promote mode name literal"}`,
+		`{"tool":"shell","command":"go test ./..."}`,
+		"Changed paths:\n- internal/runtime/workerruntime/vocabulary.go\n\nVerification: go test ./... passed.",
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request (%d)", requests)
+		}
+
+		reply := replies[requests]
+		requests++
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	defer server.Close()
+
+	var (
+		events                  []RunEvent
+		readSuccesses           int
+		targetWriteReadyRejects int
+		completionStatuses      []string
+	)
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			Shell:        "/bin/sh",
+			EnableWrites: true,
+			EnableShell:  true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8, MaxModelCalls: 12},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			TargetPacket: []string{
+				"conversation_context:previous_assistant_recommendation",
+				"Editable candidate file from previous assistant recommendation: internal/runtime/workerruntime/vocabulary.go",
+				"Related candidate file from previous assistant recommendation: internal/runtime/workerruntime/catalog.go",
+			},
+			AllowedEditPaths: []string{"internal/runtime/workerruntime/vocabulary.go", "internal/runtime/workerruntime/catalog.go"},
+			TargetRefs:       []string{"internal/runtime/workerruntime/vocabulary.go", "internal/runtime/workerruntime/catalog.go"},
+			RequiredEvidence: []string{"changed_paths_or_noop_reason", "verification_status"},
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+			if event.Role == "completion_status" {
+				completionStatuses = append(completionStatuses, event.Content)
+			}
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Move the recommended literal into the vocabulary constant location."}},
+		llama.ChatOptions{MaxTokens: 8192},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Result.Tool == "read_file" && strings.TrimSpace(event.Result.Error) == "" {
+				readSuccesses++
+			}
+			if strings.Contains(event.Result.Summary, "Target write-ready recovery rejected non-write request") {
+				targetWriteReadyRejects++
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if readSuccesses != 3 {
+		t.Fatalf("expected additional target-write-ready reads to execute under model-owned strategy, got %d successful reads; events=%s", readSuccesses, formatRunEventsForTest(events))
+	}
+	if targetWriteReadyRejects != 0 {
+		t.Fatalf("target-write-ready must not reject non-write reads/searches, got %d rejection(s); events=%s", targetWriteReadyRejects, formatRunEventsForTest(events))
+	}
+	if strings.Contains(strings.Join(completionStatuses, "\n"), "budget_exhausted") ||
+		strings.Contains(strings.Join(completionStatuses, "\n"), "implementation_tool_step_budget_blocked") {
+		t.Fatalf("target-write-ready rereads should not force a budget closeout, statuses=%v", completionStatuses)
+	}
+	if !strings.Contains(answer, "internal/runtime/workerruntime/vocabulary.go") || !strings.Contains(strings.ToLower(answer), "verification") {
+		t.Fatalf("expected edit and verification after invalid-reread recovery, got:\n%s", answer)
+	}
+}
+
+func TestRunnerImplementationVerifiedWritesReturnModelAuthoredFinalProse(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.com/finalanswer\n\ngo 1.24\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := writeTestFile(root, "internal/runtime/workerruntime/vocabulary.go", "package workerruntime\n\nconst modeName = \"legacy\"\n"); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+
+	modelFinal := "I promoted the runtime mode literal to a named constant.\n\nChanged paths:\n- internal/runtime/workerruntime/vocabulary.go\n\nVerification: go test ./... passed."
+	replies := []string{
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go"}`,
+		`{"tool":"edit_file","path":"internal/runtime/workerruntime/vocabulary.go","old_text":"const modeName = \"legacy\"","new_text":"const ModeName = \"modern\"","description":"promote mode name literal"}`,
+		`{"tool":"shell","command":"go test ./..."}`,
+		modelFinal,
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request (%d)", requests)
+		}
+
+		reply := replies[requests]
+		requests++
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	defer server.Close()
+
+	var completionStatuses []string
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			Shell:        "/bin/sh",
+			EnableWrites: true,
+			EnableShell:  true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8, MaxModelCalls: 12},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			AllowedEditPaths:     []string{"internal/runtime/workerruntime/vocabulary.go"},
+			TargetRefs:           []string{"internal/runtime/workerruntime/vocabulary.go"},
+			RequiredEvidence:     []string{"changed_paths_or_noop_reason", "verification_status"},
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "completion_status" {
+				completionStatuses = append(completionStatuses, event.Content)
+			}
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Move the recommended literal into the vocabulary constant location."}},
+		llama.ChatOptions{MaxTokens: 8192},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if requests != len(replies) {
+		t.Fatalf("expected model-authored final answer after %d replies, got %d", len(replies), requests)
+	}
+	if strings.TrimSpace(answer) != modelFinal {
+		t.Fatalf("verified implementation should return model-authored final prose, got:\n%s", answer)
+	}
+	if strings.Contains(answer, "Workspace changes were recorded and verification evidence was found") {
+		t.Fatalf("verified implementation must not return synthesized template, got:\n%s", answer)
+	}
+	if strings.Contains(strings.Join(completionStatuses, "\n"), `"status":"blocked"`) {
+		t.Fatalf("verified implementation final prose should not emit blocked completion status: %v", completionStatuses)
+	}
+}
+
+func TestRunnerTerminalRejectedMutationPathDoesNotReturnSuccessTemplate(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			AllowedEditPaths:     []string{"internal/runtime/workerruntime/vocabulary.go"},
+			TargetRefs:           []string{"internal/runtime/workerruntime/vocabulary.go"},
+			RequiredEvidence:     []string{"changed_paths_or_noop_reason", "verification_status"},
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "edit_file",
+		Summary: "Edited internal/runtime/workerruntime/vocabulary.go",
+		Output:  "Changed paths:\n- internal/runtime/workerruntime/vocabulary.go\n",
+	}, {
+		Tool:    "shell",
+		Summary: "Ran shell command in .",
+		Output:  "ok\texample.com/rejectedpath/internal/runtime/workerruntime\n",
+	}, {
+		Tool:    "edit_file",
+		Summary: "Tool not available in current runtime contract",
+		Output:  "Rejected write target: `internal/runtime/workerruntime/catalog.go`",
+		Error:   "edit_file is not in the current allowed tool surface.",
+	}}
+	modelFinal := "Implemented the requested constants cleanup.\n\nChanged paths:\n- internal/runtime/workerruntime/vocabulary.go\n\nVerification: go test ./... passed."
+
+	decision := runner.classifyTerminalAnswer(modelFinal, "rejected_mutation_paths_remaining", results)
+	answer := decision.PresentedAnswer
+
+	if !strings.Contains(answer, "internal/runtime/workerruntime/catalog.go") ||
+		!strings.Contains(answer, "rejected") {
+		t.Fatalf("unresolved rejected mutation path should produce an explicit blocker, got:\n%s", answer)
+	}
+	if strings.Contains(answer, "Workspace changes were recorded and verification evidence was found") {
+		t.Fatalf("unresolved rejected mutation path must not return synthesized success template, got:\n%s", answer)
+	}
+}
+
+func TestRunnerTargetWriteReadyAllowsSearchBeforeEdit(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.com/targetready\n\ngo 1.24\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := writeTestFile(root, "internal/runtime/workerruntime/vocabulary.go", "package workerruntime\n\nconst modeName = \"legacy\"\n"); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+	if err := writeTestFile(root, "internal/runtime/workerruntime/catalog.go", "package workerruntime\n\nvar runtimeCatalog = []string{\"legacy\"}\n"); err != nil {
+		t.Fatalf("write catalog seed: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go"}`,
+		`{"tool":"search_content","path":"internal/runtime/workerruntime","pattern":"legacy","named_gap":"check related runtime vocabulary literal references before choosing the edit target"}`,
+		`{"tool":"edit_file","path":"internal/runtime/workerruntime/vocabulary.go","old_text":"const modeName = \"legacy\"","new_text":"const ModeName = \"modern\"","description":"promote mode name literal"}`,
+		`{"tool":"shell","command":"go test ./..."}`,
+		"Changed paths:\n- internal/runtime/workerruntime/vocabulary.go\n\nVerification: go test ./... passed.",
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request (%d)", requests)
+		}
+
+		reply := replies[requests]
+		requests++
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	defer server.Close()
+
+	var (
+		events                  []RunEvent
+		searchSuccesses         int
+		targetWriteReadyRejects int
+	)
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			Shell:        "/bin/sh",
+			EnableWrites: true,
+			EnableShell:  true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8, MaxModelCalls: 12},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			TargetPacket: []string{
+				"conversation_context:previous_assistant_recommendation",
+				"Editable candidate file from previous assistant recommendation: internal/runtime/workerruntime/vocabulary.go",
+				"Related candidate file from previous assistant recommendation: internal/runtime/workerruntime/catalog.go",
+			},
+			AllowedEditPaths: []string{"internal/runtime/workerruntime/vocabulary.go", "internal/runtime/workerruntime/catalog.go"},
+			TargetRefs:       []string{"internal/runtime/workerruntime/vocabulary.go", "internal/runtime/workerruntime/catalog.go"},
+			RequiredEvidence: []string{"changed_paths_or_noop_reason", "verification_status"},
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Move the recommended literal into the vocabulary constant location."}},
+		llama.ChatOptions{MaxTokens: 8192},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Result.Tool == "search_content" && strings.TrimSpace(event.Result.Error) == "" {
+				searchSuccesses++
+			}
+			if strings.Contains(event.Result.Summary, "Target write-ready recovery rejected non-write request") {
+				targetWriteReadyRejects++
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if searchSuccesses != 1 {
+		t.Fatalf("expected target-write-ready search_content to execute, got %d successful searches; events=%s", searchSuccesses, formatRunEventsForTest(events))
+	}
+	if targetWriteReadyRejects != 0 {
+		t.Fatalf("target-write-ready must not reject non-write searches, got %d rejection(s); events=%s", targetWriteReadyRejects, formatRunEventsForTest(events))
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "internal/runtime/workerruntime/vocabulary.go"))
+	if err != nil {
+		t.Fatalf("read edited file: %v", err)
+	}
+	if !strings.Contains(string(data), `const ModeName = "modern"`) || strings.Contains(string(data), `modeName = "legacy"`) {
+		t.Fatalf("expected edit after target-write-ready search, got:\n%s", string(data))
+	}
+	if !strings.Contains(answer, "internal/runtime/workerruntime/vocabulary.go") || !strings.Contains(strings.ToLower(answer), "verification") {
+		t.Fatalf("expected final implementation answer after search and edit, got:\n%s", answer)
+	}
+}
+
+func TestRunnerTargetWriteReadyRedirectsHiddenShellLineMeasurementToFileStats(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.com/targetready\n\ngo 1.24\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := writeTestFile(root, "internal/runtime/workerruntime/vocabulary.go", "package workerruntime\n\nconst modeName = \"legacy\"\n"); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+	if err := writeTestFile(root, "internal/runtime/workerruntime/catalog.go", "package workerruntime\n\nconst replacementLine = \"legacy\"\n"); err != nil {
+		t.Fatalf("write catalog seed: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go"}`,
+		`{"tool":"shell","command":"sed -n '3p' internal/runtime/workerruntime/catalog.go | wc -c"}`,
+		`{"tool":"file_stats","path":"internal/runtime/workerruntime/catalog.go","start_line":3,"end_line":3,"named_gap":"measure replacement line length before editing"}`,
+		`{"tool":"edit_file","path":"internal/runtime/workerruntime/vocabulary.go","old_text":"const modeName = \"legacy\"","new_text":"const ModeName = \"modern\"","description":"promote mode name literal"}`,
+		`{"tool":"shell","command":"go test ./..."}`,
+		"Changed paths:\n- internal/runtime/workerruntime/vocabulary.go\n\nVerification: go test ./... passed.",
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request (%d): %s", requests, string(body))
+		}
+
+		reply := replies[requests]
+		requests++
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	defer server.Close()
+
+	var (
+		events             []RunEvent
+		fileStatsSuccesses int
+		sedShellErrors     []string
+	)
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			Shell:        "/bin/sh",
+			EnableWrites: true,
+			EnableShell:  true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8, MaxModelCalls: 12},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			TargetPacket: []string{
+				"conversation_context:previous_assistant_recommendation",
+				"Editable candidate file from previous assistant recommendation: internal/runtime/workerruntime/vocabulary.go",
+				"Related candidate file from previous assistant recommendation: internal/runtime/workerruntime/catalog.go",
+			},
+			AllowedEditPaths: []string{"internal/runtime/workerruntime/vocabulary.go", "internal/runtime/workerruntime/catalog.go"},
+			TargetRefs:       []string{"internal/runtime/workerruntime/vocabulary.go", "internal/runtime/workerruntime/catalog.go"},
+			RequiredEvidence: []string{"changed_paths_or_noop_reason", "verification_status"},
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Move the recommended literal into the vocabulary constant location."}},
+		llama.ChatOptions{MaxTokens: 8192},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Result.Tool == workspace.ToolNameFileStats && strings.TrimSpace(event.Result.Error) == "" {
+				fileStatsSuccesses++
+			}
+			if event.Request.Tool == workspace.ToolNameShell && strings.Contains(event.Request.Command, "sed -n") && strings.TrimSpace(event.Result.Error) != "" {
+				sedShellErrors = append(sedShellErrors, event.Result.Error)
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if got := countEventsByRole(events, "discovery_redirect_target_write_ready_hidden_shell"); got != 1 {
+		t.Fatalf("expected one hidden shell redirect before scoped rejection, got %d; events=%s", got, formatRunEventsForTest(events))
+	}
+	if got := countEventsByRole(events, "implementation_target_write_ready_nudge"); got != 0 {
+		t.Fatalf("hidden shell redirect should run before generic target-write-ready nudge, got %d nudge(s); events=%s", got, formatRunEventsForTest(events))
+	}
+	for _, event := range events {
+		if event.Role == "implementation_target_write_ready_recovery" && strings.Contains(event.Content, "shell") {
+			t.Fatalf("hidden deterministic shell redirect should not emit shell-oriented write-ready recovery before redirect, got event=%#v", event)
+		}
+	}
+	if len(sedShellErrors) != 0 {
+		t.Fatalf("deterministic shell line measurement should redirect rather than error, got %v; events=%s", sedShellErrors, formatRunEventsForTest(events))
+	}
+	if fileStatsSuccesses != 1 {
+		t.Fatalf("expected redirected file_stats request to execute once, got %d; events=%s", fileStatsSuccesses, formatRunEventsForTest(events))
+	}
+	if !strings.Contains(answer, "internal/runtime/workerruntime/vocabulary.go") || !strings.Contains(strings.ToLower(answer), "verification") {
+		t.Fatalf("expected final implementation answer after file_stats and edit, got:\n%s", answer)
+	}
+}
+
+func TestRunnerTargetWriteReadyUnsafeToolShapeRecoversWithoutCompletionGate(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.com/targetready\n\ngo 1.24\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := writeTestFile(root, "internal/runtime/workerruntime/vocabulary.go", "package workerruntime\n\nconst modeName = \"legacy\"\n"); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go"}`,
+		"tool: write_file\npath: internal/runtime/workerruntime/vocabulary.go\ncontent: package workerruntime\n\nconst ModeName = \"modern\"\ndescription: promote mode literal",
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go","start_line":1,"end_line":3,"named_gap":"confirm exact replacement anchor after unsafe write-shaped output was rejected"}`,
+		`{"tool":"edit_file","path":"internal/runtime/workerruntime/vocabulary.go","old_text":"const modeName = \"legacy\"","new_text":"const ModeName = \"modern\"","description":"promote mode name literal"}`,
+		`{"tool":"shell","command":"go test ./..."}`,
+		"Changed paths:\n- internal/runtime/workerruntime/vocabulary.go\n\nVerification: go test ./... passed.",
+	}
+
+	requests := 0
+	var recoveryRequestPayload struct {
+		Messages []llama.ChatMessage `json:"messages"`
+		Tools    []llama.Tool        `json:"tools,omitempty"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		if requests == 2 {
+			if err := json.Unmarshal(body, &recoveryRequestPayload); err != nil {
+				t.Fatalf("decode recovery request: %v\n%s", err, string(body))
+			}
+		}
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request (%d): %s", requests, string(body))
+		}
+
+		reply := replies[requests]
+		requests++
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	defer server.Close()
+
+	var (
+		events                   []RunEvent
+		toolParseResults         int
+		completionGateRecoveries int
+	)
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			Shell:        "/bin/sh",
+			EnableWrites: true,
+			EnableShell:  true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 10, MaxNoProgressTurns: 10, MaxModelCalls: 12},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "edit_file", "write_file", "apply_patch", "shell"},
+			TargetPacket: []string{
+				"conversation_context:previous_assistant_recommendation",
+				"Editable candidate file from previous assistant recommendation: internal/runtime/workerruntime/vocabulary.go",
+			},
+			AllowedEditPaths: []string{"internal/runtime/workerruntime/vocabulary.go"},
+			TargetRefs:       []string{"internal/runtime/workerruntime/vocabulary.go"},
+			RequiredEvidence: []string{"changed_paths_or_noop_reason", "verification_status"},
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+			if event.Role == "completion_gate_recovery" {
+				completionGateRecoveries++
+			}
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Move the recommended literal into the vocabulary constant location."}},
+		llama.ChatOptions{MaxTokens: 8192, ToolChoice: "auto"},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Request.Tool == "tool_parse" || event.Result.Tool == "tool_parse" {
+				toolParseResults++
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if toolParseResults != 1 {
+		t.Fatalf("unsafe write-shaped output should be one parser recovery, got %d; events=%s", toolParseResults, formatRunEventsForTest(events))
+	}
+	if got := countEventsByRole(events, "unsafe_tool_shape_recovery"); got != 1 {
+		t.Fatalf("expected one unsafe tool-shape recovery event, got %d; events=%s", got, formatRunEventsForTest(events))
+	}
+	if completionGateRecoveries != 0 {
+		t.Fatalf("unsafe tool-shaped output must not be routed through completion-gate recovery, got %d; events=%s", completionGateRecoveries, formatRunEventsForTest(events))
+	}
+
+	recoveryRequestText := ""
+	for _, message := range recoveryRequestPayload.Messages {
+		recoveryRequestText += "\n" + message.Content
+	}
+	for _, want := range []string{"tool-shaped arguments", "target-write-ready", "parser-readable write", "bounded " + implementationTargetWriteReadySourceProbeToolsPhrase, "<<QUESTION>>"} {
+		if !strings.Contains(recoveryRequestText, want) {
+			t.Fatalf("expected unsafe recovery request to contain %q, got:\n%s", want, recoveryRequestText)
+		}
+	}
+	if strings.Contains(recoveryRequestText, "answer in plain prose") || strings.Contains(recoveryRequestText, "plain user-visible prose") {
+		t.Fatalf("target-write-ready unsafe recovery must not invite prose final answers, got:\n%s", recoveryRequestText)
+	}
+	if !chatOptionsExposeTool(llama.ChatOptions{Tools: recoveryRequestPayload.Tools}, "read_file") {
+		t.Fatalf("unsafe target-write-ready recovery should keep reads available, got tools=%#v", recoveryRequestPayload.Tools)
+	}
+	if !chatOptionsExposeTool(llama.ChatOptions{Tools: recoveryRequestPayload.Tools}, "edit_file") &&
+		!chatOptionsExposeTool(llama.ChatOptions{Tools: recoveryRequestPayload.Tools}, "apply_patch") &&
+		!chatOptionsExposeTool(llama.ChatOptions{Tools: recoveryRequestPayload.Tools}, "write_file") {
+		t.Fatalf("unsafe target-write-ready recovery should keep writes available, got tools=%#v", recoveryRequestPayload.Tools)
+	}
+	if chatOptionsExposeTool(llama.ChatOptions{Tools: recoveryRequestPayload.Tools}, "shell") {
+		t.Fatalf("unsafe target-write-ready recovery should use the phase tool surface and hide shell before verification, got tools=%#v", recoveryRequestPayload.Tools)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "internal/runtime/workerruntime/vocabulary.go"))
+	if err != nil {
+		t.Fatalf("read edited file: %v", err)
+	}
+	if !strings.Contains(string(data), `const ModeName = "modern"`) || strings.Contains(string(data), `modeName = "legacy"`) {
+		t.Fatalf("expected recovery edit to apply, got:\n%s", string(data))
+	}
+	if !strings.Contains(answer, "internal/runtime/workerruntime/vocabulary.go") || !strings.Contains(strings.ToLower(answer), "verification") {
+		t.Fatalf("expected final implementation answer after unsafe recovery, got:\n%s", answer)
+	}
+}
+
+func TestRunnerTargetWriteReadyAmbiguousKeyValueAnswerRecoversWithoutToolParse(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.com/targetready\n\ngo 1.24\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := writeTestFile(root, "internal/runtime/workerruntime/vocabulary.go", "package workerruntime\n\nconst modeName = \"legacy\"\n"); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go"}`,
+		"path: internal/runtime/workerruntime/vocabulary.go\nold_text: const modeName = \"legacy\"\nnew_text: const ModeName = \"modern\"\ndescription: promote mode literal\nstatus: ready to edit",
+		`{"tool":"edit_file","path":"internal/runtime/workerruntime/vocabulary.go","old_text":"const modeName = \"legacy\"","new_text":"const ModeName = \"modern\"","description":"promote mode name literal"}`,
+		`{"tool":"shell","command":"go test ./..."}`,
+		"Changed paths:\n- internal/runtime/workerruntime/vocabulary.go\n\nVerification: go test ./... passed.",
+	}
+
+	requests := 0
+	var recoveryRequestPayload struct {
+		Messages []llama.ChatMessage `json:"messages"`
+		Tools    []llama.Tool        `json:"tools,omitempty"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		if requests == 2 {
+			if err := json.Unmarshal(body, &recoveryRequestPayload); err != nil {
+				t.Fatalf("decode recovery request: %v\n%s", err, string(body))
+			}
+		}
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request (%d): %s", requests, string(body))
+		}
+
+		reply := replies[requests]
+		requests++
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	defer server.Close()
+
+	var (
+		events                   []RunEvent
+		toolParseResults         int
+		ambiguousRecoveries      int
+		completionGateRecoveries int
+	)
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			Shell:        "/bin/sh",
+			EnableWrites: true,
+			EnableShell:  true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 10, MaxNoProgressTurns: 10, MaxModelCalls: 12},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "edit_file", "write_file", "apply_patch", "shell"},
+			TargetPacket: []string{
+				"conversation_context:previous_assistant_recommendation",
+				"Editable candidate file from previous assistant recommendation: internal/runtime/workerruntime/vocabulary.go",
+			},
+			AllowedEditPaths: []string{"internal/runtime/workerruntime/vocabulary.go"},
+			TargetRefs:       []string{"internal/runtime/workerruntime/vocabulary.go"},
+			RequiredEvidence: []string{"changed_paths_or_noop_reason", "verification_status"},
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+			switch event.Role {
+			case "ambiguous_model_output_recovery":
+				ambiguousRecoveries++
+			case "completion_gate_recovery":
+				completionGateRecoveries++
+			}
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Move the recommended literal into the vocabulary constant location."}},
+		llama.ChatOptions{MaxTokens: 8192, ToolChoice: "auto"},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Request.Tool == "tool_parse" || event.Result.Tool == "tool_parse" {
+				toolParseResults++
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if toolParseResults != 0 {
+		t.Fatalf("ambiguous key-value answer text should not be recorded as tool_parse, got %d; events=%s", toolParseResults, formatRunEventsForTest(events))
+	}
+	if ambiguousRecoveries != 1 {
+		t.Fatalf("expected one ambiguous model-output recovery, got %d; events=%s", ambiguousRecoveries, formatRunEventsForTest(events))
+	}
+	if completionGateRecoveries != 0 {
+		t.Fatalf("ambiguous key-value target-write-ready text should not route through completion gate, got %d; events=%s", completionGateRecoveries, formatRunEventsForTest(events))
+	}
+
+	recoveryRequestText := ""
+	for _, message := range recoveryRequestPayload.Messages {
+		recoveryRequestText += "\n" + message.Content
+	}
+	for _, want := range []string{"not an implementation action", "workspace write follow-up", "target-write-ready", "active write tool call", "file_stats", "<<QUESTION>>"} {
+		if !strings.Contains(recoveryRequestText, want) {
+			t.Fatalf("expected ambiguous recovery request to contain %q, got:\n%s", want, recoveryRequestText)
+		}
+	}
+	if strings.Contains(recoveryRequestText, "Unsafe tool-shaped request rejected") || strings.Contains(recoveryRequestText, "tool_parse") {
+		t.Fatalf("ambiguous recovery should not expose parser/tool_parse failure wording, got:\n%s", recoveryRequestText)
+	}
+	if !chatOptionsExposeTool(llama.ChatOptions{Tools: recoveryRequestPayload.Tools}, "read_file") ||
+		!chatOptionsExposeTool(llama.ChatOptions{Tools: recoveryRequestPayload.Tools}, "edit_file") {
+		t.Fatalf("ambiguous recovery should keep read and write tools available, got tools=%#v", recoveryRequestPayload.Tools)
+	}
+	if chatOptionsExposeTool(llama.ChatOptions{Tools: recoveryRequestPayload.Tools}, "shell") {
+		t.Fatalf("ambiguous recovery should use the phase tool surface and hide shell before verification, got tools=%#v", recoveryRequestPayload.Tools)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "internal/runtime/workerruntime/vocabulary.go"))
+	if err != nil {
+		t.Fatalf("read edited file: %v", err)
+	}
+	if !strings.Contains(string(data), `const ModeName = "modern"`) || strings.Contains(string(data), `modeName = "legacy"`) {
+		t.Fatalf("expected recovery edit to apply, got:\n%s", string(data))
+	}
+	if strings.Contains(answer, "Unsafe tool-shaped request rejected") || strings.Contains(answer, "tool_parse") {
+		t.Fatalf("final answer must not surface ambiguous parser recovery as blocker, got:\n%s", answer)
+	}
+	if !strings.Contains(answer, "internal/runtime/workerruntime/vocabulary.go") || !strings.Contains(strings.ToLower(answer), "verification") {
+		t.Fatalf("expected final implementation answer after ambiguous recovery, got:\n%s", answer)
+	}
+}
+
+func TestRunnerTargetWriteReadyAmbiguousOutputThenReadsOperationalLimitReportsNoWriteBlocker(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.com/targetready\n\ngo 1.24\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := writeTestFile(root, "internal/runtime/workerruntime/vocabulary.go", "package workerruntime\n\nconst modeName = \"legacy\"\n"); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go"}`,
+		"path: internal/runtime/workerruntime/vocabulary.go\nold_text: const modeName = \"legacy\"\nnew_text: const ModeName = \"modern\"\ndescription: promote mode literal\nstatus: ready to edit",
+		`{"tool":"search_content","query":"modeName","path":"internal/runtime/workerruntime/vocabulary.go","named_gap":"confirm no other symbol references before editing"}`,
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go","start_line":1,"end_line":3,"named_gap":"confirm exact replacement anchor before editing"}`,
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request (%d): %s", requests, string(body))
+		}
+
+		reply := replies[requests]
+		requests++
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	defer server.Close()
+
+	var (
+		events            []RunEvent
+		toolParseResults  int
+		searchSuccesses   int
+		readFileSuccesses int
+	)
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			Shell:        "/bin/sh",
+			EnableWrites: true,
+			EnableShell:  true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 10, MaxNoProgressTurns: 10, MaxOperationalModelCalls: 4},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "search_content", "edit_file", "write_file", "apply_patch", "shell"},
+			TargetPacket: []string{
+				"conversation_context:previous_assistant_recommendation",
+				"Editable candidate file from previous assistant recommendation: internal/runtime/workerruntime/vocabulary.go",
+			},
+			AllowedEditPaths:     []string{"internal/runtime/workerruntime/vocabulary.go"},
+			TargetRefs:           []string{"internal/runtime/workerruntime/vocabulary.go"},
+			RequiredEvidence:     []string{"changed_paths_or_noop_reason", "verification_status"},
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Move the recommended literal into the vocabulary constant location."}},
+		llama.ChatOptions{MaxTokens: 8192, ToolChoice: "auto"},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Request.Tool == "tool_parse" || event.Result.Tool == "tool_parse" {
+				toolParseResults++
+			}
+			if event.Result.Tool == "search_content" && strings.TrimSpace(event.Result.Error) == "" {
+				searchSuccesses++
+			}
+			if event.Result.Tool == "read_file" && strings.TrimSpace(event.Result.Error) == "" {
+				readFileSuccesses++
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if requests != len(replies) {
+		t.Fatalf("expected operational model-call limit to stop after %d replies, got %d", len(replies), requests)
+	}
+	if toolParseResults != 0 {
+		t.Fatalf("ambiguous key-value answer should not become tool_parse result, got %d; events=%s", toolParseResults, formatRunEventsForTest(events))
+	}
+	if got := countEventsByRole(events, "ambiguous_model_output_recovery"); got != 1 {
+		t.Fatalf("expected one ambiguous output recovery, got %d; events=%s", got, formatRunEventsForTest(events))
+	}
+	if searchSuccesses != 1 || readFileSuccesses != 2 {
+		t.Fatalf("expected allowed evidence calls before operational stop, got searches=%d reads=%d; events=%s", searchSuccesses, readFileSuccesses, formatRunEventsForTest(events))
+	}
+	if !strings.HasPrefix(answer, "<<QUESTION>>:") {
+		t.Fatalf("expected budget exhaustion to return blocker question, got:\n%s", answer)
+	}
+	for _, want := range []string{"implementation operational model-call limit reached", "before the implementation contract produced a parser-readable write", "Source-body evidence already gathered", "internal/runtime/workerruntime/vocabulary.go"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected budget blocker to contain %q, got:\n%s", want, answer)
+		}
+	}
+	for _, forbidden := range []string{"Unsafe tool-shaped request rejected", "tool_parse"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("budget blocker must not surface stale parser recovery %q, got:\n%s", forbidden, answer)
+		}
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "internal/runtime/workerruntime/vocabulary.go"))
+	if err != nil {
+		t.Fatalf("read source file: %v", err)
+	}
+	if !strings.Contains(string(data), `const modeName = "legacy"`) || strings.Contains(string(data), `const ModeName = "modern"`) {
+		t.Fatalf("test should end with no workspace edit, got:\n%s", string(data))
+	}
+}
+
+func TestRunnerTargetWriteReadyExplicitUnsafeThenReadsOperationalLimitReportsNoWriteBlocker(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.com/targetready\n\ngo 1.24\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := writeTestFile(root, "internal/runtime/workerruntime/vocabulary.go", "package workerruntime\n\nconst modeName = \"legacy\"\n"); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go"}`,
+		"tool: write_file\npath: internal/runtime/workerruntime/vocabulary.go\ncontent: package workerruntime\n\nconst ModeName = \"modern\"\ndescription: promote mode literal",
+		`{"tool":"search_content","query":"modeName","path":"internal/runtime/workerruntime/vocabulary.go","named_gap":"confirm no other symbol references before editing"}`,
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go","start_line":1,"end_line":3,"named_gap":"confirm exact replacement anchor before editing"}`,
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request (%d): %s", requests, string(body))
+		}
+
+		reply := replies[requests]
+		requests++
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	defer server.Close()
+
+	var (
+		events            []RunEvent
+		toolParseResults  int
+		searchSuccesses   int
+		readFileSuccesses int
+	)
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			Shell:        "/bin/sh",
+			EnableWrites: true,
+			EnableShell:  true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 10, MaxNoProgressTurns: 10, MaxOperationalModelCalls: 4},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "search_content", "edit_file", "write_file", "apply_patch", "shell"},
+			TargetPacket: []string{
+				"conversation_context:previous_assistant_recommendation",
+				"Editable candidate file from previous assistant recommendation: internal/runtime/workerruntime/vocabulary.go",
+			},
+			AllowedEditPaths:     []string{"internal/runtime/workerruntime/vocabulary.go"},
+			TargetRefs:           []string{"internal/runtime/workerruntime/vocabulary.go"},
+			RequiredEvidence:     []string{"changed_paths_or_noop_reason", "verification_status"},
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Move the recommended literal into the vocabulary constant location."}},
+		llama.ChatOptions{MaxTokens: 8192, ToolChoice: "auto"},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Request.Tool == parserRecoveryToolName || event.Result.Tool == parserRecoveryToolName {
+				toolParseResults++
+			}
+			if event.Result.Tool == "search_content" && strings.TrimSpace(event.Result.Error) == "" {
+				searchSuccesses++
+			}
+			if event.Result.Tool == "read_file" && strings.TrimSpace(event.Result.Error) == "" {
+				readFileSuccesses++
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if requests != len(replies) {
+		t.Fatalf("expected operational model-call limit to stop after %d replies, got %d", len(replies), requests)
+	}
+	if toolParseResults != 1 {
+		t.Fatalf("explicit unsafe tool-shaped output should record one parser recovery, got %d; events=%s", toolParseResults, formatRunEventsForTest(events))
+	}
+	if got := countEventsByRole(events, "unsafe_tool_shape_recovery"); got != 1 {
+		t.Fatalf("expected one unsafe tool-shape recovery, got %d; events=%s", got, formatRunEventsForTest(events))
+	}
+	if searchSuccesses != 1 || readFileSuccesses != 2 {
+		t.Fatalf("expected allowed evidence calls before operational stop, got searches=%d reads=%d; events=%s", searchSuccesses, readFileSuccesses, formatRunEventsForTest(events))
+	}
+	for _, want := range []string{"implementation operational model-call limit reached", "before the implementation contract produced a parser-readable write", "Source-body evidence already gathered", "internal/runtime/workerruntime/vocabulary.go"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected budget blocker to contain %q, got:\n%s", want, answer)
+		}
+	}
+	for _, forbidden := range []string{parserRecoverySummaryUnsafe, parserRecoveryToolName} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("budget blocker must not surface stale parser recovery %q, got:\n%s", forbidden, answer)
+		}
+	}
+}
+
+func TestRunnerTargetWriteReadyDuplicateReadsContinuePastAdvisoryModelCallBudget(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.com/targetready\n\ngo 1.24\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := writeTestFile(root, "internal/runtime/workerruntime/vocabulary.go", "package workerruntime\n\nconst ModeName = \"legacy\"\n"); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go"}`,
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go"}`,
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go"}`,
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go"}`,
+		`{"tool":"edit_file","path":"internal/runtime/workerruntime/vocabulary.go","old_text":"const ModeName = \"legacy\"","new_text":"const ModeName = \"modern\"","description":"update the vocabulary mode name literal"}`,
+		`{"tool":"shell","command":"go test ./..."}`,
+		"Changed paths:\n- internal/runtime/workerruntime/vocabulary.go\n\nVerification: go test ./... passed.",
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request (%d): %s", requests, string(body))
+		}
+
+		reply := replies[requests]
+		requests++
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	defer server.Close()
+
+	var (
+		events                  []RunEvent
+		readSuccesses           int
+		targetWriteReadyRejects int
+		results                 []workspace.ToolResult
+	)
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			Shell:        "/bin/sh",
+			EnableWrites: true,
+			EnableShell:  true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 10, MaxNoProgressTurns: 2, MaxModelCalls: 4, FingerprintNudgeAt: 2},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "search_content", "edit_file", "write_file", "apply_patch", "shell"},
+			TargetPacket: []string{
+				"conversation_context:previous_assistant_recommendation",
+				"Editable candidate file from previous assistant recommendation: internal/runtime/workerruntime/vocabulary.go",
+			},
+			AllowedEditPaths:     []string{"internal/runtime/workerruntime/vocabulary.go"},
+			TargetRefs:           []string{"internal/runtime/workerruntime/vocabulary.go"},
+			RequiredEvidence:     []string{"changed_paths_or_noop_reason", "verification_status"},
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Move the recommended literal into the vocabulary constant location."}},
+		llama.ChatOptions{MaxTokens: 8192, ToolChoice: "auto"},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			results = append(results, event.Result)
+			if event.Result.Tool == workspace.ToolNameReadFile && strings.TrimSpace(event.Result.Error) == "" {
+				readSuccesses++
+			}
+			if strings.Contains(event.Result.Summary, "Target write-ready recovery rejected non-write request") {
+				targetWriteReadyRejects++
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if requests != len(replies) {
+		t.Fatalf("expected advisory model-call overage to continue through edit and final answer after %d replies, got %d; events=%s", len(replies), requests, formatRunEventsForTest(events))
+	}
+	if readSuccesses != 4 {
+		t.Fatalf("duplicate target-write-ready reads should execute before the edit, got %d successful reads; events=%s", readSuccesses, formatRunEventsForTest(events))
+	}
+	if targetWriteReadyRejects != 0 {
+		t.Fatalf("target-write-ready duplicate reads must not be rejected, got %d rejection(s); events=%s", targetWriteReadyRejects, formatRunEventsForTest(events))
+	}
+	if got := countEventsByRole(events, "implementation_target_write_ready_read_loop_policy_deferred"); got == 0 {
+		t.Fatalf("expected repeated read-loop policy to defer to evidence accounting, events=%s", formatRunEventsForTest(events))
+	}
+	if strings.HasPrefix(answer, "<<QUESTION>>:") {
+		t.Fatalf("advisory model-call threshold must not return blocker question, got:\n%s", answer)
+	}
+	var budgetLedger runnerBudgetLedger
+	for _, event := range events {
+		if event.Role != "budget_ledger" {
+			continue
+		}
+		if err := json.Unmarshal([]byte(event.Content), &budgetLedger); err != nil {
+			t.Fatalf("decode budget ledger %q: %v", event.Content, err)
+		}
+	}
+	if budgetLedger.MaxModelCalls != 4 || budgetLedger.UsedModelCalls < 4 {
+		t.Fatalf("expected advisory model-call counts in ledger after overage, got %#v", budgetLedger)
+	}
+	if budgetLedger.BudgetExhausted || budgetLedger.StopReason == "model_call_budget_exhausted" {
+		t.Fatalf("advisory model-call overage must not be terminal budget exhaustion, got %#v", budgetLedger)
+	}
+	for _, forbidden := range []string{"implementation model-call budget", "model-call budget reached", "model_call_budget_exhausted", "implementation no-progress", "evidence is missing", "Rerun with a narrower edit target", "if more source evidence is required", "source-satisfied"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("duplicate source reads should not produce advisory-budget/no-progress closeout or stale source-evidence language %q, got:\n%s", forbidden, answer)
+		}
+	}
+	if len(results) == 0 || len(changedPathsFromToolResults(results)) == 0 {
+		t.Fatalf("test should end with a workspace change after advisory overage, results=%#v", results)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "internal/runtime/workerruntime/vocabulary.go"))
+	if err != nil {
+		t.Fatalf("read edited file: %v", err)
+	}
+	if !strings.Contains(string(data), `const ModeName = "modern"`) || strings.Contains(string(data), `ModeName = "legacy"`) {
+		t.Fatalf("expected edit after advisory model-call overage, got:\n%s\nresults=%#v", string(data), results)
+	}
+}
+
+func TestRunnerTargetWriteReadyDefersRepeatedReadLoopPolicyUntilEdit(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.com/targetready\n\ngo 1.24\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := writeTestFile(root, "internal/runtime/workerruntime/vocabulary.go", "package workerruntime\n\nconst ModeName = \"legacy\"\n"); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go"}`,
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go"}`,
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go"}`,
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go"}`,
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go"}`,
+		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go"}`,
+		`{"tool":"edit_file","path":"internal/runtime/workerruntime/vocabulary.go","old_text":"const ModeName = \"legacy\"","new_text":"const ModeName = \"modern\"","description":"update the vocabulary mode name literal"}`,
+		`{"tool":"shell","command":"go test ./..."}`,
+		"Changed paths:\n- internal/runtime/workerruntime/vocabulary.go\n\nVerification: go test ./... passed.",
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request (%d)", requests)
+		}
+
+		reply := replies[requests]
+		requests++
+
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	defer server.Close()
+
+	var (
+		events        []RunEvent
+		readSuccesses int
+		results       []workspace.ToolResult
+	)
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			Shell:        "/bin/sh",
+			EnableWrites: true,
+			EnableShell:  true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 12, MaxNoProgressTurns: 12, MaxModelCalls: 14, FingerprintNudgeAt: 2},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			TargetPacket: []string{
+				"conversation_context:previous_assistant_recommendation",
+				"Editable candidate file from previous assistant recommendation: internal/runtime/workerruntime/vocabulary.go",
+			},
+			AllowedEditPaths: []string{"internal/runtime/workerruntime/vocabulary.go"},
+			TargetRefs:       []string{"internal/runtime/workerruntime/vocabulary.go"},
+			RequiredEvidence: []string{"changed_paths_or_noop_reason", "verification_status"},
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Move the recommended literal into the vocabulary constant location."}},
+		llama.ChatOptions{MaxTokens: 8192},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			results = append(results, event.Result)
+			if event.Result.Tool == workspace.ToolNameReadFile && strings.TrimSpace(event.Result.Error) == "" {
+				readSuccesses++
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if readSuccesses != 6 {
+		t.Fatalf("target-write-ready repeated reads should execute under model-owned strategy, got %d successful reads; events=%s", readSuccesses, formatRunEventsForTest(events))
+	}
+	if got := countEventsByRole(events, "fingerprint_hard_block"); got != 0 {
+		t.Fatalf("target-write-ready repeated reads must not force fingerprint hard block before edit evidence, got %d; events=%s", got, formatRunEventsForTest(events))
+	}
+	if got := countEventsByRole(events, "same_path_fixation_nudge"); got != 0 {
+		t.Fatalf("target-write-ready repeated reads must not be swallowed by generic same-path fixation, got %d; events=%s", got, formatRunEventsForTest(events))
+	}
+	if got := countEventsByRole(events, "implementation_target_write_ready_read_loop_policy_deferred"); got == 0 {
+		t.Fatalf("expected repeated-read loop policy to defer to implementation evidence contract; events=%s", formatRunEventsForTest(events))
+	}
+	for _, event := range decodeRunnerAutonomyEventsForTest(t, events) {
+		if event.Type == autonomy.EventToolPolicyResult && event.Policy != nil &&
+			event.Policy.InvariantID == loopPolicyInvariantRepeatedCall &&
+			event.Policy.ReasonCode == "doom_loop_guard" &&
+			event.Policy.Decision == autonomy.PolicyStop {
+
+			t.Fatalf("target-write-ready repeated reads must not record terminal doom-loop stop policy: %#v", event.Policy)
+		}
+		if event.Type == autonomy.EventGateDecision && event.Gate != nil &&
+			event.Gate.Gate == autonomy.GateLoop &&
+			event.Gate.ReasonCode == "doom_loop_guard" &&
+			event.Gate.Decision == autonomy.PolicyStop {
+
+			t.Fatalf("target-write-ready repeated reads must not record terminal doom-loop gate decision: %#v", event.Gate)
+		}
+	}
+	if strings.Contains(answer, "required_evidence_unmet") || strings.Contains(answer, "no successful write tool result") {
+		t.Fatalf("repeated read policy should not force unmet-evidence closeout, got:\n%s", answer)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "internal/runtime/workerruntime/vocabulary.go"))
+	if err != nil {
+		t.Fatalf("read edited file: %v", err)
+	}
+	if !strings.Contains(string(data), `const ModeName = "modern"`) || strings.Contains(string(data), `ModeName = "legacy"`) {
+		t.Fatalf("expected edit after repeated reads, got:\n%s\nresults=%#v", string(data), results)
+	}
+	if !strings.Contains(answer, "internal/runtime/workerruntime/vocabulary.go") || !strings.Contains(strings.ToLower(answer), "verification") {
+		t.Fatalf("expected final implementation answer after edit, got:\n%s", answer)
+	}
+}
+
+func TestRunnerTargetWriteReadyAnswerToolNoWriteRecoversWithEdit(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.com/targetready\n\ngo 1.24\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := writeTestFile(root, "internal/runtime/workerruntime/vocabulary.go", "package workerruntime\n\nconst modeName = \"legacy\"\n"); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+
+	requests := 0
+	var recoveryRequestPayload struct {
+		Messages []llama.ChatMessage `json:"messages"`
+		Tools    []llama.Tool        `json:"tools,omitempty"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		if requests == 2 {
+			if err := json.Unmarshal(body, &recoveryRequestPayload); err != nil {
+				t.Fatalf("decode recovery request: %v\n%s", err, string(body))
+			}
+		}
+
+		switch requests {
+		case 0:
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{\"tool\":\"read_file\",\"path\":\"internal/runtime/workerruntime/vocabulary.go\"}"}}]}`))
+		case 1:
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"call_answer_1","type":"function","function":{"name":"answer","arguments":"{\"content\":\"Changed paths: none\\n\\nVerification: not run.\\n\\nI found the literal but did not edit it.\"}"}}]},"finish_reason":"tool_calls"}]}`))
+		case 2:
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{\"tool\":\"edit_file\",\"path\":\"internal/runtime/workerruntime/vocabulary.go\",\"old_text\":\"const modeName = \\\"legacy\\\"\",\"new_text\":\"const ModeName = \\\"modern\\\"\",\"description\":\"promote mode name literal\"}"}}]}`))
+		case 3:
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{\"tool\":\"shell\",\"command\":\"go test ./...\"}"}}]}`))
+		case 4:
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"Changed paths:\n- internal/runtime/workerruntime/vocabulary.go\n\nVerification: go test ./... passed."}}]}`))
+		default:
+			t.Fatalf("unexpected extra chat request (%d): %s", requests, string(body))
+		}
+		requests++
+	}))
+	defer server.Close()
+
+	var events []RunEvent
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			Shell:        "/bin/sh",
+			EnableWrites: true,
+			EnableShell:  true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8, MaxModelCalls: 12},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "edit_file", "write_file", "apply_patch", "shell", "answer"},
+			TargetPacket: []string{
+				"conversation_context:previous_assistant_recommendation",
+				"Editable candidate file from previous assistant recommendation: internal/runtime/workerruntime/vocabulary.go",
+			},
+			AllowedEditPaths: []string{"internal/runtime/workerruntime/vocabulary.go"},
+			TargetRefs:       []string{"internal/runtime/workerruntime/vocabulary.go"},
+			RequiredEvidence: []string{"changed_paths_or_noop_reason", "verification_status"},
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Move the recommended literal into the vocabulary constant location."}},
+		llama.ChatOptions{MaxTokens: 8192, ToolChoice: "auto"},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if got := countEventsByRole(events, "completion_gate_recovery"); got == 0 {
+		t.Fatalf("expected completion_gate_recovery after answer tool no-write closeout, events=%s", formatRunEventsForTest(events))
+	}
+	if !chatOptionsExposeTool(llama.ChatOptions{Tools: recoveryRequestPayload.Tools}, "read_file") {
+		t.Fatalf("answer-tool target-write-ready recovery should keep bounded reads available, got %#v", recoveryRequestPayload.Tools)
+	}
+	if strings.Contains(answer, "Changed paths: none") || strings.Contains(answer, "did not edit") {
+		t.Fatalf("answer-tool no-write closeout should not be accepted, got:\n%s", answer)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "internal/runtime/workerruntime/vocabulary.go"))
+	if err != nil {
+		t.Fatalf("read edited file: %v", err)
+	}
+	if !strings.Contains(string(data), `const ModeName = "modern"`) {
+		t.Fatalf("expected recovery edit after answer tool rejection, got:\n%s", string(data))
 	}
 }
 
@@ -34623,6 +36889,7 @@ func TestFingerprintNudgeFiresOncePerFingerprint(t *testing.T) {
 	if policyEvent.Policy.PackID != autonomy.ContractPackLoopRepeatedCall || policyEvent.Policy.Decision != autonomy.PolicyObserve {
 		t.Fatalf("expected typed loop policy fingerprint nudge event, got %#v", policyEvent.Policy)
 	}
+	assertObserveOnlyLoopPolicyLegacyPermissionAllowed(t, events)
 
 	if got := countEventsByRole(events, "doom_loop_guard"); got != 0 {
 		t.Fatalf("DoomLoopGate should NOT fire on non-consecutive repeats, got %d", got)
@@ -34707,6 +36974,7 @@ func TestConversationSamePathFixationNudgesOnVariedRanges(t *testing.T) {
 	if policyEvent.Policy.PackID != autonomy.ContractPackLoopRepeatedCall || policyEvent.Policy.Decision != autonomy.PolicyObserve {
 		t.Fatalf("expected typed loop policy same-path event, got %#v", policyEvent.Policy)
 	}
+	assertObserveOnlyLoopPolicyLegacyPermissionAllowed(t, events)
 
 	if got := countEventsByRole(events, "same_path_fixation_tool_hidden"); got != 0 {
 		t.Fatalf("same-path varied ranges must not hide read_file, got %d hidden events; events=%s", got, formatRunEventsForTest(events))
@@ -35669,7 +37937,7 @@ func TestTargetWriteReadyStagedNudgeSurfacesBasePrompt(t *testing.T) {
 		t.Fatalf("early nudge should include nudge number, got: %s", msg)
 	}
 
-	// Late stage (nudgeCount > 6)
+	// Late-stage helper output remains available for direct callers.
 	msg = targetWriteReadyStagedNudge(basePrompt, req, 8)
 	if !strings.Contains(msg, "model_popup.go") {
 		t.Fatalf("late nudge should surface basePrompt paths, got: %s", msg)
@@ -35694,14 +37962,9 @@ func TestTargetWriteReadyStagedNudgeFallsBackWhenBasePromptEmpty(t *testing.T) {
 }
 
 // TestCompleteWithoutMoreToolsInjectsToolResultForDanglingToolCalls verifies
-// that completeWithoutMoreToolsWithReason handles dangling tool_calls in the
-// conversation history by returning an error instead of crashing with a
-// protocol violation. The actual injection is tested via integration.
-// This prevents DeepSeek's "insufficient tool messages" protocol error.
+// that forced final-answer synthesis sends strict-backend-valid history when a
+// prior assistant tool_call was halted before execution.
 func TestCompleteWithoutMoreToolsInjectsToolResultForDanglingToolCalls(t *testing.T) {
-	// Build a turnMessages slice ending with a dangling tool_calls assistant
-	// message. Verify that completeWithoutMoreToolsWithReason injects a tool
-	// result before the force answer system message.
 	messages := []llama.ChatMessage{
 		{Role: "user", Content: "test"},
 		{Role: "assistant", ToolCalls: []llama.ToolCall{{
@@ -35713,121 +37976,57 @@ func TestCompleteWithoutMoreToolsInjectsToolResultForDanglingToolCalls(t *testin
 	root := t.TempDir()
 	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root})
 
+	type requestMessage struct {
+		Role       string           `json:"role"`
+		Content    string           `json:"content,omitempty"`
+		ToolCallID string           `json:"tool_call_id,omitempty"`
+		ToolCalls  []llama.ToolCall `json:"tool_calls,omitempty"`
+	}
+	type requestPayload struct {
+		Messages []requestMessage `json:"messages"`
+	}
+
+	var got requestPayload
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"final answer from evidence"}}]}`))
+	}))
+	defer server.Close()
+
 	runner := &Runner{
 		Workspace: ws,
+		Client:    llama.NewClient(server.URL, time.Second),
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily: "implementation",
-			Contract:   "implementation_result",
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "answer from gathered evidence",
 		},
-	}
-	ctx := context.Background()
-
-	// Call completeWithoutMoreToolsWithReason directly.
-	// The function should inject a tool result for the dangling tool_call
-	// before appending the force answer system message.
-	// This test won't reach the API call because the mock client will fail,
-	// but we can verify the messages were injected correctly.
-	_ = ctx
-	_ = runner
-	_ = messages
-
-	// Integration test: verify that toolResultMessage with a real ID produces
-	// role:"tool" not role:"system"
-	call := &llama.ToolCall{
-		ID:       "call_dangling_1",
-		Type:     "function",
-		Function: llama.ToolCallFunc{Name: "search_content", Arguments: `{}`},
-	}
-	result := workspace.ToolResult{Tool: "search_content", Summary: "rejected"}
-	msg := toolResultMessage(call, result)
-
-	if msg.Role != "tool" {
-		t.Fatalf("expected role=tool for call with real ID, got %q", msg.Role)
+		GateEngine: &recordingGateEngine{evaluateDecision: GateDecision{Accepted: true}},
 	}
 
-	if msg.ToolCallID != "call_dangling_1" {
-		t.Fatalf("expected ToolCallID=call_dangling_1, got %q", msg.ToolCallID)
+	answer, err := runner.completeWithoutMoreToolsWithReason(context.Background(), messages, llama.ChatOptions{}, nil, "tools are now disabled", nil)
+	if err != nil {
+		t.Fatalf("completeWithoutMoreToolsWithReason: %v", err)
 	}
-}
+	if answer != "final answer from evidence" {
+		t.Fatalf("answer = %q", answer)
+	}
 
-func TestStripOrphanedToolCalls(t *testing.T) {
-	t.Run("removes assistant with orphaned tool_calls", func(t *testing.T) {
-		messages := []llama.ChatMessage{
-			{Role: "system", Content: "you are a helpful assistant"},
-			{Role: "user", Content: "hello"},
-			{
-				Role:    "assistant",
-				Content: "",
-				ToolCalls: []llama.ToolCall{
-					{ID: "call_1", Function: llama.ToolCallFunc{Name: "read_file"}},
-				},
-			},
-			// No matching tool response — orphaned
-		}
-		stripped := stripOrphanedToolCalls(messages)
-
-		if len(stripped) != 2 {
-			t.Fatalf("expected 2 messages, got %d", len(stripped))
-		}
-
-		if stripped[0].Role != "system" || stripped[1].Role != "user" {
-			t.Fatal("expected system and user messages only")
-		}
-	})
-
-	t.Run("keeps assistant when all tool_calls have responses", func(t *testing.T) {
-		messages := []llama.ChatMessage{
-			{Role: "system", Content: "you are a helpful assistant"},
-			{Role: "user", Content: "hello"},
-			{
-				Role:    "assistant",
-				Content: "",
-				ToolCalls: []llama.ToolCall{
-					{ID: "call_1", Function: llama.ToolCallFunc{Name: "read_file"}},
-				},
-			},
-			{Role: "tool", ToolCallID: "call_1", Content: "result"},
-		}
-		stripped := stripOrphanedToolCalls(messages)
-
-		if len(stripped) != 4 {
-			t.Fatalf("expected 4 messages, got %d", len(stripped))
-		}
-	})
-
-	t.Run("removes assistant when one of multiple calls is orphaned", func(t *testing.T) {
-		messages := []llama.ChatMessage{
-			{Role: "system", Content: "you are a helpful assistant"},
-			{
-				Role:    "assistant",
-				Content: "",
-				ToolCalls: []llama.ToolCall{
-					{ID: "call_1", Function: llama.ToolCallFunc{Name: "read_file"}},
-					{ID: "call_2", Function: llama.ToolCallFunc{Name: "search_content"}},
-				},
-			},
-			{Role: "tool", ToolCallID: "call_1", Content: "result"},
-			// call_2 has no response — orphaned, so whole assistant message is removed
-		}
-		stripped := stripOrphanedToolCalls(messages)
-
-		if len(stripped) != 2 {
-			t.Fatalf("expected 2 messages (system + tool), got %d", len(stripped))
-		}
-	})
-
-	t.Run("no-op when no tool_calls present", func(t *testing.T) {
-		messages := []llama.ChatMessage{
-			{Role: "system", Content: "you are a helpful assistant"},
-			{Role: "user", Content: "hello"},
-			{Role: "assistant", Content: "hi there!"},
-		}
-		stripped := stripOrphanedToolCalls(messages)
-
-		if len(stripped) != 3 {
-			t.Fatalf("expected 3 messages, got %d", len(stripped))
-		}
-	})
+	if len(got.Messages) < 4 {
+		t.Fatalf("request messages = %#v, want repaired tool-call pair and forced answer prompt", got.Messages)
+	}
+	if got.Messages[1].Role != "assistant" || len(got.Messages[1].ToolCalls) != 1 {
+		t.Fatalf("message[1] should be assistant tool_calls, got %#v", got.Messages)
+	}
+	if got.Messages[2].Role != "tool" || got.Messages[2].ToolCallID != "call_dangling_1" {
+		t.Fatalf("dangling assistant tool_call must be followed by synthetic tool result, got %#v", got.Messages)
+	}
+	if got.Messages[3].Role != "system" || !strings.Contains(strings.ToLower(got.Messages[3].Content), "tools are now disabled") {
+		t.Fatalf("forced answer prompt should follow repaired tool result, got %#v", got.Messages)
+	}
 }
 
 func TestCompletionGateRejectsTextualXMLToolMarkup(t *testing.T) {
@@ -35896,6 +38095,9 @@ func TestCompletionGateAcceptsNormalProse(t *testing.T) {
 		"The implement lane and plan-execute lane share the same base validation requirements including source_sanity checks and compilation verification.",
 		"Based on the evidence from helpers.go and edit_set_obligations.go, both lanes require go test compilation checks.",
 		"Here's what I found:\n\n- Plan-execute: requires submit_plan with edit obligations\n- Implement: requires preflight write guard\n\nThey differ in that...",
+		"Chat Completions returns `tool_calls` when the assistant requests a tool.",
+		"DSML is a protocol label, not a tool request by itself.",
+		"The child runner was invoked from the parent task request.",
 		"", // empty reply
 	}
 
@@ -35917,6 +38119,18 @@ func TestCompletionGateAcceptsNormalProse(t *testing.T) {
 			if strings.Contains(result.Error, "XML") || strings.Contains(result.Error, "markup") {
 				t.Errorf("prose %d: normal prose incorrectly flagged as XML markup", i)
 			}
+		}
+	}
+}
+
+func TestLooksLikeTextualToolCallIgnoresProseProtocolTerms(t *testing.T) {
+	for _, prose := range []string{
+		"Chat Completions returns `tool_calls` when the assistant requests a tool.",
+		"DSML is a protocol label, not a tool request by itself.",
+		"The child runner was invoked from the parent task request.",
+	} {
+		if IsTextualToolCall(prose) {
+			t.Fatalf("prose protocol term should not look like a textual tool call: %q", prose)
 		}
 	}
 }
@@ -36020,14 +38234,14 @@ func TestLooksLikeTextualToolCallDetectsDSML(t *testing.T) {
 	_ = import_json
 
 	// Test with the DSML signature
-	if !looksLikeTextualToolCall("<n_tool_calls>") {
+	if !IsTextualToolCall("<n_tool_calls>") {
 		// This should still pass (existing test)
 	}
 
 	// The DSML signature should be detected
 	dsmlPayload := "<\ufffd\ufffdDSML\ufffd\ufffdtool_calls>"
-	if !looksLikeTextualToolCall(dsmlPayload) {
-		t.Fatal("DSML payload not detected by looksLikeTextualToolCall")
+	if !IsTextualToolCall(dsmlPayload) {
+		t.Fatal("DSML payload not detected by IsTextualToolCall")
 	}
 
 	// Also test the presentation-layer check
@@ -36069,10 +38283,10 @@ func TestDetectsDSMLFromLiveSessionBytes(t *testing.T) {
 		t.Logf("Live content length: %d", len(content))
 		t.Logf("Contains 'DSML': %v", strings.Contains(content, "DSML"))
 		t.Logf("Contains '<n_tool': %v", strings.Contains(content, "<n_tool"))
-		t.Logf("looksLikeTextualToolCall: %v", looksLikeTextualToolCall(content))
+		t.Logf("IsTextualToolCall: %v", IsTextualToolCall(content))
 
-		if !looksLikeTextualToolCall(content) {
-			t.Fatal("looksLikeTextualToolCall did NOT detect the live session XML payload")
+		if !IsTextualToolCall(content) {
+			t.Fatal("IsTextualToolCall did NOT detect the live session XML payload")
 		}
 
 		return
@@ -36152,11 +38366,11 @@ func TestForcedCompletionCatchesLiveSessionGarbageAnswer(t *testing.T) {
 		// Try the specific checks individually to find the gap
 		t.Log("completionGateRejection did not reject - checking individual checks...")
 
-		// Check 1: looksLikeTextualToolCall
-		if looksLikeTextualToolCall(garbageAnswer) {
-			t.Error("looksLikeTextualToolCall: true (but this gate fires BEFORE search-hit check in completionGateRejection)")
+		// Check 1: IsTextualToolCall
+		if IsTextualToolCall(garbageAnswer) {
+			t.Error("IsTextualToolCall: true (but this gate fires BEFORE search-hit check in completionGateRejection)")
 		} else {
-			t.Log("looksLikeTextualToolCall: false (correct - not XML)")
+			t.Log("IsTextualToolCall: false (correct - not XML)")
 		}
 
 		// Check 2: unexecuted tool request
@@ -37981,6 +40195,11 @@ func TestLooksLikeNonAnswerProseRejectsLiveFailures(t *testing.T) {
 			true,
 		},
 		{
+			"06:50 - body-backed evidence path inventory",
+			"**Evidence paths inspected (body-backed):**\n- `internal/runtime/workerruntime/catalog.go` — all literal strings identified above\n- `internal/runtime/workerruntime/vocabulary.go` — confirms existing typed constant patterns for `RoleName`, `RuntimeContractID`, `PermissionProfileID`, `EvidenceRequirementID`, `ReadinessGateID`, `VerificationContractID`, `StopConditionID`, and `FinalCriticID`.",
+			true,
+		},
+		{
 			"06:43 - gate satisfaction meta final",
 			"The answer above is grounded in the inspected evidence (`.planning/20260621-161128.627.md` lines 25-39 for the planned tests). The proposed additions are explicitly marked as `unverified - proposed` since they don't exist on disk. This satisfies the gate requirements.",
 			true,
@@ -38018,6 +40237,11 @@ func TestLooksLikeNonAnswerProseRejectsLiveFailures(t *testing.T) {
 		{
 			"legitimate path-citing mechanism answer (should NOT be blocked)",
 			"For chat-history navigation, `internal/surfaces/tui/app/model_state.go` would need selection state while `internal/surfaces/tui/app/update_handlers.go` would route up/down keys through the existing submit flow. That preserves the current message-send path while adding editable recall.",
+			false,
+		},
+		{
+			"legitimate answer with evidence section (should NOT be blocked)",
+			"The literal strings in `catalog.go` should move to typed vocabulary constants when they encode stable runtime contracts, while one-off descriptive text can remain local.\n\nEvidence paths inspected (body-backed):\n- `internal/runtime/workerruntime/catalog.go`\n- `internal/runtime/workerruntime/vocabulary.go`",
 			false,
 		},
 		{
@@ -38655,7 +40879,7 @@ func TestClassifyTerminalAnswerDoesNotRecoverReadOnlyNonAnswerFromSearchOnlyEvid
 }
 
 func TestToolParseErrorFeedbackExplainsSubmitPlanEditsArrayShape(t *testing.T) {
-	got := toolParseErrorFeedback(`{"edits":"[]"}`, errors.New("json: cannot unmarshal string into Go struct field ToolRequest.edits of type []planartifact.PlanEdit"))
+	got := toolParseErrorFeedback(`{"edits":"[]"}`, errors.New("json: cannot unmarshal string into Go struct field ToolRequest.edits of type []planartifact.PlanEdit"), "")
 	for _, want := range []string{
 		"submit_plan.edits was emitted as a quoted string",
 		"JSON array value, not a string",
@@ -38672,9 +40896,11 @@ func TestToolParseErrorFeedbackExplainsSubmitPlanEditsArrayShape(t *testing.T) {
 }
 
 func TestMalformedToolPolicyRejectsParserFailureWithTypedMetadata(t *testing.T) {
-	decision := newMalformedToolPolicyEngine().EvaluateParseFailure(
+	decision := malformedToolPolicyEngine{}.EvaluateParseFailureWithMetadata(
 		`{"edits":"[]"}`,
 		errors.New("json: cannot unmarshal string into Go struct field ToolRequest.edits of type []planartifact.PlanEdit"),
+		toolRequestNormalizerTransportTextual,
+		autonomy.ParserFailureNone,
 	)
 
 	if decision.Request.Tool != "tool_parse" || decision.Result.Tool != "tool_parse" {
@@ -38691,6 +40917,7 @@ func TestMalformedToolPolicyRejectsParserFailureWithTypedMetadata(t *testing.T) 
 		decision.Policy.InvariantID != malformedToolPolicyInvariantToolRequest ||
 		decision.Policy.Decision != autonomy.PolicyReject ||
 		decision.Policy.ReasonCode != "malformed_tool_request" ||
+		decision.Policy.Transport != autonomy.ToolTransportTextualCall ||
 		decision.Policy.ParserFailure != autonomy.ParserFailureSchemaMismatch ||
 		decision.Policy.Source != "malformed_tool_policy" {
 
@@ -38699,10 +40926,77 @@ func TestMalformedToolPolicyRejectsParserFailureWithTypedMetadata(t *testing.T) 
 }
 
 func TestRunnerTurnControllerRecordParseFailureEmitsParserGuardFriction(t *testing.T) {
+	controller, runEvents := newParseFailureControllerFixture(t)
+	controller.recordParseFailure(1, nil, `{"edits":"[]"}`, errors.New("json: cannot unmarshal string into Go struct field ToolRequest.edits of type []planartifact.PlanEdit"), toolRequestNormalizerTransportTextual, autonomy.ParserFailureSchemaMismatch, false)
+
+	policy, policyEventID, friction := parseFailurePolicyAndFrictionForTest(t, *runEvents)
+
+	if policy == nil || policy.ParserFailure != autonomy.ParserFailureSchemaMismatch {
+		t.Fatalf("expected schema-mismatch parser policy event, got %#v", policy)
+	}
+	if policy.PackID != autonomy.ContractPackParserToolRequest ||
+		policy.InvariantID != malformedToolPolicyInvariantToolRequest ||
+		policy.Decision != autonomy.PolicyReject ||
+		policy.ReasonCode != "malformed_tool_request" ||
+		policy.Transport != autonomy.ToolTransportTextualCall ||
+		policy.Source != "malformed_tool_policy" {
+
+		t.Fatalf("expected typed malformed policy metadata, got %#v", policy)
+	}
+
+	if friction == nil {
+		t.Fatalf("expected parser guard friction, got roles=%#v", eventRolesFor(*runEvents))
+	}
+
+	if friction.SourceEventID != policyEventID ||
+		friction.GuardSurface != autonomy.GuardFrictionSurfaceParser ||
+		friction.FirstInvalidAction != "tool_parse" ||
+		friction.ModelContractVisible {
+
+		t.Fatalf("unexpected parser friction: source=%q friction=%#v", policyEventID, friction)
+	}
+
+	if strings.Contains(strings.Join(friction.EvidenceRefs, " "), "edits") ||
+		strings.Contains(strings.Join(friction.EvidenceRefs, " "), "raw") {
+
+		t.Fatalf("parser friction leaked raw parse details: %#v", friction.EvidenceRefs)
+	}
+}
+
+func TestRunnerTurnControllerRecordParseFailurePreservesNativeMetadata(t *testing.T) {
+	controller, runEvents := newParseFailureControllerFixture(t)
+	normalization := normalizeToolRequestSyntax(llama.ChatMessage{ToolCalls: []llama.ToolCall{{
+		Function: llama.ToolCallFunc{
+			Name:      workspace.CodeNavigateToolName,
+			Arguments: `{"tool":"context_query","query":"callers of Run"}`,
+		},
+	}}})
+	if normalization.ParseErr == nil {
+		t.Fatal("expected native transport mismatch parse error")
+	}
+
+	controller.recordParseFailure(1, normalization.ActiveToolCall, normalization.Raw, normalization.ParseErr, normalization.EventTransport, normalization.ParserFailureClass, false)
+
+	policy, _, friction := parseFailurePolicyAndFrictionForTest(t, *runEvents)
+	if policy == nil {
+		t.Fatal("expected parser policy event")
+	}
+	if policy.Transport != autonomy.ToolTransportNativeCall ||
+		policy.ParserFailure != autonomy.ParserFailureTransportMismatch ||
+		policy.Source != "malformed_tool_policy" {
+
+		t.Fatalf("native parser metadata was not preserved in emitted policy: %#v", policy)
+	}
+	if friction == nil || friction.GuardSurface != autonomy.GuardFrictionSurfaceParser || friction.FirstInvalidAction != "tool_parse" {
+		t.Fatalf("expected native parser failure to emit parser guard friction, got %#v", friction)
+	}
+}
+
+func newParseFailureControllerFixture(t *testing.T) (runnerTurnController, *[]RunEvent) {
+	t.Helper()
+
 	root := t.TempDir()
-
-	var runEvents []RunEvent
-
+	runEvents := []RunEvent{}
 	runner := &Runner{
 		AgentName: "main",
 		Workspace: workspace.NewManager(config.Workspace{
@@ -38722,11 +41016,9 @@ func TestRunnerTurnControllerRecordParseFailureEmitsParserGuardFriction(t *testi
 		RequiredTools:     []string{"submit_plan"},
 	}
 	autonomyRecorder := newRunnerAutonomyRecorder(runner, RunPolicy{}, brief, nil)
-
 	if autonomyRecorder == nil {
 		t.Fatal("newRunnerAutonomyRecorder returned nil")
 	}
-
 	autonomyRecorder.emitContractStarted(brief)
 
 	collected := []workspace.ToolResult{}
@@ -38736,61 +41028,33 @@ func TestRunnerTurnControllerRecordParseFailureEmitsParserGuardFriction(t *testi
 		turnMessages:     &turnMessages,
 		metrics:          &runnerMetrics{},
 	}
-	controller := runnerTurnController{
+
+	return runnerTurnController{
 		runner:           runner,
 		recorder:         &recorder,
 		autonomyRecorder: autonomyRecorder,
-	}
-	controller.recordParseFailure(1, nil, `{"edits":"[]"}`, errors.New("json: cannot unmarshal string into Go struct field ToolRequest.edits of type []planartifact.PlanEdit"))
+	}, &runEvents
+}
+
+func parseFailurePolicyAndFrictionForTest(t *testing.T, runEvents []RunEvent) (*autonomy.ContractPolicyEvent, string, *autonomy.ContractGuardFrictionEvent) {
+	t.Helper()
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
-
 	var (
 		policy        *autonomy.ContractPolicyEvent
 		policyEventID string
 		friction      *autonomy.ContractGuardFrictionEvent
 	)
-
 	for _, event := range events {
 		if event.Type == autonomy.EventToolPolicyResult {
 			policy = event.Policy
 			policyEventID = event.EventID
 		}
-
 		if event.Type == autonomy.EventGuardFriction {
 			friction = event.GuardFriction
 		}
 	}
-
-	if policy == nil || policy.ParserFailure != autonomy.ParserFailureSchemaMismatch {
-		t.Fatalf("expected schema-mismatch parser policy event, got %#v", policy)
-	}
-	if policy.PackID != autonomy.ContractPackParserToolRequest ||
-		policy.InvariantID != malformedToolPolicyInvariantToolRequest ||
-		policy.Decision != autonomy.PolicyReject ||
-		policy.ReasonCode != "malformed_tool_request" ||
-		policy.Source != "malformed_tool_policy" {
-
-		t.Fatalf("expected typed malformed policy metadata, got %#v", policy)
-	}
-
-	if friction == nil {
-		t.Fatalf("expected parser guard friction, got roles=%#v", eventRolesFor(runEvents))
-	}
-
-	if friction.SourceEventID != policyEventID ||
-		friction.GuardSurface != autonomy.GuardFrictionSurfaceParser ||
-		friction.FirstInvalidAction != "tool_parse" ||
-		friction.ModelContractVisible {
-
-		t.Fatalf("unexpected parser friction: source=%q friction=%#v", policyEventID, friction)
-	}
-
-	if strings.Contains(strings.Join(friction.EvidenceRefs, " "), "edits") ||
-		strings.Contains(strings.Join(friction.EvidenceRefs, " "), "raw") {
-
-		t.Fatalf("parser friction leaked raw parse details: %#v", friction.EvidenceRefs)
-	}
+	return policy, policyEventID, friction
 }
 
 func TestRunnerTurnControllerRejectToolRecordsRejectionState(t *testing.T) {
@@ -39674,6 +41938,34 @@ func TestSourceEditsNeedSemanticVerificationAfterPatchHygieneOnly(t *testing.T) 
 	}
 }
 
+func TestFinalAnswerAcceptanceRejectsPendingPostWriteVerification(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		PermissionProfile:    "guarded_workspace_write",
+		RequiredEvidence:     []string{"changed_paths_or_noop_reason", "verification_status"},
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
+	}
+	answer := strings.Join([]string{
+		"Implemented the requested change.",
+		"",
+		"Changed paths:",
+		"- internal/labels/labels.go",
+		"",
+		"Verification: blocked; workspace writes are still pending verification.",
+	}, "\n")
+
+	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
+	if acceptance.Decision != finalAnswerAcceptanceRejected ||
+		acceptance.BlockerKind != string(turnViolationRequiredEvidenceUnmet) {
+
+		t.Fatalf("pending post-write verification should block final acceptance, got decision=%q kind=%q reason=%q", acceptance.Decision, acceptance.BlockerKind, acceptance.Reason)
+	}
+}
+
 func TestSourceEditsAreSemanticallyVerifiedAfterCompilerBackedSourceSanity(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:           "implementation",
@@ -40063,6 +42355,94 @@ func TestPostWriteSourceSanityRedirectsNormalImplementationDiscoveryDrift(t *tes
 
 	if redirected.Tool != workspace.ToolNameSourceSanity || redirected.Path != "internal/labels/labels.go" {
 		t.Fatalf("unexpected redirect: %#v", redirected)
+	}
+}
+
+func TestRunnerPostWriteVerificationRecoveryRemovesReadToolsFromNativeSurface(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.com/verify\n\ngo 1.24\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := writeTestFile(root, "internal/labels/labels.go", "package labels\n\nconst Label = \"old\"\n"); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	requests := 0
+	var verificationRequestPayload struct {
+		Tools []llama.Tool `json:"tools,omitempty"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		if requests == 2 {
+			if err := json.Unmarshal(body, &verificationRequestPayload); err != nil {
+				t.Fatalf("decode verification request: %v\n%s", err, string(body))
+			}
+		}
+
+		switch requests {
+		case 0:
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":3,\"named_gap\":\"confirm exact label literal before editing\"}"}}]}`))
+		case 1:
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"const Label = \\\"old\\\"\",\"new_text\":\"const Label = \\\"new\\\"\",\"description\":\"update label literal\"}"}}]}`))
+		case 2:
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"{\"tool\":\"shell\",\"command\":\"go test ./...\"}"}}]}`))
+		case 3:
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"Changed paths:\n- internal/labels/labels.go\n\nVerification: go test ./... passed."}}]}`))
+		default:
+			t.Fatalf("unexpected extra chat request (%d): %s", requests, string(body))
+		}
+		requests++
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			Shell:        "/bin/sh",
+			EnableWrites: true,
+			EnableShell:  true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 5, MaxNoProgressTurns: 5, MaxModelCalls: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			AllowedTools:         []string{"read_file", "edit_file", "source_sanity", "shell"},
+			AllowedEditPaths:     []string{"internal/labels/labels.go"},
+			TargetRefs:           []string{"internal/labels/labels.go"},
+			RequiredEvidence:     []string{"changed_paths_or_noop_reason", "verification_status"},
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Update the label literal."}},
+		llama.ChatOptions{MaxTokens: 8192, ToolChoice: "auto"},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if chatOptionsExposeTool(llama.ChatOptions{Tools: verificationRequestPayload.Tools}, workspace.ToolNameReadFile) {
+		t.Fatalf("post-write verification request must not expose read_file, got tools=%#v", verificationRequestPayload.Tools)
+	}
+	if !chatOptionsExposeTool(llama.ChatOptions{Tools: verificationRequestPayload.Tools}, workspace.ToolNameShell) {
+		t.Fatalf("post-write verification request should expose shell verification, got tools=%#v", verificationRequestPayload.Tools)
+	}
+	if !chatOptionsExposeTool(llama.ChatOptions{Tools: verificationRequestPayload.Tools}, workspace.ToolNameSourceSanity) {
+		t.Fatalf("post-write verification request should expose source_sanity, got tools=%#v", verificationRequestPayload.Tools)
+	}
+	if !strings.Contains(answer, "go test ./... passed") {
+		t.Fatalf("expected verified final answer, got:\n%s", answer)
 	}
 }
 

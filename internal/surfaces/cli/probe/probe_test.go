@@ -15,7 +15,7 @@ import (
 func TestRunProbeLanePassesForAllFamiliesByDefault(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"lane"}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"lane"}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("default probe must exit 0; got %d (stderr=%s)", code, stderr.String())
@@ -35,7 +35,7 @@ func TestRunProbeLanePassesForAllFamiliesByDefault(t *testing.T) {
 func TestRunProbeLaneAcceptsExplicitModeFlag(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"lane", "--mode", "implement"}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"lane", "--mode", "implement"}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("implement probe must exit 0; got %d", code)
@@ -57,7 +57,7 @@ func TestRunProbeLaneAcceptsExplicitModeFlag(t *testing.T) {
 func TestRunProbeLaneRejectsUnknownMode(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"lane", "--mode", "nonsense"}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"lane", "--mode", "nonsense"}, &stdout, &stderr, nil)
 
 	if code != 2 {
 		t.Fatalf("unknown --mode must exit 2; got %d", code)
@@ -77,7 +77,7 @@ func TestRunProbeLaneRejectsUnknownMode(t *testing.T) {
 func TestRunProbeLaneFallsBackWhenConfigMissing(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"lane", "--config", "/definitely/no/config/here.json"}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"lane", "--config", "/definitely/no/config/here.json"}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("missing config must not fail the probe; got %d (stderr=%s)", code, stderr.String())
@@ -100,7 +100,7 @@ func TestRunProbeLaneFallsBackWhenConfigMissing(t *testing.T) {
 func TestRunProbeLaneAcceptsCoderFlagAsNoOp(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"lane", "--coder"}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"lane", "--coder"}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("--coder must not affect exit code; got %d", code)
@@ -140,7 +140,7 @@ func TestRunProbeLaneResolvesConfigUnderProjectRoot(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"lane", "--project-root", root}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"lane", "--project-root", root}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("probe with project-root must exit 0; got %d (stderr=%s)", code, stderr.String())
@@ -178,7 +178,7 @@ func TestRunProbeLaneExplicitConfigOverridesProjectRoot(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"lane", "--project-root", root, "--config", "/no/such/explicit.json"}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"lane", "--project-root", root, "--config", "/no/such/explicit.json"}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("explicit --config must not block exit 0; got %d", code)
@@ -192,7 +192,7 @@ func TestRunProbeLaneExplicitConfigOverridesProjectRoot(t *testing.T) {
 func TestRunProbeLaneDoesNotClaimCrossModeCoverage(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"lane"}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"lane"}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("probe must exit 0; got %d (stderr=%s)", code, stderr.String())
@@ -212,7 +212,7 @@ func TestRunProbeLaneDoesNotClaimCrossModeCoverage(t *testing.T) {
 func TestRunProbeLaneHelpExitsZero(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"lane", "--help"}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"lane", "--help"}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("--help must exit 0; got %d", code)
@@ -226,7 +226,7 @@ func TestRunProbeLaneHelpExitsZero(t *testing.T) {
 func TestRunProbeMainUnknownSubcommandExitsTwo(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"definitely-not-a-subcommand"}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"definitely-not-a-subcommand"}, &stdout, &stderr, nil)
 
 	if code != 2 {
 		t.Fatalf("unknown subcommand must exit 2; got %d", code)

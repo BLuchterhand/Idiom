@@ -116,7 +116,7 @@ func PlanTDDObligations(prd PRDDocument, adrs []ParsedADR, ledger TDDLedger, adr
 			existingRefs := stableUniqueStrings(append(req.TDDObligations, adr.Doc.FrontMatter.TDDObligations...))
 			suggestedType, command := suggestedTDDPlanForTier(coverageTier)
 
-			if isContractTier(coverageTier) && len(existingRefs) == 0 {
+			if tierRequiresContractCoverage(coverageTier) && len(existingRefs) == 0 {
 				message := fmt.Sprintf("PRD requirement %q and ADR %q do not name any tdd_obligations; contract-tier obligations must not be silently produced without TDD obligation references", req.ID, adr.Doc.FrontMatter.ADRID)
 
 				plan.Obligations = append(plan.Obligations, TDDObligationPlanItem{
@@ -216,27 +216,10 @@ func TDDObligationPlanHasBlockers(plan TDDObligationSynthesisPlan) bool {
 }
 
 func suggestedTDDPlanForTier(coverageTier string) (string, string) {
-	switch strings.ToLower(strings.TrimSpace(coverageTier)) {
-	case "documentation":
-		return "audit", "git diff --check"
-	case "local_low":
-		return "source_sanity", "go test ./..."
-	case "behavior_standard":
-		return "acceptance", "go test ./..."
-	case "contract_high", "formal_optional":
-		return "contract", "go test ./..."
-	default:
-		return "acceptance", "go test ./..."
+	if spec, ok := normalizedCoverageTierSpecFor(coverageTier); ok {
+		return spec.suggestedType, spec.suggestedCommand
 	}
-}
-
-func isContractTier(coverageTier string) bool {
-	switch strings.ToLower(strings.TrimSpace(coverageTier)) {
-	case "contract_high", "formal_optional":
-		return true
-	default:
-		return false
-	}
+	return "acceptance", "go test ./..."
 }
 
 func isAcceptedArtifact(status string) bool {

@@ -712,7 +712,7 @@ func AnalyzeSWESuiteCoverage(suite SWESuite) SWECoverageReport {
 			report.FileSurfaces[surface]++
 		}
 
-		for _, surface := range evidenceSurfaces(task.Scenario.RequireEvidencePaths) {
+		for _, surface := range fileSurfaces(task.Scenario.RequireEvidencePaths) {
 			report.EvidenceSurfaces[surface]++
 		}
 	}
@@ -2133,10 +2133,6 @@ func taskFileSurfaces(task SWETask) []string {
 		paths = append(paths, expected.Path)
 	}
 
-	return fileSurfaces(paths)
-}
-
-func evidenceSurfaces(paths []string) []string {
 	return fileSurfaces(paths)
 }
 

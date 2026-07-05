@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"sync"
 	"time"
@@ -25,7 +24,7 @@ func roundTrip(socketPath string, req Request) (Response, error) {
 	}
 	defer conn.Close()
 
-	if err := writeRequest(conn, req); err != nil {
+	if err := writeJSON(conn, req); err != nil {
 		return Response{}, err
 	}
 
@@ -139,7 +138,7 @@ func Acquire(ctx context.Context, socketPath, pool, label, client string) (*Leas
 		return nil, err
 	}
 
-	if err := writeRequest(conn, Request{
+	if err := writeJSON(conn, Request{
 		Action: ActionAcquire,
 		Pool:   pool,
 		Label:  label,
@@ -261,8 +260,4 @@ func dial(socketPath string) (net.Conn, error) {
 	}
 
 	return conn, nil
-}
-
-func writeRequest(w io.Writer, req Request) error {
-	return writeJSON(w, req)
 }

@@ -1,62 +1,62 @@
 package workspace
 
 import (
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
+	"idiom/internal/capabilities/toolcatalog"
 	"idiom/internal/contracts/autonomy"
 )
 
-func TestBuiltInToolSurfaceSpecsProjectCatalogUnchanged(t *testing.T) {
-	catalogSpecs := builtInToolSurfaceCatalog.Specs()
-	if len(builtInToolSurfaceSpecs) != len(catalogSpecs) {
-		t.Fatalf("workspace projection count = %d, catalog count = %d", len(builtInToolSurfaceSpecs), len(catalogSpecs))
+func TestBuiltInToolSurfaceCatalogLookupReturnsClonedMetadata(t *testing.T) {
+	first, ok := builtInToolSurfaceCatalog.Lookup(ToolNameReadFile)
+	if !ok {
+		t.Fatalf("catalog lookup missed %s", ToolNameReadFile)
 	}
 
-	for i, catalogSpec := range catalogSpecs {
-		projected := builtInToolSurfaceSpecFromCatalog(catalogSpec)
-		if !reflect.DeepEqual(builtInToolSurfaceSpecs[i], projected) {
-			t.Fatalf("workspace projection[%d] for %s drifted:\ngot  %#v\nwant %#v", i, catalogSpec.Tool, builtInToolSurfaceSpecs[i], projected)
-		}
+	first.EvidenceCapabilities = append(first.EvidenceCapabilities, "mutated")
+	first.PolicyCapabilities = append(first.PolicyCapabilities, autonomy.CapabilitySourceEdit)
+	first.SideEffects = append(first.SideEffects, autonomy.SideEffectDestructive)
 
-		lookup, ok := BuiltInToolSurfaceMetadata(catalogSpec.Tool)
-		if !ok {
-			t.Fatalf("catalog-backed lookup missed %s", catalogSpec.Tool)
-		}
-		if !reflect.DeepEqual(lookup, projected) {
-			t.Fatalf("lookup projection for %s drifted:\ngot  %#v\nwant %#v", catalogSpec.Tool, lookup, projected)
-		}
+	second, ok := builtInToolSurfaceCatalog.Lookup(ToolNameReadFile)
+	if !ok {
+		t.Fatalf("second catalog lookup missed %s", ToolNameReadFile)
+	}
+
+	if slices.Contains(second.EvidenceCapabilities, "mutated") ||
+		slices.Contains(second.PolicyCapabilities, autonomy.CapabilitySourceEdit) ||
+		slices.Contains(second.SideEffects, autonomy.SideEffectDestructive) {
+		t.Fatalf("catalog lookup leaked mutable slices: %#v", second)
 	}
 }
 
 func TestWorkspaceToolSurfaceListsProjectCatalog(t *testing.T) {
-	if !slices.Equal(defaultToolManifestTools(), projectedCatalogTools(func(spec builtInToolSurfaceSpec) bool {
+	if !slices.Equal(defaultToolManifestTools(), projectedCatalogTools(func(spec toolcatalog.ToolSurfaceSpec) bool {
 		return spec.DefaultManifest
 	})) {
 		t.Fatalf("default manifest tools no longer project catalog metadata")
 	}
 
-	if !slices.Equal(WorkspaceWriteToolNames(), projectedCatalogTools(func(spec builtInToolSurfaceSpec) bool {
-		return spec.Category == CategoryWrite
+	if !slices.Equal(WorkspaceWriteToolNames(), projectedCatalogTools(func(spec toolcatalog.ToolSurfaceSpec) bool {
+		return ToolCategory(spec.Category) == CategoryWrite
 	})) {
 		t.Fatalf("workspace write tools no longer project catalog metadata")
 	}
 
-	if !slices.Equal(RuntimeSourceInspectionToolNames(), projectedCatalogTools(func(spec builtInToolSurfaceSpec) bool {
+	if !slices.Equal(RuntimeSourceInspectionToolNames(), projectedCatalogTools(func(spec toolcatalog.ToolSurfaceSpec) bool {
 		return spec.RuntimeSourceInspection
 	})) {
 		t.Fatalf("runtime source inspection tools no longer project catalog metadata")
 	}
 
-	if !slices.Equal(RuntimeContextDiscoveryToolNames(), projectedCatalogTools(func(spec builtInToolSurfaceSpec) bool {
+	if !slices.Equal(RuntimeContextDiscoveryToolNames(), projectedCatalogTools(func(spec toolcatalog.ToolSurfaceSpec) bool {
 		return spec.RuntimeContextDiscovery
 	})) {
 		t.Fatalf("runtime context discovery tools no longer project catalog metadata")
 	}
 
-	if !slices.Equal(RuntimeHistoryInspectionToolNames(), projectedCatalogTools(func(spec builtInToolSurfaceSpec) bool {
+	if !slices.Equal(RuntimeHistoryInspectionToolNames(), projectedCatalogTools(func(spec toolcatalog.ToolSurfaceSpec) bool {
 		return spec.RuntimeHistoryInspection
 	})) {
 		t.Fatalf("runtime history inspection tools no longer project catalog metadata")
@@ -78,6 +78,7 @@ func TestRuntimeReadOnlyInvestigationToolNamesKeepsGeneralLaneDiagnostics(t *tes
 		ToolNameHistoryRange,
 		ToolNameHistorySymbol,
 		ToolNameBlameRange,
+		ToolNameSystemSearchAccess,
 		ToolNameTask,
 		ToolNameMCPWebFetchExa,
 		ToolNameMCPWebSearchExa,
@@ -111,23 +112,40 @@ func TestRuntimeReadOnlyInvestigationToolActionClassesMatchAutonomy(t *testing.T
 			continue
 		}
 
-		actionClass := ToolActionClass(tool)
-		if actionClass == "" {
-			t.Fatalf("%s is in read-only investigation projection without workspace action class", tool)
-		}
-
-		if got := autonomy.TurnPhaseActionClassForTool(tool); got != actionClass {
-			t.Fatalf("%s action class drifted: autonomy=%q workspace=%q", tool, got, actionClass)
+		switch got := autonomy.TurnPhaseActionClassForToolClass(tool); got {
+		case autonomy.ActionClassRead, autonomy.ActionClassSearch, autonomy.ActionClassGenericProbe:
+		default:
+			t.Fatalf("%s is in read-only investigation projection with non-investigation action class %q", tool, got)
 		}
 	}
 }
 
+func TestRuntimeReadOnlyInvestigationToolNamesAllowsOnlyReadApprovalAdditiveEffect(t *testing.T) {
+	for _, tool := range RuntimeReadOnlyInvestigationToolNames() {
+		if strings.HasPrefix(tool, "mcp:") || tool == ToolNameTask {
+			continue
+		}
+
+		spec, ok := builtInToolSurfaceCatalog.Lookup(tool)
+		if !ok {
+			t.Fatalf("missing metadata for %s", tool)
+		}
+		if slices.Equal(spec.SideEffects, sideEffectReadOnly) {
+			continue
+		}
+		if tool == ToolNameSystemSearchAccess && slices.Equal(spec.SideEffects, sideEffectReadOnlyAdditive) {
+			continue
+		}
+		t.Fatalf("read-only investigation projection exposed unexpected side effect for %s: %#v", tool, spec.SideEffects)
+	}
+}
+
 func TestWorkspaceToolSurfaceMetadataKeepsKeySemanticFlags(t *testing.T) {
-	readFile, ok := BuiltInToolSurfaceMetadata(ToolNameReadFile)
+	readFile, ok := builtInToolSurfaceCatalog.Lookup(ToolNameReadFile)
 	if !ok {
 		t.Fatalf("missing metadata for %s", ToolNameReadFile)
 	}
-	if readFile.Category != CategoryRead || !readFile.DefaultManifest || !readFile.RuntimeSourceInspection || !readFile.PlannerAllowed || readFile.ActionClass != "read" {
+	if ToolCategory(readFile.Category) != CategoryRead || !readFile.DefaultManifest || !readFile.RuntimeSourceInspection {
 		t.Fatalf("read_file semantic flags drifted: %#v", readFile)
 	}
 	if !slices.Equal(readFile.PolicyCapabilities, []autonomy.Capability{autonomy.CapabilityBoundedRead}) {
@@ -137,11 +155,11 @@ func TestWorkspaceToolSurfaceMetadataKeepsKeySemanticFlags(t *testing.T) {
 		t.Fatalf("read_file side effects drifted: %#v", readFile.SideEffects)
 	}
 
-	submitPlan, ok := BuiltInToolSurfaceMetadata(ToolNameSubmitPlan)
+	submitPlan, ok := builtInToolSurfaceCatalog.Lookup(ToolNameSubmitPlan)
 	if !ok {
 		t.Fatalf("missing metadata for %s", ToolNameSubmitPlan)
 	}
-	if submitPlan.Category != CategoryVerification || submitPlan.CapabilityClassification != CapabilityClassWriteSideEffect || !submitPlan.PlannerAllowed || submitPlan.ActionClass != "submit_plan" {
+	if ToolCategory(submitPlan.Category) != CategoryVerification || submitPlan.CapabilityClassification != CapabilityClassWriteSideEffect {
 		t.Fatalf("submit_plan semantic flags drifted: %#v", submitPlan)
 	}
 	if !slices.Equal(submitPlan.PolicyCapabilities, []autonomy.Capability{autonomy.CapabilityPlanSubmission}) {
@@ -151,11 +169,11 @@ func TestWorkspaceToolSurfaceMetadataKeepsKeySemanticFlags(t *testing.T) {
 		t.Fatalf("submit_plan side effects drifted: %#v", submitPlan.SideEffects)
 	}
 
-	harnessAudit, ok := BuiltInToolSurfaceMetadata(ToolNameHarnessAudit)
+	harnessAudit, ok := builtInToolSurfaceCatalog.Lookup(ToolNameHarnessAudit)
 	if !ok {
 		t.Fatalf("missing metadata for %s", ToolNameHarnessAudit)
 	}
-	if harnessAudit.Category != CategoryRead || harnessAudit.CapabilityClassification != CapabilityClassRouted || harnessAudit.ActionClass != "search" {
+	if ToolCategory(harnessAudit.Category) != CategoryRead || harnessAudit.CapabilityClassification != CapabilityClassRouted {
 		t.Fatalf("harness_audit semantic flags drifted: %#v", harnessAudit)
 	}
 	if !slices.Equal(harnessAudit.PolicyCapabilities, []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}) {
@@ -167,10 +185,10 @@ func TestWorkspaceToolSurfaceMetadataKeepsKeySemanticFlags(t *testing.T) {
 
 }
 
-func projectedCatalogTools(match func(builtInToolSurfaceSpec) bool) []string {
+func projectedCatalogTools(match func(toolcatalog.ToolSurfaceSpec) bool) []string {
 	var tools []string
 
-	for _, spec := range builtInToolSurfaceSpecs {
+	for _, spec := range builtInToolSurfaceCatalog.Specs() {
 		if match(spec) {
 			tools = append(tools, spec.Tool)
 		}

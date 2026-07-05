@@ -84,6 +84,10 @@ func (b contentSearchBackend) args(req ToolRequest, excludes []string) []string 
 
 func ripgrepContentSearchArgs(req ToolRequest, excludes []string) []string {
 	args := []string{"-n", "-H", "--hidden", "--no-heading", "--color", "never"}
+	if req.FixedStrings {
+		args = append(args, "-F")
+	}
+
 	if req.Glob != "" {
 		args = append(args, "-g", req.Glob)
 	}
@@ -99,12 +103,19 @@ func ripgrepContentSearchArgs(req ToolRequest, excludes []string) []string {
 
 func grepContentSearchArgs(req ToolRequest, excludes []string) []string {
 	args := []string{"-R", "-n", "-H", "-I", "--binary-files=without-match", "--color=never"}
+	if req.FixedStrings {
+		args = append(args, "-F")
+	}
+
 	if glob := strings.TrimSpace(req.Glob); glob != "" {
 		args = append(args, "--include="+glob)
 	}
 
 	args = append(args, grepExcludeArgs(excludes)...)
-	args = append(args, "-E", strings.TrimSpace(req.Pattern), defaultString(req.Path, "."))
+	if !req.FixedStrings {
+		args = append(args, "-E")
+	}
+	args = append(args, strings.TrimSpace(req.Pattern), defaultString(req.Path, "."))
 
 	return args
 }

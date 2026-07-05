@@ -101,6 +101,40 @@ func TestPlanArtifactExecutionPermissionVocabulary(t *testing.T) {
 	}
 }
 
+func TestPlanArtifactKnownVocabularyPredicates(t *testing.T) {
+	tests := []struct {
+		name    string
+		known   func(string) bool
+		accepts []string
+		reject  string
+	}{
+		{name: "client classification", known: KnownClientClassification, accepts: []string{"finance", "healthcare_life_sciences", "public_sector", "enterprise_saas", "tooling_vendor", "local_model_private_code", "open_source"}, reject: "consumer"},
+		{name: "contract kind", known: KnownContractKind, accepts: []string{"plan_then_execute", "implementation", "implementation_result"}, reject: "design_doc"},
+		{name: "owner", known: KnownOwner, accepts: []string{"model", "harness", "planner", "executor"}, reject: "operator"},
+		{name: "approval mode", known: KnownApprovalMode, accepts: []string{"plan_then_execute", "local", "harness_policy"}, reject: "verbal"},
+		{name: "approval expiration policy", known: KnownApprovalExpirationPolicy, accepts: []string{"workspace_fingerprint"}, reject: "never"},
+		{name: "packet status", known: KnownPacketStatus, accepts: []string{"not_provided", "provided", "available", "fresh", "not_used"}, reject: "stale"},
+		{name: "approval status", known: KnownApprovalStatus, accepts: []string{"implicit", "partial", "partially_approved", "approved", "auto_approved", "not_required", "pending", "awaiting_approval", "n_a"}, reject: "maybe"},
+		{name: "handoff target", known: KnownHandoffTarget, accepts: []string{"plan_execute_executor", "executor"}, reject: "planner"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, value := range tt.accepts {
+				if !tt.known(value) {
+					t.Fatalf("%s did not accept %q", tt.name, value)
+				}
+				if !tt.known(" " + value + " ") {
+					t.Fatalf("%s did not trim %q", tt.name, value)
+				}
+			}
+			if tt.known(tt.reject) {
+				t.Fatalf("%s accepted unknown value %q", tt.name, tt.reject)
+			}
+		})
+	}
+}
+
 func TestSourceSatisfiedEvidenceRefsOnlyPromotesCurrentStateEvidence(t *testing.T) {
 	refs := SourceSatisfiedEvidenceRefs(PlanArtifact{
 		Evidence: []PlanArtifactEvidence{

@@ -381,6 +381,48 @@ fn unix_timestamp() -> String {
         .unwrap_or_else(|_| "0".to_string())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{validate_command_args, validate_command_name, validate_lane};
+
+    #[test]
+    fn validate_command_name_accepts_allowed_commands() {
+        for command in ["doctor", "backend", "queue", "tool", "version", "plan-execute"] {
+            assert!(validate_command_name(command).is_ok(), "{command} should be allowed");
+        }
+    }
+
+    #[test]
+    fn validate_command_name_rejects_unknown_and_control_characters() {
+        for command in ["unknown", "doctor\n", "doctor\r", "doctor\0"] {
+            assert!(validate_command_name(command).is_err(), "{command:?} should be rejected");
+        }
+    }
+
+    #[test]
+    fn validate_lane_accepts_desktop_presets() {
+        for lane in ["plan-execute", "implement", "atom-spec"] {
+            assert!(validate_lane(lane).is_ok(), "{lane} should be allowed");
+        }
+    }
+
+    #[test]
+    fn validate_lane_rejects_unknown_and_control_characters() {
+        for lane in ["unknown", "implement\n", "implement\r", "implement\0"] {
+            assert!(validate_lane(lane).is_err(), "{lane:?} should be rejected");
+        }
+    }
+
+    #[test]
+    fn validate_command_args_rejects_empty_and_control_characters() {
+        assert!(validate_command_args(&["--json".to_string(), "status".to_string()]).is_ok());
+
+        for arg in ["", "--json\n", "--json\r", "--json\0"] {
+            assert!(validate_command_args(&[arg.to_string()]).is_err(), "{arg:?} should be rejected");
+        }
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![app_manifest, run_command, run_tool, start_lane])

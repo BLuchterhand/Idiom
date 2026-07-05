@@ -51,42 +51,35 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec
 		subcommand = args[0]
 	}
 
-	code := RunMain(args, stdout, stderr)
+	code := 2
+	if len(args) == 0 {
+		printRecoverUsage(stderr)
+	} else {
+		switch args[0] {
+		case "inspect":
+			code = runRecoverInspectMain(args[1:], stdout, stderr)
+		case "show":
+			code = runRecoverShowMain(args[1:], stdout, stderr)
+		case "decompose":
+			code = runRecoverDecomposeMain(args[1:], stdout, stderr)
+		case "promote":
+			code = runRecoverPromoteMain(args[1:], stdout, stderr)
+		case "reconcile":
+			code = runRecoverReconcileMain(args[1:], stdout, stderr)
+		case "status":
+			code = runRecoverStatusMain(args[1:], stdout, stderr)
+		case "-h", "--help", "help":
+			printRecoverUsage(stdout)
+			code = 0
+		default:
+			fmt.Fprintf(stderr, "idiom recover: unknown subcommand %q\n", args[0])
+			printRecoverUsage(stderr)
+		}
+	}
+
 	telemetry.LogPhase(rec, "recover", map[string]any{"subcommand": subcommand, "exit_code": code})
 
 	return code
-}
-
-func RunMain(args []string, stdout io.Writer, stderr io.Writer) int {
-	if len(args) == 0 {
-		printRecoverUsage(stderr)
-
-		return 2
-	}
-
-	switch args[0] {
-	case "inspect":
-		return runRecoverInspectMain(args[1:], stdout, stderr)
-	case "show":
-		return runRecoverShowMain(args[1:], stdout, stderr)
-	case "decompose":
-		return runRecoverDecomposeMain(args[1:], stdout, stderr)
-	case "promote":
-		return runRecoverPromoteMain(args[1:], stdout, stderr)
-	case "reconcile":
-		return runRecoverReconcileMain(args[1:], stdout, stderr)
-	case "status":
-		return runRecoverStatusMain(args[1:], stdout, stderr)
-	case "-h", "--help", "help":
-		printRecoverUsage(stdout)
-
-		return 0
-	default:
-		fmt.Fprintf(stderr, "idiom recover: unknown subcommand %q\n", args[0])
-		printRecoverUsage(stderr)
-
-		return 2
-	}
 }
 
 func printRecoverUsage(w io.Writer) {

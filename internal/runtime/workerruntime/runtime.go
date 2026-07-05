@@ -2,6 +2,7 @@ package workerruntime
 
 import (
 	"idiom/internal/capabilities/workspace"
+	plancontract "idiom/internal/contracts/plan"
 	recoverycontract "idiom/internal/contracts/recovery"
 )
 
@@ -21,10 +22,11 @@ type ToolManifestEntry struct {
 }
 
 type BudgetBrief struct {
-	MaxToolSteps       int `json:"max_tool_steps,omitempty"`
-	MaxModelCalls      int `json:"max_model_calls,omitempty"`
-	MaxContextMessages int `json:"max_context_messages,omitempty"`
-	MaxContextChars    int `json:"max_context_chars,omitempty"`
+	MaxToolSteps             int `json:"max_tool_steps,omitempty"`
+	MaxModelCalls            int `json:"max_model_calls,omitempty"`
+	MaxOperationalModelCalls int `json:"max_operational_model_calls,omitempty"`
+	MaxContextMessages       int `json:"max_context_messages,omitempty"`
+	MaxContextChars          int `json:"max_context_chars,omitempty"`
 }
 
 type WorkerRuntimeBrief struct {
@@ -66,11 +68,7 @@ type WorkerRuntimeBrief struct {
 	Budget               BudgetBrief           `json:"budget,omitempty"`
 }
 
-type RequiredEditSnippet struct {
-	ID      string `json:"id,omitempty"`
-	Path    string `json:"path,omitempty"`
-	Content string `json:"content"`
-}
+type RequiredEditSnippet = plancontract.RequiredEditSnippet
 
 type ReadinessState struct {
 	ReadyToAnswer       bool     `json:"ready_to_answer"`
@@ -91,6 +89,7 @@ type ActionGuidanceInput struct {
 	ApprovedTargetScopePresent bool
 	WriteCapable               bool
 	EvidenceIntent             string
+	ToolTransportMode          string
 }
 
 type ActionGuidance struct {
@@ -158,7 +157,12 @@ type RecoveryInput struct {
 	DeclarationMovesForbidden bool
 	EvidenceIntent            string
 	WriteCapable              bool
+	ToolTransportMode         string
 }
+
+const (
+	RecoveryToolTransportNative = "native"
+)
 
 type RecoveryPlan struct {
 	FailureClass       recoverycontract.FailureClass `json:"failure_class,omitempty"`

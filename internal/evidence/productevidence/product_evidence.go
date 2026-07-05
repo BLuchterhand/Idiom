@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"idiom/internal/contracts/sensitivity"
 	idiomeval "idiom/internal/evidence/eval"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/jsonfile"
@@ -258,7 +259,7 @@ func runProductEvidenceExportWithDeps(args []string, stdout io.Writer, stderr io
 		_, _ = stdout.Write(body)
 	}
 
-	deps.logCLIPhase(rec, "product_evidence_export", map[string]any{
+	telemetry.LogPhase(rec, "product_evidence_export", map[string]any{
 		"status":                        report.Status,
 		"export_id":                     report.ExportID,
 		"artifact_hash":                 report.ArtifactHash,
@@ -3573,7 +3574,7 @@ func p912PrivacyAssertionMarker(assertion string) string {
 		}
 	}
 
-	if p912NamedCustomerIdentifier(assertion) {
+	if p912NamedCustomerIdentifierPattern.MatchString(assertion) {
 		return "customer_identifier"
 	}
 
@@ -3581,7 +3582,7 @@ func p912PrivacyAssertionMarker(assertion string) string {
 }
 
 func p912ContainsSecretValue(assertion string) bool {
-	if !localops.ContainsSecretValue(assertion) {
+	if !sensitivity.ContainsSecretMarker(assertion) {
 		return false
 	}
 
@@ -3614,10 +3615,6 @@ func p912PrivacyPhrasePatterns() []p912PrivacyPattern {
 }
 
 var p912NamedCustomerIdentifierPattern = regexp.MustCompile(`\bCustomer[A-Z0-9][A-Za-z0-9_-]*\b|\bcustomer[_-]?[0-9]+[A-Za-z0-9_-]*\b|\b[A-Z][A-Za-z0-9_-]*Customer[A-Za-z0-9_-]*\b`)
-
-func p912NamedCustomerIdentifier(text string) bool {
-	return p912NamedCustomerIdentifierPattern.MatchString(text)
-}
 
 func p912EvaluatePriorGateEvidence(p97 p97ValidationGateResult, p98 p98IntegrationGateResult, p99 productEvidenceReleaseGateLinkage, p910 productEvidenceReleaseGateLinkage, p911 productEvidenceReleaseGateLinkage, counts map[string]int, addBlocker func(string)) {
 	for _, gate := range []productEvidenceReleaseGateLinkage{

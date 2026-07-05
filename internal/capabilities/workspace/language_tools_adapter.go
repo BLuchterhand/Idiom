@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"idiom/internal/repository/semantic"
 	"idiom/internal/repository/semantic/languagetools"
 )
 
@@ -42,14 +41,6 @@ func (h languageToolHost) MaxDirectoryEntries() int {
 	return h.manager.cfg.MaxDirectoryEntries
 }
 
-func (h languageToolHost) MaxFileBytes() int64 {
-	if h.manager == nil {
-		return 0
-	}
-
-	return int64(h.manager.cfg.MaxFileBytes)
-}
-
 func (h languageToolHost) MaxOutputBytes() int {
 	if h.manager == nil {
 		return 0
@@ -62,30 +53,37 @@ func (h languageToolHost) WritesEnabled() bool {
 	return h.manager != nil && h.manager.cfg.EnableWrites
 }
 
+// idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host
 func (h languageToolHost) ResolvePath(path string, workdir string) (string, error) {
 	return h.manager.resolvePath(path, workdir)
 }
 
+// idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host
 func (h languageToolHost) DisplayPath(path string) string {
 	return h.manager.displayPath(path)
 }
 
+// idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host
 func (h languageToolHost) HandleDisplay(abs string) string {
 	return h.manager.handleDisplay(abs)
 }
 
+// idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host
 func (h languageToolHost) RememberPath(abs string) {
 	h.manager.rememberPath(abs)
 }
 
+// idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host
 func (h languageToolHost) PrimeDiscoveredPaths(paths []string) {
 	h.manager.PrimeDiscoveredPaths(paths)
 }
 
+// idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host
 func (h languageToolHost) PathForHandle(handle string) (string, error) {
 	return h.manager.pathForHandle(handle)
 }
 
+// idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host
 func (h languageToolHost) ReadFileLines(path string, start int, end int) (string, error) {
 	return h.manager.readFileLines(path, start, end)
 }
@@ -94,10 +92,12 @@ func (h languageToolHost) Execute(ctx context.Context, req languagetools.ToolReq
 	return toLanguageToolResult(h.manager.Execute(ctx, fromLanguageToolRequest(req)))
 }
 
+// idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host
 func (h languageToolHost) RunCommandDetailed(ctx context.Context, dir string, name string, args ...string) (string, string, error) {
 	return h.manager.runCommandDetailed(ctx, dir, name, args...)
 }
 
+// idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host
 func (h languageToolHost) RunCommandDetailedWithEnv(ctx context.Context, dir string, extraEnv []string, name string, args ...string) (string, string, error) {
 	return h.manager.runCommandDetailedWithEnv(ctx, dir, extraEnv, name, args...)
 }
@@ -196,10 +196,6 @@ type LSPCallHierarchyItem = languagetools.LSPCallHierarchyItem
 type LSPIncomingCall = languagetools.LSPIncomingCall
 type LSPOutgoingCall = languagetools.LSPOutgoingCall
 
-func pylspFileURI(path string) string {
-	return languagetools.PylspFileURI(path)
-}
-
 func codeNavigationSpecFor(value string) (codeNavigationSpec, error) {
 	spec, err := languagetools.CodeNavigationSpecFor(value)
 	if err != nil {
@@ -216,37 +212,12 @@ func codeNavigationSpecFor(value string) (codeNavigationSpec, error) {
 	}, nil
 }
 
-func goReadSymbolWindow(match semantic.SymbolMatch, requestedStart, requestedEnd int) (int, int) {
-	return languagetools.GoReadSymbolWindow(match, requestedStart, requestedEnd)
-}
-
 func (m *Manager) setGoplsBinaryForTesting(path string) {
 	if m.languageTools == nil {
 		m.languageTools = languagetools.NewManager(languageToolHost{manager: m})
 	}
 
 	m.languageTools.SetGoplsBinaryForTesting(path)
-}
-
-func (m *Manager) formatPylspOutgoingCalls(callerPath string, callerName string, calls []LSPOutgoingCall, pathFilter string) callHierarchyResult {
-	if m.languageTools == nil {
-		m.languageTools = languagetools.NewManager(languageToolHost{manager: m})
-	}
-
-	result := m.languageTools.FormatPylspOutgoingCalls(callerPath, callerName, calls, pathFilter)
-
-	return callHierarchyResult{
-		Output:        result.Output,
-		Relationships: fromLanguageToolRelationships(result.Relationships),
-	}
-}
-
-func (m *Manager) goDiagnosticTargets(req ToolRequest) ([]string, error) {
-	if m.languageTools == nil {
-		m.languageTools = languagetools.NewManager(languageToolHost{manager: m})
-	}
-
-	return m.languageTools.GoDiagnosticTargets(toLanguageToolRequest(req))
 }
 
 func toLanguageToolRequest(req ToolRequest) languagetools.ToolRequest {

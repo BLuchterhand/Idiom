@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/platform/textutil"
 )
 
 func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
@@ -23,7 +24,7 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "go_move_declarations")
 	}
 
-	if input.WriteCapable && (input.ApprovedTargetScopePresent || containsAny(statusCombined, "implementation target packet", "approved editable target")) {
+	if input.WriteCapable && (input.ApprovedTargetScopePresent || textutil.ContainsAny(statusCombined, "implementation target packet", "approved editable target")) {
 		guidance.Constraints = appendUnique(guidance.Constraints, "approved_target_scope_enforced")
 	}
 
@@ -49,18 +50,20 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "narrow exception: Decision: source-satisfied only with current-state evidence for every required path")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "narrow exception: <<QUESTION>> only with exact path-specific blockers")
 
-		if containsAny(statusCombined, "malformed tool request", "tool_parse") {
+		if textutil.ContainsAny(statusCombined, "malformed tool request", "tool_parse") {
 			guidance.InvalidNext = appendUnique(guidance.InvalidNext, "malformed_json_tool_request")
-			guidance.ValidNext = appendUnique(guidance.ValidNext, "emit exactly one parser-readable submit_plan JSON object")
+			guidance.ValidNext = appendUnique(guidance.ValidNext, toolParseSubmitPlanRequiredNext(input.ToolTransportMode))
 		}
 
 		return guidance
 	}
 
-	if containsAny(statusCombined, "malformed tool request", "tool_parse") {
+	if textutil.ContainsAny(statusCombined, "malformed tool request", "tool_parse") {
 		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "malformed_json_tool_request")
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "emit exactly one valid JSON tool object")
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer normally only if the task is complete")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, toolParseRequiredNext(input.ToolTransportMode))
+		if !toolParseNativeTransport(input.ToolTransportMode) {
+			guidance.ValidNext = appendUnique(guidance.ValidNext, "answer normally only if the task is complete")
+		}
 
 		return guidance
 	}
@@ -77,7 +80,7 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with <<QUESTION>> if no exact write anchor or patch is present")
 	}
 
-	if containsAny(statusCombined, "repeated", "replayed", "already failed earlier") {
+	if textutil.ContainsAny(statusCombined, "repeated", "replayed", "already failed earlier") {
 		if tool != "" {
 			guidance.InvalidNext = appendUnique(guidance.InvalidNext, "repeat_exact_"+tool+"_request")
 		} else {
@@ -93,7 +96,7 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "duplicate_read_file_on_bootstrapped_target")
 	}
 
-	if containsAny(statusCombined, "completion gate", "final answer rejected") {
+	if textutil.ContainsAny(statusCombined, "completion gate", "final answer rejected") {
 		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "final_answer_without_satisfying_completion_gate")
 	}
 
@@ -118,7 +121,7 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with a concrete blocker or no-op reason")
 	}
 
-	if !closureActive && containsAny(statusCombined, "repeated dead-end", "already failed earlier", "replayed same blocker", "replayed prior evidence") {
+	if !closureActive && textutil.ContainsAny(statusCombined, "repeated dead-end", "already failed earlier", "replayed same blocker", "replayed prior evidence") {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "choose a materially different tool or target")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with the explicit blocker and evidence")
 	}
@@ -130,13 +133,13 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer if the current evidence already resolves the question")
 	}
 
-	if containsAny(statusCombined, "post-edit", "workspace edit already landed") {
+	if textutil.ContainsAny(statusCombined, "post-edit", "workspace edit already landed") {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "provide targeted verification evidence")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "read the changed file if exact failure lines are needed")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "record required ledger state or answer with the concrete blocker")
 	}
 
-	if containsAny(statusCombined, "approved editable target", "implementation target packet") {
+	if textutil.ContainsAny(statusCombined, "approved editable target", "implementation target packet") {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "approved-target write capability inside approved paths")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "request a target-scope update if the approved target is wrong")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "report the guard as a concrete blocker")
@@ -144,7 +147,7 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 
 	if writeReadyPacket {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "required-path write capability using the packet and gathered evidence")
-		if !exactAnchorPacket && workspace.IsWorkspaceWriteTool(tool) && strings.TrimSpace(input.Result.Error) != "" && containsAny(statusCombined, "old_text did not appear", "hunk", "context matched", "ambiguous", "stale") {
+		if !exactAnchorPacket && workspace.IsWorkspaceWriteTool(tool) && strings.TrimSpace(input.Result.Error) != "" && textutil.ContainsAny(statusCombined, "old_text did not appear", "hunk", "context matched", "ambiguous", "stale") {
 			guidance.ValidNext = appendUnique(guidance.ValidNext, "semantic/context/declared project discovery capability or narrow required-path read with named_gap to refresh the stale or ambiguous anchor")
 		}
 
@@ -173,7 +176,7 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "stop and report that write approval is required")
 	}
 
-	if containsAny(statusCombined, "completion gate", "final answer rejected") {
+	if textutil.ContainsAny(statusCombined, "completion gate", "final answer rejected") {
 		if writeReadyPacket || requiredPathsRemaining {
 			guidance.ValidNext = appendUnique(guidance.ValidNext, "satisfy the missing write contract with an allowed edit, or answer with <<QUESTION>> naming the exact blocker")
 		} else {
@@ -328,13 +331,13 @@ func closureGuidanceScope(constraints []string, statusCombined string) string {
 	}
 
 	switch {
-	case containsAny(statusCombined,
+	case textutil.ContainsAny(statusCombined,
 		"child packet already contains sufficient evidence",
 		"post-child follow-up missing named gap",
 		string(ConstraintChildPacketAvailable),
 	):
 		return string(ConstraintChildPacketAvailable)
-	case containsAny(statusCombined,
+	case textutil.ContainsAny(statusCombined,
 		string(ConstraintAnswerReadinessReached),
 		"post-readiness follow-up missing named gap",
 		string(ConstraintAnswerReadinessReached),
@@ -354,7 +357,7 @@ func exactAnchorWriteFailure(constraints []string, tool string, statusCombined s
 		return false
 	}
 
-	return containsAny(statusCombined,
+	return textutil.ContainsAny(statusCombined,
 		"edit request rejected",
 		"write request rejected",
 		"patch request rejected",
@@ -375,7 +378,7 @@ func exactAnchorHiddenPrewriteTool(constraints []string, tool string, statusComb
 		return false
 	}
 
-	return containsAny(statusCombined,
+	return textutil.ContainsAny(statusCombined,
 		"tool hidden by active contract",
 		"hidden for the rest of this turn by the active runtime contract",
 	)

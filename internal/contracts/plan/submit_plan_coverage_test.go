@@ -5,22 +5,6 @@ import (
 	"testing"
 )
 
-// --- plan-execute coverage decision tests ---
-func TestDecisionComplete(t *testing.T) {
-	if !(SubmitPlanCoverageDecision{RequiredPaths: []string{"a.go"}, CoveredPaths: []string{"a.go"}}).Complete() {
-		t.Fatal("expected complete decision")
-	}
-	if (SubmitPlanCoverageDecision{RequiredPaths: []string{"a.go"}, CoveredPaths: nil}).Complete() {
-		t.Fatal("expected incomplete decision")
-	}
-	if (SubmitPlanCoverageDecision{RequiredPaths: []string{"a.go"}, CoveredPaths: []string{"b.go"}}).Complete() {
-		t.Fatal("different covered path must not satisfy required path")
-	}
-	if !(SubmitPlanCoverageDecision{RequiredPaths: []string{"./a.go", "b.go"}, CoveredPaths: []string{"b.go", "a.go", "extra.go"}}).Complete() {
-		t.Fatal("expected required paths covered despite order, prefix, and extra path")
-	}
-}
-
 // --- submit_plan coverage validation tests ---
 func TestValidateCoverageAcceptsCompleteRequiredPlan(t *testing.T) {
 	decision := ValidateCoverage(CoverageInput{

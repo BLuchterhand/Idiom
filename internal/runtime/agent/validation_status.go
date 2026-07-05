@@ -205,10 +205,6 @@ func validationAnswerClaimsTestAdded(lower string) bool {
 	)
 }
 
-func validationAnswerClaimsVerificationPassed(lower string) bool {
-	return validationAnswerClaimsBroadVerificationPassed(lower) || validationAnswerClaimsSourceSanityPassed(lower)
-}
-
 func validationAnswerClaimsBroadVerificationPassed(lower string) bool {
 	if validationAnswerNegatesNear(lower, "verified") ||
 		validationAnswerNegatesNear(lower, "validated") ||

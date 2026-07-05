@@ -69,7 +69,7 @@ func (m *Manager) codeNavigate(ctx context.Context, req ToolRequest) ToolResult 
 		}
 	}
 
-	spec, err := codeNavigationSpecFor(req.Capability)
+	spec, err := CodeNavigationSpecFor(req.Capability)
 	if err != nil {
 		return ToolResult{Tool: "code_navigate", Summary: "Code navigation rejected", Error: err.Error()}
 	}
@@ -106,7 +106,7 @@ func (m *Manager) codeNavigate(ctx context.Context, req ToolRequest) ToolResult 
 	return m.genericCodeNavigationFallback(req, spec, reason)
 }
 
-func codeNavigationSpecFor(value string) (codeNavigationSpec, error) {
+func CodeNavigationSpecFor(value string) (codeNavigationSpec, error) {
 	key := normalizeCodeNavigationCapability(value)
 
 	for _, entry := range codeNavigationSpecs {
@@ -118,10 +118,6 @@ func codeNavigationSpecFor(value string) (codeNavigationSpec, error) {
 	}
 
 	return codeNavigationSpec{}, fmt.Errorf("capability is required; choose one of %s", CodeNavigationCapabilityList())
-}
-
-func CodeNavigationSpecFor(value string) (codeNavigationSpec, error) {
-	return codeNavigationSpecFor(value)
 }
 
 func CodeNavigationCapabilityNames() []string {
@@ -523,13 +519,4 @@ func genericCodeNavigationFileMatches(path string, pattern string, remaining int
 	}
 
 	return matches, nil
-}
-
-func codeNavigationDiscoveryProfile(req ToolRequest) ToolDiscoveryProfile {
-	spec, err := codeNavigationSpecFor(req.Capability)
-	if err != nil {
-		return discoveryProfile("language_symbol", scopeFromPathAndPattern(req.Path, textutil.FirstNonEmpty(req.Pattern, req.Query)), "low", true)
-	}
-
-	return discoveryProfile(spec.Class, scopeFromPathAndPattern(req.Path, textutil.FirstNonEmpty(req.Pattern, req.Query)), spec.Cost, true)
 }

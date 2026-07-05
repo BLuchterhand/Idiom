@@ -40,7 +40,7 @@ func TestRunPrintsMetricsJSON(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"-log", logPath, "-json"}, &stdout, &stderr)
+	code := Run([]string{"-log", logPath, "-json"}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
@@ -63,7 +63,7 @@ func TestRunWritesSuggestedScenario(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"-log", logPath, "-write-scenario", scenarioPath}, &stdout, &stderr)
+	code := Run([]string{"-log", logPath, "-write-scenario", scenarioPath}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
@@ -99,7 +99,7 @@ func TestRunReturnsFailureForScenarioMismatch(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"-log", logPath, "-scenario", scenarioPath}, &stdout, &stderr)
+	code := Run([]string{"-log", logPath, "-scenario", scenarioPath}, &stdout, &stderr)
 
 	if code != 1 {
 		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -115,7 +115,7 @@ func TestRunPrintsLocalizationCorpusReport(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"-localization-corpus", corpusPath}, &stdout, &stderr)
+	code := Run([]string{"-localization-corpus", corpusPath}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -147,7 +147,7 @@ func TestRunPrintsLocalizationCorpusJSON(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"-localization-corpus", corpusPath, "-json"}, &stdout, &stderr)
+	code := Run([]string{"-localization-corpus", corpusPath, "-json"}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -168,7 +168,7 @@ func TestRunPrintsUnifiedLocalizationReport(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"-localization-corpus", corpusPath, "-localization-report", "-log", logPath}, &stdout, &stderr)
+	code := Run([]string{"-localization-corpus", corpusPath, "-localization-report", "-log", logPath}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -213,7 +213,7 @@ func TestRunPrintsUnifiedLocalizationReportJSON(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"-localization-corpus", corpusPath, "-localization-report", "-json"}, &stdout, &stderr)
+	code := Run([]string{"-localization-corpus", corpusPath, "-localization-report", "-json"}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -241,7 +241,7 @@ func TestRunLocalizationReportSuppressesUnknownCompetitiveClientClassification(t
 		t.Run(tt.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 
-			code := run(tt.args, &stdout, &stderr)
+			code := Run(tt.args, &stdout, &stderr)
 
 			if code != 1 {
 				t.Fatalf("expected failed report exit for invalid classification evidence, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -276,7 +276,7 @@ func TestRunPrintsConfiguredLocalizationTopK(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"-localization-corpus", corpusPath, "-localization-top-k", "5,1"}, &stdout, &stderr)
+	code := Run([]string{"-localization-corpus", corpusPath, "-localization-top-k", "5,1"}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -297,7 +297,7 @@ func TestRunRejectsInvalidLocalizationTopK(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"-localization-corpus", corpusPath, "-localization-top-k", "0"}, &stdout, &stderr)
+	code := Run([]string{"-localization-corpus", corpusPath, "-localization-top-k", "0"}, &stdout, &stderr)
 
 	if code != 2 {
 		t.Fatalf("expected exit 2, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -311,7 +311,7 @@ func TestRunRejectsInvalidLocalizationTopK(t *testing.T) {
 func TestRunRequiresLogPath(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := run(nil, &stdout, &stderr)
+	code := Run(nil, &stdout, &stderr)
 
 	if code != 2 {
 		t.Fatalf("expected exit 2, got %d", code)

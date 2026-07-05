@@ -477,7 +477,7 @@ func (s *replayState) addAtom(event Event, atom ReplayAtom) {
 	atom.Sequence = event.Sequence
 	atom.ContractID = event.ContractID
 
-	if looksLikeRawContractEventContent(string(atom.Gate)) {
+	if looksLikeRawGuardFrictionContent(string(atom.Gate)) {
 		atom.Gate = GateKind(replayRedactedValue)
 	}
 
@@ -505,7 +505,7 @@ func replaySafeValue(value string) string {
 		return ""
 	}
 
-	if looksLikeRawContractEventContent(value) {
+	if looksLikeRawGuardFrictionContent(value) {
 		return replayRedactedValue
 	}
 
@@ -1119,7 +1119,7 @@ func replayPrivacyStringReason(path, value string) string {
 		return "long excerpt-like value"
 	}
 
-	if looksLikeRawContractEventContent(value) {
+	if looksLikeRawGuardFrictionContent(value) {
 		return "raw content marker"
 	}
 

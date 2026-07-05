@@ -603,7 +603,7 @@ func TestPreflightPlanEditsRejectsEscapingPathBeforeRead(t *testing.T) {
 		},
 	}
 
-	got := preflightPlanEdits(root, plan, planExecuteTestDependencies().EditPreflight)
+	got := PreflightPlanEditsWithPolicy(root, plan, planExecuteTestDependencies().EditPreflight)
 	if got == nil || got.Reason != "edit has invalid path" {
 		t.Fatalf("expected invalid path preflight mismatch, got %#v", got)
 	}
@@ -630,7 +630,7 @@ func TestPreflightPlanEditsRejectsStaleAnchorProvenance(t *testing.T) {
 		SchemaVersion: planartifact.SchemaVersion,
 		Edits:         edits,
 	}
-	got := preflightPlanEdits(root, plan, planExecuteTestDependencies().EditPreflight)
+	got := PreflightPlanEditsWithPolicy(root, plan, planExecuteTestDependencies().EditPreflight)
 
 	if got == nil {
 		t.Fatalf("preflight must reject stale anchor provenance before writes")
@@ -665,7 +665,7 @@ func TestPreflightPlanEditsRejectsCurrentSchemaMissingAnchorProvenance(t *testin
 		}},
 	}
 
-	got := preflightPlanEdits(root, plan, planExecuteTestDependencies().EditPreflight)
+	got := PreflightPlanEditsWithPolicy(root, plan, planExecuteTestDependencies().EditPreflight)
 	if got == nil || !strings.Contains(got.Reason, "missing submit_plan anchor provenance") {
 		t.Fatalf("expected missing anchor provenance mismatch, got %#v", got)
 	}
@@ -692,7 +692,7 @@ func TestPreflightPlanEditsRejectsExistingEditWithoutAcceptedSourceBodyEvidence(
 		}},
 	}
 
-	got := preflightPlanEdits(root, plan, planExecuteTestDependencies().EditPreflight)
+	got := PreflightPlanEditsWithPolicy(root, plan, planExecuteTestDependencies().EditPreflight)
 	if got == nil {
 		t.Fatal("expected missing source-body evidence to reject existing-file edit")
 	}
@@ -3923,7 +3923,7 @@ func TestPlanExecutePromptProseDoesNotCreateEditSetObligations(t *testing.T) {
 func TestPlanVerificationPreservesQuotedRunPattern(t *testing.T) {
 	prompt := "/plan-execute Continue the repair. Make this pass: go test ./internal/workflows/productworkflow ./cmd/idiom -run 'Test.*(Coverage|TDD|ProductBriefRender|KnownTDD)' -count=1. Do not edit every allowed path unless it is needed."
 	want := "go test ./internal/workflows/productworkflow ./cmd/idiom -run 'Test.*(Coverage|TDD|ProductBriefRender|KnownTDD)' -count=1"
-	got := PlanVerification(VerificationPlannerInput{Prompt: prompt}).CommandStrings()
+	got := NewVerificationPlanner("").Plan(VerificationPlannerInput{Prompt: prompt}).CommandStrings()
 
 	if len(got) != 1 || got[0] != want {
 		t.Fatalf("verification commands = %#v, want %#v", got, []string{want})
@@ -3941,7 +3941,7 @@ func TestPlanVerificationPreservesQuotedRunPattern(t *testing.T) {
 
 func TestPlanVerificationHandlesRunAfterExecutorPhrase(t *testing.T) {
 	prompt := "After the executor applies the plan, run `go test ./...`."
-	got := PlanVerification(VerificationPlannerInput{Prompt: prompt}).CommandStrings()
+	got := NewVerificationPlanner("").Plan(VerificationPlannerInput{Prompt: prompt}).CommandStrings()
 
 	if len(got) != 1 || got[0] != "go test ./..." {
 		t.Fatalf("verification commands = %#v, want %#v", got, []string{"go test ./..."})
@@ -3950,7 +3950,7 @@ func TestPlanVerificationHandlesRunAfterExecutorPhrase(t *testing.T) {
 
 func TestPlanVerificationHandlesCommaSeparatedPytestApproval(t *testing.T) {
 	prompt := `Approved. Use pytest tests/test_llm_core.py, pytest tests/test_memory.py, pytest tests/test_tools.py, and pytest tests/test_planner.py as the verification commands.`
-	got := PlanVerification(VerificationPlannerInput{Prompt: prompt}).CommandStrings()
+	got := NewVerificationPlanner("").Plan(VerificationPlannerInput{Prompt: prompt}).CommandStrings()
 	want := []string{
 		"pytest tests/test_llm_core.py",
 		"pytest tests/test_memory.py",
@@ -3974,7 +3974,7 @@ func TestPlanVerificationIgnoresSuggestedTests(t *testing.T) {
 		"",
 		"Planner-owned build/test/scenario acceptance commands are pending outside this lane unless Phase Evidence names the exact command as successful.",
 	}, "\n")
-	if got := PlanVerification(VerificationPlannerInput{Prompt: prompt}).CommandStrings(); len(got) != 0 {
+	if got := NewVerificationPlanner("").Plan(VerificationPlannerInput{Prompt: prompt}).CommandStrings(); len(got) != 0 {
 		t.Fatalf("suggested/context test mentions should not become executor-owned verification commands, got %#v", got)
 	}
 }

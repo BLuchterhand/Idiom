@@ -1163,7 +1163,7 @@ func turnPhaseRequiredNextIsSafe(value string) bool {
 	if len(value) > 160 {
 		return false
 	}
-	if looksLikeRawContractEventContent(value) {
+	if looksLikeRawGuardFrictionContent(value) {
 		return false
 	}
 
@@ -1491,21 +1491,21 @@ func (g ContractGateEvent) validateRedactedFields(problems *validationProblems) 
 	values = append(values, g.ChangedPaths...)
 
 	for _, value := range values {
-		if looksLikeRawContractEventContent(value) {
+		if looksLikeRawGuardFrictionContent(value) {
 			problems.Add("gate fields must contain redaction-safe metadata only")
 			return
 		}
 	}
 
 	for _, fact := range g.ObservedFacts {
-		if looksLikeRawContractEventContent(string(fact)) {
+		if looksLikeRawGuardFrictionContent(string(fact)) {
 			problems.Add("gate.observed_facts must contain redaction-safe metadata only")
 			return
 		}
 	}
 
 	for _, alternative := range g.SafeAlternatives {
-		if looksLikeRawContractEventContent(alternative) {
+		if looksLikeRawGuardFrictionContent(alternative) {
 			problems.Add("gate.safe_alternatives must contain redaction-safe recovery options only")
 			return
 		}
@@ -1539,10 +1539,6 @@ func (g ContractGuardFrictionEvent) validateRedactedFields(problems *validationP
 			return
 		}
 	}
-}
-
-func looksLikeRawContractEventContent(value string) bool {
-	return looksLikeRawGuardFrictionContent(value)
 }
 
 func validObservedFactLabel(fact string) bool {

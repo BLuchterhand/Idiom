@@ -1521,62 +1521,6 @@ func productionAgentFiles(t *testing.T, agentDir string) []string {
 	return files
 }
 
-func mappedAgentFilesFromDesign(t *testing.T, docPath string) []string {
-	t.Helper()
-
-	body, err := os.ReadFile(docPath)
-	if err != nil {
-		t.Fatalf("read design doc: %v", err)
-	}
-	text := string(body)
-	start := strings.Index(text, "## File Movement Table")
-	if start < 0 {
-		t.Fatal("design doc missing File Movement Table section")
-	}
-	end := strings.Index(text[start:], "There are no nested Go files")
-	if end < 0 {
-		t.Fatal("design doc missing no-nested-package clarification after movement table")
-	}
-	table := text[start : start+end]
-
-	pattern := regexp.MustCompile("`([^`]+\\.go)`")
-	matches := pattern.FindAllStringSubmatch(table, -1)
-	files := make([]string, 0, len(matches))
-	for _, match := range matches {
-		files = append(files, filepath.ToSlash(match[1]))
-	}
-	sort.Strings(files)
-	return files
-}
-
-func missingFiles(expected, actual []string) []string {
-	present := make(map[string]struct{}, len(actual))
-	for _, file := range actual {
-		present[file] = struct{}{}
-	}
-
-	var missing []string
-	for _, file := range expected {
-		if _, ok := present[file]; !ok {
-			missing = append(missing, file)
-		}
-	}
-	return missing
-}
-
-func duplicateEntries(files []string) []string {
-	seen := make(map[string]struct{}, len(files))
-	var duplicates []string
-	for _, file := range files {
-		if _, ok := seen[file]; ok {
-			duplicates = append(duplicates, file)
-			continue
-		}
-		seen[file] = struct{}{}
-	}
-	return duplicates
-}
-
 func TestWriteBeforeGitHistoryEvidenceRejectsExistingLogic(t *testing.T) {
 	root := t.TempDir()
 	markGitHistoryRequirementWorkspace(t, root)
@@ -3390,18 +3334,6 @@ func TestEvidenceToolResultFromWorkspaceUsesNeutralDTO(t *testing.T) {
 	}
 	if dto.Metadata["code"] != "ok" || dto.Metadata["precision_tier"] != "source_body" {
 		t.Fatalf("metadata = %#v", dto.Metadata)
-	}
-	var candidateFacts []string
-	for _, fact := range dto.SidecarFacts {
-		if fact.Key == "candidate_path" {
-			candidateFacts = append(candidateFacts, fact.Value)
-		}
-	}
-	if len(candidateFacts) != 3 {
-		t.Fatalf("candidate facts = %#v, want relationship endpoint facts from all relationships", candidateFacts)
-	}
-	if candidateFacts[1] != "internal/runtime/agent/evidence_registry.go" {
-		t.Fatalf("relationship target path was not normalized into candidate fact: %#v", candidateFacts)
 	}
 }
 
@@ -5313,12 +5245,12 @@ func TestReadOnlyAnswerabilityRejectsAnswerAboveSourceFooter(t *testing.T) {
 		{
 			Tool:    "read_file",
 			Summary: "Read internal/runtime/agent/runner_core.go lines 128-270",
-			Output:  "package agent\ntype ConversationLanePolicy struct{}\nfunc (ConversationLanePolicy) EvidenceMethods() {}\n",
+			Output:  "package agent\nfunc conversationEvidenceSatisfied() bool { return true }\nfunc (r *Runner) conversationEvidenceAvailableForObjective() bool { return true }\n",
 		},
 	}
 	answer := "The answer above is grounded in the following inspected source files:\n\n" +
 		"- `internal/runtime/agent/evidence_readonly.go` - `ReadOnlyEvidencePacket` struct, `buildReadOnlyEvidencePacket`\n" +
-		"- `internal/runtime/agent/runner_core.go` - `ConversationLanePolicy` evidence methods\n"
+		"- `internal/runtime/agent/runner_core.go` - `conversationEvidenceSatisfied`, `conversationEvidenceAvailableForObjective`\n"
 	runner := &Runner{RuntimeBrief: brief}
 
 	kind, reason := runner.finalAnswerBlockerKind(answer, results)
@@ -5342,10 +5274,10 @@ func TestReadOnlyAnswerabilityAllowsStandaloneGroundedEvidenceAnswer(t *testing.
 		{
 			Tool:    "read_file",
 			Summary: "Read internal/runtime/agent/runner_core.go lines 128-270",
-			Output:  "package agent\ntype ConversationLanePolicy struct{}\nfunc (ConversationLanePolicy) EvidenceMethods() {}\n",
+			Output:  "package agent\nfunc conversationEvidenceSatisfied() bool { return true }\nfunc (r *Runner) conversationEvidenceAvailableForObjective() bool { return true }\n",
 		},
 	}
-	answer := "Evidence is used as the harness contract input: `ReadOnlyEvidencePacket` records source-body paths and findings in `internal/runtime/agent/evidence_readonly.go`, and `ConversationLanePolicy` in `internal/runtime/agent/runner_core.go` exposes the evidence requirements that final-answer acceptance validates before a grounded answer can close."
+	answer := "Evidence is used as the harness contract input: `ReadOnlyEvidencePacket` records source-body paths and findings in `internal/runtime/agent/evidence_readonly.go`, and `conversationEvidenceSatisfied` in `internal/runtime/agent/runner_core.go` evaluates the source-evidence threshold before a grounded answer can close."
 	runner := &Runner{RuntimeBrief: brief}
 
 	kind, reason := runner.finalAnswerBlockerKind(answer, results)
@@ -6595,17 +6527,21 @@ func TestReadOnlyEvidencePacketFiltersAndNormalizesSourceBodyPaths(t *testing.T)
 		SourceBodyPaths: []string{
 			"./internal/runtime/agent/runner_core.go",
 			"internal/runtime/agent/runner_core.go",
+			"/tmp/outside/runner_core.go",
+			"../outside/runner_core.go",
 			".idiom/logs/conversations/session.jsonl",
 			"logs/conversations/session.jsonl",
 			".idiom/comprehension/views/pack.json",
 		},
 		InspectedPaths: []string{
 			"./internal/runtime/agent/evidence_readonly.go",
+			"/tmp/outside/evidence_readonly.go",
 			"transcripts/session.md",
 			"internal/runtime/agent/evidence_readonly.go",
 		},
 		CandidatePaths: []string{
 			"internal/capabilities/workspace/manager.go",
+			"../outside/manager.go",
 			".codex/discovery/query.json",
 		},
 		Findings: []ReadOnlyEvidenceFinding{{
@@ -6628,6 +6564,43 @@ func TestReadOnlyEvidencePacketFiltersAndNormalizesSourceBodyPaths(t *testing.T)
 
 	if packet.Findings[0].Path != "" {
 		t.Fatalf("artifact finding path should be cleared during normalization: %#v", packet.Findings[0])
+	}
+}
+
+func TestReadOnlyAnswerabilityDoesNotAcceptTypedPacketWithOnlyOutsideRepoEvidence(t *testing.T) {
+	payload, err := json.Marshal(ReadOnlyEvidencePacket{
+		SchemaVersion:   ReadOnlyEvidencePacketSchema,
+		Objective:       "Explain runner readiness.",
+		SourceBodyPaths: []string{"/tmp/outside/runner_core.go", "../outside/evidence_readonly.go"},
+		InspectedPaths:  []string{"/tmp/outside/runner_core.go"},
+		Findings: []ReadOnlyEvidenceFinding{{
+			Path: "/tmp/outside/runner_core.go",
+			Text: "outside packet claims runner readiness was inspected.",
+		}},
+		Confidence: "high",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result := workspace.ToolResult{
+		Tool:        "task",
+		Summary:     "Child task completed",
+		PayloadType: ReadOnlyEvidencePacketSchema,
+		Payload:     payload,
+	}
+
+	packet, ok := readOnlyEvidencePacketFromResult(result)
+	if ok && (len(packet.SourceBodyPaths) != 0 || len(packet.InspectedPaths) != 0 || packet.Findings[0].Path != "") {
+		t.Fatalf("outside-only typed packet paths should be cleared, got %#v", packet)
+	}
+
+	ledger := readOnlyAnswerabilityForResults(workerruntime.WorkerRuntimeBrief{
+		Objective:         "Explain runner readiness.",
+		PermissionProfile: "read_only_workspace",
+	}, []workspace.ToolResult{result})
+	if ledger.Answerable() || len(ledger.SourceBodyPaths) != 0 || len(ledger.RelevantSourceBodyPaths) != 0 {
+		t.Fatalf("outside-only typed packet must not satisfy answerability: %#v", ledger)
 	}
 }
 
@@ -6997,7 +6970,7 @@ func TestReadOnlyNamedPathPrefetchEventGuards(t *testing.T) {
 
 func TestRunnerTruncatedPrefetchCanAnswerWithoutReadFileFollowup(t *testing.T) {
 	root := t.TempDir()
-	body := "The large fixture uses prefetch excerpts to expose answer token.\n" + strings.Repeat("padding\n", 2000)
+	body := "The large fixture uses prefetch excerpts to expose answer token.\n" + strings.Repeat("padding\n", 10000)
 
 	if err := os.WriteFile(filepath.Join(root, "large.md"), []byte(body), 0o644); err != nil {
 		t.Fatalf("write large fixture: %v", err)
@@ -7621,7 +7594,7 @@ func TestSourceEvidenceNonBodySignalsDoNotCloseSourceBodyObligations(t *testing.
 	}
 }
 
-func TestSourceEvidenceCandidatePathsUseSnapshotReadModel(t *testing.T) {
+func TestSourceEvidenceCandidatePathsUseContextPackCandidates(t *testing.T) {
 	results := []workspace.ToolResult{{
 		Tool:    workspace.ToolNameContextPack,
 		Summary: "Context pack includes evidence_readonly.go.",
@@ -7630,24 +7603,7 @@ func TestSourceEvidenceCandidatePathsUseSnapshotReadModel(t *testing.T) {
 
 	paths := sourceEvidenceCandidatePaths(results)
 	if len(paths) != 1 || paths[0] != "evidence_readonly.go" {
-		t.Fatalf("candidate paths = %#v, want snapshot-backed context_pack candidate", paths)
-	}
-
-	snapshot := snapshotFromWorkspaceResults(results)
-	if !snapshot.Frozen() {
-		t.Fatalf("snapshotFromWorkspaceResults returned mutable snapshot: %#v", snapshot)
-	}
-	if got := sourceEvidenceCandidatePathsFromSnapshot(snapshot); len(got) != 1 || got[0] != paths[0] {
-		t.Fatalf("snapshot candidate paths = %#v, want %#v", got, paths)
-	}
-
-	version := snapshot.Version()
-	delta := snapshot.Promote(FromWorkspaceResult(workspace.ToolResult{
-		Tool:    workspace.ToolNameReadFile,
-		Summary: "Read evidence_readonly.go lines 1-10 (total lines: 10)",
-	}))
-	if snapshot.Version() != version || len(delta.BodyReadPaths) != 0 {
-		t.Fatalf("frozen snapshot mutated after promote: version=%d->%d delta=%#v", version, snapshot.Version(), delta)
+		t.Fatalf("candidate paths = %#v, want context_pack candidate", paths)
 	}
 }
 
@@ -8086,6 +8042,125 @@ func TestPlanExecutePlanningStateCandidateProjectionAllowsSubmitWithSelectedPath
 	assertContains(t, state.TerminalResponseShapes, "submit_plan")
 }
 
+func TestPlanExecutePlanningStateProjectionFeedsTurnPhaseContract(t *testing.T) {
+	baseTools := []string{
+		"context_pack", "context_query", "context_zoom", "discovery_query",
+		"search_files", "search_content", "read_file", "code_navigate",
+		"product_efforts", "product_status", "recovery_inspect", "recovery_status",
+		"history_range", "history_symbol", "submit_plan", "edit_file", "shell",
+	}
+
+	cases := []struct {
+		name              string
+		state             PlanExecutePlanningState
+		transport         PlanExecutePlanningTransport
+		allowedFromParser bool
+		apply             func(*TurnPhaseContract, TurnPhaseContractInput, []string, PlanExecutePlanningState)
+	}{
+		{
+			name:  "required source",
+			state: PlanExecutePlanningState{Mode: PlanExecutePlanningModeRequiredSource},
+			apply: func(contract *TurnPhaseContract, _ TurnPhaseContractInput, baseTools []string, state PlanExecutePlanningState) {
+				applyRequiredSource(contract, baseTools, state)
+			},
+		},
+		{
+			name:  "candidate source",
+			state: PlanExecutePlanningState{Mode: PlanExecutePlanningModeAllowedCandidate},
+			apply: func(contract *TurnPhaseContract, _ TurnPhaseContractInput, baseTools []string, state PlanExecutePlanningState) {
+				applyCandidateSource(contract, baseTools, state)
+			},
+		},
+		{
+			name:  "candidate source submit allowed",
+			state: PlanExecutePlanningState{Mode: PlanExecutePlanningModeAllowedCandidate, TerminalOptions: []string{"submit_plan"}},
+			apply: func(contract *TurnPhaseContract, _ TurnPhaseContractInput, baseTools []string, state PlanExecutePlanningState) {
+				applyCandidateSource(contract, baseTools, state)
+			},
+		},
+		{
+			name:  "history pending",
+			state: PlanExecutePlanningState{Mode: PlanExecutePlanningModeHistoryPending},
+			apply: func(contract *TurnPhaseContract, _ TurnPhaseContractInput, baseTools []string, state PlanExecutePlanningState) {
+				applyHistoryPending(contract, baseTools, state)
+			},
+		},
+		{
+			name:  "anchor refresh",
+			state: PlanExecutePlanningState{Mode: PlanExecutePlanningModeAnchorRefresh},
+			apply: func(contract *TurnPhaseContract, input TurnPhaseContractInput, baseTools []string, state PlanExecutePlanningState) {
+				applyStaleAnchorRefresh(contract, input, baseTools, state)
+			},
+		},
+		{
+			name:              "submit ready textual",
+			state:             PlanExecutePlanningState{Mode: PlanExecutePlanningModeSubmitReady},
+			transport:         PlanExecutePlanningTransport{TextualToolParser: true},
+			allowedFromParser: true,
+			apply: func(contract *TurnPhaseContract, input TurnPhaseContractInput, baseTools []string, state PlanExecutePlanningState) {
+				applySubmitReady(contract, input, baseTools, state)
+			},
+		},
+		{
+			name:              "submit ready native",
+			state:             PlanExecutePlanningState{Mode: PlanExecutePlanningModeSubmitReady},
+			transport:         PlanExecutePlanningTransport{SupportsNativeTools: true},
+			allowedFromParser: true,
+			apply: func(contract *TurnPhaseContract, input TurnPhaseContractInput, baseTools []string, state PlanExecutePlanningState) {
+				applySubmitReady(contract, input, baseTools, state)
+			},
+		},
+		{
+			name:              "submit correction",
+			state:             PlanExecutePlanningState{Mode: PlanExecutePlanningModeSubmitCorrection},
+			transport:         PlanExecutePlanningTransport{TextualToolParser: true},
+			allowedFromParser: true,
+			apply: func(contract *TurnPhaseContract, input TurnPhaseContractInput, baseTools []string, state PlanExecutePlanningState) {
+				applySubmitReady(contract, input, baseTools, state)
+			},
+		},
+		{
+			name:              "submit correction blocker allowed",
+			state:             PlanExecutePlanningState{Mode: PlanExecutePlanningModeSubmitCorrection, SubmitCorrectionBlockerAllowed: true},
+			transport:         PlanExecutePlanningTransport{TextualToolParser: true},
+			allowedFromParser: true,
+			apply: func(contract *TurnPhaseContract, input TurnPhaseContractInput, baseTools []string, state PlanExecutePlanningState) {
+				applySubmitReady(contract, input, baseTools, state)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			state := tc.state
+			state.applyProjection(tc.transport)
+			input := TurnPhaseContractInput{
+				TextualToolParser:   tc.transport.TextualToolParser,
+				SupportsNativeTools: tc.transport.SupportsNativeTools,
+				ResponseFormat:      map[bool]string{true: "json"}[tc.transport.ResponseFormatJSON],
+			}
+
+			var contract TurnPhaseContract
+			tc.apply(&contract, input, baseTools, state)
+
+			if contract.PhaseID != state.PhaseID || contract.Phase != state.Phase || contract.DerivationReason != state.DerivationReason {
+				t.Fatalf("contract phase projection drifted:\ncontract=%#v\nstate=%#v", contract, state)
+			}
+
+			allowedSource := state.CallableTools
+			if tc.allowedFromParser {
+				allowedSource = state.ParserVisibleTools
+			}
+			assertEqualSet(t, contract.AllowedTools, filterPhaseTools(baseTools, allowedSource...))
+			assertEqualSet(t, contract.ActionPolicy.AllowedActionClasses, state.AllowedActionClasses)
+			assertEqualSet(t, contract.ActionPolicy.InvalidActionClasses, state.InvalidActionClasses)
+			assertEqualSet(t, contract.ActionPolicy.TerminalResponseShapes, state.TerminalResponseShapes)
+			assertEqualSet(t, contract.ActionPolicy.CallableToolNames, filterPhaseTools(baseTools, state.CallableTools...))
+			assertEqualSet(t, contract.TerminalOutcomes, state.TerminalResponseShapes)
+		})
+	}
+}
+
 func TestDeriveTurnPhaseContractPlanExecuteOpenCandidateSourceRequiresConcreteSelectedPathBeforeSubmit(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{
@@ -8510,14 +8585,21 @@ func TestPlanExecutePlannerAuthorityProjectionParity(t *testing.T) {
 			textualAllowed := runnerPlanExecuteTextualAllowedTools(nil, tt.brief, tt.results)
 			assertEqualSet(t, textualAllowed, tt.wantTools)
 
-			input, ok := runnerPlanExecutePlannerInput(tt.brief, tt.results, contract, RunPolicy{}, false, contract.ContractID)
+			policy := RunPolicy{MaxOperationalModelCalls: 7}
+			input, ok := runnerPlanExecutePlannerInput(tt.brief, tt.results, contract, policy, false, contract.ContractID)
 			if !ok {
 				t.Fatal("expected planner compiler input")
+			}
+			if input.Budget.MaxOperationalModelCalls != 7 {
+				t.Fatalf("planner compiler input dropped operational model-call limit: %#v", input.Budget)
 			}
 
 			compiled, err := contractcompile.CompilePlanExecutePlanner(input)
 			if err != nil {
 				t.Fatalf("compile planner contract: %v", err)
+			}
+			if compiled.Contract.Budget.MaxOperationalModelCalls != 7 {
+				t.Fatalf("compiled contract dropped operational model-call limit: %#v", compiled.Contract.Budget)
 			}
 
 			assertEqualSet(t, compiled.Protocol.VisibleTools, contract.AllowedTools)
@@ -8527,7 +8609,7 @@ func TestPlanExecutePlannerAuthorityProjectionParity(t *testing.T) {
 			assertEqualSet(t, compiled.Protocol.TerminalResponseShapes, contract.ActionPolicy.TerminalResponseShapes)
 			assertEqualSet(t, compiled.Protocol.SourceBodyObligations, input.Protocol.SourceBodyObligations)
 
-			protocol, ok := (&Runner{}).compileModelProtocolProjection(tt.brief, tt.results, contract, RunPolicy{}, false)
+			protocol, ok := (&Runner{}).compileModelProtocolProjection(tt.brief, tt.results, contract, policy, false)
 			if !ok {
 				t.Fatal("expected model protocol projection")
 			}
@@ -9432,7 +9514,7 @@ func TestDeriveTurnPhaseContractUnscopedImplementationWriteReadyAfterSourceBody(
 			TaskFamily:        "implementation",
 			Contract:          "implementation_result",
 			PermissionProfile: "guarded_workspace_write",
-			AllowedTools:      []string{"read_file", "search_content", "edit_file", "apply_patch", "source_sanity"},
+			AllowedTools:      []string{"read_file", "search_content", "file_stats", "edit_file", "apply_patch", "source_sanity"},
 		},
 		Results: []workspace.ToolResult{{
 			Tool:    "read_file",
@@ -9452,8 +9534,13 @@ func TestDeriveTurnPhaseContractUnscopedImplementationWriteReadyAfterSourceBody(
 	assertContains(t, contract.AllowedTools, "apply_patch")
 	assertContains(t, contract.AllowedTools, "read_file")
 	assertContains(t, contract.AllowedTools, "search_content")
+	assertContains(t, contract.AllowedTools, "file_stats")
+	assertContains(t, contract.ActionPolicy.CallableToolNames, "file_stats")
 
-	if !strings.Contains(strings.Join(contract.Constraints, "\n"), "bounded_source_refresh_allowance") {
+	joinedConstraints := strings.Join(contract.Constraints, "\n")
+	if !strings.Contains(joinedConstraints, "bounded_source_refresh_allowance") ||
+		!strings.Contains(joinedConstraints, implementationTargetWriteReadySourceProbeToolsPhrase) {
+
 		t.Fatalf("target-write-ready contract should project bounded source refresh allowance: %#v", contract.Constraints)
 	}
 }
@@ -9620,6 +9707,16 @@ func TestDeriveTurnPhaseContractNonEditableTargetPacketReadStaysTargetSource(t *
 	assertContains(t, contract.AllowedTools, "context_pack")
 }
 
+func TestTargetPacketWritableMentionedPathsSkipsReadOnlyPriorRecommendation(t *testing.T) {
+	got := targetPacketWritableMentionedPaths([]string{
+		"read_only_evidence previous assistant recommendation: Editable candidate file: internal/runtime/workerruntime/vocabulary.go",
+		"Editable candidate file from previous assistant recommendation: pkg/a_test.go",
+	})
+
+	assertNotContains(t, got, "internal/runtime/workerruntime/vocabulary.go")
+	assertContains(t, got, "pkg/a_test.go")
+}
+
 func TestDeriveTurnPhaseContractUnscopedImplementationPlausibleTargetReadBecomesWriteReady(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{
@@ -9695,6 +9792,15 @@ func TestTurnPhaseSurfaceSummaryDoesNotClassifyParserReadableWriteAsRead(t *test
 	assertContains(t, classes, actionPerEditWrite)
 	assertContains(t, classes, actionBlocker)
 	assertNotContains(t, classes, actionRead)
+}
+
+func TestTurnPhaseSurfaceSummaryClassifiesToolNamedReadSearchActions(t *testing.T) {
+	classes := turnPhaseSurfaceActionClassesFromText([]string{
+		"bounded read_file/search_content source refresh with named_gap for a precise edit-safety fact",
+	})
+
+	assertContains(t, classes, actionRead)
+	assertContains(t, classes, actionSearch)
 }
 
 func TestDeriveTurnPhaseContractUnscopedImplementationStaysTargetSourceAfterSymbolMiss(t *testing.T) {
@@ -10463,24 +10569,6 @@ func assertEqualSet(t *testing.T, got []string, want []string) {
 	}
 }
 
-func TestPlanExecutePlanningStateDecisionProjection(t *testing.T) {
-	state := PlanExecutePlanningState{
-		Mode:                  PlanExecutePlanningModeSubmitReady,
-		RequiredCoveragePaths: []string{"a.go"},
-		SelectedEditPaths:     []string{"a.go"},
-	}
-
-	decision := state.Decision("contract-1", "planexecute.submit_plan")
-
-	if decision.Mode != plancontract.ModeSubmitReady ||
-		decision.ContractID != "contract-1" ||
-		decision.InvariantID != "planexecute.submit_plan" ||
-		!decision.Complete() {
-
-		t.Fatalf("unexpected planexecute decision projection: %#v", decision)
-	}
-}
-
 func TestPlanExecuteLowValueRecoveryPlanFieldsDoNotDependOnPromptProse(t *testing.T) {
 	plan := planThenExecuteLowValueActionRecoveryPlan(PlanExecutePlanningState{
 		Mode:              PlanExecutePlanningModeAllowedCandidate,
@@ -10642,29 +10730,6 @@ func TestPlanExecuteLowValueRecoveryMissingTargetStillRequiresBoundedPath(t *tes
 	}
 }
 
-func TestPlanExecuteAnchorRefreshRecoveryAllowsOnlyBoundedSourceRefresh(t *testing.T) {
-	plan := planThenExecuteAnchorRefreshRecoveryPlan(
-		workerruntime.WorkerRuntimeBrief{RequiredEditPaths: []string{"pkg/feature.go"}},
-		nil,
-		workspace.ToolResult{Tool: "submit_plan", Summary: "rejected", Error: "invalid anchor for pkg/feature.go"},
-		0,
-	)
-
-	for _, allowed := range []string{workspace.CodeNavigateToolName, "read_file"} {
-		if !slices.Contains(plan.AllowedTools, allowed) {
-			t.Fatalf("anchor refresh recovery missing allowed source tool %q: %#v", allowed, plan.AllowedTools)
-		}
-	}
-	for _, forbidden := range []string{"submit_plan", "search_content", "context_pack"} {
-		if slices.Contains(plan.AllowedTools, forbidden) {
-			t.Fatalf("anchor refresh recovery advertised forbidden tool %q: %#v", forbidden, plan.AllowedTools)
-		}
-	}
-	if !slices.Equal(plan.TerminalOptions, []string{"bounded read/refresh"}) {
-		t.Fatalf("TerminalOptions = %#v", plan.TerminalOptions)
-	}
-}
-
 func TestPlanExecuteRepeatedCorrectionRecoveryDoesNotOfferTerminalEscape(t *testing.T) {
 	plan := planThenExecuteRepeatedSubmitCorrectionRecoveryPlan(workspace.ToolResult{
 		Tool:  "submit_plan",
@@ -10705,6 +10770,142 @@ func TestPlanExecuteNativeNoCallFallbackSwitchesToTextualSubmitOnly(t *testing.T
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("native no-call fallback prompt missing %q:\n%s", want, prompt)
 		}
+	}
+}
+
+func TestPlanExecuteRecoverySurfaceMetadataCharacterizesKnownSurfaces(t *testing.T) {
+	cases := []struct {
+		name          string
+		kind          PlanExecuteRecoverySurfaceKind
+		wantMode      PlanExecutePlanningMode
+		wantPhaseID   string
+		wantInvariant string
+		wantBudget    int
+	}{
+		{
+			name:          "anchor refresh",
+			kind:          PlanExecuteRecoverySurfaceAnchorRefresh,
+			wantMode:      PlanExecutePlanningModeAnchorRefresh,
+			wantPhaseID:   turnPhaseStaleAnchorRefresh,
+			wantInvariant: "planexecute.anchor_refresh",
+			wantBudget:    2,
+		},
+		{
+			name:          "history pending",
+			kind:          PlanExecuteRecoverySurfaceHistoryPending,
+			wantMode:      PlanExecutePlanningModeHistoryPending,
+			wantPhaseID:   turnPhaseHistoryPending,
+			wantInvariant: "planexecute.history_required",
+			wantBudget:    2,
+		},
+		{
+			name:          "submit correction",
+			kind:          PlanExecuteRecoverySurfaceSubmitCorrection,
+			wantMode:      PlanExecutePlanningModeSubmitCorrection,
+			wantPhaseID:   turnPhaseSubmitReadyTextual,
+			wantInvariant: "planexecute.submit_plan",
+			wantBudget:    2,
+		},
+		{
+			name:          "submit ready",
+			kind:          PlanExecuteRecoverySurfaceSubmitReady,
+			wantMode:      PlanExecutePlanningModeSubmitReady,
+			wantPhaseID:   turnPhaseSubmitReadyTextual,
+			wantInvariant: "planexecute.submit_ready",
+			wantBudget:    1,
+		},
+		{
+			name:          "source satisfied terminal",
+			kind:          PlanExecuteRecoverySurfaceSourceSatisfiedTerminal,
+			wantMode:      PlanExecutePlanningModeSubmitReady,
+			wantPhaseID:   turnPhaseSourceSatisfiedTerminal,
+			wantInvariant: "planexecute.source_satisfied_terminal",
+			wantBudget:    2,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := recoveryModeFromSurface(tc.kind); got != tc.wantMode {
+				t.Fatalf("mode = %q, want %q", got, tc.wantMode)
+			}
+			if got := recoveryPhaseIDFromSurface(tc.kind); got != tc.wantPhaseID {
+				t.Fatalf("phase = %q, want %q", got, tc.wantPhaseID)
+			}
+			if got := recoveryStateFailedInvariantID(tc.kind, TurnPhaseContract{}); got != tc.wantInvariant {
+				t.Fatalf("invariant = %q, want %q", got, tc.wantInvariant)
+			}
+			if got := recoveryStateRemainingBudget(tc.kind, 0); got != tc.wantBudget {
+				t.Fatalf("budget = %d, want %d", got, tc.wantBudget)
+			}
+		})
+	}
+}
+
+func TestPlanExecuteRecoverySurfaceKindFromContractCharacterizesPhaseOverrides(t *testing.T) {
+	cases := []struct {
+		name     string
+		phaseID  string
+		fallback PlanExecuteRecoverySurfaceKind
+		want     PlanExecuteRecoverySurfaceKind
+	}{
+		{
+			name:     "stale anchor phase",
+			phaseID:  turnPhaseStaleAnchorRefresh,
+			fallback: PlanExecuteRecoverySurfaceSubmitReady,
+			want:     PlanExecuteRecoverySurfaceAnchorRefresh,
+		},
+		{
+			name:     "history phase",
+			phaseID:  turnPhaseHistoryPending,
+			fallback: PlanExecuteRecoverySurfaceSubmitReady,
+			want:     PlanExecuteRecoverySurfaceHistoryPending,
+		},
+		{
+			name:     "malformed submit-plan recovery",
+			phaseID:  turnPhaseMalformedSubmitPlanRecovery,
+			fallback: PlanExecuteRecoverySurfaceSubmitCorrection,
+			want:     PlanExecuteRecoverySurfaceSubmitReady,
+		},
+		{
+			name:     "native submit ready",
+			phaseID:  turnPhaseSubmitReadyNativeRequired,
+			fallback: PlanExecuteRecoverySurfaceNone,
+			want:     PlanExecuteRecoverySurfaceSubmitReady,
+		},
+		{
+			name:     "native submit ready preserves correction fallback",
+			phaseID:  turnPhaseSubmitReadyNativeRequired,
+			fallback: PlanExecuteRecoverySurfaceSubmitCorrection,
+			want:     PlanExecuteRecoverySurfaceSubmitCorrection,
+		},
+		{
+			name:     "textual submit ready preserves correction fallback",
+			phaseID:  turnPhaseSubmitReadyTextual,
+			fallback: PlanExecuteRecoverySurfaceSubmitCorrection,
+			want:     PlanExecuteRecoverySurfaceSubmitCorrection,
+		},
+		{
+			name:     "textual submit ready without correction fallback",
+			phaseID:  turnPhaseSubmitReadyTextual,
+			fallback: PlanExecuteRecoverySurfaceNone,
+			want:     PlanExecuteRecoverySurfaceSubmitReady,
+		},
+		{
+			name:     "unknown phase",
+			phaseID:  "future_phase",
+			fallback: PlanExecuteRecoverySurfaceSourceSatisfiedTerminal,
+			want:     PlanExecuteRecoverySurfaceSourceSatisfiedTerminal,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := recoverySurfaceKindFromContract(TurnPhaseContract{PhaseID: tc.phaseID}, tc.fallback)
+			if got != tc.want {
+				t.Fatalf("surface = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -11163,8 +11364,8 @@ func TestPlanExecuteRuntimeCallPolicyNativeSubmitReady(t *testing.T) {
 		t.Fatalf("tool choice not preserved: %#v", policy)
 	}
 
-	if policy.PlanningTransport().EffectiveMaxTokens != 4096 {
-		t.Fatalf("EffectiveMaxTokens = %d, want 4096", policy.PlanningTransport().EffectiveMaxTokens)
+	if policy.MaxTokens != 4096 {
+		t.Fatalf("MaxTokens = %d, want 4096", policy.MaxTokens)
 	}
 
 	assertEqualSet(t, policy.ExpressibleActionClasses, []string{actionSubmitPlan})
@@ -11189,8 +11390,8 @@ func TestPlanExecuteRuntimeCallPolicyTextualJSONSubmitReady(t *testing.T) {
 		t.Fatalf("textual JSON submit-ready policy should preserve response format")
 	}
 
-	if policy.PlanningTransport().EffectiveMaxTokens != 4096 {
-		t.Fatalf("EffectiveMaxTokens = %d, want 4096", policy.PlanningTransport().EffectiveMaxTokens)
+	if policy.MaxTokens != 4096 {
+		t.Fatalf("MaxTokens = %d, want 4096", policy.MaxTokens)
 	}
 
 	assertEqualSet(t, policy.ExpressibleActionClasses, []string{actionSourceSatisfied, actionBlocker, actionFinalAnswer})
@@ -11305,8 +11506,8 @@ func TestPlanExecuteRuntimeCallPolicySourceRefreshKeepsSmallVisibleToolBudget(t 
 		t.Fatalf("source-refresh policy should not request JSON response format")
 	}
 
-	if policy.PlanningTransport().EffectiveMaxTokens != 768 {
-		t.Fatalf("source-refresh EffectiveMaxTokens = %d, want 768", policy.PlanningTransport().EffectiveMaxTokens)
+	if policy.MaxTokens != 768 {
+		t.Fatalf("source-refresh MaxTokens = %d, want 768", policy.MaxTokens)
 	}
 
 	if opts.EnableThinking == nil || *opts.EnableThinking {
@@ -11478,6 +11679,14 @@ func TestToolRequestNormalizerClassifiesNativeTransportMismatch(t *testing.T) {
 	if result.EventTransport != toolRequestNormalizerTransportNative {
 		t.Fatalf("EventTransport = %q, want native", result.EventTransport)
 	}
+
+	input := runnerAutonomyPolicyInputFromNormalization(result)
+	if input.Transport != autonomy.ToolTransportNativeCall {
+		t.Fatalf("policy transport = %q, want native tool call", input.Transport)
+	}
+	if input.ParserFailure != autonomy.ParserFailureTransportMismatch {
+		t.Fatalf("policy parser failure = %q, want transport mismatch", input.ParserFailure)
+	}
 }
 
 func TestToolRequestNormalizerMissingToolInferenceRequiresTypedAuthority(t *testing.T) {
@@ -11540,6 +11749,32 @@ func TestToolRequestNormalizerMissingToolInferenceRequiresTypedAuthority(t *test
 			}
 			if result.EventTransport != tt.wantTransport {
 				t.Fatalf("EventTransport = %q, want %q", result.EventTransport, tt.wantTransport)
+			}
+		})
+	}
+}
+
+func TestMissingToolInferenceRequiresTypedAuthorityForWorkspaceWriteTools(t *testing.T) {
+	for _, tool := range workspace.WorkspaceWriteToolNames() {
+		t.Run(tool, func(t *testing.T) {
+			if !missingToolInferenceNeedsTypedAuthority(workspace.ToolRequest{Tool: tool}) {
+				t.Fatalf("missing-tool inference must require typed authority for workspace write tool %q", tool)
+			}
+		})
+	}
+
+	for _, tool := range []string{
+		workspace.ToolNameShell,
+		workspace.ToolNameSubmitPlan,
+		workspace.ToolNameTask,
+		workspace.ToolNameTaskLedger,
+	} {
+		t.Run(tool, func(t *testing.T) {
+			if workspace.IsWorkspaceWriteTool(tool) {
+				t.Fatalf("%q should stay outside the workspace write-tool catalog for this characterization", tool)
+			}
+			if !missingToolInferenceNeedsTypedAuthority(workspace.ToolRequest{Tool: tool}) {
+				t.Fatalf("missing-tool inference must require typed authority for non-write control tool %q", tool)
 			}
 		})
 	}
@@ -11942,6 +12177,7 @@ func TestRecoveryCardDerivesWriteReadySafeNextFromSourcedEvidence(t *testing.T) 
 	assertRecoveryCardContains(t, got,
 		"phase_id=implementation.write_ready",
 		"currently callable action classes: per_edit_write, blocker",
+		"visible safe alternatives: per_edit_write, blocker",
 		"deterministic safe next action: Emit one parser-readable write to the already-sourced path(s): internal/surfaces/tui/app/sessions_panel.go. For textual write transport, use one visible JSON object or apply_patch envelope, not key/value edit-body notes; or answer <<QUESTION>> with the exact edit blocker/no-op evidence.",
 	)
 
@@ -12116,6 +12352,7 @@ func TestRecoveryCardDoesNotAdvertiseUnavailablePendingRedirect(t *testing.T) {
 		"phase_id=implementation.write_ready",
 		"currently callable tools: apply_patch",
 		"currently callable action classes: per_edit_write, blocker",
+		"visible safe alternatives: per_edit_write, blocker",
 		"deterministic safe next action: Follow the active write-ready requirement: parser-readable write to the sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence",
 	)
 
@@ -12152,8 +12389,67 @@ func TestRecoveryCardAdvertisesCallablePendingRedirect(t *testing.T) {
 
 	assertRecoveryCardContains(t, got,
 		"currently callable action classes: read, per_edit_write, blocker",
+		"visible safe alternatives: read, per_edit_write, blocker",
 		"deterministic safe next action: Resolve the exact pending redirected source-body obligation (internal/surfaces/tui/app/sessions_panel.go via code_navigate capability=read_symbol with pattern/symbol, or one file_outline first when the symbol is unknown), then emit one parser-readable write to a sourced target path. For textual write transport, use one visible JSON object or apply_patch envelope, not key/value edit-body notes; or answer <<QUESTION>> with the exact edit blocker/no-op evidence.",
 	)
+}
+
+func TestRecoveryCardDoesNotAdvertiseHiddenWriteAsSafeAlternative(t *testing.T) {
+	contract := TurnPhaseContract{
+		PhaseID:      turnPhaseImplementationWriteReady,
+		AllowedTools: []string{"read_file", "apply_patch"},
+		HiddenTools:  []string{"apply_patch"},
+		ActionPolicy: TurnActionClassPolicy{
+			AllowedActionClasses: []string{actionRead, actionPerEditWrite, actionBlocker},
+			CallableToolNames:    []string{"read_file", "apply_patch"},
+		},
+		RuntimeCall: RuntimeCallContract{
+			ExpressibleActionClasses: []string{actionRead, actionPerEditWrite, actionBlocker},
+		},
+	}
+
+	got := newCardEngine().RenderRecoveryCard(newCardEngine().BuildRecoveryCard(RecoveryCardInput{
+		PhaseContract:       contract,
+		CurrentAllowedTools: []string{"read_file", "apply_patch"},
+		RejectedRequest:     workspace.ToolRequest{Tool: "completion_gate"},
+		RejectedResult:      workspace.ToolResult{Tool: "completion_gate", Summary: "Completion gate rejected final answer"},
+	}))
+
+	assertRecoveryCardContains(t, got,
+		"currently callable tools: read_file",
+		"currently callable action classes: read, blocker",
+		"visible safe alternatives: read, blocker",
+	)
+	if strings.Contains(got, "visible safe alternatives: read, per_edit_write") ||
+		strings.Contains(got, "currently callable action classes: read, per_edit_write") {
+
+		t.Fatalf("hidden write tools must not advertise per_edit_write as safe:\n%s", got)
+	}
+}
+
+func TestRecoveryCardSurfaceSummaryUsesVisibleSafeAlternatives(t *testing.T) {
+	contract := TurnPhaseContract{
+		ContractID: "contract-test",
+		PhaseID:    turnPhaseImplementationWriteReady,
+		ActionPolicy: TurnActionClassPolicy{
+			AllowedActionClasses: []string{actionPerEditWrite, actionBlocker},
+			CallableToolNames:    []string{"apply_patch"},
+		},
+		RuntimeCall: RuntimeCallContract{
+			ExpressibleActionClasses: []string{actionPerEditWrite, actionBlocker},
+		},
+	}
+	card := BuildRecoveryCard(RecoveryCardInput{
+		PhaseContract:       contract,
+		CurrentAllowedTools: []string{"apply_patch"},
+		RejectedRequest:     workspace.ToolRequest{Tool: "completion_gate"},
+		RejectedResult:      workspace.ToolResult{Tool: "completion_gate", Summary: "Completion gate rejected final answer"},
+	})
+
+	summary := card.TurnPhaseSurfaceSummary(contract)
+
+	assertContains(t, summary.SafeAlternatives, actionPerEditWrite)
+	assertContains(t, summary.SafeAlternatives, actionBlocker)
 }
 
 func TestRecoveryCardScopesPendingRedirectsToActiveBrief(t *testing.T) {
@@ -12599,36 +12895,18 @@ func TestPlanThenExecuteNativeSubmitPlanCorrectionRecoveryPlanEmptyPaths(t *test
 	}
 }
 
-func TestPlanThenExecuteAnchorRefreshRecoveryPlan(t *testing.T) {
-	rejected := workspace.ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected: stale anchor", Output: `{"path":"src/main.go"}`}
-	plan := planThenExecuteAnchorRefreshRecoveryPlan(workerruntime.WorkerRuntimeBrief{RequiredEditPaths: []string{"src/main.go"}}, nil, rejected, 0)
-	if plan.Kind != PlanExecuteRecoveryKindAnchorRefresh {
-		t.Fatalf("expected AnchorRefresh kind")
-	}
-	hasReadFile := false
-	for _, tool := range plan.AllowedTools {
-		if tool == "read_file" {
-			hasReadFile = true
-			break
-		}
-	}
-	if !hasReadFile {
-		t.Fatal("expected read_file in allowed tools for anchor refresh")
-	}
-}
-
 func TestPlanThenExecuteAnchorRefreshPromptStaysReadOnlyAndRendererFree(t *testing.T) {
 	rejected := workspace.ToolResult{
 		Tool:    "submit_plan",
 		Summary: "submit_plan rejected: stale anchor",
 		Output:  `{"path":"src/main.go"}`,
-		Error:   "invalid edit anchor for `src/main.go`",
+		Error:   "invalid edit anchor(s): `src/main.go: old_text not found in current source`.",
 	}
-	prompt := RenderPlanExecuteRecoveryPlan(planThenExecuteAnchorRefreshRecoveryPlan(workerruntime.WorkerRuntimeBrief{
+	prompt := planThenExecuteAnchorRefreshAfterRejectedSubmitPlanPrompt(workerruntime.WorkerRuntimeBrief{
 		RequiredEditPaths: []string{"src/main.go"},
-	}, nil, rejected, 0))
+	}, nil, rejected, 0)
 
-	for _, want := range []string{"anchor-refresh phase", "bounded source-body request for one of those paths", "Use exactly one bounded `read_file`", "read_symbol", "extract_body", "Do not call `submit_plan` again"} {
+	for _, want := range []string{"anchor-refresh phase", "bounded source-body request for one of those paths", "deterministic fallback `read_file`", "start_line:1", "end_line:120", "read_symbol", "extract_body", "Do not call `submit_plan` again"} {
 		if !containsString(prompt, want) {
 			t.Fatalf("anchor-refresh prompt missing %q:\n%s", want, prompt)
 		}
@@ -12702,62 +12980,6 @@ func TestPlanThenExecuteNativeNoCallFallbackPromptStaysTextualOnly(t *testing.T)
 		if containsString(prompt, forbidden) {
 			t.Fatalf("native no-call fallback prompt included renderer/native marker %q:\n%s", forbidden, prompt)
 		}
-	}
-}
-
-// ---------------------------------------------------------------------------
-// P0: runner_implementation_brief.go — implementationPreWriteRuntimeBrief (0%)
-// ---------------------------------------------------------------------------
-
-func TestImplementationPreWriteRuntimeBriefSetsWriteOnlySurface(t *testing.T) {
-	brief := workerruntime.WorkerRuntimeBrief{
-		AllowedTools:      []string{"edit_file", "read_file", "search_content", "apply_patch", "shell"},
-		RequiredEditPaths: []string{"src/main.go"},
-		Constraints:       []string{"existing_constraint"},
-		RequiredNext:      []string{"existing_next"},
-		InvalidActions:    []string{"existing_invalid"},
-		SearchPolicy:      []string{"existing_search_policy"},
-	}
-	result := implementationPreWriteRuntimeBrief(brief)
-
-	if !slices.Equal(result.AllowedTools, []string{"edit_file", "apply_patch"}) {
-		t.Fatalf("AllowedTools = %#v, want write-only tools", result.AllowedTools)
-	}
-	for _, forbidden := range []string{"read_file", "search_content", "shell"} {
-		if slices.Contains(result.AllowedTools, forbidden) {
-			t.Fatalf("pre-write surface retained forbidden tool %q: %#v", forbidden, result.AllowedTools)
-		}
-	}
-
-	if !slices.Equal(result.RequiredTools, []string{"edit_file_or_apply_patch"}) {
-		t.Fatalf("RequiredTools = %#v", result.RequiredTools)
-	}
-	for _, want := range []string{"implementation_prewrite_write_only", "existing_constraint"} {
-		if !slices.Contains(result.Constraints, want) {
-			t.Fatalf("Constraints missing %q: %#v", want, result.Constraints)
-		}
-	}
-	for _, want := range []string{"exact-anchor required-path write capability", "existing_next"} {
-		if !slices.Contains(result.RequiredNext, want) {
-			t.Fatalf("RequiredNext missing %q: %#v", want, result.RequiredNext)
-		}
-	}
-	for _, want := range []string{"read/search/task_ledger/shell before first exact-anchor required-path write", "existing_invalid"} {
-		if !slices.Contains(result.InvalidActions, want) {
-			t.Fatalf("InvalidActions missing %q: %#v", want, result.InvalidActions)
-		}
-	}
-	for _, want := range []string{"the exact target packet and required_edit_paths are the pre-write evidence surface", "existing_search_policy"} {
-		if !slices.Contains(result.SearchPolicy, want) {
-			t.Fatalf("SearchPolicy missing %q: %#v", want, result.SearchPolicy)
-		}
-	}
-}
-
-func TestImplementationPreWriteRuntimeBriefPreservesRequiredEditPaths(t *testing.T) {
-	result := implementationPreWriteRuntimeBrief(workerruntime.WorkerRuntimeBrief{AllowedTools: []string{"edit_file"}, RequiredEditPaths: []string{"src/main.go"}})
-	if len(result.RequiredEditPaths) != 1 || result.RequiredEditPaths[0] != "src/main.go" {
-		t.Fatal("expected RequiredEditPaths preserved")
 	}
 }
 
@@ -14698,7 +14920,7 @@ func TestPlanThenExecuteRejectedPlanSourceRefreshAllowedForInvalidAnchor(t *test
 		},
 	}
 
-	if !planThenExecuteRejectedPlanSourceRefreshAllowed(workspace.ToolRequest{
+	if !planThenExecuteRejectedPlanSourceRefreshAllowedForScope(workspace.ToolRequest{
 		Tool:      "read_file",
 		Path:      "cmd/idiom/product_workflow.go",
 		StartLine: 1515,
@@ -14708,7 +14930,7 @@ func TestPlanThenExecuteRejectedPlanSourceRefreshAllowedForInvalidAnchor(t *test
 		t.Fatal("bounded source-body refresh for invalid submit_plan anchor should be allowed")
 	}
 
-	if planThenExecuteRejectedPlanSourceRefreshAllowed(workspace.ToolRequest{
+	if planThenExecuteRejectedPlanSourceRefreshAllowedForScope(workspace.ToolRequest{
 		Tool: "read_file",
 		Path: "cmd/idiom/product_workflow.go",
 	}, required, results) {
@@ -14716,7 +14938,7 @@ func TestPlanThenExecuteRejectedPlanSourceRefreshAllowedForInvalidAnchor(t *test
 		t.Fatal("unbounded file refresh should not bypass submit_plan-only recovery")
 	}
 
-	if planThenExecuteRejectedPlanSourceRefreshAllowed(workspace.ToolRequest{
+	if planThenExecuteRejectedPlanSourceRefreshAllowedForScope(workspace.ToolRequest{
 		Tool:      "read_file",
 		Path:      "internal/workflows/productworkflow/other.go",
 		StartLine: 1,
@@ -14747,7 +14969,7 @@ func TestPlanThenExecuteRejectedPlanSourceRefreshAllowedForPreflightSyntaxValida
 		},
 	}
 
-	if !planThenExecuteRejectedPlanSourceRefreshAllowed(workspace.ToolRequest{
+	if !planThenExecuteRejectedPlanSourceRefreshAllowedForScope(workspace.ToolRequest{
 		Tool:      "read_file",
 		Path:      "cmd/idiom/product_workflow.go",
 		StartLine: 80,
@@ -14757,7 +14979,7 @@ func TestPlanThenExecuteRejectedPlanSourceRefreshAllowedForPreflightSyntaxValida
 		t.Fatal("bounded source-body refresh for submit_plan syntax preflight failure should be allowed")
 	}
 
-	if planThenExecuteRejectedPlanSourceRefreshAllowed(workspace.ToolRequest{
+	if planThenExecuteRejectedPlanSourceRefreshAllowedForScope(workspace.ToolRequest{
 		Tool:      "read_file",
 		Path:      "cmd/idiom/product_workflow_test.go",
 		StartLine: 1,
@@ -15387,7 +15609,7 @@ func TestPlanExecuteRequiredAnchorRefreshRedirectsUnboundedReadFile(t *testing.T
 		t.Fatalf("redirect must be a bounded anchor-refresh read, got %#v", redirected)
 	}
 
-	if !planThenExecuteRejectedPlanSourceRefreshAllowed(redirected, runner.RuntimeBrief.RequiredEditPaths, results) {
+	if !planThenExecuteRejectedPlanSourceRefreshAllowedForScope(redirected, runner.RuntimeBrief.RequiredEditPaths, results) {
 		t.Fatalf("redirected required-path refresh should be allowed after rejected submit_plan: %#v", redirected)
 	}
 }
@@ -15413,7 +15635,7 @@ func TestPlanExecuteRequiredAnchorRefreshRedirectsRepeatedBoundedReadFile(t *tes
 		EndLine:   120,
 	}
 
-	if planThenExecuteRejectedPlanSourceRefreshAllowed(req, runner.RuntimeBrief.RequiredEditPaths, results) {
+	if planThenExecuteRejectedPlanSourceRefreshAllowedForScope(req, runner.RuntimeBrief.RequiredEditPaths, results) {
 		t.Fatal("repeated bounded anchor-refresh window should not be accepted as new refresh evidence")
 	}
 
@@ -15426,7 +15648,7 @@ func TestPlanExecuteRequiredAnchorRefreshRedirectsRepeatedBoundedReadFile(t *tes
 		t.Fatalf("redirect should advance to a later bounded window, got %#v", redirected)
 	}
 
-	if !planThenExecuteRejectedPlanSourceRefreshAllowed(redirected, runner.RuntimeBrief.RequiredEditPaths, results) {
+	if !planThenExecuteRejectedPlanSourceRefreshAllowedForScope(redirected, runner.RuntimeBrief.RequiredEditPaths, results) {
 		t.Fatalf("advanced refresh window should be allowed after repeated bounded read: %#v", redirected)
 	}
 }
@@ -21387,7 +21609,7 @@ func TestPlanExecuteRepeatedExistingSourceRewriteAfterRefreshStaysSubmitCorrecti
 	}
 
 	req := workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "native/src/simulation/world/collapse_event.h", StartLine: 1, EndLine: 63}
-	if planThenExecuteRejectedPlanSourceRefreshAllowed(req, brief.RequiredEditPaths, results) {
+	if planThenExecuteRejectedPlanSourceRefreshAllowedForScope(req, brief.RequiredEditPaths, results) {
 		t.Fatalf("anchor refresh should not be allowed after corrected evidence already refreshed the invalid anchor")
 	}
 }
@@ -21460,7 +21682,7 @@ func TestPlanExecuteRepeatedUnsafeSubmitCorrectionAllowsPathBlocker(t *testing.T
 	if !slices.Equal(state.AllowedActionClasses, []string{actionSubmitPlan, actionBlocker}) {
 		t.Fatalf("allowed actions = %#v, want submit_plan + blocker", state.AllowedActionClasses)
 	}
-	if !slices.Equal(state.TerminalResponseShapes, plancontract.SubmitPlanQuestion()) {
+	if !slices.Equal(state.TerminalResponseShapes, planExecuteTerminalSubmitPlanQuestion()) {
 		t.Fatalf("terminal shapes = %#v, want submit_plan/question", state.TerminalResponseShapes)
 	}
 
@@ -23621,7 +23843,7 @@ func TestCompletionGateRecoveryPromptForUnscopedImplementationNoWrite(t *testing
 	}
 }
 
-func TestCompletionGateRecoveryPromptForUnscopedImplementationNoWriteBecomesTerminalAfterRepeatedGate(t *testing.T) {
+func TestCompletionGateRecoveryPromptForUnscopedImplementationNoWriteKeepsReadsAfterRepeatedGate(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "implementation",
@@ -23657,14 +23879,15 @@ func TestCompletionGateRecoveryPromptForUnscopedImplementationNoWriteBecomesTerm
 		t.Fatal("expected terminal no-write recovery prompt")
 	}
 
-	if !hideReads {
-		t.Fatal("repeated no-write completion after concrete source evidence should hide reads")
+	if hideReads {
+		t.Fatalf("repeated no-write completion after concrete source evidence must keep model-owned reads available, got prompt:\n%s", prompt)
 	}
 
 	for _, want := range []string{
-		"multiple no-write final answers",
-		"Read/search/discovery tools are hidden",
-		"parser-readable write tool call",
+		"target-write-ready",
+		"parser-readable write",
+		"bounded read/search",
+		"The model owns whether more evidence is needed",
 		"internal/surfaces/tui/app/model_state.go",
 		"`<<QUESTION>>:`",
 	} {
@@ -23673,9 +23896,9 @@ func TestCompletionGateRecoveryPromptForUnscopedImplementationNoWriteBecomesTerm
 		}
 	}
 
-	for _, notWant := range []string{"If one edit-safety fact", "`read_file`", "`search_content`"} {
+	for _, notWant := range []string{"Read/search/discovery tools are hidden", "Do not inspect, search, navigate"} {
 		if strings.Contains(prompt, notWant) {
-			t.Fatalf("terminal no-write recovery prompt should not invite more discovery with %q:\n%s", notWant, prompt)
+			t.Fatalf("terminal no-write recovery prompt must not hide discovery with %q:\n%s", notWant, prompt)
 		}
 	}
 }
@@ -24056,7 +24279,7 @@ func TestImplementationRequiredPathHiddenOnlyRecoveryStallDisablesThinkingAfterR
 	}
 }
 
-func TestMutationHiddenOnlyNoWriteTerminalRecoveryRequiresConcreteSourceEvidence(t *testing.T) {
+func TestMutationHiddenOnlyNoWriteTerminalRecoveryDoesNotOverrideTargetWriteReady(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily: "implementation",
 		Contract:   "implementation_result",
@@ -24068,8 +24291,11 @@ func TestMutationHiddenOnlyNoWriteTerminalRecoveryRequiresConcreteSourceEvidence
 		Output:  "1:package a\n2:\n3:func A() {}\n",
 	}}
 
-	if !mutationHiddenOnlyNoWriteTerminalRecoveryStall(brief, sourceRead, reply, 1, false) {
-		t.Fatal("hidden-only textual retry after concrete source read and no writes should enter terminal write/blocker recovery")
+	if !implementationTargetWriteReadySurfaceActive(brief, sourceRead) {
+		t.Fatal("test setup should be target-write-ready after concrete source evidence")
+	}
+	if mutationHiddenOnlyNoWriteTerminalRecoveryStall(brief, sourceRead, reply, 1, false) {
+		t.Fatal("hidden-only textual retry after concrete source read must not override target-write-ready recovery")
 	}
 
 	outlineOnly := []workspace.ToolResult{{
@@ -24095,6 +24321,23 @@ func TestMutationHiddenOnlyNoWriteTerminalRecoveryRequiresConcreteSourceEvidence
 	}
 	if mutationHiddenOnlyNoWriteTerminalRecoveryStall(plannerBrief, sourceRead, reply, 1, false) {
 		t.Fatal("plan-execute planner recovery must keep submit_plan/source-satisfied/question terminal contract")
+	}
+
+	targetWriteReadyBrief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: "implementation",
+		Contract:   "implementation_result",
+		TargetPacket: []string{
+			"conversation_context:previous_assistant_recommendation",
+			"Editable candidate file from previous assistant recommendation: a.go",
+		},
+		AllowedEditPaths: []string{"a.go"},
+		TargetRefs:       []string{"a.go"},
+	}
+	if !implementationTargetWriteReadySurfaceActive(targetWriteReadyBrief, sourceRead) {
+		t.Fatal("test setup should be target-write-ready after recommended source evidence")
+	}
+	if mutationHiddenOnlyNoWriteTerminalRecoveryStall(targetWriteReadyBrief, sourceRead, reply, 1, false) {
+		t.Fatal("target-write-ready hidden-only retry must stay on strategy-preserving recovery and keep reads available")
 	}
 
 	if mutationHiddenOnlyNoWriteTerminalRecoveryStall(brief, append(sourceRead, workspace.ToolResult{Tool: "edit_file", Summary: "Edited a.go"}), reply, 1, false) {
@@ -24550,6 +24793,82 @@ func TestUnscopedNoWriteRecoveryDoesNotAutoReadAfterWriteReadyGate(t *testing.T)
 	}
 }
 
+func TestCompletionGateRecoveryPromptForTargetWriteReadyFinalAnswer(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			TargetPacket: []string{
+				"conversation_context:previous_assistant_recommendation",
+				"Editable candidate file from previous assistant recommendation: internal/runtime/workerruntime/vocabulary.go",
+			},
+			AllowedEditPaths: []string{"internal/runtime/workerruntime/vocabulary.go"},
+			TargetRefs:       []string{"internal/runtime/workerruntime/vocabulary.go"},
+			RequiredEvidence: []string{"changed_paths_or_noop_reason", "verification_status"},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/runtime/workerruntime/vocabulary.go lines 1-120 (total lines: 361)",
+		Output:  "package workerruntime\n\nconst existingValue = \"literal\"\n",
+	}}
+
+	if !implementationTargetWriteReadySurfaceActive(runner.RuntimeBrief, results) {
+		t.Fatal("test setup should be target-write-ready after recommended source evidence")
+	}
+
+	acceptance := rejectedFinalAnswerAcceptanceForTest(turnViolationRequiredEvidenceUnmet)
+	if !runner.retryableFinalAnswerAcceptanceRejection(acceptance, results, 0, []string{"read_file", "edit_file", "apply_patch", "write_file"}) {
+		t.Fatal("target-write-ready required-evidence rejection should be retryable")
+	}
+
+	prompt, hideReads, ok := runner.completionGateRecoveryPrompt(results)
+	if !ok {
+		t.Fatal("expected completion gate recovery prompt")
+	}
+	if hideReads {
+		t.Fatal("target-write-ready final-answer recovery must keep read/search tools available")
+	}
+	for _, want := range []string{"target-write-ready", "parser-readable write", "bounded read/search", "<<QUESTION>>", "internal/runtime/workerruntime/vocabulary.go"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("expected recovery prompt to contain %q, got:\n%s", want, prompt)
+		}
+	}
+	for _, forbidden := range []string{"narrower target packet", "no workspace change was made"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("target-write-ready recovery should not ask for a new packet after source evidence; found %q in:\n%s", forbidden, prompt)
+		}
+	}
+
+	repeatedResults := append([]workspace.ToolResult(nil), results...)
+	for range 2 {
+		repeatedResults = append(repeatedResults, workspace.ToolResult{
+			Tool:    "completion_gate",
+			Summary: "Mutation completion gate rejected final answer",
+			Error:   "this task asks for a workspace change, but no successful write tool result is present",
+		})
+	}
+
+	prompt, hideReads, ok = runner.completionGateRecoveryPrompt(repeatedResults)
+	if !ok {
+		t.Fatal("expected repeated target-write-ready completion recovery prompt")
+	}
+	if hideReads {
+		t.Fatalf("repeated target-write-ready final-answer recovery must not fall through to generic read hiding, got prompt:\n%s", prompt)
+	}
+	for _, want := range []string{"target-write-ready", "bounded read/search", "The model owns whether more evidence is needed"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("expected repeated target-write-ready recovery prompt to contain %q, got:\n%s", want, prompt)
+		}
+	}
+	for _, forbidden := range []string{"Read/search/discovery tools are hidden", "Do not inspect, search, navigate"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("repeated target-write-ready recovery must not use generic hidden-read prompt; found %q in:\n%s", forbidden, prompt)
+		}
+	}
+}
+
 func TestUnscopedImplementationWriteReadyNudgesNonWriteTools(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -24577,7 +24896,7 @@ func TestUnscopedImplementationWriteReadyNudgesNonWriteTools(t *testing.T) {
 	}
 
 	joined := prompt
-	for _, want := range []string{"target-write-ready", "parser-readable write", "<<QUESTION>>"} {
+	for _, want := range []string{"target-write-ready", "workspace write follow-up", "parser-readable write", "file_stats", "<<QUESTION>>"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected recovery text to contain %q, got %q", want, joined)
 		}
@@ -28132,8 +28451,6 @@ func TestPlanExecutePlanningStateDerivesTextualJSONTerminalTransport(t *testing.
 		TextualToolParser:  true,
 		TerminalOnly:       true,
 		ResponseFormatJSON: true,
-		EffectiveMaxTokens: 4096,
-		TimeoutMillis:      300000,
 	})
 
 	if state.Mode != PlanExecutePlanningModeSubmitReady {
@@ -28144,8 +28461,16 @@ func TestPlanExecutePlanningStateDerivesTextualJSONTerminalTransport(t *testing.
 		t.Fatalf("transport mode = %q, want textual_json_terminal", state.TransportMode)
 	}
 
-	if !state.RuntimePolicy.ResponseFormatJSON || state.RuntimePolicy.EffectiveMaxTokens != 4096 || state.RuntimePolicy.TimeoutMillis != 300000 {
-		t.Fatalf("runtime policy not preserved: %#v", state.RuntimePolicy)
+	policy := DerivePlanExecuteRuntimeCallPolicy(PlanExecuteRuntimeCallPolicyInput{
+		TextualToolParser:  true,
+		TerminalOnly:       true,
+		ResponseFormat:     "json",
+		MaxTokens:          4096,
+		TimeoutMillis:      300000,
+		ResponseFormatJSON: true,
+	})
+	if !policy.ResponseFormatJSON || policy.MaxTokens != 4096 || policy.TimeoutMillis != 300000 {
+		t.Fatalf("runtime policy not preserved: %#v", policy)
 	}
 }
 
@@ -35060,6 +35385,27 @@ func TestShellWCRedirectsToFileStats(t *testing.T) {
 
 	if !strings.Contains(decision.Result.Output, `"tool":"file_stats"`) || !strings.Contains(decision.Result.Output, "internal/runtime/agent/runner_core.go") {
 		t.Fatalf("result should redirect to file_stats with the path: %q", decision.Result.Output)
+	}
+}
+
+func TestShellSedWCPipelineRedirectsToFileStatsLineRange(t *testing.T) {
+	ws := newGoTestWorkspace(t)
+	d := NewDiscoveryRedirect()
+	decision := d.Consider(workspace.ToolRequest{Tool: "shell", Command: "sed -n '84p' internal/runtime/workerruntime/catalog.go | wc -c"}, ws)
+
+	if !decision.ShouldRedirect {
+		t.Fatalf("sed wc pipeline should redirect")
+	}
+
+	if decision.Capability != workspace.Capability("file_stats") {
+		t.Fatalf("capability: want file_stats, got %s", decision.Capability)
+	}
+
+	out := decision.Result.Output
+	for _, want := range []string{`"tool":"file_stats"`, `"path":"internal/runtime/workerruntime/catalog.go"`, `"start_line":84`, `"end_line":84`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("result should contain %q, got: %q", want, out)
+		}
 	}
 }
 

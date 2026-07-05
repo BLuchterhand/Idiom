@@ -8,6 +8,7 @@ import (
 
 	plancontract "idiom/internal/contracts/plan"
 	planartifact "idiom/internal/contracts/planartifact"
+	"idiom/internal/platform/sessionid"
 )
 
 type ContinuationScope struct {
@@ -121,7 +122,7 @@ func findLatestContinuationProgressState(root string, matches func(ProgressState
 		}
 
 		sessionID := strings.TrimSuffix(name, ".json")
-		if !validProgressSessionID(sessionID) {
+		if !sessionid.Valid(sessionID) {
 			continue
 		}
 

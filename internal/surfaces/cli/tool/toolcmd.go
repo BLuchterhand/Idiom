@@ -19,10 +19,6 @@ import (
 	cmdconfig "idiom/internal/surfaces/cli/config"
 )
 
-func Run(args []string, stdout io.Writer, stderr io.Writer) int {
-	return RunWithTelemetry(args, stdout, stderr, nil)
-}
-
 func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		printUsage(stderr)

@@ -12,6 +12,7 @@ import (
 
 	"idiom/internal/repository/discovery"
 	"idiom/internal/repository/semantic"
+	semanticrust "idiom/internal/repository/semantic/rust"
 )
 
 // -- Detection --------------------------------------------------------------
@@ -71,7 +72,7 @@ func (m *Manager) getRustIndex() (*semantic.RustIndex, error) {
 		return cached, nil
 	}
 
-	index, err := semantic.BuildRustIndex(m.Root())
+	index, err := semanticrust.BuildRustIndex(m.Root())
 	if err != nil {
 		return nil, fmt.Errorf("build Rust semantic index: %w", err)
 	}

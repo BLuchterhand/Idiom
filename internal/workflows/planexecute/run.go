@@ -101,7 +101,7 @@ func preparePlanExecuteRun(cfg *config.Config, opts *Options, stderr io.Writer) 
 		return planExecuteRunPreparation{}, RunResult{ExitCode: 1}, true
 	}
 
-	requiredAcceptanceEvidenceIDs := planExecuteRequiredAcceptanceEvidenceIDsFromPrompt(prompt)
+	requiredAcceptanceEvidenceIDs := plancontract.RequiredAcceptanceEvidenceIDsFromPrompt(prompt)
 	resumeState, resumeStatePath, failedResult, failed := loadPlanExecuteResumeState(cfg.Workspace.Root, *opts, requiredAcceptanceEvidenceIDs, stderr)
 	if failed {
 		return planExecuteRunPreparation{}, failedResult, true
@@ -165,7 +165,7 @@ func runLoadedPlanExecution(ctx context.Context, cfg config.Config, opts Options
 	changedPaths := planChangedPaths(plan)
 	planSourceSatisfiedPaths, planSourceSatisfiedEvidence := planExecutePlanSourceSatisfiedTerminalEvidence(scope.RequiredEditPaths, plan)
 
-	scope.VerificationPlan = PlanVerification(VerificationPlannerInput{
+	scope.VerificationPlan = NewVerificationPlanner(cfg.Workspace.Root).Plan(VerificationPlannerInput{
 		WorkspaceRoot:    cfg.Workspace.Root,
 		Prompt:           input.Prompt,
 		ExplicitCommands: opts.VerificationPlanExplicitCommands,
@@ -467,7 +467,7 @@ func preparePlanExecuteRunScope(root string, opts *Options, prompt string) planE
 
 	plannerPromptSource := applyCandidatePathRepairsToPrompt(prompt, candidateRepairs)
 	authorizedNewFiles := mergePlanExecutePaths(opts.AuthorizedNewFiles)
-	verificationPlan := PlanVerification(VerificationPlannerInput{
+	verificationPlan := NewVerificationPlanner(root).Plan(VerificationPlannerInput{
 		WorkspaceRoot:    root,
 		Prompt:           plannerPromptSource,
 		ExplicitCommands: opts.VerificationPlanExplicitCommands,
@@ -745,7 +745,7 @@ func RunWithDependencies(cfg config.Config, opts Options, promptRun PromptRunner
 				plancontract.PlanExecuteEventFieldAppliedPaths:                    autoExact.AppliedPaths,
 				plancontract.PlanExecuteTerminalFieldSourceSatisfiedEvidencePaths: autoExact.AppliedPaths,
 				plancontract.PlanExecuteEventFieldMissingEditSetObligations:       scope.EditSetObligations.MissingOpenObligations(autoExact.AppliedPaths),
-				plancontract.PlanExecuteEventFieldMissingRequiredEditPaths:        planExecuteMissingSourceSatisfiedCoveragePaths(planExecuteAutoSourceSatisfiedAnswer(autoExactScopePaths), scope.RequiredEditPaths),
+				plancontract.PlanExecuteEventFieldMissingRequiredEditPaths:        plancontract.SourceSatisfiedMissingCoveragePaths(planExecuteAutoSourceSatisfiedAnswer(autoExactScopePaths), scope.RequiredEditPaths),
 				plancontract.PlanExecuteEventFieldEditSetObligations:              scope.EditSetObligations,
 				plancontract.PlanExecuteEventFieldEditSetObligationCount:          len(scope.EditSetObligations),
 			}); failed {
@@ -776,7 +776,7 @@ func RunWithDependencies(cfg config.Config, opts Options, promptRun PromptRunner
 			plancontract.PlanExecuteEventFieldAppliedPaths:                    autoExact.AppliedPaths,
 			plancontract.PlanExecuteTerminalFieldSourceSatisfiedEvidencePaths: autoExact.AppliedPaths,
 			plancontract.PlanExecuteEventFieldMissingEditSetObligations:       scope.EditSetObligations.MissingOpenObligations(autoExact.AppliedPaths),
-			plancontract.PlanExecuteEventFieldMissingRequiredEditPaths:        planExecuteMissingSourceSatisfiedCoveragePaths(answer, scope.RequiredEditPaths),
+			plancontract.PlanExecuteEventFieldMissingRequiredEditPaths:        plancontract.SourceSatisfiedMissingCoveragePaths(answer, scope.RequiredEditPaths),
 			plancontract.PlanExecuteEventFieldReason:                          autoExact.Reason,
 		}); failed {
 			return result
@@ -786,7 +786,7 @@ func RunWithDependencies(cfg config.Config, opts Options, promptRun PromptRunner
 			plancontract.PlanExecuteEventFieldAllowedEditPaths:                scope.AllowedEditPaths,
 			plancontract.PlanExecuteTerminalFieldSourceSatisfiedEvidencePaths: autoExact.AppliedPaths,
 			plancontract.PlanExecuteEventFieldMissingEditSetObligations:       scope.EditSetObligations.MissingOpenObligations(autoExact.AppliedPaths),
-			plancontract.PlanExecuteEventFieldMissingRequiredEditPaths:        planExecuteMissingSourceSatisfiedCoveragePaths(answer, scope.RequiredEditPaths),
+			plancontract.PlanExecuteEventFieldMissingRequiredEditPaths:        plancontract.SourceSatisfiedMissingCoveragePaths(answer, scope.RequiredEditPaths),
 			plancontract.PlanExecuteEventFieldEditSetObligations:              scope.EditSetObligations,
 			plancontract.PlanExecuteEventFieldEditSetObligationCount:          len(scope.EditSetObligations),
 			plancontract.PlanExecuteEventFieldReason:                          autoExact.Reason,
@@ -900,7 +900,7 @@ func RunWithDependencies(cfg config.Config, opts Options, promptRun PromptRunner
 				FailureReason:                message,
 				UnsupportedEvidenceMarker:    marker,
 				SourceSatisfiedEvidencePaths: sourceSatisfiedPaths,
-				MissingRequiredEditPaths:     planExecuteMissingSourceSatisfiedCoveragePaths(answer, scope.RequiredEditPaths),
+				MissingRequiredEditPaths:     plancontract.SourceSatisfiedMissingCoveragePaths(answer, scope.RequiredEditPaths),
 			})
 		}
 		if plancontract.SourceSatisfiedAnswerCoversPaths(answer, sourceSatisfiedPaths) {
@@ -911,7 +911,7 @@ func RunWithDependencies(cfg config.Config, opts Options, promptRun PromptRunner
 					FailureReason:                message,
 					UnsupportedEvidenceMarker:    marker,
 					SourceSatisfiedEvidencePaths: sourceSatisfiedPaths,
-					MissingRequiredEditPaths:     planExecuteMissingSourceSatisfiedCoveragePaths(answer, scope.RequiredEditPaths),
+					MissingRequiredEditPaths:     plancontract.SourceSatisfiedMissingCoveragePaths(answer, scope.RequiredEditPaths),
 				})
 			}
 
@@ -921,7 +921,7 @@ func RunWithDependencies(cfg config.Config, opts Options, promptRun PromptRunner
 					FailureKind:                  string(reason),
 					FailureReason:                message,
 					SourceSatisfiedEvidencePaths: sourceSatisfiedPaths,
-					MissingRequiredEditPaths:     planExecuteMissingSourceSatisfiedCoveragePaths(answer, scope.RequiredEditPaths),
+					MissingRequiredEditPaths:     plancontract.SourceSatisfiedMissingCoveragePaths(answer, scope.RequiredEditPaths),
 				})
 			}
 
@@ -939,7 +939,7 @@ func RunWithDependencies(cfg config.Config, opts Options, promptRun PromptRunner
 				plancontract.PlanExecuteEventFieldAllowedEditPaths:                scope.AllowedEditPaths,
 				plancontract.PlanExecuteTerminalFieldSourceSatisfiedEvidencePaths: sourceSatisfiedPaths,
 				plancontract.PlanExecuteEventFieldMissingEditSetObligations:       scope.EditSetObligations.MissingOpenObligations(sourceSatisfiedPaths),
-				plancontract.PlanExecuteEventFieldMissingRequiredEditPaths:        planExecuteMissingSourceSatisfiedCoveragePaths(answer, scope.RequiredEditPaths),
+				plancontract.PlanExecuteEventFieldMissingRequiredEditPaths:        plancontract.SourceSatisfiedMissingCoveragePaths(answer, scope.RequiredEditPaths),
 				plancontract.PlanExecuteEventFieldEditSetObligations:              scope.EditSetObligations,
 				plancontract.PlanExecuteEventFieldEditSetObligationCount:          len(scope.EditSetObligations),
 				plancontract.PlanExecuteEventFieldReason:                          "planner reported requested final state already present",
@@ -1169,7 +1169,7 @@ func runResumeReviewRepair(cfg config.Config, opts Options, prompt string, state
 	verificationResumeRepairRequired := ExecutorVerificationFailed(report, fmt.Errorf("verification failed"))
 
 	if reviewErr == nil && (sourceSanityResumeRepairRequired || verificationResumeRepairRequired) && ReviewRepairResolvedVerificationFailure(reviewReport) {
-		verificationPlan := PlanVerification(VerificationPlannerInput{
+		verificationPlan := NewVerificationPlanner(cfg.Workspace.Root).Plan(VerificationPlannerInput{
 			WorkspaceRoot:    cfg.Workspace.Root,
 			Prompt:           prompt,
 			ExplicitCommands: opts.VerificationPlanExplicitCommands,

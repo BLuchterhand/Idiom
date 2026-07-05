@@ -277,12 +277,12 @@ func ApplyProductStatusMigration(options ProductStatusMigrationApplyOptions) Pro
 
 	renamed = true
 
-	if err := syncDirBestEffort(filepath.Dir(state.absEffortRoot)); err != nil {
+	if err := productStatusMigrationSyncDir(filepath.Dir(state.absEffortRoot)); err != nil {
 		return rollback(err)
 	}
 
 	if targetParent := filepath.Dir(targetRoot); targetParent != filepath.Dir(state.absEffortRoot) {
-		if err := syncDirBestEffort(targetParent); err != nil {
+		if err := productStatusMigrationSyncDir(targetParent); err != nil {
 			return rollback(err)
 		}
 	}
@@ -302,11 +302,11 @@ func ApplyProductStatusMigration(options ProductStatusMigrationApplyOptions) Pro
 
 	workflowReplaced = true
 
-	if err := syncFileBestEffort(filepath.Join(targetRoot, WorkflowStateFileName)); err != nil {
+	if err := productStatusMigrationSyncFile(filepath.Join(targetRoot, WorkflowStateFileName)); err != nil {
 		return rollback(err)
 	}
 
-	if err := syncDirBestEffort(targetRoot); err != nil {
+	if err := productStatusMigrationSyncDir(targetRoot); err != nil {
 		return rollback(err)
 	}
 
@@ -316,11 +316,11 @@ func ApplyProductStatusMigration(options ProductStatusMigrationApplyOptions) Pro
 
 	eventsReplaced = true
 
-	if err := syncFileBestEffort(filepath.Join(targetRoot, filepath.FromSlash(state.eventsPath))); err != nil {
+	if err := productStatusMigrationSyncFile(filepath.Join(targetRoot, filepath.FromSlash(state.eventsPath))); err != nil {
 		return rollback(err)
 	}
 
-	if err := syncDirBestEffort(filepath.Dir(filepath.Join(targetRoot, filepath.FromSlash(state.eventsPath)))); err != nil {
+	if err := productStatusMigrationSyncDir(filepath.Dir(filepath.Join(targetRoot, filepath.FromSlash(state.eventsPath)))); err != nil {
 		return rollback(err)
 	}
 
@@ -361,12 +361,12 @@ func rollbackProductStatusMigrationFiles(input productStatusMigrationRollback) e
 		return fmt.Errorf("rename migrated effort back to source: %w", err)
 	}
 
-	if err := syncDirBestEffort(filepath.Dir(input.sourceRoot)); err != nil {
+	if err := productStatusMigrationSyncDir(filepath.Dir(input.sourceRoot)); err != nil {
 		return fmt.Errorf("sync source parent after rollback rename: %w", err)
 	}
 
 	if targetParent := filepath.Dir(input.targetRoot); targetParent != filepath.Dir(input.sourceRoot) {
-		if err := syncDirBestEffort(targetParent); err != nil {
+		if err := productStatusMigrationSyncDir(targetParent); err != nil {
 			return fmt.Errorf("sync target parent after rollback rename: %w", err)
 		}
 	}
@@ -662,11 +662,11 @@ func writeMigrationTempFile(path string, data []byte) error {
 		return err
 	}
 
-	if err := syncFileBestEffort(path); err != nil {
+	if err := productStatusMigrationSyncFile(path); err != nil {
 		return err
 	}
 
-	return syncDirBestEffort(filepath.Dir(path))
+	return productStatusMigrationSyncDir(filepath.Dir(path))
 }
 
 func rejectProductStatusMigrationTempSymlink(path string) error {
@@ -739,14 +739,6 @@ func productStatusMigrationPathIsSymlink(path string) (bool, error) {
 	}
 
 	return info.Mode()&os.ModeSymlink != 0, nil
-}
-
-func syncFileBestEffort(path string) error {
-	return productStatusMigrationSyncFile(path)
-}
-
-func syncDirBestEffort(path string) error {
-	return productStatusMigrationSyncDir(path)
 }
 
 func syncProductStatusMigrationFile(path string) error {

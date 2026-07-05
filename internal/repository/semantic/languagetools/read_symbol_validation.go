@@ -71,10 +71,6 @@ func validateSymbolPattern(tool, pattern string) error {
 	return nil
 }
 
-func ValidateSymbolPattern(tool, pattern string) error {
-	return validateSymbolPattern(tool, pattern)
-}
-
 func symbolPatternRejection(tool, pattern string) error {
 	return fmt.Errorf(
 		"%s: pattern %q does not look like a symbol identifier or declaration shape (it contains a function call, a comparison/boolean expression, or runs longer than a declaration). "+

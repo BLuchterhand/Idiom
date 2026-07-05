@@ -44,7 +44,7 @@ func startDaemonForCLI(t *testing.T, cfg runner.Config) string {
 func TestQueueUsageOnNoSubcommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := runQueueMain([]string{}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("usage exit code = %d, want 0", code)
@@ -60,7 +60,7 @@ func TestQueuePingHitsLiveDaemon(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := runQueueMain([]string{"ping", "--socket", sock}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"ping", "--socket", sock}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("ping exit=%d stderr=%s", code, stderr.String())
@@ -83,7 +83,7 @@ func TestQueuePingFailsWithoutDaemon(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := runQueueMain([]string{"ping", "--socket", missing}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"ping", "--socket", missing}, &stdout, &stderr, nil)
 
 	if code == 0 {
 		t.Fatalf("expected nonzero exit, got 0; stderr=%s", stderr.String())
@@ -100,7 +100,7 @@ func TestQueueStatusJSONShape(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := runQueueMain([]string{"status", "--socket", sock, "--json"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"status", "--socket", sock, "--json"}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("status exit=%d stderr=%s", code, stderr.String())
@@ -119,7 +119,7 @@ func TestQueueStatusTableShape(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := runQueueMain([]string{"status", "--socket", sock}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"status", "--socket", sock}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("status exit=%d stderr=%s", code, stderr.String())
@@ -139,7 +139,7 @@ func TestQueueRunRequiresCommand(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := runQueueMain([]string{"run", "--socket", sock}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"run", "--socket", sock}, &stdout, &stderr, nil)
 
 	if code != 2 {
 		t.Fatalf("expected exit 2 for missing command, got %d", code)
@@ -159,10 +159,10 @@ func TestQueueRunExecutesUnderSlot(t *testing.T) {
 	// command. The granted-slot side effect is observable via status,
 	// but a clean exit code already proves the path: dial → enqueue
 	// → granted → exec → release.
-	code := runQueueMain([]string{
+	code := RunMainWithTelemetry([]string{
 		"run", "--socket", sock, "--quiet",
 		"--", "/usr/bin/true",
-	}, &stdout, &stderr)
+	}, &stdout, &stderr, nil)
 	if code != 0 {
 		t.Fatalf("run /usr/bin/true exit=%d stderr=%s", code, stderr.String())
 	}
@@ -173,10 +173,10 @@ func TestQueueRunPropagatesExitCode(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := runQueueMain([]string{
+	code := RunMainWithTelemetry([]string{
 		"run", "--socket", sock, "--quiet",
 		"--", "/usr/bin/false",
-	}, &stdout, &stderr)
+	}, &stdout, &stderr, nil)
 
 	if code == 0 {
 		t.Fatalf("expected nonzero exit from /usr/bin/false, got 0")
@@ -196,10 +196,10 @@ func TestQueueRunReleasesSlotAfterExit(t *testing.T) {
 		done := make(chan int, 1)
 
 		go func() {
-			done <- runQueueMain([]string{
+			done <- RunMainWithTelemetry([]string{
 				"run", "--socket", sock, "--quiet",
 				"--", "/usr/bin/true",
-			}, &stdout, &stderr)
+			}, &stdout, &stderr, nil)
 		}()
 
 		select {
@@ -228,7 +228,7 @@ func TestQueueCancelOnUnknownIDFails(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := runQueueMain([]string{"cancel", "--socket", sock, "j-does-not-exist"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"cancel", "--socket", sock, "j-does-not-exist"}, &stdout, &stderr, nil)
 
 	if code == 0 {
 		t.Fatalf("expected nonzero exit, got 0")
@@ -258,7 +258,7 @@ func TestQueueRunExportsHeldPoolsEnvForChildren(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := runQueueMain(args, &stdout, &stderr)
+	code := RunMainWithTelemetry(args, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("queue run exit=%d stderr=%s", code, stderr.String())
@@ -295,7 +295,7 @@ func TestQueueRunAppendsHeldPoolForNestedAncestor(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := runQueueMain(args, &stdout, &stderr)
+	code := RunMainWithTelemetry(args, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("queue run exit=%d stderr=%s", code, stderr.String())
@@ -332,7 +332,7 @@ func TestQueueRunSkipsDuplicateHeldPool(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := runQueueMain(args, &stdout, &stderr)
+	code := RunMainWithTelemetry(args, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("queue run exit=%d stderr=%s", code, stderr.String())

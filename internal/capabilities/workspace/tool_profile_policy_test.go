@@ -57,12 +57,12 @@ func TestToolRequestAllowedForDiscoveryProfileRequiresReportOnlyGraphReads(t *te
 
 func TestToolAllowedForDiscoveryProfileDeniesDescriptorLocalArtifactTools(t *testing.T) {
 	for _, tool := range []string{"context_pack", "context_impact", "discovery_query"} {
-		if !discoveryProfileToolWritesLocalContextArtifacts(tool) {
+		if !builtInToolSurfaceDiscoveryLocalArtifacts(tool) {
 			t.Fatalf("%s must remain descriptor-declared as a local artifact writer", tool)
 		}
 	}
 
-	localArtifactTools := builtInToolSurfaceDiscoveryLocalArtifactTools()
+	localArtifactTools := discoveryLocalArtifactToolsFromCatalog()
 	if len(localArtifactTools) == 0 {
 		t.Fatal("test setup expected at least one descriptor-declared local artifact tool")
 	}
@@ -80,15 +80,15 @@ func TestToolAllowedForDiscoveryProfileDeniesDescriptorLocalArtifactTools(t *tes
 }
 
 func TestDiscoveryProfileLocalArtifactQueryProjectsToolSurfaceMetadata(t *testing.T) {
-	for _, spec := range builtInToolSurfaceSpecs {
-		if got := discoveryProfileToolWritesLocalContextArtifacts(spec.Tool); got != spec.DiscoveryLocalArtifacts {
+	for _, spec := range builtInToolSurfaceCatalog.Specs() {
+		if got := builtInToolSurfaceDiscoveryLocalArtifacts(spec.Tool); got != spec.DiscoveryLocalArtifacts {
 			t.Fatalf("%s local artifact query = %v, want descriptor metadata %v", spec.Tool, got, spec.DiscoveryLocalArtifacts)
 		}
 	}
 }
 
 func TestToolAllowedForMCPDiscoveryProfileAllowsDescriptorLocalArtifactTools(t *testing.T) {
-	localArtifactTools := builtInToolSurfaceDiscoveryLocalArtifactTools()
+	localArtifactTools := discoveryLocalArtifactToolsFromCatalog()
 	if len(localArtifactTools) == 0 {
 		t.Fatal("test setup expected at least one descriptor-declared local artifact tool")
 	}
@@ -99,6 +99,17 @@ func TestToolAllowedForMCPDiscoveryProfileAllowsDescriptorLocalArtifactTools(t *
 			t.Fatalf("%s should be allowed for mcp_discovery profile, got %#v", tool, decision)
 		}
 	}
+}
+
+func discoveryLocalArtifactToolsFromCatalog() []string {
+	var tools []string
+	for _, spec := range builtInToolSurfaceCatalog.Specs() {
+		if spec.DiscoveryLocalArtifacts {
+			tools = append(tools, spec.Tool)
+		}
+	}
+
+	return tools
 }
 
 func TestToolAllowedForMCPDiscoveryProfileDeniesMutationShellAndUnknownEffects(t *testing.T) {

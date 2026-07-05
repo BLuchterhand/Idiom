@@ -14,9 +14,3 @@ func TestRunMainRoutesRecoverCommand(t *testing.T) {
 		t.Fatalf("expected recover usage failure 2, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 }
-
-func TestRecoverTelemetryNameIncludesSubcommand(t *testing.T) {
-	if got := commandTelemetryName([]string{"recover", "inspect"}); got != "recover:inspect" {
-		t.Fatalf("telemetry command=%q", got)
-	}
-}

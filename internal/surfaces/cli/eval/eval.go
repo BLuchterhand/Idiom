@@ -18,10 +18,6 @@ import (
 var output io.Writer = os.Stdout
 
 func Run(args []string, stdout io.Writer, stderr io.Writer) int {
-	return run(args, stdout, stderr)
-}
-
-func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	oldOutput := output
 
 	output = stdout

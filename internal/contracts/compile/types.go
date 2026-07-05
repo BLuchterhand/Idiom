@@ -83,10 +83,11 @@ type ReadinessInput struct {
 }
 
 type BudgetInput struct {
-	MaxToolSteps       int
-	MaxModelCalls      int
-	MaxContextMessages int
-	MaxContextChars    int
+	MaxToolSteps             int
+	MaxModelCalls            int
+	MaxOperationalModelCalls int
+	MaxContextMessages       int
+	MaxContextChars          int
 }
 
 type RuntimeEnvelopeInput struct {

@@ -12,6 +12,7 @@ import (
 	lanecontract "idiom/internal/contracts/lane"
 	planartifact "idiom/internal/contracts/planartifact"
 	queuecontract "idiom/internal/contracts/queue"
+	"idiom/internal/contracts/sourcekind"
 	"idiom/internal/contracts/writerroute"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
@@ -26,10 +27,10 @@ func Dependencies() planexecute.Dependencies {
 		BuildWriterRoute:     BuildWriterRouteDecision,
 		RunPromptContextTool: RunPromptContextTool,
 		ApplyExecutorEdit:    ApplyExecutorEdit,
-		LoadPlanArtifact:     LoadPlanArtifact,
+		LoadPlanArtifact:     workspace.LoadPlanArtifact,
 		SubmitAutoPlan:       SubmitAutoPlan,
 		SourceSanity:         RunSourceSanity,
-		SourceSanityCovers:   workspace.SourceSanityCoversPath,
+		SourceSanityCovers:   sourcekind.CoversSourceSanity,
 		EditPreflight:        EditPreflightPolicy(),
 		FindPlanArtifact:     FindLatestPlanArtifact,
 		CleanupPlanArtifacts: CleanupStalePlanArtifacts,
@@ -134,10 +135,6 @@ func ApplyExecutorEdit(ctx context.Context, wsCfg config.Workspace, req planexec
 		Summary: result.Summary,
 		Error:   result.Error,
 	}
-}
-
-func LoadPlanArtifact(path string) (planartifact.PlanArtifact, error) {
-	return workspace.LoadPlanArtifact(path)
 }
 
 func SubmitAutoPlan(ctx context.Context, wsCfg config.Workspace, req planexecute.AutoPlanSubmitRequest) planexecute.AutoPlanSubmitResult {

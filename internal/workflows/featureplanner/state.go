@@ -50,7 +50,7 @@ func SaveState(root string, state *FeatureState) (string, error) {
 		return "", fmt.Errorf("feature planner state is nil")
 	}
 
-	sessionID, ok := cleanSessionID(state.SessionID)
+	sessionID, ok := sessionid.Normalize(state.SessionID)
 	if !ok {
 		return "", fmt.Errorf("invalid feature planner session id %q", state.SessionID)
 	}
@@ -68,7 +68,7 @@ func SaveState(root string, state *FeatureState) (string, error) {
 	state.DerivedNextValidActions = DeriveNextValidActions(*state)
 
 	if strings.TrimSpace(state.EventsPath) == "" {
-		_, relEventsPath, err := eventLogPath(root, state.SessionID)
+		_, relEventsPath, err := EventLogPath(root, state.SessionID)
 		if err != nil {
 			return "", err
 		}
@@ -119,7 +119,7 @@ func TryLoadState(root string, sessionID string) (FeatureState, string, bool, er
 	if err != nil {
 		return FeatureState{}, "", false, err
 	}
-	requestedSessionID, ok := cleanSessionID(sessionID)
+	requestedSessionID, ok := sessionid.Normalize(sessionID)
 	if !ok {
 		return FeatureState{}, "", false, fmt.Errorf("invalid feature planner session id %q", sessionID)
 	}
@@ -149,7 +149,7 @@ func TryLoadState(root string, sessionID string) (FeatureState, string, bool, er
 		return FeatureState{}, relPath, false, fmt.Errorf("feature planner state session id %q does not match requested session %q in %s", state.SessionID, requestedSessionID, relPath)
 	}
 
-	cleanedSessionID, ok := cleanSessionID(state.SessionID)
+	cleanedSessionID, ok := sessionid.Normalize(state.SessionID)
 	if !ok {
 		return FeatureState{}, relPath, false, fmt.Errorf("invalid feature planner session id %q in %s", state.SessionID, relPath)
 	}
@@ -168,7 +168,7 @@ func TryLoadState(root string, sessionID string) (FeatureState, string, bool, er
 }
 
 func statePath(root string, sessionID string) (string, string, error) {
-	sessionID, ok := cleanSessionID(sessionID)
+	sessionID, ok := sessionid.Normalize(sessionID)
 	if !ok {
 		return "", "", fmt.Errorf("invalid feature planner session id %q", sessionID)
 	}
@@ -183,11 +183,7 @@ func statePath(root string, sessionID string) (string, string, error) {
 }
 
 func EventLogPath(root string, sessionID string) (string, string, error) {
-	return eventLogPath(root, sessionID)
-}
-
-func eventLogPath(root string, sessionID string) (string, string, error) {
-	sessionID, ok := cleanSessionID(sessionID)
+	sessionID, ok := sessionid.Normalize(sessionID)
 	if !ok {
 		return "", "", fmt.Errorf("invalid feature planner session id %q", sessionID)
 	}
@@ -199,10 +195,6 @@ func eventLogPath(root string, sessionID string) (string, string, error) {
 	}
 
 	return filepath.Join(root, filepath.FromSlash(relPath)), relPath, nil
-}
-
-func cleanSessionID(raw string) (string, bool) {
-	return sessionid.Normalize(raw)
 }
 
 func promptSHA256(prompt string) string {

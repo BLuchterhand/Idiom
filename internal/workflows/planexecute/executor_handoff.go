@@ -320,7 +320,7 @@ func sanitizePlanExecuteEventID(value string) string {
 		return ""
 	}
 
-	if planExecuteEventTextLooksSensitive(value) {
+	if sensitivity.ContainsSensitiveText(value) {
 		return "redacted:" + planExecuteEventHash(value)
 	}
 
@@ -329,7 +329,7 @@ func sanitizePlanExecuteEventID(value string) string {
 
 func sanitizePlanExecuteEventToken(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
-	if value == "" || planExecuteEventTextLooksSensitive(value) {
+	if value == "" || sensitivity.ContainsSensitiveText(value) {
 		return ""
 	}
 
@@ -365,7 +365,7 @@ func sanitizePlanExecuteEventPath(value string) string {
 		return ""
 	}
 
-	if planExecuteEventTextLooksSensitive(value) {
+	if sensitivity.ContainsSensitiveText(value) {
 		return "redacted:" + planExecuteEventHash(value)
 	}
 
@@ -377,10 +377,6 @@ func sanitizePlanExecuteEventPath(value string) string {
 	}
 
 	return value
-}
-
-func planExecuteEventTextLooksSensitive(value string) bool {
-	return sensitivity.ContainsSensitiveText(value)
 }
 
 func planExecuteEventHash(value string) string {

@@ -39,13 +39,6 @@ func LaneIDs() []LaneID {
 	}
 }
 
-func ScopeRef(value LaneID) string {
-	if value == "" {
-		return ""
-	}
-	return "lane:" + string(value)
-}
-
 func EventTypes() []EventType {
 	return []EventType{
 		EventStart,

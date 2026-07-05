@@ -11,6 +11,7 @@ import (
 
 	"idiom/internal/repository/discovery"
 	"idiom/internal/repository/semantic"
+	semanticjava "idiom/internal/repository/semantic/java"
 )
 
 // -- Detection --------------------------------------------------------------
@@ -82,7 +83,7 @@ func (m *Manager) getJavaIndex() (*semantic.JavaIndex, error) {
 		return cached, nil
 	}
 
-	index, err := semantic.BuildJavaIndex(m.Root())
+	index, err := semanticjava.BuildJavaIndex(m.Root())
 	if err != nil {
 		return nil, fmt.Errorf("build Java semantic index: %w", err)
 	}

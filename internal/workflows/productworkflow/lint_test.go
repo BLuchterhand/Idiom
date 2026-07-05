@@ -48,6 +48,24 @@ func TestLintEffortFolderRejectsSymlinkedReportFile(t *testing.T) {
 	}
 }
 
+func TestLintEffortFolderReportTypeParsing(t *testing.T) {
+	root := t.TempDir()
+	writeLintFixtureFile(t, root, "reports/bad-review.json", `{"schema_version":"idiom.review_report.v1.fixture","effort_id":"effort","task_id":"task","reviewer":{"agent_id":"rev","model":"m","reasoning_effort":"medium","independent_from_implementor":true},"status":"surprise","findings":[],"checks":{},"reviewed_at":"","commands_reviewed":[],"created_at":"2026-05-17T00:00:00Z"}`)
+	writeLintFixtureFile(t, root, "reports/unknown-invalid.json", `{`)
+	writeLintFixtureFile(t, root, "reports/unknown-valid.json", `{"notes":"free-form report"}`)
+
+	result := LintEffortFolder(root)
+	if !lintSummaryHasFinding(result, "parse_error", filepath.Join("reports", "bad-review.json")) {
+		t.Fatalf("expected known review report to use typed parser, got %#v", result.Findings)
+	}
+	if !lintSummaryHasFinding(result, "parse_error", filepath.Join("reports", "unknown-invalid.json")) {
+		t.Fatalf("expected unknown invalid JSON report to fail JSON parsing, got %#v", result.Findings)
+	}
+	if lintSummaryHasFinding(result, "parse_error", filepath.Join("reports", "unknown-valid.json")) {
+		t.Fatalf("expected unknown valid JSON report to avoid typed parsing, got %#v", result.Findings)
+	}
+}
+
 func TestLintEffortFolderDetectsADRIndexFrontMatterDivergence(t *testing.T) {
 	root := t.TempDir()
 	writeLintFixtureFile(t, root, "adrs/index.json", `{"schema_version":"v1","effort_id":"test-effort","adrs":[{"adr_id":"ADR-001","title":"Test ADR","status":"accepted","path":"ADR-001-test.md","coverage_tier":"unit","prd_refs":["REQ-INDEX"]}]}`)

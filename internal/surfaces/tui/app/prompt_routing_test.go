@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"idiom/internal/capabilities/workspace"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/contracts/workflowstate"
 	"idiom/internal/platform/config"
 )
@@ -58,7 +59,7 @@ func TestHasReadableWorkspaceFilesDetectsProjectEvidence(t *testing.T) {
 }
 
 func TestPromptContextPacketProjectionCarriesTerminalStateWhenBlocked(t *testing.T) {
-	projection := promptContextPacketProjection("plain prompt without packet headings")
+	projection := plancontract.PromptContextPacketProjectionFromPrompt("plain prompt without packet headings")
 
 	if projection.State != workflowstate.StateTerminal {
 		t.Fatalf("state = %q, want terminal", projection.State)

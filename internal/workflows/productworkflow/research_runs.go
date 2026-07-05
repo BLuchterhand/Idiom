@@ -87,7 +87,7 @@ func PlanResearchRuns(profiles []ResearchProfile, selector, researchOutputDir st
 	}
 
 	if hasRunPlanError {
-		sortProfileFindings(plan.Findings)
+		SortProfileFindings(plan.Findings)
 
 		return plan
 	}
@@ -98,7 +98,7 @@ func PlanResearchRuns(profiles []ResearchProfile, selector, researchOutputDir st
 
 	plan.Runs = runs
 	plan.RunCount = len(runs)
-	sortProfileFindings(plan.Findings)
+	SortProfileFindings(plan.Findings)
 
 	return plan
 }
@@ -174,7 +174,7 @@ func isPathSafeIdentifier(value string) bool {
 	return filepath.Clean(value) == value
 }
 
-func sortProfileFindings(findings []ProfileFinding) {
+func SortProfileFindings(findings []ProfileFinding) {
 	sort.SliceStable(findings, func(i, j int) bool {
 		if findings[i].Severity != findings[j].Severity {
 			return findings[i].Severity < findings[j].Severity

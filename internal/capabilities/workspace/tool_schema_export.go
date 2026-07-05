@@ -76,7 +76,7 @@ func BuildMCPDiscoveryToolSchemas(profile string) ([]ExportedToolSchema, error) 
 			continue
 		}
 
-		if profile == ToolProfileDiscovery && !mcpDiscoveryProfileTool(tool.Name) {
+		if profile == ToolProfileDiscovery && !builtInToolSurfaceMCPDiscoveryProfileTool(tool.Name) {
 			continue
 		}
 
@@ -84,10 +84,6 @@ func BuildMCPDiscoveryToolSchemas(profile string) ([]ExportedToolSchema, error) 
 	}
 
 	return tools, nil
-}
-
-func mcpDiscoveryProfileTool(tool string) bool {
-	return builtInToolSurfaceMCPDiscoveryProfileTool(tool)
 }
 
 func buildToolSchemaExportFromSources(manifest []ToolManifestEntry, defs []ToolDefinition, profiles map[string][]string) (ToolSchemaExport, error) {
@@ -174,7 +170,7 @@ func buildToolSchemaExportFromSources(manifest []ToolManifestEntry, defs []ToolD
 			Description:              strings.TrimSpace(def.Description),
 			InputSchema:              json.RawMessage(def.ParametersJSON),
 			Profiles:                 append([]string(nil), profiles[name]...),
-			ManifestPurposes:         compactToolExportStrings(purposesByTool[name]),
+			ManifestPurposes:         textutil.Sorted(purposesByTool[name]),
 			EvidenceCapabilities:     EvidenceCapabilitiesForTool(name),
 			CapabilityClassification: CapabilityClassificationForTool(name),
 			Policy:                   toolSchemaPolicyForTool(name),
@@ -233,7 +229,7 @@ func toolSchemaExportProfiles() map[string][]string {
 	}
 
 	for tool, names := range profiles {
-		profiles[tool] = compactToolExportStrings(names)
+		profiles[tool] = textutil.Sorted(names)
 	}
 
 	return profiles
@@ -258,9 +254,9 @@ func toolSchemaCapabilities(tool string) []autonomy.Capability {
 	}
 
 	switch {
-	case isToolSchemaDiagnosticTool(tool):
+	case LanguageToolHasCapability(tool, CapDiagnostics):
 		return []autonomy.Capability{autonomy.CapabilityShellVerification}
-	case isToolSchemaSemanticDiscoveryTool(tool):
+	case isLanguageToolName(tool):
 		return []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}
 	default:
 		return nil
@@ -273,7 +269,7 @@ func toolSchemaSideEffects(tool string) []autonomy.SideEffectClass {
 	}
 
 	switch {
-	case isToolSchemaDiagnosticTool(tool):
+	case LanguageToolHasCapability(tool, CapDiagnostics):
 		return []autonomy.SideEffectClass{autonomy.SideEffectReadOnly, autonomy.SideEffectUnknown}
 	default:
 		return []autonomy.SideEffectClass{autonomy.SideEffectReadOnly}
@@ -300,7 +296,7 @@ func toolSchemaEnforcement(tool string, sideEffects []autonomy.SideEffectClass) 
 		enforcement = append(enforcement, "path_roles_when_configured")
 	}
 
-	return compactToolExportStrings(enforcement)
+	return textutil.Sorted(enforcement)
 }
 
 func toolSchemaErrorClasses(tool string, sideEffects []autonomy.SideEffectClass) []string {
@@ -313,7 +309,7 @@ func toolSchemaErrorClasses(tool string, sideEffects []autonomy.SideEffectClass)
 		classes = append(classes, "permission_policy", "approval_guard", "command_failed", "timeout")
 	}
 
-	if isToolSchemaDiagnosticTool(tool) || isToolSchemaLanguageTool(tool) || tool == ToolNameSourceSanity {
+	if isLanguageToolName(tool) || tool == ToolNameSourceSanity {
 		classes = append(classes, "unsupported_language", "symbol_not_found", "diagnostics_failed")
 	}
 
@@ -325,41 +321,7 @@ func toolSchemaErrorClasses(tool string, sideEffects []autonomy.SideEffectClass)
 		classes = append(classes, "backend_unavailable", "stale_context")
 	}
 
-	return compactToolExportStrings(classes)
-}
-
-func isToolSchemaSemanticDiscoveryTool(tool string) bool {
-	for _, capability := range builtInToolSurfacePolicyCapabilities(tool) {
-		if capability == autonomy.CapabilitySemanticDiscovery {
-			return true
-		}
-	}
-
-	return isToolSchemaLanguageTool(tool)
-}
-
-func isToolSchemaLanguageTool(tool string) bool {
-	return isLanguageToolName(tool)
-}
-
-func isToolSchemaDiagnosticTool(tool string) bool {
-	tool = strings.ToLower(strings.TrimSpace(tool))
-	if !strings.HasSuffix(tool, "_diagnostics") {
-		return false
-	}
-
-	for _, lang := range LanguageRegistry() {
-		if strings.EqualFold(tool, strings.TrimSpace(lang.Tools[CapDiagnostics])) {
-			return true
-		}
-	}
-
-	switch tool {
-	case "go_diagnostics", "cpp_diagnostics":
-		return true
-	default:
-		return false
-	}
+	return textutil.Sorted(classes)
 }
 
 func hasToolSchemaSideEffect(values []autonomy.SideEffectClass, want autonomy.SideEffectClass) bool {
@@ -390,8 +352,4 @@ func exportedToolSchemaHasCapability(tool ExportedToolSchema, want autonomy.Capa
 	}
 
 	return false
-}
-
-func compactToolExportStrings(values []string) []string {
-	return textutil.Sorted(values)
 }

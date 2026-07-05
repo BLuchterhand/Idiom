@@ -25,7 +25,7 @@ func (m *Model) activeFeaturePlannerPlanContext() string {
 		return ""
 	}
 
-	paths := activeFeaturePlannerProposedPaths(state, plan)
+	paths := featureplanner.ActiveFeaturePlanProposedPaths(state, plan)
 	var b strings.Builder
 
 	b.WriteString("Active feature-planner plan artifact. This is proposed plan evidence, not current source evidence.\n")
@@ -64,7 +64,7 @@ func (m *Model) activeFeaturePlannerPlanSeedResult() (workspace.ToolResult, bool
 		return workspace.ToolResult{}, false
 	}
 
-	paths := activeFeaturePlannerProposedPaths(state, plan)
+	paths := featureplanner.ActiveFeaturePlanProposedPaths(state, plan)
 	if len(paths) == 0 {
 		return workspace.ToolResult{}, false
 	}
@@ -108,8 +108,4 @@ func (m *Model) activeFeaturePlannerPlanState() (featureplanner.FeatureState, st
 	}
 
 	return state, statePath, plan, true
-}
-
-func activeFeaturePlannerProposedPaths(state featureplanner.FeatureState, plan featureplanner.FeaturePlan) []string {
-	return featureplanner.ActiveFeaturePlanProposedPaths(state, plan)
 }

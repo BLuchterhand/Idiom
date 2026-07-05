@@ -257,6 +257,18 @@ func TestSubmitPlanUnsupportedProofClaimsIgnoreProseFiles(t *testing.T) {
 	}
 }
 
+func TestPlanEditUnsupportedProofClaimReasonPrefersContentOverNewText(t *testing.T) {
+	reason := PlanEditUnsupportedProofClaimReason(planartifact.PlanEdit{
+		Path:    "internal/sample_test.go",
+		Content: "package sample\n\nfunc TestRealBehavior(t *testing.T) {\n\tif got := behavior(); got != 42 {\n\t\tt.Fatalf(\"got %d\", got)\n\t}\n}\n",
+		NewText: "// for now this test is only a placeholder\n",
+	})
+
+	if reason != "" {
+		t.Fatalf("PlanEditUnsupportedProofClaimReason should inspect Content before NewText, got %q", reason)
+	}
+}
+
 func TestSubmitPlanRejectsSourceLineRangeExpansionWithoutSelectedAnchor(t *testing.T) {
 	mgr, root := newSubmitPlanTestManager(t)
 	writeSubmitPlanFixture(t, root, "native/src/core/colony_sim.h", strings.Join([]string{
@@ -1702,7 +1714,7 @@ func TestPlanArtifactSynthesizesStableApprovalScopeAndHandoffIDs(t *testing.T) {
 }
 
 func TestPlanArtifactPartialApprovalSemanticsAreClientClassAgnostic(t *testing.T) {
-	for _, class := range approvedPlanArtifactClientClasses() {
+	for _, class := range planartifact.ApprovedClientClassifications() {
 		result := AuditPlanArtifact(t.TempDir(), planartifact.PlanArtifact{
 			SchemaVersion: planartifact.SchemaVersion,
 			PlanID:        "plan-partial-" + class,
@@ -2348,7 +2360,7 @@ func TestValidatePlanArtifactRejectsBackslashTraversalPath(t *testing.T) {
 }
 
 func TestPlanArtifactClientClassificationExamplesCoverApprovedClasses(t *testing.T) {
-	for _, class := range approvedPlanArtifactClientClasses() {
+	for _, class := range planartifact.ApprovedClientClassifications() {
 		artifact := planartifact.NormalizeForSubmit(planartifact.PlanArtifact{
 			SchemaVersion: planartifact.SchemaVersion,
 			PlanID:        "plan-" + class,
@@ -3314,6 +3326,12 @@ func TestSubmitPlanRejectsAmbiguousOldTextBeforeWritingArtifact(t *testing.T) {
 		t.Fatalf("rejection should report duplicate match count, got %q", result.Error)
 	}
 
+	for _, want := range []string{"matching start line(s): 1, 3", "read_file", "replace_all=true"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("rejection should include occurrence guidance %q, got %q", want, result.Error)
+		}
+	}
+
 	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
 		t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", err)
 	}
@@ -3335,6 +3353,35 @@ func TestSubmitPlanRejectsMissingOldTextBeforeWritingArtifact(t *testing.T) {
 
 	if !strings.Contains(result.Error, "did not appear") {
 		t.Fatalf("rejection should report missing old_text, got %q", result.Error)
+	}
+
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", err)
+	}
+}
+
+func TestSubmitPlanRejectsTruncatedSearchAnchorBeforeWritingArtifact(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "catalog.go", "package main\n\nvar catalog = \"needle "+strings.Repeat("x", 800)+"\"\n")
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		Edits: []planartifact.PlanEdit{
+			{
+				Path:    "catalog.go",
+				OldText: "var catalog = \"needle " + strings.Repeat("x", 120) + lineTruncationMarker,
+				NewText: "var catalog = \"replacement\"\n",
+			},
+		},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("truncated search anchor should be rejected")
+	}
+
+	for _, want := range []string{"truncation marker", "search_content", "read_file", "start_line/end_line"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("rejection should include truncated-anchor guidance %q, got %q", want, result.Error)
+		}
 	}
 
 	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {

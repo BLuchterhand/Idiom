@@ -37,10 +37,6 @@ type readinessProfileReport = readiness.ProfileReport
 //	0 — every check passed (warns allowed)
 //	1 — at least one check failed (a hard blocker for `idiom start`)
 //	2 — argument parse error
-func Run(args []string, stdout io.Writer, stderr io.Writer) int {
-	return RunWithTelemetry(args, stdout, stderr, nil)
-}
-
 func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	fs := flag.NewFlagSet("idiom doctor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -88,7 +84,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 
 func logDoctorReadinessTelemetry(rec *telemetry.Recorder, profiles []readinessProfileReport) {
 	for _, profile := range profiles {
-		logDoctorPhase(rec, "doctor_readiness_profile", map[string]any{
+		telemetry.LogPhase(rec, "doctor_readiness_profile", map[string]any{
 			"profile":                 profile.Name,
 			"state":                   profile.State,
 			"pass_checks":             profile.Metrics.PassChecks,
@@ -115,10 +111,6 @@ func logDoctorReadinessTelemetry(rec *telemetry.Recorder, profiles []readinessPr
 			"contains_prompt_content": false,
 		})
 	}
-}
-
-func logDoctorPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	telemetry.LogPhase(rec, eventType, fields)
 }
 
 // checkBackends looks for at least one supported runner on $PATH. A
@@ -212,7 +204,7 @@ func checkConfigFile(path string) checkResult {
 // cwd when config is unreadable) is writable. A read-only workspace is
 // fatal: the lane runner cannot apply edits.
 func checkWorkspaceWritable(configPath string) checkResult {
-	root := workspaceRootFromConfig(configPath)
+	root := readiness.WorkspaceRootFromConfig(configPath)
 	if root == "" {
 		// Fall back to cwd when config didn't yield a root — doctor is
 		// still useful pre-init, and cwd writability is the next-best
@@ -251,13 +243,6 @@ func checkWorkspaceWritable(configPath string) checkResult {
 		status: "pass",
 		detail: root,
 	}
-}
-
-// workspaceRootFromConfig reads workspace.root from the config file
-// without invoking the full config loader. Returns "" on any failure
-// — caller falls back to cwd or a warn result.
-func workspaceRootFromConfig(path string) string {
-	return readiness.WorkspaceRootFromConfig(path)
 }
 
 // checkPython3 looks for python3 on $PATH. Required for `idiom brief

@@ -168,6 +168,21 @@ func TestPlanExecuteTerminalDecisionRejectsFailedReviewWithCompletedStatus(t *te
 	}
 }
 
+func TestPlanExecuteTerminalSourceSanityValidationRejectsCppGenericFallback(t *testing.T) {
+	failures := PlanExecuteTerminalSourceSanityValidationFailures(PlanExecuteTerminalCompletionRecord{
+		ChangedPaths: []string{"native/sim.cpp"},
+		SourceSanity: []PhaseEvidenceCheck{{
+			Path:    "native/sim.cpp",
+			Status:  PhaseEvidenceStatusPassed,
+			Summary: "generic fallback reported no delimiter issues",
+		}},
+	})
+
+	if len(failures) != 1 || failures[0] != "source_sanity_degraded:native/sim.cpp" {
+		t.Fatalf("validation failures = %#v, want C++ generic fallback degradation", failures)
+	}
+}
+
 func TestPlanExecuteTerminalNextActionUsesRecoveryContractVocabulary(t *testing.T) {
 	for _, action := range recoverycontract.NextActions() {
 		if !knownPlanExecuteTerminalNextAction(action) {

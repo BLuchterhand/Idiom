@@ -15,6 +15,7 @@ import (
 	lanecontract "idiom/internal/contracts/lane"
 	planartifact "idiom/internal/contracts/planartifact"
 	queuecontract "idiom/internal/contracts/queue"
+	"idiom/internal/contracts/sourcekind"
 	"idiom/internal/contracts/writerroute"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
@@ -32,7 +33,7 @@ func planExecuteTestDependencies() Dependencies {
 		LoadPlanArtifact:     workspace.LoadPlanArtifact,
 		SubmitAutoPlan:       submitAutoPlanForTest,
 		SourceSanity:         runSourceSanityForTest,
-		SourceSanityCovers:   workspace.SourceSanityCoversPath,
+		SourceSanityCovers:   sourcekind.CoversSourceSanity,
 		EditPreflight:        editPreflightPolicyForTest(),
 		FindPlanArtifact:     findLatestPlanArtifactForTest,
 		CleanupPlanArtifacts: func(string, time.Duration, io.Writer) {},

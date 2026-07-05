@@ -16,6 +16,25 @@ func atomStatusTerminalStateFromBody(specBody string) (atomintakecontract.Intake
 	return atomStatusTerminalState(status)
 }
 
+func SpecTerminalStatus(specBody string) (string, bool) {
+	status, ok := SpecStatus(specBody)
+	if !ok {
+		return "", false
+	}
+
+	return TerminalStatus(status)
+}
+
+func TerminalStatus(status string) (string, bool) {
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return "", false
+	}
+
+	state, _ := atomStatusTerminalState(status)
+	return status, state != ""
+}
+
 func atomStatusTerminalState(status string) (atomintakecontract.IntakeState, string) {
 	if strings.TrimSpace(status) == "" {
 		return "", ""

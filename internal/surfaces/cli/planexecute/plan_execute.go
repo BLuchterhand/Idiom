@@ -47,10 +47,6 @@ var runPlanExecuteIntentLoopChildRunner intentloop.PlanExecuteRunner
 // each edit deterministically against the workspace. The planner owns
 // WHAT to change; the harness owns the plan contract and deterministic
 // handoff to the executor.
-func RunMain(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdruntime.PromptRunner) int {
-	return RunMainWithTelemetry(args, stdout, stderr, promptRun, nil)
-}
-
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdruntime.PromptRunner, rec *telemetry.Recorder) int {
 	opts, loopOpts, err := parsePlanExecuteCLIOptions(args, stderr)
 	if err != nil {
@@ -136,11 +132,6 @@ func defaultPlanExecuteIntentLoop(
 		RunPlanExecute:              childRunner,
 	}, promptRun, rec, stdout, stderr)
 	return result.ExitCode
-}
-
-func parsePlanExecuteOptions(args []string, stderr io.Writer) (planExecuteOptions, error) {
-	opts, _, err := parsePlanExecuteCLIOptions(args, stderr)
-	return opts, err
 }
 
 func parsePlanExecuteCLIOptions(args []string, stderr io.Writer) (planExecuteOptions, planExecuteIntentLoopOptions, error) {

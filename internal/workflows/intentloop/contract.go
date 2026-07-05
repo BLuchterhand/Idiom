@@ -9,8 +9,6 @@ import (
 	plancontract "idiom/internal/contracts/plan"
 )
 
-const typedPlanExecutionContractMarker = "Typed plan execution contract:"
-
 type IntentLoopContract struct {
 	AtomID                string                                    `json:"atom_id,omitempty"`
 	AtomTitle             string                                    `json:"atom_title,omitempty"`
@@ -120,7 +118,7 @@ type wireTerminalEvidenceRequirements struct {
 }
 
 func extractWireContract(prompt string) (wirePlanExecutionContract, error) {
-	body := jsonAfterPromptMarker(prompt, typedPlanExecutionContractMarker)
+	body := jsonAfterPromptMarker(prompt, plancontract.PromptPlanExecutionContractMarker)
 	if body == "" {
 		return wirePlanExecutionContract{}, nil
 	}

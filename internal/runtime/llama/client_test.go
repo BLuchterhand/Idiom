@@ -908,10 +908,8 @@ func TestRepairMessageToolPairing_OrphanedToolCalls(t *testing.T) {
 					{ID: "call_1", Function: ToolCallFunc{Name: "read_file"}},
 				},
 			},
-			// No matching tool response — orphaned
 		}
 		repaired := repairMessageToolPairing(messages)
-		// Should have the system, user, assistant, plus one synthetic tool message
 		if len(repaired) != 4 {
 			t.Fatalf("expected 4 messages, got %d", len(repaired))
 		}
@@ -920,11 +918,9 @@ func TestRepairMessageToolPairing_OrphanedToolCalls(t *testing.T) {
 		if last.Role != "tool" {
 			t.Fatalf("expected last message role 'tool', got %q", last.Role)
 		}
-
 		if last.ToolCallID != "call_1" {
 			t.Fatalf("expected ToolCallID 'call_1', got %q", last.ToolCallID)
 		}
-
 		if last.Content == "" {
 			t.Fatal("expected non-empty synthetic content")
 		}
@@ -943,40 +939,35 @@ func TestRepairMessageToolPairing_OrphanedToolCalls(t *testing.T) {
 				},
 			},
 			{Role: "tool", ToolCallID: "call_1", Content: "file contents here"},
-			// call_2 has no matching response — orphaned
 		}
 		repaired := repairMessageToolPairing(messages)
-		// Should have: system, user, assistant, call_1 response (real), call_2 response (synthetic)
 		if len(repaired) != 5 {
 			t.Fatalf("expected 5 messages, got %d", len(repaired))
 		}
 
-		// Find the real and synthetic tool responses
-		var realTool, synTool *ChatMessage
-
+		var realTool, syntheticTool *ChatMessage
 		for i := range repaired {
-			if repaired[i].Role == "tool" {
-				if repaired[i].ToolCallID == "call_1" {
-					realTool = &repaired[i]
-				} else if repaired[i].ToolCallID == "call_2" {
-					synTool = &repaired[i]
-				}
+			if repaired[i].Role != "tool" {
+				continue
+			}
+			switch repaired[i].ToolCallID {
+			case "call_1":
+				realTool = &repaired[i]
+			case "call_2":
+				syntheticTool = &repaired[i]
 			}
 		}
 
 		if realTool == nil {
 			t.Fatal("missing real tool response for call_1")
 		}
-
 		if realTool.Content != "file contents here" {
 			t.Fatalf("real tool response content mismatch: %q", realTool.Content)
 		}
-
-		if synTool == nil {
+		if syntheticTool == nil {
 			t.Fatal("missing synthetic tool response for orphaned call_2")
 		}
-
-		if synTool.Content == "" {
+		if syntheticTool.Content == "" {
 			t.Fatal("synthetic tool response has empty content")
 		}
 	})
@@ -995,12 +986,9 @@ func TestRepairMessageToolPairing_OrphanedToolCalls(t *testing.T) {
 			{Role: "tool", ToolCallID: "call_1", Content: "result"},
 		}
 		repaired := repairMessageToolPairing(messages)
-
 		if len(repaired) != 4 {
 			t.Fatalf("expected 4 messages, got %d", len(repaired))
 		}
-
-		// No synthetic injection when all tool_calls are paired
 	})
 
 	t.Run("no tool_calls in messages is unchanged", func(t *testing.T) {
@@ -1010,7 +998,6 @@ func TestRepairMessageToolPairing_OrphanedToolCalls(t *testing.T) {
 			{Role: "assistant", Content: "hi there!"},
 		}
 		repaired := repairMessageToolPairing(messages)
-
 		if len(repaired) != 3 {
 			t.Fatalf("expected 3 messages, got %d", len(repaired))
 		}
@@ -1024,15 +1011,48 @@ func TestRepairMessageToolPairing_OrphanedToolCalls(t *testing.T) {
 				Role:    "assistant",
 				Content: "",
 				ToolCalls: []ToolCall{
-					{ID: "", Function: ToolCallFunc{Name: "unknown"}}, // empty ID
+					{ID: "", Function: ToolCallFunc{Name: "unknown"}},
 				},
 			},
-			// No tool response — but ID is empty so it's skipped, not treated as orphan
 		}
 		repaired := repairMessageToolPairing(messages)
-		// Should only have system, user, assistant (no synthetic for empty ID)
 		if len(repaired) != 3 {
 			t.Fatalf("expected 3 messages (empty IDs skipped), got %d", len(repaired))
 		}
 	})
+}
+
+func TestCompleteChatMessageRepairsOrphanedToolCallsBeforeRequest(t *testing.T) {
+	var got chatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"final answer"}}]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, time.Second)
+	_, err := client.CompleteChatMessage(context.Background(), []ChatMessage{
+		{Role: "user", Content: "test"},
+		{Role: "assistant", ToolCalls: []ToolCall{{
+			ID:       "call_dangling_1",
+			Type:     "function",
+			Function: ToolCallFunc{Name: "search_content", Arguments: `{"pattern":"test"}`},
+		}}},
+		{Role: "system", Content: "Tools are now disabled. Answer from gathered evidence."},
+	}, ChatOptions{Model: "model"})
+	if err != nil {
+		t.Fatalf("CompleteChatMessage: %v", err)
+	}
+
+	if len(got.Messages) != 4 {
+		t.Fatalf("messages = %#v, want synthetic tool response inserted", got.Messages)
+	}
+	if got.Messages[2].Role != "tool" || got.Messages[2].ToolCallID != "call_dangling_1" {
+		t.Fatalf("message after assistant tool_calls must be paired tool response, got %#v", got.Messages)
+	}
+	if got.Messages[3].Role != "system" {
+		t.Fatalf("force-answer system message should remain after pairing repair, got %#v", got.Messages)
+	}
 }

@@ -23,10 +23,31 @@ func TestCoversSourceSanity(t *testing.T) {
 }
 
 func TestRequiresConcreteSourceSanityDiagnostics(t *testing.T) {
-	if !RequiresConcreteSourceSanityDiagnostics("native/sim.hpp") {
-		t.Fatal("C++ path should require concrete diagnostics")
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{path: "native/sim.c", want: true},
+		{path: "native/sim.cc", want: true},
+		{path: "native/sim.cpp", want: true},
+		{path: "native/sim.cxx", want: true},
+		{path: "native/sim.h", want: true},
+		{path: "native/sim.hh", want: true},
+		{path: "native/sim.hpp", want: true},
+		{path: "native/sim.hxx", want: true},
+		{path: "native/sim.ipp", want: true},
+		{path: "native/sim.inl", want: true},
+		{path: "native/sim.tpp", want: true},
+		{path: "  NATIVE/SIM.CPP  ", want: true},
+		{path: "main.go", want: false},
+		{path: "src/app.ts", want: false},
+		{path: "src/lib.rs", want: false},
+		{path: "", want: false},
 	}
-	if RequiresConcreteSourceSanityDiagnostics("main.go") {
-		t.Fatal("Go path should not require concrete source_sanity diagnostics")
+
+	for _, tc := range tests {
+		if got := RequiresConcreteSourceSanityDiagnostics(tc.path); got != tc.want {
+			t.Fatalf("RequiresConcreteSourceSanityDiagnostics(%q) = %v, want %v", tc.path, got, tc.want)
+		}
 	}
 }

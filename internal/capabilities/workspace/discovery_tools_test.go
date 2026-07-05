@@ -3997,38 +3997,6 @@ func TestLanguageToolResultsNormalizeBackslashRelationshipPaths(t *testing.T) {
 	}
 }
 
-func TestLSPCallHierarchyFormattersReturnStructuredRelationships(t *testing.T) {
-	root := t.TempDir()
-	app := filepath.Join(root, "app.py")
-	lib := filepath.Join(root, "lib.py")
-
-	writeWorkspaceFile(t, app, "def run():\n    return helper()\n")
-	writeWorkspaceFile(t, lib, "def helper():\n    return 'ok'\n")
-
-	mgr := NewManager(config.Workspace{Root: root, CWD: root, MaxDirectoryEntries: 16})
-
-	payload := mgr.formatPylspOutgoingCalls(app, "run", []LSPOutgoingCall{{
-		To: LSPCallHierarchyItem{
-			Name: "helper",
-			URI:  pylspFileURI(lib),
-			SelectionRange: LSPRange{
-				Start: LSPPosition{Line: 0, Character: 4},
-			},
-		},
-		FromRanges: []LSPRange{{
-			Start: LSPPosition{Line: 1, Character: 11},
-		}},
-	}}, "")
-	if strings.TrimSpace(payload.Output) == "" || len(payload.Relationships) != 1 {
-		t.Fatalf("expected output and structured relationship payload, got %#v", payload)
-	}
-
-	relationship := payload.Relationships[0]
-	if relationship.SourcePath != "app.py" || relationship.SourceLine != 2 || relationship.SourceSymbol != "run" || relationship.TargetPath != "lib.py" || relationship.TargetLine != 1 || relationship.TargetSymbol != "helper" {
-		t.Fatalf("unexpected LSP relationship payload: %#v", relationship)
-	}
-}
-
 func TestDependencyGraphExtractsTypeScriptImportsWithoutMadge(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceFile(t, filepath.Join(root, "src", "main.ts"), `import {x} from "./lib";

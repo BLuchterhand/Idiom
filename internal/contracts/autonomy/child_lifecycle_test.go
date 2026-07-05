@@ -62,6 +62,52 @@ func TestParentChildInvocationRecordValidatesRuntimeEnvelopeAndCapacity(t *testi
 	}
 }
 
+func TestChildLifecycleEnumValidators(t *testing.T) {
+	tests := []struct {
+		name string
+		ok   bool
+	}{
+		{name: "workspace main", ok: validChildWorkspaceMode(ChildWorkspaceMain)},
+		{name: "workspace invalid", ok: !validChildWorkspaceMode(ChildWorkspaceMode("sidecar"))},
+		{name: "role source proxy", ok: validRoleResolutionSource(RoleResolutionSourceProxyDefault)},
+		{name: "role source invalid", ok: !validRoleResolutionSource(RoleResolutionSource("manual"))},
+		{name: "capacity state acquired", ok: validCapacityAdmissionState(CapacityAdmissionAcquired)},
+		{name: "capacity state invalid", ok: !validCapacityAdmissionState(CapacityAdmissionState("pending"))},
+		{name: "capacity enforcement blocking", ok: validCapacityAdmissionEnforcement(CapacityAdmissionBlocking)},
+		{name: "capacity enforcement invalid", ok: !validCapacityAdmissionEnforcement(CapacityAdmissionEnforcement("manual"))},
+		{name: "transport native", ok: validChildTransportMode(ChildTransportNative)},
+		{name: "transport invalid", ok: !validChildTransportMode(ChildTransportMode("email"))},
+		{name: "observed deterministic", ok: validChildObservedTransport(ChildObservedTransportDeterministic)},
+		{name: "observed invalid", ok: !validChildObservedTransport(ChildObservedTransport("proxy"))},
+		{name: "normalizer normalized", ok: validChildNormalizerStatus(ChildNormalizerNormalized)},
+		{name: "normalizer invalid", ok: !validChildNormalizerStatus(ChildNormalizerStatus("skipped"))},
+		{name: "result candidate patch", ok: validChildResultKind(ChildResultCandidatePatch)},
+		{name: "result invalid", ok: !validChildResultKind(ChildResultKind("summary"))},
+		{name: "terminal completed", ok: validChildTerminalStatus(ChildTerminalCompleted)},
+		{name: "terminal invalid", ok: !validChildTerminalStatus(ChildTerminalStatus("queued"))},
+		{name: "objective accepted", ok: validChildObjectiveAlignment(ChildObjectiveAccepted)},
+		{name: "objective invalid", ok: !validChildObjectiveAlignment(ChildObjectiveAlignment("partial"))},
+		{name: "execution route child", ok: validChildExecutionRoute(ChildRouteChildModel)},
+		{name: "execution route invalid", ok: !validChildExecutionRoute(ChildExecutionRoute("worker"))},
+		{name: "path gate allow", ok: validChildPathGateDecision(ChildPathGateAllow)},
+		{name: "path gate invalid", ok: !validChildPathGateDecision(ChildPathGateDecision("ask"))},
+		{name: "acceptance accepted", ok: validChildAcceptanceDecision(ChildAcceptanceAccepted)},
+		{name: "acceptance invalid", ok: !validChildAcceptanceDecision(ChildAcceptanceDecision("deferred"))},
+		{name: "alignment evaluator host", ok: validAlignmentEvaluator(AlignmentEvaluatorHostContract)},
+		{name: "alignment evaluator invalid", ok: !validAlignmentEvaluator(AlignmentEvaluator("parent"))},
+		{name: "verification accepted", ok: validVerificationAcceptanceDecision(VerificationAcceptanceAccepted)},
+		{name: "verification invalid", ok: !validVerificationAcceptanceDecision(VerificationAcceptanceDecision("deferred"))},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !tt.ok {
+				t.Fatal("validator result changed")
+			}
+		})
+	}
+}
+
 func TestChildTerminalRequiresCandidatePatchArtifactRef(t *testing.T) {
 	record := ChildTerminalRecord{
 		TerminalID:         "terminal-1",

@@ -32,7 +32,7 @@ func p711RunMainNoTelemetry(args []string, stdout io.Writer, stderr io.Writer) i
 
 	switch args[0] {
 	case "tool":
-		return toolcmd.Run(args[1:], stdout, stderr)
+		return toolcmd.RunWithTelemetry(args[1:], stdout, stderr, nil)
 	case "local-ops":
 		return localopscmd.RunMainWithTelemetry(args[1:], stdout, stderr, nil, localopscmd.Dependencies{
 			Version:    "test",

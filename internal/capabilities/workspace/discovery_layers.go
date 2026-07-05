@@ -1,7 +1,5 @@
 package workspace
 
-import "strings"
-
 // DiscoveryLayer constants are the stable layer names emitted by
 // discovery_query packets. Keep them at the packet producer boundary so runtime
 // presenters and evidence scoring do not grow parallel string vocabularies.
@@ -24,12 +22,3 @@ const (
 	DiscoveryLayerSemgrepScan           = ToolNameSemgrepScan
 	DiscoveryLayerJoernScan             = ToolNameJoernScan
 )
-
-func IsDiscoveryContextDigestLayer(name string) bool {
-	switch strings.TrimSpace(name) {
-	case DiscoveryLayerProjectBehaviorDigest, DiscoveryLayerProjectContextDigest:
-		return true
-	default:
-		return false
-	}
-}

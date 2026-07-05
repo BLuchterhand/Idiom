@@ -11,14 +11,9 @@ import (
 	"time"
 
 	"idiom/internal/evidence/telemetry"
-	cmdtelemetry "idiom/internal/surfaces/cli/telemetry"
 	"idiom/internal/workflows/productworkflow"
 	"idiom/internal/workflows/recovery"
 )
-
-func commandTelemetryName(args []string) string {
-	return cmdtelemetry.CommandName(args)
-}
 
 func readMainTelemetryRecords(t *testing.T, path string) []map[string]any {
 	t.Helper()
@@ -198,13 +193,6 @@ func TestProductLintIncludesPRDAndADRInCheckedFiles(t *testing.T) {
 	}
 }
 
-func TestProductLintTelemetryClassifiesAsProductLint(t *testing.T) {
-	name := commandTelemetryName([]string{"product", "lint", "--effort-root", "."})
-	if name != "product:lint" {
-		t.Fatalf("expected telemetry name product:lint, got %q", name)
-	}
-}
-
 func TestProductLintUsageErrors(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
@@ -218,7 +206,7 @@ func TestProductLintUsageErrors(t *testing.T) {
 func TestProductLintNoSubcommandUsageError(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := runProductMainWithTelemetry([]string{}, &stdout, &stderr, nil)
+	code := RunMainWithTelemetry([]string{}, &stdout, &stderr, nil)
 
 	if code != 2 {
 		t.Fatalf("expected code 2 for no subcommand, got %d", code)
@@ -229,7 +217,7 @@ func TestProductLintHelpFlags(t *testing.T) {
 	for _, args := range [][]string{{"-h"}, {"--help"}, {"help"}} {
 		var stdout, stderr bytes.Buffer
 
-		code := runProductMainWithTelemetry(args, &stdout, &stderr, nil)
+		code := RunMainWithTelemetry(args, &stdout, &stderr, nil)
 
 		if code != 0 {
 			t.Fatalf("expected code 0 for help args %v, got %d", args, code)
@@ -1661,13 +1649,6 @@ func TestProductAuditHelp(t *testing.T) {
 
 	if code != 0 {
 		t.Fatalf("expected code 0 for -h, got %d", code)
-	}
-}
-
-func TestProductAuditTelemetryName(t *testing.T) {
-	name := commandTelemetryName([]string{"product", "audit", "--effort-root", "."})
-	if name != "product:audit" {
-		t.Fatalf("expected telemetry name product:audit, got %q", name)
 	}
 }
 
@@ -4066,13 +4047,6 @@ func TestProductStatusHelp(t *testing.T) {
 	}
 }
 
-func TestProductStatusTelemetryName(t *testing.T) {
-	name := commandTelemetryName([]string{"product", "status", "--effort-root", "."})
-	if name != "product:status" {
-		t.Fatalf("expected telemetry name product:status, got %q", name)
-	}
-}
-
 func TestProductStatusAuditFailReturnsCode1(t *testing.T) {
 	dir := writeValidTestEffort(t)
 	writeTestFile(t, dir, "tdd.json", `{not valid json`)
@@ -4122,7 +4096,7 @@ func TestProductStatusAuditFailReturnsCode1(t *testing.T) {
 func TestProductStatusUsageIncludesStatus(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := runProductMainWithTelemetry([]string{"--help"}, &stdout, &stderr, nil)
+	code := RunMainWithTelemetry([]string{"--help"}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("expected code 0 for help, got %d", code)
@@ -8869,7 +8843,7 @@ func TestProductLintPerAtomRealGitMatchingPaths(t *testing.T) {
 func TestProductResearchDefaultProjectRootSucceeds(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := runProductMainWithTelemetry([]string{"research"}, &stdout, &stderr, nil)
+	code := RunMainWithTelemetry([]string{"research"}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("expected code 0 (defaults to current dir), got %d", code)

@@ -1,4 +1,4 @@
-package languagetools_test
+package languagetools
 
 import (
 	"strings"

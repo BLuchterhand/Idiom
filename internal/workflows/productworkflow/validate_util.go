@@ -101,3 +101,16 @@ func ClassifyReportFileName(name string) (reportType string, known bool) {
 
 	return "", false
 }
+
+func parseKnownReportJSON(reportType string, data []byte) (any, error) {
+	switch reportType {
+	case "implementation":
+		return ParseImplementationReportJSON(data)
+	case "review":
+		return ParseReviewReportJSON(data)
+	case "investigation":
+		return ParseInvestigationReportJSON(data)
+	default:
+		return nil, fmt.Errorf("unknown report type %q", reportType)
+	}
+}

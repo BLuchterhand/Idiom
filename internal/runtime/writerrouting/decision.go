@@ -54,7 +54,7 @@ func BuildDecision(cfg config.Config, opts DecisionOptions) writerroute.Decision
 		ExecutorModel:     executorModel,
 		ReviewerModel:     reviewerModel,
 		ClassifierModel:   classifierModel,
-		EffectiveModel:    EffectiveModelForDecision(opts.Mode, plannerModel, executorModel, classifierModel),
+		EffectiveModel:    writerroute.EffectiveModelForMode(opts.Mode, plannerModel, executorModel, classifierModel),
 		RoleAliases:       aliases,
 		VerificationOwner: opts.VerificationOwner,
 		RequiredEditPaths: opts.RequiredEditPaths,
@@ -62,8 +62,4 @@ func BuildDecision(cfg config.Config, opts DecisionOptions) writerroute.Decision
 		TaskFamily:        opts.TaskFamily,
 		UserOverride:      opts.UserOverride,
 	})
-}
-
-func EffectiveModelForDecision(mode writerroute.WriterMode, plannerModel, executorModel, classifierModel string) string {
-	return writerroute.EffectiveModelForMode(mode, plannerModel, executorModel, classifierModel)
 }

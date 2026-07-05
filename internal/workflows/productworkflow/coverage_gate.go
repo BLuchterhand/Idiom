@@ -575,21 +575,13 @@ func acceptedParsedADRs(adrs []ParsedADR) []ParsedADR {
 }
 
 func tierRequiresBehaviorCoverage(tier string) bool {
-	switch strings.TrimSpace(strings.ToLower(tier)) {
-	case "behavior_standard", "contract_high", "formal_optional":
-		return true
-	default:
-		return false
-	}
+	spec, ok := normalizedCoverageTierSpecFor(tier)
+	return ok && spec.behaviorRequired
 }
 
 func tierRequiresContractCoverage(tier string) bool {
-	switch strings.TrimSpace(strings.ToLower(tier)) {
-	case "contract_high", "formal_optional":
-		return true
-	default:
-		return false
-	}
+	spec, ok := normalizedCoverageTierSpecFor(tier)
+	return ok && spec.contractRequired
 }
 
 func gatePasses(name string, passed []string, blocked []string) bool {

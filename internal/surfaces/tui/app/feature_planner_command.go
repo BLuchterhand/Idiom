@@ -443,7 +443,7 @@ func (m *Model) directFeaturePlannerShouldConsumeOperatorInput(input string) boo
 func openDirectFeaturePlannerQuestions(state featureplanner.FeatureState) []featureplanner.PlannerQuestion {
 	out := make([]featureplanner.PlannerQuestion, 0, len(state.OpenQuestions))
 	for _, question := range state.OpenQuestions {
-		if featurePlannerQuestionOpen(question) {
+		if featureplanner.PlannerQuestionOpen(question) {
 			out = append(out, question)
 		}
 	}
@@ -1122,7 +1122,7 @@ func formatFeaturePlannerTUIOperatorQuestion(state featureplanner.FeatureState, 
 }
 
 func featurePlannerTUIShouldRenderQuestion(question featureplanner.PlannerQuestion) bool {
-	if !featurePlannerQuestionOpen(question) {
+	if !featureplanner.PlannerQuestionOpen(question) {
 		return false
 	}
 
@@ -1132,7 +1132,7 @@ func featurePlannerTUIShouldRenderQuestion(question featureplanner.PlannerQuesti
 	}
 
 	return authority == "accepted_source" &&
-		featurePlannerQuestionNeedsField(question, "source_localization") &&
+		featureplanner.PlannerQuestionHasAffectedField(question, "source_localization") &&
 		question.UserFacing
 }
 
@@ -1170,7 +1170,7 @@ func featurePlannerApprovalExplanation(state featureplanner.FeatureState) string
 
 func featurePlannerApprovalQuestionMentionsEmptyWorkspace(state featureplanner.FeatureState) bool {
 	for _, question := range state.OpenQuestions {
-		if !featurePlannerQuestionOpen(question) {
+		if !featureplanner.PlannerQuestionOpen(question) {
 			continue
 		}
 		text := strings.ToLower(strings.TrimSpace(question.QuestionSummary + " " + question.BlockingClaim + " " + question.RequestedDecision))

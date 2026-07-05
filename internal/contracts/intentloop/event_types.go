@@ -55,13 +55,8 @@ func EventTypes() []EventType {
 }
 
 func KnownEventType(eventType EventType) bool {
-	for _, known := range EventTypes() {
-		if eventType == known {
-			return true
-		}
-	}
-
-	return false
+	_, ok := parseKnownValue(eventType, EventTypes())
+	return ok
 }
 
 func ParseEventName(name string) (EventType, bool) {
@@ -108,13 +103,7 @@ func TerminalExitCode(status Status) int {
 }
 
 func ParseStatus(raw string) (Status, bool) {
-	status := Status(strings.TrimSpace(raw))
-	for _, known := range Statuses() {
-		if status == known {
-			return status, true
-		}
-	}
-	return "", false
+	return parseKnownValue(Status(strings.TrimSpace(raw)), Statuses())
 }
 
 func Statuses() []Status {
@@ -138,11 +127,15 @@ func CycleStatuses() []CycleStatus {
 }
 
 func ParseCycleStatus(raw string) (CycleStatus, bool) {
-	status := CycleStatus(strings.TrimSpace(raw))
-	for _, known := range CycleStatuses() {
-		if status == known {
-			return status, true
+	return parseKnownValue(CycleStatus(strings.TrimSpace(raw)), CycleStatuses())
+}
+
+func parseKnownValue[T comparable](value T, known []T) (T, bool) {
+	for _, candidate := range known {
+		if value == candidate {
+			return candidate, true
 		}
 	}
-	return "", false
+	var zero T
+	return zero, false
 }

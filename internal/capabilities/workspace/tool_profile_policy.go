@@ -77,7 +77,7 @@ func ToolAllowedForProfile(tool string, profile string) ToolProfileDecision {
 		return discoveryProfileDenied("mutation side effects are not allowed")
 	}
 
-	if profile == ToolProfileDiscovery && discoveryProfileToolWritesLocalContextArtifacts(tool) {
+	if profile == ToolProfileDiscovery && builtInToolSurfaceDiscoveryLocalArtifacts(tool) {
 		return discoveryProfileDenied("tool writes local context artifacts")
 	}
 
@@ -168,10 +168,6 @@ func discoveryProfileRequestAllowed(req ToolRequest) ToolProfileDecision {
 	}
 
 	return ToolProfileDecision{Allowed: true}
-}
-
-func discoveryProfileToolWritesLocalContextArtifacts(tool string) bool {
-	return builtInToolSurfaceDiscoveryLocalArtifacts(tool)
 }
 
 func discoveryProfileFreshnessPolicyCanRefresh(policy string) bool {

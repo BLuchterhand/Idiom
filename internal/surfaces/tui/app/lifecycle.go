@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"idiom/internal/capabilities/mcp"
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/evidence/transcript"
@@ -250,9 +251,7 @@ func New(cfg config.Config) *Model {
 
 	// Per-HTTP-call timeout on the primary and implementer llama clients.
 	// Bounds a single stuck chat request so it can't hang forever. This is
-	// decoupled from the turn-wide soft budget (Chat.MaxDurationSeconds)
-	// that the runner enforces by emitting a graceful "wrap up" message
-	// before cancelling the turn.
+	// deliberately scoped to one transport call, not to the model's turn.
 	callTimeout := time.Duration(cfg.Chat.RequestTimeoutSeconds) * time.Second
 
 	// Each role (planner / executor / classifier) is resolved through
@@ -382,7 +381,7 @@ func New(cfg config.Config) *Model {
 	m.applyModePermissions(mode)
 
 	mcpCtx, mcpCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	registry, mcpFailures := setupMCPRegistry(mcpCtx, cfg.MCP, cfg.Workspace.AllowPrivateNetwork)
+	registry, mcpFailures := mcp.SetupRegistry(mcpCtx, cfg.MCP, cfg.Workspace.AllowPrivateNetwork)
 
 	mcpCancel()
 
@@ -499,8 +498,8 @@ func modeRunPolicy(mode modepolicy.Mode, cfg config.Chat) agent.RunPolicy {
 		policy.MaxModelCalls = cfg.MaxModelCalls
 	}
 
-	if cfg.MaxDurationSeconds > 0 {
-		policy.MaxDuration = time.Duration(cfg.MaxDurationSeconds) * time.Second
+	if cfg.MaxOperationalModelCalls > 0 {
+		policy.MaxOperationalModelCalls = cfg.MaxOperationalModelCalls
 	}
 
 	return policy
@@ -862,11 +861,9 @@ func (m *Model) sendPromptAsync(prompt string) {
 
 	go func() {
 		// The outer ctx intentionally has no deadline. Per-call HTTP timeouts
-		// live on the llama client (Chat.RequestTimeoutSeconds), and the
-		// turn-wide soft budget lives on the runner (Chat.MaxDurationSeconds).
-		// Binding both with a single WithTimeout caused a hung call to
-		// consume the entire turn budget and produced "context deadline
-		// exceeded" mid-generation; see logs/conversations/20260423-163650.
+		// live on the llama client (Chat.RequestTimeoutSeconds); the model owns
+		// turn strategy unless a real loop, tool error, or explicit operational
+		// fuse is encountered.
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -1123,6 +1120,7 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 		steps = 0
 	}
 
+	runtimeBrief := workerruntime.NormalizeRuntimeBrief(plan.runtimeBrief)
 	seedResults := m.LastTurnSourceResultsForObjective(prompt)
 	if activePlanSeed, ok := m.activeFeaturePlannerPlanSeedResult(); ok && (plan.route.Family == string(autonomy.TaskFamilyConversation) || plan.route.Contract == string(workerruntime.ContractDirectAnswer)) {
 		seedResults = append(seedResults, activePlanSeed)
@@ -1136,7 +1134,7 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 		Policy:              policy,
 		AgentName:           "main",
 		SeedResults:         seedResults,
-		RuntimeBrief:        plan.runtimeBrief,
+		RuntimeBrief:        runtimeBrief,
 		InstructionAttacher: m.instructionAttacher,
 		ContextSize:         m.cfg.LlamaServer.CtxSize,
 		ReadApprovalGate:    m.newReadApprovalGate(),
@@ -1251,6 +1249,22 @@ func shouldUnboundDirectPromptBudgets(nonInteractive bool, route turnRoutePlan) 
 
 	return route.Family == string(autonomy.TaskFamilyConversation) || route.Family == string(autonomy.TaskFamilyDirectAnswer) ||
 		route.Contract == string(workerruntime.ContractDirectAnswer) || route.Contract == string(workerruntime.ContractGroundedEvidence)
+}
+
+func lastAssistantAnswer(history []llama.ChatMessage) (string, bool) {
+	for i := len(history) - 1; i >= 0; i-- {
+		msg := history[i]
+		if !strings.EqualFold(strings.TrimSpace(msg.Role), "assistant") {
+			continue
+		}
+
+		content := strings.TrimSpace(msg.Content)
+		if content != "" {
+			return content, true
+		}
+	}
+
+	return "", false
 }
 
 func (m *Model) preExecuteToolRequest(step int, req workspace.ToolRequest, mode modepolicy.Mode) *workspace.ToolResult {

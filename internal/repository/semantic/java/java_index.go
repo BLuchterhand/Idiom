@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"idiom/internal/platform/textutil"
@@ -271,7 +272,7 @@ func (idx *JavaIndex) Summary() string {
 	var b strings.Builder
 
 	b.WriteString("Indexed ")
-	b.WriteString(indexsupport.IntString(len(idx.Files)))
+	b.WriteString(strconv.Itoa(len(idx.Files)))
 	b.WriteString(" Java files\n")
 
 	anchors := idx.DefaultFiles(4)
@@ -287,11 +288,11 @@ func (idx *JavaIndex) Summary() string {
 			b.WriteString("- ")
 			b.WriteString(path)
 			b.WriteString(" (")
-			b.WriteString(indexsupport.IntString(file.Methods))
+			b.WriteString(strconv.Itoa(file.Methods))
 			b.WriteString(" methods, ")
-			b.WriteString(indexsupport.IntString(file.Classes + file.Interfaces + file.Enums))
+			b.WriteString(strconv.Itoa(file.Classes + file.Interfaces + file.Enums))
 			b.WriteString(" types, ")
-			b.WriteString(indexsupport.IntString(len(file.Imports)))
+			b.WriteString(strconv.Itoa(len(file.Imports)))
 			b.WriteString(" imports)\n")
 		}
 	}
@@ -376,14 +377,6 @@ func (idx *JavaIndex) FileByPath(path string) *JavaFile {
 	}
 
 	return nil
-}
-
-func (idx *JavaIndex) findFiles(pattern string) []string {
-	if idx == nil {
-		return nil
-	}
-
-	return indexsupport.FindFilesExactPartial(idx.Files, func(file JavaFile) string { return file.Path }, pattern)
 }
 
 func (idx *JavaIndex) rankFiles(scoreFn func(JavaFile) int, limit int) []JavaFile {

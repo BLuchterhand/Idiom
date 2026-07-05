@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"idiom/internal/repository/discovery"
@@ -262,7 +263,7 @@ func (idx *GoIndex) Summary() string {
 	}
 
 	b.WriteString("Indexed ")
-	b.WriteString(indexsupport.IntString(len(idx.Files)))
+	b.WriteString(strconv.Itoa(len(idx.Files)))
 	b.WriteString(" Go files")
 
 	entrypoints := idx.DefaultFiles(3)
@@ -270,7 +271,7 @@ func (idx *GoIndex) Summary() string {
 		b.WriteString("\nEntrypoints and likely anchors:\n")
 
 		for _, path := range entrypoints {
-			file := idx.fileByPath(path)
+			file := idx.FileByPath(path)
 			if file == nil {
 				continue
 			}
@@ -280,9 +281,9 @@ func (idx *GoIndex) Summary() string {
 			b.WriteString(" (package ")
 			b.WriteString(file.Package)
 			b.WriteString(", ")
-			b.WriteString(indexsupport.IntString(file.Funcs + file.Methods))
+			b.WriteString(strconv.Itoa(file.Funcs + file.Methods))
 			b.WriteString(" funcs/methods, ")
-			b.WriteString(indexsupport.IntString(file.Types))
+			b.WriteString(strconv.Itoa(file.Types))
 			b.WriteString(" types)\n")
 		}
 	}
@@ -301,9 +302,9 @@ func (idx *GoIndex) Summary() string {
 			b.WriteString(" (package ")
 			b.WriteString(pkg.pkg.Name)
 			b.WriteString(", ")
-			b.WriteString(indexsupport.IntString(pkg.pkg.Files))
+			b.WriteString(strconv.Itoa(pkg.pkg.Files))
 			b.WriteString(" files, ")
-			b.WriteString(indexsupport.IntString(pkg.pkg.Funcs + pkg.pkg.Methods))
+			b.WriteString(strconv.Itoa(pkg.pkg.Funcs + pkg.pkg.Methods))
 			b.WriteString(" funcs/methods)\n")
 		}
 	}
@@ -432,44 +433,6 @@ func (idx *GoIndex) IssueHuntFiles(limit int) []string {
 	}, limit), limit)
 }
 
-func (idx *GoIndex) SmellHuntFiles(limit int) []string {
-	return idx.uniqueRankedPaths(idx.rankFiles(func(file GoFile) int {
-		score := 0
-
-		score += sourceDirPriority(file.SourceDir)
-
-		if file.HasMain {
-			score -= 20
-		}
-
-		if strings.HasSuffix(file.Path, "/main.go") || strings.HasSuffix(file.Path, "main.go") {
-			score -= 12
-		}
-
-		if file.IsTest {
-			score -= 40
-		}
-
-		surface := file.Funcs + file.Methods*2
-
-		score += min(surface, 30)
-		score += min(file.Types*3, 18)
-		score += min(len(file.Imports), 12)
-		score += min(exportedSymbolCount(file.Symbols), 12)
-
-		pathLower := strings.ToLower(file.Path)
-		if strings.Contains(pathLower, "manager") || strings.Contains(pathLower, "runner") || strings.Contains(pathLower, "workspace") || strings.Contains(pathLower, "controller") {
-			score += 8
-		}
-
-		if strings.Contains(pathLower, "app") || strings.Contains(pathLower, "client") || strings.Contains(pathLower, "server") {
-			score += 4
-		}
-
-		return score
-	}, limit), limit)
-}
-
 type rankedPackage struct {
 	path string
 	pkg  GoPackage
@@ -503,24 +466,7 @@ func (idx *GoIndex) uniqueRankedPaths(files []GoFile, limit int) []string {
 	return indexsupport.UniqueRankedPaths(files, func(file GoFile) string { return file.Path }, limit)
 }
 
-func exportedSymbolCount(symbols []GoSymbol) int {
-	count := 0
-
-	for _, symbol := range symbols {
-		if symbol.Name == "" {
-			continue
-		}
-
-		r := rune(symbol.Name[0])
-		if r >= 'A' && r <= 'Z' {
-			count++
-		}
-	}
-
-	return count
-}
-
-func (idx *GoIndex) fileByPath(path string) *GoFile {
+func (idx *GoIndex) FileByPath(path string) *GoFile {
 	path = indexsupport.NormalizeLookupPath(path)
 	for i := range idx.Files {
 		if indexsupport.NormalizeLookupPath(idx.Files[i].Path) == path {
@@ -529,10 +475,6 @@ func (idx *GoIndex) fileByPath(path string) *GoFile {
 	}
 
 	return nil
-}
-
-func (idx *GoIndex) FileByPath(path string) *GoFile {
-	return idx.fileByPath(path)
 }
 
 func (f GoFile) PathDir() string {

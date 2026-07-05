@@ -229,7 +229,7 @@ func SensitiveStringClasses(value string) []string {
 		add("absolute_path")
 	}
 
-	if ContainsSecretValue(value) {
+	if sensitivity.ContainsSecretMarker(value) {
 		add("secret_marker")
 	}
 
@@ -238,10 +238,6 @@ func SensitiveStringClasses(value string) []string {
 	}
 
 	return classes
-}
-
-func ContainsSecretValue(value string) bool {
-	return sensitivity.ContainsSecretMarker(value)
 }
 
 func TokenNeedsRedaction(token string) bool {
@@ -362,7 +358,7 @@ func ForbiddenStringEvidence(value string) string {
 		return "absolute_path"
 	}
 
-	if ContainsSecretValue(value) {
+	if sensitivity.ContainsSecretMarker(value) {
 		return "secret_value"
 	}
 

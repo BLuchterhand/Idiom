@@ -8,6 +8,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	rulescontract "idiom/internal/contracts/codingrules"
@@ -15,7 +16,7 @@ import (
 
 const inlineAllowPrefix = "idiom:allow"
 
-func checkGoPassThroughWrappers(ctx context.Context, root string, files []string, rule effectiveRule, suppressions []rulescontract.Suppression) ([]rulescontract.Finding, int, error) {
+func checkGoPassThroughWrappers(ctx context.Context, root string, files []string, rule rulescontract.EffectiveRule, suppressions []rulescontract.Suppression) ([]rulescontract.Finding, int, error) {
 	var findings []rulescontract.Finding
 	suppressed := 0
 
@@ -36,7 +37,7 @@ func checkGoPassThroughWrappers(ctx context.Context, root string, files []string
 	return findings, suppressed, nil
 }
 
-func checkGoPassThroughFile(root string, absPath string, rule effectiveRule, suppressions []rulescontract.Suppression) ([]rulescontract.Finding, int, error) {
+func checkGoPassThroughFile(root string, absPath string, rule rulescontract.EffectiveRule, suppressions []rulescontract.Suppression) ([]rulescontract.Finding, int, error) {
 	rel, err := filepath.Rel(root, absPath)
 	if err != nil {
 		return nil, 0, err
@@ -48,14 +49,15 @@ func checkGoPassThroughFile(root string, absPath string, rule effectiveRule, sup
 		return nil, 0, err
 	}
 
-	opts := passThroughOptions(rule)
+	opts := *rule.Options.PassThroughWrapper
 	if opts.IgnoreGenerated && generatedGoFile(body) {
 		return nil, 0, nil
 	}
 	if opts.IgnoreTests && strings.HasSuffix(rel, "_test.go") {
 		return nil, 0, nil
 	}
-	if excludedByRule(rel, rule) || !includedByRule(rel, rule) {
+	if matchesAnyRulePattern(rule.Exclude, rel) ||
+		(len(rule.Include) > 0 && !matchesAnyRulePattern(rule.Include, rel)) {
 		return nil, 0, nil
 	}
 
@@ -92,25 +94,8 @@ func checkGoPassThroughFile(root string, absPath string, rule effectiveRule, sup
 	return findings, suppressed, nil
 }
 
-func passThroughOptions(rule effectiveRule) rulescontract.PassThroughWrapperOptions {
-	if rule.Options.PassThroughWrapper == nil {
-		return rulescontract.PassThroughWrapperOptions{
-			MaxBodyStatements: 1,
-			IgnoreTests:       true,
-			IgnoreGenerated:   true,
-		}
-	}
-
-	out := *rule.Options.PassThroughWrapper
-	if out.MaxBodyStatements == 0 {
-		out.MaxBodyStatements = 1
-	}
-
-	return out
-}
-
-func passThroughWrapperFinding(rel string, fset *token.FileSet, file *ast.File, fn *ast.FuncDecl, rule effectiveRule) (rulescontract.Finding, bool, bool) {
-	opts := passThroughOptions(rule)
+func passThroughWrapperFinding(rel string, fset *token.FileSet, file *ast.File, fn *ast.FuncDecl, rule rulescontract.EffectiveRule) (rulescontract.Finding, bool, bool) {
+	opts := *rule.Options.PassThroughWrapper
 	if len(fn.Body.List) != opts.MaxBodyStatements || len(fn.Body.List) != 1 {
 		return rulescontract.Finding{}, false, false
 	}
@@ -293,7 +278,7 @@ func inlineAllowed(fset *token.FileSet, file *ast.File, fn *ast.FuncDecl, ruleID
 	return false
 }
 
-func policySuppressed(finding rulescontract.Finding, rule effectiveRule, suppressions []rulescontract.Suppression) bool {
+func policySuppressed(finding rulescontract.Finding, rule rulescontract.EffectiveRule, suppressions []rulescontract.Suppression) bool {
 	for _, suppression := range suppressions {
 		if suppression.RuleID != rule.ID {
 			continue
@@ -304,6 +289,9 @@ func policySuppressed(finding rulescontract.Finding, rule effectiveRule, suppres
 		if strings.TrimSpace(suppression.Symbol) != "" && suppression.Symbol != finding.Symbol {
 			continue
 		}
+		if !slices.Contains(rule.AllowWhen, suppression.Reason) {
+			continue
+		}
 
 		return true
 	}
@@ -311,27 +299,12 @@ func policySuppressed(finding rulescontract.Finding, rule effectiveRule, suppres
 	return false
 }
 
-func excludedByRule(rel string, rule effectiveRule) bool {
-	for _, pattern := range rule.Exclude {
+func matchesAnyRulePattern(patterns []string, rel string) bool {
+	for _, pattern := range patterns {
 		if matchPathPattern(pattern, rel) {
 			return true
 		}
 	}
-
-	return false
-}
-
-func includedByRule(rel string, rule effectiveRule) bool {
-	if len(rule.Include) == 0 {
-		return true
-	}
-
-	for _, pattern := range rule.Include {
-		if matchPathPattern(pattern, rel) {
-			return true
-		}
-	}
-
 	return false
 }
 

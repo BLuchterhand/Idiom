@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"idiom/internal/platform/textutil"
@@ -240,9 +241,9 @@ func (idx *CppIndex) Summary() string {
 			return "", false
 		}
 
-		return indexsupport.IntString(file.Funcs+file.Methods) + " funcs/methods, " +
-			indexsupport.IntString(file.Types) + " types, " +
-			indexsupport.IntString(len(file.Includes)) + " includes", true
+		return strconv.Itoa(file.Funcs+file.Methods) + " funcs/methods, " +
+			strconv.Itoa(file.Types) + " types, " +
+			strconv.Itoa(len(file.Includes)) + " includes", true
 	})
 }
 
@@ -381,7 +382,7 @@ func parseCppSymbols(rel string, content string) []CppSymbol {
 
 	for i, line := range lines {
 		lineNo := i + 1
-		clean := stripCppLineComment(line)
+		clean := indexsupport.StripLineComment(line)
 		trimmed := strings.TrimSpace(clean)
 
 		if trimmed == "" {
@@ -513,7 +514,7 @@ func parseCppFunctionSignature(signature string) (CppSymbol, bool) {
 }
 
 func extractCppCalls(lines []string, startLine int, endLine int) []CppCall {
-	return indexsupport.ExtractLineCalls(lines, startLine, endLine, cppCallRe, stripCppLineComment, isCppKeywordName, func(name string, line int) CppCall {
+	return indexsupport.ExtractLineCalls(lines, startLine, endLine, cppCallRe, indexsupport.StripLineComment, isCppKeywordName, func(name string, line int) CppCall {
 		return CppCall{Name: name, Line: line}
 	})
 }
@@ -540,7 +541,7 @@ func findCppBraceEnd(lines []string, startIdx int) int {
 	seen := false
 
 	for i := startIdx; i < len(lines); i++ {
-		line := stripCppLineComment(lines[i])
+		line := indexsupport.StripLineComment(lines[i])
 		for _, r := range line {
 			switch r {
 			case '{':
@@ -597,10 +598,6 @@ func cppParenBalance(text string) int {
 	}
 
 	return balance
-}
-
-func stripCppLineComment(line string) string {
-	return indexsupport.StripLineComment(line)
 }
 
 func isCppPath(path string) bool {

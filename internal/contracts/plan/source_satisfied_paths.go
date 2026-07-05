@@ -166,15 +166,6 @@ func SourceSatisfiedEvidenceKindProvesCurrentState(kind SourceSatisfiedEvidenceK
 	}
 }
 
-func KnownSourceSatisfiedEvidenceKind(kind SourceSatisfiedEvidenceKind) bool {
-	switch parsed, ok := ParseSourceSatisfiedEvidenceKind(string(kind)); {
-	case ok:
-		return parsed == kind
-	default:
-		return false
-	}
-}
-
 func scopePathSet(paths []string) map[string]struct{} {
 	out := make(map[string]struct{}, len(paths))
 	for _, path := range UniqueScopePaths(paths) {

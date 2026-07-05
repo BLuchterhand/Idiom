@@ -12,8 +12,6 @@ import (
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
-	"idiom/internal/contracts/workflowstate"
-	"idiom/internal/platform/markdownsection"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/llama"
@@ -119,6 +117,18 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 		_ = m.debugLogger.LogRunEvent("internal_prompt", fmt.Sprintf("suppressed nested prompt (%d chars)", len(prompt)))
 	}
 
+	history := m.requestMessages()
+	if suppressTranscript {
+		history = append(history, llama.ChatMessage{Role: "user", Content: prompt})
+	}
+	conversationHistory := m.conversationFollowupHistory(prompt, suppressTranscript)
+	if activePlanContext := m.activeFeaturePlannerPlanContext(); activePlanContext != "" && (plan.route.Family == string(autonomy.TaskFamilyConversation) || plan.route.Contract == string(workerruntime.ContractDirectAnswer)) {
+		history = append(history, llama.ChatMessage{Role: "system", Content: activePlanContext})
+		m.logMessage("active_feature_planner_plan_context", activePlanContext)
+	}
+
+	plan = promptExecutionPlanWithConversationContext(prompt, conversationHistory, plan, m.projectRoot())
+
 	m.logMessage("thinking_config", samplingSummaryForOptions(chatOpts))
 
 	if summary := strings.TrimSpace(renderTurnRoutePlan(plan.route)); summary != "" {
@@ -127,15 +137,6 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 	}
 
 	m.emitWriterRouteDecision(m.writerRouteDecisionForPrompt(prompt, plan))
-
-	history := m.requestMessages()
-	if suppressTranscript {
-		history = append(history, llama.ChatMessage{Role: "user", Content: prompt})
-	}
-	if activePlanContext := m.activeFeaturePlannerPlanContext(); activePlanContext != "" && (plan.route.Family == string(autonomy.TaskFamilyConversation) || plan.route.Contract == string(workerruntime.ContractDirectAnswer)) {
-		history = append(history, llama.ChatMessage{Role: "system", Content: activePlanContext})
-		m.logMessage("active_feature_planner_plan_context", activePlanContext)
-	}
 
 	reply, err := m.runAgentTurn(ctx, prompt, history, chatOpts, plan)
 	if err != nil {
@@ -196,7 +197,7 @@ func (m *Model) applyDirectImplementationPromptRoute(ctx context.Context, prompt
 		return func() {}
 	}
 
-	if !isImplementationLikeFamily(plan.route.Family) {
+	if !workerruntime.TaskFamilyMutationCapable(plan.route.Family) {
 		return func() {}
 	}
 
@@ -247,7 +248,7 @@ func (m *Model) shouldPreloadDirectImplementationContext(prompt string, plan pro
 		return false
 	}
 
-	if !isImplementationLikeFamily(plan.route.Family) || isPlanExecuteInternalFamily(plan.route.Family) {
+	if !workerruntime.TaskFamilyMutationCapable(plan.route.Family) || isPlanExecuteInternalFamily(plan.route.Family) {
 		return false
 	}
 
@@ -485,6 +486,13 @@ func (m *Model) runPlanExecuteCommandOnce(ctx context.Context, objective string)
 		_ = m.debugLogger.LogRunEvent("internal_prompt", fmt.Sprintf("suppressed nested plan-execute command (%d chars)", len(objective)))
 	}
 
+	history := m.requestMessages()
+	if suppressTranscript {
+		history = append(history, llama.ChatMessage{Role: "user", Content: objective})
+	}
+
+	plan = promptExecutionPlanWithConversationContext(objective, m.conversationFollowupHistory(objective, suppressTranscript), plan, m.projectRoot())
+
 	if summary := strings.TrimSpace(renderTurnRoutePlan(plan.route)); summary != "" {
 		m.logMessage("route_plan", summary)
 		m.enqueueHistoryAuditEvent(historyAuditEvent{kind: "lane", label: "route selected", detail: summary, status: plan.route.InitialLane})
@@ -544,6 +552,13 @@ func (m *Model) runImplementCommandOnce(ctx context.Context, objective string) (
 		_ = m.debugLogger.LogRunEvent("internal_prompt", fmt.Sprintf("suppressed nested implement command (%d chars)", len(objective)))
 	}
 
+	history := m.requestMessages()
+	if suppressTranscript {
+		history = append(history, llama.ChatMessage{Role: "user", Content: objective})
+	}
+
+	plan = promptExecutionPlanWithConversationContext(objective, m.conversationFollowupHistory(objective, suppressTranscript), plan, m.projectRoot())
+
 	m.logMessage("thinking_config", samplingSummaryForOptions(chatOpts))
 
 	if summary := strings.TrimSpace(renderTurnRoutePlan(plan.route)); summary != "" {
@@ -553,11 +568,6 @@ func (m *Model) runImplementCommandOnce(ctx context.Context, objective string) (
 
 	m.emitWriterRouteDecision(m.writerRouteDecisionForPrompt(objective, plan))
 
-	history := m.requestMessages()
-	if suppressTranscript {
-		history = append(history, llama.ChatMessage{Role: "user", Content: objective})
-	}
-
 	reply, err := m.runAgentTurn(ctx, objective, history, chatOpts, plan)
 	if err != nil {
 		m.emitJSONError("run_failed", err.Error())
@@ -566,6 +576,24 @@ func (m *Model) runImplementCommandOnce(ctx context.Context, objective string) (
 	}
 
 	return m.finishPromptOnceReply(reply), nil
+}
+
+func (m *Model) conversationFollowupHistory(currentPrompt string, suppressTranscript bool) []llama.ChatMessage {
+	if m == nil {
+		return nil
+	}
+
+	history := m.messages
+	if m.requestHistoryOverride != nil {
+		history = *m.requestHistoryOverride
+	}
+
+	history = append([]llama.ChatMessage(nil), history...)
+	if suppressTranscript {
+		history = append(history, llama.ChatMessage{Role: "user", Content: currentPrompt})
+	}
+
+	return modelPayloadHistory(history)
 }
 
 func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerruntime.WorkerRuntimeBrief {
@@ -586,25 +614,27 @@ func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode modepolicy.Mo
 	}
 
 	mentionedPaths := pathparse.MentionedWorkspacePaths(prompt)
-	if isImplementationLikeFamily(route.Family) && !workerruntime.TaskFamilyIsPlanThenExecutePlanner(route.Family) {
+	if workerruntime.TaskFamilyMutationCapable(route.Family) && !workerruntime.TaskFamilyIsPlanThenExecutePlanner(route.Family) {
 		brief.EvidencePaths = appendUniqueBriefStrings(brief.EvidencePaths, mentionedPaths...)
 	} else {
 		brief.TargetRefs = appendUniqueBriefStrings(brief.TargetRefs, mentionedPaths...)
 	}
 
-	brief.EvidencePaths = appendUniqueBriefStrings(brief.EvidencePaths, promptContextEvidencePaths(prompt)...)
-	brief.TargetPacket = appendUniqueBriefStrings(brief.TargetPacket, promptContextPacketMarkers(prompt)...)
+	promptPacket := plancontract.PromptPacketFromPrompt(prompt)
+
+	brief.EvidencePaths = appendUniqueBriefStrings(brief.EvidencePaths, promptPacket.EvidencePaths...)
+	brief.TargetPacket = appendUniqueBriefStrings(brief.TargetPacket, promptPacket.TargetPacketMarkers...)
 
 	scopeContract, useTypedPlanExecuteScope := m.planExecuteRuntimeScopeContract(route)
-	allowed := plancontract.AllowedEditPathsFromPrompt(prompt)
-	required := plancontract.RequiredEditPathsFromPrompt(prompt)
+	allowed := promptPacket.AllowedEditPaths
+	required := promptPacket.RequiredEditPaths
 
 	if useTypedPlanExecuteScope {
 		required = scopeContract.RequiredCoveragePaths
 		allowed = scopeContract.AllowedCandidatePaths
 	}
 
-	implementationLike := isImplementationLikeFamily(route.Family)
+	implementationLike := workerruntime.TaskFamilyMutationCapable(route.Family)
 	if !implementationLike {
 		if len(required) > 0 {
 			brief.TargetRefs = appendUniqueBriefStrings(brief.TargetRefs, required...)
@@ -613,8 +643,8 @@ func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode modepolicy.Mo
 		required = nil
 	}
 
-	if !useTypedPlanExecuteScope && implementationLike && len(required) == 0 && len(allowed) > 0 && promptHasRequiredEditPayload(prompt) {
-		required = appendUniqueBriefStrings(required, requiredEditPayloadPathsFromPrompt(prompt, allowed)...)
+	if !useTypedPlanExecuteScope && implementationLike && len(required) == 0 && len(allowed) > 0 && promptPacket.HasRequiredEditPayload {
+		required = appendUniqueBriefStrings(required, requiredEditPayloadPathsFromPrompt(prompt, allowed, promptPacket.HasRequiredEditPayload)...)
 	}
 
 	if len(allowed) > 0 {
@@ -630,14 +660,14 @@ func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode modepolicy.Mo
 	}
 
 	snippetScope := required
-	if !useTypedPlanExecuteScope && len(snippetScope) == 0 && implementationLike && len(allowed) > 0 && promptHasRequiredEditPayload(prompt) {
+	if !useTypedPlanExecuteScope && len(snippetScope) == 0 && implementationLike && len(allowed) > 0 && promptPacket.HasRequiredEditPayload {
 		snippetScope = allowed
 	}
 
 	if useTypedPlanExecuteScope && len(snippetScope) == 0 && implementationLike && len(allowed) > 0 {
-		brief.RequiredEditSnippets = appendRequiredEditSnippets(brief.RequiredEditSnippets, requiredEditSnippetsFromPrompt(prompt, allowed)...)
+		brief.RequiredEditSnippets = appendRequiredEditSnippets(brief.RequiredEditSnippets, plancontract.RequiredEditSnippetsFromPrompt(prompt, allowed)...)
 	} else if len(snippetScope) > 0 {
-		brief.RequiredEditSnippets = appendRequiredEditSnippets(brief.RequiredEditSnippets, requiredEditSnippetsFromPrompt(prompt, snippetScope)...)
+		brief.RequiredEditSnippets = appendRequiredEditSnippets(brief.RequiredEditSnippets, plancontract.RequiredEditSnippetsFromPrompt(prompt, snippetScope)...)
 	}
 
 	if len(required) > 0 {
@@ -707,7 +737,7 @@ func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode modepolicy.Mo
 		}
 	}
 
-	if isEvidenceFirstMutationFamily(route.Family) && len(brief.TargetRefs) > 0 {
+	if workerruntime.TaskFamilyEvidenceFirstMutation(route.Family) && len(brief.TargetRefs) > 0 {
 		brief.RequiredNext = appendUniqueBriefStrings(brief.RequiredNext,
 			"gather source evidence before large reads of named target refs",
 		)
@@ -716,7 +746,7 @@ func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode modepolicy.Mo
 		)
 	}
 
-	if m.plannerOwnedVerification && isImplementationLikeFamily(route.Family) {
+	if m.plannerOwnedVerification && workerruntime.TaskFamilyMutationCapable(route.Family) {
 		brief.Constraints = appendUniqueBriefStrings(brief.Constraints,
 			"planner_owned_verification",
 		)
@@ -738,7 +768,7 @@ func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode modepolicy.Mo
 		}
 	}
 
-	if useTypedPlanExecuteScope && isImplementationLikeFamily(route.Family) && len(brief.RequiredEditSnippets) > 0 {
+	if useTypedPlanExecuteScope && workerruntime.TaskFamilyMutationCapable(route.Family) && len(brief.RequiredEditSnippets) > 0 {
 		brief.Constraints = appendUniqueBriefStrings(brief.Constraints, "exact_anchor_implementation")
 		brief.RequiredEvidence = appendUniqueBriefStrings(brief.RequiredEvidence, "exact_edit_anchor")
 
@@ -749,7 +779,7 @@ func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode modepolicy.Mo
 			brief.SearchPolicy = appendUniqueBriefStrings(brief.SearchPolicy, "attempt_exact_anchor_edit_before_broad_discovery")
 			brief.InvalidActions = appendUniqueBriefStrings(brief.InvalidActions, "broad_read_before_first_edit_attempt")
 		}
-	} else if !useTypedPlanExecuteScope && isImplementationLikeFamily(route.Family) && promptContainsExactEditAnchor(prompt) {
+	} else if !useTypedPlanExecuteScope && workerruntime.TaskFamilyMutationCapable(route.Family) && promptPacket.HasExactEditAnchor {
 		brief.Constraints = appendUniqueBriefStrings(brief.Constraints, "exact_anchor_implementation")
 		brief.RequiredEvidence = appendUniqueBriefStrings(brief.RequiredEvidence, "exact_edit_anchor")
 		brief.SearchPolicy = appendUniqueBriefStrings(brief.SearchPolicy, "attempt_exact_anchor_edit_before_broad_discovery")
@@ -864,654 +894,20 @@ func (m *Model) planExecuteRuntimeScopeContract(route turnRoutePlan) (plancontra
 	return contract, true
 }
 
-func promptHasRequiredEditPayload(prompt string) bool {
-	if promptContainsExactEditAnchor(prompt) {
-		return true
-	}
-
-	for _, marker := range promptContextPacketMarkers(prompt) {
-		if marker == "prompt_context:required_edits" {
-			return true
-		}
-	}
-
-	return false
-}
-
-func requiredEditPayloadPathsFromPrompt(prompt string, candidatePaths []string) []string {
-	if len(candidatePaths) == 0 || !promptHasRequiredEditPayload(prompt) {
+func requiredEditPayloadPathsFromPrompt(prompt string, candidatePaths []string, hasRequiredEditPayload bool) []string {
+	if len(candidatePaths) == 0 || !hasRequiredEditPayload {
 		return nil
 	}
 
 	var paths []string
 
-	for _, snippet := range requiredEditSnippetsFromPrompt(prompt, candidatePaths) {
+	for _, snippet := range plancontract.RequiredEditSnippetsFromPrompt(prompt, candidatePaths) {
 		if path := strings.TrimSpace(snippet.Path); path != "" {
 			paths = appendUniqueBriefStrings(paths, path)
 		}
 	}
 
 	return paths
-}
-
-func looksLikePromptSectionBoundary(line string) bool {
-	trimmed := strings.TrimSpace(line)
-	if trimmed == "" {
-		return false
-	}
-
-	if strings.HasPrefix(trimmed, "#") {
-		return true
-	}
-
-	if strings.HasPrefix(trimmed, "**") && strings.Contains(strings.TrimPrefix(trimmed, "**"), "**") {
-		return true
-	}
-
-	return strings.HasSuffix(trimmed, ":")
-}
-
-func looksLikeMarkdownPromptSectionBoundary(line string) bool {
-	trimmed := strings.TrimSpace(line)
-
-	return strings.HasPrefix(trimmed, "#") ||
-		(strings.HasPrefix(trimmed, "**") && strings.Contains(strings.TrimPrefix(trimmed, "**"), "**"))
-}
-
-func looksLikeRequiredPathPrelude(line string) bool {
-	if !looksLikePromptSectionBoundary(line) || looksLikeMarkdownPromptSectionBoundary(line) {
-		return false
-	}
-
-	normalized := normalizePromptSectionHeading(line)
-
-	return strings.Contains(normalized, "allowlist") ||
-		strings.Contains(normalized, "scope") ||
-		strings.Contains(normalized, "files") ||
-		strings.Contains(normalized, "paths") ||
-		strings.Contains(normalized, "table")
-}
-
-func promptHeadingSet(headings []string) map[string]struct{} {
-	headingSet := make(map[string]struct{}, len(headings))
-	for _, heading := range headings {
-		if normalized := normalizePromptSectionHeading(heading); normalized != "" {
-			headingSet[normalized] = struct{}{}
-		}
-	}
-
-	return headingSet
-}
-
-func workspacePathsUnderPromptHeadings(prompt string, headings []string) []string {
-	headingSet := promptHeadingSet(headings)
-
-	var paths []string
-
-	active := false
-	sawPath := false
-
-	for _, rawLine := range strings.Split(prompt, "\n") {
-		line := strings.TrimSpace(rawLine)
-		normalized := normalizePromptSectionHeading(line)
-
-		if promptHeadingInSet(normalized, headingSet) {
-			active = true
-			sawPath = false
-
-			continue
-		}
-
-		if !active {
-			continue
-		}
-
-		if line == "" {
-			if sawPath {
-				active = false
-			}
-
-			continue
-		}
-
-		linePaths := promptPacketWorkspacePaths(line)
-		if len(linePaths) > 0 {
-			sawPath = true
-			paths = appendUniqueBriefStrings(paths, linePaths...)
-
-			continue
-		}
-
-		if looksLikePromptSectionBoundary(line) {
-			if !sawPath && looksLikeRequiredPathPrelude(line) {
-				continue
-			}
-
-			active = false
-
-			continue
-		}
-	}
-
-	return paths
-}
-
-func promptPacketWorkspacePaths(text string) []string {
-	paths := appendUniqueBriefStrings(nil, pathparse.MentionedWorkspacePaths(text)...)
-	for _, fragment := range pathparse.QuotedFragments(text) {
-		path, ok := pathparse.NormalizeWorkspacePathToken(fragment)
-		if !ok {
-			continue
-		}
-
-		paths = appendUniqueBriefStrings(paths, path)
-	}
-
-	return paths
-}
-
-func promptContextEvidencePaths(prompt string) []string {
-	projection := promptContextPacketProjection(prompt)
-	headings := projection.LegacyHeadings
-	if len(headings) == 0 {
-		return nil
-	}
-
-	paths := workspacePathsUnderPromptHeadings(prompt, headings)
-
-	for _, heading := range headings {
-		section := markdownsection.ByHeading(prompt, heading)
-		if strings.TrimSpace(section) == "" {
-			continue
-		}
-
-		paths = appendUniqueBriefStrings(paths, promptPacketWorkspacePaths(section)...)
-	}
-
-	return paths
-}
-
-type promptContextPacketProjectionResult struct {
-	WorkflowID            workflowstate.WorkflowID
-	State                 workflowstate.StateID
-	TerminalState         workflowstate.TerminalState
-	Dispatchable          bool
-	StructuredPacket      bool
-	LegacyHeadingFallback bool
-	LegacyHeadings        []string
-	Markers               []string
-	Reason                string
-}
-
-func promptContextPacketProjection(prompt string) promptContextPacketProjectionResult {
-	headings := []string{
-		"verified current state",
-		"current state",
-		"current-state anchors",
-		"source evidence",
-		"context packet",
-		"context pack",
-		"context view",
-		"provided context",
-		"implementation context",
-		"discovery evidence",
-		"evidence",
-		"evidence paths",
-		"primary evidence paths",
-		"read-only evidence paths",
-		"required reads",
-		"required read",
-		"input files",
-		"relevant files",
-		"candidate scope",
-	}
-
-	projection := promptContextPacketProjectionResult{
-		WorkflowID:       workflowstate.WorkflowPromptContextPacket,
-		State:            workflowstate.StateTerminal,
-		TerminalState:    workflowstate.TerminalStateBlocked,
-		LegacyHeadings:   headings,
-		StructuredPacket: promptHasStructuredPacketMarker(prompt),
-	}
-	if projection.StructuredPacket {
-		projection.State = workflowstate.StateDispatchable
-		projection.TerminalState = ""
-		projection.Dispatchable = true
-		projection.Markers = appendUniqueBriefStrings(projection.Markers, "prompt_context:structured_packet")
-		projection.Reason = "structured_packet"
-		return projection
-	}
-
-	if !promptHasAnySectionHeading(prompt, headings) {
-		projection.Reason = "missing_structured_packet_or_legacy_heading"
-		return projection
-	}
-
-	projection.LegacyHeadingFallback = true
-	projection.State = workflowstate.StateDispatchable
-	projection.TerminalState = ""
-	projection.Dispatchable = true
-	projection.Reason = "legacy_heading_fallback"
-
-	return projection
-}
-
-func promptHasAnySectionHeading(prompt string, headings []string) bool {
-	for _, heading := range headings {
-		if promptHasSectionHeading(prompt, heading) {
-			return true
-		}
-	}
-	return false
-}
-
-func promptHasSectionHeading(prompt string, heading string) bool {
-	if strings.TrimSpace(markdownsection.ByHeading(prompt, heading)) != "" {
-		return true
-	}
-
-	want := normalizePromptSectionHeading(heading)
-	if want == "" {
-		return false
-	}
-
-	inFence := false
-	fence := ""
-	lines := strings.Split(prompt, "\n")
-
-	for i, rawLine := range lines {
-		line := strings.TrimSpace(rawLine)
-		if marker, _, ok := markdownFenceOpen(line); ok {
-			if !inFence {
-				inFence = true
-				fence = marker
-			} else if strings.HasPrefix(line, fence) {
-				inFence = false
-				fence = ""
-			}
-
-			continue
-		}
-
-		if inFence {
-			continue
-		}
-
-		if normalizePromptSectionHeading(line) == want {
-			if loosePromptSectionHasContent(lines, i+1) {
-				return true
-			}
-
-			continue
-		}
-	}
-
-	return false
-}
-
-func loosePromptSectionHasContent(lines []string, start int) bool {
-	if start < 0 || start >= len(lines) {
-		return false
-	}
-
-	for _, rawLine := range lines[start:] {
-		line := strings.TrimSpace(rawLine)
-		if line == "" {
-			continue
-		}
-
-		if len(promptPacketWorkspacePaths(line)) > 0 {
-			return true
-		}
-
-		if looksLikePromptSectionBoundary(line) {
-			return isPromptPacketNestedSection(line)
-		}
-
-		return true
-	}
-
-	return false
-}
-
-func isPromptPacketNestedSection(line string) bool {
-	switch normalizePromptSectionHeading(line) {
-	case "anchors",
-		"candidate scope",
-		"context",
-		"context evidence",
-		"current state",
-		"evidence",
-		"files",
-		"source evidence",
-		"symbols",
-		"target refs",
-		"tests",
-		"verified current state":
-		return true
-	default:
-		return false
-	}
-}
-
-func promptContextPacketMarkers(prompt string) []string {
-	projection := promptContextPacketProjection(prompt)
-
-	type packetSection struct {
-		heading string
-		marker  string
-	}
-
-	sections := []packetSection{
-		{heading: "verified current state", marker: "prompt_context:verified_current_state"},
-		{heading: "current state", marker: "prompt_context:current_state"},
-		{heading: "current-state anchors", marker: "prompt_context:current_state_anchors"},
-		{heading: "source evidence", marker: "prompt_context:source_evidence"},
-		{heading: "context packet", marker: "prompt_context:context_packet"},
-		{heading: "context pack", marker: "prompt_context:context_packet"},
-		{heading: "context view", marker: "prompt_context:context_view"},
-		{heading: "provided context", marker: "prompt_context:provided_context"},
-		{heading: "implementation context", marker: "prompt_context:implementation_context"},
-		{heading: "discovery evidence", marker: "prompt_context:discovery_evidence"},
-		{heading: "candidate scope", marker: "prompt_context:candidate_scope"},
-		{heading: "required edits", marker: "prompt_context:required_edits"},
-	}
-
-	markers := append([]string(nil), projection.Markers...)
-	if !projection.LegacyHeadingFallback && !projection.StructuredPacket {
-		return markers
-	}
-
-	for _, section := range sections {
-		if !promptHasSectionHeading(prompt, section.heading) {
-			continue
-		}
-
-		markers = appendUniqueBriefStrings(markers, section.marker)
-	}
-
-	return markers
-}
-
-func promptHasStructuredPacketMarker(prompt string) bool {
-	lower := strings.ToLower(prompt)
-	if textutil.ContainsAny(lower, `"context_packet"`, `"context_pack"`) ||
-		(strings.Contains(lower, `"planning_packet`) && strings.Contains(lower, `"schema"`)) {
-
-		return true
-	}
-
-	keys := []string{`"context_budget"`, `"candidate_scope"`, `"anchors"`, `"evidence"`, `"files_to_modify"`, `"required_edits"`}
-	count := 0
-
-	for _, key := range keys {
-		if strings.Contains(lower, key) {
-			count++
-		}
-	}
-
-	return count >= 2
-}
-
-func requiredEditSnippetsFromPrompt(prompt string, requiredPaths []string) []workerruntime.RequiredEditSnippet {
-	// Planner conventions vary: some briefs use "## Required Edits" with the
-	// new code inline, others use "## Implementation Shape" or just
-	// "## Implementation" for the same purpose. We scan candidates in order
-	// and take the first one whose code fences survive the
-	// skipRequiredEditCodeBlock filter, so an empty "required edits"
-	// header doesn't shadow a populated "implementation shape" section.
-	headings := []string{
-		"required edits",
-		"edits to apply",
-		"edits",
-		"implementation shape",
-		"implementation",
-	}
-
-	var blocks []requiredEditBlock
-
-	for _, heading := range headings {
-		candidate := markdownsection.ByHeading(prompt, heading)
-		if strings.TrimSpace(candidate) == "" {
-			continue
-		}
-
-		if found := requiredEditCodeBlocksWithPaths(candidate, requiredPaths); len(found) > 0 {
-			blocks = found
-			break
-		}
-	}
-
-	if len(blocks) == 0 {
-		return nil
-	}
-
-	path := ""
-	if len(requiredPaths) == 1 {
-		path = strings.TrimSpace(requiredPaths[0])
-	}
-
-	snippets := make([]workerruntime.RequiredEditSnippet, 0, len(blocks))
-	for _, block := range blocks {
-		content := strings.TrimSpace(block.Content)
-		if content == "" {
-			continue
-		}
-
-		blockPaths := block.Paths
-		if len(blockPaths) == 0 && path != "" {
-			blockPaths = []string{path}
-		}
-
-		if len(blockPaths) == 0 {
-			blockPaths = []string{""}
-		}
-
-		for _, blockPath := range blockPaths {
-			snippets = append(snippets, workerruntime.RequiredEditSnippet{
-				ID:      fmt.Sprintf("required_edit_%d", len(snippets)+1),
-				Path:    strings.TrimSpace(blockPath),
-				Content: content,
-			})
-		}
-	}
-
-	if len(snippets) == 0 {
-		return nil
-	}
-
-	return snippets
-}
-
-func normalizePromptSectionHeading(text string) string {
-	text = strings.TrimSpace(text)
-	text = strings.Trim(text, "#*: `\"'")
-	text = strings.TrimSuffix(text, ":")
-	text = strings.ToLower(text)
-	text = strings.NewReplacer("-", " ", "_", " ", "/", " ").Replace(text)
-
-	return strings.Join(strings.Fields(text), " ")
-}
-
-func promptHeadingInSet(candidate string, headingSet map[string]struct{}) bool {
-	if _, ok := headingSet[candidate]; ok {
-		return true
-	}
-
-	if trimmed := trimPromptHeadingQualifier(candidate); trimmed != candidate {
-		_, ok := headingSet[trimmed]
-		return ok
-	}
-
-	return false
-}
-
-func trimPromptHeadingQualifier(heading string) string {
-	heading = strings.TrimSpace(heading)
-	for _, marker := range []string{" (", " [", " - ", " -- "} {
-		if idx := strings.Index(heading, marker); idx > 0 {
-			return strings.TrimSpace(heading[:idx])
-		}
-	}
-
-	return heading
-}
-
-type requiredEditBlock struct {
-	Paths   []string
-	Content string
-}
-
-func requiredEditCodeBlocksWithPaths(section string, requiredPaths []string) []requiredEditBlock {
-	var (
-		blocks  []requiredEditBlock
-		current []string
-	)
-
-	previousNonEmpty := ""
-
-	var (
-		currentPaths []string
-		blockPaths   []string
-	)
-
-	fence := ""
-	skipCurrent := false
-
-	for _, rawLine := range strings.Split(section, "\n") {
-		trimmed := strings.TrimSpace(rawLine)
-		if fence == "" {
-			if marker, info, ok := markdownFenceOpen(trimmed); ok {
-				fence = marker
-				current = nil
-
-				blockPaths = append([]string(nil), currentPaths...)
-				skipCurrent = skipRequiredEditCodeBlock(previousNonEmpty, info)
-
-				continue
-			}
-
-			if trimmed != "" {
-				if paths := requiredEditPathsMentionedInLine(trimmed, requiredPaths); len(paths) > 0 {
-					currentPaths = paths
-				}
-
-				previousNonEmpty = trimmed
-			}
-
-			continue
-		}
-
-		if strings.HasPrefix(trimmed, fence) {
-			if !skipCurrent {
-				if block := strings.TrimSpace(strings.Join(current, "\n")); block != "" {
-					blocks = append(blocks, requiredEditBlock{Paths: append([]string(nil), blockPaths...), Content: block})
-				}
-			}
-
-			fence = ""
-			current = nil
-			blockPaths = nil
-			skipCurrent = false
-			previousNonEmpty = ""
-
-			continue
-		}
-
-		current = append(current, rawLine)
-	}
-
-	return blocks
-}
-
-func requiredEditPathsMentionedInLine(line string, requiredPaths []string) []string {
-	if len(requiredPaths) == 0 {
-		return nil
-	}
-
-	line = strings.TrimSpace(line)
-	if line == "" {
-		return nil
-	}
-
-	matched := make(map[string]struct{}, len(requiredPaths))
-	for _, path := range requiredPaths {
-		path = strings.TrimSpace(path)
-		if path == "" {
-			continue
-		}
-
-		if strings.Contains(line, path) || strings.Contains(line, "`"+path+"`") {
-			matched[path] = struct{}{}
-		}
-	}
-
-	baseCounts := make(map[string]int, len(requiredPaths))
-	for _, path := range requiredPaths {
-		path = strings.TrimSpace(path)
-		if path == "" {
-			continue
-		}
-
-		baseCounts[filepath.Base(path)]++
-	}
-
-	for _, path := range requiredPaths {
-		path = strings.TrimSpace(path)
-		if path == "" {
-			continue
-		}
-
-		base := filepath.Base(path)
-		if base == "." || base == "/" || base == "" || baseCounts[base] != 1 {
-			continue
-		}
-
-		if strings.Contains(line, "`"+base+"`") {
-			matched[path] = struct{}{}
-		}
-	}
-
-	if len(matched) == 0 {
-		return nil
-	}
-
-	out := make([]string, 0, len(matched))
-
-	for _, path := range requiredPaths {
-		path = strings.TrimSpace(path)
-		if _, ok := matched[path]; ok {
-			out = append(out, path)
-		}
-	}
-
-	return out
-}
-
-func markdownFenceOpen(line string) (marker string, info string, ok bool) {
-	switch {
-	case strings.HasPrefix(line, "```"):
-		return "```", strings.TrimSpace(strings.TrimPrefix(line, "```")), true
-	case strings.HasPrefix(line, "~~~"):
-		return "~~~", strings.TrimSpace(strings.TrimPrefix(line, "~~~")), true
-	default:
-		return "", "", false
-	}
-}
-
-func skipRequiredEditCodeBlock(label string, info string) bool {
-	lowerInfo := strings.ToLower(strings.TrimSpace(info))
-	if strings.Contains(lowerInfo, "diff") || strings.Contains(lowerInfo, "patch") {
-		return true
-	}
-
-	lowerLabel := strings.Trim(strings.ToLower(strings.TrimSpace(label)), ":. ")
-
-	return strings.HasPrefix(lowerLabel, "old") ||
-		strings.HasPrefix(lowerLabel, "before") ||
-		strings.HasPrefix(lowerLabel, "existing") ||
-		strings.HasPrefix(lowerLabel, "current") ||
-		strings.HasPrefix(lowerLabel, "replace this")
 }
 
 func appendRequiredEditSnippets(dst []workerruntime.RequiredEditSnippet, values ...workerruntime.RequiredEditSnippet) []workerruntime.RequiredEditSnippet {
@@ -1545,92 +941,6 @@ func appendRequiredEditSnippets(dst []workerruntime.RequiredEditSnippet, values 
 	}
 
 	return dst
-}
-
-func promptContainsExactEditAnchor(prompt string) bool {
-	lower := strings.ToLower(prompt)
-	if strings.Contains(prompt, "*** Begin Patch") ||
-		strings.Contains(prompt, "```diff") ||
-		(strings.Contains(prompt, "\n--- ") && strings.Contains(prompt, "\n+++ ") && strings.Contains(prompt, "\n@@")) {
-
-		return true
-	}
-
-	return promptHasStructuredExactEditPair(lower)
-}
-
-func promptHasStructuredExactEditPair(lowerPrompt string) bool {
-	type pair struct {
-		left  string
-		right string
-	}
-
-	pairs := []pair{
-		{left: "old_text", right: "new_text"},
-		{left: "old text", right: "new text"},
-		{left: "old snippet", right: "new snippet"},
-		{left: "before", right: "after"},
-		{left: "replace", right: "with"},
-		{left: "exact old", right: "exact new"},
-	}
-	labels := make(map[string]struct{}, len(pairs)*2)
-
-	for _, line := range strings.Split(lowerPrompt, "\n") {
-		label, ok := exactEditAnchorLineLabel(line)
-		if !ok {
-			continue
-		}
-
-		labels[label] = struct{}{}
-	}
-
-	for _, pair := range pairs {
-		if _, ok := labels[pair.left]; !ok {
-			continue
-		}
-
-		if _, ok := labels[pair.right]; ok {
-			return true
-		}
-	}
-
-	return false
-}
-
-func exactEditAnchorLineLabel(line string) (string, bool) {
-	line = strings.TrimSpace(line)
-	line = strings.TrimLeft(line, "-*")
-	line = strings.TrimSpace(line)
-
-	if line == "" {
-		return "", false
-	}
-
-	separator := strings.Index(line, ":")
-	if equals := strings.Index(line, "="); equals >= 0 && (separator < 0 || equals < separator) {
-		separator = equals
-	}
-
-	if separator < 0 {
-		return "", false
-	}
-
-	label := strings.TrimSpace(line[:separator])
-
-	label = strings.Trim(label, "`'\"*_ {}")
-	label = strings.NewReplacer("-", " ", "_", " ").Replace(label)
-	label = strings.Join(strings.Fields(label), " ")
-
-	switch label {
-	case "old text", "new text", "old snippet", "new snippet", "before", "after", "replace", "with", "exact old", "exact new":
-		return label, true
-	case "old":
-		return "old text", true
-	case "new":
-		return "new text", true
-	default:
-		return "", false
-	}
 }
 
 func defaultVerificationPlan(root string) []string {
@@ -1675,15 +985,6 @@ func appendUniqueBriefStrings(dst []string, values ...string) []string {
 	return dst
 }
 
-func isEvidenceFirstMutationFamily(family string) bool {
-	switch strings.TrimSpace(family) {
-	case "explore_then_implement", "investigate_then_implement", "review_then_implement", "architecture_then_implement":
-		return true
-	default:
-		return false
-	}
-}
-
 func tuneChatOptionsForPlan(opts llama.ChatOptions, plan promptExecutionPlan) llama.ChatOptions {
 	profile := strings.TrimSpace(plan.runtimeBrief.PermissionProfile)
 	contract := strings.TrimSpace(plan.runtimeBrief.Contract)
@@ -1726,14 +1027,14 @@ func tuneChatOptionsForPlan(opts llama.ChatOptions, plan promptExecutionPlan) ll
 	switch contract {
 	case string(workerruntime.ContractDirectAnswer):
 		if opts.ModelThinkingFloor {
-			opts.MaxTokens = clampPositiveMin(opts.MaxTokens, 4096)
+			opts.MaxTokens = max(opts.MaxTokens, 4096)
 		} else {
-			opts.MaxTokens = clampPositiveMin(opts.MaxTokens, 3072)
+			opts.MaxTokens = max(opts.MaxTokens, 3072)
 		}
 	case "grounded_explanation", "locate_targets":
-		opts.MaxTokens = clampPositiveMin(opts.MaxTokens, 1536)
+		opts.MaxTokens = max(opts.MaxTokens, 1536)
 	case "review_findings", "architecture_assessment":
-		opts.MaxTokens = clampPositiveMin(opts.MaxTokens, 2048)
+		opts.MaxTokens = max(opts.MaxTokens, 2048)
 	}
 
 	return opts
@@ -1761,10 +1062,6 @@ func applyMaxTokensOverride(opts llama.ChatOptions, maxTokens int) llama.ChatOpt
 	return opts
 }
 
-func clampPositiveMin(current, limit int) int {
-	return max(current, limit)
-}
-
 func (m *Model) greenfieldCreationRequiresConfirmation(prompt string, plan promptExecutionPlan) bool {
 	if m == nil || m.workspace == nil || m.suppressGreenfieldConfirmation {
 		return false
@@ -1774,7 +1071,7 @@ func (m *Model) greenfieldCreationRequiresConfirmation(prompt string, plan promp
 	// concrete creation request. Empty workspaces are still valid places to ask
 	// design, architecture, or general questions.
 	route := plan.route
-	if route.WriteIntent == "yes" || isImplementationLikeFamily(route.Family) {
+	if route.WriteIntent == "yes" || workerruntime.TaskFamilyMutationCapable(route.Family) {
 		return false
 	}
 

@@ -12,6 +12,7 @@ import (
 
 	plancontract "idiom/internal/contracts/plan"
 	planartifact "idiom/internal/contracts/planartifact"
+	"idiom/internal/contracts/sourcekind"
 	"idiom/internal/platform/atomicfile"
 	"idiom/internal/platform/failures"
 	"idiom/internal/platform/textutil"
@@ -279,29 +280,19 @@ func validatePlanEdit(edit planartifact.PlanEdit) error {
 // handoff rather than failing after the artifact is accepted.
 func PlanEditUnsupportedProofClaimReason(edit planartifact.PlanEdit) string {
 	path := strings.TrimSpace(edit.Path)
-	if path == "" || !SourceSanityCoversPath(path) {
+	if path == "" || !sourcekind.CoversSourceSanity(path) {
 		return ""
 	}
 
-	added := PlanEditAddedText(edit)
+	added := edit.Content
+	if strings.TrimSpace(added) == "" {
+		added = edit.NewText
+	}
 	if strings.TrimSpace(added) == "" {
 		return ""
 	}
 
 	return UnsupportedProofClaimReason(added)
-}
-
-// PlanEditAddedText returns the final content a plan edit contributes.
-func PlanEditAddedText(edit planartifact.PlanEdit) string {
-	if strings.TrimSpace(edit.Content) != "" {
-		return edit.Content
-	}
-
-	if strings.TrimSpace(edit.NewText) != "" {
-		return edit.NewText
-	}
-
-	return ""
 }
 
 // UnsupportedProofClaimReason detects test/proof bodies that admit they are not
@@ -469,7 +460,7 @@ func planEditPlaceholderMarker(value string, allowTODO bool, sourceLike bool) st
 func AttachPlanEditAnchorProvenance(workspaceRoot string, edits []planartifact.PlanEdit) ([]planartifact.PlanEdit, error) {
 	out := append([]planartifact.PlanEdit(nil), edits...)
 	for i, edit := range out {
-		if !planEditNeedsAnchorProvenance(edit) {
+		if !PlanEditNeedsAnchorProvenance(edit) {
 			out[i].AnchorProvenance = nil
 			continue
 		}
@@ -602,7 +593,9 @@ func buildPlanEditAnchorProvenance(workspaceRoot string, edit planartifact.PlanE
 	}, nil
 }
 
-func planEditNeedsAnchorProvenance(edit planartifact.PlanEdit) bool {
+// PlanEditNeedsAnchorProvenance reports whether an edit must carry harness-owned
+// anchor provenance before it can be accepted from a plan artifact.
+func PlanEditNeedsAnchorProvenance(edit planartifact.PlanEdit) bool {
 	if strings.TrimSpace(edit.OldText) != "" {
 		return true
 	}
@@ -612,10 +605,6 @@ func planEditNeedsAnchorProvenance(edit planartifact.PlanEdit) bool {
 	}
 
 	return false
-}
-
-func PlanEditNeedsAnchorProvenance(edit planartifact.PlanEdit) bool {
-	return planEditNeedsAnchorProvenance(edit)
 }
 
 func planEditCurrentAnchorText(current string, edit planartifact.PlanEdit) (string, error) {
@@ -1001,6 +990,10 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit planartifact.PlanEdit) e
 	matchCount := strings.Count(current, oldText)
 
 	if matchCount == 0 {
+		if containsSearchContentLineTruncationMarker(oldText) {
+			return fmt.Errorf("old_text for %s contains a search_content truncation marker; truncated search output is not an exact edit anchor. Use read_file with the match line's start_line/end_line to copy exact source, or use start_line/end_line+content", edit.Path)
+		}
+
 		if textutil.ContainsFold(current, oldText) {
 			return fmt.Errorf("old_text did not appear in %s, but a case-insensitive match exists; preserve exact casing from the file or use start_line/end_line+content", edit.Path)
 		}
@@ -1013,7 +1006,12 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit planartifact.PlanEdit) e
 	}
 
 	if matchCount > 1 && !edit.ReplaceAll {
-		return fmt.Errorf("old_text matched %d locations in %s; submit_plan rejects ambiguous substring edits before executor writes. Extend old_text with surrounding context, use start_line/end_line+content, or set replace_all=true when every occurrence is intended", matchCount, edit.Path)
+		guidance := formatOldTextOccurrenceGuidance(edit.Path, current, oldText, matchCount)
+		if guidance != "" {
+			guidance = "; " + strings.ReplaceAll(guidance, "\n", "; ")
+		}
+
+		return fmt.Errorf("old_text matched %d locations in %s%s; submit_plan rejects ambiguous substring edits before executor writes. Extend old_text with surrounding context, use start_line/end_line+content, or set replace_all=true when every occurrence is intended", matchCount, edit.Path, guidance)
 	}
 
 	updated, changed, previewErr := PreviewPlanEditContent(current, edit)
@@ -1702,7 +1700,7 @@ func attachMissingLoadedPlanAnchorProvenance(planPath string, artifact *planarti
 	}
 
 	for i, edit := range artifact.Edits {
-		if !planEditNeedsAnchorProvenance(edit) || edit.AnchorProvenance != nil {
+		if !PlanEditNeedsAnchorProvenance(edit) || edit.AnchorProvenance != nil {
 			continue
 		}
 
@@ -1717,7 +1715,7 @@ func attachMissingLoadedPlanAnchorProvenance(planPath string, artifact *planarti
 
 func planArtifactHasMissingAnchorProvenance(artifact planartifact.PlanArtifact) bool {
 	for _, edit := range artifact.Edits {
-		if planEditNeedsAnchorProvenance(edit) && edit.AnchorProvenance == nil {
+		if PlanEditNeedsAnchorProvenance(edit) && edit.AnchorProvenance == nil {
 			return true
 		}
 	}

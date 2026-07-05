@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"idiom/internal/platform/textutil"
@@ -279,9 +280,9 @@ func (idx *TsIndex) Summary() string {
 			return "", false
 		}
 
-		return indexsupport.IntString(file.Funcs+file.Methods) + " funcs/methods, " +
-			indexsupport.IntString(file.Types) + " types, " +
-			indexsupport.IntString(len(file.Imports)) + " imports", true
+		return strconv.Itoa(file.Funcs+file.Methods) + " funcs/methods, " +
+			strconv.Itoa(file.Types) + " types, " +
+			strconv.Itoa(len(file.Imports)) + " imports", true
 	})
 }
 
@@ -338,14 +339,6 @@ func (idx *TsIndex) FileByPath(path string) *TsFile {
 	}
 
 	return nil
-}
-
-func (idx *TsIndex) findFiles(pattern string) []string {
-	if idx == nil {
-		return nil
-	}
-
-	return indexsupport.FindFilesExactPartial(idx.Files, func(file TsFile) string { return file.Path }, pattern)
 }
 
 func (idx *TsIndex) rankFiles(scoreFn func(TsFile) int, limit int) []TsFile {

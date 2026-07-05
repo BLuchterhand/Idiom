@@ -54,7 +54,7 @@ func extractClaimsFromLine(line string, lineNumber int) []AnswerClaim {
 	}
 
 	if match := sourceLocationPattern.FindStringSubmatch(line); match != nil {
-		target := normalizeTarget(match[2])
+		target := TargetNormalizer{}.Normalize(match[2])
 		startLine, _ := strconv.Atoi(match[3])
 
 		claims = append(claims, AnswerClaim{
@@ -70,7 +70,7 @@ func extractClaimsFromLine(line string, lineNumber int) []AnswerClaim {
 	}
 
 	if match := pathPattern.FindStringSubmatch(line); match != nil {
-		target := normalizeTarget(match[2])
+		target := TargetNormalizer{}.Normalize(match[2])
 
 		claims = append(claims, AnswerClaim{
 			Text:     strings.TrimSpace(match[0]),

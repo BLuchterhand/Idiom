@@ -251,19 +251,6 @@ func RuntimeBriefHasContent(brief WorkerRuntimeBrief) bool {
 		NormalizeReadinessState(brief.Readiness) != nil
 }
 
-func RenderFailureFeedbackPacket(packet any) string {
-	data, err := json.Marshal(packet)
-	if err != nil {
-		return ""
-	}
-
-	return strings.Join([]string{
-		"[failure feedback packet]",
-		"This packet reports recovery state. `required_next` lists hard requirements; `valid_next` lists safe options. Do not repeat invalid actions from this packet.",
-		string(data),
-	}, "\n")
-}
-
 func recoveryStateSummary(reason string, tool string, target string, result workspace.ToolResult, evidencePaths []string) string {
 	parts := []string{strings.TrimSpace(reason)}
 
@@ -343,7 +330,7 @@ func zeroHitText(text string) bool {
 		return false
 	}
 
-	return containsAny(text,
+	return textutil.ContainsAny(text,
 		"no file matches",
 		"no content matches",
 		"no matches",
@@ -353,10 +340,6 @@ func zeroHitText(text string) bool {
 		"no symbols matched",
 		"found 0 ",
 	)
-}
-
-func containsAny(value string, needles ...string) bool {
-	return textutil.ContainsAny(value, needles...)
 }
 
 func appendUnique(values []string, value string) []string {

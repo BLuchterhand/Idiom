@@ -13,6 +13,7 @@ import (
 
 	"idiom/internal/repository/discovery"
 	"idiom/internal/repository/semantic"
+	semanticcpp "idiom/internal/repository/semantic/cpp"
 )
 
 func (m *Manager) isCppWorkspace() bool {
@@ -70,7 +71,7 @@ func (m *Manager) getCppIndex() (*semantic.CppIndex, error) {
 		return cached, nil
 	}
 
-	index, err := semantic.BuildCppIndex(m.Root())
+	index, err := semanticcpp.BuildCppIndex(m.Root())
 	if err != nil {
 		return nil, fmt.Errorf("build C++ semantic index: %w", err)
 	}
@@ -86,14 +87,6 @@ func (m *Manager) getCppIndex() (*semantic.CppIndex, error) {
 	m.mu.Unlock()
 
 	return index, nil
-}
-
-func (m *Manager) invalidateCppIndex() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.cppIndex = nil
-	m.cppIndexToken = ""
 }
 
 func (m *Manager) cppOverview() ToolResult {

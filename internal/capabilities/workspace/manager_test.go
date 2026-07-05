@@ -11,26 +11,9 @@ import (
 	"time"
 
 	planartifact "idiom/internal/contracts/planartifact"
+	"idiom/internal/contracts/sourcekind"
 	"idiom/internal/platform/config"
-	"idiom/internal/repository/semantic"
 )
-
-func TestGoReadSymbolWindowUsesSymbolExtentWhenAvailable(t *testing.T) {
-	// Symbol declared at lines 16-132 (e.g. Runner.runChildTask): the
-	// returned window should start at 16 and run for the full body when
-	// it fits under the cap. Previous bug used match.Line - 12 / +20, which returned
-	// imports for any function declared past line 12. Live run
-	// 20260425-161904 exposed this when go_read_symbol on
-	// `Runner.runChildTask` returned lines 4-36 — the imports.
-	start, end := goReadSymbolWindow(semantic.SymbolMatch{Line: 16, StartLine: 16, EndLine: 132}, 0, 0)
-	if start != 16 {
-		t.Fatalf("expected start=16, got %d", start)
-	}
-
-	if end != 132 {
-		t.Fatalf("expected end to include the full symbol body, got %d (start=%d)", end, start)
-	}
-}
 
 func TestSourceSanityFallsBackWhenLanguageDiagnosticsUnavailable(t *testing.T) {
 	root := t.TempDir()
@@ -172,7 +155,7 @@ func TestSourceSanityRoutesKnownLanguagesThroughDiagnosticsTool(t *testing.T) {
 		t.Fatalf("gdscript source_sanity tool = %q, want generic fallback", got)
 	}
 
-	if !sourceSanityCoversPath("scripts/demo.gd") {
+	if !sourcekind.CoversSourceSanity("scripts/demo.gd") {
 		t.Fatal("source_sanity should cover gdscript through generic fallback")
 	}
 }
@@ -438,38 +421,6 @@ func TestCodeNavigateGenericFallbackForUnregisteredSource(t *testing.T) {
 	}
 }
 
-func TestGoReadSymbolWindowHonorsExplicitRequest(t *testing.T) {
-	start, end := goReadSymbolWindow(semantic.SymbolMatch{Line: 16, StartLine: 16, EndLine: 132}, 50, 70)
-	if start != 50 || end != 70 {
-		t.Fatalf("expected explicit window to be honored, got %d-%d", start, end)
-	}
-}
-
-func TestGoReadSymbolWindowFallsBackToCenteredWindow(t *testing.T) {
-	// SymbolMatch with no extent (legacy index entry): fall back to the
-	// old centered window so we don't regress.
-	start, end := goReadSymbolWindow(semantic.SymbolMatch{Line: 200}, 0, 0)
-	if start != 188 {
-		t.Fatalf("expected fallback start=188 (200-12), got %d", start)
-	}
-
-	if end != 220 {
-		t.Fatalf("expected fallback end=220 (200+20), got %d", end)
-	}
-}
-
-func TestGoReadSymbolWindowCapsAtMaxLines(t *testing.T) {
-	// A 500-line function should still be capped.
-	start, end := goReadSymbolWindow(semantic.SymbolMatch{Line: 16, StartLine: 16, EndLine: 516}, 0, 0)
-	if start != 16 {
-		t.Fatalf("expected start=16, got %d", start)
-	}
-
-	if end != 135 {
-		t.Fatalf("expected end capped at 120-line window (16+119), got %d", end)
-	}
-}
-
 func TestGoReadSymbolIgnoresMaxFileBytesForTargetedLines(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/target\n\ngo 1.22\n")
@@ -604,19 +555,6 @@ func testWorkspaceConfig(t *testing.T) config.Workspace {
 		MaxFileBytes:          65536,
 		EnableShell:           true,
 		EnableWrites:          true,
-	}
-}
-
-func TestGoDiagnosticTargetsIncludesWorkspaceRootFiles(t *testing.T) {
-	mgr := NewManager(testWorkspaceConfig(t))
-
-	files, err := mgr.goDiagnosticTargets(ToolRequest{Tool: "go_diagnostics", Path: "."})
-	if err != nil {
-		t.Fatalf("goDiagnosticTargets returned error: %v", err)
-	}
-
-	if len(files) == 0 {
-		t.Fatal("expected workspace-root Go diagnostics to include indexed files")
 	}
 }
 
@@ -1555,6 +1493,82 @@ func TestEditFileReportsCaseFoldedAnchorMismatch(t *testing.T) {
 	})
 	if result.Error == "" || !strings.Contains(result.Error, "case-insensitive match exists") {
 		t.Fatalf("expected case-folded anchor guidance, got %#v", result)
+	}
+
+	if got := readTestFile(t, path); got != original {
+		t.Fatalf("rejected edit should not touch disk\ngot:\n%s\nwant:\n%s", got, original)
+	}
+}
+
+func TestEditFileRejectsTruncatedSearchAnchor(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "catalog.go")
+	original := "package main\n\nvar catalog = \"needle " + strings.Repeat("x", 800) + "\"\n"
+	writeTestFile(t, path, original)
+
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+		MaxFileBytes: 1 << 20,
+	})
+	mgr.MarkPathObserved("catalog.go")
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "edit_file",
+		Path:    "catalog.go",
+		OldText: "var catalog = \"needle " + strings.Repeat("x", 120) + lineTruncationMarker,
+		NewText: "var catalog = \"replacement\"\n",
+	})
+	if result.Error == "" {
+		t.Fatalf("expected truncated search anchor to be rejected")
+	}
+
+	for _, want := range []string{"truncation marker", "search_content", "read_file", "start_line/end_line"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("expected truncated-anchor error to mention %q, got %q", want, result.Error)
+		}
+	}
+
+	if got := readTestFile(t, path); got != original {
+		t.Fatalf("rejected edit should not touch disk\ngot:\n%s\nwant:\n%s", got, original)
+	}
+}
+
+func TestEditFileReportsAmbiguousOldTextOccurrenceLines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "matrix.cpp")
+	original := "set_floor(30.0f);\nother();\nset_floor(30.0f);\n"
+	writeTestFile(t, path, original)
+
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+		MaxFileBytes: 1 << 20,
+	})
+	mgr.MarkPathObserved("matrix.cpp")
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "edit_file",
+		Path:    "matrix.cpp",
+		OldText: "set_floor(30.0f);",
+		NewText: "floor = 30.0f;",
+	})
+	if result.Error == "" {
+		t.Fatalf("expected ambiguous old_text to be rejected")
+	}
+
+	for _, want := range []string{"matched 2 locations", "start_line/end_line", "replace_all=true"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("expected ambiguous-anchor error to mention %q, got %q", want, result.Error)
+		}
+	}
+
+	for _, want := range []string{"matching start line(s): 1, 3", "read_file", "matrix.cpp"} {
+		if !strings.Contains(result.Output, want) {
+			t.Fatalf("expected ambiguous-anchor output to mention %q, got %q", want, result.Output)
+		}
 	}
 
 	if got := readTestFile(t, path); got != original {
@@ -2648,6 +2662,39 @@ func TestSearchFilesAllowsUserGlobalConversationLogDirs(t *testing.T) {
 	}
 }
 
+func TestFileStatsLineRangeReportsByteAndCharacterCounts(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "catalog.go")
+	if err := os.WriteFile(path, []byte("alpha\nconst Label = \"wide value\"\nomega\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: dir, CWD: dir})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      ToolNameFileStats,
+		Path:      "catalog.go",
+		StartLine: 2,
+		EndLine:   2,
+	})
+	if result.Error != "" {
+		t.Fatalf("file_stats line range returned error: %s", result.Error)
+	}
+	for _, want := range []string{
+		`"start_line": 2`,
+		`"end_line": 2`,
+		`"line_bytes": 26`,
+		`"line_bytes_with_newlines": 27`,
+		`"line_characters": 26`,
+	} {
+		if !strings.Contains(result.Output, want) {
+			t.Fatalf("file_stats output missing %q; summary=%q output=\n%s", want, result.Summary, result.Output)
+		}
+	}
+	if !strings.Contains(result.Summary, "selected lines 2-2") {
+		t.Fatalf("summary should include selected line range, got %q", result.Summary)
+	}
+}
+
 func TestSearchFilesRejectsOtherUserGlobalHiddenDirs(t *testing.T) {
 	dir := t.TempDir()
 	home := t.TempDir()
@@ -3034,6 +3081,37 @@ func TestSearchContentZeroHitSuggestsPathsWhenPatternLooksLikeSymbol(t *testing.
 	}
 }
 
+func TestSearchContentFixedStringsFindsRegexSyntaxLiterally(t *testing.T) {
+	if !hasContentSearchBackend() {
+		t.Skip("no supported content search backend installed on this machine")
+	}
+
+	dir := t.TempDir()
+	mustWriteOverview(t, filepath.Join(dir, "internal/runtime/workerruntime/catalog.go"), "package workerruntime\nvar _ = FinalCriticID{\"changed_paths_reported\"}\n")
+
+	mgr := NewManager(config.Workspace{
+		Root:                  dir,
+		CWD:                   dir,
+		MaxDirectoryEntries:   512,
+		CommandTimeoutSeconds: 10,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:         "search_content",
+		Pattern:      `FinalCriticID{`,
+		Path:         ".",
+		Glob:         "*.go",
+		FixedStrings: true,
+	})
+
+	if result.Error != "" {
+		t.Fatalf("fixed-string search_content should not treat pattern as regex: %#v", result)
+	}
+
+	if !strings.Contains(result.Output, `FinalCriticID{"changed_paths_reported"}`) {
+		t.Fatalf("expected literal regex-syntax match, got output: %q", result.Output)
+	}
+}
+
 func TestSearchContentSkipsNoisyDirsByDefault(t *testing.T) {
 	if !hasContentSearchBackend() {
 		t.Skip("no supported content search backend installed on this machine")
@@ -3180,12 +3258,66 @@ func TestSearchContentTruncatesLongMatchingLines(t *testing.T) {
 		t.Fatalf("search_content failed: %#v", result)
 	}
 
-	if !strings.Contains(result.Output, "...[line truncated]") {
+	if !strings.Contains(result.Output, lineTruncationMarker) {
 		t.Fatalf("expected long matching line to be truncated, got output: %q", result.Output)
+	}
+
+	for _, want := range []string{"displayed matching line(s) were truncated", "truncated output is not an exact old_text anchor", "read_file", "line-range edit shape"} {
+		if !strings.Contains(result.Output, want) {
+			t.Fatalf("expected truncation guidance to mention %q, got output: %q", want, result.Output)
+		}
+	}
+
+	if strings.Contains(result.Output, "edit_file") {
+		t.Fatalf("search_content truncation guidance should not name write tools, got output: %q", result.Output)
 	}
 
 	if len(result.Output) > 800 {
 		t.Fatalf("expected compact search output, got %d chars: %q", len(result.Output), result.Output)
+	}
+}
+
+func TestReadFileReturnsExactLongLineAfterSearchContentTruncates(t *testing.T) {
+	if !hasContentSearchBackend() {
+		t.Skip("no supported content search backend installed on this machine")
+	}
+
+	dir := t.TempDir()
+	longLine := "var huge = \"needle " + strings.Repeat("x", 800) + "\""
+	mustWriteOverview(t, filepath.Join(dir, "internal/surfaces/tui/app/huge.go"), "package app\n"+longLine+"\n")
+
+	mgr := NewManager(config.Workspace{
+		Root:                  dir,
+		CWD:                   dir,
+		MaxDirectoryEntries:   512,
+		CommandTimeoutSeconds: 10,
+	})
+	search := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "search_content",
+		Pattern: "needle",
+		Path:    ".",
+	})
+	if search.Error != "" {
+		t.Fatalf("search_content failed: %#v", search)
+	}
+	if !strings.Contains(search.Output, lineTruncationMarker) {
+		t.Fatalf("test setup expected search output to truncate, got: %q", search.Output)
+	}
+
+	read := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "read_file",
+		Path:      "internal/surfaces/tui/app/huge.go",
+		StartLine: 2,
+		EndLine:   2,
+	})
+	if read.Error != "" {
+		t.Fatalf("read_file failed: %#v", read)
+	}
+	if strings.Contains(read.Output, lineTruncationMarker) {
+		t.Fatalf("explicit source read should return exact line without truncation, got: %q", read.Output)
+	}
+	if !strings.Contains(read.Output, longLine) {
+		t.Fatalf("explicit source read should include full old_text anchor, got %d chars: %q", len(read.Output), read.Output)
 	}
 }
 

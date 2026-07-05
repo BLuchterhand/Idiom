@@ -75,8 +75,7 @@ Go capability guide - prefer structured capabilities over raw shell/grep:
 A narrow read_file range can supply exact context when semantic routes do not land.
 `),
 		Detect: func(root string) bool {
-			info, err := os.Stat(filepath.Join(root, "go.mod"))
-			return err == nil && !info.IsDir()
+			return detectWorkspace(root, detectionSpec{markers: []string{"go.mod"}})
 		},
 	},
 	{
@@ -110,38 +109,10 @@ C/C++ capability guide - prefer structured capabilities over raw shell/grep:
 A narrow read_file range can supply exact context when semantic routes do not land.
 `),
 		Detect: func(root string) bool {
-			if info, err := os.Stat(filepath.Join(root, "compile_commands.json")); err == nil && !info.IsDir() {
-				return true
-			}
-
-			found := false
-
-			_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-				if err != nil {
-					return nil
-				}
-
-				if d.IsDir() {
-					if discovery.ShouldSkipDirName(d.Name()) && path != root {
-						return filepath.SkipDir
-					}
-
-					return nil
-				}
-
-				if strings.HasPrefix(filepath.Base(path), ".") {
-					return nil
-				}
-
-				if isCppExtension(filepath.Ext(path)) {
-					found = true
-					return filepath.SkipAll
-				}
-
-				return nil
+			return detectWorkspace(root, detectionSpec{
+				markers:        []string{"compile_commands.json"},
+				matchExtension: isCppExtension,
 			})
-
-			return found
 		},
 	},
 	{
@@ -174,57 +145,18 @@ Python capability guide - prefer structured capabilities over raw shell/grep:
 A narrow read_file range can supply exact context when semantic routes do not land.
 `),
 		Detect: func(root string) bool {
-			markers := []string{
-				"pyproject.toml",
-				"setup.py",
-				"setup.cfg",
-				"requirements.txt",
-				"Pipfile",
-				"poetry.lock",
-			}
-			for _, marker := range markers {
-				if info, err := os.Stat(filepath.Join(root, marker)); err == nil && !info.IsDir() {
-					return true
-				}
-			}
-
-			found := false
-
-			_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-				if err != nil {
-					return nil
-				}
-
-				if d.IsDir() {
-					if discovery.ShouldSkipDirName(d.Name()) && path != root {
-						return filepath.SkipDir
-					}
-
-					switch d.Name() {
-					case ".venv", "venv", "__pycache__", ".mypy_cache",
-						".pytest_cache", ".tox", "site-packages", ".eggs":
-						if path != root {
-							return filepath.SkipDir
-						}
-					}
-
-					return nil
-				}
-
-				if strings.HasPrefix(filepath.Base(path), ".") {
-					return nil
-				}
-
-				switch strings.ToLower(filepath.Ext(path)) {
-				case ".py", ".pyi":
-					found = true
-					return filepath.SkipAll
-				}
-
-				return nil
+			return detectWorkspace(root, detectionSpec{
+				markers: []string{
+					"pyproject.toml",
+					"setup.py",
+					"setup.cfg",
+					"requirements.txt",
+					"Pipfile",
+					"poetry.lock",
+				},
+				extensions: []string{".py", ".pyi"},
+				skipDirs:   []string{".venv", "venv", "__pycache__", ".mypy_cache", ".pytest_cache", ".tox", "site-packages", ".eggs"},
 			})
-
-			return found
 		},
 	},
 	{
@@ -257,44 +189,12 @@ TypeScript/JavaScript capability guide - prefer structured capabilities over raw
 The same route covers .js/.jsx/.mjs/.cjs. A narrow read_file range can supply exact context when semantic routes do not land.
 `),
 		Detect: func(root string) bool {
-			for _, marker := range []string{"tsconfig.json", "jsconfig.json", "package.json"} {
-				if info, err := os.Stat(filepath.Join(root, marker)); err == nil && !info.IsDir() {
-					return true
-				}
-			}
-
-			found := false
-
-			_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-				if err != nil {
-					return nil
-				}
-
-				if d.IsDir() {
-					if discovery.ShouldSkipDirName(d.Name()) && path != root {
-						return filepath.SkipDir
-					}
-
-					if name := d.Name(); name == ".next" || name == "node_modules" {
-						return filepath.SkipDir
-					}
-
-					return nil
-				}
-
-				if strings.HasPrefix(filepath.Base(path), ".") {
-					return nil
-				}
-
-				if isTsExtension(filepath.Ext(path)) {
-					found = true
-					return filepath.SkipAll
-				}
-
-				return nil
+			return detectWorkspace(root, detectionSpec{
+				markers:        []string{"tsconfig.json", "jsconfig.json", "package.json"},
+				matchExtension: isTsExtension,
+				skipDirs:       []string{".next", "node_modules"},
+				skipRootDirs:   true,
 			})
-
-			return found
 		},
 	},
 	{
@@ -327,39 +227,10 @@ Rust capability guide - prefer structured capabilities over raw shell/grep:
 A narrow read_file range can supply exact context when semantic routes do not land.
 `),
 		Detect: func(root string) bool {
-			if info, err := os.Stat(filepath.Join(root, "Cargo.toml")); err == nil && !info.IsDir() {
-				return true
-			}
-
-			found := false
-
-			_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-				if err != nil {
-					return nil
-				}
-
-				if d.IsDir() {
-					name := d.Name()
-					if discovery.ShouldSkipDirName(name) && path != root {
-						return filepath.SkipDir
-					}
-
-					return nil
-				}
-
-				if strings.HasPrefix(filepath.Base(path), ".") {
-					return nil
-				}
-
-				if strings.EqualFold(filepath.Ext(path), ".rs") {
-					found = true
-					return filepath.SkipAll
-				}
-
-				return nil
+			return detectWorkspace(root, detectionSpec{
+				markers:    []string{"Cargo.toml"},
+				extensions: []string{".rs"},
 			})
-
-			return found
 		},
 	},
 	{
@@ -392,47 +263,11 @@ Java capability guide - prefer structured capabilities over raw shell/grep:
 A narrow read_file range can supply exact context when semantic routes do not land.
 `),
 		Detect: func(root string) bool {
-			for _, manifest := range []string{"pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle"} {
-				if info, err := os.Stat(filepath.Join(root, manifest)); err == nil && !info.IsDir() {
-					return true
-				}
-			}
-
-			found := false
-
-			_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-				if err != nil {
-					return nil
-				}
-
-				if d.IsDir() {
-					if discovery.ShouldSkipDirName(d.Name()) && path != root {
-						return filepath.SkipDir
-					}
-
-					switch d.Name() {
-					case "target", "build", ".gradle", ".mvn":
-						if path != root {
-							return filepath.SkipDir
-						}
-					}
-
-					return nil
-				}
-
-				if strings.HasPrefix(filepath.Base(path), ".") {
-					return nil
-				}
-
-				if strings.EqualFold(filepath.Ext(path), ".java") {
-					found = true
-					return filepath.SkipAll
-				}
-
-				return nil
+			return detectWorkspace(root, detectionSpec{
+				markers:    []string{"pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle"},
+				extensions: []string{".java"},
+				skipDirs:   []string{"target", "build", ".gradle", ".mvn"},
 			})
-
-			return found
 		},
 	},
 }
@@ -574,6 +409,75 @@ func (l LanguageSupport) Tool(cap Capability) string {
 	}
 
 	return l.Tools[cap]
+}
+
+type detectionSpec struct {
+	markers        []string
+	extensions     []string
+	skipDirs       []string
+	skipRootDirs   bool
+	matchExtension func(string) bool
+}
+
+func detectWorkspace(root string, spec detectionSpec) bool {
+	for _, marker := range spec.markers {
+		if info, err := os.Stat(filepath.Join(root, marker)); err == nil && !info.IsDir() {
+			return true
+		}
+	}
+
+	if len(spec.extensions) == 0 && spec.matchExtension == nil {
+		return false
+	}
+
+	found := false
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+
+		if d.IsDir() {
+			skipDiscoveryDir := path != root && discovery.ShouldSkipDirName(d.Name())
+			skipCustomDir := spec.skipDir(d.Name()) && (path != root || spec.skipRootDirs)
+			if skipDiscoveryDir || skipCustomDir {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		if strings.HasPrefix(filepath.Base(path), ".") {
+			return nil
+		}
+		if spec.matchesExtension(filepath.Ext(path)) {
+			found = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+
+	return found
+}
+
+func (spec detectionSpec) matchesExtension(ext string) bool {
+	if spec.matchExtension != nil {
+		return spec.matchExtension(ext)
+	}
+
+	for _, candidate := range spec.extensions {
+		if strings.EqualFold(ext, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func (spec detectionSpec) skipDir(name string) bool {
+	for _, candidate := range spec.skipDirs {
+		if name == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func isCppExtension(ext string) bool {

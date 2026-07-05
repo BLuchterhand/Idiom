@@ -31,8 +31,6 @@ type ToolSurfaceSpec struct {
 	RuntimeContextDiscovery  bool
 	RuntimeHistoryInspection bool
 	Timeout                  time.Duration
-	PlannerAllowed           bool
-	ActionClass              string
 }
 
 // ToolSurfaceCatalog is a clone-safe catalog for neutral tool-surface facts.

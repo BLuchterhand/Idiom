@@ -19,7 +19,7 @@ func briefPreflightTestDeps(t *testing.T) string {
 		t.Skip("python3 not available on PATH")
 	}
 
-	scriptPath, cleanup, err := writeEmbeddedBriefPreflight()
+	scriptPath, cleanup, err := WriteEmbeddedPreflight()
 	if err != nil {
 		t.Fatalf("materialize brief-preflight.py: %v", err)
 	}

@@ -41,7 +41,7 @@ func TestRunBackendListPrintsProfilesFromProjectRoot(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"list", "--project-root", root}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"list", "--project-root", root}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("backend list expected exit 0, got %d (stderr=%s)", code, stderr.String())
@@ -74,7 +74,7 @@ func TestRunBackendListUsesExecutorRoleResolver(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"list", "--project-root", root}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"list", "--project-root", root}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("backend list expected exit 0, got %d (stderr=%s)", code, stderr.String())
@@ -99,7 +99,7 @@ func TestRunBackendListKeepsProxyLineShapeForDefaultExecutor(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"list", "--project-root", root}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"list", "--project-root", root}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("backend list expected exit 0, got %d (stderr=%s)", code, stderr.String())
@@ -129,7 +129,7 @@ func TestRunBackendListMissingFileExitsOne(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"list", "--project-root", root}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"list", "--project-root", root}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("missing backends.json must exit 1 (parity with start/stop/status), got %d", code)
@@ -149,7 +149,7 @@ func TestRunBackendListMissingFileExitsOne(t *testing.T) {
 func TestRunBackendListRejectsBothFileAndProjectRoot(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"list", "--file", "/x.json", "--project-root", "/y"}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"list", "--file", "/x.json", "--project-root", "/y"}, &stdout, &stderr, nil)
 
 	if code != 2 {
 		t.Fatalf("--file + --project-root must exit 2, got %d", code)
@@ -176,7 +176,7 @@ func TestRunBackendListMalformedFileExitsOne(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"list", "--project-root", root}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"list", "--project-root", root}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("malformed backends.json must exit 1, got %d", code)
@@ -194,7 +194,7 @@ func TestRunBackendListMalformedFileExitsOne(t *testing.T) {
 func TestRunBackendUnknownSubcommandExitsTwo(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"definitely-not-a-subcommand"}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"definitely-not-a-subcommand"}, &stdout, &stderr, nil)
 
 	if code != 2 {
 		t.Fatalf("unknown subcommand must exit 2, got %d", code)
@@ -220,7 +220,7 @@ func TestRunBackendListExplicitFileFlag(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"list", "--file", path}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"list", "--file", path}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("--file form expected exit 0, got %d (stderr=%s)", code, stderr.String())
@@ -306,7 +306,7 @@ func TestRunBackendStartReportsReadyForEachModel(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"start", "--project-root", root}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"start", "--project-root", root}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("clean start must exit 0, got %d (stderr=%s)", code, stderr.String())
@@ -337,7 +337,7 @@ func TestRunBackendStartFailsWhenAnyModelTimesOut(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"start", "--project-root", root}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"start", "--project-root", root}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("partial failure must exit 1, got %d", code)
@@ -366,7 +366,7 @@ func TestRunBackendStartTreatsAlreadyRunningAsNonFailure(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"start", "--project-root", root}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"start", "--project-root", root}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("already-running must not fail; got code=%d stdout=%s", code, stdout.String())
@@ -385,7 +385,7 @@ func TestRunBackendStartTreatsAlreadyRunningAsNonFailure(t *testing.T) {
 func TestRunBackendStartMissingBackendsJSONExitsOne(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"start", "--project-root", t.TempDir()}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"start", "--project-root", t.TempDir()}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("missing backends.json must exit 1, got %d", code)
@@ -403,7 +403,7 @@ func TestRunBackendStartMultiProfileWithoutFlagExitsTwo(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"start", "--project-root", root}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"start", "--project-root", root}, &stdout, &stderr, nil)
 
 	if code != 2 {
 		t.Fatalf("multi-profile without --profile must exit 2, got %d", code)
@@ -438,7 +438,7 @@ func TestRunBackendStartUsesDefaultProfileWhenConfigured(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"start", "--project-root", root}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"start", "--project-root", root}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("default-profile start must exit 0, got %d stderr=%s", code, stderr.String())
@@ -465,7 +465,7 @@ func TestRunBackendStopReportsResultsPerModel(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"stop", "--project-root", root}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"stop", "--project-root", root}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("clean stop must exit 0, got %d (stderr=%s)", code, stderr.String())
@@ -495,7 +495,7 @@ func TestRunBackendStatusFormatsUpAndDownLines(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"status", "--project-root", root}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"status", "--project-root", root}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("status must exit 0, got %d (stderr=%s)", code, stderr.String())
@@ -579,7 +579,7 @@ func TestRunBackendProxyServesProfileWithReadyLine(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"proxy", "--project-root", root}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"proxy", "--project-root", root}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("proxy must exit 0 on clean shutdown, got %d (stderr=%s)", code, stderr.String())
@@ -610,7 +610,7 @@ func TestRunBackendProxyListenFlagOverridesSchema(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"proxy", "--project-root", root, "--listen", "55555"}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"proxy", "--project-root", root, "--listen", "55555"}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("expected 0, got %d (stderr=%s)", code, stderr.String())
@@ -632,7 +632,7 @@ func TestRunBackendProxyDefaultFlagOverridesSchema(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"proxy", "--project-root", root, "--default", "c"}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"proxy", "--project-root", root, "--default", "c"}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("expected 0, got %d (stderr=%s)", code, stderr.String())
@@ -651,7 +651,7 @@ func TestRunBackendProxyDefaultFlagOverridesSchema(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 
-	code = Run([]string{"proxy", "--project-root", root, "--default", "no-such"}, &stdout, &stderr)
+	code = RunWithTelemetry([]string{"proxy", "--project-root", root, "--default", "no-such"}, &stdout, &stderr, nil)
 	if code != 2 {
 		t.Fatalf("bogus --default must exit 2, got %d", code)
 	}
@@ -675,7 +675,7 @@ func TestRunBackendProxyMissingListenExitsTwo(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"proxy", "--project-root", root}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"proxy", "--project-root", root}, &stdout, &stderr, nil)
 
 	if code != 2 {
 		t.Fatalf("missing listen must exit 2, got %d (stderr=%s)", code, stderr.String())
@@ -699,7 +699,7 @@ func TestRunBackendProxyMissingBackendsJSONExitsOne(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"proxy", "--project-root", t.TempDir()}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"proxy", "--project-root", t.TempDir()}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("missing backends.json must exit 1, got %d", code)
@@ -721,7 +721,7 @@ func TestRunBackendProxyBuildConfigFailureExitsOne(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"proxy", "--project-root", root}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"proxy", "--project-root", root}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("BuildProxyConfig failure must exit 1, got %d", code)

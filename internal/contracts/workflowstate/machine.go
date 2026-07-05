@@ -68,8 +68,8 @@ func DirectAnswerDefinition() MachineDefinition {
 		InitialState: StateIntake,
 		States:       []StateID{StateIntake, StateTerminal},
 		Transitions: []StateTransition{
-			{From: StateIntake, To: StateTerminal, On: terminalTransitionEvent(TerminalStateComplete)},
-			{From: StateIntake, To: StateTerminal, On: terminalTransitionEvent(TerminalStateBlocked)},
+			{From: StateIntake, To: StateTerminal, On: TransitionEvent(TerminalStateComplete)},
+			{From: StateIntake, To: StateTerminal, On: TransitionEvent(TerminalStateBlocked)},
 		},
 		TerminalStates: []TerminalState{TerminalStateComplete, TerminalStateBlocked},
 	}
@@ -83,14 +83,14 @@ func PlanExecutePlannerDefinition() MachineDefinition {
 		Transitions: []StateTransition{
 			{From: StateIntake, To: StateDispatchable, On: TransitionEventGatesPass},
 			{From: StateDispatchable, To: StatePlanning, On: TransitionEventDispatch},
-			{From: StateIntake, To: StateTerminal, On: terminalTransitionEvent(TerminalStateSourceSatisfied)},
-			{From: StateIntake, To: StateTerminal, On: terminalTransitionEvent(TerminalStateInvalidScope)},
-			{From: StateIntake, To: StateTerminal, On: terminalTransitionEvent(TerminalStateMissingScope)},
-			{From: StatePlanning, To: StateTerminal, On: terminalTransitionEvent(TerminalStateSourceSatisfied)},
-			{From: StatePlanning, To: StateTerminal, On: terminalTransitionEvent(TerminalStateBlocked)},
-			{From: StatePlanning, To: StateTerminal, On: terminalTransitionEvent(TerminalStateVerificationFailed)},
-			{From: StatePlanning, To: StateTerminal, On: terminalTransitionEvent(TerminalStateStaleNeedsRebase)},
-			{From: StatePlanning, To: StateTerminal, On: terminalTransitionEvent(TerminalStateRecoveryOpen)},
+			{From: StateIntake, To: StateTerminal, On: TransitionEvent(TerminalStateSourceSatisfied)},
+			{From: StateIntake, To: StateTerminal, On: TransitionEvent(TerminalStateInvalidScope)},
+			{From: StateIntake, To: StateTerminal, On: TransitionEvent(TerminalStateMissingScope)},
+			{From: StatePlanning, To: StateTerminal, On: TransitionEvent(TerminalStateSourceSatisfied)},
+			{From: StatePlanning, To: StateTerminal, On: TransitionEvent(TerminalStateBlocked)},
+			{From: StatePlanning, To: StateTerminal, On: TransitionEvent(TerminalStateVerificationFailed)},
+			{From: StatePlanning, To: StateTerminal, On: TransitionEvent(TerminalStateStaleNeedsRebase)},
+			{From: StatePlanning, To: StateTerminal, On: TransitionEvent(TerminalStateRecoveryOpen)},
 		},
 		TerminalStates: []TerminalState{
 			TerminalStateSourceSatisfied,
@@ -112,10 +112,10 @@ func PlanExecuteExecutorDefinition() MachineDefinition {
 		Transitions: []StateTransition{
 			{From: StateIntake, To: StateExecuting, On: TransitionEventDispatch},
 			{From: StateExecuting, To: StateReviewing, On: TransitionEventEditsApplied},
-			{From: StateExecuting, To: StateTerminal, On: terminalTransitionEvent(TerminalStateVerificationFailed)},
-			{From: StateExecuting, To: StateTerminal, On: terminalTransitionEvent(TerminalStateBlocked)},
-			{From: StateReviewing, To: StateTerminal, On: terminalTransitionEvent(TerminalStateComplete)},
-			{From: StateReviewing, To: StateTerminal, On: terminalTransitionEvent(TerminalStateRecoveryOpen)},
+			{From: StateExecuting, To: StateTerminal, On: TransitionEvent(TerminalStateVerificationFailed)},
+			{From: StateExecuting, To: StateTerminal, On: TransitionEvent(TerminalStateBlocked)},
+			{From: StateReviewing, To: StateTerminal, On: TransitionEvent(TerminalStateComplete)},
+			{From: StateReviewing, To: StateTerminal, On: TransitionEvent(TerminalStateRecoveryOpen)},
 		},
 		TerminalStates: []TerminalState{TerminalStateComplete, TerminalStateBlocked, TerminalStateVerificationFailed, TerminalStateRecoveryOpen},
 	}
@@ -128,11 +128,11 @@ func ImplementDefinition() MachineDefinition {
 		States:       []StateID{StateIntake, StateExecuting, StateTerminal},
 		Transitions: []StateTransition{
 			{From: StateIntake, To: StateExecuting, On: TransitionEventDispatch},
-			{From: StateIntake, To: StateTerminal, On: terminalTransitionEvent(TerminalStateDirtyScope)},
-			{From: StateIntake, To: StateTerminal, On: terminalTransitionEvent(TerminalStateInvalidScope)},
-			{From: StateExecuting, To: StateTerminal, On: terminalTransitionEvent(TerminalStateComplete)},
-			{From: StateExecuting, To: StateTerminal, On: terminalTransitionEvent(TerminalStateVerificationFailed)},
-			{From: StateExecuting, To: StateTerminal, On: terminalTransitionEvent(TerminalStateBlocked)},
+			{From: StateIntake, To: StateTerminal, On: TransitionEvent(TerminalStateDirtyScope)},
+			{From: StateIntake, To: StateTerminal, On: TransitionEvent(TerminalStateInvalidScope)},
+			{From: StateExecuting, To: StateTerminal, On: TransitionEvent(TerminalStateComplete)},
+			{From: StateExecuting, To: StateTerminal, On: TransitionEvent(TerminalStateVerificationFailed)},
+			{From: StateExecuting, To: StateTerminal, On: TransitionEvent(TerminalStateBlocked)},
 		},
 		TerminalStates: []TerminalState{TerminalStateComplete, TerminalStateBlocked, TerminalStateDirtyScope, TerminalStateInvalidScope, TerminalStateVerificationFailed},
 	}
@@ -147,11 +147,11 @@ func RecoveryDefinition() MachineDefinition {
 			{From: StateInspecting, To: StateDecomposing, On: TransitionEventDecompose},
 			{From: StateDecomposing, To: StatePromoting, On: TransitionEventPromote},
 			{From: StatePromoting, To: StateReconciling, On: TransitionEventDispatchComplete},
-			{From: StateReconciling, To: StateTerminal, On: terminalTransitionEvent(TerminalStateComplete)},
-			{From: StateInspecting, To: StateTerminal, On: terminalTransitionEvent(TerminalStateDirtyScope)},
-			{From: StateInspecting, To: StateTerminal, On: terminalTransitionEvent(TerminalStateInvalidScope)},
-			{From: StateInspecting, To: StateTerminal, On: terminalTransitionEvent(TerminalStateBlocked)},
-			{From: StateDecomposing, To: StateTerminal, On: terminalTransitionEvent(TerminalStateRecoveryOpen)},
+			{From: StateReconciling, To: StateTerminal, On: TransitionEvent(TerminalStateComplete)},
+			{From: StateInspecting, To: StateTerminal, On: TransitionEvent(TerminalStateDirtyScope)},
+			{From: StateInspecting, To: StateTerminal, On: TransitionEvent(TerminalStateInvalidScope)},
+			{From: StateInspecting, To: StateTerminal, On: TransitionEvent(TerminalStateBlocked)},
+			{From: StateDecomposing, To: StateTerminal, On: TransitionEvent(TerminalStateRecoveryOpen)},
 		},
 		TerminalStates: []TerminalState{TerminalStateComplete, TerminalStateBlocked, TerminalStateDirtyScope, TerminalStateInvalidScope, TerminalStateRecoveryOpen},
 	}
@@ -164,10 +164,10 @@ func SidecarToolCallDefinition() MachineDefinition {
 		States:       []StateID{StateIntake, StateCallingTool, StateAwaitingTool, StateTerminal},
 		Transitions: []StateTransition{
 			{From: StateIntake, To: StateCallingTool, On: TransitionEventAuthorized},
-			{From: StateIntake, To: StateTerminal, On: terminalTransitionEvent(TerminalStateInvalidScope)},
+			{From: StateIntake, To: StateTerminal, On: TransitionEvent(TerminalStateInvalidScope)},
 			{From: StateCallingTool, To: StateAwaitingTool, On: TransitionEventDispatched},
-			{From: StateAwaitingTool, To: StateTerminal, On: terminalTransitionEvent(TerminalStateComplete)},
-			{From: StateAwaitingTool, To: StateTerminal, On: terminalTransitionEvent(TerminalStateBlocked)},
+			{From: StateAwaitingTool, To: StateTerminal, On: TransitionEvent(TerminalStateComplete)},
+			{From: StateAwaitingTool, To: StateTerminal, On: TransitionEvent(TerminalStateBlocked)},
 		},
 		TerminalStates: []TerminalState{TerminalStateComplete, TerminalStateBlocked, TerminalStateInvalidScope},
 	}
@@ -180,15 +180,15 @@ func ProductDispatchDefinition() MachineDefinition {
 		States:       []StateID{StateIntake, StateDispatchable, StateExecuting, StateTerminal},
 		Transitions: []StateTransition{
 			{From: StateIntake, To: StateDispatchable, On: TransitionEventGatesPass},
-			{From: StateIntake, To: StateTerminal, On: terminalTransitionEvent(TerminalStateMissingScope)},
-			{From: StateIntake, To: StateTerminal, On: terminalTransitionEvent(TerminalStateDirtyScope)},
-			{From: StateIntake, To: StateTerminal, On: terminalTransitionEvent(TerminalStateInvalidScope)},
+			{From: StateIntake, To: StateTerminal, On: TransitionEvent(TerminalStateMissingScope)},
+			{From: StateIntake, To: StateTerminal, On: TransitionEvent(TerminalStateDirtyScope)},
+			{From: StateIntake, To: StateTerminal, On: TransitionEvent(TerminalStateInvalidScope)},
 			{From: StateDispatchable, To: StateExecuting, On: TransitionEventDispatch},
-			{From: StateExecuting, To: StateTerminal, On: terminalTransitionEvent(TerminalStateComplete)},
-			{From: StateExecuting, To: StateTerminal, On: terminalTransitionEvent(TerminalStateStaleNeedsRebase)},
-			{From: StateExecuting, To: StateTerminal, On: terminalTransitionEvent(TerminalStateInvalidScope)},
-			{From: StateExecuting, To: StateTerminal, On: terminalTransitionEvent(TerminalStateRecoveryOpen)},
-			{From: StateExecuting, To: StateTerminal, On: terminalTransitionEvent(TerminalStateBlocked)},
+			{From: StateExecuting, To: StateTerminal, On: TransitionEvent(TerminalStateComplete)},
+			{From: StateExecuting, To: StateTerminal, On: TransitionEvent(TerminalStateStaleNeedsRebase)},
+			{From: StateExecuting, To: StateTerminal, On: TransitionEvent(TerminalStateInvalidScope)},
+			{From: StateExecuting, To: StateTerminal, On: TransitionEvent(TerminalStateRecoveryOpen)},
+			{From: StateExecuting, To: StateTerminal, On: TransitionEvent(TerminalStateBlocked)},
 		},
 		TerminalStates: []TerminalState{TerminalStateComplete, TerminalStateBlocked, TerminalStateMissingScope, TerminalStateDirtyScope, TerminalStateInvalidScope, TerminalStateStaleNeedsRebase, TerminalStateRecoveryOpen},
 	}
@@ -201,14 +201,14 @@ func AtomIntakeDefinition() MachineDefinition {
 		States:       []StateID{StateIntake, StateDispatchable, StateTerminal},
 		Transitions: []StateTransition{
 			{From: StateIntake, To: StateDispatchable, On: TransitionEventScopeAvailable},
-			{From: StateIntake, To: StateTerminal, On: terminalTransitionEvent(TerminalStateMissingScope)},
-			{From: StateIntake, To: StateTerminal, On: terminalTransitionEvent(TerminalStateSourceSatisfied)},
-			{From: StateIntake, To: StateTerminal, On: terminalTransitionEvent(TerminalStateStaleNeedsRebase)},
-			{From: StateIntake, To: StateTerminal, On: terminalTransitionEvent(TerminalStateInvalidScope)},
-			{From: StateIntake, To: StateTerminal, On: terminalTransitionEvent(TerminalStateBlockedDirtyFiles)},
-			{From: StateIntake, To: StateTerminal, On: terminalTransitionEvent(TerminalStateFailedRefineDraft)},
-			{From: StateDispatchable, To: StateTerminal, On: terminalTransitionEvent(TerminalStateComplete)},
-			{From: StateDispatchable, To: StateTerminal, On: terminalTransitionEvent(TerminalStateBlocked)},
+			{From: StateIntake, To: StateTerminal, On: TransitionEvent(TerminalStateMissingScope)},
+			{From: StateIntake, To: StateTerminal, On: TransitionEvent(TerminalStateSourceSatisfied)},
+			{From: StateIntake, To: StateTerminal, On: TransitionEvent(TerminalStateStaleNeedsRebase)},
+			{From: StateIntake, To: StateTerminal, On: TransitionEvent(TerminalStateInvalidScope)},
+			{From: StateIntake, To: StateTerminal, On: TransitionEvent(TerminalStateBlockedDirtyFiles)},
+			{From: StateIntake, To: StateTerminal, On: TransitionEvent(TerminalStateFailedRefineDraft)},
+			{From: StateDispatchable, To: StateTerminal, On: TransitionEvent(TerminalStateComplete)},
+			{From: StateDispatchable, To: StateTerminal, On: TransitionEvent(TerminalStateBlocked)},
 		},
 		TerminalStates: []TerminalState{
 			TerminalStateComplete,
@@ -231,15 +231,11 @@ func PromptContextPacketDefinition() MachineDefinition {
 		Transitions: []StateTransition{
 			{From: StateIntake, To: StateDispatchable, On: TransitionEventStructuredPacket},
 			{From: StateIntake, To: StateDispatchable, On: TransitionEventLegacyHeadingFallback},
-			{From: StateDispatchable, To: StateTerminal, On: terminalTransitionEvent(TerminalStateComplete)},
-			{From: StateIntake, To: StateTerminal, On: terminalTransitionEvent(TerminalStateBlocked)},
+			{From: StateDispatchable, To: StateTerminal, On: TransitionEvent(TerminalStateComplete)},
+			{From: StateIntake, To: StateTerminal, On: TransitionEvent(TerminalStateBlocked)},
 		},
 		TerminalStates: []TerminalState{TerminalStateComplete, TerminalStateBlocked},
 	}
-}
-
-func terminalTransitionEvent(state TerminalState) TransitionEvent {
-	return TransitionEvent(state)
 }
 
 func ValidateTransition(workflowID WorkflowID, from StateID, event TransitionEvent) (StateID, error) {
@@ -293,12 +289,6 @@ func ValidateStateProjection(workflowID WorkflowID, state StateID, terminalState
 		return fmt.Errorf("workflow %q state %q cannot be marked dispatchable", workflowID, state)
 	default:
 		return nil
-	}
-}
-
-func MustValidateTerminalProjection(workflowID WorkflowID, terminalState TerminalState) {
-	if err := ValidateTerminalProjection(workflowID, terminalState); err != nil {
-		panic(err)
 	}
 }
 

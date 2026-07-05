@@ -33,25 +33,24 @@ const (
 	StatusWarn FindingStatus = "warn"
 	StatusFail FindingStatus = "fail"
 
-	EvidenceSingleStatement         EvidenceKind = "single_statement"
-	EvidenceSingleReturnCall        EvidenceKind = "single_return_call"
-	EvidenceSingleExpressionCall    EvidenceKind = "single_expression_call"
-	EvidenceSameArgumentForwarding  EvidenceKind = "same_argument_forwarding"
-	EvidenceNoValidation            EvidenceKind = "no_validation"
-	EvidenceNoErrorContext          EvidenceKind = "no_error_context"
-	EvidenceNoTypeTranslation       EvidenceKind = "no_type_translation"
-	EvidenceNoObservability         EvidenceKind = "no_observability"
-	EvidenceNoPermissionCheck       EvidenceKind = "no_permission_check"
-	EvidenceSuppressionsRequireNote EvidenceKind = "suppression_requires_rationale"
-
-	AllowImplementsInterface AllowanceReason = "implements_interface"
-	AllowCompatibilityAPI    AllowanceReason = "compatibility_api"
-	AllowBoundaryAdapter     AllowanceReason = "boundary_adapter"
-	AllowValidation          AllowanceReason = "validation"
-	AllowErrorContext        AllowanceReason = "error_context"
-	AllowObservability       AllowanceReason = "observability"
-	AllowPermissionCheck     AllowanceReason = "permission_check"
-	AllowDomainUseCaseName   AllowanceReason = "domain_use_case_name"
+	EvidenceSingleStatement         EvidenceKind    = "single_statement"
+	EvidenceSingleReturnCall        EvidenceKind    = "single_return_call"
+	EvidenceSingleExpressionCall    EvidenceKind    = "single_expression_call"
+	EvidenceSameArgumentForwarding  EvidenceKind    = "same_argument_forwarding"
+	EvidenceNoValidation            EvidenceKind    = "no_validation"
+	EvidenceNoErrorContext          EvidenceKind    = "no_error_context"
+	EvidenceNoTypeTranslation       EvidenceKind    = "no_type_translation"
+	EvidenceNoObservability         EvidenceKind    = "no_observability"
+	EvidenceNoPermissionCheck       EvidenceKind    = "no_permission_check"
+	EvidenceSuppressionsRequireNote EvidenceKind    = "suppression_requires_rationale"
+	AllowImplementsInterface        AllowanceReason = "implements_interface"
+	AllowCompatibilityAPI           AllowanceReason = "compatibility_api"
+	AllowBoundaryAdapter            AllowanceReason = "boundary_adapter"
+	AllowValidation                 AllowanceReason = "validation"
+	AllowErrorContext               AllowanceReason = "error_context"
+	AllowObservability              AllowanceReason = "observability"
+	AllowPermissionCheck            AllowanceReason = "permission_check"
+	AllowDomainUseCaseName          AllowanceReason = "domain_use_case_name"
 )
 
 type PolicyFile struct {
@@ -146,21 +145,4 @@ type Evidence struct {
 	Detail string       `json:"detail,omitempty"`
 	Path   string       `json:"path,omitempty"`
 	Line   int          `json:"line,omitempty"`
-}
-
-func SeverityRank(severity FindingSeverity) int {
-	switch severity {
-	case SeverityError:
-		return 3
-	case SeverityWarning:
-		return 2
-	case SeverityInfo:
-		return 1
-	default:
-		return 0
-	}
-}
-
-func EnforcementBlocks(enforcement EnforcementLevel) bool {
-	return enforcement == EnforcementBlocking
 }

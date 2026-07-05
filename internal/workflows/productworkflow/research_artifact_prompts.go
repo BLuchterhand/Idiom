@@ -18,7 +18,7 @@ func PlanResearchArtifactPrompts(runPlan ResearchRunPlan, researchPromptDir stri
 		Findings:          append([]ProfileFinding{}, runPlan.Findings...),
 	}
 	if hasErrorFinding(plan.Findings) {
-		sortProfileFindings(plan.Findings)
+		SortProfileFindings(plan.Findings)
 
 		return plan
 	}
@@ -31,7 +31,7 @@ func PlanResearchArtifactPrompts(runPlan ResearchRunPlan, researchPromptDir stri
 			File:     researchPromptDir,
 			Severity: ProductWorkflowSeverityError,
 		})
-		sortProfileFindings(plan.Findings)
+		SortProfileFindings(plan.Findings)
 
 		return plan
 	}
@@ -62,7 +62,7 @@ func PlanResearchArtifactPrompts(runPlan ResearchRunPlan, researchPromptDir stri
 
 	plan.Runs = runs
 	plan.RunCount = len(runs)
-	sortProfileFindings(plan.Findings)
+	SortProfileFindings(plan.Findings)
 
 	return plan
 }
@@ -244,8 +244,4 @@ func renderListOrNone(values []string) string {
 	}
 
 	return strings.TrimRight(b.String(), "\n")
-}
-
-func SortProfileFindings(findings []ProfileFinding) {
-	sortProfileFindings(findings)
 }

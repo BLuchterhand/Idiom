@@ -75,7 +75,7 @@ func FormatIndexSummary(fileCount int, language string, anchors []string, descri
 	var b strings.Builder
 
 	b.WriteString("Indexed ")
-	b.WriteString(IntString(fileCount))
+	b.WriteString(strconv.Itoa(fileCount))
 	b.WriteString(" ")
 	b.WriteString(language)
 	b.WriteString(" files\n")
@@ -228,10 +228,6 @@ func NormalizeTerms(terms []string) []string {
 	}
 
 	return normalized
-}
-
-func IntString(v int) string {
-	return strconv.Itoa(v)
 }
 
 func normalizeSearchPath(value string) string {

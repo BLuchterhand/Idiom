@@ -13,41 +13,27 @@ import (
 	contractcompile "idiom/internal/contracts/compile"
 	lanecontract "idiom/internal/contracts/lane"
 	"idiom/internal/contracts/pathparse"
-	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/planintent"
 )
 
-type CompletionGateCheck = Check
-type CompletionGatePipeline = Pipeline
-
-func NewCompletionGatePipeline(checks ...CompletionGateCheck) *CompletionGatePipeline {
-	return New(checks...)
-}
-
-// CompletionGateChecks returns the runner's gate checks in the order they
-// historically executed.
-func CompletionGateChecks(r *Runner, step int, taskLedger *taskLedgerState, declarationMovesForbidden bool) []CompletionGateCheck {
+func (r *Runner) completionGatePipeline(step int, taskLedger *taskLedgerState, declarationMovesForbidden bool) *completionGatePipeline {
 	if r != nil {
-		return r.completionGateChecks(step, taskLedger, declarationMovesForbidden)
+		return newCompletionGatePipeline(r.completionGateChecks(step, taskLedger, declarationMovesForbidden)...)
 	}
 
-	return []CompletionGateCheck{
+	return newCompletionGatePipeline(
 		textualToolCallGateCheck,
 		unexecutedToolRequestGateCheck,
 		rawToolResultTranscriptGateCheck,
 		unresolvedProcessIntentGateCheck,
-	}
+	)
 }
 
-func (r *Runner) completionGatePipeline(step int, taskLedger *taskLedgerState, declarationMovesForbidden bool) *CompletionGatePipeline {
-	return NewCompletionGatePipeline(CompletionGateChecks(r, step, taskLedger, declarationMovesForbidden)...)
-}
-
-func (r *Runner) completionGateChecks(_ int, taskLedger *taskLedgerState, _ bool) []CompletionGateCheck {
-	return []CompletionGateCheck{
+func (r *Runner) completionGateChecks(_ int, taskLedger *taskLedgerState, _ bool) []completionGateCheck {
+	return []completionGateCheck{
 		func(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
 			return textualToolCallCompletionRejection(r, reply, results)
 		},
@@ -85,7 +71,7 @@ func (r *Runner) completionGateChecks(_ int, taskLedger *taskLedgerState, _ bool
 	}
 }
 
-var textualToolCallGateCheck CompletionGateCheck = func(reply string, _ []workspace.ToolResult) (workspace.ToolResult, bool) {
+var textualToolCallGateCheck completionGateCheck = func(reply string, _ []workspace.ToolResult) (workspace.ToolResult, bool) {
 	return textualToolCallCompletionRejection(nil, reply, nil)
 }
 
@@ -103,12 +89,12 @@ func textualToolCallCompletionRejection(r *Runner, reply string, results []works
 		}, true
 	}
 
-	if !looksLikeTextualToolCall(reply) {
+	if !IsTextualToolCall(reply) {
 		return workspace.ToolResult{}, false
 	}
 
 	msg := "the reply contains textual tool-call markup instead of prose. Emit a tool call through the normal tool-call mechanism, or answer in plain prose."
-	if looksLikeXMLToolCall(reply) {
+	if workspace.LooksLikeXMLToolCallMarkup(reply) {
 		msg = "the reply contains XML tool-call markup (e.g. <n_tool_calls>, <invoke>, <janus_tool>) instead of prose. Emit a tool call through the normal tool-call mechanism, or answer in plain prose. Do not emit XML or HTML markup."
 	}
 
@@ -135,7 +121,7 @@ func (r *Runner) unsafeTextualWriteRecoverySurfaceActive(results []workspace.Too
 	return implementationTargetWriteReadySurfaceActive(r.RuntimeBrief, results)
 }
 
-var unexecutedToolRequestGateCheck CompletionGateCheck = func(reply string, _ []workspace.ToolResult) (workspace.ToolResult, bool) {
+var unexecutedToolRequestGateCheck completionGateCheck = func(reply string, _ []workspace.ToolResult) (workspace.ToolResult, bool) {
 	if !looksLikeUnexecutedToolRequestAnswer(reply) {
 		return workspace.ToolResult{}, false
 	}
@@ -147,11 +133,11 @@ var unexecutedToolRequestGateCheck CompletionGateCheck = func(reply string, _ []
 	}, true
 }
 
-var rawToolResultTranscriptGateCheck CompletionGateCheck = func(reply string, _ []workspace.ToolResult) (workspace.ToolResult, bool) {
+var rawToolResultTranscriptGateCheck completionGateCheck = func(reply string, _ []workspace.ToolResult) (workspace.ToolResult, bool) {
 	return rawToolResultTranscriptCompletionRejection(reply)
 }
 
-var unresolvedProcessIntentGateCheck CompletionGateCheck = func(reply string, _ []workspace.ToolResult) (workspace.ToolResult, bool) {
+var unresolvedProcessIntentGateCheck completionGateCheck = func(reply string, _ []workspace.ToolResult) (workspace.ToolResult, bool) {
 	return unresolvedProcessIntentCompletionRejection(reply)
 }
 
@@ -197,7 +183,6 @@ func runnerPlanExecutePlannerInput(brief workerruntime.WorkerRuntimeBrief, resul
 			SupportsNativeTools: textutil.EqualTrimFold(phase.RuntimeCall.ToolTransportMode, "native"),
 			ForceNativeTools:    textutil.EqualTrimFold(phase.RuntimeCall.ToolTransportMode, "native") && textutil.EqualTrimFold(phase.RuntimeCall.ToolChoice, "required"),
 			ResponseFormatJSON:  textutil.EqualTrimFold(phase.RuntimeCall.ResponseFormat, "json"),
-			EffectiveMaxTokens:  phase.RuntimeCall.MaxTokens,
 		})
 		if len(visibleTools) == 0 {
 			visibleTools = modelProtocolProjectionTools(state.ParserVisibleTools)
@@ -255,10 +240,11 @@ func runnerPlanExecutePlannerInput(brief workerruntime.WorkerRuntimeBrief, resul
 		InvalidActions:       append([]string(nil), phase.InvalidNext...),
 		Readiness:            modelProtocolReadinessInput(brief),
 		Budget: contractcompile.BudgetInput{
-			MaxToolSteps:       policy.MaxToolSteps,
-			MaxModelCalls:      policy.MaxModelCalls,
-			MaxContextMessages: policy.MaxContextMessages,
-			MaxContextChars:    policy.MaxContextChars,
+			MaxToolSteps:             policy.MaxToolSteps,
+			MaxModelCalls:            policy.MaxModelCalls,
+			MaxOperationalModelCalls: policy.MaxOperationalModelCalls,
+			MaxContextMessages:       policy.MaxContextMessages,
+			MaxContextChars:          policy.MaxContextChars,
 		},
 		Runtime: contractcompile.RuntimeEnvelopeInput{
 			BackendKind:         phase.RuntimeCall.BackendKind,
@@ -336,7 +322,7 @@ func modelProtocolProjectionTools(groups ...[]string) []string {
 	for _, group := range groups {
 		for _, value := range group {
 			value = strings.TrimSpace(value)
-			if value == "" || !modelProtocolKnownReadOnlyPlannerTool(value) {
+			if value == "" || !autonomy.IsPlanExecutePlannerToolAllowed(value) {
 				continue
 			}
 
@@ -345,10 +331,6 @@ func modelProtocolProjectionTools(groups ...[]string) []string {
 	}
 
 	return textutil.Unique(tools)
-}
-
-func modelProtocolKnownReadOnlyPlannerTool(tool string) bool {
-	return autonomy.IsPlanExecutePlannerToolAllowed(tool)
 }
 
 func modelProtocolKnownPlannerTools(values []string) []string {
@@ -1194,7 +1176,7 @@ func applyTurnPhase(contract *TurnPhaseContract, input TurnPhaseContractInput, b
 			len(planThenExecuteReviewRepairFailedPhaseObligations(brief)) > 0 ||
 			reviewRepairCompletionGateRejectionCount(input.Results) > 0):
 		applyReviewRepairTerminal(contract, brief, baseTools)
-	case implementationTargetSourceWriteReady(brief, input.Results):
+	case implementationTargetWriteReadySurfaceActive(brief, input.Results):
 		applyImplementationTargetWriteReady(contract, brief, baseTools, input.Results)
 	case implementationTargetSourcePending(brief, input.Results):
 		applyImplementationTargetSource(contract, baseTools)
@@ -1216,62 +1198,31 @@ func applyTurnPhase(contract *TurnPhaseContract, input TurnPhaseContractInput, b
 }
 
 func applyHistoryPending(contract *TurnPhaseContract, baseTools []string, state PlanExecutePlanningState) {
-	contract.PhaseID = firstPhaseString(state.PhaseID, turnPhaseHistoryPending)
-	contract.Phase = firstPhaseString(state.Phase, "history_pending")
-	contract.DerivationReason = firstPhaseString(state.DerivationReason, "plan_execute_history_evidence_pending")
-	contract.AllowedTools = filterPhaseTools(baseTools, state.CallableTools...)
+	applyPlanExecutePlanningStateProjection(contract, baseTools, state, turnPhaseHistoryPending, "history_pending", "plan_execute_history_evidence_pending", state.CallableTools)
 	contract.RequiredNext = []string{"call " + planExecuteHistoryPendingToolListForPrompt() + " for the intended logic, Decision: source-satisfied with per-path current-state evidence when no edit is needed, or <<QUESTION>> with the exact blocker"}
 	contract.InvalidNext = []string{"submit_plan before required git history evidence", "per-edit write in planner phase", "verify/build/test in planner phase", "additional source reads after source-body evidence is satisfied"}
-	contract.TerminalOutcomes = planExecuteTerminalSourceSatisfiedOrQuestion()
-	contract.ActionPolicy = TurnActionClassPolicy{
-		AllowedActionClasses:   append([]string(nil), state.AllowedActionClasses...),
-		InvalidActionClasses:   append([]string(nil), state.InvalidActionClasses...),
-		TerminalResponseShapes: append([]string(nil), state.TerminalResponseShapes...),
-		CallableToolNames:      filterPhaseTools(baseTools, state.CallableTools...),
-	}
 	contract.RuntimeCall.ParserContract = "source_refresh"
 	contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionSourceSatisfied, actionBlocker}
 }
 
 func applyRequiredSource(contract *TurnPhaseContract, baseTools []string, state PlanExecutePlanningState) {
-	contract.PhaseID = firstPhaseString(state.PhaseID, turnPhaseRequiredSource)
-	contract.Phase = firstPhaseString(state.Phase, "needs_source_body")
-	contract.DerivationReason = firstPhaseString(state.DerivationReason, "plan_execute_required_source_pending")
-	contract.AllowedTools = filterPhaseTools(baseTools, state.CallableTools...)
+	applyPlanExecutePlanningStateProjection(contract, baseTools, state, turnPhaseRequiredSource, "needs_source_body", "plan_execute_required_source_pending", state.CallableTools)
 	contract.RequiredNext = []string{"bounded source-body read for the next unread required_edit_path, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"}
 	contract.InvalidNext = []string{"submit_plan before source-body evidence", "per-edit write in planner phase", "broad search instead of bounded required-path source read"}
-	contract.TerminalOutcomes = planExecuteTerminalSourceSatisfiedOrQuestion()
-	contract.ActionPolicy = TurnActionClassPolicy{
-		AllowedActionClasses:   append([]string(nil), state.AllowedActionClasses...),
-		InvalidActionClasses:   append([]string(nil), state.InvalidActionClasses...),
-		TerminalResponseShapes: append([]string(nil), state.TerminalResponseShapes...),
-		CallableToolNames:      filterPhaseTools(baseTools, state.CallableTools...),
-	}
 	contract.RuntimeCall.ParserContract = "source_refresh"
 	contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionSourceSatisfied, actionBlocker}
 }
 
 func applyCandidateSource(contract *TurnPhaseContract, baseTools []string, state PlanExecutePlanningState) {
-	contract.PhaseID = firstPhaseString(state.PhaseID, turnPhaseCandidateSource)
-	contract.Phase = firstPhaseString(state.Phase, "candidate_source_pending")
-	contract.DerivationReason = firstPhaseString(state.DerivationReason, "plan_execute_unscoped_candidate_source_pending")
-	contract.AllowedTools = filterPhaseTools(baseTools, state.CallableTools...)
+	applyPlanExecutePlanningStateProjection(contract, baseTools, state, turnPhaseCandidateSource, "candidate_source_pending", "plan_execute_unscoped_candidate_source_pending", state.CallableTools)
 	contract.RequiredNext = []string{"current typed state: " + string(state.Mode) + "; valid terminal actions: Decision: source-satisfied with observed current-state evidence or <<QUESTION>> with the exact blocker; if no source-body evidence exists yet, use one bounded localization/read action"}
 	contract.InvalidNext = []string{"submit_plan before source-body evidence for each planned edit path", "per-edit write in planner phase", "verify/build/test in planner phase"}
-	contract.TerminalOutcomes = planExecuteTerminalSourceSatisfiedOrQuestion()
 
 	if slices.Contains(state.AllowedActionClasses, actionSubmitPlan) {
 		contract.RequiredNext = []string{"current typed state: " + string(state.Mode) + "; valid terminal actions: submit_plan, Decision: source-satisfied, or <<QUESTION>> with the exact blocker; textual submit_plan must be one visible JSON object with real rationale and executable edits, not placeholders; continue targeted source/test localization only for a named missing edit-safety fact"}
 		contract.InvalidNext = []string{"submit_plan edits without source-body evidence for each edited path", "per-edit write in planner phase", "verify/build/test in planner phase"}
-		contract.TerminalOutcomes = append(contract.TerminalOutcomes, "submit_plan")
 	}
 
-	contract.ActionPolicy = TurnActionClassPolicy{
-		AllowedActionClasses:   append([]string(nil), state.AllowedActionClasses...),
-		InvalidActionClasses:   append([]string(nil), state.InvalidActionClasses...),
-		TerminalResponseShapes: append([]string(nil), state.TerminalResponseShapes...),
-		CallableToolNames:      filterPhaseTools(baseTools, state.CallableTools...),
-	}
 	contract.RuntimeCall.ParserContract = firstPhaseString(contract.RuntimeCall.ParserContract, "source_refresh")
 	contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionSearch, actionBlocker}
 
@@ -1304,31 +1255,19 @@ func applySubmitReady(contract *TurnPhaseContract, input TurnPhaseContractInput,
 
 	nativeRequired := planExecuteSubmitReadyNativeRequired(transport)
 
-	contract.PhaseID = firstPhaseString(state.PhaseID, turnPhaseSubmitReadyTextual)
-	contract.Phase = firstPhaseString(state.Phase, "submit_ready_textual")
-	contract.DerivationReason = firstPhaseString(state.DerivationReason, "plan_execute_source_ready")
-	contract.AllowedTools = filterPhaseTools(baseTools, state.ParserVisibleTools...)
+	applyPlanExecutePlanningStateProjection(contract, baseTools, state, turnPhaseSubmitReadyTextual, "submit_ready_textual", "plan_execute_source_ready", state.ParserVisibleTools)
 	contract.RequiredNext = []string{"submit_plan using edits[] for changed paths and source_satisfied_paths for already-final paths, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"}
 	contract.InvalidNext = []string{"read/search/source-refresh after plan-execute submit_plan readiness", "verify in planner phase", "per-edit write in planner phase", "prose-only final answer"}
-	contract.TerminalOutcomes = planExecuteTerminalSubmitPlanSourceSatisfiedQuestion()
 
 	if state.Mode == PlanExecutePlanningModeSubmitCorrection {
 		contract.RequiredNext = []string{"corrected submit_plan using edits[] for changed paths and source_satisfied_paths for already-final paths"}
 		contract.InvalidNext = []string{"read/search/source-refresh after submit_plan correction is ready", "terminal Decision: source-satisfied after an incomplete submit_plan; use submit_plan.source_satisfied_paths for already-final paths instead", "<<QUESTION>> after source evidence is sufficient for correction", "verify in planner phase", "per-edit write in planner phase", "prose-only final answer"}
-		contract.TerminalOutcomes = planExecuteTerminalSubmitPlanOnly()
 		if state.SubmitCorrectionBlockerAllowed {
 			contract.RequiredNext = []string{"corrected submit_plan using edits[] for changed paths, or <<QUESTION>> with the exact path-specific missing body/anchor blocker after repeated rejected submit_plan attempts"}
 			contract.InvalidNext = []string{"read/search/source-refresh after submit_plan correction is ready", "terminal Decision: source-satisfied after an incomplete submit_plan; use submit_plan.source_satisfied_paths for already-final paths instead", "generic <<QUESTION>> without exact path-specific missing body/anchor blocker", "verify in planner phase", "per-edit write in planner phase", "prose-only final answer"}
-			contract.TerminalOutcomes = planExecuteTerminalSubmitPlanQuestion()
 		}
 	}
 
-	contract.ActionPolicy = TurnActionClassPolicy{
-		AllowedActionClasses:   append([]string(nil), state.AllowedActionClasses...),
-		InvalidActionClasses:   append([]string(nil), state.InvalidActionClasses...),
-		TerminalResponseShapes: append([]string(nil), state.TerminalResponseShapes...),
-		CallableToolNames:      filterPhaseTools(baseTools, state.CallableTools...),
-	}
 	contract.RuntimeCall.ParserContract = firstPhaseString(contract.RuntimeCall.ParserContract, "submit_plan_json")
 	contract.RuntimeCall.ResponseFormat = firstPhaseString(contract.RuntimeCall.ResponseFormat, "json")
 	contract.RuntimeCall.ExpressibleActionClasses = []string{actionSubmitPlan, actionSourceSatisfied, actionBlocker}
@@ -1402,10 +1341,7 @@ func applyStaleAnchorRefresh(contract *TurnPhaseContract, input TurnPhaseContrac
 		state.applyProjection(planExecutePlanningTransportFromPhaseInput(input))
 	}
 
-	contract.PhaseID = firstPhaseString(state.PhaseID, turnPhaseStaleAnchorRefresh)
-	contract.Phase = firstPhaseString(state.Phase, "anchor_refresh")
-	contract.DerivationReason = firstPhaseString(state.DerivationReason, "rejected_submit_plan_needs_source_refresh")
-	contract.AllowedTools = filterPhaseTools(baseTools, state.CallableTools...)
+	applyPlanExecutePlanningStateProjection(contract, baseTools, state, turnPhaseStaleAnchorRefresh, "anchor_refresh", "rejected_submit_plan_needs_source_refresh", state.CallableTools)
 	contract.RequiredNext = []string{"bounded source-body refresh for the stale or missing anchor before any terminal planner outcome"}
 
 	if len(state.RefreshPaths) > 0 {
@@ -1415,16 +1351,23 @@ func applyStaleAnchorRefresh(contract *TurnPhaseContract, input TurnPhaseContrac
 	contract.InvalidNext = []string{"submit_plan before bounded anchor refresh", "broad search", "per-edit write in planner phase"}
 	contract.StopConditions = []string{"bounded_source_refresh_returned"}
 
+	contract.RuntimeCall.ParserContract = firstPhaseString(input.ParserContract, "source_refresh")
+
+	contract.RuntimeCall.ExpressibleActionClasses = append([]string(nil), state.AllowedActionClasses...)
+}
+
+func applyPlanExecutePlanningStateProjection(contract *TurnPhaseContract, baseTools []string, state PlanExecutePlanningState, fallbackPhaseID, fallbackPhase, fallbackReason string, allowedTools []string) {
+	contract.PhaseID = firstPhaseString(state.PhaseID, fallbackPhaseID)
+	contract.Phase = firstPhaseString(state.Phase, fallbackPhase)
+	contract.DerivationReason = firstPhaseString(state.DerivationReason, fallbackReason)
+	contract.AllowedTools = filterPhaseTools(baseTools, allowedTools...)
 	contract.TerminalOutcomes = append([]string(nil), state.TerminalResponseShapes...)
 	contract.ActionPolicy = TurnActionClassPolicy{
 		AllowedActionClasses:   append([]string(nil), state.AllowedActionClasses...),
 		InvalidActionClasses:   append([]string(nil), state.InvalidActionClasses...),
 		TerminalResponseShapes: append([]string(nil), state.TerminalResponseShapes...),
-		CallableToolNames:      contract.AllowedTools,
+		CallableToolNames:      filterPhaseTools(baseTools, state.CallableTools...),
 	}
-	contract.RuntimeCall.ParserContract = firstPhaseString(input.ParserContract, "source_refresh")
-
-	contract.RuntimeCall.ExpressibleActionClasses = append([]string(nil), state.AllowedActionClasses...)
 }
 
 func applyReviewRepairTerminal(contract *TurnPhaseContract, brief workerruntime.WorkerRuntimeBrief, baseTools []string) {
@@ -1488,7 +1431,7 @@ func applyImplementationTargetWriteReady(contract *TurnPhaseContract, brief work
 	contract.Phase = "target_write_ready"
 	contract.DerivationReason = "guarded_mutation_target_source_ready"
 	contract.AllowedTools = implementationTargetWriteReadyAllowedToolsForBrief(baseTools, brief, results)
-	contract.RequiredNext = []string{"git history lookup for the intended established logic if not already observed, parser-readable write to the sourced target path, bounded read_file/search_content source refresh with named_gap for a precise edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
+	contract.RequiredNext = []string{"git history lookup for the intended established logic if not already observed, parser-readable write to the sourced target path, bounded " + implementationTargetWriteReadySourceProbeToolsPhrase + " source refresh with named_gap for a precise edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
 	contract.InvalidNext = []string{"broad read/search after source-body and git history evidence", "read/search for already-sourced paths unless the request adds a bounded missing range, exact named_gap, or required history lookup", "verification before a successful write", "generic probe", "prose-only final answer"}
 	contract.TerminalOutcomes = []string{"<<QUESTION>>:"}
 	contract.ActionPolicy = TurnActionClassPolicy{
@@ -1502,7 +1445,7 @@ func applyImplementationTargetWriteReady(contract *TurnPhaseContract, brief work
 	contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionSearch, actionPerEditWrite, actionBlocker}
 
 	if sourceRefresh {
-		contract.RequiredNext = []string{"git history lookup for the intended established logic if not already observed, parser-readable write to the sourced target path, bounded read_file/search_content source refresh with named_gap for a precise edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
+		contract.RequiredNext = []string{"git history lookup for the intended established logic if not already observed, parser-readable write to the sourced target path, bounded " + implementationTargetWriteReadySourceProbeToolsPhrase + " source refresh with named_gap for a precise edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
 		contract.InvalidNext = []string{"broad read/search after source-body and git history evidence", "read/search for already-sourced paths unless the request adds a bounded missing range, exact named_gap, or required history lookup", "verification before a successful write", "generic probe", "prose-only final answer"}
 		contract.ActionPolicy.AllowedActionClasses = []string{actionRead, actionSearch, actionPerEditWrite, actionBlocker}
 		contract.ActionPolicy.InvalidActionClasses = []string{actionVerify, actionGenericProbe, actionProseFinal, actionFinalAnswer}
@@ -1510,14 +1453,14 @@ func applyImplementationTargetWriteReady(contract *TurnPhaseContract, brief work
 		contract.RuntimeCall.ParserContract = "target_write_or_bounded_source_refresh"
 		contract.RuntimeCall.ExpectedVisibleOutput = "parser_readable_bounded_source_refresh_write_or_blocker"
 		contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionSearch, actionPerEditWrite, actionBlocker}
-		contract.Constraints = textutil.Unique(append([]string{"bounded_source_refresh_allowance: read_file/search_content require named_gap and exact scope"}, contract.Constraints...))
+		contract.Constraints = textutil.Unique(append([]string{"bounded_source_refresh_allowance: " + implementationTargetWriteReadySourceProbeToolsPhrase + " require named_gap and exact scope"}, contract.Constraints...))
 	}
 
 	if len(pendingTools) > 0 {
 		pendingSummary := sourceEvidencePendingRedirectSummary(pending, 3)
 		pendingActionSummary := sourceEvidencePendingRedirectActionSummary(pending, 3)
 
-		contract.RequiredNext = []string{"resolve the pending redirected source-body obligation (" + pendingActionSummary + "), make one parser-readable write to a sourced target path, use bounded read/search only for an exact missing edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
+		contract.RequiredNext = []string{"resolve the pending redirected source-body obligation (" + pendingActionSummary + "), make one parser-readable write to a sourced target path, use bounded " + implementationTargetWriteReadySourceProbeToolsPhrase + " only for an exact missing edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
 		contract.InvalidNext = []string{"broad read/search while a redirected source-body obligation is pending", "read/navigation/search for any path except the exact pending redirected source-body follow-up or named edit-safety gap: " + pendingActionSummary, "verification before a successful write", "generic probe", "prose-only final answer"}
 		contract.ActionPolicy.AllowedActionClasses = []string{actionRead, actionSearch, actionPerEditWrite, actionBlocker}
 		contract.ActionPolicy.InvalidActionClasses = []string{actionVerify, actionGenericProbe, actionProseFinal, actionFinalAnswer}
@@ -1861,7 +1804,7 @@ func genericReadOnlyEvidenceReady(brief workerruntime.WorkerRuntimeBrief, result
 	}
 
 	if readOnlyDirectAnswerLane(brief) {
-		return conversationEvidenceSatisfiedForObjective(brief, results)
+		return conversationEvidenceSatisfied(brief, results)
 	}
 
 	return genericReadOnlyAnswerEvidenceReady(brief, results)
@@ -1941,7 +1884,7 @@ func implementationTargetSourcePending(brief workerruntime.WorkerRuntimeBrief, r
 }
 
 func implementationTargetWriteReadyAllowedTools(baseTools []string) []string {
-	allowed := []string{"read_file", "search_content", "edit_file", "write_file", "append_file", "apply_patch", "mkdir", "go_move_declarations", "delegate_edit"}
+	allowed := []string{"read_file", "search_content", "file_stats", "edit_file", "write_file", "append_file", "apply_patch", "mkdir", "go_move_declarations", "delegate_edit"}
 
 	allowed = append(allowed, workspace.RuntimeHistoryInspectionToolNames()...)
 
@@ -1962,7 +1905,7 @@ func implementationTargetWriteReadyAllowedToolsForBrief(baseTools []string, brie
 }
 
 func implementationTargetWriteReadySourceRefreshTools(baseTools []string) []string {
-	return filterPhaseTools(baseTools, "read_file", "search_content")
+	return filterPhaseTools(baseTools, "read_file", "search_content", "file_stats")
 }
 
 func implementationTargetWriteReadySourceRefreshProjectionActive(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, baseTools []string) bool {
@@ -1970,10 +1913,6 @@ func implementationTargetWriteReadySourceRefreshProjectionActive(brief workerrun
 }
 
 func implementationTargetWriteReadySurfaceActive(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	return implementationTargetSourceWriteReady(brief, results)
-}
-
-func implementationTargetSourceWriteReady(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
 	if strings.TrimSpace(brief.TaskFamily) == PlanThenExecutePlannerTaskFamily {
 		return false
 	}
@@ -1994,7 +1933,7 @@ func implementationTargetSourceWriteReady(brief workerruntime.WorkerRuntimeBrief
 }
 
 func implementationTargetSourceEvidenceReady(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	for _, path := range concreteSourceEvidencePaths(results) {
+	for _, path := range sourceEvidenceBodyPaths(results) {
 		lower := strings.ToLower(path)
 		if strings.HasSuffix(lower, ".md") || strings.HasSuffix(lower, ".mdx") {
 			continue
@@ -2241,7 +2180,7 @@ func implementationTargetSourceAllowedTools(baseTools []string) []string {
 	reads := filterPhaseTools(baseTools,
 		"list_files", "search_files", "search_content", "rg",
 		"context_pack", "context_query", "context_zoom", "discovery_query",
-		"read_file", "code_navigate", "read_only_capability",
+		"read_file", "file_stats", "code_navigate", "read_only_capability",
 		"history_range", "history_symbol", "blame_range",
 	)
 
@@ -2386,17 +2325,6 @@ type PlanExecutePlanningTransport struct {
 	TextualToolParser   bool
 	TerminalOnly        bool
 	ResponseFormatJSON  bool
-	EffectiveMaxTokens  int
-	TimeoutMillis       int
-}
-
-type PlanExecuteRuntimePolicy struct {
-	SupportsNativeTools bool
-	ForceNativeTools    bool
-	TextualToolParser   bool
-	ResponseFormatJSON  bool
-	EffectiveMaxTokens  int
-	TimeoutMillis       int
 }
 
 type PlanExecutePlanningState struct {
@@ -2418,7 +2346,6 @@ type PlanExecutePlanningState struct {
 	InvalidActionClasses           []string
 	TerminalResponseShapes         []string
 	TransportMode                  PlanExecuteTransportMode
-	RuntimePolicy                  PlanExecuteRuntimePolicy
 	LastInvalidPaths               []string
 	SubmitCorrectionBlockerAllowed bool
 }
@@ -2446,22 +2373,71 @@ type PlanExecuteRecoverySurface struct {
 	State PlanExecutePlanningState
 }
 
-func (state PlanExecutePlanningState) Decision(contractID string, invariantID string) plancontract.SubmitPlanCoverageDecision {
-	mode := plancontract.ModeRequiredSource
-	switch state.Mode {
-	case PlanExecutePlanningModeSubmitReady, PlanExecutePlanningModeSubmitCorrection:
-		mode = plancontract.ModeSubmitReady
-	case PlanExecutePlanningModeDone:
-		mode = plancontract.ModeSourceSatisfied
-	}
+type planExecuteRecoverySurfaceSpec struct {
+	mode              PlanExecutePlanningMode
+	phaseID           string
+	failedInvariantID string
+	recoveryBudget    int
+}
 
-	return plancontract.SubmitPlanCoverageDecision{
-		Mode:          mode,
-		ContractID:    strings.TrimSpace(contractID),
-		InvariantID:   strings.TrimSpace(invariantID),
-		RequiredPaths: append([]string(nil), state.RequiredCoveragePaths...),
-		CoveredPaths:  append([]string(nil), state.SelectedEditPaths...),
+var planExecuteRecoverySurfaceSpecs = map[PlanExecuteRecoverySurfaceKind]planExecuteRecoverySurfaceSpec{
+	PlanExecuteRecoverySurfaceAnchorRefresh: {
+		mode:              PlanExecutePlanningModeAnchorRefresh,
+		phaseID:           turnPhaseStaleAnchorRefresh,
+		failedInvariantID: "planexecute.anchor_refresh",
+		recoveryBudget:    2,
+	},
+	PlanExecuteRecoverySurfaceHistoryPending: {
+		mode:              PlanExecutePlanningModeHistoryPending,
+		phaseID:           turnPhaseHistoryPending,
+		failedInvariantID: "planexecute.history_required",
+		recoveryBudget:    2,
+	},
+	PlanExecuteRecoverySurfaceSubmitCorrection: {
+		mode:              PlanExecutePlanningModeSubmitCorrection,
+		phaseID:           turnPhaseSubmitReadyTextual,
+		failedInvariantID: "planexecute.submit_plan",
+		recoveryBudget:    2,
+	},
+	PlanExecuteRecoverySurfaceSubmitReady: {
+		mode:              PlanExecutePlanningModeSubmitReady,
+		phaseID:           turnPhaseSubmitReadyTextual,
+		failedInvariantID: "planexecute.submit_ready",
+		recoveryBudget:    1,
+	},
+	PlanExecuteRecoverySurfaceSourceSatisfiedTerminal: {
+		mode:              PlanExecutePlanningModeSubmitReady,
+		phaseID:           turnPhaseSourceSatisfiedTerminal,
+		failedInvariantID: "planexecute.source_satisfied_terminal",
+		recoveryBudget:    2,
+	},
+}
+
+func planExecuteRecoverySurfaceSpecFor(kind PlanExecuteRecoverySurfaceKind) planExecuteRecoverySurfaceSpec {
+	if spec, ok := planExecuteRecoverySurfaceSpecs[kind]; ok {
+		return spec
 	}
+	return planExecuteRecoverySurfaceSpec{
+		mode:              PlanExecutePlanningModeNone,
+		phaseID:           turnPhaseGeneric,
+		failedInvariantID: "planexecute.recovery",
+		recoveryBudget:    2,
+	}
+}
+
+type planExecuteRecoveryPhaseSurfaceOverride struct {
+	phaseID                          string
+	kind                             PlanExecuteRecoverySurfaceKind
+	preserveSubmitCorrectionFallback bool
+}
+
+var planExecuteRecoveryPhaseSurfaceOverrides = []planExecuteRecoveryPhaseSurfaceOverride{
+	{phaseID: turnPhaseStaleAnchorRefresh, kind: PlanExecuteRecoverySurfaceAnchorRefresh},
+	{phaseID: turnPhaseHistoryPending, kind: PlanExecuteRecoverySurfaceHistoryPending},
+	{phaseID: turnPhaseSourceSatisfiedTerminal, kind: PlanExecuteRecoverySurfaceSourceSatisfiedTerminal},
+	{phaseID: turnPhaseMalformedSubmitPlanRecovery, kind: PlanExecuteRecoverySurfaceSubmitReady},
+	{phaseID: turnPhaseSubmitReadyNativeRequired, kind: PlanExecuteRecoverySurfaceSubmitReady, preserveSubmitCorrectionFallback: true},
+	{phaseID: turnPhaseSubmitReadyTextual, kind: PlanExecuteRecoverySurfaceSubmitReady, preserveSubmitCorrectionFallback: true},
 }
 
 func DerivePlanExecutePlanningActionState(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, transport PlanExecutePlanningTransport, req workspace.ToolRequest) PlanExecutePlanningState {
@@ -2564,38 +2540,20 @@ func DerivePlanExecuteRecoveryState(brief workerruntime.WorkerRuntimeBrief, resu
 }
 
 func recoverySurfaceKindFromContract(contract TurnPhaseContract, fallback PlanExecuteRecoverySurfaceKind) PlanExecuteRecoverySurfaceKind {
-	switch contract.PhaseID {
-	case turnPhaseStaleAnchorRefresh:
-		return PlanExecuteRecoverySurfaceAnchorRefresh
-	case turnPhaseHistoryPending:
-		return PlanExecuteRecoverySurfaceHistoryPending
-	case turnPhaseSourceSatisfiedTerminal:
-		return PlanExecuteRecoverySurfaceSourceSatisfiedTerminal
-	case turnPhaseMalformedSubmitPlanRecovery:
-		return PlanExecuteRecoverySurfaceSubmitReady
-	case turnPhaseSubmitReadyNativeRequired, turnPhaseSubmitReadyTextual:
-		if fallback == PlanExecuteRecoverySurfaceSubmitCorrection {
+	for _, override := range planExecuteRecoveryPhaseSurfaceOverrides {
+		if contract.PhaseID != override.phaseID {
+			continue
+		}
+		if override.preserveSubmitCorrectionFallback && fallback == PlanExecuteRecoverySurfaceSubmitCorrection {
 			return fallback
 		}
-		return PlanExecuteRecoverySurfaceSubmitReady
-	default:
-		return fallback
+		return override.kind
 	}
+	return fallback
 }
 
 func recoveryModeFromSurface(kind PlanExecuteRecoverySurfaceKind) PlanExecutePlanningMode {
-	switch kind {
-	case PlanExecuteRecoverySurfaceAnchorRefresh:
-		return PlanExecutePlanningModeAnchorRefresh
-	case PlanExecuteRecoverySurfaceHistoryPending:
-		return PlanExecutePlanningModeHistoryPending
-	case PlanExecuteRecoverySurfaceSubmitCorrection:
-		return PlanExecutePlanningModeSubmitCorrection
-	case PlanExecuteRecoverySurfaceSubmitReady, PlanExecuteRecoverySurfaceSourceSatisfiedTerminal:
-		return PlanExecutePlanningModeSubmitReady
-	default:
-		return PlanExecutePlanningModeNone
-	}
+	return planExecuteRecoverySurfaceSpecFor(kind).mode
 }
 
 func planExecuteRecoveryRejectedResult(req workspace.ToolRequest, result workspace.ToolResult) bool {
@@ -2620,7 +2578,7 @@ func recoveryRejectedResultIsSubmitPlan(req workspace.ToolRequest, result worksp
 		tool = resultTool
 	}
 	lower := strings.ToLower(result.Summary + "\n" + result.Error + "\n" + result.Output)
-	return tool == "tool_parse" && strings.Contains(lower, "submit_plan")
+	return tool == parserRecoveryToolName && strings.Contains(lower, "submit_plan")
 }
 
 func firstRecoveryStatePath(paths []string) string {
@@ -2634,27 +2592,11 @@ func recoveryStateFailedInvariantID(kind PlanExecuteRecoverySurfaceKind, contrac
 	if len(contract.InvariantIDs) > 0 {
 		return contract.InvariantIDs[0]
 	}
-	switch kind {
-	case PlanExecuteRecoverySurfaceAnchorRefresh:
-		return "planexecute.anchor_refresh"
-	case PlanExecuteRecoverySurfaceHistoryPending:
-		return "planexecute.history_required"
-	case PlanExecuteRecoverySurfaceSubmitCorrection:
-		return "planexecute.submit_plan"
-	case PlanExecuteRecoverySurfaceSubmitReady:
-		return "planexecute.submit_ready"
-	case PlanExecuteRecoverySurfaceSourceSatisfiedTerminal:
-		return "planexecute.source_satisfied_terminal"
-	default:
-		return "planexecute.recovery"
-	}
+	return planExecuteRecoverySurfaceSpecFor(kind).failedInvariantID
 }
 
 func recoveryStateRemainingBudget(kind PlanExecuteRecoverySurfaceKind, attemptsUsed int) int {
-	budget := 2
-	if kind == PlanExecuteRecoverySurfaceSubmitReady {
-		budget = 1
-	}
+	budget := planExecuteRecoverySurfaceSpecFor(kind).recoveryBudget
 	remaining := budget - attemptsUsed
 	if remaining < 0 {
 		return 0
@@ -2663,16 +2605,14 @@ func recoveryStateRemainingBudget(kind PlanExecuteRecoverySurfaceKind, attemptsU
 }
 
 func recoveryStateVisibleSafeAlternatives(contract TurnPhaseContract) []string {
-	classes := firstNonEmptyRecoveryCardStrings(
-		contract.RuntimeCall.ExpressibleActionClasses,
-		contract.ActionPolicy.AllowedActionClasses,
-	)
-	classes = actionClassesAllowedByPolicy(classes, contract.ActionPolicy.InvalidActionClasses)
+	return recoverySafeActionAlternatives(recoveryCardCallableActionClasses(contract, contract.ActionPolicy.CallableToolNames))
+}
 
+func recoverySafeActionAlternatives(classes []string) []string {
 	var out []string
 	for _, class := range classes {
 		switch class {
-		case actionSubmitPlan, actionSourceSatisfied, actionBlocker, actionRead, actionSearch:
+		case actionSubmitPlan, actionSourceSatisfied, actionBlocker, actionRead, actionSearch, actionPerEditWrite:
 			out = append(out, class)
 		}
 	}
@@ -2680,18 +2620,7 @@ func recoveryStateVisibleSafeAlternatives(contract TurnPhaseContract) []string {
 }
 
 func recoveryPhaseIDFromSurface(kind PlanExecuteRecoverySurfaceKind) string {
-	switch kind {
-	case PlanExecuteRecoverySurfaceAnchorRefresh:
-		return turnPhaseStaleAnchorRefresh
-	case PlanExecuteRecoverySurfaceHistoryPending:
-		return turnPhaseHistoryPending
-	case PlanExecuteRecoverySurfaceSourceSatisfiedTerminal:
-		return turnPhaseSourceSatisfiedTerminal
-	case PlanExecuteRecoverySurfaceSubmitReady, PlanExecuteRecoverySurfaceSubmitCorrection:
-		return turnPhaseSubmitReadyTextual
-	default:
-		return turnPhaseGeneric
-	}
+	return planExecuteRecoverySurfaceSpecFor(kind).phaseID
 }
 
 func recoveryStateID(phaseID string, subject string, kind PlanExecuteRecoverySurfaceKind) string {
@@ -2740,14 +2669,6 @@ func planExecuteSourceSatisfiedTerminalEvidenceComplete(brief workerruntime.Work
 
 func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, transport PlanExecutePlanningTransport) PlanExecutePlanningState {
 	state := PlanExecutePlanningState{
-		RuntimePolicy: PlanExecuteRuntimePolicy{
-			SupportsNativeTools: transport.SupportsNativeTools,
-			ForceNativeTools:    transport.ForceNativeTools,
-			TextualToolParser:   transport.TextualToolParser,
-			ResponseFormatJSON:  transport.ResponseFormatJSON,
-			EffectiveMaxTokens:  transport.EffectiveMaxTokens,
-			TimeoutMillis:       transport.TimeoutMillis,
-		},
 		TransportMode: planExecuteTransportMode(transport),
 	}
 	if strings.TrimSpace(brief.TaskFamily) == PlanThenExecuteReviewRepairTaskFamily {
@@ -2987,7 +2908,7 @@ func planThenExecuteHistoryPendingPaths(brief workerruntime.WorkerRuntimeBrief, 
 			continue
 		case planThenExecuteRequiredPathSourceSatisfied:
 		default:
-			if !concreteSourceEvidenceReadForPath(path, results) {
+			if !sourceEvidenceBodyReadForPath(path, results) {
 				continue
 			}
 		}
@@ -3492,38 +3413,6 @@ func planThenExecuteNativeSubmitPlanCorrectionRecoveryPlan(brief workerruntime.W
 	}
 }
 
-// planThenExecuteAnchorRefreshRecoveryPlan returns a recovery plan for the anchor-refresh
-// phase after a rejected submit_plan when source evidence needs refreshing.
-func planThenExecuteAnchorRefreshRecoveryPlan(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, rejected workspace.ToolResult, rejectedAt int) PlanExecuteRecoveryPlan {
-	refreshPaths := planThenExecuteRejectedPlanRefreshPaths(brief, results, rejected, rejectedAt)
-	target := "the stale or missing required edit path named by the submit_plan rejection"
-
-	if len(refreshPaths) > 0 {
-		target = strings.Join(refreshPaths, ", ")
-	}
-
-	summary := "The previous `submit_plan` was rejected before it became a valid plan artifact."
-	if brief := lastSubmitPlanRejectionBrief(rejected); brief != "" {
-		summary += " " + brief
-	}
-
-	instructions := []string{
-		"This is an anchor-refresh phase, not a submit-plan phase. The corrected plan cannot be valid until source evidence is refreshed for: " + target + ".",
-		"Your next visible message must be exactly one parser-readable bounded source-body request for one of those paths.",
-		"Use exactly one bounded `read_file`, or use `" + workspace.CodeNavigateToolName + "` with `read_symbol` / `extract_body` to fetch the exact source body.",
-		"For large Go/source files, raw `read_file` windows are refresh evidence but are not enough to close an invalid-anchor correction; prefer the symbol/body route for the declaration you intend to edit.",
-		"Do not call `submit_plan` again, answer `Decision: source-satisfied`, answer `<<QUESTION>>:`, or reply in prose until the bounded refresh returns.",
-	}
-
-	return PlanExecuteRecoveryPlan{
-		Kind:            PlanExecuteRecoveryKindAnchorRefresh,
-		AllowedTools:    []string{workspace.CodeNavigateToolName, "read_file", "code_navigate"},
-		TerminalOptions: []string{"bounded read/refresh"},
-		Summary:         summary,
-		Instructions:    instructions,
-	}
-}
-
 // planThenExecuteRepeatedSubmitCorrectionRecoveryPlan for repeated invalid submit_plan.
 func planThenExecuteRepeatedSubmitCorrectionRecoveryPlan(lastResult workspace.ToolResult) PlanExecuteRecoveryPlan {
 	summary := "The last request repeated the same invalid `submit_plan`; it was not executed again."
@@ -3752,8 +3641,6 @@ func (policy PlanExecuteRuntimeCallPolicy) PlanningTransport() PlanExecutePlanni
 		TextualToolParser:   policy.TextualToolParser,
 		TerminalOnly:        policy.TerminalOnly,
 		ResponseFormatJSON:  policy.ResponseFormatJSON,
-		EffectiveMaxTokens:  policy.MaxTokens,
-		TimeoutMillis:       policy.TimeoutMillis,
 	}
 }
 
@@ -4174,7 +4061,7 @@ func BuildRecoveryCard(input RecoveryCardInput) RecoveryCard {
 		ContractID:  contract.ContractID,
 		PhaseID:     contract.PhaseID,
 		InvariantID: invariantID,
-		EvidenceRefs: mergeRecoveryCardStrings(
+		EvidenceRefs: textutil.Merge(
 			input.EvidenceRefs,
 			recoveryCardEvidenceRefsFromContract(contract),
 		),
@@ -4185,12 +4072,12 @@ func BuildRecoveryCard(input RecoveryCardInput) RecoveryCard {
 			Reason:      recoveryCardRejectedReason(input.RejectedResult),
 		},
 		Invariant:                   recoveryCardInvariantText(invariantID, contract),
-		InvalidRepeats:              mergeRecoveryCardStrings(input.InvalidRepeats, recoveryCardInvalidRepeats(invariantID, contract)),
+		InvalidRepeats:              textutil.Merge(input.InvalidRepeats, recoveryCardInvalidRepeats(invariantID, contract)),
 		CallableTools:               callableTools,
 		CallableActionClasses:       callableActionClasses,
 		TerminalOutcomes:            recoveryCardTerminalOutcomes(contract),
 		RecoveryState:               copyPlanExecuteRecoveryState(input.RecoveryState),
-		VisibleSafeAlternatives:     recoveryCardVisibleSafeAlternatives(input.RecoveryState, contract),
+		VisibleSafeAlternatives:     recoveryCardVisibleSafeAlternatives(input.RecoveryState, callableActionClasses),
 		DeterministicSafeNextAction: deterministicSafeNextAction,
 		ExactBlockerShape:           recoveryCardExactBlockerShape(input.ExactBlockerShape, contract),
 	})
@@ -4258,14 +4145,14 @@ func NormalizeRecoveryCard(card RecoveryCard) RecoveryCard {
 	card.ContractID = strings.TrimSpace(card.ContractID)
 	card.PhaseID = strings.TrimSpace(card.PhaseID)
 	card.InvariantID = strings.TrimSpace(card.InvariantID)
-	card.EvidenceRefs = uniqueRecoveryCardStrings(card.EvidenceRefs)
+	card.EvidenceRefs = textutil.Unique(card.EvidenceRefs)
 	card.RejectedAction = normalizeRecoveryRejectedAction(card.RejectedAction)
 	card.Invariant = strings.TrimSpace(card.Invariant)
-	card.InvalidRepeats = uniqueRecoveryCardStrings(card.InvalidRepeats)
-	card.CallableTools = uniqueRecoveryCardStrings(card.CallableTools)
-	card.CallableActionClasses = uniqueRecoveryCardStrings(card.CallableActionClasses)
-	card.TerminalOutcomes = uniqueRecoveryCardStrings(card.TerminalOutcomes)
-	card.VisibleSafeAlternatives = uniqueRecoveryCardStrings(card.VisibleSafeAlternatives)
+	card.InvalidRepeats = textutil.Unique(card.InvalidRepeats)
+	card.CallableTools = textutil.Unique(card.CallableTools)
+	card.CallableActionClasses = textutil.Unique(card.CallableActionClasses)
+	card.TerminalOutcomes = textutil.Unique(card.TerminalOutcomes)
+	card.VisibleSafeAlternatives = textutil.Unique(card.VisibleSafeAlternatives)
 	card.RecoveryState = copyPlanExecuteRecoveryState(card.RecoveryState)
 	card.DeterministicSafeNextAction = strings.TrimSpace(card.DeterministicSafeNextAction)
 	card.ExactBlockerShape = sanitizeRecoveryCardBlockerShape(card.ExactBlockerShape)
@@ -4317,7 +4204,7 @@ func (card RecoveryCard) TurnPhaseSurfaceSummary(contract TurnPhaseContract) aut
 		RecoveryProjectionID:    recoveryCardRecoveryProjectionID(card.RecoveryState),
 		RemainingRecoveryBudget: recoveryCardRecoveryBudget(card.RecoveryState),
 		TerminalBlockerAllowed:  recoveryCardRecoveryTerminalBlockerAllowed(card.RecoveryState),
-		SafeAlternatives:        recoveryCardRecoverySafeAlternatives(card.RecoveryState),
+		SafeAlternatives:        recoveryCardSurfaceSafeAlternatives(card),
 	}
 }
 
@@ -4380,11 +4267,18 @@ func recoveryCardRecoverySafeAlternatives(state *PlanExecuteRecoveryState) []str
 	return append([]string(nil), state.VisibleSafeAlternatives...)
 }
 
-func recoveryCardVisibleSafeAlternatives(state *PlanExecuteRecoveryState, contract TurnPhaseContract) []string {
+func recoveryCardSurfaceSafeAlternatives(card RecoveryCard) []string {
+	if values := recoveryCardRecoverySafeAlternatives(card.RecoveryState); len(values) > 0 {
+		return values
+	}
+	return append([]string(nil), card.VisibleSafeAlternatives...)
+}
+
+func recoveryCardVisibleSafeAlternatives(state *PlanExecuteRecoveryState, callableActionClasses []string) []string {
 	if state != nil && len(state.VisibleSafeAlternatives) > 0 {
 		return append([]string(nil), state.VisibleSafeAlternatives...)
 	}
-	return recoveryStateVisibleSafeAlternatives(contract)
+	return recoverySafeActionAlternatives(callableActionClasses)
 }
 
 func sanitizeRecoveryCardBlockerShape(shape string) string {
@@ -4516,10 +4410,6 @@ func quoteRecoveryCardValue(value string) string {
 	return value
 }
 
-func uniqueRecoveryCardStrings(values []string) []string {
-	return textutil.Unique(values)
-}
-
 func recoveryCardInvariantID(input RecoveryCardInput) string {
 	if len(input.PhaseContract.InvariantIDs) > 0 {
 		return input.PhaseContract.InvariantIDs[0]
@@ -4602,10 +4492,6 @@ func recoveryCardSafeNextActionForRejectedAction(brief workerruntime.WorkerRunti
 	return ""
 }
 
-func recoveryCardSafeNextActionFromPhaseContract(contract TurnPhaseContract) string {
-	return recoveryCardSafeNextActionFromPhaseContractForSurface(contract, nil)
-}
-
 func recoveryCardSafeNextActionFromPhaseContractForSurface(contract TurnPhaseContract, callableClasses []string) string {
 	next := firstRecoveryCardString(contract.RequiredNext...)
 	if next == "" {
@@ -4683,8 +4569,8 @@ func recoveryCardActionClassesExactly(contract TurnPhaseContract, expected ...st
 		contract.ActionPolicy.AllowedActionClasses,
 	)
 
-	classes = uniqueRecoveryCardStrings(classes)
-	expected = uniqueRecoveryCardStrings(expected)
+	classes = textutil.Unique(classes)
+	expected = textutil.Unique(expected)
 
 	if len(classes) != len(expected) {
 		return false
@@ -4739,22 +4625,22 @@ func recoveryCardInvalidRepeats(invariantID string, contract TurnPhaseContract) 
 		repeats = append(repeats, "prose-only final answer", "non-parser-readable action")
 	}
 
-	return mergeRecoveryCardStrings(repeats, contract.InvalidNext)
+	return textutil.Merge(repeats, contract.InvalidNext)
 }
 
 func recoveryCardCallableTools(contract TurnPhaseContract, currentAllowedTools []string) []string {
 	phaseTools := firstNonEmptyRecoveryCardStrings(contract.ActionPolicy.CallableToolNames, contract.AllowedTools)
-	current := uniqueRecoveryCardStrings(currentAllowedTools)
+	current := textutil.Unique(currentAllowedTools)
 
-	phaseTools = removeRecoveryCardStrings(phaseTools, contract.HiddenTools)
-	current = removeRecoveryCardStrings(current, contract.HiddenTools)
+	phaseTools = textutil.Remove(phaseTools, contract.HiddenTools)
+	current = textutil.Remove(current, contract.HiddenTools)
 
 	if len(phaseTools) == 0 && recoveryCardActionPolicyHasNoToolClasses(contract.ActionPolicy.AllowedActionClasses) {
 		return nil
 	}
 
 	if len(current) == 0 {
-		return uniqueRecoveryCardStrings(phaseTools)
+		return textutil.Unique(phaseTools)
 	}
 
 	if len(phaseTools) == 0 {
@@ -4774,15 +4660,11 @@ func recoveryCardCallableTools(contract TurnPhaseContract, currentAllowedTools [
 		}
 	}
 
-	return uniqueRecoveryCardStrings(out)
-}
-
-func removeRecoveryCardStrings(values []string, remove []string) []string {
-	return textutil.Remove(values, remove)
+	return textutil.Unique(out)
 }
 
 func recoveryCardActionPolicyHasNoToolClasses(classes []string) bool {
-	classes = uniqueRecoveryCardStrings(classes)
+	classes = textutil.Unique(classes)
 	if len(classes) == 0 {
 		return false
 	}
@@ -4812,7 +4694,7 @@ func recoveryCardCallableActionClassesForSurface(contract TurnPhaseContract, cal
 	toolClasses := recoveryCardCallableActionClassesForTools(callableTools, contractClasses)
 	if len(currentAllowedTools) > 0 && len(toolClasses) > 0 {
 		return actionClassesAllowedByPolicy(
-			mergeRecoveryCardStrings(toolClasses, recoveryCardTerminalOnlyActionClasses(contractClasses)),
+			textutil.Merge(toolClasses, recoveryCardTerminalOnlyActionClasses(contractClasses)),
 			contract.ActionPolicy.InvalidActionClasses,
 		)
 	}
@@ -4821,7 +4703,7 @@ func recoveryCardCallableActionClassesForSurface(contract TurnPhaseContract, cal
 		return contractClasses
 	}
 
-	return actionClassesAllowedByPolicy(mergeRecoveryCardStrings(toolClasses, contractClasses), contract.ActionPolicy.InvalidActionClasses)
+	return actionClassesAllowedByPolicy(textutil.Merge(toolClasses, contractClasses), contract.ActionPolicy.InvalidActionClasses)
 }
 
 func recoveryCardTerminalOnlyActionClasses(classes []string) []string {
@@ -4832,7 +4714,7 @@ func recoveryCardTerminalOnlyActionClasses(classes []string) []string {
 			out = append(out, class)
 		}
 	}
-	return uniqueRecoveryCardStrings(out)
+	return textutil.Unique(out)
 }
 
 func recoveryCardTerminalOutcomes(contract TurnPhaseContract) []string {
@@ -4875,7 +4757,7 @@ func recoveryCardCallableActionClassesForTools(tools []string, contractClasses [
 		}
 	}
 
-	return uniqueRecoveryCardStrings(classes)
+	return textutil.Unique(classes)
 }
 
 func recoveryCardBlockerShape(contract TurnPhaseContract) string {
@@ -4935,7 +4817,7 @@ func recoveryCardBlockerAllowed(contract TurnPhaseContract) bool {
 }
 
 func recoveryCardEvidenceRefsFromContract(contract TurnPhaseContract) []string {
-	return mergeRecoveryCardStrings(
+	return textutil.Merge(
 		contract.EvidenceState.AcceptanceRefs,
 		contract.EvidenceState.VerificationEvidenceRefs,
 		contract.EvidenceState.RecoveryPacketRefs,
@@ -4944,11 +4826,22 @@ func recoveryCardEvidenceRefsFromContract(contract TurnPhaseContract) []string {
 }
 
 func recoveryCardRejectedTool(req workspace.ToolRequest, result workspace.ToolResult) string {
+	if recoveryRejectedResultIsSubmitPlan(req, result) {
+		return workspace.ToolNameSubmitPlan
+	}
 	if tool := strings.TrimSpace(req.Tool); tool != "" {
+		if tool == parserRecoveryToolName {
+			return ""
+		}
 		return tool
 	}
 
-	return strings.TrimSpace(result.Tool)
+	tool := strings.TrimSpace(result.Tool)
+	if tool == parserRecoveryToolName {
+		return ""
+	}
+
+	return tool
 }
 
 func recoveryCardRejectedActionClass(req workspace.ToolRequest, result workspace.ToolResult) string {
@@ -4987,16 +4880,12 @@ func firstRecoveryCardString(values ...string) string {
 
 func firstNonEmptyRecoveryCardStrings(groups ...[]string) []string {
 	for _, group := range groups {
-		if len(uniqueRecoveryCardStrings(group)) > 0 {
-			return uniqueRecoveryCardStrings(group)
+		if len(textutil.Unique(group)) > 0 {
+			return textutil.Unique(group)
 		}
 	}
 
 	return nil
-}
-
-func mergeRecoveryCardStrings(groups ...[]string) []string {
-	return textutil.Merge(groups...)
 }
 
 func slicesContainRecoveryCardString(values []string, needle string) bool {
@@ -5083,7 +4972,7 @@ func turnPhaseSurfaceSummaryFromNextActionState(state runnerNextActionState, con
 	advertisedClasses := turnPhaseSurfaceActionClassesFromText(state.NextValidActions)
 	invalidClasses := turnPhaseSurfaceInvalidActionClassesFromText(state.InvalidNextActions)
 
-	invalidClasses = append(invalidClasses, turnPhaseSurfaceInvalidAdvertisedActionClasses(advertisedClasses, contract.ActionPolicy.InvalidActionClasses)...)
+	invalidClasses = append(invalidClasses, actionClassIntersection(advertisedClasses, contract.ActionPolicy.InvalidActionClasses)...)
 	advertisedClasses = turnPhaseSurfaceActionClassesAllowedByContract(advertisedClasses, contract)
 	invalidClasses = removeAllowedTurnPhaseInvalidActionClasses(invalidClasses, contract.ActionPolicy.AllowedActionClasses)
 
@@ -5099,10 +4988,6 @@ func turnPhaseSurfaceSummaryFromNextActionState(state runnerNextActionState, con
 		ObligationRefs:          append([]string(nil), state.EvidencePaths...),
 		RuntimeCall:             payload.RuntimeCall,
 	}
-}
-
-func turnPhaseSurfaceInvalidAdvertisedActionClasses(classes []string, invalidClasses []string) []string {
-	return actionClassIntersection(classes, invalidClasses)
 }
 
 func turnPhaseSurfaceActionClassesAllowedByContract(classes []string, contract TurnPhaseContract) []string {
@@ -5203,6 +5088,10 @@ func turnPhaseSurfaceActionClassesFromText(values []string) []string {
 func phaseActionTextHasTerm(value string, term string) bool {
 	if value == "" || term == "" {
 		return false
+	}
+
+	if strings.Contains(value, term+"_") || strings.Contains(value, "_"+term) {
+		return true
 	}
 
 	fields := strings.FieldsFunc(value, func(r rune) bool {
@@ -5420,37 +5309,21 @@ func runnerTurnPhaseResidualBlockers(results []workspace.ToolResult) []string {
 	return textutil.Unique(blockers)
 }
 
-func mergeStrings(left []string, right []string) []string {
-	seen := make(map[string]struct{}, len(left)+len(right))
-	out := make([]string, 0, len(left)+len(right))
-	for _, value := range append(append([]string(nil), left...), right...) {
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return out
-}
-
-// Check inspects a model reply and accumulated results, returning a rejection
+// completionGateCheck inspects a model reply and accumulated results, returning a rejection
 // ToolResult with shouldReject=true, or an empty ToolResult with false.
-type Check func(reply string, results []workspace.ToolResult) (rejection workspace.ToolResult, shouldReject bool)
+type completionGateCheck func(reply string, results []workspace.ToolResult) (rejection workspace.ToolResult, shouldReject bool)
 
-// Pipeline evaluates checks in registration order and returns the first
+// completionGatePipeline evaluates checks in registration order and returns the first
 // rejection. If no check rejects, the pipeline passes.
-type Pipeline struct {
-	checks []Check
+type completionGatePipeline struct {
+	checks []completionGateCheck
 }
 
-func New(checks ...Check) *Pipeline {
-	return &Pipeline{checks: append([]Check(nil), checks...)}
+func newCompletionGatePipeline(checks ...completionGateCheck) *completionGatePipeline {
+	return &completionGatePipeline{checks: append([]completionGateCheck(nil), checks...)}
 }
 
-func (p *Pipeline) Evaluate(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
+func (p *completionGatePipeline) Evaluate(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
 	if p == nil {
 		return workspace.ToolResult{}, false
 	}
@@ -5576,7 +5449,7 @@ func DeriveRuntimeCallPolicy(input RuntimeCallPolicyInput) RuntimeCallPolicy {
 		ChatTemplateKwargs:       input.ChatTemplateKwargs,
 		MaxTokens:                input.MaxTokens,
 		TimeoutMillis:            input.TimeoutMillis,
-		ExpressibleActionClasses: UniqueStrings(input.ExpressibleActionClasses),
+		ExpressibleActionClasses: textutil.Unique(input.ExpressibleActionClasses),
 	}
 
 	policy.TransportMode = deriveRuntimeCallTransportMode(policy)
@@ -5619,10 +5492,6 @@ func deriveRuntimeCallTransportMode(policy RuntimeCallPolicy) RuntimeCallTranspo
 	return RuntimeCallTransportModeTextual
 }
 
-func CloneRuntimeCallBoolPtr(value *bool) *bool {
-	return cloneBoolPtr(value)
-}
-
 func cloneBoolPtr(value *bool) *bool {
 	if value == nil {
 		return nil
@@ -5631,10 +5500,6 @@ func cloneBoolPtr(value *bool) *bool {
 	cloned := *value
 
 	return &cloned
-}
-
-func UniqueStrings(values []string) []string {
-	return textutil.Unique(values)
 }
 
 type Owner string
@@ -5730,20 +5595,6 @@ func (s *ActiveSurface) Release(owner Owner) {
 	s.refreshHiddenProjection()
 }
 
-func (s *ActiveSurface) ReleaseTools(owner Owner, tools ...string) {
-	if s == nil || s.hiddenOwners == nil {
-		return
-	}
-	for _, tool := range uniqueTrimmed(tools) {
-		owners := s.hiddenOwners[tool]
-		delete(owners, owner)
-		if len(owners) == 0 {
-			delete(s.hiddenOwners, tool)
-		}
-	}
-	s.refreshHiddenProjection()
-}
-
 func (s ActiveSurface) AllowsTool(tool string) bool {
 	return slices.Contains(s.VisibleTools, strings.TrimSpace(tool))
 }
@@ -5784,14 +5635,6 @@ func (s ActiveSurface) FilterVisible(tools []string) []string {
 		filteredVisible = append(filteredVisible, tool)
 	}
 	return append([]string(nil), filteredVisible...)
-}
-
-func (s ActiveSurface) HiddenMap() map[string]bool {
-	out := make(map[string]bool, len(s.HiddenTools))
-	for _, tool := range s.HiddenTools {
-		out[tool] = true
-	}
-	return out
 }
 
 func (s *ActiveSurface) refreshHiddenProjection() {

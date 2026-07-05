@@ -6,16 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
-	"time"
 
 	"idiom/internal/contracts/pathparse"
-	"idiom/internal/platform/atomicfile"
-	"idiom/internal/platform/sessionid"
 )
 
 // --- path evidence registry ---
@@ -66,7 +61,6 @@ type PathEvidence struct {
 	ExistenceChecked     bool          // true once ExistsOnDisk has been resolved
 	BodyReadLevel        EvidenceLevel // populated from tool results
 	IsCandidate          bool          // returned by context_pack / context_query / discovery
-	IsMentionedInPrompt  bool          // mentioned in the user's prompt or brief objective
 	CandidatesFromPacket string        // name of the packet/tool that produced this candidate
 }
 
@@ -80,31 +74,13 @@ type PathEvidenceRegistry struct {
 }
 
 // NewPathEvidenceRegistry creates an empty registry. Call RegisterToolResults
-// to populate it from tool results, and SetWorkspaceRoot so PathExists can
-// fall back to the filesystem.
+// to populate it from tool results; workspaceRoot is used for lazy filesystem
+// existence checks.
 func NewPathEvidenceRegistry(workspaceRoot string) *PathEvidenceRegistry {
 	return &PathEvidenceRegistry{
 		paths:         make(map[string]*PathEvidence),
 		workspaceRoot: workspaceRoot,
 	}
-}
-
-func (r *PathEvidenceRegistry) Clone() *PathEvidenceRegistry {
-	if r == nil {
-		return nil
-	}
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	clone := NewPathEvidenceRegistry(r.workspaceRoot)
-	for path, evidence := range r.paths {
-		if evidence == nil {
-			continue
-		}
-		copied := *evidence
-		clone.paths[path] = &copied
-	}
-	return clone
 }
 
 // ---------------------------------------------------------------------------
@@ -247,38 +223,6 @@ func (r *PathEvidenceRegistry) registerCandidatePaths(result ToolResult) {
 	}
 }
 
-// RegisterCandidatePath marks a path as a candidate in the registry.
-func (r *PathEvidenceRegistry) RegisterCandidatePath(path, tool string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	p := normalizeRegistryPath(path)
-	if p == "" {
-		return
-	}
-	pe := r.getOrCreate(p)
-	pe.IsCandidate = true
-	pe.CandidatesFromPacket = tool
-}
-
-// SetCandidatePathsFromBrief seeds candidate paths from the brief's objective
-// (paths explicitly mentioned in the user prompt).
-func (r *PathEvidenceRegistry) SetCandidatePathsFromBrief(objective string) {
-	if objective == "" {
-		return
-	}
-	mentioned := pathparse.MentionedWorkspacePaths(objective)
-	for _, p := range mentioned {
-		p = normalizeRegistryPath(p)
-		if p == "" {
-			continue
-		}
-		pe := r.getOrCreate(p)
-		pe.IsMentionedInPrompt = true
-		pe.IsCandidate = true
-	}
-}
-
 // EnsurePathExists checks the filesystem once and caches the result.
 func (r *PathEvidenceRegistry) EnsurePathExists(path string) bool {
 	r.mu.Lock()
@@ -327,12 +271,6 @@ func (r *PathEvidenceRegistry) EnsurePathExists(path string) bool {
 // ---------------------------------------------------------------------------
 // Queries
 // ---------------------------------------------------------------------------
-
-// PathExists returns true if the path exists on disk (checked lazily via
-// EnsurePathExists if not already cached).
-func (r *PathEvidenceRegistry) PathExists(path string) bool {
-	return r.EnsurePathExists(path)
-}
 
 // ResolveShortPath attempts to resolve a bare filename (e.g. "ray_intersection.rs")
 // to its full workspace path. It searches:
@@ -415,58 +353,6 @@ func (r *PathEvidenceRegistry) HasBodyEvidence(path string) bool {
 	return pe.BodyReadLevel >= EvidenceBodyWindow
 }
 
-// BodyReadPaths returns all paths that have body-level evidence.
-func (r *PathEvidenceRegistry) BodyReadPaths() []string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	var result []string
-	for _, pe := range r.paths {
-		if pe.BodyReadLevel >= EvidenceBodyWindow {
-			result = append(result, pe.Path)
-		}
-	}
-	slices.Sort(result)
-	return result
-}
-
-// CandidatePaths returns all paths that are marked as candidates (from
-// discovery tools or prompt mentions) but do NOT yet have body-level
-// evidence. These are paths the model should consider reading.
-func (r *PathEvidenceRegistry) CandidatePaths() []string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	var result []string
-	for _, pe := range r.paths {
-		if pe.IsCandidate && pe.BodyReadLevel < EvidenceBodyWindow {
-			result = append(result, pe.Path)
-		}
-	}
-	slices.Sort(result)
-	return result
-}
-
-// UnreadCandidatePaths returns candidate paths that have NOT yet been
-// body-read. Used by the readiness gate to determine if the model should
-// defer answering until candidate paths are explored.
-func (r *PathEvidenceRegistry) UnreadCandidatePaths() []string {
-	return r.CandidatePaths()
-}
-
-// AllPaths returns every path the registry knows about.
-func (r *PathEvidenceRegistry) AllPaths() []string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	var result []string
-	for _, pe := range r.paths {
-		result = append(result, pe.Path)
-	}
-	slices.Sort(result)
-	return result
-}
-
 // MergeFromPriorSession injects paths from a prior session's evidence as
 // candidates (not body reads). These become UnreadCandidatePaths entries
 // that the model can choose to read.
@@ -524,14 +410,24 @@ func (r *PathEvidenceRegistry) existsOnDiskUnsafe(path string) bool {
 
 func normalizeRegistryPath(path string) string {
 	path = strings.TrimSpace(path)
+	if path == "" || filepath.IsAbs(path) || looksLikeWindowsAbsolutePath(path) {
+		return ""
+	}
+
+	path = filepath.ToSlash(filepath.Clean(path))
 	path = strings.TrimPrefix(path, "./")
+	if path == "." || path == ".." || strings.HasPrefix(path, "../") || strings.HasPrefix(path, `..\`) {
+		return ""
+	}
+
 	return path
 }
 
-func toolIsOutlineCodeNavigate(result ToolResult) bool {
-	tool := strings.TrimSpace(result.ToolName)
-	return (tool == toolNameCodeNavigate || tool == toolNameReadOnlyCapability) &&
-		strings.Contains(result.Summary, "outline")
+func looksLikeWindowsAbsolutePath(path string) bool {
+	return len(path) >= 3 &&
+		((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) &&
+		path[1] == ':' &&
+		(path[2] == '/' || path[2] == '\\')
 }
 
 func extractPathFromResult(result ToolResult) string {
@@ -573,61 +469,6 @@ func sessionEvidenceDir(workspaceRoot string) string {
 func sha256Hex(s string) string {
 	h := sha256.Sum256([]byte(s))
 	return fmt.Sprintf("%x", h)
-}
-
-// WriteSessionEvidenceRecord writes a SessionEvidenceRecord to disk as a JSON
-// file named <sessionID>.json under .idiom/sessions/evidence/.
-//
-// readPaths are the paths that were body-read during the session (obtained from
-// PathEvidenceRegistry.BodyReadPaths()). The record is used by subsequent
-// sessions to seed candidate paths via MergeFromPriorSession.
-func WriteSessionEvidenceRecord(workspaceRoot, sessionID, prompt, objective string, readPaths []string, wasBlocked bool, blockedBy string) error {
-	workspaceRoot = strings.TrimSpace(workspaceRoot)
-	if workspaceRoot == "" {
-		return fmt.Errorf("workspace root is required")
-	}
-	normalizedSessionID, ok := sessionid.Normalize(sessionID)
-	if !ok {
-		return fmt.Errorf("invalid session id %q", sessionID)
-	}
-
-	dir := sessionEvidenceDir(workspaceRoot)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create session evidence dir: %w", err)
-	}
-
-	// Deduplicate and sort read paths for deterministic output.
-	unique := make(map[string]bool)
-	for _, p := range readPaths {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			unique[p] = true
-		}
-	}
-	sorted := make([]string, 0, len(unique))
-	for p := range unique {
-		sorted = append(sorted, p)
-	}
-	sort.Strings(sorted)
-
-	record := SessionEvidenceRecord{
-		SessionID:  normalizedSessionID,
-		PromptHash: sha256Hex(prompt),
-		ReadPaths:  sorted,
-		WasBlocked: wasBlocked,
-		BlockedBy:  strings.TrimSpace(blockedBy),
-		Timestamp:  time.Now().UTC().Format(time.RFC3339),
-	}
-
-	data, err := json.Marshal(record)
-	if err != nil {
-		return fmt.Errorf("marshal session evidence record: %w", err)
-	}
-
-	if err := atomicfile.WriteFile(filepath.Join(dir, normalizedSessionID+".json"), data, 0o600); err != nil {
-		return fmt.Errorf("write session evidence record: %w", err)
-	}
-	return nil
 }
 
 // levenshteinDistance computes the Levenshtein edit distance between two strings.
@@ -739,463 +580,14 @@ func PriorSessionCandidatePaths(workspaceRoot, prompt string) []string {
 	return record.ReadPaths
 }
 
-// --- evidence snapshot ---
-type EvidenceForPath struct {
-	Path          string
-	Exists        bool
-	BodyRead      bool
-	Candidate     bool
-	EvidenceLevel EvidenceLevel
-}
-
-type CandidatePath struct {
-	Path string
-}
-
-type NamedPath struct {
-	Name string
-	Path string
-}
-
-type ObligationRef struct {
-	ID   string
-	Path string
-}
-
-type SourceOwnerEvidence struct {
-	Path       string
-	Symbol     string
-	Role       string
-	Confidence string
-}
-
-type Answerability struct {
-	Answerable bool
-	Reason     string
-	Paths      []string
-}
-
-type HistoryEvidence struct {
-	Path      string
-	Satisfied bool
-	Source    string
-}
-
-var evidenceSnapshotCounter atomic.Uint64
-
-type EvidenceSnapshot struct {
-	id                       string
-	version                  int
-	frozen                   bool
-	registry                 *PathEvidenceRegistry
-	namedPaths               []NamedPath
-	pendingSourceObligations []ObligationRef
-	sourceOwners             []SourceOwnerEvidence
-	answerability            Answerability
-	history                  []HistoryEvidence
-}
-
-func NewSnapshot(registry *PathEvidenceRegistry) EvidenceSnapshot {
-	id := fmt.Sprintf("evidence_snapshot_%d", evidenceSnapshotCounter.Add(1))
-	return EvidenceSnapshot{id: id, registry: registry}
-}
-
-func (s EvidenceSnapshot) ID() string {
-	return s.id
-}
-
-func (s EvidenceSnapshot) Version() int {
-	return s.version
-}
-
-func (s EvidenceSnapshot) Frozen() bool {
-	return s.frozen
-}
-
-func (s EvidenceSnapshot) Freeze() EvidenceSnapshot {
-	frozen := EvidenceSnapshot{
-		id:                       s.id,
-		version:                  s.version,
-		frozen:                   true,
-		registry:                 s.registry.Clone(),
-		namedPaths:               append([]NamedPath(nil), s.namedPaths...),
-		pendingSourceObligations: append([]ObligationRef(nil), s.pendingSourceObligations...),
-		sourceOwners:             append([]SourceOwnerEvidence(nil), s.sourceOwners...),
-		answerability:            s.answerability,
-		history:                  append([]HistoryEvidence(nil), s.history...),
-	}
-	frozen.answerability.Paths = append([]string(nil), s.answerability.Paths...)
-	return frozen
-}
-
-func (s EvidenceSnapshot) BodyRead(path string) EvidenceForPath {
-	if s.registry == nil {
-		return EvidenceForPath{Path: normalizeRegistryPath(path)}
-	}
-	normalized := normalizeRegistryPath(path)
-	s.registry.mu.RLock()
-	pe, ok := s.registry.paths[normalized]
-	s.registry.mu.RUnlock()
-	if !ok {
-		return EvidenceForPath{Path: normalized, Exists: s.registry.PathExists(normalized)}
-	}
-	return EvidenceForPath{
-		Path:          pe.Path,
-		Exists:        pe.ExistsOnDisk,
-		BodyRead:      pe.BodyReadLevel >= EvidenceBodyWindow,
-		Candidate:     pe.IsCandidate,
-		EvidenceLevel: pe.BodyReadLevel,
-	}
-}
-
-func (s EvidenceSnapshot) CandidatePaths() []CandidatePath {
-	if s.registry == nil {
-		return nil
-	}
-	paths := s.registry.CandidatePaths()
-	candidates := make([]CandidatePath, 0, len(paths))
-	for _, path := range paths {
-		candidates = append(candidates, CandidatePath{Path: path})
-	}
-	return candidates
-}
-
-func (s EvidenceSnapshot) BodyReadPaths() []string {
-	if s.registry == nil {
-		return nil
-	}
-	return s.registry.BodyReadPaths()
-}
-
-func (s EvidenceSnapshot) SourceOwner(path string) SourceOwnerEvidence {
-	normalized := normalizeRegistryPath(path)
-	for _, evidence := range s.sourceOwners {
-		if normalizeRegistryPath(evidence.Path) == normalized {
-			return evidence
-		}
-	}
-	return SourceOwnerEvidence{Path: normalized}
-}
-
-func (s EvidenceSnapshot) NamedPaths() []NamedPath {
-	return append([]NamedPath(nil), s.namedPaths...)
-}
-
-func (s EvidenceSnapshot) PendingSourceObligations() []ObligationRef {
-	return append([]ObligationRef(nil), s.pendingSourceObligations...)
-}
-
-func (s EvidenceSnapshot) ReadOnlyAnswerability() Answerability {
-	answerability := s.answerability
-	answerability.Paths = append([]string(nil), answerability.Paths...)
-	return answerability
-}
-
-func (s EvidenceSnapshot) GitHistory(path string) HistoryEvidence {
-	normalized := normalizeRegistryPath(path)
-	for _, evidence := range s.history {
-		if normalizeRegistryPath(evidence.Path) == normalized {
-			return evidence
-		}
-	}
-	return HistoryEvidence{Path: normalized}
-}
-
-func (s *EvidenceSnapshot) Promote(result ToolResult) Delta {
-	if s.registry == nil || s.frozen {
-		return Delta{}
-	}
-	beforeBody := evidenceStringSet(s.registry.BodyReadPaths())
-	beforeCandidates := evidenceStringSet(s.registry.CandidatePaths())
-	s.registry.RegisterToolResults([]ToolResult{result})
-	delta := evidenceDeltaFromFacts(result.SidecarFacts)
-	for _, path := range delta.CandidatePaths {
-		s.registry.RegisterCandidatePath(path, "evidence_fact")
-	}
-	s.namedPaths = mergeNamedPaths(s.namedPaths, delta.NamedPaths)
-	s.pendingSourceObligations = mergeObligationRefs(s.pendingSourceObligations, delta.PendingSourceObligations)
-	s.sourceOwners = mergeSourceOwnerEvidence(s.sourceOwners, delta.SourceOwner)
-	s.history = mergeHistoryEvidence(s.history, delta.GitHistory)
-	beforeAnswerability := s.answerability
-	if answerability, ok := answerabilityFromFacts(result.SidecarFacts); ok {
-		s.answerability = answerability
-	}
-
-	afterBody := s.registry.BodyReadPaths()
-	afterCandidates := s.registry.CandidatePaths()
-	delta.BodyReadPaths = newStrings(afterBody, beforeBody)
-	delta.CandidatePaths = newStrings(afterCandidates, beforeCandidates)
-	delta.Facts = append([]EvidenceFact(nil), result.SidecarFacts...)
-	if deltaHasStateChange(delta) || !sameAnswerability(beforeAnswerability, s.answerability) {
-		s.version++
-	}
-	return delta
-}
-
-func deltaHasStateChange(delta Delta) bool {
-	return len(delta.BodyReadPaths) > 0 ||
-		len(delta.CandidatePaths) > 0 ||
-		len(delta.NamedPaths) > 0 ||
-		len(delta.PendingSourceObligations) > 0 ||
-		len(delta.SourceOwner) > 0 ||
-		len(delta.GitHistory) > 0
-}
-
-func sameAnswerability(a, b Answerability) bool {
-	return a.Answerable == b.Answerable &&
-		a.Reason == b.Reason &&
-		slices.Equal(a.Paths, b.Paths)
-}
-
-func (r *PathEvidenceRegistry) Snapshot() EvidenceSnapshot {
-	return NewSnapshot(r)
-}
-
-func evidenceStringSet(values []string) map[string]struct{} {
-	set := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		set[value] = struct{}{}
-	}
-	return set
-}
-
-func newStrings(values []string, prior map[string]struct{}) []string {
-	var delta []string
-	for _, value := range values {
-		if _, ok := prior[value]; ok {
-			continue
-		}
-		delta = append(delta, value)
-	}
-	return delta
-}
-
-func evidenceDeltaFromFacts(facts []EvidenceFact) Delta {
-	var delta Delta
-	for _, fact := range facts {
-		key := strings.TrimSpace(fact.Key)
-		value := strings.TrimSpace(fact.Value)
-		if key == "" || value == "" {
-			continue
-		}
-		switch key {
-		case "candidate_path":
-			if path := normalizeRegistryPath(value); path != "" {
-				delta.CandidatePaths = append(delta.CandidatePaths, path)
-			}
-		case "named_path":
-			if named, ok := parseNamedPathFact(value); ok {
-				delta.NamedPaths = append(delta.NamedPaths, named)
-			}
-		case "pending_source_obligation":
-			if obligation, ok := parseObligationFact(value); ok {
-				delta.PendingSourceObligations = append(delta.PendingSourceObligations, obligation)
-			}
-		case "source_owner":
-			if owner, ok := parseSourceOwnerFact(value); ok {
-				delta.SourceOwner = append(delta.SourceOwner, owner)
-			}
-		case "git_history":
-			if history, ok := parseHistoryFact(value); ok {
-				delta.GitHistory = append(delta.GitHistory, history)
-			}
-		}
-	}
-	return delta
-}
-
-func parseNamedPathFact(value string) (NamedPath, bool) {
-	parts := strings.SplitN(value, "=", 2)
-	if len(parts) != 2 {
-		return NamedPath{}, false
-	}
-	path := normalizeRegistryPath(parts[1])
-	if path == "" {
-		return NamedPath{}, false
-	}
-	return NamedPath{Name: strings.TrimSpace(parts[0]), Path: path}, true
-}
-
-func parseObligationFact(value string) (ObligationRef, bool) {
-	id, path := splitFactIDPath(value)
-	if id == "" {
-		return ObligationRef{}, false
-	}
-	return ObligationRef{ID: id, Path: path}, true
-}
-
-func parseSourceOwnerFact(value string) (SourceOwnerEvidence, bool) {
-	fields := splitFactFields(value)
-	path := normalizeRegistryPath(fields["path"])
-	if path == "" {
-		return SourceOwnerEvidence{}, false
-	}
-	return SourceOwnerEvidence{
-		Path:       path,
-		Symbol:     fields["symbol"],
-		Role:       fields["role"],
-		Confidence: fields["confidence"],
-	}, true
-}
-
-func parseHistoryFact(value string) (HistoryEvidence, bool) {
-	fields := splitFactFields(value)
-	path := normalizeRegistryPath(fields["path"])
-	if path == "" {
-		return HistoryEvidence{}, false
-	}
-	return HistoryEvidence{
-		Path:      path,
-		Satisfied: truthyFactValue(fields["satisfied"]),
-		Source:    fields["source"],
-	}, true
-}
-
-func answerabilityFromFacts(facts []EvidenceFact) (Answerability, bool) {
-	answerability := Answerability{}
-	ok := false
-	for _, fact := range facts {
-		key := strings.TrimSpace(fact.Key)
-		value := strings.TrimSpace(fact.Value)
-		switch key {
-		case "answerability.answerable":
-			answerability.Answerable = truthyFactValue(value)
-			ok = true
-		case "answerability.reason":
-			answerability.Reason = value
-			ok = true
-		case "answerability.path":
-			if path := normalizeRegistryPath(value); path != "" && !slices.Contains(answerability.Paths, path) {
-				answerability.Paths = append(answerability.Paths, path)
-				ok = true
-			}
-		}
-	}
-	slices.Sort(answerability.Paths)
-	return answerability, ok
-}
-
-func splitFactIDPath(value string) (string, string) {
-	fields := splitFactFields(value)
-	id := strings.TrimSpace(fields["id"])
-	path := normalizeRegistryPath(fields["path"])
-	if id == "" && !strings.Contains(value, "=") {
-		id = strings.TrimSpace(value)
-	}
-	return id, path
-}
-
-func splitFactFields(value string) map[string]string {
-	fields := make(map[string]string)
-	for _, rawField := range strings.Split(value, ";") {
-		key, val, ok := strings.Cut(rawField, "=")
-		if !ok {
-			continue
-		}
-		fields[strings.TrimSpace(key)] = strings.TrimSpace(val)
-	}
-	return fields
-}
-
-func truthyFactValue(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "1", "true", "yes", "satisfied", "done":
-		return true
-	default:
-		return false
-	}
-}
-
-func mergeNamedPaths(existing []NamedPath, delta []NamedPath) []NamedPath {
-	out := append([]NamedPath(nil), existing...)
-	for _, next := range delta {
-		replace := false
-		for i, current := range out {
-			if current.Name == next.Name {
-				out[i] = next
-				replace = true
-				break
-			}
-		}
-		if !replace {
-			out = append(out, next)
-		}
-	}
-	slices.SortFunc(out, func(a, b NamedPath) int { return strings.Compare(a.Name, b.Name) })
-	return out
-}
-
-func mergeObligationRefs(existing []ObligationRef, delta []ObligationRef) []ObligationRef {
-	out := append([]ObligationRef(nil), existing...)
-	for _, next := range delta {
-		if !slices.ContainsFunc(out, func(current ObligationRef) bool { return current.ID == next.ID && current.Path == next.Path }) {
-			out = append(out, next)
-		}
-	}
-	slices.SortFunc(out, func(a, b ObligationRef) int { return strings.Compare(a.ID+a.Path, b.ID+b.Path) })
-	return out
-}
-
-func mergeSourceOwnerEvidence(existing []SourceOwnerEvidence, delta []SourceOwnerEvidence) []SourceOwnerEvidence {
-	out := append([]SourceOwnerEvidence(nil), existing...)
-	for _, next := range delta {
-		replace := false
-		for i, current := range out {
-			if normalizeRegistryPath(current.Path) == normalizeRegistryPath(next.Path) {
-				out[i] = next
-				replace = true
-				break
-			}
-		}
-		if !replace {
-			out = append(out, next)
-		}
-	}
-	return out
-}
-
-func mergeHistoryEvidence(existing []HistoryEvidence, delta []HistoryEvidence) []HistoryEvidence {
-	out := append([]HistoryEvidence(nil), existing...)
-	for _, next := range delta {
-		replace := false
-		for i, current := range out {
-			if normalizeRegistryPath(current.Path) == normalizeRegistryPath(next.Path) {
-				out[i] = next
-				replace = true
-				break
-			}
-		}
-		if !replace {
-			out = append(out, next)
-		}
-	}
-	return out
-}
-
-type EvidenceFact struct {
-	Key   string
-	Value string
-}
-
 // ToolResult is the evidence-owned DTO for ingesting workspace results.
 // Workspace adapters map concrete workspace.ToolResult and sidecar envelopes to
 // this type before evidence code interprets paths, source bodies, or ownership.
 type ToolResult struct {
-	ToolName     string
-	Summary      string
-	Output       string
-	Error        string
-	Paths        []string
-	SidecarFacts []EvidenceFact
-	Metadata     map[string]string
-}
-
-type Delta struct {
-	BodyReadPaths            []string
-	CandidatePaths           []string
-	NamedPaths               []NamedPath
-	PendingSourceObligations []ObligationRef
-	SourceOwner              []SourceOwnerEvidence
-	GitHistory               []HistoryEvidence
-	Facts                    []EvidenceFact
+	ToolName string
+	Summary  string
+	Output   string
+	Error    string
+	Paths    []string
+	Metadata map[string]string
 }

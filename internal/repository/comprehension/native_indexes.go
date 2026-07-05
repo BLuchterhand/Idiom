@@ -9,6 +9,10 @@ import (
 	"strings"
 
 	"idiom/internal/repository/semantic"
+	semanticjava "idiom/internal/repository/semantic/java"
+	semanticpython "idiom/internal/repository/semantic/python"
+	semanticrust "idiom/internal/repository/semantic/rust"
+	semanticts "idiom/internal/repository/semantic/typescript"
 )
 
 type nativeLanguageIndexes struct {
@@ -26,7 +30,7 @@ func buildNativeLanguageIndexes(ctx context.Context, root string, language strin
 	indexOpts := semantic.IndexOptions{Scope: scope, MaxFiles: maxFiles, Context: ctx}
 
 	if shouldUsePythonCollector(language) {
-		index, err := semantic.BuildPythonIndexWithOptions(root, indexOpts)
+		index, err := semanticpython.BuildPythonIndexWithOptions(root, indexOpts)
 		if err != nil {
 			return out, fmt.Errorf("build Python index: %w", err)
 		}
@@ -39,7 +43,7 @@ func buildNativeLanguageIndexes(ctx context.Context, root string, language strin
 	}
 
 	if shouldUseTypeScriptCollector(language) {
-		index, err := semantic.BuildTsIndexWithOptions(root, indexOpts)
+		index, err := semanticts.BuildTsIndexWithOptions(root, indexOpts)
 		if err != nil {
 			return out, fmt.Errorf("build TypeScript/JavaScript index: %w", err)
 		}
@@ -52,7 +56,7 @@ func buildNativeLanguageIndexes(ctx context.Context, root string, language strin
 	}
 
 	if shouldUseRustCollector(language) {
-		index, err := semantic.BuildRustIndexWithOptions(root, indexOpts)
+		index, err := semanticrust.BuildRustIndexWithOptions(root, indexOpts)
 		if err != nil {
 			return out, fmt.Errorf("build Rust index: %w", err)
 		}
@@ -65,7 +69,7 @@ func buildNativeLanguageIndexes(ctx context.Context, root string, language strin
 	}
 
 	if shouldUseJavaCollector(language) {
-		index, err := semantic.BuildJavaIndexWithOptions(root, indexOpts)
+		index, err := semanticjava.BuildJavaIndexWithOptions(root, indexOpts)
 		if err != nil {
 			return out, fmt.Errorf("build Java index: %w", err)
 		}

@@ -60,14 +60,14 @@ func (m *Manager) newClangdLSPClient(ctx context.Context) (*clangdLSPClient, err
 
 	params := map[string]any{
 		"processId": os.Getpid(),
-		"rootUri":   clangdFileURI(m.Root()),
+		"rootUri":   LSPFileURI(m.Root()),
 		"capabilities": map[string]any{
 			"general": map[string]any{
 				"positionEncodings": []string{"utf-8"},
 			},
 		},
 		"workspaceFolders": []map[string]any{{
-			"uri":  clangdFileURI(m.Root()),
+			"uri":  LSPFileURI(m.Root()),
 			"name": filepath.Base(m.Root()),
 		}},
 		"initializationOptions": map[string]any{
@@ -96,10 +96,6 @@ func (c *clangdLSPClient) openFile(path string) error {
 	return c.lspBaseClient.openFile(path, clangdLanguageID(path))
 }
 
-func clangdFileURI(path string) string {
-	return LSPFileURI(path)
-}
-
 func clangdPathFromURI(uri string) (string, error) {
 	return LSPPathFromURI(uri, "clangd")
 }
@@ -118,7 +114,7 @@ func (m *Manager) cppWorkspaceSymbolsViaClangd(ctx context.Context, pattern stri
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
 			return m.newClangdLSPClient(ctx)
 		},
-		fileURI: clangdFileURI,
+		fileURI: LSPFileURI,
 		candidates: func(pattern string, budget int) ([]string, error) {
 			index, err := m.getCppIndex()
 			if err != nil {
@@ -133,7 +129,7 @@ func (m *Manager) cppWorkspaceSymbolsViaClangd(ctx context.Context, pattern stri
 			return candidates, nil
 		},
 		flatten: flattenDocumentSymbols,
-		filter:  filterDocumentSymbolMatches,
+		filter:  filterLSPDocumentSymbolMatches,
 		format:  m.formatClangdWorkspaceSymbols,
 	}, pattern, pathFilter, limit)
 }
@@ -163,7 +159,7 @@ func (m *Manager) cppLocationQueryViaClangd(ctx context.Context, match semantic.
 	}
 
 	params := map[string]any{
-		"textDocument": map[string]any{"uri": clangdFileURI(abs)},
+		"textDocument": map[string]any{"uri": LSPFileURI(abs)},
 		"position":     m.cppLSPPosition(abs, match),
 	}
 
@@ -197,7 +193,7 @@ func (m *Manager) cppImplementationsViaClangd(ctx context.Context, match semanti
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
 			return m.newClangdLSPClient(ctx)
 		},
-		fileURI: clangdFileURI,
+		fileURI: LSPFileURI,
 		format:  m.formatClangdLocations,
 	}, match.Path, func(abs string) map[string]any {
 		return m.cppLSPPosition(abs, match)
@@ -210,7 +206,7 @@ func (m *Manager) cppReferencesViaClangd(ctx context.Context, match semantic.Cpp
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
 			return m.newClangdLSPClient(ctx)
 		},
-		fileURI: clangdFileURI,
+		fileURI: LSPFileURI,
 		format:  m.formatClangdLocations,
 	}, match.Path, func(abs string) map[string]any {
 		return m.cppLSPPosition(abs, match)
@@ -231,14 +227,14 @@ func (m *Manager) cppCallHierarchyViaClangd(ctx context.Context, match semantic.
 		return callHierarchyResult{}, err
 	}
 
-	items, err := prepareLSPCallHierarchy(ctx, client, clangdFileURI, abs, m.cppLSPPosition(abs, match))
+	items, err := prepareLSPCallHierarchy(ctx, client, LSPFileURI, abs, m.cppLSPPosition(abs, match))
 	if err != nil {
 		return callHierarchyResult{}, err
 	}
 
 	if len(items) == 0 {
 		params := map[string]any{
-			"textDocument": map[string]any{"uri": clangdFileURI(abs)},
+			"textDocument": map[string]any{"uri": LSPFileURI(abs)},
 			"position":     m.cppLSPPosition(abs, match),
 		}
 
@@ -256,7 +252,7 @@ func (m *Manager) cppCallHierarchyViaClangd(ctx context.Context, match semantic.
 						continue
 					}
 
-					if fallbackItems, prepErr := prepareLSPCallHierarchy(ctx, client, clangdFileURI, targetAbs, map[string]any{
+					if fallbackItems, prepErr := prepareLSPCallHierarchy(ctx, client, LSPFileURI, targetAbs, map[string]any{
 						"line":      location.Range.Start.Line,
 						"character": location.Range.Start.Character,
 					}); prepErr == nil && len(fallbackItems) > 0 {
@@ -401,9 +397,5 @@ func clangdSymbolKindName(kind int) string {
 }
 
 func flattenDocumentSymbols(path string, container string, symbols []LSPDocumentSymbol) []LSPSymbolInfo {
-	return flattenLSPDocumentSymbols(path, container, symbols, clangdFileURI, "::")
-}
-
-func filterDocumentSymbolMatches(symbols []LSPSymbolInfo, pattern string) []LSPSymbolInfo {
-	return filterLSPDocumentSymbolMatches(symbols, pattern)
+	return flattenLSPDocumentSymbols(path, container, symbols, LSPFileURI, "::")
 }

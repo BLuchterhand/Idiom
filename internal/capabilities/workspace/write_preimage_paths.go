@@ -1,6 +1,10 @@
 package workspace
 
-import "strings"
+import (
+	"strings"
+
+	"idiom/internal/capabilities/workspace/patching"
+)
 
 // WritePreimagePaths returns workspace-relative paths whose pre-write
 // contents should be snapshotted before dispatching req. The second return
@@ -16,12 +20,12 @@ func WritePreimagePaths(req ToolRequest) ([]string, bool, error) {
 
 		return []string{req.Path}, true, nil
 	case ToolNameApplyPatch:
-		ops, err := ParsePatch(req.Content)
+		ops, err := patching.Parse(req.Content)
 		if err != nil {
 			return nil, true, err
 		}
 
-		return PatchOpPaths(ops), true, nil
+		return patching.OpPaths(ops), true, nil
 	case ToolNameGoMoveDeclarations:
 		var paths []string
 

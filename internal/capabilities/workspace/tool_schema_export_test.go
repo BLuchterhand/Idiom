@@ -436,6 +436,36 @@ func TestToolSchemaPolicyUsesToolSurfaceMetadata(t *testing.T) {
 	}
 }
 
+func TestToolSchemaPolicyKeepsRegistryDiagnosticsDeferred(t *testing.T) {
+	var diagnosticTools []string
+	for _, entry := range languageToolCatalog() {
+		if entry.Capability == CapDiagnostics {
+			diagnosticTools = append(diagnosticTools, entry.Tool)
+		}
+	}
+	if len(diagnosticTools) == 0 {
+		t.Fatal("language tool catalog should declare diagnostic tools")
+	}
+
+	for _, tool := range diagnosticTools {
+		policy := toolSchemaPolicyForTool(tool)
+		if !slices.Contains(policy.Capabilities, autonomy.CapabilityShellVerification) {
+			t.Fatalf("%s capabilities = %#v, want shell verification", tool, policy.Capabilities)
+		}
+		if !slices.Contains(policy.SideEffects, autonomy.SideEffectUnknown) {
+			t.Fatalf("%s side effects = %#v, want unknown", tool, policy.SideEffects)
+		}
+		if got := CapabilityClassificationForTool(tool); got != CapabilityClassDeferred {
+			t.Fatalf("%s classification = %q, want %q", tool, got, CapabilityClassDeferred)
+		}
+		for _, want := range []string{"unsupported_language", "symbol_not_found", "diagnostics_failed"} {
+			if !slices.Contains(policy.ErrorClasses, want) {
+				t.Fatalf("%s error classes = %#v, want %q", tool, policy.ErrorClasses, want)
+			}
+		}
+	}
+}
+
 func TestDiscoveryManifestToolsHaveEvidenceCapabilitiesOrExplicitExclusion(t *testing.T) {
 	excluded := map[string]string{
 		"context_index": "refreshes local context artifacts; freshness and index state are reported through context_status",
@@ -635,7 +665,7 @@ func TestBuildMCPDiscoveryToolSchemasDerivesFromDiscoveryProfileAndSemanticCapab
 			sawRecoveryStatus = true
 		}
 
-		if !mcpDiscoveryProfileTool(tool.Name) {
+		if !builtInToolSurfaceMCPDiscoveryProfileTool(tool.Name) {
 			t.Fatalf("MCP discovery tool %s should be context-backed or recovery read-only", tool.Name)
 		}
 

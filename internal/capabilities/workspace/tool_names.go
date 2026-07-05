@@ -3,7 +3,7 @@ package workspace
 import "idiom/internal/contracts/autonomy"
 
 // ToolName constants for all built-in workspace tools.
-// Keep this list synchronized with builtInToolSurfaceSpecs below.
+// Keep this list synchronized with builtInToolSurfaceCatalog.
 const (
 	ToolNameAppendFile         = autonomy.ToolNameAppendFile
 	ToolNameApplyPatch         = autonomy.ToolNameApplyPatch
@@ -55,7 +55,7 @@ const (
 	// Read-only capability adapter tool.
 	ToolNameReadOnlyCapability = "read_only_capability"
 
-	// Language-specific built-in tools (planner metadata only — no builtInToolSurfaceSpec entry).
+	// Language-specific built-in tools (planner metadata only — no catalog entry).
 	ToolNameGoMoveDeclarations = autonomy.ToolNameGoMoveDeclarations
 
 	// Supplemental language tools registered via language_tool_catalog.go.

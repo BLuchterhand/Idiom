@@ -158,13 +158,13 @@ func TestNormalizeTurnRoutePlanRecognizesArtifactFinalAnswer(t *testing.T) {
 	}
 }
 
-func TestIsImplementationLikeFamilyIncludesPlanThenExecutePlanner(t *testing.T) {
+func TestRuntimeProfileMutationCapableIncludesPlanThenExecutePlanner(t *testing.T) {
 	// The runtime brief copies several constraints onto implementation-
 	// shaped lanes (planner-owned verification, exact-anchor handling,
 	// etc.). Plan-then-execute IS implementation-shaped — without this
 	// classification the planner phase is treated like a non-write lane
 	// and the brief's contract guidance drifts off.
-	if !isImplementationLikeFamily("plan_then_execute_planner") {
-		t.Fatalf("plan_then_execute_planner must be classified as implementation-like")
+	if !workerruntime.TaskFamilyMutationCapable("plan_then_execute_planner") {
+		t.Fatalf("plan_then_execute_planner must be mutation-capable")
 	}
 }

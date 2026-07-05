@@ -877,7 +877,7 @@ func planExecuteCompletionVerificationValidationFailures(summary PlanExecuteComp
 
 	evidenceByCommand := map[string]plancontract.PhaseEvidenceCheck{}
 	for _, check := range summary.Verification {
-		if !planExecuteCompletionVerificationCheckPassed(check) {
+		if !plancontract.PhaseEvidenceCheckIsPassed(check) {
 			failures = append(failures, "verification_failed:"+firstCompletionString(check.Command, "(unknown)"))
 		}
 
@@ -900,16 +900,12 @@ func planExecuteCompletionVerificationValidationFailures(summary PlanExecuteComp
 			continue
 		}
 
-		if !planExecuteCompletionVerificationCheckPassed(check) {
+		if !plancontract.PhaseEvidenceCheckIsPassed(check) {
 			failures = append(failures, "verification_not_passed:"+command.Command)
 		}
 	}
 
 	return normalizeCompletionStringList(failures)
-}
-
-func planExecuteCompletionVerificationCheckPassed(check plancontract.PhaseEvidenceCheck) bool {
-	return plancontract.PhaseEvidenceCheckIsPassed(check)
 }
 
 func firstCompletionString(values ...string) string {

@@ -120,7 +120,7 @@ func (m *Manager) sourceSanityTargets(req ToolRequest) ([]string, error) {
 	}
 
 	if !info.IsDir() {
-		if sourceSanityCoversPath(target) {
+		if sourcekind.CoversSourceSanity(target) {
 			return []string{target}, nil
 		}
 
@@ -146,7 +146,7 @@ func (m *Manager) sourceSanityTargets(req ToolRequest) ([]string, error) {
 			return nil
 		}
 
-		if sourceSanityCoversPath(path) {
+		if sourcekind.CoversSourceSanity(path) {
 			targets = append(targets, path)
 		}
 
@@ -194,7 +194,7 @@ func (m *Manager) sourceSanityOne(ctx context.Context, absPath string, workdir s
 			}
 		}
 
-		if sourceSanityRequiresConcreteDiagnosticsForPath(rel) {
+		if sourcekind.RequiresConcreteSourceSanityDiagnostics(rel) {
 			return sourceSanityOutcome{
 				Path:   rel,
 				Method: sourceSanityMethodGeneric,
@@ -234,21 +234,6 @@ func sourceSanityDiagnosticToolForPath(path string) string {
 	}
 
 	return lang.Tool(CapDiagnostics)
-}
-
-func sourceSanityRequiresConcreteDiagnosticsForPath(path string) bool {
-	return sourcekind.RequiresConcreteSourceSanityDiagnostics(path)
-}
-
-func sourceSanityCoversPath(path string) bool {
-	return sourcekind.CoversSourceSanity(path)
-}
-
-// SourceSanityCoversPath reports whether source_sanity has a concrete
-// diagnostic route or generic fallback for path. Plan/executor gates use this
-// to avoid treating prose/config edits as source edits.
-func SourceSanityCoversPath(path string) bool {
-	return sourceSanityCoversPath(path)
 }
 
 func diagnosticsUnavailable(result ToolResult) bool {

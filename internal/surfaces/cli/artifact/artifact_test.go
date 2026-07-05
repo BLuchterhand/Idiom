@@ -24,7 +24,7 @@ func TestArtifactCommandWritesOutputAndJSON(t *testing.T) {
 		gotOpts        runOptions
 	)
 
-	code := runArtifactMain(
+	code := RunMainWithTelemetry(
 		[]string{
 			"-config", configPath,
 			"-prompt", "draft a spec",
@@ -44,6 +44,7 @@ func TestArtifactCommandWritesOutputAndJSON(t *testing.T) {
 
 			return "# Artifact", nil
 		},
+		nil,
 	)
 
 	if code != 0 {
@@ -88,7 +89,7 @@ func TestArtifactCommandForwardsMaxTokenOverride(t *testing.T) {
 		gotOpts        runOptions
 	)
 
-	code := runArtifactMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "draft", "-max-token", "4096"},
 		&stdout,
 		&stderr,
@@ -96,6 +97,7 @@ func TestArtifactCommandForwardsMaxTokenOverride(t *testing.T) {
 			gotOpts = opts
 			return "artifact", nil
 		},
+		nil,
 	)
 
 	if code != 0 {
@@ -114,7 +116,7 @@ func TestArtifactCommandForwardsMaxTokenOverride(t *testing.T) {
 func TestArtifactCommandRejectsNegativeMaxToken(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := runArtifactMain(
+	code := RunMainWithTelemetry(
 		[]string{"-prompt", "draft", "-max-token", "-1"},
 		&stdout,
 		&stderr,
@@ -123,6 +125,7 @@ func TestArtifactCommandRejectsNegativeMaxToken(t *testing.T) {
 
 			return "", nil
 		},
+		nil,
 	)
 
 	if code != 2 || !strings.Contains(stderr.String(), "non-negative") {
@@ -140,7 +143,7 @@ func TestArtifactCommandNoToolsWrapsPromptAndFailsToolUse(t *testing.T) {
 		gotOpts        runOptions
 	)
 
-	code := runArtifactMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "draft", "-no-tools", "-report-out", reportPath},
 		&stdout,
 		&stderr,
@@ -151,6 +154,7 @@ func TestArtifactCommandNoToolsWrapsPromptAndFailsToolUse(t *testing.T) {
 
 			return "artifact", nil
 		},
+		nil,
 	)
 
 	if code != 1 {
@@ -186,7 +190,7 @@ func TestArtifactCommandMechanicalRepairUnwrapsOuterFence(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := runArtifactMain(
+	code := RunMainWithTelemetry(
 		[]string{
 			"-config", configPath,
 			"-prompt", "draft",
@@ -199,6 +203,7 @@ func TestArtifactCommandMechanicalRepairUnwrapsOuterFence(t *testing.T) {
 		func(config.Config, string, runOptions, io.Writer) (string, error) {
 			return "```markdown\n# Artifact\n```", nil
 		},
+		nil,
 	)
 
 	if code != 0 {
@@ -221,7 +226,7 @@ func TestArtifactCommandRunsValidatorWithArtifactEnv(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := runArtifactMain(
+	code := RunMainWithTelemetry(
 		[]string{
 			"-config", configPath,
 			"-prompt", "draft",
@@ -233,6 +238,7 @@ func TestArtifactCommandRunsValidatorWithArtifactEnv(t *testing.T) {
 		func(config.Config, string, runOptions, io.Writer) (string, error) {
 			return "validated", nil
 		},
+		nil,
 	)
 
 	if code != 0 {
@@ -280,7 +286,7 @@ func TestArtifactCommandRejectsPromptSourcesConflict(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := runArtifactMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "x", "-prompt-file", promptPath},
 		&stdout,
 		&stderr,
@@ -289,6 +295,7 @@ func TestArtifactCommandRejectsPromptSourcesConflict(t *testing.T) {
 
 			return "", nil
 		},
+		nil,
 	)
 
 	if code != 2 || !strings.Contains(stderr.String(), "mutually exclusive") {

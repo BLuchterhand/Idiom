@@ -88,7 +88,7 @@ func acceptedCoverageFromHandoff(coverage *productworkflow.ImplementationHandoff
 
 	contract := coverage.Behavioral
 	for _, req := range contract.EARS {
-		if !acceptedProductCoverageStatus(req.Status) {
+		if !productworkflow.BehavioralCoverageStatusIsAccepted(req.Status) {
 			continue
 		}
 		out.Requirements = append(out.Requirements, featureplanner.AcceptedCoverageRequirement{
@@ -117,7 +117,7 @@ func acceptedCoverageFromHandoff(coverage *productworkflow.ImplementationHandoff
 		out.ExampleRules = append(out.ExampleRules, mapped)
 	}
 	for _, scenario := range contract.BDDScenarios {
-		if !acceptedProductCoverageStatus(scenario.Status) {
+		if !productworkflow.BehavioralCoverageStatusIsAccepted(scenario.Status) {
 			continue
 		}
 		out.Scenarios = append(out.Scenarios, featureplanner.AcceptedCoverageScenario{
@@ -133,7 +133,7 @@ func acceptedCoverageFromHandoff(coverage *productworkflow.ImplementationHandoff
 		})
 	}
 	for _, dc := range contract.DesignContracts {
-		if !acceptedProductCoverageStatus(dc.Status) {
+		if !productworkflow.BehavioralCoverageStatusIsAccepted(dc.Status) {
 			continue
 		}
 		out.DesignContracts = append(out.DesignContracts, featureplanner.AcceptedCoverageDesignContract{
@@ -147,7 +147,7 @@ func acceptedCoverageFromHandoff(coverage *productworkflow.ImplementationHandoff
 		})
 	}
 	for _, invariant := range contract.Invariants {
-		if !acceptedProductCoverageStatus(invariant.Status) {
+		if !productworkflow.BehavioralCoverageStatusIsAccepted(invariant.Status) {
 			continue
 		}
 		out.Invariants = append(out.Invariants, featureplanner.AcceptedCoverageInvariant{
@@ -158,7 +158,7 @@ func acceptedCoverageFromHandoff(coverage *productworkflow.ImplementationHandoff
 		})
 	}
 	for _, mode := range contract.FailureModes {
-		if !acceptedProductCoverageStatus(mode.Status) {
+		if !productworkflow.BehavioralCoverageStatusIsAccepted(mode.Status) {
 			continue
 		}
 		out.FailureModes = append(out.FailureModes, featureplanner.AcceptedCoverageFailureMode{
@@ -171,7 +171,7 @@ func acceptedCoverageFromHandoff(coverage *productworkflow.ImplementationHandoff
 		})
 	}
 	for _, deviation := range contract.HAZOPDeviations {
-		if !acceptedProductCoverageStatus(deviation.Status) {
+		if !productworkflow.BehavioralCoverageStatusIsAccepted(deviation.Status) {
 			continue
 		}
 		out.HAZOPDeviations = append(out.HAZOPDeviations, featureplanner.AcceptedCoverageHAZOPDeviation{
@@ -185,7 +185,7 @@ func acceptedCoverageFromHandoff(coverage *productworkflow.ImplementationHandoff
 		})
 	}
 	for _, leaf := range contract.FaultTreeLeaves {
-		if !acceptedProductCoverageStatus(leaf.Status) {
+		if !productworkflow.BehavioralCoverageStatusIsAccepted(leaf.Status) {
 			continue
 		}
 		out.FaultTreeLeaves = append(out.FaultTreeLeaves, featureplanner.AcceptedCoverageFaultTreeLeaf{
@@ -197,7 +197,7 @@ func acceptedCoverageFromHandoff(coverage *productworkflow.ImplementationHandoff
 		})
 	}
 	for _, table := range contract.DecisionTables {
-		if !acceptedProductCoverageStatus(table.Status) {
+		if !productworkflow.BehavioralCoverageStatusIsAccepted(table.Status) {
 			continue
 		}
 		mapped := featureplanner.AcceptedCoverageDecisionTable{
@@ -216,7 +216,7 @@ func acceptedCoverageFromHandoff(coverage *productworkflow.ImplementationHandoff
 		out.DecisionTables = append(out.DecisionTables, mapped)
 	}
 	for _, boundary := range contract.BoundaryValues {
-		if !acceptedProductCoverageStatus(boundary.Status) {
+		if !productworkflow.BehavioralCoverageStatusIsAccepted(boundary.Status) {
 			continue
 		}
 		out.BoundaryValues = append(out.BoundaryValues, featureplanner.AcceptedCoverageBoundaryValue{
@@ -229,7 +229,7 @@ func acceptedCoverageFromHandoff(coverage *productworkflow.ImplementationHandoff
 		})
 	}
 	for _, machine := range contract.StateMachines {
-		if !acceptedProductCoverageStatus(machine.Status) {
+		if !productworkflow.BehavioralCoverageStatusIsAccepted(machine.Status) {
 			continue
 		}
 		mapped := featureplanner.AcceptedCoverageStateMachine{
@@ -248,7 +248,7 @@ func acceptedCoverageFromHandoff(coverage *productworkflow.ImplementationHandoff
 		out.StateMachines = append(out.StateMachines, mapped)
 	}
 	for _, incident := range contract.PostMortems {
-		if !acceptedProductCoverageStatus(incident.Status) {
+		if !productworkflow.BehavioralCoverageStatusIsAccepted(incident.Status) {
 			continue
 		}
 		out.PostMortems = append(out.PostMortems, featureplanner.AcceptedCoveragePostMortem{
@@ -259,7 +259,7 @@ func acceptedCoverageFromHandoff(coverage *productworkflow.ImplementationHandoff
 		})
 	}
 	for _, model := range contract.FormalModels {
-		if !acceptedProductCoverageStatus(model.Status) {
+		if !productworkflow.BehavioralCoverageStatusIsAccepted(model.Status) {
 			continue
 		}
 		out.FormalModels = append(out.FormalModels, featureplanner.AcceptedCoverageFormalModel{
@@ -270,7 +270,7 @@ func acceptedCoverageFromHandoff(coverage *productworkflow.ImplementationHandoff
 		})
 	}
 	for _, target := range contract.FuzzTargets {
-		if !acceptedProductCoverageStatus(target.Status) {
+		if !productworkflow.BehavioralCoverageStatusIsAccepted(target.Status) {
 			continue
 		}
 		out.FuzzTargets = append(out.FuzzTargets, featureplanner.AcceptedCoverageFuzzTarget{
@@ -284,7 +284,7 @@ func acceptedCoverageFromHandoff(coverage *productworkflow.ImplementationHandoff
 		})
 	}
 	for _, eval := range contract.RAGEvals {
-		if !acceptedProductCoverageStatus(eval.Status) {
+		if !productworkflow.BehavioralCoverageStatusIsAccepted(eval.Status) {
 			continue
 		}
 		out.RAGEvals = append(out.RAGEvals, featureplanner.AcceptedCoverageRAGEval{
@@ -298,7 +298,7 @@ func acceptedCoverageFromHandoff(coverage *productworkflow.ImplementationHandoff
 		})
 	}
 	for _, securityCase := range contract.SecurityCases {
-		if !acceptedProductCoverageStatus(securityCase.Status) {
+		if !productworkflow.BehavioralCoverageStatusIsAccepted(securityCase.Status) {
 			continue
 		}
 		out.SecurityCases = append(out.SecurityCases, featureplanner.AcceptedCoverageSecurityCase{
@@ -312,7 +312,7 @@ func acceptedCoverageFromHandoff(coverage *productworkflow.ImplementationHandoff
 		})
 	}
 	for _, privacy := range contract.PrivacyControls {
-		if !acceptedProductCoverageStatus(privacy.Status) {
+		if !productworkflow.BehavioralCoverageStatusIsAccepted(privacy.Status) {
 			continue
 		}
 		out.PrivacyControls = append(out.PrivacyControls, featureplanner.AcceptedCoveragePrivacyControl{
@@ -327,7 +327,7 @@ func acceptedCoverageFromHandoff(coverage *productworkflow.ImplementationHandoff
 		})
 	}
 	for _, provider := range contract.ProviderContracts {
-		if !acceptedProductCoverageStatus(provider.Status) {
+		if !productworkflow.BehavioralCoverageStatusIsAccepted(provider.Status) {
 			continue
 		}
 		out.ProviderContracts = append(out.ProviderContracts, featureplanner.AcceptedCoverageProviderContract{
@@ -341,7 +341,7 @@ func acceptedCoverageFromHandoff(coverage *productworkflow.ImplementationHandoff
 		})
 	}
 	for _, signal := range contract.Observability {
-		if !acceptedProductCoverageStatus(signal.Status) {
+		if !productworkflow.BehavioralCoverageStatusIsAccepted(signal.Status) {
 			continue
 		}
 		out.Observability = append(out.Observability, featureplanner.AcceptedCoverageObservability{
@@ -355,7 +355,7 @@ func acceptedCoverageFromHandoff(coverage *productworkflow.ImplementationHandoff
 		})
 	}
 	for _, bound := range contract.PerformanceBounds {
-		if !acceptedProductCoverageStatus(bound.Status) {
+		if !productworkflow.BehavioralCoverageStatusIsAccepted(bound.Status) {
 			continue
 		}
 		out.PerformanceBounds = append(out.PerformanceBounds, featureplanner.AcceptedCoveragePerformanceBound{
@@ -368,7 +368,7 @@ func acceptedCoverageFromHandoff(coverage *productworkflow.ImplementationHandoff
 		})
 	}
 	for _, journey := range contract.E2EJourneys {
-		if !acceptedProductCoverageStatus(journey.Status) {
+		if !productworkflow.BehavioralCoverageStatusIsAccepted(journey.Status) {
 			continue
 		}
 		out.E2EJourneys = append(out.E2EJourneys, featureplanner.AcceptedCoverageE2EJourney{
@@ -439,10 +439,6 @@ func acceptedCoverageFromHandoff(coverage *productworkflow.ImplementationHandoff
 	}
 
 	return out
-}
-
-func acceptedProductCoverageStatus(status string) bool {
-	return productworkflow.BehavioralCoverageStatusIsAccepted(status)
 }
 
 func copyStringMap(in map[string]string) map[string]string {

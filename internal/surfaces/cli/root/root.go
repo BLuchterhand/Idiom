@@ -6,17 +6,20 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	lanecontract "idiom/internal/contracts/lane"
-	"idiom/internal/evidence/telemetry"
+	"idiom/internal/evidence/productevidence"
 	architectcmd "idiom/internal/surfaces/cli/architect"
+	atomcmd "idiom/internal/surfaces/cli/atom"
 	auditcmd "idiom/internal/surfaces/cli/audit"
 	backendcmd "idiom/internal/surfaces/cli/backend"
 	briefcmd "idiom/internal/surfaces/cli/brief"
 	codingrulescmd "idiom/internal/surfaces/cli/codingrules"
 	doctorcmd "idiom/internal/surfaces/cli/doctor"
+	featureplannercmd "idiom/internal/surfaces/cli/featureplanner"
 	headlesscmd "idiom/internal/surfaces/cli/headless"
 	implementcmd "idiom/internal/surfaces/cli/implement"
 	initcmd "idiom/internal/surfaces/cli/init"
 	lanecmd "idiom/internal/surfaces/cli/lane"
+	mcpcmd "idiom/internal/surfaces/cli/mcp"
 	planexecutecmd "idiom/internal/surfaces/cli/planexecute"
 	probecmd "idiom/internal/surfaces/cli/probe"
 	productcmd "idiom/internal/surfaces/cli/product"
@@ -83,13 +86,13 @@ func runMainWithTelemetryDir(args []string, stdout io.Writer, stderr io.Writer, 
 		case "decision":
 			return headlesscmd.RunDecision(subcommandArgs, stdout, stderr)
 		case "tool":
-			return runToolMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
+			return toolcmd.RunWithTelemetry(subcommandArgs, stdout, stderr, rec)
 		case "mcp":
-			return runMCPMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
+			return mcpcmd.RunWithTelemetryAndVersion(subcommandArgs, stdout, stderr, rec, version)
 		case "context":
 			return runContextMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
 		case "atom":
-			return runAtomMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
+			return atomcmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
 		case "artifact":
 			return runArtifactMainWithTelemetry(subcommandArgs, stdout, stderr, cmdruntime.RunPromptOnce, rec)
 		case string(lanecontract.LaneImplement):
@@ -97,7 +100,7 @@ func runMainWithTelemetryDir(args []string, stdout io.Writer, stderr io.Writer, 
 		case string(lanecontract.LanePlanExecute):
 			return planexecutecmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, cmdruntime.RunPromptOnce, rec)
 		case "feature-planner":
-			return runFeaturePlannerMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
+			return featureplannercmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, rec, featurePlannerDependencies())
 		case "recover":
 			return recovercmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
 		case "lane":
@@ -125,9 +128,9 @@ func runMainWithTelemetryDir(args []string, stdout io.Writer, stderr io.Writer, 
 		case "product":
 			return productcmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
 		case "product-evidence":
-			return runProductEvidenceMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
+			return productevidence.RunProductEvidenceMainWithTelemetry(subcommandArgs, stdout, stderr, rec, productEvidenceDeps())
 		case "release":
-			return runReleaseMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
+			return productevidence.RunReleaseMainWithTelemetry(subcommandArgs, stdout, stderr, rec, productEvidenceDeps())
 		case "init":
 			return initcmd.RunMain(subcommandArgs, stdout, stderr)
 		case "skills":
@@ -139,7 +142,7 @@ func runMainWithTelemetryDir(args []string, stdout io.Writer, stderr io.Writer, 
 		}
 	}
 
-	return cmdruntime.RunWithTelemetry(args, stdout, stderr, cmdruntime.RunPromptOnce, cmdruntime.RunPromptsOnce, cmdruntime.RunTUI, cmdruntime.RunServerOnly, cmdruntime.RunListSessions, runVersionMain, rec)
+	return cmdruntime.RunWithTelemetry(args, stdout, stderr, cmdruntime.RunPromptOnce, cmdruntime.RunPromptsOnce, cmdruntime.RunTUI, cmdruntime.RunServerOnlyWithTelemetry, cmdruntime.RunListSessions, runVersionMain, rec)
 }
 
 func applyBuildInfo(opts Options) {
@@ -152,16 +155,4 @@ func applyBuildInfo(opts Options) {
 
 	resolvedVersion, resolvedCommit, resolvedDate := resolvedBuildInfo()
 	workspace.SetHarnessAuditBuildIdentity(resolvedVersion, resolvedCommit, resolvedDate)
-}
-
-func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return toolcmd.RunWithTelemetry(args, stdout, stderr, rec)
-}
-
-func toolHelpRequested(args []string) bool {
-	return toolcmd.HelpRequested(args)
-}
-
-func commandTelemetryName(args []string) string {
-	return cmdtelemetry.CommandName(args)
 }

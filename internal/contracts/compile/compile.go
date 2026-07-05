@@ -529,10 +529,11 @@ func compileObligations(input PlanExecutePlannerInput) []autonomy.Obligation {
 
 func compileBudget(input PlanExecutePlannerInput) autonomy.BudgetState {
 	return autonomy.BudgetState{
-		MaxToolSteps:       input.Budget.MaxToolSteps,
-		MaxModelCalls:      input.Budget.MaxModelCalls,
-		MaxContextMessages: firstPositive(input.Runtime.ContextBudget.MaxContextMessages, input.Budget.MaxContextMessages),
-		MaxContextChars:    firstPositive(input.Runtime.ContextBudget.MaxContextChars, input.Budget.MaxContextChars),
+		MaxToolSteps:             input.Budget.MaxToolSteps,
+		MaxModelCalls:            input.Budget.MaxModelCalls,
+		MaxOperationalModelCalls: input.Budget.MaxOperationalModelCalls,
+		MaxContextMessages:       firstPositive(input.Runtime.ContextBudget.MaxContextMessages, input.Budget.MaxContextMessages),
+		MaxContextChars:          firstPositive(input.Runtime.ContextBudget.MaxContextChars, input.Budget.MaxContextChars),
 	}
 }
 

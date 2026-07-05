@@ -82,3 +82,21 @@ func TestIntentLoopCycleStatusesParseDeclaredValues(t *testing.T) {
 		}
 	}
 }
+
+func TestIntentLoopVocabularyParsersTrimButKnownEventTypeIsExact(t *testing.T) {
+	if eventType, ok := ParseEventName(" \t" + EventName(EventStart) + "\n"); !ok || eventType != EventStart {
+		t.Fatalf("ParseEventName trimmed start = %q %v, want %q true", eventType, ok, EventStart)
+	}
+	if status, ok := ParseStatus(" \t" + string(StatusCompleted) + "\n"); !ok || status != StatusCompleted {
+		t.Fatalf("ParseStatus trimmed completed = %q %v, want %q true", status, ok, StatusCompleted)
+	}
+	if status, ok := ParseCycleStatus(" \t" + string(CycleStatusFailed) + "\n"); !ok || status != CycleStatusFailed {
+		t.Fatalf("ParseCycleStatus trimmed failed = %q %v, want %q true", status, ok, CycleStatusFailed)
+	}
+	if KnownEventType(EventType(EventName(EventStart))) {
+		t.Fatalf("KnownEventType should reject prefixed event name %q", EventName(EventStart))
+	}
+	if KnownEventType(EventType(" " + string(EventStart))) {
+		t.Fatalf("KnownEventType should not trim typed event values")
+	}
+}

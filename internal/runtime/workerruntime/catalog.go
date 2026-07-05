@@ -60,7 +60,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceArtifactBodyOrTypedBlocker},
 			VerificationContract: VerificationNotRequiredArtifactFinal,
 			StopConditions:       []StopConditionID{StopArtifactBodyReturned, StopBlockedByMissingInformation},
-			FinalCritic:          []FinalCriticID{"artifact_body_only_or_typed_blocker", "no_tool_calls"},
+			FinalCritic:          []FinalCriticID{FinalCriticArtifactBodyOnlyOrTypedBlocker, FinalCriticNoToolCalls},
 		}
 	case ArtifactDistillerTaskFamily:
 		return RuntimeContractSpec{
@@ -72,19 +72,19 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceRawOutputParserFailure, RequiredEvidenceActiveMutationContract, RequiredEvidenceRequiredEditScope},
 			VerificationContract: VerificationNotRequiredNonExecutable,
 			StopConditions:       []StopConditionID{StopEditIntentOrTypedBlocker},
-			FinalCritic:          []FinalCriticID{"outputs_only_edit_intent_or_typed_blocker", "no_tool_calls", "no_write_authority", "no_submit_plan"},
+			FinalCritic:          []FinalCriticID{FinalCriticOutputsOnlyEditIntentOrTypedBlocker, FinalCriticNoToolCalls, FinalCriticNoWriteAuthority, FinalCriticNoSubmitPlan},
 		}
-	case "conversation", "direct_question", "debug_logs":
+	case string(autonomy.TaskFamilyConversation), string(autonomy.TaskFamilyDirectQuestion), string(autonomy.TaskFamilyDebugLogs):
 		return RuntimeContractSpec{
 			TaskFamily:           autonomy.TaskFamilyConversation,
 			Contract:             ContractDirectAnswer,
 			PermissionProfile:    PermissionReadOnlyWorkspace,
 			ToolProfile:          CapabilityConversationReadOnly,
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceAnswerAddressesUserRequest},
-			SearchPolicy:         []SearchPolicyID{"answer_from_visible_context_when_sufficient", "for repo-specific questions use one efficient allowed context/search/read path", "prefer bounded source reads over broad scans", "stop_after_enough_evidence_to_answer"},
+			SearchPolicy:         []SearchPolicyID{SearchPolicyAnswerFromVisibleContextWhenSufficient, SearchPolicyForRepoSpecificQuestionsUseOneEfficientAllowedPath, SearchPolicyPreferBoundedSourceReadsOverBroadScans, SearchPolicyStopAfterEnoughEvidenceToAnswer},
 			VerificationContract: VerificationNotRequiredReadOnlyLane,
 			StopConditions:       []StopConditionID{StopAnsweredUserRequest, StopBlockedByMissingInformation},
-			FinalCritic:          []FinalCriticID{"answers_actual_user_request", "well_formatted_informative_on_topic", "cite_or_name_evidence_when_workspace_used"},
+			FinalCritic:          []FinalCriticID{FinalCriticAnswersActualUserRequest, FinalCriticWellFormattedInformativeOnTopic, FinalCriticCiteOrNameEvidenceWhenWorkspaceUsed},
 		}
 	case "verification_only":
 		return RuntimeContractSpec{
@@ -96,10 +96,10 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceVerificationCommand, RequiredEvidencePassFailStatus},
 			RequiredTools:        []string{workspace.ToolNameShell},
 			ReadinessGate:        []ReadinessGateID{ReadinessVerificationStatusReported},
-			SearchPolicy:         []SearchPolicyID{"run_requested_check", "capture_failure_output", "do_not_edit"},
+			SearchPolicy:         []SearchPolicyID{SearchPolicyRunRequestedCheck, SearchPolicyCaptureFailureOutput, SearchPolicyDoNotEdit},
 			VerificationContract: VerificationNotRequiredReadOnlyLane,
 			StopConditions:       []StopConditionID{StopRequiredEvidenceSatisfied},
-			FinalCritic:          []FinalCriticID{"answers_actual_user_request"},
+			FinalCritic:          []FinalCriticID{FinalCriticAnswersActualUserRequest},
 		}
 	case "locate":
 		return RuntimeContractSpec{
@@ -108,7 +108,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			PermissionProfile:    PermissionReadOnlyWorkspace,
 			ToolProfile:          CapabilityLocateOnly,
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceExactWorkspacePath, RequiredEvidenceLineOrSnippet, RequiredEvidenceTargetMatchReason},
-			SearchPolicy:         []SearchPolicyID{"prefer_code_navigate_or_context_query_for_symbol_location", "use_search_content_as_fallback_for_literal_matches", "stop_when_exact_target_is_supported"},
+			SearchPolicy:         []SearchPolicyID{SearchPolicyPreferCodeNavigateOrContextQueryForSymbolLocation, SearchPolicyUseSearchContentAsFallbackForLiteralMatches, SearchPolicyStopWhenExactTargetIsSupported},
 			VerificationContract: VerificationNotRequiredReadOnlyLane,
 			StopConditions:       []StopConditionID{StopRequiredEvidenceSatisfied, StopBlockedByMissingInformation},
 		}
@@ -121,15 +121,15 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceTargetLocation, requiredEvidenceGitHistoryRationale, RequiredEvidenceChangedPaths, RequiredEvidenceVerificationStatus},
 			RequiredTools:        []string{requiredToolGitHistoryLookup, "edit_file_or_apply_patch", "source_sanity_or_verification_shell"},
 			ReadinessGate:        []ReadinessGateID{ReadinessTargetLocationConfirmed, ReadinessChangedPathsReported, ReadinessVerificationStatusReported},
-			SearchPolicy:         []SearchPolicyID{"delegate_broad_discovery_when_needed", "locate_target_before_edit", "history_required_before_writes", "read_commit_descriptions_for_intended_logic_before_write", "verify_changed_surface"},
+			SearchPolicy:         []SearchPolicyID{SearchPolicyDelegateBroadDiscoveryWhenNeeded, SearchPolicyLocateTargetBeforeEdit, SearchPolicyHistoryRequiredBeforeWrites, SearchPolicyReadCommitDescriptionsForIntendedLogicBeforeWrite, SearchPolicyVerifyChangedSurface},
 			VerificationContract: VerificationTestsPassedFailedSkipped,
 			StopConditions:       []StopConditionID{StopChangeVerified, StopBlockedWithFailedVerificationOrScope},
-			FinalCritic:          []FinalCriticID{"answers_actual_user_request", "changed_paths_reported", "verification_status_reported"},
+			FinalCritic:          []FinalCriticID{FinalCriticAnswersActualUserRequest, FinalCriticChangedPathsReported, FinalCriticVerificationStatusReported},
 		}
 	case "security_review", "performance_review":
-		searchPolicy := []SearchPolicyID{"prefer_discovery_query_for_composite_review", "rank_candidates", "answer_when_bounded_finding_or_no_finding_is_supported", "if_continuing_name_one_exact_missing_claim_and_probe", "deepen_if_no_bounded_finding", "use_structural_search_for_syntax_shapes", "use_dependency_graph_for_boundary_or_import_questions"}
+		searchPolicy := []SearchPolicyID{SearchPolicyPreferDiscoveryQueryForCompositeReview, SearchPolicyRankCandidates, SearchPolicyAnswerWhenBoundedFindingOrNoFindingIsSupported, SearchPolicyIfContinuingNameOneExactMissingClaimAndProbe, SearchPolicyDeepenIfNoBoundedFinding, SearchPolicyUseStructuralSearchForSyntaxShapes, SearchPolicyUseDependencyGraphForBoundaryOrImportQuestions}
 		if strings.TrimSpace(family) == "security_review" {
-			searchPolicy = append(searchPolicy, "prefer_discovery_query_security_review_before_raw_scans", "name_heavy_scanner_need_instead_of_default_semgrep_or_joern")
+			searchPolicy = append(searchPolicy, SearchPolicyPreferDiscoveryQuerySecurityReviewBeforeRawScans, SearchPolicyNameHeavyScannerNeedInsteadOfDefaultSemgrepOrJoern)
 		}
 
 		return RuntimeContractSpec{
@@ -143,7 +143,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			SearchPolicy:         searchPolicy,
 			VerificationContract: VerificationNotRequiredReadOnlyLane,
 			StopConditions:       []StopConditionID{StopRequiredEvidenceSatisfied, StopBudgetExhaustedWithUncertainty},
-			FinalCritic:          []FinalCriticID{"answers_actual_user_request", "required_evidence_cited"},
+			FinalCritic:          []FinalCriticID{FinalCriticAnswersActualUserRequest, FinalCriticRequiredEvidenceCited},
 		}
 	case "architecture":
 		return RuntimeContractSpec{
@@ -154,10 +154,10 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceInspectedPaths, RequiredEvidenceArchitectureBoundaryEvidence, RequiredEvidenceConfidence},
 			RequiredTools:        []string{"workspace_inspection"},
 			ReadinessGate:        []ReadinessGateID{ReadinessInspectedPathsReported, ReadinessArchitectureBoundarySupportedOrUncertain},
-			SearchPolicy:         []SearchPolicyID{"delegate_broad_discovery_when_needed", "prefer_discovery_query_for_architecture_boundary", "trace_boundaries_from_named_components", "answer_when_boundary_evidence_is_sufficient", "if_not_answering_name_one_exact_missing_claim_and_probe", "use_discovery_query_for_boundary_import_or_evolution_questions", "name_heavy_graph_or_history_need_if_unresolved"},
+			SearchPolicy:         []SearchPolicyID{SearchPolicyDelegateBroadDiscoveryWhenNeeded, SearchPolicyPreferDiscoveryQueryForArchitectureBoundary, SearchPolicyTraceBoundariesFromNamedComponents, SearchPolicyAnswerWhenBoundaryEvidenceIsSufficient, SearchPolicyIfNotAnsweringNameOneExactMissingClaimAndProbe, SearchPolicyUseDiscoveryQueryForBoundaryImportOrEvolutionQuestion, SearchPolicyNameHeavyGraphOrHistoryNeedIfUnresolved},
 			VerificationContract: VerificationNotRequiredReadOnlyLane,
 			StopConditions:       []StopConditionID{StopRequiredEvidenceSatisfied, StopBudgetExhaustedWithUncertainty},
-			FinalCritic:          []FinalCriticID{"answers_actual_user_request", "required_evidence_cited"},
+			FinalCritic:          []FinalCriticID{FinalCriticAnswersActualUserRequest, FinalCriticRequiredEvidenceCited},
 		}
 	case string(autonomy.TaskFamilyFeaturePlannerPlanner):
 		return RuntimeContractSpec{
@@ -170,7 +170,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			ReadinessGate:        []ReadinessGateID{ReadinessFeaturePlanOrPlannerQuestion},
 			VerificationContract: VerificationNotRequiredNonExecutable,
 			StopConditions:       []StopConditionID{StopFeaturePlanReturnedOrQuestion, StopBlockedByMissingInformation},
-			FinalCritic:          []FinalCriticID{"feature_plan_schema_or_planner_question", "no_tool_calls"},
+			FinalCritic:          []FinalCriticID{FinalCriticFeaturePlanSchemaOrPlannerQuestion, FinalCriticNoToolCalls},
 		}
 	case string(autonomy.TaskFamilyFeaturePlannerImplementor):
 		return RuntimeContractSpec{
@@ -180,10 +180,10 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			ToolProfile:          CapabilityPlanSubmissionPlanner,
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidencePlanExecuteCompletion},
 			ReadinessGate:        []ReadinessGateID{ReadinessPlanExecuteCompletion},
-			SearchPolicy:         []SearchPolicyID{"dispatch_atom_through_plan_execute", "preserve_required_edit_paths", "return_typed_plan_execute_completion"},
+			SearchPolicy:         []SearchPolicyID{SearchPolicyDispatchAtomThroughPlanExecute, SearchPolicyPreserveRequiredEditPaths, SearchPolicyReturnTypedPlanExecuteCompletion},
 			VerificationContract: VerificationNotRequiredTextMutation,
 			StopConditions:       []StopConditionID{StopPlanExecuteCompletionReturned, StopBlockedByMissingPermissionOrInformation},
-			FinalCritic:          []FinalCriticID{"plan_execute_completion_reported"},
+			FinalCritic:          []FinalCriticID{FinalCriticPlanExecuteCompletionReported},
 		}
 	case string(autonomy.TaskFamilyPlanThenExecutePlanner):
 		// Planner phase of `idiom plan-execute`. The model has read
@@ -203,10 +203,10 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			RequiredEvidence:     []EvidenceRequirementID{requiredEvidenceGitHistoryRationale, RequiredEvidencePlanSubmittedOrSourceSatisfied},
 			RequiredTools:        []string{requiredToolGitHistoryLookup, workspace.ToolNameSubmitPlan},
 			ReadinessGate:        []ReadinessGateID{ReadinessSubmitPlanOrSourceSatisfiedOrBlocker},
-			SearchPolicy:         []SearchPolicyID{"consume_target_packet_first", "trust_preloaded_current_state_anchors_for_scope_not_source_body", "required_existing_paths_need_source_body_before_submit_plan", "history_required_before_submit_plan", "read_commit_descriptions_for_intended_logic_before_submit_plan", "submit_plan_when_edit_set_is_supported", "submit_plan_requires_executable_final_edits", "source_satisfied_when_current_state_already_matches", "do_not_call_per_edit_writes"},
+			SearchPolicy:         []SearchPolicyID{SearchPolicyConsumeTargetPacketFirst, SearchPolicyTrustPreloadedCurrentStateAnchorsForScopeNotSource, SearchPolicyRequiredExistingPathsNeedSourceBodyBeforeSubmitPlan, SearchPolicyHistoryRequiredBeforeSubmitPlan, SearchPolicyReadCommitDescriptionsForLogicBeforeSubmitPlan, SearchPolicySubmitPlanWhenEditSetIsSupported, SearchPolicySubmitPlanRequiresExecutableFinalEdits, SearchPolicySourceSatisfiedWhenCurrentStateAlreadyMatches, SearchPolicyDoNotCallPerEditWrites},
 			VerificationContract: VerificationNotRequiredTextMutation,
 			StopConditions:       []StopConditionID{StopSubmitPlanReturnedOrSourceSatisfiedOrBlocker, StopBlockedByMissingPermissionOrInformation},
-			FinalCritic:          []FinalCriticID{"answers_actual_user_request", "submit_plan_called", "source_satisfied_or_blocker_only_with_per_path_evidence"},
+			FinalCritic:          []FinalCriticID{FinalCriticAnswersActualUserRequest, FinalCriticSubmitPlanCalled, FinalCriticSourceSatisfiedOrBlockerOnlyWithPerPathEvidence},
 		}
 	case string(autonomy.TaskFamilyPlanThenExecuteReview):
 		// Action-capable review for plan-execute. This lane receives
@@ -222,10 +222,10 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceVerificationChecklist, RequiredEvidenceDecisionPassOrCorrectivePlan},
 			RequiredTools:        nil,
 			ReadinessGate:        []ReadinessGateID{ReadinessVerificationChecklistCompleted, ReadinessDecisionPassOrCorrectivePlanOrBlocker},
-			SearchPolicy:         []SearchPolicyID{"use_phase_evidence_first", "do_not_re_submit_applied_plan_edits", "submit_plan_only_for_new_corrective_edits", "corrective_submit_plan_requires_executable_final_edits", "pass_when_open_obligations_are_closed"},
+			SearchPolicy:         []SearchPolicyID{SearchPolicyUsePhaseEvidenceFirst, SearchPolicyDoNotReSubmitAppliedPlanEdits, SearchPolicySubmitPlanOnlyForNewCorrectiveEdits, SearchPolicyCorrectiveSubmitPlanRequiresExecutableFinalEdits, SearchPolicyPassWhenOpenObligationsAreClosed},
 			VerificationContract: VerificationNotRequiredReviewLane,
 			StopConditions:       []StopConditionID{StopDecisionPassWithChecklist, StopSubmitPlanCorrectiveEditsOrBlocker, StopBlockedByMissingInformation},
-			FinalCritic:          []FinalCriticID{"answers_actual_user_request", "verification_checklist_present", "decision_reported"},
+			FinalCritic:          []FinalCriticID{FinalCriticAnswersActualUserRequest, FinalCriticVerificationChecklistPresent, FinalCriticDecisionReported},
 		}
 	case "implementation", "test_authoring", "config_edit", "script_edit", "gdscript_edit", "docs_edit", "prompt_edit_security", "failure_injection":
 		family = strings.TrimSpace(family)
@@ -253,10 +253,10 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			RequiredEvidence:     []EvidenceRequirementID{requiredEvidenceGitHistoryRationale, RequiredEvidenceChangedPathsOrNoopReason, RequiredEvidenceVerificationStatus},
 			RequiredTools:        []string{requiredToolGitHistoryLookup, "edit_file_or_apply_patch", "source_sanity_or_verification_shell"},
 			ReadinessGate:        []ReadinessGateID{ReadinessChangedPathsReported, ReadinessVerificationContractResolved},
-			SearchPolicy:         []SearchPolicyID{"consume_target_packet_first", "trust_preloaded_current_state_anchors", "history_required_before_writes", "read_commit_descriptions_for_intended_logic_before_write", "write_once_edit_location_is_supported", "prefer_small_bounded_edits", "verify_changed_surface"},
+			SearchPolicy:         []SearchPolicyID{SearchPolicyConsumeTargetPacketFirst, SearchPolicyTrustPreloadedCurrentStateAnchors, SearchPolicyHistoryRequiredBeforeWrites, SearchPolicyReadCommitDescriptionsForIntendedLogicBeforeWrite, SearchPolicyWriteOnceEditLocationIsSupported, SearchPolicyPreferSmallBoundedEdits, SearchPolicyVerifyChangedSurface},
 			VerificationContract: verificationContract,
 			StopConditions:       []StopConditionID{StopImplementationVerifiedOrFailureReported, StopBlockedByMissingPermissionOrInformation},
-			FinalCritic:          []FinalCriticID{"answers_actual_user_request", "changed_paths_reported", "verification_status_reported"},
+			FinalCritic:          []FinalCriticID{FinalCriticAnswersActualUserRequest, FinalCriticChangedPathsReported, FinalCriticVerificationStatusReported},
 		}
 	default:
 		return RuntimeContractSpec{
@@ -267,7 +267,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceAnswerAddressesUserRequest},
 			VerificationContract: VerificationNotRequiredReadOnlyLane,
 			StopConditions:       []StopConditionID{StopAnsweredUserRequest, StopBlockedByMissingInformation},
-			FinalCritic:          []FinalCriticID{"answers_actual_user_request", "well_formatted_informative_on_topic"},
+			FinalCritic:          []FinalCriticID{FinalCriticAnswersActualUserRequest, FinalCriticWellFormattedInformativeOnTopic},
 		}
 	}
 }
@@ -286,9 +286,9 @@ func RuntimeBriefForTaskFamily(family string, lane string, allowedWorkspaceTools
 		PermissionProfile:    string(spec.PermissionProfile),
 		AllowedTools:         AllowedToolsForCapabilityProfile(allowedWorkspaceTools, spec.ToolProfile),
 		ForbiddenTools:       append([]string(nil), spec.ForbiddenTools...),
-		RequiredEvidence:     evidenceRequirementStrings(spec.RequiredEvidence),
+		RequiredEvidence:     EvidenceRequirementStrings(spec.RequiredEvidence),
 		RequiredTools:        append([]string(nil), spec.RequiredTools...),
-		ReadinessGate:        readinessGateStrings(spec.ReadinessGate),
+		ReadinessGate:        ReadinessGateStrings(spec.ReadinessGate),
 		SearchPolicy:         searchPolicyStrings(spec.SearchPolicy),
 		VerificationContract: string(spec.VerificationContract),
 		StopConditions:       stopConditionStrings(spec.StopConditions),
@@ -350,7 +350,7 @@ func AllowedToolsForCapabilityProfile(available []string, profile ToolCapability
 	case CapabilityGuardedWrite, CapabilityIsolatedWrite:
 		return filterAllowedTools(available, profile, guardedWriteToolNames()...)
 	case CapabilityPlanSubmissionPlanner:
-		return filterAllowedTools(available, profile, planSubmissionPlannerToolNames()...)
+		return filterAllowedTools(available, profile, autonomy.PlanExecutePlannerToolNames()...)
 	case CapabilityPlanSubmissionReview:
 		return filterAllowedTools(available, profile, planSubmissionReviewToolNames()...)
 	case CapabilityReadOnlyDiscovery:
@@ -410,10 +410,6 @@ func planSubmissionReviewToolNames() []string {
 	names = mergeStrings(names, workspace.RuntimeHistoryInspectionToolNames())
 
 	return mergeStrings(names, []string{workspace.ToolNameSubmitPlan})
-}
-
-func planSubmissionPlannerToolNames() []string {
-	return autonomy.PlanExecutePlannerToolNames()
 }
 
 func guardedWriteToolNames() []string {

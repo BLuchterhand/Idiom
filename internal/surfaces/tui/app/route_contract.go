@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"idiom/internal/runtime/modepolicy"
+	"idiom/internal/runtime/workerruntime"
 )
 
 type routeSource string
@@ -42,7 +43,7 @@ func projectRouteContract(plan turnRoutePlan, mode modepolicy.Mode) routeContrac
 	source := normalizeRouteSource(plan.RouteSource)
 	authority := routeMutationAuthorityNone
 
-	if isImplementationLikeFamily(plan.Family) {
+	if workerruntime.TaskFamilyMutationCapable(plan.Family) {
 		authority = routeMutationAuthorityExplicit
 	}
 

@@ -194,7 +194,7 @@ func (idx *GoIndex) FindCallsFrom(pattern string, limit int) []CallMatch {
 	matches := make([]CallMatch, 0)
 
 	for _, symbol := range symbols {
-		source := idx.fileByPath(symbol.Path)
+		source := idx.FileByPath(symbol.Path)
 		if source == nil {
 			continue
 		}

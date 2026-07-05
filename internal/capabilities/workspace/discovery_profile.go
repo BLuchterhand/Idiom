@@ -58,7 +58,7 @@ func DiscoveryProfileForRequest(req ToolRequest) ToolDiscoveryProfile {
 		return discoveryProfile("runtime_trace", scopeFromPathAndPattern(req.Path, req.Command), "medium", true)
 	case ToolNameDiscoveryQuery:
 		cost := "medium"
-		if normalizeDiscoveryQueryPurpose(req.Purpose) == DiscoveryQueryPurposeSecurityReview {
+		if NormalizeDiscoveryQueryPurpose(req.Purpose) == DiscoveryQueryPurposeSecurityReview {
 			cost = "high"
 		}
 

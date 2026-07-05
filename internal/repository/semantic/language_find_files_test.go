@@ -2,46 +2,6 @@ package semantic
 
 import "testing"
 
-func TestLanguageFindFilesNormalizePathSeparators(t *testing.T) {
-	tests := []struct {
-		name  string
-		files []string
-	}{
-		{
-			name: "java",
-			files: []string{
-				"src/main/java/com/example/App.java",
-				`legacy\Worker.java`,
-			},
-		},
-		{
-			name: "python",
-			files: []string{
-				"src/demo/core.py",
-				`legacy\worker.py`,
-			},
-		},
-		{
-			name: "typescript",
-			files: []string{
-				"src/app.ts",
-				`legacy\worker.ts`,
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := FindFilesExactPartial(tt.files, `src\`); len(got) != 1 {
-				t.Fatalf("expected backslash path prefix to match one slash-normalized path, got %#v", got)
-			}
-
-			if got := FindFilesExactPartial(tt.files, "worker"); len(got) != 1 {
-				t.Fatalf("expected basename match for backslash-indexed path, got %#v", got)
-			}
-		})
-	}
-}
-
 func TestFileByPathNormalizesPathSeparators(t *testing.T) {
 	goIndex := &GoIndex{Files: []GoFile{{Path: "internal/surfaces/tui/app/app.go"}}}
 	if got := goIndex.FileByPath(` internal\surfaces\tui\app\app.go `); got == nil || got.Path != "internal/surfaces/tui/app/app.go" {

@@ -32,9 +32,9 @@ func TestCompactChildArtifactsPreservesEvidenceAndDeletesOnlyTransientFiles(t *t
 		ChildIdentity: &ChildRunIdentity{BackendProfile: "profile"},
 	}}
 
-	report, err := compactChildArtifacts(root, &state)
+	report, err := CompactChildArtifacts(root, &state)
 	if err != nil {
-		t.Fatalf("compactChildArtifacts error = %v", err)
+		t.Fatalf("CompactChildArtifacts error = %v", err)
 	}
 	if fileMissing(root, terminalPath) || fileMissing(root, progressPath) || fileMissing(root, promptPath) {
 		t.Fatalf("cleanup removed preserved evidence: terminal=%v progress=%v prompt=%v",

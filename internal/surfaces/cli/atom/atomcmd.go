@@ -7,10 +7,23 @@ import (
 	"io"
 	"strings"
 
+	"idiom/internal/evidence/telemetry"
 	"idiom/internal/workflows/atomintake"
 )
 
 type Dependencies = atomintake.Dependencies
+
+func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+	subcommand := ""
+	if len(args) > 0 {
+		subcommand = args[0]
+	}
+
+	code := RunMain(args, stdout, stderr, atomintake.Dependencies{})
+	telemetry.LogPhase(rec, "atom", map[string]any{"subcommand": subcommand, "exit_code": code})
+
+	return code
+}
 
 func RunMain(args []string, stdout io.Writer, stderr io.Writer, deps atomintake.Dependencies) int {
 	if len(args) == 0 {

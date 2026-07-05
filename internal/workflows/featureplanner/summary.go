@@ -52,14 +52,14 @@ func FormatStateSummary(state FeatureState, statePath string) string {
 			if strings.TrimSpace(question.QuestionSummary) != "" {
 				fmt.Fprintf(&b, "question: %s\n", question.QuestionSummary)
 			}
-			if questionOpen(question) && strings.TrimSpace(question.RequestedDecision) != "" {
+			if PlannerQuestionOpen(question) && strings.TrimSpace(question.RequestedDecision) != "" {
 				fmt.Fprintf(&b, "requested_decision: %s\n", strings.TrimSpace(question.RequestedDecision))
 			}
-			if questionOpen(question) && strings.TrimSpace(question.AuthorityRequired) == "operator_approval" {
+			if PlannerQuestionOpen(question) && strings.TrimSpace(question.AuthorityRequired) == "operator_approval" {
 				fmt.Fprintf(&b, "how_to_continue: reply with approval, revised paths, or a different project setup; feature-planner will resume planning after your answer\n")
 			}
-			if questionOpen(question) && strings.TrimSpace(question.AuthorityRequired) != "" && strings.TrimSpace(question.AuthorityRequired) != "operator_approval" {
-				fmt.Fprintf(&b, "answer_format: %s\n", plannerQuestionAnswerFormat(question.AuthorityRequired))
+			if PlannerQuestionOpen(question) && strings.TrimSpace(question.AuthorityRequired) != "" && strings.TrimSpace(question.AuthorityRequired) != "operator_approval" {
+				fmt.Fprintf(&b, "answer_format: %s\n", PlannerQuestionAnswerFormat(question.AuthorityRequired))
 			}
 
 			if strings.TrimSpace(question.Answer) != "" {
@@ -117,7 +117,7 @@ func FormatUserFacingStateSummary(state FeatureState, statePath string) string {
 	return strings.TrimSpace(b.String())
 }
 
-func plannerQuestionAnswerFormat(authorityRequired string) string {
+func PlannerQuestionAnswerFormat(authorityRequired string) string {
 	authorityRequired = strings.TrimSpace(authorityRequired)
 	if authorityRequired == "accepted_source" {
 		return `JSON object with answer, answer_source_kind="accepted_source", evidence_refs, and source_facts [{path, symbol, signature}]`
@@ -126,24 +126,16 @@ func plannerQuestionAnswerFormat(authorityRequired string) string {
 	return fmt.Sprintf("JSON object with answer, answer_source_kind=%q, and evidence_refs", authorityRequired)
 }
 
-func PlannerQuestionAnswerFormat(authorityRequired string) string {
-	return plannerQuestionAnswerFormat(authorityRequired)
-}
-
 func PlannerQuestionOpen(question PlannerQuestion) bool {
 	status := strings.TrimSpace(question.Status)
 	return status == "" || strings.EqualFold(status, "open")
-}
-
-func questionOpen(question PlannerQuestion) bool {
-	return PlannerQuestionOpen(question)
 }
 
 func CountOpenPlannerQuestions(state FeatureState) int {
 	open := 0
 
 	for _, question := range state.OpenQuestions {
-		if questionOpen(question) {
+		if PlannerQuestionOpen(question) {
 			open++
 		}
 	}

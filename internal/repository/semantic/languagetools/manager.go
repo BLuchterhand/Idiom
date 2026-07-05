@@ -4,13 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 
 	"idiom/internal/platform/failures"
-	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/semantic"
 	"idiom/internal/repository/semantic/language"
 )
@@ -47,7 +45,6 @@ type Host interface {
 	Root() string
 	CWD() string
 	MaxDirectoryEntries() int
-	MaxFileBytes() int64
 	MaxOutputBytes() int
 	WritesEnabled() bool
 	ResolvePath(path string, workdir string) (string, error)
@@ -115,14 +112,6 @@ func (m *Manager) maxDirectoryEntries() int {
 	}
 
 	return m.host.MaxDirectoryEntries()
-}
-
-func (m *Manager) maxFileBytes() int64 {
-	if m == nil || m.host == nil || m.host.MaxFileBytes() <= 0 {
-		return 1 << 20
-	}
-
-	return m.host.MaxFileBytes()
 }
 
 func (m *Manager) maxOutputBytes() int {
@@ -352,28 +341,6 @@ type ToolDiscoveryProfile struct {
 	SideEffects string
 }
 
-func discoveryProfile(class string, scope string, cost string, readOnly bool) ToolDiscoveryProfile {
-	sideEffects := "read"
-	if !readOnly {
-		sideEffects = "write"
-	}
-
-	return ToolDiscoveryProfile{Class: class, Scope: scope, Cost: cost, ReadOnly: readOnly, SideEffects: sideEffects}
-}
-
-func scopeFromPathAndPattern(path string, pattern string) string {
-	switch {
-	case strings.TrimSpace(path) != "" && strings.TrimSpace(pattern) != "":
-		return "targeted"
-	case strings.TrimSpace(path) != "":
-		return "bounded"
-	case strings.TrimSpace(pattern) != "":
-		return "workspace"
-	default:
-		return "workspace"
-	}
-}
-
 type callHierarchyResult struct {
 	Output        string
 	Relationships []ToolRelationship
@@ -431,35 +398,6 @@ func defaultString(value, fallback string) string {
 	}
 
 	return fallback
-}
-
-func readFileLinesDirect(path string, start, end int) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-
-	lines := textutil.SplitWorkspaceFileLines(data)
-
-	if start <= 0 {
-		start = 1
-	}
-
-	if end <= 0 || end > len(lines) {
-		end = len(lines)
-	}
-
-	if start > end {
-		return "", fmt.Errorf("start_line must be <= end_line")
-	}
-
-	var b strings.Builder
-
-	for i := start - 1; i < end && i < len(lines); i++ {
-		fmt.Fprintf(&b, "%d:%s\n", i+1, lines[i])
-	}
-
-	return strings.TrimRight(b.String(), "\n"), nil
 }
 
 func (m *Manager) callRelationshipFromAbs(sourceAbs string, sourceLine int, sourceSymbol string, targetAbs string, targetLine int, targetSymbol string, evidence string) ToolRelationship {

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"syscall"
 
+	"idiom/internal/contracts/commandmeta"
 	"idiom/internal/evidence/productevidence"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
@@ -25,7 +26,7 @@ func OpenRecorder(args []string, opts RecorderOptions) *telemetry.Recorder {
 
 	rec, err := telemetry.Open(telemetry.Options{
 		Dir:           opts.Dir,
-		Command:       CommandName(args),
+		Command:       commandmeta.TelemetryName(args),
 		Args:          CommandArgs(args),
 		WorkspaceRoot: wd,
 		Version:       opts.Version,

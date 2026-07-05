@@ -5,6 +5,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	recoverycontract "idiom/internal/contracts/recovery"
+	"idiom/internal/platform/textutil"
 )
 
 func BuildRecoveryPlan(input RecoveryInput) RecoveryPlan {
@@ -16,6 +17,7 @@ func BuildRecoveryPlan(input RecoveryInput) RecoveryPlan {
 		DeclarationMovesForbidden: input.DeclarationMovesForbidden,
 		EvidenceIntent:            input.EvidenceIntent,
 		WriteCapable:              input.WriteCapable,
+		ToolTransportMode:         input.ToolTransportMode,
 	})
 	tool := strings.TrimSpace(input.Request.Tool)
 
@@ -49,20 +51,18 @@ func BuildRecoveryPlan(input RecoveryInput) RecoveryPlan {
 		plan.DoNotRepeat = appendUnique(plan.DoNotRepeat, "tool requests outside the current permission policy")
 	}
 
-	if containsAny(combined, "already failed earlier", "repeated") {
+	if textutil.ContainsAny(combined, "already failed earlier", "repeated") {
 		plan.DoNotRepeat = appendUnique(plan.DoNotRepeat, "same failed action class")
 	}
 
-	if containsAny(combined, "malformed tool", "tool_parse") {
-		plan.DoNotRepeat = appendUnique(plan.DoNotRepeat, "markdown-wrapped or malformed tool JSON")
-	}
-
-	if containsAny(combined, "malformed tool", "tool_parse") {
+	if toolParseFailure := textutil.ContainsAny(combined, "malformed tool", "tool_parse"); toolParseFailure {
+		plan.DoNotRepeat = appendUnique(plan.DoNotRepeat, toolParseDoNotRepeat(input.ToolTransportMode))
 		if ConstraintPresent(input.Constraints, ConstraintPlanThenExecuteSubmitPlanReady) {
-			plan.RequiredNext = appendUnique(plan.RequiredNext, "emit exactly one parser-readable submit_plan JSON object")
+			plan.RequiredNext = appendUnique(plan.RequiredNext, toolParseSubmitPlanRequiredNext(input.ToolTransportMode))
 		} else {
-			plan.RequiredNext = appendUnique(plan.RequiredNext, "emit exactly one valid JSON tool object")
+			plan.RequiredNext = appendUnique(plan.RequiredNext, toolParseRequiredNext(input.ToolTransportMode))
 		}
+		plan.ValidNext = toolParseValidNext(plan.ValidNext, input.ToolTransportMode, ConstraintPresent(input.Constraints, ConstraintPlanThenExecuteSubmitPlanReady))
 	}
 
 	if verificationToolFailure(tool, combined, input.Result) {
@@ -82,7 +82,7 @@ func BuildRecoveryPlan(input RecoveryInput) RecoveryPlan {
 		plan.RequiredNext = appendUnique(plan.RequiredNext, "exact-anchor write capability with the supplied anchor, or answer with <<QUESTION>> naming the missing anchor")
 	}
 
-	if containsAny(combined, "approval required", "write approval required") {
+	if textutil.ContainsAny(combined, "approval required", "write approval required") {
 		plan.RequiredNext = appendUnique(plan.RequiredNext, "stop and report that write approval is required")
 	}
 
@@ -90,11 +90,56 @@ func BuildRecoveryPlan(input RecoveryInput) RecoveryPlan {
 		plan.RequiredNext = appendUnique(plan.RequiredNext, "resolve verification status before claiming completion")
 	}
 
-	if containsAny(combined, "completion gate", "final answer rejected") {
+	if textutil.ContainsAny(combined, "completion gate", "final answer rejected") {
 		plan.RequiredNext = appendUnique(plan.RequiredNext, "satisfy the completion gate before final answer")
 	}
 
 	return plan
+}
+
+func toolParseDoNotRepeat(transport string) string {
+	if toolParseNativeTransport(transport) {
+		return "markdown-wrapped, XML/DSML, or textual tool payloads while native tool transport is active"
+	}
+	return "markdown-wrapped or malformed tool JSON"
+}
+
+func toolParseRequiredNext(transport string) string {
+	if toolParseNativeTransport(transport) {
+		return "use the active native tool-call transport for one callable tool, or answer normally if the task is complete"
+	}
+	return "emit exactly one valid JSON tool object"
+}
+
+func toolParseSubmitPlanRequiredNext(transport string) string {
+	if toolParseNativeTransport(transport) {
+		return "use the active native submit_plan tool call, or answer with <<QUESTION>> if submit_plan cannot be formed"
+	}
+	return "emit exactly one parser-readable submit_plan JSON object"
+}
+
+func toolParseNativeTransport(transport string) bool {
+	return strings.EqualFold(strings.TrimSpace(transport), RecoveryToolTransportNative)
+}
+
+func toolParseValidNext(validNext []string, transport string, submitPlanReady bool) []string {
+	if !toolParseNativeTransport(transport) {
+		return validNext
+	}
+
+	out := validNext[:0]
+	for _, item := range validNext {
+		trimmed := strings.TrimSpace(item)
+		if strings.EqualFold(trimmed, "emit exactly one valid JSON tool object") ||
+			strings.Contains(strings.ToLower(trimmed), "active native tool-call transport") {
+			continue
+		}
+		out = append(out, item)
+	}
+	if submitPlanReady {
+		return appendUnique(out, toolParseSubmitPlanRequiredNext(transport))
+	}
+	return appendUnique(out, toolParseRequiredNext(transport))
 }
 
 func ClassifyFailure(reason string, req workspace.ToolRequest, result workspace.ToolResult) recoverycontract.FailureClass {
@@ -102,25 +147,25 @@ func ClassifyFailure(reason string, req workspace.ToolRequest, result workspace.
 	tool := strings.TrimSpace(req.Tool)
 
 	switch {
-	case containsAny(combined, "tool_parse", "malformed tool request", "valid json tool object"):
+	case textutil.ContainsAny(combined, "tool_parse", "malformed tool request", "valid json tool object"):
 		return recoverycontract.FailureClassToolParseError
-	case containsAny(combined, "approval required", "write approval required", "permission denied", "permission"):
+	case textutil.ContainsAny(combined, "approval required", "write approval required", "permission denied", "permission"):
 		return recoverycontract.FailureClassPermissionBoundary
-	case containsAny(combined, "guard", "rejected by guard", "approved editable target", "implementation target packet", "bootstrap already inspected"):
+	case textutil.ContainsAny(combined, "guard", "rejected by guard", "approved editable target", "implementation target packet", "bootstrap already inspected"):
 		return recoverycontract.FailureClassGuardRejection
-	case containsAny(combined, "completion gate", "final answer rejected"):
+	case textutil.ContainsAny(combined, "completion gate", "final answer rejected"):
 		return recoverycontract.FailureClassCompletionGate
 	case verificationToolFailure(tool, combined, result):
 		return recoverycontract.FailureClassVerification
 	case isActualVerificationRecoverySignal(combined):
 		return recoverycontract.FailureClassVerificationUnresolved
-	case containsAny(combined, "same tool request", "repeated tool request", "replayed", "already failed earlier", "repeated dead-end"):
+	case textutil.ContainsAny(combined, "same tool request", "repeated tool request", "replayed", "already failed earlier", "repeated dead-end"):
 		return recoverycontract.FailureClassRepeatedAction
 	case strings.Contains(combined, "broad inspection"):
 		return recoverycontract.FailureClassBroadInspectionLoop
-	case containsAny(combined, "target scope", "outside approved", "approved target"):
+	case textutil.ContainsAny(combined, "target scope", "outside approved", "approved target"):
 		return recoverycontract.FailureClassTargetScopeViolation
-	case containsAny(combined, "post-edit", "workspace edit already landed"):
+	case textutil.ContainsAny(combined, "post-edit", "workspace edit already landed"):
 		return recoverycontract.FailureClassPostEditFocus
 	case tool == "task" || strings.Contains(combined, "child task"):
 		return recoverycontract.FailureClassChildTaskFailure
@@ -139,7 +184,7 @@ func isActualVerificationRecoverySignal(combined string) bool {
 		return false
 	}
 
-	return containsAny(combined,
+	return textutil.ContainsAny(combined,
 		"source sanity failed",
 		"source_sanity failed",
 		"diagnostics failed",
@@ -172,7 +217,7 @@ func verificationToolFailure(tool string, combined string, result workspace.Tool
 		return true
 	case workspace.ToolNameShell:
 		return isActualVerificationRecoverySignal(combined) ||
-			containsAny(strings.ToLower(combined), "test failed", "tests failed", "build failed")
+			textutil.ContainsAny(strings.ToLower(combined), "test failed", "tests failed", "build failed")
 	default:
 		return isActualVerificationRecoverySignal(combined)
 	}
@@ -198,5 +243,5 @@ func ClassifyPhase(req workspace.ToolRequest, result workspace.ToolResult) strin
 
 func UserVisibleBlocker(reason string, result workspace.ToolResult) bool {
 	combined := combinedLower(reason, result.Summary, result.Error)
-	return containsAny(combined, "approval required", "permission", "guard", "completion gate", "blocked")
+	return textutil.ContainsAny(combined, "approval required", "permission", "guard", "completion gate", "blocked")
 }

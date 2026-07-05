@@ -362,6 +362,32 @@ func TestValidatePlanProductWorkflowContextRequiresCoverageContractRefWhenBriefP
 	}
 }
 
+func TestProductBriefRequiresCoverageContractUsesProductWorkflowTiers(t *testing.T) {
+	tests := []struct {
+		tier string
+		want bool
+	}{
+		{tier: "documentation", want: false},
+		{tier: "unit", want: false},
+		{tier: "local_low", want: false},
+		{tier: "behavior_standard", want: true},
+		{tier: "contract_high", want: true},
+		{tier: "formal_optional", want: true},
+		{tier: " behavior_standard ", want: true},
+		{tier: "BEHAVIOR_STANDARD", want: false},
+	}
+
+	for _, tt := range tests {
+		brief := validProductWorkflowBrief()
+		brief.CoverageTier = tt.tier
+		brief.CoverageContract = nil
+
+		if got := productBriefRequiresCoverageContract(brief); got != tt.want {
+			t.Fatalf("productBriefRequiresCoverageContract(%q) = %v, want %v", tt.tier, got, tt.want)
+		}
+	}
+}
+
 func TestValidatePlanProductWorkflowContextRejectsEmptyCoverageContractAuthorityRef(t *testing.T) {
 	plan := validProductContextPlan()
 	plan.CoverageContract = &CoverageContractRef{}
@@ -1305,7 +1331,7 @@ func TestFeaturePlanCoveragePresentationUsesSharedDraftAndAcceptedRows(t *testin
 	}
 
 	sections := FeaturePlanCoveragePresentation(FeatureState{}, "", plan, RejectedPlanCandidate{})
-	requirements := FeaturePlanCoverageRowsBySection(sections, CoverageSectionRequirements)
+	requirements := CoverageRowsBySection(sections, CoverageSectionRequirements)
 	for _, want := range []string{
 		"REQ-DRAFT: When a planner drafts coverage, the plan tab shall render it. (event-driven)",
 		"REQ-1: When product behavior is requested, the system shall render it. (event-driven)",
@@ -1315,16 +1341,16 @@ func TestFeaturePlanCoveragePresentationUsesSharedDraftAndAcceptedRows(t *testin
 		}
 	}
 
-	rules := FeaturePlanCoverageRowsBySection(sections, CoverageSectionRulesAndExamples)
+	rules := CoverageRowsBySection(sections, CoverageSectionRulesAndExamples)
 	if !slices.Contains(rules, "Example EX-DRAFT: draft example (concrete data)") {
 		t.Fatalf("rules/examples missing draft example row: %+v", rules)
 	}
 
-	scenarios := FeaturePlanCoverageRowsBySection(sections, CoverageSectionScenarios)
+	scenarios := CoverageRowsBySection(sections, CoverageSectionScenarios)
 	if !slices.Contains(scenarios, "BDD-DRAFT: Given draft coverage exists / When the plan tab renders / Then draft behavior is visible (concrete data)") {
 		t.Fatalf("scenarios missing draft scenario row: %+v", scenarios)
 	}
-	surfaces := FeaturePlanCoverageRowsBySection(sections, CoverageSectionSurfaceInventory)
+	surfaces := CoverageRowsBySection(sections, CoverageSectionSurfaceInventory)
 	if !slices.Contains(surfaces, "SURF-1: domain_logic [in_scope] - accepted product behavior is in scope") {
 		t.Fatalf("accepted surface missing shared row: %+v", surfaces)
 	}
@@ -3852,7 +3878,7 @@ func TestBuildImplementorPromptCarriesTypedPlanNewFileAuthority(t *testing.T) {
 		t.Fatalf("implementor prompt missing typed plan execution contract:\n%s", prompt)
 	}
 
-	if got := PlanExecuteAuthorizedNewFilesFromImplementorPrompt(prompt); !slices.Equal(got, []string{"pkg/new_helper.go"}) {
+	if got := plancontract.AuthorizedNewFilePathsFromPrompt(prompt); !slices.Equal(got, []string{"pkg/new_helper.go"}) {
 		t.Fatalf("authorized new files = %#v", got)
 	}
 }
@@ -4379,7 +4405,7 @@ func TestRunUsesAnsweredPlannerQuestionForStandaloneNewFileAuthorization(t *test
 	if !slices.Equal(derived.AffectedFields, []string{"new_file_authorization"}) {
 		t.Fatalf("derived affected fields = %#v, want new_file_authorization", derived.AffectedFields)
 	}
-	if got := PlanExecuteAuthorizedNewFilesFromImplementorPrompt(implementorPrompt); !slices.Equal(got, want) {
+	if got := plancontract.AuthorizedNewFilePathsFromPrompt(implementorPrompt); !slices.Equal(got, want) {
 		t.Fatalf("authorized new files = %#v, want %#v", got, want)
 	}
 }
@@ -6908,34 +6934,6 @@ func testPlanExecuteCompletedJSONForPrompt(prompt string) string {
 	contractID, snapshotHash, paths := testPlanExecuteContractFromPrompt(prompt)
 	sourceSanity := testSourceSanityEvidenceForPaths(paths)
 	commands := testVerificationCommandsFromPrompt(prompt)
-	payload := map[string]any{
-		"tool":                        "plan_execute_completed",
-		"lane_family":                 "plan-execute",
-		"status":                      "completed",
-		"phase":                       "complete",
-		"review_status":               "completed",
-		"completion_source":           "durable_plan_execute_terminal_completion",
-		"contract_id":                 contractID,
-		"snapshot_hash":               snapshotHash,
-		"changed_paths":               paths,
-		"required_edit_paths":         paths,
-		"source_sanity":               sourceSanity,
-		"verification":                testVerificationEvidenceForCommands(commands),
-		"verification_commands":       testVerificationCommandsForCommands(commands),
-		"acceptance_evidence_ids":     []string{"req-1", "adr-1"},
-		"acceptance_evidence_trusted": true,
-	}
-
-	return mustJSONMap(trustPlanExecuteCompletionForTest(payload))
-}
-
-func testPlanExecuteCompletedJSONWithSourceSanityForPrompt(prompt string) string {
-	contractID, snapshotHash, paths := testPlanExecuteContractFromPrompt(prompt)
-	commands := testVerificationCommandsFromPrompt(prompt)
-	sourceSanity := make([]map[string]string, 0, len(paths))
-	for _, path := range paths {
-		sourceSanity = append(sourceSanity, map[string]string{"kind": "source_sanity", "path": path, "status": "ok"})
-	}
 	payload := map[string]any{
 		"tool":                        "plan_execute_completed",
 		"lane_family":                 "plan-execute",

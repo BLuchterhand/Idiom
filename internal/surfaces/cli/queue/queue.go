@@ -21,27 +21,19 @@ import (
 	"idiom/internal/runtime/runner"
 )
 
-func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return runQueueMainWithTelemetry(args, stdout, stderr, rec)
-}
-
-// runQueueMain dispatches `idiom queue <subcommand>`. The subcommands
+// RunMainWithTelemetry dispatches `idiom queue <subcommand>`. The subcommands
 // split into three lifecycle roles: `serve` runs the daemon; `run`
 // is the workhorse that any project invokes to get a slot before its
 // command starts; `status`, `ping`, and `cancel` are read/manage
 // surfaces for visibility and recovery.
-func runQueueMain(args []string, stdout io.Writer, stderr io.Writer) int {
-	return runQueueMainWithTelemetry(args, stdout, stderr, nil)
-}
-
-func runQueueMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
 		printQueueUsage(stderr)
 
 		return 0
 	}
 
-	logQueuePhase(rec, "queue_start", map[string]any{"subcommand": args[0]})
+	telemetry.LogPhase(rec, "queue_start", map[string]any{"subcommand": args[0]})
 
 	switch args[0] {
 	case "serve":
@@ -153,13 +145,13 @@ func runQueueRunWithTelemetry(args []string, stdout, stderr io.Writer, rec *tele
 	heldPoolsEnv := os.Getenv(runner.HeldPoolsEnv)
 
 	if runner.PoolHeldByAncestor(heldPoolsEnv, *pool) {
-		logQueuePhase(rec, "queue_admission", map[string]any{"state": string(queuecontract.AdmissionStateNestedSamePool), "pool": *pool, "degraded": false})
+		telemetry.LogPhase(rec, "queue_admission", map[string]any{"state": string(queuecontract.AdmissionStateNestedSamePool), "pool": *pool, "degraded": false})
 
 		if !*quiet {
 			fmt.Fprintf(stderr, "[idiom queue %s] ancestor holds slot in same pool; skipping nested acquire\n", *pool)
 		}
 	} else if strings.TrimSpace(heldPoolsEnv) != "" {
-		logQueuePhase(rec, "queue_admission", map[string]any{"state": string(queuecontract.AdmissionStateNestedCrossPool), "pool": *pool, "degraded": true})
+		telemetry.LogPhase(rec, "queue_admission", map[string]any{"state": string(queuecontract.AdmissionStateNestedCrossPool), "pool": *pool, "degraded": true})
 
 		if !*quiet {
 			fmt.Fprintf(stderr, "[idiom queue %s] ancestor holds slot in different pool(s) (%s); skipping nested acquire to prevent cross-pool deadlock — wrap the outer command with the pool the inner inference actually uses\n", *pool, heldPoolsEnv)
@@ -169,7 +161,7 @@ func runQueueRunWithTelemetry(args []string, stdout, stderr io.Writer, rec *tele
 
 		l, err := runner.Acquire(ctx, *socketPath, *pool, *label, *clientID)
 		if err != nil {
-			logQueuePhase(rec, "queue_admission", map[string]any{"state": string(queuecontract.AdmissionStateFailed), "pool": *pool, "wait_ms": time.Since(startedAt).Milliseconds(), "reason_class": queueReasonClass(err), "degraded": true})
+			telemetry.LogPhase(rec, "queue_admission", map[string]any{"state": string(queuecontract.AdmissionStateFailed), "pool": *pool, "wait_ms": time.Since(startedAt).Milliseconds(), "reason_class": queueReasonClass(err), "degraded": true})
 
 			if errors.Is(err, runner.ErrDaemonUnreachable) {
 				fmt.Fprintf(stderr, "queue run: %v\nstart the daemon with `idiom queue serve` (or set IDIOM_RUNNER_SOCKET).\n", err)
@@ -195,14 +187,14 @@ func runQueueRunWithTelemetry(args []string, stdout, stderr io.Writer, rec *tele
 
 		select {
 		case <-lease.Granted():
-			logQueuePhase(rec, "queue_admission", map[string]any{"state": string(queuecontract.AdmissionStateGranted), "pool": lease.Pool, "wait_ms": time.Since(startedAt).Milliseconds(), "degraded": false})
+			telemetry.LogPhase(rec, "queue_admission", map[string]any{"state": string(queuecontract.AdmissionStateGranted), "pool": lease.Pool, "wait_ms": time.Since(startedAt).Milliseconds(), "degraded": false})
 		case err := <-lease.Err():
-			logQueuePhase(rec, "queue_admission", map[string]any{"state": string(queuecontract.AdmissionStateFailedBeforeGrant), "pool": resolvedPool, "wait_ms": time.Since(startedAt).Milliseconds(), "reason_class": queueReasonClass(err), "degraded": true})
+			telemetry.LogPhase(rec, "queue_admission", map[string]any{"state": string(queuecontract.AdmissionStateFailedBeforeGrant), "pool": resolvedPool, "wait_ms": time.Since(startedAt).Milliseconds(), "reason_class": queueReasonClass(err), "degraded": true})
 			fmt.Fprintf(stderr, "queue run: lease error before grant: %v\n", err)
 
 			return 1
 		case <-ctx.Done():
-			logQueuePhase(rec, "queue_admission", map[string]any{"state": string(queuecontract.AdmissionStateCanceledBeforeGrant), "pool": resolvedPool, "wait_ms": time.Since(startedAt).Milliseconds(), "reason_class": string(queuecontract.ReasonClassTimeoutOrCanceled), "degraded": true})
+			telemetry.LogPhase(rec, "queue_admission", map[string]any{"state": string(queuecontract.AdmissionStateCanceledBeforeGrant), "pool": resolvedPool, "wait_ms": time.Since(startedAt).Milliseconds(), "reason_class": string(queuecontract.ReasonClassTimeoutOrCanceled), "degraded": true})
 			fmt.Fprintln(stderr, "queue run: canceled before grant")
 
 			return 130
@@ -481,10 +473,6 @@ func printQueueUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "Defaults: socket from $IDIOM_RUNNER_SOCKET, $XDG_RUNTIME_DIR/idiom-runner.sock,")
 	fmt.Fprintln(stderr, "          or $TMPDIR/idiom-runner.sock; config from $IDIOM_RUNNER_CONFIG or")
 	fmt.Fprintln(stderr, "          ~/.idiom/runner.json (single 'default' pool, max_in_flight=1 if absent).")
-}
-
-func logQueuePhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	telemetry.LogPhase(rec, eventType, fields)
 }
 
 func queueReasonClass(err error) string {

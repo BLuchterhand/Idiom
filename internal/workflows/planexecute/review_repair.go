@@ -224,8 +224,8 @@ func RunReviewRepairPhaseWithDependencies(
 		}
 
 		if reviewAnswerDeclaresBlocker(answer) {
-			blocker := reviewRepairBlockerSummary(answer)
-			failureReason := reviewRepairBlockerFailureReason(answer)
+			blocker := planExecuteBlockerSummary(answer)
+			failureReason := planExecuteBlockerFailureReason(answer)
 			if err := emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, plancontract.PlanExecuteEventReviewRepairBlocked, map[string]any{
 				"status":         "blocked",
 				"blocker":        blocker,

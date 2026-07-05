@@ -344,12 +344,8 @@ func canonicalActionClassStrings(values []string) []string {
 	return sortedStrings(out)
 }
 
-func toolVocabularyEntry(tool string) (autonomy.PlanExecutePlannerToolMetadata, bool) {
-	return autonomy.LookupPlanExecutePlannerToolMetadata(tool)
-}
-
 func capabilitiesForTool(tool string) []autonomy.Capability {
-	entry, ok := toolVocabularyEntry(tool)
+	entry, ok := autonomy.LookupPlanExecutePlannerToolMetadata(tool)
 	if !ok {
 		return nil
 	}
@@ -358,12 +354,12 @@ func capabilitiesForTool(tool string) []autonomy.Capability {
 }
 
 func knownTool(tool string) bool {
-	_, ok := toolVocabularyEntry(tool)
+	_, ok := autonomy.LookupPlanExecutePlannerToolMetadata(tool)
 	return ok
 }
 
 func sideEffectForTool(tool string) autonomy.SideEffectClass {
-	entry, ok := toolVocabularyEntry(tool)
+	entry, ok := autonomy.LookupPlanExecutePlannerToolMetadata(tool)
 	if !ok {
 		return autonomy.SideEffectUnknown
 	}

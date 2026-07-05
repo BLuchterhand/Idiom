@@ -112,9 +112,7 @@ const (
 type ExploreThoroughness string
 
 const (
-	ThoroughnessQuick    ExploreThoroughness = "quick"
-	ThoroughnessMedium   ExploreThoroughness = "medium"
-	ThoroughnessThorough ExploreThoroughness = "thorough"
+	ThoroughnessMedium ExploreThoroughness = "medium"
 )
 
 type WritePolicy string
@@ -130,6 +128,7 @@ type listedEntry struct {
 }
 
 const searchContentLineCap = 240
+const lineTruncationMarker = "...[line truncated]"
 const listFilesDisplayCap = 80
 
 func NewManager(cfg config.Workspace) *Manager {
@@ -361,21 +360,6 @@ func (m *Manager) ExploreThoroughness() ExploreThoroughness {
 	defer m.mu.Unlock()
 
 	return m.thoroughness
-}
-
-func (m *Manager) SetExploreThoroughness(level ExploreThoroughness) error {
-	switch level {
-	case ThoroughnessQuick, ThoroughnessMedium, ThoroughnessThorough:
-	default:
-		return fmt.Errorf("unsupported explore thoroughness %q", level)
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.thoroughness = level
-
-	return nil
 }
 
 func (m *Manager) WritePolicy() WritePolicy {
@@ -634,7 +618,7 @@ func (m *Manager) Execute(ctx context.Context, req ToolRequest) (result ToolResu
 		return m.toolRuleDeniedResult(req)
 	}
 
-	timeout := toolTimeoutForRequest(req)
+	timeout := ToolTimeoutForRequest(req)
 	if timeout <= 0 {
 		return m.executeDispatch(ctx, req)
 	}
@@ -721,7 +705,7 @@ func (m *Manager) executeWithTimeoutFn(ctx context.Context, req ToolRequest, tim
 // rest use a conservative 30s default. Returning 0 disables the
 // timeout for tools that legitimately need to stream long-running
 // output (none today).
-func toolTimeoutForRequest(req ToolRequest) time.Duration {
+func ToolTimeoutForRequest(req ToolRequest) time.Duration {
 	tool := strings.TrimSpace(req.Tool)
 	if tool == ToolNameContextStatus && req.Refresh {
 		return toolTimeoutFor(ToolNameContextIndex)
@@ -730,12 +714,8 @@ func toolTimeoutForRequest(req ToolRequest) time.Duration {
 	return toolTimeoutFor(tool)
 }
 
-func ToolTimeoutForRequest(req ToolRequest) time.Duration {
-	return toolTimeoutForRequest(req)
-}
-
 func toolTimeoutFor(tool string) time.Duration {
-	spec, ok := BuiltInToolSurfaceMetadata(tool)
+	spec, ok := builtInToolSurfaceCatalog.Lookup(tool)
 	if !ok {
 		return 30 * time.Second
 	}
@@ -1489,9 +1469,9 @@ func decodeNestedToolRequestJSON(payload []byte) (ToolRequest, bool, error) {
 
 	if strings.TrimSpace(nested.Tool) == "" {
 		nested.Tool = outerTool
-	} else if outerTool == CodeNavigateToolName && codeNavigateCapabilityAlias(nested.Tool) != "" {
+	} else if outerTool == CodeNavigateToolName && CodeNavigateCapabilityAlias(nested.Tool) != "" {
 		if strings.TrimSpace(nested.Capability) == "" {
-			nested.Capability = codeNavigateCapabilityAlias(nested.Tool)
+			nested.Capability = CodeNavigateCapabilityAlias(nested.Tool)
 		}
 
 		nested.Tool = outerTool
@@ -1503,10 +1483,6 @@ func decodeNestedToolRequestJSON(payload []byte) (ToolRequest, bool, error) {
 	repairEmbeddedQwenXMLToolParameters(&nested)
 
 	return nested, true, nil
-}
-
-func codeNavigateCapabilityAlias(tool string) string {
-	return CodeNavigateCapabilityAlias(tool)
 }
 
 func CodeNavigateCapabilityAlias(value string) string {
@@ -2578,7 +2554,7 @@ func repairNumericStringToolValue(value any) (bool, bool) {
 
 func boolToolField(field string) bool {
 	switch field {
-	case "replace_all", "recursive", "include_evidence", "include_source", "include_files", "refresh":
+	case "replace_all", "recursive", "fixed_strings", "include_evidence", "include_source", "include_files", "refresh":
 		return true
 	default:
 		return false
@@ -2962,12 +2938,69 @@ var (
 	qwenXMLFunctionPattern         = regexp.MustCompile(`(?s)^<function=([^>\s]+)>(.*)</function>$`)
 	qwenXMLParameterPattern        = regexp.MustCompile(`(?s)<parameter=([^>\s]+)>(.*?)</parameter>`)
 	deepSeekXMLInvokePattern       = regexp.MustCompile(`(?is)<[^>\s]*(?:invoke|function)\s+name\s*=\s*["']([^"']+)["'][^>]*>(.*?)</[^>]*(?:invoke|function)\s*>`)
+	deepSeekXMLInvokeOpenPattern   = regexp.MustCompile(`(?is)<[^>\s]*(?:invoke|function)\s+name\s*=\s*["']([^"']+)["'][^>]*>`)
 	deepSeekXMLParameterPattern    = regexp.MustCompile(`(?is)<[^>\s]*(?:parameter)\s+name\s*=\s*["']([^"']+)["'][^>]*>(.*?)</[^>]*(?:parameter)\s*>`)
 	lineAnchoredToolJSONPattern    = regexp.MustCompile(`(?m)(^|\n)\s*tool\s*:\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*(\{)`)
 	malformedToolNameObjectPattern = regexp.MustCompile(`(?s)^\{\s*"tool"\s*:\s*"([A-Za-z_][A-Za-z0-9_.-]*)"\s*:\s*\{(.*)\}\s*\}$`)
 	knownBareJSONToolNamesOnce     sync.Once
 	knownBareJSONToolNames         map[string]struct{}
 )
+
+// LooksLikeXMLToolCallMarkup recognizes XML/DSML-style tool-call envelopes
+// emitted by local backends. It intentionally lives next to the XML parsers so
+// parser rejection and recovery guidance share one vocabulary.
+func LooksLikeXMLToolCallMarkup(text string) bool {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if lower == "" {
+		return false
+	}
+
+	return xmlToolMarkupLineContains(lower, "<tool_call") ||
+		xmlToolMarkupLineContains(lower, "</tool_call>") ||
+		xmlToolMarkupLineContains(lower, "<function=") ||
+		xmlToolMarkupLineContains(lower, "</function>") ||
+		xmlToolMarkupLineContains(lower, "<invoke") ||
+		xmlToolMarkupLineContains(lower, "</invoke>") ||
+		xmlToolMarkupLineContains(lower, "<janus_tool") ||
+		xmlToolMarkupLineContains(lower, "</janus_tool") ||
+		xmlToolMarkupLineContains(lower, "<janus_invoke") ||
+		xmlToolMarkupLineContains(lower, "</janus_invoke") ||
+		xmlToolMarkupLineContains(lower, "<n_tool") ||
+		xmlToolMarkupLineContains(lower, "</n_tool") ||
+		xmlToolMarkupLineContains(lower, "<n_invoke") ||
+		xmlToolMarkupLineContains(lower, "</n_invoke") ||
+		xmlToolMarkupLineContains(lower, "<n_parameter") ||
+		xmlToolMarkupLineContains(lower, "</n_parameter") ||
+		xmlToolMarkupTagLineContains(lower, "tool_calls") ||
+		xmlToolMarkupTagLineContains(lower, "_invoke") ||
+		xmlToolMarkupTagLineContains(lower, "dsml")
+}
+
+func xmlToolMarkupLineContains(lower string, marker string) bool {
+	if strings.HasPrefix(lower, marker) || strings.Contains(lower, "\n"+marker) {
+		return true
+	}
+
+	for _, line := range strings.Split(lower, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "<") && strings.Contains(line, marker) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func xmlToolMarkupTagLineContains(lower string, marker string) bool {
+	for _, line := range strings.Split(lower, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "<") && strings.Contains(line, marker) {
+			return true
+		}
+	}
+
+	return false
+}
 
 func extractLineAnchoredToolJSONObjectPayload(text string) (string, bool, error) {
 	match := lineAnchoredToolJSONPattern.FindStringSubmatchIndex(text)
@@ -3139,27 +3172,48 @@ func extractDeepSeekXMLToolPayload(text string) (string, bool, error) {
 		return "", false, nil
 	}
 
-	lower := strings.ToLower(trimmed)
-	if !strings.Contains(lower, "invoke") && !strings.Contains(lower, "dsml") && !strings.Contains(lower, "tool_calls") {
+	if !LooksLikeXMLToolCallMarkup(trimmed) {
 		return "", false, nil
 	}
 
 	match := deepSeekXMLInvokePattern.FindStringSubmatch(trimmed)
 	if len(match) != 3 {
-		if strings.Contains(lower, "dsml") || strings.Contains(lower, "tool_calls") || strings.Contains(lower, "_invoke") {
-			return trimmed, true, fmt.Errorf("malformed DeepSeek XML tool request")
+		if payload, ok, err := extractDeepSeekXMLOpenInvokePayload(trimmed); ok || err != nil {
+			return payload, ok, err
 		}
 
+		return trimmed, true, fmt.Errorf("malformed DeepSeek XML tool request")
+	}
+
+	return deepSeekXMLPayloadFromParts(trimmed, match[1], match[2])
+}
+
+func extractDeepSeekXMLOpenInvokePayload(trimmed string) (string, bool, error) {
+	indexes := deepSeekXMLInvokeOpenPattern.FindStringSubmatchIndex(trimmed)
+	if len(indexes) < 4 {
 		return "", false, nil
 	}
 
-	tool := strings.TrimSpace(match[1])
+	tool := trimmed[indexes[2]:indexes[3]]
+	body := trimmed[indexes[1]:]
+	if closeIndex := strings.Index(strings.ToLower(body), "</n_tool"); closeIndex >= 0 {
+		body = body[:closeIndex]
+	}
+	if closeIndex := strings.Index(strings.ToLower(body), "</tool"); closeIndex >= 0 {
+		body = body[:closeIndex]
+	}
+
+	return deepSeekXMLPayloadFromParts(trimmed, tool, body)
+}
+
+func deepSeekXMLPayloadFromParts(original string, toolName string, body string) (string, bool, error) {
+	tool := strings.TrimSpace(toolName)
 	if tool == "" || !xmlToolNameIsSafe(tool) {
-		return trimmed, true, fmt.Errorf("DeepSeek XML tool request is missing a safe tool name")
+		return original, true, fmt.Errorf("DeepSeek XML tool request is missing a safe tool name")
 	}
 
 	if !IsReadTool(tool) {
-		return trimmed, true, fmt.Errorf("DeepSeek XML tool request %q is not a read/search/discovery tool", tool)
+		return original, true, fmt.Errorf("DeepSeek XML tool request %q is not a read/search/discovery tool", tool)
 	}
 
 	fields := map[string]json.RawMessage{}
@@ -3167,7 +3221,7 @@ func extractDeepSeekXMLToolPayload(text string) (string, bool, error) {
 
 	fields["tool"] = toolRaw
 
-	for _, param := range deepSeekXMLParameterPattern.FindAllStringSubmatch(match[2], -1) {
+	for _, param := range deepSeekXMLParameterPattern.FindAllStringSubmatch(body, -1) {
 		if len(param) != 3 {
 			continue
 		}
@@ -3178,7 +3232,7 @@ func extractDeepSeekXMLToolPayload(text string) (string, bool, error) {
 		}
 
 		if !xmlToolNameIsSafe(name) {
-			return trimmed, true, fmt.Errorf("DeepSeek XML tool request has unsafe parameter name %q", name)
+			return original, true, fmt.Errorf("DeepSeek XML tool request has unsafe parameter name %q", name)
 		}
 
 		if name == "operation" {
@@ -3187,7 +3241,7 @@ func extractDeepSeekXMLToolPayload(text string) (string, bool, error) {
 
 		raw, err := qwenXMLParameterRaw(name, param[2])
 		if err != nil {
-			return trimmed, true, err
+			return original, true, err
 		}
 
 		fields[name] = raw
@@ -3195,7 +3249,7 @@ func extractDeepSeekXMLToolPayload(text string) (string, bool, error) {
 
 	data, err := json.Marshal(fields)
 	if err != nil {
-		return trimmed, true, err
+		return original, true, err
 	}
 
 	return string(data), true, nil
@@ -3703,7 +3757,7 @@ func qwenXMLParameterRaw(name string, value string) (json.RawMessage, error) {
 		}
 
 		return json.RawMessage(trimmed), nil
-	case "replace_all", "recursive", "include_evidence", "include_source", "include_files", "refresh":
+	case "replace_all", "recursive", "fixed_strings", "include_evidence", "include_source", "include_files", "refresh":
 		parsed, err := strconv.ParseBool(strings.ToLower(trimmed))
 		if err != nil {
 			return nil, fmt.Errorf("qwen XML parameter %q must be boolean: %w", name, err)
@@ -3798,7 +3852,7 @@ func isStructuredNarrowingTool(tool string) bool {
 		return true
 	}
 
-	if metadata, ok := BuiltInToolSurfaceMetadata(tool); ok {
+	if metadata, ok := builtInToolSurfaceCatalog.Lookup(tool); ok {
 		return metadata.Narrowing
 	}
 
@@ -4734,7 +4788,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 	for i := start - 1; i < end && i < len(lines); i++ {
 		line := lines[i]
 		if logLike {
-			line = textutil.TruncateBytes(strings.TrimRight(line, "\r\n"), defaultLogLineCharCap, "...[line truncated]")
+			line = textutil.TruncateBytes(strings.TrimRight(line, "\r\n"), defaultLogLineCharCap, lineTruncationMarker)
 		}
 
 		fmt.Fprintf(&b, "%d:%s\n", i+1, line)
@@ -4783,7 +4837,7 @@ func (m *Manager) readLogTail(path string, description string, lineCap int) (Too
 	var b strings.Builder
 
 	for i, line := range lines {
-		line = textutil.TruncateBytes(strings.TrimRight(line, "\r\n"), defaultLogLineCharCap, "...[line truncated]")
+		line = textutil.TruncateBytes(strings.TrimRight(line, "\r\n"), defaultLogLineCharCap, lineTruncationMarker)
 		fmt.Fprintf(&b, "%d:%s\n", start+i, line)
 	}
 
@@ -4798,19 +4852,25 @@ func (m *Manager) readLogTail(path string, description string, lineCap int) (Too
 }
 
 type fileStatsReport struct {
-	Path             string           `json:"path"`
-	Recursive        bool             `json:"recursive,omitempty"`
-	MaxDepth         int              `json:"max_depth,omitempty"`
-	Glob             string           `json:"glob,omitempty"`
-	Files            int              `json:"files"`
-	Directories      int              `json:"directories,omitempty"`
-	Bytes            int64            `json:"bytes"`
-	Lines            int              `json:"lines"`
-	LineCountErrors  int              `json:"line_count_errors,omitempty"`
-	Truncated        bool             `json:"truncated,omitempty"`
-	Limit            int              `json:"limit,omitempty"`
-	Entries          []fileStatsEntry `json:"entries,omitempty"`
-	EntriesTruncated bool             `json:"entries_truncated,omitempty"`
+	Path                    string           `json:"path"`
+	Recursive               bool             `json:"recursive,omitempty"`
+	MaxDepth                int              `json:"max_depth,omitempty"`
+	Glob                    string           `json:"glob,omitempty"`
+	StartLine               int              `json:"start_line,omitempty"`
+	EndLine                 int              `json:"end_line,omitempty"`
+	Files                   int              `json:"files"`
+	Directories             int              `json:"directories,omitempty"`
+	Bytes                   int64            `json:"bytes"`
+	Lines                   int              `json:"lines"`
+	LineBytes               int              `json:"line_bytes,omitempty"`
+	LineBytesWithNewlines   int              `json:"line_bytes_with_newlines,omitempty"`
+	LineCharacters          int              `json:"line_characters,omitempty"`
+	LineCharacterWithBreaks int              `json:"line_characters_with_newlines,omitempty"`
+	LineCountErrors         int              `json:"line_count_errors,omitempty"`
+	Truncated               bool             `json:"truncated,omitempty"`
+	Limit                   int              `json:"limit,omitempty"`
+	Entries                 []fileStatsEntry `json:"entries,omitempty"`
+	EntriesTruncated        bool             `json:"entries_truncated,omitempty"`
 }
 
 type fileStatsEntry struct {
@@ -4861,6 +4921,8 @@ func (m *Manager) fileStats(req ToolRequest) ToolResult {
 		Recursive: req.Recursive,
 		MaxDepth:  req.MaxDepth,
 		Glob:      strings.TrimSpace(req.Glob),
+		StartLine: req.StartLine,
+		EndLine:   req.EndLine,
 		Limit:     limit,
 	}
 
@@ -4876,6 +4938,11 @@ func (m *Manager) fileStats(req ToolRequest) ToolResult {
 		}
 
 		report.Entries = []fileStatsEntry{entry}
+		if req.StartLine > 0 || req.EndLine > 0 {
+			if err := m.addFileStatsLineRange(target, &report, req.StartLine, req.EndLine); err != nil {
+				return ToolResult{Tool: ToolNameFileStats, Summary: "Failed to collect file line stats", Error: err.Error()}
+			}
+		}
 
 		return fileStatsResult(report)
 	}
@@ -4964,6 +5031,42 @@ func (m *Manager) fileStats(req ToolRequest) ToolResult {
 	return fileStatsResult(report)
 }
 
+func (m *Manager) addFileStatsLineRange(path string, report *fileStatsReport, start int, end int) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	lines := textutil.SplitWorkspaceFileLines(data)
+	if len(lines) == 0 {
+		report.StartLine = 0
+		report.EndLine = 0
+		return nil
+	}
+
+	requestedStart := start
+	requestedEnd := end
+	if start <= 0 {
+		start = 1
+	}
+	if end <= 0 || end > len(lines) {
+		end = len(lines)
+	}
+	start, end, _ = textutil.ClampRequestedLineRange(len(lines), start, end, requestedStart, requestedEnd)
+
+	report.StartLine = start
+	report.EndLine = end
+	for i := start - 1; i < end && i < len(lines); i++ {
+		line := lines[i]
+		report.LineBytes += len([]byte(line))
+		report.LineCharacters += len([]rune(line))
+		report.LineBytesWithNewlines += len([]byte(line)) + 1
+		report.LineCharacterWithBreaks += len([]rune(line)) + 1
+	}
+
+	return nil
+}
+
 func (m *Manager) fileStatsEntry(path string, info os.FileInfo) fileStatsEntry {
 	entry := fileStatsEntry{
 		Path:  m.displayPath(path),
@@ -4988,6 +5091,9 @@ func fileStatsResult(report fileStatsReport) ToolResult {
 	}
 
 	summary := fmt.Sprintf("Counted %d file(s), %d line(s), %s under %s", report.Files, report.Lines, formatBytes(report.Bytes), report.Path)
+	if report.StartLine > 0 && report.EndLine >= report.StartLine {
+		summary += fmt.Sprintf("; selected lines %d-%d: %d bytes, %d chars (%d bytes with newline separators)", report.StartLine, report.EndLine, report.LineBytes, report.LineCharacters, report.LineBytesWithNewlines)
+	}
 	if report.Truncated {
 		summary += fmt.Sprintf(" (truncated at %d files)", report.Limit)
 	}
@@ -5346,6 +5452,14 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 
 	matchCount := strings.Count(current, req.OldText)
 	if matchCount == 0 {
+		if containsSearchContentLineTruncationMarker(req.OldText) {
+			return withToolFailure(ToolResult{
+				Tool:    ToolNameEditFile,
+				Summary: "Edit request rejected",
+				Error:   fmt.Sprintf("old_text for %s contains a search_content truncation marker. Truncated search output is not an exact edit anchor; use read_file with the match line's start_line/end_line to copy exact source, or use edit_file start_line/end_line+content.", m.displayPath(path)),
+			}, failures.FailedPrecondition, reasonPlanSubmissionRejected)
+		}
+
 		if textutil.ContainsFold(current, req.OldText) {
 			return withToolFailure(ToolResult{
 				Tool:    ToolNameEditFile,
@@ -5362,10 +5476,12 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 	}
 
 	if matchCount > 1 && !req.ReplaceAll {
+		display := m.displayPath(path)
 		return withToolFailure(ToolResult{
 			Tool:    ToolNameEditFile,
 			Summary: "Edit request rejected",
-			Error:   fmt.Sprintf("old_text matched %d locations in %s. Either extend old_text with surrounding context so it matches exactly one place, or set replace_all=true.", matchCount, m.displayPath(path)),
+			Error:   fmt.Sprintf("old_text matched %d locations in %s. Either extend old_text with surrounding context so it matches exactly one place, use start_line/end_line+content for a listed range, or set replace_all=true when every occurrence is intended.", matchCount, display),
+			Output:  formatOldTextOccurrenceGuidance(display, current, req.OldText, matchCount),
 		}, failures.FailedPrecondition, reasonPlanSubmissionRejected)
 	}
 
@@ -5991,7 +6107,7 @@ func plannedWriteLineContext(contents []byte, line int, radius int) string {
 			marker = ">"
 		}
 
-		fmt.Fprintf(&b, "%s %d:%s\n", marker, i, textutil.TruncateBytes(strings.TrimRight(lines[i-1], "\r\n"), searchContentLineCap, "...[line truncated]"))
+		fmt.Fprintf(&b, "%s %d:%s\n", marker, i, textutil.TruncateBytes(strings.TrimRight(lines[i-1], "\r\n"), searchContentLineCap, lineTruncationMarker))
 	}
 
 	return strings.TrimRight(b.String(), "\n")
@@ -6024,6 +6140,79 @@ func lineSpans(text string) []lineSpan {
 	}
 
 	return spans
+}
+
+func formatOldTextOccurrenceGuidance(displayPath, content, oldText string, matchCount int) string {
+	lines := oldTextOccurrenceLineNumbers(content, oldText, 8)
+	if len(lines) == 0 {
+		return ""
+	}
+
+	showing := ""
+	if matchCount > len(lines) {
+		showing = fmt.Sprintf(" (showing first %d)", len(lines))
+	}
+
+	return fmt.Sprintf(
+		"matching start line(s)%s: %s\nUse read_file on %s around the listed line(s) for exact anchors. If all occurrences should change, retry with replace_all=true.",
+		showing,
+		formatLineNumbers(lines),
+		displayPath,
+	)
+}
+
+func oldTextOccurrenceLineNumbers(content, oldText string, limit int) []int {
+	if content == "" || oldText == "" || limit <= 0 {
+		return nil
+	}
+
+	spans := lineSpans(content)
+	if len(spans) == 0 {
+		return nil
+	}
+
+	lines := make([]int, 0, min(strings.Count(content, oldText), limit))
+	offset := 0
+
+	for len(lines) < limit {
+		index := strings.Index(content[offset:], oldText)
+		if index < 0 {
+			break
+		}
+
+		absolute := offset + index
+		lines = append(lines, lineNumberForOffset(spans, absolute))
+		offset = absolute + len(oldText)
+	}
+
+	return lines
+}
+
+func lineNumberForOffset(spans []lineSpan, offset int) int {
+	for i, span := range spans {
+		if offset >= span.start && offset < span.end {
+			return i + 1
+		}
+	}
+
+	return len(spans)
+}
+
+func formatLineNumbers(lines []int) string {
+	if len(lines) == 0 {
+		return ""
+	}
+
+	parts := make([]string, 0, len(lines))
+	for _, line := range lines {
+		parts = append(parts, strconv.Itoa(line))
+	}
+
+	return strings.Join(parts, ", ")
+}
+
+func containsSearchContentLineTruncationMarker(text string) bool {
+	return strings.Contains(text, lineTruncationMarker) || strings.Contains(text, "[line truncated]")
 }
 
 func (m *Manager) runShell(ctx context.Context, req ToolRequest) ToolResult {

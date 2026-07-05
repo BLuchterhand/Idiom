@@ -141,3 +141,35 @@ func TestPlanExecuteCompletionSourceTrustPolicy(t *testing.T) {
 		t.Fatal("unknown completion source should not be trusted")
 	}
 }
+
+func TestFeaturePlannerEventStringPredicatesTrimInput(t *testing.T) {
+	if eventType, ok := ParseEventName(" \t" + EventName(EventStart) + "\n"); !ok || eventType != EventStart {
+		t.Fatalf("ParseEventName trimmed start = %q %v, want %q true", eventType, ok, EventStart)
+	}
+	if !KnownLegacyEventName(" \t" + string(LegacyEventAtomStarted) + "\n") {
+		t.Fatalf("KnownLegacyEventName should trim %q", LegacyEventAtomStarted)
+	}
+	if source, ok := ParsePlanExecuteCompletionSource(" \t" + string(PlanExecuteCompletionSourceDurableTerminal) + "\n"); !ok || source != PlanExecuteCompletionSourceDurableTerminal {
+		t.Fatalf("ParsePlanExecuteCompletionSource trimmed durable_terminal = %q %v", source, ok)
+	}
+	if !CompletionSourceCarriesDurableAcceptanceEvidence(" \t" + string(PlanExecuteCompletionSourceDurableProgress) + "\n") {
+		t.Fatalf("CompletionSourceCarriesDurableAcceptanceEvidence should trim %q", PlanExecuteCompletionSourceDurableProgress)
+	}
+	if !CompletionSourceTrustsAcceptanceEvidence(" \t" + string(PlanExecuteCompletionSourceTUIReturned) + "\n") {
+		t.Fatalf("CompletionSourceTrustsAcceptanceEvidence should trim %q", PlanExecuteCompletionSourceTUIReturned)
+	}
+	if eventName, ok := ParseNestedPlanExecuteCompletionEventName(" \t" + string(NestedPlanExecuteCompletionEventBlocked) + "\n"); !ok || eventName != NestedPlanExecuteCompletionEventBlocked {
+		t.Fatalf("ParseNestedPlanExecuteCompletionEventName trimmed blocked = %q %v", eventName, ok)
+	}
+
+	for _, value := range []string{
+		"idiom.feature_planner.not_real",
+		"idiom.feature.atom_unknown",
+		"test_plan_execute_adapter",
+		"internal_idiom.plan_execute.unknown",
+	} {
+		if KnownDurableEventName(value) {
+			t.Fatalf("KnownDurableEventName(%q) = true", value)
+		}
+	}
+}

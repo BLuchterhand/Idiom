@@ -430,7 +430,7 @@ func (s *eventAuditState) addEvent(event Event, rawGateFields gateAuditFieldSnap
 		coverage := s.contractCoverage(event.ContractID)
 		coverage.EventCount++
 
-		coverage.ParentID = firstNonEmptyAuditValue(coverage.ParentID, event.ParentID)
+		coverage.ParentID = firstNonEmptyString(coverage.ParentID, event.ParentID)
 
 		if coverage.FirstSequence == 0 || event.Sequence < coverage.FirstSequence {
 			coverage.FirstSequence = event.Sequence
@@ -499,9 +499,9 @@ func (s *eventAuditState) addAuditGroup(event Event) {
 
 func auditGroupForEvent(event Event) AuditGroup {
 	return AuditGroup{
-		ContractID:    firstNonEmptyAuditValue(event.ContractID, "unknown"),
+		ContractID:    firstNonEmptyString(event.ContractID, "unknown"),
 		InvariantID:   auditEventInvariantID(event),
-		Lane:          firstNonEmptyAuditValue(event.Correlation.Lane, event.Correlation.SidecarProfile, "unknown"),
+		Lane:          firstNonEmptyString(event.Correlation.Lane, event.Correlation.SidecarProfile, "unknown"),
 		Phase:         auditEventPhase(event),
 		AdapterRoute:  auditEventAdapterRoute(event),
 		TerminalState: auditEventTerminalState(event),
@@ -541,33 +541,33 @@ func auditEventInvariantID(event Event) string {
 
 func auditEventPhase(event Event) string {
 	if event.Lifecycle != nil && event.Lifecycle.TurnPhaseContract != nil {
-		return firstNonEmptyAuditValue(event.Lifecycle.TurnPhaseContract.PhaseID, event.Lifecycle.TurnPhaseContract.Phase, event.Correlation.Phase, "unknown")
+		return firstNonEmptyString(event.Lifecycle.TurnPhaseContract.PhaseID, event.Lifecycle.TurnPhaseContract.Phase, event.Correlation.Phase, "unknown")
 	}
 	if event.GuardFriction != nil {
-		return firstNonEmptyAuditValue(event.GuardFriction.PhaseID, event.GuardFriction.Phase, event.Correlation.Phase, "unknown")
+		return firstNonEmptyString(event.GuardFriction.PhaseID, event.GuardFriction.Phase, event.Correlation.Phase, "unknown")
 	}
 	if event.ModelExchange != nil {
-		return firstNonEmptyAuditValue(event.ModelExchange.PhaseID, event.Correlation.Phase, "unknown")
+		return firstNonEmptyString(event.ModelExchange.PhaseID, event.Correlation.Phase, "unknown")
 	}
 
-	return firstNonEmptyAuditValue(event.Correlation.Phase, "unknown")
+	return firstNonEmptyString(event.Correlation.Phase, "unknown")
 }
 
 func auditEventAdapterRoute(event Event) string {
 	if event.Policy != nil {
-		return firstNonEmptyAuditValue(event.Policy.ToolName, string(event.Policy.Capability), string(event.Policy.ActionClass), "unknown")
+		return firstNonEmptyString(event.Policy.ToolName, string(event.Policy.Capability), string(event.Policy.ActionClass), "unknown")
 	}
 	if event.Gate != nil {
-		return firstNonEmptyAuditValue(event.Gate.ToolName, string(event.Gate.Gate), "unknown")
+		return firstNonEmptyString(event.Gate.ToolName, string(event.Gate.Gate), "unknown")
 	}
 	if event.GuardFriction != nil {
-		return firstNonEmptyAuditValue(string(event.GuardFriction.GuardSurface), string(event.GuardFriction.Subject), "unknown")
+		return firstNonEmptyString(string(event.GuardFriction.GuardSurface), string(event.GuardFriction.Subject), "unknown")
 	}
 	if event.ModelExchange != nil {
-		return firstNonEmptyAuditValue(event.ModelExchange.Kind, "model_exchange")
+		return firstNonEmptyString(event.ModelExchange.Kind, "model_exchange")
 	}
 	if event.Correlation.SidecarTool != "" || event.Correlation.ToolName != "" {
-		return firstNonEmptyAuditValue(event.Correlation.SidecarTool, event.Correlation.ToolName, "unknown")
+		return firstNonEmptyString(event.Correlation.SidecarTool, event.Correlation.ToolName, "unknown")
 	}
 
 	return "unknown"
@@ -581,13 +581,13 @@ func auditEventTerminalState(event Event) string {
 		}
 	}
 	if event.Completion != nil {
-		return firstNonEmptyAuditValue(string(event.Completion.Decision), event.Completion.VerificationStatus, "unknown")
+		return firstNonEmptyString(string(event.Completion.Decision), event.Completion.VerificationStatus, "unknown")
 	}
 	if event.Gate != nil {
-		return firstNonEmptyAuditValue(string(event.Gate.Decision), event.Gate.VerificationStatus, "unknown")
+		return firstNonEmptyString(string(event.Gate.Decision), event.Gate.VerificationStatus, "unknown")
 	}
 	if event.GuardFriction != nil {
-		return firstNonEmptyAuditValue(string(event.GuardFriction.Decision), string(event.GuardFriction.RetryOutcome), "unknown")
+		return firstNonEmptyString(string(event.GuardFriction.Decision), string(event.GuardFriction.RetryOutcome), "unknown")
 	}
 
 	return "unknown"
@@ -811,7 +811,7 @@ func (s *eventAuditState) addTurnPhaseSurfaceSummary(event Event, surface TurnPh
 		issue.EventID = event.EventID
 		issue.Type = string(event.Type)
 		issue.Sequence = event.Sequence
-		issue.ContractID = firstNonEmptyAuditValue(issue.ContractID, event.ContractID)
+		issue.ContractID = firstNonEmptyString(issue.ContractID, event.ContractID)
 		s.report.TurnPhaseCoverage.Contradictions = append(s.report.TurnPhaseCoverage.Contradictions, issue)
 	}
 }
@@ -1183,14 +1183,14 @@ func (s *eventAuditState) addGateProtocolHashParity(event Event) {
 	if n := len(s.report.TurnPhaseCoverage.Contradictions); n > 0 && strings.TrimSpace(s.report.TurnPhaseCoverage.Contradictions[n-1].EventID) == event.EventID {
 		s.report.TurnPhaseCoverage.Contradictions[n-1].SurfaceID = "completion_gate"
 		s.report.TurnPhaseCoverage.Contradictions[n-1].SurfacePair = turnPhaseSurfacePair("turn_phase_contract", "completion_gate")
-		s.report.TurnPhaseCoverage.Contradictions[n-1].ProtocolHash = firstNonEmptyAuditValue(gateHash, phaseHash)
+		s.report.TurnPhaseCoverage.Contradictions[n-1].ProtocolHash = firstNonEmptyString(gateHash, phaseHash)
 	}
 }
 
 func (s *eventAuditState) addGuardFriction(event Event) {
 	s.report.GuardFrictionCoverage.Total++
 	if event.ContractID != "" {
-		incrementStringMap(&s.contractCoverage(event.ContractID).GuardFrictionCounts, string(EventGuardFriction))
+		incrementContractMap(s.contractCoverage(event.ContractID), "guard_friction", string(EventGuardFriction))
 	}
 
 	if event.GuardFriction == nil {
@@ -1204,9 +1204,9 @@ func (s *eventAuditState) addGuardFriction(event Event) {
 	friction := *event.GuardFriction
 	friction.normalize()
 
-	contractID := firstNonEmptyAuditValue(friction.ContractID, event.ContractID)
-	incrementStringMap(&s.report.GuardFrictionCoverage.LaneCounts, firstNonEmptyAuditValue(friction.Lane, event.Correlation.Lane))
-	incrementStringMap(&s.report.GuardFrictionCoverage.PhaseCounts, firstNonEmptyAuditValue(friction.PhaseID, friction.Phase, event.Correlation.Phase))
+	contractID := firstNonEmptyString(friction.ContractID, event.ContractID)
+	incrementStringMap(&s.report.GuardFrictionCoverage.LaneCounts, firstNonEmptyString(friction.Lane, event.Correlation.Lane))
+	incrementStringMap(&s.report.GuardFrictionCoverage.PhaseCounts, firstNonEmptyString(friction.PhaseID, friction.Phase, event.Correlation.Phase))
 	incrementStringMap(&s.report.GuardFrictionCoverage.AvoidabilityCounts, string(friction.Avoidability))
 	incrementStringMap(&s.report.GuardFrictionCoverage.FirstInvalidActionCounts, friction.FirstInvalidAction)
 	incrementStringMap(&s.report.GuardFrictionCoverage.RetryOutcomeCounts, string(friction.RetryOutcome))
@@ -1333,8 +1333,8 @@ func (s *eventAuditState) addSidecarToolCorrelation(event Event) {
 	toolName := event.Correlation.ToolName
 
 	if event.Policy != nil {
-		toolCallID = firstNonEmptyAuditValue(toolCallID, event.Policy.ToolCallID)
-		toolName = firstNonEmptyAuditValue(toolName, event.Policy.ToolName)
+		toolCallID = firstNonEmptyString(toolCallID, event.Policy.ToolCallID)
+		toolName = firstNonEmptyString(toolName, event.Policy.ToolName)
 	}
 
 	if sidecarPresent {
@@ -1499,195 +1499,157 @@ func (s *eventAuditState) finish() {
 }
 
 func (s *eventAuditState) addFindings() {
-	if refs := s.report.ReferenceCoverage.MissingContractIDEvents; len(refs) > 0 {
-		s.report.Findings = append(s.report.Findings, EventAuditFinding{
-			ID:       "contract_event_missing_contract_id",
-			Severity: "high",
-			Evidence: fmt.Sprintf("%d autonomy event(s) lack contract_id", len(refs)),
-			EventIDs: eventIDsFromAuditRefs(refs),
-		})
+	for _, spec := range auditFindingSpecs() {
+		finding, ok := spec.finding(&s.report)
+		if ok {
+			s.report.Findings = append(s.report.Findings, finding)
+		}
+	}
+}
+
+type auditFindingSpec struct {
+	id          string
+	severity    string
+	evidence    string
+	source      auditFindingSource
+	eventIDs    bool
+	contractIDs bool
+}
+
+type auditFindingSource uint8
+
+const (
+	auditFindingMissingContractID auditFindingSource = iota
+	auditFindingUnmatchedContractReference
+	auditFindingStaleContractReference
+	auditFindingUnmatchedParentReference
+	auditFindingMissingExpectedContract
+	auditFindingSidecarToolCorrelation
+	auditFindingGateOpenObligationInconsistent
+	auditFindingGateMissingPackID
+	auditFindingGateMissingEnforcementMode
+	auditFindingGateMissingSafeAlternatives
+	auditFindingCompletionAllowWithRemainingObligations
+	auditFindingUnmatchedObligation
+	auditFindingTurnPhaseContradiction
+	auditFindingModelExchangeMissingProtocolHash
+	auditFindingModelExchangeMissingTypedPayload
+	auditFindingReadinessForcedNoTools
+	auditFindingReadinessUsefulToolsHidden
+	auditFindingReadinessHostComposedAfterProbe
+	auditFindingPrivacyForbiddenRawContent
+)
+
+type auditFindingProjection struct {
+	count       int
+	eventIDs    []string
+	contractIDs []string
+	details     []EventAuditFindingDetail
+}
+
+func (spec auditFindingSpec) finding(report *EventAuditReport) (EventAuditFinding, bool) {
+	projection := spec.project(report)
+	if projection.count == 0 {
+		return EventAuditFinding{}, false
 	}
 
-	if refs := s.report.ReferenceCoverage.UnmatchedContractReferences; len(refs) > 0 {
-		s.report.Findings = append(s.report.Findings, EventAuditFinding{
-			ID:          "contract_event_unmatched_contract_reference",
-			Severity:    "medium",
-			Evidence:    fmt.Sprintf("%d contract reference(s) have no matching lifecycle event or expected contract", len(refs)),
-			ContractIDs: contractIDsFromAuditRefs(refs),
-		})
+	finding := EventAuditFinding{
+		ID:          spec.id,
+		Severity:    spec.severity,
+		Evidence:    fmt.Sprintf(spec.evidence, projection.count),
+		EventIDs:    projection.eventIDs,
+		ContractIDs: projection.contractIDs,
+		Details:     projection.details,
+	}
+	if len(projection.details) > 0 {
+		finding.DetailCount = projection.count
 	}
 
-	if refs := s.report.ReferenceCoverage.StaleContractReferences; len(refs) > 0 {
-		s.report.Findings = append(s.report.Findings, EventAuditFinding{
-			ID:          "contract_event_stale_contract_reference",
-			Severity:    "medium",
-			Evidence:    fmt.Sprintf("%d event(s) reference a stopped or superseded contract", len(refs)),
-			EventIDs:    eventIDsFromAuditRefs(refs),
-			ContractIDs: contractIDsFromAuditRefs(refs),
-		})
-	}
+	return finding, true
+}
 
-	if refs := s.report.ReferenceCoverage.UnmatchedParentReferences; len(refs) > 0 {
-		s.report.Findings = append(s.report.Findings, EventAuditFinding{
-			ID:          "contract_event_unmatched_parent_reference",
-			Severity:    "low",
-			Evidence:    fmt.Sprintf("%d parent contract reference(s) have no matching lifecycle event or expected contract", len(refs)),
-			ContractIDs: contractIDsFromAuditRefs(refs),
-		})
+func (spec auditFindingSpec) project(report *EventAuditReport) auditFindingProjection {
+	switch spec.source {
+	case auditFindingMissingContractID:
+		return auditRefsProjection(report.ReferenceCoverage.MissingContractIDEvents, spec.eventIDs, spec.contractIDs)
+	case auditFindingUnmatchedContractReference:
+		return auditRefsProjection(report.ReferenceCoverage.UnmatchedContractReferences, spec.eventIDs, spec.contractIDs)
+	case auditFindingStaleContractReference:
+		return auditRefsProjection(report.ReferenceCoverage.StaleContractReferences, spec.eventIDs, spec.contractIDs)
+	case auditFindingUnmatchedParentReference:
+		return auditRefsProjection(report.ReferenceCoverage.UnmatchedParentReferences, spec.eventIDs, spec.contractIDs)
+	case auditFindingMissingExpectedContract:
+		return auditFindingProjection{count: len(report.ReferenceCoverage.MissingExpectedContracts), contractIDs: slices.Clone(report.ReferenceCoverage.MissingExpectedContracts)}
+	case auditFindingSidecarToolCorrelation:
+		issues := report.SidecarToolCorrelation.UnmatchedCorrelations
+		return auditFindingProjection{count: len(issues), eventIDs: eventIDsFromSidecarIssues(issues), contractIDs: contractIDsFromSidecarIssues(issues)}
+	case auditFindingGateOpenObligationInconsistent:
+		return auditRefsProjection(report.GateCoverage.InconsistentOpenObligationRefs, spec.eventIDs, spec.contractIDs)
+	case auditFindingGateMissingPackID:
+		return auditRefsProjection(report.GateCoverage.MissingPackIDRefs, spec.eventIDs, spec.contractIDs)
+	case auditFindingGateMissingEnforcementMode:
+		return auditRefsProjection(report.GateCoverage.MissingEnforcementModeRefs, spec.eventIDs, spec.contractIDs)
+	case auditFindingGateMissingSafeAlternatives:
+		return auditRefsProjection(report.GateCoverage.MissingSafeAlternativesRefs, spec.eventIDs, spec.contractIDs)
+	case auditFindingCompletionAllowWithRemainingObligations:
+		return auditRefsProjection(report.CompletionCoverage.AllowWithRemainingObligationsRefs, spec.eventIDs, spec.contractIDs)
+	case auditFindingUnmatchedObligation:
+		refs := report.ObligationCoverage.UnmatchedObligations
+		return auditFindingProjection{count: len(refs), eventIDs: eventIDsFromObligationRefs(refs), contractIDs: contractIDsFromObligationRefs(refs)}
+	case auditFindingTurnPhaseContradiction:
+		issues := report.TurnPhaseCoverage.Contradictions
+		return auditFindingProjection{count: len(issues), eventIDs: eventIDsFromTurnPhaseContradictions(issues), contractIDs: contractIDsFromTurnPhaseContradictions(issues), details: eventAuditDetailsFromTurnPhaseContradictions(issues, 25)}
+	case auditFindingModelExchangeMissingProtocolHash:
+		return auditRefsProjection(report.ModelExchangeCoverage.EventsMissingProtocolHash, spec.eventIDs, spec.contractIDs)
+	case auditFindingModelExchangeMissingTypedPayload:
+		return auditRefsProjection(report.ModelExchangeCoverage.EventsMissingHarnessPayload, spec.eventIDs, spec.contractIDs)
+	case auditFindingReadinessForcedNoTools:
+		return auditRefsProjection(report.ReadinessForcing.ForcedNoToolsTurns, spec.eventIDs, spec.contractIDs)
+	case auditFindingReadinessUsefulToolsHidden:
+		return auditRefsProjection(report.ReadinessForcing.UsefulToolsHiddenAfterReadiness, spec.eventIDs, spec.contractIDs)
+	case auditFindingReadinessHostComposedAfterProbe:
+		return auditRefsProjection(report.ReadinessForcing.HostComposedAfterRelevantProbes, spec.eventIDs, spec.contractIDs)
+	case auditFindingPrivacyForbiddenRawContent:
+		refs := report.PrivacyChecks.Refs
+		return auditFindingProjection{count: len(refs), eventIDs: eventIDsFromPrivacyRefs(refs), contractIDs: contractIDsFromPrivacyRefs(refs), details: eventAuditDetailsFromPrivacyRefs(refs, 25)}
+	default:
+		return auditFindingProjection{}
 	}
+}
 
-	if missing := s.report.ReferenceCoverage.MissingExpectedContracts; len(missing) > 0 {
-		s.report.Findings = append(s.report.Findings, EventAuditFinding{
-			ID:          "contract_event_expected_contract_missing",
-			Severity:    "medium",
-			Evidence:    fmt.Sprintf("%d expected contract(s) had no events", len(missing)),
-			ContractIDs: append([]string(nil), missing...),
-		})
+func auditFindingSpecs() []auditFindingSpec {
+	return []auditFindingSpec{
+		{"contract_event_missing_contract_id", "high", "%d autonomy event(s) lack contract_id", auditFindingMissingContractID, true, false},
+		{"contract_event_unmatched_contract_reference", "medium", "%d contract reference(s) have no matching lifecycle event or expected contract", auditFindingUnmatchedContractReference, false, true},
+		{"contract_event_stale_contract_reference", "medium", "%d event(s) reference a stopped or superseded contract", auditFindingStaleContractReference, true, true},
+		{"contract_event_unmatched_parent_reference", "low", "%d parent contract reference(s) have no matching lifecycle event or expected contract", auditFindingUnmatchedParentReference, false, true},
+		{"contract_event_expected_contract_missing", "medium", "%d expected contract(s) had no events", auditFindingMissingExpectedContract, false, true},
+		{"contract_event_sidecar_tool_correlation_mismatch", "medium", "%d sidecar/tool-call correlation issue(s)", auditFindingSidecarToolCorrelation, true, true},
+		{"contract_event_gate_open_obligation_inconsistent", "medium", "%d gate open-obligation reference(s) were not open at the gate sequence", auditFindingGateOpenObligationInconsistent, true, true},
+		{"contract_event_gate_missing_pack_id", "medium", "%d typed gate event(s) lack pack_id", auditFindingGateMissingPackID, true, true},
+		{"contract_event_gate_missing_enforcement_mode", "medium", "%d typed gate event(s) lack enforcement_mode", auditFindingGateMissingEnforcementMode, true, true},
+		{"contract_event_gate_missing_safe_alternatives", "medium", "%d enforced reject/deny/stop gate event(s) lack safe_alternatives", auditFindingGateMissingSafeAlternatives, true, true},
+		{"contract_event_completion_allow_with_remaining_obligations", "medium", "%d completion allow event(s) reported remaining obligations", auditFindingCompletionAllowWithRemainingObligations, true, true},
+		{"contract_event_unmatched_obligation_reference", "low", "%d obligation resolution event(s) had no matching opened event", auditFindingUnmatchedObligation, true, true},
+		{"turn_phase_contract_contradiction", "high", "%d turn phase contract contradiction(s)", auditFindingTurnPhaseContradiction, true, true},
+		{"model_exchange_missing_protocol_hash", "high", "%d model_exchange event(s) lack protocol_hash", auditFindingModelExchangeMissingProtocolHash, true, true},
+		{"model_exchange_missing_typed_payload", "high", "%d model_exchange event(s) lack a typed payload", auditFindingModelExchangeMissingTypedPayload, true, true},
+		{"readiness_forced_no_tools_turn", "medium", "%d turn phase event(s) allowed final answer while useful tools were unavailable and source-body obligations remained", auditFindingReadinessForcedNoTools, true, true},
+		{"readiness_useful_tools_hidden", "medium", "%d turn phase event(s) hid useful read/search tools after readiness with open obligations", auditFindingReadinessUsefulToolsHidden, true, true},
+		{"readiness_host_composed_after_probe", "medium", "%d completion event(s) allowed a terminal answer after the model requested missing context", auditFindingReadinessHostComposedAfterProbe, true, true},
+		{"contract_event_privacy_forbidden_raw_content", "high", "%d forbidden raw-content field(s) or value marker(s) in autonomy event metadata", auditFindingPrivacyForbiddenRawContent, true, true},
 	}
+}
 
-	if issues := s.report.SidecarToolCorrelation.UnmatchedCorrelations; len(issues) > 0 {
-		s.report.Findings = append(s.report.Findings, EventAuditFinding{
-			ID:          "contract_event_sidecar_tool_correlation_mismatch",
-			Severity:    "medium",
-			Evidence:    fmt.Sprintf("%d sidecar/tool-call correlation issue(s)", len(issues)),
-			EventIDs:    eventIDsFromSidecarIssues(issues),
-			ContractIDs: contractIDsFromSidecarIssues(issues),
-		})
+func auditRefsProjection(refs []EventAuditRef, includeEvents bool, includeContracts bool) auditFindingProjection {
+	projection := auditFindingProjection{count: len(refs)}
+	if includeEvents {
+		projection.eventIDs = eventIDsFromAuditRefs(refs)
 	}
-
-	if refs := s.report.GateCoverage.InconsistentOpenObligationRefs; len(refs) > 0 {
-		s.report.Findings = append(s.report.Findings, EventAuditFinding{
-			ID:          "contract_event_gate_open_obligation_inconsistent",
-			Severity:    "medium",
-			Evidence:    fmt.Sprintf("%d gate open-obligation reference(s) were not open at the gate sequence", len(refs)),
-			EventIDs:    eventIDsFromAuditRefs(refs),
-			ContractIDs: contractIDsFromAuditRefs(refs),
-		})
+	if includeContracts {
+		projection.contractIDs = contractIDsFromAuditRefs(refs)
 	}
-
-	if refs := s.report.GateCoverage.MissingPackIDRefs; len(refs) > 0 {
-		s.report.Findings = append(s.report.Findings, EventAuditFinding{
-			ID:          "contract_event_gate_missing_pack_id",
-			Severity:    "medium",
-			Evidence:    fmt.Sprintf("%d typed gate event(s) lack pack_id", len(refs)),
-			EventIDs:    eventIDsFromAuditRefs(refs),
-			ContractIDs: contractIDsFromAuditRefs(refs),
-		})
-	}
-
-	if refs := s.report.GateCoverage.MissingEnforcementModeRefs; len(refs) > 0 {
-		s.report.Findings = append(s.report.Findings, EventAuditFinding{
-			ID:          "contract_event_gate_missing_enforcement_mode",
-			Severity:    "medium",
-			Evidence:    fmt.Sprintf("%d typed gate event(s) lack enforcement_mode", len(refs)),
-			EventIDs:    eventIDsFromAuditRefs(refs),
-			ContractIDs: contractIDsFromAuditRefs(refs),
-		})
-	}
-
-	if refs := s.report.GateCoverage.MissingSafeAlternativesRefs; len(refs) > 0 {
-		s.report.Findings = append(s.report.Findings, EventAuditFinding{
-			ID:          "contract_event_gate_missing_safe_alternatives",
-			Severity:    "medium",
-			Evidence:    fmt.Sprintf("%d enforced reject/deny/stop gate event(s) lack safe_alternatives", len(refs)),
-			EventIDs:    eventIDsFromAuditRefs(refs),
-			ContractIDs: contractIDsFromAuditRefs(refs),
-		})
-	}
-
-	if refs := s.report.CompletionCoverage.AllowWithRemainingObligationsRefs; len(refs) > 0 {
-		s.report.Findings = append(s.report.Findings, EventAuditFinding{
-			ID:          "contract_event_completion_allow_with_remaining_obligations",
-			Severity:    "medium",
-			Evidence:    fmt.Sprintf("%d completion allow event(s) reported remaining obligations", len(refs)),
-			EventIDs:    eventIDsFromAuditRefs(refs),
-			ContractIDs: contractIDsFromAuditRefs(refs),
-		})
-	}
-
-	if refs := s.report.ObligationCoverage.UnmatchedObligations; len(refs) > 0 {
-		s.report.Findings = append(s.report.Findings, EventAuditFinding{
-			ID:          "contract_event_unmatched_obligation_reference",
-			Severity:    "low",
-			Evidence:    fmt.Sprintf("%d obligation resolution event(s) had no matching opened event", len(refs)),
-			EventIDs:    eventIDsFromObligationRefs(refs),
-			ContractIDs: contractIDsFromObligationRefs(refs),
-		})
-	}
-
-	if issues := s.report.TurnPhaseCoverage.Contradictions; len(issues) > 0 {
-		s.report.Findings = append(s.report.Findings, EventAuditFinding{
-			ID:          "turn_phase_contract_contradiction",
-			Severity:    "high",
-			Evidence:    fmt.Sprintf("%d turn phase contract contradiction(s)", len(issues)),
-			EventIDs:    eventIDsFromTurnPhaseContradictions(issues),
-			ContractIDs: contractIDsFromTurnPhaseContradictions(issues),
-			DetailCount: len(issues),
-			Details:     eventAuditDetailsFromTurnPhaseContradictions(issues, 25),
-		})
-	}
-
-	if refs := s.report.ModelExchangeCoverage.EventsMissingProtocolHash; len(refs) > 0 {
-		s.report.Findings = append(s.report.Findings, EventAuditFinding{
-			ID:          "model_exchange_missing_protocol_hash",
-			Severity:    "high",
-			Evidence:    fmt.Sprintf("%d model_exchange event(s) lack protocol_hash", len(refs)),
-			EventIDs:    eventIDsFromAuditRefs(refs),
-			ContractIDs: contractIDsFromAuditRefs(refs),
-		})
-	}
-
-	if refs := s.report.ModelExchangeCoverage.EventsMissingHarnessPayload; len(refs) > 0 {
-		s.report.Findings = append(s.report.Findings, EventAuditFinding{
-			ID:          "model_exchange_missing_typed_payload",
-			Severity:    "high",
-			Evidence:    fmt.Sprintf("%d model_exchange event(s) lack a typed payload", len(refs)),
-			EventIDs:    eventIDsFromAuditRefs(refs),
-			ContractIDs: contractIDsFromAuditRefs(refs),
-		})
-	}
-
-	if refs := s.report.ReadinessForcing.ForcedNoToolsTurns; len(refs) > 0 {
-		s.report.Findings = append(s.report.Findings, EventAuditFinding{
-			ID:          "readiness_forced_no_tools_turn",
-			Severity:    "medium",
-			Evidence:    fmt.Sprintf("%d turn phase event(s) allowed final answer while useful tools were unavailable and source-body obligations remained", len(refs)),
-			EventIDs:    eventIDsFromAuditRefs(refs),
-			ContractIDs: contractIDsFromAuditRefs(refs),
-		})
-	}
-
-	if refs := s.report.ReadinessForcing.UsefulToolsHiddenAfterReadiness; len(refs) > 0 {
-		s.report.Findings = append(s.report.Findings, EventAuditFinding{
-			ID:          "readiness_useful_tools_hidden",
-			Severity:    "medium",
-			Evidence:    fmt.Sprintf("%d turn phase event(s) hid useful read/search tools after readiness with open obligations", len(refs)),
-			EventIDs:    eventIDsFromAuditRefs(refs),
-			ContractIDs: contractIDsFromAuditRefs(refs),
-		})
-	}
-
-	if refs := s.report.ReadinessForcing.HostComposedAfterRelevantProbes; len(refs) > 0 {
-		s.report.Findings = append(s.report.Findings, EventAuditFinding{
-			ID:          "readiness_host_composed_after_probe",
-			Severity:    "medium",
-			Evidence:    fmt.Sprintf("%d completion event(s) allowed a terminal answer after the model requested missing context", len(refs)),
-			EventIDs:    eventIDsFromAuditRefs(refs),
-			ContractIDs: contractIDsFromAuditRefs(refs),
-		})
-	}
-
-	if refs := s.report.PrivacyChecks.Refs; len(refs) > 0 {
-		s.report.Findings = append(s.report.Findings, EventAuditFinding{
-			ID:          "contract_event_privacy_forbidden_raw_content",
-			Severity:    "high",
-			Evidence:    fmt.Sprintf("%d forbidden raw-content field(s) or value marker(s) in autonomy event metadata", len(refs)),
-			EventIDs:    eventIDsFromPrivacyRefs(refs),
-			ContractIDs: contractIDsFromPrivacyRefs(refs),
-			DetailCount: len(refs),
-			Details:     eventAuditDetailsFromPrivacyRefs(refs, 25),
-		})
-	}
+	return projection
 }
 
 func (s *eventAuditState) contractCoverage(contractID string) *ContractEventCoverage {
@@ -1749,35 +1711,8 @@ func (s *eventAuditState) contractsWithMap(kind string) []string {
 	set := make(map[string]struct{})
 
 	for contractID, coverage := range s.contracts {
-		switch kind {
-		case "policy":
-			if len(coverage.PolicyEvents) > 0 {
-				set[contractID] = struct{}{}
-			}
-		case "obligation":
-			if len(coverage.ObligationEvents) > 0 {
-				set[contractID] = struct{}{}
-			}
-		case "readiness":
-			if len(coverage.ReadinessEvents) > 0 {
-				set[contractID] = struct{}{}
-			}
-		case "completion":
-			if len(coverage.CompletionEvents) > 0 {
-				set[contractID] = struct{}{}
-			}
-		case "gate":
-			if len(coverage.GateEvents) > 0 {
-				set[contractID] = struct{}{}
-			}
-		case "guard_friction":
-			if len(coverage.GuardFrictionCounts) > 0 {
-				set[contractID] = struct{}{}
-			}
-		case "model_exchange":
-			if len(coverage.ModelExchangeCounts) > 0 {
-				set[contractID] = struct{}{}
-			}
+		if events := contractCoverageEventMap(coverage, kind); events != nil && len(*events) > 0 {
+			set[contractID] = struct{}{}
 		}
 	}
 
@@ -1797,21 +1732,37 @@ func (s *eventAuditState) lifecycleOnlyContracts() []string {
 }
 
 func incrementContractMap(coverage *ContractEventCoverage, kind string, key string) {
+	events := contractCoverageEventMap(coverage, kind)
+	if events == nil {
+		return
+	}
+	incrementStringMap(events, key)
+}
+
+func contractCoverageEventMap(coverage *ContractEventCoverage, kind string) *map[string]int {
+	if coverage == nil {
+		return nil
+	}
+
 	switch kind {
 	case "lifecycle":
-		incrementStringMap(&coverage.LifecycleEvents, key)
+		return &coverage.LifecycleEvents
 	case "policy":
-		incrementStringMap(&coverage.PolicyEvents, key)
+		return &coverage.PolicyEvents
 	case "obligation":
-		incrementStringMap(&coverage.ObligationEvents, key)
+		return &coverage.ObligationEvents
 	case "readiness":
-		incrementStringMap(&coverage.ReadinessEvents, key)
+		return &coverage.ReadinessEvents
 	case "completion":
-		incrementStringMap(&coverage.CompletionEvents, key)
+		return &coverage.CompletionEvents
 	case "gate":
-		incrementStringMap(&coverage.GateEvents, key)
+		return &coverage.GateEvents
+	case "guard_friction":
+		return &coverage.GuardFrictionCounts
 	case "model_exchange":
-		incrementStringMap(&coverage.ModelExchangeCounts, key)
+		return &coverage.ModelExchangeCounts
+	default:
+		return nil
 	}
 }
 
@@ -1861,7 +1812,7 @@ func guardFrictionAvoidable(avoidability GuardFrictionAvoidability) bool {
 func guardFrictionUnclassified(event Event, friction ContractGuardFrictionEvent) bool {
 	return friction.Avoidability == "" ||
 		friction.Avoidability == GuardFrictionAvoidabilityUnknown ||
-		firstNonEmptyAuditValue(friction.ContractID, event.ContractID) == "" ||
+		firstNonEmptyString(friction.ContractID, event.ContractID) == "" ||
 		friction.InvariantID == "" ||
 		friction.Decision == "" ||
 		friction.GuardSurface == "" ||
@@ -1991,7 +1942,7 @@ func TurnPhaseActionClassForToolClass(tool string) ActionClass {
 		return ActionClassPerEditWrite
 	case "shell", "source_sanity", "coding_rules_check", "git_diff", "git_status", "context_trace_pack", "go_diagnostics", "cpp_diagnostics", "java_diagnostics", "python_diagnostics", "rust_diagnostics", "ts_diagnostics":
 		return ActionClassVerify
-	case "task":
+	case "task", ToolNameSystemSearchAccess:
 		return ActionClassGenericProbe
 	default:
 		return ""
@@ -2011,10 +1962,6 @@ func stringSetContains(values []string, want string) bool {
 	}
 
 	return false
-}
-
-func firstNonEmptyAuditValue(values ...string) string {
-	return firstNonEmptyString(values...)
 }
 
 func removeString(values []string, remove string) []string {

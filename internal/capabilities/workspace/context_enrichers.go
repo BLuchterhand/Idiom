@@ -16,6 +16,7 @@ import (
 
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/comprehension"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 )
 
 const (
@@ -103,7 +104,7 @@ func (e workspaceGraphEnricher) EnrichGraph(ctx context.Context, graph comprehen
 }
 
 func (e workspaceGraphEnricher) diagnosticEvidence(ctx context.Context, graph comprehension.Graph, language string) ([]comprehension.Node, []comprehension.Edge, int, []string) {
-	tool := diagnosticToolForGraphLanguage(language)
+	tool := semanticlanguage.DiagnosticToolForLanguage(language)
 	if tool == "" {
 		return nil, nil, 0, nil
 	}
@@ -365,10 +366,6 @@ func graphSymbolCanHaveImplementations(kind string) bool {
 	return kind == "type" || kind == "interface"
 }
 
-func diagnosticToolForGraphLanguage(language string) string {
-	return DiagnosticToolForLanguage(language)
-}
-
 func relationshipToolsForGraphLanguage(language string) map[string]string {
 	lang, ok := LanguageForName(language)
 	if !ok {
@@ -386,7 +383,7 @@ func relationshipToolsForGraphLanguage(language string) map[string]string {
 
 func languageEnrichmentTools(language string) []string {
 	tools := []string{}
-	if tool := diagnosticToolForGraphLanguage(language); tool != "" {
+	if tool := semanticlanguage.DiagnosticToolForLanguage(language); tool != "" {
 		tools = append(tools, tool)
 	}
 

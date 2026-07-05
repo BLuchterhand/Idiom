@@ -65,7 +65,7 @@ func TestRunSuiteOnlyPassesValidSuite(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"-suite", suitePath, "-suite-only"}, &stdout, &stderr)
+	code := Run([]string{"-suite", suitePath, "-suite-only"}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -90,7 +90,7 @@ func TestRunEvaluatesLogsDirectory(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"-suite", suitePath, "-logs", logsDir}, &stdout, &stderr)
+	code := Run([]string{"-suite", suitePath, "-logs", logsDir}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -120,7 +120,7 @@ func TestRunLiveGeneratesLogsAndScoresThem(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"-suite", suitePath, "-run-live", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
+	code := Run([]string{"-suite", suitePath, "-run-live", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -153,7 +153,7 @@ func TestRunLivePassesMultiTurnMetadata(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"-suite", suitePath, "-run-live", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
+	code := Run([]string{"-suite", suitePath, "-run-live", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -204,7 +204,7 @@ func TestRunLivePassesRunnerModeMetadata(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"-suite", suitePath, "-run-live", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
+	code := Run([]string{"-suite", suitePath, "-run-live", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -232,7 +232,7 @@ func TestRunLiveContinueOnErrorRunsRemainingTasksAndWritesJSONLFailure(t *testin
 
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"-suite", suitePath, "-run-live", "-run-live-continue-on-error", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
+	code := Run([]string{"-suite", suitePath, "-run-live", "-run-live-continue-on-error", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
 
 	if code != 1 {
 		t.Fatalf("expected failing suite exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -278,7 +278,7 @@ func TestRunLiveScoresNonzeroRunnerWhenLogIsLoadable(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"-suite", suitePath, "-run-live", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
+	code := Run([]string{"-suite", suitePath, "-run-live", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("expected scoreable nonzero runner log to pass, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -677,7 +677,7 @@ func TestRunLiveDerivesTaskTimeoutFromOracleAndReportsProgress(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"-suite", suitePath, "-run-live", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
+	code := Run([]string{"-suite", suitePath, "-run-live", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -743,7 +743,7 @@ func TestRunWritesFailingScenarioSuite(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"-suite", suitePath, "-logs", logsDir, "-write-failing-scenarios", outPath}, &stdout, &stderr)
+	code := Run([]string{"-suite", suitePath, "-logs", logsDir, "-write-failing-scenarios", outPath}, &stdout, &stderr)
 
 	if code != 1 {
 		t.Fatalf("expected failing eval exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -787,7 +787,7 @@ func TestRunReportsMissingLogs(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"-suite", suitePath}, &stdout, &stderr)
+	code := Run([]string{"-suite", suitePath}, &stdout, &stderr)
 
 	if code != 1 {
 		t.Fatalf("expected exit 1 for missing logs, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -985,7 +985,7 @@ func TestRepresentativeSuiteLintsClean(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"-suite", suitePath, "-suite-only"}, &stdout, &stderr)
+	code := Run([]string{"-suite", suitePath, "-suite-only"}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("representative suite failed -suite-only lint (exit %d).\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
@@ -1004,7 +1004,7 @@ func TestCLIParityRegressionSuiteLintsClean(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"-suite", suitePath, "-suite-only"}, &stdout, &stderr)
+	code := Run([]string{"-suite", suitePath, "-suite-only"}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("cli parity regression suite failed -suite-only lint (exit %d).\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
@@ -1023,7 +1023,7 @@ func TestLiveContractSuiteLintsClean(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"-suite", suitePath, "-suite-only"}, &stdout, &stderr)
+	code := Run([]string{"-suite", suitePath, "-suite-only"}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("live contract suite failed -suite-only lint (exit %d).\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
@@ -1042,7 +1042,7 @@ func TestScriptedContractSuiteLintsClean(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := run([]string{"-suite", suitePath, "-suite-only"}, &stdout, &stderr)
+	code := Run([]string{"-suite", suitePath, "-suite-only"}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("scripted contract suite failed -suite-only lint (exit %d).\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())

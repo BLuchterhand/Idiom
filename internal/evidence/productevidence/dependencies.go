@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	"idiom/internal/evidence/lanehistory"
-	"idiom/internal/evidence/telemetry"
 )
 
 const laneHistoryRelPath = lanehistory.RelPath
@@ -104,10 +103,6 @@ func (deps Dependencies) summarizeLaneHistory(projectRoot string) (LaneHistorySu
 	}
 
 	return deps.SummarizeLaneHistory(projectRoot)
-}
-
-func (deps Dependencies) logCLIPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	telemetry.LogPhase(rec, eventType, fields)
 }
 
 func firstNonEmptyString(values ...string) string {

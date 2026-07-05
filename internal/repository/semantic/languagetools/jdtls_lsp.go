@@ -63,7 +63,7 @@ func (m *Manager) newJdtlsLSPClient(ctx context.Context) (*jdtlsLSPClient, error
 
 	params := map[string]any{
 		"processId": os.Getpid(),
-		"rootUri":   jdtlsFileURI(m.Root()),
+		"rootUri":   LSPFileURI(m.Root()),
 		"capabilities": map[string]any{
 			"textDocument": map[string]any{
 				"documentSymbol": map[string]any{
@@ -81,7 +81,7 @@ func (m *Manager) newJdtlsLSPClient(ctx context.Context) (*jdtlsLSPClient, error
 			},
 		},
 		"workspaceFolders": []map[string]any{{
-			"uri":  jdtlsFileURI(m.Root()),
+			"uri":  LSPFileURI(m.Root()),
 			"name": filepath.Base(m.Root()),
 		}},
 		"initializationOptions": map[string]any{
@@ -121,10 +121,6 @@ func (m *Manager) newJdtlsLSPClient(ctx context.Context) (*jdtlsLSPClient, error
 
 func (c *jdtlsLSPClient) openFile(path string) error {
 	return c.lspBaseClient.openFile(path, "java")
-}
-
-func jdtlsFileURI(path string) string {
-	return LSPFileURI(path)
 }
 
 func jdtlsPathFromURI(uri string) (string, error) {
@@ -211,11 +207,7 @@ func jdtlsSymbolKindName(kind int) string {
 }
 
 func flattenJdtlsDocumentSymbols(path string, container string, symbols []LSPDocumentSymbol) []LSPSymbolInfo {
-	return flattenLSPDocumentSymbols(path, container, symbols, jdtlsFileURI, ".")
-}
-
-func filterJdtlsDocumentSymbolMatches(symbols []LSPSymbolInfo, pattern string) []LSPSymbolInfo {
-	return filterLSPDocumentSymbolMatches(symbols, pattern)
+	return flattenLSPDocumentSymbols(path, container, symbols, LSPFileURI, ".")
 }
 
 // javaWorkspaceSymbolsViaJdtls performs a workspace/symbol query,
@@ -226,7 +218,7 @@ func (m *Manager) javaWorkspaceSymbolsViaJdtls(ctx context.Context, pattern stri
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
 			return m.newJdtlsLSPClient(ctx)
 		},
-		fileURI: jdtlsFileURI,
+		fileURI: LSPFileURI,
 		candidates: func(pattern string, budget int) ([]string, error) {
 			index, err := m.getJavaIndex()
 			if err != nil {
@@ -241,7 +233,7 @@ func (m *Manager) javaWorkspaceSymbolsViaJdtls(ctx context.Context, pattern stri
 			return candidates, nil
 		},
 		flatten: flattenJdtlsDocumentSymbols,
-		filter:  filterJdtlsDocumentSymbolMatches,
+		filter:  filterLSPDocumentSymbolMatches,
 		format:  m.formatJdtlsWorkspaceSymbols,
 	}, pattern, pathFilter, limit)
 }
@@ -256,7 +248,7 @@ func (m *Manager) javaLocationQueryViaJdtls(ctx context.Context, match semantic.
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
 			return m.newJdtlsLSPClient(ctx)
 		},
-		fileURI: jdtlsFileURI,
+		fileURI: LSPFileURI,
 		format:  m.formatJdtlsLocations,
 	}, match.Path, func(abs string) map[string]any {
 		return m.javaLSPPosition(abs, match)
@@ -269,7 +261,7 @@ func (m *Manager) javaImplementationsViaJdtls(ctx context.Context, match semanti
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
 			return m.newJdtlsLSPClient(ctx)
 		},
-		fileURI: jdtlsFileURI,
+		fileURI: LSPFileURI,
 		format:  m.formatJdtlsLocations,
 	}, match.Path, func(abs string) map[string]any {
 		return m.javaLSPPosition(abs, match)
@@ -282,7 +274,7 @@ func (m *Manager) javaReferencesViaJdtls(ctx context.Context, match semantic.Jav
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
 			return m.newJdtlsLSPClient(ctx)
 		},
-		fileURI: jdtlsFileURI,
+		fileURI: LSPFileURI,
 		format:  m.formatJdtlsLocations,
 	}, match.Path, func(abs string) map[string]any {
 		return m.javaLSPPosition(abs, match)
@@ -303,7 +295,7 @@ func (m *Manager) javaCallHierarchyViaJdtls(ctx context.Context, match semantic.
 		return callHierarchyResult{}, err
 	}
 
-	items, err := prepareLSPCallHierarchy(ctx, client, jdtlsFileURI, abs, m.javaLSPPosition(abs, match))
+	items, err := prepareLSPCallHierarchy(ctx, client, LSPFileURI, abs, m.javaLSPPosition(abs, match))
 	if err != nil {
 		return callHierarchyResult{}, err
 	}

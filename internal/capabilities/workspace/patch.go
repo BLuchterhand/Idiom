@@ -11,31 +11,6 @@ import (
 	"idiom/internal/platform/failures"
 )
 
-const (
-	PatchOpAdd    = patching.OpAdd
-	PatchOpUpdate = patching.OpUpdate
-	PatchOpDelete = patching.OpDelete
-)
-
-type PatchOp = patching.Op
-
-func ParsePatch(text string) ([]PatchOp, error) {
-	return patching.Parse(text)
-}
-
-// SerializePatch reverses ParsePatch: it turns a slice of PatchOp into the
-// canonical *** Begin Patch / *** End Patch envelope text. Used by the
-// runner-side pre-flight when it needs to drop redundant sections from a
-// model-issued patch and re-submit the trimmed envelope to applyPatch
-// without changing applyPatch's semantics.
-func SerializePatch(ops []PatchOp) string {
-	return patching.Serialize(ops)
-}
-
-func PatchOpPaths(ops []PatchOp) []string {
-	return patching.OpPaths(ops)
-}
-
 func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 	if !m.cfg.EnableWrites {
 		return toolWriteDisabledResult(ToolNameApplyPatch, "Patch request rejected", "workspace writes are disabled")
@@ -46,7 +21,7 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 		return toolInvalidArgumentResult(ToolNameApplyPatch, "Patch request rejected", "apply_patch requires the patch body in content")
 	}
 
-	ops, err := ParsePatch(body)
+	ops, err := patching.Parse(body)
 	if err != nil {
 		return toolFailureFromErrorResult(ToolNameApplyPatch, "Patch parse failed", err, failures.InvalidArgument, reasonToolInvalidArgument)
 	}
@@ -67,7 +42,7 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 		}
 
 		switch op.Kind {
-		case PatchOpAdd:
+		case patching.OpAdd:
 			if _, statErr := os.Stat(path); statErr == nil {
 				return toolFailureResult(ToolNameApplyPatch, "Patch request rejected", fmt.Sprintf("Add File target %s already exists", m.displayPath(path)), failures.AlreadyExists, reasonPlanSubmissionRejected)
 			}
@@ -79,7 +54,7 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 
 			planned = append(planned, plannedWrite{path: path, contents: []byte(body)})
 			summaries = append(summaries, fmt.Sprintf("add %s (%d bytes)", m.displayPath(path), len(body)))
-		case PatchOpDelete:
+		case patching.OpDelete:
 			info, statErr := os.Stat(path)
 			if statErr != nil {
 				return toolFailureResult(ToolNameApplyPatch, "Patch request rejected", fmt.Sprintf("Delete File target %s not found", m.displayPath(path)), failures.NotFound, reasonPlanSubmissionRejected)
@@ -91,7 +66,7 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 
 			planned = append(planned, plannedWrite{path: path, remove: true})
 			summaries = append(summaries, fmt.Sprintf("delete %s", m.displayPath(path)))
-		case PatchOpUpdate:
+		case patching.OpUpdate:
 			current, readErr := os.ReadFile(path)
 			if readErr != nil {
 				return toolFailureFromErrorResult(ToolNameApplyPatch, "Patch request rejected", fmt.Errorf("Update File target %s: %w", m.displayPath(path), readErr), failures.NotFound, reasonPlanSubmissionRejected)

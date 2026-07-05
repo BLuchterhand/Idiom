@@ -46,10 +46,11 @@ func TestRunFeaturePlannerMainReadsPromptFileAndHonorsJSON(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt-file", promptPath, "-json", "-resume", "prior"},
 		&stdout,
 		&stderr,
+		nil,
 	)
 
 	if code != 0 {
@@ -97,7 +98,7 @@ func TestRunFeaturePlannerMainJSONMessagesDoNotLeakRawPromptOrAnswer(t *testing.
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := RunMain([]string{"--config", configPath, "--prompt-file", promptPath, "--json"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"--config", configPath, "--prompt-file", promptPath, "--json"}, &stdout, &stderr, nil)
 	if code != 0 {
 		t.Fatalf("RunMain code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
@@ -122,10 +123,11 @@ func TestRunFeaturePlannerMainReportsRunnerError(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "plan feature", "-json"},
 		&stdout,
 		&stderr,
+		nil,
 	)
 
 	if code != 1 {
@@ -308,7 +310,7 @@ func TestFeaturePlannerMainDispatchesThroughAdapter(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain([]string{"-config", configPath, "-prompt", "plan"}, &stdout, &stderr)
+	code := RunMainWithTelemetry([]string{"-config", configPath, "-prompt", "plan"}, &stdout, &stderr, nil)
 
 	if code != 0 || !called || strings.TrimSpace(stdout.String()) != "ok" {
 		t.Fatalf("expected feature-planner dispatch success, code=%d called=%t stdout=%q stderr=%s", code, called, stdout.String(), stderr.String())
@@ -373,10 +375,11 @@ func TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute(t *testi
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "send atom through plan-execute", "-json"},
 		&stdout,
 		&stderr,
+		nil,
 	)
 
 	if code != 0 {
@@ -462,10 +465,11 @@ func TestDefaultHeadlessFeaturePlannerBlocksDispatchForInScopeSurfaceWithoutTDDO
 
 	var stdout, stderr bytes.Buffer
 
-	code := RunMain(
+	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "send atom through plan-execute", "-json"},
 		&stdout,
 		&stderr,
+		nil,
 	)
 
 	if code != 0 {

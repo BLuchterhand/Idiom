@@ -1023,28 +1023,6 @@ func findStatusSection(t *testing.T, sections []StatusSection, name string) Stat
 	return StatusSection{}
 }
 
-func statusRepoRoot(t *testing.T) string {
-	t.Helper()
-
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-
-		next := filepath.Dir(dir)
-		if next == dir {
-			t.Fatal("could not find repo root")
-		}
-
-		dir = next
-	}
-}
-
 func loadDurableWorkflowState(t *testing.T) map[string]any {
 	t.Helper()
 

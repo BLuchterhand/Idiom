@@ -23,6 +23,8 @@ import (
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/discovery"
 	"idiom/internal/repository/semantic"
+	semanticcpp "idiom/internal/repository/semantic/cpp"
+	semanticgo "idiom/internal/repository/semantic/golang"
 )
 
 func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
@@ -127,7 +129,7 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 
 	indexOpts := semantic.IndexOptions{Scope: scope, MaxFiles: opts.MaxFiles, Context: ctx}
 	if shouldUseGoCollector(language) {
-		goIndex, err = semantic.BuildGoIndexWithOptions(root, indexOpts)
+		goIndex, err = semanticgo.BuildGoIndexWithOptions(root, indexOpts)
 		if err != nil {
 			return BuildReport{}, fmt.Errorf("build go index: %w", err)
 		}
@@ -148,7 +150,7 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 	var cppIndex *semantic.CppIndex
 
 	if shouldUseCppCollector(language) {
-		cppIndex, err = semantic.BuildCppIndexWithOptions(root, indexOpts)
+		cppIndex, err = semanticcpp.BuildCppIndexWithOptions(root, indexOpts)
 		if err != nil {
 			return BuildReport{}, fmt.Errorf("build C++ index: %w", err)
 		}
@@ -3081,15 +3083,6 @@ func claimForNode(node Node) string {
 	}
 
 	return fmt.Sprintf("%s %q is present in the context index (%s confidence)", node.Kind, label, node.Confidence)
-}
-
-func cloneProperties(in map[string]any) map[string]any {
-	out := make(map[string]any, len(in)+1)
-	for key, value := range in {
-		out[key] = value
-	}
-
-	return out
 }
 
 func uniqueStrings(values []string) []string {

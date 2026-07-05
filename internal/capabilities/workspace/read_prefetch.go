@@ -197,14 +197,7 @@ func (m *Manager) prefetchReadFile(requested string, opts PrefetchReadOptions, r
 		return ToolResult{}, "", 0, 0, false, PrefetchSkippedPath{Path: displayPath, Reason: "read_failed"}
 	}
 
-	excerptLimit := opts.MaxExcerptBytes
-	if remainingBytes < excerptLimit {
-		excerptLimit = remainingBytes
-	}
-
-	if excerptLimit > len(data) {
-		excerptLimit = len(data)
-	}
+	excerptLimit := prefetchExcerptLimit(info.Size(), opts, remainingBytes, len(data))
 
 	excerpt := data
 	if len(excerpt) > excerptLimit {
@@ -222,7 +215,11 @@ func (m *Manager) prefetchReadFile(requested string, opts PrefetchReadOptions, r
 	var b strings.Builder
 
 	for i, line := range lines {
-		line = textutil.TruncateBytes(strings.TrimRight(line, "\r\n"), defaultLogLineCharCap, "...[line truncated]")
+		line = strings.TrimRight(line, "\r\n")
+		if truncated {
+			line = textutil.TruncateBytes(line, defaultLogLineCharCap, lineTruncationMarker)
+		}
+
 		fmt.Fprintf(&b, "%d:%s\n", i+1, line)
 	}
 
@@ -243,6 +240,23 @@ func (m *Manager) prefetchReadFile(requested string, opts PrefetchReadOptions, r
 		Summary: summary,
 		Output:  strings.TrimRight(b.String(), "\n"),
 	}, displayPath, outputBytes, len(lines), truncated, PrefetchSkippedPath{}
+}
+
+func prefetchExcerptLimit(fileSize int64, opts PrefetchReadOptions, remainingBytes int, bytesRead int) int {
+	limit := opts.MaxExcerptBytes
+	if fileSize <= int64(opts.MaxBytesPerFile) && fileSize <= int64(remainingBytes) {
+		limit = opts.MaxBytesPerFile
+	}
+
+	if remainingBytes < limit {
+		limit = remainingBytes
+	}
+
+	if bytesRead < limit {
+		limit = bytesRead
+	}
+
+	return limit
 }
 
 func countWorkspaceFileLines(path string) (int, error) {

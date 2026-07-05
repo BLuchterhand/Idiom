@@ -98,6 +98,139 @@ func TestRunnerEndToEndAcceptsLowConfidenceSourceBackedDirectAnswer(t *testing.T
 	}
 }
 
+func TestRunnerEndToEndRejectsCodingRulesLocalizationOutsideWorkspaceEvidence(t *testing.T) {
+	root := newGoModuleTestWorkspace(t)
+	if err := writeTestFile(root, "internal/labels/labels.go", strings.Join([]string{
+		"package labels",
+		"",
+		"const ShortLabel = \"idiom\"",
+		"",
+		"func CurrentShortLabel() string {",
+		"\treturn ShortLabel",
+		"}",
+	}, "\n")); err != nil {
+		t.Fatalf("write source doc: %v", err)
+	}
+
+	badAnswer := "The short label is `failed`, based on `/tmp/outside/labels.go:6`."
+	finalAnswer := "The short label is `idiom`; `internal/labels/labels.go` defines `ShortLabel` with that value and `CurrentShortLabel` returns it."
+	replies := []string{
+		`{"tool":"task","description":"Review coding rules localization evidence for the short label."}`,
+		badAnswer,
+		`{"tool":"read_file","path":"internal/labels/labels.go","start_line":1,"end_line":10}`,
+		finalAnswer,
+	}
+
+	server, requestBodies := newScriptedChatServer(t, replies, true)
+	defer server.Close()
+
+	codingRulesReport := strings.Join([]string{
+		`{`,
+		`  "schema_version": "idiom.coding_rules.report.v1",`,
+		`  "workspace_root": "` + root + `",`,
+		`  "status": "warn",`,
+		`  "summary": {"files_scanned": 1, "findings": 1, "warnings": 1},`,
+		`  "findings": [{`,
+		`    "rule_id": "go.no_pass_through_wrapper",`,
+		`    "language": "go",`,
+		`    "severity": "warning",`,
+		`    "enforcement": "advisory",`,
+		`    "path": "/tmp/outside/labels.go",`,
+		`    "line": 6,`,
+		`    "symbol": "CurrentShortLabel",`,
+		`    "message": "outside localization candidate",`,
+		`    "evidence": [{"kind": "single_statement", "path": "/tmp/outside/labels.go", "line": 6}]`,
+		`  }]`,
+		`}`,
+	}, "\n")
+
+	objective := "What is the current short label?"
+	var events []RunEvent
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, 5*time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 4, MaxModelCalls: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         objective,
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"task", "read_file"},
+		},
+		PreExecute: func(step int, req workspace.ToolRequest) *workspace.ToolResult {
+			if req.Tool != "task" {
+				return nil
+			}
+
+			return &workspace.ToolResult{
+				Tool:        req.Tool,
+				Summary:     "Coding rules warn: files=1 findings=1 blocking=0 suppressed=0",
+				Output:      codingRulesReport,
+				PayloadType: "application/vnd.idiom.coding_rules.report+json",
+				Payload:     []byte(codingRulesReport),
+			}
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: objective}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if answer != finalAnswer {
+		t.Fatalf("runner returned unexpected answer:\n%s", answer)
+	}
+	if strings.Contains(answer, "/tmp/outside") || strings.Contains(answer, "failed") {
+		t.Fatalf("runner surfaced outside-evidence answer:\n%s", answer)
+	}
+
+	bodies := strings.Join(requestBodies(), "\n---\n")
+	if !strings.Contains(bodies, badAnswer) {
+		t.Fatalf("expected bad answer attempt before repair; bodies:\n%s", bodies)
+	}
+	if !strings.Contains(bodies, "internal/labels/labels.go") || !strings.Contains(bodies, "CurrentShortLabel") {
+		t.Fatalf("expected repo-local read_file source body before accepted answer; bodies:\n%s", bodies)
+	}
+
+	var sawReject bool
+	var sawAccept bool
+	for _, event := range events {
+		if (event.Role == "next_action_state" || event.Role == "failure_feedback" || event.Role == "completion_gate_recovery") &&
+			strings.Contains(event.Content, "source-body read") &&
+			strings.Contains(event.Content, "/tmp/outside/labels.go") {
+
+			sawReject = true
+		}
+		if event.Role == "final_answer_critic" &&
+			strings.Contains(event.Content, `"passed":true`) &&
+			strings.Contains(event.Content, "internal/labels/labels.go") &&
+			!strings.Contains(event.Content, "/tmp/outside/labels.go") {
+
+			sawAccept = true
+		}
+	}
+
+	if !sawReject {
+		t.Fatalf("expected final-answer critic to reject outside coding-rules localization evidence; events=%#v", events)
+	}
+	if !sawAccept {
+		t.Fatalf("expected final-answer critic to accept only repo-local source-body evidence; events=%#v", events)
+	}
+}
+
 func TestRunnerEndToEndAllowsContextQueryAfterBroadTextSearch(t *testing.T) {
 	root := newGoModuleTestWorkspace(t)
 	if err := writeTestFile(root, "internal/contracts/workflowstate/machine.go", strings.Join([]string{

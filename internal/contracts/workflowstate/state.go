@@ -1,7 +1,5 @@
 package workflowstate
 
-import "strings"
-
 type WorkflowID string
 
 const (
@@ -50,30 +48,4 @@ type Blocker struct {
 type Transition struct {
 	From string `json:"from,omitempty"`
 	To   string `json:"to"`
-}
-
-func Normalize(classification Classification) Classification {
-	classification.Reason = strings.TrimSpace(classification.Reason)
-	if classification.TerminalState == "" {
-		classification.TerminalState = TerminalStateBlocked
-	}
-	if classification.WorkflowID == "" {
-		classification.WorkflowID = WorkflowDirectAnswer
-	}
-	for i := range classification.Blockers {
-		classification.Blockers[i].Code = Token(classification.Blockers[i].Code)
-		classification.Blockers[i].Message = strings.TrimSpace(classification.Blockers[i].Message)
-	}
-	for i := range classification.Transitions {
-		classification.Transitions[i].From = Token(classification.Transitions[i].From)
-		classification.Transitions[i].To = Token(classification.Transitions[i].To)
-	}
-
-	return classification
-}
-
-func Token(value string) string {
-	value = strings.TrimSpace(strings.ToLower(value))
-	value = strings.ReplaceAll(value, "_", "-")
-	return value
 }

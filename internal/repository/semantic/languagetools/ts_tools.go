@@ -20,6 +20,7 @@ import (
 
 	"idiom/internal/repository/discovery"
 	"idiom/internal/repository/semantic"
+	semanticts "idiom/internal/repository/semantic/typescript"
 )
 
 // isTsWorkspace returns true if the workspace root looks like a
@@ -85,7 +86,7 @@ func (m *Manager) getTsIndex() (*semantic.TsIndex, error) {
 		return cached, nil
 	}
 
-	index, err := semantic.BuildTsIndex(m.Root())
+	index, err := semanticts.BuildTsIndex(m.Root())
 	if err != nil {
 		return nil, fmt.Errorf("build TypeScript semantic index: %w", err)
 	}

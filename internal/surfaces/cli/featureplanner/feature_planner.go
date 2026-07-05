@@ -81,10 +81,6 @@ var runFeaturePlannerPlanExecute = defaultFeaturePlannerPlanExecute
 
 type featurePlannerModelTurnRunner func(context.Context, featurePlannerRequest, string, string, io.Writer) (string, error)
 
-func RunMain(args []string, stdout io.Writer, stderr io.Writer) int {
-	return RunMainWithTelemetry(args, stdout, stderr, nil)
-}
-
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder, depOverrides ...Dependencies) int {
 	deps := resolveDependencies(depOverrides...)
 
@@ -292,10 +288,10 @@ func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerReques
 		"status":             result.State.Status,
 		"state_path":         statePath,
 		"atom_count":         len(result.State.Atoms),
-		"open_questions":     countOpenFeaturePlannerQuestions(result.State),
+		"open_questions":     featureplanner.CountOpenPlannerQuestions(result.State),
 		"next_valid_actions": result.State.DerivedNextValidActions,
 	}
-	answer := featurePlannerAnswer(result.State, statePath)
+	answer := featureplanner.FormatStateSummary(result.State, statePath)
 
 	return featurePlannerResult{Answer: answer, Fields: fields}, nil
 }
@@ -323,7 +319,7 @@ func closeFeaturePlannerSourceSatisfied(req featurePlannerRequest, state feature
 		"status":             state.Status,
 		"state_path":         statePath,
 		"atom_count":         len(state.Atoms),
-		"open_questions":     countOpenFeaturePlannerQuestions(state),
+		"open_questions":     featureplanner.CountOpenPlannerQuestions(state),
 		"next_valid_actions": state.DerivedNextValidActions,
 		"source_satisfied":   true,
 		"effort_id":          strings.TrimSpace(brief.EffortID),
@@ -331,7 +327,7 @@ func closeFeaturePlannerSourceSatisfied(req featurePlannerRequest, state feature
 		"current_state":      strings.TrimSpace(brief.CurrentState),
 	}
 
-	return featurePlannerResult{Answer: featurePlannerAnswer(state, statePath), Fields: fields}, nil
+	return featurePlannerResult{Answer: featureplanner.FormatStateSummary(state, statePath), Fields: fields}, nil
 }
 
 func featurePlannerEffortRoot(req featurePlannerRequest, state featureplanner.FeatureState) string {
@@ -445,7 +441,7 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 		args = append(args, "-write-allowed-path", path)
 	}
 
-	for _, path := range featureplanner.PlanExecuteAuthorizedNewFilesFromImplementorPrompt(prompt) {
+	for _, path := range plancontract.AuthorizedNewFilePathsFromPrompt(prompt) {
 		args = append(args, "-authorized-new-file", path)
 	}
 
@@ -643,14 +639,6 @@ func hasOpenFeaturePlannerQuestion(state featureplanner.FeatureState) bool {
 	}
 
 	return false
-}
-
-func featurePlannerAnswer(state featureplanner.FeatureState, statePath string) string {
-	return featureplanner.FormatStateSummary(state, statePath)
-}
-
-func countOpenFeaturePlannerQuestions(state featureplanner.FeatureState) int {
-	return featureplanner.CountOpenPlannerQuestions(state)
 }
 
 func parseFeaturePlannerOptions(args []string, stderr io.Writer) (featurePlannerOptions, error) {

@@ -19,7 +19,3 @@ func (TargetNormalizer) Normalize(target string) string {
 func (n TargetNormalizer) Same(receiptTarget string, claimTarget string) bool {
 	return n.Normalize(receiptTarget) == n.Normalize(claimTarget)
 }
-
-func normalizeTarget(target string) string {
-	return TargetNormalizer{}.Normalize(target)
-}

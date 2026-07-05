@@ -54,7 +54,7 @@ func ToolManifestTools(opts ToolManifestToolOptions) []string {
 	}
 
 	if opts.IncludePlanThenExecute {
-		if metadata, ok := BuiltInToolSurfaceMetadata(ToolNameSubmitPlan); ok {
+		if metadata, ok := builtInToolSurfaceCatalog.Lookup(ToolNameSubmitPlan); ok {
 			tools = append(tools, metadata.Tool)
 		}
 	}
@@ -190,7 +190,7 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 		{Tool: ToolNamePwd, Request: `{"tool":"pwd"}`, Purpose: "show current workspace directory"},
 		{Tool: ToolNameListFiles, Request: `{"tool":"list_files","path":".","recursive":true,"max_depth":2}`, Purpose: "bounded file discovery"},
 		{Tool: ToolNameSearchFiles, Request: `{"tool":"search_files","pattern":"name","path":".","named_gap":"locate the exact file that defines the child-task handoff before answering"}`, Purpose: "find files by name"},
-		{Tool: ToolNameSearchContent, Request: `{"tool":"search_content","pattern":"symbol|text","path":".","glob":"*.go","named_gap":"find one exact branch in a known scope after a semantic probe or packet did not fully resolve the question","why_not_answering":"without the deciding branch, the explanation may overstate how delegation is triggered"}`, Purpose: "find exact text when semantic tools or discovered handles are not enough"},
+		{Tool: ToolNameSearchContent, Request: `{"tool":"search_content","pattern":"symbol|text","path":".","glob":"*.go","fixed_strings":false,"named_gap":"find one exact branch in a known scope after a semantic probe or packet did not fully resolve the question","why_not_answering":"without the deciding branch, the explanation may overstate how delegation is triggered"}`, Purpose: "find regex or exact literal text when semantic tools or discovered handles are not enough; set fixed_strings=true for punctuation-heavy snippets"},
 		{Tool: ToolNameReadFile, Request: `{"tool":"read_file","path":"relative/file.go","start_line":1,"end_line":120,"named_gap":"verify one exact function body or narrow range now that the target file is known","why_not_answering":"I still need the implementation body, not just the file name"}`, Purpose: "read exact file ranges"},
 		{Tool: ToolNameFileStats, Request: `{"tool":"file_stats","path":".","recursive":true,"glob":"*.go","max_depth":3,"limit":1000}`, Purpose: "count files, bytes, and lines without shell wc/find pipelines"},
 		{Tool: CodeNavigateToolName, Request: CodeNavigateRequestExample(CapReadSymbol, "relative/file.go", "Run"), Purpose: "request a code navigation capability; the harness routes by file language to the best symbol/navigation tool or a bounded generic fallback"},

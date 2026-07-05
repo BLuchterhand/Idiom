@@ -463,11 +463,11 @@ func CapabilityClassificationForTool(tool string) string {
 		return ""
 	case IsWorkspaceWriteTool(tool):
 		return CapabilityClassWriteSideEffect
-	case isToolSchemaDiagnosticTool(tool):
+	case LanguageToolHasCapability(tool, CapDiagnostics):
 		return CapabilityClassDeferred
 	}
 
-	if metadata, ok := BuiltInToolSurfaceMetadata(tool); ok && metadata.CapabilityClassification != "" {
+	if metadata, ok := builtInToolSurfaceCatalog.Lookup(tool); ok && metadata.CapabilityClassification != "" {
 		return metadata.CapabilityClassification
 	}
 

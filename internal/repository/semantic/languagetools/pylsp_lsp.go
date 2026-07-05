@@ -99,7 +99,7 @@ func (m *Manager) newPylspLSPClient(ctx context.Context) (*pylspLSPClient, error
 
 	params := map[string]any{
 		"processId": os.Getpid(),
-		"rootUri":   pylspFileURI(m.Root()),
+		"rootUri":   LSPFileURI(m.Root()),
 		"capabilities": map[string]any{
 			"workspace": map[string]any{
 				"symbol": map[string]any{
@@ -108,7 +108,7 @@ func (m *Manager) newPylspLSPClient(ctx context.Context) (*pylspLSPClient, error
 			},
 		},
 		"workspaceFolders": []map[string]any{{
-			"uri":  pylspFileURI(m.Root()),
+			"uri":  LSPFileURI(m.Root()),
 			"name": filepath.Base(m.Root()),
 		}},
 	}
@@ -134,14 +134,6 @@ func (c *pylspLSPClient) openFile(path string) error {
 	return c.lspBaseClient.openFile(path, "python")
 }
 
-func pylspFileURI(path string) string {
-	return LSPFileURI(path)
-}
-
-func PylspFileURI(path string) string {
-	return pylspFileURI(path)
-}
-
 func pylspPathFromURI(uri string) (string, error) {
 	return LSPPathFromURI(uri, "Python LSP")
 }
@@ -151,7 +143,7 @@ func (m *Manager) pythonWorkspaceSymbolsViaLSP(ctx context.Context, pattern stri
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
 			return m.newPylspLSPClient(ctx)
 		},
-		fileURI: pylspFileURI,
+		fileURI: LSPFileURI,
 		candidates: func(pattern string, budget int) ([]string, error) {
 			index, err := m.getPythonIndex()
 			if err != nil {
@@ -166,7 +158,7 @@ func (m *Manager) pythonWorkspaceSymbolsViaLSP(ctx context.Context, pattern stri
 			return candidates, nil
 		},
 		flatten: flattenPylspDocumentSymbols,
-		filter:  filterPylspDocumentSymbolMatches,
+		filter:  filterLSPDocumentSymbolMatches,
 		format:  m.formatPylspWorkspaceSymbols,
 	}, pattern, pathFilter, limit)
 }
@@ -181,7 +173,7 @@ func (m *Manager) pythonLocationQueryViaLSP(ctx context.Context, match semantic.
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
 			return m.newPylspLSPClient(ctx)
 		},
-		fileURI: pylspFileURI,
+		fileURI: LSPFileURI,
 		format:  m.formatPylspLocations,
 	}, match.Path, func(abs string) map[string]any {
 		return m.pythonLSPPosition(abs, match)
@@ -194,7 +186,7 @@ func (m *Manager) pythonImplementationsViaLSP(ctx context.Context, match semanti
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
 			return m.newPylspLSPClient(ctx)
 		},
-		fileURI: pylspFileURI,
+		fileURI: LSPFileURI,
 		format:  m.formatPylspLocations,
 	}, match.Path, func(abs string) map[string]any {
 		return m.pythonLSPPosition(abs, match)
@@ -207,7 +199,7 @@ func (m *Manager) pythonReferencesViaLSP(ctx context.Context, match semantic.Pyt
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
 			return m.newPylspLSPClient(ctx)
 		},
-		fileURI: pylspFileURI,
+		fileURI: LSPFileURI,
 		format:  m.formatPylspLocations,
 	}, match.Path, func(abs string) map[string]any {
 		return m.pythonLSPPosition(abs, match)
@@ -228,7 +220,7 @@ func (m *Manager) pythonCallHierarchyViaLSP(ctx context.Context, match semantic.
 		return callHierarchyResult{}, err
 	}
 
-	items, err := prepareLSPCallHierarchy(ctx, client, pylspFileURI, abs, m.pythonLSPPosition(abs, match))
+	items, err := prepareLSPCallHierarchy(ctx, client, LSPFileURI, abs, m.pythonLSPPosition(abs, match))
 	if err != nil {
 		return callHierarchyResult{}, err
 	}
@@ -392,10 +384,6 @@ func (m *Manager) formatPylspOutgoingCalls(callerPath string, callerName string,
 	return m.formatLSPOutgoingCalls(callerPath, callerName, calls, pathFilter, pylspPathFromURI)
 }
 
-func (m *Manager) FormatPylspOutgoingCalls(callerPath string, callerName string, calls []LSPOutgoingCall, pathFilter string) callHierarchyResult {
-	return m.formatPylspOutgoingCalls(callerPath, callerName, calls, pathFilter)
-}
-
 func pylspSymbolKindName(kind int) string {
 	switch kind {
 	case 5:
@@ -420,9 +408,5 @@ func pylspSymbolKindName(kind int) string {
 }
 
 func flattenPylspDocumentSymbols(path string, container string, symbols []LSPDocumentSymbol) []LSPSymbolInfo {
-	return flattenLSPDocumentSymbols(path, container, symbols, pylspFileURI, ".")
-}
-
-func filterPylspDocumentSymbolMatches(symbols []LSPSymbolInfo, pattern string) []LSPSymbolInfo {
-	return filterLSPDocumentSymbolMatches(symbols, pattern)
+	return flattenLSPDocumentSymbols(path, container, symbols, LSPFileURI, ".")
 }

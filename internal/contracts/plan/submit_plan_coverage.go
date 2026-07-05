@@ -8,49 +8,6 @@ import (
 	"strings"
 )
 
-// --- plan-execute coverage decision ---
-type PlanExecuteDecisionMode string
-
-const (
-	ModeRequiredSource  PlanExecuteDecisionMode = "required_source"
-	ModeSubmitReady     PlanExecuteDecisionMode = "submit_ready"
-	ModeSourceSatisfied PlanExecuteDecisionMode = "source_satisfied"
-)
-
-type SubmitPlanCoverageDecision struct {
-	Mode          PlanExecuteDecisionMode
-	ContractID    string
-	InvariantID   string
-	RequiredPaths []string
-	CoveredPaths  []string
-}
-
-func (d SubmitPlanCoverageDecision) Complete() bool {
-	required := normalizedPathSet(d.RequiredPaths)
-	if len(required) == 0 {
-		return false
-	}
-	covered := normalizedPathSet(d.CoveredPaths)
-	for path := range required {
-		if _, ok := covered[path]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
-func normalizedPathSet(paths []string) map[string]struct{} {
-	set := make(map[string]struct{}, len(paths))
-	for _, path := range paths {
-		path = strings.TrimSpace(strings.TrimPrefix(path, "./"))
-		if path == "" {
-			continue
-		}
-		set[path] = struct{}{}
-	}
-	return set
-}
-
 // --- submit_plan coverage validation ---
 const CoverageMismatchCode = "plan_then_execute_submit_plan_coverage_mismatch"
 
@@ -540,27 +497,4 @@ func quotedStrings(values []string) string {
 		quoted = append(quoted, "`"+value+"`")
 	}
 	return strings.Join(quoted, ", ")
-}
-
-// --- plan-execute terminal shapes ---
-const (
-	TerminalSubmitPlan      = "submit_plan"
-	TerminalSourceSatisfied = "SubmitPlanCoverageDecision: source-satisfied"
-	TerminalQuestion        = "<<QUESTION>>:"
-)
-
-func SourceSatisfiedOrQuestion() []string {
-	return []string{TerminalSourceSatisfied, TerminalQuestion}
-}
-
-func SubmitPlanSourceSatisfiedQuestion() []string {
-	return []string{TerminalSubmitPlan, TerminalSourceSatisfied, TerminalQuestion}
-}
-
-func SubmitPlanQuestion() []string {
-	return []string{TerminalSubmitPlan, TerminalQuestion}
-}
-
-func SubmitPlanOnly() []string {
-	return []string{TerminalSubmitPlan}
 }

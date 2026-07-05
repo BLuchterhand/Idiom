@@ -85,19 +85,47 @@ func validateWorkflowState(ws WorkflowState) error {
 	return errors.Join(errs...)
 }
 
-var allowedCoverageTiers = map[string]bool{
-	"documentation":     true,
-	"local_low":         true,
-	"behavior_standard": true,
-	"contract_high":     true,
-	"formal_optional":   true,
-	"unit":              true,
+type coverageTierSpec struct {
+	name, suggestedType, suggestedCommand string
+	behaviorRequired, contractRequired    bool
 }
 
-var coverageTierPromptOrder = []string{"documentation", "unit", "local_low", "behavior_standard", "contract_high", "formal_optional"}
+var coverageTierSpecs = []coverageTierSpec{
+	{"documentation", "audit", "git diff --check", false, false},
+	{"unit", "acceptance", "go test ./...", false, false},
+	{"local_low", "source_sanity", "go test ./...", false, false},
+	{"behavior_standard", "acceptance", "go test ./...", true, false},
+	{"contract_high", "contract", "go test ./...", true, true},
+	{"formal_optional", "contract", "go test ./...", true, true},
+}
 
 func AllowedCoverageTiers() []string {
-	return orderedAllowedValues(allowedCoverageTiers, coverageTierPromptOrder)
+	out := make([]string, len(coverageTierSpecs))
+	for i, spec := range coverageTierSpecs {
+		out[i] = spec.name
+	}
+	return out
+}
+
+func coverageTierAllowed(tier string) bool {
+	spec, ok := normalizedCoverageTierSpecFor(tier)
+	return ok && spec.name == tier
+}
+
+func CoverageTierRequiresCoverageContract(tier string) bool {
+	tier = strings.TrimSpace(tier)
+	spec, ok := normalizedCoverageTierSpecFor(tier)
+	return ok && spec.name == tier && spec.behaviorRequired
+}
+
+func normalizedCoverageTierSpecFor(tier string) (coverageTierSpec, bool) {
+	tier = strings.TrimSpace(strings.ToLower(tier))
+	for _, spec := range coverageTierSpecs {
+		if spec.name == tier {
+			return spec, true
+		}
+	}
+	return coverageTierSpec{}, false
 }
 
 var allowedObligationTypes = map[string]bool{
@@ -171,7 +199,7 @@ func validateTDDLedger(ledger TDDLedger) error {
 	require(&errs, ledger.TaskID, "tdd ledger missing task_id")
 	require(&errs, ledger.CoverageTier, "tdd ledger missing coverage_tier")
 
-	if ledger.CoverageTier != "" && !allowedCoverageTiers[ledger.CoverageTier] {
+	if ledger.CoverageTier != "" && !coverageTierAllowed(ledger.CoverageTier) {
 		errs = append(errs, fmt.Errorf("tdd ledger invalid coverage_tier %q", ledger.CoverageTier))
 	}
 
@@ -494,7 +522,7 @@ func validateImplementationLedger(records []ImplementationLedgerRecord) error {
 			require(&errs, rec.AllowedScope, fmt.Sprintf("implementation ledger line %d: fallback_exception missing allowed_scope", line))
 		}
 
-		if rec.CommitHash != "" && RequiresImplementationCommitHash(rec.RecordType) {
+		if rec.CommitHash != "" && IsImplementationChangeRecordType(rec.RecordType) {
 			if !isValidCommitHash(rec.CommitHash) {
 				errs = append(errs, fmt.Errorf("implementation ledger line %d: commit_hash must be 40 hex chars, got %q", line, rec.CommitHash))
 			}
@@ -695,7 +723,7 @@ func validateADRIndex(idx ADRIndex) error {
 			errs = append(errs, fmt.Errorf("%s missing prd_refs", prefix))
 		}
 
-		if entry.CoverageTier != "" && !allowedCoverageTiers[entry.CoverageTier] {
+		if entry.CoverageTier != "" && !coverageTierAllowed(entry.CoverageTier) {
 			errs = append(errs, fmt.Errorf("%s invalid coverage_tier %q", prefix, entry.CoverageTier))
 		}
 	}
@@ -744,7 +772,7 @@ func validateADR(doc ADRDocument) error {
 
 	require(&errs, doc.FrontMatter.CoverageTier, "ADR front matter missing coverage_tier")
 
-	if doc.FrontMatter.CoverageTier != "" && !allowedCoverageTiers[doc.FrontMatter.CoverageTier] {
+	if doc.FrontMatter.CoverageTier != "" && !coverageTierAllowed(doc.FrontMatter.CoverageTier) {
 		errs = append(errs, fmt.Errorf("ADR front matter invalid coverage_tier %q", doc.FrontMatter.CoverageTier))
 	}
 

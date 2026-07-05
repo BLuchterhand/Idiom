@@ -26,44 +26,16 @@ const (
 
 const (
 	sourceGroundingCandidateOnlyMarker     = "Candidate/search/context paths are not source-body evidence"
+	sourceGroundingCandidateOnlyPathMarker = "Candidate path(s):"
 	sourceGroundingMissingCandidateMarker  = "not read as source-body evidence"
 	sourceGroundingUnsupportedDetailMarker = "not backed by a source-body read"
 )
-
-type sourceGroundingRejectionDescriptor struct {
-	MatchMarker string
-	PathMarker  string
-}
-
-func sourceGroundingRejectionDescriptorFor(kind sourceGroundingRejectionKind) sourceGroundingRejectionDescriptor {
-	switch kind {
-	case sourceGroundingRejectionCandidateOnly:
-		return sourceGroundingRejectionDescriptor{
-			MatchMarker: sourceGroundingCandidateOnlyMarker,
-			PathMarker:  "Candidate path(s):",
-		}
-	case sourceGroundingRejectionMissingCandidate:
-		return sourceGroundingRejectionDescriptor{
-			MatchMarker: sourceGroundingMissingCandidateMarker,
-			PathMarker:  sourceGroundingMissingCandidateMarker + ":",
-		}
-	case sourceGroundingRejectionUnsupportedDetail:
-		return sourceGroundingRejectionDescriptor{
-			MatchMarker: sourceGroundingUnsupportedDetailMarker,
-			PathMarker:  sourceGroundingUnsupportedDetailMarker + ":",
-		}
-	default:
-		return sourceGroundingRejectionDescriptor{}
-	}
-}
 
 type sourceGroundingAssessment struct {
 	Kind  sourceGroundingRejectionKind
 	Paths []string
 	Text  string
 }
-
-type sourceGroundingRejection = sourceGroundingAssessment
 
 func classifySourceGroundingRejectionText(text string) (sourceGroundingAssessment, bool) {
 	text = strings.TrimSpace(sourceGroundingStripGateRecoveryPrefix(text))
@@ -73,22 +45,22 @@ func classifySourceGroundingRejectionText(text string) (sourceGroundingAssessmen
 
 	lower := strings.ToLower(text)
 	switch {
-	case strings.Contains(text, sourceGroundingRejectionDescriptorFor(sourceGroundingRejectionCandidateOnly).MatchMarker):
+	case strings.Contains(text, sourceGroundingCandidateOnlyMarker):
 		return sourceGroundingAssessment{
 			Kind:  sourceGroundingRejectionCandidateOnly,
-			Paths: sourceGroundingPathsAfterMarker(text, sourceGroundingRejectionDescriptorFor(sourceGroundingRejectionCandidateOnly).PathMarker),
+			Paths: sourceGroundingPathsAfterMarker(text, sourceGroundingCandidateOnlyPathMarker),
 			Text:  text,
 		}, true
-	case strings.Contains(text, sourceGroundingRejectionDescriptorFor(sourceGroundingRejectionMissingCandidate).MatchMarker):
+	case strings.Contains(text, sourceGroundingMissingCandidateMarker):
 		return sourceGroundingAssessment{
 			Kind:  sourceGroundingRejectionMissingCandidate,
-			Paths: sourceGroundingPathsAfterMarker(text, sourceGroundingRejectionDescriptorFor(sourceGroundingRejectionMissingCandidate).PathMarker),
+			Paths: sourceGroundingPathsAfterMarker(text, sourceGroundingMissingCandidateMarker+":"),
 			Text:  text,
 		}, true
-	case strings.Contains(text, sourceGroundingRejectionDescriptorFor(sourceGroundingRejectionUnsupportedDetail).MatchMarker):
+	case strings.Contains(text, sourceGroundingUnsupportedDetailMarker):
 		return sourceGroundingAssessment{
 			Kind:  sourceGroundingRejectionUnsupportedDetail,
-			Paths: sourceGroundingPathsAfterMarker(text, sourceGroundingRejectionDescriptorFor(sourceGroundingRejectionUnsupportedDetail).PathMarker),
+			Paths: sourceGroundingPathsAfterMarker(text, sourceGroundingUnsupportedDetailMarker+":"),
 			Text:  text,
 		}, true
 	case strings.Contains(lower, "source-body evidence") && strings.Contains(lower, "answer cites path"):
@@ -179,19 +151,16 @@ func (a sourceGroundingAssessment) BlocksFinalAnswer() bool {
 func (a sourceGroundingAssessment) Message() string {
 	switch a.Kind {
 	case sourceGroundingRejectionCandidateOnly:
-		descriptor := sourceGroundingRejectionDescriptorFor(sourceGroundingRejectionCandidateOnly)
 		paths := nonEmptyRunnerStrings(a.Paths, 8)
 		pathSummary := strings.Join(paths, ", ")
 		if pathSummary == "" {
 			pathSummary = "(candidate path unavailable)"
 		}
-		return "read-only workspace answers require bounded source-body or diagnostic evidence tied to the user's objective before a final answer. " + descriptor.MatchMarker + ". " + descriptor.PathMarker + " " + pathSummary + ". Inspect one candidate with source-body evidence, use one materially different source-owner probe if these candidates do not establish the claim, or answer `<<QUESTION>>:` with the exact unavailable evidence source."
+		return "read-only workspace answers require bounded source-body or diagnostic evidence tied to the user's objective before a final answer. " + sourceGroundingCandidateOnlyMarker + ". " + sourceGroundingCandidateOnlyPathMarker + " " + pathSummary + ". Inspect one candidate with source-body evidence, use one materially different source-owner probe if these candidates do not establish the claim, or answer `<<QUESTION>>:` with the exact unavailable evidence source."
 	case sourceGroundingRejectionMissingCandidate:
-		descriptor := sourceGroundingRejectionDescriptorFor(sourceGroundingRejectionMissingCandidate)
-		return "the answer cites path(s) that were discovered as index candidates but " + descriptor.PathMarker + " " + quotedRunnerStrings(uniqueSortedRunnerPaths(a.Paths)) + ". Read the first unread path with one bounded `read_file` or `code_navigate` call and cite the actual evidence from the file body. If the path was from search or graph results and does not need a full read, qualify the claim as `unverified` next to the citation."
+		return "the answer cites path(s) that were discovered as index candidates but " + sourceGroundingMissingCandidateMarker + ": " + quotedRunnerStrings(uniqueSortedRunnerPaths(a.Paths)) + ". Read the first unread path with one bounded `read_file` or `code_navigate` call and cite the actual evidence from the file body. If the path was from search or graph results and does not need a full read, qualify the claim as `unverified` next to the citation."
 	case sourceGroundingRejectionUnsupportedDetail:
-		descriptor := sourceGroundingRejectionDescriptorFor(sourceGroundingRejectionUnsupportedDetail)
-		return "the answer cites source path/line/symbol detail " + descriptor.PathMarker + " " + quotedRunnerStrings(uniqueSortedRunnerPaths(a.Paths)) + ". Use one exact read/code_navigate body probe for the claim, or qualify it as unverified."
+		return "the answer cites source path/line/symbol detail " + sourceGroundingUnsupportedDetailMarker + ": " + quotedRunnerStrings(uniqueSortedRunnerPaths(a.Paths)) + ". Use one exact read/code_navigate body probe for the claim, or qualify it as unverified."
 	case sourceGroundingRejectionExactDetail, sourceGroundingRejectionScaffold:
 		return strings.TrimSpace(a.Text)
 	default:
@@ -207,6 +176,7 @@ func (a sourceGroundingAssessment) RecoveryPrompt(ledgerGuidance string) string 
 	lines := []string{
 		"The completion gate rejected the answer because source paths were cited without body evidence: " + formatInlinePathList(a.Paths, 4) + ".",
 		"Valid next strategies: read one unsupported path with a bounded `read_file` or `code_navigate` body request; rewrite the answer so it cites only body-backed evidence; qualify candidate-only paths as `unverified`; or answer `<<QUESTION>>:` with the exact blocker if the evidence source is unavailable.",
+		"Do not answer with only an evidence-path inventory, readiness summary, or gate-satisfaction statement; answer the user's actual question using only supported evidence.",
 	}
 	if strings.TrimSpace(ledgerGuidance) != "" {
 		lines = append(lines, strings.TrimSpace(ledgerGuidance))
@@ -268,6 +238,10 @@ func (r *Runner) assessSourceGrounding(answer string, results []workspace.ToolRe
 	}
 
 	validationLedgerEvidence := r.validationStatusAnswerCanUseLedgerEvidence(answer, results)
+
+	if escaping := sourceGroundingUnsupportedEscapingMentionedPaths(answer, results); len(escaping) > 0 {
+		return sourceGroundingUnsupportedDetailAssessment(escaping)
+	}
 
 	paths := sourceGroundingMentionedPaths(answer)
 	if len(paths) == 0 {
@@ -488,6 +462,68 @@ func sourceGroundingMentionedPaths(answer string) []string {
 	return uniqueSortedRunnerPaths(paths)
 }
 
+func sourceGroundingEscapingMentionedPaths(answer string) []string {
+	scanText := stripQuotedAndFencedSourceExamples(answer)
+	seen := map[string]struct{}{}
+	var paths []string
+
+	for _, raw := range strings.Fields(scanText) {
+		raw = strings.Trim(raw, "`'\"()[]{}<>,;")
+		if !readOnlyPathEscapesWorkspace(raw) {
+			continue
+		}
+
+		path := sourceGroundingEscapingPathDisplay(raw)
+		if path == "" || !pathparse.HasWorkspaceFileExtension(path) {
+			continue
+		}
+
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+
+	return textutil.Sorted(paths)
+}
+
+func sourceGroundingUnsupportedEscapingMentionedPaths(answer string, results []workspace.ToolResult) []string {
+	paths := sourceGroundingEscapingMentionedPaths(answer)
+	if len(paths) == 0 {
+		return nil
+	}
+
+	var unsupported []string
+	for _, path := range paths {
+		if sourceGroundingDiagnosticArtifactReadForPath(path, results) {
+			continue
+		}
+		if sourceCitationExplicitlyUnverified(answer, path) || sourceCitationExplicitlyNonCurrent(answer, path) {
+			continue
+		}
+		unsupported = append(unsupported, path)
+	}
+
+	return unsupported
+}
+
+func sourceGroundingEscapingPathDisplay(raw string) string {
+	path := strings.TrimSpace(raw)
+	path = strings.Trim(path, "`'\"()[]{}<>,;")
+	if path == "" {
+		return ""
+	}
+
+	for _, ext := range []string{".jsonl", ".json", ".yaml", ".toml", ".tsx", ".jsx", ".cpp", ".hpp", ".zsh", ".go", ".py", ".ts", ".js", ".rs", ".java", ".cc", ".c", ".h", ".sh", ".gd", ".md", ".yml", ".txt"} {
+		if idx := indexFold(path, ext); idx >= 0 {
+			return path[:idx+len(ext)]
+		}
+	}
+
+	return path
+}
+
 func stripQuotedAndFencedSourceExamples(text string) string {
 	if strings.TrimSpace(text) == "" {
 		return text
@@ -605,7 +641,7 @@ func sourceCitationExists(r *Runner, path string) bool {
 	}
 
 	if r != nil && r.PathEvidenceRegistry != nil {
-		return r.PathEvidenceRegistry.PathExists(path)
+		return r.PathEvidenceRegistry.EnsurePathExists(path)
 	}
 
 	root := "."
@@ -679,6 +715,7 @@ func sourceCitationExplicitlyNonCurrent(answer string, path string) bool {
 	for _, phrase := range []string{
 		"does not exist", "do not exist", "doesn't exist",
 		"not in the current checkout", "not current",
+		"not in the workspace", "outside the workspace", "outside workspace",
 		"historical", "log-only", "from the log", "in the log",
 	} {
 		if strings.Contains(lower, phrase) {

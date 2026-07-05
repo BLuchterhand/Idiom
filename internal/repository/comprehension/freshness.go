@@ -852,11 +852,11 @@ func skippedFreshnessRefresh(decision FreshnessDecision, language string, blocke
 }
 
 func inferFreshnessScope(root string, req FreshnessRequest) string {
-	if scope := boundedFreshnessScope(req.Path); scope != "" {
+	if scope := cleanFreshnessPath(req.Path); scope != "" {
 		return scope
 	}
 
-	if scope := boundedFreshnessScope(pathFromFreshnessHandle(req.Handle)); scope != "" {
+	if scope := cleanFreshnessPath(pathFromFreshnessHandle(req.Handle)); scope != "" {
 		return scope
 	}
 
@@ -1022,10 +1022,6 @@ func looksLikeWindowsAbsPath(path string) bool {
 	return len(path) >= 3 && path[1] == ':' && path[2] == '/'
 }
 
-func boundedFreshnessScope(path string) string {
-	return cleanFreshnessPath(path)
-}
-
 func pathFromFreshnessHandle(handle string) string {
 	handle = strings.TrimSpace(handle)
 	switch {
@@ -1182,44 +1178,4 @@ func FreshnessScopeWarningCheck(checkedPaths []string, returnedPaths []string) (
 		len(outOfScope), strings.Join(outOfScope, ", "))
 
 	return warning, outOfScope
-}
-
-// StalenessWarningCheck checks whether the comprehension index is stale
-// relative to dirty files in the working tree. When git_dirty is true and the
-// index's generated_at timestamp is older than the modification time of dirty
-// files, it returns a warning listing those files.
-func StalenessWarningCheck(root string, gitDirty bool, generatedAt string, dirtyFilePaths []string) (warning string, staleFiles []string) {
-	if !gitDirty || generatedAt == "" || len(dirtyFilePaths) == 0 {
-		return "", nil
-	}
-
-	genAt, err := time.Parse(time.RFC3339, generatedAt)
-	if err != nil {
-		// generated_at may be in a different format; attempt broader parsing
-		genAt, err = time.Parse(time.RFC3339Nano, generatedAt)
-		if err != nil {
-			return "", nil
-		}
-	}
-
-	for _, file := range dirtyFilePaths {
-		info, err := os.Stat(filepath.Join(root, filepath.FromSlash(file)))
-		if err != nil {
-			continue
-		}
-		if info.ModTime().After(genAt) {
-			staleFiles = append(staleFiles, file)
-		}
-	}
-
-	if len(staleFiles) == 0 {
-		return "", nil
-	}
-
-	slices.Sort(staleFiles)
-
-	warning = fmt.Sprintf("%d dirty file(s) modified after comprehension index was generated at %s: %s",
-		len(staleFiles), generatedAt, strings.Join(staleFiles, ", "))
-
-	return warning, staleFiles
 }

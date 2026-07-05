@@ -30,17 +30,13 @@ var (
 	backendServeProxy = backends.ServeProxy
 )
 
-// Run dispatches `idiom backend <subcommand>`. Phase 4
+// RunWithTelemetry dispatches `idiom backend <subcommand>`. Phase 4
 // ships `list` (introspect the loaded backends.json); Phase 4b
 // adds `start`, `stop`, `status`; Phase 4c adds `proxy`, the
 // alias-routing front door that fans `model:` requests out to the
 // per-alias backends started by `start`.
-func Run(args []string, stdout io.Writer, stderr io.Writer) int {
-	return RunWithTelemetry(args, stdout, stderr, nil)
-}
-
 func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	logBackendPhase(rec, "backend_start", map[string]any{"argc": len(args)})
+	telemetry.LogPhase(rec, "backend_start", map[string]any{"argc": len(args)})
 
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
 		printBackendUsage(stderr)
@@ -65,10 +61,6 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 
 		return 2
 	}
-}
-
-func logBackendPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	telemetry.LogPhase(rec, eventType, fields)
 }
 
 // resolveProjectRoot returns the project root the operator named

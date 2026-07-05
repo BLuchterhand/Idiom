@@ -189,22 +189,11 @@ func LintEffortFolder(root string) LintSummaryResult {
 				continue
 			}
 
-			switch reportType {
-			case "implementation":
-				if _, err := ParseImplementationReportJSON(data); err != nil {
-					addFinding("parse_error", relPath, err.Error())
-				}
-			case "review":
-				if _, err := ParseReviewReportJSON(data); err != nil {
-					addFinding("parse_error", relPath, err.Error())
-				}
-			case "investigation":
-				report, err := ParseInvestigationReportJSON(data)
-				if err != nil {
-					addFinding("parse_error", relPath, err.Error())
-				} else {
-					parsedInvestigations = append(parsedInvestigations, report)
-				}
+			report, err := parseKnownReportJSON(reportType, data)
+			if err != nil {
+				addFinding("parse_error", relPath, err.Error())
+			} else if investigation, ok := report.(InvestigationReport); ok {
+				parsedInvestigations = append(parsedInvestigations, investigation)
 			}
 		}
 	}

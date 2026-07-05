@@ -803,7 +803,7 @@ func AdaptExecutionFeedbackToRankerLearning(input RankerLearningEvidenceInput) R
 		metrics["context_pack_present"] = 1
 	}
 
-	if executionFeedbackCurrentContext(state.Context.FreshnessState) {
+	if productWorkflowContextFreshnessCurrent(state.Context.FreshnessState) {
 		metrics["context_fresh_current"] = 1
 	}
 
@@ -951,7 +951,7 @@ func AdaptExecutionFeedbackToRankerLearning(input RankerLearningEvidenceInput) R
 			"workflow_state freshness_state is required for verified context evidence",
 			"attach freshness state for the referenced context pack before deriving ranker-learning evidence",
 		)
-	} else if !executionFeedbackCurrentContext(result.Summary.FreshnessState) {
+	} else if !productWorkflowContextFreshnessCurrent(result.Summary.FreshnessState) {
 		addBlocker(
 			"stale_workflow_context",
 			fmt.Sprintf("workflow_state freshness_state %q is not current", result.Summary.FreshnessState),
@@ -1251,15 +1251,6 @@ func AdaptExecutionFeedbackToRankerLearning(input RankerLearningEvidenceInput) R
 	})
 
 	return result
-}
-
-func executionFeedbackCurrentContext(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "current", "fresh", "verified":
-		return true
-	default:
-		return false
-	}
 }
 
 func safeExecutionFeedbackToken(value string) bool {

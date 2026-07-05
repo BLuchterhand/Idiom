@@ -7,14 +7,6 @@ func reviewAnswerDeclaresBlocker(answer string) bool {
 	return strings.Contains(answer, "<<QUESTION>>") || strings.Contains(lower, "decision: block") || strings.Contains(lower, "blocker")
 }
 
-func reviewRepairBlockerSummary(answer string) string {
-	return planExecuteBlockerSummary(answer)
-}
-
-func reviewRepairBlockerFailureReason(answer string) string {
-	return planExecuteBlockerFailureReason(answer)
-}
-
 func planExecuteAnswerDeclaresBlocker(answer string) bool {
 	answer = strings.TrimSpace(answer)
 

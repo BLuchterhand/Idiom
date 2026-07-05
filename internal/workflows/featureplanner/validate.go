@@ -38,7 +38,7 @@ type MissingNewFileAuthorizationError struct {
 }
 
 func (e *MissingNewFileAuthorizationError) Error() string {
-	paths := normalizeEditScopeList(e.Paths)
+	paths := plancontract.UniqueScopePaths(e.Paths)
 	if len(paths) == 0 {
 		return "missing new-file authorization"
 	}
@@ -424,22 +424,6 @@ func behavioralCoverageDraftHasStructuredCoverage(draft BehavioralCoverageDraft)
 		len(draft.Items) > 0
 }
 
-func validateDraftObligationRefs(prefix string, refs []string, tddIDs map[string]bool) []error {
-	if len(tddIDs) == 0 {
-		return nil
-	}
-
-	var errs []error
-	for i, ref := range refs {
-		ref = strings.TrimSpace(ref)
-		if ref != "" && !tddIDs[ref] {
-			errs = append(errs, fmt.Errorf("%s.tdd_obligations[%d] references unknown TDD obligation %q", prefix, i, ref))
-		}
-	}
-
-	return errs
-}
-
 func tddObligationIDs(obligations []TDDObligation) []string {
 	ids := make([]string, 0, len(obligations))
 	for _, obligation := range obligations {
@@ -656,14 +640,10 @@ func featurePlanApprovalEmpty(approval FeaturePlanApproval) bool {
 }
 
 func ValidateDurablePlan(plan FeaturePlan) error {
-	return validateDurablePlan(plan, plancontract.PlanExecutionContract{})
+	return ValidateDurablePlanWithContract(plan, plancontract.PlanExecutionContract{})
 }
 
 func ValidateDurablePlanWithContract(plan FeaturePlan, contract plancontract.PlanExecutionContract) error {
-	return validateDurablePlan(plan, contract)
-}
-
-func validateDurablePlan(plan FeaturePlan, contract plancontract.PlanExecutionContract) error {
 	var errs []error
 
 	if plan.SchemaVersion != "" && plan.SchemaVersion != FeaturePlanSchemaVersion && plan.SchemaVersion != "idiom.feature_plan.v1" {
@@ -846,12 +826,7 @@ func productBriefRequiresCoverageContract(brief ProductWorkflowBrief) bool {
 	if brief.AcceptedCoverage != nil {
 		return true
 	}
-	switch strings.TrimSpace(brief.CoverageTier) {
-	case "behavior_standard", "contract_high", "formal_optional":
-		return true
-	default:
-		return false
-	}
+	return productworkflow.CoverageTierRequiresCoverageContract(brief.CoverageTier)
 }
 
 func validateProductAcceptedCoverageAuthority(brief ProductWorkflowBrief) []error {
@@ -1052,7 +1027,7 @@ func ValidatePlanStandaloneWorkspaceContext(plan FeaturePlan, context Standalone
 				Disposition:       StandaloneValidationNeedsOperatorApproval,
 				Message:           err.Error(),
 				AuthorityRequired: "operator_approval",
-				AffectedPaths:     normalizeEditScopeList(atom.TestFirst.TestArtifactPaths),
+				AffectedPaths:     plancontract.UniqueScopePaths(atom.TestFirst.TestArtifactPaths),
 				AffectedFields:    []string{"verification_command"},
 				Commands:          nonEmptyFeaturePlannerStrings(append(append([]string(nil), atom.TestFirst.Commands...), atom.PlannedTDDSnapshot.TestCommands...)),
 			})
@@ -1069,13 +1044,13 @@ func ValidatePlanStandaloneWorkspaceContext(plan FeaturePlan, context Standalone
 				Disposition:       StandaloneValidationNeedsAcceptedSource,
 				Message:           err.Error(),
 				AuthorityRequired: "accepted_source",
-				AffectedPaths:     normalizeEditScopeList(append(append([]string(nil), atom.RequiredEditPaths...), atom.EvidencePaths...)),
+				AffectedPaths:     plancontract.UniqueScopePaths(append(append([]string(nil), atom.RequiredEditPaths...), atom.EvidencePaths...)),
 				AffectedFields:    []string{"source_localization"},
 			})
 		}
 	}
 
-	if missingNewFilePaths = normalizeEditScopeList(missingNewFilePaths); len(missingNewFilePaths) > 0 {
+	if missingNewFilePaths = plancontract.UniqueScopePaths(missingNewFilePaths); len(missingNewFilePaths) > 0 {
 		missingErr := &MissingNewFileAuthorizationError{Paths: missingNewFilePaths}
 		errs = append(errs, missingErr)
 		issues = append(issues, StandaloneValidationIssue{
@@ -1169,7 +1144,7 @@ func validateStandaloneSurfaceInventoryReadiness(draft *BehavioralCoverageDraft)
 	var errs []error
 	for i, surface := range draft.SurfaceInventory {
 		prefix := fmt.Sprintf("behavioral_coverage_draft.surface_inventory[%d]", i)
-		status := normalizeStandaloneSurfaceStatus(surface.Status)
+		status := productworkflow.NormalizeBehavioralSurfaceStatus(surface.Status)
 		if status == "open_question" {
 			errs = append(errs, fmt.Errorf("%s has unresolved open_question status; resolve, waive, mark not_required, or map it to concrete coverage before approval", prefix))
 			continue
@@ -1179,10 +1154,6 @@ func validateStandaloneSurfaceInventoryReadiness(draft *BehavioralCoverageDraft)
 		}
 	}
 	return errs
-}
-
-func normalizeStandaloneSurfaceStatus(status string) string {
-	return productworkflow.NormalizeBehavioralSurfaceStatus(status)
 }
 
 func standaloneAtomWorkspaceScopePaths(atom FeatureAtomPlan) []string {
@@ -1358,140 +1329,6 @@ func (g atomPromptGrounding) pathIsDeclaredDirectory(path string) bool {
 	return false
 }
 
-func (g atomPromptGrounding) addPromptSignatures(prompt string) {
-	for _, signature := range promptVerifiedSignatureLines(prompt) {
-		g.addVerifiedSignature(signatureSymbol(signature), signature)
-	}
-}
-
-func promptVerifiedSignatureLines(prompt string) []string {
-	var signatures []string
-	inSignatureList := false
-
-	for _, line := range strings.Split(prompt, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			inSignatureList = false
-			continue
-		}
-		lower := strings.ToLower(trimmed)
-		if promptLineDeclaresVerifiedSignatures(lower) {
-			inSignatureList = true
-			signatureLine := promptInlineSignatureDeclaration(trimmed)
-			if !promptLineLooksLikeSignatureDeclaration(signatureLine) {
-				continue
-			}
-			for _, signature := range extractSignatures(signatureLine) {
-				signatures = append(signatures, signature)
-			}
-			continue
-		}
-		if !inSignatureList {
-			continue
-		}
-		if !strings.HasPrefix(trimmed, "-") && !strings.HasPrefix(trimmed, "*") {
-			inSignatureList = false
-			continue
-		}
-		signatureLine := strings.TrimSpace(strings.TrimLeft(trimmed, "-*"))
-		if !promptLineLooksLikeSignatureDeclaration(signatureLine) {
-			continue
-		}
-		for _, signature := range extractSignatures(signatureLine) {
-			signatures = append(signatures, signature)
-		}
-	}
-
-	return signatures
-}
-
-func promptInlineSignatureDeclaration(line string) string {
-	lower := strings.ToLower(line)
-	markerEnd := -1
-	for _, marker := range []string{"source-verified signatures", "source-verified signature", "verified signatures", "verified signature", "exact signature", "signature verified"} {
-		if idx := strings.Index(lower, marker); idx >= 0 {
-			markerEnd = idx + len(marker)
-			break
-		}
-	}
-	if markerEnd >= 0 {
-		line = strings.TrimSpace(line[markerEnd:])
-	} else if strings.Contains(line, ":") {
-		line = strings.TrimSpace(line[strings.Index(line, ":")+1:])
-	}
-	line = strings.TrimSpace(strings.TrimPrefix(line, ":"))
-	line = strings.TrimSpace(strings.TrimPrefix(line, "is "))
-	signature := strings.TrimSpace(featurePlannerSignaturePattern.FindString(line))
-	if signature == "" {
-		return ""
-	}
-	return signature
-}
-
-func promptLineLooksLikeSignatureDeclaration(line string) bool {
-	line = strings.TrimSpace(line)
-	if line == "" {
-		return false
-	}
-	lower := strings.ToLower(line)
-	for _, prefix := range []string{"call ", "use ", "when ", "if ", "then ", "ensure ", "write ", "cover:", "cover "} {
-		if strings.HasPrefix(lower, prefix) {
-			return false
-		}
-	}
-	signature := strings.TrimSpace(featurePlannerSignaturePattern.FindString(line))
-	if signature == "" || !strings.HasPrefix(line, signature) {
-		return false
-	}
-	suffix := strings.TrimSpace(strings.TrimPrefix(line, signature))
-	if suffix != "" && suffix != "const" && suffix != ";" {
-		if !signatureDeclarationSuffixAllowed(signature, suffix) {
-			return false
-		}
-	}
-	symbol := signatureSymbol(signature)
-	return strings.Contains(symbol, "::") ||
-		signatureHasExplicitReturnType(signature, symbol) ||
-		strings.HasPrefix(suffix, "->") ||
-		strings.HasPrefix(suffix, ":")
-}
-
-func signatureDeclarationSuffixAllowed(signature string, suffix string) bool {
-	suffix = strings.TrimSpace(suffix)
-	lowerSignature := strings.ToLower(strings.TrimSpace(signature))
-	return strings.HasPrefix(suffix, "->") ||
-		featurePlannerTypeScriptReturnSuffixPattern.MatchString(suffix) ||
-		(strings.HasPrefix(lowerSignature, "func ") && featurePlannerGoReturnSuffixPattern.MatchString(suffix))
-}
-
-func signatureHasExplicitReturnType(signature string, symbol string) bool {
-	signature = strings.TrimSpace(signature)
-	symbol = strings.TrimSpace(symbol)
-	if signature == "" || symbol == "" {
-		return false
-	}
-	idx := strings.Index(signature, symbol)
-	if idx <= 0 {
-		return false
-	}
-	return strings.TrimSpace(signature[:idx]) != ""
-}
-
-func promptLineDeclaresVerifiedSignatures(lowerLine string) bool {
-	for _, negated := range []string{"unverified signature", "not verified signature", "signature is not", "no source-verified signature", "no verified signature", "without source-verified signature", "without verified signature"} {
-		if strings.Contains(lowerLine, negated) {
-			return false
-		}
-	}
-	for _, marker := range []string{"verified signature", "source-verified signature", "exact signature", "signature verified"} {
-		if strings.Contains(lowerLine, marker) {
-			return true
-		}
-	}
-
-	return false
-}
-
 func (g atomPromptGrounding) addVerifiedSignature(symbol string, signature string) {
 	symbol = normalizeSignatureSymbol(symbol)
 	signature = strings.TrimSpace(signature)
@@ -1536,8 +1373,6 @@ func signatureSymbol(signature string) string {
 }
 
 var featurePlannerSignaturePattern = regexp.MustCompile(`\b(?:[A-Za-z_][A-Za-z0-9_:<>,*&\s]+\s+)?([A-Za-z_][A-Za-z0-9_:]*)\s*\([^)]*\)`)
-var featurePlannerGoReturnSuffixPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)?$`)
-var featurePlannerTypeScriptReturnSuffixPattern = regexp.MustCompile(`^:\s*[A-Za-z_$][A-Za-z0-9_$]*(?:\[\])?(?:\s*[|&]\s*[A-Za-z_$][A-Za-z0-9_$]*(?:\[\])?)*$`)
 
 func extractSignatures(text string) []string {
 	matches := featurePlannerSignaturePattern.FindAllString(text, -1)
@@ -1953,7 +1788,7 @@ func verificationCommandCoveredByNewFileAuthorization(command string, delta Plan
 	if command == "" {
 		return false
 	}
-	for _, path := range normalizeEditScopeList(delta.AffectedPaths) {
+	for _, path := range plancontract.UniqueScopePaths(delta.AffectedPaths) {
 		if strings.Contains(command, strings.ToLower(path)) {
 			return true
 		}
@@ -2292,7 +2127,7 @@ func testArtifactLooksSkippedOrCommentOnly(text string) bool {
 }
 
 func demotedRequiredImplementationPaths(plan FeaturePlan, atom FeatureAtomPlan) []string {
-	allowed := normalizeEditScopeList(atom.AllowedEditPaths)
+	allowed := plancontract.UniqueScopePaths(atom.AllowedEditPaths)
 	if len(allowed) == 0 {
 		return nil
 	}
@@ -2315,7 +2150,7 @@ func demotedRequiredImplementationPaths(plan FeaturePlan, atom FeatureAtomPlan) 
 		}
 	}
 
-	return normalizeEditScopeList(paths)
+	return plancontract.UniqueScopePaths(paths)
 }
 
 func pathRequiredByText(text string, path string) bool {
@@ -2457,9 +2292,9 @@ func planArtifactBindingFromFeaturePlan(plan FeaturePlan) plancontract.PlanArtif
 }
 
 func compileAtomAuthorityContract(plan FeaturePlan, atom FeatureAtomPlan) plancontract.AtomExecutionContract {
-	required := normalizeEditScopeList(atom.RequiredEditPaths)
+	required := plancontract.UniqueScopePaths(atom.RequiredEditPaths)
 
-	required = normalizeEditScopeList(append(required, requiredTDDTestArtifactPaths(atom)...))
+	required = plancontract.UniqueScopePaths(append(required, requiredTDDTestArtifactPaths(atom)...))
 
 	allowed := plancontract.AllowedScopePathsExcludingRequired(atom.AllowedEditPaths, required)
 	obligations := atomEditSetObligations(atom, required)
@@ -2486,7 +2321,7 @@ func compileAtomAuthorityContract(plan FeaturePlan, atom FeatureAtomPlan) planco
 			ID:                tddID,
 			Command:           command,
 			Behavior:          strings.TrimSpace(tdd.Behavior),
-			TestArtifactPaths: normalizeEditScopeList(append(atom.TestFirst.TestArtifactPaths, atom.PlannedTDDSnapshot.TestArtifactPaths...)),
+			TestArtifactPaths: plancontract.UniqueScopePaths(append(atom.TestFirst.TestArtifactPaths, atom.PlannedTDDSnapshot.TestArtifactPaths...)),
 			Source:            "featureplanner.test_first",
 		})
 	}
@@ -2495,7 +2330,7 @@ func compileAtomAuthorityContract(plan FeaturePlan, atom FeatureAtomPlan) planco
 		contract.AcceptanceObligations = append(contract.AcceptanceObligations, plancontract.AcceptanceEvidenceRequired{Description: acceptance, Required: true, Source: "featureplanner.sdd"})
 	}
 
-	for _, path := range normalizeEditScopeList(atom.EvidencePaths) {
+	for _, path := range plancontract.UniqueScopePaths(atom.EvidencePaths) {
 		contract.SourceEvidenceObligations = append(contract.SourceEvidenceObligations, plancontract.SourceEvidenceObligation{Path: path, Kind: "featureplanner_evidence", Required: true, Source: "featureplanner"})
 	}
 
@@ -2538,16 +2373,6 @@ func atomEditSetObligations(atom FeatureAtomPlan, required []string) plancontrac
 	}
 
 	return obligations.Normalized()
-}
-
-func atomStopConditions(atom FeatureAtomPlan) []string {
-	var out []string
-
-	if !atom.ImplementationRequired {
-		out = append(out, "implementation_required_after_characterization=false")
-	}
-
-	return out
 }
 
 func StampPlanAuthorityContract(plan *FeaturePlan, deltas []PlanAuthorityDelta) plancontract.PlanExecutionContract {
@@ -2807,7 +2632,7 @@ func atomTDDArtifactPaths(atom plancontract.AtomExecutionContract) []string {
 		out = append(out, obligation.TestArtifactPaths...)
 	}
 
-	return normalizeEditScopeList(out)
+	return plancontract.UniqueScopePaths(out)
 }
 
 func atomAcceptanceRefs(atom plancontract.AtomExecutionContract) []string {
@@ -2972,7 +2797,7 @@ func normalizePlanAuthorityDeltas(deltas []PlanAuthorityDelta) []PlanAuthorityDe
 		delta.QuestionID = strings.TrimSpace(delta.QuestionID)
 		delta.AuthorityKind = strings.TrimSpace(delta.AuthorityKind)
 		delta.EvidenceRefs = normalizedStringList(delta.EvidenceRefs)
-		delta.AffectedPaths = normalizeEditScopeList(delta.AffectedPaths)
+		delta.AffectedPaths = plancontract.UniqueScopePaths(delta.AffectedPaths)
 		delta.AffectedFields = normalizedStringList(delta.AffectedFields)
 		delta.SourceFacts = normalizeSourceAuthorityFacts(delta.SourceFacts)
 		delta.Expected = strings.TrimSpace(delta.Expected)
@@ -3030,30 +2855,6 @@ func planContractSourceAuthorityFacts(facts []SourceAuthorityFact) []plancontrac
 	return out
 }
 
-func newFileAuthorizedPathsFromDeltas(deltas []PlanAuthorityDelta) []string {
-	var paths []string
-
-	for _, delta := range normalizePlanAuthorityDeltas(deltas) {
-		switch delta.AuthorityKind {
-		case "new_file_authorization", "operator_approval":
-		default:
-			continue
-		}
-
-		if len(delta.AffectedPaths) == 0 {
-			continue
-		}
-
-		if len(delta.AffectedFields) == 0 || (!deltaAllowsField(delta, "new_file_authorization") && !deltaAllowsField(delta, "required_edit_paths")) {
-			continue
-		}
-
-		paths = append(paths, delta.AffectedPaths...)
-	}
-
-	return normalizeEditScopeList(paths)
-}
-
 func NormalizePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowBrief, workspaceRoot string) FeaturePlan {
 	grounding := newRepoGrounding(brief, workspaceRoot)
 	plan.BehavioralCoverageDraft = nil
@@ -3061,9 +2862,9 @@ func NormalizePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflow
 
 	for i := range plan.Atoms {
 		atom := &plan.Atoms[i]
-		required := normalizeEditScopeList(atom.RequiredEditPaths)
+		required := plancontract.UniqueScopePaths(atom.RequiredEditPaths)
 		requiredSet := normalizedStringSet(required)
-		allowed := normalizeEditScopeList(atom.AllowedEditPaths)
+		allowed := plancontract.UniqueScopePaths(atom.AllowedEditPaths)
 
 		for _, path := range productAtomRequiredEditPaths(plan, brief, *atom, allowed) {
 			if requiredSet[path] || !grounding.pathGrounded(path) {
@@ -3086,7 +2887,7 @@ func NormalizePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflow
 		}
 
 		atom.RequiredEditPaths = required
-		atom.AllowedEditPaths = normalizeEditScopeList(keptAllowed)
+		atom.AllowedEditPaths = plancontract.UniqueScopePaths(keptAllowed)
 	}
 
 	return plan
@@ -3095,7 +2896,7 @@ func NormalizePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflow
 func NormalizePlanPromptDeclarations(plan FeaturePlan) FeaturePlan {
 	for i := range plan.Atoms {
 		atom := &plan.Atoms[i]
-		atom.EvidencePaths = normalizeEditScopeList(append(atom.EvidencePaths, promptDeclaredEvidencePaths(atom.Prompt)...))
+		atom.EvidencePaths = plancontract.UniqueScopePaths(append(atom.EvidencePaths, promptDeclaredEvidencePaths(atom.Prompt)...))
 	}
 
 	return plan
@@ -3113,12 +2914,12 @@ func promptDeclaredEvidencePaths(prompt string) []string {
 		paths = append(paths, repoPathsMentionedInText(line)...)
 	}
 
-	return normalizeEditScopeList(paths)
+	return plancontract.UniqueScopePaths(paths)
 }
 
 func productAtomRequiredEditPaths(plan FeaturePlan, brief ProductWorkflowBrief, atom FeatureAtomPlan, allowed []string) []string {
-	paths := productAtomRequiredTestArtifactPaths(atom)
-	filesToModify := normalizeEditScopeList(brief.FilesToModify)
+	paths := requiredTDDTestArtifactPaths(atom)
+	filesToModify := plancontract.UniqueScopePaths(brief.FilesToModify)
 
 	if len(plan.Atoms) == 1 {
 		paths = append(paths, filesToModify...)
@@ -3131,11 +2932,7 @@ func productAtomRequiredEditPaths(plan FeaturePlan, brief ProductWorkflowBrief, 
 		}
 	}
 
-	return normalizeEditScopeList(paths)
-}
-
-func productAtomRequiredTestArtifactPaths(atom FeatureAtomPlan) []string {
-	return requiredTDDTestArtifactPaths(atom)
+	return plancontract.UniqueScopePaths(paths)
 }
 
 func requiredTDDTestArtifactPaths(atom FeatureAtomPlan) []string {
@@ -3155,11 +2952,11 @@ func requiredTDDTestArtifactPaths(atom FeatureAtomPlan) []string {
 		paths = append(paths, atom.PlannedTDDSnapshot.TestArtifactPaths...)
 	}
 
-	return normalizeEditScopeList(paths)
+	return plancontract.UniqueScopePaths(paths)
 }
 
 func validatePlanCoversFilesToModify(plan FeaturePlan, brief ProductWorkflowBrief) []error {
-	filesToModify := normalizeEditScopeList(brief.FilesToModify)
+	filesToModify := plancontract.UniqueScopePaths(brief.FilesToModify)
 	if len(filesToModify) == 0 {
 		return nil
 	}
@@ -3168,11 +2965,11 @@ func validatePlanCoversFilesToModify(plan FeaturePlan, brief ProductWorkflowBrie
 	allowedByAnyAtom := map[string]bool{}
 
 	for _, atom := range plan.Atoms {
-		for _, path := range normalizeEditScopeList(atom.RequiredEditPaths) {
+		for _, path := range plancontract.UniqueScopePaths(atom.RequiredEditPaths) {
 			requiredByAnyAtom[path] = true
 		}
 
-		for _, path := range normalizeEditScopeList(atom.AllowedEditPaths) {
+		for _, path := range plancontract.UniqueScopePaths(atom.AllowedEditPaths) {
 			allowedByAnyAtom[path] = true
 		}
 	}
@@ -3190,10 +2987,6 @@ func validatePlanCoversFilesToModify(plan FeaturePlan, brief ProductWorkflowBrie
 	}
 
 	return errs
-}
-
-func normalizeEditScopeList(paths []string) []string {
-	return plancontract.UniqueScopePaths(paths)
 }
 
 type productRepoGrounding struct {
@@ -3741,7 +3534,7 @@ func ValidateDurableState(state FeatureState) error {
 			errs = append(errs, fmt.Errorf("authority delta %d missing evidence_refs", i))
 		}
 
-		if len(delta.AffectedPaths) > 0 && len(normalizeEditScopeList(delta.AffectedPaths)) != len(delta.AffectedPaths) {
+		if len(delta.AffectedPaths) > 0 && len(plancontract.UniqueScopePaths(delta.AffectedPaths)) != len(delta.AffectedPaths) {
 			errs = append(errs, fmt.Errorf("authority delta %d has invalid affected_paths", i))
 		}
 
@@ -4059,8 +3852,8 @@ func normalizeVerificationClosure(closure VerificationClosure) VerificationClosu
 	closure.ContractHash = strings.TrimSpace(closure.ContractHash)
 	closure.ScopeContractID = strings.TrimSpace(closure.ScopeContractID)
 	closure.ScopeContractHash = strings.TrimSpace(closure.ScopeContractHash)
-	closure.ChangedPaths = normalizeEditScopeList(closure.ChangedPaths)
-	closure.SourceSatisfiedEvidencePaths = normalizeEditScopeList(closure.SourceSatisfiedEvidencePaths)
+	closure.ChangedPaths = plancontract.UniqueScopePaths(closure.ChangedPaths)
+	closure.SourceSatisfiedEvidencePaths = plancontract.UniqueScopePaths(closure.SourceSatisfiedEvidencePaths)
 	closure.RequiredTestResults = normalizeVerificationCommandResults(closure.RequiredTestResults)
 	closure.TDDCommandResults = normalizeVerificationCommandResults(closure.TDDCommandResults)
 	closure.SourceSanity = normalizeVerificationCheckResults(closure.SourceSanity)
@@ -4248,7 +4041,7 @@ func normalizeVerificationCommandResults(results []VerificationCommandResult) []
 		result.Status = strings.TrimSpace(strings.ToLower(result.Status))
 		result.Source = strings.TrimSpace(result.Source)
 		result.ObligationRefs = normalizeCompletionStableIDList(result.ObligationRefs)
-		result.TestArtifactPaths = normalizeEditScopeList(result.TestArtifactPaths)
+		result.TestArtifactPaths = plancontract.UniqueScopePaths(result.TestArtifactPaths)
 		if result.Command == "" {
 			continue
 		}
@@ -4512,7 +4305,7 @@ func ValidatePlannerQuestion(question PlannerQuestion) error {
 		errs = append(errs, fmt.Errorf("planner question has unknown status %q", question.Status))
 	}
 
-	if plannerQuestionRequestsPathAuthority(question) && len(normalizeEditScopeList(question.AffectedPaths)) == 0 {
+	if plannerQuestionRequestsPathAuthority(question) && len(plancontract.UniqueScopePaths(question.AffectedPaths)) == 0 {
 		errs = append(errs, errors.New("planner question path-level authority requires affected_paths"))
 	}
 	if plannerQuestionDelegatesSourceLocalizationToOperator(question) {
@@ -4523,7 +4316,7 @@ func ValidatePlannerQuestion(question PlannerQuestion) error {
 }
 
 func demoteUnanchoredPathAuthorityQuestion(question PlannerQuestion) PlannerQuestion {
-	if len(normalizeEditScopeList(question.AffectedPaths)) > 0 {
+	if len(plancontract.UniqueScopePaths(question.AffectedPaths)) > 0 {
 		return question
 	}
 
@@ -4573,7 +4366,7 @@ func plannerQuestionDelegatesSourceLocalizationToOperator(question PlannerQuesti
 	if strings.TrimSpace(question.AuthorityRequired) != "operator_approval" {
 		return false
 	}
-	if !plannerQuestionHasAffectedField(question, "source_localization") {
+	if !PlannerQuestionHasAffectedField(question, "source_localization") {
 		return false
 	}
 
@@ -4598,7 +4391,7 @@ func plannerQuestionDelegatesSourceLocalizationToOperator(question PlannerQuesti
 	return false
 }
 
-func plannerQuestionHasAffectedField(question PlannerQuestion, field string) bool {
+func PlannerQuestionHasAffectedField(question PlannerQuestion, field string) bool {
 	field = strings.TrimSpace(field)
 	for _, candidate := range question.AffectedFields {
 		if strings.TrimSpace(candidate) == field {
@@ -4607,10 +4400,6 @@ func plannerQuestionHasAffectedField(question PlannerQuestion, field string) boo
 	}
 
 	return false
-}
-
-func PlannerQuestionHasAffectedField(question PlannerQuestion, field string) bool {
-	return plannerQuestionHasAffectedField(question, field)
 }
 
 func plannerQuestionAffectedFieldRequiresPathAuthority(field string) bool {

@@ -22,10 +22,6 @@ type PlanExecuteDispatchState struct {
 	Reason                string                      `json:"reason,omitempty"`
 }
 
-func planExecuteExactPlanEdits(prompt string, requiredEditPaths []string) ([]planartifact.PlanEdit, string) {
-	return planExecuteExactPlanEditsForWorkspace(prompt, requiredEditPaths, "")
-}
-
 func planExecuteExactPlanEditsForWorkspace(prompt string, requiredEditPaths []string, workspaceRoot string) ([]planartifact.PlanEdit, string) {
 	required := plancontract.UniqueScopePaths(requiredEditPaths)
 	state := planExecuteExactPlanDispatchState(required)

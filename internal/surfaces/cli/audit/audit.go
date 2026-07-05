@@ -212,10 +212,6 @@ var defaultAuditWatchPaths = []string{
 	"logs/telemetry",
 }
 
-func RunMain(args []string, stdout io.Writer, stderr io.Writer) int {
-	return RunMainWithTelemetry(args, stdout, stderr, nil)
-}
-
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
 		printAuditUsage(stderr)
@@ -223,7 +219,7 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec
 		return 0
 	}
 
-	logAuditPhase(rec, "audit_start", map[string]any{"subcommand": args[0]})
+	telemetry.LogPhase(rec, "audit_start", map[string]any{"subcommand": args[0]})
 
 	switch args[0] {
 	case "watch":
@@ -312,7 +308,7 @@ func runAuditWatch(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		}
 
 		if reviewPath != "" {
-			logAuditPhase(rec, "audit_watch_review", map[string]any{"artifact": reviewPath, "trigger_files": len(triggers)})
+			telemetry.LogPhase(rec, "audit_watch_review", map[string]any{"artifact": reviewPath, "trigger_files": len(triggers)})
 
 			if !opts.Quiet {
 				fmt.Fprintf(stdout, "audit review: %s\n", reviewPath)
@@ -1878,8 +1874,4 @@ func auditWatchHelpRequested(args []string) bool {
 	}
 
 	return false
-}
-
-func logAuditPhase(rec *telemetry.Recorder, eventType string, fields map[string]any) {
-	telemetry.LogPhase(rec, eventType, fields)
 }

@@ -19,6 +19,7 @@ import (
 	"idiom/internal/runtime/sessionlog"
 	"idiom/internal/surfaces/cli/runrecord"
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
+	toolcmd "idiom/internal/surfaces/cli/tool"
 	"idiom/internal/workflows/recovery"
 )
 
@@ -28,7 +29,7 @@ func nopPrompts(config.Config, []string, cmdruntime.RunOptions, io.Writer) ([]st
 }
 
 func run(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdruntime.PromptRunner, promptsRun cmdruntime.PromptsRunner, tuiRun cmdruntime.ModeRunner, serverRun cmdruntime.ModeRunner, listSessions cmdruntime.ListSessionsRunner) int {
-	return cmdruntime.Run(args, stdout, stderr, promptRun, promptsRun, tuiRun, serverRun, listSessions, runVersionMain)
+	return cmdruntime.RunWithTelemetry(args, stdout, stderr, promptRun, promptsRun, tuiRun, serverRun, listSessions, runVersionMain, nil)
 }
 
 func TestRunPromptModeUsesInjectedRunner(t *testing.T) {
@@ -584,24 +585,6 @@ func TestSessionIDFromPath(t *testing.T) {
 	}
 }
 
-func TestCommandTelemetryNameClassifiesAuditSubcommands(t *testing.T) {
-	if got := commandTelemetryName([]string{"audit", "watch", "--once"}); got != "audit:watch" {
-		t.Fatalf("commandTelemetryName audit watch = %q, want audit:watch", got)
-	}
-}
-
-func TestCommandTelemetryNameClassifiesDoctor(t *testing.T) {
-	if got := commandTelemetryName([]string{"doctor", "--json", "--profile", "implement"}); got != "doctor" {
-		t.Fatalf("commandTelemetryName doctor = %q, want doctor", got)
-	}
-}
-
-func TestCommandTelemetryNameClassifiesLocalOpsBenchmark(t *testing.T) {
-	if got := commandTelemetryName([]string{"local-ops", "benchmark", "--json"}); got != "local-ops:benchmark" {
-		t.Fatalf("commandTelemetryName local-ops benchmark = %q, want local-ops:benchmark", got)
-	}
-}
-
 func TestRunMainWritesTelemetryForDirectTool(t *testing.T) {
 	telemetryDir := t.TempDir()
 	t.Setenv("IDIOM_TELEMETRY_DIR", telemetryDir)
@@ -1010,14 +993,14 @@ func TestRunMainDirectToolInputUsesSharedRequestDecoder(t *testing.T) {
 	code := runMain([]string{
 		"tool", "go_read_symbol",
 		"-config", configPath,
-		"-input", `{"path":"internal/surfaces/cli/root/root.go","symbol":"runToolMainWithTelemetry"}`,
+		"-input", `{"path":"internal/surfaces/cli/root/root.go","symbol":"runMain"}`,
 	}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 
-	if !strings.Contains(stdout.String(), "runToolMainWithTelemetry") {
+	if !strings.Contains(stdout.String(), "runMain") {
 		t.Fatalf("expected symbol read output, got %s", stdout.String())
 	}
 }
@@ -1150,11 +1133,11 @@ func TestRunMainToolSchemasExportsManifestDerivedSchemas(t *testing.T) {
 }
 
 func TestToolHelpRequestedIgnoresFlagValues(t *testing.T) {
-	if !toolHelpRequested([]string{"--config", "custom.json", "--help"}) {
+	if !toolcmd.HelpRequested([]string{"--config", "custom.json", "--help"}) {
 		t.Fatal("expected help after config flag to be recognized")
 	}
 
-	if toolHelpRequested([]string{"--input", "help"}) {
+	if toolcmd.HelpRequested([]string{"--input", "help"}) {
 		t.Fatal("input value should not be treated as a help request")
 	}
 }

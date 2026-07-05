@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/capabilities/workspace/patching"
 )
 
 // rollbackEntry captures file content before an edit for the /undo command.
@@ -70,12 +71,12 @@ func rollbackPathsForRequest(req workspace.ToolRequest) []string {
 			return []string{p}
 		}
 	case "apply_patch":
-		ops, err := workspace.ParsePatch(req.Content)
+		ops, err := patching.Parse(req.Content)
 		if err != nil {
 			return nil
 		}
 
-		return workspace.PatchOpPaths(ops)
+		return patching.OpPaths(ops)
 	}
 
 	return nil

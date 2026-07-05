@@ -27,16 +27,6 @@ type CheckResult struct {
 	SuppressedCount int
 }
 
-type effectiveRule struct {
-	ID          rulescontract.RuleID
-	Enabled     bool
-	Enforcement rulescontract.EnforcementLevel
-	Severity    rulescontract.FindingSeverity
-	Include     []string
-	Exclude     []string
-	Options     rulescontract.RuleOptions
-}
-
 func LoadPolicy(projectRoot string, configPath string) (rulescontract.PolicyFile, string, bool, error) {
 	explicitConfig := strings.TrimSpace(configPath) != ""
 	if strings.TrimSpace(configPath) == "" {
@@ -106,7 +96,7 @@ func CheckWorkspace(ctx context.Context, opts CheckOptions) (CheckResult, error)
 	var findings []rulescontract.Finding
 	suppressed := 0
 
-	for _, rule := range effectiveRules(policy) {
+	for _, rule := range rulescontract.EffectiveRules(policy) {
 		if !rule.Enabled || rule.Enforcement == rulescontract.EnforcementDisabled {
 			continue
 		}
@@ -165,84 +155,23 @@ func PolicyExists(projectRoot string, configPath string) bool {
 	return err == nil && !info.IsDir()
 }
 
-func effectiveRules(policy rulescontract.PolicyFile) []effectiveRule {
-	defaultEnabled := true
-	if policy.Defaults.Enabled != nil {
-		defaultEnabled = *policy.Defaults.Enabled
-	}
-
-	defaultEnforcement := policy.Defaults.Enforcement
-	if defaultEnforcement == "" {
-		defaultEnforcement = rulescontract.EnforcementAdvisory
-	}
-
-	defaultSeverity := policy.Defaults.Severity
-	if defaultSeverity == "" {
-		defaultSeverity = rulescontract.SeverityWarning
-	}
-
-	defaultInclude := policy.Defaults.Include
-	if len(defaultInclude) == 0 {
-		defaultInclude = []string{"**/*.go"}
-	}
-
-	defaultExclude := policy.Defaults.Exclude
-
-	byID := map[rulescontract.RuleID]rulescontract.RuleConfig{}
-	for _, rule := range policy.Rules {
-		byID[rule.ID] = rule
-	}
-
-	ids := []rulescontract.RuleID{rulescontract.RuleNoPassThroughWrapper}
-	out := make([]effectiveRule, 0, len(ids))
-
-	for _, id := range ids {
-		spec := byID[id]
-		enabled := defaultEnabled
-		if spec.Enabled != nil {
-			enabled = *spec.Enabled
-		}
-
-		enforcement := spec.Enforcement
-		if enforcement == "" {
-			enforcement = defaultEnforcement
-		}
-
-		severity := spec.Severity
-		if severity == "" {
-			severity = defaultSeverity
-		}
-
-		include := spec.Include
-		if len(include) == 0 {
-			include = defaultInclude
-		}
-
-		exclude := append([]string(nil), defaultExclude...)
-		exclude = append(exclude, spec.Exclude...)
-
-		options := spec.Options
-		if options.PassThroughWrapper == nil {
-			options.PassThroughWrapper = rulescontract.DefaultPolicy().Rules[0].Options.PassThroughWrapper
-		}
-
-		out = append(out, effectiveRule{
-			ID:          id,
-			Enabled:     enabled,
-			Enforcement: enforcement,
-			Severity:    severity,
-			Include:     include,
-			Exclude:     exclude,
-			Options:     options,
-		})
-	}
-
-	return out
-}
-
 func goFilesForOptions(root string, paths []string) ([]string, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+
 	if len(paths) == 0 {
-		return discoverGoFiles(root)
+		files, err := discoverGoFiles(root)
+		if err != nil {
+			return nil, err
+		}
+		for _, file := range files {
+			if !pathResolvesUnderRoot(root, file) {
+				return nil, fmt.Errorf("coding rules path %q escapes project root", file)
+			}
+		}
+		return files, nil
 	}
 
 	seen := map[string]struct{}{}
@@ -258,6 +187,10 @@ func goFilesForOptions(root string, paths []string) ([]string, error) {
 		if !filepath.IsAbs(abs) {
 			abs = filepath.Join(root, filepath.FromSlash(p))
 		}
+		abs, err := filepath.Abs(abs)
+		if err != nil {
+			return nil, err
+		}
 
 		info, err := os.Stat(abs)
 		if err != nil {
@@ -265,6 +198,9 @@ func goFilesForOptions(root string, paths []string) ([]string, error) {
 				continue
 			}
 			return nil, err
+		}
+		if !pathResolvesUnderRoot(root, abs) {
+			return nil, fmt.Errorf("coding rules path %q escapes project root", p)
 		}
 
 		var scoped []string
@@ -283,6 +219,9 @@ func goFilesForOptions(root string, paths []string) ([]string, error) {
 			if err != nil {
 				return nil, err
 			}
+			if !pathResolvesUnderRoot(root, file) {
+				return nil, fmt.Errorf("coding rules path %q escapes project root", file)
+			}
 			if _, ok := seen[file]; ok {
 				continue
 			}
@@ -294,6 +233,23 @@ func goFilesForOptions(root string, paths []string) ([]string, error) {
 	slices.Sort(files)
 
 	return files, nil
+}
+
+func pathResolvesUnderRoot(root string, path string) bool {
+	root = filepath.Clean(strings.TrimSpace(root))
+	path = filepath.Clean(strings.TrimSpace(path))
+	if root == "" || path == "" {
+		return false
+	}
+
+	rootEval, rootErr := filepath.EvalSymlinks(root)
+	pathEval, pathErr := filepath.EvalSymlinks(path)
+	if rootErr != nil || pathErr != nil {
+		return false
+	}
+
+	rel, err := filepath.Rel(rootEval, pathEval)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func discoverGoFiles(root string) ([]string, error) {

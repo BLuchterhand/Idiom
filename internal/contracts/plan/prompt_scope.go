@@ -224,7 +224,7 @@ func requiredEditPathsUnderPromptHeadings(prompt string, headings []string, file
 			continue
 		}
 
-		linePaths := promptPacketWorkspacePaths(line)
+			linePaths := PromptWorkspacePaths(line)
 		if fileOnly {
 			linePaths = pathparse.FilterWorkspaceFilePaths(linePaths)
 		}
@@ -295,7 +295,7 @@ func structuredEditPathsFromPrompt(prompt string, keys []string) []string {
 			scanLine = structuredEditPathInlineValue(line)
 		}
 
-		linePaths := promptPacketWorkspacePaths(scanLine)
+		linePaths := PromptWorkspacePaths(scanLine)
 		if len(linePaths) > 0 {
 			paths = appendUniquePromptScopeStrings(paths, linePaths...)
 		}
@@ -562,7 +562,10 @@ func promptHeadingSet(headings []string) map[string]struct{} {
 	return headingSet
 }
 
-func promptPacketWorkspacePaths(text string) []string {
+// PromptWorkspacePaths returns the workspace path references recognized by
+// prompt packet parsing, including quoted fragments that are valid workspace
+// path tokens.
+func PromptWorkspacePaths(text string) []string {
 	paths := appendUniquePromptScopeStrings(nil, pathparse.MentionedWorkspacePaths(text)...)
 	for _, fragment := range pathparse.QuotedFragments(text) {
 		path, ok := pathparse.NormalizeWorkspacePathToken(fragment)

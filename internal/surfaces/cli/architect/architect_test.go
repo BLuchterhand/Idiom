@@ -23,7 +23,7 @@ func TestArchitectPacketCommandWritesPacket(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{
+	code := RunWithTelemetry([]string{
 		"packet",
 		"--root", root,
 		"--task", "Plan feature",
@@ -32,7 +32,7 @@ func TestArchitectPacketCommandWritesPacket(t *testing.T) {
 		"--anchor", `{"path":"src/simulation/job_queue.cpp","symbol":"JobQueue::posted_job_for","lines":"37","why":"C++ method anchor"}`,
 		"--context-view", ".idiom/comprehension/views/pack.json",
 		"--output", outputPath,
-	}, &stdout, &stderr)
+	}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("expected success, code=%d stderr=%s", code, stderr.String())
@@ -77,7 +77,7 @@ func TestArchitectPacketCommandWritesPlanningV2(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{
+	code := RunWithTelemetry([]string{
 		"packet",
 		"--root", root,
 		"--schema", "planning_v2",
@@ -85,7 +85,7 @@ func TestArchitectPacketCommandWritesPlanningV2(t *testing.T) {
 		"--task", "Plan feature",
 		"--context-view", ".idiom/comprehension/views/pack.json",
 		"--output", outputPath,
-	}, &stdout, &stderr)
+	}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("expected success, code=%d stderr=%s", code, stderr.String())
@@ -118,7 +118,7 @@ func TestArchitectLintCommandFailsRequiredGate(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"lint", "--packet", packetPath}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"lint", "--packet", packetPath}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("expected lint failure, code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
@@ -140,11 +140,11 @@ func TestArchitectPlanAuditCommandFailsMissingFile(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{
+	code := RunWithTelemetry([]string{
 		"plan-audit",
 		"--packet", packetPath,
 		"--plan", "Modify internal/workflows/architect/missing.go.",
-	}, &stdout, &stderr)
+	}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("expected audit failure, code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
@@ -182,7 +182,7 @@ func TestArchitectPlanAuditCommandChecksSubmittedPlanArtifact(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"plan-audit", "--packet", packetPath, "--plan-artifact", artifactPath}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"plan-audit", "--packet", packetPath, "--plan-artifact", artifactPath}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("expected artifact audit failure, code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
@@ -221,7 +221,7 @@ func TestArchitectPlanAuditCommandBlocksReadyHandoffWithoutApproval(t *testing.T
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"plan-audit", "--packet", packetPath, "--plan-artifact", artifactPath}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"plan-audit", "--packet", packetPath, "--plan-artifact", artifactPath}, &stdout, &stderr, nil)
 
 	if code != 1 {
 		t.Fatalf("expected approval handoff audit failure, code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
@@ -251,7 +251,7 @@ func TestArchitectBudgetCommandReportsTiers(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"budget", "--packet", packetPath, "--tiers", "brief,standard"}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"budget", "--packet", packetPath, "--tiers", "brief,standard"}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("expected budget success, code=%d stderr=%s", code, stderr.String())
@@ -285,7 +285,7 @@ func TestArchitectPacketCompareCommandReportsV2Deltas(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"packet-compare", "--base", basePath, "--candidate", candidatePath}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"packet-compare", "--base", basePath, "--candidate", candidatePath}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("expected compare success, code=%d stderr=%s", code, stderr.String())
@@ -327,7 +327,7 @@ func TestArchitectReplayCompareCommandAuditsPlanVariants(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"replay-compare", "--base", basePath, "--candidate", candidatePath, "--base-plan", basePlanPath, "--candidate-plan", candidatePlanPath}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"replay-compare", "--base", basePath, "--candidate", candidatePath, "--base-plan", basePlanPath, "--candidate-plan", candidatePlanPath}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("expected replay compare success, code=%d stderr=%s", code, stderr.String())
@@ -352,7 +352,7 @@ func TestArchitectPromptCommandRendersBrief(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"prompt", "--kind", "brief", "--packet", packetPath, "--prior", "approved plan"}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"prompt", "--kind", "brief", "--packet", packetPath, "--prior", "approved plan"}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("expected success, code=%d stderr=%s", code, stderr.String())
@@ -373,7 +373,7 @@ func TestArchitectPlanAliasRendersPlanPrompt(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 
-	code := Run([]string{"plan", "--packet", packetPath}, &stdout, &stderr)
+	code := RunWithTelemetry([]string{"plan", "--packet", packetPath}, &stdout, &stderr, nil)
 
 	if code != 0 {
 		t.Fatalf("expected success, code=%d stderr=%s", code, stderr.String())

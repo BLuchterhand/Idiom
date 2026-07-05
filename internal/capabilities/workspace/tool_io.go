@@ -40,6 +40,7 @@ type ToolRequest struct {
 	NewText           string              `json:"new_text,omitempty"`
 	ReplaceAll        bool                `json:"replace_all,omitempty"`
 	Recursive         bool                `json:"recursive,omitempty"`
+	FixedStrings      bool                `json:"fixed_strings,omitempty"`
 	MaxDepth          int                 `json:"max_depth,omitempty"`
 	Limit             int                 `json:"limit,omitempty"`
 	BudgetTokens      int                 `json:"budget_tokens,omitempty"`

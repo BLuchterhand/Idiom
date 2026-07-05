@@ -787,6 +787,31 @@ func TestParseToolRequestIgnoresProseQwenXMLFunctionReference(t *testing.T) {
 	}
 }
 
+func TestParseToolRequestIgnoresProseProtocolTerms(t *testing.T) {
+	for _, text := range []string{
+		"Chat Completions returns `tool_calls` when the assistant requests a tool.",
+		"DSML is a protocol label, not a tool request by itself.",
+		"The prior response was invoked from a child runner.",
+	} {
+		_, _, ok, err := ParseToolRequest(text)
+		if err != nil || ok {
+			t.Fatalf("expected prose protocol term to remain a final answer, ok=%t err=%v text=%q", ok, err, text)
+		}
+	}
+}
+
+func TestLooksLikeXMLToolCallMarkupIgnoresProseProtocolTerms(t *testing.T) {
+	for _, text := range []string{
+		"Chat Completions returns `tool_calls` when the assistant requests a tool.",
+		"DSML is a protocol label, not a tool request by itself.",
+		"Use `<function=submit_plan>` only inside a tool envelope.",
+	} {
+		if LooksLikeXMLToolCallMarkup(text) {
+			t.Fatalf("prose protocol term should not look like XML tool markup: %q", text)
+		}
+	}
+}
+
 func TestParseToolRequestReportsMalformedQwenXMLObjectParameter(t *testing.T) {
 	_, _, ok, err := ParseToolRequest(`<function=submit_plan>
 <parameter=edits>
@@ -1346,6 +1371,53 @@ func TestParseToolRequestAcceptsDeepSeekXMLReadTools(t *testing.T) {
 
 	if req.Tool != "read_file" || req.Path != "internal/runtime/agent/runner.go" || req.StartLine != 1 || req.EndLine != 20 {
 		t.Fatalf("unexpected request: %#v", req)
+	}
+}
+
+func TestParseToolRequestAcceptsOpenDeepSeekXMLReadTool(t *testing.T) {
+	text := `<n_tool_calls>
+<n_invoke name="read_file">
+<n_parameter name="path" string="true">internal/runtime/agent/runner.go</n_parameter>
+</n_tool_calls>`
+
+	req, raw, ok, err := ParseToolRequest(text)
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+
+	if !ok {
+		t.Fatal("expected open DeepSeek XML read_file request to parse")
+	}
+
+	if req.Tool != "read_file" || req.Path != "internal/runtime/agent/runner.go" {
+		t.Fatalf("unexpected request: %#v", req)
+	}
+
+	if !strings.Contains(raw, `"tool":"read_file"`) || !strings.Contains(raw, `"path":"internal/runtime/agent/runner.go"`) {
+		t.Fatalf("expected canonical raw request with tool/path, got %s", raw)
+	}
+}
+
+func TestParseToolRequestAcceptsOpenDeepSeekXMLToolNameForNormalValidation(t *testing.T) {
+	text := `<n_tool_calls>
+<n_invoke name="search_content">
+</n_tool_calls>`
+
+	req, raw, ok, err := ParseToolRequest(text)
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+
+	if !ok {
+		t.Fatal("expected open DeepSeek XML search_content request to parse")
+	}
+
+	if req.Tool != "search_content" || req.Pattern != "" || req.Path != "" {
+		t.Fatalf("unexpected request: %#v", req)
+	}
+
+	if raw != `{"tool":"search_content"}` {
+		t.Fatalf("expected canonical raw request with only tool name, got %s", raw)
 	}
 }
 

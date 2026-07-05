@@ -26,35 +26,25 @@ const (
 	ProductWorkflowEventSourceProductWorkflowStatus  ProductWorkflowEventSource = "product_workflow_status"
 )
 
+var behavioralCoverageEventsByState = map[string]ProductWorkflowEventType{
+	BehavioralCoveragePromotionStateProposed:   ProductWorkflowEventBehavioralCoverageProposed,
+	BehavioralCoveragePromotionStatePrepared:   ProductWorkflowEventBehavioralCoveragePrepared,
+	BehavioralCoveragePromotionStateReviewed:   ProductWorkflowEventBehavioralCoverageReviewed,
+	BehavioralCoveragePromotionStateAccepted:   ProductWorkflowEventBehavioralCoverageAccepted,
+	BehavioralCoveragePromotionStateRejected:   ProductWorkflowEventBehavioralCoverageRejected,
+	BehavioralCoveragePromotionStateSuperseded: ProductWorkflowEventBehavioralCoverageSuperseded,
+}
+
 func ProductWorkflowBehavioralCoverageEvent(state string) (ProductWorkflowEventType, bool) {
-	switch strings.TrimSpace(state) {
-	case BehavioralCoveragePromotionStateProposed:
-		return ProductWorkflowEventBehavioralCoverageProposed, true
-	case BehavioralCoveragePromotionStatePrepared:
-		return ProductWorkflowEventBehavioralCoveragePrepared, true
-	case BehavioralCoveragePromotionStateReviewed:
-		return ProductWorkflowEventBehavioralCoverageReviewed, true
-	case BehavioralCoveragePromotionStateAccepted:
-		return ProductWorkflowEventBehavioralCoverageAccepted, true
-	case BehavioralCoveragePromotionStateRejected:
-		return ProductWorkflowEventBehavioralCoverageRejected, true
-	case BehavioralCoveragePromotionStateSuperseded:
-		return ProductWorkflowEventBehavioralCoverageSuperseded, true
-	default:
-		return "", false
-	}
+	event, ok := behavioralCoverageEventsByState[strings.TrimSpace(state)]
+	return event, ok
 }
 
 func KnownProductWorkflowBehavioralCoverageEvent(event ProductWorkflowEventType) bool {
-	switch event {
-	case ProductWorkflowEventBehavioralCoverageProposed,
-		ProductWorkflowEventBehavioralCoveragePrepared,
-		ProductWorkflowEventBehavioralCoverageReviewed,
-		ProductWorkflowEventBehavioralCoverageAccepted,
-		ProductWorkflowEventBehavioralCoverageRejected,
-		ProductWorkflowEventBehavioralCoverageSuperseded:
-		return true
-	default:
-		return false
+	for _, known := range behavioralCoverageEventsByState {
+		if known == event {
+			return true
+		}
 	}
+	return false
 }

@@ -21,7 +21,7 @@ func RunExecutorPhaseWithDependencies(cfg config.Config, plan planartifact.PlanA
 	if opts.VerificationPlan != nil {
 		verificationPlan = *opts.VerificationPlan
 	} else {
-		verificationPlan = PlanVerification(VerificationPlannerInput{
+		verificationPlan = NewVerificationPlanner(cfg.Workspace.Root).Plan(VerificationPlannerInput{
 			WorkspaceRoot:    cfg.Workspace.Root,
 			ExplicitCommands: opts.VerificationCommands,
 			ChangedPaths:     planChangedPaths(plan),
@@ -66,10 +66,6 @@ const (
 	executorToolSubmitPlan = "submit_plan"
 	executorToolWriteFile  = "write_file"
 )
-
-func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan planartifact.PlanArtifact, scope ExecutorScope, verificationPlan VerificationPlan, output executorPhaseOutput, progress ...EditProgressFunc) (ExecutorPhaseReport, error) {
-	return runExecutorPhaseScopedWithDependencies(cfg, plan, scope, verificationPlan, output, Dependencies{}, progress...)
-}
 
 func runExecutorPhaseScopedWithDependencies(cfg config.Config, plan planartifact.PlanArtifact, scope ExecutorScope, verificationPlan VerificationPlan, output executorPhaseOutput, deps Dependencies, progress ...EditProgressFunc) (ExecutorPhaseReport, error) {
 	deps = normalizeDependencies(deps)
@@ -140,7 +136,7 @@ func runExecutorPhaseScopedWithDependencies(cfg config.Config, plan planartifact
 		return report, fmt.Errorf("plan authorized_new_files preflight failed (%s): %s", mismatch.Path, mismatch.Reason)
 	}
 
-	if mismatch := preflightPlanEdits(cfg.Workspace.Root, plan, deps.EditPreflight); mismatch != nil {
+	if mismatch := PreflightPlanEditsWithPolicy(cfg.Workspace.Root, plan, deps.EditPreflight); mismatch != nil {
 		if err := emitExecutorPreflightFailure(stdout, jsonEvents, mismatch, fmt.Sprintf("edit %d/%d %s", mismatch.Index+1, len(plan.Edits), mismatch.Path), nil); err != nil {
 			return report, err
 		}
@@ -154,7 +150,7 @@ func runExecutorPhaseScopedWithDependencies(cfg config.Config, plan planartifact
 		return report, fmt.Errorf("plan preflight failed on edit %d (%s): %s", mismatch.Index, mismatch.Path, mismatch.Reason)
 	}
 
-	if mismatch := preflightPlanUnsupportedProofClaims(plan, deps.EditPreflight); mismatch != nil {
+	if mismatch := PreflightPlanUnsupportedProofClaimsWithPolicy(plan, deps.EditPreflight); mismatch != nil {
 		if err := emitExecutorPreflightFailure(stdout, jsonEvents, mismatch, fmt.Sprintf("edit %d/%d %s", mismatch.Index+1, len(plan.Edits), mismatch.Path), nil); err != nil {
 			return report, err
 		}

@@ -60,7 +60,7 @@ func CompactStaleSessions(root string, olderThan time.Duration, now time.Time) (
 			continue
 		}
 
-		childReport, err := compactChildArtifacts(root, &state)
+		childReport, err := CompactChildArtifacts(root, &state)
 		if err != nil {
 			return report, err
 		}
@@ -80,10 +80,6 @@ func CompactStaleSessions(root string, olderThan time.Duration, now time.Time) (
 }
 
 func CompactChildArtifacts(root string, state *IntentLoopState) (CleanupReport, error) {
-	return compactChildArtifacts(root, state)
-}
-
-func compactChildArtifacts(root string, state *IntentLoopState) (CleanupReport, error) {
 	if state == nil {
 		return CleanupReport{}, fmt.Errorf("intent loop state is nil")
 	}

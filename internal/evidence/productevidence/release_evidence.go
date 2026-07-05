@@ -373,7 +373,7 @@ func runReleaseEvidenceWithDeps(args []string, stdout io.Writer, stderr io.Write
 		_, _ = stdout.Write(body)
 	}
 
-	deps.logCLIPhase(rec, "release_evidence_bundle", map[string]any{
+	telemetry.LogPhase(rec, "release_evidence_bundle", map[string]any{
 		"status":           report.Status,
 		"bundle_id":        report.BundleID,
 		"artifact_hash":    report.ArtifactHash,

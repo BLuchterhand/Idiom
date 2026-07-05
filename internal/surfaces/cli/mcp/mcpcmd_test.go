@@ -542,12 +542,12 @@ func TestMCPDiscoveryResourceFreshnessMatchesCLISidecarReportOnly(t *testing.T) 
 
 	var cliStdout, cliStderr bytes.Buffer
 
-	code := toolcmd.Run([]string{
+	code := toolcmd.RunWithTelemetry([]string{
 		"context_status",
 		"-config", configPath,
 		"--profile", "discovery",
 		"--input", `{"path":"pkg/pkg.go","freshness_policy":"report_only","limit":1}`,
-	}, &cliStdout, &cliStderr)
+	}, &cliStdout, &cliStderr, nil)
 
 	if code != 0 {
 		t.Fatalf("CLI context_status failed with %d stdout=%s stderr=%s", code, cliStdout.String(), cliStderr.String())

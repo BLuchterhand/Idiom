@@ -460,11 +460,6 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode modepolicy.Mode) turnRouteP
 	plan.ReasonCodes = normalizeRouteReasonCodes(plan.ReasonCodes)
 	plan.RouteSource = source
 
-	switch plan.Family {
-	case "plan_execute", "plan_execute_planner", "plan_then_execute":
-		plan.Family = string(autonomy.TaskFamilyPlanThenExecutePlanner)
-	}
-
 	if plan.Family == "" {
 		plan.Family = familyForRouteOutcome(plan.RequestedOutcome, plan.WriteIntent)
 	}
@@ -473,110 +468,22 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode modepolicy.Mode) turnRouteP
 		return fallbackTurnRoute("", mode)
 	}
 
-	switch plan.Family {
-	case workerruntime.ArtifactFinalAnswerTaskFamily:
-		plan.InitialLane = "main"
-		plan.FollowupLane = ""
-		plan.Contract = string(workerruntime.ContractArtifactFinalAnswer)
-		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "artifact_final_answer")
-	case "direct_question", "conversation":
-		plan.Family = "conversation"
-		plan.InitialLane = "main"
-		plan.FollowupLane = ""
-		plan.Contract = string(workerruntime.ContractDirectAnswer)
-		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "conversation")
-	case "debug_logs":
-		plan.Family = "conversation"
-		plan.InitialLane = "main"
-		plan.FollowupLane = ""
-		plan.Contract = string(workerruntime.ContractDirectAnswer)
-		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "legacy_debug_logs_collapsed_to_conversation")
-	case "verification_only":
-		plan.InitialLane = "main"
-		plan.FollowupLane = ""
-		plan.Contract = string(workerruntime.ContractDirectAnswer)
-		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "verification_request")
-	case "locate":
-		plan.InitialLane = "locate"
-		plan.FollowupLane = ""
-		plan.Contract = string(workerruntime.ContractLocateTargets)
-		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "locate_request")
-	case "locate_then_implement":
-		plan.InitialLane = "locate"
-		plan.FollowupLane = "implement"
-		plan.Contract = string(workerruntime.ContractImplementationResult)
-		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "locate_request")
-	case "explore_then_implement", "investigate_then_implement":
-		plan.InitialLane = "explore"
-		plan.FollowupLane = "implement"
-		plan.Contract = string(workerruntime.ContractImplementationResult)
-		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "explore_request")
-	case "review_then_implement":
-		plan.InitialLane = "review"
-		plan.FollowupLane = "implement"
-		plan.Contract = string(workerruntime.ContractImplementationResult)
-		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "review_request")
-	case "security_review":
-		plan.InitialLane = "review"
-		plan.FollowupLane = ""
-		plan.Contract = string(workerruntime.ContractReviewFindings)
-		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "security_review")
-	case "performance_review":
-		plan.InitialLane = "review"
-		plan.FollowupLane = ""
-		plan.Contract = string(workerruntime.ContractReviewFindings)
-		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "performance_review")
-	case "architecture":
-		plan.InitialLane = "architecture"
-		plan.FollowupLane = ""
-		plan.Contract = string(workerruntime.ContractArchitecture)
-		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "architecture_request")
-	case "architecture_then_implement":
-		plan.InitialLane = "architecture"
-		plan.FollowupLane = "implement"
-		plan.Contract = string(workerruntime.ContractImplementationResult)
-		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "architecture_request")
-	case "implementation", "test_authoring", "config_edit", "script_edit", "gdscript_edit", "docs_edit", "prompt_edit_security", "failure_injection":
-		plan.InitialLane = "implement"
-		plan.FollowupLane = ""
-		plan.Contract = string(workerruntime.ContractImplementationResult)
-		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "direct_implementation")
-	case string(autonomy.TaskFamilyPlanThenExecutePlanner):
-		// Planner phase of `idiom plan-execute`. Same lane shape as
-		// implementation (write-capable contract, single turn) but the
-		// only exposed write tool is submit_plan; per-edit writes are
-		// runtime-rejected. Without this case the family fell through
-		// to fallbackTurnRoute -> conversation/direct_answer,
-		// leaving the planner with zero write tools and no way to
-		// submit a plan.
-		plan.InitialLane = "implement"
-		plan.FollowupLane = ""
-		plan.Contract = string(workerruntime.ContractImplementationResult)
-		plan.Reason = textutil.FirstNonEmpty(plan.Reason, string(autonomy.TaskFamilyPlanThenExecutePlanner))
-	case string(autonomy.TaskFamilyPlanThenExecuteReview):
-		// Post-executor review phase for `idiom plan-execute`. This is
-		// review-shaped, not implementation-shaped: the model may close
-		// with a checklist-backed pass, or use submit_plan only for
-		// corrective edits found by the review.
-		plan.InitialLane = "review"
-		plan.FollowupLane = ""
-		plan.Contract = string(workerruntime.ContractReviewFindings)
-		plan.Reason = textutil.FirstNonEmpty(plan.Reason, string(autonomy.TaskFamilyPlanThenExecuteReview))
-	case "multi_turn_state":
-		plan.Family = "conversation"
-		plan.InitialLane = "main"
-		plan.Contract = string(workerruntime.ContractDirectAnswer)
-		plan.Reason = textutil.FirstNonEmpty(plan.Reason, "context_followup")
-	default:
+	profile, ok := workerruntime.RuntimeProfileForTaskFamily(plan.Family)
+	if !ok {
 		return fallbackTurnRoute("", mode)
 	}
+	plan.Family = profile.TaskFamily
+	plan.InitialLane = profile.InitialLane
+	plan.FollowupLane = profile.FollowupLane
+	plan.Contract = string(profile.Contract)
+	plan.Reason = textutil.FirstNonEmpty(plan.Reason, profile.DefaultReason)
 
 	return plan
 }
 
 func correctTurnRoutePlanForPrompt(plan turnRoutePlan, prompt string, mode modepolicy.Mode) turnRoutePlan {
 	normalized := normalizeTurnRoutePlan(plan, mode)
-	if promptRequestsRepositoryArchitectureEvidence(prompt) && !isImplementationLikeFamily(normalized.Family) {
+	if promptRequestsRepositoryArchitectureEvidence(prompt) && !workerruntime.TaskFamilyMutationCapable(normalized.Family) {
 		normalized.Family = "architecture"
 		normalized.InitialLane = "architecture"
 		normalized.FollowupLane = ""
@@ -595,7 +502,7 @@ func correctTurnRoutePlanForPrompt(plan turnRoutePlan, prompt string, mode modep
 		normalized.Reason = textutil.FirstNonEmpty(normalized.Reason, "route_prompt_requests_evidence_report")
 		normalized.ReasonCodes = appendUniqueBriefStrings(normalized.ReasonCodes, "route_prompt_requests_evidence_report")
 
-		if isImplementationLikeFamily(normalized.Family) {
+		if workerruntime.TaskFamilyMutationCapable(normalized.Family) {
 			return readOnlyRouteForOutcome(normalized, mode, "route_prompt_requests_evidence_report")
 		}
 
@@ -660,7 +567,7 @@ func promptRequestsRepositoryArchitectureEvidence(prompt string) bool {
 
 func routePlanCorrectedByOutcomeContract(plan turnRoutePlan, mode modepolicy.Mode) (turnRoutePlan, bool) {
 	if plan.ReadOnlyConstraint || plan.WriteIntent == "no" {
-		if isImplementationLikeFamily(plan.Family) {
+		if workerruntime.TaskFamilyMutationCapable(plan.Family) {
 			return readOnlyRouteForOutcome(plan, mode, "route_outcome_read_only_constraint"), true
 		}
 
@@ -669,7 +576,7 @@ func routePlanCorrectedByOutcomeContract(plan turnRoutePlan, mode modepolicy.Mod
 
 	switch plan.RequestedOutcome {
 	case "change_workspace":
-		if !isImplementationLikeFamily(plan.Family) && plan.WriteIntent != "no" {
+		if !workerruntime.TaskFamilyMutationCapable(plan.Family) && plan.WriteIntent != "no" {
 			plan.Family = "implementation"
 			plan.InitialLane = "implement"
 			plan.FollowupLane = ""
@@ -681,7 +588,7 @@ func routePlanCorrectedByOutcomeContract(plan turnRoutePlan, mode modepolicy.Mod
 			return normalizeTurnRoutePlan(plan, mode), true
 		}
 	case "diagnose_then_change":
-		if !isImplementationLikeFamily(plan.Family) {
+		if !workerruntime.TaskFamilyMutationCapable(plan.Family) {
 			plan.Family = "explore_then_implement"
 			plan.InitialLane = "explore"
 			plan.FollowupLane = "implement"
@@ -705,7 +612,7 @@ func routePlanCorrectedByOutcomeContract(plan turnRoutePlan, mode modepolicy.Mod
 		}
 	}
 
-	if plan.WriteIntent == "yes" && !isImplementationLikeFamily(plan.Family) {
+	if plan.WriteIntent == "yes" && !workerruntime.TaskFamilyMutationCapable(plan.Family) {
 		plan.Family = "implementation"
 		plan.InitialLane = "implement"
 		plan.FollowupLane = ""
@@ -1198,28 +1105,6 @@ func promptRequestsFileDeletionFollowup(prompt string) bool {
 	}
 
 	return false
-}
-
-func isImplementationLikeFamily(family string) bool {
-	switch strings.TrimSpace(family) {
-	case "implementation",
-		"test_authoring",
-		"config_edit",
-		"script_edit",
-		"gdscript_edit",
-		"docs_edit",
-		"prompt_edit_security",
-		"failure_injection",
-		"locate_then_implement",
-		"explore_then_implement",
-		"investigate_then_implement",
-		"review_then_implement",
-		"architecture_then_implement",
-		string(autonomy.TaskFamilyPlanThenExecutePlanner):
-		return true
-	default:
-		return false
-	}
 }
 
 func plannerWordText(prompt string) string {

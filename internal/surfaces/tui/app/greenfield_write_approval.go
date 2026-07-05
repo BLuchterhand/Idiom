@@ -111,7 +111,7 @@ func renderFeaturePlannerQuestion(question featureplanner.PlannerQuestion, state
 		fmt.Fprintf(&b, "\nDecision needed: %s\n", decision)
 	}
 
-	if featurePlannerQuestionNeedsField(question, "verification_command") {
+	if featureplanner.PlannerQuestionHasAffectedField(question, "verification_command") {
 		b.WriteString("\nAlso provide the exact verification command for this project.\n")
 	}
 
@@ -145,9 +145,9 @@ func greenfieldCreationConfirmationQuestion(plan promptExecutionPlan) string {
 }
 
 func greenfieldScopeAuthorizationFromPlannerQuestion(question featureplanner.PlannerQuestion, statePath string) (greenfieldWriteApprovalRequest, bool) {
-	if !featurePlannerQuestionOpen(question) ||
+	if !featureplanner.PlannerQuestionOpen(question) ||
 		strings.TrimSpace(question.AuthorityRequired) != "operator_approval" ||
-		!featurePlannerQuestionNeedsField(question, "new_file_authorization") {
+		!featureplanner.PlannerQuestionHasAffectedField(question, "new_file_authorization") {
 		return greenfieldWriteApprovalRequest{}, false
 	}
 
@@ -161,14 +161,10 @@ func greenfieldScopeAuthorizationFromPlannerQuestion(question featureplanner.Pla
 		Question:                    strings.TrimSpace(question.QuestionSummary),
 		Decision:                    strings.TrimSpace(question.RequestedDecision),
 		ProposedPaths:               paths,
-		RequiresVerificationCommand: featurePlannerQuestionNeedsField(question, "verification_command"),
+		RequiresVerificationCommand: featureplanner.PlannerQuestionHasAffectedField(question, "verification_command"),
 		StatePath:                   statePath,
 		PlanPath:                    "",
 	}, true
-}
-
-func featurePlannerQuestionOpen(question featureplanner.PlannerQuestion) bool {
-	return featureplanner.PlannerQuestionOpen(question)
 }
 
 func featurePlannerQuestionAffectedPaths(question featureplanner.PlannerQuestion) []string {
@@ -188,8 +184,4 @@ func featurePlannerQuestionAffectedPaths(question featureplanner.PlannerQuestion
 	}
 
 	return paths
-}
-
-func featurePlannerQuestionNeedsField(question featureplanner.PlannerQuestion, field string) bool {
-	return featureplanner.PlannerQuestionHasAffectedField(question, field)
 }

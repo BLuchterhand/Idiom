@@ -260,7 +260,7 @@ func ValidateADRIntake(doc ADRDocument, adrPath string) IntakeResult {
 			Code: "missing_adr_coverage_tier", Message: "ADR front matter missing coverage_tier",
 			Artifact: "adr", Path: adrPath, Fields: []string{"coverage_tier"},
 		})
-	} else if !allowedCoverageTiers[fm.CoverageTier] {
+	} else if !coverageTierAllowed(fm.CoverageTier) {
 		failures = append(failures, IntakeFailure{
 			Code: "invalid_adr_coverage_tier", Message: "ADR front matter invalid coverage_tier " + fm.CoverageTier,
 			Artifact: "adr", Path: adrPath, Fields: []string{"coverage_tier"},

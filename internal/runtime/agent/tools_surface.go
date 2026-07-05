@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/capabilities/workspace/patching"
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/contracts/pathparse"
 	planartifact "idiom/internal/contracts/planartifact"
@@ -588,7 +589,8 @@ func conversationDiscoveryRedirectApplies(brief workerruntime.WorkerRuntimeBrief
 		return true
 	}
 
-	return workerruntime.RuntimeContractIsConversationDiscovery(brief.Contract)
+	return workerruntime.RuntimeContractMatches(brief.Contract, workerruntime.ContractDirectAnswer) ||
+		workerruntime.RuntimeContractMatches(brief.Contract, workerruntime.ContractGroundedEvidence)
 }
 
 func searchContentTargetsConcreteFile(req workspace.ToolRequest) bool {
@@ -862,8 +864,9 @@ func structuredToolPrefixes() []string {
 //
 //   - `sed -n 'A,Bp' FILE` -> read_file(path=FILE, start_line=A, end_line=B).
 //     Strictly generic: no language-specific replacement is needed.
-//   - `wc [-l|-c|-w] FILE` -> file_stats(path=FILE). Strictly generic:
-//     the model is asking for bounded counts, not arbitrary shell.
+//   - `wc [-l|-c|-w] FILE` and `sed -n 'Np' FILE | wc -c` ->
+//     file_stats(...). Strictly generic: the model is asking for bounded
+//     counts, not arbitrary shell.
 //   - `grep [-n|-rn|-r] "IDENT" [FILE]` with an identifier-shaped pattern
 //     -> language symbol tool (references if scoped to a file, workspace
 //     symbol otherwise).
@@ -940,6 +943,22 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 			capability:        workspace.Capability("search_files"),
 			summary:           "Redirected to search_files",
 			hardRejectSummary: "Shell find blocked by file-name search capability",
+			message:           msg,
+		})
+	}
+
+	if match := matchShellSedWCStats(cmd); match != nil {
+		msg := fmt.Sprintf(
+			"The request measures a file line range via shell. File-stat capability is available through file_stats; it returns structured byte and character counts for bounded line ranges without a shell prompt.\n"+
+				"candidate_request: {\"tool\":\"file_stats\",\"path\":%q,\"start_line\":%d,\"end_line\":%d}\n"+
+				"direct_tool_fallback: if file stats do not answer the question, the original command remains available.",
+			match.path, match.start, match.end)
+
+		return d.shellRedirectDecision(req, shellRedirect{
+			kind:              "shell|sed_wc_file_stats",
+			capability:        workspace.Capability("file_stats"),
+			summary:           "Redirected to file_stats",
+			hardRejectSummary: "Shell line-count pipeline blocked by file-stat capability",
 			message:           msg,
 		})
 	}
@@ -1078,6 +1097,8 @@ type shellSedMatch struct {
 // sed invocations (in-place edits, script form) fall through and execute.
 var reShellSedRange = regexp.MustCompile(`^sed\s+-n\s+['"]?(\d+),(\d+)p['"]?\s+(\S+)\s*$`)
 
+var reShellSedWCStats = regexp.MustCompile(`^sed\s+-n\s+['"]?(\d+)(?:,(\d+))?p['"]?\s+(\S+)\s*\|\s*wc\s+-c\s*$`)
+
 func matchShellSedRange(cmd string) *shellSedMatch {
 	m := reShellSedRange.FindStringSubmatch(cmd)
 	if m == nil {
@@ -1092,6 +1113,33 @@ func matchShellSedRange(cmd string) *shellSedMatch {
 	end, err := strconv.Atoi(m[2])
 	if err != nil || end < start {
 		return nil
+	}
+
+	return &shellSedMatch{path: m[3], start: start, end: end}
+}
+
+func matchShellSedWCStats(cmd string) *shellSedMatch {
+	if strings.ContainsAny(cmd, "$`") {
+		return nil
+	}
+
+	m := reShellSedWCStats.FindStringSubmatch(cmd)
+	if m == nil {
+		return nil
+	}
+
+	start, err := strconv.Atoi(m[1])
+	if err != nil {
+		return nil
+	}
+
+	end := start
+	if strings.TrimSpace(m[2]) != "" {
+		parsedEnd, err := strconv.Atoi(m[2])
+		if err != nil || parsedEnd < start {
+			return nil
+		}
+		end = parsedEnd
 	}
 
 	return &shellSedMatch{path: m[3], start: start, end: end}
@@ -1679,14 +1727,14 @@ func latestDebugLogSelection(results []workspace.ToolResult) (debugLogFileSelect
 		switch strings.TrimSpace(result.Tool) {
 		case workspace.ToolNameReadFile:
 			window, ok := parseDebugLogReadWindow(result)
-			if !ok || !isStrictDebugLogArtifactPath(window.Path) {
+			if !ok || !mentionsConcreteDebugLogSelector(window.Path) {
 				continue
 			}
 
 			return debugLogFileSelection{Handle: window.Handle, Path: window.Path}, true
 		case workspace.ToolNameSearchContent:
 			hit, ok := parseDebugLogSearchHit(result)
-			if !ok || !isStrictDebugLogArtifactPath(hit.Path) {
+			if !ok || !mentionsConcreteDebugLogSelector(hit.Path) {
 				continue
 			}
 
@@ -1720,7 +1768,7 @@ func parseDebugLogFileSelections(result workspace.ToolResult) []debugLogFileSele
 
 	for _, line := range strings.Split(result.Output, "\n") {
 		handle, path := parseSearchFilesSelectionLine(line)
-		if path == "" || !isStrictDebugLogArtifactPath(path) {
+		if path == "" || !mentionsConcreteDebugLogSelector(path) {
 			continue
 		}
 
@@ -1736,14 +1784,14 @@ func latestStableDebugLogSelection(results []workspace.ToolResult, sessionID str
 		switch strings.TrimSpace(result.Tool) {
 		case workspace.ToolNameReadFile:
 			window, ok := parseDebugLogReadWindow(result)
-			if !ok || !isStrictDebugLogArtifactPath(window.Path) || currentSessionDebugLogPath(window.Path, sessionID) {
+			if !ok || !mentionsConcreteDebugLogSelector(window.Path) || currentSessionDebugLogPath(window.Path, sessionID) {
 				continue
 			}
 
 			return debugLogFileSelection{Handle: window.Handle, Path: window.Path}, true
 		case workspace.ToolNameSearchContent:
 			hit, ok := parseDebugLogSearchHit(result)
-			if !ok || !isStrictDebugLogArtifactPath(hit.Path) || currentSessionDebugLogPath(hit.Path, sessionID) {
+			if !ok || !mentionsConcreteDebugLogSelector(hit.Path) || currentSessionDebugLogPath(hit.Path, sessionID) {
 				continue
 			}
 
@@ -2008,7 +2056,7 @@ func currentSessionDebugLogPath(path string, sessionID string) bool {
 	}
 
 	clean := strings.TrimPrefix(filepath.ToSlash(strings.TrimSpace(path)), "./")
-	if !isStrictDebugLogArtifactPath(clean) {
+	if !mentionsConcreteDebugLogSelector(clean) {
 		return false
 	}
 
@@ -2101,7 +2149,7 @@ func debugLogSelectionMatchesPath(selection debugLogFileSelection, path string) 
 
 func concreteDebugLogArtifactPathForRequest(req workspace.ToolRequest, results []workspace.ToolResult) (string, bool) {
 	for _, value := range []string{req.Path, req.Glob} {
-		if isStrictDebugLogArtifactPath(value) {
+		if mentionsConcreteDebugLogSelector(value) {
 			return strings.TrimSpace(value), true
 		}
 	}
@@ -2114,16 +2162,16 @@ func concreteDebugLogArtifactPathForRequest(req workspace.ToolRequest, results [
 	for i := len(results) - 1; i >= 0; i-- {
 		result := results[i]
 
-		if window, ok := parseDebugLogReadWindow(result); ok && window.Handle == handle && isStrictDebugLogArtifactPath(window.Path) {
+		if window, ok := parseDebugLogReadWindow(result); ok && window.Handle == handle && mentionsConcreteDebugLogSelector(window.Path) {
 			return window.Path, true
 		}
 
-		if hit, ok := parseDebugLogSearchHit(result); ok && hit.Handle == handle && isStrictDebugLogArtifactPath(hit.Path) {
+		if hit, ok := parseDebugLogSearchHit(result); ok && hit.Handle == handle && mentionsConcreteDebugLogSelector(hit.Path) {
 			return hit.Path, true
 		}
 
 		for _, selection := range parseDebugLogFileSelections(result) {
-			if selection.Handle == handle && isStrictDebugLogArtifactPath(selection.Path) {
+			if selection.Handle == handle && mentionsConcreteDebugLogSelector(selection.Path) {
 				return selection.Path, true
 			}
 		}
@@ -2182,16 +2230,6 @@ func debugLogRequestWindowCovered(req workspace.ToolRequest, window debugLogRead
 	return window.Start <= start && window.End >= end
 }
 
-func debugLogRequestTargetsCurrentSession(req workspace.ToolRequest, sessionID string) bool {
-	for _, value := range []string{req.Path, req.Glob} {
-		if currentSessionDebugLogPath(value, sessionID) {
-			return true
-		}
-	}
-
-	return false
-}
-
 func debugLogRequestMatchesDiscovery(req workspace.ToolRequest, discovery workspace.ToolRequest) bool {
 	if strings.TrimSpace(req.Tool) != strings.TrimSpace(discovery.Tool) {
 		return false
@@ -2204,9 +2242,9 @@ func debugLogRequestMatchesDiscovery(req workspace.ToolRequest, discovery worksp
 func isConcreteDebugLogArtifactRequest(req workspace.ToolRequest) bool {
 	switch strings.TrimSpace(req.Tool) {
 	case workspace.ToolNameReadFile:
-		return isStrictDebugLogArtifactPath(strings.TrimSpace(req.Path))
+		return mentionsConcreteDebugLogSelector(strings.TrimSpace(req.Path))
 	case workspace.ToolNameSearchContent:
-		return isStrictDebugLogArtifactPath(strings.TrimSpace(req.Path)) || isStrictDebugLogArtifactPath(strings.TrimSpace(req.Glob))
+		return mentionsConcreteDebugLogSelector(strings.TrimSpace(req.Path)) || mentionsConcreteDebugLogSelector(strings.TrimSpace(req.Glob))
 	default:
 		return false
 	}
@@ -2249,10 +2287,6 @@ func mentionsConcreteDebugLogSelector(value string) bool {
 		strings.HasSuffix(lower, ".jsonl") ||
 		strings.HasSuffix(lower, ".ndjson") ||
 		strings.HasSuffix(lower, ".trace")
-}
-
-func isStrictDebugLogArtifactPath(path string) bool {
-	return mentionsConcreteDebugLogSelector(path)
 }
 
 func exactDebugLogFilePath(path string) bool {
@@ -2454,7 +2488,7 @@ func repeatedFileOutlineToReadSymbolRewriteRequest(req workspace.ToolRequest, re
 	}
 
 	path := agentutil.NormalizeRunnerPath(req.Path)
-	if path == "" || concreteSourceEvidenceReadForPath(path, results) || !priorFileOutlineForPath(path, results) {
+	if path == "" || sourceEvidenceBodyReadForPath(path, results) || !priorFileOutlineForPath(path, results) {
 		return workspace.ToolRequest{}, "", "", false
 	}
 
@@ -2782,17 +2816,6 @@ func (r *Runner) augmentReadOnlyChildPrompt(prompt string) string {
 	return strings.TrimSpace(prompt) + "\n\nScope guidance:\n- " + strings.Join(guidance, "\n- ")
 }
 
-func (r *Runner) completeWithoutMoreTools(
-	ctx context.Context,
-	turnMessages []llama.ChatMessage,
-	opts llama.ChatOptions,
-	collectedResults []workspace.ToolResult,
-	metrics *runnerMetrics,
-) (string, error) {
-
-	return r.completeWithoutMoreToolsWithReason(ctx, turnMessages, opts, collectedResults, "Tool budget is exhausted. Tools are now disabled.", metrics)
-}
-
 func answerFirstNoToolsPrompt(reason string) string {
 	reason = strings.TrimSpace(reason)
 
@@ -2817,6 +2840,25 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 	reason string,
 	metrics *runnerMetrics,
 ) (string, error) {
+	return r.completeWithoutMoreToolsWithReasonMode(ctx, turnMessages, opts, collectedResults, reason, metrics, noToolsCloseoutModelAllowed)
+}
+
+type noToolsCloseoutMode string
+
+const (
+	noToolsCloseoutModelAllowed          noToolsCloseoutMode = "model_allowed"
+	noToolsCloseoutDeterministicRequired noToolsCloseoutMode = "deterministic_required"
+)
+
+func (r *Runner) completeWithoutMoreToolsWithReasonMode(
+	ctx context.Context,
+	turnMessages []llama.ChatMessage,
+	opts llama.ChatOptions,
+	collectedResults []workspace.ToolResult,
+	reason string,
+	metrics *runnerMetrics,
+	mode noToolsCloseoutMode,
+) (string, error) {
 
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
@@ -2826,10 +2868,18 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 	reason = answerFirstNoToolsPrompt(reason)
 	_ = r.evidenceEngine().ClosureDecision(r.RuntimeBrief, collectedResults)
 
+	if mode == noToolsCloseoutDeterministicRequired {
+		if answer, ok := r.deterministicNoModelCloseoutAnswer(reason, collectedResults); ok {
+			return answer, nil
+		}
+
+		return "", fmt.Errorf("deterministic closeout required but no deterministic answer is available")
+	}
+
 	preferModelSynthesis := shouldPreferModelBudgetSynthesis(r.agentName(), r.RuntimeBrief, collectedResults)
 
-	if !preferModelSynthesis && postReadinessForcedCompletionReason(reason) && shouldPreferDeterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults) {
-		if answer, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
+	if !preferModelSynthesis && postReadinessForcedCompletionReason(reason) {
+		if answer, ok := r.deterministicNoToolsFallback(noToolsFallbackBeforeModel, collectedResults); ok {
 			if !strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") {
 				return answer, nil
 			}
@@ -2838,12 +2888,6 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 
 	if !preferModelSynthesis {
 		if answer, ok := immediateBudgetFallbackAnswer(r.agentName(), r.RuntimeBrief, reason, collectedResults); ok {
-			return answer, nil
-		}
-	}
-
-	if runnerBriefRequiresMutation(r.RuntimeBrief) && shouldPreferDeterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults) {
-		if answer, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
 			return answer, nil
 		}
 	}
@@ -2871,11 +2915,6 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 		metrics.ModelCalls++
 	}
 
-	// Strip orphaned tool_calls before the final API call so that
-	// strict backends (DeepSeek) never see an assistant tool_calls
-	// message without a matching role:"tool" response.
-	turnMessages = stripOrphanedToolCalls(turnMessages)
-
 	modelStart := time.Now()
 	textOnlyOpts := textOnlyChatOptions(opts, r.RuntimeBrief)
 	requestMessages := r.chatMessagesForOptions(turnMessages, textOnlyOpts)
@@ -2894,19 +2933,19 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 	reply := assistantMessage.Content
 	r.emitThinkingTrace(0, "forced_completion_reply", assistantMessage, textOnlyOpts, false)
 
-	preferDeterministicFallback := shouldPreferDeterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults)
+	deterministicFallback := func() (string, bool) {
+		return r.deterministicNoToolsFallback(noToolsFallbackAfterInvalidModelCloseout, collectedResults)
+	}
 
 	if len(assistantMessage.ToolCalls) > 0 {
-		if preferDeterministicFallback {
-			if fallback, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
-				return fallback, nil
-			}
-		}
-
 		if retry, ok, err := r.retryInvalidFinalAnswer(ctx, turnMessages, assistantMessage, textOnlyOpts, collectedResults, metrics, "native tool call"); err != nil {
 			return "", err
 		} else if ok {
 			return retry, nil
+		}
+
+		if fallback, ok := deterministicFallback(); ok {
+			return fallback, nil
 		}
 
 		if fallback, ok, err := r.repairOrFallbackFinalAnswer(ctx, turnMessages, textOnlyOpts, collectedResults, metrics); err != nil {
@@ -2918,17 +2957,15 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 		return "", fmt.Errorf("tool loop exhausted and model still requested another tool instead of answering")
 	}
 
-	if looksLikeTextualToolCall(reply) {
-		if preferDeterministicFallback {
-			if fallback, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
-				return fallback, nil
-			}
-		}
-
+	if IsTextualToolCall(reply) {
 		if retry, ok, err := r.retryInvalidFinalAnswer(ctx, turnMessages, assistantMessage, textOnlyOpts, collectedResults, metrics, "textual tool call"); err != nil {
 			return "", err
 		} else if ok {
 			return retry, nil
+		}
+
+		if fallback, ok := deterministicFallback(); ok {
+			return fallback, nil
 		}
 
 		if fallback, ok, err := r.repairOrFallbackFinalAnswer(ctx, turnMessages, textOnlyOpts, collectedResults, metrics); err != nil {
@@ -2941,16 +2978,14 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 	}
 
 	if _, _, ok, parseErr := workspace.ParseToolRequest(reply); parseErr != nil {
-		if preferDeterministicFallback {
-			if fallback, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
-				return fallback, nil
-			}
-		}
-
 		if retry, retryOK, err := r.retryInvalidFinalAnswer(ctx, turnMessages, assistantMessage, textOnlyOpts, collectedResults, metrics, "malformed tool request"); err != nil {
 			return "", err
 		} else if retryOK {
 			return retry, nil
+		}
+
+		if fallback, ok := deterministicFallback(); ok {
+			return fallback, nil
 		}
 
 		if fallback, ok, err := r.repairOrFallbackFinalAnswer(ctx, turnMessages, textOnlyOpts, collectedResults, metrics); err != nil {
@@ -2961,16 +2996,14 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 
 		return "", parseErr
 	} else if ok {
-		if preferDeterministicFallback {
-			if fallback, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
-				return fallback, nil
-			}
-		}
-
 		if retry, retryOK, err := r.retryInvalidFinalAnswer(ctx, turnMessages, assistantMessage, textOnlyOpts, collectedResults, metrics, "tool request"); err != nil {
 			return "", err
 		} else if retryOK {
 			return retry, nil
+		}
+
+		if fallback, ok := deterministicFallback(); ok {
+			return fallback, nil
 		}
 
 		if fallback, ok, err := r.repairOrFallbackFinalAnswer(ctx, turnMessages, textOnlyOpts, collectedResults, metrics); err != nil {
@@ -2988,7 +3021,7 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 	}
 
 	if _, rejected := r.completionGateRejection(answer, collectedResults, 0, nil, false); rejected {
-		if fallback, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
+		if fallback, ok := deterministicFallback(); ok {
 			return fallback, nil
 		}
 
@@ -2998,7 +3031,7 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 	}
 
 	if _, rejected := r.readOnlyNonSubstantiveCompletionRejection(answer, collectedResults); rejected {
-		if fallback, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
+		if fallback, ok := deterministicFallback(); ok {
 			return fallback, nil
 		}
 
@@ -3020,6 +3053,22 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 	}
 
 	return answer, nil
+}
+
+func (r *Runner) deterministicNoModelCloseoutAnswer(reason string, results []workspace.ToolResult) (string, bool) {
+	if r == nil {
+		return "", false
+	}
+
+	if answer, ok := r.deterministicNoToolsFallback(noToolsFallbackAfterBudgetExhausted, results); ok {
+		return answer, true
+	}
+
+	if answer, ok := immediateBudgetFallbackAnswer(r.agentName(), r.RuntimeBrief, reason, results); ok {
+		return answer, true
+	}
+
+	return budgetDeterministicBlocker(reason, r.RuntimeBrief, results), true
 }
 
 func postReadinessForcedCompletionReason(reason string) bool {
@@ -3086,11 +3135,6 @@ func (r *Runner) repairInternalFinalAnswer(
 		metrics.ModelCalls++
 	}
 
-	// Strip orphaned tool_calls before the final API call so that
-	// strict backends (DeepSeek) never see an assistant tool_calls
-	// message without a matching role:"tool" response.
-	repairMessages = stripOrphanedToolCalls(repairMessages)
-
 	modelStart := time.Now()
 	requestMessages := r.chatMessagesForOptions(repairMessages, opts)
 
@@ -3111,7 +3155,7 @@ func (r *Runner) repairInternalFinalAnswer(
 	}
 
 	content := strings.TrimSpace(repairMessage.Content)
-	if content == "" || looksLikeTextualToolCall(content) {
+	if content == "" || IsTextualToolCall(content) {
 		return "", false, nil
 	}
 
@@ -3176,11 +3220,6 @@ func (r *Runner) retryInvalidFinalAnswer(
 		metrics.ModelCalls++
 	}
 
-	// Strip orphaned tool_calls before the final API call so that
-	// strict backends (DeepSeek) never see an assistant tool_calls
-	// message without a matching role:"tool" response.
-	retryMessages = stripOrphanedToolCalls(retryMessages)
-
 	modelStart := time.Now()
 	requestMessages := r.chatMessagesForOptions(retryMessages, opts)
 
@@ -3201,7 +3240,7 @@ func (r *Runner) retryInvalidFinalAnswer(
 	}
 
 	content := strings.TrimSpace(retryMessage.Content)
-	if content == "" || looksLikeTextualToolCall(content) {
+	if content == "" || IsTextualToolCall(content) {
 		return "", false, nil
 	}
 
@@ -3214,7 +3253,7 @@ func (r *Runner) retryInvalidFinalAnswer(
 	}
 
 	if _, rejected := r.completionGateRejection(content, collectedResults, 0, nil, false); rejected {
-		if fallback, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
+		if fallback, ok := r.deterministicNoToolsFallback(noToolsFallbackAfterRejectedModelCloseout, collectedResults); ok {
 			return fallback, true, nil
 		}
 
@@ -3230,7 +3269,7 @@ func (r *Runner) retryInvalidFinalAnswer(
 			}
 		}
 
-		if fallback, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
+		if fallback, ok := r.deterministicNoToolsFallback(noToolsFallbackAfterInvalidModelCloseout, collectedResults); ok {
 			return fallback, true, nil
 		}
 
@@ -3240,6 +3279,28 @@ func (r *Runner) retryInvalidFinalAnswer(
 	r.LastAssistantMessage = retryMessage
 
 	return content, true, nil
+}
+
+type noToolsFallbackPhase string
+
+const (
+	noToolsFallbackBeforeModel                 noToolsFallbackPhase = "before_model"
+	noToolsFallbackAfterBudgetExhausted        noToolsFallbackPhase = "after_budget_exhausted"
+	noToolsFallbackAfterInvalidModelCloseout   noToolsFallbackPhase = "after_invalid_model_closeout"
+	noToolsFallbackAfterRejectedModelCloseout  noToolsFallbackPhase = "after_rejected_model_closeout"
+	noToolsFallbackAfterEmptyAnswerRetryFailed noToolsFallbackPhase = "after_empty_answer_retry_failed"
+)
+
+func (r *Runner) deterministicNoToolsFallback(phase noToolsFallbackPhase, results []workspace.ToolResult) (string, bool) {
+	if r == nil || !shouldPreferDeterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, results) {
+		return "", false
+	}
+
+	if runnerBriefRequiresMutation(r.RuntimeBrief) && phase == noToolsFallbackBeforeModel {
+		return "", false
+	}
+
+	return deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, results)
 }
 
 func shouldPreferDeterministicNoToolsAnswer(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
@@ -3520,60 +3581,12 @@ func textOnlyMaxTokensForBrief(brief workerruntime.WorkerRuntimeBrief) int {
 // IsTextualToolCall returns true when text looks like tool-call markup
 // that should never reach the user-facing presentation layer.
 func IsTextualToolCall(text string) bool {
-	return looksLikeTextualToolCall(text)
-}
-
-// looksLikeXMLToolCall returns true when the text contains XML/HTML
-// tool-call markup tags (llama.cpp DSML, janus, n_tool, etc.).
-// Does not match line-oriented key-value tool requests.
-func looksLikeXMLToolCall(text string) bool {
 	lower := strings.ToLower(strings.TrimSpace(text))
 	if lower == "" {
 		return false
 	}
 
-	return strings.Contains(lower, "<tool_call") ||
-		strings.Contains(lower, "</tool_call>") ||
-		strings.Contains(lower, "<function=") ||
-		strings.Contains(lower, "</function>") ||
-		strings.Contains(lower, "<invoke") ||
-		strings.Contains(lower, "</invoke>") ||
-		strings.Contains(lower, "<janus_tool") ||
-		strings.Contains(lower, "</janus_tool") ||
-		strings.Contains(lower, "<janus_invoke") ||
-		strings.Contains(lower, "</janus_invoke") ||
-		strings.Contains(lower, "<n_tool") ||
-		strings.Contains(lower, "</n_tool") ||
-		strings.Contains(lower, "<n_invoke") ||
-		strings.Contains(lower, "</n_invoke") ||
-		strings.Contains(lower, "<n_parameter") ||
-		strings.Contains(lower, "</n_parameter") ||
-		strings.Contains(lower, "dsml")
-}
-
-func looksLikeTextualToolCall(text string) bool {
-	lower := strings.ToLower(strings.TrimSpace(text))
-	if lower == "" {
-		return false
-	}
-
-	if strings.Contains(lower, "<tool_call") ||
-		strings.Contains(lower, "</tool_call>") ||
-		strings.Contains(lower, "<function=") ||
-		strings.Contains(lower, "</function>") ||
-		strings.Contains(lower, "<invoke") ||
-		strings.Contains(lower, "</invoke>") ||
-		strings.Contains(lower, "<janus_tool") ||
-		strings.Contains(lower, "</janus_tool") ||
-		strings.Contains(lower, "<janus_invoke") ||
-		strings.Contains(lower, "</janus_invoke") ||
-		strings.Contains(lower, "<n_tool") ||
-		strings.Contains(lower, "</n_tool") ||
-		strings.Contains(lower, "<n_invoke") ||
-		strings.Contains(lower, "</n_invoke") ||
-		strings.Contains(lower, "<n_parameter") ||
-		strings.Contains(lower, "</n_parameter") ||
-		strings.Contains(lower, "dsml") ||
+	if workspace.LooksLikeXMLToolCallMarkup(lower) ||
 		strings.Contains(lower, "[calling tool:") {
 
 		return true
@@ -3915,8 +3928,8 @@ func (r *Runner) ensureNonEmptyAnswer(
 
 	trimmed := strings.TrimSpace(reply.Content)
 	if trimmed != "" {
-		if looksLikeTextualToolCall(trimmed) {
-			if fallback, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
+		if IsTextualToolCall(trimmed) {
+			if fallback, ok := r.deterministicNoToolsFallback(noToolsFallbackAfterInvalidModelCloseout, collectedResults); ok {
 				return fallback, nil
 			}
 
@@ -3946,11 +3959,6 @@ func (r *Runner) ensureNonEmptyAnswer(
 		metrics.ModelCalls++
 	}
 
-	// Strip orphaned tool_calls before the final API call so that
-	// strict backends (DeepSeek) never see an assistant tool_calls
-	// message without a matching role:"tool" response.
-	retryMessages = stripOrphanedToolCalls(retryMessages)
-
 	modelStart := time.Now()
 	textOnlyOpts := textOnlyChatOptions(opts, r.RuntimeBrief)
 	requestMessages := r.chatMessagesForOptions(retryMessages, textOnlyOpts)
@@ -3970,15 +3978,15 @@ func (r *Runner) ensureNonEmptyAnswer(
 	r.emitThinkingTrace(0, "empty_answer_retry_reply", retryMessage, textOnlyOpts, false)
 
 	if len(retryMessage.ToolCalls) > 0 {
-		if fallback, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
+		if fallback, ok := r.deterministicNoToolsFallback(noToolsFallbackAfterEmptyAnswerRetryFailed, collectedResults); ok {
 			return fallback, nil
 		}
 
 		return "", fmt.Errorf("%s agent emitted a tool request instead of a non-empty answer", r.agentName())
 	}
 
-	if looksLikeTextualToolCall(retryReply) {
-		if fallback, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
+	if IsTextualToolCall(retryReply) {
+		if fallback, ok := r.deterministicNoToolsFallback(noToolsFallbackAfterEmptyAnswerRetryFailed, collectedResults); ok {
 			return fallback, nil
 		}
 
@@ -3988,7 +3996,7 @@ func (r *Runner) ensureNonEmptyAnswer(
 	if _, _, ok, parseErr := workspace.ParseToolRequest(retryReply); parseErr != nil {
 		return "", parseErr
 	} else if ok {
-		if fallback, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
+		if fallback, ok := r.deterministicNoToolsFallback(noToolsFallbackAfterEmptyAnswerRetryFailed, collectedResults); ok {
 			return fallback, nil
 		}
 
@@ -3997,7 +4005,7 @@ func (r *Runner) ensureNonEmptyAnswer(
 
 	retryTrimmed := strings.TrimSpace(retryReply)
 	if retryTrimmed == "" {
-		if fallback, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
+		if fallback, ok := r.deterministicNoToolsFallback(noToolsFallbackAfterEmptyAnswerRetryFailed, collectedResults); ok {
 			return fallback, nil
 		}
 
@@ -4424,7 +4432,7 @@ func reasoningAnswerCandidateIsClean(answer string) bool {
 		return false
 	}
 
-	if looksLikeTextualToolCall(answer) ||
+	if IsTextualToolCall(answer) ||
 		looksLikeRawToolResultTranscript(answer) ||
 		looksLikeUnexecutedToolRequestAnswer(answer) ||
 		looksLikeNonAnswerProse(answer) {
@@ -4552,17 +4560,8 @@ func looksLikeQwenThinkingToolCall(line string) bool {
 }
 
 func knownToolName(name string) bool {
-	switch strings.TrimSpace(name) {
-	case "read_file", "search_content", "search_files",
-		"context_pack", "context_query", "context_zoom", "context_status",
-		"code_navigate", "discovery_query", "structural_search",
-		"edit_file", "write_file", "append_file", "apply_patch",
-		"shell", "source_sanity", "submit_plan", "task",
-		"task_ledger", "mkdir", "note":
-		return true
-	default:
-		return false
-	}
+	name = strings.TrimSpace(name)
+	return workspace.IsBuiltInToolName(name) || name == noteToolName
 }
 
 func looksLikeToolCallWrapper(line string) bool {
@@ -4751,7 +4750,7 @@ func (r *Runner) rewriteToolRequest(
 func (r *Runner) visibleBriefForToolSurface(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) workerruntime.WorkerRuntimeBrief {
 	visible := runnerVisibleBriefForToolSurface(brief, results)
 	if r == nil || r.Workspace == nil ||
-		(!implementationPreWriteToolSurfaceActive(brief, results) &&
+		(!exactAnchorPreWriteSurfaceActive(brief, results) &&
 			!implementationTargetSourcePending(brief, results) &&
 			!implementationTargetWriteReadySurfaceActive(brief, results) &&
 			!implementationScopedEditSurfaceActive(brief, results)) {
@@ -5224,12 +5223,12 @@ func writeRequestPaths(req workspace.ToolRequest) []string {
 			return []string{req.Path}
 		}
 	case workspace.ToolNameApplyPatch:
-		ops, err := workspace.ParsePatch(req.Content)
+		ops, err := patching.Parse(req.Content)
 		if err != nil {
 			return nil
 		}
 
-		return workspace.PatchOpPaths(ops)
+		return patching.OpPaths(ops)
 	case workspace.ToolNameGoMoveDeclarations:
 		var paths []string
 
@@ -5582,27 +5581,6 @@ func narrowToolFamily(tool string) string {
 	default:
 		return ""
 	}
-}
-
-// narrowToolFamilyAutoRedirect reports whether a narrow tool family
-// should be auto-redirected to a broader discovery tool after the
-// repetition nudge fires. Only code_navigate enumeration benefits
-// from this redirect; read_file and search are legitimate evidence
-// tools that should never be redirected away.
-func narrowToolFamilyAutoRedirect(family string) bool {
-	return family == "code_navigate"
-}
-
-func narrowToolFamilyRedirectTool(family string, allowedTools []string) string {
-	if !narrowToolFamilyAutoRedirect(family) {
-		return ""
-	}
-
-	if toolAllowed(allowedTools, workspace.ToolNameContextQuery) {
-		return workspace.ToolNameContextQuery
-	}
-
-	return ""
 }
 
 func toolActionClass(req workspace.ToolRequest) string {
@@ -6359,7 +6337,7 @@ func (r *Runner) safeVisibleWorkspaceWriteRequest(req workspace.ToolRequest, res
 	}
 
 	for _, path := range paths {
-		if !concreteSourceEvidenceReadForPath(path, results) {
+		if !sourceEvidenceBodyReadForPath(path, results) {
 			return false
 		}
 	}
@@ -6588,7 +6566,7 @@ func safeWorkspaceWriteRequestShape(req workspace.ToolRequest) bool {
 			return false
 		}
 
-		_, err := workspace.ParsePatch(req.Content)
+		_, err := patching.Parse(req.Content)
 
 		return err == nil
 	default:
@@ -6713,6 +6691,7 @@ type toolRequestSyntaxNormalization struct {
 	ParserFailureClass autonomy.ParserFailureClass
 	ActiveToolCall     *llama.ToolCall
 	Repaired           bool
+	UnsafeExplicitTool bool
 }
 
 type toolRequestIntentProjection struct {
@@ -6766,21 +6745,31 @@ func toolRequestIntentConfidence(n toolRequestSyntaxNormalization) string {
 }
 
 func runnerAutonomyPolicyInputFromNormalization(n toolRequestSyntaxNormalization) runnerAutonomyPolicyEventInput {
+	transport, parserFailure := parserPolicyMetadata(n.Raw, n.ParseErr, n.EventTransport, n.ParserFailureClass)
 	input := runnerAutonomyPolicyEventInput{
 		EventType:     autonomy.EventToolIntentClassified,
-		Transport:     toolRequestAutonomyTransport(n.EventTransport),
-		ParserFailure: toolRequestParserFailureClass(n.Raw, n.ParseErr),
+		Transport:     transport,
+		ParserFailure: parserFailure,
 		RepairSource:  autonomy.RepairSourceNone,
 		Result:        strings.TrimSpace(n.EventOutcome),
 		Source:        "tooling.intent",
-	}
-	if strings.TrimSpace(string(n.ParserFailureClass)) != "" {
-		input.ParserFailure = autonomy.CanonicalParserFailureClass(n.ParserFailureClass)
 	}
 	if n.Repaired {
 		input.RepairSource = autonomy.RepairSourceHostNormalizer
 	}
 	return input
+}
+
+func parserPolicyMetadata(raw string, parseErr error, transport string, parserFailureClass autonomy.ParserFailureClass) (autonomy.ToolTransport, autonomy.ParserFailureClass) {
+	policyTransport := toolRequestAutonomyTransport(transport)
+	parserFailure := autonomy.CanonicalParserFailureClass(parserFailureClass)
+	if parserFailure == "" || parserFailure == autonomy.ParserFailureNone {
+		parserFailure = toolRequestParserFailureClass(raw, parseErr)
+	}
+	if (policyTransport == "" || policyTransport == autonomy.ToolTransportUnknown) && parserFailure != "" && parserFailure != autonomy.ParserFailureNone {
+		policyTransport = autonomy.ToolTransportTextualCall
+	}
+	return policyTransport, parserFailure
 }
 
 func toolRequestAutonomyTransport(transport string) autonomy.ToolTransport {
@@ -6866,9 +6855,10 @@ func normalizeToolRequestSyntax(message llama.ChatMessage) toolRequestSyntaxNorm
 		result.EventOutcome = toolRequestNormalizerOutcomeUnsupportedShape
 		result.EventTransport = toolRequestNormalizerTransportTextual
 
-		if looksLikeXMLToolCall(message.Content) {
+		if workspace.LooksLikeXMLToolCallMarkup(message.Content) {
 			result.EventOutcome = toolRequestNormalizerOutcomeUnsafeToInfer
 			result.EventTransport = toolRequestNormalizerTransportXMLToolMarkup
+			result.UnsafeExplicitTool = unsafeToolShapeHasExplicitTool(message.Content)
 		}
 
 		result.ParserFailureClass = toolRequestParserFailureClass(result.Raw, parseErr)
@@ -6891,6 +6881,7 @@ func normalizeToolRequestSyntax(message llama.ChatMessage) toolRequestSyntaxNorm
 				result.OK = false
 				result.EventOutcome = toolRequestNormalizerOutcomeUnsafeToInfer
 				result.EventTransport = toolRequestNormalizerTransportTextual
+				result.UnsafeExplicitTool = unsafeToolShapeHasExplicitTool(message.Content)
 
 				return result
 			}
@@ -6899,7 +6890,7 @@ func normalizeToolRequestSyntax(message llama.ChatMessage) toolRequestSyntaxNorm
 		}
 
 		result.EventTransport = toolRequestNormalizerTransportTextual
-		if looksLikeXMLToolCall(message.Content) {
+		if workspace.LooksLikeXMLToolCallMarkup(message.Content) {
 			result.EventTransport = toolRequestNormalizerTransportXMLToolMarkup
 		}
 
@@ -6911,6 +6902,7 @@ func normalizeToolRequestSyntax(message llama.ChatMessage) toolRequestSyntaxNorm
 	if tokenResult := ParseWithAllTokenizers(message.Content); tokenResult.Unsafe {
 		result.EventOutcome = toolRequestNormalizerOutcomeUnsafeToInfer
 		result.EventTransport = textToNormalizerTransport(tokenResult.Transport)
+		result.UnsafeExplicitTool = tokenResult.UnsafeExplicitTool
 
 		return result
 	} else if tokenResult.OK {
@@ -6919,6 +6911,7 @@ func normalizeToolRequestSyntax(message llama.ChatMessage) toolRequestSyntaxNorm
 		if tokenizerWriteRequestUnsafe(tokenResult.Transport, tokenResult.Request.Tool) {
 			result.EventOutcome = toolRequestNormalizerOutcomeUnsafeToInfer
 			result.EventTransport = textToNormalizerTransport(tokenResult.Transport)
+			result.UnsafeExplicitTool = true
 
 			return result
 		}
@@ -7106,47 +7099,6 @@ func repairStringifiedSubmitPlanEditsToolRequest(raw string, activeToolCall *lla
 	return req, string(repaired), true
 }
 
-func parseIdiomCLIToolRequestSyntax(text string) (workspace.ToolRequest, string, bool, bool) {
-	trimmed := strings.TrimSpace(text)
-	lower := strings.ToLower(trimmed)
-
-	if !strings.HasPrefix(lower, "idiom tool ") {
-		return workspace.ToolRequest{}, "", false, false
-	}
-
-	objectStart := strings.Index(trimmed, "{")
-	if objectStart < 0 {
-		return workspace.ToolRequest{}, "", false, true
-	}
-
-	prefix := strings.TrimSpace(trimmed[:objectStart])
-	parts := strings.Fields(prefix)
-
-	if len(parts) < 3 || !strings.EqualFold(parts[0], "idiom") || !strings.EqualFold(parts[1], "tool") || !toolRequestSyntaxIdentifier(parts[2]) {
-		return workspace.ToolRequest{}, "", false, true
-	}
-
-	object, _, ok := extractJSONObjectAt(trimmed, objectStart)
-	if !ok {
-		return workspace.ToolRequest{}, "", false, true
-	}
-
-	req, err := workspace.DecodeToolRequestJSON([]byte(object))
-	if err != nil {
-		return workspace.ToolRequest{}, "", false, true
-	}
-
-	if strings.TrimSpace(req.Tool) == "" {
-		req.Tool = parts[2]
-	}
-
-	if !textutil.EqualTrimFold(req.Tool, parts[2]) {
-		return workspace.ToolRequest{}, "", false, true
-	}
-
-	return req, object, true, false
-}
-
 func exactFencedJSONPayload(text string) (payload string, ok bool, unsafe bool) {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
@@ -7182,42 +7134,6 @@ func exactFencedJSONPayload(text string) (payload string, ok bool, unsafe bool) 
 	}
 
 	return payload, true, false
-}
-
-func parseKeyValueArgsToolRequestSyntax(text string) (workspace.ToolRequest, string, bool, bool) {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" || !strings.Contains(trimmed, "{") || !strings.Contains(strings.ToLower(trimmed), "args:") {
-		return workspace.ToolRequest{}, "", false, false
-	}
-
-	tool, argsStart, ok := keyValueArgsToolAndBodyStart(trimmed)
-	if !ok {
-		return workspace.ToolRequest{}, "", false, true
-	}
-
-	objectOffset := strings.Index(trimmed[argsStart:], "{")
-	if objectOffset < 0 {
-		return workspace.ToolRequest{}, "", false, true
-	}
-
-	objectStart := argsStart + objectOffset
-	object, _, ok := extractJSONObjectAt(trimmed, objectStart)
-
-	if !ok {
-		return workspace.ToolRequest{}, "", false, true
-	}
-
-	payload, ok := normalizeKeyValueArgsObject(tool, object)
-	if !ok {
-		return workspace.ToolRequest{}, "", false, true
-	}
-
-	req, err := workspace.DecodeToolRequestJSON([]byte(payload))
-	if err != nil || strings.TrimSpace(req.Tool) == "" {
-		return workspace.ToolRequest{}, "", false, true
-	}
-
-	return req, payload, true, false
 }
 
 func keyValueArgsToolAndBodyStart(text string) (string, int, bool) {
@@ -7673,24 +7589,6 @@ func toolRequestSyntaxIdentifier(value string) bool {
 	return true
 }
 
-func parseKeyValueToolRequestSyntax(text string) (workspace.ToolRequest, bool, bool) {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return workspace.ToolRequest{}, false, false
-	}
-
-	parsed := ParseToolRequestFromTokenizer(keyValueToolRequestTokenizer{}, trimmed)
-	if parsed.Unsafe {
-		return workspace.ToolRequest{}, false, true
-	}
-
-	if !parsed.OK {
-		return workspace.ToolRequest{}, false, false
-	}
-
-	return parsed.Request, true, false
-}
-
 func toolRequestFromSyntaxValues(tool string, values map[string]string) (workspace.ToolRequest, bool) {
 	req := workspace.ToolRequest{
 		Tool:            tool,
@@ -7904,18 +7802,16 @@ func toolRequestPayloadMissingExplicitTool(raw string) bool {
 }
 
 func missingToolInferenceNeedsTypedAuthority(req workspace.ToolRequest) bool {
-	switch strings.TrimSpace(req.Tool) {
-	case "append_file",
-		"apply_patch",
-		"delegate_edit",
-		"edit_file",
-		"go_move_declarations",
-		"mkdir",
-		"shell",
-		"submit_plan",
-		"task",
-		"task_ledger",
-		"write_file":
+	tool := strings.TrimSpace(req.Tool)
+	if workspace.IsWorkspaceWriteTool(tool) {
+		return true
+	}
+
+	switch tool {
+	case workspace.ToolNameShell,
+		workspace.ToolNameSubmitPlan,
+		workspace.ToolNameTask,
+		workspace.ToolNameTaskLedger:
 		return true
 	case workspace.ToolNameReadFile:
 		return strings.TrimSpace(req.Path) == "" && strings.TrimSpace(req.Handle) == ""
@@ -7976,6 +7872,31 @@ func unsafeTextualToolName(text string) string {
 	return ""
 }
 
+func unsafeToolShapeHasExplicitTool(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+
+	return unsafeTextualToolName(text) != "" || jsonObjectHasToolField(text)
+}
+
+func jsonObjectHasToolField(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text), &obj); err == nil {
+		_, ok := obj["tool"]
+		return ok
+	}
+
+	lower := strings.ToLower(text)
+	return strings.Contains(lower, `"tool"`) || strings.Contains(lower, `'tool'`)
+}
+
 // ToolRequestTokenizer converts raw model output into a tool name and
 // key-value field map.
 type ToolRequestTokenizer interface {
@@ -7983,18 +7904,20 @@ type ToolRequestTokenizer interface {
 }
 
 type ToolRequestTokenization struct {
-	Tool   string
-	Fields map[string]string
-	OK     bool
-	Unsafe bool
+	Tool               string
+	Fields             map[string]string
+	OK                 bool
+	Unsafe             bool
+	UnsafeExplicitTool bool
 }
 
 // ParseResult is the unified output of all tokenizers after normalization.
 type ParseResult struct {
-	Request workspace.ToolRequest
-	Raw     string
-	OK      bool
-	Unsafe  bool
+	Request            workspace.ToolRequest
+	Raw                string
+	OK                 bool
+	Unsafe             bool
+	UnsafeExplicitTool bool
 	// Transport identifies the text format that was parsed, for telemetry.
 	Transport string
 }
@@ -8005,7 +7928,7 @@ type ParseResult struct {
 func ParseToolRequestFromTokenizer(t ToolRequestTokenizer, raw string) ParseResult {
 	tokens := t.Tokenize(raw)
 	if tokens.Unsafe {
-		return ParseResult{Unsafe: true}
+		return ParseResult{Unsafe: true, UnsafeExplicitTool: tokens.UnsafeExplicitTool}
 	}
 
 	if !tokens.OK {
@@ -8014,7 +7937,7 @@ func ParseToolRequestFromTokenizer(t ToolRequestTokenizer, raw string) ParseResu
 
 	req, ok := toolRequestFromSyntaxValues(tokens.Tool, tokens.Fields)
 	if !ok {
-		return ParseResult{Unsafe: true}
+		return ParseResult{Unsafe: true, UnsafeExplicitTool: strings.TrimSpace(tokens.Tool) != ""}
 	}
 
 	return ParseResult{
@@ -8045,7 +7968,7 @@ func ParseWithAllTokenizers(raw string) ParseResult {
 	for _, nt := range tokenizers {
 		result := ParseToolRequestFromTokenizer(nt.tokenizer, raw)
 		if result.Unsafe {
-			return ParseResult{Unsafe: true, Transport: nt.name}
+			return ParseResult{Unsafe: true, Transport: nt.name, UnsafeExplicitTool: result.UnsafeExplicitTool}
 		}
 
 		if result.OK {
@@ -8097,6 +8020,7 @@ func (keyValueToolRequestTokenizer) Tokenize(text string) ToolRequestTokenizatio
 	}
 
 	values := map[string]string{}
+	explicitToolSeen := false
 	sawKeyValue := false
 	lastKey := ""
 	continuationLines := 0
@@ -8186,16 +8110,19 @@ func (keyValueToolRequestTokenizer) Tokenize(text string) ToolRequestTokenizatio
 		sawKeyValue = true
 		continuationLines = 0
 		values[key] = value
+		if key == "tool" {
+			explicitToolSeen = true
+		}
 		lastKey = key
 	}
 
 	if !sawKeyValue {
-		return ToolRequestTokenization{Unsafe: true}
+		return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: explicitToolSeen}
 	}
 
 	tool := strings.TrimSpace(values["tool"])
 	if tool == "" {
-		return ToolRequestTokenization{Unsafe: true}
+		return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: explicitToolSeen}
 	}
 
 	return ToolRequestTokenization{Tool: tool, Fields: values, OK: true}
@@ -8312,7 +8239,7 @@ func (fencedJSONToolRequestTokenizer) Tokenize(text string) ToolRequestTokenizat
 	payload, ok, unsafe := exactFencedJSONPayload(text)
 	if !ok {
 		if unsafe {
-			return ToolRequestTokenization{Unsafe: true}
+			return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: jsonObjectHasToolField(payload)}
 		}
 
 		return ToolRequestTokenization{}
@@ -8321,7 +8248,7 @@ func (fencedJSONToolRequestTokenizer) Tokenize(text string) ToolRequestTokenizat
 	var obj map[string]json.RawMessage
 
 	if err := json.Unmarshal([]byte(payload), &obj); err != nil {
-		return ToolRequestTokenization{Unsafe: true}
+		return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: jsonObjectHasToolField(payload)}
 	}
 
 	toolRaw, ok := obj["tool"]
@@ -8332,7 +8259,7 @@ func (fencedJSONToolRequestTokenizer) Tokenize(text string) ToolRequestTokenizat
 	var tool string
 
 	if err := json.Unmarshal(toolRaw, &tool); err != nil || strings.TrimSpace(tool) == "" {
-		return ToolRequestTokenization{Unsafe: true}
+		return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: true}
 	}
 
 	fields := make(map[string]string, len(obj))
@@ -8388,7 +8315,7 @@ func (functionCallToolRequestTokenizer) Tokenize(text string) ToolRequestTokeniz
 	}
 
 	if strings.Contains(trimmed, "{") || strings.Contains(trimmed, "```") {
-		return ToolRequestTokenization{Unsafe: true}
+		return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: strings.HasPrefix(strings.ToLower(trimmed), "tool:")}
 	}
 
 	key, body, ok := strings.Cut(trimmed, ":")
@@ -8401,22 +8328,22 @@ func (functionCallToolRequestTokenizer) Tokenize(text string) ToolRequestTokeniz
 	open := strings.Index(body, "(")
 
 	if open < 0 {
-		return ToolRequestTokenization{Unsafe: true}
+		return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: true}
 	}
 
 	if !strings.HasSuffix(body, ")") {
-		return ToolRequestTokenization{Unsafe: true}
+		return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: true}
 	}
 
 	tool := strings.TrimSpace(body[:open])
 	if !toolRequestSyntaxIdentifier(tool) {
-		return ToolRequestTokenization{Unsafe: true}
+		return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: true}
 	}
 
 	args := strings.TrimSpace(body[open+1 : len(body)-1])
 	values, ok := parseFunctionCallToolArguments(args)
 	if !ok {
-		return ToolRequestTokenization{Unsafe: true}
+		return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: true}
 	}
 
 	return ToolRequestTokenization{Tool: tool, Fields: values, OK: true}
@@ -8437,19 +8364,19 @@ func (idiomCLIToolRequestTokenizer) Tokenize(text string) ToolRequestTokenizatio
 
 	objectStart := strings.Index(trimmed, "{")
 	if objectStart < 0 {
-		return ToolRequestTokenization{Unsafe: true}
+		return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: true}
 	}
 
 	prefix := strings.TrimSpace(trimmed[:objectStart])
 	parts := strings.Fields(prefix)
 
 	if len(parts) < 3 || !strings.EqualFold(parts[0], "idiom") || !strings.EqualFold(parts[1], "tool") || !toolRequestSyntaxIdentifier(parts[2]) {
-		return ToolRequestTokenization{Unsafe: true}
+		return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: true}
 	}
 
 	object, _, ok := extractJSONObjectAt(trimmed, objectStart)
 	if !ok {
-		return ToolRequestTokenization{Unsafe: true}
+		return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: true}
 	}
 
 	var obj map[string]json.RawMessage
@@ -8466,7 +8393,7 @@ func (idiomCLIToolRequestTokenizer) Tokenize(text string) ToolRequestTokenizatio
 
 		if err := json.Unmarshal(toolRaw, &jsonTool); err == nil && strings.TrimSpace(jsonTool) != "" {
 			if !strings.EqualFold(tool, jsonTool) {
-				return ToolRequestTokenization{Unsafe: true}
+				return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: true}
 			}
 		}
 	}
@@ -8520,40 +8447,40 @@ func (keyValueArgsToolRequestTokenizer) Tokenize(text string) ToolRequestTokeniz
 
 	tool, argsStart, ok := keyValueArgsToolAndBodyStart(trimmed)
 	if !ok {
-		return ToolRequestTokenization{Unsafe: true}
+		return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: unsafeToolShapeHasExplicitTool(trimmed)}
 	}
 
 	objectOffset := strings.Index(trimmed[argsStart:], "{")
 	if objectOffset < 0 {
-		return ToolRequestTokenization{Unsafe: true}
+		return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: true}
 	}
 
 	objectStart := argsStart + objectOffset
 	object, _, ok := extractJSONObjectAt(trimmed, objectStart)
 	if !ok {
-		return ToolRequestTokenization{Unsafe: true}
+		return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: true}
 	}
 
 	payload, ok := normalizeKeyValueArgsObject(tool, object)
 	if !ok {
-		return ToolRequestTokenization{Unsafe: true}
+		return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: true}
 	}
 
 	var obj map[string]json.RawMessage
 
 	if err := json.Unmarshal([]byte(payload), &obj); err != nil {
-		return ToolRequestTokenization{Unsafe: true}
+		return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: true}
 	}
 
 	toolRaw, ok := obj["tool"]
 	if !ok {
-		return ToolRequestTokenization{Unsafe: true}
+		return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: true}
 	}
 
 	var jsonTool string
 
 	if err := json.Unmarshal(toolRaw, &jsonTool); err != nil || strings.TrimSpace(jsonTool) == "" {
-		return ToolRequestTokenization{Unsafe: true}
+		return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: true}
 	}
 
 	fields := make(map[string]string, len(obj))
@@ -8624,7 +8551,7 @@ func (nestedArgumentsToolRequestTokenizer) Tokenize(text string) ToolRequestToke
 	var inner map[string]json.RawMessage
 
 	if err := json.Unmarshal(args, &inner); err != nil {
-		return ToolRequestTokenization{Unsafe: true}
+		return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: true}
 	}
 
 	toolRaw, ok := inner["tool"]
@@ -8635,7 +8562,7 @@ func (nestedArgumentsToolRequestTokenizer) Tokenize(text string) ToolRequestToke
 	var tool string
 
 	if err := json.Unmarshal(toolRaw, &tool); err != nil || strings.TrimSpace(tool) == "" {
-		return ToolRequestTokenization{Unsafe: true}
+		return ToolRequestTokenization{Unsafe: true, UnsafeExplicitTool: true}
 	}
 
 	fields := make(map[string]string, len(inner))
@@ -9071,12 +8998,12 @@ func toolResultTouchedPaths(req workspace.ToolRequest, _ workspace.ToolResult) [
 			return []string{req.Path}
 		}
 	case "apply_patch":
-		ops, err := workspace.ParsePatch(req.Content)
+		ops, err := patching.Parse(req.Content)
 		if err != nil {
 			return nil
 		}
 
-		return workspace.PatchOpPaths(ops)
+		return patching.OpPaths(ops)
 	}
 
 	return nil
