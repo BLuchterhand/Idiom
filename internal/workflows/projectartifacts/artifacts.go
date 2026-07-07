@@ -2,12 +2,12 @@ package projectartifacts
 
 import (
 	"cmp"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -16,6 +16,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
+	"idiom/internal/platform/gitstate"
 	"idiom/internal/repository/discovery"
 	semanticlanguage "idiom/internal/repository/semantic/language"
 )
@@ -208,13 +209,10 @@ func artifactsPresent(root string) bool {
 }
 
 func currentFingerprint(root string) (fingerprint string, gitHead string, gitDirty bool) {
-	headBytes, headErr := exec.Command("git", "-C", root, "rev-parse", "HEAD").Output()
-	statusBytes, statusErr := exec.Command("git", "-C", root, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=all").Output()
+	if snapshot, err := gitstate.Current(context.Background(), root); err == nil {
+		gitHead = snapshot.Head
 
-	if headErr == nil && statusErr == nil {
-		gitHead = strings.TrimSpace(string(headBytes))
-
-		lines := filterStatusLines(strings.Split(string(statusBytes), "\n"))
+		lines := filterStatusLines(snapshot.StatusLines)
 
 		gitDirty = len(lines) > 0
 
@@ -227,7 +225,7 @@ func currentFingerprint(root string) (fingerprint string, gitHead string, gitDir
 			_, _ = h.Write([]byte(line))
 			_, _ = h.Write([]byte{'\n'})
 
-			path := pathFromStatusLine(line)
+			path := gitstate.PathFromPorcelainLine(line)
 
 			if path == "" {
 				continue
@@ -284,12 +282,12 @@ func currentFingerprint(root string) (fingerprint string, gitHead string, gitDir
 func filterStatusLines(lines []string) []string {
 	out := make([]string, 0, len(lines))
 	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
+		line = strings.TrimRight(line, "\r\n")
+		if strings.TrimSpace(line) == "" {
 			continue
 		}
 
-		path := pathFromStatusLine(line)
+		path := gitstate.PathFromPorcelainLine(line)
 		if path == "" {
 			continue
 		}
@@ -304,24 +302,6 @@ func filterStatusLines(lines []string) []string {
 	slices.Sort(out)
 
 	return out
-}
-
-func pathFromStatusLine(line string) string {
-	line = strings.TrimSpace(line)
-	if len(line) < 4 {
-		return ""
-	}
-
-	payload := strings.TrimSpace(line[3:])
-	if payload == "" {
-		return ""
-	}
-
-	if idx := strings.LastIndex(payload, " -> "); idx >= 0 {
-		payload = payload[idx+4:]
-	}
-
-	return filepath.ToSlash(strings.TrimSpace(payload))
 }
 
 func discoverPromptFiles(root string) []string {

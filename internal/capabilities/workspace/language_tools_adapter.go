@@ -3,10 +3,9 @@ package workspace
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"path/filepath"
-	"strings"
 
+	"idiom/internal/platform/gitstate"
 	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/repository/semantic/languagetools"
 )
@@ -171,17 +170,12 @@ func (m *Manager) currentWorkspaceIndexToken() string {
 		return ""
 	}
 
-	head, err := exec.Command("git", "-C", m.cfg.Root, "rev-parse", "HEAD").Output()
+	snapshot, err := gitstate.Current(context.Background(), m.cfg.Root)
 	if err != nil {
 		return ""
 	}
 
-	status, err := exec.Command("git", "-C", m.cfg.Root, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=all").Output()
-	if err != nil {
-		return ""
-	}
-
-	return strings.TrimSpace(string(head)) + "\n" + strings.TrimSpace(string(status))
+	return snapshot.Token()
 }
 
 type codeNavigationSpec struct {

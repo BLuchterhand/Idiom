@@ -7,12 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
+	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/comprehension"
 	semanticlanguage "idiom/internal/repository/semantic/language"
@@ -778,11 +778,11 @@ func globForLanguageExtensions(extensions []string) string {
 }
 
 func discoveryQueryID(root string, purpose string, req ToolRequest, target string, language string, depth int) string {
-	status, _ := execOutput(root, "git", "-C", root, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=all")
-
-	status = filterDiscoveryQueryStatus(status)
-
-	head, _ := execOutput(root, "git", "-C", root, "rev-parse", "HEAD")
+	var head, status string
+	if snapshot, err := gitstate.Current(context.Background(), root); err == nil {
+		head = snapshot.Head
+		status = filterDiscoveryQueryStatus(snapshot.Status)
+	}
 	payload, _ := json.Marshal(map[string]any{
 		"purpose":  purpose,
 		"path":     target,
@@ -814,18 +814,6 @@ func filterDiscoveryQueryStatus(status string) string {
 
 	return strings.Join(lines, "\n")
 }
-
-func execOutput(dir string, name string, args ...string) (string, error) {
-	cmd := execCommand(name, args...)
-
-	cmd.Dir = dir
-
-	out, err := cmd.Output()
-
-	return string(out), err
-}
-
-var execCommand = exec.Command
 
 func ensureDiscoveryArtifactsIgnored(root string) error {
 	excludePath, err := gitInfoExcludePath(root)
@@ -872,21 +860,7 @@ func ensureDiscoveryArtifactsIgnored(root string) error {
 }
 
 func gitInfoExcludePath(root string) (string, error) {
-	output, err := execOutput(root, "git", "-C", root, "rev-parse", "--git-path", "info/exclude")
-	if err != nil {
-		return "", err
-	}
-
-	path := strings.TrimSpace(output)
-	if path == "" {
-		return "", nil
-	}
-
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(root, path)
-	}
-
-	return path, nil
+	return gitstate.GitPath(context.Background(), root, "info/exclude")
 }
 
 func requestMap(req ToolRequest) map[string]any {

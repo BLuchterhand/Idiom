@@ -935,3 +935,46 @@ readers until a persistence horizon or migration is defined.
   where argv execution can replace them.
 - String parsers over read summaries and `submit_plan` rejection text.
 - Compatibility aliases and facade tests after documented migration windows.
+
+### Reviewer Synthesis And Reduction Target
+
+Reviewer pass date: 2026-07-07.
+
+The reviewer consensus is that the largest reduction will come from deleting
+parallel authorities, not from local helper extraction. Current rough baseline:
+about 328k non-test Go lines and 284k Go test lines. The practical target is a
+meaningful production reduction in the low thousands of lines once the authority
+migrations are complete, with a larger test reduction after tests stop
+preserving wrapper internals.
+
+High-confidence reduction bands:
+
+- `commandexec` plus sanctioned long-lived process start owner: remove direct
+  one-shot command wrappers, duplicated timeout/capture/env/PWD handling, and
+  shell-mode variants. Expected production reduction after full migration:
+  roughly 700 to 1,500 lines.
+- `gitstate` owner: remove repeated `HEAD`, porcelain status, git-path,
+  dirty-path, and combined-output helpers across workspace, repository,
+  runtime, and workflows. Expected production reduction: roughly 300 to 800
+  lines, with better consistency more important than raw deletion.
+- Workspace catalog as tool-surface authority: remove mirrored tool-name lists,
+  handler switches, profile/phase/action-class projections, and manual sync
+  tests. Expected production reduction: roughly 800 to 1,800 lines.
+- Typed tool-result metadata and submit-plan diagnostics: remove summary-text
+  parsers, rejection-string probes, and duplicated evidence reconstruction.
+  Expected production reduction: roughly 500 to 1,200 lines.
+- Harness audit and discovery query splits: reduce oversized orchestration files
+  by moving backend availability, tool-surface audit, context freshness, and git
+  fingerprinting to their owners. Expected production reduction: roughly 400 to
+  1,000 lines after compatibility glue is deleted.
+- Compatibility sunset after documented migration windows: legacy direct-tool
+  envelope fields, deprecated CLI aliases, stale no-op flags, and pass-through
+  facades. Expected production reduction: roughly 1,000 to 2,500 lines, but only
+  after the replacement contracts are active.
+
+Conservative aggregate expectation: about 3,000 to 7,000 production Go lines
+can likely be removed without disrupting behavior. An aggressive cleanup that
+also rewrites brittle tests and sunsets compatibility surfaces could remove
+another 5,000 to 15,000 test and compatibility lines. The first slices may add
+code because they introduce owners and characterization tests; deletion should
+accelerate once multiple callers share those owners.
