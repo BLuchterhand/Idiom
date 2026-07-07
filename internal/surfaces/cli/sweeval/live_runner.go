@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"idiom/internal/evidence/eval"
+	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/textutil"
 )
@@ -124,16 +124,7 @@ func (r liveSuiteRunner) runTask(index int, total int, task eval.SWETask, logPat
 
 	fmt.Fprintf(r.progress, "[%d/%d] running %s (timeout=%ds)\n", index+1, total, strings.TrimSpace(task.ID), taskTimeout)
 
-	cmdCtx, cancel := context.WithTimeout(context.Background(), time.Duration(taskTimeout+45)*time.Second)
-
-	defer cancel()
-
-	cmd := exec.CommandContext(cmdCtx, "/bin/sh", "-lc", command)
-
-	cmd.Dir = textutil.FirstNonEmpty(fixture, filepath.Dir(r.suitePath))
-
-	cmd.Env = append(os.Environ(), taskEnvEntries(task.Env)...)
-	cmd.Env = append(cmd.Env,
+	env := append(taskEnvEntries(task.Env),
 		"IDIOM_SWE_PROMPT="+prompt,
 		"IDIOM_SWE_TURNS_JSON="+string(turnsJSON),
 		"IDIOM_SWE_TURN_COUNT="+fmt.Sprintf("%d", len(turns)),
@@ -147,7 +138,18 @@ func (r liveSuiteRunner) runTask(index int, total int, task eval.SWETask, logPat
 		"IDIOM_SWE_TASK_TIMEOUT="+strconv.Itoa(taskTimeout),
 	)
 
-	output, err := cmd.CombinedOutput()
+	result := commandexec.Run(context.Background(), commandexec.Spec{
+		Mode:           commandexec.ModePlainShell,
+		Shell:          "/bin/sh",
+		Command:        command,
+		Dir:            textutil.FirstNonEmpty(fixture, filepath.Dir(r.suitePath)),
+		BaseEnv:        os.Environ(),
+		Env:            env,
+		Timeout:        time.Duration(taskTimeout+45) * time.Second,
+		MergeOutput:    true,
+		MaxOutputBytes: 0,
+	})
+	output := []byte(result.Stdout)
 
 	if len(output) > 0 && fileMissingOrEmpty(logPath) {
 		if writeErr := os.WriteFile(logPath, output, 0o644); writeErr != nil {
@@ -155,19 +157,19 @@ func (r liveSuiteRunner) runTask(index int, total int, task eval.SWETask, logPat
 		}
 	}
 
-	if err != nil {
+	if result.Err != nil {
 		if _, loadErr := eval.LoadRecords(logPath); loadErr == nil && !fileMissingOrEmpty(logPath) {
-			fmt.Fprintf(r.progress, "[%d/%d] runner exited nonzero for %s but wrote a scoreable log: %v\n", index+1, total, strings.TrimSpace(task.ID), err)
+			fmt.Fprintf(r.progress, "[%d/%d] runner exited nonzero for %s but wrote a scoreable log: %v\n", index+1, total, strings.TrimSpace(task.ID), result.Err)
 			fmt.Fprintf(r.progress, "[%d/%d] finished %s in %s -> %s\n", index+1, total, strings.TrimSpace(task.ID), time.Since(start).Round(time.Millisecond), logPath)
 
 			return nil
 		}
 
-		if cmdCtx.Err() == context.DeadlineExceeded {
+		if result.TimedOut {
 			return fmt.Errorf("run live task %s: evaluator deadline exceeded after %ds", task.ID, taskTimeout+45)
 		}
 
-		return fmt.Errorf("run live task %s: %w: %s", task.ID, err, strings.TrimSpace(string(output)))
+		return fmt.Errorf("run live task %s: %w: %s", task.ID, result.Err, strings.TrimSpace(string(output)))
 	}
 
 	fmt.Fprintf(r.progress, "[%d/%d] finished %s in %s -> %s\n", index+1, total, strings.TrimSpace(task.ID), time.Since(start).Round(time.Millisecond), logPath)
