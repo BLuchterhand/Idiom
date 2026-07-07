@@ -123,9 +123,7 @@ func renderFeaturePlannerPlanTabMarkdown(state featureplanner.FeatureState, stat
 	return strings.TrimRight(b.String(), "\n") + "\n"
 }
 
-type featurePlannerCoverageReview = featureplanner.FeaturePlanTraceabilityReview
-
-func writeFeaturePlannerCoverageReviewSummary(b *strings.Builder, review featurePlannerCoverageReview) {
+func writeFeaturePlannerCoverageReviewSummary(b *strings.Builder, review featureplanner.FeaturePlanTraceabilityReview) {
 	missingConcreteTests := 0
 	for _, behavior := range review.Behaviors {
 		if behavior.MissingTests {
@@ -161,7 +159,7 @@ func writeFeaturePlannerCoverageReviewSummary(b *strings.Builder, review feature
 	fmt.Fprintf(b, "- Behaviors missing concrete test cases: %d\n\n", missingConcreteTests)
 }
 
-func writeFeaturePlannerBehaviorReview(b *strings.Builder, review featurePlannerCoverageReview) {
+func writeFeaturePlannerBehaviorReview(b *strings.Builder, review featureplanner.FeaturePlanTraceabilityReview) {
 	b.WriteString("## Behavior Review\n\n")
 	if len(review.Behaviors) == 0 {
 		b.WriteString("- No behavior obligations recorded in the structured plan.\n\n")
@@ -197,7 +195,7 @@ func writeFeaturePlannerBehaviorList(b *strings.Builder, label string, values []
 	fmt.Fprintf(b, "- %s: %s\n", label, strings.Join(values, "; "))
 }
 
-func writeFeaturePlannerTraceabilityMatrix(b *strings.Builder, review featurePlannerCoverageReview) {
+func writeFeaturePlannerTraceabilityMatrix(b *strings.Builder, review featureplanner.FeaturePlanTraceabilityReview) {
 	b.WriteString("## Traceability Matrix\n\n")
 	if len(review.Behaviors) == 0 {
 		b.WriteString("- No behavior obligations recorded in the structured plan.\n\n")

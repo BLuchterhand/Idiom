@@ -13,6 +13,7 @@ import (
 	contractcompile "idiom/internal/contracts/compile"
 	lanecontract "idiom/internal/contracts/lane"
 	"idiom/internal/contracts/pathparse"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
@@ -1042,7 +1043,7 @@ func terminalOutcomeFamilyForContract(contract TurnPhaseContract) string {
 	}
 }
 
-func requiredSnippetIDs(snippets []workerruntime.RequiredEditSnippet) []string {
+func requiredSnippetIDs(snippets []plancontract.RequiredEditSnippet) []string {
 	ids := make([]string, 0, len(snippets))
 	for _, snippet := range snippets {
 		if id := strings.TrimSpace(snippet.ID); id != "" {
@@ -4751,7 +4752,11 @@ func runnerTurnPhaseResidualBlockers(results []workspace.ToolResult) []string {
 			continue
 		}
 
-		if strings.TrimSpace(result.Tool) == "completion_gate" || strings.Contains(strings.ToLower(result.Summary), "blocked") {
+		if strings.TrimSpace(result.Tool) == "completion_gate" {
+			continue
+		}
+
+		if strings.Contains(strings.ToLower(result.Summary), "blocked") {
 			blockers = append(blockers, result.Summary)
 		}
 	}

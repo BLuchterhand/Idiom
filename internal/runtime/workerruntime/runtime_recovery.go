@@ -91,7 +91,7 @@ func BuildRecoveryPlan(input RecoveryInput) RecoveryPlan {
 	}
 
 	if textutil.ContainsAny(combined, "completion gate", "final answer rejected") {
-		plan.RequiredNext = appendUnique(plan.RequiredNext, "satisfy the completion gate before final answer")
+		plan.RequiredNext = appendUnique(plan.RequiredNext, "resolve the completion-gate blocker with a corrected final answer, one allowed evidence/tool action, or <<QUESTION>> with the exact blocker")
 	}
 
 	return plan

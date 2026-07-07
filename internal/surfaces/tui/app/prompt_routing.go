@@ -907,7 +907,7 @@ func requiredEditPayloadPathsFromPrompt(prompt string, candidatePaths []string, 
 	return paths
 }
 
-func appendRequiredEditSnippets(dst []workerruntime.RequiredEditSnippet, values ...workerruntime.RequiredEditSnippet) []workerruntime.RequiredEditSnippet {
+func appendRequiredEditSnippets(dst []plancontract.RequiredEditSnippet, values ...plancontract.RequiredEditSnippet) []plancontract.RequiredEditSnippet {
 	seen := make(map[string]struct{}, len(dst)+len(values))
 	for _, value := range dst {
 		content := strings.TrimSpace(value.Content)

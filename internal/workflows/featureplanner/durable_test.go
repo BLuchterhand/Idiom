@@ -12,6 +12,7 @@ import (
 	"time"
 
 	featureplannercontract "idiom/internal/contracts/featureplanner"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/platform/failures"
 )
 
@@ -263,7 +264,7 @@ func TestSaveLoadBundleUsesStateAuthorityForAcceptedSourceSignatures(t *testing.
 		EvidenceRefs:   []string{"native/src/simulation/economy/fluid_network_system.h"},
 		AffectedPaths:  []string{"native/src/simulation/economy/fluid_network_system.h"},
 		AffectedFields: []string{"source_localization"},
-		SourceFacts: []SourceAuthorityFact{{
+		SourceFacts: []plancontract.SourceAuthorityFact{{
 			Path:      "native/src/simulation/economy/fluid_network_system.h",
 			Symbol:    "FluidNetworkSystem::find_connected_cistern_with_volume",
 			Signature: "EntityID FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const",

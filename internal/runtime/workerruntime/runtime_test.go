@@ -900,7 +900,7 @@ func TestBuildRecoveryPlanClassifiesFailure(t *testing.T) {
 				Result:  workspace.ToolResult{Tool: "completion_gate", Summary: "Task ledger completion gate rejected final answer", Error: "completion gate still requires pending work"},
 			},
 			want:   recoverycontract.FailureClassCompletionGate,
-			needle: "satisfy the completion gate before final answer",
+			needle: "resolve the completion-gate blocker with a corrected final answer",
 		},
 		{
 			name: "repeated action",

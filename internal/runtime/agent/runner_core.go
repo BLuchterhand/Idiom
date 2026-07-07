@@ -10156,7 +10156,7 @@ func removedTestDeclarationTerms(declaration string) []string {
 	return terms
 }
 
-func requiredEditSnippetCandidatePaths(snippet workerruntime.RequiredEditSnippet, required []string, changed map[string]struct{}) []string {
+func requiredEditSnippetCandidatePaths(snippet plancontract.RequiredEditSnippet, required []string, changed map[string]struct{}) []string {
 	if path := NormalizeRunnerPath(snippet.Path); path != "" {
 		return []string{path}
 	}
@@ -10270,7 +10270,7 @@ func nonEmptyTrimmedLines(text string) []string {
 	return lines
 }
 
-func requiredEditSnippetName(snippet workerruntime.RequiredEditSnippet, index int) string {
+func requiredEditSnippetName(snippet plancontract.RequiredEditSnippet, index int) string {
 	if id := strings.TrimSpace(snippet.ID); id != "" {
 		return id
 	}

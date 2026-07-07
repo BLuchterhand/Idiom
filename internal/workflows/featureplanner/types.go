@@ -1148,19 +1148,17 @@ type VerificationCheckResult struct {
 }
 
 type PlanAuthorityDelta struct {
-	QuestionID     string                `json:"question_id"`
-	AuthorityKind  string                `json:"authority_kind"`
-	EvidenceRefs   []string              `json:"evidence_refs"`
-	AffectedPaths  []string              `json:"affected_paths,omitempty"`
-	AffectedFields []string              `json:"affected_fields,omitempty"`
-	SourceFacts    []SourceAuthorityFact `json:"source_facts,omitempty"`
-	Expected       string                `json:"expected,omitempty"`
-	Actual         string                `json:"actual,omitempty"`
-	Revision       int                   `json:"revision"`
-	CreatedAt      string                `json:"created_at"`
+	QuestionID     string                             `json:"question_id"`
+	AuthorityKind  string                             `json:"authority_kind"`
+	EvidenceRefs   []string                           `json:"evidence_refs"`
+	AffectedPaths  []string                           `json:"affected_paths,omitempty"`
+	AffectedFields []string                           `json:"affected_fields,omitempty"`
+	SourceFacts    []plancontract.SourceAuthorityFact `json:"source_facts,omitempty"`
+	Expected       string                             `json:"expected,omitempty"`
+	Actual         string                             `json:"actual,omitempty"`
+	Revision       int                                `json:"revision"`
+	CreatedAt      string                             `json:"created_at"`
 }
-
-type SourceAuthorityFact = plancontract.SourceAuthorityFact
 
 type RuntimeEnvelope struct {
 	ContractID       string   `json:"contract_id,omitempty"`

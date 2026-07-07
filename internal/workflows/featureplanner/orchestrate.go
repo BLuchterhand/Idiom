@@ -661,7 +661,7 @@ func acceptedSourceAuthorityConstraints(deltas []PlanAuthorityDelta) []string {
 	return normalizedStringList(constraints)
 }
 
-func sourceAuthorityFactDescription(fact SourceAuthorityFact) string {
+func sourceAuthorityFactDescription(fact plancontract.SourceAuthorityFact) string {
 	var parts []string
 	if fact.Path != "" {
 		parts = append(parts, "path: "+fact.Path)
@@ -960,7 +960,7 @@ func acceptedSourceAuthorityConstraintsFromContract(contract plancontract.PlanEx
 func acceptedSourceContractDeltaConstraint(delta plancontract.AuthorityDelta) string {
 	var parts []string
 	for _, fact := range delta.SourceFacts {
-		if description := sourceAuthorityFactDescription(SourceAuthorityFact{
+		if description := sourceAuthorityFactDescription(plancontract.SourceAuthorityFact{
 			Path:      fact.Path,
 			Symbol:    fact.Symbol,
 			Signature: fact.Signature,
@@ -2281,15 +2281,15 @@ func applyQuestionAnswerAuthority(question *PlannerQuestion, rawAnswer string, r
 	}
 
 	var payload struct {
-		Answer           string                `json:"answer"`
-		AnswerSourceKind string                `json:"answer_source_kind"`
-		AuthorityKind    string                `json:"authority_kind"`
-		EvidenceRefs     []string              `json:"evidence_refs"`
-		AffectedPaths    []string              `json:"affected_paths"`
-		AffectedFields   []string              `json:"affected_fields"`
-		SourceFacts      []SourceAuthorityFact `json:"source_facts"`
-		Expected         string                `json:"expected"`
-		Actual           string                `json:"actual"`
+		Answer           string                             `json:"answer"`
+		AnswerSourceKind string                             `json:"answer_source_kind"`
+		AuthorityKind    string                             `json:"authority_kind"`
+		EvidenceRefs     []string                           `json:"evidence_refs"`
+		AffectedPaths    []string                           `json:"affected_paths"`
+		AffectedFields   []string                           `json:"affected_fields"`
+		SourceFacts      []plancontract.SourceAuthorityFact `json:"source_facts"`
+		Expected         string                             `json:"expected"`
+		Actual           string                             `json:"actual"`
 	}
 
 	if err := json.Unmarshal([]byte(answer), &payload); err != nil {
@@ -2828,8 +2828,8 @@ func planAuthorityDeltaFromQuestion(question PlannerQuestion, revision int, now 
 	return delta
 }
 
-func deriveAcceptedSourceAuthorityFacts(delta PlanAuthorityDelta) []SourceAuthorityFact {
-	facts := append([]SourceAuthorityFact(nil), delta.SourceFacts...)
+func deriveAcceptedSourceAuthorityFacts(delta PlanAuthorityDelta) []plancontract.SourceAuthorityFact {
+	facts := append([]plancontract.SourceAuthorityFact(nil), delta.SourceFacts...)
 	if strings.TrimSpace(delta.AuthorityKind) != "accepted_source" {
 		return normalizeSourceAuthorityFacts(facts)
 	}
@@ -2840,16 +2840,16 @@ func deriveAcceptedSourceAuthorityFacts(delta PlanAuthorityDelta) []SourceAuthor
 	for _, signature := range extractSignatures(delta.Actual) {
 		symbol := signatureSymbol(signature)
 		if len(paths) == 0 {
-			facts = append(facts, SourceAuthorityFact{Symbol: symbol, Signature: signature})
+			facts = append(facts, plancontract.SourceAuthorityFact{Symbol: symbol, Signature: signature})
 			continue
 		}
 		for _, path := range paths {
-			facts = append(facts, SourceAuthorityFact{Path: path, Symbol: symbol, Signature: signature})
+			facts = append(facts, plancontract.SourceAuthorityFact{Path: path, Symbol: symbol, Signature: signature})
 		}
 	}
 
 	for _, path := range paths {
-		facts = append(facts, SourceAuthorityFact{Path: path})
+		facts = append(facts, plancontract.SourceAuthorityFact{Path: path})
 	}
 
 	return normalizeSourceAuthorityFacts(facts)

@@ -46,7 +46,6 @@ func (h languageToolHost) WritesEnabled() bool {
 	return h.manager != nil && h.manager.cfg.EnableWrites
 }
 
-// idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host
 func (h languageToolHost) ResolvePath(path string, workdir string) (string, error) {
 	if h.manager == nil {
 		return "", fmt.Errorf("workspace root is not configured")
@@ -55,7 +54,6 @@ func (h languageToolHost) ResolvePath(path string, workdir string) (string, erro
 	return h.manager.pathAccess.ResolvePath(path, workdir)
 }
 
-// idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host
 func (h languageToolHost) DisplayPath(path string) string {
 	if h.manager == nil {
 		return ""

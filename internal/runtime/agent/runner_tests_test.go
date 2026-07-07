@@ -21,6 +21,7 @@ import (
 	"idiom/internal/capabilities/workspace/externaltool"
 	"idiom/internal/contracts/autonomy"
 	contractcompile "idiom/internal/contracts/compile"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/gitstate"
@@ -3398,7 +3399,7 @@ func TestEmitBriefAuditCapturesContractShape(t *testing.T) {
 			PermissionProfile: "guarded_workspace_write",
 			Constraints:       []string{"exact_anchor_implementation"},
 			RequiredEditPaths: []string{"a.go", "b.go"},
-			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{
+			RequiredEditSnippets: []plancontract.RequiredEditSnippet{
 				{Path: "a.go", Content: "old"},
 				{Path: "a.go", Content: "second snippet"},
 				{Path: "b.go", Content: "new"},
@@ -7988,7 +7989,7 @@ func TestMutationCompletionGateRequiresRequiredEditSnippets(t *testing.T) {
 			Contract:             "implementation_result",
 			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 			RequiredEditPaths:    []string{target},
-			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{
+			RequiredEditSnippets: []plancontract.RequiredEditSnippet{
 				{ID: "required_edit_1", Path: target, Content: includeSnippet},
 				{ID: "required_edit_2", Path: target, Content: testSnippet},
 			},
@@ -13429,7 +13430,7 @@ func TestRequiredEditPathReadinessAllowsNoGapInScopeRead(t *testing.T) {
 			VerificationContract: "not_required_for_text_mutations",
 			PermissionProfile:    "guarded_workspace_write",
 			RequiredEditPaths:    []string{"a.txt"},
-			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{{
+			RequiredEditSnippets: []plancontract.RequiredEditSnippet{{
 				Path:    "a.txt",
 				Content: "changed",
 			}},
@@ -17225,7 +17226,7 @@ func TestImplementationPreWriteNonWriteRecoveryAllowsSubmitPlanInPlannerPhase(t 
 			PermissionProfile: "guarded_workspace_write",
 			RequiredEditPaths: []string{"a.go", "b.go"},
 			Constraints:       []string{"exact_anchor_implementation"},
-			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{
+			RequiredEditSnippets: []plancontract.RequiredEditSnippet{
 				{Path: "a.go", Content: "func foo() {}"},
 			},
 		},
@@ -17293,7 +17294,7 @@ func TestPlanExecuteExactAnchorPlannerDoesNotPreHideReadTools(t *testing.T) {
 			PermissionProfile: "guarded_workspace_write",
 			Constraints:       []string{"exact_anchor_implementation"},
 			RequiredEditPaths: []string{"target.txt"},
-			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{
+			RequiredEditSnippets: []plancontract.RequiredEditSnippet{
 				{Path: "target.txt", Content: "stale\n"},
 			},
 			TargetRefs: []string{"target.txt"},
@@ -17452,7 +17453,7 @@ func TestPlanExecuteExactAnchorPlannerDoesNotUseImplementationPreWriteSurface(t 
 		PermissionProfile: "guarded_workspace_write",
 		Constraints:       []string{"exact_anchor_implementation"},
 		RequiredEditPaths: []string{"a.txt", "b.txt"},
-		RequiredEditSnippets: []workerruntime.RequiredEditSnippet{
+		RequiredEditSnippets: []plancontract.RequiredEditSnippet{
 			{Path: "a.txt", Content: "old a"},
 			{Path: "b.txt", Content: "old b"},
 		},
@@ -17463,7 +17464,7 @@ func TestPlanExecuteExactAnchorPlannerDoesNotUseImplementationPreWriteSurface(t 
 
 	missing := covered
 
-	missing.RequiredEditSnippets = []workerruntime.RequiredEditSnippet{{Path: "a.txt", Content: "old a"}}
+	missing.RequiredEditSnippets = []plancontract.RequiredEditSnippet{{Path: "a.txt", Content: "old a"}}
 
 	if exactAnchorPreWriteSurfaceActive(missing, nil) {
 		t.Fatal("plan-execute planner must keep using the plan-execute recovery surface even with partial snippets")
@@ -19178,7 +19179,7 @@ func TestRunnerBriefWithPhaseHintsPromotesRequiredPathWriteReadiness(t *testing.
 		Contract:          "implementation_result",
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"native/src/system.cpp", "native/tests/test_system.cpp"},
-		RequiredEditSnippets: []workerruntime.RequiredEditSnippet{{
+		RequiredEditSnippets: []plancontract.RequiredEditSnippet{{
 			Path:    "native/src/system.cpp",
 			Content: "anchor",
 		}},

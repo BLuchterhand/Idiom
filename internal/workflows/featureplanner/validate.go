@@ -2814,8 +2814,8 @@ func normalizePlanAuthorityDeltas(deltas []PlanAuthorityDelta) []PlanAuthorityDe
 	return out
 }
 
-func normalizeSourceAuthorityFacts(facts []SourceAuthorityFact) []SourceAuthorityFact {
-	out := make([]SourceAuthorityFact, 0, len(facts))
+func normalizeSourceAuthorityFacts(facts []plancontract.SourceAuthorityFact) []plancontract.SourceAuthorityFact {
+	out := make([]plancontract.SourceAuthorityFact, 0, len(facts))
 	seen := map[string]bool{}
 
 	for _, fact := range facts {
@@ -2839,7 +2839,7 @@ func normalizeSourceAuthorityFacts(facts []SourceAuthorityFact) []SourceAuthorit
 	return out
 }
 
-func planContractSourceAuthorityFacts(facts []SourceAuthorityFact) []plancontract.SourceAuthorityFact {
+func planContractSourceAuthorityFacts(facts []plancontract.SourceAuthorityFact) []plancontract.SourceAuthorityFact {
 	normalized := normalizeSourceAuthorityFacts(facts)
 	out := make([]plancontract.SourceAuthorityFact, 0, len(normalized))
 

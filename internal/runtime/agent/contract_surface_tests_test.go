@@ -9127,6 +9127,51 @@ func TestDeriveTurnPhaseContractReadOnlyWorkspaceAllowsAnswerAfterEvidence(t *te
 	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionSearch)
 }
 
+func TestDeriveCurrentTurnPhaseContractReadOnlyCompletionGateRejectionKeepsCorrectedFinalAnswerOpen(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "What does internal/labels/labels.go return?",
+		AllowedTools:      []string{"search_content", "read_file", "code_navigate"},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/labels/labels.go lines 1-5",
+			Output:  "package labels\nfunc ShortLabel() string { return \"Save changes\" }\n",
+		},
+		{
+			Tool:    "completion_gate",
+			Summary: "Final answer rejected by blocker check",
+			Error:   "the answer cites path(s) that were discovered as index candidates but not read as source-body evidence: `src/pages/book.astro`. Read the first unread path with one bounded `read_file` or `code_navigate` call and cite the actual evidence from the file body. If the path was from search or graph results and does not need a full read, qualify the claim as `unverified` next to the citation.",
+		},
+	}
+	runner := &Runner{RuntimeBrief: brief}
+	contract := runner.deriveCurrentTurnPhaseContract(runnerTurnPhaseContractInput{
+		Brief:               brief,
+		Results:             results,
+		AllowedTools:        brief.AllowedTools,
+		Options:             llama.ChatOptions{Model: "test-model"},
+		SupportsNativeTools: true,
+		ModelCallNumber:     22,
+	})
+
+	if contract.Phase != "read_only_evidence_available" {
+		t.Fatalf("Phase = %q, want read_only_evidence_available", contract.Phase)
+	}
+
+	if len(contract.EvidenceState.ResidualBlockers) > 0 {
+		t.Fatalf("completion_gate feedback must not become residual evidence blockers: %#v", contract.EvidenceState.ResidualBlockers)
+	}
+
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
+	assertContains(t, contract.RuntimeCall.ExpressibleActionClasses, actionFinalAnswer)
+	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
+	assertContains(t, contract.TerminalOutcomes, "final answer")
+	assertContains(t, contract.ActionPolicy.TerminalResponseShapes, "final answer")
+}
+
 func TestDeriveTurnPhaseContractReadOnlyConversationEvidenceAvailableKeepsProofReadSurface(t *testing.T) {
 	input := TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{
@@ -9229,7 +9274,7 @@ func TestDeriveTurnPhaseContractProjectsTypedRouteFields(t *testing.T) {
 			AllowedEditPaths:     []string{"a_test.go"},
 			EvidencePaths:        []string{"docs/design.md"},
 			ForbiddenTools:       []string{"shell"},
-			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{{ID: "snippet-a", Path: "a.go", Content: "func Run()"}},
+			RequiredEditSnippets: []plancontract.RequiredEditSnippet{{ID: "snippet-a", Path: "a.go", Content: "func Run()"}},
 			AllowedTools:         []string{"read_file", "submit_plan"},
 		},
 		Results: []workspace.ToolResult{{
@@ -13510,7 +13555,7 @@ func TestPlanThenExecuteSubmitPlanCoverageGuardRejectsMissingRequiredSnippet(t *
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        PlanThenExecutePlannerTaskFamily,
 			RequiredEditPaths: []string{"a.txt"},
-			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{{
+			RequiredEditSnippets: []plancontract.RequiredEditSnippet{{
 				ID:      "required_edit_2",
 				Path:    "a.txt",
 				Content: "old behavior\nnew regression coverage",
@@ -13544,7 +13589,7 @@ func TestPlanThenExecuteSubmitPlanCoverageGuardAcceptsSnippetAlreadyPresentOrPla
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        PlanThenExecutePlannerTaskFamily,
 			RequiredEditPaths: []string{"a.txt"},
-			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{{
+			RequiredEditSnippets: []plancontract.RequiredEditSnippet{{
 				ID:      "required_edit_1",
 				Path:    "a.txt",
 				Content: "old behavior\nnew regression coverage",
@@ -13588,7 +13633,7 @@ func TestPlanThenExecuteSubmitPlanCoverageGuardRejectsPlanThatRemovesRequiredSni
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        PlanThenExecutePlannerTaskFamily,
 			RequiredEditPaths: []string{"a.txt"},
-			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{{
+			RequiredEditSnippets: []plancontract.RequiredEditSnippet{{
 				ID:      "required_edit_1",
 				Path:    "a.txt",
 				Content: "old behavior\nnew regression coverage",
@@ -19445,7 +19490,7 @@ func TestPlanExecuteReadyToSubmitKeepsLargeBudgetForNewFileOrWholeFile(t *testin
 			PermissionProfile: "guarded_workspace_write",
 			Objective:         "Create new file internal/workflows/productworkflow/coverage_gate_report.go",
 			RequiredEditPaths: []string{"internal/workflows/productworkflow/coverage_gate_report.go", "internal/workflows/productworkflow/coverage_gate_report_test.go"},
-			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{
+			RequiredEditSnippets: []plancontract.RequiredEditSnippet{
 				{Path: "internal/workflows/productworkflow/coverage_gate_report.go", Content: "package productworkflow\n"},
 				{Path: "internal/workflows/productworkflow/coverage_gate_report_test.go", Content: "package productworkflow\n"},
 			},
@@ -19456,7 +19501,7 @@ func TestPlanExecuteReadyToSubmitKeepsLargeBudgetForNewFileOrWholeFile(t *testin
 			PermissionProfile: "guarded_workspace_write",
 			Objective:         "Replace whole-file contents for generated coverage report fixtures",
 			RequiredEditPaths: []string{"internal/workflows/productworkflow/coverage_gate_report.go", "internal/workflows/productworkflow/coverage_gate_report_test.go"},
-			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{
+			RequiredEditSnippets: []plancontract.RequiredEditSnippet{
 				{Path: "internal/workflows/productworkflow/coverage_gate_report.go", Content: "package productworkflow\n"},
 				{Path: "internal/workflows/productworkflow/coverage_gate_report_test.go", Content: "package productworkflow\n"},
 			},
@@ -28693,7 +28738,7 @@ func TestPlanThenExecuteEmptySubmitPlanSourceSatisfiedSkipsRequiredSnippetBriefs
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"internal/contracts/writerroute/decision_test.go"},
-		RequiredEditSnippets: []workerruntime.RequiredEditSnippet{
+		RequiredEditSnippets: []plancontract.RequiredEditSnippet{
 			{Path: "internal/contracts/writerroute/decision_test.go", Content: "func TestWriterRouteDecision_NormalizationAndStableID(t *testing.T) {}"},
 		},
 	}
@@ -29374,7 +29419,7 @@ func TestPlanExecuteSubmitPlanSourceSatisfiedBridgeRejectsSnippetOnlyEvidence(t 
 	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		RequiredEditPaths: []string{"a.txt", "b.txt"},
-		RequiredEditSnippets: []workerruntime.RequiredEditSnippet{
+		RequiredEditSnippets: []plancontract.RequiredEditSnippet{
 			{Path: "b.txt", Content: "already final"},
 		},
 	}}
@@ -29437,7 +29482,7 @@ func TestPlanExecuteSubmitPlanCoverageAcceptsSourceSatisfiedRequiredSnippet(t *t
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        PlanThenExecutePlannerTaskFamily,
 			RequiredEditPaths: []string{"a.txt", "b.txt"},
-			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{
+			RequiredEditSnippets: []plancontract.RequiredEditSnippet{
 				{Path: "b.txt", Content: "already final"},
 			},
 		},
@@ -29470,7 +29515,7 @@ func TestPlanExecuteSubmitPlanCoverageAcceptsArtifactSourceSatisfiedRequiredSnip
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        PlanThenExecutePlannerTaskFamily,
 			RequiredEditPaths: []string{"a.txt", "b.txt"},
-			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{
+			RequiredEditSnippets: []plancontract.RequiredEditSnippet{
 				{Path: "b.txt", Content: "already final"},
 			},
 		},
@@ -29505,7 +29550,7 @@ func TestPlanExecuteSubmitPlanCoverageRejectsSourceSatisfiedMissingRequiredSnipp
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        PlanThenExecutePlannerTaskFamily,
 			RequiredEditPaths: []string{"a.txt", "b.txt"},
-			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{
+			RequiredEditSnippets: []plancontract.RequiredEditSnippet{
 				{ID: "b_final", Path: "b.txt", Content: "already final"},
 			},
 		},

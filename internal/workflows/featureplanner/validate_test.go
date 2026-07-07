@@ -1546,7 +1546,7 @@ func TestBuildPlannerPromptCarriesAcceptedSourceAuthorityConstraints(t *testing.
 		EvidenceRefs:   []string{"native/src/simulation/economy/fluid_network_system.h"},
 		AffectedPaths:  []string{"native/src/simulation/economy/fluid_network_system.h"},
 		AffectedFields: []string{"source_localization"},
-		SourceFacts: []SourceAuthorityFact{{
+		SourceFacts: []plancontract.SourceAuthorityFact{{
 			Path:      "native/src/simulation/economy/fluid_network_system.h",
 			Symbol:    "FluidNetworkSystem::find_connected_cistern_with_volume",
 			Signature: "EntityID FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const",
@@ -1579,7 +1579,7 @@ func TestBuildImplementorPromptCarriesAcceptedSourceAuthorityConstraints(t *test
 		EvidenceRefs:   []string{"native/src/simulation/economy/fluid_network_system.h"},
 		AffectedPaths:  []string{"native/src/simulation/economy/fluid_network_system.h"},
 		AffectedFields: []string{"source_localization"},
-		SourceFacts: []SourceAuthorityFact{{
+		SourceFacts: []plancontract.SourceAuthorityFact{{
 			Path:      "native/src/simulation/economy/fluid_network_system.h",
 			Symbol:    "FluidNetworkSystem::find_connected_cistern_with_volume",
 			Signature: "EntityID FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const",
@@ -4003,7 +4003,7 @@ func TestApplyPlannerOutputUsesAcceptedSourceAuthorityForDurablePromptCalls(t *t
 		EvidenceRefs:   []string{"native/src/simulation/economy/fluid_network_system.h"},
 		AffectedPaths:  []string{"native/src/simulation/economy/fluid_network_system.h"},
 		AffectedFields: []string{"source_localization"},
-		SourceFacts: []SourceAuthorityFact{{
+		SourceFacts: []plancontract.SourceAuthorityFact{{
 			Path:      "native/src/simulation/economy/fluid_network_system.h",
 			Symbol:    "FluidNetworkSystem::find_connected_cistern_with_volume",
 			Signature: "EntityID FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const",
@@ -4033,7 +4033,7 @@ func TestPlanContractAuthorityDeltasCarryTypedSourceFacts(t *testing.T) {
 		EvidenceRefs:   []string{"./native/src/simulation/economy/fluid_network_system.h"},
 		AffectedPaths:  []string{"./native/src/simulation/economy/fluid_network_system.h"},
 		AffectedFields: []string{"source_localization"},
-		SourceFacts: []SourceAuthorityFact{{
+		SourceFacts: []plancontract.SourceAuthorityFact{{
 			Path:      "./native/src/simulation/economy/fluid_network_system.h",
 			Symbol:    "FluidNetworkSystem::find_connected_cistern_with_volume",
 			Signature: "EntityID FluidNetworkSystem::find_connected_cistern_with_volume(uint32_t network_id, int32_t volume_required) const",
@@ -6463,7 +6463,7 @@ func TestClearAnsweredAcceptedSourceBlockersPreservesUncoveredHelperCalls(t *tes
 		AuthorityKind:  "accepted_source",
 		EvidenceRefs:   []string{"docs/feature.md#acceptance"},
 		AffectedFields: []string{"source_localization"},
-		SourceFacts: []SourceAuthorityFact{{
+		SourceFacts: []plancontract.SourceAuthorityFact{{
 			Path:      "docs/feature.md",
 			Symbol:    "BuildThing",
 			Signature: "Result BuildThing(Input arg)",

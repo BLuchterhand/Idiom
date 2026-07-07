@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/platform/textutil"
 )
 
@@ -416,16 +417,16 @@ func NormalizeRuntimeBrief(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
 	return brief
 }
 
-func normalizeRequiredEditSnippets(snippets []RequiredEditSnippet) []RequiredEditSnippet {
+func normalizeRequiredEditSnippets(snippets []plancontract.RequiredEditSnippet) []plancontract.RequiredEditSnippet {
 	if len(snippets) == 0 {
 		return nil
 	}
 
-	out := make([]RequiredEditSnippet, 0, len(snippets))
+	out := make([]plancontract.RequiredEditSnippet, 0, len(snippets))
 	seen := make(map[string]struct{}, len(snippets))
 
 	for _, snippet := range snippets {
-		normalized := RequiredEditSnippet{
+		normalized := plancontract.RequiredEditSnippet{
 			ID:      strings.TrimSpace(snippet.ID),
 			Path:    strings.TrimSpace(snippet.Path),
 			Content: strings.TrimSpace(snippet.Content),
