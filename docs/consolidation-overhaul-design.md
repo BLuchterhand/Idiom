@@ -375,6 +375,7 @@ Accepted or corrected slices:
 | Gitstate dirty-path and snapshot authority | Production Go `+120 / -126`: net `-6`; moved recovery and atom-intake git porcelain dirty-path parsing into `internal/platform/gitstate`, deleted recovery-local and atom-intake-local parsers, and retargeted comprehension/runtime git snapshot capture to `gitstate.Current` while preserving contextual git failure errors | Test Go `+80 / -32`: net `+48`; owner tests now cover quoted paths, literal ` -> ` filenames, quoted rename destinations, leading/trailing spaces inside quoted paths, ignored prefixes, sorted/default order, stdout-only success with stderr, and live untracked-file collection | Focused: `go test ./internal/platform/gitstate -count=1`; `go test ./internal/runtime/agent ./internal/repository/comprehension ./internal/workflows/atomintake ./internal/surfaces/cli/recover ./internal/capabilities/workspace -run 'TestRunnerCreatesCheckpointBeforeFirstWrite|TestGraph|TestAtomIntake.*Dirty|TestRunRecoverInspect|TestRecovery' -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `git diff --check` | Accepted after architecture and contract/test reviewer findings were resolved; `gitstate` owns command execution result interpretation, HEAD/status snapshots, porcelain path normalization, dirty-path filtering/dedupe/sorting, and callers no longer preserve local parser APIs |
 | Workspace language alias deletion | Production Go `+413 / -422`: net `-9`; deleted workspace re-exports of semantic language capability/type aliases, retargeted workspace/runtime/TUI callers to `internal/repository/semantic/language`, and changed redirect capability telemetry to string tokens because generic shell redirects can target `read_file`, `search_files`, and `file_stats` rather than semantic-language capabilities | Test Go `+39 / -33`: net `+6`; tests now assert through semantic language capability owners or generic workspace tool names instead of the deleted aliases | Focused: `go test ./internal/capabilities/workspace -count=1`; compile-focused `go test ./internal/runtime/agent -run 'TestNonExistent' -count=1`; `go test ./internal/runtime/workerruntime ./internal/surfaces/tui/app -run 'TestNonExistent' -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `git diff --check` | Accepted after reviewer synthesis; `internal/repository/semantic/language` is the single owner for language capability/type facts, workspace keeps only `Manager.ActiveLanguages` as a root-bound projection, production type aliases dropped from `15` to `13`, and no wrapper helper was introduced |
 | Source-result evidence and shell authority cleanup | Production Go `+163 / -245`: net `-82`; deleted the registry-local `EvidenceLevel` classifier, `bodyReadLevelForResult`, `extractPathFromResult`, shell/TUI build-test heuristics, and the Go language-tool `goEnv` helper; the live registry now uses `ReadPathsFromToolResult` and `planThenExecuteToolResultSourceEvidence` as the source-result body authority, shell/TUI verification checks use `workspace.AnalyzeShellCommand`, and Go language tools route `go env` through the host command boundary | Test Go `+90 / -22`: net `+68`; tests now reject the old outline/body split, prove `context_zoom include_source` is registry body evidence, keep graph/candidate `context_zoom` as unread candidate evidence, and model `go env GOPATH` through the language-tool host | Focused: `go test ./internal/runtime/agent -run 'TestPathEvidenceRegistryAndRawReadModelBodyEvidenceParity|TestOutlineEvidenceClassificationDoesNotSatisfyBodyEvidence|TestPathEvidenceContextZoomCandidateOnlyRegistersUnreadCandidate|TestPathEvidenceContextZoomGraphOutputRegistersUnreadCandidate|TestPathEvidencePendingSourceObligationParity|TestSourceEvidencePendingRedirectRequestAllowedAcceptsSourceBodyShapes|TestReadPathsFromToolResultPrefersTypedPathsAndParsesSpaceBearingReadSummary|TestSourceGroundingUsesPathEvidenceRegistryForCitationSupport|TestFinalAnswerAcceptanceRejectsPlanningPathWithoutBodyOwnedSupport|TestPathEvidenceReadOnlyAnswerabilityConsolidationMatrix' -count=1`; `go test ./internal/capabilities/workspace -run 'TestAnalyzeShellCommandClassifiesInspectionAndVerification|TestAnalyzeShellCommandDetectsBuildOrTestSegments|TestSearchToolNameIncludesWorkspaceSearchAndLegacyGrep|TestTextSearchToolNameExcludesFileSearch|TestToolPolicyCapabilitiesUsesWorkspaceCatalog' -count=1`; `go test ./internal/surfaces/tui/app -run 'Test.*History|Test.*Audit|Test.*Lifecycle|Test.*Verification' -count=1`; `go test ./internal/repository/semantic/languagetools -run 'TestFindGoToolUsesGoEnvGOPATHBin|TestLanguageToolBinaryLookupsUseHostPath' -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...` | Accepted after evidence and shell/command reviewer synthesis; the extra `context_zoom` JSON source detector is behavior, not a wrapper, and coding rules caught and forced deletion of a transient pass-through wrapper, leaving `0` active wrapper findings and only the existing `languagetools.Host` boundary adapter suppressions |
+| Dormant answer-grounding authority deletion | Production Go `+0 / -359`: net `-359`; deleted unused `internal/evidence/answergrounding` claim/evidence/path-support authority after import-graph review showed live source grounding and read-only answerability are owned by `internal/runtime/agent` | Test Go `+9 / -510`: net `-501`; deleted package-local tests that preserved the dormant receipt evaluator and retargeted fixture strings in eval/runtime tests to live runtime evidence files | Focused: `go test ./internal/runtime/agent ./internal/evidence/eval ./internal/contracts/compile -count=1`; fixture-focused runtime/eval tests; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`; `git diff --check` | Accepted after evidence reviewer audit; this corrects the prior stale "no accepted pool" estimate and removes a production-compiled duplicate authority rather than adding a compatibility wrapper |
 
 ## Historical Count Snapshots (Superseded)
 
@@ -812,12 +813,13 @@ Current git state:
   state includes the runtime alias, ADR shim, transport alias, autodetect
   owner cleanup, command-result authority cleanup, source-evidence candidate
   extraction cleanup, completion-gate/alias authority cleanup, and the
-  source-result evidence plus shell command authority cleanup.
+  source-result evidence plus shell command authority cleanup, and dormant
+  answer-grounding authority deletion.
 - Goal-period diff from merge base through the latest working state:
-  production Go `+20,237 / -20,293`, net `-56`; Go tests `+9,978 / -5,993`,
-  net `+3,985`; strict all-file total `+32,260 / -28,255`, net `+4,005`.
+  production Go `+20,287 / -20,654`, net `-367`; Go tests `+9,937 / -6,501`,
+  net `+3,436`; strict all-file total `+32,269 / -29,124`, net `+3,145`.
 - Physical tracked production Go file lines moved from `328,110` at the merge
-  base to `328,054` in the latest working tree: net `-56`.
+  base to `327,695` in the latest working tree: net `-415`.
 - Latest semantic facade cleanup slice only: production Go `+245 / -294`,
   net `-49`; Go tests `+31 / -24`, net `+7`.
 - Latest gitstate cleanup slice only: production Go `+120 / -126`, net `-6`;
@@ -837,13 +839,15 @@ Current git state:
   production Go `+84 / -86`, net `-2`; Go tests `+73 / -26`, net `+47`.
 - Latest source-result evidence and shell authority cleanup slice only:
   production Go `+163 / -245`, net `-82`; Go tests `+90 / -22`, net `+68`.
+- Latest dormant answer-grounding authority deletion slice only:
+  production Go `+0 / -359`, net `-359`; Go tests `+9 / -510`, net `-501`.
 
 Interpretation: the current goal-period branch is now production-LOC negative.
 Many individual consolidation slices are net-negative and remove real duplicate
 or alias-only surfaces, while the total all-file diff remains positive because
 tests, docs, scripted fixtures, and earlier `commandexec` process-lifecycle
 setup added shared platform coverage before all remaining process migrations
-are complete. The honest current production answer is net `-56` Go LOC from
+are complete. The honest current production answer is net `-367` Go LOC from
 merge base through the working tree. The implementation ledger above remains
 the source of truth for accepted local reductions inside each consolidation
 case.
@@ -946,13 +950,14 @@ Reviewer-updated estimate:
   lines before docs. Further profile/oracle defaults have no accepted savings
   until explicit false overrides, unknown profile errors, run-live metadata
   propagation, and all-task expansion parity are characterized.
-- General reduction estimate from current reviewer evidence: accepted immediate
-  net-negative production cleanup remaining is `0` LOC after the local-ops,
-  pathparse/TUI, focused staticcheck, atom-intake required-edit parser,
-  autonomy typed-vocabulary, runtime evidence/workerruntime, source-result
-  evidence, shell classifier, and Go language-tool command-boundary slices
-  above. A new audit might still find small local cleanup, but there is no
-  currently accepted `0-50` LOC pool.
+- General reduction estimate from current reviewer evidence: the previously
+  documented `0` immediate pool was stale. The dormant answer-grounding
+  authority deletion above removed `359` production Go LOC, and the current
+  shell/command reviewer found one additional accepted design candidate:
+  moving runtime-owned verification-command classification into
+  `workspace.AnalyzeShellCommand`, estimated at `40-90` net production LOC.
+  Beyond that shell-classification candidate, no other accepted immediate pool
+  is currently documented.
   With a future evidence/read-model design decision and reviewer acceptance,
   `150-350` production LOC is a hypothesis, not an accepted estimate.
 - Further reductions should come from larger owner moves in the case plan, not

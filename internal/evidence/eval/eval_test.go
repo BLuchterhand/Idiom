@@ -172,8 +172,8 @@ func TestScenarioRoundTripFileHelpers(t *testing.T) {
 		Name:                    "grounding-smoke",
 		PromptContains:          []string{"inspect evidence"},
 		RequireTools:            []string{"read_file"},
-		RequireEvidencePaths:    []string{"internal/evidence/answergrounding/grounding.go"},
-		RequireChangedFiles:     []string{"internal/evidence/answergrounding/grounding_test.go"},
+		RequireEvidencePaths:    []string{"internal/runtime/agent/source_grounding.go"},
+		RequireChangedFiles:     []string{"internal/runtime/agent/source_grounding_test.go"},
 		RequireRunEvents:        []string{"readiness_check"},
 		RequireDiscoveryTools:   []string{"context_pack"},
 		RequireDiscoveryClasses: []string{"semantic_context"},
@@ -197,7 +197,7 @@ func TestScenarioRoundTripFileHelpers(t *testing.T) {
 		t.Fatalf("LoadScenario: %v", err)
 	}
 
-	if got.Name != scenario.Name || !containsStringFold(got.RequireTools, "read_file") || !containsStringFold(got.RequireEvidencePaths, "internal/evidence/answergrounding/grounding.go") {
+	if got.Name != scenario.Name || !containsStringFold(got.RequireTools, "read_file") || !containsStringFold(got.RequireEvidencePaths, "internal/runtime/agent/source_grounding.go") {
 		t.Fatalf("scenario round trip mismatch: %#v", got)
 	}
 }

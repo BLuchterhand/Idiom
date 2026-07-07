@@ -31559,7 +31559,7 @@ func TestArchitectureFinalAnswerAcceptanceRejectsCompactCallLineFragments(t *tes
 }
 
 func TestArchitectureFinalAnswerAcceptanceRejectsLeadingEllipsisLineFragments(t *testing.T) {
-	answer := "... 4:\treceipts   []EvidenceReceipt. 5:\tnormalizer TargetNormalizer. f3 internal/evidence/answergrounding/evidence_ledger.go. This is grounded in `internal/evidence/answergrounding/evidence_ledger.go`, `internal/capabilities/workspace/harness_audit.go`."
+	answer := "... 57:\tObjective string. 58:\tFindings []ReadOnlyEvidenceFinding. f3 internal/runtime/agent/evidence_readonly.go. This is grounded in `internal/runtime/agent/evidence_readonly.go`, `internal/capabilities/workspace/harness_audit.go`."
 	if !looksLikeLineOrientedSourceSnippetAnswer(answer) {
 		t.Fatalf("expected leading-ellipsis source fragments to be detected:\n%s", answer)
 	}
@@ -31575,8 +31575,8 @@ func TestArchitectureFinalAnswerAcceptanceRejectsLeadingEllipsisLineFragments(t 
 	}
 	results := []workspace.ToolResult{{
 		Tool:    "read_file",
-		Summary: "Read internal/evidence/answergrounding/evidence_ledger.go lines 1-20",
-		Output:  "1:package answergrounding\n4:\treceipts   []EvidenceReceipt\n5:\tnormalizer TargetNormalizer\n",
+		Summary: "Read internal/runtime/agent/evidence_readonly.go lines 50-65",
+		Output:  "50:package agent\n57:\tObjective string\n58:\tFindings []ReadOnlyEvidenceFinding\n",
 	}}
 	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
 
