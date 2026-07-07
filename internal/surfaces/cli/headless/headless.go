@@ -20,6 +20,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/evidence/telemetry"
+	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/sessionlog"
 	"idiom/internal/surfaces/cli/runrecord"
@@ -983,31 +984,37 @@ func runCommandWithConfigTimeout(name string, command string, cfg config.Config)
 }
 
 func runCommand(ctx context.Context, name string, command string, cfg config.Config) HeadlessCheck {
-	start := time.Now()
 	check := HeadlessCheck{Name: name, Command: command}
-	cmd := exec.CommandContext(ctx, shellName(cfg), "-c", command)
-	cmd.Dir = commandDir(cfg)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	check.DurationMS = time.Since(start).Milliseconds()
-	check.Stdout = boundedString(stdout.String(), 4000)
-	check.Stderr = boundedString(stderr.String(), 4000)
-	if err == nil {
+
+	result := commandexec.Run(ctx, commandexec.Spec{
+		Mode:           commandexec.ModePlainShell,
+		Shell:          shellName(cfg),
+		Command:        command,
+		Dir:            commandDir(cfg),
+		MaxOutputBytes: headlessCommandCaptureBytes,
+	})
+
+	check.DurationMS = result.Duration.Milliseconds()
+	check.Stdout = boundedString(result.Stdout, 4000)
+	check.Stderr = boundedString(result.Stderr, 4000)
+	if result.Err == nil {
 		check.ExitCode = 0
 
 		return check
 	}
-	if exitErr, ok := err.(*exec.ExitError); ok {
-		check.ExitCode = exitErr.ExitCode()
+
+	var exitErr *exec.ExitError
+	if errors.As(result.Err, &exitErr) {
+		check.ExitCode = result.ExitCode
 	} else {
 		check.ExitCode = 1
-		check.Stderr = boundedString(strings.TrimSpace(check.Stderr+"\n"+err.Error()), 4000)
+		check.Stderr = boundedString(strings.TrimSpace(check.Stderr+"\n"+result.Err.Error()), 4000)
 	}
 
 	return check
 }
+
+const headlessCommandCaptureBytes = 1024 * 1024
 
 func writeGitDiff(path string, cfg config.Config) error {
 	timeout := time.Duration(cfg.Workspace.CommandTimeoutSeconds) * time.Second

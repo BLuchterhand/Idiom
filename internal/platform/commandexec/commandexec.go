@@ -184,6 +184,10 @@ func shellArgv(spec Spec, flag string) (string, []string, error) {
 }
 
 func commandEnv(spec Spec) []string {
+	if spec.BaseEnv == nil && len(spec.Env) == 0 && !spec.CanonicalPWD {
+		return nil
+	}
+
 	base := spec.BaseEnv
 	if base == nil {
 		base = os.Environ()

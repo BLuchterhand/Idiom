@@ -2,6 +2,7 @@ package headless
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"idiom/internal/platform/config"
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
@@ -320,6 +322,63 @@ func TestRunPolicyTimeoutProjectsToRuntimeRequestTimeout(t *testing.T) {
 	if got := output.Metadata["timeout_owner"]; len(got) != 1 || got[0] != "headless_policy_timeout" {
 		t.Fatalf("timeout owner metadata should identify policy timeout: %#v", output.Metadata)
 	}
+}
+
+func TestRunCommandCapturesStdoutStderrAndExitCode(t *testing.T) {
+	root := t.TempDir()
+	check := runCommand(context.Background(), "check", "printf 'out'; printf 'err' >&2; exit 7", headlessCommandTestConfig(root))
+
+	if check.ExitCode != 7 {
+		t.Fatalf("ExitCode = %d, want 7; check=%#v", check.ExitCode, check)
+	}
+	if check.Stdout != "out" {
+		t.Fatalf("Stdout = %q, want out", check.Stdout)
+	}
+	if check.Stderr != "err" {
+		t.Fatalf("Stderr = %q, want err", check.Stderr)
+	}
+	if check.Name != "check" || check.Command == "" {
+		t.Fatalf("check identity not preserved: %#v", check)
+	}
+}
+
+func TestRunCommandUsesConfiguredCommandDirAndBoundsOutput(t *testing.T) {
+	root := t.TempDir()
+	check := runCommand(context.Background(), "pwd", "pwd; printf '%05000d' 0", headlessCommandTestConfig(root))
+
+	if check.ExitCode != 0 {
+		t.Fatalf("ExitCode = %d, want 0; check=%#v", check.ExitCode, check)
+	}
+	if !strings.HasPrefix(check.Stdout, root) {
+		t.Fatalf("Stdout should start with configured cwd %q, got %q", root, check.Stdout[:min(len(check.Stdout), 80)])
+	}
+	if len(check.Stdout) != 4000 {
+		t.Fatalf("Stdout length = %d, want bounded 4000", len(check.Stdout))
+	}
+}
+
+func TestRunCommandHonorsContextTimeout(t *testing.T) {
+	root := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	check := runCommand(ctx, "timeout", "while true; do :; done", headlessCommandTestConfig(root))
+
+	if check.ExitCode == 0 {
+		t.Fatalf("timeout command should not exit 0: %#v", check)
+	}
+	if check.DurationMS <= 0 || check.DurationMS > 1000 {
+		t.Fatalf("timeout duration should be bounded, got %dms in %#v", check.DurationMS, check)
+	}
+}
+
+func headlessCommandTestConfig(root string) config.Config {
+	cfg := config.Config{}
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.Shell = "/bin/sh"
+
+	return cfg
 }
 
 func TestRunFailOnDegradedRejectsUnsupportedApprovalPolicy(t *testing.T) {
