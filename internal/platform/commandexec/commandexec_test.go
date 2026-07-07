@@ -168,6 +168,107 @@ func TestRunMergeOutputUsesSingleOutputLimit(t *testing.T) {
 	}
 }
 
+func TestStartProvidesStreamingPipesEnvAndDir(t *testing.T) {
+	dir := t.TempDir()
+	spec := helperSpecWithDir(dir, "stream-context")
+	spec.Env = append(spec.Env, "IDIOM_STREAM_VALUE=from-env")
+
+	process, err := Start(t.Context(), spec)
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer process.Close()
+
+	if _, err := io.WriteString(process.Stdin(), "payload"); err != nil {
+		t.Fatalf("write stdin: %v", err)
+	}
+	if err := process.Stdin().Close(); err != nil {
+		t.Fatalf("close stdin: %v", err)
+	}
+
+	data, err := io.ReadAll(process.Stdout())
+	if err != nil {
+		t.Fatalf("read stdout: %v", err)
+	}
+	if err := process.wait(); err != nil {
+		t.Fatalf("Wait failed: %v", err)
+	}
+
+	got := string(data)
+	wantPWD := "pwd=" + config.CanonicalizeExistingPath(dir)
+	if !strings.Contains(got, wantPWD) {
+		t.Fatalf("stdout missing %q: %q", wantPWD, got)
+	}
+	if !strings.Contains(got, "env=from-env") {
+		t.Fatalf("stdout missing env overlay: %q", got)
+	}
+	if !strings.Contains(got, "stdin=payload") {
+		t.Fatalf("stdout missing streamed stdin: %q", got)
+	}
+}
+
+func TestStartCapturesBoundedStderr(t *testing.T) {
+	spec := helperSpec("stderr-large")
+	spec.MaxOutputBytes = 8
+
+	process, err := Start(t.Context(), spec)
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer process.Close()
+
+	if err := process.wait(); err != nil {
+		t.Fatalf("Wait failed: %v", err)
+	}
+
+	stderr, truncated := process.stderrOutput()
+	if !truncated {
+		t.Fatalf("Stderr truncated = false; stderr=%q", stderr)
+	}
+	if !strings.HasPrefix(stderr, strings.Repeat("e", 8)) {
+		t.Fatalf("stderr should keep the first bounded bytes, got %q", stderr)
+	}
+	if !strings.Contains(stderr, "...[truncated]") {
+		t.Fatalf("stderr should include truncation marker, got %q", stderr)
+	}
+}
+
+func TestStartCloseTerminatesRunningProcess(t *testing.T) {
+	process, err := Start(t.Context(), helperSpec("sleep"))
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- process.wait()
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+	if err := process.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("process did not terminate after Close")
+	}
+}
+
+func TestStartRejectsStaticStdin(t *testing.T) {
+	spec := helperSpec("echo-stdin")
+	spec.Stdin = "not a streaming pipe"
+
+	_, err := Start(t.Context(), spec)
+	if err == nil {
+		t.Fatal("expected Start to reject static stdin")
+	}
+	if !strings.Contains(err.Error(), "static stdin") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func helperSpec(args ...string) Spec {
 	return helperSpecWithDir("", args...)
 }
@@ -178,7 +279,7 @@ func helperSpecWithDir(dir string, args ...string) Spec {
 		Args:           append([]string{"-test.run=TestCommandExecHelperProcess", "--"}, args...),
 		Dir:            dir,
 		Env:            []string{"GO_WANT_COMMAND_EXEC_HELPER=1"},
-		Timeout:        time.Second,
+		Timeout:        5 * time.Second,
 		MaxOutputBytes: 4096,
 		CanonicalPWD:   true,
 	}
@@ -228,6 +329,15 @@ func TestCommandExecHelperProcess(t *testing.T) {
 	case "mixed-output":
 		fmt.Fprint(os.Stdout, strings.Repeat("o", 16))
 		fmt.Fprint(os.Stderr, strings.Repeat("e", 16))
+		os.Exit(0)
+
+	case "stream-context":
+		data, _ := io.ReadAll(os.Stdin)
+		fmt.Fprintf(os.Stdout, "pwd=%s\nenv=%s\nstdin=%s", filepath.Clean(os.Getenv("PWD")), os.Getenv("IDIOM_STREAM_VALUE"), string(data))
+		os.Exit(0)
+
+	case "stderr-large":
+		fmt.Fprint(os.Stderr, strings.Repeat("e", 64))
 		os.Exit(0)
 	}
 

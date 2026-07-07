@@ -1,7 +1,9 @@
 package app
 
 import (
-	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -94,40 +96,50 @@ func TestCopyConversationContentSelectedHistoryRequiresFocusedPanel(t *testing.T
 }
 
 func TestClipboardCommandForRuntimeUsesPlatformCommand(t *testing.T) {
-	lookup := func(name string) (string, error) {
-		if name == "pbcopy" {
-			return "/usr/bin/pbcopy", nil
-		}
-
-		return "", errors.New("missing")
+	if runtime.GOOS == "windows" {
+		t.Skip("executable fixture uses POSIX mode bits")
 	}
 
-	spec, err := clipboardCommandForRuntime("darwin", lookup)
+	binDir := t.TempDir()
+	pbcopy := filepath.Join(binDir, "pbcopy")
+	writeClipboardExecutable(t, pbcopy)
+	t.Setenv("PATH", binDir)
+
+	spec, err := clipboardCommandForRuntime("darwin")
 	if err != nil {
 		t.Fatalf("clipboardCommandForRuntime returned error: %v", err)
 	}
 
-	if spec.name != "/usr/bin/pbcopy" || len(spec.args) != 0 {
+	if spec.name != pbcopy || len(spec.args) != 0 {
 		t.Fatalf("spec = %#v, want pbcopy without args", spec)
 	}
 }
 
 func TestClipboardCommandForRuntimeFallsBackOnLinux(t *testing.T) {
-	lookup := func(name string) (string, error) {
-		if name == "xclip" {
-			return "/usr/bin/xclip", nil
-		}
-
-		return "", errors.New("missing")
+	if runtime.GOOS == "windows" {
+		t.Skip("executable fixture uses POSIX mode bits")
 	}
 
-	spec, err := clipboardCommandForRuntime("linux", lookup)
+	binDir := t.TempDir()
+	xclip := filepath.Join(binDir, "xclip")
+	writeClipboardExecutable(t, xclip)
+	t.Setenv("PATH", binDir)
+
+	spec, err := clipboardCommandForRuntime("linux")
 	if err != nil {
 		t.Fatalf("clipboardCommandForRuntime returned error: %v", err)
 	}
 
-	if spec.name != "/usr/bin/xclip" || strings.Join(spec.args, " ") != "-selection clipboard" {
+	if spec.name != xclip || strings.Join(spec.args, " ") != "-selection clipboard" {
 		t.Fatalf("spec = %#v, want xclip clipboard command", spec)
+	}
+}
+
+func writeClipboardExecutable(t *testing.T, path string) {
+	t.Helper()
+
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write executable %s: %v", path, err)
 	}
 }
 

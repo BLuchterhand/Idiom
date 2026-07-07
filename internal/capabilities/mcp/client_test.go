@@ -1,10 +1,13 @@
 package mcp
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -274,6 +277,50 @@ func TestClientResourcesListAndReadRoundTrip(t *testing.T) {
 	if len(read.Contents) != 1 || read.Contents[0].URI != "idiom://workspace/root" || !containsBytes(json.RawMessage(read.Contents[0].Text), "metadata_only") {
 		t.Fatalf("unexpected resource read: %+v", read)
 	}
+}
+
+func TestStartStdioRoundTripsFramesAndEnv(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	transport, err := StartStdio(ctx, os.Args[0], []string{"-test.run=TestMCPStdioHelperProcess", "--"}, []string{
+		"GO_WANT_MCP_STDIO_HELPER=1",
+		"IDIOM_MCP_ENV=env-ok",
+	})
+	if err != nil {
+		t.Fatalf("StartStdio failed: %v", err)
+	}
+	defer transport.Close()
+
+	if err := transport.Send(ctx, []byte(`{"jsonrpc":"2.0","id":1,"method":"ping"}`)); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+
+	got, err := transport.Receive(ctx)
+	if err != nil {
+		t.Fatalf("Receive failed: %v", err)
+	}
+
+	if !containsBytes(json.RawMessage(got), `"echo":true`) || !containsBytes(json.RawMessage(got), `"env":"env-ok"`) {
+		t.Fatalf("unexpected stdio response: %s", got)
+	}
+}
+
+func TestMCPStdioHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_MCP_STDIO_HELPER") != "1" {
+		return
+	}
+
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		fmt.Fprintf(os.Stdout, `{"jsonrpc":"2.0","id":1,"result":{"echo":true,"env":%q}}`+"\n", os.Getenv("IDIOM_MCP_ENV"))
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "scan stdin: %v\n", err)
+		os.Exit(3)
+	}
+
+	os.Exit(0)
 }
 
 func TestRegistryNamespaceAndDispatch(t *testing.T) {

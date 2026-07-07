@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -52,6 +54,8 @@ type Result struct {
 	Err             error
 }
 
+const defaultProcessStderrLimit = 64 * 1024
+
 func Run(parent context.Context, spec Spec) Result {
 	if parent == nil {
 		parent = context.Background()
@@ -64,14 +68,10 @@ func Run(parent context.Context, spec Spec) Result {
 		defer cancel()
 	}
 
-	name, args, err := commandArgv(spec)
+	cmd, err := configuredCommand(ctx, spec)
 	if err != nil {
 		return Result{ExitCode: 1, Err: err}
 	}
-
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = spec.Dir
-	cmd.Env = commandEnv(spec)
 	if spec.Stdin != "" {
 		cmd.Stdin = strings.NewReader(spec.Stdin)
 	}
@@ -120,6 +120,174 @@ func Run(parent context.Context, spec Spec) Result {
 	return result
 }
 
+// Process is a started child process whose lifecycle is owned by commandexec.
+type Process struct {
+	cmd    *exec.Cmd
+	cancel context.CancelFunc
+
+	stdin  io.WriteCloser
+	stdout io.ReadCloser
+	stderr *limitedOutputBuffer
+
+	waitOnce sync.Once
+	waitErr  error
+}
+
+// Start launches a streaming child process. commandexec owns command shape,
+// environment overlay, pipe cleanup, stderr bounding, and process teardown.
+func Start(parent context.Context, spec Spec) (*Process, error) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	if spec.Stdin != "" {
+		return nil, errors.New("streaming command cannot use static stdin")
+	}
+	if spec.MergeOutput {
+		return nil, errors.New("streaming command cannot merge output")
+	}
+
+	ctx := parent
+	var cancel context.CancelFunc
+	if spec.Timeout > 0 {
+		ctx, cancel = context.WithTimeout(parent, spec.Timeout)
+	}
+
+	cmd, err := configuredCommand(ctx, spec)
+	if err != nil {
+		if cancel != nil {
+			cancel()
+		}
+
+		return nil, err
+	}
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		if cancel != nil {
+			cancel()
+		}
+
+		return nil, fmt.Errorf("stdin pipe: %w", err)
+	}
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		_ = stdin.Close()
+		if cancel != nil {
+			cancel()
+		}
+
+		return nil, fmt.Errorf("stdout pipe: %w", err)
+	}
+
+	stderr := newLimitedOutputBuffer(streamingStderrLimit(spec.MaxOutputBytes))
+	cmd.Stderr = stderr
+
+	if err := cmd.Start(); err != nil {
+		_ = stdin.Close()
+		_ = stdout.Close()
+		if cancel != nil {
+			cancel()
+		}
+
+		return nil, fmt.Errorf("start %s: %w", cmd.Path, err)
+	}
+
+	return &Process{
+		cmd:    cmd,
+		cancel: cancel,
+		stdin:  stdin,
+		stdout: stdout,
+		stderr: stderr,
+	}, nil
+}
+
+func streamingStderrLimit(limit int) int {
+	if limit > 0 {
+		return limit
+	}
+
+	return defaultProcessStderrLimit
+}
+
+// Stdin returns the process stdin stream.
+func (p *Process) Stdin() io.WriteCloser {
+	if p == nil {
+		return nil
+	}
+
+	return p.stdin
+}
+
+// Stdout returns the process stdout stream.
+func (p *Process) Stdout() io.ReadCloser {
+	if p == nil {
+		return nil
+	}
+
+	return p.stdout
+}
+
+func (p *Process) stderrOutput() (string, bool) {
+	if p == nil || p.stderr == nil {
+		return "", false
+	}
+
+	return p.stderr.String()
+}
+
+func (p *Process) wait() error {
+	if p == nil || p.cmd == nil {
+		return nil
+	}
+
+	p.waitOnce.Do(func() {
+		p.waitErr = p.cmd.Wait()
+		if p.cancel != nil {
+			p.cancel()
+		}
+	})
+
+	return p.waitErr
+}
+
+func (p *Process) kill() error {
+	if p == nil || p.cmd == nil || p.cmd.Process == nil {
+		return nil
+	}
+
+	if err := p.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return err
+	}
+
+	return nil
+}
+
+// Close closes process pipes, terminates the child, and waits for cleanup.
+func (p *Process) Close() error {
+	if p == nil {
+		return nil
+	}
+
+	var firstErr error
+	record := func(err error) {
+		if err != nil && firstErr == nil && !errors.Is(err, os.ErrClosed) && !errors.Is(err, os.ErrProcessDone) {
+			firstErr = err
+		}
+	}
+
+	if p.stdin != nil {
+		record(p.stdin.Close())
+	}
+	if p.stdout != nil {
+		record(p.stdout.Close())
+	}
+	record(p.kill())
+	_ = p.wait()
+
+	return firstErr
+}
+
 func CombineOutput(stdout string, stderr string) string {
 	output := strings.TrimSpace(stdout)
 	errText := strings.TrimSpace(stderr)
@@ -133,6 +301,19 @@ func CombineOutput(stdout string, stderr string) string {
 	}
 
 	return output
+}
+
+func configuredCommand(ctx context.Context, spec Spec) (*exec.Cmd, error) {
+	name, args, err := commandArgv(spec)
+	if err != nil {
+		return nil, err
+	}
+
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = spec.Dir
+	cmd.Env = commandEnv(spec)
+
+	return cmd, nil
 }
 
 func EnvWithCanonicalPWD(base []string, dir string, extra []string) []string {

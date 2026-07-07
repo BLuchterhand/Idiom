@@ -14,10 +14,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os/exec"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"idiom/internal/platform/commandexec"
 )
 
 // ProtocolVersion is the MCP spec revision this client negotiates.
@@ -319,44 +320,28 @@ func (c *Client) Close() error {
 // StdioTransport speaks MCP's newline-delimited JSON-RPC over a child
 // process's stdio pair. One frame per line.
 type StdioTransport struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout *bufio.Reader
-	closer io.Closer
+	process *commandexec.Process
+	stdin   io.WriteCloser
+	stdout  *bufio.Reader
 }
 
 // StartStdio launches command with args and returns a Transport connected
 // to its stdio. The caller's context is attached to the cmd so killing it
 // shuts the server down.
 func StartStdio(ctx context.Context, command string, args []string, env []string) (*StdioTransport, error) {
-	cmd := exec.CommandContext(ctx, command, args...)
-	if len(env) > 0 {
-		cmd.Env = append(cmd.Environ(), env...)
-	}
-
-	stdin, err := cmd.StdinPipe()
+	process, err := commandexec.Start(ctx, commandexec.Spec{
+		Name: command,
+		Args: append([]string(nil), args...),
+		Env:  append([]string(nil), env...),
+	})
 	if err != nil {
-		return nil, fmt.Errorf("stdin pipe: %w", err)
-	}
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		_ = stdin.Close()
-		return nil, fmt.Errorf("stdout pipe: %w", err)
-	}
-
-	if err := cmd.Start(); err != nil {
-		_ = stdin.Close()
-		_ = stdout.Close()
-
-		return nil, fmt.Errorf("start %s: %w", command, err)
+		return nil, err
 	}
 
 	return &StdioTransport{
-		cmd:    cmd,
-		stdin:  stdin,
-		stdout: bufio.NewReaderSize(stdout, 1<<16),
-		closer: multiCloser{stdin, stdout},
+		process: process,
+		stdin:   process.Stdin(),
+		stdout:  bufio.NewReaderSize(process.Stdout(), 1<<16),
 	}, nil
 }
 
@@ -394,25 +379,9 @@ func (t *StdioTransport) Close() error {
 		return nil
 	}
 
-	_ = t.closer.Close()
-	if t.cmd != nil && t.cmd.Process != nil {
-		_ = t.cmd.Process.Kill()
-		_, _ = t.cmd.Process.Wait()
+	if t.process != nil {
+		return t.process.Close()
 	}
 
 	return nil
-}
-
-type multiCloser []io.Closer
-
-func (m multiCloser) Close() error {
-	var firstErr error
-
-	for _, c := range m {
-		if err := c.Close(); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-
-	return firstErr
 }

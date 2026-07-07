@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
+	"idiom/internal/platform/hosttools"
 	"idiom/internal/runtime/llama"
 )
 
@@ -81,7 +82,7 @@ func (m *Model) copyConversationContent(rawTarget string) (string, string, error
 }
 
 func clipboardCopyCmd(target, content string) (tea.Cmd, error) {
-	spec, err := clipboardCommandForRuntime(runtime.GOOS, exec.LookPath)
+	spec, err := clipboardCommandForRuntime(runtime.GOOS)
 	if err != nil {
 		return nil, err
 	}
@@ -98,31 +99,31 @@ func clipboardCopyCmd(target, content string) (tea.Cmd, error) {
 	}), nil
 }
 
-func clipboardCommandForRuntime(goos string, lookup func(string) (string, error)) (clipboardCommandSpec, error) {
+func clipboardCommandForRuntime(goos string) (clipboardCommandSpec, error) {
 	switch goos {
 	case "darwin":
-		return clipboardCommandFromCandidates(lookup, []clipboardCommandSpec{{name: "pbcopy"}})
+		return clipboardCommandFromCandidates([]clipboardCommandSpec{{name: "pbcopy"}})
 	case "linux", "freebsd", "openbsd", "netbsd":
-		return clipboardCommandFromCandidates(lookup, []clipboardCommandSpec{
+		return clipboardCommandFromCandidates([]clipboardCommandSpec{
 			{name: "wl-copy"},
 			{name: "xclip", args: []string{"-selection", "clipboard"}},
 			{name: "xsel", args: []string{"--clipboard", "--input"}},
 		})
 	case "windows":
-		return clipboardCommandFromCandidates(lookup, []clipboardCommandSpec{{name: "clip.exe"}})
+		return clipboardCommandFromCandidates([]clipboardCommandSpec{{name: "clip.exe"}})
 	default:
 		return clipboardCommandSpec{}, fmt.Errorf("clipboard copy is unsupported on %s", goos)
 	}
 }
 
-func clipboardCommandFromCandidates(lookup func(string) (string, error), candidates []clipboardCommandSpec) (clipboardCommandSpec, error) {
+func clipboardCommandFromCandidates(candidates []clipboardCommandSpec) (clipboardCommandSpec, error) {
 	var tried []string
 
 	for _, candidate := range candidates {
 		tried = append(tried, candidate.name)
 
-		path, err := lookup(candidate.name)
-		if err == nil {
+		path := hosttools.FirstAvailable(candidate.name)
+		if path != "" {
 			candidate.name = path
 			return candidate, nil
 		}
