@@ -847,22 +847,6 @@ func TestAtomIntakeAllowDirtyMakesDirtyScopeDispatchable(t *testing.T) {
 	}
 }
 
-func TestParseGitPorcelainPathSupportsStrictAndCompactStatus(t *testing.T) {
-	cases := map[string]string{
-		" M foo.go":               "foo.go",
-		"M  foo.go":               "foo.go",
-		"?? foo.go":               "foo.go",
-		"M foo.go":                "foo.go",
-		"R  old.go -> new.go":     "new.go",
-		` M "path/with space.go"`: "path/with space.go",
-	}
-	for line, want := range cases {
-		if got := ParseGitPorcelainPath(line); got != want {
-			t.Fatalf("ParseGitPorcelainPath(%q) = %q, want %q", line, got, want)
-		}
-	}
-}
-
 func writeAtomSpec(t *testing.T, root, name, body string) string {
 	t.Helper()
 

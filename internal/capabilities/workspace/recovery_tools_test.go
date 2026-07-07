@@ -104,21 +104,6 @@ func TestRecoveryToolsInspectDecomposeAndStatus(t *testing.T) {
 	}
 }
 
-func TestParseRecoveryGitPorcelainPathsPreservesStatusColumnPaths(t *testing.T) {
-	got := parseRecoveryGitPorcelainPaths(strings.Join([]string{
-		" M tracked.go",
-		"?? nested/new.go",
-		"R  old.go -> renamed.go",
-		" M .idiom/recovery/packet.json",
-		" M tracked.go",
-	}, "\n"))
-
-	want := []string{"nested/new.go", "renamed.go", "tracked.go"}
-	if strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("parseRecoveryGitPorcelainPaths = %#v, want %#v", got, want)
-	}
-}
-
 func TestRecoveryToolsInspectDecomposeAndStatusImplementRecord(t *testing.T) {
 	root := t.TempDir()
 	writeRecoveryWorkspaceFile(t, root, "internal/surfaces/tui/app/foo.go", "package app\n")

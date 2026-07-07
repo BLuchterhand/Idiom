@@ -3172,10 +3172,12 @@ func shouldUseGenericCollector(language string) bool {
 }
 
 func gitState(ctx context.Context, root string) (string, bool) {
-	head, _ := gitstate.Output(ctx, root, "rev-parse", "HEAD")
-	status, _ := gitstate.Output(ctx, root, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=all")
+	snapshot, err := gitstate.Current(ctx, root)
+	if err != nil {
+		return "", false
+	}
 
-	return strings.TrimSpace(head), strings.TrimSpace(status) != ""
+	return snapshot.Head, snapshot.Dirty
 }
 
 func ensureIgnored(root string) error {

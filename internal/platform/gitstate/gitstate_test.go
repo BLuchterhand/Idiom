@@ -38,8 +38,14 @@ func TestCurrentCapturesHeadAndPorcelainStatus(t *testing.T) {
 }
 
 func TestCurrentReturnsErrorOutsideGitRepo(t *testing.T) {
-	if _, err := Current(t.Context(), t.TempDir()); err == nil {
+	_, err := Current(t.Context(), t.TempDir())
+	if err == nil {
 		t.Fatalf("Current outside git repo returned nil error")
+	}
+
+	text := err.Error()
+	if !strings.Contains(text, "git rev-parse HEAD:") || !strings.Contains(strings.ToLower(text), "not a git repository") {
+		t.Fatalf("Current error should include command and git output, got %q", text)
 	}
 }
 
@@ -66,6 +72,19 @@ func TestCombinedOutputTextPreservesRawOutputAndWrapsGitErrors(t *testing.T) {
 	}
 }
 
+func TestOutputSuccessDoesNotMergeStderr(t *testing.T) {
+	root := initGitStateRepo(t)
+
+	got, err := Output(t.Context(), root, "-c", "alias.noisy=!sh -c 'printf stdout; printf stderr >&2'", "noisy")
+	if err != nil {
+		t.Fatalf("Output success: %v", err)
+	}
+
+	if got != "stdout" {
+		t.Fatalf("Output merged stderr into stdout: got %q, want stdout", got)
+	}
+}
+
 func TestGitPathResolvesRelativeGitPath(t *testing.T) {
 	root := initGitStateRepo(t)
 
@@ -88,6 +107,12 @@ func TestPathFromPorcelainLine(t *testing.T) {
 		{line: " M tracked.txt", want: "tracked.txt"},
 		{line: "?? nested/file.txt", want: "nested/file.txt"},
 		{line: "R  old/name.txt -> new/name.txt", want: "new/name.txt"},
+		{line: `R  "old -> name.txt" -> "new -> name.txt"`, want: "new -> name.txt"},
+		{line: `R  old.go -> " trailing.go "`, want: " trailing.go "},
+		{line: ` M "space path.txt"`, want: "space path.txt"},
+		{line: `?? "quote\"path.txt"`, want: `quote"path.txt`},
+		{line: `?? " leading.go"`, want: " leading.go"},
+		{line: `?? a -> b.txt`, want: "a -> b.txt"},
 		{line: "A  folder/file.txt", want: "folder/file.txt"},
 		{line: " M", want: ""},
 	}
@@ -96,6 +121,60 @@ func TestPathFromPorcelainLine(t *testing.T) {
 		if got := PathFromPorcelainLine(tt.line); got != tt.want {
 			t.Fatalf("PathFromPorcelainLine(%q) = %q, want %q", tt.line, got, tt.want)
 		}
+	}
+}
+
+func TestDirtyPathsFromPorcelainFiltersDedupesAndSorts(t *testing.T) {
+	got := dirtyPathsFromPorcelain(strings.Join([]string{
+		" M tracked.go",
+		"?? nested/new.go",
+		"R  old.go -> renamed.go",
+		` M "space path.go"`,
+		" M .idiom/recovery/packet.json",
+		" M .idiom/plan-execute/progress.json",
+		" M tracked.go",
+	}, "\n"), DirtyPathOptions{
+		IgnorePrefixes: []string{".idiom/recovery/", ".idiom/plan-execute/"},
+		Sort:           true,
+	})
+
+	want := []string{"nested/new.go", "renamed.go", "space path.go", "tracked.go"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("dirtyPathsFromPorcelain sorted = %#v, want %#v", got, want)
+	}
+}
+
+func TestDirtyPathsFromPorcelainCanPreserveGitOrder(t *testing.T) {
+	got := dirtyPathsFromPorcelain(strings.Join([]string{
+		" M z.go",
+		" M a.go",
+	}, "\n"), DirtyPathOptions{})
+
+	want := []string{"z.go", "a.go"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("dirtyPathsFromPorcelain order = %#v, want %#v", got, want)
+	}
+}
+
+func TestDirtyPathsIncludesAllUntrackedFiles(t *testing.T) {
+	root := initGitStateRepo(t)
+	writeGitStateFile(t, filepath.Join(root, "tracked.txt"), "changed\n")
+	writeGitStateFile(t, filepath.Join(root, "nested", "new.txt"), "new\n")
+	writeGitStateFile(t, filepath.Join(root, `quote"path.txt`), "quoted\n")
+	writeGitStateFile(t, filepath.Join(root, "a -> b.txt"), "arrow\n")
+	writeGitStateFile(t, filepath.Join(root, ".idiom", "recovery", "packet.json"), "{}\n")
+
+	got, err := DirtyPaths(t.Context(), root, DirtyPathOptions{
+		IgnorePrefixes: []string{".idiom/recovery/"},
+		Sort:           true,
+	})
+	if err != nil {
+		t.Fatalf("DirtyPaths: %v", err)
+	}
+
+	want := []string{"a -> b.txt", "nested/new.txt", `quote"path.txt`, "tracked.txt"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("DirtyPaths = %#v, want %#v", got, want)
 	}
 }
 

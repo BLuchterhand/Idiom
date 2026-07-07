@@ -10382,23 +10382,16 @@ func CaptureGitCheckpoint(ctx context.Context, root string) (GitCheckpoint, erro
 		return GitCheckpoint{}, fmt.Errorf("checkpoint root is required")
 	}
 
-	head, err := gitstate.CombinedOutputText(ctx, root, "rev-parse", "HEAD")
+	snapshot, err := gitstate.Current(ctx, root)
 	if err != nil {
 		return GitCheckpoint{}, err
 	}
-
-	status, err := gitstate.CombinedOutputText(ctx, root, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=all")
-	if err != nil {
-		return GitCheckpoint{}, err
-	}
-
-	trimmedStatus := strings.TrimSpace(status)
 
 	return GitCheckpoint{
 		Root:   root,
-		Head:   strings.TrimSpace(head),
-		Dirty:  trimmedStatus != "",
-		Status: trimmedStatus,
+		Head:   snapshot.Head,
+		Dirty:  snapshot.Dirty,
+		Status: snapshot.Status,
 	}, nil
 }
 

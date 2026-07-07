@@ -297,7 +297,10 @@ func (m *Manager) recoveryDecomposeOutputPath(failureID string, outputPath strin
 }
 
 func (m *Manager) recoveryPartialState(ctx context.Context, record recoverycontract.FailureRecord) recoverycontract.PartialState {
-	dirtyPaths, err := gitDirtyPathsForRecovery(ctx, m.cfg.Root)
+	dirtyPaths, err := gitstate.DirtyPaths(ctx, m.cfg.Root, gitstate.DirtyPathOptions{
+		IgnorePrefixes: []string{".idiom/recovery/"},
+		Sort:           true,
+	})
 	if err != nil {
 		return record.PartialState
 	}
@@ -309,40 +312,6 @@ func (m *Manager) recoveryPartialState(ctx context.Context, record recoverycontr
 		record.SourceRun.AllowedEditPaths,
 		record.PartialState.TotalEdits,
 	)
-}
-
-func gitDirtyPathsForRecovery(ctx context.Context, root string) ([]string, error) {
-	out, err := gitstate.Output(ctx, root, "status", "--porcelain", "--untracked-files=all")
-	if err != nil {
-		return nil, err
-	}
-
-	return parseRecoveryGitPorcelainPaths(out), nil
-}
-
-func parseRecoveryGitPorcelainPaths(output string) []string {
-	seen := map[string]bool{}
-
-	var paths []string
-
-	for _, line := range gitstate.PorcelainLines(output) {
-		path := gitstate.PathFromPorcelainLine(line)
-		if path == "" {
-			continue
-		}
-
-		path = filepath.ToSlash(strings.Trim(path, `"`))
-		if path == "" || strings.HasPrefix(path, ".idiom/recovery/") || seen[path] {
-			continue
-		}
-
-		seen[path] = true
-		paths = append(paths, path)
-	}
-
-	sort.Strings(paths)
-
-	return paths
 }
 
 func (m *Manager) recoveryReconciliationForStatus(packetPath string, packet recoverycontract.DecompositionPacket) (recoverycontract.Reconciliation, string, bool, []string) {

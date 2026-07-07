@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -406,7 +405,9 @@ func writeRecoverInspectReport(stdout io.Writer, stderr io.Writer, jsonOut bool,
 }
 
 func inspectRecoveryPartialState(root string, record recoverycontract.FailureRecord) recoverycontract.PartialState {
-	dirtyPaths, err := gitDirtyPaths(root)
+	dirtyPaths, err := gitstate.DirtyPaths(context.Background(), root, gitstate.DirtyPathOptions{
+		IgnorePrefixes: []string{".idiom/recovery/", ".idiom/plan-execute/"},
+	})
 	if err != nil {
 		return record.PartialState
 	}
@@ -418,41 +419,4 @@ func inspectRecoveryPartialState(root string, record recoverycontract.FailureRec
 		record.SourceRun.AllowedEditPaths,
 		record.PartialState.TotalEdits,
 	)
-}
-
-func gitDirtyPaths(root string) ([]string, error) {
-	out, err := gitstate.Output(context.Background(), root, "status", "--porcelain", "--untracked-files=all")
-	if err != nil {
-		return nil, err
-	}
-
-	return parseGitPorcelainPaths(out), nil
-}
-
-func parseGitPorcelainPaths(output string) []string {
-	seen := map[string]bool{}
-
-	var paths []string
-
-	for _, line := range gitstate.PorcelainLines(output) {
-		path := gitstate.PathFromPorcelainLine(line)
-		if path == "" {
-			continue
-		}
-
-		path = filepath.ToSlash(strings.Trim(path, `"`))
-		if path == "" || isRecoveryInternalPath(path) || seen[path] {
-			continue
-		}
-
-		seen[path] = true
-		paths = append(paths, path)
-	}
-
-	return paths
-}
-
-func isRecoveryInternalPath(path string) bool {
-	return strings.HasPrefix(path, ".idiom/recovery/") ||
-		strings.HasPrefix(path, ".idiom/plan-execute/")
 }

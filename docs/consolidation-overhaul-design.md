@@ -367,6 +367,7 @@ Accepted or corrected slices:
 | CLI lane/plan-execute alias cleanup | Production Go `+29 / -41`: net `-12`; deleted alias-only DTO/type surfaces from `internal/surfaces/cli/lane` and `internal/surfaces/cli/planexecute`, with call sites naming `cmdruntime`, `lanehistory`, `atomintake`, `readiness`, and workflow `planexecute` owners directly | Test Go `+48 / -44`: net `+4`; test fakes and review-repair fixtures now use owner package types instead of package-local compatibility aliases | Focused: `go test ./internal/surfaces/cli/planexecute ./internal/surfaces/cli/lane -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `git diff --check` | Accepted as an alias-only surface deletion; no wrapper helper was introduced, the tracked wrapper policy scanned `607` Go files with `0` findings, and `deadcode -test ./...` is clean |
 | External-tool registry wrapper deletion | Production Go `+41 / -121`: net `-80`; deleted `workspace.ExternalTool`, `workspace.ExternalToolRegistry`, `workspace.NewExternalToolRegistry`, and the forwarding registry methods, then stored and passed `externaltool.Registry` directly while keeping workspace-owned `ToolDefinition` projection local | Test Go `+20 / -16`: net `+4`; tests now construct `externaltool.Registry` with `externaltool.Tool` so they no longer preserve the deleted compatibility API | Focused: `go test ./internal/capabilities/workspace ./internal/capabilities/workspace/externaltool ./internal/runtime/agent ./internal/surfaces/cli/tool ./internal/surfaces/cli/init -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `git diff --check` | Accepted after architecture and Go/package reviewer feedback; `externaltool` owns validation, availability, and invocation, `workspace` owns config loading plus tool-surface projection, and stale config/init references to the deleted alias were removed |
 | Semantic facade alias deletion | Production Go `+245 / -294`: net `-49`; deleted `internal/repository/semantic/facade.go`, retargeted comprehension and language-tool callers to concrete language owner packages, and made `semantic.IndexOptions` a concrete root contract instead of an alias over internal index support | Test Go `+31 / -24`: net `+7`; tests now import concrete semantic language packages instead of preserving root facade types | Focused: `go test ./internal/repository/semantic ./internal/repository/semantic/... ./internal/repository/comprehension -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `git diff --check` | Accepted after architecture and Go/package reviewer feedback; language index/query types are owned by their language packages, root `semantic` now owns only the shared index options contract, and no semantic facade aliases remain |
+| Gitstate dirty-path and snapshot authority | Production Go `+120 / -126`: net `-6`; moved recovery and atom-intake git porcelain dirty-path parsing into `internal/platform/gitstate`, deleted recovery-local and atom-intake-local parsers, and retargeted comprehension/runtime git snapshot capture to `gitstate.Current` while preserving contextual git failure errors | Test Go `+80 / -32`: net `+48`; owner tests now cover quoted paths, literal ` -> ` filenames, quoted rename destinations, leading/trailing spaces inside quoted paths, ignored prefixes, sorted/default order, stdout-only success with stderr, and live untracked-file collection | Focused: `go test ./internal/platform/gitstate -count=1`; `go test ./internal/runtime/agent ./internal/repository/comprehension ./internal/workflows/atomintake ./internal/surfaces/cli/recover ./internal/capabilities/workspace -run 'TestRunnerCreatesCheckpointBeforeFirstWrite|TestGraph|TestAtomIntake.*Dirty|TestRunRecoverInspect|TestRecovery' -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `git diff --check` | Accepted after architecture and contract/test reviewer findings were resolved; `gitstate` owns command execution result interpretation, HEAD/status snapshots, porcelain path normalization, dirty-path filtering/dedupe/sorting, and callers no longer preserve local parser APIs |
 
 ## Historical Count Snapshots (Superseded)
 
@@ -762,12 +763,18 @@ helper cleanup:
   latest run passed.
 - `go test ./internal/repository/semantic ./internal/repository/semantic/...
   ./internal/repository/comprehension -count=1`: latest run passed.
+- `go test ./internal/platform/gitstate -count=1`: latest run passed.
+- `go test ./internal/runtime/agent ./internal/repository/comprehension
+  ./internal/workflows/atomintake ./internal/surfaces/cli/recover
+  ./internal/capabilities/workspace -run
+  'TestRunnerCreatesCheckpointBeforeFirstWrite|TestGraph|TestAtomIntake.*Dirty|TestRunRecoverInspect|TestRecovery'
+  -count=1`: latest run passed.
 - `go test ./internal/surfaces/cli/planexecute ./internal/surfaces/cli/lane
   -count=1`: latest run passed.
 - `go test ./...`: latest run passed.
 - `go build ./cmd/idiom`: latest run passed.
 - `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on
-  warning`: latest run passed with `0` findings across 606 scanned Go files.
+  warning`: latest run passed with `0` findings across 605 scanned Go files.
 - `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`: latest run
   is clean.
 - `git diff --check`: latest run passed.
@@ -778,12 +785,14 @@ Current git state:
 
 - Branch state: `codex/rearchitecture-surface-authority` is based on
   merge-base `b6591bf5eb647e29a10697b48585047c6a8361da`; the latest commit
-  includes the semantic facade alias deletion.
+  includes the gitstate dirty-path and snapshot authority cleanup.
 - Goal-period diff from merge base through the latest commit: production Go
-  `+19,240 / -19,179`, net `+61`; Go tests `+9,571 / -5,847`, net `+3,724`;
-  strict all-file total `+30,806 / -26,997`, net `+3,809` across 409 files.
+  `+19,336 / -19,281`, net `+55`; Go tests `+9,635 / -5,863`, net `+3,772`;
+  strict all-file total `+30,975 / -27,115`, net `+3,860` across 408 files.
 - Latest semantic facade cleanup slice only: production Go `+245 / -294`,
   net `-49`; Go tests `+31 / -24`, net `+7`.
+- Latest gitstate cleanup slice only: production Go `+120 / -126`, net `-6`;
+  Go tests `+80 / -32`, net `+48`.
 
 Interpretation: the current goal-period branch is not production-LOC negative.
 Many individual consolidation slices are net-negative and remove real duplicate
