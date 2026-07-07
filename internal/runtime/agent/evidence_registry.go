@@ -14,31 +14,6 @@ import (
 	"idiom/internal/contracts/pathparse"
 )
 
-// --- path evidence registry ---
-const (
-	legacyGrepToolName = "grep"
-)
-
-func registrySearchCandidateTool(tool string) bool {
-	switch strings.TrimSpace(tool) {
-	case workspace.ToolNameSearchContent, workspace.ToolNameSearchFiles, workspace.ToolNameRg, legacyGrepToolName:
-		return true
-	default:
-		return false
-	}
-}
-
-func registryDiscoveryCandidateTool(tool string) bool {
-	tool = strings.TrimSpace(tool)
-	switch tool {
-	case workspace.ToolNameDiscoveryQuery, workspace.ToolNameContextQuery, workspace.ToolNameContextZoom,
-		workspace.ToolNameContextImpact, workspace.ToolNameStructuralSearch:
-		return true
-	default:
-		return strings.HasSuffix(tool, "_workspace_symbol")
-	}
-}
-
 // ---------------------------------------------------------------------------
 // PathEvidenceRegistry owns path-state facts for source-like workspace paths:
 // filesystem existence, body-read level, candidate status, and basename
@@ -109,7 +84,7 @@ func (r *PathEvidenceRegistry) RegisterToolResults(results []ToolResult) {
 			r.registerBodyRead(result)
 		case strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"):
 			r.registerBodyRead(result)
-		case tool == workspace.ToolNameContextPack || registrySearchCandidateTool(tool) || registryDiscoveryCandidateTool(tool):
+		case tool == workspace.ToolNameContextPack || sourceEvidenceDiscoveryCandidateTool(tool) || sourceEvidenceSearchCandidateTool(tool):
 			r.registerCandidatePaths(result)
 		}
 	}
@@ -216,18 +191,7 @@ func (r *PathEvidenceRegistry) registerCandidatePaths(result ToolResult) {
 		Error:   result.Error,
 	}
 	paths := append([]string{}, result.Paths...)
-
-	switch tool {
-	case workspace.ToolNameContextPack:
-		paths = append(paths, contextPackCandidatePathsFromResults([]workspace.ToolResult{workspaceResult}, 128)...)
-	default:
-		if registryDiscoveryCandidateTool(tool) {
-			paths = append(paths, discoveryConsumptionCandidatesFromResult(workspaceResult, 128)...)
-		}
-		if registrySearchCandidateTool(tool) {
-			paths = append(paths, sourceLikePathsFromText(result.Summary+"\n"+result.Output, 128)...)
-		}
-	}
+	paths = append(paths, sourceEvidenceCandidatePathsFromResult(workspaceResult, 128)...)
 
 	if len(paths) == 0 {
 		return

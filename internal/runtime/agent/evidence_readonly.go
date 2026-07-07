@@ -266,9 +266,9 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 			continue
 		}
 
-		switch tool {
-		case "context_pack":
-			candidates := readOnlySourceLikePaths(contextPackCandidatePathsFromResults([]workspace.ToolResult{result}, 16), 16)
+		switch {
+		case tool == workspace.ToolNameContextPack:
+			candidates := readOnlySourceLikePaths(sourceEvidenceCandidatePathsFromResult(result, 16), 16)
 			ledger.addItem(readOnlyEvidenceItem{
 				Kind:           readOnlyEvidenceContextPacket,
 				Tool:           tool,
@@ -277,8 +277,8 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 			})
 
 			ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, candidates)
-		case "search_content", "search_files", "rg", "grep":
-			candidates := readOnlySourceLikePaths(sourceLikePathsFromText(result.Summary+"\n"+result.Output, 128), 128)
+		case sourceEvidenceSearchCandidateTool(tool):
+			candidates := readOnlySourceLikePaths(sourceEvidenceCandidatePathsFromResult(result, 128), 128)
 			objectiveCandidates := readOnlyObjectiveCandidatePathsFromSearch(result, ledger.Objective, 128)
 			count, _ := searchContentSummaryMatchCount(result.Summary)
 
@@ -300,9 +300,8 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 
 			ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, candidates)
 			ledger.CandidateObjectivePaths = textutil.Merge(ledger.CandidateObjectivePaths, objectiveCandidates)
-		case "discovery_query", "context_query", "context_zoom", "context_impact", "structural_search",
-			"go_workspace_symbol", "cpp_workspace_symbol", "python_workspace_symbol", "ts_workspace_symbol", "rust_workspace_symbol", "java_workspace_symbol":
-			candidates := readOnlySourceLikePaths(discoveryConsumptionCandidatesFromResult(result, 16), 16)
+		case sourceEvidenceDiscoveryCandidateTool(tool):
+			candidates := readOnlySourceLikePaths(sourceEvidenceCandidatePathsFromResult(result, 16), 16)
 			if len(candidates) > 0 {
 				ledger.addItem(readOnlyEvidenceItem{
 					Kind:           readOnlyEvidenceSearchHit,
@@ -4276,14 +4275,13 @@ func readOnlyEvidencePacketCandidatePaths(results []workspace.ToolResult) []stri
 
 		tool := strings.TrimSpace(result.Tool)
 		switch {
-		case tool == "discovery_query" || tool == "context_query" || tool == "context_zoom" ||
-			tool == "context_impact" || tool == "structural_search" || strings.HasSuffix(tool, "_workspace_symbol"):
-			paths = append(paths, discoveryConsumptionCandidatesFromResult(result, 16)...)
+		case sourceEvidenceDiscoveryCandidateTool(tool):
+			paths = append(paths, sourceEvidenceCandidatePathsFromResult(result, 16)...)
 			paths = append(paths, delegatedDiscoveryQueryEvidencePaths([]workspace.ToolResult{result}, 8)...)
-		case tool == "context_pack":
-			paths = append(paths, contextPackCandidatePathsFromResults([]workspace.ToolResult{result}, 16)...)
-		case tool == "search_content" || tool == "search_files" || tool == "rg" || tool == "grep":
-			paths = append(paths, sourceLikePathsFromText(result.Summary+"\n"+result.Output, 64)...)
+		case tool == workspace.ToolNameContextPack:
+			paths = append(paths, sourceEvidenceCandidatePathsFromResult(result, 16)...)
+		case sourceEvidenceSearchCandidateTool(tool):
+			paths = append(paths, sourceEvidenceCandidatePathsFromResult(result, 64)...)
 		default:
 			paths = append(paths, ReadPathsFromToolResult(result)...)
 		}
@@ -8429,6 +8427,46 @@ func sourceEvidenceBodyPaths(results []workspace.ToolResult) []string {
 	return newToolResultEvidenceView(results).SourceBodyPaths()
 }
 
+const legacyGrepToolName = "grep"
+
+func sourceEvidenceDiscoveryCandidateTool(tool string) bool {
+	tool = strings.TrimSpace(tool)
+	switch tool {
+	case workspace.ToolNameDiscoveryQuery, workspace.ToolNameContextQuery, workspace.ToolNameContextZoom,
+		workspace.ToolNameContextImpact, workspace.ToolNameStructuralSearch:
+		return true
+	default:
+		return strings.HasSuffix(tool, "_workspace_symbol")
+	}
+}
+
+func sourceEvidenceSearchCandidateTool(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case workspace.ToolNameSearchContent, workspace.ToolNameSearchFiles, workspace.ToolNameRg, legacyGrepToolName:
+		return true
+	default:
+		return false
+	}
+}
+
+func sourceEvidenceCandidatePathsFromResult(result workspace.ToolResult, max int) []string {
+	if strings.TrimSpace(result.Error) != "" {
+		return nil
+	}
+
+	tool := strings.TrimSpace(result.Tool)
+	switch {
+	case tool == workspace.ToolNameContextPack:
+		return contextPackCandidatePathsFromResults([]workspace.ToolResult{result}, max)
+	case sourceEvidenceDiscoveryCandidateTool(tool):
+		return discoveryConsumptionCandidatesFromResult(result, max)
+	case sourceEvidenceSearchCandidateTool(tool):
+		return sourceLikePathsFromText(result.Summary+"\n"+result.Output, max)
+	default:
+		return nil
+	}
+}
+
 func sourceEvidenceCandidatePaths(results []workspace.ToolResult) []string {
 	bodySet := make(map[string]struct{})
 	for _, p := range sourceEvidenceBodyPaths(results) {
@@ -8439,24 +8477,7 @@ func sourceEvidenceCandidatePaths(results []workspace.ToolResult) []string {
 	var paths []string
 
 	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-
-		tool := strings.TrimSpace(result.Tool)
-		var candidates []string
-
-		switch {
-		case tool == "discovery_query" || tool == "context_query" || tool == "context_zoom" ||
-			tool == "context_impact" || tool == "structural_search" || strings.HasSuffix(tool, "_workspace_symbol"):
-			candidates = discoveryConsumptionCandidatesFromResult(result, 128)
-		case tool == "context_pack":
-			candidates = contextPackCandidatePathsFromResults([]workspace.ToolResult{result}, 128)
-		case tool == "search_content" || tool == "search_files" || tool == "rg" || tool == "grep":
-			candidates = sourceLikePathsFromText(result.Summary+"\n"+result.Output, 128)
-		}
-
-		for _, path := range candidates {
+		for _, path := range sourceEvidenceCandidatePathsFromResult(result, 128) {
 			normalized := NormalizeRunnerPath(path)
 			if normalized == "" {
 				continue
