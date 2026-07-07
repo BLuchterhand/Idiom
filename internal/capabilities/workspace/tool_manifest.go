@@ -275,7 +275,7 @@ func mergeLanguageToolManifestEntries(entries []ToolManifestEntry) []ToolManifes
 	inserted := false
 
 	for _, entry := range entries {
-		if isLanguageToolName(entry.Tool) {
+		if IsLanguageToolName(entry.Tool) {
 			if !inserted {
 				out = append(out, catalog...)
 				inserted = true

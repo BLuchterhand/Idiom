@@ -119,7 +119,7 @@ func mergeLanguageToolDefinitions(defs []ToolDefinition) []ToolDefinition {
 	inserted := false
 
 	for _, def := range defs {
-		if isLanguageToolName(def.Name) {
+		if IsLanguageToolName(def.Name) {
 			if !inserted {
 				out = append(out, catalog...)
 				inserted = true

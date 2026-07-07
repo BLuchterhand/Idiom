@@ -1,14 +1,11 @@
 package recover
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -18,6 +15,7 @@ import (
 
 	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/platform/atomicfile"
+	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/config"
 	"idiom/internal/repository/comprehension"
 	"idiom/internal/runtime/localops"
@@ -637,40 +635,18 @@ func runRecoveryWorkspaceStateGate(partial recoverycontract.PartialState, allowD
 }
 
 func runRecoveryBriefLintGate(root string, briefPath string) recoverGateReport {
-	scriptPath, cleanup, err := briefcmd.WriteEmbeddedPreflight()
+	report, err := briefcmd.BuildLintReport(briefPath, root)
 	if err != nil {
 		return recoverGateReport{Name: recoverycontract.GateBriefLint, Status: recoverycontract.GateStatusError, Summary: err.Error()}
 	}
-	defer cleanup()
 
-	cmd := exec.Command("python3", scriptPath, briefPath)
-
-	cmd.Dir = root
-
-	var outBuf, errBuf bytes.Buffer
-
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &errBuf
-
-	runErr := cmd.Run()
-	exit := 0
-
-	if runErr != nil {
-		if exitErr, ok := runErr.(*exec.ExitError); ok {
-			exit = exitErr.ExitCode()
-		} else {
-			return recoverGateReport{Name: recoverycontract.GateBriefLint, Status: recoverycontract.GateStatusError, Summary: fmt.Sprintf("python3 failed: %v", runErr)}
-		}
-	}
-
-	findings := briefcmd.ParseLintFindings(briefPath, outBuf.String()+errBuf.String())
 	status := recoverycontract.GateStatusPass
 
-	if exit != 0 {
+	if report.Exit != 0 {
 		status = recoverycontract.GateStatusBlock
 	}
 
-	return recoverGateReport{Name: recoverycontract.GateBriefLint, Status: status, Findings: findings, Summary: fmt.Sprintf("brief lint exit %d", exit)}
+	return recoverGateReport{Name: recoverycontract.GateBriefLint, Status: status, Findings: report.Findings, Summary: fmt.Sprintf("brief lint exit %d", report.Exit)}
 }
 
 func runRecoveryAtomIntakeGate(root string, specPath string, body string, allowDirty bool) recoverGateReport {
@@ -888,29 +864,23 @@ func runRecoveryVerificationCommand(root string, command string) (recoverycontra
 		return result, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-
-	cmd.Dir = root
-
-	var stderr bytes.Buffer
-
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
+	execResult := commandexec.Run(nil, commandexec.Spec{
+		Name:    args[0],
+		Args:    args[1:],
+		Dir:     root,
+		Timeout: 5 * time.Minute,
+	})
+	if execResult.Err != nil {
 		result.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			result.ExitCode = exitErr.ExitCode()
+		if execResult.ExitError {
+			result.ExitCode = execResult.ExitCode
 		}
 
-		if ctx.Err() == context.DeadlineExceeded {
+		if execResult.TimedOut {
 			return result, fmt.Errorf("recovery verification command timed out: %s", command)
 		}
 
-		return result, fmt.Errorf("recovery verification command failed: %s: %s", command, strings.TrimSpace(stderr.String()))
+		return result, fmt.Errorf("recovery verification command failed: %s: %s", command, strings.TrimSpace(execResult.Stderr))
 	}
 
 	result.Status = recoverycontract.ReconciliationVerificationPass

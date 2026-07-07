@@ -421,15 +421,11 @@ func LanguageToolForCapability(language string, capability Capability) string {
 	return strings.TrimSpace(lang.Tool(capability))
 }
 
-func isLanguageToolName(tool string) bool {
-	_, ok := languageToolCatalogEntryForTool(tool)
-	return ok
-}
-
 // IsLanguageToolName reports whether tool is registered by the workspace
 // language-tool catalog.
 func IsLanguageToolName(tool string) bool {
-	return isLanguageToolName(tool)
+	_, ok := languageToolCatalogEntryForTool(tool)
+	return ok
 }
 
 // LanguageToolParts returns the catalog language and suffix for a registered

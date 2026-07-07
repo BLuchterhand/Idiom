@@ -1,7 +1,6 @@
 package brief
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -14,6 +13,7 @@ import (
 	"strings"
 
 	"idiom/internal/evidence/telemetry"
+	"idiom/internal/platform/commandexec"
 	"idiom/internal/surfaces/cliassets"
 )
 
@@ -281,6 +281,26 @@ func RunLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.R
 		return 2
 	}
 
+	if emitJSON {
+		report, err := BuildLintReport(briefPath, "")
+		if err != nil {
+			fmt.Fprintf(stderr, "brief lint: %v\n", err)
+
+			return 2
+		}
+		blob, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			fmt.Fprintf(stderr, "brief lint: json marshal failed: %v\n", err)
+
+			return 2
+		}
+
+		fmt.Fprintln(stdout, string(blob))
+		telemetry.LogPhase(rec, "brief_lint", map[string]any{"exit": report.Exit, "json": true, "findings": len(report.Findings)})
+
+		return report.Exit
+	}
+
 	scriptPath, cleanup, err := WriteEmbeddedPreflight()
 	if err != nil {
 		fmt.Fprintf(stderr, "brief lint: cannot stage preflight script: %v\n", err)
@@ -290,49 +310,6 @@ func RunLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.R
 	defer cleanup()
 
 	cmd := exec.Command("python3", scriptPath, briefPath)
-
-	if emitJSON {
-		// Capture both streams so the parser sees the full output.
-		// The python preflight emits findings on stderr by design;
-		// stdout may also have content depending on the path.
-		var outBuf, errBuf bytes.Buffer
-
-		cmd.Stdout = &outBuf
-		cmd.Stderr = &errBuf
-
-		runErr := cmd.Run()
-		exit := 0
-
-		if runErr != nil {
-			if exitErr, ok := runErr.(*exec.ExitError); ok {
-				exit = exitErr.ExitCode()
-			} else {
-				fmt.Fprintf(stderr, "brief lint: failed to run python3: %v\n", runErr)
-
-				return 2
-			}
-		}
-
-		combined := outBuf.String() + errBuf.String()
-		report := LintReport{
-			Brief:    briefPath,
-			Exit:     exit,
-			Findings: ParseLintFindings(briefPath, combined),
-		}
-
-		blob, err := json.MarshalIndent(report, "", "  ")
-		if err != nil {
-			fmt.Fprintf(stderr, "brief lint: json marshal failed: %v\n", err)
-
-			return 2
-		}
-
-		fmt.Fprintln(stdout, string(blob))
-		telemetry.LogPhase(rec, "brief_lint", map[string]any{"exit": exit, "json": true, "findings": len(report.Findings)})
-
-		return exit
-	}
-
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 
@@ -352,6 +329,47 @@ func RunLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.R
 	telemetry.LogPhase(rec, "brief_lint", map[string]any{"exit": 0})
 
 	return 0
+}
+
+// BuildLintReport runs the embedded brief preflight and converts its
+// line-oriented output into the stable JSON report shape used by recover and
+// refine surfaces.
+func BuildLintReport(briefPath string, workdir string) (LintReport, error) {
+	result, err := runEmbeddedPreflight(briefPath, workdir)
+	if err != nil {
+		return LintReport{}, err
+	}
+
+	exit := 0
+	if result.Err != nil {
+		if !result.ExitError {
+			return LintReport{}, fmt.Errorf("failed to run python3: %w", result.Err)
+		}
+
+		exit = result.ExitCode
+	}
+
+	combined := result.Stdout + result.Stderr
+
+	return LintReport{
+		Brief:    briefPath,
+		Exit:     exit,
+		Findings: ParseLintFindings(briefPath, combined),
+	}, nil
+}
+
+func runEmbeddedPreflight(briefPath string, workdir string) (commandexec.Result, error) {
+	scriptPath, cleanup, err := WriteEmbeddedPreflight()
+	if err != nil {
+		return commandexec.Result{}, fmt.Errorf("cannot stage preflight script: %w", err)
+	}
+	defer cleanup()
+
+	return commandexec.Run(nil, commandexec.Spec{
+		Name: "python3",
+		Args: []string{scriptPath, briefPath},
+		Dir:  workdir,
+	}), nil
 }
 
 // ParseLintFindings extracts structured findings from the
@@ -567,12 +585,6 @@ func runBriefPreview(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 }
 
 func runBriefLintResult(content string, stderr io.Writer) (int, []string) {
-	scriptPath, cleanup, err := WriteEmbeddedPreflight()
-	if err != nil {
-		return 2, []string{fmt.Sprintf("cannot stage preflight script: %v", err)}
-	}
-	defer cleanup()
-
 	tmpBrief, err := os.CreateTemp("", "idiom-preview-*.md")
 	if err != nil {
 		return 2, []string{fmt.Sprintf("cannot create temp brief: %v", err)}
@@ -588,22 +600,17 @@ func runBriefLintResult(content string, stderr io.Writer) (int, []string) {
 
 	defer os.Remove(tmpPath)
 
-	cmd := exec.Command("python3", scriptPath, tmpPath)
+	result, err := runEmbeddedPreflight(tmpPath, "")
+	if err != nil {
+		return 2, []string{fmt.Sprintf("python3 failed: %v", err)}
+	}
 
-	var stderrBuf strings.Builder
-
-	cmd.Stderr = &stderrBuf
-	cmd.Stdout = io.Discard
-
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			code := exitErr.ExitCode()
-			failures := parseLintFailures(stderrBuf.String())
-
-			return code, failures
+	if result.Err != nil {
+		if result.ExitError {
+			return result.ExitCode, parseLintFailures(result.Stderr)
 		}
 
-		return 2, []string{fmt.Sprintf("python3 failed: %v", err)}
+		return 2, []string{fmt.Sprintf("python3 failed: %v", result.Err)}
 	}
 
 	return 0, nil

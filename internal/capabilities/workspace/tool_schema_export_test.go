@@ -318,7 +318,7 @@ func TestLanguageToolCatalogDrivesSchemaManifestAndMetadata(t *testing.T) {
 			t.Fatalf("%s classification = %q, want %q", entry.Tool, manifestEntry.CapabilityClassification, wantClassification)
 		}
 
-		if !isLanguageToolName(entry.Tool) {
+		if !IsLanguageToolName(entry.Tool) {
 			t.Fatalf("%s should be accepted as a catalog language tool", entry.Tool)
 		}
 	}

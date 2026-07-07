@@ -33,7 +33,7 @@ func IsScopedInspectionRequest(req ToolRequest) bool {
 
 func isStructuredNarrowingTool(tool string) bool {
 	tool = strings.TrimSpace(tool)
-	if isLanguageToolName(tool) {
+	if IsLanguageToolName(tool) {
 		return true
 	}
 

@@ -273,7 +273,7 @@ func ToolPolicyCapabilities(tool string) []autonomy.Capability {
 		return capabilities
 	}
 
-	if isLanguageToolName(tool) {
+	if IsLanguageToolName(tool) {
 		return []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}
 	}
 

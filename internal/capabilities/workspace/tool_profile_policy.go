@@ -192,5 +192,5 @@ func IsBuiltInToolName(tool string) bool {
 		return true
 	}
 
-	return isLanguageToolName(tool)
+	return IsLanguageToolName(tool)
 }

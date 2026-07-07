@@ -247,7 +247,7 @@ func (m *Manager) executeDispatch(ctx context.Context, req ToolRequest) (result 
 		return toolPermissionPolicyResult(tool, "Tool request rejected", reason)
 	}
 
-	if isLanguageToolName(tool) {
+	if IsLanguageToolName(tool) {
 		return m.executeLanguageTool(ctx, req)
 	}
 

@@ -895,38 +895,6 @@ func (r *Runner) presentableBriefConversationFallbackCandidate(results []workspa
 	return readOnlyClosureDecisionForResults(r.RuntimeBrief, results).PresentableBriefConversationFallbackCandidate(r.agentName())
 }
 
-func (r *Runner) genericReadOnlyEvidenceReady(results []workspace.ToolResult) bool {
-	if r == nil {
-		return false
-	}
-	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
-	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
-		return false
-	}
-	if slices.Contains(brief.Constraints, "answer_readiness_reached") {
-		return true
-	}
-	return readOnlyClosureDecisionForResults(brief, results).Answerable()
-}
-
-func (r *Runner) readOnlyEvidenceAvailableTerminalChatOptions(opts llama.ChatOptions, results []workspace.ToolResult) llama.ChatOptions {
-	if r == nil {
-		return opts
-	}
-	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
-	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) || artifactFinalAnswerBrief(brief) ||
-		!workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) ||
-		!readOnlyDirectAnswerLane(brief) ||
-		!readOnlyClosureDecisionForResults(brief, results).Answerable() {
-		return readOnlyEvidenceAvailableTerminalChatOptions(opts, brief, results)
-	}
-	thinkingOff := false
-	opts.EnableThinking = &thinkingOff
-	opts.ChatTemplateKwargs = true
-	opts.PreserveThinking = false
-	return opts
-}
-
 func (r *Runner) loopTurnState(state *runnerRunState) TurnState {
 	if r == nil {
 		return NewTurnState(0, nil, nil)

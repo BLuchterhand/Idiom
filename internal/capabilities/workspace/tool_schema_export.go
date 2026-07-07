@@ -263,7 +263,7 @@ func toolSchemaCapabilities(tool string) []autonomy.Capability {
 	switch {
 	case LanguageToolHasCapability(tool, CapDiagnostics):
 		return []autonomy.Capability{autonomy.CapabilityShellVerification}
-	case isLanguageToolName(tool):
+	case IsLanguageToolName(tool):
 		return []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}
 	default:
 		return nil
@@ -316,7 +316,7 @@ func toolSchemaErrorClasses(tool string, sideEffects []autonomy.SideEffectClass)
 		classes = append(classes, "permission_policy", "approval_guard", "command_failed", "timeout")
 	}
 
-	if isLanguageToolName(tool) || tool == ToolNameSourceSanity {
+	if IsLanguageToolName(tool) || tool == ToolNameSourceSanity {
 		classes = append(classes, "unsupported_language", "symbol_not_found", "diagnostics_failed")
 	}
 

@@ -27,7 +27,7 @@ func ClassifyTool(name string) ToolCategory {
 		return ToolCategory(metadata.Category)
 	}
 
-	if isLanguageToolName(name) {
+	if IsLanguageToolName(name) {
 		return CategoryRead
 	}
 
@@ -258,7 +258,7 @@ func IsRuntimeInspectionRequest(req ToolRequest) bool {
 
 	metadata, ok := builtInToolSurfaceCatalog.lookup(tool)
 	if !ok {
-		return isLanguageToolName(tool)
+		return IsLanguageToolName(tool)
 	}
 
 	actionClass := autonomy.CanonicalActionClass(autonomy.TurnPhaseActionClassForToolClass(tool))

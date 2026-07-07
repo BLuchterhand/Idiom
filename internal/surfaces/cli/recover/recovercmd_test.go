@@ -1051,6 +1051,78 @@ func TestRecoverReconcileMergesCompletedAtoms(t *testing.T) {
 	}
 }
 
+func TestRunRecoveryVerificationCommandUsesWorkspaceRoot(t *testing.T) {
+	root := t.TempDir()
+	writeRecoverTestGoModule(t, root)
+	writeRecoverTestPackage(t, root, "pkg/pass")
+
+	result, err := runRecoveryVerificationCommand(root, "go test ./pkg/pass")
+	if err != nil {
+		t.Fatalf("verification command should pass from workspace root: %v", err)
+	}
+
+	if result.Status != recoverycontract.ReconciliationVerificationPass || result.ExitCode != 0 {
+		t.Fatalf("unexpected pass result: %#v", result)
+	}
+	if result.StartedAt == "" || result.CompletedAt == "" {
+		t.Fatalf("verification result should record timestamps: %#v", result)
+	}
+}
+
+func TestRunRecoveryVerificationCommandRecordsFailureExitCode(t *testing.T) {
+	root := t.TempDir()
+	writeRecoverTestGoModule(t, root)
+	writeRecoverFailingTestPackage(t, root, "pkg/fail")
+
+	result, err := runRecoveryVerificationCommand(root, "go test ./pkg/fail")
+	if err == nil {
+		t.Fatalf("failing verification command returned nil error")
+	}
+
+	if result.Status != recoverycontract.ReconciliationVerificationFail || result.ExitCode == 0 {
+		t.Fatalf("unexpected failure result: %#v err=%v", result, err)
+	}
+	if result.StartedAt == "" || result.CompletedAt == "" {
+		t.Fatalf("verification failure should record timestamps: %#v", result)
+	}
+}
+
+func TestRunRecoveryVerificationCommandRejectsUnsupportedCommand(t *testing.T) {
+	result, err := runRecoveryVerificationCommand(t.TempDir(), "go env GOPATH")
+	if err == nil {
+		t.Fatalf("unsupported verification command returned nil error")
+	}
+
+	if result.Command != "go env GOPATH" ||
+		result.Status != recoverycontract.ReconciliationVerificationFail ||
+		result.ExitCode != -1 ||
+		result.CompletedAt == "" {
+		t.Fatalf("unexpected unsupported-command result: %#v", result)
+	}
+}
+
+func TestRunRecoveryBriefLintGateMapsLintReport(t *testing.T) {
+	root := t.TempDir()
+	writeRecoveryBriefWorkspaceMarker(t, root)
+	writeRecoveryFile(t, filepath.Join(root, "allowed.go"), "package allowed\n")
+
+	passPath := writeRecoveryBrief(t, root, recoveryLintBriefBody("allowed.go"))
+	pass := runRecoveryBriefLintGate(root, passPath)
+	if pass.Status != recoverycontract.GateStatusPass ||
+		pass.Summary != "brief lint exit 0" ||
+		len(pass.Findings) != 0 {
+		t.Fatalf("unexpected passing lint gate: %#v", pass)
+	}
+
+	blockPath := writeRecoveryBrief(t, root, "# Brief\n\n## Required Edits\n\nMissing file table.\n")
+	block := runRecoveryBriefLintGate(root, blockPath)
+	if block.Status != recoverycontract.GateStatusBlock ||
+		!strings.HasPrefix(block.Summary, "brief lint exit ") ||
+		len(block.Findings) == 0 {
+		t.Fatalf("unexpected blocking lint gate: %#v", block)
+	}
+}
+
 func TestRecoveryReconciliationLearningRejectsRankerStatePaths(t *testing.T) {
 	root := t.TempDir()
 	packet := recoverycontract.DecompositionPacket{
@@ -1460,6 +1532,63 @@ func writeRecoverTestPackage(t *testing.T, root string, dir string) {
 	if err := os.WriteFile(filepath.Join(fullDir, pkg+".go"), body, 0o644); err != nil {
 		t.Fatalf("write test package: %v", err)
 	}
+}
+
+func writeRecoverFailingTestPackage(t *testing.T, root string, dir string) {
+	t.Helper()
+
+	fullDir := filepath.Join(root, filepath.FromSlash(dir))
+	if err := os.MkdirAll(fullDir, 0o755); err != nil {
+		t.Fatalf("mkdir failing test package: %v", err)
+	}
+
+	pkg := filepath.Base(dir)
+	body := []byte("package " + pkg + "\n\nimport \"testing\"\n\nfunc TestFails(t *testing.T) { t.Fatal(\"expected failure\") }\n")
+	if err := os.WriteFile(filepath.Join(fullDir, pkg+"_test.go"), body, 0o644); err != nil {
+		t.Fatalf("write failing test package: %v", err)
+	}
+}
+
+func writeRecoveryBriefWorkspaceMarker(t *testing.T, root string) {
+	t.Helper()
+
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir recovery brief workspace marker: %v", err)
+	}
+}
+
+func writeRecoveryFile(t *testing.T, path string, content string) {
+	t.Helper()
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir recovery file parent: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write recovery file: %v", err)
+	}
+}
+
+func writeRecoveryBrief(t *testing.T, root string, body string) string {
+	t.Helper()
+
+	path := filepath.Join(root, "brief.md")
+	writeRecoveryFile(t, path, body)
+
+	return path
+}
+
+func recoveryLintBriefBody(path string) string {
+	return "# Brief\n\n" +
+		"## Files to Modify (EXHAUSTIVE allowlist)\n\n" +
+		"| File | Change |\n" +
+		"|------|--------|\n" +
+		"| `" + path + "` | MODIFY existing package file |\n\n" +
+		"## Verified Anchors\n\n" +
+		"Confirmed `" + path + ":1` currently declares package allowed.\n\n" +
+		"## Required Edits\n\n" +
+		"Apply the edit named in the file table.\n\n" +
+		"## Acceptance\n\n" +
+		"- `go build ./...` succeeds.\n"
 }
 
 func writeRecoverFailedPlanExecuteRecord(t *testing.T, root string, sessionID string, requiredPaths []string) {
