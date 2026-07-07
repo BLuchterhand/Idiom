@@ -133,6 +133,131 @@ func TestSlow(t *testing.T) {
 	}
 }
 
+func TestRunPlanExecuteVerificationCommandUsesWorkingDir(t *testing.T) {
+	root := t.TempDir()
+	writePlanExecuteVerificationModule(t, root, "workingdir")
+	writePlanExecuteVerificationFile(t, root, "pkg/pkg_test.go", `package pkg
+
+import "testing"
+
+func TestPass(t *testing.T) {}
+`)
+
+	check := runPlanExecuteVerificationCommandWithTimeout(context.Background(), root, plancontract.VerificationCommand{
+		Command:    "go test -count=1 .",
+		WorkingDir: "pkg",
+	}, 10*time.Second)
+
+	if check.Status != plancontract.PhaseEvidenceStatusOK {
+		t.Fatalf("status = %q, want ok; check=%#v", check.Status, check)
+	}
+	if check.WorkingDir != "pkg" {
+		t.Fatalf("WorkingDir = %q, want pkg", check.WorkingDir)
+	}
+	if !strings.Contains(check.Summary, "ok") {
+		t.Fatalf("summary should contain go test output, got %q", check.Summary)
+	}
+}
+
+func TestRunPlanExecuteVerificationCommandRejectsUnsafeWorkingDir(t *testing.T) {
+	root := t.TempDir()
+	writePlanExecuteVerificationModule(t, root, "unsafeworkdir")
+
+	check := runPlanExecuteVerificationCommandWithTimeout(context.Background(), root, plancontract.VerificationCommand{
+		Command:    "go test ./...",
+		WorkingDir: "../escape",
+	}, 10*time.Second)
+
+	if check.Status != plancontract.PhaseEvidenceStatusFailed {
+		t.Fatalf("status = %q, want failed", check.Status)
+	}
+	if check.Error != "unsafe verification working_dir" {
+		t.Fatalf("error = %q, want unsafe verification working_dir", check.Error)
+	}
+}
+
+func TestRunPlanExecuteVerificationCommandFailureUsesCombinedOutput(t *testing.T) {
+	root := t.TempDir()
+	writePlanExecuteVerificationModule(t, root, "failureoutput")
+	writePlanExecuteVerificationFile(t, root, "pkg/pkg_test.go", `package pkg
+
+import (
+	"fmt"
+	"os"
+	"testing"
+)
+
+func TestFail(t *testing.T) {
+	fmt.Println("STDOUT_MARKER")
+	fmt.Fprintln(os.Stderr, "STDERR_MARKER")
+	t.Fatal("FAIL_MARKER")
+}
+`)
+
+	check := runPlanExecuteVerificationCommandWithTimeout(context.Background(), root, plancontract.VerificationCommand{
+		Command: "go test -count=1 ./pkg",
+	}, 10*time.Second)
+
+	if check.Status != plancontract.PhaseEvidenceStatusFailed {
+		t.Fatalf("status = %q, want failed", check.Status)
+	}
+	for _, want := range []string{"STDOUT_MARKER", "STDERR_MARKER", "FAIL_MARKER"} {
+		if !strings.Contains(check.Error, want) {
+			t.Fatalf("error should include %q from combined output, got %q", want, check.Error)
+		}
+	}
+	if !strings.Contains(check.Summary, "exit status") {
+		t.Fatalf("summary should preserve process error, got %q", check.Summary)
+	}
+}
+
+func TestRunPlanExecuteVerificationCommandTruncatesOutput(t *testing.T) {
+	root := t.TempDir()
+	writePlanExecuteVerificationModule(t, root, "truncateverify")
+	writePlanExecuteVerificationFile(t, root, "pkg/pkg_test.go", `package pkg
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestChatty(t *testing.T) {
+	t.Log(strings.Repeat("x", 13000))
+}
+`)
+
+	check := runPlanExecuteVerificationCommandWithTimeout(context.Background(), root, plancontract.VerificationCommand{
+		Command: "go test -count=1 -v ./pkg",
+	}, 10*time.Second)
+
+	if check.Status != plancontract.PhaseEvidenceStatusOK {
+		t.Fatalf("status = %q, want ok; check=%#v", check.Status, check)
+	}
+	if !strings.Contains(check.Summary, "[truncated") {
+		t.Fatalf("summary should include truncation marker, len=%d summary tail=%q", len(check.Summary), check.Summary[max(0, len(check.Summary)-80):])
+	}
+}
+
+func writePlanExecuteVerificationModule(t *testing.T, root string, module string) {
+	t.Helper()
+
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module "+module+"\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+}
+
+func writePlanExecuteVerificationFile(t *testing.T, root string, rel string, body string) {
+	t.Helper()
+
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write %s: %v", rel, err)
+	}
+}
+
 func decodeSinglePlanExecuteEventForTest(t *testing.T, output string) map[string]any {
 	t.Helper()
 

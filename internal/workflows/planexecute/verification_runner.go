@@ -7,13 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"idiom/internal/contracts/autonomy"
 	plancontract "idiom/internal/contracts/plan"
+	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/textutil"
 )
 
@@ -323,19 +323,10 @@ func runPlanExecuteVerificationCommandWithTimeout(parent context.Context, root s
 		return check
 	}
 
-	ctx := planExecuteContext(parent)
-	var cancel context.CancelFunc
-	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
+	workdir := strings.TrimSpace(root)
 
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-
-	cmd.Dir = strings.TrimSpace(root)
-
-	if cmd.Dir == "" {
-		cmd.Dir = "."
+	if workdir == "" {
+		workdir = "."
 	}
 
 	if command.WorkingDir != "" {
@@ -345,22 +336,29 @@ func runPlanExecuteVerificationCommandWithTimeout(parent context.Context, root s
 			return check
 		}
 
-		cmd.Dir = filepath.Join(cmd.Dir, filepath.FromSlash(workingDir))
+		workdir = filepath.Join(workdir, filepath.FromSlash(workingDir))
 	}
 
-	out, err := cmd.CombinedOutput()
-	output := truncatePlanExecuteText(strings.TrimSpace(string(out)), 12000)
+	result := commandexec.Run(planExecuteContext(parent), commandexec.Spec{
+		Name:           args[0],
+		Args:           args[1:],
+		Dir:            workdir,
+		Timeout:        timeout,
+		MaxOutputBytes: planExecuteVerificationCaptureBytes,
+		MergeOutput:    true,
+	})
+	output := truncatePlanExecuteText(strings.TrimSpace(result.CombinedOutput()), 12000)
 
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+	if result.Err != nil {
+		if result.TimedOut {
 			check.Error = fmt.Sprintf("verification command timed out after %s", timeout)
 			check.Summary = check.Error
 
 			return check
 		}
 
-		check.Error = firstNonEmptyString(output, err.Error())
-		check.Summary = err.Error()
+		check.Error = firstNonEmptyString(output, result.Err.Error())
+		check.Summary = result.Err.Error()
 
 		return check
 	}
@@ -370,6 +368,8 @@ func runPlanExecuteVerificationCommandWithTimeout(parent context.Context, root s
 
 	return check
 }
+
+const planExecuteVerificationCaptureBytes = 1024 * 1024
 
 func VerificationStatus(evidence []plancontract.PhaseEvidenceCheck) string {
 	if len(evidence) == 0 {
