@@ -1,15 +1,14 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/implementationdispatch"
@@ -237,46 +236,41 @@ func runImplementationDispatchCommand(ctx context.Context, root string, timeout 
 		timeout = 45 * time.Second
 	}
 
-	preflightCtx, cancel := context.WithTimeout(ctx, timeout)
-
-	defer cancel()
-
-	cmd := exec.CommandContext(preflightCtx, binary, args...)
-
-	cmd.Dir = root
-
-	var stdout, stderr bytes.Buffer
-
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
+	execResult := commandexec.Run(ctx, commandexec.Spec{
+		Mode:    commandexec.ModeArgv,
+		Name:    binary,
+		Args:    args,
+		Dir:     root,
+		Timeout: timeout,
+	})
 	result := implementationDispatchCommandResult{
-		Stdout: stdout.String(),
-		Stderr: stderr.String(),
+		ExitCode: execResult.ExitCode,
+		Stdout:   execResult.Stdout,
+		Stderr:   execResult.Stderr,
+		Err:      execResult.Err,
 	}
 
-	if err == nil {
+	if execResult.Err == nil {
 		return result
 	}
 
-	if exitErr, ok := err.(*exec.ExitError); ok {
-		result.ExitCode = exitErr.ExitCode()
-		result.Err = err
-
-		return result
-	}
-
-	if preflightCtx.Err() != nil {
+	if ctx != nil && ctx.Err() != nil {
 		result.ExitCode = 124
-		result.Err = preflightCtx.Err()
+		result.Err = ctx.Err()
+		return result
+	}
 
+	if execResult.TimedOut {
+		result.ExitCode = 124
+		result.Err = context.DeadlineExceeded
+		return result
+	}
+
+	if execResult.ExitError {
 		return result
 	}
 
 	result.ExitCode = 2
-	result.Err = err
-
 	return result
 }
 

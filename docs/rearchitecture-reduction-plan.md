@@ -77,8 +77,10 @@ command-output interpretation for atom intake and brief lint reports is also
 workflow-owned. Nonzero refine accepted-brief sanitization and refined
 plan-document replacement are workflow-owned. Plan-document preflight
 aggregation, skip rules, and path backfill are workflow-owned; the TUI still
-owns orchestration, transient UI logging, preflight command execution, and
-prompt-runner callbacks.
+owns orchestration, transient UI logging, and prompt-runner callbacks. The TUI
+constructs the refine command request/result, but process execution now goes
+through `internal/platform/commandexec` for cwd, timeout, output capture, exit
+status, launch failure, and cancellation semantics.
 
 ### 4. Workspace Manager Decomposition
 
