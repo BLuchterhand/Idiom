@@ -2064,7 +2064,7 @@ func TestEvaluateSWESuiteReportsMissingLogs(t *testing.T) {
 			},
 		}},
 	}
-	report := EvaluateSWESuite(suite, nil, nil)
+	report := EvaluateSWESuiteWithLoadErrors(suite, nil, nil, nil)
 
 	if report.Passed {
 		t.Fatal("expected missing task log to fail suite")

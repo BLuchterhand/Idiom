@@ -299,7 +299,7 @@ func TestImplementTelemetryIncludesLocalOpsAndQueueMetadataOnly(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
 	}
 
-	if err := rec.Close(0); err != nil {
+	if err := rec.CloseWithFields(0, nil); err != nil {
 		t.Fatalf("rec.Close: %v", err)
 	}
 
@@ -346,7 +346,7 @@ func TestImplementQueueTelemetryReportsUnavailableAsDegraded(t *testing.T) {
 	queueResult := implementAcquireQueueSlot(config.Config{}, "session", &stdout, &stderr, true, rec)
 	queueResult.Release()
 
-	if err := rec.Close(0); err != nil {
+	if err := rec.CloseWithFields(0, nil); err != nil {
 		t.Fatalf("rec.Close: %v", err)
 	}
 
@@ -394,7 +394,7 @@ func TestImplementQueueTelemetryReportsRealAcquire(t *testing.T) {
 	queueResult := implementAcquireQueueSlot(config.Config{}, "session", &stdout, &stderr, true, rec)
 	queueResult.Release()
 
-	if err := rec.Close(0); err != nil {
+	if err := rec.CloseWithFields(0, nil); err != nil {
 		t.Fatalf("rec.Close: %v", err)
 	}
 
@@ -439,7 +439,7 @@ func TestModelCloseoutWritesImplementTelemetryAndOneSessionSummary(t *testing.T)
 		t.Fatalf("rec.CloseWithFields: %v", err)
 	}
 
-	if err := rec.Close(0); err != nil {
+	if err := rec.CloseWithFields(0, nil); err != nil {
 		t.Fatalf("second rec.Close: %v", err)
 	}
 

@@ -40,6 +40,39 @@ func Save(ctx string, user string) error {
 	}
 }
 
+func TestCheckWorkspaceFlagsDefaultArgumentWrapper(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "wrapper.go", `package sample
+
+type manager struct{}
+
+func (manager) runWithEnv(ctx string, dir string, env []string, name string, args ...string) (string, error) {
+	return "", nil
+}
+
+func (m manager) run(ctx string, dir string, name string, args ...string) (string, error) {
+	return m.runWithEnv(ctx, dir, nil, name, args...)
+}
+`)
+
+	result, err := CheckWorkspace(context.Background(), CheckOptions{ProjectRoot: root})
+	if err != nil {
+		t.Fatalf("CheckWorkspace: %v", err)
+	}
+
+	if len(result.Report.Findings) != 1 {
+		t.Fatalf("findings = %#v, want one default-argument wrapper", result.Report.Findings)
+	}
+
+	finding := result.Report.Findings[0]
+	if finding.RuleID != rulescontract.RuleNoPassThroughWrapper || finding.Symbol != "manager.run" {
+		t.Fatalf("unexpected finding: %#v", finding)
+	}
+	if !strings.Contains(finding.Evidence[2].Detail, "nil") {
+		t.Fatalf("forwarding evidence = %#v, want default nil argument detail", finding.Evidence)
+	}
+}
+
 func TestLoadPolicyRejectsExplicitMissingConfig(t *testing.T) {
 	root := t.TempDir()
 

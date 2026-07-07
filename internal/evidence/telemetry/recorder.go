@@ -213,10 +213,6 @@ func (r *Recorder) runCloseouts() {
 	}
 }
 
-func (r *Recorder) Close(exitCode int) error {
-	return r.CloseWithFields(exitCode, nil)
-}
-
 func (r *Recorder) CloseWithFields(exitCode int, fields map[string]any) error {
 	if r == nil {
 		return nil

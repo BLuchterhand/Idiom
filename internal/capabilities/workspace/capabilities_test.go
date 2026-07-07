@@ -1279,7 +1279,7 @@ func TestUnsafeReadOnlyCapabilityMappingsNameSchemaTruthViolations(t *testing.T)
 		},
 	}
 
-	unsafe := unsafeReadOnlyCapabilityMappings(registry)
+	unsafe := unsafeReadOnlyCapabilityMappingsForTools(registry, nil)
 	if len(unsafe) != 1 {
 		t.Fatalf("unsafe mapping count = %d, got %#v", len(unsafe), unsafe)
 	}

@@ -8,7 +8,7 @@ import (
 )
 
 func (m *Manager) runCommand(parent context.Context, dir, name string, args ...string) (string, error) {
-	stdout, stderr, err := m.runCommandDetailed(parent, dir, name, args...)
+	stdout, stderr, err := m.runCommandDetailedWithEnv(parent, dir, nil, name, args...)
 	output := m.truncateCommandOutput(commandexec.CombineOutput(stdout, stderr))
 
 	if err != nil {
@@ -24,10 +24,6 @@ func (m *Manager) truncateCommandOutput(output string) string {
 	}
 
 	return output
-}
-
-func (m *Manager) runCommandDetailed(parent context.Context, dir, name string, args ...string) (string, string, error) {
-	return m.runCommandDetailedWithEnv(parent, dir, nil, name, args...)
 }
 
 func (m *Manager) runCommandDetailedWithEnv(parent context.Context, dir string, extraEnv []string, name string, args ...string) (string, string, error) {

@@ -29,7 +29,7 @@ func TestRecorderWritesProcessTelemetryAndRedactsSensitiveArgs(t *testing.T) {
 		t.Fatalf("Log: %v", err)
 	}
 
-	if err := rec.Close(0); err != nil {
+	if err := rec.CloseWithFields(0, nil); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
@@ -102,7 +102,7 @@ func TestOpenUsesTelemetryDirEnvAndSanitizedCommandName(t *testing.T) {
 		t.Fatal("recorder disabled unexpectedly")
 	}
 
-	if err := rec.Close(0); err != nil {
+	if err := rec.CloseWithFields(0, nil); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
@@ -134,7 +134,7 @@ func TestRecorderStampsVersionWhenSet(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 
-	if err := rec.Close(0); err != nil {
+	if err := rec.CloseWithFields(0, nil); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
@@ -179,7 +179,7 @@ func TestRecorderOmitsEmptyVersion(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 
-	if err := rec.Close(0); err != nil {
+	if err := rec.CloseWithFields(0, nil); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
@@ -210,7 +210,7 @@ func TestRecorderCloseWithFieldsIsIdempotent(t *testing.T) {
 		t.Fatalf("CloseWithFields: %v", err)
 	}
 
-	if err := rec.Close(0); err != nil {
+	if err := rec.CloseWithFields(0, nil); err != nil {
 		t.Fatalf("second Close: %v", err)
 	}
 
@@ -259,7 +259,7 @@ func TestRecorderCloseRunsRegisteredCloseoutsOnce(t *testing.T) {
 		t.Fatalf("CloseWithFields: %v", err)
 	}
 
-	if err := rec.Close(0); err != nil {
+	if err := rec.CloseWithFields(0, nil); err != nil {
 		t.Fatalf("second Close: %v", err)
 	}
 

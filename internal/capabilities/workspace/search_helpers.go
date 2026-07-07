@@ -68,7 +68,7 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 
 	args := backend.args(req, m.defaultSearchExcludeGlobs(req.Path, req.Pattern, req.Glob))
 
-	stdout, stderr, err := m.runCommandDetailed(parent, workdir, backend.bin, args...)
+	stdout, stderr, err := m.runCommandDetailedWithEnv(parent, workdir, nil, backend.bin, args...)
 	if err != nil && !isNoMatchExit(err) {
 		output := strings.TrimSpace(strings.TrimSpace(stdout) + "\n" + strings.TrimSpace(stderr))
 		errMsg := err.Error()

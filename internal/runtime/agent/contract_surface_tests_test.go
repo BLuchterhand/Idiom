@@ -19078,7 +19078,7 @@ func TestPlanExecuteSubmitReadyFailureFeedbackDoesNotSuggestGenericProbe(t *test
 		rejected,
 	}
 
-	state := buildRunnerNextActionState("main", 3, "tool_rejected", req, rejected, results, false, brief)
+	state := buildRunnerNextActionStateWithAllowedTools("main", 3, "tool_rejected", req, rejected, results, false, brief, nil)
 	joinedState := strings.Join(state.NextValidActions, "\n")
 
 	if !strings.Contains(joinedState, "source_satisfied_paths") {
@@ -19093,7 +19093,7 @@ func TestPlanExecuteSubmitReadyFailureFeedbackDoesNotSuggestGenericProbe(t *test
 		t.Fatalf("submit-ready next_action_state must not include generic answer/probe fallback: %#v", state.NextValidActions)
 	}
 
-	packet := buildRunnerFailureFeedbackPacket("main", 3, "tool_rejected", req, rejected, results, false, brief)
+	packet := buildRunnerFailureFeedbackPacketWithAllowedTools("main", 3, "tool_rejected", req, rejected, results, false, brief, nil)
 	joinedFeedback := strings.Join(packet.ValidNext, "\n")
 
 	if !strings.Contains(joinedFeedback, "source_satisfied_paths") {
@@ -19160,7 +19160,7 @@ func TestPlanExecuteSubmitReadyStateDoesNotAdvertiseReadProbes(t *testing.T) {
 
 	lastReq := workspace.ToolRequest{Tool: "code_navigate", Path: "b.go", Capability: "read_symbol", Pattern: "Run"}
 	lastResult := results[len(results)-1]
-	state := buildRunnerNextActionState("main", 2, "tool_result", lastReq, lastResult, results, false, brief)
+	state := buildRunnerNextActionStateWithAllowedTools("main", 2, "tool_result", lastReq, lastResult, results, false, brief, nil)
 	joinedState := strings.Join(state.NextValidActions, "\n")
 
 	if !strings.Contains(joinedState, "source_satisfied_paths") {
@@ -30947,7 +30947,7 @@ func TestDocDeliverableCompletionRecoveryStateClosesTowardWriteOrBlocker(t *test
 		Summary: "Mutation completion gate rejected final answer",
 		Error:   "this task asks for a workspace change, but no successful write tool result is present",
 	}
-	state := buildRunnerNextActionState("main", 3, "completion_gate_rejected", workspace.ToolRequest{Tool: "completion_gate"}, result, []workspace.ToolResult{result}, false, brief)
+	state := buildRunnerNextActionStateWithAllowedTools("main", 3, "completion_gate_rejected", workspace.ToolRequest{Tool: "completion_gate"}, result, []workspace.ToolResult{result}, false, brief, nil)
 
 	joinedValid := strings.Join(state.NextValidActions, "\n")
 	for _, want := range []string{"deliverable-write capability", ".idiom/refine/example/iter-2/draft.md", "<<QUESTION>>"} {
@@ -31137,7 +31137,7 @@ func TestScratchpadDeliverableFailureFeedbackNarrowsToWriteOrQuestion(t *testing
 		Summary: "Scoped implementation read rejected",
 		Error:   "outside the required edit paths and explicit evidence paths",
 	}
-	packet := buildRunnerFailureFeedbackPacket("main", 3, "tool_rejected", req, result, []workspace.ToolResult{result}, false, brief)
+	packet := buildRunnerFailureFeedbackPacketWithAllowedTools("main", 3, "tool_rejected", req, result, []workspace.ToolResult{result}, false, brief, nil)
 	joinedRequired := strings.Join(packet.RequiredNext, "\n")
 
 	if !strings.Contains(joinedRequired, "record the failed") {

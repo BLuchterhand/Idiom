@@ -892,7 +892,7 @@ func (m *Manager) contextTracePack(ctx context.Context, req ToolRequest) ToolRes
 		return ToolResult{Tool: ToolNameContextTracePack, Summary: "Context trace pack failed to resolve workdir", Error: err.Error()}
 	}
 
-	stdout, stderr, execErr := m.runCommandDetailed(ctx, workdir, m.cfg.Shell, "-lc", command)
+	stdout, stderr, execErr := m.runCommandDetailedWithEnv(ctx, workdir, nil, m.cfg.Shell, "-lc", command)
 	exitCode := 0
 	execError := ""
 

@@ -3014,7 +3014,7 @@ func TestReviewRepairNonInteractiveDoesNotTrustSelfApprovedRepairPlanForNewFile(
 func TestVerificationPlanRejectsFailExecutorVerification(t *testing.T) {
 	var stdout bytes.Buffer
 
-	checked, evidence, err := RunVerificationPlan(t.TempDir(), VerificationPlan{
+	checked, evidence, err := RunVerificationPlanWithContext(nil, t.TempDir(), VerificationPlan{
 		Rejects: []plancontract.VerificationReject{{
 			Command: "bin/colony_tests -ts=quality_inventory_bindings",
 			Source:  plancontract.VerificationCommandSourcePrompt,

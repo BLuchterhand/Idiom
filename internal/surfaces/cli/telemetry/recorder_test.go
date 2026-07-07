@@ -15,7 +15,7 @@ func TestOpenRecorderUsesCommandMetadataName(t *testing.T) {
 		t.Fatal("recorder disabled unexpectedly")
 	}
 
-	if err := rec.Close(0); err != nil {
+	if err := rec.CloseWithFields(0, nil); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 

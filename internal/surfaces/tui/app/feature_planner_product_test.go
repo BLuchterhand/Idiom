@@ -4737,7 +4737,7 @@ func TestPlanExecuteExecutionRecoveryOpenMessageSurfacesSourceSanity(t *testing.
 }
 
 func TestBuildProductWorkflowBriefIncludesWorkflowReferencedPaths(t *testing.T) {
-	brief := buildProductWorkflowBrief(
+	brief := buildProductWorkflowBriefWithPromotionEvents(
 		"docs/product-workflows/efforts/example",
 		productworkflow.WorkflowState{
 			Context: productworkflow.WorkflowContext{
@@ -4749,6 +4749,7 @@ func TestBuildProductWorkflowBriefIncludesWorkflowReferencedPaths(t *testing.T) 
 		nil,
 		productworkflow.TDDLedger{EffortID: "effort-1", TaskID: "task-1"},
 		productworkflow.TraceabilityMatrix{},
+		nil,
 		nil,
 	)
 
@@ -4946,7 +4947,7 @@ func TestBuildProductWorkflowBriefCarriesAcceptedBehavioralCoverageWhileTDDEvide
 }
 
 func TestBuildProductWorkflowBriefBlocksUngroundedImplementationClaims(t *testing.T) {
-	brief := buildProductWorkflowBrief(
+	brief := buildProductWorkflowBriefWithPromotionEvents(
 		filepath.Join(t.TempDir(), "effort"),
 		productworkflow.WorkflowState{},
 		productworkflow.PRDDocument{Requirements: []productworkflow.PRDRequirement{{
@@ -4964,6 +4965,7 @@ func TestBuildProductWorkflowBriefBlocksUngroundedImplementationClaims(t *testin
 		productworkflow.TDDLedger{EffortID: "effort-1", TaskID: "task-1"},
 		productworkflow.TraceabilityMatrix{},
 		nil,
+		nil,
 	)
 
 	joined := strings.Join(brief.Blockers, "\n")
@@ -4978,7 +4980,7 @@ func TestBuildProductWorkflowBriefBlocksUngroundedImplementationClaims(t *testin
 }
 
 func TestBuildProductWorkflowBriefAllowsResolvedImplementationEvidence(t *testing.T) {
-	brief := buildProductWorkflowBrief(
+	brief := buildProductWorkflowBriefWithPromotionEvents(
 		filepath.Join(t.TempDir(), "effort"),
 		productworkflow.WorkflowState{TaskID: "task-1"},
 		productworkflow.PRDDocument{
@@ -5036,6 +5038,7 @@ func TestBuildProductWorkflowBriefAllowsResolvedImplementationEvidence(t *testin
 			TDDObligationsSatisfied: []string{"TDD-1"},
 			VerificationStatus:      "pass",
 		}},
+		nil,
 	)
 
 	if len(brief.Blockers) != 0 {
@@ -5047,7 +5050,7 @@ func TestBuildProductWorkflowBriefAllowsResolvedImplementationEvidence(t *testin
 }
 
 func TestBuildProductWorkflowBriefUsesVerificationRecordsForCoverageGate(t *testing.T) {
-	brief := buildProductWorkflowBrief(
+	brief := buildProductWorkflowBriefWithPromotionEvents(
 		filepath.Join(t.TempDir(), "effort"),
 		productworkflow.WorkflowState{TaskID: "task-verified"},
 		productworkflow.PRDDocument{
@@ -5105,6 +5108,7 @@ func TestBuildProductWorkflowBriefUsesVerificationRecordsForCoverageGate(t *test
 			VerificationStatus:      "pass",
 			VerificationCommandsRun: []string{"go test ./internal/surfaces/tui/app"},
 		}},
+		nil,
 	)
 
 	if !brief.CoverageGatePassed {

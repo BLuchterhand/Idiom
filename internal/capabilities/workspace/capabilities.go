@@ -1726,10 +1726,6 @@ func normalizeReadOnlyCapabilityID(id string) string {
 	}
 }
 
-func unsafeReadOnlyCapabilityMappings(registry ReadOnlyCapabilityRegistry) []ReadOnlyCapabilityUnsafeAdapterSpec {
-	return unsafeReadOnlyCapabilityMappingsForTools(registry, nil)
-}
-
 func unsafeReadOnlyCapabilityMappingsForTools(registry ReadOnlyCapabilityRegistry, tools []string) []ReadOnlyCapabilityUnsafeAdapterSpec {
 	toolSet := stringSet(tools)
 	filterTools := len(toolSet) > 0

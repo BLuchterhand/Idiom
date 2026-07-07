@@ -3171,7 +3171,7 @@ func TestHarnessAuditContractCoverageSortsEventsBeforeAuditing(t *testing.T) {
 
 	mgr := NewManager(config.Workspace{Root: root, CWD: root})
 
-	report, warnings := mgr.auditContractEventCoverage([]string{resolvePath, openPath})
+	report, warnings := mgr.auditContractEventCoverageWithFilter([]string{resolvePath, openPath}, nil)
 	if len(warnings) != 0 {
 		t.Fatalf("unexpected warnings: %#v", warnings)
 	}

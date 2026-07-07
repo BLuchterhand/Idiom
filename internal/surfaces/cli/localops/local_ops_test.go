@@ -344,7 +344,7 @@ func TestLocalOpsBenchmarkRedactsReplayPathFromErrorsAndTelemetry(t *testing.T) 
 		"--replay-log", replayPath,
 	}, &stdout, &stderr, rec)
 	if rec != nil {
-		if err := rec.Close(code); err != nil {
+		if err := rec.CloseWithFields(code, nil); err != nil {
 			t.Fatalf("close telemetry: %v", err)
 		}
 	}

@@ -1576,10 +1576,6 @@ func fileContentOracleContent(fullPath string, relPath string, snapshots []LiveC
 	return "", "file", fmt.Errorf("file content oracle could not read %q", relPath)
 }
 
-func EvaluateSWESuite(suite SWESuite, recordsByTask map[string][]Record, logPaths map[string]string) SWESuiteReport {
-	return EvaluateSWESuiteWithLoadErrors(suite, recordsByTask, logPaths, nil)
-}
-
 func EvaluateSWESuiteDefinition(suite SWESuite) SWESuiteReport {
 	coverage := AnalyzeSWESuiteCoverage(suite)
 	lintFindings := LintSWESuite(suite)

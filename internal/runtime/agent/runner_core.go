@@ -16436,10 +16436,6 @@ func evidenceFirstMutationPhase(brief workerruntime.WorkerRuntimeBrief, results 
 	return "target_inspection"
 }
 
-func buildRunnerNextActionState(agent string, step int, reason string, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult, declarationMovesForbidden bool, brief workerruntime.WorkerRuntimeBrief) runnerNextActionState {
-	return buildRunnerNextActionStateWithAllowedTools(agent, step, reason, req, result, results, declarationMovesForbidden, brief, nil)
-}
-
 func buildRunnerNextActionStateWithAllowedTools(agent string, step int, reason string, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult, declarationMovesForbidden bool, brief workerruntime.WorkerRuntimeBrief, currentAllowedTools []string) runnerNextActionState {
 	state, _ := buildRunnerNextActionStateWithAllowedToolsAndContract(agent, step, reason, req, result, results, declarationMovesForbidden, brief, currentAllowedTools)
 	return state
@@ -16638,10 +16634,6 @@ func applyReadOnlyDiscoveryPendingGuidance(state runnerNextActionState, brief wo
 	}
 
 	return state
-}
-
-func buildRunnerFailureFeedbackPacket(agent string, step int, reason string, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult, declarationMovesForbidden bool, brief workerruntime.WorkerRuntimeBrief) runnerFailureFeedbackPacket {
-	return buildRunnerFailureFeedbackPacketWithAllowedTools(agent, step, reason, req, result, results, declarationMovesForbidden, brief, nil)
 }
 
 func buildRunnerFailureFeedbackPacketWithAllowedTools(agent string, step int, reason string, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult, declarationMovesForbidden bool, brief workerruntime.WorkerRuntimeBrief, currentAllowedTools []string) runnerFailureFeedbackPacket {

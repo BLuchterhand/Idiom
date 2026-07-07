@@ -17,16 +17,8 @@ import (
 	"idiom/internal/platform/textutil"
 )
 
-func RunVerificationPlan(root string, plan VerificationPlan, jsonEvents bool, stdout io.Writer) (int, []plancontract.PhaseEvidenceCheck, error) {
-	return RunVerificationPlanWithContext(nil, root, plan, jsonEvents, stdout)
-}
-
 func RunVerificationPlanWithContext(ctx context.Context, root string, plan VerificationPlan, jsonEvents bool, stdout io.Writer) (int, []plancontract.PhaseEvidenceCheck, error) {
-	return runPlanExecuteVerificationPlan(planExecuteContext(ctx), root, plan, jsonEvents, stdout)
-}
-
-func runPlanExecuteVerificationPlan(ctx context.Context, root string, plan VerificationPlan, jsonEvents bool, stdout io.Writer) (int, []plancontract.PhaseEvidenceCheck, error) {
-	return runPlanExecuteVerificationPlanWithParentContract(ctx, root, plan, "", jsonEvents, stdout)
+	return runPlanExecuteVerificationPlanWithParentContract(planExecuteContext(ctx), root, plan, "", jsonEvents, stdout)
 }
 
 func runPlanExecuteVerificationPlanWithParentContract(ctx context.Context, root string, plan VerificationPlan, parentContractID string, jsonEvents bool, stdout io.Writer) (int, []plancontract.PhaseEvidenceCheck, error) {

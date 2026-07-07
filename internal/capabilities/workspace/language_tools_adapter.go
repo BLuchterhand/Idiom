@@ -103,7 +103,7 @@ func (h languageToolHost) Execute(ctx context.Context, req languagetools.ToolReq
 
 // idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host
 func (h languageToolHost) RunCommandDetailed(ctx context.Context, dir string, name string, args ...string) (string, string, error) {
-	return h.manager.runCommandDetailed(ctx, dir, name, args...)
+	return h.manager.runCommandDetailedWithEnv(ctx, dir, nil, name, args...)
 }
 
 // idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host

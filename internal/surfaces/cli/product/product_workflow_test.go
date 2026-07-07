@@ -6892,7 +6892,7 @@ func TestProductTDDCoverageGateEmitsCoverageGateEvaluatedTelemetry(t *testing.T)
 		"--json",
 	}, &stdout, &stderr, rec)
 
-	if err := rec.Close(code); err != nil {
+	if err := rec.CloseWithFields(code, nil); err != nil {
 		t.Fatalf("rec.Close: %v", err)
 	}
 
@@ -7179,7 +7179,7 @@ func TestProductBriefRenderUsesAuthorityPreflightCoverageGate(t *testing.T) {
 		"--json",
 	}, &stdout, &stderr, rec)
 
-	if err := rec.Close(code); err != nil {
+	if err := rec.CloseWithFields(code, nil); err != nil {
 		t.Fatalf("rec.Close: %v", err)
 	}
 

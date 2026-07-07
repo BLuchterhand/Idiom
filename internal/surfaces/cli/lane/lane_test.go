@@ -701,7 +701,7 @@ func TestRunLaneMainTelemetryMatchesDoctorReadinessProfile(t *testing.T) {
 		t.Fatalf("lane JSON should report writer route decision with role aliases, got %s", stdout.String())
 	}
 
-	if err := rec.Close(0); err != nil {
+	if err := rec.CloseWithFields(0, nil); err != nil {
 		t.Fatalf("rec.Close: %v", err)
 	}
 

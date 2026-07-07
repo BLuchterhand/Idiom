@@ -166,7 +166,7 @@ func (m *Manager) runShell(ctx context.Context, req ToolRequest) ToolResult {
 		}
 	}
 
-	stdout, stderr, execErr := m.runCommandDetailed(ctx, workdir, m.cfg.Shell, "-lc", command)
+	stdout, stderr, execErr := m.runCommandDetailedWithEnv(ctx, workdir, nil, m.cfg.Shell, "-lc", command)
 	rawOutput := commandexec.CombineOutput(stdout, stderr)
 	output := m.truncateCommandOutput(rawOutput)
 	result := ToolResult{

@@ -109,12 +109,14 @@ func passThroughWrapperFinding(rel string, fset *token.FileSet, file *ast.File, 
 	if !ok {
 		return rulescontract.Finding{}, false, false
 	}
-	if !forwardsParamsInOrder(call, paramNames) {
-		return rulescontract.Finding{}, false, false
-	}
 
 	callee := callName(call.Fun)
 	if callee == "" || isBuiltinCall(callee) || callee == fn.Name.Name {
+		return rulescontract.Finding{}, false, false
+	}
+
+	forwardingDetail, ok := forwardedParamsWithOnlyDefaultArgs(call, paramNames, fn.Name.Name, callee)
+	if !ok {
 		return rulescontract.Finding{}, false, false
 	}
 
@@ -138,7 +140,7 @@ func passThroughWrapperFinding(rel string, fset *token.FileSet, file *ast.File, 
 		Evidence: []rulescontract.Evidence{
 			{Kind: rulescontract.EvidenceSingleStatement, Path: rel, Line: pos.Line},
 			{Kind: callKind, Detail: callee, Path: rel, Line: fset.Position(call.Pos()).Line},
-			{Kind: rulescontract.EvidenceSameArgumentForwarding, Detail: strings.Join(paramNames, ", "), Path: rel, Line: fset.Position(call.Pos()).Line},
+			{Kind: rulescontract.EvidenceSameArgumentForwarding, Detail: forwardingDetail, Path: rel, Line: fset.Position(call.Pos()).Line},
 			{Kind: rulescontract.EvidenceNoValidation},
 			{Kind: rulescontract.EvidenceNoErrorContext},
 			{Kind: rulescontract.EvidenceNoTypeTranslation},
@@ -187,22 +189,69 @@ func singleCall(stmt ast.Stmt) (*ast.CallExpr, rulescontract.EvidenceKind, bool)
 	}
 }
 
-func forwardsParamsInOrder(call *ast.CallExpr, paramNames []string) bool {
-	if len(call.Args) != len(paramNames) {
+func forwardedParamsWithOnlyDefaultArgs(call *ast.CallExpr, paramNames []string, wrapperName string, callee string) (string, bool) {
+	paramIndex := 0
+	projection := make([]string, 0, len(call.Args))
+	defaultArgUsed := false
+
+	for _, arg := range call.Args {
+		expr := arg
+		if ellipsis, ok := arg.(*ast.Ellipsis); ok {
+			expr = ellipsis.Elt
+		}
+
+		if paramIndex < len(paramNames) {
+			if ident, ok := expr.(*ast.Ident); ok && ident.Name == paramNames[paramIndex] {
+				projection = append(projection, ident.Name)
+				paramIndex++
+
+				continue
+			}
+		}
+
+		defaultArg, ok := defaultArgumentLiteral(expr)
+		if !ok {
+			return "", false
+		}
+		defaultArgUsed = true
+
+		projection = append(projection, defaultArg)
+	}
+
+	if paramIndex != len(paramNames) {
+		return "", false
+	}
+	if defaultArgUsed && !defaultArgumentWrapperCandidate(wrapperName, callee) {
+		return "", false
+	}
+
+	return strings.Join(projection, ", "), true
+}
+
+func defaultArgumentLiteral(expr ast.Expr) (string, bool) {
+	switch typed := expr.(type) {
+	case *ast.Ident:
+		if typed.Name == "nil" {
+			return typed.Name, true
+		}
+	}
+
+	return "", false
+}
+
+func defaultArgumentWrapperCandidate(wrapperName string, callee string) bool {
+	calleeBase := callee
+	if idx := strings.LastIndex(calleeBase, "."); idx >= 0 {
+		calleeBase = calleeBase[idx+1:]
+	}
+
+	wrapperName = strings.TrimSpace(wrapperName)
+	calleeBase = strings.TrimSpace(calleeBase)
+	if wrapperName == "" || calleeBase == "" {
 		return false
 	}
 
-	for i, arg := range call.Args {
-		if ellipsis, ok := arg.(*ast.Ellipsis); ok {
-			arg = ellipsis.Elt
-		}
-		ident, ok := arg.(*ast.Ident)
-		if !ok || ident.Name != paramNames[i] {
-			return false
-		}
-	}
-
-	return true
+	return strings.HasPrefix(calleeBase, wrapperName)
 }
 
 func callName(expr ast.Expr) string {

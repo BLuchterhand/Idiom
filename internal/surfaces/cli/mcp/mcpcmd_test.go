@@ -313,7 +313,7 @@ func TestMCPClientStdioSmokeTelemetryAndCallerParity(t *testing.T) {
 		t.Fatalf("client close: %v", err)
 	}
 
-	if err := rec.Close(0); err != nil {
+	if err := rec.CloseWithFields(0, nil); err != nil {
 		t.Fatalf("close telemetry: %v", err)
 	}
 

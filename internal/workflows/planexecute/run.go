@@ -1271,7 +1271,7 @@ func saveRunProgressState(root string, state *ProgressState, jsonEvents bool, st
 	if ProgressRequiresRecovery(*state) && !(len(suppressRecovery) > 0 && suppressRecovery[0]) {
 		now := time.Now().UTC()
 
-		record, recordPath, err := recovery.WritePlanExecuteFailureRecord(root, RecoveryInputFromProgress(*state, statePath), now)
+		record, recordPath, err := recovery.WritePlanExecuteFailureRecord(root, RecoveryInputFromProgressWithInvariants(*state, statePath, nil), now)
 		if err != nil {
 			if emitErr := emitPlanExecuteJSONEvent(stdout, jsonEvents, plancontract.PlanExecuteEventRecoveryFailureRecordFailed, map[string]any{
 				plancontract.PlanExecuteEventFieldSessionID: state.SessionID,
@@ -1508,11 +1508,6 @@ func planExecuteTerminalRecoveryInput(root string, sessionID string) planExecute
 	}
 
 	return metadata
-}
-
-// RecoveryInputFromProgress maps plan-execute progress into the recovery failure input contract.
-func RecoveryInputFromProgress(state ProgressState, statePath string) recovery.PlanExecuteFailureInput {
-	return RecoveryInputFromProgressWithInvariants(state, statePath, nil)
 }
 
 func RecoveryInputFromProgressWithInvariants(state ProgressState, statePath string, invariantFailures []recoverycontract.InvariantFailure) recovery.PlanExecuteFailureInput {

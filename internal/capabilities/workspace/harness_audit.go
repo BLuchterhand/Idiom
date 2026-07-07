@@ -1099,7 +1099,7 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 
 	warnings = append(warnings, lifecycleWarnings...)
 
-	contractCoverage, contractWarnings := m.auditContractEventCoverage(paths)
+	contractCoverage, contractWarnings := m.auditContractEventCoverageWithFilter(paths, nil)
 	currentContractCoverage, currentContractWarnings := m.auditCurrentContractEventCoverage(paths)
 
 	warnings = append(warnings, contractWarnings...)
@@ -1972,10 +1972,6 @@ func harnessAuditRelativePath(root, path string) (string, bool) {
 	}
 
 	return filepath.ToSlash(rel), true
-}
-
-func (m *Manager) auditContractEventCoverage(paths []string) (*autonomy.EventAuditReport, []string) {
-	return m.auditContractEventCoverageWithFilter(paths, nil)
 }
 
 func (m *Manager) auditCurrentContractEventCoverage(paths []string) (*autonomy.EventAuditReport, []string) {

@@ -413,7 +413,7 @@ func TestContextCommandsWriteStructuredTelemetry(t *testing.T) {
 		t.Fatalf("context build failed code=%d stderr=%s", code, stderr.String())
 	}
 
-	if err := rec.Close(code); err != nil {
+	if err := rec.CloseWithFields(code, nil); err != nil {
 		t.Fatalf("rec.Close: %v", err)
 	}
 

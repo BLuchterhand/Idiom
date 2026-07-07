@@ -1,11 +1,15 @@
 package brief
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"idiom/internal/evidence/telemetry"
 )
 
 // briefPreflightTestDeps materializes the embedded brief-preflight.py script
@@ -88,6 +92,123 @@ func writeLintBrief(t *testing.T, dir, content string) string {
 	}
 
 	return briefPath
+}
+
+func TestRunLintPlainEmitsPreflightOutput(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not available on PATH")
+	}
+
+	dir := t.TempDir()
+	brief := writeLintBrief(t, dir, "# Brief\n\nThis intentionally lacks the canonical brief sections.\n")
+
+	var stdout, stderr bytes.Buffer
+	exit := RunLint([]string{brief}, &stdout, &stderr, nil)
+
+	if exit != 1 {
+		t.Fatalf("RunLint exit = %d, want lint failure; stdout=%s stderr=%s", exit, stdout.String(), stderr.String())
+	}
+
+	if !strings.Contains(stdout.String()+stderr.String(), "idiom brief preflight:") {
+		t.Fatalf("expected preflight output, stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+func TestRunLintPlainReportsPythonLaunchFailure(t *testing.T) {
+	dir := t.TempDir()
+	brief := writeLintBrief(t, dir, "# Brief\n")
+	t.Setenv("PATH", "")
+
+	var stdout, stderr bytes.Buffer
+	exit := RunLint([]string{brief}, &stdout, &stderr, nil)
+
+	if exit != 2 {
+		t.Fatalf("RunLint exit = %d, want launch failure; stdout=%s stderr=%s", exit, stdout.String(), stderr.String())
+	}
+
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no stdout on launch failure, got %q", stdout.String())
+	}
+
+	if !strings.Contains(stderr.String(), "brief lint: failed to run python3:") {
+		t.Fatalf("expected python launch failure, stderr=%q", stderr.String())
+	}
+}
+
+func TestRunLintPlainTelemetryRecordsSuccessAndExitFailure(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not available on PATH")
+	}
+	t.Setenv("IDIOM_TELEMETRY", "1")
+
+	successBrief := writeLintBrief(t, t.TempDir(), withCanonicalSections("# Brief\n\n"+
+		"## Files to Modify (EXHAUSTIVE allowlist)\n\n"+
+		"| File | Change |\n"+
+		"|------|--------|\n"+
+		"| `go.mod` | READ module declaration |\n\n"+
+		"## Verified Anchors\n\n"+
+		"Confirmed: `module idiom` is present.\n"))
+
+	successRec, err := telemetry.Open(telemetry.Options{Dir: t.TempDir(), Command: "brief"})
+	if err != nil {
+		t.Fatalf("open success telemetry: %v", err)
+	}
+	var successOut, successErr bytes.Buffer
+	if exit := RunLint([]string{successBrief}, &successOut, &successErr, successRec); exit != 0 {
+		t.Fatalf("RunLint success exit = %d, stdout=%s stderr=%s", exit, successOut.String(), successErr.String())
+	}
+	if err := successRec.CloseWithFields(0, nil); err != nil {
+		t.Fatalf("close success telemetry: %v", err)
+	}
+
+	var successLint map[string]any
+	successData, err := os.ReadFile(successRec.Path())
+	if err != nil {
+		t.Fatalf("read success telemetry: %v", err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(successData)), "\n") {
+		var record map[string]any
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("parse success telemetry line %q: %v", line, err)
+		}
+		if record["type"] == "brief_lint" {
+			successLint = record
+		}
+	}
+	if successLint["exit"] != float64(0) {
+		t.Fatalf("success brief_lint telemetry exit = %#v in %#v", successLint["exit"], successLint)
+	}
+
+	failingBrief := writeLintBrief(t, t.TempDir(), "# Brief\n\nThis intentionally lacks the canonical brief sections.\n")
+	failureRec, err := telemetry.Open(telemetry.Options{Dir: t.TempDir(), Command: "brief"})
+	if err != nil {
+		t.Fatalf("open failure telemetry: %v", err)
+	}
+	var failureOut, failureErr bytes.Buffer
+	if exit := RunLint([]string{failingBrief}, &failureOut, &failureErr, failureRec); exit != 1 {
+		t.Fatalf("RunLint failure exit = %d, stdout=%s stderr=%s", exit, failureOut.String(), failureErr.String())
+	}
+	if err := failureRec.CloseWithFields(1, nil); err != nil {
+		t.Fatalf("close failure telemetry: %v", err)
+	}
+
+	var failureLint map[string]any
+	failureData, err := os.ReadFile(failureRec.Path())
+	if err != nil {
+		t.Fatalf("read failure telemetry: %v", err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(failureData)), "\n") {
+		var record map[string]any
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("parse failure telemetry line %q: %v", line, err)
+		}
+		if record["type"] == "brief_lint" {
+			failureLint = record
+		}
+	}
+	if failureLint["exit"] != float64(1) {
+		t.Fatalf("failure brief_lint telemetry exit = %#v in %#v", failureLint["exit"], failureLint)
+	}
 }
 
 // withCanonicalSections appends stub `## Required Edits` and/or

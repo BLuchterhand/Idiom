@@ -1128,11 +1128,6 @@ func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, featurepl
 	return answer, result.State, statePath, nil
 }
 
-// buildProductWorkflowBrief constructs a ProductWorkflowBrief from effort artifacts.
-func buildProductWorkflowBrief(effortRoot string, workflowState productworkflow.WorkflowState, prd productworkflow.PRDDocument, adrIdx productworkflow.ADRIndex, parsedADRs []productworkflow.ParsedADR, ledger productworkflow.TDDLedger, traceability productworkflow.TraceabilityMatrix, implementationRecords []productworkflow.ImplementationLedgerRecord) *featureplanner.ProductWorkflowBrief {
-	return buildProductWorkflowBriefWithPromotionEvents(effortRoot, workflowState, prd, adrIdx, parsedADRs, ledger, traceability, implementationRecords, nil)
-}
-
 func buildProductWorkflowBriefWithPromotionEvents(effortRoot string, workflowState productworkflow.WorkflowState, prd productworkflow.PRDDocument, adrIdx productworkflow.ADRIndex, parsedADRs []productworkflow.ParsedADR, ledger productworkflow.TDDLedger, traceability productworkflow.TraceabilityMatrix, implementationRecords []productworkflow.ImplementationLedgerRecord, promotionEvents []productworkflow.BehavioralCoveragePromotionEvent) *featureplanner.ProductWorkflowBrief {
 	input := productworkflow.PrepareBriefGenerationInput(productworkflow.BriefGenerationInput{
 		EffortRoot:            effortRoot,

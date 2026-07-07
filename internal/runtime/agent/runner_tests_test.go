@@ -8933,7 +8933,7 @@ func TestBuildRunnerNextActionStateGuidesAfterBootstrappedReadBlocker(t *testing
 		Error:   "internal/surfaces/tui/app/app.go has already been read in the implementation bootstrap; use edit_file or a narrow line range instead",
 		Output:  "internal/surfaces/tui/app/app.go: already inspected",
 	}
-	state := buildRunnerNextActionState(
+	state := buildRunnerNextActionStateWithAllowedTools(
 		"implement",
 		3,
 		"pre_execute_guard",
@@ -8942,6 +8942,7 @@ func TestBuildRunnerNextActionStateGuidesAfterBootstrappedReadBlocker(t *testing
 		[]workspace.ToolResult{result},
 		true,
 		workerruntime.WorkerRuntimeBrief{},
+		nil,
 	)
 
 	if state.Lane != "implement" || state.Step != 3 || state.LastTool != "read_file" || state.LastTarget != "internal/surfaces/tui/app/app.go" {
@@ -10945,7 +10946,7 @@ func TestFailureFeedbackPacketKeepsRepeatedActionClosureBiased(t *testing.T) {
 		Summary: "Repeated tool request rejected",
 		Error:   "you just ran the same tool request. Either answer with what you already know, or take one materially different narrow step that names the exact missing claim it closes.",
 	}
-	packet := buildRunnerFailureFeedbackPacket(
+	packet := buildRunnerFailureFeedbackPacketWithAllowedTools(
 		"child:explorer",
 		3,
 		"tool_rejected",
@@ -10957,6 +10958,7 @@ func TestFailureFeedbackPacketKeepsRepeatedActionClosureBiased(t *testing.T) {
 			TaskFamily: "delegated_read_only",
 			Objective:  "Explain how this harness uses subagents.",
 		},
+		nil,
 	)
 	joined := strings.Join(append(append([]string{}, packet.RequiredNext...), packet.ValidNext...), "\n")
 
@@ -19242,7 +19244,7 @@ func TestBuildRunnerNextActionStateIncludesEvidenceFirstPhaseHints(t *testing.T)
 		Summary: "Listed 38 path(s).",
 	}
 
-	state := buildRunnerNextActionState("main", 17, "tool_result", req, result, results, false, brief)
+	state := buildRunnerNextActionStateWithAllowedTools("main", 17, "tool_result", req, result, results, false, brief, nil)
 	if state.Phase != "target_inspection" {
 		t.Fatalf("phase = %q, want target_inspection", state.Phase)
 	}
@@ -27806,7 +27808,7 @@ func TestBuildRunnerNextActionStatePrefersClosureAfterDelegatedReadiness(t *test
 			Output:  "package agent\nfunc finish() {}\n",
 		},
 	}
-	state := buildRunnerNextActionState(
+	state := buildRunnerNextActionStateWithAllowedTools(
 		"child:explorer",
 		3,
 		"tool_result",
@@ -27815,6 +27817,7 @@ func TestBuildRunnerNextActionStatePrefersClosureAfterDelegatedReadiness(t *test
 		results,
 		false,
 		brief,
+		nil,
 	)
 
 	if !slices.Contains(state.Constraints, "answer_readiness_reached") {
@@ -27849,7 +27852,7 @@ func TestBuildRunnerNextActionStatePrefersClosureAfterDelegatedReadiness(t *test
 }
 
 func TestBuildRunnerNextActionStatePrefersClosureAfterChildPacket(t *testing.T) {
-	state := buildRunnerNextActionState(
+	state := buildRunnerNextActionStateWithAllowedTools(
 		"main",
 		1,
 		"child_task_result",
@@ -27858,6 +27861,7 @@ func TestBuildRunnerNextActionStatePrefersClosureAfterChildPacket(t *testing.T) 
 		[]workspace.ToolResult{{Tool: "task", Summary: "Child task completed", Output: "Source-body evidence paths:\n- internal/runtime/agent/runner_core.go\n\nKey findings:\n- The inspected runner source explains how this harness uses subagents through delegated child tasks.\n\nInspected paths: internal/runtime/agent/runner_core.go"}},
 		false,
 		workerruntime.WorkerRuntimeBrief{TaskFamily: "architecture", Objective: "Explain how subagents work."},
+		nil,
 	)
 	if !slices.Contains(state.Constraints, "child_packet_available") {
 		t.Fatalf("expected child-packet closure bias, got %#v", state)
@@ -27894,7 +27898,7 @@ func TestBuildRunnerNextActionStatePrefersClosureAfterTypedChildPacket(t *testin
 			{Path: "internal/runtime/agent/implementation_flow.go", Text: "`runChildTask` constructs the subagent child runner and returns the child packet."},
 		},
 	})
-	state := buildRunnerNextActionState(
+	state := buildRunnerNextActionStateWithAllowedTools(
 		"main",
 		1,
 		"child_task_result",
@@ -27903,6 +27907,7 @@ func TestBuildRunnerNextActionStatePrefersClosureAfterTypedChildPacket(t *testin
 		[]workspace.ToolResult{result},
 		false,
 		workerruntime.WorkerRuntimeBrief{TaskFamily: "architecture", Objective: "Explain how subagents work.", PermissionProfile: "read_only_workspace"},
+		nil,
 	)
 
 	if !slices.Contains(state.Constraints, "child_packet_available") {
@@ -27974,7 +27979,7 @@ func TestBuildRunnerNextActionStateDoesNotCloseOnUnrelatedChildPacket(t *testing
 		Summary: "Child task completed",
 		Output:  "Question: explain labels\nSource-body evidence paths:\n- internal/labels/labels.go\n\nKey findings:\n- ShortLabel returns Save changes.",
 	}
-	state := buildRunnerNextActionState(
+	state := buildRunnerNextActionStateWithAllowedTools(
 		"main",
 		1,
 		"child_task_result",
@@ -27983,6 +27988,7 @@ func TestBuildRunnerNextActionStateDoesNotCloseOnUnrelatedChildPacket(t *testing
 		[]workspace.ToolResult{result},
 		false,
 		workerruntime.WorkerRuntimeBrief{TaskFamily: "architecture", Objective: "Explain how subagents work."},
+		nil,
 	)
 
 	if slices.Contains(state.Constraints, "child_packet_available") {
@@ -28002,7 +28008,7 @@ func TestBuildRunnerNextActionStateDoesNotInventChildPacketForDirectReadOnlyEvid
 		PermissionProfile: "read_only_workspace",
 		Objective:         "What does the debug log redacted mode do?",
 	}
-	state := buildRunnerNextActionState(
+	state := buildRunnerNextActionStateWithAllowedTools(
 		"main",
 		1,
 		"tool_result",
@@ -28011,6 +28017,7 @@ func TestBuildRunnerNextActionStateDoesNotInventChildPacketForDirectReadOnlyEvid
 		results,
 		false,
 		brief,
+		nil,
 	)
 
 	if slices.Contains(state.Constraints, "child_packet_available") {
@@ -28299,7 +28306,7 @@ func TestBuildRunnerNextActionStateUsesClosureConstraintsForSuccessfulPostChildS
 			Output:  "internal/runtime/agent/implementation_flow.go:73:synthesizeDelegatedReadOnlyAnswer\ninternal/runtime/agent/runner_core.go:648:runChildTask\n",
 		},
 	}
-	state := buildRunnerNextActionState(
+	state := buildRunnerNextActionStateWithAllowedTools(
 		"main",
 		5,
 		"tool_result",
@@ -28308,6 +28315,7 @@ func TestBuildRunnerNextActionStateUsesClosureConstraintsForSuccessfulPostChildS
 		results,
 		false,
 		workerruntime.WorkerRuntimeBrief{TaskFamily: "architecture", Objective: "Explain how subagents work."},
+		nil,
 	)
 
 	if !slices.Contains(state.Constraints, "child_packet_available") {
@@ -28326,7 +28334,7 @@ func TestBuildRunnerNextActionStateUsesClosureConstraintsForSuccessfulPostChildS
 }
 
 func TestBuildRunnerNextActionStatePreservesDurableChildPacketClosureAfterSuccessfulOutline(t *testing.T) {
-	state := buildRunnerNextActionState(
+	state := buildRunnerNextActionStateWithAllowedTools(
 		"main",
 		6,
 		"tool_result",
@@ -28348,6 +28356,7 @@ func TestBuildRunnerNextActionStatePreservesDurableChildPacketClosureAfterSucces
 			Constraints:   []string{"child_packet_available"},
 			EvidencePaths: []string{"internal/runtime/agent/runner_core.go", "internal/runtime/agent/implementation_flow.go"},
 		},
+		nil,
 	)
 	if !slices.Contains(state.Constraints, "child_packet_available") {
 		t.Fatalf("expected durable child-packet closure constraint, got %#v", state)

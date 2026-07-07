@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -301,27 +300,28 @@ func RunLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.R
 		return report.Exit
 	}
 
-	scriptPath, cleanup, err := WriteEmbeddedPreflight()
+	result, err := runEmbeddedPreflight(briefPath, "")
 	if err != nil {
-		fmt.Fprintf(stderr, "brief lint: cannot stage preflight script: %v\n", err)
+		fmt.Fprintf(stderr, "brief lint: %v\n", err)
 
 		return 2
 	}
-	defer cleanup()
 
-	cmd := exec.Command("python3", scriptPath, briefPath)
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
+	if result.Stdout != "" {
+		fmt.Fprint(stdout, result.Stdout)
+	}
+	if result.Stderr != "" {
+		fmt.Fprint(stderr, result.Stderr)
+	}
 
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			code := exitErr.ExitCode()
-			telemetry.LogPhase(rec, "brief_lint", map[string]any{"exit": code})
+	if result.Err != nil {
+		if result.ExitError {
+			telemetry.LogPhase(rec, "brief_lint", map[string]any{"exit": result.ExitCode})
 
-			return code
+			return result.ExitCode
 		}
 
-		fmt.Fprintf(stderr, "brief lint: failed to run python3: %v\n", err)
+		fmt.Fprintf(stderr, "brief lint: failed to run python3: %v\n", result.Err)
 
 		return 2
 	}

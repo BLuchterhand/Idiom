@@ -269,7 +269,7 @@ func runExecutorPhaseScopedWithDependencies(cfg config.Config, plan planartifact
 		return report, err
 	}
 
-	verificationChecked, verificationEvidence, verificationErr := runPlanExecuteVerificationPlan(ctx, cfg.Workspace.Root, verificationPlan, jsonEvents, stdout)
+	verificationChecked, verificationEvidence, verificationErr := runPlanExecuteVerificationPlanWithParentContract(ctx, cfg.Workspace.Root, verificationPlan, "", jsonEvents, stdout)
 
 	report.Verification = verificationEvidence
 

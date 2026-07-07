@@ -34,7 +34,7 @@ func TestRunMainRecoverInspectReadsFailureRecord(t *testing.T) {
 		t.Fatalf("save progress: %v", err)
 	}
 
-	record, recordPath, err := recovery.WritePlanExecuteFailureRecord(root, planexecute.RecoveryInputFromProgress(state, statePath), time.Now().UTC())
+	record, recordPath, err := recovery.WritePlanExecuteFailureRecord(root, planexecute.RecoveryInputFromProgressWithInvariants(state, statePath, nil), time.Now().UTC())
 	if err != nil {
 		t.Fatalf("write recovery record: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestRunMainRecoverShowAcceptsFailureIDAndPrintsTerminalSummary(t *testing.T
 		t.Fatalf("save progress: %v", err)
 	}
 
-	record, _, err := recovery.WritePlanExecuteFailureRecord(root, planexecute.RecoveryInputFromProgress(state, statePath), time.Now().UTC())
+	record, _, err := recovery.WritePlanExecuteFailureRecord(root, planexecute.RecoveryInputFromProgressWithInvariants(state, statePath, nil), time.Now().UTC())
 	if err != nil {
 		t.Fatalf("write recovery record: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestRunMainRecoverShowDoesNotTrustUncorrelatedTerminalCompletion(t *testing
 		t.Fatalf("save progress: %v", err)
 	}
 
-	record, _, err := recovery.WritePlanExecuteFailureRecord(root, planexecute.RecoveryInputFromProgress(state, statePath), time.Now().UTC())
+	record, _, err := recovery.WritePlanExecuteFailureRecord(root, planexecute.RecoveryInputFromProgressWithInvariants(state, statePath, nil), time.Now().UTC())
 	if err != nil {
 		t.Fatalf("write recovery record: %v", err)
 	}
@@ -397,7 +397,7 @@ func TestRunRecoverInspectClassifiesOutOfScopeDirtyWorkspace(t *testing.T) {
 		t.Fatalf("save progress: %v", err)
 	}
 
-	if _, _, err := recovery.WritePlanExecuteFailureRecord(root, planexecute.RecoveryInputFromProgress(state, statePath), time.Now().UTC()); err != nil {
+	if _, _, err := recovery.WritePlanExecuteFailureRecord(root, planexecute.RecoveryInputFromProgressWithInvariants(state, statePath, nil), time.Now().UTC()); err != nil {
 		t.Fatalf("write recovery record: %v", err)
 	}
 
@@ -452,7 +452,7 @@ func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 		t.Fatalf("save progress: %v", err)
 	}
 
-	if _, _, err := recovery.WritePlanExecuteFailureRecord(root, planexecute.RecoveryInputFromProgress(state, statePath), time.Now().UTC()); err != nil {
+	if _, _, err := recovery.WritePlanExecuteFailureRecord(root, planexecute.RecoveryInputFromProgressWithInvariants(state, statePath, nil), time.Now().UTC()); err != nil {
 		t.Fatalf("write recovery record: %v", err)
 	}
 
@@ -1605,7 +1605,7 @@ func writeRecoverFailedPlanExecuteRecord(t *testing.T, root string, sessionID st
 		t.Fatalf("save progress: %v", err)
 	}
 
-	if _, _, err := recovery.WritePlanExecuteFailureRecord(root, planexecute.RecoveryInputFromProgress(state, statePath), time.Now().UTC()); err != nil {
+	if _, _, err := recovery.WritePlanExecuteFailureRecord(root, planexecute.RecoveryInputFromProgressWithInvariants(state, statePath, nil), time.Now().UTC()); err != nil {
 		t.Fatalf("write recovery record: %v", err)
 	}
 }

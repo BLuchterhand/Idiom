@@ -66,7 +66,7 @@ func runMainWithTelemetryDir(args []string, stdout io.Writer, stderr io.Writer, 
 				panic(recovered)
 			}
 
-			_ = rec.Close(code)
+			_ = rec.CloseWithFields(code, nil)
 		}()
 	}
 

@@ -224,7 +224,7 @@ func buildRecoverInspectReport(root string, sessionID string) (recoverInspectRep
 		return report, nil
 	}
 
-	computed, err := recovery.BuildPlanExecuteFailureRecord(planexecute.RecoveryInputFromProgress(state, statePath), time.Now().UTC())
+	computed, err := recovery.BuildPlanExecuteFailureRecord(planexecute.RecoveryInputFromProgressWithInvariants(state, statePath, nil), time.Now().UTC())
 	if err != nil {
 		return recoverInspectReport{}, err
 	}
