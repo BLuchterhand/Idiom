@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"idiom/internal/platform/commandexec"
 )
 
 func TestGoDiagnosticTargetsIncludesWorkspaceRootFiles(t *testing.T) {
@@ -193,8 +195,8 @@ func (h ownerTestHost) Execute(context.Context, ToolRequest) ToolResult {
 	return ToolResult{Error: "not implemented"}
 }
 
-func (h ownerTestHost) RunCommandDetailedWithEnv(context.Context, string, []string, string, ...string) (string, string, error) {
-	return "", "", fmt.Errorf("not implemented")
+func (h ownerTestHost) RunCommand(context.Context, string, []string, string, ...string) commandexec.Result {
+	return commandexec.Result{ExitCode: 1, Err: fmt.Errorf("not implemented")}
 }
 
 func writeOwnerTestFile(t *testing.T, path string, content string) {

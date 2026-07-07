@@ -128,8 +128,8 @@ func (m *Manager) runShell(ctx context.Context, req ToolRequest) ToolResult {
 		}
 	}
 
-	stdout, stderr, execErr := m.runCommandDetailedWithEnv(ctx, workdir, nil, m.cfg.Shell, "-lc", command)
-	rawOutput := commandexec.CombineOutput(stdout, stderr)
+	execResult := m.runCommandResultWithEnv(ctx, workdir, nil, m.cfg.Shell, "-lc", command)
+	rawOutput := commandexec.CombineOutput(execResult.Stdout, execResult.Stderr)
 	output := m.truncateCommandOutput(rawOutput)
 	result := ToolResult{
 		Tool:    ToolNameShell,
@@ -137,7 +137,7 @@ func (m *Manager) runShell(ctx context.Context, req ToolRequest) ToolResult {
 		Output:  "$ " + command + "\n" + strings.TrimSpace(output),
 	}
 
-	if execErr != nil {
+	if execErr := execResult.FailureError(fmt.Sprintf("%ds", workspaceCommandTimeoutSeconds(m.cfg.CommandTimeoutSeconds))); execErr != nil {
 		result.Error = execErr.Error()
 	} else if reason := zeroSelectedTestFailureReason(command, rawOutput); reason != "" {
 		result.Error = reason

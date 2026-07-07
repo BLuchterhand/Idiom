@@ -36,6 +36,10 @@ func TestRunCapturesStdoutStderrAndExitCode(t *testing.T) {
 	if result.Err == nil {
 		t.Fatalf("Err is nil for non-zero exit")
 	}
+
+	if err := result.FailureError(""); err == nil || !strings.Contains(err.Error(), "command failed:") {
+		t.Fatalf("FailureError = %v, want command failed error", err)
+	}
 }
 
 func TestRunMissingCommandReportsNonExitError(t *testing.T) {
@@ -85,6 +89,10 @@ func TestRunReportsTimeout(t *testing.T) {
 
 	if result.Err == nil {
 		t.Fatalf("Err is nil for timed out command")
+	}
+
+	if err := result.FailureError("10ms"); err == nil || err.Error() != "command timed out after 10ms" {
+		t.Fatalf("FailureError = %v", err)
 	}
 }
 

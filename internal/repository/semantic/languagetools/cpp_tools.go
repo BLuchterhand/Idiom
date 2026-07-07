@@ -1128,10 +1128,10 @@ func (m *Manager) compileCommandsDir() string {
 }
 
 func (m *Manager) runClangdCheck(ctx context.Context, compileDir string, rel string) (string, error) {
-	stdout, stderr, err := m.runCommandDetailedWithEnv(ctx, m.Root(), nil, "clangd", "--compile-commands-dir="+compileDir, "--check="+rel, "--log=error")
-	output := strings.TrimSpace(strings.TrimSpace(stdout) + "\n" + strings.TrimSpace(stderr))
+	result := m.runCommandResult(ctx, m.Root(), nil, "clangd", "--compile-commands-dir="+compileDir, "--check="+rel, "--log=error")
+	output := strings.TrimSpace(strings.TrimSpace(result.Stdout) + "\n" + strings.TrimSpace(result.Stderr))
 
-	return strings.TrimSpace(output), err
+	return strings.TrimSpace(output), result.FailureError("")
 }
 
 func (m *Manager) cppDiagnosticTargets(req ToolRequest) ([]string, error) {

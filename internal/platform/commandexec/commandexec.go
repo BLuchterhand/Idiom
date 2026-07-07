@@ -57,6 +57,22 @@ type Result struct {
 	Err             error
 }
 
+func (r Result) FailureError(timeoutLabel string) error {
+	if r.TimedOut {
+		if strings.TrimSpace(timeoutLabel) != "" {
+			return fmt.Errorf("command timed out after %s", strings.TrimSpace(timeoutLabel))
+		}
+
+		return errors.New("command timed out")
+	}
+
+	if r.Err != nil {
+		return fmt.Errorf("command failed: %w", r.Err)
+	}
+
+	return nil
+}
+
 const defaultProcessStderrLimit = 64 * 1024
 
 func Run(parent context.Context, spec Spec) Result {

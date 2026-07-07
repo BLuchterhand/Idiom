@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -892,19 +891,13 @@ func (m *Manager) contextTracePack(ctx context.Context, req ToolRequest) ToolRes
 		return ToolResult{Tool: ToolNameContextTracePack, Summary: "Context trace pack failed to resolve workdir", Error: err.Error()}
 	}
 
-	stdout, stderr, execErr := m.runCommandDetailedWithEnv(ctx, workdir, nil, m.cfg.Shell, "-lc", command)
+	execResult := m.runCommandResultWithEnv(ctx, workdir, nil, m.cfg.Shell, "-lc", command)
 	exitCode := 0
 	execError := ""
 
-	if execErr != nil {
-		execError = execErr.Error()
-		exitCode = 1
-
-		var exitErr *exec.ExitError
-
-		if errors.As(execErr, &exitErr) {
-			exitCode = exitErr.ExitCode()
-		}
+	if execResult.Err != nil {
+		execError = execResult.FailureError(fmt.Sprintf("%ds", workspaceCommandTimeoutSeconds(m.cfg.CommandTimeoutSeconds))).Error()
+		exitCode = execResult.ExitCode
 	}
 
 	result, err := comprehension.Trace(comprehension.TraceOptions{
@@ -912,8 +905,8 @@ func (m *Manager) contextTracePack(ctx context.Context, req ToolRequest) ToolRes
 		Command:      command,
 		Path:         req.Path,
 		Language:     req.Language,
-		Stdout:       stdout,
-		Stderr:       stderr,
+		Stdout:       execResult.Stdout,
+		Stderr:       execResult.Stderr,
 		ExitCode:     exitCode,
 		ExecError:    execError,
 		Limit:        req.Limit,

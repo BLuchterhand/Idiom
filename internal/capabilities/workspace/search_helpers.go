@@ -68,12 +68,13 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 
 	args := backend.args(req, m.defaultSearchExcludeGlobs(req.Path, req.Pattern, req.Glob))
 
-	stdout, stderr, err := m.runCommandDetailedWithEnv(parent, workdir, nil, backend.bin, args...)
-	if err != nil && !isNoMatchExit(err) {
-		output := strings.TrimSpace(strings.TrimSpace(stdout) + "\n" + strings.TrimSpace(stderr))
-		errMsg := err.Error()
+	execResult := m.runCommandResultWithEnv(parent, workdir, nil, backend.bin, args...)
+	noMatch := execResult.ExitError && execResult.ExitCode == 1
+	if execResult.Err != nil && !noMatch {
+		output := strings.TrimSpace(strings.TrimSpace(execResult.Stdout) + "\n" + strings.TrimSpace(execResult.Stderr))
+		errMsg := execResult.FailureError(fmt.Sprintf("%ds", workspaceCommandTimeoutSeconds(m.cfg.CommandTimeoutSeconds))).Error()
 
-		if trimmed := strings.TrimSpace(stderr); trimmed != "" {
+		if trimmed := strings.TrimSpace(execResult.Stderr); trimmed != "" {
 			errMsg = fmt.Sprintf("%s: %s", errMsg, trimmed)
 		}
 
@@ -85,7 +86,7 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 		}
 	}
 
-	if isNoMatchExit(err) || strings.TrimSpace(stdout) == "" {
+	if noMatch || strings.TrimSpace(execResult.Stdout) == "" {
 		// Zero-hit enrichment. Common confused-mode: model pastes a
 		// symbol name as a search_content pattern but the actual
 		// definition lives in a file whose *name* contains that term
@@ -114,7 +115,7 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 		}
 	}
 
-	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	lines := strings.Split(strings.TrimSpace(execResult.Stdout), "\n")
 	// Hard display cap. Logs show 100+ hits routinely in monorepos, and
 	// the model re-ingests the full result on every subsequent turn.
 	// Capping the rendered view at 50 lets the model scan the top hits,

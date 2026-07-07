@@ -869,7 +869,7 @@ func (m *Manager) runGoPLSCommand(ctx context.Context, args ...string) (string, 
 	_ = os.MkdirAll(filepath.Join(cacheRoot, "gocache"), 0o755)
 	_ = os.MkdirAll(filepath.Join(cacheRoot, "home"), 0o755)
 
-	stdout, stderr, err := m.runCommandDetailedWithEnv(
+	result := m.runCommandResult(
 		ctx,
 		m.Root(),
 		[]string{
@@ -880,10 +880,10 @@ func (m *Manager) runGoPLSCommand(ctx context.Context, args ...string) (string, 
 		gopls,
 		args...,
 	)
-	output := strings.TrimSpace(stdout)
+	output := strings.TrimSpace(result.Stdout)
 
-	if err != nil {
-		errText := strings.TrimSpace(stderr)
+	if err := result.FailureError(""); err != nil {
+		errText := strings.TrimSpace(result.Stderr)
 		if errText != "" {
 			if output != "" {
 				output += "\n"

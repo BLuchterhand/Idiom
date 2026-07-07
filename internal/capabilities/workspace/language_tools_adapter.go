@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"idiom/internal/platform/commandexec"
 	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/repository/semantic/languagetools"
 )
@@ -88,8 +89,8 @@ func (h languageToolHost) Execute(ctx context.Context, req languagetools.ToolReq
 }
 
 // idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host
-func (h languageToolHost) RunCommandDetailedWithEnv(ctx context.Context, dir string, extraEnv []string, name string, args ...string) (string, string, error) {
-	return h.manager.runCommandDetailedWithEnv(ctx, dir, extraEnv, name, args...)
+func (h languageToolHost) RunCommand(ctx context.Context, dir string, extraEnv []string, name string, args ...string) commandexec.Result {
+	return h.manager.runCommandResultWithEnv(ctx, dir, extraEnv, name, args...)
 }
 
 func (m *Manager) executeLanguageTool(ctx context.Context, req ToolRequest) ToolResult {

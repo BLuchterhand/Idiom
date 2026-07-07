@@ -730,11 +730,11 @@ func (m *Manager) javaDiagnostics(ctx context.Context, req ToolRequest) ToolResu
 	}
 
 	if _, err := os.Stat(filepath.Join(m.Root(), "pom.xml")); err == nil {
-		stdout, stderr, runErr := m.runCommandDetailedWithEnv(ctx, m.Root(), nil, "mvn", "-q", "-o", "compile", "-DskipTests")
-		output := strings.TrimSpace(strings.TrimSpace(stdout) + "\n" + strings.TrimSpace(stderr))
+		result := m.runCommandResult(ctx, m.Root(), nil, "mvn", "-q", "-o", "compile", "-DskipTests")
+		output := strings.TrimSpace(strings.TrimSpace(result.Stdout) + "\n" + strings.TrimSpace(result.Stderr))
 
-		if runErr != nil && output == "" {
-			output = runErr.Error()
+		if err := result.FailureError(""); err != nil && output == "" {
+			output = err.Error()
 		}
 
 		if output == "" {
@@ -745,11 +745,11 @@ func (m *Manager) javaDiagnostics(ctx context.Context, req ToolRequest) ToolResu
 	}
 
 	if _, err := os.Stat(filepath.Join(m.Root(), "build.gradle")); err == nil {
-		stdout, stderr, runErr := m.runCommandDetailedWithEnv(ctx, m.Root(), nil, "gradle", "--offline", "--quiet", "compileJava")
-		output := strings.TrimSpace(strings.TrimSpace(stdout) + "\n" + strings.TrimSpace(stderr))
+		result := m.runCommandResult(ctx, m.Root(), nil, "gradle", "--offline", "--quiet", "compileJava")
+		output := strings.TrimSpace(strings.TrimSpace(result.Stdout) + "\n" + strings.TrimSpace(result.Stderr))
 
-		if runErr != nil && output == "" {
-			output = runErr.Error()
+		if err := result.FailureError(""); err != nil && output == "" {
+			output = err.Error()
 		}
 
 		if output == "" {
@@ -767,12 +767,12 @@ func (m *Manager) javaDiagnostics(ctx context.Context, req ToolRequest) ToolResu
 			continue
 		}
 
-		stdout, stderr, runErr := m.runCommandDetailedWithEnv(ctx, m.Root(), nil, "javac", "-Xlint:all", "-d", os.TempDir(), abs)
-		chunk := strings.TrimSpace(strings.TrimSpace(stdout) + "\n" + strings.TrimSpace(stderr))
+		result := m.runCommandResult(ctx, m.Root(), nil, "javac", "-Xlint:all", "-d", os.TempDir(), abs)
+		chunk := strings.TrimSpace(strings.TrimSpace(result.Stdout) + "\n" + strings.TrimSpace(result.Stderr))
 
 		if chunk == "" {
-			if runErr != nil {
-				chunk = fmt.Sprintf("%s: %s", rel, runErr.Error())
+			if err := result.FailureError(""); err != nil {
+				chunk = fmt.Sprintf("%s: %s", rel, err.Error())
 			} else {
 				chunk = fmt.Sprintf("%s: no warnings or errors", rel)
 			}

@@ -9,10 +9,10 @@ import (
 )
 
 func (m *Manager) runCommand(parent context.Context, dir, name string, args ...string) (string, error) {
-	stdout, stderr, err := m.runCommandDetailedWithEnv(parent, dir, nil, name, args...)
-	output := m.truncateCommandOutput(commandexec.CombineOutput(stdout, stderr))
+	result := m.runCommandResultWithEnv(parent, dir, nil, name, args...)
+	output := m.truncateCommandOutput(commandexec.CombineOutput(result.Stdout, result.Stderr))
 
-	if err != nil {
+	if err := result.FailureError(fmt.Sprintf("%ds", workspaceCommandTimeoutSeconds(m.cfg.CommandTimeoutSeconds))); err != nil {
 		return output, err
 	}
 
@@ -27,9 +27,9 @@ func (m *Manager) truncateCommandOutput(output string) string {
 	return output
 }
 
-func (m *Manager) runCommandDetailedWithEnv(parent context.Context, dir string, extraEnv []string, name string, args ...string) (string, string, error) {
+func (m *Manager) runCommandResultWithEnv(parent context.Context, dir string, extraEnv []string, name string, args ...string) commandexec.Result {
 	timeoutSeconds := workspaceCommandTimeoutSeconds(m.cfg.CommandTimeoutSeconds)
-	result := commandexec.Run(parent, commandexec.Spec{
+	return commandexec.Run(parent, commandexec.Spec{
 		Mode:           commandexec.ModeArgv,
 		Name:           name,
 		Args:           args,
@@ -39,16 +39,6 @@ func (m *Manager) runCommandDetailedWithEnv(parent context.Context, dir string, 
 		MaxOutputBytes: workspaceCommandCaptureBytes(m.cfg.MaxOutputBytes),
 		CanonicalPWD:   true,
 	})
-
-	if result.TimedOut {
-		return result.Stdout, result.Stderr, fmt.Errorf("command timed out after %ds", timeoutSeconds)
-	}
-
-	if result.Err != nil {
-		return result.Stdout, result.Stderr, fmt.Errorf("command failed: %w", result.Err)
-	}
-
-	return result.Stdout, result.Stderr, nil
 }
 
 func workspaceCommandTimeoutSeconds(seconds int) int {

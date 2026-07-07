@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/failures"
 	semanticcpp "idiom/internal/repository/semantic/cpp"
 	semanticgo "idiom/internal/repository/semantic/golang"
@@ -37,7 +38,7 @@ type Host interface {
 	PrimeDiscoveredPaths(paths []string)
 	PathForHandle(handle string) (string, error)
 	Execute(ctx context.Context, req ToolRequest) ToolResult
-	RunCommandDetailedWithEnv(ctx context.Context, dir string, extraEnv []string, name string, args ...string) (string, string, error)
+	RunCommand(ctx context.Context, dir string, extraEnv []string, name string, args ...string) commandexec.Result
 }
 
 type Manager struct {
@@ -173,18 +174,18 @@ func (m *Manager) searchContent(ctx context.Context, req ToolRequest, toolName s
 	return result
 }
 
-func (m *Manager) runCommandDetailedWithEnv(ctx context.Context, dir string, extraEnv []string, name string, args ...string) (string, string, error) {
+func (m *Manager) runCommandResult(ctx context.Context, dir string, extraEnv []string, name string, args ...string) commandexec.Result {
 	if m == nil || m.host == nil {
-		return "", "", fmt.Errorf("language tool host unavailable")
+		return commandexec.Result{ExitCode: 1, Err: fmt.Errorf("language tool host unavailable")}
 	}
 
-	return m.host.RunCommandDetailedWithEnv(ctx, dir, extraEnv, name, args...)
+	return m.host.RunCommand(ctx, dir, extraEnv, name, args...)
 }
 
 func (m *Manager) runCommand(ctx context.Context, dir, name string, args ...string) (string, error) {
-	stdout, stderr, err := m.runCommandDetailedWithEnv(ctx, dir, nil, name, args...)
-	output := strings.TrimSpace(stdout)
-	errText := strings.TrimSpace(stderr)
+	result := m.runCommandResult(ctx, dir, nil, name, args...)
+	output := strings.TrimSpace(result.Stdout)
+	errText := strings.TrimSpace(result.Stderr)
 
 	if errText != "" {
 		if output != "" {
@@ -198,7 +199,7 @@ func (m *Manager) runCommand(ctx context.Context, dir, name string, args ...stri
 		output = output[:max] + "\n...[truncated]"
 	}
 
-	if err != nil {
+	if err := result.FailureError(""); err != nil {
 		return output, err
 	}
 
