@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"idiom/internal/evidence/eval"
+	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/textutil"
 )
 
@@ -177,12 +178,12 @@ func (r liveSuiteRunner) runTask(index int, total int, task eval.SWETask, logPat
 func (r liveSuiteRunner) suiteGitRoot() string {
 	dir := filepath.Dir(r.suitePath)
 
-	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	out, err := gitstate.Output(context.Background(), dir, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return dir
 	}
 
-	return strings.TrimSpace(string(out))
+	return strings.TrimSpace(out)
 }
 
 func (r liveSuiteRunner) ensureRunnerErrorLog(task eval.SWETask, logPath string, runErr error) error {

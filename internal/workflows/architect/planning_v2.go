@@ -2,17 +2,18 @@ package architect
 
 import (
 	"cmp"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/textutil"
 )
 
@@ -798,16 +799,12 @@ func stableHandlePart(value string) string {
 }
 
 func gitOutput(root string, args ...string) string {
-	cmd := exec.Command("git", args...)
-
-	cmd.Dir = filepath.Clean(root)
-
-	data, err := cmd.Output()
+	data, err := gitstate.Output(context.Background(), filepath.Clean(root), args...)
 	if err != nil {
 		return ""
 	}
 
-	return strings.TrimSpace(string(data))
+	return strings.TrimSpace(data)
 }
 
 func precisionTier(confidence string) string {

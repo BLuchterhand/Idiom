@@ -1,14 +1,15 @@
 package eval
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
 
+	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/comprehension"
 )
@@ -589,11 +590,11 @@ func validateFixtureGitRefReachable(repoDir string, ref string) error {
 		return fmt.Errorf("must not begin with '-'")
 	}
 
-	out, err := exec.Command("git", "-C", repoDir, "rev-parse", "--verify", ref+"^{commit}").CombinedOutput()
-	if err != nil {
-		text := strings.TrimSpace(string(out))
+	result := gitstate.CombinedOutput(context.Background(), repoDir, "rev-parse", "--verify", ref+"^{commit}")
+	if result.Err != nil {
+		text := strings.TrimSpace(result.Stdout)
 		if text == "" {
-			text = err.Error()
+			text = result.Err.Error()
 		}
 
 		return fmt.Errorf("not a reachable commit from suite repository: %s", text)
