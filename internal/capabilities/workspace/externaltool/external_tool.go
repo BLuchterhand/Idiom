@@ -1,7 +1,6 @@
 package externaltool
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"idiom/internal/platform/commandexec"
 )
 
 // Tool registers an arbitrary shell-invokable tool.
@@ -215,76 +216,36 @@ func (r *Registry) Invoke(ctx context.Context, name string, input json.RawMessag
 		timeout = 30 * time.Second
 	}
 
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
-
-	defer cancel()
-
-	cmd := exec.CommandContext(runCtx, tool.Command, args...)
+	workdir := baseDir
 	if cwd := strings.TrimSpace(tool.Cwd); cwd != "" {
-		cmd.Dir = expandCwd(cwd, baseDir)
-	} else if baseDir != "" {
-		cmd.Dir = baseDir
+		workdir = expandCwd(cwd, baseDir)
 	}
 
-	cmd.Stdin = strings.NewReader(string(input))
 	if os.Getenv("IDIOM_DEBUG_TOOLS") != "" {
-		fmt.Fprintf(os.Stderr, "[idiom-debug] external tool=%s argv=%v cwd=%s\n", name, args, cmd.Dir)
+		fmt.Fprintf(os.Stderr, "[idiom-debug] external tool=%s argv=%v cwd=%s\n", name, args, workdir)
 	}
 
-	outputBuffer := newLimitedOutputBuffer(maxOutputBytes)
-	cmd.Stdout = outputBuffer
-	cmd.Stderr = outputBuffer
-	err := cmd.Run()
-	output, truncated := outputBuffer.String()
+	result := commandexec.Run(ctx, commandexec.Spec{
+		Name:           tool.Command,
+		Args:           args,
+		Dir:            workdir,
+		Stdin:          string(input),
+		Timeout:        timeout,
+		MaxOutputBytes: maxOutputBytes,
+		MergeOutput:    true,
+	})
+	output := result.CombinedOutput()
+	truncated := result.StdoutTruncated || result.StderrTruncated
 
-	if err != nil {
-		if runCtx.Err() == context.DeadlineExceeded {
+	if result.Err != nil {
+		if result.TimedOut {
 			return output, truncated, fmt.Errorf("external tool %q: timed out after %s", name, timeout)
 		}
 
-		return output, truncated, fmt.Errorf("external tool %q: %w", name, err)
+		return output, truncated, fmt.Errorf("external tool %q: %w", name, result.Err)
 	}
 
 	return output, truncated, nil
-}
-
-type limitedOutputBuffer struct {
-	buf       bytes.Buffer
-	limit     int
-	truncated bool
-}
-
-func newLimitedOutputBuffer(limit int) *limitedOutputBuffer {
-	return &limitedOutputBuffer{limit: limit}
-}
-
-func (b *limitedOutputBuffer) Write(p []byte) (int, error) {
-	if b.limit <= 0 {
-		return b.buf.Write(p)
-	}
-
-	remaining := b.limit - b.buf.Len()
-	if remaining <= 0 {
-		b.truncated = true
-		return len(p), nil
-	}
-
-	if len(p) > remaining {
-		_, _ = b.buf.Write(p[:remaining])
-		b.truncated = true
-		return len(p), nil
-	}
-
-	return b.buf.Write(p)
-}
-
-func (b *limitedOutputBuffer) String() (string, bool) {
-	output := b.buf.String()
-	if b.truncated {
-		output += "\n...[truncated]"
-	}
-
-	return output, b.truncated
 }
 
 func unavailableReason(tool Tool, baseDir string) string {

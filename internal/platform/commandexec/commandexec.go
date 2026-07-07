@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"idiom/internal/platform/config"
@@ -28,6 +29,7 @@ type Spec struct {
 
 	Command string
 	Shell   string
+	Stdin   string
 
 	Dir            string
 	Env            []string
@@ -35,6 +37,7 @@ type Spec struct {
 	Timeout        time.Duration
 	MaxOutputBytes int
 	CanonicalPWD   bool
+	MergeOutput    bool
 }
 
 type Result struct {
@@ -72,9 +75,15 @@ func Run(parent context.Context, spec Spec) Result {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = spec.Dir
 	cmd.Env = commandEnv(spec)
+	if spec.Stdin != "" {
+		cmd.Stdin = strings.NewReader(spec.Stdin)
+	}
 
 	stdout := newLimitedOutputBuffer(spec.MaxOutputBytes)
-	stderr := newLimitedOutputBuffer(spec.MaxOutputBytes)
+	stderr := stdout
+	if !spec.MergeOutput {
+		stderr = newLimitedOutputBuffer(spec.MaxOutputBytes)
+	}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 
@@ -83,6 +92,10 @@ func Run(parent context.Context, spec Spec) Result {
 	duration := time.Since(start)
 	stdoutText, stdoutTruncated := stdout.String()
 	stderrText, stderrTruncated := stderr.String()
+	if spec.MergeOutput {
+		stderrText = ""
+		stderrTruncated = false
+	}
 
 	result := Result{
 		Stdout:          stdoutText,
@@ -211,6 +224,7 @@ func setEnvValue(env []string, key string, value string) []string {
 }
 
 type limitedOutputBuffer struct {
+	mu        sync.Mutex
 	buf       bytes.Buffer
 	limit     int
 	truncated bool
@@ -221,6 +235,9 @@ func newLimitedOutputBuffer(limit int) *limitedOutputBuffer {
 }
 
 func (b *limitedOutputBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	if b.limit <= 0 {
 		return b.buf.Write(p)
 	}
@@ -243,6 +260,9 @@ func (b *limitedOutputBuffer) Write(p []byte) (int, error) {
 }
 
 func (b *limitedOutputBuffer) String() (string, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	output := b.buf.String()
 	if b.truncated {
 		output += "\n...[truncated]"

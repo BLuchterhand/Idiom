@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -156,6 +157,37 @@ func TestManagerBoundsExternalToolOutput(t *testing.T) {
 	}
 	if !strings.Contains(result.Summary, "output truncated") {
 		t.Fatalf("external tool summary missing truncation signal: %#v", result.Summary)
+	}
+}
+
+func TestManagerPassesExternalToolInputOnStdin(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0o755); err != nil {
+		t.Fatalf("mkdir scripts: %v", err)
+	}
+
+	script := filepath.Join(root, "scripts", "stdin.py")
+	if err := os.WriteFile(script, []byte("#!/usr/bin/env python3\nimport sys\nprint(sys.stdin.read())\n"), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	reg, err := NewExternalToolRegistry([]ExternalTool{{Name: "stdin_tool", Command: "./scripts/stdin.py"}})
+	if err != nil {
+		t.Fatalf("NewExternalToolRegistry: %v", err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root, MaxOutputBytes: 1024})
+	mgr.SetExternalToolsRegistry(reg)
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "stdin_tool",
+		Args: json.RawMessage(`{"message":"hello"}`),
+	})
+	if result.Error != "" {
+		t.Fatalf("external tool failed: %#v", result)
+	}
+	if !strings.Contains(result.Output, `"message":"hello"`) {
+		t.Fatalf("external tool did not receive JSON input on stdin: %#v", result.Output)
 	}
 }
 

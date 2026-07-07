@@ -2,6 +2,7 @@ package commandexec
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,6 +116,41 @@ func TestRunPlainShellMode(t *testing.T) {
 	}
 }
 
+func TestRunPassesStdin(t *testing.T) {
+	spec := helperSpec("echo-stdin")
+	spec.Stdin = `{"message":"hello"}`
+
+	result := Run(t.Context(), spec)
+
+	if result.Err != nil {
+		t.Fatalf("Run failed: %v", result.Err)
+	}
+
+	if strings.TrimSpace(result.Stdout) != spec.Stdin {
+		t.Fatalf("Stdout = %q, want stdin %q", result.Stdout, spec.Stdin)
+	}
+}
+
+func TestRunMergeOutputUsesSingleOutputLimit(t *testing.T) {
+	spec := helperSpec("mixed-output")
+	spec.MaxOutputBytes = 12
+	spec.MergeOutput = true
+
+	result := Run(t.Context(), spec)
+
+	if !result.StdoutTruncated {
+		t.Fatalf("StdoutTruncated = false; result=%#v", result)
+	}
+
+	if result.Stderr != "" || result.StderrTruncated {
+		t.Fatalf("merged output should be returned as stdout only, result=%#v", result)
+	}
+
+	if len(strings.TrimSuffix(result.Stdout, "\n...[truncated]")) > 12 {
+		t.Fatalf("merged output exceeded single limit: %q", result.Stdout)
+	}
+}
+
 func helperSpec(args ...string) Spec {
 	return helperSpecWithDir("", args...)
 }
@@ -165,6 +201,16 @@ func TestCommandExecHelperProcess(t *testing.T) {
 
 	case "print-pwd":
 		fmt.Fprint(os.Stdout, filepath.Clean(os.Getenv("PWD")))
+		os.Exit(0)
+
+	case "echo-stdin":
+		data, _ := io.ReadAll(os.Stdin)
+		fmt.Fprint(os.Stdout, string(data))
+		os.Exit(0)
+
+	case "mixed-output":
+		fmt.Fprint(os.Stdout, strings.Repeat("o", 16))
+		fmt.Fprint(os.Stderr, strings.Repeat("e", 16))
 		os.Exit(0)
 	}
 
