@@ -147,15 +147,6 @@ type codeNavigationSpec struct {
 	Class           string
 }
 
-type LSPPosition = languagetools.LSPPosition
-type LSPRange = languagetools.LSPRange
-type LSPLocation = languagetools.LSPLocation
-type LSPLocationLink = languagetools.LSPLocationLink
-type LSPSymbolInfo = languagetools.LSPSymbolInfo
-type LSPCallHierarchyItem = languagetools.LSPCallHierarchyItem
-type LSPIncomingCall = languagetools.LSPIncomingCall
-type LSPOutgoingCall = languagetools.LSPOutgoingCall
-
 func codeNavigationSpecFor(value string) (codeNavigationSpec, error) {
 	spec, err := languagetools.CodeNavigationSpecFor(value)
 	if err != nil {

@@ -262,7 +262,7 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 	}
 
 	if opts.Mode == "refine" {
-		refineOpts := laneRefineOptions{
+		refineOpts := refinecmd.Options{
 			SpecPath:    opts.RefineSpecPath,
 			OutputPath:  opts.RefineOutputPath,
 			Title:       opts.Title,

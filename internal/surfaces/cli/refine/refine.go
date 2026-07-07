@@ -74,8 +74,8 @@ var refineReviewTemplate = cliassets.MustRefineTemplate("review.md")
 
 var refinePatchTemplate = cliassets.MustRefineTemplate("patch.md")
 
-// laneRefineOptions captures the refine-mode-specific flags.
-type laneRefineOptions struct {
+// Options captures the refine-mode-specific flags.
+type Options struct {
 	SpecPath    string
 	OutputPath  string
 	Title       string
@@ -87,20 +87,17 @@ type laneRefineOptions struct {
 	Mode string
 }
 
-// refineDispatchFn is the per-step dispatcher. Default impl shells
+// DispatchFunc is the per-step dispatcher. Default impl shells
 // out to artifact generation for scratchpad deliverables; tests
 // inject a fake.
-type refineDispatchFn func(metaBriefPath string, stdout, stderr io.Writer) int
-
-type Options = laneRefineOptions
-type DispatchFunc = refineDispatchFn
+type DispatchFunc func(metaBriefPath string, stdout, stderr io.Writer) int
 
 var laneBriefLintRunner = func(args []string, stdout io.Writer, stderr io.Writer) int {
 	return briefcmd.RunLint(args, stdout, stderr, nil)
 }
 
 // Refine routes all phases to the primary 35B-A3B backend. The
-// wrapper now owns scratchpad materialization through artifact
+// command path owns scratchpad materialization through artifact
 // commands, which avoids depending on local Qwen tool-call selection
 // for review and patch documents.
 const refineDefaultPool = "qwen-35b"
@@ -599,7 +596,7 @@ func Run(opts Options, dispatch DispatchFunc, stdout, stderr io.Writer) int {
 	return finalizeRefineWithTitleAndOverlay(finalDraft, opts.OutputPath, opts.Title, opts.MaxIters, "max-iters-exhausted", opts.ProjectRoot, mode, specDeliverableTargets, stderr)
 }
 
-func validateRefineOptions(opts *laneRefineOptions) error {
+func validateRefineOptions(opts *Options) error {
 	if strings.TrimSpace(opts.SpecPath) == "" {
 		return fmt.Errorf("--spec is required")
 	}
@@ -663,7 +660,7 @@ func refineSanitizeTitle(title string) string {
 	return cleaned
 }
 
-func writeRefineDraftMeta(metaPath, draftPath string, opts laneRefineOptions, specBody, mode string, stderr io.Writer) error {
+func writeRefineDraftMeta(metaPath, draftPath string, opts Options, specBody, mode string, stderr io.Writer) error {
 	template, source, err := resolveRefineDraftTemplate(opts.ProjectRoot, mode)
 	if err != nil {
 		return err

@@ -21,9 +21,12 @@ Idiom is a local coding-agent harness. The model owns strategy; the harness owns
 - Prefer clear, explicit Go over clever compression.
 - Keep business logic, infrastructure, persistence, CLI, TUI, and prompt
   concerns separated unless an existing package intentionally combines them.
-- Do not create pass-through wrappers, wrapper-only migration steps, or one-off
-  helpers. Move callers to the real owner and delete the old authority instead.
-  Abstract only when a shared concept has proved itself.
+- Do not create pass-through wrappers, alias-only compatibility surfaces,
+  wrapper-only migration steps, or one-off helpers. Move callers to the real
+  owner and delete the old authority instead. A temporary wrapper or alias that
+  merely renames or forwards to an owner is still prohibited even when intended
+  to make a later migration easier. Abstract only when a shared concept has
+  proved itself.
 - Use constants, typed enums, structs, and narrow interfaces where they encode
   real contracts. Do not add ceremony for simple values.
 - Tests should specify behavior and meaningful edge cases, not implementation

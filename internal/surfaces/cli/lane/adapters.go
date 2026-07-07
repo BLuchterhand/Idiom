@@ -5,7 +5,6 @@ import (
 
 	"idiom/internal/evidence/lanehistory"
 	"idiom/internal/runtime/readiness"
-	refinecmd "idiom/internal/surfaces/cli/refine"
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
 	"idiom/internal/workflows/atomintake"
 )
@@ -20,7 +19,6 @@ const laneHistoryRelPath = lanehistory.RelPath
 type laneHistoryEvent = lanehistory.Event
 type laneHistoryFilter = lanehistory.Filter
 type readinessProfileReport = readiness.ProfileReport
-type laneRefineOptions = refinecmd.Options
 
 func laneRunFinalState(exitCode int, degradations []laneDegradation, out []byte) string {
 	if exitCode != 0 {

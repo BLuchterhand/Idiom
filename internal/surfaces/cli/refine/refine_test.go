@@ -230,7 +230,7 @@ func firstBacktickMDPath(line string) string {
 	}
 }
 
-func stubDispatcher(t *testing.T, responses []string) (refineDispatchFn, *int) {
+func stubDispatcher(t *testing.T, responses []string) (DispatchFunc, *int) {
 	t.Helper()
 
 	calls := 0
@@ -409,7 +409,7 @@ func TestRunLaneRefineDoesNotAcceptStaleDraftOutput(t *testing.T) {
 		t.Fatalf("seed spec: %v", err)
 	}
 
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
 		Title:       "stale-output",
@@ -535,7 +535,7 @@ func TestWriteRefineDraftMetaDoesNotLeakSpecRequiredEditPaths(t *testing.T) {
 
 Change the real implementation file.
 `
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    filepath.Join(root, "spec.md"),
 		OutputPath:  filepath.Join(root, "brief.md"),
 		Title:       "atom",
@@ -707,7 +707,7 @@ func TestRunLaneRefineConvergesOnShipAsIsVerdict(t *testing.T) {
 	}
 
 	outPath := filepath.Join(root, "brief.md")
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  outPath,
 		Title:       "test-atom",
@@ -781,7 +781,7 @@ func TestRunLaneRefineRefusesCompletedSpecStatus(t *testing.T) {
 		t.Fatalf("seed spec: %v", err)
 	}
 
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
 		Title:       "completed-spec",
@@ -849,7 +849,7 @@ func TestRunLaneRefineWritesMetricsOnDraftDispatchFailure(t *testing.T) {
 	}
 
 	outPath := filepath.Join(root, "brief.md")
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  outPath,
 		Title:       "fail-atom",
@@ -905,7 +905,7 @@ func TestRunLaneRefineShipsBestDraftOnDivergingLoop(t *testing.T) {
 		t.Fatalf("seed spec: %v", err)
 	}
 
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
 		Title:       "test-atom",
@@ -956,7 +956,7 @@ func TestRunLaneRefineFailsoftShipsBestDraftWhenLaterReviewWedges(t *testing.T) 
 		t.Fatalf("seed spec: %v", err)
 	}
 
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
 		Title:       "test-atom",
@@ -970,7 +970,7 @@ func TestRunLaneRefineFailsoftShipsBestDraftWhenLaterReviewWedges(t *testing.T) 
 	// here we use a stub variant that returns non-zero on the 4th
 	// dispatch.
 	calls := 0
-	dispatch := refineDispatchFn(func(metaBriefPath string, stdout, stderr io.Writer) int {
+	dispatch := DispatchFunc(func(metaBriefPath string, stdout, stderr io.Writer) int {
 		calls++
 
 		body, err := os.ReadFile(metaBriefPath)
@@ -1117,7 +1117,7 @@ func TestRunLaneRefineFailsHardWhenIter1HasNoReviewedDraft(t *testing.T) {
 		t.Fatalf("seed spec: %v", err)
 	}
 
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
 		Title:       "test-atom",
@@ -1125,7 +1125,7 @@ func TestRunLaneRefineFailsHardWhenIter1HasNoReviewedDraft(t *testing.T) {
 		ProjectRoot: root,
 	}
 	// Iter-1 draft dispatch fails immediately.
-	dispatch := refineDispatchFn(func(metaBriefPath string, stdout, stderr io.Writer) int {
+	dispatch := DispatchFunc(func(metaBriefPath string, stdout, stderr io.Writer) int {
 		return 2
 	})
 
@@ -1150,7 +1150,7 @@ func TestRunLaneRefineExhaustsMaxItersAndShipsLatest(t *testing.T) {
 		t.Fatalf("seed spec: %v", err)
 	}
 
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
 		Title:       "test-atom",
@@ -1198,7 +1198,7 @@ func TestRunLaneRefineContinuesThroughChangedBugSetUntilMaxIters(t *testing.T) {
 		t.Fatalf("seed spec: %v", err)
 	}
 
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
 		Title:       "no-improvement",
@@ -1248,7 +1248,7 @@ func TestRunLaneRefineFinalizesBestDraftNotLatest(t *testing.T) {
 		t.Fatalf("seed spec: %v", err)
 	}
 
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
 		Title:       "best-draft",
@@ -1436,7 +1436,7 @@ func TestRunLaneRefineAppliesProjectOverlay(t *testing.T) {
 		t.Fatalf("seed spec: %v", err)
 	}
 
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
 		Title:       "overlay-test",
@@ -1556,7 +1556,7 @@ func TestRunLaneRefinePatchPhaseSeesLintPreload(t *testing.T) {
 		t.Fatalf("seed spec: %v", err)
 	}
 
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
 		Title:       "patch-lint",
@@ -2111,7 +2111,7 @@ func TestRunLaneRefinePersistLintJSONAlongMetricsJSON(t *testing.T) {
 		t.Fatalf("seed spec: %v", err)
 	}
 
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
 		Title:       "persist-lint",
@@ -2691,7 +2691,7 @@ func TestMarkdownDraftTemplateClarifiesTwoPaths(t *testing.T) {
 
 	metaPath := filepath.Join(root, "meta-draft.md")
 	draftPath := filepath.Join(root, "draft.md")
-	opts := laneRefineOptions{
+	opts := Options{
 		Title:       "two-path-test",
 		ProjectRoot: root,
 	}
@@ -2804,7 +2804,7 @@ func TestRunLaneRefineOverlayAndOverrideTemplateInteract(t *testing.T) {
 		t.Fatalf("seed spec: %v", err)
 	}
 
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
 		Title:       "interact-test",
@@ -2874,7 +2874,7 @@ func TestRunLaneRefineFailsoftPreservesOverlay(t *testing.T) {
 		t.Fatalf("seed spec: %v", err)
 	}
 
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
 		Title:       "failsoft-overlay",
@@ -2974,7 +2974,7 @@ func TestRunLaneRefineBareRepoSkipsOverlay(t *testing.T) {
 		t.Fatalf("seed spec: %v", err)
 	}
 
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
 		Title:       "bare",
@@ -3353,7 +3353,7 @@ func TestRunLaneRefineAutoAppendsArtifactClosureToOverride(t *testing.T) {
 		t.Fatalf("seed spec: %v", err)
 	}
 
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
 		Title:       "closure-test",
@@ -3422,7 +3422,7 @@ func TestRunLaneRefineUsesProjectOverrideTemplate(t *testing.T) {
 		t.Fatalf("seed spec: %v", err)
 	}
 
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
 		Title:       "override-test",
@@ -3508,7 +3508,7 @@ func TestRunLaneRefineRoutesMarkdownSpecToMarkdownTemplate(t *testing.T) {
 		t.Fatalf("seed spec: %v", err)
 	}
 
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
 		Title:       "markdown-spec",
@@ -3557,7 +3557,7 @@ func TestRunLaneRefineModeOverrideForcesAnchored(t *testing.T) {
 		t.Fatalf("seed spec: %v", err)
 	}
 
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
 		Title:       "override-anchored",
@@ -3606,7 +3606,7 @@ func TestRunLaneRefineInlinesLintOutputIntoReviewMeta(t *testing.T) {
 		t.Fatalf("seed spec: %v", err)
 	}
 
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
 		Title:       "lint-preload",
@@ -3692,7 +3692,7 @@ func TestRunLaneRefinePreloadsFinalShapeLintFindings(t *testing.T) {
 		refineDeliverableMarker + "\n\n## Verified Current State\n\nSource verification pending.\n\n" +
 		"## Required Behavior\n\n1. Modify the feature using source anchors once verified.\n\n" +
 		"## Acceptance\n\n- `go test ./...`\n"
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
 		Title:       "final-shape-lint",
@@ -3742,7 +3742,7 @@ func TestRunLaneRefineHandlesCleanLintGracefully(t *testing.T) {
 		t.Fatalf("seed spec: %v", err)
 	}
 
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
 		Title:       "lint-clean",
@@ -3816,7 +3816,7 @@ func TestRunLaneRefineFailsOnTrivialDraft(t *testing.T) {
 		t.Fatalf("seed spec: %v", err)
 	}
 
-	opts := laneRefineOptions{
+	opts := Options{
 		SpecPath:    specPath,
 		OutputPath:  filepath.Join(root, "brief.md"),
 		Title:       "trivial-draft",
@@ -3825,7 +3825,7 @@ func TestRunLaneRefineFailsOnTrivialDraft(t *testing.T) {
 	}
 	// Dispatch exits 0 but writes only a 20-byte fragment to the
 	// draft path — the silent-failure shape.
-	dispatch := refineDispatchFn(func(metaBriefPath string, stdout, stderr io.Writer) int {
+	dispatch := DispatchFunc(func(metaBriefPath string, stdout, stderr io.Writer) int {
 		iterDir := filepath.Dir(metaBriefPath)
 
 		_ = os.WriteFile(filepath.Join(iterDir, "draft.md"), []byte("# stub\n"), 0o644)
