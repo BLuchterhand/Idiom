@@ -25,8 +25,6 @@ type checkResult struct {
 	remedy string
 }
 
-type readinessProfileReport = readiness.ProfileReport
-
 // Run implements `idiom doctor` — a preflight diagnostic that
 // scans the host for backend runners, model files, project config,
 // workspace permissions, and supporting tools, then prints a report
@@ -82,7 +80,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 	return 0
 }
 
-func logDoctorReadinessTelemetry(rec *telemetry.Recorder, profiles []readinessProfileReport) {
+func logDoctorReadinessTelemetry(rec *telemetry.Recorder, profiles []readiness.ProfileReport) {
 	for _, profile := range profiles {
 		telemetry.LogPhase(rec, "doctor_readiness_profile", map[string]any{
 			"profile":                 profile.Name,
@@ -291,7 +289,7 @@ func checkGit() checkResult {
 // emitDoctorText writes a human-readable report. Format is intentionally
 // simple — one line per check with status icon, name, and detail; a
 // trailing block of remedy lines for anything non-passing.
-func emitDoctorText(w io.Writer, results []checkResult, profiles []readinessProfileReport) {
+func emitDoctorText(w io.Writer, results []checkResult, profiles []readiness.ProfileReport) {
 	icon := map[string]string{
 		"pass": "ok  ",
 		"warn": "warn",
@@ -337,7 +335,7 @@ func emitDoctorText(w io.Writer, results []checkResult, profiles []readinessProf
 // emitDoctorJSON writes a single JSON object: { "checks": [...],
 // "summary": {pass, warn, fail} }. CI / wrappers consume this without
 // parsing the human-readable form.
-func emitDoctorJSON(w io.Writer, results []checkResult, profiles []readinessProfileReport) {
+func emitDoctorJSON(w io.Writer, results []checkResult, profiles []readiness.ProfileReport) {
 	type entry struct {
 		Name   string `json:"name"`
 		Status string `json:"status"`
@@ -352,9 +350,9 @@ func emitDoctorJSON(w io.Writer, results []checkResult, profiles []readinessProf
 	}
 
 	out := struct {
-		Checks            []entry                  `json:"checks"`
-		Summary           summary                  `json:"summary"`
-		ReadinessProfiles []readinessProfileReport `json:"readiness_profiles"`
+		Checks            []entry                   `json:"checks"`
+		Summary           summary                   `json:"summary"`
+		ReadinessProfiles []readiness.ProfileReport `json:"readiness_profiles"`
 	}{
 		Checks:            make([]entry, 0, len(results)),
 		ReadinessProfiles: profiles,
@@ -378,7 +376,7 @@ func emitDoctorJSON(w io.Writer, results []checkResult, profiles []readinessProf
 	_ = enc.Encode(out)
 }
 
-func emitDoctorReadinessText(w io.Writer, profiles []readinessProfileReport) {
+func emitDoctorReadinessText(w io.Writer, profiles []readiness.ProfileReport) {
 	if len(profiles) == 0 {
 		return
 	}
@@ -444,7 +442,7 @@ func emitDoctorReadinessText(w io.Writer, profiles []readinessProfileReport) {
 	}
 }
 
-func buildDoctorReadinessProfiles(configPath, selected string, hostChecks []checkResult) ([]readinessProfileReport, error) {
+func buildDoctorReadinessProfiles(configPath, selected string, hostChecks []checkResult) ([]readiness.ProfileReport, error) {
 	return readiness.BuildProfiles(configPath, selected, readinessHostChecks(hostChecks))
 }
 

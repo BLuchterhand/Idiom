@@ -34,11 +34,6 @@ const (
 
 type PromptRunner func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error)
 
-type RunCompletionRecord = runrecord.RunCompletionRecord
-type RunOutputRecord = runrecord.RunOutputRecord
-type HeadlessPolicy = runrecord.HeadlessPolicy
-type HeadlessCheck = runrecord.HeadlessCheck
-
 type stringList []string
 
 func (l *stringList) String() string {
@@ -77,7 +72,7 @@ type runRequest struct {
 	CommitMessage     string
 	TestCommand       string
 	LintCommand       string
-	Policy            HeadlessPolicy
+	Policy            runrecord.HeadlessPolicy
 	UnsupportedIntent []string
 }
 
@@ -116,7 +111,7 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 	cfg.Workspace.SessionID = runID
 
 	started := time.Now().UTC()
-	record := RunCompletionRecord{
+	record := runrecord.RunCompletionRecord{
 		SchemaVersion:    RunCompletionSchemaVersion,
 		Type:             RunCompletionRecordType,
 		RunID:            runID,
@@ -229,7 +224,7 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 	}
 
 	if req.OutputMode == "json" {
-		out := RunOutputRecord{RunCompletionRecord: record}
+		out := runrecord.RunOutputRecord{RunCompletionRecord: record}
 		if runErr == nil && answer != "" {
 			out.Answer = answer
 		}
@@ -358,7 +353,7 @@ func parseRunRequest(args []string, stdin io.Reader, stderr io.Writer) (runReque
 	return req, nil
 }
 
-func validatePolicyFlags(policy HeadlessPolicy) error {
+func validatePolicyFlags(policy runrecord.HeadlessPolicy) error {
 	switch strings.ToLower(strings.TrimSpace(policy.PermissionProfile)) {
 	case "", "default", "read-only", "readonly", "read_only", "write", "writes", "write-enabled":
 	default:
@@ -962,15 +957,15 @@ func answerJSONObject(answer string) ([]byte, error) {
 	return nil, fmt.Errorf("output schema validation failed: answer does not contain a JSON object")
 }
 
-func runOptionalCheck(name string, command string, cfg config.Config) []HeadlessCheck {
+func runOptionalCheck(name string, command string, cfg config.Config) []runrecord.HeadlessCheck {
 	if strings.TrimSpace(command) == "" {
 		return nil
 	}
 
-	return []HeadlessCheck{runCommandWithConfigTimeout(name, command, cfg)}
+	return []runrecord.HeadlessCheck{runCommandWithConfigTimeout(name, command, cfg)}
 }
 
-func runCommandWithConfigTimeout(name string, command string, cfg config.Config) HeadlessCheck {
+func runCommandWithConfigTimeout(name string, command string, cfg config.Config) runrecord.HeadlessCheck {
 	timeout := time.Duration(cfg.Workspace.CommandTimeoutSeconds) * time.Second
 	if timeout <= 0 {
 		timeout = 120 * time.Second
@@ -982,8 +977,8 @@ func runCommandWithConfigTimeout(name string, command string, cfg config.Config)
 	return runCommand(ctx, name, command, cfg)
 }
 
-func runCommand(ctx context.Context, name string, command string, cfg config.Config) HeadlessCheck {
-	check := HeadlessCheck{Name: name, Command: command}
+func runCommand(ctx context.Context, name string, command string, cfg config.Config) runrecord.HeadlessCheck {
+	check := runrecord.HeadlessCheck{Name: name, Command: command}
 
 	result := commandexec.Run(ctx, commandexec.Spec{
 		Mode:           commandexec.ModePlainShell,

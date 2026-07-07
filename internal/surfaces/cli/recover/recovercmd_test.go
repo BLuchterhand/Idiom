@@ -486,7 +486,7 @@ func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 		t.Fatalf("recover status exit=%d stdout=%s stderr=%s", code, statusOut.String(), statusErr.String())
 	}
 
-	var statusReport recoverStatusReport
+	var statusReport recoverstatus.Report
 
 	if err := json.Unmarshal(statusOut.Bytes(), &statusReport); err != nil {
 		t.Fatalf("decode status report: %v\n%s", err, statusOut.String())
@@ -621,7 +621,7 @@ func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 		t.Fatalf("recover status after reconcile exit=%d stdout=%s stderr=%s", code, statusOut.String(), statusErr.String())
 	}
 
-	statusReport = recoverStatusReport{}
+	statusReport = recoverstatus.Report{}
 	if err := json.Unmarshal(statusOut.Bytes(), &statusReport); err != nil {
 		t.Fatalf("decode reconciled status report: %v\n%s", err, statusOut.String())
 	}
@@ -658,7 +658,7 @@ func TestRecoverStatusScrubsPersistedResidualEvidenceSummaries(t *testing.T) {
 		t.Fatalf("recover status exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 
-	var report recoverStatusReport
+	var report recoverstatus.Report
 
 	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
 		t.Fatalf("decode status report: %v\n%s", err, stdout.String())
@@ -686,7 +686,7 @@ func TestRecoverStatusRejectsPacketOutsideWorkspaceRoot(t *testing.T) {
 		t.Fatalf("recover status should reject outside packet, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 
-	var report recoverStatusReport
+	var report recoverstatus.Report
 
 	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
 		t.Fatalf("decode report: %v\n%s", err, stdout.String())

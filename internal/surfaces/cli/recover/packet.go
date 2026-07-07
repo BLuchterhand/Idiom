@@ -26,8 +26,6 @@ import (
 	"idiom/internal/workflows/recovery"
 )
 
-type atomIntakeReport = atomintake.IntakeReport
-
 type recoverDecomposeOptions struct {
 	ConfigPath string
 	SessionID  string
@@ -70,8 +68,6 @@ type recoverDecomposeReport struct {
 	Packet         *recoverycontract.DecompositionPacket `json:"packet,omitempty"`
 	Error          string                                `json:"error,omitempty"`
 }
-
-type recoverStatusReport = recoverstatus.Report
 
 type recoverPromoteReport struct {
 	Type                string              `json:"type"`
@@ -118,7 +114,7 @@ type recoverGateReport struct {
 	Status     recoverycontract.GateStatus `json:"status"`
 	Summary    string                      `json:"summary,omitempty"`
 	Findings   []brieflint.Finding         `json:"findings,omitempty"`
-	Intake     *atomIntakeReport           `json:"intake,omitempty"`
+	Intake     *atomintake.IntakeReport    `json:"intake,omitempty"`
 	ScopePaths []string                    `json:"scope_paths,omitempty"`
 }
 
@@ -998,7 +994,7 @@ func writeRecoverDecomposeReport(stdout io.Writer, stderr io.Writer, jsonOut boo
 	return code
 }
 
-func writeRecoverStatusReport(stdout io.Writer, stderr io.Writer, jsonOut bool, report recoverStatusReport, code int) int {
+func writeRecoverStatusReport(stdout io.Writer, stderr io.Writer, jsonOut bool, report recoverstatus.Report, code int) int {
 	if jsonOut {
 		return encodeRecoverJSON(stdout, stderr, report, code)
 	}

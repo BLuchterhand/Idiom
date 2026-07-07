@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"idiom/internal/platform/config"
+	"idiom/internal/surfaces/cli/runrecord"
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
 )
 
@@ -69,7 +70,7 @@ func TestRunAppliesPolicyOverridesAndWritesCompletion(t *testing.T) {
 		t.Fatalf("Run exit = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 
-	var output RunOutputRecord
+	var output runrecord.RunOutputRecord
 	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
 		t.Fatalf("decode stdout completion: %v\n%s", err, stdout.String())
 	}
@@ -88,7 +89,7 @@ func TestRunAppliesPolicyOverridesAndWritesCompletion(t *testing.T) {
 	if _, err := os.Stat(completionPath); err != nil {
 		t.Fatalf("completion artifact missing: %v", err)
 	}
-	var saved RunCompletionRecord
+	var saved runrecord.RunCompletionRecord
 	savedBody, err := os.ReadFile(completionPath)
 	if err != nil {
 		t.Fatal(err)
@@ -148,7 +149,7 @@ func TestRunValidatesOutputSchema(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("schema-valid run failed: code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
-	var output RunOutputRecord
+	var output runrecord.RunOutputRecord
 	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
 		t.Fatalf("decode completion: %v\n%s", err, stdout.String())
 	}
@@ -279,7 +280,7 @@ func TestRunFailsWhenCompletionCannotBeSaved(t *testing.T) {
 	if code == 0 {
 		t.Fatal("completion save failure should fail the run")
 	}
-	var output RunOutputRecord
+	var output runrecord.RunOutputRecord
 	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
 		t.Fatalf("decode completion: %v\n%s", err, stdout.String())
 	}
@@ -316,7 +317,7 @@ func TestRunPolicyTimeoutProjectsToRuntimeRequestTimeout(t *testing.T) {
 		t.Fatalf("timeout projection run failed stdout=%s stderr=%s", stdout.String(), stderr.String())
 	}
 
-	var output RunOutputRecord
+	var output runrecord.RunOutputRecord
 	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
 		t.Fatalf("decode timeout projection completion: %v\n%s", err, stdout.String())
 	}
@@ -456,7 +457,7 @@ func TestRunFailOnDegradedRejectsUnsupportedApprovalPolicy(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("degraded run should fail when --fail-on-degraded is set")
 	}
-	var record RunCompletionRecord
+	var record runrecord.RunCompletionRecord
 	if err := json.Unmarshal(stdout.Bytes(), &record); err != nil {
 		t.Fatalf("decode completion: %v\n%s", err, stdout.String())
 	}

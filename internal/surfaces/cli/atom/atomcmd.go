@@ -11,8 +11,6 @@ import (
 	"idiom/internal/workflows/atomintake"
 )
 
-type Dependencies = atomintake.Dependencies
-
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	subcommand := ""
 	if len(args) > 0 {
