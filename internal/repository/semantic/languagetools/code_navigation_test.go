@@ -6,7 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
+	"idiom/internal/repository/semantic/language"
+	"idiom/internal/repository/semantic/languagetools"
 )
 
 func TestCodeNavigationSpecAcceptsDefinitionAliases(t *testing.T) {
@@ -14,42 +17,42 @@ func TestCodeNavigationSpecAcceptsDefinitionAliases(t *testing.T) {
 		name       string
 		capability string
 		wantName   string
-		wantCap    Capability
+		wantCap    language.Capability
 	}{
-		{name: "definition", capability: "definition", wantName: "definition", wantCap: CapDefinition},
-		{name: "find definition", capability: "find_definition", wantName: "definition", wantCap: CapDefinition},
-		{name: "find definitions", capability: "find_definitions", wantName: "definition", wantCap: CapDefinition},
-		{name: "hyphen definition", capability: "find-definition", wantName: "definition", wantCap: CapDefinition},
-		{name: "space definition", capability: "find definition", wantName: "definition", wantCap: CapDefinition},
-		{name: "find references", capability: "find_references", wantName: "references", wantCap: CapReferences},
-		{name: "hyphen references", capability: "find-references", wantName: "references", wantCap: CapReferences},
-		{name: "space references", capability: "find references", wantName: "references", wantCap: CapReferences},
-		{name: "extract body", capability: "extract_body", wantName: "extract_body", wantCap: CapExtractBody},
-		{name: "full body", capability: "full_body", wantName: "extract_body", wantCap: CapExtractBody},
+		{name: "definition", capability: "definition", wantName: "definition", wantCap: language.CapDefinition},
+		{name: "find definition", capability: "find_definition", wantName: "definition", wantCap: language.CapDefinition},
+		{name: "find definitions", capability: "find_definitions", wantName: "definition", wantCap: language.CapDefinition},
+		{name: "hyphen definition", capability: "find-definition", wantName: "definition", wantCap: language.CapDefinition},
+		{name: "space definition", capability: "find definition", wantName: "definition", wantCap: language.CapDefinition},
+		{name: "find references", capability: "find_references", wantName: "references", wantCap: language.CapReferences},
+		{name: "hyphen references", capability: "find-references", wantName: "references", wantCap: language.CapReferences},
+		{name: "space references", capability: "find references", wantName: "references", wantCap: language.CapReferences},
+		{name: "extract body", capability: "extract_body", wantName: "extract_body", wantCap: language.CapExtractBody},
+		{name: "full body", capability: "full_body", wantName: "extract_body", wantCap: language.CapExtractBody},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			spec, err := codeNavigationSpecFor(tc.capability)
+			spec, err := languagetools.CodeNavigationSpecFor(tc.capability)
 			if err != nil {
-				t.Fatalf("codeNavigationSpecFor(%q): %v", tc.capability, err)
+				t.Fatalf("languagetools.CodeNavigationSpecFor(%q): %v", tc.capability, err)
 			}
 
 			if spec.Name != tc.wantName || spec.Capability != tc.wantCap {
-				t.Fatalf("codeNavigationSpecFor(%q) = %#v, want name=%q capability=%q", tc.capability, spec, tc.wantName, tc.wantCap)
+				t.Fatalf("languagetools.CodeNavigationSpecFor(%q) = %#v, want name=%q capability=%q", tc.capability, spec, tc.wantName, tc.wantCap)
 			}
 		})
 	}
 }
 
 func TestCodeNavigationCapabilityListMatchesSpecs(t *testing.T) {
-	names := codeNavigationCapabilityNames()
+	names := languagetools.CodeNavigationCapabilityNames()
 	if len(names) == 0 {
 		t.Fatal("expected advertised code navigation capabilities")
 	}
 
 	for _, name := range names {
-		spec, err := codeNavigationSpecFor(name)
+		spec, err := languagetools.CodeNavigationSpecFor(name)
 		if err != nil {
 			t.Fatalf("advertised capability %q did not resolve: %v", name, err)
 		}
@@ -59,7 +62,7 @@ func TestCodeNavigationCapabilityListMatchesSpecs(t *testing.T) {
 		}
 	}
 
-	_, err := codeNavigationSpecFor("not_a_capability")
+	_, err := languagetools.CodeNavigationSpecFor("not_a_capability")
 	if err == nil {
 		t.Fatal("expected unknown capability to be rejected")
 	}
@@ -70,8 +73,8 @@ func TestCodeNavigationCapabilityListMatchesSpecs(t *testing.T) {
 		}
 	}
 
-	if strings.Join(names, ", ") != codeNavigationCapabilityList() {
-		t.Fatalf("capability list helper drifted from names: names=%#v list=%q", names, codeNavigationCapabilityList())
+	if strings.Join(names, ", ") != languagetools.CodeNavigationCapabilityList() {
+		t.Fatalf("capability list helper drifted from names: names=%#v list=%q", names, languagetools.CodeNavigationCapabilityList())
 	}
 }
 
@@ -85,8 +88,8 @@ type DebugLogMode string
 const DebugLogModeRedacted DebugLogMode = "redacted"
 `)
 
-	mgr := NewManager(config.Workspace{Root: root, CWD: root})
-	result := mgr.Execute(context.Background(), ToolRequest{
+	mgr := workspace.NewManager(config.Workspace{Root: root, CWD: root})
+	result := mgr.Execute(context.Background(), workspace.ToolRequest{
 		Tool:       "code_navigate",
 		Capability: "find_definition",
 		Symbol:     "DebugLogMode",

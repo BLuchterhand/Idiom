@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
 )
 
@@ -88,7 +89,7 @@ void WorkerSystem::process_cycle() {}
 		filepath.Join("src", "worker_system.cpp"),
 	})
 
-	mgr := NewManager(config.Workspace{
+	mgr := workspace.NewManager(config.Workspace{
 		Root:                  root,
 		CWD:                   root,
 		EnableShell:           true,
@@ -101,61 +102,61 @@ void WorkerSystem::process_cycle() {}
 		t.Fatal("expected temp fixture to count as C++ workspace")
 	}
 
-	if result := executeTool(mgr, "cpp_overview", ToolRequest{}); result.Error != "" || !strings.Contains(result.Output, "Indexed 7 C/C++ files") {
+	if result := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_overview"}); result.Error != "" || !strings.Contains(result.Output, "Indexed 7 C/C++ files") {
 		t.Fatalf("unexpected cppOverview result: %#v", result)
 	}
 
-	find := executeTool(mgr, "cpp_find_symbol", ToolRequest{Tool: "cpp_find_symbol", Pattern: "tick"})
+	find := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_find_symbol", Pattern: "tick"})
 	if find.Error != "" || !strings.Contains(find.Output, "entity_manager.cpp") {
 		t.Fatalf("unexpected cppFindSymbol result: %#v", find)
 	}
 
-	findDecl := executeTool(mgr, "cpp_find_symbol", ToolRequest{Tool: "cpp_find_symbol", Pattern: "struct EntityManager"})
+	findDecl := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_find_symbol", Pattern: "struct EntityManager"})
 	if findDecl.Error != "" || !strings.Contains(findDecl.Output, "EntityManager") {
 		t.Fatalf("expected declaration-shaped cppFindSymbol query to find EntityManager, got %#v", findDecl)
 	}
 
-	readDecl := executeTool(mgr, "cpp_read_symbol", ToolRequest{Tool: "cpp_read_symbol", Pattern: "struct EntityManager"})
+	readDecl := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_read_symbol", Pattern: "struct EntityManager"})
 	if readDecl.Error != "" || !strings.Contains(readDecl.Output, "struct EntityManager") {
 		t.Fatalf("expected declaration-shaped cppReadSymbol to return EntityManager snippet, got %#v", readDecl)
 	}
 
-	findUnion := executeTool(mgr, "cpp_find_symbol", ToolRequest{Tool: "cpp_find_symbol", Pattern: "union EntityValue"})
+	findUnion := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_find_symbol", Pattern: "union EntityValue"})
 	if findUnion.Error != "" || !strings.Contains(findUnion.Output, "EntityValue") {
 		t.Fatalf("expected declaration-shaped cppFindSymbol query to find EntityValue union, got %#v", findUnion)
 	}
 
-	readUnion := executeTool(mgr, "cpp_read_symbol", ToolRequest{Tool: "cpp_read_symbol", Pattern: "union EntityValue"})
+	readUnion := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_read_symbol", Pattern: "union EntityValue"})
 	if readUnion.Error != "" || !strings.Contains(readUnion.Output, "union EntityValue") {
 		t.Fatalf("expected declaration-shaped cppReadSymbol to return EntityValue union, got %#v", readUnion)
 	}
 
-	findTemplate := executeTool(mgr, "cpp_find_symbol", ToolRequest{Tool: "cpp_find_symbol", Pattern: "template <typename T> class EntityBox"})
+	findTemplate := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_find_symbol", Pattern: "template <typename T> class EntityBox"})
 	if findTemplate.Error != "" || !strings.Contains(findTemplate.Output, "EntityBox") {
 		t.Fatalf("expected declaration-shaped cppFindSymbol query to find EntityBox template, got %#v", findTemplate)
 	}
 
-	readTemplate := executeTool(mgr, "cpp_read_symbol", ToolRequest{Tool: "cpp_read_symbol", Pattern: "template <typename T> class EntityBox"})
+	readTemplate := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_read_symbol", Pattern: "template <typename T> class EntityBox"})
 	if readTemplate.Error != "" || !strings.Contains(readTemplate.Output, "class EntityBox") {
 		t.Fatalf("expected declaration-shaped cppReadSymbol to return EntityBox template, got %#v", readTemplate)
 	}
 
-	body := executeTool(mgr, "cpp_extract_body", ToolRequest{Tool: "cpp_extract_body", Pattern: "EntityManager::tick"})
+	body := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_extract_body", Pattern: "EntityManager::tick"})
 	if body.Error != "" || !strings.Contains(body.Output, "helper();") {
 		t.Fatalf("unexpected cppExtractBody result: %#v", body)
 	}
 
-	blast := executeTool(mgr, "cpp_blast_radius", ToolRequest{Tool: "cpp_blast_radius", Pattern: "entity_manager.h"})
+	blast := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_blast_radius", Pattern: "entity_manager.h"})
 	if blast.Error != "" || !strings.Contains(blast.Output, "entity_manager.cpp") || !strings.Contains(blast.Output, "main.cpp") {
 		t.Fatalf("unexpected cppBlastRadius result: %#v", blast)
 	}
 
-	refs := executeToolCtx(context.Background(), mgr, "cpp_references", ToolRequest{Tool: "cpp_references", Pattern: "helper", Path: "."})
+	refs := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_references", Pattern: "helper", Path: "."})
 	if refs.Error != "" || !strings.Contains(refs.Output, "entity_manager.cpp") || !strings.Contains(refs.Output, "helper();") {
 		t.Fatalf("unexpected cppReferences result: %#v", refs)
 	}
 
-	outline := executeTool(mgr, "cpp_file_outline", ToolRequest{Tool: "cpp_file_outline", Path: filepath.Join("src", "entity_manager.cpp")})
+	outline := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_file_outline", Path: filepath.Join("src", "entity_manager.cpp")})
 	if outline.Error != "" {
 		t.Fatalf("unexpected cppFileOutline error: %#v", outline)
 	}
@@ -240,7 +241,7 @@ void WorkerSystem::process_cycle() {}
 		filepath.Join("src", "worker_system.cpp"),
 	})
 
-	mgr := NewManager(config.Workspace{
+	mgr := workspace.NewManager(config.Workspace{
 		Root:                  root,
 		CWD:                   root,
 		EnableShell:           true,
@@ -249,37 +250,37 @@ void WorkerSystem::process_cycle() {}
 		MaxFileBytes:          65536,
 	})
 
-	ws := executeToolCtx(context.Background(), mgr, "cpp_workspace_symbol", ToolRequest{Tool: "cpp_workspace_symbol", Pattern: "EntityManager"})
+	ws := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_workspace_symbol", Pattern: "EntityManager"})
 	if ws.Error != "" || !strings.Contains(ws.Summary, "clangd") || !strings.Contains(ws.Output, "entity_manager.h") {
 		t.Fatalf("unexpected cppWorkspaceSymbol result: %#v", ws)
 	}
 
-	def := executeToolCtx(context.Background(), mgr, "cpp_definition", ToolRequest{Tool: "cpp_definition", Pattern: "EntityManager::tick"})
+	def := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_definition", Pattern: "EntityManager::tick"})
 	if def.Error != "" || !strings.Contains(def.Output, "entity_manager.cpp") {
 		t.Fatalf("unexpected cppDefinition result: %#v", def)
 	}
 
-	decl := executeToolCtx(context.Background(), mgr, "cpp_declaration", ToolRequest{Tool: "cpp_declaration", Pattern: "EntityManager::tick"})
+	decl := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_declaration", Pattern: "EntityManager::tick"})
 	if decl.Error != "" || !strings.Contains(decl.Output, "entity_manager.h") {
 		t.Fatalf("unexpected cppDeclaration result: %#v", decl)
 	}
 
-	refs := executeToolCtx(context.Background(), mgr, "cpp_references", ToolRequest{Tool: "cpp_references", Pattern: "helper", Path: "."})
+	refs := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_references", Pattern: "helper", Path: "."})
 	if refs.Error != "" || !strings.Contains(refs.Summary, "clangd") || !strings.Contains(refs.Output, "helper();") {
 		t.Fatalf("unexpected cppReferences result: %#v", refs)
 	}
 
-	impls := executeToolCtx(context.Background(), mgr, "cpp_implementations", ToolRequest{Tool: "cpp_implementations", Pattern: "SystemBase::process_cycle"})
+	impls := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_implementations", Pattern: "SystemBase::process_cycle"})
 	if impls.Error != "" || !strings.Contains(impls.Output, "worker_system.cpp") {
 		t.Fatalf("unexpected cppImplementations result: %#v", impls)
 	}
 
-	outgoing := executeToolCtx(context.Background(), mgr, "cpp_calls_from", ToolRequest{Tool: "cpp_calls_from", Pattern: "EntityManager::tick"})
+	outgoing := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_calls_from", Pattern: "EntityManager::tick"})
 	if outgoing.Error != "" || !strings.Contains(outgoing.Output, "helper") {
 		t.Fatalf("unexpected cppCallsFrom result: %#v", outgoing)
 	}
 
-	incoming := executeToolCtx(context.Background(), mgr, "cpp_calls_into", ToolRequest{Tool: "cpp_calls_into", Pattern: "helper"})
+	incoming := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "cpp_calls_into", Pattern: "helper"})
 	if incoming.Error != "" || (!strings.Contains(incoming.Output, "main") && !strings.Contains(incoming.Output, "tick")) {
 		t.Fatalf("unexpected cppCallsInto result: %#v", incoming)
 	}

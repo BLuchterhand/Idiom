@@ -6,84 +6,85 @@ import (
 	"strings"
 	"testing"
 
+	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
 )
 
 func TestReadSymbolPathMissReportsCandidateAnchorsAcrossLanguages(t *testing.T) {
 	tests := []struct {
 		name       string
-		setup      func(t *testing.T) (*Manager, ToolRequest)
+		setup      func(t *testing.T) (*workspace.Manager, workspace.ToolRequest)
 		wantPath   string
 		forbidBody string
 	}{
 		{
 			name: "go",
-			setup: func(t *testing.T) (*Manager, ToolRequest) {
+			setup: func(t *testing.T) (*workspace.Manager, workspace.ToolRequest) {
 				root := t.TempDir()
 				writeTestFile(t, filepath.Join(root, "go.mod"), "module example.com/pathmiss\n\ngo 1.22\n")
 				writeTestFile(t, filepath.Join(root, "internal", "surfaces", "tui", "app", "model_state.go"), "package app\n\ntype Model struct{}\n")
 				writeTestFile(t, filepath.Join(root, "internal", "surfaces", "tui", "app", "lifecycle.go"), "package app\n\nfunc (m Model) Update() int {\n\treturn 42\n}\n")
 
-				return NewManager(config.Workspace{Root: root, CWD: root}), ToolRequest{Tool: "go_read_symbol", Pattern: "Model.Update", Path: filepath.Join("internal", "surfaces", "tui", "app", "model_state.go")}
+				return workspace.NewManager(config.Workspace{Root: root, CWD: root}), workspace.ToolRequest{Tool: "go_read_symbol", Pattern: "Model.Update", Path: filepath.Join("internal", "surfaces", "tui", "app", "model_state.go")}
 			},
 			wantPath:   "internal/surfaces/tui/app/lifecycle.go",
 			forbidBody: "return 42",
 		},
 		{
 			name: "python",
-			setup: func(t *testing.T) (*Manager, ToolRequest) {
+			setup: func(t *testing.T) (*workspace.Manager, workspace.ToolRequest) {
 				root := t.TempDir()
 				writePythonToolFixture(t, filepath.Join(root, "pyproject.toml"), "[project]\nname = \"pathmiss\"\nversion = \"0.1.0\"\n")
 				writePythonToolFixture(t, filepath.Join(root, "src", "demo", "empty.py"), "# no symbols here\n")
 				writePythonToolFixture(t, filepath.Join(root, "src", "demo", "engine.py"), "class Engine:\n    def tick(self):\n        return \"tick-body\"\n")
 
-				return NewManager(config.Workspace{Root: root, CWD: root}), ToolRequest{Tool: "python_read_symbol", Pattern: "Engine.tick", Path: filepath.Join("src", "demo", "empty.py")}
+				return workspace.NewManager(config.Workspace{Root: root, CWD: root}), workspace.ToolRequest{Tool: "python_read_symbol", Pattern: "Engine.tick", Path: filepath.Join("src", "demo", "empty.py")}
 			},
 			wantPath:   "src/demo/engine.py",
 			forbidBody: "tick-body",
 		},
 		{
 			name: "cpp",
-			setup: func(t *testing.T) (*Manager, ToolRequest) {
+			setup: func(t *testing.T) (*workspace.Manager, workspace.ToolRequest) {
 				root := t.TempDir()
 				writeCppFixture(t, filepath.Join(root, "include", "entity_manager.h"), "struct EntityManager {\n    void tick();\n};\n")
 				writeCppFixture(t, filepath.Join(root, "src", "entity_manager.cpp"), "#include \"entity_manager.h\"\nvoid EntityManager::tick() {\n    int tick_body = 1;\n}\n")
 				writeCppFixture(t, filepath.Join(root, "src", "main.cpp"), "int main() { return 0; }\n")
 
-				return NewManager(config.Workspace{Root: root, CWD: root}), ToolRequest{Tool: "cpp_read_symbol", Pattern: "EntityManager::tick", Path: filepath.Join("src", "main.cpp")}
+				return workspace.NewManager(config.Workspace{Root: root, CWD: root}), workspace.ToolRequest{Tool: "cpp_read_symbol", Pattern: "EntityManager::tick", Path: filepath.Join("src", "main.cpp")}
 			},
 			wantPath:   "src/entity_manager.cpp",
 			forbidBody: "tick_body",
 		},
 		{
 			name: "typescript",
-			setup: func(t *testing.T) (*Manager, ToolRequest) {
+			setup: func(t *testing.T) (*workspace.Manager, workspace.ToolRequest) {
 				root := t.TempDir()
 				writeTsTestFixture(t, filepath.Join(root, "tsconfig.json"), `{"compilerOptions":{"target":"es2020","module":"commonjs"}}`)
 				writeTsTestFixture(t, filepath.Join(root, "src", "other.ts"), "export const other = 1;\n")
 				writeTsTestFixture(t, filepath.Join(root, "src", "greeter.ts"), "export class Shouter {\n  shout(name: string): void {\n    console.log(name.toUpperCase());\n  }\n}\n")
 
-				return NewManager(config.Workspace{Root: root, CWD: root}), ToolRequest{Tool: "ts_read_symbol", Pattern: "Shouter.shout", Path: filepath.Join("src", "other.ts")}
+				return workspace.NewManager(config.Workspace{Root: root, CWD: root}), workspace.ToolRequest{Tool: "ts_read_symbol", Pattern: "Shouter.shout", Path: filepath.Join("src", "other.ts")}
 			},
 			wantPath:   "src/greeter.ts",
 			forbidBody: "toUpperCase",
 		},
 		{
 			name: "rust",
-			setup: func(t *testing.T) (*Manager, ToolRequest) {
+			setup: func(t *testing.T) (*workspace.Manager, workspace.ToolRequest) {
 				mgr, _ := newRustFixtureManager(t)
-				return mgr, ToolRequest{Tool: "rust_read_symbol", Pattern: "spawn", Path: filepath.Join("src", "main.rs")}
+				return mgr, workspace.ToolRequest{Tool: "rust_read_symbol", Pattern: "spawn", Path: filepath.Join("src", "main.rs")}
 			},
 			wantPath:   "src/worker.rs",
 			forbidBody: "Worker { id }",
 		},
 		{
 			name: "java",
-			setup: func(t *testing.T) (*Manager, ToolRequest) {
+			setup: func(t *testing.T) (*workspace.Manager, workspace.ToolRequest) {
 				root := buildJavaTempWorkspace(t)
 				writeJavaFile(t, filepath.Join(root, "src", "main", "java", "com", "example", "package-info.java"), "package com.example;\n")
 
-				return NewManager(config.Workspace{Root: root, CWD: root}), ToolRequest{Tool: "java_read_symbol", Pattern: "private int compute()", Path: filepath.Join("src", "main", "java", "com", "example", "package-info.java")}
+				return workspace.NewManager(config.Workspace{Root: root, CWD: root}), workspace.ToolRequest{Tool: "java_read_symbol", Pattern: "private int compute()", Path: filepath.Join("src", "main", "java", "com", "example", "package-info.java")}
 			},
 			wantPath:   "src/main/java/com/example/util/Helper.java",
 			forbidBody: "return 42",
@@ -105,8 +106,8 @@ func TestCodeNavigateReadSymbolPathMissReportsCandidateAnchor(t *testing.T) {
 	writeTestFile(t, filepath.Join(root, "internal", "surfaces", "tui", "app", "model_state.go"), "package app\n\ntype Model struct{}\n")
 	writeTestFile(t, filepath.Join(root, "internal", "surfaces", "tui", "app", "lifecycle.go"), "package app\n\nfunc (m Model) Update() int {\n\treturn 42\n}\n")
 
-	mgr := NewManager(config.Workspace{Root: root, CWD: root})
-	result := mgr.Execute(context.Background(), ToolRequest{
+	mgr := workspace.NewManager(config.Workspace{Root: root, CWD: root})
+	result := mgr.Execute(context.Background(), workspace.ToolRequest{
 		Tool:       "code_navigate",
 		Capability: "read_symbol",
 		Pattern:    "Model.Update",
@@ -119,7 +120,7 @@ func TestCodeNavigateReadSymbolPathMissReportsCandidateAnchor(t *testing.T) {
 	}
 }
 
-func assertReadSymbolCandidateMiss(t *testing.T, result ToolResult, wantPath string, forbidBody string) {
+func assertReadSymbolCandidateMiss(t *testing.T, result workspace.ToolResult, wantPath string, forbidBody string) {
 	t.Helper()
 
 	if result.Error != "" {

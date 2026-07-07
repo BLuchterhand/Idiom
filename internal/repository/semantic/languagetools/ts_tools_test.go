@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
 )
 
@@ -78,7 +79,7 @@ export declare class ExternalClient {
 export declare const defaultEndpoint: string;
 `)
 
-	mgr := NewManager(config.Workspace{
+	mgr := workspace.NewManager(config.Workspace{
 		Root:                  root,
 		CWD:                   root,
 		EnableShell:           true,
@@ -92,27 +93,27 @@ export declare const defaultEndpoint: string;
 		t.Fatal("expected temp fixture to count as TypeScript workspace")
 	}
 
-	overview := executeTool(mgr, "ts_overview", ToolRequest{})
+	overview := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_overview"})
 	if overview.Error != "" || !strings.Contains(overview.Output, "TypeScript/JavaScript files") {
 		t.Fatalf("unexpected tsOverview result: %#v", overview)
 	}
 
-	find := executeTool(mgr, "ts_find_symbol", ToolRequest{Tool: "ts_find_symbol", Pattern: "greet"})
+	find := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_find_symbol", Pattern: "greet"})
 	if find.Error != "" || !strings.Contains(find.Output, "greeter.ts") {
 		t.Fatalf("unexpected tsFindSymbol result: %#v", find)
 	}
 
-	findDecl := executeTool(mgr, "ts_find_symbol", ToolRequest{Tool: "ts_find_symbol", Pattern: "export interface Greeter"})
+	findDecl := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_find_symbol", Pattern: "export interface Greeter"})
 	if findDecl.Error != "" || !strings.Contains(findDecl.Output, "Greeter") {
 		t.Fatalf("expected declaration-shaped tsFindSymbol query to find Greeter, got %#v", findDecl)
 	}
 
-	related := executeTool(mgr, "ts_related_files", ToolRequest{Tool: "ts_related_files", Pattern: "greeter"})
+	related := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_related_files", Pattern: "greeter"})
 	if related.Error != "" || !strings.Contains(related.Output, "greeter.ts") {
 		t.Fatalf("unexpected tsRelatedFiles result: %#v", related)
 	}
 
-	outline := executeTool(mgr, "ts_file_outline", ToolRequest{Tool: "ts_file_outline", Path: filepath.Join("src", "greeter.ts")})
+	outline := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_file_outline", Path: filepath.Join("src", "greeter.ts")})
 	if outline.Error != "" {
 		t.Fatalf("unexpected tsFileOutline error: %#v", outline)
 	}
@@ -125,85 +126,85 @@ export declare const defaultEndpoint: string;
 		t.Fatalf("tsFileOutline missing symbols: %#v", outline)
 	}
 
-	read := executeTool(mgr, "ts_read_symbol", ToolRequest{Tool: "ts_read_symbol", Pattern: "Shouter.shout"})
+	read := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_read_symbol", Pattern: "Shouter.shout"})
 	if read.Error != "" || !strings.Contains(read.Output, "toUpperCase") {
 		t.Fatalf("unexpected tsReadSymbol result: %#v", read)
 	}
 
-	readDecl := executeTool(mgr, "ts_read_symbol", ToolRequest{Tool: "ts_read_symbol", Pattern: "export class Shouter"})
+	readDecl := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_read_symbol", Pattern: "export class Shouter"})
 	if readDecl.Error != "" || !strings.Contains(readDecl.Output, "export class Shouter") {
 		t.Fatalf("expected declaration-shaped tsReadSymbol to return Shouter class, got %#v", readDecl)
 	}
 
 	// Default-export declaration-shaped queries.
-	findDefaultClass := executeTool(mgr, "ts_find_symbol", ToolRequest{Tool: "ts_find_symbol", Pattern: "export default class DefaultGreeter"})
+	findDefaultClass := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_find_symbol", Pattern: "export default class DefaultGreeter"})
 	if findDefaultClass.Error != "" || !strings.Contains(findDefaultClass.Output, "default_class.ts") {
 		t.Fatalf("expected declaration-shaped tsFindSymbol for 'export default class DefaultGreeter', got %#v", findDefaultClass)
 	}
 
-	findDefaultFunc := executeTool(mgr, "ts_find_symbol", ToolRequest{Tool: "ts_find_symbol", Pattern: "export default function defaultGreet"})
+	findDefaultFunc := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_find_symbol", Pattern: "export default function defaultGreet"})
 	if findDefaultFunc.Error != "" || !strings.Contains(findDefaultFunc.Output, "default_function.ts") {
 		t.Fatalf("expected declaration-shaped tsFindSymbol for 'export default function defaultGreet', got %#v", findDefaultFunc)
 	}
 
-	readDefaultClass := executeTool(mgr, "ts_read_symbol", ToolRequest{Tool: "ts_read_symbol", Pattern: "export default class DefaultGreeter"})
+	readDefaultClass := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_read_symbol", Pattern: "export default class DefaultGreeter"})
 	if readDefaultClass.Error != "" || !strings.Contains(readDefaultClass.Output, "export default class DefaultGreeter") {
 		t.Fatalf("expected declaration-shaped tsReadSymbol for 'export default class DefaultGreeter', got %#v", readDefaultClass)
 	}
 
-	readDefaultFunc := executeTool(mgr, "ts_read_symbol", ToolRequest{Tool: "ts_read_symbol", Pattern: "export default function defaultGreet"})
+	readDefaultFunc := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_read_symbol", Pattern: "export default function defaultGreet"})
 	if readDefaultFunc.Error != "" || !strings.Contains(readDefaultFunc.Output, "export default function defaultGreet") {
 		t.Fatalf("expected declaration-shaped tsReadSymbol for 'export default function defaultGreet', got %#v", readDefaultFunc)
 	}
 
-	findGenerator := executeTool(mgr, "ts_find_symbol", ToolRequest{Tool: "ts_find_symbol", Pattern: "export function* greetNames"})
+	findGenerator := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_find_symbol", Pattern: "export function* greetNames"})
 	if findGenerator.Error != "" || !strings.Contains(findGenerator.Output, "greetNames") {
 		t.Fatalf("expected declaration-shaped tsFindSymbol for 'export function* greetNames', got %#v", findGenerator)
 	}
 
-	readAsyncGenerator := executeTool(mgr, "ts_read_symbol", ToolRequest{Tool: "ts_read_symbol", Pattern: "export async function* streamNames"})
+	readAsyncGenerator := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_read_symbol", Pattern: "export async function* streamNames"})
 	if readAsyncGenerator.Error != "" || !strings.Contains(readAsyncGenerator.Output, "export async function* streamNames") {
 		t.Fatalf("expected declaration-shaped tsReadSymbol for 'export async function* streamNames', got %#v", readAsyncGenerator)
 	}
 
-	findDeclareClass := executeTool(mgr, "ts_find_symbol", ToolRequest{Tool: "ts_find_symbol", Pattern: "export declare class ExternalClient"})
+	findDeclareClass := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_find_symbol", Pattern: "export declare class ExternalClient"})
 	if findDeclareClass.Error != "" || !strings.Contains(findDeclareClass.Output, "external.d.ts") {
 		t.Fatalf("expected declaration-shaped tsFindSymbol for 'export declare class ExternalClient', got %#v", findDeclareClass)
 	}
 
-	readDeclareClass := executeTool(mgr, "ts_read_symbol", ToolRequest{Tool: "ts_read_symbol", Pattern: "export declare class ExternalClient"})
+	readDeclareClass := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_read_symbol", Pattern: "export declare class ExternalClient"})
 	if readDeclareClass.Error != "" || !strings.Contains(readDeclareClass.Output, "export declare class ExternalClient") {
 		t.Fatalf("expected declaration-shaped tsReadSymbol for 'export declare class ExternalClient', got %#v", readDeclareClass)
 	}
 
-	readDeclareConst := executeTool(mgr, "ts_read_symbol", ToolRequest{Tool: "ts_read_symbol", Pattern: "export declare const defaultEndpoint"})
+	readDeclareConst := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_read_symbol", Pattern: "export declare const defaultEndpoint"})
 	if readDeclareConst.Error != "" || !strings.Contains(readDeclareConst.Output, "export declare const defaultEndpoint") {
 		t.Fatalf("expected declaration-shaped tsReadSymbol for 'export declare const defaultEndpoint', got %#v", readDeclareConst)
 	}
 
-	findEnum := executeTool(mgr, "ts_find_symbol", ToolRequest{Tool: "ts_find_symbol", Pattern: "export enum GreetMode"})
+	findEnum := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_find_symbol", Pattern: "export enum GreetMode"})
 	if findEnum.Error != "" || !strings.Contains(findEnum.Output, "GreetMode") {
 		t.Fatalf("expected declaration-shaped tsFindSymbol for 'export enum GreetMode', got %#v", findEnum)
 	}
 
-	readNamespace := executeTool(mgr, "ts_read_symbol", ToolRequest{Tool: "ts_read_symbol", Pattern: "export namespace GreeterTools"})
+	readNamespace := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_read_symbol", Pattern: "export namespace GreeterTools"})
 	if readNamespace.Error != "" || !strings.Contains(readNamespace.Output, "export namespace GreeterTools") {
 		t.Fatalf("expected declaration-shaped tsReadSymbol for 'export namespace GreeterTools', got %#v", readNamespace)
 	}
 
-	entry := executeTool(mgr, "ts_entrypoints", ToolRequest{Tool: "ts_entrypoints"})
+	entry := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_entrypoints"})
 	if entry.Error != "" || !strings.Contains(entry.Output, "index.ts") {
 		t.Fatalf("unexpected tsEntrypoints result: %#v", entry)
 	}
 
 	// calls_from via semantic index
-	callsFrom := executeToolCtx(context.Background(), mgr, "ts_calls_from", ToolRequest{Tool: "ts_calls_from", Pattern: "main"})
+	callsFrom := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_calls_from", Pattern: "main"})
 	if callsFrom.Error != "" || !strings.Contains(callsFrom.Output, "greet") {
 		t.Fatalf("unexpected tsCallsFrom result: %#v", callsFrom)
 	}
 
 	// Ensure .jsx is indexed too.
-	findJsx := executeTool(mgr, "ts_find_symbol", ToolRequest{Tool: "ts_find_symbol", Pattern: "Panel"})
+	findJsx := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_find_symbol", Pattern: "Panel"})
 	if findJsx.Error != "" || !strings.Contains(findJsx.Output, "util.jsx") {
 		t.Fatalf("unexpected tsFindSymbol for jsx: %#v", findJsx)
 	}
@@ -239,7 +240,7 @@ export function main(): void {
 }
 `)
 
-	mgr := NewManager(config.Workspace{
+	mgr := workspace.NewManager(config.Workspace{
 		Root:                  root,
 		CWD:                   root,
 		EnableShell:           true,
@@ -249,17 +250,17 @@ export function main(): void {
 		MaxDirectoryEntries:   50,
 	})
 
-	ws := executeToolCtx(context.Background(), mgr, "ts_workspace_symbol", ToolRequest{Tool: "ts_workspace_symbol", Pattern: "Shouter"})
+	ws := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_workspace_symbol", Pattern: "Shouter"})
 	if ws.Error != "" || !strings.Contains(ws.Output, "greeter.ts") {
 		t.Fatalf("unexpected tsWorkspaceSymbol result: %#v", ws)
 	}
 
-	def := executeToolCtx(context.Background(), mgr, "ts_definition", ToolRequest{Tool: "ts_definition", Pattern: "greet"})
+	def := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_definition", Pattern: "greet"})
 	if def.Error != "" || !strings.Contains(def.Output, "greeter.ts") {
 		t.Fatalf("unexpected tsDefinition result: %#v", def)
 	}
 
-	refs := executeToolCtx(context.Background(), mgr, "ts_references", ToolRequest{Tool: "ts_references", Pattern: "greet", Path: "."})
+	refs := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "ts_references", Pattern: "greet", Path: "."})
 	if refs.Error != "" {
 		t.Fatalf("unexpected tsReferences error: %#v", refs)
 	}

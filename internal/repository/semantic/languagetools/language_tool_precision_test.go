@@ -7,33 +7,35 @@ import (
 	"strings"
 	"testing"
 
+	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
+	"idiom/internal/repository/semantic/language"
 )
 
 type languagePrecisionFixture struct {
 	name     string
-	manager  *Manager
-	requests map[Capability]ToolRequest
+	manager  *workspace.Manager
+	requests map[language.Capability]workspace.ToolRequest
 }
 
-var standardLanguageCapabilities = []Capability{
-	CapOverview,
-	CapEntrypoints,
-	CapFindSymbol,
-	CapWorkspaceSymbol,
-	CapDefinition,
-	CapReferences,
-	CapCallsFrom,
-	CapCallsInto,
-	CapReadSymbol,
-	CapRelatedFiles,
-	CapImplementations,
-	CapDiagnostics,
-	CapFileOutline,
+var standardLanguageCapabilities = []language.Capability{
+	language.CapOverview,
+	language.CapEntrypoints,
+	language.CapFindSymbol,
+	language.CapWorkspaceSymbol,
+	language.CapDefinition,
+	language.CapReferences,
+	language.CapCallsFrom,
+	language.CapCallsInto,
+	language.CapReadSymbol,
+	language.CapRelatedFiles,
+	language.CapImplementations,
+	language.CapDiagnostics,
+	language.CapFileOutline,
 }
 
 func TestLanguageRegistryConformanceCapabilities(t *testing.T) {
-	for _, lang := range LanguageRegistry() {
+	for _, lang := range language.LanguageRegistry() {
 		for _, cap := range standardLanguageCapabilities {
 			tool := lang.Tool(cap)
 			if strings.TrimSpace(tool) == "" {
@@ -49,16 +51,16 @@ func TestLanguageRegistryConformanceCapabilities(t *testing.T) {
 
 func TestLanguageRegistryTypeScriptAliases(t *testing.T) {
 	for _, name := range []string{"javascript", "jsx", "mjs", "cjs", "tsx", "mts", "cts", "d.ts", ".d.mts", ".d.cts"} {
-		lang, ok := LanguageForName(name)
+		lang, ok := language.LanguageForName(name)
 		if !ok || lang.Name != "typescript" {
-			t.Fatalf("LanguageForName(%q) = %#v, %v; want typescript", name, lang, ok)
+			t.Fatalf("language.LanguageForName(%q) = %#v, %v; want typescript", name, lang, ok)
 		}
 	}
 
 	for _, ext := range []string{".d.ts", ".d.mts", ".d.cts"} {
-		lang, ok := LanguageForExtension(ext)
+		lang, ok := language.LanguageForExtension(ext)
 		if !ok || lang.Name != "typescript" {
-			t.Fatalf("LanguageForExtension(%q) = %#v, %v; want typescript", ext, lang, ok)
+			t.Fatalf("language.LanguageForExtension(%q) = %#v, %v; want typescript", ext, lang, ok)
 		}
 	}
 }
@@ -103,14 +105,14 @@ func TestLanguageToolPrecisionTierConformance(t *testing.T) {
 }
 
 func TestLanguagePrecisionTierIsShownToModel(t *testing.T) {
-	result := ToolResult{Tool: "go_find_symbol", Summary: "Found 1 matching Go symbol", PrecisionTier: PrecisionTierSyntaxIndex}
-	rendered := FormatToolResultForModel(result)
+	result := workspace.ToolResult{Tool: "go_find_symbol", Summary: "Found 1 matching Go symbol", PrecisionTier: workspace.PrecisionTierSyntaxIndex}
+	rendered := workspace.FormatToolResultForModel(result)
 
 	if !strings.Contains(rendered, "precision_tier: syntax-index") {
 		t.Fatalf("model result missing precision tier:\n%s", rendered)
 	}
 
-	trace := FormatToolTrace(result)
+	trace := workspace.FormatToolTrace(result)
 	if !strings.Contains(trace, "precision_tier=syntax-index") {
 		t.Fatalf("trace missing precision tier:\n%s", trace)
 	}
@@ -121,15 +123,15 @@ func TestSupplementalLanguageDiscoveryToolsReceivePrecisionTier(t *testing.T) {
 	cppFixture := newCppPrecisionFixture(t)
 	tests := []struct {
 		name string
-		mgr  *Manager
-		req  ToolRequest
+		mgr  *workspace.Manager
+		req  workspace.ToolRequest
 	}{
-		{name: "go_find_function", mgr: goFixture.manager, req: ToolRequest{Tool: "go_find_function", Pattern: "helper"}},
-		{name: "go_find_type", mgr: goFixture.manager, req: ToolRequest{Tool: "go_find_type", Pattern: "Worker"}},
-		{name: "go_find_package", mgr: goFixture.manager, req: ToolRequest{Tool: "go_find_package", Pattern: "main"}},
-		{name: "cpp_declaration", mgr: cppFixture.manager, req: ToolRequest{Tool: "cpp_declaration", Pattern: "WorkerSystem::run"}},
-		{name: "cpp_includes", mgr: cppFixture.manager, req: ToolRequest{Tool: "cpp_includes", Path: filepath.Join("src", "worker_system.cpp")}},
-		{name: "cpp_dead_symbol", mgr: cppFixture.manager, req: ToolRequest{Tool: "cpp_dead_symbol", Pattern: "NoSuchSymbol"}},
+		{name: "go_find_function", mgr: goFixture.manager, req: workspace.ToolRequest{Tool: "go_find_function", Pattern: "helper"}},
+		{name: "go_find_type", mgr: goFixture.manager, req: workspace.ToolRequest{Tool: "go_find_type", Pattern: "Worker"}},
+		{name: "go_find_package", mgr: goFixture.manager, req: workspace.ToolRequest{Tool: "go_find_package", Pattern: "main"}},
+		{name: "cpp_declaration", mgr: cppFixture.manager, req: workspace.ToolRequest{Tool: "cpp_declaration", Pattern: "WorkerSystem::run"}},
+		{name: "cpp_includes", mgr: cppFixture.manager, req: workspace.ToolRequest{Tool: "cpp_includes", Path: filepath.Join("src", "worker_system.cpp")}},
+		{name: "cpp_dead_symbol", mgr: cppFixture.manager, req: workspace.ToolRequest{Tool: "cpp_dead_symbol", Pattern: "NoSuchSymbol"}},
 	}
 
 	for _, tt := range tests {
@@ -139,20 +141,20 @@ func TestSupplementalLanguageDiscoveryToolsReceivePrecisionTier(t *testing.T) {
 		}
 	}
 
-	result := goFixture.manager.Execute(context.Background(), ToolRequest{Tool: "go_move_declarations"})
+	result := goFixture.manager.Execute(context.Background(), workspace.ToolRequest{Tool: "go_move_declarations"})
 	if result.PrecisionTier != "" {
 		t.Fatalf("write tool received precision tier %q", result.PrecisionTier)
 	}
 }
 
-func languageByName(name string) (LanguageSupport, bool) {
-	for _, lang := range LanguageRegistry() {
+func languageByName(name string) (language.LanguageSupport, bool) {
+	for _, lang := range language.LanguageRegistry() {
 		if lang.Name == name {
 			return lang, true
 		}
 	}
 
-	return LanguageSupport{}, false
+	return language.LanguageSupport{}, false
 }
 
 func languageToolPrefix(name string) string {
@@ -166,7 +168,7 @@ func languageToolPrefix(name string) string {
 
 func validPrecisionTier(tier string) bool {
 	switch tier {
-	case PrecisionTierLSP, PrecisionTierSyntaxIndex, PrecisionTierRGFallback, PrecisionTierUnavailable:
+	case workspace.PrecisionTierLSP, workspace.PrecisionTierSyntaxIndex, workspace.PrecisionTierRGFallback, workspace.PrecisionTierUnavailable:
 		return true
 	default:
 		return false
@@ -198,26 +200,26 @@ func main() {
 }
 `)
 
-	mgr := NewManager(config.Workspace{Root: root, CWD: root, EnableShell: true, CommandTimeoutSeconds: 30, MaxFileBytes: 65536, MaxDirectoryEntries: 64})
+	mgr := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableShell: true, CommandTimeoutSeconds: 30, MaxFileBytes: 65536, MaxDirectoryEntries: 64})
 
 	return languagePrecisionFixture{
 		name:    "go",
 		manager: mgr,
-		requests: map[Capability]ToolRequest{
-			CapOverview:        {},
-			CapEntrypoints:     {},
-			CapFindSymbol:      {Pattern: "helper"},
-			CapWorkspaceSymbol: {Pattern: "helper"},
-			CapDefinition:      {Pattern: "helper"},
-			CapReferences:      {Pattern: "helper", Path: "."},
-			CapCallsFrom:       {Pattern: "Run"},
-			CapCallsInto:       {Pattern: "helper"},
-			CapReadSymbol:      {Pattern: "helper"},
-			CapExtractBody:     {Pattern: "helper"},
-			CapRelatedFiles:    {Pattern: "helper"},
-			CapImplementations: {Pattern: "Runner"},
-			CapDiagnostics:     {},
-			CapFileOutline:     {Path: "main.go"},
+		requests: map[language.Capability]workspace.ToolRequest{
+			language.CapOverview:        {},
+			language.CapEntrypoints:     {},
+			language.CapFindSymbol:      {Pattern: "helper"},
+			language.CapWorkspaceSymbol: {Pattern: "helper"},
+			language.CapDefinition:      {Pattern: "helper"},
+			language.CapReferences:      {Pattern: "helper", Path: "."},
+			language.CapCallsFrom:       {Pattern: "Run"},
+			language.CapCallsInto:       {Pattern: "helper"},
+			language.CapReadSymbol:      {Pattern: "helper"},
+			language.CapExtractBody:     {Pattern: "helper"},
+			language.CapRelatedFiles:    {Pattern: "helper"},
+			language.CapImplementations: {Pattern: "Runner"},
+			language.CapDiagnostics:     {},
+			language.CapFileOutline:     {Path: "main.go"},
 		},
 	}
 }
@@ -252,26 +254,26 @@ int main() {
 `)
 	writeCppCompileCommands(t, root, []string{filepath.Join("src", "worker_system.cpp"), filepath.Join("src", "main.cpp")})
 
-	mgr := NewManager(config.Workspace{Root: root, CWD: root, EnableShell: true, CommandTimeoutSeconds: 30, MaxFileBytes: 65536, MaxDirectoryEntries: 64})
+	mgr := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableShell: true, CommandTimeoutSeconds: 30, MaxFileBytes: 65536, MaxDirectoryEntries: 64})
 
 	return languagePrecisionFixture{
 		name:    "cpp",
 		manager: mgr,
-		requests: map[Capability]ToolRequest{
-			CapOverview:        {},
-			CapEntrypoints:     {},
-			CapFindSymbol:      {Pattern: "helper"},
-			CapWorkspaceSymbol: {Pattern: "helper"},
-			CapDefinition:      {Pattern: "helper"},
-			CapReferences:      {Pattern: "helper", Path: "."},
-			CapCallsFrom:       {Pattern: "main"},
-			CapCallsInto:       {Pattern: "helper"},
-			CapReadSymbol:      {Pattern: "helper"},
-			CapExtractBody:     {Pattern: "helper"},
-			CapRelatedFiles:    {Pattern: "helper"},
-			CapImplementations: {Pattern: "SystemBase"},
-			CapDiagnostics:     {},
-			CapFileOutline:     {Path: filepath.Join("src", "worker_system.cpp")},
+		requests: map[language.Capability]workspace.ToolRequest{
+			language.CapOverview:        {},
+			language.CapEntrypoints:     {},
+			language.CapFindSymbol:      {Pattern: "helper"},
+			language.CapWorkspaceSymbol: {Pattern: "helper"},
+			language.CapDefinition:      {Pattern: "helper"},
+			language.CapReferences:      {Pattern: "helper", Path: "."},
+			language.CapCallsFrom:       {Pattern: "main"},
+			language.CapCallsInto:       {Pattern: "helper"},
+			language.CapReadSymbol:      {Pattern: "helper"},
+			language.CapExtractBody:     {Pattern: "helper"},
+			language.CapRelatedFiles:    {Pattern: "helper"},
+			language.CapImplementations: {Pattern: "SystemBase"},
+			language.CapDiagnostics:     {},
+			language.CapFileOutline:     {Path: filepath.Join("src", "worker_system.cpp")},
 		},
 	}
 }
@@ -297,25 +299,25 @@ if __name__ == "__main__":
     helper()
 `)
 
-	mgr := NewManager(config.Workspace{Root: root, CWD: root, EnableShell: true, CommandTimeoutSeconds: 30, MaxFileBytes: 65536, MaxDirectoryEntries: 64})
+	mgr := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableShell: true, CommandTimeoutSeconds: 30, MaxFileBytes: 65536, MaxDirectoryEntries: 64})
 
 	return languagePrecisionFixture{
 		name:    "python",
 		manager: mgr,
-		requests: map[Capability]ToolRequest{
-			CapOverview:        {},
-			CapEntrypoints:     {},
-			CapFindSymbol:      {Pattern: "helper"},
-			CapWorkspaceSymbol: {Pattern: "helper"},
-			CapDefinition:      {Pattern: "helper"},
-			CapReferences:      {Pattern: "helper", Path: "."},
-			CapCallsFrom:       {Pattern: "run"},
-			CapCallsInto:       {Pattern: "helper"},
-			CapReadSymbol:      {Pattern: "helper"},
-			CapRelatedFiles:    {Pattern: "helper"},
-			CapImplementations: {Pattern: "SystemBase"},
-			CapDiagnostics:     {Path: filepath.Join("src", "demo", "engine.py")},
-			CapFileOutline:     {Path: filepath.Join("src", "demo", "engine.py")},
+		requests: map[language.Capability]workspace.ToolRequest{
+			language.CapOverview:        {},
+			language.CapEntrypoints:     {},
+			language.CapFindSymbol:      {Pattern: "helper"},
+			language.CapWorkspaceSymbol: {Pattern: "helper"},
+			language.CapDefinition:      {Pattern: "helper"},
+			language.CapReferences:      {Pattern: "helper", Path: "."},
+			language.CapCallsFrom:       {Pattern: "run"},
+			language.CapCallsInto:       {Pattern: "helper"},
+			language.CapReadSymbol:      {Pattern: "helper"},
+			language.CapRelatedFiles:    {Pattern: "helper"},
+			language.CapImplementations: {Pattern: "SystemBase"},
+			language.CapDiagnostics:     {Path: filepath.Join("src", "demo", "engine.py")},
+			language.CapFileOutline:     {Path: filepath.Join("src", "demo", "engine.py")},
 		},
 	}
 }
@@ -340,25 +342,25 @@ export function main(): void {
 }
 `)
 
-	mgr := NewManager(config.Workspace{Root: root, CWD: root, EnableShell: true, CommandTimeoutSeconds: 30, MaxFileBytes: 65536, MaxDirectoryEntries: 64})
+	mgr := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableShell: true, CommandTimeoutSeconds: 30, MaxFileBytes: 65536, MaxDirectoryEntries: 64})
 
 	return languagePrecisionFixture{
 		name:    "typescript",
 		manager: mgr,
-		requests: map[Capability]ToolRequest{
-			CapOverview:        {},
-			CapEntrypoints:     {},
-			CapFindSymbol:      {Pattern: "helper"},
-			CapWorkspaceSymbol: {Pattern: "helper"},
-			CapDefinition:      {Pattern: "helper"},
-			CapReferences:      {Pattern: "helper", Path: "."},
-			CapCallsFrom:       {Pattern: "main"},
-			CapCallsInto:       {Pattern: "helper"},
-			CapReadSymbol:      {Pattern: "helper"},
-			CapRelatedFiles:    {Pattern: "helper"},
-			CapImplementations: {Pattern: "Service"},
-			CapDiagnostics:     {Path: filepath.Join("src", "service.ts")},
-			CapFileOutline:     {Path: filepath.Join("src", "service.ts")},
+		requests: map[language.Capability]workspace.ToolRequest{
+			language.CapOverview:        {},
+			language.CapEntrypoints:     {},
+			language.CapFindSymbol:      {Pattern: "helper"},
+			language.CapWorkspaceSymbol: {Pattern: "helper"},
+			language.CapDefinition:      {Pattern: "helper"},
+			language.CapReferences:      {Pattern: "helper", Path: "."},
+			language.CapCallsFrom:       {Pattern: "main"},
+			language.CapCallsInto:       {Pattern: "helper"},
+			language.CapReadSymbol:      {Pattern: "helper"},
+			language.CapRelatedFiles:    {Pattern: "helper"},
+			language.CapImplementations: {Pattern: "Service"},
+			language.CapDiagnostics:     {Path: filepath.Join("src", "service.ts")},
+			language.CapFileOutline:     {Path: filepath.Join("src", "service.ts")},
 		},
 	}
 }
@@ -371,20 +373,20 @@ func newRustPrecisionFixture(t *testing.T) languagePrecisionFixture {
 	return languagePrecisionFixture{
 		name:    "rust",
 		manager: mgr,
-		requests: map[Capability]ToolRequest{
-			CapOverview:        {},
-			CapEntrypoints:     {},
-			CapFindSymbol:      {Pattern: "helper"},
-			CapWorkspaceSymbol: {Pattern: "helper"},
-			CapDefinition:      {Pattern: "helper"},
-			CapReferences:      {Pattern: "helper", Path: "."},
-			CapCallsFrom:       {Pattern: "main"},
-			CapCallsInto:       {Pattern: "helper"},
-			CapReadSymbol:      {Pattern: "helper"},
-			CapRelatedFiles:    {Pattern: "worker"},
-			CapImplementations: {Pattern: "Runnable"},
-			CapDiagnostics:     {},
-			CapFileOutline:     {Path: filepath.Join("src", "worker.rs")},
+		requests: map[language.Capability]workspace.ToolRequest{
+			language.CapOverview:        {},
+			language.CapEntrypoints:     {},
+			language.CapFindSymbol:      {Pattern: "helper"},
+			language.CapWorkspaceSymbol: {Pattern: "helper"},
+			language.CapDefinition:      {Pattern: "helper"},
+			language.CapReferences:      {Pattern: "helper", Path: "."},
+			language.CapCallsFrom:       {Pattern: "main"},
+			language.CapCallsInto:       {Pattern: "helper"},
+			language.CapReadSymbol:      {Pattern: "helper"},
+			language.CapRelatedFiles:    {Pattern: "worker"},
+			language.CapImplementations: {Pattern: "Runnable"},
+			language.CapDiagnostics:     {},
+			language.CapFileOutline:     {Path: filepath.Join("src", "worker.rs")},
 		},
 	}
 }
@@ -393,25 +395,25 @@ func newJavaPrecisionFixture(t *testing.T) languagePrecisionFixture {
 	t.Helper()
 
 	root := buildJavaTempWorkspace(t)
-	mgr := NewManager(config.Workspace{Root: root, CWD: root, EnableShell: true, CommandTimeoutSeconds: 30, MaxFileBytes: 65536, MaxDirectoryEntries: 64})
+	mgr := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableShell: true, CommandTimeoutSeconds: 30, MaxFileBytes: 65536, MaxDirectoryEntries: 64})
 
 	return languagePrecisionFixture{
 		name:    "java",
 		manager: mgr,
-		requests: map[Capability]ToolRequest{
-			CapOverview:        {},
-			CapEntrypoints:     {},
-			CapFindSymbol:      {Pattern: "Helper"},
-			CapWorkspaceSymbol: {Pattern: "Helper"},
-			CapDefinition:      {Pattern: "Helper"},
-			CapReferences:      {Pattern: "Helper", Path: "."},
-			CapCallsFrom:       {Pattern: "main"},
-			CapCallsInto:       {Pattern: "compute"},
-			CapReadSymbol:      {Pattern: "Helper#run"},
-			CapRelatedFiles:    {Pattern: "helper"},
-			CapImplementations: {Pattern: "Service"},
-			CapDiagnostics:     {},
-			CapFileOutline:     {Path: filepath.Join("src", "main", "java", "com", "example", "App.java")},
+		requests: map[language.Capability]workspace.ToolRequest{
+			language.CapOverview:        {},
+			language.CapEntrypoints:     {},
+			language.CapFindSymbol:      {Pattern: "Helper"},
+			language.CapWorkspaceSymbol: {Pattern: "Helper"},
+			language.CapDefinition:      {Pattern: "Helper"},
+			language.CapReferences:      {Pattern: "Helper", Path: "."},
+			language.CapCallsFrom:       {Pattern: "main"},
+			language.CapCallsInto:       {Pattern: "compute"},
+			language.CapReadSymbol:      {Pattern: "Helper#run"},
+			language.CapRelatedFiles:    {Pattern: "helper"},
+			language.CapImplementations: {Pattern: "Service"},
+			language.CapDiagnostics:     {},
+			language.CapFileOutline:     {Path: filepath.Join("src", "main", "java", "com", "example", "App.java")},
 		},
 	}
 }

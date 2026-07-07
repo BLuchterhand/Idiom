@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
 )
 
@@ -17,8 +18,8 @@ func TestGoFindSymbolAcceptsDeclarationPattern(t *testing.T) {
 type Runner struct{}
 `)
 
-	mgr := NewManager(config.Workspace{Root: dir, CWD: dir})
-	result := mgr.Execute(context.Background(), ToolRequest{Tool: "go_find_symbol", Pattern: "type Runner struct"})
+	mgr := workspace.NewManager(config.Workspace{Root: dir, CWD: dir})
+	result := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "go_find_symbol", Pattern: "type Runner struct"})
 
 	if result.Error != "" {
 		t.Fatalf("go_find_symbol failed: %#v", result)
@@ -39,8 +40,8 @@ type Runner struct{}
 func (r *Runner) Run() {}
 `)
 
-	mgr := NewManager(config.Workspace{Root: dir, CWD: dir})
-	result := mgr.Execute(context.Background(), ToolRequest{Tool: "go_read_symbol", Pattern: "type Runner struct"})
+	mgr := workspace.NewManager(config.Workspace{Root: dir, CWD: dir})
+	result := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "go_read_symbol", Pattern: "type Runner struct"})
 
 	if result.Error != "" {
 		t.Fatalf("go_read_symbol failed: %#v", result)

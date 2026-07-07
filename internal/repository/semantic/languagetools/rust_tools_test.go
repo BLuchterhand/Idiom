@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
+	"idiom/internal/repository/semantic/languagetools"
 )
 
 func writeRustFixture(t *testing.T, path string, content string) {
@@ -23,7 +25,7 @@ func writeRustFixture(t *testing.T, path string, content string) {
 	}
 }
 
-func newRustFixtureManager(t *testing.T) (*Manager, string) {
+func newRustFixtureManager(t *testing.T) (*workspace.Manager, string) {
 	t.Helper()
 
 	root := t.TempDir()
@@ -100,7 +102,7 @@ fn trivial() {
 }
 `)
 
-	mgr := NewManager(config.Workspace{
+	mgr := workspace.NewManager(config.Workspace{
 		Root:                  root,
 		CWD:                   root,
 		EnableShell:           true,
@@ -122,7 +124,7 @@ func TestRustWorkspaceDetect(t *testing.T) {
 
 func TestRustOverview(t *testing.T) {
 	mgr, _ := newRustFixtureManager(t)
-	result := executeTool(mgr, "rust_overview", ToolRequest{})
+	result := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "rust_overview"})
 
 	if result.Error != "" {
 		t.Fatalf("rustOverview returned error: %v", result.Error)
@@ -135,7 +137,7 @@ func TestRustOverview(t *testing.T) {
 
 func TestRustFindSymbol(t *testing.T) {
 	mgr, _ := newRustFixtureManager(t)
-	result := executeTool(mgr, "rust_find_symbol", ToolRequest{Tool: "rust_find_symbol", Pattern: "Worker"})
+	result := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "rust_find_symbol", Pattern: "Worker"})
 
 	if result.Error != "" {
 		t.Fatalf("rustFindSymbol returned error: %v", result.Error)
@@ -145,17 +147,17 @@ func TestRustFindSymbol(t *testing.T) {
 		t.Fatalf("expected worker.rs in output, got: %q", result.Output)
 	}
 
-	decl := executeTool(mgr, "rust_find_symbol", ToolRequest{Tool: "rust_find_symbol", Pattern: "pub struct Worker"})
+	decl := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "rust_find_symbol", Pattern: "pub struct Worker"})
 	if decl.Error != "" || !strings.Contains(decl.Output, "Worker") {
 		t.Fatalf("expected declaration-shaped rustFindSymbol query to find Worker, got %#v", decl)
 	}
 
-	typeAlias := executeTool(mgr, "rust_find_symbol", ToolRequest{Tool: "rust_find_symbol", Pattern: "pub type WorkerId"})
+	typeAlias := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "rust_find_symbol", Pattern: "pub type WorkerId"})
 	if typeAlias.Error != "" || !strings.Contains(typeAlias.Output, "WorkerId") {
 		t.Fatalf("expected declaration-shaped rustFindSymbol query to find WorkerId type alias, got %#v", typeAlias)
 	}
 
-	staticDecl := executeTool(mgr, "rust_find_symbol", ToolRequest{Tool: "rust_find_symbol", Pattern: "pub static mut GLOBAL_MAX"})
+	staticDecl := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "rust_find_symbol", Pattern: "pub static mut GLOBAL_MAX"})
 	if staticDecl.Error != "" || !strings.Contains(staticDecl.Output, "GLOBAL_MAX") {
 		t.Fatalf("expected declaration-shaped rustFindSymbol query to find GLOBAL_MAX static, got %#v", staticDecl)
 	}
@@ -163,7 +165,7 @@ func TestRustFindSymbol(t *testing.T) {
 
 func TestRustFindSymbolEmptyPattern(t *testing.T) {
 	mgr, _ := newRustFixtureManager(t)
-	result := executeTool(mgr, "rust_find_symbol", ToolRequest{Tool: "rust_find_symbol"})
+	result := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "rust_find_symbol"})
 
 	if result.Error == "" {
 		t.Fatalf("expected error for empty pattern, got success: %#v", result)
@@ -172,7 +174,7 @@ func TestRustFindSymbolEmptyPattern(t *testing.T) {
 
 func TestRustReadSymbol(t *testing.T) {
 	mgr, _ := newRustFixtureManager(t)
-	result := executeTool(mgr, "rust_read_symbol", ToolRequest{Tool: "rust_read_symbol", Pattern: "spawn", Path: filepath.Join("src", "worker.rs")})
+	result := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "rust_read_symbol", Pattern: "spawn", Path: filepath.Join("src", "worker.rs")})
 
 	if result.Error != "" {
 		t.Fatalf("rustReadSymbol returned error: %v", result.Error)
@@ -182,7 +184,7 @@ func TestRustReadSymbol(t *testing.T) {
 		t.Fatalf("expected output to include spawn, got: %q", result.Output)
 	}
 
-	decl := executeTool(mgr, "rust_read_symbol", ToolRequest{Tool: "rust_read_symbol", Pattern: "pub struct Worker", Path: filepath.Join("src", "worker.rs")})
+	decl := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "rust_read_symbol", Pattern: "pub struct Worker", Path: filepath.Join("src", "worker.rs")})
 	if decl.Error != "" {
 		t.Fatalf("rustReadSymbol with declaration-shaped pattern returned error: %v", decl.Error)
 	}
@@ -191,12 +193,12 @@ func TestRustReadSymbol(t *testing.T) {
 		t.Fatalf("expected declaration-shaped rustReadSymbol to return struct snippet, got: %q", decl.Output)
 	}
 
-	constFn := executeTool(mgr, "rust_read_symbol", ToolRequest{Tool: "rust_read_symbol", Pattern: "pub const fn default_worker_id", Path: filepath.Join("src", "utils.rs")})
+	constFn := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "rust_read_symbol", Pattern: "pub const fn default_worker_id", Path: filepath.Join("src", "utils.rs")})
 	if constFn.Error != "" || !strings.Contains(constFn.Output, "pub const fn default_worker_id") {
 		t.Fatalf("expected declaration-shaped rustReadSymbol to return const fn snippet, got %#v", constFn)
 	}
 
-	macroDecl := executeTool(mgr, "rust_read_symbol", ToolRequest{Tool: "rust_read_symbol", Pattern: "macro_rules! helper_macro", Path: filepath.Join("src", "utils.rs")})
+	macroDecl := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "rust_read_symbol", Pattern: "macro_rules! helper_macro", Path: filepath.Join("src", "utils.rs")})
 	if macroDecl.Error != "" || !strings.Contains(macroDecl.Output, "macro_rules! helper_macro") {
 		t.Fatalf("expected declaration-shaped rustReadSymbol to return macro snippet, got %#v", macroDecl)
 	}
@@ -204,7 +206,7 @@ func TestRustReadSymbol(t *testing.T) {
 
 func TestRustFileOutline(t *testing.T) {
 	mgr, _ := newRustFixtureManager(t)
-	result := executeTool(mgr, "rust_file_outline", ToolRequest{Tool: "rust_file_outline", Path: filepath.Join("src", "worker.rs")})
+	result := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "rust_file_outline", Path: filepath.Join("src", "worker.rs")})
 
 	if result.Error != "" {
 		t.Fatalf("rustFileOutline returned error: %v", result.Error)
@@ -225,7 +227,7 @@ func TestRustFileOutline(t *testing.T) {
 
 func TestRustEntrypoints(t *testing.T) {
 	mgr, _ := newRustFixtureManager(t)
-	result := executeTool(mgr, "rust_entrypoints", ToolRequest{Tool: "rust_entrypoints"})
+	result := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "rust_entrypoints"})
 
 	if result.Error != "" {
 		t.Fatalf("rustEntrypoints returned error: %v", result.Error)
@@ -238,7 +240,7 @@ func TestRustEntrypoints(t *testing.T) {
 
 func TestRustRelatedFiles(t *testing.T) {
 	mgr, _ := newRustFixtureManager(t)
-	result := executeTool(mgr, "rust_related_files", ToolRequest{Tool: "rust_related_files", Pattern: "worker"})
+	result := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "rust_related_files", Pattern: "worker"})
 
 	if result.Error != "" {
 		t.Fatalf("rustRelatedFiles returned error: %v", result.Error)
@@ -253,7 +255,7 @@ func TestRustImplementationsFallback(t *testing.T) {
 	mgr, _ := newRustFixtureManager(t)
 	// rust-analyzer is almost certainly unavailable in CI, so this exercises
 	// the TraitImplementers fallback path.
-	result := executeToolCtx(context.Background(), mgr, "rust_implementations", ToolRequest{Tool: "rust_implementations", Pattern: "Runnable"})
+	result := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "rust_implementations", Pattern: "Runnable"})
 	if result.Error != "" {
 		t.Fatalf("rustImplementations returned error: %v", result.Error)
 	}
@@ -265,7 +267,7 @@ func TestRustImplementationsFallback(t *testing.T) {
 
 func TestRustCallsFromFallback(t *testing.T) {
 	mgr, _ := newRustFixtureManager(t)
-	result := executeToolCtx(context.Background(), mgr, "rust_calls_from", ToolRequest{Tool: "rust_calls_from", Pattern: "main"})
+	result := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "rust_calls_from", Pattern: "main"})
 
 	if result.Error != "" {
 		t.Fatalf("rustCallsFrom returned error: %v", result.Error)
@@ -279,7 +281,7 @@ func TestRustCallsFromFallback(t *testing.T) {
 
 func TestRustCallsIntoFallback(t *testing.T) {
 	mgr, _ := newRustFixtureManager(t)
-	result := executeToolCtx(context.Background(), mgr, "rust_calls_into", ToolRequest{Tool: "rust_calls_into", Pattern: "helper"})
+	result := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "rust_calls_into", Pattern: "helper"})
 
 	if result.Error != "" {
 		t.Fatalf("rustCallsInto returned error: %v", result.Error)
@@ -292,7 +294,7 @@ func TestRustCallsIntoFallback(t *testing.T) {
 
 func TestRustReferencesFallback(t *testing.T) {
 	mgr, _ := newRustFixtureManager(t)
-	result := executeToolCtx(context.Background(), mgr, "rust_references", ToolRequest{Tool: "rust_references", Pattern: "helper", Path: "."})
+	result := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "rust_references", Pattern: "helper", Path: "."})
 
 	if result.Error != "" {
 		t.Fatalf("rustReferences returned error: %v", result.Error)
@@ -307,7 +309,7 @@ func TestRustReferencesFallback(t *testing.T) {
 
 func TestRustDefinitionFallback(t *testing.T) {
 	mgr, _ := newRustFixtureManager(t)
-	result := executeToolCtx(context.Background(), mgr, "rust_definition", ToolRequest{Tool: "rust_definition", Pattern: "do_work"})
+	result := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "rust_definition", Pattern: "do_work"})
 
 	if result.Error != "" {
 		t.Fatalf("rustDefinition returned error: %v", result.Error)
@@ -320,7 +322,7 @@ func TestRustDefinitionFallback(t *testing.T) {
 
 func TestRustWorkspaceSymbolFallback(t *testing.T) {
 	mgr, _ := newRustFixtureManager(t)
-	result := executeToolCtx(context.Background(), mgr, "rust_workspace_symbol", ToolRequest{Tool: "rust_workspace_symbol", Pattern: "Worker"})
+	result := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "rust_workspace_symbol", Pattern: "Worker"})
 
 	if result.Error != "" {
 		t.Fatalf("rustWorkspaceSymbol returned error: %v", result.Error)
@@ -335,7 +337,7 @@ func TestRustDiagnosticsNoCargo(t *testing.T) {
 	mgr, _ := newRustFixtureManager(t)
 	t.Setenv("PATH", "")
 
-	result := executeToolCtx(context.Background(), mgr, "rust_diagnostics", ToolRequest{Tool: "rust_diagnostics"})
+	result := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "rust_diagnostics"})
 	if result.Error == "" {
 		t.Fatal("expected error when cargo is absent")
 	}
@@ -352,7 +354,7 @@ func TestRustToolsWithRustAnalyzer(t *testing.T) {
 
 	mgr, _ := newRustFixtureManager(t)
 
-	ws := executeToolCtx(context.Background(), mgr, "rust_workspace_symbol", ToolRequest{Tool: "rust_workspace_symbol", Pattern: "Worker"})
+	ws := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "rust_workspace_symbol", Pattern: "Worker"})
 	if ws.Error != "" {
 		t.Fatalf("rustWorkspaceSymbol returned error: %v", ws.Error)
 	}
@@ -361,7 +363,7 @@ func TestRustToolsWithRustAnalyzer(t *testing.T) {
 		t.Fatalf("rustWorkspaceSymbol missing Worker, got: %q", ws.Output)
 	}
 
-	def := executeToolCtx(context.Background(), mgr, "rust_definition", ToolRequest{Tool: "rust_definition", Pattern: "spawn", Path: filepath.Join("src", "worker.rs")})
+	def := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "rust_definition", Pattern: "spawn", Path: filepath.Join("src", "worker.rs")})
 	if def.Error != "" {
 		t.Fatalf("rustDefinition returned error: %v", def.Error)
 	}
@@ -370,12 +372,12 @@ func TestRustToolsWithRustAnalyzer(t *testing.T) {
 func TestExecuteRustToolDispatch(t *testing.T) {
 	mgr, _ := newRustFixtureManager(t)
 
-	for _, name := range RustToolNames() {
+	for _, name := range languagetools.RustToolNames() {
 		if name == "rust_diagnostics" {
 			continue // cargo may not be installed
 		}
 
-		req := ToolRequest{Tool: name}
+		req := workspace.ToolRequest{Tool: name}
 		switch name {
 		case "rust_overview", "rust_entrypoints":
 			// no extra params needed
@@ -388,7 +390,7 @@ func TestExecuteRustToolDispatch(t *testing.T) {
 			req.Pattern = "Worker"
 		}
 
-		result := executeToolCtx(context.Background(), mgr, req.Tool, req)
+		result := mgr.Execute(context.Background(), req)
 		if result.Tool == "" {
 			t.Fatalf("ExecuteRustTool(%q) returned blank Tool name", name)
 		}
@@ -397,7 +399,7 @@ func TestExecuteRustToolDispatch(t *testing.T) {
 
 func TestExecuteRustToolUnknown(t *testing.T) {
 	mgr, _ := newRustFixtureManager(t)
-	result := executeToolCtx(context.Background(), mgr, ToolRequest{Tool: "rust_bogus"}.Tool, ToolRequest{Tool: "rust_bogus"})
+	result := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "rust_bogus"})
 
 	if result.Error == "" {
 		t.Fatal("expected error for unknown rust tool")
