@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -15,6 +16,48 @@ import (
 	"idiom/internal/platform/config"
 	"idiom/internal/repository/comprehension"
 )
+
+func TestAuditUniversalCtagsPathRequiresUniversalCtags(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("executable shell fixture uses POSIX mode bits")
+	}
+
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{
+			name: "accepts universal ctags",
+			body: "#!/bin/sh\nprintf '%s\\n' 'Universal Ctags 6.1.0'\n",
+			want: true,
+		},
+		{
+			name: "rejects non-universal ctags",
+			body: "#!/bin/sh\nprintf '%s\\n' 'Exuberant Ctags 5.8'\n",
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			binDir := t.TempDir()
+			path := filepath.Join(binDir, "ctags")
+			if err := os.WriteFile(path, []byte(tt.body), 0o755); err != nil {
+				t.Fatalf("write ctags: %v", err)
+			}
+			t.Setenv("PATH", binDir)
+
+			got := auditUniversalCtagsPath()
+			if tt.want && got != path {
+				t.Fatalf("auditUniversalCtagsPath() = %q, want %q", got, path)
+			}
+			if !tt.want && got != "" {
+				t.Fatalf("auditUniversalCtagsPath() = %q, want empty", got)
+			}
+		})
+	}
+}
 
 func TestBuildRankerLearningAuditEmptyWorkspace(t *testing.T) {
 	root := t.TempDir()

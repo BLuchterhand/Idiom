@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -226,7 +225,7 @@ func (m *Manager) gitHistoryApplicability(ctx context.Context, tool string, rel 
 		return toolInvalidArgumentResult(tool, "History query rejected", fmt.Sprintf("path %q is a directory; history tools require a file path", rel)), true
 	}
 
-	if _, err := exec.LookPath("git"); err != nil {
+	if hosttools.FirstAvailable("git") == "" {
 		return toolFailureResult(tool, "Git history unavailable", "git is not installed", failures.Unavailable, reasonGitHistoryUnavailable), true
 	}
 
@@ -311,8 +310,8 @@ func gitOutputContainsPath(output string, rel string) bool {
 }
 
 func (m *Manager) ctagsSymbols(ctx context.Context, req ToolRequest) ToolResult {
-	bin, err := exec.LookPath("ctags")
-	if err != nil || bin == "" {
+	bin := hosttools.FirstAvailable("ctags")
+	if bin == "" {
 		return toolUnavailableResult(ToolNameCtagsSymbols, "Ctags symbol search unavailable", "ctags is not installed")
 	}
 
@@ -335,8 +334,8 @@ func (m *Manager) ctagsSymbols(ctx context.Context, req ToolRequest) ToolResult 
 }
 
 func (m *Manager) semgrepScan(ctx context.Context, req ToolRequest) ToolResult {
-	bin, err := exec.LookPath("semgrep")
-	if err != nil || bin == "" {
+	bin := hosttools.FirstAvailable("semgrep")
+	if bin == "" {
 		return toolUnavailableResult(ToolNameSemgrepScan, "Semgrep scan unavailable", "semgrep is not installed")
 	}
 
@@ -361,8 +360,8 @@ func (m *Manager) semgrepScan(ctx context.Context, req ToolRequest) ToolResult {
 }
 
 func (m *Manager) joernScan(ctx context.Context, req ToolRequest) ToolResult {
-	bin, err := exec.LookPath("joern-scan")
-	if err != nil || bin == "" {
+	bin := hosttools.FirstAvailable("joern-scan")
+	if bin == "" {
 		return toolUnavailableResult(ToolNameJoernScan, "Joern scan unavailable", "joern-scan is not installed")
 	}
 
@@ -413,7 +412,7 @@ func (m *Manager) rustDependencyGraph(ctx context.Context, target string) ToolRe
 }
 
 func (m *Manager) tsDependencyGraph(ctx context.Context, target string) ToolResult {
-	if bin, err := exec.LookPath("madge"); err == nil && bin != "" {
+	if bin := hosttools.FirstAvailable("madge"); bin != "" {
 		output, execErr := m.runCommand(ctx, m.cfg.Root, bin, "--json", target)
 		result := ToolResult{Tool: ToolNameDependencyGraph, Summary: fmt.Sprintf("Collected TypeScript/JavaScript dependency graph with madge under %s", m.pathAccess.DisplayPath(target)), Output: strings.TrimSpace(output)}
 
@@ -432,7 +431,7 @@ func typescriptDependencyGraphExtensions() []string {
 }
 
 func (m *Manager) pythonDependencyGraph(ctx context.Context, target string) ToolResult {
-	if bin, err := exec.LookPath("pydeps"); err == nil && bin != "" {
+	if bin := hosttools.FirstAvailable("pydeps"); bin != "" {
 		output, execErr := m.runCommand(ctx, m.cfg.Root, bin, "--show-deps", "--no-output", target)
 		result := ToolResult{Tool: ToolNameDependencyGraph, Summary: fmt.Sprintf("Collected Python dependency graph with pydeps under %s", m.pathAccess.DisplayPath(target)), Output: strings.TrimSpace(output)}
 

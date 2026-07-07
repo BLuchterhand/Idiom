@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"idiom/internal/platform/commandexec"
+	"idiom/internal/platform/hosttools"
 )
 
 // Tool registers an arbitrary shell-invokable tool.
@@ -283,7 +283,7 @@ func unavailableReason(tool Tool, baseDir string) string {
 		return ""
 	}
 
-	if _, err := exec.LookPath(command); err != nil {
+	if hosttools.FirstAvailable(command) == "" {
 		return "command not found on PATH"
 	}
 

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 )
 
@@ -125,6 +126,40 @@ func TestRegistryAvailabilityFiltersMissingCommands(t *testing.T) {
 		if ok || reason == "" {
 			t.Fatalf("expected unavailable reason for %s, ok=%v reason=%q", missing, ok, reason)
 		}
+	}
+}
+
+func TestRegistryAvailabilityAcceptsBareCommandOnPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("executable shell fixture uses POSIX mode bits")
+	}
+
+	binDir := t.TempDir()
+	commandPath := filepath.Join(binDir, "idiom-external-ok")
+	if err := os.WriteFile(commandPath, []byte("#!/bin/sh\necho ok\n"), 0o755); err != nil {
+		t.Fatalf("write command: %v", err)
+	}
+	t.Setenv("PATH", binDir)
+
+	reg, err := NewRegistry([]Tool{
+		{Name: "ok_path", Command: "idiom-external-ok"},
+		{Name: "missing_path", Command: "idiom-external-missing"},
+	})
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+
+	names := reg.AvailableNames(t.TempDir())
+	if !hasString(names, "ok_path") {
+		t.Fatalf("expected bare PATH command to be available, got %#v", names)
+	}
+	if hasString(names, "missing_path") {
+		t.Fatalf("missing bare PATH command should not be available: %#v", names)
+	}
+
+	ok, reason := reg.Availability("missing_path", "")
+	if ok || reason != "command not found on PATH" {
+		t.Fatalf("missing PATH command availability = %v, %q", ok, reason)
 	}
 }
 
