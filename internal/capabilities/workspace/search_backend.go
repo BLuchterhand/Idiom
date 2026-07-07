@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"idiom/internal/platform/commandexec"
 )
 
 type contentSearchBackend struct {
@@ -16,6 +18,8 @@ type contentSearchBackend struct {
 const (
 	contentSearchRipgrep = "ripgrep"
 	contentSearchGrep    = "grep"
+
+	contentSearchVersionCaptureBytes = 64 * 1024
 )
 
 func resolveContentSearchBackend() (contentSearchBackend, error) {
@@ -61,12 +65,17 @@ func findGNUStyleGrep(name string) (string, bool) {
 		return "", false
 	}
 
-	output, err := exec.Command(path, "--version").CombinedOutput()
-	if err != nil {
+	result := commandexec.Run(nil, commandexec.Spec{
+		Name:           path,
+		Args:           []string{"--version"},
+		MaxOutputBytes: contentSearchVersionCaptureBytes,
+		MergeOutput:    true,
+	})
+	if result.Err != nil {
 		return "", false
 	}
 
-	if !strings.Contains(strings.ToLower(string(output)), "gnu grep") {
+	if !strings.Contains(strings.ToLower(result.CombinedOutput()), "gnu grep") {
 		return "", false
 	}
 
