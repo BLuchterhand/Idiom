@@ -8,6 +8,7 @@ import (
 
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/platform/textutil"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 )
 
 const ToolSchemaExportVersion = "idiom.tool_schema_export.v1"
@@ -261,7 +262,7 @@ func toolSchemaCapabilities(tool string) []autonomy.Capability {
 	}
 
 	switch {
-	case LanguageToolHasCapability(tool, CapDiagnostics):
+	case LanguageToolHasCapability(tool, semanticlanguage.CapDiagnostics):
 		return []autonomy.Capability{autonomy.CapabilityShellVerification}
 	case IsLanguageToolName(tool):
 		return []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}
@@ -276,7 +277,7 @@ func toolSchemaSideEffects(tool string) []autonomy.SideEffectClass {
 	}
 
 	switch {
-	case LanguageToolHasCapability(tool, CapDiagnostics):
+	case LanguageToolHasCapability(tool, semanticlanguage.CapDiagnostics):
 		return []autonomy.SideEffectClass{autonomy.SideEffectReadOnly, autonomy.SideEffectUnknown}
 	default:
 		return []autonomy.SideEffectClass{autonomy.SideEffectReadOnly}

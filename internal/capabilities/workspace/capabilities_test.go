@@ -87,7 +87,7 @@ func TestReadOnlyCapabilityRegistryMapsStableVocabularyToAdapters(t *testing.T) 
 	}
 
 	if !slices.ContainsFunc(definition.Capability.Adapters, func(adapter ReadOnlyCapabilityAdapterSpec) bool {
-		return adapter.Tool == "code_navigate" && adapter.Capability == string(CapDefinition)
+		return adapter.Tool == "code_navigate" && adapter.Capability == string(semanticlanguage.CapDefinition)
 	}) {
 
 		t.Fatalf("definition should map to code_navigate definition route: %#v", definition.Capability.Adapters)
@@ -138,14 +138,14 @@ func TestReadOnlyCapabilityResolverDoesNotFacadeWriteCapabilities(t *testing.T) 
 }
 
 func TestReadOnlyCapabilityRegistryPromotesStableSubsetOfCodeNavigate(t *testing.T) {
-	if implementations, ok := ResolveReadOnlyCapability(string(CapImplementations), nil); !ok ||
+	if implementations, ok := ResolveReadOnlyCapability(string(semanticlanguage.CapImplementations), nil); !ok ||
 		implementations.Capability.ID != string(ReadOnlyCapabilityImplementations) {
 
 		t.Fatalf("implementations should be promoted as a stable product capability, got ok=%v resolution=%#v", ok, implementations)
 	}
 
 	for _, capability := range []string{
-		string(CapExtractBody),
+		string(semanticlanguage.CapExtractBody),
 	} {
 		if _, ok := ResolveReadOnlyCapability(capability, nil); ok {
 			t.Fatalf("%s should remain outside read_only_capability until promoted as a stable product capability", capability)

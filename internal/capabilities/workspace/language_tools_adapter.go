@@ -140,7 +140,7 @@ func (m *Manager) languageDetects(name string) bool {
 
 type codeNavigationSpec struct {
 	Name            string
-	Capability      Capability
+	Capability      semanticlanguage.Capability
 	RequiresPattern bool
 	RequiresPath    bool
 	Cost            string
@@ -155,7 +155,7 @@ func codeNavigationSpecFor(value string) (codeNavigationSpec, error) {
 
 	return codeNavigationSpec{
 		Name:            spec.Name,
-		Capability:      Capability(spec.Capability),
+		Capability:      semanticlanguage.Capability(spec.Capability),
 		RequiresPattern: spec.RequiresPattern,
 		RequiresPath:    spec.RequiresPath,
 		Cost:            spec.Cost,

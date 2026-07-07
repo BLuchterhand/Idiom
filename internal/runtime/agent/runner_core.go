@@ -13043,7 +13043,7 @@ func isResultUsefulForFallback(result workspace.ToolResult) bool {
 	case "task", "discovery_query", "read_file", "search_content", "search_files":
 		return true
 	default:
-		return workspace.LanguageToolHasAnyCapability(result.Tool, workspace.CapReadSymbol, workspace.CapFileOutline)
+		return workspace.LanguageToolHasAnyCapability(result.Tool, semanticlanguage.CapReadSymbol, semanticlanguage.CapFileOutline)
 	}
 }
 
@@ -13803,13 +13803,13 @@ func delegatedDiscoveryConsumableLayerScore(name string) int {
 	switch {
 	case name == "text_anchor_search":
 		return 80
-	case workspace.LanguageToolHasAnyCapability(name, workspace.CapReadSymbol):
+	case workspace.LanguageToolHasAnyCapability(name, semanticlanguage.CapReadSymbol):
 		return 75
-	case workspace.LanguageToolHasAnyCapability(name, workspace.CapReferences):
+	case workspace.LanguageToolHasAnyCapability(name, semanticlanguage.CapReferences):
 		return 65
-	case workspace.LanguageToolHasAnyCapability(name, workspace.CapDefinition):
+	case workspace.LanguageToolHasAnyCapability(name, semanticlanguage.CapDefinition):
 		return 60
-	case workspace.LanguageToolHasAnyCapability(name, workspace.CapWorkspaceSymbol):
+	case workspace.LanguageToolHasAnyCapability(name, semanticlanguage.CapWorkspaceSymbol):
 		return 45
 	}
 
@@ -15067,7 +15067,7 @@ func postReadinessSymbolBodyUpgradeRequest(results []workspace.ToolResult, req w
 
 	upgraded := req
 	if tool == workspace.CodeNavigateToolName {
-		upgraded.Capability = string(workspace.CapExtractBody)
+		upgraded.Capability = string(semanticlanguage.CapExtractBody)
 	} else {
 		upgraded.Tool = "go_extract_body"
 	}
@@ -15080,7 +15080,7 @@ func postReadinessSymbolBodyUpgradeableTool(tool, capability string) bool {
 	case "go_read_symbol":
 		return true
 	case workspace.CodeNavigateToolName:
-		return workspace.CodeNavigateCapabilityPredicate(workspace.CapReadSymbol)(capability)
+		return workspace.CodeNavigateCapabilityPredicate(semanticlanguage.CapReadSymbol)(capability)
 	default:
 		return false
 	}
@@ -15980,13 +15980,13 @@ func readOnlyAnalysisExactProbeCount(results []workspace.ToolResult) int {
 		default:
 			if !workspace.LanguageToolHasAnyCapability(
 				result.Tool,
-				workspace.CapReadSymbol,
-				workspace.CapExtractBody,
-				workspace.CapCallsFrom,
-				workspace.CapCallsInto,
-				workspace.CapReferences,
-				workspace.CapDefinition,
-				workspace.CapWorkspaceSymbol,
+				semanticlanguage.CapReadSymbol,
+				semanticlanguage.CapExtractBody,
+				semanticlanguage.CapCallsFrom,
+				semanticlanguage.CapCallsInto,
+				semanticlanguage.CapReferences,
+				semanticlanguage.CapDefinition,
+				semanticlanguage.CapWorkspaceSymbol,
 			) {
 				continue
 			}

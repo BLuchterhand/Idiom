@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	semanticlanguage "idiom/internal/repository/semantic/language"
 )
 
 type ShellReplacementKind string
@@ -20,7 +22,7 @@ const (
 
 type ShellReplacementCandidate struct {
 	Kind       ShellReplacementKind
-	Capability Capability
+	Capability string
 	Request    ToolRequest
 	Symbol     ShellSymbolSearch
 }
@@ -35,7 +37,7 @@ func shellReplacementCandidate(command string) *ShellReplacementCandidate {
 	if match := matchShellSedRange(command); match != nil {
 		return &ShellReplacementCandidate{
 			Kind:       ShellReplacementSedReadFile,
-			Capability: Capability(ToolNameReadFile),
+			Capability: ToolNameReadFile,
 			Request: ToolRequest{
 				Tool:      ToolNameReadFile,
 				Path:      match.path,
@@ -48,7 +50,7 @@ func shellReplacementCandidate(command string) *ShellReplacementCandidate {
 	if match := matchShellHeadTailFile(command); match != nil {
 		return &ShellReplacementCandidate{
 			Kind:       ShellReplacementHeadTailReadFile,
-			Capability: Capability(ToolNameReadFile),
+			Capability: ToolNameReadFile,
 			Request: ToolRequest{
 				Tool:      ToolNameReadFile,
 				Path:      match.path,
@@ -61,7 +63,7 @@ func shellReplacementCandidate(command string) *ShellReplacementCandidate {
 	if path := matchShellCatWholeFile(command); path != "" {
 		return &ShellReplacementCandidate{
 			Kind:       ShellReplacementCatReadFile,
-			Capability: Capability(ToolNameReadFile),
+			Capability: ToolNameReadFile,
 			Request:    ToolRequest{Tool: ToolNameReadFile, Path: path},
 		}
 	}
@@ -69,7 +71,7 @@ func shellReplacementCandidate(command string) *ShellReplacementCandidate {
 	if pattern := matchShellFindName(command); pattern != "" {
 		return &ShellReplacementCandidate{
 			Kind:       ShellReplacementFindSearchFiles,
-			Capability: Capability(ToolNameSearchFiles),
+			Capability: ToolNameSearchFiles,
 			Request:    ToolRequest{Tool: ToolNameSearchFiles, Pattern: pattern},
 		}
 	}
@@ -77,7 +79,7 @@ func shellReplacementCandidate(command string) *ShellReplacementCandidate {
 	if match := matchShellSedWCStats(command); match != nil {
 		return &ShellReplacementCandidate{
 			Kind:       ShellReplacementSedWCFileStats,
-			Capability: Capability(ToolNameFileStats),
+			Capability: ToolNameFileStats,
 			Request: ToolRequest{
 				Tool:      ToolNameFileStats,
 				Path:      match.path,
@@ -90,15 +92,15 @@ func shellReplacementCandidate(command string) *ShellReplacementCandidate {
 	if path := matchShellWCStats(command); path != "" {
 		return &ShellReplacementCandidate{
 			Kind:       ShellReplacementWCFileStats,
-			Capability: Capability(ToolNameFileStats),
+			Capability: ToolNameFileStats,
 			Request:    ToolRequest{Tool: ToolNameFileStats, Path: path},
 		}
 	}
 
 	if match := matchShellGrepIdentifier(command); match != nil {
-		capability := CapWorkspaceSymbol
+		capability := string(semanticlanguage.CapWorkspaceSymbol)
 		if match.path != "" {
-			capability = CapReferences
+			capability = string(semanticlanguage.CapReferences)
 		}
 
 		return &ShellReplacementCandidate{

@@ -26,6 +26,7 @@ import (
 	planartifact "idiom/internal/contracts/planartifact"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/failures"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/planintent"
@@ -33252,7 +33253,7 @@ func TestShellGrepIdentifierRedirectsInCppWorkspace(t *testing.T) {
 			t.Fatalf("language: want cpp, got %s", decision.Language)
 		}
 
-		if decision.Capability != workspace.CapReferences {
+		if decision.Capability != string(semanticlanguage.CapReferences) {
 			t.Fatalf("capability: want references, got %s", decision.Capability)
 		}
 
@@ -33345,7 +33346,7 @@ func TestShellWCRedirectsToFileStats(t *testing.T) {
 		t.Fatalf("wc file count should redirect")
 	}
 
-	if decision.Capability != workspace.Capability("file_stats") {
+	if decision.Capability != workspace.ToolNameFileStats {
 		t.Fatalf("capability: want file_stats, got %s", decision.Capability)
 	}
 
@@ -33363,7 +33364,7 @@ func TestShellSedWCPipelineRedirectsToFileStatsLineRange(t *testing.T) {
 		t.Fatalf("sed wc pipeline should redirect")
 	}
 
-	if decision.Capability != workspace.Capability("file_stats") {
+	if decision.Capability != workspace.ToolNameFileStats {
 		t.Fatalf("capability: want file_stats, got %s", decision.Capability)
 	}
 
@@ -33406,7 +33407,7 @@ func TestShellGrepIdentifierRedirects(t *testing.T) {
 			t.Fatalf("scoped grep should redirect")
 		}
 
-		if decision.Capability != workspace.CapReferences {
+		if decision.Capability != string(semanticlanguage.CapReferences) {
 			t.Fatalf("capability: want references, got %s", decision.Capability)
 		}
 
@@ -33422,7 +33423,7 @@ func TestShellGrepIdentifierRedirects(t *testing.T) {
 			t.Fatalf("recursive grep should redirect")
 		}
 
-		if decision.Capability != workspace.CapWorkspaceSymbol {
+		if decision.Capability != string(semanticlanguage.CapWorkspaceSymbol) {
 			t.Fatalf("capability: want workspace_symbol, got %s", decision.Capability)
 		}
 	})
@@ -33434,7 +33435,7 @@ func TestShellGrepIdentifierRedirects(t *testing.T) {
 			t.Fatalf("declaration grep should redirect")
 		}
 
-		if decision.Capability != workspace.CapReferences {
+		if decision.Capability != string(semanticlanguage.CapReferences) {
 			t.Fatalf("capability: want references, got %s", decision.Capability)
 		}
 
@@ -33688,8 +33689,8 @@ func TestReadFileRedirectsLargeTestFileToOutline(t *testing.T) {
 		t.Fatal("expected large unbounded test-file read to redirect")
 	}
 
-	if decision.Capability != workspace.CapFileOutline {
-		t.Fatalf("capability: want %s, got %s", workspace.CapFileOutline, decision.Capability)
+	if decision.Capability != string(semanticlanguage.CapFileOutline) {
+		t.Fatalf("capability: want %s, got %s", semanticlanguage.CapFileOutline, decision.Capability)
 	}
 
 	if !strings.Contains(decision.Result.Output, `"tool":"go_file_outline"`) {
@@ -33709,17 +33710,17 @@ func TestSearchContentRoutesByPathScope(t *testing.T) {
 	cases := []struct {
 		name    string
 		req     workspace.ToolRequest
-		wantCap workspace.Capability
+		wantCap string
 	}{
 		{
 			name:    "no path scope prefers workspace_symbol",
 			req:     workspace.ToolRequest{Tool: "search_content", Pattern: "Runner", Glob: "*.go"},
-			wantCap: workspace.CapWorkspaceSymbol,
+			wantCap: string(semanticlanguage.CapWorkspaceSymbol),
 		},
 		{
 			name:    "explicit path scope prefers find_symbol",
 			req:     workspace.ToolRequest{Tool: "search_content", Pattern: "Runner", Glob: "*.go", Path: "internal/runtime/agent"},
-			wantCap: workspace.CapFindSymbol,
+			wantCap: string(semanticlanguage.CapFindSymbol),
 		},
 	}
 
@@ -33883,7 +33884,7 @@ func TestSearchContentRedirectsSymbolShapedBareIdentifier(t *testing.T) {
 		t.Fatalf("symbol-shaped identifier should redirect to structured symbol search")
 	}
 
-	if decision.Capability != workspace.CapFindSymbol {
+	if decision.Capability != string(semanticlanguage.CapFindSymbol) {
 		t.Fatalf("capability: want find_symbol, got %s", decision.Capability)
 	}
 }
@@ -33947,7 +33948,7 @@ func TestRedirectRoutesCppReadFile(t *testing.T) {
 		t.Fatalf("language: want cpp, got %s", decision.Language)
 	}
 
-	if decision.Capability != workspace.CapFileOutline {
+	if decision.Capability != string(semanticlanguage.CapFileOutline) {
 		t.Fatalf("capability: want file_outline, got %s", decision.Capability)
 	}
 }
@@ -33988,7 +33989,7 @@ func TestRedirectRoutesReadFileHandle(t *testing.T) {
 		t.Fatalf("language: want go, got %s", decision.Language)
 	}
 
-	if decision.Capability != workspace.CapFileOutline {
+	if decision.Capability != string(semanticlanguage.CapFileOutline) {
 		t.Fatalf("capability: want file_outline, got %s", decision.Capability)
 	}
 
@@ -34114,7 +34115,7 @@ func TestSearchContentWorkspaceSymbolRedirectExtractsDeclarationIdentifier(t *te
 		t.Fatalf("declaration search should redirect")
 	}
 
-	if decision.Capability != workspace.CapWorkspaceSymbol {
+	if decision.Capability != string(semanticlanguage.CapWorkspaceSymbol) {
 		t.Fatalf("capability: want workspace_symbol, got %s", decision.Capability)
 	}
 

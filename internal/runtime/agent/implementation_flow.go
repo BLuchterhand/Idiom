@@ -7036,15 +7036,15 @@ func (r *Runner) implementationTargetWriteReadyHiddenShellRedirect(req workspace
 	return decision
 }
 
-func implementationTargetWriteReadyRedirectCapabilityAllowed(capability workspace.Capability, allowedTools []string) bool {
+func implementationTargetWriteReadyRedirectCapabilityAllowed(capability string, allowedTools []string) bool {
 	switch capability {
-	case workspace.Capability("read_file"):
+	case workspace.ToolNameReadFile:
 		return slices.Contains(allowedTools, workspace.ToolNameReadFile)
-	case workspace.Capability("search_files"):
+	case workspace.ToolNameSearchFiles:
 		return slices.Contains(allowedTools, workspace.ToolNameSearchFiles)
-	case workspace.Capability("file_stats"):
+	case workspace.ToolNameFileStats:
 		return slices.Contains(allowedTools, workspace.ToolNameFileStats)
-	case workspace.CapFileOutline, workspace.CapReadSymbol, workspace.CapExtractBody:
+	case string(semanticlanguage.CapFileOutline), string(semanticlanguage.CapReadSymbol), string(semanticlanguage.CapExtractBody):
 		return slices.Contains(allowedTools, workspace.ToolNameCodeNavigate) || slices.Contains(allowedTools, workspace.ToolNameReadFile)
 	default:
 		return false
@@ -10126,7 +10126,7 @@ func verificationInterceptToolCovered(req workspace.ToolRequest) bool {
 		return false
 	}
 
-	return workspace.LanguageToolHasAnyCapability(tool, workspace.CapFileOutline, workspace.CapReadSymbol)
+	return workspace.LanguageToolHasAnyCapability(tool, semanticlanguage.CapFileOutline, semanticlanguage.CapReadSymbol)
 }
 
 // precedingResultWasReadClass returns true if the most recent recorded

@@ -518,20 +518,20 @@ type harnessAuditQuestion struct {
 	Candidate string `json:"candidate,omitempty"`
 }
 
-var harnessAuditStandardCapabilities = []Capability{
-	CapOverview,
-	CapEntrypoints,
-	CapFindSymbol,
-	CapWorkspaceSymbol,
-	CapDefinition,
-	CapReferences,
-	CapCallsFrom,
-	CapCallsInto,
-	CapReadSymbol,
-	CapRelatedFiles,
-	CapImplementations,
-	CapDiagnostics,
-	CapFileOutline,
+var harnessAuditStandardCapabilities = []semanticlanguage.Capability{
+	semanticlanguage.CapOverview,
+	semanticlanguage.CapEntrypoints,
+	semanticlanguage.CapFindSymbol,
+	semanticlanguage.CapWorkspaceSymbol,
+	semanticlanguage.CapDefinition,
+	semanticlanguage.CapReferences,
+	semanticlanguage.CapCallsFrom,
+	semanticlanguage.CapCallsInto,
+	semanticlanguage.CapReadSymbol,
+	semanticlanguage.CapRelatedFiles,
+	semanticlanguage.CapImplementations,
+	semanticlanguage.CapDiagnostics,
+	semanticlanguage.CapFileOutline,
 }
 
 func (m *Manager) harnessAudit(req ToolRequest) ToolResult {
@@ -5052,7 +5052,7 @@ func auditObservedCapabilityForToolCapability(tool, capability string) string {
 		return ""
 	}
 
-	if mapped := evidenceCapabilityForLanguageCapability(Capability(capability)); mapped != "" {
+	if mapped := evidenceCapabilityForLanguageCapability(semanticlanguage.Capability(capability)); mapped != "" {
 		return mapped
 	}
 

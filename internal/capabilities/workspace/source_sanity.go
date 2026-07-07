@@ -234,7 +234,7 @@ func sourceSanityDiagnosticToolForPath(path string) string {
 		return ""
 	}
 
-	return lang.Tool(CapDiagnostics)
+	return lang.Tool(semanticlanguage.CapDiagnostics)
 }
 
 func diagnosticsUnavailable(result ToolResult) bool {

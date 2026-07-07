@@ -14,6 +14,7 @@ import (
 	planartifact "idiom/internal/contracts/planartifact"
 
 	"idiom/internal/platform/textutil"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/repository/semantic/languagetools"
 )
 
@@ -1237,7 +1238,7 @@ func inferMissingToolRequest(req ToolRequest) (ToolRequest, bool) {
 	case strings.TrimSpace(req.ID) != "" || req.StartLine != 0 || req.EndLine != 0:
 		req.Tool = ToolNameReadFile
 	case strings.HasSuffix(strings.TrimSpace(req.Path), ".go") && strings.TrimSpace(req.Pattern) == "" && strings.TrimSpace(req.Content) == "":
-		req.Tool = LanguageToolForCapability("go", CapFileOutline)
+		req.Tool = LanguageToolForCapability("go", semanticlanguage.CapFileOutline)
 	default:
 		return ToolRequest{}, false
 	}

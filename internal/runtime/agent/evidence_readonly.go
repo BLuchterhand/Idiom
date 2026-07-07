@@ -18,6 +18,7 @@ import (
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/textutil"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -1944,9 +1945,9 @@ func extractExactProbeAnchor(result workspace.ToolResult) (string, string) {
 	summary := strings.TrimSpace(result.Summary)
 	tool := strings.TrimSpace(result.Tool)
 	switch {
-	case workspace.LanguageToolHasAnyCapability(tool, workspace.CapReadSymbol):
+	case workspace.LanguageToolHasAnyCapability(tool, semanticlanguage.CapReadSymbol):
 		return extractReadExactProbeAnchor(summary)
-	case workspace.LanguageToolHasAnyCapability(tool, workspace.CapExtractBody):
+	case workspace.LanguageToolHasAnyCapability(tool, semanticlanguage.CapExtractBody):
 		if rest, ok := strings.CutPrefix(summary, "Extracted "); ok {
 			if symbol, remainder, found := strings.Cut(rest, " in "); found {
 				return extractExactProbePath(remainder), strings.TrimSpace(symbol)
@@ -4561,13 +4562,13 @@ func delegatedDiscoveryLayerPriority(name string) int {
 	switch {
 	case name == "text_anchor_search":
 		return 0
-	case workspace.LanguageToolHasAnyCapability(name, workspace.CapReadSymbol):
+	case workspace.LanguageToolHasAnyCapability(name, semanticlanguage.CapReadSymbol):
 		return 1
-	case workspace.LanguageToolHasAnyCapability(name, workspace.CapReferences):
+	case workspace.LanguageToolHasAnyCapability(name, semanticlanguage.CapReferences):
 		return 2
-	case workspace.LanguageToolHasAnyCapability(name, workspace.CapDefinition):
+	case workspace.LanguageToolHasAnyCapability(name, semanticlanguage.CapDefinition):
 		return 3
-	case workspace.LanguageToolHasAnyCapability(name, workspace.CapWorkspaceSymbol):
+	case workspace.LanguageToolHasAnyCapability(name, semanticlanguage.CapWorkspaceSymbol):
 		return 4
 	case name == "related_files":
 		return 5
@@ -8997,8 +8998,8 @@ func sourceEvidencePendingRedirectActionLabel(obligation sourceEvidenceObligatio
 			"%s via %s capability=%s with pattern/symbol, or one %s first when the symbol is unknown",
 			path,
 			workspace.CodeNavigateToolName,
-			string(workspace.CapReadSymbol),
-			string(workspace.CapFileOutline),
+			string(semanticlanguage.CapReadSymbol),
+			string(semanticlanguage.CapFileOutline),
 		)
 	case tool == "read_only_capability":
 		return fmt.Sprintf("%s via read_only_capability inspect-symbol with pattern/symbol, or one outline first when the symbol is unknown", path)

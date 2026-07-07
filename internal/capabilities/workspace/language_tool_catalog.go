@@ -14,7 +14,7 @@ const CodeNavigateToolName = ToolNameCodeNavigate
 type languageToolCatalogEntry struct {
 	Language             string
 	Tool                 string
-	Capability           Capability
+	Capability           semanticlanguage.Capability
 	Supplemental         bool
 	Description          string
 	ParametersJSON       string
@@ -120,128 +120,128 @@ var supplementalLanguageToolSpecs = map[string][]supplementalLanguageToolSpec{
 }
 
 type languageManifestToolToken struct {
-	Capability   Capability
+	Capability   semanticlanguage.Capability
 	Supplemental string
 }
 
 var defaultLanguageManifestToolOrder = []languageManifestToolToken{
-	{Capability: CapOverview},
-	{Capability: CapEntrypoints},
-	{Capability: CapFindSymbol},
-	{Capability: CapReadSymbol},
-	{Capability: CapRelatedFiles},
-	{Capability: CapDefinition},
-	{Capability: CapImplementations},
-	{Capability: CapReferences},
-	{Capability: CapCallsFrom},
-	{Capability: CapCallsInto},
-	{Capability: CapWorkspaceSymbol},
-	{Capability: CapDiagnostics},
-	{Capability: CapFileOutline},
+	{Capability: semanticlanguage.CapOverview},
+	{Capability: semanticlanguage.CapEntrypoints},
+	{Capability: semanticlanguage.CapFindSymbol},
+	{Capability: semanticlanguage.CapReadSymbol},
+	{Capability: semanticlanguage.CapRelatedFiles},
+	{Capability: semanticlanguage.CapDefinition},
+	{Capability: semanticlanguage.CapImplementations},
+	{Capability: semanticlanguage.CapReferences},
+	{Capability: semanticlanguage.CapCallsFrom},
+	{Capability: semanticlanguage.CapCallsInto},
+	{Capability: semanticlanguage.CapWorkspaceSymbol},
+	{Capability: semanticlanguage.CapDiagnostics},
+	{Capability: semanticlanguage.CapFileOutline},
 }
 
 var languageManifestToolOrders = map[string][]languageManifestToolToken{
 	"go": {
-		{Capability: CapOverview},
-		{Capability: CapEntrypoints},
-		{Capability: CapFindSymbol},
+		{Capability: semanticlanguage.CapOverview},
+		{Capability: semanticlanguage.CapEntrypoints},
+		{Capability: semanticlanguage.CapFindSymbol},
 		{Supplemental: ToolNameGoFindFunction},
 		{Supplemental: ToolNameGoFindType},
 		{Supplemental: ToolNameGoFindConst},
 		{Supplemental: ToolNameGoFindPackage},
-		{Capability: CapRelatedFiles},
-		{Capability: CapWorkspaceSymbol},
-		{Capability: CapReferences},
-		{Capability: CapDefinition},
-		{Capability: CapImplementations},
-		{Capability: CapCallsFrom},
-		{Capability: CapCallsInto},
-		{Capability: CapReadSymbol},
-		{Capability: CapExtractBody},
+		{Capability: semanticlanguage.CapRelatedFiles},
+		{Capability: semanticlanguage.CapWorkspaceSymbol},
+		{Capability: semanticlanguage.CapReferences},
+		{Capability: semanticlanguage.CapDefinition},
+		{Capability: semanticlanguage.CapImplementations},
+		{Capability: semanticlanguage.CapCallsFrom},
+		{Capability: semanticlanguage.CapCallsInto},
+		{Capability: semanticlanguage.CapReadSymbol},
+		{Capability: semanticlanguage.CapExtractBody},
 		{Supplemental: ToolNameGoImporters},
-		{Capability: CapDiagnostics},
-		{Capability: CapFileOutline},
+		{Capability: semanticlanguage.CapDiagnostics},
+		{Capability: semanticlanguage.CapFileOutline},
 	},
 	"cpp": {
-		{Capability: CapOverview},
-		{Capability: CapEntrypoints},
-		{Capability: CapFindSymbol},
-		{Capability: CapReadSymbol},
-		{Capability: CapRelatedFiles},
-		{Capability: CapReferences},
-		{Capability: CapDefinition},
+		{Capability: semanticlanguage.CapOverview},
+		{Capability: semanticlanguage.CapEntrypoints},
+		{Capability: semanticlanguage.CapFindSymbol},
+		{Capability: semanticlanguage.CapReadSymbol},
+		{Capability: semanticlanguage.CapRelatedFiles},
+		{Capability: semanticlanguage.CapReferences},
+		{Capability: semanticlanguage.CapDefinition},
 		{Supplemental: ToolNameCppDeclaration},
-		{Capability: CapImplementations},
-		{Capability: CapCallsFrom},
-		{Capability: CapCallsInto},
-		{Capability: CapExtractBody},
+		{Capability: semanticlanguage.CapImplementations},
+		{Capability: semanticlanguage.CapCallsFrom},
+		{Capability: semanticlanguage.CapCallsInto},
+		{Capability: semanticlanguage.CapExtractBody},
 		{Supplemental: ToolNameCppIncludes},
 		{Supplemental: ToolNameCppWhoIncludes},
 		{Supplemental: ToolNameCppBlastRadius},
 		{Supplemental: ToolNameCppDeadSymbol},
-		{Capability: CapWorkspaceSymbol},
-		{Capability: CapDiagnostics},
-		{Capability: CapFileOutline},
+		{Capability: semanticlanguage.CapWorkspaceSymbol},
+		{Capability: semanticlanguage.CapDiagnostics},
+		{Capability: semanticlanguage.CapFileOutline},
 	},
 	"python": {
-		{Capability: CapOverview},
-		{Capability: CapEntrypoints},
-		{Capability: CapFindSymbol},
-		{Capability: CapReadSymbol},
-		{Capability: CapRelatedFiles},
-		{Capability: CapReferences},
-		{Capability: CapDefinition},
-		{Capability: CapImplementations},
-		{Capability: CapCallsFrom},
-		{Capability: CapCallsInto},
-		{Capability: CapWorkspaceSymbol},
-		{Capability: CapDiagnostics},
-		{Capability: CapFileOutline},
+		{Capability: semanticlanguage.CapOverview},
+		{Capability: semanticlanguage.CapEntrypoints},
+		{Capability: semanticlanguage.CapFindSymbol},
+		{Capability: semanticlanguage.CapReadSymbol},
+		{Capability: semanticlanguage.CapRelatedFiles},
+		{Capability: semanticlanguage.CapReferences},
+		{Capability: semanticlanguage.CapDefinition},
+		{Capability: semanticlanguage.CapImplementations},
+		{Capability: semanticlanguage.CapCallsFrom},
+		{Capability: semanticlanguage.CapCallsInto},
+		{Capability: semanticlanguage.CapWorkspaceSymbol},
+		{Capability: semanticlanguage.CapDiagnostics},
+		{Capability: semanticlanguage.CapFileOutline},
 	},
 	"typescript": {
-		{Capability: CapOverview},
-		{Capability: CapEntrypoints},
-		{Capability: CapFindSymbol},
-		{Capability: CapReadSymbol},
-		{Capability: CapRelatedFiles},
-		{Capability: CapDefinition},
-		{Capability: CapImplementations},
-		{Capability: CapReferences},
-		{Capability: CapCallsFrom},
-		{Capability: CapCallsInto},
-		{Capability: CapWorkspaceSymbol},
-		{Capability: CapDiagnostics},
-		{Capability: CapFileOutline},
+		{Capability: semanticlanguage.CapOverview},
+		{Capability: semanticlanguage.CapEntrypoints},
+		{Capability: semanticlanguage.CapFindSymbol},
+		{Capability: semanticlanguage.CapReadSymbol},
+		{Capability: semanticlanguage.CapRelatedFiles},
+		{Capability: semanticlanguage.CapDefinition},
+		{Capability: semanticlanguage.CapImplementations},
+		{Capability: semanticlanguage.CapReferences},
+		{Capability: semanticlanguage.CapCallsFrom},
+		{Capability: semanticlanguage.CapCallsInto},
+		{Capability: semanticlanguage.CapWorkspaceSymbol},
+		{Capability: semanticlanguage.CapDiagnostics},
+		{Capability: semanticlanguage.CapFileOutline},
 	},
 	"rust": {
-		{Capability: CapOverview},
-		{Capability: CapEntrypoints},
-		{Capability: CapFindSymbol},
-		{Capability: CapWorkspaceSymbol},
-		{Capability: CapReadSymbol},
-		{Capability: CapRelatedFiles},
-		{Capability: CapFileOutline},
-		{Capability: CapDefinition},
-		{Capability: CapReferences},
-		{Capability: CapCallsFrom},
-		{Capability: CapCallsInto},
-		{Capability: CapImplementations},
-		{Capability: CapDiagnostics},
+		{Capability: semanticlanguage.CapOverview},
+		{Capability: semanticlanguage.CapEntrypoints},
+		{Capability: semanticlanguage.CapFindSymbol},
+		{Capability: semanticlanguage.CapWorkspaceSymbol},
+		{Capability: semanticlanguage.CapReadSymbol},
+		{Capability: semanticlanguage.CapRelatedFiles},
+		{Capability: semanticlanguage.CapFileOutline},
+		{Capability: semanticlanguage.CapDefinition},
+		{Capability: semanticlanguage.CapReferences},
+		{Capability: semanticlanguage.CapCallsFrom},
+		{Capability: semanticlanguage.CapCallsInto},
+		{Capability: semanticlanguage.CapImplementations},
+		{Capability: semanticlanguage.CapDiagnostics},
 	},
 	"java": {
-		{Capability: CapOverview},
-		{Capability: CapEntrypoints},
-		{Capability: CapFindSymbol},
-		{Capability: CapReadSymbol},
-		{Capability: CapRelatedFiles},
-		{Capability: CapWorkspaceSymbol},
-		{Capability: CapDefinition},
-		{Capability: CapReferences},
-		{Capability: CapImplementations},
-		{Capability: CapCallsFrom},
-		{Capability: CapCallsInto},
-		{Capability: CapDiagnostics},
-		{Capability: CapFileOutline},
+		{Capability: semanticlanguage.CapOverview},
+		{Capability: semanticlanguage.CapEntrypoints},
+		{Capability: semanticlanguage.CapFindSymbol},
+		{Capability: semanticlanguage.CapReadSymbol},
+		{Capability: semanticlanguage.CapRelatedFiles},
+		{Capability: semanticlanguage.CapWorkspaceSymbol},
+		{Capability: semanticlanguage.CapDefinition},
+		{Capability: semanticlanguage.CapReferences},
+		{Capability: semanticlanguage.CapImplementations},
+		{Capability: semanticlanguage.CapCallsFrom},
+		{Capability: semanticlanguage.CapCallsInto},
+		{Capability: semanticlanguage.CapDiagnostics},
+		{Capability: semanticlanguage.CapFileOutline},
 	},
 }
 
@@ -287,7 +287,7 @@ func languageToolOrderFor(languageName string) []languageManifestToolToken {
 	return defaultLanguageManifestToolOrder
 }
 
-func languageToolEntryForCapability(languageName, tool string, capability Capability) languageToolCatalogEntry {
+func languageToolEntryForCapability(languageName, tool string, capability semanticlanguage.Capability) languageToolCatalogEntry {
 	return languageToolCatalogEntry{
 		Language:             strings.ToLower(strings.TrimSpace(languageName)),
 		Tool:                 strings.TrimSpace(tool),
@@ -383,7 +383,7 @@ func languageToolEvidenceCapabilities(tool string) []string {
 	return nil
 }
 
-func LanguageToolCapability(tool string) (Capability, bool) {
+func LanguageToolCapability(tool string) (semanticlanguage.Capability, bool) {
 	entry, ok := languageToolCatalogEntryForTool(tool)
 	if !ok || entry.Capability == "" {
 		return "", false
@@ -392,12 +392,12 @@ func LanguageToolCapability(tool string) (Capability, bool) {
 	return entry.Capability, true
 }
 
-func LanguageToolHasCapability(tool string, capability Capability) bool {
+func LanguageToolHasCapability(tool string, capability semanticlanguage.Capability) bool {
 	found, ok := LanguageToolCapability(tool)
 	return ok && found == capability
 }
 
-func LanguageToolHasAnyCapability(tool string, capabilities ...Capability) bool {
+func LanguageToolHasAnyCapability(tool string, capabilities ...semanticlanguage.Capability) bool {
 	found, ok := LanguageToolCapability(tool)
 	if !ok {
 		return false
@@ -412,7 +412,7 @@ func LanguageToolHasAnyCapability(tool string, capabilities ...Capability) bool 
 	return false
 }
 
-func LanguageToolForCapability(language string, capability Capability) string {
+func LanguageToolForCapability(language string, capability semanticlanguage.Capability) string {
 	lang, ok := semanticlanguage.LanguageForName(language)
 	if !ok {
 		return ""
@@ -446,7 +446,7 @@ func LanguageToolParts(tool string) (language string, suffix string, ok bool) {
 	return strings.TrimSpace(entry.Language), suffix, true
 }
 
-func languageCapabilityEvidenceCapabilities(capability Capability) []string {
+func languageCapabilityEvidenceCapabilities(capability semanticlanguage.Capability) []string {
 	if id := evidenceCapabilityForLanguageCapability(capability); id != "" {
 		return []string{id}
 	}
@@ -454,65 +454,65 @@ func languageCapabilityEvidenceCapabilities(capability Capability) []string {
 	return nil
 }
 
-func languageToolDescription(languageName string, capability Capability) string {
+func languageToolDescription(languageName string, capability semanticlanguage.Capability) string {
 	label := languageDisplayName(languageName)
 
 	switch capability {
-	case CapOverview:
+	case semanticlanguage.CapOverview:
 		return fmt.Sprintf("Summarize the %s workspace structure.", label)
-	case CapEntrypoints:
+	case semanticlanguage.CapEntrypoints:
 		return fmt.Sprintf("List likely %s entrypoints.", label)
-	case CapFindSymbol:
+	case semanticlanguage.CapFindSymbol:
 		return fmt.Sprintf("Find %s symbols matching a pattern.", label)
-	case CapWorkspaceSymbol:
+	case semanticlanguage.CapWorkspaceSymbol:
 		return fmt.Sprintf("Workspace-wide %s symbol lookup.", label)
-	case CapDefinition:
+	case semanticlanguage.CapDefinition:
 		return fmt.Sprintf("Find a %s symbol definition.", label)
-	case CapReferences:
+	case semanticlanguage.CapReferences:
 		return fmt.Sprintf("Find references to a %s symbol.", label)
-	case CapCallsFrom:
+	case semanticlanguage.CapCallsFrom:
 		return fmt.Sprintf("Find outgoing calls from a %s function or method.", label)
-	case CapCallsInto:
+	case semanticlanguage.CapCallsInto:
 		return fmt.Sprintf("Find incoming calls to a %s function or method.", label)
-	case CapReadSymbol:
+	case semanticlanguage.CapReadSymbol:
 		return fmt.Sprintf("Read a %s symbol body. Anchor first with a symbol lookup or prior tool result; use search_content for literal text inside files.", label)
-	case CapExtractBody:
+	case semanticlanguage.CapExtractBody:
 		return fmt.Sprintf("Extract the full body of a %s function or method.", label)
-	case CapRelatedFiles:
+	case semanticlanguage.CapRelatedFiles:
 		return fmt.Sprintf("Find %s files related to a pattern or symbol.", label)
-	case CapImplementations:
+	case semanticlanguage.CapImplementations:
 		return fmt.Sprintf("Find %s implementations for an interface, trait, base type, or method.", label)
-	case CapDiagnostics:
+	case semanticlanguage.CapDiagnostics:
 		return fmt.Sprintf("Run %s diagnostics when the language backend is available.", label)
-	case CapFileOutline:
+	case semanticlanguage.CapFileOutline:
 		return fmt.Sprintf("List declarations with line ranges in a %s file.", label)
 	default:
 		return fmt.Sprintf("Run %s capability %s.", label, capability)
 	}
 }
 
-func languageToolParametersJSON(languageName string, capability Capability) string {
+func languageToolParametersJSON(languageName string, capability semanticlanguage.Capability) string {
 	pathDesc := "optional file or directory scope"
-	if capability == CapFileOutline || capability == CapExtractBody {
+	if capability == semanticlanguage.CapFileOutline || capability == semanticlanguage.CapExtractBody {
 		pathDesc = "file path"
 	}
 
 	switch capability {
-	case CapOverview:
+	case semanticlanguage.CapOverview:
 		return `{"type":"object","properties":{}}`
-	case CapEntrypoints:
+	case semanticlanguage.CapEntrypoints:
 		return schemaObj(nil, `"path":`+strProp("optional workspace scope")+`,"max_depth":`+intProp("optional result limit"))
-	case CapFileOutline, CapDiagnostics:
+	case semanticlanguage.CapFileOutline, semanticlanguage.CapDiagnostics:
 		return schemaObj([]string{"path"}, `"path":`+strProp(pathDesc))
-	case CapReadSymbol:
+	case semanticlanguage.CapReadSymbol:
 		return schemaObj([]string{"pattern", "path"}, `"pattern":`+strProp("symbol name or regex")+`,"path":`+strProp("file path")+`,"start_line":`+intProp("optional 1-based start")+`,"end_line":`+intProp("optional 1-based end"))
-	case CapExtractBody:
+	case semanticlanguage.CapExtractBody:
 		return schemaObj([]string{"pattern", "path"}, `"pattern":`+strProp("symbol name or regex")+`,"path":`+strProp(pathDesc)+`,"start_line":`+intProp("optional 1-based start")+`,"end_line":`+intProp("optional 1-based end"))
-	case CapFindSymbol, CapWorkspaceSymbol:
+	case semanticlanguage.CapFindSymbol, semanticlanguage.CapWorkspaceSymbol:
 		return schemaObj([]string{"pattern"}, `"pattern":`+strProp("symbol name or regex")+`,"path":`+strProp("optional file or directory scope")+`,"max_depth":`+intProp("optional result limit"))
-	case CapRelatedFiles:
+	case semanticlanguage.CapRelatedFiles:
 		return schemaObj([]string{"pattern"}, `"pattern":`+strProp("term or symbol")+`,"path":`+strProp("optional file or directory scope")+`,"max_depth":`+intProp("optional result limit"))
-	case CapDefinition, CapReferences, CapCallsFrom, CapCallsInto, CapImplementations:
+	case semanticlanguage.CapDefinition, semanticlanguage.CapReferences, semanticlanguage.CapCallsFrom, semanticlanguage.CapCallsInto, semanticlanguage.CapImplementations:
 		return schemaObj([]string{"pattern"}, `"pattern":`+strProp("symbol name or regex")+`,"path":`+strProp("optional file or directory scope"))
 	default:
 		_ = languageName
@@ -520,52 +520,52 @@ func languageToolParametersJSON(languageName string, capability Capability) stri
 	}
 }
 
-func languageToolManifestRequest(tool, languageName string, capability Capability) string {
+func languageToolManifestRequest(tool, languageName string, capability semanticlanguage.Capability) string {
 	switch capability {
-	case CapOverview:
+	case semanticlanguage.CapOverview:
 		return fmt.Sprintf(`{"tool":%q}`, tool)
-	case CapEntrypoints:
+	case semanticlanguage.CapEntrypoints:
 		return fmt.Sprintf(`{"tool":%q}`, tool)
-	case CapFileOutline:
+	case semanticlanguage.CapFileOutline:
 		return fmt.Sprintf(`{"tool":%q,"path":%q}`, tool, sampleLanguagePath(languageName))
-	case CapDiagnostics:
+	case semanticlanguage.CapDiagnostics:
 		return fmt.Sprintf(`{"tool":%q,"path":%q}`, tool, sampleLanguagePath(languageName))
-	case CapReadSymbol, CapExtractBody:
+	case semanticlanguage.CapReadSymbol, semanticlanguage.CapExtractBody:
 		return fmt.Sprintf(`{"tool":%q,"pattern":"Name","path":%q}`, tool, sampleLanguagePath(languageName))
 	default:
 		return fmt.Sprintf(`{"tool":%q,"pattern":"Name","path":"."}`, tool)
 	}
 }
 
-func languageToolManifestPurpose(languageName string, capability Capability) string {
+func languageToolManifestPurpose(languageName string, capability semanticlanguage.Capability) string {
 	label := languageDisplayName(languageName)
 
 	switch capability {
-	case CapOverview:
+	case semanticlanguage.CapOverview:
 		return fmt.Sprintf("summarize %s workspace", label)
-	case CapEntrypoints:
+	case semanticlanguage.CapEntrypoints:
 		return fmt.Sprintf("find %s entrypoints", label)
-	case CapFileOutline:
+	case semanticlanguage.CapFileOutline:
 		return fmt.Sprintf("list %s declaration boundaries", label)
-	case CapDiagnostics:
+	case semanticlanguage.CapDiagnostics:
 		return fmt.Sprintf("run %s diagnostics", label)
-	case CapReadSymbol:
+	case semanticlanguage.CapReadSymbol:
 		return fmt.Sprintf("read a %s symbol body", label)
-	case CapExtractBody:
+	case semanticlanguage.CapExtractBody:
 		return fmt.Sprintf("extract a full %s body", label)
-	case CapFindSymbol, CapWorkspaceSymbol:
+	case semanticlanguage.CapFindSymbol, semanticlanguage.CapWorkspaceSymbol:
 		return fmt.Sprintf("find %s symbols", label)
-	case CapDefinition:
+	case semanticlanguage.CapDefinition:
 		return fmt.Sprintf("find %s definitions", label)
-	case CapReferences:
+	case semanticlanguage.CapReferences:
 		return fmt.Sprintf("find %s references", label)
-	case CapCallsFrom:
+	case semanticlanguage.CapCallsFrom:
 		return fmt.Sprintf("find outgoing %s calls", label)
-	case CapCallsInto:
+	case semanticlanguage.CapCallsInto:
 		return fmt.Sprintf("find incoming %s calls", label)
-	case CapImplementations:
+	case semanticlanguage.CapImplementations:
 		return fmt.Sprintf("find %s implementations", label)
-	case CapRelatedFiles:
+	case semanticlanguage.CapRelatedFiles:
 		return fmt.Sprintf("find related %s files", label)
 	default:
 		return fmt.Sprintf("run %s capability %s", label, capability)
@@ -610,7 +610,7 @@ func sampleLanguagePath(languageName string) string {
 	}
 }
 
-func CodeNavigateCapabilityPredicate(capability Capability) func(string) bool {
+func CodeNavigateCapabilityPredicate(capability semanticlanguage.Capability) func(string) bool {
 	want := string(capability)
 
 	return func(candidate string) bool {
@@ -620,8 +620,8 @@ func CodeNavigateCapabilityPredicate(capability Capability) func(string) bool {
 
 func CodeNavigateSourceBodyCapabilityNames() []string {
 	return []string{
-		string(CapReadSymbol),
-		string(CapExtractBody),
+		string(semanticlanguage.CapReadSymbol),
+		string(semanticlanguage.CapExtractBody),
 	}
 }
 
@@ -636,11 +636,11 @@ func CodeNavigateSourceBodyCapabilityPhrase() string {
 	return strings.Join(parts, " / ")
 }
 
-func CodeNavigateCapabilityInstruction(capability Capability) string {
+func CodeNavigateCapabilityInstruction(capability semanticlanguage.Capability) string {
 	return fmt.Sprintf("`%s` with `capability:\"%s\"`", CodeNavigateToolName, string(capability))
 }
 
-func CodeNavigateRequestExample(capability Capability, path, pattern string) string {
+func CodeNavigateRequestExample(capability semanticlanguage.Capability, path, pattern string) string {
 	if strings.TrimSpace(pattern) == "" {
 		pattern = "<symbol name>"
 	}

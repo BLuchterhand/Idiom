@@ -60,7 +60,7 @@ func (e workspaceGraphEnricher) EnrichGraph(ctx context.Context, graph comprehen
 			Available: true,
 			Tools:     tools,
 			Capabilities: []string{
-				string(CapDiagnostics), string(CapReferences), string(CapCallsFrom), string(CapCallsInto), string(CapImplementations),
+				string(semanticlanguage.CapDiagnostics), string(semanticlanguage.CapReferences), string(semanticlanguage.CapCallsFrom), string(semanticlanguage.CapCallsInto), string(semanticlanguage.CapImplementations),
 			},
 			Properties: map[string]any{
 				"mode":          opts.Mode,
@@ -186,7 +186,7 @@ func (e workspaceGraphEnricher) relationshipEvidence(ctx context.Context, graph 
 				continue
 			}
 
-			if capability == string(CapImplementations) && !graphSymbolCanHaveImplementations(symbol.Kind) {
+			if capability == string(semanticlanguage.CapImplementations) && !graphSymbolCanHaveImplementations(symbol.Kind) {
 				continue
 			}
 
@@ -373,7 +373,7 @@ func relationshipToolsForGraphLanguage(language string) map[string]string {
 	}
 
 	out := map[string]string{}
-	for _, capability := range []Capability{CapReferences, CapCallsFrom, CapCallsInto, CapImplementations} {
+	for _, capability := range []semanticlanguage.Capability{semanticlanguage.CapReferences, semanticlanguage.CapCallsFrom, semanticlanguage.CapCallsInto, semanticlanguage.CapImplementations} {
 		if tool := strings.TrimSpace(lang.Tool(capability)); tool != "" {
 			out[string(capability)] = tool
 		}
@@ -456,7 +456,7 @@ func normalizeToolRelationshipEdges(graph comprehension.Graph, lookup graphRelat
 		}
 
 		switch capability {
-		case string(CapCallsFrom):
+		case string(semanticlanguage.CapCallsFrom):
 			_, right, ok := splitToolArrow(line)
 			if !ok {
 				continue
@@ -468,7 +468,7 @@ func normalizeToolRelationshipEdges(graph comprehension.Graph, lookup graphRelat
 			}
 
 			edges = append(edges, toolRelationshipEdge("calls", subject.ID, targetID, tool, confidence, subject, line))
-		case string(CapCallsInto):
+		case string(semanticlanguage.CapCallsInto):
 			left, _, ok := splitToolArrow(line)
 			if !ok {
 				left = line
@@ -480,14 +480,14 @@ func normalizeToolRelationshipEdges(graph comprehension.Graph, lookup graphRelat
 			}
 
 			edges = append(edges, toolRelationshipEdge("calls", sourceID, subject.ID, tool, confidence, subject, line))
-		case string(CapImplementations):
+		case string(semanticlanguage.CapImplementations):
 			sourceID := lookup.resolveSymbolFromText(line)
 			if sourceID == "" || sourceID == subject.ID {
 				continue
 			}
 
 			edges = append(edges, toolRelationshipEdge("implements", sourceID, subject.ID, tool, confidence, subject, line))
-		case string(CapReferences):
+		case string(semanticlanguage.CapReferences):
 			sourceID := lookup.resolveReferenceSource(line)
 			if sourceID == "" || sourceID == subject.ID {
 				continue
@@ -517,11 +517,11 @@ func normalizeStructuredToolRelationshipEdges(lookup graphRelationshipLookup, su
 		targetID := lookup.resolveRelationshipEndpoint(relationship.TargetPath, relationship.TargetLine, relationship.TargetSymbol)
 
 		switch capability {
-		case string(CapCallsFrom):
+		case string(semanticlanguage.CapCallsFrom):
 			if sourceID == "" {
 				sourceID = subject.ID
 			}
-		case string(CapCallsInto), string(CapReferences), string(CapImplementations):
+		case string(semanticlanguage.CapCallsInto), string(semanticlanguage.CapReferences), string(semanticlanguage.CapImplementations):
 			if targetID == "" {
 				targetID = subject.ID
 			}
@@ -539,11 +539,11 @@ func normalizeStructuredToolRelationshipEdges(lookup graphRelationshipLookup, su
 
 func relationshipKindForCapability(capability string) string {
 	switch capability {
-	case string(CapCallsFrom), string(CapCallsInto):
+	case string(semanticlanguage.CapCallsFrom), string(semanticlanguage.CapCallsInto):
 		return "calls"
-	case string(CapReferences):
+	case string(semanticlanguage.CapReferences):
 		return "references"
-	case string(CapImplementations):
+	case string(semanticlanguage.CapImplementations):
 		return "implements"
 	default:
 		return ""

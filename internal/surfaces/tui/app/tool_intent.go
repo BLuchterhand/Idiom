@@ -4,12 +4,13 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 )
 
 func toolIntent(toolName, target string) string {
 	toolName = strings.TrimSpace(toolName)
 
-	if workspace.LanguageToolHasCapability(toolName, workspace.CapFileOutline) {
+	if workspace.LanguageToolHasCapability(toolName, semanticlanguage.CapFileOutline) {
 		if target == "" {
 			return "scan the file structure before reading details"
 		}
@@ -17,7 +18,7 @@ func toolIntent(toolName, target string) string {
 		return "scan " + target + " to find the right symbol or section"
 	}
 
-	if workspace.LanguageToolHasCapability(toolName, workspace.CapReadSymbol) {
+	if workspace.LanguageToolHasCapability(toolName, semanticlanguage.CapReadSymbol) {
 		if target == "" {
 			return "read the exact declaration instead of a broad file slice"
 		}

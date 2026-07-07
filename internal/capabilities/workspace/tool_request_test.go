@@ -252,7 +252,7 @@ func TestCodeNavigateAcceptsFindReferencesAlias(t *testing.T) {
 		t.Fatalf("codeNavigationSpecFor(find_references): %v", err)
 	}
 
-	if spec.Name != "references" || spec.Capability != CapReferences {
+	if spec.Name != "references" || spec.Capability != semanticlanguage.CapReferences {
 		t.Fatalf("unexpected references alias spec: %#v", spec)
 	}
 }

@@ -3046,7 +3046,7 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 			targetSummary,
 			"Your next visible message must be exactly one parser-readable action, not the same prose. Do not include analysis before or after the action.",
 			"Actions written only in hidden reasoning are ignored by the tool parser and do not satisfy this contract. The `submit_plan`, `Decision: source-satisfied`, `<<QUESTION>>:` outcome must appear in visible content or a native tool call.",
-			"For textual tool transport, any bounded read/search/navigation action is one visible JSON object with a top-level `tool` field plus that tool's arguments, for example `" + workspace.CodeNavigateRequestExample(workspace.CapReadSymbol, "path/from/evidence.go", "SymbolFromEvidence") + "`. XML-like tags and key-value notes are not accepted tool calls unless they contain a parser-readable JSON object.",
+			"For textual tool transport, any bounded read/search/navigation action is one visible JSON object with a top-level `tool` field plus that tool's arguments, for example `" + workspace.CodeNavigateRequestExample(semanticlanguage.CapReadSymbol, "path/from/evidence.go", "SymbolFromEvidence") + "`. XML-like tags and key-value notes are not accepted tool calls unless they contain a parser-readable JSON object.",
 			"For textual tool transport, a `submit_plan` action is one visible JSON object with top-level `tool`, `rationale`, and `edits` keys; `edits` must be a JSON array, not a quoted string.",
 			"When submitting, each `submit_plan.edits[]` entry must use a real candidate path plus exactly one executable shape: exact `old_text`/`new_text`, replacement `start_line`/`end_line`/`content`, small inline insertion-only `insert_after_line`/`content`, or missing/new-file-only `replace_all:true`/`new_text`; include a one-sentence `purpose`. Existing source/test files must use bounded anchored edits. For large additions, use line-range replacement of unchanged anchor line(s) plus inserted content. Edit bodies must be complete executable source text; do not copy schema examples, placeholders, ellipses, or prose as field values.",
 			nextAction,
@@ -5240,10 +5240,10 @@ func planThenExecuteSourceReadInstruction(path string, results []workspace.ToolR
 	}
 
 	if planThenExecutePathHasOutlineEvidence(path, results) {
-		return "read source for " + path + " using a source-body route: " + workspace.CodeNavigateCapabilityInstruction(workspace.CapReadSymbol) + " for the relevant declaration, or `read_file` with `start_line`/`end_line` copied from the outline. Do not repeat whole-file `read_file`; it can redirect to an outline and still leave the path unread"
+		return "read source for " + path + " using a source-body route: " + workspace.CodeNavigateCapabilityInstruction(semanticlanguage.CapReadSymbol) + " for the relevant declaration, or `read_file` with `start_line`/`end_line` copied from the outline. Do not repeat whole-file `read_file`; it can redirect to an outline and still leave the path unread"
 	}
 
-	return "read source for " + path + " with `read_file`; if the file is large or redirects to an outline, follow with " + workspace.CodeNavigateCapabilityInstruction(workspace.CapReadSymbol) + " or bounded `read_file` using `start_line`/`end_line`"
+	return "read source for " + path + " with `read_file`; if the file is large or redirects to an outline, follow with " + workspace.CodeNavigateCapabilityInstruction(semanticlanguage.CapReadSymbol) + " or bounded `read_file` using `start_line`/`end_line`"
 }
 
 func planThenExecutePathHasOutlineEvidence(path string, results []workspace.ToolResult) bool {
@@ -5282,8 +5282,8 @@ func planThenExecuteSourceBodyReadRequest(req workspace.ToolRequest) bool {
 	case "code_navigate", "read_only_capability":
 		capability := strings.TrimSpace(req.Capability)
 
-		return workspace.CodeNavigateCapabilityPredicate(workspace.CapReadSymbol)(capability) ||
-			workspace.CodeNavigateCapabilityPredicate(workspace.CapExtractBody)(capability) ||
+		return workspace.CodeNavigateCapabilityPredicate(semanticlanguage.CapReadSymbol)(capability) ||
+			workspace.CodeNavigateCapabilityPredicate(semanticlanguage.CapExtractBody)(capability) ||
 			strings.HasSuffix(capability, "_read_symbol") ||
 			strings.HasSuffix(capability, "_extract_body")
 	default:
@@ -5298,8 +5298,8 @@ func planThenExecuteAnchorRefreshRequestAllowed(req workspace.ToolRequest) bool 
 	case workspace.ToolNameCodeNavigate:
 		capability := strings.TrimSpace(req.Capability)
 
-		return workspace.CodeNavigateCapabilityPredicate(workspace.CapReadSymbol)(capability) ||
-			workspace.CodeNavigateCapabilityPredicate(workspace.CapExtractBody)(capability)
+		return workspace.CodeNavigateCapabilityPredicate(semanticlanguage.CapReadSymbol)(capability) ||
+			workspace.CodeNavigateCapabilityPredicate(semanticlanguage.CapExtractBody)(capability)
 	default:
 		return false
 	}
@@ -8740,7 +8740,7 @@ func planThenExecuteUnreadRequiredSourceNudge(brief workerruntime.WorkerRuntimeB
 		"Current evidence state: " + state,
 		"",
 		"Next action MUST be exactly one visible source-body tool call for that path before `submit_plan`:",
-		"  1. " + workspace.CodeNavigateCapabilityInstruction(workspace.CapReadSymbol) + " for the relevant declaration in " + next + ", or",
+		"  1. " + workspace.CodeNavigateCapabilityInstruction(semanticlanguage.CapReadSymbol) + " for the relevant declaration in " + next + ", or",
 		"  2. `read_file` with explicit `start_line`/`end_line` copied from the outline/search hit.",
 		"",
 		"Outline and search hits do not satisfy this contract by themselves. Do not call `submit_plan` until every required_edit_path has source-body evidence. Hidden reasoning is not executable evidence.",

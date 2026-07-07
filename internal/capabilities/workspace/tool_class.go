@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"idiom/internal/contracts/autonomy"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 )
 
 // ToolCategory classifies workspace tools into broad capability groups
@@ -60,15 +61,15 @@ func IsReadClassToolName(name string) bool {
 
 func IsLanguageReadClassToolName(name string) bool {
 	return LanguageToolHasAnyCapability(name,
-		CapReadSymbol,
-		CapFileOutline,
-		CapExtractBody,
-		CapWorkspaceSymbol,
-		CapReferences,
-		CapDefinition,
-		CapCallsFrom,
-		CapCallsInto,
-		CapRelatedFiles,
+		semanticlanguage.CapReadSymbol,
+		semanticlanguage.CapFileOutline,
+		semanticlanguage.CapExtractBody,
+		semanticlanguage.CapWorkspaceSymbol,
+		semanticlanguage.CapReferences,
+		semanticlanguage.CapDefinition,
+		semanticlanguage.CapCallsFrom,
+		semanticlanguage.CapCallsInto,
+		semanticlanguage.CapRelatedFiles,
 	)
 }
 
@@ -132,14 +133,14 @@ func IsSourceBodyInspectionTool(name string) bool {
 	}
 
 	return LanguageToolHasAnyCapability(name,
-		CapReadSymbol,
-		CapFileOutline,
-		CapExtractBody,
+		semanticlanguage.CapReadSymbol,
+		semanticlanguage.CapFileOutline,
+		semanticlanguage.CapExtractBody,
 	)
 }
 
 func IsLanguageSourceBodyTool(name string) bool {
-	return LanguageToolHasAnyCapability(name, CapReadSymbol, CapExtractBody)
+	return LanguageToolHasAnyCapability(name, semanticlanguage.CapReadSymbol, semanticlanguage.CapExtractBody)
 }
 
 // TaskLedgerReadEvidenceTool reports whether a successful tool result can
@@ -150,7 +151,7 @@ func TaskLedgerReadEvidenceTool(name string) bool {
 		return true
 	}
 
-	return LanguageToolHasAnyCapability(name, CapReadSymbol, CapExtractBody, CapFileOutline)
+	return LanguageToolHasAnyCapability(name, semanticlanguage.CapReadSymbol, semanticlanguage.CapExtractBody, semanticlanguage.CapFileOutline)
 }
 
 // ToolRequestPathAttachesInstructions reports whether a request's Path should
@@ -162,10 +163,10 @@ func ToolRequestPathAttachesInstructions(tool string) bool {
 	}
 
 	return LanguageToolHasAnyCapability(tool,
-		CapReadSymbol,
-		CapFileOutline,
-		CapExtractBody,
-		CapDiagnostics,
+		semanticlanguage.CapReadSymbol,
+		semanticlanguage.CapFileOutline,
+		semanticlanguage.CapExtractBody,
+		semanticlanguage.CapDiagnostics,
 	)
 }
 
@@ -176,7 +177,7 @@ func BroadDiscoveryToolNames() []string {
 	tools := builtInToolSurfaceToolsByFacet(toolSurfaceFacetBroadDiscovery)
 
 	for _, entry := range languageToolCatalog() {
-		if entry.Capability == CapOverview || entry.Capability == CapEntrypoints {
+		if entry.Capability == semanticlanguage.CapOverview || entry.Capability == semanticlanguage.CapEntrypoints {
 			tools = append(tools, entry.Tool)
 		}
 	}

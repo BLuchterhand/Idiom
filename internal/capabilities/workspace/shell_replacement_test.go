@@ -1,6 +1,10 @@
 package workspace
 
-import "testing"
+import (
+	"testing"
+
+	semanticlanguage "idiom/internal/repository/semantic/language"
+)
 
 func TestAnalyzeShellCommandExtractsReadFileReplacements(t *testing.T) {
 	tests := []struct {
@@ -53,7 +57,7 @@ func TestAnalyzeShellCommandExtractsReadFileReplacements(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			replacement := requireShellReplacement(t, tt.command, tt.kind)
-			if replacement.Capability != Capability(ToolNameReadFile) {
+			if replacement.Capability != ToolNameReadFile {
 				t.Fatalf("Capability = %q, want read_file", replacement.Capability)
 			}
 			if replacement.Request.Tool != ToolNameReadFile {
@@ -111,7 +115,7 @@ func TestAnalyzeShellCommandExtractsFileStatsReplacements(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			replacement := requireShellReplacement(t, tt.command, tt.kind)
-			if replacement.Capability != Capability(ToolNameFileStats) {
+			if replacement.Capability != ToolNameFileStats {
 				t.Fatalf("Capability = %q, want file_stats", replacement.Capability)
 			}
 			if replacement.Request.Tool != ToolNameFileStats {
@@ -139,7 +143,7 @@ func TestAnalyzeShellCommandExtractsSearchFilesReplacements(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.command, func(t *testing.T) {
 			replacement := requireShellReplacement(t, tt.command, ShellReplacementFindSearchFiles)
-			if replacement.Capability != Capability(ToolNameSearchFiles) {
+			if replacement.Capability != ToolNameSearchFiles {
 				t.Fatalf("Capability = %q, want search_files", replacement.Capability)
 			}
 			if replacement.Request.Tool != ToolNameSearchFiles {
@@ -156,7 +160,7 @@ func TestAnalyzeShellCommandExtractsIdentifierGrepReplacementFacts(t *testing.T)
 	tests := []struct {
 		name       string
 		command    string
-		capability Capability
+		capability string
 		pattern    string
 		path       string
 		glob       string
@@ -164,34 +168,34 @@ func TestAnalyzeShellCommandExtractsIdentifierGrepReplacementFacts(t *testing.T)
 		{
 			name:       "scoped grep uses references intent",
 			command:    "grep -n RunPolicy main.go",
-			capability: CapReferences,
+			capability: string(semanticlanguage.CapReferences),
 			pattern:    "RunPolicy",
 			path:       "main.go",
 		},
 		{
 			name:       "recursive grep uses workspace symbol intent",
 			command:    "grep -rn RunPolicy",
-			capability: CapWorkspaceSymbol,
+			capability: string(semanticlanguage.CapWorkspaceSymbol),
 			pattern:    "RunPolicy",
 		},
 		{
 			name:       "include glob is retained",
 			command:    "grep -rn --include=*.py Widget",
-			capability: CapWorkspaceSymbol,
+			capability: string(semanticlanguage.CapWorkspaceSymbol),
 			pattern:    "Widget",
 			glob:       "*.py",
 		},
 		{
 			name:       "declaration pattern extracts identifier",
 			command:    "grep -n 'type ToolRequest struct' internal/capabilities/workspace/manager.go",
-			capability: CapReferences,
+			capability: string(semanticlanguage.CapReferences),
 			pattern:    "ToolRequest",
 			path:       "internal/capabilities/workspace/manager.go",
 		},
 		{
 			name:       "identifier alternation chooses first",
 			command:    `grep -rn 'parseToolCall\|ParseToolRequest' internal/ --include='*.go'`,
-			capability: CapReferences,
+			capability: string(semanticlanguage.CapReferences),
 			pattern:    "parseToolCall",
 			path:       "internal/",
 			glob:       "*.go",

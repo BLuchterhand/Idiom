@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"idiom/internal/contracts/autonomy"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/repository/semantic/languagetools"
 )
 
@@ -310,7 +311,7 @@ func TestLanguageToolCatalogDrivesSchemaManifestAndMetadata(t *testing.T) {
 		}
 
 		wantClassification := CapabilityClassCompatibilityAdapter
-		if entry.Capability == CapDiagnostics {
+		if entry.Capability == semanticlanguage.CapDiagnostics {
 			wantClassification = CapabilityClassDeferred
 		}
 
@@ -335,8 +336,8 @@ func TestExtractBodyIsRegistryBackedLanguageCapability(t *testing.T) {
 			t.Fatalf("%s should be registry-backed, not supplemental: %#v", tool, entry)
 		}
 
-		if entry.Capability != CapExtractBody {
-			t.Fatalf("%s capability = %q, want %q", tool, entry.Capability, CapExtractBody)
+		if entry.Capability != semanticlanguage.CapExtractBody {
+			t.Fatalf("%s capability = %q, want %q", tool, entry.Capability, semanticlanguage.CapExtractBody)
 		}
 
 		if !slices.Contains(entry.EvidenceCapabilities, "inspect_symbol") {
@@ -439,7 +440,7 @@ func TestToolSchemaPolicyUsesToolSurfaceMetadata(t *testing.T) {
 func TestToolSchemaPolicyKeepsRegistryDiagnosticsDeferred(t *testing.T) {
 	var diagnosticTools []string
 	for _, entry := range languageToolCatalog() {
-		if entry.Capability == CapDiagnostics {
+		if entry.Capability == semanticlanguage.CapDiagnostics {
 			diagnosticTools = append(diagnosticTools, entry.Tool)
 		}
 	}

@@ -413,7 +413,7 @@ func (r *discoveryQueryRunner) addContextLayer() {
 
 func (r *discoveryQueryRunner) addFileOrientation(path string, language string) {
 	if lang, ok := semanticlanguage.LanguageForName(language); ok {
-		if tool := lang.Tool(CapFileOutline); tool != "" {
+		if tool := lang.Tool(semanticlanguage.CapFileOutline); tool != "" {
 			r.addLayer(DiscoveryLayerFileOutline, ToolRequest{Tool: tool, Path: path})
 
 			return
@@ -442,11 +442,11 @@ func (r *discoveryQueryRunner) addLanguageRelationshipLayers(path string, patter
 		return
 	}
 
-	for _, capability := range []Capability{
-		CapWorkspaceSymbol,
-		CapDefinition,
-		CapReferences,
-		CapReadSymbol,
+	for _, capability := range []semanticlanguage.Capability{
+		semanticlanguage.CapWorkspaceSymbol,
+		semanticlanguage.CapDefinition,
+		semanticlanguage.CapReferences,
+		semanticlanguage.CapReadSymbol,
 	} {
 		if tool := lang.Tool(capability); tool != "" {
 			r.addLayer(tool, ToolRequest{Tool: tool, Path: path, Pattern: pattern, MaxDepth: r.packet.Depth})
@@ -454,7 +454,7 @@ func (r *discoveryQueryRunner) addLanguageRelationshipLayers(path string, patter
 	}
 
 	if includeCalls {
-		for _, capability := range []Capability{CapCallsFrom, CapCallsInto} {
+		for _, capability := range []semanticlanguage.Capability{semanticlanguage.CapCallsFrom, semanticlanguage.CapCallsInto} {
 			if tool := lang.Tool(capability); tool != "" {
 				r.addLayer(tool, ToolRequest{Tool: tool, Path: path, Pattern: pattern, MaxDepth: r.packet.Depth})
 			}
@@ -468,7 +468,7 @@ func (r *discoveryQueryRunner) addRelatedFileLayer(path string, pattern string, 
 		return
 	}
 
-	if tool := lang.Tool(CapRelatedFiles); tool != "" {
+	if tool := lang.Tool(semanticlanguage.CapRelatedFiles); tool != "" {
 		r.addLayer(DiscoveryLayerRelatedFiles, ToolRequest{Tool: tool, Path: path, Pattern: pattern, MaxDepth: r.packet.Depth})
 	}
 }

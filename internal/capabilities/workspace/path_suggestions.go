@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"idiom/internal/repository/discovery"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 )
 
 const readFileRecoveryCapabilities = "Available recovery capabilities: file-name search, structured symbol/code navigation, or exact text search followed by a returned handle"
@@ -368,9 +369,9 @@ func (m *Manager) symbolSearchSuggestion(pattern string) string {
 	var langs []string
 
 	for _, lang := range active {
-		tool := lang.Tool(CapWorkspaceSymbol)
+		tool := lang.Tool(semanticlanguage.CapWorkspaceSymbol)
 		if tool == "" {
-			tool = lang.Tool(CapFindSymbol)
+			tool = lang.Tool(semanticlanguage.CapFindSymbol)
 		}
 
 		if tool == "" {

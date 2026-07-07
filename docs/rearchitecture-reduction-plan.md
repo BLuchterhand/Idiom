@@ -343,8 +343,10 @@ lookup helpers (`LanguageRegistry`, `LanguageForFile`, `LanguageForName`,
 `LanguageForExtension`, `DiagnosticToolNames`, `IsDiagnosticToolName`). Runtime,
 workspace tests, harness audit, and project artifact enrichment now call
 `internal/repository/semantic/language` directly for registry facts. Workspace
-keeps only capability/type aliases and `Manager.ActiveLanguages`, where
-workspace session state is part of the behavior.
+also no longer re-exports language capability/type aliases; callers use the
+semantic language owner directly. Workspace keeps only `Manager.ActiveLanguages`
+as the root-bound active-language projection, where workspace session state is
+part of the behavior.
 
 ### Slice 2: Tool profile ownership
 

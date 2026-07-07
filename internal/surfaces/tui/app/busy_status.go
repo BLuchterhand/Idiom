@@ -6,6 +6,7 @@ import (
 	"unicode"
 
 	"idiom/internal/capabilities/workspace"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/runtime/agent"
 )
 
@@ -34,7 +35,7 @@ func busyStatusForToolRequest(event agent.ToolRequestEvent, fallback string) str
 		}
 	}
 
-	if workspace.LanguageToolHasCapability(tool, workspace.CapFileOutline) {
+	if workspace.LanguageToolHasCapability(tool, semanticlanguage.CapFileOutline) {
 		if topic == "" {
 			return "Qwen is reading the relevant code"
 		}
@@ -42,7 +43,7 @@ func busyStatusForToolRequest(event agent.ToolRequestEvent, fallback string) str
 		return "Qwen is reading code related to " + topic
 	}
 
-	if workspace.LanguageToolHasCapability(tool, workspace.CapReadSymbol) {
+	if workspace.LanguageToolHasCapability(tool, semanticlanguage.CapReadSymbol) {
 		if topic == "" {
 			return "Qwen is inspecting a source symbol"
 		}

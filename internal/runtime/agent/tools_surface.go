@@ -30,9 +30,9 @@ import (
 // through as the fallback path — the model gets one nudge per
 // (fingerprint, turn), never a lockout.
 //
-// The redirect layer reasons in capability space (workspace.Capability)
-// rather than tool-name space, so adding a new language only requires a
-// LanguageSupport entry in the semantic language registry — no changes here.
+// The redirect layer reasons in capability tokens rather than tool-name space,
+// so adding a new language only requires a LanguageSupport entry in the
+// semantic language registry — no changes here.
 type DiscoveryRedirect struct {
 	// firedRedirects keys on the redirect fingerprint (tool+Path+Pattern).
 	// The first time a fingerprint fires, we synthesize a redirect. The
@@ -108,8 +108,8 @@ type RedirectDecision struct {
 	DecisionGuide string
 	// Language is the language matched by the redirect (for telemetry).
 	Language string
-	// Capability is the capability the redirect recommends (for telemetry).
-	Capability workspace.Capability
+	// Capability is the capability token the redirect recommends (for telemetry).
+	Capability string
 	// HardReject signals that the caller should treat this as a
 	// rejection (populate its rejectedFingerprints, bump counters)
 	// rather than as a soft "redirected" result. Generic code-read
@@ -145,7 +145,7 @@ func (d *DiscoveryRedirect) Consider(req workspace.ToolRequest, ws *workspace.Ma
 		return RedirectDecision{}
 	}
 
-	if cap == workspace.CapFileOutline && strings.TrimSpace(req.Path) == "" {
+	if cap == semanticlanguage.CapFileOutline && strings.TrimSpace(req.Path) == "" {
 		if path, ok := redirectReadFilePath(req, ws); ok {
 			req.Path = path
 		}
@@ -208,7 +208,7 @@ func (d *DiscoveryRedirect) Consider(req workspace.ToolRequest, ws *workspace.Ma
 		Result:         result,
 		DecisionGuide:  guide,
 		Language:       lang.Name,
-		Capability:     cap,
+		Capability:     string(cap),
 	}
 }
 
@@ -276,7 +276,7 @@ func redirectSummary(req workspace.ToolRequest, replacement string) string {
 // redirect body when the same (language, capability) class has already
 // fired this turn. The number of prior fires is included so the model
 // sees the streak, not just an anonymous scolding.
-func escalateRedirectMessage(base string, lang workspace.LanguageSupport, cap workspace.Capability, replacement string, fireNumber int) string {
+func escalateRedirectMessage(base string, lang semanticlanguage.LanguageSupport, cap semanticlanguage.Capability, replacement string, fireNumber int) string {
 	preface := fmt.Sprintf(
 		"This exact call has been redirected %d times this turn. The structured tool route via %s for %s code queries remains available. If the structured tool already returned results for this symbol, those results are your answer.\n\n",
 		fireNumber, replacement, lang.Name,
@@ -285,28 +285,28 @@ func escalateRedirectMessage(base string, lang workspace.LanguageSupport, cap wo
 	return preface + base
 }
 
-func redirectMessage(req workspace.ToolRequest, lang workspace.LanguageSupport, cap workspace.Capability, replacement string, adapter redirectAdapter) string {
+func redirectMessage(req workspace.ToolRequest, lang semanticlanguage.LanguageSupport, cap semanticlanguage.Capability, replacement string, adapter redirectAdapter) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "This %s code query is answered through the %s capability via %s.\n",
 		lang.Name, cap, adapter.Label())
 
 	switch cap {
-	case workspace.CapFileOutline:
+	case semanticlanguage.CapFileOutline:
 		writeRedirectCandidateRequest(&b, adapter, cap, lang.Name, req.Path, "")
 
-		readSym := lang.Tool(workspace.CapReadSymbol)
+		readSym := lang.Tool(semanticlanguage.CapReadSymbol)
 		fmt.Fprintf(&b, "related_capability: read_symbol via %s returns one declaration body by name.\n", relatedRedirectAdapterLabel(adapter, readSym))
 		b.WriteString("raw_range_fallback: read_file with start_line/end_line remains appropriate for ranges a single declaration cannot cover.\n")
-	case workspace.CapWorkspaceSymbol, workspace.CapFindSymbol:
+	case semanticlanguage.CapWorkspaceSymbol, semanticlanguage.CapFindSymbol:
 		writeRedirectCandidateRequest(&b, adapter, cap, lang.Name, req.Path, req.Pattern)
 		b.WriteString("The structured result includes file, line, kind, and qualified name.\n")
 
-		readSym := lang.Tool(workspace.CapReadSymbol)
+		readSym := lang.Tool(semanticlanguage.CapReadSymbol)
 		if readSym != "" {
 			fmt.Fprintf(&b, "related_capability: read_symbol via %s returns a hit's body by pattern and path; raw range fallback remains for context beyond a single declaration.\n", relatedRedirectAdapterLabel(adapter, readSym))
 		}
-	case workspace.CapReferences:
+	case semanticlanguage.CapReferences:
 		path := req.Path
 		if strings.TrimSpace(path) == "" {
 			path = "."
@@ -314,7 +314,7 @@ func redirectMessage(req workspace.ToolRequest, lang workspace.LanguageSupport, 
 
 		writeRedirectCandidateRequest(&b, adapter, cap, lang.Name, path, req.Pattern)
 
-		readSym := lang.Tool(workspace.CapReadSymbol)
+		readSym := lang.Tool(semanticlanguage.CapReadSymbol)
 		if readSym != "" {
 			fmt.Fprintf(&b, "related_capability: read_symbol via %s can inspect each hit's enclosing declaration; raw range fallback remains for surrounding context.\n", relatedRedirectAdapterLabel(adapter, readSym))
 		}
@@ -339,7 +339,7 @@ func relatedRedirectAdapterLabel(primary redirectAdapter, directRelated string) 
 	return strings.TrimSpace(directRelated)
 }
 
-func writeRedirectCandidateRequest(b *strings.Builder, adapter redirectAdapter, cap workspace.Capability, language, path, pattern string) {
+func writeRedirectCandidateRequest(b *strings.Builder, adapter redirectAdapter, cap semanticlanguage.Capability, language, path, pattern string) {
 	if b == nil {
 		return
 	}
@@ -377,9 +377,9 @@ func writeRedirectCandidateRequest(b *strings.Builder, adapter redirectAdapter, 
 	b.WriteString("}\n")
 }
 
-func normalizeRedirectRequest(req workspace.ToolRequest, lang workspace.LanguageSupport, cap workspace.Capability) workspace.ToolRequest {
+func normalizeRedirectRequest(req workspace.ToolRequest, lang semanticlanguage.LanguageSupport, cap semanticlanguage.Capability) workspace.ToolRequest {
 	switch cap {
-	case workspace.CapWorkspaceSymbol, workspace.CapFindSymbol, workspace.CapReferences:
+	case semanticlanguage.CapWorkspaceSymbol, semanticlanguage.CapFindSymbol, semanticlanguage.CapReferences:
 		if ident, ok := workspace.SyntaxIdentifierForLanguage(lang.Name, req.Pattern); ok {
 			req.Pattern = ident
 		}
@@ -418,7 +418,7 @@ func redirectReadFilePath(req workspace.ToolRequest, ws *workspace.Manager) (str
 // matchRedirectRule maps a generic tool request to a (language,
 // capability) pair when a deterministic tool would answer the same
 // question better. Returns ok=false when no rule matches.
-func matchRedirectRule(req workspace.ToolRequest, ws *workspace.Manager) (workspace.LanguageSupport, workspace.Capability, bool) {
+func matchRedirectRule(req workspace.ToolRequest, ws *workspace.Manager) (semanticlanguage.LanguageSupport, semanticlanguage.Capability, bool) {
 	switch strings.ToLower(strings.TrimSpace(req.Tool)) {
 	case "read_file":
 		// A read_file on a code file with no line range is almost
@@ -427,30 +427,30 @@ func matchRedirectRule(req workspace.ToolRequest, ws *workspace.Manager) (worksp
 		// read_file. A read with start_line/end_line set is a
 		// targeted read and is not redirected.
 		if req.StartLine > 0 || req.EndLine > 0 {
-			return workspace.LanguageSupport{}, "", false
+			return semanticlanguage.LanguageSupport{}, "", false
 		}
 
 		path, ok := redirectReadFilePath(req, ws)
 		if !ok {
-			return workspace.LanguageSupport{}, "", false
+			return semanticlanguage.LanguageSupport{}, "", false
 		}
 
 		lang, ok := semanticlanguage.LanguageForFile(path)
 		if !ok {
-			return workspace.LanguageSupport{}, "", false
+			return semanticlanguage.LanguageSupport{}, "", false
 		}
 
 		if !languageActive(ws, lang) {
-			return workspace.LanguageSupport{}, "", false
+			return semanticlanguage.LanguageSupport{}, "", false
 		}
 
-		if lang.Tool(workspace.CapFileOutline) == "" {
-			return workspace.LanguageSupport{}, "", false
+		if lang.Tool(semanticlanguage.CapFileOutline) == "" {
+			return semanticlanguage.LanguageSupport{}, "", false
 		}
 
 		lineCount, ok := ws.FileLineCount(path)
 		if !ok {
-			return workspace.LanguageSupport{}, "", false
+			return semanticlanguage.LanguageSupport{}, "", false
 		}
 
 		// Small files short-circuit the outline detour. A typical
@@ -464,27 +464,27 @@ func matchRedirectRule(req workspace.ToolRequest, ws *workspace.Manager) (worksp
 		// The threshold is deliberately generous — outline is still the
 		// right answer for 500-line files with many decls.
 		if lineCount > 0 && lineCount <= smallFileRedirectThreshold {
-			return workspace.LanguageSupport{}, "", false
+			return semanticlanguage.LanguageSupport{}, "", false
 		}
 
-		return lang, workspace.CapFileOutline, true
+		return lang, semanticlanguage.CapFileOutline, true
 	case "search_content":
 		pattern := strings.TrimSpace(req.Pattern)
 		if pattern == "" {
-			return workspace.LanguageSupport{}, "", false
+			return semanticlanguage.LanguageSupport{}, "", false
 		}
 
 		if searchContentTargetsConcreteFile(req) && workspace.LooksLikeIdentifier(pattern) {
-			return workspace.LanguageSupport{}, "", false
+			return semanticlanguage.LanguageSupport{}, "", false
 		}
 
 		lang, ok := languageForSearchRequest(req, ws)
 		if !ok {
-			return workspace.LanguageSupport{}, "", false
+			return semanticlanguage.LanguageSupport{}, "", false
 		}
 
 		if !languageActive(ws, lang) {
-			return workspace.LanguageSupport{}, "", false
+			return semanticlanguage.LanguageSupport{}, "", false
 		}
 
 		// Choose between workspace-wide and path-scoped symbol search
@@ -495,23 +495,23 @@ func matchRedirectRule(req workspace.ToolRequest, ws *workspace.Manager) (worksp
 		// unfiltered hits. When no path is set, workspace_symbol is the
 		// right default — it has the broader reach. Either tool falls
 		// back to the other when the preferred one is missing.
-		primary, secondary := workspace.CapWorkspaceSymbol, workspace.CapFindSymbol
+		primary, secondary := semanticlanguage.CapWorkspaceSymbol, semanticlanguage.CapFindSymbol
 		if strings.TrimSpace(req.Path) != "" {
-			primary, secondary = workspace.CapFindSymbol, workspace.CapWorkspaceSymbol
+			primary, secondary = semanticlanguage.CapFindSymbol, semanticlanguage.CapWorkspaceSymbol
 		}
 
 		cap := primary
 		if lang.Tool(cap) == "" {
 			cap = secondary
 			if lang.Tool(cap) == "" {
-				return workspace.LanguageSupport{}, "", false
+				return semanticlanguage.LanguageSupport{}, "", false
 			}
 		}
 
 		return lang, cap, true
 	}
 
-	return workspace.LanguageSupport{}, "", false
+	return semanticlanguage.LanguageSupport{}, "", false
 }
 
 // considerConversationReadFileRedirect redirects repeated source-file
@@ -567,9 +567,9 @@ func (d *DiscoveryRedirect) considerConversationReadFileRedirect(req workspace.T
 		"You have read %s %d times this turn. Instead of reading small chunks, use %s with the symbol name to get the full body in one call. Try:\n\n%s\n\n"+
 			"If you don't know the symbol name, use %s first to list available symbols.",
 		path, fpFires,
-		workspace.CodeNavigateCapabilityInstruction(workspace.CapReadSymbol),
-		workspace.CodeNavigateRequestExample(workspace.CapReadSymbol, path, "<symbol name>"),
-		workspace.CodeNavigateCapabilityInstruction(workspace.CapFileOutline),
+		workspace.CodeNavigateCapabilityInstruction(semanticlanguage.CapReadSymbol),
+		workspace.CodeNavigateRequestExample(semanticlanguage.CapReadSymbol, path, "<symbol name>"),
+		workspace.CodeNavigateCapabilityInstruction(semanticlanguage.CapFileOutline),
 	)
 
 	return RedirectDecision{
@@ -607,7 +607,7 @@ func searchContentTargetsConcreteFile(req workspace.ToolRequest) bool {
 // request from the strongest available signal. It deliberately avoids
 // guessing: ambiguous syntax in a polyglot workspace falls through to the
 // original text search instead of redirecting to the wrong language tool.
-func languageForSearchRequest(req workspace.ToolRequest, ws *workspace.Manager) (workspace.LanguageSupport, bool) {
+func languageForSearchRequest(req workspace.ToolRequest, ws *workspace.Manager) (semanticlanguage.LanguageSupport, bool) {
 	if lang, ok := languageFromConcretePath(req.Path); ok && patternCompatibleWithLanguage(req.Pattern, lang) {
 		return lang, true
 	}
@@ -619,7 +619,7 @@ func languageForSearchRequest(req workspace.ToolRequest, ws *workspace.Manager) 
 	return languageFromSyntaxPattern(req.Pattern, ws)
 }
 
-func patternCompatibleWithLanguage(pattern string, lang workspace.LanguageSupport) bool {
+func patternCompatibleWithLanguage(pattern string, lang semanticlanguage.LanguageSupport) bool {
 	if workspace.LooksLikeSymbolIdentifier(pattern) {
 		return true
 	}
@@ -628,21 +628,21 @@ func patternCompatibleWithLanguage(pattern string, lang workspace.LanguageSuppor
 	return ok
 }
 
-func languageFromConcretePath(path string) (workspace.LanguageSupport, bool) {
+func languageFromConcretePath(path string) (semanticlanguage.LanguageSupport, bool) {
 	path = strings.TrimSpace(path)
 	if path == "" {
-		return workspace.LanguageSupport{}, false
+		return semanticlanguage.LanguageSupport{}, false
 	}
 
 	ext := filepath.Ext(path)
 	if ext == "" {
-		return workspace.LanguageSupport{}, false
+		return semanticlanguage.LanguageSupport{}, false
 	}
 
 	return semanticlanguage.LanguageForExtension(ext)
 }
 
-func languageActive(ws *workspace.Manager, lang workspace.LanguageSupport) bool {
+func languageActive(ws *workspace.Manager, lang semanticlanguage.LanguageSupport) bool {
 	for _, active := range ws.ActiveLanguages() {
 		if active.Name == lang.Name {
 			return true
@@ -655,10 +655,10 @@ func languageActive(ws *workspace.Manager, lang workspace.LanguageSupport) bool 
 // languageFromGlob derives a language from a filename glob like
 // "*.go", "*.{cpp,h}", "**/*.cc". Only language-specific globs
 // redirect; a generic "*" matches nothing here.
-func languageFromGlob(glob string) (workspace.LanguageSupport, bool) {
+func languageFromGlob(glob string) (semanticlanguage.LanguageSupport, bool) {
 	glob = strings.ToLower(strings.TrimSpace(glob))
 	if glob == "" {
-		return workspace.LanguageSupport{}, false
+		return semanticlanguage.LanguageSupport{}, false
 	}
 
 	base := filepath.Base(glob)
@@ -684,25 +684,25 @@ func languageFromGlob(glob string) (workspace.LanguageSupport, bool) {
 				}
 			}
 
-			return workspace.LanguageSupport{}, false
+			return semanticlanguage.LanguageSupport{}, false
 		}
 	}
 
 	ext := filepath.Ext(base)
 	if ext == "" {
-		return workspace.LanguageSupport{}, false
+		return semanticlanguage.LanguageSupport{}, false
 	}
 
 	return semanticlanguage.LanguageForExtension(ext)
 }
 
-func languageFromSyntaxPattern(pattern string, ws *workspace.Manager) (workspace.LanguageSupport, bool) {
+func languageFromSyntaxPattern(pattern string, ws *workspace.Manager) (semanticlanguage.LanguageSupport, bool) {
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" || ws == nil {
-		return workspace.LanguageSupport{}, false
+		return semanticlanguage.LanguageSupport{}, false
 	}
 
-	var matches []workspace.LanguageSupport
+	var matches []semanticlanguage.LanguageSupport
 
 	for _, lang := range ws.ActiveLanguages() {
 		if _, ok := workspace.SyntaxIdentifierForLanguage(lang.Name, pattern); ok {
@@ -711,7 +711,7 @@ func languageFromSyntaxPattern(pattern string, ws *workspace.Manager) (workspace
 	}
 
 	if len(matches) != 1 {
-		return workspace.LanguageSupport{}, false
+		return semanticlanguage.LanguageSupport{}, false
 	}
 
 	return matches[0], true
@@ -882,12 +882,12 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 		// Prefer references when the model already named a file (that's
 		// the "where is X used in this file" question); workspace_symbol
 		// otherwise.
-		primary := candidate.Capability
+		primary := semanticlanguage.Capability(candidate.Capability)
 
 		toolName := lang.Tool(primary)
 		if toolName == "" {
 			// Fall back to the other side of the symbol pair.
-			alt := workspace.CapFindSymbol
+			alt := semanticlanguage.CapFindSymbol
 			toolName = lang.Tool(alt)
 			if toolName == "" {
 				return RedirectDecision{}
@@ -920,7 +920,7 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 
 		return d.shellRedirectDecision(req, shellRedirect{
 			kind:              kind,
-			capability:        primary,
+			capability:        string(primary),
 			summary:           "Redirected to " + toolName,
 			hardRejectSummary: fmt.Sprintf("Shell grep blocked by %s capability", primary),
 			message:           b.String(),
@@ -934,7 +934,7 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 
 type shellRedirect struct {
 	kind              string
-	capability        workspace.Capability
+	capability        string
 	summary           string
 	hardRejectSummary string
 	message           string
@@ -970,9 +970,9 @@ func (d *DiscoveryRedirect) shellRedirectDecision(req workspace.ToolRequest, red
 	}
 }
 
-func languageForShellGrep(symbol workspace.ShellSymbolSearch, ws *workspace.Manager) (workspace.LanguageSupport, bool) {
+func languageForShellGrep(symbol workspace.ShellSymbolSearch, ws *workspace.Manager) (semanticlanguage.LanguageSupport, bool) {
 	if ws == nil {
-		return workspace.LanguageSupport{}, false
+		return semanticlanguage.LanguageSupport{}, false
 	}
 
 	if lang, ok := languageFromConcretePath(symbol.Path); ok {
@@ -988,7 +988,7 @@ func languageForShellGrep(symbol workspace.ShellSymbolSearch, ws *workspace.Mana
 		return active[0], true
 	}
 
-	return workspace.LanguageSupport{}, false
+	return semanticlanguage.LanguageSupport{}, false
 }
 
 type debugLogSearchHit struct {
@@ -1748,7 +1748,7 @@ func structuredSourceReadRewriteRequest(req workspace.ToolRequest, ws *workspace
 	}
 
 	lang, cap, ok := matchRedirectRule(req, ws)
-	if !ok || cap != workspace.CapFileOutline {
+	if !ok || cap != semanticlanguage.CapFileOutline {
 		return workspace.ToolRequest{}, "", "", false
 	}
 

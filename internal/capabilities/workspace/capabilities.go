@@ -274,7 +274,7 @@ func CodeNavigationEvidenceCapabilities() []string {
 	var out []string
 
 	for _, capability := range languagetools.CodeNavigationCapabilities() {
-		if evidence := evidenceCapabilityForLanguageCapability(Capability(capability)); evidence != "" {
+		if evidence := evidenceCapabilityForLanguageCapability(semanticlanguage.Capability(capability)); evidence != "" {
 			out = append(out, evidence)
 		}
 	}
@@ -289,23 +289,23 @@ func ReadOnlyCapabilityEvidenceCapability(capability string) string {
 	case string(ReadOnlyCapabilityQueryContext):
 		return EvidenceCapabilityQueryContext
 	case string(ReadOnlyCapabilityFileOutline):
-		return evidenceCapabilityForLanguageCapability(CapFileOutline)
+		return evidenceCapabilityForLanguageCapability(semanticlanguage.CapFileOutline)
 	case string(ReadOnlyCapabilityInspectSymbol):
-		return evidenceCapabilityForLanguageCapability(CapReadSymbol)
+		return evidenceCapabilityForLanguageCapability(semanticlanguage.CapReadSymbol)
 	case string(ReadOnlyCapabilitySymbolLookup):
-		return evidenceCapabilityForLanguageCapability(CapFindSymbol)
+		return evidenceCapabilityForLanguageCapability(semanticlanguage.CapFindSymbol)
 	case string(ReadOnlyCapabilityDefinition):
-		return evidenceCapabilityForLanguageCapability(CapDefinition)
+		return evidenceCapabilityForLanguageCapability(semanticlanguage.CapDefinition)
 	case string(ReadOnlyCapabilityReferences):
-		return evidenceCapabilityForLanguageCapability(CapReferences)
+		return evidenceCapabilityForLanguageCapability(semanticlanguage.CapReferences)
 	case string(ReadOnlyCapabilityImplementations):
-		return evidenceCapabilityForLanguageCapability(CapImplementations)
+		return evidenceCapabilityForLanguageCapability(semanticlanguage.CapImplementations)
 	case string(ReadOnlyCapabilityCallsFrom):
-		return evidenceCapabilityForLanguageCapability(CapCallsFrom)
+		return evidenceCapabilityForLanguageCapability(semanticlanguage.CapCallsFrom)
 	case string(ReadOnlyCapabilityCallsInto):
-		return evidenceCapabilityForLanguageCapability(CapCallsInto)
+		return evidenceCapabilityForLanguageCapability(semanticlanguage.CapCallsInto)
 	case string(ReadOnlyCapabilityRelatedFiles):
-		return evidenceCapabilityForLanguageCapability(CapRelatedFiles)
+		return evidenceCapabilityForLanguageCapability(semanticlanguage.CapRelatedFiles)
 	case string(ReadOnlyCapabilitySourceSanity):
 		return EvidenceCapabilitySourceSanity
 	case string(ReadOnlyCapabilityTraceRuntime):
@@ -351,16 +351,16 @@ func BuildReadOnlyCapabilityRegistry() ReadOnlyCapabilityRegistry {
 				ReadOnlyCapabilityFileOutline,
 				"Return declaration or structural outline evidence for one source file.",
 				append(
-					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(CapFileOutline)},
-					languageCapabilityAdapters(CapFileOutline)...,
+					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(semanticlanguage.CapFileOutline)},
+					languageCapabilityAdapters(semanticlanguage.CapFileOutline)...,
 				),
 			),
 			readOnlyCapability(
 				ReadOnlyCapabilityInspectSymbol,
 				"Read a symbol body or exact symbol range after anchoring.",
 				append(
-					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(CapReadSymbol)},
-					languageCapabilityAdapters(CapReadSymbol)...,
+					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(semanticlanguage.CapReadSymbol)},
+					languageCapabilityAdapters(semanticlanguage.CapReadSymbol)...,
 				),
 			),
 			readOnlyCapability(
@@ -368,58 +368,58 @@ func BuildReadOnlyCapabilityRegistry() ReadOnlyCapabilityRegistry {
 				"Find candidate symbols by name or pattern without reading or changing source.",
 				append(
 					[]ReadOnlyCapabilityAdapterSpec{
-						codeNavigateCapabilityAdapter(CapFindSymbol),
-						codeNavigateCapabilityAdapter(CapWorkspaceSymbol),
+						codeNavigateCapabilityAdapter(semanticlanguage.CapFindSymbol),
+						codeNavigateCapabilityAdapter(semanticlanguage.CapWorkspaceSymbol),
 					},
-					append(languageCapabilityAdapters(CapFindSymbol), languageCapabilityAdapters(CapWorkspaceSymbol)...)...,
+					append(languageCapabilityAdapters(semanticlanguage.CapFindSymbol), languageCapabilityAdapters(semanticlanguage.CapWorkspaceSymbol)...)...,
 				),
 			),
 			readOnlyCapability(
 				ReadOnlyCapabilityDefinition,
 				"Locate definition evidence for a named symbol.",
 				append(
-					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(CapDefinition)},
-					languageCapabilityAdapters(CapDefinition)...,
+					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(semanticlanguage.CapDefinition)},
+					languageCapabilityAdapters(semanticlanguage.CapDefinition)...,
 				),
 			),
 			readOnlyCapability(
 				ReadOnlyCapabilityReferences,
 				"Locate reference or usage evidence for a named symbol.",
 				append(
-					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(CapReferences)},
-					languageCapabilityAdapters(CapReferences)...,
+					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(semanticlanguage.CapReferences)},
+					languageCapabilityAdapters(semanticlanguage.CapReferences)...,
 				),
 			),
 			readOnlyCapability(
 				ReadOnlyCapabilityImplementations,
 				"Locate implementation evidence for an interface, trait, method, or abstract symbol.",
 				append(
-					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(CapImplementations)},
-					languageCapabilityAdapters(CapImplementations)...,
+					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(semanticlanguage.CapImplementations)},
+					languageCapabilityAdapters(semanticlanguage.CapImplementations)...,
 				),
 			),
 			readOnlyCapability(
 				ReadOnlyCapabilityCallsFrom,
 				"Locate outgoing call evidence from a named symbol.",
 				append(
-					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(CapCallsFrom)},
-					languageCapabilityAdapters(CapCallsFrom)...,
+					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(semanticlanguage.CapCallsFrom)},
+					languageCapabilityAdapters(semanticlanguage.CapCallsFrom)...,
 				),
 			),
 			readOnlyCapability(
 				ReadOnlyCapabilityCallsInto,
 				"Locate incoming call evidence for a named symbol.",
 				append(
-					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(CapCallsInto)},
-					languageCapabilityAdapters(CapCallsInto)...,
+					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(semanticlanguage.CapCallsInto)},
+					languageCapabilityAdapters(semanticlanguage.CapCallsInto)...,
 				),
 			),
 			readOnlyCapability(
 				ReadOnlyCapabilityRelatedFiles,
 				"Find files related to a symbol, file, or implementation topic.",
 				append(
-					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(CapRelatedFiles)},
-					languageCapabilityAdapters(CapRelatedFiles)...,
+					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(semanticlanguage.CapRelatedFiles)},
+					languageCapabilityAdapters(semanticlanguage.CapRelatedFiles)...,
 				),
 			),
 			readOnlyCapability(
@@ -464,7 +464,7 @@ func CapabilityClassificationForTool(tool string) string {
 		return ""
 	case IsWorkspaceWriteTool(tool):
 		return CapabilityClassWriteSideEffect
-	case LanguageToolHasCapability(tool, CapDiagnostics):
+	case LanguageToolHasCapability(tool, semanticlanguage.CapDiagnostics):
 		return CapabilityClassDeferred
 	}
 
@@ -479,29 +479,29 @@ func CapabilityClassificationForTool(tool string) string {
 	return ""
 }
 
-func evidenceCapabilityForLanguageCapability(capability Capability) string {
+func evidenceCapabilityForLanguageCapability(capability semanticlanguage.Capability) string {
 	switch capability {
-	case CapFileOutline:
+	case semanticlanguage.CapFileOutline:
 		return EvidenceCapabilityInspectFile
-	case CapFindSymbol, CapWorkspaceSymbol:
+	case semanticlanguage.CapFindSymbol, semanticlanguage.CapWorkspaceSymbol:
 		return EvidenceCapabilityFindSymbol
-	case CapReadSymbol, CapExtractBody:
+	case semanticlanguage.CapReadSymbol, semanticlanguage.CapExtractBody:
 		return EvidenceCapabilityInspectSymbol
-	case CapDefinition:
+	case semanticlanguage.CapDefinition:
 		return EvidenceCapabilityFindDefinition
-	case CapReferences:
+	case semanticlanguage.CapReferences:
 		return EvidenceCapabilityFindReferences
-	case CapCallsFrom:
+	case semanticlanguage.CapCallsFrom:
 		return EvidenceCapabilityCallsFrom
-	case CapCallsInto:
+	case semanticlanguage.CapCallsInto:
 		return EvidenceCapabilityCallsInto
-	case CapRelatedFiles:
+	case semanticlanguage.CapRelatedFiles:
 		return EvidenceCapabilityRelatedFiles
-	case CapImplementations:
+	case semanticlanguage.CapImplementations:
 		return EvidenceCapabilityFindImplementations
-	case CapDiagnostics:
+	case semanticlanguage.CapDiagnostics:
 		return EvidenceCapabilitySourceDiagnostics
-	case CapOverview, CapEntrypoints:
+	case semanticlanguage.CapOverview, semanticlanguage.CapEntrypoints:
 		return EvidenceCapabilityLocalizeChange
 	default:
 		return ""
@@ -673,7 +673,7 @@ func readOnlyCapabilityResolverTools(req ToolRequest) []string {
 	return textutil.UniqueNonEmpty(tools)
 }
 
-func readOnlyCapabilityRequestLanguage(req ToolRequest) (LanguageSupport, bool) {
+func readOnlyCapabilityRequestLanguage(req ToolRequest) (semanticlanguage.LanguageSupport, bool) {
 	if path := strings.TrimSpace(req.Path); path != "" {
 		if lang, ok := semanticlanguage.LanguageForFile(path); ok {
 			return lang, true
@@ -684,7 +684,7 @@ func readOnlyCapabilityRequestLanguage(req ToolRequest) (LanguageSupport, bool) 
 		return semanticlanguage.LanguageForName(language)
 	}
 
-	return LanguageSupport{}, false
+	return semanticlanguage.LanguageSupport{}, false
 }
 
 func readOnlyCapabilityResolvedTarget(req ToolRequest) ReadOnlyCapabilityResolvedTarget {
@@ -1600,11 +1600,11 @@ func readOnlyCapability(id ReadOnlyCapabilityID, description string, adapters []
 	}
 }
 
-func codeNavigateCapabilityAdapter(cap Capability) ReadOnlyCapabilityAdapterSpec {
+func codeNavigateCapabilityAdapter(cap semanticlanguage.Capability) ReadOnlyCapabilityAdapterSpec {
 	return readOnlyAdapter(CodeNavigateToolName, string(cap), "", "capability_router")
 }
 
-func languageCapabilityAdapters(cap Capability) []ReadOnlyCapabilityAdapterSpec {
+func languageCapabilityAdapters(cap semanticlanguage.Capability) []ReadOnlyCapabilityAdapterSpec {
 	var adapters []ReadOnlyCapabilityAdapterSpec
 
 	for _, lang := range semanticlanguage.LanguageRegistry() {
