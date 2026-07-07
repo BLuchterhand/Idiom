@@ -1025,18 +1025,21 @@ func writeGitDiff(path string, cfg config.Config) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, shellName(cfg), "-c", "git diff --binary")
-	cmd.Dir = commandDir(cfg)
-	data, err := cmd.Output()
-	if err != nil {
-		if ctx.Err() != nil {
-			return fmt.Errorf("git diff --binary: %w", ctx.Err())
+	result := commandexec.Run(ctx, commandexec.Spec{
+		Mode:    commandexec.ModePlainShell,
+		Shell:   shellName(cfg),
+		Command: "git diff --binary",
+		Dir:     commandDir(cfg),
+	})
+	if result.Err != nil {
+		if result.TimedOut {
+			return fmt.Errorf("git diff --binary: %w", context.DeadlineExceeded)
 		}
 
-		return fmt.Errorf("git diff --binary: %w", err)
+		return fmt.Errorf("git diff --binary: %w", result.Err)
 	}
 
-	return os.WriteFile(filepath.Clean(path), data, 0o600)
+	return os.WriteFile(filepath.Clean(path), []byte(result.Stdout), 0o600)
 }
 
 func writeJSONFile(path string, value any) error {

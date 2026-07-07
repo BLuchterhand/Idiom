@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -379,6 +380,61 @@ func headlessCommandTestConfig(root string) config.Config {
 	cfg.Workspace.Shell = "/bin/sh"
 
 	return cfg
+}
+
+func TestWriteGitDiffWritesWorkspacePatch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	root := t.TempDir()
+	runHeadlessGit(t, root, "init")
+	runHeadlessGit(t, root, "config", "user.email", "test@example.com")
+	runHeadlessGit(t, root, "config", "user.name", "Test User")
+
+	if err := os.WriteFile(filepath.Join(root, "file.txt"), []byte("before\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	runHeadlessGit(t, root, "add", "file.txt")
+	runHeadlessGit(t, root, "commit", "-m", "initial")
+
+	if err := os.WriteFile(filepath.Join(root, "file.txt"), []byte("after\n"), 0o644); err != nil {
+		t.Fatalf("modify file: %v", err)
+	}
+
+	patchPath := filepath.Join(t.TempDir(), "diff.patch")
+	if err := writeGitDiff(patchPath, headlessCommandTestConfig(root)); err != nil {
+		t.Fatalf("writeGitDiff failed: %v", err)
+	}
+
+	body, err := os.ReadFile(patchPath)
+	if err != nil {
+		t.Fatalf("read patch: %v", err)
+	}
+	text := string(body)
+	for _, want := range []string{"diff --git a/file.txt b/file.txt", "-before", "+after"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("patch missing %q:\n%s", want, text)
+		}
+	}
+
+	info, err := os.Stat(patchPath)
+	if err != nil {
+		t.Fatalf("stat patch: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("patch mode = %o, want 600", got)
+	}
+}
+
+func runHeadlessGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
+	}
 }
 
 func TestRunFailOnDegradedRejectsUnsupportedApprovalPolicy(t *testing.T) {
