@@ -9663,7 +9663,7 @@ func resultIsVerificationAttempt(result workspace.ToolResult) bool {
 		return false
 	}
 
-	command := shellCommandFromToolResult(result)
+	command := workspace.ShellCommandFromToolResult(result)
 	if command != "" && isVerificationRequest(workspace.ToolRequest{Tool: "shell", Command: command}) {
 		return true
 	}

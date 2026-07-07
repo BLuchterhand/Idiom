@@ -423,10 +423,6 @@ func toolManifestOptionsForSurfaceProfile(profile ToolSurfaceProfile) ToolManife
 	return opts
 }
 
-func ReadOnlyDiscoveryToolNames() []string {
-	return collectToolSurfaceProjectionToolNames(toolSurfaceProjectionReadOnlyDiscovery, nil)
-}
-
 func DirectAnswerSurfaceToolNames() []string {
 	return collectToolSurfaceProjectionToolNames(toolSurfaceProjectionDirectAnswer, nil)
 }

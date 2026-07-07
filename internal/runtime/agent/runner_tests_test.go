@@ -7780,6 +7780,50 @@ func TestPostWriteVerificationTelemetryForShellSyntaxCheck(t *testing.T) {
 	}
 }
 
+func TestPostWriteVerificationTelemetryUsesShellResultCommandFallback(t *testing.T) {
+	var events []RunEvent
+
+	runner := &Runner{OnEvent: func(event RunEvent) {
+		events = append(events, event)
+	}}
+	ok := runner.emitPostWriteVerificationTelemetry(
+		workspace.ToolRequest{Tool: "shell"},
+		workspace.ToolResult{Tool: "shell", Summary: "Ran shell command", Output: "$ bash -n scripts/run-harness.sh\n"},
+	)
+
+	if !ok {
+		t.Fatal("expected telemetry emission from shell result command fallback")
+	}
+
+	if len(events) != 2 || events[0].Role != "verification_plan" || events[1].Role != "verification_feedback" {
+		t.Fatalf("unexpected telemetry events: %#v", events)
+	}
+
+	var plan struct {
+		Commands []string `json:"commands"`
+	}
+
+	if err := json.Unmarshal([]byte(events[0].Content), &plan); err != nil {
+		t.Fatalf("parse verification plan: %v", err)
+	}
+
+	if !slices.Contains(plan.Commands, "bash -n scripts/run-harness.sh") {
+		t.Fatalf("verification plan did not use shell result command: %#v", plan)
+	}
+
+	var feedback struct {
+		Commands []string `json:"commands"`
+	}
+
+	if err := json.Unmarshal([]byte(events[1].Content), &feedback); err != nil {
+		t.Fatalf("parse verification feedback: %v", err)
+	}
+
+	if !slices.Contains(feedback.Commands, "bash -n scripts/run-harness.sh") {
+		t.Fatalf("verification feedback did not use shell result command: %#v", feedback)
+	}
+}
+
 func TestPatchHygieneDoesNotSatisfySourceEditCompletion(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{

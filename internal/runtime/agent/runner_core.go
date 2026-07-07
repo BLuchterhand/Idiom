@@ -12796,7 +12796,7 @@ func latestSuccessfulVerificationSummary(results []workspace.ToolResult) (string
 			continue
 		}
 
-		if command := shellCommandFromToolResult(result); command != "" {
+		if command := workspace.ShellCommandFromToolResult(result); command != "" {
 			return command + " passed", true
 		}
 
@@ -22205,13 +22205,13 @@ func postWriteVerificationTelemetryCommand(req workspace.ToolRequest, result wor
 			return command
 		}
 
-		if command := shellCommandFromToolResult(result); command != "" {
+		if command := workspace.ShellCommandFromToolResult(result); command != "" {
 			return command
 		}
 	}
 
 	if strings.TrimSpace(result.Tool) == workspace.ToolNameShell {
-		if command := shellCommandFromToolResult(result); command != "" {
+		if command := workspace.ShellCommandFromToolResult(result); command != "" {
 			return command
 		}
 	}

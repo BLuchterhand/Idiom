@@ -4405,21 +4405,6 @@ func hasSuccessfulVerificationResult(results []workspace.ToolResult) bool {
 	return false
 }
 
-func shellCommandFromToolResult(result workspace.ToolResult) string {
-	for _, line := range strings.Split(strings.TrimSpace(result.Output), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "$ ") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "$ "))
-		}
-
-		if line != "" {
-			return ""
-		}
-	}
-
-	return ""
-}
-
 func hasSuccessfulTaskResult(results []workspace.ToolResult) bool {
 	for _, result := range results {
 		if strings.TrimSpace(result.Tool) != workspace.ToolNameTask {
@@ -8055,57 +8040,6 @@ func ReadPathsFromToolResult(r workspace.ToolResult) []string {
 // candidate anchor without reading source body content.
 func CandidateAnchorOnlyResult(r workspace.ToolResult) bool {
 	return CandidateAnchorOnlyText(r.Summary + "\n" + r.Output)
-}
-
-// ReadOnlySourceLikePaths filters paths to only include source-code-like paths
-// with a limit on count.
-func ReadOnlySourceLikePaths(paths []string, max int) []string {
-	if max <= 0 {
-		max = 8
-	}
-
-	var filtered []string
-
-	for _, path := range paths {
-		path = NormalizeRunnerPath(path)
-		if path == "" || strings.HasPrefix(path, "../") || path == ".." || strings.HasPrefix(path, "/") {
-			continue
-		}
-
-		if !looksLikeWorkspaceSourcePath(strings.ToLower(path)) {
-			continue
-		}
-
-		filtered = append(filtered, path)
-		if len(filtered) >= max {
-			break
-		}
-	}
-
-	return filtered
-}
-
-func looksLikeWorkspaceSourcePath(lower string) bool {
-	// Skip non-source paths that commonly appear in tool output.
-	if strings.HasPrefix(lower, ".idiom/") || strings.HasPrefix(lower, ".git/") {
-		return false
-	}
-
-	if strings.HasSuffix(lower, ".md") || strings.HasSuffix(lower, ".json") || strings.HasSuffix(lower, ".jsonl") ||
-		strings.HasSuffix(lower, ".yaml") || strings.HasSuffix(lower, ".yml") || strings.HasSuffix(lower, ".toml") ||
-		strings.HasSuffix(lower, ".lock") || strings.HasSuffix(lower, ".sum") || strings.HasSuffix(lower, ".mod") ||
-		strings.HasSuffix(lower, ".txt") || strings.HasSuffix(lower, ".csv") || strings.HasSuffix(lower, ".env") ||
-		strings.HasSuffix(lower, ".log") || strings.HasSuffix(lower, ".tmp") ||
-		strings.HasSuffix(lower, "go.sum") || strings.HasSuffix(lower, "go.mod") {
-		return true // config/doc files are valid source-like paths in workspace context
-	}
-
-	// Skip paths that look like URLs or binary names.
-	if strings.Contains(lower, "://") || !strings.Contains(lower, "/") {
-		return false
-	}
-
-	return true
 }
 
 // ---------------------------------------------------------------------------

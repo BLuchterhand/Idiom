@@ -264,7 +264,7 @@ func latestSuccessfulBuildOrTestVerificationSummary(results []workspace.ToolResu
 			continue
 		}
 
-		command := shellCommandFromToolResult(result)
+		command := workspace.ShellCommandFromToolResult(result)
 		if command == "" || !workspace.AnalyzeShellCommand(command).BuildOrTest {
 			continue
 		}
@@ -315,7 +315,7 @@ func latestObservedVerificationSummary(results []workspace.ToolResult) (string, 
 		}
 
 		if resultCountsAsSuccessfulVerification(result) {
-			if command := shellCommandFromToolResult(result); command != "" {
+			if command := workspace.ShellCommandFromToolResult(result); command != "" {
 				return command + " passed", true
 			}
 			if summary := strings.TrimSpace(result.Summary); summary != "" {
