@@ -49,6 +49,7 @@ type Result struct {
 	StderrTruncated bool
 	ExitCode        int
 	ExitError       bool
+	CommandNotFound bool
 	TimedOut        bool
 	Duration        time.Duration
 	Err             error
@@ -110,6 +111,8 @@ func Run(parent context.Context, spec Spec) Result {
 		if errors.As(runErr, &exitErr) {
 			result.ExitCode = exitErr.ExitCode()
 			result.ExitError = true
+		} else if errors.Is(runErr, exec.ErrNotFound) {
+			result.CommandNotFound = true
 		}
 	}
 

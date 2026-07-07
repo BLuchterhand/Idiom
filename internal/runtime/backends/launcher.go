@@ -2,16 +2,15 @@ package backends
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/failures"
 )
 
@@ -601,24 +600,26 @@ func portStillOwnedByPID(port int, pid int, pidForPort func(int) (int, error)) b
 // (the binary-not-found case is not an error — callers will fall
 // back to the next strategy).
 func pidForPortViaLsof(port int) (int, error) {
-	cmd := exec.Command("lsof", "-ti", fmt.Sprintf(":%d", port))
+	result := commandexec.Run(context.Background(), commandexec.Spec{
+		Name:           "lsof",
+		Args:           []string{"-ti", fmt.Sprintf(":%d", port)},
+		MaxOutputBytes: 4096,
+	})
 
-	out, err := cmd.Output()
-	if err != nil {
-		if errors.Is(err, exec.ErrNotFound) {
+	if result.Err != nil {
+		if result.CommandNotFound {
 			return 0, errLsofUnavailable
 		}
-
 		// `lsof` exits non-zero when nothing's listening; that's the
 		// "no PID found" path, not an error.
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		if result.ExitError && result.ExitCode == 1 {
 			return 0, nil
 		}
 
-		return 0, fmt.Errorf("backends: lsof %d: %w", port, err)
+		return 0, fmt.Errorf("backends: lsof %d: %w", port, result.Err)
 	}
 
-	line := strings.TrimSpace(strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0])
+	line := strings.TrimSpace(strings.SplitN(strings.TrimSpace(result.Stdout), "\n", 2)[0])
 	if line == "" {
 		return 0, nil
 	}

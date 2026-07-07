@@ -44,6 +44,9 @@ func TestRunMissingCommandReportsNonExitError(t *testing.T) {
 	if result.ExitError {
 		t.Fatalf("ExitError = true for spawn failure; result=%#v", result)
 	}
+	if !result.CommandNotFound {
+		t.Fatalf("CommandNotFound = false for missing command; result=%#v", result)
+	}
 	if result.ExitCode != 1 {
 		t.Fatalf("ExitCode = %d, want 1; result=%#v", result.ExitCode, result)
 	}

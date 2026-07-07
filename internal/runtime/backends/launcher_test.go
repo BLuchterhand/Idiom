@@ -3,6 +3,8 @@ package backends
 import (
 	"errors"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -49,6 +51,66 @@ func TestBuildLaunchSpecMLXCanonical(t *testing.T) {
 			t.Fatalf("argv[%d] = %q, want %q (full: %v)", i, spec.Argv[i], want[i], spec.Argv)
 		}
 	}
+}
+
+func TestPIDForPortViaLsofParsesFirstPID(t *testing.T) {
+	writeFakeLsof(t, "printf '4242\\n9999\\n'\n")
+
+	pid, err := pidForPortViaLsof(47781)
+	if err != nil {
+		t.Fatalf("pidForPortViaLsof: %v", err)
+	}
+	if pid != 4242 {
+		t.Fatalf("pid = %d, want 4242", pid)
+	}
+}
+
+func TestPIDForPortViaLsofExitOneMeansNoListener(t *testing.T) {
+	writeFakeLsof(t, "exit 1\n")
+
+	pid, err := pidForPortViaLsof(47781)
+	if err != nil {
+		t.Fatalf("pidForPortViaLsof: %v", err)
+	}
+	if pid != 0 {
+		t.Fatalf("pid = %d, want 0", pid)
+	}
+}
+
+func TestPIDForPortViaLsofMissingBinaryUnavailable(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	pid, err := pidForPortViaLsof(47781)
+	if !errors.Is(err, errLsofUnavailable) {
+		t.Fatalf("err = %v, want errLsofUnavailable", err)
+	}
+	if pid != 0 {
+		t.Fatalf("pid = %d, want 0", pid)
+	}
+}
+
+func TestPIDForPortViaLsofInvalidPIDReportsParseError(t *testing.T) {
+	writeFakeLsof(t, "printf 'not-a-pid\\n'\n")
+
+	_, err := pidForPortViaLsof(47781)
+	if err == nil || !strings.Contains(err.Error(), "parse lsof output") {
+		t.Fatalf("err = %v, want parse error", err)
+	}
+}
+
+func writeFakeLsof(t *testing.T, body string) {
+	t.Helper()
+
+	if runtime.GOOS == "windows" {
+		t.Skip("fake lsof fixture uses a POSIX shell script")
+	}
+
+	binDir := t.TempDir()
+	path := filepath.Join(binDir, "lsof")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+		t.Fatalf("write fake lsof: %v", err)
+	}
+	t.Setenv("PATH", binDir)
 }
 
 func TestBuildLaunchSpecVmlxIncludesRequestTimeout(t *testing.T) {
