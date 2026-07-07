@@ -2,6 +2,8 @@ package modepolicy
 
 import (
 	"testing"
+
+	"idiom/internal/contracts/toolpolicy"
 )
 
 func TestDefaultModesValidate(t *testing.T) {
@@ -54,11 +56,11 @@ func TestModeOrDefaultFallsBackToBuild(t *testing.T) {
 func TestModeMCPDefaults(t *testing.T) {
 	cases := []struct {
 		mode string
-		want ToolRuleDecision
+		want toolpolicy.Decision
 	}{
-		{"build", ToolRuleAsk},
-		{"plan", ToolRuleAllow},
-		{"general", ToolRuleAsk},
+		{"build", toolpolicy.Ask},
+		{"plan", toolpolicy.Allow},
+		{"general", toolpolicy.Ask},
 	}
 	for _, tc := range cases {
 		t.Run(tc.mode, func(t *testing.T) {

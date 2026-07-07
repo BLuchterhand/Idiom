@@ -24,6 +24,7 @@ import (
 	contractcompile "idiom/internal/contracts/compile"
 	plancontract "idiom/internal/contracts/plan"
 	planartifact "idiom/internal/contracts/planartifact"
+	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/failures"
 	semanticlanguage "idiom/internal/repository/semantic/language"
@@ -1729,7 +1730,7 @@ func TestRuntimeAgentHasNoNestedGoPackages(t *testing.T) {
 func runtimeAgentTargetPackageDirectImports() map[string][]string {
 	return map[string][]string{
 		"idiom/internal/runtime/instructions": {},
-		"idiom/internal/runtime/modepolicy":   {"idiom/internal/capabilities/workspace"},
+		"idiom/internal/runtime/modepolicy":   {"idiom/internal/contracts/toolpolicy"},
 	}
 }
 
@@ -31235,11 +31236,11 @@ func TestPlanExecuteNonToolPlannerQuestionDoesNotAutoRead(t *testing.T) {
 func TestToolAuthorizationPolicyPermissionAllowsWithTypedMetadata(t *testing.T) {
 	decision := toolAuthorizationPermissionDecision(
 		workspace.ToolRequest{Tool: "read_file", Path: "README.md"},
-		ToolPermissionPolicy{Default: PermissionAllow},
+		toolpolicy.Policy{Default: toolpolicy.Allow},
 		false,
 	)
 
-	if decision.Snapshot.Decision != PermissionAllow {
+	if decision.Snapshot.Decision != toolpolicy.Allow {
 		t.Fatalf("permission snapshot = %#v", decision.Snapshot)
 	}
 
@@ -31255,11 +31256,11 @@ func TestToolAuthorizationPolicyPermissionAllowsWithTypedMetadata(t *testing.T) 
 func TestToolAuthorizationPolicyPermissionDeniesConfiguredWorkspaceRule(t *testing.T) {
 	decision := toolAuthorizationPermissionDecision(
 		workspace.ToolRequest{Tool: "edit_file", Path: "README.md"},
-		ToolPermissionPolicy{Default: PermissionAllow},
+		toolpolicy.Policy{Default: toolpolicy.Allow},
 		true,
 	)
 
-	if decision.Snapshot.Decision != PermissionDeny || !workspaceToolRulesPermissionDeny(decision.Snapshot) {
+	if decision.Snapshot.Decision != toolpolicy.Deny || !workspaceToolRulesPermissionDeny(decision.Snapshot) {
 		t.Fatalf("expected workspace rule deny snapshot, got %#v", decision.Snapshot)
 	}
 
@@ -31275,11 +31276,11 @@ func TestToolAuthorizationPolicyPermissionDeniesConfiguredWorkspaceRule(t *testi
 func TestToolAuthorizationPolicyPermissionAsksForApproval(t *testing.T) {
 	decision := toolAuthorizationPermissionDecision(
 		workspace.ToolRequest{Tool: "shell", Command: "git status"},
-		ToolPermissionPolicy{Default: PermissionAsk},
+		toolpolicy.Policy{Default: toolpolicy.Ask},
 		false,
 	)
 
-	if decision.Snapshot.Decision != PermissionAsk {
+	if decision.Snapshot.Decision != toolpolicy.Ask {
 		t.Fatalf("permission snapshot = %#v", decision.Snapshot)
 	}
 
@@ -37915,12 +37916,12 @@ func TestRunnerGuardFiresAfterPermissionDeny(t *testing.T) {
 		Client:    llama.NewClient(server.URL, time.Second),
 		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
 		Policy:    RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3},
-		PermissionPolicy: ToolPermissionPolicy{
-			Default: PermissionAllow,
-			Rules: []ToolPermissionRule{{
+		PermissionPolicy: toolpolicy.Policy{
+			Default: toolpolicy.Allow,
+			Rules: []toolpolicy.Rule{{
 				Tool:        "edit_file",
 				PathPattern: "README.md",
-				Decision:    PermissionDeny,
+				Decision:    toolpolicy.Deny,
 			}},
 		},
 	}

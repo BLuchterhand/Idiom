@@ -51,6 +51,11 @@ func TestAnalyzeShellCommandClassifiesInspectionAndVerification(t *testing.T) {
 			sideEffect: autonomy.SideEffectUnknown,
 		},
 		{
+			name:       "git diff separated output flag is unknown",
+			command:    "git diff --output report.txt",
+			sideEffect: autonomy.SideEffectUnknown,
+		},
+		{
 			name:       "prefix is not enough",
 			command:    "git statusx",
 			sideEffect: autonomy.SideEffectUnknown,
@@ -207,20 +212,26 @@ func TestWorkbranchChildShellPolicyProjectsAnalysisOwnedFamilies(t *testing.T) {
 		}
 	}
 
-	for _, fragment := range []string{"&&", ">", "$(", "`", "go env -w", "--output="} {
+	for _, fragment := range []string{"&&", ">", "$(", "`", "go env -w", "--output"} {
 		if !slices.Contains(policy.DeniedFragments, fragment) {
 			t.Fatalf("DeniedFragments missing %q: %#v", fragment, policy.DeniedFragments)
 		}
 	}
 }
 
-func TestReadOnlyChildShellAllowedPrefixesAreWorkspaceOwned(t *testing.T) {
-	prefixes := ReadOnlyChildShellAllowedPrefixes()
+func TestReadOnlyChildShellPolicyIsWorkspaceOwned(t *testing.T) {
+	policy := ReadOnlyChildShellPolicy()
 	for _, prefix := range []string{
 		"rg ", "sed -n", "find ", "git diff", "go env",
 	} {
-		if !slices.Contains(prefixes, prefix) {
-			t.Fatalf("read-only prefixes missing %q: %#v", prefix, prefixes)
+		if !slices.Contains(policy.AllowedPrefixes, prefix) {
+			t.Fatalf("read-only prefixes missing %q: %#v", prefix, policy.AllowedPrefixes)
+		}
+	}
+
+	for _, fragment := range []string{"&&", ">", "$(", "`", "go env -w", "--output"} {
+		if !slices.Contains(policy.DeniedFragments, fragment) {
+			t.Fatalf("read-only denied fragments missing %q: %#v", fragment, policy.DeniedFragments)
 		}
 	}
 }

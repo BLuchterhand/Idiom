@@ -1174,7 +1174,7 @@ func (m *Model) applyModePermissions(mode modepolicy.Mode) {
 	}
 
 	m.workspace.SetProtectedWritePaths(protectedPromptWritePaths(m.cfg, mode))
-	m.workspace.SetPermissionRules(agent.ModePermissionRules(mode))
+	m.workspace.SetPermissionRules(mode.PermissionRules)
 }
 
 func (m *Model) SetNonInteractive(nonInteractive bool) {

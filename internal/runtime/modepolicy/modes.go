@@ -4,21 +4,9 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"idiom/internal/contracts/toolpolicy"
 )
-
-type ToolRuleDecision string
-
-const (
-	ToolRuleAllow ToolRuleDecision = "allow"
-	ToolRuleAsk   ToolRuleDecision = "ask"
-	ToolRuleDeny  ToolRuleDecision = "deny"
-	ToolRuleNone  ToolRuleDecision = ""
-)
-
-type ToolRule struct {
-	Pattern  string
-	Decision ToolRuleDecision
-}
 
 // Mode is a user-selectable agent profile. Each Mode bundles a system-prompt
 // identity, a static permission ruleset, and a step cap.
@@ -26,7 +14,7 @@ type Mode struct {
 	Name              string
 	Description       string
 	SystemPromptFiles []string
-	PermissionRules   map[string][]ToolRule
+	PermissionRules   map[string][]toolpolicy.Rule
 	StepCap           int
 }
 
@@ -35,14 +23,14 @@ func BuildMode() Mode {
 		Name:              "build",
 		Description:       "Full read/write/shell capability. The default for interactive development.",
 		SystemPromptFiles: []string{"prompts/base.md"},
-		PermissionRules: map[string][]ToolRule{
+		PermissionRules: map[string][]toolpolicy.Rule{
 			"shell": {
-				{Pattern: "rm -rf /", Decision: ToolRuleDeny},
-				{Pattern: "rm -rf ~", Decision: ToolRuleDeny},
-				{Pattern: "rm -rf *", Decision: ToolRuleAsk},
-				{Pattern: "sudo *", Decision: ToolRuleAsk},
+				{Pattern: "rm -rf /", Decision: toolpolicy.Deny},
+				{Pattern: "rm -rf ~", Decision: toolpolicy.Deny},
+				{Pattern: "rm -rf *", Decision: toolpolicy.Ask},
+				{Pattern: "sudo *", Decision: toolpolicy.Ask},
 			},
-			"mcp:*": {{Pattern: "*", Decision: ToolRuleAsk}},
+			"mcp:*": {{Pattern: "*", Decision: toolpolicy.Ask}},
 		},
 		StepCap: 0,
 	}
@@ -53,20 +41,20 @@ func PlanMode() Mode {
 		Name:              "plan",
 		Description:       "Read-only. Edits and mutating shell are denied. Use when you want the agent to think, not act.",
 		SystemPromptFiles: []string{"prompts/base.md", "prompts/plan-mode.md"},
-		PermissionRules: map[string][]ToolRule{
-			"edit_file":   {{Pattern: "**", Decision: ToolRuleDeny}},
-			"write_file":  {{Pattern: "**", Decision: ToolRuleDeny}},
-			"append_file": {{Pattern: "**", Decision: ToolRuleDeny}},
-			"apply_patch": {{Pattern: "**", Decision: ToolRuleDeny}},
+		PermissionRules: map[string][]toolpolicy.Rule{
+			"edit_file":   {{Pattern: "**", Decision: toolpolicy.Deny}},
+			"write_file":  {{Pattern: "**", Decision: toolpolicy.Deny}},
+			"append_file": {{Pattern: "**", Decision: toolpolicy.Deny}},
+			"apply_patch": {{Pattern: "**", Decision: toolpolicy.Deny}},
 			"shell": {
-				{Pattern: "git *", Decision: ToolRuleAllow},
-				{Pattern: "ls *", Decision: ToolRuleAllow},
-				{Pattern: "cat *", Decision: ToolRuleAllow},
-				{Pattern: "grep *", Decision: ToolRuleAllow},
-				{Pattern: "rg *", Decision: ToolRuleAllow},
-				{Pattern: "*", Decision: ToolRuleDeny},
+				{Pattern: "git *", Decision: toolpolicy.Allow},
+				{Pattern: "ls *", Decision: toolpolicy.Allow},
+				{Pattern: "cat *", Decision: toolpolicy.Allow},
+				{Pattern: "grep *", Decision: toolpolicy.Allow},
+				{Pattern: "rg *", Decision: toolpolicy.Allow},
+				{Pattern: "*", Decision: toolpolicy.Deny},
 			},
-			"mcp:*": {{Pattern: "*", Decision: ToolRuleAllow}},
+			"mcp:*": {{Pattern: "*", Decision: toolpolicy.Allow}},
 		},
 		StepCap: 64,
 	}
@@ -77,17 +65,17 @@ func GeneralMode() Mode {
 		Name:              "general",
 		Description:       "Reads freely; writes require approval. Use when you aren't sure what the agent should be allowed to do.",
 		SystemPromptFiles: []string{"prompts/base.md"},
-		PermissionRules: map[string][]ToolRule{
-			"edit_file":   {{Pattern: "**", Decision: ToolRuleAsk}},
-			"write_file":  {{Pattern: "**", Decision: ToolRuleAsk}},
-			"append_file": {{Pattern: "**", Decision: ToolRuleAsk}},
-			"apply_patch": {{Pattern: "**", Decision: ToolRuleAsk}},
+		PermissionRules: map[string][]toolpolicy.Rule{
+			"edit_file":   {{Pattern: "**", Decision: toolpolicy.Ask}},
+			"write_file":  {{Pattern: "**", Decision: toolpolicy.Ask}},
+			"append_file": {{Pattern: "**", Decision: toolpolicy.Ask}},
+			"apply_patch": {{Pattern: "**", Decision: toolpolicy.Ask}},
 			"shell": {
-				{Pattern: "rm -rf *", Decision: ToolRuleDeny},
-				{Pattern: "sudo *", Decision: ToolRuleDeny},
-				{Pattern: "*", Decision: ToolRuleAsk},
+				{Pattern: "rm -rf *", Decision: toolpolicy.Deny},
+				{Pattern: "sudo *", Decision: toolpolicy.Deny},
+				{Pattern: "*", Decision: toolpolicy.Ask},
 			},
-			"mcp:*": {{Pattern: "*", Decision: ToolRuleAsk}},
+			"mcp:*": {{Pattern: "*", Decision: toolpolicy.Ask}},
 		},
 		StepCap: 32,
 	}
@@ -145,8 +133,8 @@ func (m Mode) Validate() error {
 
 		for i, rule := range rules {
 			switch rule.Decision {
-			case ToolRuleAllow, ToolRuleAsk, ToolRuleDeny:
-			case ToolRuleNone:
+			case toolpolicy.Allow, toolpolicy.Ask, toolpolicy.Deny:
+			case toolpolicy.None:
 				return fmt.Errorf("agent mode %q: %s rule %d has empty decision", m.Name, tool, i)
 			default:
 				return fmt.Errorf("agent mode %q: %s rule %d has invalid decision %q", m.Name, tool, i, rule.Decision)

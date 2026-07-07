@@ -21,6 +21,7 @@ import (
 	"idiom/internal/capabilities/workspace/externaltool"
 	"idiom/internal/contracts/autonomy"
 	contractcompile "idiom/internal/contracts/compile"
+	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/textutil"
@@ -6722,13 +6723,13 @@ func TestRunnerRequestBudgetFingerprintDecisionWarnsThenBlocks(t *testing.T) {
 
 func TestPermissionDecisionFromAutonomyDoesNotReportObserveOnlyAsDeny(t *testing.T) {
 	for _, decision := range []autonomy.ToolPolicyDecision{autonomy.PolicyAllow, autonomy.PolicyObserve, autonomy.PolicyNudge} {
-		if got := permissionDecisionFromAutonomy(decision); got != PermissionAllow {
-			t.Fatalf("%s mapped to %q, want %q", decision, got, PermissionAllow)
+		if got := permissionDecisionFromAutonomy(decision); got != toolpolicy.Allow {
+			t.Fatalf("%s mapped to %q, want %q", decision, got, toolpolicy.Allow)
 		}
 	}
 
-	if got := permissionDecisionFromAutonomy(autonomy.PolicyReject); got != PermissionDeny {
-		t.Fatalf("reject mapped to %q, want %q", got, PermissionDeny)
+	if got := permissionDecisionFromAutonomy(autonomy.PolicyReject); got != toolpolicy.Deny {
+		t.Fatalf("reject mapped to %q, want %q", got, toolpolicy.Deny)
 	}
 }
 
@@ -9673,15 +9674,25 @@ func TestRunnerExecutesReadOnlyChildTask(t *testing.T) {
 
 func TestReadOnlyChildTaskPermissionPolicyDeniesWritesAndAllowsReads(t *testing.T) {
 	policy := readOnlyChildTaskPermissionPolicy()
-	if decision := policy.Decide(workspace.ToolRequest{Tool: "edit_file", Path: "README.md"}); decision.Decision != PermissionDeny {
+	if decision := permissionPolicyDecision(policy, workspace.ToolRequest{Tool: "edit_file", Path: "README.md"}); decision.Decision != toolpolicy.Deny {
 		t.Fatalf("edit_file decision = %q, want deny", decision.Decision)
 	}
 
-	if decision := policy.Decide(workspace.ToolRequest{Tool: "read_file", Path: "README.md"}); decision.Decision != PermissionAllow {
+	if decision := permissionPolicyDecision(policy, workspace.ToolRequest{Tool: "read_file", Path: "README.md"}); decision.Decision != toolpolicy.Allow {
 		t.Fatalf("read_file decision = %q, want allow", decision.Decision)
 	}
 
-	if decision := policy.Decide(workspace.ToolRequest{Tool: "task", Prompt: "nested"}); decision.Decision != PermissionDeny {
+	if decision := permissionPolicyDecision(policy, workspace.ToolRequest{Tool: workspace.ToolNameShell, Command: "git diff -- README.md"}); decision.Decision != toolpolicy.Allow {
+		t.Fatalf("git diff decision = %q, want allow", decision.Decision)
+	}
+
+	for _, command := range []string{"git diff --output=/tmp/patch", "git diff --output /tmp/patch"} {
+		if decision := permissionPolicyDecision(policy, workspace.ToolRequest{Tool: workspace.ToolNameShell, Command: command}); decision.Decision != toolpolicy.Deny {
+			t.Fatalf("%q decision = %q, want deny; snapshot=%#v", command, decision.Decision, decision)
+		}
+	}
+
+	if decision := permissionPolicyDecision(policy, workspace.ToolRequest{Tool: "task", Prompt: "nested"}); decision.Decision != toolpolicy.Deny {
 		t.Fatalf("task decision = %q, want deny", decision.Decision)
 	}
 }
@@ -19266,37 +19277,43 @@ func TestWorkbranchChildTaskPermissionPolicyUsesWorkspaceShellPolicy(t *testing.
 	tests := []struct {
 		name    string
 		req     workspace.ToolRequest
-		want    PermissionDecision
+		want    toolpolicy.Decision
 		wantRef string
 	}{
 		{
 			name:    "workspace allowed shell family",
 			req:     workspace.ToolRequest{Tool: workspace.ToolNameShell, Command: "go test ./..."},
-			want:    PermissionAllow,
+			want:    toolpolicy.Allow,
 			wantRef: "command=go test",
 		},
 		{
 			name:    "workspace denied shell prefix",
 			req:     workspace.ToolRequest{Tool: workspace.ToolNameShell, Command: "git add README.md"},
-			want:    PermissionDeny,
+			want:    toolpolicy.Deny,
 			wantRef: "command=git add",
 		},
 		{
 			name:    "workspace denied shell fragment",
 			req:     workspace.ToolRequest{Tool: workspace.ToolNameShell, Command: "git diff --output=/tmp/patch"},
-			want:    PermissionDeny,
-			wantRef: "command_contains=--output=",
+			want:    toolpolicy.Deny,
+			wantRef: "command_contains=--output",
+		},
+		{
+			name:    "workspace denied shell fragment separated output flag",
+			req:     workspace.ToolRequest{Tool: workspace.ToolNameShell, Command: "git diff --output /tmp/patch"},
+			want:    toolpolicy.Deny,
+			wantRef: "command_contains=--output",
 		},
 		{
 			name: "unknown shell defaults denied",
 			req:  workspace.ToolRequest{Tool: workspace.ToolNameShell, Command: "rm -rf /tmp/x"},
-			want: PermissionDeny,
+			want: toolpolicy.Deny,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			decision := policy.Decide(tt.req)
+			decision := permissionPolicyDecision(policy, tt.req)
 			if decision.Decision != tt.want {
 				t.Fatalf("decision = %q, want %q; snapshot=%#v", decision.Decision, tt.want, decision)
 			}
@@ -19310,7 +19327,7 @@ func TestWorkbranchChildTaskPermissionPolicyUsesWorkspaceShellPolicy(t *testing.
 func TestWorkbranchChildTaskPermissionPolicyAllowsStructuredWriteTools(t *testing.T) {
 	policy := workbranchChildTaskPermissionPolicy()
 	for _, tool := range []string{"edit_file", "write_file", "apply_patch", "mkdir", "append_file", "go_move_declarations"} {
-		if decision := policy.Decide(workspace.ToolRequest{Tool: tool, Path: "test.go"}); decision.Decision != PermissionAllow {
+		if decision := permissionPolicyDecision(policy, workspace.ToolRequest{Tool: tool, Path: "test.go"}); decision.Decision != toolpolicy.Allow {
 			t.Fatalf("%q decision = %q, want allow", tool, decision.Decision)
 		}
 	}
@@ -19318,11 +19335,11 @@ func TestWorkbranchChildTaskPermissionPolicyAllowsStructuredWriteTools(t *testin
 
 func TestWorkbranchChildTaskPermissionPolicyDeniesNestedDelegation(t *testing.T) {
 	policy := workbranchChildTaskPermissionPolicy()
-	if decision := policy.Decide(workspace.ToolRequest{Tool: "task", Prompt: "nested"}); decision.Decision != PermissionDeny {
+	if decision := permissionPolicyDecision(policy, workspace.ToolRequest{Tool: "task", Prompt: "nested"}); decision.Decision != toolpolicy.Deny {
 		t.Fatalf("nested task decision = %q, want deny", decision.Decision)
 	}
 
-	if decision := policy.Decide(workspace.ToolRequest{Tool: "task", Prompt: "explore more"}); decision.Decision != PermissionDeny {
+	if decision := permissionPolicyDecision(policy, workspace.ToolRequest{Tool: "task", Prompt: "explore more"}); decision.Decision != toolpolicy.Deny {
 		t.Fatalf("nested explore task decision = %q, want deny", decision.Decision)
 	}
 }
@@ -23937,12 +23954,12 @@ func TestRunnerPermissionPolicyDeniesToolBeforeExecution(t *testing.T) {
 			CWD:  ".",
 		}),
 		Policy: RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3},
-		PermissionPolicy: ToolPermissionPolicy{
-			Default: PermissionAllow,
-			Rules: []ToolPermissionRule{{
+		PermissionPolicy: toolpolicy.Policy{
+			Default: toolpolicy.Allow,
+			Rules: []toolpolicy.Rule{{
 				Tool:        "edit_file",
 				PathPattern: "README.md",
-				Decision:    PermissionDeny,
+				Decision:    toolpolicy.Deny,
 			}},
 		},
 		OnEvent: func(event RunEvent) {
@@ -24223,8 +24240,8 @@ func TestRunnerWorkspaceToolRulesDenyBeforePolicyAllow(t *testing.T) {
 			},
 		}),
 		Policy: RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3},
-		PermissionPolicy: ToolPermissionPolicy{
-			Default: PermissionAllow,
+		PermissionPolicy: toolpolicy.Policy{
+			Default: toolpolicy.Allow,
 		},
 		OnEvent: func(event RunEvent) {
 			if event.Role == "permission_decision" {

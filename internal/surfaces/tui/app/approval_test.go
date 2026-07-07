@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/modepolicy"
 )
@@ -76,9 +77,9 @@ func TestPreExecuteToolRequestConfigDenyOverridesModeAllow(t *testing.T) {
 			},
 		}),
 	}
-	model.workspace.SetPermissionRules(map[string][]workspace.ToolRule{
+	model.workspace.SetPermissionRules(map[string][]toolpolicy.Rule{
 		"read_file": {
-			{Pattern: "*", Decision: workspace.ToolRuleAllow},
+			{Pattern: "*", Decision: toolpolicy.Allow},
 		},
 	})
 

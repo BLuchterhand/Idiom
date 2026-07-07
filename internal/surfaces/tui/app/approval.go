@@ -9,7 +9,7 @@ import (
 	"idiom/internal/platform/textutil"
 )
 
-// pendingApproval holds a tool request that hit a ToolRuleAsk decision and
+// pendingApproval holds a tool request that hit an ask permission decision and
 // is blocked waiting for a user response via /approve or /deny. The
 // PreExecute hook blocks on response until the UI thread resolves it.
 type pendingApproval struct {

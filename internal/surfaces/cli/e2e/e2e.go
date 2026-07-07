@@ -83,7 +83,7 @@ func Main() {
 
 	ws := workspace.NewManager(cfg.Workspace)
 	mode := modepolicy.ModeOrDefault(*modeName)
-	ws.SetPermissionRules(agent.ModePermissionRules(mode))
+	ws.SetPermissionRules(mode.PermissionRules)
 
 	// Build a minimal system prompt — same composition as lifecycle.go:
 	// base.md + mode prompt files. NO workspace.Instructions() (the

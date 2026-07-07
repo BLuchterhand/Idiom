@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/textutil"
 )
 
@@ -393,6 +394,29 @@ type ExternalToolDef struct {
 type ToolRule struct {
 	Pattern  string `json:"pattern"`
 	Decision string `json:"decision"`
+}
+
+// ToolPolicyRules converts serialized workspace config rules into the neutral
+// permission-rule contract used by runtime policy evaluators.
+func ToolPolicyRules(rules map[string][]ToolRule) map[string][]toolpolicy.Rule {
+	if len(rules) == 0 {
+		return nil
+	}
+
+	convertedRules := make(map[string][]toolpolicy.Rule, len(rules))
+	for name, list := range rules {
+		converted := make([]toolpolicy.Rule, 0, len(list))
+		for _, r := range list {
+			converted = append(converted, toolpolicy.Rule{
+				Pattern:  r.Pattern,
+				Decision: toolpolicy.Decision(strings.ToLower(strings.TrimSpace(r.Decision))),
+			})
+		}
+
+		convertedRules[name] = converted
+	}
+
+	return convertedRules
 }
 
 type ChatPreset struct {

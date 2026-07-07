@@ -16,6 +16,7 @@ import (
 	"idiom/internal/capabilities/mcp"
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/autonomy"
+	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/evidence/transcript"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/textutil"
@@ -1268,18 +1269,18 @@ func (m *Model) preExecuteToolRequest(step int, req workspace.ToolRequest, mode 
 	}
 
 	switch m.workspace.EvaluateToolRule(req) {
-	case workspace.ToolRuleAllow:
+	case toolpolicy.Allow:
 		m.recordRollbackSnapshot(req)
 		m.capturePlanSnapshot(step, req)
 
 		return nil
-	case workspace.ToolRuleDeny:
+	case toolpolicy.Deny:
 		return &workspace.ToolResult{
 			Tool:    req.Tool,
 			Summary: "Tool request blocked by permission rules",
 			Error:   fmt.Sprintf("permission rules deny %s under agent mode %q", req.Tool, mode.Name),
 		}
-	case workspace.ToolRuleAsk:
+	case toolpolicy.Ask:
 		if m.requestApproval(req, mode.Name) {
 			m.recordRollbackSnapshot(req)
 			m.capturePlanSnapshot(step, req)

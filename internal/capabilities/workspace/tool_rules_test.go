@@ -7,17 +7,16 @@ import (
 	"strings"
 	"testing"
 
+	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/config"
 )
 
-// Fix 6 integration — the Manager's EvaluateToolRule wrapper converts
-// config.ToolRule entries and applies the same glob semantics as the pure
-// matcher above. This is the surface that app-layer code (lifecycle.go,
-// implementation.go) consults before falling through to the binary
-// EnableWrites / EnableShell gates.
+// Fix 6 integration — Manager.EvaluateToolRule owns the workspace overlay:
+// project config denies, active mode rules, protected write paths, and the
+// legacy EnableWrites / EnableShell fallback.
 func TestManagerEvaluateToolRuleIntegratesConfigRules(t *testing.T) {
 	mgr := &Manager{}
-	if got := mgr.EvaluateToolRule(ToolRequest{Tool: "edit_file", Path: "x.go"}); got != ToolRuleNone {
+	if got := mgr.EvaluateToolRule(ToolRequest{Tool: "edit_file", Path: "x.go"}); got != toolpolicy.None {
 		t.Fatalf("manager with no rules must return none, got %s", got)
 	}
 }
@@ -30,14 +29,14 @@ func TestManagerEvaluateToolRuleConfiguredDenyOverridesModeAllow(t *testing.T) {
 			},
 		},
 	})
-	mgr.SetPermissionRules(map[string][]ToolRule{
+	mgr.SetPermissionRules(map[string][]toolpolicy.Rule{
 		"read_file": {
-			{Pattern: "*", Decision: ToolRuleAllow},
+			{Pattern: "*", Decision: toolpolicy.Allow},
 		},
 	})
 
 	got := mgr.EvaluateToolRule(ToolRequest{Tool: "read_file", Path: "secret.txt"})
-	if got != ToolRuleDeny {
+	if got != toolpolicy.Deny {
 		t.Fatalf("config deny must override mode allow, got %s", got)
 	}
 }
@@ -45,15 +44,15 @@ func TestManagerEvaluateToolRuleConfiguredDenyOverridesModeAllow(t *testing.T) {
 func TestManagerProtectedWritePathsRequireApprovalInWriteMode(t *testing.T) {
 	mgr := NewManager(config.Workspace{Root: t.TempDir()})
 	mgr.SetProtectedWritePaths([]string{"prompts/base.md"})
-	mgr.SetPermissionRules(map[string][]ToolRule{
-		"edit_file": {{Pattern: "**", Decision: ToolRuleAllow}},
+	mgr.SetPermissionRules(map[string][]toolpolicy.Rule{
+		"edit_file": {{Pattern: "**", Decision: toolpolicy.Allow}},
 	})
 
-	if got := mgr.EvaluateToolRule(ToolRequest{Tool: "edit_file", Path: "prompts/base.md"}); got != ToolRuleAsk {
+	if got := mgr.EvaluateToolRule(ToolRequest{Tool: "edit_file", Path: "prompts/base.md"}); got != toolpolicy.Ask {
 		t.Fatalf("protected edit_file decision = %s, want ask", got)
 	}
 
-	if got := mgr.EvaluateToolRule(ToolRequest{Tool: "edit_file", Path: "README.md"}); got != ToolRuleAllow {
+	if got := mgr.EvaluateToolRule(ToolRequest{Tool: "edit_file", Path: "README.md"}); got != toolpolicy.Allow {
 		t.Fatalf("unprotected edit_file decision = %s, want allow", got)
 	}
 }
@@ -61,11 +60,11 @@ func TestManagerProtectedWritePathsRequireApprovalInWriteMode(t *testing.T) {
 func TestManagerProtectedWritePathsDoNotOverrideModeDeny(t *testing.T) {
 	mgr := NewManager(config.Workspace{Root: t.TempDir()})
 	mgr.SetProtectedWritePaths([]string{"prompts/base.md"})
-	mgr.SetPermissionRules(map[string][]ToolRule{
-		"edit_file": {{Pattern: "**", Decision: ToolRuleDeny}},
+	mgr.SetPermissionRules(map[string][]toolpolicy.Rule{
+		"edit_file": {{Pattern: "**", Decision: toolpolicy.Deny}},
 	})
 
-	if got := mgr.EvaluateToolRule(ToolRequest{Tool: "edit_file", Path: "prompts/base.md"}); got != ToolRuleDeny {
+	if got := mgr.EvaluateToolRule(ToolRequest{Tool: "edit_file", Path: "prompts/base.md"}); got != toolpolicy.Deny {
 		t.Fatalf("protected edit_file under deny mode = %s, want deny", got)
 	}
 }
@@ -75,7 +74,7 @@ func TestManagerProtectedWritePathsCoverApplyPatchTargets(t *testing.T) {
 	mgr.SetProtectedWritePaths([]string{"prompts/base.md"})
 
 	patch := "*** Begin Patch\n*** Update File: prompts/base.md\n@@\n-old\n+new\n*** End Patch\n"
-	if got := mgr.EvaluateToolRule(ToolRequest{Tool: "apply_patch", Content: patch}); got != ToolRuleAsk {
+	if got := mgr.EvaluateToolRule(ToolRequest{Tool: "apply_patch", Content: patch}); got != toolpolicy.Ask {
 		t.Fatalf("protected apply_patch decision = %s, want ask", got)
 	}
 }

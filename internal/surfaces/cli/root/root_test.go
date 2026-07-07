@@ -13,6 +13,7 @@ import (
 	"time"
 
 	recoverycontract "idiom/internal/contracts/recovery"
+	"idiom/internal/contracts/toolpolicy"
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
@@ -428,7 +429,7 @@ func TestRunDefaultLoadsWorkspaceToolRulesFromRootConfig(t *testing.T) {
 	mgr := workspace.NewManager(gotCfg.Workspace)
 	decision := mgr.EvaluateConfiguredToolRule(workspace.ToolRequest{Tool: "read_file", Path: ".idiom/deny-read-test.txt"})
 
-	if decision != workspace.ToolRuleDeny {
+	if decision != toolpolicy.Deny {
 		t.Fatalf("default TUI config must carry root config tool_rules deny, got %s in %#v", decision, gotCfg.Workspace.ToolRules)
 	}
 }

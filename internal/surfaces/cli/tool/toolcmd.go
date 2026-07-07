@@ -13,6 +13,7 @@ import (
 
 	"idiom/internal/capabilities/mcp"
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/textutil"
@@ -406,7 +407,7 @@ func RunListWithConfig(stdout io.Writer, configPath string, profile string) int 
 				names := make([]string, 0, len(mcpReg.Tools()))
 				for name := range mcpReg.Tools() {
 					if profile == workspace.ToolProfileDiscovery &&
-						workspace.MatchConfiguredToolRule(name, workspace.ToolRequest{Tool: name}, cfg.Workspace.ToolRules) != workspace.ToolRuleAllow {
+						toolpolicy.Match(name, toolpolicy.Request{Tool: name}, config.ToolPolicyRules(cfg.Workspace.ToolRules)) != toolpolicy.Allow {
 						continue
 					}
 					names = append(names, name)

@@ -6,6 +6,7 @@ import (
 
 	"idiom/internal/capabilities/workspace/externaltool"
 	"idiom/internal/contracts/autonomy"
+	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/failures"
 	"idiom/internal/platform/textutil"
@@ -119,7 +120,9 @@ func ToolRequestAllowedForWorkspaceProfile(req ToolRequest, profile string, poli
 		return ToolProfileDecision{Allowed: true}
 	}
 
-	if strings.HasPrefix(strings.TrimSpace(req.Tool), "mcp:") && MatchConfiguredToolRule(req.Tool, req, policy.Workspace.ToolRules) == ToolRuleAllow {
+	if strings.HasPrefix(strings.TrimSpace(req.Tool), "mcp:") &&
+		toolpolicy.Match(req.Tool, toolPolicyRequest(req), config.ToolPolicyRules(policy.Workspace.ToolRules)) == toolpolicy.Allow {
+
 		return ToolProfileDecision{Allowed: true}
 	}
 

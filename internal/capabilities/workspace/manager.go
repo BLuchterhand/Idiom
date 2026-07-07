@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/config"
 	"idiom/internal/repository/semantic/languagetools"
 )
@@ -35,7 +36,7 @@ type Manager struct {
 	pathTracker          PathTracker
 	pathAccess           PathAccess
 	writeGuard           WriteGuard
-	permissionRules      map[string][]ToolRule
+	permissionRules      map[string][]toolpolicy.Rule
 	protectedWritePaths  map[string]struct{}
 	toolSurface          ToolSurface
 	languageTools        *languagetools.Manager

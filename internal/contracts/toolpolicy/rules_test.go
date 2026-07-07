@@ -80,3 +80,51 @@ func TestMatchFirstMatchWins(t *testing.T) {
 		t.Fatalf("first-match-wins broken: got %s", got)
 	}
 }
+
+func TestPolicyDecideLastMatchWins(t *testing.T) {
+	policy := Policy{
+		Default: Deny,
+		Rules: []Rule{
+			{Tool: "shell", CommandPrefix: "git diff", Decision: Allow},
+			{Tool: "shell", CommandContains: "--output", Decision: Deny},
+		},
+	}
+
+	for _, command := range []string{"git diff --output=/tmp/patch", "git diff --output /tmp/patch"} {
+		got := policy.Decide(Request{Tool: "shell", Command: command})
+		if got.Decision != Deny || !got.Matched || got.Rule.CommandContains != "--output" {
+			t.Fatalf("deny tail should override earlier allow for %q, got %#v", command, got)
+		}
+	}
+}
+
+func TestPolicyCommandPrefixMatchesTokenBoundary(t *testing.T) {
+	policy := Policy{
+		Default: Deny,
+		Rules: []Rule{
+			{Tool: "shell", CommandPrefix: "go test", Decision: Allow},
+		},
+	}
+
+	if got := policy.Decide(Request{Tool: "shell", Command: "go test ./..."}); got.Decision != Allow {
+		t.Fatalf("go test command should match prefix, got %#v", got)
+	}
+
+	if got := policy.Decide(Request{Tool: "shell", Command: "go testdata"}); got.Decision != Deny {
+		t.Fatalf("prefix must respect token boundary, got %#v", got)
+	}
+}
+
+func TestPolicyPathPatternUsesRequestTarget(t *testing.T) {
+	policy := Policy{
+		Default: Allow,
+		Rules: []Rule{
+			{Tool: "edit_file", PathPattern: "README.md", Decision: Deny},
+		},
+	}
+
+	got := policy.Decide(Request{Tool: "edit_file", Path: "README.md"})
+	if got.Decision != Deny || got.Target != "README.md" {
+		t.Fatalf("path pattern should match request target, got %#v", got)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/failures"
 )
 
@@ -30,7 +31,7 @@ func (m *Manager) Execute(ctx context.Context, req ToolRequest) (result ToolResu
 		result = annotateLanguageRelationships(result)
 	}()
 
-	if m.EvaluateConfiguredToolRule(req) == ToolRuleDeny {
+	if m.EvaluateConfiguredToolRule(req) == toolpolicy.Deny {
 		return m.toolRuleDeniedResult(req)
 	}
 

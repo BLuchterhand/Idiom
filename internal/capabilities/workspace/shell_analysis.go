@@ -25,13 +25,13 @@ type ShellCommandAnalysis struct {
 }
 
 var shellCommandPolicy = struct {
-	broadInspectionHeads      []string
-	narrowingHeads            []string
-	exploreHeads              []string
-	exploreGitSubcommands     []string
-	readOnlyChildPrefixes     []string
-	workbranchChildPrefixes   []string
-	workbranchDeniedFragments []string
+	broadInspectionHeads    []string
+	narrowingHeads          []string
+	exploreHeads            []string
+	exploreGitSubcommands   []string
+	readOnlyChildPrefixes   []string
+	workbranchChildPrefixes []string
+	childDeniedFragments    []string
 }{
 	broadInspectionHeads:  []string{"ls", "find", "tree"},
 	narrowingHeads:        []string{"rg", "grep", "awk", "sed", "cat", "head", "tail"},
@@ -48,7 +48,7 @@ var shellCommandPolicy = struct {
 		"git status", "git diff", "git log", "git show", "git grep",
 		"pwd", "ls ", "rg ", "grep ", "cat ", "head ", "tail ", "wc ",
 	},
-	workbranchDeniedFragments: []string{"\n", "\r", "&&", "||", ";", "|", ">", "<", "$(", "`", "go env -w", "go env -u", "--output="},
+	childDeniedFragments: []string{"\n", "\r", "&&", "||", ";", "|", ">", "<", "$(", "`", "go env -w", "go env -u", "--output"},
 }
 
 // AnalyzeShellCommand is the single workspace authority for shell command facts
@@ -121,24 +121,27 @@ func validateExploreShellCommand(command string) error {
 	return nil
 }
 
-type WorkbranchShellPolicy struct {
+type ChildShellPolicy struct {
 	AllowedPrefixes []string
 	DeniedPrefixes  []string
 	DeniedFragments []string
 }
 
-func ReadOnlyChildShellAllowedPrefixes() []string {
-	return append([]string(nil), shellCommandPolicy.readOnlyChildPrefixes...)
+func ReadOnlyChildShellPolicy() ChildShellPolicy {
+	return ChildShellPolicy{
+		AllowedPrefixes: append([]string(nil), shellCommandPolicy.readOnlyChildPrefixes...),
+		DeniedFragments: append([]string(nil), shellCommandPolicy.childDeniedFragments...),
+	}
 }
 
-func WorkbranchChildShellPolicy(forbiddenTools []string) WorkbranchShellPolicy {
-	policy := WorkbranchShellPolicy{
+func WorkbranchChildShellPolicy(forbiddenTools []string) ChildShellPolicy {
+	policy := ChildShellPolicy{
 		AllowedPrefixes: append([]string(nil), shellCommandPolicy.workbranchChildPrefixes...),
 		DeniedPrefixes: []string{
 			"gh pr create",
 			"git -C",
 		},
-		DeniedFragments: append([]string(nil), shellCommandPolicy.workbranchDeniedFragments...),
+		DeniedFragments: append([]string(nil), shellCommandPolicy.childDeniedFragments...),
 	}
 
 	for _, forbidden := range forbiddenTools {

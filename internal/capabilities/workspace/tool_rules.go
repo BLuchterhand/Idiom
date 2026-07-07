@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace/patching"
-	"idiom/internal/capabilities/workspace/toolpolicy"
+	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/config"
 )
 
@@ -12,30 +12,11 @@ import (
 // upgrade the binary EnableWrites / EnableShell switches with per-pattern
 // allow/ask/deny decisions. See docs/opencode-fixes-design.md §6.
 
-// ToolRuleDecision is the outcome of a tool-rule lookup.
-type ToolRuleDecision = toolpolicy.Decision
-
-const (
-	ToolRuleAllow = toolpolicy.Allow
-	ToolRuleAsk   = toolpolicy.Ask
-	ToolRuleDeny  = toolpolicy.Deny
-	ToolRuleNone  = toolpolicy.None
-)
-
-// ToolRule is a single `pattern → decision` entry. Patterns are glob-style:
-//   - for shell-class tools (shell, bash), the pattern is matched against
-//     the command string with simple prefix-plus-wildcard semantics
-//     ("git *" matches a command starting with "git ").
-//   - for path-class tools (edit_file, write_file, append_file, read_file),
-//     the pattern is matched against the request's path using `filepath.Match`
-//     extended to accept `**` as a recursive glob.
-type ToolRule = toolpolicy.Rule
-
 // SetPermissionRules installs the active Mode's permission ruleset. Called
 // at session startup (from New) and when the user switches Mode via
 // /mode. Project-configured deny rules are still absolute; Mode rules are
 // consulted only after a request fails to match a config deny.
-func (m *Manager) SetPermissionRules(rules map[string][]ToolRule) {
+func (m *Manager) SetPermissionRules(rules map[string][]toolpolicy.Rule) {
 	if m == nil {
 		return
 	}
@@ -48,9 +29,9 @@ func (m *Manager) SetPermissionRules(rules map[string][]ToolRule) {
 		return
 	}
 
-	copied := make(map[string][]ToolRule, len(rules))
+	copied := make(map[string][]toolpolicy.Rule, len(rules))
 	for tool, list := range rules {
-		next := make([]ToolRule, len(list))
+		next := make([]toolpolicy.Rule, len(list))
 		copy(next, list)
 
 		copied[tool] = next
@@ -89,28 +70,28 @@ func (m *Manager) SetProtectedWritePaths(paths []string) {
 // EvaluateConfiguredToolRule applies only the static
 // config.Workspace.ToolRules layer. Callers use this for host-enforced
 // absolute denies so no active Mode can override a project rule.
-func (m *Manager) EvaluateConfiguredToolRule(req ToolRequest) ToolRuleDecision {
+func (m *Manager) EvaluateConfiguredToolRule(req ToolRequest) toolpolicy.Decision {
 	if m == nil || len(m.cfg.ToolRules) == 0 {
-		return ToolRuleNone
+		return toolpolicy.None
 	}
 
-	return MatchToolRule(strings.TrimSpace(req.Tool), req, convertConfiguredToolRules(m.cfg.ToolRules))
+	return toolpolicy.Match(strings.TrimSpace(req.Tool), toolPolicyRequest(req), config.ToolPolicyRules(m.cfg.ToolRules))
 }
 
 // EvaluateToolRule applies absolute project-configured deny rules first,
 // then the active Mode's permission rules, then non-deny static
-// config.Workspace.ToolRules as a fallback. Returns ToolRuleNone when
+// config.Workspace.ToolRules as a fallback. Returns toolpolicy.None when
 // neither layer matches.
-func (m *Manager) EvaluateToolRule(req ToolRequest) ToolRuleDecision {
+func (m *Manager) EvaluateToolRule(req ToolRequest) toolpolicy.Decision {
 	if m == nil {
-		return ToolRuleNone
+		return toolpolicy.None
 	}
 
 	tool := strings.TrimSpace(req.Tool)
 	configDecision := m.EvaluateConfiguredToolRule(req)
 
-	if configDecision == ToolRuleDeny {
-		return ToolRuleDeny
+	if configDecision == toolpolicy.Deny {
+		return toolpolicy.Deny
 	}
 
 	m.mu.Lock()
@@ -119,9 +100,9 @@ func (m *Manager) EvaluateToolRule(req ToolRequest) ToolRuleDecision {
 	m.mu.Unlock()
 
 	if len(modeRules) > 0 {
-		if decision := MatchToolRule(tool, req, modeRules); decision != ToolRuleNone {
-			if decision != ToolRuleDeny && m.protectedWritePathMatched(req) {
-				return ToolRuleAsk
+		if decision := toolpolicy.Match(tool, toolPolicyRequest(req), modeRules); decision != toolpolicy.None {
+			if decision != toolpolicy.Deny && m.protectedWritePathMatched(req) {
+				return toolpolicy.Ask
 			}
 
 			return decision
@@ -129,14 +110,14 @@ func (m *Manager) EvaluateToolRule(req ToolRequest) ToolRuleDecision {
 	}
 
 	if m.protectedWritePathMatched(req) {
-		return ToolRuleAsk
+		return toolpolicy.Ask
 	}
 
-	if configDecision != ToolRuleNone {
+	if configDecision != toolpolicy.None {
 		return configDecision
 	}
 
-	return ToolRuleNone
+	return toolpolicy.None
 }
 
 func (m *Manager) protectedWritePathMatched(req ToolRequest) bool {
@@ -189,52 +170,31 @@ func protectedWriteRequestPaths(req ToolRequest) []string {
 	}
 }
 
-func convertConfiguredToolRules(configRules map[string][]config.ToolRule) map[string][]ToolRule {
-	if len(configRules) == 0 {
-		return nil
-	}
-
-	convertedRules := make(map[string][]ToolRule, len(configRules))
-	for name, rules := range configRules {
-		converted := make([]ToolRule, 0, len(rules))
-		for _, r := range rules {
-			converted = append(converted, ToolRule{
-				Pattern:  r.Pattern,
-				Decision: ToolRuleDecision(strings.ToLower(strings.TrimSpace(r.Decision))),
-			})
-		}
-
-		convertedRules[name] = converted
-	}
-
-	return convertedRules
-}
-
-// MatchToolRule evaluates the first rule whose pattern matches the request
-// and returns its decision. A missing tool or empty rule set returns
-// ToolRuleNone — callers should treat that as "defer to the legacy
-// binary gate" so behavior is unchanged when the config omits this section.
-//
-// For `mcp:<server>/<tool>` calls there is a glob fallback: if no rules
-// are registered under the literal qualified name, MatchToolRule retries
-// against the catch-all key `mcp:*`. This lets users write a single
-// "every MCP tool asks" rule without enumerating each server.
-func MatchToolRule(tool string, req ToolRequest, rules map[string][]ToolRule) ToolRuleDecision {
-	return toolpolicy.Match(tool, toolPolicyRequest(req), rules)
-}
-
-func MatchConfiguredToolRule(tool string, req ToolRequest, rules map[string][]config.ToolRule) ToolRuleDecision {
-	return MatchToolRule(tool, req, convertConfiguredToolRules(rules))
-}
-
 func extractToolRuleTarget(tool string, req ToolRequest) string {
 	return toolpolicy.ExtractTarget(tool, toolPolicyRequest(req))
 }
 
 func toolPolicyRequest(req ToolRequest) toolpolicy.Request {
 	return toolpolicy.Request{
-		Command: req.Command,
-		Path:    req.Path,
-		Args:    req.Args,
+		Tool:        req.Tool,
+		Command:     req.Command,
+		Path:        req.Path,
+		Destination: req.Destination,
+		Workdir:     req.Workdir,
+		Moves:       toolPolicyMoves(req.Moves),
+		Args:        req.Args,
 	}
+}
+
+func toolPolicyMoves(moves []GoDeclarationMove) []toolpolicy.Move {
+	if len(moves) == 0 {
+		return nil
+	}
+
+	out := make([]toolpolicy.Move, 0, len(moves))
+	for _, move := range moves {
+		out = append(out, toolpolicy.Move{Destination: move.Destination})
+	}
+
+	return out
 }

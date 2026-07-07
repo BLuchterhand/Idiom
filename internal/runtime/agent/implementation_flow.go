@@ -21,6 +21,7 @@ import (
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/contracts/sourcekind"
+	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/textutil"
@@ -5137,38 +5138,6 @@ func LanePolicyForBrief(brief workerruntime.WorkerRuntimeBrief) *LanePolicy {
 
 type Mode = modepolicy.Mode
 
-func ModePermissionRules(mode Mode) map[string][]workspace.ToolRule {
-	if len(mode.PermissionRules) == 0 {
-		return nil
-	}
-
-	out := make(map[string][]workspace.ToolRule, len(mode.PermissionRules))
-	for tool, rules := range mode.PermissionRules {
-		converted := make([]workspace.ToolRule, 0, len(rules))
-		for _, rule := range rules {
-			converted = append(converted, workspace.ToolRule{
-				Pattern:  rule.Pattern,
-				Decision: modeToolRuleDecision(rule.Decision),
-			})
-		}
-		out[tool] = converted
-	}
-	return out
-}
-
-func modeToolRuleDecision(decision modepolicy.ToolRuleDecision) workspace.ToolRuleDecision {
-	switch decision {
-	case modepolicy.ToolRuleAllow:
-		return workspace.ToolRuleAllow
-	case modepolicy.ToolRuleAsk:
-		return workspace.ToolRuleAsk
-	case modepolicy.ToolRuleDeny:
-		return workspace.ToolRuleDeny
-	default:
-		return workspace.ToolRuleNone
-	}
-}
-
 // ModePolicy returns tool-economy nudge defaults for the given Mode. These
 // are soft budgets -- they inject a one-shot system message when crossed,
 // never hard-stop a turn.
@@ -5764,14 +5733,18 @@ func renderWorkbranchChildOutput(checkout WorkbranchCheckout, diff WorkbranchDif
 	return strings.TrimSpace(b.String())
 }
 
-func readOnlyChildTaskPermissionPolicy() ToolPermissionPolicy {
-	allowTool := func(tool string) ToolPermissionRule {
-		return ToolPermissionRule{Tool: tool, Decision: PermissionAllow}
+func readOnlyChildTaskPermissionPolicy() toolpolicy.Policy {
+	allowTool := func(tool string) toolpolicy.Rule {
+		return toolpolicy.Rule{Tool: tool, Decision: toolpolicy.Allow}
 	}
-	allowShellPrefix := func(prefix string) ToolPermissionRule {
-		return ToolPermissionRule{Tool: workspace.ToolNameShell, CommandPrefix: prefix, Decision: PermissionAllow}
+	allowShellPrefix := func(prefix string) toolpolicy.Rule {
+		return toolpolicy.Rule{Tool: workspace.ToolNameShell, CommandPrefix: prefix, Decision: toolpolicy.Allow}
 	}
-	rules := make([]ToolPermissionRule, 0, len(childAllowedTools())+20)
+	denyShellContains := func(value string) toolpolicy.Rule {
+		return toolpolicy.Rule{Tool: workspace.ToolNameShell, CommandContains: value, Decision: toolpolicy.Deny}
+	}
+	shellPolicy := workspace.ReadOnlyChildShellPolicy()
+	rules := make([]toolpolicy.Rule, 0, len(childAllowedTools())+len(shellPolicy.AllowedPrefixes)+len(shellPolicy.DeniedFragments))
 
 	for _, tool := range childAllowedTools() {
 		if tool == workspace.ToolNameShell {
@@ -5781,35 +5754,39 @@ func readOnlyChildTaskPermissionPolicy() ToolPermissionPolicy {
 		rules = append(rules, allowTool(tool))
 	}
 
-	for _, prefix := range workspace.ReadOnlyChildShellAllowedPrefixes() {
+	for _, prefix := range shellPolicy.AllowedPrefixes {
 		rules = append(rules, allowShellPrefix(prefix))
 	}
 
-	return ToolPermissionPolicy{
-		Default: PermissionDeny,
+	for _, value := range shellPolicy.DeniedFragments {
+		rules = append(rules, denyShellContains(value))
+	}
+
+	return toolpolicy.Policy{
+		Default: toolpolicy.Deny,
 		Rules:   rules,
 	}
 }
 
-func workbranchChildTaskPermissionPolicy() ToolPermissionPolicy {
-	allowTool := func(tool string) ToolPermissionRule {
-		return ToolPermissionRule{Tool: tool, Decision: PermissionAllow}
+func workbranchChildTaskPermissionPolicy() toolpolicy.Policy {
+	allowTool := func(tool string) toolpolicy.Rule {
+		return toolpolicy.Rule{Tool: tool, Decision: toolpolicy.Allow}
 	}
-	allowShellPrefix := func(prefix string) ToolPermissionRule {
-		return ToolPermissionRule{Tool: workspace.ToolNameShell, CommandPrefix: prefix, Decision: PermissionAllow}
+	allowShellPrefix := func(prefix string) toolpolicy.Rule {
+		return toolpolicy.Rule{Tool: workspace.ToolNameShell, CommandPrefix: prefix, Decision: toolpolicy.Allow}
 	}
-	deny := func(tool string) ToolPermissionRule {
-		return ToolPermissionRule{Tool: tool, Decision: PermissionDeny}
+	deny := func(tool string) toolpolicy.Rule {
+		return toolpolicy.Rule{Tool: tool, Decision: toolpolicy.Deny}
 	}
-	denyShellPrefix := func(prefix string) ToolPermissionRule {
-		return ToolPermissionRule{Tool: workspace.ToolNameShell, CommandPrefix: prefix, Decision: PermissionDeny}
+	denyShellPrefix := func(prefix string) toolpolicy.Rule {
+		return toolpolicy.Rule{Tool: workspace.ToolNameShell, CommandPrefix: prefix, Decision: toolpolicy.Deny}
 	}
-	denyShellContains := func(value string) ToolPermissionRule {
-		return ToolPermissionRule{Tool: workspace.ToolNameShell, CommandContains: value, Decision: PermissionDeny}
+	denyShellContains := func(value string) toolpolicy.Rule {
+		return toolpolicy.Rule{Tool: workspace.ToolNameShell, CommandContains: value, Decision: toolpolicy.Deny}
 	}
 	spec := workerruntime.RoleSpecFor("child_write")
 	shellPolicy := workspace.WorkbranchChildShellPolicy(spec.ForbiddenTools)
-	rules := make([]ToolPermissionRule, 0, len(spec.AllowedTools)+len(shellPolicy.AllowedPrefixes)+len(shellPolicy.DeniedPrefixes)+2)
+	rules := make([]toolpolicy.Rule, 0, len(spec.AllowedTools)+len(shellPolicy.AllowedPrefixes)+len(shellPolicy.DeniedPrefixes)+len(shellPolicy.DeniedFragments)+2)
 
 	for _, tool := range spec.AllowedTools {
 		tool = strings.TrimSpace(tool)
@@ -5833,8 +5810,8 @@ func workbranchChildTaskPermissionPolicy() ToolPermissionPolicy {
 		rules = append(rules, denyShellContains(value))
 	}
 
-	return ToolPermissionPolicy{
-		Default: PermissionDeny,
+	return toolpolicy.Policy{
+		Default: toolpolicy.Deny,
 		Rules:   rules,
 	}
 }
@@ -10200,32 +10177,11 @@ func (e LifecycleEvent) Complete() bool {
 	return e.Status == "complete" || e.Status == "blocked" || e.Status == "failed"
 }
 
-type PermissionDecision string
-
-const (
-	PermissionAllow PermissionDecision = "allow"
-	PermissionAsk   PermissionDecision = "ask"
-	PermissionDeny  PermissionDecision = "deny"
-)
-
-type ToolPermissionPolicy struct {
-	Default PermissionDecision
-	Rules   []ToolPermissionRule
-}
-
-type ToolPermissionRule struct {
-	Tool            string
-	PathPattern     string
-	CommandPrefix   string
-	CommandContains string
-	Decision        PermissionDecision
-}
-
 type PermissionDecisionSnapshot struct {
-	Tool     string             `json:"tool"`
-	Target   string             `json:"target,omitempty"`
-	Decision PermissionDecision `json:"decision"`
-	Rule     string             `json:"rule,omitempty"`
+	Tool     string              `json:"tool"`
+	Target   string              `json:"target,omitempty"`
+	Decision toolpolicy.Decision `json:"decision"`
+	Rule     string              `json:"rule,omitempty"`
 }
 
 type CheckpointPolicy struct {
@@ -10239,34 +10195,17 @@ type GitCheckpoint struct {
 	Status string `json:"status,omitempty"`
 }
 
-func (p ToolPermissionPolicy) Decide(req workspace.ToolRequest) PermissionDecisionSnapshot {
-	decision := p.Default
-	if decision == "" {
-		decision = PermissionAllow
+func permissionPolicyDecision(policy toolpolicy.Policy, req workspace.ToolRequest) PermissionDecisionSnapshot {
+	decision := policy.Decide(toolPolicyRequest(req))
+	return PermissionDecisionSnapshot{
+		Tool:     decision.Tool,
+		Target:   decision.Target,
+		Decision: decision.Decision,
+		Rule:     permissionRuleRef(decision.Rule),
 	}
-
-	snapshot := PermissionDecisionSnapshot{
-		Tool:     strings.TrimSpace(req.Tool),
-		Target:   PermissionTarget(req),
-		Decision: decision,
-	}
-	for _, rule := range p.Rules {
-		if !rule.matches(req) {
-			continue
-		}
-
-		if rule.Decision == "" {
-			continue
-		}
-
-		snapshot.Decision = rule.Decision
-		snapshot.Rule = rule.String()
-	}
-
-	return snapshot
 }
 
-func (r ToolPermissionRule) String() string {
+func permissionRuleRef(r toolpolicy.Rule) string {
 	parts := []string{}
 	if r.Tool != "" {
 		parts = append(parts, "tool="+r.Tool)
@@ -10291,81 +10230,44 @@ func (r ToolPermissionRule) String() string {
 	return strings.Join(parts, " ")
 }
 
-func (r ToolPermissionRule) matches(req workspace.ToolRequest) bool {
-	if r.Tool != "" && r.Tool != "*" && r.Tool != strings.TrimSpace(req.Tool) {
-		return false
-	}
-
-	if r.CommandPrefix != "" && !commandMatchesPrefix(strings.TrimSpace(req.Command), r.CommandPrefix) {
-		return false
-	}
-
-	if r.CommandContains != "" && !strings.Contains(strings.TrimSpace(req.Command), r.CommandContains) {
-		return false
-	}
-
-	if r.PathPattern != "" {
-		target := PermissionTarget(req)
-		if target == "" {
-			return false
-		}
-
-		ok, err := filepath.Match(r.PathPattern, target)
-		if err != nil || !ok {
-			return false
-		}
-	}
-
-	return true
-}
-
-func commandMatchesPrefix(command string, prefix string) bool {
-	if prefix == "" {
-		return true
-	}
-
-	if strings.HasSuffix(prefix, " ") || strings.HasSuffix(prefix, "\t") {
-		return strings.HasPrefix(command, prefix)
-	}
-
-	if command == prefix {
-		return true
-	}
-
-	if !strings.HasPrefix(command, prefix) {
-		return false
-	}
-
-	if len(command) <= len(prefix) {
-		return true
-	}
-
-	return command[len(prefix)] == ' ' || command[len(prefix)] == '\t'
-}
-
 func PermissionTarget(req workspace.ToolRequest) string {
-	for _, value := range []string{req.Path, req.Destination, req.Workdir} {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return filepath.ToSlash(trimmed)
-		}
+	return toolpolicy.Target(toolPolicyRequest(req))
+}
+
+func toolPolicyRequest(req workspace.ToolRequest) toolpolicy.Request {
+	return toolpolicy.Request{
+		Tool:        req.Tool,
+		Command:     req.Command,
+		Path:        req.Path,
+		Destination: req.Destination,
+		Workdir:     req.Workdir,
+		Moves:       toolPolicyMoves(req.Moves),
+		Args:        req.Args,
+	}
+}
+
+func toolPolicyMoves(moves []workspace.GoDeclarationMove) []toolpolicy.Move {
+	if len(moves) == 0 {
+		return nil
 	}
 
-	if len(req.Moves) > 0 {
-		return filepath.ToSlash(strings.TrimSpace(req.Moves[0].Destination))
+	out := make([]toolpolicy.Move, 0, len(moves))
+	for _, move := range moves {
+		out = append(out, toolpolicy.Move{Destination: move.Destination})
 	}
 
-	return ""
+	return out
 }
 
 func (s PermissionDecisionSnapshot) ToolResult() workspace.ToolResult {
 	switch s.Decision {
-	case PermissionDeny:
+	case toolpolicy.Deny:
 		return workspace.ToolResult{
 			Tool:    s.Tool,
 			Summary: "Tool permission denied",
 			Error:   fmt.Sprintf("permission policy denied %s on %s", s.Tool, textutil.FirstNonEmpty(s.Target, "this target")),
 		}
-	case PermissionAsk:
+	case toolpolicy.Ask:
 		return workspace.ToolResult{
 			Tool:    s.Tool,
 			Summary: "Tool approval required",

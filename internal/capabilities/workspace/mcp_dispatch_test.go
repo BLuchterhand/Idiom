@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"idiom/internal/capabilities/mcp"
+	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/config"
 )
 
@@ -317,46 +318,46 @@ func TestExtractToolRuleTarget_MCPPullsQueryThenURL(t *testing.T) {
 	}
 }
 
-func TestMatchToolRule_MCPGlobFallback(t *testing.T) {
-	rules := map[string][]ToolRule{
-		"mcp:*": {{Pattern: "*", Decision: ToolRuleAsk}},
+func TestToolPolicyMatch_MCPGlobFallback(t *testing.T) {
+	rules := map[string][]toolpolicy.Rule{
+		"mcp:*": {{Pattern: "*", Decision: toolpolicy.Ask}},
 	}
 	req := ToolRequest{Tool: "mcp:exa/web_search_exa", Args: []byte(`{"query":"go 1.24"}`)}
-	got := MatchToolRule(req.Tool, req, rules)
+	got := toolpolicy.Match(req.Tool, toolPolicyRequest(req), rules)
 
-	if got != ToolRuleAsk {
-		t.Fatalf("got %q, want %q", got, ToolRuleAsk)
+	if got != toolpolicy.Ask {
+		t.Fatalf("got %q, want %q", got, toolpolicy.Ask)
 	}
 }
 
-func TestMatchToolRule_MCPSpecificBeatsGlob(t *testing.T) {
-	rules := map[string][]ToolRule{
-		"mcp:exa/web_search_exa": {{Pattern: "*", Decision: ToolRuleAllow}},
-		"mcp:*":                  {{Pattern: "*", Decision: ToolRuleAsk}},
+func TestToolPolicyMatch_MCPSpecificBeatsGlob(t *testing.T) {
+	rules := map[string][]toolpolicy.Rule{
+		"mcp:exa/web_search_exa": {{Pattern: "*", Decision: toolpolicy.Allow}},
+		"mcp:*":                  {{Pattern: "*", Decision: toolpolicy.Ask}},
 	}
 	req := ToolRequest{Tool: "mcp:exa/web_search_exa", Args: []byte(`{"query":"x"}`)}
-	got := MatchToolRule(req.Tool, req, rules)
+	got := toolpolicy.Match(req.Tool, toolPolicyRequest(req), rules)
 
-	if got != ToolRuleAllow {
-		t.Fatalf("got %q, want %q (specific rule should win)", got, ToolRuleAllow)
+	if got != toolpolicy.Allow {
+		t.Fatalf("got %q, want %q (specific rule should win)", got, toolpolicy.Allow)
 	}
 }
 
-func TestMatchToolRule_MCPPatternAgainstURL(t *testing.T) {
-	rules := map[string][]ToolRule{
+func TestToolPolicyMatch_MCPPatternAgainstURL(t *testing.T) {
+	rules := map[string][]toolpolicy.Rule{
 		"mcp:fetch/fetch": {
-			{Pattern: "https://github.com/**", Decision: ToolRuleAllow},
-			{Pattern: "*", Decision: ToolRuleAsk},
+			{Pattern: "https://github.com/**", Decision: toolpolicy.Allow},
+			{Pattern: "*", Decision: toolpolicy.Ask},
 		},
 	}
 	allowed := ToolRequest{Tool: "mcp:fetch/fetch", Args: []byte(`{"url":"https://github.com/sst/opencode"}`)}
 
-	if got := MatchToolRule(allowed.Tool, allowed, rules); got != ToolRuleAllow {
+	if got := toolpolicy.Match(allowed.Tool, toolPolicyRequest(allowed), rules); got != toolpolicy.Allow {
 		t.Fatalf("github URL: got %q, want allow", got)
 	}
 
 	other := ToolRequest{Tool: "mcp:fetch/fetch", Args: []byte(`{"url":"https://random.example/"}`)}
-	if got := MatchToolRule(other.Tool, other, rules); got != ToolRuleAsk {
+	if got := toolpolicy.Match(other.Tool, toolPolicyRequest(other), rules); got != toolpolicy.Ask {
 		t.Fatalf("non-github URL: got %q, want ask", got)
 	}
 }

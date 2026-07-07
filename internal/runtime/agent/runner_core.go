@@ -23,6 +23,7 @@ import (
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
 	recoverycontract "idiom/internal/contracts/recovery"
+	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/failures"
 	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/textutil"
@@ -655,28 +656,28 @@ func (r *Runner) readOnlyWriteChildTaskPermissionDecision(req workspace.ToolRequ
 	return PermissionDecisionSnapshot{
 		Tool:     strings.TrimSpace(req.Tool),
 		Target:   PermissionTarget(req),
-		Decision: PermissionAsk,
+		Decision: toolpolicy.Ask,
 		Rule:     "read_only_workspace task.mode=write decision=ask",
 	}, true
 }
 
-func toolAuthorizationPermissionDecision(req workspace.ToolRequest, policy ToolPermissionPolicy, workspaceRulesDeny bool) ToolAuthorizationPermissionDecision {
-	snapshot := policy.Decide(req)
+func toolAuthorizationPermissionDecision(req workspace.ToolRequest, policy toolpolicy.Policy, workspaceRulesDeny bool) ToolAuthorizationPermissionDecision {
+	snapshot := permissionPolicyDecision(policy, req)
 	if workspaceRulesDeny {
-		snapshot.Decision = PermissionDeny
+		snapshot.Decision = toolpolicy.Deny
 		snapshot.Rule = "workspace.tool_rules decision=deny"
 	}
 	result := "no_approval_needed"
 	decision := autonomy.PolicyAllow
 	errorClass := ""
-	if snapshot.Decision == PermissionAsk {
+	if snapshot.Decision == toolpolicy.Ask {
 		decision, result, errorClass = autonomy.PolicyAsk, "approval_required", "permission_policy"
-	} else if snapshot.Decision == PermissionDeny {
+	} else if snapshot.Decision == toolpolicy.Deny {
 		decision, result, errorClass = autonomy.PolicyDeny, "denied", "permission_policy"
 	}
 	return ToolAuthorizationPermissionDecision{
 		Snapshot: snapshot,
-		Policy:   toolAuthorizationPolicyEvent(req, decision, "permission_policy", result, errorClass, strings.TrimSpace(snapshot.Rule), snapshot.Decision == PermissionAsk),
+		Policy:   toolAuthorizationPolicyEvent(req, decision, "permission_policy", result, errorClass, strings.TrimSpace(snapshot.Rule), snapshot.Decision == toolpolicy.Ask),
 	}
 }
 
@@ -971,7 +972,7 @@ type Runner struct {
 	PreExecute            func(step int, req workspace.ToolRequest) *workspace.ToolResult
 	CompletionGate        CompletionGate
 	TaskLedger            TaskLedgerPolicy
-	PermissionPolicy      ToolPermissionPolicy
+	PermissionPolicy      toolpolicy.Policy
 	CheckpointPolicy      CheckpointPolicy
 	RuntimeBrief          workerruntime.WorkerRuntimeBrief
 	OnEvent               func(RunEvent)
@@ -3784,15 +3785,15 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		permissionDecision := r.PermissionPolicy.Decide(req)
-		if r.Workspace != nil && r.Workspace.EvaluateConfiguredToolRule(req) == workspace.ToolRuleDeny {
+		permissionDecision := permissionPolicyDecision(r.PermissionPolicy, req)
+		if r.Workspace != nil && r.Workspace.EvaluateConfiguredToolRule(req) == toolpolicy.Deny {
 			permissionDecision = PermissionDecisionSnapshot{
 				Tool:     strings.TrimSpace(req.Tool),
 				Target:   PermissionTarget(req),
-				Decision: PermissionDeny,
+				Decision: toolpolicy.Deny,
 				Rule:     "workspace.tool_rules decision=deny",
 			}
-		} else if permissionDecision.Decision == PermissionAllow {
+		} else if permissionDecision.Decision == toolpolicy.Allow {
 			if readOnlyWriteChildDecision, ok := r.readOnlyWriteChildTaskPermissionDecision(req); ok {
 				permissionDecision = readOnlyWriteChildDecision
 			}
@@ -3810,13 +3811,13 @@ func (r *Runner) runLegacySessionBody(
 			autonomyRecorder.emitPathRolesResolved(req, pathPolicyInput)
 		}
 
-		if permissionDecision.Decision != PermissionAllow {
+		if permissionDecision.Decision != toolpolicy.Allow {
 
 			if autonomyRecorder != nil {
 				decision := autonomy.PolicyDeny
 				resultLabel := "denied"
 
-				if permissionDecision.Decision == PermissionAsk {
+				if permissionDecision.Decision == toolpolicy.Ask {
 					decision = autonomy.PolicyAsk
 					resultLabel = "approval_required"
 				}
@@ -3829,7 +3830,7 @@ func (r *Runner) runLegacySessionBody(
 					Transport:        normalizedPolicyInput.Transport,
 					ParserFailure:    normalizedPolicyInput.ParserFailure,
 					RepairSource:     normalizedPolicyInput.RepairSource,
-					ApprovalRequired: permissionDecision.Decision == PermissionAsk,
+					ApprovalRequired: permissionDecision.Decision == toolpolicy.Ask,
 					Result:           resultLabel,
 					ErrorClass:       "permission_policy",
 					Source:           strings.TrimSpace(permissionDecision.Rule),
@@ -3852,7 +3853,7 @@ func (r *Runner) runLegacySessionBody(
 				return finish(answer, nil, "workspace_tool_rules_deny", true)
 			}
 
-			if permissionDecision.Decision == PermissionAsk {
+			if permissionDecision.Decision == toolpolicy.Ask {
 				answer, err := controller.completeWithoutMoreToolsWithDefaultCloseout()
 				return finish(answer, err, "permission_approval_required", false)
 			}
@@ -7858,18 +7859,18 @@ func (a *runnerAutonomyRecorder) emitLegacyPermissionDecision(req workspace.Tool
 	a.runner.emitEvent(marshalRunEvent("permission_decision", snapshot))
 }
 
-// permissionDecisionFromAutonomy maps an autonomy ToolPolicyDecision to the legacy
-// PermissionDecision value used by the permission_decision RunEvent.
-func permissionDecisionFromAutonomy(d autonomy.ToolPolicyDecision) PermissionDecision {
+// permissionDecisionFromAutonomy maps an autonomy ToolPolicyDecision to the
+// legacy decision value used by the permission_decision RunEvent.
+func permissionDecisionFromAutonomy(d autonomy.ToolPolicyDecision) toolpolicy.Decision {
 	switch d {
 	case autonomy.PolicyAllow, autonomy.PolicyObserve, autonomy.PolicyNudge:
-		return PermissionAllow
+		return toolpolicy.Allow
 	case autonomy.PolicyAsk:
-		return PermissionAsk
+		return toolpolicy.Ask
 	case autonomy.PolicyDeny, autonomy.PolicyReject:
-		return PermissionDeny
+		return toolpolicy.Deny
 	default:
-		return PermissionDeny
+		return toolpolicy.Deny
 	}
 }
 
@@ -20644,7 +20645,7 @@ func (r *Runner) emitCompletionStatusFromParams(status, reason, blockerKind stri
 }
 
 func workspaceToolRulesPermissionDeny(decision PermissionDecisionSnapshot) bool {
-	return decision.Decision == PermissionDeny && strings.Contains(strings.TrimSpace(decision.Rule), "workspace.tool_rules")
+	return decision.Decision == toolpolicy.Deny && strings.Contains(strings.TrimSpace(decision.Rule), "workspace.tool_rules")
 }
 
 func workspaceToolRulesPermissionDenyAnswer(req workspace.ToolRequest, result workspace.ToolResult) string {
