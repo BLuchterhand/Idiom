@@ -4704,11 +4704,11 @@ func marshalToolRequestRaw(req workspace.ToolRequest) string {
 }
 
 func shellActionClass(command string) string {
-	if isVerificationCommandText(command) {
+	analysis := workspace.AnalyzeShellCommand(command)
+	if analysis.Verification != workspace.ShellVerificationNone {
 		return "shell_verification:" + normalizeActionToken(command)
 	}
 
-	analysis := workspace.AnalyzeShellCommand(command)
 	if len(analysis.Fields) == 0 {
 		return workspace.ToolNameShell
 	}

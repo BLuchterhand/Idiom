@@ -20,9 +20,23 @@ type ShellCommandAnalysis struct {
 	BroadInspection  bool
 	Narrowing        bool
 	BuildOrTest      bool
+	Verification     ShellVerificationFamily
+	FullSuite        bool
 	SideEffect       autonomy.SideEffectClass
 	Replacement      *ShellReplacementCandidate
 }
+
+type ShellVerificationFamily string
+
+const (
+	ShellVerificationNone         ShellVerificationFamily = ""
+	ShellVerificationScriptSyntax ShellVerificationFamily = "script_syntax"
+	ShellVerificationFullSuite    ShellVerificationFamily = "full_suite"
+	ShellVerificationTest         ShellVerificationFamily = "test"
+	ShellVerificationBuild        ShellVerificationFamily = "build"
+	ShellVerificationCheck        ShellVerificationFamily = "check"
+	ShellVerificationGeneric      ShellVerificationFamily = "generic"
+)
 
 var shellCommandPolicy = struct {
 	broadInspectionHeads    []string
@@ -74,6 +88,8 @@ func AnalyzeShellCommand(command string) ShellCommandAnalysis {
 	analysis.BroadInspection = shellHeadInSet(rawHead, shellCommandPolicy.broadInspectionHeads...)
 	analysis.Narrowing = shellHeadInSet(rawHead, shellCommandPolicy.narrowingHeads...)
 	analysis.BuildOrTest = shellCommandBuildOrTest(command)
+	analysis.Verification = shellCommandVerification(command)
+	analysis.FullSuite = analysis.Verification == ShellVerificationFullSuite
 	analysis.Replacement = shellReplacementCandidate(command)
 
 	if !analysis.HasControlSyntax && readOnlyShellCommand(analysis.Head, analysis.Args) {
@@ -195,6 +211,37 @@ func shellCommandBuildOrTest(command string) bool {
 	}
 
 	return false
+}
+
+func shellCommandVerification(command string) ShellVerificationFamily {
+	lower := strings.ToLower(strings.TrimSpace(command))
+	switch {
+	case lower == "":
+		return ShellVerificationNone
+	case textutil.ContainsAny(lower, "bash -n", "sh -n", "zsh -n", "shellcheck"):
+		return ShellVerificationScriptSyntax
+	case textutil.ContainsAny(lower, "go test ./...", "make test", "npm test", "pnpm test", "cargo test"):
+		return ShellVerificationFullSuite
+	case textutil.ContainsAny(lower, "git diff --check", "cargo check", "make check", "ruff check", "npm run check", "pnpm run check", "yarn run check", "npm run lint", "pnpm run lint", "yarn run lint"):
+		return ShellVerificationCheck
+	case textutil.ContainsAny(lower, "go vet", "tsc", "eslint"):
+		return ShellVerificationGeneric
+	case shellCommandBuildOrTest(command):
+		return shellBuildOrTestVerification(lower)
+	default:
+		return ShellVerificationNone
+	}
+}
+
+func shellBuildOrTestVerification(lower string) ShellVerificationFamily {
+	switch {
+	case textutil.ContainsAny(lower, "build", "scons", "cmake", "ninja", "meson"):
+		return ShellVerificationBuild
+	case textutil.ContainsAny(lower, "check", "lint", "clippy"):
+		return ShellVerificationCheck
+	default:
+		return ShellVerificationTest
+	}
 }
 
 func shellCommandHasControlSyntax(command string) bool {

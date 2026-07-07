@@ -14,6 +14,8 @@ func TestAnalyzeShellCommandClassifiesInspectionAndVerification(t *testing.T) {
 		broadInspection  bool
 		narrowing        bool
 		buildOrTest      bool
+		verification     ShellVerificationFamily
+		fullSuite        bool
 		hasControlSyntax bool
 		sideEffect       autonomy.SideEffectClass
 	}{
@@ -30,10 +32,12 @@ func TestAnalyzeShellCommandClassifiesInspectionAndVerification(t *testing.T) {
 			sideEffect: autonomy.SideEffectUnknown,
 		},
 		{
-			name:        "go test is read only verification",
-			command:     "go test ./...",
-			buildOrTest: true,
-			sideEffect:  autonomy.SideEffectReadOnly,
+			name:         "go test is read only full suite verification",
+			command:      "go test ./...",
+			buildOrTest:  true,
+			verification: ShellVerificationFullSuite,
+			fullSuite:    true,
+			sideEffect:   autonomy.SideEffectReadOnly,
 		},
 		{
 			name:       "git status is read only verification",
@@ -41,9 +45,10 @@ func TestAnalyzeShellCommandClassifiesInspectionAndVerification(t *testing.T) {
 			sideEffect: autonomy.SideEffectReadOnly,
 		},
 		{
-			name:       "git diff check is read only verification",
-			command:    "git diff --check -- README.md",
-			sideEffect: autonomy.SideEffectReadOnly,
+			name:         "git diff check is read only verification",
+			command:      "git diff --check -- README.md",
+			verification: ShellVerificationCheck,
+			sideEffect:   autonomy.SideEffectReadOnly,
 		},
 		{
 			name:       "git diff output flag is unknown",
@@ -69,6 +74,8 @@ func TestAnalyzeShellCommandClassifiesInspectionAndVerification(t *testing.T) {
 			name:             "pipe is control syntax",
 			command:          "go test ./... | tee report.txt",
 			buildOrTest:      true,
+			verification:     ShellVerificationFullSuite,
+			fullSuite:        true,
 			hasControlSyntax: true,
 			sideEffect:       autonomy.SideEffectUnknown,
 		},
@@ -85,10 +92,41 @@ func TestAnalyzeShellCommandClassifiesInspectionAndVerification(t *testing.T) {
 			sideEffect:       autonomy.SideEffectUnknown,
 		},
 		{
-			name:        "quoted pipe is not control syntax",
-			command:     "go test ./internal/runtime/agent -run 'TestA|TestB'",
-			buildOrTest: true,
-			sideEffect:  autonomy.SideEffectReadOnly,
+			name:         "quoted pipe is not control syntax",
+			command:      "go test ./internal/runtime/agent -run 'TestA|TestB'",
+			buildOrTest:  true,
+			verification: ShellVerificationTest,
+			sideEffect:   autonomy.SideEffectReadOnly,
+		},
+		{
+			name:         "bash syntax check is script verification",
+			command:      "bash -n scripts/run-harness.sh",
+			verification: ShellVerificationScriptSyntax,
+			sideEffect:   autonomy.SideEffectUnknown,
+		},
+		{
+			name:         "shellcheck is script verification",
+			command:      "shellcheck scripts/run-harness.sh",
+			verification: ShellVerificationScriptSyntax,
+			sideEffect:   autonomy.SideEffectUnknown,
+		},
+		{
+			name:         "typescript compiler is generic verification",
+			command:      "tsc --noEmit",
+			verification: ShellVerificationGeneric,
+			sideEffect:   autonomy.SideEffectUnknown,
+		},
+		{
+			name:         "ruff check is check verification",
+			command:      "ruff check .",
+			verification: ShellVerificationCheck,
+			sideEffect:   autonomy.SideEffectUnknown,
+		},
+		{
+			name:         "eslint is generic verification",
+			command:      "eslint src",
+			verification: ShellVerificationGeneric,
+			sideEffect:   autonomy.SideEffectUnknown,
 		},
 	}
 
@@ -103,6 +141,12 @@ func TestAnalyzeShellCommandClassifiesInspectionAndVerification(t *testing.T) {
 			}
 			if got.BuildOrTest != tt.buildOrTest {
 				t.Fatalf("BuildOrTest = %t, want %t", got.BuildOrTest, tt.buildOrTest)
+			}
+			if got.Verification != tt.verification {
+				t.Fatalf("Verification = %q, want %q", got.Verification, tt.verification)
+			}
+			if got.FullSuite != tt.fullSuite {
+				t.Fatalf("FullSuite = %t, want %t", got.FullSuite, tt.fullSuite)
 			}
 			if got.HasControlSyntax != tt.hasControlSyntax {
 				t.Fatalf("HasControlSyntax = %t, want %t", got.HasControlSyntax, tt.hasControlSyntax)
@@ -141,6 +185,38 @@ func TestAnalyzeShellCommandDetectsBuildOrTestSegments(t *testing.T) {
 	} {
 		if got := AnalyzeShellCommand(command); got.BuildOrTest {
 			t.Fatalf("%q BuildOrTest = true, want false; analysis=%#v", command, got)
+		}
+	}
+}
+
+func TestAnalyzeShellCommandDetectsVerificationFamilies(t *testing.T) {
+	tests := []struct {
+		command string
+		want    ShellVerificationFamily
+		full    bool
+	}{
+		{command: "go test ./...", want: ShellVerificationFullSuite, full: true},
+		{command: "go test ./internal/runtime/agent", want: ShellVerificationTest},
+		{command: "go build ./cmd/idiom", want: ShellVerificationBuild},
+		{command: "git diff --check -- README.md", want: ShellVerificationCheck},
+		{command: "cargo check", want: ShellVerificationCheck},
+		{command: "cargo test", want: ShellVerificationFullSuite, full: true},
+		{command: "npm test", want: ShellVerificationFullSuite, full: true},
+		{command: "npm run build", want: ShellVerificationBuild},
+		{command: "python -m pytest", want: ShellVerificationTest},
+		{command: "python3 tools/build.py", want: ShellVerificationBuild},
+		{command: "make check", want: ShellVerificationCheck},
+		{command: "bash -n scripts/run-harness.sh", want: ShellVerificationScriptSyntax},
+		{command: "shellcheck scripts/run-harness.sh", want: ShellVerificationScriptSyntax},
+		{command: "tsc --noEmit", want: ShellVerificationGeneric},
+		{command: "ruff check .", want: ShellVerificationCheck},
+		{command: "eslint src", want: ShellVerificationGeneric},
+	}
+
+	for _, tt := range tests {
+		got := AnalyzeShellCommand(tt.command)
+		if got.Verification != tt.want || got.FullSuite != tt.full {
+			t.Fatalf("%q verification = %q full=%t, want %q full=%t; analysis=%#v", tt.command, got.Verification, got.FullSuite, tt.want, tt.full, got)
 		}
 	}
 }

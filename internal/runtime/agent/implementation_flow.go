@@ -9803,33 +9803,18 @@ func summarizeRunnerPaths(paths []string, limit int) string {
 }
 
 func isVerificationCommandText(text string) bool {
-	command := strings.ToLower(strings.TrimSpace(text))
+	command := strings.TrimSpace(text)
 	if command == "" {
 		return false
 	}
 
-	verificationSnippets := []string{
-		"go test", "go vet", "go build",
-		"git diff --check",
-		"npm test", "npm run test", "npm run build",
-		"pnpm test", "pnpm run test", "pnpm build",
-		"yarn test", "yarn build",
-		"pytest", "python -m pytest", "python3 -m pytest",
-		"cargo test", "cargo check", "cargo build",
-		"make test", "make check",
-		"ctest", "mvn test", "gradle test",
-		"tsc", "ruff check", "eslint",
-		"bash -n", "sh -n", "zsh -n", "shellcheck",
-	}
-	for _, snippet := range verificationSnippets {
-		if strings.Contains(command, snippet) {
-			return true
-		}
+	if workspace.AnalyzeShellCommand(command).Verification != workspace.ShellVerificationNone {
+		return true
 	}
 
 	for _, line := range strings.Split(command, "\n") {
 		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "$"))
-		if line != "" && workspace.AnalyzeShellCommand(line).BuildOrTest {
+		if line != "" && workspace.AnalyzeShellCommand(line).Verification != workspace.ShellVerificationNone {
 			return true
 		}
 	}

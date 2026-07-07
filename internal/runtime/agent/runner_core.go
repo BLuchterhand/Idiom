@@ -22158,14 +22158,44 @@ func (r *Runner) emitPostWriteVerificationTelemetry(req workspace.ToolRequest, r
 		return false
 	}
 
-	confidence := postWriteVerificationTelemetryConfidence(command)
+	analysis := workspace.AnalyzeShellCommand(command)
+	usesFullSuite := analysis.FullSuite
+	coverage := "targeted verification"
+	confidence := "medium"
+	riskLevel := "low"
+	expectedFailures := []string{"verification failures"}
+	recommendation := "keep targeted tests close to the changed surface before widening scope"
+
+	switch analysis.Verification {
+	case workspace.ShellVerificationScriptSyntax:
+		coverage = "targeted script syntax verification"
+		confidence = "low"
+		expectedFailures = []string{"shell syntax errors"}
+		recommendation = "syntax verification passed; run targeted tests when behavior changes beyond script parsing"
+	case workspace.ShellVerificationFullSuite:
+		coverage = "full-suite verification"
+		confidence = "high"
+		riskLevel = "high"
+		expectedFailures = []string{"test failures"}
+		recommendation = "record full-suite success for similar high-risk surfaces"
+	case workspace.ShellVerificationTest:
+		coverage = "targeted project verification"
+		expectedFailures = []string{"test failures"}
+	case workspace.ShellVerificationBuild:
+		coverage = "targeted project verification"
+		expectedFailures = []string{"build failures"}
+	case workspace.ShellVerificationCheck:
+		coverage = "targeted project verification"
+		expectedFailures = []string{"check failures"}
+	}
+
 	plan := map[string]any{
 		"commands":          []string{command},
-		"uses_full_suite":   postWriteVerificationUsesFullSuite(command),
-		"coverage":          postWriteVerificationTelemetryCoverage(command),
+		"uses_full_suite":   usesFullSuite,
+		"coverage":          coverage,
 		"confidence":        confidence,
-		"risk_level":        postWriteVerificationTelemetryRisk(command),
-		"expected_failures": postWriteVerificationExpectedFailures(command),
+		"risk_level":        riskLevel,
+		"expected_failures": expectedFailures,
 		"repair_policy":     "repair failing checks before widening scope",
 	}
 	r.emitEvent(marshalRunEvent("verification_plan", plan))
@@ -22176,7 +22206,7 @@ func (r *Runner) emitPostWriteVerificationTelemetry(req workspace.ToolRequest, r
 		"confidence":             confidence,
 		"coverage":               plan["coverage"],
 		"risk_level":             plan["risk_level"],
-		"learned_recommendation": postWriteVerificationRecommendation(command),
+		"learned_recommendation": recommendation,
 	}
 	r.emitEvent(marshalRunEvent("verification_feedback", feedback))
 
@@ -22209,80 +22239,6 @@ func postWriteVerificationTelemetryCommand(req workspace.ToolRequest, result wor
 	}
 
 	return ""
-}
-
-func postWriteVerificationUsesFullSuite(command string) bool {
-	lower := strings.ToLower(command)
-
-	return strings.Contains(lower, "go test ./...") ||
-		strings.Contains(lower, "make test") ||
-		strings.Contains(lower, "npm test") ||
-		strings.Contains(lower, "pnpm test") ||
-		strings.Contains(lower, "cargo test")
-}
-
-func postWriteVerificationTelemetryCoverage(command string) string {
-	lower := strings.ToLower(command)
-	switch {
-	case strings.Contains(lower, "bash -n") || strings.Contains(lower, "sh -n") || strings.Contains(lower, "zsh -n") || strings.Contains(lower, "shellcheck"):
-		return "targeted script syntax verification"
-	case postWriteVerificationUsesFullSuite(command):
-		return "full-suite verification"
-	case strings.Contains(lower, "test") || strings.Contains(lower, "build") || strings.Contains(lower, "check"):
-		return "targeted project verification"
-	default:
-		return "targeted verification"
-	}
-}
-
-func postWriteVerificationTelemetryConfidence(command string) string {
-	lower := strings.ToLower(command)
-	if strings.Contains(lower, "bash -n") || strings.Contains(lower, "sh -n") || strings.Contains(lower, "zsh -n") || strings.Contains(lower, "shellcheck") {
-		return "low"
-	}
-
-	if postWriteVerificationUsesFullSuite(command) {
-		return "high"
-	}
-
-	return "medium"
-}
-
-func postWriteVerificationTelemetryRisk(command string) string {
-	if postWriteVerificationUsesFullSuite(command) {
-		return "high"
-	}
-
-	return "low"
-}
-
-func postWriteVerificationExpectedFailures(command string) []string {
-	lower := strings.ToLower(command)
-	switch {
-	case strings.Contains(lower, "bash -n") || strings.Contains(lower, "sh -n") || strings.Contains(lower, "zsh -n") || strings.Contains(lower, "shellcheck"):
-		return []string{"shell syntax errors"}
-	case strings.Contains(lower, "test"):
-		return []string{"test failures"}
-	case strings.Contains(lower, "build"):
-		return []string{"build failures"}
-	case strings.Contains(lower, "check"):
-		return []string{"check failures"}
-	default:
-		return []string{"verification failures"}
-	}
-}
-
-func postWriteVerificationRecommendation(command string) string {
-	lower := strings.ToLower(command)
-	if strings.Contains(lower, "bash -n") || strings.Contains(lower, "sh -n") || strings.Contains(lower, "zsh -n") || strings.Contains(lower, "shellcheck") {
-		return "syntax verification passed; run targeted tests when behavior changes beyond script parsing"
-	}
-
-	if postWriteVerificationUsesFullSuite(command) {
-		return "record full-suite success for similar high-risk surfaces"
-	}
-
-	return "keep targeted tests close to the changed surface before widening scope"
 }
 
 // requiredEditPathsProgressMessage returns a compact authoritative
