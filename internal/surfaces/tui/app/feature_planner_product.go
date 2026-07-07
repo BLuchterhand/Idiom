@@ -766,13 +766,6 @@ func buildADRRefinementPrompt(currentADRs, feedback, effortRoot string) string {
 	return b.String()
 }
 
-// splitAndParseADRs is a backward-compatible shim that delegates to
-// productworkflow.TrySplitAndParseADRs and discards per-chunk failure details.
-func splitAndParseADRs(output string, prd productworkflow.PRDDocument) ([]productworkflow.ADRDocument, []productworkflow.ADRIndexEntry, error) {
-	adrDocs, indexEntries, _, err := productworkflow.TrySplitAndParseADRs(output, prd)
-	return adrDocs, indexEntries, err
-}
-
 // mergeADRIndex merges new ADRs into an existing index, replacing matching IDs.
 func mergeADRIndex(existing productworkflow.ADRIndex, newDocs []productworkflow.ADRDocument, newEntries []productworkflow.ADRIndexEntry) ([]productworkflow.ADRDocument, []productworkflow.ADRIndexEntry) {
 	existingByID := map[string]int{}

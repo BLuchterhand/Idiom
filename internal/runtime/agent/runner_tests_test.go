@@ -19434,7 +19434,7 @@ func TestWorkbranchManagerFallsBackToFilesystemCopyForNonGitWorkspace(t *testing
 		t.Fatalf("write seed file: %v", err)
 	}
 
-	manager := WorkbranchManager{Root: root}
+	manager := Manager{Root: root}
 	checkout, err := manager.Create(context.Background(), "patch-readme")
 	if err != nil {
 		t.Fatalf("create fallback checkout: %v", err)

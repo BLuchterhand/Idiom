@@ -2235,17 +2235,14 @@ const (
 	ToolCallTransportModeTextualJSON ToolCallTransportMode = "textual_json_terminal"
 	ToolCallTransportModeNative      ToolCallTransportMode = "native_tools"
 
-	PlanExecuteTransportModeTextual     PlanExecuteTransportMode = ToolCallTransportModeTextual
-	PlanExecuteTransportModeTextualJSON PlanExecuteTransportMode = ToolCallTransportModeTextualJSON
-	PlanExecuteTransportModeNative      PlanExecuteTransportMode = ToolCallTransportModeNative
+	PlanExecuteTransportModeTextual     ToolCallTransportMode = ToolCallTransportModeTextual
+	PlanExecuteTransportModeTextualJSON ToolCallTransportMode = ToolCallTransportModeTextualJSON
+	PlanExecuteTransportModeNative      ToolCallTransportMode = ToolCallTransportModeNative
 
-	RuntimeCallTransportModeTextual     RuntimeCallTransportMode = ToolCallTransportModeTextual
-	RuntimeCallTransportModeTextualJSON RuntimeCallTransportMode = ToolCallTransportModeTextualJSON
-	RuntimeCallTransportModeNative      RuntimeCallTransportMode = ToolCallTransportModeNative
+	RuntimeCallTransportModeTextual     ToolCallTransportMode = ToolCallTransportModeTextual
+	RuntimeCallTransportModeTextualJSON ToolCallTransportMode = ToolCallTransportModeTextualJSON
+	RuntimeCallTransportModeNative      ToolCallTransportMode = ToolCallTransportModeNative
 )
-
-type PlanExecuteTransportMode = ToolCallTransportMode
-type RuntimeCallTransportMode = ToolCallTransportMode
 
 type PlanExecutePlanningTransport struct {
 	SupportsNativeTools bool
@@ -2273,7 +2270,7 @@ type PlanExecutePlanningState struct {
 	AllowedActionClasses           []string
 	InvalidActionClasses           []string
 	TerminalResponseShapes         []string
-	TransportMode                  PlanExecuteTransportMode
+	TransportMode                  ToolCallTransportMode
 	LastInvalidPaths               []string
 	SubmitCorrectionBlockerAllowed bool
 }
@@ -2774,7 +2771,7 @@ func planExecuteSubmitReadyNativeRequired(transport PlanExecutePlanningTransport
 	return transport.ForceNativeTools || (transport.SupportsNativeTools && !transport.TextualToolParser)
 }
 
-func planExecuteTransportMode(transport PlanExecutePlanningTransport) PlanExecuteTransportMode {
+func planExecuteTransportMode(transport PlanExecutePlanningTransport) ToolCallTransportMode {
 	if transport.ForceNativeTools || (transport.SupportsNativeTools && !transport.TextualToolParser && !transport.ResponseFormatJSON) {
 		return PlanExecuteTransportModeNative
 	}
@@ -4872,7 +4869,7 @@ type RuntimeCallPolicy struct {
 	ChatTemplateKwargs       bool
 	MaxTokens                int
 	TimeoutMillis            int
-	TransportMode            RuntimeCallTransportMode
+	TransportMode            ToolCallTransportMode
 	ExpressibleActionClasses []string
 }
 
@@ -4933,7 +4930,7 @@ func (policy RuntimeCallPolicy) ResponseFormatMode() string {
 	return "default"
 }
 
-func deriveRuntimeCallTransportMode(policy RuntimeCallPolicy) RuntimeCallTransportMode {
+func deriveRuntimeCallTransportMode(policy RuntimeCallPolicy) ToolCallTransportMode {
 	if policy.ForceNativeTools || (policy.SupportsNativeTools && !policy.TextualToolParser && !policy.ResponseFormatJSON) {
 		return RuntimeCallTransportModeNative
 	}

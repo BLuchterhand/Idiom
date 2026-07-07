@@ -4178,7 +4178,7 @@ Revert the auth module changes.
 - None
 `
 
-		docs, entries, err := splitAndParseADRs(output, prd)
+		docs, entries, _, err := productworkflow.TrySplitAndParseADRs(output, prd)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -4282,7 +4282,7 @@ Rollback 2.
 None.
 `
 
-		docs, entries, err := splitAndParseADRs(output, prd)
+		docs, entries, _, err := productworkflow.TrySplitAndParseADRs(output, prd)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -4341,7 +4341,7 @@ Test.
 Test.
 `
 
-		docs, _, err := splitAndParseADRs(output, prd)
+		docs, _, _, err := productworkflow.TrySplitAndParseADRs(output, prd)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -4427,7 +4427,7 @@ Second.
 Second.
 `
 
-		docs, _, err := splitAndParseADRs(output, prd)
+		docs, _, _, err := productworkflow.TrySplitAndParseADRs(output, prd)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

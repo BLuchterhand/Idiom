@@ -26,7 +26,6 @@ import (
 	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/textutil"
 	semanticlanguage "idiom/internal/repository/semantic/language"
-	"idiom/internal/runtime/instructions"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/modepolicy"
 	"idiom/internal/runtime/workerruntime"
@@ -627,7 +626,7 @@ func (r *Runner) emitReadOnlyChildTerminal(ctx childLifecycleContext, result wor
 	r.emitChildTerminalAcceptance(ctx, record, childLifecycleAcceptanceDecisionForTerminal(record), childLifecycleAcceptanceReasonForTerminal(record))
 }
 
-func (r *Runner) emitWorkbranchChildTerminal(ctx childLifecycleContext, checkout WorkbranchCheckout, result workspace.ToolResult, diff WorkbranchDiff, status autonomy.ChildTerminalStatus) {
+func (r *Runner) emitWorkbranchChildTerminal(ctx childLifecycleContext, checkout Checkout, result workspace.ToolResult, diff Diff, status autonomy.ChildTerminalStatus) {
 	patchID := childLifecycleID("candidate_patch", ctx.InvocationID, checkout.BaseSHA, strings.Join(diff.ChangedPaths, ","), childLifecycleHash(diff.Patch))
 	var artifactRefs []string
 	resultKind := autonomy.ChildResultCandidatePatch
@@ -725,7 +724,7 @@ func childLifecycleObservedTransport(route autonomy.ChildExecutionRoute) autonom
 	}
 }
 
-func childLifecycleDiffStat(diff WorkbranchDiff) autonomy.PatchDiffStat {
+func childLifecycleDiffStat(diff Diff) autonomy.PatchDiffStat {
 	return autonomy.PatchDiffStat{
 		Files:      len(diff.ChangedPaths),
 		Insertions: childLifecycleStatValue(diff.Stat, "insertions"),
@@ -5006,10 +5005,6 @@ func answerHasGitHistoryNoopOrBlocker(answer string) bool {
 		strings.Contains(lower, "new file")
 }
 
-// --- internal/runtime/instructions.go ---
-type InstructionAttachment = instructions.Attachment
-type InstructionAttacher = instructions.Attacher
-
 type LanePolicyID string
 
 const (
@@ -5136,12 +5131,10 @@ func LanePolicyForBrief(brief workerruntime.WorkerRuntimeBrief) *LanePolicy {
 	return &defaultLanePolicy
 }
 
-type Mode = modepolicy.Mode
-
 // ModePolicy returns tool-economy nudge defaults for the given Mode. These
 // are soft budgets -- they inject a one-shot system message when crossed,
 // never hard-stop a turn.
-func ModePolicy(_ Mode) RunPolicy {
+func ModePolicy(_ modepolicy.Mode) RunPolicy {
 	return RunPolicy{
 		FingerprintNudgeAt: 3,
 		SynthesisNudgeAt:   10,
@@ -5569,7 +5562,7 @@ func (r *Runner) runWorkbranchChildTask(ctx context.Context, req workspace.ToolR
 		agentName = "worker"
 	}
 
-	manager := WorkbranchManager{Root: r.Workspace.Root()}
+	manager := Manager{Root: r.Workspace.Root()}
 
 	checkout, err := manager.Create(ctx, agentName)
 	if err != nil {
@@ -5695,7 +5688,7 @@ func (r *Runner) runWorkbranchChildModel(ctx context.Context, child *Runner, lif
 	)
 }
 
-func renderWorkbranchChildOutput(checkout WorkbranchCheckout, diff WorkbranchDiff, answer string) string {
+func renderWorkbranchChildOutput(checkout Checkout, diff Diff, answer string) string {
 	var b strings.Builder
 
 	b.WriteString("Isolated workbranch result\n")
@@ -10161,10 +10154,6 @@ func marshalRunEvent(role string, value any) RunEvent {
 
 	return RunEvent{Role: role, Content: string(data)}
 }
-
-type WorkbranchManager = Manager
-type WorkbranchCheckout = Checkout
-type WorkbranchDiff = Diff
 
 type LifecycleEvent struct {
 	ChildID    string

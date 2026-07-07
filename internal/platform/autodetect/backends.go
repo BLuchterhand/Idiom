@@ -11,8 +11,9 @@
 package autodetect
 
 import (
-	"os/exec"
 	"slices"
+
+	"idiom/internal/platform/hosttools"
 )
 
 // Backend describes one local-LLM runner that's installed on this host.
@@ -47,8 +48,8 @@ var backendCandidates = []struct {
 func DetectBackends() []Backend {
 	found := make([]Backend, 0, len(backendCandidates))
 	for _, c := range backendCandidates {
-		path, err := exec.LookPath(c.bin)
-		if err != nil {
+		path := hosttools.FirstAvailable(c.bin)
+		if path == "" {
 			continue
 		}
 

@@ -9,9 +9,9 @@ import (
 
 // TestDetectBackendsFindsStubBinary stages a fake mlx_lm.server binary
 // in a temp dir, prepends it to PATH, and verifies DetectBackends finds
-// it. The stub doesn't need to be executable — exec.LookPath cares only
-// that it's a regular file with the executable bit set on Unix; we set
-// it explicitly. On Windows we skip because LookPath there has different
+// it. The stub doesn't need to do anything; host tool lookup only needs
+// a regular file with the executable bit set on Unix, so we set it
+// explicitly. On Windows we skip because PATH probing has different
 // extension-resolution rules and idiom isn't shipping windows-host
 // support for backends.
 func TestDetectBackendsFindsStubBinary(t *testing.T) {

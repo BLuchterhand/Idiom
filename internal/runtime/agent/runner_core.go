@@ -28,6 +28,7 @@ import (
 	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/textutil"
 	semanticlanguage "idiom/internal/repository/semantic/language"
+	"idiom/internal/runtime/instructions"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 )
@@ -1001,7 +1002,7 @@ type Runner struct {
 
 	// InstructionAttacher injects configured per-directory guidance
 	// whenever the model touches a file under that directory.
-	InstructionAttacher *InstructionAttacher
+	InstructionAttacher *instructions.Attacher
 	// DoomLoopGate, if non-nil, is called when the model emits three identical
 	// consecutive tool calls. Returning true approves the call (resets the
 	// streak and lets execution continue); returning false rejects it and
