@@ -39,6 +39,11 @@ var sensitiveTextMarkers = []string{
 }
 
 func ContainsSecretMarker(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+
 	return secretMarkerPattern.MatchString(value)
 }
 

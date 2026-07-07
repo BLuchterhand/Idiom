@@ -19,6 +19,7 @@ type ShellCommandAnalysis struct {
 	Narrowing        bool
 	BuildOrTest      bool
 	SideEffect       autonomy.SideEffectClass
+	Replacement      *ShellReplacementCandidate
 }
 
 // AnalyzeShellCommand is the single workspace authority for shell command facts
@@ -33,7 +34,7 @@ func AnalyzeShellCommand(command string) ShellCommandAnalysis {
 	}
 
 	analysis.HasControlSyntax = shellCommandHasControlSyntax(command)
-	analysis.Fields = strings.Fields(command)
+	analysis.Fields = shellCommandFields(command)
 	if len(analysis.Fields) == 0 {
 		return analysis
 	}
@@ -44,6 +45,7 @@ func AnalyzeShellCommand(command string) ShellCommandAnalysis {
 	analysis.BroadInspection = shellHeadInSet(rawHead, "ls", "find", "tree")
 	analysis.Narrowing = shellHeadInSet(rawHead, "rg", "grep", "awk", "sed", "cat", "head", "tail")
 	analysis.BuildOrTest = shellCommandBuildOrTest(command)
+	analysis.Replacement = shellReplacementCandidate(command)
 
 	if !analysis.HasControlSyntax && readOnlyShellCommand(analysis.Head, analysis.Args) {
 		analysis.SideEffect = autonomy.SideEffectReadOnly
@@ -54,7 +56,7 @@ func AnalyzeShellCommand(command string) ShellCommandAnalysis {
 
 func shellCommandBuildOrTest(command string) bool {
 	for _, part := range splitShellSegments(command) {
-		fields := strings.Fields(part)
+		fields := shellCommandFields(part)
 		if len(fields) == 0 {
 			continue
 		}

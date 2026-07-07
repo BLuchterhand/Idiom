@@ -241,7 +241,7 @@ func anthropicAssistantMessage(msg ChatMessage) anthropicMessage {
 		blocks = append(blocks, anthropicContentBlock{
 			Type:  "tool_use",
 			ID:    call.ID,
-			Name:  normalizeHostedToolName(call.Function.Name),
+			Name:  hostedToolNameReplacer.Replace(call.Function.Name),
 			Input: anthropicToolInput(call.Function.Arguments),
 		})
 	}
@@ -326,6 +326,6 @@ func anthropicToolChoice(choice string) *anthropicToolChoiceDef {
 	case "required":
 		return &anthropicToolChoiceDef{Type: "any"}
 	default:
-		return &anthropicToolChoiceDef{Type: "tool", Name: normalizeHostedToolName(choice)}
+		return &anthropicToolChoiceDef{Type: "tool", Name: hostedToolNameReplacer.Replace(choice)}
 	}
 }

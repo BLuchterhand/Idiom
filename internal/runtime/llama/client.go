@@ -475,7 +475,7 @@ func normalizeHostedTools(tools []Tool) ([]Tool, map[string]string) {
 
 	for i, t := range tools {
 		orig := t.Function.Name
-		sanitized := normalizeHostedToolName(orig)
+		sanitized := hostedToolNameReplacer.Replace(orig)
 
 		if sanitized != orig {
 			reverse[sanitized] = orig
@@ -494,9 +494,7 @@ func normalizeHostedTools(tools []Tool) ([]Tool, map[string]string) {
 	return normalized, reverse
 }
 
-func normalizeHostedToolName(name string) string {
-	return strings.NewReplacer(":", "_", "/", "_").Replace(name)
-}
+var hostedToolNameReplacer = strings.NewReplacer(":", "_", "/", "_")
 
 // repairMessageToolPairing ensures every assistant message with tool_calls
 // has matching role:"tool" responses. Hosted APIs (DeepSeek) reject

@@ -9322,7 +9322,15 @@ func rewriteVerificationShellReadToSourceSanity(req workspace.ToolRequest, brief
 		return workspace.ToolRequest{}, false
 	}
 
-	path := strings.TrimSpace(matchShellCatWholeFile(req.Command))
+	analysis := workspace.AnalyzeShellCommand(req.Command)
+	if analysis.Replacement == nil ||
+		analysis.Replacement.Kind != workspace.ShellReplacementCatReadFile ||
+		analysis.Replacement.Request.Tool != workspace.ToolNameReadFile {
+
+		return workspace.ToolRequest{}, false
+	}
+
+	path := strings.TrimSpace(analysis.Replacement.Request.Path)
 	if path == "" || !sourcekind.CoversSourceSanity(path) {
 		return workspace.ToolRequest{}, false
 	}

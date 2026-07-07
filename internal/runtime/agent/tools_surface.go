@@ -380,7 +380,7 @@ func writeRedirectCandidateRequest(b *strings.Builder, adapter redirectAdapter, 
 func normalizeRedirectRequest(req workspace.ToolRequest, lang workspace.LanguageSupport, cap workspace.Capability) workspace.ToolRequest {
 	switch cap {
 	case workspace.CapWorkspaceSymbol, workspace.CapFindSymbol, workspace.CapReferences:
-		if ident, ok := extractSyntaxIdentifierForLanguage(lang.Name, req.Pattern); ok {
+		if ident, ok := workspace.SyntaxIdentifierForLanguage(lang.Name, req.Pattern); ok {
 			req.Pattern = ident
 		}
 	}
@@ -474,7 +474,7 @@ func matchRedirectRule(req workspace.ToolRequest, ws *workspace.Manager) (worksp
 			return workspace.LanguageSupport{}, "", false
 		}
 
-		if searchContentTargetsConcreteFile(req) && looksLikeIdentifier(pattern) {
+		if searchContentTargetsConcreteFile(req) && workspace.LooksLikeIdentifier(pattern) {
 			return workspace.LanguageSupport{}, "", false
 		}
 
@@ -620,7 +620,12 @@ func languageForSearchRequest(req workspace.ToolRequest, ws *workspace.Manager) 
 }
 
 func patternCompatibleWithLanguage(pattern string, lang workspace.LanguageSupport) bool {
-	return looksLikeSymbolIdentifier(pattern) || languageSyntaxMatches(lang.Name, pattern)
+	if workspace.LooksLikeSymbolIdentifier(pattern) {
+		return true
+	}
+
+	_, ok := workspace.SyntaxIdentifierForLanguage(lang.Name, pattern)
+	return ok
 }
 
 func languageFromConcretePath(path string) (workspace.LanguageSupport, bool) {
@@ -645,49 +650,6 @@ func languageActive(ws *workspace.Manager, lang workspace.LanguageSupport) bool 
 	}
 
 	return false
-}
-
-// looksLikeIdentifier returns true when the pattern is a bare identifier
-// the model is almost certainly trying to locate -- the redirect should
-// only fire for symbol-shaped queries, not for free-form regex.
-func looksLikeIdentifier(pattern string) bool {
-	if len(pattern) < 2 {
-		return false
-	}
-
-	for _, r := range pattern {
-		switch {
-		case r == '_' || r == ':':
-		case r >= '0' && r <= '9':
-		case r >= 'A' && r <= 'Z':
-		case r >= 'a' && r <= 'z':
-		default:
-			return false
-		}
-	}
-
-	return true
-}
-
-func looksLikeSymbolIdentifier(pattern string) bool {
-	if !looksLikeIdentifier(pattern) {
-		return false
-	}
-
-	hasSymbolShape := false
-
-	for _, r := range pattern {
-		switch {
-		case r == '_' || r == ':':
-			hasSymbolShape = true
-		case r >= '0' && r <= '9':
-			hasSymbolShape = true
-		case r >= 'A' && r <= 'Z':
-			hasSymbolShape = true
-		}
-	}
-
-	return hasSymbolShape
 }
 
 // languageFromGlob derives a language from a filename glob like
@@ -743,7 +705,7 @@ func languageFromSyntaxPattern(pattern string, ws *workspace.Manager) (workspace
 	var matches []workspace.LanguageSupport
 
 	for _, lang := range ws.ActiveLanguages() {
-		if languageSyntaxMatches(lang.Name, pattern) {
+		if _, ok := workspace.SyntaxIdentifierForLanguage(lang.Name, pattern); ok {
 			matches = append(matches, lang)
 		}
 	}
@@ -753,74 +715,6 @@ func languageFromSyntaxPattern(pattern string, ws *workspace.Manager) (workspace
 	}
 
 	return matches[0], true
-}
-
-func languageSyntaxMatches(language string, pattern string) bool {
-	_, ok := extractSyntaxIdentifierForLanguage(language, pattern)
-	return ok
-}
-
-func extractSyntaxIdentifierForLanguage(language string, pattern string) (string, bool) {
-	for _, re := range syntaxExtractors[strings.ToLower(strings.TrimSpace(language))] {
-		if m := re.FindStringSubmatch(pattern); len(m) >= 2 && m[1] != "" {
-			return m[1], true
-		}
-	}
-
-	return "", false
-}
-
-var syntaxExtractors = map[string][]*regexp.Regexp{
-	"go": {
-		regexp.MustCompile(`^func\s*\([^)]*\)\s*([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^func\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^func[.*\\\s]+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^type\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^const\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^var\s+([A-Za-z_]\w*)`),
-	},
-	"cpp": {
-		regexp.MustCompile(`^class\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^class[.*\\\s]+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^struct\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^struct[.*\\\s]+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^namespace\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^enum(?:\s+class)?\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^union\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^union[.*\\\s]+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^template\s*<[^>]*>\s*(?:class|struct|typename)?\s*([A-Za-z_]\w*)`),
-	},
-	"python": {
-		regexp.MustCompile(`^(?:async\s+)?def\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^class\s+([A-Za-z_]\w*)`),
-	},
-	"typescript": {
-		regexp.MustCompile(`^(?:export\s+)?(?:declare\s+)?(?:default\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)`),
-		regexp.MustCompile(`^(?:export\s+)?(?:declare\s+)?(?:default\s+)?(?:async\s+)?function(?:\s+\*?|\s*\*)\s*([A-Za-z_$][\w$]*)`),
-		regexp.MustCompile(`^(?:export\s+)?(?:declare\s+)?(?:const\s+)?enum\s+([A-Za-z_$][\w$]*)`),
-		regexp.MustCompile(`^(?:export\s+)?(?:declare\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)`),
-		regexp.MustCompile(`^(?:export\s+)?(?:declare\s+)?interface\s+([A-Za-z_$][\w$]*)`),
-		regexp.MustCompile(`^(?:export\s+)?(?:declare\s+)?type\s+([A-Za-z_$][\w$]*)`),
-		regexp.MustCompile(`^(?:export\s+)?(?:declare\s+)?(?:namespace|module)\s+([A-Za-z_$][\w$]*)`),
-	},
-	"rust": {
-		regexp.MustCompile(`^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+|const\s+|unsafe\s+|extern\s+(?:"[^"]+"\s+)?)*fn\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum)\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^(?:pub(?:\([^)]*\))?\s+)?(?:unsafe\s+)?trait\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^(?:pub(?:\([^)]*\))?\s+)?type\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^(?:pub(?:\([^)]*\))?\s+)?const\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^(?:pub(?:\([^)]*\))?\s+)?static\s+(?:mut\s+)?([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^(?:pub(?:\([^)]*\))?\s+)?macro_rules!\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^impl(?:<[^>]*>)?\s+([A-Za-z_]\w*)`),
-	},
-	"java": {
-		regexp.MustCompile(`^(?:public|private|protected|abstract|final|static|sealed|non-sealed|strictfp|\s)*class\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^(?:public|private|protected|abstract|final|static|sealed|non-sealed|strictfp|\s)*interface\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^(?:public|private|protected|abstract|final|static|sealed|non-sealed|strictfp|\s)*enum\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^(?:public|private|protected|abstract|final|static|sealed|non-sealed|strictfp|\s)*record\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^(?:public|private|protected|abstract|final|static|sealed|non-sealed|strictfp|\s)*@interface\s+([A-Za-z_]\w*)`),
-		regexp.MustCompile(`^(?:public|private|protected|abstract|final|static|synchronized|native|default|strictfp|\s)*(?:<[^>]+>\s+)?(?:[A-Za-z_][\w<>\[\].?,\s]*\s+)?([A-Za-z_]\w*)\s*\(`),
-	},
 }
 
 // isStructuredTool reports whether a tool name is already a
@@ -884,104 +778,99 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 		return RedirectDecision{}
 	}
 
-	if match := matchShellSedRange(cmd); match != nil {
+	analysis := workspace.AnalyzeShellCommand(cmd)
+	candidate := analysis.Replacement
+	if candidate == nil {
+		return RedirectDecision{}
+	}
+
+	switch candidate.Kind {
+	case workspace.ShellReplacementSedReadFile:
 		msg := fmt.Sprintf(
 			"The request reads a file range via shell. Bounded-read capability is available through read_file; it returns structured output and skips the shell permission prompt.\n"+
 				"candidate_request: {\"tool\":\"read_file\",\"path\":%q,\"start_line\":%d,\"end_line\":%d}\n"+
 				"direct_tool_fallback: if the bounded read returns nothing, the original command remains available.",
-			match.path, match.start, match.end)
+			candidate.Request.Path, candidate.Request.StartLine, candidate.Request.EndLine)
 
 		return d.shellRedirectDecision(req, shellRedirect{
 			kind:              "shell|sed_read_file",
-			capability:        workspace.Capability("read_file"),
+			capability:        candidate.Capability,
 			summary:           "Redirected to read_file",
 			hardRejectSummary: "Shell range-read blocked by bounded-read capability",
 			message:           msg,
 		})
-	}
-
-	if match := matchShellHeadTailFile(cmd); match != nil {
+	case workspace.ShellReplacementHeadTailReadFile:
 		msg := fmt.Sprintf(
 			"The request reads a file prefix/suffix via shell. Bounded-read capability is available through read_file; structured output, no permission prompt.\n"+
 				"candidate_request: {\"tool\":\"read_file\",\"path\":%q,\"start_line\":%d,\"end_line\":%d}\n"+
 				"direct_tool_fallback: if the bounded read returns nothing, the original command remains available.",
-			match.path, match.start, match.end)
+			candidate.Request.Path, candidate.Request.StartLine, candidate.Request.EndLine)
 
 		return d.shellRedirectDecision(req, shellRedirect{
 			kind:              "shell|headtail_read_file",
-			capability:        workspace.Capability("read_file"),
+			capability:        candidate.Capability,
 			summary:           "Redirected to read_file",
 			hardRejectSummary: "Shell prefix/suffix read blocked by bounded-read capability",
 			message:           msg,
 		})
-	}
-
-	if match := matchShellCatWholeFile(cmd); match != "" {
+	case workspace.ShellReplacementCatReadFile:
 		msg := fmt.Sprintf(
 			"The request dumps an entire file via shell. Bounded-read capability is available through read_file so the result is structured and observable by the harness.\n"+
 				"candidate_request: {\"tool\":\"read_file\",\"path\":%q}\n"+
 				"direct_tool_fallback: if the bounded read returns nothing, the original command remains available.",
-			match)
+			candidate.Request.Path)
 
 		return d.shellRedirectDecision(req, shellRedirect{
 			kind:              "shell|cat_read_file",
-			capability:        workspace.Capability("read_file"),
+			capability:        candidate.Capability,
 			summary:           "Redirected to read_file",
 			hardRejectSummary: "Shell cat blocked by bounded-read capability",
 			message:           msg,
 		})
-	}
-
-	if match := matchShellFindName(cmd); match != "" {
+	case workspace.ShellReplacementFindSearchFiles:
 		msg := fmt.Sprintf(
 			"The request searches for files by name via shell. File-name search capability is available through search_files; it returns stable handles.\n"+
 				"candidate_request: {\"tool\":\"search_files\",\"pattern\":%q}\n"+
 				"direct_tool_fallback: if file-name search returns nothing, the original command remains available.",
-			match)
+			candidate.Request.Pattern)
 
 		return d.shellRedirectDecision(req, shellRedirect{
 			kind:              "shell|find_search_files",
-			capability:        workspace.Capability("search_files"),
+			capability:        candidate.Capability,
 			summary:           "Redirected to search_files",
 			hardRejectSummary: "Shell find blocked by file-name search capability",
 			message:           msg,
 		})
-	}
-
-	if match := matchShellSedWCStats(cmd); match != nil {
+	case workspace.ShellReplacementSedWCFileStats:
 		msg := fmt.Sprintf(
 			"The request measures a file line range via shell. File-stat capability is available through file_stats; it returns structured byte and character counts for bounded line ranges without a shell prompt.\n"+
 				"candidate_request: {\"tool\":\"file_stats\",\"path\":%q,\"start_line\":%d,\"end_line\":%d}\n"+
 				"direct_tool_fallback: if file stats do not answer the question, the original command remains available.",
-			match.path, match.start, match.end)
+			candidate.Request.Path, candidate.Request.StartLine, candidate.Request.EndLine)
 
 		return d.shellRedirectDecision(req, shellRedirect{
 			kind:              "shell|sed_wc_file_stats",
-			capability:        workspace.Capability("file_stats"),
+			capability:        candidate.Capability,
 			summary:           "Redirected to file_stats",
 			hardRejectSummary: "Shell line-count pipeline blocked by file-stat capability",
 			message:           msg,
 		})
-	}
-
-	if match := matchShellWCStats(cmd); match != "" {
+	case workspace.ShellReplacementWCFileStats:
 		msg := fmt.Sprintf(
 			"The request counts file size/lines via shell. File-stat capability is available through file_stats; it returns structured file, byte, and line counts without a shell prompt.\n"+
 				"candidate_request: {\"tool\":\"file_stats\",\"path\":%q}\n"+
 				"direct_tool_fallback: if file stats do not answer the question, the original command remains available.",
-			match)
+			candidate.Request.Path)
 
 		return d.shellRedirectDecision(req, shellRedirect{
 			kind:              "shell|file_stats",
-			capability:        workspace.Capability("file_stats"),
+			capability:        candidate.Capability,
 			summary:           "Redirected to file_stats",
 			hardRejectSummary: "Shell wc blocked by file-stat capability",
 			message:           msg,
 		})
-	}
-
-	if match := matchShellGrepIdentifier(cmd); match != nil {
-		lang, ok := languageForShellGrep(match, ws)
+	case workspace.ShellReplacementSymbolSearch:
+		lang, ok := languageForShellGrep(candidate.Symbol, ws)
 		if !ok {
 			return RedirectDecision{}
 		}
@@ -993,21 +882,14 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 		// Prefer references when the model already named a file (that's
 		// the "where is X used in this file" question); workspace_symbol
 		// otherwise.
-		primary := workspace.CapWorkspaceSymbol
-		if match.path != "" {
-			primary = workspace.CapReferences
-		}
+		primary := candidate.Capability
 
-		replacement := lang.Tool(primary)
-		if replacement == "" {
+		toolName := lang.Tool(primary)
+		if toolName == "" {
 			// Fall back to the other side of the symbol pair.
 			alt := workspace.CapFindSymbol
-			if primary == workspace.CapReferences {
-				alt = workspace.CapFindSymbol
-			}
-
-			replacement = lang.Tool(alt)
-			if replacement == "" {
+			toolName = lang.Tool(alt)
+			if toolName == "" {
 				return RedirectDecision{}
 			}
 
@@ -1026,12 +908,12 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 		var b strings.Builder
 
 		fmt.Fprintf(&b, "The request greps for an identifier via shell on %s code. Capability route: %s via adapter %s; it returns file, line, and qualified-name for each hit.\n",
-			lang.Name, primary, replacement)
+			lang.Name, primary, toolName)
 
-		if match.path != "" {
-			fmt.Fprintf(&b, "candidate_request: {\"tool\":%q,\"pattern\":%q,\"path\":%q}\n", replacement, match.pattern, match.path)
+		if candidate.Symbol.Path != "" {
+			fmt.Fprintf(&b, "candidate_request: {\"tool\":%q,\"pattern\":%q,\"path\":%q}\n", toolName, candidate.Symbol.Pattern, candidate.Symbol.Path)
 		} else {
-			fmt.Fprintf(&b, "candidate_request: {\"tool\":%q,\"pattern\":%q}\n", replacement, match.pattern)
+			fmt.Fprintf(&b, "candidate_request: {\"tool\":%q,\"pattern\":%q}\n", toolName, candidate.Symbol.Pattern)
 		}
 
 		b.WriteString("direct_tool_fallback: if the capability route returns nothing, the original command remains available.")
@@ -1039,15 +921,15 @@ func (d *DiscoveryRedirect) considerShell(req workspace.ToolRequest, ws *workspa
 		return d.shellRedirectDecision(req, shellRedirect{
 			kind:              kind,
 			capability:        primary,
-			summary:           "Redirected to " + replacement,
+			summary:           "Redirected to " + toolName,
 			hardRejectSummary: fmt.Sprintf("Shell grep blocked by %s capability", primary),
 			message:           b.String(),
 			language:          lang.Name,
 			decisionGuide:     guide,
 		})
+	default:
+		return RedirectDecision{}
 	}
-
-	return RedirectDecision{}
 }
 
 type shellRedirect struct {
@@ -1088,420 +970,16 @@ func (d *DiscoveryRedirect) shellRedirectDecision(req workspace.ToolRequest, red
 	}
 }
 
-type shellSedMatch struct {
-	path       string
-	start, end int
-}
-
-// reShellSedRange matches the common `sed -n 'A,Bp' FILE` shape. The
-// quoted address form `'1,20p'` is the only flag the logs observed -- other
-// sed invocations (in-place edits, script form) fall through and execute.
-var reShellSedRange = regexp.MustCompile(`^sed\s+-n\s+['"]?(\d+),(\d+)p['"]?\s+(\S+)\s*$`)
-
-var reShellSedWCStats = regexp.MustCompile(`^sed\s+-n\s+['"]?(\d+)(?:,(\d+))?p['"]?\s+(\S+)\s*\|\s*wc\s+-c\s*$`)
-
-func matchShellSedRange(cmd string) *shellSedMatch {
-	m := reShellSedRange.FindStringSubmatch(cmd)
-	if m == nil {
-		return nil
-	}
-
-	start, err := strconv.Atoi(m[1])
-	if err != nil {
-		return nil
-	}
-
-	end, err := strconv.Atoi(m[2])
-	if err != nil || end < start {
-		return nil
-	}
-
-	return &shellSedMatch{path: m[3], start: start, end: end}
-}
-
-func matchShellSedWCStats(cmd string) *shellSedMatch {
-	if strings.ContainsAny(cmd, "$`") {
-		return nil
-	}
-
-	m := reShellSedWCStats.FindStringSubmatch(cmd)
-	if m == nil {
-		return nil
-	}
-
-	start, err := strconv.Atoi(m[1])
-	if err != nil {
-		return nil
-	}
-
-	end := start
-	if strings.TrimSpace(m[2]) != "" {
-		parsedEnd, err := strconv.Atoi(m[2])
-		if err != nil || parsedEnd < start {
-			return nil
-		}
-		end = parsedEnd
-	}
-
-	return &shellSedMatch{path: m[3], start: start, end: end}
-}
-
-type shellGrepMatch struct {
-	pattern string
-	path    string
-	glob    string
-}
-
-func matchShellWCStats(cmd string) string {
-	if strings.ContainsAny(cmd, "$`") || shellCommandHasControlOperator(cmd) {
-		return ""
-	}
-
-	fields := shellCommandFields(cmd)
-	if len(fields) < 2 || fields[0] != "wc" {
-		return ""
-	}
-
-	pathArg := ""
-
-	for i := 1; i < len(fields); i++ {
-		field := fields[i]
-		if field == "--" {
-			if i+1 >= len(fields) || pathArg != "" {
-				return ""
-			}
-
-			pathArg = fields[i+1]
-			i++
-
-			continue
-		}
-
-		if strings.HasPrefix(field, "-") {
-			if !isSupportedWCFlag(field) {
-				return ""
-			}
-
-			continue
-		}
-
-		if pathArg != "" {
-			return ""
-		}
-
-		pathArg = field
-	}
-
-	return stripShellQuotes(pathArg)
-}
-
-func isSupportedWCFlag(flag string) bool {
-	if flag == "" || flag[0] != '-' {
-		return false
-	}
-
-	switch flag {
-	case "-l", "-c", "-m", "-w":
-		return true
-	}
-
-	if strings.HasPrefix(flag, "--") {
-		switch flag {
-		case "--lines", "--bytes", "--chars", "--words":
-			return true
-		default:
-			return false
-		}
-	}
-
-	for _, r := range strings.TrimPrefix(flag, "-") {
-		switch r {
-		case 'l', 'c', 'm', 'w':
-		default:
-			return false
-		}
-	}
-
-	return true
-}
-
-var reShellGrepIdentToken = regexp.MustCompile(`^[A-Za-z_][\w:]*$`)
-
-// matchShellGrepIdentifier accepts `grep [-flags] PATTERN [FILE]` (or `rg`
-// in place of `grep`) where PATTERN, stripped of optional single/double
-// quotes, is a bare identifier. Pipes, redirections, and regex metachars
-// anywhere in the line disqualify the whole match -- we only rewrite the
-// unambiguous symbol-lookup shape.
-func matchShellGrepIdentifier(cmd string) *shellGrepMatch {
-	if strings.ContainsAny(cmd, "$`") || shellCommandHasControlOperator(cmd) {
-		return nil
-	}
-
-	fields := shellCommandFields(cmd)
-	if len(fields) < 2 {
-		return nil
-	}
-
-	if fields[0] != "grep" && fields[0] != "rg" {
-		return nil
-	}
-
-	i := 1
-	// Skip flag tokens. Accept single-letter combos (-rn) and long
-	// flags (--include=foo). Capture include/glob flags because they
-	// are the only language signal in common unscoped grep/rg searches.
-	glob := ""
-
-	for i < len(fields) && strings.HasPrefix(fields[i], "-") {
-		// -E, -P, -F change pattern semantics -- bail. The caller's
-		// pattern might be valid identifier in basic grep but a regex
-		// in -E grep, so we don't rewrite those.
-		if fields[i] == "-E" || fields[i] == "-P" || fields[i] == "-F" ||
-			fields[i] == "--extended-regexp" || fields[i] == "--perl-regexp" {
-
-			return nil
-		}
-
-		if strings.HasPrefix(fields[i], "--include=") {
-			glob = stripShellQuotes(strings.TrimPrefix(fields[i], "--include="))
-		} else if fields[i] == "-g" && i+1 < len(fields) {
-			i++
-
-			glob = stripShellQuotes(fields[i])
-		}
-
-		i++
-	}
-
-	if i >= len(fields) {
-		return nil
-	}
-
-	pattern, ok := shellGrepSymbolPattern(stripShellQuotes(fields[i]))
-	if !ok {
-		return nil
-	}
-
-	i++
-
-	path := ""
-
-	for i < len(fields) {
-		token := fields[i]
-		if strings.HasPrefix(token, "--include=") {
-			glob = stripShellQuotes(strings.TrimPrefix(token, "--include="))
-			i++
-
-			continue
-		}
-
-		if token == "-g" && i+1 < len(fields) {
-			i++
-
-			glob = stripShellQuotes(fields[i])
-			i++
-
-			continue
-		}
-
-		if strings.HasPrefix(token, "-") {
-			i++
-			continue
-		}
-
-		if path != "" {
-			return nil
-		}
-
-		candidate := stripShellQuotes(token)
-		if strings.ContainsAny(candidate, "*?[]{}()") {
-			return nil
-		}
-
-		path = candidate
-		i++
-	}
-
-	return &shellGrepMatch{pattern: pattern, path: path, glob: glob}
-}
-
-func shellCommandHasControlOperator(cmd string) bool {
-	var quote rune
-
-	escaped := false
-
-	for _, r := range cmd {
-		if escaped {
-			escaped = false
-			continue
-		}
-
-		if r == '\\' {
-			if quote != '\'' {
-				escaped = true
-			}
-
-			continue
-		}
-
-		if quote != 0 {
-			if r == quote {
-				quote = 0
-			}
-
-			continue
-		}
-
-		if r == '\'' || r == '"' {
-			quote = r
-			continue
-		}
-
-		if strings.ContainsRune("|><;&", r) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func shellCommandFields(cmd string) []string {
-	var (
-		fields []string
-		b      strings.Builder
-		quote  rune
-	)
-
-	escaped := false
-
-	for _, r := range cmd {
-		if escaped {
-			b.WriteRune(r)
-
-			escaped = false
-
-			continue
-		}
-
-		if r == '\\' {
-			if quote == '\'' {
-				b.WriteRune(r)
-			} else {
-				escaped = true
-			}
-
-			continue
-		}
-
-		if quote != 0 {
-			if r == quote {
-				quote = 0
-			} else {
-				b.WriteRune(r)
-			}
-
-			continue
-		}
-
-		if r == '\'' || r == '"' {
-			quote = r
-			continue
-		}
-
-		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
-			if b.Len() > 0 {
-				fields = append(fields, b.String())
-				b.Reset()
-			}
-
-			continue
-		}
-
-		b.WriteRune(r)
-	}
-
-	if escaped {
-		b.WriteRune('\\')
-	}
-
-	if b.Len() > 0 {
-		fields = append(fields, b.String())
-	}
-
-	return fields
-}
-
-func shellGrepSymbolPattern(pattern string) (string, bool) {
-	pattern = strings.TrimSpace(pattern)
-	if reShellGrepIdentToken.MatchString(pattern) {
-		return pattern, true
-	}
-
-	if strings.ContainsAny(pattern, "*+?[]{}()^$") {
-		return "", false
-	}
-
-	if first, ok := firstIdentifierAlternative(pattern); ok {
-		return first, true
-	}
-
-	if ident, ok := extractUnambiguousSyntaxIdentifier(pattern); ok {
-		return ident, true
-	}
-
-	return "", false
-}
-
-func firstIdentifierAlternative(pattern string) (string, bool) {
-	normalized := strings.ReplaceAll(pattern, `\|`, "|")
-	if !strings.Contains(normalized, "|") {
-		return "", false
-	}
-
-	parts := strings.Split(normalized, "|")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if !looksLikeIdentifier(part) {
-			return "", false
-		}
-	}
-
-	first := strings.TrimSpace(parts[0])
-
-	return first, first != ""
-}
-
-func extractUnambiguousSyntaxIdentifier(pattern string) (string, bool) {
-	var found string
-
-	for _, extractors := range syntaxExtractors {
-		for _, re := range extractors {
-			m := re.FindStringSubmatch(pattern)
-			if len(m) < 2 || m[1] == "" {
-				continue
-			}
-
-			if found != "" && found != m[1] {
-				return "", false
-			}
-
-			found = m[1]
-		}
-	}
-
-	return found, found != ""
-}
-
-func languageForShellGrep(match *shellGrepMatch, ws *workspace.Manager) (workspace.LanguageSupport, bool) {
-	if match == nil || ws == nil {
+func languageForShellGrep(symbol workspace.ShellSymbolSearch, ws *workspace.Manager) (workspace.LanguageSupport, bool) {
+	if ws == nil {
 		return workspace.LanguageSupport{}, false
 	}
 
-	if lang, ok := languageFromConcretePath(match.path); ok {
+	if lang, ok := languageFromConcretePath(symbol.Path); ok {
 		return lang, true
 	}
 
-	if lang, ok := languageFromGlob(match.glob); ok {
+	if lang, ok := languageFromGlob(symbol.Glob); ok {
 		return lang, true
 	}
 
@@ -1511,118 +989,6 @@ func languageForShellGrep(match *shellGrepMatch, ws *workspace.Manager) (workspa
 	}
 
 	return workspace.LanguageSupport{}, false
-}
-
-// reShellHeadTail matches `head -N FILE` / `tail -N FILE` / `head -n N FILE`.
-// Only the simple single-file form redirects; multi-file or piped variants
-// fall through to normal execution.
-var reShellHeadTail = regexp.MustCompile(`^(head|tail)\s+(?:-n\s+)?-?(\d+)\s+(\S+)\s*$`)
-
-type shellHeadTailMatch struct {
-	path       string
-	start, end int
-}
-
-// matchShellHeadTailFile rewrites `head -N FILE` -> read_file lines 1..N
-// and `tail -N FILE` -> read_file requesting a wide-enough trailing
-// window. For tail we use start_line=1 end_line=0 (open-ended) because
-// without reading the file we don't know the line count; read_file's
-// own clamping logic will handle it.
-func matchShellHeadTailFile(cmd string) *shellHeadTailMatch {
-	if strings.ContainsAny(cmd, "|><$`;&") {
-		return nil
-	}
-
-	m := reShellHeadTail.FindStringSubmatch(cmd)
-	if m == nil {
-		return nil
-	}
-
-	n, err := strconv.Atoi(m[2])
-	if err != nil || n <= 0 {
-		return nil
-	}
-
-	path := m[3]
-	if strings.ContainsAny(path, "*?[]{}()") {
-		return nil
-	}
-
-	switch m[1] {
-	case "head":
-		return &shellHeadTailMatch{path: path, start: 1, end: n}
-	case "tail":
-		// For tail we don't know total lines; point the model at a
-		// whole-file read_file so the workspace layer can choose the
-		// right log/source behavior.
-		return &shellHeadTailMatch{path: path, start: 1, end: 0}
-	}
-
-	return nil
-}
-
-// matchShellCatWholeFile rewrites `cat FILE` (single file, no flags,
-// no pipe) -> read_file on that path. Returns the file path when matched,
-// empty string otherwise.
-func matchShellCatWholeFile(cmd string) string {
-	if strings.ContainsAny(cmd, "|><$`;&") {
-		return ""
-	}
-
-	fields := strings.Fields(cmd)
-	if len(fields) != 2 || fields[0] != "cat" {
-		return ""
-	}
-
-	path := fields[1]
-	if strings.HasPrefix(path, "-") {
-		return ""
-	}
-
-	if strings.ContainsAny(path, "*?[]{}()") {
-		return ""
-	}
-
-	return path
-}
-
-// reShellFindName matches the common `find PATH -name PATTERN` shape.
-// Go's regexp (RE2) doesn't support backreferences, so we match with
-// liberal quote handling and strip quotes from the captured pattern.
-// Any additional predicates (-type, -path, -exec, -mtime, etc.) or
-// pipe/redirection disqualify the match so we don't silently rewrite
-// complex finds.
-var reShellFindName = regexp.MustCompile(`^find\s+\S+\s+-name\s+(\S+)\s*$`)
-
-// matchShellFindName rewrites `find PATH -name PATTERN` -> search_files
-// with the same pattern. Returns the pattern when matched, empty string
-// otherwise.
-func matchShellFindName(cmd string) string {
-	if strings.ContainsAny(cmd, "|><$`;&") {
-		return ""
-	}
-
-	m := reShellFindName.FindStringSubmatch(cmd)
-	if m == nil {
-		return ""
-	}
-
-	pattern := stripShellQuotes(m[1])
-	if pattern == "" {
-		return ""
-	}
-
-	return pattern
-}
-
-func stripShellQuotes(s string) string {
-	if len(s) >= 2 {
-		if (s[0] == '\'' && s[len(s)-1] == '\'') || (s[0] == '"' && s[len(s)-1] == '"') {
-			return s[1 : len(s)-1]
-		}
-	}
-
-	return s
 }
 
 type debugLogSearchHit struct {

@@ -818,7 +818,7 @@ func TestAgentGuidanceDocumentsHarnessBoundaryChecklist(t *testing.T) {
 		filepath.Join(root, "AGENTS.md"): {
 			"model owns strategy",
 			"harness owns contracts",
-			"Avoid pass-through wrappers",
+			"Do not create pass-through wrappers",
 			"typed contracts",
 			"Evidence tools should report findings",
 			"grounded in code, tests, logs, tool output",

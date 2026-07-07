@@ -90,7 +90,7 @@ func validateExploreShellCommand(command string) error {
 	}
 
 	for _, segment := range splitShellSegments(command) {
-		fields := strings.Fields(segment)
+		fields := shellCommandFields(segment)
 		if len(fields) == 0 {
 			continue
 		}

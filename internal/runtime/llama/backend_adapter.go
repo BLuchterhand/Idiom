@@ -36,6 +36,17 @@ type backendAdapter interface {
 	StructuredOutputCapabilities() StructuredOutputCapabilities
 }
 
+type bearerAuth struct{}
+
+func (bearerAuth) AuthHeaders(apiKey string) map[string]string {
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return nil
+	}
+
+	return map[string]string{"Authorization": "Bearer " + apiKey}
+}
+
 type chatCompletionsBackendAdapter interface {
 	backendAdapter
 	ChatCompletionsPath() string
@@ -272,6 +283,7 @@ func (a localChatAdapter) ChatCompletionsPayload(messages []ChatMessage, opts Ch
 }
 
 type hostedChatAdapter struct {
+	bearerAuth
 	kind              string
 	modelsPath        string
 	chatPath          string
@@ -304,10 +316,6 @@ func (a hostedChatAdapter) ChatCompletionsPath() string {
 func (a hostedChatAdapter) RequiresAuth() bool { return true }
 
 func (a hostedChatAdapter) DefaultAPIKeyEnv() string { return a.defaultAPIKeyEnv }
-
-func (a hostedChatAdapter) AuthHeaders(apiKey string) map[string]string {
-	return bearerAuthHeaders(apiKey)
-}
 
 func (a hostedChatAdapter) StructuredOutputCapabilities() StructuredOutputCapabilities {
 	return StructuredOutputCapabilities{
@@ -387,6 +395,7 @@ func (a hostedChatAdapter) ChatMessagesForRequest(messages []ChatMessage, _ Chat
 }
 
 type responsesAdapter struct {
+	bearerAuth
 	kind             string
 	defaultAPIKeyEnv string
 }
@@ -400,10 +409,6 @@ func (a responsesAdapter) ModelsPath() string { return "/v1/models" }
 func (a responsesAdapter) RequiresAuth() bool { return true }
 
 func (a responsesAdapter) DefaultAPIKeyEnv() string { return a.defaultAPIKeyEnv }
-
-func (a responsesAdapter) AuthHeaders(apiKey string) map[string]string {
-	return bearerAuthHeaders(apiKey)
-}
 
 func (a responsesAdapter) StructuredOutputCapabilities() StructuredOutputCapabilities {
 	return StructuredOutputCapabilities{
@@ -441,12 +446,4 @@ func (a responsesAdapter) ResponsesPayload(messages []ChatMessage, opts ChatOpti
 	}
 
 	return payload, true
-}
-
-func bearerAuthHeaders(apiKey string) map[string]string {
-	if strings.TrimSpace(apiKey) == "" {
-		return nil
-	}
-
-	return map[string]string{"Authorization": "Bearer " + strings.TrimSpace(apiKey)}
 }
