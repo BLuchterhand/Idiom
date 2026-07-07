@@ -7,13 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	recoverycontract "idiom/internal/contracts/recovery"
+	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/textutil"
 
 	"idiom/internal/workflows/recovery"
@@ -312,14 +312,12 @@ func (m *Manager) recoveryPartialState(ctx context.Context, record recoverycontr
 }
 
 func gitDirtyPathsForRecovery(ctx context.Context, root string) ([]string, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", root, "status", "--porcelain", "--untracked-files=all")
-
-	out, err := cmd.Output()
+	out, err := gitstate.Output(ctx, root, "status", "--porcelain", "--untracked-files=all")
 	if err != nil {
 		return nil, err
 	}
 
-	return parseRecoveryGitPorcelainPaths(string(out)), nil
+	return parseRecoveryGitPorcelainPaths(out), nil
 }
 
 func parseRecoveryGitPorcelainPaths(output string) []string {
@@ -327,16 +325,10 @@ func parseRecoveryGitPorcelainPaths(output string) []string {
 
 	var paths []string
 
-	for _, line := range strings.Split(output, "\n") {
-		if len(line) < 4 {
+	for _, line := range gitstate.PorcelainLines(output) {
+		path := gitstate.PathFromPorcelainLine(line)
+		if path == "" {
 			continue
-		}
-
-		path := strings.TrimSpace(line[3:])
-		if strings.Contains(path, " -> ") {
-			parts := strings.Split(path, " -> ")
-
-			path = parts[len(parts)-1]
 		}
 
 		path = filepath.ToSlash(strings.Trim(path, `"`))

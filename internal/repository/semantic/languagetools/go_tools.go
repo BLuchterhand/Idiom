@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/semantic"
 	semanticgo "idiom/internal/repository/semantic/golang"
@@ -962,17 +963,12 @@ func (m *Manager) currentGoIndexToken() string {
 		return ""
 	}
 
-	head, err := exec.Command("git", "-C", m.Root(), "rev-parse", "HEAD").Output()
+	snapshot, err := gitstate.Current(context.Background(), m.Root())
 	if err != nil {
 		return ""
 	}
 
-	status, err := exec.Command("git", "-C", m.Root(), "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=all").Output()
-	if err != nil {
-		return ""
-	}
-
-	return strings.TrimSpace(string(head)) + "\n" + strings.TrimSpace(string(status))
+	return snapshot.Token()
 }
 
 func (m *Manager) goplsBinary() string {

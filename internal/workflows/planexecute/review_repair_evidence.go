@@ -1,13 +1,14 @@
 package planexecute
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	planartifact "idiom/internal/contracts/planartifact"
+	"idiom/internal/platform/gitstate"
 )
 
 func CollectReviewRepairEvidence(root string, paths []string, baseline *ReviewRepairBaseline) ReviewRepairEvidence {
@@ -98,21 +99,20 @@ func collectReviewRepairDiffFromBaseline(root string, paths []string, baseline R
 }
 
 func runGitEvidence(root string, args ...string) string {
-	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
-	out, err := cmd.CombinedOutput()
+	result := gitstate.CombinedOutput(context.Background(), root, args...)
 
-	if err != nil && len(out) == 0 {
-		return err.Error()
+	if result.Err != nil && result.Stdout == "" {
+		return result.Err.Error()
 	}
 
-	return string(out)
+	return result.Stdout
 }
 
 func runGitEvidenceExit(root string, args ...string) int {
-	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return exitErr.ExitCode()
+	result := gitstate.Run(context.Background(), root, args...)
+	if result.Err != nil {
+		if result.ExitError {
+			return result.ExitCode
 		}
 
 		return 127
