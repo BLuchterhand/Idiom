@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -100,6 +101,70 @@ TEST_CASE("after") {}
 	}
 	if !strings.Contains(got["native/tests/test_a.cpp"], `TEST_CASE("after")`) {
 		t.Fatalf("test snippet path/content not captured correctly: %#v", snippets)
+	}
+}
+
+func TestRequiredEditSnippetsFromPromptCarriesOldTextAnchor(t *testing.T) {
+	prompt := `
+## Required Edits
+
+In ` + "`native/src/a.cpp`" + `, replace the source line.
+
+old_text:
+
+` + "```text" + `
+int before();
+` + "```" + `
+
+new_text:
+
+` + "```text" + `
+int after();
+` + "```" + `
+`
+	snippets := RequiredEditSnippetsFromPrompt(prompt, []string{"native/src/a.cpp"})
+
+	if got := len(snippets); got != 1 {
+		t.Fatalf("expected one new snippet, got %d: %#v", got, snippets)
+	}
+	if snippets[0].Path != "native/src/a.cpp" {
+		t.Fatalf("snippet path = %q, want native/src/a.cpp", snippets[0].Path)
+	}
+	if strings.Contains(snippets[0].Content, "before") {
+		t.Fatalf("old_text should not be captured as required content: %#v", snippets[0])
+	}
+	if !strings.Contains(snippets[0].Anchor, "int before();") {
+		t.Fatalf("old_text anchor not carried: %#v", snippets[0])
+	}
+
+	data, err := json.Marshal(snippets[0])
+	if err != nil {
+		t.Fatalf("marshal snippet: %v", err)
+	}
+	if strings.Contains(string(data), "Anchor") || strings.Contains(string(data), "before") {
+		t.Fatalf("internal anchor leaked into JSON: %s", data)
+	}
+}
+
+func TestRequiredEditSnippetsFromPromptNormalizesBackslashLabels(t *testing.T) {
+	prompt := `
+## Required Edits
+
+In ` + "`native\\src\\a.cpp`" + `, replace the source line.
+
+new_text:
+
+` + "```text" + `
+int after();
+` + "```" + `
+`
+	snippets := RequiredEditSnippetsFromPrompt(prompt, []string{"native/src/a.cpp"})
+
+	if got := len(snippets); got != 1 {
+		t.Fatalf("expected one snippet, got %d: %#v", got, snippets)
+	}
+	if snippets[0].Path != "native/src/a.cpp" {
+		t.Fatalf("snippet path = %q, want normalized required path", snippets[0].Path)
 	}
 }
 

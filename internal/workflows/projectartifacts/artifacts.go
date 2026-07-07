@@ -17,6 +17,7 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
 	"idiom/internal/repository/discovery"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 )
 
 const (
@@ -435,7 +436,7 @@ func summarizeDirModule(root string, dir string) (count int, sample []string, la
 			sample = append(sample, rel)
 		}
 
-		if lang, ok := workspace.LanguageForFile(rel); ok {
+		if lang, ok := semanticlanguage.LanguageForFile(rel); ok {
 			languageSet[lang.Name] = struct{}{}
 		}
 
@@ -837,7 +838,7 @@ func languagesForFiles(paths []string) []string {
 	set := make(map[string]struct{})
 
 	for _, path := range paths {
-		if lang, ok := workspace.LanguageForFile(path); ok {
+		if lang, ok := semanticlanguage.LanguageForFile(path); ok {
 			set[lang.Name] = struct{}{}
 		}
 	}

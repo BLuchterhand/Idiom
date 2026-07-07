@@ -2,32 +2,19 @@ package commandmeta
 
 import "strings"
 
-var telemetrySubcommandPrefixes = map[string]bool{
-	"architect": true, "audit": true, "brief": true, "context": true,
-	"lane": true, "local-ops": true, "mcp": true, "product": true,
-	"product-evidence": true, "ranker": true, "recover": true, "release": true,
-	"tool": true,
-}
-
-var telemetryDirectCommands = map[string]bool{
-	"artifact":  true,
-	"doctor":    true,
-	"implement": true,
-}
-
 func TelemetryName(args []string) string {
 	if len(args) == 0 {
 		return "tui"
 	}
 
-	if telemetrySubcommandPrefixes[args[0]] {
+	switch args[0] {
+	case "architect", "audit", "brief", "context", "lane", "local-ops", "mcp",
+		"product", "product-evidence", "ranker", "recover", "release", "tool":
 		if len(args) > 1 {
 			return args[0] + ":" + args[1]
 		}
 		return args[0]
-	}
-
-	if telemetryDirectCommands[args[0]] {
+	case "artifact", "doctor", "implement":
 		return args[0]
 	}
 

@@ -1868,6 +1868,53 @@ func TestContextZoomAcceptsHandleAlias(t *testing.T) {
 	}
 }
 
+func TestContextZoomIncludeSourceKeepsGraphOnlyOutput(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/zoomsource\n\ngo 1.22\n")
+	writeWorkspaceFile(t, filepath.Join(root, "pkg", "pkg.go"), "package pkg\n\nfunc Run() string { return \"source body\" }\n")
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	if result := mgr.Execute(context.Background(), ToolRequest{Tool: "context_index", Language: "go"}); result.Error != "" {
+		t.Fatalf("context_index returned error: %v\n%s", result.Error, result.Output)
+	}
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:          "context_zoom",
+		Handle:        "symbol://pkg/pkg.go#Run",
+		Language:      "go",
+		IncludeSource: true,
+	})
+	if result.Error != "" {
+		t.Fatalf("context_zoom include_source returned error: %v\n%s", result.Error, result.Output)
+	}
+
+	var zoom struct {
+		Node *struct {
+			ID         string         `json:"id"`
+			Path       string         `json:"path"`
+			Source     string         `json:"source"`
+			SourceBody string         `json:"source_body"`
+			Properties map[string]any `json:"properties"`
+		} `json:"node"`
+	}
+	if err := json.Unmarshal([]byte(result.Output), &zoom); err != nil {
+		t.Fatalf("decode context_zoom output: %v\n%s", err, result.Output)
+	}
+
+	if zoom.Node == nil || zoom.Node.ID != "symbol://pkg/pkg.go#Run" || zoom.Node.Path != "pkg/pkg.go" {
+		t.Fatalf("expected graph node for Run, got %#v", zoom.Node)
+	}
+	if zoom.Node.Source != "" || zoom.Node.SourceBody != "" {
+		t.Fatalf("context_zoom include_source currently emits graph metadata, not source body: %#v", zoom.Node)
+	}
+	if _, ok := zoom.Node.Properties["source"]; ok {
+		t.Fatalf("context_zoom include_source must not hide source body in node properties: %#v", zoom.Node.Properties)
+	}
+	if strings.Contains(result.Output, "return \"source body\"") {
+		t.Fatalf("context_zoom include_source unexpectedly emitted source body:\n%s", result.Output)
+	}
+}
+
 func TestContextTracePackCapturesFailingCommandAsEvidence(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceFile(t, filepath.Join(root, "app.py"), "def run():\n    raise AssertionError('bad')\n")

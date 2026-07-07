@@ -27,8 +27,6 @@ type BenchmarkOptions struct {
 	JSON              bool
 }
 
-type localOpsBenchmarkOptions = BenchmarkOptions
-
 type Dependencies struct {
 	Version    string
 	Commit     string
@@ -58,7 +56,7 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec
 }
 
 func runLocalOpsBenchmark(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder, deps Dependencies) int {
-	opts := localOpsBenchmarkOptions{}
+	opts := BenchmarkOptions{}
 	fs := flag.NewFlagSet("idiom local-ops benchmark", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&opts.ConfigPath, "config", ".idiom/config.json", "path to project config")
@@ -109,14 +107,6 @@ func runLocalOpsBenchmark(args []string, stdout io.Writer, stderr io.Writer, rec
 	printLocalOpsBenchmarkText(stdout, report)
 
 	return 0
-}
-
-func BuildBenchmarkReport(opts BenchmarkOptions, rec *telemetry.Recorder, depOverrides ...Dependencies) (localops.BenchmarkReport, error) {
-	return buildLocalOpsBenchmarkReportWithDeps(opts, rec, resolveDependencies(depOverrides...))
-}
-
-func buildLocalOpsBenchmarkReport(opts localOpsBenchmarkOptions, rec *telemetry.Recorder) (localops.BenchmarkReport, error) {
-	return buildLocalOpsBenchmarkReportWithDeps(opts, rec, resolveDependencies())
 }
 
 func buildLocalOpsBenchmarkReportWithDeps(opts BenchmarkOptions, rec *telemetry.Recorder, deps Dependencies) (localops.BenchmarkReport, error) {

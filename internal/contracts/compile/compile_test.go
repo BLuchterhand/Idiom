@@ -370,6 +370,7 @@ func TestCompilePlanExecutePlannerIDsAreStableForEquivalentInput(t *testing.T) {
 			SourceBodyObligations:  []string{"internal/runtime/agent/runner.go", "internal/contracts/autonomy/contract.go"},
 			RecoveryBudget:         2,
 		},
+		ToolMetadata: plannerFixtureToolMetadata(),
 		MetadataTags: []string{"unit1"},
 	})
 	if err != nil {
@@ -418,7 +419,7 @@ func TestCompilePlanExecutePlannerDefaultsKeepRequiredEditsDistinctFromSourceBod
 
 func TestCompilePlanExecutePlannerAcceptsPlannerToolVocabulary(t *testing.T) {
 	input := plannerFixtureInput()
-	plannerTools := autonomy.PlanExecutePlannerToolNames()
+	plannerTools := plannerFixtureAllowedToolNames()
 
 	input.AllowedTools = plannerTools
 	input.RequiredTools = []string{"history_range", "history_symbol", "submit_plan"}
@@ -937,8 +938,42 @@ func plannerFixtureInput() PlanExecutePlannerInput {
 			SourceBodyObligations:  []string{"internal/runtime/agent/runner.go", "internal/contracts/autonomy/contract.go"},
 			RecoveryBudget:         2,
 		},
+		ToolMetadata: plannerFixtureToolMetadata(),
 		MetadataTags: []string{"unit1"},
 	}
+}
+
+func plannerFixtureToolMetadata() []PlanExecutePlannerToolMetadata {
+	return []PlanExecutePlannerToolMetadata{
+		{Tool: "apply_patch", Capabilities: []autonomy.Capability{autonomy.CapabilityApplyPatch}, SideEffect: autonomy.SideEffectAdditive},
+		{Tool: "blame_range", Capabilities: []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}, SideEffect: autonomy.SideEffectReadOnly, PlannerAllowed: true},
+		{Tool: "code_navigate", Capabilities: []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}, SideEffect: autonomy.SideEffectReadOnly, PlannerAllowed: true},
+		{Tool: "context_impact", Capabilities: []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}, SideEffect: autonomy.SideEffectReadOnly, PlannerAllowed: true},
+		{Tool: "context_pack", Capabilities: []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}, SideEffect: autonomy.SideEffectReadOnly, PlannerAllowed: true},
+		{Tool: "context_query", Capabilities: []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}, SideEffect: autonomy.SideEffectReadOnly, PlannerAllowed: true},
+		{Tool: "delegate_edit", Capabilities: []autonomy.Capability{autonomy.CapabilityDelegation}, SideEffect: autonomy.SideEffectAdditive},
+		{Tool: "harness_feedback", Capabilities: []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}, SideEffect: autonomy.SideEffectAdditive, PlannerAllowed: true},
+		{Tool: "history_range", Capabilities: []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}, SideEffect: autonomy.SideEffectReadOnly, PlannerAllowed: true},
+		{Tool: "history_symbol", Capabilities: []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}, SideEffect: autonomy.SideEffectReadOnly, PlannerAllowed: true},
+		{Tool: "read_file", Capabilities: []autonomy.Capability{autonomy.CapabilityBoundedRead}, SideEffect: autonomy.SideEffectReadOnly, PlannerAllowed: true},
+		{Tool: "search_content", Capabilities: []autonomy.Capability{autonomy.CapabilityLiteralSearch}, SideEffect: autonomy.SideEffectReadOnly, PlannerAllowed: true},
+		{Tool: "search_files", Capabilities: []autonomy.Capability{autonomy.CapabilityLiteralSearch}, SideEffect: autonomy.SideEffectReadOnly, PlannerAllowed: true},
+		{Tool: "shell", Capabilities: []autonomy.Capability{autonomy.CapabilityShellVerification}, SideEffect: autonomy.SideEffectUnknown},
+		{Tool: "source_sanity", Capabilities: []autonomy.Capability{autonomy.CapabilityShellVerification}, SideEffect: autonomy.SideEffectUnknown},
+		{Tool: "submit_plan", Capabilities: []autonomy.Capability{autonomy.CapabilityPlanSubmission}, SideEffect: autonomy.SideEffectAdditive, PlannerAllowed: true},
+		{Tool: "task", Capabilities: []autonomy.Capability{autonomy.CapabilityDelegation}, SideEffect: autonomy.SideEffectAdditive},
+	}
+}
+
+func plannerFixtureAllowedToolNames() []string {
+	var tools []string
+	for _, entry := range plannerFixtureToolMetadata() {
+		if entry.PlannerAllowed {
+			tools = append(tools, entry.Tool)
+		}
+	}
+
+	return sortedStrings(tools)
 }
 
 func findActiveAuthorityDecision(t *testing.T, result CompileResult) autonomy.PolicyDecision {

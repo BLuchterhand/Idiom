@@ -219,7 +219,7 @@ func printBriefPreloadList(stdout io.Writer, projectRoot string) {
 	}
 }
 
-// briefLintFinding is the structured representation of one lint
+// LintFinding is the structured representation of one lint
 // entry consumed by the refine review/patch preload (§2.3, §6.1 Gap
 // 5). Schema documented at docs/refine-end-to-end-loop.md §6.1.
 // Fields:
@@ -236,19 +236,15 @@ type LintFinding struct {
 	Message  string `json:"message"`
 }
 
-type briefLintFinding = LintFinding
-
-// briefLintReport is the top-level JSON envelope from `idiom brief
+// LintReport is the top-level JSON envelope from `idiom brief
 // lint --json`. Exit reflects the python preflight script's exit
 // code (0=pass, 1=fail-with-blocks, 2=error). Findings is the full
 // finding list in original emission order.
 type LintReport struct {
-	Brief    string             `json:"brief"`
-	Exit     int                `json:"exit"`
-	Findings []briefLintFinding `json:"findings"`
+	Brief    string        `json:"brief"`
+	Exit     int           `json:"exit"`
+	Findings []LintFinding `json:"findings"`
 }
-
-type briefLintReport = LintReport
 
 func RunLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	emitJSON := false
@@ -318,7 +314,7 @@ func RunLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.R
 		}
 
 		combined := outBuf.String() + errBuf.String()
-		report := briefLintReport{
+		report := LintReport{
 			Brief:    briefPath,
 			Exit:     exit,
 			Findings: ParseLintFindings(briefPath, combined),

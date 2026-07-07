@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
@@ -225,7 +226,7 @@ func (m *Model) recoverDirectImplementationContext(prompt string, plan promptExe
 	}, &diagnostics, planexecuteadapters.Dependencies().RunPromptContextTool)
 
 	if diag := strings.TrimSpace(diagnostics.String()); diag != "" {
-		m.logMessage("direct_context_recovery", truncateImplementationDispatchText(diag, 700))
+		m.logMessage("direct_context_recovery", textutil.TruncateWithByteCount(diag, 700))
 	}
 
 	if strings.TrimSpace(section) == "" {
@@ -601,7 +602,8 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 }
 
 func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode modepolicy.Mode, prompt string) workerruntime.WorkerRuntimeBrief {
-	brief := turnRoutePlanRuntimeBrief(route, mode, m.workspaceAllowedTools())
+	route = normalizeTurnRoutePlan(route, mode)
+	brief := turnRoutePlanRuntimeBrief(route, mode, m.workspaceAllowedToolsForTaskFamily(route.Family))
 	if m != nil && m.planExecuteActive && strings.TrimSpace(m.forcedTaskFamily) == string(autonomy.TaskFamilyDirectQuestion) {
 		brief.PermissionProfile = string(workerruntime.PermissionConversationOnly)
 		brief.AllowedTools = nil
@@ -793,11 +795,6 @@ func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode modepolicy.Mo
 	return brief
 }
 
-const (
-	runtimeBriefGitHistoryEvidence = "git_history_rationale_for_intended_logic"
-	runtimeBriefGitHistoryTool     = "history_range_or_history_symbol"
-)
-
 func (m *Model) workspaceHasGitMetadata() bool {
 	if m == nil || m.workspace == nil {
 		return false
@@ -817,10 +814,10 @@ func (m *Model) workspaceHasGitMetadata() bool {
 
 func runtimeBriefWithoutGitHistoryRequirement(brief workerruntime.WorkerRuntimeBrief) workerruntime.WorkerRuntimeBrief {
 	brief.RequiredEvidence = filterBriefStrings(brief.RequiredEvidence, func(value string) bool {
-		return strings.TrimSpace(value) != runtimeBriefGitHistoryEvidence
+		return strings.TrimSpace(value) != string(workerruntime.RequiredEvidenceGitHistoryRationale)
 	})
 	brief.RequiredTools = filterBriefStrings(brief.RequiredTools, func(value string) bool {
-		return strings.TrimSpace(value) != runtimeBriefGitHistoryTool
+		return strings.TrimSpace(value) != workspace.RequiredToolGitHistoryLookup
 	})
 	brief.SearchPolicy = filterBriefStrings(brief.SearchPolicy, func(value string) bool {
 		lower := strings.ToLower(strings.TrimSpace(value))

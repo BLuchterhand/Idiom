@@ -1,62 +1,61 @@
 package workspace
 
-import "idiom/internal/contracts/autonomy"
-
 // ToolName constants for all built-in workspace tools.
 // Keep this list synchronized with builtInToolSurfaceCatalog.
 const (
-	ToolNameAppendFile         = autonomy.ToolNameAppendFile
-	ToolNameApplyPatch         = autonomy.ToolNameApplyPatch
-	ToolNameBlameRange         = autonomy.ToolNameBlameRange
-	ToolNameCodeNavigate       = autonomy.ToolNameCodeNavigate
-	ToolNameCodingRulesCheck   = autonomy.ToolNameCodingRulesCheck
-	ToolNameContextImpact      = autonomy.ToolNameContextImpact
-	ToolNameContextIndex       = autonomy.ToolNameContextIndex
-	ToolNameContextPack        = autonomy.ToolNameContextPack
-	ToolNameContextQuery       = autonomy.ToolNameContextQuery
-	ToolNameContextStatus      = autonomy.ToolNameContextStatus
-	ToolNameContextTracePack   = autonomy.ToolNameContextTracePack
-	ToolNameContextZoom        = autonomy.ToolNameContextZoom
-	ToolNameCtagsSymbols       = autonomy.ToolNameCtagsSymbols
-	ToolNameDelegateEdit       = autonomy.ToolNameDelegateEdit
-	ToolNameDependencyGraph    = autonomy.ToolNameDependencyGraph
-	ToolNameDiscoveryQuery     = autonomy.ToolNameDiscoveryQuery
-	ToolNameEditFile           = autonomy.ToolNameEditFile
-	ToolNameFileStats          = autonomy.ToolNameFileStats
-	ToolNameGitDiff            = autonomy.ToolNameGitDiff
-	ToolNameGitStatus          = autonomy.ToolNameGitStatus
-	ToolNameHarnessAudit       = autonomy.ToolNameHarnessAudit
-	ToolNameHarnessFeedback    = autonomy.ToolNameHarnessFeedback
-	ToolNameHistoryRange       = autonomy.ToolNameHistoryRange
-	ToolNameHistorySymbol      = autonomy.ToolNameHistorySymbol
-	ToolNameJoernScan          = autonomy.ToolNameJoernScan
-	ToolNameListFiles          = autonomy.ToolNameListFiles
-	ToolNameMkdir              = autonomy.ToolNameMkdir
-	ToolNameProductEfforts     = autonomy.ToolNameProductEfforts
-	ToolNameProductStatus      = autonomy.ToolNameProductStatus
-	ToolNamePwd                = autonomy.ToolNamePwd
-	ToolNameReadFile           = autonomy.ToolNameReadFile
-	ToolNameRecoveryDecompose  = autonomy.ToolNameRecoveryDecompose
-	ToolNameRecoveryInspect    = autonomy.ToolNameRecoveryInspect
-	ToolNameRecoveryStatus     = autonomy.ToolNameRecoveryStatus
-	ToolNameRg                 = autonomy.ToolNameRg
-	ToolNameSearchContent      = autonomy.ToolNameSearchContent
-	ToolNameSearchFiles        = autonomy.ToolNameSearchFiles
-	ToolNameSemgrepScan        = autonomy.ToolNameSemgrepScan
-	ToolNameShell              = autonomy.ToolNameShell
-	ToolNameSourceSanity       = autonomy.ToolNameSourceSanity
-	ToolNameSystemSearchAccess = autonomy.ToolNameSystemSearchAccess
-	ToolNameStructuralSearch   = autonomy.ToolNameStructuralSearch
-	ToolNameSubmitPlan         = autonomy.ToolNameSubmitPlan
-	ToolNameTask               = autonomy.ToolNameTask
-	ToolNameTaskLedger         = autonomy.ToolNameTaskLedger
-	ToolNameWriteFile          = autonomy.ToolNameWriteFile
+	ToolNameAppendFile         = "append_file"
+	ToolNameApplyPatch         = "apply_patch"
+	ToolNameBlameRange         = "blame_range"
+	ToolNameCodeNavigate       = "code_navigate"
+	ToolNameCodingRulesCheck   = "coding_rules_check"
+	ToolNameContextImpact      = "context_impact"
+	ToolNameContextIndex       = "context_index"
+	ToolNameContextPack        = "context_pack"
+	ToolNameContextQuery       = "context_query"
+	ToolNameContextStatus      = "context_status"
+	ToolNameContextTracePack   = "context_trace_pack"
+	ToolNameContextZoom        = "context_zoom"
+	ToolNameCtagsSymbols       = "ctags_symbols"
+	ToolNameDelegateEdit       = "delegate_edit"
+	ToolNameDependencyGraph    = "dependency_graph"
+	ToolNameDiscoveryQuery     = "discovery_query"
+	ToolNameEditFile           = "edit_file"
+	ToolNameFileStats          = "file_stats"
+	ToolNameGitDiff            = "git_diff"
+	ToolNameGitStatus          = "git_status"
+	ToolNameHarnessAudit       = "harness_audit"
+	ToolNameHarnessFeedback    = "harness_feedback"
+	ToolNameHistoryRange       = "history_range"
+	ToolNameHistorySymbol      = "history_symbol"
+	ToolNameJoernScan          = "joern_scan"
+	ToolNameListFiles          = "list_files"
+	ToolNameMkdir              = "mkdir"
+	ToolNameNote               = "note"
+	ToolNameProductEfforts     = "product_efforts"
+	ToolNameProductStatus      = "product_status"
+	ToolNamePwd                = "pwd"
+	ToolNameReadFile           = "read_file"
+	ToolNameRecoveryDecompose  = "recovery_decompose"
+	ToolNameRecoveryInspect    = "recovery_inspect"
+	ToolNameRecoveryStatus     = "recovery_status"
+	ToolNameRg                 = "rg"
+	ToolNameSearchContent      = "search_content"
+	ToolNameSearchFiles        = "search_files"
+	ToolNameSemgrepScan        = "semgrep_scan"
+	ToolNameShell              = "shell"
+	ToolNameSourceSanity       = "source_sanity"
+	ToolNameSystemSearchAccess = "request_system_search_access"
+	ToolNameStructuralSearch   = "structural_search"
+	ToolNameSubmitPlan         = "submit_plan"
+	ToolNameTask               = "task"
+	ToolNameTaskLedger         = "task_ledger"
+	ToolNameWriteFile          = "write_file"
 
 	// Read-only capability adapter tool.
 	ToolNameReadOnlyCapability = "read_only_capability"
 
-	// Language-specific built-in tools (planner metadata only — no catalog entry).
-	ToolNameGoMoveDeclarations = autonomy.ToolNameGoMoveDeclarations
+	// Language-specific built-in write tools.
+	ToolNameGoMoveDeclarations = "go_move_declarations"
 
 	// Supplemental language tools registered via language_tool_catalog.go.
 	ToolNameGoFindFunction = "go_find_function"
@@ -70,13 +69,13 @@ const (
 	ToolNameCppBlastRadius = "cpp_blast_radius"
 	ToolNameCppDeadSymbol  = "cpp_dead_symbol"
 
-	// Language diagnostic tools (planner metadata only).
-	ToolNameGoDiagnostics     = autonomy.ToolNameGoDiagnostics
-	ToolNameCppDiagnostics    = autonomy.ToolNameCppDiagnostics
-	ToolNamePythonDiagnostics = autonomy.ToolNamePythonDiagnostics
-	ToolNameRustDiagnostics   = autonomy.ToolNameRustDiagnostics
-	ToolNameJavaDiagnostics   = autonomy.ToolNameJavaDiagnostics
-	ToolNameTsDiagnostics     = autonomy.ToolNameTsDiagnostics
+	// Language diagnostic tools.
+	ToolNameGoDiagnostics     = "go_diagnostics"
+	ToolNameCppDiagnostics    = "cpp_diagnostics"
+	ToolNamePythonDiagnostics = "python_diagnostics"
+	ToolNameRustDiagnostics   = "rust_diagnostics"
+	ToolNameJavaDiagnostics   = "java_diagnostics"
+	ToolNameTsDiagnostics     = "ts_diagnostics"
 
 	// MCP-prefixed external tools.
 	ToolNameMCPWebFetchExa  = "mcp:exa/web_fetch_exa"

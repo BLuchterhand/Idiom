@@ -243,6 +243,14 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
+			Name:        ToolNameRg,
+			Description: "Ripgrep-compatible text search fallback over workspace files.",
+			ParametersJSON: schemaObj(
+				[]string{"pattern"},
+				`"pattern":`+strProp("regex by default, or exact literal text when fixed_strings is true")+`,"path":`+strProp("root to search under")+`,"glob":`+strProp("file-name glob filter")+`,"fixed_strings":`+boolProp("treat pattern as exact literal text instead of a regex; useful for punctuation-heavy source snippets and typed IDs"),
+			),
+		},
+		{
 			Name:        ToolNameReadFile,
 			Description: "Read a file or a line range.",
 			ParametersJSON: schemaObj(

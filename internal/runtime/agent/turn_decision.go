@@ -21,6 +21,7 @@ const answerObjectiveUnmetInsufficientEvidenceClaimed = "answer_objective_unmet:
 const (
 	turnReasonPlanExecuteAnchorRefreshPending     turnReasonCode = "plan_execute_anchor_refresh_pending"
 	turnReasonGateSatisfactionMetaFinalAnswer     turnReasonCode = "gate_satisfaction_meta_final_answer"
+	turnReasonNonSelfContainedFinalAnswer         turnReasonCode = "non_self_contained_final_answer"
 	turnReasonEmbeddedQuestionProtocolMarker      turnReasonCode = "embedded_question_protocol_marker"
 	turnReasonUnexecutedToolRequestAnswer         turnReasonCode = "unexecuted_tool_request_final_answer"
 	turnReasonRequiredEditPathsRemaining          turnReasonCode = "required_edit_paths_remaining"
@@ -535,24 +536,6 @@ func turnAssessmentFromToolAuthorizationPolicy(policy ToolAuthorizationPolicyEve
 		})
 	}
 	return assessment
-}
-
-func turnAssessmentFromVerificationPolicy(decision VerificationPolicyDecision) turnContractAssessment {
-	if !decision.Handled || decision.Decision == autonomy.PolicyAllow {
-		return turnContractAssessment{}
-	}
-
-	kind := turnViolationPostWriteVerificationRequired
-	if decision.Status == "failed" {
-		kind = turnViolationPostWriteVerificationFailed
-	}
-
-	return turnContractAssessment{}.withViolation(turnViolation{
-		Kind:        kind,
-		PackID:      autonomy.ContractPackVerificationPostWrite,
-		InvariantID: decision.InvariantID,
-		ReasonCode:  turnReasonCode(decision.ReasonCode),
-	})
 }
 
 func turnAssessmentFromVerificationDecision(decision VerificationDecision) turnContractAssessment {

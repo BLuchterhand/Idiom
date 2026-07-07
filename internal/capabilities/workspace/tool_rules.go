@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"path/filepath"
 	"strings"
 
 	"idiom/internal/capabilities/workspace/patching"
@@ -71,7 +70,7 @@ func (m *Manager) SetProtectedWritePaths(paths []string) {
 
 	protected := make(map[string]struct{})
 	for _, p := range paths {
-		for _, key := range m.protectedPathKeys(p) {
+		for _, key := range m.pathAccess.ProtectedPathKeys(p) {
 			protected[key] = struct{}{}
 		}
 	}
@@ -154,7 +153,7 @@ func (m *Manager) protectedWritePathMatched(req ToolRequest) bool {
 	}
 
 	for _, path := range protectedWriteRequestPaths(req) {
-		for _, key := range m.protectedPathKeys(path) {
+		for _, key := range m.pathAccess.ProtectedPathKeys(path) {
 			if _, ok := protected[key]; ok {
 				return true
 			}
@@ -188,43 +187,6 @@ func protectedWriteRequestPaths(req ToolRequest) []string {
 
 		return []string{req.Path}
 	}
-}
-
-func (m *Manager) protectedPathKeys(path string) []string {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return nil
-	}
-
-	cleaned := filepath.Clean(path)
-	keys := []string{normalizePathKey(cleaned)}
-
-	if filepath.IsAbs(cleaned) {
-		if root := strings.TrimSpace(m.Root()); root != "" {
-			if rel, err := filepath.Rel(root, cleaned); err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				keys = append(keys, normalizePathKey(rel))
-			}
-		}
-	} else if root := strings.TrimSpace(m.Root()); root != "" {
-		keys = append(keys, normalizePathKey(filepath.Join(root, cleaned)))
-	}
-
-	out := make([]string, 0, len(keys))
-	seen := make(map[string]struct{}, len(keys))
-	for _, key := range keys {
-		if key == "" {
-			continue
-		}
-
-		if _, ok := seen[key]; ok {
-			continue
-		}
-
-		seen[key] = struct{}{}
-		out = append(out, key)
-	}
-
-	return out
 }
 
 func convertConfiguredToolRules(configRules map[string][]config.ToolRule) map[string][]ToolRule {

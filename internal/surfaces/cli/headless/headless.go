@@ -426,7 +426,7 @@ func applyRunRequestToConfig(cfg *config.Config, req runRequest) {
 		}
 	}
 
-	writeTools := []string{workspace.ToolNameEditFile, workspace.ToolNameWriteFile, workspace.ToolNameAppendFile, workspace.ToolNameApplyPatch}
+	writeTools := workspace.WorkspacePerEditWriteToolNames()
 	for _, path := range req.Policy.DenyPaths {
 		path = strings.TrimSpace(path)
 		if path == "" {

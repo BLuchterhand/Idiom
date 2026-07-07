@@ -1002,7 +1002,7 @@ func TestImplementationFollowupRuntimeBriefCarriesPreviousRecommendation(t *test
 		PermissionProfile:    string(workerruntime.PermissionGuardedWorkspaceWrite),
 		AllowedTools:         []string{"read_file", "search_content", "apply_patch"},
 		ForbiddenTools:       []string{"shell"},
-		RequiredTools:        []string{"edit_file_or_apply_patch"},
+		RequiredTools:        []string{workspace.RequiredToolEditFileOrApplyPatch},
 		ToolManifest:         []workerruntime.ToolManifestEntry{{Tool: "read_file", Request: "bounded source read"}},
 		EvidenceCapabilities: []string{"source_body"},
 		SearchPolicy:         []string{"consume_target_packet_first"},
@@ -1071,7 +1071,7 @@ func TestImplementationFollowupRuntimeBriefPromotesRecommendationBackedSourceSur
 		Contract:          "implementation_result",
 		PermissionProfile: string(workerruntime.PermissionGuardedWorkspaceWrite),
 		AllowedTools:      []string{"read_file", "search_content", "apply_patch"},
-		RequiredTools:     []string{"edit_file_or_apply_patch"},
+		RequiredTools:     []string{workspace.RequiredToolEditFileOrApplyPatch},
 	}
 	history := []llama.ChatMessage{
 		{Role: "user", Content: "internal/runtime/workerruntime/catalog.go contains some literal strings that should be enums or constants. Can you identify where those should be going?"},
@@ -1115,7 +1115,7 @@ func TestImplementationFollowupRuntimeBriefPromotesRecommendationSectionPaths(t 
 		Contract:          "implementation_result",
 		PermissionProfile: string(workerruntime.PermissionGuardedWorkspaceWrite),
 		AllowedTools:      []string{"read_file", "search_content", "apply_patch"},
-		RequiredTools:     []string{"edit_file_or_apply_patch"},
+		RequiredTools:     []string{workspace.RequiredToolEditFileOrApplyPatch},
 		TargetPacket:      []string{"prompt_context:structured_packet"},
 		SearchPolicy:      []string{"consume_target_packet_first"},
 	}
@@ -1176,7 +1176,7 @@ func TestImplementationFollowupRuntimeBriefPromotesPathOnlyRecommendationSection
 		Contract:          "implementation_result",
 		PermissionProfile: string(workerruntime.PermissionGuardedWorkspaceWrite),
 		AllowedTools:      []string{"read_file", "search_content", "apply_patch"},
-		RequiredTools:     []string{"edit_file_or_apply_patch"},
+		RequiredTools:     []string{workspace.RequiredToolEditFileOrApplyPatch},
 	}
 	history := []llama.ChatMessage{
 		{Role: "user", Content: "internal/runtime/workerruntime/catalog.go contains literal strings that should be constants."},
@@ -1230,7 +1230,7 @@ func TestImplementationFollowupRuntimeBriefDoesNotPromoteMissingRecommendationPa
 		Contract:          "implementation_result",
 		PermissionProfile: string(workerruntime.PermissionGuardedWorkspaceWrite),
 		AllowedTools:      []string{"read_file", "search_content", "apply_patch"},
-		RequiredTools:     []string{"edit_file_or_apply_patch"},
+		RequiredTools:     []string{workspace.RequiredToolEditFileOrApplyPatch},
 	}
 	history := []llama.ChatMessage{
 		{Role: "user", Content: "Which strings in internal/runtime/workerruntime/catalog.go should become constants?"},
@@ -1274,7 +1274,7 @@ func TestImplementationFollowupRuntimeBriefDoesNotPromoteEvidenceOnlyPaths(t *te
 		Contract:          "implementation_result",
 		PermissionProfile: string(workerruntime.PermissionGuardedWorkspaceWrite),
 		AllowedTools:      []string{"read_file", "search_content", "apply_patch"},
-		RequiredTools:     []string{"edit_file_or_apply_patch"},
+		RequiredTools:     []string{workspace.RequiredToolEditFileOrApplyPatch},
 	}
 	history := []llama.ChatMessage{
 		{Role: "user", Content: "Which strings in internal/runtime/workerruntime/catalog.go should become constants?"},
@@ -1309,7 +1309,7 @@ func TestImplementationFollowupRuntimeBriefDoesNotPromoteRawLiteralEvidenceAsEdi
 		Contract:          "implementation_result",
 		PermissionProfile: string(workerruntime.PermissionGuardedWorkspaceWrite),
 		AllowedTools:      []string{"read_file", "search_content", "apply_patch"},
-		RequiredTools:     []string{"edit_file_or_apply_patch"},
+		RequiredTools:     []string{workspace.RequiredToolEditFileOrApplyPatch},
 	}
 	history := []llama.ChatMessage{
 		{Role: "user", Content: "Which strings in internal/runtime/workerruntime/catalog.go should become constants?"},
@@ -1342,7 +1342,7 @@ func TestImplementationFollowupRuntimeBriefDoesNotOpenSectionFromNegativeDestina
 		Contract:          "implementation_result",
 		PermissionProfile: string(workerruntime.PermissionGuardedWorkspaceWrite),
 		AllowedTools:      []string{"read_file", "search_content", "apply_patch"},
-		RequiredTools:     []string{"edit_file_or_apply_patch"},
+		RequiredTools:     []string{workspace.RequiredToolEditFileOrApplyPatch},
 	}
 	history := []llama.ChatMessage{
 		{Role: "user", Content: "Which strings in internal/runtime/workerruntime/catalog.go should become constants?"},
@@ -1371,7 +1371,7 @@ func TestImplementationFollowupRuntimeBriefDoesNotPromoteSameLineNegativeDestina
 		Contract:          "implementation_result",
 		PermissionProfile: string(workerruntime.PermissionGuardedWorkspaceWrite),
 		AllowedTools:      []string{"read_file", "search_content", "apply_patch"},
-		RequiredTools:     []string{"edit_file_or_apply_patch"},
+		RequiredTools:     []string{workspace.RequiredToolEditFileOrApplyPatch},
 	}
 	history := []llama.ChatMessage{
 		{Role: "user", Content: "Which strings in internal/runtime/workerruntime/catalog.go should become constants?"},
@@ -2445,11 +2445,11 @@ func TestPlanExecuteRuntimeBriefHistoryRequirementFollowsGitMetadata(t *testing.
 	prompt := "Use plan-execute to update pkg/a.go.\n\nrequired_edit_paths: pkg/a.go"
 	brief := nonGit.runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, modepolicy.BuildMode(), prompt)
 
-	if slices.Contains(brief.RequiredEvidence, runtimeBriefGitHistoryEvidence) {
+	if slices.Contains(brief.RequiredEvidence, string(workerruntime.RequiredEvidenceGitHistoryRationale)) {
 		t.Fatalf("non-git workspace must not require git history evidence: %#v", brief.RequiredEvidence)
 	}
 
-	if slices.Contains(brief.RequiredTools, runtimeBriefGitHistoryTool) {
+	if slices.Contains(brief.RequiredTools, workspace.RequiredToolGitHistoryLookup) {
 		t.Fatalf("non-git workspace must not require git history tools: %#v", brief.RequiredTools)
 	}
 
@@ -2465,11 +2465,11 @@ func TestPlanExecuteRuntimeBriefHistoryRequirementFollowsGitMetadata(t *testing.
 	}
 	gitBrief := gitModel.runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, modepolicy.BuildMode(), prompt)
 
-	if !slices.Contains(gitBrief.RequiredEvidence, runtimeBriefGitHistoryEvidence) {
+	if !slices.Contains(gitBrief.RequiredEvidence, string(workerruntime.RequiredEvidenceGitHistoryRationale)) {
 		t.Fatalf("git workspace should retain git history evidence: %#v", gitBrief.RequiredEvidence)
 	}
 
-	if !slices.Contains(gitBrief.RequiredTools, runtimeBriefGitHistoryTool) {
+	if !slices.Contains(gitBrief.RequiredTools, workspace.RequiredToolGitHistoryLookup) {
 		t.Fatalf("git workspace should retain git history tool requirement: %#v", gitBrief.RequiredTools)
 	}
 }

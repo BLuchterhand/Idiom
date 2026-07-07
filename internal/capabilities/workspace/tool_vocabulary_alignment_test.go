@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"idiom/internal/capabilities/workspace"
-	"idiom/internal/contracts/autonomy"
 )
 
 func TestPlanExecutePlannerVocabularyAlignsWithWorkspacePolicyMetadata(t *testing.T) {
@@ -19,7 +18,11 @@ func TestPlanExecutePlannerVocabularyAlignsWithWorkspacePolicyMetadata(t *testin
 		workspacePolicy[tool.Name] = tool.Policy
 	}
 
-	for _, entry := range autonomy.PlanExecutePlannerToolMetadataEntries() {
+	for _, entry := range workspace.PlanExecutePlannerToolMetadataEntries() {
+		if !entry.PlannerAllowed {
+			continue
+		}
+
 		policy, ok := workspacePolicy[entry.Tool]
 		if !ok {
 			t.Fatalf("planner vocabulary tool %q missing from workspace schema export", entry.Tool)
@@ -43,12 +46,12 @@ func TestPlanExecutePlannerVocabularyAlignsWithWorkspacePolicyMetadata(t *testin
 			continue
 		}
 
-		entry, ok := autonomy.LookupPlanExecutePlannerToolMetadata(tool.Name)
+		entry, ok := workspace.LookupPlanExecutePlannerToolMetadata(tool.Name)
 		if !ok {
-			t.Fatalf("workspace planner-profile tool %q missing from autonomy planner metadata", tool.Name)
+			t.Fatalf("workspace planner-profile tool %q missing from workspace planner metadata", tool.Name)
 		}
 		if !entry.PlannerAllowed {
-			t.Fatalf("workspace planner-profile tool %q is not planner-allowed in autonomy metadata: %#v", tool.Name, entry)
+			t.Fatalf("workspace planner-profile tool %q is not planner-allowed in workspace metadata: %#v", tool.Name, entry)
 		}
 	}
 }

@@ -770,11 +770,11 @@ func (p PathRole) sortKey() string {
 }
 
 func (p *CapabilityPolicy) normalize() {
-	p.Allowed = uniqueCapabilities(p.Allowed)
-	p.Forbidden = uniqueCapabilities(p.Forbidden)
+	p.Allowed = uniqueVocabulary(p.Allowed)
+	p.Forbidden = uniqueVocabulary(p.Forbidden)
 	p.HiddenTools = compactStrings(p.HiddenTools)
-	p.AllowedEffects = uniqueSideEffects(p.AllowedEffects)
-	p.ForbiddenEffects = uniqueSideEffects(p.ForbiddenEffects)
+	p.AllowedEffects = uniqueVocabulary(p.AllowedEffects)
+	p.ForbiddenEffects = uniqueVocabulary(p.ForbiddenEffects)
 }
 
 func (t *ToolPolicyRule) normalize() {
@@ -848,8 +848,8 @@ func (e *EvidenceRef) normalize() {
 }
 
 func (m *ContractMetadata) normalize() {
-	m.ClientClassifications = uniqueClientClassifications(m.ClientClassifications)
-	m.ProductSignals = uniqueProductSignals(m.ProductSignals)
+	m.ClientClassifications = uniqueVocabulary(m.ClientClassifications)
+	m.ProductSignals = uniqueVocabulary(m.ProductSignals)
 	m.Tags = compactStrings(m.Tags)
 }
 
@@ -1096,91 +1096,13 @@ func validProductSignal(signal ProductSignal) bool {
 	}
 }
 
-func uniqueCapabilities(values []Capability) []Capability {
+func uniqueVocabulary[T ~string](values []T) []T {
 	if len(values) == 0 {
 		return nil
 	}
 
-	seen := make(map[Capability]struct{}, len(values))
-	out := make([]Capability, 0, len(values))
-
-	for _, value := range values {
-		if strings.TrimSpace(string(value)) == "" {
-			continue
-		}
-
-		if _, ok := seen[value]; ok {
-			continue
-		}
-
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-
-	slices.Sort(out)
-
-	return out
-}
-
-func uniqueSideEffects(values []SideEffectClass) []SideEffectClass {
-	if len(values) == 0 {
-		return nil
-	}
-
-	seen := make(map[SideEffectClass]struct{}, len(values))
-	out := make([]SideEffectClass, 0, len(values))
-
-	for _, value := range values {
-		if strings.TrimSpace(string(value)) == "" {
-			continue
-		}
-
-		if _, ok := seen[value]; ok {
-			continue
-		}
-
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-
-	slices.Sort(out)
-
-	return out
-}
-
-func uniqueClientClassifications(values []ClientClassification) []ClientClassification {
-	if len(values) == 0 {
-		return nil
-	}
-
-	seen := make(map[ClientClassification]struct{}, len(values))
-	out := make([]ClientClassification, 0, len(values))
-
-	for _, value := range values {
-		if strings.TrimSpace(string(value)) == "" {
-			continue
-		}
-
-		if _, ok := seen[value]; ok {
-			continue
-		}
-
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-
-	slices.Sort(out)
-
-	return out
-}
-
-func uniqueProductSignals(values []ProductSignal) []ProductSignal {
-	if len(values) == 0 {
-		return nil
-	}
-
-	seen := make(map[ProductSignal]struct{}, len(values))
-	out := make([]ProductSignal, 0, len(values))
+	seen := make(map[T]struct{}, len(values))
+	out := make([]T, 0, len(values))
 
 	for _, value := range values {
 		if strings.TrimSpace(string(value)) == "" {

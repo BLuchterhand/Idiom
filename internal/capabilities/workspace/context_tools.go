@@ -13,6 +13,7 @@ import (
 	"idiom/internal/platform/failures"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/comprehension"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 )
 
 const (
@@ -830,7 +831,7 @@ func contextRefreshLanguage(req ToolRequest) string {
 		return language
 	}
 
-	if support, ok := LanguageForFile(boundedContextRefreshScope(req)); ok {
+	if support, ok := semanticlanguage.LanguageForFile(boundedContextRefreshScope(req)); ok {
 		return support.Name
 	}
 
@@ -886,7 +887,7 @@ func (m *Manager) contextTracePack(ctx context.Context, req ToolRequest) ToolRes
 		}
 	}
 
-	workdir, err := m.resolveWorkdir(req.Workdir)
+	workdir, err := m.pathAccess.ResolveWorkdir(req.Workdir)
 	if err != nil {
 		return ToolResult{Tool: ToolNameContextTracePack, Summary: "Context trace pack failed to resolve workdir", Error: err.Error()}
 	}

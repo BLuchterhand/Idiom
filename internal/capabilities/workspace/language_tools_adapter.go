@@ -2,10 +2,12 @@ package workspace
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
+	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/repository/semantic/languagetools"
 )
 
@@ -55,12 +57,20 @@ func (h languageToolHost) WritesEnabled() bool {
 
 // idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host
 func (h languageToolHost) ResolvePath(path string, workdir string) (string, error) {
-	return h.manager.resolvePath(path, workdir)
+	if h.manager == nil {
+		return "", fmt.Errorf("workspace root is not configured")
+	}
+
+	return h.manager.pathAccess.ResolvePath(path, workdir)
 }
 
 // idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host
 func (h languageToolHost) DisplayPath(path string) string {
-	return h.manager.displayPath(path)
+	if h.manager == nil {
+		return ""
+	}
+
+	return h.manager.pathAccess.DisplayPath(path)
 }
 
 // idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host
@@ -80,7 +90,7 @@ func (h languageToolHost) PrimeDiscoveredPaths(paths []string) {
 
 // idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host
 func (h languageToolHost) PathForHandle(handle string) (string, error) {
-	return h.manager.pathForHandle(handle)
+	return h.manager.pathTracker.PathForHandle(handle)
 }
 
 // idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host
@@ -118,11 +128,7 @@ func (m *Manager) resetLanguageTools() {
 	m.languageTools = languagetools.NewManager(languageToolHost{manager: m})
 }
 
-func (m *Manager) invalidateGoIndex() {
-	m.resetLanguageTools()
-}
-
-func (m *Manager) invalidateCppIndex() {
+func (m *Manager) invalidateLanguageToolsAfterWorkspaceMutation() {
 	m.resetLanguageTools()
 }
 
@@ -155,7 +161,7 @@ func (m *Manager) languageDetects(name string) bool {
 		return false
 	}
 
-	lang, ok := LanguageForName(name)
+	lang, ok := semanticlanguage.LanguageForName(name)
 
 	return ok && lang.Detect != nil && lang.Detect(m.cfg.Root)
 }

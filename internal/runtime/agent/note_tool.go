@@ -15,7 +15,7 @@ import (
 const (
 	noteToolMaxKeyLength    = 80
 	noteToolMaxContentBytes = 64 * 1024
-	noteToolName            = "note"
+	noteToolName            = workspace.ToolNameNote
 )
 
 var keyPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)

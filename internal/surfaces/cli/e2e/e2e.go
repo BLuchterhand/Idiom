@@ -95,7 +95,7 @@ func Main() {
 		}
 	}
 
-	allowedTools := ws.AllowedTools()
+	allowedTools := ws.ToolSurfaceSnapshot().AllowedTools()
 	emit("config", map[string]any{
 		"base_url":              cfg.BaseURL(),
 		"mode":                  mode.Name,

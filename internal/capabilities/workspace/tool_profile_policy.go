@@ -3,7 +3,6 @@ package workspace
 import (
 	"fmt"
 	"strings"
-	"sync"
 
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/platform/config"
@@ -14,11 +13,6 @@ import (
 const ToolProfileDefault = "default"
 const ToolProfileDiscovery = "discovery"
 const ToolProfileMCPDiscovery = "mcp_discovery"
-
-var (
-	builtInToolNameSetOnce sync.Once
-	builtInToolNameSet     map[string]struct{}
-)
 
 type ToolProfileDecision struct {
 	Allowed bool
@@ -62,7 +56,7 @@ func ToolAllowedForProfile(tool string, profile string) ToolProfileDecision {
 	}
 
 	if !IsBuiltInToolName(tool) {
-		return discoveryProfileDenied("tool is not declared in the built-in read-only profile")
+		return discoveryProfileDenied("tool is not declared in the built-in tool surface")
 	}
 
 	policy := toolSchemaPolicyForTool(tool)
@@ -194,20 +188,9 @@ func IsBuiltInToolName(tool string) bool {
 		return false
 	}
 
-	builtInToolNameSetOnce.Do(func() {
-		set := make(map[string]struct{})
+	if _, ok := builtInToolSurfaceCatalog.lookup(tool); ok {
+		return true
+	}
 
-		for _, entry := range BuildToolManifest(nil) {
-			t := strings.TrimSpace(entry.Tool)
-			if t != "" {
-				set[t] = struct{}{}
-			}
-		}
-
-		builtInToolNameSet = set
-	})
-
-	_, ok := builtInToolNameSet[tool]
-
-	return ok
+	return isLanguageToolName(tool)
 }

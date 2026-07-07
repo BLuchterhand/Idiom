@@ -1,20 +1,7 @@
-{
-  "model": "scripted-model",
-  "responses": [
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"temp.md\",\"start_line\":1,\"end_line\":20,\"named_gap\":\"confirm temp file before deletion\"}"
-    },
-    {
-      "content": "{\"tool\":\"history_range\",\"path\":\"temp.md\"}"
-    },
-    {
-      "content": "{\"tool\":\"apply_patch\",\"content\":\"*** Begin Patch\\n*** Delete File: temp.md\\n*** End Patch\",\"description\":\"Delete the recently created temp.md file\"}"
-    },
-    {
-      "content": "{\"tool\":\"shell\",\"command\":\"test ! -e temp.md\"}"
-    },
-    {
-      "content": "Implemented the requested change.\n\nChanged paths:\n- temp.md\n\nVerification: not run or not detected.\n\nBlocker:\n- Tool not available in current runtime contract: shell is not in the current allowed tool surface."
-    }
-  ]
-}
+[
+  "{\"tool\":\"read_file\",\"path\":\"temp.md\",\"start_line\":1,\"end_line\":20,\"named_gap\":\"confirm temp file before deletion\"}",
+  "{\"tool\":\"history_range\",\"path\":\"temp.md\"}",
+  "{\"tool\":\"apply_patch\",\"content\":\"*** Begin Patch\\n*** Delete File: temp.md\\n*** End Patch\",\"description\":\"Delete the recently created temp.md file\"}",
+  "{\"tool\":\"shell\",\"command\":\"test ! -e temp.md\"}",
+  "Implemented the requested change.\n\nChanged paths:\n- temp.md\n\nVerification: not run or not detected.\n\nBlocker:\n- Tool not available in current runtime contract: shell is not in the current allowed tool surface."
+]

@@ -19,10 +19,10 @@ func TestLocalOpsBenchmarkReportsSmokeCapacityReplayBlockers(t *testing.T) {
 	t.Chdir(root)
 	stageDoctorConfigWithBudget(t, root, 16384, 512)
 
-	report, err := buildLocalOpsBenchmarkReport(localOpsBenchmarkOptions{
+	report, err := buildLocalOpsBenchmarkReportWithDeps(BenchmarkOptions{
 		ConfigPath: filepath.Join(root, ".idiom", "config.json"),
 		Profile:    "eval",
-	}, nil)
+	}, nil, resolveDependencies())
 	if err != nil {
 		t.Fatalf("build local-ops report: %v", err)
 	}
@@ -79,13 +79,13 @@ func TestLocalOpsBenchmarkQuickstartSmokeRecordsP010ActivationEvidence(t *testin
 		t.Fatalf("write source: %v", err)
 	}
 
-	report, err := buildLocalOpsBenchmarkReport(localOpsBenchmarkOptions{
+	report, err := buildLocalOpsBenchmarkReportWithDeps(BenchmarkOptions{
 		ConfigPath:        filepath.Join(root, ".idiom", "config.json"),
 		Profile:           "sidecar",
 		QuickstartSmoke:   true,
 		QuickstartTask:    "localize quickstart smoke value",
 		QuickstartCleanup: "remove-local-state",
-	}, nil)
+	}, nil, resolveDependencies())
 	if err != nil {
 		t.Fatalf("build local-ops report: %v", err)
 	}
@@ -152,13 +152,13 @@ func TestLocalOpsBenchmarkQuickstartSmokeRedactsSensitiveTaskEvidence(t *testing
 		t.Fatalf("write main.go: %v", err)
 	}
 
-	report, err := buildLocalOpsBenchmarkReport(localOpsBenchmarkOptions{
+	report, err := buildLocalOpsBenchmarkReportWithDeps(BenchmarkOptions{
 		ConfigPath:        filepath.Join(root, ".idiom", "config.json"),
 		Profile:           "sidecar",
 		QuickstartSmoke:   true,
 		QuickstartTask:    "QuickstartSensitiveTaskFixture /workspace/CustomerX-private-repo secret abc123",
 		QuickstartCleanup: "remove-local-state",
-	}, nil)
+	}, nil, resolveDependencies())
 	if err != nil {
 		t.Fatalf("build local-ops report: %v", err)
 	}
@@ -290,11 +290,11 @@ func TestLocalOpsBenchmarkSummarizesReplayFixtureWithoutRawPrompt(t *testing.T) 
 		t.Fatalf("write replay fixture: %v", err)
 	}
 
-	report, err := buildLocalOpsBenchmarkReport(localOpsBenchmarkOptions{
+	report, err := buildLocalOpsBenchmarkReportWithDeps(BenchmarkOptions{
 		ConfigPath: filepath.Join(root, ".idiom", "config.json"),
 		Profile:    "implement",
 		ReplayLog:  logPath,
-	}, nil)
+	}, nil, resolveDependencies())
 	if err != nil {
 		t.Fatalf("build local-ops report: %v", err)
 	}

@@ -233,7 +233,7 @@ func loadAllowedToolsFromConfig(configPath string) ([]string, error) {
 
 	mgr := workspace.NewManager(cfg.Workspace)
 
-	return mgr.AllowedTools(), nil
+	return mgr.ToolSurfaceSnapshot().AllowedTools(), nil
 }
 
 // resolveProbeConfigPath picks which config the probe should load.

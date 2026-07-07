@@ -1,14 +1,5 @@
-{
-  "model": "scripted-model",
-  "responses": [
-    {
-      "content": "{\"tool\":\"write_file\",\"path\":\"temp.md\",\"content\":\"\",\"description\":\"Overwrite temp.md with empty content since no delete tool is available\"}"
-    },
-    {
-      "content": "Done. Removed temp.md."
-    },
-    {
-      "content": "Deleted `temp.md`.\n\nChanged paths:\n- temp.md\n\nVerification: not run; deleted content-only markdown file."
-    }
-  ]
-}
+[
+  "{\"tool\":\"write_file\",\"path\":\"temp.md\",\"content\":\"\",\"description\":\"Overwrite temp.md with empty content since no delete tool is available\"}",
+  "Done. Removed temp.md.",
+  "Deleted `temp.md`.\n\nChanged paths:\n- temp.md\n\nVerification: not run; deleted content-only markdown file."
+]

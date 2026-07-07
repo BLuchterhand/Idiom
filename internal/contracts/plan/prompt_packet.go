@@ -34,6 +34,7 @@ type RequiredEditSnippet struct {
 	ID      string
 	Path    string
 	Content string
+	Anchor  string `json:"-"`
 }
 
 func PromptPacketFromPrompt(prompt string) PromptPacket {
@@ -102,6 +103,7 @@ func RequiredEditSnippetsFromPrompt(prompt string, requiredPaths []string) []Req
 				ID:      fmt.Sprintf("required_edit_%d", len(snippets)+1),
 				Path:    strings.TrimSpace(blockPath),
 				Content: content,
+				Anchor:  block.Anchor,
 			})
 		}
 	}
@@ -116,6 +118,7 @@ func RequiredEditSnippetsFromPrompt(prompt string, requiredPaths []string) []Req
 type requiredEditBlock struct {
 	Paths   []string
 	Content string
+	Anchor  string
 }
 
 func requiredEditCodeBlocksWithPaths(section string, requiredPaths []string) []requiredEditBlock {
@@ -133,6 +136,7 @@ func requiredEditCodeBlocksWithPaths(section string, requiredPaths []string) []r
 
 	fence := ""
 	skipCurrent := false
+	pendingAnchor := requiredEditBlock{}
 
 	for _, rawLine := range strings.Split(section, "\n") {
 		trimmed := strings.TrimSpace(rawLine)
@@ -159,9 +163,17 @@ func requiredEditCodeBlocksWithPaths(section string, requiredPaths []string) []r
 		}
 
 		if strings.HasPrefix(trimmed, fence) {
-			if !skipCurrent {
-				if block := strings.TrimSpace(strings.Join(current, "\n")); block != "" {
-					blocks = append(blocks, requiredEditBlock{Paths: append([]string(nil), blockPaths...), Content: block})
+			if block := strings.TrimSpace(strings.Join(current, "\n")); block != "" {
+				if skipCurrent {
+					pendingAnchor = requiredEditBlock{Paths: append([]string(nil), blockPaths...), Content: block}
+				} else {
+					anchor := ""
+					if pendingAnchor.Content != "" && requiredEditPathsCompatible(pendingAnchor.Paths, blockPaths) {
+						anchor = pendingAnchor.Content
+					}
+
+					blocks = append(blocks, requiredEditBlock{Paths: append([]string(nil), blockPaths...), Content: block, Anchor: anchor})
+					pendingAnchor = requiredEditBlock{}
 				}
 			}
 
@@ -185,7 +197,7 @@ func requiredEditPathsMentionedInLine(line string, requiredPaths []string) []str
 		return nil
 	}
 
-	line = strings.TrimSpace(line)
+	line = strings.ReplaceAll(strings.TrimSpace(line), "\\", "/")
 	if line == "" {
 		return nil
 	}
@@ -197,7 +209,8 @@ func requiredEditPathsMentionedInLine(line string, requiredPaths []string) []str
 			continue
 		}
 
-		if strings.Contains(line, path) || strings.Contains(line, "`"+path+"`") {
+		normalized := strings.ReplaceAll(path, "\\", "/")
+		if strings.Contains(line, normalized) || strings.Contains(line, "`"+normalized+"`") {
 			matched[path] = struct{}{}
 		}
 	}
@@ -209,7 +222,8 @@ func requiredEditPathsMentionedInLine(line string, requiredPaths []string) []str
 			continue
 		}
 
-		baseCounts[filepath.Base(path)]++
+		normalized := strings.ReplaceAll(path, "\\", "/")
+		baseCounts[filepath.Base(filepath.FromSlash(normalized))]++
 	}
 
 	for _, path := range requiredPaths {
@@ -218,7 +232,8 @@ func requiredEditPathsMentionedInLine(line string, requiredPaths []string) []str
 			continue
 		}
 
-		base := filepath.Base(path)
+		normalized := strings.ReplaceAll(path, "\\", "/")
+		base := filepath.Base(filepath.FromSlash(normalized))
 		if base == "." || base == "/" || base == "" || baseCounts[base] != 1 {
 			continue
 		}
@@ -242,6 +257,24 @@ func requiredEditPathsMentionedInLine(line string, requiredPaths []string) []str
 	}
 
 	return out
+}
+
+func requiredEditPathsCompatible(anchorPaths, blockPaths []string) bool {
+	if len(anchorPaths) == 0 || len(blockPaths) == 0 {
+		return true
+	}
+
+	if len(anchorPaths) != len(blockPaths) {
+		return false
+	}
+
+	for i := range anchorPaths {
+		if strings.TrimSpace(anchorPaths[i]) != strings.TrimSpace(blockPaths[i]) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func skipRequiredEditCodeBlock(label string, info string) bool {

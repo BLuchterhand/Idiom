@@ -1,6 +1,7 @@
 package pathparse
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -25,6 +26,34 @@ func TestMentionedWorkspacePathsRejectsBacktickProseTokens(t *testing.T) {
 		if strings.Contains(p, "`") {
 			t.Fatalf("backtick-prose token leaked into extracted paths: %q (full set: %v)", p, got)
 		}
+	}
+}
+
+func TestPlanFileScopeHeadingsReturnsStableVocabularyCopy(t *testing.T) {
+	want := []string{
+		"expected file scope",
+		"implementation file scope",
+		"file scope",
+		"files to modify",
+		"files to edit",
+		"write scope",
+		"edit scope",
+	}
+
+	got := PlanFileScopeHeadings()
+	if !slices.Equal(got, want) {
+		t.Fatalf("PlanFileScopeHeadings() = %#v, want %#v", got, want)
+	}
+
+	got[0] = "mutated"
+	if got := PlanFileScopeHeadings(); !slices.Equal(got, want) {
+		t.Fatalf("PlanFileScopeHeadings returned mutable shared backing storage: %#v", got)
+	}
+}
+
+func TestHasWorkspaceFileExtensionIncludesAstro(t *testing.T) {
+	if !HasWorkspaceFileExtension("src/pages/contact.astro") {
+		t.Fatal(".astro should be recognized as a workspace file extension")
 	}
 }
 

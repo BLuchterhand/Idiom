@@ -4,6 +4,7 @@ import (
 	"slices"
 	"testing"
 
+	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/autonomy"
 )
 
@@ -29,7 +30,7 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 			t.Fatalf("unexpected artifact distiller contract: %#v", spec)
 		}
 
-		if spec.PermissionProfile != "conversation_only" || spec.ToolProfile != CapabilityArtifactDistiller {
+		if spec.PermissionProfile != "conversation_only" || spec.ToolProfile != workspace.ToolSurfaceProfileArtifactDistiller {
 			t.Fatalf("artifact distiller must be tool-free/no-write, got %#v", spec)
 		}
 
@@ -48,7 +49,7 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 
 	t.Run("conversation", func(t *testing.T) {
 		spec := RuntimeContractForTaskFamily("conversation")
-		if spec.TaskFamily != autonomy.TaskFamilyConversation || spec.ToolProfile != CapabilityConversationReadOnly {
+		if spec.TaskFamily != autonomy.TaskFamilyConversation || spec.ToolProfile != workspace.ToolSurfaceProfileConversationReadOnly {
 			t.Fatalf("unexpected conversation contract: %#v", spec)
 		}
 
@@ -74,7 +75,7 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 
 	t.Run("debug logs", func(t *testing.T) {
 		spec := RuntimeContractForTaskFamily("debug_logs")
-		if spec.TaskFamily != autonomy.TaskFamilyConversation || spec.Contract != ContractDirectAnswer || spec.ToolProfile != CapabilityConversationReadOnly {
+		if spec.TaskFamily != autonomy.TaskFamilyConversation || spec.Contract != ContractDirectAnswer || spec.ToolProfile != workspace.ToolSurfaceProfileConversationReadOnly {
 			t.Fatalf("debug_logs should be a compatibility alias for conversation, got %#v", spec)
 		}
 
@@ -85,7 +86,7 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 
 	t.Run("implementation", func(t *testing.T) {
 		spec := RuntimeContractForTaskFamily("implementation")
-		if spec.ToolProfile != CapabilityGuardedWrite || spec.PermissionProfile != "guarded_workspace_write" {
+		if spec.ToolProfile != workspace.ToolSurfaceProfileGuardedWrite || spec.PermissionProfile != "guarded_workspace_write" {
 			t.Fatalf("unexpected implementation contract: %#v", spec)
 		}
 
@@ -93,11 +94,11 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 			t.Fatalf("expected implementation contract to keep readiness/final critic, got %#v", spec)
 		}
 
-		if !runtimeLabelContains(spec.RequiredEvidence, string(requiredEvidenceGitHistoryRationale)) {
+		if !runtimeLabelContains(spec.RequiredEvidence, string(RequiredEvidenceGitHistoryRationale)) {
 			t.Fatalf("implementation must require git history rationale before writes, got %#v", spec.RequiredEvidence)
 		}
 
-		if !slices.Contains(spec.RequiredTools, requiredToolGitHistoryLookup) {
+		if !slices.Contains(spec.RequiredTools, workspace.RequiredToolGitHistoryLookup) {
 			t.Fatalf("implementation must require history lookup before writes, got %#v", spec.RequiredTools)
 		}
 
@@ -118,7 +119,7 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 			t.Fatalf("feature planner planner must be first-class, got %#v", spec)
 		}
 
-		if spec.PermissionProfile != PermissionConversationOnly || spec.ToolProfile != CapabilityConversationReadOnly {
+		if spec.PermissionProfile != PermissionConversationOnly || spec.ToolProfile != workspace.ToolSurfaceProfileConversationReadOnly {
 			t.Fatalf("feature planner planner should be JSON-only/no-tool model turn, got %#v", spec)
 		}
 
@@ -133,7 +134,7 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 			t.Fatalf("feature planner implementor must be first-class, got %#v", spec)
 		}
 
-		if spec.ToolProfile != CapabilityPlanSubmissionPlanner {
+		if spec.ToolProfile != workspace.ToolSurfaceProfilePlanSubmissionPlanner {
 			t.Fatalf("feature planner implementor should route through plan-execute submission, got %#v", spec)
 		}
 
@@ -305,45 +306,5 @@ func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
 
 	if len(security.ReadinessGate) == 0 || len(security.FinalCritic) == 0 {
 		t.Fatalf("security review should keep closure gates and final critic, got %#v", security)
-	}
-}
-
-func TestManifestToolsForCapabilityProfileExposeExpectedSurfaces(t *testing.T) {
-	distiller := ManifestToolsForCapabilityProfile(CapabilityArtifactDistiller)
-	if len(distiller) != 0 {
-		t.Fatalf("artifact distiller manifest must be empty, got %#v", distiller)
-	}
-
-	readOnly := ManifestToolsForCapabilityProfile(CapabilityConversationReadOnly)
-	if !slices.Contains(readOnly, "task") {
-		t.Fatalf("conversation read-only manifest should include task, got %#v", readOnly)
-	}
-
-	if !slices.Contains(readOnly, "read_only_capability") {
-		t.Fatalf("conversation read-only manifest should include read_only_capability, got %#v", readOnly)
-	}
-
-	for _, expected := range []string{"harness_audit", "context_status", "context_query", "context_zoom", "structural_search", "history_range", "history_symbol", "blame_range"} {
-		if !slices.Contains(readOnly, expected) {
-			t.Fatalf("conversation read-only manifest should include diagnostic tool %q, got %#v", expected, readOnly)
-		}
-	}
-
-	for _, forbidden := range []string{"edit_file", "context_pack", "context_impact", "context_trace_pack", "discovery_query"} {
-		if slices.Contains(readOnly, forbidden) {
-			t.Fatalf("conversation read-only manifest should not include %q, got %#v", forbidden, readOnly)
-		}
-	}
-
-	verificationOnly := ManifestToolsForCapabilityProfile(CapabilityVerificationOnly)
-	if slices.Contains(verificationOnly, "read_only_capability") {
-		t.Fatalf("verification-only manifest should not include read_only_capability, got %#v", verificationOnly)
-	}
-
-	guardedWrite := ManifestToolsForCapabilityProfile(CapabilityGuardedWrite)
-	for _, expected := range []string{"task", "task_ledger", "edit_file", "apply_patch"} {
-		if !slices.Contains(guardedWrite, expected) {
-			t.Fatalf("guarded write manifest missing %q in %#v", expected, guardedWrite)
-		}
 	}
 }

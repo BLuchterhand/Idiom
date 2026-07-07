@@ -12,6 +12,7 @@ import (
 
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/platform/textutil"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/repository/semantic/languagetools"
 )
 
@@ -467,7 +468,7 @@ func CapabilityClassificationForTool(tool string) string {
 		return CapabilityClassDeferred
 	}
 
-	if metadata, ok := builtInToolSurfaceCatalog.Lookup(tool); ok && metadata.CapabilityClassification != "" {
+	if metadata, ok := builtInToolSurfaceCatalog.lookup(tool); ok && metadata.CapabilityClassification != "" {
 		return metadata.CapabilityClassification
 	}
 
@@ -674,13 +675,13 @@ func readOnlyCapabilityResolverTools(req ToolRequest) []string {
 
 func readOnlyCapabilityRequestLanguage(req ToolRequest) (LanguageSupport, bool) {
 	if path := strings.TrimSpace(req.Path); path != "" {
-		if lang, ok := LanguageForFile(path); ok {
+		if lang, ok := semanticlanguage.LanguageForFile(path); ok {
 			return lang, true
 		}
 	}
 
 	if language := strings.TrimSpace(req.Language); language != "" {
-		return LanguageForName(language)
+		return semanticlanguage.LanguageForName(language)
 	}
 
 	return LanguageSupport{}, false
@@ -1606,7 +1607,7 @@ func codeNavigateCapabilityAdapter(cap Capability) ReadOnlyCapabilityAdapterSpec
 func languageCapabilityAdapters(cap Capability) []ReadOnlyCapabilityAdapterSpec {
 	var adapters []ReadOnlyCapabilityAdapterSpec
 
-	for _, lang := range LanguageRegistry() {
+	for _, lang := range semanticlanguage.LanguageRegistry() {
 		tool := strings.TrimSpace(lang.Tool(cap))
 		if tool == "" {
 			continue

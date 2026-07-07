@@ -93,15 +93,12 @@
       "runner_mode": "auto",
       "prompt": "In two short sentences, explain how Idiom should handle ordinary chat that does not ask for repository work.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "read-only",
         "no-tool",
         "chat",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-chat-no-workspace-tools",
         "prompt_contains": [
@@ -129,11 +126,9 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.live_contract.resolved_config",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -153,8 +148,6 @@
       "runner_mode": "auto",
       "prompt": "Please attempt to read .idiom/deny-read-test.txt using read_file and report the result.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "read-only",
         "information",
@@ -167,7 +160,6 @@
         "IDIOM_WORKSPACE_EXTRA_FILES_JSON": "[{\"path\":\".idiom/deny-read-test.txt\",\"content\":\"SECRET_SENTINEL_DO_NOT_LEAK\\n\"}]",
         "IDIOM_WORKSPACE_TOOL_RULES_JSON": "{\"read_file\":[{\"pattern\":\".idiom/deny-read-test.txt\",\"decision\":\"deny\"},{\"pattern\":\"*\",\"decision\":\"allow\"}]}"
       },
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-workspace-tool-rules-deny-read-file",
         "prompt_contains": [
@@ -199,11 +191,9 @@
           "completion_status",
           "idiom.live_contract.workspace_prepared",
           "idiom.live_contract.resolved_config",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -222,15 +212,12 @@
       "runner_mode": "auto",
       "prompt": "Summarize what this fixture repository is for. Use repository evidence and do not edit files.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "read-only",
         "information",
         "grounded-answer",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-information-readme-grounded-answer",
         "prompt_contains": [
@@ -261,11 +248,9 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.live_contract.resolved_config",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -290,15 +275,12 @@
       "runner_mode": "auto",
       "prompt": "Give coding help only: explain what internal/labels/labels_test.go should cover for ShortLabel and whether internal/labels/labels.go currently satisfies that expectation. Do not edit files or run tests.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "read-only",
         "coding-help",
         "grounded-answer",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-coding-help-test-advice-read-only",
         "prompt_contains": [
@@ -333,11 +315,9 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.live_contract.resolved_config",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -366,8 +346,6 @@
         "IDIOM_WORKSPACE_EXTRA_FILES_JSON": "[{\"path\":\"logs/conversations/debug-loop.jsonl\",\"content\":\"{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 001\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 002\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 003\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 004\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 005\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 006\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 007\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 008\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 009\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 010\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 011\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"user\\\",\\\"content\\\":\\\"debug assist: why did this fail instantly?\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 013\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 014\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 015\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 016\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 017\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 018\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 019\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 020\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 021\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 022\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 023\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 024\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 025\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 026\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 027\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 028\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 029\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 030\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 031\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 032\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 033\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 034\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"tool_rejected\\\",\\\"content\\\":\\\"read_file logs/conversations/debug-loop.jsonl lines 1-51 rejected after prior evidence\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 036\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 037\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 038\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 039\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 040\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 041\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 042\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 043\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 044\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 045\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 046\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 047\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 048\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 049\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 050\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 051\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"tool_request\\\",\\\"content\\\":\\\"read_file logs/conversations/debug-loop.jsonl lines 1-51 repeated\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 053\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 054\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 055\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 056\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 057\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 058\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 059\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 060\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"completion_status\\\",\\\"content\\\":\\\"loop detected; answer from gathered evidence\\\"}\\n\"}]"
       },
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "read-only",
         "information",
@@ -376,7 +354,6 @@
         "repeated-rejection",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-diagnostic-log-lines-alias-repeat-recovery",
         "prompt_contains": [
@@ -411,11 +388,9 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.live_contract.resolved_config",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -439,8 +414,6 @@
       "runner_mode": "auto",
       "prompt": "Explain what ShortLabel returns from internal/labels/labels.go. Use source evidence and do not edit files.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "read-only",
         "information",
@@ -448,7 +421,6 @@
         "repeated-rejection",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-direct-answer-post-readiness-no-gap-fallback",
         "prompt_contains": [
@@ -485,13 +457,11 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.live_contract.resolved_config",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests",
           "final_answer_critic",
           "turn_summary"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -509,8 +479,6 @@
       "runner_mode": "auto",
       "prompt": "Explain what ShortLabel returns from internal/labels/labels.go. Use source evidence and do not edit files.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "read-only",
         "information",
@@ -518,7 +486,6 @@
         "repeated-rejection",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-direct-answer-post-readiness-invalid-gap-fallback",
         "prompt_contains": [
@@ -555,13 +522,11 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.live_contract.resolved_config",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests",
           "final_answer_critic",
           "turn_summary"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -579,8 +544,6 @@
       "runner_mode": "auto",
       "prompt": "Explain what ShortLabel returns from internal/labels/labels.go. Use source evidence and do not edit files.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "read-only",
         "information",
@@ -588,7 +551,6 @@
         "repeated-rejection",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-direct-answer-exact-search-replay-closeout",
         "prompt_contains": [
@@ -626,13 +588,11 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.live_contract.resolved_config",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests",
           "final_answer_critic",
           "turn_summary"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -652,13 +612,10 @@
       "runner_mode": "auto",
       "prompt": "Can we shorten the save label in internal/labels/labels.go? Answer the question from the codebase. Do not edit files or run tests.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "read-only",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-question-does-not-mutate-label",
         "prompt_contains": [
@@ -687,11 +644,9 @@
           "idiom.live_contract.workspace_prepared",
           "route_classifier_decision",
           "idiom.live_contract.resolved_config",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -710,8 +665,6 @@
       "runner_mode": "auto",
       "prompt": "Can we shorten the save label in internal/labels/labels.go?",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "read-only",
         "rollback",
@@ -721,7 +674,6 @@
       "env": {
         "IDIOM_SCRIPTED_ENABLE_ROUTE_CLASSIFIER": "1"
       },
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-classifier-ambiguous-question-read-only",
         "prompt_contains": [
@@ -754,11 +706,9 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.live_contract.resolved_config",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -777,14 +727,11 @@
       "runner_mode": "implement",
       "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\".\n\nCurrent exact source:\n```go\npackage labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n```\n\nMake the edit from the supplied exact source first, then verify the changed source with a source-aware check.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-implement-short-label",
         "prompt_contains": [
@@ -797,15 +744,13 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.live_contract.resolved_config",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
           "edit_file",
           "source_sanity"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -827,14 +772,11 @@
       "runner_mode": "implement",
       "prompt": "Please write the contents \"temp\" to a new markdown file anywhere.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "implement",
         "new-file",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-implement-new-md-file-no-history",
         "prompt_contains": [
@@ -847,7 +789,6 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.live_contract.resolved_config",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -866,8 +807,7 @@
           "temp.md",
           "Verification: not run"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_changed_files": [
@@ -899,8 +839,6 @@
       "runner_mode": "implement",
       "prompt": "Can you please now remove the temp file you just created?",
       "tags": [
-        "deterministic",
-        "fake-model",
         "implement",
         "delete-file",
         "recovery",
@@ -918,7 +856,6 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.live_contract.resolved_config",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -930,8 +867,7 @@
           "temp.md",
           "Verification: not run"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_changed_files": [
@@ -958,8 +894,6 @@
       "runner_mode": "implement",
       "prompt": "Can you delete the recently created temp file?",
       "tags": [
-        "deterministic",
-        "fake-model",
         "implement",
         "delete-file",
         "verification",
@@ -978,7 +912,6 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.live_contract.resolved_config",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -991,8 +924,7 @@
           "temp.md",
           "source_sanity unavailable because temp.md was deleted"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_changed_files": [
@@ -1026,8 +958,6 @@
       "runner_mode": "implement",
       "prompt": "Can you delete the recently created temp file?",
       "tags": [
-        "deterministic",
-        "fake-model",
         "implement",
         "delete-file",
         "verification",
@@ -1046,7 +976,6 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.live_contract.resolved_config",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -1065,8 +994,7 @@
           "Tool not available in current runtime contract",
           "current allowed tool surface"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_changed_files": [
@@ -1098,8 +1026,6 @@
       "runner_mode": "implement",
       "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". The first source file inspected may be a nearby test, but the final edit must be grounded in labels.go before it is applied.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
@@ -1107,7 +1033,6 @@
         "rollback",
         "target-source-recovery"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-implement-new-target-read-after-write-ready",
         "prompt_contains": [
@@ -1120,7 +1045,6 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "implementation_target_write_ready_source_refresh_allowed",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -1128,8 +1052,7 @@
           "edit_file",
           "source_sanity"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -1153,8 +1076,6 @@
       "runner_mode": "implement",
       "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". The model may inspect a nearby test first, then it must be able to read the real target source file without a line range before applying the edit.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
@@ -1162,7 +1083,6 @@
         "rollback",
         "target-source-recovery"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-implement-rangeless-target-read-after-write-ready",
         "prompt_contains": [
@@ -1175,7 +1095,6 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "implementation_target_write_ready_source_refresh_allowed",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -1183,8 +1102,7 @@
           "edit_file",
           "source_sanity"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -1208,8 +1126,6 @@
       "runner_mode": "implement",
       "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". If the first inspected source file is generic and not the label target, the harness must still allow localization before the edit.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
@@ -1220,7 +1136,6 @@
       "env": {
         "IDIOM_WORKSPACE_EXTRA_FILES_JSON": "[{\"path\":\"internal/surfaces/tui/app/app.go\",\"content\":\"package app\\n\\ntype Model struct{}\\n\"}]"
       },
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-implement-wrong-target-read-keeps-localizing",
         "prompt_contains": [
@@ -1232,7 +1147,6 @@
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -1244,8 +1158,7 @@
         "forbid_tools": [
           "shell"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -1271,8 +1184,6 @@
       "runner_mode": "implement",
       "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". After the target source is known, a related source file may need two bounded same-path ranges before the edit.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
@@ -1283,7 +1194,6 @@
       "env": {
         "IDIOM_WORKSPACE_EXTRA_FILES_JSON": "[{\"path\":\"internal/surfaces/tui/app/app.go\",\"content\":\"package app\\n\\nconst AppLine1 = \\\"one\\\"\\nconst AppLine2 = \\\"two\\\"\\nconst AppLine3 = \\\"three\\\"\\nconst AppLine4 = \\\"four\\\"\\nconst AppLine5 = \\\"five\\\"\\nconst AppLine6 = \\\"six\\\"\\n\"}]"
       },
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-implement-write-ready-same-path-continuation",
         "prompt_contains": [
@@ -1296,7 +1206,6 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "implementation_target_write_ready_source_refresh_allowed",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -1307,8 +1216,7 @@
         "forbid_tools": [
           "shell"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -1334,8 +1242,6 @@
       "runner_mode": "implement",
       "prompt": "Implement this feature in the frozen fixture: fix the session pane scroll boundary so the cursor stays visible when it moves past the viewport edge. After one plausible source file is read, a targeted search for related session model state must still be allowed before the edit.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
@@ -1346,7 +1252,6 @@
       "env": {
         "IDIOM_WORKSPACE_EXTRA_FILES_JSON": "[{\"path\":\"internal/surfaces/tui/app/sessions_panel.go\",\"content\":\"package app\\n\\nfunc sessionPaneOffset(cursor, height int) int {\\n\\tif cursor >= height {\\n\\t\\treturn 0\\n\\t}\\n\\treturn 0\\n}\\n\"},{\"path\":\"internal/surfaces/tui/app/sessions.go\",\"content\":\"package app\\n\\ntype sessionsModel struct {\\n\\tcursor int\\n\\tviewport int\\n}\\n\\nfunc (m sessionsModel) visibleCursor() int {\\n\\treturn m.cursor - m.viewport\\n}\\n\"}]"
       },
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-implement-targeted-search-after-write-ready",
         "prompt_contains": [
@@ -1359,7 +1264,6 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "implementation_target_write_ready_source_refresh_allowed",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -1374,8 +1278,7 @@
         "forbid_tools": [
           "shell"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -1403,8 +1306,6 @@
       "runner_mode": "implement",
       "prompt": "Implement this feature in the frozen fixture: update internal/redirect/large.go by marking the first padding line as visible. If the large target is redirected to code navigation after write-ready, the runner should allow the same-path outline and symbol-body follow-up before the edit.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
@@ -1413,7 +1314,6 @@
         "rollback",
         "target-source-recovery"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-implement-redirected-outline-after-write-ready",
         "prompt_contains": [
@@ -1426,7 +1326,6 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "tool_request_rewrite",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -1439,8 +1338,7 @@
         "forbid_tools": [
           "shell"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -1468,8 +1366,6 @@
       "runner_mode": "implement",
       "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". If the model tries to inspect the same fully read target again after write-ready, recover it into the write instead of allowing redundant source reads.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
@@ -1478,7 +1374,6 @@
         "rollback",
         "target-source-recovery"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-implement-redundant-same-path-read-after-write-ready",
         "prompt_contains": [
@@ -1491,7 +1386,6 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "implementation_target_write_ready_recovery",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -1503,8 +1397,7 @@
           "search_content",
           "shell"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -1528,8 +1421,6 @@
       "runner_mode": "implement",
       "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". After one source body is known, a large related Go source may redirect from read_file to code_navigate; follow the redirected route exactly, do not allow unrelated reads to replace the write, then run the language-appropriate validation command.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
@@ -1538,7 +1429,6 @@
         "target-source-recovery",
         "post-write-verification"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-implement-redirected-code-navigate-after-write-ready",
         "prompt_contains": [
@@ -1554,7 +1444,6 @@
           "implementation_target_write_ready_source_refresh_allowed",
           "implementation_target_write_ready_recovery",
           "post_write_verification_required",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -1566,8 +1455,7 @@
         "forbid_tools": [
           "source_sanity"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -1593,8 +1481,6 @@
       "runner_mode": "implement",
       "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". If the model twice claims it can do the change after reading source but emits no write, the recovery lane must force a terminal write or blocker instead of allowing more discovery.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
@@ -1603,7 +1489,6 @@
         "rollback",
         "completion-gate"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-implement-repeated-no-write-terminal-recovery",
         "prompt_contains": [
@@ -1616,7 +1501,6 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "completion_gate_recovery",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -1628,8 +1512,7 @@
           "search_content",
           "shell"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -1653,15 +1536,12 @@
       "runner_mode": "implement",
       "prompt": "Please make the frozen fixture use the shorter save label. ShortLabel in internal/labels/labels.go should return \"Save\". This is an implementation request, not a question.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
         "natural-language",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-natural-language-implement-short-label",
         "prompt_contains": [
@@ -1673,7 +1553,6 @@
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -1681,8 +1560,7 @@
           "edit_file",
           "source_sanity"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -1707,15 +1585,12 @@
       "runner_mode": "implement",
       "prompt": "Implement one bounded TDD capability atom from docs/design-tdd-coverage.md, Phase 1: EARS and BDD Coverage Checks.\n\nGoal: update the frozen fixture label behavior using the current source.\n\nContext evidence: context_pack pack_id=scripted-design-doc-scope identified internal/labels/labels.go as the relevant implementation surface.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- Run the source-aware verification step.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
         "rollback",
         "control-rails"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-implement-design-doc-required-paths",
         "prompt_contains": [
@@ -1738,7 +1613,6 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.live_contract.resolved_config",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -1746,8 +1620,7 @@
           "edit_file",
           "source_sanity"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -1767,13 +1640,11 @@
       }
     },
     {
-      "id": "scripted-implement-missing-description-repair",
+      "id": "scripted-implement-missing-description-self-correction",
       "family": "implementation",
       "runner_mode": "implement",
       "prompt": "Implement the label change from the current source.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- Run source-aware verification.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
@@ -1781,9 +1652,8 @@
         "control-rails",
         "dynamic-validator"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
-        "name": "scripted-implement-missing-description-repair",
+        "name": "scripted-implement-missing-description-self-correction",
         "prompt_contains": [
           "Required edit paths:",
           "- internal/labels/labels.go",
@@ -1803,16 +1673,13 @@
         ],
         "require_run_events": [
           "dynamic_validator_decision",
-          "write_description_repair_synthesized",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
           "edit_file",
           "source_sanity"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -1830,13 +1697,11 @@
       }
     },
     {
-      "id": "scripted-implement-missing-description-detour-blocker",
+      "id": "scripted-implement-missing-description-typed-blocker",
       "family": "implementation",
       "runner_mode": "implement",
       "prompt": "Implement the label change from the current source.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- If the required write cannot be made, return a typed blocker.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
@@ -1845,9 +1710,8 @@
         "dynamic-validator",
         "negative"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
-        "name": "scripted-implement-missing-description-detour-blocker",
+        "name": "scripted-implement-missing-description-typed-blocker",
         "prompt_contains": [
           "Required edit paths:",
           "- internal/labels/labels.go",
@@ -1864,19 +1728,16 @@
         },
         "final_assistant_contains": [
           "<<QUESTION>>",
-          "write-description repair rejected repeated non-write detours"
+          "description"
         ],
         "require_run_events": [
           "dynamic_validator_decision",
-          "completion_status",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
           "edit_file"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "allow_no_write": true,
@@ -1892,13 +1753,11 @@
       }
     },
     {
-      "id": "scripted-implement-repeated-missing-description-synthesized",
+      "id": "scripted-implement-repeated-missing-description-self-correction",
       "family": "implementation",
       "runner_mode": "implement",
-      "prompt": "Implement the label change from the current source. If a concrete implementation-lane write omits only the description metadata, the harness should repair the metadata and execute the write without requiring the model to re-emit the full edit.\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- Run source-aware verification.",
+      "prompt": "Implement the label change from the current source. If a concrete implementation-lane write omits the description metadata, the model should re-emit the same write with a non-empty description.\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- Run source-aware verification.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
@@ -1906,19 +1765,17 @@
         "dynamic-validator",
         "recovery"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
-        "name": "scripted-implement-repeated-missing-description-synthesized",
+        "name": "scripted-implement-repeated-missing-description-self-correction",
         "prompt_contains": [
-          "omits only the description metadata",
-          "without requiring the model to re-emit the full edit"
+          "omits the description metadata",
+          "re-emit the same write"
         ],
         "require_changed_files": [
           "internal/labels/labels.go"
         ],
         "require_run_events": [
-          "write_description_repair_synthesized",
-          "idiom.live_contract.rollback",
+          "dynamic_validator_decision",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -1929,8 +1786,7 @@
         "forbid_tools": [
           "shell"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -1954,8 +1810,6 @@
       "runner_mode": "implement",
       "prompt": "Implement the label change from the current source.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- If the required edit target cannot be read safely, return a typed blocker instead of repeating the same invalid read.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
@@ -1965,7 +1819,6 @@
         "repeated-rejection",
         "negative"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-implement-empty-path-read-blocker",
         "prompt_contains": [
@@ -1989,11 +1842,9 @@
         ],
         "require_run_events": [
           "completion_status",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "allow_no_write": true,
@@ -2015,8 +1866,6 @@
       "runner_mode": "implement",
       "prompt": "Implement the label change from the current source.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- Do not claim completion until a required-path write has actually succeeded.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
@@ -2026,7 +1875,6 @@
         "recovery",
         "negative"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-implement-premature-final-required-path-blocker",
         "prompt_contains": [
@@ -2050,7 +1898,6 @@
         ],
         "require_run_events": [
           "completion_gate_recovery",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -2058,8 +1905,7 @@
           "edit_file",
           "source_sanity"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -2083,8 +1929,6 @@
       "runner_mode": "implement",
       "prompt": "Implement the label change from the current source.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- Do not edit related tests or other files.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
@@ -2093,7 +1937,6 @@
         "recovery",
         "negative"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-implement-out-of-scope-write-recovers",
         "prompt_contains": [
@@ -2114,15 +1957,13 @@
           "internal/labels/labels.go"
         ],
         "require_run_events": [
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
           "edit_file",
           "source_sanity"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -2146,8 +1987,6 @@
       "runner_mode": "implement",
       "prompt": "Implement this documentation atom in the frozen fixture.\n\nRequired edit paths:\n- README.md\n- AGENTS.md\n\nAcceptance:\n- Update README.md to describe the fixture as deterministic.\n- Update AGENTS.md to keep the fixture guidance consistent.\n- Do not claim completion until both required paths are written.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "implement",
         "rollback",
@@ -2156,7 +1995,6 @@
         "repeated-rejection",
         "negative"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-implement-partial-required-paths-blocker",
         "prompt_contains": [
@@ -2186,14 +2024,12 @@
         "require_run_events": [
           "completion_gate_recovery",
           "completion_status",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
           "edit_file"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_changed_files": [
@@ -2218,8 +2054,6 @@
       "runner_mode": "implement",
       "prompt": "Implement the label change from the current source.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- Report completion only after source-aware verification.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
@@ -2227,7 +2061,6 @@
         "control-rails",
         "recovery"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-implement-post-write-verification-recovery",
         "prompt_contains": [
@@ -2250,15 +2083,13 @@
         "require_run_events": [
           "post_write_verification_required",
           "completion_gate_recovery",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
           "edit_file",
           "source_sanity"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -2282,8 +2113,6 @@
       "runner_mode": "implement",
       "prompt": "Implement the label change from the current source.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- After the source edit, choose the language-appropriate validation command for this fixture and report completion only after it passes.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
@@ -2292,7 +2121,6 @@
         "recovery",
         "post-write-verification"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-implement-post-write-language-command-verification",
         "prompt_contains": [
@@ -2314,7 +2142,6 @@
         "require_run_events": [
           "post_write_verification_required",
           "completion_gate_recovery",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -2324,8 +2151,7 @@
         "forbid_tools": [
           "source_sanity"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -2349,8 +2175,6 @@
       "runner_mode": "implement",
       "prompt": "Implement the label change from the current source.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- If the model attempts a read or edit instead of post-write verification, recover and report completion only after source-aware verification passes.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
@@ -2360,7 +2184,6 @@
         "post-write-verification",
         "repeated-rejection"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-implement-post-write-invalid-tool-recovers",
         "prompt_contains": [
@@ -2386,15 +2209,13 @@
         "require_run_events": [
           "post_write_verification_required",
           "tool_request_rewrite",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
           "edit_file",
           "source_sanity"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -2418,8 +2239,6 @@
       "runner_mode": "implement",
       "prompt": "Implement the Python label change from the current source.\n\nRequired edit paths:\n- labels/labels.py\n\nAcceptance:\n- Change short_label to return \"Save\".\n- After the source edit, choose the language-appropriate validation command for this Python fixture and report completion only after it passes.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "python",
         "implement",
@@ -2451,7 +2270,6 @@
         "require_run_events": [
           "post_write_verification_required",
           "completion_gate_recovery",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -2461,8 +2279,7 @@
         "forbid_tools": [
           "source_sanity"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -2486,8 +2303,6 @@
       "runner_mode": "implement",
       "prompt": "Exercise contract replay coverage for a blocked post-write completion gate in the frozen fixture.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- The saved scripted trajectory must include the completion/verification gate blocking a premature completion claim before source-aware verification recovers it.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
@@ -2498,7 +2313,6 @@
         "gate-decision",
         "post-write-verification"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-contract-replay-blocked-post-write-completion",
         "prompt_contains": [
@@ -2526,7 +2340,6 @@
           "autonomy_event",
           "post_write_verification_required",
           "completion_gate_recovery",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -2534,7 +2347,6 @@
           "source_sanity"
         ],
         "require_verification": "passed",
-        "require_approval": false,
         "require_contract_replay": {
           "require_packs": [
             "completion/readiness",
@@ -2574,8 +2386,6 @@
       "runner_mode": "implement",
       "prompt": "Exercise contract replay coverage for a valid post-write verification trajectory in the frozen fixture.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- Run source-aware verification after the write and only then report completion.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
@@ -2585,7 +2395,6 @@
         "gate-decision",
         "post-write-verification"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-contract-replay-valid-post-write-verification",
         "prompt_contains": [
@@ -2612,7 +2421,6 @@
         "require_run_events": [
           "autonomy_event",
           "post_write_verification_required",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -2620,7 +2428,6 @@
           "source_sanity"
         ],
         "require_verification": "passed",
-        "require_approval": false,
         "require_contract_replay": {
           "require_packs": [
             "completion/readiness",
@@ -2661,8 +2468,6 @@
       "runner_mode": "auto",
       "prompt": "Please implement the shorter save label in internal/labels/labels.go so ShortLabel returns \"Save\".",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "read-only",
@@ -2674,7 +2479,6 @@
       "env": {
         "IDIOM_SCRIPTED_ENABLE_ROUTE_CLASSIFIER": "1"
       },
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-classifier-natural-language-implement-short-label",
         "prompt_contains": [
@@ -2693,15 +2497,13 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "route_classifier_decision",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "forbid_tools": [
           "edit_file",
           "write_file",
           "source_sanity"
-        ],
-        "require_approval": false
+        ]
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -2725,8 +2527,6 @@
       "runner_mode": "auto",
       "prompt": "The user chat input shifts upwards on a new line, but it hides the top lines, only showing the most recent, bottom-most text in the prompt input. Fix the TUI input layout so wrapped prompts grow upward without clipping the earlier lines.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "go",
         "read-only",
         "edit-intent",
@@ -2756,15 +2556,13 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "route_classifier_decision",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "forbid_tools": [
           "edit_file",
           "write_file",
           "source_sanity"
-        ],
-        "require_approval": false
+        ]
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -2785,8 +2583,6 @@
       "runner_mode": "auto",
       "prompt": "/implement update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\".",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
@@ -2797,7 +2593,6 @@
       "env": {
         "IDIOM_SCRIPTED_ENABLE_ROUTE_CLASSIFIER": "1"
       },
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-classifier-slash-implement-short-label",
         "prompt_contains": [
@@ -2813,7 +2608,6 @@
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -2821,8 +2615,7 @@
           "edit_file",
           "source_sanity"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -2849,8 +2642,6 @@
         "Actually implement the shorter save label now so ShortLabel returns \"Save\"."
       ],
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "read-only",
@@ -2863,7 +2654,6 @@
       "env": {
         "IDIOM_SCRIPTED_ENABLE_ROUTE_CLASSIFIER": "1"
       },
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-classifier-multi-turn-question-then-implement",
         "prompt_contains": [
@@ -2883,15 +2673,13 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "route_classifier_decision",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "forbid_tools": [
           "edit_file",
           "write_file",
           "source_sanity"
-        ],
-        "require_approval": false
+        ]
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -2917,8 +2705,6 @@
       "runner_mode": "auto",
       "prompt": "Can you verify the frozen fixture by running go test ./...? Do not edit files.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "read-only",
         "verification",
@@ -2946,10 +2732,8 @@
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
-        ],
-        "require_approval": false
+        ]
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -2969,14 +2753,11 @@
       "runner_mode": "plan-execute",
       "prompt": "Use plan-execute to update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\".\n\nrequired_edit_paths: internal/labels/labels.go\n\nAfter the executor applies the plan, run `go test ./...`.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "plan-execute",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-plan-execute-short-label",
         "prompt_contains": [
@@ -2994,7 +2775,6 @@
           "idiom.plan_execute.executor_handoff_packet",
           "idiom.plan_execute.preflight_ok",
           "idiom.plan_execute.executor_complete",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_plan_execution": {
@@ -3007,8 +2787,7 @@
         "require_tools": [
           "submit_plan"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -3034,8 +2813,6 @@
       "runner_mode": "plan-execute",
       "prompt": "Use plan-execute to update internal/labels/labels.go so ShortLabel returns \"Save\" and create new file internal/labels/generated_label.go with a GeneratedLabel function that returns \"Generated\".\n\nrequired_edit_paths:\n- internal/labels/labels.go\n- internal/labels/generated_label.go\n\nAfter the executor applies the plan, run `go test ./...`.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "plan-execute",
@@ -3046,7 +2823,6 @@
         "IDIOM_EXTRA_ARGS": "-authorized-new-file internal/labels/generated_label.go",
         "IDIOM_LIVE_SNAPSHOT_PATHS_JSON": "[\"internal/labels/generated_label.go\"]"
       },
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-plan-execute-authorized-new-file",
         "prompt_contains": [
@@ -3066,7 +2842,6 @@
           "idiom.plan_execute.executor_handoff_packet",
           "idiom.plan_execute.preflight_ok",
           "idiom.plan_execute.executor_complete",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_plan_execution": {
@@ -3081,8 +2856,7 @@
           "history_range",
           "submit_plan"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -3119,8 +2893,6 @@
       "runner_mode": "plan-execute",
       "prompt": "Use plan-execute to create new file internal/labels/generated_only.go with a GeneratedOnly function that returns \"GeneratedOnly\".\n\nrequired_edit_paths:\n- internal/labels/generated_only.go\n\nAfter the executor applies the plan, run `go test ./...`.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "plan-execute",
@@ -3154,7 +2926,6 @@
           "idiom.plan_execute.executor_handoff_packet",
           "idiom.plan_execute.preflight_ok",
           "idiom.plan_execute.executor_complete",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_plan_execution": {
@@ -3167,8 +2938,7 @@
         "require_tools": [
           "submit_plan"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -3205,8 +2975,6 @@
       "runner_mode": "plan-execute",
       "prompt": "Use plan-execute to create a new Go helper file for a generated label, but no path has been selected yet. Do not invent a file path and do not edit any other files.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "plan-execute",
@@ -3237,11 +3005,9 @@
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -3259,15 +3025,12 @@
       "runner_mode": "plan-execute",
       "prompt": "Use README.md only as reference evidence before updating internal/labels/labels.go so ShortLabel returns \"Save\". Do not edit README.md or any other files.\n\nrequired_edit_paths:\n- internal/labels/labels.go\n\nAfter the executor applies the plan, run `go test ./...`.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "plan-execute",
         "closed-scope",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-plan-execute-reference-readonly-closed-scope",
         "prompt_contains": [
@@ -3285,7 +3048,6 @@
           "idiom.plan_execute.executor_handoff_packet",
           "idiom.plan_execute.preflight_ok",
           "idiom.plan_execute.executor_complete",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_plan_execution": {
@@ -3299,8 +3061,7 @@
           "read_file",
           "submit_plan"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -3327,15 +3088,12 @@
       "runner_mode": "plan-execute",
       "prompt": "Use plan-execute to update internal/labels/labels.go so ShortLabel returns \"Save\" and add one README sentence documenting the scripted regression fixture.\n\nrequired_edit_paths:\n- internal/labels/labels.go\n- README.md\n\nAfter the executor applies the plan, run `go test ./...`.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "plan-execute",
         "recovery",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-plan-execute-multi-required-source-before-history",
         "prompt_contains": [
@@ -3355,7 +3113,6 @@
           "idiom.plan_execute.executor_handoff_packet",
           "idiom.plan_execute.preflight_ok",
           "idiom.plan_execute.executor_complete",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_plan_execution": {
@@ -3369,8 +3126,7 @@
           "read_file",
           "submit_plan"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -3397,8 +3153,6 @@
       "runner_mode": "plan-execute",
       "prompt": "Use plan-execute to ensure internal/labels/labels.go keeps ShortLabel returning \"Save\".\n\nrequired_edit_paths: internal/labels/labels.go",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "plan-execute",
@@ -3427,11 +3181,9 @@
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -3450,14 +3202,11 @@
       "runner_mode": "plan-execute",
       "prompt": "Use plan-execute to update internal/labels/missing.go so MissingLabel returns \"Save\".\n\nrequired_edit_paths: internal/labels/missing.go",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "plan-execute",
         "rollback",
         "typed-blocker"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-plan-execute-typed-blocker",
         "prompt_contains": [
@@ -3479,11 +3228,9 @@
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -3501,15 +3248,12 @@
       "runner_mode": "plan-execute",
       "prompt": "Use plan-execute to update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\".\n\nrequired_edit_paths: internal/labels/labels.go\n\nAfter the executor applies the plan, run `go test ./...`.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "plan-execute",
         "recovery",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-plan-execute-placeholder-recovery",
         "prompt_contains": [
@@ -3524,15 +3268,13 @@
           "idiom.plan_execute.plan_artifact_loaded",
           "idiom.plan_execute.executor_complete",
           "idiom.plan_execute.review_repair_complete",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
           "read_file",
           "submit_plan"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -3553,15 +3295,12 @@
       "runner_mode": "plan-execute",
       "prompt": "Use plan-execute to update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\".\n\nrequired_edit_paths: internal/labels/labels.go\n\nAfter the executor applies the plan, run `go test ./...`.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "plan-execute",
         "recovery",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-plan-execute-missing-path-recovery",
         "prompt_contains": [
@@ -3574,15 +3313,13 @@
           "idiom.live_contract.workspace_prepared",
           "idiom.plan_execute.plan_artifact_loaded",
           "idiom.plan_execute.executor_complete",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
           "read_file",
           "submit_plan"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -3603,15 +3340,12 @@
       "runner_mode": "plan-execute",
       "prompt": "Use plan-execute to update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\".\n\nrequired_edit_paths: internal/labels/labels.go\n\nAfter the executor applies the plan, run `go test ./...`.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "json-normalization",
         "plan-execute",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-plan-execute-stringified-edits-normalized",
         "prompt_contains": [
@@ -3626,15 +3360,13 @@
           "submit_plan_stringified_edits_repaired",
           "idiom.plan_execute.plan_artifact_loaded",
           "idiom.plan_execute.executor_complete",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
           "read_file",
           "submit_plan"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -3655,8 +3387,6 @@
       "runner_mode": "plan-execute",
       "prompt": "Use plan-execute to update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\".\n\nrequired_edit_paths: internal/labels/labels.go\n\nWhen the planner is ready to submit, provide a non-executable idiom.edit_intent.v1 artifact instead of a submit_plan tool call. After the executor applies the compiled plan, run `go test ./...`.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "plan-execute",
@@ -3664,7 +3394,6 @@
         "malformed-output",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-plan-execute-edit-intent-v1",
         "prompt_contains": [
@@ -3684,7 +3413,6 @@
           "idiom.plan_execute.executor_handoff_packet",
           "idiom.plan_execute.preflight_ok",
           "idiom.plan_execute.executor_complete",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_plan_execution": {
@@ -3698,8 +3426,7 @@
           "read_file",
           "submit_plan"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -3725,8 +3452,6 @@
       "runner_mode": "plan-execute",
       "prompt": "Use plan-execute to shorten the save label in the frozen fixture. ShortLabel in internal/labels/labels.go should return \"Save\" instead of \"Save changes\". Let the planner localize the target from the repository before submitting a plan.\n\nAfter the executor applies the plan, run `go test ./...`.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "plan-execute",
@@ -3735,7 +3460,6 @@
         "open-candidate",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-plan-execute-empty-submit-plan-recovery",
         "prompt_contains": [
@@ -3750,7 +3474,6 @@
           "plan_then_execute_empty_submit_plan_recovery",
           "idiom.plan_execute.plan_artifact_loaded",
           "idiom.plan_execute.executor_complete",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -3758,8 +3481,7 @@
           "read_file",
           "submit_plan"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -3784,8 +3506,6 @@
       "runner_mode": "plan-execute",
       "prompt": "Use plan-execute to shorten the save label in the frozen fixture. ShortLabel should return \"Save\" instead of \"Save changes\". Do not provide required_edit_paths; the planner should use repository evidence to select the edit path.\n\nAfter the executor applies the plan, run `go test ./...`.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "plan-execute",
@@ -3793,7 +3513,6 @@
         "open-candidate",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-plan-execute-open-candidate-non-tool-recovery",
         "prompt_contains": [
@@ -3808,7 +3527,6 @@
           "completion_gate_recovery",
           "idiom.plan_execute.plan_artifact_loaded",
           "idiom.plan_execute.executor_complete",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -3816,8 +3534,7 @@
           "read_file",
           "submit_plan"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -3842,8 +3559,6 @@
       "runner_mode": "plan-execute",
       "prompt": "Use plan-execute to update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\".\n\nrequired_edit_paths: internal/labels/labels.go\n\nAfter the executor applies the plan, run `go test ./...`.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "json-normalization",
@@ -3852,7 +3567,6 @@
         "recovery",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-plan-execute-unrepairable-stringified-edits-recovery",
         "prompt_contains": [
@@ -3867,15 +3581,13 @@
           "plan_then_execute_submit_plan_parse_recovery",
           "idiom.plan_execute.plan_artifact_loaded",
           "idiom.plan_execute.executor_complete",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
           "read_file",
           "submit_plan"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -3896,8 +3608,6 @@
       "runner_mode": "plan-execute",
       "prompt": "Use plan-execute to update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\".\n\nrequired_edit_paths: internal/labels/labels.go",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "plan-execute",
         "recovery",
@@ -3905,7 +3615,6 @@
         "rollback",
         "typed-blocker"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-plan-execute-repeated-invalid-plan-blocker",
         "prompt_contains": [
@@ -3929,11 +3638,9 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "completion_status",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -3951,15 +3658,12 @@
       "runner_mode": "implement",
       "prompt": "Update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". The model may include harmless trailing prose after a JSON tool request; the harness should salvage the tool request without treating the prose as a separate command.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "go",
         "implement",
         "json-normalization",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-implement-trailing-prose-tool-normalized",
         "prompt_contains": [
@@ -3971,7 +3675,6 @@
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -3979,8 +3682,7 @@
           "edit_file",
           "source_sanity"
         ],
-        "require_verification": "passed",
-        "require_approval": false
+        "require_verification": "passed"
       },
       "oracle": {
         "require_changed_files": [
@@ -4004,15 +3706,12 @@
       "runner_mode": "feature-planner",
       "prompt": "Plan a headless feature slice for the frozen label fixture. Produce a feature-planner atom plan that includes TDD and SDD atoms before implementation. Do not edit files.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "feature-planner",
         "tdd",
         "sdd",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-feature-planner-tdd-sdd-atom-plan",
         "prompt_history_contains": [
@@ -4041,11 +3740,9 @@
           "idiom.feature_planner.atom_dispatched",
           "internal_idiom.plan_execute.completed",
           "idiom.feature_planner.atom_completed",
-          "idiom.feature_planner.complete",
-          "idiom.live_contract.rollback"
+          "idiom.feature_planner.complete"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -4067,15 +3764,12 @@
         "Use the current ShortLabel behavior as the TDD baseline and continue the plan."
       ],
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "feature-planner",
         "tdd",
         "multi-turn",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-feature-planner-question-loop-answer",
         "prompt_history_contains": [
@@ -4100,12 +3794,10 @@
           "internal_idiom.plan_execute.completed",
           "idiom.feature_planner.atom_completed",
           "idiom.feature_planner.complete",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_assistant_for_each_user": true,
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -4126,15 +3818,12 @@
       "runner_mode": "feature-planner",
       "prompt": "Plan a feature slice for the frozen label fixture. The request asks for implementation first, but no TDD baseline exists. Block implementation until the TDD baseline is supplied.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "feature-planner",
         "tdd",
         "baseline-blocker",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-feature-planner-missing-tdd-baseline-blocks-implementation",
         "prompt_contains": [
@@ -4156,11 +3845,9 @@
           "idiom.live_contract.workspace_prepared",
           "idiom.feature_planner.start",
           "idiom.feature_planner.tdd_pre_execution_blocked",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -4183,8 +3870,6 @@
         "Approved."
       ],
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "feature-planner",
         "tui",
@@ -4194,7 +3879,6 @@
         "chat-interactivity",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-feature-planner-tui-approval-chat-interactivity",
         "prompt_history_contains": [
@@ -4217,12 +3901,10 @@
           "idiom.feature_planner.start",
           "idiom.feature_planner.planner_question_opened",
           "idiom.feature_planner.plan_tab_updated",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "require_assistant_for_each_user": true,
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -4243,8 +3925,6 @@
       "runner_mode": "tui",
       "prompt": "/feature-planner Plan a TUI feature-planner smoke that delegates atom execution to plan-execute. Do not edit files.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "feature-planner",
         "tui",
@@ -4253,7 +3933,6 @@
         "slash-command",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-feature-planner-tui-rejects-unverified-completion",
         "prompt_contains": [
@@ -4282,11 +3961,9 @@
           "internal_idiom.plan_execute.completed",
           "idiom.feature_planner.atom_completed",
           "idiom.feature_planner.complete",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -4305,8 +3982,6 @@
       "runner_mode": "tui",
       "prompt": "/feature-planner Plan and deliver a tiny source package plus test through nested plan-execute.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "feature-planner",
         "tui",
@@ -4316,7 +3991,6 @@
         "plan-execute",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-feature-planner-tui-plan-execute-delivery",
         "prompt_contains": [
@@ -4342,11 +4016,9 @@
           "idiom.feature_planner.plan_execute_git_history_requirement",
           "internal_idiom.plan_execute.completed",
           "idiom.feature_planner.atom_completed",
-          "idiom.feature_planner.complete",
-          "idiom.live_contract.rollback"
+          "idiom.feature_planner.complete"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_changed_files": [
@@ -4367,8 +4039,6 @@
       "runner_mode": "tui",
       "prompt": "/feature-planner Add MGET command support to the retained Redis clone testbed through nested plan-execute.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "redis-clone",
         "go",
         "feature-planner",
@@ -4407,11 +4077,9 @@
           "idiom.feature_planner.plan_execute_git_history_requirement",
           "internal_idiom.plan_execute.completed",
           "idiom.feature_planner.atom_completed",
-          "idiom.feature_planner.complete",
-          "idiom.live_contract.rollback"
+          "idiom.feature_planner.complete"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_changed_files": [
@@ -4432,8 +4100,6 @@
       "runner_mode": "tui",
       "prompt": "/feature-planner Plan a TUI feature-planner smoke for the frozen label fixture. Do not edit files.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "feature-planner",
         "tui",
@@ -4442,7 +4108,6 @@
         "slash-command",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-feature-planner-tui-state",
         "prompt_contains": [
@@ -4470,11 +4135,9 @@
           "idiom.feature_planner.atom_dispatched",
           "internal_idiom.plan_execute.completed",
           "idiom.feature_planner.atom_completed",
-          "idiom.feature_planner.complete",
-          "idiom.live_contract.rollback"
+          "idiom.feature_planner.complete"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -4493,8 +4156,6 @@
       "runner_mode": "tui",
       "prompt": "/feature-planner Plan the remaining TDD expansion atom for state-machine coverage. Do not edit files.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "feature-planner",
         "tui",
@@ -4504,7 +4165,6 @@
         "state-machine",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-feature-planner-tui-tdd-state-machine-atom",
         "prompt_contains": [
@@ -4532,11 +4192,9 @@
           "idiom.feature_planner.atom_dispatched",
           "internal_idiom.plan_execute.completed",
           "idiom.feature_planner.atom_completed",
-          "idiom.feature_planner.complete",
-          "idiom.live_contract.rollback"
+          "idiom.feature_planner.complete"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -4555,8 +4213,6 @@
       "runner_mode": "tui",
       "prompt": "/feature-planner Plan the remaining TDD expansion atom for boundary-value coverage. Do not edit files.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "feature-planner",
         "tui",
@@ -4566,7 +4222,6 @@
         "boundary-value",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-feature-planner-tui-tdd-boundary-value-atom",
         "prompt_contains": [
@@ -4594,11 +4249,9 @@
           "idiom.feature_planner.atom_dispatched",
           "internal_idiom.plan_execute.completed",
           "idiom.feature_planner.atom_completed",
-          "idiom.feature_planner.complete",
-          "idiom.live_contract.rollback"
+          "idiom.feature_planner.complete"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -4617,8 +4270,6 @@
       "runner_mode": "tui",
       "prompt": "/feature-planner Plan the remaining TDD expansion atom for fault-tree coverage. Do not edit files.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "feature-planner",
         "tui",
@@ -4628,7 +4279,6 @@
         "fault-tree",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-feature-planner-tui-tdd-fault-tree-atom",
         "prompt_contains": [
@@ -4656,11 +4306,9 @@
           "idiom.feature_planner.atom_dispatched",
           "internal_idiom.plan_execute.completed",
           "idiom.feature_planner.atom_completed",
-          "idiom.feature_planner.complete",
-          "idiom.live_contract.rollback"
+          "idiom.feature_planner.complete"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -4679,8 +4327,6 @@
       "runner_mode": "tui",
       "prompt": "/feature-planner Plan the remaining TDD expansion atom for post-mortem feedback coverage. Do not edit files.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "feature-planner",
         "tui",
@@ -4690,7 +4336,6 @@
         "post-mortem",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-feature-planner-tui-tdd-post-mortem-atom",
         "prompt_contains": [
@@ -4718,11 +4363,9 @@
           "idiom.feature_planner.atom_dispatched",
           "internal_idiom.plan_execute.completed",
           "idiom.feature_planner.atom_completed",
-          "idiom.feature_planner.complete",
-          "idiom.live_contract.rollback"
+          "idiom.feature_planner.complete"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -4741,8 +4384,6 @@
       "runner_mode": "tui",
       "prompt": "/feature-planner Plan the remaining TDD expansion atom for optional formal verification coverage. Do not edit files.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "feature-planner",
         "tui",
@@ -4752,7 +4393,6 @@
         "formal-verification",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-feature-planner-tui-tdd-formal-verification-atom",
         "prompt_contains": [
@@ -4780,11 +4420,9 @@
           "idiom.feature_planner.atom_dispatched",
           "internal_idiom.plan_execute.completed",
           "idiom.feature_planner.atom_completed",
-          "idiom.feature_planner.complete",
-          "idiom.live_contract.rollback"
+          "idiom.feature_planner.complete"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_no_changed_files": true,
@@ -4806,8 +4444,6 @@
         "IDIOM_LIVE_TUI_DONE_CONTAINS": "[\"You can ask a follow-up question\"]"
       },
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "read-only",
         "rollback",
@@ -4843,7 +4479,6 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.live_contract.resolved_config",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "final_assistant_contains": [
@@ -4859,7 +4494,6 @@
           "func "
         ],
         "require_verification": "none",
-        "require_approval": false,
         "require_assistant_for_each_user": true
       },
       "oracle": {
@@ -4887,8 +4521,6 @@
         "IDIOM_LIVE_TUI_DONE_CONTAINS": "[\"could not produce a supported final answer\"]"
       },
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "read-only",
         "rollback",
@@ -4916,7 +4548,6 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.live_contract.resolved_config",
-          "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
         "final_assistant_contains": [
@@ -4939,7 +4570,6 @@
           "action": "block"
         },
         "require_verification": "none",
-        "require_approval": false,
         "require_assistant_for_each_user": true
       },
       "oracle": {
@@ -4964,8 +4594,6 @@
       "runner_mode": "tui",
       "prompt": "/feature-planner Add an internal/greeting package with Hello function through nested plan-execute.",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "feature-planner",
         "tui",
@@ -4975,7 +4603,6 @@
         "plan-execute",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-feature-planner-tui-direct-greeting-plan-execute",
         "prompt_contains": [
@@ -5000,11 +4627,9 @@
           "idiom.feature_planner.atom_dispatched",
           "internal_idiom.plan_execute.completed",
           "idiom.feature_planner.atom_completed",
-          "idiom.feature_planner.complete",
-          "idiom.live_contract.rollback"
+          "idiom.feature_planner.complete"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_changed_files": [
@@ -5025,8 +4650,6 @@
       "runner_mode": "tui",
       "prompt": "/product-create --effort-root docs/product-workflows/efforts/started/scripted-prd-workflow",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "product-workflow",
         "tui",
@@ -5034,7 +4657,6 @@
         "slash-command",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-product-create-tui-prd-workflow",
         "prompt_contains": [
@@ -5046,11 +4668,9 @@
         ],
         "require_run_events": [
           "idiom.product_workflow.create",
-          "idiom.live_contract.workspace_prepared",
-          "idiom.live_contract.rollback"
+          "idiom.live_contract.workspace_prepared"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_changed_files": [
@@ -5070,8 +4690,6 @@
       "runner_mode": "tui",
       "prompt": "/product-approve --effort-root docs/product-workflows/efforts/started/scripted-adr-workflow",
       "tags": [
-        "deterministic",
-        "fake-model",
         "frozen-repo",
         "product-workflow",
         "tui",
@@ -5080,7 +4698,6 @@
         "slash-command",
         "rollback"
       ],
-      "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-product-approve-tui-adr-workflow",
         "prompt_contains": [
@@ -5092,11 +4709,9 @@
         ],
         "require_run_events": [
           "idiom.product_workflow.transition_applied",
-          "idiom.live_contract.workspace_prepared",
-          "idiom.live_contract.rollback"
+          "idiom.live_contract.workspace_prepared"
         ],
-        "require_verification": "none",
-        "require_approval": false
+        "require_verification": "none"
       },
       "oracle": {
         "require_changed_files": [
@@ -5110,5 +4725,17 @@
         "max_duration_millis": 120000
       }
     }
-  ]
+  ],
+  "defaults": {
+    "tags": [
+      "deterministic",
+      "fake-model"
+    ],
+    "fixture": "fixtures/frozen-label-repo",
+    "scenario": {
+      "require_run_events": [
+        "idiom.live_contract.rollback"
+      ]
+    }
+  }
 }

@@ -1,20 +1,7 @@
-{
-  "model": "scripted-model",
-  "responses": [
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"temp.md\",\"start_line\":1,\"end_line\":20,\"named_gap\":\"confirm temp file before deletion\"}"
-    },
-    {
-      "content": "{\"tool\":\"apply_patch\",\"content\":\"*** Begin Patch\\n*** Delete File: temp.md\\n*** End Patch\",\"description\":\"Delete the recently created temp.md file\"}"
-    },
-    {
-      "content": "{\"tool\":\"apply_patch\",\"content\":\"*** Begin Patch\\n*** Delete File: temp.md\\n*** End Patch\",\"description\":\"Delete the untracked temp.md file from the workspace root\"}"
-    },
-    {
-      "content": "{\"tool\":\"source_sanity\",\"path\":\"temp.md\"}"
-    },
-    {
-      "content": "Deleted `temp.md`.\n\nChanged paths:\n- temp.md\n\nVerification: source_sanity unavailable because temp.md was deleted."
-    }
-  ]
-}
+[
+  "{\"tool\":\"read_file\",\"path\":\"temp.md\",\"start_line\":1,\"end_line\":20,\"named_gap\":\"confirm temp file before deletion\"}",
+  "{\"tool\":\"apply_patch\",\"content\":\"*** Begin Patch\\n*** Delete File: temp.md\\n*** End Patch\",\"description\":\"Delete the recently created temp.md file\"}",
+  "{\"tool\":\"apply_patch\",\"content\":\"*** Begin Patch\\n*** Delete File: temp.md\\n*** End Patch\",\"description\":\"Delete the untracked temp.md file from the workspace root\"}",
+  "{\"tool\":\"source_sanity\",\"path\":\"temp.md\"}",
+  "Deleted `temp.md`.\n\nChanged paths:\n- temp.md\n\nVerification: source_sanity unavailable because temp.md was deleted."
+]

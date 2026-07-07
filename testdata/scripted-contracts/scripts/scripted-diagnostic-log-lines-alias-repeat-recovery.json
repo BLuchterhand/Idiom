@@ -1,17 +1,6 @@
-{
-  "model": "scripted-model",
-  "responses": [
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"logs/conversations/debug-loop.jsonl\",\"named_gap\":\"inspect the recent diagnostic conversation tail\",\"why_not_answering\":\"need log evidence before diagnosing the failure\"}"
-    },
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"logs/conversations/debug-loop.jsonl\",\"lines\":\"1-51\",\"named_gap\":\"inspect the missing early diagnostic log window\",\"why_not_answering\":\"the tail shows a loop but not the first rejected request\"}"
-    },
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"logs/conversations/debug-loop.jsonl\",\"lines\":\"1-51\",\"named_gap\":\"inspect the missing early diagnostic log window\",\"why_not_answering\":\"the prior window might not have been retained\"}"
-    },
-    {
-      "content": "The diagnostic log shows an instant debug-assist failure from repeated reads of the same diagnostic conversation window. The early window in logs/conversations/debug-loop.jsonl includes the first rejected request, and the later tail repeats the same request instead of answering from evidence. The harness recovered from the duplicate bounded read; I did not edit files or run shell commands."
-    }
-  ]
-}
+[
+  "{\"tool\":\"read_file\",\"path\":\"logs/conversations/debug-loop.jsonl\",\"named_gap\":\"inspect the recent diagnostic conversation tail\",\"why_not_answering\":\"need log evidence before diagnosing the failure\"}",
+  "{\"tool\":\"read_file\",\"path\":\"logs/conversations/debug-loop.jsonl\",\"lines\":\"1-51\",\"named_gap\":\"inspect the missing early diagnostic log window\",\"why_not_answering\":\"the tail shows a loop but not the first rejected request\"}",
+  "{\"tool\":\"read_file\",\"path\":\"logs/conversations/debug-loop.jsonl\",\"lines\":\"1-51\",\"named_gap\":\"inspect the missing early diagnostic log window\",\"why_not_answering\":\"the prior window might not have been retained\"}",
+  "The diagnostic log shows an instant debug-assist failure from repeated reads of the same diagnostic conversation window. The early window in logs/conversations/debug-loop.jsonl includes the first rejected request, and the later tail repeats the same request instead of answering from evidence. The harness recovered from the duplicate bounded read; I did not edit files or run shell commands."
+]

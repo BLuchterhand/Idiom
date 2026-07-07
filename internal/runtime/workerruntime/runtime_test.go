@@ -86,6 +86,86 @@ func TestRenderActiveProtocolCardOmitsEmptyProjection(t *testing.T) {
 	}
 }
 
+func TestNormalizeReadinessStateReturnsIndependentCopy(t *testing.T) {
+	original := &ReadinessState{
+		ReadyToAnswer:       true,
+		ClosedClaims:        []string{" claim ", "claim"},
+		OpenObligations:     []string{"evidence"},
+		EvidenceSources:     []string{"read_file:a.go"},
+		FurtherReadsRequire: " source body ",
+	}
+
+	normalized := NormalizeReadinessState(original)
+	if normalized == nil {
+		t.Fatal("expected non-empty readiness state")
+	}
+	if normalized == original {
+		t.Fatal("normalization should return a distinct readiness state")
+	}
+	if !slices.Equal(normalized.ClosedClaims, []string{"claim"}) {
+		t.Fatalf("closed claims = %#v", normalized.ClosedClaims)
+	}
+	if normalized.FurtherReadsRequire != "source body" {
+		t.Fatalf("further reads requirement = %q", normalized.FurtherReadsRequire)
+	}
+
+	original.ClosedClaims[0] = "mutated"
+	original.OpenObligations[0] = "mutated"
+	original.EvidenceSources[0] = "mutated"
+	if slices.Contains(normalized.ClosedClaims, "mutated") ||
+		slices.Contains(normalized.OpenObligations, "mutated") ||
+		slices.Contains(normalized.EvidenceSources, "mutated") {
+		t.Fatalf("normalized readiness shares backing storage with original: %#v", normalized)
+	}
+}
+
+func TestTypedIDStringConvertersTrimAndPreserveOrder(t *testing.T) {
+	if got := EvidenceRequirementStrings([]EvidenceRequirementID{
+		" first ",
+		"",
+		"second",
+		"first",
+	}); !slices.Equal(got, []string{"first", "second", "first"}) {
+		t.Fatalf("evidence requirement strings = %#v", got)
+	}
+
+	if got := ReadinessGateStrings([]ReadinessGateID{
+		" ready ",
+		"ready",
+		" ",
+		"verify",
+	}); !slices.Equal(got, []string{"ready", "ready", "verify"}) {
+		t.Fatalf("readiness gate strings = %#v", got)
+	}
+
+	if got := typedIDStrings([]SearchPolicyID{
+		" search ",
+		"",
+		"preserve",
+		"search",
+	}); !slices.Equal(got, []string{"search", "preserve", "search"}) {
+		t.Fatalf("search policy strings = %#v", got)
+	}
+
+	if got := typedIDStrings([]StopConditionID{
+		" stop ",
+		"stop",
+		"",
+		"done",
+	}); !slices.Equal(got, []string{"stop", "stop", "done"}) {
+		t.Fatalf("stop condition strings = %#v", got)
+	}
+
+	if got := typedIDStrings([]FinalCriticID{
+		" cite ",
+		"",
+		"verify",
+		"cite",
+	}); !slices.Equal(got, []string{"cite", "verify", "cite"}) {
+		t.Fatalf("final critic strings = %#v", got)
+	}
+}
+
 func TestIsZeroHitSearchResultDetectsRoutedSymbolMiss(t *testing.T) {
 	result := workspace.ToolResult{
 		Tool:    "code_navigate",
@@ -738,6 +818,23 @@ func TestBuildActionGuidanceSearchSuccessOmitsEditSuggestionWhenReadOnly(t *test
 
 	if strings.Contains(joined, "edit_file if the target is already clear") {
 		t.Fatalf("read-only search guidance should not suggest edits, got %#v", guidance.ValidNext)
+	}
+}
+
+func TestBuildActionGuidanceSearchSuccessUsesWorkspaceLanguageTaxonomy(t *testing.T) {
+	guidance := BuildActionGuidance(ActionGuidanceInput{
+		Reason:  "tool_result",
+		Request: workspace.ToolRequest{Tool: "ts_references", Path: "src/app.ts", Pattern: "render"},
+		Result: workspace.ToolResult{
+			Tool:    "ts_references",
+			Summary: "Found 3 TypeScript reference(s) for render",
+			Output:  "src/app.ts:42 render()\n",
+		},
+	})
+	joined := strings.Join(guidance.ValidNext, "\n")
+
+	if !strings.Contains(joined, "read one exact symbol body, discovered handle, or narrow range from the highest-confidence hit") {
+		t.Fatalf("language search guidance should use workspace taxonomy, got %#v", guidance.ValidNext)
 	}
 }
 
@@ -1562,6 +1659,12 @@ func TestRoleSpecForChildReadOnlyOmitsNestedTaskDelegation(t *testing.T) {
 			t.Fatalf("expected child read-only search policy to include %q, got %#v", want, spec.SearchPolicy)
 		}
 	}
+
+	for _, tool := range workspace.WorkspaceWriteToolNames() {
+		if !slices.Contains(spec.ForbiddenTools, tool) {
+			t.Fatalf("child read-only role must forbid cataloged workspace write tool %q, got %#v", tool, spec.ForbiddenTools)
+		}
+	}
 }
 
 func TestRoleSpecForImplementTrustsPreloadedAnchors(t *testing.T) {
@@ -1581,5 +1684,11 @@ func TestRoleSpecForMainUsesConversationOnlyFallback(t *testing.T) {
 
 	if len(spec.AllowedTools) != 0 {
 		t.Fatalf("main role should not advertise tools by default, got %#v", spec.AllowedTools)
+	}
+
+	for _, tool := range workspace.WorkspaceWriteToolNames() {
+		if !slices.Contains(spec.ForbiddenTools, tool) {
+			t.Fatalf("main role must forbid cataloged workspace write tool %q, got %#v", tool, spec.ForbiddenTools)
+		}
 	}
 }

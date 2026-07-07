@@ -194,12 +194,10 @@ func shellDiscoveryProfile(command string) ToolDiscoveryProfile {
 }
 
 func languageDiscoveryProfile(tool string) ToolDiscoveryProfile {
-	lang, suffix, ok := splitLanguageTool(tool)
+	_, suffix, ok := LanguageToolParts(tool)
 	if !ok {
 		return ToolDiscoveryProfile{Class: "other"}
 	}
-
-	_ = lang
 
 	switch suffix {
 	case string(CapOverview), string(CapEntrypoints):
@@ -213,14 +211,4 @@ func languageDiscoveryProfile(tool string) ToolDiscoveryProfile {
 	default:
 		return ToolDiscoveryProfile{Class: "other"}
 	}
-}
-
-func splitLanguageTool(tool string) (string, string, bool) {
-	for _, prefix := range []string{"go_", "cpp_", "python_", "ts_", "rust_", "java_"} {
-		if strings.HasPrefix(tool, prefix) {
-			return strings.TrimSuffix(prefix, "_"), strings.TrimPrefix(tool, prefix), true
-		}
-	}
-
-	return "", "", false
 }

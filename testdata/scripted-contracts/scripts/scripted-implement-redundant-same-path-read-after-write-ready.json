@@ -1,23 +1,8 @@
-{
-  "model": "scripted-model",
-  "responses": [
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":5,\"named_gap\":\"read the label target source before editing\",\"why_not_answering\":\"need source-body evidence for the edit target\"}"
-    },
-    {
-      "content": "{\"tool\":\"code_navigate\",\"capability\":\"file_outline\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"inspect the same target again before writing\",\"why_not_answering\":\"trying to get more structure before editing\"}"
-    },
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\"}"
-    },
-    {
-      "content": "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten save label after write-ready recovery\"}"
-    },
-    {
-      "content": "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/labels.go\"}"
-    },
-    {
-      "content": "Implemented the label change.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: Source sanity passed for internal/labels/labels.go."
-    }
-  ]
-}
+[
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":5,\"named_gap\":\"read the label target source before editing\",\"why_not_answering\":\"need source-body evidence for the edit target\"}",
+  "{\"tool\":\"code_navigate\",\"capability\":\"file_outline\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"inspect the same target again before writing\",\"why_not_answering\":\"trying to get more structure before editing\"}",
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\"}",
+  "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten save label after write-ready recovery\"}",
+  "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/labels.go\"}",
+  "Implemented the label change.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: Source sanity passed for internal/labels/labels.go."
+]

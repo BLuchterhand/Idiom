@@ -221,15 +221,15 @@ func (m *Model) runImplementationViaPlanExecute(ctx context.Context, prompt stri
 
 		m.logMessage("dispatch_preflight", fmt.Sprintf("blocked plan-execute dispatch for unresolved referenced design document(s): %s", strings.Join(refs, ", ")))
 
-		return humanPlanDocumentResolutionBlockedMessage(resolutionBlockers), nil
+		return implementationdispatch.HumanPlanDocumentResolutionBlockedMessage(resolutionBlockers), nil
 	}
 
-	if implementationDispatchPlanDocumentsShouldPreAtomize(planDocuments) {
+	if implementationdispatch.PlanDocumentsShouldPreAtomize(planDocuments) {
 		m.logMessage("dispatch_atomize", "referenced design document exceeds single-purpose dispatch limits; materializing atom briefs before plan-execute")
 
 		m.queueUIEvent(infoMsg{text: "Materializing design document atoms before plan-execute..."})
 
-		atomDocuments, err := materializeImplementationDispatchPlanDocumentAtoms(m.cfg, planDocuments)
+		atomDocuments, err := implementationdispatch.MaterializePlanDocumentAtoms(implementationdispatch.WorkspaceRoot(m.cfg.Workspace.Root, m.cfg.Workspace.CWD), planDocuments)
 		if err != nil {
 			return "", err
 		}
@@ -242,23 +242,24 @@ func (m *Model) runImplementationViaPlanExecute(ctx context.Context, prompt stri
 
 func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan, planDocuments []implementationDispatchPlanDocument) (string, error) {
 	planDocuments = implementationdispatch.PlanDocumentsWithDirtyAllowance(prompt, planDocuments)
+	root := implementationdispatch.WorkspaceRoot(m.cfg.Workspace.Root, m.cfg.Workspace.CWD)
 
 	requiredPaths, allowedPaths := implementationDispatchEditScopeFromPlanDocuments(prompt, plan, m.cfg, planDocuments)
 
-	if closed := implementationDispatchPlanDocumentsTerminalAtoms(planDocuments); len(closed) == len(planDocuments) && len(closed) > 0 {
+	if closed := implementationdispatch.PlanDocumentsTerminalAtoms(planDocuments); len(closed) == len(planDocuments) && len(closed) > 0 {
 		m.logMessage("dispatch_source_satisfied", fmt.Sprintf("skipping plan-execute for %d closed design-doc atom(s)", len(closed)))
 
-		return humanImplementationDispatchTerminalAtomMessage(closed), nil
+		return implementationdispatch.HumanTerminalAtomMessage(closed), nil
 	}
 
-	if satisfied := implementationDispatchPlanDocumentsSourceSatisfied(m.cfg, planDocuments); len(satisfied) == len(planDocuments) && len(satisfied) > 0 {
+	if satisfied := implementationdispatch.PlanDocumentsSourceSatisfied(root, planDocuments); len(satisfied) == len(planDocuments) && len(satisfied) > 0 {
 		m.logMessage("dispatch_source_satisfied", fmt.Sprintf("skipping plan-execute for %d already-satisfied design-doc atom(s)", len(satisfied)))
-		implementationDispatchMarkSourceSatisfiedAtomDocuments(m.cfg, satisfied)
+		implementationdispatch.MarkSourceSatisfiedAtomDocuments(root, satisfied)
 
-		return humanImplementationDispatchSourceSatisfiedMessage(satisfied), nil
+		return implementationdispatch.HumanSourceSatisfiedMessage(satisfied), nil
 	}
 
-	if implementationDispatchPlanDocumentsNeedRefineBeforeDispatch(planDocuments) {
+	if implementationdispatch.PlanDocumentsNeedRefineBeforeDispatch(planDocuments) {
 		m.logMessage("dispatch_refine", "materialized design-doc atom requires refine before plan-execute")
 
 		m.queueUIEvent(infoMsg{text: "Refining materialized design-doc atom before plan-execute..."})
@@ -268,7 +269,7 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 		refinedPlanDocuments := append([]implementationDispatchPlanDocument(nil), planDocuments...)
 
 		for _, doc := range planDocuments {
-			if !implementationDispatchPlanDocumentNeedsRefineBeforeDispatch(doc) {
+			if !implementationdispatch.PlanDocumentNeedsRefineBeforeDispatch(doc) {
 				continue
 			}
 
@@ -278,67 +279,70 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 
 			if !refined.OK {
 				if len(refined.PostPreflightBlockers) > 0 {
-					if implementationDispatchPreflightAllSourceSatisfied(refined.PostPreflightBlockers) {
+					sourceSatisfiedRecords := implementationdispatch.PreflightSourceSatisfiedRecords(refined.PostPreflightBlockers)
+					if implementationdispatch.PreflightRecordsAllSourceSatisfied(sourceSatisfiedRecords) {
 						m.logMessage("dispatch_source_satisfied", fmt.Sprintf("refined atom candidate classified %d atom(s) as source-satisfied", len(refined.PostPreflightBlockers)))
-						implementationDispatchMarkPreflightSourceSatisfiedAtomDocuments(m.cfg, refined.PostPreflightBlockers)
+						implementationdispatch.MarkPreflightSourceSatisfiedAtomDocuments(root, sourceSatisfiedRecords)
 
-						return humanImplementationDispatchPreflightSourceSatisfiedMessage(refined.PostPreflightBlockers), nil
+						return implementationdispatch.HumanPreflightSourceSatisfiedMessage(sourceSatisfiedRecords), nil
 					}
 
 					m.logMessage("dispatch_refine", fmt.Sprintf("refined atom candidate still blocked by preflight for %s", strings.TrimSpace(refined.OutputPath)))
 
-					return humanPlanDocumentRefinePostPreflightBlockedMessage(refineResults, refined.PostPreflightBlockers), nil
+					return implementationdispatch.HumanPlanDocumentRefinePostPreflightBlockedMessage(refineResults, refined.PostPreflightBlockers), nil
 				}
 
 				if implementationDispatchRefinedDocumentIsDispatchable(ctx, m.cfg, refined.Document) {
 					m.logMessage("dispatch_refine", fmt.Sprintf("using structurally dispatchable refined atom %s despite nonzero refine exit", strings.TrimSpace(refined.OutputPath)))
 
-					refinedPlanDocuments = replaceImplementationDispatchPlanDocument(refinedPlanDocuments, doc.Path, refined.Document)
+					refinedPlanDocuments = implementationdispatch.ReplacePlanDocument(refinedPlanDocuments, doc.Path, refined.Document)
 
 					continue
 				}
 
 				m.logMessage("dispatch_refine", fmt.Sprintf("refine failed for %s (code=%d output=%s)", doc.Path, refined.ExitCode, strings.TrimSpace(refined.OutputPath)))
 
-				return humanPlanDocumentRefineFailedMessage(nil, refineResults), nil
+				return implementationdispatch.HumanPlanDocumentRefineFailedMessage(nil, refineResults), nil
 			}
 
 			m.logMessage("dispatch_refine", fmt.Sprintf("refined %s to %s", doc.Path, refined.OutputPath))
 
-			refinedPlanDocuments = replaceImplementationDispatchPlanDocument(refinedPlanDocuments, doc.Path, refined.Document)
+			refinedPlanDocuments = implementationdispatch.ReplacePlanDocument(refinedPlanDocuments, doc.Path, refined.Document)
 		}
 
 		planDocuments = refinedPlanDocuments
 		requiredPaths, allowedPaths = implementationDispatchEditScopeFromPlanDocuments(prompt, plan, m.cfg, planDocuments)
 
 		if refinedBlocked := preflightImplementationDispatchPlanDocuments(ctx, m.cfg, planDocuments); len(refinedBlocked) > 0 {
-			if implementationDispatchPreflightAllSourceSatisfied(refinedBlocked) {
+			sourceSatisfiedRecords := implementationdispatch.PreflightSourceSatisfiedRecords(refinedBlocked)
+			if implementationdispatch.PreflightRecordsAllSourceSatisfied(sourceSatisfiedRecords) {
 				m.logMessage("dispatch_source_satisfied", fmt.Sprintf("refined atom preflight classified %d atom(s) as source-satisfied", len(refinedBlocked)))
-				implementationDispatchMarkPreflightSourceSatisfiedAtomDocuments(m.cfg, refinedBlocked)
+				implementationdispatch.MarkPreflightSourceSatisfiedAtomDocuments(root, sourceSatisfiedRecords)
 
-				return humanImplementationDispatchPreflightSourceSatisfiedMessage(refinedBlocked), nil
+				return implementationdispatch.HumanPreflightSourceSatisfiedMessage(sourceSatisfiedRecords), nil
 			}
 
 			m.logMessage("dispatch_refine", "refined atom brief still blocked by preflight")
 
-			return humanPlanDocumentRefinePostPreflightBlockedMessage(refineResults, refinedBlocked), nil
+			return implementationdispatch.HumanPlanDocumentRefinePostPreflightBlockedMessage(refineResults, refinedBlocked), nil
 		}
 	}
 
 	if blocked := preflightImplementationDispatchPlanDocuments(ctx, m.cfg, planDocuments); len(blocked) > 0 {
-		if implementationDispatchPreflightAllSourceSatisfied(blocked) {
+		sourceSatisfiedRecords := implementationdispatch.PreflightSourceSatisfiedRecords(blocked)
+		if implementationdispatch.PreflightRecordsAllSourceSatisfied(sourceSatisfiedRecords) {
 			m.logMessage("dispatch_source_satisfied", fmt.Sprintf("preflight classified %d atom(s) as source-satisfied", len(blocked)))
-			implementationDispatchMarkPreflightSourceSatisfiedAtomDocuments(m.cfg, blocked)
+			implementationdispatch.MarkPreflightSourceSatisfiedAtomDocuments(root, sourceSatisfiedRecords)
 
-			return humanImplementationDispatchPreflightSourceSatisfiedMessage(blocked), nil
+			return implementationdispatch.HumanPreflightSourceSatisfiedMessage(sourceSatisfiedRecords), nil
 		}
 
-		if implementationDispatchPreflightNeedsAtomization(blocked) && implementationDispatchCanAtomizePlanDocuments(planDocuments) {
+		if implementationdispatch.PreflightNeedsAtomization(blocked) && implementationdispatch.CanAtomizePlanDocuments(planDocuments) {
 			m.logMessage("dispatch_atomize", "preflight requested sub-atoms; materializing atom briefs before plan-execute")
 
 			m.queueUIEvent(infoMsg{text: "Materializing design document atoms before plan-execute..."})
 
-			atomDocuments, err := materializeImplementationDispatchPlanDocumentAtoms(m.cfg, planDocuments)
+			atomDocuments, err := implementationdispatch.MaterializePlanDocumentAtoms(implementationdispatch.WorkspaceRoot(m.cfg.Workspace.Root, m.cfg.Workspace.CWD), planDocuments)
 			if err != nil {
 				return "", err
 			}
@@ -346,7 +350,7 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 			return m.runAtomizedImplementationPlanDocumentsViaPlanExecute(ctx, prompt, plan, atomDocuments)
 		}
 
-		if implementationDispatchPreflightCanRefine(blocked) {
+		if implementationdispatch.PreflightCanRefine(blocked) {
 			m.logMessage("dispatch_refine", "preflight found non-dispatchable plan document shape; running refine before plan-execute")
 
 			m.queueUIEvent(infoMsg{text: "Refining referenced plan document before plan-execute..."})
@@ -381,53 +385,55 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 
 				if !refined.OK {
 					if len(refined.PostPreflightBlockers) > 0 {
-						if implementationDispatchPreflightAllSourceSatisfied(refined.PostPreflightBlockers) {
+						sourceSatisfiedRecords := implementationdispatch.PreflightSourceSatisfiedRecords(refined.PostPreflightBlockers)
+						if implementationdispatch.PreflightRecordsAllSourceSatisfied(sourceSatisfiedRecords) {
 							m.logMessage("dispatch_source_satisfied", fmt.Sprintf("refined candidate classified %d atom(s) as source-satisfied", len(refined.PostPreflightBlockers)))
-							implementationDispatchMarkPreflightSourceSatisfiedAtomDocuments(m.cfg, refined.PostPreflightBlockers)
+							implementationdispatch.MarkPreflightSourceSatisfiedAtomDocuments(root, sourceSatisfiedRecords)
 
-							return humanImplementationDispatchPreflightSourceSatisfiedMessage(refined.PostPreflightBlockers), nil
+							return implementationdispatch.HumanPreflightSourceSatisfiedMessage(sourceSatisfiedRecords), nil
 						}
 
 						m.logMessage("dispatch_refine", fmt.Sprintf("refined candidate still blocked by preflight for %s", strings.TrimSpace(refined.OutputPath)))
 
-						return humanPlanDocumentRefinePostPreflightBlockedMessage(refineResults, refined.PostPreflightBlockers), nil
+						return implementationdispatch.HumanPlanDocumentRefinePostPreflightBlockedMessage(refineResults, refined.PostPreflightBlockers), nil
 					}
 
 					if implementationDispatchRefinedDocumentIsDispatchable(ctx, m.cfg, refined.Document) {
 						m.logMessage("dispatch_refine", fmt.Sprintf("using structurally dispatchable refined brief %s despite nonzero refine exit", strings.TrimSpace(refined.OutputPath)))
 
-						refinedPlanDocuments = replaceImplementationDispatchPlanDocument(refinedPlanDocuments, docPath, refined.Document)
+						refinedPlanDocuments = implementationdispatch.ReplacePlanDocument(refinedPlanDocuments, docPath, refined.Document)
 
 						continue
 					}
 
 					m.logMessage("dispatch_refine", fmt.Sprintf("refine failed for %s (code=%d output=%s)", docPath, refined.ExitCode, strings.TrimSpace(refined.OutputPath)))
 
-					return humanPlanDocumentRefineFailedMessage(blocked, refineResults), nil
+					return implementationdispatch.HumanPlanDocumentRefineFailedMessage(blocked, refineResults), nil
 				}
 
 				m.logMessage("dispatch_refine", fmt.Sprintf("refined %s to %s", docPath, refined.OutputPath))
 
-				refinedPlanDocuments = replaceImplementationDispatchPlanDocument(refinedPlanDocuments, docPath, refined.Document)
+				refinedPlanDocuments = implementationdispatch.ReplacePlanDocument(refinedPlanDocuments, docPath, refined.Document)
 			}
 
 			planDocuments = refinedPlanDocuments
 			requiredPaths, allowedPaths = implementationDispatchEditScopeFromPlanDocuments(prompt, plan, m.cfg, planDocuments)
 
 			if refinedBlocked := preflightImplementationDispatchPlanDocuments(ctx, m.cfg, planDocuments); len(refinedBlocked) > 0 {
-				if implementationDispatchPreflightAllSourceSatisfied(refinedBlocked) {
+				sourceSatisfiedRecords := implementationdispatch.PreflightSourceSatisfiedRecords(refinedBlocked)
+				if implementationdispatch.PreflightRecordsAllSourceSatisfied(sourceSatisfiedRecords) {
 					m.logMessage("dispatch_source_satisfied", fmt.Sprintf("refined preflight classified %d atom(s) as source-satisfied", len(refinedBlocked)))
-					implementationDispatchMarkPreflightSourceSatisfiedAtomDocuments(m.cfg, refinedBlocked)
+					implementationdispatch.MarkPreflightSourceSatisfiedAtomDocuments(root, sourceSatisfiedRecords)
 
-					return humanImplementationDispatchPreflightSourceSatisfiedMessage(refinedBlocked), nil
+					return implementationdispatch.HumanPreflightSourceSatisfiedMessage(sourceSatisfiedRecords), nil
 				}
 
-				if implementationDispatchPreflightNeedsAtomization(refinedBlocked) && implementationDispatchCanAtomizePlanDocuments(planDocuments) {
+				if implementationdispatch.PreflightNeedsAtomization(refinedBlocked) && implementationdispatch.CanAtomizePlanDocuments(planDocuments) {
 					m.logMessage("dispatch_atomize", "refined brief still exceeds single-purpose limits; materializing atom briefs before plan-execute")
 
 					m.queueUIEvent(infoMsg{text: "Materializing refined design document atoms before plan-execute..."})
 
-					atomDocuments, err := materializeImplementationDispatchPlanDocumentAtoms(m.cfg, planDocuments)
+					atomDocuments, err := implementationdispatch.MaterializePlanDocumentAtoms(implementationdispatch.WorkspaceRoot(m.cfg.Workspace.Root, m.cfg.Workspace.CWD), planDocuments)
 					if err != nil {
 						return "", err
 					}
@@ -437,7 +443,7 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 
 				m.logMessage("dispatch_refine", "refined brief still blocked by preflight")
 
-				return humanPlanDocumentRefinePostPreflightBlockedMessage(refineResults, refinedBlocked), nil
+				return implementationdispatch.HumanPlanDocumentRefinePostPreflightBlockedMessage(refineResults, refinedBlocked), nil
 			}
 		} else {
 			var paths []string
@@ -448,7 +454,7 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 
 			m.logMessage("dispatch_preflight", fmt.Sprintf("blocked plan-execute dispatch for referenced plan document(s): %s", strings.Join(paths, ", ")))
 
-			return humanPlanDocumentPreflightBlockedMessage(blocked), nil
+			return implementationdispatch.HumanPlanDocumentPreflightBlockedMessage(blocked), nil
 		}
 	}
 
@@ -461,20 +467,6 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 	}
 
 	return m.runSingleImplementationPlanExecute(ctx, prompt, plan, requiredPaths, allowedPaths, planDocuments)
-}
-
-func implementationDispatchPlanDocumentsNeedRefineBeforeDispatch(planDocuments []implementationDispatchPlanDocument) bool {
-	for _, doc := range planDocuments {
-		if implementationDispatchPlanDocumentNeedsRefineBeforeDispatch(doc) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func implementationDispatchPlanDocumentNeedsRefineBeforeDispatch(doc implementationDispatchPlanDocument) bool {
-	return implementationDispatchIsAtomizedPlanDocumentPath(doc.Path)
 }
 
 func implementationDispatchRefinedDocumentIsDispatchable(ctx context.Context, cfg config.Config, doc implementationDispatchPlanDocument) bool {
@@ -495,12 +487,13 @@ func (m *Model) runAtomizedImplementationPlanDocumentsViaPlanExecute(ctx context
 
 	var (
 		summaries []string
-		skipped   []implementationDispatchTerminalAtomRecord
+		skipped   []implementationdispatch.TerminalAtomRecord
 	)
+	root := implementationdispatch.WorkspaceRoot(m.cfg.Workspace.Root, m.cfg.Workspace.CWD)
 
 	for i, atomDoc := range atomDocuments {
-		if status, ok := implementationDispatchPlanDocumentTerminalAtomStatus(atomDoc); ok {
-			skipped = append(skipped, implementationDispatchTerminalAtomRecord{DocumentPath: atomDoc.Path, Status: status})
+		if status, ok := implementationdispatch.PlanDocumentTerminalAtomStatus(atomDoc); ok {
+			skipped = append(skipped, implementationdispatch.TerminalAtomRecord{DocumentPath: atomDoc.Path, Status: status})
 			summaries = append(summaries, fmt.Sprintf("Atom %d/%d `%s` skipped: %s", i+1, len(atomDocuments), atomDoc.Path, status))
 
 			continue
@@ -521,16 +514,16 @@ func (m *Model) runAtomizedImplementationPlanDocumentsViaPlanExecute(ctx context
 		}
 
 		result := m.lastPlanExecuteRunResult
-		if implementationDispatchPlanExecuteResultBlocksAtomCompletion(result) ||
-			(result == nil && implementationDispatchAnswerLooksBlocked(answer)) {
+		if implementationdispatch.PlanExecuteResultBlocksAtomCompletion(result) ||
+			(result == nil && implementationdispatch.AnswerLooksBlocked(answer)) {
 			return answer, nil
 		}
 
-		if pendingCommands := implementationDispatchUnprovenVerificationCommands(atomDoc, answer); len(pendingCommands) > 0 {
-			return humanImplementationDispatchPendingVerificationCommandMessage(atomDoc, pendingCommands), nil
+		if pendingCommands := implementationdispatch.UnprovenVerificationCommands(atomDoc, answer); len(pendingCommands) > 0 {
+			return implementationdispatch.HumanPendingVerificationCommandMessage(atomDoc, pendingCommands), nil
 		}
 
-		implementationDispatchMarkCompletedAtomDocumentForResult(m.cfg, atomDoc, answer, result)
+		implementationdispatch.MarkCompletedAtomDocumentForResult(root, atomDoc, answer, result)
 
 		summaries = append(summaries, fmt.Sprintf("Atom %d/%d `%s`:\n%s", i+1, len(atomDocuments), atomDoc.Path, strings.TrimSpace(answer)))
 	}
@@ -547,7 +540,7 @@ func (m *Model) runAtomizedImplementationPlanDocumentsViaPlanExecute(ctx context
 		}
 	}
 
-	if obligations := implementationDispatchTestObligationsFromDocuments(atomDocuments); len(obligations) > 0 {
+	if obligations := implementationdispatch.TestObligationsFromDocuments(atomDocuments); len(obligations) > 0 {
 		b.WriteString("\n\nDesign-doc test obligations tracked:")
 
 		for _, obligation := range obligations {
@@ -564,34 +557,6 @@ func (m *Model) runAtomizedImplementationPlanDocumentsViaPlanExecute(ctx context
 	return strings.TrimSpace(b.String()), nil
 }
 
-func implementationDispatchTestObligationsFromDocuments(docs []implementationDispatchPlanDocument) []string {
-	var obligations []string
-
-	for _, doc := range docs {
-		obligations = appendUniqueBriefStrings(obligations, doc.TestObligations...)
-	}
-
-	return obligations
-}
-
-func implementationDispatchAnswerLooksBlocked(answer string) bool {
-	lower := strings.ToLower(strings.TrimSpace(answer))
-	if lower == "" {
-		return false
-	}
-
-	return strings.HasPrefix(lower, "<<question>>") ||
-		strings.Contains(lower, "<<question>>") ||
-		strings.Contains(lower, "plan-execute could not produce a plan artifact") ||
-		strings.Contains(lower, "planner phase did not produce a plan artifact") ||
-		strings.Contains(lower, "planner phase reported a blocker") ||
-		strings.Contains(lower, "required edit paths still need a plan") ||
-		strings.Contains(lower, "blocked dispatch") ||
-		strings.Contains(lower, "blocked before the planner ran") ||
-		strings.Contains(lower, "automatic refine did not produce") ||
-		strings.Contains(lower, "still blocked by preflight")
-}
-
 func (m *Model) runPersistedPlanExecuteContinuation(ctx context.Context, prompt string, plan promptExecutionPlan, scope planexecute.ContinuationScope) (string, error) {
 	allow, blanket, ok := planExecuteApprovalDecisionFromOperatorInput(prompt)
 	if !ok || !allow {
@@ -602,7 +567,6 @@ func (m *Model) runPersistedPlanExecuteContinuation(ctx context.Context, prompt 
 		m.planExecuteApproveAllEdits = true
 	}
 
-	root := implementationDispatchWorkspaceRoot(m.cfg)
 	requiredPaths := appendUniqueBriefStrings(nil, scope.RequiredEditPaths...)
 	authorizedNewFiles := appendUniqueBriefStrings(plan.runtimeBrief.AuthorizedNewFiles, scope.AuthorizedNewFiles...)
 	planExecuteDeps := planexecuteadapters.Dependencies()
@@ -621,7 +585,7 @@ func (m *Model) runPersistedPlanExecuteContinuation(ctx context.Context, prompt 
 		ScopeContract:         plancontract.NewPlanScopeContract(requiredPaths, nil, nil),
 		ScopeExtractionPolicy: planexecute.ScopeExtractionFrozen,
 		AuthorizedNewFiles:    authorizedNewFiles,
-		MaxTokens:             implementationDispatchPlanExecuteMaxTokens(root, prompt, requiredPaths, nil, nil),
+		MaxTokens:             implementationdispatch.PlanExecuteMaxTokens(prompt, requiredPaths, nil, nil),
 		OnPhase: func(phase, detail string) {
 			m.queueUIEvent(planPhaseMsg{phase: phase, detail: detail})
 		},
@@ -692,10 +656,10 @@ func (m *Model) runPersistedPlanExecuteContinuation(ctx context.Context, prompt 
 
 func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan, requiredPaths []string, allowedPaths []string, planDocuments []implementationDispatchPlanDocument) (string, error) {
 	brief := composeImplementationBriefWithEditScopeAndPlanDocuments(prompt, plan, m.cfg, requiredPaths, allowedPaths, planDocuments)
-	root := implementationDispatchWorkspaceRoot(m.cfg)
+	root := implementationdispatch.WorkspaceRoot(m.cfg.Workspace.Root, m.cfg.Workspace.CWD)
 	intake := implementationDispatchCompilePlanExecuteScopeIntake(prompt, plan, m.cfg)
 	authorizedNewFiles := appendUniqueBriefStrings(
-		implementationDispatchAuthorizedNewFiles(prompt, planDocuments),
+		implementationdispatch.AuthorizedNewFiles(prompt, planDocuments),
 		intake.AuthorizedNewFiles...,
 	)
 
@@ -712,7 +676,7 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 	}, &contextPackLog, planExecuteDeps.RunPromptContextTool)
 
 	if diag := strings.TrimSpace(contextPackLog.String()); diag != "" {
-		m.logMessage("dispatch_context", truncateImplementationDispatchText(diag, 500))
+		m.logMessage("dispatch_context", textutil.TruncateWithByteCount(diag, 500))
 	}
 
 	if strings.TrimSpace(contextPackSection) != "" {
@@ -812,7 +776,7 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 		ScopeContract:         scopeContract,
 		ScopeExtractionPolicy: scopeExtractionPolicy,
 		AuthorizedNewFiles:    authorizedNewFiles,
-		MaxTokens:             implementationDispatchPlanExecuteMaxTokens(m.cfg.Workspace.Root, prompt, requiredPaths, allowedPaths, planDocuments),
+		MaxTokens:             implementationdispatch.PlanExecuteMaxTokens(prompt, requiredPaths, allowedPaths, planDocuments),
 		OnPhase: func(phase, detail string) {
 			m.queueUIEvent(planPhaseMsg{phase: phase, detail: detail})
 		},
@@ -960,88 +924,9 @@ func humanPlanExecuteExecutionRecoveryOpenMessage(root string, result planexecut
 	return strings.TrimSpace(b.String()), true
 }
 
-func implementationDispatchPlanExecuteMaxTokens(root string, prompt string, requiredPaths []string, allowedPaths []string, planDocuments []implementationDispatchPlanDocument) int {
-	if implementationDispatchPlanExecuteNeedsLargeBodyBudget(root, prompt, requiredPaths, allowedPaths, planDocuments) {
-		return 16384
-	}
-
-	return 8192
-}
-
-func implementationDispatchPlanExecuteNeedsLargeBodyBudget(root string, prompt string, requiredPaths []string, allowedPaths []string, planDocuments []implementationDispatchPlanDocument) bool {
-	if len(planDocuments) > 0 {
-		for _, doc := range planDocuments {
-			docText := strings.ToLower(doc.Content)
-			if strings.Contains(docText, "new file") || strings.Contains(docText, "replace_all") || strings.Contains(docText, "full file body") {
-				return true
-			}
-
-			for _, path := range doc.EditPaths {
-				base := strings.ToLower(filepath.Base(filepath.ToSlash(path)))
-				if strings.Contains(base, "new") {
-					return true
-				}
-			}
-		}
-	}
-
-	lower := strings.ToLower(prompt)
-	for _, phrase := range []string{"create new file", "add new file", "write new file", "whole-file", "replace_all", "full file body"} {
-		if strings.Contains(lower, phrase) {
-			return true
-		}
-	}
-
-	for _, path := range append(append([]string(nil), requiredPaths...), allowedPaths...) {
-		lowerPath := strings.ToLower(filepath.ToSlash(path))
-		if strings.Contains(lowerPath, "/new/") || strings.Contains(filepath.Base(lowerPath), "new_") {
-			return true
-		}
-
-		if implementationDispatchPromptImpliesNewFilePath(lower, lowerPath) {
-			return true
-		}
-
-	}
-
-	return false
-}
-
-func implementationDispatchPromptImpliesNewFilePath(lowerPrompt string, lowerPath string) bool {
-	if lowerPrompt == "" || lowerPath == "" || !strings.Contains(lowerPrompt, lowerPath) {
-		return false
-	}
-
-	if strings.Contains(lowerPrompt, " create ") ||
-		strings.HasPrefix(lowerPrompt, "create ") ||
-		strings.Contains(lowerPrompt, " write ") ||
-		strings.HasPrefix(lowerPrompt, "write ") {
-
-		return true
-	}
-
-	if strings.Contains(lowerPrompt, " add "+lowerPath) || strings.Contains(lowerPrompt, " add new") || strings.Contains(lowerPrompt, " add file") {
-		return true
-	}
-
-	return strings.HasPrefix(lowerPrompt, "add "+lowerPath) ||
-		strings.HasPrefix(lowerPrompt, "add new ") ||
-		strings.HasPrefix(lowerPrompt, "add file ")
-}
-
 func implementationDispatchPlanExecuteRunFailureKind(result planexecute.RunResult) plancontract.PlanExecuteFailureKind {
 	failureKind, _ := plancontract.ParsePlanExecuteFailureKind(result.FailureKind)
 	return failureKind
-}
-
-func implementationDispatchAuthorizedNewFiles(prompt string, planDocuments []implementationDispatchPlanDocument) []string {
-	paths := append([]string{}, plancontract.AuthorizedNewFilePathsFromPrompt(prompt)...)
-	for _, doc := range planDocuments {
-		paths = append(paths, doc.AuthorizedNewFiles...)
-		paths = append(paths, plancontract.AuthorizedNewFilePathsFromPrompt(doc.Content)...)
-	}
-
-	return uniqueImplementationDispatchPaths(paths)
 }
 
 func humanPlanExecuteNewFileAuthorizationRequiredMessage(paths []string) string {
@@ -1081,7 +966,7 @@ func (m *Model) humanPlanExecuteMissingNewFileAuthorizationMessage(result planex
 		return "", false
 	}
 
-	root := implementationDispatchWorkspaceRoot(m.cfg)
+	root := implementationdispatch.WorkspaceRoot(m.cfg.Workspace.Root, m.cfg.Workspace.CWD)
 	state, _, found, _ := planexecute.TryLoadProgressState(root, result.SessionID)
 	if !found {
 		return "", false
@@ -1383,7 +1268,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 		}), true, nil
 	}
 
-	m.logMessage("dispatch_recovery", fmt.Sprintf("planner_blocked decision=%s reason=%s", strings.TrimSpace(decision.Decision), truncateImplementationDispatchText(strings.TrimSpace(decision.Reason), 240)))
+	m.logMessage("dispatch_recovery", fmt.Sprintf("planner_blocked decision=%s reason=%s", strings.TrimSpace(decision.Decision), textutil.TruncateWithByteCount(strings.TrimSpace(decision.Reason), 240)))
 
 	if textutil.EqualTrimFold(decision.Decision, "retry") {
 		retryPrompt := appendPlanExecutePlannerRecoveryAddendum(failure.Brief, failure, decision, raw)
@@ -1688,7 +1573,7 @@ func (m *Model) resolveUnscopedImplementationAllowedPaths(ctx context.Context, p
 		FreshnessMaxFiles: 64,
 	})
 	if strings.TrimSpace(result.Error) != "" {
-		m.logMessage("dispatch_recovery", "fallback scope search failed: "+truncateImplementationDispatchText(result.Error, 240))
+		m.logMessage("dispatch_recovery", "fallback scope search failed: "+textutil.TruncateWithByteCount(result.Error, 240))
 
 		return nil
 	}
@@ -2442,19 +2327,19 @@ func planExecutePlannerBlockedDecisionPrompt(failure implementationDispatchPlanE
 
 	if answer := strings.TrimSpace(failure.Result.PlannerAnswer); answer != "" {
 		b.WriteString("\n## Planner Blocker Answer\n\n")
-		b.WriteString(truncateImplementationDispatchText(answer, 6000))
+		b.WriteString(textutil.TruncateWithByteCount(answer, 6000))
 		b.WriteString("\n")
 	}
 
 	if stderr := strings.TrimSpace(failure.Stderr); stderr != "" {
 		b.WriteString("\n## Orchestrator Error\n\n")
-		b.WriteString(truncateImplementationDispatchText(stderr, 2000))
+		b.WriteString(textutil.TruncateWithByteCount(stderr, 2000))
 		b.WriteString("\n")
 	}
 
 	if stdout := strings.TrimSpace(failure.Stdout); stdout != "" && !strings.Contains(stdout, failure.Result.PlannerAnswer) {
 		b.WriteString("\n## Orchestrator Output\n\n")
-		b.WriteString(truncateImplementationDispatchText(stdout, 3000))
+		b.WriteString(textutil.TruncateWithByteCount(stdout, 3000))
 		b.WriteString("\n")
 	}
 
@@ -2555,7 +2440,7 @@ func planExecutePlannerRecoveryObservation(addendum string) string {
 		return ""
 	}
 
-	return truncateImplementationDispatchText(addendum, 600)
+	return textutil.TruncateWithByteCount(addendum, 600)
 }
 
 func planExecutePlannerRecoveryAddendumContradictsContract(addendum string) bool {
@@ -2668,7 +2553,7 @@ func (m *Model) implementationDispatchSubmittedPlanPaths(failure implementationD
 		return nil
 	}
 
-	root := implementationDispatchWorkspaceRoot(m.cfg)
+	root := implementationdispatch.WorkspaceRoot(m.cfg.Workspace.Root, m.cfg.Workspace.CWD)
 	if strings.TrimSpace(root) == "" {
 		return nil
 	}
@@ -2734,10 +2619,10 @@ func humanPlanExecutePlannerBlockedMessage(failure implementationDispatchPlanExe
 	if answer := strings.TrimSpace(failure.Result.PlannerAnswer); answer != "" && !planExecutePlannerAnswerIsInternalCompletionGate(answer) {
 		if detail, ok := humanPlanExecutePlannerAnswerDetail(answer); ok {
 			b.WriteString("\n\nPlanner detail:\n")
-			b.WriteString(truncateImplementationDispatchText(detail, 1200))
+			b.WriteString(textutil.TruncateWithByteCount(detail, 1200))
 		} else {
 			b.WriteString("\n\nPlanner answer:\n")
-			b.WriteString(truncateImplementationDispatchText(answer, 2000))
+			b.WriteString(textutil.TruncateWithByteCount(answer, 2000))
 		}
 	}
 

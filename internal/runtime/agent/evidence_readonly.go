@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/capabilities/workspace/patching"
@@ -30,6 +31,7 @@ const (
 	readOnlyEvidenceDiagnostic        readOnlyEvidenceKind = "diagnostic"
 	readOnlyEvidencePlanArtifact      readOnlyEvidenceKind = "plan_artifact"
 	readOnlyEvidenceGeneratedArtifact readOnlyEvidenceKind = "generated_artifact"
+	readOnlyEvidenceExternalDocument  readOnlyEvidenceKind = "external_document_body"
 )
 
 const readOnlyHighCardinalitySearchThreshold = 50
@@ -63,6 +65,8 @@ type readOnlyAnswerabilityLedger struct {
 	SourceBodyPaths                []string
 	SourceBodyTaskPaths            []string
 	RelevantSourceBodyPaths        []string
+	ExternalDocumentBodyPaths      []string
+	RelevantExternalDocumentPaths  []string
 	GeneratedArtifactPaths         []string
 	SourceBodyObjectivePaths       []string
 	SourceBodyObjectiveTerms       []readOnlySourceBodyObjectiveSupport
@@ -102,7 +106,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 		}
 
 		if readFileResultOnlyMentionsDiagnosticLogArtifacts(result) {
-			paths := readOnlySourceLikePaths(agentutil.ReadPathsFromToolResult(result), 8)
+			paths := readOnlySourceLikePaths(ReadPathsFromToolResult(result), 8)
 			ledger.addItem(readOnlyEvidenceItem{
 				Kind:           readOnlyEvidenceGeneratedArtifact,
 				Tool:           tool,
@@ -158,7 +162,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 		}
 
 		if concreteSourceEvidenceResult(result) {
-			for _, path := range readOnlySourceLikePaths(agentutil.ReadPathsFromToolResult(result), 8) {
+			for _, path := range readOnlySourceLikePaths(ReadPathsFromToolResult(result), 8) {
 				ledger.addItem(readOnlyEvidenceItem{
 					Kind:    readOnlyEvidenceSourceBody,
 					Tool:    tool,
@@ -169,6 +173,19 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 
 				ledger.SourceBodyPaths = textutil.Merge(ledger.SourceBodyPaths, []string{path})
 				ledger.observeSourceBodyObjectiveSupport(path, result.Output)
+			}
+
+			for _, path := range readOnlyExternalDocumentBodyPathsFromResult(result) {
+				ledger.addItem(readOnlyEvidenceItem{
+					Kind:    readOnlyEvidenceExternalDocument,
+					Tool:    tool,
+					Source:  readOnlyEvidenceItemSource(tool),
+					Path:    path,
+					Summary: strings.TrimSpace(result.Summary),
+				})
+
+				ledger.ExternalDocumentBodyPaths = textutil.Merge(ledger.ExternalDocumentBodyPaths, []string{path})
+				ledger.observeExternalDocumentObjectiveSupport(path, result.Output)
 			}
 
 			continue
@@ -201,7 +218,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 					ledger.SourceBodyPaths = textutil.Merge(ledger.SourceBodyPaths, sourcePaths)
 					ledger.SourceBodyTaskPaths = textutil.Merge(ledger.SourceBodyTaskPaths, sourcePaths)
 
-					if !ledger.directAnswerConversation() || !agentutil.ObjectiveAsksImplementationShape(ledger.Objective) {
+					if !ledger.directAnswerConversation() || !ObjectiveAsksImplementationShape(ledger.Objective) {
 						ledger.SourceBodyObjectivePaths = textutil.Merge(ledger.SourceBodyObjectivePaths, sourcePaths)
 					}
 				}
@@ -297,7 +314,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 			}
 		default:
 			if readOnlyOutlineEvidenceResult(result) {
-				candidates := readOnlySourceLikePaths(agentutil.ReadPathsFromToolResult(result), 8)
+				candidates := readOnlySourceLikePaths(ReadPathsFromToolResult(result), 8)
 				ledger.addItem(readOnlyEvidenceItem{
 					Kind:           readOnlyEvidenceOutline,
 					Tool:           tool,
@@ -311,17 +328,18 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 	}
 
 	ledger.CandidatePaths = textutil.Merge(namedTargets, ledger.CandidatePaths)
-	ledger.SourceBodyPaths = textutil.Merge(ledger.SourceBodyPaths, sourceEvidenceBodyPaths(results), delegatedReadOnlySourceBodyReadinessPaths(ledger.Objective, results))
+	ledger.SourceBodyPaths = textutil.Merge(ledger.SourceBodyPaths, readOnlyConcreteSourceBodyPaths(results), delegatedReadOnlySourceBodyReadinessPaths(ledger.Objective, results))
 	ledger.promoteCollectiveSourceBodyObjectiveSupport(namedTargets)
 	ledger.markRelevantSourceBodies(namedTargets)
+	ledger.markRelevantExternalDocuments()
 
 	// Determine whether unread candidate paths exist (candidates not yet read as source bodies).
 	candidateSet := make(map[string]struct{}, len(ledger.CandidatePaths))
 	for _, p := range ledger.CandidatePaths {
-		candidateSet[agentutil.NormalizeRunnerPath(p)] = struct{}{}
+		candidateSet[NormalizeRunnerPath(p)] = struct{}{}
 	}
 	for _, p := range ledger.SourceBodyPaths {
-		delete(candidateSet, agentutil.NormalizeRunnerPath(p))
+		delete(candidateSet, NormalizeRunnerPath(p))
 	}
 	ledger.HasUnreadCandidatePaths = len(candidateSet) > 0
 
@@ -344,7 +362,7 @@ func delegatedTaskOutputHasFindingEvidence(output string) bool {
 		return false
 	}
 
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		"grounded answer",
 		"core files:",
 		"primary files:",
@@ -365,7 +383,7 @@ func delegatedTaskOutputHasFindingEvidence(output string) bool {
 func (l *readOnlyAnswerabilityLedger) addItem(item readOnlyEvidenceItem) {
 	item.Tool = strings.TrimSpace(item.Tool)
 	item.Source = strings.TrimSpace(item.Source)
-	item.Path = agentutil.NormalizeRunnerPath(item.Path)
+	item.Path = NormalizeRunnerPath(item.Path)
 	item.CandidatePaths = readOnlySourceLikePaths(item.CandidatePaths, 128)
 	item.Summary = strings.TrimSpace(item.Summary)
 	l.Items = append(l.Items, item)
@@ -381,12 +399,12 @@ func readOnlyEvidenceItemSource(tool string) string {
 }
 
 func (l *readOnlyAnswerabilityLedger) observeSourceBodyObjectiveSupport(path string, body string) {
-	path = agentutil.NormalizeRunnerPath(path)
-	if path == "" || agentutil.IsNonSourceEvidenceArtifactPath(path) || !pathparse.HasWorkspaceFileExtension(path) {
+	path = NormalizeRunnerPath(path)
+	if path == "" || IsNonSourceEvidenceArtifactPath(path) || !pathparse.HasWorkspaceFileExtension(path) {
 		return
 	}
 
-	if l.directAnswerConversation() && agentutil.ObjectiveAsksImplementationShape(l.Objective) {
+	if l.directAnswerConversation() && ObjectiveAsksImplementationShape(l.Objective) {
 		evidence := readOnlySourceOwnerEvidenceForBody(path, "", l.Objective, body)
 		l.observeSourceOwnerEvidence(evidence)
 
@@ -406,9 +424,31 @@ func (l *readOnlyAnswerabilityLedger) observeSourceBodyObjectiveSupport(path str
 
 	if sourceBodyHasStrongObjectiveToken(body, l.Objective) &&
 		(!l.directAnswerConversation() ||
-			!agentutil.ObjectiveAsksImplementationShape(l.Objective) ||
+			!ObjectiveAsksImplementationShape(l.Objective) ||
 			implementationShapeSourceBodyCanClose(l.Objective, body)) {
 
+		l.SourceBodyObjectivePaths = textutil.Merge(l.SourceBodyObjectivePaths, []string{path})
+	}
+
+	terms := l.sourceBodyObjectiveTerms(body)
+	if l.sourceBodyObjectiveTermSupportSatisfies(path, terms, body) {
+		l.SourceBodyObjectivePaths = textutil.Merge(l.SourceBodyObjectivePaths, []string{path})
+	}
+
+	if len(terms) == 0 {
+		return
+	}
+
+	l.observeSourceBodyObjectiveTerms(path, terms)
+}
+
+func (l *readOnlyAnswerabilityLedger) observeExternalDocumentObjectiveSupport(path string, body string) {
+	path = normalizeReadOnlyExternalDocumentPath(path)
+	if path == "" || !readOnlyExternalDocumentBodyPath(path) {
+		return
+	}
+
+	if sourceBodyHasStrongObjectiveToken(body, l.Objective) {
 		l.SourceBodyObjectivePaths = textutil.Merge(l.SourceBodyObjectivePaths, []string{path})
 	}
 
@@ -439,7 +479,7 @@ func (l *readOnlyAnswerabilityLedger) observeSourceBodyObjectiveTerms(path strin
 }
 
 func (l *readOnlyAnswerabilityLedger) observeSourceOwnerEvidence(evidence readOnlySourceOwnerEvidence) {
-	evidence.Path = agentutil.NormalizeRunnerPath(evidence.Path)
+	evidence.Path = NormalizeRunnerPath(evidence.Path)
 	if evidence.Path == "" {
 		return
 	}
@@ -491,7 +531,7 @@ func (l readOnlyAnswerabilityLedger) sourceBodyObjectiveTermSupportSatisfies(pat
 
 	termSet := map[string]struct{}{}
 	for _, term := range terms {
-		term = agentutil.ReadOnlyObjectiveSupportTerm(term)
+		term = ReadOnlyObjectiveSupportTerm(term)
 		if term == "" {
 			continue
 		}
@@ -501,7 +541,7 @@ func (l readOnlyAnswerabilityLedger) sourceBodyObjectiveTermSupportSatisfies(pat
 
 	matches := 0
 	for _, requiredTerm := range required {
-		requiredTerm = agentutil.ReadOnlyObjectiveSupportTerm(requiredTerm)
+		requiredTerm = ReadOnlyObjectiveSupportTerm(requiredTerm)
 		if requiredTerm == "" {
 			continue
 		}
@@ -512,14 +552,14 @@ func (l readOnlyAnswerabilityLedger) sourceBodyObjectiveTermSupportSatisfies(pat
 	}
 
 	if len(required) == 1 {
-		requiredTerm := agentutil.ReadOnlyObjectiveSupportTerm(required[0])
+		requiredTerm := ReadOnlyObjectiveSupportTerm(required[0])
 		if readOnlyTextNegatesObjectiveTerm(l.Objective, requiredTerm) &&
 			!readOnlyTextNegatesObjectiveTerm(body, requiredTerm) {
 
 			return false
 		}
 
-		_, carried := readOnlyPathSet(l.CandidatePaths)[agentutil.NormalizeRunnerPath(path)]
+		_, carried := readOnlyPathSet(l.CandidatePaths)[NormalizeRunnerPath(path)]
 		return matches == 1 &&
 			readOnlyCarriedReferentObjective(l.Objective) &&
 			carried
@@ -529,7 +569,7 @@ func (l readOnlyAnswerabilityLedger) sourceBodyObjectiveTermSupportSatisfies(pat
 }
 
 func readOnlyTextNegatesObjectiveTerm(text string, term string) bool {
-	term = agentutil.ReadOnlyObjectiveSupportTerm(term)
+	term = ReadOnlyObjectiveSupportTerm(term)
 	if term == "" {
 		return false
 	}
@@ -568,7 +608,7 @@ func (l readOnlyAnswerabilityLedger) requiredSourceBodyObjectiveTerms() []string
 	seen := map[string]struct{}{}
 
 	for _, term := range terms {
-		term = agentutil.ReadOnlyObjectiveSupportTerm(term)
+		term = ReadOnlyObjectiveSupportTerm(term)
 		if len(term) < 3 {
 			continue
 		}
@@ -589,12 +629,12 @@ func (l readOnlyAnswerabilityLedger) requiredSourceBodyObjectiveTerms() []string
 }
 
 func readOnlyCollectiveObjectiveSupportStopWord(term string) bool {
-	term = agentutil.ReadOnlyObjectiveSupportTerm(term)
+	term = ReadOnlyObjectiveSupportTerm(term)
 	if term == "" {
 		return true
 	}
 
-	if _, skip := agentutil.RecoverySearchStopWords()[term]; skip {
+	if _, skip := RecoverySearchStopWords()[term]; skip {
 		return true
 	}
 
@@ -614,7 +654,7 @@ func (l *readOnlyAnswerabilityLedger) promoteCollectiveSourceBodyObjectiveSuppor
 		return
 	}
 
-	if l.directAnswerConversation() && agentutil.ObjectiveAsksImplementationShape(l.Objective) {
+	if l.directAnswerConversation() && ObjectiveAsksImplementationShape(l.Objective) {
 		l.promoteCollectiveImplementationOwnerSupport(namedTargets, requiredTerms)
 
 		return
@@ -628,13 +668,13 @@ func (l *readOnlyAnswerabilityLedger) promoteCollectiveSourceBodyObjectiveSuppor
 	supportingPaths := map[string]struct{}{}
 
 	for _, support := range l.SourceBodyObjectiveTerms {
-		path := agentutil.NormalizeRunnerPath(support.Path)
+		path := NormalizeRunnerPath(support.Path)
 		if path == "" {
 			continue
 		}
 
 		for _, term := range support.Terms {
-			term = agentutil.ReadOnlyObjectiveSupportTerm(term)
+			term = ReadOnlyObjectiveSupportTerm(term)
 			if term == "" {
 				continue
 			}
@@ -659,7 +699,7 @@ func (l *readOnlyAnswerabilityLedger) promoteCollectiveSourceBodyObjectiveSuppor
 			coveredTerms++
 
 			for _, path := range paths {
-				if pathTermCount[agentutil.NormalizeRunnerPath(path)] < 2 {
+				if pathTermCount[NormalizeRunnerPath(path)] < 2 {
 					continue
 				}
 
@@ -690,13 +730,13 @@ func (l *readOnlyAnswerabilityLedger) promoteCollectiveImplementationOwnerSuppor
 	termPaths := make(map[string][]string, len(requiredTerms))
 
 	for _, support := range l.SourceBodyObjectiveTerms {
-		path := agentutil.NormalizeRunnerPath(support.Path)
+		path := NormalizeRunnerPath(support.Path)
 		if path == "" {
 			continue
 		}
 
 		for _, term := range support.Terms {
-			term = agentutil.ReadOnlyObjectiveSupportTerm(term)
+			term = ReadOnlyObjectiveSupportTerm(term)
 			if term == "" {
 				continue
 			}
@@ -724,7 +764,7 @@ func (l *readOnlyAnswerabilityLedger) promoteCollectiveImplementationOwnerSuppor
 			continue
 		}
 
-		path := agentutil.NormalizeRunnerPath(evidence.Path)
+		path := NormalizeRunnerPath(evidence.Path)
 		if !l.collectiveSourceBodyPromotionPathAllowed(path, candidateSet, objectiveCandidateSet, namedSet) {
 			continue
 		}
@@ -740,7 +780,7 @@ func (l *readOnlyAnswerabilityLedger) promoteCollectiveImplementationOwnerSuppor
 }
 
 func (l readOnlyAnswerabilityLedger) collectiveSourceBodyPromotionPathAllowed(path string, candidateSet map[string]struct{}, objectiveCandidateSet map[string]struct{}, namedSet map[string]struct{}) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -811,14 +851,34 @@ func (l *readOnlyAnswerabilityLedger) markRelevantSourceBodies(namedTargets []st
 
 	for i := range l.Items {
 		if l.Items[i].Kind == readOnlyEvidenceSourceBody {
-			_, l.Items[i].Relevant = readOnlyPathSet(l.RelevantSourceBodyPaths)[agentutil.NormalizeRunnerPath(l.Items[i].Path)]
+			_, l.Items[i].Relevant = readOnlyPathSet(l.RelevantSourceBodyPaths)[NormalizeRunnerPath(l.Items[i].Path)]
+		}
+	}
+}
+
+func (l *readOnlyAnswerabilityLedger) markRelevantExternalDocuments() {
+	bodySet := readOnlyExternalDocumentPathSet(l.ExternalDocumentBodyPaths)
+	objectiveSet := readOnlyExternalDocumentPathSet(l.SourceBodyObjectivePaths)
+
+	var relevant []string
+	for path := range bodySet {
+		if _, ok := objectiveSet[path]; ok {
+			relevant = append(relevant, path)
+		}
+	}
+
+	l.RelevantExternalDocumentPaths = textutil.Sorted(relevant)
+	relevantSet := readOnlyExternalDocumentPathSet(l.RelevantExternalDocumentPaths)
+	for i := range l.Items {
+		if l.Items[i].Kind == readOnlyEvidenceExternalDocument {
+			_, l.Items[i].Relevant = relevantSet[normalizeReadOnlyExternalDocumentPath(l.Items[i].Path)]
 		}
 	}
 }
 
 func (l readOnlyAnswerabilityLedger) sourceBodyPathRelevant(path string, candidateSet map[string]struct{}, objectiveCandidateSet map[string]struct{}, namedSet map[string]struct{}, objectiveBodySet map[string]struct{}, taskSourceBodySet map[string]struct{}) bool {
-	path = agentutil.NormalizeRunnerPath(path)
-	if path == "" || agentutil.IsNonSourceEvidenceArtifactPath(path) {
+	path = NormalizeRunnerPath(path)
+	if path == "" || IsNonSourceEvidenceArtifactPath(path) {
 		return false
 	}
 
@@ -902,8 +962,8 @@ func candidateSourcePathStronglyOverlapsObjective(path string, objective string)
 	matches := 0
 	seen := map[string]struct{}{}
 
-	for _, term := range agentutil.RecoveryObjectiveSearchWords(objective, 32) {
-		term = agentutil.SingularObjectiveWord(strings.TrimSpace(term))
+	for _, term := range RecoveryObjectiveSearchWords(objective, 32) {
+		term = SingularObjectiveWord(strings.TrimSpace(term))
 		if len(term) < 4 {
 			continue
 		}
@@ -987,7 +1047,7 @@ func readOnlySearchHitObjectiveTerms(objective string) []string {
 	var terms []string
 
 	for _, word := range words {
-		word = agentutil.SingularObjectiveWord(strings.TrimSpace(word))
+		word = SingularObjectiveWord(strings.TrimSpace(word))
 		if len(word) < 4 {
 			continue
 		}
@@ -1013,7 +1073,7 @@ func sourceBodyHasStrongObjectiveToken(output string, objective string) bool {
 		return false
 	}
 
-	terms := agentutil.RecoveryObjectiveSearchWords(objective, 32)
+	terms := RecoveryObjectiveSearchWords(objective, 32)
 	if len(terms) == 0 {
 		return false
 	}
@@ -1023,7 +1083,7 @@ func sourceBodyHasStrongObjectiveToken(output string, objective string) bool {
 	var objectiveTerms []string
 
 	for _, term := range terms {
-		term = agentutil.SingularObjectiveWord(term)
+		term = SingularObjectiveWord(term)
 		if len(term) < 3 {
 			continue
 		}
@@ -1099,7 +1159,7 @@ func sourceOwnerSpecificObjectiveTerms(terms []string) []string {
 	var filtered []string
 
 	for _, term := range terms {
-		term = agentutil.ReadOnlyObjectiveSupportTerm(term)
+		term = ReadOnlyObjectiveSupportTerm(term)
 		if term == "" || weakSourceOwnerObjectiveTerm(term) {
 			continue
 		}
@@ -1111,7 +1171,7 @@ func sourceOwnerSpecificObjectiveTerms(terms []string) []string {
 }
 
 func implementationShapeSourceBodyCanClose(objective string, body string) bool {
-	if !agentutil.ObjectiveAsksImplementationShape(objective) {
+	if !ObjectiveAsksImplementationShape(objective) {
 		return false
 	}
 
@@ -1119,7 +1179,7 @@ func implementationShapeSourceBodyCanClose(objective string, body string) bool {
 }
 
 func weakSourceOwnerObjectiveTerm(term string) bool {
-	switch agentutil.ReadOnlyObjectiveSupportTerm(term) {
+	switch ReadOnlyObjectiveSupportTerm(term) {
 	case "user", "chat", "history", "key", "arrow", "up", "down", "navigate", "old", "easy", "find", "intent", "make", "typing", "type":
 		return true
 	default:
@@ -1182,7 +1242,7 @@ func readOnlyObjectiveAnswerEvidenceSupportedWithMinTerms(output string, objecti
 }
 
 func readOnlyObjectivePromotionTerms(objective string) []string {
-	rawTerms := agentutil.RecoveryObjectiveSearchWords(objective, 32)
+	rawTerms := RecoveryObjectiveSearchWords(objective, 32)
 	if len(rawTerms) == 0 {
 		return nil
 	}
@@ -1192,7 +1252,7 @@ func readOnlyObjectivePromotionTerms(objective string) []string {
 	var terms []string
 
 	for _, term := range rawTerms {
-		term = agentutil.SingularObjectiveWord(strings.TrimSpace(term))
+		term = SingularObjectiveWord(strings.TrimSpace(term))
 		if len(term) < 4 || readOnlyObjectivePromotionStopWord(term) {
 			continue
 		}
@@ -1209,12 +1269,12 @@ func readOnlyObjectivePromotionTerms(objective string) []string {
 }
 
 func readOnlyObjectivePromotionStopWord(term string) bool {
-	term = agentutil.SingularObjectiveWord(strings.TrimSpace(term))
+	term = SingularObjectiveWord(strings.TrimSpace(term))
 	if term == "" {
 		return true
 	}
 
-	if _, skip := agentutil.RecoverySearchStopWords()[term]; skip {
+	if _, skip := RecoverySearchStopWords()[term]; skip {
 		return true
 	}
 
@@ -1231,7 +1291,7 @@ func readOnlyObjectivePromotionStopWord(term string) bool {
 
 func readOnlyObjectivePromotionTermInText(text string, term string) bool {
 	text = strings.ToLower(strings.TrimSpace(text))
-	term = agentutil.SingularObjectiveWord(strings.TrimSpace(term))
+	term = SingularObjectiveWord(strings.TrimSpace(term))
 
 	if text == "" || term == "" {
 		return false
@@ -1322,11 +1382,15 @@ func (l readOnlyAnswerabilityLedger) Answerable() bool {
 		return true
 	}
 
-	if l.directAnswerConversation() && agentutil.ObjectiveAsksImplementationShape(l.Objective) {
+	if l.directAnswerConversation() && ObjectiveAsksImplementationShape(l.Objective) {
 		return l.diagnosticEvidenceAnswerable() || (len(l.ImplementationOwnerPaths()) > 0 && len(l.MissingNamedSourcePaths) == 0)
 	}
 
 	if l.diagnosticEvidenceAnswerable() {
+		return true
+	}
+
+	if len(l.RelevantExternalDocumentPaths) > 0 && len(l.MissingNamedSourcePaths) == 0 {
 		return true
 	}
 
@@ -1349,7 +1413,7 @@ func (l readOnlyAnswerabilityLedger) ImplementationOwnerPaths() []string {
 	objectiveSet := readOnlyPathSet(l.SourceBodyObjectivePaths)
 
 	for _, evidence := range l.SourceOwnerEvidence {
-		path := agentutil.NormalizeRunnerPath(evidence.Path)
+		path := NormalizeRunnerPath(evidence.Path)
 		if path == "" || !evidence.OwnerEligible() {
 			continue
 		}
@@ -1367,13 +1431,13 @@ func (l readOnlyAnswerabilityLedger) ImplementationOwnerPaths() []string {
 }
 
 func (l readOnlyAnswerabilityLedger) SourceOwnerEvidenceForPath(path string) (readOnlySourceOwnerEvidence, bool) {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return readOnlySourceOwnerEvidence{}, false
 	}
 
 	for _, evidence := range l.SourceOwnerEvidence {
-		if agentutil.NormalizeRunnerPath(evidence.Path) == path {
+		if NormalizeRunnerPath(evidence.Path) == path {
 			return evidence, true
 		}
 	}
@@ -1412,7 +1476,7 @@ func readOnlyObjectiveEvidencePaths(brief workerruntime.WorkerRuntimeBrief) []st
 
 func readOnlyObjectiveImpliesArchitecture(objective string) bool {
 	lower := strings.ToLower(strings.Join(strings.Fields(objective), " "))
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		"how is",
 		"layout",
 		"structure",
@@ -1444,7 +1508,7 @@ func readOnlySourceLikePaths(paths []string, max int) []string {
 		if readOnlyPathEscapesWorkspace(raw) {
 			continue
 		}
-		path := agentutil.NormalizeRunnerPath(raw)
+		path := NormalizeRunnerPath(raw)
 		if !readOnlyRepoLocalSourcePath(path) {
 			continue
 		}
@@ -1465,14 +1529,14 @@ func readOnlySourceLikePaths(paths []string, max int) []string {
 }
 
 func readOnlyRepoLocalSourcePath(path string) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" || path == "." || path == ".." {
 		return false
 	}
 	if filepath.IsAbs(path) || strings.HasPrefix(path, "../") || strings.HasPrefix(path, `..\`) {
 		return false
 	}
-	if agentutil.IsNonSourceEvidenceArtifactPath(path) || !pathparse.HasWorkspaceFileExtension(path) {
+	if IsNonSourceEvidenceArtifactPath(path) || !pathparse.HasWorkspaceFileExtension(path) {
 		return false
 	}
 
@@ -1519,13 +1583,111 @@ func readOnlyDiagnosticEvidenceResult(result workspace.ToolResult) bool {
 	return false
 }
 
+func readOnlyConcreteSourceBodyPaths(results []workspace.ToolResult) []string {
+	var paths []string
+	for _, result := range results {
+		if !concreteSourceEvidenceResult(result) {
+			continue
+		}
+		paths = textutil.Merge(paths, readOnlySourceLikePaths(ReadPathsFromToolResult(result), 8))
+	}
+	return paths
+}
+
+func readOnlyExternalDocumentBodyPathsFromResult(result workspace.ToolResult) []string {
+	if !concreteSourceEvidenceResult(result) {
+		return nil
+	}
+
+	var paths []string
+	for _, raw := range ReadPathsFromToolResult(result) {
+		path := normalizeReadOnlyExternalDocumentPath(raw)
+		if !readOnlyExternalDocumentBodyPath(path) {
+			continue
+		}
+
+		paths = textutil.AppendUnique(paths, path)
+	}
+
+	return paths
+}
+
+func readOnlyExternalDocumentBodyReadForPath(path string, results []workspace.ToolResult) bool {
+	path = normalizeReadOnlyExternalDocumentPath(path)
+	if path == "" {
+		return false
+	}
+
+	for _, result := range results {
+		if slices.Contains(readOnlyExternalDocumentBodyPathsFromResult(result), path) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func normalizeReadOnlyExternalDocumentPath(path string) string {
+	path = strings.TrimSpace(path)
+	path = strings.Trim(path, "`'\"()[]{}<>,;")
+	if path == "" {
+		return ""
+	}
+
+	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" || looksLikeWindowsAbsolutePath(path) {
+		return filepath.ToSlash(filepath.Clean(path))
+	}
+
+	return ""
+}
+
+func readOnlyExternalDocumentBodyPath(path string) bool {
+	path = normalizeReadOnlyExternalDocumentPath(path)
+	if path == "" {
+		return false
+	}
+
+	if readOnlyExternalDocumentArtifactPath(path) || !pathparse.HasWorkspaceFileExtension(path) {
+		return false
+	}
+
+	return true
+}
+
+func readOnlyExternalDocumentArtifactPath(path string) bool {
+	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	if lower == "" {
+		return false
+	}
+
+	return strings.Contains(lower, "/.idiom/") ||
+		strings.Contains(lower, "/idiom/logs/") ||
+		strings.Contains(lower, "/logs/") ||
+		strings.Contains(lower, "/.codex/") ||
+		strings.Contains(lower, "/codex/discovery/") ||
+		strings.Contains(lower, "/transcripts/") ||
+		strings.Contains(lower, "/testdata/swe/generated-logs/")
+}
+
+func readOnlyExternalDocumentPathSet(paths []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(paths))
+	for _, raw := range paths {
+		path := normalizeReadOnlyExternalDocumentPath(raw)
+		if path == "" {
+			continue
+		}
+		set[path] = struct{}{}
+	}
+	return set
+}
+
 func readOnlyDiagnosticEvidencePaths(result workspace.ToolResult, max int) []string {
 	if max <= 0 {
 		max = 8
 	}
 
 	return readOnlySourceLikePaths(textutil.Merge(
-		agentutil.ReadPathsFromToolResult(result),
+		ReadPathsFromToolResult(result),
 		readOnlyDiagnosticLocationPaths(result.Summary+"\n"+result.Output, max),
 	), max)
 }
@@ -1594,7 +1756,7 @@ func readOnlyDiagnosticEvidenceMatchesObjective(objective string, namedTargets [
 
 	namedSet := readOnlyPathSet(namedTargets)
 	for _, path := range paths {
-		if _, ok := namedSet[agentutil.NormalizeRunnerPath(path)]; ok {
+		if _, ok := namedSet[NormalizeRunnerPath(path)]; ok {
 			return true
 		}
 
@@ -1623,7 +1785,7 @@ func readOnlyObjectiveExplicitlyAsksForDiagnostics(objective string) bool {
 		return false
 	}
 
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		"diagnostic", "diagnostics",
 		"source_sanity",
 		"compiler error", "compile error",
@@ -1640,11 +1802,11 @@ func readOnlyOutlineEvidenceResult(result workspace.ToolResult) bool {
 		return false
 	}
 
-	if !agentutil.ContainsAny(text, "file_outline", "capability: outline", "outlined ", "top-level declaration") {
+	if !ContainsAny(text, "file_outline", "capability: outline", "outlined ", "top-level declaration") {
 		return false
 	}
 
-	return len(readOnlySourceLikePaths(agentutil.ReadPathsFromToolResult(result), 1)) > 0 ||
+	return len(readOnlySourceLikePaths(ReadPathsFromToolResult(result), 1)) > 0 ||
 		len(sourceLikePathsFromText(result.Summary+"\n"+result.Output, 1)) > 0
 }
 
@@ -1673,12 +1835,12 @@ func looksLikeReadOnlyReadinessNudgeEcho(answer string) bool {
 		return true
 	}
 
-	return agentutil.ContainsAny(normalized,
+	return ContainsAny(normalized,
 		"why a final answer is now valid:",
 		"a final answer is available unless one exact unresolved claim remains",
 		"if one more source read would materially change the answer",
 		"core evidence paths:",
-	) && agentutil.ContainsAny(normalized,
+	) && ContainsAny(normalized,
 		"answer_readiness_reached",
 		"read-only evidence is sufficient",
 		"post-readiness",
@@ -1692,11 +1854,11 @@ func contextDependentSourceFooter(lower string) bool {
 		return false
 	}
 
-	if !agentutil.ContainsAny(normalized, "the answer above", "the previous answer", "the prior answer") {
+	if !ContainsAny(normalized, "the answer above", "the previous answer", "the prior answer") {
 		return false
 	}
 
-	return agentutil.ContainsAny(normalized,
+	return ContainsAny(normalized,
 		"grounded in the following inspected source files",
 		"grounded in the following source files",
 		"grounded in these inspected source files",
@@ -1723,7 +1885,7 @@ func readOnlyFallbackNeedsAnswerableEvidence(brief workerruntime.WorkerRuntimeBr
 func readOnlyAnswerReportsInsufficientEvidence(answer string) bool {
 	lower := strings.ToLower(strings.Join(strings.Fields(answer), " "))
 
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		"available evidence is not enough",
 		"could not produce a supported final answer",
 		"evidence is not enough",
@@ -1780,16 +1942,17 @@ func exactProbeCallNames(symbol string, output string, max int) []string {
 
 func extractExactProbeAnchor(result workspace.ToolResult) (string, string) {
 	summary := strings.TrimSpace(result.Summary)
-	switch strings.TrimSpace(result.Tool) {
-	case "go_read_symbol", "cpp_read_symbol", "python_read_symbol", "ts_read_symbol", "rust_read_symbol", "java_read_symbol":
+	tool := strings.TrimSpace(result.Tool)
+	switch {
+	case workspace.LanguageToolHasAnyCapability(tool, workspace.CapReadSymbol):
 		return extractReadExactProbeAnchor(summary)
-	case "go_extract_body", "cpp_extract_body":
+	case workspace.LanguageToolHasAnyCapability(tool, workspace.CapExtractBody):
 		if rest, ok := strings.CutPrefix(summary, "Extracted "); ok {
 			if symbol, remainder, found := strings.Cut(rest, " in "); found {
 				return extractExactProbePath(remainder), strings.TrimSpace(symbol)
 			}
 		}
-	case "code_navigate", "read_only_capability":
+	case tool == workspace.ToolNameCodeNavigate || tool == workspace.ToolNameReadOnlyCapability:
 		if routeSummary := routeSummaryFromToolOutput(result.Output); routeSummary != "" {
 			return extractReadExactProbeAnchor(routeSummary)
 		}
@@ -1959,7 +2122,7 @@ func ExactEvidenceSymbolSet(results []workspace.ToolResult) map[string]struct{} 
 			continue
 		}
 
-		if agentutil.CandidateAnchorOnlyResult(result) {
+		if CandidateAnchorOnlyResult(result) {
 			continue
 		}
 
@@ -2176,8 +2339,8 @@ func TextSharesObjectiveTerm(text string, objective string) bool {
 		return false
 	}
 
-	for _, term := range agentutil.RecoveryObjectiveSearchWords(objective, 32) {
-		term = agentutil.SingularObjectiveWord(strings.ToLower(strings.TrimSpace(term)))
+	for _, term := range RecoveryObjectiveSearchWords(objective, 32) {
+		term = SingularObjectiveWord(strings.ToLower(strings.TrimSpace(term)))
 		if len(term) < 4 {
 			continue
 		}
@@ -2222,8 +2385,6 @@ const (
 	readOnlyClosureReasonCandidatesNeedSource     ReadOnlyCloseoutReason = "candidate_paths_need_source_body"
 	readOnlyClosureReasonNoRelevantSourceEvidence ReadOnlyCloseoutReason = "no_relevant_source_or_diagnostic_evidence"
 )
-
-type readOnlyClosureDecision = ReadOnlyCloseout
 
 type ReadOnlyCloseout struct {
 	Brief    workerruntime.WorkerRuntimeBrief
@@ -2336,9 +2497,9 @@ func (d ReadOnlyCloseout) ConversationUncertaintyFallback() string {
 	)
 
 	for _, result := range d.Results {
-		paths := agentutil.ReadPathsFromToolResult(result)
+		paths := ReadPathsFromToolResult(result)
 		for _, path := range paths {
-			if agentutil.IsNonSourceEvidenceArtifactPath(path) {
+			if IsNonSourceEvidenceArtifactPath(path) {
 				continue
 			}
 
@@ -2393,6 +2554,10 @@ func (d ReadOnlyCloseout) ConcreteFallbackAnswer() (string, bool) {
 
 	if exact, ok := presentableExactProbeAnswer(d.Brief, d.Results); ok {
 		return exact, true
+	}
+
+	if externalDocument, ok := presentableExternalDocumentEvidenceAnswer(d.Brief, d.Results); ok {
+		return externalDocument, true
 	}
 
 	if sourceBody, ok := presentableReadFileSourceAnswer(d.Brief, d.Results); ok {
@@ -2485,7 +2650,7 @@ func (d ReadOnlyCloseout) FinalAnswerDecision(answer string) readOnlyFinalAnswer
 			return decision
 		}
 
-		if len(ledger.SourceBodyPaths) == 0 && !ledger.DiagnosticEvidence {
+		if len(ledger.SourceBodyPaths) == 0 && len(ledger.ExternalDocumentBodyPaths) == 0 && !ledger.DiagnosticEvidence {
 			decision.BlockerKind = "answer_objective_unmet:no_source_body_evidence"
 			decision.Reason = "the final answer says the evidence is insufficient before source-body or diagnostic evidence for the user's objective is present. This objective-relevance diagnostic is advisory."
 
@@ -2503,7 +2668,7 @@ func (d ReadOnlyCloseout) FinalAnswerDecision(answer string) readOnlyFinalAnswer
 	// shared decision still rejects path inventories and wrong-owner
 	// citations so carried evidence cannot bypass the acceptance contract.
 	if ledger.directAnswerConversation() &&
-		(len(d.Brief.EvidencePaths) > 0 || len(ledger.SourceBodyPaths) > 0) &&
+		(len(d.Brief.EvidencePaths) > 0 || len(ledger.SourceBodyPaths) > 0 || len(ledger.ExternalDocumentBodyPaths) > 0) &&
 		readOnlyCarriedEvidenceAnswerAccepted(substantiveAnswer, objective, ledger, d.Results) {
 
 		decision.AcceptedEvidencePaths = readOnlyAcceptedDirectAnswerEvidencePaths(answer, ledger, d.Results)
@@ -2727,7 +2892,7 @@ func answerCitesNamedObjectiveSource(answer string, ledger readOnlyAnswerability
 	sourceSet := readOnlyPathSet(ledger.SourceBodyPaths)
 
 	for _, raw := range sourceGroundingMentionedPaths(answer) {
-		path := agentutil.NormalizeRunnerPath(raw)
+		path := NormalizeRunnerPath(raw)
 		if path == "" {
 			continue
 		}
@@ -2768,7 +2933,7 @@ func answerCitesNamedObjectiveSource(answer string, ledger readOnlyAnswerability
 			continue
 		}
 
-		for _, source := range readOnlySourceLikePaths(agentutil.ReadPathsFromToolResult(result), 16) {
+		for _, source := range readOnlySourceLikePaths(ReadPathsFromToolResult(result), 16) {
 			base := strings.ToLower(filepath.Base(filepath.ToSlash(source)))
 			if base == "" || !strings.Contains(lower, base) {
 				continue
@@ -2816,7 +2981,7 @@ func readOnlySharedObjectiveSupportTerms(answer string, objective string) []stri
 }
 
 func readOnlyObjectiveSupportTerms(objective string) []string {
-	rawTerms := agentutil.RecoveryObjectiveSearchWords(objective, 32)
+	rawTerms := RecoveryObjectiveSearchWords(objective, 32)
 	if len(rawTerms) == 0 {
 		return nil
 	}
@@ -2825,8 +2990,8 @@ func readOnlyObjectiveSupportTerms(objective string) []string {
 	var terms []string
 
 	for _, raw := range rawTerms {
-		term := agentutil.ReadOnlyObjectiveSupportTerm(raw)
-		term = agentutil.SingularObjectiveWord(term)
+		term := ReadOnlyObjectiveSupportTerm(raw)
+		term = SingularObjectiveWord(term)
 		if len(term) < 4 {
 			continue
 		}
@@ -2851,7 +3016,7 @@ func readOnlyObjectiveSupportTerms(objective string) []string {
 }
 
 func readOnlyLowConfidenceObjectiveSupportStopWord(term string) bool {
-	term = agentutil.ReadOnlyObjectiveSupportTerm(term)
+	term = ReadOnlyObjectiveSupportTerm(term)
 	if len(term) < 5 {
 		return true
 	}
@@ -2868,9 +3033,15 @@ func readOnlyLowConfidenceObjectiveSupportStopWord(term string) bool {
 }
 
 func answerSourceCitationsAreObjectiveRelevant(answer string, ledger readOnlyAnswerabilityLedger) bool {
-	mentioned := readOnlySourceLikePaths(sourceGroundingMentionedPaths(answer), 16)
-	if len(mentioned) == 0 {
+	mentionedPaths := sourceGroundingMentionedPaths(answer)
+	if answerCitesRelevantExternalDocument(mentionedPaths, ledger) {
 		return true
+	}
+	mentionsExternalDocument := answerMentionsExternalDocument(mentionedPaths, ledger.ExternalDocumentBodyPaths)
+
+	mentioned := readOnlySourceLikePaths(mentionedPaths, 16)
+	if len(mentioned) == 0 {
+		return !mentionsExternalDocument
 	}
 
 	if ledger.planArtifactAnswerable() && featurePlannerPlanPathCitationsAreRelevant(answer, mentioned, ledger) {
@@ -2878,7 +3049,7 @@ func answerSourceCitationsAreObjectiveRelevant(answer string, ledger readOnlyAns
 	}
 
 	relevantPaths := ledger.RelevantSourceBodyPaths
-	if ledger.directAnswerConversation() && agentutil.ObjectiveAsksImplementationShape(ledger.Objective) {
+	if ledger.directAnswerConversation() && ObjectiveAsksImplementationShape(ledger.Objective) {
 		relevantPaths = ledger.ImplementationOwnerPaths()
 	}
 
@@ -2888,12 +3059,44 @@ func answerSourceCitationsAreObjectiveRelevant(answer string, ledger readOnlyAns
 
 	relevantSet := readOnlyPathSet(relevantPaths)
 	if len(relevantSet) == 0 {
-		return len(ledger.SourceBodyPaths) == 0
+		return len(ledger.SourceBodyPaths) == 0 && !mentionsExternalDocument
 	}
 
 	for _, path := range mentioned {
-		if _, ok := relevantSet[agentutil.NormalizeRunnerPath(path)]; ok {
+		if _, ok := relevantSet[NormalizeRunnerPath(path)]; ok {
 			return true
+		}
+	}
+
+	return false
+}
+
+func answerMentionsExternalDocument(mentionedPaths []string, externalDocumentPaths []string) bool {
+	if len(mentionedPaths) == 0 || len(externalDocumentPaths) == 0 {
+		return false
+	}
+
+	for _, path := range mentionedPaths {
+		for _, externalPath := range externalDocumentPaths {
+			if sourceCitationExternalDocumentPathMatches(path, externalPath) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func answerCitesRelevantExternalDocument(mentionedPaths []string, ledger readOnlyAnswerabilityLedger) bool {
+	if len(mentionedPaths) == 0 || len(ledger.RelevantExternalDocumentPaths) == 0 {
+		return false
+	}
+
+	for _, path := range mentionedPaths {
+		for _, relevantPath := range ledger.RelevantExternalDocumentPaths {
+			if sourceCitationExternalDocumentPathMatches(path, relevantPath) {
+				return true
+			}
 		}
 	}
 
@@ -2903,7 +3106,7 @@ func answerSourceCitationsAreObjectiveRelevant(answer string, ledger readOnlyAns
 func objectiveAsksBehaviorSummary(objective string) bool {
 	lower := " " + strings.ToLower(strings.Join(strings.Fields(objective), " ")) + " "
 
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		" what does ",
 		" what do ",
 	)
@@ -2911,7 +3114,7 @@ func objectiveAsksBehaviorSummary(objective string) bool {
 
 func plainNamedFileContentRequest(objective string) bool {
 	lower := strings.ToLower(strings.Join(strings.Fields(objective), " "))
-	if !agentutil.ContainsAny(lower, "what is in", "what's in", "show", "summarize", "summary of", "contents of", "list") {
+	if !ContainsAny(lower, "what is in", "what's in", "show", "summarize", "summary of", "contents of", "list") {
 		return false
 	}
 
@@ -2975,7 +3178,7 @@ func readOnlyAnswerUsesInspectedSourceAsAnswer(answer string, ledger readOnlyAns
 
 	lower := strings.ToLower(strings.Join(strings.Fields(answer), " "))
 
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		"the relevant code",
 		"the code is",
 		"the implementation is",
@@ -3012,36 +3215,28 @@ func answerMakesCausalClaimWithoutObjectiveEvidence(answer string, ledger readOn
 		readOnlyCauseIntent(answer)
 }
 
-func (d ReadOnlyCloseout) HostOwnedAnswer(agentName string) (string, bool) {
-	return "", false
-}
-
-func hostOwnedCloseoutAnswerIsPresentable(answer string) bool {
-	answer = strings.TrimSpace(answer)
-	return answer != "" &&
-		!strings.HasPrefix(answer, "<<QUESTION>>") &&
-		!looksLikeNonAnswerProse(answer)
-}
-
 func (d ReadOnlyCloseout) PresentableObjectiveAnswerCandidate(agentName string, answer string) (string, bool) {
 	answer, ok := d.PresentableFallbackCandidate(agentName, answer)
-	if !ok || !d.presentableHostObjectiveAnswer(answer) {
+	if !ok || !d.presentableObjectiveAnswer(answer) {
 		return "", false
 	}
 
 	return answer, true
 }
 
-func (d ReadOnlyCloseout) presentableHostObjectiveAnswer(answer string) bool {
+func (d ReadOnlyCloseout) presentableObjectiveAnswer(answer string) bool {
 	answer = strings.TrimSpace(answer)
-	if looksLikeHostCloseoutSourceInventoryNonAnswer(answer) {
+	if looksLikeSourceInventoryNonAnswer(answer) {
 		return false
 	}
 
-	return hostOwnedCloseoutAnswerIsPresentable(answer) && d.hostOwnedAnswerAddressesObjective(answer)
+	return answer != "" &&
+		!strings.HasPrefix(answer, "<<QUESTION>>") &&
+		!looksLikeNonAnswerProse(answer) &&
+		d.answerAddressesReadOnlyObjective(answer)
 }
 
-func (d ReadOnlyCloseout) hostOwnedAnswerAddressesObjective(answer string) bool {
+func (d ReadOnlyCloseout) answerAddressesReadOnlyObjective(answer string) bool {
 	brief := workerruntime.NormalizeRuntimeBrief(d.Brief)
 	objective := strings.TrimSpace(brief.Objective)
 	if objective == "" {
@@ -3060,17 +3255,6 @@ func (d ReadOnlyCloseout) hostOwnedAnswerAddressesObjective(answer string) bool 
 
 	return answerAddressesObjective(answer, objective, d.Evidence, d.Results) &&
 		answerSourceCitationsAreObjectiveRelevant(answer, d.Evidence)
-}
-
-func (d ReadOnlyCloseout) AcceptsHostOwnedAnswer(agentName string, answer string) bool {
-	answer = strings.TrimSpace(answer)
-	if answer == "" || strings.HasPrefix(answer, "<<QUESTION>>") {
-		return false
-	}
-
-	expected, ok := d.HostOwnedAnswer(agentName)
-
-	return ok && strings.TrimSpace(expected) == answer
 }
 
 func (d ReadOnlyCloseout) PresentableFallbackCandidate(agentName string, answer string) (string, bool) {
@@ -3195,8 +3379,38 @@ func (d ReadOnlyCloseout) NonAnswerReplacement() (string, bool) {
 }
 
 func readOnlyClosureKnownEvidencePaths(evidence readOnlyAnswerabilityLedger) []string {
-	paths := textutil.Merge(evidence.CandidatePaths, evidence.SourceBodyPaths, evidence.NamedSourcePaths)
-	return readOnlySourceLikePaths(paths, 8)
+	paths := textutil.Merge(evidence.CandidatePaths, evidence.SourceBodyPaths, evidence.ExternalDocumentBodyPaths, evidence.NamedSourcePaths)
+	return readOnlyEvidenceDisplayPaths(paths, 8)
+}
+
+func readOnlyEvidenceDisplayPaths(paths []string, max int) []string {
+	if max <= 0 {
+		max = 8
+	}
+
+	out := closurePromptEvidencePaths(paths, max)
+	seen := map[string]struct{}{}
+	for _, path := range out {
+		seen[path] = struct{}{}
+	}
+
+	for _, raw := range paths {
+		path := normalizeReadOnlyExternalDocumentPath(raw)
+		if !readOnlyExternalDocumentBodyPath(path) {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+
+		seen[path] = struct{}{}
+		out = append(out, path)
+		if len(out) >= max {
+			break
+		}
+	}
+
+	return out
 }
 
 func readOnlyEvidenceLedgerGuidanceForBrief(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
@@ -3212,6 +3426,12 @@ func readOnlyEvidenceLedgerGuidanceForBrief(brief workerruntime.WorkerRuntimeBri
 		parts = append(parts, "body-backed source evidence: "+formatInlinePathList(paths, 3))
 	} else if paths := closurePromptEvidencePaths(ledger.SourceBodyPaths, 3); len(paths) > 0 {
 		parts = append(parts, "source bodies inspected: "+formatInlinePathList(paths, 3))
+	}
+
+	if paths := readOnlyEvidenceDisplayPaths(ledger.RelevantExternalDocumentPaths, 3); len(paths) > 0 {
+		parts = append(parts, "body-backed external document evidence: "+formatInlinePathList(paths, 3))
+	} else if paths := readOnlyEvidenceDisplayPaths(ledger.ExternalDocumentBodyPaths, 3); len(paths) > 0 {
+		parts = append(parts, "external documents inspected: "+formatInlinePathList(paths, 3))
 	}
 
 	if ledger.DiagnosticRelevant {
@@ -3247,7 +3467,7 @@ func readOnlyCandidateOnlyPaths(ledger readOnlyAnswerabilityLedger, max int) []s
 	var out []string
 
 	for _, candidate := range readOnlySourceLikePaths(ledger.CandidatePaths, 64) {
-		normalized := agentutil.NormalizeRunnerPath(candidate)
+		normalized := NormalizeRunnerPath(candidate)
 		if normalized == "" {
 			continue
 		}
@@ -3439,7 +3659,7 @@ func isHarnessRejectionErrorText(text string) bool {
 		return false
 	}
 
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		"payload was tool-shaped",
 		"unsafe to infer as a tool call",
 		"not an executable tool call",
@@ -3880,7 +4100,7 @@ func readOnlyEvidencePacketAnswerableForObjective(packet ReadOnlyEvidencePacket,
 		return true
 	}
 
-	if agentutil.ObjectiveAsksImplementationShape(objective) {
+	if ObjectiveAsksImplementationShape(objective) {
 		return len(readOnlyEvidencePacketObjectiveSourceOwnerEvidence(packet, objective)) > 0
 	}
 
@@ -3918,7 +4138,7 @@ func readOnlyEvidencePacketHasObjectiveScopedSourceSupport(packet ReadOnlyEviden
 		return false
 	}
 
-	if agentutil.ObjectiveAsksImplementationShape(objective) {
+	if ObjectiveAsksImplementationShape(objective) {
 		return len(readOnlyEvidencePacketObjectiveSourceOwnerEvidence(packet, objective)) > 0
 	}
 
@@ -3937,7 +4157,7 @@ func readOnlyEvidencePacketHasObjectiveScopedSourceSupport(packet ReadOnlyEviden
 func readOnlyEvidencePacketObjectiveSourceOwnerEvidence(packet ReadOnlyEvidencePacket, objective string) []readOnlySourceOwnerEvidence {
 	packet = normalizeReadOnlyEvidencePacket(packet)
 
-	if !agentutil.ObjectiveAsksImplementationShape(objective) {
+	if !ObjectiveAsksImplementationShape(objective) {
 		return nil
 	}
 
@@ -4041,7 +4261,6 @@ func readOnlyEvidencePacketSourceBodyPaths(results []workspace.ToolResult) []str
 	paths := make([]string, 0, 4)
 
 	paths = append(paths, sourceEvidenceBodyPaths(results)...)
-	paths = append(paths, sourceEvidenceBodyPaths(results)...)
 
 	return readOnlyEvidencePacketSourceLikePaths(paths, 16)
 }
@@ -4054,16 +4273,18 @@ func readOnlyEvidencePacketCandidatePaths(results []workspace.ToolResult) []stri
 			continue
 		}
 
-		switch strings.TrimSpace(result.Tool) {
-		case "discovery_query", "context_query", "context_zoom", "context_impact", "structural_search":
+		tool := strings.TrimSpace(result.Tool)
+		switch {
+		case tool == "discovery_query" || tool == "context_query" || tool == "context_zoom" ||
+			tool == "context_impact" || tool == "structural_search" || strings.HasSuffix(tool, "_workspace_symbol"):
 			paths = append(paths, discoveryConsumptionCandidatesFromResult(result, 16)...)
 			paths = append(paths, delegatedDiscoveryQueryEvidencePaths([]workspace.ToolResult{result}, 8)...)
-		case "context_pack":
+		case tool == "context_pack":
 			paths = append(paths, contextPackCandidatePathsFromResults([]workspace.ToolResult{result}, 16)...)
-		case "search_content", "search_files":
+		case tool == "search_content" || tool == "search_files" || tool == "rg" || tool == "grep":
 			paths = append(paths, sourceLikePathsFromText(result.Summary+"\n"+result.Output, 64)...)
 		default:
-			paths = append(paths, agentutil.ReadPathsFromToolResult(result)...)
+			paths = append(paths, ReadPathsFromToolResult(result)...)
 		}
 	}
 
@@ -4201,7 +4422,7 @@ func readOnlyEvidencePacketSourceLikePaths(paths []string, limit int) []string {
 	filtered := make([]string, 0, len(paths))
 	for _, raw := range paths {
 		path := normalizeReadOnlyEvidencePacketPath(raw)
-		if path == "" || agentutil.IsNonSourceEvidenceArtifactPath(path) {
+		if path == "" || IsNonSourceEvidenceArtifactPath(path) {
 			continue
 		}
 
@@ -4227,7 +4448,7 @@ func normalizeReadOnlyEvidencePacketPath(raw string) string {
 		path = "." + path
 	}
 
-	return agentutil.NormalizeRunnerPath(path)
+	return NormalizeRunnerPath(path)
 }
 
 func readOnlyEvidencePacketUsefulFindings(findings []ReadOnlyEvidenceFinding) []ReadOnlyEvidenceFinding {
@@ -4305,13 +4526,13 @@ func discoveryConsumptionCandidatesFromResult(result workspace.ToolResult, max i
 }
 
 func readFileResultOnlyMentionsDiagnosticLogArtifacts(result workspace.ToolResult) bool {
-	paths := agentutil.ReadPathsFromToolResult(result)
+	paths := ReadPathsFromToolResult(result)
 	if len(paths) == 0 {
 		return false
 	}
 
 	for _, path := range paths {
-		if !agentutil.IsNonSourceEvidenceArtifactPath(path) {
+		if !IsNonSourceEvidenceArtifactPath(path) {
 			return false
 		}
 	}
@@ -4336,26 +4557,27 @@ func delegatedDiscoveryPathPriority(path string) int {
 }
 
 func delegatedDiscoveryLayerPriority(name string) int {
-	switch strings.TrimSpace(name) {
-	case "text_anchor_search":
+	name = strings.TrimSpace(name)
+	switch {
+	case name == "text_anchor_search":
 		return 0
-	case "go_read_symbol", "cpp_read_symbol", "python_read_symbol", "ts_read_symbol", "rust_read_symbol", "java_read_symbol":
+	case workspace.LanguageToolHasAnyCapability(name, workspace.CapReadSymbol):
 		return 1
-	case "go_references", "cpp_references", "python_references", "ts_references", "rust_references", "java_references":
+	case workspace.LanguageToolHasAnyCapability(name, workspace.CapReferences):
 		return 2
-	case "go_definition", "cpp_definition", "python_definition", "ts_definition", "rust_definition", "java_definition":
+	case workspace.LanguageToolHasAnyCapability(name, workspace.CapDefinition):
 		return 3
-	case "go_workspace_symbol", "cpp_workspace_symbol", "python_workspace_symbol", "ts_workspace_symbol", "rust_workspace_symbol", "java_workspace_symbol":
+	case workspace.LanguageToolHasAnyCapability(name, workspace.CapWorkspaceSymbol):
 		return 4
-	case "related_files":
+	case name == "related_files":
 		return 5
-	case workspace.ToolNameDependencyGraph:
+	case name == workspace.ToolNameDependencyGraph:
 		return 6
-	case workspace.ToolNameCtagsSymbols:
+	case name == workspace.ToolNameCtagsSymbols:
 		return 7
-	case "target_listing":
+	case name == "target_listing":
 		return 20
-	case "project_behavior_digest", "project_context_digest":
+	case name == "project_behavior_digest" || name == "project_context_digest":
 		return 30
 	default:
 		return 10
@@ -4945,7 +5167,7 @@ func childPacketContainsGroundedAnswerEvidence(objective string, output string) 
 		return false
 	}
 
-	if !agentutil.ContainsAny(lower,
+	if !ContainsAny(lower,
 		"grounded answer",
 		"core files:",
 		"primary files:",
@@ -5023,12 +5245,9 @@ func delegatedReadOnlyLiteralSymbolCandidate(raw string) (string, bool) {
 		return "", false
 	}
 
-	for i, r := range value {
-		if i == 0 && !unicode.IsLetter(r) && r != '_' {
-			return "", false
-		}
-
-		break
+	firstRune, _ := utf8.DecodeRuneInString(value)
+	if !unicode.IsLetter(firstRune) && firstRune != '_' {
+		return "", false
 	}
 
 	hasLetter := false
@@ -5062,7 +5281,7 @@ func delegatedReadOnlyLiteralSymbolCandidate(raw string) (string, bool) {
 func nonArtifactEvidencePaths(paths []string) []string {
 	out := make([]string, 0, len(paths))
 	for _, path := range paths {
-		if strings.TrimSpace(path) == "" || agentutil.IsNonSourceEvidenceArtifactPath(path) {
+		if strings.TrimSpace(path) == "" || IsNonSourceEvidenceArtifactPath(path) {
 			continue
 		}
 
@@ -5105,7 +5324,7 @@ const (
 )
 
 func planThenExecuteRequiredSourceEvidenceForPath(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, path string) planThenExecuteSourceEvidence {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return planThenExecuteSourceEvidence{}
 	}
@@ -5443,11 +5662,11 @@ func (e readOnlySourceOwnerEvidence) OwnerEligible() bool {
 
 func readOnlySourceOwnerEvidenceForBody(path string, symbol string, objective string, body string) readOnlySourceOwnerEvidence {
 	evidence := readOnlySourceOwnerEvidence{
-		Path:   agentutil.NormalizeRunnerPath(path),
+		Path:   NormalizeRunnerPath(path),
 		Symbol: strings.TrimSpace(symbol),
 		Role:   readOnlySourceOwnerUnknown,
 	}
-	if !agentutil.ObjectiveAsksImplementationShape(objective) {
+	if !ObjectiveAsksImplementationShape(objective) {
 		return evidence
 	}
 
@@ -5464,8 +5683,8 @@ func readOnlySourceOwnerEvidenceForBody(path string, symbol string, objective st
 	}
 
 	evidence.Mechanism = implementationShapeMechanismEvidence(text)
-	evidence.SpecificTerms = sourceOwnerMatchedTerms(text, sourceOwnerSpecificObjectiveTerms(agentutil.RecoveryObjectiveSearchWords(objective, 32)))
-	evidence.WeakTerms = sourceOwnerMatchedWeakTerms(text, agentutil.RecoveryObjectiveSearchWords(objective, 32))
+	evidence.SpecificTerms = sourceOwnerMatchedTerms(text, sourceOwnerSpecificObjectiveTerms(RecoveryObjectiveSearchWords(objective, 32)))
+	evidence.WeakTerms = sourceOwnerMatchedWeakTerms(text, RecoveryObjectiveSearchWords(objective, 32))
 	evidence.SupportTerms = sourceOwnerSupportTerms(text)
 	evidence.ConflictTerms = sourceOwnerConflictTerms(rawText, evidence.Path, evidence.Symbol, objective)
 	evidence.Score = sourceOwnerEvidenceScore(evidence)
@@ -5506,7 +5725,7 @@ func readOnlySourceOwnerEvidenceForBody(path string, symbol string, objective st
 }
 
 func sourceOwnerHasDirectMechanismSignal(text string) bool {
-	return agentutil.ContainsAny(text,
+	return ContainsAny(text,
 		"case tea.",
 		"case \"",
 		" handles ",
@@ -5528,7 +5747,7 @@ func sourceOwnerMatchedTerms(text string, terms []string) []string {
 	var matches []string
 
 	for _, term := range terms {
-		term = agentutil.ReadOnlyObjectiveSupportTerm(term)
+		term = ReadOnlyObjectiveSupportTerm(term)
 		if len(term) < 3 {
 			continue
 		}
@@ -5545,7 +5764,7 @@ func sourceOwnerMatchedWeakTerms(text string, terms []string) []string {
 	var matches []string
 
 	for _, term := range terms {
-		term = agentutil.ReadOnlyObjectiveSupportTerm(term)
+		term = ReadOnlyObjectiveSupportTerm(term)
 		if len(term) < 3 || !weakSourceOwnerObjectiveTerm(term) {
 			continue
 		}
@@ -5589,15 +5808,15 @@ func sourceOwnerConflictTerms(text string, path string, symbol string, objective
 }
 
 func sourceOwnerLooksLikeDisplaySupport(text string) bool {
-	return agentutil.ContainsAny(text, "render", "viewport", "view()", "setcontent", "content")
+	return ContainsAny(text, "render", "viewport", "view()", "setcontent", "content")
 }
 
 func sourceOwnerLooksLikeStateHolder(text string) bool {
-	return agentutil.ContainsAny(text, "type ", " struct ", "state", " field")
+	return ContainsAny(text, "type ", " struct ", "state", " field")
 }
 
 func implementationShapeTestOwnerDisallowed(path string, objective string) bool {
-	path = strings.ToLower(strings.TrimSpace(agentutil.NormalizeRunnerPath(path)))
+	path = strings.ToLower(strings.TrimSpace(NormalizeRunnerPath(path)))
 	if path == "" || !strings.HasSuffix(path, "_test.go") {
 		return false
 	}
@@ -5608,7 +5827,7 @@ func implementationShapeTestOwnerDisallowed(path string, objective string) bool 
 func objectiveAllowsTestImplementationOwner(objective string) bool {
 	lower := " " + strings.ToLower(strings.Join(strings.Fields(objective), " ")) + " "
 
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		" test ",
 		" tests ",
 		" testing ",
@@ -5638,8 +5857,8 @@ func sourceOwnerEvidenceScore(evidence readOnlySourceOwnerEvidence) int {
 func sourceOwnerObjectiveTermSet(objective string) map[string]struct{} {
 	set := map[string]struct{}{}
 
-	for _, term := range agentutil.RecoveryObjectiveSearchWords(objective, 64) {
-		term = agentutil.ReadOnlyObjectiveSupportTerm(term)
+	for _, term := range RecoveryObjectiveSearchWords(objective, 64) {
+		term = ReadOnlyObjectiveSupportTerm(term)
 		if len(term) < 3 {
 			continue
 		}
@@ -5663,7 +5882,7 @@ func sourceOwnerIdentityTerms(path string, symbol string, text string) []string 
 
 	for _, raw := range sourceOwnerIdentityFragments(symbol + "\n" + sourceOwnerBodyIdentityText(text)) {
 		for _, term := range splitImplementationPathToken(raw) {
-			term = agentutil.ReadOnlyObjectiveSupportTerm(term)
+			term = ReadOnlyObjectiveSupportTerm(term)
 			if len(term) < 4 || sourceOwnerGenericIdentityTerm(term) {
 				continue
 			}
@@ -5705,7 +5924,7 @@ func sourceOwnerIdentityFragments(text string) []string {
 }
 
 func sourceOwnerGenericIdentityTerm(term string) bool {
-	switch agentutil.ReadOnlyObjectiveSupportTerm(term) {
+	switch ReadOnlyObjectiveSupportTerm(term) {
 	case "internal", "cmd", "pkg", "app", "apps", "test", "tests", "model", "func", "return", "returns",
 		"handle", "handler", "handlers", "update", "press", "key", "keys", "message",
 		"state", "true", "false", "bool", "line", "lines", "read", "body", "source", "summary",
@@ -5807,7 +6026,7 @@ func sourceBodyEvidencePathsFromDelegatedPacket(output string) []string {
 		}
 
 		for _, path := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(line)) {
-			if agentutil.IsNonSourceEvidenceArtifactPath(path) {
+			if IsNonSourceEvidenceArtifactPath(path) {
 				continue
 			}
 
@@ -6263,7 +6482,7 @@ func (r *Runner) readOnlyExplanationCompletionRejection(reply string, results []
 		}, true
 	}
 
-	if reason := r.gateEngine().SourceGroundingRejection(reply, results); reason != "" {
+	if reason := r.sourceGroundingRejectionReason(reply, results); reason != "" {
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
 			Summary: "Read-only explanation gate rejected ungrounded source citation",
@@ -6401,7 +6620,7 @@ func featurePlannerPlanArtifactMatchesObjective(objective string, result workspa
 func objectiveAsksAboutActivePlan(objectiveText string) bool {
 	objectiveText = normalizedPlanObjectiveText(objectiveText)
 
-	return agentutil.ContainsAny(" "+objectiveText+" ",
+	return ContainsAny(" "+objectiveText+" ",
 		" plan ", " planning ", " planned ",
 		" proposal ", " proposed ",
 		" approve ", " approval ",
@@ -6416,7 +6635,7 @@ func objectiveAsksAboutActivePlan(objectiveText string) bool {
 func objectiveAsksAboutPlanExpansion(objectiveText string) bool {
 	objectiveText = normalizedPlanObjectiveText(objectiveText)
 
-	return agentutil.ContainsAny(" "+objectiveText+" ",
+	return ContainsAny(" "+objectiveText+" ",
 		" expand ", " expansion ", " add ", " additional ", " more ",
 		" recommend ", " recommendation ", " should we ",
 		" coverage ", " tests ", " test ", " test suite ", " tdd ",
@@ -6439,7 +6658,7 @@ func normalizedPlanObjectiveText(objectiveText string) string {
 
 func answerMentionsFeaturePlannerPlan(answer string) bool {
 	lower := " " + strings.ToLower(strings.Join(strings.Fields(answer), " ")) + " "
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		" active plan ", " proposed plan ", " planned files ", " proposed files ",
 		" plan artifact ", " plan tab ", " feature-planner ", " feature planner ",
 	)
@@ -6450,7 +6669,7 @@ func featurePlannerPlanMarkdownReadResult(result workspace.ToolResult) bool {
 		return false
 	}
 
-	if !agentutil.ReadStyleSourceBodyTool(strings.TrimSpace(result.Tool)) {
+	if !ReadStyleSourceBodyTool(strings.TrimSpace(result.Tool)) {
 		return false
 	}
 
@@ -6459,21 +6678,21 @@ func featurePlannerPlanMarkdownReadResult(result workspace.ToolResult) bool {
 		return false
 	}
 
-	if !agentutil.ContainsAny(text, "\nStatus:", "\nSession:", "\nState:") {
+	if !ContainsAny(text, "\nStatus:", "\nSession:", "\nState:") {
 		return false
 	}
 
-	if !agentutil.ContainsAny(text, "\n## Proposed Paths", "\n## Test Coverage", "\n## Verification", "\n## Atoms") {
+	if !ContainsAny(text, "\n## Proposed Paths", "\n## Test Coverage", "\n## Verification", "\n## Atoms") {
 		return false
 	}
 
-	readPaths := agentutil.ReadPathsFromToolResult(result)
+	readPaths := ReadPathsFromToolResult(result)
 	if len(readPaths) == 0 {
 		return false
 	}
 
 	for _, path := range readPaths {
-		path = agentutil.NormalizeRunnerPath(path)
+		path = NormalizeRunnerPath(path)
 		if path == "" {
 			continue
 		}
@@ -6519,7 +6738,7 @@ func featurePlannerPlanArtifactProposedPaths(result workspace.ToolResult) []stri
 	var out []string
 	seen := map[string]struct{}{}
 	for _, path := range paths {
-		path = agentutil.NormalizeRunnerPath(path)
+		path = NormalizeRunnerPath(path)
 		if path == "" {
 			continue
 		}
@@ -6537,7 +6756,7 @@ func featurePlannerPlanArtifactProposedPaths(result workspace.ToolResult) []stri
 }
 
 func featurePlannerPlanMetadataPath(path string) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	return strings.HasPrefix(path, ".idiom/") ||
 		strings.HasPrefix(path, "idiom/") ||
 		strings.HasPrefix(path, ".planning/") ||
@@ -6575,7 +6794,7 @@ func (r *Runner) implementationTargetSourceWriteBeforeEvidenceRedirect(req works
 		return workspace.ToolRequest{}, "", false
 	}
 
-	target := agentutil.NormalizeRunnerPath(paths[0])
+	target := NormalizeRunnerPath(paths[0])
 	if target == "" || sourceEvidenceBodyReadForPath(target, results) {
 		return workspace.ToolRequest{}, "", false
 	}
@@ -6600,11 +6819,11 @@ type implementationDeferredSourceEvidenceWrite struct {
 }
 
 func newImplementationDeferredSourceEvidenceWrite(req workspace.ToolRequest, raw string, evidencePath string) *implementationDeferredSourceEvidenceWrite {
-	target := agentutil.NormalizeRunnerPath(evidencePath)
+	target := NormalizeRunnerPath(evidencePath)
 	if target == "" {
 		paths := writeRequestPaths(req)
 		if len(paths) == 1 {
-			target = agentutil.NormalizeRunnerPath(paths[0])
+			target = NormalizeRunnerPath(paths[0])
 		}
 	}
 
@@ -6633,11 +6852,11 @@ func (r *Runner) newImplementationDeferredSourceEvidenceWrite(req workspace.Tool
 }
 
 func (r *Runner) normalizeDeleteIntentDeferredWrite(req workspace.ToolRequest, raw string, evidencePath string, currentAllowedTools []string) (workspace.ToolRequest, string, bool) {
-	target := agentutil.NormalizeRunnerPath(evidencePath)
+	target := NormalizeRunnerPath(evidencePath)
 	if target == "" {
 		paths := writeRequestPaths(req)
 		if len(paths) == 1 {
-			target = agentutil.NormalizeRunnerPath(paths[0])
+			target = NormalizeRunnerPath(paths[0])
 		}
 	}
 
@@ -6677,7 +6896,7 @@ func runnerToolAllowed(tool string, currentAllowedTools []string, briefAllowedTo
 }
 
 func implementationDeleteIntentForPath(objective string, requestText string, path string) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -6852,7 +7071,7 @@ func (d *implementationDeferredSourceEvidenceWrite) fallbackVerificationRequest(
 		return workspace.ToolRequest{}, false
 	}
 
-	path := agentutil.NormalizeRunnerPath(paths[0])
+	path := NormalizeRunnerPath(paths[0])
 	if path == "" {
 		return workspace.ToolRequest{}, false
 	}
@@ -6879,9 +7098,9 @@ func (d *implementationDeferredSourceEvidenceWrite) replayAllowedForRequest(req 
 		return false
 	}
 
-	target := agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
+	target := NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
 	if target == "" {
-		target = agentutil.NormalizeRunnerPath(req.Path)
+		target = NormalizeRunnerPath(req.Path)
 	}
 
 	return target == d.EvidencePath
@@ -6903,7 +7122,7 @@ func implementationDeferredWriteHasHistoryEvidence(req workspace.ToolRequest, re
 }
 
 func implementationDeferredWriteCoveredBySourceEvidence(req workspace.ToolRequest, path string, results []workspace.ToolResult, allowAnchorMismatch bool) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -6940,7 +7159,7 @@ func implementationApplyPatchDeletesOnlyPath(req workspace.ToolRequest, path str
 		return false
 	}
 
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -6951,7 +7170,7 @@ func implementationApplyPatchDeletesOnlyPath(req workspace.ToolRequest, path str
 	}
 
 	for _, op := range ops {
-		if op.Kind != patching.OpDelete || agentutil.NormalizeRunnerPath(op.Path) != path {
+		if op.Kind != patching.OpDelete || NormalizeRunnerPath(op.Path) != path {
 			return false
 		}
 	}
@@ -6964,7 +7183,7 @@ func implementationDeferredWriteHasExecutableAnchor(req workspace.ToolRequest) b
 		return false
 	}
 
-	if agentutil.NormalizeRunnerPath(req.Path) == "" {
+	if NormalizeRunnerPath(req.Path) == "" {
 		return false
 	}
 
@@ -6972,7 +7191,7 @@ func implementationDeferredWriteHasExecutableAnchor(req workspace.ToolRequest) b
 }
 
 func implementationSourceEvidenceTextContains(path string, results []workspace.ToolResult, want string) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	want = strings.TrimSpace(want)
 
 	if path == "" || want == "" {
@@ -7011,19 +7230,6 @@ func planThenExecuteCandidateSourceReadyResult(result workspace.ToolResult) bool
 	// new behavior writes and reads the typed result code above.
 	return strings.TrimSpace(result.Code) == "" &&
 		strings.TrimSpace(result.Summary) == "Candidate source already ready"
-}
-
-func currentToolSurfaceRejection(req workspace.ToolRequest, allowedTools []string) (string, string, bool) {
-	tool := strings.TrimSpace(req.Tool)
-	if tool == "" || slices.Contains(allowedTools, tool) {
-		return "", "", false
-	}
-
-	if len(allowedTools) == 0 {
-		return "Tool not available in current runtime contract", fmt.Sprintf("%s is not available because the current runtime contract exposes no tools. Answer from gathered evidence or report a concrete blocker.", tool), true
-	}
-
-	return "Tool not available in current runtime contract", fmt.Sprintf("%s is not in the current allowed tool surface. Available tools: %s. Use an available tool, answer from gathered evidence, or report a concrete blocker.", tool, strings.Join(allowedTools, ", ")), true
 }
 
 func (r *Runner) implementationTargetSourceWriteBeforeEvidenceRejection(req workspace.ToolRequest, results []workspace.ToolResult, currentAllowedTools []string) (string, string, bool) {
@@ -7148,7 +7354,7 @@ func implementationTargetSourceWriteTargetsHaveEvidence(req workspace.ToolReques
 	}
 
 	for _, path := range paths {
-		path = agentutil.NormalizeRunnerPath(path)
+		path = NormalizeRunnerPath(path)
 		if path == "" || !sourceEvidenceBodyReadForPath(path, results) {
 			return false
 		}
@@ -7282,7 +7488,7 @@ func sourceInventoryMarkerCount(normalized string, marker string) int {
 }
 
 func sourceInventoryClaimLooksSynthesized(normalized string) bool {
-	return agentutil.ContainsAny(normalized,
+	return ContainsAny(normalized,
 		" because ",
 		" this means ",
 		" the likely cause is ",
@@ -7482,7 +7688,7 @@ func looksLikeLowValueSourceInventoryNonAnswer(answer string) bool {
 		looksLikeLowValueSourceInventoryFallback(trimmed)
 }
 
-func looksLikeHostCloseoutSourceInventoryNonAnswer(answer string) bool {
+func looksLikeSourceInventoryNonAnswer(answer string) bool {
 	if looksLikeLowValueSourceInventoryNonAnswer(answer) {
 		return true
 	}
@@ -7575,7 +7781,7 @@ func looksLikeCompactedLineOrientedSourceSnippet(text string) bool {
 	}
 
 	lower := strings.ToLower(trimmed)
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		"\t",
 		"[]",
 		"{}",
@@ -7716,7 +7922,7 @@ func looksLikeSourceEchoOnlyAnswer(answer string) bool {
 
 	claim := normalizeSourceInventoryClaim(stripPresentableSourceObjectiveEcho(trimmed))
 	if sourceInventoryClaimLooksSynthesized(claim) ||
-		agentutil.ContainsAny(lower,
+		ContainsAny(lower,
 			" should reject ",
 			" should change ",
 		) {
@@ -7791,7 +7997,7 @@ func looksLikeScratchpadLeakedAnswer(answer string) bool {
 		}
 
 		if i == 0 && lineStartsWithAny(lowerLine, "the user wants", "the user is asking") {
-			if agentutil.ContainsAny(normalized,
+			if ContainsAny(normalized,
 				" actually, ",
 				" actually, i ",
 				" actually, let me ",
@@ -7807,7 +8013,7 @@ func looksLikeScratchpadLeakedAnswer(answer string) bool {
 				return true
 			}
 
-			return !agentutil.ContainsAny(normalized,
+			return !ContainsAny(normalized,
 				" the answer is ",
 				" the likely cause is ",
 				" the root cause is ",
@@ -7827,7 +8033,7 @@ func looksLikeMetaIntentRestatement(answer string) bool {
 	}
 
 	lower := " " + strings.ToLower(strings.Join(strings.Fields(trimmed), " ")) + " "
-	if !agentutil.ContainsAny(lower,
+	if !ContainsAny(lower,
 		" the user is asking me to ",
 		" the user asked me to ",
 		" the user wants me to ",
@@ -7837,7 +8043,7 @@ func looksLikeMetaIntentRestatement(answer string) bool {
 		return false
 	}
 
-	if agentutil.ContainsAny(lower,
+	if ContainsAny(lower,
 		" the answer is ",
 		" the likely cause is ",
 		" the root cause is ",
@@ -7848,7 +8054,7 @@ func looksLikeMetaIntentRestatement(answer string) bool {
 		return false
 	}
 
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		" i need to find ",
 		" i need to inspect ",
 		" i need to search ",
@@ -7943,6 +8149,10 @@ func looksLikeNonAnswerProseCore(answer string) bool {
 		return true
 	}
 
+	if looksLikePriorAnswerReferenceFinalAnswer(trimmed) {
+		return true
+	}
+
 	if looksLikeRawReadOnlyEvidencePacketAnswer(trimmed) {
 		return true
 	}
@@ -7970,6 +8180,67 @@ func looksLikeNonAnswerProseCore(answer string) bool {
 	return false
 }
 
+func looksLikePriorAnswerReferenceFinalAnswer(answer string) bool {
+	normalized := strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(answer)), " "))
+	if normalized == "" || priorAnswerReferenceDiscussesFailure(normalized) {
+		return false
+	}
+
+	for _, prefix := range []string{
+		"the answer above ",
+		"the previous answer ",
+		"the prior answer ",
+		"my previous answer ",
+		"my prior answer ",
+		"the rca above ",
+		"the fix proposal above ",
+	} {
+		if strings.HasPrefix(normalized, prefix) {
+			return true
+		}
+	}
+
+	for _, phrase := range []string{
+		"as described above",
+		"as covered above",
+		"as listed above",
+		"covered above",
+		"answer above",
+	} {
+		if strings.HasPrefix(normalized, phrase) ||
+			strings.Contains(normalized, ". "+phrase) ||
+			strings.Contains(normalized, "\n"+phrase) {
+
+			return true
+		}
+	}
+
+	return false
+}
+
+func priorAnswerReferenceDiscussesFailure(normalized string) bool {
+	if !gateMetaPhraseDiscussesFailure(normalized) {
+		return false
+	}
+
+	return ContainsAny(normalized,
+		"model said",
+		"answer said",
+		"literal",
+		"quoted",
+		"phrase",
+		"wrongly",
+		"incorrectly",
+		"accepted incorrectly",
+		"leaked because",
+		"did not classify",
+		"did not treat",
+		"root cause was",
+		"failure was",
+		"bug was",
+	)
+}
+
 func looksLikeGateSatisfactionMetaFinalAnswer(answer string) bool {
 	normalized := strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(answer)), " "))
 	if normalized == "" {
@@ -7979,7 +8250,7 @@ func looksLikeGateSatisfactionMetaFinalAnswer(answer string) bool {
 	selfReferential := strings.HasPrefix(normalized, "the answer above ") ||
 		strings.HasPrefix(normalized, "the previous answer ") ||
 		strings.HasPrefix(normalized, "the prior answer ")
-	if selfReferential && agentutil.ContainsAny(normalized,
+	if selfReferential && ContainsAny(normalized,
 		"complete and grounded",
 		"grounded in the inspected evidence",
 		"grounded in inspected evidence",
@@ -7991,7 +8262,7 @@ func looksLikeGateSatisfactionMetaFinalAnswer(answer string) bool {
 		return true
 	}
 
-	if agentutil.ContainsAny(normalized,
+	if ContainsAny(normalized,
 		"the answer above is complete",
 		"the answer above already answers",
 		"the answer above is grounded",
@@ -8001,7 +8272,7 @@ func looksLikeGateSatisfactionMetaFinalAnswer(answer string) bool {
 		"the prior answer is complete",
 		"the prior answer already answers",
 		"the prior answer is grounded",
-	) && agentutil.ContainsAny(normalized,
+	) && ContainsAny(normalized,
 		"i have all the evidence",
 		"i have enough evidence",
 		"i have sufficient evidence",
@@ -8047,7 +8318,7 @@ func gateMetaPhraseAppearsSelfCertifying(normalized string) bool {
 }
 
 func gateMetaPhraseDiscussesFailure(normalized string) bool {
-	return agentutil.ContainsAny(normalized,
+	return ContainsAny(normalized,
 		"model said",
 		"answer said",
 		"literal",
@@ -8058,6 +8329,9 @@ func gateMetaPhraseDiscussesFailure(normalized string) bool {
 		"bug",
 		"root cause",
 		"failure",
+		"leak",
+		"leaked",
+		"non-self-contained",
 		"accepted incorrectly",
 	)
 }
@@ -8110,11 +8384,11 @@ func looksLikeGroundedAnswerRepairState(answer string) bool {
 	}
 
 	for _, path := range pathparse.MentionedWorkspaceFiles(prefix) {
-		path = agentutil.NormalizeRunnerPath(path)
+		path = NormalizeRunnerPath(path)
 		if path == "" {
 			continue
 		}
-		if agentutil.IsNonSourceEvidenceArtifactPath(path) ||
+		if IsNonSourceEvidenceArtifactPath(path) ||
 			strings.HasPrefix(path, ".planning/") ||
 			strings.HasPrefix(path, "planning/") {
 
@@ -8133,18 +8407,6 @@ type sourceEvidenceObligation struct {
 	PendingTool string
 }
 
-type sourceEvidenceLevel = PlanThenExecuteSourceEvidenceLevel
-
-const (
-	sourceEvidenceNone              sourceEvidenceLevel = planThenExecuteEvidenceNone
-	sourceEvidencePathSeen          sourceEvidenceLevel = planThenExecuteEvidencePathSeen
-	sourceEvidenceSourceBodyPending sourceEvidenceLevel = planThenExecuteEvidenceSourceBodyPending
-	sourceEvidenceBodyWindow        sourceEvidenceLevel = planThenExecuteEvidenceBodyWindow
-	sourceEvidenceAnchorReady       sourceEvidenceLevel = planThenExecuteEvidenceAnchorReady
-	sourceEvidenceExactAnchor       sourceEvidenceLevel = planThenExecuteEvidenceExactAnchorContract
-	sourceEvidenceNewFile           sourceEvidenceLevel = planThenExecuteEvidenceNewFileContract
-)
-
 // maxObligationResolutionAttempts is the number of failed code_navigate
 // attempts on a single path before we treat an obligation as unresolvable
 // and drop it from the write-gating set.
@@ -8160,17 +8422,6 @@ func sourceEvidenceHasBody(evidence planThenExecuteSourceEvidence) bool {
 
 func sourceEvidenceBodyReadForPath(path string, results []workspace.ToolResult) bool {
 	return newToolResultEvidenceView(results).HasSourceBody(path)
-}
-
-// sourceEvidenceBodyReadForPathWithRegistry checks body-read evidence from
-// the tool results AND the PathEvidenceRegistry when available. This avoids
-// redundant os.Stat calls and covers paths registered by the registry that
-// the raw tool-result scan may not see.
-func sourceEvidenceBodyReadForPathWithRegistry(path string, results []workspace.ToolResult, registry *PathEvidenceRegistry) bool {
-	if registry != nil && registry.HasBodyEvidence(path) {
-		return true
-	}
-	return sourceEvidenceBodyReadForPath(path, results)
 }
 
 func sourceEvidenceBodyPaths(results []workspace.ToolResult) []string {
@@ -8194,17 +8445,18 @@ func sourceEvidenceCandidatePaths(results []workspace.ToolResult) []string {
 		tool := strings.TrimSpace(result.Tool)
 		var candidates []string
 
-		switch tool {
-		case "discovery_query", "context_query", "context_zoom", "context_impact", "structural_search":
+		switch {
+		case tool == "discovery_query" || tool == "context_query" || tool == "context_zoom" ||
+			tool == "context_impact" || tool == "structural_search" || strings.HasSuffix(tool, "_workspace_symbol"):
 			candidates = discoveryConsumptionCandidatesFromResult(result, 128)
-		case "context_pack":
+		case tool == "context_pack":
 			candidates = contextPackCandidatePathsFromResults([]workspace.ToolResult{result}, 128)
-		case "search_content", "search_files":
+		case tool == "search_content" || tool == "search_files" || tool == "rg" || tool == "grep":
 			candidates = sourceLikePathsFromText(result.Summary+"\n"+result.Output, 128)
 		}
 
 		for _, path := range candidates {
-			normalized := agentutil.NormalizeRunnerPath(path)
+			normalized := NormalizeRunnerPath(path)
 			if normalized == "" {
 				continue
 			}
@@ -8230,7 +8482,7 @@ func sourceEvidenceCandidatePaths(results []workspace.ToolResult) []string {
 // discovery tool result actually exists on the filesystem. This prevents
 // stale graph-index entries from appearing as valid candidates.
 func sourceEvidenceCandidatePathExists(path string) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" || strings.HasPrefix(path, "../") || path == ".." || filepath.IsAbs(path) {
 		return false
 	}
@@ -8255,7 +8507,7 @@ func sourceEvidencePendingRedirects(results []workspace.ToolResult) []sourceEvid
 		}
 
 		seen[path] = struct{}{}
-		if sourceEvidenceBodyReadForPath(path, results) {
+		if sourceEvidencePendingRedirectSatisfiedForPath(path, results) {
 			continue
 		}
 
@@ -8268,7 +8520,7 @@ func sourceEvidencePendingRedirects(results []workspace.ToolResult) []sourceEvid
 
 		pending = append(pending, sourceEvidenceObligation{
 			Path:        path,
-			Level:       sourceEvidenceSourceBodyPending,
+			Level:       planThenExecuteEvidenceSourceBodyPending,
 			Source:      evidence.Source,
 			Detail:      evidence.Detail,
 			PendingTool: tool,
@@ -8278,6 +8530,26 @@ func sourceEvidencePendingRedirects(results []workspace.ToolResult) []sourceEvid
 	reverseSourceEvidenceObligations(pending)
 
 	return pending
+}
+
+func sourceEvidencePendingRedirectSatisfiedForPath(path string, results []workspace.ToolResult) bool {
+	path = NormalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+
+	for _, result := range results {
+		evidence := planThenExecuteToolResultSourceEvidence(result, path)
+		if planThenExecuteEvidenceRank(evidence.Level) < planThenExecuteEvidenceRank(planThenExecuteEvidenceBodyWindow) {
+			continue
+		}
+		if strings.TrimSpace(evidence.Detail) == "file outline body window" {
+			continue
+		}
+		return true
+	}
+
+	return false
 }
 
 func sourceEvidencePendingRedirectsForBrief(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []sourceEvidenceObligation {
@@ -8308,7 +8580,7 @@ func sourceEvidencePendingRedirectsForBrief(brief workerruntime.WorkerRuntimeBri
 }
 
 func sourceEvidencePendingRedirectRelevantAfterBodyEvidence(brief workerruntime.WorkerRuntimeBrief, path string) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -8328,7 +8600,7 @@ func sourceEvidencePendingRedirectRelevantAfterBodyEvidence(brief workerruntime.
 	candidates = append(candidates, pathparse.MentionedWorkspacePaths(brief.Objective)...)
 
 	for _, candidate := range candidates {
-		if agentutil.NormalizeRunnerPath(candidate) == path {
+		if NormalizeRunnerPath(candidate) == path {
 			return true
 		}
 	}
@@ -8337,14 +8609,14 @@ func sourceEvidencePendingRedirectRelevantAfterBodyEvidence(brief workerruntime.
 }
 
 func sourceEvidencePathSharesObjectiveTerm(path string, objective string) bool {
-	terms := agentutil.RecoveryObjectiveSearchWords(objective, 32)
+	terms := RecoveryObjectiveSearchWords(objective, 32)
 	if len(terms) == 0 {
 		return false
 	}
 
 	objectiveTerms := make(map[string]struct{}, len(terms))
 	for _, term := range terms {
-		objectiveTerms[agentutil.SingularObjectiveWord(term)] = struct{}{}
+		objectiveTerms[SingularObjectiveWord(term)] = struct{}{}
 	}
 
 	for _, term := range implementationPathTerms(path) {
@@ -8367,7 +8639,7 @@ func sourceEvidencePathSharesObjectiveTerm(path string, objective string) bool {
 // attempts on a path. When attempts reach maxObligationResolutionAttempts
 // the obligation is treated as unresolvable.
 func sourceEvidenceObligationResolutionAttempts(path string, results []workspace.ToolResult) int {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return 0
 	}
@@ -8404,7 +8676,7 @@ func reverseSourceEvidenceObligations(values []sourceEvidenceObligation) {
 }
 
 func sourceEvidencePendingRedirectForPath(path string, results []workspace.ToolResult) (sourceEvidenceObligation, bool) {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return sourceEvidenceObligation{}, false
 	}
@@ -8419,7 +8691,7 @@ func sourceEvidencePendingRedirectForPath(path string, results []workspace.ToolR
 }
 
 func sourceEvidencePendingRedirectFollowupAllowed(req workspace.ToolRequest, results []workspace.ToolResult) bool {
-	path := agentutil.NormalizeRunnerPath(req.Path)
+	path := NormalizeRunnerPath(req.Path)
 	tool := strings.TrimSpace(req.Tool)
 
 	if path == "" || tool == "" {
@@ -8432,7 +8704,7 @@ func sourceEvidencePendingRedirectFollowupAllowed(req workspace.ToolRequest, res
 }
 
 func sourceEvidencePendingRedirectFollowupAllowedForBrief(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest, results []workspace.ToolResult) bool {
-	path := agentutil.NormalizeRunnerPath(req.Path)
+	path := NormalizeRunnerPath(req.Path)
 	tool := strings.TrimSpace(req.Tool)
 
 	if path == "" || tool == "" {
@@ -8449,7 +8721,7 @@ func sourceEvidencePendingRedirectFollowupAllowedForBrief(brief workerruntime.Wo
 }
 
 func sourceEvidencePendingRedirectProgressAllowedForBrief(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest, results []workspace.ToolResult) bool {
-	path := agentutil.NormalizeRunnerPath(req.Path)
+	path := NormalizeRunnerPath(req.Path)
 	tool := strings.TrimSpace(req.Tool)
 
 	if path == "" || tool == "" {
@@ -8481,9 +8753,9 @@ func sourceEvidencePendingRedirectRequestAllowed(obligation sourceEvidenceObliga
 
 	switch {
 	case tool == "code_navigate":
-		return sourceEvidenceCodeNavigateSourceBodyRequest(req)
+		return sourceEvidenceToolSourceBodyRequest(req)
 	case tool == "read_only_capability":
-		return sourceEvidenceReadOnlyCapabilitySourceBodyRequest(req)
+		return sourceEvidenceToolSourceBodyRequest(req)
 	case strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"):
 		return sourceEvidenceRequestHasSymbolPattern(req)
 	default:
@@ -8491,17 +8763,7 @@ func sourceEvidencePendingRedirectRequestAllowed(obligation sourceEvidenceObliga
 	}
 }
 
-func sourceEvidenceCodeNavigateSourceBodyRequest(req workspace.ToolRequest) bool {
-	capability := sourceEvidenceCapabilityToken(firstSourceEvidenceString(req.Capability, req.Action, req.Operation, req.Mode))
-	switch capability {
-	case "read_symbol", "inspect_symbol", "symbol_body":
-		return sourceEvidenceRequestHasSymbolPattern(req)
-	default:
-		return false
-	}
-}
-
-func sourceEvidenceReadOnlyCapabilitySourceBodyRequest(req workspace.ToolRequest) bool {
+func sourceEvidenceToolSourceBodyRequest(req workspace.ToolRequest) bool {
 	capability := sourceEvidenceCapabilityToken(firstSourceEvidenceString(req.Capability, req.Action, req.Operation, req.Mode))
 	switch capability {
 	case "read_symbol", "inspect_symbol", "symbol_body":
@@ -8512,7 +8774,7 @@ func sourceEvidenceReadOnlyCapabilitySourceBodyRequest(req workspace.ToolRequest
 }
 
 func sourceEvidencePendingRedirectOutlineProgressAllowed(obligation sourceEvidenceObligation, req workspace.ToolRequest, results []workspace.ToolResult) bool {
-	if agentutil.NormalizeRunnerPath(req.Path) != strings.TrimSpace(obligation.Path) {
+	if NormalizeRunnerPath(req.Path) != strings.TrimSpace(obligation.Path) {
 		return false
 	}
 
@@ -8548,7 +8810,7 @@ func sourceEvidencePendingRedirectOutlineProgressAllowed(obligation sourceEviden
 }
 
 func sourceEvidenceOutlineReadForPath(path string, results []workspace.ToolResult) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -8581,8 +8843,8 @@ func sourceEvidenceOutlineReadForPath(path string, results []workspace.ToolResul
 }
 
 func sourceEvidenceToolResultMentionsPath(result workspace.ToolResult, path string) bool {
-	for _, readPath := range agentutil.ReadPathsFromToolResult(result) {
-		if agentutil.NormalizeRunnerPath(readPath) == path {
+	for _, readPath := range ReadPathsFromToolResult(result) {
+		if NormalizeRunnerPath(readPath) == path {
 			return true
 		}
 	}
@@ -8777,14 +9039,14 @@ func splitImplementationPathToken(token string) []string {
 }
 
 func implementationSourcePathOverlapsObjective(path string, objective string) bool {
-	terms := agentutil.RecoveryObjectiveSearchWords(objective, 32)
+	terms := RecoveryObjectiveSearchWords(objective, 32)
 	if len(terms) == 0 {
 		return false
 	}
 
 	objectiveTerms := make(map[string]struct{}, len(terms))
 	for _, term := range terms {
-		objectiveTerms[agentutil.SingularObjectiveWord(term)] = struct{}{}
+		objectiveTerms[SingularObjectiveWord(term)] = struct{}{}
 	}
 
 	matches := 0
@@ -8803,18 +9065,21 @@ func concreteSourceEvidenceResult(result workspace.ToolResult) bool {
 		return false
 	}
 
-	if agentutil.CandidateAnchorOnlyResult(result) {
+	if CandidateAnchorOnlyResult(result) {
 		return false
 	}
 
 	tool := strings.TrimSpace(result.Tool)
 	switch {
-	case agentutil.ReadStyleSourceBodyTool(tool):
+	case ReadStyleSourceBodyTool(tool):
 		return readFileResultHasConcreteSourceBody(result)
 	case tool == workspace.ToolNameContextZoom:
 		return contextZoomResultHasConcreteSourceBody(result)
 	case tool == workspace.ToolNameCodeNavigate || tool == workspace.ToolNameReadOnlyCapability:
-		return agentutil.RoutedSourceReadOutputHasBody(result.Output) && toolResultHasNonArtifactReadPath(result)
+		if planThenExecuteCodeNavigateIsOutline(result) {
+			return false
+		}
+		return RoutedSourceReadOutputHasBody(result.Output) && toolResultHasNonArtifactReadPath(result)
 	case strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"):
 		return toolResultHasNonArtifactReadPath(result)
 	default:
@@ -8857,7 +9122,6 @@ func implementationTargetWriteReadyRedirectedRelatedSourceTool(result workspace.
 	return "", false
 }
 
-// --- /var/folders/h5/0qmlhm750_5c0srn1523bvgw0000gn/T/tmpmzgeso_j.go ---
 func FromWorkspaceResult(result workspace.ToolResult) ToolResult {
 	paths := workspaceResultPaths(result)
 	return ToolResult{
@@ -8878,7 +9142,9 @@ func workspaceResultPaths(result workspace.ToolResult) []string {
 	seen := make(map[string]struct{})
 	var paths []string
 	add := func(path string) {
-		path = normalizeWorkspaceAdapterPath(path)
+		path = strings.TrimSpace(strings.ReplaceAll(path, "\\", "/"))
+		path = strings.TrimPrefix(path, "./")
+		path = strings.Trim(path, "/")
 		if path == "" {
 			return
 		}
@@ -8889,14 +9155,8 @@ func workspaceResultPaths(result workspace.ToolResult) []string {
 		paths = append(paths, path)
 	}
 
-	for _, path := range agentutil.ReadPathsFromToolResult(result) {
+	for _, path := range ReadPathsFromToolResult(result) {
 		add(path)
 	}
 	return paths
-}
-
-func normalizeWorkspaceAdapterPath(path string) string {
-	path = strings.TrimSpace(strings.ReplaceAll(path, "\\", "/"))
-	path = strings.TrimPrefix(path, "./")
-	return strings.Trim(path, "/")
 }

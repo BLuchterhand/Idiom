@@ -124,7 +124,6 @@ func renderFeaturePlannerPlanTabMarkdown(state featureplanner.FeatureState, stat
 }
 
 type featurePlannerCoverageReview = featureplanner.FeaturePlanTraceabilityReview
-type featurePlannerBehaviorReview = featureplanner.FeaturePlanBehaviorReview
 
 func writeFeaturePlannerCoverageReviewSummary(b *strings.Builder, review featurePlannerCoverageReview) {
 	missingConcreteTests := 0

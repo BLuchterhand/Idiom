@@ -934,6 +934,13 @@ func toolRequestIntent(event agent.ToolRequestEvent) string {
 
 	target := truncateRunes(collapseWhitespace(toolRequestTraceTarget(req)), 96)
 	tool := strings.TrimSpace(req.Tool)
+	if workspace.IsWorkspacePerEditWriteTool(tool) {
+		if target == "" {
+			return "apply the planned code change"
+		}
+
+		return "apply the planned change in " + target
+	}
 
 	if workspace.LanguageToolHasCapability(tool, workspace.CapFileOutline) {
 		if target == "" {
@@ -1003,12 +1010,6 @@ func toolRequestIntent(event agent.ToolRequestEvent) string {
 		}
 
 		return "inspect " + target + " for the relevant context"
-	case workspace.ToolNameEditFile, workspace.ToolNameWriteFile, workspace.ToolNameAppendFile, workspace.ToolNameApplyPatch:
-		if target == "" {
-			return "apply the planned code change"
-		}
-
-		return "apply the planned change in " + target
 	case workspace.ToolNameTaskLedger:
 		return "keep the visible plan synchronized with the work"
 	case workspace.ToolNameShell:

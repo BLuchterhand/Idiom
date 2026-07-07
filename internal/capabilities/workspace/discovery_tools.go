@@ -43,7 +43,7 @@ func (m *Manager) structuralSearch(ctx context.Context, req ToolRequest) ToolRes
 		return toolUnavailableResult(ToolNameStructuralSearch, "Structural search unavailable", "ast-grep is not installed")
 	}
 
-	target, err := m.resolvePath(defaultString(req.Path, "."), req.Workdir)
+	target, err := m.pathAccess.ResolvePath(defaultString(req.Path, "."), req.Workdir)
 	if err != nil {
 		return toolPathResolutionFailureResult(ToolNameStructuralSearch, "Failed to resolve path", err)
 	}
@@ -58,7 +58,7 @@ func (m *Manager) structuralSearch(ctx context.Context, req ToolRequest) ToolRes
 	output, execErr := m.runCommand(ctx, m.cfg.Root, bin, args...)
 	result := ToolResult{
 		Tool:    ToolNameStructuralSearch,
-		Summary: fmt.Sprintf("Ran structural search under %s", m.displayPath(target)),
+		Summary: fmt.Sprintf("Ran structural search under %s", m.pathAccess.DisplayPath(target)),
 		Output:  strings.TrimSpace(output),
 	}
 
@@ -70,7 +70,7 @@ func (m *Manager) structuralSearch(ctx context.Context, req ToolRequest) ToolRes
 }
 
 func (m *Manager) dependencyGraph(ctx context.Context, req ToolRequest) ToolResult {
-	target, err := m.resolvePath(defaultString(req.Path, "."), req.Workdir)
+	target, err := m.pathAccess.ResolvePath(defaultString(req.Path, "."), req.Workdir)
 	if err != nil {
 		return toolPathResolutionFailureResult(ToolNameDependencyGraph, "Failed to resolve path", err)
 	}
@@ -315,7 +315,7 @@ func (m *Manager) ctagsSymbols(ctx context.Context, req ToolRequest) ToolResult 
 		return toolUnavailableResult(ToolNameCtagsSymbols, "Ctags symbol search unavailable", "ctags is not installed")
 	}
 
-	target, err := m.resolvePath(defaultString(req.Path, "."), req.Workdir)
+	target, err := m.pathAccess.ResolvePath(defaultString(req.Path, "."), req.Workdir)
 	if err != nil {
 		return toolPathResolutionFailureResult(ToolNameCtagsSymbols, "Failed to resolve path", err)
 	}
@@ -325,7 +325,7 @@ func (m *Manager) ctagsSymbols(ctx context.Context, req ToolRequest) ToolResult 
 		output = filterLinesContaining(output, filter)
 	}
 
-	result := ToolResult{Tool: ToolNameCtagsSymbols, Summary: fmt.Sprintf("Indexed symbols under %s with ctags", m.displayPath(target)), Output: strings.TrimSpace(output)}
+	result := ToolResult{Tool: ToolNameCtagsSymbols, Summary: fmt.Sprintf("Indexed symbols under %s with ctags", m.pathAccess.DisplayPath(target)), Output: strings.TrimSpace(output)}
 	if execErr != nil {
 		result.Error = execErr.Error()
 	}
@@ -339,7 +339,7 @@ func (m *Manager) semgrepScan(ctx context.Context, req ToolRequest) ToolResult {
 		return toolUnavailableResult(ToolNameSemgrepScan, "Semgrep scan unavailable", "semgrep is not installed")
 	}
 
-	target, err := m.resolvePath(defaultString(req.Path, "."), req.Workdir)
+	target, err := m.pathAccess.ResolvePath(defaultString(req.Path, "."), req.Workdir)
 	if err != nil {
 		return toolPathResolutionFailureResult(ToolNameSemgrepScan, "Failed to resolve path", err)
 	}
@@ -350,7 +350,7 @@ func (m *Manager) semgrepScan(ctx context.Context, req ToolRequest) ToolResult {
 	}
 
 	output, execErr := m.runCommand(ctx, m.cfg.Root, bin, "scan", "--json", "--config", config, target)
-	result := ToolResult{Tool: ToolNameSemgrepScan, Summary: fmt.Sprintf("Ran Semgrep config %q under %s", config, m.displayPath(target)), Output: strings.TrimSpace(output)}
+	result := ToolResult{Tool: ToolNameSemgrepScan, Summary: fmt.Sprintf("Ran Semgrep config %q under %s", config, m.pathAccess.DisplayPath(target)), Output: strings.TrimSpace(output)}
 
 	if execErr != nil {
 		result.Error = execErr.Error()
@@ -365,13 +365,13 @@ func (m *Manager) joernScan(ctx context.Context, req ToolRequest) ToolResult {
 		return toolUnavailableResult(ToolNameJoernScan, "Joern scan unavailable", "joern-scan is not installed")
 	}
 
-	target, err := m.resolvePath(defaultString(req.Path, "."), req.Workdir)
+	target, err := m.pathAccess.ResolvePath(defaultString(req.Path, "."), req.Workdir)
 	if err != nil {
 		return toolPathResolutionFailureResult(ToolNameJoernScan, "Failed to resolve path", err)
 	}
 
 	output, execErr := m.runCommand(ctx, m.cfg.Root, bin, "--src", target)
-	result := ToolResult{Tool: ToolNameJoernScan, Summary: fmt.Sprintf("Ran Joern scan under %s", m.displayPath(target)), Output: strings.TrimSpace(output)}
+	result := ToolResult{Tool: ToolNameJoernScan, Summary: fmt.Sprintf("Ran Joern scan under %s", m.pathAccess.DisplayPath(target)), Output: strings.TrimSpace(output)}
 
 	if execErr != nil {
 		result.Error = execErr.Error()
@@ -402,7 +402,7 @@ func (m *Manager) rustDependencyGraph(ctx context.Context, target string) ToolRe
 	}
 
 	output, execErr := m.runCommand(ctx, cargoRoot, "cargo", "tree", "--prefix", "depth")
-	result := ToolResult{Tool: ToolNameDependencyGraph, Summary: fmt.Sprintf("Collected Rust dependency graph in %s", m.displayPath(cargoRoot)), Output: strings.TrimSpace(output)}
+	result := ToolResult{Tool: ToolNameDependencyGraph, Summary: fmt.Sprintf("Collected Rust dependency graph in %s", m.pathAccess.DisplayPath(cargoRoot)), Output: strings.TrimSpace(output)}
 
 	if execErr != nil {
 		result.Error = execErr.Error()
@@ -414,7 +414,7 @@ func (m *Manager) rustDependencyGraph(ctx context.Context, target string) ToolRe
 func (m *Manager) tsDependencyGraph(ctx context.Context, target string) ToolResult {
 	if bin := firstAvailableBinary("madge"); bin != "" {
 		output, execErr := m.runCommand(ctx, m.cfg.Root, bin, "--json", target)
-		result := ToolResult{Tool: ToolNameDependencyGraph, Summary: fmt.Sprintf("Collected TypeScript/JavaScript dependency graph with madge under %s", m.displayPath(target)), Output: strings.TrimSpace(output)}
+		result := ToolResult{Tool: ToolNameDependencyGraph, Summary: fmt.Sprintf("Collected TypeScript/JavaScript dependency graph with madge under %s", m.pathAccess.DisplayPath(target)), Output: strings.TrimSpace(output)}
 
 		if execErr != nil {
 			result.Error = execErr.Error()
@@ -433,7 +433,7 @@ func typescriptDependencyGraphExtensions() []string {
 func (m *Manager) pythonDependencyGraph(ctx context.Context, target string) ToolResult {
 	if bin := firstAvailableBinary("pydeps"); bin != "" {
 		output, execErr := m.runCommand(ctx, m.cfg.Root, bin, "--show-deps", "--no-output", target)
-		result := ToolResult{Tool: ToolNameDependencyGraph, Summary: fmt.Sprintf("Collected Python dependency graph with pydeps under %s", m.displayPath(target)), Output: strings.TrimSpace(output)}
+		result := ToolResult{Tool: ToolNameDependencyGraph, Summary: fmt.Sprintf("Collected Python dependency graph with pydeps under %s", m.pathAccess.DisplayPath(target)), Output: strings.TrimSpace(output)}
 
 		if execErr != nil {
 			result.Error = execErr.Error()
@@ -615,7 +615,7 @@ func hasExtensionUnder(root string, target string, extensions ...string) bool {
 }
 
 func (m *Manager) gitRelPath(path string, workdir string) (string, error) {
-	abs, err := m.resolvePath(path, workdir)
+	abs, err := m.pathAccess.ResolvePath(path, workdir)
 	if err != nil {
 		return "", err
 	}

@@ -1,17 +1,6 @@
-{
-  "model": "scripted-model",
-  "responses": [
-    {
-      "content": "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels_test.go\",\"old_text\":\"want \\\"Save\\\"\",\"new_text\":\"want \\\"Save changes\\\"\",\"description\":\"attempt to update a related but out-of-scope test\"}"
-    },
-    {
-      "content": "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten the required label implementation\"}"
-    },
-    {
-      "content": "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/labels.go\"}"
-    },
-    {
-      "content": "Implemented the scoped label change.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: Source sanity passed for internal/labels/labels.go."
-    }
-  ]
-}
+[
+  "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels_test.go\",\"old_text\":\"want \\\"Save\\\"\",\"new_text\":\"want \\\"Save changes\\\"\",\"description\":\"attempt to update a related but out-of-scope test\"}",
+  "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten the required label implementation\"}",
+  "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/labels.go\"}",
+  "Implemented the scoped label change.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: Source sanity passed for internal/labels/labels.go."
+]

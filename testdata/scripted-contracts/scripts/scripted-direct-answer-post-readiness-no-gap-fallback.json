@@ -1,17 +1,6 @@
-{
-  "model": "scripted-model",
-  "responses": [
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":4,\"named_gap\":\"inspect ShortLabel source\",\"why_not_answering\":\"need source evidence before answering\"}"
-    },
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":5,\"end_line\":8}"
-    },
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":9,\"end_line\":12}"
-    },
-    {
-      "content": "For `Explain what ShortLabel returns from internal/labels/labels.go. Use source evidence and do not edit files.`, `internal/labels/labels.go` shows `ShortLabel` returns `\"Save changes\"`."
-    }
-  ]
-}
+[
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":4,\"named_gap\":\"inspect ShortLabel source\",\"why_not_answering\":\"need source evidence before answering\"}",
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":5,\"end_line\":8}",
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":9,\"end_line\":12}",
+  "For `Explain what ShortLabel returns from internal/labels/labels.go. Use source evidence and do not edit files.`, `internal/labels/labels.go` shows `ShortLabel` returns `\"Save changes\"`."
+]

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"idiom/internal/platform/textutil"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 )
 
 const CodeNavigateToolName = ToolNameCodeNavigate
@@ -247,7 +248,7 @@ var languageManifestToolOrders = map[string][]languageManifestToolToken{
 func languageToolCatalog() []languageToolCatalogEntry {
 	var out []languageToolCatalogEntry
 
-	for _, lang := range LanguageRegistry() {
+	for _, lang := range semanticlanguage.LanguageRegistry() {
 		for _, token := range languageToolOrderFor(lang.Name) {
 			switch {
 			case token.Capability != "":
@@ -412,7 +413,7 @@ func LanguageToolHasAnyCapability(tool string, capabilities ...Capability) bool 
 }
 
 func LanguageToolForCapability(language string, capability Capability) string {
-	lang, ok := LanguageForName(language)
+	lang, ok := semanticlanguage.LanguageForName(language)
 	if !ok {
 		return ""
 	}
@@ -423,6 +424,30 @@ func LanguageToolForCapability(language string, capability Capability) string {
 func isLanguageToolName(tool string) bool {
 	_, ok := languageToolCatalogEntryForTool(tool)
 	return ok
+}
+
+// IsLanguageToolName reports whether tool is registered by the workspace
+// language-tool catalog.
+func IsLanguageToolName(tool string) bool {
+	return isLanguageToolName(tool)
+}
+
+// LanguageToolParts returns the catalog language and suffix for a registered
+// language tool. The suffix is the portion after the tool-name prefix, e.g.
+// "read_symbol" for "go_read_symbol" and "file_outline" for "ts_file_outline".
+func LanguageToolParts(tool string) (language string, suffix string, ok bool) {
+	entry, ok := languageToolCatalogEntryForTool(tool)
+	if !ok {
+		return "", "", false
+	}
+
+	tool = strings.TrimSpace(entry.Tool)
+	_, suffix, ok = strings.Cut(tool, "_")
+	if !ok || suffix == "" {
+		return strings.TrimSpace(entry.Language), "", false
+	}
+
+	return strings.TrimSpace(entry.Language), suffix, true
 }
 
 func languageCapabilityEvidenceCapabilities(capability Capability) []string {

@@ -12,7 +12,6 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/runtime/localops"
-	localopscmd "idiom/internal/surfaces/cli/localops"
 )
 
 type p79PostureMatrix struct {
@@ -245,14 +244,14 @@ func TestP79SecurityPrivacyControlsExecuteGenericEvidence(t *testing.T) {
 
 	stageDoctorConfigWithBudget(t, localRoot, 16384, 1024)
 
-	report, err := localopscmd.BuildBenchmarkReport(localopscmd.BenchmarkOptions{
+	report, err := localops.BuildBenchmarkReport(localops.BenchmarkOptions{
 		ConfigPath:        filepath.Join(localRoot, ".idiom", "config.json"),
 		Profile:           "sidecar",
 		OutputPath:        filepath.Join(localRoot, "evidence", "p79-posture.json"),
 		QuickstartSmoke:   true,
 		QuickstartTask:    "P79 private repo task /home/example/secret token=abc123",
 		QuickstartCleanup: "remove-local-state",
-	}, nil)
+	}, localops.QuickstartDeps{})
 	if err != nil {
 		t.Fatalf("build local-ops report: %v", err)
 	}

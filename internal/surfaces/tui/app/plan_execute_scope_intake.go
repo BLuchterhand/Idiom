@@ -7,6 +7,7 @@ import (
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/platform/config"
+	"idiom/internal/workflows/implementationdispatch"
 )
 
 type planExecuteScopeIntake struct {
@@ -151,7 +152,7 @@ func implementationDispatchSegmentMarksReadOnlyEvidence(words string, pathWords 
 }
 
 func implementationDispatchSegmentMarksReferenceDocument(words string, path string, pathWords string) bool {
-	if !implementationDispatchLooksLikePlanDocument(path) {
+	if !implementationdispatch.LooksLikePlanDocument(path) {
 		return false
 	}
 	if pathWords == "" || !strings.Contains(words, " "+pathWords+" ") {

@@ -1,11 +1,4 @@
-{
-  "model": "scripted-model",
-  "responses": [
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/missing.go\",\"named_gap\":\"confirm required path source before planning\",\"why_not_answering\":\"the required edit path must be inspected before submit_plan or blocker\"}"
-    },
-    {
-      "content": "<<QUESTION>>: internal/labels/missing.go is the required edit path, but the file is missing in the workspace, so I cannot produce an executable source-grounded submit_plan for that path."
-    }
-  ]
-}
+[
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/missing.go\",\"named_gap\":\"confirm required path source before planning\",\"why_not_answering\":\"the required edit path must be inspected before submit_plan or blocker\"}",
+  "<<QUESTION>>: internal/labels/missing.go is the required edit path, but the file is missing in the workspace, so I cannot produce an executable source-grounded submit_plan for that path."
+]

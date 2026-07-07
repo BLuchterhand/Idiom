@@ -20,7 +20,7 @@ func (r *Runner) implementationLifecycleSnapshot(results []workspace.ToolResult,
 		RemainingRequiredEditPaths: uniqueSortedRunnerPaths(r.remainingRequiredEditPaths(results)),
 		ChangedPaths:               uniqueSortedRunnerPaths(mapKeys(changedPathsFromToolResults(results))),
 		SourcedEvidencePaths:       uniqueSortedRunnerPaths(sourceEvidenceBodyPaths(results)),
-		PendingRedirects:           implementationPendingRedirectSnapshots(r.evidenceEngine().PendingRedirectsForBrief(r.RuntimeBrief, results)),
+		PendingRedirects:           implementationPendingRedirectSnapshots(sourceEvidencePendingRedirectsForBrief(r.RuntimeBrief, results)),
 		WriteReadyNudgeCount:       writeReadyNudges,
 	}
 
@@ -51,7 +51,7 @@ func implementationPendingRedirectSnapshots(pending []sourceEvidenceObligation) 
 
 	out := make([]recoverycontract.ImplementationPendingRedirect, 0, len(pending))
 	for _, obligation := range pending {
-		path := agentutil.NormalizeRunnerPath(obligation.Path)
+		path := NormalizeRunnerPath(obligation.Path)
 		if path == "" {
 			continue
 		}

@@ -367,7 +367,7 @@ func graphSymbolCanHaveImplementations(kind string) bool {
 }
 
 func relationshipToolsForGraphLanguage(language string) map[string]string {
-	lang, ok := LanguageForName(language)
+	lang, ok := semanticlanguage.LanguageForName(language)
 	if !ok {
 		return nil
 	}

@@ -21,7 +21,7 @@ func TestArtifactCommandWritesOutputAndJSON(t *testing.T) {
 
 	var (
 		stdout, stderr bytes.Buffer
-		gotOpts        runOptions
+		gotOpts        RunOptions
 	)
 
 	code := RunMainWithTelemetry(
@@ -34,7 +34,7 @@ func TestArtifactCommandWritesOutputAndJSON(t *testing.T) {
 		},
 		&stdout,
 		&stderr,
-		func(_ config.Config, prompt string, opts runOptions, w io.Writer) (string, error) {
+		func(_ config.Config, prompt string, opts RunOptions, w io.Writer) (string, error) {
 			if prompt != "draft a spec" {
 				t.Fatalf("prompt = %q", prompt)
 			}
@@ -86,14 +86,14 @@ func TestArtifactCommandForwardsMaxTokenOverride(t *testing.T) {
 
 	var (
 		stdout, stderr bytes.Buffer
-		gotOpts        runOptions
+		gotOpts        RunOptions
 	)
 
 	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "draft", "-max-token", "4096"},
 		&stdout,
 		&stderr,
-		func(_ config.Config, _ string, opts runOptions, _ io.Writer) (string, error) {
+		func(_ config.Config, _ string, opts RunOptions, _ io.Writer) (string, error) {
 			gotOpts = opts
 			return "artifact", nil
 		},
@@ -120,7 +120,7 @@ func TestArtifactCommandRejectsNegativeMaxToken(t *testing.T) {
 		[]string{"-prompt", "draft", "-max-token", "-1"},
 		&stdout,
 		&stderr,
-		func(config.Config, string, runOptions, io.Writer) (string, error) {
+		func(config.Config, string, RunOptions, io.Writer) (string, error) {
 			t.Fatal("prompt runner should not be called")
 
 			return "", nil
@@ -140,14 +140,14 @@ func TestArtifactCommandNoToolsWrapsPromptAndFailsToolUse(t *testing.T) {
 	var (
 		stdout, stderr bytes.Buffer
 		gotPrompt      string
-		gotOpts        runOptions
+		gotOpts        RunOptions
 	)
 
 	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "draft", "-no-tools", "-report-out", reportPath},
 		&stdout,
 		&stderr,
-		func(_ config.Config, prompt string, opts runOptions, w io.Writer) (string, error) {
+		func(_ config.Config, prompt string, opts RunOptions, w io.Writer) (string, error) {
 			gotPrompt = prompt
 			gotOpts = opts
 			_, _ = w.Write([]byte("{\"type\":\"tool_request\",\"tool\":\"read_file\"}\n"))
@@ -200,7 +200,7 @@ func TestArtifactCommandMechanicalRepairUnwrapsOuterFence(t *testing.T) {
 		},
 		&stdout,
 		&stderr,
-		func(config.Config, string, runOptions, io.Writer) (string, error) {
+		func(config.Config, string, RunOptions, io.Writer) (string, error) {
 			return "```markdown\n# Artifact\n```", nil
 		},
 		nil,
@@ -235,7 +235,7 @@ func TestArtifactCommandRunsValidatorWithArtifactEnv(t *testing.T) {
 		},
 		&stdout,
 		&stderr,
-		func(config.Config, string, runOptions, io.Writer) (string, error) {
+		func(config.Config, string, RunOptions, io.Writer) (string, error) {
 			return "validated", nil
 		},
 		nil,
@@ -290,7 +290,7 @@ func TestArtifactCommandRejectsPromptSourcesConflict(t *testing.T) {
 		[]string{"-config", configPath, "-prompt", "x", "-prompt-file", promptPath},
 		&stdout,
 		&stderr,
-		func(config.Config, string, runOptions, io.Writer) (string, error) {
+		func(config.Config, string, RunOptions, io.Writer) (string, error) {
 			t.Fatal("prompt runner should not be called")
 
 			return "", nil

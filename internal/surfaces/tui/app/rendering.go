@@ -286,11 +286,13 @@ func evidenceDisplayName(rawTool string) string {
 	}
 
 	// Generic tools.
+	if workspace.IsWorkspacePerEditWriteTool(tool) {
+		return "edit"
+	}
+
 	switch tool {
 	case workspace.ToolNameReadFile:
 		return "read"
-	case workspace.ToolNameEditFile, workspace.ToolNameWriteFile, workspace.ToolNameAppendFile, workspace.ToolNameApplyPatch:
-		return "edit"
 	case workspace.ToolNameSearchContent, workspace.ToolNameSearchFiles:
 		return "search"
 	case workspace.ToolNameListFiles:

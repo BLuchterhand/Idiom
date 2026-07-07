@@ -3,6 +3,7 @@ package eval
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -374,6 +375,99 @@ func TestEvaluateSWESuiteDefinitionWithFixturesReportsMissingFixture(t *testing.
 	}
 }
 
+func TestLoadSWESuiteAppliesTaskDefaultsBeforeValidation(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "fixtures", "frozen-label-repo"), 0o755); err != nil {
+		t.Fatalf("mkdir fixture: %v", err)
+	}
+
+	suitePath := filepath.Join(dir, "suite.json")
+	if err := os.WriteFile(suitePath, []byte(`{
+  "name": "defaults-suite",
+  "coverage": {
+    "required_tags": ["deterministic", "fake-model", "custom"],
+    "required_fixtures": ["fixtures/frozen-label-repo"],
+    "required_scenario_assertions": ["run_events"]
+  },
+  "defaults": {
+    "tags": ["deterministic", "fake-model"],
+    "fixture": "fixtures/frozen-label-repo",
+    "scenario": {
+      "require_run_events": ["idiom.live_contract.rollback"]
+    }
+  },
+  "tasks": [{
+    "id": "defaulted",
+    "family": "general_chat",
+    "runner_mode": "auto",
+    "prompt": "Explain defaults.",
+    "tags": ["custom", "fake-model"],
+    "scenario": {
+      "name": "defaulted",
+      "prompt_contains": ["defaults"],
+      "require_run_events": ["idiom.live_contract.rollback", "custom_event"]
+    }
+  }]
+}`), 0o644); err != nil {
+		t.Fatalf("write suite: %v", err)
+	}
+
+	suite, err := LoadSWESuite(suitePath)
+	if err != nil {
+		t.Fatalf("LoadSWESuite: %v", err)
+	}
+
+	if got := suite.Tasks[0].Fixture; got != "fixtures/frozen-label-repo" {
+		t.Fatalf("default fixture = %q", got)
+	}
+	if got, want := suite.Tasks[0].Tags, []string{"deterministic", "fake-model", "custom"}; !slices.Equal(got, want) {
+		t.Fatalf("defaulted tags = %#v, want %#v", got, want)
+	}
+	if got, want := suite.Tasks[0].Scenario.RequireRunEvents, []string{"idiom.live_contract.rollback", "custom_event"}; !slices.Equal(got, want) {
+		t.Fatalf("defaulted run events = %#v, want %#v", got, want)
+	}
+}
+
+func TestReadSWESuiteTaskDefaultsDoNotOverrideExplicitFixture(t *testing.T) {
+	dir := t.TempDir()
+	suitePath := filepath.Join(dir, "suite.json")
+	if err := os.WriteFile(suitePath, []byte(`{
+  "name": "defaults-suite",
+  "defaults": {
+    "fixture": "fixtures/frozen-label-repo",
+    "scenario": {
+      "require_run_events": ["idiom.live_contract.rollback"]
+    }
+  },
+  "tasks": [{
+    "id": "explicit",
+    "family": "information_request",
+    "prompt": "Read the explicit fixture.",
+    "fixture": "fixtures/custom-repo",
+    "scenario": {
+      "name": "explicit",
+      "prompt_contains": ["explicit"],
+      "require_run_events": ["custom_event"]
+    }
+  }]
+}`), 0o644); err != nil {
+		t.Fatalf("write suite: %v", err)
+	}
+
+	suite, err := ReadSWESuite(suitePath)
+	if err != nil {
+		t.Fatalf("ReadSWESuite: %v", err)
+	}
+
+	task := suite.Tasks[0]
+	if got := task.Fixture; got != "fixtures/custom-repo" {
+		t.Fatalf("explicit fixture was overridden: %q", got)
+	}
+	if got, want := task.Scenario.RequireRunEvents, []string{"idiom.live_contract.rollback", "custom_event"}; !slices.Equal(got, want) {
+		t.Fatalf("defaulted run events = %#v, want %#v", got, want)
+	}
+}
+
 func TestLintSWESuiteReportsWeakOracles(t *testing.T) {
 	suite := SWESuite{
 		Name: "lint",
@@ -631,6 +725,29 @@ func TestEvaluateSWETaskAppliesOracle(t *testing.T) {
 
 	if !report.Passed {
 		t.Fatalf("expected SWE task to pass, got %#v", report.Findings)
+	}
+}
+
+func TestEvaluateSWETaskRequireNoApprovalRejectsApprovalRequired(t *testing.T) {
+	task := SWETask{
+		ID:       "no-approval",
+		Family:   "implementation",
+		Prompt:   "Update README.md.",
+		Scenario: Scenario{Name: "no-approval", PromptContains: []string{"Update README.md"}},
+		Oracle:   SWEOracle{RequireNoApproval: true},
+	}
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "Update README.md."}},
+		{Type: "tool_result", Data: map[string]any{"tool": "edit_file", "summary": "write approval required for README.md"}},
+	}
+
+	report := EvaluateSWETask("no-approval.jsonl", records, task)
+
+	if report.Passed {
+		t.Fatal("expected approval-required run to fail require_no_approval oracle")
+	}
+	if !strings.Contains(strings.Join(report.Findings, "\n"), "approval was forbidden but required by run") {
+		t.Fatalf("expected require_no_approval finding, got %#v", report.Findings)
 	}
 }
 

@@ -1942,7 +1942,7 @@ func TurnPhaseActionClassForToolClass(tool string) ActionClass {
 		return ActionClassPerEditWrite
 	case "shell", "source_sanity", "coding_rules_check", "git_diff", "git_status", "context_trace_pack", "go_diagnostics", "cpp_diagnostics", "java_diagnostics", "python_diagnostics", "rust_diagnostics", "ts_diagnostics":
 		return ActionClassVerify
-	case "task", ToolNameSystemSearchAccess:
+	case "task", "request_system_search_access":
 		return ActionClassGenericProbe
 	default:
 		return ""

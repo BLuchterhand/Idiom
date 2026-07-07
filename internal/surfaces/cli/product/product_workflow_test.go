@@ -927,7 +927,7 @@ func TestProductAuditPassesOnDurableEffortFixture(t *testing.T) {
 		t.Fatalf("expected audit to pass on durable effort fixture, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 
-	var result productAuditResult
+	var result productworkflow.ProductAuditResult
 
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
@@ -972,7 +972,7 @@ func TestProductAuditJSONIncludesAllRequiredSections(t *testing.T) {
 		t.Fatalf("expected audit to pass, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 
-	var result productAuditResult
+	var result productworkflow.ProductAuditResult
 
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
@@ -1249,7 +1249,7 @@ func TestProductAuditMetrics(t *testing.T) {
 		t.Fatalf("expected audit to pass, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 
-	var result productAuditResult
+	var result productworkflow.ProductAuditResult
 
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
@@ -1284,7 +1284,7 @@ func TestProductAuditMetricsErrorUsesRelativeArtifactPath(t *testing.T) {
 		t.Fatalf("expected audit failure, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 
-	var result productAuditResult
+	var result productworkflow.ProductAuditResult
 
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
@@ -1333,7 +1333,7 @@ func TestProductAuditMetricsFailsClosedOnUnknownGateStatus(t *testing.T) {
 		t.Fatalf("expected audit to fail closed, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 
-	var result productAuditResult
+	var result productworkflow.ProductAuditResult
 
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
@@ -1388,7 +1388,7 @@ func TestProductAuditSurfacesParseErrorInPRDSection(t *testing.T) {
 		t.Fatalf("expected audit to fail on invalid PRD, got code=%d", code)
 	}
 
-	var result productAuditResult
+	var result productworkflow.ProductAuditResult
 
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
@@ -1425,7 +1425,7 @@ func TestProductAuditSurfacesParseErrorInADRSection(t *testing.T) {
 		t.Fatalf("expected audit to fail on invalid ADR index, got code=%d", code)
 	}
 
-	var result productAuditResult
+	var result productworkflow.ProductAuditResult
 
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
@@ -1462,7 +1462,7 @@ func TestProductAuditSurfacesParseErrorInTDDSection(t *testing.T) {
 		t.Fatalf("expected audit to fail on invalid TDD, got code=%d", code)
 	}
 
-	var result productAuditResult
+	var result productworkflow.ProductAuditResult
 
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
@@ -1512,7 +1512,7 @@ func TestProductAuditDoesNotChangeLintBehavior(t *testing.T) {
 		t.Fatalf("lint output should be valid JSON: %v", err)
 	}
 
-	var auditResult productAuditResult
+	var auditResult productworkflow.ProductAuditResult
 
 	if err := json.Unmarshal(auditStdout.Bytes(), &auditResult); err != nil {
 		t.Fatalf("audit output should be valid JSON: %v", err)
@@ -1609,7 +1609,7 @@ func TestProductAuditFailNextValidActionParity(t *testing.T) {
 		t.Fatalf("expected fail, got code=%d stdout=%s stderr=%s", code, jsonStdout.String(), jsonStderr.String())
 	}
 
-	var jsonResult productAuditResult
+	var jsonResult productworkflow.ProductAuditResult
 
 	if err := json.Unmarshal(jsonStdout.Bytes(), &jsonResult); err != nil {
 		t.Fatalf("invalid json: %v", err)
@@ -1687,7 +1687,7 @@ created_at: 2026-05-17T00:00:00Z
 		t.Fatalf("expected audit to fail with broken PRD evidence ref, got code=%d", code)
 	}
 
-	var result productAuditResult
+	var result productworkflow.ProductAuditResult
 
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
@@ -2035,7 +2035,7 @@ None.
 		t.Fatalf("expected audit to fail with broken ADR evidence ref, got code=%d", code)
 	}
 
-	var result productAuditResult
+	var result productworkflow.ProductAuditResult
 
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
@@ -2126,7 +2126,7 @@ None.
 		t.Fatalf("expected audit to fail with broken ADR TDD obligation ref, got code=%d", code)
 	}
 
-	var result productAuditResult
+	var result productworkflow.ProductAuditResult
 
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
@@ -2216,7 +2216,7 @@ None.
 		t.Fatalf("expected audit to fail with broken ADR PRD ref, got code=%d", code)
 	}
 
-	var result productAuditResult
+	var result productworkflow.ProductAuditResult
 
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
@@ -2383,7 +2383,7 @@ None.
 		t.Fatalf("expected audit failure, got %d", code)
 	}
 
-	var result productAuditResult
+	var result productworkflow.ProductAuditResult
 
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
@@ -2416,7 +2416,7 @@ func TestProductAuditSupersessionDetectsBrokenADRIndexLinks(t *testing.T) {
 		t.Fatalf("expected audit failure, got %d", code)
 	}
 
-	var result productAuditResult
+	var result productworkflow.ProductAuditResult
 
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
@@ -2527,7 +2527,7 @@ created_at: 2026-05-17T00:00:00Z
 		t.Fatalf("expected audit to fail on missing PRD TDD obligation, got code=%d", code)
 	}
 
-	var result productAuditResult
+	var result productworkflow.ProductAuditResult
 
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
@@ -3284,7 +3284,7 @@ func TestProductAuditNextValidActionParity(t *testing.T) {
 		t.Fatalf("expected audit failure exit code 1, got code=%d stdout=%s stderr=%s", jsonCode, jsonStdout.String(), jsonStderr.String())
 	}
 
-	var out productAuditResult
+	var out productworkflow.ProductAuditResult
 
 	if err := json.Unmarshal(jsonStdout.Bytes(), &out); err != nil {
 		t.Fatalf("expected valid audit JSON: %v", err)
@@ -4107,7 +4107,7 @@ func TestProductStatusUsageIncludesStatus(t *testing.T) {
 	}
 }
 
-func findAuditSection(t *testing.T, result productAuditResult, name string) productAuditSection {
+func findAuditSection(t *testing.T, result productworkflow.ProductAuditResult, name string) productworkflow.ProductAuditSection {
 	t.Helper()
 
 	for _, sec := range result.Sections {
@@ -4118,7 +4118,7 @@ func findAuditSection(t *testing.T, result productAuditResult, name string) prod
 
 	t.Fatalf("section %q not found", name)
 
-	return productAuditSection{}
+	return productworkflow.ProductAuditSection{}
 }
 
 func findStatusSection(t *testing.T, sections []productworkflow.StatusSection, name string) productworkflow.StatusSection {
@@ -4929,7 +4929,7 @@ func TestProductAuditScopeGateFailingIncludesSection(t *testing.T) {
 		t.Fatalf("expected exit code 1, got %d", code)
 	}
 
-	var result productAuditResult
+	var result productworkflow.ProductAuditResult
 
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())

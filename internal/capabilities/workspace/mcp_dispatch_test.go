@@ -69,7 +69,7 @@ func registerFakeMCP(t *testing.T, name string, srv *httptest.Server) *mcp.Regis
 
 func TestManagerBuildToolDefinitions_NoRegistryReturnsBuiltinsOnly(t *testing.T) {
 	mgr := NewManager(config.Workspace{})
-	got := mgr.BuildToolDefinitions(nil)
+	got := mgr.ToolSurfaceSnapshot().BuildToolDefinitions(nil)
 	want := BuildToolDefinitions(nil)
 
 	if len(got) != len(want) {
@@ -92,7 +92,7 @@ func TestManagerBuildToolDefinitions_AppendsMCPTools(t *testing.T) {
 	mgr := NewManager(config.Workspace{})
 	mgr.SetMCPRegistry(reg)
 
-	defs := mgr.BuildToolDefinitions(nil)
+	defs := mgr.ToolSurfaceSnapshot().BuildToolDefinitions(nil)
 
 	var found *ToolDefinition
 
@@ -129,14 +129,14 @@ func TestManagerBuildToolDefinitions_AllowedFiltersMCPTools(t *testing.T) {
 	mgr := NewManager(config.Workspace{})
 	mgr.SetMCPRegistry(reg)
 
-	defs := mgr.BuildToolDefinitions([]string{"read_file"})
+	defs := mgr.ToolSurfaceSnapshot().BuildToolDefinitions([]string{"read_file"})
 	for _, def := range defs {
 		if strings.HasPrefix(def.Name, "mcp:") {
 			t.Fatalf("allowed list excluded mcp tools, but %q slipped through", def.Name)
 		}
 	}
 
-	defs = mgr.BuildToolDefinitions([]string{"mcp:exa/web_search_exa"})
+	defs = mgr.ToolSurfaceSnapshot().BuildToolDefinitions([]string{"mcp:exa/web_search_exa"})
 	if len(defs) != 1 {
 		t.Fatalf("expected 1 def with allow=[mcp:exa/web_search_exa], got %d", len(defs))
 	}
@@ -153,11 +153,10 @@ func TestManagerAllowedTools_AppendsMCPNames(t *testing.T) {
 	reg := registerFakeMCP(t, "exa", srv)
 
 	mgr := NewManager(config.Workspace{})
-	before := mgr.AllowedTools()
-
+	before := mgr.ToolSurfaceSnapshot().AllowedTools()
 	mgr.SetMCPRegistry(reg)
 
-	after := mgr.AllowedTools()
+	after := mgr.ToolSurfaceSnapshot().AllowedTools()
 
 	if len(after) != len(before)+1 {
 		t.Fatalf("expected exactly one new tool added, got %d → %d", len(before), len(after))
@@ -371,7 +370,7 @@ func TestManagerBuildToolDefinitions_EmptyDescriptionFallsBack(t *testing.T) {
 	mgr := NewManager(config.Workspace{})
 	mgr.SetMCPRegistry(reg)
 
-	defs := mgr.BuildToolDefinitions(nil)
+	defs := mgr.ToolSurfaceSnapshot().BuildToolDefinitions(nil)
 	for _, def := range defs {
 		if def.Name == "mcp:x/tool_no_desc" {
 			if !strings.Contains(def.Description, "MCP tool from x") {

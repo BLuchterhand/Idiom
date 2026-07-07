@@ -97,7 +97,7 @@ func HasWorkspaceFileExtension(candidate string) bool {
 		".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".ipp", ".inl", ".tpp",
 		".gd", ".tscn", ".tres",
 		".py", ".pyi",
-		".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".d.ts",
+		".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".d.ts", ".astro",
 		".rs",
 		".java", ".kt", ".kts",
 		".sh", ".bash", ".zsh", ".fish", ".ps1",

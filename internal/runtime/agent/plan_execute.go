@@ -18,22 +18,19 @@ import (
 	plancontract "idiom/internal/contracts/plan"
 	planartifact "idiom/internal/contracts/planartifact"
 	"idiom/internal/platform/textutil"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 )
 
 func (r *Runner) implementationScopedDisallowedToolRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, reject bool) {
-	var extReg *workspace.ExternalToolRegistry
-
-	if r != nil && r.Workspace != nil {
-		extReg = r.Workspace.ExternalToolsRegistry()
-	}
-
 	if lastResultSummaryIs(results, "Missing write description") {
 		return "", "", "", false
 	}
 
-	if r == nil || !implementationScopedEditSurfaceActive(r.RuntimeBrief, results) || implementationScopedEditToolAllowedWithRegistry(req.Tool, extReg) {
+	if r == nil || !implementationScopedEditSurfaceActive(r.RuntimeBrief, results) ||
+		workspace.ImplementationScopedEditToolAllowedWithExternalReadOnlyDiscovery(req.Tool, r.workspaceToolSurfaceSnapshot().ExternalToolIsReadOnlyDiscovery) {
+
 		return "", "", "", false
 	}
 
@@ -66,39 +63,23 @@ func lastResultSummaryIs(results []workspace.ToolResult, summary string) bool {
 	return strings.TrimSpace(results[len(results)-1].Summary) == strings.TrimSpace(summary)
 }
 
-func (r *Runner) writeDescriptionRepairPrompt(req workspace.ToolRequest) string {
-	path := agentutil.NormalizeRunnerPath(req.Path)
-	if path == "" {
-		path = "the required edit path"
-	}
-
-	tool := strings.TrimSpace(req.Tool)
-	if tool == "" {
-		tool = "the write tool"
-	}
-
-	return fmt.Sprintf("Write-description repair is active for %s on %s. Missing: a non-empty `description` field. Valid next actions: reissue the same in-scope write with `description`, or answer `<<QUESTION>>:` with the exact blocker. Invalid now: search, broad discovery, unrelated reads, unrelated writes, or prose final answer.", tool, path)
-}
-
 func (r *Runner) emitWriteDescriptionValidatorDecision(step int, req workspace.ToolRequest, status string, lastFailure string, recoveryID string) {
 	if r == nil {
 		return
 	}
 
-	path := agentutil.NormalizeRunnerPath(req.Path)
+	path := NormalizeRunnerPath(req.Path)
 	payload := map[string]any{
-		"schema":               "idiom.dynamic_validator_decision.v1",
-		"step":                 step,
-		"status":               strings.TrimSpace(status),
-		"invariant_id":         "write.description.required",
-		"recovery_id":          strings.TrimSpace(recoveryID),
-		"last_failure":         strings.TrimSpace(lastFailure),
-		"tool":                 strings.TrimSpace(req.Tool),
-		"path":                 path,
-		"missing":              []string{"write_description_missing"},
-		"valid_next_actions":   []string{"same_write_with_description", "typed_blocker"},
-		"invalid_next_actions": []string{"search", "broad_discovery", "unrelated_read", "unrelated_write", "prose_final"},
-		"hide_tools":           []string{"non_write_tools"},
+		"schema":             "idiom.dynamic_validator_decision.v1",
+		"step":               step,
+		"status":             strings.TrimSpace(status),
+		"invariant_id":       "write.description.required",
+		"recovery_id":        strings.TrimSpace(recoveryID),
+		"last_failure":       strings.TrimSpace(lastFailure),
+		"tool":               strings.TrimSpace(req.Tool),
+		"path":               path,
+		"missing":            []string{"write_description_missing"},
+		"valid_next_actions": []string{"write_with_description", "other_contract_valid_action", "typed_blocker"},
 	}
 	r.emitEvent(marshalRunEvent("dynamic_validator_decision", payload))
 }
@@ -282,9 +263,7 @@ func (r *Runner) externalReadOnlyDiscoveryTool(tool string) bool {
 		return false
 	}
 
-	extReg := r.Workspace.ExternalToolsRegistry()
-
-	return extReg != nil && extReg.IsReadOnlyDiscovery(tool)
+	return r.workspaceToolSurfaceSnapshot().ExternalToolIsReadOnlyDiscovery(tool)
 }
 
 func (r *Runner) scopedImplementationDiscoveryLookupAllowed(req workspace.ToolRequest, pathScope []string) bool {
@@ -300,7 +279,7 @@ func (r *Runner) scopedImplementationDiscoveryLookupAllowed(req workspace.ToolRe
 		return true
 	}
 
-	if !implementationScopedSemanticDiscoveryToolAllowed(req.Tool) {
+	if !workspace.ImplementationScopedSemanticDiscoveryToolAllowed(req.Tool) {
 		return false
 	}
 
@@ -344,13 +323,13 @@ func scopedImplementationDiscoveryPathAllowed(req workspace.ToolRequest, pathSco
 		return true
 	}
 
-	normalized := agentutil.NormalizeRunnerPath(path)
+	normalized := NormalizeRunnerPath(path)
 	if normalized == "" {
 		return false
 	}
 
 	for _, scoped := range pathScope {
-		scoped = agentutil.NormalizeRunnerPath(scoped)
+		scoped = NormalizeRunnerPath(scoped)
 		if scoped == "" {
 			continue
 		}
@@ -373,7 +352,7 @@ func runnerPathLooksLikeFile(path string) bool {
 }
 
 func scopedImplementationPackageDiscoveryPathAllowed(req workspace.ToolRequest, normalized string, pathScope []string) bool {
-	normalized = agentutil.NormalizeRunnerPath(filepath.ToSlash(strings.TrimSpace(normalized)))
+	normalized = NormalizeRunnerPath(filepath.ToSlash(strings.TrimSpace(normalized)))
 	if normalized == "" || normalized == "." || normalized == "/" || runnerPathLooksLikeFile(normalized) {
 		return false
 	}
@@ -383,12 +362,12 @@ func scopedImplementationPackageDiscoveryPathAllowed(req workspace.ToolRequest, 
 	}
 
 	for _, scoped := range pathScope {
-		scoped = agentutil.NormalizeRunnerPath(filepath.ToSlash(strings.TrimSpace(scoped)))
+		scoped = NormalizeRunnerPath(filepath.ToSlash(strings.TrimSpace(scoped)))
 		if scoped == "" || !runnerPathLooksLikeFile(scoped) {
 			continue
 		}
 
-		parent := agentutil.NormalizeRunnerPath(filepath.ToSlash(filepath.Dir(scoped)))
+		parent := NormalizeRunnerPath(filepath.ToSlash(filepath.Dir(scoped)))
 		if parent == "" || parent == "." || parent == "/" {
 			continue
 		}
@@ -431,7 +410,7 @@ func scopedImplementationSymbolOwnerLookupAllowed(req workspace.ToolRequest) boo
 		return scopedImplementationLookupTargetAllowed(req)
 	}
 
-	_, suffix, ok := runnerLanguageToolParts(tool)
+	_, suffix, ok := workspace.LanguageToolParts(tool)
 	if !ok {
 		return false
 	}
@@ -457,16 +436,6 @@ func scopedImplementationLookupTargetAllowed(req workspace.ToolRequest) bool {
 	}
 
 	return true
-}
-
-func runnerLanguageToolParts(tool string) (language string, suffix string, ok bool) {
-	for _, prefix := range []string{"go_", "cpp_", "python_", "ts_", "rust_", "java_"} {
-		if strings.HasPrefix(tool, prefix) {
-			return strings.TrimSuffix(prefix, "_"), strings.TrimPrefix(tool, prefix), true
-		}
-	}
-
-	return "", "", false
 }
 
 // writeOnlyRecoveryBlockerAnswer returns the <<QUESTION>> answer the runner
@@ -866,7 +835,7 @@ func candidateRecoveryScopePaths(brief workerruntime.WorkerRuntimeBrief, results
 	seen := make(map[string]struct{}, max)
 	paths := make([]string, 0, max)
 	add := func(path string) {
-		path = agentutil.NormalizeRunnerPath(path)
+		path = NormalizeRunnerPath(path)
 		if path == "" {
 			return
 		}
@@ -918,7 +887,7 @@ func contextPackCandidatePathsFromResults(results []workspace.ToolResult, max in
 	seen := map[string]struct{}{}
 	paths := make([]string, 0, max)
 	add := func(path string) {
-		path = agentutil.NormalizeRunnerPath(path)
+		path = NormalizeRunnerPath(path)
 		if path == "" || !pathparse.HasWorkspaceFileExtension(path) {
 			return
 		}
@@ -1214,7 +1183,7 @@ func unreadCandidateRecoveryScopePaths(brief workerruntime.WorkerRuntimeBrief, r
 
 	read := readPathsFromResults(results)
 	for _, path := range candidates {
-		if _, ok := read[agentutil.NormalizeRunnerPath(path)]; ok {
+		if _, ok := read[NormalizeRunnerPath(path)]; ok {
 			return nil
 		}
 	}
@@ -1236,7 +1205,7 @@ func unreadCandidateRecoveryScopePathsForRecovery(brief workerruntime.WorkerRunt
 	unread := make([]string, 0, len(candidates))
 
 	for _, path := range candidates {
-		normalized := agentutil.NormalizeRunnerPath(path)
+		normalized := NormalizeRunnerPath(path)
 		if normalized == "" {
 			continue
 		}
@@ -1256,7 +1225,7 @@ func unreadCandidateRecoveryScopePathsForRecovery(brief workerruntime.WorkerRunt
 }
 
 func candidateRecoveryScopePathHasMissingFileEvidence(path string, results []workspace.ToolResult) bool {
-	normalized := agentutil.NormalizeRunnerPath(path)
+	normalized := NormalizeRunnerPath(path)
 	if normalized == "" {
 		return false
 	}
@@ -1412,11 +1381,11 @@ func recoverySearchLineScore(path string, text string, terms []string, uiObjecti
 		score -= 30
 	}
 
-	if strings.HasPrefix(lowerPath, "cmd/") && !agentutil.ContainsAny(lowerText, "implementation", "core", "internal") {
+	if strings.HasPrefix(lowerPath, "cmd/") && !ContainsAny(lowerText, "implementation", "core", "internal") {
 		score -= 20
 	}
 
-	if slices.Contains(terms, "apply") && agentutil.ContainsAny(lowerPath, "migration_apply", "_apply.", "/apply") {
+	if slices.Contains(terms, "apply") && ContainsAny(lowerPath, "migration_apply", "_apply.", "/apply") {
 		score += 60
 	}
 
@@ -1425,11 +1394,11 @@ func recoverySearchLineScore(path string, text string, terms []string, uiObjecti
 			score += 45
 		}
 
-		if agentutil.ContainsAny(lowerPath, "render", "view", "model_state", "update_handlers") {
+		if ContainsAny(lowerPath, "render", "view", "model_state", "update_handlers") {
 			score += 25
 		}
 
-		if agentutil.ContainsAny(lowerPath, "frontier/", "comprehension/", "workspace/") {
+		if ContainsAny(lowerPath, "frontier/", "comprehension/", "workspace/") {
 			score -= 25
 		}
 	}
@@ -1459,7 +1428,7 @@ func recoveryObjectiveSignalTerms(objective string) []string {
 }
 
 func objectiveMentionsUI(lowerObjective string) bool {
-	return agentutil.ContainsAny(lowerObjective, "tui", "ui", "banner", "header", "footer", "top-right", "top right", "window", "screen", "view", "render")
+	return ContainsAny(lowerObjective, "tui", "ui", "banner", "header", "footer", "top-right", "top right", "window", "screen", "view", "render")
 }
 
 func (r *Runner) repeatedRangeLessReadFileRejection(req workspace.ToolRequest, results []workspace.ToolResult) (string, string, bool) {
@@ -1471,7 +1440,7 @@ func (r *Runner) repeatedRangeLessReadFileRejection(req workspace.ToolRequest, r
 		return "", "", false
 	}
 
-	path := agentutil.NormalizeRunnerPath(req.Path)
+	path := NormalizeRunnerPath(req.Path)
 	if path == "" {
 		return "", "", false
 	}
@@ -1715,7 +1684,7 @@ func (r *Runner) repeatedRangeLessReadFileRedirect(req workspace.ToolRequest, re
 		return workspace.ToolRequest{}, "", false
 	}
 
-	path := agentutil.NormalizeRunnerPath(req.Path)
+	path := NormalizeRunnerPath(req.Path)
 	if path == "" || !rangeLessReadFileWasRedirectedToOutline(path, results) || sourceEvidenceBodyReadForPath(path, results) {
 		return workspace.ToolRequest{}, "", false
 	}
@@ -1744,7 +1713,7 @@ func (r *Runner) planThenExecuteCandidateRangeLessReadRedirect(req workspace.Too
 		return workspace.ToolRequest{}, "", false
 	}
 
-	target := agentutil.NormalizeRunnerPath(req.Path)
+	target := NormalizeRunnerPath(req.Path)
 	if target == "" {
 		return workspace.ToolRequest{}, "", false
 	}
@@ -1755,7 +1724,7 @@ func (r *Runner) planThenExecuteCandidateRangeLessReadRedirect(req workspace.Too
 
 	candidateSet := make(map[string]struct{})
 	for _, path := range candidateRecoveryScopePaths(r.RuntimeBrief, results, 8) {
-		candidateSet[agentutil.NormalizeRunnerPath(path)] = struct{}{}
+		candidateSet[NormalizeRunnerPath(path)] = struct{}{}
 	}
 
 	if _, ok := candidateSet[target]; !ok {
@@ -1788,12 +1757,12 @@ func (r *Runner) planThenExecuteMalformedSymbolReadRedirect(req workspace.ToolRe
 		return workspace.ToolRequest{}, "", false
 	}
 
-	path := agentutil.NormalizeRunnerPath(req.Path)
+	path := NormalizeRunnerPath(req.Path)
 	if path == "" {
 		return workspace.ToolRequest{}, "", false
 	}
 
-	if _, ok := workspace.LanguageForFile(path); !ok {
+	if _, ok := semanticlanguage.LanguageForFile(path); !ok {
 		return workspace.ToolRequest{}, "", false
 	}
 
@@ -1837,12 +1806,12 @@ func (r *Runner) planThenExecuteRepeatedSymbolReadFallbackRedirect(req workspace
 		return workspace.ToolRequest{}, "", false
 	}
 
-	path := agentutil.NormalizeRunnerPath(req.Path)
+	path := NormalizeRunnerPath(req.Path)
 	if path == "" || sourceEvidenceBodyReadForPath(path, results) {
 		return workspace.ToolRequest{}, "", false
 	}
 
-	if _, ok := workspace.LanguageForFile(path); !ok {
+	if _, ok := semanticlanguage.LanguageForFile(path); !ok {
 		return workspace.ToolRequest{}, "", false
 	}
 
@@ -1940,7 +1909,7 @@ func (r *Runner) repeatedRangeLessReadFileFollowup(path string, results []worksp
 }
 
 func rangeLessReadFileWasRedirectedToOutline(path string, results []workspace.ToolResult) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -1976,22 +1945,22 @@ func rangeLessReadFileWasRedirectedToOutline(path string, results []workspace.To
 }
 
 func concreteSourceEvidenceResultMatchesPath(result workspace.ToolResult, path string) bool {
-	path = agentutil.NormalizeRunnerPath(path)
-	if path == "" || agentutil.IsNonSourceEvidenceArtifactPath(path) {
+	path = NormalizeRunnerPath(path)
+	if path == "" || IsNonSourceEvidenceArtifactPath(path) {
 		return false
 	}
 
 	if strings.TrimSpace(result.Tool) == workspace.ToolNameReadFile {
-		readPath := agentutil.NormalizeRunnerPath(agentutil.ExtractReadPathFromSummary(result.Summary))
-		return readPath == path && !agentutil.IsNonSourceEvidenceArtifactPath(readPath)
+		readPath := NormalizeRunnerPath(ExtractReadPathFromSummary(result.Summary))
+		return readPath == path && !IsNonSourceEvidenceArtifactPath(readPath)
 	}
 
-	for _, readPath := range agentutil.ReadPathsFromToolResult(result) {
-		if agentutil.IsNonSourceEvidenceArtifactPath(readPath) {
+	for _, readPath := range ReadPathsFromToolResult(result) {
+		if IsNonSourceEvidenceArtifactPath(readPath) {
 			continue
 		}
 
-		if agentutil.NormalizeRunnerPath(readPath) == path {
+		if NormalizeRunnerPath(readPath) == path {
 			return true
 		}
 	}
@@ -2000,7 +1969,7 @@ func concreteSourceEvidenceResultMatchesPath(result workspace.ToolResult, path s
 }
 
 func fullSourceReadFileSeen(path string, results []workspace.ToolResult) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -2014,7 +1983,7 @@ func fullSourceReadFileSeen(path string, results []workspace.ToolResult) bool {
 			continue
 		}
 
-		readPath := agentutil.NormalizeRunnerPath(agentutil.ExtractReadPathFromSummary(result.Summary))
+		readPath := NormalizeRunnerPath(ExtractReadPathFromSummary(result.Summary))
 		if readPath != path {
 			continue
 		}
@@ -2297,8 +2266,8 @@ func (r *Runner) markConcreteSourceEvidenceObserved(result workspace.ToolResult)
 		return
 	}
 
-	for _, path := range agentutil.ReadPathsFromToolResult(result) {
-		if agentutil.IsNonSourceEvidenceArtifactPath(path) {
+	for _, path := range ReadPathsFromToolResult(result) {
+		if IsNonSourceEvidenceArtifactPath(path) {
 			continue
 		}
 
@@ -2319,7 +2288,7 @@ func contextZoomResultHasConcreteSourceBody(result workspace.ToolResult) bool {
 	hasSourcePath := false
 
 	for _, path := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(text)) {
-		if agentutil.IsNonSourceEvidenceArtifactPath(path) {
+		if IsNonSourceEvidenceArtifactPath(path) {
 			continue
 		}
 
@@ -2334,7 +2303,7 @@ func contextZoomResultHasConcreteSourceBody(result workspace.ToolResult) bool {
 
 	lower := strings.ToLower(text)
 
-	return agentutil.RoutedSourceReadOutputHasBody(result.Output) ||
+	return RoutedSourceReadOutputHasBody(result.Output) ||
 		strings.Contains(lower, `"source"`) ||
 		strings.Contains(lower, "source body") ||
 		strings.Contains(lower, "include_source")
@@ -2348,8 +2317,8 @@ func readFileResultHasConcreteSourceBody(result workspace.ToolResult) bool {
 
 	hasSourcePath := false
 
-	for _, path := range agentutil.ReadPathsFromToolResult(result) {
-		if agentutil.IsNonSourceEvidenceArtifactPath(path) {
+	for _, path := range ReadPathsFromToolResult(result) {
+		if IsNonSourceEvidenceArtifactPath(path) {
 			return false
 		}
 
@@ -2372,8 +2341,8 @@ func readFileResultHasConcreteSourceBody(result workspace.ToolResult) bool {
 }
 
 func toolResultHasNonArtifactReadPath(result workspace.ToolResult) bool {
-	for _, path := range agentutil.ReadPathsFromToolResult(result) {
-		if agentutil.IsNonSourceEvidenceArtifactPath(path) {
+	for _, path := range ReadPathsFromToolResult(result) {
+		if IsNonSourceEvidenceArtifactPath(path) {
 			continue
 		}
 
@@ -2532,7 +2501,7 @@ func mutationReplyReportsConcreteNoopOrBlocker(lowerReply string) bool {
 		return false
 	}
 
-	if agentutil.ContainsAny(lowerReply,
+	if ContainsAny(lowerReply,
 		"<<question>>",
 		"blocked",
 		"blocker",
@@ -2552,8 +2521,8 @@ func mutationReplyReportsConcreteNoopOrBlocker(lowerReply string) bool {
 		return true
 	}
 
-	return agentutil.ContainsAny(lowerReply, "already present", "already implemented", "already satisfied", "already up to date") &&
-		agentutil.ContainsAny(lowerReply, "no change", "no-op", "no op", "nothing to change")
+	return ContainsAny(lowerReply, "already present", "already implemented", "already satisfied", "already up to date") &&
+		ContainsAny(lowerReply, "no change", "no-op", "no op", "nothing to change")
 }
 
 func mutationReplyClaimsCompletedWorkspaceChange(reply string) bool {
@@ -2563,8 +2532,8 @@ func mutationReplyClaimsCompletedWorkspaceChange(reply string) bool {
 	}
 
 	lower := strings.ToLower(strings.Join(strings.Fields(trimmed), " "))
-	if agentutil.ContainsAny(lower, "already present", "already implemented", "already satisfied", "already up to date") &&
-		agentutil.ContainsAny(lower, "no change", "no-op", "no op", "nothing to change") {
+	if ContainsAny(lower, "already present", "already implemented", "already satisfied", "already up to date") &&
+		ContainsAny(lower, "no change", "no-op", "no op", "nothing to change") {
 
 		return false
 	}
@@ -2572,7 +2541,7 @@ func mutationReplyClaimsCompletedWorkspaceChange(reply string) bool {
 	if len(pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(trimmed))) == 0 {
 		for _, fragment := range pathparse.QuotedFragments(trimmed) {
 			if _, ok := pathparse.NormalizeWorkspacePathToken(fragment); ok {
-				return agentutil.ContainsAny(lower,
+				return ContainsAny(lower,
 					"has been edited",
 					"have edited",
 					"has been updated",
@@ -2590,7 +2559,7 @@ func mutationReplyClaimsCompletedWorkspaceChange(reply string) bool {
 		return false
 	}
 
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		"has been edited",
 		"have edited",
 		"has been updated",
@@ -3184,7 +3153,7 @@ func (r *Runner) readOnlyEvidenceCompletionRecoveryPrompt(results []workspace.To
 	target := ""
 
 	for _, rawTarget := range targets {
-		candidate := agentutil.NormalizeRunnerPath(rawTarget)
+		candidate := NormalizeRunnerPath(rawTarget)
 		if candidate == "" {
 			continue
 		}
@@ -3420,6 +3389,7 @@ func (r *Runner) refreshPlanThenExecuteTerminalToolSurface(messages *[]llama.Cha
 		return
 	}
 
+	submitPlanTools := workspace.ToolSurfacePhaseToolNames(workspace.ToolSurfacePhasePlanExecuteSubmitPlanOnly)
 	terminalBrief := r.planThenExecuteTerminalToolBrief(results)
 	terminalState := workerruntime.RunState{
 		Lane:              textutil.FirstNonEmpty(strings.TrimSpace(terminalBrief.Lane), r.agentName()),
@@ -3432,9 +3402,9 @@ func (r *Runner) refreshPlanThenExecuteTerminalToolSurface(messages *[]llama.Cha
 		RequiredEditPaths: append([]string(nil), terminalBrief.RequiredEditPaths...),
 		EvidencePaths:     runnerEvidencePathsForBrief(terminalBrief, results, 6),
 		Constraints:       append([]string(nil), terminalBrief.Constraints...),
-		AllowedTools:      []string{workspace.ToolNameSubmitPlan},
-		ToolManifest:      runnerSanitizedToolManifest([]string{workspace.ToolNameSubmitPlan}),
-		RequiredTools:     []string{workspace.ToolNameSubmitPlan},
+		AllowedTools:      submitPlanTools,
+		ToolManifest:      workspace.BuildToolManifest(submitPlanTools),
+		RequiredTools:     submitPlanTools,
 		ReadinessGate:     append([]string(nil), terminalBrief.ReadinessGate...),
 		SearchPolicy:      append([]string(nil), terminalBrief.SearchPolicy...),
 		StopConditions:    append([]string(nil), terminalBrief.StopConditions...),
@@ -3492,7 +3462,7 @@ func (r *Runner) refreshPlanThenExecuteTerminalToolSurface(messages *[]llama.Cha
 		"dropped_scaffolding_messages":  droppedScaffolding,
 		"dropped_compact_messages":      compactDropped,
 		"compact_evidence_messages":     compactEvidenceMessages,
-		"allowed_tools":                 []string{workspace.ToolNameSubmitPlan},
+		"allowed_tools":                 submitPlanTools,
 	}))
 }
 
@@ -3568,6 +3538,7 @@ func (r *Runner) refreshPlanThenExecuteTerminalTextualFallbackSurface(messages *
 		return
 	}
 
+	submitPlanTools := workspace.ToolSurfacePhaseToolNames(workspace.ToolSurfacePhasePlanExecuteSubmitPlanOnly)
 	terminalBrief := r.planThenExecuteTerminalToolBrief(results)
 	pruned, droppedActions, droppedScaffolding := prunePlanThenExecuteTerminalTextualMessages(*messages)
 	pruned, compactDropped, compactEvidenceMessages := compactPlanThenExecuteTerminalTextualMessages(pruned, terminalBrief, results)
@@ -3582,9 +3553,9 @@ func (r *Runner) refreshPlanThenExecuteTerminalTextualFallbackSurface(messages *
 		RequiredEditPaths: append([]string(nil), terminalBrief.RequiredEditPaths...),
 		EvidencePaths:     runnerEvidencePathsForBrief(terminalBrief, results, 6),
 		Constraints:       append([]string(nil), terminalBrief.Constraints...),
-		AllowedTools:      []string{workspace.ToolNameSubmitPlan},
-		ToolManifest:      runnerSanitizedToolManifest([]string{workspace.ToolNameSubmitPlan}),
-		RequiredTools:     []string{workspace.ToolNameSubmitPlan},
+		AllowedTools:      submitPlanTools,
+		ToolManifest:      workspace.BuildToolManifest(submitPlanTools),
+		RequiredTools:     submitPlanTools,
 		ReadinessGate:     []string{"visible_textual_submit_plan_json_required"},
 		SearchPolicy:      []string{"no read/search/discovery action is valid after submit_plan readiness before the first terminal outcome"},
 		StopConditions:    []string{"submit_plan_returned_ok", "submit_plan_rejected_with_blocker"},
@@ -3613,7 +3584,7 @@ func (r *Runner) refreshPlanThenExecuteTerminalTextualFallbackSurface(messages *
 		"dropped_scaffolding_messages":  droppedScaffolding,
 		"dropped_compact_messages":      compactDropped,
 		"compact_evidence_messages":     compactEvidenceMessages,
-		"allowed_tools":                 []string{workspace.ToolNameSubmitPlan},
+		"allowed_tools":                 submitPlanTools,
 	}))
 }
 
@@ -3630,6 +3601,7 @@ func (r *Runner) refreshPlanThenExecuteAnchorRefreshSurface(messages *[]llama.Ch
 	refreshPaths := stateProjection.RefreshPaths
 	pruned, droppedActions, droppedScaffolding := prunePlanThenExecuteTerminalTextualMessages(*messages)
 	brief := runnerBriefWithPhaseHints(r.RuntimeBrief, results)
+	anchorRefreshTools := workspace.ToolSurfacePhaseToolNames(workspace.ToolSurfacePhasePlanExecuteAnchorRefresh)
 	state := workerruntime.RunState{
 		Lane:              textutil.FirstNonEmpty(strings.TrimSpace(brief.Lane), r.agentName()),
 		TaskFamily:        brief.TaskFamily,
@@ -3641,9 +3613,9 @@ func (r *Runner) refreshPlanThenExecuteAnchorRefreshSurface(messages *[]llama.Ch
 		RequiredEditPaths: append([]string(nil), brief.RequiredEditPaths...),
 		EvidencePaths:     runnerEvidencePathsForBrief(brief, results, 6),
 		Constraints:       append([]string(nil), brief.Constraints...),
-		AllowedTools:      planThenExecuteAnchorRefreshToolNames(),
-		ToolManifest:      runnerSanitizedToolManifest(planThenExecuteAnchorRefreshToolNames()),
-		RequiredTools:     planThenExecuteAnchorRefreshToolNames(),
+		AllowedTools:      anchorRefreshTools,
+		ToolManifest:      workspace.BuildToolManifest(anchorRefreshTools),
+		RequiredTools:     anchorRefreshTools,
 		ReadinessGate:     []string{"bounded_anchor_refresh_before_corrected_submit_plan"},
 		SearchPolicy:      append([]string(nil), brief.SearchPolicy...),
 		StopConditions:    []string{"bounded_source_refresh_returned"},
@@ -3678,7 +3650,7 @@ func (r *Runner) refreshPlanThenExecuteAnchorRefreshSurface(messages *[]llama.Ch
 		"transport":                     "textual",
 		"dropped_tool_request_messages": droppedActions,
 		"dropped_scaffolding_messages":  droppedScaffolding,
-		"allowed_tools":                 planThenExecuteAnchorRefreshToolNames(),
+		"allowed_tools":                 anchorRefreshTools,
 		"refresh_paths":                 refreshPaths,
 	}))
 }
@@ -3689,12 +3661,12 @@ func (r *Runner) planThenExecuteTerminalToolBrief(results []workspace.ToolResult
 		brief.Lane = r.agentName()
 	}
 
-	brief.AllowedTools = []string{workspace.ToolNameSubmitPlan}
-	brief.RequiredTools = []string{workspace.ToolNameSubmitPlan}
-	brief.ForbiddenTools = textutil.Merge(brief.ForbiddenTools,
-		[]string{workspace.ToolNameReadFile, workspace.ToolNameCodeNavigate, workspace.ToolNameSearchFiles, workspace.ToolNameSearchContent, workspace.ToolNameListFiles, workspace.ToolNameShell, workspace.ToolNameSourceSanity, workspace.ToolNameEditFile, workspace.ToolNameWriteFile, workspace.ToolNameAppendFile, workspace.ToolNameApplyPatch},
-	)
-	brief.ToolManifest = runnerSanitizedToolManifest([]string{workspace.ToolNameSubmitPlan})
+	submitPlanTools := workspace.ToolSurfacePhaseToolNames(workspace.ToolSurfacePhasePlanExecuteSubmitPlanOnly)
+	submitPlanDisallowedTools := workspace.PlanExecuteSubmitReadyDisallowedTools(brief.AllowedTools)
+	brief.AllowedTools = submitPlanTools
+	brief.RequiredTools = submitPlanTools
+	brief.ForbiddenTools = textutil.Merge(brief.ForbiddenTools, submitPlanDisallowedTools)
+	brief.ToolManifest = workspace.BuildToolManifest(submitPlanTools)
 	brief.Constraints = textutil.Merge(brief.Constraints, []string{"plan_then_execute_submit_plan_ready", "required_edit_paths_define_write_scope", "planner_owned_verification"})
 	brief.SearchPolicy = []string{"no read/search/discovery action is valid after submit_plan readiness before the first terminal outcome"}
 
@@ -3776,7 +3748,7 @@ func planThenExecuteTerminalSubmitPlanSkeletonEntries(brief workerruntime.Worker
 			EndLine:   1,
 			NewFile:   planThenExecuteRequiredPathHasTerminalMissingFileEvidence(path, results),
 		}
-		for _, evidence := range evidenceByPath[agentutil.NormalizeRunnerPath(path)] {
+		for _, evidence := range evidenceByPath[NormalizeRunnerPath(path)] {
 			if evidenceLinesRemaining > 0 {
 				entry.Evidence = append(entry.Evidence, evidence.Summary)
 				evidenceLinesRemaining--
@@ -3810,7 +3782,7 @@ func planThenExecuteTerminalSubmitPlanEvidenceByPath(results []workspace.ToolRes
 	out := map[string][]planThenExecuteTerminalSubmitPlanEvidence{}
 	seen := map[string]map[string]struct{}{}
 	add := func(path string, summary string) {
-		path = agentutil.NormalizeRunnerPath(path)
+		path = NormalizeRunnerPath(path)
 		summary = strings.TrimSpace(summary)
 
 		if path == "" || summary == "" || len(out[path]) >= maxPerPath {
@@ -3841,7 +3813,7 @@ func planThenExecuteTerminalSubmitPlanEvidenceByPath(results []workspace.ToolRes
 			continue
 		}
 
-		for _, path := range agentutil.ReadPathsFromToolResult(result) {
+		for _, path := range ReadPathsFromToolResult(result) {
 			add(path, result.Summary)
 		}
 
@@ -3852,10 +3824,10 @@ func planThenExecuteTerminalSubmitPlanEvidenceByPath(results []workspace.ToolRes
 			}
 
 			summary := strings.TrimSpace(strings.TrimPrefix(line, "route_summary:"))
-			path := agentutil.ExtractReadPathFromSummary(summary)
+			path := ExtractReadPathFromSummary(summary)
 
 			if path == "" {
-				path = agentutil.ExtractRoutedReadPathFromOutput(line)
+				path = ExtractRoutedReadPathFromOutput(line)
 			}
 
 			add(path, summary)
@@ -4025,7 +3997,7 @@ func planThenExecuteTerminalSourceEvidenceMessages(brief workerruntime.WorkerRun
 	required := map[string]struct{}{}
 
 	for _, path := range normalizedRequiredEditPaths(brief.RequiredEditPaths) {
-		if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
+		if normalized := NormalizeRunnerPath(path); normalized != "" {
 			required[normalized] = struct{}{}
 		}
 	}
@@ -4038,7 +4010,7 @@ func planThenExecuteTerminalSourceEvidenceMessages(brief workerruntime.WorkerRun
 			continue
 		}
 
-		paths := agentutil.ReadPathsFromToolResult(result)
+		paths := ReadPathsFromToolResult(result)
 
 		paths = nonArtifactEvidencePaths(paths)
 
@@ -4094,11 +4066,11 @@ func planThenExecuteTerminalSourceEvidenceMessages(brief workerruntime.WorkerRun
 
 func planThenExecuteEvidenceIntersectsRequiredPaths(paths []string, required map[string]struct{}) bool {
 	for _, path := range paths {
-		if agentutil.IsNonSourceEvidenceArtifactPath(path) {
+		if IsNonSourceEvidenceArtifactPath(path) {
 			continue
 		}
 
-		if _, ok := required[agentutil.NormalizeRunnerPath(path)]; ok {
+		if _, ok := required[NormalizeRunnerPath(path)]; ok {
 			return true
 		}
 	}
@@ -4111,12 +4083,12 @@ func normalizedRunnerPaths(paths []string) []string {
 	seen := map[string]struct{}{}
 
 	for _, path := range paths {
-		normalized := agentutil.NormalizeRunnerPath(path)
+		normalized := NormalizeRunnerPath(path)
 		if normalized == "" {
 			continue
 		}
 
-		if agentutil.IsNonSourceEvidenceArtifactPath(normalized) {
+		if IsNonSourceEvidenceArtifactPath(normalized) {
 			continue
 		}
 
@@ -4293,7 +4265,7 @@ func planThenExecuteRejectedSubmitPlanDraftEvidence(req workspace.ToolRequest, r
 	b.WriteString("\nDraft edit entries from the rejected request. Rejected body excerpts are not source evidence; correct them against the latest read_file/code_navigate source evidence before resubmitting.\n")
 
 	for i, edit := range edits {
-		path := agentutil.NormalizeRunnerPath(edit.Path)
+		path := NormalizeRunnerPath(edit.Path)
 		if path == "" {
 			path = strings.TrimSpace(edit.Path)
 		}
@@ -4308,11 +4280,11 @@ func planThenExecuteRejectedSubmitPlanDraftEvidence(req workspace.ToolRequest, r
 			b.WriteString(fmt.Sprintf(" lines=%d-%d", edit.StartLine, edit.EndLine))
 		}
 
-		if _, ok := invalidPaths[agentutil.NormalizeRunnerPath(edit.Path)]; ok {
+		if _, ok := invalidPaths[NormalizeRunnerPath(edit.Path)]; ok {
 			b.WriteString(" status=invalid_anchor_or_syntax")
 		}
 
-		if _, ok := missingPaths[agentutil.NormalizeRunnerPath(edit.Path)]; ok {
+		if _, ok := missingPaths[NormalizeRunnerPath(edit.Path)]; ok {
 			b.WriteString(" status=missing_required_path")
 		}
 
@@ -4351,7 +4323,7 @@ func planThenExecuteShouldIncludeRejectedDraftBody(edit planartifact.PlanEdit, i
 		return false
 	}
 
-	_, ok := invalidPaths[agentutil.NormalizeRunnerPath(edit.Path)]
+	_, ok := invalidPaths[NormalizeRunnerPath(edit.Path)]
 
 	return ok
 }
@@ -4430,7 +4402,7 @@ func (r *Runner) preflightPlanThenExecuteWriteGuard(req workspace.ToolRequest) v
 	}
 
 	tool := strings.TrimSpace(req.Tool)
-	if !planThenExecuteForbiddenWriteTool(tool) {
+	if !workspace.IsWorkspaceWriteTool(tool) {
 		return verificationInterceptResult{}
 	}
 
@@ -4550,7 +4522,7 @@ func (r *Runner) ungroundedSubmitPlanEditPaths(req workspace.ToolRequest, result
 	seen := make(map[string]struct{}, len(edits))
 
 	for i, edit := range edits {
-		path := agentutil.NormalizeRunnerPath(edit.Path)
+		path := NormalizeRunnerPath(edit.Path)
 		if path == "" {
 			path = plancontract.EditName(i, planThenExecuteCoverageEdit(edit))
 		}
@@ -4575,7 +4547,7 @@ func (r *Runner) submitPlanEditPathGrounded(path string, edit planartifact.PlanE
 }
 
 func (r *Runner) submitPlanEditPathGrounding(path string, edit planartifact.PlanEdit, root string, results []workspace.ToolResult) planThenExecuteSourceEvidence {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return planThenExecuteSourceEvidence{}
 	}
@@ -4618,7 +4590,7 @@ func (r *Runner) submitPlanEditPathGrounding(path string, edit planartifact.Plan
 }
 
 func planThenExecuteEditHasValidatedInsertionAnchor(edit planartifact.PlanEdit, root string, path string, results []workspace.ToolResult) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" || strings.TrimSpace(root) == "" || filepath.IsAbs(path) {
 		return false
 	}
@@ -4655,7 +4627,7 @@ func planThenExecuteEditHasValidatedInsertionAnchor(edit planartifact.PlanEdit, 
 }
 
 func planThenExecuteEditHasExactAnchorContract(edit planartifact.PlanEdit, root string, path string) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" || strings.TrimSpace(root) == "" || filepath.IsAbs(path) {
 		return false
 	}
@@ -4678,7 +4650,7 @@ func planThenExecuteEditHasExactAnchorContract(edit planartifact.PlanEdit, root 
 }
 
 func planThenExecuteCompleteNewFileEdit(edit planartifact.PlanEdit, root string, path string) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" || strings.TrimSpace(root) == "" || filepath.IsAbs(path) {
 		return false
 	}
@@ -4716,7 +4688,7 @@ func normalizedRequiredEditPaths(required []string) []string {
 	seen := make(map[string]struct{}, len(required))
 
 	for _, raw := range required {
-		path := agentutil.NormalizeRunnerPath(raw)
+		path := NormalizeRunnerPath(raw)
 		if path == "" {
 			continue
 		}
@@ -4733,7 +4705,7 @@ func normalizedRequiredEditPaths(required []string) []string {
 }
 
 func planThenExecuteRequiredPathIsDirectoryScope(path string, all []string, root string) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" || filepath.IsAbs(path) {
 		return false
 	}
@@ -4771,12 +4743,12 @@ func planThenExecuteSubmitPlanCoverageDetailsFromResult(result workspace.ToolRes
 func planThenExecutePlannedSubmitPaths(edits []planartifact.PlanEdit, sourceSatisfiedPaths []string) map[string]struct{} {
 	planned := make(map[string]struct{}, len(edits)+len(sourceSatisfiedPaths))
 	for _, path := range sourceSatisfiedPaths {
-		if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
+		if normalized := NormalizeRunnerPath(path); normalized != "" {
 			planned[normalized] = struct{}{}
 		}
 	}
 	for _, edit := range edits {
-		if path := agentutil.NormalizeRunnerPath(edit.Path); path != "" {
+		if path := NormalizeRunnerPath(edit.Path); path != "" {
 			planned[path] = struct{}{}
 		}
 	}
@@ -4863,7 +4835,7 @@ func (r *Runner) invalidSubmitPlanAnchors(req workspace.ToolRequest) []string {
 	contentCache := make(map[string]string)
 
 	for _, edit := range planThenExecuteEffectiveSubmitPlanEdits(req) {
-		path := agentutil.NormalizeRunnerPath(edit.Path)
+		path := NormalizeRunnerPath(edit.Path)
 		if path == "" || filepath.IsAbs(path) {
 			continue
 		}
@@ -4931,7 +4903,7 @@ func (r *Runner) missingSubmitPlanRequiredEditSnippets(req workspace.ToolRequest
 func projectedPlanContentByPath(root string, edits []planartifact.PlanEdit) map[string]string {
 	out := make(map[string]string, len(edits))
 	for _, edit := range edits {
-		path := agentutil.NormalizeRunnerPath(edit.Path)
+		path := NormalizeRunnerPath(edit.Path)
 		if path == "" {
 			continue
 		}
@@ -4953,7 +4925,7 @@ func addSourceSatisfiedPlanProjectionBases(root string, projectedContent map[str
 	}
 
 	for _, rawPath := range paths {
-		path := agentutil.NormalizeRunnerPath(rawPath)
+		path := NormalizeRunnerPath(rawPath)
 		if path == "" {
 			continue
 		}
@@ -5037,14 +5009,14 @@ func (r *Runner) planThenExecuteAttachSubmitPlanSourceSatisfiedEvidence(req work
 	sourceSatisfiedSet := map[string]struct{}{}
 
 	for _, path := range sourceSatisfiedPaths {
-		if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
+		if normalized := NormalizeRunnerPath(path); normalized != "" {
 			sourceSatisfiedSet[normalized] = struct{}{}
 		}
 	}
 
 	filteredEvidence := artifact.Evidence[:0]
 	for _, evidence := range artifact.Evidence {
-		path := agentutil.NormalizeRunnerPath(evidence.Path)
+		path := NormalizeRunnerPath(evidence.Path)
 		if _, sourceSatisfied := sourceSatisfiedSet[path]; sourceSatisfied {
 			continue
 		}
@@ -5057,7 +5029,7 @@ func (r *Runner) planThenExecuteAttachSubmitPlanSourceSatisfiedEvidence(req work
 	knownEvidence := map[string]struct{}{}
 
 	for _, evidence := range artifact.Evidence {
-		path := agentutil.NormalizeRunnerPath(evidence.Path)
+		path := NormalizeRunnerPath(evidence.Path)
 		kind := strings.TrimSpace(string(evidence.Kind))
 
 		if path != "" && kind != "" {
@@ -5072,7 +5044,7 @@ func (r *Runner) planThenExecuteAttachSubmitPlanSourceSatisfiedEvidence(req work
 		}
 
 		kind := string(planartifact.EvidenceKindHarnessObservedSource)
-		key := agentutil.NormalizeRunnerPath(path) + "|" + kind
+		key := NormalizeRunnerPath(path) + "|" + kind
 
 		if _, ok := knownEvidence[key]; ok {
 			continue
@@ -5173,7 +5145,7 @@ func planThenExecuteRequiredSnippetCovered(candidates []string, snippet string, 
 	}
 
 	for _, candidate := range candidates {
-		path := agentutil.NormalizeRunnerPath(candidate)
+		path := NormalizeRunnerPath(candidate)
 		if path == "" {
 			continue
 		}
@@ -5204,7 +5176,7 @@ func planThenExecuteRequiredPathDiscoveryRejection(req workspace.ToolRequest, br
 		return "", "", false
 	}
 
-	target := agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
+	target := NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
 	required := normalizedRequiredEditPathSet(brief.RequiredEditPaths)
 
 	if rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results); ok && target != "" {
@@ -5262,7 +5234,7 @@ func planThenExecuteRequiredPathDiscoveryRejection(req workspace.ToolRequest, br
 }
 
 func planThenExecuteSourceReadInstruction(path string, results []workspace.ToolResult) string {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return "read the next unread required_edit_path with source-body evidence"
 	}
@@ -5275,7 +5247,7 @@ func planThenExecuteSourceReadInstruction(path string, results []workspace.ToolR
 }
 
 func planThenExecutePathHasOutlineEvidence(path string, results []workspace.ToolResult) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -5319,15 +5291,11 @@ func planThenExecuteSourceBodyReadRequest(req workspace.ToolRequest) bool {
 	}
 }
 
-func planThenExecuteAnchorRefreshToolNames() []string {
-	return []string{"read_file", "code_navigate"}
-}
-
 func planThenExecuteAnchorRefreshRequestAllowed(req workspace.ToolRequest) bool {
 	switch strings.TrimSpace(req.Tool) {
-	case "read_file":
+	case workspace.ToolNameReadFile:
 		return req.StartLine > 0 && req.EndLine >= req.StartLine && req.EndLine-req.StartLine+1 <= 400
-	case "code_navigate":
+	case workspace.ToolNameCodeNavigate:
 		capability := strings.TrimSpace(req.Capability)
 
 		return workspace.CodeNavigateCapabilityPredicate(workspace.CapReadSymbol)(capability) ||
@@ -5346,7 +5314,7 @@ func planThenExecuteInvalidAnchorRefreshRequestAllowed(req workspace.ToolRequest
 		return true
 	}
 
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" || !strings.EqualFold(filepath.Ext(path), ".go") {
 		return true
 	}
@@ -5400,7 +5368,7 @@ func planThenExecuteReadFileCoversRejectedLineRange(req workspace.ToolRequest, p
 }
 
 func submitPlanSyntaxValidationLineForPath(result workspace.ToolResult, path string) (int, bool) {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return 0, false
 	}
@@ -5446,7 +5414,7 @@ func submitPlanSyntaxValidationLineForPath(result workspace.ToolResult, path str
 }
 
 func planThenExecuteLargePathSeen(path string, results []workspace.ToolResult) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -5481,7 +5449,7 @@ func planThenExecutePostReadinessDiscoveryRejection(req workspace.ToolRequest, b
 
 	if rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results); ok {
 		invalidAnchorPaths := submitPlanInvalidAnchorPaths(rejected)
-		target := agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
+		target := NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
 		required := normalizedRequiredEditPathSet(brief.RequiredEditPaths)
 		_, inRequiredScope := required[target]
 
@@ -5507,7 +5475,7 @@ func planThenExecutePostReadinessDiscoveryRejection(req workspace.ToolRequest, b
 			}
 
 			return "Git history evidence required",
-				"the rejected `submit_plan` anchor refresh is complete, but git history evidence is still required before corrected submit_plan. Do not perform additional source reads or search. Call " + planExecuteHistoryPendingToolListForPrompt() + " for the intended logic in: " + strings.Join(nonEmptyRunnerStrings(pendingHistory, 4), ", ") + ".",
+				"the rejected `submit_plan` anchor refresh is complete, but git history evidence is still required before corrected submit_plan. Do not perform additional source reads or search. Call " + workspace.PlanExecuteHistoryPendingToolListForPrompt() + " for the intended logic in: " + strings.Join(nonEmptyRunnerStrings(pendingHistory, 4), ", ") + ".",
 				true
 		}
 
@@ -5528,7 +5496,7 @@ func planThenExecutePostReadinessDiscoveryRejection(req workspace.ToolRequest, b
 		}
 
 		return "Git history evidence required",
-			"every required_edit_path has satisfied its source-body obligation, but git history evidence is still required before submit_plan. Do not perform additional source reads or search. Call " + planExecuteHistoryPendingToolListForPrompt() + " for the intended logic in: " + strings.Join(nonEmptyRunnerStrings(pendingHistory, 4), ", ") + ", answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact path-specific blocker.",
+			"every required_edit_path has satisfied its source-body obligation, but git history evidence is still required before submit_plan. Do not perform additional source reads or search. Call " + workspace.PlanExecuteHistoryPendingToolListForPrompt() + " for the intended logic in: " + strings.Join(nonEmptyRunnerStrings(pendingHistory, 4), ", ") + ", answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact path-specific blocker.",
 			true
 	}
 
@@ -5556,7 +5524,7 @@ func planThenExecuteAnchorRefreshReadFallbackInstruction(refreshPaths []string) 
 		return "Use exactly one bounded `read_file` with `start_line`/`end_line` or `" + workspace.CodeNavigateToolName + "` with " + workspace.CodeNavigateSourceBodyCapabilityPhrase() + " for one refresh path."
 	}
 
-	path := agentutil.NormalizeRunnerPath(paths[0])
+	path := NormalizeRunnerPath(paths[0])
 	if path == "" {
 		path = strings.TrimSpace(paths[0])
 	}
@@ -5569,13 +5537,13 @@ func planThenExecutePostSourceHistoryRequestAllowed(req workspace.ToolRequest, b
 		return false
 	}
 
-	target := agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
+	target := NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
 	if target == "" {
 		return false
 	}
 
 	for _, pending := range planThenExecuteHistoryPendingPaths(brief, results, nil) {
-		if agentutil.NormalizeRunnerPath(pending) == target {
+		if NormalizeRunnerPath(pending) == target {
 			return true
 		}
 	}
@@ -5588,7 +5556,7 @@ func planThenExecutePostSubmitRejectionRefreshNote(brief workerruntime.WorkerRun
 	refreshable := make([]string, 0, 2)
 
 	for _, rawPath := range planThenExecuteRefreshScopePaths(brief, results) {
-		path := agentutil.NormalizeRunnerPath(rawPath)
+		path := NormalizeRunnerPath(rawPath)
 		if path == "" {
 			continue
 		}
@@ -5612,7 +5580,7 @@ func planThenExecuteRejectedPlanSourceRefreshAllowedForScope(req workspace.ToolR
 		return false
 	}
 
-	target := agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
+	target := NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
 	if target == "" {
 		return false
 	}
@@ -5648,7 +5616,7 @@ func planThenExecuteAnchorRefreshReadRangeAlreadyTried(req workspace.ToolRequest
 		return false
 	}
 
-	target = agentutil.NormalizeRunnerPath(target)
+	target = NormalizeRunnerPath(target)
 	if target == "" || req.StartLine <= 0 || req.EndLine < req.StartLine {
 		return false
 	}
@@ -5791,7 +5759,7 @@ func submitPlanLineRangeInvalidAnchorPaths(result workspace.ToolResult) map[stri
 }
 
 func submitPlanLineRangeInvalidAnchorRanges(result workspace.ToolResult, path string) []planThenExecuteLineRange {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return nil
 	}
@@ -5877,7 +5845,7 @@ func normalizeSubmitPlanDiagnosticPath(raw string) string {
 	if raw == "" {
 		return ""
 	}
-	if path := agentutil.NormalizeRunnerPath(raw); path != "" && !filepath.IsAbs(raw) {
+	if path := NormalizeRunnerPath(raw); path != "" && !filepath.IsAbs(raw) {
 		return path
 	}
 
@@ -5893,7 +5861,7 @@ func normalizeSubmitPlanDiagnosticPath(raw string) string {
 		"/.planning/",
 	} {
 		if idx := strings.Index(raw, marker); idx >= 0 {
-			return agentutil.NormalizeRunnerPath(raw[idx+1:])
+			return NormalizeRunnerPath(raw[idx+1:])
 		}
 	}
 
@@ -5909,7 +5877,7 @@ func submitPlanSyntaxValidationPaths(result workspace.ToolResult) map[string]str
 	}
 
 	for _, path := range pathparse.MentionedWorkspaceFiles(text) {
-		path = agentutil.NormalizeRunnerPath(path)
+		path = NormalizeRunnerPath(path)
 		if path == "" {
 			continue
 		}
@@ -6007,7 +5975,7 @@ func submitPlanPathMapFromDiagnostics(segments []string, allowColon bool) map[st
 			continue
 		}
 
-		path := agentutil.NormalizeRunnerPath(segment)
+		path := NormalizeRunnerPath(segment)
 		if planThenExecuteRecoveryScopePathAllowed(path) {
 			out[path] = struct{}{}
 		}
@@ -6017,7 +5985,7 @@ func submitPlanPathMapFromDiagnostics(segments []string, allowColon bool) map[st
 }
 
 func planThenExecuteRecoveryScopePathAllowed(path string) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" || submitPlanDiagnosticProtocolToken(path) {
 		return false
 	}
@@ -6070,13 +6038,13 @@ func submitPlanInvalidAnchorPathsAllowsRead(paths map[string]struct{}, path stri
 		return false
 	}
 
-	_, ok := paths[agentutil.NormalizeRunnerPath(path)]
+	_, ok := paths[NormalizeRunnerPath(path)]
 
 	return ok
 }
 
 func successfulSourceEvidencePathAfter(results []workspace.ToolResult, index int, path string) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -6091,7 +6059,7 @@ func successfulSourceEvidencePathAfter(results []workspace.ToolResult, index int
 }
 
 func successfulInvalidAnchorCorrectionEvidencePathAfter(results []workspace.ToolResult, index int, path string) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -6114,7 +6082,7 @@ func successfulInvalidAnchorCorrectionEvidenceForRejection(results []workspace.T
 }
 
 func successfulInvalidAnchorCorrectionEvidenceAfterPriorRejection(results []workspace.ToolResult, rejectedAt int, path string) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" || rejectedAt <= 0 || rejectedAt > len(results) {
 		return false
 	}
@@ -6238,11 +6206,11 @@ func readFileResultIsBoundedCppSourceWindow(result workspace.ToolResult, path st
 	}
 
 	readPath, readRange, ok := extractReadPathAndRangeFromSummary(result.Summary)
-	if !ok || agentutil.NormalizeRunnerPath(readPath) != agentutil.NormalizeRunnerPath(path) {
+	if !ok || NormalizeRunnerPath(readPath) != NormalizeRunnerPath(path) {
 		return false
 	}
 
-	normalizedPath := strings.ToLower(agentutil.NormalizeRunnerPath(path))
+	normalizedPath := strings.ToLower(NormalizeRunnerPath(path))
 	if !(strings.HasSuffix(normalizedPath, ".cpp") ||
 		strings.HasSuffix(normalizedPath, ".cc") ||
 		strings.HasSuffix(normalizedPath, ".cxx")) {
@@ -6261,7 +6229,7 @@ func readFileResultCoversRejectedLineRange(result workspace.ToolResult, path str
 	}
 
 	readPath, readRange, ok := extractReadPathAndRangeFromSummary(result.Summary)
-	if !ok || agentutil.NormalizeRunnerPath(readPath) != agentutil.NormalizeRunnerPath(path) {
+	if !ok || NormalizeRunnerPath(readPath) != NormalizeRunnerPath(path) {
 		return false
 	}
 
@@ -6526,7 +6494,7 @@ func (state planThenExecuteRequiredPathTypedState) requiresSourceBodyRead() bool
 }
 
 func planThenExecuteRequiredPathState(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, path string) planThenExecuteRequiredPathTypedState {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return planThenExecuteRequiredPathBlocked
 	}
@@ -6558,7 +6526,7 @@ func planThenExecuteRequiredPathState(brief workerruntime.WorkerRuntimeBrief, re
 }
 
 func planThenExecuteRequiredPathHasExplicitNewFileIntent(brief workerruntime.WorkerRuntimeBrief, path string) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -6611,13 +6579,13 @@ func planThenExecuteBriefNewFileIntentText(brief workerruntime.WorkerRuntimeBrie
 }
 
 func planThenExecuteBriefAuthorizesNewFilePath(brief workerruntime.WorkerRuntimeBrief, path string) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
 
 	for _, authorized := range brief.AuthorizedNewFiles {
-		if agentutil.NormalizeRunnerPath(authorized) == path {
+		if NormalizeRunnerPath(authorized) == path {
 			return true
 		}
 	}
@@ -6626,7 +6594,7 @@ func planThenExecuteBriefAuthorizesNewFilePath(brief workerruntime.WorkerRuntime
 }
 
 func planThenExecuteRequiredPathHasBlockerEvidence(path string, results []workspace.ToolResult) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -6684,7 +6652,7 @@ func planThenExecuteRequiredPathStateSummaries(brief workerruntime.WorkerRuntime
 	out := make([]string, 0, len(required))
 
 	for _, path := range required {
-		normalized := agentutil.NormalizeRunnerPath(path)
+		normalized := NormalizeRunnerPath(path)
 		if normalized == "" {
 			continue
 		}
@@ -6696,8 +6664,8 @@ func planThenExecuteRequiredPathStateSummaries(brief workerruntime.WorkerRuntime
 }
 
 func planThenExecuteToolResultSourceEvidence(result workspace.ToolResult, path string) planThenExecuteSourceEvidence {
-	path = agentutil.NormalizeRunnerPath(path)
-	if path == "" || agentutil.IsNonSourceEvidenceArtifactPath(path) || strings.TrimSpace(result.Error) != "" {
+	path = NormalizeRunnerPath(path)
+	if path == "" || IsNonSourceEvidenceArtifactPath(path) || strings.TrimSpace(result.Error) != "" {
 		return planThenExecuteSourceEvidence{}
 	}
 
@@ -6710,15 +6678,15 @@ func planThenExecuteToolResultSourceEvidence(result workspace.ToolResult, path s
 		evidence.Detail = "path mentioned by tool result"
 	}
 
-	sourcePaths := agentutil.ReadPathsFromToolResult(result)
+	sourcePaths := ReadPathsFromToolResult(result)
 	sourceMatched := false
 
 	for _, readPath := range sourcePaths {
-		if agentutil.IsNonSourceEvidenceArtifactPath(readPath) {
+		if IsNonSourceEvidenceArtifactPath(readPath) {
 			continue
 		}
 
-		if agentutil.NormalizeRunnerPath(readPath) == path {
+		if NormalizeRunnerPath(readPath) == path {
 			sourceMatched = true
 			break
 		}
@@ -6735,7 +6703,7 @@ func planThenExecuteToolResultSourceEvidence(result workspace.ToolResult, path s
 	evidence.Detail = "source body"
 
 	switch {
-	case agentutil.ReadStyleSourceBodyTool(tool):
+	case ReadStyleSourceBodyTool(tool):
 		evidence.Level, evidence.Detail = planThenExecuteReadFileEvidenceLevel(result, path)
 	case tool == "code_navigate" || tool == "read_only_capability":
 		// Check for file outline content first — an outline with symbols
@@ -6744,7 +6712,7 @@ func planThenExecuteToolResultSourceEvidence(result workspace.ToolResult, path s
 		if planThenExecuteCodeNavigateIsOutline(result) {
 			evidence.Level = planThenExecuteEvidenceBodyWindow
 			evidence.Detail = "file outline body window"
-		} else if !agentutil.RoutedSourceReadOutputHasBody(result.Output) {
+		} else if !RoutedSourceReadOutputHasBody(result.Output) {
 			evidence.Level = planThenExecuteEvidencePathSeen
 			evidence.Detail = "navigation result without source body"
 		} else {
@@ -6774,7 +6742,7 @@ func planThenExecuteCodeNavigateIsOutline(result workspace.ToolResult) bool {
 
 	// If the tool was called with file_outline capability and output exists,
 	// treat it as body-window evidence.
-	if strings.Contains(summary, "outline") && !agentutil.CandidateAnchorOnlyText(result.Output) {
+	if strings.Contains(summary, "outline") && !CandidateAnchorOnlyText(result.Output) {
 		return true
 	}
 
@@ -6857,7 +6825,7 @@ const planThenExecuteBoundedReadMaxLines = 120
 
 func planThenExecuteLargeGoRawRangeNeedsSymbolBody(path string, total int) bool {
 	return total >= planThenExecuteLargeFileGenericHeaderMinTotalLines &&
-		strings.EqualFold(filepath.Ext(agentutil.NormalizeRunnerPath(path)), ".go")
+		strings.EqualFold(filepath.Ext(NormalizeRunnerPath(path)), ".go")
 }
 
 func planThenExecuteGenericHeaderWindow(start, end, total int, hasTotal bool) bool {
@@ -6950,7 +6918,7 @@ func planThenExecuteReadSummaryTotalLinesAfter(lower string, marker string) (int
 
 func firstPlanThenExecuteUnreadRequiredPath(required []string, unread map[string]struct{}) string {
 	for _, path := range required {
-		normalized := agentutil.NormalizeRunnerPath(path)
+		normalized := NormalizeRunnerPath(path)
 		if normalized == "" {
 			continue
 		}
@@ -7031,7 +6999,7 @@ func (r *Runner) planThenExecuteClampedEOFReadRejection(req workspace.ToolReques
 		return "", "", false
 	}
 
-	path := agentutil.NormalizeRunnerPath(req.Path)
+	path := NormalizeRunnerPath(req.Path)
 	if path == "" || req.StartLine <= 0 {
 		return "", "", false
 	}
@@ -7064,7 +7032,7 @@ func (r *Runner) shouldHideToolAfterDiscoveryHardRedirect(req workspace.ToolRequ
 }
 
 func priorClampedEOFReadLineCount(path string, results []workspace.ToolResult) (int, bool) {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return 0, false
 	}
@@ -7086,7 +7054,7 @@ func priorClampedEOFReadLineCount(path string, results []workspace.ToolResult) (
 
 func clampedEOFReadLineCountForPath(summary string, path string) (int, bool) {
 	summary = strings.TrimSpace(summary)
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 
 	const (
 		prefix      = "Read "
@@ -7131,13 +7099,13 @@ func clampedEOFReadLineCountForPath(summary string, path string) (int, bool) {
 }
 
 func readFileSummaryDescriptionMatchesPath(description string, path string) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
 
 	for _, candidate := range readFileSummaryPathCandidates(description) {
-		if agentutil.NormalizeRunnerPath(candidate) == path {
+		if NormalizeRunnerPath(candidate) == path {
 			return true
 		}
 	}
@@ -7358,7 +7326,7 @@ func reviewRepairTerminalProbePassCloseout(brief workerruntime.WorkerRuntimeBrie
 		return "", false
 	}
 
-	if !reviewRepairTerminalProbeTool(req.Tool) {
+	if !workspace.ToolSurfacePhaseAllowsTool(req.Tool, workspace.ToolSurfacePhasePlanExecuteReviewRepairTerminal) {
 		return "", false
 	}
 
@@ -7387,17 +7355,6 @@ func normalizeReviewRepairPassCloseout(text string) string {
 	}
 
 	return "Decision: pass\n\n" + body
-}
-
-func reviewRepairTerminalProbeTool(tool string) bool {
-	switch strings.TrimSpace(tool) {
-	case "read_file", "search_files", "search_content", "file_stats", "code_navigate",
-		"context_status", "context_query", "context_zoom", "context_pack", "context_impact",
-		"discovery_query", "structural_search":
-		return true
-	default:
-		return false
-	}
 }
 
 func reviewRepairNoopSubmitPlanEvidencePassCloseout(brief workerruntime.WorkerRuntimeBrief) (string, bool) {
@@ -7663,18 +7620,6 @@ func reviewRepairPlanEditAlreadyApplied(body string, edit planartifact.PlanEdit)
 	}
 }
 
-// planThenExecuteForbiddenWriteTool lists the per-edit write tools
-// the planner phase must not call. submit_plan is OUR tool, not a
-// per-edit write — it captures the structured plan.
-func planThenExecuteForbiddenWriteTool(tool string) bool {
-	switch tool {
-	case "edit_file", "write_file", "append_file", "apply_patch", "delegate_edit", "go_move_declarations", "mkdir":
-		return true
-	}
-
-	return false
-}
-
 func planThenExecutePlannerForbiddenTool(tool string) bool {
 	switch strings.TrimSpace(tool) {
 	case "shell", "git_diff", "git_status", "source_sanity", "affected_suites", "context_trace_pack", "task", "task_ledger", "pwd":
@@ -7903,7 +7848,7 @@ func planThenExecuteRejectedPlanRefreshPathsNeedingRefreshBeforeBlocker(brief wo
 
 	var out []string
 	for _, path := range paths {
-		normalized := agentutil.NormalizeRunnerPath(path)
+		normalized := NormalizeRunnerPath(path)
 		if normalized == "" {
 			continue
 		}
@@ -7987,11 +7932,11 @@ func requiredPathsHaveSourceBodyEvidence(requiredPaths []string, results []works
 
 	refreshSet := make(map[string]struct{}, len(refreshPaths))
 	for _, p := range refreshPaths {
-		refreshSet[agentutil.NormalizeRunnerPath(p)] = struct{}{}
+		refreshSet[NormalizeRunnerPath(p)] = struct{}{}
 	}
 
 	for _, path := range requiredPaths {
-		normPath := agentutil.NormalizeRunnerPath(path)
+		normPath := NormalizeRunnerPath(path)
 		scoped := results
 
 		if _, needsFresh := refreshSet[normPath]; needsFresh && resultCutoff > 0 && resultCutoff < len(results) {
@@ -8094,7 +8039,7 @@ func planThenExecuteReadyToSubmitNudge(brief workerruntime.WorkerRuntimeBrief, r
 		var observedSelected []string
 
 		for _, path := range paths {
-			normalized := agentutil.NormalizeRunnerPath(path)
+			normalized := NormalizeRunnerPath(path)
 			if _, ok := observed[normalized]; ok {
 				observedSelected = append(observedSelected, normalized)
 			}
@@ -8134,7 +8079,7 @@ func planThenExecuteReadyToSubmitNudge(brief workerruntime.WorkerRuntimeBrief, r
 	var readyPaths []string
 
 	for _, path := range required {
-		normalized := agentutil.NormalizeRunnerPath(path)
+		normalized := NormalizeRunnerPath(path)
 		state := planThenExecuteRequiredPathState(brief, results, normalized)
 
 		switch state {
@@ -8256,7 +8201,7 @@ var planThenExecuteRepoRootMarkdownFiles = map[string]struct{}{
 }
 
 func isPlanExecuteContextDocPath(path string) bool {
-	normalized := strings.ToLower(agentutil.NormalizeRunnerPath(path))
+	normalized := strings.ToLower(NormalizeRunnerPath(path))
 	if normalized == "" {
 		return false
 	}
@@ -8277,7 +8222,7 @@ func isPlanExecuteContextDocPath(path string) bool {
 func planExecuteContextDocReadCount(results []workspace.ToolResult) int {
 	seen := make(map[string]struct{})
 	for path := range readPathsFromResults(results) {
-		normalized := agentutil.NormalizeRunnerPath(path)
+		normalized := NormalizeRunnerPath(path)
 		if normalized == "" || !isPlanExecuteContextDocPath(normalized) {
 			continue
 		}
@@ -8301,7 +8246,7 @@ func planThenExecuteCandidatePostReadinessDiscoveryRejection(req workspace.ToolR
 		return "", "", plancontract.PlanExecuteRejectionNone, false
 	}
 
-	target := agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
+	target := NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
 	if target != "" {
 		if summary, errorText, reject := planThenExecutePostGateOutOfScopeCandidateReadRejection(target, brief, results); reject {
 			return summary, errorText, plancontract.PlanExecuteRejectionPostGateReadOutsideCandidateScope, true
@@ -8381,7 +8326,7 @@ func planThenExecuteCandidatePostReadinessDiscoveryRejection(req workspace.ToolR
 }
 
 func planThenExecuteReadyCandidateForRequestTarget(target string, anchorReady map[string]struct{}) (string, bool) {
-	target = agentutil.NormalizeRunnerPath(target)
+	target = NormalizeRunnerPath(target)
 	if target == "" {
 		return "", false
 	}
@@ -8393,7 +8338,7 @@ func planThenExecuteReadyCandidateForRequestTarget(target string, anchorReady ma
 	var matches []string
 	targetPrefix := strings.TrimSuffix(target, "/") + "/"
 	for path := range anchorReady {
-		normalized := agentutil.NormalizeRunnerPath(path)
+		normalized := NormalizeRunnerPath(path)
 		if normalized == "" {
 			continue
 		}
@@ -8412,7 +8357,7 @@ func planThenExecuteReadyCandidateForRequestTarget(target string, anchorReady ma
 }
 
 func planThenExecutePostGateOutOfScopeCandidateReadRejection(target string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, string, bool) {
-	target = agentutil.NormalizeRunnerPath(target)
+	target = NormalizeRunnerPath(target)
 	if target == "" || !completionGateResultSeen(results) {
 		return "", "", false
 	}
@@ -8441,33 +8386,33 @@ func planThenExecutePostGateOutOfScopeCandidateReadRejection(target string, brie
 		true
 }
 
-func planThenExecuteCandidateLowValueAction(hooks planExecuteRecoveryHooks, req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, transport PlanExecutePlanningTransport) (string, string, bool) {
+func planThenExecuteCandidateLowValueAction(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, transport PlanExecutePlanningTransport) (string, string, bool) {
 	state := DerivePlanExecutePlanningActionState(brief, results, transport, req)
 	if len(state.LowValueActions) == 0 {
 		return "", "", false
 	}
 
 	reason := state.LowValueActions[0]
-	prompt := RenderPlanExecuteRecoveryPlan(hooks.lowValueActionPlan(state))
+	prompt := RenderPlanExecuteRecoveryPlan(planThenExecuteLowValueActionRecoveryPlan(state))
 
 	return reason, prompt, true
 }
 
 func planThenExecuteCandidateDifferentPathReadAllowed(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, target string) bool {
-	target = agentutil.NormalizeRunnerPath(target)
+	target = NormalizeRunnerPath(target)
 	if target == "" {
 		return false
 	}
 
 	for readPath := range readPathsFromResults(results) {
-		if agentutil.NormalizeRunnerPath(readPath) == target {
+		if NormalizeRunnerPath(readPath) == target {
 			return false
 		}
 	}
 
 	candidateSet := make(map[string]struct{})
 	for _, path := range candidateRecoveryScopePaths(brief, results, 8) {
-		candidateSet[agentutil.NormalizeRunnerPath(path)] = struct{}{}
+		candidateSet[NormalizeRunnerPath(path)] = struct{}{}
 	}
 
 	if _, ok := candidateSet[target]; !ok {
@@ -8478,7 +8423,7 @@ func planThenExecuteCandidateDifferentPathReadAllowed(req workspace.ToolRequest,
 }
 
 func planThenExecuteCandidateSymbolReadAllowed(req workspace.ToolRequest, results []workspace.ToolResult, target string) bool {
-	target = agentutil.NormalizeRunnerPath(target)
+	target = NormalizeRunnerPath(target)
 	if target == "" || strings.TrimSpace(req.Tool) != "code_navigate" || !planThenExecuteAnchorRefreshRequestAllowed(req) {
 		return false
 	}
@@ -8495,7 +8440,7 @@ func planThenExecuteCandidateSymbolReadAllowed(req workspace.ToolRequest, result
 }
 
 func planThenExecuteCandidateSamePathContinuationReadAllowed(req workspace.ToolRequest, results []workspace.ToolResult, target string) bool {
-	target = agentutil.NormalizeRunnerPath(target)
+	target = NormalizeRunnerPath(target)
 	if target == "" || strings.TrimSpace(req.Tool) != "read_file" {
 		return false
 	}
@@ -8554,7 +8499,7 @@ func planThenExecuteCandidateRejectedPlanSourceRefreshAllowed(req workspace.Tool
 }
 
 func planThenExecuteCandidateRejectedPlanSourceRefreshTarget(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, target string) bool {
-	target = agentutil.NormalizeRunnerPath(target)
+	target = NormalizeRunnerPath(target)
 	if target == "" || len(planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "")) > 0 {
 		return false
 	}
@@ -8639,7 +8584,7 @@ func planThenExecuteSubmitPlanCorrectionChecklist(brief workerruntime.WorkerRunt
 	b.WriteString("Next submit_plan coverage checklist:")
 
 	for _, rawPath := range required {
-		path := agentutil.NormalizeRunnerPath(rawPath)
+		path := NormalizeRunnerPath(rawPath)
 		if path == "" {
 			continue
 		}
@@ -8728,7 +8673,7 @@ func submitPlanNoOpEditPaths(result workspace.ToolResult) map[string]struct{} {
 				path = path[:cut]
 			}
 
-			if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
+			if normalized := NormalizeRunnerPath(path); normalized != "" {
 				paths[normalized] = struct{}{}
 			}
 
@@ -8803,7 +8748,7 @@ func planThenExecuteUnreadRequiredSourceNudge(brief workerruntime.WorkerRuntimeB
 }
 
 func planThenExecuteRequiredPathHasTerminalMissingFileEvidence(path string, results []workspace.ToolResult) bool {
-	normalized := agentutil.NormalizeRunnerPath(path)
+	normalized := NormalizeRunnerPath(path)
 	if normalized == "" {
 		return false
 	}
@@ -8866,7 +8811,7 @@ type planThenExecuteReadRange struct {
 }
 
 func readRangesForPathFromResults(results []workspace.ToolResult, target string) []planThenExecuteReadRange {
-	target = agentutil.NormalizeRunnerPath(target)
+	target = NormalizeRunnerPath(target)
 	if target == "" {
 		return nil
 	}
@@ -8880,7 +8825,7 @@ func readRangesForPathFromResults(results []workspace.ToolResult, target string)
 
 		for _, text := range []string{result.Summary, result.Output} {
 			path, readRange, ok := extractReadPathAndRangeFromSummary(text)
-			if ok && agentutil.NormalizeRunnerPath(path) == target {
+			if ok && NormalizeRunnerPath(path) == target {
 				ranges = append(ranges, readRange)
 			}
 		}
@@ -8892,7 +8837,7 @@ func readRangesForPathFromResults(results []workspace.ToolResult, target string)
 			}
 
 			path, readRange, ok := extractReadPathAndRangeFromSummary(strings.TrimSpace(strings.TrimPrefix(line, "route_summary:")))
-			if ok && agentutil.NormalizeRunnerPath(path) == target {
+			if ok && NormalizeRunnerPath(path) == target {
 				ranges = append(ranges, readRange)
 			}
 		}
@@ -9089,7 +9034,7 @@ func implementationRequiredPathAnchorsReady(brief workerruntime.WorkerRuntimeBri
 	changed := changedPathsFromToolResults(results)
 
 	for _, path := range brief.RequiredEditPaths {
-		normalized := agentutil.NormalizeRunnerPath(path)
+		normalized := NormalizeRunnerPath(path)
 		if normalized == "" {
 			continue
 		}
@@ -9267,7 +9212,7 @@ func (r *Runner) planThenExecuteSubmitPlanParseRecoveryPlan(raw string, parseErr
 
 	required := nonEmptyRunnerStrings(r.RuntimeBrief.RequiredEditPaths, 12)
 
-	return r.planExecuteRecoveryHooks().submitPlanParseRecoveryPlan(stringifiedEdits, required), true
+	return planThenExecuteSubmitPlanParseRecoveryPlan(stringifiedEdits, required), true
 }
 
 func submitPlanEditsStringParseError(raw string, parseErr error) bool {
@@ -9323,30 +9268,7 @@ func planThenExecuteNativeSubmitPlanNudge(brief workerruntime.WorkerRuntimeBrief
 }
 
 func planThenExecuteNativeSubmitPlanCorrectionPrompt(brief workerruntime.WorkerRuntimeBrief, result workspace.ToolResult) string {
-	required := nonEmptyRunnerStrings(brief.RequiredEditPaths, 12)
-
-	var b strings.Builder
-
-	b.WriteString("The previous native `submit_plan` tool call was rejected before it became a valid plan artifact. ")
-	b.WriteString(lastSubmitPlanCorrectionRejectionBrief(result))
-
-	if details := planThenExecuteNativeSubmitPlanCorrectionDetails(brief, result); details != "" {
-		b.WriteString(details)
-		b.WriteString(" ")
-	}
-
-	b.WriteString("Call native `submit_plan` again now. ")
-	b.WriteString("The next tool call must be a corrected `submit_plan`. ")
-	b.WriteString(planThenExecuteSubmitPlanCoverageSentence())
-	b.WriteString(" Do not answer in prose, and do not call read/search/discovery, shell, verification, or per-edit write tools.")
-
-	if len(required) > 0 {
-		b.WriteString("\n\nRequired edit paths: ")
-		b.WriteString(strings.Join(required, ", "))
-		b.WriteString(".")
-	}
-
-	return b.String()
+	return RenderPlanExecuteRecoveryPlan(planThenExecuteNativeSubmitPlanCorrectionRecoveryPlan(brief, result))
 }
 
 func (r *Runner) planThenExecuteNativeSubmitPlanNoCallFallbackPrompt(modelErr error, opts llama.ChatOptions, results []workspace.ToolResult, used int) (string, bool) {
@@ -9367,7 +9289,7 @@ func (r *Runner) planThenExecuteNativeSubmitPlanNoCallFallbackPrompt(modelErr er
 
 	required := nonEmptyRunnerStrings(r.RuntimeBrief.RequiredEditPaths, 12)
 
-	return r.planExecuteRecoveryHooks().nativeNoCallFallbackPrompt(required), true
+	return RenderPlanExecuteRecoveryPlan(planThenExecuteNativeNoCallFallbackRecoveryPlan(required)), true
 }
 
 func planThenExecuteReadyToSubmitChatOptionsForBackend(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, supportsNativeTools bool) llama.ChatOptions {
@@ -9591,7 +9513,7 @@ func planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts llama.ChatOp
 	if surface.Kind == PlanExecuteRecoverySurfaceAnchorRefresh {
 		opts = forceVisibleActionChatOptions(opts)
 
-		refreshTools := planThenExecuteAnchorRefreshToolNames()
+		refreshTools := workspace.ToolSurfacePhaseToolNames(workspace.ToolSurfacePhasePlanExecuteAnchorRefresh)
 
 		if chatOptionsExposeAnyTool(opts, refreshTools...) {
 			opts.Tools = filterChatOptionsTools(opts.Tools, refreshTools...)
@@ -9611,7 +9533,7 @@ func planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts llama.ChatOp
 	if surface.Kind == PlanExecuteRecoverySurfaceHistoryPending {
 		opts = forceVisibleActionChatOptions(opts)
 
-		historyTools := planExecuteHistoryPendingToolNames()
+		historyTools := workspace.ToolSurfacePhaseToolNames(workspace.ToolSurfacePhasePlanExecuteHistoryPending)
 
 		if chatOptionsExposeAnyTool(opts, historyTools...) {
 			opts.Tools = filterChatOptionsTools(opts.Tools, historyTools...)
@@ -9706,7 +9628,7 @@ func planThenExecuteRejectedPlanRefreshPathsForResult(brief workerruntime.Worker
 	var out []string
 
 	for _, rawPath := range planThenExecuteRefreshScopePathsForRejectedPlan(brief, results, refreshPaths) {
-		path := agentutil.NormalizeRunnerPath(rawPath)
+		path := NormalizeRunnerPath(rawPath)
 		if path == "" {
 			continue
 		}
@@ -9776,7 +9698,7 @@ func planThenExecuteRejectedSubmitPlanStreakInvalidPaths(results []workspace.Too
 
 	for _, index := range streak {
 		for path := range submitPlanRefreshPathCandidates(results[index]) {
-			if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
+			if normalized := NormalizeRunnerPath(path); normalized != "" {
 				out[normalized] = struct{}{}
 			}
 		}
@@ -9795,7 +9717,7 @@ func planThenExecuteRejectedSubmitPlanStreakRefreshPaths(brief workerruntime.Wor
 	for _, index := range streak {
 		rejected := results[index]
 		for _, path := range planThenExecuteRejectedPlanRefreshPathsForResult(brief, results, rejected, index) {
-			if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
+			if normalized := NormalizeRunnerPath(path); normalized != "" {
 				pathSet[normalized] = struct{}{}
 			}
 		}
@@ -9822,7 +9744,7 @@ func planThenExecuteRefreshScopePathsForRejectedPlan(brief workerruntime.WorkerR
 	seen := normalizedRequiredEditPathSet(paths)
 
 	for path := range refreshPaths {
-		normalized := agentutil.NormalizeRunnerPath(path)
+		normalized := NormalizeRunnerPath(path)
 		if !planThenExecuteRecoveryScopePathAllowed(normalized) {
 			continue
 		}
@@ -9967,7 +9889,7 @@ func planThenExecuteCandidateScopeFullyRead(brief workerruntime.WorkerRuntimeBri
 	}
 
 	for _, path := range candidates {
-		if _, ok := read[agentutil.NormalizeRunnerPath(path)]; !ok {
+		if _, ok := read[NormalizeRunnerPath(path)]; !ok {
 			return false
 		}
 	}
@@ -10050,7 +9972,7 @@ func (r *Runner) deterministicPlanExecuteRequiredSourceRead(results []workspace.
 	next := ""
 
 	for _, path := range r.requiredEditCoveragePaths() {
-		normalized := agentutil.NormalizeRunnerPath(path)
+		normalized := NormalizeRunnerPath(path)
 		if normalized == "" {
 			continue
 		}
@@ -10114,7 +10036,7 @@ func (r *Runner) planThenExecuteRequiredSourceSurfaceAction(req workspace.ToolRe
 		slices.Contains(allowedTools, redirected.Tool) &&
 		normalizedToolRequestRaw(redirected) != normalizedToolRequestRaw(req) {
 
-		target := agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(redirected))
+		target := NormalizeRunnerPath(planThenExecuteRequestTargetPath(redirected))
 		if _, missing := unread[target]; missing {
 			evidence := planThenExecuteRequiredSourceEvidenceForPath(r.RuntimeBrief, results, target)
 			if planThenExecuteRequiredSourceRequestAdvances(redirected, target, evidence, results) {
@@ -10189,7 +10111,7 @@ func implementationRejectedTextCanAdvanceRequiredRead(reply string) bool {
 
 	lower := " " + strings.ToLower(strings.Join(strings.Fields(trimmed), " ")) + " "
 
-	return !agentutil.ContainsAny(lower,
+	return !ContainsAny(lower,
 		" blocked ",
 		" blocker ",
 		" cannot ",
@@ -10214,7 +10136,7 @@ func (r *Runner) deterministicImplementationRequiredPathRead(results []workspace
 	changed := changedPathsFromToolResults(results)
 
 	for _, path := range r.requiredEditCoveragePaths() {
-		normalized := agentutil.NormalizeRunnerPath(path)
+		normalized := NormalizeRunnerPath(path)
 		if normalized == "" {
 			continue
 		}
@@ -10263,7 +10185,7 @@ func (r *Runner) deterministicImplementationEvidencePathRead(results []workspace
 	var paths []string
 
 	for _, path := range r.RuntimeBrief.EvidencePaths {
-		normalized := agentutil.NormalizeRunnerPath(path)
+		normalized := NormalizeRunnerPath(path)
 		if normalized == "" || !recoverySearchPathLooksEditableSource(normalized) || alreadyReadPath(results, normalized) {
 			continue
 		}
@@ -10312,7 +10234,7 @@ func (r *Runner) planThenExecuteRequiredSourceFollowupRedirect(results []workspa
 		return workspace.ToolRequest{}, false
 	}
 
-	target := agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
+	target := NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
 	if target == "" {
 		return workspace.ToolRequest{}, false
 	}
@@ -10369,7 +10291,7 @@ func (r *Runner) planThenExecuteAnchorRefreshWriteOnlyRejection(req workspace.To
 	return workspace.ToolResult{
 		Tool:    req.Tool,
 		Summary: "Bounded submit_plan anchor refresh required",
-		Error:   r.planExecuteRecoveryHooks().anchorRefreshWriteOnlyError(strings.TrimSpace(req.Tool), state.RefreshPaths),
+		Error:   planThenExecuteAnchorRefreshWriteOnlyError(strings.TrimSpace(req.Tool), state.RefreshPaths),
 	}, true
 }
 
@@ -10380,7 +10302,7 @@ func planThenExecuteInvalidAnchorRefreshAllowed(req workspace.ToolRequest, targe
 	}
 
 	invalidAnchorPaths := submitPlanInvalidAnchorPaths(rejected)
-	if _, invalidAnchor := invalidAnchorPaths[agentutil.NormalizeRunnerPath(target)]; !invalidAnchor {
+	if _, invalidAnchor := invalidAnchorPaths[NormalizeRunnerPath(target)]; !invalidAnchor {
 		return false
 	}
 
@@ -10412,7 +10334,7 @@ func (r *Runner) planThenExecuteActiveAnchorRefreshReadAllowed(req workspace.Too
 		return false
 	}
 
-	target := agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
+	target := NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
 	if target == "" {
 		return false
 	}
@@ -10444,7 +10366,7 @@ func (r *Runner) planThenExecuteReadySourceRefreshAllowed(req workspace.ToolRequ
 		return false
 	}
 
-	target := agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
+	target := NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
 	if target == "" {
 		return false
 	}
@@ -10481,7 +10403,7 @@ func (r *Runner) planThenExecuteRejectedPlanRefreshReadRedirect(req workspace.To
 		return workspace.ToolRequest{}, "", false
 	}
 
-	target := agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
+	target := NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
 	if target == "" {
 		return workspace.ToolRequest{}, "", false
 	}
@@ -10498,7 +10420,7 @@ func (r *Runner) planThenExecuteRejectedPlanRefreshReadRedirect(req workspace.To
 
 	retargeted := false
 	if !slices.Contains(state.RefreshPaths, target) {
-		target = agentutil.NormalizeRunnerPath(state.RefreshPaths[0])
+		target = NormalizeRunnerPath(state.RefreshPaths[0])
 		retargeted = true
 	}
 
@@ -10580,7 +10502,7 @@ func (r *Runner) planThenExecuteSubmitPlanOnlySurfaceRejection(req workspace.Too
 	}
 
 	if planThenExecuteSubmitCorrectionActive(r.RuntimeBrief, results) {
-		summary, errorText, prompt := planThenExecuteSubmitCorrectionWrongToolRejection(tool, planThenExecuteSubmitCorrectionBlockerAllowed(r.RuntimeBrief, results))
+		summary, errorText, prompt := planThenExecuteSubmitCorrectionWrongToolRejection(tool, planThenExecuteSubmitCorrectionRecoveryPlanForResults(r.RuntimeBrief, results, ""))
 		return summary, errorText, prompt, true
 	}
 
@@ -10594,28 +10516,25 @@ func (r *Runner) planThenExecuteSubmitPlanOnlySurfaceRejection(req workspace.Too
 	return "Plan-execute submit_plan required", fmt.Sprintf("%s is not available because the plan-execute planner is source-ready and exposes only `submit_plan`. Emit a parser-readable `submit_plan` JSON object now. %s Use `Decision: source-satisfied` or `<<QUESTION>>:` only for a true terminal exception; do not request another source read.", tool, planThenExecuteSubmitPlanCoverageSentence()), prompt, true
 }
 
-func planThenExecuteSubmitCorrectionWrongToolRejection(tool string, blockerAllowed bool) (string, string, string) {
+func planThenExecuteSubmitCorrectionRecoveryPlanForResults(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, refreshNote string) PlanExecuteRecoveryPlan {
+	rejected, _, _ := lastRejectedSubmitPlanCoverageResult(results)
+	return planThenExecuteSubmitCorrectionRecoveryPlan(brief, rejected, refreshNote, planThenExecuteSubmitCorrectionBlockerAllowed(brief, results))
+}
+
+func planThenExecuteSubmitCorrectionWrongToolRejection(tool string, plan PlanExecuteRecoveryPlan) (string, string, string) {
 	tool = strings.TrimSpace(tool)
 	if tool == "" {
 		tool = "the requested tool"
 	}
 
-	outcome := "Do not call `read_file`, `code_navigate`, search, shell, git, source-sanity, or per-edit write tools in this state. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not describe the correction in prose."
 	errorSuffix := "No terminal source-satisfied/question/prose fallback is valid in this state."
-	if blockerAllowed {
-		outcome = "Do not call `read_file`, `code_navigate`, search, shell, git, source-sanity, or per-edit write tools in this state. Do not answer `Decision: source-satisfied`. If no safe executable edit body can be produced from the gathered evidence after these rejected submit_plan attempts, answer `<<QUESTION>>:` with the exact path-specific missing body/anchor blocker."
+	if slices.Contains(plan.TerminalOptions, "<<QUESTION>>:") {
 		errorSuffix = "`<<QUESTION>>:` is valid only for the exact path-specific missing body/anchor blocker; no source-satisfied/prose fallback is valid in this state."
 	}
 
-	prompt := strings.Join([]string{
-		"Plan-execute submit-correction mode is now the only allowed planner action. Every required_edit_path already has source-body evidence, and the previous `submit_plan` was rejected before it became a valid plan artifact.",
-		"The next visible action must be exactly one parser-readable `submit_plan` JSON object. " + planThenExecuteSubmitPlanCoverageSentence() + " " + planThenExecuteSubmitPlanVisibleJSONInstruction(),
-		outcome,
-	}, "\n")
-
 	return "Corrected submit_plan required",
 		fmt.Sprintf("%s is not available because plan-execute submit-correction mode exposes only `submit_plan`. Emit one parser-readable `submit_plan` JSON object now. %s %s", tool, planThenExecuteSubmitPlanCoverageSentence(), errorSuffix),
-		prompt
+		RenderPlanExecuteRecoveryPlan(plan)
 }
 
 func planThenExecuteSubmitCorrectionCurrentSurfaceRejection(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, string, string, bool) {
@@ -10627,7 +10546,7 @@ func planThenExecuteSubmitCorrectionCurrentSurfaceRejection(req workspace.ToolRe
 		return "", "", "", false
 	}
 
-	summary, errorText, prompt := planThenExecuteSubmitCorrectionWrongToolRejection(req.Tool, planThenExecuteSubmitCorrectionBlockerAllowed(brief, results))
+	summary, errorText, prompt := planThenExecuteSubmitCorrectionWrongToolRejection(req.Tool, planThenExecuteSubmitCorrectionRecoveryPlanForResults(brief, results, ""))
 
 	return summary, errorText, prompt, true
 }
@@ -10669,7 +10588,7 @@ func planThenExecuteTerminalSubmitPlanSurfaceReady(brief workerruntime.WorkerRun
 }
 
 func planThenExecuteRequiredSourceRequestAdvances(req workspace.ToolRequest, path string, evidence planThenExecuteSourceEvidence, results []workspace.ToolResult) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -10738,7 +10657,7 @@ func planThenExecuteRequiredSourceRequestAdvances(req workspace.ToolRequest, pat
 }
 
 func planThenExecuteRequiredSourceReadTotal(path string, results []workspace.ToolResult) int {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return 0
 	}
@@ -10765,7 +10684,7 @@ func planThenExecuteRequiredSourceReadTotal(path string, results []workspace.Too
 }
 
 func planThenExecuteReadRangeSeen(path string, start, end int, results []workspace.ToolResult) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" || start <= 0 || end < start {
 		return false
 	}
@@ -10810,7 +10729,7 @@ type requiredSourceFollowupWording struct {
 }
 
 func (r *Runner) deterministicRequiredSourceFollowup(path string, results []workspace.ToolResult, wording requiredSourceFollowupWording) (workspace.ToolRequest, bool) {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return workspace.ToolRequest{}, false
 	}
@@ -10879,7 +10798,7 @@ func deterministicRequiredSourceRangeFollowup(path string, results []workspace.T
 }
 
 func planThenExecuteNextRequiredSourceReadRange(path string, results []workspace.ToolResult) (int, int, bool) {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return 0, 0, false
 	}
@@ -10945,7 +10864,7 @@ func planThenExecutePathSupportsCodeNavigate(path string) bool {
 }
 
 func planThenExecuteFileOutlineSeen(path string, results []workspace.ToolResult) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -10969,7 +10888,7 @@ func planThenExecuteFileOutlineSeen(path string, results []workspace.ToolResult)
 }
 
 func planThenExecuteReadSymbolSeen(path, symbol string, results []workspace.ToolResult) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	symbol = strings.ToLower(strings.TrimSpace(symbol))
 
 	if path == "" || symbol == "" {
@@ -10991,7 +10910,7 @@ func planThenExecuteReadSymbolSeen(path, symbol string, results []workspace.Tool
 }
 
 func planThenExecuteBestOutlineSymbol(path, objective string, results []workspace.ToolResult) string {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return ""
 	}
@@ -11059,7 +10978,7 @@ func planThenExecutePreviewDeclarationNames(text string) []string {
 }
 
 func planThenExecuteBestOutlineRange(path, objective string, results []workspace.ToolResult) (int, int, bool) {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return 0, 0, false
 	}
@@ -11169,7 +11088,7 @@ func planThenExecuteSymbolScoreTokens(text string) map[string]int {
 }
 
 func planThenExecutePathHasAnyToolEvidence(path string, results []workspace.ToolResult) bool {
-	normalized := agentutil.NormalizeRunnerPath(path)
+	normalized := NormalizeRunnerPath(path)
 	if normalized == "" {
 		return false
 	}

@@ -1,17 +1,6 @@
-{
-  "model": "scripted-model",
-  "responses": [
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"confirm exact ShortLabel source before the design-doc atom edit\",\"why_not_answering\":\"required_edit_paths need source-body evidence before writing\"}"
-    },
-    {
-      "content": "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"implement the bounded design-doc atom target\"}"
-    },
-    {
-      "content": "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/labels.go\"}"
-    },
-    {
-      "content": "Implemented the design-doc scoped atom.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: Source sanity passed for internal/labels/labels.go."
-    }
-  ]
-}
+[
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"confirm exact ShortLabel source before the design-doc atom edit\",\"why_not_answering\":\"required_edit_paths need source-body evidence before writing\"}",
+  "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"implement the bounded design-doc atom target\"}",
+  "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/labels.go\"}",
+  "Implemented the design-doc scoped atom.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: Source sanity passed for internal/labels/labels.go."
+]

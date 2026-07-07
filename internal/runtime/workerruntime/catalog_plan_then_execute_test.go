@@ -4,7 +4,7 @@ import (
 	"slices"
 	"testing"
 
-	"idiom/internal/contracts/autonomy"
+	"idiom/internal/capabilities/workspace"
 )
 
 func TestRuntimeContractForTaskFamilyRecognizesPlanThenExecutePlanner(t *testing.T) {
@@ -21,19 +21,19 @@ func TestRuntimeContractForTaskFamilyRecognizesPlanThenExecutePlanner(t *testing
 		t.Fatalf("planner phase needs guarded_workspace_write so the runner doesn't block reads/submit_plan, got %q", spec.PermissionProfile)
 	}
 
-	if spec.ToolProfile != CapabilityPlanSubmissionPlanner {
+	if spec.ToolProfile != workspace.ToolSurfaceProfilePlanSubmissionPlanner {
 		t.Fatalf("planner phase should expose the plan-submission profile, got %q", spec.ToolProfile)
 	}
 
-	if !planThenExecuteToolListContains(spec.RequiredTools, "submit_plan") {
+	if !planThenExecuteToolListContains(spec.RequiredTools, workspace.ToolNameSubmitPlan) {
 		t.Fatalf("planner phase must require submit_plan in RequiredTools, got %v", spec.RequiredTools)
 	}
 
-	if !planThenExecuteToolListContains(spec.RequiredTools, requiredToolGitHistoryLookup) {
+	if !planThenExecuteToolListContains(spec.RequiredTools, workspace.RequiredToolGitHistoryLookup) {
 		t.Fatalf("planner phase must require git history lookup before submit_plan, got %v", spec.RequiredTools)
 	}
 
-	if !planThenExecuteToolListContains(spec.RequiredEvidence, string(requiredEvidenceGitHistoryRationale)) {
+	if !planThenExecuteToolListContains(spec.RequiredEvidence, string(RequiredEvidenceGitHistoryRationale)) {
 		t.Fatalf("planner phase must require git history rationale evidence, got %v", spec.RequiredEvidence)
 	}
 
@@ -97,23 +97,23 @@ func TestRuntimeBriefForPlanThenExecutePlannerKeepsSubmitPlanInAllowedTools(t *t
 	}
 }
 
-func TestPlanSubmissionPlannerProfileUsesAutonomyMetadata(t *testing.T) {
-	canonicalTools := autonomy.PlanExecutePlannerToolNames()
-	manifestTools := ManifestToolsForCapabilityProfile(CapabilityPlanSubmissionPlanner)
+func TestPlanSubmissionPlannerProfileUsesWorkspacePlannerMetadata(t *testing.T) {
+	canonicalTools := workspace.PlanExecutePlannerToolNames()
+	manifestTools := workspace.ManifestToolsForSurfaceProfile(workspace.ToolSurfaceProfilePlanSubmissionPlanner)
 	for _, tool := range canonicalTools {
 		if !planThenExecuteToolListContains(manifestTools, tool) {
-			t.Fatalf("planner manifest missing autonomy tool %q: manifest=%#v canonical=%#v", tool, manifestTools, canonicalTools)
+			t.Fatalf("planner manifest missing workspace planner tool %q: manifest=%#v canonical=%#v", tool, manifestTools, canonicalTools)
 		}
 	}
 
 	for _, tool := range manifestTools {
 		if !slices.Contains(canonicalTools, tool) {
-			t.Fatalf("planner manifest exposes non-autonomy tool %q: manifest=%#v canonical=%#v", tool, manifestTools, canonicalTools)
+			t.Fatalf("planner manifest exposes non-planner tool %q: manifest=%#v canonical=%#v", tool, manifestTools, canonicalTools)
 		}
 	}
 }
 
-func TestRuntimeBriefForPlanThenExecutePlannerAddsSubmitPlanBeforeWorkspacePlannerMode(t *testing.T) {
+func TestRuntimeBriefForPlanThenExecutePlannerUsesWorkspaceProfileCompletion(t *testing.T) {
 	available := []string{
 		"read_file", "search_content", "code_navigate",
 		"product_efforts", "product_status",
@@ -121,12 +121,12 @@ func TestRuntimeBriefForPlanThenExecutePlannerAddsSubmitPlanBeforeWorkspacePlann
 	brief := RuntimeBriefForTaskFamily("plan_then_execute_planner", "main", available)
 
 	if !planThenExecuteToolListContains(brief.AllowedTools, "submit_plan") {
-		t.Fatalf("planner brief must include submit_plan even before workspace planner mode enables it, got %v", brief.AllowedTools)
+		t.Fatalf("planner brief must include workspace-profile-required submit_plan, got %v", brief.AllowedTools)
 	}
 
 	for _, expected := range []string{"product_efforts", "product_status"} {
 		if !planThenExecuteToolListContains(brief.AllowedTools, expected) {
-			t.Fatalf("planner brief lost %s from pre-mode workspace surface, got %v", expected, brief.AllowedTools)
+			t.Fatalf("planner brief lost workspace-profile tool %s, got %v", expected, brief.AllowedTools)
 		}
 	}
 }
@@ -145,11 +145,11 @@ func TestRuntimeContractForPlanThenExecuteReviewRepairIsReviewShaped(t *testing.
 		t.Fatalf("review-repair phase should not be generic guarded_workspace_write, got %q", spec.PermissionProfile)
 	}
 
-	if spec.ToolProfile != CapabilityPlanSubmissionReview {
+	if spec.ToolProfile != workspace.ToolSurfaceProfilePlanSubmissionReview {
 		t.Fatalf("review-repair phase should expose read tools plus submit_plan, got %q", spec.ToolProfile)
 	}
 
-	if planThenExecuteToolListContains(spec.RequiredTools, "submit_plan") {
+	if planThenExecuteToolListContains(spec.RequiredTools, workspace.ToolNameSubmitPlan) {
 		t.Fatalf("review-repair must not require submit_plan when a checklist-backed pass is valid, got %v", spec.RequiredTools)
 	}
 
@@ -190,22 +190,6 @@ func TestRuntimeBriefForPlanThenExecuteReviewRepairKeepsSubmitPlanWithoutWrites(
 	for _, forbidden := range []string{"ask", "gdscript_trace", "mcp:question/ask"} {
 		if planThenExecuteToolListContains(brief.AllowedTools, forbidden) {
 			t.Fatalf("review-repair brief must not surface external tool %s; got %v", forbidden, brief.AllowedTools)
-		}
-	}
-}
-
-func TestBuiltInToolNamesDoNotLookExternal(t *testing.T) {
-	for _, tool := range []string{
-		"code_navigate",
-		"read_only_capability",
-		"source_sanity",
-		"harness_feedback",
-		"context_impact",
-		"submit_plan",
-		"delegate_edit",
-	} {
-		if isExternalToolName(tool) {
-			t.Fatalf("built-in tool %q must not be classified as a project external", tool)
 		}
 	}
 }

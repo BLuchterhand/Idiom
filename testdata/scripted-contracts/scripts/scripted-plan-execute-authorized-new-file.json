@@ -1,17 +1,6 @@
-{
-  "model": "scripted-model",
-  "responses": [
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":80}"
-    },
-    {
-      "content": "{\"tool\":\"history_range\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":80}"
-    },
-    {
-      "content": "{\"tool\":\"submit_plan\",\"rationale\":\"Update ShortLabel and create the explicitly authorized generated label helper file.\",\"edits\":[{\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"purpose\":\"Update ShortLabel to return the shorter save label\"},{\"path\":\"internal/labels/generated_label.go\",\"old_text\":\"\",\"new_text\":\"package labels\\n\\nfunc GeneratedLabel() string {\\n\\treturn \\\"Generated\\\"\\n}\\n\",\"replace_all\":true,\"purpose\":\"Create the authorized generated label helper file\"}]}"
-    },
-    {
-      "content": "Decision: pass\n\nVerification Checklist:\n- Required behavior: ShortLabel returns \"Save\" and GeneratedLabel returns \"Generated\" after the submitted edits.\n- Scope safety: Only internal/labels/labels.go and internal/labels/generated_label.go changed, both inside Allowed Repair Paths.\n- Test or command evidence: Phase Evidence reports the required verification and source_sanity checks."
-    }
-  ]
-}
+[
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":80}",
+  "{\"tool\":\"history_range\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":80}",
+  "{\"tool\":\"submit_plan\",\"rationale\":\"Update ShortLabel and create the explicitly authorized generated label helper file.\",\"edits\":[{\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"purpose\":\"Update ShortLabel to return the shorter save label\"},{\"path\":\"internal/labels/generated_label.go\",\"old_text\":\"\",\"new_text\":\"package labels\\n\\nfunc GeneratedLabel() string {\\n\\treturn \\\"Generated\\\"\\n}\\n\",\"replace_all\":true,\"purpose\":\"Create the authorized generated label helper file\"}]}",
+  "Decision: pass\n\nVerification Checklist:\n- Required behavior: ShortLabel returns \"Save\" and GeneratedLabel returns \"Generated\" after the submitted edits.\n- Scope safety: Only internal/labels/labels.go and internal/labels/generated_label.go changed, both inside Allowed Repair Paths.\n- Test or command evidence: Phase Evidence reports the required verification and source_sanity checks."
+]

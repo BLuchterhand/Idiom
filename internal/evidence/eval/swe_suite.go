@@ -26,7 +26,18 @@ type SWESuite struct {
 	Name     string              `json:"name"`
 	Version  int                 `json:"version,omitempty"`
 	Coverage SWECoverageContract `json:"coverage,omitempty"`
+	Defaults SWETaskDefaults     `json:"defaults,omitempty"`
 	Tasks    []SWETask           `json:"tasks"`
+}
+
+type SWETaskDefaults struct {
+	Tags     []string            `json:"tags,omitempty"`
+	Fixture  string              `json:"fixture,omitempty"`
+	Scenario SWEScenarioDefaults `json:"scenario,omitempty"`
+}
+
+type SWEScenarioDefaults struct {
+	RequireRunEvents []string `json:"require_run_events,omitempty"`
 }
 
 type SWETask struct {
@@ -280,7 +291,29 @@ func ReadSWESuite(path string) (SWESuite, error) {
 		return suite, fmt.Errorf("decode SWE suite: %w", err)
 	}
 
+	applySWETaskDefaults(&suite)
+
 	return suite, nil
+}
+
+func applySWETaskDefaults(suite *SWESuite) {
+	if suite == nil {
+		return
+	}
+
+	defaults := suite.Defaults
+	if len(defaults.Tags) == 0 && strings.TrimSpace(defaults.Fixture) == "" && len(defaults.Scenario.RequireRunEvents) == 0 {
+		return
+	}
+
+	for i := range suite.Tasks {
+		task := &suite.Tasks[i]
+		task.Tags = textutil.UniqueNonEmpty(append(append([]string{}, defaults.Tags...), task.Tags...))
+		if strings.TrimSpace(task.Fixture) == "" {
+			task.Fixture = strings.TrimSpace(defaults.Fixture)
+		}
+		task.Scenario.RequireRunEvents = textutil.UniqueNonEmpty(append(append([]string{}, defaults.Scenario.RequireRunEvents...), task.Scenario.RequireRunEvents...))
+	}
 }
 
 func ValidateSWESuite(suite SWESuite) error {

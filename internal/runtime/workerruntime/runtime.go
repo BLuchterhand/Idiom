@@ -13,13 +13,7 @@ type ToolResultSummary struct {
 	OutputChars int    `json:"output_chars,omitempty"`
 }
 
-type ToolManifestEntry struct {
-	Tool                     string   `json:"tool"`
-	Request                  string   `json:"request"`
-	Purpose                  string   `json:"purpose,omitempty"`
-	EvidenceCapabilities     []string `json:"evidence_capabilities,omitempty"`
-	CapabilityClassification string   `json:"capability_classification,omitempty"`
-}
+type ToolManifestEntry = workspace.ToolManifestEntry
 
 type BudgetBrief struct {
 	MaxToolSteps             int `json:"max_tool_steps,omitempty"`

@@ -8,12 +8,10 @@ import (
 	"idiom/internal/runtime/workerruntime"
 )
 
-func TestSetForcedTaskFamilyTogglesPlanThenExecutePlannerMode(t *testing.T) {
-	// End-to-end: setting the forced task family on the Model must
-	// propagate to the workspace.Manager so the manifest swaps
-	// per-edit writes for submit_plan. Without this wiring the
-	// planner phase has no submit_plan tool to call (the failure
-	// mode the first plan-execute Colony run hit on 2026-05-09).
+func TestSetForcedTaskFamilyProjectsPlanThenExecuteToolSurface(t *testing.T) {
+	// End-to-end: setting the forced task family on the Model must make the
+	// prompt/runtime brief use the plan-submission tool surface so the planner
+	// phase exposes submit_plan without storing phase state on workspace.Manager.
 	cfg := config.Default()
 
 	cfg.Workspace.Root = t.TempDir()
@@ -24,8 +22,8 @@ func TestSetForcedTaskFamilyTogglesPlanThenExecutePlannerMode(t *testing.T) {
 	model := New(cfg)
 	defer model.Close()
 
-	// Default: planner mode off, edit_file in the manifest, submit_plan absent.
-	defaultTools := model.workspace.AllowedTools()
+	// Default: edit_file in the manifest, submit_plan absent.
+	defaultTools := model.workspaceAllowedTools()
 	if !appPlanModeContains(defaultTools, "edit_file") {
 		t.Fatalf("default workspace must include edit_file, got %v", defaultTools)
 	}
@@ -34,37 +32,25 @@ func TestSetForcedTaskFamilyTogglesPlanThenExecutePlannerMode(t *testing.T) {
 		t.Fatalf("default workspace must NOT include submit_plan, got %v", defaultTools)
 	}
 
-	if model.workspace.PlanThenExecutePlannerMode() {
-		t.Fatalf("planner mode must default to off")
-	}
-
-	// Forcing the canonical plan-then-execute task family flips the
-	// workspace flag.
+	// Forcing the canonical plan-then-execute task family projects the
+	// plan-submission planner surface.
 	model.SetForcedTaskFamily("plan_then_execute_planner")
 
-	if !model.workspace.PlanThenExecutePlannerMode() {
-		t.Fatalf("SetForcedTaskFamily(plan_then_execute_planner) must enable workspace planner mode")
-	}
-
-	plannerTools := model.workspace.AllowedTools()
+	plannerTools := model.workspaceAllowedTools()
 	if !appPlanModeContains(plannerTools, "submit_plan") {
-		t.Fatalf("planner-mode manifest must include submit_plan, got %v", plannerTools)
+		t.Fatalf("planner-profile manifest must include submit_plan, got %v", plannerTools)
 	}
 
 	for _, write := range []string{"edit_file", "apply_patch", "delegate_edit"} {
 		if appPlanModeContains(plannerTools, write) {
-			t.Fatalf("planner-mode manifest must hide %s, got %v", write, plannerTools)
+			t.Fatalf("planner-profile manifest must hide %s, got %v", write, plannerTools)
 		}
 	}
 
-	// Switching to a different family flips the flag back off.
+	// Switching to a different family returns to the default workspace surface.
 	model.SetForcedTaskFamily("implementation")
 
-	if model.workspace.PlanThenExecutePlannerMode() {
-		t.Fatalf("non-plan-execute family must restore default workspace mode")
-	}
-
-	restored := model.workspace.AllowedTools()
+	restored := model.workspaceAllowedTools()
 	if !appPlanModeContains(restored, "edit_file") {
 		t.Fatalf("restored manifest must include edit_file, got %v", restored)
 	}
@@ -75,17 +61,13 @@ func TestSetForcedTaskFamilyTogglesPlanThenExecutePlannerMode(t *testing.T) {
 
 	model.SetForcedTaskFamily("plan_then_execute_review_repair")
 
-	if !model.workspace.PlanThenExecutePlannerMode() {
-		t.Fatalf("SetForcedTaskFamily(plan_then_execute_review_repair) must enable submit_plan surface")
-	}
-
-	reviewTools := model.workspace.AllowedTools()
+	reviewTools := model.workspaceAllowedTools()
 	if !appPlanModeContains(reviewTools, "submit_plan") {
-		t.Fatalf("review-repair manifest must include submit_plan, got %v", reviewTools)
+		t.Fatalf("review-repair profile must include submit_plan, got %v", reviewTools)
 	}
 
 	if appPlanModeContains(reviewTools, "edit_file") {
-		t.Fatalf("review-repair manifest must hide per-edit writes, got %v", reviewTools)
+		t.Fatalf("review-repair profile must hide per-edit writes, got %v", reviewTools)
 	}
 }
 

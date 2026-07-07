@@ -69,7 +69,15 @@ type PlanExecutePlannerInput struct {
 	Budget               BudgetInput
 	Runtime              RuntimeEnvelopeInput
 	Protocol             ProtocolInput
+	ToolMetadata         []PlanExecutePlannerToolMetadata
 	MetadataTags         []string
+}
+
+type PlanExecutePlannerToolMetadata struct {
+	Tool           string
+	Capabilities   []autonomy.Capability
+	SideEffect     autonomy.SideEffectClass
+	PlannerAllowed bool
 }
 
 type ReadinessInput struct {

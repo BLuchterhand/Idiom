@@ -110,3 +110,19 @@ func TestTruncate(t *testing.T) {
 		})
 	}
 }
+
+func TestTruncateWithByteCount(t *testing.T) {
+	got := TruncateWithByteCount("hello world", 5)
+	want := "hello\n\n[truncated 6 bytes]\n"
+	if got != want {
+		t.Fatalf("TruncateWithByteCount = %q, want %q", got, want)
+	}
+
+	if got := TruncateWithByteCount("short", 10); got != "short" {
+		t.Fatalf("short text should not be truncated, got %q", got)
+	}
+
+	if got := TruncateWithByteCount("😀hello", 2); got != "\n\n[truncated 7 bytes]\n" {
+		t.Fatalf("multibyte truncation should stay UTF-8 safe, got %q", got)
+	}
+}

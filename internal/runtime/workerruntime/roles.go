@@ -1,8 +1,7 @@
 package workerruntime
 
 import (
-	"strings"
-
+	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/autonomy"
 )
 
@@ -28,7 +27,7 @@ func RoleSpecFor(name string) RoleSpec {
 			TaskFamily:           autonomy.TaskFamilyDelegatedIsolatedImpl,
 			Contract:             ContractPatchSummary,
 			PermissionProfile:    PermissionIsolatedWorkbranchWrite,
-			AllowedTools:         ManifestToolsForCapabilityProfile(CapabilityIsolatedWrite),
+			AllowedTools:         workspace.ManifestToolsForSurfaceProfile(workspace.ToolSurfaceProfileIsolatedWrite),
 			ForbiddenTools:       []string{"task", "mutating_parent_workspace", "git_push", "git_history_mutation", "git_index_mutation", "publish", "deploy"},
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceChangedPathsOrNoopReason, RequiredEvidenceVerificationStatus, RequiredEvidenceConfidence},
 			ReadinessGate:        []ReadinessGateID{ReadinessPatchSummaryPresent, ReadinessChangedPathsReported, ReadinessVerificationStatusReported},
@@ -42,8 +41,8 @@ func RoleSpecFor(name string) RoleSpec {
 			TaskFamily:           autonomy.TaskFamilyDelegatedReadOnly,
 			Contract:             ContractGroundedEvidence,
 			PermissionProfile:    PermissionReadOnlyWorkspace,
-			AllowedTools:         filterAllowedTools(ManifestToolsForCapabilityProfile(CapabilityReadOnlyDiscovery), CapabilityReadOnlyDiscovery, readOnlyChildAllowedTools()...),
-			ForbiddenTools:       []string{"edit_file", "write_file", "append_file", "mkdir", "apply_patch", "go_move_declarations", "mutating_shell", "task"},
+			AllowedTools:         workspace.ManifestToolsForSurfaceProfile(workspace.ToolSurfaceProfileDelegatedReadOnly),
+			ForbiddenTools:       roleForbiddenWorkspaceWrites("mutating_shell", workspace.ToolNameTask),
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceInspectedPaths, RequiredEvidenceAnswerAddressesDelegatedQuestion, RequiredEvidenceConfidence},
 			SearchPolicy:         []SearchPolicyID{SearchPolicyPreferDiscoveryQueryForCompositeQuestions, SearchPolicyPreferSymbolOrHandleProbesOverRawPathReads, SearchPolicyAnswerWhenEvidenceIsSufficient, SearchPolicyIfNotAnsweringNameOneExactMissingClaimAndProbe, SearchPolicyAvoidBroadLoops},
 			VerificationContract: VerificationNotRequiredReadOnlyChild,
@@ -55,7 +54,7 @@ func RoleSpecFor(name string) RoleSpec {
 			TaskFamily:           autonomy.TaskFamilyImplementationRepair,
 			Contract:             ContractRepairSummary,
 			PermissionProfile:    PermissionGuardedWorkspaceWrite,
-			AllowedTools:         ManifestToolsForCapabilityProfile(CapabilityGuardedWrite),
+			AllowedTools:         workspace.ManifestToolsForSurfaceProfile(workspace.ToolSurfaceProfileGuardedWrite),
 			ForbiddenTools:       []string{"unbounded_write", "unapproved_protected_write"},
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceFailedVerificationOutput, RequiredEvidenceChangedPathsOrNoopReasonRepair, RequiredEvidenceVerificationStatus},
 			ReadinessGate:        []ReadinessGateID{ReadinessFailedOutputAddressed, ReadinessVerificationContractResolved},
@@ -69,7 +68,7 @@ func RoleSpecFor(name string) RoleSpec {
 			TaskFamily:           autonomy.TaskFamilyImplementation,
 			Contract:             ContractImplementationResult,
 			PermissionProfile:    PermissionGuardedWorkspaceWrite,
-			AllowedTools:         ManifestToolsForCapabilityProfile(CapabilityGuardedWrite),
+			AllowedTools:         workspace.ManifestToolsForSurfaceProfile(workspace.ToolSurfaceProfileGuardedWrite),
 			ForbiddenTools:       []string{"unbounded_write", "unapproved_protected_write"},
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceChangedFilesOrNoopReason, RequiredEvidenceVerificationResult},
 			ReadinessGate:        []ReadinessGateID{ReadinessTargetPacketOrChangedFilesPresent, ReadinessVerificationContractResolved},
@@ -84,7 +83,7 @@ func RoleSpecFor(name string) RoleSpec {
 			Contract:             ContractDirectAnswer,
 			PermissionProfile:    PermissionConversationOnly,
 			AllowedTools:         nil,
-			ForbiddenTools:       []string{"mkdir", "edit_file", "write_file", "append_file", "apply_patch", "go_move_declarations"},
+			ForbiddenTools:       roleForbiddenWorkspaceWrites(),
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceAnswerAddressesUserRequest},
 			SearchPolicy:         []SearchPolicyID{SearchPolicyUseWorkspaceToolsOnlyWhenNeeded},
 			VerificationContract: VerificationNotRequiredConversation,
@@ -93,20 +92,9 @@ func RoleSpecFor(name string) RoleSpec {
 	}
 }
 
-func readOnlyChildAllowedTools() []string {
-	tools := readOnlyDiscoveryToolNames()
-	filtered := make([]string, 0, len(tools))
-
-	for _, tool := range tools {
-		switch strings.TrimSpace(tool) {
-		case "task", "list_files":
-			continue
-		}
-
-		filtered = append(filtered, tool)
-	}
-
-	return filtered
+func roleForbiddenWorkspaceWrites(extra ...string) []string {
+	tools := workspace.WorkspaceWriteToolNames()
+	return append(tools, extra...)
 }
 
 func RuntimeBriefForRole(role string, lane string, objective string) WorkerRuntimeBrief {
@@ -125,8 +113,8 @@ func RuntimeBriefForRole(role string, lane string, objective string) WorkerRunti
 		ForbiddenTools:       append([]string(nil), spec.ForbiddenTools...),
 		RequiredEvidence:     EvidenceRequirementStrings(spec.RequiredEvidence),
 		ReadinessGate:        ReadinessGateStrings(spec.ReadinessGate),
-		SearchPolicy:         searchPolicyStrings(spec.SearchPolicy),
+		SearchPolicy:         typedIDStrings(spec.SearchPolicy),
 		VerificationContract: string(spec.VerificationContract),
-		StopConditions:       stopConditionStrings(spec.StopConditions),
+		StopConditions:       typedIDStrings(spec.StopConditions),
 	})
 }

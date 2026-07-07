@@ -23,7 +23,7 @@ const (
 
 // ClassifyTool returns the ToolCategory for a given tool name.
 func ClassifyTool(name string) ToolCategory {
-	if metadata, ok := builtInToolSurfaceCatalog.Lookup(name); ok && ToolCategory(metadata.Category) != CategoryUnknown {
+	if metadata, ok := builtInToolSurfaceCatalog.lookup(name); ok && ToolCategory(metadata.Category) != CategoryUnknown {
 		return ToolCategory(metadata.Category)
 	}
 
@@ -50,15 +50,12 @@ func IsReadTool(name string) bool {
 // class covers follow-up reads/searches that must explain the exact remaining
 // evidence gap.
 func IsReadClassToolName(name string) bool {
-	switch strings.TrimSpace(name) {
-	case ToolNameReadFile, ToolNameSearchContent, ToolNameSearchFiles, ToolNameListFiles,
-		ToolNameHarnessAudit, ToolNameDiscoveryQuery, ToolNameStructuralSearch, ToolNameCtagsSymbols,
-		ToolNameDependencyGraph, ToolNameHistoryRange, ToolNameHistorySymbol, ToolNameBlameRange,
-		ToolNameSemgrepScan, ToolNameJoernScan:
+	name = strings.TrimSpace(name)
+	if builtInToolSurfaceHasFacet(name, toolSurfaceFacetReadClass) {
 		return true
-	default:
-		return IsLanguageReadClassToolName(name)
 	}
+
+	return IsLanguageReadClassToolName(name)
 }
 
 func IsLanguageReadClassToolName(name string) bool {
@@ -75,6 +72,178 @@ func IsLanguageReadClassToolName(name string) bool {
 	)
 }
 
+// IsRuntimeContentInspectionTool reports whether a tool actually inspects or
+// narrows source content. Runtime uses this to distinguish content inspection
+// from broad directory listing loops.
+func IsRuntimeContentInspectionTool(name string) bool {
+	name = strings.TrimSpace(name)
+	if builtInToolSurfaceHasFacet(name, toolSurfaceFacetRuntimeContentInspection) {
+		return true
+	}
+
+	return languageToolHasAnyEvidenceCapability(name,
+		EvidenceCapabilityFindSymbol,
+		EvidenceCapabilityInspectSymbol,
+		EvidenceCapabilityFindDefinition,
+		EvidenceCapabilityFindReferences,
+		EvidenceCapabilityFindImplementations,
+		EvidenceCapabilityCallsFrom,
+		EvidenceCapabilityCallsInto,
+		EvidenceCapabilityRelatedFiles,
+		EvidenceCapabilitySourceDiagnostics,
+	)
+}
+
+// IsRuntimeSearchGuidanceTool reports whether a successful result is a
+// search-like narrowing step whose next action should usually read or inspect
+// the highest-confidence hit.
+func IsRuntimeSearchGuidanceTool(name string) bool {
+	name = strings.TrimSpace(name)
+	if builtInToolSurfaceHasFacet(name, toolSurfaceFacetRuntimeSearchGuidance) {
+		return true
+	}
+
+	return languageToolHasAnyEvidenceCapability(name,
+		EvidenceCapabilityFindSymbol,
+		EvidenceCapabilityFindDefinition,
+		EvidenceCapabilityFindReferences,
+		EvidenceCapabilityFindImplementations,
+		EvidenceCapabilityCallsFrom,
+		EvidenceCapabilityCallsInto,
+		EvidenceCapabilityRelatedFiles,
+	)
+}
+
+// IsRuntimeOrientationGuidanceTool reports whether a just-finished tool was a
+// broad orientation/search step for runtime next-action guidance. Structured
+// symbol tools are intentionally excluded because they already return the
+// evidence that relational queries usually need.
+func IsRuntimeOrientationGuidanceTool(name string) bool {
+	return builtInToolSurfaceHasFacet(name, toolSurfaceFacetRuntimeOrientationGuidance)
+}
+
+// IsSourceBodyInspectionTool reports whether a result from tool can provide a
+// concrete source body or declaration boundary, as opposed to only search or
+// directory evidence.
+func IsSourceBodyInspectionTool(name string) bool {
+	name = strings.TrimSpace(name)
+	if builtInToolSurfaceHasFacet(name, toolSurfaceFacetSourceBodyInspection) {
+		return true
+	}
+
+	return LanguageToolHasAnyCapability(name,
+		CapReadSymbol,
+		CapFileOutline,
+		CapExtractBody,
+	)
+}
+
+func IsLanguageSourceBodyTool(name string) bool {
+	return LanguageToolHasAnyCapability(name, CapReadSymbol, CapExtractBody)
+}
+
+// TaskLedgerReadEvidenceTool reports whether a successful tool result can
+// satisfy a task-ledger read evidence reference.
+func TaskLedgerReadEvidenceTool(name string) bool {
+	name = strings.TrimSpace(name)
+	if builtInToolSurfaceHasFacet(name, toolSurfaceFacetTaskLedgerReadEvidence) {
+		return true
+	}
+
+	return LanguageToolHasAnyCapability(name, CapReadSymbol, CapExtractBody, CapFileOutline)
+}
+
+// ToolRequestPathAttachesInstructions reports whether a request's Path should
+// be used to surface nearby instruction files after the tool result.
+func ToolRequestPathAttachesInstructions(tool string) bool {
+	tool = strings.TrimSpace(tool)
+	if builtInToolSurfaceHasFacet(tool, toolSurfaceFacetPathAttachesInstructions) {
+		return true
+	}
+
+	return LanguageToolHasAnyCapability(tool,
+		CapReadSymbol,
+		CapFileOutline,
+		CapExtractBody,
+		CapDiagnostics,
+	)
+}
+
+// BroadDiscoveryToolNames returns tools that orient broadly rather than inspect
+// one concrete source location. Runtime uses this to hide broad probes once a
+// child packet or readiness gate has supplied enough context.
+func BroadDiscoveryToolNames() []string {
+	tools := builtInToolSurfaceToolsByFacet(toolSurfaceFacetBroadDiscovery)
+
+	for _, entry := range languageToolCatalog() {
+		if entry.Capability == CapOverview || entry.Capability == CapEntrypoints {
+			tools = append(tools, entry.Tool)
+		}
+	}
+
+	return uniqueToolNames(tools)
+}
+
+func uniqueToolNames(tools []string) []string {
+	seen := make(map[string]struct{}, len(tools))
+	out := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		tool = strings.TrimSpace(tool)
+		if tool == "" {
+			continue
+		}
+		if _, ok := seen[tool]; ok {
+			continue
+		}
+		seen[tool] = struct{}{}
+		out = append(out, tool)
+	}
+
+	return out
+}
+
+// RuntimeNarrowToolFamily returns the repeated-tool family used by runtime
+// read-loop nudges. Broad discovery tools intentionally return an empty family.
+func RuntimeNarrowToolFamily(name string) string {
+	name = strings.TrimSpace(name)
+	if family := builtInToolSurfaceRuntimeNarrowFamily(name); family != "" {
+		return family
+	}
+
+	if languageToolHasAnyEvidenceCapability(name,
+		EvidenceCapabilityFindSymbol,
+		EvidenceCapabilityInspectSymbol,
+		EvidenceCapabilityFindDefinition,
+		EvidenceCapabilityFindReferences,
+		EvidenceCapabilityFindImplementations,
+		EvidenceCapabilityCallsFrom,
+		EvidenceCapabilityCallsInto,
+		EvidenceCapabilityRelatedFiles,
+		EvidenceCapabilitySourceDiagnostics,
+	) {
+		return "code_navigate"
+	}
+
+	return ""
+}
+
+func languageToolHasAnyEvidenceCapability(tool string, capabilities ...string) bool {
+	evidenceCapabilities := languageToolEvidenceCapabilities(tool)
+	if len(evidenceCapabilities) == 0 {
+		return false
+	}
+
+	for _, found := range evidenceCapabilities {
+		for _, capability := range capabilities {
+			if found == capability {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // IsRuntimeInspectionRequest reports whether a request gathers or narrows
 // workspace evidence rather than verifying, mutating, or updating harness state.
 func IsRuntimeInspectionRequest(req ToolRequest) bool {
@@ -87,7 +256,7 @@ func IsRuntimeInspectionRequest(req ToolRequest) bool {
 		return IsNarrowingRequest(req)
 	}
 
-	metadata, ok := builtInToolSurfaceCatalog.Lookup(tool)
+	metadata, ok := builtInToolSurfaceCatalog.lookup(tool)
 	if !ok {
 		return isLanguageToolName(tool)
 	}

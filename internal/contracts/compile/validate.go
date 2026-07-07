@@ -24,6 +24,7 @@ func validatePlanExecutePlannerInput(input PlanExecutePlannerInput) error {
 
 	if err := validateToolVocabulary(toolVocabularyPolicy{
 		ForbiddenTools: input.ForbiddenTools,
+		ToolMetadata:   input.ToolMetadata,
 		ExposedToolSets: []toolVocabularySet{
 			{Role: "allowed", Field: "allowed_tools", Tools: input.AllowedTools},
 			{Role: "required", Field: "required_tools", Tools: input.RequiredTools},
@@ -36,7 +37,7 @@ func validatePlanExecutePlannerInput(input PlanExecutePlannerInput) error {
 	}); err != nil {
 		return err
 	}
-	if err := validateHiddenToolProjection("protocol.hidden_tools", input.Protocol.HiddenTools, input.Protocol.VisibleTools, input.Protocol.CallableTools); err != nil {
+	if err := validateHiddenToolProjection("protocol.hidden_tools", input.Protocol.HiddenTools, input.Protocol.VisibleTools, input.Protocol.CallableTools, input.ToolMetadata); err != nil {
 		return err
 	}
 
@@ -53,11 +54,12 @@ func validatePlanExecutePlannerInput(input PlanExecutePlannerInput) error {
 	return nil
 }
 
-func plannerForbiddenTool(tool string) bool {
-	return !autonomy.IsPlanExecutePlannerToolAllowed(tool)
+func plannerForbiddenTool(tool string, metadata []PlanExecutePlannerToolMetadata) bool {
+	entry, ok := lookupPlannerToolMetadata(metadata, tool)
+	return !ok || !entry.PlannerAllowed
 }
 
-func validateProtocolProjection(protocol ModelProtocolProjection) error {
+func validateProtocolProjection(protocol ModelProtocolProjection, metadata []PlanExecutePlannerToolMetadata) error {
 	var problems []string
 
 	if err := validateActionClassVocabulary(actionClassVocabulary{
@@ -71,6 +73,7 @@ func validateProtocolProjection(protocol ModelProtocolProjection) error {
 	}
 
 	if err := validateToolVocabulary(toolVocabularyPolicy{
+		ToolMetadata: metadata,
 		ExposedToolSets: []toolVocabularySet{
 			{Role: "required", Field: "model_protocol.required_tools", Tools: protocol.RequiredTools},
 			{Role: "visible", Field: "model_protocol.visible_tools", Tools: protocol.VisibleTools},
@@ -81,7 +84,7 @@ func validateProtocolProjection(protocol ModelProtocolProjection) error {
 	}); err != nil {
 		return err
 	}
-	if err := validateHiddenToolProjection("model_protocol.hidden_tools", protocol.HiddenTools, protocol.VisibleTools, protocol.CallableTools); err != nil {
+	if err := validateHiddenToolProjection("model_protocol.hidden_tools", protocol.HiddenTools, protocol.VisibleTools, protocol.CallableTools, metadata); err != nil {
 		return err
 	}
 
@@ -100,6 +103,7 @@ func validateProtocolProjection(protocol ModelProtocolProjection) error {
 
 type toolVocabularyPolicy struct {
 	ForbiddenTools         []string
+	ToolMetadata           []PlanExecutePlannerToolMetadata
 	ExposedToolSets        []toolVocabularySet
 	RequireCallableVisible bool
 	PlannerOnly            bool
@@ -113,7 +117,7 @@ type toolVocabularySet struct {
 }
 
 func validateToolVocabulary(policy toolVocabularyPolicy) error {
-	if err := validateKnownTools("forbidden_tools", policy.ForbiddenTools); err != nil {
+	if err := validateKnownTools("forbidden_tools", policy.ForbiddenTools, policy.ToolMetadata); err != nil {
 		return err
 	}
 
@@ -121,7 +125,7 @@ func validateToolVocabulary(policy toolVocabularyPolicy) error {
 	var callable []string
 
 	for _, set := range policy.ExposedToolSets {
-		if err := validateKnownTools(set.Field, set.Tools); err != nil {
+		if err := validateKnownTools(set.Field, set.Tools, policy.ToolMetadata); err != nil {
 			return err
 		}
 
@@ -129,13 +133,13 @@ func validateToolVocabulary(policy toolVocabularyPolicy) error {
 			return fmt.Errorf("tool %q cannot be both %s and forbidden", overlap, set.Role)
 		}
 
-		if exposedTool, forbiddenTool, capability := firstCapabilityOverlap(set.Tools, policy.ForbiddenTools); capability != "" {
+		if exposedTool, forbiddenTool, capability := firstCapabilityOverlap(set.Tools, policy.ForbiddenTools, policy.ToolMetadata); capability != "" {
 			return fmt.Errorf("%s tool %q and forbidden tool %q both map to capability %q", set.Field, exposedTool, forbiddenTool, capability)
 		}
 
 		if policy.ReadOnlyProfile {
 			for _, tool := range set.Tools {
-				if sideEffectForTool(tool) != autonomy.SideEffectReadOnly {
+				if sideEffectForTool(policy.ToolMetadata, tool) != autonomy.SideEffectReadOnly {
 					return fmt.Errorf("read-only permission profile cannot expose mutating tool %q in %s", tool, set.Field)
 				}
 			}
@@ -143,7 +147,7 @@ func validateToolVocabulary(policy toolVocabularyPolicy) error {
 
 		if policy.PlannerOnly {
 			for _, tool := range set.Tools {
-				if plannerForbiddenTool(tool) {
+				if plannerForbiddenTool(tool, policy.ToolMetadata) {
 					return fmt.Errorf("plan-execute planner cannot expose tool %q in %s", tool, set.Field)
 				}
 			}
@@ -166,9 +170,9 @@ func validateToolVocabulary(policy toolVocabularyPolicy) error {
 	return nil
 }
 
-func validateKnownTools(field string, tools []string) error {
+func validateKnownTools(field string, tools []string, metadata []PlanExecutePlannerToolMetadata) error {
 	for _, tool := range tools {
-		if !knownTool(tool) {
+		if !knownTool(metadata, tool) {
 			return fmt.Errorf("%s contains unmapped tool %q", field, tool)
 		}
 	}
@@ -176,8 +180,8 @@ func validateKnownTools(field string, tools []string) error {
 	return nil
 }
 
-func validateHiddenToolProjection(field string, hiddenTools []string, visibleTools []string, callableTools []string) error {
-	if err := validateKnownTools(field, hiddenTools); err != nil {
+func validateHiddenToolProjection(field string, hiddenTools []string, visibleTools []string, callableTools []string, metadata []PlanExecutePlannerToolMetadata) error {
+	if err := validateKnownTools(field, hiddenTools, metadata); err != nil {
 		return err
 	}
 
@@ -399,11 +403,11 @@ func firstStringOverlap(left []string, right []string) string {
 	return ""
 }
 
-func firstCapabilityOverlap(exposedTools []string, forbiddenTools []string) (string, string, autonomy.Capability) {
+func firstCapabilityOverlap(exposedTools []string, forbiddenTools []string, metadata []PlanExecutePlannerToolMetadata) (string, string, autonomy.Capability) {
 	for _, exposedTool := range exposedTools {
-		for _, exposedCapability := range capabilitiesForTool(exposedTool) {
+		for _, exposedCapability := range capabilitiesForTool(metadata, exposedTool) {
 			for _, forbiddenTool := range forbiddenTools {
-				for _, forbiddenCapability := range capabilitiesForTool(forbiddenTool) {
+				for _, forbiddenCapability := range capabilitiesForTool(metadata, forbiddenTool) {
 					if exposedCapability != "" && exposedCapability == forbiddenCapability {
 						return exposedTool, forbiddenTool, exposedCapability
 					}

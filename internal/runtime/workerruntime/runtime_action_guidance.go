@@ -219,8 +219,8 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 			}
 		}
 
-		switch tool {
-		case workspace.ToolNameReadFile, workspace.ToolNameCodeNavigate:
+		switch {
+		case tool == workspace.ToolNameReadFile || tool == workspace.ToolNameCodeNavigate:
 			if strings.TrimSpace(input.Result.Error) == "" {
 				if writeReadyPacket {
 					guidance.ValidNext = appendUnique(guidance.ValidNext, "required-path edit from the packet and inspected evidence")
@@ -240,7 +240,7 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 					guidance.ValidNext = appendUnique(guidance.ValidNext, "one narrow range read or exact-text search only if a specific anchor is still missing")
 				}
 			}
-		case workspace.ToolNameSearchFiles, workspace.ToolNameSearchContent, workspace.ToolNameRg, "go_find_symbol", "go_find_type", "go_find_const", "go_references", "go_definition":
+		case workspace.IsRuntimeSearchGuidanceTool(tool):
 			if strings.TrimSpace(input.Result.Error) == "" {
 				if IsZeroHitSearchResult(input.Result) {
 					// The default "read the highest-confidence hit" nudge is
@@ -260,12 +260,12 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 					}
 				}
 			}
-		case workspace.ToolNameEditFile, workspace.ToolNameWriteFile, workspace.ToolNameAppendFile, workspace.ToolNameGoMoveDeclarations:
+		case tool == workspace.ToolNameEditFile || tool == workspace.ToolNameWriteFile || tool == workspace.ToolNameAppendFile || tool == workspace.ToolNameGoMoveDeclarations:
 			if strings.TrimSpace(input.Result.Error) == "" {
 				guidance.ValidNext = appendUnique(guidance.ValidNext, "targeted verification evidence")
 				guidance.ValidNext = appendUnique(guidance.ValidNext, "required ledger state or answer with the change summary")
 			}
-		case workspace.ToolNameTaskLedger:
+		case tool == workspace.ToolNameTaskLedger:
 			if writeReadyPacket || requiredPathsRemaining {
 				guidance.ValidNext = appendUnique(guidance.ValidNext, "task_ledger does not satisfy the required-path write contract")
 				guidance.ValidNext = appendUnique(guidance.ValidNext, "required-path write capability")
@@ -292,7 +292,7 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "otherwise take one exact tool-shaped follow-up tied to a concrete missing claim")
 	}
 
-	if !closureActive && input.EvidenceIntent == "relation_trace" && isDiscoveryTool(tool) {
+	if !closureActive && input.EvidenceIntent == "relation_trace" && workspace.IsRuntimeOrientationGuidanceTool(tool) {
 		// Promote semantic navigation ahead of the generic
 		// "read a hit" advice. The generic nudges are tuned for "find a
 		// file and read it"; a relational question ("how does X call Y")
@@ -460,20 +460,6 @@ func filterClosureGuidanceNext(values []string, scope string) []string {
 	}
 
 	return prefixed
-}
-
-// isDiscoveryTool reports whether the just-finished tool was an
-// orientation/search step — the only moment it's worth re-ranking the
-// suggested next actions. We deliberately exclude edit/write tools
-// (post-edit guidance has its own shape) and structured symbol tools
-// (already returned what relational queries want).
-func isDiscoveryTool(tool string) bool {
-	switch strings.TrimSpace(tool) {
-	case workspace.ToolNameListFiles, workspace.ToolNameSearchContent, workspace.ToolNameSearchFiles, workspace.ToolNameReadFile, workspace.ToolNameRg:
-		return true
-	}
-
-	return false
 }
 
 func languageOutlineGuidanceTool(tool string) bool {

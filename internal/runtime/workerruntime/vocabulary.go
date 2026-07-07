@@ -250,50 +250,22 @@ func taskFamilyID(value string) autonomy.TaskFamilyID {
 }
 
 func EvidenceRequirementStrings(values []EvidenceRequirementID) []string {
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(string(value)); trimmed != "" {
-			out = append(out, trimmed)
-		}
+	if len(values) == 0 {
+		return nil
 	}
 
-	return out
+	return typedIDStrings(values)
 }
 
 func ReadinessGateStrings(values []ReadinessGateID) []string {
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(string(value)); trimmed != "" {
-			out = append(out, trimmed)
-		}
+	if len(values) == 0 {
+		return nil
 	}
 
-	return out
+	return typedIDStrings(values)
 }
 
-func searchPolicyStrings(values []SearchPolicyID) []string {
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(string(value)); trimmed != "" {
-			out = append(out, trimmed)
-		}
-	}
-
-	return out
-}
-
-func stopConditionStrings(values []StopConditionID) []string {
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(string(value)); trimmed != "" {
-			out = append(out, trimmed)
-		}
-	}
-
-	return out
-}
-
-func finalCriticStrings(values []FinalCriticID) []string {
+func typedIDStrings[T ~string](values []T) []string {
 	out := make([]string, 0, len(values))
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(string(value)); trimmed != "" {

@@ -340,73 +340,6 @@ func runProductLint(args []string, stdout io.Writer, stderr io.Writer, rec *tele
 	return 0
 }
 
-type productAuditSection struct {
-	Name     string                                `json:"name"`
-	Status   productworkflow.ProductWorkflowStatus `json:"status"`
-	Findings []productworkflow.LintSummaryFinding  `json:"findings"`
-}
-
-type productAuditResult struct {
-	Status          productworkflow.ProductWorkflowStatus   `json:"status"`
-	EffortRoot      string                                  `json:"effort_root"`
-	CheckedFiles    []string                                `json:"checked_files"`
-	Sections        []productAuditSection                   `json:"sections"`
-	Findings        []productworkflow.LintSummaryFinding    `json:"findings"`
-	Metrics         *productworkflow.ProductWorkflowMetrics `json:"metrics,omitempty"`
-	NextValidAction string                                  `json:"next_valid_action"`
-}
-
-func buildAuditResult(lintResult productworkflow.LintSummaryResult) productAuditResult {
-	sectionMap := map[string]*productAuditSection{
-		"prd":          {Name: "prd", Status: productworkflow.ProductWorkflowStatusPass},
-		"adr":          {Name: "adr", Status: productworkflow.ProductWorkflowStatusPass},
-		"tdd":          {Name: "tdd", Status: productworkflow.ProductWorkflowStatusPass},
-		"traceability": {Name: "traceability", Status: productworkflow.ProductWorkflowStatusPass},
-		"reports":      {Name: "reports", Status: productworkflow.ProductWorkflowStatusPass},
-		"obsidian":     {Name: "obsidian", Status: productworkflow.ProductWorkflowStatusPass},
-		"scope_gate":   {Name: "scope_gate", Status: productworkflow.ProductWorkflowStatusPass},
-		"metrics":      {Name: "metrics", Status: productworkflow.ProductWorkflowStatusPass},
-	}
-
-	for _, f := range lintResult.Findings {
-		section := productworkflow.ClassifySection(f.Path)
-		if section == "" {
-			if strings.HasPrefix(f.Code, "scope_gate_") {
-				section = "scope_gate"
-			} else if strings.HasPrefix(f.Code, "obsidian_") {
-				section = "obsidian"
-			} else if strings.HasPrefix(f.Code, "coverage_") {
-				section = "tdd"
-			} else {
-				continue
-			}
-		}
-
-		sec := sectionMap[section]
-
-		sec.Findings = append(sec.Findings, f)
-		sec.Status = productworkflow.ProductWorkflowStatusFail
-	}
-
-	sections := make([]productAuditSection, 0, len(sectionMap))
-	for _, name := range []string{"prd", "adr", "tdd", "traceability", "reports", "obsidian", "scope_gate", "metrics"} {
-		sections = append(sections, *sectionMap[name])
-	}
-
-	status := productworkflow.ProductWorkflowStatusPass
-	if lintResult.Status == productworkflow.ProductWorkflowStatusFail {
-		status = productworkflow.ProductWorkflowStatusFail
-	}
-
-	return productAuditResult{
-		Status:       status,
-		EffortRoot:   lintResult.EffortRoot,
-		CheckedFiles: lintResult.CheckedFiles,
-		Sections:     sections,
-		Findings:     lintResult.Findings,
-	}
-}
-
 func runProductAudit(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	fs := flag.NewFlagSet("idiom product audit", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -440,21 +373,7 @@ func runProductAudit(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 		return 2
 	}
 
-	lintResult := productworkflow.LintEffortFolder(absRoot)
-	auditResult := buildAuditResult(lintResult)
-
-	metrics, metricsErr := productworkflow.BuildProductWorkflowMetrics(absRoot)
-	if metricsErr != nil {
-		finding := productMetricsFinding(metricsErr)
-
-		auditResult.Status = productworkflow.ProductWorkflowStatusFail
-		auditResult.Findings = append(auditResult.Findings, finding)
-		markAuditSectionFailure(&auditResult, "metrics", finding)
-	} else {
-		auditResult.Metrics = &metrics
-	}
-
-	auditResult.NextValidAction = productAuditNextValidAction(auditResult.Status)
+	auditResult := productworkflow.BuildCheckedProductAudit(absRoot)
 	telemetry.LogPhase(rec, "product_audit", map[string]any{
 		"status":        auditResult.Status,
 		"finding_count": len(auditResult.Findings),
@@ -513,39 +432,6 @@ func runProductAudit(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 	}
 
 	return 0
-}
-
-func productMetricsFinding(err error) productworkflow.LintSummaryFinding {
-	path := "workflow_state.json"
-
-	var metricsErr productworkflow.ProductWorkflowMetricsError
-
-	if errors.As(err, &metricsErr) && strings.TrimSpace(metricsErr.Path) != "" {
-		path = metricsErr.Path
-	}
-
-	return productworkflow.LintSummaryFinding{
-		Code:    "metrics_error",
-		Path:    path,
-		Message: err.Error(),
-	}
-}
-
-func markAuditSectionFailure(result *productAuditResult, name string, finding productworkflow.LintSummaryFinding) {
-	for i := range result.Sections {
-		if result.Sections[i].Name == name {
-			result.Sections[i].Status = productworkflow.ProductWorkflowStatusFail
-			result.Sections[i].Findings = append(result.Sections[i].Findings, finding)
-
-			return
-		}
-	}
-
-	result.Sections = append(result.Sections, productAuditSection{
-		Name:     name,
-		Status:   productworkflow.ProductWorkflowStatusFail,
-		Findings: []productworkflow.LintSummaryFinding{finding},
-	})
 }
 
 func runProductEfforts(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
@@ -1358,14 +1244,6 @@ func productLintNextValidAction(status productworkflow.ProductWorkflowStatus) st
 	}
 
 	return "fix findings, then rerun `idiom product lint --effort-root <path>`"
-}
-
-func productAuditNextValidAction(status productworkflow.ProductWorkflowStatus) string {
-	if status == productworkflow.ProductWorkflowStatusPass {
-		return "run `idiom product status --effort-root <path>` to inspect workflow state"
-	}
-
-	return "fix findings, then rerun `idiom product audit --effort-root <path>`"
 }
 
 func productStatusNextValidActions(view productworkflow.ProductStatusView, exitCode int, workflowStateErr bool) []string {

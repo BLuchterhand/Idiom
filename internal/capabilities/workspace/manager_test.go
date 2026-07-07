@@ -740,7 +740,7 @@ func TestReadFileOsMissingErrorUsesGenericCapabilities(t *testing.T) {
 		CWD:  dir,
 	})
 
-	missingPath, err := mgr.resolvePath("stale.txt", "")
+	missingPath, err := mgr.pathAccess.ResolvePath("stale.txt", "")
 	if err != nil {
 		t.Fatalf("resolve missing path: %v", err)
 	}

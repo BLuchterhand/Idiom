@@ -15,6 +15,7 @@ import (
 
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/comprehension"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 )
 
 const (
@@ -116,12 +117,12 @@ func (m *Manager) discoveryQuery(ctx context.Context, req ToolRequest) ToolResul
 		return ToolResult{Tool: ToolNameDiscoveryQuery, Summary: "Discovery query rejected", Error: "purpose must be one of " + strings.Join(DiscoveryQueryPurposeValues(), ", ")}
 	}
 
-	targetAbs, err := m.resolvePath(defaultString(req.Path, "."), req.Workdir)
+	targetAbs, err := m.pathAccess.ResolvePath(defaultString(req.Path, "."), req.Workdir)
 	if err != nil {
 		return ToolResult{Tool: ToolNameDiscoveryQuery, Summary: "Failed to resolve discovery query target", Error: err.Error()}
 	}
 
-	targetRel := m.displayPath(targetAbs)
+	targetRel := m.pathAccess.DisplayPath(targetAbs)
 	depth := req.MaxDepth
 
 	if depth <= 0 {
@@ -411,7 +412,7 @@ func (r *discoveryQueryRunner) addContextLayer() {
 }
 
 func (r *discoveryQueryRunner) addFileOrientation(path string, language string) {
-	if lang, ok := LanguageForName(language); ok {
+	if lang, ok := semanticlanguage.LanguageForName(language); ok {
 		if tool := lang.Tool(CapFileOutline); tool != "" {
 			r.addLayer(DiscoveryLayerFileOutline, ToolRequest{Tool: tool, Path: path})
 
@@ -427,7 +428,7 @@ func (r *discoveryQueryRunner) addDependency(path string, language string) {
 }
 
 func (r *discoveryQueryRunner) addLanguageRelationshipLayers(path string, pattern string, language string, includeCalls bool) {
-	lang, ok := LanguageForName(language)
+	lang, ok := semanticlanguage.LanguageForName(language)
 	if !ok {
 		if pattern != "" {
 			r.addCtagsFallback(path, pattern)
@@ -462,7 +463,7 @@ func (r *discoveryQueryRunner) addLanguageRelationshipLayers(path string, patter
 }
 
 func (r *discoveryQueryRunner) addRelatedFileLayer(path string, pattern string, language string) {
-	lang, ok := LanguageForName(language)
+	lang, ok := semanticlanguage.LanguageForName(language)
 	if !ok {
 		return
 	}
@@ -739,7 +740,7 @@ func normalizeDiscoveryQueryLanguage(value string) string {
 }
 
 func globForDiscoveryLanguage(language string) string {
-	lang, ok := LanguageForName(normalizeDiscoveryQueryLanguage(language))
+	lang, ok := semanticlanguage.LanguageForName(normalizeDiscoveryQueryLanguage(language))
 	if !ok {
 		return ""
 	}

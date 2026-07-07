@@ -1,11 +1,4 @@
-{
-  "model": "scripted-model",
-  "responses": [
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"confirm ShortLabel already returns Save\",\"why_not_answering\":\"source-satisfied closeout needs source-body evidence for the required path\"}"
-    },
-    {
-      "content": "Decision: source-satisfied\n\ninternal/labels/labels.go already contains `return \"Save\"` in ShortLabel, so no plan edits are needed."
-    }
-  ]
-}
+[
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"confirm ShortLabel already returns Save\",\"why_not_answering\":\"source-satisfied closeout needs source-body evidence for the required path\"}",
+  "Decision: source-satisfied\n\ninternal/labels/labels.go already contains `return \"Save\"` in ShortLabel, so no plan edits are needed."
+]

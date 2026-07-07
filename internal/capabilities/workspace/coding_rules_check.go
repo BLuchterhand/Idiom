@@ -68,7 +68,7 @@ func (m *Manager) codingRulesCheckPaths(req ToolRequest) ([]string, error) {
 		return nil, nil
 	}
 
-	abs, err := m.resolvePath(path, req.Workdir)
+	abs, err := m.pathAccess.ResolvePath(path, req.Workdir)
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +87,7 @@ func (m *Manager) codingRulesConfigPath(configPath string, workdir string) (stri
 		return "", nil
 	}
 
-	abs, err := m.resolvePath(configPath, workdir)
+	abs, err := m.pathAccess.ResolvePath(configPath, workdir)
 	if err != nil {
 		return "", err
 	}

@@ -11,6 +11,7 @@ import (
 
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/platform/config"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 )
 
 func TestReadOnlyCapabilityRegistryMapsStableVocabularyToAdapters(t *testing.T) {
@@ -1216,7 +1217,7 @@ func TestToolCapabilityMetadataUsesOneStaticSource(t *testing.T) {
 		}
 	}
 
-	for _, lang := range LanguageRegistry() {
+	for _, lang := range semanticlanguage.LanguageRegistry() {
 		for capability, tool := range lang.Tools {
 			if got := EvidenceCapabilitiesForTool(tool); len(got) == 0 {
 				t.Fatalf("%s tool %s for %s should expose evidence capabilities", lang.Name, tool, capability)

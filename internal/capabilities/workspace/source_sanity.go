@@ -12,6 +12,7 @@ import (
 	"idiom/internal/contracts/sourcekind"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/discovery"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 )
 
 const (
@@ -44,7 +45,7 @@ func (m *Manager) sourceSanity(ctx context.Context, req ToolRequest) ToolResult 
 	if len(targets) > limit {
 		rel := make([]string, 0, min(limit, len(targets)))
 		for _, target := range targets[:min(limit, len(targets))] {
-			rel = append(rel, filepath.ToSlash(m.displayPath(target)))
+			rel = append(rel, filepath.ToSlash(m.pathAccess.DisplayPath(target)))
 		}
 
 		return ToolResult{
@@ -109,7 +110,7 @@ func (m *Manager) sourceSanityTargets(req ToolRequest) ([]string, error) {
 		return nil, fmt.Errorf("%s requires path", ToolNameSourceSanity)
 	}
 
-	target, err := m.resolvePath(req.Path, req.Workdir)
+	target, err := m.pathAccess.ResolvePath(req.Path, req.Workdir)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +125,7 @@ func (m *Manager) sourceSanityTargets(req ToolRequest) ([]string, error) {
 			return []string{target}, nil
 		}
 
-		return nil, fmt.Errorf("%s is not a supported source file", m.displayPath(target))
+		return nil, fmt.Errorf("%s is not a supported source file", m.pathAccess.DisplayPath(target))
 	}
 
 	var targets []string
@@ -142,7 +143,7 @@ func (m *Manager) sourceSanityTargets(req ToolRequest) ([]string, error) {
 			return nil
 		}
 
-		if strings.HasPrefix(filepath.Base(path), ".") || discovery.ShouldSkipRelFile(filepath.ToSlash(m.displayPath(path))) {
+		if strings.HasPrefix(filepath.Base(path), ".") || discovery.ShouldSkipRelFile(filepath.ToSlash(m.pathAccess.DisplayPath(path))) {
 			return nil
 		}
 
@@ -157,14 +158,14 @@ func (m *Manager) sourceSanityTargets(req ToolRequest) ([]string, error) {
 	}
 
 	sort.Slice(targets, func(i, j int) bool {
-		return m.displayPath(targets[i]) < m.displayPath(targets[j])
+		return m.pathAccess.DisplayPath(targets[i]) < m.pathAccess.DisplayPath(targets[j])
 	})
 
 	return targets, nil
 }
 
 func (m *Manager) sourceSanityOne(ctx context.Context, absPath string, workdir string) sourceSanityOutcome {
-	rel := filepath.ToSlash(m.displayPath(absPath))
+	rel := filepath.ToSlash(m.pathAccess.DisplayPath(absPath))
 	if tool := sourceSanityDiagnosticToolForPath(rel); tool != "" {
 		result := m.Execute(ctx, ToolRequest{Tool: tool, Path: rel, Workdir: workdir})
 		if strings.TrimSpace(result.Error) == "" && !diagnosticsUnavailable(result) {
@@ -228,7 +229,7 @@ func (m *Manager) sourceSanityOne(ctx context.Context, absPath string, workdir s
 }
 
 func sourceSanityDiagnosticToolForPath(path string) string {
-	lang, ok := LanguageForFile(path)
+	lang, ok := semanticlanguage.LanguageForFile(path)
 	if !ok {
 		return ""
 	}

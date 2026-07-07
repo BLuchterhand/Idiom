@@ -1,14 +1,5 @@
-{
-  "model": "scripted-model",
-  "responses": [
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"confirm exact ShortLabel source before edit_intent.v1\",\"why_not_answering\":\"required_edit_paths need source-body evidence before plan submission\"}"
-    },
-    {
-      "content": "{\"schema_version\":\"idiom.edit_intent.v1\",\"source\":\"planner\",\"task_summary\":\"Update ShortLabel to return Save using the confirmed current source.\",\"scope\":{\"required_edit_paths\":[\"internal/labels/labels.go\"],\"evidence_refs\":[\"read_file:internal/labels/labels.go\"]},\"intents\":[{\"path\":\"internal/labels/labels.go\",\"operation\":\"replace_exact_text\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"purpose\":\"Update ShortLabel to return the shorter save label\",\"evidence_refs\":[\"read_file:internal/labels/labels.go\"]}]}"
-    },
-    {
-      "content": "Decision: pass\n\nVerification Checklist:\n- Required behavior: ShortLabel returns \"Save\" after the compiled edit_intent.v1 plan.\n- Scope safety: Only internal/labels/labels.go changed, which is inside Allowed Repair Paths.\n- Test or command evidence: Phase Evidence reports the required verification and source_sanity checks."
-    }
-  ]
-}
+[
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"confirm exact ShortLabel source before edit_intent.v1\",\"why_not_answering\":\"required_edit_paths need source-body evidence before plan submission\"}",
+  "{\"schema_version\":\"idiom.edit_intent.v1\",\"source\":\"planner\",\"task_summary\":\"Update ShortLabel to return Save using the confirmed current source.\",\"scope\":{\"required_edit_paths\":[\"internal/labels/labels.go\"],\"evidence_refs\":[\"read_file:internal/labels/labels.go\"]},\"intents\":[{\"path\":\"internal/labels/labels.go\",\"operation\":\"replace_exact_text\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"purpose\":\"Update ShortLabel to return the shorter save label\",\"evidence_refs\":[\"read_file:internal/labels/labels.go\"]}]}",
+  "Decision: pass\n\nVerification Checklist:\n- Required behavior: ShortLabel returns \"Save\" after the compiled edit_intent.v1 plan.\n- Scope safety: Only internal/labels/labels.go changed, which is inside Allowed Repair Paths.\n- Test or command evidence: Phase Evidence reports the required verification and source_sanity checks."
+]

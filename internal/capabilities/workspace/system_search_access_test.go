@@ -92,6 +92,9 @@ func TestSystemSearchAccessApprovalEnablesReadOnlyDiscovery(t *testing.T) {
 	if read.Error != "" || !strings.Contains(read.Output, "module idiom") {
 		t.Fatalf("read_file should read approved sibling repo file, got %#v", read)
 	}
+	if got, want := read.Paths, []string{canonicalTestPath(t, filepath.Join(idiom, "go.mod"))}; len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("read_file should report typed read path %v, got %#v", want, got)
+	}
 }
 
 func TestSystemSearchAccessSelectedFileOnlyAllowsThatFile(t *testing.T) {

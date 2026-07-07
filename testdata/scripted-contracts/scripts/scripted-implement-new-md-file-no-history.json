@@ -1,11 +1,4 @@
-{
-  "model": "scripted-model",
-  "responses": [
-    {
-      "content": "{\"tool\":\"write_file\",\"path\":\"temp.md\",\"content\":\"temp\",\"description\":\"create the requested markdown file\"}"
-    },
-    {
-      "content": "Created `temp.md` with the requested contents.\n\nChanged paths:\n- temp.md\n\nVerification: not run; content-only markdown file."
-    }
-  ]
-}
+[
+  "{\"tool\":\"write_file\",\"path\":\"temp.md\",\"content\":\"temp\",\"description\":\"create the requested markdown file\"}",
+  "Created `temp.md` with the requested contents.\n\nChanged paths:\n- temp.md\n\nVerification: not run; content-only markdown file."
+]

@@ -1,0 +1,4 @@
+[
+  "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\"}",
+  "<<QUESTION>>: Cannot safely make the required edit because the write description is missing."
+]

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"idiom/internal/platform/config"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 )
 
 func TestDiscoveryQueryImpactAnalysisWritesLayeredArtifact(t *testing.T) {
@@ -400,7 +401,7 @@ func TestDiscoveryQueryNormalizesArchitectureUsefulnessAliases(t *testing.T) {
 }
 
 func TestDiscoveryQueryLanguageCoverageFollowsRegistry(t *testing.T) {
-	for _, lang := range LanguageRegistry() {
+	for _, lang := range semanticlanguage.LanguageRegistry() {
 		glob := globForDiscoveryLanguage(lang.Name)
 		if glob == "" {
 			t.Fatalf("%s should have a discovery glob", lang.Name)

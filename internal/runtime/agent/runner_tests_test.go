@@ -28,15 +28,6 @@ import (
 	"idiom/internal/runtime/workerruntime"
 )
 
-type recordingGateEngine struct {
-	retryBudget          int
-	calls                int
-	evaluateCalls        int
-	evaluateDecision     GateDecision
-	sourceGroundingCalls int
-	sourceGroundingText  string
-}
-
 type panicLLMClient struct{}
 
 func (panicLLMClient) CompleteChat(context.Context, []llama.ChatMessage, llama.ChatOptions) (string, error) {
@@ -58,256 +49,6 @@ func (panicLLMClient) ListModels(context.Context) ([]llama.ModelInfo, error) {
 func (panicLLMClient) Backend() string { return "panic-test" }
 
 func (panicLLMClient) SupportsNativeTools() bool { return true }
-
-func (g *recordingGateEngine) EvaluateGate(string, []workspace.ToolResult, StateStore) GateDecision {
-	g.evaluateCalls++
-	if g.evaluateDecision.Kind != "" || g.evaluateDecision.Reason != "" || !g.evaluateDecision.Accepted {
-		return g.evaluateDecision
-	}
-	return GateDecision{Accepted: true}
-}
-
-func (g *recordingGateEngine) RetryBudget([]workspace.ToolResult) int {
-	g.calls++
-	return g.retryBudget
-}
-
-func (g *recordingGateEngine) RemainingRetries(StateStore) int { return g.retryBudget }
-
-func (g *recordingGateEngine) Retryable(decision GateDecision, _ StateStore) bool {
-	return !decision.Accepted
-}
-
-func (g *recordingGateEngine) SourceGroundingRejection(string, []workspace.ToolResult) string {
-	g.sourceGroundingCalls++
-	return g.sourceGroundingText
-}
-
-type recordingGuidanceEngine struct {
-	closureActive  bool
-	delegatedReady bool
-	delegatedCalls *int
-}
-
-func (g recordingGuidanceEngine) ClosureActive(workerruntime.WorkerRuntimeBrief, []workspace.ToolResult) bool {
-	return g.closureActive
-}
-
-func (g recordingGuidanceEngine) DelegatedReadOnlyClosureReady(workerruntime.WorkerRuntimeBrief, []workspace.ToolResult) bool {
-	if g.delegatedCalls != nil {
-		(*g.delegatedCalls)++
-	}
-
-	return g.delegatedReady
-}
-
-type gateEngineInjectionTestClient struct {
-	err error
-}
-
-func (c gateEngineInjectionTestClient) CompleteChat(context.Context, []llama.ChatMessage, llama.ChatOptions) (string, error) {
-	return "", c.err
-}
-
-func (c gateEngineInjectionTestClient) CompleteChatMessage(context.Context, []llama.ChatMessage, llama.ChatOptions) (llama.ChatMessage, error) {
-	return llama.ChatMessage{}, c.err
-}
-
-func (c gateEngineInjectionTestClient) StreamChat(context.Context, []llama.ChatMessage, llama.ChatOptions, func(string) error) error {
-	return c.err
-}
-
-func (c gateEngineInjectionTestClient) ListModels(context.Context) ([]llama.ModelInfo, error) {
-	return []llama.ModelInfo{{ID: "gate-engine-injection-test"}}, nil
-}
-
-func (c gateEngineInjectionTestClient) Backend() string { return "test" }
-
-func (c gateEngineInjectionTestClient) SupportsNativeTools() bool { return false }
-
-func TestRunnerGateEngineAccessorUsesInjectedRetryBudget(t *testing.T) {
-	engine := &recordingGateEngine{retryBudget: 7}
-	runner := &Runner{GateEngine: engine}
-
-	if got := runner.gateEngine().RetryBudget(nil); got != 7 {
-		t.Fatalf("injected retry budget = %d, want 7", got)
-	}
-
-	if engine.calls != 1 {
-		t.Fatalf("injected gate engine calls = %d, want 1", engine.calls)
-	}
-}
-
-func TestGateDecisionKindForSummaryUsesClosedVocabulary(t *testing.T) {
-	tests := []struct {
-		summary       string
-		wantKind      GateDecisionKind
-		wantInvariant string
-	}{
-		{"Textual write syntax rejected as final answer", GateDecisionTextualWrite, "completion.no_textual_write"},
-		{"Unexecuted tool request in final answer", GateDecisionUnexecutedTool, "completion.no_unexecuted_tool"},
-		{"Read-only completion gate rejected search-hit inventory", GateDecisionSearchInventory, "completion.no_search_inventory"},
-		{"Review-repair completion gate rejected contradictory pass", GateDecisionReviewRepairPass, "completion.review_repair_obligations"},
-		{"some new summary", GateDecisionUnknown, "completion.unknown"},
-	}
-
-	for _, tt := range tests {
-		gotKind, gotInvariant := gateDecisionKindForSummary(tt.summary)
-		if gotKind != tt.wantKind || gotInvariant != tt.wantInvariant {
-			t.Fatalf("gateDecisionKindForSummary(%q) = (%q, %q), want (%q, %q)", tt.summary, gotKind, gotInvariant, tt.wantKind, tt.wantInvariant)
-		}
-	}
-}
-
-func TestRunnerRunPreservesInjectedGateEngine(t *testing.T) {
-	engine := &recordingGateEngine{retryBudget: 7}
-	runner := &Runner{
-		Client:     gateEngineInjectionTestClient{err: errors.New("stop before model response")},
-		GateEngine: engine,
-	}
-
-	_, _ = runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "hello"}}, llama.ChatOptions{}, nil, nil, nil)
-
-	if runner.GateEngine != engine {
-		t.Fatal("Run replaced the injected GateEngine")
-	}
-}
-
-func TestRunnerRunPreservesInjectedGuidanceEngine(t *testing.T) {
-	engine := recordingGuidanceEngine{}
-	runner := &Runner{
-		Client:         gateEngineInjectionTestClient{err: errors.New("stop before model response")},
-		GuidanceEngine: engine,
-	}
-
-	_, _ = runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "hello"}}, llama.ChatOptions{}, nil, nil, nil)
-
-	if runner.GuidanceEngine != engine {
-		t.Fatal("Run replaced the injected GuidanceEngine")
-	}
-}
-
-func TestRunnerNextActionStateUsesInjectedGuidanceEngine(t *testing.T) {
-	delegatedCalls := 0
-	var event RunEvent
-	runner := &Runner{
-		AgentName: "child:explorer",
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        "delegated_read_only",
-			Contract:          "direct_answer",
-			PermissionProfile: "read_only_workspace",
-			Objective:         "Explain the runner state guidance.",
-		},
-		GuidanceEngine: recordingGuidanceEngine{
-			delegatedReady: true,
-			delegatedCalls: &delegatedCalls,
-		},
-		OnEvent: func(e RunEvent) {
-			if e.Role == "next_action_state" {
-				event = e
-			}
-		},
-	}
-
-	runner.emitNextActionState(1, "test", workspace.ToolRequest{Tool: "read_file"}, workspace.ToolResult{Tool: "read_file", Summary: "ok"}, nil, false)
-
-	if delegatedCalls == 0 {
-		t.Fatal("expected next-action state emission to consult injected GuidanceEngine")
-	}
-
-	if !strings.Contains(event.Content, "answer_readiness_reached") {
-		t.Fatalf("expected injected guidance readiness in next-action state, got %q", event.Content)
-	}
-}
-
-func TestRunnerReadinessStateHonorsInjectedGuidanceNotReady(t *testing.T) {
-	runner := &Runner{
-		AgentName: "child:explorer",
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        "delegated_read_only",
-			Contract:          "direct_answer",
-			PermissionProfile: "read_only_workspace",
-			Objective:         "What is in internal/runtime/agent/runner_core.go?",
-		},
-		GuidanceEngine: recordingGuidanceEngine{delegatedReady: false},
-	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/runtime/agent/runner_core.go lines 1-20",
-		Output:  "1:package agent\n2:\n3:func RunExample() {}\n",
-	}}
-
-	brief := runner.visibleBriefForToolSurface(runner.RuntimeBrief, results)
-	if brief.Readiness != nil && brief.Readiness.ReadyToAnswer {
-		t.Fatalf("expected injected guidance not-ready to control readiness, got %#v", brief.Readiness)
-	}
-}
-
-func TestNoToolsCompletionGateUsesInjectedGateEngine(t *testing.T) {
-	engine := &recordingGateEngine{
-		evaluateDecision: GateDecision{
-			Accepted: false,
-			Kind:     "Injected completion gate rejected",
-			Reason:   "injected gate rejection",
-		},
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{
-				"message": map[string]string{"content": "valid answer"},
-			}},
-		})
-	}))
-	defer server.Close()
-
-	runner := &Runner{
-		AgentName: "main",
-		Client:    llama.NewClient(server.URL, time.Second),
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        "conversation",
-			Contract:          "direct_answer",
-			PermissionProfile: "read_only_workspace",
-			Objective:         "answer from evidence",
-		},
-		GateEngine: engine,
-	}
-
-	answer, err := runner.completeWithoutMoreToolsWithReason(context.Background(), nil, llama.ChatOptions{}, nil, "tools are now disabled", nil)
-	if err != nil {
-		t.Fatalf("completeWithoutMoreToolsWithReason: %v", err)
-	}
-
-	if engine.evaluateCalls == 0 {
-		t.Fatal("expected no-tools completion gate path to use injected GateEngine")
-	}
-
-	if answer != "I wasn't able to produce a clean answer from the evidence. Could you rephrase or narrow the question?" {
-		t.Fatalf("expected injected gate rejection fallback, got %q", answer)
-	}
-}
-
-func TestRunnerSourceGroundingUsesRunnerGateEngine(t *testing.T) {
-	engine := &recordingGateEngine{sourceGroundingText: "injected grounding rejection"}
-	runner := &Runner{
-		GateEngine: engine,
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        string(autonomy.TaskFamilyArchitecture),
-			Contract:          string(workerruntime.ContractArchitecture),
-			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
-		},
-	}
-
-	result, rejected := runner.readOnlyExplanationCompletionRejection("answer", nil)
-	if !rejected {
-		t.Fatal("expected injected GateEngine source-grounding rejection")
-	}
-	if result.Error != "injected grounding rejection" {
-		t.Fatalf("source-grounding error = %q", result.Error)
-	}
-	if engine.sourceGroundingCalls != 1 {
-		t.Fatalf("source-grounding calls = %d, want 1", engine.sourceGroundingCalls)
-	}
-}
 
 type lifecycleCloseoutPolicyTestClient struct{}
 
@@ -331,48 +72,8 @@ func (lifecycleCloseoutPolicyTestClient) Backend() string { return "test" }
 
 func (lifecycleCloseoutPolicyTestClient) SupportsNativeTools() bool { return false }
 
-type recordingLifecycleCloseoutPolicyEngine struct {
-	loopOpenObligations bool
-}
-
-func (e *recordingLifecycleCloseoutPolicyEngine) LoopCloseout(stopReason string, hasOpenLoopObligations bool) LifecycleCloseoutPolicyDecision {
-	e.loopOpenObligations = hasOpenLoopObligations
-
-	return LifecycleCloseoutPolicyDecision{
-		Handled: true,
-		Gate: runnerAutonomyGateDecision{
-			Gate:        autonomy.GateLoop,
-			Decision:    autonomy.PolicyObserve,
-			InvariantID: "loop.repeated_call",
-			ReasonCode:  "injected_loop_closeout",
-			Source:      "runner_loop_closeout",
-		},
-	}
-}
-
-func (e *recordingLifecycleCloseoutPolicyEngine) BudgetCloseout(policy RunPolicy, metrics runnerMetrics, stopReason string, exhausted bool) LifecycleCloseoutPolicyDecision {
-	return LifecycleCloseoutPolicyDecision{
-		Handled: true,
-		Gate: runnerAutonomyGateDecision{
-			Gate:        autonomy.GateBudget,
-			Decision:    autonomy.PolicyObserve,
-			InvariantID: "budget.run_policy",
-			ReasonCode:  "injected_budget_closeout",
-			Budget: &autonomy.BudgetState{
-				MaxToolSteps:     policy.MaxToolSteps,
-				UsedToolSteps:    metrics.ToolCalls,
-				MaxModelCalls:    policy.MaxModelCalls,
-				UsedModelCalls:   metrics.ModelCalls,
-				Exhausted:        exhausted,
-				ExhaustionReason: "injected_budget_closeout",
-			},
-			Source: "runner_budget_gate",
-		},
-	}
-}
-
 func TestLifecycleCloseoutPolicyLoopCloseoutObservesOpenLoopObligation(t *testing.T) {
-	decision := newLifecycleCloseoutPolicyEngine().LoopCloseout("completed", true)
+	decision := lifecycleLoopCloseoutDecision("completed", true)
 
 	if !decision.Handled {
 		t.Fatal("expected loop closeout to handle open loop obligation")
@@ -388,7 +89,7 @@ func TestLifecycleCloseoutPolicyLoopCloseoutObservesOpenLoopObligation(t *testin
 }
 
 func TestLifecycleCloseoutPolicyLoopCloseoutSkipsClosedLoopObligation(t *testing.T) {
-	decision := newLifecycleCloseoutPolicyEngine().LoopCloseout("completed", false)
+	decision := lifecycleLoopCloseoutDecision("completed", false)
 
 	if decision.Handled {
 		t.Fatalf("closed loop obligation should not emit closeout decision: %#v", decision)
@@ -396,7 +97,7 @@ func TestLifecycleCloseoutPolicyLoopCloseoutSkipsClosedLoopObligation(t *testing
 }
 
 func TestLifecycleCloseoutPolicyLoopCloseoutPreservesStopReason(t *testing.T) {
-	decision := newLifecycleCloseoutPolicyEngine().LoopCloseout("model_error", true)
+	decision := lifecycleLoopCloseoutDecision("model_error", true)
 
 	if !decision.Handled || decision.Gate.ReasonCode != "model_error" {
 		t.Fatalf("expected non-completed stop reason to pass through, got %#v", decision)
@@ -411,7 +112,7 @@ func TestLifecycleCloseoutPolicyBudgetCloseoutCarriesRunPolicyState(t *testing.T
 		MaxContextChars:    4096,
 	}
 
-	decision := newLifecycleCloseoutPolicyEngine().BudgetCloseout(policy, runnerMetrics{ToolCalls: 7, ModelCalls: 2}, "tool_step_budget_exhausted", true)
+	decision := lifecycleBudgetCloseoutDecision(policy, runnerMetrics{ToolCalls: 7, ModelCalls: 2}, "tool_step_budget_exhausted", true)
 
 	if !decision.Handled {
 		t.Fatal("expected budget closeout to handle every run")
@@ -441,49 +142,8 @@ func TestLifecycleCloseoutPolicyBudgetCloseoutCarriesRunPolicyState(t *testing.T
 	}
 }
 
-func TestRunnerUsesInjectedLifecycleCloseoutPolicy(t *testing.T) {
-	var (
-		events []RunEvent
-	)
-	engine := &recordingLifecycleCloseoutPolicyEngine{}
-	runner := &Runner{
-		Client: lifecycleCloseoutPolicyTestClient{},
-		Policy: RunPolicy{MaxToolSteps: 2, MaxModelCalls: 2},
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			Lane:              "conversation",
-			TaskFamily:        "conversation",
-			Contract:          "direct_answer",
-			PermissionProfile: "read_only_workspace",
-		},
-		LifecycleCloseoutPolicyEngine: engine,
-		OnEvent: func(event RunEvent) {
-			events = append(events, event)
-		},
-	}
-
-	_, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "Answer briefly."}}, llama.ChatOptions{}, nil, nil, nil)
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-
-	if !engine.loopOpenObligations {
-		t.Fatal("runner should pass current loop obligation state into lifecycle policy")
-	}
-
-	rawGates := decodeRunnerAutonomyGatePayloadsForTest(t, events)
-	loopGate := mustRunnerAutonomyRawGateForTest(t, rawGates, autonomy.GateLoop)
-	if got := rawGateString(loopGate, "reason_code"); got != "injected_loop_closeout" {
-		t.Fatalf("loop closeout should use injected lifecycle policy decision, got %#v", loopGate)
-	}
-
-	budgetGate := mustRunnerAutonomyRawGateForTest(t, rawGates, autonomy.GateBudget)
-	if got := rawGateString(budgetGate, "reason_code"); got != "injected_budget_closeout" {
-		t.Fatalf("budget closeout should use injected lifecycle policy decision, got %#v", budgetGate)
-	}
-}
-
 func TestLifecycleCloseoutPolicyBudgetCloseoutDefaultsBlankStopReason(t *testing.T) {
-	decision := newLifecycleCloseoutPolicyEngine().BudgetCloseout(RunPolicy{}, runnerMetrics{}, "", false)
+	decision := lifecycleBudgetCloseoutDecision(RunPolicy{}, runnerMetrics{}, "", false)
 
 	if !decision.Handled || decision.Gate.Decision != autonomy.PolicyObserve || decision.Gate.ReasonCode != "completed" {
 		t.Fatalf("unexpected default budget closeout: %#v", decision)
@@ -494,55 +154,10 @@ func TestLifecycleCloseoutPolicyBudgetCloseoutDefaultsBlankStopReason(t *testing
 	}
 }
 
-type modelCallReadinessPolicyTestClient struct {
-	calls   int
-	prompts []string
-}
-
-func (c *modelCallReadinessPolicyTestClient) CompleteChat(context.Context, []llama.ChatMessage, llama.ChatOptions) (string, error) {
-	c.calls++
-	return "Forced stop acknowledged.", nil
-}
-
-func (c *modelCallReadinessPolicyTestClient) CompleteChatMessage(_ context.Context, messages []llama.ChatMessage, _ llama.ChatOptions) (llama.ChatMessage, error) {
-	c.calls++
-	for _, message := range messages {
-		c.prompts = append(c.prompts, message.Content)
-	}
-
-	return llama.ChatMessage{Content: "Forced stop acknowledged."}, nil
-}
-
-func (c *modelCallReadinessPolicyTestClient) StreamChat(context.Context, []llama.ChatMessage, llama.ChatOptions, func(string) error) error {
-	c.calls++
-	return nil
-}
-
-func (c *modelCallReadinessPolicyTestClient) ListModels(context.Context) ([]llama.ModelInfo, error) {
-	return []llama.ModelInfo{{ID: "model-call-readiness-policy-test"}}, nil
-}
-
-func (c *modelCallReadinessPolicyTestClient) Backend() string { return "test" }
-
-func (c *modelCallReadinessPolicyTestClient) SupportsNativeTools() bool { return false }
-
-type injectedStopModelCallReadinessPolicyEngine struct{}
-
-func (injectedStopModelCallReadinessPolicyEngine) BeforeModelCall(ModelCallReadinessPolicyInput) ModelCallReadinessPolicyDecision {
-	return ModelCallReadinessPolicyDecision{
-		Stop:            true,
-		StopReason:      "injected_model_call_readiness_stop",
-		BudgetExhausted: true,
-		CloseoutMode:    noToolsCloseoutModelAllowed,
-		CloseoutPrompt:  "Injected model-call readiness stop. Tools are now disabled.",
-	}
-}
-
 func TestModelCallReadinessPolicyDoesNotStopForElapsedDuration(t *testing.T) {
-	decision := newModelCallReadinessPolicyEngine().BeforeModelCall(ModelCallReadinessPolicyInput{
-		Policy:     RunPolicy{},
-		LanePolicy: DefaultLanePolicy{},
-		Metrics:    runnerMetrics{startedAt: time.Now().Add(-time.Second)},
+	decision := modelCallReadinessBeforeModelCall(ModelCallReadinessPolicyInput{
+		Policy:  RunPolicy{},
+		Metrics: runnerMetrics{startedAt: time.Now().Add(-time.Second)},
 	})
 
 	if decision.Stop || decision.BudgetExhausted || decision.StopReason != "" {
@@ -551,32 +166,25 @@ func TestModelCallReadinessPolicyDoesNotStopForElapsedDuration(t *testing.T) {
 }
 
 func TestModelCallReadinessPolicyKeepsAdvisoryBudgetsNonTerminalWhenLaneOwnsReadiness(t *testing.T) {
-	for _, lanePolicy := range []LanePolicy{
-		ConversationLanePolicy{},
-		ReadOnlyInvestigationLanePolicy{},
-	} {
-		decision := newModelCallReadinessPolicyEngine().BeforeModelCall(ModelCallReadinessPolicyInput{
-			Policy: RunPolicy{
-				MaxModelCalls: 1,
-			},
-			LanePolicy: lanePolicy,
-			Metrics: runnerMetrics{
-				startedAt:  time.Now().Add(-time.Second),
-				ModelCalls: 1,
-			},
-		})
+	decision := modelCallReadinessBeforeModelCall(ModelCallReadinessPolicyInput{
+		Policy: RunPolicy{
+			MaxModelCalls: 1,
+		},
+		Metrics: runnerMetrics{
+			startedAt:  time.Now().Add(-time.Second),
+			ModelCalls: 1,
+		},
+	})
 
-		if decision.Stop {
-			t.Fatalf("%s lane should skip pre-model-call budget stop, got %#v", lanePolicy.Name(), decision)
-		}
+	if decision.Stop {
+		t.Fatalf("advisory model-call budget should not stop before model call, got %#v", decision)
 	}
 }
 
 func TestModelCallReadinessPolicyDoesNotStopOnAdvisoryModelCallBudget(t *testing.T) {
-	decision := newModelCallReadinessPolicyEngine().BeforeModelCall(ModelCallReadinessPolicyInput{
-		Policy:     RunPolicy{MaxModelCalls: 2},
-		LanePolicy: DefaultLanePolicy{},
-		Metrics:    runnerMetrics{startedAt: time.Now(), ModelCalls: 2},
+	decision := modelCallReadinessBeforeModelCall(ModelCallReadinessPolicyInput{
+		Policy:  RunPolicy{MaxModelCalls: 2},
+		Metrics: runnerMetrics{startedAt: time.Now(), ModelCalls: 2},
 	})
 
 	if decision.Stop || decision.BudgetExhausted || decision.StopReason != "" {
@@ -585,10 +193,9 @@ func TestModelCallReadinessPolicyDoesNotStopOnAdvisoryModelCallBudget(t *testing
 }
 
 func TestModelCallReadinessPolicyStopsOnOperationalModelCallLimit(t *testing.T) {
-	decision := newModelCallReadinessPolicyEngine().BeforeModelCall(ModelCallReadinessPolicyInput{
-		Policy:     RunPolicy{MaxOperationalModelCalls: 2},
-		LanePolicy: DefaultLanePolicy{},
-		Metrics:    runnerMetrics{startedAt: time.Now(), ModelCalls: 2},
+	decision := modelCallReadinessBeforeModelCall(ModelCallReadinessPolicyInput{
+		Policy:  RunPolicy{MaxOperationalModelCalls: 2},
+		Metrics: runnerMetrics{startedAt: time.Now(), ModelCalls: 2},
 	})
 
 	if !decision.Stop || !decision.BudgetExhausted || decision.StopReason != "operational_model_call_limit_exceeded" {
@@ -601,19 +208,13 @@ func TestModelCallReadinessPolicyStopsOnOperationalModelCallLimit(t *testing.T) 
 }
 
 func TestModelCallReadinessPolicyOperationalLimitIsNotSkippedByLane(t *testing.T) {
-	for _, lanePolicy := range []LanePolicy{
-		ConversationLanePolicy{},
-		ReadOnlyInvestigationLanePolicy{},
-	} {
-		decision := newModelCallReadinessPolicyEngine().BeforeModelCall(ModelCallReadinessPolicyInput{
-			Policy:     RunPolicy{MaxOperationalModelCalls: 2},
-			LanePolicy: lanePolicy,
-			Metrics:    runnerMetrics{startedAt: time.Now(), ModelCalls: 2},
-		})
+	decision := modelCallReadinessBeforeModelCall(ModelCallReadinessPolicyInput{
+		Policy:  RunPolicy{MaxOperationalModelCalls: 2},
+		Metrics: runnerMetrics{startedAt: time.Now(), ModelCalls: 2},
+	})
 
-		if !decision.Stop || !decision.BudgetExhausted || decision.StopReason != "operational_model_call_limit_exceeded" {
-			t.Fatalf("%s lane must honor explicit operational model-call limit, got %#v", lanePolicy.Name(), decision)
-		}
+	if !decision.Stop || !decision.BudgetExhausted || decision.StopReason != "operational_model_call_limit_exceeded" {
+		t.Fatalf("explicit operational model-call limit must remain terminal, got %#v", decision)
 	}
 }
 
@@ -636,10 +237,9 @@ func TestNoToolsCloseoutModeOperationalLimitIsNotSkippedByLane(t *testing.T) {
 }
 
 func TestModelCallReadinessPolicyDoesNotSteerFinalAvailableModelSlot(t *testing.T) {
-	decision := newModelCallReadinessPolicyEngine().BeforeModelCall(ModelCallReadinessPolicyInput{
-		Policy:     RunPolicy{MaxModelCalls: 3},
-		LanePolicy: DefaultLanePolicy{},
-		Metrics:    runnerMetrics{startedAt: time.Now(), ModelCalls: 2},
+	decision := modelCallReadinessBeforeModelCall(ModelCallReadinessPolicyInput{
+		Policy:  RunPolicy{MaxModelCalls: 3},
+		Metrics: runnerMetrics{startedAt: time.Now(), ModelCalls: 2},
 	})
 
 	if decision.Stop {
@@ -647,45 +247,12 @@ func TestModelCallReadinessPolicyDoesNotSteerFinalAvailableModelSlot(t *testing.
 	}
 }
 
-func TestRunnerUsesInjectedModelCallReadinessPolicyBeforeMainModelCall(t *testing.T) {
-	client := &modelCallReadinessPolicyTestClient{}
-	var budgetEvent string
-	runner := &Runner{
-		Client:                         client,
-		Policy:                         RunPolicy{MaxToolSteps: 3, MaxModelCalls: 3},
-		ModelCallReadinessPolicyEngine: injectedStopModelCallReadinessPolicyEngine{},
-		OnEvent: func(event RunEvent) {
-			if event.Role == "budget_ledger" {
-				budgetEvent = event.Content
-			}
-		},
-	}
-
-	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "work"}}, llama.ChatOptions{}, nil, nil, nil)
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-
-	if client.calls != 1 {
-		t.Fatalf("runner should only issue forced-answer transport after readiness stop, calls=%d prompts=%#v", client.calls, client.prompts)
-	}
-
-	if !strings.Contains(strings.Join(client.prompts, "\n"), "Injected model-call readiness stop") {
-		t.Fatalf("runner did not use injected force-answer prompt, prompts=%#v answer=%q", client.prompts, answer)
-	}
-
-	if !strings.Contains(budgetEvent, `"stop_reason":"injected_model_call_readiness_stop"`) {
-		t.Fatalf("budget ledger should use injected stop reason, got %s", budgetEvent)
-	}
-}
-
 func TestRunnerPreservesInjectedStateStore(t *testing.T) {
 	injectedStore := newStateStore(nil, true, 2)
 	runner := &Runner{
-		Client:                         &modelCallReadinessPolicyTestClient{},
-		Policy:                         RunPolicy{MaxToolSteps: 3, MaxModelCalls: 3},
-		StateStore:                     injectedStore,
-		ModelCallReadinessPolicyEngine: injectedStopModelCallReadinessPolicyEngine{},
+		Client:     lifecycleCloseoutPolicyTestClient{},
+		Policy:     RunPolicy{MaxToolSteps: 3, MaxModelCalls: 3},
+		StateStore: injectedStore,
 	}
 
 	if _, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "work"}}, llama.ChatOptions{}, nil, nil, nil); err != nil {
@@ -783,7 +350,7 @@ func TestRunnerAutonomyPlanExecutePlannerUsesSharedToolMetadata(t *testing.T) {
 		PermissionProfile: "guarded_workspace_write",
 	}
 
-	for _, entry := range autonomy.PlanExecutePlannerToolMetadataEntries() {
+	for _, entry := range workspace.PlanExecutePlannerToolMetadataEntries() {
 		t.Run(entry.Tool, func(t *testing.T) {
 			if got := runnerAutonomyCapabilitiesForTool(brief, entry.Tool); !slices.Equal(got, entry.Capabilities) {
 				t.Fatalf("runner capabilities = %#v, want metadata capabilities %#v", got, entry.Capabilities)
@@ -858,7 +425,7 @@ func TestRunnerAutonomyPlanExecutePlannerPolicyEventsUseSharedToolMetadata(t *te
 	}
 }
 
-func TestRunnerAutonomySharedPlannerMetadataDoesNotChangeNonPlannerFallback(t *testing.T) {
+func TestRunnerAutonomyNonPlannerUsesSharedToolSurfaceFallback(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		Lane:              "implement",
 		TaskFamily:        "implementation",
@@ -866,8 +433,8 @@ func TestRunnerAutonomySharedPlannerMetadataDoesNotChangeNonPlannerFallback(t *t
 		PermissionProfile: "guarded_workspace_write",
 	}
 
-	if got := runnerAutonomyCapabilitiesForTool(brief, "code_navigate"); len(got) != 0 {
-		t.Fatalf("non-planner code_navigate should keep legacy fallback capabilities, got %#v", got)
+	if got, want := runnerAutonomyCapabilitiesForTool(brief, "code_navigate"), []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}; !slices.Equal(got, want) {
+		t.Fatalf("non-planner code_navigate capabilities = %#v, want shared tool-surface metadata %#v", got, want)
 	}
 
 	if got := runnerAutonomySideEffectForBrief(brief, workspace.ToolRequest{Tool: "shell", Command: "go test ./internal/runtime/agent"}); got != autonomy.SideEffectReadOnly {
@@ -1429,7 +996,7 @@ func TestPlanExecuteHistoryPendingModelProtocolUsesCanonicalReadAction(t *testin
 		Contract:          "submit_plan",
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"a.go"},
-		RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
+		RequiredEvidence:  []string{string(workerruntime.RequiredEvidenceGitHistoryRationale)},
 		AllowedTools: []string{
 			"read_file",
 			"context_impact",
@@ -1505,6 +1072,19 @@ func TestPlanExecuteHistoryPendingModelProtocolUsesCanonicalReadAction(t *testin
 	}
 }
 
+func TestModelProtocolRequiredToolsProjectsRuntimeRequiredToolVocabulary(t *testing.T) {
+	got := modelProtocolRequiredTools([]string{
+		workspace.RequiredToolGitHistoryLookup,
+		workspace.RequiredToolEditFileOrApplyPatch,
+		"not_a_tool",
+	}, TurnPhaseContract{})
+
+	want := []string{workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol}
+	if !slices.Equal(got, want) {
+		t.Fatalf("model protocol required tools = %#v, want %#v", got, want)
+	}
+}
+
 func TestPlanExecuteModelProtocolShowsCompletedHistoryWhenSourceBodyPending(t *testing.T) {
 	runner := &Runner{}
 	brief := workerruntime.WorkerRuntimeBrief{
@@ -1513,7 +1093,7 @@ func TestPlanExecuteModelProtocolShowsCompletedHistoryWhenSourceBodyPending(t *t
 		Contract:          "submit_plan",
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"a.go"},
-		RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
+		RequiredEvidence:  []string{string(workerruntime.RequiredEvidenceGitHistoryRationale)},
 		AllowedTools: []string{
 			"read_file",
 			"code_navigate",
@@ -2591,8 +2171,7 @@ func TestRunnerAutonomyRecorderEmitsGateEventsForExistingGates(t *testing.T) {
 	recorder.emitVerificationGate(workspace.ToolRequest{Tool: "read_file", Path: "internal/runtime/agent/runner_core.go"}, autonomy.PolicyReject, "verification_required_after_write", "pending")
 	recorder.emitCompletionGate(autonomy.PolicyReject, "completion_gate_rejected", nil)
 	recorder.emitLoopGate(workspace.ToolRequest{Tool: "read_file", Path: "internal/runtime/agent/runner_core.go"}, autonomy.PolicyStop, "repeated_tool_call", "read_file:internal/runtime/agent/runner_core.go", 3)
-	lifecyclePolicy := newLifecycleCloseoutPolicyEngine()
-	recorder.emitBudgetGate(lifecyclePolicy.BudgetCloseout(policy, runnerMetrics{ToolCalls: 5, ModelCalls: 2}, "max_tool_steps", true))
+	recorder.emitBudgetGate(lifecycleBudgetCloseoutDecision(policy, runnerMetrics{ToolCalls: 5, ModelCalls: 2}, "max_tool_steps", true))
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
 	gateKinds := map[autonomy.GateKind]int{}
@@ -2694,8 +2273,7 @@ func TestRunnerAutonomyRecorderGateDecisionPayloadIncludesPackModeFactsAndAltern
 	recorder.emitVerificationGate(workspace.ToolRequest{Tool: "shell"}, autonomy.PolicyReject, "verification_required_after_write", "pending")
 	recorder.emitCompletionGate(autonomy.PolicyReject, "required_obligations_open", nil)
 	recorder.emitLoopGate(workspace.ToolRequest{Tool: "read_file", Path: "internal/runtime/agent/runner_core.go"}, autonomy.PolicyStop, "repeated_tool_call", "read_file:internal/runtime/agent/runner_core.go", 3)
-	lifecyclePolicy := newLifecycleCloseoutPolicyEngine()
-	recorder.emitBudgetGate(lifecyclePolicy.BudgetCloseout(policy, runnerMetrics{ToolCalls: 5, ModelCalls: 2}, "max_tool_steps", true))
+	recorder.emitBudgetGate(lifecycleBudgetCloseoutDecision(policy, runnerMetrics{ToolCalls: 5, ModelCalls: 2}, "max_tool_steps", true))
 	recorder.emitGateDecision(runnerAutonomyGateDecision{
 		Gate:        autonomy.GateReadOnly,
 		Decision:    autonomy.PolicyObserve,
@@ -2848,9 +2426,8 @@ func TestRunnerAutonomyRecorderLifecycleEventsCloseSuccessfulGateObligations(t *
 			recorder.emitWriteGate(workspace.ToolRequest{Tool: "apply_patch", Path: "internal/runtime/agent/runner_core.go"}, autonomy.PolicyAllow, "write_result_completed", []string{"internal/runtime/agent/runner_core.go"})
 			recorder.emitVerificationGate(workspace.ToolRequest{Tool: "shell", Command: "go test ./internal/runtime/agent"}, autonomy.PolicyAllow, "verification_result_passed", "passed")
 			recorder.emitCompletionGate(autonomy.PolicyAllow, "final_answer_accepted", nil)
-			lifecyclePolicy := newLifecycleCloseoutPolicyEngine()
-			recorder.emitLoopCloseout(lifecyclePolicy.LoopCloseout("completed", recorder.hasOpenObligationsForGate(autonomy.GateLoop)))
-			recorder.emitBudgetGate(lifecyclePolicy.BudgetCloseout(policy, runnerMetrics{ToolCalls: 3, ModelCalls: 2}, tc.budgetStopReason, tc.budgetExhausted))
+			recorder.emitLoopCloseout(lifecycleLoopCloseoutDecision("completed", recorder.hasOpenObligationsForGate(autonomy.GateLoop)))
+			recorder.emitBudgetGate(lifecycleBudgetCloseoutDecision(policy, runnerMetrics{ToolCalls: 3, ModelCalls: 2}, tc.budgetStopReason, tc.budgetExhausted))
 
 			events := decodeRunnerAutonomyEventsForTest(t, runEvents)
 			report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
@@ -2912,9 +2489,8 @@ func TestRunnerAutonomyRecorderOpensBeforeInitialResolvedObligations(t *testing.
 
 	recorder.emitContractStarted(brief)
 	recorder.emitCompletionGate(autonomy.PolicyAllow, "final_answer_accepted", results)
-	lifecyclePolicy := newLifecycleCloseoutPolicyEngine()
-	recorder.emitLoopCloseout(lifecyclePolicy.LoopCloseout("completed", recorder.hasOpenObligationsForGate(autonomy.GateLoop)))
-	recorder.emitBudgetGate(lifecyclePolicy.BudgetCloseout(policy, runnerMetrics{ToolCalls: 2, ModelCalls: 1}, "completed", false))
+	recorder.emitLoopCloseout(lifecycleLoopCloseoutDecision("completed", recorder.hasOpenObligationsForGate(autonomy.GateLoop)))
+	recorder.emitBudgetGate(lifecycleBudgetCloseoutDecision(policy, runnerMetrics{ToolCalls: 2, ModelCalls: 1}, "completed", false))
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
 
@@ -7127,7 +6703,7 @@ func TestRunnerRequestBudgetFingerprintDecisionWarnsThenBlocks(t *testing.T) {
 	state.noteFingerprint(fingerprint)
 	state.noteFingerprint(fingerprint)
 
-	decision := state.loopPolicy.EvaluateFingerprint(&state, RunPolicy{FingerprintNudgeAt: 2}, req, fingerprint)
+	decision := attachLoopPolicyDecision(state.fingerprintDecision(RunPolicy{FingerprintNudgeAt: 2}, req, fingerprint))
 	if !decision.Handled || decision.Nudge == "" || decision.EventRole != "fingerprint_nudge" {
 		t.Fatalf("expected fingerprint nudge decision, got %#v", decision)
 	}
@@ -7135,7 +6711,7 @@ func TestRunnerRequestBudgetFingerprintDecisionWarnsThenBlocks(t *testing.T) {
 
 	state.noteFingerprint(fingerprint)
 
-	decision = state.loopPolicy.EvaluateFingerprint(&state, RunPolicy{FingerprintNudgeAt: 2}, req, fingerprint)
+	decision = attachLoopPolicyDecision(state.fingerprintDecision(RunPolicy{FingerprintNudgeAt: 2}, req, fingerprint))
 	if !decision.Handled || decision.ForceAnswerReason != "fingerprint_hard_block_exhausted" {
 		t.Fatalf("expected hard block after repeated warned fingerprint, got %#v", decision)
 	}
@@ -7180,13 +6756,13 @@ func TestRunnerRequestBudgetSamePathFixationNudgesOnVariedRanges(t *testing.T) {
 
 	for i := 0; i < samePathFixationNudgeAt-1; i++ {
 		req := workspace.ToolRequest{Tool: "read_file", Path: "internal/surfaces/tui/app/app.go", StartLine: i*50 + 1, EndLine: (i + 1) * 50}
-		if decision := state.loopPolicy.EvaluateSamePathFixation(&state, req, false); decision.Handled {
+		if decision := attachLoopPolicyDecision(state.samePathFixationDecision(req, false)); decision.Handled {
 			t.Fatalf("same-path nudge fired too early at request %d: %#v", i+1, decision)
 		}
 	}
 
 	req := workspace.ToolRequest{Tool: "read_file", Path: "internal/surfaces/tui/app/app.go", StartLine: 201, EndLine: 250}
-	decision := state.loopPolicy.EvaluateSamePathFixation(&state, req, true)
+	decision := attachLoopPolicyDecision(state.samePathFixationDecision(req, true))
 
 	if !decision.Handled || decision.Nudge == "" || decision.EventRole != "same_path_fixation_nudge" {
 		t.Fatalf("expected same-path fixation nudge, got %#v", decision)
@@ -7201,7 +6777,7 @@ func TestRunnerRequestBudgetSamePathFixationNudgesOnVariedRanges(t *testing.T) {
 	}
 
 	req = workspace.ToolRequest{Tool: "read_file", Path: "internal/surfaces/tui/app/app.go", StartLine: 251, EndLine: 300}
-	decision = state.loopPolicy.EvaluateSamePathFixation(&state, req, true)
+	decision = attachLoopPolicyDecision(state.samePathFixationDecision(req, true))
 
 	if decision.Handled || decision.HideTool != "" {
 		t.Fatalf("ignored same-path nudge must not hide read tools, got %#v", decision)
@@ -7213,7 +6789,7 @@ func TestRunnerRequestBudgetSamePathFixationSkipsDiagnosticLogs(t *testing.T) {
 
 	for i := 0; i < samePathFixationNudgeAt+2; i++ {
 		req := workspace.ToolRequest{Tool: "read_file", Path: "logs/conversations/20260604-192533.289.jsonl", StartLine: i*80 + 1, EndLine: (i + 1) * 80}
-		if decision := state.loopPolicy.EvaluateSamePathFixation(&state, req, true); decision.Handled {
+		if decision := attachLoopPolicyDecision(state.samePathFixationDecision(req, true)); decision.Handled {
 			t.Fatalf("diagnostic log window %d should not trigger source same-path nudge: %#v", i+1, decision)
 		}
 	}
@@ -7229,7 +6805,7 @@ func TestRunnerRequestBudgetDoesNotForceNoToolsForTerminalArtifactRetry(t *testi
 	state.noteFingerprint(fingerprint)
 	state.noteFingerprint(fingerprint)
 
-	decision := state.loopPolicy.EvaluateFingerprint(&state, RunPolicy{FingerprintNudgeAt: 2}, req, fingerprint)
+	decision := attachLoopPolicyDecision(state.fingerprintDecision(RunPolicy{FingerprintNudgeAt: 2}, req, fingerprint))
 	if !decision.Handled {
 		t.Fatal("expected terminal artifact retry to be handled")
 	}
@@ -7247,7 +6823,7 @@ func TestRunnerRequestBudgetDoesNotForceNoToolsForTerminalArtifactRetry(t *testi
 		t.Fatalf("nudge should require submit_plan without no-tools closeout: %q", decision.Nudge)
 	}
 
-	early := state.loopPolicy.EvaluateEarlyRejectedFingerprint(&state, req, fingerprint)
+	early := attachLoopPolicyDecision(state.earlyRejectedFingerprintDecision(req, fingerprint))
 	if !early.Handled || early.ForceAnswerReason != "" || !strings.Contains(early.Nudge, "terminal plan artifact") {
 		t.Fatalf("early repeated rejection should also preserve terminal artifact recovery, got %#v", early)
 	}
@@ -7263,7 +6839,7 @@ func TestRunnerRequestBudgetSubmitCorrectionRetryDoesNotAdvertiseTerminalExcepti
 	state.noteFingerprint(fingerprint)
 	state.noteFingerprint(fingerprint)
 
-	decision := state.loopPolicy.EvaluateFingerprint(&state, RunPolicy{FingerprintNudgeAt: 2}, req, fingerprint)
+	decision := attachLoopPolicyDecision(state.fingerprintDecision(RunPolicy{FingerprintNudgeAt: 2}, req, fingerprint))
 	if !decision.Handled {
 		t.Fatal("expected submit-correction retry to be handled")
 	}
@@ -7314,14 +6890,14 @@ func TestRunnerRequestBudgetEarlyBlocksRepeatedRangeLessReadRetry(t *testing.T) 
 			state.fingerprint.rejected[fingerprint] = summary
 
 			// First retry: nudge (nudge-then-block pattern)
-			decision := state.loopPolicy.EvaluateEarlyRejectedFingerprint(&state, req, fingerprint)
+			decision := attachLoopPolicyDecision(state.earlyRejectedFingerprintDecision(req, fingerprint))
 			if !decision.Handled || decision.Nudge == "" {
 				t.Fatalf("expected nudge on first retry, got %#v", decision)
 			}
 			assertLoopPolicyDecision(t, decision, autonomy.PolicyObserve, "rejection_retry_nudge")
 
 			// Second retry: blocked
-			decision = state.loopPolicy.EvaluateEarlyRejectedFingerprint(&state, req, fingerprint)
+			decision = attachLoopPolicyDecision(state.earlyRejectedFingerprintDecision(req, fingerprint))
 			if !decision.Handled || decision.ForceAnswerReason != "rejection_retry_blocked" {
 				t.Fatalf("expected block on second retry, got %#v", decision)
 			}
@@ -7341,7 +6917,7 @@ func TestRunnerRequestBudgetAllowsOneCorrectedRetryAfterMissingNamedGap(t *testi
 
 	state.fingerprint.rejected[fingerprint] = "Post-readiness follow-up missing named gap"
 
-	decision := state.loopPolicy.EvaluateFingerprint(&state, RunPolicy{}, req, fingerprint)
+	decision := attachLoopPolicyDecision(state.fingerprintDecision(RunPolicy{}, req, fingerprint))
 	if decision.Handled {
 		t.Fatalf("expected corrected retry to be allowed, got %#v", decision)
 	}
@@ -7385,7 +6961,7 @@ func TestRunnerRequestBudgetClearsLegacyMissingNamedGapRetryWithoutNamedGap(t *t
 
 	// Read-only post-readiness follow-ups are advisory now. The old
 	// named_gap rejection summary must not enter the retry budget.
-	decision := state.loopPolicy.EvaluateFingerprint(&state, RunPolicy{}, req, fingerprint)
+	decision := attachLoopPolicyDecision(state.fingerprintDecision(RunPolicy{}, req, fingerprint))
 	if decision.Handled {
 		t.Fatalf("advisory post-readiness retry should not be budget-blocked, got %#v", decision)
 	}
@@ -7468,7 +7044,7 @@ func TestRunnerRequestBudgetNudgesAndBlocksZeroHitSearchFamily(t *testing.T) {
 	})
 
 	second := workspace.ToolRequest{Tool: "search_content", Path: ".", Pattern: "pkey.KeyArrowDown"}
-	decision := state.loopPolicy.EvaluateFingerprint(&state, RunPolicy{}, second, "search_content|.|pkey.KeyArrowDown")
+	decision := attachLoopPolicyDecision(state.fingerprintDecision(RunPolicy{}, second, "search_content|.|pkey.KeyArrowDown"))
 
 	if !decision.Handled || decision.EventRole != "zero_hit_family_nudge" || decision.Nudge == "" {
 		t.Fatalf("expected same-family zero-hit nudge, got %#v", decision)
@@ -7482,7 +7058,7 @@ func TestRunnerRequestBudgetNudgesAndBlocksZeroHitSearchFamily(t *testing.T) {
 
 	third := workspace.ToolRequest{Tool: "search_content", Path: ".", Pattern: "key arrow"}
 
-	decision = state.loopPolicy.EvaluateFingerprint(&state, RunPolicy{}, third, "search_content|.|key arrow")
+	decision = attachLoopPolicyDecision(state.fingerprintDecision(RunPolicy{}, third, "search_content|.|key arrow"))
 
 	if !decision.Handled || decision.RejectSummary != "Zero-hit search family blocked" || decision.RejectStopReason != "zero_hit_family_budget_exhausted" {
 		t.Fatalf("expected same-family zero-hit block, got %#v", decision)
@@ -7601,7 +7177,7 @@ func TestWriteReadyNudgeActiveDefersRejectionRetry(t *testing.T) {
 	state.fingerprint.rejected[fingerprint] = "Chained search rejected"
 	state.fingerprint.rejectedRetries = make(map[string]int)
 
-	decision := state.loopPolicy.EvaluateFingerprint(&state, RunPolicy{}, req, fingerprint)
+	decision := attachLoopPolicyDecision(state.fingerprintDecision(RunPolicy{}, req, fingerprint))
 	if !decision.Handled {
 		t.Fatal("expected rejection retry to be handled")
 	}
@@ -7633,7 +7209,7 @@ func TestRejectionRetryNudgeThenBlock(t *testing.T) {
 	state.fingerprint.rejectedRetries = make(map[string]int)
 
 	// First retry: nudge
-	d1 := state.loopPolicy.EvaluateFingerprint(&state, RunPolicy{}, req, fingerprint)
+	d1 := attachLoopPolicyDecision(state.fingerprintDecision(RunPolicy{}, req, fingerprint))
 	if !d1.Handled || d1.Nudge == "" {
 		t.Fatalf("expected nudge on first retry, got %#v", d1)
 	}
@@ -7646,7 +7222,7 @@ func TestRejectionRetryNudgeThenBlock(t *testing.T) {
 	t.Log("first retry: nudge")
 
 	// Second retry: blocked
-	d2 := state.loopPolicy.EvaluateFingerprint(&state, RunPolicy{}, req, fingerprint)
+	d2 := attachLoopPolicyDecision(state.fingerprintDecision(RunPolicy{}, req, fingerprint))
 	if !d2.Handled || d2.ForceAnswerReason != "rejection_retry_blocked" {
 		t.Fatalf("expected force-answer on second retry, got %#v", d2)
 	}
@@ -7842,23 +7418,6 @@ func TestRewriteMissingRequiredNewFileProbeIgnoresUnrelatedTools(t *testing.T) {
 	}
 }
 
-func TestRunStateSyncToolSurfaceRefreshesVisibleToolsWhenHiddenOwnerExists(t *testing.T) {
-	state := &runnerRunState{
-		currentAllowedTools: []string{"read_file", "shell"},
-		toolSurface:         NewActiveSurface([]string{"read_file"}, nil),
-	}
-	state.toolSurface.Hide(OwnerLoopPolicy, "shell")
-
-	state.syncToolSurfaceFromBridge()
-
-	if !state.toolSurface.AllowsTool("read_file") {
-		t.Fatalf("read_file should remain visible: %#v", state.toolSurface.VisibleTools)
-	}
-	if state.toolSurface.AllowsTool("shell") {
-		t.Fatalf("hidden shell leaked into visible tools: %#v", state.toolSurface.VisibleTools)
-	}
-}
-
 type runnerSessionTestClient struct {
 	calls int
 }
@@ -7920,11 +7479,8 @@ func TestRunnerSessionBootstrapOwnsEngineInitialization(t *testing.T) {
 	if remaining := runner.StateStore.RequiredEditsRemaining(); len(remaining) != 1 || remaining[0] != "internal/runtime/agent/runner_core.go" {
 		t.Fatalf("required edits = %#v", remaining)
 	}
-	if runner.LanePolicy == nil || runner.EvidenceEngine == nil || runner.GateEngine == nil ||
-		runner.CardEngine == nil || runner.GuidanceEngine == nil ||
-		runner.VerificationPolicyEngine == nil || runner.LifecycleCloseoutPolicyEngine == nil ||
-		runner.ModelCallReadinessPolicyEngine == nil || runner.ToolAuthorizationPolicyEngine == nil {
-		t.Fatalf("Bootstrap did not initialize runner engines: %#v", runner)
+	if runner.LanePolicy == nil {
+		t.Fatalf("Bootstrap did not initialize lane policy: %#v", runner)
 	}
 }
 
@@ -8818,6 +8374,8 @@ func TestToolActionClassNormalizesRepeatedDeadEndKeys(t *testing.T) {
 		{req: workspace.ToolRequest{Tool: "joern_scan", Path: "src"}, want: "joern_scan:src"},
 		{req: workspace.ToolRequest{Tool: "go_find_symbol", Pattern: "classifyPromptExecutionPlan"}, want: "go_find_symbol:classifypromptexecutionplan"},
 		{req: workspace.ToolRequest{Tool: "go_file_outline", Path: "internal/surfaces/tui/app/app.go"}, want: "go_file_outline:internal/surfaces/tui/app/app.go"},
+		{req: workspace.ToolRequest{Tool: "cpp_declaration", Pattern: "RenderFrame"}, want: "cpp_declaration:renderframe"},
+		{req: workspace.ToolRequest{Tool: "rust_references", Path: "src/lib.rs", Pattern: "Runner"}, want: "rust_references:runner"},
 		{req: workspace.ToolRequest{Tool: "go_move_declarations", Path: "internal/surfaces/tui/app/app.go", Destination: "internal/surfaces/tui/app/rendering.go"}, want: "go_move_declarations:internal/surfaces/tui/app/app.go->internal/surfaces/tui/app/rendering.go"},
 	}
 	for _, tc := range cases {
@@ -9009,7 +8567,7 @@ func TestPlannerOwnedVerificationGateNamesLaneSanity(t *testing.T) {
 
 func TestHideBroadDiscoveryToolsIncludesHeavyGenericDiscovery(t *testing.T) {
 	surface := NewActiveSurface(nil, nil)
-	surface.Hide(OwnerChildPacket, broadDiscoveryToolNames()...)
+	surface.Hide(OwnerChildPacket, workspace.BroadDiscoveryToolNames()...)
 
 	for _, want := range []string{"list_files", "discovery_query", "dependency_graph", "ctags_symbols", "semgrep_scan", "joern_scan", "go_overview"} {
 		if !surface.HidesTool(want) {
@@ -9222,34 +8780,6 @@ func TestReadOnlyEvidencePendingTerminalChatOptionsPreserveThinking(t *testing.T
 	}
 }
 
-func TestRunnerReadOnlyEvidenceAvailableTerminalChatOptionsUsesEvidenceEngine(t *testing.T) {
-	thinkingOn := true
-	opts := llama.ChatOptions{EnableThinking: &thinkingOn, PreserveThinking: true, MaxTokens: 8192}
-	engine := &pendingRedirectEvidenceEngine{}
-	runner := &Runner{
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        "conversation",
-			Contract:          "direct_answer",
-			PermissionProfile: "read_only_workspace",
-			Objective:         "What is in internal/runtime/agent/runner_core.go?",
-		},
-		EvidenceEngine: engine,
-	}
-
-	got := runner.readOnlyEvidenceAvailableTerminalChatOptions(opts, nil)
-	if !engine.closureCalled {
-		t.Fatal("expected terminal chat options readiness to use runner-owned EvidenceEngine")
-	}
-
-	if got.EnableThinking == nil || *got.EnableThinking || got.PreserveThinking {
-		t.Fatalf("runner-owned evidence-ready terminal mode should disable thinking, got enable=%#v preserve=%v", got.EnableThinking, got.PreserveThinking)
-	}
-
-	if !got.ChatTemplateKwargs {
-		t.Fatal("runner-owned evidence-ready terminal mode should send chat-template kwargs")
-	}
-}
-
 func TestTextualToolProtocolEntriesPrioritizeWriteAliasExamples(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		AllowedTools: []string{
@@ -9269,8 +8799,8 @@ func TestTextualToolProtocolEntriesPrioritizeWriteAliasExamples(t *testing.T) {
 			"append_file",
 			"apply_patch",
 		},
-		RequiredTools: []string{"edit_file_or_apply_patch", "semantic_discovery_or_narrow_read_for_named_gap"},
-		ToolManifest: workerruntime.ToolManifestFromWorkspace(workspace.BuildToolManifest([]string{
+		RequiredTools: []string{workspace.RequiredToolEditFileOrApplyPatch, workspace.RequiredToolSemanticDiscoveryOrNarrowReadForNamedGap},
+		ToolManifest: workspace.BuildToolManifest([]string{
 			"read_file",
 			"code_navigate",
 			"source_sanity",
@@ -9286,7 +8816,7 @@ func TestTextualToolProtocolEntriesPrioritizeWriteAliasExamples(t *testing.T) {
 			"write_file",
 			"append_file",
 			"apply_patch",
-		})),
+		}),
 	}
 
 	entries := textualToolProtocolEntries(brief)
@@ -12823,176 +12353,6 @@ func TestPresentableFallbackCandidatePreservesChildDelegatedPacket(t *testing.T)
 	}
 }
 
-type closureDecisionSpyEvidenceEngine struct {
-	EvidenceEngine
-	closureCalls int
-}
-
-func (e *closureDecisionSpyEvidenceEngine) ClosureDecision(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) ReadOnlyCloseout {
-	e.closureCalls++
-	return newEvidenceEngine().ClosureDecision(brief, results)
-}
-
-func TestNoToolsPresentableFallbackUsesRunnerEvidenceEngine(t *testing.T) {
-	brief := workerruntime.WorkerRuntimeBrief{
-		TaskFamily:        "conversation",
-		Contract:          "direct_answer",
-		PermissionProfile: "read_only_workspace",
-		Objective:         "Can we shorten the save label in internal/labels/labels.go?",
-	}
-	results := []workspace.ToolResult{{
-		Tool:    "search_content",
-		Summary: "Found 1 matching line(s).",
-		Output:  "internal/labels/labels.go:4:\treturn \"Save changes\"",
-	}}
-
-	engine := &closureDecisionSpyEvidenceEngine{}
-	runner := &Runner{
-		AgentName:      "main",
-		RuntimeBrief:   brief,
-		EvidenceEngine: engine,
-	}
-
-	runner.presentableFallbackCandidate(results, "The retained source context identifies the relevant implementation surface as `internal/labels/labels.go`.")
-	runner.presentableOrReadOnlyNonAnswerReplacement(results, "The retained source context identifies the relevant implementation surface as `internal/labels/labels.go`.")
-	runner.presentableBriefConversationFallbackCandidate(results)
-
-	if engine.closureCalls < 3 {
-		t.Fatalf("expected presentable fallback helpers to use runner-owned EvidenceEngine at least 3 time(s), got %d", engine.closureCalls)
-	}
-}
-
-func TestNoToolsBudgetFallbackUsesRunnerEvidenceEngine(t *testing.T) {
-	brief := workerruntime.WorkerRuntimeBrief{
-		TaskFamily:        "conversation",
-		Contract:          "direct_answer",
-		PermissionProfile: "read_only_workspace",
-		Objective:         "What does internal/runtime/agent/runner_core.go do?",
-	}
-	results := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/runtime/agent/runner_core.go lines 1-20",
-			Output:  "1:package agent\n2:\n3:func RunExample() {}\n",
-		},
-		{
-			Tool:    "search_content",
-			Summary: "Found 1 matching line(s).",
-			Output:  "internal/runtime/agent/runner_core.go:3:func RunExample() {}\n",
-		},
-	}
-
-	engine := &closureDecisionSpyEvidenceEngine{}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"choices": []map[string]any{{
-				"message": map[string]string{"content": "The inspected file is `internal/runtime/agent/runner_core.go`."},
-			}},
-		})
-	}))
-	defer server.Close()
-
-	runner := &Runner{
-		AgentName:      "child:explorer",
-		Client:         llama.NewClient(server.URL, time.Second),
-		RuntimeBrief:   brief,
-		EvidenceEngine: engine,
-	}
-
-	_, _ = runner.completeWithoutMoreToolsWithReason(context.Background(), nil, llama.ChatOptions{}, results, "maximum tool steps reached", nil)
-	if engine.closureCalls == 0 {
-		t.Fatal("expected budget fallback to use runner-owned EvidenceEngine")
-	}
-}
-
-func TestNoToolsFallbackSynthesisUsesRunnerEvidenceEngine(t *testing.T) {
-	brief := workerruntime.WorkerRuntimeBrief{
-		TaskFamily:        "conversation",
-		Contract:          "direct_answer",
-		PermissionProfile: "read_only_workspace",
-		Objective:         "What is in internal/runtime/agent/runner_core.go?",
-	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/runtime/agent/runner_core.go lines 1-20",
-		Output:  "1:package agent\n2:\n3:func RunExample() {}\n",
-	}}
-
-	engine := &closureDecisionSpyEvidenceEngine{}
-	runner := &Runner{
-		AgentName:      "main",
-		RuntimeBrief:   brief,
-		EvidenceEngine: engine,
-	}
-
-	_, _, err := runner.repairOrFallbackFinalAnswer(context.Background(), nil, llama.ChatOptions{}, results, nil)
-	if err != nil {
-		t.Fatalf("repairOrFallbackFinalAnswer: %v", err)
-	}
-
-	if engine.closureCalls == 0 {
-		t.Fatal("expected no-tools fallback synthesis to use runner-owned EvidenceEngine")
-	}
-}
-
-func TestFinalAnswerDecorationUsesRunnerEvidenceEngine(t *testing.T) {
-	brief := workerruntime.WorkerRuntimeBrief{
-		TaskFamily:        "conversation",
-		Contract:          "direct_answer",
-		PermissionProfile: "read_only_workspace",
-		Objective:         "What is in internal/runtime/agent/runner_core.go?",
-	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/runtime/agent/runner_core.go lines 1-20",
-		Output:  "1:package agent\n2:\n3:func RunExample() {}\n",
-	}}
-
-	engine := &closureDecisionSpyEvidenceEngine{}
-	runner := &Runner{
-		AgentName:      "main",
-		RuntimeBrief:   brief,
-		EvidenceEngine: engine,
-	}
-
-	_ = runner.decorateFinalAnswer(FinalAnswerDecorateInput{
-		Answer:     "Partial findings from this turn:\n1:package agent\n2:\n3:func RunExample() {}",
-		Brief:      brief,
-		Results:    results,
-		UserFacing: true,
-	})
-
-	if engine.closureCalls == 0 {
-		t.Fatal("expected final answer decoration to use runner-owned EvidenceEngine")
-	}
-}
-
-func TestPresentableFallbackNestedNoToolsUsesRunnerEvidenceEngine(t *testing.T) {
-	brief := workerruntime.WorkerRuntimeBrief{
-		TaskFamily:        "conversation",
-		Contract:          "direct_answer",
-		PermissionProfile: "read_only_workspace",
-		Objective:         "What is in internal/runtime/agent/runner_core.go?",
-	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/runtime/agent/runner_core.go lines 1-20",
-		Output:  "1:package agent\n2:\n3:func RunExample() {}\n",
-	}}
-
-	engine := &closureDecisionSpyEvidenceEngine{}
-	runner := &Runner{
-		AgentName:      "main",
-		RuntimeBrief:   brief,
-		EvidenceEngine: engine,
-	}
-
-	_, _ = runner.presentableFallbackCandidate(results, "Partial findings from this turn:\n1:package agent\n2:\n3:func RunExample() {}")
-	if engine.closureCalls < 2 {
-		t.Fatalf("expected nested presentable fallback to reuse runner-owned EvidenceEngine, got %d closure call(s)", engine.closureCalls)
-	}
-}
-
 func TestForcedCompletionFallsBackWhenReadOnlyRetryStillViolatesCompletionGate(t *testing.T) {
 	replies := []string{
 		`{"tool":"read_file","path":"internal/labels/labels.go","start_line":1,"end_line":200}`,
@@ -15454,13 +14814,6 @@ func TestRunnerReadOnlyReviewClosesAfterReplayedSourceEvidence(t *testing.T) {
 			t.Fatalf("decode budget ledger %q: %v", event.Content, err)
 		}
 
-		if ledger.StopReason == "read_only_replayed_evidence_closeout" ||
-			ledger.StopReason == "host_read_only_closeout" ||
-			ledger.StopReason == "read_only_prefetch_host_closeout" {
-
-			t.Fatalf("replayed evidence must not use read-only closeout stop reason: %#v", ledger)
-		}
-
 		if ledger.StopReason != "" {
 			return
 		}
@@ -16530,7 +15883,7 @@ func TestCandidateAnchorMissDoesNotCountAsSourceBodyEvidence(t *testing.T) {
 			t.Fatalf("%s candidate-anchor miss counted as concrete source evidence", result.Tool)
 		}
 
-		if paths := agentutil.ReadPathsFromToolResult(result); len(paths) != 0 {
+		if paths := ReadPathsFromToolResult(result); len(paths) != 0 {
 			t.Fatalf("%s candidate-anchor miss returned read paths: %#v", result.Tool, paths)
 		}
 	}
@@ -16868,7 +16221,7 @@ func TestVisibleBriefForToolSurfaceStatesReadOnlyEvidenceGateBeforeAnswer(t *tes
 		t.Fatalf("read-only evidence-pending surface retained write tool: %#v", visible.AllowedTools)
 	}
 
-	if !slices.Contains(visible.RequiredTools, "bounded_workspace_evidence_tool") {
+	if !slices.Contains(visible.RequiredTools, workspace.RequiredToolBoundedWorkspaceEvidence) {
 		t.Fatalf("expected bounded evidence tool requirement, got %#v", visible.RequiredTools)
 	}
 
@@ -16977,6 +16330,26 @@ func TestControlRailsUseRuntimeBriefForImplementation(t *testing.T) {
 
 	if rails.PermissionProfile != "guarded_workspace_write" || rails.VerificationContract == "not_required_for_read_only_lane" {
 		t.Fatalf("expected write + verification rails, got %#v", rails)
+	}
+}
+
+func TestControlRailsVerificationShellForbidsCatalogedWorkspaceWrites(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			AllowedTools:         []string{workspace.ToolNameShell},
+			VerificationContract: string(workerruntime.VerificationTestsPassedFailedSkipped),
+		},
+	}
+
+	rails := runner.controlRails(nil)
+	if rails.PermissionProfile != string(workerruntime.PermissionReadOnlyVerificationShell) {
+		t.Fatalf("expected read-only verification shell rails, got %#v", rails)
+	}
+
+	for _, tool := range workspace.WorkspaceWriteToolNames() {
+		if !slices.Contains(rails.ForbiddenTools, tool) {
+			t.Fatalf("verification shell rails must forbid cataloged workspace write tool %q, got %#v", tool, rails.ForbiddenTools)
+		}
 	}
 }
 
@@ -20602,10 +19975,6 @@ func TestReadOnlyDirectAnswerClosesAfterAnswerableExactSearchReplay(t *testing.T
 			t.Fatalf("decode budget ledger %q: %v", event.Content, err)
 		}
 
-		if ledger.StopReason == "host_read_only_closeout" || ledger.StopReason == "read_only_prefetch_host_closeout" || ledger.StopReason == "read_only_replayed_evidence_closeout" {
-			t.Fatalf("read-only replay must not use host/forced closeout, got %#v", ledger)
-		}
-
 		if ledger.RejectedActions != 0 {
 			t.Fatalf("single replay before model final answer should not accumulate rejected actions, got %#v", ledger)
 		}
@@ -20733,13 +20102,6 @@ func TestReadOnlyNoMatchProbeDoesNotForceCloseoutAfterSourceEvidence(t *testing.
 		var ledger runnerBudgetLedger
 		if err := json.Unmarshal([]byte(event.Content), &ledger); err != nil {
 			t.Fatalf("decode budget ledger %q: %v", event.Content, err)
-		}
-
-		if ledger.StopReason == "read_only_no_match_closeout" ||
-			ledger.StopReason == "host_read_only_closeout" ||
-			ledger.StopReason == "read_only_prefetch_host_closeout" {
-
-			t.Fatalf("read-only no-match must not use host/forced closeout, got %#v", ledger)
 		}
 
 		return
@@ -21804,7 +21166,7 @@ func TestPlanExecuteSalvagesVisibleMissingTargetReadForTypedRecovery(t *testing.
 		t.Fatalf("salvaged raw request must preserve read_file request, got %s", raw)
 	}
 
-	reason, _, lowValue := planThenExecuteCandidateLowValueAction(planExecuteRecoveryHooks{}, req, runner.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	reason, _, lowValue := planThenExecuteCandidateLowValueAction(req, runner.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
 	if !lowValue || reason != "candidate_read_missing_target" {
 		t.Fatalf("expected typed missing-target recovery, got lowValue=%v reason=%q", lowValue, reason)
 	}
@@ -22965,7 +22327,7 @@ func TestRunnerTargetSourceAllowsRedirectedSourceFollowupAfterWriteReady(t *test
 		PreExecute: func(_ int, req workspace.ToolRequest) *workspace.ToolResult {
 			switch strings.TrimSpace(req.Tool) {
 			case "read_file":
-				if agentutil.NormalizeRunnerPath(req.Path) == "internal/surfaces/tui/app/sessions.go" && req.StartLine <= 0 && req.EndLine <= 0 {
+				if NormalizeRunnerPath(req.Path) == "internal/surfaces/tui/app/sessions.go" && req.StartLine <= 0 && req.EndLine <= 0 {
 					return &workspace.ToolResult{
 						Tool:    "read_file",
 						Summary: "Redirected internal/surfaces/tui/app/sessions.go to code_navigate",
@@ -22973,7 +22335,7 @@ func TestRunnerTargetSourceAllowsRedirectedSourceFollowupAfterWriteReady(t *test
 					}
 				}
 			case "code_navigate":
-				if agentutil.NormalizeRunnerPath(req.Path) == "internal/surfaces/tui/app/sessions.go" {
+				if NormalizeRunnerPath(req.Path) == "internal/surfaces/tui/app/sessions.go" {
 					return &workspace.ToolResult{
 						Tool:    "code_navigate",
 						Summary: "Code navigation routed read_symbol via go_read_symbol",
@@ -23122,7 +22484,7 @@ func TestRunnerTargetSourceAllowsRedirectedOutlineThenSymbolAfterWriteReady(t *t
 		PreExecute: func(_ int, req workspace.ToolRequest) *workspace.ToolResult {
 			switch strings.TrimSpace(req.Tool) {
 			case "read_file":
-				if agentutil.NormalizeRunnerPath(req.Path) == "internal/surfaces/tui/app/sessions.go" && req.StartLine <= 0 && req.EndLine <= 0 {
+				if NormalizeRunnerPath(req.Path) == "internal/surfaces/tui/app/sessions.go" && req.StartLine <= 0 && req.EndLine <= 0 {
 					return &workspace.ToolResult{
 						Tool:    "read_file",
 						Summary: "Redirected internal/surfaces/tui/app/sessions.go to code_navigate",
@@ -23130,7 +22492,7 @@ func TestRunnerTargetSourceAllowsRedirectedOutlineThenSymbolAfterWriteReady(t *t
 					}
 				}
 			case "code_navigate":
-				if agentutil.NormalizeRunnerPath(req.Path) == "internal/surfaces/tui/app/sessions.go" && req.Capability == "file_outline" {
+				if NormalizeRunnerPath(req.Path) == "internal/surfaces/tui/app/sessions.go" && req.Capability == "file_outline" {
 					return &workspace.ToolResult{
 						Tool:    "code_navigate",
 						Summary: "Code navigation routed file_outline via go_file_outline",
@@ -23145,7 +22507,7 @@ func TestRunnerTargetSourceAllowsRedirectedOutlineThenSymbolAfterWriteReady(t *t
 					}
 				}
 
-				if agentutil.NormalizeRunnerPath(req.Path) == "internal/surfaces/tui/app/sessions.go" && req.Capability == "read_symbol" {
+				if NormalizeRunnerPath(req.Path) == "internal/surfaces/tui/app/sessions.go" && req.Capability == "read_symbol" {
 					return &workspace.ToolResult{
 						Tool:    "code_navigate",
 						Summary: "Code navigation routed read_symbol via go_read_symbol",
@@ -25735,13 +25097,16 @@ func TestHideExactAnchorReadToolsRequiresWriteFirst(t *testing.T) {
 	root := t.TempDir()
 	manager := workspace.NewManager(config.Workspace{Root: root, CWD: root})
 	state := &runnerRunState{
-		toolSurface: NewActiveSurface(manager.AllowedTools(), nil),
+		toolSurface: NewActiveSurface(manager.ToolSurfaceSnapshot().AllowedTools(), nil),
 	}
-	state.hideExactAnchorReadTools(manager)
+	state.hideExactAnchorReadTools(manager.ToolSurfaceSnapshot().AllowedTools())
 
 	for _, tool := range []string{"read_file", "context_status", "context_query", "shell", "git_diff", "pwd"} {
 		if !state.surfaceHidesTool(tool) {
 			t.Fatalf("expected exact-anchor pre-write mode to hide %s; hidden=%#v", tool, state.toolSurface.HiddenTools)
+		}
+		if !state.surfaceHiddenByOwner(OwnerExactAnchorRead, tool) {
+			t.Fatalf("expected exact-anchor owner to hold %s; hidden=%#v", tool, state.toolSurface.HiddenTools)
 		}
 	}
 
@@ -25752,6 +25117,40 @@ func TestHideExactAnchorReadToolsRequiresWriteFirst(t *testing.T) {
 	}
 }
 
+func TestRunStateImplementationWriteOnlyToolsUseActiveSurfaceOwners(t *testing.T) {
+	allowedTools := []string{
+		workspace.ToolNameReadFile,
+		workspace.ToolNameEditFile,
+		workspace.ToolNameSubmitPlan,
+		workspace.ToolNameShell,
+	}
+	state := &runnerRunState{
+		toolSurface: NewActiveSurface(allowedTools, nil),
+	}
+
+	state.hideImplementationWriteOnlyTools(allowedTools)
+
+	if !state.surfaceHiddenByOwner(OwnerImplementationWriteOnly, workspace.ToolNameReadFile) {
+		t.Fatalf("implementation write-only owner should hide read_file: %#v", state.toolSurface.HiddenTools)
+	}
+	if state.surfaceHidesTool(workspace.ToolNameEditFile) {
+		t.Fatalf("implementation write-only owner should keep edit_file visible: %#v", state.toolSurface.VisibleTools)
+	}
+	state.hideReviewRepairTerminalOnlyTools(allowedTools)
+	if !state.surfaceHiddenByOwner(OwnerReviewRepairTerminalOnly, workspace.ToolNameReadFile) {
+		t.Fatalf("review-repair terminal owner should hide read_file: %#v", state.toolSurface.HiddenTools)
+	}
+	if state.surfaceHidesTool(workspace.ToolNameSubmitPlan) {
+		t.Fatalf("review-repair terminal owner should keep submit_plan visible: %#v", state.toolSurface.VisibleTools)
+	}
+
+	state.releaseImplementationWriteOnlyTools()
+	state.toolSurface.SetVisibleTools(allowedTools)
+	if state.surfaceHidesTool(workspace.ToolNameReadFile) {
+		t.Fatalf("implementation release should restore read_file after both implementation owners release: %#v", state.toolSurface.HiddenTools)
+	}
+}
+
 func TestExactAnchorPreWriteVisibleBriefAdvertisesWriteOnlySurface(t *testing.T) {
 	brief := runnerVisibleBriefForToolSurface(workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "implementation",
@@ -25759,7 +25158,7 @@ func TestExactAnchorPreWriteVisibleBriefAdvertisesWriteOnlySurface(t *testing.T)
 		PermissionProfile: "guarded_workspace_write",
 		Constraints:       []string{"exact_anchor_implementation"},
 		AllowedTools:      []string{"read_file", "search_content", "edit_file", "apply_patch", "shell", "task_ledger", "harness_feedback"},
-		RequiredTools:     []string{"edit_file_or_apply_patch", "verification_shell"},
+		RequiredTools:     []string{workspace.RequiredToolEditFileOrApplyPatch, workspace.RequiredToolVerificationShell},
 		RequiredEditPaths: []string{"scripts/ui/depot_panel.gd"},
 		TargetRefs:        []string{"scripts/ui/depot_panel.gd"},
 	}, nil)
@@ -25785,7 +25184,7 @@ func TestExactAnchorPreWriteVisibleBriefAdvertisesWriteOnlySurface(t *testing.T)
 		}
 	}
 
-	if !reflect.DeepEqual(brief.RequiredTools, []string{"edit_file_or_apply_patch"}) {
+	if !reflect.DeepEqual(brief.RequiredTools, []string{workspace.RequiredToolEditFileOrApplyPatch}) {
 		t.Fatalf("exact-anchor pre-write required tools = %#v, want edit only", brief.RequiredTools)
 	}
 
@@ -25801,7 +25200,7 @@ func TestWriteReadyPreWriteVisibleBriefAdvertisesScopedSurface(t *testing.T) {
 		PermissionProfile: "guarded_workspace_write",
 		Constraints:       []string{"implementation_packet_write_ready"},
 		AllowedTools:      []string{"read_file", "search_content", "code_navigate", "edit_file", "write_file", "apply_patch", "task_ledger", "harness_feedback"},
-		RequiredTools:     []string{"edit_file_or_apply_patch", "source_sanity_or_verification_shell"},
+		RequiredTools:     []string{workspace.RequiredToolEditFileOrApplyPatch, workspace.RequiredToolSourceSanityOrVerificationShell},
 		RequiredEditPaths: []string{"native/src/simulation/economy/energy.cpp"},
 		TargetPacket:      []string{"verified_current_state"},
 		EvidencePaths:     []string{"native/src/simulation/economy/energy.cpp"},
@@ -25819,7 +25218,7 @@ func TestWriteReadyPreWriteVisibleBriefAdvertisesScopedSurface(t *testing.T) {
 		}
 	}
 
-	if !reflect.DeepEqual(brief.RequiredTools, []string{"edit_file_or_apply_patch", "semantic_discovery_or_narrow_read_for_named_gap"}) {
+	if !reflect.DeepEqual(brief.RequiredTools, []string{workspace.RequiredToolEditFileOrApplyPatch, workspace.RequiredToolSemanticDiscoveryOrNarrowReadForNamedGap}) {
 		t.Fatalf("write-ready pre-write required tools = %#v, want scoped edit/read tools", brief.RequiredTools)
 	}
 
@@ -25876,7 +25275,7 @@ func TestControlRailsExactAnchorPreWriteDoesNotAdvertiseReadShell(t *testing.T) 
 		}
 	}
 
-	if !reflect.DeepEqual(rails.RequiredTools, []string{"edit_file_or_apply_patch"}) {
+	if !reflect.DeepEqual(rails.RequiredTools, []string{workspace.RequiredToolEditFileOrApplyPatch}) {
 		t.Fatalf("exact-anchor pre-write control rails required tools = %#v, want edit only", rails.RequiredTools)
 	}
 }
@@ -30746,25 +30145,6 @@ func TestDirectAnswerQuestionProtocolIsRetryableNotUserVisibleBlocker(t *testing
 	}
 }
 
-func TestHostReadOnlyCloseoutIsDisabledForReadOnlyEvidence(t *testing.T) {
-	runner := &Runner{
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
-			Contract:          string(workerruntime.ContractDirectAnswer),
-			PermissionProfile: "read_only_workspace",
-			Objective:         "Why did the latest run fail?",
-		},
-	}
-	results := []workspace.ToolResult{{
-		Tool:    "search_content",
-		Summary: "Found 1 matching line(s).",
-		Output:  "logs/conversations/20260604-195321.801.jsonl:20: completion_gate_repeated_rejection",
-	}}
-	if answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results); ok {
-		t.Fatalf("read-only evidence must not produce a host-authored closeout:\n%s", answer)
-	}
-}
-
 func TestFinalAnswerAcceptanceRetryPolicyRequiresToolsAndNoMutation(t *testing.T) {
 	noToolsRunner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -31032,10 +30412,8 @@ func TestSourceGroundingRetryHidesNonReadToolsOnlyWhenReadRecoveryAvailable(t *t
 		},
 	}
 
-	hidden := map[string]bool{}
 	runState := &runnerRunState{
 		currentAllowedTools: []string{"read_file", "code_navigate", "search_content"},
-		turnHiddenTools:     hidden,
 		toolSurface:         NewActiveSurface([]string{"read_file", "code_navigate", "search_content"}, nil),
 	}
 	rejections := 0
@@ -31054,7 +30432,6 @@ func TestSourceGroundingRetryHidesNonReadToolsOnlyWhenReadRecoveryAvailable(t *t
 		currentAllowedTools:      []string{"read_file", "code_navigate", "search_content"},
 		completionGateRejections: &rejections,
 		turnMessages:             &turnMessages,
-		turnHiddenTools:          hidden,
 		runState:                 runState,
 		controller:               &runnerTurnController{},
 	})
@@ -31062,16 +30439,16 @@ func TestSourceGroundingRetryHidesNonReadToolsOnlyWhenReadRecoveryAvailable(t *t
 		t.Fatal("source-grounding rejection should be retryable")
 	}
 	// search tools should be hidden; read tools should not.
-	if !hidden["search_content"] {
-		t.Fatal("search_content should be hidden after source-grounding rejection")
-	}
 	if !runState.surfaceHidesTool("search_content") {
 		t.Fatal("surface should own search_content hiding after source-grounding rejection")
 	}
-	if hidden["read_file"] {
+	if !runState.surfaceHiddenByOwner(OwnerSourceGrounding, "search_content") {
+		t.Fatal("source-grounding owner should hold search_content hiding after source-grounding rejection")
+	}
+	if runState.surfaceHidesTool("read_file") {
 		t.Fatal("read_file should NOT be hidden after source-grounding rejection")
 	}
-	if hidden["code_navigate"] {
+	if runState.surfaceHidesTool("code_navigate") {
 		t.Fatal("code_navigate should NOT be hidden after source-grounding rejection")
 	}
 
@@ -31083,10 +30460,8 @@ func TestSourceGroundingRetryHidesNonReadToolsOnlyWhenReadRecoveryAvailable(t *t
 			AllowedTools:      []string{"search_content"},
 		},
 	}
-	noReadHidden := map[string]bool{}
 	noReadRunState := &runnerRunState{
 		currentAllowedTools: []string{"search_content"},
-		turnHiddenTools:     noReadHidden,
 		toolSurface:         NewActiveSurface([]string{"search_content"}, nil),
 	}
 	noReadRejections := 0
@@ -31102,14 +30477,13 @@ func TestSourceGroundingRetryHidesNonReadToolsOnlyWhenReadRecoveryAvailable(t *t
 		currentAllowedTools:      []string{"search_content"},
 		completionGateRejections: &noReadRejections,
 		turnMessages:             &turnMessages,
-		turnHiddenTools:          noReadHidden,
 		runState:                 noReadRunState,
 		controller:               &runnerTurnController{},
 	})
 	if !retried {
 		t.Fatal("source-grounding rejection should still be retryable under the generic read-only retry policy")
 	}
-	if noReadHidden["search_content"] || noReadRunState.surfaceHidesTool("search_content") {
+	if noReadRunState.surfaceHidesTool("search_content") {
 		t.Fatal("source-grounding retry must not hide the only search tool when no source-body read tool is available")
 	}
 }
@@ -31398,6 +30772,38 @@ func TestCompletionGatePipelinePreservesInternalOrderBeforeExternalGate(t *testi
 
 	if result.Summary != "Textual tool-call markup rejected as final answer" {
 		t.Fatalf("unexpected first rejection: %#v", result)
+	}
+}
+
+func TestCompletionGatePipelineRunsFinalAnswerAcceptanceBeforeExternalGate(t *testing.T) {
+	externalCalled := false
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+		CompletionGate: func(input CompletionGateInput) CompletionGateResult {
+			externalCalled = true
+			return CompletionGateResult{Accept: true}
+		},
+	}
+	result, rejected := runner.completionGateRejection(
+		"The answer above covers everything I found.",
+		nil,
+		1,
+		nil,
+		false,
+	)
+
+	if !rejected {
+		t.Fatalf("expected non-self-contained final answer to be rejected")
+	}
+	if externalCalled {
+		t.Fatalf("external completion gate must not bypass final-answer acceptance")
+	}
+	if result.Tool != "completion_gate" || !strings.Contains(result.Error, "self-contained") {
+		t.Fatalf("unexpected final-answer acceptance projection: %#v", result)
 	}
 }
 
@@ -31696,147 +31102,6 @@ func TestReadOnlyEvidenceRejectionDoesNotAskToRereadAlreadyInspectedNamedPath(t 
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("rejection guidance missing %q:\n%s", want, prompt)
 		}
-	}
-}
-
-func TestHostOwnedReadOnlyCloseoutDoesNotSynthesizeAnswerableArchitectureChildPacket(t *testing.T) {
-	runner := &Runner{
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			Contract:          "architecture_assessment",
-			TaskFamily:        "architecture",
-			PermissionProfile: "read_only_workspace",
-			Objective:         "Explain how this harness uses sub-agents.",
-		},
-	}
-	results := []workspace.ToolResult{
-		typedReadOnlyTaskResult(ReadOnlyEvidencePacket{
-			SchemaVersion:   ReadOnlyEvidencePacketSchema,
-			Question:        "Explain how this harness uses sub-agents.",
-			SourceBodyPaths: []string{"internal/runtime/agent/runner_core.go", "internal/runtime/agent/implementation_flow.go"},
-			InspectedPaths:  []string{"internal/runtime/agent/runner_core.go", "internal/runtime/agent/implementation_flow.go"},
-			Findings: []ReadOnlyEvidenceFinding{{
-				Path: "internal/runtime/agent/implementation_flow.go",
-				Text: "The harness uses subagents through the task tool: the parent runner invokes child task execution and receives the child evidence packet.",
-			}},
-			Confidence: "high",
-		}),
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed file_outline via go_file_outline",
-			Output:  "internal/runtime/agent/implementation_flow.go: runChildTask is the child task handoff.\ninternal/runtime/agent/runner_core.go: Runner drives the main task loop.",
-		},
-	}
-	answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results)
-
-	if ok {
-		t.Fatalf("answerable child packet must remain model-owned, got host answer:\n%s", answer)
-	}
-}
-
-func TestHostOwnedReadOnlyCloseoutUsesDebugLogArchitectureFallbackFromChildPacket(t *testing.T) {
-	runner := &Runner{
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			Contract:          "architecture_assessment",
-			TaskFamily:        "architecture",
-			PermissionProfile: "read_only_workspace",
-			Objective:         "What does the debug log redacted mode do?",
-		},
-	}
-	results := []workspace.ToolResult{{
-		Tool:    "task",
-		Summary: "Child task completed",
-		Output: strings.Join([]string{
-			"Source-body evidence paths:",
-			"- `internal/runtime/agent/evidence_readonly.go`",
-			"",
-			"Key findings:",
-			"- `internal/evidence/transcript/debuglog.go` owns debug log redacted mode and records secret-safe redacted log metadata instead of raw prompt content.",
-			"- The implementation keeps path metadata sanitized and uses digest summaries for large raw values.",
-			"Confidence: high",
-		}, "\n"),
-	}}
-	answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results)
-
-	if ok {
-		t.Fatalf("debug-log child packet must remain model-owned, got host answer:\n%s", answer)
-	}
-}
-
-func TestHostOwnedReadOnlyCloseoutDoesNotSynthesizeDiscoveryToolRecommendationFromChildPacket(t *testing.T) {
-	runner := &Runner{
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			Contract:          "architecture_assessment",
-			TaskFamily:        "architecture",
-			PermissionProfile: "read_only_workspace",
-			Objective:         "What can we add to our discovery tools in an effort at increasing their overall usefulness?",
-		},
-	}
-	results := []workspace.ToolResult{{
-		Tool:    "task",
-		Summary: "Child task completed",
-		Output: strings.Join([]string{
-			"Source-body evidence paths:",
-			"- `internal/capabilities/workspace/discovery_query.go`",
-			"- `internal/capabilities/workspace/discovery_profile.go`",
-			"",
-			"Key findings:",
-			"- `internal/capabilities/workspace/discovery_query.go` should increase discovery tool usefulness by returning source-oriented discovery evidence.",
-			"- Discovery tools can increase overall usefulness when the closeout path turns profile/source evidence into final answers instead of tool inventories.",
-			"Confidence: high",
-		}, "\n"),
-	}}
-	answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results)
-
-	if ok {
-		t.Fatalf("recommendation-oriented architecture packet should remain model-synthesis evidence, not host-authored answer:\n%s", answer)
-	}
-}
-
-func TestHostOwnedReadOnlyCloseoutDoesNotUseCandidateOnlyEvidence(t *testing.T) {
-	runner := &Runner{
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			Contract:          "architecture_assessment",
-			TaskFamily:        "architecture",
-			PermissionProfile: "read_only_workspace",
-			Objective:         "Explain how this harness uses sub-agents.",
-		},
-	}
-	results := []workspace.ToolResult{{
-		Tool:    "context_pack",
-		Summary: "Context packet produced candidate files",
-		Output:  "Candidate files:\n- `internal/runtime/agent/runner_core.go`\n- `internal/runtime/agent/implementation_flow.go`\n",
-	}}
-
-	if answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results); ok {
-		t.Fatalf("candidate-only evidence must not host-closeout, got %q", answer)
-	}
-}
-
-func TestHostOwnedReadOnlyCloseoutDisabledForNoisyMentionedPaths(t *testing.T) {
-	runner := &Runner{
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			Contract:          "architecture_assessment",
-			TaskFamily:        "architecture",
-			PermissionProfile: "read_only_workspace",
-			Objective:         "Explain how this harness uses sub-agents.",
-		},
-	}
-	results := []workspace.ToolResult{
-		{
-			Tool:    "go_read_symbol",
-			Summary: "Read runChildTask in internal/runtime/agent/implementation_flow.go lines 10-30",
-			Output:  "10:func runChildTask() {}\n",
-		},
-		{
-			Tool:    "discovery_query",
-			Summary: "Discovery packet also mentioned .idiom/discovery/queries/query.json and testdata/swe/generated-logs/direct.jsonl.",
-			Output:  "candidate artifacts: .idiom/discovery/queries/query.json\ntestdata/swe/generated-logs/direct.jsonl\n",
-		},
-	}
-	answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results)
-
-	if ok {
-		t.Fatalf("host-owned read-only closeout must not synthesize final answers from noisy evidence, got %q", answer)
 	}
 }
 
@@ -32768,6 +32033,167 @@ func TestReadOnlyEvidenceCompletionRejectionAllowsAnswerAfterEvidence(t *testing
 
 	if rejected {
 		t.Fatalf("did not expect read-only final answer to be rejected after source evidence")
+	}
+}
+
+func TestReadOnlyAnswerabilityTreatsExternalDocumentReadAsBodyEvidence(t *testing.T) {
+	docPath := filepath.Join(t.TempDir(), "Mobile Documents", "Website Project", "conversation brief.md")
+	brief := workerruntime.WorkerRuntimeBrief{
+		Contract:          "direct_answer",
+		TaskFamily:        "conversation",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "What does the Website failure brief say about duplicate surfaces?",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: fmt.Sprintf("Read f35 %s lines 1-4 (total lines: 4)", docPath),
+		Output:  "1:The Website failure brief says duplicate surfaces caused drift.\n2:The fix is to consolidate final-answer acceptance and completion-gate projection.",
+		Paths:   []string{docPath},
+	}}
+
+	ledger := readOnlyAnswerabilityForResults(brief, results)
+	normalizedPath := filepath.ToSlash(filepath.Clean(docPath))
+
+	if !slices.Contains(ledger.ExternalDocumentBodyPaths, normalizedPath) {
+		t.Fatalf("external document body path missing: %#v, want %q", ledger.ExternalDocumentBodyPaths, normalizedPath)
+	}
+	if !slices.Contains(ledger.RelevantExternalDocumentPaths, normalizedPath) {
+		t.Fatalf("external document relevance missing: %#v, want %q", ledger.RelevantExternalDocumentPaths, normalizedPath)
+	}
+	if !ledger.Answerable() {
+		t.Fatalf("external document read should make objective answerable: %#v", ledger)
+	}
+
+	runner := &Runner{RuntimeBrief: brief}
+	acceptance := runner.evaluateFinalAnswerAcceptance(
+		"The Website failure brief says duplicate surfaces caused drift and the fix is to consolidate final-answer acceptance with completion-gate projection. This is grounded in `"+normalizedPath+"`.",
+		results,
+	)
+	if acceptance.Decision != finalAnswerAcceptanceAccepted {
+		t.Fatalf("external document-backed final answer should be accepted: %#v", acceptance)
+	}
+}
+
+func TestReadOnlyAnswerabilityDoesNotTreatExternalSearchHitAsBodyEvidence(t *testing.T) {
+	docPath := filepath.Join(t.TempDir(), "Mobile Documents", "Website Project", "conversation brief.md")
+	brief := workerruntime.WorkerRuntimeBrief{
+		Contract:          "direct_answer",
+		TaskFamily:        "conversation",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "What does the Website failure brief say about duplicate surfaces?",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "search_content",
+		Summary: "Found 1 matching line(s).",
+		Output:  fmt.Sprintf("%s:1:The Website failure brief says duplicate surfaces caused drift.", docPath),
+		Paths:   []string{docPath},
+	}}
+
+	ledger := readOnlyAnswerabilityForResults(brief, results)
+	if len(ledger.ExternalDocumentBodyPaths) != 0 || len(ledger.RelevantExternalDocumentPaths) != 0 {
+		t.Fatalf("search-only external document path must not become body evidence: %#v", ledger)
+	}
+	if ledger.Answerable() {
+		t.Fatalf("search-only external document hit should not be answerable: %#v", ledger)
+	}
+}
+
+func TestFinalAnswerAcceptanceAllowsRelativeExternalDocumentCitationsWithWorkspaceEvidence(t *testing.T) {
+	docRoot := filepath.Join(t.TempDir(), "Mobile Documents", "com~apple~CloudDocs", "Idiom Book Project")
+	bookMatterPath := filepath.Join(docRoot, "front-back", "book-matter-and-cover-copy-proposal.md")
+	backMatterPath := filepath.Join(docRoot, "front-back", "back-matter.md")
+	brief := workerruntime.WorkerRuntimeBrief{
+		Contract:          "direct_answer",
+		TaskFamily:        "conversation",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "What can be added to the website from the Idiom book and about the author material?",
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    workspace.ToolNameReadFile,
+			Summary: "Read src/pages/about.astro lines 1-80 (total lines: 120)",
+			Output:  "1:<section id=\"about-author\">About the author section placeholder</section>\n2:<section id=\"book\">Website book section placeholder</section>",
+			Paths:   []string{"src/pages/about.astro"},
+		},
+		{
+			Tool:    workspace.ToolNameReadFile,
+			Summary: "Read f86 " + bookMatterPath + " lines 1-80 (total lines: 120)",
+			Output:  "1:The Idiom book gives the website process and evidence positioning.\n",
+			Paths:   []string{bookMatterPath},
+		},
+		{
+			Tool:    workspace.ToolNameReadFile,
+			Summary: "Read f88 " + backMatterPath + " lines 1-80 (total lines: 95)",
+			Output:  "1:The about the author section can describe Ben building Idiom from practitioner experience with coding agents.\n2:The author material emphasizes evidence, contracts, auditability, and reliable agent work.\n",
+			Paths:   []string{backMatterPath},
+		},
+	}
+	answer := "Add book-positioning copy from `front-back/book-matter-and-cover-copy-proposal.md` and author material from `front-back/back-matter.md`; those external notes support the Website book and about-author sections."
+	runner := &Runner{RuntimeBrief: brief}
+
+	decision := readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results).
+		FinalAnswerDecision(answer)
+	if decision.BlockerKind != "" {
+		t.Fatalf("mixed workspace/external evidence should pass objective relevance: %#v", decision)
+	}
+
+	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
+	if acceptance.Decision != finalAnswerAcceptanceAccepted {
+		t.Fatalf("mixed workspace/external evidence final answer should be accepted: %#v", acceptance)
+	}
+}
+
+func TestFinalAnswerDecisionRejectsIrrelevantExternalDocumentCitation(t *testing.T) {
+	docRoot := filepath.Join(t.TempDir(), "Mobile Documents", "com~apple~CloudDocs", "Idiom Book Project")
+	relevantPath := filepath.Join(docRoot, "front-back", "back-matter.md")
+	irrelevantPath := filepath.Join(docRoot, "notes", "release-checklist.md")
+	brief := workerruntime.WorkerRuntimeBrief{
+		Contract:          "direct_answer",
+		TaskFamily:        "conversation",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "What can be added to the website from the Idiom book and about the author material?",
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    workspace.ToolNameReadFile,
+			Summary: "Read f88 " + relevantPath + " lines 1-80 (total lines: 95)",
+			Output:  "1:The about the author section can describe Ben building Idiom from practitioner experience with coding agents.\n2:The author material emphasizes evidence, contracts, auditability, and reliable agent work.\n",
+			Paths:   []string{relevantPath},
+		},
+		{
+			Tool:    workspace.ToolNameReadFile,
+			Summary: "Read f91 " + irrelevantPath + " lines 1-20 (total lines: 20)",
+			Output:  "1:Release checklist notes cover deploy windows and rollback contacts.\n",
+			Paths:   []string{irrelevantPath},
+		},
+	}
+	answer := "The author material for the website is supported by `" + filepath.ToSlash(filepath.Clean(irrelevantPath)) + "`."
+
+	decision := readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results).
+		FinalAnswerDecision(answer)
+	if decision.BlockerKind == "" {
+		t.Fatalf("irrelevant external document citation should not pass objective relevance: %#v", decision)
+	}
+}
+
+func TestReadPathsFromToolResultPrefersTypedPathsAndParsesSpaceBearingReadSummary(t *testing.T) {
+	typed := workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read wrong.md lines 1-2",
+		Output:  "1:body",
+		Paths:   []string{"/Users/ben/Library/Mobile Documents/Website Project/conversation brief.md"},
+	}
+	if got := ReadPathsFromToolResult(typed); !slices.Equal(got, typed.Paths) {
+		t.Fatalf("ReadPathsFromToolResult typed paths = %#v, want %#v", got, typed.Paths)
+	}
+
+	summaryOnly := workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read f35 /Users/ben/Library/Mobile Documents/Website Project/conversation brief.md lines 1-80 (total lines: 92)",
+		Output:  "1:Website failure brief",
+	}
+	if got := ReadPathsFromToolResult(summaryOnly); !slices.Equal(got, []string{"/Users/ben/Library/Mobile Documents/Website Project/conversation brief.md"}) {
+		t.Fatalf("ReadPathsFromToolResult summary path = %#v", got)
 	}
 }
 
@@ -34484,10 +33910,11 @@ func TestPlanExecuteAnchorRefreshRecoveryCardAdvertisesDerivedReadTools(t *testi
 		t.Fatalf("anchor-refresh recovery card should advertise derived read tools, got:\n%s", state.RecoveryCard)
 	}
 
-	if !strings.Contains(state.RecoveryCard, "deterministic safe next action: Make exactly one bounded source-body refresh") ||
-		!strings.Contains(state.RecoveryCard, "native/src/simulation/production/production_execution.cpp") {
+	if !strings.Contains(state.RecoveryCard, "visible safe alternatives: read") ||
+		!strings.Contains(state.RecoveryCard, "recovery state:") ||
+		!strings.Contains(state.RecoveryCard, "surface=anchor_refresh") {
 
-		t.Fatalf("anchor-refresh recovery card should advertise the bounded refresh as safe next, got:\n%s", state.RecoveryCard)
+		t.Fatalf("anchor-refresh recovery card should render typed recovery state and read alternatives, got:\n%s", state.RecoveryCard)
 	}
 
 	if !strings.Contains(state.RecoveryCard, "recovery state:") ||
@@ -34499,7 +33926,7 @@ func TestPlanExecuteAnchorRefreshRecoveryCardAdvertisesDerivedReadTools(t *testi
 
 	if strings.Contains(state.RecoveryCard, "currently callable tools: none") ||
 		strings.Contains(state.RecoveryCard, "currently callable tools: submit_plan") ||
-		strings.Contains(state.RecoveryCard, "deterministic safe next action: none available") {
+		strings.Contains(state.RecoveryCard, "deterministic safe next action") {
 
 		t.Fatalf("anchor-refresh recovery card advertised stale callable tools, got:\n%s", state.RecoveryCard)
 	}
@@ -34567,8 +33994,6 @@ func TestPlanExecuteRecoveryStatePreservesNativeTransportInNextActionState(t *te
 		false,
 		brief,
 		[]string{workspace.ToolNameSubmitPlan},
-		newCardEngine(),
-		newGuidanceEngine("main", newEvidenceEngine()),
 		PlanExecutePlanningTransport{SupportsNativeTools: true, TextualToolParser: false},
 	)
 	if contract.PhaseID != turnPhaseSubmitReadyNativeRequired {
@@ -37914,7 +37339,7 @@ func TestRunnerRejectsDuplicateReadOnlyTaskWithoutForcingAnswer(t *testing.T) {
 // path→objective matching (e.g., model_popup.go matching /model task).
 
 func TestRecoverySearchStopWordsDoesNotFilterModel(t *testing.T) {
-	stop := agentutil.RecoverySearchStopWords()
+	stop := RecoverySearchStopWords()
 	if _, ok := stop["model"]; ok {
 		t.Fatal(`"model" should not be a search stop word — it carries domain signal for path→objective matching`)
 	}
@@ -38004,7 +37429,6 @@ func TestCompleteWithoutMoreToolsInjectsToolResultForDanglingToolCalls(t *testin
 			PermissionProfile: "read_only_workspace",
 			Objective:         "answer from gathered evidence",
 		},
-		GateEngine: &recordingGateEngine{evaluateDecision: GateDecision{Accepted: true}},
 	}
 
 	answer, err := runner.completeWithoutMoreToolsWithReason(context.Background(), messages, llama.ChatOptions{}, nil, "tools are now disabled", nil)
@@ -40210,6 +39634,11 @@ func TestLooksLikeNonAnswerProseRejectsLiveFailures(t *testing.T) {
 			true,
 		},
 		{
+			"non-self-contained prior answer reference",
+			"The previous answer already covers the root cause and proposed fixes.",
+			true,
+		},
+		{
 			"embedded question protocol marker",
 			"Findings so far: the run found the latest log.\n<<QUESTION>>: Need permission to read the conversation log outside the workspace.",
 			true,
@@ -40270,6 +39699,11 @@ func TestLooksLikeNonAnswerProseRejectsLiveFailures(t *testing.T) {
 			false,
 		},
 		{
+			"legitimate prior-answer leak RCA (should NOT be blocked)",
+			"The phrase `the answer above` leaked because final-answer acceptance did not treat it as a non-self-contained protocol-meta closeout.",
+			false,
+		},
+		{
 			"<<QUESTION>> blocker is handled by the explicit escape hatch",
 			"<<QUESTION>>: Cannot locate the target file. The path does not exist.",
 			false,
@@ -40323,6 +39757,8 @@ func TestFinalAnswerBlockerRejectsProtocolMetaFinalAnswerShapes(t *testing.T) {
 		"This satisfies the gate requirements because the answer cites the inspected plan artifact and marks proposed additions as unverified.",
 		"This satisfies the gate requirements because the completion gate accepted it.",
 		"I have all the evidence I need. The answer above is complete and grounded in the source files I've read.",
+		"The answer above covers everything I found.",
+		"The previous answer already covers this.",
 		"Findings so far: I identified the newest conversation log at `/home/dev/.idiom/logs/conversations/20260622-064537.192-20260622-104535.851.jsonl`.\n<<QUESTION>>: I need permission to read the conversation log from the user-level path.",
 		"Findings so far: I identified the newest conversation log.\n### <<QUESTION>> — Exact Blocker\nI need permission to read the conversation log from the user-level path.",
 	}
@@ -40335,12 +39771,25 @@ func TestFinalAnswerBlockerRejectsProtocolMetaFinalAnswerShapes(t *testing.T) {
 	}
 }
 
+func TestFinalAnswerAcceptanceRejectsNonSelfContainedPriorAnswerReference(t *testing.T) {
+	runner := &Runner{}
+	acceptance := runner.evaluateFinalAnswerAcceptance("The answer above covers everything I found.", nil)
+
+	if acceptance.Decision != finalAnswerAcceptanceRejected ||
+		acceptance.BlockerKind != string(turnViolationProtocolMetaFinalAnswer) ||
+		acceptance.Reason != string(turnReasonNonSelfContainedFinalAnswer) {
+
+		t.Fatalf("prior-answer reference acceptance = %#v, want protocol-meta non-self-contained rejection", acceptance)
+	}
+}
+
 func TestFinalAnswerBlockerAllowsLegitimateGateFailureRCA(t *testing.T) {
 	runner := &Runner{}
 	cases := []string{
 		"The completion gate accepted the answer incorrectly because final-answer acceptance did not classify gate self-certification as non-answer prose.",
 		"The gate requirements should be source-body evidence plus objective relevance; the bug was that a self-certifying answer bypassed that contract.",
 		"The model said `this satisfies the gate requirements`, and acceptance wrongly allowed it instead of requiring a real answer.",
+		"The phrase `the answer above` leaked because final-answer acceptance did not treat it as a non-self-contained protocol-meta closeout.",
 	}
 
 	for _, answer := range cases {
@@ -40675,6 +40124,65 @@ func TestRecoveredReadOnlyTerminalCloseoutAnswersRepeatedCompletionGateRejection
 	}
 }
 
+func TestRecoveredReadOnlyTerminalCloseoutAnswersExternalDocumentEvidence(t *testing.T) {
+	docRoot := filepath.Join(t.TempDir(), "Mobile Documents", "com~apple~CloudDocs", "Idiom Book Project")
+	backMatterPath := filepath.Join(docRoot, "front-back", "back-matter.md")
+	bookMatterPath := filepath.Join(docRoot, "front-back", "book-matter-and-cover-copy-proposal.md")
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "What can be added to the website from the Idiom book and about the author material?",
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "completion_gate",
+			Summary: "Final answer rejected by blocker check",
+			Error:   "completion_gate_repeated_rejection",
+		},
+		{
+			Tool:    workspace.ToolNameReadFile,
+			Summary: "Read f86 " + bookMatterPath + " lines 1-80 (total lines: 120)",
+			Output: strings.Join([]string{
+				"1:# Book matter and cover copy proposal",
+				"2:bookOffer = \"The Idiom book gives the website process and evidence positioning.\"",
+				"3:bookTitle = \"Trust the Process, Not the Prompt\"",
+			}, "\n"),
+			Paths: []string{bookMatterPath},
+		},
+		{
+			Tool:    workspace.ToolNameReadFile,
+			Summary: "Read f88 " + backMatterPath + " lines 1-80 (total lines: 95)",
+			Output: strings.Join([]string{
+				"1:# Back matter",
+				"2:authorBio = \"The about the author section can describe Ben building Idiom from practitioner experience with coding agents.\"",
+				"3:authorTheme = \"The author material emphasizes evidence, contracts, auditability, and reliable agent work.\"",
+			}, "\n"),
+			Paths: []string{backMatterPath},
+		},
+	}
+
+	answer, acceptance, ok := runner.readOnlyTerminalRecoveryCandidate(completionGateRepeatedRejectionAcceptance(), results)
+	if !ok {
+		t.Fatalf("external-document read-only evidence should recover from repeated gate rejection; acceptance=%#v", acceptance)
+	}
+	if acceptance.BlockerKind != "" {
+		t.Fatalf("recovered external-document answer should pass acceptance: %#v", acceptance)
+	}
+	for _, forbidden := range []string{"I could not produce a supported final answer", "<<QUESTION>>", "completion gate rejected"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("recovered external-document answer leaked %q:\n%s", forbidden, answer)
+		}
+	}
+	for _, want := range []string{"Idiom book", "website", "author", "evidence"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("recovered external-document answer missing %q:\n%s", want, answer)
+		}
+	}
+}
+
 func TestRecoveredReadOnlyTerminalCloseoutSupportsDirectAnswerTaskFamily(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -40896,7 +40404,7 @@ func TestToolParseErrorFeedbackExplainsSubmitPlanEditsArrayShape(t *testing.T) {
 }
 
 func TestMalformedToolPolicyRejectsParserFailureWithTypedMetadata(t *testing.T) {
-	decision := malformedToolPolicyEngine{}.EvaluateParseFailureWithMetadata(
+	decision := malformedToolParseFailureDecision(
 		`{"edits":"[]"}`,
 		errors.New("json: cannot unmarshal string into Go struct field ToolRequest.edits of type []planartifact.PlanEdit"),
 		toolRequestNormalizerTransportTextual,
@@ -41320,7 +40828,7 @@ func TestRunnerTurnControllerRejectToolDoesNotMarkInvalidPostReadinessGapAsDeadE
 	}
 }
 
-func TestRunnerTurnControllerRejectCompletionPreservesReplyAndRecordsGate(t *testing.T) {
+func TestRunnerTurnControllerRejectCompletionDoesNotReplayReadOnlyDirectAnswerReply(t *testing.T) {
 	collected := []workspace.ToolResult{}
 	turnMessages := []llama.ChatMessage{}
 	lastToolKey := ""
@@ -41344,7 +40852,11 @@ func TestRunnerTurnControllerRejectCompletionPreservesReplyAndRecordsGate(t *tes
 		metrics:                   metrics,
 	}
 	controller := runnerTurnController{
-		runner:                     &Runner{},
+		runner: &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		}},
 		ctx:                        context.Background(),
 		metrics:                    metrics,
 		requestBudget:              &requestBudget,
@@ -41392,12 +40904,14 @@ func TestRunnerTurnControllerRejectCompletionPreservesReplyAndRecordsGate(t *tes
 		t.Fatalf("collected results = %d, want 1", len(collected))
 	}
 
-	if len(turnMessages) != 2 {
-		t.Fatalf("turn messages = %d, want 2", len(turnMessages))
+	if len(turnMessages) != 1 {
+		t.Fatalf("turn messages = %d, want only completion gate result", len(turnMessages))
 	}
 
-	if turnMessages[0].Role != "assistant" || turnMessages[0].Content != "partial answer" {
-		t.Fatalf("preserved reply = %#v, want assistant partial answer", turnMessages[0])
+	for _, message := range turnMessages {
+		if message.Role == "assistant" || strings.Contains(message.Content, "partial answer") {
+			t.Fatalf("rejected read-only final answer leaked into history: %#v", turnMessages)
+		}
 	}
 }
 

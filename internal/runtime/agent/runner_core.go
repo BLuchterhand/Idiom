@@ -25,31 +25,10 @@ import (
 	recoverycontract "idiom/internal/contracts/recovery"
 	"idiom/internal/platform/failures"
 	"idiom/internal/platform/textutil"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 )
-
-const (
-	planExecuteTerminalSubmitPlan      = "submit_plan"
-	planExecuteTerminalSourceSatisfied = plancontract.SourceSatisfiedDecision
-	planExecuteTerminalQuestion        = "<<QUESTION>>:"
-)
-
-func planExecuteTerminalSourceSatisfiedOrQuestion() []string {
-	return []string{planExecuteTerminalSourceSatisfied, planExecuteTerminalQuestion}
-}
-
-func planExecuteTerminalSubmitPlanSourceSatisfiedQuestion() []string {
-	return []string{planExecuteTerminalSubmitPlan, planExecuteTerminalSourceSatisfied, planExecuteTerminalQuestion}
-}
-
-func planExecuteTerminalSubmitPlanQuestion() []string {
-	return []string{planExecuteTerminalSubmitPlan, planExecuteTerminalQuestion}
-}
-
-func planExecuteTerminalSubmitPlanOnly() []string {
-	return []string{planExecuteTerminalSubmitPlan}
-}
 
 type toolResultEvidenceView struct {
 	results []workspace.ToolResult
@@ -65,8 +44,8 @@ func (view toolResultEvidenceView) ReadPaths() map[string]struct{} {
 		if strings.TrimSpace(result.Error) != "" {
 			continue
 		}
-		for _, path := range agentutil.ReadPathsFromToolResult(result) {
-			normalized := agentutil.NormalizeRunnerPath(path)
+		for _, path := range ReadPathsFromToolResult(result) {
+			normalized := NormalizeRunnerPath(path)
 			if normalized != "" {
 				paths[normalized] = struct{}{}
 			}
@@ -76,8 +55,8 @@ func (view toolResultEvidenceView) ReadPaths() map[string]struct{} {
 }
 
 func (view toolResultEvidenceView) SourceEvidenceForPath(path string) planThenExecuteSourceEvidence {
-	path = agentutil.NormalizeRunnerPath(path)
-	if path == "" || agentutil.IsNonSourceEvidenceArtifactPath(path) {
+	path = NormalizeRunnerPath(path)
+	if path == "" || IsNonSourceEvidenceArtifactPath(path) {
 		return planThenExecuteSourceEvidence{}
 	}
 	best := planThenExecuteSourceEvidence{Path: path}
@@ -87,7 +66,7 @@ func (view toolResultEvidenceView) SourceEvidenceForPath(path string) planThenEx
 			if tool, ok := implementationTargetWriteReadyRedirectedReadTool(result); ok {
 				evidence = planThenExecuteSourceEvidence{
 					Path:   path,
-					Level:  sourceEvidenceSourceBodyPending,
+					Level:  planThenExecuteEvidenceSourceBodyPending,
 					Source: strings.TrimSpace(result.Tool),
 					Detail: "redirected to " + tool,
 				}
@@ -111,9 +90,9 @@ func (view toolResultEvidenceView) SourceBodyPaths() []string {
 		if strings.TrimSpace(result.Error) != "" {
 			continue
 		}
-		for _, path := range agentutil.ReadPathsFromToolResult(result) {
-			normalized := agentutil.NormalizeRunnerPath(path)
-			if normalized == "" || agentutil.IsNonSourceEvidenceArtifactPath(normalized) || !view.HasSourceBody(normalized) {
+		for _, path := range ReadPathsFromToolResult(result) {
+			normalized := NormalizeRunnerPath(path)
+			if normalized == "" || IsNonSourceEvidenceArtifactPath(normalized) || !view.HasSourceBody(normalized) {
 				continue
 			}
 			if _, ok := seen[normalized]; ok {
@@ -508,256 +487,9 @@ func normalizeStateStorePath(raw string) string {
 	return path
 }
 
-type GateDecisionKind string
-
-const (
-	GateDecisionUnknown          GateDecisionKind = "unknown"
-	GateDecisionTextualWrite     GateDecisionKind = "textual_write"
-	GateDecisionUnexecutedTool   GateDecisionKind = "unexecuted_tool"
-	GateDecisionSearchInventory  GateDecisionKind = "search_inventory"
-	GateDecisionReviewRepairPass GateDecisionKind = "review_repair_pass"
-)
-
-type GateDecision struct {
-	Accepted bool
-	Kind     GateDecisionKind
-	Reason   string
-	Result   workspace.ToolResult
-}
-
-type GateEngine interface {
-	EvaluateGate(string, []workspace.ToolResult, StateStore) GateDecision
-	RetryBudget([]workspace.ToolResult) int
-	RemainingRetries(StateStore) int
-	Retryable(GateDecision, StateStore) bool
-	SourceGroundingRejection(string, []workspace.ToolResult) string
-}
-
-type defaultGateEngine struct{ runner *Runner }
-
-func (r *Runner) gateEngine() GateEngine {
-	if r != nil && r.GateEngine != nil {
-		return r.GateEngine
-	}
-	return defaultGateEngine{runner: r}
-}
-
-func (e defaultGateEngine) EvaluateGate(answer string, results []workspace.ToolResult, _ StateStore) GateDecision {
-	if e.runner == nil {
-		return GateDecision{Accepted: true}
-	}
-	if result, rejected := e.runner.completionGateRejection(answer, results, 0, nil, false); rejected {
-		kind, _ := gateDecisionKindForSummary(result.Summary)
-		return GateDecision{Accepted: false, Kind: kind, Reason: result.Error, Result: result}
-	}
-	return GateDecision{Accepted: true}
-}
-
-func (e defaultGateEngine) RetryBudget(results []workspace.ToolResult) int {
-	if e.runner == nil {
-		return 1
-	}
-	return e.runner.completionGateRetryLimit(results)
-}
-
-func (e defaultGateEngine) RemainingRetries(store StateStore) int {
-	if store == nil {
-		return 0
-	}
-	return store.ProseRetriesRemaining()
-}
-
-func (e defaultGateEngine) Retryable(decision GateDecision, store StateStore) bool {
-	return !decision.Accepted && e.RemainingRetries(store) > 0
-}
-
-func (e defaultGateEngine) SourceGroundingRejection(answer string, results []workspace.ToolResult) string {
-	if e.runner == nil {
-		return ""
-	}
-	return e.runner.sourceGroundingRejectionReason(answer, results)
-}
-
-func gateDecisionKindForSummary(summary string) (GateDecisionKind, string) {
-	switch strings.TrimSpace(summary) {
-	case "Textual write syntax rejected as final answer":
-		return GateDecisionTextualWrite, "completion.no_textual_write"
-	case "Unexecuted tool request in final answer":
-		return GateDecisionUnexecutedTool, "completion.no_unexecuted_tool"
-	case "Read-only completion gate rejected search-hit inventory":
-		return GateDecisionSearchInventory, "completion.no_search_inventory"
-	case "Review-repair completion gate rejected contradictory pass":
-		return GateDecisionReviewRepairPass, "completion.review_repair_obligations"
-	default:
-		return GateDecisionUnknown, "completion.unknown"
-	}
-}
-
-type EvidenceEngine interface {
-	ClosureDecision(workerruntime.WorkerRuntimeBrief, []workspace.ToolResult) ReadOnlyCloseout
-	PendingRedirectsForBrief(workerruntime.WorkerRuntimeBrief, []workspace.ToolResult) []sourceEvidenceObligation
-	EvidenceForPath([]workspace.ToolResult, string) planThenExecuteSourceEvidence
-}
-
-type defaultEvidenceEngine struct{}
-
-func newEvidenceEngine() EvidenceEngine { return defaultEvidenceEngine{} }
-
-func (r *Runner) evidenceEngine() EvidenceEngine {
-	if r != nil && r.EvidenceEngine != nil {
-		return r.EvidenceEngine
-	}
-	return newEvidenceEngine()
-}
-
-func (defaultEvidenceEngine) ClosureDecision(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) ReadOnlyCloseout {
-	return readOnlyClosureDecisionForResults(brief, results)
-}
-
-func (defaultEvidenceEngine) PendingRedirectsForBrief(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []sourceEvidenceObligation {
-	return sourceEvidencePendingRedirectsForBrief(brief, results)
-}
-
-func (defaultEvidenceEngine) EvidenceForPath(results []workspace.ToolResult, path string) planThenExecuteSourceEvidence {
-	return sourceEvidenceForPath(results, path)
-}
-
-type GuidanceEngine interface {
-	ClosureActive(workerruntime.WorkerRuntimeBrief, []workspace.ToolResult) bool
-	DelegatedReadOnlyClosureReady(workerruntime.WorkerRuntimeBrief, []workspace.ToolResult) bool
-}
-
-type defaultGuidanceEngine struct {
-	agent    string
-	evidence EvidenceEngine
-}
-
-func newGuidanceEngine(agent string, evidence EvidenceEngine) GuidanceEngine {
-	if evidence == nil {
-		evidence = newEvidenceEngine()
-	}
-	return defaultGuidanceEngine{agent: agent, evidence: evidence}
-}
-
-func (r *Runner) guidanceEngine() GuidanceEngine {
-	if r != nil && r.GuidanceEngine != nil {
-		return r.GuidanceEngine
-	}
-	agent := ""
-	if r != nil {
-		agent = r.agentName()
-	}
-	return newGuidanceEngine(agent, r.evidenceEngine())
-}
-
-func (e defaultGuidanceEngine) ClosureActive(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	if e.DelegatedReadOnlyClosureReady(brief, results) {
-		return true
-	}
-	if strings.HasPrefix(strings.TrimSpace(e.agent), "child:") {
-		return false
-	}
-	return e.evidence.ClosureDecision(brief, results).Answerable()
-}
-
-func (e defaultGuidanceEngine) DelegatedReadOnlyClosureReady(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	return e.evidence.ClosureDecision(brief, results).Answerable()
-}
-
-type CardEngine interface {
-	BuildRecoveryCard(RecoveryCardInput) RecoveryCard
-	RenderRecoveryCard(RecoveryCard) string
-}
-
-type planExecuteRecoveryHooks struct {
-	onLowValueActionPlan             func(PlanExecutePlanningState) PlanExecuteRecoveryPlan
-	onUnscopedEmptySubmitPlan        func() PlanExecuteRecoveryPlan
-	onSubmitPlanParseRecoveryPlan    func(bool, []string) PlanExecuteRecoveryPlan
-	onNativeSubmitCorrectionPrompt   func(workerruntime.WorkerRuntimeBrief, workspace.ToolResult) string
-	onNativeNoCallFallbackPrompt     func([]string) string
-	onAnchorRefreshRequiredError     func([]string, workspace.ToolResult) string
-	onAnchorRefreshRequiredPathError func(string, string) string
-	onAnchorRefreshWriteOnlyError    func(string, []string) string
-	onSubmitCorrectionRequiredError  func(workerruntime.WorkerRuntimeBrief, []workspace.ToolResult, workspace.ToolResult, string) string
-	onSubmitCorrectionReadyNudge     func(workerruntime.WorkerRuntimeBrief, []workspace.ToolResult, workspace.ToolResult) string
-	onSubmitCorrectionWrongTool      func(string, bool) (string, string, string)
-	onRepeatedCorrectionPlan         func(workspace.ToolResult, bool) PlanExecuteRecoveryPlan
-	onRepeatedCorrectionExhausted    func(workspace.ToolResult, bool) (string, string)
-	onCorrectionHiddenOnlyPrompt     func(string, bool) string
-}
-
-type defaultCardEngine struct{}
-
-func newCardEngine() defaultCardEngine { return defaultCardEngine{} }
-
-func (r *Runner) planExecuteRecoveryHooks() planExecuteRecoveryHooks {
-	if r == nil {
-		return planExecuteRecoveryHooks{}
-	}
-	return r.planExecuteRecoveryHookOverrides
-}
-
-func (defaultCardEngine) BuildRecoveryCard(input RecoveryCardInput) RecoveryCard {
-	return BuildRecoveryCard(input)
-}
-func (defaultCardEngine) RenderRecoveryCard(card RecoveryCard) string {
-	return RenderRecoveryCard(card)
-}
-
-func (hooks planExecuteRecoveryHooks) lowValueActionPlan(state PlanExecutePlanningState) PlanExecuteRecoveryPlan {
-	if hooks.onLowValueActionPlan != nil {
-		return hooks.onLowValueActionPlan(state)
-	}
-	return planThenExecuteLowValueActionRecoveryPlan(state)
-}
-func (hooks planExecuteRecoveryHooks) unscopedEmptySubmitPlan() PlanExecuteRecoveryPlan {
-	if hooks.onUnscopedEmptySubmitPlan != nil {
-		return hooks.onUnscopedEmptySubmitPlan()
-	}
-	return planThenExecuteUnscopedEmptySubmitPlanRecoveryPlan()
-}
-func (hooks planExecuteRecoveryHooks) submitPlanParseRecoveryPlan(stringifiedEdits bool, requiredPaths []string) PlanExecuteRecoveryPlan {
-	if hooks.onSubmitPlanParseRecoveryPlan != nil {
-		return hooks.onSubmitPlanParseRecoveryPlan(stringifiedEdits, requiredPaths)
-	}
-	return planThenExecuteSubmitPlanParseRecoveryPlan(stringifiedEdits, requiredPaths)
-}
-func (hooks planExecuteRecoveryHooks) nativeSubmitCorrectionPrompt(brief workerruntime.WorkerRuntimeBrief, result workspace.ToolResult) string {
-	if hooks.onNativeSubmitCorrectionPrompt != nil {
-		return hooks.onNativeSubmitCorrectionPrompt(brief, result)
-	}
-	return planThenExecuteNativeSubmitPlanCorrectionPrompt(brief, result)
-}
-func (hooks planExecuteRecoveryHooks) nativeNoCallFallbackPrompt(requiredPaths []string) string {
-	if hooks.onNativeNoCallFallbackPrompt != nil {
-		return hooks.onNativeNoCallFallbackPrompt(requiredPaths)
-	}
-	return RenderPlanExecuteRecoveryPlan(planThenExecuteNativeNoCallFallbackRecoveryPlan(requiredPaths))
-}
-func (hooks planExecuteRecoveryHooks) anchorRefreshWriteOnlyError(tool string, refreshPaths []string) string {
-	if hooks.onAnchorRefreshWriteOnlyError != nil {
-		return hooks.onAnchorRefreshWriteOnlyError(tool, refreshPaths)
-	}
+func planThenExecuteAnchorRefreshWriteOnlyError(tool string, refreshPaths []string) string {
 	targets := strings.Join(nonEmptyRunnerStrings(refreshPaths, 4), ", ")
 	return fmt.Sprintf("%s is not available in its requested form while plan-execute anchor-refresh mode is still open for: %s. Issue exactly one bounded source-body request for a remaining refresh path: `read_file` with explicit `start_line`/`end_line`, or `%s` with %s plus `pattern`. Do not call `submit_plan` until that refresh returns.", strings.TrimSpace(tool), targets, workspace.CodeNavigateToolName, workspace.CodeNavigateSourceBodyCapabilityPhrase())
-}
-func (hooks planExecuteRecoveryHooks) repeatedCorrectionPlan(result workspace.ToolResult, blockerAllowed bool) PlanExecuteRecoveryPlan {
-	if hooks.onRepeatedCorrectionPlan != nil {
-		return hooks.onRepeatedCorrectionPlan(result, blockerAllowed)
-	}
-	return planThenExecuteRepeatedSubmitCorrectionRecoveryPlan(result)
-}
-func (hooks planExecuteRecoveryHooks) repeatedCorrectionExhausted(result workspace.ToolResult, blockerAllowed bool) (string, string) {
-	if hooks.onRepeatedCorrectionExhausted != nil {
-		return hooks.onRepeatedCorrectionExhausted(result, blockerAllowed)
-	}
-	return planThenExecuteRepeatedCorrectionExhaustedRejection(result)
-}
-func (hooks planExecuteRecoveryHooks) correctionHiddenOnlyPrompt(base string, blockerAllowed bool) string {
-	if hooks.onCorrectionHiddenOnlyPrompt != nil {
-		return hooks.onCorrectionHiddenOnlyPrompt(base, blockerAllowed)
-	}
-	return planThenExecuteCorrectionHiddenOnlyRecoveryPrompt(base)
 }
 
 type VerificationPolicyDecision struct {
@@ -771,17 +503,7 @@ type VerificationPolicyDecision struct {
 
 const verificationPolicyInvariantPostWrite = "verification.post_write"
 
-type VerificationPolicyEngine interface {
-	PostWriteRequired(workspace.ToolRequest, workerruntime.WorkerRuntimeBrief, int) VerificationPolicyDecision
-	SourceEditRequired(workspace.ToolRequest, workerruntime.WorkerRuntimeBrief, []workspace.ToolResult) VerificationPolicyDecision
-	Result(workspace.ToolRequest, string) VerificationPolicyDecision
-}
-
-type defaultVerificationPolicyEngine struct{}
-
-func newVerificationPolicyEngine() VerificationPolicyEngine { return defaultVerificationPolicyEngine{} }
-
-func (defaultVerificationPolicyEngine) PostWriteRequired(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, writesSinceVerification int) VerificationPolicyDecision {
+func verificationPostWriteRequiredDecision(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, writesSinceVerification int) VerificationPolicyDecision {
 	state := &runnerExecutionState{writesSinceVerification: writesSinceVerification}
 	if !state.shouldRequireVerification(req, brief) {
 		return VerificationPolicyDecision{}
@@ -789,14 +511,14 @@ func (defaultVerificationPolicyEngine) PostWriteRequired(req workspace.ToolReque
 	return verificationPolicyDecision(autonomy.PolicyReject, "verification_required_after_writes", "pending")
 }
 
-func (defaultVerificationPolicyEngine) SourceEditRequired(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) VerificationPolicyDecision {
+func verificationSourceEditRequiredDecision(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) VerificationPolicyDecision {
 	if _, _, reject := sourceEditVerificationRejection(req, brief, results); !reject {
 		return VerificationPolicyDecision{}
 	}
 	return verificationPolicyDecision(autonomy.PolicyReject, "source_edit_verification_required", "pending")
 }
 
-func (defaultVerificationPolicyEngine) Result(_ workspace.ToolRequest, status string) VerificationPolicyDecision {
+func verificationResultDecision(status string) VerificationPolicyDecision {
 	status = strings.TrimSpace(status)
 	decision := autonomy.PolicyAllow
 	if status == "failed" {
@@ -821,25 +543,7 @@ type LifecycleCloseoutPolicyDecision struct {
 	Gate    runnerAutonomyGateDecision
 }
 
-type LifecycleCloseoutPolicyEngine interface {
-	LoopCloseout(string, bool) LifecycleCloseoutPolicyDecision
-	BudgetCloseout(RunPolicy, runnerMetrics, string, bool) LifecycleCloseoutPolicyDecision
-}
-
-type defaultLifecycleCloseoutPolicyEngine struct{}
-
-func newLifecycleCloseoutPolicyEngine() LifecycleCloseoutPolicyEngine {
-	return defaultLifecycleCloseoutPolicyEngine{}
-}
-
-func (r *Runner) lifecycleCloseoutPolicyEngine() LifecycleCloseoutPolicyEngine {
-	if r != nil && r.LifecycleCloseoutPolicyEngine != nil {
-		return r.LifecycleCloseoutPolicyEngine
-	}
-	return newLifecycleCloseoutPolicyEngine()
-}
-
-func (defaultLifecycleCloseoutPolicyEngine) LoopCloseout(stopReason string, hasOpenLoopObligations bool) LifecycleCloseoutPolicyDecision {
+func lifecycleLoopCloseoutDecision(stopReason string, hasOpenLoopObligations bool) LifecycleCloseoutPolicyDecision {
 	if !hasOpenLoopObligations {
 		return LifecycleCloseoutPolicyDecision{}
 	}
@@ -856,7 +560,7 @@ func (defaultLifecycleCloseoutPolicyEngine) LoopCloseout(stopReason string, hasO
 	}}
 }
 
-func (defaultLifecycleCloseoutPolicyEngine) BudgetCloseout(policy RunPolicy, metrics runnerMetrics, stopReason string, exhausted bool) LifecycleCloseoutPolicyDecision {
+func lifecycleBudgetCloseoutDecision(policy RunPolicy, metrics runnerMetrics, stopReason string, exhausted bool) LifecycleCloseoutPolicyDecision {
 	reason := strings.TrimSpace(stopReason)
 	if reason == "" {
 		reason = "completed"
@@ -890,9 +594,8 @@ func (defaultLifecycleCloseoutPolicyEngine) BudgetCloseout(policy RunPolicy, met
 }
 
 type ModelCallReadinessPolicyInput struct {
-	Policy     RunPolicy
-	LanePolicy LanePolicy
-	Metrics    runnerMetrics
+	Policy  RunPolicy
+	Metrics runnerMetrics
 }
 
 type ModelCallReadinessPolicyDecision struct {
@@ -903,24 +606,7 @@ type ModelCallReadinessPolicyDecision struct {
 	CloseoutPrompt  string
 }
 
-type ModelCallReadinessPolicyEngine interface {
-	BeforeModelCall(ModelCallReadinessPolicyInput) ModelCallReadinessPolicyDecision
-}
-
-type defaultModelCallReadinessPolicyEngine struct{}
-
-func newModelCallReadinessPolicyEngine() ModelCallReadinessPolicyEngine {
-	return defaultModelCallReadinessPolicyEngine{}
-}
-
-func (r *Runner) modelCallReadinessPolicyEngine() ModelCallReadinessPolicyEngine {
-	if r != nil && r.ModelCallReadinessPolicyEngine != nil {
-		return r.ModelCallReadinessPolicyEngine
-	}
-	return newModelCallReadinessPolicyEngine()
-}
-
-func (defaultModelCallReadinessPolicyEngine) BeforeModelCall(input ModelCallReadinessPolicyInput) ModelCallReadinessPolicyDecision {
+func modelCallReadinessBeforeModelCall(input ModelCallReadinessPolicyInput) ModelCallReadinessPolicyDecision {
 	if input.Policy.shouldStopForOperationalModelCalls(input.Metrics.ModelCalls) {
 		return ModelCallReadinessPolicyDecision{
 			Stop:            true,
@@ -954,25 +640,6 @@ type ToolAuthorizationPolicyEvent struct {
 
 const toolAuthorizationPolicyInvariant = "tool.authorization"
 
-type ToolAuthorizationPolicyEngine interface {
-	Permission(workspace.ToolRequest, ToolPermissionPolicy, bool) ToolAuthorizationPermissionDecision
-	Surface(workspace.ToolRequest, []string, bool) ToolAuthorizationSurfaceDecision
-	WriteApprovalRequired(workspace.ToolRequest) ToolAuthorizationPolicyEvent
-}
-
-type defaultToolAuthorizationPolicyEngine struct{}
-
-func newToolAuthorizationPolicyEngine() ToolAuthorizationPolicyEngine {
-	return defaultToolAuthorizationPolicyEngine{}
-}
-
-func (r *Runner) toolAuthorizationPolicyEngine() ToolAuthorizationPolicyEngine {
-	if r != nil && r.ToolAuthorizationPolicyEngine != nil {
-		return r.ToolAuthorizationPolicyEngine
-	}
-	return newToolAuthorizationPolicyEngine()
-}
-
 func (r *Runner) readOnlyWriteChildTaskPermissionDecision(req workspace.ToolRequest) (PermissionDecisionSnapshot, bool) {
 	if r == nil || strings.TrimSpace(req.Tool) != workspace.ToolNameTask || !isWriteChildMode(req.Mode) {
 		return PermissionDecisionSnapshot{}, false
@@ -992,7 +659,7 @@ func (r *Runner) readOnlyWriteChildTaskPermissionDecision(req workspace.ToolRequ
 	}, true
 }
 
-func (defaultToolAuthorizationPolicyEngine) Permission(req workspace.ToolRequest, policy ToolPermissionPolicy, workspaceRulesDeny bool) ToolAuthorizationPermissionDecision {
+func toolAuthorizationPermissionDecision(req workspace.ToolRequest, policy ToolPermissionPolicy, workspaceRulesDeny bool) ToolAuthorizationPermissionDecision {
 	snapshot := policy.Decide(req)
 	if workspaceRulesDeny {
 		snapshot.Decision = PermissionDeny
@@ -1012,7 +679,7 @@ func (defaultToolAuthorizationPolicyEngine) Permission(req workspace.ToolRequest
 	}
 }
 
-func (defaultToolAuthorizationPolicyEngine) Surface(req workspace.ToolRequest, visibleTools []string, recoveryAllowance bool) ToolAuthorizationSurfaceDecision {
+func toolAuthorizationSurfaceDecision(req workspace.ToolRequest, visibleTools []string, recoveryAllowance bool) ToolAuthorizationSurfaceDecision {
 	parity := CompareParity(ParityInput{
 		SurfaceID:   "current_tool_surface",
 		InvariantID: toolAuthorizationPolicyInvariant,
@@ -1020,22 +687,53 @@ func (defaultToolAuthorizationPolicyEngine) Surface(req workspace.ToolRequest, v
 		NewDecision: map[bool]string{true: "allow", false: "reject"}[recoveryAllowance],
 	})
 	if recoveryAllowance {
-		policy := toolAuthorizationPolicyEvent(req, autonomy.PolicyAllow, "current_tool_surface", "allowed", "", "tool_authorization_policy", false)
+		policy := toolAuthorizationSurfacePolicyEvent(req, autonomy.PolicyAllow)
 		policy.ParityReport = parity
 		return ToolAuthorizationSurfaceDecision{Policy: policy, ParityReport: parity}
 	}
-	summary, errorText, rejected := currentToolSurfaceRejection(req, visibleTools)
-	if !rejected {
+	rejection := NewActiveSurface(visibleTools, nil).RejectionForTool(req.Tool)
+	if !rejection.Reject {
 		parity.NewDecision = "allow"
 		return ToolAuthorizationSurfaceDecision{ParityReport: parity}
 	}
-	policy := toolAuthorizationPolicyEvent(req, autonomy.PolicyReject, "current_tool_surface", "rejected", "tool_surface", "tool_authorization_policy", false)
+	policy := toolAuthorizationSurfacePolicyEvent(req, autonomy.PolicyReject)
 	policy.ParityReport = parity
-	return ToolAuthorizationSurfaceDecision{Rejected: true, Summary: summary, Error: errorText, Policy: policy, ParityReport: parity}
+	return ToolAuthorizationSurfaceDecision{
+		Rejected:     true,
+		Summary:      rejection.Summary,
+		Error:        rejection.Error,
+		Policy:       policy,
+		ParityReport: parity,
+	}
 }
 
-func (defaultToolAuthorizationPolicyEngine) WriteApprovalRequired(req workspace.ToolRequest) ToolAuthorizationPolicyEvent {
+func toolAuthorizationWriteApprovalRequired(req workspace.ToolRequest) ToolAuthorizationPolicyEvent {
 	return toolAuthorizationPolicyEvent(req, autonomy.PolicyAsk, "write_approval_required", "approval_required", "approval_guard", "tool_authorization_policy", true)
+}
+
+func toolAuthorizationSurfacePolicyEvent(req workspace.ToolRequest, decision autonomy.ToolPolicyDecision) ToolAuthorizationPolicyEvent {
+	result := "rejected"
+	errorClass := "tool_surface"
+	if decision == autonomy.PolicyAllow {
+		result = "allowed"
+		errorClass = ""
+	}
+	return toolAuthorizationPolicyEvent(req, decision, "current_tool_surface", result, errorClass, "tool_authorization_policy", false)
+}
+
+func emitToolAuthorizationSurfacePolicyResult(recorder *runnerAutonomyRecorder, req workspace.ToolRequest, decision autonomy.ToolPolicyDecision) {
+	if recorder == nil {
+		return
+	}
+	parityDecision := "reject"
+	if decision == autonomy.PolicyAllow {
+		parityDecision = "allow"
+	}
+	recorder.emitPolicyResult(req, toolAuthorizationPolicyResultInput(
+		toolAuthorizationSurfacePolicyEvent(req, decision),
+		autonomy.EventToolPolicyResult,
+		toolAuthorizationSurfaceParityReport(recorder, parityDecision),
+	))
 }
 
 func toolAuthorizationPolicyEvent(req workspace.ToolRequest, decision autonomy.ToolPolicyDecision, reason string, result string, errorClass string, source string, approval bool) ToolAuthorizationPolicyEvent {
@@ -1101,9 +799,6 @@ type runnerSession struct {
 	answer string
 	err    error
 	ran    bool
-
-	workspacePlanThenExecuteModePrior bool
-	workspacePlanThenExecuteModeSet   bool
 }
 
 func (r *Runner) Run(
@@ -1137,35 +832,7 @@ func (s *runnerSession) Bootstrap(_ context.Context, _ *SessionState) error {
 		r.stateStoreOwnedBySession = true
 	}
 	r.StateStore.SetRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths)
-	if r.EvidenceEngine == nil {
-		r.EvidenceEngine = newEvidenceEngine()
-	}
-	if r.GateEngine == nil {
-		r.GateEngine = defaultGateEngine{runner: r}
-	}
-	if r.CardEngine == nil {
-		r.CardEngine = newCardEngine()
-	}
-	if r.GuidanceEngine == nil {
-		r.GuidanceEngine = newGuidanceEngine(r.agentName(), r.evidenceEngine())
-	}
-	if r.VerificationPolicyEngine == nil {
-		r.VerificationPolicyEngine = newVerificationPolicyEngine()
-	}
-	if r.LifecycleCloseoutPolicyEngine == nil {
-		r.LifecycleCloseoutPolicyEngine = newLifecycleCloseoutPolicyEngine()
-	}
-	if r.ModelCallReadinessPolicyEngine == nil {
-		r.ModelCallReadinessPolicyEngine = newModelCallReadinessPolicyEngine()
-	}
-	if r.ToolAuthorizationPolicyEngine == nil {
-		r.ToolAuthorizationPolicyEngine = newToolAuthorizationPolicyEngine()
-	}
-	if r.Workspace != nil && strings.TrimSpace(r.RuntimeBrief.TaskFamily) == PlanThenExecutePlannerTaskFamily {
-		s.workspacePlanThenExecuteModePrior = r.Workspace.PlanThenExecutePlannerMode()
-		r.Workspace.SetPlanThenExecutePlannerMode(true)
-		s.workspacePlanThenExecuteModeSet = true
-	}
+
 	return nil
 }
 
@@ -1189,9 +856,6 @@ func (s *runnerSession) Close(_ context.Context, _ *SessionState) {
 	if s == nil || s.runner == nil {
 		return
 	}
-	if s.workspacePlanThenExecuteModeSet && s.runner.Workspace != nil {
-		s.runner.Workspace.SetPlanThenExecutePlannerMode(s.workspacePlanThenExecuteModePrior)
-	}
 	s.runner.currentAllowedTools = nil
 	s.runner.activeAutonomy = nil
 }
@@ -1203,7 +867,7 @@ func (r *Runner) presentableFallbackCandidate(results []workspace.ToolResult, an
 	if runnerBriefRequiresMutation(r.RuntimeBrief) {
 		return strings.TrimSpace(answer), strings.TrimSpace(answer) != ""
 	}
-	closeout := r.evidenceEngine().ClosureDecision(r.RuntimeBrief, results)
+	closeout := readOnlyClosureDecisionForResults(r.RuntimeBrief, results)
 	presentable, ok := closeout.PresentableFallbackCandidate(r.agentName(), answer)
 	if !ok {
 		return "", false
@@ -1220,14 +884,14 @@ func (r *Runner) presentableOrReadOnlyNonAnswerReplacement(results []workspace.T
 	if r == nil {
 		return presentableOrReadOnlyNonAnswerReplacement("", workerruntime.WorkerRuntimeBrief{}, results, answer)
 	}
-	return r.evidenceEngine().ClosureDecision(r.RuntimeBrief, results).PresentableOrReadOnlyNonAnswerReplacement(r.agentName(), answer)
+	return readOnlyClosureDecisionForResults(r.RuntimeBrief, results).PresentableOrReadOnlyNonAnswerReplacement(r.agentName(), answer)
 }
 
 func (r *Runner) presentableBriefConversationFallbackCandidate(results []workspace.ToolResult) (string, bool) {
 	if r == nil {
 		return presentableBriefConversationFallbackCandidate("", workerruntime.WorkerRuntimeBrief{}, results)
 	}
-	return r.evidenceEngine().ClosureDecision(r.RuntimeBrief, results).PresentableBriefConversationFallbackCandidate(r.agentName())
+	return readOnlyClosureDecisionForResults(r.RuntimeBrief, results).PresentableBriefConversationFallbackCandidate(r.agentName())
 }
 
 func (r *Runner) genericReadOnlyEvidenceReady(results []workspace.ToolResult) bool {
@@ -1241,7 +905,7 @@ func (r *Runner) genericReadOnlyEvidenceReady(results []workspace.ToolResult) bo
 	if slices.Contains(brief.Constraints, "answer_readiness_reached") {
 		return true
 	}
-	return r.evidenceEngine().ClosureDecision(brief, results).Answerable()
+	return readOnlyClosureDecisionForResults(brief, results).Answerable()
 }
 
 func (r *Runner) readOnlyEvidenceAvailableTerminalChatOptions(opts llama.ChatOptions, results []workspace.ToolResult) llama.ChatOptions {
@@ -1252,7 +916,7 @@ func (r *Runner) readOnlyEvidenceAvailableTerminalChatOptions(opts llama.ChatOpt
 	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) || artifactFinalAnswerBrief(brief) ||
 		!workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) ||
 		!readOnlyDirectAnswerLane(brief) ||
-		!r.evidenceEngine().ClosureDecision(brief, results).Answerable() {
+		!readOnlyClosureDecisionForResults(brief, results).Answerable() {
 		return readOnlyEvidenceAvailableTerminalChatOptions(opts, brief, results)
 	}
 	thinkingOff := false
@@ -1279,66 +943,47 @@ func (r *Runner) loopTurnState(state *runnerRunState) TurnState {
 	return NewTurnState(step, allowed, changed)
 }
 
-func planThenExecutePostReadinessDiscoveryRejectionWithRecoveryEngine(hooks planExecuteRecoveryHooks, req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, string, bool) {
-	summary, errorText, rejected := planThenExecutePostReadinessDiscoveryRejection(req, brief, results)
-	if !rejected {
-		return "", "", false
-	}
-	if rejectedResult, _, ok := lastRejectedSubmitPlanCoverageResult(results); ok {
-		if refreshPaths := planThenExecuteRejectedPlanRefreshPaths(brief, results, rejectedResult, len(results)-1); len(refreshPaths) > 0 && strings.Contains(strings.ToLower(summary), "anchor refresh") {
-			return summary, hooks.onAnchorRefreshRequiredError(refreshPaths, rejectedResult), true
-		}
-		refreshNote := planThenExecutePostSubmitRejectionRefreshNote(brief, results, rejectedResult, len(results)-1)
-		return summary, hooks.onSubmitCorrectionRequiredError(brief, results, rejectedResult, refreshNote), true
-	}
-	return summary, errorText, true
-}
-
-func planThenExecuteRequiredPathDiscoveryRejectionWithRecoveryEngine(hooks planExecuteRecoveryHooks, req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, string, bool) {
-	summary, _, rejected := planThenExecuteRequiredPathDiscoveryRejection(req, brief, results)
-	if !rejected {
-		return "", "", false
-	}
-	target := firstPlanThenExecuteUnreadRequiredPath(brief.RequiredEditPaths, planThenExecuteUnreadRequiredPaths(brief, results))
-	next := planThenExecuteSourceReadInstruction(target, results)
-	return summary, hooks.onAnchorRefreshRequiredPathError(target, next), true
-}
-
-func planThenExecuteSubmitCorrectionCurrentSurfaceRejectionWithRecoveryEngine(hooks planExecuteRecoveryHooks, req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, string, string, bool) {
-	if strings.TrimSpace(req.Tool) == "" || strings.TrimSpace(req.Tool) == workspace.ToolNameSubmitPlan || !planThenExecuteSubmitCorrectionActive(brief, results) {
-		return "", "", "", false
-	}
-	summary, errorText, prompt := hooks.onSubmitCorrectionWrongTool(req.Tool, planThenExecuteSubmitCorrectionBlockerAllowed(brief, results))
-	return summary, errorText, prompt, true
-}
-
-func planThenExecuteReadyToSubmitNudgeWithRecoveryEngine(hooks planExecuteRecoveryHooks, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
-	rejected, _, ok := lastRejectedSubmitPlanCoverageResult(results)
-	if !ok {
-		return planThenExecuteReadyToSubmitNudge(brief, results)
-	}
-	return hooks.onSubmitCorrectionReadyNudge(brief, results, rejected)
-}
-
-func (r *Runner) planThenExecuteSubmitCorrectionHiddenOnlyVisiblePromptForState(base string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
-	if r == nil {
-		return planThenExecuteSubmitCorrectionHiddenOnlyVisiblePromptForState(base, brief, results)
-	}
-	return r.planExecuteRecoveryHooks().correctionHiddenOnlyPrompt(base, planThenExecuteSubmitCorrectionBlockerAllowed(brief, results))
-}
-
-func (r *Runner) planThenExecuteUnscopedEmptySubmitPlanRecoveryPrompt() string {
-	if r == nil {
-		return RenderPlanExecuteRecoveryPlan(planThenExecuteUnscopedEmptySubmitPlanRecoveryPlan())
-	}
-	return RenderPlanExecuteRecoveryPlan(r.planExecuteRecoveryHooks().unscopedEmptySubmitPlan())
-}
-
 func (r *Runner) sessionID() string {
 	if r == nil || r.Workspace == nil {
 		return ""
 	}
 	return r.Workspace.SessionID()
+}
+
+func (r *Runner) workspaceAllowedTools() []string {
+	if r == nil || r.Workspace == nil {
+		return nil
+	}
+	return r.workspaceToolSurfaceSnapshot().AllowedTools()
+}
+
+func (r *Runner) workspaceAdvertisedAllowedTools() []string {
+	if r == nil {
+		return nil
+	}
+	return r.advertisedAllowedTools(r.workspaceAllowedTools())
+}
+
+func (r *Runner) workspaceToolSurfaceSnapshot() workspace.ToolSurfaceSnapshot {
+	if r == nil || r.Workspace == nil {
+		return workspace.ToolSurfaceSnapshot{}
+	}
+
+	if profile, ok := runnerWorkspaceToolSurfaceProfile(r.RuntimeBrief); ok {
+		return r.Workspace.ToolSurfaceSnapshotForProfile(profile)
+	}
+
+	return r.Workspace.ToolSurfaceSnapshot()
+}
+
+func runnerWorkspaceToolSurfaceProfile(brief workerruntime.WorkerRuntimeBrief) (workspace.ToolSurfaceProfile, bool) {
+	profile := workerruntime.RuntimeContractForTaskFamily(brief.TaskFamily).ToolProfile
+	switch profile {
+	case workspace.ToolSurfaceProfilePlanSubmissionPlanner, workspace.ToolSurfaceProfilePlanSubmissionReview:
+		return profile, true
+	default:
+		return "", false
+	}
 }
 
 type Runner struct {
@@ -1371,20 +1016,11 @@ type Runner struct {
 	// LanePolicy is the lane-specific behavioral policy derived from
 	// RuntimeBrief at runner construction time. The policy replaces
 	// inline TaskFamily/Contract string-comparison guards with a
-	// single dispatch point. When nil, falls back to DefaultLanePolicy.
-	LanePolicy LanePolicy
+	// single dispatch point. When nil, falls back to the default lane policy.
+	LanePolicy *LanePolicy
 
-	StateStore                       StateStore
-	stateStoreOwnedBySession         bool
-	EvidenceEngine                   EvidenceEngine
-	GateEngine                       GateEngine
-	CardEngine                       CardEngine
-	planExecuteRecoveryHookOverrides planExecuteRecoveryHooks
-	GuidanceEngine                   GuidanceEngine
-	VerificationPolicyEngine         VerificationPolicyEngine
-	LifecycleCloseoutPolicyEngine    LifecycleCloseoutPolicyEngine
-	ModelCallReadinessPolicyEngine   ModelCallReadinessPolicyEngine
-	ToolAuthorizationPolicyEngine    ToolAuthorizationPolicyEngine
+	StateStore               StateStore
+	stateStoreOwnedBySession bool
 
 	// PathEvidenceRegistry is the consolidated path-existence, body-read,
 	// candidate, and basename-resolution service. Populated once per turn
@@ -1438,7 +1074,7 @@ func (r *Runner) currentPlanningTransport() PlanExecutePlanningTransport {
 
 // lanePolicy returns the lane-specific behavioral policy, falling back
 // to LanePolicyForBrief when the Runner.LanePolicy field is nil.
-func (r *Runner) lanePolicy() LanePolicy {
+func (r *Runner) lanePolicy() *LanePolicy {
 	if r != nil && r.LanePolicy != nil {
 		return r.LanePolicy
 	}
@@ -1447,7 +1083,7 @@ func (r *Runner) lanePolicy() LanePolicy {
 		return LanePolicyForBrief(r.RuntimeBrief)
 	}
 
-	return DefaultLanePolicy{}
+	return &defaultLanePolicy
 }
 func (r *Runner) supportsTerminalSubmitPlanNativeTools(results []workspace.ToolResult) bool {
 	if r == nil || r.Client == nil {
@@ -1486,7 +1122,7 @@ func (r *Runner) runLegacySessionBody(
 	planThenExecuteSubmitOnlyReadinessNudged := false
 	planThenExecuteCandidateReadinessNonSubmitTools := 0
 	conversationEvidenceNudged := false
-	convFirstMilestone, convNudgeInterval := lp.CallCountMilestones(r.ContextSize)
+	convFirstMilestone, convNudgeInterval := lanePolicyCallCountMilestones(lp, r.ContextSize)
 
 	planThenExecuteCorrectionAfterRefreshNudged := false
 	planThenExecuteUnreadSourceNudgedFor := ""
@@ -1498,10 +1134,6 @@ func (r *Runner) runLegacySessionBody(
 	postChildDiminishingNudgeStage := 0
 	implementationWriteOnlyRecoveryActive := false
 	requiredPathCompletionRecoveryActive := false
-	writeDescriptionRepairActive := false
-	writeDescriptionDetourRejections := 0
-	writeDescriptionRepairPath := ""
-	implementationWriteOnlyHiddenTools := make(map[string]bool)
 	scopedHiddenNonWriteRecoveryUsed := false
 	scratchpadCloseoutNonWriteRejections := 0
 	// recoveryReadAllowanceUsed tracks paths that have already consumed
@@ -1523,15 +1155,6 @@ func (r *Runner) runLegacySessionBody(
 	// crosses postCompletionVerificationCutoff, the runner force-answers
 	// with a CLEAN success completion.
 	postCompletionVerificationCalls := 0
-	// turnHiddenTools tracks tools that have been gated enough times this
-	// turn that we should stop advertising them in the manifest. Removes
-	// a class of waste outright: if list_files is chained past the gate,
-	// hiding it for the rest of the turn prevents another round of token
-	// spend on calls we're going to reject anyway.
-	turnHiddenTools := make(map[string]bool)
-	exactAnchorHiddenTools := make(map[string]bool)
-	implementationScopedHiddenTools := make(map[string]bool)
-
 	collectedResults := append([]workspace.ToolResult(nil), r.SeedResults...)
 	exactAnchorWriteOnlyActive := exactAnchorPreWriteSurfaceActive(r.RuntimeBrief, collectedResults)
 	exactAnchorWriteFailures := 0
@@ -1542,9 +1165,7 @@ func (r *Runner) runLegacySessionBody(
 		opts:                                    opts,
 		collectedResults:                        collectedResults,
 		turnMessages:                            turnMessages,
-		turnHiddenTools:                         turnHiddenTools,
 		executionState:                          &executionState,
-		implementationScopedHiddenTools:         implementationScopedHiddenTools,
 		delegatedReadOnlyAnswerReady:            delegatedReadOnlyAnswerReady,
 		postChildPacketActive:                   postChildPacketActive,
 		implementationWriteOnlyRecoveryActive:   implementationWriteOnlyRecoveryActive,
@@ -1557,10 +1178,8 @@ func (r *Runner) runLegacySessionBody(
 		runState.opts = opts
 		runState.collectedResults = collectedResults
 		runState.turnMessages = turnMessages
-		runState.turnHiddenTools = turnHiddenTools
 		runState.currentAllowedTools = append(runState.currentAllowedTools[:0], currentAllowedTools...)
 		runState.executionState = &executionState
-		runState.implementationScopedHiddenTools = implementationScopedHiddenTools
 		runState.delegatedReadOnlyAnswerReady = delegatedReadOnlyAnswerReady
 		runState.postChildPacketActive = postChildPacketActive
 		runState.implementationWriteOnlyRecoveryActive = implementationWriteOnlyRecoveryActive
@@ -1585,22 +1204,6 @@ func (r *Runner) runLegacySessionBody(
 
 	setCurrentAllowedTools := func(tools []string) {
 		r.setCurrentAllowedTools(runState, tools)
-	}
-
-	if r.Workspace != nil {
-		priorPlanThenExecuteMode := r.Workspace.PlanThenExecutePlannerMode()
-		switch strings.TrimSpace(r.RuntimeBrief.TaskFamily) {
-		case PlanThenExecutePlannerTaskFamily, PlanThenExecuteReviewRepairTaskFamily:
-			r.Workspace.SetPlanThenExecutePlannerMode(true)
-		default:
-			r.Workspace.SetPlanThenExecutePlannerMode(false)
-		}
-
-		restoreWorkspacePlanThenExecuteMode := func() {
-			r.Workspace.SetPlanThenExecutePlannerMode(priorPlanThenExecuteMode)
-		}
-
-		defer restoreWorkspacePlanThenExecuteMode()
 	}
 
 	syncCurrentAllowedToolsFromOptions := func() {
@@ -1641,7 +1244,7 @@ func (r *Runner) runLegacySessionBody(
 
 	if r.Workspace != nil {
 		if exactAnchorWriteOnlyActive {
-			hideExactAnchorReadTools(turnHiddenTools, exactAnchorHiddenTools, r.Workspace)
+			runState.hideExactAnchorReadTools(r.workspaceAllowedTools())
 		}
 
 		rebuildTools()
@@ -1764,8 +1367,8 @@ func (r *Runner) runLegacySessionBody(
 	// whose prompt is similar to the current prompt. This lets the model
 	// pick up where it left off across sessions without re-reading files.
 	if r.PathEvidenceRegistry != nil && r.Workspace != nil {
-		if priorPaths := PriorSessionCandidatePaths(r.Workspace.Root(), r.RuntimeBrief.Objective); len(priorPaths) > 0 {
-			r.PathEvidenceRegistry.MergeFromPriorSession(priorPaths)
+		if priorSession := FindMatchingPriorSession(r.Workspace.Root(), r.RuntimeBrief.Objective); priorSession != nil {
+			r.PathEvidenceRegistry.MergeFromPriorSession(priorSession.ReadPaths)
 		}
 	}
 
@@ -1796,7 +1399,7 @@ func (r *Runner) runLegacySessionBody(
 
 	// Investigation lane: recommended strategy to avoid exhaustive
 	// symbol-by-symbol enumeration. One-shot at session start.
-	if _, ok := r.lanePolicy().(ReadOnlyInvestigationLanePolicy); ok {
+	if lanePolicyHasName(r.lanePolicy(), lanePolicyReadOnlyInvestigation) {
 		turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: readOnlyInvestigationStrategyPrompt(visibleRuntimeBrief.AllowedTools)})
 	}
 
@@ -1879,10 +1482,9 @@ func (r *Runner) runLegacySessionBody(
 
 	for step := 0; policy.unbounded() || step < policy.MaxToolSteps; step++ {
 		stepNumber := step + 1
-		readiness := r.modelCallReadinessPolicyEngine().BeforeModelCall(ModelCallReadinessPolicyInput{
-			Policy:     policy,
-			LanePolicy: r.lanePolicy(),
-			Metrics:    metrics,
+		readiness := modelCallReadinessBeforeModelCall(ModelCallReadinessPolicyInput{
+			Policy:  policy,
+			Metrics: metrics,
 		})
 		if readiness.Stop {
 			if blocker, ok := r.implementationContractCloseoutBlocker(collectedResults, readiness.StopReason); ok {
@@ -1930,7 +1532,7 @@ func (r *Runner) runLegacySessionBody(
 			Brief:               r.RuntimeBrief,
 			Results:             collectedResults,
 			AllowedTools:        currentAllowedTools,
-			HiddenTools:         turnHiddenTools,
+			ActiveSurface:       runState.toolSurface,
 			Options:             modelCallOpts,
 			SupportsNativeTools: terminalSubmitPlanNativeTools(),
 		})
@@ -2150,7 +1752,7 @@ func (r *Runner) runLegacySessionBody(
 				}
 
 				markRuntimeBriefPathsObserved(r.Workspace, r.RuntimeBrief)
-				hideImplementationWriteOnlyToolsForTurn(turnHiddenTools, implementationWriteOnlyHiddenTools, r.Workspace)
+				runState.hideImplementationWriteOnlyTools(r.workspaceAllowedTools())
 				rebuildTools()
 
 				opts = planThenExecuteCandidateWriteOnlyRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
@@ -2282,7 +1884,6 @@ func (r *Runner) runLegacySessionBody(
 						currentAllowedTools:      currentAllowedTools,
 						completionGateRejections: &completionGateRejections,
 						turnMessages:             &turnMessages,
-						turnHiddenTools:          turnHiddenTools,
 						controller:               &controller,
 						autonomyRecorder:         autonomyRecorder,
 						rebuildTools:             rebuildTools,
@@ -2388,9 +1989,9 @@ func (r *Runner) runLegacySessionBody(
 						markRuntimeBriefPathsObserved(r.Workspace, r.RuntimeBrief)
 
 						if strings.TrimSpace(r.RuntimeBrief.TaskFamily) == PlanThenExecuteReviewRepairTaskFamily {
-							hideReviewRepairTerminalOnlyToolsForTurn(turnHiddenTools, implementationWriteOnlyHiddenTools, r.Workspace)
+							runState.hideReviewRepairTerminalOnlyTools(r.workspaceAllowedTools())
 						} else {
-							hideImplementationWriteOnlyToolsForTurn(turnHiddenTools, implementationWriteOnlyHiddenTools, r.Workspace)
+							runState.hideImplementationWriteOnlyTools(r.workspaceAllowedTools())
 						}
 
 						rebuildTools()
@@ -2426,7 +2027,7 @@ func (r *Runner) runLegacySessionBody(
 				}
 
 				if sourceGroundingReadRecovery {
-					hideNonSourceBodyReadTools(turnHiddenTools, currentAllowedTools)
+					runState.hideNonSourceBodyReadTools(OwnerSourceGrounding, currentAllowedTools)
 					rebuildTools()
 
 					turnMessages = append(turnMessages, llama.ChatMessage{
@@ -2487,7 +2088,6 @@ func (r *Runner) runLegacySessionBody(
 						currentAllowedTools:      currentAllowedTools,
 						completionGateRejections: &completionGateRejections,
 						turnMessages:             &turnMessages,
-						turnHiddenTools:          turnHiddenTools,
 						controller:               &controller,
 						autonomyRecorder:         autonomyRecorder,
 						rebuildTools:             rebuildTools,
@@ -2583,8 +2183,8 @@ func (r *Runner) runLegacySessionBody(
 
 		if redirected, redirectedRaw, reason, ok := generatedEvidenceArtifactReadRedirectRequest(req, collectedResults); ok {
 			r.emitEvent(marshalRunEvent("generated_evidence_artifact_read_redirect", map[string]any{
-				"from_path": agentutil.NormalizeRunnerPath(req.Path),
-				"to_path":   agentutil.NormalizeRunnerPath(redirected.Path),
+				"from_path": NormalizeRunnerPath(req.Path),
+				"to_path":   NormalizeRunnerPath(redirected.Path),
 				"reason":    reason,
 			}))
 
@@ -2626,46 +2226,7 @@ func (r *Runner) runLegacySessionBody(
 			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "repeated_rangeless_read_file_bounded_source")
 		}
 
-		if repaired, repairedRaw, ok := r.writeDescriptionRepairSynthesizedRequest(req, writeDescriptionRepairActive); ok {
-			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, repaired, repairedRaw, "write_description_repair_synthesized")
-			r.emitWriteDescriptionValidatorDecision(stepNumber, repaired, "repair", "description_synthesized", "write_description_repair")
-			r.emitEvent(RunEvent{Role: "write_description_repair_synthesized", Content: fmt.Sprintf("synthesized missing write description for %s on %q", strings.TrimSpace(repaired.Tool), agentutil.NormalizeRunnerPath(repaired.Path))})
-		}
-
 		currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
-		if (writeDescriptionRepairActive ||
-			lastResultSummaryIs(collectedResults, "Missing write description") ||
-			lastResultSummaryIs(collectedResults, "Write-description repair rejected non-write detour")) &&
-			!r.writeOnlyRecoveryToolIsWrite(req.Tool) {
-
-			writeDescriptionRepairActive = true
-			writeDescriptionDetourRejections++
-
-			prompt := r.writeDescriptionRepairPrompt(req)
-			result := workspace.ToolResult{
-				Tool:    req.Tool,
-				Summary: "Write-description repair rejected non-write detour",
-				Error:   fmt.Sprintf("%s is not available while write-description repair is pending. Reissue the same in-scope write with a non-empty description, or answer with <<QUESTION>> and the exact blocker.", strings.TrimSpace(req.Tool)),
-			}
-			controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
-			r.emitWriteDescriptionValidatorDecision(stepNumber, req, "reject", "non_write_detour", "write_description_repair")
-			r.emitEvent(RunEvent{Role: "write_description_repair_recovery", Content: prompt})
-
-			if writeDescriptionDetourRejections >= 2 {
-				blockerKind := "write_description_repair_detour_repeated"
-				emitCompletionStatus("blocked", blockerKind, blockerKind, collectedResults, true)
-
-				answer := "<<QUESTION>>: write-description repair rejected repeated non-write detours. The required edit path remains unchanged; reissue the same in-scope write with a non-empty description, or provide the exact blocker."
-
-				return finish(answer, nil, blockerKind, true)
-			}
-
-			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
-
-			rebuildTools()
-
-			continue
-		}
 
 		if workspace.IsWorkspaceWriteTool(req.Tool) && implementationTargetSourceWriteTargetsHaveEvidence(req, collectedResults) {
 			clearRejectedFingerprintSummary(requestBudget.fingerprint.rejected, currentFingerprint, "Write rejected before source-body evidence")
@@ -2681,7 +2242,7 @@ func (r *Runner) runLegacySessionBody(
 				implementationWriteOnlyRecoveryActive = true
 
 				markRuntimeBriefPathsObserved(r.Workspace, r.RuntimeBrief)
-				hideImplementationWriteOnlyToolsForTurn(turnHiddenTools, implementationWriteOnlyHiddenTools, r.Workspace)
+				runState.hideImplementationWriteOnlyTools(r.workspaceAllowedTools())
 				rebuildTools()
 
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
@@ -2771,7 +2332,7 @@ func (r *Runner) runLegacySessionBody(
 		// submit_plan surface is active. Must run before the nudge rejection
 		// below so the read can reach the post-readiness candidate-scope check.
 		if !recoveryReadAllowanceGrantedThisRequest && workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
-			target := agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
+			target := NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))
 			if target != "" && isPlanExecuteContextDocPath(target) &&
 				planExecuteContextDocReadCount(collectedResults) < planThenExecuteContextDocReadCap {
 				recoveryReadAllowanceGrantedThisRequest = true
@@ -2842,7 +2403,7 @@ func (r *Runner) runLegacySessionBody(
 
 			r.emitEvent(RunEvent{
 				Role:    "implementation_target_write_ready_source_refresh_allowed",
-				Content: fmt.Sprintf("allowed write-ready %s source expansion on target path %q", strings.TrimSpace(req.Tool), agentutil.NormalizeRunnerPath(req.Path)),
+				Content: fmt.Sprintf("allowed write-ready %s source expansion on target path %q", strings.TrimSpace(req.Tool), NormalizeRunnerPath(req.Path)),
 			})
 		} else if prompt, ok := r.implementationTargetWriteReadyNonWritePrompt(req, collectedResults); ok {
 			implementationTargetWriteReadyNudges++
@@ -2857,7 +2418,9 @@ func (r *Runner) runLegacySessionBody(
 			r.emitImplementationLifecycleState(collectedResults, "target_write_ready", implementationTargetWriteReadyNudges)
 		}
 
-		scopedHiddenNonWrite := implementationScopedHiddenTools[strings.TrimSpace(req.Tool)] && !workspace.IsWorkspaceWriteTool(req.Tool)
+		requestedTool := strings.TrimSpace(req.Tool)
+		toolHiddenByActiveSurface := runState.surfaceHidesTool(requestedTool)
+		scopedHiddenNonWrite := runState.surfaceHiddenByOwner(OwnerImplementationScoped, requestedTool) && !workspace.IsWorkspaceWriteTool(req.Tool)
 		if summary, errorText, prompt, reject := r.implementationScopedDisallowedToolRecovery(req, collectedResults); reject && !(scopedHiddenNonWrite && scopedHiddenNonWriteRecoveryUsed) {
 			result := workspace.ToolResult{
 				Tool:    req.Tool,
@@ -2878,7 +2441,7 @@ func (r *Runner) runLegacySessionBody(
 			continue
 		}
 
-		if !turnHiddenTools[strings.TrimSpace(req.Tool)] {
+		if !toolHiddenByActiveSurface {
 			if summary, errorText, prompt, hideNonWrite, reject := r.writeReadyPacketReadWithoutGapRecovery(req, collectedResults); reject {
 				result := workspace.ToolResult{
 					Tool:    req.Tool,
@@ -2919,7 +2482,7 @@ func (r *Runner) runLegacySessionBody(
 					}
 
 					markRuntimeBriefPathsObserved(r.Workspace, r.RuntimeBrief)
-					hideImplementationWriteOnlyToolsForTurn(turnHiddenTools, implementationWriteOnlyHiddenTools, r.Workspace)
+					runState.hideImplementationWriteOnlyTools(r.workspaceAllowedTools())
 				}
 
 				rebuildTools()
@@ -2957,14 +2520,14 @@ func (r *Runner) runLegacySessionBody(
 
 			r.emitEvent(RunEvent{
 				Role:    "plan_then_execute_source_satisfied_evidence_read_allowed",
-				Content: fmt.Sprintf("allowed bounded %s for source-satisfied evidence path %q", strings.TrimSpace(req.Tool), agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
+				Content: fmt.Sprintf("allowed bounded %s for source-satisfied evidence path %q", strings.TrimSpace(req.Tool), NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
 			})
 		} else if refreshReason, ok := r.planThenExecuteDirectSourceRefreshAllowed(req, collectedResults, planThenExecuteReadySourceRefreshes); ok {
 			recoveryReadAllowanceGrantedThisRequest = true
 			planThenExecuteReadySourceRefreshes++
 			r.emitEvent(RunEvent{
 				Role:    "plan_then_execute_ready_source_refresh_allowed",
-				Content: fmt.Sprintf("allowed bounded %s source refresh %d/%d for %s %q after rejected submit_plan showed a stale or missing anchor", strings.TrimSpace(req.Tool), planThenExecuteReadySourceRefreshes, planThenExecuteReadySourceRefreshLimit, refreshReason, agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
+				Content: fmt.Sprintf("allowed bounded %s source refresh %d/%d for %s %q after rejected submit_plan showed a stale or missing anchor", strings.TrimSpace(req.Tool), planThenExecuteReadySourceRefreshes, planThenExecuteReadySourceRefreshLimit, refreshReason, NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
 			})
 		} else if redirected, redirectedRaw, ok := r.planThenExecuteRejectedPlanRefreshReadRedirect(req, collectedResults); ok {
 			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_rejected_plan_source_refresh_region")
@@ -2973,14 +2536,14 @@ func (r *Runner) runLegacySessionBody(
 			planThenExecuteReadySourceRefreshes++
 			r.emitEvent(RunEvent{
 				Role:    "plan_then_execute_ready_source_refresh_allowed",
-				Content: fmt.Sprintf("redirected bounded %s source refresh %d/%d for rejected plan path %q", strings.TrimSpace(req.Tool), planThenExecuteReadySourceRefreshes, planThenExecuteReadySourceRefreshLimit, agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
+				Content: fmt.Sprintf("redirected bounded %s source refresh %d/%d for rejected plan path %q", strings.TrimSpace(req.Tool), planThenExecuteReadySourceRefreshes, planThenExecuteReadySourceRefreshLimit, NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
 			})
 		} else if r.planThenExecuteCandidateSourceRefreshAllowed(req, collectedResults, planThenExecuteReadySourceRefreshes) {
 			recoveryReadAllowanceGrantedThisRequest = true
 			planThenExecuteReadySourceRefreshes++
 			r.emitEvent(RunEvent{
 				Role:    "plan_then_execute_ready_source_refresh_allowed",
-				Content: fmt.Sprintf("allowed bounded %s source refresh %d/%d for candidate path %q after rejected submit_plan showed a stale or missing anchor", strings.TrimSpace(req.Tool), planThenExecuteReadySourceRefreshes, planThenExecuteReadySourceRefreshLimit, agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
+				Content: fmt.Sprintf("allowed bounded %s source refresh %d/%d for candidate path %q after rejected submit_plan showed a stale or missing anchor", strings.TrimSpace(req.Tool), planThenExecuteReadySourceRefreshes, planThenExecuteReadySourceRefreshLimit, NormalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
 			})
 		}
 
@@ -3034,13 +2597,7 @@ func (r *Runner) runLegacySessionBody(
 						Summary: "Plan-execute submit_plan required",
 						Error:   fmt.Sprintf("%s is not available while plan-execute planner recovery is waiting for a visible `submit_plan`. The next visible action must be a parser-readable `submit_plan`. %s%s", strings.TrimSpace(req.Tool), planThenExecuteSubmitPlanCoverageSentence(), refreshNote),
 					}
-					if autonomyRecorder != nil {
-						autonomyRecorder.emitPolicyResult(req, toolAuthorizationPolicyResultInput(
-							toolAuthorizationPolicyEvent(req, autonomy.PolicyReject, "current_tool_surface", "rejected", "tool_surface", "tool_authorization_policy", false),
-							autonomy.EventToolPolicyResult,
-							toolAuthorizationSurfaceParityReport(autonomyRecorder, "reject"),
-						))
-					}
+					emitToolAuthorizationSurfacePolicyResult(autonomyRecorder, req, autonomy.PolicyReject)
 					controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
 					refreshPlanThenExecuteTerminalSurface("submit_plan_recovery")
 
@@ -3080,7 +2637,7 @@ func (r *Runner) runLegacySessionBody(
 					opts = forceVisibleActionChatOptions(opts)
 					opts = planExecuteSetExactMaxTokens(opts, 768)
 
-					hideImplementationWriteOnlyToolsForTurn(turnHiddenTools, implementationWriteOnlyHiddenTools, r.Workspace)
+					runState.hideImplementationWriteOnlyTools(r.workspaceAllowedTools())
 					rebuildTools()
 					r.emitEvent(RunEvent{Role: "implementation_write_only_recovery_non_write_repair", Content: prompt})
 
@@ -3100,7 +2657,8 @@ func (r *Runner) runLegacySessionBody(
 			}
 		}
 
-		if turnHiddenTools[strings.TrimSpace(req.Tool)] && !recoveryReadAllowanceGrantedThisRequest {
+		hiddenCheckTool := strings.TrimSpace(req.Tool)
+		if runState.surfaceHidesTool(hiddenCheckTool) && !recoveryReadAllowanceGrantedThisRequest {
 			hiddenSummary := "Tool hidden by active contract"
 			hiddenError := fmt.Sprintf("%s is hidden for the rest of this turn by the active runtime contract. Use an available tool, or answer with a concrete blocker if the contract prevents completion.", strings.TrimSpace(req.Tool))
 
@@ -3168,7 +2726,7 @@ func (r *Runner) runLegacySessionBody(
 			}
 
 			markRuntimeBriefPathsObserved(r.Workspace, r.RuntimeBrief)
-			hideImplementationWriteOnlyToolsForTurn(turnHiddenTools, implementationWriteOnlyHiddenTools, r.Workspace)
+			runState.hideImplementationWriteOnlyTools(r.workspaceAllowedTools())
 			rebuildTools()
 
 			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
@@ -3186,11 +2744,11 @@ func (r *Runner) runLegacySessionBody(
 		planningState := DerivePlanExecutePlanningActionState(r.RuntimeBrief, collectedResults, planningTransport, req)
 
 		if !recoveryReadAllowanceGrantedThisRequest {
-			if reason, prompt, ok := planThenExecuteCandidateLowValueAction(r.planExecuteRecoveryHooks(), req, r.RuntimeBrief, collectedResults, planningTransport); ok {
+			if reason, prompt, ok := planThenExecuteCandidateLowValueAction(req, r.RuntimeBrief, collectedResults, planningTransport); ok {
 				r.emitEvent(marshalRunEvent("plan_then_execute_low_value_action", map[string]any{
 					"agent":             r.agentName(),
 					"tool":              strings.TrimSpace(req.Tool),
-					"path":              agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req)),
+					"path":              NormalizeRunnerPath(planThenExecuteRequestTargetPath(req)),
 					"reason":            reason,
 					"terminal_options":  planningState.TerminalOptions,
 					"low_value_actions": planningState.LowValueActions,
@@ -3227,13 +2785,7 @@ func (r *Runner) runLegacySessionBody(
 		}
 
 		if summary, errorText, prompt, reject := r.planThenExecuteSubmitPlanOnlySurfaceRejection(req, collectedResults, currentAllowedTools); reject && !recoveryReadAllowanceGrantedThisRequest {
-			if autonomyRecorder != nil {
-				autonomyRecorder.emitPolicyResult(req, toolAuthorizationPolicyResultInput(
-					toolAuthorizationPolicyEvent(req, autonomy.PolicyReject, "current_tool_surface", "rejected", "tool_surface", "tool_authorization_policy", false),
-					autonomy.EventToolPolicyResult,
-					toolAuthorizationSurfaceParityReport(autonomyRecorder, "reject"),
-				))
-			}
+			emitToolAuthorizationSurfacePolicyResult(autonomyRecorder, req, autonomy.PolicyReject)
 
 			controller.recordRejectedResult(stepNumber, activeToolCall, req, workspace.ToolResult{
 				Tool:    req.Tool,
@@ -3275,14 +2827,13 @@ func (r *Runner) runLegacySessionBody(
 		surfaceAllowedTools := runnerPlanExecuteTextualAllowedToolsForRequest(currentAllowedTools, r.RuntimeBrief, collectedResults, req)
 		historyRedirectAllowedTools := append(append([]string(nil), surfaceAllowedTools...), workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol)
 
-		if summary, errorText, reject := currentToolSurfaceRejection(req, surfaceAllowedTools); reject && !recoveryReadAllowanceGrantedThisRequest {
+		surfaceDecision := toolAuthorizationSurfaceDecision(req, surfaceAllowedTools, false)
+		if surfaceDecision.Rejected && !recoveryReadAllowanceGrantedThisRequest {
+			summary, errorText := surfaceDecision.Summary, surfaceDecision.Error
 			redirected := false
 
 			if planThenExecuteUnscopedEmptySubmitPlanAttempt(r.RuntimeBrief, req) {
-				if autonomyRecorder != nil {
-					policy := r.toolAuthorizationPolicyEngine().Surface(req, surfaceAllowedTools, false).Policy
-					autonomyRecorder.emitPolicyResult(req, toolAuthorizationPolicyResultInput(policy, autonomy.EventToolPolicyResult, toolAuthorizationSurfaceParityReport(autonomyRecorder, "reject")))
-				}
+				emitToolAuthorizationSurfacePolicyResult(autonomyRecorder, req, autonomy.PolicyReject)
 
 				result := workspace.ToolResult{
 					Tool:    workspace.ToolNameSubmitPlan,
@@ -3329,13 +2880,7 @@ func (r *Runner) runLegacySessionBody(
 			} else if submitCorrectionSummary, submitCorrectionError, prompt, ok := planThenExecuteSubmitCorrectionCurrentSurfaceRejection(req, r.RuntimeBrief, collectedResults); ok {
 				summary = submitCorrectionSummary
 				errorText = submitCorrectionError
-				if autonomyRecorder != nil {
-					autonomyRecorder.emitPolicyResult(req, toolAuthorizationPolicyResultInput(
-						toolAuthorizationPolicyEvent(req, autonomy.PolicyReject, "current_tool_surface", "rejected", "tool_surface", "tool_authorization_policy", false),
-						autonomy.EventToolPolicyResult,
-						toolAuthorizationSurfaceParityReport(autonomyRecorder, "reject"),
-					))
-				}
+				emitToolAuthorizationSurfacePolicyResult(autonomyRecorder, req, autonomy.PolicyReject)
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 				opts = planThenExecuteReadyToSubmitChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
 				currentAllowedTools = append(currentAllowedTools[:0], workspace.ToolNameSubmitPlan)
@@ -3370,10 +2915,7 @@ func (r *Runner) runLegacySessionBody(
 			}
 
 			if !redirected {
-				if autonomyRecorder != nil {
-					policy := r.toolAuthorizationPolicyEngine().Surface(req, surfaceAllowedTools, false).Policy
-					autonomyRecorder.emitPolicyResult(req, toolAuthorizationPolicyResultInput(policy, autonomy.EventToolPolicyResult, toolAuthorizationSurfaceParityReport(autonomyRecorder, "reject")))
-				}
+				emitToolAuthorizationSurfacePolicyResult(autonomyRecorder, req, autonomy.PolicyReject)
 				answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
 				if done {
 					return finish(answer, err, "tool_not_allowed_by_runtime_surface", true)
@@ -3545,7 +3087,7 @@ func (r *Runner) runLegacySessionBody(
 		// This catches patterns like 50 consecutive code_navigate
 		// read_symbol calls — each targeting a different symbol, so
 		// same-path fixation and fingerprint hard block never fire.
-		if narrowFamily := narrowToolFamily(req.Tool); narrowFamily != "" {
+		if narrowFamily := workspace.RuntimeNarrowToolFamily(req.Tool); narrowFamily != "" {
 			if narrowFamily == lastNarrowToolFamily {
 				consecutiveNarrowToolCalls++
 			} else {
@@ -3707,9 +3249,7 @@ func (r *Runner) runLegacySessionBody(
 						Source:      "runner_loop_policy",
 					})
 				}
-				if tool := strings.TrimSpace(decision.HideTool); tool != "" && !turnHiddenTools[tool] {
-					turnHiddenTools[tool] = true
-
+				if tool := strings.TrimSpace(decision.HideTool); runState.hideSurfaceTool(OwnerLoopPolicy, tool) {
 					rebuildTools()
 					r.emitEvent(RunEvent{Role: "tool_hidden", Content: fmt.Sprintf("%s hidden for rest of turn after same-path fixation", tool)})
 				}
@@ -3729,7 +3269,7 @@ func (r *Runner) runLegacySessionBody(
 				implementationWriteOnlyRecoveryActive = true
 
 				markRuntimeBriefPathsObserved(r.Workspace, r.RuntimeBrief)
-				hideImplementationWriteOnlyToolsForTurn(turnHiddenTools, implementationWriteOnlyHiddenTools, r.Workspace)
+				runState.hideImplementationWriteOnlyTools(r.workspaceAllowedTools())
 				rebuildTools()
 
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
@@ -3787,7 +3327,7 @@ func (r *Runner) runLegacySessionBody(
 			// Skip the doom-loop gate for read-class tools in conversation;
 			// same-path fixation is handled by requestBudget before this
 			// exact-argument branch so varied ranges are covered too.
-			if (r.lanePolicy().SkipFingerprintHardBlock() ||
+			if (r.lanePolicy().skipFingerprintHardBlock ||
 				targetWriteReadyReadLoopDefers) &&
 				workspace.IsReadTool(strings.TrimSpace(req.Tool)) {
 				requestBudget.fingerprint.identicalRun = 0
@@ -3907,7 +3447,7 @@ func (r *Runner) runLegacySessionBody(
 		// Conversation lanes: the fingerprint hard block's forced
 		// completion cuts off legitimate investigation. Clear the
 		// ForceAnswerPrompt before apply() so the model can continue.
-		if r.lanePolicy().SkipFingerprintHardBlock() && fingerprintDecision.ForceAnswerReason == "fingerprint_hard_block_exhausted" {
+		if r.lanePolicy().skipFingerprintHardBlock && fingerprintDecision.ForceAnswerReason == "fingerprint_hard_block_exhausted" {
 			fingerprintDecision.ForceAnswerPrompt = ""
 			fingerprintDecision.ForceAnswerReason = ""
 		}
@@ -3947,7 +3487,7 @@ func (r *Runner) runLegacySessionBody(
 			// contradicts the conversation lane's evidence requirement
 			// (file:line from at least one inspected source location).
 			// The conversation lane has its own evidence-aligned nudge.
-			!r.lanePolicy().SkipSynthesisNudge() {
+			!r.lanePolicy().skipSynthesisNudge {
 
 			if res := requestBudget.synthesisDecision(policy, metrics.ToolCalls, runnerBriefRequiresMutation(r.RuntimeBrief)).apply(budgetDecisionContext{
 				controller: &controller, stepNumber: stepNumber, activeToolCall: activeToolCall, req: req,
@@ -3959,12 +3499,8 @@ func (r *Runner) runLegacySessionBody(
 		}
 
 		if summary, errorText, reject := planThenExecutePostReadinessDiscoveryRejection(req, r.RuntimeBrief, collectedResults); reject && !recoveryReadAllowanceGrantedThisRequest {
-			if autonomyRecorder != nil && r.planThenExecutePlannerPhase() {
-				autonomyRecorder.emitPolicyResult(req, toolAuthorizationPolicyResultInput(
-					toolAuthorizationPolicyEvent(req, autonomy.PolicyReject, "current_tool_surface", "rejected", "tool_surface", "tool_authorization_policy", false),
-					autonomy.EventToolPolicyResult,
-					toolAuthorizationSurfaceParityReport(autonomyRecorder, "reject"),
-				))
+			if r.planThenExecutePlannerPhase() {
+				emitToolAuthorizationSurfacePolicyResult(autonomyRecorder, req, autonomy.PolicyReject)
 			}
 
 			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
@@ -4052,9 +3588,7 @@ func (r *Runner) runLegacySessionBody(
 					// of the turn. If shell was redirected to a structured
 					// tool N times and now hard-rejected, the model has
 					// shown it won't self-correct — remove the tool.
-					if tool := strings.TrimSpace(req.Tool); tool != "" && !turnHiddenTools[tool] && r.shouldHideToolAfterDiscoveryHardRedirect(req) {
-						turnHiddenTools[tool] = true
-
+					if tool := strings.TrimSpace(req.Tool); r.shouldHideToolAfterDiscoveryHardRedirect(req) && runState.hideSurfaceTool(OwnerDiscoveryRedirect, tool) {
 						rebuildTools()
 						r.emitEvent(RunEvent{Role: "tool_hidden", Content: fmt.Sprintf("%s hidden for rest of turn after hard-redirect", tool)})
 					}
@@ -4102,7 +3636,7 @@ func (r *Runner) runLegacySessionBody(
 
 		if actionClass != "" && rejectedActions[actionClass] > 0 {
 			if redirected, redirectedRaw, ok := r.planThenExecuteRepeatedSymbolReadFallbackRedirect(req, collectedResults, currentAllowedTools); ok {
-				req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_symbol_read_after_read_failure_bounded")
+				req, _ = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_symbol_read_after_read_failure_bounded")
 				currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 				repeatedDeadEndRecovered = true
 			}
@@ -4145,9 +3679,7 @@ func (r *Runner) runLegacySessionBody(
 			// invites another rejected call. Mode-gating the tool out is
 			// more effective than rejecting each retry with a message the
 			// model already ignored.
-			if !turnHiddenTools[workspace.ToolNameListFiles] {
-				turnHiddenTools[workspace.ToolNameListFiles] = true
-
+			if runState.hideSurfaceTool(OwnerListFilesGate, workspace.ToolNameListFiles) {
 				rebuildTools()
 				r.emitEvent(RunEvent{Role: "tool_hidden", Content: "list_files hidden for rest of turn after chained-gate fire"})
 			}
@@ -4395,7 +3927,7 @@ func (r *Runner) runLegacySessionBody(
 
 			if strings.TrimSpace(result.Error) == "" && !isWriteChildMode(req.Mode) {
 				requestBudget.readOnlyChildTaskSatisfied = true
-				turnHiddenTools[workspace.ToolNameTask] = true
+				runState.hideSurfaceTools(OwnerTaskDelegation, workspace.ToolNameTask)
 
 				rebuildTools()
 
@@ -4409,7 +3941,7 @@ func (r *Runner) runLegacySessionBody(
 					postChildDiminishingNudgeStage = 0
 					r.RuntimeBrief.EvidencePaths = textutil.Merge(r.RuntimeBrief.EvidencePaths, evidencePaths)
 					requestBudget.noteReadOnlyChildPacket(evidencePaths)
-					hideBroadDiscoveryTools(turnHiddenTools)
+					runState.hideSurfaceTools(OwnerChildPacket, workspace.BroadDiscoveryToolNames()...)
 					rebuildTools()
 
 					requestBudget.postChild.readCalls = 0
@@ -4557,24 +4089,7 @@ func (r *Runner) runLegacySessionBody(
 				SetLastToolKey:          true,
 			})
 
-			writeDescriptionRepairActive = true
-			writeDescriptionDetourRejections = 0
-			writeDescriptionRepairPath = agentutil.NormalizeRunnerPath(req.Path)
-			implementationWriteOnlyRecoveryActive = true
-
-			if len(r.remainingRequiredEditPaths(collectedResults)) > 0 {
-				requiredPathCompletionRecoveryActive = true
-			}
-
-			markRuntimeBriefPathsObserved(r.Workspace, r.RuntimeBrief)
-			hideImplementationWriteOnlyToolsForTurn(turnHiddenTools, implementationWriteOnlyHiddenTools, r.Workspace)
-			rebuildTools()
-
-			prompt := r.writeDescriptionRepairPrompt(req)
-			r.emitWriteDescriptionValidatorDecision(stepNumber, req, "force_write_or_block", "write_description_missing", "write_description_repair")
-			r.emitEvent(RunEvent{Role: "write_description_repair_recovery", Content: prompt})
-
-			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			r.emitWriteDescriptionValidatorDecision(stepNumber, req, "reject", "write_description_missing", "write_description_required")
 
 			if consecutiveRejectedActions >= 2 {
 				answer, err := controller.completeWithoutMoreToolsWithDefaultCloseout()
@@ -4797,7 +4312,7 @@ func (r *Runner) runLegacySessionBody(
 		if !recoveryReadAllowanceGrantedThisRequest && implementationTargetSourceReadEstablishedWriteReady(r.RuntimeBrief, req, result, collectedResults) {
 			r.emitEvent(RunEvent{
 				Role:    "implementation_target_write_ready_source_refresh_allowed",
-				Content: fmt.Sprintf("allowed %s source read to establish target-write-ready evidence on %q", strings.TrimSpace(req.Tool), agentutil.NormalizeRunnerPath(req.Path)),
+				Content: fmt.Sprintf("allowed %s source read to establish target-write-ready evidence on %q", strings.TrimSpace(req.Tool), NormalizeRunnerPath(req.Path)),
 			})
 		}
 
@@ -5056,7 +4571,7 @@ func (r *Runner) runLegacySessionBody(
 		if exactAnchorWriteOnlyActive && workspaceWriteResultCompleted(req, result) {
 			exactAnchorWriteOnlyActive = false
 
-			releaseExactAnchorReadTools(turnHiddenTools, exactAnchorHiddenTools)
+			runState.releaseSurfaceHiddenTools(OwnerExactAnchorRead)
 			rebuildTools()
 			r.emitEvent(RunEvent{Role: "tool_hidden", Content: "read-class tools restored after successful exact-anchor write"})
 		} else if exactAnchorWriteOnlyActive && workspace.IsWorkspaceWriteTool(req.Tool) && strings.TrimSpace(result.Error) != "" {
@@ -5077,19 +4592,10 @@ func (r *Runner) runLegacySessionBody(
 			implementationWriteOnlyRecoveryActive = false
 			implementationWriteOnlyNonWriteRejects = 0
 			requiredPathCompletionRecoveryActive = false
-			writeDescriptionRepairActive = false
-			writeDescriptionDetourRejections = 0
-			writeDescriptionRepairPath = ""
 
-			releaseHiddenTools(turnHiddenTools, implementationWriteOnlyHiddenTools)
+			runState.releaseImplementationWriteOnlyTools()
 			rebuildTools()
 			r.emitEvent(RunEvent{Role: "tool_hidden", Content: "non-write tools restored after required implementation writes completed"})
-		}
-
-		if writeDescriptionRepairActive && workspaceWriteResultCompleted(req, result) && agentutil.NormalizeRunnerPath(req.Path) == writeDescriptionRepairPath {
-			writeDescriptionRepairActive = false
-			writeDescriptionDetourRejections = 0
-			writeDescriptionRepairPath = ""
 		}
 
 		if prompt, ok := r.scratchpadDeliverableFailedEvidenceNudge(req, result, collectedResults); ok {
@@ -5213,13 +4719,7 @@ func (r *Runner) runLegacySessionBody(
 			eventRole := "plan_then_execute_submit_plan_required"
 
 			if planThenExecuteUnscopedEmptySubmitPlanRejected(r.RuntimeBrief, collectedResults) {
-				if autonomyRecorder != nil {
-					autonomyRecorder.emitPolicyResult(req, toolAuthorizationPolicyResultInput(
-						toolAuthorizationPolicyEvent(req, autonomy.PolicyAllow, "current_tool_surface", "allowed", "", "tool_authorization_policy", false),
-						autonomy.EventToolPolicyResult,
-						toolAuthorizationSurfaceParityReport(autonomyRecorder, "allow"),
-					))
-				}
+				emitToolAuthorizationSurfacePolicyResult(autonomyRecorder, req, autonomy.PolicyAllow)
 				prompt = RenderPlanExecuteRecoveryPlan(planThenExecuteUnscopedEmptySubmitPlanRecoveryPlan())
 				eventRole = "plan_then_execute_empty_submit_plan_recovery"
 			} else if recoveryState.Mode == PlanExecutePlanningModeAnchorRefresh {
@@ -5421,7 +4921,7 @@ func (r *Runner) runLegacySessionBody(
 
 		// Conversation lane: auto-capture findings at the first context-derived
 		// milestone so discoveries survive context compactions.
-		if r.lanePolicy().AutoCaptureFindings() &&
+		if r.lanePolicy().autoCaptureFindings &&
 			metrics.ToolCalls == convFirstMilestone && strings.TrimSpace(result.Error) == "" && r.Workspace != nil {
 
 			if _, err := writeAutoFindingsNoteFromResults(r.Workspace.Root(), r.RuntimeBrief.Objective, collectedResults); err == nil {
@@ -5670,8 +5170,8 @@ func implementationCloseoutRepeatedReadSummary(results []workspace.ToolResult, l
 			continue
 		}
 
-		for _, path := range agentutil.ReadPathsFromToolResult(result) {
-			path = agentutil.NormalizeRunnerPath(path)
+		for _, path := range ReadPathsFromToolResult(result) {
+			path = NormalizeRunnerPath(path)
 			if path == "" {
 				continue
 			}
@@ -5776,7 +5276,7 @@ func requiredPathBlockerAnswerCovers(reply string, missing []string) bool {
 		return false
 	}
 
-	if !agentutil.ContainsAny(lower,
+	if !ContainsAny(lower,
 		"blocked",
 		"blocker",
 		"cannot",
@@ -5805,7 +5305,7 @@ func submitCorrectionMissingBodyAnchorBlockerCovers(reply string, missing []stri
 	}
 
 	lower := strings.ToLower(reply)
-	if !agentutil.ContainsAny(lower,
+	if !ContainsAny(lower,
 		"missing body",
 		"body evidence",
 		"missing anchor",
@@ -5836,7 +5336,7 @@ func submitCorrectionMissingBodyAnchorBlockerCovers(reply string, missing []stri
 			windowEnd = len(reply)
 		}
 		window := strings.ToLower(reply[windowStart:windowEnd])
-		if !agentutil.ContainsAny(window, "missing body", "body evidence", "missing anchor", "anchor blocker", "body/anchor", "safe edit body", "no safe edit", "unsafe edit") {
+		if !ContainsAny(window, "missing body", "body evidence", "missing anchor", "anchor blocker", "body/anchor", "safe edit body", "no safe edit", "unsafe edit") {
 			return false
 		}
 	}
@@ -5934,10 +5434,10 @@ func (r *Runner) planThenExecuteRepeatedSubmitPlanCorrectionPrompt(req workspace
 	}
 
 	if nativeSubmitPlan {
-		return r.planExecuteRecoveryHooks().nativeSubmitCorrectionPrompt(r.RuntimeBrief, *lastResult), true
+		return planThenExecuteNativeSubmitPlanCorrectionPrompt(r.RuntimeBrief, *lastResult), true
 	}
 
-	return RenderPlanExecuteRecoveryPlan(r.planExecuteRecoveryHooks().repeatedCorrectionPlan(*lastResult, planThenExecuteSubmitCorrectionBlockerAllowed(r.RuntimeBrief, results))), true
+	return RenderPlanExecuteRecoveryPlan(planThenExecuteRepeatedSubmitCorrectionRecoveryPlan(*lastResult)), true
 }
 
 func (r *Runner) planThenExecuteRepeatedSubmitPlanCorrectionExhaustedRejection(req workspace.ToolRequest, lastResult *workspace.ToolResult, results []workspace.ToolResult) (string, string, bool) {
@@ -5945,7 +5445,7 @@ func (r *Runner) planThenExecuteRepeatedSubmitPlanCorrectionExhaustedRejection(r
 		return "", "", false
 	}
 
-	summary, errorText := r.planExecuteRecoveryHooks().repeatedCorrectionExhausted(*lastResult, planThenExecuteSubmitCorrectionBlockerAllowed(r.RuntimeBrief, results))
+	summary, errorText := planThenExecuteRepeatedCorrectionExhaustedRejection(*lastResult)
 	return summary, errorText, true
 }
 
@@ -5959,10 +5459,6 @@ func planThenExecuteSubmitCorrectionHiddenOnlyVisiblePromptForState(base string,
 	}
 
 	return planThenExecuteSubmitCorrectionHiddenOnlyVisiblePrompt(base)
-}
-
-func (r *Runner) hostOwnedReadOnlyCloseoutAnswer(results []workspace.ToolResult) (string, bool) {
-	return "", false
 }
 
 func lowercaseFirstSentence(value string) string {
@@ -6366,7 +5862,7 @@ func answerSentenceContainingIndex(text string, idx int, length int) string {
 func answerHasExplicitUncertainty(reply string) bool {
 	lower := strings.ToLower(strings.TrimSpace(reply))
 
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		"not directly inspected",
 		"not directly read",
 		"not confirmed",
@@ -6548,7 +6044,7 @@ func (r *Runner) preflightApplyPatchAgainstChangedPaths(req workspace.ToolReques
 			continue
 		}
 
-		path := agentutil.NormalizeRunnerPath(op.Path)
+		path := NormalizeRunnerPath(op.Path)
 		if path == "" {
 			keptOps = append(keptOps, op)
 			continue
@@ -6668,7 +6164,7 @@ func (r *Runner) consumeRecoveryReadAllowance(req workspace.ToolRequest, used ma
 		return false
 	}
 
-	path := agentutil.NormalizeRunnerPath(req.Path)
+	path := NormalizeRunnerPath(req.Path)
 	if path == "" {
 		return false
 	}
@@ -6695,7 +6191,7 @@ func (r *Runner) consumeRecoveryReadAllowance(req workspace.ToolRequest, used ma
 	if tool == workspace.ToolNameCodeNavigate {
 		pending := sourceEvidencePendingRedirectsForBrief(r.RuntimeBrief, results)
 		for _, ob := range pending {
-			if agentutil.NormalizeRunnerPath(ob.Path) == path {
+			if NormalizeRunnerPath(ob.Path) == path {
 				used[path] = true
 				return true
 			}
@@ -7118,25 +6614,25 @@ func runnerAutonomyPathRoles(brief workerruntime.WorkerRuntimeBrief, results []w
 	var roles []autonomy.PathRole
 
 	for _, path := range brief.RequiredEditPaths {
-		if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
+		if normalized := NormalizeRunnerPath(path); normalized != "" {
 			roles = append(roles, autonomy.PathRole{Role: autonomy.PathRoleRequiredEdit, PathPattern: normalized, Freshness: autonomy.FreshnessFresh, Reason: "runtime brief required_edit_paths"})
 		}
 	}
 
 	for _, path := range brief.AllowedEditPaths {
-		if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
+		if normalized := NormalizeRunnerPath(path); normalized != "" {
 			roles = append(roles, autonomy.PathRole{Role: autonomy.PathRoleAllowedEdit, PathPattern: normalized, Freshness: autonomy.FreshnessFresh, Reason: "runtime brief allowed_edit_paths"})
 		}
 	}
 
 	for _, path := range brief.EvidencePaths {
-		if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
+		if normalized := NormalizeRunnerPath(path); normalized != "" {
 			roles = append(roles, autonomy.PathRole{Role: autonomy.PathRoleEvidenceReadonly, PathPattern: normalized, Freshness: autonomy.FreshnessFresh, Reason: "runtime brief evidence_paths"})
 		}
 	}
 
 	for _, path := range mapKeys(changedPathsFromToolResults(results)) {
-		if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
+		if normalized := NormalizeRunnerPath(path); normalized != "" {
 			roles = append(roles, autonomy.PathRole{Role: autonomy.PathRoleGeneratedArtifact, PathPattern: normalized, Freshness: autonomy.FreshnessFresh, Reason: "recorded changed_paths"})
 		}
 	}
@@ -7185,32 +6681,23 @@ func runnerAutonomyCapabilitiesForTool(brief workerruntime.WorkerRuntimeBrief, t
 	return runnerAutonomyFallbackCapabilitiesForTool(tool)
 }
 
-func runnerAutonomyPlannerToolMetadata(brief workerruntime.WorkerRuntimeBrief, tool string) (autonomy.PlanExecutePlannerToolMetadata, bool) {
+func runnerAutonomyPlannerToolMetadata(brief workerruntime.WorkerRuntimeBrief, tool string) (workspace.PlanExecutePlannerToolMetadata, bool) {
 	if !planThenExecutePlannerBrief(brief) {
-		return autonomy.PlanExecutePlannerToolMetadata{}, false
+		return workspace.PlanExecutePlannerToolMetadata{}, false
 	}
 
-	return autonomy.LookupPlanExecutePlannerToolMetadata(tool)
+	return workspace.LookupPlanExecutePlannerToolMetadata(tool)
 }
 
 func runnerAutonomyFallbackCapabilitiesForTool(tool string) []autonomy.Capability {
-	switch strings.TrimSpace(tool) {
-	case "read_file":
-		return []autonomy.Capability{autonomy.CapabilityBoundedRead}
-	case "search_files", "search_content", "rg", "grep":
+	tool = strings.TrimSpace(tool)
+	if capabilities := workspace.ToolPolicyCapabilities(tool); len(capabilities) > 0 {
+		return capabilities
+	}
+
+	switch tool {
+	case "grep":
 		return []autonomy.Capability{autonomy.CapabilityLiteralSearch}
-	case "context_pack", "context_query", "context_zoom", "discovery_query", "go_read_symbol", "go_find_symbol", "cpp_read_symbol", "cpp_find_symbol":
-		return []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}
-	case "edit_file", "write_file", "append_file", "mkdir":
-		return []autonomy.Capability{autonomy.CapabilitySourceEdit}
-	case "apply_patch":
-		return []autonomy.Capability{autonomy.CapabilityApplyPatch}
-	case "shell", "source_sanity", "go_diagnostics", "cpp_diagnostics":
-		return []autonomy.Capability{autonomy.CapabilityShellVerification}
-	case "task":
-		return []autonomy.Capability{autonomy.CapabilityDelegation}
-	case "submit_plan":
-		return []autonomy.Capability{autonomy.CapabilityPlanSubmission}
 	default:
 		return nil
 	}
@@ -7243,7 +6730,7 @@ func runnerAutonomyObligations(brief workerruntime.WorkerRuntimeBrief, policy Ru
 
 	if runnerBriefRequiresMutation(brief) {
 		for _, path := range brief.RequiredEditPaths {
-			path = agentutil.NormalizeRunnerPath(path)
+			path = NormalizeRunnerPath(path)
 			if path == "" {
 				continue
 			}
@@ -7985,7 +7472,7 @@ func (a *runnerAutonomyRecorder) completionGateResolvedAndOpenObligations(input 
 
 	changed := make(map[string]struct{}, len(input.ChangedPaths))
 	for _, path := range input.ChangedPaths {
-		if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
+		if normalized := NormalizeRunnerPath(path); normalized != "" {
 			changed[normalized] = struct{}{}
 		}
 	}
@@ -8001,7 +7488,7 @@ func (a *runnerAutonomyRecorder) completionGateResolvedAndOpenObligations(input 
 				path = path[:idx]
 			}
 
-			if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
+			if normalized := NormalizeRunnerPath(path); normalized != "" {
 				sourceSatisfiedPaths[normalized] = struct{}{}
 			}
 		}
@@ -8019,7 +7506,7 @@ func (a *runnerAutonomyRecorder) completionGateResolvedAndOpenObligations(input 
 		}
 
 		if obligation.Kind == autonomy.ObligationWrite {
-			target := agentutil.NormalizeRunnerPath(obligation.TargetRef)
+			target := NormalizeRunnerPath(obligation.TargetRef)
 			if target == "" {
 				if sourceSatisfiedReason {
 					resolved = append(resolved, ref)
@@ -8208,7 +7695,7 @@ func runnerAutonomyPathVariants(path string, root string) []string {
 		}
 
 		value = filepath.ToSlash(filepath.Clean(value))
-		value = agentutil.NormalizeRunnerPath(value)
+		value = NormalizeRunnerPath(value)
 
 		if value == "" || value == "." {
 			return
@@ -8676,7 +8163,7 @@ func (a *runnerAutonomyRecorder) emitLoopCloseout(input any) {
 	}
 
 	stopReason, _ := input.(string)
-	if decision := a.runner.lifecycleCloseoutPolicyEngine().LoopCloseout(stopReason, a.hasOpenObligationsForGate(autonomy.GateLoop)); decision.Handled {
+	if decision := lifecycleLoopCloseoutDecision(stopReason, a.hasOpenObligationsForGate(autonomy.GateLoop)); decision.Handled {
 		a.emitGateDecision(decision.Gate)
 	}
 }
@@ -8701,7 +8188,7 @@ func (a *runnerAutonomyRecorder) emitBudgetGate(args ...any) {
 	metrics, _ := args[1].(runnerMetrics)
 	stopReason, _ := args[2].(string)
 	exhausted, _ := args[3].(bool)
-	if decision := a.runner.lifecycleCloseoutPolicyEngine().BudgetCloseout(policy, metrics, stopReason, exhausted); decision.Handled {
+	if decision := lifecycleBudgetCloseoutDecision(policy, metrics, stopReason, exhausted); decision.Handled {
 		a.emitGateDecision(decision.Gate)
 	}
 }
@@ -9558,7 +9045,7 @@ func runnerAutonomyRequiredPathStatus(contract autonomy.AutonomyContract, result
 			continue
 		}
 
-		path := agentutil.NormalizeRunnerPath(role.PathPattern)
+		path := NormalizeRunnerPath(role.PathPattern)
 		if path == "" {
 			continue
 		}
@@ -9691,12 +9178,10 @@ func runnerAutonomyPrimaryCapability(brief workerruntime.WorkerRuntimeBrief, too
 }
 
 func runnerAutonomyPolicyPaths(req workspace.ToolRequest) []string {
-	switch strings.TrimSpace(req.Tool) {
-	case "read_file", "search_content", "search_files", "list_files", "file_stats", "git_diff",
-		"go_read_symbol", "go_extract_body", "go_find_symbol", "cpp_read_symbol", "cpp_find_symbol",
-		"context_pack", "context_query", "context_zoom", "discovery_query", "structural_search",
-		"dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols",
-		"semgrep_scan", "joern_scan":
+	tool := strings.TrimSpace(req.Tool)
+	if workspace.IsRuntimeInspectionRequest(req) || workspace.IsLanguageToolName(tool) ||
+		tool == workspace.ToolNameGitDiff || tool == workspace.ToolNameGitStatus {
+
 		for _, path := range []string{req.Path, req.Workdir} {
 			if trimmed := strings.TrimSpace(path); trimmed != "" {
 				return []string{trimmed}
@@ -9704,9 +9189,9 @@ func runnerAutonomyPolicyPaths(req workspace.ToolRequest) []string {
 		}
 
 		return nil
-	default:
-		return writeRequestPaths(req)
 	}
+
+	return writeRequestPaths(req)
 }
 
 func runnerAutonomySideEffectForBrief(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest) autonomy.SideEffectClass {
@@ -9718,25 +9203,33 @@ func runnerAutonomySideEffectForBrief(brief workerruntime.WorkerRuntimeBrief, re
 }
 
 func runnerAutonomyFallbackSideEffectForRequest(req workspace.ToolRequest) autonomy.SideEffectClass {
-	switch strings.TrimSpace(req.Tool) {
-	case "read_file", "search_files", "search_content", "list_files", "context_pack", "context_query", "context_zoom",
-		"discovery_query", "go_read_symbol", "go_extract_body", "go_find_symbol", "cpp_read_symbol", "cpp_find_symbol",
-		"structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols",
-		"semgrep_scan", "joern_scan", "file_stats", "git_diff":
-		return autonomy.SideEffectReadOnly
-	case "edit_file", "write_file", "append_file", "mkdir", "delegate_edit", "go_move_declarations":
-		return autonomy.SideEffectAdditive
-	case "apply_patch":
+	tool := strings.TrimSpace(req.Tool)
+	switch tool {
+	case workspace.ToolNameApplyPatch:
 		if effect, ok := runnerAutonomyPatchSideEffect(req.Content); ok {
 			return effect
 		}
 
 		return autonomy.SideEffectUnknown
-	case "shell", "source_sanity", "go_diagnostics", "cpp_diagnostics":
+	case workspace.ToolNameShell, workspace.ToolNameSourceSanity:
 		return runnerAutonomyShellSideEffect(req.Command)
-	default:
-		return autonomy.SideEffectUnknown
 	}
+
+	if semanticlanguage.IsDiagnosticToolName(tool) {
+		return runnerAutonomyShellSideEffect(req.Command)
+	}
+
+	if workspace.IsWorkspaceWriteTool(tool) {
+		return autonomy.SideEffectAdditive
+	}
+
+	if workspace.IsRuntimeInspectionRequest(req) || workspace.IsLanguageToolName(tool) ||
+		tool == workspace.ToolNameGitDiff || tool == workspace.ToolNameGitStatus {
+
+		return autonomy.SideEffectReadOnly
+	}
+
+	return autonomy.SideEffectUnknown
 }
 
 func runnerAutonomyPatchSideEffect(patch string) (autonomy.SideEffectClass, bool) {
@@ -9900,7 +9393,7 @@ func compactRunnerAutonomyPaths(paths []string) []string {
 	out := make([]string, 0, len(paths))
 
 	for _, path := range paths {
-		path = agentutil.NormalizeRunnerPath(path)
+		path = NormalizeRunnerPath(path)
 		if path == "" {
 			continue
 		}
@@ -10286,10 +9779,10 @@ func readOnlyEvidencePendingRuntimeBrief(brief workerruntime.WorkerRuntimeBrief)
 	brief.ToolManifest = nil
 
 	if len(allowed) > 0 {
-		brief.ToolManifest = runnerSanitizedToolManifest(allowed)
+		brief.ToolManifest = workspace.BuildToolManifest(allowed)
 	}
 
-	brief.RequiredTools = textutil.Merge([]string{"bounded_workspace_evidence_tool"}, brief.RequiredTools)
+	brief.RequiredTools = textutil.Merge([]string{workspace.RequiredToolBoundedWorkspaceEvidence}, brief.RequiredTools)
 	brief.ReadinessGate = textutil.Merge([]string{"bounded_workspace_evidence_before_final_answer"}, brief.ReadinessGate)
 	brief.RequiredNext = textutil.Merge([]string{
 		"exactly one parser-readable bounded read/search/context tool call for the user's question, or <<QUESTION>> with the exact evidence blocker",
@@ -10350,8 +9843,8 @@ func (r *Runner) emitBriefAudit(brief workerruntime.WorkerRuntimeBrief, results 
 	}
 
 	allowedToolsCount := len(brief.AllowedTools)
-	if surfaceTools := DirectAnswerSurfaceForBriefTools(brief); surfaceTools != nil {
-		allowedToolsCount = len(surfaceTools)
+	if surface, ok := DirectAnswerSurfaceForBrief(brief); ok {
+		allowedToolsCount = len(surface.ToolNames)
 	}
 
 	event := briefAuditEvent{
@@ -10421,13 +9914,13 @@ func targetPacketByteCount(packet []string) int {
 }
 
 func requestPathInRequiredEditPaths(path string, required []string) bool {
-	cleaned := agentutil.NormalizeRunnerPath(path)
+	cleaned := NormalizeRunnerPath(path)
 	if cleaned == "" {
 		return false
 	}
 
 	for _, p := range required {
-		if agentutil.NormalizeRunnerPath(p) == cleaned {
+		if NormalizeRunnerPath(p) == cleaned {
 			return true
 		}
 	}
@@ -10444,7 +9937,7 @@ func changedPathsFromToolResults(results []workspace.ToolResult) map[string]stru
 		}
 
 		for _, path := range changedPathsFromToolResult(result) {
-			paths[agentutil.NormalizeRunnerPath(path)] = struct{}{}
+			paths[NormalizeRunnerPath(path)] = struct{}{}
 		}
 	}
 
@@ -10466,12 +9959,12 @@ func unresolvedRejectedMutationPaths(results []workspace.ToolResult, requiredPat
 			continue
 		}
 
-		paths := readOnlySourceLikePaths(agentutil.ReadPathsFromToolResult(result), 8)
+		paths := readOnlySourceLikePaths(ReadPathsFromToolResult(result), 8)
 
 		paths = textutil.Merge(paths, readOnlySourceLikePaths(sourceLikePathsFromText(result.Summary+"\n"+result.Output+"\n"+result.Error, 8), 8))
 
 		for _, path := range paths {
-			path = agentutil.NormalizeRunnerPath(path)
+			path = NormalizeRunnerPath(path)
 			if path == "" {
 				continue
 			}
@@ -10520,7 +10013,7 @@ func unsupportedClaimedChangedPaths(reply string, results []workspace.ToolResult
 }
 
 func claimedPathMatchesActualBasename(claimed string, actual map[string]struct{}) bool {
-	claimed = agentutil.NormalizeRunnerPath(claimed)
+	claimed = NormalizeRunnerPath(claimed)
 	if claimed == "" || strings.Contains(claimed, "/") {
 		return false
 	}
@@ -10537,7 +10030,7 @@ func claimedPathMatchesActualBasename(claimed string, actual map[string]struct{}
 }
 
 func looksLikeStrictChangedPathClaim(path string) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return false
 	}
@@ -10569,7 +10062,7 @@ func missingRequiredEditPaths(required []string, actual map[string]struct{}) []s
 	seen := make(map[string]struct{}, len(required))
 
 	for _, path := range required {
-		normalized := agentutil.NormalizeRunnerPath(path)
+		normalized := NormalizeRunnerPath(path)
 		if normalized == "" {
 			continue
 		}
@@ -10780,7 +10273,7 @@ func testDeclarationFromLine(line string) (key string, display string, ok bool) 
 
 func replyReportsRemovedTests(reply string, removed []string) bool {
 	lower := strings.ToLower(reply)
-	if !agentutil.ContainsAny(lower, "removed test", "deleted test", "dropped test", "removed existing test", "test removal", "removed tests", "deleted tests", "dropped tests") {
+	if !ContainsAny(lower, "removed test", "deleted test", "dropped test", "removed existing test", "test removal", "removed tests", "deleted tests", "dropped tests") {
 		return false
 	}
 
@@ -10825,7 +10318,7 @@ func removedTestDeclarationTerms(declaration string) []string {
 }
 
 func requiredEditSnippetCandidatePaths(snippet workerruntime.RequiredEditSnippet, required []string, changed map[string]struct{}) []string {
-	if path := agentutil.NormalizeRunnerPath(snippet.Path); path != "" {
+	if path := NormalizeRunnerPath(snippet.Path); path != "" {
 		return []string{path}
 	}
 
@@ -10834,7 +10327,7 @@ func requiredEditSnippetCandidatePaths(snippet workerruntime.RequiredEditSnippet
 	seen := make(map[string]struct{})
 
 	for _, path := range required {
-		normalized := agentutil.NormalizeRunnerPath(path)
+		normalized := NormalizeRunnerPath(path)
 		if normalized == "" {
 			continue
 		}
@@ -10865,7 +10358,7 @@ func requiredEditSnippetPresent(root string, candidates []string, snippet string
 	}
 
 	for _, candidate := range candidates {
-		path := agentutil.NormalizeRunnerPath(candidate)
+		path := NormalizeRunnerPath(candidate)
 		if path == "" || filepath.IsAbs(path) {
 			continue
 		}
@@ -10988,7 +10481,7 @@ func claimedChangedPathsFromAnswer(reply string) []string {
 		}
 
 		for _, path := range lineCandidates {
-			path = agentutil.NormalizeRunnerPath(path)
+			path = NormalizeRunnerPath(path)
 			if path == "" {
 				continue
 			}
@@ -11043,7 +10536,7 @@ func changedPathsSectionStop(lower string, pathsSeen bool) bool {
 		return false
 	}
 
-	return agentutil.ContainsAny(lower, "verification", "test", "planner", "blocker", "validation", "lane sanity")
+	return ContainsAny(lower, "verification", "test", "planner", "blocker", "validation", "lane sanity")
 }
 
 func changedPathsSectionStatusLabel(label string) bool {
@@ -11171,7 +10664,7 @@ func isVerificationRequest(req workspace.ToolRequest) bool {
 		return true
 	}
 
-	if workspace.IsDiagnosticToolName(tool) {
+	if semanticlanguage.IsDiagnosticToolName(tool) {
 		return true
 	}
 
@@ -11251,7 +10744,7 @@ func writeResultMadeNoWorkspaceChange(result workspace.ToolResult) bool {
 // with no specced allowlist still trip the verification gate when they
 // happen to touch a markdown file.
 
-func runnerGuidanceConstraintsWithEngine(agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, engine GuidanceEngine) []string {
+func runnerGuidanceConstraints(agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []string {
 	constraints := append([]string(nil), brief.Constraints...)
 	if planThenExecuteSubmitPlanOnlyReady(brief, results) {
 		constraints = textutil.Merge(constraints, []string{"plan_then_execute_submit_plan_ready"})
@@ -11259,8 +10752,7 @@ func runnerGuidanceConstraintsWithEngine(agent string, brief workerruntime.Worke
 
 	if strings.HasPrefix(strings.TrimSpace(agent), "child:") &&
 		strings.TrimSpace(brief.TaskFamily) == "delegated_read_only" &&
-		engine != nil &&
-		engine.DelegatedReadOnlyClosureReady(brief, results) {
+		delegatedReadOnlyClosureReady(agent, brief, results) {
 
 		constraints = textutil.Merge(constraints, []string{"answer_readiness_reached"})
 	}
@@ -11272,10 +10764,10 @@ func runnerGuidanceConstraintsWithEngine(agent string, brief workerruntime.Worke
 	return constraints
 }
 
-func applyDelegatedReadOnlyClosureBias(state runnerNextActionState, agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, engine GuidanceEngine) runnerNextActionState {
-	if engine == nil || !strings.HasPrefix(strings.TrimSpace(agent), "child:") ||
+func applyDelegatedReadOnlyClosureBias(state runnerNextActionState, agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) runnerNextActionState {
+	if !strings.HasPrefix(strings.TrimSpace(agent), "child:") ||
 		strings.TrimSpace(brief.TaskFamily) != "delegated_read_only" ||
-		!engine.DelegatedReadOnlyClosureReady(brief, results) {
+		!delegatedReadOnlyClosureReady(agent, brief, results) {
 
 		return state
 	}
@@ -11379,26 +10871,6 @@ func closureSynthesisAfterIgnoredNudgePrompt(agent string, brief workerruntime.W
 }
 
 func (r *Runner) completionGateRejection(reply string, results []workspace.ToolResult, step int, taskLedger *taskLedgerState, declarationMovesForbidden bool) (workspace.ToolResult, bool) {
-	if r != nil && r.GateEngine != nil {
-		if _, isDefault := r.GateEngine.(defaultGateEngine); !isDefault {
-			decision := r.GateEngine.EvaluateGate(reply, results, r.StateStore)
-			if !decision.Accepted {
-				result := decision.Result
-				if strings.TrimSpace(result.Tool) == "" {
-					result.Tool = "completion_gate"
-				}
-				if strings.TrimSpace(result.Summary) == "" {
-					result.Summary = string(decision.Kind)
-				}
-				if strings.TrimSpace(result.Error) == "" {
-					result.Error = strings.TrimSpace(decision.Reason)
-				}
-				return result, true
-			}
-			return workspace.ToolResult{}, false
-		}
-	}
-
 	if result, rejected := r.completionGatePipeline(step, taskLedger, declarationMovesForbidden).Evaluate(reply, results); rejected {
 		return result, true
 	}
@@ -11432,6 +10904,58 @@ func (r *Runner) completionGateRejection(reply string, results []workspace.ToolR
 		Summary: summary,
 		Error:   errorText,
 	}, true
+}
+
+func (r *Runner) finalAnswerAcceptanceCompletionRejection(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
+	if r == nil {
+		return workspace.ToolResult{}, false
+	}
+	if !r.replyMayProjectFinalAnswerAcceptanceThroughCompletionGate(reply) {
+		return workspace.ToolResult{}, false
+	}
+
+	acceptance := r.evaluateFinalAnswerAcceptance(reply, results)
+	if acceptance.BlockerKind == "" {
+		return workspace.ToolResult{}, false
+	}
+	if !r.finalAnswerAcceptanceProjectsThroughCompletionGate(acceptance) {
+		return workspace.ToolResult{}, false
+	}
+
+	return finalAnswerCompletionGateProjection(
+		acceptance,
+		"Final answer rejected by blocker check",
+		r.finalAnswerBlockerErrorText(acceptance.BlockerKind, acceptance.Reason, reply, results),
+	)
+}
+
+func (r *Runner) replyMayProjectFinalAnswerAcceptanceThroughCompletionGate(reply string) bool {
+	if !r.readOnlyProtocolMetaCompletionProjectionLane() {
+		return false
+	}
+
+	return looksLikePriorAnswerReferenceFinalAnswer(reply) ||
+		looksLikeGateSatisfactionMetaFinalAnswer(reply) ||
+		looksLikeEmbeddedQuestionProtocolFinalAnswer(reply)
+}
+
+func (r *Runner) finalAnswerAcceptanceProjectsThroughCompletionGate(acceptance finalAnswerAcceptance) bool {
+	if !r.readOnlyProtocolMetaCompletionProjectionLane() {
+		return false
+	}
+
+	switch acceptance.BlockerKind {
+	case string(turnViolationProtocolMetaFinalAnswer):
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *Runner) readOnlyProtocolMetaCompletionProjectionLane() bool {
+	return r != nil &&
+		!runnerBriefRequiresMutation(r.RuntimeBrief) &&
+		workerruntime.PermissionProfileIsReadOnlyWorkspace(r.RuntimeBrief.PermissionProfile)
 }
 
 func rawToolResultTranscriptCompletionRejection(reply string) (workspace.ToolResult, bool) {
@@ -11477,13 +11001,13 @@ func (r *Runner) readOnlyEvidenceCompletionRejection(reply string, results []wor
 		return workspace.ToolResult{}, false
 	}
 
-	if r.evidenceEngine().ClosureDecision(brief, results).Answerable() {
+	if readOnlyClosureDecisionForResults(brief, results).Answerable() {
 		return workspace.ToolResult{}, false
 	}
 
 	if readOnlyDirectAnswerLane(brief) && readOnlyAnswerReportsInsufficientEvidence(reply) {
 		ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
-		if len(ledger.SourceBodyPaths) > 0 || ledger.DiagnosticEvidence {
+		if len(ledger.SourceBodyPaths) > 0 || len(ledger.ExternalDocumentBodyPaths) > 0 || ledger.DiagnosticEvidence {
 			return workspace.ToolResult{}, false
 		}
 	}
@@ -11532,7 +11056,7 @@ func (r *Runner) readOnlyEvidenceCompletionRejection(reply string, results []wor
 
 func readOnlyAnswerHasConcreteEvidence(results []workspace.ToolResult) bool {
 	for _, result := range results {
-		if concreteSourceEvidenceResult(result) || readOnlyDiagnosticEvidenceResult(result) {
+		if concreteSourceEvidenceResult(result) || len(readOnlyExternalDocumentBodyPathsFromResult(result)) > 0 || readOnlyDiagnosticEvidenceResult(result) {
 			return true
 		}
 	}
@@ -11586,7 +11110,7 @@ func unresolvedProcessIntentCompletionRejection(reply string) (workspace.ToolRes
 	}
 
 	lower := " " + strings.ToLower(strings.Join(strings.Fields(inspect), " ")) + " "
-	if agentutil.ContainsAny(lower,
+	if ContainsAny(lower,
 		" blocked ",
 		" blocker ",
 		" cannot ",
@@ -11601,7 +11125,7 @@ func unresolvedProcessIntentCompletionRejection(reply string) (workspace.ToolRes
 		return workspace.ToolResult{}, false
 	}
 
-	if !agentutil.ContainsAny(lower,
+	if !ContainsAny(lower,
 		" let me search ", " let me inspect ", " let me read ", " let me refresh ", " let me run ", " let me check ", " let me audit ", " let me investigate ", " let me explore ", " let me look ",
 		" let me call ", " let me use ",
 		" i need to search ", " i need to inspect ", " i need to find ", " i need to read ", " i need to refresh ", " i need to run ", " i need to check ", " i need to audit ", " i need to investigate ", " i need to explore ", " i need to look ",
@@ -11622,7 +11146,7 @@ func unresolvedProcessIntentCompletionRejection(reply string) (workspace.ToolRes
 		return workspace.ToolResult{}, false
 	}
 
-	if agentutil.ContainsAny(lower, " i'll ", " i will ") && !agentutil.ContainsAny(lower,
+	if ContainsAny(lower, " i'll ", " i will ") && !ContainsAny(lower,
 		" search ", " inspect ", " read ", " refresh ", " run ", " check ", " verify ",
 	) {
 
@@ -12100,20 +11624,14 @@ func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) ru
 		allowedTools = nil
 	} else if len(brief.AllowedTools) > 0 {
 		allowedTools = append([]string(nil), brief.AllowedTools...)
-	} else if r.Workspace != nil {
-		allowedTools = r.Workspace.AllowedTools()
+	} else {
+		allowedTools = r.workspaceAllowedTools()
 	}
 
 	if exactAnchorPreWriteSurfaceActive(brief, nil) {
-		allowedTools = implementationPreWriteAllowedTools(allowedTools)
+		allowedTools = workspace.ToolSurfacePhaseAllowedTools(allowedTools, workspace.ToolSurfacePhaseImplementationPreWrite)
 	} else if implementationScopedEditSurfaceActive(brief, nil) {
-		var extReg *workspace.ExternalToolRegistry
-
-		if r.Workspace != nil {
-			extReg = r.Workspace.ExternalToolsRegistry()
-		}
-
-		allowedTools = implementationScopedEditAllowedToolsWithRegistry(allowedTools, extReg)
+		allowedTools = workspace.ImplementationScopedEditAllowedToolsWithExternalReadOnlyDiscovery(allowedTools, r.workspaceToolSurfaceSnapshot().ExternalToolIsReadOnlyDiscovery)
 	}
 
 	profile := strings.TrimSpace(brief.PermissionProfile)
@@ -12160,7 +11678,7 @@ func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) ru
 
 		if planThenExecutePlannerBrief(brief) {
 			rails.RequiredEvidence = textutil.Merge([]string{string(workerruntime.RequiredEvidencePlanSubmittedOrSourceSatisfied)}, rails.RequiredEvidence)
-			rails.RequiredTools = textutil.Merge([]string{workspace.ToolNameSubmitPlan}, rails.RequiredTools)
+			rails.RequiredTools = textutil.Merge(workspace.ToolSurfacePhaseToolNames(workspace.ToolSurfacePhasePlanExecuteSubmitPlanOnly), rails.RequiredTools)
 			rails.ForbiddenTools = textutil.AppendUnique(rails.ForbiddenTools, "unbounded_write")
 			rails.ReadinessGate = textutil.Merge([]string{string(workerruntime.ReadinessSubmitPlanOrSourceSatisfiedOrBlocker)}, rails.ReadinessGate)
 			rails.SearchPolicy = textutil.Merge([]string{"consume_target_packet_first", "trust_preloaded_current_state_anchors_for_scope_not_source_body", "required_existing_paths_need_source_body_before_submit_plan", "submit_plan_when_edit_set_is_supported", "source_satisfied_when_current_state_already_matches", "do_not_call_per_edit_writes"}, rails.SearchPolicy)
@@ -12173,11 +11691,11 @@ func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) ru
 
 		rails.RequiredEvidence = defaultRunnerStateSlice(rails.RequiredEvidence, []string{string(workerruntime.RequiredEvidenceChangedPathsOrNoopReason), string(workerruntime.RequiredEvidenceVerificationStatus)})
 		if exactAnchorPreWriteSurfaceActive(brief, nil) {
-			rails.RequiredTools = []string{"edit_file_or_apply_patch"}
+			rails.RequiredTools = []string{workspace.RequiredToolEditFileOrApplyPatch}
 		} else if implementationScopedEditSurfaceActive(brief, nil) {
-			rails.RequiredTools = []string{"edit_file_or_apply_patch", "semantic_discovery_or_narrow_read_for_named_gap"}
+			rails.RequiredTools = []string{workspace.RequiredToolEditFileOrApplyPatch, workspace.RequiredToolSemanticDiscoveryOrNarrowReadForNamedGap}
 		} else {
-			rails.RequiredTools = defaultRunnerStateSlice(rails.RequiredTools, []string{"edit_file_or_apply_patch", "source_sanity_or_verification_shell"})
+			rails.RequiredTools = defaultRunnerStateSlice(rails.RequiredTools, []string{workspace.RequiredToolEditFileOrApplyPatch, workspace.RequiredToolSourceSanityOrVerificationShell})
 		}
 
 		rails.ForbiddenTools = textutil.AppendUnique(rails.ForbiddenTools, "unbounded_write")
@@ -12196,7 +11714,7 @@ func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) ru
 		rails.PermissionProfile = textutil.FirstNonEmpty(strings.TrimSpace(brief.PermissionProfile), string(workerruntime.PermissionReadOnlyVerificationShell))
 		rails.RequiredEvidence = defaultRunnerStateSlice(rails.RequiredEvidence, []string{string(workerruntime.RequiredEvidenceVerificationCommand), string(workerruntime.RequiredEvidencePassFailStatus)})
 		rails.RequiredTools = defaultRunnerStateSlice(rails.RequiredTools, []string{workspace.ToolNameShell})
-		rails.ForbiddenTools = appendRunnerTools(rails.ForbiddenTools, workspace.ToolNameEditFile, workspace.ToolNameWriteFile, workspace.ToolNameAppendFile, workspace.ToolNameMkdir, "mutating_shell")
+		rails.ForbiddenTools = appendRunnerTools(rails.ForbiddenTools, append(workspace.WorkspaceWriteToolNames(), "mutating_shell")...)
 		rails.ReadinessGate = defaultRunnerStateSlice(rails.ReadinessGate, []string{string(workerruntime.ReadinessVerificationStatusReported)})
 		rails.SearchPolicy = defaultRunnerStateSlice(rails.SearchPolicy, []string{"run_requested_check", "capture_failure_output", "do_not_edit"})
 		rails.FinalCritic = []string{"answers_actual_user_request", "required_evidence_cited"}
@@ -12606,7 +12124,7 @@ func (s *runnerExecutionState) applyResult(req workspace.ToolRequest, result wor
 
 	if textutil.EqualTrimFold(req.Tool, "list_files") {
 		s.consecutiveListFiles++
-	} else if isContentInspectionTool(req.Tool) {
+	} else if workspace.IsRuntimeContentInspectionTool(req.Tool) {
 		s.consecutiveListFiles = 0
 	}
 
@@ -12635,7 +12153,7 @@ func (s *runnerExecutionState) applyResult(req workspace.ToolRequest, result wor
 		}
 	} else if sourceBodyConsumed {
 		s.clearPendingDiscoveryConsumption()
-	} else if s.pendingDiscoveryConsumption && isContentInspectionTool(req.Tool) && strings.TrimSpace(result.Error) != "" {
+	} else if s.pendingDiscoveryConsumption && workspace.IsRuntimeContentInspectionTool(req.Tool) && strings.TrimSpace(result.Error) != "" {
 		s.pendingDiscoveryFailedAttempt = true
 	}
 
@@ -12873,7 +12391,7 @@ func immediateBudgetFallbackAnswer(agentName string, brief workerruntime.WorkerR
 	}
 
 	lowerReason := strings.ToLower(strings.TrimSpace(reason))
-	if !agentutil.ContainsAny(lowerReason,
+	if !ContainsAny(lowerReason,
 		"budget",
 		"maximum tool steps",
 		"tools are now disabled",
@@ -13105,7 +12623,7 @@ func planThenExecuteFallbackUnresolvedLastRejectedRefreshPaths(brief workerrunti
 
 	var unresolved []string
 	for _, rawPath := range planThenExecuteRefreshScopePathsForRejectedPlan(brief, results, refreshPaths) {
-		path := agentutil.NormalizeRunnerPath(rawPath)
+		path := NormalizeRunnerPath(rawPath)
 		if path == "" {
 			continue
 		}
@@ -13676,7 +13194,7 @@ func isResultUsefulForFallback(result workspace.ToolResult) bool {
 	lowerSummary := strings.ToLower(strings.TrimSpace(result.Summary))
 	lowerOutput := strings.ToLower(strings.TrimSpace(result.Output))
 
-	if strings.HasPrefix(lowerSummary, "redirected to ") || agentutil.ContainsAny(lowerOutput,
+	if strings.HasPrefix(lowerSummary, "redirected to ") || ContainsAny(lowerOutput,
 		"try: {\"tool\":",
 		"retry your original request and it will execute",
 	) {
@@ -13684,17 +13202,11 @@ func isResultUsefulForFallback(result workspace.ToolResult) bool {
 		return false
 	}
 
-	switch result.Tool {
-	case "task", "discovery_query", "read_file", "search_content", "search_files",
-		"go_read_symbol", "go_file_outline",
-		"cpp_read_symbol", "cpp_file_outline",
-		"python_read_symbol", "python_file_outline",
-		"ts_read_symbol", "ts_file_outline",
-		"rust_read_symbol", "rust_file_outline",
-		"java_read_symbol", "java_file_outline":
+	switch strings.TrimSpace(result.Tool) {
+	case "task", "discovery_query", "read_file", "search_content", "search_files":
 		return true
 	default:
-		return false
+		return workspace.LanguageToolHasAnyCapability(result.Tool, workspace.CapReadSymbol, workspace.CapFileOutline)
 	}
 }
 
@@ -13758,7 +13270,7 @@ func finishShouldOverrideSourceEcho(answer string) bool {
 	}
 
 	for _, path := range pathparse.MentionedWorkspacePaths(answer) {
-		path = agentutil.NormalizeRunnerPath(path)
+		path = NormalizeRunnerPath(path)
 		if strings.HasPrefix(path, "internal/") || strings.HasPrefix(path, "logs/") {
 			return true
 		}
@@ -13925,7 +13437,7 @@ func changedPathsRequireGitHistory(results []workspace.ToolResult) bool {
 		}
 
 		for _, path := range changedPathsFromToolResult(result) {
-			normalized := agentutil.NormalizeRunnerPath(path)
+			normalized := NormalizeRunnerPath(path)
 			if normalized == "" || writePathIsNonSource(normalized) {
 				continue
 			}
@@ -13952,10 +13464,10 @@ func toolResultPreimagePathWasMissing(result workspace.ToolResult, path string) 
 		return false
 	}
 
-	normalized := agentutil.NormalizeRunnerPath(path)
+	normalized := NormalizeRunnerPath(path)
 
 	for _, entry := range payload.Paths {
-		if agentutil.NormalizeRunnerPath(entry.Path) == normalized {
+		if NormalizeRunnerPath(entry.Path) == normalized {
 			return !entry.Exists
 		}
 	}
@@ -14044,7 +13556,6 @@ type runnerFinalAnswerRetryInput struct {
 	currentAllowedTools      []string
 	completionGateRejections *int
 	turnMessages             *[]llama.ChatMessage
-	turnHiddenTools          map[string]bool
 	runState                 *runnerRunState
 	controller               *runnerTurnController
 	autonomyRecorder         *runnerAutonomyRecorder
@@ -14080,21 +13591,11 @@ func (r *Runner) retryRejectedFinalAnswerForRun(input runnerFinalAnswerRetryInpu
 		*input.turnMessages = append(*input.turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 	}
 
-	delete(input.turnHiddenTools, workspace.ToolNameCodeNavigate)
-	delete(input.turnHiddenTools, workspace.ToolNameReadFile)
-
 	// When source-body read tools are available for a source-grounding
 	// rejection, hide non-read tools so the next action is a bounded source
 	// read instead of another prose answer.
 	if r.sourceGroundingReadRecoveryAvailable(input.result.Error, input.currentAllowedTools) {
-		hideNonSourceBodyReadTools(input.turnHiddenTools, input.currentAllowedTools)
-		if state != nil && len(input.turnHiddenTools) > 0 {
-			if len(state.toolSurface.VisibleTools) == 0 && len(state.toolSurface.HiddenTools) == 0 {
-				state.toolSurface = NewActiveSurface(input.currentAllowedTools, nil)
-			}
-			state.toolSurface.Hide(OwnerSourceGrounding, mapTrueKeys(input.turnHiddenTools)...)
-			state.syncToolSurfaceFromBridge()
-		}
+		state.hideNonSourceBodyReadTools(OwnerSourceGrounding, input.currentAllowedTools)
 	}
 	if input.rebuildTools != nil {
 		input.rebuildTools()
@@ -14288,7 +13789,7 @@ func (p delegatedDiscoveryPlan) candidateConsumptionRequest(results []workspace.
 
 	paths := p.consumableSourceBodyCandidatePaths(results, 6)
 	for _, path := range paths {
-		path = agentutil.NormalizeRunnerPath(path)
+		path = NormalizeRunnerPath(path)
 		if path == "" || sourceEvidenceBodyReadForPath(path, results) {
 			continue
 		}
@@ -14410,7 +13911,7 @@ func delegatedDiscoveryConsumableSourcePath(path string) bool {
 func (p delegatedDiscoveryPlan) consumableCandidateTerms() []string {
 	var terms []string
 
-	for _, term := range agentutil.RecoveryObjectiveSearchWords(p.questionText, 16) {
+	for _, term := range RecoveryObjectiveSearchWords(p.questionText, 16) {
 		terms = appendDelegatedDiscoveryCandidateTerm(terms, term)
 	}
 
@@ -14461,17 +13962,21 @@ func (p delegatedDiscoveryPlan) consumableCandidateScore(path string, layerName 
 }
 
 func delegatedDiscoveryConsumableLayerScore(name string) int {
-	switch strings.TrimSpace(name) {
-	case "text_anchor_search":
+	name = strings.TrimSpace(name)
+	switch {
+	case name == "text_anchor_search":
 		return 80
-	case "go_read_symbol", "cpp_read_symbol", "python_read_symbol", "ts_read_symbol", "rust_read_symbol", "java_read_symbol":
+	case workspace.LanguageToolHasAnyCapability(name, workspace.CapReadSymbol):
 		return 75
-	case "go_references", "cpp_references", "python_references", "ts_references", "rust_references", "java_references":
+	case workspace.LanguageToolHasAnyCapability(name, workspace.CapReferences):
 		return 65
-	case "go_definition", "cpp_definition", "python_definition", "ts_definition", "rust_definition", "java_definition":
+	case workspace.LanguageToolHasAnyCapability(name, workspace.CapDefinition):
 		return 60
-	case "go_workspace_symbol", "cpp_workspace_symbol", "python_workspace_symbol", "ts_workspace_symbol", "rust_workspace_symbol", "java_workspace_symbol":
+	case workspace.LanguageToolHasAnyCapability(name, workspace.CapWorkspaceSymbol):
 		return 45
+	}
+
+	switch name {
 	case "related_files":
 		return 10
 	case "dependency_graph", "ctags_symbols":
@@ -14551,7 +14056,7 @@ func delegatedDiscoveryConsumableMechanismScore(path string, layerName string, l
 	haystack := strings.ToLower(filepath.ToSlash(path) + "\n" + line)
 	score := 0
 
-	if agentutil.ContainsAny(haystack,
+	if ContainsAny(haystack,
 		"compose", "composer", "composition", "synthesis", "synthesize", "final response", "final answer",
 		"closeout", "readiness", "completion", "acceptance", "grounded evidence", "mechanism", "contract",
 	) {
@@ -14559,11 +14064,11 @@ func delegatedDiscoveryConsumableMechanismScore(path string, layerName string, l
 		score += 55
 	}
 
-	if agentutil.ContainsAny(haystack, "implementation path", "implementation anchor", "source anchor", "source-body", "source body") {
+	if ContainsAny(haystack, "implementation path", "implementation anchor", "source anchor", "source-body", "source body") {
 		score += 25
 	}
 
-	if agentutil.ContainsAny(haystack, "capability:", "language:", "symbol index:", "related files:", "found related") {
+	if ContainsAny(haystack, "capability:", "language:", "symbol index:", "related files:", "found related") {
 		score -= 35
 	}
 
@@ -14579,7 +14084,7 @@ func delegatedDiscoveryConsumableInventoryScore(layerName string, line string) i
 		score -= 20
 	}
 
-	if agentutil.ContainsAny(lower,
+	if ContainsAny(lower,
 		"no go workspace symbols matched",
 		"no workspace symbols matched",
 		"no symbols matched",
@@ -14653,7 +14158,7 @@ func (p delegatedDiscoveryPlan) purposeSupportedByObjective(purpose string) bool
 	switch strings.TrimSpace(purpose) {
 	case "security_review":
 		lower := strings.ToLower(p.objective)
-		return agentutil.ContainsAny(lower, "security", "unsafe", "vulnerability", "injection", "secret", "token")
+		return ContainsAny(lower, "security", "unsafe", "vulnerability", "injection", "secret", "token")
 	default:
 		return true
 	}
@@ -14669,7 +14174,7 @@ func (p delegatedDiscoveryPlan) shouldReplacePath(path string) bool {
 		return true
 	}
 
-	if delegatedReadOnlyBroadNamedScope(path) && p.primaryScope != "" && p.primaryScope != "." && agentutil.NormalizeRunnerPath(path) != agentutil.NormalizeRunnerPath(p.primaryScope) {
+	if delegatedReadOnlyBroadNamedScope(path) && p.primaryScope != "" && p.primaryScope != "." && NormalizeRunnerPath(path) != NormalizeRunnerPath(p.primaryScope) {
 		return true
 	}
 
@@ -14677,7 +14182,7 @@ func (p delegatedDiscoveryPlan) shouldReplacePath(path string) bool {
 }
 
 func (p delegatedDiscoveryPlan) pathOutsideDetailedScope(path string) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" || path == "." || len(p.detailedScopes) == 0 {
 		return false
 	}
@@ -14774,7 +14279,7 @@ func (p delegatedDiscoveryPlan) computeDetailedNamedScopes() []string {
 	var scopes []string
 
 	for _, candidate := range p.namedScopes {
-		candidate = agentutil.NormalizeRunnerPath(strings.Trim(strings.TrimSpace(candidate), "`'\""))
+		candidate = NormalizeRunnerPath(strings.Trim(strings.TrimSpace(candidate), "`'\""))
 		if candidate == "" || candidate == "." || delegatedReadOnlyBroadNamedScope(candidate) || delegatedReadOnlySecondaryEvidencePath(candidate) {
 			continue
 		}
@@ -14792,13 +14297,13 @@ func (p delegatedDiscoveryPlan) computePurpose() string {
 	}
 
 	switch {
-	case agentutil.ContainsAny(lower, "security", "unsafe", "vulnerability", "injection", "secret", "token"):
+	case ContainsAny(lower, "security", "unsafe", "vulnerability", "injection", "secret", "token"):
 		return "security_review"
-	case agentutil.ContainsAny(lower, "git history", "history of", "historical", "evolution", "changed over time", "regression introduced"):
+	case ContainsAny(lower, "git history", "history of", "historical", "evolution", "changed over time", "regression introduced"):
 		return "history_context"
-	case agentutil.ContainsAny(lower, "call", "calls", "trace", "tracing", "invoked", "invoke", "entrypoint"):
+	case ContainsAny(lower, "call", "calls", "trace", "tracing", "invoked", "invoke", "entrypoint"):
 		return "function_tracing"
-	case agentutil.ContainsAny(lower, "impact", "blast radius", "affected", "change"):
+	case ContainsAny(lower, "impact", "blast radius", "affected", "change"):
 		return "impact_analysis"
 	default:
 		return "architecture_boundary"
@@ -15013,11 +14518,7 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 		toolName := strings.TrimSpace(decision.Request.Tool)
 		isExternal := false
 
-		if r.Workspace != nil {
-			if extReg := r.Workspace.ExternalToolsRegistry(); extReg != nil {
-				isExternal = extReg.Has(toolName)
-			}
-		}
+		isExternal = r.workspaceToolSurfaceSnapshot().HasExternalTool(toolName)
 
 		if !isExternal {
 			decision.RejectSummary = "Tool request rejected by conversation-only contract"
@@ -15410,7 +14911,7 @@ func conversationFileSearchPatternIsConcrete(pattern string) bool {
 		return strings.HasPrefix(pattern, ".") && len(pattern) >= 2
 	}
 
-	for _, token := range agentutil.RecoveryObjectiveSearchWords(pattern, 16) {
+	for _, token := range RecoveryObjectiveSearchWords(pattern, 16) {
 		token = strings.ToLower(strings.TrimSpace(token))
 		if len(token) < 3 || conversationBroadFileSearchToken(token) {
 			continue
@@ -15566,7 +15067,7 @@ func (r *Runner) conversationEvidenceAvailableForObjective(results []workspace.T
 		return false
 	}
 
-	return r.evidenceEngine().ClosureDecision(readOnlyDirectAnswerAcceptanceLedgerBrief(r.RuntimeBrief), results).Answerable()
+	return readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(r.RuntimeBrief), results).Answerable()
 }
 
 func (r *Runner) mainReadOnlyDelegationBootstrapRequest(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
@@ -15586,7 +15087,7 @@ func (r *Runner) mainReadOnlyDelegationBootstrapRequest(results []workspace.Tool
 		return workspace.ToolRequest{}, false
 	}
 
-	if r.Workspace == nil || !slices.Contains(r.advertisedAllowedTools(r.Workspace.AllowedTools()), "task") {
+	if r.Workspace == nil || !slices.Contains(r.workspaceAdvertisedAllowedTools(), "task") {
 		return workspace.ToolRequest{}, false
 	}
 
@@ -15613,7 +15114,7 @@ func mainReadOnlyObjectiveShouldDelegate(objective string) bool {
 		return false
 	}
 
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		"architecture", "boundary", "boundaries", "flow", "handoff", "lifecycle", "orchestration",
 		"how does", "how this", "explain how", "trace", "call", "calls", "invoked", "invoke",
 		"subagent", "sub-agent", "sub agent", "child task", "child runner",
@@ -15635,7 +15136,7 @@ func mainReadOnlyObjectiveIsConcreteFeatureQuestion(lower string) bool {
 		return true
 	}
 
-	return agentutil.ContainsAny(lower, " mode do", " feature do")
+	return ContainsAny(lower, " mode do", " feature do")
 }
 
 func mainReadOnlyDelegationBootstrapEvidenceSeen(results []workspace.ToolResult) bool {
@@ -15677,7 +15178,7 @@ func (r *Runner) mainReadOnlyBroadSearchContextPackRequest(results []workspace.T
 		return workspace.ToolRequest{}, false
 	}
 
-	path := agentutil.NormalizeRunnerPath(req.Path)
+	path := NormalizeRunnerPath(req.Path)
 	if path != "" && path != "." {
 		return workspace.ToolRequest{}, false
 	}
@@ -15827,7 +15328,7 @@ func delegatedReadOnlyPostDiscoveryOutlineReadRedirect(results []workspace.ToolR
 		return workspace.ToolRequest{}, false
 	}
 
-	path := agentutil.NormalizeRunnerPath(req.Path)
+	path := NormalizeRunnerPath(req.Path)
 	if path == "" || !delegatedDiscoveryConsumableSourcePath(path) || sourceEvidenceBodyReadForPath(path, results) {
 		return workspace.ToolRequest{}, false
 	}
@@ -15864,7 +15365,7 @@ func (r *Runner) delegatedReadOnlyFirstExistingDetailedScope(plan delegatedDisco
 }
 
 func (r *Runner) delegatedReadOnlyDiscoveryPathMissing(path string) bool {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if r == nil || r.Workspace == nil || path == "" || path == "." {
 		return false
 	}
@@ -15971,7 +15472,7 @@ func delegatedReadOnlyObjectiveRequiresDiscoveryQuery(objective string) bool {
 	// This classifier only identifies broad child-runner mechanism questions
 	// that need composite discovery. Exact source anchors are preserved by
 	// delegatedReadOnlyBootstrapQueryRequest before this predicate is consulted.
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		"discovery tool",
 		"discovery tools",
 		"tool usefulness",
@@ -15990,7 +15491,7 @@ func delegatedReadOnlyObjectiveRequiresDiscoveryQuery(objective string) bool {
 
 func delegatedReadOnlyObjectiveHasExactPrimarySourceAnchor(objective string) bool {
 	for _, path := range pathparse.MentionedWorkspacePaths(objective) {
-		path = agentutil.NormalizeRunnerPath(path)
+		path = NormalizeRunnerPath(path)
 		if path == "" || delegatedReadOnlySecondaryEvidencePath(path) || delegatedReadOnlyMentionedPathIsPattern(path) {
 			continue
 		}
@@ -16005,7 +15506,7 @@ func delegatedReadOnlyObjectiveHasExactPrimarySourceAnchor(objective string) boo
 
 func delegatedReadOnlyCompositeQuestionOverridesExactSourceAnchor(objective string) bool {
 	lower := strings.ToLower(strings.Join(strings.Fields(objective), " "))
-	return agentutil.ContainsAny(lower, "discovery tool", "discovery tools", "tool usefulness", "increase their usefulness", "overall usefulness")
+	return ContainsAny(lower, "discovery tool", "discovery tools", "tool usefulness", "increase their usefulness", "overall usefulness")
 }
 
 func delegatedReadOnlyMentionedPathIsPattern(path string) bool {
@@ -16024,7 +15525,7 @@ func delegatedReadOnlyMentionedPathIsPattern(path string) bool {
 
 func delegatedReadOnlyChildMechanismQuestion(objective string) bool {
 	lower := strings.ToLower(strings.Join(strings.Fields(delegatedDisplayQuestion(objective)), " "))
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		"subagent",
 		"sub-agent",
 		"sub agent",
@@ -16089,7 +15590,7 @@ func delegatedReadOnlyLikelySourceCandidates(objective string) []string {
 func delegatedObjectiveNeedsEntrypointScope(objective string) bool {
 	lower := strings.ToLower(objective)
 
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		"entrypoint",
 		"entry point",
 		"main entry",
@@ -16146,7 +15647,7 @@ func delegatedReadOnlyBootstrapScope(objective string) string {
 }
 
 func delegatedReadOnlyBroadNamedScope(scope string) bool {
-	switch agentutil.NormalizeRunnerPath(scope) {
+	switch NormalizeRunnerPath(scope) {
 	case "internal", "pkg", "src", "cmd", "prompts", "docs":
 		return true
 	default:
@@ -16259,7 +15760,7 @@ func (r *Runner) delegatedReadOnlySecondaryEvidenceRedirect(results []workspace.
 }
 
 func delegatedReadOnlyConsolidatedTestSourceCandidates(testPath string) []string {
-	testPath = agentutil.NormalizeRunnerPath(testPath)
+	testPath = NormalizeRunnerPath(testPath)
 	dir := filepath.Dir(testPath)
 	base := filepath.Base(testPath)
 
@@ -16374,13 +15875,13 @@ func delegatedReadOnlyMechanismTerms(objective string) []string {
 	lower := strings.ToLower(delegatedDisplayQuestion(objective))
 	terms := make([]string, 0, 6)
 
-	if agentutil.ContainsAny(lower, "invoke", "invoked", "execute", "executed", "run", "runner", "workflow", "wired") {
+	if ContainsAny(lower, "invoke", "invoked", "execute", "executed", "run", "runner", "workflow", "wired") {
 		for _, term := range []string{"invoke", "execute"} {
 			terms = textutil.AppendUnique(terms, term)
 		}
 	}
 
-	if agentutil.ContainsAny(lower, "subagent", "sub-agent", "sub agent") {
+	if ContainsAny(lower, "subagent", "sub-agent", "sub agent") {
 		for _, term := range []string{"child task", "task tool", "delegate", "delegation"} {
 			terms = textutil.AppendUnique(terms, term)
 		}
@@ -16579,11 +16080,11 @@ func (r *Runner) readOnlyAnalysisAnswerReadyAfterResult(req workspace.ToolReques
 	evidencePaths := promptEvidencePathsFromToolResults(results, 6)
 
 	if delegatedReadOnlyHasCompositeDiscoveryPacket(results) {
-		closure := r.evidenceEngine().ClosureDecision(r.RuntimeBrief, results)
+		closure := readOnlyClosureDecisionForResults(r.RuntimeBrief, results)
 		return exactProbes >= 1 && closure.Answerable() && readOnlyAnalysisHasObjectiveRelevantSourceBody(r.RuntimeBrief, closure.Evidence)
 	}
 
-	closure := r.evidenceEngine().ClosureDecision(r.RuntimeBrief, results)
+	closure := readOnlyClosureDecisionForResults(r.RuntimeBrief, results)
 
 	return exactProbes >= 2 && len(evidencePaths) >= 1 && closure.Answerable() && readOnlyAnalysisHasObjectiveRelevantSourceBody(r.RuntimeBrief, closure.Evidence)
 }
@@ -16591,7 +16092,7 @@ func (r *Runner) readOnlyAnalysisAnswerReadyAfterResult(req workspace.ToolReques
 func readOnlyAnalysisHasObjectiveRelevantSourceBody(brief workerruntime.WorkerRuntimeBrief, evidence readOnlyAnswerabilityLedger) bool {
 	sourceBodies := readOnlyPathSet(evidence.SourceBodyPaths)
 	for _, support := range evidence.SourceBodyObjectiveTerms {
-		path := agentutil.NormalizeRunnerPath(support.Path)
+		path := NormalizeRunnerPath(support.Path)
 		if path == "" || len(support.Terms) == 0 {
 			continue
 		}
@@ -16620,7 +16121,7 @@ func readOnlyAnalysisExactProbeCount(results []workspace.ToolResult) int {
 			continue
 		}
 
-		if agentutil.CandidateAnchorOnlyResult(result) {
+		if CandidateAnchorOnlyResult(result) {
 			continue
 		}
 
@@ -16634,19 +16135,24 @@ func readOnlyAnalysisExactProbeCount(results []workspace.ToolResult) int {
 				count++
 			}
 		case "code_navigate":
-			if agentutil.RoutedSourceReadOutputHasBody(result.Output) &&
+			if RoutedSourceReadOutputHasBody(result.Output) &&
 				!strings.Contains(result.Output, "capability: file_outline") {
 
 				count++
 			}
-		case "go_read_symbol", "go_extract_body",
-			"go_calls_from", "go_calls_into", "go_references", "go_definition", "go_workspace_symbol",
-			"cpp_read_symbol", "cpp_extract_body",
-			"cpp_calls_from", "cpp_calls_into", "cpp_references", "cpp_definition", "cpp_workspace_symbol",
-			"python_read_symbol", "python_calls_from", "python_calls_into", "python_references", "python_definition", "python_workspace_symbol",
-			"ts_read_symbol", "ts_calls_from", "ts_calls_into", "ts_references", "ts_definition", "ts_workspace_symbol",
-			"rust_read_symbol", "rust_calls_from", "rust_calls_into", "rust_references", "rust_definition", "rust_workspace_symbol",
-			"java_read_symbol", "java_calls_from", "java_calls_into", "java_references", "java_definition", "java_workspace_symbol":
+		default:
+			if !workspace.LanguageToolHasAnyCapability(
+				result.Tool,
+				workspace.CapReadSymbol,
+				workspace.CapExtractBody,
+				workspace.CapCallsFrom,
+				workspace.CapCallsInto,
+				workspace.CapReferences,
+				workspace.CapDefinition,
+				workspace.CapWorkspaceSymbol,
+			) {
+				continue
+			}
 			count++
 		}
 	}
@@ -16693,19 +16199,11 @@ func delegatedReadOnlyInspectedImplementationPaths(results []workspace.ToolResul
 			continue
 		}
 
-		if agentutil.CandidateAnchorOnlyResult(result) {
+		if CandidateAnchorOnlyResult(result) {
 			continue
 		}
 
-		switch strings.TrimSpace(result.Tool) {
-		case "read_file",
-			"go_read_symbol", "go_file_outline", "go_extract_body",
-			"cpp_read_symbol", "cpp_file_outline", "cpp_extract_body",
-			"python_read_symbol", "python_file_outline",
-			"ts_read_symbol", "ts_file_outline",
-			"rust_read_symbol", "rust_file_outline",
-			"java_read_symbol", "java_file_outline":
-		default:
+		if !workspace.IsSourceBodyInspectionTool(result.Tool) {
 			continue
 		}
 
@@ -17119,13 +16617,12 @@ func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step in
 	}
 
 	brief = runnerBriefWithPhaseHints(brief, results)
-	guidanceEngine := runnerNextActionGuidanceEngine(agent, options)
 
 	guidance := workerruntime.BuildActionGuidance(workerruntime.ActionGuidanceInput{
 		Reason:                    reason,
 		Request:                   req,
 		Result:                    result,
-		Constraints:               runnerGuidanceConstraintsWithEngine(agent, brief, results, guidanceEngine),
+		Constraints:               runnerGuidanceConstraints(agent, brief, results),
 		DeclarationMovesForbidden: declarationMovesForbidden,
 		EvidenceIntent:            brief.EvidenceIntent,
 		WriteCapable:              runnerHasWorkspaceWriteCapability(brief, brief.AllowedTools),
@@ -17153,7 +16650,7 @@ func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step in
 		state.EvidenceStatus = []string{status}
 	}
 
-	if strings.HasPrefix(strings.TrimSpace(agent), "child:") && guidanceEngine.DelegatedReadOnlyClosureReady(brief, results) {
+	if strings.HasPrefix(strings.TrimSpace(agent), "child:") && delegatedReadOnlyClosureReady(agent, brief, results) {
 		state.EvidencePaths = delegatedClosureEvidencePaths(brief.Objective, results, 6)
 	}
 
@@ -17188,14 +16685,16 @@ func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step in
 	}
 
 	if strings.TrimSpace(result.Error) != "" {
-		state.RecoveryCard = RenderRecoveryCard(BuildRecoveryCard(RecoveryCardInput{
+		card := BuildRecoveryCard(RecoveryCardInput{
 			PhaseContract:       phaseContract,
 			CurrentAllowedTools: effectiveRecoveryCardAllowedTools(currentAllowedTools, brief, results, phaseContract),
 			RejectedRequest:     surfaceReq,
 			RejectedResult:      surfaceResult,
 			EvidenceRefs:        state.EvidencePaths,
 			RecoveryState:       state.RecoveryState,
-		}))
+		})
+		state.recoveryCard = &card
+		state.RecoveryCard = RenderRecoveryCard(card)
 	}
 
 	if strings.TrimSpace(reason) == parserRecoveryRecordReason {
@@ -17220,7 +16719,7 @@ func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step in
 		return state, phaseContract
 	}
 
-	state = applyDelegatedReadOnlyClosureBias(state, agent, brief, results, guidanceEngine)
+	state = applyDelegatedReadOnlyClosureBias(state, agent, brief, results)
 	state = applyPostChildClosureBias(state, agent, brief, results)
 	state = applyScratchpadDeliverableCloseoutBias(state, brief, results)
 	state = applyReadOnlyDiscoveryPendingGuidance(state, brief, req, result, results)
@@ -17238,15 +16737,6 @@ func runnerNextActionPlanningTransport(options []any) PlanExecutePlanningTranspo
 		}
 	}
 	return transport
-}
-
-func runnerNextActionGuidanceEngine(agent string, options []any) GuidanceEngine {
-	for _, option := range options {
-		if candidate, ok := option.(GuidanceEngine); ok && candidate != nil {
-			return candidate
-		}
-	}
-	return newGuidanceEngine(agent, newEvidenceEngine())
 }
 
 func applyReadOnlyDiscoveryPendingGuidance(state runnerNextActionState, brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult) runnerNextActionState {
@@ -17463,7 +16953,7 @@ func effectiveRecoveryCardAllowedTools(currentAllowedTools []string, brief worke
 	}
 
 	if strings.TrimSpace(contract.PhaseID) == turnPhaseStaleAnchorRefresh {
-		return planThenExecuteAnchorRefreshToolNames()
+		return workspace.ToolSurfacePhaseToolNames(workspace.ToolSurfacePhasePlanExecuteAnchorRefresh)
 	}
 
 	if len(currentAllowedTools) > 0 {
@@ -17978,7 +17468,7 @@ func annotateWritePreimagePayload(result workspace.ToolResult, store *PreimageCh
 	payload := writePreimagePayload{Paths: make([]writePreimagePath, 0, len(paths))}
 
 	for _, path := range paths {
-		normalized := agentutil.NormalizeRunnerPath(path)
+		normalized := NormalizeRunnerPath(path)
 		if normalized == "" {
 			continue
 		}
@@ -18178,7 +17668,7 @@ func resultWithRejectedRequestTarget(req workspace.ToolRequest, result workspace
 		return result
 	}
 
-	path := agentutil.NormalizeRunnerPath(req.Path)
+	path := NormalizeRunnerPath(req.Path)
 	if path == "" || strings.Contains(result.Summary, path) || strings.Contains(result.Output, path) {
 		return result
 	}
@@ -18332,7 +17822,7 @@ func buildRejectionRecoveryNudge(req workspace.ToolRequest, results []workspace.
 	// nudges that declare evidence is sufficient or that the harness
 	// will end the turn. The force-completion path is also gated in
 	// rejectTool; this keeps the nudge text consistent.
-	if LanePolicyForBrief(brief).ShouldSkipRecoveryNudge() {
+	if LanePolicyForBrief(brief).skipRecoveryNudge {
 		return ""
 	}
 
@@ -18800,8 +18290,8 @@ func repeatedDiagnosticLogReadFileBackfill(req workspace.ToolRequest, results []
 		return workspace.ToolRequest{}, "", false
 	}
 
-	path := agentutil.NormalizeRunnerPath(req.Path)
-	if path == "" || !agentutil.IsDiagnosticLogArtifactPath(path) {
+	path := NormalizeRunnerPath(req.Path)
+	if path == "" || !IsDiagnosticLogArtifactPath(path) {
 		return workspace.ToolRequest{}, "", false
 	}
 
@@ -18833,7 +18323,7 @@ type diagnosticLogReadWindow struct {
 }
 
 func diagnosticLogReadFileWindows(path string, results []workspace.ToolResult) []diagnosticLogReadWindow {
-	path = agentutil.NormalizeRunnerPath(path)
+	path = NormalizeRunnerPath(path)
 	if path == "" {
 		return nil
 	}
@@ -18865,8 +18355,8 @@ func diagnosticLogUnboundedReadCoverageRejection(req workspace.ToolRequest, resu
 		return "", "", false
 	}
 
-	path := agentutil.NormalizeRunnerPath(req.Path)
-	if path == "" || !agentutil.IsDiagnosticLogArtifactPath(path) {
+	path := NormalizeRunnerPath(req.Path)
+	if path == "" || !IsDiagnosticLogArtifactPath(path) {
 		return "", "", false
 	}
 
@@ -19000,8 +18490,8 @@ func mergeDiagnosticLogReadWindows(windows []diagnosticLogReadWindow) ([]diagnos
 }
 
 func runnerToolResultReadPathMatches(result workspace.ToolResult, path string) bool {
-	for _, readPath := range agentutil.ReadPathsFromToolResult(result) {
-		if agentutil.NormalizeRunnerPath(readPath) == path {
+	for _, readPath := range ReadPathsFromToolResult(result) {
+		if NormalizeRunnerPath(readPath) == path {
 			return true
 		}
 	}
@@ -19041,8 +18531,8 @@ func repeatedDiagnosticLogReadFileExactRejection(req workspace.ToolRequest, last
 		return "", "", false
 	}
 
-	path := agentutil.NormalizeRunnerPath(req.Path)
-	if path == "" || !agentutil.IsDiagnosticLogArtifactPath(path) {
+	path := NormalizeRunnerPath(req.Path)
+	if path == "" || !IsDiagnosticLogArtifactPath(path) {
 		return "", "", false
 	}
 
@@ -19050,8 +18540,8 @@ func repeatedDiagnosticLogReadFileExactRejection(req workspace.ToolRequest, last
 		return "", "", false
 	}
 
-	for _, readPath := range agentutil.ReadPathsFromToolResult(last) {
-		if agentutil.NormalizeRunnerPath(readPath) != path {
+	for _, readPath := range ReadPathsFromToolResult(last) {
+		if NormalizeRunnerPath(readPath) != path {
 			continue
 		}
 
@@ -19068,8 +18558,8 @@ func repeatedDiagnosticLogReadFilePreviouslyReadRejection(req workspace.ToolRequ
 		return "", "", false
 	}
 
-	path := agentutil.NormalizeRunnerPath(req.Path)
-	if path == "" || !agentutil.IsDiagnosticLogArtifactPath(path) {
+	path := NormalizeRunnerPath(req.Path)
+	if path == "" || !IsDiagnosticLogArtifactPath(path) {
 		return "", "", false
 	}
 
@@ -19130,7 +18620,6 @@ type postChildBudgetState struct {
 type runnerRequestBudgetState struct {
 	fingerprint fingerprintTrackingState
 	postChild   postChildBudgetState
-	loopPolicy  runnerLoopPolicy
 
 	// writeReadyNudgeActive is set by the write-ready nudge path in
 	// runner.go when the model is in a write-ready-but-not-writing
@@ -19176,8 +18665,6 @@ type runnerRequestBudgetDecision struct {
 	Policy            runnerLoopPolicyDecision
 }
 
-type runnerLoopPolicy struct{}
-
 type runnerLoopPolicyDecision struct {
 	ContractID  autonomy.ContractPackID
 	InvariantID string
@@ -19208,11 +18695,7 @@ func (d runnerRequestBudgetDecision) apply(ctx budgetDecisionContext) budgetDeci
 	if ctx.controller != nil &&
 		ctx.controller.autonomyRecorder != nil &&
 		terminalArtifactRequiredRejectionSummary(d.RejectSummary) {
-		ctx.controller.autonomyRecorder.emitPolicyResult(ctx.req, toolAuthorizationPolicyResultInput(
-			toolAuthorizationPolicyEvent(ctx.req, autonomy.PolicyReject, "current_tool_surface", "rejected", "tool_surface", "tool_authorization_policy", false),
-			autonomy.EventToolPolicyResult,
-			toolAuthorizationSurfaceParityReport(ctx.controller.autonomyRecorder, "reject"),
-		))
+		emitToolAuthorizationSurfacePolicyResult(ctx.controller.autonomyRecorder, ctx.req, autonomy.PolicyReject)
 	}
 
 	if ctx.controller != nil && ctx.controller.autonomyRecorder != nil && d.Policy.InvariantID != "" {
@@ -19294,29 +18777,7 @@ func newRunnerRequestBudgetState(postChildReadBudget int) runnerRequestBudgetSta
 			readFamilies:     make(map[string]int),
 			familyNudgeFired: make(map[string]bool),
 		},
-		loopPolicy: runnerLoopPolicy{},
 	}
-}
-
-func (runnerLoopPolicy) EvaluateFingerprint(state *runnerRequestBudgetState, policy RunPolicy, req workspace.ToolRequest, fingerprint string) runnerRequestBudgetDecision {
-	if state == nil {
-		return runnerRequestBudgetDecision{}
-	}
-	return attachLoopPolicyDecision(state.fingerprintDecision(policy, req, fingerprint))
-}
-
-func (runnerLoopPolicy) EvaluateSamePathFixation(state *runnerRequestBudgetState, req workspace.ToolRequest, evidenceAvailable bool) runnerRequestBudgetDecision {
-	if state == nil {
-		return runnerRequestBudgetDecision{}
-	}
-	return attachLoopPolicyDecision(state.samePathFixationDecision(req, evidenceAvailable))
-}
-
-func (runnerLoopPolicy) EvaluateEarlyRejectedFingerprint(state *runnerRequestBudgetState, req workspace.ToolRequest, fingerprint string) runnerRequestBudgetDecision {
-	if state == nil {
-		return runnerRequestBudgetDecision{}
-	}
-	return attachLoopPolicyDecision(state.earlyRejectedFingerprintDecision(req, fingerprint))
 }
 
 func attachLoopPolicyDecision(decision runnerRequestBudgetDecision) runnerRequestBudgetDecision {
@@ -19379,7 +18840,7 @@ func (s *runnerRequestBudgetState) noteFingerprint(currentFingerprint string) in
 
 func (s *runnerRequestBudgetState) samePathFixationDecision(req workspace.ToolRequest, evidenceAvailable bool) runnerRequestBudgetDecision {
 	fp := samePathFingerprint(req)
-	if fp == "" || agentutil.IsDiagnosticLogArtifactPath(req.Path) {
+	if fp == "" || IsDiagnosticLogArtifactPath(req.Path) {
 		return runnerRequestBudgetDecision{}
 	}
 
@@ -20065,19 +19526,15 @@ func postChildPathsOverlap(reqPath string, evidencePath string) bool {
 type runnerRunState struct {
 	ctx     context.Context
 	policy  RunPolicy
-	brief   workerruntime.WorkerRuntimeBrief
 	metrics runnerMetrics
 
 	opts             llama.ChatOptions
 	collectedResults []workspace.ToolResult
 	turnMessages     []llama.ChatMessage
-	turnHiddenTools  map[string]bool
 
-	stepNumber       int
-	activeToolCall   *llama.ToolCall
-	assistantMessage llama.ChatMessage
-	budgetExhausted  bool
-	stopReason       string
+	stepNumber      int
+	budgetExhausted bool
+	stopReason      string
 
 	currentAllowedTools                   []string
 	toolSurface                           ActiveSurface
@@ -20085,24 +19542,12 @@ type runnerRunState struct {
 	requiredPathCompletionRecoveryActive  bool
 	exactAnchorWriteOnlyActive            bool
 
-	executionState                  *runnerExecutionState
-	implementationScopedHiddenTools map[string]bool
-	delegatedReadOnlyAnswerReady    bool
-	postChildPacketActive           bool
-	directAnswerSurfaceEmitted      bool
+	executionState               *runnerExecutionState
+	delegatedReadOnlyAnswerReady bool
+	postChildPacketActive        bool
+	directAnswerSurfaceEmitted   bool
 
-	planThenExecuteNativeSubmitPlanDisabled        bool
-	planThenExecuteNativeSubmitPlanNoCallFallbacks int
-	planThenExecuteReadinessNudged                 bool
-	planThenExecuteCorrectionAfterRefreshNudged    bool
-	planThenExecuteUnreadSourceNudgedFor           string
-	planThenExecuteReadySourceRefreshes            int
-	planThenExecuteLoopBudgetRecoveryUsed          bool
-
-	deferredGitHistorySubmitPlan    *workspace.ToolRequest
-	deferredGitHistorySubmitPlanRaw string
-
-	replayedToolRequests map[string]int
+	planThenExecuteNativeSubmitPlanDisabled bool
 
 	autonomyRecorder                     *runnerAutonomyRecorder
 	completionGateRejections             int
@@ -20115,40 +19560,88 @@ type runnerRunState struct {
 	controller runnerTurnController
 }
 
-func (state *runnerRunState) syncToolSurfaceFromBridge() {
+func (state *runnerRunState) hideExactAnchorReadTools(allowedTools []string) {
+	state.hideSurfaceToolsExcept(OwnerExactAnchorRead, allowedTools, func(tool string) bool {
+		return workspace.ToolSurfacePhaseAllowsTool(tool, workspace.ToolSurfacePhaseImplementationPreWrite)
+	})
+}
+
+func (state *runnerRunState) hideImplementationWriteOnlyTools(allowedTools []string) {
+	state.hideSurfaceToolsExcept(OwnerImplementationWriteOnly, allowedTools, func(tool string) bool {
+		return workspace.ToolSurfacePhaseAllowsTool(tool, workspace.ToolSurfacePhaseImplementationPreWrite)
+	})
+}
+
+func (state *runnerRunState) hideReviewRepairTerminalOnlyTools(allowedTools []string) {
+	state.hideSurfaceToolsExcept(OwnerReviewRepairTerminalOnly, allowedTools, func(tool string) bool {
+		return strings.TrimSpace(tool) == workspace.ToolNameSubmitPlan
+	})
+}
+
+func (state *runnerRunState) hideSurfaceToolsExcept(owner Owner, allowedTools []string, allow func(string) bool) {
+	if state == nil || len(allowedTools) == 0 {
+		return
+	}
+
+	state.toolSurface.SetVisibleTools(allowedTools)
+	state.toolSurface.HideExcept(owner, allowedTools, allow)
+}
+
+func (state *runnerRunState) hideSurfaceTool(owner Owner, tool string) bool {
+	tool = strings.TrimSpace(tool)
+	if state == nil || tool == "" || state.surfaceHidesTool(tool) {
+		return false
+	}
+
+	state.hideSurfaceTools(owner, tool)
+	return true
+}
+
+func (state *runnerRunState) hideSurfaceTools(owner Owner, tools ...string) {
+	if state == nil || len(tools) == 0 {
+		return
+	}
+
+	if !activeSurfaceProvided(state.toolSurface) {
+		state.toolSurface = NewActiveSurface(state.currentAllowedTools, nil)
+	}
+	state.toolSurface.Hide(owner, tools...)
+}
+
+func (state *runnerRunState) hideNonSourceBodyReadTools(owner Owner, allowedTools []string) {
+	if state == nil || len(allowedTools) == 0 {
+		return
+	}
+
+	if !activeSurfaceProvided(state.toolSurface) {
+		state.toolSurface = NewActiveSurface(allowedTools, nil)
+	} else {
+		state.toolSurface.SetVisibleTools(allowedTools)
+	}
+	state.toolSurface.HideExcept(owner, allowedTools, func(tool string) bool {
+		return tool == workspace.ToolNameReadFile || tool == workspace.ToolNameCodeNavigate
+	})
+}
+
+func (state *runnerRunState) releaseImplementationWriteOnlyTools() {
+	state.releaseSurfaceHiddenTools(OwnerImplementationWriteOnly)
+	state.releaseSurfaceHiddenTools(OwnerReviewRepairTerminalOnly)
+}
+
+func (state *runnerRunState) releaseSurfaceHiddenTools(owner Owner) {
 	if state == nil {
 		return
 	}
-	if len(state.toolSurface.VisibleTools) == 0 && len(state.toolSurface.HiddenTools) == 0 {
-		state.toolSurface = NewActiveSurface(state.currentAllowedTools, nil)
-		return
-	}
-	state.toolSurface.SetVisibleTools(state.currentAllowedTools)
-}
 
-func (state *runnerRunState) hideExactAnchorReadTools(manager *workspace.Manager) {
-	if state == nil || manager == nil {
-		return
-	}
-	hidden := map[string]bool{}
-	exactHidden := map[string]bool{}
-	hideExactAnchorReadTools(hidden, exactHidden, manager)
-	state.toolSurface.SetVisibleTools(manager.AllowedTools())
-	state.toolSurface.Hide(OwnerExactAnchorRead, mapTrueKeys(exactHidden)...)
+	state.toolSurface.Release(owner)
 }
 
 func (state *runnerRunState) surfaceHidesTool(tool string) bool {
 	return state != nil && state.toolSurface.HidesTool(tool)
 }
 
-func mapTrueKeys(values map[string]bool) []string {
-	out := make([]string, 0, len(values))
-	for key, ok := range values {
-		if ok {
-			out = append(out, key)
-		}
-	}
-	return out
+func (state *runnerRunState) surfaceHiddenByOwner(owner Owner, tool string) bool {
+	return state != nil && state.toolSurface.HiddenByOwner(owner, tool)
 }
 
 // setCurrentAllowedTools syncs the Runner-level currentAllowedTools field.
@@ -20212,16 +19705,23 @@ func (r *Runner) rebuildRunTools(state *runnerRunState) {
 		return
 	}
 
-	allowed := r.advertisedAllowedTools(r.Workspace.AllowedTools())
+	workspaceSurface := r.workspaceToolSurfaceSnapshot()
+	allowed := r.workspaceAdvertisedAllowedTools()
 	writeOnlySurface := state.implementationWriteOnlyRecoveryActive ||
 		state.requiredPathCompletionRecoveryActive ||
 		exactAnchorPreWriteSurfaceActive(r.RuntimeBrief, state.collectedResults)
 	scopedEditSurface := !writeOnlySurface && implementationScopedEditSurfaceActive(r.RuntimeBrief, state.collectedResults)
 
-	if scopedEditSurface {
-		hideImplementationScopedToolsForTurn(state.turnHiddenTools, state.implementationScopedHiddenTools, r.Workspace)
+	state.toolSurface.Release(OwnerImplementationScoped)
+	if !activeSurfaceProvided(state.toolSurface) {
+		state.toolSurface = NewActiveSurface(allowed, nil)
 	} else {
-		releaseHiddenTools(state.turnHiddenTools, state.implementationScopedHiddenTools)
+		state.toolSurface.SetVisibleTools(allowed)
+	}
+	if scopedEditSurface {
+		state.toolSurface.HideExcept(OwnerImplementationScoped, allowed, func(tool string) bool {
+			return workspace.ImplementationScopedEditToolAllowedWithExternalReadOnlyDiscovery(tool, workspaceSurface.ExternalToolIsReadOnlyDiscovery)
+		})
 	}
 
 	if workerruntime.PermissionProfileIsReadOnlyVerificationShell(r.RuntimeBrief.PermissionProfile) && !state.executionState.verificationAttempted {
@@ -20237,13 +19737,13 @@ func (r *Runner) rebuildRunTools(state *runnerRunState) {
 	}
 
 	if runnerBriefAllowsExternalToolAppend(r.RuntimeBrief) && !writeOnlySurface && !scopedEditSurface {
-		if extReg := r.Workspace.ExternalToolsRegistry(); extReg != nil {
+		if externalNames := workspaceSurface.AvailableExternalToolNames(); len(externalNames) > 0 {
 			seen := make(map[string]struct{}, len(allowed))
 			for _, name := range allowed {
 				seen[name] = struct{}{}
 			}
 
-			for _, name := range r.Workspace.AvailableExternalToolNames() {
+			for _, name := range externalNames {
 				if _, ok := seen[name]; !ok {
 					allowed = append(allowed, name)
 					seen[name] = struct{}{}
@@ -20253,21 +19753,20 @@ func (r *Runner) rebuildRunTools(state *runnerRunState) {
 	}
 
 	if writeOnlySurface {
-		allowed = implementationPreWriteAllowedTools(allowed)
+		allowed = workspace.ToolSurfacePhaseAllowedTools(allowed, workspace.ToolSurfacePhaseImplementationPreWrite)
 	} else if scopedEditSurface {
 		contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 			Brief:            r.RuntimeBrief,
 			Results:          state.collectedResults,
 			BaseAllowedTools: allowed,
+			ActiveSurface:    state.toolSurface,
 		})
 
 		allowed = append([]string(nil), contract.AllowedTools...)
 
-		if extReg := r.Workspace.ExternalToolsRegistry(); extReg != nil {
-			for _, name := range r.Workspace.AvailableExternalToolNames() {
-				if extReg.IsReadOnlyDiscovery(name) && !slices.Contains(allowed, name) {
-					allowed = append(allowed, name)
-				}
+		for _, name := range workspaceSurface.AvailableExternalToolNames() {
+			if workspaceSurface.ExternalToolIsReadOnlyDiscovery(name) && !slices.Contains(allowed, name) {
+				allowed = append(allowed, name)
 			}
 		}
 	} else if contract := deriveTurnPhaseContract(TurnPhaseContractInput{
@@ -20281,35 +19780,26 @@ func (r *Runner) rebuildRunTools(state *runnerRunState) {
 		allowed = append([]string(nil), contract.AllowedTools...)
 	}
 
-	if surfaceTools := DirectAnswerSurfaceForBriefTools(r.RuntimeBrief); surfaceTools != nil {
-		allowed = append([]string(nil), surfaceTools...)
+	if surface, ok := DirectAnswerSurfaceForBrief(r.RuntimeBrief); ok {
+		allowed = append([]string(nil), surface.ToolNames...)
 
 		if !state.directAnswerSurfaceEmitted {
-			if surface, ok := DirectAnswerSurfaceForBrief(r.RuntimeBrief); ok {
-				EmitDirectAnswerSurfaceEvent(r.emitEvent, surface)
+			EmitDirectAnswerSurfaceEvent(r.emitEvent, surface)
 
-				state.directAnswerSurfaceEmitted = true
-			}
+			state.directAnswerSurfaceEmitted = true
 		}
 	}
 
-	if len(state.turnHiddenTools) > 0 {
-		filtered := make([]string, 0, len(allowed))
-		for _, t := range allowed {
-			if !state.turnHiddenTools[t] {
-				filtered = append(filtered, t)
-			}
-		}
-
-		allowed = filtered
+	if activeSurfaceProvided(state.toolSurface) {
+		allowed = state.toolSurface.FilterVisible(allowed)
 	}
 
 	var tools []llama.Tool
 
 	if len(allowed) > 0 || !workerruntime.PermissionProfileIsConversationOnly(r.RuntimeBrief.PermissionProfile) {
-		tools = buildLlamaTools(r.Workspace.BuildToolDefinitions(allowed))
+		tools = buildLlamaTools(workspaceSurface.BuildToolDefinitions(allowed))
 		if !workerruntime.RuntimeContractIsDirectAnswer(r.RuntimeBrief.Contract) &&
-			r.lanePolicy().ShouldHaveNoteTool(r.RuntimeBrief.Contract) {
+			lanePolicyShouldHaveNoteTool(r.lanePolicy(), r.RuntimeBrief.Contract) {
 
 			tools = append(tools, noteToolDefinition())
 			if !slices.Contains(r.RuntimeBrief.AllowedTools, noteToolName) {
@@ -20664,7 +20154,7 @@ func (r *Runner) effectivePolicy() RunPolicy {
 	// doesn't explicitly skip it. The TUI already sets this via ModePolicy;
 	// this ensures CLI mode gets the same advisory nudge so the model is
 	// prompted to pause and answer rather than exploring indefinitely.
-	if policy.SynthesisNudgeAt <= 0 && !r.lanePolicy().SkipSynthesisNudge() {
+	if policy.SynthesisNudgeAt <= 0 && !r.lanePolicy().skipSynthesisNudge {
 		policy.SynthesisNudgeAt = 10
 	}
 
@@ -20838,6 +20328,7 @@ type runnerNextActionState struct {
 	StateSummary       string                    `json:"state_summary,omitempty"`
 	RecoveryCard       string                    `json:"recovery_card,omitempty"`
 	RecoveryState      *PlanExecuteRecoveryState `json:"recovery_state,omitempty"`
+	recoveryCard       *RecoveryCard
 }
 
 type runnerThinkingTrace struct {
@@ -20869,21 +20360,13 @@ func (r *Runner) emitNextActionState(step int, reason string, req workspace.Tool
 	}
 
 	brief := r.visibleBriefForToolSurface(r.RuntimeBrief, results)
-	state, phaseContract := buildRunnerNextActionStateWithAllowedToolsAndContract(r.agentName(), step, reason, req, result, results, declarationMovesForbidden, brief, r.currentAllowedTools, r.currentPlanningTransport(), r.guidanceEngine())
+	state, phaseContract := buildRunnerNextActionStateWithAllowedToolsAndContract(r.agentName(), step, reason, req, result, results, declarationMovesForbidden, brief, r.currentAllowedTools, r.currentPlanningTransport())
 
 	if r.activeAutonomy != nil {
 		r.activeAutonomy.emitTurnPhaseSurfaceSummary(turnPhaseSurfaceSummaryFromNextActionState(state, phaseContract), phaseContract)
 
-		if strings.TrimSpace(result.Error) != "" {
-			card := BuildRecoveryCard(RecoveryCardInput{
-				PhaseContract:       phaseContract,
-				CurrentAllowedTools: effectiveRecoveryCardAllowedTools(r.currentAllowedTools, brief, results, phaseContract),
-				RejectedRequest:     req,
-				RejectedResult:      result,
-				EvidenceRefs:        state.EvidencePaths,
-				RecoveryState:       state.RecoveryState,
-			})
-			r.activeAutonomy.emitTurnPhaseSurfaceSummary(card.TurnPhaseSurfaceSummary(phaseContract), phaseContract)
+		if state.recoveryCard != nil {
+			r.activeAutonomy.emitTurnPhaseSurfaceSummary(state.recoveryCard.TurnPhaseSurfaceSummary(phaseContract), phaseContract)
 		}
 	}
 
@@ -20934,20 +20417,13 @@ func (r *Runner) runtimeBriefWithLiveState(policy RunPolicy, messages []llama.Ch
 
 	brief.ChangedPaths = textutil.Merge(brief.ChangedPaths, mapKeys(changedPathsFromToolResults(results)))
 	brief = runnerBriefWithPhaseHints(brief, results)
-	brief.Readiness = runnerReadinessStateWithEngine(r.agentName(), brief, results, r.guidanceEngine())
+	brief.Readiness = runnerReadinessState(r.agentName(), brief, results)
 
 	return workerruntime.NormalizeRuntimeBrief(brief)
 }
 
 func runnerReadinessState(agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) *workerruntime.ReadinessState {
-	return runnerReadinessStateWithEngine(agent, brief, results, newGuidanceEngine(agent, newEvidenceEngine()))
-}
-
-func runnerReadinessStateWithEngine(agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, guidance GuidanceEngine) *workerruntime.ReadinessState {
 	brief = workerruntime.NormalizeRuntimeBrief(brief)
-	if guidance == nil {
-		guidance = newGuidanceEngine(agent, newEvidenceEngine())
-	}
 
 	readiness := &workerruntime.ReadinessState{}
 	readOnlyBrief := brief
@@ -21019,6 +20495,11 @@ func runnerReadinessStateWithEngine(agent string, brief workerruntime.WorkerRunt
 		addClosed("relevant_source_body_evidence")
 	}
 
+	if len(readOnlyLedger.RelevantExternalDocumentPaths) > 0 {
+		addSource("external_document_body")
+		addClosed("relevant_external_document_evidence")
+	}
+
 	if readOnlyLedger.DiagnosticEvidence {
 		addSource("diagnostic_evidence")
 		addClosed("diagnostic_evidence_available")
@@ -21026,7 +20507,7 @@ func runnerReadinessStateWithEngine(agent string, brief workerruntime.WorkerRunt
 
 	if strings.HasPrefix(strings.TrimSpace(agent), "child:") &&
 		strings.TrimSpace(brief.TaskFamily) == "delegated_read_only" &&
-		guidance.DelegatedReadOnlyClosureReady(brief, results) {
+		delegatedReadOnlyClosureReady(agent, brief, results) {
 
 		readiness.ReadyToAnswer = true
 
@@ -21446,7 +20927,7 @@ func (r *Runner) emitToolRequestNormalizerEvent(outcome string, transport string
 		"outcome":   strings.TrimSpace(outcome),
 		"transport": strings.TrimSpace(transport),
 		"tool":      strings.TrimSpace(req.Tool),
-		"path":      agentutil.NormalizeRunnerPath(planThenExecuteRequestTargetPath(req)),
+		"path":      NormalizeRunnerPath(planThenExecuteRequestTargetPath(req)),
 	}
 	if parseErr == nil && strings.TrimSpace(req.Tool) != "" && toolRequestNormalizerTransportIsModelTextual(transport) {
 		payload["parsed_textual_tool"] = strings.TrimSpace(req.Tool)
@@ -21913,9 +21394,7 @@ func scoreMessageForRetention(msg llama.ChatMessage, result *workspace.ToolResul
 
 		tool := strings.TrimSpace(result.Tool)
 		if tool == workspace.ToolNameReadFile || tool == workspace.ToolNameCodeNavigate || tool == workspace.ToolNameSourceSanity ||
-			tool == "go_read_symbol" || tool == "go_extract_body" ||
-			tool == "cpp_read_symbol" || tool == "cpp_extract_body" ||
-			tool == "python_read_symbol" || tool == "python_extract_body" {
+			workspace.IsLanguageSourceBodyTool(tool) {
 
 			score += 0.10
 		}
@@ -21930,7 +21409,7 @@ func scoreMessageForRetention(msg llama.ChatMessage, result *workspace.ToolResul
 	editScore := 0.0
 
 	for _, path := range editPaths {
-		normalized := agentutil.NormalizeRunnerPath(path)
+		normalized := NormalizeRunnerPath(path)
 		if normalized != "" && strings.Contains(content, strings.ToLower(normalized)) {
 			editScore += 0.25
 			break
@@ -21946,7 +21425,7 @@ func scoreMessageForRetention(msg llama.ChatMessage, result *workspace.ToolResul
 	evidenceScore := 0.0
 
 	for _, path := range brief.EvidencePaths {
-		normalized := agentutil.NormalizeRunnerPath(path)
+		normalized := NormalizeRunnerPath(path)
 		if normalized != "" && strings.Contains(content, strings.ToLower(normalized)) {
 			evidenceScore += 0.15
 			break
@@ -22030,7 +21509,7 @@ func implementationSourceCoverageByPath(results []workspace.ToolResult) map[stri
 			continue
 		}
 
-		paths := agentutil.ReadPathsFromToolResult(result)
+		paths := ReadPathsFromToolResult(result)
 		if len(paths) == 0 {
 			continue
 		}
@@ -22039,8 +21518,8 @@ func implementationSourceCoverageByPath(results []workspace.ToolResult) map[stri
 		total, hasTotal := planThenExecuteReadSummaryTotalLines(result.Summary)
 
 		for _, rawPath := range paths {
-			path := agentutil.NormalizeRunnerPath(rawPath)
-			if path == "" || agentutil.IsNonSourceEvidenceArtifactPath(path) {
+			path := NormalizeRunnerPath(rawPath)
+			if path == "" || IsNonSourceEvidenceArtifactPath(path) {
 				continue
 			}
 			hasBody := sourceEvidenceHasBody(planThenExecuteToolResultSourceEvidence(result, path))
@@ -22192,7 +21671,7 @@ func directProbePathsFromToolResults(results []workspace.ToolResult, max int) []
 
 		for _, path := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(result.Summary)) {
 			path = normalizeDelegatedDiscoveryEvidencePath(path)
-			if path == "" || agentutil.IsNonSourceEvidenceArtifactPath(path) || !delegatedDiscoveryLooksLikeEvidencePath(path) {
+			if path == "" || IsNonSourceEvidenceArtifactPath(path) || !delegatedDiscoveryLooksLikeEvidencePath(path) {
 				continue
 			}
 
@@ -22250,7 +21729,7 @@ func runnerEvidencePathsForBrief(brief workerruntime.WorkerRuntimeBrief, results
 	paths := changedPathListFromToolResults(results)
 
 	for _, path := range directProbePathsFromToolResults(results, max*2) {
-		normalized := agentutil.NormalizeRunnerPath(path)
+		normalized := NormalizeRunnerPath(path)
 		if normalized == "" || !scope[normalized] {
 			continue
 		}
@@ -22259,7 +21738,7 @@ func runnerEvidencePathsForBrief(brief workerruntime.WorkerRuntimeBrief, results
 	}
 
 	for _, path := range brief.EvidencePaths {
-		normalized := agentutil.NormalizeRunnerPath(path)
+		normalized := NormalizeRunnerPath(path)
 		if normalized == "" || !scope[normalized] {
 			continue
 		}
@@ -22285,8 +21764,9 @@ func readOnlyDirectAnswerPresentationEvidencePaths(brief workerruntime.WorkerRun
 
 	ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
 	paths := append([]string{}, ledger.RelevantSourceBodyPaths...)
+	paths = textutil.Merge(paths, ledger.RelevantExternalDocumentPaths)
 
-	if agentutil.ObjectiveAsksImplementationShape(ledger.Objective) {
+	if ObjectiveAsksImplementationShape(ledger.Objective) {
 		paths = textutil.Merge(paths, ledger.ImplementationOwnerPaths())
 	}
 
@@ -22294,7 +21774,7 @@ func readOnlyDirectAnswerPresentationEvidencePaths(brief workerruntime.WorkerRun
 		paths = textutil.Merge(paths, readOnlySourceLikePaths(ledger.DiagnosticPaths, max*2))
 	}
 
-	return closurePromptEvidencePaths(paths, max)
+	return readOnlyEvidenceDisplayPaths(paths, max)
 }
 
 func runnerPinnedPathsForBrief(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
@@ -22332,7 +21812,7 @@ func mutationEvidenceScope(brief workerruntime.WorkerRuntimeBrief, results []wor
 		mapKeys(changedPathsFromToolResults(results)),
 	} {
 		for _, raw := range values {
-			path := agentutil.NormalizeRunnerPath(raw)
+			path := NormalizeRunnerPath(raw)
 			if path != "" {
 				scope[path] = true
 			}
@@ -22434,7 +21914,7 @@ func delegatedChildPacketFollowupAnchors(objective string, output string) []stri
 }
 
 func weakChildPacketFollowupAnchorsAllowed(objective string) bool {
-	return agentutil.ObjectiveAsksImplementationShape(objective) || delegatedReadOnlyChildMechanismQuestion(objective)
+	return ObjectiveAsksImplementationShape(objective) || delegatedReadOnlyChildMechanismQuestion(objective)
 }
 
 func delegatedChildPacketNamesFollowupEvidence(output string) bool {
@@ -22443,7 +21923,7 @@ func delegatedChildPacketNamesFollowupEvidence(output string) bool {
 		return false
 	}
 
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		"inspected paths:",
 		"inspected evidence:",
 		"candidate paths:",
@@ -22521,15 +22001,6 @@ func (r *Runner) classifyTerminalAnswer(answer string, stopReason string, result
 		decision.Outcome = terminalAnswerTransportBlocked
 		decision.PresentedAnswer = "I wasn't able to produce a clean answer from the evidence. Could you rephrase or narrow the question?"
 		decision.StopReason = acceptance.BlockerKind
-		decision.Acceptance = acceptance
-
-		return decision
-	}
-
-	if r.hostOwnedReadOnlyCloseoutAccepted(answer, stopReason, results, acceptance) {
-		acceptance = finalAnswerAcceptanceWithTerminalOverride(acceptance, finalAnswerAcceptanceAccepted, "", "host_read_only_closeout")
-		decision.Outcome = terminalAnswerAccepted
-		decision.StopReason = stopReason
 		decision.Acceptance = acceptance
 
 		return decision
@@ -22629,19 +22100,6 @@ func (r *Runner) readOnlyTerminalRecoveryCandidate(acceptance finalAnswerAccepta
 	}
 
 	return recovered, recoveredAcceptance, true
-}
-
-func (r *Runner) hostOwnedReadOnlyCloseoutAccepted(answer string, stopReason string, results []workspace.ToolResult, acceptance finalAnswerAcceptance) bool {
-	if r == nil || strings.TrimSpace(stopReason) != "host_read_only_closeout" || acceptance.BlockerKind == "" {
-		return false
-	}
-
-	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
-	if !readOnlyDirectAnswerLane(brief) || runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
-		return false
-	}
-
-	return readOnlyClosureDecisionForResults(brief, results).AcceptsHostOwnedAnswer(r.agentName(), answer)
 }
 
 func terminalBlockedStatusShouldEmit(alreadyEmitted bool, lastStatus string, lastBlockerKind string, terminalBlockerKind string) bool {
@@ -22918,10 +22376,10 @@ func postWriteVerificationTelemetryCommand(req workspace.ToolRequest, result wor
 	}
 
 	if strings.TrimSpace(req.Tool) == workspace.ToolNameSourceSanity && strings.TrimSpace(req.Path) != "" {
-		return "source_sanity " + agentutil.NormalizeRunnerPath(req.Path)
+		return "source_sanity " + NormalizeRunnerPath(req.Path)
 	}
 
-	if workspace.IsDiagnosticToolName(req.Tool) {
+	if semanticlanguage.IsDiagnosticToolName(req.Tool) {
 		return strings.TrimSpace(req.Tool)
 	}
 
@@ -23045,7 +22503,7 @@ func (r *Runner) requiredEditPathsProgressMessage(req workspace.ToolRequest, res
 	)
 
 	for _, raw := range required {
-		path := agentutil.NormalizeRunnerPath(raw)
+		path := NormalizeRunnerPath(raw)
 		if path == "" {
 			continue
 		}
@@ -23137,6 +22595,9 @@ func (r *Runner) finalAnswerBlockerErrorText(kind string, reason string, answer 
 	case string(turnViolationReadOnlyProtocolBlocker):
 		return "the final answer exposed internal <<QUESTION>> blocker protocol in a read-only direct-answer lane. Answer in normal prose from gathered evidence, or state the exact unresolved claim and the smallest useful next probe without raw blocker markup."
 	case string(turnViolationProtocolMetaFinalAnswer):
+		if reason == string(turnReasonNonSelfContainedFinalAnswer) {
+			return "the final answer referred to a hidden, prior, or rejected answer instead of standing on its own. Reply with self-contained user-visible prose from the gathered evidence; do not say \"the answer above\", \"previous answer\", or similar."
+		}
 		return "the final answer repeated internal validation status instead of answering the user. Answer in normal prose from the gathered evidence; omit validation status and internal protocol markers."
 	case string(turnViolationUnexecutedToolRequestAnswer):
 		return "the final answer was an unexecuted workspace-tool request payload. " + workspaceLookupTransportInstruction(recoveryToolTransportMode(r.currentPlanningTransport())) + " Or answer in normal prose from the available evidence."
@@ -23272,7 +22733,7 @@ func changedPathListFromToolResults(results []workspace.ToolResult) []string {
 		}
 
 		for _, rawPath := range changedPathsFromToolResult(result) {
-			path := agentutil.NormalizeRunnerPath(rawPath)
+			path := NormalizeRunnerPath(rawPath)
 			if path == "" {
 				continue
 			}
@@ -23319,9 +22780,7 @@ func exactProbeEvidencePaths(results []workspace.ToolResult) []string {
 			continue
 		}
 
-		switch strings.TrimSpace(result.Tool) {
-		case "go_read_symbol", "go_extract_body", "cpp_read_symbol", "cpp_extract_body", "python_read_symbol", "ts_read_symbol", "rust_read_symbol", "java_read_symbol":
-		default:
+		if !workspace.IsLanguageSourceBodyTool(result.Tool) {
 			continue
 		}
 
@@ -23361,7 +22820,7 @@ func (r *Runner) explorationDelegationNudge(readCallsSinceWrite int, results []w
 	// ("without a write") and assumes write-then-answer lanes.
 	// The conversation lane has its own evidence path and should
 	// not receive mutation-framed nudges.
-	if r.lanePolicy().SkipExplorationDelegationNudge() {
+	if r.lanePolicy().skipExplorationDelegationNudge {
 		return ""
 	}
 
@@ -23369,7 +22828,7 @@ func (r *Runner) explorationDelegationNudge(readCallsSinceWrite int, results []w
 		return ""
 	}
 
-	allowedTools := r.advertisedAllowedTools(r.Workspace.AllowedTools())
+	allowedTools := r.workspaceAdvertisedAllowedTools()
 	if !slices.Contains(allowedTools, workspace.ToolNameTask) {
 		return ""
 	}
@@ -23430,14 +22889,7 @@ func hasConcreteReadOnlyInspectionEvidence(results []workspace.ToolResult) bool 
 			continue
 		}
 
-		switch strings.TrimSpace(result.Tool) {
-		case workspace.ToolNameReadFile,
-			"go_read_symbol", "go_file_outline",
-			"cpp_read_symbol", "cpp_file_outline",
-			"python_read_symbol", "python_file_outline",
-			"ts_read_symbol", "ts_file_outline",
-			"rust_read_symbol", "rust_file_outline",
-			"java_read_symbol", "java_file_outline":
+		if workspace.IsSourceBodyInspectionTool(result.Tool) {
 			return true
 		}
 	}
@@ -23514,7 +22966,7 @@ func (c *runnerTurnController) rejectTool(step int, activeToolCall *llama.ToolCa
 		// Conversation lanes: the "last chance before harness ends"
 		// force-complete contradicts the investigation directive.
 		// Instead of force-completing, let the model continue.
-		if c.runner != nil && !c.runner.lanePolicy().ShouldForceAnswerAfterRejection() {
+		if c.runner != nil && !c.runner.lanePolicy().forceAnswerAfterRejection {
 			*c.consecutiveRejected = 0
 			return "", nil, false
 		}
@@ -23545,7 +22997,7 @@ func (c *runnerTurnController) rejectCompletion(step int, activeToolCall *llama.
 		historyReply.ReasoningContent = ""
 	}
 
-	if c.turnMessages != nil {
+	if c.turnMessages != nil && !completionGateRejectedReplyHiddenFromHistory(c.runner, result) {
 		*c.turnMessages = append(*c.turnMessages, completionGateRejectedHistoryMessage(c.runner, historyReply, result, c.snapshotResults()))
 	}
 
@@ -23556,6 +23008,14 @@ func (c *runnerTurnController) rejectCompletion(step int, activeToolCall *llama.
 		IncrementNoProgress: true,
 		SetLastToolKey:      false,
 	})
+}
+
+func completionGateRejectedReplyHiddenFromHistory(r *Runner, result workspace.ToolResult) bool {
+	if r == nil || strings.TrimSpace(result.Tool) != "completion_gate" {
+		return false
+	}
+
+	return readOnlyDirectAnswerLane(r.RuntimeBrief) && !runnerBriefRequiresMutation(r.RuntimeBrief)
 }
 
 func completionGateRejectedHistoryMessage(r *Runner, reply llama.ChatMessage, result workspace.ToolResult, results []workspace.ToolResult) llama.ChatMessage {
@@ -23607,7 +23067,7 @@ func (c *runnerTurnController) recordParseFailure(step int, activeToolCall *llam
 		return
 	}
 
-	decision := malformedToolPolicyEngine{}.EvaluateParseFailureWithMetadata(raw, parseErr, transport, parserFailureClass)
+	decision := malformedToolParseFailureDecision(raw, parseErr, transport, parserFailureClass)
 
 	c.recorder.activeToolCall = activeToolCall
 
@@ -23621,9 +23081,6 @@ func (c *runnerTurnController) recordParseFailure(step int, activeToolCall *llam
 		SuppressModelMessage: suppressModelMessage,
 	})
 }
-
-type malformedToolPolicyEngine struct{}
-type unsafeToolShapePolicyEngine struct{}
 
 const (
 	parserRecoveryToolName         = "tool_parse"
@@ -23726,7 +23183,7 @@ func (r *Runner) unsafeToolShapeRecoveryBeforeCompletionGateActive(results []wor
 	return implementationTargetWriteReadySurfaceActive(r.RuntimeBrief, results)
 }
 
-func (malformedToolPolicyEngine) EvaluateParseFailureWithMetadata(raw string, parseErr error, transport string, parserFailureClass autonomy.ParserFailureClass) malformedToolPolicyDecision {
+func malformedToolParseFailureDecision(raw string, parseErr error, transport string, parserFailureClass autonomy.ParserFailureClass) malformedToolPolicyDecision {
 	policyTransport, parserFailureClass := parserPolicyMetadata(raw, parseErr, transport, parserFailureClass)
 
 	return malformedToolPolicyDecision{
@@ -23750,7 +23207,7 @@ func (malformedToolPolicyEngine) EvaluateParseFailureWithMetadata(raw string, pa
 	}
 }
 
-func (unsafeToolShapePolicyEngine) Evaluate(normalization toolRequestSyntaxNormalization, targetWriteReady bool) malformedToolPolicyDecision {
+func unsafeToolShapeDecision(normalization toolRequestSyntaxNormalization, targetWriteReady bool) malformedToolPolicyDecision {
 	transport, parserFailureClass := parserPolicyMetadata(normalization.Raw, nil, normalization.EventTransport, autonomy.ParserFailureUnsupportedTransport)
 	if parserFailureClass == "" || parserFailureClass == autonomy.ParserFailureNone {
 		parserFailureClass = autonomy.ParserFailureUnsupportedTransport
@@ -23828,7 +23285,7 @@ func (c *runnerTurnController) recordUnsafeToolShape(step int, activeToolCall *l
 		return
 	}
 
-	decision := unsafeToolShapePolicyEngine{}.Evaluate(normalization, true)
+	decision := unsafeToolShapeDecision(normalization, true)
 
 	c.recorder.activeToolCall = activeToolCall
 

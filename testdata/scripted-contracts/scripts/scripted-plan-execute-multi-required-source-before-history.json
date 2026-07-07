@@ -1,22 +1,8 @@
-{
-  "responses": [
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"confirm ShortLabel implementation before submit_plan\",\"why_not_answering\":\"required_edit_paths need source-body evidence before submit_plan\"}"
-    },
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"README.md\",\"named_gap\":\"confirm README documentation anchor before submit_plan\",\"why_not_answering\":\"another required_edit_path still needs source-body evidence before history or submit_plan\"}"
-    },
-    {
-      "content": "{\"tool\":\"history_range\",\"path\":\"README.md\",\"start_line\":1,\"end_line\":5,\"named_gap\":\"read git history for README before submit_plan\",\"why_not_answering\":\"runtime requires git history evidence for intended existing logic\"}"
-    },
-    {
-      "content": "{\"tool\":\"history_range\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":5,\"named_gap\":\"read git history for ShortLabel before submit_plan\",\"why_not_answering\":\"runtime requires git history evidence for intended existing logic\"}"
-    },
-    {
-      "content": "{\"tool\":\"submit_plan\",\"rationale\":\"Update ShortLabel and document the scripted regression using source evidence from both required paths.\",\"edits\":[{\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"purpose\":\"Update ShortLabel to return the shorter save label\"},{\"path\":\"README.md\",\"old_text\":\"real binary through workspace mutation, verification, and rollback.\",\"new_text\":\"real binary through workspace mutation, verification, and rollback.\\nThis fixture also covers multi-path plan-execute source gathering before history evidence.\",\"purpose\":\"Document the multi-path plan-execute regression fixture\"}]}"
-    },
-    {
-      "content": "Decision: pass\n\nVerification Checklist:\n- Required behavior: ShortLabel returns \"Save\" after the submitted edit.\n- Scope safety: internal/labels/labels.go and README.md were the required edit paths.\n- Test or command evidence: Phase Evidence reports the required verification and source_sanity checks."
-    }
-  ]
-}
+[
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"confirm ShortLabel implementation before submit_plan\",\"why_not_answering\":\"required_edit_paths need source-body evidence before submit_plan\"}",
+  "{\"tool\":\"read_file\",\"path\":\"README.md\",\"named_gap\":\"confirm README documentation anchor before submit_plan\",\"why_not_answering\":\"another required_edit_path still needs source-body evidence before history or submit_plan\"}",
+  "{\"tool\":\"history_range\",\"path\":\"README.md\",\"start_line\":1,\"end_line\":5,\"named_gap\":\"read git history for README before submit_plan\",\"why_not_answering\":\"runtime requires git history evidence for intended existing logic\"}",
+  "{\"tool\":\"history_range\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":5,\"named_gap\":\"read git history for ShortLabel before submit_plan\",\"why_not_answering\":\"runtime requires git history evidence for intended existing logic\"}",
+  "{\"tool\":\"submit_plan\",\"rationale\":\"Update ShortLabel and document the scripted regression using source evidence from both required paths.\",\"edits\":[{\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"purpose\":\"Update ShortLabel to return the shorter save label\"},{\"path\":\"README.md\",\"old_text\":\"real binary through workspace mutation, verification, and rollback.\",\"new_text\":\"real binary through workspace mutation, verification, and rollback.\\nThis fixture also covers multi-path plan-execute source gathering before history evidence.\",\"purpose\":\"Document the multi-path plan-execute regression fixture\"}]}",
+  "Decision: pass\n\nVerification Checklist:\n- Required behavior: ShortLabel returns \"Save\" after the submitted edit.\n- Scope safety: internal/labels/labels.go and README.md were the required edit paths.\n- Test or command evidence: Phase Evidence reports the required verification and source_sanity checks."
+]

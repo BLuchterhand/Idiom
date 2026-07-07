@@ -3,9 +3,6 @@ package prompts
 import (
 	"embed"
 	"fmt"
-	"io/fs"
-	"slices"
-	"strings"
 )
 
 //go:embed base.md
@@ -34,34 +31,4 @@ func MustProfile(name string) string {
 	}
 
 	return body
-}
-
-func ProfileNames() ([]string, error) {
-	entries, err := profilesFS.ReadDir("profiles")
-	if err != nil {
-		return nil, fmt.Errorf("read embedded profiles/: %w", err)
-	}
-
-	var names []string
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-
-		name := entry.Name()
-		if strings.TrimSuffix(name, ".md") == name {
-			continue
-		}
-
-		if _, err := fs.Stat(profilesFS, "profiles/"+name); err != nil {
-			continue
-		}
-
-		names = append(names, strings.TrimSuffix(name, ".md"))
-	}
-
-	slices.Sort(names)
-
-	return names, nil
 }

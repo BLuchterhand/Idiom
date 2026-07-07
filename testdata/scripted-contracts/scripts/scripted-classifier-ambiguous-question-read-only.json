@@ -1,14 +1,5 @@
-{
-  "model": "scripted-model",
-  "responses": [
-    {
-      "content": "{\"family\":\"direct_question\",\"initial_lane\":\"main\",\"reason\":\"read_only_question\",\"contract\":\"direct_answer\"}"
-    },
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"confirm current ShortLabel value\",\"why_not_answering\":\"need source evidence to answer without mutating\"}"
-    },
-    {
-      "content": "Yes. internal/labels/labels.go currently returns \"Save changes\" from ShortLabel, so it could be shortened to \"Save\". I did not edit files."
-    }
-  ]
-}
+[
+  "{\"family\":\"direct_question\",\"initial_lane\":\"main\",\"reason\":\"read_only_question\",\"contract\":\"direct_answer\"}",
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"confirm current ShortLabel value\",\"why_not_answering\":\"need source evidence to answer without mutating\"}",
+  "Yes. internal/labels/labels.go currently returns \"Save changes\" from ShortLabel, so it could be shortened to \"Save\". I did not edit files."
+]

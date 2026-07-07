@@ -14,9 +14,18 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 class ScriptedState:
-    def __init__(self, script: dict, request_log: pathlib.Path | None):
-        self.model = str(script.get("model") or "scripted-model")
-        self.responses = list(script.get("responses") or [])
+    def __init__(self, script: object, request_log: pathlib.Path | None):
+        if isinstance(script, list):
+            self.model = "scripted-model"
+            self.responses = script
+        elif isinstance(script, dict):
+            self.model = str(script.get("model") or "scripted-model")
+            responses = script.get("responses") or []
+            if not isinstance(responses, list):
+                raise TypeError("script responses must be an array")
+            self.responses = responses
+        else:
+            raise TypeError("script must be an object or an array")
         self.request_log = request_log
         self.lock = threading.Lock()
         self.index = 0
@@ -28,7 +37,13 @@ class ScriptedState:
         self.log_request(index, request)
         if index >= len(self.responses):
             raise IndexError(f"script exhausted after {index} chat request(s)")
-        response = dict(self.responses[index])
+        raw_response = self.responses[index]
+        if isinstance(raw_response, str):
+            response = {"content": raw_response}
+        elif isinstance(raw_response, dict):
+            response = dict(raw_response)
+        else:
+            raise TypeError("script response must be an object or a string")
         response.setdefault("role", "assistant")
         response.setdefault("content", "")
         return response

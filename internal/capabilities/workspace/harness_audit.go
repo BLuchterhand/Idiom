@@ -25,6 +25,7 @@ import (
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/comprehension"
 	"idiom/internal/repository/discovery"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 )
 
 const (
@@ -851,8 +852,9 @@ func (m *Manager) auditLanguageTooling() []harnessAuditLanguage {
 		active[lang.Name] = true
 	}
 
-	out := make([]harnessAuditLanguage, 0, len(LanguageRegistry()))
-	for _, lang := range LanguageRegistry() {
+	languages := semanticlanguage.LanguageRegistry()
+	out := make([]harnessAuditLanguage, 0, len(languages))
+	for _, lang := range languages {
 		row := harnessAuditLanguage{
 			Language:   lang.Name,
 			Active:     active[lang.Name],
@@ -1088,12 +1090,12 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 	for _, path := range paths {
 		report, err := eval.AnalyzeLog(path)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("%s: %v", m.displayPath(path), err))
+			warnings = append(warnings, fmt.Sprintf("%s: %v", m.pathAccess.DisplayPath(path), err))
 			continue
 		}
 
 		report.SessionID = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-		report.LogPath = m.displayPath(path)
+		report.LogPath = m.pathAccess.DisplayPath(path)
 		reports = append(reports, report)
 	}
 
@@ -1106,7 +1108,7 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 
 	warnings = append(warnings, contractWarnings...)
 
-	childLifecycle := auditChildLifecycleLogs(paths, m.displayPath)
+	childLifecycle := auditChildLifecycleLogs(paths, m.pathAccess.DisplayPath)
 
 	malformedOutput, malformedWarnings := auditMalformedOutputStages(paths)
 
@@ -1115,12 +1117,12 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 	}
 
 	intentLoop := auditIntentLoopEvents(paths)
-	featurePlanner := auditFeaturePlannerEvents(paths, m.displayPath)
+	featurePlanner := auditFeaturePlannerEvents(paths, m.pathAccess.DisplayPath)
 	aggregate := eval.Aggregate(reports)
 	currentReports := currentHarnessAuditPerfReports(m.cfg.Root, reports)
 	currentAggregate := eval.Aggregate(currentReports)
 	freshnessResolution := auditCurrentFreshnessWindow(m.cfg.Root, currentReports)
-	capabilityMix := auditObservedCapabilityMix(paths, aggregate.LogCount, &warnings, m.displayPath)
+	capabilityMix := auditObservedCapabilityMix(paths, aggregate.LogCount, &warnings, m.pathAccess.DisplayPath)
 	behavior := &harnessAuditLogBehavior{
 		LogLimit:            limit,
 		LogsConsidered:      len(paths),
@@ -1995,7 +1997,7 @@ func (m *Manager) auditContractEventCoverageWithFilter(paths []string, filter fu
 		includeWarnings := filter == nil || m.harnessAuditPathIsCurrent(path)
 		if includeWarnings {
 			for _, warning := range pathWarnings {
-				warnings = append(warnings, fmt.Sprintf("%s contract coverage: %s", m.displayPath(path), warning))
+				warnings = append(warnings, fmt.Sprintf("%s contract coverage: %s", m.pathAccess.DisplayPath(path), warning))
 			}
 		}
 
@@ -2156,11 +2158,11 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 	for _, path := range paths {
 		facts, err := readHarnessAuditLogFacts(path)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("%s lifecycle audit: %v", m.displayPath(path), err))
+			warnings = append(warnings, fmt.Sprintf("%s lifecycle audit: %v", m.pathAccess.DisplayPath(path), err))
 			continue
 		}
 
-		displayPath := m.displayPath(path)
+		displayPath := m.pathAccess.DisplayPath(path)
 		log := auditedLog{path: path, displayPath: displayPath, facts: facts}
 
 		logs = append(logs, log)
@@ -2174,7 +2176,7 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 					telemetryByConversationLog[filepath.Clean(conversationPath)] = log
 				}
 
-				if displayConversation := m.displayPath(conversationPath); displayConversation != "" {
+				if displayConversation := m.pathAccess.DisplayPath(conversationPath); displayConversation != "" {
 					if _, ok := telemetryByConversationLog[displayConversation]; !ok {
 						telemetryByConversationLog[displayConversation] = log
 					}
@@ -2186,7 +2188,7 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 			if conversationPath != "" {
 				session := harnessAuditInProgressSession{
 					TelemetryLog:    displayPath,
-					ConversationLog: m.displayPath(conversationPath),
+					ConversationLog: m.pathAccess.DisplayPath(conversationPath),
 					SessionID:       strings.TrimSpace(facts.SessionID),
 					Command:         strings.TrimSpace(facts.Command),
 					PID:             facts.PID,
@@ -2227,7 +2229,7 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 
 		prefixes = textutil.UniqueNonEmpty(prefixes)
 
-		displayConversationPath := m.displayPath(conversationPath)
+		displayConversationPath := m.pathAccess.DisplayPath(conversationPath)
 
 		var candidates []string
 
@@ -2256,7 +2258,7 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 		for _, candidate := range candidates {
 			candidateFacts, err := readHarnessAuditLogFacts(candidate)
 			if err != nil {
-				warnings = append(warnings, fmt.Sprintf("%s lifecycle audit: %v", m.displayPath(candidate), err))
+				warnings = append(warnings, fmt.Sprintf("%s lifecycle audit: %v", m.pathAccess.DisplayPath(candidate), err))
 				continue
 			}
 
@@ -2267,7 +2269,7 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 			candidateConversationPath := m.auditConversationPathFromTelemetry(candidateFacts)
 			sameConversation := candidateConversationPath != "" &&
 				(filepath.Clean(candidateConversationPath) == cleanConversationPath ||
-					m.displayPath(candidateConversationPath) == displayConversationPath)
+					m.pathAccess.DisplayPath(candidateConversationPath) == displayConversationPath)
 			sameSession := strings.TrimSpace(conversationFacts.SessionID) != "" &&
 				strings.TrimSpace(conversationFacts.SessionID) == strings.TrimSpace(candidateFacts.SessionID)
 
@@ -2275,7 +2277,7 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 				continue
 			}
 
-			return auditedLog{path: candidate, displayPath: m.displayPath(candidate), facts: candidateFacts}, true
+			return auditedLog{path: candidate, displayPath: m.pathAccess.DisplayPath(candidate), facts: candidateFacts}, true
 		}
 
 		return auditedLog{}, false
@@ -2295,7 +2297,7 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 				}
 				if facts.HasModelSession {
 					if conversationPath := m.auditConversationPathFromTelemetry(facts); conversationPath != "" {
-						session.ConversationLog = m.displayPath(conversationPath)
+						session.ConversationLog = m.pathAccess.DisplayPath(conversationPath)
 					}
 				}
 
@@ -2315,7 +2317,7 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 
 			if facts.HasModelSession {
 				if conversationPath := m.auditConversationPathFromTelemetry(facts); conversationPath != "" {
-					session.ConversationLog = m.displayPath(conversationPath)
+					session.ConversationLog = m.pathAccess.DisplayPath(conversationPath)
 
 					conversationFacts, err := readHarnessAuditLogFacts(conversationPath)
 					if err != nil {
@@ -2459,7 +2461,7 @@ func (m *Manager) auditConversationPathFromTelemetry(facts harnessAuditLogFacts)
 		return ""
 	}
 
-	if m.pathWithinWorkspace(path) || auditPathWithinRoot(path, facts.WorkspaceRoot) {
+	if m.pathAccess.PathWithinWorkspace(path) || auditPathWithinRoot(path, facts.WorkspaceRoot) {
 		return path
 	}
 
@@ -2937,7 +2939,7 @@ func (m *Manager) auditLogPaths(req ToolRequest, limit int) ([]string, []harness
 			break
 		}
 
-		target, err := m.resolvePath(path, req.Workdir)
+		target, err := m.pathAccess.ResolvePath(path, req.Workdir)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -3028,7 +3030,7 @@ func (m *Manager) auditDefaultJSONLGlob(pattern string) ([]string, error) {
 		return m.auditGlob(pattern)
 	}
 
-	dir, err := m.resolvePath(dirPattern, "")
+	dir, err := m.pathAccess.ResolvePath(dirPattern, "")
 	if err != nil {
 		return nil, fmt.Errorf("audit glob %q: %w", pattern, err)
 	}

@@ -206,7 +206,7 @@ func compileProtocolProjection(input PlanExecutePlannerInput, runtime RuntimeEnv
 
 	normalizeProtocolProjection(&protocol)
 
-	if err := validateProtocolProjection(protocol); err != nil {
+	if err := validateProtocolProjection(protocol, input.ToolMetadata); err != nil {
 		return ModelProtocolProjection{}, err
 	}
 
@@ -405,13 +405,13 @@ func compileCapabilityPolicy(input PlanExecutePlannerInput) autonomy.CapabilityP
 	forbidden := map[autonomy.Capability]struct{}{}
 
 	for _, tool := range input.AllowedTools {
-		for _, capability := range capabilitiesForTool(tool) {
+		for _, capability := range capabilitiesForTool(input.ToolMetadata, tool) {
 			allowed[capability] = struct{}{}
 		}
 	}
 
 	for _, tool := range input.ForbiddenTools {
-		for _, capability := range capabilitiesForTool(tool) {
+		for _, capability := range capabilitiesForTool(input.ToolMetadata, tool) {
 			forbidden[capability] = struct{}{}
 		}
 	}
@@ -435,12 +435,12 @@ func compileToolPolicy(input PlanExecutePlannerInput) []autonomy.ToolPolicyRule 
 	var rules []autonomy.ToolPolicyRule
 
 	for _, tool := range input.AllowedTools {
-		for _, capability := range capabilitiesForTool(tool) {
+		for _, capability := range capabilitiesForTool(input.ToolMetadata, tool) {
 			rules = append(rules, autonomy.ToolPolicyRule{
 				ToolPattern: tool,
 				Decision:    autonomy.PolicyAllow,
 				Capability:  capability,
-				SideEffect:  sideEffectForTool(tool),
+				SideEffect:  sideEffectForTool(input.ToolMetadata, tool),
 				Source:      "contractcompile.plan_execute_planner.report_only",
 				ReasonCode:  "declared_visible_tool_allowed_report_only",
 			})
@@ -448,12 +448,12 @@ func compileToolPolicy(input PlanExecutePlannerInput) []autonomy.ToolPolicyRule 
 	}
 
 	for _, tool := range input.ForbiddenTools {
-		for _, capability := range capabilitiesForTool(tool) {
+		for _, capability := range capabilitiesForTool(input.ToolMetadata, tool) {
 			rules = append(rules, autonomy.ToolPolicyRule{
 				ToolPattern: tool,
 				Decision:    autonomy.PolicyReject,
 				Capability:  capability,
-				SideEffect:  sideEffectForTool(tool),
+				SideEffect:  sideEffectForTool(input.ToolMetadata, tool),
 				Source:      "contractcompile.plan_execute_planner.report_only",
 				ReasonCode:  "declared_hidden_tool_forbidden_report_only",
 			})

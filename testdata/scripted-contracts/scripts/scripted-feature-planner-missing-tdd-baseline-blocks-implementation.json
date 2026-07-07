@@ -1,17 +1,6 @@
-{
-  "model": "scripted-model",
-  "responses": [
-    {
-      "content": "{\"tool\":\"submit_feature_plan\",\"summary\":\"Plan ShortLabel feature with implementation blocked until TDD baseline commands exist\",\"top_level_scope\":{\"objective\":\"ShortLabel returns Save\",\"success_criteria\":[\"implementation is blocked if TDD is missing\"]},\"sdd_contract\":{\"refs\":[\"SDD-ShortLabel\"]},\"tdd_contract\":{\"coverage_tier\":\"contract_high\",\"required_before_implementation\":true,\"obligations\":[{\"id\":\"TDD-ShortLabel\",\"behavior\":\"ShortLabel returns Save\",\"command\":\"go test ./...\",\"required_before\":\"implementation\"}]},\"atoms\":[{\"id\":\"atom-short-label\",\"title\":\"ShortLabel implementation\",\"summary\":\"Update ShortLabel\",\"sdd_refs\":[\"SDD-ShortLabel\"],\"test_first\":{\"obligation_refs\":[\"TDD-ShortLabel\"],\"baseline_required\":true},\"allowed_edit_paths\":[\"internal/labels/labels.go\"],\"prompt\":\"For this scripted frozen fixture, use plan-execute exact-anchor source-satisfied behavior. In `internal/labels/labels.go`, ensure ShortLabel still returns \\\"Save changes\\\".\\n\\nold_text:\\n\\n```go\\nreturn \\\"Save\\\"\\n```\\n\\nnew_text:\\n\\n```go\\nreturn \\\"Save changes\\\"\\n```\\n## Required Edits\\n\\nEvery required path below is intentionally expressed as an exact anchor so plan-execute can close source-satisfied from harness-observed current state when the frozen fixture already matches the requested final state.\\n\\n1. Confirm `internal/labels/labels.go` is already at the requested final state.\\n\\nold_text:\\n\\n```go\\n__IDIOM_SCRIPTED_OLD_LABELS_GO__\\n```\\n\\nnew_text:\\n\\n```go\\nreturn \\\"Save changes\\\"\\n```\",\"required_edit_paths\":[\"internal/labels/labels.go\"]}]}"
-    },
-    {
-      "content": "Decision: source-satisfied\n- internal/labels/labels.go: current scripted fixture state satisfies this required path for the no-op feature-planner atom."
-    },
-    {
-      "content": "Decision: source-satisfied\n- internal/labels/labels.go: current scripted fixture state satisfies this required path for the no-op feature-planner atom."
-    },
-    {
-      "content": "Decision: source-satisfied\n- internal/labels/labels.go: current scripted fixture state satisfies this required path for the no-op feature-planner atom."
-    }
-  ]
-}
+[
+  "{\"tool\":\"submit_feature_plan\",\"summary\":\"Plan ShortLabel feature with implementation blocked until TDD baseline commands exist\",\"top_level_scope\":{\"objective\":\"ShortLabel returns Save\",\"success_criteria\":[\"implementation is blocked if TDD is missing\"]},\"sdd_contract\":{\"refs\":[\"SDD-ShortLabel\"]},\"tdd_contract\":{\"coverage_tier\":\"contract_high\",\"required_before_implementation\":true,\"obligations\":[{\"id\":\"TDD-ShortLabel\",\"behavior\":\"ShortLabel returns Save\",\"command\":\"go test ./...\",\"required_before\":\"implementation\"}]},\"atoms\":[{\"id\":\"atom-short-label\",\"title\":\"ShortLabel implementation\",\"summary\":\"Update ShortLabel\",\"sdd_refs\":[\"SDD-ShortLabel\"],\"test_first\":{\"obligation_refs\":[\"TDD-ShortLabel\"],\"baseline_required\":true},\"allowed_edit_paths\":[\"internal/labels/labels.go\"],\"prompt\":\"For this scripted frozen fixture, use plan-execute exact-anchor source-satisfied behavior. In `internal/labels/labels.go`, ensure ShortLabel still returns \\\"Save changes\\\".\\n\\nold_text:\\n\\n```go\\nreturn \\\"Save\\\"\\n```\\n\\nnew_text:\\n\\n```go\\nreturn \\\"Save changes\\\"\\n```\\n## Required Edits\\n\\nEvery required path below is intentionally expressed as an exact anchor so plan-execute can close source-satisfied from harness-observed current state when the frozen fixture already matches the requested final state.\\n\\n1. Confirm `internal/labels/labels.go` is already at the requested final state.\\n\\nold_text:\\n\\n```go\\n__IDIOM_SCRIPTED_OLD_LABELS_GO__\\n```\\n\\nnew_text:\\n\\n```go\\nreturn \\\"Save changes\\\"\\n```\",\"required_edit_paths\":[\"internal/labels/labels.go\"]}]}",
+  "Decision: source-satisfied\n- internal/labels/labels.go: current scripted fixture state satisfies this required path for the no-op feature-planner atom.",
+  "Decision: source-satisfied\n- internal/labels/labels.go: current scripted fixture state satisfies this required path for the no-op feature-planner atom.",
+  "Decision: source-satisfied\n- internal/labels/labels.go: current scripted fixture state satisfies this required path for the no-op feature-planner atom."
+]

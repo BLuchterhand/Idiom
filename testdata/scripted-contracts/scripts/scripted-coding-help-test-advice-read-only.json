@@ -1,14 +1,5 @@
-{
-  "model": "scripted-model",
-  "responses": [
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"inspect ShortLabel implementation\",\"why_not_answering\":\"need source evidence before giving coding advice\"}"
-    },
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels_test.go\",\"named_gap\":\"inspect existing test expectation\",\"why_not_answering\":\"need current test evidence before suggesting a change\"}"
-    },
-    {
-      "content": "internal/labels/labels_test.go has TestShortLabel calling ShortLabel and expects \"Save\". internal/labels/labels.go implementation still returns \"Save changes\", so the test covers the shortened-label expectation but the implementation does not satisfy it. I did not edit files or run shell commands."
-    }
-  ]
-}
+[
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"inspect ShortLabel implementation\",\"why_not_answering\":\"need source evidence before giving coding advice\"}",
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels_test.go\",\"named_gap\":\"inspect existing test expectation\",\"why_not_answering\":\"need current test evidence before suggesting a change\"}",
+  "internal/labels/labels_test.go has TestShortLabel calling ShortLabel and expects \"Save\". internal/labels/labels.go implementation still returns \"Save changes\", so the test covers the shortened-label expectation but the implementation does not satisfy it. I did not edit files or run shell commands."
+]

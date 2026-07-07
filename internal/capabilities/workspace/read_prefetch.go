@@ -151,7 +151,7 @@ func (m *Manager) prefetchReadFile(requested string, opts PrefetchReadOptions, r
 		return ToolResult{}, "", 0, 0, false, PrefetchSkippedPath{Path: requested, Reason: "resolve_failed"}
 	}
 
-	displayPath := m.displayPath(path)
+	displayPath := m.pathAccess.DisplayPath(path)
 	kind := classifySearchFilePath(displayPath)
 
 	switch kind {
@@ -239,6 +239,7 @@ func (m *Manager) prefetchReadFile(requested string, opts PrefetchReadOptions, r
 		Tool:    ToolNamePrefetch,
 		Summary: summary,
 		Output:  strings.TrimRight(b.String(), "\n"),
+		Paths:   []string{displayPath},
 	}, displayPath, outputBytes, len(lines), truncated, PrefetchSkippedPath{}
 }
 

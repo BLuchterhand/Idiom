@@ -14,7 +14,7 @@ func (m *Manager) productEfforts(req ToolRequest) ToolResult {
 		root = productworkflow.DefaultProductEffortsRoot
 	}
 
-	absRoot, err := m.resolvePath(root, req.Workdir)
+	absRoot, err := m.pathAccess.ResolvePath(root, req.Workdir)
 	if err != nil {
 		return ToolResult{Tool: "product_efforts", Summary: "Product efforts rejected", Error: err.Error()}
 	}
@@ -56,7 +56,7 @@ func (m *Manager) productStatus(req ToolRequest) ToolResult {
 		}
 	}
 
-	absRoot, err := m.resolvePath(effortRoot, req.Workdir)
+	absRoot, err := m.pathAccess.ResolvePath(effortRoot, req.Workdir)
 	if err != nil {
 		return ToolResult{
 			Tool:    "product_status",

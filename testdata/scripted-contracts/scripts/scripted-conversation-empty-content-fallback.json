@@ -1,17 +1,6 @@
-{
-  "model": "scripted-model",
-  "responses": [
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"docs/evidence.md\",\"named_gap\":\"inspect the local evidence policy before answering\",\"why_not_answering\":\"need source evidence for the evidence question\"}"
-    },
-    {
-      "content": "In `docs/evidence.md`, evidence means bounded, auditable facts from source-body reads, logs, tool summaries, changed paths, verification commands, and explicit uncertainty."
-    },
-    {
-      "content": "{\"tool\":\"search_content\",\"path\":\"docs\",\"pattern\":\"git operations\",\"named_gap\":\"check whether git operations are evidence in this policy\",\"why_not_answering\":\"need the git-specific evidence rule before answering\"}"
-    },
-    {
-      "content": "Yes, git operations are useful when they are evidence-producing probes, not hidden mutation gates. `docs/evidence.md` says history, blame, and diff checks can reduce churn when they answer a named question about intended change paths, while write permission, verification, and final answer readiness stay separate contracts. You can ask a follow-up question."
-    }
-  ]
-}
+[
+  "{\"tool\":\"read_file\",\"path\":\"docs/evidence.md\",\"named_gap\":\"inspect the local evidence policy before answering\",\"why_not_answering\":\"need source evidence for the evidence question\"}",
+  "In `docs/evidence.md`, evidence means bounded, auditable facts from source-body reads, logs, tool summaries, changed paths, verification commands, and explicit uncertainty.",
+  "{\"tool\":\"search_content\",\"path\":\"docs\",\"pattern\":\"git operations\",\"named_gap\":\"check whether git operations are evidence in this policy\",\"why_not_answering\":\"need the git-specific evidence rule before answering\"}",
+  "Yes, git operations are useful when they are evidence-producing probes, not hidden mutation gates. `docs/evidence.md` says history, blame, and diff checks can reduce churn when they answer a named question about intended change paths, while write permission, verification, and final answer readiness stay separate contracts. You can ask a follow-up question."
+]

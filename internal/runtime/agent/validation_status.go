@@ -7,6 +7,7 @@ import (
 	"idiom/internal/capabilities/workspace"
 	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/platform/textutil"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -23,17 +24,17 @@ func validationStatusQuestionForBrief(brief workerruntime.WorkerRuntimeBrief) va
 	}
 
 	shape := validationStatusQuestionShape{}
-	shape.AsksVerification = agentutil.ContainsAny(text,
+	shape.AsksVerification = ContainsAny(text,
 		"did you verify", "did you validate", "did you test",
 		"have you verified", "have you validated", "have you tested",
 		"was this verified", "was this validated", "verification status",
 	)
-	shape.AsksBuild = agentutil.ContainsAny(text,
+	shape.AsksBuild = ContainsAny(text,
 		"still builds", "it builds", "build still", "verify that it builds",
 		"validated that it builds", "build passes", "build passed",
 		"go build", "compile", "compiles",
 	)
-	shape.AsksTestAdded = agentutil.ContainsAny(text,
+	shape.AsksTestAdded = ContainsAny(text,
 		"added a test", "add a test", "added tests", "add tests",
 		"test to cover", "tests to cover", "test coverage", "covered by a test",
 	)
@@ -100,7 +101,7 @@ func (r *Runner) validationStatusAnswerCanUseLedgerEvidence(answer string, resul
 func validationStatusPathBackedByLedger(rawPath string, canonicalPath string, results []workspace.ToolResult) bool {
 	candidates := map[string]struct{}{}
 	for _, path := range []string{rawPath, canonicalPath} {
-		if normalized := agentutil.NormalizeRunnerPath(path); normalized != "" {
+		if normalized := NormalizeRunnerPath(path); normalized != "" {
 			candidates[normalized] = struct{}{}
 		}
 	}
@@ -162,18 +163,18 @@ func (r *Runner) validationStatusTerminalRecoveryAnswer(results []workspace.Tool
 }
 
 func validationAnswerMentionsBuildStatus(lower string) bool {
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		"build", "builds", "built", "compile", "compiles", "compiled",
 		"go test", "go build", "test command", "build command",
 	)
 }
 
 func validationAnswerMentionsTestStatus(lower string) bool {
-	return agentutil.ContainsAny(lower, "test", "tests", "coverage")
+	return ContainsAny(lower, "test", "tests", "coverage")
 }
 
 func validationAnswerMentionsValidationLedger(lower string) bool {
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		"verification", "verified", "validate", "validated", "source_sanity",
 		"source sanity", "build", "test", "coverage", "changed path",
 	)
@@ -187,7 +188,7 @@ func validationAnswerClaimsBuildPassed(lower string) bool {
 		return false
 	}
 
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		"still builds", "build passed", "build passes", "build succeeded",
 		"build succeeds", "go build passed", "compiled successfully",
 		"tests passed", "test passed", "go test passed",
@@ -199,7 +200,7 @@ func validationAnswerClaimsTestAdded(lower string) bool {
 		return false
 	}
 
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		"added a test", "added tests", "test added", "tests added",
 		"created a test", "new test", "test coverage added",
 	)
@@ -212,7 +213,7 @@ func validationAnswerClaimsBroadVerificationPassed(lower string) bool {
 		return false
 	}
 
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		"verified", "validated", "verification passed",
 	)
 }
@@ -223,7 +224,7 @@ func validationAnswerClaimsSourceSanityPassed(lower string) bool {
 		return false
 	}
 
-	return agentutil.ContainsAny(lower,
+	return ContainsAny(lower,
 		"source_sanity passed", "source sanity passed", "source sanity succeeded",
 	)
 }
@@ -245,7 +246,7 @@ func validationAnswerNegatesNear(lower string, term string) bool {
 	}
 	window := lower[start : idx+len(term)]
 
-	return agentutil.ContainsAny(window, "no ", "not ", "did not ", "didn't ", "was not ", "wasn't ", "without ")
+	return ContainsAny(window, "no ", "not ", "did not ", "didn't ", "was not ", "wasn't ", "without ")
 }
 
 func hasSuccessfulBuildOrTestVerification(results []workspace.ToolResult) bool {
@@ -323,7 +324,7 @@ func latestObservedVerificationSummary(results []workspace.ToolResult) (string, 
 			return "verification passed", true
 		}
 
-		if strings.TrimSpace(result.Tool) == workspace.ToolNameSourceSanity || workspace.IsDiagnosticToolName(result.Tool) {
+		if strings.TrimSpace(result.Tool) == workspace.ToolNameSourceSanity || semanticlanguage.IsDiagnosticToolName(result.Tool) {
 			if summary := strings.TrimSpace(result.Summary); summary != "" {
 				return summary, true
 			}
@@ -345,7 +346,7 @@ func validationStatusEvidencePaths(results []workspace.ToolResult) []string {
 func validationStatusEvidenceLedgerPaths(results []workspace.ToolResult) []string {
 	var paths []string
 	add := func(path string) {
-		normalized := agentutil.NormalizeRunnerPath(path)
+		normalized := NormalizeRunnerPath(path)
 		if normalized == "" {
 			return
 		}
@@ -360,10 +361,10 @@ func validationStatusEvidenceLedgerPaths(results []workspace.ToolResult) []strin
 		if strings.TrimSpace(result.Error) != "" {
 			continue
 		}
-		if strings.TrimSpace(result.Tool) != workspace.ToolNameSourceSanity && !workspace.IsDiagnosticToolName(result.Tool) {
+		if strings.TrimSpace(result.Tool) != workspace.ToolNameSourceSanity && !semanticlanguage.IsDiagnosticToolName(result.Tool) {
 			continue
 		}
-		for _, path := range agentutil.ReadPathsFromToolResult(result) {
+		for _, path := range ReadPathsFromToolResult(result) {
 			add(path)
 		}
 		for _, path := range sourceGroundingMentionedPaths(result.Summary + "\n" + result.Output) {

@@ -324,7 +324,7 @@ func TestFinalAnswerAcceptanceAcceptedOverrideClearsTypedViolations(t *testing.T
 		t.Fatalf("test setup expected violation: %#v", rejected.ContractAssessment)
 	}
 
-	accepted := finalAnswerAcceptanceWithTerminalOverride(rejected, finalAnswerAcceptanceAccepted, "", "host_read_only_closeout")
+	accepted := finalAnswerAcceptanceWithTerminalOverride(rejected, finalAnswerAcceptanceAccepted, "", "read_only_terminal_recovery")
 	if len(accepted.ContractAssessment.Violations) > 0 {
 		t.Fatalf("accepted override must clear stale typed violations: %#v", accepted.ContractAssessment)
 	}
@@ -391,30 +391,6 @@ func TestTurnAssessmentFromToolAuthorizationPolicy(t *testing.T) {
 				t.Fatalf("unexpected authorization violation: %#v", violation)
 			}
 		})
-	}
-}
-
-func TestTurnAssessmentFromVerificationPolicy(t *testing.T) {
-	required := verificationPolicyDecision(autonomy.PolicyReject, "verification_required_after_writes", "pending")
-	requiredAssessment := turnAssessmentFromVerificationPolicy(required)
-	if !requiredAssessment.HasViolation(turnViolationPostWriteVerificationRequired) {
-		t.Fatalf("verification required should create typed violation: %#v", requiredAssessment)
-	}
-	if violation := requiredAssessment.Violations[0]; violation.PackID != autonomy.ContractPackVerificationPostWrite ||
-		violation.InvariantID != verificationPolicyInvariantPostWrite ||
-		violation.ReasonCode != turnReasonCode(required.ReasonCode) {
-		t.Fatalf("unexpected required verification violation: %#v", violation)
-	}
-
-	failed := verificationPolicyDecision(autonomy.PolicyReject, "verification_result_failed", "failed")
-	failedAssessment := turnAssessmentFromVerificationPolicy(failed)
-	if !failedAssessment.HasViolation(turnViolationPostWriteVerificationFailed) {
-		t.Fatalf("failed verification should create typed violation: %#v", failedAssessment)
-	}
-
-	allowed := verificationPolicyDecision(autonomy.PolicyAllow, "verification_result_passed", "passed")
-	if assessment := turnAssessmentFromVerificationPolicy(allowed); len(assessment.Violations) > 0 {
-		t.Fatalf("allowed verification must not create violations: %#v", assessment)
 	}
 }
 

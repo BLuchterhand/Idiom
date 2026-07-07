@@ -17,13 +17,13 @@ import (
 )
 
 func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolName string) ToolResult {
-	workdir, err := m.resolveReadWorkdir(req.Workdir)
+	workdir, err := m.pathAccess.ResolveReadWorkdir(req.Workdir)
 	if err != nil {
 		return ToolResult{Tool: toolName, Summary: "Failed to resolve workdir", Error: err.Error()}
 	}
 	requestScope := strings.TrimSpace(req.Path)
-	if info, statErr := os.Stat(workdir); statErr == nil && m.selectedSystemSearchDirectoryAccess(workdir, info) && (requestScope == "" || requestScope == ".") {
-		return selectedSystemSearchDirectoryDeniedResult(toolName, m.displayPath(workdir))
+	if info, statErr := os.Stat(workdir); statErr == nil && m.pathAccess.SelectedSystemSearchDirectoryAccess(workdir, info) && (requestScope == "" || requestScope == ".") {
+		return selectedSystemSearchDirectoryDeniedResult(toolName, m.pathAccess.DisplayPath(workdir))
 	}
 
 	pattern := strings.TrimSpace(req.Pattern)
@@ -32,7 +32,7 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 	}
 
 	if scope := strings.TrimSpace(req.Path); scope != "" && scope != "." {
-		resolvedScope, err := m.resolveReadPath(scope, req.Workdir)
+		resolvedScope, err := m.pathAccess.ResolveReadPath(scope, req.Workdir)
 		if err != nil {
 			return ToolResult{Tool: toolName, Summary: "Search scope not found", Output: formatPathSuggestions(m.findPathSuggestions(scope, 5))}
 		}
@@ -50,8 +50,8 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 
 			return result
 		}
-		if info, statErr := os.Stat(resolvedScope); statErr == nil && m.selectedSystemSearchDirectoryAccess(resolvedScope, info) {
-			return selectedSystemSearchDirectoryDeniedResult(toolName, m.displayPath(resolvedScope))
+		if info, statErr := os.Stat(resolvedScope); statErr == nil && m.pathAccess.SelectedSystemSearchDirectoryAccess(resolvedScope, info) {
+			return selectedSystemSearchDirectoryDeniedResult(toolName, m.pathAccess.DisplayPath(resolvedScope))
 		}
 
 		req.Path = resolvedScope
@@ -146,7 +146,7 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 
 		absPath := filepath.Clean(filepath.Join(workdir, parts[0]))
 		handle := m.rememberPath(absPath)
-		display := m.displayPath(absPath)
+		display := m.pathAccess.DisplayPath(absPath)
 		lineNumber, _ := strconv.Atoi(parts[1])
 		rawLine := strings.TrimRight(parts[2], "\r\n")
 		renderedLine := textutil.TruncateBytes(rawLine, searchContentLineCap, lineTruncationMarker)
@@ -444,7 +444,7 @@ func (m *Manager) FileLineCount(path string) (int, bool) {
 		return 0, false
 	}
 
-	resolved, err := m.resolvePath(strings.TrimSpace(path), "")
+	resolved, err := m.pathAccess.ResolvePath(strings.TrimSpace(path), "")
 	if err != nil {
 		return 0, false
 	}

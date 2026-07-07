@@ -213,32 +213,7 @@ func LoadProductStatus(absRoot string, lintResult *LintSummaryResult) (ProductSt
 	if lintResult != nil {
 		view.CheckedFileCount = len(lintResult.CheckedFiles)
 		view.AuditStatus = lintResult.Status
-
-		sectionMap := map[string]*StatusSection{
-			"prd":          {Name: "prd", Status: ProductWorkflowStatusPass},
-			"adr":          {Name: "adr", Status: ProductWorkflowStatusPass},
-			"tdd":          {Name: "tdd", Status: ProductWorkflowStatusPass},
-			"traceability": {Name: "traceability", Status: ProductWorkflowStatusPass},
-			"reports":      {Name: "reports", Status: ProductWorkflowStatusPass},
-			"obsidian":     {Name: "obsidian", Status: ProductWorkflowStatusPass},
-			"metrics":      {Name: "metrics", Status: ProductWorkflowStatusPass},
-		}
-
-		for _, f := range lintResult.Findings {
-			sec := ClassifySection(f.Path)
-			if sec == "" {
-				continue
-			}
-
-			if s, ok := sectionMap[sec]; ok {
-				s.Status = ProductWorkflowStatusFail
-				s.FindingCount++
-			}
-		}
-
-		for _, name := range []string{"prd", "adr", "tdd", "traceability", "reports", "obsidian", "metrics"} {
-			view.Sections = append(view.Sections, *sectionMap[name])
-		}
+		view.Sections = BuildProductStatusSections(*lintResult)
 
 		for _, f := range lintResult.Findings {
 			view.Findings = append(view.Findings, StatusBlocker{

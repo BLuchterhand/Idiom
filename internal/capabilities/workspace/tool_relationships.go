@@ -12,44 +12,6 @@ type toolRelationshipEndpoint struct {
 	Symbol string
 }
 
-type callHierarchyResult struct {
-	Output        string
-	Relationships []ToolRelationship
-}
-
-func (m *Manager) pathWithinWorkspace(path string) bool {
-	_, ok := m.relativeWorkspacePath(path)
-	return ok
-}
-
-func (m *Manager) relativeWorkspacePath(path string) (string, bool) {
-	path = filepath.Clean(strings.TrimSpace(path))
-
-	root := filepath.Clean(strings.TrimSpace(m.cfg.Root))
-
-	if path == "" || root == "" {
-		return "", false
-	}
-
-	if rel, err := filepath.Rel(root, path); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") && !strings.HasPrefix(rel, `..\`) {
-		return rel, true
-	}
-
-	evaluatedRoot, rootErr := filepath.EvalSymlinks(root)
-	evaluatedPath, pathErr := filepath.EvalSymlinks(path)
-
-	if rootErr != nil || pathErr != nil {
-		return "", false
-	}
-
-	rel, err := filepath.Rel(evaluatedRoot, evaluatedPath)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, "../") || strings.HasPrefix(rel, `..\`) {
-		return "", false
-	}
-
-	return rel, true
-}
-
 func annotateLanguageRelationships(result ToolResult) ToolResult {
 	if len(result.Relationships) > 0 || strings.TrimSpace(result.Error) != "" {
 		return result

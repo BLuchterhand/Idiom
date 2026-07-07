@@ -18,7 +18,6 @@ import (
 
 	"idiom/internal/capabilities/mcp"
 	"idiom/internal/capabilities/workspace"
-	"idiom/internal/contracts/autonomy"
 	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/evidence/transcript"
 	"idiom/internal/platform/config"
@@ -242,10 +241,6 @@ type Model struct {
 	disableThinkingOverride        bool
 	forcedReadinessOpenObligations []string
 	suppressGreenfieldConfirmation bool
-	// suppressLaneSwitchConfirmation temporarily disables the lane-switch
-	// popup/headless reply for nested turns that re-enter the prompt loop
-	// after the user already chose a lane. Mirrors the greenfield analog.
-	suppressLaneSwitchConfirmation bool
 	// lastTurnSourceResults carries source-body tool results from the
 	// previous conversation turn so the next turn's source grounding gate
 	// can verify evidence paths without re-reading files.
@@ -1774,19 +1769,6 @@ func (m *Model) setContextError(message string) {
 
 func (m *Model) SetForcedTaskFamily(family string) {
 	m.forcedTaskFamily = strings.TrimSpace(family)
-	// Plan-then-execute planner phase needs the workspace manifest to
-	// swap per-edit write tools for submit_plan so the model's tool
-	// spec actually exposes the only write the planner is allowed to
-	// call. Detect via the canonical task-family constant and toggle
-	// the manager flag here, where forced family is set.
-	if m.workspace != nil {
-		switch m.forcedTaskFamily {
-		case string(autonomy.TaskFamilyPlanThenExecutePlanner), string(autonomy.TaskFamilyPlanThenExecuteReview):
-			m.workspace.SetPlanThenExecutePlannerMode(true)
-		default:
-			m.workspace.SetPlanThenExecutePlannerMode(false)
-		}
-	}
 }
 
 func (m *Model) SetPlannerOwnedVerification(enabled bool) {

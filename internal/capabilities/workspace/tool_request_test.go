@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"idiom/internal/platform/config"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 )
 
 func TestParseToolRequestExtractsFirstJSONObjectFromToolFence(t *testing.T) {
@@ -1584,7 +1585,7 @@ func TestShouldClearBroadInspectionLockRequiresRelevantSuccessfulNarrowing(t *te
 func TestStructuredNarrowingUsesSharedRegistryPredicate(t *testing.T) {
 	mgr := NewManager(testWorkspaceConfig(t))
 
-	for _, lang := range LanguageRegistry() {
+	for _, lang := range semanticlanguage.LanguageRegistry() {
 		for capability, tool := range lang.Tools {
 			req := ToolRequest{Tool: tool}
 			if !IsNarrowingRequest(req) {

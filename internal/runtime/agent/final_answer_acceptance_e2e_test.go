@@ -198,8 +198,8 @@ func TestRunnerEndToEndRejectsCodingRulesLocalizationOutsideWorkspaceEvidence(t 
 	}
 
 	bodies := strings.Join(requestBodies(), "\n---\n")
-	if !strings.Contains(bodies, badAnswer) {
-		t.Fatalf("expected bad answer attempt before repair; bodies:\n%s", bodies)
+	if strings.Contains(bodies, badAnswer) {
+		t.Fatalf("rejected bad answer leaked into repair prompt; bodies:\n%s", bodies)
 	}
 	if !strings.Contains(bodies, "internal/labels/labels.go") || !strings.Contains(bodies, "CurrentShortLabel") {
 		t.Fatalf("expected repo-local read_file source body before accepted answer; bodies:\n%s", bodies)

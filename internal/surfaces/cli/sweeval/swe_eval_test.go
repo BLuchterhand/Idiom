@@ -2,12 +2,15 @@ package sweeval
 
 import (
 	"bytes"
+	"encoding/json"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"idiom/internal/evidence/eval"
 )
@@ -31,6 +34,214 @@ func sweEvalTestRepoRoot(t *testing.T) string {
 		}
 
 		dir = parent
+	}
+}
+
+func startScriptedModelServer(t *testing.T, script string) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "script.json")
+	portFile := filepath.Join(dir, "port.txt")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o644); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	var stderr bytes.Buffer
+	cmd := exec.Command("python3",
+		filepath.Join(sweEvalTestRepoRoot(t), "scripts", "scripted-model-server.py"),
+		"--script", scriptPath,
+		"--port-file", portFile,
+	)
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start scripted model server: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+
+	var baseURL string
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(portFile)
+		if err == nil && strings.TrimSpace(string(data)) != "" {
+			baseURL = strings.TrimSpace(string(data))
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if baseURL == "" {
+		t.Fatalf("scripted model server did not report a port; stderr=%s", stderr.String())
+	}
+
+	return baseURL
+}
+
+func scriptedModelIDs(t *testing.T, baseURL string) []string {
+	t.Helper()
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(baseURL + "/v1/models")
+	if err != nil {
+		t.Fatalf("get models: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("models status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var payload struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode models response: %v", err)
+	}
+
+	var ids []string
+	for _, model := range payload.Data {
+		ids = append(ids, model.ID)
+	}
+	return ids
+}
+
+func scriptedModelContent(t *testing.T, baseURL string) string {
+	t.Helper()
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	req, err := http.NewRequest(
+		http.MethodPost,
+		baseURL+"/v1/chat/completions",
+		strings.NewReader(`{"model":"scripted-model","messages":[{"role":"user","content":"next"}]}`),
+	)
+	if err != nil {
+		t.Fatalf("build chat request: %v", err)
+	}
+	req.Header.Set("content-type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("post chat completion: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("chat status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var payload struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode chat completion: %v", err)
+	}
+	if len(payload.Choices) != 1 {
+		t.Fatalf("chat choices = %#v, want one choice", payload.Choices)
+	}
+	return payload.Choices[0].Message.Content
+}
+
+func TestScriptedModelServerDefaultsMissingModel(t *testing.T) {
+	baseURL := startScriptedModelServer(t, `{"responses":[{"content":"ok"}]}`)
+	if got := scriptedModelIDs(t, baseURL); !slices.Equal(got, []string{"scripted-model"}) {
+		t.Fatalf("models response = %#v, want scripted-model default", got)
+	}
+}
+
+func TestScriptedModelServerAcceptsCompactResponseFormats(t *testing.T) {
+	tests := []struct {
+		name    string
+		script  string
+		content string
+	}{
+		{
+			name:    "legacy object envelope",
+			script:  `{"responses":[{"content":"legacy"}]}`,
+			content: "legacy",
+		},
+		{
+			name:    "top level array of objects",
+			script:  `[{"content":"array object"}]`,
+			content: "array object",
+		},
+		{
+			name:    "wrapped string response",
+			script:  `{"responses":["wrapped string"]}`,
+			content: "wrapped string",
+		},
+		{
+			name:    "top level array of strings",
+			script:  `["array string"]`,
+			content: "array string",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			baseURL := startScriptedModelServer(t, tt.script)
+			if got := scriptedModelContent(t, baseURL); got != tt.content {
+				t.Fatalf("scripted content = %q, want %q", got, tt.content)
+			}
+		})
+	}
+}
+
+func TestScriptedContractResponseScriptsRemainContentOnly(t *testing.T) {
+	paths, err := filepath.Glob(filepath.Join(sweEvalTestRepoRoot(t), "testdata", "scripted-contracts", "scripts", "*.json"))
+	if err != nil {
+		t.Fatalf("glob scripted response scripts: %v", err)
+	}
+	if len(paths) == 0 {
+		t.Fatal("no scripted response scripts found")
+	}
+
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+
+		var script any
+		if err := json.Unmarshal(data, &script); err != nil {
+			t.Fatalf("decode %s: %v", path, err)
+		}
+
+		var responses []any
+		switch value := script.(type) {
+		case []any:
+			responses = value
+		case map[string]any:
+			if len(value) != 1 {
+				t.Fatalf("%s has top-level keys beyond responses: %#v", path, value)
+			}
+			rawResponses, ok := value["responses"].([]any)
+			if !ok {
+				t.Fatalf("%s responses must be an array, got %#v", path, value["responses"])
+			}
+			responses = rawResponses
+		default:
+			t.Fatalf("%s must be a response array or object envelope, got %#v", path, script)
+		}
+
+		for i, response := range responses {
+			switch value := response.(type) {
+			case string:
+				continue
+			case map[string]any:
+				content, ok := value["content"].(string)
+				if !ok || len(value) != 1 || content == "" {
+					t.Fatalf("%s response %d must contain only non-empty content, got %#v", path, i, value)
+				}
+			default:
+				t.Fatalf("%s response %d must be content string or object, got %#v", path, i, response)
+			}
+		}
 	}
 }
 
@@ -1051,6 +1262,84 @@ func TestScriptedContractSuiteLintsClean(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Lint: PASS") {
 		t.Fatalf("expected `Lint: PASS` in suite report, got:\n%s", stdout.String())
 	}
+}
+
+func TestScriptedContractSuiteDefaultsExpandPinnedTaskSemantics(t *testing.T) {
+	suitePath := filepath.Join(sweEvalTestRepoRoot(t), "testdata", "scripted-contracts", "suite.json")
+
+	suite, err := eval.LoadSWESuite(suitePath)
+	if err != nil {
+		t.Fatalf("load scripted contract suite: %v", err)
+	}
+
+	taskByID := map[string]eval.SWETask{}
+	for _, task := range suite.Tasks {
+		taskByID[task.ID] = task
+	}
+
+	if len(suite.Tasks) != 79 {
+		t.Fatalf("scripted contract suite task count = %d, want 79", len(suite.Tasks))
+	}
+
+	scriptPaths, err := filepath.Glob(filepath.Join(sweEvalTestRepoRoot(t), "testdata", "scripted-contracts", "scripts", "*.json"))
+	if err != nil {
+		t.Fatalf("glob scripted response scripts: %v", err)
+	}
+	scripts := map[string]bool{}
+	for _, path := range scriptPaths {
+		scripts[strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))] = true
+	}
+
+	for _, task := range suite.Tasks {
+		if task.Fixture == "" {
+			t.Fatalf("%s fixture must be explicit or expanded from defaults", task.ID)
+		}
+		assertTaskHasTags(t, task, "deterministic", "fake-model")
+		assertTaskHasRunEvents(t, task, "idiom.live_contract.rollback")
+		if !scripts[task.ID] {
+			t.Fatalf("%s missing scripted response file", task.ID)
+		}
+	}
+
+	extraScripts := []string{}
+	for id := range scripts {
+		if _, ok := taskByID[id]; !ok {
+			extraScripts = append(extraScripts, id)
+		}
+	}
+	slices.Sort(extraScripts)
+	if !slices.Equal(extraScripts, []string{
+		"scripted-feature-planner-tui-adr-body-persistence",
+		"scripted-feature-planner-tui-prd-conversation",
+	}) {
+		t.Fatalf("unexpected scripted response files without suite tasks: %#v", extraScripts)
+	}
+
+	for _, id := range []string{
+		"scripted-chat-no-workspace-tools",
+		"scripted-implement-short-label",
+		"scripted-plan-execute-authorized-new-file",
+	} {
+		task := taskByID[id]
+		if task.ID == "" {
+			t.Fatalf("%s task missing", id)
+		}
+		if task.Fixture != "fixtures/frozen-label-repo" {
+			t.Fatalf("%s fixture = %q, want frozen-label default", id, task.Fixture)
+		}
+		assertTaskHasTags(t, task, "deterministic", "fake-model")
+		assertTaskHasRunEvents(t, task, "idiom.live_contract.rollback")
+	}
+
+	temp := taskByID["scripted-implement-delete-file-empty-write-recovery"]
+	if temp.ID == "" {
+		t.Fatal("temp-file task missing")
+	}
+	if temp.Fixture != "fixtures/temp-file-repo" {
+		t.Fatalf("explicit fixture override = %q, want temp fixture", temp.Fixture)
+	}
+	assertTaskHasTags(t, temp, "deterministic", "fake-model")
+	assertTaskHasRunEvents(t, temp, "idiom.live_contract.rollback")
 }
 
 func TestScriptedContractGenericHarnessClassTasksPinned(t *testing.T) {

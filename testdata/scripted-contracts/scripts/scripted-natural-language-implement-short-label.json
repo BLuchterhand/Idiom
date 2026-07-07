@@ -1,14 +1,5 @@
-{
-  "model": "scripted-model",
-  "responses": [
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"confirm current ShortLabel body\",\"why_not_answering\":\"need source-body evidence before editing\"}"
-    },
-    {
-      "content": "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten save label\"}"
-    },
-    {
-      "content": "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/labels.go\"}"
-    }
-  ]
-}
+[
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"confirm current ShortLabel body\",\"why_not_answering\":\"need source-body evidence before editing\"}",
+  "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten save label\"}",
+  "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/labels.go\"}"
+]

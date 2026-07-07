@@ -4,6 +4,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	semanticlanguage "idiom/internal/repository/semantic/language"
 )
 
 func TestBuildToolManifestSuppressesPlaceholderRequests(t *testing.T) {
@@ -117,7 +119,7 @@ func TestToolManifestToolsDerivesLanguageMembershipFromRegistry(t *testing.T) {
 		seen[tool]++
 	}
 
-	for _, lang := range LanguageRegistry() {
+	for _, lang := range semanticlanguage.LanguageRegistry() {
 		for capability, tool := range lang.Tools {
 			if seen[tool] != 1 {
 				t.Fatalf("%s tool %s for %s manifest count = %d, want 1", lang.Name, tool, capability, seen[tool])

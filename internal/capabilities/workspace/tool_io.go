@@ -155,6 +155,7 @@ type ToolResult struct {
 	Output        string
 	Error         string
 	Failure       error              `json:"-"`
+	Paths         []string           `json:"paths,omitempty"`
 	PrecisionTier string             `json:"precision_tier,omitempty"`
 	Relationships []ToolRelationship `json:"relationships,omitempty"`
 	PayloadType   string             `json:"payload_type,omitempty"`

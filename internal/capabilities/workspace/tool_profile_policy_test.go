@@ -80,7 +80,7 @@ func TestToolAllowedForDiscoveryProfileDeniesDescriptorLocalArtifactTools(t *tes
 }
 
 func TestDiscoveryProfileLocalArtifactQueryProjectsToolSurfaceMetadata(t *testing.T) {
-	for _, spec := range builtInToolSurfaceCatalog.Specs() {
+	for _, spec := range builtInToolSurfaceCatalog.specsSnapshot() {
 		if got := builtInToolSurfaceDiscoveryLocalArtifacts(spec.Tool); got != spec.DiscoveryLocalArtifacts {
 			t.Fatalf("%s local artifact query = %v, want descriptor metadata %v", spec.Tool, got, spec.DiscoveryLocalArtifacts)
 		}
@@ -103,7 +103,7 @@ func TestToolAllowedForMCPDiscoveryProfileAllowsDescriptorLocalArtifactTools(t *
 
 func discoveryLocalArtifactToolsFromCatalog() []string {
 	var tools []string
-	for _, spec := range builtInToolSurfaceCatalog.Specs() {
+	for _, spec := range builtInToolSurfaceCatalog.specsSnapshot() {
 		if spec.DiscoveryLocalArtifacts {
 			tools = append(tools, spec.Tool)
 		}

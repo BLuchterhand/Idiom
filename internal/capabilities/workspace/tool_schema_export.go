@@ -228,6 +228,13 @@ func toolSchemaExportProfiles() map[string][]string {
 		}
 	}
 
+	for _, entry := range BuildToolManifest(nil) {
+		tool := strings.TrimSpace(entry.Tool)
+		if tool != "" && len(profiles[tool]) == 0 {
+			profiles[tool] = append(profiles[tool], "metadata")
+		}
+	}
+
 	for tool, names := range profiles {
 		profiles[tool] = textutil.Sorted(names)
 	}

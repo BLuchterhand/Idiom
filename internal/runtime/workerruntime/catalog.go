@@ -7,33 +7,11 @@ import (
 	"idiom/internal/contracts/autonomy"
 )
 
-const (
-	requiredEvidenceGitHistoryRationale = RequiredEvidenceGitHistoryRationale
-	requiredToolGitHistoryLookup        = "history_range_or_history_symbol"
-)
-
-type ToolCapabilityProfile string
-
-const (
-	CapabilityConversationReadOnly     ToolCapabilityProfile = "conversation_read_only"
-	CapabilityReadOnlyDiscovery        ToolCapabilityProfile = "read_only_discovery"
-	CapabilityDebugLogInvestigator     ToolCapabilityProfile = "debug_log_investigator"
-	CapabilityVerificationOnly         ToolCapabilityProfile = "verification_only"
-	CapabilityLocateOnly               ToolCapabilityProfile = "locate_only"
-	CapabilityPlanSubmissionPlanner    ToolCapabilityProfile = "plan_submission_planner"
-	CapabilityPlanSubmissionReview     ToolCapabilityProfile = "plan_submission_review"
-	CapabilityArtifactDistiller        ToolCapabilityProfile = "artifact_distiller"
-	CapabilityGuardedWrite             ToolCapabilityProfile = "guarded_write"
-	CapabilityIsolatedWrite            ToolCapabilityProfile = "isolated_write"
-	CapabilityImplementationScopedEdit ToolCapabilityProfile = "implementation_scoped_edit"
-)
-
 type RuntimeContractSpec struct {
 	TaskFamily           autonomy.TaskFamilyID
 	Contract             RuntimeContractID
 	PermissionProfile    PermissionProfileID
-	ToolProfile          ToolCapabilityProfile
-	ForbiddenTools       []string
+	ToolProfile          workspace.ToolSurfaceProfile
 	RequiredEvidence     []EvidenceRequirementID
 	RequiredTools        []string
 	ReadinessGate        []ReadinessGateID
@@ -55,8 +33,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			TaskFamily:           autonomy.TaskFamilyArtifactFinalAnswer,
 			Contract:             ContractArtifactFinalAnswer,
 			PermissionProfile:    PermissionConversationOnly,
-			ToolProfile:          CapabilityConversationReadOnly,
-			ForbiddenTools:       append(append(workspace.WorkspaceWriteToolNames(), workspace.ToolNameTask, workspace.ToolNameShell), readOnlyDiscoveryToolNames()...),
+			ToolProfile:          workspace.ToolSurfaceProfileConversationReadOnly,
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceArtifactBodyOrTypedBlocker},
 			VerificationContract: VerificationNotRequiredArtifactFinal,
 			StopConditions:       []StopConditionID{StopArtifactBodyReturned, StopBlockedByMissingInformation},
@@ -67,8 +44,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			TaskFamily:           autonomy.TaskFamilyArtifactDistiller,
 			Contract:             ContractEditIntentDistill,
 			PermissionProfile:    PermissionConversationOnly,
-			ToolProfile:          CapabilityArtifactDistiller,
-			ForbiddenTools:       append(append(workspace.WorkspaceWriteToolNames(), workspace.ToolNameTask, workspace.ToolNameTaskLedger, workspace.ToolNameShell, workspace.ToolNameSubmitPlan), readOnlyDiscoveryToolNames()...),
+			ToolProfile:          workspace.ToolSurfaceProfileArtifactDistiller,
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceRawOutputParserFailure, RequiredEvidenceActiveMutationContract, RequiredEvidenceRequiredEditScope},
 			VerificationContract: VerificationNotRequiredNonExecutable,
 			StopConditions:       []StopConditionID{StopEditIntentOrTypedBlocker},
@@ -79,7 +55,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			TaskFamily:           autonomy.TaskFamilyConversation,
 			Contract:             ContractDirectAnswer,
 			PermissionProfile:    PermissionReadOnlyWorkspace,
-			ToolProfile:          CapabilityConversationReadOnly,
+			ToolProfile:          workspace.ToolSurfaceProfileConversationReadOnly,
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceAnswerAddressesUserRequest},
 			SearchPolicy:         []SearchPolicyID{SearchPolicyAnswerFromVisibleContextWhenSufficient, SearchPolicyForRepoSpecificQuestionsUseOneEfficientAllowedPath, SearchPolicyPreferBoundedSourceReadsOverBroadScans, SearchPolicyStopAfterEnoughEvidenceToAnswer},
 			VerificationContract: VerificationNotRequiredReadOnlyLane,
@@ -91,8 +67,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			TaskFamily:           autonomy.TaskFamilyVerificationOnly,
 			Contract:             ContractDirectAnswer,
 			PermissionProfile:    PermissionReadOnlyVerificationShell,
-			ToolProfile:          CapabilityVerificationOnly,
-			ForbiddenTools:       append(append([]string(nil), workspace.WorkspaceWriteToolNames()...), workspace.ToolNameTask),
+			ToolProfile:          workspace.ToolSurfaceProfileVerificationOnly,
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceVerificationCommand, RequiredEvidencePassFailStatus},
 			RequiredTools:        []string{workspace.ToolNameShell},
 			ReadinessGate:        []ReadinessGateID{ReadinessVerificationStatusReported},
@@ -106,7 +81,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			TaskFamily:           autonomy.TaskFamilyLocate,
 			Contract:             ContractLocateTargets,
 			PermissionProfile:    PermissionReadOnlyWorkspace,
-			ToolProfile:          CapabilityLocateOnly,
+			ToolProfile:          workspace.ToolSurfaceProfileLocateOnly,
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceExactWorkspacePath, RequiredEvidenceLineOrSnippet, RequiredEvidenceTargetMatchReason},
 			SearchPolicy:         []SearchPolicyID{SearchPolicyPreferCodeNavigateOrContextQueryForSymbolLocation, SearchPolicyUseSearchContentAsFallbackForLiteralMatches, SearchPolicyStopWhenExactTargetIsSupported},
 			VerificationContract: VerificationNotRequiredReadOnlyLane,
@@ -117,9 +92,9 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			TaskFamily:           taskFamilyID(family),
 			Contract:             ContractImplementationResult,
 			PermissionProfile:    PermissionAnalysisReadOnlyThenWrite,
-			ToolProfile:          CapabilityGuardedWrite,
-			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceTargetLocation, requiredEvidenceGitHistoryRationale, RequiredEvidenceChangedPaths, RequiredEvidenceVerificationStatus},
-			RequiredTools:        []string{requiredToolGitHistoryLookup, "edit_file_or_apply_patch", "source_sanity_or_verification_shell"},
+			ToolProfile:          workspace.ToolSurfaceProfileGuardedWrite,
+			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceTargetLocation, RequiredEvidenceGitHistoryRationale, RequiredEvidenceChangedPaths, RequiredEvidenceVerificationStatus},
+			RequiredTools:        []string{workspace.RequiredToolGitHistoryLookup, workspace.RequiredToolEditFileOrApplyPatch, workspace.RequiredToolSourceSanityOrVerificationShell},
 			ReadinessGate:        []ReadinessGateID{ReadinessTargetLocationConfirmed, ReadinessChangedPathsReported, ReadinessVerificationStatusReported},
 			SearchPolicy:         []SearchPolicyID{SearchPolicyDelegateBroadDiscoveryWhenNeeded, SearchPolicyLocateTargetBeforeEdit, SearchPolicyHistoryRequiredBeforeWrites, SearchPolicyReadCommitDescriptionsForIntendedLogicBeforeWrite, SearchPolicyVerifyChangedSurface},
 			VerificationContract: VerificationTestsPassedFailedSkipped,
@@ -136,7 +111,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			TaskFamily:           taskFamilyID(family),
 			Contract:             ContractReviewFindings,
 			PermissionProfile:    PermissionReadOnlyWorkspace,
-			ToolProfile:          CapabilityReadOnlyDiscovery,
+			ToolProfile:          workspace.ToolSurfaceProfileReadOnlyDiscovery,
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceInspectedPaths, RequiredEvidenceBoundedFindingsOrNoFinding, RequiredEvidenceConfidence},
 			RequiredTools:        []string{"workspace_inspection"},
 			ReadinessGate:        []ReadinessGateID{ReadinessInspectedPathsReported, ReadinessBoundedFindingsOrNoFindingSupported},
@@ -150,7 +125,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			TaskFamily:           autonomy.TaskFamilyArchitecture,
 			Contract:             ContractArchitecture,
 			PermissionProfile:    PermissionReadOnlyWorkspace,
-			ToolProfile:          CapabilityReadOnlyDiscovery,
+			ToolProfile:          workspace.ToolSurfaceProfileReadOnlyDiscovery,
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceInspectedPaths, RequiredEvidenceArchitectureBoundaryEvidence, RequiredEvidenceConfidence},
 			RequiredTools:        []string{"workspace_inspection"},
 			ReadinessGate:        []ReadinessGateID{ReadinessInspectedPathsReported, ReadinessArchitectureBoundarySupportedOrUncertain},
@@ -164,8 +139,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			TaskFamily:           autonomy.TaskFamilyFeaturePlannerPlanner,
 			Contract:             ContractFeaturePlan,
 			PermissionProfile:    PermissionConversationOnly,
-			ToolProfile:          CapabilityConversationReadOnly,
-			ForbiddenTools:       append(append(workspace.WorkspaceWriteToolNames(), workspace.ToolNameTask, workspace.ToolNameShell, workspace.ToolNameSubmitPlan), readOnlyDiscoveryToolNames()...),
+			ToolProfile:          workspace.ToolSurfaceProfileConversationReadOnly,
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceFeaturePlanOrPlannerQuestion},
 			ReadinessGate:        []ReadinessGateID{ReadinessFeaturePlanOrPlannerQuestion},
 			VerificationContract: VerificationNotRequiredNonExecutable,
@@ -177,7 +151,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			TaskFamily:           autonomy.TaskFamilyFeaturePlannerImplementor,
 			Contract:             ContractImplementationResult,
 			PermissionProfile:    PermissionGuardedWorkspaceWrite,
-			ToolProfile:          CapabilityPlanSubmissionPlanner,
+			ToolProfile:          workspace.ToolSurfaceProfilePlanSubmissionPlanner,
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidencePlanExecuteCompletion},
 			ReadinessGate:        []ReadinessGateID{ReadinessPlanExecuteCompletion},
 			SearchPolicy:         []SearchPolicyID{SearchPolicyDispatchAtomThroughPlanExecute, SearchPolicyPreserveRequiredEditPaths, SearchPolicyReturnTypedPlanExecuteCompletion},
@@ -190,7 +164,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 		// access plus the submit_plan tool; per-edit writes are
 		// runtime-rejected by the runner's plan-then-execute write
 		// guard, and the workspace manager hides them from the
-		// manifest when SetPlanThenExecutePlannerMode is active.
+		// manifest when the workspace tool surface's plan-execute mode is active.
 		// Verification is planner-owned (the executor phase
 		// dispatches edits deterministically without re-running
 		// tests), so the contract reflects "plan submitted, no per-
@@ -199,9 +173,9 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			TaskFamily:           autonomy.TaskFamilyPlanThenExecutePlanner,
 			Contract:             ContractImplementationResult,
 			PermissionProfile:    PermissionGuardedWorkspaceWrite,
-			ToolProfile:          CapabilityPlanSubmissionPlanner,
-			RequiredEvidence:     []EvidenceRequirementID{requiredEvidenceGitHistoryRationale, RequiredEvidencePlanSubmittedOrSourceSatisfied},
-			RequiredTools:        []string{requiredToolGitHistoryLookup, workspace.ToolNameSubmitPlan},
+			ToolProfile:          workspace.ToolSurfaceProfilePlanSubmissionPlanner,
+			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceGitHistoryRationale, RequiredEvidencePlanSubmittedOrSourceSatisfied},
+			RequiredTools:        []string{workspace.RequiredToolGitHistoryLookup, workspace.ToolNameSubmitPlan},
 			ReadinessGate:        []ReadinessGateID{ReadinessSubmitPlanOrSourceSatisfiedOrBlocker},
 			SearchPolicy:         []SearchPolicyID{SearchPolicyConsumeTargetPacketFirst, SearchPolicyTrustPreloadedCurrentStateAnchorsForScopeNotSource, SearchPolicyRequiredExistingPathsNeedSourceBodyBeforeSubmitPlan, SearchPolicyHistoryRequiredBeforeSubmitPlan, SearchPolicyReadCommitDescriptionsForLogicBeforeSubmitPlan, SearchPolicySubmitPlanWhenEditSetIsSupported, SearchPolicySubmitPlanRequiresExecutableFinalEdits, SearchPolicySourceSatisfiedWhenCurrentStateAlreadyMatches, SearchPolicyDoNotCallPerEditWrites},
 			VerificationContract: VerificationNotRequiredTextMutation,
@@ -218,7 +192,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			TaskFamily:           autonomy.TaskFamilyPlanThenExecuteReview,
 			Contract:             ContractReviewFindings,
 			PermissionProfile:    PermissionPlanSubmissionReview,
-			ToolProfile:          CapabilityPlanSubmissionReview,
+			ToolProfile:          workspace.ToolSurfaceProfilePlanSubmissionReview,
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceVerificationChecklist, RequiredEvidenceDecisionPassOrCorrectivePlan},
 			RequiredTools:        nil,
 			ReadinessGate:        []ReadinessGateID{ReadinessVerificationChecklistCompleted, ReadinessDecisionPassOrCorrectivePlanOrBlocker},
@@ -249,9 +223,9 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			TaskFamily:           taskFamilyID(family),
 			Contract:             ContractImplementationResult,
 			PermissionProfile:    PermissionGuardedWorkspaceWrite,
-			ToolProfile:          CapabilityGuardedWrite,
-			RequiredEvidence:     []EvidenceRequirementID{requiredEvidenceGitHistoryRationale, RequiredEvidenceChangedPathsOrNoopReason, RequiredEvidenceVerificationStatus},
-			RequiredTools:        []string{requiredToolGitHistoryLookup, "edit_file_or_apply_patch", "source_sanity_or_verification_shell"},
+			ToolProfile:          workspace.ToolSurfaceProfileGuardedWrite,
+			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceGitHistoryRationale, RequiredEvidenceChangedPathsOrNoopReason, RequiredEvidenceVerificationStatus},
+			RequiredTools:        []string{workspace.RequiredToolGitHistoryLookup, workspace.RequiredToolEditFileOrApplyPatch, workspace.RequiredToolSourceSanityOrVerificationShell},
 			ReadinessGate:        []ReadinessGateID{ReadinessChangedPathsReported, ReadinessVerificationContractResolved},
 			SearchPolicy:         []SearchPolicyID{SearchPolicyConsumeTargetPacketFirst, SearchPolicyTrustPreloadedCurrentStateAnchors, SearchPolicyHistoryRequiredBeforeWrites, SearchPolicyReadCommitDescriptionsForIntendedLogicBeforeWrite, SearchPolicyWriteOnceEditLocationIsSupported, SearchPolicyPreferSmallBoundedEdits, SearchPolicyVerifyChangedSurface},
 			VerificationContract: verificationContract,
@@ -263,7 +237,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			TaskFamily:           autonomy.TaskFamilyConversation,
 			Contract:             ContractDirectAnswer,
 			PermissionProfile:    PermissionReadOnlyWorkspace,
-			ToolProfile:          CapabilityConversationReadOnly,
+			ToolProfile:          workspace.ToolSurfaceProfileConversationReadOnly,
 			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceAnswerAddressesUserRequest},
 			VerificationContract: VerificationNotRequiredReadOnlyLane,
 			StopConditions:       []StopConditionID{StopAnsweredUserRequest, StopBlockedByMissingInformation},
@@ -284,25 +258,15 @@ func RuntimeBriefForTaskFamily(family string, lane string, allowedWorkspaceTools
 		TaskFamily:           string(spec.TaskFamily),
 		Contract:             string(spec.Contract),
 		PermissionProfile:    string(spec.PermissionProfile),
-		AllowedTools:         AllowedToolsForCapabilityProfile(allowedWorkspaceTools, spec.ToolProfile),
-		ForbiddenTools:       append([]string(nil), spec.ForbiddenTools...),
+		AllowedTools:         workspace.AllowedToolsForSurfaceProfile(allowedWorkspaceTools, spec.ToolProfile),
 		RequiredEvidence:     EvidenceRequirementStrings(spec.RequiredEvidence),
 		RequiredTools:        append([]string(nil), spec.RequiredTools...),
 		ReadinessGate:        ReadinessGateStrings(spec.ReadinessGate),
-		SearchPolicy:         searchPolicyStrings(spec.SearchPolicy),
+		SearchPolicy:         typedIDStrings(spec.SearchPolicy),
 		VerificationContract: string(spec.VerificationContract),
-		StopConditions:       stopConditionStrings(spec.StopConditions),
-		FinalCritic:          finalCriticStrings(spec.FinalCritic),
+		StopConditions:       typedIDStrings(spec.StopConditions),
+		FinalCritic:          typedIDStrings(spec.FinalCritic),
 	}
-	if spec.ToolProfile == CapabilityPlanSubmissionPlanner || spec.ToolProfile == CapabilityPlanSubmissionReview {
-		// The app often builds the brief before the workspace manager flips
-		// into plan-execute mode, so the pre-mode workspace snapshot can lack
-		// submit_plan even though the runner will enable it before execution.
-		// Keep the contract-required tool in the brief allow-list so later
-		// live-surface filtering does not remove the only valid planner write.
-		brief.AllowedTools = mergeStrings(brief.AllowedTools, []string{workspace.ToolNameSubmitPlan})
-	}
-
 	if spec.PermissionProfile == PermissionConversationOnly {
 		// Conversation mode is intentionally tool-free. Codebase questions
 		// should route to locate, architecture, review, or implementation
@@ -311,7 +275,7 @@ func RuntimeBriefForTaskFamily(family string, lane string, allowedWorkspaceTools
 		brief.ToolManifest = nil
 	}
 
-	if spec.ToolProfile == CapabilityArtifactDistiller {
+	if spec.ToolProfile == workspace.ToolSurfaceProfileArtifactDistiller {
 		brief.AllowedTools = nil
 		brief.RequiredTools = nil
 		brief.ToolManifest = nil
@@ -326,192 +290,4 @@ func RuntimeBriefForTaskFamily(family string, lane string, allowedWorkspaceTools
 	}
 
 	return NormalizeRuntimeBrief(brief)
-}
-
-func ManifestToolsForCapabilityProfile(profile ToolCapabilityProfile) []string {
-	available := workspace.ToolManifestTools(toolManifestOptionsForProfile(profile))
-	return AllowedToolsForCapabilityProfile(available, profile)
-}
-
-func AllowedToolsForCapabilityProfile(available []string, profile ToolCapabilityProfile) []string {
-	if len(available) == 0 {
-		return nil
-	}
-
-	switch profile {
-	case CapabilityArtifactDistiller:
-		return nil
-	case CapabilityDebugLogInvestigator:
-		return filterAllowedTools(available, profile, workspace.ToolNameSearchFiles, workspace.ToolNameSearchContent, workspace.ToolNameReadFile)
-	case CapabilityVerificationOnly:
-		return filterAllowedTools(available, profile, workspace.ToolNameSourceSanity, workspace.ToolNameShell, workspace.ToolNameReadFile, workspace.ToolNameSearchFiles, workspace.ToolNameSearchContent)
-	case CapabilityLocateOnly:
-		return filterAllowedTools(available, profile, workspace.ToolNamePwd, workspace.ToolNameSearchFiles, workspace.ToolNameSearchContent, workspace.ToolNameReadFile, workspace.ToolNameCodeNavigate, workspace.ToolNameContextQuery, workspace.ToolNameContextZoom)
-	case CapabilityGuardedWrite, CapabilityIsolatedWrite:
-		return filterAllowedTools(available, profile, guardedWriteToolNames()...)
-	case CapabilityPlanSubmissionPlanner:
-		return filterAllowedTools(available, profile, autonomy.PlanExecutePlannerToolNames()...)
-	case CapabilityPlanSubmissionReview:
-		return filterAllowedTools(available, profile, planSubmissionReviewToolNames()...)
-	case CapabilityReadOnlyDiscovery:
-		return filterAllowedTools(available, profile, readOnlyDiscoveryToolNames()...)
-	case CapabilityConversationReadOnly:
-		return filterAllowedTools(available, profile, workspace.RuntimeReadOnlyInvestigationToolNames()...)
-	case CapabilityImplementationScopedEdit:
-		return filterAllowedTools(available, profile, implementationScopedEditToolNames()...)
-	default:
-		return append([]string(nil), available...)
-	}
-}
-
-func toolManifestOptionsForProfile(profile ToolCapabilityProfile) workspace.ToolManifestToolOptions {
-	opts := workspace.ToolManifestToolOptions{
-		IncludeGo:         true,
-		IncludeCpp:        true,
-		IncludePython:     true,
-		IncludeTypescript: true,
-		IncludeRust:       true,
-		IncludeJava:       true,
-	}
-
-	switch profile {
-	case CapabilityGuardedWrite, CapabilityIsolatedWrite:
-		opts.IncludeTaskLedger = true
-		opts.IncludeTask = true
-		opts.IncludeWriteTools = true
-	case CapabilityPlanSubmissionPlanner:
-		opts.IncludePlanThenExecute = true
-		opts.PlanThenExecutePlannerSurface = true
-	case CapabilityPlanSubmissionReview:
-		opts.IncludePlanThenExecute = true
-	case CapabilityReadOnlyDiscovery, CapabilityConversationReadOnly:
-		opts.IncludeTask = true
-	case CapabilityVerificationOnly, CapabilityLocateOnly, CapabilityDebugLogInvestigator, CapabilityArtifactDistiller:
-		// no extra options
-	case CapabilityImplementationScopedEdit:
-		opts.IncludeWriteTools = true
-	}
-
-	return opts
-}
-
-func readOnlyDiscoveryToolNames() []string {
-	names := mergeStrings(workspace.RuntimeSourceInspectionToolNames(), []string{workspace.ToolNameReadOnlyCapability, workspace.ToolNameHarnessAudit})
-
-	names = mergeStrings(names, workspace.RuntimeContextDiscoveryToolNames())
-
-	return mergeStrings(names, []string{workspace.ToolNameTask, "note"})
-}
-
-func planSubmissionReviewToolNames() []string {
-	names := mergeStrings([]string{workspace.ToolNameReadFile, workspace.ToolNameFileStats, workspace.ToolNameCodeNavigate, workspace.ToolNameSourceSanity}, []string{workspace.ToolNameHarnessAudit, workspace.ToolNameHarnessFeedback})
-
-	names = mergeStrings(names, workspace.RuntimeContextDiscoveryToolNames())
-	names = mergeStrings(names, workspace.RuntimeHistoryInspectionToolNames())
-
-	return mergeStrings(names, []string{workspace.ToolNameSubmitPlan})
-}
-
-func guardedWriteToolNames() []string {
-	names := []string{workspace.ToolNameTaskLedger, workspace.ToolNameTask, workspace.ToolNamePwd}
-
-	names = mergeStrings(names, workspace.RuntimeSourceInspectionToolNames())
-	names = mergeStrings(names, workspace.RuntimeContextDiscoveryToolNames())
-	names = mergeStrings(names, []string{workspace.ToolNameGitStatus, workspace.ToolNameGitDiff})
-	names = mergeStrings(names, workspace.RuntimeHistoryInspectionToolNames())
-	names = mergeStrings(names, []string{workspace.ToolNameShell})
-	names = mergeStrings(names, workspace.WorkspaceWriteToolNames())
-
-	return mergeStrings(names, []string{workspace.ToolNameSubmitPlan})
-}
-
-func implementationScopedEditToolNames() []string {
-	names := append([]string{}, workspace.WorkspaceWriteToolNames()...)
-
-	names = mergeStrings(names, []string{workspace.ToolNameReadFile, workspace.ToolNameCodeNavigate, workspace.ToolNameSubmitPlan})
-	names = mergeStrings(names, workspace.RuntimeContextDiscoveryToolNames())
-	names = mergeStrings(names, []string{workspace.ToolNameDependencyGraph, workspace.ToolNameCtagsSymbols})
-	names = mergeStrings(names, workspace.RuntimeHistoryInspectionToolNames())
-	names = mergeStrings(names, []string{workspace.ToolNameSourceSanity})
-
-	return names
-}
-
-func filterAllowedTools(available []string, profile ToolCapabilityProfile, names ...string) []string {
-	if len(available) == 0 || len(names) == 0 {
-		return nil
-	}
-
-	allowed := make(map[string]struct{}, len(names))
-	for _, name := range names {
-		name = strings.TrimSpace(name)
-		if name != "" {
-			allowed[name] = struct{}{}
-		}
-	}
-
-	var out []string
-
-	for _, tool := range available {
-		trimmed := strings.TrimSpace(tool)
-		if _, ok := allowed[trimmed]; ok {
-			out = append(out, tool)
-			continue
-		}
-
-		// External/MCP tools are opaque to idiom, so only broad discovery,
-		// planning, and implementation profiles may inherit them by
-		// default. Bounded review/verification profiles use exact
-		// allow-lists so a project-defined helper cannot widen the phase
-		// contract or distract the model from the supplied evidence.
-		if capabilityProfileAllowsExternalTools(profile) && isExternalToolName(trimmed) {
-			out = append(out, tool)
-		}
-	}
-
-	return out
-}
-
-func capabilityProfileAllowsExternalTools(profile ToolCapabilityProfile) bool {
-	switch profile {
-	case CapabilityDebugLogInvestigator, CapabilityVerificationOnly, CapabilityPlanSubmissionReview, CapabilityArtifactDistiller:
-		return false
-	case CapabilityImplementationScopedEdit:
-		return false
-	default:
-		return true
-	}
-}
-
-// isExternalToolName reports whether a tool name belongs to a host-project
-// external tool or an MCP-discovered tool, as opposed to a built-in
-// idiom tool. Built-ins are enumerated in the workspace's tool manifest;
-// anything that isn't a built-in (and isn't reserved by the runner) is
-// treated as a registered external/MCP tool the project owns.
-//
-// Implementation: built-ins follow a small set of stable name patterns
-// (`go_*`, `python_*`, `ts_*`, `rust_*`, `java_*`, `cpp_*`, plus the
-// hardcoded utility names like `pwd`, `read_file`, `discovery_query`,
-// etc.). MCP tools always carry the `mcp:` prefix. Anything that doesn't
-// match either is assumed to be a project external.
-func isExternalToolName(name string) bool {
-	if name == "" {
-		return false
-	}
-
-	if strings.HasPrefix(name, "mcp:") {
-		return true
-	}
-
-	// rg is a search_content alias; it is not a separate manifest entry
-	// but must still be recognized as built-in.
-	if name == "rg" {
-		return false
-	}
-
-	if workspace.IsBuiltInToolName(name) {
-		return false
-	}
-
-	return true
 }

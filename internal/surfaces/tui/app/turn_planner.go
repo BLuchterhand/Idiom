@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode"
 
+	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/llama"
@@ -172,7 +173,7 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 	}
 
 	if err != nil {
-		m.logRouteClassifierDecision(map[string]any{"status": "unavailable", "reason": "completion_error", "error": truncateImplementationDispatchText(err.Error(), 240)})
+		m.logRouteClassifierDecision(map[string]any{"status": "unavailable", "reason": "completion_error", "error": textutil.TruncateWithByteCount(err.Error(), 240)})
 
 		return turnRoutePlan{}, false
 	}
@@ -183,8 +184,8 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 		if repairErr != nil {
 			m.logRouteClassifierDecision(map[string]any{
 				"status":       "parse_error",
-				"error":        truncateImplementationDispatchText(err.Error(), 240),
-				"repair_error": truncateImplementationDispatchText(repairErr.Error(), 240),
+				"error":        textutil.TruncateWithByteCount(err.Error(), 240),
+				"repair_error": textutil.TruncateWithByteCount(repairErr.Error(), 240),
 			})
 
 			return turnRoutePlan{}, false
@@ -242,7 +243,7 @@ func (m *Model) repairTurnRouteClassification(ctx context.Context, client llama.
 		},
 		{
 			Role:    "user",
-			Content: fmt.Sprintf("Mode: %s\nCurrent user prompt:\n%s\n\nPrevious invalid classifier response:\n%s\n\nParse error: %s\n\nReturn one corrected JSON object now.", mode.Name, classifierPrompt, truncateImplementationDispatchText(invalid, 1200), parseErr),
+			Content: fmt.Sprintf("Mode: %s\nCurrent user prompt:\n%s\n\nPrevious invalid classifier response:\n%s\n\nParse error: %s\n\nReturn one corrected JSON object now.", mode.Name, classifierPrompt, textutil.TruncateWithByteCount(invalid, 1200), parseErr),
 		},
 	}, llama.ChatOptions{
 		MaxTokens:          192,
@@ -1223,7 +1224,29 @@ func (m *Model) workspaceAllowedTools() []string {
 		return nil
 	}
 
-	return m.workspace.AllowedTools()
+	return m.workspaceAllowedToolsForTaskFamily(m.forcedTaskFamily)
+}
+
+func (m *Model) workspaceAllowedToolsForTaskFamily(family string) []string {
+	if m == nil || m.workspace == nil {
+		return nil
+	}
+
+	if profile, ok := modelWorkspaceToolSurfaceProfile(family); ok {
+		return m.workspace.ToolSurfaceSnapshotForProfile(profile).AllowedTools()
+	}
+
+	return m.workspace.ToolSurfaceSnapshot().AllowedTools()
+}
+
+func modelWorkspaceToolSurfaceProfile(family string) (workspace.ToolSurfaceProfile, bool) {
+	profile := workerruntime.RuntimeContractForTaskFamily(family).ToolProfile
+	switch profile {
+	case workspace.ToolSurfaceProfilePlanSubmissionPlanner, workspace.ToolSurfaceProfilePlanSubmissionReview:
+		return profile, true
+	default:
+		return "", false
+	}
 }
 
 func normalizeRouteValue(value string) string {

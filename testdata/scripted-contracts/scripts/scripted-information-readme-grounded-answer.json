@@ -1,11 +1,4 @@
-{
-  "model": "scripted-model",
-  "responses": [
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"README.md\",\"named_gap\":\"confirm what this fixture repository is for\",\"why_not_answering\":\"need source-backed project information before summarizing\"}"
-    },
-    {
-      "content": "This fixture repository exists for deterministic Idiom scripted-contract tests. It gives the harness a tiny real Git workspace where a fake model can drive the real binary through workspace mutation, verification, and rollback. I did not edit files or run shell commands."
-    }
-  ]
-}
+[
+  "{\"tool\":\"read_file\",\"path\":\"README.md\",\"named_gap\":\"confirm what this fixture repository is for\",\"why_not_answering\":\"need source-backed project information before summarizing\"}",
+  "This fixture repository exists for deterministic Idiom scripted-contract tests. It gives the harness a tiny real Git workspace where a fake model can drive the real binary through workspace mutation, verification, and rollback. I did not edit files or run shell commands."
+]

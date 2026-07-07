@@ -919,7 +919,7 @@ func planEditPurposeIsVerificationOnly(purpose string) bool {
 }
 
 func (m *Manager) validatePlanEditAgainstWorkspace(edit planartifact.PlanEdit) error {
-	path, err := m.resolvePath(edit.Path, "")
+	path, err := m.pathAccess.ResolvePath(edit.Path, "")
 	if err != nil {
 		return fmt.Errorf("plan edit preflight could not resolve path %q: %w", edit.Path, err)
 	}
@@ -959,11 +959,7 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit planartifact.PlanEdit) e
 		}
 
 		if changed {
-			if lineNo, line, ok := NewSuspiciousAdjacentDuplicateCodeLine(path, body, []byte(updated)); ok {
-				return fmt.Errorf("edit would introduce adjacent duplicate code line %d in %s: %q", lineNo, edit.Path, line)
-			}
-
-			if rejected := m.rejectInvalidPlannedWrite(ToolNameSubmitPlan, "Plan edit rejected", path, []byte(updated)); rejected != nil {
+			if rejected := m.writeGuard.RejectPlannedWrite(ToolNameSubmitPlan, "Plan edit rejected", path, body, []byte(updated), m.pathAccess.DisplayPath); rejected != nil {
 				errorText := strings.TrimSpace(rejected.Error)
 				if edit.StartLine > 0 && edit.EndLine >= edit.StartLine {
 					errorText += fmt.Sprintf("\nLine-range edit detail: submit_plan edit for %s declared start_line=%d and end_line=%d. The `content` replaces exactly that inclusive current-source range; if the replacement includes source that currently lives after end_line, extend end_line to cover it, otherwise trim trailing unchanged context from content. If you are inserting after a current line, use insert_after_line with non-empty content instead.", edit.Path, edit.StartLine, edit.EndLine)
@@ -1020,11 +1016,7 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit planartifact.PlanEdit) e
 	}
 
 	if changed {
-		if lineNo, line, ok := NewSuspiciousAdjacentDuplicateCodeLine(path, body, []byte(updated)); ok {
-			return fmt.Errorf("edit would introduce adjacent duplicate code line %d in %s: %q", lineNo, edit.Path, line)
-		}
-
-		if rejected := m.rejectInvalidPlannedWrite(ToolNameSubmitPlan, "Plan edit rejected", path, []byte(updated)); rejected != nil {
+		if rejected := m.writeGuard.RejectPlannedWrite(ToolNameSubmitPlan, "Plan edit rejected", path, body, []byte(updated), m.pathAccess.DisplayPath); rejected != nil {
 			return fmt.Errorf("%w: %s", ErrPlanSubmissionRejected, strings.TrimSpace(rejected.Error))
 		}
 	} else {
@@ -1038,7 +1030,7 @@ func (m *Manager) validatePlanEditSequenceAgainstWorkspace(edits []planartifact.
 	projected := make(map[string][]byte)
 
 	for i, edit := range edits {
-		path, err := m.resolvePath(edit.Path, "")
+		path, err := m.pathAccess.ResolvePath(edit.Path, "")
 		if err != nil {
 			return fmt.Errorf("edits[%d]: plan edit preflight could not resolve path %q: %w", i, edit.Path, err)
 		}
@@ -1074,11 +1066,7 @@ func (m *Manager) validatePlanEditSequenceAgainstWorkspace(edits []planartifact.
 			return fmt.Errorf("edits[%d]: edit would not change %s after applying prior plan edits; %s", i, edit.Path, submitPlanNoOpEditGuidanceForPath(edit.Path))
 		}
 
-		if lineNo, line, ok := NewSuspiciousAdjacentDuplicateCodeLine(path, body, []byte(updated)); ok {
-			return fmt.Errorf("edits[%d]: edit would introduce adjacent duplicate code line %d in %s after applying prior plan edits: %q", i, lineNo, edit.Path, line)
-		}
-
-		if rejected := m.rejectInvalidPlannedWrite(ToolNameSubmitPlan, "Plan edit rejected", path, []byte(updated)); rejected != nil {
+		if rejected := m.writeGuard.RejectPlannedWrite(ToolNameSubmitPlan, "Plan edit rejected", path, body, []byte(updated), m.pathAccess.DisplayPath); rejected != nil {
 			errorText := strings.TrimSpace(rejected.Error)
 			if edit.StartLine > 0 && edit.EndLine >= edit.StartLine {
 				errorText += fmt.Sprintf("\nLine-range edit detail: submit_plan edit for %s declared start_line=%d and end_line=%d. The `content` replaces exactly that inclusive current-source range; if the replacement includes source that currently lives after end_line, extend end_line to cover it, otherwise trim trailing unchanged context from content. If you are inserting after a current line, use insert_after_line with non-empty content instead.", edit.Path, edit.StartLine, edit.EndLine)
@@ -1350,7 +1338,7 @@ func (m *Manager) repairPlanArtifactOldTextAnchors(artifact *planartifact.PlanAr
 			continue
 		}
 
-		path, err := m.resolvePath(edit.Path, "")
+		path, err := m.pathAccess.ResolvePath(edit.Path, "")
 		if err != nil {
 			continue
 		}

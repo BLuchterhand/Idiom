@@ -1,6 +1,9 @@
 package textutil
 
-import "unicode/utf8"
+import (
+	"fmt"
+	"unicode/utf8"
+)
 
 func TruncateBytes(s string, maxBytes int, marker string) string {
 	if maxBytes <= 0 || len(s) <= maxBytes {
@@ -32,6 +35,14 @@ func TruncateRunes(s string, maxRunes int, marker string) string {
 
 func Truncate(s string, maxBytes int) string {
 	return TruncateBytes(s, maxBytes, "...")
+}
+
+func TruncateWithByteCount(s string, maxBytes int) string {
+	if maxBytes <= 0 || len(s) <= maxBytes {
+		return s
+	}
+
+	return utf8SafePrefix(s, maxBytes) + fmt.Sprintf("\n\n[truncated %d bytes]\n", len(s)-maxBytes)
 }
 
 func utf8SafePrefix(s string, maxBytes int) string {

@@ -1,14 +1,5 @@
-{
-  "model": "scripted-model",
-  "responses": [
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"confirm current ShortLabel body\",\"why_not_answering\":\"need source-body evidence before editing\"}\nI will use this exact source as the edit anchor."
-    },
-    {
-      "content": "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten save label\"}\nThis is the only source edit needed."
-    },
-    {
-      "content": "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/labels.go\"}\nThe source-aware check is scoped to the edited file."
-    }
-  ]
-}
+[
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"confirm current ShortLabel body\",\"why_not_answering\":\"need source-body evidence before editing\"}\nI will use this exact source as the edit anchor.",
+  "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten save label\"}\nThis is the only source edit needed.",
+  "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/labels.go\"}\nThe source-aware check is scoped to the edited file."
+]

@@ -45,8 +45,68 @@ func normalizePlanExecutePlannerInput(input PlanExecutePlannerInput) PlanExecute
 	normalizeReadinessInput(&input.Readiness)
 	normalizeRuntimeInput(&input.Runtime)
 	normalizeProtocolInput(&input.Protocol)
+	input.ToolMetadata = normalizePlanExecutePlannerToolMetadata(input.ToolMetadata)
 
 	return input
+}
+
+func normalizePlanExecutePlannerToolMetadata(entries []PlanExecutePlannerToolMetadata) []PlanExecutePlannerToolMetadata {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	byTool := make(map[string]PlanExecutePlannerToolMetadata, len(entries))
+	for _, entry := range entries {
+		entry.Tool = strings.TrimSpace(entry.Tool)
+		if entry.Tool == "" {
+			continue
+		}
+
+		entry.Capabilities = uniqueCapabilities(entry.Capabilities)
+		if entry.SideEffect == "" {
+			entry.SideEffect = autonomy.SideEffectUnknown
+		}
+
+		byTool[entry.Tool] = entry
+	}
+
+	if len(byTool) == 0 {
+		return nil
+	}
+
+	out := make([]PlanExecutePlannerToolMetadata, 0, len(byTool))
+	for _, entry := range byTool {
+		out = append(out, entry)
+	}
+
+	slices.SortFunc(out, func(a, b PlanExecutePlannerToolMetadata) int {
+		return cmp.Compare(a.Tool, b.Tool)
+	})
+
+	return out
+}
+
+func uniqueCapabilities(values []autonomy.Capability) []autonomy.Capability {
+	if len(values) == 0 {
+		return nil
+	}
+
+	seen := make(map[autonomy.Capability]struct{}, len(values))
+	out := make([]autonomy.Capability, 0, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+
+	slices.SortFunc(out, func(a, b autonomy.Capability) int { return cmp.Compare(a, b) })
+
+	return out
 }
 
 func normalizeReadinessInput(readiness *ReadinessInput) {
@@ -344,27 +404,43 @@ func canonicalActionClassStrings(values []string) []string {
 	return sortedStrings(out)
 }
 
-func capabilitiesForTool(tool string) []autonomy.Capability {
-	entry, ok := autonomy.LookupPlanExecutePlannerToolMetadata(tool)
+func capabilitiesForTool(metadata []PlanExecutePlannerToolMetadata, tool string) []autonomy.Capability {
+	entry, ok := lookupPlannerToolMetadata(metadata, tool)
 	if !ok {
 		return nil
 	}
 
-	return entry.Capabilities
+	return append([]autonomy.Capability(nil), entry.Capabilities...)
 }
 
-func knownTool(tool string) bool {
-	_, ok := autonomy.LookupPlanExecutePlannerToolMetadata(tool)
+func knownTool(metadata []PlanExecutePlannerToolMetadata, tool string) bool {
+	_, ok := lookupPlannerToolMetadata(metadata, tool)
 	return ok
 }
 
-func sideEffectForTool(tool string) autonomy.SideEffectClass {
-	entry, ok := autonomy.LookupPlanExecutePlannerToolMetadata(tool)
+func sideEffectForTool(metadata []PlanExecutePlannerToolMetadata, tool string) autonomy.SideEffectClass {
+	entry, ok := lookupPlannerToolMetadata(metadata, tool)
 	if !ok {
 		return autonomy.SideEffectUnknown
 	}
 
 	return entry.SideEffect
+}
+
+func lookupPlannerToolMetadata(metadata []PlanExecutePlannerToolMetadata, tool string) (PlanExecutePlannerToolMetadata, bool) {
+	tool = strings.TrimSpace(tool)
+	if tool == "" {
+		return PlanExecutePlannerToolMetadata{}, false
+	}
+
+	for _, entry := range metadata {
+		if entry.Tool == tool {
+			entry.Capabilities = append([]autonomy.Capability(nil), entry.Capabilities...)
+			return entry, true
+		}
+	}
+
+	return PlanExecutePlannerToolMetadata{}, false
 }
 
 func allowedEffects(input PlanExecutePlannerInput) []autonomy.SideEffectClass {

@@ -53,6 +53,10 @@ func TestPrefetchReadFilesReadsNamedSourceAndSkipsUnsafeKinds(t *testing.T) {
 		t.Fatalf("prefetch summary should preserve read_file shape, got %q", report.Results[0].Summary)
 	}
 
+	if got, want := report.Results[0].Paths, []string{"README.md"}; len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("prefetch result should report typed read path %v, got %#v", want, got)
+	}
+
 	if !strings.Contains(report.Results[0].Output, "1:Idiom keeps source evidence fresh.") {
 		t.Fatalf("prefetch output missing line-numbered source body:\n%s", report.Results[0].Output)
 	}

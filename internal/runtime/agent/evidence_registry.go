@@ -10,34 +10,54 @@ import (
 	"strings"
 	"sync"
 
+	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
 )
 
 // --- path evidence registry ---
 const (
 	toolNameCodeNavigate       = "code_navigate"
+	toolNameContextImpact      = "context_impact"
+	toolNameContextPack        = "context_pack"
+	toolNameContextQuery       = "context_query"
+	toolNameContextZoom        = "context_zoom"
+	toolNameDiscoveryQuery     = "discovery_query"
+	toolNameGrep               = "grep"
 	toolNamePrefetch           = "prefetch"
 	toolNameReadFile           = "read_file"
 	toolNameReadOnlyCapability = "read_only_capability"
 	toolNameRg                 = "rg"
 	toolNameSearchContent      = "search_content"
 	toolNameSearchFiles        = "search_files"
+	toolNameStructuralSearch   = "structural_search"
 )
 
+func registrySearchCandidateTool(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case toolNameSearchContent, toolNameSearchFiles, toolNameRg, toolNameGrep:
+		return true
+	default:
+		return false
+	}
+}
+
+func registryDiscoveryCandidateTool(tool string) bool {
+	tool = strings.TrimSpace(tool)
+	switch tool {
+	case toolNameDiscoveryQuery, toolNameContextQuery, toolNameContextZoom,
+		toolNameContextImpact, toolNameStructuralSearch:
+		return true
+	default:
+		return strings.HasSuffix(tool, "_workspace_symbol")
+	}
+}
+
 // ---------------------------------------------------------------------------
-// PathEvidenceRegistry — shared single source of truth for path existence,
-// body-read status, candidate tracking, and basename resolution.
-//
-// Consolidates the following previously independent concerns:
-//   - sourceCitationExists / sourceCitationCanonicalPath (source_grounding.go)
-//   - sourceEvidenceBodyReadForPath / sourceEvidenceBodyPaths (source_evidence_state.go)
-//   - pendingDiscoveryCandidates / discoveryConsumptionCandidatesFromResult
-//     (runner_execution_state.go)
-//   - delegatedReadOnlyDiscoveryPathMissing (runner_lane_policy.go)
-//   - Per-tool freshness checks (context tools)
-//
-// Populated once per turn by RegisterToolResults; all downstream consumers
-// query the registry instead of calling os.Stat or scanning raw tool results.
+// PathEvidenceRegistry owns path-state facts for source-like workspace paths:
+// filesystem existence, body-read level, candidate status, and basename
+// resolution. It does not own diagnostic relevance, delegated task packets,
+// plan artifacts, or read-only answerability; those remain raw-result read-model
+// concerns because they depend on objective fit and provenance.
 // ---------------------------------------------------------------------------
 
 // EvidenceLevel mirrors PlanThenExecuteSourceEvidenceLevel for use within
@@ -45,13 +65,9 @@ const (
 type EvidenceLevel int
 
 const (
-	EvidenceNone              EvidenceLevel = 0
-	EvidencePathSeen          EvidenceLevel = 1
-	EvidenceSourceBodyPending EvidenceLevel = 1
-	EvidenceBodyWindow        EvidenceLevel = 2
-	EvidenceAnchorReady       EvidenceLevel = 3
-	EvidenceExactAnchor       EvidenceLevel = 3
-	EvidenceNewFile           EvidenceLevel = 3
+	EvidenceNone        EvidenceLevel = 0
+	EvidenceBodyWindow  EvidenceLevel = 2
+	EvidenceAnchorReady EvidenceLevel = 3
 )
 
 // PathEvidence is the per-path record maintained by the registry.
@@ -106,7 +122,7 @@ func (r *PathEvidenceRegistry) RegisterToolResults(results []ToolResult) {
 			r.registerBodyRead(result)
 		case strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"):
 			r.registerBodyRead(result)
-		case tool == toolNameSearchContent || tool == toolNameSearchFiles || tool == toolNameRg:
+		case tool == toolNameContextPack || registrySearchCandidateTool(tool) || registryDiscoveryCandidateTool(tool):
 			r.registerCandidatePaths(result)
 		}
 	}
@@ -129,6 +145,9 @@ func (r *PathEvidenceRegistry) registerBodyRead(result ToolResult) {
 	for _, p := range paths {
 		p = normalizeRegistryPath(p)
 		if p == "" {
+			continue
+		}
+		if IsNonSourceEvidenceArtifactPath(p) || !pathparse.HasWorkspaceFileExtension(p) {
 			continue
 		}
 		pe := r.getOrCreate(p)
@@ -195,21 +214,43 @@ func bodyReadLevelForResult(result ToolResult) EvidenceLevel {
 	return EvidenceNone
 }
 
-// registerCandidatePaths extracts workspace file paths from a discovery tool
-// result (search_content, search_files, rg) and marks them as candidates.
+// registerCandidatePaths extracts workspace file paths from a discovery or
+// search tool result and marks them as candidates.
 // This seeds the registry with paths that the model can later read as source-body
 // evidence, and ensures the completion gate's source-grounding check does not
 // reject them as "discovered but never registered." When context_pack fails
 // (e.g., readonly DB), search_content candidates provide the fallback path set.
 func (r *PathEvidenceRegistry) registerCandidatePaths(result ToolResult) {
+	tool := strings.TrimSpace(result.ToolName)
+	workspaceResult := workspace.ToolResult{
+		Tool:    tool,
+		Summary: result.Summary,
+		Output:  result.Output,
+		Error:   result.Error,
+	}
 	paths := append([]string{}, result.Paths...)
-	paths = append(paths, pathparse.MentionedWorkspaceFiles(result.Summary+"\n"+result.Output)...)
+
+	switch tool {
+	case toolNameContextPack:
+		paths = append(paths, contextPackCandidatePathsFromResults([]workspace.ToolResult{workspaceResult}, 128)...)
+	default:
+		if registryDiscoveryCandidateTool(tool) {
+			paths = append(paths, discoveryConsumptionCandidatesFromResult(workspaceResult, 128)...)
+		}
+		if registrySearchCandidateTool(tool) {
+			paths = append(paths, sourceLikePathsFromText(result.Summary+"\n"+result.Output, 128)...)
+		}
+	}
+
 	if len(paths) == 0 {
 		return
 	}
 	for _, p := range paths {
 		p = normalizeRegistryPath(p)
 		if p == "" {
+			continue
+		}
+		if IsNonSourceEvidenceArtifactPath(p) || !pathparse.HasWorkspaceFileExtension(p) {
 			continue
 		}
 		pe := r.getOrCreate(p)
@@ -567,17 +608,6 @@ func FindMatchingPriorSession(workspaceRoot, prompt string) *SessionEvidenceReco
 	})
 
 	return candidates[0]
-}
-
-// PriorSessionCandidatePaths is a convenience wrapper that calls
-// FindMatchingPriorSession and returns the matching record's ReadPaths.
-// Returns nil if no match is found.
-func PriorSessionCandidatePaths(workspaceRoot, prompt string) []string {
-	record := FindMatchingPriorSession(workspaceRoot, prompt)
-	if record == nil {
-		return nil
-	}
-	return record.ReadPaths
 }
 
 // ToolResult is the evidence-owned DTO for ingesting workspace results.

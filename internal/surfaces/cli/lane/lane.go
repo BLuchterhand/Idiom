@@ -630,7 +630,7 @@ func laneBriefIntakeProjection(body string) laneBriefIntakeProjectionResult {
 		return projection
 	}
 
-	if len(atomintake.RequiredEditSnippetsFromSpec(body, targets)) > 0 {
+	if len(plancontract.RequiredEditSnippetsFromPrompt(body, targets)) > 0 {
 		projection.NeedsAtomIntake = true
 		projection.Reason = "required_edit_snippet"
 		return projection

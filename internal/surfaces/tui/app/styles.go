@@ -86,11 +86,6 @@ var (
 	planH1Style         = lipgloss.NewStyle().Bold(true).Foreground(colorOnPrimary).Background(colorPrimary).Padding(0, 1)
 	planH2Style         = lipgloss.NewStyle().Bold(true).Foreground(colorAccent).PaddingLeft(1)
 	planH3Style         = lipgloss.NewStyle().Bold(true).Foreground(colorText).PaddingLeft(1)
-
-	// Plan checkbox indicator styles (pre-compiled, used in renderPlanLine).
-	planCheckboxTilde = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
-	planCheckboxEmpty = lipgloss.NewStyle().Foreground(colorMuted)
-	planCheckboxDone  = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
 )
 
 // ── Model popup ───────────────────────────────────────────────────────────────

@@ -1,17 +1,6 @@
-{
-  "model": "scripted-model",
-  "responses": [
-    {
-      "content": "{\"tool\":\"edit_file\",\"path\":\"labels/labels.py\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten the Python label implementation\"}"
-    },
-    {
-      "content": "Implemented the Python label change.\n\nChanged paths:\n- labels/labels.py"
-    },
-    {
-      "content": "{\"tool\":\"shell\",\"command\":\"python3 -B -m unittest\"}"
-    },
-    {
-      "content": "Implemented the Python label change.\n\nChanged paths:\n- labels/labels.py\n\nVerification: python3 -B -m unittest passed."
-    }
-  ]
-}
+[
+  "{\"tool\":\"edit_file\",\"path\":\"labels/labels.py\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten the Python label implementation\"}",
+  "Implemented the Python label change.\n\nChanged paths:\n- labels/labels.py",
+  "{\"tool\":\"shell\",\"command\":\"python3 -B -m unittest\"}",
+  "Implemented the Python label change.\n\nChanged paths:\n- labels/labels.py\n\nVerification: python3 -B -m unittest passed."
+]

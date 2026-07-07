@@ -32,9 +32,6 @@ type RunOptions struct {
 
 type PromptRunner func(config.Config, string, RunOptions, io.Writer) (string, error)
 
-type runOptions = RunOptions
-type promptRunner = PromptRunner
-
 type artifactOptions struct {
 	ConfigPath string
 	Prompt     string
@@ -122,7 +119,7 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, pro
 		report.FailOnTools = true
 	}
 
-	runOpts := runOptions{JSONEvents: true, Resume: opts.Resume, MaxTokensOverride: opts.MaxTokens, Telemetry: rec}
+	runOpts := RunOptions{JSONEvents: true, Resume: opts.Resume, MaxTokensOverride: opts.MaxTokens, Telemetry: rec}
 	if opts.NoTools {
 		runOpts.TaskFamily = workerruntime.ArtifactFinalAnswerTaskFamily
 	}

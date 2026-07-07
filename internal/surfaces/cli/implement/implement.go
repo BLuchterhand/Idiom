@@ -21,9 +21,6 @@ import (
 	cmdtelemetry "idiom/internal/surfaces/cli/telemetry"
 )
 
-type runOptions = cmdruntime.RunOptions
-type promptRunner = cmdruntime.PromptRunner
-
 type implementOptions struct {
 	ConfigPath               string
 	Prompt                   string
@@ -99,7 +96,7 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, pro
 		return 1
 	}
 
-	answer, err := promptRun(cfg, prompt, runOptions{
+	answer, err := promptRun(cfg, prompt, cmdruntime.RunOptions{
 		JSONEvents:               opts.JSONEvents,
 		Resume:                   opts.Resume,
 		TaskFamily:               string(autonomy.TaskFamilyImplementation),

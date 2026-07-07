@@ -23,30 +23,6 @@ const (
 
 type LanguageSupport = language.LanguageSupport
 
-func LanguageRegistry() []LanguageSupport {
-	return language.LanguageRegistry()
-}
-
-func LanguageForExtension(ext string) (LanguageSupport, bool) {
-	return language.LanguageForExtension(ext)
-}
-
-func LanguageForFile(path string) (LanguageSupport, bool) {
-	return language.LanguageForFile(path)
-}
-
-func LanguageForName(name string) (LanguageSupport, bool) {
-	return language.LanguageForName(name)
-}
-
-func DiagnosticToolNames() []string {
-	return language.DiagnosticToolNames()
-}
-
-func IsDiagnosticToolName(tool string) bool {
-	return language.IsDiagnosticToolName(tool)
-}
-
 // ActiveLanguages returns languages whose semantic detection reports true
 // against the workspace root. Kept on Manager because the workspace package
 // owns active workspace state; the registry itself lives under semantic.

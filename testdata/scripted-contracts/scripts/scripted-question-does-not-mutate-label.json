@@ -1,11 +1,4 @@
-{
-  "model": "scripted-model",
-  "responses": [
-    {
-      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"confirm current ShortLabel return value\",\"why_not_answering\":\"need source evidence to answer the question without mutating\"}"
-    },
-    {
-      "content": "Yes. internal/labels/labels.go currently has ShortLabel returning \"Save changes\", so shortening it to \"Save\" would be a small label-only change. I did not edit files or run tests."
-    }
-  ]
-}
+[
+  "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"confirm current ShortLabel return value\",\"why_not_answering\":\"need source evidence to answer the question without mutating\"}",
+  "Yes. internal/labels/labels.go currently has ShortLabel returning \"Save changes\", so shortening it to \"Save\" would be a small label-only change. I did not edit files or run tests."
+]

@@ -130,17 +130,24 @@ func changeLooksNoop(change string) bool {
 		strings.HasPrefix(normalized, "do not touch")
 }
 
+var planFileScopeHeadings = []string{
+	"expected file scope",
+	"implementation file scope",
+	"file scope",
+	"files to modify",
+	"files to edit",
+	"write scope",
+	"edit scope",
+}
+
+// PlanFileScopeHeadings returns the markdown headings that define explicit
+// implementation file scope in plan documents.
+func PlanFileScopeHeadings() []string {
+	return append([]string(nil), planFileScopeHeadings...)
+}
+
 func extractPlanFileScopeTargets(specBody string) []string {
-	return FilterFilePaths(MentionedWorkspacePathsUnderHeadings(
-		specBody,
-		"expected file scope",
-		"implementation file scope",
-		"file scope",
-		"files to modify",
-		"files to edit",
-		"write scope",
-		"edit scope",
-	))
+	return FilterFilePaths(MentionedWorkspacePathsUnderHeadings(specBody, PlanFileScopeHeadings()...))
 }
 
 func extractScopeFileTargets(specBody string) []string {

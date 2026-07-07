@@ -1259,17 +1259,17 @@ func TestAuditEventsFlagsReadinessForcingIncidents(t *testing.T) {
 
 func TestTurnPhaseActionClassForToolCoversProjectionTools(t *testing.T) {
 	cases := map[string]string{
-		"read_file":                ActionClassToken(ActionClassRead),
-		"read_only_capability":     ActionClassToken(ActionClassRead),
-		"context_status":           ActionClassToken(ActionClassSearch),
-		"history_range":            ActionClassToken(ActionClassRead),
-		"history_symbol":           ActionClassToken(ActionClassRead),
-		"harness_audit":            ActionClassToken(ActionClassSearch),
-		"submit_plan":              ActionClassToken(ActionClassSubmitPlan),
-		"apply_patch":              ActionClassToken(ActionClassPerEditWrite),
-		"go_diagnostics":           ActionClassToken(ActionClassVerify),
-		"task":                     ActionClassToken(ActionClassGenericProbe),
-		ToolNameSystemSearchAccess: ActionClassToken(ActionClassGenericProbe),
+		"read_file":                    ActionClassToken(ActionClassRead),
+		"read_only_capability":         ActionClassToken(ActionClassRead),
+		"context_status":               ActionClassToken(ActionClassSearch),
+		"history_range":                ActionClassToken(ActionClassRead),
+		"history_symbol":               ActionClassToken(ActionClassRead),
+		"harness_audit":                ActionClassToken(ActionClassSearch),
+		"submit_plan":                  ActionClassToken(ActionClassSubmitPlan),
+		"apply_patch":                  ActionClassToken(ActionClassPerEditWrite),
+		"go_diagnostics":               ActionClassToken(ActionClassVerify),
+		"task":                         ActionClassToken(ActionClassGenericProbe),
+		"request_system_search_access": ActionClassToken(ActionClassGenericProbe),
 	}
 	for tool, want := range cases {
 		if got := TurnPhaseActionClassForTool(tool); got != want {

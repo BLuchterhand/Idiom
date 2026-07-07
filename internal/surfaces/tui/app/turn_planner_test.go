@@ -110,18 +110,18 @@ func TestImplementationDispatchPlanDocumentSkipsRefineIterArtifactsButAllowsAcce
 		t.Fatalf("write accepted: %v", err)
 	}
 
-	if _, ok := readImplementationDispatchPlanDocument(root, ".idiom/refine/example/iter-1/draft.md"); ok {
+	if _, ok := implementationdispatch.ReadPlanDocument(root, ".idiom/refine/example/iter-1/draft.md"); ok {
 		t.Fatalf("refine iter draft should not be treated as a plan document for recursive TUI refine")
 	}
 
-	if _, ok := readImplementationDispatchPlanDocument(root, ".idiom/refine/example/accepted.md"); !ok {
+	if _, ok := implementationdispatch.ReadPlanDocument(root, ".idiom/refine/example/accepted.md"); !ok {
 		t.Fatalf("accepted refine output should remain readable as a plan document")
 	}
 }
 
 func TestImplementationDispatchRefineTitleIsBounded(t *testing.T) {
 	longPath := ".idiom/refine/" + strings.Repeat("nested-title-", 40) + "iter-1/draft.md"
-	title := implementationDispatchRefineTitle(longPath)
+	title := implementationdispatch.DocumentOutputTitle(longPath)
 
 	if !strings.HasPrefix(title, "tui-") {
 		t.Fatalf("title %q missing tui prefix", title)
@@ -129,43 +129,6 @@ func TestImplementationDispatchRefineTitleIsBounded(t *testing.T) {
 
 	if len(title) > 84 {
 		t.Fatalf("title length = %d, want <= 84: %s", len(title), title)
-	}
-}
-
-func TestImplementationDispatchSanitizesNonzeroRefineAcceptedContent(t *testing.T) {
-	content := strings.Join([]string{
-		"> WARNING: refine exited non-zero - reason=max-iters-exhausted after iter 3.",
-		"",
-		"<!-- idiom:refine-drafted title=tui-example iter=3 reason=max-iters-exhausted -->",
-		"# Accepted",
-		"",
-		"## Files To Modify",
-		"",
-		"| File | Change |",
-		"|---|---|",
-		"| target.txt | NEW FILE: write target |",
-		"",
-	}, "\n")
-	sanitized, changed := sanitizeImplementationDispatchNonzeroRefineAcceptedContent(content)
-
-	if !changed {
-		t.Fatalf("expected sanitize to report changed content")
-	}
-
-	for _, forbidden := range []string{
-		"refine exited non-zero",
-		"idiom:refine-drafted",
-		"reason=max-iters-exhausted",
-	} {
-		if strings.Contains(sanitized, forbidden) {
-			t.Fatalf("sanitized content still contains %q:\n%s", forbidden, sanitized)
-		}
-	}
-
-	if !strings.Contains(sanitized, "idiom:tui-refine-accepted-after-structural-preflight") ||
-		!strings.Contains(sanitized, "## Files To Modify") {
-
-		t.Fatalf("sanitized content lost expected dispatchable brief shape:\n%s", sanitized)
 	}
 }
 
@@ -346,7 +309,7 @@ func TestImplementationDispatchDirtyAllowanceBroadFlagRequiresAffirmativeContext
 
 func TestImplementationDispatchAtomMarksMissingPathAsNewFile(t *testing.T) {
 	root := t.TempDir()
-	atom := implementationDispatchPlanDocumentAtomWithWorkspaceShape(root, implementationDispatchPlanDocumentAtom{
+	atom := implementationdispatch.PlanDocumentAtomWithWorkspaceShape(root, implementationdispatch.PlanDocumentAtom{
 		Path:   "internal/contracts/writerroute/decision.go",
 		Change: "Domain type, normalization, stable ID, event fields",
 	})
@@ -363,7 +326,7 @@ func TestImplementationDispatchAtomMarksMissingPathAsNewFile(t *testing.T) {
 		t.Fatalf("write existing file: %v", err)
 	}
 
-	atom = implementationDispatchPlanDocumentAtomWithWorkspaceShape(root, implementationDispatchPlanDocumentAtom{
+	atom = implementationdispatch.PlanDocumentAtomWithWorkspaceShape(root, implementationdispatch.PlanDocumentAtom{
 		Path:   "internal/contracts/writerroute/decision.go",
 		Change: "Domain type, normalization, stable ID, event fields",
 	})
@@ -398,7 +361,7 @@ func TestImplementationDispatchAtomAnchorsPreserveCompleteSourceLines(t *testing
 		t.Fatalf("write source: %v", err)
 	}
 
-	atom := implementationDispatchPlanDocumentAtomWithWorkspaceShape(root, implementationDispatchPlanDocumentAtom{
+	atom := implementationdispatch.PlanDocumentAtomWithWorkspaceShape(root, implementationdispatch.PlanDocumentAtom{
 		Path:    relPath,
 		Change:  "Preserve the NewDecision constructor shape",
 		Excerpt: "NewDecision constructor shape",
@@ -455,7 +418,7 @@ func TestImplementationDispatchMaterializedAtomsCarryDesignDocTestObligations(t 
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
-	atoms, err := materializeImplementationDispatchPlanDocumentAtoms(cfg, []implementationDispatchPlanDocument{doc})
+	atoms, err := implementationdispatch.MaterializePlanDocumentAtoms(root, []implementationDispatchPlanDocument{doc})
 	if err != nil {
 		t.Fatalf("materialize atoms: %v", err)
 	}
@@ -540,7 +503,7 @@ func TestImplementationDispatchMaterializedAtomsPreserveTerminalAtomState(t *tes
 		t.Fatalf("write existing atom: %v", err)
 	}
 
-	atoms, err := materializeImplementationDispatchPlanDocumentAtoms(cfg, []implementationDispatchPlanDocument{doc})
+	atoms, err := implementationdispatch.MaterializePlanDocumentAtoms(root, []implementationDispatchPlanDocument{doc})
 	if err != nil {
 		t.Fatalf("materialize atoms: %v", err)
 	}
@@ -549,7 +512,7 @@ func TestImplementationDispatchMaterializedAtomsPreserveTerminalAtomState(t *tes
 		t.Fatalf("expected existing atom to be returned, got %#v", atoms)
 	}
 
-	status, ok := implementationDispatchPlanDocumentTerminalAtomStatus(atoms[0])
+	status, ok := implementationdispatch.PlanDocumentTerminalAtomStatus(atoms[0])
 	if !ok || status != "completed" {
 		t.Fatalf("existing atom should stay terminal, status=%q ok=%v", status, ok)
 	}
@@ -595,7 +558,7 @@ func TestRunAtomizedImplementationPlanDocumentsSkipsTerminalAtoms(t *testing.T) 
 		t.Fatalf("write atom: %v", err)
 	}
 
-	doc, ok := readImplementationDispatchPlanDocument(root, atomRel)
+	doc, ok := implementationdispatch.ReadPlanDocument(root, atomRel)
 	if !ok {
 		t.Fatalf("atom doc should be readable")
 	}
@@ -651,14 +614,14 @@ func TestImplementationDispatchSourceSatisfiedRequiresTestObligationEvidence(t *
 
 	doc.Content += "\n\n## Design Doc Test Obligations\n\n- `pkg/source_test.go`: add `TestRouteDecisionShape`.\n"
 
-	doc.TestObligations = implementationDispatchDesignDocTestObligations(doc.Content)
+	doc.TestObligations = implementationdispatch.DesignDocTestObligations(doc.Content)
 
 	cfg := config.Default()
 
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
-	if records := implementationDispatchPlanDocumentsSourceSatisfied(cfg, []implementationDispatchPlanDocument{doc}); len(records) != 0 {
+	if records := implementationdispatch.PlanDocumentsSourceSatisfied(root, []implementationDispatchPlanDocument{doc}); len(records) != 0 {
 		t.Fatalf("source-satisfied must not close without matching test evidence: %#v", records)
 	}
 
@@ -666,12 +629,12 @@ func TestImplementationDispatchSourceSatisfiedRequiresTestObligationEvidence(t *
 		t.Fatalf("write source test with evidence: %v", err)
 	}
 
-	records := implementationDispatchPlanDocumentsSourceSatisfied(cfg, []implementationDispatchPlanDocument{doc})
+	records := implementationdispatch.PlanDocumentsSourceSatisfied(root, []implementationDispatchPlanDocument{doc})
 	if len(records) != 1 || len(records[0].TestEvidence) == 0 {
 		t.Fatalf("expected source-satisfied test evidence, got %#v", records)
 	}
 
-	message := humanImplementationDispatchSourceSatisfiedMessage(records)
+	message := implementationdispatch.HumanSourceSatisfiedMessage(records)
 	if !strings.Contains(message, "Test obligations") || !strings.Contains(message, "TestRouteDecisionShape") {
 		t.Fatalf("source-satisfied message should report test obligations and evidence:\n%s", message)
 	}
@@ -697,14 +660,14 @@ func TestImplementationDispatchSourceSatisfiedRequiresVerificationCommandEvidenc
 
 	doc.Content += "\n\n## Design Doc Test Obligations\n\n- `go test ./pkg`\n"
 
-	doc.TestObligations = implementationDispatchDesignDocTestObligations(doc.Content)
+	doc.TestObligations = implementationdispatch.DesignDocTestObligations(doc.Content)
 
 	cfg := config.Default()
 
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
-	if records := implementationDispatchPlanDocumentsSourceSatisfied(cfg, []implementationDispatchPlanDocument{doc}); len(records) != 0 {
+	if records := implementationdispatch.PlanDocumentsSourceSatisfied(root, []implementationDispatchPlanDocument{doc}); len(records) != 0 {
 		t.Fatalf("source-satisfied must not treat an unrun verification command as evidence: %#v", records)
 	}
 }
@@ -734,7 +697,7 @@ func TestImplementationDispatchBlockedQuestionDoesNotMarkAtomCompleted(t *testin
 		t.Fatalf("write atom: %v", err)
 	}
 
-	doc, ok := readImplementationDispatchPlanDocument(root, atomRel)
+	doc, ok := implementationdispatch.ReadPlanDocument(root, atomRel)
 	if !ok {
 		t.Fatalf("atom doc should be readable")
 	}
@@ -745,11 +708,11 @@ func TestImplementationDispatchBlockedQuestionDoesNotMarkAtomCompleted(t *testin
 	cfg.Workspace.CWD = root
 
 	answer := "<<QUESTION>>: Plan-execute could not produce a plan artifact.\n\nRequired edit paths still need a plan:\n- pkg/source.go"
-	if !implementationDispatchAnswerLooksBlocked(answer) {
+	if !implementationdispatch.AnswerLooksBlocked(answer) {
 		t.Fatalf("question answer should be classified as blocked")
 	}
 
-	implementationDispatchMarkCompletedAtomDocumentForResult(cfg, doc, answer, nil)
+	implementationdispatch.MarkCompletedAtomDocumentForResult(root, doc, answer, nil)
 
 	updated, err := os.ReadFile(atomAbs)
 	if err != nil {
@@ -790,7 +753,7 @@ func TestImplementationDispatchCommandObligationMustBeProvenBeforeAtomComplete(t
 		t.Fatalf("write atom: %v", err)
 	}
 
-	doc, ok := readImplementationDispatchPlanDocument(root, atomRel)
+	doc, ok := implementationdispatch.ReadPlanDocument(root, atomRel)
 	if !ok {
 		t.Fatalf("atom doc should be readable")
 	}
@@ -801,11 +764,11 @@ func TestImplementationDispatchCommandObligationMustBeProvenBeforeAtomComplete(t
 	cfg.Workspace.CWD = root
 
 	unprovenAnswer := "Decision: source-satisfied\n\n`pkg/source.go` already contains the requested source."
-	if pending := implementationDispatchUnprovenVerificationCommands(doc, unprovenAnswer); len(pending) != 1 {
+	if pending := implementationdispatch.UnprovenVerificationCommands(doc, unprovenAnswer); len(pending) != 1 {
 		t.Fatalf("expected pending command, got %#v", pending)
 	}
 
-	implementationDispatchMarkCompletedAtomDocumentForResult(cfg, doc, unprovenAnswer, nil)
+	implementationdispatch.MarkCompletedAtomDocumentForResult(root, doc, unprovenAnswer, nil)
 
 	updated, err := os.ReadFile(atomAbs)
 	if err != nil {
@@ -817,7 +780,7 @@ func TestImplementationDispatchCommandObligationMustBeProvenBeforeAtomComplete(t
 	}
 
 	provenAnswer := "Completed source work.\n\nVerification: `go test ./pkg` passed with exit 0."
-	implementationDispatchMarkCompletedAtomDocumentForResult(cfg, doc, provenAnswer, nil)
+	implementationdispatch.MarkCompletedAtomDocumentForResult(root, doc, provenAnswer, nil)
 
 	updated, err = os.ReadFile(atomAbs)
 	if err != nil {
@@ -2224,81 +2187,6 @@ func TestMissingRequestedTestAddendumMarksPathsAsCandidateScope(t *testing.T) {
 	}
 }
 
-func TestImplementationDispatchPlanExecuteMaxTokensMatchesCLIPlannerDefault(t *testing.T) {
-	got := implementationDispatchPlanExecuteMaxTokens(
-		"",
-		"reject temp symlinks and add regression tests proving no partial mutation",
-		nil,
-		[]string{"internal/workflows/productworkflow/migration_apply.go", "internal/workflows/productworkflow/migration_apply_test.go"},
-		nil,
-	)
-	if got != 8192 {
-		t.Fatalf("bounded existing-file plan max tokens = %d, want tighter existing-file budget 8192", got)
-	}
-}
-
-func TestImplementationDispatchPlanExecuteMaxTokensDoesNotDowngradeLargeNewFilePlans(t *testing.T) {
-	got := implementationDispatchPlanExecuteMaxTokens(
-		"",
-		"create new file with the full file body",
-		[]string{"internal/workflows/productworkflow/new_feature.go"},
-		nil,
-		nil,
-	)
-	if got != 16384 {
-		t.Fatalf("new-file plan max tokens = %d, want CLI default 16384", got)
-	}
-}
-
-func TestImplementationDispatchPlanExecuteMaxTokensDoesNotUsePromptTestHeuristic(t *testing.T) {
-	root := t.TempDir()
-	got := implementationDispatchPlanExecuteMaxTokens(
-		root,
-		"add regression tests proving the parser rejects invalid routes",
-		[]string{"internal/parser/route_test.go"},
-		nil,
-		nil,
-	)
-
-	if got != 8192 {
-		t.Fatalf("prompt prose must not inflate missing-test budget, got %d want 8192", got)
-	}
-}
-
-func TestImplementationDispatchPlanExecuteMaxTokensUsesLargeBudgetForPlanDocNewFile(t *testing.T) {
-	got := implementationDispatchPlanExecuteMaxTokens(
-		"",
-		"implement the referenced plan",
-		[]string{"internal/contracts/writerroute/decision.go"},
-		nil,
-		[]implementationDispatchPlanDocument{{
-			Content:   "## Files To Modify\n\n- internal/contracts/writerroute/decision.go — NEW FILE\n\nUse replace_all:true with the full file body.",
-			EditPaths: []string{"internal/contracts/writerroute/decision.go"},
-		}},
-	)
-	if got != 16384 {
-		t.Fatalf("plan-doc new-file budget = %d, want 16384", got)
-	}
-}
-
-func TestImplementationDispatchPlanExecuteMaxTokensDoesNotUsePlanDocTestHeuristic(t *testing.T) {
-	root := t.TempDir()
-	got := implementationDispatchPlanExecuteMaxTokens(
-		root,
-		"implement docs/parser-plan.md",
-		nil,
-		nil,
-		[]implementationDispatchPlanDocument{{
-			Content:   "## Files To Modify\n\n- tests/parser_test.py\n\nAdd a regression test for invalid parser routes.",
-			EditPaths: []string{"tests/parser_test.py"},
-		}},
-	)
-
-	if got != 8192 {
-		t.Fatalf("plan-doc prose must not inflate missing-test budget, got %d want 8192", got)
-	}
-}
-
 func TestAppendMissingRequestedTestEditRecoveryAddendumStaysInsideBriefBody(t *testing.T) {
 	prompt := pathparse.WrapBriefBody("# Objective\n\nUpdate the banner and add regression tests.")
 	got := recovery.AppendMissingRequestedTestEditRecoveryAddendum(prompt, []string{"internal/surfaces/tui/app/rendering.go", "internal/surfaces/tui/app/rendering_test.go"})
@@ -3258,49 +3146,6 @@ func TestPlanExecuteActiveModelFallbackAddendumInsertedBeforeBriefEnd(t *testing
 	}
 }
 
-func TestImplementationDispatchCarriesTypedAuthorizedNewFiles(t *testing.T) {
-	prompt := strings.Join([]string{
-		"Implement atom.",
-		"Typed plan execution contract:",
-		`{"authorized_new_files":[{"path":"pkg/new_helper.go"},{"path":"pkg/new_helper_test.go"}]}`,
-		"Typed plan authority projection:",
-		`{"atom_id":"atom-1"}`,
-	}, "\n")
-
-	want := []string{"pkg/new_helper.go", "pkg/new_helper_test.go"}
-	if got := implementationDispatchAuthorizedNewFiles(prompt, nil); !slices.Equal(got, want) {
-		t.Fatalf("authorized new files = %#v, want %#v", got, want)
-	}
-}
-
-func TestImplementationDispatchCarriesPlanDocumentTypedAuthorizedNewFiles(t *testing.T) {
-	doc := implementationDispatchPlanDocument{Content: strings.Join([]string{
-		"Plan document.",
-		"Typed plan execution contract:",
-		`{"authorized_new_files":[{"path":"pkg/from_doc.go"}]}`,
-		"Typed plan authority projection:",
-		`{"atom_id":"atom-1"}`,
-	}, "\n")}
-
-	if got := implementationDispatchAuthorizedNewFiles("Implement atom.", []implementationDispatchPlanDocument{doc}); !slices.Equal(got, []string{"pkg/from_doc.go"}) {
-		t.Fatalf("authorized new files = %#v, want plan document authority", got)
-	}
-}
-
-func TestImplementationDispatchIgnoresPromptProseNewFileWithoutTypedContract(t *testing.T) {
-	prompt := strings.Join([]string{
-		"Create new file pkg/new_helper.go with the following content.",
-		"Typed plan execution contract:",
-		`{"authorized_new_files":`,
-		"Typed plan authority projection:",
-		`{"atom_id":"atom-1"}`,
-	}, "\n")
-
-	if got := implementationDispatchAuthorizedNewFiles(prompt, nil); len(got) != 0 {
-		t.Fatalf("prompt prose or malformed typed contract must not authorize new files: %#v", got)
-	}
-}
-
 func TestPlanExecutePlannerRecoveryAddendumUsesHarnessOwnedRetryContract(t *testing.T) {
 	failure := implementationDispatchPlanExecuteFailure{
 		Brief:         "# Brief\n\nImplement typed JSON usage errors.",
@@ -3924,7 +3769,7 @@ func TestHandleStreamDoneClearsPlanPhaseOnTerminalPlannerFailure(t *testing.T) {
 
 func TestImplementationDispatchRefineDiagnosticsDoNotTruncateActionableLine(t *testing.T) {
 	longBlocker := "exact-anchor specificity failed for required edit path(s): " + strings.Repeat("internal/pkg/path.go ", 40) + "Each required edit path must carry at least one `<path>:<line>` reference."
-	diagnostics := implementationDispatchRefineDiagnostics(implementationDispatchPlanDocumentRefineResult{
+	diagnostics := implementationdispatch.RefineDiagnostics(implementationDispatchPlanDocumentRefineResult{
 		Stderr: "noise\nrefine: iter 1\n" + longBlocker + "\n",
 	})
 	joined := strings.Join(diagnostics, "\n")
@@ -3935,38 +3780,6 @@ func TestImplementationDispatchRefineDiagnosticsDoNotTruncateActionableLine(t *t
 
 	if strings.Contains(joined, "[truncated") {
 		t.Fatalf("diagnostics should not include truncation marker:\n%s", joined)
-	}
-}
-
-func TestImplementationDispatchBriefLintBlockersDoNotTruncateActionableLine(t *testing.T) {
-	longBlocker := "exact-anchor specificity failed for required edit path(s): " + strings.Repeat("internal/pkg/path.go ", 40) + "Each required edit path must carry at least one `<path>:<line>` reference."
-
-	payload, err := json.Marshal(map[string]any{
-		"exit": 1,
-		"findings": []map[string]string{
-			{
-				"severity": "BLOCK",
-				"category": "anchor-specificity",
-				"message":  longBlocker,
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("marshal lint report: %v", err)
-	}
-
-	blockers := implementationDispatchBriefLintBlockers(implementationDispatchPreflightCommandResult{
-		ExitCode: 1,
-		Stdout:   string(payload),
-	})
-	joined := strings.Join(blockers, "\n")
-
-	if !strings.Contains(joined, longBlocker) {
-		t.Fatalf("lint blockers lost actionable blocker:\n%s", joined)
-	}
-
-	if strings.Contains(joined, "[truncated") {
-		t.Fatalf("lint blockers should not include truncation marker:\n%s", joined)
 	}
 }
 
@@ -4778,8 +4591,8 @@ func TestRunPromptOnceRefinesPlanDocBeforePlanExecuteDispatch(t *testing.T) {
 		}
 	})
 	stubImplementationDispatchPlanDocumentRefine(t, func(_ context.Context, cfg config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentRefineResult {
-		root := implementationDispatchWorkspaceRoot(cfg)
-		outAbs, ok := implementationDispatchWorkspaceFile(root, refinedPath)
+		root := implementationdispatch.WorkspaceRoot(cfg.Workspace.Root, cfg.Workspace.CWD)
+		outAbs, ok := implementationdispatch.WorkspaceFile(root, refinedPath)
 
 		if !ok {
 			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: refinedPath, ExitCode: 2}
@@ -4827,7 +4640,7 @@ func TestRunPromptOnceRefinesPlanDocBeforePlanExecuteDispatch(t *testing.T) {
 			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: refinedPath, ExitCode: 1, Err: err}
 		}
 
-		refinedDoc, ok := readImplementationDispatchPlanDocument(root, refinedPath)
+		refinedDoc, ok := implementationdispatch.ReadPlanDocument(root, refinedPath)
 		if !ok {
 			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: refinedPath, ExitCode: 1}
 		}
@@ -4945,7 +4758,7 @@ func TestRunPromptOnceRefinesPlanDocBeforePlanExecuteDispatch(t *testing.T) {
 func TestImplementationDispatchWorkspaceFileRejectsEscapesAndSymlinkAncestors(t *testing.T) {
 	root := t.TempDir()
 
-	if _, ok := implementationDispatchWorkspaceFile(root, "../outside.md"); ok {
+	if _, ok := implementationdispatch.WorkspaceFile(root, "../outside.md"); ok {
 		t.Fatal("parent traversal path should be rejected")
 	}
 
@@ -4954,11 +4767,11 @@ func TestImplementationDispatchWorkspaceFileRejectsEscapesAndSymlinkAncestors(t 
 		t.Skipf("symlink unavailable on this platform: %v", err)
 	}
 
-	if _, ok := implementationDispatchWorkspaceFile(root, "linked/escape.md"); ok {
+	if _, ok := implementationdispatch.WorkspaceFile(root, "linked/escape.md"); ok {
 		t.Fatal("path through symlinked workspace ancestor should be rejected")
 	}
 
-	if _, ok := implementationDispatchWorkspaceFile(root, "docs/new.md"); !ok {
+	if _, ok := implementationdispatch.WorkspaceFile(root, "docs/new.md"); !ok {
 		t.Fatal("missing in-scope file should remain valid for new-file dispatch")
 	}
 }
@@ -4975,7 +4788,7 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 				LintBlockers: []string{"brief lint: single-purpose decomposition failed: 3 file-allowlist row(s) across 3 files. Decompose into ADD-only / MODIFY-only / TEST-only sub-atoms before dispatch."},
 				Blockers:     []string{"brief lint: single-purpose decomposition failed: 3 file-allowlist row(s) across 3 files. Decompose into ADD-only / MODIFY-only / TEST-only sub-atoms before dispatch."},
 			}
-		case implementationDispatchIsAtomizedPlanDocumentPath(doc.Path):
+		case implementationdispatch.IsAtomizedPlanDocumentPath(doc.Path):
 			return implementationDispatchPlanDocumentPreflightResult{
 				Path: doc.Path,
 				OK:   true,
@@ -4996,9 +4809,9 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, ExitCode: 1, Stderr: "missing atom edit path"}
 		}
 
-		root := implementationDispatchWorkspaceRoot(cfg)
-		outRel := filepath.ToSlash(filepath.Join(".idiom", "refine", implementationDispatchRefineTitle(doc.Path), "accepted.md"))
-		outAbs, ok := implementationDispatchWorkspaceFile(root, outRel)
+		root := implementationdispatch.WorkspaceRoot(cfg.Workspace.Root, cfg.Workspace.CWD)
+		outRel := filepath.ToSlash(filepath.Join(".idiom", "refine", implementationdispatch.DocumentOutputTitle(doc.Path), "accepted.md"))
+		outAbs, ok := implementationdispatch.WorkspaceFile(root, outRel)
 
 		if !ok {
 			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: outRel, ExitCode: 2}
@@ -5044,7 +4857,7 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: outRel, ExitCode: 1, Err: err}
 		}
 
-		refinedDoc, ok := readImplementationDispatchPlanDocument(root, outRel)
+		refinedDoc, ok := implementationdispatch.ReadPlanDocument(root, outRel)
 		if !ok {
 			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: outRel, ExitCode: 1}
 		}
@@ -5245,7 +5058,7 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 		t.Fatalf("c.go content = %q, want created fixture", string(gotC))
 	}
 
-	atomDir := filepath.Join(root, ".idiom", "atoms", implementationDispatchRefineTitle("docs/design.md"))
+	atomDir := filepath.Join(root, ".idiom", "atoms", implementationdispatch.DocumentOutputTitle("docs/design.md"))
 	for _, name := range []string{"atom-001.md", "atom-002.md", "atom-003.md"} {
 		if _, err := os.Stat(filepath.Join(atomDir, name)); err != nil {
 			t.Fatalf("expected materialized atom %s: %v", name, err)
@@ -5462,7 +5275,7 @@ func TestRunImplementationPlanDocumentsSourceSatisfiedAtomMarksAtomComplete(t *t
 		t.Fatalf("write atom: %v", err)
 	}
 
-	doc, ok := readImplementationDispatchPlanDocument(root, atomRel)
+	doc, ok := implementationdispatch.ReadPlanDocument(root, atomRel)
 	if !ok {
 		t.Fatalf("atom doc should be readable")
 	}
@@ -5586,7 +5399,7 @@ func TestImplementationDispatchSourceSatisfiedUsesCurrentStateAnchorConcepts(t *
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
-	records := implementationDispatchPlanDocumentsSourceSatisfied(cfg, docs)
+	records := implementationdispatch.PlanDocumentsSourceSatisfied(root, docs)
 	if len(records) != len(docs) {
 		t.Fatalf("records = %#v, want one source-satisfied record per atom", records)
 	}
@@ -5631,7 +5444,7 @@ func TestImplementationDispatchSourceSatisfiedUsesCurrentSourceBodyWhenAnchorsAr
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
-	records := implementationDispatchPlanDocumentsSourceSatisfied(cfg, []implementationDispatchPlanDocument{doc})
+	records := implementationdispatch.PlanDocumentsSourceSatisfied(root, []implementationDispatchPlanDocument{doc})
 	if len(records) != 1 {
 		t.Fatalf("records = %#v, want source-satisfied from current source body", records)
 	}
@@ -5660,7 +5473,7 @@ func TestImplementationDispatchSourceSatisfiedDoesNotTreatFallbackAnchorsAsDone(
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
-	if records := implementationDispatchPlanDocumentsSourceSatisfied(cfg, []implementationDispatchPlanDocument{doc}); len(records) != 0 {
+	if records := implementationdispatch.PlanDocumentsSourceSatisfied(root, []implementationDispatchPlanDocument{doc}); len(records) != 0 {
 		t.Fatalf("fallback/current old anchors must not source-satisfy pending work: %#v", records)
 	}
 }
@@ -5693,7 +5506,7 @@ func TestImplementationDispatchOptionalSourceSatisfiedRequiresLiveAnchor(t *test
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
-	if records := implementationDispatchPlanDocumentsSourceSatisfied(cfg, []implementationDispatchPlanDocument{doc}); len(records) != 0 {
+	if records := implementationdispatch.PlanDocumentsSourceSatisfied(root, []implementationDispatchPlanDocument{doc}); len(records) != 0 {
 		t.Fatalf("optional source-satisfied must require a live current-state anchor, got %#v", records)
 	}
 }

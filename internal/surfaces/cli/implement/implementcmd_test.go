@@ -33,14 +33,14 @@ func TestRunImplementMainForcesImplementationTaskFamily(t *testing.T) {
 	var (
 		stdout, stderr bytes.Buffer
 		gotPrompt      string
-		gotOpts        runOptions
+		gotOpts        cmdruntime.RunOptions
 	)
 
 	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "modify exactly one file; do not run tests"},
 		&stdout,
 		&stderr,
-		func(_ config.Config, prompt string, opts runOptions, _ io.Writer) (string, error) {
+		func(_ config.Config, prompt string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			gotPrompt = prompt
 			gotOpts = opts
 
@@ -75,14 +75,14 @@ func TestRunImplementMainCanDelegateBuildTestsToPlanner(t *testing.T) {
 
 	var (
 		stdout, stderr bytes.Buffer
-		gotOpts        runOptions
+		gotOpts        cmdruntime.RunOptions
 	)
 
 	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "modify and verify", "-planner-owned-verification"},
 		&stdout,
 		&stderr,
-		func(_ config.Config, _ string, opts runOptions, _ io.Writer) (string, error) {
+		func(_ config.Config, _ string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			gotOpts = opts
 			return "done", nil
 		},
@@ -103,14 +103,14 @@ func TestRunImplementMainCanDisableThinking(t *testing.T) {
 
 	var (
 		stdout, stderr bytes.Buffer
-		gotOpts        runOptions
+		gotOpts        cmdruntime.RunOptions
 	)
 
 	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "write the brief", "-no-thinking"},
 		&stdout,
 		&stderr,
-		func(_ config.Config, _ string, opts runOptions, _ io.Writer) (string, error) {
+		func(_ config.Config, _ string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			gotOpts = opts
 			return "done", nil
 		},
@@ -131,14 +131,14 @@ func TestRunImplementMainAllowBuildTestsOverridesPlannerOwnedVerification(t *tes
 
 	var (
 		stdout, stderr bytes.Buffer
-		gotOpts        runOptions
+		gotOpts        cmdruntime.RunOptions
 	)
 
 	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt", "modify and verify", "-planner-owned-verification", "-allow-build-tests"},
 		&stdout,
 		&stderr,
-		func(_ config.Config, _ string, opts runOptions, _ io.Writer) (string, error) {
+		func(_ config.Config, _ string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			gotOpts = opts
 			return "done", nil
 		},
@@ -164,14 +164,14 @@ func TestRunImplementMainReadsPromptFileAndHonorsJSON(t *testing.T) {
 
 	var (
 		stdout, stderr bytes.Buffer
-		gotOpts        runOptions
+		gotOpts        cmdruntime.RunOptions
 	)
 
 	code := RunMainWithTelemetry(
 		[]string{"-config", configPath, "-prompt-file", promptPath, "-json", "-resume", "prior"},
 		&stdout,
 		&stderr,
-		func(_ config.Config, prompt string, opts runOptions, w io.Writer) (string, error) {
+		func(_ config.Config, prompt string, opts cmdruntime.RunOptions, w io.Writer) (string, error) {
 			gotOpts = opts
 
 			if prompt != "implement this" {
@@ -233,7 +233,7 @@ func TestRunImplementMainReturnsJSONEventWriterError(t *testing.T) {
 		[]string{"-config", configPath, "-prompt", "implement this", "-json"},
 		implementFailingWriter{err: want},
 		&stderr,
-		func(config.Config, string, runOptions, io.Writer) (string, error) {
+		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
 			t.Fatal("prompt runner should not run after json event writer failure")
 			return "", nil
 		},
@@ -257,7 +257,7 @@ func TestRunImplementMainRejectsMissingPrompt(t *testing.T) {
 		[]string{"-config", configPath},
 		&stdout,
 		&stderr,
-		func(config.Config, string, runOptions, io.Writer) (string, error) {
+		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
 			t.Fatal("prompt runner should not be called")
 
 			return "", nil
@@ -285,7 +285,7 @@ func TestImplementTelemetryIncludesLocalOpsAndQueueMetadataOnly(t *testing.T) {
 		[]string{"-config", configPath, "-prompt", "modify a file", "-json"},
 		&stdout,
 		&stderr,
-		func(_ config.Config, _ string, opts runOptions, _ io.Writer) (string, error) {
+		func(_ config.Config, _ string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			if opts.Telemetry != rec {
 				t.Fatal("implement runner should receive telemetry recorder")
 			}

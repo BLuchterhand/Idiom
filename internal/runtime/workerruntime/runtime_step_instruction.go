@@ -289,7 +289,7 @@ func MergeRuntimeBriefIntoState(brief WorkerRuntimeBrief, state RunState) RunSta
 	state.Constraints = mergeStrings(state.Constraints, brief.Constraints)
 
 	if state.Readiness == nil {
-		state.Readiness = cloneReadinessState(brief.Readiness)
+		state.Readiness = NormalizeReadinessState(brief.Readiness)
 	}
 
 	if len(state.AllowedTools) == 0 {
@@ -395,7 +395,7 @@ func NormalizeRuntimeBrief(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
 	brief.RequiredNext = textutil.UniqueNonEmpty(brief.RequiredNext)
 	brief.InvalidActions = textutil.UniqueNonEmpty(brief.InvalidActions)
 	brief.Readiness = NormalizeReadinessState(brief.Readiness)
-	brief.ToolManifest = SanitizeToolManifestRequests(brief.ToolManifest)
+	brief.ToolManifest = workspace.SanitizeToolManifestRequests(brief.ToolManifest)
 
 	if PermissionProfileIsConversationOnly(brief.PermissionProfile) {
 		brief.AllowedTools = nil
@@ -406,7 +406,7 @@ func NormalizeRuntimeBrief(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
 	}
 
 	if len(brief.ToolManifest) == 0 && len(brief.AllowedTools) > 0 {
-		brief.ToolManifest = ToolManifestFromWorkspace(workspace.BuildToolManifest(brief.AllowedTools))
+		brief.ToolManifest = workspace.BuildToolManifest(brief.AllowedTools)
 	}
 
 	if len(brief.EvidenceCapabilities) == 0 && len(brief.ToolManifest) > 0 {
@@ -414,74 +414,6 @@ func NormalizeRuntimeBrief(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
 	}
 
 	return brief
-}
-
-func ToolManifestFromWorkspace(manifest []workspace.ToolManifestEntry) []ToolManifestEntry {
-	if len(manifest) == 0 {
-		return nil
-	}
-
-	out := make([]ToolManifestEntry, 0, len(manifest))
-	for _, entry := range manifest {
-		out = append(out, ToolManifestEntry{
-			Tool:                     entry.Tool,
-			Request:                  entry.Request,
-			Purpose:                  entry.Purpose,
-			EvidenceCapabilities:     append([]string(nil), entry.EvidenceCapabilities...),
-			CapabilityClassification: entry.CapabilityClassification,
-		})
-	}
-	return out
-}
-
-func SanitizeToolManifestRequests(manifest []ToolManifestEntry) []ToolManifestEntry {
-	if len(manifest) == 0 {
-		return nil
-	}
-
-	out := append([]ToolManifestEntry(nil), manifest...)
-	for i := range out {
-		if toolManifestRequestLooksPlaceholder(out[i].Request) {
-			out[i].Request = ""
-		}
-	}
-	return out
-}
-
-func toolManifestRequestLooksPlaceholder(request string) bool {
-	lower := strings.ToLower(strings.TrimSpace(request))
-
-	return textutil.ContainsAny(lower,
-		"relative/file",
-		"candidate/path.go",
-		"symbol|text",
-		`"pattern":"name"`,
-		`"pattern":"funcname"`,
-		`"pattern":"functionname"`,
-		`"pattern":"typename"`,
-		`"pattern":"constname"`,
-		`"pattern":"interfacename"`,
-		`"pattern":"classname`,
-		`"pattern":"methodname"`,
-		`"path":"file.go"`,
-		`"path":"source.go"`,
-		`"destination":"target.go"`,
-		`"path":"src/file`,
-		`"path":"src/pkg/file.py"`,
-		`"path":"src/main/java/com/example/file.java"`,
-		`"path":"include/file.h"`,
-		`"path":"relative/dir"`,
-		`"path":"optional/path"`,
-		"session-001",
-		"session.jsonl",
-		"exact current",
-		"exact substring",
-		"replacement text",
-		"complete replacement",
-		"one paragraph",
-		"why this edit",
-		"<",
-	)
 }
 
 func normalizeRequiredEditSnippets(snippets []RequiredEditSnippet) []RequiredEditSnippet {
@@ -497,6 +429,7 @@ func normalizeRequiredEditSnippets(snippets []RequiredEditSnippet) []RequiredEdi
 			ID:      strings.TrimSpace(snippet.ID),
 			Path:    strings.TrimSpace(snippet.Path),
 			Content: strings.TrimSpace(snippet.Content),
+			Anchor:  strings.TrimSpace(snippet.Anchor),
 		}
 		if normalized.Content == "" {
 			continue
@@ -545,21 +478,4 @@ func NormalizeReadinessState(readiness *ReadinessState) *ReadinessState {
 	}
 
 	return normalized
-}
-
-func cloneReadinessState(readiness *ReadinessState) *ReadinessState {
-	readiness = NormalizeReadinessState(readiness)
-	if readiness == nil {
-		return nil
-	}
-
-	return &ReadinessState{
-		ReadyToAnswer:       readiness.ReadyToAnswer,
-		ReadyToWrite:        readiness.ReadyToWrite,
-		ReadyToVerify:       readiness.ReadyToVerify,
-		ClosedClaims:        append([]string(nil), readiness.ClosedClaims...),
-		OpenObligations:     append([]string(nil), readiness.OpenObligations...),
-		EvidenceSources:     append([]string(nil), readiness.EvidenceSources...),
-		FurtherReadsRequire: readiness.FurtherReadsRequire,
-	}
 }
