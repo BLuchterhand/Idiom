@@ -1,14 +1,10 @@
 package workspace
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
-	"strings"
 
-	"idiom/internal/platform/config"
+	"idiom/internal/platform/commandexec"
 )
 
 func (m *Manager) runCommand(parent context.Context, dir, name string, args ...string) (string, error) {
@@ -23,18 +19,7 @@ func (m *Manager) runCommand(parent context.Context, dir, name string, args ...s
 }
 
 func combineCommandOutput(stdout string, stderr string) string {
-	output := strings.TrimSpace(stdout)
-	errText := strings.TrimSpace(stderr)
-
-	if errText != "" {
-		if output != "" {
-			output += "\n"
-		}
-
-		output += errText
-	}
-
-	return output
+	return commandexec.CombineOutput(stdout, stderr)
 }
 
 func (m *Manager) truncateCommandOutput(output string) string {
@@ -51,35 +36,26 @@ func (m *Manager) runCommandDetailed(parent context.Context, dir, name string, a
 
 func (m *Manager) runCommandDetailedWithEnv(parent context.Context, dir string, extraEnv []string, name string, args ...string) (string, string, error) {
 	timeoutSeconds := workspaceCommandTimeoutSeconds(m.cfg.CommandTimeoutSeconds)
-	timeout := timeDurationSeconds(timeoutSeconds)
-	ctx, cancel := context.WithTimeout(parent, timeout)
+	result := commandexec.Run(parent, commandexec.Spec{
+		Mode:           commandexec.ModeArgv,
+		Name:           name,
+		Args:           args,
+		Dir:            dir,
+		Env:            extraEnv,
+		Timeout:        timeDurationSeconds(timeoutSeconds),
+		MaxOutputBytes: workspaceCommandCaptureBytes(m.cfg.MaxOutputBytes),
+		CanonicalPWD:   true,
+	})
 
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, name, args...)
-
-	cmd.Dir = dir
-	cmd.Env = envWithCanonicalPWD(os.Environ(), dir, extraEnv)
-
-	var (
-		stdout bytes.Buffer
-		stderr bytes.Buffer
-	)
-
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-
-	if ctx.Err() == context.DeadlineExceeded {
-		return stdout.String(), stderr.String(), fmt.Errorf("command timed out after %ds", timeoutSeconds)
+	if result.TimedOut {
+		return result.Stdout, result.Stderr, fmt.Errorf("command timed out after %ds", timeoutSeconds)
 	}
 
-	if err != nil {
-		return stdout.String(), stderr.String(), fmt.Errorf("command failed: %w", err)
+	if result.Err != nil {
+		return result.Stdout, result.Stderr, fmt.Errorf("command failed: %w", result.Err)
 	}
 
-	return stdout.String(), stderr.String(), nil
+	return result.Stdout, result.Stderr, nil
 }
 
 func workspaceCommandTimeoutSeconds(seconds int) int {
@@ -90,42 +66,20 @@ func workspaceCommandTimeoutSeconds(seconds int) int {
 	return seconds
 }
 
-func envWithCanonicalPWD(base []string, dir string, extra []string) []string {
-	env := append([]string(nil), base...)
+func workspaceCommandCaptureBytes(displayBytes int) int {
+	const diagnosticCaptureBytes = 1024 * 1024
 
-	env = append(env, extra...)
-	dir = strings.TrimSpace(dir)
-
-	if dir == "" {
-		return env
+	if displayBytes <= 0 {
+		return 0
 	}
 
-	env = setEnvValue(env, "PWD", config.CanonicalizeExistingPath(dir))
+	if displayBytes > diagnosticCaptureBytes {
+		return displayBytes
+	}
 
-	return env
+	return diagnosticCaptureBytes
 }
 
-func setEnvValue(env []string, key string, value string) []string {
-	prefix := key + "="
-	out := make([]string, 0, len(env)+1)
-	replaced := false
-
-	for _, entry := range env {
-		if strings.HasPrefix(entry, prefix) {
-			if !replaced {
-				out = append(out, prefix+value)
-				replaced = true
-			}
-
-			continue
-		}
-
-		out = append(out, entry)
-	}
-
-	if !replaced {
-		out = append(out, prefix+value)
-	}
-
-	return out
+func envWithCanonicalPWD(base []string, dir string, extra []string) []string {
+	return commandexec.EnvWithCanonicalPWD(base, dir, extra)
 }
