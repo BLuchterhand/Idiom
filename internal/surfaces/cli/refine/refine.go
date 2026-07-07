@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"idiom/internal/contracts/pathparse"
+	"idiom/internal/platform/commandexec"
 	briefcmd "idiom/internal/surfaces/cli/brief"
 	"idiom/internal/surfaces/cliassets"
 	"idiom/internal/workflows/atomintake"
@@ -154,20 +154,27 @@ func DefaultDispatchWithConfig(metaBriefPath string, configPath string, stdout, 
 	}
 
 	args := defaultRefineDispatchArgs(binary, configPath, metaBriefPath)
-	cmd := exec.Command(args[0], args[1:]...)
+	result := commandexec.Run(nil, commandexec.Spec{
+		Name: args[0],
+		Args: args[1:],
+	})
 
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
+	if _, err := io.WriteString(stdout, result.Stdout); err != nil {
+		return 1
+	}
+	if _, err := io.WriteString(stderr, result.Stderr); err != nil {
+		return 1
+	}
 
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return exitErr.ExitCode()
+	if result.Err != nil {
+		if result.ExitError {
+			return result.ExitCode
 		}
 
 		return 1
 	}
 
-	return 0
+	return result.ExitCode
 }
 
 func defaultRefineDispatchArgs(binary, configPath, metaBriefPath string) []string {

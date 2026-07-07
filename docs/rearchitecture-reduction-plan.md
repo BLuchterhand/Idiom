@@ -80,7 +80,11 @@ aggregation, skip rules, and path backfill are workflow-owned; the TUI still
 owns orchestration, transient UI logging, and prompt-runner callbacks. The TUI
 constructs the refine command request/result, but process execution now goes
 through `internal/platform/commandexec` for cwd, timeout, output capture, exit
-status, launch failure, and cancellation semantics.
+status, launch failure, and cancellation semantics. CLI refine's default
+artifact dispatcher also routes its one-shot child process through
+`commandexec`; `queue run` remains a direct process owner until the platform
+execution API explicitly supports live stdin/stdout/stderr streaming, signal
+cancellation, and queue lease environment propagation.
 
 ### 4. Workspace Manager Decomposition
 

@@ -3,6 +3,7 @@ package refine
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -19,6 +21,17 @@ import (
 	"idiom/internal/workflows/atomintake"
 	"idiom/internal/workflows/brieflint"
 )
+
+func TestMain(m *testing.M) {
+	if os.Getenv("IDIOM_REFINE_HELPER_PROCESS") == "1" {
+		fmt.Fprintln(os.Stdout, "stdout marker")
+		fmt.Fprintln(os.Stderr, "stderr marker")
+		exitCode, _ := strconv.Atoi(os.Getenv("IDIOM_REFINE_HELPER_EXIT"))
+		os.Exit(exitCode)
+	}
+
+	os.Exit(m.Run())
+}
 
 // nonTrivialDraftBody returns a canned draft body sized to clear the
 // refineDraftIsTrivial check (≥ refineMinDraftBytes, contains at
@@ -111,6 +124,52 @@ func TestDefaultRefineDispatchRoutesPatchThroughArtifactCommand(t *testing.T) {
 	if strings.Contains(joined, "lane\x00implement") {
 		t.Fatalf("patch dispatch should not depend on implementation-lane tool use, got:\n%#v", args)
 	}
+}
+
+func TestDefaultDispatchWithConfigPreservesChildExitAndOutput(t *testing.T) {
+	t.Setenv("IDIOM_REFINE_HELPER_PROCESS", "1")
+	t.Setenv("IDIOM_REFINE_HELPER_EXIT", "7")
+
+	var stdout, stderr bytes.Buffer
+	code := DefaultDispatchWithConfig(filepath.Join("root", ".idiom", "refine", "atom", "iter-1", "meta-draft.md"), ".idiom/config.json", &stdout, &stderr)
+
+	if code != 7 {
+		t.Fatalf("DefaultDispatchWithConfig exit = %d, want 7; stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "stdout marker") {
+		t.Fatalf("stdout did not include child stdout: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "stderr marker") {
+		t.Fatalf("stderr did not include child stderr: %q", stderr.String())
+	}
+}
+
+func TestDefaultDispatchWithConfigReturnsZeroForSuccessfulChild(t *testing.T) {
+	t.Setenv("IDIOM_REFINE_HELPER_PROCESS", "1")
+	t.Setenv("IDIOM_REFINE_HELPER_EXIT", "0")
+
+	code := DefaultDispatchWithConfig(filepath.Join("iter-1", "meta-draft.md"), ".idiom/config.json", &bytes.Buffer{}, &bytes.Buffer{})
+
+	if code != 0 {
+		t.Fatalf("DefaultDispatchWithConfig successful child exit = %d, want 0", code)
+	}
+}
+
+func TestDefaultDispatchWithConfigReturnsOneForOutputWriteFailure(t *testing.T) {
+	t.Setenv("IDIOM_REFINE_HELPER_PROCESS", "1")
+	t.Setenv("IDIOM_REFINE_HELPER_EXIT", "0")
+
+	code := DefaultDispatchWithConfig(filepath.Join("iter-1", "meta-draft.md"), ".idiom/config.json", failingWriter{}, &bytes.Buffer{})
+
+	if code != 1 {
+		t.Fatalf("DefaultDispatchWithConfig output write failure exit = %d, want 1", code)
+	}
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write failed")
 }
 
 // stripFencedBlocksForStub removes ```...``` code blocks from
