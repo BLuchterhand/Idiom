@@ -8,7 +8,6 @@ import (
 	"io"
 	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -26,6 +25,7 @@ import (
 	"idiom/internal/evidence/lanehistory"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
+	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/jsonevents"
 	"idiom/internal/platform/markdownsection"
 	"idiom/internal/platform/textutil"
@@ -149,13 +149,10 @@ var lanePostflightRunner = func(args []string, stdout io.Writer, stderr io.Write
 // laneGitDiff is a package-level indirection over the `git diff`
 // shell-out runLanePostflightAfterLane uses to capture the working-
 // tree diff. Tests stub this so they don't need an actual git repo
-// in the temp workspace; production calls into git via os/exec.
+// in the temp workspace; production calls into git via gitstate.
 var laneGitDiff = func(projectRoot string) ([]byte, error) {
-	cmd := exec.Command("git", "diff")
-
-	cmd.Dir = projectRoot
-
-	return cmd.Output()
+	out, err := gitstate.Output(context.Background(), projectRoot, "diff")
+	return []byte(out), err
 }
 
 // RunMainWithTelemetry is the variant the top-level dispatcher

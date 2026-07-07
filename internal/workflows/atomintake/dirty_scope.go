@@ -1,9 +1,10 @@
 package atomintake
 
 import (
-	"bytes"
-	"os/exec"
+	"context"
 	"strings"
+
+	"idiom/internal/platform/gitstate"
 )
 
 func dirtyAtomScopePaths(projectRoot string, paths []string) []string {
@@ -11,11 +12,10 @@ func dirtyAtomScopePaths(projectRoot string, paths []string) []string {
 		return nil
 	}
 
-	args := append([]string{"-C", projectRoot, "status", "--porcelain", "--"}, paths...)
-	cmd := exec.Command("git", args...)
-	out, err := cmd.Output()
+	args := append([]string{"status", "--porcelain", "--"}, paths...)
+	out, err := gitstate.Output(context.Background(), projectRoot, args...)
 
-	if err != nil || len(bytes.TrimSpace(out)) == 0 {
+	if err != nil || strings.TrimSpace(out) == "" {
 		return nil
 	}
 
@@ -23,7 +23,7 @@ func dirtyAtomScopePaths(projectRoot string, paths []string) []string {
 
 	var dirty []string
 
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		path := ParseGitPorcelainPath(line)
 		if path == "" || seen[path] {
 			continue

@@ -1,16 +1,17 @@
 package lane
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"idiom/internal/contracts/pathparse"
+	"idiom/internal/platform/gitstate"
 )
 
 // checkBriefStaleness fails when any required edit path has git
@@ -99,16 +100,12 @@ func mostRecentChangeTime(repoRoot, path string) (time.Time, bool) {
 }
 
 func lastCommitTime(repoRoot, path string) (time.Time, bool) {
-	cmd := exec.Command("git", "log", "-1", "--format=%ct", "--", path)
-
-	cmd.Dir = repoRoot
-
-	out, err := cmd.Output()
+	out, err := gitstate.Output(context.Background(), repoRoot, "log", "-1", "--format=%ct", "--", path)
 	if err != nil {
 		return time.Time{}, false
 	}
 
-	trimmed := strings.TrimSpace(string(out))
+	trimmed := strings.TrimSpace(out)
 	if trimmed == "" {
 		return time.Time{}, false
 	}
