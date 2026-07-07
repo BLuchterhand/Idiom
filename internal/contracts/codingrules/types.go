@@ -44,13 +44,11 @@ const (
 	EvidenceNoPermissionCheck       EvidenceKind    = "no_permission_check"
 	EvidenceSuppressionsRequireNote EvidenceKind    = "suppression_requires_rationale"
 	AllowImplementsInterface        AllowanceReason = "implements_interface"
-	AllowCompatibilityAPI           AllowanceReason = "compatibility_api"
 	AllowBoundaryAdapter            AllowanceReason = "boundary_adapter"
 	AllowValidation                 AllowanceReason = "validation"
 	AllowErrorContext               AllowanceReason = "error_context"
 	AllowObservability              AllowanceReason = "observability"
 	AllowPermissionCheck            AllowanceReason = "permission_check"
-	AllowDomainUseCaseName          AllowanceReason = "domain_use_case_name"
 )
 
 type PolicyFile struct {

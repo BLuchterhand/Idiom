@@ -148,9 +148,35 @@ func TestWrapper(v string) string {
 	}
 }
 
-func TestCheckWorkspaceAllowsInlineRationale(t *testing.T) {
+func TestCheckWorkspaceAllowsInlineBoundaryAdapterRationale(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "allowed.go", `package sample
+
+type repoType struct{}
+
+func (repoType) Save(ctx string, user string) error { return nil }
+
+var repo repoType
+
+// idiom:allow go.no_pass_through_wrapper -- boundary adapter required by external Host interface
+func Save(ctx string, user string) error {
+	return repo.Save(ctx, user)
+}
+`)
+
+	result, err := CheckWorkspace(context.Background(), CheckOptions{ProjectRoot: root})
+	if err != nil {
+		t.Fatalf("CheckWorkspace: %v", err)
+	}
+
+	if len(result.Report.Findings) != 0 || result.Report.Summary.Suppressed != 1 {
+		t.Fatalf("report = %#v, want one suppression and no findings", result.Report)
+	}
+}
+
+func TestCheckWorkspaceRejectsInlineCompatibilityRationale(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "wrapper.go", `package sample
 
 type repoType struct{}
 
@@ -169,8 +195,8 @@ func Save(ctx string, user string) error {
 		t.Fatalf("CheckWorkspace: %v", err)
 	}
 
-	if len(result.Report.Findings) != 0 || result.Report.Summary.Suppressed != 1 {
-		t.Fatalf("report = %#v, want one suppression and no findings", result.Report)
+	if len(result.Report.Findings) != 1 || result.Report.Summary.Suppressed != 0 {
+		t.Fatalf("report = %#v, want compatibility wrapper suppression rejected", result.Report)
 	}
 }
 
@@ -199,7 +225,7 @@ func Wrapper(v string) string {
 			Enabled:   &enabled,
 			Languages: []rulescontract.LanguageID{rulescontract.LanguageGo},
 			Kind:      rulescontract.RuleKindStructure,
-			AllowWhen: []rulescontract.AllowanceReason{rulescontract.AllowCompatibilityAPI},
+			AllowWhen: []rulescontract.AllowanceReason{rulescontract.AllowBoundaryAdapter},
 		}},
 		Suppressions: []rulescontract.Suppression{{
 			RuleID:    rulescontract.RuleNoPassThroughWrapper,
@@ -220,7 +246,7 @@ func Wrapper(v string) string {
 	}
 }
 
-func TestCheckWorkspacePartialRuleOverrideInheritsDefaultSuppressionAllowances(t *testing.T) {
+func TestCheckWorkspacePartialRuleOverrideInheritsDefaultBoundarySuppressionAllowance(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "wrapper.go", `package sample
 
@@ -252,8 +278,8 @@ func Save(v string) string {
 			RuleID:    rulescontract.RuleNoPassThroughWrapper,
 			Path:      "wrapper.go",
 			Symbol:    "Save",
-			Reason:    rulescontract.AllowCompatibilityAPI,
-			Rationale: "compatibility API while callers migrate",
+			Reason:    rulescontract.AllowBoundaryAdapter,
+			Rationale: "required boundary adapter for an external interface",
 		}},
 	}
 

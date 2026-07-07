@@ -53,7 +53,7 @@ func TestEffectiveRulesInheritPassThroughDefaultsForPartialOverride(t *testing.T
 	if rule.Enforcement != EnforcementBlocking || rule.Severity != SeverityError {
 		t.Fatalf("explicit enforcement/severity not preserved: %#v", rule)
 	}
-	if !containsAllowance(rule.AllowWhen, AllowCompatibilityAPI) {
+	if !containsAllowance(rule.AllowWhen, AllowBoundaryAdapter) {
 		t.Fatalf("partial override did not inherit default allowances: %#v", rule.AllowWhen)
 	}
 	if rule.Options.PassThroughWrapper == nil || *rule.Options.PassThroughWrapper != DefaultPassThroughWrapperOptions() {
@@ -117,7 +117,7 @@ func TestEffectiveRulesReturnsIndependentPolicyCopies(t *testing.T) {
 			ID:        RuleNoPassThroughWrapper,
 			Include:   []string{"internal/**"},
 			Exclude:   []string{"internal/generated/**"},
-			AllowWhen: []AllowanceReason{AllowCompatibilityAPI},
+			AllowWhen: []AllowanceReason{AllowBoundaryAdapter},
 			Options: RuleOptions{
 				PassThroughWrapper: &options,
 			},
@@ -137,7 +137,7 @@ func TestEffectiveRulesReturnsIndependentPolicyCopies(t *testing.T) {
 	if !slices.Equal(again[0].Exclude, []string{"vendor/**", ".git/**", ".idiom/**", "internal/generated/**"}) {
 		t.Fatalf("returned exclude aliases input policy or defaults: %#v", again[0].Exclude)
 	}
-	if len(again[0].AllowWhen) != 1 || again[0].AllowWhen[0] != AllowCompatibilityAPI {
+	if len(again[0].AllowWhen) != 1 || again[0].AllowWhen[0] != AllowBoundaryAdapter {
 		t.Fatalf("returned allow_when aliases input policy: %#v", again[0].AllowWhen)
 	}
 	if !again[0].Options.PassThroughWrapper.IgnoreTests || !options.IgnoreTests {

@@ -14,13 +14,11 @@
       "kind": "structure",
       "allow_when": [
         "implements_interface",
-        "compatibility_api",
         "boundary_adapter",
         "validation",
         "error_context",
         "observability",
-        "permission_check",
-        "domain_use_case_name"
+        "permission_check"
       ],
       "options": {
         "pass_through_wrapper": {
@@ -34,10 +32,10 @@
   "suppressions": [
     {
       "rule_id": "go.no_pass_through_wrapper",
-      "path": "internal/example/compat.go",
-      "symbol": "Save",
-      "reason": "compatibility_api",
-      "rationale": "Preserves an exported API while callers migrate to the concrete service."
+      "path": "internal/example/host_adapter.go",
+      "symbol": "ResolvePath",
+      "reason": "boundary_adapter",
+      "rationale": "Implements an external host interface where the adapter method is the boundary contract."
     }
   ]
 }

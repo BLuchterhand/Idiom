@@ -31,11 +31,14 @@ idiom tool coding_rules_check --input '{"path":"."}'
 ```
 
 Use advisory enforcement while tuning a repository. Switch a rule to `blocking`
-only when the team agrees the pattern is a real invariant. Inline suppressions
-must carry a rationale:
+only when the team agrees the pattern is a real invariant. Do not suppress
+wrapper-only migration steps, compatibility aliases, or functions kept only so
+callers can be moved later. Move callers to the owning API and delete the old
+surface. Inline suppressions are for imposed boundary/interface adapters only
+and must carry that rationale:
 
 ```go
-// idiom:allow go.no_pass_through_wrapper -- compatibility API required by callers
+// idiom:allow go.no_pass_through_wrapper -- boundary adapter required by external Host interface
 ```
 
 ## Installer Checks

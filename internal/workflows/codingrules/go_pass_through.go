@@ -120,7 +120,7 @@ func passThroughWrapperFinding(rel string, fset *token.FileSet, file *ast.File, 
 		return rulescontract.Finding{}, false, false
 	}
 
-	if inlineAllowed(fset, file, fn, rule.ID) {
+	if inlineAllowed(fset, file, fn, rule) {
 		return rulescontract.Finding{}, false, true
 	}
 
@@ -147,7 +147,7 @@ func passThroughWrapperFinding(rel string, fset *token.FileSet, file *ast.File, 
 			{Kind: rulescontract.EvidenceNoObservability},
 			{Kind: rulescontract.EvidenceNoPermissionCheck},
 		},
-		SuggestedAction: "Inline the call, or add validation, translation, error context, observability, permission checks, or an explicit suppression rationale.",
+		SuggestedAction: "Inline the call, or add validation, translation, error context, observability, permission checks, or an allowed boundary/interface suppression rationale. Compatibility migration wrappers are not valid suppressions.",
 		SuppressionKey:  rulescontract.FindingSuppressionKey(rule.ID, rel, symbol),
 	}, true, false
 }
@@ -302,7 +302,7 @@ func receiverTypeName(expr ast.Expr) string {
 	}
 }
 
-func inlineAllowed(fset *token.FileSet, file *ast.File, fn *ast.FuncDecl, ruleID rulescontract.RuleID) bool {
+func inlineAllowed(fset *token.FileSet, file *ast.File, fn *ast.FuncDecl, rule rulescontract.EffectiveRule) bool {
 	start := fset.Position(fn.Pos()).Line
 	end := fset.Position(fn.End()).Line
 	for _, group := range file.Comments {
@@ -315,16 +315,55 @@ func inlineAllowed(fset *token.FileSet, file *ast.File, fn *ast.FuncDecl, ruleID
 		for _, comment := range group.List {
 			text := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(comment.Text, "//"), "/*"))
 			text = strings.TrimSpace(strings.TrimSuffix(text, "*/"))
-			if !strings.Contains(text, inlineAllowPrefix) || !strings.Contains(text, string(ruleID)) {
+			if !strings.Contains(text, inlineAllowPrefix) || !strings.Contains(text, string(rule.ID)) {
 				continue
 			}
 
 			_, rationale, hasRationale := strings.Cut(text, "--")
-			return hasRationale && strings.TrimSpace(rationale) != ""
+			return hasRationale && inlineSuppressionAllowed(rationale, rule.AllowWhen)
 		}
 	}
 
 	return false
+}
+
+func inlineSuppressionAllowed(rationale string, allowed []rulescontract.AllowanceReason) bool {
+	rationale = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(rationale), "_", " "))
+	if rationale == "" {
+		return false
+	}
+
+	for _, reason := range allowed {
+		if inlineRationaleMatchesReason(rationale, reason) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func inlineRationaleMatchesReason(rationale string, reason rulescontract.AllowanceReason) bool {
+	switch reason {
+	case rulescontract.AllowImplementsInterface:
+		return strings.Contains(rationale, "implements interface") ||
+			strings.Contains(rationale, "implements an interface") ||
+			strings.Contains(rationale, "interface implementation") ||
+			strings.Contains(rationale, "required by interface")
+	case rulescontract.AllowBoundaryAdapter:
+		return strings.Contains(rationale, "boundary adapter") ||
+			strings.Contains(rationale, "required boundary adapter") ||
+			strings.Contains(rationale, "adapter required by")
+	case rulescontract.AllowValidation:
+		return strings.Contains(rationale, "validation") || strings.Contains(rationale, "validate")
+	case rulescontract.AllowErrorContext:
+		return strings.Contains(rationale, "error context") || strings.Contains(rationale, "wraps error") || strings.Contains(rationale, "error wrapping")
+	case rulescontract.AllowObservability:
+		return strings.Contains(rationale, "observability") || strings.Contains(rationale, "telemetry") || strings.Contains(rationale, "logging")
+	case rulescontract.AllowPermissionCheck:
+		return strings.Contains(rationale, "permission check") || strings.Contains(rationale, "permissions")
+	default:
+		return false
+	}
 }
 
 func policySuppressed(finding rulescontract.Finding, rule rulescontract.EffectiveRule, suppressions []rulescontract.Suppression) bool {

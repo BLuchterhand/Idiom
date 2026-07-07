@@ -100,13 +100,11 @@ func defaultRuleAllowances(id RuleID) []AllowanceReason {
 	}
 	return []AllowanceReason{
 		AllowImplementsInterface,
-		AllowCompatibilityAPI,
 		AllowBoundaryAdapter,
 		AllowValidation,
 		AllowErrorContext,
 		AllowObservability,
 		AllowPermissionCheck,
-		AllowDomainUseCaseName,
 	}
 }
 

@@ -44,13 +44,11 @@ func TestDefaultPolicyPassThroughDefaultsAreStable(t *testing.T) {
 	}
 	wantAllowances := []AllowanceReason{
 		AllowImplementsInterface,
-		AllowCompatibilityAPI,
 		AllowBoundaryAdapter,
 		AllowValidation,
 		AllowErrorContext,
 		AllowObservability,
 		AllowPermissionCheck,
-		AllowDomainUseCaseName,
 	}
 	if !slices.Equal(rule.AllowWhen, wantAllowances) {
 		t.Fatalf("default rule allowances = %#v, want %#v", rule.AllowWhen, wantAllowances)
@@ -78,7 +76,7 @@ func TestValidatePolicyRequiresSuppressionRationale(t *testing.T) {
 	policy.Suppressions = []Suppression{{
 		RuleID: RuleNoPassThroughWrapper,
 		Path:   "internal/example.go",
-		Reason: AllowCompatibilityAPI,
+		Reason: AllowBoundaryAdapter,
 	}}
 
 	if err := ValidatePolicy(policy); err == nil {
