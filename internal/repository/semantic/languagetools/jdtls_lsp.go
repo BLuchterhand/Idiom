@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/platform/hosttools"
 	"idiom/internal/repository/semantic"
 )
 
@@ -22,8 +23,7 @@ type jdtlsLSPClient struct {
 const jdtlsInitializeTimeout = 30 * time.Second
 
 func (m *Manager) jdtlsBinary() string {
-	path, _ := exec.LookPath("jdtls")
-	return path
+	return hosttools.FirstAvailable("jdtls")
 }
 
 func (m *Manager) newJdtlsLSPClient(ctx context.Context) (*jdtlsLSPClient, error) {

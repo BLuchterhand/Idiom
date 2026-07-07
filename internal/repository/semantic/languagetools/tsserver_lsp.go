@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/platform/hosttools"
 	"idiom/internal/repository/semantic"
 )
 
@@ -44,8 +45,7 @@ type tsPublishDiagnosticsParams struct {
 // it's not installed. Callers should degrade gracefully — TS tools
 // without a language server fall back to the semantic index.
 func (m *Manager) tsserverBinary() string {
-	path, _ := exec.LookPath("typescript-language-server")
-	return path
+	return hosttools.FirstAvailable("typescript-language-server")
 }
 
 func (m *Manager) newTsLSPClient(ctx context.Context) (*tsLSPClient, error) {

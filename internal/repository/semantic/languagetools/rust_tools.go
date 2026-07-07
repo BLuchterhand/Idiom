@@ -5,11 +5,11 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 
+	"idiom/internal/platform/hosttools"
 	"idiom/internal/repository/discovery"
 	"idiom/internal/repository/semantic"
 	semanticrust "idiom/internal/repository/semantic/rust"
@@ -576,7 +576,7 @@ func (m *Manager) rustImplementations(ctx context.Context, req ToolRequest) Tool
 // -- Tool: rust_diagnostics -------------------------------------------------
 
 func (m *Manager) rustDiagnostics(ctx context.Context, req ToolRequest) ToolResult {
-	if _, err := exec.LookPath("cargo"); err != nil {
+	if hosttools.FirstAvailable("cargo") == "" {
 		return ToolResult{Tool: "rust_diagnostics", Summary: "Rust diagnostics unavailable", Error: "cargo is not installed"}
 	}
 

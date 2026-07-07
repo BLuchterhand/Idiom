@@ -333,9 +333,7 @@ func TestRustWorkspaceSymbolFallback(t *testing.T) {
 
 func TestRustDiagnosticsNoCargo(t *testing.T) {
 	mgr, _ := newRustFixtureManager(t)
-	if _, err := exec.LookPath("cargo"); err == nil {
-		t.Skip("cargo is installed; diagnostics is exercised elsewhere")
-	}
+	t.Setenv("PATH", "")
 
 	result := executeToolCtx(context.Background(), mgr, "rust_diagnostics", ToolRequest{Tool: "rust_diagnostics"})
 	if result.Error == "" {

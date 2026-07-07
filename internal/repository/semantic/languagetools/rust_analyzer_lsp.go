@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"idiom/internal/platform/hosttools"
 	"idiom/internal/repository/semantic"
 )
 
@@ -17,8 +18,7 @@ type rustAnalyzerLSPClient struct {
 }
 
 func (m *Manager) rustAnalyzerBinary() string {
-	path, _ := exec.LookPath("rust-analyzer")
-	return path
+	return hosttools.FirstAvailable("rust-analyzer")
 }
 
 func (m *Manager) newRustAnalyzerLSPClient(ctx context.Context) (*rustAnalyzerLSPClient, error) {

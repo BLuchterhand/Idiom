@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
+	"idiom/internal/platform/hosttools"
 	"idiom/internal/repository/discovery"
 	"idiom/internal/repository/semantic"
 	semanticcpp "idiom/internal/repository/semantic/cpp"
@@ -1108,8 +1108,7 @@ func nonEmptySearchLines(output string) []string {
 }
 
 func (m *Manager) clangdBinary() string {
-	path, _ := exec.LookPath("clangd")
-	return path
+	return hosttools.FirstAvailable("clangd")
 }
 
 func (m *Manager) compileCommandsDir() string {

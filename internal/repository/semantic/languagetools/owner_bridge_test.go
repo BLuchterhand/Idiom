@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -45,6 +46,50 @@ func TestFindGoToolUsesGoEnvGOPATHBin(t *testing.T) {
 	mgr := NewManager(ownerTestHost{root: root})
 	if got := mgr.findGoTool("gopls"); got != toolPath {
 		t.Fatalf("findGoTool = %q, want %q", got, toolPath)
+	}
+}
+
+func TestLanguageToolBinaryLookupsUseHostPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("executable fixture uses POSIX mode bits")
+	}
+
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	for _, name := range []string{"clangd", "rust-analyzer", "jdtls", "typescript-language-server"} {
+		writeOwnerTestExecutable(t, filepath.Join(binDir, name))
+	}
+	t.Setenv("PATH", binDir)
+
+	mgr := NewManager(ownerTestHost{root: root})
+	for name, got := range map[string]string{
+		"clangd":                     mgr.clangdBinary(),
+		"rust-analyzer":              mgr.rustAnalyzerBinary(),
+		"jdtls":                      mgr.jdtlsBinary(),
+		"typescript-language-server": mgr.tsserverBinary(),
+	} {
+		want := filepath.Join(binDir, name)
+		if got != want {
+			t.Fatalf("%s lookup = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestPythonLSPBinaryPrefersPyrightOverPylsp(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("executable fixture uses POSIX mode bits")
+	}
+
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	writeOwnerTestExecutable(t, filepath.Join(binDir, "pylsp"))
+	writeOwnerTestExecutable(t, filepath.Join(binDir, "pyright-langserver"))
+	t.Setenv("PATH", binDir)
+
+	mgr := NewManager(ownerTestHost{root: root})
+	path, server := mgr.pythonLSPBinary()
+	if path != filepath.Join(binDir, "pyright-langserver") || server != "pyright" {
+		t.Fatalf("pythonLSPBinary = %q/%q, want pyright-langserver/pyright", path, server)
 	}
 }
 
@@ -161,5 +206,16 @@ func writeOwnerTestFile(t *testing.T, path string, content string) {
 
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func writeOwnerTestExecutable(t *testing.T, path string) {
+	t.Helper()
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write executable %s: %v", path, err)
 	}
 }

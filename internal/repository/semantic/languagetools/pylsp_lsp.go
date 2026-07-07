@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/platform/hosttools"
 	"idiom/internal/repository/semantic"
 )
 
@@ -38,11 +39,11 @@ type pylspDiagnostic struct {
 // pythonLSPBinary resolves the preferred LSP server binary. Returns
 // ("", "") when neither pyright nor pylsp is on PATH.
 func (m *Manager) pythonLSPBinary() (path string, server string) {
-	if p, err := exec.LookPath("pyright-langserver"); err == nil {
+	if p := hosttools.FirstAvailable("pyright-langserver"); p != "" {
 		return p, "pyright"
 	}
 
-	if p, err := exec.LookPath("pylsp"); err == nil {
+	if p := hosttools.FirstAvailable("pylsp"); p != "" {
 		return p, "pylsp"
 	}
 

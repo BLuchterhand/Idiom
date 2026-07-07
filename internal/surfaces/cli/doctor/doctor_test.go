@@ -434,6 +434,32 @@ func TestCheckBackendsFailsWhenPathEmpty(t *testing.T) {
 	}
 }
 
+func TestHostToolChecksUsePath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("executable fixture uses POSIX mode bits")
+	}
+
+	binDir := t.TempDir()
+	writeDoctorExecutable(t, filepath.Join(binDir, "python3"))
+	writeDoctorExecutable(t, filepath.Join(binDir, "git"))
+	t.Setenv("PATH", binDir)
+
+	if result := checkPython3(); result.status != "pass" {
+		t.Fatalf("checkPython3 status = %s (%s), want pass", result.status, result.detail)
+	}
+	if result := checkGit(); result.status != "pass" {
+		t.Fatalf("checkGit status = %s (%s), want pass", result.status, result.detail)
+	}
+}
+
+func writeDoctorExecutable(t *testing.T, path string) {
+	t.Helper()
+
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write executable %s: %v", path, err)
+	}
+}
+
 // TestCheckConfigFileMissing verifies a missing config produces a fail
 // pointing at `idiom init`. This is the path a fresh user hits before
 // running init at all.
