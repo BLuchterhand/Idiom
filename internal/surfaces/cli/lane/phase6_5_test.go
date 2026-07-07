@@ -11,6 +11,7 @@ import (
 
 	lanecontract "idiom/internal/contracts/lane"
 	"idiom/internal/platform/config"
+	cmdruntime "idiom/internal/surfaces/cli/runtime"
 )
 
 // TestLaneRunsBriefLintByDefault verifies the Phase 6.5.1 contract:
@@ -49,7 +50,7 @@ func TestLaneRunsBriefLintByDefault(t *testing.T) {
 		loadConfig:       func(string) (config.Config, error) { return cfg, nil },
 		runPlanExecute:   fake.plan,
 		runImplement:     fake.implement,
-		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
+		defaultPromptRun: func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) { return "", nil },
 	}
 	code := runLaneMainWithDeps([]string{"plan-execute", briefPath}, &stdout, &stderr, deps)
 
@@ -115,7 +116,7 @@ func TestLaneAbortsOnLintFailure(t *testing.T) {
 		loadConfig:       func(string) (config.Config, error) { return cfg, nil },
 		runPlanExecute:   fake.plan,
 		runImplement:     fake.implement,
-		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
+		defaultPromptRun: func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) { return "", nil },
 	}
 	code := runLaneMainWithDeps([]string{"plan-execute", briefPath}, &stdout, &stderr, deps)
 
@@ -340,11 +341,11 @@ func TestRunLaneMainEmitsDegradedEventOnReadOnlyLane(t *testing.T) {
 	briefPath := writeBrief(t, "# Test\n")
 	stubLaneBriefLint(t, func([]string, io.Writer, io.Writer) int { return 0 })
 
-	plan := func(args []string, stdout io.Writer, _ io.Writer, _ promptRunner) int {
+	plan := func(args []string, stdout io.Writer, _ io.Writer, _ cmdruntime.PromptRunner) int {
 		_, _ = stdout.Write([]byte(`{"type":"route_plan","contract":"verification_only"}` + "\n"))
 		return 0
 	}
-	implement := func([]string, io.Writer, io.Writer, promptRunner) int { return 0 }
+	implement := func([]string, io.Writer, io.Writer, cmdruntime.PromptRunner) int { return 0 }
 
 	var stdout, stderr bytes.Buffer
 
@@ -382,7 +383,7 @@ func runLaneMainWithCustomRunners(t *testing.T, args []string, stdout, stderr io
 		loadConfig:       func(string) (config.Config, error) { return cfg, nil },
 		runPlanExecute:   plan,
 		runImplement:     implement,
-		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
+		defaultPromptRun: func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) { return "", nil },
 	}
 
 	return runLaneMainWithDeps(args, stdout, stderr, deps)
@@ -417,7 +418,7 @@ func TestLanePostflightFlagRunsAfterDispatch(t *testing.T) {
 		loadConfig:       func(string) (config.Config, error) { return cfg, nil },
 		runPlanExecute:   fake.plan,
 		runImplement:     fake.implement,
-		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
+		defaultPromptRun: func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) { return "", nil },
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -459,7 +460,7 @@ func TestLanePostflightFlagPassesBrief(t *testing.T) {
 		loadConfig:       func(string) (config.Config, error) { return cfg, nil },
 		runPlanExecute:   fake.plan,
 		runImplement:     fake.implement,
-		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
+		defaultPromptRun: func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) { return "", nil },
 	}
 
 	var stdout, stderr bytes.Buffer

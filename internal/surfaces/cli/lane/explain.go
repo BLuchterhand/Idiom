@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"idiom/internal/evidence/lanehistory"
 	"idiom/internal/platform/textutil"
 )
 
@@ -196,7 +197,7 @@ func sessionIDForLatestBriefDispatch(projectRoot, briefPath string) (string, err
 			continue
 		}
 
-		var evt laneHistoryEvent
+		var evt lanehistory.Event
 
 		if err := json.Unmarshal([]byte(line), &evt); err != nil {
 			continue

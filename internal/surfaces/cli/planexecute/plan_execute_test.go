@@ -66,7 +66,7 @@ func TestRunPlanExecuteMainForwardsThinkingAndMaxTokens(t *testing.T) {
 func TestRunPlanExecuteMainDefaultDoesNotRouteIntentLoop(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
 	originalRunner := runPlanExecuteIntentLoop
-	runPlanExecuteIntentLoop = func(config.Config, planExecuteOptions, planExecuteIntentLoopOptions, planexecute.PromptRunner, *telemetry.Recorder, io.Writer, io.Writer) int {
+	runPlanExecuteIntentLoop = func(config.Config, planexecute.Options, planExecuteIntentLoopOptions, planexecute.PromptRunner, *telemetry.Recorder, io.Writer, io.Writer) int {
 		t.Fatal("intent-loop runner must not be called without --intent-loop")
 		return 99
 	}
@@ -93,10 +93,10 @@ func TestRunPlanExecuteMainIntentLoopFlagsRouteToLoopRunner(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
 	originalRunner := runPlanExecuteIntentLoop
 	var (
-		gotOpts     planExecuteOptions
+		gotOpts     planexecute.Options
 		gotLoopOpts planExecuteIntentLoopOptions
 	)
-	runPlanExecuteIntentLoop = func(_ config.Config, opts planExecuteOptions, loopOpts planExecuteIntentLoopOptions, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) int {
+	runPlanExecuteIntentLoop = func(_ config.Config, opts planexecute.Options, loopOpts planExecuteIntentLoopOptions, _ planexecute.PromptRunner, _ *telemetry.Recorder, _ io.Writer, _ io.Writer) int {
 		gotOpts = opts
 		gotLoopOpts = loopOpts
 		return 7
@@ -2392,7 +2392,7 @@ func TestRunReviewRepairPhaseAutoRepairsPatchHygieneBeforePrompt(t *testing.T) {
 		nil,
 		&baseline,
 		planexecute.ExecutorPhaseReport{},
-		planExecuteOptions{},
+		planexecute.Options{},
 		&stdout,
 		func(_ config.Config, prompt string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			gotPrompt = prompt
@@ -2449,7 +2449,7 @@ func TestRunReviewRepairPhaseRejectsPassWithoutChecklist(t *testing.T) {
 		nil,
 		nil,
 		planexecute.ExecutorPhaseReport{},
-		planExecuteOptions{},
+		planexecute.Options{},
 		&stdout,
 		func(_ config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			return "Decision: pass\nNo issues.", nil
@@ -2488,7 +2488,7 @@ func TestRunReviewRepairPhaseRejectsRecoveryTemplateAsPass(t *testing.T) {
 		nil,
 		nil,
 		planexecute.ExecutorPhaseReport{},
-		planExecuteOptions{},
+		planexecute.Options{},
 		&stdout,
 		func(_ config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			return "The completion gate rejected the review-repair response.\n\nPass shape:\nDecision: pass\n\nVerification Checklist:\n- Required behavior: <checked fact>.\n\nDo not add prose before or after the chosen terminal shape.", nil
@@ -2527,7 +2527,7 @@ func TestRunReviewRepairPhaseRejectsContradictoryPass(t *testing.T) {
 		nil,
 		nil,
 		planexecute.ExecutorPhaseReport{},
-		planExecuteOptions{
+		planexecute.Options{
 			JSONEvents: true,
 			EditSetObligations: plancontract.EditSetObligations{}.With(
 				plancontract.EditSetObligationKindTestEdit,
@@ -2582,7 +2582,7 @@ func TestRunReviewRepairPhaseRejectsPassThatAdmitsCommandWasNotRun(t *testing.T)
 		nil,
 		nil,
 		planexecute.ExecutorPhaseReport{},
-		planExecuteOptions{JSONEvents: true},
+		planexecute.Options{JSONEvents: true},
 		&stdout,
 		func(_ config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			return "Decision: pass\n\nVerification Checklist:\n- Required behavior: diff looks scoped.\n- Test or command evidence: We didn't run `go test ./cmd/idiom`.", nil
@@ -2635,7 +2635,7 @@ func TestRunReviewRepairPhaseRejectsPassWhenRequestedTestEditMissing(t *testing.
 		nil,
 		nil,
 		planexecute.ExecutorPhaseReport{},
-		planExecuteOptions{
+		planexecute.Options{
 			JSONEvents: true,
 			EditSetObligations: plancontract.EditSetObligations{}.With(
 				plancontract.EditSetObligationKindTestEdit,
@@ -2699,7 +2699,7 @@ func TestRunReviewRepairPhaseRejectsPassWhenRequestedImplementationEditMissing(t
 		nil,
 		nil,
 		planexecute.ExecutorPhaseReport{},
-		planExecuteOptions{
+		planexecute.Options{
 			JSONEvents: true,
 			EditSetObligations: plancontract.EditSetObligations{}.With(
 				plancontract.EditSetObligationKindImplementationEdit,
@@ -2769,7 +2769,7 @@ func TestRunReviewRepairPhaseRejectsPassWhenVerificationFailed(t *testing.T) {
 			Status:  "failed",
 			Error:   "TestValue failed",
 		}}},
-		planExecuteOptions{JSONEvents: true},
+		planexecute.Options{JSONEvents: true},
 		&stdout,
 		func(_ config.Config, prompt string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			gotPrompt = prompt
@@ -2833,7 +2833,7 @@ func TestRunReviewRepairPhaseRetriesContradictoryPassIntoCorrectivePlan(t *testi
 			Status:  "failed",
 			Error:   "value was bad",
 		}}},
-		planExecuteOptions{JSONEvents: true},
+		planexecute.Options{JSONEvents: true},
 		&stdout,
 		func(cfg config.Config, prompt string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			attempts++
@@ -2913,7 +2913,7 @@ func TestRunReviewRepairPhaseRejectsCorrectivePlanWhenRequestedTestEditStillMiss
 		nil,
 		nil,
 		planexecute.ExecutorPhaseReport{},
-		planExecuteOptions{
+		planexecute.Options{
 			JSONEvents:         true,
 			EditSetObligations: plancontract.EditSetObligations{}.With(plancontract.EditSetObligationKindTestEdit, "test"),
 		},
@@ -3059,7 +3059,7 @@ func TestRunReviewRepairPhaseUsesReviewRepairTaskFamilyForPass(t *testing.T) {
 		nil,
 		nil,
 		planexecute.ExecutorPhaseReport{},
-		planExecuteOptions{UseActiveModel: true},
+		planexecute.Options{UseActiveModel: true},
 		&stdout,
 		func(_ config.Config, prompt string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			gotTaskFamily = opts.TaskFamily
@@ -3343,7 +3343,7 @@ func TestRunReviewRepairPhaseDegradesWhenReviewModelUnavailable(t *testing.T) {
 		nil,
 		nil,
 		planexecute.ExecutorPhaseReport{Succeeded: 1, Total: 1},
-		planExecuteOptions{JSONEvents: true},
+		planexecute.Options{JSONEvents: true},
 		&stdout,
 		func(_ config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			return "", fmt.Errorf("Post \"http://127.0.0.1:47781/v1/chat/completions\": EOF")
@@ -3397,7 +3397,7 @@ func TestRunReviewRepairPhaseAppliesChecklistRepairPlanWithinScope(t *testing.T)
 		nil,
 		nil,
 		planexecute.ExecutorPhaseReport{},
-		planExecuteOptions{},
+		planexecute.Options{},
 		&stdout,
 		func(cfg config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, planartifact.PlanArtifact{
@@ -3459,7 +3459,7 @@ func TestRunReviewRepairPhaseRejectsOutOfScopeRepairBeforeWrites(t *testing.T) {
 		nil,
 		nil,
 		planexecute.ExecutorPhaseReport{},
-		planExecuteOptions{},
+		planexecute.Options{},
 		&stdout,
 		func(cfg config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, planartifact.PlanArtifact{
@@ -3519,7 +3519,7 @@ func TestRunReviewRepairPhaseRejectsNoOpAssertionRepairBeforeWrites(t *testing.T
 		nil,
 		nil,
 		planexecute.ExecutorPhaseReport{},
-		planExecuteOptions{},
+		planexecute.Options{},
 		&stdout,
 		func(cfg config.Config, _ string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, planartifact.PlanArtifact{
@@ -3690,7 +3690,7 @@ func runReviewRepairPhaseForTest(
 	requiredEditPaths []string,
 	baseline *planexecute.ReviewRepairBaseline,
 	executorReport planexecute.ExecutorPhaseReport,
-	opts planExecuteOptions,
+	opts planexecute.Options,
 	stdout io.Writer,
 	promptRun cmdruntime.PromptRunner,
 	rec *telemetry.Recorder,

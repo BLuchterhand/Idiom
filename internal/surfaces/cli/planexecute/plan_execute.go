@@ -15,9 +15,6 @@ import (
 	planexecuteadapters "idiom/internal/workflows/planexecute/adapters"
 )
 
-// planExecuteOptions configures `idiom plan-execute`.
-type planExecuteOptions = planexecute.Options
-
 type planExecuteIntentLoopOptions struct {
 	Enabled           bool
 	MaxCycles         int
@@ -26,7 +23,7 @@ type planExecuteIntentLoopOptions struct {
 
 type planExecuteIntentLoopRunner func(
 	cfg config.Config,
-	opts planExecuteOptions,
+	opts planexecute.Options,
 	loopOpts planExecuteIntentLoopOptions,
 	promptRun planexecute.PromptRunner,
 	rec *telemetry.Recorder,
@@ -106,7 +103,7 @@ func adaptPromptRunner(promptRun cmdruntime.PromptRunner) planexecute.PromptRunn
 
 func defaultPlanExecuteIntentLoop(
 	cfg config.Config,
-	opts planExecuteOptions,
+	opts planexecute.Options,
 	loopOpts planExecuteIntentLoopOptions,
 	promptRun planexecute.PromptRunner,
 	rec *telemetry.Recorder,
@@ -134,15 +131,15 @@ func defaultPlanExecuteIntentLoop(
 	return result.ExitCode
 }
 
-func parsePlanExecuteCLIOptions(args []string, stderr io.Writer) (planExecuteOptions, planExecuteIntentLoopOptions, error) {
+func parsePlanExecuteCLIOptions(args []string, stderr io.Writer) (planexecute.Options, planExecuteIntentLoopOptions, error) {
 	planArgs, loopOpts, err := splitPlanExecuteIntentLoopArgs(args)
 	if err != nil {
-		return planExecuteOptions{}, planExecuteIntentLoopOptions{}, err
+		return planexecute.Options{}, planExecuteIntentLoopOptions{}, err
 	}
 
 	opts, err := planexecute.ParseOptions(planArgs, stderr)
 	if err != nil {
-		return planExecuteOptions{}, planExecuteIntentLoopOptions{}, err
+		return planexecute.Options{}, planExecuteIntentLoopOptions{}, err
 	}
 
 	return opts, loopOpts, nil

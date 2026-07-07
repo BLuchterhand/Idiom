@@ -10,8 +10,10 @@ import (
 
 	plancontract "idiom/internal/contracts/plan"
 	recoverycontract "idiom/internal/contracts/recovery"
+	"idiom/internal/evidence/lanehistory"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/sessionid"
+	cmdruntime "idiom/internal/surfaces/cli/runtime"
 	"idiom/internal/workflows/recovery"
 )
 
@@ -19,8 +21,8 @@ type lanePromptSessionCapture struct {
 	sessionID string
 }
 
-func (c *lanePromptSessionCapture) wrap(next promptRunner) promptRunner {
-	return func(cfg config.Config, prompt string, opts runOptions, stdout io.Writer) (string, error) {
+func (c *lanePromptSessionCapture) wrap(next cmdruntime.PromptRunner) cmdruntime.PromptRunner {
+	return func(cfg config.Config, prompt string, opts cmdruntime.RunOptions, stdout io.Writer) (string, error) {
 		if sessionID := strings.TrimSpace(cfg.Workspace.SessionID); sessionID != "" {
 			c.sessionID = sessionID
 		}
@@ -37,7 +39,7 @@ func (c *lanePromptSessionCapture) SessionID() string {
 	return strings.TrimSpace(c.sessionID)
 }
 
-func writeLaneImplementRecovery(opts laneOptions, history laneHistoryEvent, subcommandExit int, stderr io.Writer) {
+func writeLaneImplementRecovery(opts laneOptions, history lanehistory.Event, subcommandExit int, stderr io.Writer) {
 	sessionID := strings.TrimSpace(history.SessionID)
 	if sessionID == "" {
 		sessionID = sessionid.New()
@@ -79,7 +81,7 @@ func writeLaneImplementRecovery(opts laneOptions, history laneHistoryEvent, subc
 	fmt.Fprintf(stderr, "lane: recovery failure_record=%s packet=%s next_valid_action=%s\n", recordPath, packetPath, packet.NextAction)
 }
 
-func laneImplementFailureSummary(history laneHistoryEvent, subcommandExit int) string {
+func laneImplementFailureSummary(history lanehistory.Event, subcommandExit int) string {
 	parts := []string{
 		fmt.Sprintf("implement process failed: exit_code=%d", subcommandExit),
 	}
@@ -98,7 +100,7 @@ func laneImplementFailureSummary(history laneHistoryEvent, subcommandExit int) s
 	return strings.Join(parts, " ")
 }
 
-func laneImplementEvidenceRefs(opts laneOptions, history laneHistoryEvent) []recoverycontract.EvidenceRef {
+func laneImplementEvidenceRefs(opts laneOptions, history lanehistory.Event) []recoverycontract.EvidenceRef {
 	refs := []recoverycontract.EvidenceRef{
 		{Kind: "lane_history", Path: laneHistoryRelPath},
 	}

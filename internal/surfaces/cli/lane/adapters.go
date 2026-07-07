@@ -4,21 +4,9 @@ import (
 	"strings"
 
 	"idiom/internal/evidence/lanehistory"
-	"idiom/internal/runtime/readiness"
-	cmdruntime "idiom/internal/surfaces/cli/runtime"
-	"idiom/internal/workflows/atomintake"
 )
 
-type runOptions = cmdruntime.RunOptions
-type promptRunner = cmdruntime.PromptRunner
-
-type atomIntakeReport = atomintake.IntakeReport
-
 const laneHistoryRelPath = lanehistory.RelPath
-
-type laneHistoryEvent = lanehistory.Event
-type laneHistoryFilter = lanehistory.Filter
-type readinessProfileReport = readiness.ProfileReport
 
 func laneRunFinalState(exitCode int, degradations []laneDegradation, out []byte) string {
 	if exitCode != 0 {

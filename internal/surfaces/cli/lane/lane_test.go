@@ -21,6 +21,8 @@ import (
 	"idiom/internal/platform/jsonevents/jsoneventstest"
 	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/readiness"
+	cmdruntime "idiom/internal/surfaces/cli/runtime"
+	"idiom/internal/workflows/atomintake"
 	canonicalprompts "idiom/prompts"
 )
 
@@ -88,7 +90,7 @@ func TestLaneAtomIntakeReportFieldsProjectFinalNonDispatchableStates(t *testing.
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			report := atomIntakeReport{
+			report := atomintake.IntakeReport{
 				State:        tc.state,
 				Dispatchable: false,
 			}
@@ -111,7 +113,7 @@ func TestLaneAtomIntakeReportFieldsProjectFinalNonDispatchableStates(t *testing.
 	}
 }
 
-func (f *laneFakeRunner) plan(args []string, stdout, _ io.Writer, _ promptRunner) int {
+func (f *laneFakeRunner) plan(args []string, stdout, _ io.Writer, _ cmdruntime.PromptRunner) int {
 	f.calledMode = "plan-execute"
 
 	f.calledArgs = append([]string(nil), args...)
@@ -122,7 +124,7 @@ func (f *laneFakeRunner) plan(args []string, stdout, _ io.Writer, _ promptRunner
 	return f.exitCode
 }
 
-func (f *laneFakeRunner) implement(args []string, stdout, _ io.Writer, _ promptRunner) int {
+func (f *laneFakeRunner) implement(args []string, stdout, _ io.Writer, _ cmdruntime.PromptRunner) int {
 	f.calledMode = "implement"
 
 	f.calledArgs = append([]string(nil), args...)
@@ -536,7 +538,7 @@ func TestRunLaneMainInjectsAutomaticContextPackBeforeBrief(t *testing.T) {
 		loadConfig:     func(string) (config.Config, error) { return cfg, nil },
 		runPlanExecute: fake.plan,
 		runImplement:   fake.implement,
-		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) {
+		defaultPromptRun: func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
 			return "", nil
 		},
 		buildContextPack: func(opts laneOptions, got config.Config, stderr io.Writer) string {
@@ -676,7 +678,7 @@ func TestRunLaneMainTelemetryMatchesDoctorReadinessProfile(t *testing.T) {
 		loadConfig:     config.Load,
 		runPlanExecute: fake.plan,
 		runImplement:   fake.implement,
-		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) {
+		defaultPromptRun: func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
 			return "", nil
 		},
 		buildContextPack: func(laneOptions, config.Config, io.Writer) string { return "" },
@@ -817,7 +819,7 @@ func TestRunLaneMainNoContextPackSkipsAutomaticContextPack(t *testing.T) {
 		loadConfig:       func(string) (config.Config, error) { return cfg, nil },
 		runPlanExecute:   fake.plan,
 		runImplement:     fake.implement,
-		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
+		defaultPromptRun: func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) { return "", nil },
 		buildContextPack: func(laneOptions, config.Config, io.Writer) string {
 			calls++
 			return "## Context Pack\n\nshould not appear\n"
@@ -865,7 +867,7 @@ func TestRunLaneMainSkipsContextPackForRefineScratchpadMetaBrief(t *testing.T) {
 		loadConfig:       func(string) (config.Config, error) { return cfg, nil },
 		runPlanExecute:   fake.plan,
 		runImplement:     fake.implement,
-		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
+		defaultPromptRun: func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) { return "", nil },
 		buildContextPack: func(laneOptions, config.Config, io.Writer) string {
 			calls++
 			return "## Context Pack\n\nshould not appear\n"
@@ -2039,7 +2041,7 @@ func TestRunLaneMainResolvesProjectRootFromConfig(t *testing.T) {
 		loadConfig:       func(string) (config.Config, error) { return cfg, nil },
 		runPlanExecute:   fake.plan,
 		runImplement:     fake.implement,
-		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
+		defaultPromptRun: func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) { return "", nil },
 	}
 
 	if got := runLaneMainWithDeps([]string{"plan-execute", briefPath}, &stdout, &stderr, deps); got != 0 {
@@ -2082,7 +2084,7 @@ func TestRunLaneMainProjectRootFlagWinsOverConfig(t *testing.T) {
 		loadConfig:       func(string) (config.Config, error) { return cfg, nil },
 		runPlanExecute:   fake.plan,
 		runImplement:     fake.implement,
-		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
+		defaultPromptRun: func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) { return "", nil },
 	}
 	args := []string{"plan-execute", "--project-root", flagRoot, briefPath}
 
@@ -2477,7 +2479,7 @@ func runLaneMainTest(t *testing.T, args []string, stdout, stderr io.Writer, fake
 		loadConfig:       func(string) (config.Config, error) { return cfg, nil },
 		runPlanExecute:   fake.plan,
 		runImplement:     fake.implement,
-		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
+		defaultPromptRun: func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) { return "", nil },
 	}
 
 	return runLaneMainWithDeps(args, stdout, stderr, deps)

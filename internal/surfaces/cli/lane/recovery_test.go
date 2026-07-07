@@ -12,6 +12,7 @@ import (
 	recoverycontract "idiom/internal/contracts/recovery"
 
 	"idiom/internal/platform/config"
+	cmdruntime "idiom/internal/surfaces/cli/runtime"
 	"idiom/internal/workflows/recovery"
 )
 
@@ -42,14 +43,14 @@ func TestRunLaneImplementRecoveryWritesFailureAndPacket(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
 	code := runLaneRecoveryTest(t, root, []string{"implement", "--json", "--project-root", root, briefPath},
-		func(args []string, stdout, _ io.Writer, _ promptRunner) int {
+		func(args []string, stdout, _ io.Writer, _ cmdruntime.PromptRunner) int {
 			_, _ = stdout.Write([]byte(`{"type":"session_summary","session_id":"impl-session","stop_reason":"model_error"}` + "\n"))
 			_, _ = stdout.Write([]byte(`{"type":"implementation_lifecycle_state","phase":"implementation.target_write_ready","stop_reason":"model_call_budget_exhausted","remaining_required_edit_paths":["internal/workflows/recovery/record.go"],"sourced_evidence_paths":["internal/workflows/recovery/record.go"],"write_ready_nudge_count":1}` + "\n"))
 			_, _ = stdout.Write([]byte("transcript: SECRET_TRANSCRIPT_BODY\n"))
 
 			return 7
 		},
-		func(args []string, stdout, _ io.Writer, _ promptRunner) int { return 0 },
+		func(args []string, stdout, _ io.Writer, _ cmdruntime.PromptRunner) int { return 0 },
 		&stdout, &stderr)
 
 	if code != 7 {
@@ -137,15 +138,15 @@ func TestRunLaneImplementRecoveryCapturesPromptRunnerSessionID(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
 	code := runLaneRecoveryTest(t, root, []string{"implement", "--project-root", root, briefPath},
-		func(args []string, stdout, _ io.Writer, promptRun promptRunner) int {
+		func(args []string, stdout, _ io.Writer, promptRun cmdruntime.PromptRunner) int {
 			cfg := config.Default()
 
 			cfg.Workspace.SessionID = "captured-session"
-			_, _ = promptRun(cfg, "", runOptions{}, stdout)
+			_, _ = promptRun(cfg, "", cmdruntime.RunOptions{}, stdout)
 
 			return 3
 		},
-		func(args []string, stdout, _ io.Writer, _ promptRunner) int { return 0 },
+		func(args []string, stdout, _ io.Writer, _ cmdruntime.PromptRunner) int { return 0 },
 		&stdout, &stderr)
 
 	if code != 3 {
@@ -187,8 +188,8 @@ func TestRunLanePlanExecuteRecoveryDoesNotWriteLaneImplementRecord(t *testing.T)
 	var stdout, stderr bytes.Buffer
 
 	code := runLaneRecoveryTest(t, root, []string{"plan-execute", "--json", "--project-root", root, briefPath},
-		func(args []string, stdout, _ io.Writer, _ promptRunner) int { return 0 },
-		func(args []string, stdout, _ io.Writer, _ promptRunner) int {
+		func(args []string, stdout, _ io.Writer, _ cmdruntime.PromptRunner) int { return 0 },
+		func(args []string, stdout, _ io.Writer, _ cmdruntime.PromptRunner) int {
 			_, _ = stdout.Write([]byte(`{"type":"session_summary","session_id":"plan-session","stop_reason":"planner_failed"}` + "\n"))
 			return 5
 		},
@@ -220,7 +221,7 @@ func runLaneRecoveryTest(t *testing.T, root string, args []string, implement lan
 		loadConfig:       func(string) (config.Config, error) { return cfg, nil },
 		runPlanExecute:   plan,
 		runImplement:     implement,
-		defaultPromptRun: func(config.Config, string, runOptions, io.Writer) (string, error) { return "", nil },
+		defaultPromptRun: func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) { return "", nil },
 	}
 
 	return runLaneMainWithDeps(args, stdout, stderr, deps)

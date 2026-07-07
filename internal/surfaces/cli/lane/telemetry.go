@@ -55,15 +55,15 @@ func laneStartTelemetryFields(opts laneOptions, cfg config.Config) map[string]an
 	return fields
 }
 
-func laneDoctorReadinessProfile(opts laneOptions) (readinessProfileReport, bool) {
+func laneDoctorReadinessProfile(opts laneOptions) (readiness.ProfileReport, bool) {
 	profileName := laneReadinessProfileName(opts.Mode)
 	if profileName == "" {
-		return readinessProfileReport{}, false
+		return readiness.ProfileReport{}, false
 	}
 
 	profiles, err := readiness.BuildProfiles(opts.ConfigPath, profileName, nil)
 	if err != nil || len(profiles) != 1 {
-		return readinessProfileReport{}, false
+		return readiness.ProfileReport{}, false
 	}
 
 	return profiles[0], true

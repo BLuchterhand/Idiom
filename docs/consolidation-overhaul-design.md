@@ -364,6 +364,7 @@ Accepted or corrected slices:
 | Languagetools test facade deletion | Production Go unchanged; deleted the test-only `languagetools_test` compatibility facade and retargeted tests to `workspace`, `semantic/language`, and `semantic/languagetools` owners directly while keeping only local fixture helpers for file writes and language detection | Test Go `+328 / -429`: net `-101`; the old 140-line alias/wrapper facade is now a 26-line helper-only file, and tests no longer hide owner packages behind local type/constant aliases or route-execution wrappers | Focused: `go test ./internal/repository/semantic/languagetools -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `git diff --check` | Accepted after test-architecture reviewer feedback; tests now reinforce the intended owner boundaries instead of preserving compatibility names production no longer exposes |
 | TUI clipboard host-tool lookup cleanup | Production Go `+9 / -8`: net `+1`; routed clipboard command discovery through `internal/platform/hosttools` and removed the private lookup callback used only to bypass PATH lookup in tests; Bubble Tea process execution remains local because it hands an `exec.Cmd` to `tea.ExecProcess` | Test Go `+29 / -17`: clipboard command-selection tests now use PATH-isolated executable fixtures instead of a callback seam | Focused so far: `go test ./internal/surfaces/tui/app -run 'TestClipboardCommandForRuntime|TestCopyConversationContent|TestSelectionMode' -count=1` | Accepted locally as the host-tool lookup tail: production `exec.LookPath` remains only in platform packages, while TUI clipboard process execution stays deferred to a future lifecycle-aware process API because it integrates with Bubble Tea's `ExecProcess` |
 | Wrapper policy audit hardening | Production Go behavior unchanged; changed the pass-through wrapper default and tracked Idiom policy so test files are scanned instead of exempted, and strengthened AGENTS/development guidance to ban wrapper-only helpers in tests as well as production | No test files changed; policy/docs delta is `+13 / -10` across `.idiom/coding_rules.json`, `coding_rules.example.json`, `internal/contracts/codingrules/effective.go`, `AGENTS.md`, and `docs/development.md` before this ledger row | Branch audit: `git diff b6591bf5eb647e29a10697b48585047c6a8361da..HEAD -- '*.go'` added no type aliases; diff-scoped wrapper scan with `ignore_tests=false` scanned `179` changed Go files with `0` findings; full scan with tracked policy scanned `607` Go files with `0` findings and `5` boundary-adapter suppressions; focused rule tests passed | Accepted as a direct response to wrapper-risk review: compatibility/API suppressions remain rejected by scanner tests, test-only facades are no longer policy-exempt, and the only active suppressions are the `languagetools.Host` boundary adapter methods |
+| CLI lane/plan-execute alias cleanup | Production Go `+29 / -41`: net `-12`; deleted alias-only DTO/type surfaces from `internal/surfaces/cli/lane` and `internal/surfaces/cli/planexecute`, with call sites naming `cmdruntime`, `lanehistory`, `atomintake`, `readiness`, and workflow `planexecute` owners directly | Test Go `+48 / -44`: net `+4`; test fakes and review-repair fixtures now use owner package types instead of package-local compatibility aliases | Focused: `go test ./internal/surfaces/cli/planexecute ./internal/surfaces/cli/lane -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `git diff --check` | Accepted as an alias-only surface deletion; no wrapper helper was introduced, the tracked wrapper policy scanned `607` Go files with `0` findings, and `deadcode -test ./...` is clean |
 
 ## Historical Count Snapshots (Superseded)
 
@@ -751,51 +752,39 @@ helper cleanup:
   ./internal/evidence/sidecarvalidation`: latest focused staticcheck run
   passed.
 
-## Final Verification For This Dirty Worktree
+## Final Verification For Current Branch State
 
-- `go test ./...`: latest run passed 9,008 tests in 139 packages.
-- `go build ./cmd/idiom ./cmd/idiom-eval ./cmd/idiom-perf-eval
-  ./cmd/idiom-swe-eval`: latest run passed.
-- `go run ./cmd/idiom coding-rules check --project-root . --config
-  coding_rules.example.json --json`: latest run stayed advisory-only with 12
-  warnings, 0 errors, 0 blocking findings, and 9 suppressed findings.
+- `go test ./internal/surfaces/cli/planexecute ./internal/surfaces/cli/lane
+  -count=1`: latest run passed.
+- `go test ./...`: latest run passed.
+- `go build ./cmd/idiom`: latest run passed.
+- `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on
+  warning`: latest run passed with `0` findings across 607 scanned Go files.
 - `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`: latest run
   is clean.
-- `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`:
-  latest run is clean.
 - `git diff --check`: latest run passed.
 
 ## Current Count And Estimate
 
 Current git state:
 
-- Branch state: `main` tracks `origin/main` with `0` commits ahead and `0`
-  commits behind; the working tree is dirty.
-- Current working-tree diff after the evidence adapter cleanup, raw
-  source-evidence alias deletion, staticcheck-dead cleanup, prior-session
-  wrapper deletion, source-grounding wrapper deletion, evidence parity
-  characterization, command telemetry map collapse, scripted compact response
-  cleanup, scripted no-approval assertion cleanup, scripted defaults-only
-  compaction, prompt-profile API deletion, read-only outline classification
-  correction, candidate-parity characterization, the one-call registry
-  candidate wrapper inline, CLI surface alias-only cleanup, local-ops wrapper
-  deletion, pathparse plan-file-scope heading ownership, focused staticcheck
-  simplification, the atom-intake required-edit parser owner move, the autonomy
-  typed-vocabulary uniqueness helper cleanup, the runtime evidence/workerruntime
-  cleanup tail, and the context-zoom evidence-boundary characterization:
-  production Go `+265 / -623`, net `-358`; supporting Python `+19 / -4`, net
-  `+15`; Go tests `+2194 / -66`, net `+2128`; fixture JSON `+579 / -1818`,
-  net `-1239`; docs/other `+303 / -100`, net `+203`; strict current
-  working-tree total `+3360 / -2611`, net `+749`.
-- Because the branch has no committed divergence from `origin/main`, `git diff
-  origin/main` currently reports the same dirty working-tree totals above.
+- Branch state: `codex/rearchitecture-surface-authority` is based on
+  merge-base `b6591bf5eb647e29a10697b48585047c6a8361da`; the latest commit
+  includes the CLI lane/plan-execute alias cleanup.
+- Goal-period diff from merge base through the latest commit: production Go
+  `+18,960 / -18,770`, net `+190`; Go tests `+9,526 / -5,813`, net `+3,713`;
+  strict all-file total `+30,473 / -26,554`, net `+3,919` across 388 files.
+- Latest alias-cleanup slice only: production Go `+29 / -41`, net
+  `-12`; Go tests `+48 / -44`, net `+4`.
 
-Interpretation: the current patch is net positive overall because the latest
-work added characterization tests and a design ledger before or alongside
-deletions. Production Go is now net negative by `358` LOC in the dirty working
-tree, while the larger visible deletion is fixture JSON compaction. The
-implementation ledger above remains the source of truth for accepted local
-reductions inside each consolidation case.
+Interpretation: the current goal-period branch is not production-LOC negative.
+Many individual consolidation slices are net-negative and remove real duplicate
+or alias-only surfaces, but the later `commandexec` process-lifecycle owner
+work intentionally added shared platform code before all remaining process
+migrations are complete. The honest current production answer is net `+190`
+Go LOC from merge base through the working tree. The implementation ledger
+above remains the source of truth for accepted local reductions inside each
+consolidation case.
 
 Reviewer-updated estimate:
 

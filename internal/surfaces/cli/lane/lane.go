@@ -72,7 +72,7 @@ var canonicalRuleNames = cliassets.CanonicalLaneRuleNames()
 // laneSubcommandRunner is the function shape the lane wrapper uses
 // for implement and plan-execute dispatch. Capturing it as a type
 // lets tests inject fakes that record what the lane wrapper forwarded.
-type laneSubcommandRunner func(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner) int
+type laneSubcommandRunner func(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdruntime.PromptRunner) int
 
 // laneDeps groups the lane wrapper's external dependencies so tests
 // can swap in fakes without touching package-level globals.
@@ -80,7 +80,7 @@ type laneDeps struct {
 	loadConfig       func(path string) (config.Config, error)
 	runPlanExecute   laneSubcommandRunner
 	runImplement     laneSubcommandRunner
-	defaultPromptRun promptRunner
+	defaultPromptRun cmdruntime.PromptRunner
 	buildContextPack laneContextPackBuilder
 	telemetry        *telemetry.Recorder
 }
@@ -161,10 +161,10 @@ var laneGitDiff = func(projectRoot string) ([]byte, error) {
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	deps := laneDeps{
 		loadConfig: config.Load,
-		runPlanExecute: func(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner) int {
+		runPlanExecute: func(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdruntime.PromptRunner) int {
 			return planexecutecmd.RunMainWithTelemetry(args, stdout, stderr, promptRun, rec)
 		},
-		runImplement: func(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner) int {
+		runImplement: func(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdruntime.PromptRunner) int {
 			return implementcmd.RunMainWithTelemetry(args, stdout, stderr, promptRun, rec)
 		},
 		defaultPromptRun: cmdruntime.RunPromptOnce,
@@ -230,7 +230,7 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 	}
 
 	if opts.Mode == "history" {
-		filter := laneHistoryFilter{FailedOnly: opts.FailedOnly, ModeFilter: opts.ModeFilter}
+		filter := lanehistory.Filter{FailedOnly: opts.FailedOnly, ModeFilter: opts.ModeFilter}
 		if opts.Since != "" {
 			dur, err := time.ParseDuration(opts.Since)
 			if err != nil {
@@ -395,7 +395,7 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		briefMtime = info.ModTime().UTC().Format(time.RFC3339Nano)
 	}
 
-	historyEvt := laneHistoryEvent{
+	historyEvt := lanehistory.Event{
 		Mode:            opts.Mode,
 		Brief:           opts.BriefPath,
 		BriefMtime:      briefMtime,
@@ -486,7 +486,7 @@ func isKnownLaneMode(mode string) bool {
 	return false
 }
 
-func runLaneAtomIntakePreflight(opts laneOptions, stdout io.Writer, stderr io.Writer) (bool, int, *atomIntakeReport) {
+func runLaneAtomIntakePreflight(opts laneOptions, stdout io.Writer, stderr io.Writer) (bool, int, *atomintake.IntakeReport) {
 	body, err := os.ReadFile(opts.BriefPath)
 	if err != nil {
 		return false, 0, nil
@@ -509,7 +509,7 @@ func runLaneAtomIntakePreflight(opts laneOptions, stdout io.Writer, stderr io.Wr
 		return false, 0, &report
 	}
 
-	historyEvt := laneHistoryEvent{
+	historyEvt := lanehistory.Event{
 		Mode:            opts.Mode,
 		Brief:           opts.BriefPath,
 		BriefMtime:      laneBriefMtime(opts.BriefPath),
@@ -535,7 +535,7 @@ func runLaneAtomIntakePreflight(opts laneOptions, stdout io.Writer, stderr io.Wr
 	return true, 1, &report
 }
 
-func printLaneAtomIntakeReport(report atomIntakeReport, w io.Writer) {
+func printLaneAtomIntakeReport(report atomintake.IntakeReport, w io.Writer) {
 	fmt.Fprintf(w, "state: %s\n", report.State)
 
 	if report.Status != "" {
@@ -667,7 +667,7 @@ func laneBriefHasAtomIntakeMarker(body string) bool {
 	return false
 }
 
-func laneAtomIntakeReportFields(report atomIntakeReport, projection laneBriefIntakeProjectionResult) map[string]any {
+func laneAtomIntakeReportFields(report atomintake.IntakeReport, projection laneBriefIntakeProjectionResult) map[string]any {
 	body, err := json.Marshal(report)
 	if err != nil {
 		return map[string]any{}
@@ -693,7 +693,7 @@ func laneAtomIntakeReportFields(report atomIntakeReport, projection laneBriefInt
 	return fields
 }
 
-func laneAtomIntakeWorkflowProjection(report atomIntakeReport, reason string) laneBriefIntakeProjectionResult {
+func laneAtomIntakeWorkflowProjection(report atomintake.IntakeReport, reason string) laneBriefIntakeProjectionResult {
 	projection := laneBriefIntakeProjectionResult{
 		WorkflowID: workflowstate.WorkflowAtomIntake,
 		Reason:     strings.TrimSpace(reason),
@@ -1621,7 +1621,7 @@ func projectRulesExtras(projectRoot string, canonical map[string]struct{}) []str
 	return extras
 }
 
-func laneForwardedRequiredEditPaths(opts laneOptions, atomReport *atomIntakeReport, stderr io.Writer) []string {
+func laneForwardedRequiredEditPaths(opts laneOptions, atomReport *atomintake.IntakeReport, stderr io.Writer) []string {
 	if opts.Mode != string(lanecontract.LanePlanExecute) {
 		return nil
 	}
