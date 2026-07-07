@@ -19,7 +19,6 @@ import (
 	"strings"
 
 	"idiom/internal/repository/discovery"
-	"idiom/internal/repository/semantic"
 	semanticts "idiom/internal/repository/semantic/typescript"
 )
 
@@ -71,7 +70,7 @@ func (m *Manager) isTsWorkspace() bool {
 	return found
 }
 
-func (m *Manager) getTsIndex() (*semantic.TsIndex, error) {
+func (m *Manager) getTsIndex() (*semanticts.TsIndex, error) {
 	if !m.isTsWorkspace() {
 		return nil, fmt.Errorf("typescript-specific tools require a workspace with TS/JS source files or a tsconfig/jsconfig/package.json")
 	}
@@ -511,8 +510,8 @@ func (m *Manager) tsFileOutline(req ToolRequest) ToolResult {
 	} else if len(file.Symbols) > 200 {
 		fmt.Fprintf(&b, "declarations: omitted for large file (%d symbols).\n", len(file.Symbols))
 	} else {
-		symbols := append([]semantic.TsSymbol(nil), file.Symbols...)
-		slices.SortStableFunc(symbols, func(a, b semantic.TsSymbol) int { return cmp.Compare(a.Line, b.Line) })
+		symbols := append([]semanticts.TsSymbol(nil), file.Symbols...)
+		slices.SortStableFunc(symbols, func(a, b semanticts.TsSymbol) int { return cmp.Compare(a.Line, b.Line) })
 		b.WriteString("declarations:\n")
 
 		for _, sym := range symbols {
@@ -585,42 +584,42 @@ func (m *Manager) tsDiagnostics(ctx context.Context, req ToolRequest) ToolResult
 	return ToolResult{Tool: "ts_diagnostics", Summary: fmt.Sprintf("Collected TypeScript diagnostics for %d file(s).", len(files)), Output: strings.Join(lines, "\n")}
 }
 
-func (m *Manager) selectTsSymbolMatch(req ToolRequest) (semantic.TsSymbolMatch, error) {
+func (m *Manager) selectTsSymbolMatch(req ToolRequest) (semanticts.TsSymbolMatch, error) {
 	pattern := strings.TrimSpace(req.Pattern)
 	if pattern == "" {
-		return semantic.TsSymbolMatch{}, fmt.Errorf("pattern is required")
+		return semanticts.TsSymbolMatch{}, fmt.Errorf("pattern is required")
 	}
 
 	index, err := m.getTsIndex()
 	if err != nil {
-		return semantic.TsSymbolMatch{}, err
+		return semanticts.TsSymbolMatch{}, err
 	}
 
 	pathFilter, err := m.tsPathFilterForRequest(req)
 	if err != nil {
-		return semantic.TsSymbolMatch{}, err
+		return semanticts.TsSymbolMatch{}, err
 	}
 
 	matches := filterTsSymbolMatches(index.FindSymbols(pattern, 12), pathFilter)
 	if len(matches) == 0 {
 		if pathFilter != "" {
-			return semantic.TsSymbolMatch{}, fmt.Errorf("no TypeScript symbols matched %q under %s", pattern, pathFilter)
+			return semanticts.TsSymbolMatch{}, fmt.Errorf("no TypeScript symbols matched %q under %s", pattern, pathFilter)
 		}
 
-		return semantic.TsSymbolMatch{}, fmt.Errorf("no TypeScript symbols matched %q", pattern)
+		return semanticts.TsSymbolMatch{}, fmt.Errorf("no TypeScript symbols matched %q", pattern)
 	}
 
 	return matches[0], nil
 }
 
-func (m *Manager) tsImplementationFallback(match semantic.TsSymbolMatch, pathFilter string) (string, error) {
+func (m *Manager) tsImplementationFallback(match semanticts.TsSymbolMatch, pathFilter string) (string, error) {
 	index, err := m.getTsIndex()
 	if err != nil {
 		return "", err
 	}
 
 	candidates := filterTsSymbolMatches(index.FindSymbols(match.Name, 64), pathFilter)
-	impls := make([]semantic.TsSymbolMatch, 0, len(candidates))
+	impls := make([]semanticts.TsSymbolMatch, 0, len(candidates))
 	seen := make(map[string]struct{})
 
 	for _, candidate := range candidates {
@@ -650,7 +649,7 @@ func (m *Manager) tsImplementationFallback(match semantic.TsSymbolMatch, pathFil
 		return "", fmt.Errorf("no semantic implementation candidates found")
 	}
 
-	slices.SortFunc(impls, func(a, b semantic.TsSymbolMatch) int {
+	slices.SortFunc(impls, func(a, b semanticts.TsSymbolMatch) int {
 		if c := cmp.Compare(a.Path, b.Path); c != 0 {
 			return c
 		}
@@ -767,12 +766,12 @@ func (m *Manager) tsDiagnosticTargets(req ToolRequest) ([]string, error) {
 	return out, nil
 }
 
-func filterTsSymbolMatches(matches []semantic.TsSymbolMatch, pathFilter string) []semantic.TsSymbolMatch {
+func filterTsSymbolMatches(matches []semanticts.TsSymbolMatch, pathFilter string) []semanticts.TsSymbolMatch {
 	if pathFilter == "" {
 		return matches
 	}
 
-	out := make([]semantic.TsSymbolMatch, 0, len(matches))
+	out := make([]semanticts.TsSymbolMatch, 0, len(matches))
 	for _, match := range matches {
 		if pathMatchesFilter(match.Path, pathFilter) {
 			out = append(out, match)
@@ -782,12 +781,12 @@ func filterTsSymbolMatches(matches []semantic.TsSymbolMatch, pathFilter string) 
 	return out
 }
 
-func filterTsCallMatches(matches []semantic.TsCallMatch, pathFilter string) []semantic.TsCallMatch {
+func filterTsCallMatches(matches []semanticts.TsCallMatch, pathFilter string) []semanticts.TsCallMatch {
 	if pathFilter == "" {
 		return matches
 	}
 
-	out := make([]semantic.TsCallMatch, 0, len(matches))
+	out := make([]semanticts.TsCallMatch, 0, len(matches))
 	for _, match := range matches {
 		if pathMatchesFilter(match.Caller.Path, pathFilter) {
 			out = append(out, match)

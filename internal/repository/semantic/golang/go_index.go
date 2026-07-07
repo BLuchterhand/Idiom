@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"idiom/internal/repository/discovery"
+	"idiom/internal/repository/semantic"
 	"idiom/internal/repository/semantic/internal/indexsupport"
 )
 
@@ -63,10 +64,10 @@ type GoPackage struct {
 }
 
 func BuildGoIndex(root string) (*GoIndex, error) {
-	return BuildGoIndexWithOptions(root, indexsupport.IndexOptions{})
+	return BuildGoIndexWithOptions(root, semantic.IndexOptions{})
 }
 
-func BuildGoIndexWithOptions(root string, opts indexsupport.IndexOptions) (*GoIndex, error) {
+func BuildGoIndexWithOptions(root string, opts semantic.IndexOptions) (*GoIndex, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return nil, nil
@@ -85,7 +86,7 @@ func BuildGoIndexWithOptions(root string, opts indexsupport.IndexOptions) (*GoIn
 	errStop := filepath.SkipAll
 	filesParsed := 0
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
-		if err := indexsupport.ContextErr(opts); err != nil {
+		if err := indexsupport.ContextErr(opts.Context); err != nil {
 			return err
 		}
 

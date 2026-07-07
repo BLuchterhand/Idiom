@@ -6,12 +6,6 @@ import (
 	"strings"
 )
 
-type IndexOptions struct {
-	Scope    string
-	MaxFiles int
-	Context  context.Context
-}
-
 func CleanIndexScope(scope string) string {
 	scope = filepath.ToSlash(filepath.Clean(strings.TrimSpace(scope)))
 	if scope == "" || scope == "." {
@@ -51,10 +45,10 @@ func ShouldVisitDir(root string, path string, scope string) bool {
 	return PathInScope(rel, scope) || strings.HasPrefix(scope, rel+"/")
 }
 
-func ContextErr(opts IndexOptions) error {
-	if opts.Context == nil {
+func ContextErr(ctx context.Context) error {
+	if ctx == nil {
 		return nil
 	}
 
-	return opts.Context.Err()
+	return ctx.Err()
 }

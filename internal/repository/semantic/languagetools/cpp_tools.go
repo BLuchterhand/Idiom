@@ -12,7 +12,6 @@ import (
 
 	"idiom/internal/platform/hosttools"
 	"idiom/internal/repository/discovery"
-	"idiom/internal/repository/semantic"
 	semanticcpp "idiom/internal/repository/semantic/cpp"
 )
 
@@ -55,7 +54,7 @@ func (m *Manager) isCppWorkspace() bool {
 	return found
 }
 
-func (m *Manager) getCppIndex() (*semantic.CppIndex, error) {
+func (m *Manager) getCppIndex() (*semanticcpp.CppIndex, error) {
 	if !m.isCppWorkspace() {
 		return nil, fmt.Errorf("c++-specific tools require a workspace with C/C++ source files or compile_commands.json")
 	}
@@ -670,7 +669,7 @@ func (m *Manager) cppFileOutline(req ToolRequest) ToolResult {
 	} else if len(file.Symbols) > 200 {
 		fmt.Fprintf(&b, "declarations: omitted for large file (%d symbols).\n", len(file.Symbols))
 	} else {
-		symbols := append([]semantic.CppSymbol(nil), file.Symbols...)
+		symbols := append([]semanticcpp.CppSymbol(nil), file.Symbols...)
 		sort.SliceStable(symbols, func(i, j int) bool {
 			return symbols[i].Line < symbols[j].Line
 		})
@@ -753,29 +752,29 @@ func (m *Manager) cppDiagnostics(ctx context.Context, req ToolRequest) ToolResul
 	return ToolResult{Tool: "cpp_diagnostics", Summary: fmt.Sprintf("Collected C++ diagnostics for %d file(s).", len(files)), Output: strings.Join(lines, "\n")}
 }
 
-func (m *Manager) selectCppSymbolMatch(req ToolRequest) (semantic.CppSymbolMatch, error) {
+func (m *Manager) selectCppSymbolMatch(req ToolRequest) (semanticcpp.CppSymbolMatch, error) {
 	pattern := strings.TrimSpace(req.Pattern)
 	if pattern == "" {
-		return semantic.CppSymbolMatch{}, fmt.Errorf("pattern is required")
+		return semanticcpp.CppSymbolMatch{}, fmt.Errorf("pattern is required")
 	}
 
 	index, err := m.getCppIndex()
 	if err != nil {
-		return semantic.CppSymbolMatch{}, err
+		return semanticcpp.CppSymbolMatch{}, err
 	}
 
 	pathFilter, err := m.cppPathFilterForRequest(req)
 	if err != nil {
-		return semantic.CppSymbolMatch{}, err
+		return semanticcpp.CppSymbolMatch{}, err
 	}
 
 	matches := filterCppSymbolMatches(index.FindSymbols(pattern, 12), pathFilter)
 	if len(matches) == 0 {
 		if pathFilter != "" {
-			return semantic.CppSymbolMatch{}, fmt.Errorf("no C++ symbols matched %q under %s", pattern, pathFilter)
+			return semanticcpp.CppSymbolMatch{}, fmt.Errorf("no C++ symbols matched %q under %s", pattern, pathFilter)
 		}
 
-		return semantic.CppSymbolMatch{}, fmt.Errorf("no C++ symbols matched %q", pattern)
+		return semanticcpp.CppSymbolMatch{}, fmt.Errorf("no C++ symbols matched %q", pattern)
 	}
 
 	return matches[0], nil
@@ -799,15 +798,15 @@ func (m *Manager) cppPathFilter(path string) string {
 	return filepath.ToSlash(m.displayPath(resolved))
 }
 
-func (m *Manager) cppDeclarationFallbackMatch(match semantic.CppSymbolMatch) (semantic.CppSymbolMatch, error) {
+func (m *Manager) cppDeclarationFallbackMatch(match semanticcpp.CppSymbolMatch) (semanticcpp.CppSymbolMatch, error) {
 	index, err := m.getCppIndex()
 	if err != nil {
-		return semantic.CppSymbolMatch{}, err
+		return semanticcpp.CppSymbolMatch{}, err
 	}
 
 	patterns := []string{match.Qualified, match.Name}
 	seen := make(map[string]struct{})
-	candidates := make([]semantic.CppSymbolMatch, 0, 8)
+	candidates := make([]semanticcpp.CppSymbolMatch, 0, 8)
 
 	for _, pattern := range patterns {
 		pattern = strings.TrimSpace(pattern)
@@ -832,7 +831,7 @@ func (m *Manager) cppDeclarationFallbackMatch(match semantic.CppSymbolMatch) (se
 	}
 
 	if len(candidates) == 0 {
-		return semantic.CppSymbolMatch{}, fmt.Errorf("no declaration fallback candidates found")
+		return semanticcpp.CppSymbolMatch{}, fmt.Errorf("no declaration fallback candidates found")
 	}
 
 	sort.Slice(candidates, func(i, j int) bool {
@@ -860,15 +859,15 @@ func (m *Manager) cppDeclarationFallbackMatch(match semantic.CppSymbolMatch) (se
 	return candidates[0], nil
 }
 
-func (m *Manager) cppDefinitionFallbackMatch(match semantic.CppSymbolMatch) (semantic.CppSymbolMatch, error) {
+func (m *Manager) cppDefinitionFallbackMatch(match semanticcpp.CppSymbolMatch) (semanticcpp.CppSymbolMatch, error) {
 	index, err := m.getCppIndex()
 	if err != nil {
-		return semantic.CppSymbolMatch{}, err
+		return semanticcpp.CppSymbolMatch{}, err
 	}
 
 	patterns := []string{match.Qualified, match.Name}
 	seen := make(map[string]struct{})
-	candidates := make([]semantic.CppSymbolMatch, 0, 8)
+	candidates := make([]semanticcpp.CppSymbolMatch, 0, 8)
 
 	for _, pattern := range patterns {
 		pattern = strings.TrimSpace(pattern)
@@ -893,7 +892,7 @@ func (m *Manager) cppDefinitionFallbackMatch(match semantic.CppSymbolMatch) (sem
 	}
 
 	if len(candidates) == 0 {
-		return semantic.CppSymbolMatch{}, fmt.Errorf("no definition fallback candidates found")
+		return semanticcpp.CppSymbolMatch{}, fmt.Errorf("no definition fallback candidates found")
 	}
 
 	wantQualified := strings.TrimSpace(match.Qualified)
@@ -923,7 +922,7 @@ func (m *Manager) cppDefinitionFallbackMatch(match semantic.CppSymbolMatch) (sem
 	return candidates[0], nil
 }
 
-func (m *Manager) cppImplementationFallback(match semantic.CppSymbolMatch, pathFilter string) (string, error) {
+func (m *Manager) cppImplementationFallback(match semanticcpp.CppSymbolMatch, pathFilter string) (string, error) {
 	index, err := m.getCppIndex()
 	if err != nil {
 		return "", err
@@ -932,7 +931,7 @@ func (m *Manager) cppImplementationFallback(match semantic.CppSymbolMatch, pathF
 	candidates := filterCppSymbolMatches(index.FindSymbols(match.Name, 64), pathFilter)
 
 	type impl struct {
-		match semantic.CppSymbolMatch
+		match semanticcpp.CppSymbolMatch
 	}
 
 	impls := make([]impl, 0, len(candidates))
@@ -1013,12 +1012,12 @@ func (m *Manager) cppHandleDisplay(rel string) (string, error) {
 	return m.handleDisplay(abs), nil
 }
 
-func filterCppSymbolMatches(matches []semantic.CppSymbolMatch, pathFilter string) []semantic.CppSymbolMatch {
+func filterCppSymbolMatches(matches []semanticcpp.CppSymbolMatch, pathFilter string) []semanticcpp.CppSymbolMatch {
 	if pathFilter == "" {
 		return matches
 	}
 
-	out := make([]semantic.CppSymbolMatch, 0, len(matches))
+	out := make([]semanticcpp.CppSymbolMatch, 0, len(matches))
 	for _, match := range matches {
 		if pathMatchesFilter(match.Path, pathFilter) {
 			out = append(out, match)
@@ -1028,12 +1027,12 @@ func filterCppSymbolMatches(matches []semantic.CppSymbolMatch, pathFilter string
 	return out
 }
 
-func filterCppCallMatches(matches []semantic.CppCallMatch, pathFilter string) []semantic.CppCallMatch {
+func filterCppCallMatches(matches []semanticcpp.CppCallMatch, pathFilter string) []semanticcpp.CppCallMatch {
 	if pathFilter == "" {
 		return matches
 	}
 
-	out := make([]semantic.CppCallMatch, 0, len(matches))
+	out := make([]semanticcpp.CppCallMatch, 0, len(matches))
 	for _, match := range matches {
 		if pathMatchesFilter(match.Caller.Path, pathFilter) {
 			out = append(out, match)

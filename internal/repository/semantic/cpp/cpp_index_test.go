@@ -1,12 +1,11 @@
 package cpp
 
 import (
+	"idiom/internal/repository/semantic"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"idiom/internal/repository/semantic/internal/indexsupport"
 )
 
 func TestBuildCppIndexAndQueries(t *testing.T) {
@@ -135,7 +134,7 @@ func TestBuildCppIndexWithOptionsScopesWalk(t *testing.T) {
 	mustWriteFile(t, filepath.Join(root, "native", "sim.cpp"), "int tick() { return 1; }\n")
 	mustWriteFile(t, filepath.Join(root, "tools", "tool.cpp"), "int tool() { return 2; }\n")
 
-	index, err := BuildCppIndexWithOptions(root, indexsupport.IndexOptions{Scope: "native"})
+	index, err := BuildCppIndexWithOptions(root, semantic.IndexOptions{Scope: "native"})
 	if err != nil {
 		t.Fatalf("BuildCppIndexWithOptions: %v", err)
 	}

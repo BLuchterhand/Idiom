@@ -2,10 +2,14 @@ package languagetools
 
 import (
 	"fmt"
+	semanticcpp "idiom/internal/repository/semantic/cpp"
+	semanticgo "idiom/internal/repository/semantic/golang"
+	semanticjava "idiom/internal/repository/semantic/java"
+	semanticpython "idiom/internal/repository/semantic/python"
+	semanticrust "idiom/internal/repository/semantic/rust"
+	semanticts "idiom/internal/repository/semantic/typescript"
 	"path/filepath"
 	"strings"
-
-	"idiom/internal/repository/semantic"
 )
 
 const (
@@ -131,12 +135,12 @@ func cleanCandidatePath(path string) string {
 	return filepath.ToSlash(filepath.Clean(path))
 }
 
-func (m *Manager) goReadSymbolPathMiss(req ToolRequest, pattern, pathFilter string, index *semantic.GoIndex) (ToolResult, bool) {
+func (m *Manager) goReadSymbolPathMiss(req ToolRequest, pattern, pathFilter string, index *semanticgo.GoIndex) (ToolResult, bool) {
 	if strings.TrimSpace(pathFilter) == "" || index == nil {
 		return ToolResult{}, false
 	}
 
-	return readSymbolPathMissFromMatches("go_read_symbol", "Go", pattern, pathFilter, index.FindSymbols(pattern, readSymbolCandidateSearchLimit), func(match semantic.SymbolMatch) readSymbolCandidate {
+	return readSymbolPathMissFromMatches("go_read_symbol", "Go", pattern, pathFilter, index.FindSymbols(pattern, readSymbolCandidateSearchLimit), func(match semanticgo.SymbolMatch) readSymbolCandidate {
 		return readSymbolCandidate{Path: match.Path, Line: match.Line, Kind: match.Kind, Display: goQualifiedSymbol(match)}
 	})
 }
@@ -161,7 +165,7 @@ func (m *Manager) javaReadSymbolPathMiss(req ToolRequest) (ToolResult, bool) {
 	return readSymbolPathMissForRequest(req, "java_read_symbol", "Java", m.javaPathFilterForRequest, m.javaReadSymbolMatches, javaReadSymbolCandidate)
 }
 
-func (m *Manager) pythonReadSymbolMatches(pattern string) ([]semantic.PythonSymbolMatch, error) {
+func (m *Manager) pythonReadSymbolMatches(pattern string) ([]semanticpython.PythonSymbolMatch, error) {
 	index, err := m.getPythonIndex()
 	if err != nil {
 		return nil, err
@@ -170,7 +174,7 @@ func (m *Manager) pythonReadSymbolMatches(pattern string) ([]semantic.PythonSymb
 	return index.FindSymbols(pattern, readSymbolCandidateSearchLimit), nil
 }
 
-func (m *Manager) cppReadSymbolMatches(pattern string) ([]semantic.CppSymbolMatch, error) {
+func (m *Manager) cppReadSymbolMatches(pattern string) ([]semanticcpp.CppSymbolMatch, error) {
 	index, err := m.getCppIndex()
 	if err != nil {
 		return nil, err
@@ -179,7 +183,7 @@ func (m *Manager) cppReadSymbolMatches(pattern string) ([]semantic.CppSymbolMatc
 	return index.FindSymbols(pattern, readSymbolCandidateSearchLimit), nil
 }
 
-func (m *Manager) tsReadSymbolMatches(pattern string) ([]semantic.TsSymbolMatch, error) {
+func (m *Manager) tsReadSymbolMatches(pattern string) ([]semanticts.TsSymbolMatch, error) {
 	index, err := m.getTsIndex()
 	if err != nil {
 		return nil, err
@@ -188,7 +192,7 @@ func (m *Manager) tsReadSymbolMatches(pattern string) ([]semantic.TsSymbolMatch,
 	return index.FindSymbols(pattern, readSymbolCandidateSearchLimit), nil
 }
 
-func (m *Manager) rustReadSymbolMatches(pattern string) ([]semantic.RustSymbolMatch, error) {
+func (m *Manager) rustReadSymbolMatches(pattern string) ([]semanticrust.RustSymbolMatch, error) {
 	index, err := m.getRustIndex()
 	if err != nil {
 		return nil, err
@@ -197,7 +201,7 @@ func (m *Manager) rustReadSymbolMatches(pattern string) ([]semantic.RustSymbolMa
 	return index.FindSymbols(pattern, readSymbolCandidateSearchLimit), nil
 }
 
-func (m *Manager) javaReadSymbolMatches(pattern string) ([]semantic.JavaSymbolMatch, error) {
+func (m *Manager) javaReadSymbolMatches(pattern string) ([]semanticjava.JavaSymbolMatch, error) {
 	index, err := m.getJavaIndex()
 	if err != nil {
 		return nil, err
@@ -206,22 +210,22 @@ func (m *Manager) javaReadSymbolMatches(pattern string) ([]semantic.JavaSymbolMa
 	return index.FindSymbols(pattern, readSymbolCandidateSearchLimit), nil
 }
 
-func pythonReadSymbolCandidate(match semantic.PythonSymbolMatch) readSymbolCandidate {
+func pythonReadSymbolCandidate(match semanticpython.PythonSymbolMatch) readSymbolCandidate {
 	return readSymbolCandidate{Path: match.Path, Line: match.Line, Kind: match.Kind, Display: pythonDisplayName(match.Qualified, match.Name)}
 }
 
-func cppReadSymbolCandidate(match semantic.CppSymbolMatch) readSymbolCandidate {
+func cppReadSymbolCandidate(match semanticcpp.CppSymbolMatch) readSymbolCandidate {
 	return readSymbolCandidate{Path: match.Path, Line: match.Line, Kind: match.Kind, Display: cppDisplayName(match.Qualified, match.Name)}
 }
 
-func tsReadSymbolCandidate(match semantic.TsSymbolMatch) readSymbolCandidate {
+func tsReadSymbolCandidate(match semanticts.TsSymbolMatch) readSymbolCandidate {
 	return readSymbolCandidate{Path: match.Path, Line: match.Line, Kind: match.Kind, Display: tsDisplayName(match.Qualified, match.Name)}
 }
 
-func rustReadSymbolCandidate(match semantic.RustSymbolMatch) readSymbolCandidate {
+func rustReadSymbolCandidate(match semanticrust.RustSymbolMatch) readSymbolCandidate {
 	return readSymbolCandidate{Path: match.Path, Line: match.Line, Kind: match.Kind, Display: rustDisplayName(match.Qualified, match.Name)}
 }
 
-func javaReadSymbolCandidate(match semantic.JavaSymbolMatch) readSymbolCandidate {
+func javaReadSymbolCandidate(match semanticjava.JavaSymbolMatch) readSymbolCandidate {
 	return readSymbolCandidate{Path: match.Path, Line: match.Line, Kind: match.Kind, Display: javaDisplayName(match.Qualified, match.Name)}
 }

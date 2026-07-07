@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"idiom/internal/repository/discovery"
-	"idiom/internal/repository/semantic"
 	semanticpython "idiom/internal/repository/semantic/python"
 )
 
@@ -92,7 +91,7 @@ var pythonWorkspaceSkipDirs = map[string]struct{}{
 // small enough that a per-call rebuild is fine; if this ever shows up
 // in profiles, a cache can be added in a follow-up alongside the
 // integration-doc snippet that plumbs a field into Manager.
-func (m *Manager) getPythonIndex() (*semantic.PythonIndex, error) {
+func (m *Manager) getPythonIndex() (*semanticpython.PythonIndex, error) {
 	if !m.isPythonWorkspace() {
 		return nil, fmt.Errorf("python-specific tools require a workspace with Python source files or a project file (pyproject.toml, setup.py, setup.cfg, requirements.txt)")
 	}
@@ -514,8 +513,8 @@ func (m *Manager) pythonFileOutline(req ToolRequest) ToolResult {
 	} else if len(file.Symbols) > 200 {
 		fmt.Fprintf(&b, "declarations: omitted for large file (%d symbols).\n", len(file.Symbols))
 	} else {
-		symbols := append([]semantic.PythonSymbol(nil), file.Symbols...)
-		slices.SortStableFunc(symbols, func(a, b semantic.PythonSymbol) int { return cmp.Compare(a.Line, b.Line) })
+		symbols := append([]semanticpython.PythonSymbol(nil), file.Symbols...)
+		slices.SortStableFunc(symbols, func(a, b semanticpython.PythonSymbol) int { return cmp.Compare(a.Line, b.Line) })
 		b.WriteString("declarations:\n")
 
 		for _, sym := range symbols {
@@ -662,29 +661,29 @@ func (m *Manager) pythonDiagnosticTargets(req ToolRequest) ([]string, error) {
 	return files, nil
 }
 
-func (m *Manager) selectPythonSymbolMatch(req ToolRequest) (semantic.PythonSymbolMatch, error) {
+func (m *Manager) selectPythonSymbolMatch(req ToolRequest) (semanticpython.PythonSymbolMatch, error) {
 	pattern := strings.TrimSpace(req.Pattern)
 	if pattern == "" {
-		return semantic.PythonSymbolMatch{}, fmt.Errorf("pattern is required")
+		return semanticpython.PythonSymbolMatch{}, fmt.Errorf("pattern is required")
 	}
 
 	index, err := m.getPythonIndex()
 	if err != nil {
-		return semantic.PythonSymbolMatch{}, err
+		return semanticpython.PythonSymbolMatch{}, err
 	}
 
 	pathFilter, err := m.pythonPathFilterForRequest(req)
 	if err != nil {
-		return semantic.PythonSymbolMatch{}, err
+		return semanticpython.PythonSymbolMatch{}, err
 	}
 
 	matches := filterPythonSymbolMatches(index.FindSymbols(pattern, 12), pathFilter)
 	if len(matches) == 0 {
 		if pathFilter != "" {
-			return semantic.PythonSymbolMatch{}, fmt.Errorf("no Python symbols matched %q under %s", pattern, pathFilter)
+			return semanticpython.PythonSymbolMatch{}, fmt.Errorf("no Python symbols matched %q under %s", pattern, pathFilter)
 		}
 
-		return semantic.PythonSymbolMatch{}, fmt.Errorf("no Python symbols matched %q", pattern)
+		return semanticpython.PythonSymbolMatch{}, fmt.Errorf("no Python symbols matched %q", pattern)
 	}
 
 	return matches[0], nil
@@ -721,12 +720,12 @@ func (m *Manager) pythonHandleDisplay(rel string) (string, error) {
 	return m.handleDisplay(abs), nil
 }
 
-func filterPythonSymbolMatches(matches []semantic.PythonSymbolMatch, pathFilter string) []semantic.PythonSymbolMatch {
+func filterPythonSymbolMatches(matches []semanticpython.PythonSymbolMatch, pathFilter string) []semanticpython.PythonSymbolMatch {
 	if pathFilter == "" {
 		return matches
 	}
 
-	out := make([]semantic.PythonSymbolMatch, 0, len(matches))
+	out := make([]semanticpython.PythonSymbolMatch, 0, len(matches))
 	for _, match := range matches {
 		if pathMatchesFilter(match.Path, pathFilter) {
 			out = append(out, match)
@@ -736,12 +735,12 @@ func filterPythonSymbolMatches(matches []semantic.PythonSymbolMatch, pathFilter 
 	return out
 }
 
-func filterPythonCallMatches(matches []semantic.PythonCallMatch, pathFilter string) []semantic.PythonCallMatch {
+func filterPythonCallMatches(matches []semanticpython.PythonCallMatch, pathFilter string) []semanticpython.PythonCallMatch {
 	if pathFilter == "" {
 		return matches
 	}
 
-	out := make([]semantic.PythonCallMatch, 0, len(matches))
+	out := make([]semanticpython.PythonCallMatch, 0, len(matches))
 	for _, match := range matches {
 		if pathMatchesFilter(match.Caller.Path, pathFilter) {
 			out = append(out, match)

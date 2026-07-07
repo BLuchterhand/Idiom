@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"idiom/internal/repository/semantic"
+	semanticcpp "idiom/internal/repository/semantic/cpp"
 )
 
 func TestBuildQueryZoomAndStatus(t *testing.T) {
@@ -750,32 +750,32 @@ func TestGraphBuildLockRespectsContextWhileHeld(t *testing.T) {
 }
 
 func TestCppCallTargetResolverMatchesScopedPreferenceRules(t *testing.T) {
-	index := &semantic.CppIndex{Files: []semantic.CppFile{
+	index := &semanticcpp.CppIndex{Files: []semanticcpp.CppFile{
 		{
 			Path: "src/a.cpp",
-			Symbols: []semantic.CppSymbol{
+			Symbols: []semanticcpp.CppSymbol{
 				{Name: "Run", Kind: "func", HasBody: false},
 				{Name: "Run", Qualified: "Worker::Run", Scope: "Worker", Kind: "method", HasBody: true},
 			},
 		},
 		{
 			Path: "other/b.cpp",
-			Symbols: []semantic.CppSymbol{
+			Symbols: []semanticcpp.CppSymbol{
 				{Name: "Run", Kind: "func", HasBody: true},
 			},
 		},
 	}}
 
 	resolver := newCppCallTargetResolver(index, "src")
-	if got, want := resolver.targetID(semantic.CppCall{Name: "Run"}), "symbol://src/a.cpp#Worker::Run"; got != want {
+	if got, want := resolver.targetID(semanticcpp.CppCall{Name: "Run"}), "symbol://src/a.cpp#Worker::Run"; got != want {
 		t.Fatalf("expected scoped method body target %q, got %q", want, got)
 	}
 
-	if got, want := resolver.targetID(semantic.CppCall{Name: "Worker::Run"}), "symbol://src/a.cpp#Worker::Run"; got != want {
+	if got, want := resolver.targetID(semanticcpp.CppCall{Name: "Worker::Run"}), "symbol://src/a.cpp#Worker::Run"; got != want {
 		t.Fatalf("expected qualified target %q, got %q", want, got)
 	}
 
-	if got := resolver.targetID(semantic.CppCall{Name: "Missing"}); got != "" {
+	if got := resolver.targetID(semanticcpp.CppCall{Name: "Missing"}); got != "" {
 		t.Fatalf("expected missing call target to stay unresolved, got %q", got)
 	}
 }

@@ -13,7 +13,6 @@ import (
 	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/hosttools"
 	"idiom/internal/platform/textutil"
-	"idiom/internal/repository/semantic"
 	semanticgo "idiom/internal/repository/semantic/golang"
 )
 
@@ -225,7 +224,7 @@ func (m *Manager) goReadSymbol(req ToolRequest) ToolResult {
 // `Runner.runChildTask` returned imports while go_extract_body returned
 // the actual 117-line function body. Fixed by reading from the symbol's
 // real start line.
-func goReadSymbolWindow(match semantic.SymbolMatch, requestedStart, requestedEnd int) (int, int) {
+func goReadSymbolWindow(match semanticgo.SymbolMatch, requestedStart, requestedEnd int) (int, int) {
 	if requestedStart > 0 && requestedEnd >= requestedStart {
 		return requestedStart, requestedEnd
 	}
@@ -917,7 +916,7 @@ func (m *Manager) isGoWorkspace() bool {
 	return err == nil && !info.IsDir()
 }
 
-func (m *Manager) getGoIndex() (*semantic.GoIndex, error) {
+func (m *Manager) getGoIndex() (*semanticgo.GoIndex, error) {
 	if !m.isGoWorkspace() {
 		return nil, fmt.Errorf("go-specific tools require a workspace with go.mod at the root")
 	}
@@ -1120,12 +1119,12 @@ func (m *Manager) goPathFilter(path string) string {
 	return filepath.ToSlash(m.displayPath(resolved))
 }
 
-func filterSymbolMatches(matches []semantic.SymbolMatch, pathFilter string) []semantic.SymbolMatch {
+func filterSymbolMatches(matches []semanticgo.SymbolMatch, pathFilter string) []semanticgo.SymbolMatch {
 	if pathFilter == "" {
 		return matches
 	}
 
-	filtered := make([]semantic.SymbolMatch, 0, len(matches))
+	filtered := make([]semanticgo.SymbolMatch, 0, len(matches))
 	for _, match := range matches {
 		if pathMatchesFilter(match.Path, pathFilter) {
 			filtered = append(filtered, match)
@@ -1135,12 +1134,12 @@ func filterSymbolMatches(matches []semantic.SymbolMatch, pathFilter string) []se
 	return filtered
 }
 
-func filterPackageMatches(matches []semantic.PackageMatch, pathFilter string) []semantic.PackageMatch {
+func filterPackageMatches(matches []semanticgo.PackageMatch, pathFilter string) []semanticgo.PackageMatch {
 	if pathFilter == "" {
 		return matches
 	}
 
-	filtered := make([]semantic.PackageMatch, 0, len(matches))
+	filtered := make([]semanticgo.PackageMatch, 0, len(matches))
 	for _, match := range matches {
 		if pathMatchesFilter(match.Path, pathFilter) {
 			filtered = append(filtered, match)
@@ -1180,7 +1179,7 @@ func pathMatchesFilter(path string, filter string) bool {
 	return strings.HasPrefix(path, filter+"/")
 }
 
-func goQualifiedSymbol(match semantic.SymbolMatch) string {
+func goQualifiedSymbol(match semanticgo.SymbolMatch) string {
 	if match.Kind == "method" && strings.TrimSpace(match.Receiver) != "" {
 		return match.Receiver + "." + match.Name
 	}
@@ -1196,29 +1195,29 @@ func goResultLimit(requested int, fallback int) int {
 	return fallback
 }
 
-func (m *Manager) selectGoSymbolMatch(req ToolRequest) (semantic.SymbolMatch, error) {
+func (m *Manager) selectGoSymbolMatch(req ToolRequest) (semanticgo.SymbolMatch, error) {
 	pattern := strings.TrimSpace(req.Pattern)
 	if pattern == "" {
-		return semantic.SymbolMatch{}, fmt.Errorf("pattern is required")
+		return semanticgo.SymbolMatch{}, fmt.Errorf("pattern is required")
 	}
 
 	index, err := m.getGoIndex()
 	if err != nil {
-		return semantic.SymbolMatch{}, err
+		return semanticgo.SymbolMatch{}, err
 	}
 
 	pathFilter, err := m.goPathFilterForRequest(req)
 	if err != nil {
-		return semantic.SymbolMatch{}, err
+		return semanticgo.SymbolMatch{}, err
 	}
 
 	matches := filterSymbolMatches(index.FindSymbols(pattern, 12), pathFilter)
 	if len(matches) == 0 {
 		if pathFilter != "" {
-			return semantic.SymbolMatch{}, fmt.Errorf("no Go symbols matched %q under %s", pattern, pathFilter)
+			return semanticgo.SymbolMatch{}, fmt.Errorf("no Go symbols matched %q under %s", pattern, pathFilter)
 		}
 
-		return semantic.SymbolMatch{}, fmt.Errorf("no Go symbols matched %q", pattern)
+		return semanticgo.SymbolMatch{}, fmt.Errorf("no Go symbols matched %q", pattern)
 	}
 
 	return matches[0], nil
@@ -1241,7 +1240,7 @@ func (m *Manager) goPathFilterForRequest(req ToolRequest) (string, error) {
 	return filepath.ToSlash(m.displayPath(path)), nil
 }
 
-func (m *Manager) goSymbolPosition(match semantic.SymbolMatch) string {
+func (m *Manager) goSymbolPosition(match semanticgo.SymbolMatch) string {
 	line := match.Line
 	if line <= 0 {
 		line = 1
@@ -1313,12 +1312,12 @@ func (m *Manager) formatGoCallHierarchy(output string, prefix string) string {
 	return strings.Join(formatted, "\n")
 }
 
-func filterCallMatches(matches []semantic.CallMatch, pathFilter string) []semantic.CallMatch {
+func filterCallMatches(matches []semanticgo.CallMatch, pathFilter string) []semanticgo.CallMatch {
 	if pathFilter == "" {
 		return matches
 	}
 
-	filtered := make([]semantic.CallMatch, 0, len(matches))
+	filtered := make([]semanticgo.CallMatch, 0, len(matches))
 	for _, match := range matches {
 		if pathMatchesFilter(match.Caller.Path, pathFilter) || pathMatchesFilter(match.CalleeTarget.Path, pathFilter) {
 			filtered = append(filtered, match)

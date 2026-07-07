@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"idiom/internal/platform/textutil"
+	"idiom/internal/repository/semantic"
 	"idiom/internal/repository/semantic/internal/indexsupport"
 
 	"idiom/internal/repository/discovery"
@@ -78,10 +79,10 @@ var pythonFileExtensions = map[string]struct{}{
 // BuildPythonIndex walks root, parses every .py / .pyi file, and returns
 // the populated index. Returns (nil, nil) if no Python files are found.
 func BuildPythonIndex(root string) (*PythonIndex, error) {
-	return BuildPythonIndexWithOptions(root, indexsupport.IndexOptions{})
+	return BuildPythonIndexWithOptions(root, semantic.IndexOptions{})
 }
 
-func BuildPythonIndexWithOptions(root string, opts indexsupport.IndexOptions) (*PythonIndex, error) {
+func BuildPythonIndexWithOptions(root string, opts semantic.IndexOptions) (*PythonIndex, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return nil, nil
@@ -100,7 +101,7 @@ func BuildPythonIndexWithOptions(root string, opts indexsupport.IndexOptions) (*
 
 	errStop := filepath.SkipAll
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
-		if err := indexsupport.ContextErr(opts); err != nil {
+		if err := indexsupport.ContextErr(opts.Context); err != nil {
 			return err
 		}
 
@@ -173,7 +174,7 @@ func BuildPythonIndexWithOptions(root string, opts indexsupport.IndexOptions) (*
 	slices.Sort(paths)
 
 	for _, rel := range paths {
-		if err := indexsupport.ContextErr(opts); err != nil {
+		if err := indexsupport.ContextErr(opts.Context); err != nil {
 			return nil, err
 		}
 

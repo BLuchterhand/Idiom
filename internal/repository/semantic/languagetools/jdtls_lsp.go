@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"idiom/internal/platform/hosttools"
-	"idiom/internal/repository/semantic"
+	semanticjava "idiom/internal/repository/semantic/java"
 )
 
 type jdtlsLSPClient struct {
@@ -105,7 +105,7 @@ func jdtlsPathFromURI(uri string) (string, error) {
 	return LSPPathFromURI(uri, "jdtls")
 }
 
-func (m *Manager) javaLSPPosition(abs string, match semantic.JavaSymbolMatch) map[string]any {
+func (m *Manager) javaLSPPosition(abs string, match semanticjava.JavaSymbolMatch) map[string]any {
 	line := match.Line - 1
 	if line < 0 {
 		line = 0
@@ -126,7 +126,7 @@ func (m *Manager) javaLSPPosition(abs string, match semantic.JavaSymbolMatch) ma
 	}
 }
 
-func (m *Manager) javaLSPCharacter(abs string, match semantic.JavaSymbolMatch) (int, bool) {
+func (m *Manager) javaLSPCharacter(abs string, match semanticjava.JavaSymbolMatch) (int, bool) {
 	if abs == "" || match.Line <= 0 {
 		return 0, false
 	}
@@ -151,7 +151,7 @@ func (m *Manager) formatJdtlsWorkspaceSymbols(symbols []LSPSymbolInfo, pathFilte
 	return m.formatLSPWorkspaceSymbols(symbols, pathFilter, limit, jdtlsPathFromURI, jdtlsSymbolKindName, ".")
 }
 
-func (m *Manager) formatJdtlsIncomingCalls(calls []LSPIncomingCall, pathFilter string, target semantic.JavaSymbolMatch) callHierarchyResult {
+func (m *Manager) formatJdtlsIncomingCalls(calls []LSPIncomingCall, pathFilter string, target semanticjava.JavaSymbolMatch) callHierarchyResult {
 	return m.formatLSPIncomingCalls(calls, pathFilter, lspCallTarget{Path: target.Path, Line: target.Line, Name: target.Name}, jdtlsPathFromURI)
 }
 
@@ -216,11 +216,11 @@ func (m *Manager) javaWorkspaceSymbolsViaJdtls(ctx context.Context, pattern stri
 	}, pattern, pathFilter, limit)
 }
 
-func (m *Manager) javaDefinitionViaJdtls(ctx context.Context, match semantic.JavaSymbolMatch) (string, error) {
+func (m *Manager) javaDefinitionViaJdtls(ctx context.Context, match semanticjava.JavaSymbolMatch) (string, error) {
 	return m.javaLocationQueryViaJdtls(ctx, match, "textDocument/definition")
 }
 
-func (m *Manager) javaLocationQueryViaJdtls(ctx context.Context, match semantic.JavaSymbolMatch, method string) (string, error) {
+func (m *Manager) javaLocationQueryViaJdtls(ctx context.Context, match semanticjava.JavaSymbolMatch, method string) (string, error) {
 	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
 		serverName: "jdtls",
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
@@ -233,7 +233,7 @@ func (m *Manager) javaLocationQueryViaJdtls(ctx context.Context, match semantic.
 	}, method, nil, "", 4, false)
 }
 
-func (m *Manager) javaImplementationsViaJdtls(ctx context.Context, match semantic.JavaSymbolMatch, pathFilter string) (string, error) {
+func (m *Manager) javaImplementationsViaJdtls(ctx context.Context, match semanticjava.JavaSymbolMatch, pathFilter string) (string, error) {
 	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
 		serverName: "jdtls",
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
@@ -246,7 +246,7 @@ func (m *Manager) javaImplementationsViaJdtls(ctx context.Context, match semanti
 	}, "textDocument/implementation", nil, pathFilter, m.maxDirectoryEntries(), false)
 }
 
-func (m *Manager) javaReferencesViaJdtls(ctx context.Context, match semantic.JavaSymbolMatch, pathFilter string) (string, error) {
+func (m *Manager) javaReferencesViaJdtls(ctx context.Context, match semanticjava.JavaSymbolMatch, pathFilter string) (string, error) {
 	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
 		serverName: "jdtls",
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
@@ -261,7 +261,7 @@ func (m *Manager) javaReferencesViaJdtls(ctx context.Context, match semantic.Jav
 	}, pathFilter, m.maxDirectoryEntries(), true)
 }
 
-func (m *Manager) javaCallHierarchyViaJdtls(ctx context.Context, match semantic.JavaSymbolMatch, pathFilter string, incoming bool) (callHierarchyResult, error) {
+func (m *Manager) javaCallHierarchyViaJdtls(ctx context.Context, match semanticjava.JavaSymbolMatch, pathFilter string, incoming bool) (callHierarchyResult, error) {
 	client, err := m.newJdtlsLSPClient(ctx)
 	if err != nil {
 		return callHierarchyResult{}, err

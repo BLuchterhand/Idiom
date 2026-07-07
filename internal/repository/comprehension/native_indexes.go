@@ -17,10 +17,10 @@ import (
 
 type nativeLanguageIndexes struct {
 	requested  string
-	python     *semantic.PythonIndex
-	typescript *semantic.TsIndex
-	rust       *semantic.RustIndex
-	java       *semantic.JavaIndex
+	python     *semanticpython.PythonIndex
+	typescript *semanticts.TsIndex
+	rust       *semanticrust.RustIndex
+	java       *semanticjava.JavaIndex
 }
 
 func buildNativeLanguageIndexes(ctx context.Context, root string, language string, scope string, maxFiles int, allowMissingScope bool) (nativeLanguageIndexes, error) {
@@ -161,7 +161,7 @@ func hasNativeRemaining(maxFiles int, added int) bool {
 	return maxFiles <= 0 || added < maxFiles
 }
 
-func (b *graphBuilder) addPythonIndex(root string, repoID string, scope string, index *semantic.PythonIndex, maxFiles int, indexedFiles map[string]struct{}) (int, int) {
+func (b *graphBuilder) addPythonIndex(root string, repoID string, scope string, index *semanticpython.PythonIndex, maxFiles int, indexedFiles map[string]struct{}) (int, int) {
 	table := newNativeSymbolTable()
 
 	for _, file := range index.Files {
@@ -174,7 +174,7 @@ func (b *graphBuilder) addPythonIndex(root string, repoID string, scope string, 
 		}
 	}
 
-	existingFiles := nativeIndexFiles(index.Files, func(file semantic.PythonFile) string { return file.Path })
+	existingFiles := nativeIndexFiles(index.Files, func(file semanticpython.PythonFile) string { return file.Path })
 	filesIndexed := 0
 	symbolsIndexed := 0
 
@@ -284,7 +284,7 @@ func (b *graphBuilder) addPythonIndex(root string, repoID string, scope string, 
 	return filesIndexed, symbolsIndexed
 }
 
-func (b *graphBuilder) addTypeScriptIndex(root string, repoID string, scope string, requested string, index *semantic.TsIndex, maxFiles int, indexedFiles map[string]struct{}) (int, int, []string) {
+func (b *graphBuilder) addTypeScriptIndex(root string, repoID string, scope string, requested string, index *semanticts.TsIndex, maxFiles int, indexedFiles map[string]struct{}) (int, int, []string) {
 	table := newNativeSymbolTable()
 
 	for _, file := range index.Files {
@@ -298,7 +298,7 @@ func (b *graphBuilder) addTypeScriptIndex(root string, repoID string, scope stri
 		}
 	}
 
-	existingFiles := nativeIndexFiles(index.Files, func(file semantic.TsFile) string { return file.Path })
+	existingFiles := nativeIndexFiles(index.Files, func(file semanticts.TsFile) string { return file.Path })
 	filesIndexed := 0
 	symbolsIndexed := 0
 	languagesSeen := make(map[string]struct{})
@@ -410,9 +410,9 @@ func (b *graphBuilder) addTypeScriptIndex(root string, repoID string, scope stri
 	return filesIndexed, symbolsIndexed, sortedStringSet(languagesSeen)
 }
 
-func (b *graphBuilder) addRustIndex(root string, repoID string, scope string, index *semantic.RustIndex, maxFiles int, indexedFiles map[string]struct{}) (int, int) {
+func (b *graphBuilder) addRustIndex(root string, repoID string, scope string, index *semanticrust.RustIndex, maxFiles int, indexedFiles map[string]struct{}) (int, int) {
 	table := newNativeSymbolTable()
-	existingFiles := nativeIndexFiles(index.Files, func(file semantic.RustFile) string { return file.Path })
+	existingFiles := nativeIndexFiles(index.Files, func(file semanticrust.RustFile) string { return file.Path })
 
 	for _, file := range index.Files {
 		if !pathInScope(file.Path, scope) {
@@ -551,7 +551,7 @@ func (b *graphBuilder) addRustIndex(root string, repoID string, scope string, in
 	return filesIndexed, symbolsIndexed
 }
 
-func (b *graphBuilder) addJavaIndex(root string, repoID string, scope string, index *semantic.JavaIndex, maxFiles int, indexedFiles map[string]struct{}) (int, int) {
+func (b *graphBuilder) addJavaIndex(root string, repoID string, scope string, index *semanticjava.JavaIndex, maxFiles int, indexedFiles map[string]struct{}) (int, int) {
 	table := newNativeSymbolTable()
 
 	for _, file := range index.Files {
@@ -911,7 +911,7 @@ func nativeIndexFiles[T any](files []T, pathFn func(T) string) map[string]struct
 	return out
 }
 
-func pythonLocalSymbols(file semantic.PythonFile) map[string]string {
+func pythonLocalSymbols(file semanticpython.PythonFile) map[string]string {
 	out := make(map[string]string)
 
 	for _, symbol := range file.Symbols {
@@ -926,7 +926,7 @@ func pythonLocalSymbols(file semantic.PythonFile) map[string]string {
 	return out
 }
 
-func tsLocalSymbols(file semantic.TsFile) map[string]string {
+func tsLocalSymbols(file semanticts.TsFile) map[string]string {
 	out := make(map[string]string)
 
 	for _, symbol := range file.Symbols {
@@ -941,7 +941,7 @@ func tsLocalSymbols(file semantic.TsFile) map[string]string {
 	return out
 }
 
-func rustLocalSymbols(file semantic.RustFile) map[string]string {
+func rustLocalSymbols(file semanticrust.RustFile) map[string]string {
 	out := make(map[string]string)
 
 	for _, symbol := range file.Symbols {
@@ -956,7 +956,7 @@ func rustLocalSymbols(file semantic.RustFile) map[string]string {
 	return out
 }
 
-func javaLocalSymbols(file semantic.JavaFile) map[string]string {
+func javaLocalSymbols(file semanticjava.JavaFile) map[string]string {
 	out := make(map[string]string)
 
 	for _, symbol := range file.Symbols {
@@ -975,7 +975,7 @@ func javaLocalSymbols(file semantic.JavaFile) map[string]string {
 	return out
 }
 
-func qualifiedPythonSymbolName(symbol semantic.PythonSymbol) string {
+func qualifiedPythonSymbolName(symbol semanticpython.PythonSymbol) string {
 	if strings.TrimSpace(symbol.Qualified) != "" {
 		return symbol.Qualified
 	}
@@ -1016,7 +1016,7 @@ func pythonRawImportResolved(raw string, resolved []string) bool {
 	return false
 }
 
-func qualifiedTsSymbolName(symbol semantic.TsSymbol) string {
+func qualifiedTsSymbolName(symbol semanticts.TsSymbol) string {
 	if strings.TrimSpace(symbol.Qualified) != "" {
 		return symbol.Qualified
 	}
@@ -1041,7 +1041,7 @@ func tsSymbolKind(kind string) string {
 	}
 }
 
-func qualifiedRustSymbolName(symbol semantic.RustSymbol) string {
+func qualifiedRustSymbolName(symbol semanticrust.RustSymbol) string {
 	if strings.TrimSpace(symbol.Qualified) != "" {
 		return symbol.Qualified
 	}
@@ -1090,7 +1090,7 @@ func rustUseTargetPath(sourcePath string, usePath string, existing map[string]st
 	return rustModuleTargetPath(sourcePath, module, existing)
 }
 
-func qualifiedJavaSymbolName(symbol semantic.JavaSymbol) string {
+func qualifiedJavaSymbolName(symbol semanticjava.JavaSymbol) string {
 	if strings.TrimSpace(symbol.Qualified) != "" {
 		return symbol.Qualified
 	}
@@ -1115,7 +1115,7 @@ func javaSymbolKind(kind string) string {
 	}
 }
 
-func javaImportTargetPaths(index *semantic.JavaIndex, file semantic.JavaFile) []string {
+func javaImportTargetPaths(index *semanticjava.JavaIndex, file semanticjava.JavaFile) []string {
 	out := make(map[string]struct{})
 
 	for _, raw := range file.Imports {
@@ -1148,7 +1148,7 @@ func javaImportTargetPaths(index *semantic.JavaIndex, file semantic.JavaFile) []
 	return sortedStringSet(out)
 }
 
-func javaRawImportResolved(index *semantic.JavaIndex, raw string) bool {
+func javaRawImportResolved(index *semanticjava.JavaIndex, raw string) bool {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || index == nil {
 		return false

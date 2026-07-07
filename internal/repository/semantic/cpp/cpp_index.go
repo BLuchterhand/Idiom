@@ -11,6 +11,7 @@ import (
 
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/discovery"
+	"idiom/internal/repository/semantic"
 	"idiom/internal/repository/semantic/internal/indexsupport"
 )
 
@@ -85,10 +86,10 @@ var cppHeaderExtensions = map[string]struct{}{
 }
 
 func BuildCppIndex(root string) (*CppIndex, error) {
-	return BuildCppIndexWithOptions(root, indexsupport.IndexOptions{})
+	return BuildCppIndexWithOptions(root, semantic.IndexOptions{})
 }
 
-func BuildCppIndexWithOptions(root string, opts indexsupport.IndexOptions) (*CppIndex, error) {
+func BuildCppIndexWithOptions(root string, opts semantic.IndexOptions) (*CppIndex, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return nil, nil
@@ -107,7 +108,7 @@ func BuildCppIndexWithOptions(root string, opts indexsupport.IndexOptions) (*Cpp
 
 	errStop := filepath.SkipAll
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
-		if err := indexsupport.ContextErr(opts); err != nil {
+		if err := indexsupport.ContextErr(opts.Context); err != nil {
 			return err
 		}
 
@@ -171,7 +172,7 @@ func BuildCppIndexWithOptions(root string, opts indexsupport.IndexOptions) (*Cpp
 	slices.Sort(paths)
 
 	for _, rel := range paths {
-		if err := indexsupport.ContextErr(opts); err != nil {
+		if err := indexsupport.ContextErr(opts.Context); err != nil {
 			return nil, err
 		}
 

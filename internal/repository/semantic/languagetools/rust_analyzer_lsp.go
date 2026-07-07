@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"idiom/internal/platform/hosttools"
-	"idiom/internal/repository/semantic"
+	semanticrust "idiom/internal/repository/semantic/rust"
 )
 
 type rustAnalyzerLSPClient struct {
@@ -94,7 +94,7 @@ func (m *Manager) rustWorkspaceSymbolsViaRustAnalyzer(ctx context.Context, patte
 	return m.formatRAWorkspaceSymbols(symbols, pathFilter, limit), nil
 }
 
-func (m *Manager) rustDefinitionViaRustAnalyzer(ctx context.Context, match semantic.RustSymbolMatch) (string, error) {
+func (m *Manager) rustDefinitionViaRustAnalyzer(ctx context.Context, match semanticrust.RustSymbolMatch) (string, error) {
 	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
 		serverName: "rust-analyzer",
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
@@ -107,7 +107,7 @@ func (m *Manager) rustDefinitionViaRustAnalyzer(ctx context.Context, match seman
 	}, "textDocument/definition", nil, "", 4, false)
 }
 
-func (m *Manager) rustReferencesViaRustAnalyzer(ctx context.Context, match semantic.RustSymbolMatch, pathFilter string) (string, error) {
+func (m *Manager) rustReferencesViaRustAnalyzer(ctx context.Context, match semanticrust.RustSymbolMatch, pathFilter string) (string, error) {
 	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
 		serverName: "rust-analyzer",
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
@@ -122,7 +122,7 @@ func (m *Manager) rustReferencesViaRustAnalyzer(ctx context.Context, match seman
 	}, pathFilter, m.maxDirectoryEntries(), true)
 }
 
-func (m *Manager) rustImplementationsViaRustAnalyzer(ctx context.Context, match semantic.RustSymbolMatch, pathFilter string) (string, error) {
+func (m *Manager) rustImplementationsViaRustAnalyzer(ctx context.Context, match semanticrust.RustSymbolMatch, pathFilter string) (string, error) {
 	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
 		serverName: "rust-analyzer",
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
@@ -135,7 +135,7 @@ func (m *Manager) rustImplementationsViaRustAnalyzer(ctx context.Context, match 
 	}, "textDocument/implementation", nil, pathFilter, m.maxDirectoryEntries(), false)
 }
 
-func (m *Manager) rustCallHierarchyViaRustAnalyzer(ctx context.Context, match semantic.RustSymbolMatch, pathFilter string, incoming bool) (callHierarchyResult, error) {
+func (m *Manager) rustCallHierarchyViaRustAnalyzer(ctx context.Context, match semanticrust.RustSymbolMatch, pathFilter string, incoming bool) (callHierarchyResult, error) {
 	client, err := m.newRustAnalyzerLSPClient(ctx)
 	if err != nil {
 		return callHierarchyResult{}, err
@@ -194,7 +194,7 @@ func (m *Manager) rustAnalyzerPrepareCallHierarchy(ctx context.Context, client *
 	return items, nil
 }
 
-func (m *Manager) rustLSPPosition(abs string, match semantic.RustSymbolMatch) map[string]any {
+func (m *Manager) rustLSPPosition(abs string, match semanticrust.RustSymbolMatch) map[string]any {
 	line := match.Line - 1
 	if line < 0 {
 		line = 0
@@ -212,7 +212,7 @@ func (m *Manager) rustLSPPosition(abs string, match semantic.RustSymbolMatch) ma
 	return map[string]any{"line": line, "character": character}
 }
 
-func (m *Manager) rustLSPCharacter(abs string, match semantic.RustSymbolMatch) (int, bool) {
+func (m *Manager) rustLSPCharacter(abs string, match semanticrust.RustSymbolMatch) (int, bool) {
 	if abs == "" || match.Line <= 0 {
 		return 0, false
 	}
@@ -254,7 +254,7 @@ func (m *Manager) formatRAWorkspaceSymbols(symbols []LSPSymbolInfo, pathFilter s
 	return m.formatLSPWorkspaceSymbols(symbols, pathFilter, limit, raPathFromURI, raSymbolKindName, "::")
 }
 
-func (m *Manager) formatRAIncomingCalls(calls []LSPIncomingCall, pathFilter string, target semantic.RustSymbolMatch) callHierarchyResult {
+func (m *Manager) formatRAIncomingCalls(calls []LSPIncomingCall, pathFilter string, target semanticrust.RustSymbolMatch) callHierarchyResult {
 	return m.formatLSPIncomingCalls(calls, pathFilter, lspCallTarget{Path: target.Path, Line: target.Line, Name: target.Name}, raPathFromURI)
 }
 

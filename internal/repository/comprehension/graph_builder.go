@@ -2,11 +2,11 @@ package comprehension
 
 import (
 	"context"
+	semanticcpp "idiom/internal/repository/semantic/cpp"
+	semanticgo "idiom/internal/repository/semantic/golang"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"idiom/internal/repository/semantic"
 )
 
 type graphBuilder struct {
@@ -54,7 +54,7 @@ func (b *graphBuilder) addEdge(kind, sourceID, targetID, collector, confidence s
 	b.edges[edge.ID] = edge
 }
 
-func (b *graphBuilder) addGoIndex(root string, repoID string, scope string, goIndex *semantic.GoIndex, maxFiles int, indexedFiles map[string]struct{}) (int, int) {
+func (b *graphBuilder) addGoIndex(root string, repoID string, scope string, goIndex *semanticgo.GoIndex, maxFiles int, indexedFiles map[string]struct{}) (int, int) {
 	filesIndexed := 0
 	symbolsIndexed := 0
 
@@ -179,7 +179,7 @@ func (b *graphBuilder) addGoIndex(root string, repoID string, scope string, goIn
 	return filesIndexed, symbolsIndexed
 }
 
-func (b *graphBuilder) addCppIndex(root string, repoID string, scope string, cppIndex *semantic.CppIndex, maxFiles int, indexedFiles map[string]struct{}) (int, int) {
+func (b *graphBuilder) addCppIndex(root string, repoID string, scope string, cppIndex *semanticcpp.CppIndex, maxFiles int, indexedFiles map[string]struct{}) (int, int) {
 	filesIndexed := 0
 	symbolsIndexed := 0
 	callTargets := newCppCallTargetResolver(cppIndex, scope)

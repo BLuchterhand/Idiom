@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"idiom/internal/repository/discovery"
-	"idiom/internal/repository/semantic"
 	semanticjava "idiom/internal/repository/semantic/java"
 )
 
@@ -68,7 +67,7 @@ func (m *Manager) isJavaWorkspace() bool {
 	return found
 }
 
-func (m *Manager) getJavaIndex() (*semantic.JavaIndex, error) {
+func (m *Manager) getJavaIndex() (*semanticjava.JavaIndex, error) {
 	if !m.isJavaWorkspace() {
 		return nil, fmt.Errorf("java-specific tools require a workspace with Java source files or a pom.xml / build.gradle manifest")
 	}
@@ -142,12 +141,12 @@ func javaDisplayName(qualified string, name string) string {
 	return strings.TrimSpace(name)
 }
 
-func filterJavaSymbolMatches(matches []semantic.JavaSymbolMatch, pathFilter string) []semantic.JavaSymbolMatch {
+func filterJavaSymbolMatches(matches []semanticjava.JavaSymbolMatch, pathFilter string) []semanticjava.JavaSymbolMatch {
 	if pathFilter == "" {
 		return matches
 	}
 
-	out := make([]semantic.JavaSymbolMatch, 0, len(matches))
+	out := make([]semanticjava.JavaSymbolMatch, 0, len(matches))
 	for _, match := range matches {
 		if pathMatchesFilter(match.Path, pathFilter) {
 			out = append(out, match)
@@ -157,12 +156,12 @@ func filterJavaSymbolMatches(matches []semantic.JavaSymbolMatch, pathFilter stri
 	return out
 }
 
-func filterJavaCallMatches(matches []semantic.JavaCallMatch, pathFilter string) []semantic.JavaCallMatch {
+func filterJavaCallMatches(matches []semanticjava.JavaCallMatch, pathFilter string) []semanticjava.JavaCallMatch {
 	if pathFilter == "" {
 		return matches
 	}
 
-	out := make([]semantic.JavaCallMatch, 0, len(matches))
+	out := make([]semanticjava.JavaCallMatch, 0, len(matches))
 	for _, match := range matches {
 		if pathMatchesFilter(match.Caller.Path, pathFilter) {
 			out = append(out, match)
@@ -172,29 +171,29 @@ func filterJavaCallMatches(matches []semantic.JavaCallMatch, pathFilter string) 
 	return out
 }
 
-func (m *Manager) selectJavaSymbolMatch(req ToolRequest) (semantic.JavaSymbolMatch, error) {
+func (m *Manager) selectJavaSymbolMatch(req ToolRequest) (semanticjava.JavaSymbolMatch, error) {
 	pattern := strings.TrimSpace(req.Pattern)
 	if pattern == "" {
-		return semantic.JavaSymbolMatch{}, fmt.Errorf("pattern is required")
+		return semanticjava.JavaSymbolMatch{}, fmt.Errorf("pattern is required")
 	}
 
 	index, err := m.getJavaIndex()
 	if err != nil {
-		return semantic.JavaSymbolMatch{}, err
+		return semanticjava.JavaSymbolMatch{}, err
 	}
 
 	pathFilter, err := m.javaPathFilterForRequest(req)
 	if err != nil {
-		return semantic.JavaSymbolMatch{}, err
+		return semanticjava.JavaSymbolMatch{}, err
 	}
 
 	matches := filterJavaSymbolMatches(index.FindSymbols(pattern, 12), pathFilter)
 	if len(matches) == 0 {
 		if pathFilter != "" {
-			return semantic.JavaSymbolMatch{}, fmt.Errorf("no Java symbols matched %q under %s", pattern, pathFilter)
+			return semanticjava.JavaSymbolMatch{}, fmt.Errorf("no Java symbols matched %q under %s", pattern, pathFilter)
 		}
 
-		return semantic.JavaSymbolMatch{}, fmt.Errorf("no Java symbols matched %q", pattern)
+		return semanticjava.JavaSymbolMatch{}, fmt.Errorf("no Java symbols matched %q", pattern)
 	}
 
 	return matches[0], nil
@@ -656,8 +655,8 @@ func (m *Manager) javaFileOutline(req ToolRequest) ToolResult {
 	} else if len(file.Symbols) > 200 {
 		fmt.Fprintf(&b, "declarations: omitted for large file (%d symbols).\n", len(file.Symbols))
 	} else {
-		symbols := append([]semantic.JavaSymbol(nil), file.Symbols...)
-		slices.SortStableFunc(symbols, func(a, b semantic.JavaSymbol) int { return cmp.Compare(a.Line, b.Line) })
+		symbols := append([]semanticjava.JavaSymbol(nil), file.Symbols...)
+		slices.SortStableFunc(symbols, func(a, b semanticjava.JavaSymbol) int { return cmp.Compare(a.Line, b.Line) })
 		b.WriteString("declarations:\n")
 
 		for _, sym := range symbols {

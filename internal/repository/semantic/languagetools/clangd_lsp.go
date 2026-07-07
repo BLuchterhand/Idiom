@@ -4,12 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	semanticcpp "idiom/internal/repository/semantic/cpp"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"idiom/internal/repository/semantic"
 )
 
 type clangdLSPClient struct {
@@ -112,15 +111,15 @@ func (m *Manager) cppWorkspaceSymbolsViaClangd(ctx context.Context, pattern stri
 	}, pattern, pathFilter, limit)
 }
 
-func (m *Manager) cppDefinitionViaClangd(ctx context.Context, match semantic.CppSymbolMatch) (string, error) {
+func (m *Manager) cppDefinitionViaClangd(ctx context.Context, match semanticcpp.CppSymbolMatch) (string, error) {
 	return m.cppLocationQueryViaClangd(ctx, match, "textDocument/definition", true)
 }
 
-func (m *Manager) cppDeclarationViaClangd(ctx context.Context, match semantic.CppSymbolMatch) (string, error) {
+func (m *Manager) cppDeclarationViaClangd(ctx context.Context, match semanticcpp.CppSymbolMatch) (string, error) {
 	return m.cppLocationQueryViaClangd(ctx, match, "textDocument/declaration", false)
 }
 
-func (m *Manager) cppLocationQueryViaClangd(ctx context.Context, match semantic.CppSymbolMatch, method string, declarationFallback bool) (string, error) {
+func (m *Manager) cppLocationQueryViaClangd(ctx context.Context, match semanticcpp.CppSymbolMatch, method string, declarationFallback bool) (string, error) {
 	client, err := m.newClangdLSPClient(ctx)
 	if err != nil {
 		return "", err
@@ -165,7 +164,7 @@ func (m *Manager) cppLocationQueryViaClangd(ctx context.Context, match semantic.
 	return m.formatClangdLocations(locations, "", 4, false), nil
 }
 
-func (m *Manager) cppImplementationsViaClangd(ctx context.Context, match semantic.CppSymbolMatch, pathFilter string) (string, error) {
+func (m *Manager) cppImplementationsViaClangd(ctx context.Context, match semanticcpp.CppSymbolMatch, pathFilter string) (string, error) {
 	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
 		serverName: "clangd",
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
@@ -178,7 +177,7 @@ func (m *Manager) cppImplementationsViaClangd(ctx context.Context, match semanti
 	}, "textDocument/implementation", nil, pathFilter, m.maxDirectoryEntries(), false)
 }
 
-func (m *Manager) cppReferencesViaClangd(ctx context.Context, match semantic.CppSymbolMatch, pathFilter string) (string, error) {
+func (m *Manager) cppReferencesViaClangd(ctx context.Context, match semanticcpp.CppSymbolMatch, pathFilter string) (string, error) {
 	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
 		serverName: "clangd",
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
@@ -193,7 +192,7 @@ func (m *Manager) cppReferencesViaClangd(ctx context.Context, match semantic.Cpp
 	}, pathFilter, m.maxDirectoryEntries(), true)
 }
 
-func (m *Manager) cppCallHierarchyViaClangd(ctx context.Context, match semantic.CppSymbolMatch, pathFilter string, incoming bool) (callHierarchyResult, error) {
+func (m *Manager) cppCallHierarchyViaClangd(ctx context.Context, match semanticcpp.CppSymbolMatch, pathFilter string, incoming bool) (callHierarchyResult, error) {
 	client, err := m.newClangdLSPClient(ctx)
 	if err != nil {
 		return callHierarchyResult{}, err
@@ -265,7 +264,7 @@ func (m *Manager) cppCallHierarchyViaClangd(ctx context.Context, match semantic.
 	return m.formatClangdOutgoingCalls(abs, match.Name, calls, pathFilter), nil
 }
 
-func (m *Manager) cppLSPPosition(abs string, match semantic.CppSymbolMatch) map[string]any {
+func (m *Manager) cppLSPPosition(abs string, match semanticcpp.CppSymbolMatch) map[string]any {
 	line := match.Line - 1
 	if line < 0 {
 		line = 0
@@ -286,7 +285,7 @@ func (m *Manager) cppLSPPosition(abs string, match semantic.CppSymbolMatch) map[
 	}
 }
 
-func (m *Manager) cppLSPCharacter(abs string, match semantic.CppSymbolMatch) (int, bool) {
+func (m *Manager) cppLSPCharacter(abs string, match semanticcpp.CppSymbolMatch) (int, bool) {
 	if abs == "" || match.Line <= 0 {
 		return 0, false
 	}
@@ -330,7 +329,7 @@ func (m *Manager) formatClangdWorkspaceSymbols(symbols []LSPSymbolInfo, pathFilt
 	return m.formatLSPWorkspaceSymbols(symbols, pathFilter, limit, clangdPathFromURI, clangdSymbolKindName, "::")
 }
 
-func (m *Manager) formatClangdIncomingCalls(calls []LSPIncomingCall, pathFilter string, target semantic.CppSymbolMatch) callHierarchyResult {
+func (m *Manager) formatClangdIncomingCalls(calls []LSPIncomingCall, pathFilter string, target semanticcpp.CppSymbolMatch) callHierarchyResult {
 	return m.formatLSPIncomingCalls(calls, pathFilter, lspCallTarget{Path: target.Path, Line: target.Line, Name: target.Name}, clangdPathFromURI)
 }
 

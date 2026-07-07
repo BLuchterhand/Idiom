@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"idiom/internal/platform/hosttools"
-	"idiom/internal/repository/semantic"
+	semanticts "idiom/internal/repository/semantic/typescript"
 )
 
 type tsLSPClient struct {
@@ -163,7 +163,7 @@ func tsLanguageID(path string) string {
 	}
 }
 
-func (m *Manager) tsLSPPosition(abs string, match semantic.TsSymbolMatch) map[string]any {
+func (m *Manager) tsLSPPosition(abs string, match semanticts.TsSymbolMatch) map[string]any {
 	line := match.Line - 1
 	if line < 0 {
 		line = 0
@@ -184,7 +184,7 @@ func (m *Manager) tsLSPPosition(abs string, match semantic.TsSymbolMatch) map[st
 	}
 }
 
-func (m *Manager) tsLSPCharacter(abs string, match semantic.TsSymbolMatch) (int, bool) {
+func (m *Manager) tsLSPCharacter(abs string, match semanticts.TsSymbolMatch) (int, bool) {
 	if abs == "" || match.Line <= 0 {
 		return 0, false
 	}
@@ -240,11 +240,11 @@ func (m *Manager) tsWorkspaceSymbolsViaLSP(ctx context.Context, pattern string, 
 	}, pattern, pathFilter, limit)
 }
 
-func (m *Manager) tsDefinitionViaLSP(ctx context.Context, match semantic.TsSymbolMatch) (string, error) {
+func (m *Manager) tsDefinitionViaLSP(ctx context.Context, match semanticts.TsSymbolMatch) (string, error) {
 	return m.LSPLocationQueryViaLSP(ctx, match, "textDocument/definition")
 }
 
-func (m *Manager) LSPLocationQueryViaLSP(ctx context.Context, match semantic.TsSymbolMatch, method string) (string, error) {
+func (m *Manager) LSPLocationQueryViaLSP(ctx context.Context, match semanticts.TsSymbolMatch, method string) (string, error) {
 	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
 		serverName: "ts LSP",
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
@@ -257,7 +257,7 @@ func (m *Manager) LSPLocationQueryViaLSP(ctx context.Context, match semantic.TsS
 	}, method, nil, "", 4, false)
 }
 
-func (m *Manager) tsImplementationsViaLSP(ctx context.Context, match semantic.TsSymbolMatch, pathFilter string) (string, error) {
+func (m *Manager) tsImplementationsViaLSP(ctx context.Context, match semanticts.TsSymbolMatch, pathFilter string) (string, error) {
 	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
 		serverName: "ts LSP",
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
@@ -270,7 +270,7 @@ func (m *Manager) tsImplementationsViaLSP(ctx context.Context, match semantic.Ts
 	}, "textDocument/implementation", nil, pathFilter, m.maxDirectoryEntries(), false)
 }
 
-func (m *Manager) tsReferencesViaLSP(ctx context.Context, match semantic.TsSymbolMatch, pathFilter string) (string, error) {
+func (m *Manager) tsReferencesViaLSP(ctx context.Context, match semanticts.TsSymbolMatch, pathFilter string) (string, error) {
 	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
 		serverName: "ts LSP",
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
@@ -285,7 +285,7 @@ func (m *Manager) tsReferencesViaLSP(ctx context.Context, match semantic.TsSymbo
 	}, pathFilter, m.maxDirectoryEntries(), true)
 }
 
-func (m *Manager) tsCallHierarchyViaLSP(ctx context.Context, match semantic.TsSymbolMatch, pathFilter string, incoming bool) (callHierarchyResult, error) {
+func (m *Manager) tsCallHierarchyViaLSP(ctx context.Context, match semanticts.TsSymbolMatch, pathFilter string, incoming bool) (callHierarchyResult, error) {
 	client, err := m.newTsLSPClient(ctx)
 	if err != nil {
 		return callHierarchyResult{}, err
@@ -354,7 +354,7 @@ func (m *Manager) formatTsWorkspaceSymbols(symbols []LSPSymbolInfo, pathFilter s
 	return m.formatLSPWorkspaceSymbols(symbols, pathFilter, limit, tsPathFromURI, tsSymbolKindName, ".")
 }
 
-func (m *Manager) formatTsIncomingCalls(calls []LSPIncomingCall, pathFilter string, target semantic.TsSymbolMatch) callHierarchyResult {
+func (m *Manager) formatTsIncomingCalls(calls []LSPIncomingCall, pathFilter string, target semanticts.TsSymbolMatch) callHierarchyResult {
 	return m.formatLSPIncomingCalls(calls, pathFilter, lspCallTarget{Path: target.Path, Line: target.Line, Name: target.Name}, tsPathFromURI)
 }
 

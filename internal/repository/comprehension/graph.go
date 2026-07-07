@@ -58,7 +58,7 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 		language = "auto"
 	}
 
-	var goIndex *semantic.GoIndex
+	var goIndex *semanticgo.GoIndex
 
 	repoProps := map[string]any{}
 
@@ -147,7 +147,7 @@ func Build(ctx context.Context, opts BuildOptions) (BuildReport, error) {
 		return BuildReport{}, err
 	}
 
-	var cppIndex *semantic.CppIndex
+	var cppIndex *semanticcpp.CppIndex
 
 	if shouldUseCppCollector(language) {
 		cppIndex, err = semanticcpp.BuildCppIndexWithOptions(root, indexOpts)
@@ -1254,7 +1254,7 @@ func rootFingerprint(root string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-func packageFingerprint(path string, pkg semantic.GoPackage) string {
+func packageFingerprint(path string, pkg semanticgo.GoPackage) string {
 	payload := fmt.Sprintf("%s:%s:%d:%d:%d:%d", path, pkg.Name, pkg.Files, pkg.Funcs, pkg.Methods, pkg.Types)
 	sum := sha256.Sum256([]byte(payload))
 
@@ -1399,7 +1399,7 @@ func edgeID(kind, sourceID, targetID string, evidence map[string]any) string {
 	return "edge://" + hex.EncodeToString(sum[:8])
 }
 
-func qualifiedGoSymbolName(symbol semantic.GoSymbol) string {
+func qualifiedGoSymbolName(symbol semanticgo.GoSymbol) string {
 	if strings.TrimSpace(symbol.Receiver) == "" {
 		return symbol.Name
 	}
@@ -1407,7 +1407,7 @@ func qualifiedGoSymbolName(symbol semantic.GoSymbol) string {
 	return symbol.Receiver + "." + symbol.Name
 }
 
-func qualifiedCallName(call semantic.GoCall) string {
+func qualifiedCallName(call semanticgo.GoCall) string {
 	if strings.TrimSpace(call.Qualifier) == "" {
 		return call.Name
 	}
@@ -1443,7 +1443,7 @@ func goImportAliases(path string) map[string]string {
 	return out
 }
 
-func goSymbolIDsByName(index *semantic.GoIndex, packageDir string) map[string]string {
+func goSymbolIDsByName(index *semanticgo.GoIndex, packageDir string) map[string]string {
 	out := make(map[string]string)
 	if index == nil {
 		return out
@@ -1483,7 +1483,7 @@ func goTestTargetID(testName string, symbolIDsByName map[string]string) string {
 	return ""
 }
 
-func goCallTargetID(index *semantic.GoIndex, call semantic.GoCall, scope string, packageDir string, importAliases map[string]string) (string, *Node) {
+func goCallTargetID(index *semanticgo.GoIndex, call semanticgo.GoCall, scope string, packageDir string, importAliases map[string]string) (string, *Node) {
 	if index == nil || strings.TrimSpace(call.Name) == "" {
 		return "", nil
 	}
@@ -1506,7 +1506,7 @@ func goCallTargetID(index *semantic.GoIndex, call semantic.GoCall, scope string,
 	return goPackageSymbolTargetID(index, packageDir, call.Name, qualifiedCallName(call), scope), nil
 }
 
-func goLocalImportTargetID(index *semantic.GoIndex, importPath string, name string, scope string) string {
+func goLocalImportTargetID(index *semanticgo.GoIndex, importPath string, name string, scope string) string {
 	dir := goLocalImportDir(index, importPath)
 	if dir == "" {
 		return ""
@@ -1515,7 +1515,7 @@ func goLocalImportTargetID(index *semantic.GoIndex, importPath string, name stri
 	return goPackageSymbolTargetID(index, dir, name, "", scope)
 }
 
-func goLocalImportDir(index *semantic.GoIndex, importPath string) string {
+func goLocalImportDir(index *semanticgo.GoIndex, importPath string) string {
 	if index == nil || strings.TrimSpace(index.Module) == "" || strings.TrimSpace(importPath) == "" {
 		return ""
 	}
@@ -1534,7 +1534,7 @@ func goLocalImportDir(index *semantic.GoIndex, importPath string) string {
 	}
 }
 
-func goPackageSymbolTargetID(index *semantic.GoIndex, packageDir string, name string, qualified string, scope string) string {
+func goPackageSymbolTargetID(index *semanticgo.GoIndex, packageDir string, name string, qualified string, scope string) string {
 	name = strings.ToLower(strings.TrimSpace(name))
 	qualified = strings.ToLower(strings.TrimSpace(qualified))
 
@@ -1570,7 +1570,7 @@ func goPackageSymbolTargetID(index *semantic.GoIndex, packageDir string, name st
 	return ""
 }
 
-func goExternalCallNode(id string, call semantic.GoCall, importPath string) Node {
+func goExternalCallNode(id string, call semanticgo.GoCall, importPath string) Node {
 	return Node{
 		ID:            id,
 		Kind:          "external_symbol",
@@ -1586,7 +1586,7 @@ func goExternalCallNode(id string, call semantic.GoCall, importPath string) Node
 	}
 }
 
-func qualifiedCppSymbolName(symbol semantic.CppSymbol) string {
+func qualifiedCppSymbolName(symbol semanticcpp.CppSymbol) string {
 	if strings.TrimSpace(symbol.Qualified) != "" {
 		return symbol.Qualified
 	}
@@ -1609,7 +1609,7 @@ func cppSymbolKind(kind string) string {
 	}
 }
 
-func cppIncludeTargetID(index *semantic.CppIndex, include string) string {
+func cppIncludeTargetID(index *semanticcpp.CppIndex, include string) string {
 	include = filepath.ToSlash(strings.TrimSpace(include))
 	if include == "" {
 		return ""
@@ -1631,7 +1631,7 @@ type cppCallTarget struct {
 	score int
 }
 
-func newCppCallTargetResolver(index *semantic.CppIndex, scope string) cppCallTargetResolver {
+func newCppCallTargetResolver(index *semanticcpp.CppIndex, scope string) cppCallTargetResolver {
 	resolver := cppCallTargetResolver{byName: make(map[string]cppCallTarget)}
 	if index == nil {
 		return resolver
@@ -1658,7 +1658,7 @@ func newCppCallTargetResolver(index *semantic.CppIndex, scope string) cppCallTar
 	return resolver
 }
 
-func (r cppCallTargetResolver) targetID(call semantic.CppCall) string {
+func (r cppCallTargetResolver) targetID(call semanticcpp.CppCall) string {
 	callName := strings.ToLower(strings.TrimSpace(call.Name))
 	if callName == "" || len(r.byName) == 0 {
 		return ""
@@ -1680,7 +1680,7 @@ func (r cppCallTargetResolver) add(name string, id string, score int) {
 	r.byName[name] = cppCallTarget{id: id, score: score}
 }
 
-func cppCallTargetScore(symbol semantic.CppSymbol, base int) int {
+func cppCallTargetScore(symbol semanticcpp.CppSymbol, base int) int {
 	score := base
 	if symbol.HasBody {
 		score += 20

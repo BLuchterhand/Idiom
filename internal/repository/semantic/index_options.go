@@ -1,5 +1,9 @@
 package semantic
 
-import "idiom/internal/repository/semantic/internal/indexsupport"
+import "context"
 
-type IndexOptions = indexsupport.IndexOptions
+type IndexOptions struct {
+	Scope    string
+	MaxFiles int
+	Context  context.Context
+}

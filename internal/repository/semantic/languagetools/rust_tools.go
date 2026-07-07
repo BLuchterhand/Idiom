@@ -11,7 +11,6 @@ import (
 
 	"idiom/internal/platform/hosttools"
 	"idiom/internal/repository/discovery"
-	"idiom/internal/repository/semantic"
 	semanticrust "idiom/internal/repository/semantic/rust"
 )
 
@@ -57,7 +56,7 @@ func (m *Manager) isRustWorkspace() bool {
 	return found
 }
 
-func (m *Manager) getRustIndex() (*semantic.RustIndex, error) {
+func (m *Manager) getRustIndex() (*semanticrust.RustIndex, error) {
 	if !m.isRustWorkspace() {
 		return nil, fmt.Errorf("rust-specific tools require a workspace with Rust source files or Cargo.toml")
 	}
@@ -379,8 +378,8 @@ func (m *Manager) rustFileOutline(req ToolRequest) ToolResult {
 	} else if len(file.Symbols) > 200 {
 		fmt.Fprintf(&b, "declarations: omitted for large file (%d symbols).\n", len(file.Symbols))
 	} else {
-		symbols := append([]semantic.RustSymbol(nil), file.Symbols...)
-		slices.SortStableFunc(symbols, func(a, b semantic.RustSymbol) int { return cmp.Compare(a.Line, b.Line) })
+		symbols := append([]semanticrust.RustSymbol(nil), file.Symbols...)
+		slices.SortStableFunc(symbols, func(a, b semanticrust.RustSymbol) int { return cmp.Compare(a.Line, b.Line) })
 		b.WriteString("declarations:\n")
 
 		for _, sym := range symbols {
@@ -612,29 +611,29 @@ func (m *Manager) rustDiagnostics(ctx context.Context, req ToolRequest) ToolResu
 
 // -- Shared helpers ---------------------------------------------------------
 
-func (m *Manager) selectRustSymbolMatch(req ToolRequest) (semantic.RustSymbolMatch, error) {
+func (m *Manager) selectRustSymbolMatch(req ToolRequest) (semanticrust.RustSymbolMatch, error) {
 	pattern := strings.TrimSpace(req.Pattern)
 	if pattern == "" {
-		return semantic.RustSymbolMatch{}, fmt.Errorf("pattern is required")
+		return semanticrust.RustSymbolMatch{}, fmt.Errorf("pattern is required")
 	}
 
 	index, err := m.getRustIndex()
 	if err != nil {
-		return semantic.RustSymbolMatch{}, err
+		return semanticrust.RustSymbolMatch{}, err
 	}
 
 	pathFilter, err := m.rustPathFilterForRequest(req)
 	if err != nil {
-		return semantic.RustSymbolMatch{}, err
+		return semanticrust.RustSymbolMatch{}, err
 	}
 
 	matches := filterRustSymbolMatches(index.FindSymbols(pattern, 12), pathFilter)
 	if len(matches) == 0 {
 		if pathFilter != "" {
-			return semantic.RustSymbolMatch{}, fmt.Errorf("no Rust symbols matched %q under %s", pattern, pathFilter)
+			return semanticrust.RustSymbolMatch{}, fmt.Errorf("no Rust symbols matched %q under %s", pattern, pathFilter)
 		}
 
-		return semantic.RustSymbolMatch{}, fmt.Errorf("no Rust symbols matched %q", pattern)
+		return semanticrust.RustSymbolMatch{}, fmt.Errorf("no Rust symbols matched %q", pattern)
 	}
 
 	return matches[0], nil
@@ -671,12 +670,12 @@ func (m *Manager) rustHandleDisplay(rel string) (string, error) {
 	return m.handleDisplay(abs), nil
 }
 
-func filterRustSymbolMatches(matches []semantic.RustSymbolMatch, pathFilter string) []semantic.RustSymbolMatch {
+func filterRustSymbolMatches(matches []semanticrust.RustSymbolMatch, pathFilter string) []semanticrust.RustSymbolMatch {
 	if pathFilter == "" {
 		return matches
 	}
 
-	out := make([]semantic.RustSymbolMatch, 0, len(matches))
+	out := make([]semanticrust.RustSymbolMatch, 0, len(matches))
 	for _, match := range matches {
 		if pathMatchesFilter(match.Path, pathFilter) {
 			out = append(out, match)
@@ -686,12 +685,12 @@ func filterRustSymbolMatches(matches []semantic.RustSymbolMatch, pathFilter stri
 	return out
 }
 
-func filterRustCallMatches(matches []semantic.RustCallMatch, pathFilter string) []semantic.RustCallMatch {
+func filterRustCallMatches(matches []semanticrust.RustCallMatch, pathFilter string) []semanticrust.RustCallMatch {
 	if pathFilter == "" {
 		return matches
 	}
 
-	out := make([]semantic.RustCallMatch, 0, len(matches))
+	out := make([]semanticrust.RustCallMatch, 0, len(matches))
 	for _, match := range matches {
 		if pathMatchesFilter(match.Caller.Path, pathFilter) {
 			out = append(out, match)

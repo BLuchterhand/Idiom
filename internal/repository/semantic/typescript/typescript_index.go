@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"idiom/internal/platform/textutil"
+	"idiom/internal/repository/semantic"
 	"idiom/internal/repository/semantic/internal/indexsupport"
 
 	"idiom/internal/repository/discovery"
@@ -114,10 +115,10 @@ var tsSkippedDirs = map[string]struct{}{
 }
 
 func BuildTsIndex(root string) (*TsIndex, error) {
-	return BuildTsIndexWithOptions(root, indexsupport.IndexOptions{})
+	return BuildTsIndexWithOptions(root, semantic.IndexOptions{})
 }
 
-func BuildTsIndexWithOptions(root string, opts indexsupport.IndexOptions) (*TsIndex, error) {
+func BuildTsIndexWithOptions(root string, opts semantic.IndexOptions) (*TsIndex, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return nil, nil
@@ -136,7 +137,7 @@ func BuildTsIndexWithOptions(root string, opts indexsupport.IndexOptions) (*TsIn
 
 	errStop := filepath.SkipAll
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
-		if err := indexsupport.ContextErr(opts); err != nil {
+		if err := indexsupport.ContextErr(opts.Context); err != nil {
 			return err
 		}
 
@@ -204,7 +205,7 @@ func BuildTsIndexWithOptions(root string, opts indexsupport.IndexOptions) (*TsIn
 	slices.Sort(paths)
 
 	for _, rel := range paths {
-		if err := indexsupport.ContextErr(opts); err != nil {
+		if err := indexsupport.ContextErr(opts.Context); err != nil {
 			return nil, err
 		}
 

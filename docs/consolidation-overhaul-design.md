@@ -366,6 +366,7 @@ Accepted or corrected slices:
 | Wrapper policy audit hardening | Production Go behavior unchanged; changed the pass-through wrapper default and tracked Idiom policy so test files are scanned instead of exempted, and strengthened AGENTS/development guidance to ban wrapper-only helpers in tests as well as production | No test files changed; policy/docs delta is `+13 / -10` across `.idiom/coding_rules.json`, `coding_rules.example.json`, `internal/contracts/codingrules/effective.go`, `AGENTS.md`, and `docs/development.md` before this ledger row | Branch audit: `git diff b6591bf5eb647e29a10697b48585047c6a8361da..HEAD -- '*.go'` added no type aliases; diff-scoped wrapper scan with `ignore_tests=false` scanned `179` changed Go files with `0` findings; full scan with tracked policy scanned `607` Go files with `0` findings and `5` boundary-adapter suppressions; focused rule tests passed | Accepted as a direct response to wrapper-risk review: compatibility/API suppressions remain rejected by scanner tests, test-only facades are no longer policy-exempt, and the only active suppressions are the `languagetools.Host` boundary adapter methods |
 | CLI lane/plan-execute alias cleanup | Production Go `+29 / -41`: net `-12`; deleted alias-only DTO/type surfaces from `internal/surfaces/cli/lane` and `internal/surfaces/cli/planexecute`, with call sites naming `cmdruntime`, `lanehistory`, `atomintake`, `readiness`, and workflow `planexecute` owners directly | Test Go `+48 / -44`: net `+4`; test fakes and review-repair fixtures now use owner package types instead of package-local compatibility aliases | Focused: `go test ./internal/surfaces/cli/planexecute ./internal/surfaces/cli/lane -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `git diff --check` | Accepted as an alias-only surface deletion; no wrapper helper was introduced, the tracked wrapper policy scanned `607` Go files with `0` findings, and `deadcode -test ./...` is clean |
 | External-tool registry wrapper deletion | Production Go `+41 / -121`: net `-80`; deleted `workspace.ExternalTool`, `workspace.ExternalToolRegistry`, `workspace.NewExternalToolRegistry`, and the forwarding registry methods, then stored and passed `externaltool.Registry` directly while keeping workspace-owned `ToolDefinition` projection local | Test Go `+20 / -16`: net `+4`; tests now construct `externaltool.Registry` with `externaltool.Tool` so they no longer preserve the deleted compatibility API | Focused: `go test ./internal/capabilities/workspace ./internal/capabilities/workspace/externaltool ./internal/runtime/agent ./internal/surfaces/cli/tool ./internal/surfaces/cli/init -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `git diff --check` | Accepted after architecture and Go/package reviewer feedback; `externaltool` owns validation, availability, and invocation, `workspace` owns config loading plus tool-surface projection, and stale config/init references to the deleted alias were removed |
+| Semantic facade alias deletion | Production Go `+245 / -294`: net `-49`; deleted `internal/repository/semantic/facade.go`, retargeted comprehension and language-tool callers to concrete language owner packages, and made `semantic.IndexOptions` a concrete root contract instead of an alias over internal index support | Test Go `+31 / -24`: net `+7`; tests now import concrete semantic language packages instead of preserving root facade types | Focused: `go test ./internal/repository/semantic ./internal/repository/semantic/... ./internal/repository/comprehension -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `git diff --check` | Accepted after architecture and Go/package reviewer feedback; language index/query types are owned by their language packages, root `semantic` now owns only the shared index options contract, and no semantic facade aliases remain |
 
 ## Historical Count Snapshots (Superseded)
 
@@ -759,6 +760,8 @@ helper cleanup:
   ./internal/capabilities/workspace/externaltool ./internal/runtime/agent
   ./internal/surfaces/cli/tool ./internal/surfaces/cli/init -count=1`:
   latest run passed.
+- `go test ./internal/repository/semantic ./internal/repository/semantic/...
+  ./internal/repository/comprehension -count=1`: latest run passed.
 - `go test ./internal/surfaces/cli/planexecute ./internal/surfaces/cli/lane
   -count=1`: latest run passed.
 - `go test ./...`: latest run passed.
@@ -775,18 +778,18 @@ Current git state:
 
 - Branch state: `codex/rearchitecture-surface-authority` is based on
   merge-base `b6591bf5eb647e29a10697b48585047c6a8361da`; the latest commit
-  includes the external-tool registry wrapper deletion.
+  includes the semantic facade alias deletion.
 - Goal-period diff from merge base through the latest commit: production Go
-  `+18,995 / -18,885`, net `+110`; Go tests `+9,540 / -5,823`, net `+3,717`;
-  strict all-file total `+30,527 / -26,679`, net `+3,848` across 391 files.
-- Latest external-tool registry cleanup slice only: production Go `+41 / -121`,
-  net `-80`; Go tests `+20 / -16`, net `+4`.
+  `+19,240 / -19,179`, net `+61`; Go tests `+9,571 / -5,847`, net `+3,724`;
+  strict all-file total `+30,806 / -26,997`, net `+3,809` across 409 files.
+- Latest semantic facade cleanup slice only: production Go `+245 / -294`,
+  net `-49`; Go tests `+31 / -24`, net `+7`.
 
 Interpretation: the current goal-period branch is not production-LOC negative.
 Many individual consolidation slices are net-negative and remove real duplicate
 or alias-only surfaces, but the later `commandexec` process-lifecycle owner
 work intentionally added shared platform code before all remaining process
-migrations are complete. The honest current production answer is net `+110`
+migrations are complete. The honest current production answer is net `+61`
 Go LOC from merge base through the working tree. The implementation ledger
 above remains the source of truth for accepted local reductions inside each
 consolidation case.

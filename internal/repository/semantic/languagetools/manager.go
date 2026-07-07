@@ -9,8 +9,12 @@ import (
 	"sync"
 
 	"idiom/internal/platform/failures"
-	"idiom/internal/repository/semantic"
+	semanticcpp "idiom/internal/repository/semantic/cpp"
+	semanticgo "idiom/internal/repository/semantic/golang"
+	semanticjava "idiom/internal/repository/semantic/java"
 	"idiom/internal/repository/semantic/language"
+	semanticrust "idiom/internal/repository/semantic/rust"
+	semanticts "idiom/internal/repository/semantic/typescript"
 )
 
 const (
@@ -40,15 +44,15 @@ type Manager struct {
 	host Host
 
 	mu             sync.Mutex
-	goIndex        *semantic.GoIndex
+	goIndex        *semanticgo.GoIndex
 	goIndexToken   string
-	cppIndex       *semantic.CppIndex
+	cppIndex       *semanticcpp.CppIndex
 	cppIndexToken  string
-	rustIndex      *semantic.RustIndex
+	rustIndex      *semanticrust.RustIndex
 	rustIndexToken string
-	tsIndex        *semantic.TsIndex
+	tsIndex        *semanticts.TsIndex
 	tsIndexToken   string
-	javaIndex      *semantic.JavaIndex
+	javaIndex      *semanticjava.JavaIndex
 	javaIndexToken string
 	goplsPath      string
 	goplsChecked   bool

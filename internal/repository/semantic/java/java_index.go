@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"idiom/internal/platform/textutil"
+	"idiom/internal/repository/semantic"
 	"idiom/internal/repository/semantic/internal/indexsupport"
 
 	"idiom/internal/repository/discovery"
@@ -104,10 +105,10 @@ var javaSkippedDirNames = map[string]struct{}{
 // that actually contains .java files; if root has no Java sources it
 // returns (nil, nil).
 func BuildJavaIndex(root string) (*JavaIndex, error) {
-	return BuildJavaIndexWithOptions(root, indexsupport.IndexOptions{})
+	return BuildJavaIndexWithOptions(root, semantic.IndexOptions{})
 }
 
-func BuildJavaIndexWithOptions(root string, opts indexsupport.IndexOptions) (*JavaIndex, error) {
+func BuildJavaIndexWithOptions(root string, opts semantic.IndexOptions) (*JavaIndex, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return nil, nil
@@ -123,7 +124,7 @@ func BuildJavaIndexWithOptions(root string, opts indexsupport.IndexOptions) (*Ja
 	paths := make([]string, 0, 64)
 	errStop := filepath.SkipAll
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
-		if err := indexsupport.ContextErr(opts); err != nil {
+		if err := indexsupport.ContextErr(opts.Context); err != nil {
 			return err
 		}
 
@@ -190,7 +191,7 @@ func BuildJavaIndexWithOptions(root string, opts indexsupport.IndexOptions) (*Ja
 	classByFQN := make(map[string]string) // fq class name -> file path
 
 	for _, rel := range paths {
-		if err := indexsupport.ContextErr(opts); err != nil {
+		if err := indexsupport.ContextErr(opts.Context); err != nil {
 			return nil, err
 		}
 

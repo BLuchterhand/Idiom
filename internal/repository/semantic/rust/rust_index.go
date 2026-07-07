@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"idiom/internal/platform/textutil"
+	"idiom/internal/repository/semantic"
 	"idiom/internal/repository/semantic/internal/indexsupport"
 
 	"idiom/internal/repository/discovery"
@@ -134,10 +135,10 @@ func rustSourceDirPriority(dir string) int {
 // conservative regexes, and returns a RustIndex. Returns nil, nil when no
 // .rs files were found (lets callers surface a clean "no rust here" error).
 func BuildRustIndex(root string) (*RustIndex, error) {
-	return BuildRustIndexWithOptions(root, indexsupport.IndexOptions{})
+	return BuildRustIndexWithOptions(root, semantic.IndexOptions{})
 }
 
-func BuildRustIndexWithOptions(root string, opts indexsupport.IndexOptions) (*RustIndex, error) {
+func BuildRustIndexWithOptions(root string, opts semantic.IndexOptions) (*RustIndex, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return nil, nil
@@ -154,7 +155,7 @@ func BuildRustIndexWithOptions(root string, opts indexsupport.IndexOptions) (*Ru
 
 	errStop := filepath.SkipAll
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
-		if err := indexsupport.ContextErr(opts); err != nil {
+		if err := indexsupport.ContextErr(opts.Context); err != nil {
 			return err
 		}
 
@@ -216,7 +217,7 @@ func BuildRustIndexWithOptions(root string, opts indexsupport.IndexOptions) (*Ru
 	slices.Sort(paths)
 
 	for _, rel := range paths {
-		if err := indexsupport.ContextErr(opts); err != nil {
+		if err := indexsupport.ContextErr(opts.Context); err != nil {
 			return nil, err
 		}
 

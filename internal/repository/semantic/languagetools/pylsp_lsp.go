@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"idiom/internal/platform/hosttools"
-	"idiom/internal/repository/semantic"
+	semanticpython "idiom/internal/repository/semantic/python"
 )
 
 // pylspLSPClient drives a Python LSP server over stdio JSON-RPC.
@@ -144,11 +144,11 @@ func (m *Manager) pythonWorkspaceSymbolsViaLSP(ctx context.Context, pattern stri
 	}, pattern, pathFilter, limit)
 }
 
-func (m *Manager) pythonDefinitionViaLSP(ctx context.Context, match semantic.PythonSymbolMatch) (string, error) {
+func (m *Manager) pythonDefinitionViaLSP(ctx context.Context, match semanticpython.PythonSymbolMatch) (string, error) {
 	return m.pythonLocationQueryViaLSP(ctx, match, "textDocument/definition")
 }
 
-func (m *Manager) pythonLocationQueryViaLSP(ctx context.Context, match semantic.PythonSymbolMatch, method string) (string, error) {
+func (m *Manager) pythonLocationQueryViaLSP(ctx context.Context, match semanticpython.PythonSymbolMatch, method string) (string, error) {
 	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
 		serverName: "Python LSP",
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
@@ -161,7 +161,7 @@ func (m *Manager) pythonLocationQueryViaLSP(ctx context.Context, match semantic.
 	}, method, nil, "", 4, false)
 }
 
-func (m *Manager) pythonImplementationsViaLSP(ctx context.Context, match semantic.PythonSymbolMatch, pathFilter string) (string, error) {
+func (m *Manager) pythonImplementationsViaLSP(ctx context.Context, match semanticpython.PythonSymbolMatch, pathFilter string) (string, error) {
 	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
 		serverName: "Python LSP",
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
@@ -174,7 +174,7 @@ func (m *Manager) pythonImplementationsViaLSP(ctx context.Context, match semanti
 	}, "textDocument/implementation", nil, pathFilter, m.maxDirectoryEntries(), false)
 }
 
-func (m *Manager) pythonReferencesViaLSP(ctx context.Context, match semantic.PythonSymbolMatch, pathFilter string) (string, error) {
+func (m *Manager) pythonReferencesViaLSP(ctx context.Context, match semanticpython.PythonSymbolMatch, pathFilter string) (string, error) {
 	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
 		serverName: "Python LSP",
 		newClient: func(ctx context.Context) (managedLSPClient, error) {
@@ -189,7 +189,7 @@ func (m *Manager) pythonReferencesViaLSP(ctx context.Context, match semantic.Pyt
 	}, pathFilter, m.maxDirectoryEntries(), true)
 }
 
-func (m *Manager) pythonCallHierarchyViaLSP(ctx context.Context, match semantic.PythonSymbolMatch, pathFilter string, incoming bool) (callHierarchyResult, error) {
+func (m *Manager) pythonCallHierarchyViaLSP(ctx context.Context, match semanticpython.PythonSymbolMatch, pathFilter string, incoming bool) (callHierarchyResult, error) {
 	client, err := m.newPylspLSPClient(ctx)
 	if err != nil {
 		return callHierarchyResult{}, err
@@ -311,7 +311,7 @@ func pylspReadWithTimeout(ctx context.Context, client *pylspLSPClient) ([]byte, 
 	}
 }
 
-func (m *Manager) pythonLSPPosition(abs string, match semantic.PythonSymbolMatch) map[string]any {
+func (m *Manager) pythonLSPPosition(abs string, match semanticpython.PythonSymbolMatch) map[string]any {
 	line := match.Line - 1
 	if line < 0 {
 		line = 0
@@ -332,7 +332,7 @@ func (m *Manager) pythonLSPPosition(abs string, match semantic.PythonSymbolMatch
 	}
 }
 
-func (m *Manager) pythonLSPCharacter(abs string, match semantic.PythonSymbolMatch) (int, bool) {
+func (m *Manager) pythonLSPCharacter(abs string, match semanticpython.PythonSymbolMatch) (int, bool) {
 	if abs == "" || match.Line <= 0 {
 		return 0, false
 	}
@@ -357,7 +357,7 @@ func (m *Manager) formatPylspWorkspaceSymbols(symbols []LSPSymbolInfo, pathFilte
 	return m.formatLSPWorkspaceSymbols(symbols, pathFilter, limit, pylspPathFromURI, pylspSymbolKindName, ".")
 }
 
-func (m *Manager) formatPylspIncomingCalls(calls []LSPIncomingCall, pathFilter string, target semantic.PythonSymbolMatch) callHierarchyResult {
+func (m *Manager) formatPylspIncomingCalls(calls []LSPIncomingCall, pathFilter string, target semanticpython.PythonSymbolMatch) callHierarchyResult {
 	return m.formatLSPIncomingCalls(calls, pathFilter, lspCallTarget{Path: target.Path, Line: target.Line, Name: target.Name}, pylspPathFromURI)
 }
 
