@@ -2,6 +2,7 @@ package gitstate
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -54,6 +55,15 @@ func CombinedOutput(ctx context.Context, root string, args ...string) commandexe
 	spec.MergeOutput = true
 
 	return commandexec.Run(ctx, spec)
+}
+
+func CombinedOutputText(ctx context.Context, root string, args ...string) (string, error) {
+	result := CombinedOutput(ctx, root, args...)
+	if result.Err != nil {
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), result.Err, strings.TrimSpace(result.Stdout))
+	}
+
+	return result.Stdout, nil
 }
 
 func Run(ctx context.Context, root string, args ...string) commandexec.Result {

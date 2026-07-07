@@ -43,6 +43,29 @@ func TestCurrentReturnsErrorOutsideGitRepo(t *testing.T) {
 	}
 }
 
+func TestCombinedOutputTextPreservesRawOutputAndWrapsGitErrors(t *testing.T) {
+	root := initGitStateRepo(t)
+	head := gitStateGit(t, root, "rev-parse", "HEAD")
+
+	got, err := CombinedOutputText(t.Context(), root, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatalf("CombinedOutputText success: %v", err)
+	}
+	if got != head {
+		t.Fatalf("CombinedOutputText output = %q, want %q", got, head)
+	}
+
+	_, err = CombinedOutputText(t.Context(), t.TempDir(), "rev-parse", "HEAD")
+	if err == nil {
+		t.Fatalf("CombinedOutputText outside git repo returned nil error")
+	}
+
+	text := err.Error()
+	if !strings.Contains(text, "git rev-parse HEAD:") || !strings.Contains(strings.ToLower(text), "not a git repository") {
+		t.Fatalf("CombinedOutputText error should include command and git output, got %q", text)
+	}
+}
+
 func TestGitPathResolvesRelativeGitPath(t *testing.T) {
 	root := initGitStateRepo(t)
 

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -23,6 +22,7 @@ import (
 	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/contracts/sourcekind"
 	"idiom/internal/platform/config"
+	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/textutil"
 	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/runtime/instructions"
@@ -10561,14 +10561,7 @@ func CaptureGitCheckpoint(ctx context.Context, root string) (GitCheckpoint, erro
 }
 
 func GitCombinedOutput(ctx context.Context, root string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
-	}
-
-	return string(output), nil
+	return gitstate.CombinedOutputText(ctx, root, args...)
 }
 
 // PreimageCheckpointStore captures file contents before a workspace write.
@@ -10899,14 +10892,7 @@ func (m Manager) Remove(ctx context.Context, checkout Checkout) error {
 }
 
 func gitOutput(ctx context.Context, root string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
-	}
-
-	return string(output), nil
+	return gitstate.CombinedOutputText(ctx, root, args...)
 }
 
 func workbranchCanFallbackWithoutGit(err error) bool {
