@@ -1,11 +1,14 @@
 package commandexec
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -259,6 +262,130 @@ func TestStartCloseTerminatesRunningProcess(t *testing.T) {
 	}
 }
 
+func TestStartLoggedProcessOwnsOutputAndSignalLifecycle(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell signal trap is Unix-specific")
+	}
+
+	root := t.TempDir()
+	logPath := filepath.Join(root, "logs", "process.log")
+	readyPath := filepath.Join(root, "ready")
+	binary := filepath.Join(root, "logged-process")
+	script := `#!/bin/sh
+trap 'echo interrupted >&2; exit 0' TERM
+echo ready
+echo ready > "$READY_FILE"
+while true; do sleep 0.05; done
+`
+	if err := os.WriteFile(binary, []byte(script), 0o755); err != nil {
+		t.Fatalf("write helper script: %v", err)
+	}
+
+	spec := Spec{
+		Name:          binary,
+		Env:           []string{"READY_FILE=" + readyPath},
+		Timeout:       5 * time.Second,
+		OutputLogPath: logPath,
+	}
+
+	process, err := Start(t.Context(), spec)
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer process.Close()
+
+	if process.PID() <= 0 {
+		t.Fatalf("PID = %d, want positive process id", process.PID())
+	}
+	if !process.Alive() {
+		t.Fatal("process should be alive after start")
+	}
+	if process.Stdin() != nil || process.Stdout() != nil {
+		t.Fatalf("logged process should not expose streaming pipes: stdin=%#v stdout=%#v", process.Stdin(), process.Stdout())
+	}
+
+	waitForFileContent(t, readyPath, "ready")
+
+	stopCtx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	if err := process.Stop(stopCtx, syscall.SIGTERM); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+
+	if process.Alive() {
+		t.Fatal("process should not be alive after Done closes")
+	}
+
+	body, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if got := string(body); !strings.Contains(got, "ready") || !strings.Contains(got, "interrupted") {
+		t.Fatalf("log missing lifecycle output: %q", got)
+	}
+}
+
+func TestStopRejectsStreamingProcess(t *testing.T) {
+	process, err := Start(t.Context(), helperSpec("sleep"))
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer process.Close()
+
+	err = process.Stop(t.Context(), syscall.SIGTERM)
+	if err == nil || !strings.Contains(err.Error(), "non-streaming") {
+		t.Fatalf("Stop should reject streaming processes, got %v", err)
+	}
+}
+
+func TestStopFallsBackToCloseWhenGracefulSignalFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("invalid Unix signal fixture is Unix-specific")
+	}
+
+	root := t.TempDir()
+	logPath := filepath.Join(root, "logs", "process.log")
+	readyPath := filepath.Join(root, "ready")
+	binary := filepath.Join(root, "logged-process")
+	script := `#!/bin/sh
+echo ready > "$READY_FILE"
+while true; do sleep 0.05; done
+`
+	if err := os.WriteFile(binary, []byte(script), 0o755); err != nil {
+		t.Fatalf("write helper script: %v", err)
+	}
+
+	process, err := Start(t.Context(), Spec{
+		Name:          binary,
+		Env:           []string{"READY_FILE=" + readyPath},
+		Timeout:       5 * time.Second,
+		OutputLogPath: logPath,
+	})
+	if err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer process.Close()
+
+	waitForFileContent(t, readyPath, "ready")
+
+	stopCtx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	if err := process.Stop(stopCtx, syscall.Signal(-1)); err != nil {
+		t.Fatalf("Stop should fall back to forced cleanup after signal failure: %v", err)
+	}
+	if process.Alive() {
+		t.Fatal("process should not be alive after fallback cleanup")
+	}
+}
+
+func TestRunRejectsOutputLogPath(t *testing.T) {
+	result := Run(t.Context(), Spec{Name: os.Args[0], OutputLogPath: filepath.Join(t.TempDir(), "run.log")})
+
+	if result.Err == nil || !strings.Contains(result.Err.Error(), "output log path") {
+		t.Fatalf("Run should reject output log path, result=%#v", result)
+	}
+}
+
 func TestStartRejectsStaticStdin(t *testing.T) {
 	spec := helperSpec("echo-stdin")
 	spec.Stdin = "not a streaming pipe"
@@ -342,9 +469,27 @@ func TestCommandExecHelperProcess(t *testing.T) {
 	case "stderr-large":
 		fmt.Fprint(os.Stderr, strings.Repeat("e", 64))
 		os.Exit(0)
+
 	}
 
 	os.Exit(2)
+}
+
+func waitForFileContent(t *testing.T, path string, want string) {
+	t.Helper()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		body, err := os.ReadFile(path)
+		if err == nil && strings.Contains(string(body), want) {
+			return
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	body, _ := os.ReadFile(path)
+	t.Fatalf("timed out waiting for %q in %s; content=%q", want, path, string(body))
 }
 
 func atoiDefault(value string, fallback int) int {

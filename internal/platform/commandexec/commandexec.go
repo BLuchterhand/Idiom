@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +41,7 @@ type Spec struct {
 	MaxOutputBytes int
 	CanonicalPWD   bool
 	MergeOutput    bool
+	OutputLogPath  string
 }
 
 type Result struct {
@@ -60,6 +62,9 @@ const defaultProcessStderrLimit = 64 * 1024
 func Run(parent context.Context, spec Spec) Result {
 	if parent == nil {
 		parent = context.Background()
+	}
+	if spec.OutputLogPath != "" {
+		return Result{ExitCode: 1, Err: errors.New("one-shot command cannot use output log path")}
 	}
 
 	ctx := parent
@@ -128,12 +133,14 @@ type Process struct {
 	cmd    *exec.Cmd
 	cancel context.CancelFunc
 
-	stdin  io.WriteCloser
-	stdout io.ReadCloser
-	stderr *limitedOutputBuffer
+	stdin     io.WriteCloser
+	stdout    io.ReadCloser
+	stderr    *limitedOutputBuffer
+	resources []io.Closer
 
 	waitOnce sync.Once
 	waitErr  error
+	done     chan struct{}
 }
 
 // Start launches a streaming child process. commandexec owns command shape,
@@ -164,31 +171,17 @@ func Start(parent context.Context, spec Spec) (*Process, error) {
 		return nil, err
 	}
 
-	stdin, err := cmd.StdinPipe()
+	stdin, stdout, stderr, resources, err := configureProcessIO(cmd, spec)
 	if err != nil {
 		if cancel != nil {
 			cancel()
 		}
 
-		return nil, fmt.Errorf("stdin pipe: %w", err)
+		return nil, err
 	}
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		_ = stdin.Close()
-		if cancel != nil {
-			cancel()
-		}
-
-		return nil, fmt.Errorf("stdout pipe: %w", err)
-	}
-
-	stderr := newLimitedOutputBuffer(streamingStderrLimit(spec.MaxOutputBytes))
-	cmd.Stderr = stderr
 
 	if err := cmd.Start(); err != nil {
-		_ = stdin.Close()
-		_ = stdout.Close()
+		closeProcessResources(stdin, stdout, resources)
 		if cancel != nil {
 			cancel()
 		}
@@ -196,13 +189,21 @@ func Start(parent context.Context, spec Spec) (*Process, error) {
 		return nil, fmt.Errorf("start %s: %w", cmd.Path, err)
 	}
 
-	return &Process{
-		cmd:    cmd,
-		cancel: cancel,
-		stdin:  stdin,
-		stdout: stdout,
-		stderr: stderr,
-	}, nil
+	process := &Process{
+		cmd:       cmd,
+		cancel:    cancel,
+		stdin:     stdin,
+		stdout:    stdout,
+		stderr:    stderr,
+		resources: resources,
+		done:      make(chan struct{}),
+	}
+
+	if process.stdout == nil {
+		go process.wait()
+	}
+
+	return process, nil
 }
 
 func streamingStderrLimit(limit int) int {
@@ -211,6 +212,41 @@ func streamingStderrLimit(limit int) int {
 	}
 
 	return defaultProcessStderrLimit
+}
+
+func configureProcessIO(cmd *exec.Cmd, spec Spec) (io.WriteCloser, io.ReadCloser, *limitedOutputBuffer, []io.Closer, error) {
+	logPath := strings.TrimSpace(spec.OutputLogPath)
+	if logPath != "" {
+		if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("create log directory: %w", err)
+		}
+
+		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("open log file: %w", err)
+		}
+
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
+
+		return nil, nil, nil, []io.Closer{logFile}, nil
+	}
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("stdin pipe: %w", err)
+	}
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		_ = stdin.Close()
+		return nil, nil, nil, nil, fmt.Errorf("stdout pipe: %w", err)
+	}
+
+	stderr := newLimitedOutputBuffer(streamingStderrLimit(spec.MaxOutputBytes))
+	cmd.Stderr = stderr
+
+	return stdin, stdout, stderr, nil, nil
 }
 
 // Stdin returns the process stdin stream.
@@ -240,6 +276,74 @@ func (p *Process) Stderr() (string, bool) {
 	return p.stderr.String()
 }
 
+// Done closes once commandexec has observed process exit and released resources.
+func (p *Process) Done() <-chan struct{} {
+	if p == nil || p.done == nil {
+		done := make(chan struct{})
+		close(done)
+
+		return done
+	}
+
+	return p.done
+}
+
+// Alive reports whether commandexec still considers the process running.
+func (p *Process) Alive() bool {
+	if p == nil || p.cmd == nil || p.cmd.Process == nil {
+		return false
+	}
+
+	select {
+	case <-p.Done():
+		return false
+	default:
+		return true
+	}
+}
+
+// PID returns the host process id, or 0 when no process is attached.
+func (p *Process) PID() int {
+	if p == nil || p.cmd == nil || p.cmd.Process == nil {
+		return 0
+	}
+
+	return p.cmd.Process.Pid
+}
+
+// Stop asks a non-streaming process to exit, waits for commandexec cleanup, and
+// falls back to Close when the context expires.
+func (p *Process) Stop(ctx context.Context, graceful os.Signal) error {
+	if p == nil || !p.Alive() {
+		return nil
+	}
+	if p.stdout != nil || p.stdin != nil {
+		return errors.New("graceful stop requires a non-streaming process")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	if graceful != nil {
+		if err := p.cmd.Process.Signal(graceful); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			if closeErr := p.Close(); closeErr != nil {
+				return closeErr
+			}
+
+			return nil
+		}
+	}
+
+	select {
+	case <-p.Done():
+		return nil
+	case <-ctx.Done():
+		_ = p.Close()
+
+		return ctx.Err()
+	}
+}
+
 func (p *Process) wait() error {
 	if p == nil || p.cmd == nil {
 		return nil
@@ -249,6 +353,10 @@ func (p *Process) wait() error {
 		p.waitErr = p.cmd.Wait()
 		if p.cancel != nil {
 			p.cancel()
+		}
+		closeProcessResources(nil, nil, p.resources)
+		if p.done != nil {
+			close(p.done)
 		}
 	})
 
@@ -265,6 +373,20 @@ func (p *Process) kill() error {
 	}
 
 	return nil
+}
+
+func closeProcessResources(stdin io.WriteCloser, stdout io.ReadCloser, resources []io.Closer) {
+	if stdin != nil {
+		_ = stdin.Close()
+	}
+	if stdout != nil {
+		_ = stdout.Close()
+	}
+	for _, resource := range resources {
+		if resource != nil {
+			_ = resource.Close()
+		}
+	}
 }
 
 // Close closes process pipes, terminates the child, and waits for cleanup.

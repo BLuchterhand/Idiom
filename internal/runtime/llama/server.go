@@ -4,14 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
+	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/config"
 )
 
@@ -19,8 +17,8 @@ type ServerController struct {
 	cfg    config.LlamaServer
 	client *Client
 
-	mu  sync.Mutex
-	cmd *exec.Cmd
+	mu      sync.Mutex
+	process *commandexec.Process
 }
 
 func NewServerController(cfg config.LlamaServer, client *Client) *ServerController {
@@ -46,37 +44,25 @@ func (s *ServerController) Start(ctx context.Context) error {
 		return err
 	}
 
-	if err := os.MkdirAll(filepath.Dir(s.cfg.LogFile), 0o755); err != nil {
-		return llmServerStartError("create log directory", err)
-	}
-
-	logFile, err := os.OpenFile(s.cfg.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	process, err := commandexec.Start(context.Background(), commandexec.Spec{
+		Name:          s.cfg.Binary,
+		Args:          s.buildArgs(),
+		OutputLogPath: s.cfg.LogFile,
+	})
 	if err != nil {
-		return llmServerStartError("open log file", err)
-	}
-
-	args := s.buildArgs()
-	cmd := exec.Command(s.cfg.Binary, args...)
-
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-
-	if err := cmd.Start(); err != nil {
-		_ = logFile.Close()
 		return llmServerStartError("start llama-server", err)
 	}
 
-	s.cmd = cmd
+	s.process = process
 
 	go func() {
-		_ = cmd.Wait()
-		_ = logFile.Close()
+		<-process.Done()
 
 		s.mu.Lock()
 		defer s.mu.Unlock()
 
-		if s.cmd == cmd {
-			s.cmd = nil
+		if s.process == process {
+			s.process = nil
 		}
 	}()
 
@@ -86,6 +72,9 @@ func (s *ServerController) Start(ctx context.Context) error {
 func (s *ServerController) validateLaunchConfig() error {
 	if strings.TrimSpace(s.cfg.Binary) == "" {
 		return llmServerConfigError("server binary is required")
+	}
+	if strings.TrimSpace(s.cfg.LogFile) == "" {
+		return llmServerConfigError("server log file is required")
 	}
 
 	model := strings.TrimSpace(s.cfg.Model)
@@ -107,33 +96,18 @@ func (s *ServerController) validateLaunchConfig() error {
 func (s *ServerController) Stop(ctx context.Context) error {
 	s.mu.Lock()
 
-	cmd := s.cmd
+	process := s.process
 	s.mu.Unlock()
 
-	if cmd == nil || cmd.Process == nil {
+	if process == nil || !process.Alive() {
 		return nil
 	}
 
-	if err := cmd.Process.Signal(os.Interrupt); err != nil {
-		if err := cmd.Process.Kill(); err != nil {
-			return llmServerStopError("stop llama-server", err)
-		}
+	if err := process.Stop(ctx, os.Interrupt); err != nil {
+		return llmServerStopError("stop llama-server", err)
 	}
 
-	ticker := time.NewTicker(250 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			_ = cmd.Process.Kill()
-			return llmServerStopError("stop llama-server", ctx.Err())
-		case <-ticker.C:
-			if !processAlive(cmd.Process) {
-				return nil
-			}
-		}
-	}
+	return nil
 }
 
 func (s *ServerController) Restart(ctx context.Context) error {
@@ -237,15 +211,5 @@ func (s *ServerController) buildMLXArgs() []string {
 }
 
 func (s *ServerController) isRunningLocked() bool {
-	return s.cmd != nil && s.cmd.Process != nil && processAlive(s.cmd.Process)
-}
-
-func processAlive(p *os.Process) bool {
-	if p == nil {
-		return false
-	}
-
-	err := p.Signal(syscall.Signal(0))
-
-	return err == nil
+	return s.process != nil && s.process.Alive()
 }
