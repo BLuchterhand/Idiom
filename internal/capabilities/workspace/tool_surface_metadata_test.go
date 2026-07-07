@@ -205,6 +205,11 @@ func TestToolPolicyCapabilitiesUsesWorkspaceCatalog(t *testing.T) {
 		t.Fatalf("rg capabilities = %#v, want literal_search", rg)
 	}
 
+	grep := ToolPolicyCapabilities("grep")
+	if !slices.Equal(grep, []autonomy.Capability{autonomy.CapabilityLiteralSearch}) {
+		t.Fatalf("legacy grep capabilities = %#v, want literal_search", grep)
+	}
+
 	languageTool := ToolPolicyCapabilities("go_read_symbol")
 	if !slices.Equal(languageTool, []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}) {
 		t.Fatalf("language tool capabilities = %#v, want semantic_discovery", languageTool)

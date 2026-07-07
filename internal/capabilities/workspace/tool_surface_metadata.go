@@ -273,6 +273,10 @@ func ToolPolicyCapabilities(tool string) []autonomy.Capability {
 		return capabilities
 	}
 
+	if IsSearchToolName(tool) {
+		return []autonomy.Capability{autonomy.CapabilityLiteralSearch}
+	}
+
 	if IsLanguageToolName(tool) {
 		return []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}
 	}

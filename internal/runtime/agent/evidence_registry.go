@@ -22,24 +22,14 @@ import (
 // concerns because they depend on objective fit and provenance.
 // ---------------------------------------------------------------------------
 
-// EvidenceLevel mirrors PlanThenExecuteSourceEvidenceLevel for use within
-// the registry without importing the plan-execute guard package cycle.
-type EvidenceLevel int
-
-const (
-	EvidenceNone        EvidenceLevel = 0
-	EvidenceBodyWindow  EvidenceLevel = 2
-	EvidenceAnchorReady EvidenceLevel = 3
-)
-
 // PathEvidence is the per-path record maintained by the registry.
 type PathEvidence struct {
-	Path                 string        // canonical workspace-relative path
-	ExistsOnDisk         bool          // populated at registry construction
-	ExistenceChecked     bool          // true once ExistsOnDisk has been resolved
-	BodyReadLevel        EvidenceLevel // populated from tool results
-	IsCandidate          bool          // returned by context_pack / context_query / discovery
-	CandidatesFromPacket string        // name of the packet/tool that produced this candidate
+	Path                 string // canonical workspace-relative path
+	ExistsOnDisk         bool   // populated at registry construction
+	ExistenceChecked     bool   // true once ExistsOnDisk has been resolved
+	BodyReadLevel        PlanThenExecuteSourceEvidenceLevel
+	IsCandidate          bool   // returned by context_pack / context_query / discovery
+	CandidatesFromPacket string // name of the packet/tool that produced this candidate
 }
 
 // PathEvidenceRegistry is the central registry for all path-related evidence
@@ -76,40 +66,40 @@ func (r *PathEvidenceRegistry) RegisterToolResults(results []ToolResult) {
 			continue
 		}
 		tool := strings.TrimSpace(result.ToolName)
+		workspaceResult := workspace.ToolResult{
+			Tool:    tool,
+			Summary: result.Summary,
+			Output:  result.Output,
+			Error:   result.Error,
+			Paths:   append([]string(nil), result.Paths...),
+		}
 
 		switch {
-		case tool == workspace.ToolNameReadFile || tool == workspace.ToolNamePrefetch:
-			r.registerBodyRead(result)
-		case tool == workspace.ToolNameCodeNavigate || tool == workspace.ToolNameReadOnlyCapability:
-			r.registerBodyRead(result)
-		case strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"):
-			r.registerBodyRead(result)
-		case tool == workspace.ToolNameContextPack || sourceEvidenceDiscoveryCandidateTool(tool) || sourceEvidenceSearchCandidateTool(tool):
-			r.registerCandidatePaths(result)
+		case tool == workspace.ToolNameReadFile || tool == workspace.ToolNamePrefetch,
+			tool == workspace.ToolNameCodeNavigate || tool == workspace.ToolNameReadOnlyCapability,
+			strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"),
+			tool == workspace.ToolNameContextZoom && contextZoomResultHasConcreteSourceBody(workspaceResult):
+
+			r.registerBodyRead(workspaceResult)
+		}
+
+		if tool == workspace.ToolNameContextPack || sourceEvidenceDiscoveryCandidateTool(tool) || workspace.IsSearchToolName(tool) {
+			r.registerCandidatePaths(workspaceResult)
 		}
 	}
 }
 
-func (r *PathEvidenceRegistry) registerBodyRead(result ToolResult) {
-	level := bodyReadLevelForResult(result)
-	if level == EvidenceNone {
-		return
-	}
-	// Extract path from the tool result's Summary (which begins with "Read" or "Routed")
-	paths := append([]string{}, result.Paths...)
-	paths = append(paths, pathparse.MentionedWorkspaceFiles(result.Summary)...)
-	if len(paths) == 0 {
-		// Fall back to the request path embedded in the result
-		if p := extractPathFromResult(result); p != "" {
-			paths = []string{p}
-		}
-	}
-	for _, p := range paths {
+func (r *PathEvidenceRegistry) registerBodyRead(result workspace.ToolResult) {
+	for _, p := range ReadPathsFromToolResult(result) {
 		p = normalizeRegistryPath(p)
 		if p == "" {
 			continue
 		}
 		if IsNonSourceEvidenceArtifactPath(p) || !pathparse.HasWorkspaceFileExtension(p) {
+			continue
+		}
+		evidence := planThenExecuteToolResultSourceEvidence(result, p)
+		if !sourceEvidenceHasBody(evidence) {
 			continue
 		}
 		pe := r.getOrCreate(p)
@@ -118,62 +108,10 @@ func (r *PathEvidenceRegistry) registerBodyRead(result ToolResult) {
 		// created here with getOrCreate's zero-value ExistsOnDisk.
 		pe.ExistsOnDisk = true
 		pe.ExistenceChecked = true
-		if pe.BodyReadLevel < level {
-			pe.BodyReadLevel = level
+		if planThenExecuteEvidenceRank(pe.BodyReadLevel) < planThenExecuteEvidenceRank(evidence.Level) {
+			pe.BodyReadLevel = evidence.Level
 		}
 	}
-}
-
-func bodyReadLevelForResult(result ToolResult) EvidenceLevel {
-	tool := strings.TrimSpace(result.ToolName)
-	text := strings.ToLower(strings.Join([]string{result.Summary, result.Output}, "\n"))
-	if strings.TrimSpace(result.Error) != "" {
-		return EvidenceNone
-	}
-	if strings.Contains(text, "redirected ") ||
-		strings.Contains(text, "use code_navigate for source-body evidence") ||
-		strings.Contains(text, "path-filter miss") ||
-		strings.Contains(text, "candidate_anchor") ||
-		strings.Contains(text, "candidate anchor") ||
-		strings.Contains(text, "no source-body match") {
-		return EvidenceNone
-	}
-	if strings.Contains(text, ".idiom/comprehension/views/") {
-		return EvidenceNone
-	}
-	if tool == workspace.ToolNameReadFile || tool == workspace.ToolNamePrefetch {
-		if len(result.Paths) > 0 || (strings.Contains(text, "read ") && strings.Contains(text, " lines ")) {
-			return EvidenceAnchorReady
-		}
-		return EvidenceNone
-	}
-	if tool == workspace.ToolNameCodeNavigate || tool == workspace.ToolNameReadOnlyCapability {
-		if strings.Contains(text, "file_outline") ||
-			strings.Contains(text, "outlined ") ||
-			strings.Contains(text, "top-level declaration") {
-			return EvidenceNone
-		}
-		if strings.Contains(text, "read_symbol") ||
-			strings.Contains(text, "extract_body") ||
-			strings.Contains(text, "source body") ||
-			strings.Contains(text, "source-body") ||
-			(strings.Contains(text, "read ") && strings.Contains(text, " lines ")) {
-			return EvidenceAnchorReady
-		}
-		return EvidenceNone
-	}
-	if strings.HasSuffix(tool, "_file_outline") {
-		return EvidenceNone
-	}
-	if strings.HasSuffix(tool, "_read_symbol") || strings.HasSuffix(tool, "_extract_body") {
-		if strings.Contains(text, "read ") && strings.Contains(text, " lines ") ||
-			strings.Contains(text, "func ") ||
-			strings.Contains(text, "type ") ||
-			strings.Contains(text, "package ") {
-			return EvidenceAnchorReady
-		}
-	}
-	return EvidenceNone
 }
 
 // registerCandidatePaths extracts workspace file paths from a discovery or
@@ -182,16 +120,12 @@ func bodyReadLevelForResult(result ToolResult) EvidenceLevel {
 // evidence, and ensures the completion gate's source-grounding check does not
 // reject them as "discovered but never registered." When context_pack fails
 // (e.g., readonly DB), search_content candidates provide the fallback path set.
-func (r *PathEvidenceRegistry) registerCandidatePaths(result ToolResult) {
-	tool := strings.TrimSpace(result.ToolName)
-	workspaceResult := workspace.ToolResult{
-		Tool:    tool,
-		Summary: result.Summary,
-		Output:  result.Output,
-		Error:   result.Error,
-	}
+func (r *PathEvidenceRegistry) registerCandidatePaths(result workspace.ToolResult) {
 	paths := append([]string{}, result.Paths...)
-	paths = append(paths, sourceEvidenceCandidatePathsFromResult(workspaceResult, 128)...)
+	paths = append(paths, sourceEvidenceCandidatePathsFromResult(result, 128)...)
+	if sourceEvidenceDiscoveryCandidateTool(result.Tool) {
+		paths = append(paths, delegatedDiscoveryQueryEvidencePaths([]workspace.ToolResult{result}, 128)...)
+	}
 
 	if len(paths) == 0 {
 		return
@@ -207,7 +141,7 @@ func (r *PathEvidenceRegistry) registerCandidatePaths(result ToolResult) {
 		pe := r.getOrCreate(p)
 		pe.IsCandidate = true
 		if pe.CandidatesFromPacket == "" {
-			pe.CandidatesFromPacket = result.ToolName
+			pe.CandidatesFromPacket = result.Tool
 		}
 		// Don't set ExistsOnDisk here — we know the path was mentioned in
 		// search results but don't know if it still exists. It will be
@@ -342,7 +276,7 @@ func (r *PathEvidenceRegistry) HasBodyEvidence(path string) bool {
 	if !ok {
 		return false
 	}
-	return pe.BodyReadLevel >= EvidenceBodyWindow
+	return planThenExecuteEvidenceRank(pe.BodyReadLevel) >= planThenExecuteEvidenceRank(planThenExecuteEvidenceBodyWindow)
 }
 
 // MergeFromPriorSession injects paths from a prior session's evidence as
@@ -420,21 +354,6 @@ func looksLikeWindowsAbsolutePath(path string) bool {
 		((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) &&
 		path[1] == ':' &&
 		(path[2] == '/' || path[2] == '\\')
-}
-
-func extractPathFromResult(result ToolResult) string {
-	// The tool results store the path information in the Summary field
-	// (e.g. "Read src/graphics/mod.rs lines 1-14 (total lines: 14)")
-	// or Output. We extract it via mentioned-workspace-files parsing.
-	paths := pathparse.MentionedWorkspaceFiles(result.Summary)
-	if len(paths) > 0 {
-		return paths[0]
-	}
-	paths = pathparse.MentionedWorkspaceFiles(result.Output)
-	if len(paths) > 0 {
-		return paths[0]
-	}
-	return ""
 }
 
 // --- session evidence store ---

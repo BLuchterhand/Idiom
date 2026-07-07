@@ -6657,17 +6657,11 @@ func runnerAutonomyPlannerToolMetadata(brief workerruntime.WorkerRuntimeBrief, t
 }
 
 func runnerAutonomyFallbackCapabilitiesForTool(tool string) []autonomy.Capability {
-	tool = strings.TrimSpace(tool)
 	if capabilities := workspace.ToolPolicyCapabilities(tool); len(capabilities) > 0 {
 		return capabilities
 	}
 
-	switch tool {
-	case "grep":
-		return []autonomy.Capability{autonomy.CapabilityLiteralSearch}
-	default:
-		return nil
-	}
+	return nil
 }
 
 func runnerAutonomyAllowedEffects(brief workerruntime.WorkerRuntimeBrief) []autonomy.SideEffectClass {
@@ -8796,7 +8790,7 @@ func runnerAutonomyActionClassForBrief(brief workerruntime.WorkerRuntimeBrief, r
 		return autonomy.ActionClassVerify
 	case workspace.IsReadTool(tool):
 		if strings.Contains(toolActionClass(req), "broad_inspection") ||
-			tool == "search_files" || tool == "search_content" || tool == "rg" || tool == "grep" {
+			workspace.IsSearchToolName(tool) {
 
 			return autonomy.ActionClassSearch
 		}
@@ -18819,9 +18813,7 @@ func (s *runnerRequestBudgetState) zeroHitFamilyDecision(req workspace.ToolReque
 }
 
 func zeroHitSearchFamilyKey(req workspace.ToolRequest) string {
-	switch strings.TrimSpace(req.Tool) {
-	case "search_content", "search_files", "rg", "grep":
-	default:
+	if !workspace.IsSearchToolName(req.Tool) {
 		return ""
 	}
 
@@ -19256,15 +19248,17 @@ func (s *runnerRequestBudgetState) postChildGuidanceDecision(req workspace.ToolR
 }
 
 func postChildRequestFamilyKey(req workspace.ToolRequest) string {
+	if workspace.IsSearchToolName(req.Tool) {
+		if path := normalizePostChildPath(req.Path); path != "" && path != "." {
+			return strings.TrimSpace(req.Tool) + ":" + path
+		}
+	}
+
 	switch strings.TrimSpace(req.Tool) {
 	case "read_file", "go_read_symbol", "go_file_outline", "python_read_symbol", "python_file_outline",
 		"ts_read_symbol", "ts_file_outline", "rust_read_symbol", "rust_file_outline",
 		"java_read_symbol", "java_file_outline", "cpp_read_symbol":
 		if path := normalizePostChildPath(req.Path); path != "" {
-			return strings.TrimSpace(req.Tool) + ":" + path
-		}
-	case "search_content", "search_files", "rg", "grep":
-		if path := normalizePostChildPath(req.Path); path != "" && path != "." {
 			return strings.TrimSpace(req.Tool) + ":" + path
 		}
 	}

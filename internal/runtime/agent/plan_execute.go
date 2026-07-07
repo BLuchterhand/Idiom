@@ -2301,12 +2301,68 @@ func contextZoomResultHasConcreteSourceBody(result workspace.ToolResult) bool {
 		return false
 	}
 
-	lower := strings.ToLower(text)
+	if strings.Contains(result.Output, "route_summary:") && RoutedSourceReadOutputHasBody(result.Output) {
+		return true
+	}
 
-	return RoutedSourceReadOutputHasBody(result.Output) ||
-		strings.Contains(lower, `"source"`) ||
-		strings.Contains(lower, "source body") ||
-		strings.Contains(lower, "include_source")
+	return contextZoomOutputHasConcreteSourceBody(result.Output)
+}
+
+func contextZoomOutputHasConcreteSourceBody(output string) bool {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return false
+	}
+
+	var decoded any
+	if err := json.Unmarshal([]byte(output), &decoded); err != nil {
+		return false
+	}
+
+	return contextZoomJSONHasConcreteSourceBody(decoded)
+}
+
+func contextZoomJSONHasConcreteSourceBody(value any) bool {
+	object, ok := value.(map[string]any)
+	if !ok {
+		if list, ok := value.([]any); ok {
+			for _, item := range list {
+				if contextZoomJSONHasConcreteSourceBody(item) {
+					return true
+				}
+			}
+		}
+
+		return false
+	}
+
+	if contextZoomJSONHasSourcePath(object) {
+		if source, ok := object["source"].(string); ok && strings.TrimSpace(source) != "" {
+			return true
+		}
+		if sourceBody, ok := object["source_body"].(string); ok && strings.TrimSpace(sourceBody) != "" {
+			return true
+		}
+	}
+
+	for _, nested := range object {
+		if contextZoomJSONHasConcreteSourceBody(nested) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func contextZoomJSONHasSourcePath(object map[string]any) bool {
+	path, ok := object["path"].(string)
+	if !ok {
+		return false
+	}
+
+	path = NormalizeRunnerPath(path)
+
+	return path != "" && !IsNonSourceEvidenceArtifactPath(path)
 }
 
 func readFileResultHasConcreteSourceBody(result workspace.ToolResult) bool {
@@ -6706,12 +6762,9 @@ func planThenExecuteToolResultSourceEvidence(result workspace.ToolResult, path s
 	case ReadStyleSourceBodyTool(tool):
 		evidence.Level, evidence.Detail = planThenExecuteReadFileEvidenceLevel(result, path)
 	case tool == "code_navigate" || tool == "read_only_capability":
-		// Check for file outline content first — an outline with symbols
-		// counts as body-window evidence even when routedSourceReadOutputHasBody
-		// returns false (e.g. "candidate_anchor_status: anchors only").
 		if planThenExecuteCodeNavigateIsOutline(result) {
-			evidence.Level = planThenExecuteEvidenceBodyWindow
-			evidence.Detail = "file outline body window"
+			evidence.Level = planThenExecuteEvidencePathSeen
+			evidence.Detail = "file outline"
 		} else if !RoutedSourceReadOutputHasBody(result.Output) {
 			evidence.Level = planThenExecuteEvidencePathSeen
 			evidence.Detail = "navigation result without source body"
@@ -6719,8 +6772,8 @@ func planThenExecuteToolResultSourceEvidence(result workspace.ToolResult, path s
 			evidence.Detail = "routed source body"
 		}
 	case strings.HasSuffix(tool, "_file_outline"):
-		evidence.Level = planThenExecuteEvidenceBodyWindow
-		evidence.Detail = "file outline body window"
+		evidence.Level = planThenExecuteEvidencePathSeen
+		evidence.Detail = "file outline"
 	case strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"):
 		evidence.Detail = "symbol/body read"
 	}

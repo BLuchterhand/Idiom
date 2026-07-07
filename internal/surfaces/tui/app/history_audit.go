@@ -98,7 +98,7 @@ func historyToolAuditKind(event agent.ToolRequestEvent) string {
 	case tool == "task" || tool == "child_task":
 		return "delegation"
 	case tool == "shell":
-		if historyShellCommandLooksLikeVerification(req.Command) {
+		if workspace.AnalyzeShellCommand(req.Command).BuildOrTest {
 			return "verification"
 		}
 
@@ -1006,16 +1006,6 @@ func safeHistoryAuditDetail(text string) string {
 	}
 
 	return truncateRunes(text, 220)
-}
-
-func historyShellCommandLooksLikeVerification(command string) bool {
-	command = strings.TrimSpace(command)
-
-	return strings.HasPrefix(command, "go test") ||
-		strings.HasPrefix(command, "go build") ||
-		strings.HasPrefix(command, "make test") ||
-		strings.HasPrefix(command, "make build") ||
-		strings.Contains(command, " test")
 }
 
 func stringMapValue(fields map[string]any, key string) string {

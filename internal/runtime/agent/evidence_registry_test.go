@@ -167,7 +167,7 @@ func TestPathEvidenceRegistryAndRawReadModelBodyEvidenceParity(t *testing.T) {
 			wantRegistryBody: true,
 		},
 		{
-			name: "context zoom include source is raw body evidence but not registry body evidence",
+			name: "context zoom include source agrees as body evidence",
 			path: sourcePath,
 			result: workspace.ToolResult{
 				Tool:    workspace.ToolNameContextZoom,
@@ -176,7 +176,7 @@ func TestPathEvidenceRegistryAndRawReadModelBodyEvidenceParity(t *testing.T) {
 			},
 			wantRawLevel:     planThenExecuteEvidenceAnchorReady,
 			wantRawBody:      true,
-			wantRegistryBody: false,
+			wantRegistryBody: true,
 		},
 		{
 			name: "candidate anchor only agrees as non-body evidence",
@@ -191,15 +191,15 @@ func TestPathEvidenceRegistryAndRawReadModelBodyEvidenceParity(t *testing.T) {
 			wantRegistryBody: false,
 		},
 		{
-			name: "file outline is raw body-window evidence but not registry body evidence",
+			name: "file outline is path progress but not body evidence",
 			path: sourcePath,
 			result: workspace.ToolResult{
 				Tool:    workspace.ToolNameCodeNavigate,
 				Summary: "Read outline in internal/runtime/agent/evidence_registry.go with capability: file_outline",
 				Output:  "capability: file_outline\nfn TestRegisterToolResultsUsesEvidenceOwnedDTO\nstruct PathEvidenceRegistry\n",
 			},
-			wantRawLevel:     planThenExecuteEvidenceBodyWindow,
-			wantRawBody:      true,
+			wantRawLevel:     planThenExecuteEvidencePathSeen,
+			wantRawBody:      false,
 			wantRegistryBody: false,
 		},
 	}
@@ -221,6 +221,33 @@ func TestPathEvidenceRegistryAndRawReadModelBodyEvidenceParity(t *testing.T) {
 				t.Fatalf("registry body evidence = %v, want %v", got, tt.wantRegistryBody)
 			}
 		})
+	}
+}
+
+func TestContextZoomIncludeSourceFlagWithoutBodyIsNotConcreteSourceEvidence(t *testing.T) {
+	const sourcePath = "internal/runtime/agent/evidence_registry.go"
+	result := workspace.ToolResult{
+		Tool:    workspace.ToolNameContextZoom,
+		Summary: "Read internal/runtime/agent/evidence_registry.go lines 1-20 with include_source",
+		Output: `{
+			"node": {
+				"id": "symbol://internal/runtime/agent/evidence_registry.go#PathEvidenceRegistry",
+				"path": "internal/runtime/agent/evidence_registry.go",
+				"source": "",
+				"source_body": "",
+				"properties": {"source": "context_graph"}
+			}
+		}`,
+	}
+
+	if contextZoomResultHasConcreteSourceBody(result) {
+		t.Fatal("include_source graph metadata must not count as concrete source-body evidence")
+	}
+
+	registry := NewPathEvidenceRegistry(".")
+	registry.RegisterToolResults([]ToolResult{FromWorkspaceResult(result)})
+	if registry.HasBodyEvidence(sourcePath) {
+		t.Fatal("include_source graph metadata must not become registry body evidence")
 	}
 }
 
@@ -413,7 +440,7 @@ func TestPathEvidenceContextDiscoveryCandidateParity(t *testing.T) {
 	}
 }
 
-func TestPathEvidenceContextZoomCandidateOnlyCurrentSplit(t *testing.T) {
+func TestPathEvidenceContextZoomCandidateOnlyRegistersUnreadCandidate(t *testing.T) {
 	const sourcePath = "evidence_registry.go"
 	result := workspace.ToolResult{
 		Tool:    workspace.ToolNameContextZoom,
@@ -435,11 +462,11 @@ func TestPathEvidenceContextZoomCandidateOnlyCurrentSplit(t *testing.T) {
 		Contract:          "direct_answer",
 		PermissionProfile: "read_only_workspace",
 	}, results)
-	if slices.Contains(ledger.CandidatePaths, sourcePath) {
-		t.Fatalf("candidate-only context_zoom is not currently promoted to answerability ledger candidates: %#v", ledger.CandidatePaths)
+	if !slices.Contains(ledger.CandidatePaths, sourcePath) {
+		t.Fatalf("candidate-only context_zoom should promote an answerability ledger candidate: %#v", ledger.CandidatePaths)
 	}
-	if ledger.HasUnreadCandidatePaths {
-		t.Fatalf("candidate-only context_zoom is not currently an unread answerability candidate: %#v", ledger)
+	if !ledger.HasUnreadCandidatePaths {
+		t.Fatalf("candidate-only context_zoom should remain an unread answerability candidate: %#v", ledger)
 	}
 	if slices.Contains(ledger.SourceBodyPaths, sourcePath) {
 		t.Fatalf("candidate-only context_zoom must not become source-body paths: %#v", ledger.SourceBodyPaths)
@@ -458,7 +485,7 @@ func TestPathEvidenceContextZoomCandidateOnlyCurrentSplit(t *testing.T) {
 	}
 }
 
-func TestPathEvidenceContextZoomGraphOutputCurrentSplit(t *testing.T) {
+func TestPathEvidenceContextZoomGraphOutputRegistersUnreadCandidate(t *testing.T) {
 	const sourcePath = "internal/runtime/agent/evidence_registry.go"
 	result := workspace.ToolResult{
 		Tool:    workspace.ToolNameContextZoom,
@@ -497,11 +524,11 @@ func TestPathEvidenceContextZoomGraphOutputCurrentSplit(t *testing.T) {
 		Contract:          "direct_answer",
 		PermissionProfile: "read_only_workspace",
 	}, results)
-	if slices.Contains(ledger.CandidatePaths, sourcePath) {
-		t.Fatalf("production-shaped context_zoom graph output is not currently an answerability candidate: %#v", ledger.CandidatePaths)
+	if !slices.Contains(ledger.CandidatePaths, sourcePath) {
+		t.Fatalf("production-shaped context_zoom graph output should register an answerability candidate: %#v", ledger.CandidatePaths)
 	}
-	if ledger.HasUnreadCandidatePaths {
-		t.Fatalf("production-shaped context_zoom graph output is not currently an unread answerability candidate: %#v", ledger)
+	if !ledger.HasUnreadCandidatePaths {
+		t.Fatalf("production-shaped context_zoom graph output should remain an unread answerability candidate: %#v", ledger)
 	}
 	if slices.Contains(ledger.SourceBodyPaths, sourcePath) {
 		t.Fatalf("graph-shaped context_zoom must not become source-body paths: %#v", ledger.SourceBodyPaths)
@@ -691,7 +718,7 @@ func TestPathEvidenceReadOnlyAnswerabilityConsolidationMatrix(t *testing.T) {
 			wantRegistryPathRegistered: true,
 		},
 		{
-			name:  "context zoom source body is answerability evidence but not registry body evidence",
+			name:  "context zoom source body agrees with registry body evidence",
 			brief: brief("Explain evidence registry behavior."),
 			results: []workspace.ToolResult{{
 				Tool:    workspace.ToolNameContextZoom,
@@ -703,6 +730,7 @@ func TestPathEvidenceReadOnlyAnswerabilityConsolidationMatrix(t *testing.T) {
 			wantLedgerSourceBody:       true,
 			wantLedgerRelevantBody:     true,
 			wantRegistryCandidate:      true,
+			wantRegistryBody:           true,
 			wantRegistryPathRegistered: true,
 		},
 		{
@@ -897,7 +925,7 @@ func TestPathEvidenceReadOnlyAnswerabilityNonRegistryEvidenceRequiresObjectiveMa
 	}
 }
 
-func TestOutlineEvidenceClassificationSplitAcrossRawLedgerRegistryAndReadiness(t *testing.T) {
+func TestOutlineEvidenceClassificationDoesNotSatisfyBodyEvidence(t *testing.T) {
 	const sourcePath = "internal/runtime/agent/evidence_registry.go"
 
 	outlineResult := workspace.ToolResult{
@@ -917,11 +945,11 @@ func TestOutlineEvidenceClassificationSplitAcrossRawLedgerRegistryAndReadiness(t
 	}
 
 	raw := sourceEvidenceForPath([]workspace.ToolResult{outlineResult}, sourcePath)
-	if raw.Level != planThenExecuteEvidenceBodyWindow {
-		t.Fatalf("outline raw evidence level = %q, want %q; evidence=%#v", raw.Level, planThenExecuteEvidenceBodyWindow, raw)
+	if raw.Level != planThenExecuteEvidencePathSeen {
+		t.Fatalf("outline raw evidence level = %q, want %q; evidence=%#v", raw.Level, planThenExecuteEvidencePathSeen, raw)
 	}
-	if !sourceEvidenceHasBody(raw) {
-		t.Fatalf("outline should count as raw plan-execute body-window evidence: %#v", raw)
+	if sourceEvidenceHasBody(raw) {
+		t.Fatalf("outline must not count as source-body evidence: %#v", raw)
 	}
 
 	registry := NewPathEvidenceRegistry(".")

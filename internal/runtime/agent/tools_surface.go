@@ -6562,7 +6562,7 @@ func toolRequestFromSyntaxValues(tool string, values map[string]string) (workspa
 		req.Pattern = req.Symbol
 	}
 
-	if strings.TrimSpace(req.Pattern) == "" && strings.TrimSpace(req.Query) != "" && syntaxToolRequestUsesPatternAlias(req.Tool) {
+	if strings.TrimSpace(req.Pattern) == "" && strings.TrimSpace(req.Query) != "" && workspace.IsSearchToolName(req.Tool) {
 		req.Pattern = req.Query
 	}
 
@@ -6615,15 +6615,6 @@ func toolRequestFromSyntaxValues(tool string, values map[string]string) (workspa
 	}
 
 	return req, true
-}
-
-func syntaxToolRequestUsesPatternAlias(tool string) bool {
-	switch strings.TrimSpace(tool) {
-	case "search_content", "rg", "grep", "search_files":
-		return true
-	default:
-		return false
-	}
 }
 
 func syntaxToolRequestUsesCapabilityAlias(tool string) bool {

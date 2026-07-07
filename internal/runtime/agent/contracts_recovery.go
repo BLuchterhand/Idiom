@@ -4457,7 +4457,7 @@ func recoveryCardRejectedActionClass(req workspace.ToolRequest, result workspace
 		return actionVerify
 	case workspace.IsReadTool(strings.TrimSpace(tool)):
 		return actionRead
-	case tool == "search_files" || tool == "search_content" || tool == "rg" || tool == "grep":
+	case workspace.IsSearchToolName(tool):
 		return actionSearch
 	default:
 		return strings.TrimSpace(toolActionClass(req))

@@ -1012,7 +1012,7 @@ func toolRequestIntent(event agent.ToolRequestEvent) string {
 			return "inspect or verify state with a command"
 		}
 
-		if historyShellCommandLooksLikeVerification(target) {
+		if workspace.AnalyzeShellCommand(target).BuildOrTest {
 			return "verify the current state by running " + target
 		}
 

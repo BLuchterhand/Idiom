@@ -277,7 +277,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 			})
 
 			ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, candidates)
-		case sourceEvidenceSearchCandidateTool(tool):
+		case workspace.IsSearchToolName(tool):
 			candidates := readOnlySourceLikePaths(sourceEvidenceCandidatePathsFromResult(result, 128), 128)
 			objectiveCandidates := readOnlyObjectiveCandidatePathsFromSearch(result, ledger.Objective, 128)
 			count, _ := searchContentSummaryMatchCount(result.Summary)
@@ -4280,7 +4280,7 @@ func readOnlyEvidencePacketCandidatePaths(results []workspace.ToolResult) []stri
 			paths = append(paths, delegatedDiscoveryQueryEvidencePaths([]workspace.ToolResult{result}, 8)...)
 		case tool == workspace.ToolNameContextPack:
 			paths = append(paths, sourceEvidenceCandidatePathsFromResult(result, 16)...)
-		case sourceEvidenceSearchCandidateTool(tool):
+		case workspace.IsSearchToolName(tool):
 			paths = append(paths, sourceEvidenceCandidatePathsFromResult(result, 64)...)
 		default:
 			paths = append(paths, ReadPathsFromToolResult(result)...)
@@ -8427,8 +8427,6 @@ func sourceEvidenceBodyPaths(results []workspace.ToolResult) []string {
 	return newToolResultEvidenceView(results).SourceBodyPaths()
 }
 
-const legacyGrepToolName = "grep"
-
 func sourceEvidenceDiscoveryCandidateTool(tool string) bool {
 	tool = strings.TrimSpace(tool)
 	switch tool {
@@ -8437,15 +8435,6 @@ func sourceEvidenceDiscoveryCandidateTool(tool string) bool {
 		return true
 	default:
 		return strings.HasSuffix(tool, "_workspace_symbol")
-	}
-}
-
-func sourceEvidenceSearchCandidateTool(tool string) bool {
-	switch strings.TrimSpace(tool) {
-	case workspace.ToolNameSearchContent, workspace.ToolNameSearchFiles, workspace.ToolNameRg, legacyGrepToolName:
-		return true
-	default:
-		return false
 	}
 }
 
@@ -8460,7 +8449,7 @@ func sourceEvidenceCandidatePathsFromResult(result workspace.ToolResult, max int
 		return contextPackCandidatePathsFromResults([]workspace.ToolResult{result}, max)
 	case sourceEvidenceDiscoveryCandidateTool(tool):
 		return discoveryConsumptionCandidatesFromResult(result, max)
-	case sourceEvidenceSearchCandidateTool(tool):
+	case workspace.IsSearchToolName(tool):
 		return sourceLikePathsFromText(result.Summary+"\n"+result.Output, max)
 	default:
 		return nil
@@ -8563,9 +8552,6 @@ func sourceEvidencePendingRedirectSatisfiedForPath(path string, results []worksp
 	for _, result := range results {
 		evidence := planThenExecuteToolResultSourceEvidence(result, path)
 		if planThenExecuteEvidenceRank(evidence.Level) < planThenExecuteEvidenceRank(planThenExecuteEvidenceBodyWindow) {
-			continue
-		}
-		if strings.TrimSpace(evidence.Detail) == "file outline body window" {
 			continue
 		}
 		return true

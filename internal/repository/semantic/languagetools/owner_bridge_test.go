@@ -195,7 +195,14 @@ func (h ownerTestHost) Execute(context.Context, ToolRequest) ToolResult {
 	return ToolResult{Error: "not implemented"}
 }
 
-func (h ownerTestHost) RunCommand(context.Context, string, []string, string, ...string) commandexec.Result {
+func (h ownerTestHost) RunCommand(_ context.Context, _ string, _ []string, name string, args ...string) commandexec.Result {
+	if name == "go" && len(args) == 2 && args[0] == "env" {
+		switch args[1] {
+		case "GOBIN", "GOPATH":
+			return commandexec.Result{Stdout: os.Getenv(args[1])}
+		}
+	}
+
 	return commandexec.Result{ExitCode: 1, Err: fmt.Errorf("not implemented")}
 }
 

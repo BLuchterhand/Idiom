@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strings"
 
-	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/hosttools"
 	"idiom/internal/platform/textutil"
@@ -1003,14 +1002,14 @@ func (m *Manager) findGoTool(name string) string {
 		return ""
 	}
 
-	if gobin, err := m.goEnv("GOBIN"); err == nil && gobin != "" {
+	if gobin, err := m.runCommand(context.Background(), m.Root(), "go", "env", "GOBIN"); err == nil && gobin != "" {
 		candidate := filepath.Join(gobin, name)
 		if stat, err := os.Stat(candidate); err == nil && !stat.IsDir() {
 			return candidate
 		}
 	}
 
-	if gopath, err := m.goEnv("GOPATH"); err == nil && gopath != "" {
+	if gopath, err := m.runCommand(context.Background(), m.Root(), "go", "env", "GOPATH"); err == nil && gopath != "" {
 		candidate := filepath.Join(gopath, "bin", name)
 		if stat, err := os.Stat(candidate); err == nil && !stat.IsDir() {
 			return candidate
@@ -1018,18 +1017,6 @@ func (m *Manager) findGoTool(name string) string {
 	}
 
 	return ""
-}
-
-func (m *Manager) goEnv(key string) (string, error) {
-	result := commandexec.Run(context.Background(), commandexec.Spec{
-		Name: "go",
-		Args: []string{"env", key},
-	})
-	if result.Err != nil {
-		return "", result.Err
-	}
-
-	return strings.TrimSpace(result.Stdout), nil
 }
 
 func (m *Manager) goHandleDisplay(rel string) (string, error) {

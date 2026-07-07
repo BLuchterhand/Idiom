@@ -7,6 +7,8 @@ import (
 	semanticlanguage "idiom/internal/repository/semantic/language"
 )
 
+const legacyGrepToolName = "grep"
+
 // ToolCategory classifies workspace tools into broad capability groups
 // for gating, recovery-card rendering, and autonomy recording.
 type ToolCategory int
@@ -43,6 +45,25 @@ func ClassifyTool(name string) ToolCategory {
 func IsReadTool(name string) bool {
 	c := ClassifyTool(name)
 	return c == CategoryRead || c == CategorySearch || c == CategoryDiscovery
+}
+
+// IsSearchToolName reports whether name is a search tool result. It includes
+// the legacy "grep" result name because old transcripts and evidence records
+// can still contain it even though current workspace requests use rg/search_content.
+func IsSearchToolName(name string) bool {
+	name = strings.TrimSpace(name)
+	return ClassifyTool(name) == CategorySearch || name == legacyGrepToolName
+}
+
+// IsTextSearchToolName reports whether search output contains text matches
+// that can be broad or truncated. File-name searches are intentionally excluded.
+func IsTextSearchToolName(name string) bool {
+	switch strings.TrimSpace(name) {
+	case ToolNameSearchContent, ToolNameRg, legacyGrepToolName:
+		return true
+	default:
+		return false
+	}
 }
 
 // IsReadClassToolName reports whether name is a read-class tool that narrows

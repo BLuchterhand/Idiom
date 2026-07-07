@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -26,13 +27,12 @@ func successfulSearchDiscoveryResult(req workspace.ToolRequest, result workspace
 		return false
 	}
 
-	switch strings.TrimSpace(req.Tool) {
-	case "search_files", "search_content", "rg", "grep",
-		"go_workspace_symbol", "cpp_workspace_symbol", "python_workspace_symbol", "ts_workspace_symbol", "rust_workspace_symbol", "java_workspace_symbol":
+	tool := strings.TrimSpace(req.Tool)
+	if workspace.IsSearchToolName(tool) || workspace.LanguageToolHasAnyCapability(tool, semanticlanguage.CapWorkspaceSymbol) {
 		return true
-	default:
-		return false
 	}
+
+	return false
 }
 
 func discoveryConsumptionResultStrengthFromLegacySemantics(req workspace.ToolRequest, result workspace.ToolResult) discoveryConsumptionStrength {
@@ -48,8 +48,9 @@ func discoveryConsumptionResultStrengthFromLegacySemantics(req workspace.ToolReq
 		return discoveryConsumptionNone
 	}
 
-	switch strings.TrimSpace(req.Tool) {
-	case "context_pack":
+	tool := strings.TrimSpace(req.Tool)
+	switch {
+	case tool == workspace.ToolNameContextPack:
 		if !contextPackResultHasTargets(result) {
 			return discoveryConsumptionNone
 		}
@@ -59,7 +60,7 @@ func discoveryConsumptionResultStrengthFromLegacySemantics(req workspace.ToolReq
 		}
 
 		return discoveryConsumptionSourceOwner
-	case "context_query":
+	case tool == workspace.ToolNameContextQuery:
 		if len(discoveryConsumptionCandidatesFromResult(result, 1)) == 0 {
 			return discoveryConsumptionNone
 		}
@@ -69,7 +70,7 @@ func discoveryConsumptionResultStrengthFromLegacySemantics(req workspace.ToolReq
 		}
 
 		return discoveryConsumptionCandidateOnly
-	case "search_content", "rg", "grep":
+	case workspace.IsTextSearchToolName(tool):
 		if len(discoveryConsumptionCandidatesFromResult(result, 1)) == 0 {
 			return discoveryConsumptionNone
 		}
@@ -79,9 +80,12 @@ func discoveryConsumptionResultStrengthFromLegacySemantics(req workspace.ToolReq
 		}
 
 		return discoveryConsumptionSourceOwner
-	case "search_files",
-		"go_workspace_symbol", "cpp_workspace_symbol", "python_workspace_symbol", "ts_workspace_symbol", "rust_workspace_symbol", "java_workspace_symbol",
-		"structural_search", "discovery_query", "context_zoom", "context_impact":
+	case tool == workspace.ToolNameSearchFiles ||
+		workspace.LanguageToolHasAnyCapability(tool, semanticlanguage.CapWorkspaceSymbol) ||
+		tool == workspace.ToolNameStructuralSearch ||
+		tool == workspace.ToolNameDiscoveryQuery ||
+		tool == workspace.ToolNameContextZoom ||
+		tool == workspace.ToolNameContextImpact:
 		if len(discoveryConsumptionCandidatesFromResult(result, 1)) == 0 {
 			return discoveryConsumptionNone
 		}

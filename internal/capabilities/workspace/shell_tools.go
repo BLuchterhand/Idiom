@@ -149,7 +149,7 @@ func (m *Manager) runShell(ctx context.Context, req ToolRequest) ToolResult {
 }
 
 func zeroSelectedTestFailureReason(command string, output string) string {
-	if !shellCommandLooksLikeTest(command) {
+	if !AnalyzeShellCommand(command).BuildOrTest {
 		return ""
 	}
 
@@ -158,37 +158,6 @@ func zeroSelectedTestFailureReason(command string, output string) string {
 	}
 
 	return ""
-}
-
-func shellCommandLooksLikeTest(command string) bool {
-	lower := strings.ToLower(strings.TrimSpace(command))
-	if lower == "" {
-		return false
-	}
-
-	for _, needle := range []string{
-		"go test",
-		"cargo test",
-		"npm test",
-		"yarn test",
-		"pnpm test",
-		"pytest",
-		"doctest",
-		"ctest",
-		"jest",
-		"vitest",
-		"colony_tests",
-		"run_tests.py",
-		"run_tests.sh",
-		"run_tests",
-		"-tc=",
-	} {
-		if strings.Contains(lower, needle) {
-			return true
-		}
-	}
-
-	return false
 }
 
 func zeroSelectedTestSignal(output string) string {
