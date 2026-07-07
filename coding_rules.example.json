@@ -23,7 +23,7 @@
       "options": {
         "pass_through_wrapper": {
           "max_body_statements": 1,
-          "ignore_tests": true,
+          "ignore_tests": false,
           "ignore_generated": true
         }
       }

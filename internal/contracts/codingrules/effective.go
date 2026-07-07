@@ -36,7 +36,7 @@ func EffectiveRules(policy PolicyFile) []EffectiveRule {
 func DefaultPassThroughWrapperOptions() PassThroughWrapperOptions {
 	return PassThroughWrapperOptions{
 		MaxBodyStatements: 1,
-		IgnoreTests:       true,
+		IgnoreTests:       false,
 		IgnoreGenerated:   true,
 	}
 }
