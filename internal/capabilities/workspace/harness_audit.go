@@ -3,12 +3,12 @@ package workspace
 import (
 	"bufio"
 	"cmp"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -22,6 +22,7 @@ import (
 	intentloopcontract "idiom/internal/contracts/intentloop"
 	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/evidence/eval"
+	"idiom/internal/platform/hosttools"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/comprehension"
 	"idiom/internal/repository/discovery"
@@ -1066,12 +1067,7 @@ func auditUniversalCtagsPath() string {
 		return ""
 	}
 
-	output, err := exec.Command(path, "--version").CombinedOutput()
-	if err != nil {
-		return ""
-	}
-
-	if !strings.Contains(strings.ToLower(string(output)), "universal ctags") {
+	if !hosttools.VersionOutputContains(context.Background(), path, "universal ctags") {
 		return ""
 	}
 

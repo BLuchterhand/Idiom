@@ -1,13 +1,13 @@
 package workspace
 
 import (
+	"context"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 
-	"idiom/internal/platform/commandexec"
+	"idiom/internal/platform/hosttools"
 )
 
 type contentSearchBackend struct {
@@ -18,8 +18,6 @@ type contentSearchBackend struct {
 const (
 	contentSearchRipgrep = "ripgrep"
 	contentSearchGrep    = "grep"
-
-	contentSearchVersionCaptureBytes = 64 * 1024
 )
 
 func resolveContentSearchBackend() (contentSearchBackend, error) {
@@ -60,22 +58,12 @@ func contentSearchBackendCandidates() []string {
 }
 
 func findGNUStyleGrep(name string) (string, bool) {
-	path, err := exec.LookPath(name)
-	if err != nil || path == "" {
+	path := hosttools.FirstAvailable(name)
+	if path == "" {
 		return "", false
 	}
 
-	result := commandexec.Run(nil, commandexec.Spec{
-		Name:           path,
-		Args:           []string{"--version"},
-		MaxOutputBytes: contentSearchVersionCaptureBytes,
-		MergeOutput:    true,
-	})
-	if result.Err != nil {
-		return "", false
-	}
-
-	if !strings.Contains(strings.ToLower(result.CombinedOutput()), "gnu grep") {
+	if !hosttools.VersionOutputContains(context.Background(), path, "gnu grep") {
 		return "", false
 	}
 

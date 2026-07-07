@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 
 	"idiom/internal/platform/failures"
+	"idiom/internal/platform/hosttools"
 	"idiom/internal/repository/discovery"
 )
 
@@ -655,13 +655,7 @@ func hasGitMetadataAncestor(root string) bool {
 }
 
 func firstAvailableBinary(names ...string) string {
-	for _, name := range names {
-		if path, err := exec.LookPath(name); err == nil && path != "" {
-			return path
-		}
-	}
-
-	return ""
+	return hosttools.FirstAvailable(names...)
 }
 
 func nearestAncestorWithFile(start string, name string, root string) string {

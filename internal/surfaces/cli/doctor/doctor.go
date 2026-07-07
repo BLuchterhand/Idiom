@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/autodetect"
+	"idiom/internal/platform/hosttools"
 	"idiom/internal/runtime/readiness"
 )
 
@@ -251,7 +251,7 @@ func checkWorkspaceWritable(configPath string) checkResult {
 // "fail" because idiom can still run plan-execute lanes without it
 // against a different backend.
 func checkPython3() checkResult {
-	if _, err := exec.LookPath("python3"); err != nil {
+	if !hosttools.Available("python3") {
 		return checkResult{
 			name:   "python3",
 			status: "warn",
@@ -272,7 +272,7 @@ func checkPython3() checkResult {
 // repo's clean state. Missing git is "warn" not "fail" because lanes
 // themselves don't require git.
 func checkGit() checkResult {
-	if _, err := exec.LookPath("git"); err != nil {
+	if !hosttools.Available("git") {
 		return checkResult{
 			name:   "git",
 			status: "warn",
