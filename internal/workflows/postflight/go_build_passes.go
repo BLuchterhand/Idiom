@@ -3,10 +3,11 @@ package postflight
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"idiom/internal/platform/commandexec"
 )
 
 // GoBuildPasses runs `go build ./...` against the project root
@@ -45,27 +46,29 @@ func (c GoBuildPasses) Run(d Diff, ctx RunContext) ([]Finding, error) {
 		return nil, nil
 	}
 
-	cmd := exec.Command("go", "build", "./...")
-
-	cmd.Dir = ctx.ProjectRoot
-
-	out, err := cmd.CombinedOutput()
-	if err == nil {
+	result := commandexec.Run(nil, commandexec.Spec{
+		Name:        "go",
+		Args:        []string{"build", "./..."},
+		Dir:         ctx.ProjectRoot,
+		MergeOutput: true,
+	})
+	if result.Err == nil {
 		return nil, nil
 	}
 
-	if _, ok := err.(*exec.ExitError); !ok {
-		return nil, err
+	if !result.ExitError {
+		return nil, result.Err
 	}
 
+	out := result.CombinedOutput()
 	re := regexp.MustCompile(`(?m)^([^:\s]+):(\d+):\d+:\s*(.+)$`)
-	matches := re.FindAllStringSubmatch(string(out), -1)
+	matches := re.FindAllStringSubmatch(out, -1)
 
 	if len(matches) == 0 {
 		return []Finding{{
 			Check:    "go_build_passes",
 			Severity: SeverityError,
-			Message:  strings.TrimSpace(string(out)),
+			Message:  strings.TrimSpace(out),
 		}}, nil
 	}
 

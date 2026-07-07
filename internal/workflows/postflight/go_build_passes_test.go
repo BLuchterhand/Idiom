@@ -42,6 +42,26 @@ func TestGoBuildPassesReportsCompileErrors(t *testing.T) {
 	}
 }
 
+func TestGoBuildPassesPassesValidGoModule(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module gobuildpasses_valid\n\ngo 1.21\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+
+	diff := Diff{Files: []FileChange{{Path: "main.go"}}}
+
+	findings, err := GoBuildPasses{}.Run(diff, RunContext{ProjectRoot: dir})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("expected no findings for valid Go module, got %v", findings)
+	}
+}
+
 func TestGoBuildPassesNoOpsForNonGoDiff(t *testing.T) {
 	diff := Diff{Files: []FileChange{{Path: "README.md"}}}
 
@@ -52,5 +72,22 @@ func TestGoBuildPassesNoOpsForNonGoDiff(t *testing.T) {
 
 	if findings != nil {
 		t.Fatalf("expected nil findings for non-Go diff, got %v", findings)
+	}
+}
+
+func TestGoBuildPassesNoOpsWithoutGoMod(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+
+	diff := Diff{Files: []FileChange{{Path: "main.go"}}}
+
+	findings, err := GoBuildPasses{}.Run(diff, RunContext{ProjectRoot: dir})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if findings != nil {
+		t.Fatalf("expected nil findings without go.mod, got %v", findings)
 	}
 }
