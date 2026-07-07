@@ -1,6 +1,7 @@
 package postflight
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -171,6 +172,130 @@ func TestProjectShellCheckRespectsFailOnNonZeroFalse(t *testing.T) {
 	if len(findings) != 1 || findings[0].Severity != SeverityWarning {
 		t.Fatalf("fail_on_non_zero=false must yield a warning, got %v", findings)
 	}
+}
+
+func TestProjectShellCheckRunsInProjectRootWithSubstitutedArgs(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("GO_WANT_POSTFLIGHT_PROJECT_HELPER", "1")
+
+	pc := &projectCheckRunner{spec: ProjectCheck{
+		Name:    "cwd-and-args",
+		Kind:    "shell",
+		Command: os.Args[0],
+		Args: []string{
+			"-test.run=TestPostflightProjectCommandHelperProcess",
+			"--",
+			"cwd-and-args",
+			"{project_root}",
+			"{paths}",
+		},
+	}}
+	diff := Diff{Files: []FileChange{{Path: "a.go"}, {Path: "b.go"}}}
+
+	findings, err := pc.Run(diff, RunContext{ProjectRoot: root})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(findings) != 1 || findings[0].Severity != SeverityError {
+		t.Fatalf("expected one error finding from helper exit, got %v", findings)
+	}
+	for _, want := range []string{
+		"cwd=" + root,
+		"arg=" + root,
+		"arg=a.go b.go",
+	} {
+		if !strings.Contains(findings[0].Message, want) {
+			t.Fatalf("message missing %q:\n%s", want, findings[0].Message)
+		}
+	}
+}
+
+func TestProjectShellCheckFailureUsesCombinedOutput(t *testing.T) {
+	t.Setenv("GO_WANT_POSTFLIGHT_PROJECT_HELPER", "1")
+
+	pc := &projectCheckRunner{spec: ProjectCheck{
+		Name:    "combined-output",
+		Kind:    "shell",
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestPostflightProjectCommandHelperProcess", "--", "combined-output"},
+	}}
+
+	findings, err := pc.Run(Diff{}, RunContext{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(findings) != 1 || findings[0].Severity != SeverityError {
+		t.Fatalf("expected one error finding, got %v", findings)
+	}
+	for _, want := range []string{"stdout marker", "stderr marker", "exit 7"} {
+		if !strings.Contains(findings[0].Message, want) {
+			t.Fatalf("message missing %q:\n%s", want, findings[0].Message)
+		}
+	}
+}
+
+func TestProjectShellCheckTruncatesCombinedOutput(t *testing.T) {
+	t.Setenv("GO_WANT_POSTFLIGHT_PROJECT_HELPER", "1")
+
+	pc := &projectCheckRunner{spec: ProjectCheck{
+		Name:    "chatty",
+		Kind:    "shell",
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestPostflightProjectCommandHelperProcess", "--", "chatty"},
+	}}
+
+	findings, err := pc.Run(Diff{}, RunContext{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(findings) != 1 || findings[0].Severity != SeverityError {
+		t.Fatalf("expected one error finding, got %v", findings)
+	}
+	if !strings.Contains(findings[0].Message, "... (truncated; rerun the check for full output)") {
+		t.Fatalf("message missing truncation marker:\n%s", findings[0].Message)
+	}
+	if len(findings[0].Message) > shellOutputCap+128 {
+		t.Fatalf("message was not bounded: len=%d", len(findings[0].Message))
+	}
+}
+
+func TestPostflightProjectCommandHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_POSTFLIGHT_PROJECT_HELPER") != "1" {
+		return
+	}
+
+	sep := -1
+	for i, arg := range os.Args {
+		if arg == "--" {
+			sep = i
+			break
+		}
+	}
+	if sep < 0 || sep+1 >= len(os.Args) {
+		os.Exit(2)
+	}
+
+	args := os.Args[sep+1:]
+	switch args[0] {
+	case "cwd-and-args":
+		wd, _ := os.Getwd()
+		fmt.Println("cwd=" + wd)
+		for _, arg := range args[1:] {
+			fmt.Println("arg=" + arg)
+		}
+		os.Exit(3)
+
+	case "combined-output":
+		fmt.Fprintln(os.Stdout, "stdout marker")
+		fmt.Fprintln(os.Stderr, "stderr marker")
+		os.Exit(7)
+
+	case "chatty":
+		fmt.Fprintln(os.Stdout, strings.Repeat("x", shellOutputCap+256))
+		os.Exit(1)
+	}
+
+	os.Exit(2)
 }
 
 // TestProjectShellCheckEmptyCommandIsConfigError verifies that a

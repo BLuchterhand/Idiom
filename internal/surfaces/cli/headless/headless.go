@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -1003,8 +1002,7 @@ func runCommand(ctx context.Context, name string, command string, cfg config.Con
 		return check
 	}
 
-	var exitErr *exec.ExitError
-	if errors.As(result.Err, &exitErr) {
+	if result.ExitError {
 		check.ExitCode = result.ExitCode
 	} else {
 		check.ExitCode = 1

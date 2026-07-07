@@ -2,15 +2,15 @@ package postflight
 
 import (
 	"cmp"
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
+
+	"idiom/internal/platform/commandexec"
 )
 
 // ProjectCheck is the on-disk representation of a check declared
@@ -131,6 +131,7 @@ func (r *projectCheckRunner) Run(d Diff, ctx RunContext) ([]Finding, error) {
 // see what the rule reported and tells the operator to rerun for
 // full output.
 const shellOutputCap = 4096
+const shellOutputCaptureBytes = 1024 * 1024
 
 // runShell invokes the configured command with substituted args
 // and treats a non-zero exit as a check failure (configurable via
@@ -155,20 +156,23 @@ func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error)
 	// default check timeout. If a project rule legitimately needs
 	// longer it can spawn its own background work and report
 	// quickly.
-	cctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
 	args := substituteShellArgs(r.spec.Args, ctx, d)
-	c := exec.CommandContext(cctx, cmd, args...)
-
+	workdir := ""
 	if strings.TrimSpace(ctx.ProjectRoot) != "" {
-		c.Dir = ctx.ProjectRoot
+		workdir = ctx.ProjectRoot
 	}
 
-	out, err := c.CombinedOutput()
-	exitErr, _ := err.(*exec.ExitError)
+	result := commandexec.Run(nil, commandexec.Spec{
+		Name:           cmd,
+		Args:           args,
+		Dir:            workdir,
+		Timeout:        60 * time.Second,
+		MaxOutputBytes: shellOutputCaptureBytes,
+		MergeOutput:    true,
+	})
+	output := result.CombinedOutput()
 
-	if cctx.Err() == context.DeadlineExceeded {
+	if result.TimedOut {
 		return []Finding{{
 			Check:    r.Name(),
 			Severity: SeverityError,
@@ -176,25 +180,22 @@ func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error)
 		}}, nil
 	}
 
-	if err != nil && exitErr == nil {
+	if result.Err != nil && !result.ExitError {
 		// non-exit error: command not found, can't spawn, etc.
 		return []Finding{{
 			Check:    r.Name(),
 			Severity: SeverityError,
-			Message:  fmt.Sprintf("shell project check failed to run: %v", err),
+			Message:  fmt.Sprintf("shell project check failed to run: %v", result.Err),
 		}}, nil
 	}
 
-	exitCode := 0
-	if exitErr != nil {
-		exitCode = exitErr.ExitCode()
-	}
+	exitCode := result.ExitCode
 
 	if exitCode != 0 && r.spec.shouldFailOnNonZero() {
 		return []Finding{{
 			Check:    r.Name(),
 			Severity: SeverityError,
-			Message:  fmt.Sprintf("exit %d: %s", exitCode, truncateOutput(out)),
+			Message:  fmt.Sprintf("exit %d: %s", exitCode, truncateOutput(output)),
 		}}, nil
 	}
 
@@ -202,7 +203,7 @@ func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error)
 		return []Finding{{
 			Check:    r.Name(),
 			Severity: SeverityWarning,
-			Message:  fmt.Sprintf("exit %d (non-blocking): %s", exitCode, truncateOutput(out)),
+			Message:  fmt.Sprintf("exit %d (non-blocking): %s", exitCode, truncateOutput(output)),
 		}}, nil
 	}
 
@@ -213,8 +214,8 @@ func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error)
 // bytes and appends a marker so the operator knows there's more.
 // Whitespace is trimmed before the cap so a script that prints
 // trailing newlines doesn't waste budget on those.
-func truncateOutput(out []byte) string {
-	s := strings.TrimSpace(string(out))
+func truncateOutput(out string) string {
+	s := strings.TrimSpace(out)
 	if len(s) <= shellOutputCap {
 		return s
 	}

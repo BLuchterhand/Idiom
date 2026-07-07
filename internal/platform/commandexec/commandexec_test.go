@@ -18,6 +18,9 @@ func TestRunCapturesStdoutStderrAndExitCode(t *testing.T) {
 	if result.ExitCode != 7 {
 		t.Fatalf("ExitCode = %d, want 7; result=%#v", result.ExitCode, result)
 	}
+	if !result.ExitError {
+		t.Fatalf("ExitError = false for non-zero process exit; result=%#v", result)
+	}
 
 	if strings.TrimSpace(result.Stdout) != "stdout text" {
 		t.Fatalf("Stdout = %q", result.Stdout)
@@ -29,6 +32,20 @@ func TestRunCapturesStdoutStderrAndExitCode(t *testing.T) {
 
 	if result.Err == nil {
 		t.Fatalf("Err is nil for non-zero exit")
+	}
+}
+
+func TestRunMissingCommandReportsNonExitError(t *testing.T) {
+	result := Run(t.Context(), Spec{Name: "definitely-not-an-idiom-test-command"})
+
+	if result.Err == nil {
+		t.Fatalf("Err is nil for missing command")
+	}
+	if result.ExitError {
+		t.Fatalf("ExitError = true for spawn failure; result=%#v", result)
+	}
+	if result.ExitCode != 1 {
+		t.Fatalf("ExitCode = %d, want 1; result=%#v", result.ExitCode, result)
 	}
 }
 

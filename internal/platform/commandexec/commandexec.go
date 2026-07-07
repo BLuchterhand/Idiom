@@ -46,6 +46,7 @@ type Result struct {
 	StdoutTruncated bool
 	StderrTruncated bool
 	ExitCode        int
+	ExitError       bool
 	TimedOut        bool
 	Duration        time.Duration
 	Err             error
@@ -112,6 +113,7 @@ func Run(parent context.Context, spec Spec) Result {
 		var exitErr *exec.ExitError
 		if errors.As(runErr, &exitErr) {
 			result.ExitCode = exitErr.ExitCode()
+			result.ExitError = true
 		}
 	}
 
