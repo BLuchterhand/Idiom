@@ -250,6 +250,46 @@ func TestArtifactCommandRunsValidatorWithArtifactEnv(t *testing.T) {
 	}
 }
 
+func TestRunArtifactValidatorWritesCombinedOutputToStderr(t *testing.T) {
+	artifactPath := filepath.Join(t.TempDir(), "artifact.md")
+	if err := os.WriteFile(artifactPath, []byte("artifact\n"), 0o644); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+
+	var stderr bytes.Buffer
+	exit, err := runArtifactValidator("printf stdout-marker; printf stderr-marker >&2", artifactPath, &stderr)
+	if err != nil {
+		t.Fatalf("validator failed: exit=%d err=%v stderr=%s", exit, err, stderr.String())
+	}
+	if exit != 0 {
+		t.Fatalf("exit = %d, want 0", exit)
+	}
+	for _, want := range []string{"stdout-marker", "stderr-marker"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr missing %q: %q", want, stderr.String())
+		}
+	}
+}
+
+func TestRunArtifactValidatorReturnsFailureExitCode(t *testing.T) {
+	artifactPath := filepath.Join(t.TempDir(), "artifact.md")
+	if err := os.WriteFile(artifactPath, []byte("artifact\n"), 0o644); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+
+	var stderr bytes.Buffer
+	exit, err := runArtifactValidator("printf failing-validator >&2; exit 7", artifactPath, &stderr)
+	if err == nil {
+		t.Fatalf("expected validator failure")
+	}
+	if exit != 7 {
+		t.Fatalf("exit = %d, want 7; err=%v", exit, err)
+	}
+	if !strings.Contains(stderr.String(), "failing-validator") {
+		t.Fatalf("stderr should include validator output, got %q", stderr.String())
+	}
+}
+
 func writeMainConfig(t *testing.T) string {
 	t.Helper()
 
