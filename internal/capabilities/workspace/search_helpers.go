@@ -467,33 +467,3 @@ func (m *Manager) FileLineCount(path string) (int, bool) {
 
 	return count, true
 }
-
-func (m *Manager) readFileLines(path string, start, end int) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-
-	lines := textutil.SplitWorkspaceFileLines(data)
-
-	if start <= 0 {
-		start = 1
-	}
-
-	if end <= 0 || end > len(lines) {
-		end = len(lines)
-	}
-
-	start, end, _ = textutil.ClampRequestedLineRange(len(lines), start, end, start, end)
-	if start > end {
-		return "", fmt.Errorf("start_line must be <= end_line")
-	}
-
-	var b strings.Builder
-
-	for i := start - 1; i < end && i < len(lines); i++ {
-		fmt.Fprintf(&b, "%d:%s\n", i+1, lines[i])
-	}
-
-	return strings.TrimRight(b.String(), "\n"), nil
-}

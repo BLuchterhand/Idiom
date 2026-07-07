@@ -30,6 +30,24 @@ func TestGoDiagnosticTargetsIncludesWorkspaceRootFiles(t *testing.T) {
 	}
 }
 
+func TestFindGoToolUsesGoEnvGOPATHBin(t *testing.T) {
+	root := t.TempDir()
+	gopath := filepath.Join(root, "gopath")
+	binDir := filepath.Join(gopath, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir GOPATH/bin: %v", err)
+	}
+	toolPath := filepath.Join(binDir, "gopls")
+	writeOwnerTestFile(t, toolPath, "#!/bin/sh\n")
+
+	t.Setenv("GOPATH", gopath)
+
+	mgr := NewManager(ownerTestHost{root: root})
+	if got := mgr.findGoTool("gopls"); got != toolPath {
+		t.Fatalf("findGoTool = %q, want %q", got, toolPath)
+	}
+}
+
 func TestPylspOutgoingCallFormatterReturnsStructuredRelationships(t *testing.T) {
 	root := t.TempDir()
 	app := filepath.Join(root, "app.py")
@@ -72,10 +90,6 @@ func (h ownerTestHost) Enabled() bool {
 }
 
 func (h ownerTestHost) Root() string {
-	return h.root
-}
-
-func (h ownerTestHost) CWD() string {
 	return h.root
 }
 

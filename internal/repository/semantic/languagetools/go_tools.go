@@ -5,12 +5,13 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 
+	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/gitstate"
+	"idiom/internal/platform/hosttools"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/semantic"
 	semanticgo "idiom/internal/repository/semantic/golang"
@@ -983,7 +984,7 @@ func (m *Manager) goplsBinary() string {
 
 	m.mu.Unlock()
 
-	path, _ := exec.LookPath("gopls")
+	path := hosttools.FirstAvailable("gopls")
 	if path == "" {
 		path = m.findGoTool("gopls")
 	}
@@ -1021,12 +1022,15 @@ func (m *Manager) findGoTool(name string) string {
 }
 
 func (m *Manager) goEnv(key string) (string, error) {
-	output, err := exec.Command("go", "env", key).Output()
-	if err != nil {
-		return "", err
+	result := commandexec.Run(context.Background(), commandexec.Spec{
+		Name: "go",
+		Args: []string{"env", key},
+	})
+	if result.Err != nil {
+		return "", result.Err
 	}
 
-	return strings.TrimSpace(string(output)), nil
+	return strings.TrimSpace(result.Stdout), nil
 }
 
 func (m *Manager) goHandleDisplay(rel string) (string, error) {
