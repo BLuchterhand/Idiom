@@ -831,10 +831,6 @@ func (m MCPServer) Validate() error {
 	return nil
 }
 
-func (c Config) BaseURL() string {
-	return c.LlamaServer.EndpointBaseURL()
-}
-
 // ImplementerBaseURL returns the HTTP URL for the implementer llama-server,
 // or an empty string when no implementer is configured. The app uses an
 // empty return to mean "no secondary server — child tasks run on the

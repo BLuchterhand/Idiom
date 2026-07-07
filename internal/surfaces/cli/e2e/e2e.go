@@ -1,6 +1,6 @@
 // idiom-e2e drives a real multi-turn session against a live llama-server and
 // prints a verification summary. Use to confirm the runner's decisioning loop
-// actually works end-to-end. Requires llama-server running at cfg.BaseURL().
+// actually works end-to-end. Requires llama-server running at cfg.LlamaServer.EndpointBaseURL().
 package e2e
 
 import (
@@ -65,7 +65,7 @@ func Main() {
 		})
 	}
 
-	client := llama.NewClient(cfg.BaseURL(), 0).WithBackend(cfg.LlamaServer.Kind)
+	client := llama.NewClient(cfg.LlamaServer.EndpointBaseURL(), 0).WithBackend(cfg.LlamaServer.Kind)
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 
 	defer cancel()
@@ -73,7 +73,7 @@ func Main() {
 	// Ensure server is reachable + capture the model ID.
 	models, err := client.ListModels(ctx)
 	if err != nil {
-		fatalf("llama-server not reachable at %s: %v", cfg.BaseURL(), err)
+		fatalf("llama-server not reachable at %s: %v", cfg.LlamaServer.EndpointBaseURL(), err)
 	}
 
 	modelID := ""
@@ -97,7 +97,7 @@ func Main() {
 
 	allowedTools := ws.ToolSurfaceSnapshot().AllowedTools()
 	emit("config", map[string]any{
-		"base_url":              cfg.BaseURL(),
+		"base_url":              cfg.LlamaServer.EndpointBaseURL(),
 		"mode":                  mode.Name,
 		"workspace_mode":        string(ws.Mode()),
 		"workspace_root":        ws.Root(),

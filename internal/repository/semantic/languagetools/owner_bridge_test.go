@@ -146,10 +146,6 @@ func (h ownerTestHost) RunCommandDetailedWithEnv(context.Context, string, []stri
 	return "", "", fmt.Errorf("not implemented")
 }
 
-func (h ownerTestHost) CurrentIndexToken() string {
-	return ""
-}
-
 func writeOwnerTestFile(t *testing.T, path string, content string) {
 	t.Helper()
 

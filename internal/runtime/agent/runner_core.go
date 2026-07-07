@@ -1490,7 +1490,7 @@ func (r *Runner) runLegacySessionBody(
 
 		contractID := ""
 		if autonomyRecorder != nil {
-			contractID = autonomyRecorder.contractIDForTurnPhase()
+			contractID = autonomyRecorder.activeAuthorityContractID()
 		}
 
 		phaseContract := r.deriveCurrentTurnPhaseContract(runnerTurnPhaseContractInput{
@@ -6391,10 +6391,6 @@ func (a *runnerAutonomyRecorder) activeAuthorityContractID() string {
 	}
 
 	return a.contract.ContractID
-}
-
-func (a *runnerAutonomyRecorder) contractIDForTurnPhase() string {
-	return a.activeAuthorityContractID()
 }
 
 func (a *runnerAutonomyRecorder) activeAuthorityInvariantID() string {

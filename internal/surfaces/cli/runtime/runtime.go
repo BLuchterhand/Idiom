@@ -635,7 +635,7 @@ func RunServerOnlyWithTelemetry(cfg config.Config, opts RunOptions) error {
 	client := llama.NewClientForServer(cfg.LlamaServer, 0)
 	controller := llama.NewServerController(cfg.LlamaServer, client)
 	telemetry.LogPhase(opts.Telemetry, "server_starting", map[string]any{
-		"base_url": cfg.BaseURL(),
+		"base_url": cfg.LlamaServer.EndpointBaseURL(),
 		"backend":  cfg.LlamaServer.Kind,
 	})
 
@@ -655,11 +655,11 @@ func RunServerOnlyWithTelemetry(cfg config.Config, opts RunOptions) error {
 	}
 
 	telemetry.LogPhase(opts.Telemetry, "server_ready", map[string]any{
-		"base_url": cfg.BaseURL(),
+		"base_url": cfg.LlamaServer.EndpointBaseURL(),
 		"log_path": controller.LogPath(),
 	})
 
-	fmt.Printf("llama-server ready on %s\n", cfg.BaseURL())
+	fmt.Printf("llama-server ready on %s\n", cfg.LlamaServer.EndpointBaseURL())
 	fmt.Printf("model: %s\n", cfg.LlamaServer.Model)
 	fmt.Printf("log: %s\n", controller.LogPath())
 
@@ -677,7 +677,7 @@ func RunServerOnlyWithTelemetry(cfg config.Config, opts RunOptions) error {
 	}
 
 	telemetry.LogPhase(opts.Telemetry, "server_stopped", map[string]any{
-		"base_url": cfg.BaseURL(),
+		"base_url": cfg.LlamaServer.EndpointBaseURL(),
 	})
 
 	return nil

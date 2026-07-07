@@ -25,7 +25,7 @@ func (m *Manager) makeDir(req ToolRequest) ToolResult {
 		return toolWriteFailureResult(ToolNameMkdir, "Failed to create directory", err)
 	}
 
-	m.invalidateLanguageToolsAfterWorkspaceMutation()
+	m.resetLanguageTools()
 
 	return ToolResult{
 		Tool:    ToolNameMkdir,
@@ -91,7 +91,7 @@ func (m *Manager) writeFile(req ToolRequest, appendMode bool) ToolResult {
 		action = "Appended"
 	}
 
-	m.invalidateLanguageToolsAfterWorkspaceMutation()
+	m.resetLanguageTools()
 
 	return ToolResult{
 		Tool:    toolName,
@@ -182,7 +182,7 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 		return toolWriteFailureResult(ToolNameEditFile, "Failed to write edited file", err)
 	}
 
-	m.invalidateLanguageToolsAfterWorkspaceMutation()
+	m.resetLanguageTools()
 
 	return projection.result
 }

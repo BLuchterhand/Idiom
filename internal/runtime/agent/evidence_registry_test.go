@@ -523,7 +523,7 @@ func TestPathEvidenceContextZoomGraphOutputCurrentSplit(t *testing.T) {
 func TestPathEvidenceRegistryCandidateBoundaries(t *testing.T) {
 	registry := NewPathEvidenceRegistry(".")
 	registry.RegisterToolResults([]ToolResult{{
-		ToolName: toolNameContextPack,
+		ToolName: workspace.ToolNameContextPack,
 		Paths: []string{
 			"internal/runtime/agent/evidence_registry.go",
 			"../outside.go",

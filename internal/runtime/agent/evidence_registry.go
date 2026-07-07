@@ -16,25 +16,12 @@ import (
 
 // --- path evidence registry ---
 const (
-	toolNameCodeNavigate       = "code_navigate"
-	toolNameContextImpact      = "context_impact"
-	toolNameContextPack        = "context_pack"
-	toolNameContextQuery       = "context_query"
-	toolNameContextZoom        = "context_zoom"
-	toolNameDiscoveryQuery     = "discovery_query"
-	toolNameGrep               = "grep"
-	toolNamePrefetch           = "prefetch"
-	toolNameReadFile           = "read_file"
-	toolNameReadOnlyCapability = "read_only_capability"
-	toolNameRg                 = "rg"
-	toolNameSearchContent      = "search_content"
-	toolNameSearchFiles        = "search_files"
-	toolNameStructuralSearch   = "structural_search"
+	legacyGrepToolName = "grep"
 )
 
 func registrySearchCandidateTool(tool string) bool {
 	switch strings.TrimSpace(tool) {
-	case toolNameSearchContent, toolNameSearchFiles, toolNameRg, toolNameGrep:
+	case workspace.ToolNameSearchContent, workspace.ToolNameSearchFiles, workspace.ToolNameRg, legacyGrepToolName:
 		return true
 	default:
 		return false
@@ -44,8 +31,8 @@ func registrySearchCandidateTool(tool string) bool {
 func registryDiscoveryCandidateTool(tool string) bool {
 	tool = strings.TrimSpace(tool)
 	switch tool {
-	case toolNameDiscoveryQuery, toolNameContextQuery, toolNameContextZoom,
-		toolNameContextImpact, toolNameStructuralSearch:
+	case workspace.ToolNameDiscoveryQuery, workspace.ToolNameContextQuery, workspace.ToolNameContextZoom,
+		workspace.ToolNameContextImpact, workspace.ToolNameStructuralSearch:
 		return true
 	default:
 		return strings.HasSuffix(tool, "_workspace_symbol")
@@ -116,13 +103,13 @@ func (r *PathEvidenceRegistry) RegisterToolResults(results []ToolResult) {
 		tool := strings.TrimSpace(result.ToolName)
 
 		switch {
-		case tool == toolNameReadFile || tool == toolNamePrefetch:
+		case tool == workspace.ToolNameReadFile || tool == workspace.ToolNamePrefetch:
 			r.registerBodyRead(result)
-		case tool == toolNameCodeNavigate || tool == toolNameReadOnlyCapability:
+		case tool == workspace.ToolNameCodeNavigate || tool == workspace.ToolNameReadOnlyCapability:
 			r.registerBodyRead(result)
 		case strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"):
 			r.registerBodyRead(result)
-		case tool == toolNameContextPack || registrySearchCandidateTool(tool) || registryDiscoveryCandidateTool(tool):
+		case tool == workspace.ToolNameContextPack || registrySearchCandidateTool(tool) || registryDiscoveryCandidateTool(tool):
 			r.registerCandidatePaths(result)
 		}
 	}
@@ -179,13 +166,13 @@ func bodyReadLevelForResult(result ToolResult) EvidenceLevel {
 	if strings.Contains(text, ".idiom/comprehension/views/") {
 		return EvidenceNone
 	}
-	if tool == toolNameReadFile || tool == toolNamePrefetch {
+	if tool == workspace.ToolNameReadFile || tool == workspace.ToolNamePrefetch {
 		if len(result.Paths) > 0 || (strings.Contains(text, "read ") && strings.Contains(text, " lines ")) {
 			return EvidenceAnchorReady
 		}
 		return EvidenceNone
 	}
-	if tool == toolNameCodeNavigate || tool == toolNameReadOnlyCapability {
+	if tool == workspace.ToolNameCodeNavigate || tool == workspace.ToolNameReadOnlyCapability {
 		if strings.Contains(text, "file_outline") ||
 			strings.Contains(text, "outlined ") ||
 			strings.Contains(text, "top-level declaration") {
@@ -231,7 +218,7 @@ func (r *PathEvidenceRegistry) registerCandidatePaths(result ToolResult) {
 	paths := append([]string{}, result.Paths...)
 
 	switch tool {
-	case toolNameContextPack:
+	case workspace.ToolNameContextPack:
 		paths = append(paths, contextPackCandidatePathsFromResults([]workspace.ToolResult{workspaceResult}, 128)...)
 	default:
 		if registryDiscoveryCandidateTool(tool) {

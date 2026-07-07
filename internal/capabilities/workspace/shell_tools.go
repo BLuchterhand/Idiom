@@ -180,7 +180,7 @@ func (m *Manager) runShell(ctx context.Context, req ToolRequest) ToolResult {
 	} else if reason := zeroSelectedTestFailureReason(command, rawOutput); reason != "" {
 		result.Error = reason
 	} else if m.Mode() != ModeExplore {
-		m.invalidateLanguageToolsAfterWorkspaceMutation()
+		m.resetLanguageTools()
 	}
 
 	return result

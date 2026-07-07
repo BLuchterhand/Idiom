@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"idiom/internal/platform/gitstate"
 	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/repository/semantic/languagetools"
 )
@@ -111,10 +110,6 @@ func (h languageToolHost) RunCommandDetailedWithEnv(ctx context.Context, dir str
 	return h.manager.runCommandDetailedWithEnv(ctx, dir, extraEnv, name, args...)
 }
 
-func (h languageToolHost) CurrentIndexToken() string {
-	return h.manager.currentWorkspaceIndexToken()
-}
-
 func (m *Manager) executeLanguageTool(ctx context.Context, req ToolRequest) ToolResult {
 	if m.languageTools == nil {
 		m.languageTools = languagetools.NewManager(languageToolHost{manager: m})
@@ -125,10 +120,6 @@ func (m *Manager) executeLanguageTool(ctx context.Context, req ToolRequest) Tool
 
 func (m *Manager) resetLanguageTools() {
 	m.languageTools = languagetools.NewManager(languageToolHost{manager: m})
-}
-
-func (m *Manager) invalidateLanguageToolsAfterWorkspaceMutation() {
-	m.resetLanguageTools()
 }
 
 func (m *Manager) isCppWorkspace() bool {
@@ -163,19 +154,6 @@ func (m *Manager) languageDetects(name string) bool {
 	lang, ok := semanticlanguage.LanguageForName(name)
 
 	return ok && lang.Detect != nil && lang.Detect(m.cfg.Root)
-}
-
-func (m *Manager) currentWorkspaceIndexToken() string {
-	if !m.Enabled() {
-		return ""
-	}
-
-	snapshot, err := gitstate.Current(context.Background(), m.cfg.Root)
-	if err != nil {
-		return ""
-	}
-
-	return snapshot.Token()
 }
 
 type codeNavigationSpec struct {

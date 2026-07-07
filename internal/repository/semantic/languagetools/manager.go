@@ -57,7 +57,6 @@ type Host interface {
 	Execute(ctx context.Context, req ToolRequest) ToolResult
 	RunCommandDetailed(ctx context.Context, dir string, name string, args ...string) (string, string, error)
 	RunCommandDetailedWithEnv(ctx context.Context, dir string, extraEnv []string, name string, args ...string) (string, string, error)
-	CurrentIndexToken() string
 }
 
 type Manager struct {

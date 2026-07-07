@@ -826,7 +826,7 @@ func llmReview(cfgPath string, calls []toolCall, sessions map[string]*sessionSum
 		return "", fmt.Errorf("load config: %w", err)
 	}
 
-	client := llama.NewClient(cfg.BaseURL(), 0).WithBackend(cfg.LlamaServer.Kind)
+	client := llama.NewClient(cfg.LlamaServer.EndpointBaseURL(), 0).WithBackend(cfg.LlamaServer.Kind)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 
 	defer cancel()

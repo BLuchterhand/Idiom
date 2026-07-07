@@ -134,7 +134,7 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 		}
 	}
 
-	m.invalidateLanguageToolsAfterWorkspaceMutation()
+	m.resetLanguageTools()
 
 	return ToolResult{
 		Tool:    ToolNameApplyPatch,

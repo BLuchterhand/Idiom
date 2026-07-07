@@ -196,13 +196,6 @@ func sameLlamaTarget(a, b config.LlamaServer) bool {
 	return a.EndpointBaseURL() == b.EndpointBaseURL() && a.Model == b.Model && strings.EqualFold(a.Kind, b.Kind) && a.APIKeyEnvName() == b.APIKeyEnvName()
 }
 
-// llamaServerBaseURL renders the endpoint URL for a LlamaServer spec.
-// Centralised so planner / implementer / classifier wiring all build URLs the
-// same way across local and hosted backends.
-func llamaServerBaseURL(spec config.LlamaServer) string {
-	return spec.EndpointBaseURL()
-}
-
 type serverStatusMsg struct {
 	running   bool
 	modelID   string
@@ -309,7 +302,7 @@ func New(cfg config.Config) *Model {
 	classifierBaseURL := strings.TrimSpace(cfg.RouteClassifier.BaseURL)
 
 	if classifierFromBackends {
-		classifierBaseURL = llamaServerBaseURL(classifierSpec)
+		classifierBaseURL = classifierSpec.EndpointBaseURL()
 	}
 
 	if classifierFromBackends && sameLlamaTarget(classifierSpec, plannerSpec) {
