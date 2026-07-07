@@ -301,7 +301,7 @@ func MergeRuntimeBriefIntoState(brief WorkerRuntimeBrief, state RunState) RunSta
 	}
 
 	if len(state.ToolManifest) == 0 {
-		state.ToolManifest = append([]ToolManifestEntry(nil), brief.ToolManifest...)
+		state.ToolManifest = append([]workspace.ToolManifestEntry(nil), brief.ToolManifest...)
 	}
 
 	if len(state.EvidenceCapabilities) == 0 {

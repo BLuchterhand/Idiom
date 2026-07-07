@@ -240,7 +240,7 @@ func (m *Model) runImplementationViaPlanExecute(ctx context.Context, prompt stri
 	return m.runImplementationPlanDocumentsViaPlanExecute(ctx, prompt, plan, planDocuments)
 }
 
-func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan, planDocuments []implementationDispatchPlanDocument) (string, error) {
+func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan, planDocuments []implementationdispatch.PlanDocument) (string, error) {
 	planDocuments = implementationdispatch.PlanDocumentsWithDirtyAllowance(prompt, planDocuments)
 	root := implementationdispatch.WorkspaceRoot(m.cfg.Workspace.Root, m.cfg.Workspace.CWD)
 
@@ -264,16 +264,16 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 
 		m.queueUIEvent(infoMsg{text: "Refining materialized design-doc atom before plan-execute..."})
 
-		var refineResults []implementationDispatchPlanDocumentRefineResult
+		var refineResults []implementationdispatch.PlanDocumentRefineResult
 
-		refinedPlanDocuments := append([]implementationDispatchPlanDocument(nil), planDocuments...)
+		refinedPlanDocuments := append([]implementationdispatch.PlanDocument(nil), planDocuments...)
 
 		for _, doc := range planDocuments {
 			if !implementationdispatch.PlanDocumentNeedsRefineBeforeDispatch(doc) {
 				continue
 			}
 
-			refined := implementationDispatchPlanDocumentRefineRunner(ctx, m.cfg, doc)
+			refined := planDocumentRefineRunner(ctx, m.cfg, doc)
 
 			refineResults = append(refineResults, refined)
 
@@ -317,7 +317,7 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 			WorkspaceRoot: m.cfg.Workspace.Root,
 			WorkspaceCWD:  m.cfg.Workspace.CWD,
 			PlanDocuments: planDocuments,
-			Runner:        implementationDispatchPlanDocumentPreflightRunner,
+			Runner:        planDocumentPreflightRunner,
 		}); len(refinedBlocked) > 0 {
 			sourceSatisfiedRecords := implementationdispatch.PreflightSourceSatisfiedRecords(refinedBlocked)
 			if implementationdispatch.PreflightRecordsAllSourceSatisfied(sourceSatisfiedRecords) {
@@ -337,7 +337,7 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 		WorkspaceRoot: m.cfg.Workspace.Root,
 		WorkspaceCWD:  m.cfg.Workspace.CWD,
 		PlanDocuments: planDocuments,
-		Runner:        implementationDispatchPlanDocumentPreflightRunner,
+		Runner:        planDocumentPreflightRunner,
 	}); len(blocked) > 0 {
 		sourceSatisfiedRecords := implementationdispatch.PreflightSourceSatisfiedRecords(blocked)
 		if implementationdispatch.PreflightRecordsAllSourceSatisfied(sourceSatisfiedRecords) {
@@ -365,14 +365,14 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 
 			m.queueUIEvent(infoMsg{text: "Refining referenced plan document before plan-execute..."})
 
-			var refineResults []implementationDispatchPlanDocumentRefineResult
+			var refineResults []implementationdispatch.PlanDocumentRefineResult
 
-			refinedPlanDocuments := append([]implementationDispatchPlanDocument(nil), planDocuments...)
+			refinedPlanDocuments := append([]implementationdispatch.PlanDocument(nil), planDocuments...)
 
 			for _, result := range blocked {
 				docPath := strings.TrimSpace(result.Path)
 
-				var original implementationDispatchPlanDocument
+				var original implementationdispatch.PlanDocument
 
 				found := false
 
@@ -389,7 +389,7 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 					continue
 				}
 
-				refined := implementationDispatchPlanDocumentRefineRunner(ctx, m.cfg, original)
+				refined := planDocumentRefineRunner(ctx, m.cfg, original)
 
 				refineResults = append(refineResults, refined)
 
@@ -433,7 +433,7 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 				WorkspaceRoot: m.cfg.Workspace.Root,
 				WorkspaceCWD:  m.cfg.Workspace.CWD,
 				PlanDocuments: planDocuments,
-				Runner:        implementationDispatchPlanDocumentPreflightRunner,
+				Runner:        planDocumentPreflightRunner,
 			}); len(refinedBlocked) > 0 {
 				sourceSatisfiedRecords := implementationdispatch.PreflightSourceSatisfiedRecords(refinedBlocked)
 				if implementationdispatch.PreflightRecordsAllSourceSatisfied(sourceSatisfiedRecords) {
@@ -484,7 +484,7 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 	return m.runSingleImplementationPlanExecute(ctx, prompt, plan, requiredPaths, allowedPaths, planDocuments)
 }
 
-func implementationDispatchRefinedDocumentIsDispatchable(ctx context.Context, cfg config.Config, doc implementationDispatchPlanDocument) bool {
+func implementationDispatchRefinedDocumentIsDispatchable(ctx context.Context, cfg config.Config, doc implementationdispatch.PlanDocument) bool {
 	if strings.TrimSpace(doc.Path) == "" || strings.TrimSpace(doc.Content) == "" {
 		return false
 	}
@@ -492,12 +492,12 @@ func implementationDispatchRefinedDocumentIsDispatchable(ctx context.Context, cf
 	return len(implementationdispatch.PreflightPlanDocuments(ctx, implementationdispatch.PlanDocumentsPreflightInput{
 		WorkspaceRoot: cfg.Workspace.Root,
 		WorkspaceCWD:  cfg.Workspace.CWD,
-		PlanDocuments: []implementationDispatchPlanDocument{doc},
-		Runner:        implementationDispatchPlanDocumentPreflightRunner,
+		PlanDocuments: []implementationdispatch.PlanDocument{doc},
+		Runner:        planDocumentPreflightRunner,
 	})) == 0
 }
 
-func (m *Model) runAtomizedImplementationPlanDocumentsViaPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan, atomDocuments []implementationDispatchPlanDocument) (string, error) {
+func (m *Model) runAtomizedImplementationPlanDocumentsViaPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan, atomDocuments []implementationdispatch.PlanDocument) (string, error) {
 	if len(atomDocuments) == 0 {
 		return "Plan-execute dispatch blocked before the planner ran.\n\nThe referenced design document needed sub-atoms, but no dispatchable atom briefs could be materialized.", nil
 	}
@@ -528,7 +528,7 @@ func (m *Model) runAtomizedImplementationPlanDocumentsViaPlanExecute(ctx context
 
 		atomPlan.runtimeBrief.RequiredEditPaths = nil
 
-		answer, err := m.runImplementationPlanDocumentsViaPlanExecute(ctx, atomPrompt, atomPlan, []implementationDispatchPlanDocument{atomDoc})
+		answer, err := m.runImplementationPlanDocumentsViaPlanExecute(ctx, atomPrompt, atomPlan, []implementationdispatch.PlanDocument{atomDoc})
 		if err != nil {
 			return "", err
 		}
@@ -674,7 +674,7 @@ func (m *Model) runPersistedPlanExecuteContinuation(ctx context.Context, prompt 
 	return answer, nil
 }
 
-func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan, requiredPaths []string, allowedPaths []string, planDocuments []implementationDispatchPlanDocument) (string, error) {
+func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan, requiredPaths []string, allowedPaths []string, planDocuments []implementationdispatch.PlanDocument) (string, error) {
 	brief := composeImplementationBriefWithEditScopeAndPlanDocuments(prompt, plan, m.cfg, requiredPaths, allowedPaths, planDocuments)
 	root := implementationdispatch.WorkspaceRoot(m.cfg.Workspace.Root, m.cfg.Workspace.CWD)
 	intake := implementationDispatchCompilePlanExecuteScopeIntake(prompt, plan, m.cfg)
@@ -1066,7 +1066,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 	if failure.PlannerBlockedChainDepth >= maxPlannerBlockedChainDepth {
 		m.logMessage("dispatch_recovery", fmt.Sprintf("planner_blocked chain depth %d reached limit %d; surfacing to user", failure.PlannerBlockedChainDepth, maxPlannerBlockedChainDepth))
 
-		return humanPlanExecutePlannerBlockedMessage(failure, implementationDispatchRecoveryDecision{
+		return humanPlanExecutePlannerBlockedMessage(failure, recovery.PlanExecuteRecoveryDecision{
 			Decision: "surface",
 			Reason:   fmt.Sprintf("plan-execute retry chain depth %d exceeded; surfacing blocker to user", failure.PlannerBlockedChainDepth),
 		}), true, nil
@@ -1171,14 +1171,14 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 			return m.handlePlanExecutePlannerBlocked(ctx, retryFailure)
 		}
 
-		return humanPlanExecutePlannerBlockedMessage(retryFailure, implementationDispatchRecoveryDecision{
+		return humanPlanExecutePlannerBlockedMessage(retryFailure, recovery.PlanExecuteRecoveryDecision{
 			Decision: "surface",
 			Reason:   "automatic discovered-scope retry did not produce a plan",
 		}), true, nil
 	}
 
 	if path, ok := planExecuteRequiredSourceReadBlockerPath(failure); ok {
-		decision := implementationDispatchRecoveryDecision{
+		decision := recovery.PlanExecuteRecoveryDecision{
 			Decision:      "retry",
 			Reason:        "planner blocker names an unread required source path that a retry can satisfy with a source-body read",
 			RetryAddendum: fmt.Sprintf("First read source for `%s` using a source-body route, then submit the plan when every required path has source evidence.", path),
@@ -1228,7 +1228,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 			return m.handlePlanExecutePlannerBlocked(ctx, retryFailure)
 		}
 
-		return humanPlanExecutePlannerBlockedMessage(retryFailure, implementationDispatchRecoveryDecision{
+		return humanPlanExecutePlannerBlockedMessage(retryFailure, recovery.PlanExecuteRecoveryDecision{
 			Decision: "surface",
 			Reason:   "automatic source-read retry did not produce a plan",
 		}), true, nil
@@ -1272,7 +1272,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 			return m.handlePlanExecutePlannerBlocked(ctx, retryFailure)
 		}
 
-		return humanPlanExecutePlannerBlockedMessage(retryFailure, implementationDispatchRecoveryDecision{
+		return humanPlanExecutePlannerBlockedMessage(retryFailure, recovery.PlanExecuteRecoveryDecision{
 			Decision: "surface",
 			Reason:   "active-model fallback did not produce a plan",
 		}), true, nil
@@ -1282,7 +1282,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 	if err != nil {
 		m.logMessage("dispatch_recovery", "recovery decision failed; surfacing planner blocker: "+err.Error())
 
-		return humanPlanExecutePlannerBlockedMessage(failure, implementationDispatchRecoveryDecision{
+		return humanPlanExecutePlannerBlockedMessage(failure, recovery.PlanExecuteRecoveryDecision{
 			Decision: "surface",
 			Reason:   "recovery decision failed: " + err.Error(),
 		}), true, nil
@@ -1336,7 +1336,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 			return m.handlePlanExecutePlannerBlocked(ctx, retryFailure)
 		}
 
-		return humanPlanExecutePlannerBlockedMessage(retryFailure, implementationDispatchRecoveryDecision{
+		return humanPlanExecutePlannerBlockedMessage(retryFailure, recovery.PlanExecuteRecoveryDecision{
 			Decision: "surface",
 			Reason:   "automatic retry did not produce a plan",
 			Message:  strings.TrimSpace(decision.Message),
@@ -1350,7 +1350,7 @@ func (m *Model) handlePlanExecuteMissingEditRetry(ctx context.Context, failure i
 	if implementationDispatchOptionsAlreadyCarriedEditSetObligation(failure.Options, spec.obligationKind) {
 		m.logMessage("dispatch_recovery", spec.alreadyCarriedLog)
 
-		return humanPlanExecutePlannerBlockedMessage(failure, implementationDispatchRecoveryDecision{
+		return humanPlanExecutePlannerBlockedMessage(failure, recovery.PlanExecuteRecoveryDecision{
 			Decision: "surface",
 			Reason:   spec.alreadyCarriedReason,
 		}), true, nil
@@ -1360,7 +1360,7 @@ func (m *Model) handlePlanExecuteMissingEditRetry(ctx context.Context, failure i
 	if len(allowedPaths) == 0 {
 		m.logMessage("dispatch_recovery", spec.noScopeLog)
 
-		return humanPlanExecutePlannerBlockedMessage(failure, implementationDispatchRecoveryDecision{
+		return humanPlanExecutePlannerBlockedMessage(failure, recovery.PlanExecuteRecoveryDecision{
 			Decision: "surface",
 			Reason:   spec.noScopeReason,
 		}), true, nil
@@ -1405,13 +1405,13 @@ func (m *Model) handlePlanExecuteMissingEditRetry(ctx context.Context, failure i
 	}
 
 	if implementationDispatchPlanExecuteRunFailureKind(retryResult) == plancontract.PlanExecuteFailureExecutorFailed {
-		return humanPlanExecutePlannerBlockedMessage(retryFailure, implementationDispatchRecoveryDecision{
+		return humanPlanExecutePlannerBlockedMessage(retryFailure, recovery.PlanExecuteRecoveryDecision{
 			Decision: "surface",
 			Reason:   spec.executorFailedReason,
 		}), true, nil
 	}
 
-	return humanPlanExecutePlannerBlockedMessage(retryFailure, implementationDispatchRecoveryDecision{
+	return humanPlanExecutePlannerBlockedMessage(retryFailure, recovery.PlanExecuteRecoveryDecision{
 		Decision: "surface",
 		Reason:   spec.finalReason,
 	}), true, nil
@@ -2271,9 +2271,9 @@ func (m *Model) planExecuteFailureHasPlanExecuteHandoff(failure implementationDi
 	return implementationDispatchHasPlanExecuteHandoff(failure.Prompt, failure.Plan, m.cfg)
 }
 
-func (m *Model) decidePlanExecutePlannerBlocked(ctx context.Context, failure implementationDispatchPlanExecuteFailure) (implementationDispatchRecoveryDecision, string, error) {
+func (m *Model) decidePlanExecutePlannerBlocked(ctx context.Context, failure implementationDispatchPlanExecuteFailure) (recovery.PlanExecuteRecoveryDecision, string, error) {
 	if m == nil || m.client == nil {
-		return implementationDispatchRecoveryDecision{}, "", fmt.Errorf("model client unavailable")
+		return recovery.PlanExecuteRecoveryDecision{}, "", fmt.Errorf("model client unavailable")
 	}
 
 	opts := m.chatOptions()
@@ -2295,17 +2295,17 @@ func (m *Model) decidePlanExecutePlannerBlocked(ctx context.Context, failure imp
 		{Role: "user", Content: prompt},
 	}, opts)
 	if err != nil {
-		return implementationDispatchRecoveryDecision{}, raw, err
+		return recovery.PlanExecuteRecoveryDecision{}, raw, err
 	}
 
 	decision, ok := recovery.ParsePlanExecuteRecoveryDecision(raw)
 	if !ok {
-		return implementationDispatchRecoveryDecision{}, raw, fmt.Errorf("recovery decision was not valid JSON")
+		return recovery.PlanExecuteRecoveryDecision{}, raw, fmt.Errorf("recovery decision was not valid JSON")
 	}
 
 	decision.Decision = strings.ToLower(strings.TrimSpace(decision.Decision))
 	if decision.Decision != "retry" && decision.Decision != "surface" {
-		return implementationDispatchRecoveryDecision{}, raw, fmt.Errorf("unsupported recovery decision %q", decision.Decision)
+		return recovery.PlanExecuteRecoveryDecision{}, raw, fmt.Errorf("unsupported recovery decision %q", decision.Decision)
 	}
 
 	return decision, raw, nil
@@ -2366,7 +2366,7 @@ func planExecutePlannerBlockedDecisionPrompt(failure implementationDispatchPlanE
 	return b.String()
 }
 
-func appendPlanExecutePlannerRecoveryAddendum(brief string, failure implementationDispatchPlanExecuteFailure, decision implementationDispatchRecoveryDecision, rawDecision string) string {
+func appendPlanExecutePlannerRecoveryAddendum(brief string, failure implementationDispatchPlanExecuteFailure, decision recovery.PlanExecuteRecoveryDecision, rawDecision string) string {
 	var b strings.Builder
 
 	b.WriteString(strings.TrimSpace(brief))
@@ -2605,7 +2605,7 @@ func (m *Model) implementationDispatchSubmittedPlanPaths(failure implementationD
 	return uniqueImplementationDispatchPaths(paths)
 }
 
-func humanPlanExecutePlannerBlockedMessage(failure implementationDispatchPlanExecuteFailure, decision implementationDispatchRecoveryDecision) string {
+func humanPlanExecutePlannerBlockedMessage(failure implementationDispatchPlanExecuteFailure, decision recovery.PlanExecuteRecoveryDecision) string {
 	if msg := strings.TrimSpace(decision.Message); msg != "" {
 		if !implementationDispatchRecoveryMessageIsInternal(msg) && !planExecuteRecoveryMessageContradictsSourceSatisfied(failure, msg) {
 			return msg

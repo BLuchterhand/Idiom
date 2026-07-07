@@ -1567,7 +1567,7 @@ func TestNormalizeRuntimeBriefConversationOnlyClearsToolSurface(t *testing.T) {
 func TestNormalizeRuntimeBriefSuppressesPlaceholderManifestRequests(t *testing.T) {
 	brief := NormalizeRuntimeBrief(WorkerRuntimeBrief{
 		AllowedTools: []string{"submit_plan", "pwd"},
-		ToolManifest: []ToolManifestEntry{
+		ToolManifest: []workspace.ToolManifestEntry{
 			{
 				Tool:    "submit_plan",
 				Request: `{"tool":"submit_plan","rationale":"one paragraph on the overall plan","edits":[{"path":"relative/file","old_text":"exact current substring","new_text":"complete replacement text","purpose":"why this edit"}]}`,
@@ -1581,7 +1581,7 @@ func TestNormalizeRuntimeBriefSuppressesPlaceholderManifestRequests(t *testing.T
 		},
 	})
 
-	byTool := map[string]ToolManifestEntry{}
+	byTool := map[string]workspace.ToolManifestEntry{}
 	for _, entry := range brief.ToolManifest {
 		byTool[entry.Tool] = entry
 	}
@@ -1598,7 +1598,7 @@ func TestNormalizeRuntimeBriefSuppressesPlaceholderManifestRequests(t *testing.T
 func TestNormalizeRuntimeBriefBuildsWorkspaceOwnedToolManifest(t *testing.T) {
 	brief := NormalizeRuntimeBrief(WorkerRuntimeBrief{AllowedTools: []string{"submit_plan", "pwd"}})
 
-	byTool := map[string]ToolManifestEntry{}
+	byTool := map[string]workspace.ToolManifestEntry{}
 	for _, entry := range brief.ToolManifest {
 		byTool[entry.Tool] = entry
 	}

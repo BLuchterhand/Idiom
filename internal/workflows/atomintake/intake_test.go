@@ -488,7 +488,7 @@ func TestAtomIntakeDoesNotTreatUncoveredCurrentStateAnchorsAsDone(t *testing.T) 
 
 func TestAtomIntakeOptionalCurrentStateScopeRequiresLiveAnchor(t *testing.T) {
 	root := t.TempDir()
-	current := "package main\n\ntype implementationDispatchPlanDocument struct {\n\tPath string\n}\n"
+	current := "package main\n\ntype dispatchPlanDocument struct {\n\tPath string\n}\n"
 
 	if err := os.WriteFile(filepath.Join(root, "dispatch.go"), []byte(current), 0o644); err != nil {
 		t.Fatalf("write dispatch: %v", err)
@@ -508,7 +508,7 @@ func TestAtomIntakeOptionalCurrentStateScopeRequiresLiveAnchor(t *testing.T) {
 		"## Verified Current State",
 		"",
 		"- Host current-state anchors captured before dispatch:",
-		"  - `dispatch.go:3`: `type implementationDispatchPlanDocument struct {`",
+		"  - `dispatch.go:3`: `type dispatchPlanDocument struct {`",
 		"",
 	}, "\n")
 	specPath := writeAtomSpec(t, root, "spec.md", spec)
@@ -525,7 +525,7 @@ func TestAtomIntakeOptionalCurrentStateScopeRequiresLiveAnchor(t *testing.T) {
 
 func TestAtomIntakeOptionalCurrentStateScopeDoesNotUseWeakSourceBodyTerms(t *testing.T) {
 	root := t.TempDir()
-	current := "package main\n\ntype implementationDispatchPlanDocument struct {\n\tPath string\n}\n"
+	current := "package main\n\ntype dispatchPlanDocument struct {\n\tPath string\n}\n"
 
 	if err := os.WriteFile(filepath.Join(root, "dispatch.go"), []byte(current), 0o644); err != nil {
 		t.Fatalf("write dispatch: %v", err)

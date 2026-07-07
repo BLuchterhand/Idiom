@@ -13,18 +13,10 @@ import (
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/workerruntime"
 	"idiom/internal/workflows/implementationdispatch"
-	"idiom/internal/workflows/recovery"
 )
 
-type implementationDispatchPlanDocument = implementationdispatch.PlanDocument
-type implementationDispatchPlanDocumentPreflightResult = implementationdispatch.PlanDocumentPreflightResult
-type implementationDispatchPlanDocumentRefineResult = implementationdispatch.PlanDocumentRefineResult
-type implementationDispatchPlanDocumentResolutionBlocker = implementationdispatch.ResolutionBlocker
-
-type implementationDispatchRecoveryDecision = recovery.PlanExecuteRecoveryDecision
-
-var implementationDispatchPlanDocumentPreflightRunner implementationdispatch.PlanDocumentPreflightRunner = implementationdispatch.PreflightPlanDocument
-var implementationDispatchPlanDocumentRefineRunner = defaultImplementationDispatchPlanDocumentRefine
+var planDocumentPreflightRunner implementationdispatch.PlanDocumentPreflightRunner = implementationdispatch.PreflightPlanDocument
+var planDocumentRefineRunner = defaultImplementationDispatchPlanDocumentRefine
 
 func isPlanExecuteInternalFamily(family string) bool {
 	return workerruntime.TaskFamilyIsPlanThenExecutePlanner(family) || workerruntime.TaskFamilyIsPlanThenExecuteReview(family)
@@ -39,7 +31,7 @@ func implementationDispatchHasPlanExecuteHandoff(prompt string, plan promptExecu
 		len(blockers) > 0
 }
 
-func composeImplementationBriefWithEditScopeAndPlanDocuments(prompt string, plan promptExecutionPlan, cfg config.Config, requiredPaths []string, allowedPaths []string, planDocuments []implementationDispatchPlanDocument) string {
+func composeImplementationBriefWithEditScopeAndPlanDocuments(prompt string, plan promptExecutionPlan, cfg config.Config, requiredPaths []string, allowedPaths []string, planDocuments []implementationdispatch.PlanDocument) string {
 	brief := plan.runtimeBrief
 	snippets := make([]implementationdispatch.RequiredEditSnippet, 0, len(brief.RequiredEditSnippets))
 
@@ -63,8 +55,8 @@ func composeImplementationBriefWithEditScopeAndPlanDocuments(prompt string, plan
 	})
 }
 
-func defaultImplementationDispatchPlanDocumentRefine(ctx context.Context, cfg config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentRefineResult {
-	result := implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path}
+func defaultImplementationDispatchPlanDocumentRefine(ctx context.Context, cfg config.Config, doc implementationdispatch.PlanDocument) implementationdispatch.PlanDocumentRefineResult {
+	result := implementationdispatch.PlanDocumentRefineResult{OriginalPath: doc.Path}
 	root := implementationdispatch.WorkspaceRoot(cfg.Workspace.Root, cfg.Workspace.CWD)
 
 	if strings.TrimSpace(root) == "" {
@@ -166,49 +158,49 @@ func defaultImplementationDispatchPlanDocumentRefine(ctx context.Context, cfg co
 	return result
 }
 
-func materializeImplementationDispatchNonzeroRefineAcceptedCandidate(ctx context.Context, cfg config.Config, acceptedRel string, allowDirtyAtomScope ...bool) (implementationDispatchPlanDocument, string, []implementationDispatchPlanDocumentPreflightResult, bool) {
+func materializeImplementationDispatchNonzeroRefineAcceptedCandidate(ctx context.Context, cfg config.Config, acceptedRel string, allowDirtyAtomScope ...bool) (implementationdispatch.PlanDocument, string, []implementationdispatch.PlanDocumentPreflightResult, bool) {
 	root := implementationdispatch.WorkspaceRoot(cfg.Workspace.Root, cfg.Workspace.CWD)
 	if strings.TrimSpace(root) == "" {
-		return implementationDispatchPlanDocument{}, "", nil, false
+		return implementationdispatch.PlanDocument{}, "", nil, false
 	}
 
 	acceptedAbs, ok := implementationdispatch.WorkspaceFile(root, acceptedRel)
 	if !ok {
-		return implementationDispatchPlanDocument{}, "", nil, false
+		return implementationdispatch.PlanDocument{}, "", nil, false
 	}
 
 	body, err := os.ReadFile(acceptedAbs)
 	if err != nil {
-		return implementationDispatchPlanDocument{}, "", nil, false
+		return implementationdispatch.PlanDocument{}, "", nil, false
 	}
 
 	sanitized, changed := implementationdispatch.SanitizeNonzeroRefineAcceptedContent(string(body))
 	if !changed {
-		return implementationDispatchPlanDocument{}, "", nil, false
+		return implementationdispatch.PlanDocument{}, "", nil, false
 	}
 
 	candidateRel := strings.TrimSuffix(acceptedRel, filepath.Ext(acceptedRel)) + ".dispatch" + filepath.Ext(acceptedRel)
 	candidateAbs, ok := implementationdispatch.WorkspaceFile(root, candidateRel)
 
 	if !ok {
-		return implementationDispatchPlanDocument{}, "", nil, false
+		return implementationdispatch.PlanDocument{}, "", nil, false
 	}
 
 	if err := os.WriteFile(candidateAbs, []byte(sanitized), 0o644); err != nil {
-		return implementationDispatchPlanDocument{}, "", nil, false
+		return implementationdispatch.PlanDocument{}, "", nil, false
 	}
 
 	candidate, ok := implementationdispatch.ReadPlanDocument(root, candidateRel)
 	if !ok {
-		return implementationDispatchPlanDocument{}, "", nil, false
+		return implementationdispatch.PlanDocument{}, "", nil, false
 	}
 
 	candidate.AllowDirtyAtomScope = len(allowDirtyAtomScope) > 0 && allowDirtyAtomScope[0]
 	if blocked := implementationdispatch.PreflightPlanDocuments(ctx, implementationdispatch.PlanDocumentsPreflightInput{
 		WorkspaceRoot: cfg.Workspace.Root,
 		WorkspaceCWD:  cfg.Workspace.CWD,
-		PlanDocuments: []implementationDispatchPlanDocument{candidate},
-		Runner:        implementationDispatchPlanDocumentPreflightRunner,
+		PlanDocuments: []implementationdispatch.PlanDocument{candidate},
+		Runner:        planDocumentPreflightRunner,
 	}); len(blocked) > 0 {
 		return candidate, candidateRel, blocked, false
 	}
@@ -293,7 +285,7 @@ func implementationDispatchFileExists(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
-func implementationDispatchEditScopeFromPlanDocuments(prompt string, plan promptExecutionPlan, cfg config.Config, planDocuments []implementationDispatchPlanDocument) ([]string, []string) {
+func implementationDispatchEditScopeFromPlanDocuments(prompt string, plan promptExecutionPlan, cfg config.Config, planDocuments []implementationdispatch.PlanDocument) ([]string, []string) {
 	intake := implementationDispatchCompilePlanExecuteScopeIntake(prompt, plan, cfg)
 	requiredPaths := appendUniqueBriefStrings(nil, intake.RequiredTargets...)
 
@@ -312,7 +304,7 @@ func implementationDispatchEditScopeFromPlanDocuments(prompt string, plan prompt
 	return requiredPaths, allowedPaths
 }
 
-func implementationDispatchEditScopePlanDocumentsAndResolution(prompt string, plan promptExecutionPlan, cfg config.Config) ([]string, []string, []implementationDispatchPlanDocument, []implementationDispatchPlanDocumentResolutionBlocker) {
+func implementationDispatchEditScopePlanDocumentsAndResolution(prompt string, plan promptExecutionPlan, cfg config.Config) ([]string, []string, []implementationdispatch.PlanDocument, []implementationdispatch.ResolutionBlocker) {
 	intake := implementationDispatchCompilePlanExecuteScopeIntake(prompt, plan, cfg)
 	root := implementationdispatch.WorkspaceRoot(cfg.Workspace.Root, cfg.Workspace.CWD)
 

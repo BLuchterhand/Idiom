@@ -7,10 +7,10 @@ import (
 	"testing"
 )
 
-func TestOpenRecorderUsesCommandMetadataName(t *testing.T) {
+func TestOpenRecorderUsesResolvedCommandName(t *testing.T) {
 	dir := t.TempDir()
 
-	rec := OpenRecorder([]string{"tool", "pwd"}, RecorderOptions{Dir: dir})
+	rec := OpenRecorder("tool:pwd", []string{"tool", "pwd"}, RecorderOptions{Dir: dir})
 	if rec == nil {
 		t.Fatal("recorder disabled unexpectedly")
 	}

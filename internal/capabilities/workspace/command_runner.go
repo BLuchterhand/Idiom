@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"idiom/internal/platform/commandexec"
 )
@@ -34,7 +35,7 @@ func (m *Manager) runCommandDetailedWithEnv(parent context.Context, dir string, 
 		Args:           args,
 		Dir:            dir,
 		Env:            extraEnv,
-		Timeout:        timeDurationSeconds(timeoutSeconds),
+		Timeout:        time.Duration(timeoutSeconds) * time.Second,
 		MaxOutputBytes: workspaceCommandCaptureBytes(m.cfg.MaxOutputBytes),
 		CanonicalPWD:   true,
 	})

@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"strings"
-	"time"
 )
 
 func defaultString(value, fallback string) string {
@@ -11,10 +10,6 @@ func defaultString(value, fallback string) string {
 	}
 
 	return value
-}
-
-func timeDurationSeconds(seconds int) time.Duration {
-	return time.Duration(seconds) * time.Second
 }
 
 func isNoMatchExit(err error) bool {

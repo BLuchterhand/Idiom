@@ -122,7 +122,7 @@ type evidenceCapabilitySummaryInfo struct {
 	classes []string
 }
 
-func compactEvidenceCapabilitySummary(manifest []ToolManifestEntry) []string {
+func compactEvidenceCapabilitySummary(manifest []workspace.ToolManifestEntry) []string {
 	byCapability := make(map[string]*evidenceCapabilitySummaryInfo)
 
 	for _, entry := range manifest {

@@ -40,12 +40,12 @@ func disableQueueDaemonForTurnPlannerTest(t *testing.T, root string) {
 	t.Setenv("IDIOM_QUEUE_SOCKET", filepath.Join(root, "missing-runner.sock"))
 }
 
-func stubImplementationDispatchPlanDocumentPreflight(t *testing.T, stub func(context.Context, config.Config, implementationDispatchPlanDocument) implementationDispatchPlanDocumentPreflightResult) {
+func stubImplementationDispatchPlanDocumentPreflight(t *testing.T, stub func(context.Context, config.Config, implementationdispatch.PlanDocument) implementationdispatch.PlanDocumentPreflightResult) {
 	t.Helper()
 
-	orig := implementationDispatchPlanDocumentPreflightRunner
+	orig := planDocumentPreflightRunner
 
-	implementationDispatchPlanDocumentPreflightRunner = func(ctx context.Context, input implementationdispatch.PlanDocumentPreflightInput) implementationDispatchPlanDocumentPreflightResult {
+	planDocumentPreflightRunner = func(ctx context.Context, input implementationdispatch.PlanDocumentPreflightInput) implementationdispatch.PlanDocumentPreflightResult {
 		cfg := config.Config{}
 		cfg.Workspace.Root = input.WorkspaceRoot
 		cfg.Workspace.CWD = input.WorkspaceCWD
@@ -53,24 +53,24 @@ func stubImplementationDispatchPlanDocumentPreflight(t *testing.T, stub func(con
 		return stub(ctx, cfg, input.Document)
 	}
 
-	t.Cleanup(func() { implementationDispatchPlanDocumentPreflightRunner = orig })
+	t.Cleanup(func() { planDocumentPreflightRunner = orig })
 }
 
 func allowImplementationDispatchPlanDocumentPreflight(t *testing.T) {
 	t.Helper()
-	stubImplementationDispatchPlanDocumentPreflight(t, func(_ context.Context, _ config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentPreflightResult {
-		return implementationDispatchPlanDocumentPreflightResult{Path: doc.Path, OK: true}
+	stubImplementationDispatchPlanDocumentPreflight(t, func(_ context.Context, _ config.Config, doc implementationdispatch.PlanDocument) implementationdispatch.PlanDocumentPreflightResult {
+		return implementationdispatch.PlanDocumentPreflightResult{Path: doc.Path, OK: true}
 	})
 }
 
-func stubImplementationDispatchPlanDocumentRefine(t *testing.T, stub func(context.Context, config.Config, implementationDispatchPlanDocument) implementationDispatchPlanDocumentRefineResult) {
+func stubImplementationDispatchPlanDocumentRefine(t *testing.T, stub func(context.Context, config.Config, implementationdispatch.PlanDocument) implementationdispatch.PlanDocumentRefineResult) {
 	t.Helper()
 
-	orig := implementationDispatchPlanDocumentRefineRunner
+	orig := planDocumentRefineRunner
 
-	implementationDispatchPlanDocumentRefineRunner = stub
+	planDocumentRefineRunner = stub
 
-	t.Cleanup(func() { implementationDispatchPlanDocumentRefineRunner = orig })
+	t.Cleanup(func() { planDocumentRefineRunner = orig })
 }
 
 func TestImplementationDispatchSkipsRefineScratchpadMetaBriefs(t *testing.T) {
@@ -145,8 +145,8 @@ func TestImplementationDispatchNonzeroRefineCandidateCarriesPreflightBlockers(t 
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
-	stubImplementationDispatchPlanDocumentPreflight(t, func(_ context.Context, _ config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentPreflightResult {
-		return implementationDispatchPlanDocumentPreflightResult{
+	stubImplementationDispatchPlanDocumentPreflight(t, func(_ context.Context, _ config.Config, doc implementationdispatch.PlanDocument) implementationdispatch.PlanDocumentPreflightResult {
+		return implementationdispatch.PlanDocumentPreflightResult{
 			Path:      doc.Path,
 			OK:        false,
 			AtomState: "blocked-dirty-files",
@@ -200,7 +200,7 @@ func TestImplementationDispatchNonzeroRefineCandidateCarriesPreflightBlockers(t 
 }
 
 func TestImplementationDispatchDirtyAllowanceMarksOnlyNamedScopedDocument(t *testing.T) {
-	docs := []implementationDispatchPlanDocument{
+	docs := []implementationdispatch.PlanDocument{
 		{Path: "atom-a.md", EditPaths: []string{"internal/contracts/writerroute/decision_test.go"}},
 		{Path: "atom-b.md", EditPaths: []string{"internal/contracts/writerroute/decision.go"}},
 	}
@@ -219,7 +219,7 @@ func TestImplementationDispatchDirtyAllowanceMarksOnlyNamedScopedDocument(t *tes
 }
 
 func TestImplementationDispatchDirtyAllowanceIgnoresQuotedNextAction(t *testing.T) {
-	docs := []implementationDispatchPlanDocument{
+	docs := []implementationdispatch.PlanDocument{
 		{Path: "atom-a.md", EditPaths: []string{"internal/contracts/writerroute/decision_test.go"}},
 	}
 	got := implementationdispatch.PlanDocumentsWithDirtyAllowance(
@@ -278,7 +278,7 @@ func TestImplementationDispatchDirtyAllowanceIgnoresQuotedNextAction(t *testing.
 }
 
 func TestImplementationDispatchDirtyAllowanceBroadFlagAllowsAllScopedDocuments(t *testing.T) {
-	docs := []implementationDispatchPlanDocument{
+	docs := []implementationdispatch.PlanDocument{
 		{Path: "atom-a.md", EditPaths: []string{"internal/contracts/writerroute/decision_test.go"}},
 		{Path: "atom-b.md", EditPaths: []string{"internal/contracts/writerroute/decision.go"}},
 	}
@@ -290,7 +290,7 @@ func TestImplementationDispatchDirtyAllowanceBroadFlagAllowsAllScopedDocuments(t
 }
 
 func TestImplementationDispatchDirtyAllowanceBroadFlagRequiresAffirmativeContext(t *testing.T) {
-	docs := []implementationDispatchPlanDocument{
+	docs := []implementationdispatch.PlanDocument{
 		{Path: "atom-a.md", EditPaths: []string{"internal/contracts/writerroute/decision_test.go"}},
 		{Path: "atom-b.md", EditPaths: []string{"internal/contracts/writerroute/decision.go"}},
 	}
@@ -396,7 +396,7 @@ func TestImplementationDispatchMaterializedAtomsCarryDesignDocTestObligations(t 
 		}
 	}
 
-	doc := implementationDispatchPlanDocument{
+	doc := implementationdispatch.PlanDocument{
 		Path: "docs/design.md",
 		Content: strings.Join([]string{
 			"# Design",
@@ -424,12 +424,12 @@ func TestImplementationDispatchMaterializedAtomsCarryDesignDocTestObligations(t 
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
-	atoms, err := implementationdispatch.MaterializePlanDocumentAtoms(root, []implementationDispatchPlanDocument{doc})
+	atoms, err := implementationdispatch.MaterializePlanDocumentAtoms(root, []implementationdispatch.PlanDocument{doc})
 	if err != nil {
 		t.Fatalf("materialize atoms: %v", err)
 	}
 
-	var testAtom implementationDispatchPlanDocument
+	var testAtom implementationdispatch.PlanDocument
 
 	for _, atom := range atoms {
 		if slices.Contains(atom.EditPaths, "pkg/source_test.go") {
@@ -462,7 +462,7 @@ func TestImplementationDispatchMaterializedAtomsPreserveTerminalAtomState(t *tes
 		t.Fatalf("write source: %v", err)
 	}
 
-	doc := implementationDispatchPlanDocument{
+	doc := implementationdispatch.PlanDocument{
 		Path: "docs/design.md",
 		Content: strings.Join([]string{
 			"# Design",
@@ -509,7 +509,7 @@ func TestImplementationDispatchMaterializedAtomsPreserveTerminalAtomState(t *tes
 		t.Fatalf("write existing atom: %v", err)
 	}
 
-	atoms, err := implementationdispatch.MaterializePlanDocumentAtoms(root, []implementationDispatchPlanDocument{doc})
+	atoms, err := implementationdispatch.MaterializePlanDocumentAtoms(root, []implementationdispatch.PlanDocument{doc})
 	if err != nil {
 		t.Fatalf("materialize atoms: %v", err)
 	}
@@ -581,7 +581,7 @@ func TestRunAtomizedImplementationPlanDocumentsSkipsTerminalAtoms(t *testing.T) 
 
 	defer model.Close()
 
-	answer, err := model.runAtomizedImplementationPlanDocumentsViaPlanExecute(context.Background(), "implement docs/design.md", promptExecutionPlan{}, []implementationDispatchPlanDocument{doc})
+	answer, err := model.runAtomizedImplementationPlanDocumentsViaPlanExecute(context.Background(), "implement docs/design.md", promptExecutionPlan{}, []implementationdispatch.PlanDocument{doc})
 	if err != nil {
 		t.Fatalf("run atomized plan documents: %v", err)
 	}
@@ -627,7 +627,7 @@ func TestImplementationDispatchSourceSatisfiedRequiresTestObligationEvidence(t *
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
-	if records := implementationdispatch.PlanDocumentsSourceSatisfied(root, []implementationDispatchPlanDocument{doc}); len(records) != 0 {
+	if records := implementationdispatch.PlanDocumentsSourceSatisfied(root, []implementationdispatch.PlanDocument{doc}); len(records) != 0 {
 		t.Fatalf("source-satisfied must not close without matching test evidence: %#v", records)
 	}
 
@@ -635,7 +635,7 @@ func TestImplementationDispatchSourceSatisfiedRequiresTestObligationEvidence(t *
 		t.Fatalf("write source test with evidence: %v", err)
 	}
 
-	records := implementationdispatch.PlanDocumentsSourceSatisfied(root, []implementationDispatchPlanDocument{doc})
+	records := implementationdispatch.PlanDocumentsSourceSatisfied(root, []implementationdispatch.PlanDocument{doc})
 	if len(records) != 1 || len(records[0].TestEvidence) == 0 {
 		t.Fatalf("expected source-satisfied test evidence, got %#v", records)
 	}
@@ -673,7 +673,7 @@ func TestImplementationDispatchSourceSatisfiedRequiresVerificationCommandEvidenc
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
-	if records := implementationdispatch.PlanDocumentsSourceSatisfied(root, []implementationDispatchPlanDocument{doc}); len(records) != 0 {
+	if records := implementationdispatch.PlanDocumentsSourceSatisfied(root, []implementationdispatch.PlanDocument{doc}); len(records) != 0 {
 		t.Fatalf("source-satisfied must not treat an unrun verification command as evidence: %#v", records)
 	}
 }
@@ -2932,7 +2932,7 @@ func TestPlanExecutePlannerBlockedMessageHidesInternalCompletionGatePrompt(t *te
 			FailureReason: "<<QUESTION>>: Completion gate rejected the final answer repeatedly before the required completion evidence was produced.",
 			PlannerAnswer: "Missing completion evidence: [gate retry 3/3] plan-execute planner phase requires a successful submit_plan tool result before final answer.",
 		},
-	}, implementationDispatchRecoveryDecision{
+	}, recovery.PlanExecuteRecoveryDecision{
 		Decision: "surface",
 		Reason:   "automatic discovered-scope retry did not produce a plan",
 	})
@@ -2980,7 +2980,7 @@ func TestPlanExecutePlannerBlockedMessageCompactsCanonicalPlannerQuestion(t *tes
 			FailureReason: "<<QUESTION>>: Implementation incomplete; required edit path(s) remain unchanged.",
 			PlannerAnswer: plannerAnswer,
 		},
-	}, implementationDispatchRecoveryDecision{
+	}, recovery.PlanExecuteRecoveryDecision{
 		Decision: "surface",
 		Reason:   "automatic retry did not produce a plan",
 	})
@@ -3009,7 +3009,7 @@ func TestPlanExecutePlannerBlockedMessageNamesExecutorRejectedSubmittedPlan(t *t
 			FailureKind:   string(plancontract.PlanExecuteFailureExecutorFailed),
 			FailureReason: "executor phase aborted on edit 0 (pkg/feature_test.go): preflight syntax validation failed",
 		},
-	}, implementationDispatchRecoveryDecision{
+	}, recovery.PlanExecuteRecoveryDecision{
 		Decision: "surface",
 		Reason:   "automatic missing-test retry submitted a plan, but the executor rejected an edit",
 	})
@@ -3038,7 +3038,7 @@ func TestPlanExecuteRepeatedCompletionGateSurfacesDeterministicMessage(t *testin
 		t.Fatalf("expected repeated completion gate classifier to match")
 	}
 
-	answer := humanPlanExecutePlannerBlockedMessage(failure, implementationDispatchRecoveryDecision{
+	answer := humanPlanExecutePlannerBlockedMessage(failure, recovery.PlanExecuteRecoveryDecision{
 		Decision: "surface",
 		Reason:   "planner stopped before emitting `submit_plan`, `Decision: source-satisfied`, or a concrete blocker after repeated completion-gate rejection",
 		Message:  "The system rejected the response 3 times. Manually invoke the submit_plan tool.",
@@ -3110,7 +3110,7 @@ func TestPlanExecutePlannerBlockedMessageDoesNotClaimUnreadSourcesAfterSourceSat
 		},
 		Stdout: "Blocker:\n- Plan submission required: every required_edit_path has satisfied its source-body obligation. Submit one parser-readable `submit_plan` request.",
 	}
-	answer := humanPlanExecutePlannerBlockedMessage(failure, implementationDispatchRecoveryDecision{
+	answer := humanPlanExecutePlannerBlockedMessage(failure, recovery.PlanExecuteRecoveryDecision{
 		Decision: "surface",
 		Reason:   "the planner failed because it lacks the current source code for the required edit paths",
 		Message:  "Planner blocked: the planner cannot generate a valid `submit_plan` because it has not read the current state of the required files. Please allow the planner to read these files.",
@@ -3163,7 +3163,7 @@ func TestPlanExecutePlannerRecoveryAddendumUsesHarnessOwnedRetryContract(t *test
 			FailureReason: "completion gate rejected final answer before submit_plan",
 		},
 	}
-	decision := implementationDispatchRecoveryDecision{
+	decision := recovery.PlanExecuteRecoveryDecision{
 		Decision: "retry",
 		Reason:   "the brief has exact scope",
 		RetryAddendum: "CRITICAL: You MUST produce a valid `submit_plan` tool call. " +
@@ -3216,7 +3216,7 @@ func TestPlanExecutePlannerRecoveryAddendumPrioritizesRequiredSourceReadBlocker(
 		t.Fatalf("source-read blocker path = %q, %v", path, ok)
 	}
 
-	got := appendPlanExecutePlannerRecoveryAddendum(failure.Brief, failure, implementationDispatchRecoveryDecision{
+	got := appendPlanExecutePlannerRecoveryAddendum(failure.Brief, failure, recovery.PlanExecuteRecoveryDecision{
 		Decision:      "retry",
 		Reason:        "source read blocker",
 		RetryAddendum: "First read source for `internal/surfaces/cli/product/product_workflow_test.go`.",
@@ -3775,7 +3775,7 @@ func TestHandleStreamDoneClearsPlanPhaseOnTerminalPlannerFailure(t *testing.T) {
 
 func TestImplementationDispatchRefineDiagnosticsDoNotTruncateActionableLine(t *testing.T) {
 	longBlocker := "exact-anchor specificity failed for required edit path(s): " + strings.Repeat("internal/pkg/path.go ", 40) + "Each required edit path must carry at least one `<path>:<line>` reference."
-	diagnostics := implementationdispatch.RefineDiagnostics(implementationDispatchPlanDocumentRefineResult{
+	diagnostics := implementationdispatch.RefineDiagnostics(implementationdispatch.PlanDocumentRefineResult{
 		Stderr: "noise\nrefine: iter 1\n" + longBlocker + "\n",
 	})
 	joined := strings.Join(diagnostics, "\n")
@@ -4350,8 +4350,8 @@ func TestRunPromptOnceBlocksAmbiguousPlanDocBasenameBeforePlanExecute(t *testing
 func TestRunPromptOnceBlocksUnlintedPlanDocBeforePlanExecute(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
-	stubImplementationDispatchPlanDocumentPreflight(t, func(_ context.Context, _ config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentPreflightResult {
-		return implementationDispatchPlanDocumentPreflightResult{
+	stubImplementationDispatchPlanDocumentPreflight(t, func(_ context.Context, _ config.Config, doc implementationdispatch.PlanDocument) implementationdispatch.PlanDocumentPreflightResult {
+		return implementationdispatch.PlanDocumentPreflightResult{
 			Path:         doc.Path,
 			OK:           false,
 			LintBlockers: []string{"brief lint: brief shape is unknown"},
@@ -4361,8 +4361,8 @@ func TestRunPromptOnceBlocksUnlintedPlanDocBeforePlanExecute(t *testing.T) {
 			},
 		}
 	})
-	stubImplementationDispatchPlanDocumentRefine(t, func(_ context.Context, _ config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentRefineResult {
-		return implementationDispatchPlanDocumentRefineResult{
+	stubImplementationDispatchPlanDocumentRefine(t, func(_ context.Context, _ config.Config, doc implementationdispatch.PlanDocument) implementationdispatch.PlanDocumentRefineResult {
+		return implementationdispatch.PlanDocumentRefineResult{
 			OriginalPath: doc.Path,
 			OutputPath:   ".idiom/refine/tui-docs-plan/accepted.md",
 			ExitCode:     1,
@@ -4461,26 +4461,26 @@ func TestRunPromptOnceSurfacesRefinedCandidatePreflightBlocker(t *testing.T) {
 
 	const refinedPath = ".idiom/refine/tui-docs-plan/accepted.dispatch.md"
 
-	stubImplementationDispatchPlanDocumentPreflight(t, func(_ context.Context, _ config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentPreflightResult {
-		return implementationDispatchPlanDocumentPreflightResult{
+	stubImplementationDispatchPlanDocumentPreflight(t, func(_ context.Context, _ config.Config, doc implementationdispatch.PlanDocument) implementationdispatch.PlanDocumentPreflightResult {
+		return implementationdispatch.PlanDocumentPreflightResult{
 			Path:         doc.Path,
 			OK:           false,
 			LintBlockers: []string{"brief lint: brief shape is unknown"},
 			Blockers:     []string{"brief lint: brief shape is unknown"},
 		}
 	})
-	stubImplementationDispatchPlanDocumentRefine(t, func(_ context.Context, _ config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentRefineResult {
-		return implementationDispatchPlanDocumentRefineResult{
+	stubImplementationDispatchPlanDocumentRefine(t, func(_ context.Context, _ config.Config, doc implementationdispatch.PlanDocument) implementationdispatch.PlanDocumentRefineResult {
+		return implementationdispatch.PlanDocumentRefineResult{
 			OriginalPath: doc.Path,
 			OutputPath:   refinedPath,
 			ExitCode:     1,
 			Stderr:       "refine: max iters reached without ship-as-is verdict",
-			Document: implementationDispatchPlanDocument{
+			Document: implementationdispatch.PlanDocument{
 				Path:      refinedPath,
 				Content:   "# Refined\n\n## Files To Modify\n\n| File | Change |\n|---|---|\n| target.txt | modify target |\n",
 				EditPaths: []string{"target.txt"},
 			},
-			PostPreflightBlockers: []implementationDispatchPlanDocumentPreflightResult{{
+			PostPreflightBlockers: []implementationdispatch.PlanDocumentPreflightResult{{
 				Path:      refinedPath,
 				OK:        false,
 				AtomState: "blocked-dirty-files",
@@ -4584,28 +4584,28 @@ func TestRunPromptOnceRefinesPlanDocBeforePlanExecuteDispatch(t *testing.T) {
 
 	const refinedPath = ".idiom/refine/tui-docs-plan/accepted.md"
 
-	stubImplementationDispatchPlanDocumentPreflight(t, func(_ context.Context, _ config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentPreflightResult {
+	stubImplementationDispatchPlanDocumentPreflight(t, func(_ context.Context, _ config.Config, doc implementationdispatch.PlanDocument) implementationdispatch.PlanDocumentPreflightResult {
 		if doc.Path == refinedPath {
-			return implementationDispatchPlanDocumentPreflightResult{Path: doc.Path, OK: true}
+			return implementationdispatch.PlanDocumentPreflightResult{Path: doc.Path, OK: true}
 		}
 
-		return implementationDispatchPlanDocumentPreflightResult{
+		return implementationdispatch.PlanDocumentPreflightResult{
 			Path:         doc.Path,
 			OK:           false,
 			LintBlockers: []string{"brief lint: brief shape is unknown"},
 			Blockers:     []string{"brief lint: brief shape is unknown"},
 		}
 	})
-	stubImplementationDispatchPlanDocumentRefine(t, func(_ context.Context, cfg config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentRefineResult {
+	stubImplementationDispatchPlanDocumentRefine(t, func(_ context.Context, cfg config.Config, doc implementationdispatch.PlanDocument) implementationdispatch.PlanDocumentRefineResult {
 		root := implementationdispatch.WorkspaceRoot(cfg.Workspace.Root, cfg.Workspace.CWD)
 		outAbs, ok := implementationdispatch.WorkspaceFile(root, refinedPath)
 
 		if !ok {
-			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: refinedPath, ExitCode: 2}
+			return implementationdispatch.PlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: refinedPath, ExitCode: 2}
 		}
 
 		if err := os.MkdirAll(filepath.Dir(outAbs), 0o755); err != nil {
-			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: refinedPath, ExitCode: 1, Err: err}
+			return implementationdispatch.PlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: refinedPath, ExitCode: 1, Err: err}
 		}
 
 		refinedBody := strings.Join([]string{
@@ -4643,15 +4643,15 @@ func TestRunPromptOnceRefinesPlanDocBeforePlanExecuteDispatch(t *testing.T) {
 			"",
 		}, "\n")
 		if err := os.WriteFile(outAbs, []byte(refinedBody), 0o644); err != nil {
-			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: refinedPath, ExitCode: 1, Err: err}
+			return implementationdispatch.PlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: refinedPath, ExitCode: 1, Err: err}
 		}
 
 		refinedDoc, ok := implementationdispatch.ReadPlanDocument(root, refinedPath)
 		if !ok {
-			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: refinedPath, ExitCode: 1}
+			return implementationdispatch.PlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: refinedPath, ExitCode: 1}
 		}
 
-		return implementationDispatchPlanDocumentRefineResult{
+		return implementationdispatch.PlanDocumentRefineResult{
 			OriginalPath: doc.Path,
 			OutputPath:   refinedPath,
 			OK:           true,
@@ -4785,34 +4785,34 @@ func TestImplementationDispatchWorkspaceFileRejectsEscapesAndSymlinkAncestors(t 
 func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
-	stubImplementationDispatchPlanDocumentPreflight(t, func(_ context.Context, _ config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentPreflightResult {
+	stubImplementationDispatchPlanDocumentPreflight(t, func(_ context.Context, _ config.Config, doc implementationdispatch.PlanDocument) implementationdispatch.PlanDocumentPreflightResult {
 		switch {
 		case doc.Path == "docs/design.md":
-			return implementationDispatchPlanDocumentPreflightResult{
+			return implementationdispatch.PlanDocumentPreflightResult{
 				Path:         doc.Path,
 				OK:           false,
 				LintBlockers: []string{"brief lint: single-purpose decomposition failed: 3 file-allowlist row(s) across 3 files. Decompose into ADD-only / MODIFY-only / TEST-only sub-atoms before dispatch."},
 				Blockers:     []string{"brief lint: single-purpose decomposition failed: 3 file-allowlist row(s) across 3 files. Decompose into ADD-only / MODIFY-only / TEST-only sub-atoms before dispatch."},
 			}
 		case implementationdispatch.IsAtomizedPlanDocumentPath(doc.Path):
-			return implementationDispatchPlanDocumentPreflightResult{
+			return implementationdispatch.PlanDocumentPreflightResult{
 				Path: doc.Path,
 				OK:   true,
 			}
 		case strings.HasPrefix(doc.Path, ".idiom/refine/") && strings.HasSuffix(doc.Path, "/accepted.md"):
-			return implementationDispatchPlanDocumentPreflightResult{Path: doc.Path, OK: true}
+			return implementationdispatch.PlanDocumentPreflightResult{Path: doc.Path, OK: true}
 		default:
-			return implementationDispatchPlanDocumentPreflightResult{Path: doc.Path, OK: true}
+			return implementationdispatch.PlanDocumentPreflightResult{Path: doc.Path, OK: true}
 		}
 	})
-	stubImplementationDispatchPlanDocumentRefine(t, func(_ context.Context, cfg config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentRefineResult {
+	stubImplementationDispatchPlanDocumentRefine(t, func(_ context.Context, cfg config.Config, doc implementationdispatch.PlanDocument) implementationdispatch.PlanDocumentRefineResult {
 		target := ""
 		if len(doc.EditPaths) > 0 {
 			target = doc.EditPaths[0]
 		}
 
 		if target == "" {
-			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, ExitCode: 1, Stderr: "missing atom edit path"}
+			return implementationdispatch.PlanDocumentRefineResult{OriginalPath: doc.Path, ExitCode: 1, Stderr: "missing atom edit path"}
 		}
 
 		root := implementationdispatch.WorkspaceRoot(cfg.Workspace.Root, cfg.Workspace.CWD)
@@ -4820,11 +4820,11 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 		outAbs, ok := implementationdispatch.WorkspaceFile(root, outRel)
 
 		if !ok {
-			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: outRel, ExitCode: 2}
+			return implementationdispatch.PlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: outRel, ExitCode: 2}
 		}
 
 		if err := os.MkdirAll(filepath.Dir(outAbs), 0o755); err != nil {
-			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: outRel, ExitCode: 1, Err: err}
+			return implementationdispatch.PlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: outRel, ExitCode: 1, Err: err}
 		}
 
 		change := "Apply this atom's design-doc slice."
@@ -4860,15 +4860,15 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 			"",
 		}, "\n")
 		if err := os.WriteFile(outAbs, []byte(refinedBody), 0o644); err != nil {
-			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: outRel, ExitCode: 1, Err: err}
+			return implementationdispatch.PlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: outRel, ExitCode: 1, Err: err}
 		}
 
 		refinedDoc, ok := implementationdispatch.ReadPlanDocument(root, outRel)
 		if !ok {
-			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: outRel, ExitCode: 1}
+			return implementationdispatch.PlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: outRel, ExitCode: 1}
 		}
 
-		return implementationDispatchPlanDocumentRefineResult{
+		return implementationdispatch.PlanDocumentRefineResult{
 			OriginalPath: doc.Path,
 			OutputPath:   outRel,
 			OK:           false,
@@ -5146,18 +5146,18 @@ func TestRunImplementationPlanDocumentsSourceSatisfiedAtomSkipsRefineAndPlanExec
 
 	var refineCalls atomic.Int64
 
-	stubImplementationDispatchPlanDocumentRefine(t, func(_ context.Context, _ config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentRefineResult {
+	stubImplementationDispatchPlanDocumentRefine(t, func(_ context.Context, _ config.Config, doc implementationdispatch.PlanDocument) implementationdispatch.PlanDocumentRefineResult {
 		refineCalls.Add(1)
 
-		return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, ExitCode: 1, Stderr: "refine should not run"}
+		return implementationdispatch.PlanDocumentRefineResult{OriginalPath: doc.Path, ExitCode: 1, Stderr: "refine should not run"}
 	})
 
 	var preflightCalls atomic.Int64
 
-	stubImplementationDispatchPlanDocumentPreflight(t, func(_ context.Context, _ config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentPreflightResult {
+	stubImplementationDispatchPlanDocumentPreflight(t, func(_ context.Context, _ config.Config, doc implementationdispatch.PlanDocument) implementationdispatch.PlanDocumentPreflightResult {
 		preflightCalls.Add(1)
 
-		return implementationDispatchPlanDocumentPreflightResult{Path: doc.Path, OK: true}
+		return implementationdispatch.PlanDocumentPreflightResult{Path: doc.Path, OK: true}
 	})
 
 	atomContent := strings.Join([]string{
@@ -5188,7 +5188,7 @@ func TestRunImplementationPlanDocumentsSourceSatisfiedAtomSkipsRefineAndPlanExec
 		"> | `pkg/events.go` | Emit `idiom.pkg.writer_route_decision` for direct runs |",
 		"",
 	}, "\n")
-	doc := implementationDispatchPlanDocument{
+	doc := implementationdispatch.PlanDocument{
 		Path:      ".idiom/atoms/design/atom-001.md",
 		Content:   atomContent,
 		EditPaths: []string{"pkg/events.go"},
@@ -5205,7 +5205,7 @@ func TestRunImplementationPlanDocumentsSourceSatisfiedAtomSkipsRefineAndPlanExec
 	model := New(cfg)
 	defer model.Close()
 
-	answer, err := model.runImplementationPlanDocumentsViaPlanExecute(context.Background(), "implement docs/design.md", promptExecutionPlan{}, []implementationDispatchPlanDocument{doc})
+	answer, err := model.runImplementationPlanDocumentsViaPlanExecute(context.Background(), "implement docs/design.md", promptExecutionPlan{}, []implementationdispatch.PlanDocument{doc})
 	if err != nil {
 		t.Fatalf("runImplementationPlanDocumentsViaPlanExecute: %v", err)
 	}
@@ -5298,7 +5298,7 @@ func TestRunImplementationPlanDocumentsSourceSatisfiedAtomMarksAtomComplete(t *t
 
 	defer model.Close()
 
-	answer, err := model.runImplementationPlanDocumentsViaPlanExecute(context.Background(), "implement docs/design.md", promptExecutionPlan{}, []implementationDispatchPlanDocument{doc})
+	answer, err := model.runImplementationPlanDocumentsViaPlanExecute(context.Background(), "implement docs/design.md", promptExecutionPlan{}, []implementationdispatch.PlanDocument{doc})
 	if err != nil {
 		t.Fatalf("runImplementationPlanDocumentsViaPlanExecute: %v", err)
 	}
@@ -5380,7 +5380,7 @@ func TestImplementationDispatchSourceSatisfiedUsesCurrentStateAnchorConcepts(t *
 		}
 	}
 
-	docs := []implementationDispatchPlanDocument{
+	docs := []implementationdispatch.PlanDocument{
 		sourceSatisfiedAtomDoc(".idiom/atoms/design/atom-001.md", "internal/contracts/writerroute/decision.go", "Domain type, normalization, stable ID, event fields", []string{
 			"`internal/contracts/writerroute/decision.go:3`: `// SchemaVersion is the current version of the WriterRouteDecision schema.`",
 			"`internal/contracts/writerroute/decision.go:6`: `type Decision struct {`",
@@ -5450,7 +5450,7 @@ func TestImplementationDispatchSourceSatisfiedUsesCurrentSourceBodyWhenAnchorsAr
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
-	records := implementationdispatch.PlanDocumentsSourceSatisfied(root, []implementationDispatchPlanDocument{doc})
+	records := implementationdispatch.PlanDocumentsSourceSatisfied(root, []implementationdispatch.PlanDocument{doc})
 	if len(records) != 1 {
 		t.Fatalf("records = %#v, want source-satisfied from current source body", records)
 	}
@@ -5479,7 +5479,7 @@ func TestImplementationDispatchSourceSatisfiedDoesNotTreatFallbackAnchorsAsDone(
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
-	if records := implementationdispatch.PlanDocumentsSourceSatisfied(root, []implementationDispatchPlanDocument{doc}); len(records) != 0 {
+	if records := implementationdispatch.PlanDocumentsSourceSatisfied(root, []implementationdispatch.PlanDocument{doc}); len(records) != 0 {
 		t.Fatalf("fallback/current old anchors must not source-satisfy pending work: %#v", records)
 	}
 }
@@ -5496,7 +5496,7 @@ func TestImplementationDispatchOptionalSourceSatisfiedRequiresLiveAnchor(t *test
 	if err := os.WriteFile(full, []byte(strings.Join([]string{
 		"package app",
 		"",
-		"type implementationDispatchPlanDocument struct {",
+		"type planDocumentFixture struct {",
 		"	Path string",
 		"}",
 		"",
@@ -5512,12 +5512,12 @@ func TestImplementationDispatchOptionalSourceSatisfiedRequiresLiveAnchor(t *test
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
-	if records := implementationdispatch.PlanDocumentsSourceSatisfied(root, []implementationDispatchPlanDocument{doc}); len(records) != 0 {
+	if records := implementationdispatch.PlanDocumentsSourceSatisfied(root, []implementationdispatch.PlanDocument{doc}); len(records) != 0 {
 		t.Fatalf("optional source-satisfied must require a live current-state anchor, got %#v", records)
 	}
 }
 
-func sourceSatisfiedAtomDoc(docPath string, editPath string, change string, anchors []string) implementationDispatchPlanDocument {
+func sourceSatisfiedAtomDoc(docPath string, editPath string, change string, anchors []string) implementationdispatch.PlanDocument {
 	var b strings.Builder
 
 	b.WriteString("# Atom\n\n")
@@ -5547,7 +5547,7 @@ func sourceSatisfiedAtomDoc(docPath string, editPath string, change string, anch
 	b.WriteString(change)
 	b.WriteString(" |\n")
 
-	return implementationDispatchPlanDocument{
+	return implementationdispatch.PlanDocument{
 		Path:      docPath,
 		Content:   b.String(),
 		EditPaths: []string{editPath},
@@ -6976,17 +6976,17 @@ func TestRunPromptOnceReferenceOnlyDesignDocDispatchesPlanExecuteWithoutRefine(t
 
 	var preflightCalls atomic.Int64
 
-	stubImplementationDispatchPlanDocumentPreflight(t, func(_ context.Context, _ config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentPreflightResult {
+	stubImplementationDispatchPlanDocumentPreflight(t, func(_ context.Context, _ config.Config, doc implementationdispatch.PlanDocument) implementationdispatch.PlanDocumentPreflightResult {
 		preflightCalls.Add(1)
 
-		return implementationDispatchPlanDocumentPreflightResult{
+		return implementationdispatch.PlanDocumentPreflightResult{
 			Path:     doc.Path,
 			OK:       false,
 			Blockers: []string{"reference-only design doc must not run dispatch preflight"},
 		}
 	})
-	stubImplementationDispatchPlanDocumentRefine(t, func(_ context.Context, _ config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentRefineResult {
-		return implementationDispatchPlanDocumentRefineResult{
+	stubImplementationDispatchPlanDocumentRefine(t, func(_ context.Context, _ config.Config, doc implementationdispatch.PlanDocument) implementationdispatch.PlanDocumentRefineResult {
+		return implementationdispatch.PlanDocumentRefineResult{
 			OriginalPath: doc.Path,
 			ExitCode:     1,
 			Stderr:       "reference-only design doc must not run refine",

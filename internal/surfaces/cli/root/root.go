@@ -3,6 +3,7 @@ package root
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"idiom/internal/capabilities/workspace"
 	lanecontract "idiom/internal/contracts/lane"
@@ -52,7 +53,7 @@ func runMain(args []string, stdout io.Writer, stderr io.Writer) (code int) {
 }
 
 func runMainWithTelemetryDir(args []string, stdout io.Writer, stderr io.Writer, telemetryDir string) (code int) {
-	rec := cmdtelemetry.OpenRecorder(args, cmdtelemetry.RecorderOptions{Dir: telemetryDir, Version: version})
+	rec := cmdtelemetry.OpenRecorder(rootTelemetryCommandName(args), args, cmdtelemetry.RecorderOptions{Dir: telemetryDir, Version: version})
 	if rec != nil {
 		stopTelemetrySignalHandler := cmdtelemetry.InstallSignalHandler(rec)
 		defer func() {
@@ -143,6 +144,54 @@ func runMainWithTelemetryDir(args []string, stdout io.Writer, stderr io.Writer, 
 	}
 
 	return cmdruntime.RunWithTelemetry(args, stdout, stderr, cmdruntime.RunPromptOnce, cmdruntime.RunPromptsOnce, cmdruntime.RunTUI, cmdruntime.RunServerOnlyWithTelemetry, cmdruntime.RunListSessions, runVersionMain, rec)
+}
+
+func rootTelemetryCommandName(args []string) string {
+	if len(args) == 0 {
+		return legacyRuntimeTelemetryCommandName(args)
+	}
+
+	subcommand := args[0]
+	switch subcommand {
+	case "architect", "atom", "audit", "backend", "brief", "coding-rules", "context",
+		"feature-planner", "lane", "local-ops", "mcp", "product", "product-evidence",
+		"probe", "queue", "ranker", "recover", "release", "tool":
+		if len(args) > 1 {
+			return subcommand + ":" + args[1]
+		}
+		return subcommand
+	case "artifact", "contract", "decision", "doctor", string(lanecontract.LaneImplement), "init",
+		string(lanecontract.LanePlanExecute), "profile", "run", "serve", "session",
+		"skills", "version":
+		return subcommand
+	default:
+		return legacyRuntimeTelemetryCommandName(args)
+	}
+}
+
+func legacyRuntimeTelemetryCommandName(args []string) string {
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-prompt=") || strings.HasPrefix(arg, "--prompt=") {
+			return "prompt"
+		}
+
+		if strings.HasPrefix(arg, "-turns-file=") || strings.HasPrefix(arg, "--turns-file=") {
+			return "turns_file"
+		}
+
+		switch arg {
+		case "-server-only", "--server-only":
+			return "server"
+		case "-prompt", "--prompt":
+			return "prompt"
+		case "-turns-file", "--turns-file":
+			return "turns_file"
+		case "-list-sessions", "--list-sessions":
+			return "list_sessions"
+		}
+	}
+
+	return "tui"
 }
 
 func applyBuildInfo(opts Options) {

@@ -430,11 +430,11 @@ Current-state note: plan-submission profiles now own required-tool completion
 for `submit_plan` inside workspace profile projection. `workerruntime` selects a
 `ToolSurfaceProfile` and receives the projected tools; it no longer patches
 `submit_plan` back into planner/review briefs after filtering.
-`workerruntime.ToolManifestEntry` is now an alias for the workspace manifest
-entry, and runtime brief normalization calls workspace manifest build/sanitize
-functions directly. The duplicate runtime manifest struct, workspace-to-runtime
-conversion helper, placeholder-request sanitizer, and runner-local
-`runnerSanitizedToolManifest` wrapper were removed.
+Runtime briefs now name the workspace manifest entry type directly, and runtime
+brief normalization calls workspace manifest build/sanitize functions directly.
+The duplicate runtime manifest struct, workspace-to-runtime conversion helper,
+placeholder-request sanitizer, and runner-local `runnerSanitizedToolManifest`
+wrapper were removed.
 Symbolic runtime `RequiredTools` labels now live in workspace with a single
 `ConcreteRequiredTools` projection to workspace tool names. Runtime catalog
 specs, visible-brief shaping, control rails, TUI prompt-routing filters, and

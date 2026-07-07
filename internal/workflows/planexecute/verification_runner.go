@@ -17,10 +17,6 @@ import (
 	"idiom/internal/platform/textutil"
 )
 
-func RunVerificationPlanWithContext(ctx context.Context, root string, plan VerificationPlan, jsonEvents bool, stdout io.Writer) (int, []plancontract.PhaseEvidenceCheck, error) {
-	return runPlanExecuteVerificationPlanWithParentContract(planExecuteContext(ctx), root, plan, "", jsonEvents, stdout)
-}
-
 func runPlanExecuteVerificationPlanWithParentContract(ctx context.Context, root string, plan VerificationPlan, parentContractID string, jsonEvents bool, stdout io.Writer) (int, []plancontract.PhaseEvidenceCheck, error) {
 	ctx = planExecuteContext(ctx)
 	evidence := make([]plancontract.PhaseEvidenceCheck, 0, len(plan.Commands)+len(plan.Rejects))

@@ -7,7 +7,6 @@ import (
 	"sync"
 	"syscall"
 
-	"idiom/internal/contracts/commandmeta"
 	"idiom/internal/evidence/productevidence"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
@@ -19,14 +18,14 @@ type RecorderOptions struct {
 	Version string
 }
 
-func OpenRecorder(args []string, opts RecorderOptions) *telemetry.Recorder {
+func OpenRecorder(command string, args []string, opts RecorderOptions) *telemetry.Recorder {
 	wd, _ := os.Getwd()
 
 	wd = config.CanonicalizeExistingPath(wd)
 
 	rec, err := telemetry.Open(telemetry.Options{
 		Dir:           opts.Dir,
-		Command:       commandmeta.TelemetryName(args),
+		Command:       command,
 		Args:          CommandArgs(args),
 		WorkspaceRoot: wd,
 		Version:       opts.Version,

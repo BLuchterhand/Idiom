@@ -19,23 +19,21 @@ release behavior.
 
 ## Coding Rules
 
-Projects can codify local idioms in `.idiom/coding_rules.json`. The first
-runtime rule checks Go pass-through wrappers: one-statement functions that only
-forward the same arguments to another call without validation, translation,
-error context, observability, or a permission check.
+Projects can codify local idioms in `.idiom/coding_rules.json`. This repository
+tracks that file and treats Go pass-through wrappers as a blocking error. The
+rule checks one-statement functions that only forward the same arguments to
+another call without owning a real interface or boundary-adapter contract.
 
 ```bash
-cp coding_rules.example.json .idiom/coding_rules.json
 idiom coding-rules check --project-root . --fail-on blocking
 idiom tool coding_rules_check --input '{"path":"."}'
 ```
 
-Use advisory enforcement while tuning a repository. Switch a rule to `blocking`
-only when the team agrees the pattern is a real invariant. Do not suppress
-wrapper-only migration steps, compatibility aliases, or functions kept only so
-callers can be moved later. Move callers to the owning API and delete the old
-surface. Inline suppressions are for imposed boundary/interface adapters only
-and must carry that rationale:
+Use `coding_rules.example.json` as an advisory starting point for other
+repositories. Do not suppress wrapper-only migration steps, compatibility
+aliases, or functions kept only so callers can be moved later. Move callers to
+the owning API and delete the old surface. Inline suppressions are for imposed
+boundary/interface adapters only and must carry that rationale:
 
 ```go
 // idiom:allow go.no_pass_through_wrapper -- boundary adapter required by external Host interface

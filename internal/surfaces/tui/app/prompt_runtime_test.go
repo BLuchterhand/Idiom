@@ -1003,7 +1003,7 @@ func TestImplementationFollowupRuntimeBriefCarriesPreviousRecommendation(t *test
 		AllowedTools:         []string{"read_file", "search_content", "apply_patch"},
 		ForbiddenTools:       []string{"shell"},
 		RequiredTools:        []string{workspace.RequiredToolEditFileOrApplyPatch},
-		ToolManifest:         []workerruntime.ToolManifestEntry{{Tool: "read_file", Request: "bounded source read"}},
+		ToolManifest:         []workspace.ToolManifestEntry{{Tool: "read_file", Request: "bounded source read"}},
 		EvidenceCapabilities: []string{"source_body"},
 		SearchPolicy:         []string{"consume_target_packet_first"},
 		TargetPacket:         []string{"prompt_context:structured_packet"},

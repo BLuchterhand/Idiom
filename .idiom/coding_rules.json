@@ -1,0 +1,28 @@
+{
+  "schema_version": "idiom.coding_rules.v1",
+  "defaults": {
+    "enabled": true,
+    "enforcement": "blocking",
+    "severity": "error",
+    "include": ["**/*.go"],
+    "exclude": ["vendor/**", "testdata/**", ".git/**", ".idiom/**"]
+  },
+  "rules": [
+    {
+      "id": "go.no_pass_through_wrapper",
+      "languages": ["go"],
+      "kind": "structure",
+      "allow_when": [
+        "implements_interface",
+        "boundary_adapter"
+      ],
+      "options": {
+        "pass_through_wrapper": {
+          "max_body_statements": 1,
+          "ignore_tests": true,
+          "ignore_generated": true
+        }
+      }
+    }
+  ]
+}

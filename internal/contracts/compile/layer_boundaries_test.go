@@ -55,7 +55,6 @@ func coreContractPackageDirectImports() map[string][]string {
 		"idiom/internal/contracts/atomintake":     {},
 		"idiom/internal/contracts/autonomy":       {"idiom/internal/contracts/lane"},
 		"idiom/internal/contracts/codingrules":    {},
-		"idiom/internal/contracts/commandmeta":    {},
 		"idiom/internal/contracts/compile":        {"idiom/internal/contracts/autonomy", "idiom/internal/contracts/lane"},
 		"idiom/internal/contracts/contextpack":    {},
 		"idiom/internal/contracts/featureplanner": {},

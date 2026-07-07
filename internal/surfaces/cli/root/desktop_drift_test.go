@@ -1,4 +1,4 @@
-package commandmeta
+package root
 
 import (
 	"os"
@@ -191,7 +191,7 @@ func repoRoot(t *testing.T) string {
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	root, err := filepath.Abs(filepath.Join(filepath.Dir(filename), "..", "..", ".."))
+	root, err := filepath.Abs(filepath.Join(filepath.Dir(filename), "..", "..", "..", ".."))
 	if err != nil {
 		t.Fatalf("resolve repo root: %v", err)
 	}

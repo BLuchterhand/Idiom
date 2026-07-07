@@ -3014,13 +3014,13 @@ func TestReviewRepairNonInteractiveDoesNotTrustSelfApprovedRepairPlanForNewFile(
 func TestVerificationPlanRejectsFailExecutorVerification(t *testing.T) {
 	var stdout bytes.Buffer
 
-	checked, evidence, err := RunVerificationPlanWithContext(nil, t.TempDir(), VerificationPlan{
+	checked, evidence, err := runPlanExecuteVerificationPlanWithParentContract(context.Background(), t.TempDir(), VerificationPlan{
 		Rejects: []plancontract.VerificationReject{{
 			Command: "bin/colony_tests -ts=quality_inventory_bindings",
 			Source:  plancontract.VerificationCommandSourcePrompt,
 			Reason:  plancontract.VerificationRejectUnsupportedCmd,
 		}},
-	}, true, &stdout)
+	}, "", true, &stdout)
 	if err == nil {
 		t.Fatal("expected unsupported requested verification to fail")
 	}

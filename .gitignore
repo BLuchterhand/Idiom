@@ -22,6 +22,7 @@ __pycache__/
 .idiom/*
 !.idiom/backends.json
 !.idiom/config.json
+!.idiom/coding_rules.json
 !.idiom/prompts/
 !.idiom/prompts/**
 .planning/
