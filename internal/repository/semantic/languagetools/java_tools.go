@@ -731,7 +731,7 @@ func (m *Manager) javaDiagnostics(ctx context.Context, req ToolRequest) ToolResu
 	}
 
 	if _, err := os.Stat(filepath.Join(m.Root(), "pom.xml")); err == nil {
-		stdout, stderr, runErr := m.runCommandDetailed(ctx, m.Root(), "mvn", "-q", "-o", "compile", "-DskipTests")
+		stdout, stderr, runErr := m.runCommandDetailedWithEnv(ctx, m.Root(), nil, "mvn", "-q", "-o", "compile", "-DskipTests")
 		output := strings.TrimSpace(strings.TrimSpace(stdout) + "\n" + strings.TrimSpace(stderr))
 
 		if runErr != nil && output == "" {
@@ -746,7 +746,7 @@ func (m *Manager) javaDiagnostics(ctx context.Context, req ToolRequest) ToolResu
 	}
 
 	if _, err := os.Stat(filepath.Join(m.Root(), "build.gradle")); err == nil {
-		stdout, stderr, runErr := m.runCommandDetailed(ctx, m.Root(), "gradle", "--offline", "--quiet", "compileJava")
+		stdout, stderr, runErr := m.runCommandDetailedWithEnv(ctx, m.Root(), nil, "gradle", "--offline", "--quiet", "compileJava")
 		output := strings.TrimSpace(strings.TrimSpace(stdout) + "\n" + strings.TrimSpace(stderr))
 
 		if runErr != nil && output == "" {
@@ -768,7 +768,7 @@ func (m *Manager) javaDiagnostics(ctx context.Context, req ToolRequest) ToolResu
 			continue
 		}
 
-		stdout, stderr, runErr := m.runCommandDetailed(ctx, m.Root(), "javac", "-Xlint:all", "-d", os.TempDir(), abs)
+		stdout, stderr, runErr := m.runCommandDetailedWithEnv(ctx, m.Root(), nil, "javac", "-Xlint:all", "-d", os.TempDir(), abs)
 		chunk := strings.TrimSpace(strings.TrimSpace(stdout) + "\n" + strings.TrimSpace(stderr))
 
 		if chunk == "" {

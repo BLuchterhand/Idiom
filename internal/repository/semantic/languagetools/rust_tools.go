@@ -592,7 +592,7 @@ func (m *Manager) rustDiagnostics(ctx context.Context, req ToolRequest) ToolResu
 		}
 	}
 
-	stdout, stderr, err := m.runCommandDetailed(ctx, workdir, "cargo", "check", "--quiet", "--message-format=short")
+	stdout, stderr, err := m.runCommandDetailedWithEnv(ctx, workdir, nil, "cargo", "check", "--quiet", "--message-format=short")
 	output := strings.TrimSpace(strings.TrimSpace(stdout) + "\n" + strings.TrimSpace(stderr))
 
 	output = strings.TrimSpace(output)

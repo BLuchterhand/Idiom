@@ -15,25 +15,25 @@ const (
 	PlanExecuteTerminalQuestion        = "<<QUESTION>>:"
 )
 
-type ToolSurfacePhase = toolSurfaceProjectionID
+type ToolSurfacePhase string
 
 const (
-	ToolSurfacePhaseImplementationPreWrite           = toolSurfaceProjectionImplementationPreWrite
-	ToolSurfacePhaseImplementationTargetSource       = toolSurfaceProjectionImplementationTargetSource
-	ToolSurfacePhaseImplementationTargetWriteReady   = toolSurfaceProjectionImplementationTargetWriteReady
-	ToolSurfacePhaseImplementationVerificationReady  = toolSurfaceProjectionImplementationVerificationReady
-	ToolSurfacePhaseImplementationVerificationRepair = toolSurfaceProjectionImplementationVerificationRepair
-	ToolSurfacePhasePlanExecuteReviewRepairInitial   = toolSurfaceProjectionPlanExecuteReviewRepairInitial
-	ToolSurfacePhasePlanExecuteReviewRepairTerminal  = toolSurfaceProjectionPlanExecuteReviewRepairTerminal
-	ToolSurfacePhasePlanExecuteSubmitPlanOnly        = toolSurfaceProjectionPlanExecuteSubmitPlanOnly
-	ToolSurfacePhasePlanExecuteRequiredSource        = toolSurfaceProjectionPlanExecuteRequiredSource
-	ToolSurfacePhasePlanExecuteHistoryPending        = toolSurfaceProjectionPlanExecuteHistoryPending
-	ToolSurfacePhasePlanExecuteCandidateSource       = toolSurfaceProjectionPlanExecuteCandidateSource
-	ToolSurfacePhasePlanExecuteAnchorRefresh         = toolSurfaceProjectionPlanExecuteAnchorRefresh
+	ToolSurfacePhaseImplementationPreWrite           ToolSurfacePhase = ToolSurfacePhase(toolSurfaceProjectionImplementationPreWrite)
+	ToolSurfacePhaseImplementationTargetSource       ToolSurfacePhase = ToolSurfacePhase(toolSurfaceProjectionImplementationTargetSource)
+	ToolSurfacePhaseImplementationTargetWriteReady   ToolSurfacePhase = ToolSurfacePhase(toolSurfaceProjectionImplementationTargetWriteReady)
+	ToolSurfacePhaseImplementationVerificationReady  ToolSurfacePhase = ToolSurfacePhase(toolSurfaceProjectionImplementationVerificationReady)
+	ToolSurfacePhaseImplementationVerificationRepair ToolSurfacePhase = ToolSurfacePhase(toolSurfaceProjectionImplementationVerificationRepair)
+	ToolSurfacePhasePlanExecuteReviewRepairInitial   ToolSurfacePhase = ToolSurfacePhase(toolSurfaceProjectionPlanExecuteReviewRepairInitial)
+	ToolSurfacePhasePlanExecuteReviewRepairTerminal  ToolSurfacePhase = ToolSurfacePhase(toolSurfaceProjectionPlanExecuteReviewRepairTerminal)
+	ToolSurfacePhasePlanExecuteSubmitPlanOnly        ToolSurfacePhase = ToolSurfacePhase(toolSurfaceProjectionPlanExecuteSubmitPlanOnly)
+	ToolSurfacePhasePlanExecuteRequiredSource        ToolSurfacePhase = ToolSurfacePhase(toolSurfaceProjectionPlanExecuteRequiredSource)
+	ToolSurfacePhasePlanExecuteHistoryPending        ToolSurfacePhase = ToolSurfacePhase(toolSurfaceProjectionPlanExecuteHistoryPending)
+	ToolSurfacePhasePlanExecuteCandidateSource       ToolSurfacePhase = ToolSurfacePhase(toolSurfaceProjectionPlanExecuteCandidateSource)
+	ToolSurfacePhasePlanExecuteAnchorRefresh         ToolSurfacePhase = ToolSurfacePhase(toolSurfaceProjectionPlanExecuteAnchorRefresh)
 )
 
 func ToolSurfacePhaseToolNames(phase ToolSurfacePhase) []string {
-	return collectToolSurfaceProjectionToolNames(phase, nil)
+	return collectToolSurfaceProjectionToolNames(toolSurfaceProjectionID(phase), nil)
 }
 
 func ToolSurfacePhaseAllowedTools(tools []string, phase ToolSurfacePhase) []string {

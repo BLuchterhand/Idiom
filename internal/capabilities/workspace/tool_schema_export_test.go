@@ -798,7 +798,7 @@ func TestHarnessAuditToolSurfaceDetectsExportSuggestionAndStaleBlockerDrift(t *t
 		Description:    "drift fixture",
 		ParametersJSON: `{"type":"object","properties":{}}`,
 	})
-	suggestions := append(builtinToolNamesForSuggest(), "suggestion_only")
+	suggestions := append(toolManifestToolsAcrossBuiltInSurfaces(), "suggestion_only")
 
 	export, err := BuildToolSchemaExport(nil)
 	if err != nil {

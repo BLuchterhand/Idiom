@@ -43,7 +43,6 @@ const (
 type Host interface {
 	Enabled() bool
 	Root() string
-	CWD() string
 	MaxDirectoryEntries() int
 	MaxOutputBytes() int
 	WritesEnabled() bool
@@ -53,9 +52,7 @@ type Host interface {
 	RememberPath(abs string)
 	PrimeDiscoveredPaths(paths []string)
 	PathForHandle(handle string) (string, error)
-	ReadFileLines(path string, start int, end int) (string, error)
 	Execute(ctx context.Context, req ToolRequest) ToolResult
-	RunCommandDetailed(ctx context.Context, dir string, name string, args ...string) (string, string, error)
 	RunCommandDetailedWithEnv(ctx context.Context, dir string, extraEnv []string, name string, args ...string) (string, string, error)
 }
 
@@ -192,14 +189,6 @@ func (m *Manager) searchContent(ctx context.Context, req ToolRequest, toolName s
 	return result
 }
 
-func (m *Manager) runCommandDetailed(ctx context.Context, dir, name string, args ...string) (string, string, error) {
-	if m == nil || m.host == nil {
-		return "", "", fmt.Errorf("language tool host unavailable")
-	}
-
-	return m.host.RunCommandDetailed(ctx, dir, name, args...)
-}
-
 func (m *Manager) runCommandDetailedWithEnv(ctx context.Context, dir string, extraEnv []string, name string, args ...string) (string, string, error) {
 	if m == nil || m.host == nil {
 		return "", "", fmt.Errorf("language tool host unavailable")
@@ -209,7 +198,7 @@ func (m *Manager) runCommandDetailedWithEnv(ctx context.Context, dir string, ext
 }
 
 func (m *Manager) runCommand(ctx context.Context, dir, name string, args ...string) (string, error) {
-	stdout, stderr, err := m.runCommandDetailed(ctx, dir, name, args...)
+	stdout, stderr, err := m.runCommandDetailedWithEnv(ctx, dir, nil, name, args...)
 	output := strings.TrimSpace(stdout)
 	errText := strings.TrimSpace(stderr)
 

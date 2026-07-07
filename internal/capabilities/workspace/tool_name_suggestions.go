@@ -37,12 +37,6 @@ func (m *Manager) knownToolNames() []string {
 	return m.toolSurface.KnownToolNames(m.externalToolBaseDir())
 }
 
-// builtinToolNamesForSuggest reuses the manifest inventory so unsupported-tool
-// recovery does not drift away from the exported built-in surface.
-func builtinToolNamesForSuggest() []string {
-	return toolManifestToolsAcrossBuiltInSurfaces()
-}
-
 // closestToolNames returns up to maxN candidates closest to target by
 // case-insensitive prefix match first, then substring containment, then short
 // Levenshtein distance.

@@ -25,14 +25,6 @@ func (h languageToolHost) Root() string {
 	return h.manager.cfg.Root
 }
 
-func (h languageToolHost) CWD() string {
-	if h.manager == nil {
-		return ""
-	}
-
-	return h.manager.cfg.CWD
-}
-
 func (h languageToolHost) MaxDirectoryEntries() int {
 	if h.manager == nil {
 		return 0
@@ -91,18 +83,8 @@ func (h languageToolHost) PathForHandle(handle string) (string, error) {
 	return h.manager.pathTracker.PathForHandle(handle)
 }
 
-// idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host
-func (h languageToolHost) ReadFileLines(path string, start int, end int) (string, error) {
-	return h.manager.readFileLines(path, start, end)
-}
-
 func (h languageToolHost) Execute(ctx context.Context, req languagetools.ToolRequest) languagetools.ToolResult {
 	return toLanguageToolResult(h.manager.Execute(ctx, fromLanguageToolRequest(req)))
-}
-
-// idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host
-func (h languageToolHost) RunCommandDetailed(ctx context.Context, dir string, name string, args ...string) (string, string, error) {
-	return h.manager.runCommandDetailedWithEnv(ctx, dir, nil, name, args...)
 }
 
 // idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host

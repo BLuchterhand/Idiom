@@ -1130,7 +1130,7 @@ func (m *Manager) compileCommandsDir() string {
 }
 
 func (m *Manager) runClangdCheck(ctx context.Context, compileDir string, rel string) (string, error) {
-	stdout, stderr, err := m.runCommandDetailed(ctx, m.Root(), "clangd", "--compile-commands-dir="+compileDir, "--check="+rel, "--log=error")
+	stdout, stderr, err := m.runCommandDetailedWithEnv(ctx, m.Root(), nil, "clangd", "--compile-commands-dir="+compileDir, "--check="+rel, "--log=error")
 	output := strings.TrimSpace(strings.TrimSpace(stdout) + "\n" + strings.TrimSpace(stderr))
 
 	return strings.TrimSpace(output), err

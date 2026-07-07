@@ -632,7 +632,7 @@ func (m *Manager) auditToolSurface() harnessAuditToolSurface {
 	schemaDefs := BuildToolDefinitions(nil)
 	export, exportErr := BuildToolSchemaExport(nil)
 
-	return auditToolSurfaceFromSources(manifest, schemaDefs, builtinToolNamesForSuggest(), export, exportErr)
+	return auditToolSurfaceFromSources(manifest, schemaDefs, toolManifestToolsAcrossBuiltInSurfaces(), export, exportErr)
 }
 
 func auditToolSurfaceFromSources(manifest []string, schemaDefs []ToolDefinition, suggestions []string, export ToolSchemaExport, exportErr error) harnessAuditToolSurface {

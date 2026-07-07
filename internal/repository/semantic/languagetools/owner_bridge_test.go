@@ -130,16 +130,8 @@ func (h ownerTestHost) PathForHandle(handle string) (string, error) {
 	return "", fmt.Errorf("unknown handle %q", handle)
 }
 
-func (h ownerTestHost) ReadFileLines(string, int, int) (string, error) {
-	return "", fmt.Errorf("not implemented")
-}
-
 func (h ownerTestHost) Execute(context.Context, ToolRequest) ToolResult {
 	return ToolResult{Error: "not implemented"}
-}
-
-func (h ownerTestHost) RunCommandDetailed(context.Context, string, string, ...string) (string, string, error) {
-	return "", "", fmt.Errorf("not implemented")
 }
 
 func (h ownerTestHost) RunCommandDetailedWithEnv(context.Context, string, []string, string, ...string) (string, string, error) {

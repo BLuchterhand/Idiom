@@ -409,7 +409,7 @@ func (s *ToolSurface) BuildToolDefinitions(allowed []string, externalBaseDir str
 }
 
 func (s *ToolSurface) KnownToolNames(externalBaseDir string) []string {
-	names := append([]string(nil), builtinToolNamesForSuggest()...)
+	names := append([]string(nil), toolManifestToolsAcrossBuiltInSurfaces()...)
 	if reg := s.ExternalToolsRegistry(); reg != nil {
 		names = append(names, reg.AvailableNames(externalBaseDir)...)
 	}
