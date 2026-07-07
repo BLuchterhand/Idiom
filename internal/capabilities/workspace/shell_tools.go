@@ -15,7 +15,7 @@ func IsBroadInspectionRequest(req ToolRequest) bool {
 	case ToolNameListFiles:
 		return !IsScopedInspectionRequest(req)
 	case ToolNameShell:
-		return isBroadInspectionShell(req.Command)
+		return AnalyzeShellCommand(req.Command).BroadInspection
 	default:
 		return false
 	}
@@ -51,7 +51,7 @@ func IsNarrowingRequest(req ToolRequest) bool {
 	case ToolNameReadFile:
 		return true
 	case ToolNameShell:
-		return isNarrowingShell(req.Command)
+		return AnalyzeShellCommand(req.Command).Narrowing
 	default:
 		return isStructuredNarrowingTool(req.Tool)
 	}
@@ -73,37 +73,9 @@ func (m *Manager) ShouldClearBroadInspectionLock(req ToolRequest, result ToolRes
 
 		return m.isRelevantExplorationPath(path)
 	case ToolNameShell:
-		return isNarrowingShell(req.Command)
+		return AnalyzeShellCommand(req.Command).Narrowing
 	default:
 		return isStructuredNarrowingTool(req.Tool)
-	}
-}
-
-func isBroadInspectionShell(command string) bool {
-	fields := strings.Fields(strings.TrimSpace(command))
-	if len(fields) == 0 {
-		return false
-	}
-
-	switch fields[0] {
-	case "ls", "find", "tree":
-		return true
-	default:
-		return false
-	}
-}
-
-func isNarrowingShell(command string) bool {
-	fields := strings.Fields(strings.TrimSpace(command))
-	if len(fields) == 0 {
-		return false
-	}
-
-	switch fields[0] {
-	case "rg", "grep", "awk", "sed", "cat", "head", "tail":
-		return true
-	default:
-		return false
 	}
 }
 

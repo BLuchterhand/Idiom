@@ -9181,11 +9181,11 @@ func runnerAutonomyFallbackSideEffectForRequest(req workspace.ToolRequest) auton
 
 		return autonomy.SideEffectUnknown
 	case workspace.ToolNameShell, workspace.ToolNameSourceSanity:
-		return runnerAutonomyShellSideEffect(req.Command)
+		return workspace.AnalyzeShellCommand(req.Command).SideEffect
 	}
 
 	if semanticlanguage.IsDiagnosticToolName(tool) {
-		return runnerAutonomyShellSideEffect(req.Command)
+		return workspace.AnalyzeShellCommand(req.Command).SideEffect
 	}
 
 	if workspace.IsWorkspaceWriteTool(tool) {
@@ -9227,134 +9227,6 @@ func runnerAutonomyPatchSideEffect(patch string) (autonomy.SideEffectClass, bool
 	}
 
 	return effect, true
-}
-
-func runnerAutonomyShellSideEffect(command string) autonomy.SideEffectClass {
-	command = strings.TrimSpace(command)
-	if command == "" {
-		return autonomy.SideEffectUnknown
-	}
-
-	if shellCommandHasControlSyntax(command) {
-		return autonomy.SideEffectUnknown
-	}
-
-	fields := strings.Fields(command)
-	if len(fields) == 0 {
-		return autonomy.SideEffectUnknown
-	}
-
-	head := strings.TrimPrefix(strings.ToLower(filepath.Base(strings.Trim(fields[0], `"'`))), "./")
-	args := lowerRunnerAutonomyShellArgs(fields[1:])
-
-	if runnerAutonomyReadOnlyShellCommand(head, args) {
-		return autonomy.SideEffectReadOnly
-	}
-
-	return autonomy.SideEffectUnknown
-}
-
-func shellCommandHasControlSyntax(command string) bool {
-	inSingleQuote := false
-	inDoubleQuote := false
-	escaped := false
-
-	for i := 0; i < len(command); i++ {
-		ch := command[i]
-
-		if escaped {
-			escaped = false
-			continue
-		}
-
-		if ch == '\\' {
-			escaped = true
-			continue
-		}
-
-		if ch == '\'' && !inDoubleQuote {
-			inSingleQuote = !inSingleQuote
-			continue
-		}
-
-		if ch == '"' && !inSingleQuote {
-			inDoubleQuote = !inDoubleQuote
-			continue
-		}
-
-		if inSingleQuote {
-			continue
-		}
-
-		if ch == '$' && i+1 < len(command) && command[i+1] == '(' {
-			return true
-		}
-
-		if inDoubleQuote {
-			if ch == '`' {
-				return true
-			}
-
-			continue
-		}
-
-		switch ch {
-		case '\n', '\r', ';', '&', '|', '<', '>', '`':
-			return true
-		}
-	}
-
-	return false
-}
-
-func lowerRunnerAutonomyShellArgs(args []string) []string {
-	out := make([]string, 0, len(args))
-	for _, arg := range args {
-		arg = strings.ToLower(strings.TrimSpace(strings.Trim(arg, `"'`)))
-		if arg != "" {
-			out = append(out, arg)
-		}
-	}
-
-	return out
-}
-
-func runnerAutonomyReadOnlyShellCommand(head string, args []string) bool {
-	switch head {
-	case "git":
-		return runnerAutonomyGitReadOnlyArgs(args)
-	case "go":
-		return len(args) > 0 && runnerStringInSet(args[0], "test", "build")
-	case "make":
-		return len(args) > 0 && runnerStringInSet(args[0], "test", "build")
-	case "npm":
-		return len(args) > 0 && args[0] == "test"
-	case "cargo":
-		return len(args) > 0 && args[0] == "test"
-	default:
-		return false
-	}
-}
-
-func runnerAutonomyGitReadOnlyArgs(args []string) bool {
-	if len(args) == 0 {
-		return false
-	}
-
-	switch args[0] {
-	case "status":
-		return true
-	case "diff":
-		for _, arg := range args[1:] {
-			if arg == "--output" || strings.HasPrefix(arg, "--output=") {
-				return false
-			}
-		}
-
-		return true
-	default:
-		return false
-	}
 }
 
 func compactRunnerAutonomyPaths(paths []string) []string {

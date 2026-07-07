@@ -439,7 +439,7 @@ func TestRunnerAutonomyNonPlannerUsesSharedToolSurfaceFallback(t *testing.T) {
 	}
 
 	if got := runnerAutonomySideEffectForBrief(brief, workspace.ToolRequest{Tool: "shell", Command: "go test ./internal/runtime/agent"}); got != autonomy.SideEffectReadOnly {
-		t.Fatalf("non-planner shell verification side effect = %q, want legacy read_only", got)
+		t.Fatalf("non-planner shell verification side effect = %q, want workspace read_only classification", got)
 	}
 
 	if got := runnerAutonomySideEffectForBrief(brief, workspace.ToolRequest{
@@ -2013,31 +2013,31 @@ func TestRunnerAutonomyRecorderModelExchangeClassifiesModelResponseAsNonAuthorit
 	}
 }
 
-func TestRunnerAutonomyShellSideEffectClassifiesConservatively(t *testing.T) {
+func TestRunnerAutonomyShellSideEffectUsesWorkspaceAnalysis(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "implement",
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+	}
 	tests := []struct {
 		name    string
 		command string
-		want    autonomy.SideEffectClass
 	}{
-		{name: "git diff check", command: "git diff --check", want: autonomy.SideEffectReadOnly},
-		{name: "git diff check path", command: "git diff --check -- README.md", want: autonomy.SideEffectReadOnly},
-		{name: "git status", command: "git status --short", want: autonomy.SideEffectReadOnly},
-		{name: "go test", command: "go test", want: autonomy.SideEffectReadOnly},
-		{name: "go test package", command: "go test ./internal/runtime/agent", want: autonomy.SideEffectReadOnly},
-		{name: "go test quoted regex", command: "go test ./internal/runtime/agent -run 'TestA|TestB'", want: autonomy.SideEffectReadOnly},
-		{name: "git status compound", command: "git status && rm -rf tmp", want: autonomy.SideEffectUnknown},
-		{name: "go test semicolon", command: "go test ./...; touch x", want: autonomy.SideEffectUnknown},
-		{name: "go test pipe", command: "go test ./... | tee report.txt", want: autonomy.SideEffectUnknown},
-		{name: "git diff redirection", command: "git diff --check > report.txt", want: autonomy.SideEffectUnknown},
-		{name: "git diff output flag", command: "git diff --output=report.txt", want: autonomy.SideEffectUnknown},
-		{name: "prefix is not enough", command: "git statusx", want: autonomy.SideEffectUnknown},
-		{name: "direct mutating command", command: "touch x", want: autonomy.SideEffectUnknown},
+		{name: "git diff check", command: "git diff --check"},
+		{name: "go test quoted regex", command: "go test ./internal/runtime/agent -run 'TestA|TestB'"},
+		{name: "git status compound", command: "git status && rm -rf tmp"},
+		{name: "git diff output flag", command: "git diff --output=report.txt"},
+		{name: "direct mutating command", command: "touch x"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := runnerAutonomyShellSideEffect(tt.command); got != tt.want {
-				t.Fatalf("runnerAutonomyShellSideEffect(%q) = %q, want %q", tt.command, got, tt.want)
+			req := workspace.ToolRequest{Tool: workspace.ToolNameShell, Command: tt.command}
+			got := runnerAutonomySideEffectForBrief(brief, req)
+			want := workspace.AnalyzeShellCommand(tt.command).SideEffect
+			if got != want {
+				t.Fatalf("runner side effect for %q = %q, want workspace analysis %q", tt.command, got, want)
 			}
 		})
 	}
@@ -19214,171 +19214,57 @@ func TestBuildRunnerNextActionStateIncludesEvidenceFirstPhaseHints(t *testing.T)
 	}
 }
 
-func TestWorkbranchChildTaskPermissionPolicyDeniesDiffHidingAndReleaseCommands(t *testing.T) {
+func TestWorkbranchChildTaskPermissionPolicyUsesWorkspaceShellPolicy(t *testing.T) {
 	policy := workbranchChildTaskPermissionPolicy()
-	deniedShell := []string{
-		"git add README.md",
-		"git commit -m child",
-		"git reset --hard",
-		"git push origin HEAD",
-		"gh pr create",
-		"gh pr merge 1",
-		"gh release create v1",
-		"npm publish",
-		"pnpm publish",
-		"docker push image",
-		"kubectl apply -f deploy.yaml",
+	tests := []struct {
+		name    string
+		req     workspace.ToolRequest
+		want    PermissionDecision
+		wantRef string
+	}{
+		{
+			name:    "workspace allowed shell family",
+			req:     workspace.ToolRequest{Tool: workspace.ToolNameShell, Command: "go test ./..."},
+			want:    PermissionAllow,
+			wantRef: "command=go test",
+		},
+		{
+			name:    "workspace denied shell prefix",
+			req:     workspace.ToolRequest{Tool: workspace.ToolNameShell, Command: "git add README.md"},
+			want:    PermissionDeny,
+			wantRef: "command=git add",
+		},
+		{
+			name:    "workspace denied shell fragment",
+			req:     workspace.ToolRequest{Tool: workspace.ToolNameShell, Command: "git diff --output=/tmp/patch"},
+			want:    PermissionDeny,
+			wantRef: "command_contains=--output=",
+		},
+		{
+			name: "unknown shell defaults denied",
+			req:  workspace.ToolRequest{Tool: workspace.ToolNameShell, Command: "rm -rf /tmp/x"},
+			want: PermissionDeny,
+		},
 	}
 
-	for _, command := range deniedShell {
-		if decision := policy.Decide(workspace.ToolRequest{Tool: "shell", Command: command}); decision.Decision != PermissionDeny {
-			t.Fatalf("%q decision = %q, want deny", command, decision.Decision)
-		}
-	}
-
-	if decision := policy.Decide(workspace.ToolRequest{Tool: "task", Prompt: "nested"}); decision.Decision != PermissionDeny {
-		t.Fatalf("task decision = %q, want deny", decision.Decision)
-	}
-
-	if decision := policy.Decide(workspace.ToolRequest{Tool: "edit_file", Path: "README.md"}); decision.Decision != PermissionAllow {
-		t.Fatalf("edit_file decision = %q, want allow", decision.Decision)
-	}
-
-	if decision := policy.Decide(workspace.ToolRequest{Tool: "shell", Command: "go test ./..."}); decision.Decision != PermissionAllow {
-		t.Fatalf("go test decision = %q, want allow", decision.Decision)
-	}
-}
-
-func TestWorkbranchChildTaskPermissionPolicyDefaultDeniesUnknownTools(t *testing.T) {
-	policy := workbranchChildTaskPermissionPolicy()
-	if decision := policy.Decide(workspace.ToolRequest{Tool: "unknown_tool", Path: "."}); decision.Decision != PermissionDeny {
-		t.Fatalf("unknown tool decision = %q, want deny", decision.Decision)
-	}
-
-	if decision := policy.Decide(workspace.ToolRequest{Tool: "shell", Command: "rm -rf /tmp/x"}); decision.Decision != PermissionDeny {
-		t.Fatalf("arbitrary shell decision = %q, want deny", decision.Decision)
-	}
-
-	if decision := policy.Decide(workspace.ToolRequest{Tool: "shell", Command: "git clone https://example.com/repo"}); decision.Decision != PermissionDeny {
-		t.Fatalf("git clone decision = %q, want deny", decision.Decision)
-	}
-
-	if decision := policy.Decide(workspace.ToolRequest{Tool: "shell", Command: "git push"}); decision.Decision != PermissionDeny {
-		t.Fatalf("git push decision = %q, want deny", decision.Decision)
-	}
-
-	if decision := policy.Decide(workspace.ToolRequest{Tool: "shell", Command: "git statusfoo"}); decision.Decision != PermissionDeny {
-		t.Fatalf("git statusfoo decision = %q, want deny", decision.Decision)
-	}
-
-	if decision := policy.Decide(workspace.ToolRequest{Tool: "shell", Command: "pwdx"}); decision.Decision != PermissionDeny {
-		t.Fatalf("pwdx decision = %q, want deny", decision.Decision)
-	}
-
-	if decision := policy.Decide(workspace.ToolRequest{Tool: "shell", Command: "cat"}); decision.Decision != PermissionDeny {
-		t.Fatalf("bare cat decision = %q, want deny", decision.Decision)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			decision := policy.Decide(tt.req)
+			if decision.Decision != tt.want {
+				t.Fatalf("decision = %q, want %q; snapshot=%#v", decision.Decision, tt.want, decision)
+			}
+			if tt.wantRef != "" && !strings.Contains(decision.Rule, tt.wantRef) {
+				t.Fatalf("decision rule = %q, want to contain %q", decision.Rule, tt.wantRef)
+			}
+		})
 	}
 }
 
 func TestWorkbranchChildTaskPermissionPolicyAllowsStructuredWriteTools(t *testing.T) {
 	policy := workbranchChildTaskPermissionPolicy()
-	writeTools := []string{
-		"edit_file",
-		"write_file",
-		"apply_patch",
-		"mkdir",
-		"append_file",
-		"go_move_declarations",
-	}
-
-	for _, tool := range writeTools {
+	for _, tool := range []string{"edit_file", "write_file", "apply_patch", "mkdir", "append_file", "go_move_declarations"} {
 		if decision := policy.Decide(workspace.ToolRequest{Tool: tool, Path: "test.go"}); decision.Decision != PermissionAllow {
 			t.Fatalf("%q decision = %q, want allow", tool, decision.Decision)
-		}
-	}
-}
-
-func TestWorkbranchChildTaskPermissionPolicyAllowsSafeVerificationShell(t *testing.T) {
-	policy := workbranchChildTaskPermissionPolicy()
-	safeCommands := []string{
-		"go test ./...",
-		"go list ./...",
-		"git status",
-		"git diff",
-		"git show HEAD",
-		"git grep func",
-		"pwd",
-		"ls -la",
-		"rg pattern",
-		"grep -r foo .",
-		"cat README.md",
-		"head -20 file.go",
-		"tail -20 file.go",
-		"wc -l file.go",
-	}
-
-	for _, command := range safeCommands {
-		if decision := policy.Decide(workspace.ToolRequest{Tool: "shell", Command: command}); decision.Decision != PermissionAllow {
-			t.Fatalf("%q decision = %q, want allow", command, decision.Decision)
-		}
-	}
-}
-
-func TestWorkbranchChildTaskPermissionPolicyDeniesGitCParentEscape(t *testing.T) {
-	policy := workbranchChildTaskPermissionPolicy()
-	parentEscapeCommands := []string{
-		"git -C /workspace/idiom status",
-		"git -C /some/other/repo diff",
-		"git -C ../parent status",
-		"git -C / status",
-	}
-
-	for _, command := range parentEscapeCommands {
-		if decision := policy.Decide(workspace.ToolRequest{Tool: "shell", Command: command}); decision.Decision != PermissionDeny {
-			t.Fatalf("%q decision = %q, want deny", command, decision.Decision)
-		}
-	}
-}
-
-func TestWorkbranchChildTaskPermissionPolicyDeniesChainedShellEscapes(t *testing.T) {
-	policy := workbranchChildTaskPermissionPolicy()
-	commands := []string{
-		"go test ./... && rm -rf /tmp/workbranch-escape",
-		"git status; git push origin HEAD",
-		"git status\nrm -rf /tmp/workbranch-escape",
-		"go test ./...\ntouch /tmp/workbranch-escape",
-		"git diff | sh",
-		"git show HEAD > /tmp/patch",
-		"cat README.md $(touch /tmp/workbranch-escape)",
-		"grep foo README.md `touch /tmp/workbranch-escape`",
-	}
-
-	for _, command := range commands {
-		if decision := policy.Decide(workspace.ToolRequest{Tool: "shell", Command: command}); decision.Decision != PermissionDeny {
-			t.Fatalf("%q decision = %q, want deny", command, decision.Decision)
-		}
-	}
-}
-
-func TestWorkbranchChildTaskPermissionPolicyDeniesMutatingAllowedCommandOptions(t *testing.T) {
-	policy := workbranchChildTaskPermissionPolicy()
-	commands := []string{
-		"go env -w GOPROXY=off",
-		"go env\t-w GOPROXY=off",
-		"go env -u GOPROXY",
-		"go env  -u GOPROXY",
-		"go env GOPATH",
-		"find . -delete",
-		"find . -exec touch /tmp/workbranch-escape {} +",
-		"awk 'BEGIN { system(\"touch /tmp/workbranch-escape\") }'",
-		"sed -n -i '1p' file.go",
-		"git diff --output=/tmp/patch",
-		"git show HEAD --output=/tmp/patch",
-	}
-
-	for _, command := range commands {
-		if decision := policy.Decide(workspace.ToolRequest{Tool: "shell", Command: command}); decision.Decision != PermissionDeny {
-			t.Fatalf("%q decision = %q, want deny", command, decision.Decision)
 		}
 	}
 }

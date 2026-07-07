@@ -5769,39 +5769,21 @@ func readOnlyChildTaskPermissionPolicy() ToolPermissionPolicy {
 		return ToolPermissionRule{Tool: tool, Decision: PermissionAllow}
 	}
 	allowShellPrefix := func(prefix string) ToolPermissionRule {
-		return ToolPermissionRule{Tool: "shell", CommandPrefix: prefix, Decision: PermissionAllow}
+		return ToolPermissionRule{Tool: workspace.ToolNameShell, CommandPrefix: prefix, Decision: PermissionAllow}
 	}
 	rules := make([]ToolPermissionRule, 0, len(childAllowedTools())+20)
 
 	for _, tool := range childAllowedTools() {
-		if tool == "shell" {
+		if tool == workspace.ToolNameShell {
 			continue
 		}
 
 		rules = append(rules, allowTool(tool))
 	}
 
-	rules = append(rules,
-		allowShellPrefix("rg "),
-		allowShellPrefix("grep "),
-		allowShellPrefix("awk "),
-		allowShellPrefix("sed -n"),
-		allowShellPrefix("cat "),
-		allowShellPrefix("head "),
-		allowShellPrefix("tail "),
-		allowShellPrefix("wc "),
-		allowShellPrefix("pwd"),
-		allowShellPrefix("ls "),
-		allowShellPrefix("find "),
-		allowShellPrefix("git status"),
-		allowShellPrefix("git diff"),
-		allowShellPrefix("git log"),
-		allowShellPrefix("git show"),
-		allowShellPrefix("git grep"),
-		allowShellPrefix("go test"),
-		allowShellPrefix("go list"),
-		allowShellPrefix("go env"),
-	)
+	for _, prefix := range workspace.ReadOnlyChildShellAllowedPrefixes() {
+		rules = append(rules, allowShellPrefix(prefix))
+	}
 
 	return ToolPermissionPolicy{
 		Default: PermissionDeny,
@@ -5814,41 +5796,40 @@ func workbranchChildTaskPermissionPolicy() ToolPermissionPolicy {
 		return ToolPermissionRule{Tool: tool, Decision: PermissionAllow}
 	}
 	allowShellPrefix := func(prefix string) ToolPermissionRule {
-		return ToolPermissionRule{Tool: "shell", CommandPrefix: prefix, Decision: PermissionAllow}
+		return ToolPermissionRule{Tool: workspace.ToolNameShell, CommandPrefix: prefix, Decision: PermissionAllow}
 	}
 	deny := func(tool string) ToolPermissionRule {
 		return ToolPermissionRule{Tool: tool, Decision: PermissionDeny}
 	}
 	denyShellPrefix := func(prefix string) ToolPermissionRule {
-		return ToolPermissionRule{Tool: "shell", CommandPrefix: prefix, Decision: PermissionDeny}
+		return ToolPermissionRule{Tool: workspace.ToolNameShell, CommandPrefix: prefix, Decision: PermissionDeny}
 	}
 	denyShellContains := func(value string) ToolPermissionRule {
-		return ToolPermissionRule{Tool: "shell", CommandContains: value, Decision: PermissionDeny}
+		return ToolPermissionRule{Tool: workspace.ToolNameShell, CommandContains: value, Decision: PermissionDeny}
 	}
 	spec := workerruntime.RoleSpecFor("child_write")
-	workbranchAllowPrefixes := workbranchAllowedShellPrefixes()
-	rules := make([]ToolPermissionRule, 0, len(spec.AllowedTools)+len(workbranchAllowPrefixes)+len(workbranchDeniedShellPrefixes(spec))+2)
+	shellPolicy := workspace.WorkbranchChildShellPolicy(spec.ForbiddenTools)
+	rules := make([]ToolPermissionRule, 0, len(spec.AllowedTools)+len(shellPolicy.AllowedPrefixes)+len(shellPolicy.DeniedPrefixes)+2)
 
 	for _, tool := range spec.AllowedTools {
 		tool = strings.TrimSpace(tool)
-		if tool == "" || tool == "task" || tool == "shell" {
+		if tool == "" || tool == workspace.ToolNameTask || tool == workspace.ToolNameShell {
 			continue
 		}
 
 		rules = append(rules, allowTool(tool))
 	}
 
-	for _, prefix := range workbranchAllowPrefixes {
+	for _, prefix := range shellPolicy.AllowedPrefixes {
 		rules = append(rules, allowShellPrefix(prefix))
 	}
 
-	rules = append(rules, deny("task"))
-	for _, prefix := range workbranchDeniedShellPrefixes(spec) {
+	rules = append(rules, deny(workspace.ToolNameTask))
+	for _, prefix := range shellPolicy.DeniedPrefixes {
 		rules = append(rules, denyShellPrefix(prefix))
 	}
 
-	rules = append(rules, denyShellPrefix("git -C"))
-	for _, value := range workbranchDeniedShellFragments() {
+	for _, value := range shellPolicy.DeniedFragments {
 		rules = append(rules, denyShellContains(value))
 	}
 
@@ -5858,43 +5839,8 @@ func workbranchChildTaskPermissionPolicy() ToolPermissionPolicy {
 	}
 }
 
-func workbranchAllowedShellPrefixes() []string {
-	return []string{
-		"go test", "go list",
-		"git status", "git diff", "git log", "git show", "git grep",
-		"pwd", "ls ",
-		"rg ", "grep ",
-		"cat ", "head ", "tail ", "wc ",
-	}
-}
-
-func workbranchDeniedShellFragments() []string {
-	return []string{"\n", "\r", "&&", "||", ";", "|", ">", "<", "$(", "`", "go env -w", "go env -u", "--output="}
-}
-
 func childAllowedTools() []string {
 	return workerruntime.RoleSpecFor("child_read_only").AllowedTools
-}
-
-func workbranchDeniedShellPrefixes(spec workerruntime.RoleSpec) []string {
-	denied := []string{"gh pr create"}
-
-	for _, forbidden := range spec.ForbiddenTools {
-		switch strings.TrimSpace(forbidden) {
-		case "git_push":
-			denied = append(denied, "git push", "gh pr merge")
-		case "git_history_mutation":
-			denied = append(denied, "git commit", "git reset", "git checkout", "git switch", "git worktree", "git branch", "git clean")
-		case "git_index_mutation":
-			denied = append(denied, "git add", "git restore")
-		case "publish":
-			denied = append(denied, "npm publish", "pnpm publish", "yarn publish", "docker push")
-		case "deploy":
-			denied = append(denied, "kubectl ", "deploy", "release", "gh release")
-		}
-	}
-
-	return textutil.Merge(denied)
 }
 
 // runDelegateEdit handles a delegate_edit tool call from the planner.
@@ -9797,7 +9743,7 @@ func shellOutputIsPatchHygieneOnly(output string) bool {
 			continue
 		}
 
-		if line != "" && isBuildOrTestShellCommand(line) {
+		if line != "" && workspace.AnalyzeShellCommand(line).BuildOrTest {
 			hasSourceAware = true
 		}
 	}
@@ -9905,7 +9851,7 @@ func isVerificationCommandText(text string) bool {
 
 	for _, line := range strings.Split(command, "\n") {
 		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "$"))
-		if line != "" && isBuildOrTestShellCommand(line) {
+		if line != "" && workspace.AnalyzeShellCommand(line).BuildOrTest {
 			return true
 		}
 	}
@@ -9919,7 +9865,7 @@ func plannerOwnedVerificationShellRejection(req workspace.ToolRequest, brief wor
 	}
 
 	command := strings.TrimSpace(req.Command)
-	if command == "" || !isBuildOrTestShellCommand(command) {
+	if command == "" || !workspace.AnalyzeShellCommand(command).BuildOrTest {
 		return "", "", false
 	}
 
@@ -9948,118 +9894,6 @@ func plannerOwnsVerification(brief workerruntime.WorkerRuntimeBrief) bool {
 	for _, constraint := range brief.Constraints {
 		switch strings.ToLower(strings.TrimSpace(constraint)) {
 		case "planner_owned_verification", "planner-owned-verification", "planner_owned_acceptance", "planner-owned-acceptance":
-			return true
-		}
-	}
-
-	return false
-}
-
-func isBuildOrTestShellCommand(command string) bool {
-	for _, segment := range shellCommandClassificationSegments(command) {
-		fields := strings.Fields(segment)
-		if len(fields) == 0 {
-			continue
-		}
-
-		head := strings.TrimPrefix(strings.ToLower(filepath.Base(fields[0])), "./")
-		if shellHeadIsBuildOrTest(head, fields[1:]) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func shellHeadIsBuildOrTest(head string, args []string) bool {
-	switch head {
-	case "scons", "ctest", "ninja", "meson", "pytest", "tox", "godot":
-		return true
-	case "make", "cmake", "mvn", "gradle", "gradlew":
-		return true
-	case "go":
-		return len(args) > 0 && runnerStringInSet(args[0], "test", "build", "vet")
-	case "cargo":
-		return len(args) > 0 && runnerStringInSet(args[0], "test", "build", "check", "clippy")
-	case "npm", "pnpm", "yarn":
-		return packageManagerArgsAreBuildOrTest(args)
-	case "python", "python3":
-		return pythonArgsAreTest(args)
-	default:
-		return strings.Contains(head, "test") && !strings.Contains(head, "diff")
-	}
-}
-
-func packageManagerArgsAreBuildOrTest(args []string) bool {
-	if len(args) == 0 {
-		return false
-	}
-
-	first := strings.ToLower(strings.TrimSpace(args[0]))
-	if runnerStringInSet(first, "test", "build") {
-		return true
-	}
-
-	return first == "run" && len(args) > 1 && runnerStringInSet(args[1], "test", "build", "check", "lint")
-}
-
-func pythonArgsAreTest(args []string) bool {
-	if len(args) == 0 {
-		return false
-	}
-
-	for i, arg := range args {
-		arg = strings.Trim(strings.ToLower(strings.TrimSpace(arg)), `"'`)
-		if arg == "" {
-			continue
-		}
-
-		if i == 0 && strings.HasPrefix(arg, "pytest") {
-			return true
-		}
-
-		if arg == "-m" && i+1 < len(args) {
-			module := strings.Trim(strings.ToLower(strings.TrimSpace(args[i+1])), `"'`)
-			if strings.HasPrefix(module, "pytest") || runnerStringInSet(module, "unittest", "build") {
-				return true
-			}
-		}
-
-		if strings.HasPrefix(arg, "-") {
-			continue
-		}
-
-		base := filepath.Base(arg)
-		if strings.HasSuffix(base, ".py") &&
-			(strings.Contains(base, "test") || strings.Contains(base, "build")) {
-
-			return true
-		}
-	}
-
-	return false
-}
-
-func shellCommandClassificationSegments(command string) []string {
-	replacer := strings.NewReplacer("&&", "|", "||", "|", ";", "|")
-	normalized := replacer.Replace(strings.TrimSpace(command))
-	parts := strings.Split(normalized, "|")
-	segments := make([]string, 0, len(parts))
-
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part != "" {
-			segments = append(segments, part)
-		}
-	}
-
-	return segments
-}
-
-func runnerStringInSet(value string, candidates ...string) bool {
-	value = strings.ToLower(strings.TrimSpace(value))
-	for _, candidate := range candidates {
-		if value == candidate {
 			return true
 		}
 	}

@@ -5357,18 +5357,18 @@ func shellActionClass(command string) string {
 		return "shell_verification:" + normalizeActionToken(command)
 	}
 
-	fields := strings.Fields(strings.TrimSpace(command))
-	if len(fields) == 0 {
+	analysis := workspace.AnalyzeShellCommand(command)
+	if len(analysis.Fields) == 0 {
 		return workspace.ToolNameShell
 	}
 
-	switch fields[0] {
-	case "ls", "find", "tree":
+	switch {
+	case analysis.BroadInspection:
 		return "broad_inspection"
-	case workspace.ToolNameRg, "grep", "awk", "sed", "cat", "head", "tail":
+	case analysis.Narrowing:
 		return "shell_narrow:" + normalizeActionToken(command)
 	default:
-		return "shell:" + normalizeActionToken(fields[0])
+		return "shell:" + normalizeActionToken(analysis.Fields[0])
 	}
 }
 

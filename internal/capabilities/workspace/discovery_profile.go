@@ -183,10 +183,11 @@ func scopeFromPathAndPattern(path string, pattern string) string {
 }
 
 func shellDiscoveryProfile(command string) ToolDiscoveryProfile {
+	analysis := AnalyzeShellCommand(command)
 	switch {
-	case isBroadInspectionShell(command):
+	case analysis.BroadInspection:
 		return discoveryProfile("shell_discovery", "broad", "high", false)
-	case isNarrowingShell(command):
+	case analysis.Narrowing:
 		return discoveryProfile("shell_discovery", "targeted", "medium", false)
 	default:
 		return ToolDiscoveryProfile{Class: "other"}

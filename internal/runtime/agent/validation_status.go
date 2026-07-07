@@ -265,7 +265,7 @@ func latestSuccessfulBuildOrTestVerificationSummary(results []workspace.ToolResu
 		}
 
 		command := shellCommandFromToolResult(result)
-		if command == "" || !isBuildOrTestShellCommand(command) {
+		if command == "" || !workspace.AnalyzeShellCommand(command).BuildOrTest {
 			continue
 		}
 
