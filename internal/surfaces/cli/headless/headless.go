@@ -27,11 +27,6 @@ import (
 	"idiom/internal/workflows/planexecute"
 )
 
-const (
-	RunCompletionSchemaVersion = runrecord.RunCompletionSchemaVersion
-	RunCompletionRecordType    = runrecord.RunCompletionRecordType
-)
-
 type PromptRunner func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error)
 
 type stringList []string
@@ -112,8 +107,8 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 
 	started := time.Now().UTC()
 	record := runrecord.RunCompletionRecord{
-		SchemaVersion:    RunCompletionSchemaVersion,
-		Type:             RunCompletionRecordType,
+		SchemaVersion:    runrecord.RunCompletionSchemaVersion,
+		Type:             runrecord.RunCompletionRecordType,
 		RunID:            runID,
 		SessionID:        runID,
 		PromptSHA256:     runrecord.SHA256Hex(req.Prompt),

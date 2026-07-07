@@ -22,7 +22,7 @@ const (
 
 type codeNavigationSpec struct {
 	Name            string
-	Capability      Capability
+	Capability      language.Capability
 	RequiresPattern bool
 	RequiresPath    bool
 	Cost            string
@@ -30,17 +30,17 @@ type codeNavigationSpec struct {
 }
 
 var codeNavigationSpecs = []codeNavigationSpecDefinition{
-	{Spec: codeNavigationSpec{Name: "file_outline", Capability: CapFileOutline, RequiresPath: true, Class: "language_symbol", Cost: "low"}, Aliases: []string{"file_outline", "outline"}},
-	{Spec: codeNavigationSpec{Name: "find_symbol", Capability: CapFindSymbol, RequiresPattern: true, Class: "language_symbol", Cost: "low"}, Aliases: []string{"find_symbol", "symbol", "symbol_lookup", "lookup"}},
-	{Spec: codeNavigationSpec{Name: "workspace_symbol", Capability: CapWorkspaceSymbol, RequiresPattern: true, Class: "language_symbol", Cost: "low"}, Aliases: []string{"workspace_symbol", "workspace_symbols", "find_symbol_workspace"}},
-	{Spec: codeNavigationSpec{Name: "read_symbol", Capability: CapReadSymbol, RequiresPattern: true, Class: "language_symbol", Cost: "low"}, Aliases: []string{"read_symbol", "inspect_symbol", "symbol_body"}},
-	{Spec: codeNavigationSpec{Name: "extract_body", Capability: CapExtractBody, RequiresPattern: true, Class: "language_symbol", Cost: "low"}, Aliases: []string{"extract_body", "full_body", "symbol_full_body"}},
-	{Spec: codeNavigationSpec{Name: "definition", Capability: CapDefinition, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"definition", "definitions", "declaration", "declarations", "find_definition", "find_definitions", "find_declaration", "find_declarations", "goto_definition", "go_to_definition"}},
-	{Spec: codeNavigationSpec{Name: "references", Capability: CapReferences, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"references", "reference", "usages", "find_references", "find_reference"}},
-	{Spec: codeNavigationSpec{Name: "calls_from", Capability: CapCallsFrom, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"calls_from", "callees"}},
-	{Spec: codeNavigationSpec{Name: "calls_into", Capability: CapCallsInto, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"calls_into", "callers"}},
-	{Spec: codeNavigationSpec{Name: "implementations", Capability: CapImplementations, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"implementations", "implementation", "impls"}},
-	{Spec: codeNavigationSpec{Name: "related_files", Capability: CapRelatedFiles, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"related_files", "related"}},
+	{Spec: codeNavigationSpec{Name: "file_outline", Capability: language.CapFileOutline, RequiresPath: true, Class: "language_symbol", Cost: "low"}, Aliases: []string{"file_outline", "outline"}},
+	{Spec: codeNavigationSpec{Name: "find_symbol", Capability: language.CapFindSymbol, RequiresPattern: true, Class: "language_symbol", Cost: "low"}, Aliases: []string{"find_symbol", "symbol", "symbol_lookup", "lookup"}},
+	{Spec: codeNavigationSpec{Name: "workspace_symbol", Capability: language.CapWorkspaceSymbol, RequiresPattern: true, Class: "language_symbol", Cost: "low"}, Aliases: []string{"workspace_symbol", "workspace_symbols", "find_symbol_workspace"}},
+	{Spec: codeNavigationSpec{Name: "read_symbol", Capability: language.CapReadSymbol, RequiresPattern: true, Class: "language_symbol", Cost: "low"}, Aliases: []string{"read_symbol", "inspect_symbol", "symbol_body"}},
+	{Spec: codeNavigationSpec{Name: "extract_body", Capability: language.CapExtractBody, RequiresPattern: true, Class: "language_symbol", Cost: "low"}, Aliases: []string{"extract_body", "full_body", "symbol_full_body"}},
+	{Spec: codeNavigationSpec{Name: "definition", Capability: language.CapDefinition, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"definition", "definitions", "declaration", "declarations", "find_definition", "find_definitions", "find_declaration", "find_declarations", "goto_definition", "go_to_definition"}},
+	{Spec: codeNavigationSpec{Name: "references", Capability: language.CapReferences, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"references", "reference", "usages", "find_references", "find_reference"}},
+	{Spec: codeNavigationSpec{Name: "calls_from", Capability: language.CapCallsFrom, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"calls_from", "callees"}},
+	{Spec: codeNavigationSpec{Name: "calls_into", Capability: language.CapCallsInto, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"calls_into", "callers"}},
+	{Spec: codeNavigationSpec{Name: "implementations", Capability: language.CapImplementations, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"implementations", "implementation", "impls"}},
+	{Spec: codeNavigationSpec{Name: "related_files", Capability: language.CapRelatedFiles, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"related_files", "related"}},
 }
 
 type codeNavigationSpecDefinition struct {
@@ -129,8 +129,8 @@ func CodeNavigationCapabilityNames() []string {
 	return names
 }
 
-func CodeNavigationCapabilities() []Capability {
-	capabilities := make([]Capability, 0, len(codeNavigationSpecs))
+func CodeNavigationCapabilities() []language.Capability {
+	capabilities := make([]language.Capability, 0, len(codeNavigationSpecs))
 	for _, entry := range codeNavigationSpecs {
 		capabilities = append(capabilities, entry.Spec.Capability)
 	}
@@ -161,14 +161,14 @@ func codeNavigateGraphResolutionOnly(value string) bool {
 	}
 }
 
-func (m *Manager) codeNavigationLanguage(req ToolRequest) (LanguageSupport, bool, string) {
+func (m *Manager) codeNavigationLanguage(req ToolRequest) (language.LanguageSupport, bool, string) {
 	if path := strings.TrimSpace(req.Path); path != "" {
 		if lang, ok := language.LanguageForFile(path); ok {
 			return lang, true, ""
 		}
 
 		if m.codeNavigationPathIsFile(path, req.Workdir) || filepath.Ext(path) != "" {
-			return LanguageSupport{}, false, fmt.Sprintf("no registered language route for %s", filepath.ToSlash(path))
+			return language.LanguageSupport{}, false, fmt.Sprintf("no registered language route for %s", filepath.ToSlash(path))
 		}
 	}
 
@@ -177,7 +177,7 @@ func (m *Manager) codeNavigationLanguage(req ToolRequest) (LanguageSupport, bool
 			return lang, true, ""
 		}
 
-		return LanguageSupport{}, false, fmt.Sprintf("unsupported language %q", languageName)
+		return language.LanguageSupport{}, false, fmt.Sprintf("unsupported language %q", languageName)
 	}
 
 	if m != nil {
@@ -194,11 +194,11 @@ func (m *Manager) codeNavigationLanguage(req ToolRequest) (LanguageSupport, bool
 
 			slices.Sort(names)
 
-			return LanguageSupport{}, false, fmt.Sprintf("multiple active languages (%s); pass path or language to route precisely", strings.Join(names, ", "))
+			return language.LanguageSupport{}, false, fmt.Sprintf("multiple active languages (%s); pass path or language to route precisely", strings.Join(names, ", "))
 		}
 	}
 
-	return LanguageSupport{}, false, "no language route matched; using generic source text fallback"
+	return language.LanguageSupport{}, false, "no language route matched; using generic source text fallback"
 }
 
 func codeNavigationCanFallback(result ToolResult) bool {

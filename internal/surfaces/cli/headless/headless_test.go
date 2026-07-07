@@ -78,7 +78,7 @@ func TestRunAppliesPolicyOverridesAndWritesCompletion(t *testing.T) {
 	if output.Answer != "answer" {
 		t.Fatalf("json output should include final answer, got %q", output.Answer)
 	}
-	if record.SchemaVersion != RunCompletionSchemaVersion || record.Type != RunCompletionRecordType {
+	if record.SchemaVersion != runrecord.RunCompletionSchemaVersion || record.Type != runrecord.RunCompletionRecordType {
 		t.Fatalf("unexpected completion identity: %#v", record)
 	}
 	if record.Artifacts["completion"] == "" || record.Artifacts["summary"] != summaryPath {

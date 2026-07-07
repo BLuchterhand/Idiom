@@ -13,26 +13,6 @@ import (
 	"idiom/internal/repository/semantic/language"
 )
 
-type Capability = language.Capability
-type LanguageSupport = language.LanguageSupport
-
-const (
-	CapFileOutline     = language.CapFileOutline
-	CapFindSymbol      = language.CapFindSymbol
-	CapWorkspaceSymbol = language.CapWorkspaceSymbol
-	CapDefinition      = language.CapDefinition
-	CapReferences      = language.CapReferences
-	CapCallsFrom       = language.CapCallsFrom
-	CapCallsInto       = language.CapCallsInto
-	CapReadSymbol      = language.CapReadSymbol
-	CapExtractBody     = language.CapExtractBody
-	CapRelatedFiles    = language.CapRelatedFiles
-	CapImplementations = language.CapImplementations
-	CapDiagnostics     = language.CapDiagnostics
-	CapOverview        = language.CapOverview
-	CapEntrypoints     = language.CapEntrypoints
-)
-
 const (
 	PrecisionTierLSP         = "lsp"
 	PrecisionTierSyntaxIndex = "syntax-index"
