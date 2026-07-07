@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/capabilities/workspace/externaltool"
 	"idiom/internal/contracts/autonomy"
 	contractcompile "idiom/internal/contracts/compile"
 	plancontract "idiom/internal/contracts/plan"
@@ -30828,12 +30829,12 @@ func TestImplementationScopedSurfaceActiveForRequiredPathMutation(t *testing.T) 
 }
 
 func TestScopedImplementationDiscoveryLookupAllowsSemanticAndDeclaredProjectTools(t *testing.T) {
-	reg, err := workspace.NewExternalToolRegistry([]workspace.ExternalTool{
+	reg, err := externaltool.NewRegistry([]externaltool.Tool{
 		{Name: "lookup", Command: "true", ReadOnly: true, Discovery: true},
 		{Name: "queue_run", Command: "true", ReadOnly: false, Discovery: false},
 	})
 	if err != nil {
-		t.Fatalf("NewExternalToolRegistry: %v", err)
+		t.Fatalf("externaltool.NewRegistry: %v", err)
 	}
 
 	root := t.TempDir()

@@ -6,12 +6,13 @@ import (
 	"sync"
 
 	"idiom/internal/capabilities/mcp"
+	"idiom/internal/capabilities/workspace/externaltool"
 )
 
 type ToolSurface struct {
 	mu                    sync.Mutex
 	mcpRegistry           *mcp.Registry
-	externalToolsRegistry *ExternalToolRegistry
+	externalToolsRegistry *externaltool.Registry
 }
 
 type ToolSurfaceManifestOptions struct {
@@ -186,7 +187,7 @@ func (m *Manager) SetMCPRegistry(registry *mcp.Registry) {
 	m.toolSurface.SetMCPRegistry(registry)
 }
 
-func (m *Manager) SetExternalToolsRegistry(registry *ExternalToolRegistry) {
+func (m *Manager) SetExternalToolsRegistry(registry *externaltool.Registry) {
 	if m == nil {
 		return
 	}
@@ -237,7 +238,7 @@ func (s *ToolSurface) MCPRegistry() *mcp.Registry {
 	return s.mcpRegistry
 }
 
-func (s *ToolSurface) SetExternalToolsRegistry(registry *ExternalToolRegistry) {
+func (s *ToolSurface) SetExternalToolsRegistry(registry *externaltool.Registry) {
 	if s == nil {
 		return
 	}
@@ -248,7 +249,7 @@ func (s *ToolSurface) SetExternalToolsRegistry(registry *ExternalToolRegistry) {
 	s.externalToolsRegistry = registry
 }
 
-func (s *ToolSurface) ExternalToolsRegistry() *ExternalToolRegistry {
+func (s *ToolSurface) ExternalToolsRegistry() *externaltool.Registry {
 	if s == nil {
 		return nil
 	}

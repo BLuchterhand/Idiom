@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"idiom/internal/capabilities/workspace/externaltool"
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/failures"
@@ -22,7 +23,7 @@ type ToolProfileDecision struct {
 
 type ToolProfilePolicyContext struct {
 	Workspace     config.Workspace
-	ExternalTools *ExternalToolRegistry
+	ExternalTools *externaltool.Registry
 }
 
 func NormalizeToolProfile(profile string) (string, error) {

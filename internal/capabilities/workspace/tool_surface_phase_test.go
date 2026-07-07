@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"idiom/internal/capabilities/workspace/externaltool"
 	"idiom/internal/contracts/autonomy"
 )
 
@@ -73,12 +74,12 @@ func TestImplementationScopedEditAllowsSubmitPlan(t *testing.T) {
 		}
 	}
 
-	reg, err := NewExternalToolRegistry([]ExternalTool{
+	reg, err := externaltool.NewRegistry([]externaltool.Tool{
 		{Name: "trace_code", Command: "true", ReadOnly: true, Discovery: true},
 		{Name: "queue_run", Command: "true", ReadOnly: false, Discovery: false},
 	})
 	if err != nil {
-		t.Fatalf("NewExternalToolRegistry: %v", err)
+		t.Fatalf("externaltool.NewRegistry: %v", err)
 	}
 
 	got := ImplementationScopedEditAllowedToolsWithExternalReadOnlyDiscovery([]string{"trace_code", "queue_run", ToolNameEditFile}, reg.IsReadOnlyDiscovery)

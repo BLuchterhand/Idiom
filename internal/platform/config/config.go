@@ -372,9 +372,9 @@ type Workspace struct {
 	ExternalToolsDir string `json:"external_tools_dir,omitempty"`
 }
 
-// ExternalToolDef mirrors workspace.ExternalTool at the config layer.
+// ExternalToolDef mirrors externaltool.Tool at the config layer.
 // Kept in this package to avoid import cycles between config and
-// workspace; the manager copies these into workspace.ExternalTool at
+// workspace; the manager copies these into externaltool.Tool at
 // init time.
 type ExternalToolDef struct {
 	Name           string          `json:"name"`

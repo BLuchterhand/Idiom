@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/capabilities/workspace/externaltool"
 	"idiom/internal/contracts/autonomy"
 	contractcompile "idiom/internal/contracts/compile"
 	"idiom/internal/platform/config"
@@ -8644,11 +8645,11 @@ func TestAdvertisedAllowedToolsPreservesRuntimeBriefOrder(t *testing.T) {
 func TestAdvertisedAllowedToolsSuppressesArtifactFinalAnswerTools(t *testing.T) {
 	root := t.TempDir()
 
-	reg, err := workspace.NewExternalToolRegistry([]workspace.ExternalTool{
+	reg, err := externaltool.NewRegistry([]externaltool.Tool{
 		{Name: "project_lookup", Command: "/bin/sh"},
 	})
 	if err != nil {
-		t.Fatalf("NewExternalToolRegistry: %v", err)
+		t.Fatalf("externaltool.NewRegistry: %v", err)
 	}
 
 	manager := workspace.NewManager(config.Workspace{Root: root, CWD: root})
@@ -8672,11 +8673,11 @@ func TestAdvertisedAllowedToolsSuppressesArtifactFinalAnswerTools(t *testing.T) 
 func TestArtifactFinalAnswerRunDoesNotAppendExternalTools(t *testing.T) {
 	root := t.TempDir()
 
-	reg, err := workspace.NewExternalToolRegistry([]workspace.ExternalTool{
+	reg, err := externaltool.NewRegistry([]externaltool.Tool{
 		{Name: "project_lookup", Command: "/bin/sh"},
 	})
 	if err != nil {
-		t.Fatalf("NewExternalToolRegistry: %v", err)
+		t.Fatalf("externaltool.NewRegistry: %v", err)
 	}
 
 	manager := workspace.NewManager(config.Workspace{Root: root, CWD: root})

@@ -365,6 +365,7 @@ Accepted or corrected slices:
 | TUI clipboard host-tool lookup cleanup | Production Go `+9 / -8`: net `+1`; routed clipboard command discovery through `internal/platform/hosttools` and removed the private lookup callback used only to bypass PATH lookup in tests; Bubble Tea process execution remains local because it hands an `exec.Cmd` to `tea.ExecProcess` | Test Go `+29 / -17`: clipboard command-selection tests now use PATH-isolated executable fixtures instead of a callback seam | Focused so far: `go test ./internal/surfaces/tui/app -run 'TestClipboardCommandForRuntime|TestCopyConversationContent|TestSelectionMode' -count=1` | Accepted locally as the host-tool lookup tail: production `exec.LookPath` remains only in platform packages, while TUI clipboard process execution stays deferred to a future lifecycle-aware process API because it integrates with Bubble Tea's `ExecProcess` |
 | Wrapper policy audit hardening | Production Go behavior unchanged; changed the pass-through wrapper default and tracked Idiom policy so test files are scanned instead of exempted, and strengthened AGENTS/development guidance to ban wrapper-only helpers in tests as well as production | No test files changed; policy/docs delta is `+13 / -10` across `.idiom/coding_rules.json`, `coding_rules.example.json`, `internal/contracts/codingrules/effective.go`, `AGENTS.md`, and `docs/development.md` before this ledger row | Branch audit: `git diff b6591bf5eb647e29a10697b48585047c6a8361da..HEAD -- '*.go'` added no type aliases; diff-scoped wrapper scan with `ignore_tests=false` scanned `179` changed Go files with `0` findings; full scan with tracked policy scanned `607` Go files with `0` findings and `5` boundary-adapter suppressions; focused rule tests passed | Accepted as a direct response to wrapper-risk review: compatibility/API suppressions remain rejected by scanner tests, test-only facades are no longer policy-exempt, and the only active suppressions are the `languagetools.Host` boundary adapter methods |
 | CLI lane/plan-execute alias cleanup | Production Go `+29 / -41`: net `-12`; deleted alias-only DTO/type surfaces from `internal/surfaces/cli/lane` and `internal/surfaces/cli/planexecute`, with call sites naming `cmdruntime`, `lanehistory`, `atomintake`, `readiness`, and workflow `planexecute` owners directly | Test Go `+48 / -44`: net `+4`; test fakes and review-repair fixtures now use owner package types instead of package-local compatibility aliases | Focused: `go test ./internal/surfaces/cli/planexecute ./internal/surfaces/cli/lane -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `git diff --check` | Accepted as an alias-only surface deletion; no wrapper helper was introduced, the tracked wrapper policy scanned `607` Go files with `0` findings, and `deadcode -test ./...` is clean |
+| External-tool registry wrapper deletion | Production Go `+41 / -121`: net `-80`; deleted `workspace.ExternalTool`, `workspace.ExternalToolRegistry`, `workspace.NewExternalToolRegistry`, and the forwarding registry methods, then stored and passed `externaltool.Registry` directly while keeping workspace-owned `ToolDefinition` projection local | Test Go `+20 / -16`: net `+4`; tests now construct `externaltool.Registry` with `externaltool.Tool` so they no longer preserve the deleted compatibility API | Focused: `go test ./internal/capabilities/workspace ./internal/capabilities/workspace/externaltool ./internal/runtime/agent ./internal/surfaces/cli/tool ./internal/surfaces/cli/init -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `git diff --check` | Accepted after architecture and Go/package reviewer feedback; `externaltool` owns validation, availability, and invocation, `workspace` owns config loading plus tool-surface projection, and stale config/init references to the deleted alias were removed |
 
 ## Historical Count Snapshots (Superseded)
 
@@ -754,12 +755,16 @@ helper cleanup:
 
 ## Final Verification For Current Branch State
 
+- `go test ./internal/capabilities/workspace
+  ./internal/capabilities/workspace/externaltool ./internal/runtime/agent
+  ./internal/surfaces/cli/tool ./internal/surfaces/cli/init -count=1`:
+  latest run passed.
 - `go test ./internal/surfaces/cli/planexecute ./internal/surfaces/cli/lane
   -count=1`: latest run passed.
 - `go test ./...`: latest run passed.
 - `go build ./cmd/idiom`: latest run passed.
 - `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on
-  warning`: latest run passed with `0` findings across 607 scanned Go files.
+  warning`: latest run passed with `0` findings across 606 scanned Go files.
 - `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`: latest run
   is clean.
 - `git diff --check`: latest run passed.
@@ -770,18 +775,18 @@ Current git state:
 
 - Branch state: `codex/rearchitecture-surface-authority` is based on
   merge-base `b6591bf5eb647e29a10697b48585047c6a8361da`; the latest commit
-  includes the CLI lane/plan-execute alias cleanup.
+  includes the external-tool registry wrapper deletion.
 - Goal-period diff from merge base through the latest commit: production Go
-  `+18,960 / -18,770`, net `+190`; Go tests `+9,526 / -5,813`, net `+3,713`;
-  strict all-file total `+30,473 / -26,554`, net `+3,919` across 388 files.
-- Latest alias-cleanup slice only: production Go `+29 / -41`, net
-  `-12`; Go tests `+48 / -44`, net `+4`.
+  `+18,995 / -18,885`, net `+110`; Go tests `+9,540 / -5,823`, net `+3,717`;
+  strict all-file total `+30,527 / -26,679`, net `+3,848` across 391 files.
+- Latest external-tool registry cleanup slice only: production Go `+41 / -121`,
+  net `-80`; Go tests `+20 / -16`, net `+4`.
 
 Interpretation: the current goal-period branch is not production-LOC negative.
 Many individual consolidation slices are net-negative and remove real duplicate
 or alias-only surfaces, but the later `commandexec` process-lifecycle owner
 work intentionally added shared platform code before all remaining process
-migrations are complete. The honest current production answer is net `+190`
+migrations are complete. The honest current production answer is net `+110`
 Go LOC from merge base through the working tree. The implementation ledger
 above remains the source of truth for accepted local reductions inside each
 consolidation case.

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"idiom/internal/capabilities/workspace/externaltool"
 	"idiom/internal/platform/config"
 )
 
@@ -21,12 +22,12 @@ func TestManagerDoesNotAdvertiseUnavailableExternalTools(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 
-	reg, err := NewExternalToolRegistry([]ExternalTool{
+	reg, err := externaltool.NewRegistry([]externaltool.Tool{
 		{Name: "ok_tool", Command: "./scripts/ok.sh"},
 		{Name: "stale_tool", Command: filepath.Join(root, "does-not-exist.sh")},
 	})
 	if err != nil {
-		t.Fatalf("NewExternalToolRegistry: %v", err)
+		t.Fatalf("externaltool.NewRegistry: %v", err)
 	}
 
 	mgr := NewManager(config.Workspace{Root: root, CWD: root})
@@ -64,13 +65,13 @@ func TestToolSurfaceSnapshotCopiesExternalToolView(t *testing.T) {
 		}
 	}
 
-	reg, err := NewExternalToolRegistry([]ExternalTool{
+	reg, err := externaltool.NewRegistry([]externaltool.Tool{
 		{Name: "lookup_tool", Command: "./scripts/lookup.sh", ReadOnly: true, Discovery: true},
 		{Name: "mutating_tool", Command: "./scripts/mutate.sh", ReadOnly: false, Discovery: true},
 		{Name: "stale_lookup", Command: "./scripts/missing.sh", ReadOnly: true, Discovery: true},
 	})
 	if err != nil {
-		t.Fatalf("NewExternalToolRegistry: %v", err)
+		t.Fatalf("externaltool.NewRegistry: %v", err)
 	}
 
 	mgr := NewManager(config.Workspace{Root: root, CWD: root})
@@ -140,9 +141,9 @@ func TestManagerBoundsExternalToolOutput(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 
-	reg, err := NewExternalToolRegistry([]ExternalTool{{Name: "chatty_tool", Command: "./scripts/chatty.sh"}})
+	reg, err := externaltool.NewRegistry([]externaltool.Tool{{Name: "chatty_tool", Command: "./scripts/chatty.sh"}})
 	if err != nil {
-		t.Fatalf("NewExternalToolRegistry: %v", err)
+		t.Fatalf("externaltool.NewRegistry: %v", err)
 	}
 
 	mgr := NewManager(config.Workspace{Root: root, CWD: root, MaxOutputBytes: 8})
@@ -171,9 +172,9 @@ func TestManagerPassesExternalToolInputOnStdin(t *testing.T) {
 		t.Fatalf("write script: %v", err)
 	}
 
-	reg, err := NewExternalToolRegistry([]ExternalTool{{Name: "stdin_tool", Command: "./scripts/stdin.py"}})
+	reg, err := externaltool.NewRegistry([]externaltool.Tool{{Name: "stdin_tool", Command: "./scripts/stdin.py"}})
 	if err != nil {
-		t.Fatalf("NewExternalToolRegistry: %v", err)
+		t.Fatalf("externaltool.NewRegistry: %v", err)
 	}
 
 	mgr := NewManager(config.Workspace{Root: root, CWD: root, MaxOutputBytes: 1024})

@@ -8,14 +8,15 @@ import (
 	"path/filepath"
 	"slices"
 
+	"idiom/internal/capabilities/workspace/externaltool"
 	"idiom/internal/platform/config"
 )
 
 // LoadExternalToolsRegistry merges inline workspace config with per-tool JSON
 // files and returns a populated external tool registry. It returns nil when no
 // external tools are configured.
-func LoadExternalToolsRegistry(ws config.Workspace) (*ExternalToolRegistry, error) {
-	tools := make([]ExternalTool, 0, len(ws.ExternalTools))
+func LoadExternalToolsRegistry(ws config.Workspace) (*externaltool.Registry, error) {
+	tools := make([]externaltool.Tool, 0, len(ws.ExternalTools))
 	for _, def := range ws.ExternalTools {
 		tools = append(tools, externalToolFromConfig(def))
 	}
@@ -38,13 +39,13 @@ func LoadExternalToolsRegistry(ws config.Workspace) (*ExternalToolRegistry, erro
 		return nil, nil
 	}
 
-	slices.SortFunc(tools, func(a, b ExternalTool) int { return cmp.Compare(a.Name, b.Name) })
+	slices.SortFunc(tools, func(a, b externaltool.Tool) int { return cmp.Compare(a.Name, b.Name) })
 
-	return NewExternalToolRegistry(tools)
+	return externaltool.NewRegistry(tools)
 }
 
-func externalToolFromConfig(def config.ExternalToolDef) ExternalTool {
-	return ExternalTool{
+func externalToolFromConfig(def config.ExternalToolDef) externaltool.Tool {
+	return externaltool.Tool{
 		Name:           def.Name,
 		Description:    def.Description,
 		Command:        def.Command,
@@ -57,7 +58,7 @@ func externalToolFromConfig(def config.ExternalToolDef) ExternalTool {
 	}
 }
 
-func loadExternalToolsDir(dir string) ([]ExternalTool, error) {
+func loadExternalToolsDir(dir string) ([]externaltool.Tool, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -67,7 +68,7 @@ func loadExternalToolsDir(dir string) ([]ExternalTool, error) {
 		return nil, fmt.Errorf("external_tools_dir %q: %w", dir, err)
 	}
 
-	out := make([]ExternalTool, 0)
+	out := make([]externaltool.Tool, 0)
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue

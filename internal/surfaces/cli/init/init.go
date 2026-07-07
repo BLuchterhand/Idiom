@@ -281,8 +281,8 @@ available for gap-driven lookup/trace work while opaque external tools stay
 hidden behind the write-scope contract.
 
 See the idiom source for the full schema (internal/platform/config/config.go's
-` + "`ExternalToolDef`" + ` type and internal/capabilities/workspace/manager.go's
-` + "`ExternalTool`" + ` consumer).
+` + "`ExternalToolDef`" + ` type and internal/capabilities/workspace/externaltool's
+registry owner).
 `
 
 const initSeedPostflightChecksReadme = `# Project-specific postflight checks
