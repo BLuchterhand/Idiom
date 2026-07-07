@@ -1,6 +1,7 @@
 package brief
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -12,8 +13,8 @@ import (
 	"strings"
 
 	"idiom/internal/evidence/telemetry"
-	"idiom/internal/platform/commandexec"
 	"idiom/internal/surfaces/cliassets"
+	"idiom/internal/workflows/brieflint"
 )
 
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
@@ -218,33 +219,6 @@ func printBriefPreloadList(stdout io.Writer, projectRoot string) {
 	}
 }
 
-// LintFinding is the structured representation of one lint
-// entry consumed by the refine review/patch preload (§2.3, §6.1 Gap
-// 5). Schema documented at docs/refine-end-to-end-loop.md §6.1.
-// Fields:
-//   - Severity: "BLOCK" / "WARN" / "INFO" — equally meaningful to
-//     downstream patch-phase consumers (BLOCK = required edit target).
-//   - Category: derived from message keywords; stable across the
-//     run so patch-phase prompts can group findings.
-//   - Brief: source brief path.
-//   - Message: full original lint text (humans + LLMs both want this).
-type LintFinding struct {
-	Severity string `json:"severity"`
-	Category string `json:"category"`
-	Brief    string `json:"brief"`
-	Message  string `json:"message"`
-}
-
-// LintReport is the top-level JSON envelope from `idiom brief
-// lint --json`. Exit reflects the python preflight script's exit
-// code (0=pass, 1=fail-with-blocks, 2=error). Findings is the full
-// finding list in original emission order.
-type LintReport struct {
-	Brief    string        `json:"brief"`
-	Exit     int           `json:"exit"`
-	Findings []LintFinding `json:"findings"`
-}
-
 func RunLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	emitJSON := false
 	briefArgs := args
@@ -281,7 +255,7 @@ func RunLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.R
 	}
 
 	if emitJSON {
-		report, err := BuildLintReport(briefPath, "")
+		report, err := brieflint.BuildReport(context.Background(), briefPath, "", 0)
 		if err != nil {
 			fmt.Fprintf(stderr, "brief lint: %v\n", err)
 
@@ -300,7 +274,7 @@ func RunLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.R
 		return report.Exit
 	}
 
-	result, err := runEmbeddedPreflight(briefPath, "")
+	result, err := brieflint.RunEmbeddedPreflight(context.Background(), briefPath, "", 0)
 	if err != nil {
 		fmt.Fprintf(stderr, "brief lint: %v\n", err)
 
@@ -329,129 +303,6 @@ func RunLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.R
 	telemetry.LogPhase(rec, "brief_lint", map[string]any{"exit": 0})
 
 	return 0
-}
-
-// BuildLintReport runs the embedded brief preflight and converts its
-// line-oriented output into the stable JSON report shape used by recover and
-// refine surfaces.
-func BuildLintReport(briefPath string, workdir string) (LintReport, error) {
-	result, err := runEmbeddedPreflight(briefPath, workdir)
-	if err != nil {
-		return LintReport{}, err
-	}
-
-	exit := 0
-	if result.Err != nil {
-		if !result.ExitError {
-			return LintReport{}, fmt.Errorf("failed to run python3: %w", result.Err)
-		}
-
-		exit = result.ExitCode
-	}
-
-	combined := result.Stdout + result.Stderr
-
-	return LintReport{
-		Brief:    briefPath,
-		Exit:     exit,
-		Findings: ParseLintFindings(briefPath, combined),
-	}, nil
-}
-
-func runEmbeddedPreflight(briefPath string, workdir string) (commandexec.Result, error) {
-	scriptPath, cleanup, err := WriteEmbeddedPreflight()
-	if err != nil {
-		return commandexec.Result{}, fmt.Errorf("cannot stage preflight script: %w", err)
-	}
-	defer cleanup()
-
-	return commandexec.Run(nil, commandexec.Spec{
-		Name: "python3",
-		Args: []string{scriptPath, briefPath},
-		Dir:  workdir,
-	}), nil
-}
-
-// ParseLintFindings extracts structured findings from the
-// python preflight script's combined stdout+stderr output. The
-// script's format is line-oriented:
-//
-//	idiom brief preflight: FAIL /path/to/brief.md  (or OK / WARN)
-//	- WARN: <warning message>
-//	- INFO: <info message>
-//	- <BLOCK-shaped line — no WARN/INFO prefix, in the failure list>
-//
-// Lines starting with `- ` and no severity prefix are BLOCK-level
-// (the preflight script's existing convention). Categories are
-// derived from keyword matching on the message; the taxonomy is
-// stable enough for downstream patch-phase consumers. Unknown
-// shapes fall through to category "other".
-func ParseLintFindings(briefPath, combined string) []LintFinding {
-	var findings []LintFinding
-
-	for _, raw := range strings.Split(combined, "\n") {
-		line := strings.TrimRight(raw, "\r")
-		trimmed := strings.TrimSpace(line)
-
-		if !strings.HasPrefix(trimmed, "- ") {
-			continue
-		}
-
-		body := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
-		severity := "BLOCK"
-		message := body
-
-		switch {
-		case strings.HasPrefix(body, "WARN:"):
-			severity = "WARN"
-			message = strings.TrimSpace(strings.TrimPrefix(body, "WARN:"))
-		case strings.HasPrefix(body, "INFO:"):
-			severity = "INFO"
-			message = strings.TrimSpace(strings.TrimPrefix(body, "INFO:"))
-		}
-
-		findings = append(findings, LintFinding{
-			Severity: severity,
-			Category: classifyBriefLintMessage(message),
-			Brief:    briefPath,
-			Message:  message,
-		})
-	}
-
-	return findings
-}
-
-// classifyBriefLintMessage derives a stable category string from
-// the message text. The taxonomy is intentionally narrow; adding a
-// new lint rule means adding its keyword pattern here so patch-phase
-// prompts can map findings → fix strategies. Unknown messages fall
-// through to "other" (never silently dropped).
-func classifyBriefLintMessage(msg string) string {
-	low := strings.ToLower(msg)
-	switch {
-	case strings.Contains(low, "exact-anchor specificity"), strings.Contains(low, "anchor specificity"):
-		return "anchor-specificity"
-	case strings.Contains(low, "verified-current-state"), strings.Contains(low, "verified current state"):
-		return "missing-current-state"
-	case strings.Contains(low, "anchor verification skipped"):
-		return "anchor-verification-skipped"
-	case strings.Contains(low, "placeholder"):
-		return "unfilled-placeholder"
-	case strings.Contains(low, "content fence"), strings.Contains(low, "content-fence"):
-		return "content-fence"
-	case strings.Contains(low, "multi-action"):
-		return "multi-action-row"
-	case strings.Contains(low, "discovery-mandate"), strings.Contains(low, "discovery mandate"):
-		return "discovery-mandate"
-	case strings.Contains(low, "branching"):
-		return "branching-language"
-	case strings.Contains(low, "prose-anchor"), strings.Contains(low, "prose anchor"):
-		return "prose-anchor"
-	case strings.Contains(low, "outer ```"):
-		return "outer-fence"
-	}
-
-	return "other"
 }
 
 func runBriefPreview(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
@@ -600,7 +451,7 @@ func runBriefLintResult(content string, stderr io.Writer) (int, []string) {
 
 	defer os.Remove(tmpPath)
 
-	result, err := runEmbeddedPreflight(tmpPath, "")
+	result, err := brieflint.RunEmbeddedPreflight(context.Background(), tmpPath, "", 0)
 	if err != nil {
 		return 2, []string{fmt.Sprintf("python3 failed: %v", err)}
 	}
@@ -634,23 +485,4 @@ func parseLintFailures(output string) []string {
 	}
 
 	return failures
-}
-
-func WriteEmbeddedPreflight() (path string, cleanup func(), err error) {
-	tmpDir, err := os.MkdirTemp("", "idiom-brief-")
-	if err != nil {
-		return "", func() {}, err
-	}
-
-	cleanup = func() { _ = os.RemoveAll(tmpDir) }
-
-	scriptPath := filepath.Join(tmpDir, "brief-preflight.py")
-
-	if err := os.WriteFile(scriptPath, cliassets.BriefPreflightScript(), 0o755); err != nil {
-		cleanup()
-
-		return "", func() {}, err
-	}
-
-	return scriptPath, cleanup, nil
 }

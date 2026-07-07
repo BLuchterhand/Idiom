@@ -19,6 +19,7 @@ import (
 	briefcmd "idiom/internal/surfaces/cli/brief"
 	"idiom/internal/surfaces/cliassets"
 	"idiom/internal/workflows/atomintake"
+	"idiom/internal/workflows/brieflint"
 )
 
 // refineIterMetrics captures observable per-iteration data and is
@@ -93,7 +94,6 @@ type refineDispatchFn func(metaBriefPath string, stdout, stderr io.Writer) int
 
 type Options = laneRefineOptions
 type DispatchFunc = refineDispatchFn
-type briefLintReport = briefcmd.LintReport
 
 var laneBriefLintRunner = func(args []string, stdout io.Writer, stderr io.Writer) int {
 	return briefcmd.RunLint(args, stdout, stderr, nil)
@@ -1626,7 +1626,7 @@ func persistRefineLintJSON(iterDir string, raw []byte, stderr io.Writer) {
 // list (INFO dropped). Returns ok=false if the JSON is malformed so
 // the caller can fall back gracefully.
 func renderRefineLintFindings(raw []byte) (string, bool) {
-	var report briefLintReport
+	var report brieflint.Report
 
 	if err := json.Unmarshal(bytes.TrimSpace(raw), &report); err != nil {
 		return "", false

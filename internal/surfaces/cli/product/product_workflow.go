@@ -14,10 +14,9 @@ import (
 
 	"idiom/internal/evidence/telemetry"
 	briefcmd "idiom/internal/surfaces/cli/brief"
+	"idiom/internal/workflows/brieflint"
 	"idiom/internal/workflows/productworkflow"
 )
-
-type briefLintReport = briefcmd.LintReport
 
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	if len(args) == 0 {
@@ -2952,7 +2951,7 @@ type productBriefOutput struct {
 	BriefOutputPath    string                                  `json:"brief_output_path,omitempty"`
 	Generated          productworkflow.BriefGenerationResult   `json:"generated"`
 	CoverageEvaluation *productworkflow.CoverageGateEvaluation `json:"coverage_evaluation,omitempty"`
-	Lint               *briefLintReport                        `json:"lint,omitempty"`
+	Lint               *brieflint.Report                       `json:"lint,omitempty"`
 	Blocker            string                                  `json:"blocker,omitempty"`
 	NextValidAction    string                                  `json:"next_valid_action,omitempty"`
 }
@@ -3068,7 +3067,7 @@ func runProductBrief(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 
 			lintCode := briefcmd.RunLint([]string{briefPathForLint, "--json"}, &lintStdout, &lintStderr, rec)
 
-			var lintReport briefLintReport
+			var lintReport brieflint.Report
 
 			if unmarshalErr := json.Unmarshal(lintStdout.Bytes(), &lintReport); unmarshalErr != nil {
 				allBlockers = append(allBlockers, fmt.Sprintf("brief lint output parse failed: %v", unmarshalErr))

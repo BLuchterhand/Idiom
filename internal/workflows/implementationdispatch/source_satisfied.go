@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 
+	atomintakecontract "idiom/internal/contracts/atomintake"
 	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/workflows/atomintake"
@@ -25,7 +26,7 @@ type TerminalAtomRecord struct {
 
 type PreflightSourceSatisfiedRecord struct {
 	Path         string
-	AtomState    string
+	AtomState    atomintakecontract.IntakeState
 	Blockers     []string
 	LintBlockers []string
 }
@@ -216,9 +217,8 @@ func TestObligationTermEvidence(path string, content string, obligation string) 
 	return atomintake.TermCoverageLineEvidence(path, content, obligation, "current test source covers design-doc test obligation", 2)
 }
 
-func AtomStateIsSourceSatisfied(state string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(state))
-	return normalized == "source-satisfied" || normalized == "source satisfied"
+func AtomStateIsSourceSatisfied(state atomintakecontract.IntakeState) bool {
+	return state == atomintakecontract.StateSourceSatisfied
 }
 
 func PreflightRecordsAllSourceSatisfied(records []PreflightSourceSatisfiedRecord) bool {

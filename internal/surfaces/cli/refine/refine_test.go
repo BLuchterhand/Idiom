@@ -17,6 +17,7 @@ import (
 	plancontract "idiom/internal/contracts/plan"
 	briefcmd "idiom/internal/surfaces/cli/brief"
 	"idiom/internal/workflows/atomintake"
+	"idiom/internal/workflows/brieflint"
 )
 
 // nonTrivialDraftBody returns a canned draft body sized to clear the
@@ -1881,56 +1882,6 @@ func TestRenderRefineLintFindingsMalformedJSONReturnsNotOK(t *testing.T) {
 	}
 }
 
-// TestParseBriefLintFindingsCategorizesByKeyword exercises the
-// keyword-driven category derivation (§6.1 Gap 5 schema). Each
-// known message shape lands in a stable category; unknown messages
-// fall to "other" rather than being silently dropped.
-func TestParseBriefLintFindingsCategorizesByKeyword(t *testing.T) {
-	cases := []struct {
-		name string
-		raw  string
-		want briefcmd.LintFinding
-	}{
-		{
-			name: "anchor-specificity-block",
-			raw:  "idiom brief preflight: FAIL /b.md\n- exact-anchor specificity failed for x.go.\n",
-			want: briefcmd.LintFinding{Severity: "BLOCK", Category: "anchor-specificity", Brief: "/b.md", Message: "exact-anchor specificity failed for x.go."},
-		},
-		{
-			name: "warn-current-state",
-			raw:  "- WARN: no obvious verified-current-state section found.\n",
-			want: briefcmd.LintFinding{Severity: "WARN", Category: "missing-current-state", Brief: "/b.md", Message: "no obvious verified-current-state section found."},
-		},
-		{
-			name: "info-note",
-			raw:  "- INFO: noteworthy detail\n",
-			want: briefcmd.LintFinding{Severity: "INFO", Category: "other", Brief: "/b.md", Message: "noteworthy detail"},
-		},
-		{
-			name: "unfilled-placeholder-block",
-			raw:  "- some unfilled placeholder somewhere\n",
-			want: briefcmd.LintFinding{Severity: "BLOCK", Category: "unfilled-placeholder", Brief: "/b.md", Message: "some unfilled placeholder somewhere"},
-		},
-		{
-			name: "unknown-falls-through-to-other",
-			raw:  "- something nobody planned for\n",
-			want: briefcmd.LintFinding{Severity: "BLOCK", Category: "other", Brief: "/b.md", Message: "something nobody planned for"},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := briefcmd.ParseLintFindings("/b.md", tc.raw)
-			if len(got) != 1 {
-				t.Fatalf("expected 1 finding, got %d: %+v", len(got), got)
-			}
-
-			if got[0] != tc.want {
-				t.Fatalf("finding mismatch:\n got=%+v\nwant=%+v", got[0], tc.want)
-			}
-		})
-	}
-}
-
 // TestRunBriefLintJSONFlagEmitsEnvelope is the end-to-end binding:
 // the CLI `idiom brief lint --json <path>` returns a JSON envelope
 // on stdout matching the schema, with the underlying preflight's
@@ -1958,7 +1909,7 @@ func TestRunBriefLintJSONFlagEmitsEnvelope(t *testing.T) {
 		t.Fatalf("expected JSON envelope on stdout, got: %s", out)
 	}
 
-	var report briefLintReport
+	var report brieflint.Report
 
 	if err := json.Unmarshal([]byte(out), &report); err != nil {
 		t.Fatalf("expected valid JSON envelope, got: %v\n%s", err, out)
@@ -2729,10 +2680,10 @@ func TestMarkdownDraftTemplateClarifiesTwoPaths(t *testing.T) {
 // prompts, future tooling) depend on. Renaming or removing a field
 // here is a breaking change and must be deliberate.
 func TestBriefLintJSONEnvelopeSchemaIsStable(t *testing.T) {
-	report := briefcmd.LintReport{
+	report := brieflint.Report{
 		Brief: "/x.md",
 		Exit:  1,
-		Findings: []briefcmd.LintFinding{
+		Findings: []brieflint.Finding{
 			{Severity: "BLOCK", Category: "anchor-specificity", Brief: "/x.md", Message: "test"},
 		},
 	}

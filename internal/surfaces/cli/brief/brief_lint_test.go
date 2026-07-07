@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"idiom/internal/evidence/telemetry"
+	"idiom/internal/workflows/brieflint"
 )
 
 // briefPreflightTestDeps materializes the embedded brief-preflight.py script
@@ -23,7 +24,7 @@ func briefPreflightTestDeps(t *testing.T) string {
 		t.Skip("python3 not available on PATH")
 	}
 
-	scriptPath, cleanup, err := WriteEmbeddedPreflight()
+	scriptPath, cleanup, err := brieflint.WriteEmbeddedPreflight()
 	if err != nil {
 		t.Fatalf("materialize brief-preflight.py: %v", err)
 	}

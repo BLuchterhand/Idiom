@@ -7,10 +7,6 @@ import (
 )
 
 func TestAssetsExposeExpectedBundles(t *testing.T) {
-	if !strings.Contains(string(BriefPreflightScript()), "brief-preflight.py <brief.md>") {
-		t.Fatalf("brief preflight script is missing its usage anchor")
-	}
-
 	preloadKinds, err := BriefPreloadKinds()
 	if err != nil {
 		t.Fatalf("list brief preload kinds: %v", err)

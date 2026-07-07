@@ -1,5 +1,7 @@
 package implementationdispatch
 
+import atomintakecontract "idiom/internal/contracts/atomintake"
+
 type PlanDocument struct {
 	Path                string
 	Content             string
@@ -13,7 +15,7 @@ type PlanDocument struct {
 type PlanDocumentPreflightResult struct {
 	Path         string
 	OK           bool
-	AtomState    string
+	AtomState    atomintakecontract.IntakeState
 	Blockers     []string
 	LintBlockers []string
 	Warnings     []string
@@ -29,13 +31,6 @@ type PlanDocumentRefineResult struct {
 	Err                   error
 	Document              PlanDocument
 	PostPreflightBlockers []PlanDocumentPreflightResult
-}
-
-type PreflightCommandResult struct {
-	ExitCode int
-	Stdout   string
-	Stderr   string
-	Err      error
 }
 
 type ResolutionBlocker struct {

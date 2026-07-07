@@ -313,7 +313,12 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 		planDocuments = refinedPlanDocuments
 		requiredPaths, allowedPaths = implementationDispatchEditScopeFromPlanDocuments(prompt, plan, m.cfg, planDocuments)
 
-		if refinedBlocked := preflightImplementationDispatchPlanDocuments(ctx, m.cfg, planDocuments); len(refinedBlocked) > 0 {
+		if refinedBlocked := implementationdispatch.PreflightPlanDocuments(ctx, implementationdispatch.PlanDocumentsPreflightInput{
+			WorkspaceRoot: m.cfg.Workspace.Root,
+			WorkspaceCWD:  m.cfg.Workspace.CWD,
+			PlanDocuments: planDocuments,
+			Runner:        implementationDispatchPlanDocumentPreflightRunner,
+		}); len(refinedBlocked) > 0 {
 			sourceSatisfiedRecords := implementationdispatch.PreflightSourceSatisfiedRecords(refinedBlocked)
 			if implementationdispatch.PreflightRecordsAllSourceSatisfied(sourceSatisfiedRecords) {
 				m.logMessage("dispatch_source_satisfied", fmt.Sprintf("refined atom preflight classified %d atom(s) as source-satisfied", len(refinedBlocked)))
@@ -328,7 +333,12 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 		}
 	}
 
-	if blocked := preflightImplementationDispatchPlanDocuments(ctx, m.cfg, planDocuments); len(blocked) > 0 {
+	if blocked := implementationdispatch.PreflightPlanDocuments(ctx, implementationdispatch.PlanDocumentsPreflightInput{
+		WorkspaceRoot: m.cfg.Workspace.Root,
+		WorkspaceCWD:  m.cfg.Workspace.CWD,
+		PlanDocuments: planDocuments,
+		Runner:        implementationDispatchPlanDocumentPreflightRunner,
+	}); len(blocked) > 0 {
 		sourceSatisfiedRecords := implementationdispatch.PreflightSourceSatisfiedRecords(blocked)
 		if implementationdispatch.PreflightRecordsAllSourceSatisfied(sourceSatisfiedRecords) {
 			m.logMessage("dispatch_source_satisfied", fmt.Sprintf("preflight classified %d atom(s) as source-satisfied", len(blocked)))
@@ -419,7 +429,12 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 			planDocuments = refinedPlanDocuments
 			requiredPaths, allowedPaths = implementationDispatchEditScopeFromPlanDocuments(prompt, plan, m.cfg, planDocuments)
 
-			if refinedBlocked := preflightImplementationDispatchPlanDocuments(ctx, m.cfg, planDocuments); len(refinedBlocked) > 0 {
+			if refinedBlocked := implementationdispatch.PreflightPlanDocuments(ctx, implementationdispatch.PlanDocumentsPreflightInput{
+				WorkspaceRoot: m.cfg.Workspace.Root,
+				WorkspaceCWD:  m.cfg.Workspace.CWD,
+				PlanDocuments: planDocuments,
+				Runner:        implementationDispatchPlanDocumentPreflightRunner,
+			}); len(refinedBlocked) > 0 {
 				sourceSatisfiedRecords := implementationdispatch.PreflightSourceSatisfiedRecords(refinedBlocked)
 				if implementationdispatch.PreflightRecordsAllSourceSatisfied(sourceSatisfiedRecords) {
 					m.logMessage("dispatch_source_satisfied", fmt.Sprintf("refined preflight classified %d atom(s) as source-satisfied", len(refinedBlocked)))
@@ -474,7 +489,12 @@ func implementationDispatchRefinedDocumentIsDispatchable(ctx context.Context, cf
 		return false
 	}
 
-	return len(preflightImplementationDispatchPlanDocuments(ctx, cfg, []implementationDispatchPlanDocument{doc})) == 0
+	return len(implementationdispatch.PreflightPlanDocuments(ctx, implementationdispatch.PlanDocumentsPreflightInput{
+		WorkspaceRoot: cfg.Workspace.Root,
+		WorkspaceCWD:  cfg.Workspace.CWD,
+		PlanDocuments: []implementationDispatchPlanDocument{doc},
+		Runner:        implementationDispatchPlanDocumentPreflightRunner,
+	})) == 0
 }
 
 func (m *Model) runAtomizedImplementationPlanDocumentsViaPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan, atomDocuments []implementationDispatchPlanDocument) (string, error) {

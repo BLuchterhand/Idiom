@@ -45,7 +45,13 @@ func stubImplementationDispatchPlanDocumentPreflight(t *testing.T, stub func(con
 
 	orig := implementationDispatchPlanDocumentPreflightRunner
 
-	implementationDispatchPlanDocumentPreflightRunner = stub
+	implementationDispatchPlanDocumentPreflightRunner = func(ctx context.Context, input implementationdispatch.PlanDocumentPreflightInput) implementationDispatchPlanDocumentPreflightResult {
+		cfg := config.Config{}
+		cfg.Workspace.Root = input.WorkspaceRoot
+		cfg.Workspace.CWD = input.WorkspaceCWD
+
+		return stub(ctx, cfg, input.Document)
+	}
 
 	t.Cleanup(func() { implementationDispatchPlanDocumentPreflightRunner = orig })
 }

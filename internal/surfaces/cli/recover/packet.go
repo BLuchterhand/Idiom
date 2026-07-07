@@ -1,6 +1,7 @@
 package recover
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -19,14 +20,13 @@ import (
 	"idiom/internal/platform/config"
 	"idiom/internal/repository/comprehension"
 	"idiom/internal/runtime/localops"
-	briefcmd "idiom/internal/surfaces/cli/brief"
 	"idiom/internal/workflows/atomintake"
+	"idiom/internal/workflows/brieflint"
 	"idiom/internal/workflows/recoverstatus"
 	"idiom/internal/workflows/recovery"
 )
 
 type atomIntakeReport = atomintake.IntakeReport
-type briefLintFinding = briefcmd.LintFinding
 
 type recoverDecomposeOptions struct {
 	ConfigPath string
@@ -117,7 +117,7 @@ type recoverGateReport struct {
 	Name       string                      `json:"name"`
 	Status     recoverycontract.GateStatus `json:"status"`
 	Summary    string                      `json:"summary,omitempty"`
-	Findings   []briefLintFinding          `json:"findings,omitempty"`
+	Findings   []brieflint.Finding         `json:"findings,omitempty"`
 	Intake     *atomIntakeReport           `json:"intake,omitempty"`
 	ScopePaths []string                    `json:"scope_paths,omitempty"`
 }
@@ -635,7 +635,7 @@ func runRecoveryWorkspaceStateGate(partial recoverycontract.PartialState, allowD
 }
 
 func runRecoveryBriefLintGate(root string, briefPath string) recoverGateReport {
-	report, err := briefcmd.BuildLintReport(briefPath, root)
+	report, err := brieflint.BuildReport(context.Background(), briefPath, root, 0)
 	if err != nil {
 		return recoverGateReport{Name: recoverycontract.GateBriefLint, Status: recoverycontract.GateStatusError, Summary: err.Error()}
 	}

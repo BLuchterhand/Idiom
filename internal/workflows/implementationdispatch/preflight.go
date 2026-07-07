@@ -5,16 +5,17 @@ import (
 	"strings"
 )
 
-type PlanDocumentPreflightRunner func(context.Context, PlanDocument) PlanDocumentPreflightResult
+type PlanDocumentPreflightRunner func(context.Context, PlanDocumentPreflightInput) PlanDocumentPreflightResult
 
-func PreflightPlanDocuments(ctx context.Context, planDocuments []PlanDocument, runner PlanDocumentPreflightRunner) []PlanDocumentPreflightResult {
+func PreflightPlanDocuments(ctx context.Context, input PlanDocumentsPreflightInput) []PlanDocumentPreflightResult {
+	runner := input.Runner
 	if runner == nil {
-		return nil
+		runner = PreflightPlanDocument
 	}
 
 	var blocked []PlanDocumentPreflightResult
 
-	for _, doc := range planDocuments {
+	for _, doc := range input.PlanDocuments {
 		if strings.TrimSpace(doc.Path) == "" {
 			continue
 		}
@@ -23,7 +24,12 @@ func PreflightPlanDocuments(ctx context.Context, planDocuments []PlanDocument, r
 			continue
 		}
 
-		result := runner(ctx, doc)
+		result := runner(ctx, PlanDocumentPreflightInput{
+			WorkspaceRoot: input.WorkspaceRoot,
+			WorkspaceCWD:  input.WorkspaceCWD,
+			Document:      doc,
+			Timeout:       input.Timeout,
+		})
 		if !result.OK || len(result.Blockers) > 0 {
 			if strings.TrimSpace(result.Path) == "" {
 				result.Path = doc.Path

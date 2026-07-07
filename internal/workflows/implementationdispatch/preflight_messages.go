@@ -3,6 +3,8 @@ package implementationdispatch
 import (
 	"fmt"
 	"strings"
+
+	atomintakecontract "idiom/internal/contracts/atomintake"
 )
 
 func HumanPlanDocumentPreflightBlockedMessage(results []PlanDocumentPreflightResult) string {
@@ -90,8 +92,8 @@ func PreflightCanRefine(results []PlanDocumentPreflightResult) bool {
 			return true
 		}
 
-		switch strings.TrimSpace(result.AtomState) {
-		case "missing-scope":
+		switch result.AtomState {
+		case atomintakecontract.StateMissingScope:
 			return true
 		}
 	}

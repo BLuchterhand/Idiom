@@ -14,9 +14,12 @@ func TestPreflightPlanDocumentsSkipsEmptyAndReferenceOnlyDocuments(t *testing.T)
 		{Path: "docs/dispatch.md"},
 	}
 
-	blocked := PreflightPlanDocuments(context.Background(), docs, func(_ context.Context, doc PlanDocument) PlanDocumentPreflightResult {
-		visited = append(visited, doc.Path)
-		return PlanDocumentPreflightResult{Path: doc.Path, OK: true}
+	blocked := PreflightPlanDocuments(context.Background(), PlanDocumentsPreflightInput{
+		PlanDocuments: docs,
+		Runner: func(_ context.Context, input PlanDocumentPreflightInput) PlanDocumentPreflightResult {
+			visited = append(visited, input.Document.Path)
+			return PlanDocumentPreflightResult{Path: input.Document.Path, OK: true}
+		},
 	})
 
 	if len(blocked) != 0 {
@@ -31,11 +34,14 @@ func TestPreflightPlanDocumentsSkipsEmptyAndReferenceOnlyDocuments(t *testing.T)
 func TestPreflightPlanDocumentsReportsBlockedResultsAndBackfillsPath(t *testing.T) {
 	docs := []PlanDocument{{Path: "docs/dispatch.md"}}
 
-	blocked := PreflightPlanDocuments(context.Background(), docs, func(_ context.Context, doc PlanDocument) PlanDocumentPreflightResult {
-		return PlanDocumentPreflightResult{
-			OK:       true,
-			Blockers: []string{"brief lint: missing exact anchor"},
-		}
+	blocked := PreflightPlanDocuments(context.Background(), PlanDocumentsPreflightInput{
+		PlanDocuments: docs,
+		Runner: func(_ context.Context, _ PlanDocumentPreflightInput) PlanDocumentPreflightResult {
+			return PlanDocumentPreflightResult{
+				OK:       true,
+				Blockers: []string{"brief lint: missing exact anchor"},
+			}
+		},
 	})
 
 	if len(blocked) != 1 {

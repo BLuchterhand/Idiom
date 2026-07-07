@@ -8,12 +8,6 @@ import (
 	"strings"
 )
 
-// BriefPreflightScript is the Python brief-lint implementation bundled into
-// the idiom binary.
-//
-//go:embed brief-preflight.py
-var briefPreflightScript []byte
-
 //go:embed brief-preload/*.md
 var briefPreloadFS embed.FS
 
@@ -27,10 +21,6 @@ var canonicalLaneRuleNames = []string{
 	"loop-protocol.md",
 	"brief-skeleton.md",
 	"known-traps-generic.md",
-}
-
-func BriefPreflightScript() []byte {
-	return append([]byte(nil), briefPreflightScript...)
 }
 
 func BriefPreload(kind string) (string, error) {

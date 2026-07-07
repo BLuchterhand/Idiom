@@ -20,11 +20,10 @@ type implementationDispatchPlanDocument = implementationdispatch.PlanDocument
 type implementationDispatchPlanDocumentPreflightResult = implementationdispatch.PlanDocumentPreflightResult
 type implementationDispatchPlanDocumentRefineResult = implementationdispatch.PlanDocumentRefineResult
 type implementationDispatchPlanDocumentResolutionBlocker = implementationdispatch.ResolutionBlocker
-type implementationDispatchPreflightCommandResult = implementationdispatch.PreflightCommandResult
 
 type implementationDispatchRecoveryDecision = recovery.PlanExecuteRecoveryDecision
 
-var implementationDispatchPlanDocumentPreflightRunner = defaultImplementationDispatchPlanDocumentPreflight
+var implementationDispatchPlanDocumentPreflightRunner implementationdispatch.PlanDocumentPreflightRunner = implementationdispatch.PreflightPlanDocument
 var implementationDispatchPlanDocumentRefineRunner = defaultImplementationDispatchPlanDocumentRefine
 
 func isPlanExecuteInternalFamily(family string) bool {
@@ -62,72 +61,6 @@ func composeImplementationBriefWithEditScopeAndPlanDocuments(prompt string, plan
 		VerificationPlan:     brief.VerificationPlan,
 		WorkspaceRoot:        cfg.Workspace.Root,
 	})
-}
-
-func preflightImplementationDispatchPlanDocuments(ctx context.Context, cfg config.Config, planDocuments []implementationDispatchPlanDocument) []implementationDispatchPlanDocumentPreflightResult {
-	return implementationdispatch.PreflightPlanDocuments(ctx, planDocuments, func(ctx context.Context, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentPreflightResult {
-		return implementationDispatchPlanDocumentPreflightRunner(ctx, cfg, doc)
-	})
-}
-
-func defaultImplementationDispatchPlanDocumentPreflight(ctx context.Context, cfg config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentPreflightResult {
-	result := implementationDispatchPlanDocumentPreflightResult{Path: doc.Path, OK: true}
-	root := implementationdispatch.WorkspaceRoot(cfg.Workspace.Root, cfg.Workspace.CWD)
-
-	if strings.TrimSpace(root) == "" {
-		result.OK = false
-		result.Blockers = append(result.Blockers, "workspace root is unavailable; cannot run dispatch preflight")
-
-		return result
-	}
-
-	abs, ok := implementationdispatch.WorkspaceFile(root, doc.Path)
-	if !ok {
-		result.OK = false
-		result.Blockers = append(result.Blockers, "referenced plan document path is outside the workspace")
-
-		return result
-	}
-
-	binary, err := implementationDispatchIdiomBinary()
-	if err != nil {
-		result.OK = false
-		result.Blockers = append(result.Blockers, "dispatch preflight unavailable: "+err.Error())
-
-		return result
-	}
-
-	atomArgs := []string{"atom", "intake", "--spec", abs, "--project-root", root, "--json"}
-	if doc.AllowDirtyAtomScope {
-		atomArgs = append(atomArgs, "--allow-dirty")
-	}
-
-	atom := runImplementationDispatchPreflightCommand(ctx, root, binary, atomArgs...)
-	if atom.ExitCode != 0 {
-		atomState, blockers := implementationdispatch.AtomIntakeBlocker(atom)
-
-		result.AtomState = atomState
-		result.Blockers = append(result.Blockers, blockers...)
-
-		if implementationdispatch.AtomStateIsSourceSatisfied(atomState) {
-			result.OK = false
-			return result
-		}
-	}
-
-	lint := runImplementationDispatchPreflightCommand(ctx, root, binary, "brief", "lint", abs, "--json")
-	if lint.ExitCode != 0 {
-		blockers := implementationdispatch.BriefLintBlockers(lint)
-
-		result.LintBlockers = append(result.LintBlockers, blockers...)
-		result.Blockers = append(result.Blockers, blockers...)
-	} else {
-		result.Warnings = append(result.Warnings, implementationdispatch.BriefLintWarnings(lint)...)
-	}
-
-	result.OK = len(result.Blockers) == 0
-
-	return result
 }
 
 func defaultImplementationDispatchPlanDocumentRefine(ctx context.Context, cfg config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentRefineResult {
@@ -271,7 +204,12 @@ func materializeImplementationDispatchNonzeroRefineAcceptedCandidate(ctx context
 	}
 
 	candidate.AllowDirtyAtomScope = len(allowDirtyAtomScope) > 0 && allowDirtyAtomScope[0]
-	if blocked := preflightImplementationDispatchPlanDocuments(ctx, cfg, []implementationDispatchPlanDocument{candidate}); len(blocked) > 0 {
+	if blocked := implementationdispatch.PreflightPlanDocuments(ctx, implementationdispatch.PlanDocumentsPreflightInput{
+		WorkspaceRoot: cfg.Workspace.Root,
+		WorkspaceCWD:  cfg.Workspace.CWD,
+		PlanDocuments: []implementationDispatchPlanDocument{candidate},
+		Runner:        implementationDispatchPlanDocumentPreflightRunner,
+	}); len(blocked) > 0 {
 		return candidate, candidateRel, blocked, false
 	}
 
@@ -295,11 +233,14 @@ func implementationDispatchIdiomBinary() (string, error) {
 	return path, nil
 }
 
-func runImplementationDispatchPreflightCommand(ctx context.Context, root string, binary string, args ...string) implementationDispatchPreflightCommandResult {
-	return runImplementationDispatchCommand(ctx, root, 45*time.Second, binary, args...)
+type implementationDispatchCommandResult struct {
+	ExitCode int
+	Stdout   string
+	Stderr   string
+	Err      error
 }
 
-func runImplementationDispatchCommand(ctx context.Context, root string, timeout time.Duration, binary string, args ...string) implementationDispatchPreflightCommandResult {
+func runImplementationDispatchCommand(ctx context.Context, root string, timeout time.Duration, binary string, args ...string) implementationDispatchCommandResult {
 	if timeout <= 0 {
 		timeout = 45 * time.Second
 	}
@@ -318,7 +259,7 @@ func runImplementationDispatchCommand(ctx context.Context, root string, timeout 
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
-	result := implementationDispatchPreflightCommandResult{
+	result := implementationDispatchCommandResult{
 		Stdout: stdout.String(),
 		Stderr: stderr.String(),
 	}
