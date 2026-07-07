@@ -8,12 +8,10 @@ package languagetools
 // and textDocument/publishDiagnostics.
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -54,34 +52,12 @@ func (m *Manager) newTsLSPClient(ctx context.Context) (*tsLSPClient, error) {
 		return nil, fmt.Errorf("typescript-language-server is not installed")
 	}
 
-	cmd := exec.CommandContext(ctx, tsserver, "--stdio")
-
-	cmd.Dir = m.Root()
-
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, err
-	}
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-
 	client := &tsLSPClient{pendingDiagnostics: make(map[string][]tsDiagnostic)}
-
-	client.lspBaseClient = lspBaseClient{
-		serverName:         "typescript-language-server",
-		cmd:                cmd,
-		stdin:              stdin,
-		stdout:             bufio.NewReader(stdout),
-		handleNotification: client.handleNotification,
-	}
-	cmd.Stderr = &client.stderr
-
-	if err := cmd.Start(); err != nil {
+	base, err := newLSPBaseClient(ctx, m.Root(), "typescript-language-server", tsserver, []string{"--stdio"}, client.handleNotification)
+	if err != nil {
 		return nil, err
 	}
+	client.lspBaseClient = base
 
 	params := map[string]any{
 		"processId": os.Getpid(),

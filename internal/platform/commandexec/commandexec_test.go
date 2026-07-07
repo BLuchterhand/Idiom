@@ -221,7 +221,7 @@ func TestStartCapturesBoundedStderr(t *testing.T) {
 		t.Fatalf("Wait failed: %v", err)
 	}
 
-	stderr, truncated := process.stderrOutput()
+	stderr, truncated := process.Stderr()
 	if !truncated {
 		t.Fatalf("Stderr truncated = false; stderr=%q", stderr)
 	}

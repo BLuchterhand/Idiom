@@ -1,12 +1,10 @@
 package languagetools
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -29,33 +27,13 @@ func (m *Manager) newClangdLSPClient(ctx context.Context) (*clangdLSPClient, err
 		args = append(args, "--compile-commands-dir="+compileDir)
 	}
 
-	cmd := exec.CommandContext(ctx, clangd, args...)
-
-	cmd.Dir = m.Root()
-
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, err
-	}
-
-	stdout, err := cmd.StdoutPipe()
+	base, err := newLSPBaseClient(ctx, m.Root(), "clangd", clangd, args, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	client := &clangdLSPClient{
-		lspBaseClient: lspBaseClient{
-			serverName: "clangd",
-			cmd:        cmd,
-			stdin:      stdin,
-			stdout:     bufio.NewReader(stdout),
-		},
-	}
-
-	cmd.Stderr = &client.stderr
-
-	if err := cmd.Start(); err != nil {
-		return nil, err
+		lspBaseClient: base,
 	}
 
 	params := map[string]any{

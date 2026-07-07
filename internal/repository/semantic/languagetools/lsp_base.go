@@ -10,22 +10,21 @@ import (
 	"io"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/failures"
 	"idiom/internal/platform/textutil"
 )
 
 type lspBaseClient struct {
-	cmd                *exec.Cmd
+	process            *commandexec.Process
 	stdin              io.WriteCloser
 	stdout             *bufio.Reader
-	stderr             bytes.Buffer
 	nextID             int
 	serverName         string
 	handleNotification lspNotificationHandler
@@ -124,23 +123,61 @@ type lspWorkspaceSymbolQueryConfig struct {
 	format     func([]LSPSymbolInfo, string, int) string
 }
 
+func newLSPBaseClient(ctx context.Context, root string, serverName string, binary string, args []string, handleNotification lspNotificationHandler) (lspBaseClient, error) {
+	process, err := commandexec.Start(ctx, commandexec.Spec{
+		Name: binary,
+		Args: append([]string(nil), args...),
+		Dir:  root,
+	})
+	if err != nil {
+		return lspBaseClient{}, err
+	}
+
+	return lspBaseClient{
+		process:            process,
+		stdin:              process.Stdin(),
+		stdout:             bufio.NewReader(process.Stdout()),
+		serverName:         serverName,
+		handleNotification: handleNotification,
+	}, nil
+}
+
 func (c *lspBaseClient) close() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	_ = c.request(ctx, "shutdown", nil, nil)
-	_ = c.notify("exit", map[string]any{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+
+		_ = c.request(ctx, "shutdown", nil, nil)
+		_ = c.notify("exit", map[string]any{})
+	}()
+
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+
 	c.forceClose()
+
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+	}
 }
 
 func (c *lspBaseClient) forceClose() {
-	_ = c.stdin.Close()
-	if c.cmd.Process != nil {
-		_ = c.cmd.Process.Kill()
+	if c.process != nil {
+		_ = c.process.Close()
+
+		return
 	}
 
-	_, _ = io.Copy(io.Discard, c.stdout)
-	_ = c.cmd.Wait()
+	_ = c.stdin.Close()
+	if c.stdout != nil {
+		_, _ = io.Copy(io.Discard, c.stdout)
+	}
 }
 
 func (c *lspBaseClient) notify(method string, params any) error {
@@ -176,7 +213,11 @@ func (c *lspBaseClient) request(ctx context.Context, method string, params any, 
 
 		body, err := c.readMessage()
 		if err != nil {
-			if stderr := strings.TrimSpace(c.stderr.String()); stderr != "" {
+			var stderr string
+			if c.process != nil {
+				stderr, _ = c.process.Stderr()
+			}
+			if stderr = strings.TrimSpace(stderr); stderr != "" {
 				return fmt.Errorf("%w: %s", err, stderr)
 			}
 

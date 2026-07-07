@@ -1,12 +1,10 @@
 package languagetools
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -70,32 +68,14 @@ func (m *Manager) newPylspLSPClient(ctx context.Context) (*pylspLSPClient, error
 		// pylsp defaults to stdio; no extra args required.
 	}
 
-	cmd := exec.CommandContext(ctx, binary, args...)
-
-	cmd.Dir = m.Root()
-
-	stdin, err := cmd.StdinPipe()
+	base, err := newLSPBaseClient(ctx, m.Root(), "Python LSP", binary, args, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-
-	client := &pylspLSPClient{server: server}
-
-	client.lspBaseClient = lspBaseClient{
-		serverName: "Python LSP",
-		cmd:        cmd,
-		stdin:      stdin,
-		stdout:     bufio.NewReader(stdout),
-	}
-	cmd.Stderr = &client.stderr
-
-	if err := cmd.Start(); err != nil {
-		return nil, err
+	client := &pylspLSPClient{
+		lspBaseClient: base,
+		server:        server,
 	}
 
 	params := map[string]any{

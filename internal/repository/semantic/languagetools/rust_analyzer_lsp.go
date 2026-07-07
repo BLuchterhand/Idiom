@@ -1,11 +1,9 @@
 package languagetools
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -27,32 +25,13 @@ func (m *Manager) newRustAnalyzerLSPClient(ctx context.Context) (*rustAnalyzerLS
 		return nil, fmt.Errorf("rust-analyzer is not installed")
 	}
 
-	cmd := exec.CommandContext(ctx, ra)
-
-	cmd.Dir = m.Root()
-
-	stdin, err := cmd.StdinPipe()
+	base, err := newLSPBaseClient(ctx, m.Root(), "rust-analyzer", ra, nil, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-
-	client := &rustAnalyzerLSPClient{}
-
-	client.lspBaseClient = lspBaseClient{
-		serverName: "rust-analyzer",
-		cmd:        cmd,
-		stdin:      stdin,
-		stdout:     bufio.NewReader(stdout),
-	}
-	cmd.Stderr = &client.stderr
-
-	if err := cmd.Start(); err != nil {
-		return nil, err
+	client := &rustAnalyzerLSPClient{
+		lspBaseClient: base,
 	}
 
 	params := map[string]any{

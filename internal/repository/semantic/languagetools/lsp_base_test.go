@@ -1,9 +1,19 @@
 package languagetools
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
+
+	"idiom/internal/platform/commandexec"
 )
 
 func TestParseLSPLocations(t *testing.T) {
@@ -100,6 +110,181 @@ func TestParseLSPLocations(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLSPRequestIncludesProcessStderrOnReadFailure(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	process, err := commandexec.Start(ctx, commandexec.Spec{
+		Name:    os.Args[0],
+		Args:    []string{"-test.run=TestLSPHelperProcess", "--", "stderr-after-request"},
+		Timeout: 5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Start helper: %v", err)
+	}
+	defer process.Close()
+
+	client := lspBaseClient{
+		process:    process,
+		stdin:      process.Stdin(),
+		stdout:     bufio.NewReader(process.Stdout()),
+		serverName: "test-lsp",
+	}
+
+	err = client.request(ctx, "test/request", map[string]any{"ok": true}, nil)
+	if err == nil {
+		t.Fatal("expected request to fail when helper closes stdout")
+	}
+	if !strings.Contains(err.Error(), "server stderr detail") {
+		t.Fatalf("request error missing server stderr: %v", err)
+	}
+}
+
+func TestLSPBaseClientStartsProcessWithDirArgsAndFrames(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	root := t.TempDir()
+	client, err := newLSPBaseClient(ctx, root, "test-lsp", os.Args[0], []string{"-test.run=TestLSPHelperProcess", "--", "echo", "arg-ok"}, nil)
+	if err != nil {
+		t.Fatalf("newLSPBaseClient: %v", err)
+	}
+	defer client.forceClose()
+
+	var result struct {
+		CWD string `json:"cwd"`
+		Arg string `json:"arg"`
+	}
+	if err := client.request(ctx, "test/echo", nil, &result); err != nil {
+		t.Fatalf("request: %v", err)
+	}
+
+	if filepath.Clean(result.CWD) != filepath.Clean(root) {
+		t.Fatalf("helper cwd = %q, want %q", result.CWD, root)
+	}
+	if result.Arg != "arg-ok" {
+		t.Fatalf("helper arg = %q, want arg-ok", result.Arg)
+	}
+}
+
+func TestLSPCloseReturnsWhenServerIgnoresShutdown(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	client, err := newLSPBaseClient(ctx, t.TempDir(), "quiet-lsp", os.Args[0], []string{"-test.run=TestLSPHelperProcess", "--", "quiet"}, nil)
+	if err != nil {
+		t.Fatalf("newLSPBaseClient: %v", err)
+	}
+
+	start := time.Now()
+	client.close()
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("close took %s; expected shutdown timeout and force close", elapsed)
+	}
+}
+
+func TestLSPHelperProcess(t *testing.T) {
+	mode, args, ok := lspHelperMode()
+	if !ok {
+		return
+	}
+
+	reader := bufio.NewReader(os.Stdin)
+	body, err := readLSPHelperMessage(reader)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "read request: %v\n", err)
+		os.Exit(2)
+	}
+
+	switch mode {
+	case "stderr-after-request":
+		fmt.Fprintln(os.Stderr, "server stderr detail")
+		os.Exit(0)
+
+	case "echo":
+		var req struct {
+			ID json.RawMessage `json:"id"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			fmt.Fprintf(os.Stderr, "decode request: %v\n", err)
+			os.Exit(2)
+		}
+
+		cwd, _ := os.Getwd()
+		arg := ""
+		if len(args) > 0 {
+			arg = args[0]
+		}
+
+		writeLSPHelperMessage(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      json.RawMessage(req.ID),
+			"result": map[string]any{
+				"cwd": cwd,
+				"arg": arg,
+			},
+		})
+		os.Exit(0)
+
+	case "quiet":
+		_, _ = io.Copy(io.Discard, reader)
+		os.Exit(0)
+	}
+
+	os.Exit(2)
+}
+
+func lspHelperMode() (string, []string, bool) {
+	for i, arg := range os.Args {
+		if arg == "--" && i+1 < len(os.Args) {
+			return os.Args[i+1], os.Args[i+2:], true
+		}
+	}
+
+	return "", nil, false
+}
+
+func readLSPHelperMessage(reader *bufio.Reader) ([]byte, error) {
+	contentLength := 0
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			break
+		}
+
+		var value int
+		if _, err := fmt.Sscanf(line, "Content-Length: %d", &value); err == nil {
+			contentLength = value
+		}
+	}
+
+	if contentLength > 0 {
+		body := make([]byte, contentLength)
+		if _, err := io.ReadFull(reader, body); err != nil {
+			return nil, err
+		}
+
+		return body, nil
+	}
+
+	return nil, nil
+}
+
+func writeLSPHelperMessage(payload any) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "marshal response: %v\n", err)
+		os.Exit(2)
+	}
+
+	fmt.Fprintf(os.Stdout, "Content-Length: %d\r\n\r\n%s", len(body), body)
 }
 
 func marshalTestJSON(t *testing.T, value any) string {

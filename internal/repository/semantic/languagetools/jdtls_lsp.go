@@ -1,11 +1,9 @@
 package languagetools
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -32,33 +30,13 @@ func (m *Manager) newJdtlsLSPClient(ctx context.Context) (*jdtlsLSPClient, error
 		return nil, fmt.Errorf("jdtls is not installed")
 	}
 
-	cmd := exec.CommandContext(ctx, jdtls)
-
-	cmd.Dir = m.Root()
-
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, err
-	}
-
-	stdout, err := cmd.StdoutPipe()
+	base, err := newLSPBaseClient(ctx, m.Root(), "jdtls", jdtls, nil, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	client := &jdtlsLSPClient{
-		lspBaseClient: lspBaseClient{
-			serverName: "jdtls",
-			cmd:        cmd,
-			stdin:      stdin,
-			stdout:     bufio.NewReader(stdout),
-		},
-	}
-
-	cmd.Stderr = &client.stderr
-
-	if err := cmd.Start(); err != nil {
-		return nil, err
+		lspBaseClient: base,
 	}
 
 	params := map[string]any{

@@ -228,7 +228,8 @@ func (p *Process) Stdout() io.ReadCloser {
 	return p.stdout
 }
 
-func (p *Process) stderrOutput() (string, bool) {
+// Stderr returns bounded stderr captured so far.
+func (p *Process) Stderr() (string, bool) {
 	if p == nil || p.stderr == nil {
 		return "", false
 	}
