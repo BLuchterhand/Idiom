@@ -10,7 +10,6 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -19,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/jsonfile"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/discovery"
@@ -3172,36 +3172,16 @@ func shouldUseGenericCollector(language string) bool {
 }
 
 func gitState(ctx context.Context, root string) (string, bool) {
-	head := strings.TrimSpace(execOutput(ctx, root, "git", "-C", root, "rev-parse", "HEAD"))
-	status := strings.TrimSpace(execOutput(ctx, root, "git", "-C", root, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=all"))
+	head, _ := gitstate.Output(ctx, root, "rev-parse", "HEAD")
+	status, _ := gitstate.Output(ctx, root, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=all")
 
-	return head, status != ""
-}
-
-func execOutput(ctx context.Context, dir string, name string, args ...string) string {
-	cmd := exec.CommandContext(ctx, name, args...)
-
-	cmd.Dir = dir
-
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-
-	return string(out)
+	return strings.TrimSpace(head), strings.TrimSpace(status) != ""
 }
 
 func ensureIgnored(root string) error {
-	exclude := execOutput(context.Background(), root, "git", "-C", root, "rev-parse", "--git-path", "info/exclude")
-
-	exclude = strings.TrimSpace(exclude)
-
-	if exclude == "" {
+	exclude, err := gitstate.GitPath(context.Background(), root, "info/exclude")
+	if err != nil || strings.TrimSpace(exclude) == "" {
 		return nil
-	}
-
-	if !filepath.IsAbs(exclude) {
-		exclude = filepath.Join(root, exclude)
 	}
 
 	data, err := os.ReadFile(exclude)

@@ -6,13 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
 
+	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/textutil"
 )
 
@@ -382,35 +382,35 @@ func runCollectorEvidence(ctx context.Context, root string, collectors []Collect
 			timeout = 30 * time.Second
 		}
 
-		runCtx, cancel := context.WithTimeout(ctx, timeout)
-		cmd := exec.CommandContext(runCtx, collector.Command, collector.Args...)
-
+		dir := root
 		if collector.Cwd != "" {
 			if filepath.IsAbs(collector.Cwd) {
-				cmd.Dir = collector.Cwd
+				dir = collector.Cwd
 			} else {
-				cmd.Dir = filepath.Join(root, collector.Cwd)
+				dir = filepath.Join(root, collector.Cwd)
 			}
-		} else {
-			cmd.Dir = root
 		}
-
-		outBytes, err := cmd.CombinedOutput()
-
-		cancel()
 
 		limit := collector.MaxBytes
 		if limit <= 0 {
 			limit = defaultMaxBytes
 		}
 
-		ev.Content = textutil.TruncateBytes(stripANSI(string(outBytes)), limit, "\n[truncated]")
+		result := commandexec.Run(ctx, commandexec.Spec{
+			Name:        collector.Command,
+			Args:        collector.Args,
+			Dir:         dir,
+			Timeout:     timeout,
+			MergeOutput: true,
+		})
 
-		if err != nil {
-			if runCtx.Err() == context.DeadlineExceeded {
+		ev.Content = textutil.TruncateBytes(stripANSI(result.Stdout), limit, "\n[truncated]")
+
+		if result.Err != nil {
+			if result.TimedOut {
 				ev.Error = fmt.Sprintf("collector timed out after %s", timeout)
 			} else {
-				ev.Error = err.Error()
+				ev.Error = result.Err.Error()
 			}
 		}
 

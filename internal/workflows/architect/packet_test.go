@@ -84,6 +84,117 @@ func TestBuildPacketRunsCollectorsWhenRequested(t *testing.T) {
 	}
 }
 
+func TestBuildPacketCollectorPreservesOutputOnNonzeroExit(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "profile.json"), `{
+  "name": "demo",
+  "collectors": [{"name": "failing", "command": "/bin/sh", "args": ["-c", "printf 'stdout-line\n'; printf 'stderr-line\n' >&2; exit 7"]}]
+}`)
+
+	packet, err := BuildPacket(context.Background(), BuildOptions{
+		Root:          root,
+		Task:          "Collect failure facts",
+		ProfilePath:   filepath.Join(root, "profile.json"),
+		RunCollectors: true,
+	})
+	if err != nil {
+		t.Fatalf("BuildPacket: %v", err)
+	}
+
+	if len(packet.Evidence) != 1 || packet.Evidence[0].Kind != "collector" {
+		t.Fatalf("collector evidence missing: %#v", packet.Evidence)
+	}
+
+	got := packet.Evidence[0]
+	if !strings.Contains(got.Content, "stdout-line") || !strings.Contains(got.Content, "stderr-line") {
+		t.Fatalf("collector output should include stdout and stderr: %#v", got)
+	}
+	if !strings.Contains(got.Error, "exit status 7") {
+		t.Fatalf("collector error = %q, want exit status", got.Error)
+	}
+}
+
+func TestBuildPacketCollectorReportsTimeout(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "profile.json"), `{
+  "name": "demo",
+  "collectors": [{"name": "slow", "command": "/bin/sh", "args": ["-c", "sleep 2"], "timeout_seconds": 1}]
+}`)
+
+	packet, err := BuildPacket(context.Background(), BuildOptions{
+		Root:          root,
+		Task:          "Collect timeout facts",
+		ProfilePath:   filepath.Join(root, "profile.json"),
+		RunCollectors: true,
+	})
+	if err != nil {
+		t.Fatalf("BuildPacket: %v", err)
+	}
+
+	if len(packet.Evidence) != 1 || packet.Evidence[0].Kind != "collector" {
+		t.Fatalf("collector evidence missing: %#v", packet.Evidence)
+	}
+
+	if packet.Evidence[0].Error != "collector timed out after 1s" {
+		t.Fatalf("collector error = %q, want timeout", packet.Evidence[0].Error)
+	}
+}
+
+func TestBuildPacketCollectorUsesRelativeCwd(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "nested"), 0o755); err != nil {
+		t.Fatalf("mkdir nested: %v", err)
+	}
+	writeFile(t, filepath.Join(root, "profile.json"), `{
+  "name": "demo",
+  "collectors": [{"name": "pwd", "command": "/bin/sh", "args": ["-c", "pwd"], "cwd": "nested"}]
+}`)
+
+	packet, err := BuildPacket(context.Background(), BuildOptions{
+		Root:          root,
+		Task:          "Collect cwd facts",
+		ProfilePath:   filepath.Join(root, "profile.json"),
+		RunCollectors: true,
+	})
+	if err != nil {
+		t.Fatalf("BuildPacket: %v", err)
+	}
+
+	want := filepath.Join(root, "nested")
+	if len(packet.Evidence) != 1 || strings.TrimSpace(packet.Evidence[0].Content) != want {
+		t.Fatalf("collector content = %#v, want cwd %q", packet.Evidence, want)
+	}
+}
+
+func TestBuildPacketCollectorTruncatesAfterANSIStripping(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "profile.json"), `{
+  "name": "demo",
+  "collectors": [{"name": "color", "command": "/bin/sh", "args": ["-c", "printf '\\033[31mabcdefghijklmnop\\033[0m\\n'"], "max_bytes": 15}]
+}`)
+
+	packet, err := BuildPacket(context.Background(), BuildOptions{
+		Root:          root,
+		Task:          "Collect truncated facts",
+		ProfilePath:   filepath.Join(root, "profile.json"),
+		RunCollectors: true,
+	})
+	if err != nil {
+		t.Fatalf("BuildPacket: %v", err)
+	}
+
+	if len(packet.Evidence) != 1 {
+		t.Fatalf("collector evidence missing: %#v", packet.Evidence)
+	}
+	content := packet.Evidence[0].Content
+	if strings.Contains(content, "\x1b[") {
+		t.Fatalf("collector content should strip ANSI before truncating: %#v", packet.Evidence[0])
+	}
+	if content != "abc\n[truncated]" {
+		t.Fatalf("collector content = %q, want stripped truncation marker", content)
+	}
+}
+
 func TestBuildPacketIncludesContextViewEvidence(t *testing.T) {
 	root := t.TempDir()
 	viewPath := filepath.Join(root, ".idiom", "comprehension", "views", "pack.json")
