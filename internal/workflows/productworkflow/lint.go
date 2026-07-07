@@ -1,13 +1,15 @@
 package productworkflow
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"idiom/internal/platform/gitstate"
 )
 
 // LintEffortFolder runs deterministic product-workflow lint checks for an effort folder.
@@ -547,21 +549,21 @@ func gitChangedPaths(effortRoot string) []string {
 		return nil
 	}
 
-	out, err := exec.Command("git", "-C", repoRoot, "log", "--reverse", "--format=%H", "--", rel).Output()
+	out, err := gitstate.Output(context.Background(), repoRoot, "log", "--reverse", "--format=%H", "--", rel)
 	if err != nil {
 		return nil
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	lines := strings.Split(strings.TrimSpace(out), "\n")
 	if len(lines) == 0 || lines[0] == "" {
 		return nil
 	}
 
 	firstCommit := lines[0]
 
-	diffOut, err := exec.Command("git", "-C", repoRoot, "diff", "--name-only", firstCommit+"^", "HEAD").Output()
+	diffOut, err := gitstate.Output(context.Background(), repoRoot, "diff", "--name-only", firstCommit+"^", "HEAD")
 	if err != nil {
-		diffOut, err = exec.Command("git", "-C", repoRoot, "diff", "--name-only", firstCommit, "HEAD").Output()
+		diffOut, err = gitstate.Output(context.Background(), repoRoot, "diff", "--name-only", firstCommit, "HEAD")
 		if err != nil {
 			return nil
 		}
@@ -569,7 +571,7 @@ func gitChangedPaths(effortRoot string) []string {
 
 	var paths []string
 
-	for _, line := range strings.Split(strings.TrimSpace(string(diffOut)), "\n") {
+	for _, line := range strings.Split(strings.TrimSpace(diffOut), "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" {
 			paths = append(paths, line)
@@ -583,14 +585,14 @@ func gitCommitPaths(repoRoot string, hashes []string) map[string][]string {
 	result := make(map[string][]string)
 
 	for _, h := range hashes {
-		out, err := exec.Command("git", "-C", repoRoot, "show", "--name-only", "--format=", h).Output()
+		out, err := gitstate.Output(context.Background(), repoRoot, "show", "--name-only", "--format=", h)
 		if err != nil {
 			continue
 		}
 
 		var paths []string
 
-		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 			line = strings.TrimSpace(line)
 			if line != "" {
 				paths = append(paths, line)
