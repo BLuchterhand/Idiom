@@ -79,44 +79,6 @@ func (m *Manager) ShouldClearBroadInspectionLock(req ToolRequest, result ToolRes
 	}
 }
 
-func validateExploreShellCommand(command string) error {
-	command = strings.TrimSpace(command)
-	if command == "" {
-		return fmt.Errorf("command is required")
-	}
-
-	if strings.ContainsAny(command, "\n\r><`") || strings.Contains(command, "$(") {
-		return fmt.Errorf("redirection, command substitution, and multiline shell are not allowed")
-	}
-
-	for _, segment := range splitShellSegments(command) {
-		fields := shellCommandFields(segment)
-		if len(fields) == 0 {
-			continue
-		}
-
-		switch fields[0] {
-		case "ls", "find", "rg", "grep", "awk", "sed", "cat", "head", "tail", "wc", "file", "pwd", "tree":
-			continue
-		case "git":
-			if len(fields) < 2 {
-				return fmt.Errorf("git command requires a read-only subcommand")
-			}
-
-			switch fields[1] {
-			case "status", "log", "diff", "show", "grep", "branch", "rev-parse":
-				continue
-			default:
-				return fmt.Errorf("git %s is not allowed in explore mode", fields[1])
-			}
-		default:
-			return fmt.Errorf("%s is not an allowed explore-mode shell command", fields[0])
-		}
-	}
-
-	return nil
-}
-
 func splitShellSegments(command string) []string {
 	replacer := strings.NewReplacer("&&", "|", "||", "|", ";", "|")
 	normalized := replacer.Replace(command)

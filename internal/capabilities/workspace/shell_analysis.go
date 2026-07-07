@@ -1,10 +1,12 @@
 package workspace
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 
 	"idiom/internal/contracts/autonomy"
+	"idiom/internal/platform/textutil"
 )
 
 // ShellCommandAnalysis contains parsed facts and conservative policy
@@ -20,6 +22,33 @@ type ShellCommandAnalysis struct {
 	BuildOrTest      bool
 	SideEffect       autonomy.SideEffectClass
 	Replacement      *ShellReplacementCandidate
+}
+
+var shellCommandPolicy = struct {
+	broadInspectionHeads      []string
+	narrowingHeads            []string
+	exploreHeads              []string
+	exploreGitSubcommands     []string
+	readOnlyChildPrefixes     []string
+	workbranchChildPrefixes   []string
+	workbranchDeniedFragments []string
+}{
+	broadInspectionHeads:  []string{"ls", "find", "tree"},
+	narrowingHeads:        []string{"rg", "grep", "awk", "sed", "cat", "head", "tail"},
+	exploreHeads:          []string{"ls", "find", "rg", "grep", "awk", "sed", "cat", "head", "tail", "wc", "file", "pwd", "tree"},
+	exploreGitSubcommands: []string{"status", "log", "diff", "show", "grep", "branch", "rev-parse"},
+	readOnlyChildPrefixes: []string{
+		"rg ", "grep ", "awk ", "sed -n", "cat ", "head ", "tail ", "wc ",
+		"pwd", "ls ", "find ",
+		"git status", "git diff", "git log", "git show", "git grep",
+		"go test", "go list", "go env",
+	},
+	workbranchChildPrefixes: []string{
+		"go test", "go list",
+		"git status", "git diff", "git log", "git show", "git grep",
+		"pwd", "ls ", "rg ", "grep ", "cat ", "head ", "tail ", "wc ",
+	},
+	workbranchDeniedFragments: []string{"\n", "\r", "&&", "||", ";", "|", ">", "<", "$(", "`", "go env -w", "go env -u", "--output="},
 }
 
 // AnalyzeShellCommand is the single workspace authority for shell command facts
@@ -42,8 +71,8 @@ func AnalyzeShellCommand(command string) ShellCommandAnalysis {
 	rawHead := analysis.Fields[0]
 	analysis.Head = normalizeShellHead(rawHead)
 	analysis.Args = lowerShellArgs(analysis.Fields[1:])
-	analysis.BroadInspection = shellHeadInSet(rawHead, "ls", "find", "tree")
-	analysis.Narrowing = shellHeadInSet(rawHead, "rg", "grep", "awk", "sed", "cat", "head", "tail")
+	analysis.BroadInspection = shellHeadInSet(rawHead, shellCommandPolicy.broadInspectionHeads...)
+	analysis.Narrowing = shellHeadInSet(rawHead, shellCommandPolicy.narrowingHeads...)
 	analysis.BuildOrTest = shellCommandBuildOrTest(command)
 	analysis.Replacement = shellReplacementCandidate(command)
 
@@ -52,6 +81,83 @@ func AnalyzeShellCommand(command string) ShellCommandAnalysis {
 	}
 
 	return analysis
+}
+
+func validateExploreShellCommand(command string) error {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return fmt.Errorf("command is required")
+	}
+
+	if strings.ContainsAny(command, "\n\r><`") || strings.Contains(command, "$(") {
+		return fmt.Errorf("redirection, command substitution, and multiline shell are not allowed")
+	}
+
+	for _, segment := range splitShellSegments(command) {
+		fields := shellCommandFields(segment)
+		if len(fields) == 0 {
+			continue
+		}
+
+		if shellHeadInSet(fields[0], shellCommandPolicy.exploreHeads...) {
+			continue
+		}
+
+		if fields[0] == "git" {
+			if len(fields) < 2 {
+				return fmt.Errorf("git command requires a read-only subcommand")
+			}
+
+			if shellHeadInSet(fields[1], shellCommandPolicy.exploreGitSubcommands...) {
+				continue
+			}
+
+			return fmt.Errorf("git %s is not allowed in explore mode", fields[1])
+		}
+
+		return fmt.Errorf("%s is not an allowed explore-mode shell command", fields[0])
+	}
+
+	return nil
+}
+
+type WorkbranchShellPolicy struct {
+	AllowedPrefixes []string
+	DeniedPrefixes  []string
+	DeniedFragments []string
+}
+
+func ReadOnlyChildShellAllowedPrefixes() []string {
+	return append([]string(nil), shellCommandPolicy.readOnlyChildPrefixes...)
+}
+
+func WorkbranchChildShellPolicy(forbiddenTools []string) WorkbranchShellPolicy {
+	policy := WorkbranchShellPolicy{
+		AllowedPrefixes: append([]string(nil), shellCommandPolicy.workbranchChildPrefixes...),
+		DeniedPrefixes: []string{
+			"gh pr create",
+			"git -C",
+		},
+		DeniedFragments: append([]string(nil), shellCommandPolicy.workbranchDeniedFragments...),
+	}
+
+	for _, forbidden := range forbiddenTools {
+		switch strings.TrimSpace(forbidden) {
+		case "git_push":
+			policy.DeniedPrefixes = append(policy.DeniedPrefixes, "git push", "gh pr merge")
+		case "git_history_mutation":
+			policy.DeniedPrefixes = append(policy.DeniedPrefixes, "git commit", "git reset", "git checkout", "git switch", "git worktree", "git branch", "git clean")
+		case "git_index_mutation":
+			policy.DeniedPrefixes = append(policy.DeniedPrefixes, "git add", "git restore")
+		case "publish":
+			policy.DeniedPrefixes = append(policy.DeniedPrefixes, "npm publish", "pnpm publish", "yarn publish", "docker push")
+		case "deploy":
+			policy.DeniedPrefixes = append(policy.DeniedPrefixes, "kubectl ", "deploy", "release", "gh release")
+		}
+	}
+
+	policy.DeniedPrefixes = textutil.Merge(policy.DeniedPrefixes)
+	return policy
 }
 
 // ShellCommandFromToolResult extracts the command prefix emitted by the

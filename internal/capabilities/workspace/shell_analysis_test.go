@@ -179,7 +179,7 @@ func TestShellCommandFromToolResultExtractsWorkspaceShellPrefix(t *testing.T) {
 	}
 }
 
-func TestWorkbranchChildShellPolicyOwnsCommandFamilies(t *testing.T) {
+func TestWorkbranchChildShellPolicyProjectsAnalysisOwnedFamilies(t *testing.T) {
 	policy := WorkbranchChildShellPolicy([]string{
 		"git_push",
 		"git_history_mutation",
@@ -188,44 +188,22 @@ func TestWorkbranchChildShellPolicyOwnsCommandFamilies(t *testing.T) {
 		"deploy",
 	})
 
-	for _, command := range []string{
-		"go test ./...",
-		"go list ./...",
-		"git status",
-		"git diff",
-		"git log",
-		"git show HEAD",
-		"git grep func",
-		"pwd",
-		"ls -la",
-		"rg pattern",
-		"grep -r foo .",
-		"cat README.md",
-		"head -20 file.go",
-		"tail -20 file.go",
-		"wc -l file.go",
+	for _, prefix := range []string{
+		"go test", "go list", "git status", "git diff", "git log", "git show",
+		"git grep", "pwd", "ls ", "rg ", "grep ", "cat ", "head ", "tail ", "wc ",
 	} {
-		if !shellCommandMatchesAnyPrefix(command, policy.AllowedPrefixes) {
-			t.Fatalf("%q should match workspace workbranch allow prefixes %#v", command, policy.AllowedPrefixes)
+		if !slices.Contains(policy.AllowedPrefixes, prefix) {
+			t.Fatalf("AllowedPrefixes missing %q: %#v", prefix, policy.AllowedPrefixes)
 		}
 	}
 
-	for _, command := range []string{
-		"git add README.md",
-		"git commit -m child",
-		"git reset --hard",
-		"git push origin HEAD",
-		"gh pr create",
-		"gh pr merge 1",
-		"gh release create v1",
-		"git -C ../parent status",
-		"npm publish",
-		"pnpm publish",
-		"docker push image",
-		"kubectl apply -f deploy.yaml",
+	for _, prefix := range []string{
+		"git add", "git commit", "git reset", "git push", "gh pr create",
+		"gh pr merge", "gh release", "git -C", "npm publish", "pnpm publish",
+		"docker push", "kubectl",
 	} {
-		if !shellCommandMatchesAnyPrefix(command, policy.DeniedPrefixes) {
-			t.Fatalf("%q should match workspace workbranch deny prefixes %#v", command, policy.DeniedPrefixes)
+		if !slices.Contains(policy.DeniedPrefixes, prefix) {
+			t.Fatalf("DeniedPrefixes missing %q: %#v", prefix, policy.DeniedPrefixes)
 		}
 	}
 
@@ -238,45 +216,11 @@ func TestWorkbranchChildShellPolicyOwnsCommandFamilies(t *testing.T) {
 
 func TestReadOnlyChildShellAllowedPrefixesAreWorkspaceOwned(t *testing.T) {
 	prefixes := ReadOnlyChildShellAllowedPrefixes()
-	for _, command := range []string{
-		"rg pattern",
-		"sed -n '1,20p' file.go",
-		"find . -name '*.go'",
-		"git diff -- README.md",
-		"go env GOPATH",
+	for _, prefix := range []string{
+		"rg ", "sed -n", "find ", "git diff", "go env",
 	} {
-		if !shellCommandMatchesAnyPrefix(command, prefixes) {
-			t.Fatalf("%q should match read-only child shell prefixes %#v", command, prefixes)
+		if !slices.Contains(prefixes, prefix) {
+			t.Fatalf("read-only prefixes missing %q: %#v", prefix, prefixes)
 		}
 	}
-}
-
-func shellCommandMatchesAnyPrefix(command string, prefixes []string) bool {
-	for _, prefix := range prefixes {
-		if shellCommandMatchesPrefix(command, prefix) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func shellCommandMatchesPrefix(command string, prefix string) bool {
-	if prefix == "" {
-		return true
-	}
-
-	if prefix[len(prefix)-1] == ' ' || prefix[len(prefix)-1] == '\t' {
-		return len(command) >= len(prefix) && command[:len(prefix)] == prefix
-	}
-
-	if command == prefix {
-		return true
-	}
-
-	if len(command) < len(prefix) || command[:len(prefix)] != prefix {
-		return false
-	}
-
-	return len(command) == len(prefix) || command[len(prefix)] == ' ' || command[len(prefix)] == '\t'
 }
