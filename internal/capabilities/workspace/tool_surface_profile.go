@@ -380,14 +380,8 @@ func AllowedToolsForSurfaceProfile(available []string, profile ToolSurfaceProfil
 		return append([]string(nil), available...)
 	}
 
-	return completeAllowedToolsForSurfaceProfile(
-		filterAllowedToolsForSurfaceProfile(available, spec.ExternalToolsAllowed, collectToolSurfaceProjectionToolNames(spec.Projection, nil)...),
-		profile,
-	)
-}
-
-func completeAllowedToolsForSurfaceProfile(tools []string, profile ToolSurfaceProfile) []string {
-	return textutil.Merge(tools, requiredToolsForSurfaceProfile(profile))
+	filtered := filterAllowedToolsForSurfaceProfile(available, spec.ExternalToolsAllowed, collectToolSurfaceProjectionToolNames(spec.Projection, nil)...)
+	return textutil.Merge(filtered, requiredToolsForSurfaceProfile(profile))
 }
 
 func requiredToolsForSurfaceProfile(profile ToolSurfaceProfile) []string {

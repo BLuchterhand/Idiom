@@ -109,7 +109,7 @@ func runGitEvidence(root string, args ...string) string {
 }
 
 func runGitEvidenceExit(root string, args ...string) int {
-	result := gitstate.Run(context.Background(), root, args...)
+	result := gitstate.CombinedOutput(context.Background(), root, args...)
 	if result.Err != nil {
 		if result.ExitError {
 			return result.ExitCode

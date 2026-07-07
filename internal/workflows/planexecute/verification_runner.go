@@ -347,7 +347,7 @@ func runPlanExecuteVerificationCommandWithTimeout(parent context.Context, root s
 		MaxOutputBytes: planExecuteVerificationCaptureBytes,
 		MergeOutput:    true,
 	})
-	output := truncatePlanExecuteText(strings.TrimSpace(result.CombinedOutput()), 12000)
+	output := truncatePlanExecuteText(strings.TrimSpace(commandexec.CombineOutput(result.Stdout, result.Stderr)), 12000)
 
 	if result.Err != nil {
 		if result.TimedOut {

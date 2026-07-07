@@ -60,7 +60,7 @@ func (c GoBuildPasses) Run(d Diff, ctx RunContext) ([]Finding, error) {
 		return nil, result.Err
 	}
 
-	out := result.CombinedOutput()
+	out := commandexec.CombineOutput(result.Stdout, result.Stderr)
 	re := regexp.MustCompile(`(?m)^([^:\s]+):(\d+):\d+:\s*(.+)$`)
 	matches := re.FindAllStringSubmatch(out, -1)
 

@@ -234,7 +234,7 @@ func (r *Registry) Invoke(ctx context.Context, name string, input json.RawMessag
 		MaxOutputBytes: maxOutputBytes,
 		MergeOutput:    true,
 	})
-	output := result.CombinedOutput()
+	output := commandexec.CombineOutput(result.Stdout, result.Stderr)
 	truncated := result.StdoutTruncated || result.StderrTruncated
 
 	if result.Err != nil {

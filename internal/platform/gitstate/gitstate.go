@@ -42,7 +42,7 @@ func (s Snapshot) Token() string {
 }
 
 func Output(ctx context.Context, root string, args ...string) (string, error) {
-	result := Run(ctx, root, args...)
+	result := commandexec.Run(ctx, gitSpec(root, args...))
 	if result.Err != nil {
 		return "", result.Err
 	}
@@ -64,10 +64,6 @@ func CombinedOutputText(ctx context.Context, root string, args ...string) (strin
 	}
 
 	return result.Stdout, nil
-}
-
-func Run(ctx context.Context, root string, args ...string) commandexec.Result {
-	return commandexec.Run(ctx, gitSpec(root, args...))
 }
 
 func GitPath(ctx context.Context, root string, path string) (string, error) {

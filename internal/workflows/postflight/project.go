@@ -170,7 +170,7 @@ func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error)
 		MaxOutputBytes: shellOutputCaptureBytes,
 		MergeOutput:    true,
 	})
-	output := result.CombinedOutput()
+	output := commandexec.CombineOutput(result.Stdout, result.Stderr)
 
 	if result.TimedOut {
 		return []Finding{{

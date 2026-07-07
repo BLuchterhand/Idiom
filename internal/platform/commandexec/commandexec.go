@@ -52,10 +52,6 @@ type Result struct {
 	Err             error
 }
 
-func (r Result) CombinedOutput() string {
-	return CombineOutput(r.Stdout, r.Stderr)
-}
-
 func Run(parent context.Context, spec Spec) Result {
 	if parent == nil {
 		parent = context.Background()
