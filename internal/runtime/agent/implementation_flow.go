@@ -10540,12 +10540,12 @@ func CaptureGitCheckpoint(ctx context.Context, root string) (GitCheckpoint, erro
 		return GitCheckpoint{}, fmt.Errorf("checkpoint root is required")
 	}
 
-	head, err := GitCombinedOutput(ctx, root, "rev-parse", "HEAD")
+	head, err := gitstate.CombinedOutputText(ctx, root, "rev-parse", "HEAD")
 	if err != nil {
 		return GitCheckpoint{}, err
 	}
 
-	status, err := GitCombinedOutput(ctx, root, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=all")
+	status, err := gitstate.CombinedOutputText(ctx, root, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=all")
 	if err != nil {
 		return GitCheckpoint{}, err
 	}
@@ -10558,10 +10558,6 @@ func CaptureGitCheckpoint(ctx context.Context, root string) (GitCheckpoint, erro
 		Dirty:  trimmedStatus != "",
 		Status: trimmedStatus,
 	}, nil
-}
-
-func GitCombinedOutput(ctx context.Context, root string, args ...string) (string, error) {
-	return gitstate.CombinedOutputText(ctx, root, args...)
 }
 
 // PreimageCheckpointStore captures file contents before a workspace write.
@@ -10787,7 +10783,7 @@ func (m Manager) Create(ctx context.Context, name string) (Checkout, error) {
 		return Checkout{}, err
 	}
 
-	baseSHA, err := gitOutput(ctx, root, "rev-parse", "HEAD")
+	baseSHA, err := gitstate.CombinedOutputText(ctx, root, "rev-parse", "HEAD")
 	if err != nil {
 		if !workbranchCanFallbackWithoutGit(err) {
 			return Checkout{}, err
@@ -10805,7 +10801,7 @@ func (m Manager) Create(ctx context.Context, name string) (Checkout, error) {
 		}, nil
 	}
 
-	if _, err := gitOutput(ctx, root, "worktree", "add", "-b", branch, path, strings.TrimSpace(baseSHA)); err != nil {
+	if _, err := gitstate.CombinedOutputText(ctx, root, "worktree", "add", "-b", branch, path, strings.TrimSpace(baseSHA)); err != nil {
 		return Checkout{}, err
 	}
 
@@ -10833,21 +10829,21 @@ func (m Manager) Diff(ctx context.Context, checkout Checkout) (Diff, error) {
 		return diffWorkbranchCopy(m.Root, path)
 	}
 
-	if _, err := gitOutput(ctx, path, "add", "-N", "."); err != nil {
+	if _, err := gitstate.CombinedOutputText(ctx, path, "add", "-N", "."); err != nil {
 		return Diff{}, err
 	}
 
-	stat, err := gitOutput(ctx, path, "diff", "--stat", base, "--")
+	stat, err := gitstate.CombinedOutputText(ctx, path, "diff", "--stat", base, "--")
 	if err != nil {
 		return Diff{}, err
 	}
 
-	names, err := gitOutput(ctx, path, "diff", "--name-only", base, "--")
+	names, err := gitstate.CombinedOutputText(ctx, path, "diff", "--name-only", base, "--")
 	if err != nil {
 		return Diff{}, err
 	}
 
-	patch, err := gitOutput(ctx, path, "diff", "--binary", base, "--")
+	patch, err := gitstate.CombinedOutputText(ctx, path, "diff", "--binary", base, "--")
 	if err != nil {
 		return Diff{}, err
 	}
@@ -10878,21 +10874,17 @@ func (m Manager) Remove(ctx context.Context, checkout Checkout) error {
 		return os.RemoveAll(path)
 	}
 
-	if _, err := gitOutput(ctx, root, "worktree", "remove", "--force", path); err != nil {
+	if _, err := gitstate.CombinedOutputText(ctx, root, "worktree", "remove", "--force", path); err != nil {
 		return err
 	}
 
 	if branch := strings.TrimSpace(checkout.Branch); branch != "" {
-		if _, err := gitOutput(ctx, root, "branch", "-D", branch); err != nil {
+		if _, err := gitstate.CombinedOutputText(ctx, root, "branch", "-D", branch); err != nil {
 			return err
 		}
 	}
 
 	return nil
-}
-
-func gitOutput(ctx context.Context, root string, args ...string) (string, error) {
-	return gitstate.CombinedOutputText(ctx, root, args...)
 }
 
 func workbranchCanFallbackWithoutGit(err error) bool {

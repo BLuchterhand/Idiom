@@ -21,6 +21,7 @@ import (
 	"idiom/internal/contracts/autonomy"
 	contractcompile "idiom/internal/contracts/compile"
 	"idiom/internal/platform/config"
+	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/instructions"
 	"idiom/internal/runtime/llama"
@@ -8090,7 +8091,7 @@ func initRunnerTestGitRepo(t *testing.T, root string) {
 	t.Helper()
 
 	ctx := context.Background()
-	if _, err := GitCombinedOutput(ctx, root, "init"); err != nil {
+	if _, err := gitstate.CombinedOutputText(ctx, root, "init"); err != nil {
 		t.Skipf("git unavailable for diff-backed completion gate test: %v", err)
 	}
 
@@ -8100,7 +8101,7 @@ func initRunnerTestGitRepo(t *testing.T, root string) {
 		{"add", "."},
 		{"commit", "-m", "initial"},
 	} {
-		if _, err := GitCombinedOutput(ctx, root, args...); err != nil {
+		if _, err := gitstate.CombinedOutputText(ctx, root, args...); err != nil {
 			t.Fatalf("git %s: %v", strings.Join(args, " "), err)
 		}
 	}

@@ -5,11 +5,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
+
+	"idiom/internal/platform/hosttools"
 )
 
 type CollectorReport struct {
@@ -204,7 +205,8 @@ func (languageEnvironmentEnricher) EnrichGraph(_ context.Context, graph Graph, o
 
 		handledLanguages[spec.Language] = struct{}{}
 
-		path, available := firstAvailableBinaryPath(spec.Binaries)
+		path := hosttools.FirstAvailable(spec.Binaries...)
+		available := path != ""
 		backendID := toolchainNodeID(spec.Language, spec.BackendName)
 		report := CollectorReport{
 			Name:         spec.BackendName,
@@ -549,16 +551,6 @@ func languageSet(languages []string) map[string]struct{} {
 	}
 
 	return out
-}
-
-func firstAvailableBinaryPath(candidates []string) (string, bool) {
-	for _, candidate := range candidates {
-		if path, err := exec.LookPath(candidate); err == nil {
-			return path, true
-		}
-	}
-
-	return "", false
 }
 
 func toolchainNodeID(language string, backend string) string {

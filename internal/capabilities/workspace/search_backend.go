@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -24,11 +25,11 @@ func resolveContentSearchBackend() (contentSearchBackend, error) {
 	for _, candidate := range contentSearchBackendCandidates() {
 		switch candidate {
 		case "rg":
-			if path := firstAvailableBinary("rg"); path != "" {
+			if path, err := exec.LookPath("rg"); err == nil && path != "" {
 				return contentSearchBackend{bin: path, kind: contentSearchRipgrep}, nil
 			}
 		case "ggrep":
-			if path := firstAvailableBinary("ggrep"); path != "" {
+			if path, err := exec.LookPath("ggrep"); err == nil && path != "" {
 				return contentSearchBackend{bin: path, kind: contentSearchGrep}, nil
 			}
 		case "grep":
@@ -58,8 +59,8 @@ func contentSearchBackendCandidates() []string {
 }
 
 func findGNUStyleGrep(name string) (string, bool) {
-	path := hosttools.FirstAvailable(name)
-	if path == "" {
+	path, err := exec.LookPath(name)
+	if err != nil || path == "" {
 		return "", false
 	}
 

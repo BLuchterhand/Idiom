@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -1017,7 +1018,7 @@ func (m *Manager) auditBackendAvailability(languages []harnessAuditLanguage) []h
 			continue
 		}
 
-		if path := firstAvailableBinary(backends[i].Binaries...); path != "" {
+		if path := hosttools.FirstAvailable(backends[i].Binaries...); path != "" {
 			backends[i].Available = true
 			backends[i].Path = path
 		}
@@ -1062,8 +1063,8 @@ func (m *Manager) auditContextGraphBackend() harnessAuditBackend {
 }
 
 func auditUniversalCtagsPath() string {
-	path := firstAvailableBinary("ctags")
-	if path == "" {
+	path, err := exec.LookPath("ctags")
+	if err != nil || path == "" {
 		return ""
 	}
 

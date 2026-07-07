@@ -24,6 +24,7 @@ import (
 	plancontract "idiom/internal/contracts/plan"
 	recoverycontract "idiom/internal/contracts/recovery"
 	"idiom/internal/platform/failures"
+	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/textutil"
 	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/runtime/llama"
@@ -10152,7 +10153,7 @@ func (r *Runner) removedTestDeclarations(results []workspace.ToolResult) []strin
 	}
 
 	args := append([]string{"diff", "--unified=0", "--"}, paths...)
-	diff, err := GitCombinedOutput(context.Background(), root, args...)
+	diff, err := gitstate.CombinedOutputText(context.Background(), root, args...)
 
 	if err != nil || strings.TrimSpace(diff) == "" {
 		return nil

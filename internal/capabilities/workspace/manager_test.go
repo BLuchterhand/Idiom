@@ -506,26 +506,6 @@ func TestGoWorkspaceSymbolFallsBackAfterEmptyGoplsResult(t *testing.T) {
 	}
 }
 
-func TestEnvWithCanonicalPWDOverridesLogicalPWD(t *testing.T) {
-	dir := t.TempDir()
-	env := envWithCanonicalPWD([]string{"PATH=/bin", "PWD=/tmp/Logical"}, dir, []string{"PWD=/tmp/Other"})
-	count := 0
-
-	for _, entry := range env {
-		if strings.HasPrefix(entry, "PWD=") {
-			count++
-
-			if got := strings.TrimPrefix(entry, "PWD="); got != config.CanonicalizeExistingPath(dir) {
-				t.Fatalf("expected canonical PWD %q, got %q", config.CanonicalizeExistingPath(dir), got)
-			}
-		}
-	}
-
-	if count != 1 {
-		t.Fatalf("expected one PWD entry, got %d in %#v", count, env)
-	}
-}
-
 func TestSearchContentMissingScopeReturnsGracefulMiss(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "internal", "runtime", "agent", "runner.go"), "package agent\n\nfunc ExampleWorker() {}\n")

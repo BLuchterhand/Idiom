@@ -9,17 +9,13 @@ import (
 
 func (m *Manager) runCommand(parent context.Context, dir, name string, args ...string) (string, error) {
 	stdout, stderr, err := m.runCommandDetailed(parent, dir, name, args...)
-	output := m.truncateCommandOutput(combineCommandOutput(stdout, stderr))
+	output := m.truncateCommandOutput(commandexec.CombineOutput(stdout, stderr))
 
 	if err != nil {
 		return output, err
 	}
 
 	return output, nil
-}
-
-func combineCommandOutput(stdout string, stderr string) string {
-	return commandexec.CombineOutput(stdout, stderr)
 }
 
 func (m *Manager) truncateCommandOutput(output string) string {
@@ -78,8 +74,4 @@ func workspaceCommandCaptureBytes(displayBytes int) int {
 	}
 
 	return diagnosticCaptureBytes
-}
-
-func envWithCanonicalPWD(base []string, dir string, extra []string) []string {
-	return commandexec.EnvWithCanonicalPWD(base, dir, extra)
 }

@@ -25,10 +25,6 @@ func FirstAvailable(names ...string) string {
 	return ""
 }
 
-func Available(name string) bool {
-	return FirstAvailable(name) != ""
-}
-
 func VersionOutput(ctx context.Context, path string, maxOutputBytes int) (string, error) {
 	if maxOutputBytes <= 0 {
 		maxOutputBytes = DefaultVersionOutputLimit
