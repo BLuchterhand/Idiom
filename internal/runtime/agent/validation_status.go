@@ -314,7 +314,7 @@ func latestObservedVerificationSummary(results []workspace.ToolResult) (string, 
 			continue
 		}
 
-		if resultCountsAsSuccessfulVerification(result) {
+		if workspace.AnalyzeVerificationResult(result).Successful {
 			if command := workspace.ShellCommandFromToolResult(result); command != "" {
 				return command + " passed", true
 			}

@@ -4388,7 +4388,7 @@ func hasSuccessfulVerificationResult(results []workspace.ToolResult) bool {
 			continue
 		}
 
-		if resultCountsAsSuccessfulVerification(result) {
+		if workspace.AnalyzeVerificationResult(result).Successful {
 			return true
 		}
 	}

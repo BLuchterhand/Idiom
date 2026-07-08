@@ -7659,7 +7659,7 @@ func TestLanguageDiagnosticsCountAsVerification(t *testing.T) {
 	}
 	for _, tool := range diagnosticsTools {
 		req := workspace.ToolRequest{Tool: tool}
-		if !isVerificationRequest(req) {
+		if !workspace.AnalyzeVerificationRequest(req).Attempted {
 			t.Errorf("%s should count as a verification request", tool)
 		}
 
@@ -7675,7 +7675,7 @@ func TestLanguageDiagnosticsCountAsVerification(t *testing.T) {
 
 func TestShellSanityCommandsCountAsVerification(t *testing.T) {
 	req := workspace.ToolRequest{Tool: "shell", Command: "git diff --check"}
-	if !isVerificationRequest(req) {
+	if !workspace.AnalyzeVerificationRequest(req).Attempted {
 		t.Fatal("git diff --check should count as a verification request after writes")
 	}
 
@@ -7691,7 +7691,7 @@ func TestShellSanityCommandsCountAsVerification(t *testing.T) {
 		t.Fatal("post-write verification gate should allow git diff --check")
 	}
 
-	if !isVerificationRequest(workspace.ToolRequest{Tool: "source_sanity", Path: "native/tests/test_cart_system.cpp"}) {
+	if !workspace.AnalyzeVerificationRequest(workspace.ToolRequest{Tool: "source_sanity", Path: "native/tests/test_cart_system.cpp"}).Attempted {
 		t.Fatal("source_sanity should count as a verification request")
 	}
 
@@ -7702,7 +7702,7 @@ func TestShellSanityCommandsCountAsVerification(t *testing.T) {
 
 func TestShellSyntaxCheckSatisfiesScriptPostWriteVerification(t *testing.T) {
 	req := workspace.ToolRequest{Tool: "shell", Command: "bash -n scripts/run-harness.sh"}
-	if !isVerificationRequest(req) {
+	if !workspace.AnalyzeVerificationRequest(req).Attempted {
 		t.Fatal("bash -n should count as a verification request for shell script edits")
 	}
 
@@ -42035,7 +42035,7 @@ func TestSourceVerificationDoesNotTreatIncidentalPathMentionAsVerificationExcept
 			Output: "Implement the feature by changing pkg/feature.go and pkg/feature_test.go.",
 		},
 		{Tool: "edit_file", Summary: "Edited pkg/feature.go"},
-		{Tool: "shell", Summary: "git diff --check passed", Output: "git diff --check passed"},
+		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check\npassed"},
 	}
 
 	if summary, errorText, reject := sourceEditVerificationRejection(workspace.ToolRequest{

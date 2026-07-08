@@ -8922,7 +8922,7 @@ func runnerAutonomyVerificationStatus(results []workspace.ToolResult, brief work
 
 	for i := len(results) - 1; i >= 0; i-- {
 		result := results[i]
-		if isVerificationRequest(workspace.ToolRequest{Tool: result.Tool}) {
+		if workspace.AnalyzeVerificationRequest(workspace.ToolRequest{Tool: result.Tool}).Attempted {
 			if strings.TrimSpace(result.Error) != "" {
 				return "failed"
 			}
@@ -10437,24 +10437,6 @@ func mapKeys(values map[string]struct{}) []string {
 	return keys
 }
 
-func isVerificationRequest(req workspace.ToolRequest) bool {
-	tool := strings.TrimSpace(req.Tool)
-	if tool == workspace.ToolNameSourceSanity {
-		return true
-	}
-
-	if semanticlanguage.IsDiagnosticToolName(tool) {
-		return true
-	}
-
-	switch tool {
-	case workspace.ToolNameShell:
-		return isVerificationCommandText(req.Command)
-	}
-
-	return false
-}
-
 func hasPendingVerificationAfterWrites(results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) bool {
 	if workerruntime.VerificationContractSkipsGate(brief.VerificationContract) {
 		return false
@@ -10492,7 +10474,7 @@ func hasPendingVerificationAfterWrites(results []workspace.ToolResult, brief wor
 			continue
 		}
 
-		if pending && resultCountsAsSuccessfulPostWriteVerification(result, pendingPaths) {
+		if pending && workspace.AnalyzePostWriteVerificationResult(result, pendingPaths).Successful {
 			pending = false
 			pendingPaths = nil
 		}
@@ -11856,7 +11838,7 @@ func (s *runnerExecutionState) shouldRequireVerification(req workspace.ToolReque
 		return false
 	}
 
-	return s.writesSinceVerification >= 2 && !isVerificationRequest(req) && strings.TrimSpace(req.Tool) != "task_ledger"
+	return s.writesSinceVerification >= 2 && !workspace.AnalyzeVerificationRequest(req).Attempted && strings.TrimSpace(req.Tool) != "task_ledger"
 }
 
 func (s *runnerExecutionState) needsCheckpoint(policy CheckpointPolicy, req workspace.ToolRequest) bool {
@@ -11882,7 +11864,7 @@ func (s *runnerExecutionState) applyResult(req workspace.ToolRequest, result wor
 
 	update := runnerExecutionUpdate{}
 
-	if isVerificationRequest(req) {
+	if workspace.AnalyzeVerificationRequest(req).Attempted {
 		s.verificationAttempted = true
 		// Any verification attempt closes the "run verification before more
 		// inspection" guard. A failed verifier opens a repair path instead;
@@ -11982,7 +11964,7 @@ func verificationPhaseState(result workspace.ToolResult) (state string, detail s
 	if strings.TrimSpace(result.Error) != "" {
 		state = "failed"
 		detail = strings.TrimSpace(result.Error)
-	} else if verificationResultIsPatchHygieneOnly(result) {
+	} else if workspace.AnalyzeVerificationResult(result).PatchHygieneOnly {
 		state = "hygiene"
 
 		if detail == "" {
@@ -11990,7 +11972,7 @@ func verificationPhaseState(result workspace.ToolResult) (state string, detail s
 		} else {
 			detail += "; patch hygiene completed"
 		}
-	} else if resultCountsAsSuccessfulVerification(result) {
+	} else if workspace.AnalyzeVerificationResult(result).Successful {
 		state = "done"
 	} else {
 		state = "insufficient"
@@ -12569,7 +12551,7 @@ func synthesizeMutationFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 			continue
 		}
 
-		if workspace.IsWorkspaceWriteTool(result.Tool) || resultCountsAsSuccessfulVerification(result) {
+		if workspace.IsWorkspaceWriteTool(result.Tool) || workspace.AnalyzeVerificationResult(result).Successful {
 			latestProgressIndex = i
 		}
 	}
@@ -12645,7 +12627,7 @@ func synthesizeMutationFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 		b.WriteString("\n")
 	}
 
-	if latestSourceVerification, ok := latestVerificationAfterLatestSourceWrite(results); sourceEditsNeedSemanticVerification(brief, results) && ok && verificationResultIsPatchHygieneOnly(latestSourceVerification) {
+	if latestSourceVerification, ok := latestVerificationAfterLatestSourceWrite(results); sourceEditsNeedSemanticVerification(brief, results) && ok && workspace.AnalyzeVerificationResult(latestSourceVerification).PatchHygieneOnly {
 		b.WriteString("Verification: ")
 
 		if summary, ok := latestSuccessfulVerificationSummary(results); ok {
@@ -12740,7 +12722,7 @@ func (r *Runner) modelErrorAfterPartialEditBlockerAnswer(modelErr error, results
 func latestSuccessfulVerificationSummary(results []workspace.ToolResult) (string, bool) {
 	for i := len(results) - 1; i >= 0; i-- {
 		result := results[i]
-		if !resultCountsAsSuccessfulVerification(result) {
+		if !workspace.AnalyzeVerificationResult(result).Successful {
 			continue
 		}
 
@@ -13133,7 +13115,7 @@ var requiredEvidenceCheck = map[workerruntime.EvidenceRequirementID]func(answer 
 		}
 
 		for _, r := range results {
-			if isVerificationToolResult(r) {
+			if workspace.AnalyzeVerificationResult(r).Attempted {
 				return true
 			}
 		}
@@ -13142,7 +13124,7 @@ var requiredEvidenceCheck = map[workerruntime.EvidenceRequirementID]func(answer 
 	},
 	workerruntime.RequiredEvidenceVerificationCommand: func(answer string, results []workspace.ToolResult) bool {
 		for _, r := range results {
-			if isVerificationToolResult(r) {
+			if workspace.AnalyzeVerificationResult(r).Attempted {
 				return true
 			}
 		}
@@ -13259,21 +13241,6 @@ func toolResultPreimagePathWasMissing(result workspace.ToolResult, path string) 
 		if NormalizeRunnerPath(entry.Path) == normalized {
 			return !entry.Exists
 		}
-	}
-
-	return false
-}
-
-// isVerificationToolResult reports whether a tool result came from a
-// verification-oriented tool (source_sanity, shell with test invocation).
-func isVerificationToolResult(result workspace.ToolResult) bool {
-	tool := strings.TrimSpace(strings.ToLower(result.Tool))
-	if tool == workspace.ToolNameSourceSanity {
-		return true
-	}
-
-	if tool == workspace.ToolNameShell && strings.TrimSpace(result.Error) == "" {
-		return true
 	}
 
 	return false
@@ -14384,7 +14351,7 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 	}
 
 	if workerruntime.PermissionProfileIsReadOnlyVerificationShell(r.RuntimeBrief.PermissionProfile) &&
-		!isVerificationRequest(decision.Request) {
+		!workspace.AnalyzeVerificationRequest(decision.Request).Attempted {
 
 		if !input.VerificationAttempted {
 			if redirected, ok := r.verificationBootstrapRequest(); ok {
@@ -21162,7 +21129,7 @@ func scoreMessageForRetention(msg llama.ChatMessage, result *workspace.ToolResul
 
 	if result != nil {
 		if strings.TrimSpace(result.Error) != "" {
-			if resultIsVerificationAttempt(*result) {
+			if workspace.AnalyzeVerificationResult(*result).Attempted {
 				score += 0.40
 			} else {
 				score += 0.10
@@ -22105,7 +22072,7 @@ func (r *Runner) emitFinalAnswerBlockerOverride(acceptance finalAnswerAcceptance
 }
 
 func (r *Runner) emitPostWriteVerificationTelemetry(req workspace.ToolRequest, result workspace.ToolResult) bool {
-	if r == nil || r.OnEvent == nil || strings.TrimSpace(result.Error) != "" || !resultCountsAsSuccessfulVerification(result) {
+	if r == nil || r.OnEvent == nil || strings.TrimSpace(result.Error) != "" || !workspace.AnalyzeVerificationResult(result).Successful {
 		return false
 	}
 

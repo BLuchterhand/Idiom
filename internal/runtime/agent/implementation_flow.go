@@ -4342,7 +4342,7 @@ func lastFailureIsHarnessRejectionAfterCompletedMutation(results []workspace.Too
 			continue
 		}
 
-		if workspace.IsWorkspaceWriteTool(result.Tool) || resultCountsAsSuccessfulVerification(result) {
+		if workspace.IsWorkspaceWriteTool(result.Tool) || workspace.AnalyzeVerificationResult(result).Successful {
 			latestProgressIndex = i
 		}
 	}
@@ -8961,7 +8961,7 @@ func taskLedgerVerificationTool(result workspace.ToolResult) bool {
 		return true
 	}
 
-	return resultCountsAsSuccessfulVerification(result)
+	return workspace.AnalyzeVerificationResult(result).Successful
 }
 
 func taskLedgerAnySuccessfulTool(result workspace.ToolResult) bool {
@@ -9147,93 +9147,17 @@ func taskLedgerFinalHasTerminalReason(reply string) bool {
 	)
 }
 
-func resultCountsAsSuccessfulVerification(result workspace.ToolResult) bool {
-	if strings.TrimSpace(result.Error) != "" {
-		return false
-	}
-
-	if strings.TrimSpace(result.Tool) == "source_sanity" {
-		return sourceSanityResultUsesLanguageDiagnostics(result)
-	}
-
-	if semanticlanguage.IsDiagnosticToolName(result.Tool) {
-		return true
-	}
-
-	return strings.TrimSpace(result.Tool) == "shell" &&
-		isVerificationCommandText(result.Output)
-}
-
-func resultCountsAsSuccessfulPostWriteVerification(result workspace.ToolResult, pendingPaths []string) bool {
-	if resultCountsAsSuccessfulVerification(result) {
-		return true
-	}
-
-	if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Tool) != "shell" {
-		return false
-	}
-
-	return shellOutputVerifiesPendingHTMLArtifacts(result.Output, pendingPaths)
-}
-
-func shellOutputVerifiesPendingHTMLArtifacts(output string, pendingPaths []string) bool {
-	normalized := make([]string, 0, len(pendingPaths))
-	for _, path := range pendingPaths {
-		path = NormalizeRunnerPath(path)
-		if path == "" {
-			continue
-		}
-		normalized = textutil.AppendUniqueMulti(normalized, path)
-	}
-	if len(normalized) == 0 {
-		return false
-	}
-
-	for _, path := range normalized {
-		ext := strings.ToLower(filepath.Ext(path))
-		if ext != ".html" && ext != ".htm" {
-			return false
-		}
-	}
-
-	lower := strings.ToLower(output)
-	if !strings.Contains(lower, "python") ||
-		(!strings.Contains(lower, "html.parser") && !strings.Contains(lower, "htmlparser")) {
-		return false
-	}
-
-	for _, path := range normalized {
-		if !shellOutputMentionsPath(lower, path) {
-			return false
-		}
-	}
-
-	return true
-}
-
-func shellOutputMentionsPath(lowerOutput string, path string) bool {
-	normalized := strings.ToLower(NormalizeRunnerPath(path))
-	if normalized == "" {
-		return false
-	}
-	if strings.Contains(lowerOutput, normalized) {
-		return true
-	}
-	base := strings.ToLower(filepath.Base(normalized))
-	return base != "." && base != "" && strings.Contains(lowerOutput, base)
-}
-
 func sourceEditVerificationRejection(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (summary string, errorText string, reject bool) {
 	if !sourceVerificationGateApplies(brief, results) {
 		return "", "", false
 	}
 
 	latest, ok := latestVerificationAfterLatestSourceWrite(results)
-	if !ok || !verificationResultIsPatchHygieneOnly(latest) {
+	if !ok || !workspace.AnalyzeVerificationResult(latest).PatchHygieneOnly {
 		return "", "", false
 	}
 
-	if isVerificationRequest(req) || workspace.IsWorkspaceWriteTool(req.Tool) || sourceVerificationBoundaryAllowsTool(req.Tool) {
+	if workspace.AnalyzeVerificationRequest(req).Attempted || workspace.IsWorkspaceWriteTool(req.Tool) || sourceVerificationBoundaryAllowsTool(req.Tool) {
 		return "", "", false
 	}
 
@@ -9319,7 +9243,7 @@ func postWriteSourceSanityRedirect(req workspace.ToolRequest, brief workerruntim
 		return workspace.ToolRequest{}, false
 	}
 
-	if isVerificationRequest(req) || strings.TrimSpace(req.Tool) == workspace.ToolNameSourceSanity {
+	if workspace.AnalyzeVerificationRequest(req).Attempted || strings.TrimSpace(req.Tool) == workspace.ToolNameSourceSanity {
 		return workspace.ToolRequest{}, false
 	}
 
@@ -9438,7 +9362,7 @@ func sourceEditCloseoutPrompt(req workspace.ToolRequest, brief workerruntime.Wor
 		return "", false
 	}
 
-	if isVerificationRequest(req) || workspace.IsWorkspaceWriteTool(req.Tool) || sourceVerificationBoundaryAllowsTool(req.Tool) {
+	if workspace.AnalyzeVerificationRequest(req).Attempted || workspace.IsWorkspaceWriteTool(req.Tool) || sourceVerificationBoundaryAllowsTool(req.Tool) {
 		return "", false
 	}
 
@@ -9464,7 +9388,7 @@ func sourceEditsNeedSemanticVerification(brief workerruntime.WorkerRuntimeBrief,
 		return true
 	}
 
-	return verificationResultIsPatchHygieneOnly(latest)
+	return workspace.AnalyzeVerificationResult(latest).PatchHygieneOnly
 }
 
 func deterministicPostWriteVerificationRequest(results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) (workspace.ToolRequest, bool) {
@@ -9533,7 +9457,7 @@ func sourceEditsAreSemanticallyVerified(brief workerruntime.WorkerRuntimeBrief, 
 
 	latest, ok := latestVerificationAfterLatestSourceWrite(results)
 
-	return ok && !verificationResultIsPatchHygieneOnly(latest)
+	return ok && !workspace.AnalyzeVerificationResult(latest).PatchHygieneOnly
 }
 
 func failedVerificationAfterLatestWrite(results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) (workspace.ToolResult, bool) {
@@ -9566,7 +9490,7 @@ func failedVerificationAfterLatestWrite(results []workspace.ToolResult, brief wo
 			continue
 		}
 
-		if pending && strings.TrimSpace(result.Error) == "" && resultCountsAsSuccessfulPostWriteVerification(result, pendingPaths) {
+		if pending && strings.TrimSpace(result.Error) == "" && workspace.AnalyzePostWriteVerificationResult(result, pendingPaths).Successful {
 			pending = false
 			pendingPaths = nil
 			failed = false
@@ -9575,11 +9499,11 @@ func failedVerificationAfterLatestWrite(results []workspace.ToolResult, brief wo
 			continue
 		}
 
-		if !pending || !resultIsVerificationAttempt(result) {
+		if !pending || !workspace.AnalyzeVerificationResult(result).Attempted {
 			continue
 		}
 
-		if strings.TrimSpace(result.Error) == "" && resultCountsAsSuccessfulVerification(result) {
+		if strings.TrimSpace(result.Error) == "" && workspace.AnalyzeVerificationResult(result).Successful {
 			pending = false
 			pendingPaths = nil
 			failed = false
@@ -9599,47 +9523,6 @@ func failedVerificationAfterLatestWrite(results []workspace.ToolResult, brief wo
 	}
 
 	return latestFailed, true
-}
-
-func resultIsVerificationAttempt(result workspace.ToolResult) bool {
-	tool := strings.TrimSpace(result.Tool)
-	if tool == "source_sanity" || semanticlanguage.IsDiagnosticToolName(tool) {
-		return true
-	}
-
-	if tool != "shell" {
-		return false
-	}
-
-	command := workspace.ShellCommandFromToolResult(result)
-	if command != "" && isVerificationRequest(workspace.ToolRequest{Tool: "shell", Command: command}) {
-		return true
-	}
-
-	return isVerificationCommandText(result.Output) || isVerificationCommandText(result.Summary)
-}
-
-func sourceSanityResultUsesLanguageDiagnostics(result workspace.ToolResult) bool {
-	text := strings.ToLower(strings.TrimSpace(result.Summary + "\n" + result.Output))
-	if text == "" {
-		return false
-	}
-
-	if strings.Contains(text, "generic fallback") ||
-		strings.Contains(text, "generic_source_sanity") ||
-		strings.Contains(text, "generic delimiter") ||
-		strings.Contains(text, "generic source sanity") {
-
-		return false
-	}
-
-	for _, tool := range semanticlanguage.DiagnosticToolNames() {
-		if strings.Contains(text, strings.ToLower(strings.TrimSpace(tool))) {
-			return true
-		}
-	}
-
-	return false
 }
 
 func sourceVerificationGateApplies(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
@@ -9669,42 +9552,13 @@ func latestVerificationAfterLatestSourceWrite(results []workspace.ToolResult) (w
 			continue
 		}
 
-		if seenSourceWrite && resultCountsAsSuccessfulVerification(result) {
+		if seenSourceWrite && workspace.AnalyzeVerificationResult(result).Successful {
 			latest = result
 			found = true
 		}
 	}
 
 	return latest, found
-}
-
-func verificationResultIsPatchHygieneOnly(result workspace.ToolResult) bool {
-	if strings.TrimSpace(result.Tool) != "shell" {
-		return false
-	}
-
-	return shellOutputIsPatchHygieneOnly(result.Output)
-}
-
-func shellOutputIsPatchHygieneOnly(output string) bool {
-	hasPatchHygiene := false
-	hasSourceAware := false
-
-	for _, raw := range strings.Split(output, "\n") {
-		line := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(raw), "$"))
-		lower := strings.ToLower(line)
-
-		if strings.Contains(lower, "git diff --check") {
-			hasPatchHygiene = true
-			continue
-		}
-
-		if line != "" && workspace.AnalyzeShellCommand(line).BuildOrTest {
-			hasSourceAware = true
-		}
-	}
-
-	return hasPatchHygiene && !hasSourceAware
 }
 
 func changedSourcePaths(results []workspace.ToolResult) []string {
@@ -9778,26 +9632,6 @@ func summarizeRunnerPaths(paths []string, limit int) string {
 	}
 
 	return strings.Join(quoted, ", ")
-}
-
-func isVerificationCommandText(text string) bool {
-	command := strings.TrimSpace(text)
-	if command == "" {
-		return false
-	}
-
-	if workspace.AnalyzeShellCommand(command).Verification != workspace.ShellVerificationNone {
-		return true
-	}
-
-	for _, line := range strings.Split(command, "\n") {
-		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "$"))
-		if line != "" && workspace.AnalyzeShellCommand(line).Verification != workspace.ShellVerificationNone {
-			return true
-		}
-	}
-
-	return false
 }
 
 func plannerOwnedVerificationShellRejection(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief) (summary string, errorText string, reject bool) {

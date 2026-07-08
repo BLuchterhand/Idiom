@@ -4440,7 +4440,7 @@ func recoveryCardRejectedActionClass(req workspace.ToolRequest, result workspace
 		return actionSubmitPlan
 	case workspace.IsWorkspaceWriteTool(tool):
 		return actionPerEditWrite
-	case isVerificationRequest(workspace.ToolRequest{Tool: tool, Command: req.Command, Path: req.Path}):
+	case workspace.AnalyzeVerificationRequest(workspace.ToolRequest{Tool: tool, Command: req.Command, Path: req.Path}).Attempted:
 		return actionVerify
 	case workspace.IsSearchToolName(tool):
 		return actionSearch
@@ -4714,7 +4714,7 @@ func runnerVerificationEvidenceRefs(results []workspace.ToolResult) []string {
 	var refs []string
 
 	for _, result := range results {
-		if !resultCountsAsSuccessfulVerification(result) {
+		if !workspace.AnalyzeVerificationResult(result).Successful {
 			continue
 		}
 
