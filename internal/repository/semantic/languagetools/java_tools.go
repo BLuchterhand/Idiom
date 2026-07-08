@@ -741,7 +741,7 @@ func (m *Manager) javaDiagnostics(ctx context.Context, req ToolRequest) ToolResu
 			output = "mvn compile: no warnings or errors"
 		}
 
-		return ToolResult{Tool: "java_diagnostics", Summary: "Collected Java diagnostics via mvn compile", Output: output}
+		return ToolResult{Tool: "java_diagnostics", Summary: "Collected Java diagnostics via mvn compile", Output: output, Facts: diagnosticToolFacts(files)}
 	}
 
 	if _, err := os.Stat(filepath.Join(m.Root(), "build.gradle")); err == nil {
@@ -756,7 +756,7 @@ func (m *Manager) javaDiagnostics(ctx context.Context, req ToolRequest) ToolResu
 			output = "gradle compileJava: no warnings or errors"
 		}
 
-		return ToolResult{Tool: "java_diagnostics", Summary: "Collected Java diagnostics via gradle compileJava", Output: output}
+		return ToolResult{Tool: "java_diagnostics", Summary: "Collected Java diagnostics via gradle compileJava", Output: output, Facts: diagnosticToolFacts(files)}
 	}
 
 	// javac fallback — one file at a time.
@@ -781,7 +781,7 @@ func (m *Manager) javaDiagnostics(ctx context.Context, req ToolRequest) ToolResu
 		lines = append(lines, chunk)
 	}
 
-	return ToolResult{Tool: "java_diagnostics", Summary: fmt.Sprintf("Collected Java diagnostics via javac for %d file(s).", len(files)), Output: strings.Join(lines, "\n")}
+	return ToolResult{Tool: "java_diagnostics", Summary: fmt.Sprintf("Collected Java diagnostics via javac for %d file(s).", len(files)), Output: strings.Join(lines, "\n"), Facts: diagnosticToolFacts(files)}
 }
 
 func (m *Manager) javaDiagnosticTargets(req ToolRequest) ([]string, error) {

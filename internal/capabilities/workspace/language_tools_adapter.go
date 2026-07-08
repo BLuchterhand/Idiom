@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/commandexec"
 	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/repository/semantic/languagetools"
@@ -213,6 +214,7 @@ func fromLanguageToolResult(result languagetools.ToolResult) ToolResult {
 		Error:         result.Error,
 		Failure:       result.Failure,
 		ChangedPaths:  append([]string(nil), result.ChangedPaths...),
+		Facts:         cloneToolResultFacts(result.Facts),
 		PrecisionTier: result.PrecisionTier,
 		Relationships: fromLanguageToolRelationships(result.Relationships),
 		PayloadType:   result.PayloadType,
@@ -229,10 +231,21 @@ func toLanguageToolResult(result ToolResult) languagetools.ToolResult {
 		Error:         result.Error,
 		Failure:       result.Failure,
 		ChangedPaths:  append([]string(nil), result.ChangedPaths...),
+		Facts:         cloneToolResultFacts(result.Facts),
 		PrecisionTier: result.PrecisionTier,
 		Relationships: toLanguageToolRelationships(result.Relationships),
 		PayloadType:   result.PayloadType,
 		Payload:       result.Payload,
+	}
+}
+
+func cloneToolResultFacts(facts *toolfacts.ToolResultFacts) *toolfacts.ToolResultFacts {
+	if facts == nil {
+		return nil
+	}
+
+	return &toolfacts.ToolResultFacts{
+		DiagnosticEvidencePaths: append([]string(nil), facts.DiagnosticEvidencePaths...),
 	}
 }
 

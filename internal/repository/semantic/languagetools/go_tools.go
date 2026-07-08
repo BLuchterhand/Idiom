@@ -665,6 +665,7 @@ func (m *Manager) goDiagnostics(ctx context.Context, req ToolRequest) ToolResult
 			Tool:    "go_diagnostics",
 			Summary: fmt.Sprintf("Collected Go diagnostics for %d file(s).", len(files)),
 			Output:  strings.Join(lines, "\n"),
+			Facts:   diagnosticToolFacts(files),
 		}
 		if len(failures) > 0 {
 			result.Error = strings.Join(failures, "\n")
@@ -678,6 +679,7 @@ func (m *Manager) goDiagnostics(ctx context.Context, req ToolRequest) ToolResult
 		Tool:    "go_diagnostics",
 		Summary: "Collected Go build diagnostics via go build fallback",
 		Output:  strings.TrimSpace(output),
+		Facts:   diagnosticToolFacts(files),
 	}
 
 	if err != nil {

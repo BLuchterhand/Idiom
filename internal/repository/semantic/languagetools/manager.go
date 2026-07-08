@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/failures"
 	semanticcpp "idiom/internal/repository/semantic/cpp"
@@ -274,10 +275,37 @@ type ToolResult struct {
 	Error         string
 	Failure       error
 	ChangedPaths  []string
+	Facts         *toolfacts.ToolResultFacts
 	PrecisionTier string
 	Relationships []ToolRelationship
 	PayloadType   string
 	Payload       json.RawMessage
+}
+
+func diagnosticToolFacts(paths []string) *toolfacts.ToolResultFacts {
+	if len(paths) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(paths))
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = filepath.ToSlash(strings.TrimPrefix(strings.TrimSpace(path), "./"))
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		out = append(out, path)
+	}
+
+	if len(out) == 0 {
+		return nil
+	}
+
+	return &toolfacts.ToolResultFacts{DiagnosticEvidencePaths: out}
 }
 
 type ToolRelationship struct {

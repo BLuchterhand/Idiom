@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"idiom/internal/contracts/pathparse"
 	"idiom/internal/platform/hosttools"
 	"idiom/internal/repository/discovery"
 	semanticrust "idiom/internal/repository/semantic/rust"
@@ -606,7 +607,43 @@ func (m *Manager) rustDiagnostics(ctx context.Context, req ToolRequest) ToolResu
 
 	summary := fmt.Sprintf("Ran cargo check in %s", m.displayPath(workdir))
 
-	return ToolResult{Tool: "rust_diagnostics", Summary: summary, Output: output}
+	return ToolResult{Tool: "rust_diagnostics", Summary: summary, Output: output, Facts: diagnosticToolFacts(m.rustDiagnosticEvidencePaths(req, workdir, output))}
+}
+
+func (m *Manager) rustDiagnosticEvidencePaths(req ToolRequest, workdir string, output string) []string {
+	var paths []string
+
+	if strings.TrimSpace(req.Path) != "" {
+		resolved, err := m.resolvePath(req.Path, "")
+		if err == nil {
+			if info, statErr := os.Stat(resolved); statErr == nil && !info.IsDir() {
+				rel := filepath.ToSlash(m.displayPath(resolved))
+				if strings.ToLower(filepath.Ext(rel)) == ".rs" {
+					paths = append(paths, rel)
+				}
+			}
+		}
+	}
+
+	workdirRel := "."
+	if rel, ok := m.relativeWorkspacePath(workdir); ok {
+		workdirRel = filepath.ToSlash(rel)
+	}
+
+	for _, raw := range pathparse.MentionedWorkspaceFiles(output) {
+		rel := filepath.ToSlash(strings.TrimPrefix(strings.TrimSpace(raw), "./"))
+		if strings.ToLower(filepath.Ext(rel)) != ".rs" {
+			continue
+		}
+
+		if workdirRel != "." && !pathMatchesFilter(rel, workdirRel) {
+			rel = filepath.ToSlash(filepath.Join(workdirRel, rel))
+		}
+
+		paths = append(paths, rel)
+	}
+
+	return paths
 }
 
 // -- Shared helpers ---------------------------------------------------------

@@ -23,6 +23,7 @@ import (
 	contractcompile "idiom/internal/contracts/compile"
 	plancontract "idiom/internal/contracts/plan"
 	planartifact "idiom/internal/contracts/planartifact"
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/failures"
@@ -4160,6 +4161,7 @@ func TestReadOnlyAnswerabilityAcceptsExplicitDiagnosticEvidence(t *testing.T) {
 		Tool:    "source_sanity",
 		Summary: "source_sanity failed for internal/runtime/agent/runner_core.go",
 		Output:  "internal/runtime/agent/runner_core.go:10: undefined: Foo\n",
+		Facts:   &toolfacts.ToolResultFacts{DiagnosticEvidencePaths: []string{"internal/runtime/agent/runner_core.go"}},
 	}}
 
 	ledger := readOnlyAnswerabilityForResults(brief, results)
@@ -4198,6 +4200,7 @@ func TestReadOnlyAnswerabilityRejectsUnrelatedDiagnosticEvidence(t *testing.T) {
 		Tool:    "source_sanity",
 		Summary: "source_sanity failed for internal/platform/config/config.go",
 		Output:  "internal/platform/config/config.go:10: undefined: ConfigValue\n",
+		Facts:   &toolfacts.ToolResultFacts{DiagnosticEvidencePaths: []string{"internal/platform/config/config.go"}},
 	}}
 
 	ledger := readOnlyAnswerabilityForResults(brief, results)
@@ -4232,6 +4235,7 @@ func TestReadOnlyAnswerabilityAcceptsPathMatchedDiagnosticEvidence(t *testing.T)
 		Tool:    "source_sanity",
 		Summary: "source_sanity failed for internal/runtime/agent/runner_core.go",
 		Output:  "internal/runtime/agent/runner_core.go:10: undefined: RunnerState\n",
+		Facts:   &toolfacts.ToolResultFacts{DiagnosticEvidencePaths: []string{"internal/runtime/agent/runner_core.go"}},
 	}}
 
 	ledger := readOnlyAnswerabilityForResults(brief, results)
@@ -4246,6 +4250,7 @@ func TestReadOnlyAnswerabilityRejectsWrongPathDiagnosticEvidence(t *testing.T) {
 		Tool:    "source_sanity",
 		Summary: "source_sanity failed for internal/platform/config/config.go",
 		Output:  "internal/platform/config/config.go:10: undefined: ConfigValue\n",
+		Facts:   &toolfacts.ToolResultFacts{DiagnosticEvidencePaths: []string{"internal/platform/config/config.go"}},
 	}}
 
 	ledger := readOnlyAnswerabilityForResults(brief, results)
@@ -4260,6 +4265,7 @@ func TestReadOnlyAnswerabilityRejectsWrongPathDiagnosticEvidenceEvenWhenTextEcho
 		Tool:    "source_sanity",
 		Summary: "source_sanity failed for internal/platform/config/config.go while investigating diagnostics for internal/runtime/agent/runner_core.go",
 		Output:  "internal/platform/config/config.go:10: undefined: ConfigValue\ninternal/runtime/agent/runner_core.go remains the requested diagnostic target.\n",
+		Facts:   &toolfacts.ToolResultFacts{DiagnosticEvidencePaths: []string{"internal/platform/config/config.go"}},
 	}}
 
 	ledger := readOnlyAnswerabilityForResults(brief, results)

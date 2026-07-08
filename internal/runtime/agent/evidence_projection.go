@@ -295,34 +295,6 @@ func normalizeDiagnosticArtifactEvidencePath(path string) string {
 	return path
 }
 
-func (toolResultEvidenceProjection) DiagnosticEvidencePathsFromResult(result workspace.ToolResult, max int) ([]string, bool) {
-	if strings.TrimSpace(result.Error) != "" {
-		return nil, false
-	}
-
-	tool := strings.ToLower(strings.TrimSpace(result.Tool))
-	if tool == "" {
-		return nil, false
-	}
-
-	if !strings.Contains(tool, "diagnostic") && !strings.Contains(tool, "source_sanity") && !strings.HasSuffix(tool, "_diagnostics") {
-		return nil, false
-	}
-
-	if strings.TrimSpace(result.Summary) == "" && strings.TrimSpace(result.Output) == "" {
-		return nil, false
-	}
-
-	if max <= 0 {
-		max = 8
-	}
-
-	paths := append([]string{}, ReadPathsFromToolResult(result)...)
-	paths = append(paths, readOnlyDiagnosticLocationPaths(result.Summary+"\n"+result.Output, max)...)
-
-	return readOnlySourceLikePaths(paths, max), true
-}
-
 func (toolResultEvidenceProjection) ExternalDocumentBodyPathsFromResult(result workspace.ToolResult) []string {
 	if !concreteSourceEvidenceResult(result) {
 		return nil

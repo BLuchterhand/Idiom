@@ -5325,7 +5325,8 @@ func acceptedMentionedEvidenceResultForObjective(result workspace.ToolResult, ob
 		return false
 	}
 
-	if _, diagnostic := (toolResultEvidenceProjection{}).DiagnosticEvidencePathsFromResult(result, 8); concreteSourceEvidenceResult(result) || diagnostic {
+	diagnostic := result.Facts != nil && len(readOnlySourceLikePaths(result.Facts.DiagnosticEvidencePaths, 8)) > 0
+	if concreteSourceEvidenceResult(result) || diagnostic {
 		return true
 	}
 
@@ -10505,7 +10506,7 @@ func (r *Runner) readOnlyEvidenceCompletionRejection(reply string, results []wor
 
 func readOnlyAnswerHasConcreteEvidence(results []workspace.ToolResult) bool {
 	for _, result := range results {
-		_, diagnostic := (toolResultEvidenceProjection{}).DiagnosticEvidencePathsFromResult(result, 8)
+		diagnostic := result.Facts != nil && len(readOnlySourceLikePaths(result.Facts.DiagnosticEvidencePaths, 8)) > 0
 		if concreteSourceEvidenceResult(result) ||
 			len((toolResultEvidenceProjection{}).ExternalDocumentBodyPathsFromResult(result)) > 0 ||
 			diagnostic {

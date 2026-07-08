@@ -591,7 +591,7 @@ func (m *Manager) pythonDiagnostics(ctx context.Context, req ToolRequest) ToolRe
 		}
 	}
 
-	return ToolResult{Tool: "python_diagnostics", Summary: fmt.Sprintf("Collected Python diagnostics for %d file(s).", len(files)), Output: strings.Join(lines, "\n")}
+	return ToolResult{Tool: "python_diagnostics", Summary: fmt.Sprintf("Collected Python diagnostics for %d file(s).", len(files)), Output: strings.Join(lines, "\n"), Facts: diagnosticToolFacts(files)}
 }
 
 func pythonDiagSeverity(code int) string {

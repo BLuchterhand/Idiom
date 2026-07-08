@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -739,6 +740,7 @@ func TestPathEvidenceReadOnlyAnswerabilityConsolidationMatrix(t *testing.T) {
 				Tool:    workspace.ToolNameSourceSanity,
 				Summary: "source_sanity failed for evidence_registry.go",
 				Output:  sourcePath + ":10: undefined: PathEvidenceRegistry\n",
+				Facts:   &toolfacts.ToolResultFacts{DiagnosticEvidencePaths: []string{sourcePath}},
 			}},
 			wantKind:                   readOnlyEvidenceDiagnostic,
 			wantAnswerable:             true,
@@ -866,6 +868,7 @@ func TestPathEvidenceReadOnlyAnswerabilityNonRegistryEvidenceRequiresObjectiveMa
 				Tool:    workspace.ToolNameSourceSanity,
 				Summary: "source_sanity failed for internal/runtime/agent/evidence_registry.go",
 				Output:  "internal/runtime/agent/evidence_registry.go:10: undefined: PathEvidenceRegistry\n",
+				Facts:   &toolfacts.ToolResultFacts{DiagnosticEvidencePaths: []string{"internal/runtime/agent/evidence_registry.go"}},
 			},
 			wantKind: readOnlyEvidenceDiagnostic,
 		},
@@ -1510,6 +1513,7 @@ func TestToolResultEvidenceProjectionReadOnlyCategoryBoundaries(t *testing.T) {
 			Tool:    workspace.ToolNameSourceSanity,
 			Summary: "source_sanity failed for " + diagnosticPath,
 			Output:  diagnosticPath + ":10: undefined: Runner\n",
+			Facts:   &toolfacts.ToolResultFacts{DiagnosticEvidencePaths: []string{diagnosticPath}},
 		},
 		typedReadOnlyTaskResult(ReadOnlyEvidencePacket{
 			Objective:       "Explain read-only packet evidence.",
@@ -1535,8 +1539,8 @@ func TestToolResultEvidenceProjectionReadOnlyCategoryBoundaries(t *testing.T) {
 	if got := projection.ExternalDocumentBodyMatches("brief.md"); !slices.Contains(got, externalPath) {
 		t.Fatalf("external document matches = %#v, want %q", got, externalPath)
 	}
-	if paths, ok := (toolResultEvidenceProjection{}).DiagnosticEvidencePathsFromResult(results[1], 8); !ok || !slices.Contains(paths, diagnosticPath) {
-		t.Fatalf("diagnostic evidence paths = %#v, ok=%v, want %q", paths, ok, diagnosticPath)
+	if paths := readOnlySourceLikePaths(results[1].Facts.DiagnosticEvidencePaths, 8); !slices.Contains(paths, diagnosticPath) {
+		t.Fatalf("diagnostic evidence paths = %#v, want %q", paths, diagnosticPath)
 	}
 	if got := projection.ReadOnlySourceBodyEvidencePaths(); !slices.Contains(got, sourcePath) || !slices.Contains(got, taskPath) {
 		t.Fatalf("read-only source-body evidence paths = %#v, want direct %q and delegated %q", got, sourcePath, taskPath)

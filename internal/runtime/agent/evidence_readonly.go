@@ -249,23 +249,27 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 			continue
 		}
 
-		if paths, ok := (toolResultEvidenceProjection{}).DiagnosticEvidencePathsFromResult(result, 8); ok {
-			relevant := readOnlyDiagnosticEvidenceMatchesObjective(ledger.Objective, namedTargets, result, paths)
+		if result.Facts != nil {
+			paths := readOnlySourceLikePaths(result.Facts.DiagnosticEvidencePaths, 8)
+			if len(paths) > 0 {
 
-			ledger.DiagnosticEvidence = true
-			ledger.DiagnosticPaths = textutil.Merge(ledger.DiagnosticPaths, paths)
+				relevant := readOnlyDiagnosticEvidenceMatchesObjective(ledger.Objective, namedTargets, result, paths)
 
-			if relevant {
-				ledger.DiagnosticRelevant = true
+				ledger.DiagnosticEvidence = true
+				ledger.DiagnosticPaths = textutil.Merge(ledger.DiagnosticPaths, paths)
+
+				if relevant {
+					ledger.DiagnosticRelevant = true
+				}
+
+				ledger.addItem(readOnlyEvidenceItem{
+					Kind:           readOnlyEvidenceDiagnostic,
+					Tool:           tool,
+					CandidatePaths: paths,
+					Relevant:       relevant,
+					Summary:        strings.TrimSpace(result.Summary),
+				})
 			}
-
-			ledger.addItem(readOnlyEvidenceItem{
-				Kind:           readOnlyEvidenceDiagnostic,
-				Tool:           tool,
-				CandidatePaths: paths,
-				Relevant:       relevant,
-				Summary:        strings.TrimSpace(result.Summary),
-			})
 		}
 
 		if featurePlannerPlanArtifactResult(result) {
@@ -1682,60 +1686,6 @@ func readOnlyExternalDocumentPathSet(paths []string) map[string]struct{} {
 		set[path] = struct{}{}
 	}
 	return set
-}
-
-func readOnlyDiagnosticLocationPaths(text string, max int) []string {
-	if max <= 0 {
-		max = 8
-	}
-
-	var paths []string
-
-	for _, line := range strings.Split(text, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-
-		for _, path := range sourceLikePathsFromText(line, max) {
-			if !readOnlyDiagnosticLineIdentifiesPath(line, path) {
-				continue
-			}
-
-			paths = textutil.Merge(paths, []string{path})
-			if len(paths) >= max {
-				return paths
-			}
-		}
-	}
-
-	return paths
-}
-
-func readOnlyDiagnosticLineIdentifiesPath(line string, path string) bool {
-	line = strings.ToLower(strings.TrimSpace(line))
-	path = strings.ToLower(strings.TrimSpace(path))
-
-	if line == "" || path == "" {
-		return false
-	}
-
-	idx := strings.Index(line, path)
-	if idx < 0 {
-		return false
-	}
-
-	after := strings.TrimSpace(line[idx+len(path):])
-	if strings.HasPrefix(after, ":") && len(after) > 1 && after[1] >= '0' && after[1] <= '9' {
-		return true
-	}
-
-	before := strings.TrimSpace(line[:idx])
-
-	return strings.HasSuffix(before, "failed for") ||
-		strings.HasSuffix(before, "failed in") ||
-		strings.HasSuffix(before, "error in") ||
-		strings.HasSuffix(before, "errors in")
 }
 
 func readOnlyDiagnosticEvidenceMatchesObjective(objective string, namedTargets []string, result workspace.ToolResult, paths []string) bool {

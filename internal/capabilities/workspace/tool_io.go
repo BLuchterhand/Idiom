@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	planartifact "idiom/internal/contracts/planartifact"
+	"idiom/internal/contracts/toolfacts"
 )
 
 // ToolRequest is the normalized, typed form of a workspace tool call.
@@ -151,13 +152,14 @@ type ToolResult struct {
 	Summary       string
 	Output        string
 	Error         string
-	Failure       error              `json:"-"`
-	Paths         []string           `json:"paths,omitempty"`
-	ChangedPaths  []string           `json:"changed_paths,omitempty"`
-	PrecisionTier string             `json:"precision_tier,omitempty"`
-	Relationships []ToolRelationship `json:"relationships,omitempty"`
-	PayloadType   string             `json:"payload_type,omitempty"`
-	Payload       json.RawMessage    `json:"payload,omitempty"`
+	Failure       error                      `json:"-"`
+	Paths         []string                   `json:"paths,omitempty"`
+	ChangedPaths  []string                   `json:"changed_paths,omitempty"`
+	Facts         *toolfacts.ToolResultFacts `json:"facts,omitempty"`
+	PrecisionTier string                     `json:"precision_tier,omitempty"`
+	Relationships []ToolRelationship         `json:"relationships,omitempty"`
+	PayloadType   string                     `json:"payload_type,omitempty"`
+	Payload       json.RawMessage            `json:"payload,omitempty"`
 }
 
 type ToolRelationship struct {

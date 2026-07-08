@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"idiom/internal/contracts/sourcekind"
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/discovery"
 	semanticlanguage "idiom/internal/repository/semantic/language"
@@ -62,9 +63,14 @@ func (m *Manager) sourceSanity(ctx context.Context, req ToolRequest) ToolResult 
 
 	failures := make([]string, 0)
 	outputLines := make([]string, 0, len(outcomes))
+	diagnosticPaths := make([]string, 0, len(outcomes))
 	fallbacks := 0
 
 	for _, outcome := range outcomes {
+		if strings.TrimSpace(outcome.Path) != "" && outcome.Method != sourceSanityMethodGeneric {
+			diagnosticPaths = textutil.AppendUnique(diagnosticPaths, outcome.Path)
+		}
+
 		line := fmt.Sprintf("%s: %s", outcome.Path, outcome.Detail)
 		if outcome.Method != "" {
 			line = fmt.Sprintf("%s: %s via %s", outcome.Path, outcome.Detail, outcome.Method)
@@ -81,12 +87,18 @@ func (m *Manager) sourceSanity(ctx context.Context, req ToolRequest) ToolResult 
 		}
 	}
 
+	var facts *toolfacts.ToolResultFacts
+	if len(diagnosticPaths) > 0 {
+		facts = &toolfacts.ToolResultFacts{DiagnosticEvidencePaths: diagnosticPaths}
+	}
+
 	if len(failures) > 0 {
 		return ToolResult{
 			Tool:    ToolNameSourceSanity,
 			Summary: fmt.Sprintf("Source sanity failed for %d of %d file(s)", len(failures), len(outcomes)),
 			Output:  strings.Join(outputLines, "\n"),
 			Error:   strings.Join(failures, "\n"),
+			Facts:   facts,
 		}
 	}
 
@@ -102,6 +114,7 @@ func (m *Manager) sourceSanity(ctx context.Context, req ToolRequest) ToolResult 
 		Tool:    ToolNameSourceSanity,
 		Summary: summary,
 		Output:  strings.Join(outputLines, "\n"),
+		Facts:   facts,
 	}
 }
 

@@ -749,7 +749,7 @@ func (m *Manager) cppDiagnostics(ctx context.Context, req ToolRequest) ToolResul
 		lines = append(lines, output)
 	}
 
-	return ToolResult{Tool: "cpp_diagnostics", Summary: fmt.Sprintf("Collected C++ diagnostics for %d file(s).", len(files)), Output: strings.Join(lines, "\n")}
+	return ToolResult{Tool: "cpp_diagnostics", Summary: fmt.Sprintf("Collected C++ diagnostics for %d file(s).", len(files)), Output: strings.Join(lines, "\n"), Facts: diagnosticToolFacts(files)}
 }
 
 func (m *Manager) selectCppSymbolMatch(req ToolRequest) (semanticcpp.CppSymbolMatch, error) {

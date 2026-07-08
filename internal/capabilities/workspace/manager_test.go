@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -50,6 +51,9 @@ func TestSourceSanityFallsBackWhenLanguageDiagnosticsUnavailable(t *testing.T) {
 	if !strings.Contains(result.Output, "cpp_diagnostics unavailable") || !strings.Contains(result.Output, "generic source sanity failed") {
 		t.Fatalf("expected diagnostics-unavailable note and generic fallback in output, got:\n%s", result.Output)
 	}
+	if result.Facts != nil && len(result.Facts.DiagnosticEvidencePaths) > 0 {
+		t.Fatalf("generic source_sanity fallback must not emit diagnostic facts: %#v", result.Facts)
+	}
 
 	if !strings.Contains(result.Error, "unclosed") && !strings.Contains(result.Error, "mismatched") {
 		t.Fatalf("expected delimiter failure, got %q", result.Error)
@@ -77,6 +81,9 @@ func TestSourceSanityRejectsCppGenericFallbackAsTerminalEvidence(t *testing.T) {
 
 	if !strings.Contains(result.Output, "cpp_diagnostics unavailable") || !strings.Contains(result.Output, "generic delimiter sanity passed") {
 		t.Fatalf("expected diagnostics-unavailable note and advisory generic fallback, got:\n%s", result.Output)
+	}
+	if result.Facts != nil && len(result.Facts.DiagnosticEvidencePaths) > 0 {
+		t.Fatalf("generic source_sanity fallback must not emit diagnostic facts: %#v", result.Facts)
 	}
 
 	if !strings.Contains(result.Error, "generic delimiter sanity is advisory") {
@@ -199,6 +206,9 @@ func TestSourceSanityCompilesGoTestFiles(t *testing.T) {
 	if !strings.Contains(result.Error, "go test compile failed") || !strings.Contains(result.Error, "missingHelper") {
 		t.Fatalf("expected go test compile diagnostics, output=\n%s\nerror=\n%s", result.Output, result.Error)
 	}
+	if result.Facts == nil || !slices.Contains(result.Facts.DiagnosticEvidencePaths, "pkg/feature_test.go") {
+		t.Fatalf("source_sanity diagnostic facts = %#v, want pkg/feature_test.go", result.Facts)
+	}
 }
 
 func TestSourceSanityCatchesCrossFileCompileErrorInNonTestPackage(t *testing.T) {
@@ -233,6 +243,9 @@ func TestSourceSanityCatchesCrossFileCompileErrorInNonTestPackage(t *testing.T) 
 
 	if !strings.Contains(result.Error, "go test compile failed") || !strings.Contains(result.Error, "missingFunc") {
 		t.Fatalf("expected go test compile diagnostics with missingFunc, output=\n%s\nerror=\n%s", result.Output, result.Error)
+	}
+	if result.Facts == nil || !slices.Contains(result.Facts.DiagnosticEvidencePaths, "pkg/b.go") {
+		t.Fatalf("source_sanity diagnostic facts = %#v, want pkg/b.go", result.Facts)
 	}
 }
 

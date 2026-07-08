@@ -581,7 +581,7 @@ func (m *Manager) tsDiagnostics(ctx context.Context, req ToolRequest) ToolResult
 		lines = append(lines, output)
 	}
 
-	return ToolResult{Tool: "ts_diagnostics", Summary: fmt.Sprintf("Collected TypeScript diagnostics for %d file(s).", len(files)), Output: strings.Join(lines, "\n")}
+	return ToolResult{Tool: "ts_diagnostics", Summary: fmt.Sprintf("Collected TypeScript diagnostics for %d file(s).", len(files)), Output: strings.Join(lines, "\n"), Facts: diagnosticToolFacts(files)}
 }
 
 func (m *Manager) selectTsSymbolMatch(req ToolRequest) (semanticts.TsSymbolMatch, error) {
