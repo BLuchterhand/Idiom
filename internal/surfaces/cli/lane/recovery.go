@@ -102,7 +102,7 @@ func laneImplementFailureSummary(history lanehistory.Event, subcommandExit int) 
 
 func laneImplementEvidenceRefs(opts laneOptions, history lanehistory.Event) []recoverycontract.EvidenceRef {
 	refs := []recoverycontract.EvidenceRef{
-		{Kind: "lane_history", Path: laneHistoryRelPath},
+		{Kind: "lane_history", Path: lanehistory.RelPath},
 	}
 	if brief := laneWorkspaceRelPath(opts.ProjectRoot, opts.BriefPath); brief != "" {
 		refs = append(refs, recoverycontract.EvidenceRef{Kind: "original_brief", Path: brief})

@@ -6,8 +6,6 @@ import (
 	"idiom/internal/evidence/lanehistory"
 )
 
-const laneHistoryRelPath = lanehistory.RelPath
-
 func laneRunFinalState(exitCode int, degradations []laneDegradation, out []byte) string {
 	if exitCode != 0 {
 		return lanehistory.FinalStateFailed

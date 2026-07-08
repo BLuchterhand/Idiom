@@ -23,7 +23,6 @@ import (
 	cmdconfig "idiom/internal/surfaces/cli/config"
 )
 
-const DiscoveryProfile = workspace.ToolProfileMCPDiscovery
 const StdioTransport = "mcp_stdio"
 const defaultVersion = "dev"
 
@@ -81,7 +80,7 @@ func RunWithTelemetryAndVersion(args []string, stdout io.Writer, stderr io.Write
 
 	configPath := fs.String("config", "config.json", "path to config file")
 	stdio := fs.Bool("stdio", false, "serve MCP over newline-delimited stdio")
-	profileFlag := fs.String("profile", DiscoveryProfile, "tool permission profile: discovery, mcp_discovery")
+	profileFlag := fs.String("profile", workspace.ToolProfileMCPDiscovery, "tool permission profile: discovery, mcp_discovery")
 	callerID := fs.String("caller-id", "", "opaque caller identifier for sidecar.caller metadata")
 	requestID := fs.String("request-id", "", "opaque request identifier for sidecar.caller metadata")
 	traceID := fs.String("trace-id", "", "opaque trace identifier for sidecar.caller metadata")

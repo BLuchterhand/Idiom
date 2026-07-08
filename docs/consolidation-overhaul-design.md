@@ -379,6 +379,7 @@ Accepted or corrected slices:
 | Shell verification classification authority | Production Go `+89 / -101`: net `-12`; moved runtime-only verification command family facts into `workspace.AnalyzeShellCommand`, deleted the runtime verification snippet table and runtime full-suite substring classifiers, and kept runtime-owned telemetry wording as presentation logic over the workspace facts | Test Go `+87 / -11`: net `+76`; workspace now covers `bash -n`, `shellcheck`, `tsc`, `ruff check`, `eslint`, `git diff --check`, full-suite commands, and build/test/check families; runtime tests keep shell action keys and post-write telemetry behavior | Focused: `go test ./internal/capabilities/workspace -run 'TestAnalyzeShellCommand|TestShellCommandFromToolResult' -count=1`; `go test ./internal/runtime/agent -run 'TestShellSyntaxCheckSatisfiesScriptPostWriteVerification|TestPostWriteVerificationTelemetryForShellSyntaxCheck|TestPostWriteVerificationTelemetryUsesShellResultCommandFallback|TestToolActionClassNormalizesRepeatedDeadEndKeys|TestVerificationShellActionClassDoesNotShareGenericGitDeadEnd|TestPatchHygieneDoesNotSatisfySourceEditCompletion|TestFinalAnswerAcceptanceAllowsHonestSourceSanityButNoBuildOrTestAnswer|Test.*Verification|TestRunner.*Verification|Test.*SourceVerification|Test.*BuildOrTest|Test.*ObservedVerification' -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`; `git diff --check` | Accepted after shell/command reviewer audit; the rough `40-90` estimate was too optimistic once the typed workspace fact and owner tests were added, but the production slice remains net-negative, removes duplicate command-family authority, and leaves coding-rules at `0` findings |
 | Eval discovery taxonomy deletion | Production Go `+0 / -96`: net `-96`; deleted eval-local `legacyDiscoveryProfile` and `legacyLanguageDiscoveryProfile` plus fallback fill-in/unfill logic, so eval discovery balance consumes only recorded `discovery_class`, `discovery_scope`, and `discovery_cost` emitted by runtime from the workspace owner | Test Go `+18 / -4`: net `+14`; tests now prove unannotated historical tool records do not infer discovery metadata and add explicit metadata where discovery balance is intended | Focused: `go test ./internal/evidence/eval -run 'TestAnalyze.*Discovery|TestAnalyzeCountsRejected|TestAnalyzeDoesNotUncount|TestAnalyzeUncountsRecoverable|TestAnalyzeDoesNotInferDiscoveryProfileForUnannotatedTools' -count=1`; `go test ./internal/capabilities/workspace -run 'TestDiscoveryProfile|TestAnalyzeShellCommand' -count=1`; `go test ./internal/runtime/agent -run 'Test.*Discovery.*ToolRequest|Test.*ToolRequest.*Discovery|Test.*Shell.*Verification' -count=1`; clean-worktree broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`; `git diff --check` | Accepted after shell/command reviewer audit; old JSONL without discovery metadata loses inferred discovery counts by design because retaining that inference preserved a stale duplicate taxonomy |
 | Prior-session evidence reader deletion | Production Go `+0 / -166`: net `-166`; deleted the orphan `.idiom/sessions/evidence` reader, prompt-hash and raw-prompt matching, edit-distance helper, registry prior-session merge, and runner startup seeding so current-run path evidence is no longer polluted by stale session files | Test Go `+0 / -107`: net `-107`; deleted tests that preserved prompt-hash lookup, legacy raw-prompt fallback, most-recent stale record selection, and the session-record fixture writer | Focused: `go test ./internal/runtime/agent -run 'Test(PathEvidenceRegistry|SourceGrounding|ReadOnlyAnswerability|SourceEvidence|CandidatePathExistence)' -count=1`; clean-worktree broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`; `git diff --check` | Accepted after evidence/read-model reviewer audit; the previous writer-removal slice left a read-only cache with no production writer, so retaining it would preserve dead authority rather than useful resume behavior |
+| Alias-only constant cleanup | Production Go `+7 / -15`: net `-8`; deleted local aliases for the MCP discovery profile, lane history path, product-evidence lane history path, and context-pack fallback schema so callers name the owning packages directly | Test Go `+4 / -2`: net `+2`; tests now assert context-pack fallback schema through the context-pack contract owner rather than a workspace re-export | Focused: `go test ./internal/capabilities/workspace -run 'TestContextPack|TestToolTimeout|TestBuildToolSidecarEnvelope' -count=1`; `go test ./internal/evidence/productevidence -count=1`; `go test ./internal/surfaces/cli/lane ./internal/surfaces/cli/mcp -count=1`; clean-worktree broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`; `git diff --check` | Accepted as shallow surface removal after the larger evidence-reader deletion; this does not introduce replacement wrappers or helpers |
 
 ## Historical Count Snapshots (Superseded)
 
@@ -818,13 +819,13 @@ Current git state:
   extraction cleanup, completion-gate/alias authority cleanup, and the
   source-result evidence plus shell command authority cleanup, dormant
   answer-grounding authority deletion, shell verification classification
-  authority consolidation, eval discovery taxonomy deletion, and prior-session
-  evidence reader deletion.
+  authority consolidation, eval discovery taxonomy deletion, prior-session
+  evidence reader deletion, and alias-only constant cleanup.
 - Goal-period diff from merge base through the latest working state:
-  production Go `+20,305 / -20,994`, net `-689`; Go tests `+10,046 / -6,579`,
-  net `+3,467`; strict all-file total `+32,416 / -29,544`, net `+2,872`.
+  production Go `+20,312 / -21,009`, net `-697`; Go tests `+10,050 / -6,581`,
+  net `+3,469`; strict all-file total `+32,426 / -29,557`, net `+2,869`.
 - Physical tracked production Go file lines moved from `328,110` at the merge
-  base to `327,421` in the latest working tree: net `-689`.
+  base to `327,413` in the latest working tree: net `-697`.
 - Latest semantic facade cleanup slice only: production Go `+245 / -294`,
   net `-49`; Go tests `+31 / -24`, net `+7`.
 - Latest gitstate cleanup slice only: production Go `+120 / -126`, net `-6`;
@@ -852,13 +853,15 @@ Current git state:
   production Go `+0 / -96`, net `-96`; Go tests `+18 / -4`, net `+14`.
 - Latest prior-session evidence reader deletion slice only:
   production Go `+0 / -166`, net `-166`; Go tests `+0 / -107`, net `-107`.
+- Latest alias-only constant cleanup slice only:
+  production Go `+7 / -15`, net `-8`; Go tests `+4 / -2`, net `+2`.
 
 Interpretation: the current goal-period branch is now production-LOC negative.
 Many individual consolidation slices are net-negative and remove real duplicate
 or alias-only surfaces, while the total all-file diff remains positive because
 tests, docs, scripted fixtures, and earlier `commandexec` process-lifecycle
 setup added shared platform coverage before all remaining process migrations
-are complete. The honest current production answer is net `-689` Go LOC from
+are complete. The honest current production answer is net `-697` Go LOC from
 merge base through the working tree. The implementation ledger above remains
 the source of truth for accepted local reductions inside each consolidation
 case.

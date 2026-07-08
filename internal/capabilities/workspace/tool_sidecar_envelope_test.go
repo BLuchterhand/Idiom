@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	contextpackcontract "idiom/internal/contracts/contextpack"
 	"idiom/internal/platform/failures"
 )
 
@@ -394,7 +395,7 @@ func TestBuildToolSidecarEnvelopeIncludesContextPackFallbackStructuredOutput(t *
 		t.Fatalf("context_pack fallback should be structured JSON output, got %#v", envelope.StructuredOutput)
 	}
 
-	if structured["schema"] != ContextPackFallbackSchema || structured["status"] != "unavailable" || structured["retry_same_request"] != false {
+	if structured["schema"] != contextpackcontract.FallbackSchema || structured["status"] != "unavailable" || structured["retry_same_request"] != false {
 		t.Fatalf("unexpected structured fallback payload: %#v", structured)
 	}
 }

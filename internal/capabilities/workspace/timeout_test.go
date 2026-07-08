@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	contextpackcontract "idiom/internal/contracts/contextpack"
 	"idiom/internal/platform/failures"
 )
 
@@ -121,7 +122,7 @@ func TestExecuteWithTimeoutFnContextPackTimeoutCarriesFallbackPayload(t *testing
 		t.Fatalf("context_pack timeout should include JSON fallback output: %v\n%s", err, res.Output)
 	}
 
-	if payload["schema"] != ContextPackFallbackSchema || payload["status"] != "unavailable" || payload["reason"] != "timeout" {
+	if payload["schema"] != contextpackcontract.FallbackSchema || payload["status"] != "unavailable" || payload["reason"] != "timeout" {
 		t.Fatalf("unexpected fallback payload identity: %#v", payload)
 	}
 

@@ -178,7 +178,7 @@ func findNewestSessionLog(logsDir string) (string, error) {
 // brief isn't in history. The session id is the trailing 16 hex
 // chars of the log filename (matches the suffix lane writers emit).
 func sessionIDForLatestBriefDispatch(projectRoot, briefPath string) (string, error) {
-	path := filepath.Join(projectRoot, laneHistoryRelPath)
+	path := filepath.Join(projectRoot, lanehistory.RelPath)
 
 	body, err := os.ReadFile(path)
 	if err != nil {

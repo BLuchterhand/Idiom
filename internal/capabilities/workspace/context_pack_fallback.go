@@ -12,8 +12,6 @@ import (
 	"idiom/internal/platform/failures"
 )
 
-const ContextPackFallbackSchema = contextpackcontract.FallbackSchema
-
 type contextPackFallbackPayload struct {
 	Schema               string   `json:"schema"`
 	Status               string   `json:"status"`
@@ -59,7 +57,7 @@ func contextPackFallbackResult(req ToolRequest, timeout time.Duration, cause err
 	}
 
 	payload := contextPackFallbackPayload{
-		Schema:            ContextPackFallbackSchema,
+		Schema:            contextpackcontract.FallbackSchema,
 		Status:            contextpackcontract.FallbackStatusUnavailable,
 		Reason:            reason,
 		Tool:              ToolNameContextPack,
@@ -90,7 +88,7 @@ func contextPackFallbackResult(req ToolRequest, timeout time.Duration, cause err
 
 	output, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
-		output = []byte(fmt.Sprintf(`{"schema":%q,"status":%q,"reason":%q,"tool":%q,"retry_same_request":false}`, ContextPackFallbackSchema, contextpackcontract.FallbackStatusUnavailable, reason, ToolNameContextPack))
+		output = []byte(fmt.Sprintf(`{"schema":%q,"status":%q,"reason":%q,"tool":%q,"retry_same_request":false}`, contextpackcontract.FallbackSchema, contextpackcontract.FallbackStatusUnavailable, reason, ToolNameContextPack))
 	}
 
 	return ToolResult{

@@ -6,11 +6,7 @@ import (
 	"os"
 	"strings"
 	"sync"
-
-	"idiom/internal/evidence/lanehistory"
 )
-
-const laneHistoryRelPath = lanehistory.RelPath
 
 type LaneHistorySummary struct {
 	Total                 int

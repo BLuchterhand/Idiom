@@ -16,6 +16,7 @@ import (
 
 	"idiom/internal/contracts/sensitivity"
 	idiomeval "idiom/internal/evidence/eval"
+	"idiom/internal/evidence/lanehistory"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/jsonfile"
 	"idiom/internal/repository/comprehension"
@@ -342,7 +343,7 @@ func buildProductEvidenceExportReportWithDeps(root string, summary LaneHistorySu
 		GeneratedAt:   time.Now().UTC().Format(time.RFC3339Nano),
 		Status:        status,
 		ProjectRootID: "root_id:" + localops.StableID(root),
-		SourceIDs:     map[string]string{"lane_history": "artifact_id:" + localops.StableID(filepath.Join(root, laneHistoryRelPath))},
+		SourceIDs:     map[string]string{"lane_history": "artifact_id:" + localops.StableID(filepath.Join(root, lanehistory.RelPath))},
 		LaneHistory: productEvidenceLaneHistory{
 			Status:                 laneStatus,
 			TotalRuns:              summary.Total,
