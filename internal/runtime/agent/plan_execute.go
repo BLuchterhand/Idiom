@@ -24,7 +24,7 @@ import (
 )
 
 func (r *Runner) implementationScopedDisallowedToolRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, reject bool) {
-	if lastResultSummaryIs(results, "Missing write description") {
+	if len(results) > 0 && strings.TrimSpace(results[len(results)-1].Code) == writeDescriptionMissingCode {
 		return "", "", "", false
 	}
 
@@ -53,35 +53,6 @@ func (r *Runner) implementationScopedDisallowedToolRecovery(req workspace.ToolRe
 	prompt = fmt.Sprintf("The implementation packet defines the edit scope for %s. The available contract menu is: required-path edit, context/language/declared read-only project discovery for the exact edit-safety fact, narrow raw read only for anchor confirmation on a required path or evidence path, or <<QUESTION>> with the exact blocker. Do not use task planning, shell, opaque external tools, or broad raw search until the required-path contract is resolved.", target)
 
 	return summary, errorText, prompt, true
-}
-
-func lastResultSummaryIs(results []workspace.ToolResult, summary string) bool {
-	if len(results) == 0 {
-		return false
-	}
-
-	return strings.TrimSpace(results[len(results)-1].Summary) == strings.TrimSpace(summary)
-}
-
-func (r *Runner) emitWriteDescriptionValidatorDecision(step int, req workspace.ToolRequest, status string, lastFailure string, recoveryID string) {
-	if r == nil {
-		return
-	}
-
-	path := NormalizeRunnerPath(req.Path)
-	payload := map[string]any{
-		"schema":             "idiom.dynamic_validator_decision.v1",
-		"step":               step,
-		"status":             strings.TrimSpace(status),
-		"invariant_id":       "write.description.required",
-		"recovery_id":        strings.TrimSpace(recoveryID),
-		"last_failure":       strings.TrimSpace(lastFailure),
-		"tool":               strings.TrimSpace(req.Tool),
-		"path":               path,
-		"missing":            []string{"write_description_missing"},
-		"valid_next_actions": []string{"write_with_description", "other_contract_valid_action", "typed_blocker"},
-	}
-	r.emitEvent(marshalRunEvent("dynamic_validator_decision", payload))
 }
 
 func (r *Runner) writeReadyPacketReadWithoutGapRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, hideNonWrite bool, reject bool) {

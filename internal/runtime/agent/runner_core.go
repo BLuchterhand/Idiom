@@ -3891,18 +3891,11 @@ func (r *Runner) runLegacySessionBody(
 
 		if guarded := CheckDescription(req); guarded != nil {
 			recorder.activeToolCall = activeToolCall
-			recorder.recordWithOptions(stepNumber, req, *guarded, "write_description_missing", runnerRecordOptions{
+			recorder.recordWithOptions(stepNumber, req, *guarded, writeDescriptionMissingCode, runnerRecordOptions{
 				CountRejected:           true,
 				IncrementRejectedStreak: true,
 				SetLastToolKey:          true,
 			})
-
-			r.emitWriteDescriptionValidatorDecision(stepNumber, req, "reject", "write_description_missing", "write_description_required")
-
-			if consecutiveRejectedActions >= 2 {
-				answer, err := controller.completeWithoutMoreToolsWithDefaultCloseout()
-				return finish(answer, err, "write_description_budget_exhausted", true)
-			}
 
 			continue
 		}

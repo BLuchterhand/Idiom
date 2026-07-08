@@ -1672,7 +1672,6 @@
           "internal/labels/labels.go"
         ],
         "require_run_events": [
-          "dynamic_validator_decision",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -1731,7 +1730,6 @@
           "description"
         ],
         "require_run_events": [
-          "dynamic_validator_decision",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [
@@ -1775,7 +1773,6 @@
           "internal/labels/labels.go"
         ],
         "require_run_events": [
-          "dynamic_validator_decision",
           "idiom.scripted_model.requests"
         ],
         "require_tools": [

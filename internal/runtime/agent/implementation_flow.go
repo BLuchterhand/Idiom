@@ -10528,8 +10528,10 @@ func sanitizeName(name string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-// CheckDescription returns a synthesized guard result when a described-write
-// tool was invoked without a Description.
+const writeDescriptionMissingCode = "write_description_missing"
+
+// CheckDescription returns a guard result when a described-write tool was
+// invoked without a Description.
 func CheckDescription(req workspace.ToolRequest) *workspace.ToolResult {
 	if !workspace.IsWorkspacePerEditWriteTool(req.Tool) {
 		return nil
@@ -10546,6 +10548,7 @@ func CheckDescription(req workspace.ToolRequest) *workspace.ToolResult {
 
 	return &workspace.ToolResult{
 		Tool:    req.Tool,
+		Code:    writeDescriptionMissingCode,
 		Summary: "Missing write description",
 		Error:   strings.TrimSpace(b.String()),
 	}

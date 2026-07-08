@@ -24456,6 +24456,7 @@ func TestSynthesizeMutationFallbackAnswerDropsErrorsSupersededByLaterWrite(t *te
 	}, []workspace.ToolResult{
 		{
 			Tool:    "edit_file",
+			Code:    writeDescriptionMissingCode,
 			Summary: "Missing write description",
 			Error:   "edit_file requires a description field",
 		},

@@ -37045,6 +37045,10 @@ func TestCheckWriteDescriptionRejectsEachDescribedTool(t *testing.T) {
 			t.Errorf("%s: guard Summary = %q", tool, got.Summary)
 		}
 
+		if got.Code != writeDescriptionMissingCode {
+			t.Errorf("%s: guard Code = %q, want %q", tool, got.Code, writeDescriptionMissingCode)
+		}
+
 		if !strings.Contains(got.Error, tool) {
 			t.Errorf("%s: guard error should mention the tool name, got: %q", tool, got.Error)
 		}
@@ -37085,9 +37089,11 @@ func TestRunnerRejectsEditWithoutDescription(t *testing.T) {
 
 	var guarded *workspace.ToolResult
 
+	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true})
+	ws.MarkPathObserved("README.md")
 	runner := &Runner{
 		Client:    llama.NewClient(server.URL, time.Second),
-		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		Workspace: ws,
 		Policy:    RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3},
 	}
 
@@ -37260,15 +37266,18 @@ func TestRunnerGuardFiresAfterPermissionDeny(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 
+	if firstResult.Tool != "edit_file" {
+		t.Fatalf("expected edit_file permission result, got %#v", firstResult)
+	}
+	if !strings.Contains(strings.ToLower(firstResult.Summary+"\n"+firstResult.Error), "permission") {
+		t.Fatalf("expected permission denial result, got %#v", firstResult)
+	}
 	if strings.Contains(firstResult.Error, "requires a \"description\"") {
 		t.Fatalf("description guard fired before permission check: %q", firstResult.Error)
 	}
 }
 
-// TestRunnerBailsAfterTwoNonConcreteMissingDescriptions locks in the
-// safety valve for repeated missing-description writes: the runner stops the
-// loop rather than letting the guard fire indefinitely.
-func TestRunnerBailsAfterTwoNonConcreteMissingDescriptions(t *testing.T) {
+func TestRunnerAllowsRecoveryAfterRepeatedMissingWriteDescriptions(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "README.md", "hello\n"); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -37278,20 +37287,18 @@ func TestRunnerBailsAfterTwoNonConcreteMissingDescriptions(t *testing.T) {
 		t.Fatalf("seed other: %v", err)
 	}
 
-	// Use distinct args on each call so the "repeated tool request" guard
-	// doesn't pre-empt the description guard.
 	replies := []string{
 		"```tool\n{\"tool\":\"edit_file\",\"path\":\"README.md\"}\n```",
 		"```tool\n{\"tool\":\"edit_file\",\"path\":\"OTHER.md\"}\n```",
-		// If the bail never triggers, the loop will ask for a third reply.
-		"Gave up on description.",
+		"```tool\n{\"tool\":\"edit_file\",\"path\":\"README.md\",\"old_text\":\"hello\",\"new_text\":\"bye\",\"description\":\"change greeting after guard feedback\"}\n```",
+		"Done.",
 	}
 
 	var requests int
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requests >= len(replies) {
-			t.Fatalf("unexpected extra chat request: bail did not fire")
+			t.Fatalf("unexpected extra chat request after recovery sequence")
 		}
 
 		reply := replies[requests]
@@ -37306,40 +37313,45 @@ func TestRunnerBailsAfterTwoNonConcreteMissingDescriptions(t *testing.T) {
 
 	defer server.Close()
 
-	var budgetEvent string
+	var descriptionRejections int
 
+	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true})
+	ws.MarkPathObserved("README.md")
 	runner := &Runner{
 		Client:    llama.NewClient(server.URL, time.Second),
-		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		Workspace: ws,
 		Policy:    RunPolicy{MaxToolSteps: 5, MaxNoProgressTurns: 5},
-		OnEvent: func(event RunEvent) {
-			if event.Role == "budget_ledger" {
-				budgetEvent = event.Content
-			}
-		},
 	}
 
-	_, err := runner.Run(
+	answer, err := runner.Run(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: "edit without description"}},
 		llama.ChatOptions{},
-		nil, nil, nil,
+		nil, nil,
+		func(ev ToolResultEvent) {
+			if ev.Result.Code == writeDescriptionMissingCode {
+				descriptionRejections++
+			}
+		},
 	)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
-	var ledger runnerBudgetLedger
-
-	if err := json.Unmarshal([]byte(budgetEvent), &ledger); err != nil {
-		t.Fatalf("decode budget ledger %q: %v", budgetEvent, err)
+	if answer != "Done." {
+		t.Fatalf("runner should continue through missing-description rejections and accept later final answer, got %q", answer)
 	}
 
-	if ledger.StopReason != "write_description_budget_exhausted" {
-		t.Fatalf("expected stop_reason=write_description_budget_exhausted, got %#v", ledger)
+	if descriptionRejections != 2 {
+		t.Fatalf("description rejections = %d, want 2", descriptionRejections)
 	}
 
-	if !ledger.BudgetExhausted {
-		t.Fatalf("expected budget_exhausted=true on write-description bail, got %#v", ledger)
+	data, err := os.ReadFile(filepath.Join(root, "README.md"))
+	if err != nil {
+		t.Fatalf("read readme: %v", err)
+	}
+
+	if string(data) != "bye\n" {
+		t.Fatalf("described recovery write did not mutate file: %q", data)
 	}
 }
