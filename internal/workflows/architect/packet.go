@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/textutil"
+	"idiom/internal/workflows/commandcheck"
 )
 
 const (
@@ -396,9 +396,8 @@ func runCollectorEvidence(ctx context.Context, root string, collectors []Collect
 			limit = defaultMaxBytes
 		}
 
-		result := commandexec.Run(ctx, commandexec.Spec{
-			Name:        collector.Command,
-			Args:        collector.Args,
+		result := commandcheck.Run(ctx, commandcheck.Request{
+			Argv:        append([]string{collector.Command}, collector.Args...),
 			Dir:         dir,
 			Timeout:     timeout,
 			MergeOutput: true,
@@ -406,8 +405,8 @@ func runCollectorEvidence(ctx context.Context, root string, collectors []Collect
 
 		ev.Content = textutil.TruncateBytes(stripANSI(result.Stdout), limit, "\n[truncated]")
 
-		if result.Err != nil {
-			if result.TimedOut {
+		if result.Failure != commandcheck.FailureNone {
+			if result.Failure == commandcheck.FailureTimeout {
 				ev.Error = fmt.Sprintf("collector timed out after %s", timeout)
 			} else {
 				ev.Error = result.Err.Error()

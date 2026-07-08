@@ -2137,15 +2137,6 @@ func TestSentinelFailuresPreserveErrorsIsAndCanonicalCodes(t *testing.T) {
 	}
 }
 
-func TestLifecycleEventComplete(t *testing.T) {
-	if !(LifecycleEvent{Status: "complete"}).Complete() {
-		t.Fatal("complete status should be terminal")
-	}
-	if (LifecycleEvent{Status: "running"}).Complete() {
-		t.Fatal("running status should not be terminal")
-	}
-}
-
 func TestWriteDecisionPendingRequiredPaths(t *testing.T) {
 	decision := WriteDecision{
 		RequiredPaths: []string{"a.go", "b.go"},
@@ -18929,7 +18920,7 @@ func TestPlanExecuteSubmitReadyFailureFeedbackDoesNotSuggestGenericProbe(t *test
 		rejected,
 	}
 
-	state := buildRunnerNextActionStateWithAllowedTools("main", 3, "tool_rejected", req, rejected, results, false, brief, nil)
+	state, _ := buildRunnerNextActionStateWithAllowedToolsAndContract("main", 3, "tool_rejected", req, rejected, results, false, brief, nil)
 	joinedState := strings.Join(state.NextValidActions, "\n")
 
 	if !strings.Contains(joinedState, "source_satisfied_paths") {
@@ -18944,7 +18935,7 @@ func TestPlanExecuteSubmitReadyFailureFeedbackDoesNotSuggestGenericProbe(t *test
 		t.Fatalf("submit-ready next_action_state must not include generic answer/probe fallback: %#v", state.NextValidActions)
 	}
 
-	packet := buildRunnerFailureFeedbackPacketWithAllowedTools("main", 3, "tool_rejected", req, rejected, results, false, brief, nil)
+	packet := buildRunnerFailureFeedbackPacketWithAllowedToolsAndTransport("main", 3, "tool_rejected", req, rejected, results, false, brief, nil, PlanExecutePlanningTransport{TextualToolParser: true})
 	joinedFeedback := strings.Join(packet.ValidNext, "\n")
 
 	if !strings.Contains(joinedFeedback, "source_satisfied_paths") {
@@ -19011,7 +19002,7 @@ func TestPlanExecuteSubmitReadyStateDoesNotAdvertiseReadProbes(t *testing.T) {
 
 	lastReq := workspace.ToolRequest{Tool: "code_navigate", Path: "b.go", Capability: "read_symbol", Pattern: "Run"}
 	lastResult := results[len(results)-1]
-	state := buildRunnerNextActionStateWithAllowedTools("main", 2, "tool_result", lastReq, lastResult, results, false, brief, nil)
+	state, _ := buildRunnerNextActionStateWithAllowedToolsAndContract("main", 2, "tool_result", lastReq, lastResult, results, false, brief, nil)
 	joinedState := strings.Join(state.NextValidActions, "\n")
 
 	if !strings.Contains(joinedState, "source_satisfied_paths") {
@@ -21617,7 +21608,7 @@ func TestPlanThenExecuteControlRailsKeepSubmitPlanContract(t *testing.T) {
 		},
 	}
 
-	rails := runner.controlRails(nil)
+	rails := runner.controlRailsForBrief(runner.RuntimeBrief)
 	if !slices.Contains(rails.RequiredTools, "submit_plan") {
 		t.Fatalf("control rails must require submit_plan for planner phase, got %#v", rails.RequiredTools)
 	}
@@ -30455,7 +30446,7 @@ func TestDocDeliverableCompletionRecoveryStateClosesTowardWriteOrBlocker(t *test
 		Summary: "Mutation completion gate rejected final answer",
 		Error:   "this task asks for a workspace change, but no successful write tool result is present",
 	}
-	state := buildRunnerNextActionStateWithAllowedTools("main", 3, "completion_gate_rejected", workspace.ToolRequest{Tool: "completion_gate"}, result, []workspace.ToolResult{result}, false, brief, nil)
+	state, _ := buildRunnerNextActionStateWithAllowedToolsAndContract("main", 3, "completion_gate_rejected", workspace.ToolRequest{Tool: "completion_gate"}, result, []workspace.ToolResult{result}, false, brief, nil)
 
 	joinedValid := strings.Join(state.NextValidActions, "\n")
 	for _, want := range []string{"deliverable-write capability", ".idiom/refine/example/iter-2/draft.md", "<<QUESTION>>"} {
@@ -30645,7 +30636,7 @@ func TestScratchpadDeliverableFailureFeedbackNarrowsToWriteOrQuestion(t *testing
 		Summary: "Scoped implementation read rejected",
 		Error:   "outside the required edit paths and explicit evidence paths",
 	}
-	packet := buildRunnerFailureFeedbackPacketWithAllowedTools("main", 3, "tool_rejected", req, result, []workspace.ToolResult{result}, false, brief, nil)
+	packet := buildRunnerFailureFeedbackPacketWithAllowedToolsAndTransport("main", 3, "tool_rejected", req, result, []workspace.ToolResult{result}, false, brief, nil, PlanExecutePlanningTransport{TextualToolParser: true})
 	joinedRequired := strings.Join(packet.RequiredNext, "\n")
 
 	if !strings.Contains(joinedRequired, "record the failed") {
@@ -31138,102 +31129,10 @@ func TestDeriveForceNativeOverridesBackendDefault(t *testing.T) {
 	}
 }
 
-func TestPreimageCheckpointStoreRestoresExistingFile(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, "README.md")
-
-	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
-		t.Fatalf("seed file: %v", err)
-	}
-
-	store := NewPreimageCheckpointStore(root)
-	if err := store.Snapshot("README.md"); err != nil {
-		t.Fatalf("snapshot: %v", err)
-	}
-
-	if err := os.WriteFile(path, []byte("after\n"), 0o644); err != nil {
-		t.Fatalf("mutate file: %v", err)
-	}
-
-	if err := store.Restore("README.md"); err != nil {
-		t.Fatalf("restore: %v", err)
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read restored file: %v", err)
-	}
-
-	if string(data) != "before\n" {
-		t.Fatalf("restored content = %q", data)
-	}
-}
-
-func TestPreimageCheckpointStoreRestoresMissingFileByDeletingIt(t *testing.T) {
-	root := t.TempDir()
-	store := NewPreimageCheckpointStore(root)
-
-	if err := store.Snapshot("new.txt"); err != nil {
-		t.Fatalf("snapshot missing file: %v", err)
-	}
-
-	path := filepath.Join(root, "new.txt")
-	if err := os.WriteFile(path, []byte("created\n"), 0o644); err != nil {
-		t.Fatalf("create file: %v", err)
-	}
-
-	if err := store.Restore("new.txt"); err != nil {
-		t.Fatalf("restore missing preimage: %v", err)
-	}
-
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("expected restored missing file to be deleted, stat err=%v", err)
-	}
-}
-
-func TestPreimageCheckpointStoreKeepsFirstSnapshot(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, "README.md")
-
-	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
-		t.Fatalf("seed file: %v", err)
-	}
-
-	store := NewPreimageCheckpointStore(root)
-	if err := store.Snapshot("README.md"); err != nil {
-		t.Fatalf("first snapshot: %v", err)
-	}
-
-	if err := os.WriteFile(path, []byte("intermediate\n"), 0o644); err != nil {
-		t.Fatalf("mutate file: %v", err)
-	}
-
-	if err := store.Snapshot("README.md"); err != nil {
-		t.Fatalf("second snapshot: %v", err)
-	}
-
-	if err := store.Restore("README.md"); err != nil {
-		t.Fatalf("restore: %v", err)
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read restored file: %v", err)
-	}
-
-	if string(data) != "before\n" {
-		t.Fatalf("second snapshot overwrote first preimage: %q", data)
-	}
-}
-
 func TestPreimageCheckpointStoreRejectsWorkspaceEscape(t *testing.T) {
 	store := NewPreimageCheckpointStore(t.TempDir())
 	if err := store.Snapshot("../outside.txt"); err == nil {
 		t.Fatal("expected snapshot to reject workspace escape")
-	}
-
-	if err := store.Restore("/tmp/outside.txt"); err == nil {
-		t.Fatal("expected restore to reject absolute path")
 	}
 }
 
@@ -32008,7 +31907,7 @@ func TestReadOnlyWeakDiscoveryNextActionNamesMissingSourceOwner(t *testing.T) {
 		Output:  `{"quality":{"localization_confidence":"low","source_owner_found":false,"reasons":["related_evidence_without_source_owner"]},"candidate_files":[{"path":"internal/runtime/agent/runner_core.go"},{"path":"internal/surfaces/tui/app/rendering.go"}]}`,
 	}
 
-	state := buildRunnerNextActionStateWithAllowedTools("main", 1, "tool_result", req, result, []workspace.ToolResult{result}, false, brief, brief.AllowedTools)
+	state, _ := buildRunnerNextActionStateWithAllowedToolsAndContract("main", 1, "tool_result", req, result, []workspace.ToolResult{result}, false, brief, brief.AllowedTools)
 	if len(state.EvidencePaths) != 0 {
 		t.Fatalf("candidate-only discovery must not be promoted to source-body evidence paths: %#v", state.EvidencePaths)
 	}
@@ -32048,7 +31947,7 @@ func TestReadOnlySourceOwnerDiscoveryNextActionRequiresSourceBody(t *testing.T) 
 		Output:  `{"quality":{"localization_confidence":"high","source_owner_found":true,"evidence_paths":["internal/runtime/agent/runner_core.go"]},"candidate_files":[{"path":"internal/runtime/agent/runner_core.go"}]}`,
 	}
 
-	state := buildRunnerNextActionStateWithAllowedTools("main", 1, "tool_result", req, result, []workspace.ToolResult{result}, false, brief, brief.AllowedTools)
+	state, _ := buildRunnerNextActionStateWithAllowedToolsAndContract("main", 1, "tool_result", req, result, []workspace.ToolResult{result}, false, brief, brief.AllowedTools)
 	if len(state.EvidencePaths) != 0 {
 		t.Fatalf("source-owner discovery still must not become source-body evidence paths: %#v", state.EvidencePaths)
 	}

@@ -13,8 +13,8 @@ import (
 
 	"idiom/internal/contracts/autonomy"
 	plancontract "idiom/internal/contracts/plan"
-	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/textutil"
+	"idiom/internal/workflows/commandcheck"
 )
 
 func runPlanExecuteVerificationPlanWithParentContract(ctx context.Context, root string, plan VerificationPlan, parentContractID string, jsonEvents bool, stdout io.Writer) (int, []plancontract.PhaseEvidenceCheck, error) {
@@ -287,6 +287,7 @@ type VerificationCommandRun struct {
 	StartedAt   time.Time
 	CompletedAt time.Time
 	ExitCode    int
+	Failure     commandcheck.FailureKind
 }
 
 func RunVerificationCommand(parent context.Context, root string, command plancontract.VerificationCommand, timeout time.Duration, requireOperandAfterPrefix bool) VerificationCommandRun {
@@ -294,8 +295,6 @@ func RunVerificationCommand(parent context.Context, root string, command plancon
 		timeout = defaultPlanExecuteVerificationTimeout
 	}
 	command.Command = strings.TrimSpace(command.Command)
-	startedAt := time.Now().UTC()
-
 	args := plancontract.NormalizeVerificationArgv(command.Argv)
 
 	if len(args) == 0 {
@@ -304,6 +303,7 @@ func RunVerificationCommand(parent context.Context, root string, command plancon
 		}
 	}
 
+	startedAt := time.Now().UTC()
 	run := VerificationCommandRun{StartedAt: startedAt, ExitCode: -1}
 	check := plancontract.PhaseEvidenceCheck{
 		Kind:       plancontract.PhaseEvidenceKindVerification,
@@ -313,19 +313,11 @@ func RunVerificationCommand(parent context.Context, root string, command plancon
 	}
 	finish := func() VerificationCommandRun {
 		run.Check = check
-		run.CompletedAt = time.Now().UTC()
+		if run.CompletedAt.IsZero() {
+			run.CompletedAt = time.Now().UTC()
+		}
 		return run
 	}
-	if len(args) == 0 || !plancontract.VerificationArgvAllowed(args) {
-		check.Error = "unsupported verification command"
-		return finish()
-	}
-
-	if requireOperandAfterPrefix && len(args) == len(plancontract.VerificationCommandPrefix(args)) {
-		check.Error = "verification command must name a package pattern"
-		return finish()
-	}
-
 	workdir := strings.TrimSpace(root)
 
 	if workdir == "" {
@@ -342,41 +334,48 @@ func RunVerificationCommand(parent context.Context, root string, command plancon
 		workdir = filepath.Join(workdir, filepath.FromSlash(workingDir))
 	}
 
-	result := commandexec.Run(planExecuteContext(parent), commandexec.Spec{
-		Name:           args[0],
-		Args:           args[1:],
-		Dir:            workdir,
-		Timeout:        timeout,
-		MaxOutputBytes: planExecuteVerificationCaptureBytes,
-		MergeOutput:    true,
+	result := commandcheck.Run(planExecuteContext(parent), commandcheck.Request{
+		Argv:                      args,
+		Dir:                       workdir,
+		Timeout:                   timeout,
+		AllowedArgv:               plancontract.VerificationArgvAllowed,
+		PrefixArgv:                plancontract.VerificationCommandPrefix,
+		RequireOperandAfterPrefix: requireOperandAfterPrefix,
+		CaptureBytes:              commandcheck.DiagnosticCaptureBytes,
+		DisplayBytes:              12000,
+		Truncation:                commandcheck.TruncatePlanExecute,
+		MergeOutput:               true,
 	})
-	output := truncatePlanExecuteText(strings.TrimSpace(commandexec.CombineOutput(result.Stdout, result.Stderr)), 12000)
+	run.StartedAt = result.StartedAt
+	run.CompletedAt = result.CompletedAt
+	run.ExitCode = result.ExitCode
+	run.Failure = result.Failure
 
-	if result.Err != nil {
-		if result.ExitError {
-			run.ExitCode = result.ExitCode
+	switch result.Failure {
+	case commandcheck.FailureNone:
+		check.Status = plancontract.PhaseEvidenceStatusOK
+		check.Summary = result.DisplayOutput
+		run.ExitCode = 0
+
+	case commandcheck.FailureUnsupported:
+		check.Error = "unsupported verification command"
+
+	case commandcheck.FailureMissingOperand:
+		check.Error = "verification command must name a package pattern"
+
+	case commandcheck.FailureTimeout:
+		check.Error = fmt.Sprintf("verification command timed out after %s", timeout)
+		check.Summary = check.Error
+
+	default:
+		if result.Err != nil {
+			check.Error = firstNonEmptyString(result.DisplayOutput, result.Err.Error())
+			check.Summary = result.Err.Error()
 		}
-		if result.TimedOut {
-			check.Error = fmt.Sprintf("verification command timed out after %s", timeout)
-			check.Summary = check.Error
-
-			return finish()
-		}
-
-		check.Error = firstNonEmptyString(output, result.Err.Error())
-		check.Summary = result.Err.Error()
-
-		return finish()
 	}
-
-	check.Status = plancontract.PhaseEvidenceStatusOK
-	check.Summary = output
-	run.ExitCode = 0
 
 	return finish()
 }
-
-const planExecuteVerificationCaptureBytes = 1024 * 1024
 
 func VerificationStatus(evidence []plancontract.PhaseEvidenceCheck) string {
 	if len(evidence) == 0 {

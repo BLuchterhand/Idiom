@@ -15,6 +15,7 @@ import (
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/surfaces/cliassets"
 	"idiom/internal/workflows/brieflint"
+	"idiom/internal/workflows/commandcheck"
 )
 
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
@@ -288,8 +289,8 @@ func RunLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.R
 		fmt.Fprint(stderr, result.Stderr)
 	}
 
-	if result.Err != nil {
-		if result.ExitError {
+	if result.Failure != commandcheck.FailureNone {
+		if result.Failure == commandcheck.FailureExit {
 			telemetry.LogPhase(rec, "brief_lint", map[string]any{"exit": result.ExitCode})
 
 			return result.ExitCode
@@ -456,8 +457,8 @@ func runBriefLintResult(content string, stderr io.Writer) (int, []string) {
 		return 2, []string{fmt.Sprintf("python3 failed: %v", err)}
 	}
 
-	if result.Err != nil {
-		if result.ExitError {
+	if result.Failure != commandcheck.FailureNone {
+		if result.Failure == commandcheck.FailureExit {
 			return result.ExitCode, parseLintFailures(result.Stderr)
 		}
 

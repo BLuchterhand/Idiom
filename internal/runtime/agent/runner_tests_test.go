@@ -4944,7 +4944,7 @@ func TestSnapshotWritePreimagesCapturesEditTarget(t *testing.T) {
 		t.Fatalf("snapshot blocked unexpectedly: blocked=%v result=%#v", blocked, result)
 	}
 
-	if !store.Has("README.md") {
+	if _, ok := store.Existed("README.md"); !ok {
 		t.Fatal("expected edit target preimage to be captured")
 	}
 }
@@ -4971,7 +4971,7 @@ func TestSnapshotWritePreimagesCapturesApplyPatchTargets(t *testing.T) {
 	}
 
 	for _, path := range []string{"a.txt", "b.txt"} {
-		if !store.Has(path) {
+		if _, ok := store.Existed(path); !ok {
 			t.Fatalf("expected apply_patch target %s preimage to be captured", path)
 		}
 	}
@@ -8931,7 +8931,7 @@ func TestBuildRunnerNextActionStateGuidesAfterBootstrappedReadBlocker(t *testing
 		Error:   "internal/surfaces/tui/app/app.go has already been read in the implementation bootstrap; use edit_file or a narrow line range instead",
 		Output:  "internal/surfaces/tui/app/app.go: already inspected",
 	}
-	state := buildRunnerNextActionStateWithAllowedTools(
+	state, _ := buildRunnerNextActionStateWithAllowedToolsAndContract(
 		"implement",
 		3,
 		"pre_execute_guard",
@@ -10954,7 +10954,7 @@ func TestFailureFeedbackPacketKeepsRepeatedActionClosureBiased(t *testing.T) {
 		Summary: "Repeated tool request rejected",
 		Error:   "you just ran the same tool request. Either answer with what you already know, or take one materially different narrow step that names the exact missing claim it closes.",
 	}
-	packet := buildRunnerFailureFeedbackPacketWithAllowedTools(
+	packet := buildRunnerFailureFeedbackPacketWithAllowedToolsAndTransport(
 		"child:explorer",
 		3,
 		"tool_rejected",
@@ -10967,6 +10967,7 @@ func TestFailureFeedbackPacketKeepsRepeatedActionClosureBiased(t *testing.T) {
 			Objective:  "Explain how this harness uses subagents.",
 		},
 		nil,
+		PlanExecutePlanningTransport{TextualToolParser: true},
 	)
 	joined := strings.Join(append(append([]string{}, packet.RequiredNext...), packet.ValidNext...), "\n")
 
@@ -16377,7 +16378,7 @@ func TestControlRailsUseRuntimeBriefForImplementation(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.RuntimeBriefForRole("implement", "main", "update README"),
 	}
-	rails := runner.controlRails(nil)
+	rails := runner.controlRailsForBrief(runner.RuntimeBrief)
 
 	if rails.TaskFamily != "implementation" || rails.Contract != "implementation_result" {
 		t.Fatalf("unexpected rails: %#v", rails)
@@ -16396,7 +16397,7 @@ func TestControlRailsVerificationShellForbidsCatalogedWorkspaceWrites(t *testing
 		},
 	}
 
-	rails := runner.controlRails(nil)
+	rails := runner.controlRailsForBrief(runner.RuntimeBrief)
 	if rails.PermissionProfile != string(workerruntime.PermissionReadOnlyVerificationShell) {
 		t.Fatalf("expected read-only verification shell rails, got %#v", rails)
 	}
@@ -16419,7 +16420,7 @@ func TestControlRailsReadOnlyWorkspaceSuppressesWriteTools(t *testing.T) {
 		},
 	}
 
-	rails := runner.controlRails(nil)
+	rails := runner.controlRailsForBrief(runner.RuntimeBrief)
 	for _, tool := range []string{workspace.ToolNameEditFile, workspace.ToolNameApplyPatch, workspace.ToolNameSubmitPlan} {
 		if slices.Contains(rails.AllowedTools, tool) {
 			t.Fatalf("read-only workspace rails must not allow %q, got %#v", tool, rails.AllowedTools)
@@ -16446,7 +16447,7 @@ func TestControlRailsReportRequiredEditPathsAndInstructionAttachment(t *testing.
 		InstructionAttacher: instructions.NewAttacher(t.TempDir()),
 	}
 
-	rails := runner.controlRails(nil)
+	rails := runner.controlRailsForBrief(runner.RuntimeBrief)
 	if !slices.Contains(rails.RequiredEditPaths, "native/src/job_queue.cpp") {
 		t.Fatalf("expected required edit paths in control rails, got %#v", rails.RequiredEditPaths)
 	}
@@ -16465,7 +16466,7 @@ func TestControlRailsPreserveReadOnlyDiscoveryForDirectAnswer(t *testing.T) {
 			AllowedTools:      []string{"search_files", "search_content", "read_file", "go_workspace_symbol", "go_read_symbol"},
 		},
 	}
-	rails := runner.controlRails(nil)
+	rails := runner.controlRailsForBrief(runner.RuntimeBrief)
 
 	if rails.PermissionProfile != "read_only_workspace" {
 		t.Fatalf("permission = %q, want read_only_workspace", rails.PermissionProfile)
@@ -16490,7 +16491,7 @@ func TestControlRailsConversationOnlySuppressesAllowedTools(t *testing.T) {
 			FinalCritic:       []string{"answers_actual_user_request"},
 		},
 	}
-	rails := runner.controlRails(nil)
+	rails := runner.controlRailsForBrief(runner.RuntimeBrief)
 
 	if rails.PermissionProfile != "conversation_only" {
 		t.Fatalf("permission = %q, want conversation_only", rails.PermissionProfile)
@@ -16513,7 +16514,7 @@ func TestControlRailsBlankPermissionInfersReadOnlyWorkspaceWhenToolsExist(t *tes
 			AllowedTools: []string{"search_files", "read_file"},
 		},
 	}
-	rails := runner.controlRails(nil)
+	rails := runner.controlRailsForBrief(runner.RuntimeBrief)
 
 	if rails.PermissionProfile != "read_only_workspace" {
 		t.Fatalf("permission = %q, want read_only_workspace", rails.PermissionProfile)
@@ -16529,7 +16530,7 @@ func TestControlRailsTreatDebugLogsAsConversationAlias(t *testing.T) {
 			AllowedTools:      []string{"search_files", "search_content", "read_file"},
 		},
 	}
-	rails := runner.controlRails(nil)
+	rails := runner.controlRailsForBrief(runner.RuntimeBrief)
 
 	if len(rails.ReadinessGate) != 0 || len(rails.FinalCritic) != 0 {
 		t.Fatalf("debug_logs compatibility brief should use soft conversation rails, got %#v", rails)
@@ -16546,7 +16547,7 @@ func TestControlRailsArchitectureKeepsClosureCritic(t *testing.T) {
 			RequiredEvidence:  []string{"inspected_paths", "architecture_boundary_evidence", "confidence"},
 		},
 	}
-	rails := runner.controlRails(nil)
+	rails := runner.controlRailsForBrief(runner.RuntimeBrief)
 
 	if len(rails.ReadinessGate) == 0 || len(rails.FinalCritic) == 0 {
 		t.Fatalf("expected architecture rails to keep closure guidance, got %#v", rails)
@@ -19260,9 +19261,6 @@ func TestRunnerBriefWithPhaseHintsOmitsWriteReadyConstraintWithoutAnchors(t *tes
 		t.Fatalf("write-ready constraint should be omitted when brief lacks anchors, got %#v", live.Constraints)
 	}
 
-	if runtimeBriefDefinesWriteReadyReadContract(live) {
-		t.Fatalf("write-ready read contract should be inactive without anchors, brief = %#v", live)
-	}
 }
 
 func TestBuildRunnerNextActionStateIncludesEvidenceFirstPhaseHints(t *testing.T) {
@@ -19282,7 +19280,7 @@ func TestBuildRunnerNextActionStateIncludesEvidenceFirstPhaseHints(t *testing.T)
 		Summary: "Listed 38 path(s).",
 	}
 
-	state := buildRunnerNextActionStateWithAllowedTools("main", 17, "tool_result", req, result, results, false, brief, nil)
+	state, _ := buildRunnerNextActionStateWithAllowedToolsAndContract("main", 17, "tool_result", req, result, results, false, brief, nil)
 	if state.Phase != "target_inspection" {
 		t.Fatalf("phase = %q, want target_inspection", state.Phase)
 	}
@@ -25218,7 +25216,7 @@ func TestControlRailsExactAnchorPreWriteDoesNotAdvertiseReadShell(t *testing.T) 
 		},
 	}
 
-	rails := runner.controlRails(nil)
+	rails := runner.controlRailsForBrief(runner.RuntimeBrief)
 	for _, forbidden := range []string{"read_file", "search_content", "shell", "task_ledger"} {
 		if slices.Contains(rails.AllowedTools, forbidden) {
 			t.Fatalf("exact-anchor pre-write control rails advertised %s: %#v", forbidden, rails.AllowedTools)
@@ -27820,7 +27818,7 @@ func TestBuildRunnerNextActionStatePrefersClosureAfterDelegatedReadiness(t *test
 			Output:  "package agent\nfunc finish() {}\n",
 		},
 	}
-	state := buildRunnerNextActionStateWithAllowedTools(
+	state, _ := buildRunnerNextActionStateWithAllowedToolsAndContract(
 		"child:explorer",
 		3,
 		"tool_result",
@@ -27864,7 +27862,7 @@ func TestBuildRunnerNextActionStatePrefersClosureAfterDelegatedReadiness(t *test
 }
 
 func TestBuildRunnerNextActionStatePrefersClosureAfterChildPacket(t *testing.T) {
-	state := buildRunnerNextActionStateWithAllowedTools(
+	state, _ := buildRunnerNextActionStateWithAllowedToolsAndContract(
 		"main",
 		1,
 		"child_task_result",
@@ -27910,7 +27908,7 @@ func TestBuildRunnerNextActionStatePrefersClosureAfterTypedChildPacket(t *testin
 			{Path: "internal/runtime/agent/implementation_flow.go", Text: "`runChildTask` constructs the subagent child runner and returns the child packet."},
 		},
 	})
-	state := buildRunnerNextActionStateWithAllowedTools(
+	state, _ := buildRunnerNextActionStateWithAllowedToolsAndContract(
 		"main",
 		1,
 		"child_task_result",
@@ -27991,7 +27989,7 @@ func TestBuildRunnerNextActionStateDoesNotCloseOnUnrelatedChildPacket(t *testing
 		Summary: "Child task completed",
 		Output:  "Question: explain labels\nSource-body evidence paths:\n- internal/labels/labels.go\n\nKey findings:\n- ShortLabel returns Save changes.",
 	}
-	state := buildRunnerNextActionStateWithAllowedTools(
+	state, _ := buildRunnerNextActionStateWithAllowedToolsAndContract(
 		"main",
 		1,
 		"child_task_result",
@@ -28020,7 +28018,7 @@ func TestBuildRunnerNextActionStateDoesNotInventChildPacketForDirectReadOnlyEvid
 		PermissionProfile: "read_only_workspace",
 		Objective:         "What does the debug log redacted mode do?",
 	}
-	state := buildRunnerNextActionStateWithAllowedTools(
+	state, _ := buildRunnerNextActionStateWithAllowedToolsAndContract(
 		"main",
 		1,
 		"tool_result",
@@ -28318,7 +28316,7 @@ func TestBuildRunnerNextActionStateUsesClosureConstraintsForSuccessfulPostChildS
 			Output:  "internal/runtime/agent/implementation_flow.go:73:synthesizeDelegatedReadOnlyAnswer\ninternal/runtime/agent/runner_core.go:648:runChildTask\n",
 		},
 	}
-	state := buildRunnerNextActionStateWithAllowedTools(
+	state, _ := buildRunnerNextActionStateWithAllowedToolsAndContract(
 		"main",
 		5,
 		"tool_result",
@@ -28346,7 +28344,7 @@ func TestBuildRunnerNextActionStateUsesClosureConstraintsForSuccessfulPostChildS
 }
 
 func TestBuildRunnerNextActionStatePreservesDurableChildPacketClosureAfterSuccessfulOutline(t *testing.T) {
-	state := buildRunnerNextActionStateWithAllowedTools(
+	state, _ := buildRunnerNextActionStateWithAllowedToolsAndContract(
 		"main",
 		6,
 		"tool_result",
@@ -33827,7 +33825,7 @@ func TestPlanExecuteAnchorRefreshRecoveryCardAdvertisesDerivedReadTools(t *testi
 		rejected,
 	}
 
-	state := buildRunnerNextActionStateWithAllowedTools("main", 2, "tool_result", workspace.ToolRequest{Tool: "submit_plan"}, rejected, results, false, brief, []string{"submit_plan"})
+	state, _ := buildRunnerNextActionStateWithAllowedToolsAndContract("main", 2, "tool_result", workspace.ToolRequest{Tool: "submit_plan"}, rejected, results, false, brief, []string{"submit_plan"})
 	if state.RecoveryState == nil {
 		t.Fatalf("anchor-refresh recovery card should expose typed recovery state")
 	}
@@ -33888,7 +33886,7 @@ func TestPlanExecuteRecoveryStateCountsRejectedAttemptsInNextActionState(t *test
 		rejected,
 	}
 
-	state := buildRunnerNextActionStateWithAllowedTools("main", 3, "tool_result", workspace.ToolRequest{Tool: workspace.ToolNameSubmitPlan}, rejected, results, false, brief, []string{workspace.ToolNameSubmitPlan})
+	state, _ := buildRunnerNextActionStateWithAllowedToolsAndContract("main", 3, "tool_result", workspace.ToolRequest{Tool: workspace.ToolNameSubmitPlan}, rejected, results, false, brief, []string{workspace.ToolNameSubmitPlan})
 	if state.RecoveryState == nil {
 		t.Fatalf("submit-correction recovery should expose typed recovery state")
 	}

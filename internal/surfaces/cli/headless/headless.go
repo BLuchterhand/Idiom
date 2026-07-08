@@ -19,12 +19,12 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/evidence/telemetry"
-	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/gitstate"
 	"idiom/internal/runtime/sessionlog"
 	"idiom/internal/surfaces/cli/runrecord"
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
+	"idiom/internal/workflows/commandcheck"
 	"idiom/internal/workflows/planexecute"
 )
 
@@ -150,8 +150,12 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 	}
 
 	if runErr == nil && exitCode == 0 {
-		record.Checks = append(record.Checks, runOptionalCheck("lint", req.LintCommand, cfg)...)
-		record.Checks = append(record.Checks, runOptionalCheck("test", req.TestCommand, cfg)...)
+		if strings.TrimSpace(req.LintCommand) != "" {
+			record.Checks = append(record.Checks, runCommandWithConfigTimeout("lint", req.LintCommand, cfg))
+		}
+		if strings.TrimSpace(req.TestCommand) != "" {
+			record.Checks = append(record.Checks, runCommandWithConfigTimeout("test", req.TestCommand, cfg))
+		}
 		for _, check := range record.Checks {
 			if check.ExitCode != 0 {
 				exitCode = 1
@@ -1212,14 +1216,6 @@ func answerJSONObject(answer string) ([]byte, error) {
 	return nil, fmt.Errorf("output schema validation failed: answer does not contain a JSON object")
 }
 
-func runOptionalCheck(name string, command string, cfg config.Config) []runrecord.HeadlessCheck {
-	if strings.TrimSpace(command) == "" {
-		return nil
-	}
-
-	return []runrecord.HeadlessCheck{runCommandWithConfigTimeout(name, command, cfg)}
-}
-
 func runCommandWithConfigTimeout(name string, command string, cfg config.Config) runrecord.HeadlessCheck {
 	timeout := time.Duration(cfg.Workspace.CommandTimeoutSeconds) * time.Second
 	if timeout <= 0 {
@@ -1235,34 +1231,33 @@ func runCommandWithConfigTimeout(name string, command string, cfg config.Config)
 func runCommand(ctx context.Context, name string, command string, cfg config.Config) runrecord.HeadlessCheck {
 	check := runrecord.HeadlessCheck{Name: name, Command: command}
 
-	result := commandexec.Run(ctx, commandexec.Spec{
-		Mode:           commandexec.ModePlainShell,
-		Shell:          shellName(cfg),
-		Command:        command,
-		Dir:            commandDir(cfg),
-		MaxOutputBytes: headlessCommandCaptureBytes,
+	result := commandcheck.Run(ctx, commandcheck.Request{
+		ShellCommand: command,
+		Shell:        shellName(cfg),
+		Dir:          commandDir(cfg),
+		CaptureBytes: commandcheck.DiagnosticCaptureBytes,
 	})
 
 	check.DurationMS = result.Duration.Milliseconds()
-	check.Stdout = boundedString(result.Stdout, 4000)
-	check.Stderr = boundedString(result.Stderr, 4000)
-	if result.Err == nil {
+	check.Stdout = commandcheck.TrimDisplay(result.Stdout, 4000, "")
+	check.Stderr = commandcheck.TrimDisplay(result.Stderr, 4000, "")
+	if result.Failure == commandcheck.FailureNone {
 		check.ExitCode = 0
 
 		return check
 	}
 
-	if result.ExitError {
+	if result.Failure == commandcheck.FailureExit {
 		check.ExitCode = result.ExitCode
 	} else {
 		check.ExitCode = 1
-		check.Stderr = boundedString(strings.TrimSpace(check.Stderr+"\n"+result.Err.Error()), 4000)
+		if result.Err != nil {
+			check.Stderr = commandcheck.TrimDisplay(strings.TrimSpace(check.Stderr+"\n"+result.Err.Error()), 4000, "")
+		}
 	}
 
 	return check
 }
-
-const headlessCommandCaptureBytes = 1024 * 1024
 
 func writeGitDiff(path string, cfg config.Config) error {
 	timeout := time.Duration(cfg.Workspace.CommandTimeoutSeconds) * time.Second
@@ -1358,15 +1353,6 @@ func stdinHasData(r io.Reader) bool {
 	}
 
 	return (stat.Mode() & os.ModeCharDevice) == 0
-}
-
-func boundedString(value string, limit int) string {
-	value = strings.TrimSpace(value)
-	if limit <= 0 || len(value) <= limit {
-		return value
-	}
-
-	return value[:limit]
 }
 
 func durationSecondsCeil(d time.Duration) int {

@@ -5757,40 +5757,6 @@ func briefHasUsableEditAnchors(brief workerruntime.WorkerRuntimeBrief) bool {
 	return exactAnchorImplementationActive(brief)
 }
 
-func runtimeBriefDefinesWriteReadyReadContract(brief workerruntime.WorkerRuntimeBrief) bool {
-	if !briefHasUsableEditAnchors(brief) {
-		return false
-	}
-
-	if slices.Contains(brief.Constraints, "implementation_packet_write_ready") ||
-		slices.Contains(brief.Constraints, "required_edit_paths_define_write_scope") {
-
-		return true
-	}
-
-	if brief.Readiness != nil && brief.Readiness.ReadyToWrite {
-		if slices.Contains(brief.Readiness.ClosedClaims, "required_edit_paths_define_write_scope") ||
-			strings.Contains(strings.ToLower(brief.Readiness.FurtherReadsRequire), "named_gap") {
-
-			return true
-		}
-	}
-
-	for _, policy := range brief.SearchPolicy {
-		policy = strings.ToLower(strings.TrimSpace(policy))
-		if strings.Contains(policy, "required_edit_paths") &&
-			(strings.Contains(policy, "readiness-to-write") ||
-				strings.Contains(policy, "readiness to write") ||
-				strings.Contains(policy, "named edit-safety") ||
-				strings.Contains(policy, "named_gap")) {
-
-			return true
-		}
-	}
-
-	return false
-}
-
 func implementationScopedEditSurfaceActive(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
 	if planThenExecutePlannerBrief(brief) {
 		return false
@@ -11122,14 +11088,6 @@ func (r *Runner) emitControlRailsForBrief(messages []llama.ChatMessage, brief wo
 	r.emitEvent(RunEvent{Role: "control_rails", Content: string(data)})
 }
 
-func (r *Runner) controlRails(messages []llama.ChatMessage) runnerControlRails {
-	if r == nil {
-		return runnerControlRails{}
-	}
-
-	return r.controlRailsForBrief(r.RuntimeBrief)
-}
-
 func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) runnerControlRails {
 	brief = workerruntime.NormalizeRuntimeBrief(brief)
 
@@ -16105,11 +16063,6 @@ func evidenceFirstMutationPhase(brief workerruntime.WorkerRuntimeBrief, results 
 	return "target_inspection"
 }
 
-func buildRunnerNextActionStateWithAllowedTools(agent string, step int, reason string, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult, declarationMovesForbidden bool, brief workerruntime.WorkerRuntimeBrief, currentAllowedTools []string) runnerNextActionState {
-	state, _ := buildRunnerNextActionStateWithAllowedToolsAndContract(agent, step, reason, req, result, results, declarationMovesForbidden, brief, currentAllowedTools)
-	return state
-}
-
 func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step int, reason string, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult, declarationMovesForbidden bool, brief workerruntime.WorkerRuntimeBrief, currentAllowedTools []string, options ...any) (runnerNextActionState, TurnPhaseContract) {
 	planningTransport := runnerNextActionPlanningTransport(options)
 	surfaceReq, surfaceResult := modelFacingParserRejectionSurface(reason, req, result, recoveryToolTransportMode(planningTransport))
@@ -16303,10 +16256,6 @@ func applyReadOnlyDiscoveryPendingGuidance(state runnerNextActionState, brief wo
 	}
 
 	return state
-}
-
-func buildRunnerFailureFeedbackPacketWithAllowedTools(agent string, step int, reason string, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult, declarationMovesForbidden bool, brief workerruntime.WorkerRuntimeBrief, currentAllowedTools []string) runnerFailureFeedbackPacket {
-	return buildRunnerFailureFeedbackPacketWithAllowedToolsAndTransport(agent, step, reason, req, result, results, declarationMovesForbidden, brief, currentAllowedTools, PlanExecutePlanningTransport{TextualToolParser: true})
 }
 
 func buildRunnerFailureFeedbackPacketWithAllowedToolsAndTransport(agent string, step int, reason string, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult, declarationMovesForbidden bool, brief workerruntime.WorkerRuntimeBrief, currentAllowedTools []string, transport PlanExecutePlanningTransport) runnerFailureFeedbackPacket {

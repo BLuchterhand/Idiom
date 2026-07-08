@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"idiom/internal/evidence/eval"
-	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/textutil"
+	"idiom/internal/workflows/commandcheck"
 )
 
 type liveSuiteRunner struct {
@@ -138,16 +138,13 @@ func (r liveSuiteRunner) runTask(index int, total int, task eval.SWETask, logPat
 		"IDIOM_SWE_TASK_TIMEOUT="+strconv.Itoa(taskTimeout),
 	)
 
-	result := commandexec.Run(context.Background(), commandexec.Spec{
-		Mode:           commandexec.ModePlainShell,
-		Shell:          "/bin/sh",
-		Command:        command,
-		Dir:            textutil.FirstNonEmpty(fixture, filepath.Dir(r.suitePath)),
-		BaseEnv:        os.Environ(),
-		Env:            env,
-		Timeout:        time.Duration(taskTimeout+45) * time.Second,
-		MergeOutput:    true,
-		MaxOutputBytes: 0,
+	result := commandcheck.Run(context.Background(), commandcheck.Request{
+		ShellCommand: command,
+		Shell:        "/bin/sh",
+		Dir:          textutil.FirstNonEmpty(fixture, filepath.Dir(r.suitePath)),
+		Env:          env,
+		Timeout:      time.Duration(taskTimeout+45) * time.Second,
+		MergeOutput:  true,
 	})
 	output := []byte(result.Stdout)
 
@@ -157,7 +154,7 @@ func (r liveSuiteRunner) runTask(index int, total int, task eval.SWETask, logPat
 		}
 	}
 
-	if result.Err != nil {
+	if result.Failure != commandcheck.FailureNone {
 		if _, loadErr := eval.LoadRecords(logPath); loadErr == nil && !fileMissingOrEmpty(logPath) {
 			fmt.Fprintf(r.progress, "[%d/%d] runner exited nonzero for %s but wrote a scoreable log: %v\n", index+1, total, strings.TrimSpace(task.ID), result.Err)
 			fmt.Fprintf(r.progress, "[%d/%d] finished %s in %s -> %s\n", index+1, total, strings.TrimSpace(task.ID), time.Since(start).Round(time.Millisecond), logPath)
@@ -165,7 +162,7 @@ func (r liveSuiteRunner) runTask(index int, total int, task eval.SWETask, logPat
 			return nil
 		}
 
-		if result.TimedOut {
+		if result.Failure == commandcheck.FailureTimeout {
 			return fmt.Errorf("run live task %s: evaluator deadline exceeded after %ds", task.ID, taskTimeout+45)
 		}
 

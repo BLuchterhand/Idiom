@@ -16,9 +16,9 @@ import (
 	"time"
 
 	"idiom/internal/evidence/telemetry"
-	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/workflows/commandcheck"
 	"idiom/internal/workflows/productworkflow"
 )
 
@@ -461,25 +461,24 @@ func runArtifactValidator(command string, artifactPath string, stderr io.Writer)
 		return 2, fmt.Errorf("validator requires a materialized artifact path")
 	}
 
-	result := commandexec.Run(context.TODO(), commandexec.Spec{
-		Mode:           commandexec.ModePlainShell,
-		Shell:          "/bin/sh",
-		Command:        command,
-		Env:            []string{"IDIOM_ARTIFACT=" + artifactPath},
-		Timeout:        2 * time.Minute,
-		MaxOutputBytes: artifactValidatorCaptureBytes,
-		MergeOutput:    true,
+	result := commandcheck.Run(context.TODO(), commandcheck.Request{
+		ShellCommand: command,
+		Shell:        "/bin/sh",
+		Env:          []string{"IDIOM_ARTIFACT=" + artifactPath},
+		Timeout:      2 * time.Minute,
+		CaptureBytes: commandcheck.DiagnosticCaptureBytes,
+		MergeOutput:  true,
 	})
 	if result.Stdout != "" && stderr != nil {
 		_, _ = io.WriteString(stderr, result.Stdout)
 	}
 
-	if result.Err != nil {
-		if result.TimedOut {
+	if result.Failure != commandcheck.FailureNone {
+		if result.Failure == commandcheck.FailureTimeout {
 			return 124, fmt.Errorf("artifact validator timed out: %w", context.DeadlineExceeded)
 		}
 
-		if result.ExitError {
+		if result.Failure == commandcheck.FailureExit {
 			return result.ExitCode, fmt.Errorf("artifact validator failed: %w", result.Err)
 		}
 
@@ -488,5 +487,3 @@ func runArtifactValidator(command string, artifactPath string, stderr io.Writer)
 
 	return 0, nil
 }
-
-const artifactValidatorCaptureBytes = 1024 * 1024

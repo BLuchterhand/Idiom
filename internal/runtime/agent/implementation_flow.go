@@ -9875,17 +9875,6 @@ func marshalRunEvent(role string, value any) RunEvent {
 	return RunEvent{Role: role, Content: string(data)}
 }
 
-type LifecycleEvent struct {
-	ChildID    string
-	Kind       string
-	Status     string
-	ArtifactID string
-}
-
-func (e LifecycleEvent) Complete() bool {
-	return e.Status == "complete" || e.Status == "blocked" || e.Status == "failed"
-}
-
 type PermissionDecisionSnapshot struct {
 	Tool     string              `json:"tool"`
 	Target   string              `json:"target,omitempty"`
@@ -10071,51 +10060,6 @@ func (s *PreimageCheckpointStore) Snapshot(path string) error {
 	s.snapshots[normalized] = preimageSnapshot{Exists: true, Data: append([]byte(nil), data...), Mode: info.Mode()}
 
 	return nil
-}
-
-func (s *PreimageCheckpointStore) Restore(path string) error {
-	if s == nil {
-		return fmt.Errorf("preimage checkpoint store is nil")
-	}
-
-	normalized, full, err := s.resolve(path)
-	if err != nil {
-		return err
-	}
-
-	snapshot, ok := s.snapshots[normalized]
-	if !ok {
-		return fmt.Errorf("no preimage checkpoint for %s", normalized)
-	}
-
-	if !snapshot.Exists {
-		if err := os.Remove(full); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-
-		return nil
-	}
-
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		return err
-	}
-
-	return os.WriteFile(full, snapshot.Data, snapshot.Mode)
-}
-
-func (s *PreimageCheckpointStore) Has(path string) bool {
-	if s == nil {
-		return false
-	}
-
-	normalized, _, err := s.resolve(path)
-	if err != nil {
-		return false
-	}
-
-	_, ok := s.snapshots[normalized]
-
-	return ok
 }
 
 func (s *PreimageCheckpointStore) Existed(path string) (bool, bool) {

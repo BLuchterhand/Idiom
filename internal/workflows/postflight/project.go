@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/platform/commandexec"
+	"idiom/internal/workflows/commandcheck"
 )
 
 // ProjectCheck is the on-disk representation of a check declared
@@ -132,7 +132,6 @@ func (r *projectCheckRunner) Run(d Diff, ctx RunContext) ([]Finding, error) {
 // see what the rule reported and tells the operator to rerun for
 // full output.
 const shellOutputCap = 4096
-const shellOutputCaptureBytes = 1024 * 1024
 
 // runShell invokes the configured command with substituted args
 // and treats a non-zero exit as a check failure (configurable via
@@ -163,17 +162,18 @@ func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error)
 		workdir = ctx.ProjectRoot
 	}
 
-	result := commandexec.Run(context.TODO(), commandexec.Spec{
-		Name:           cmd,
-		Args:           args,
-		Dir:            workdir,
-		Timeout:        60 * time.Second,
-		MaxOutputBytes: shellOutputCaptureBytes,
-		MergeOutput:    true,
+	result := commandcheck.Run(context.TODO(), commandcheck.Request{
+		Argv:         append([]string{cmd}, args...),
+		Dir:          workdir,
+		Timeout:      60 * time.Second,
+		CaptureBytes: commandcheck.DiagnosticCaptureBytes,
+		DisplayBytes: shellOutputCap,
+		Truncation:   commandcheck.TruncatePostflight,
+		MergeOutput:  true,
 	})
-	output := commandexec.CombineOutput(result.Stdout, result.Stderr)
+	output := result.DisplayOutput
 
-	if result.TimedOut {
+	if result.Failure == commandcheck.FailureTimeout {
 		return []Finding{{
 			Check:    r.Name(),
 			Severity: SeverityError,
@@ -181,7 +181,7 @@ func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error)
 		}}, nil
 	}
 
-	if result.Err != nil && !result.ExitError {
+	if result.Failure == commandcheck.FailureSpawn {
 		// non-exit error: command not found, can't spawn, etc.
 		return []Finding{{
 			Check:    r.Name(),
@@ -192,36 +192,23 @@ func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error)
 
 	exitCode := result.ExitCode
 
-	if exitCode != 0 && r.spec.shouldFailOnNonZero() {
+	if result.Failure == commandcheck.FailureExit && r.spec.shouldFailOnNonZero() {
 		return []Finding{{
 			Check:    r.Name(),
 			Severity: SeverityError,
-			Message:  fmt.Sprintf("exit %d: %s", exitCode, truncateOutput(output)),
+			Message:  fmt.Sprintf("exit %d: %s", exitCode, output),
 		}}, nil
 	}
 
-	if exitCode != 0 {
+	if result.Failure == commandcheck.FailureExit {
 		return []Finding{{
 			Check:    r.Name(),
 			Severity: SeverityWarning,
-			Message:  fmt.Sprintf("exit %d (non-blocking): %s", exitCode, truncateOutput(output)),
+			Message:  fmt.Sprintf("exit %d (non-blocking): %s", exitCode, output),
 		}}, nil
 	}
 
 	return nil, nil
-}
-
-// truncateOutput trims the combined stdout+stderr to shellOutputCap
-// bytes and appends a marker so the operator knows there's more.
-// Whitespace is trimmed before the cap so a script that prints
-// trailing newlines doesn't waste budget on those.
-func truncateOutput(out string) string {
-	s := strings.TrimSpace(out)
-	if len(s) <= shellOutputCap {
-		return s
-	}
-
-	return s[:shellOutputCap] + "... (truncated; rerun the check for full output)"
 }
 
 // substituteShellArgs expands placeholders the project may pass in

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/workflows/commandcheck"
 	"idiom/internal/workflows/implementationdispatch"
 )
 
@@ -232,10 +232,8 @@ func runImplementationDispatchCommand(ctx context.Context, root string, timeout 
 		timeout = 45 * time.Second
 	}
 
-	execResult := commandexec.Run(ctx, commandexec.Spec{
-		Mode:    commandexec.ModeArgv,
-		Name:    binary,
-		Args:    args,
+	execResult := commandcheck.Run(ctx, commandcheck.Request{
+		Argv:    append([]string{binary}, args...),
 		Dir:     root,
 		Timeout: timeout,
 	})
@@ -246,7 +244,7 @@ func runImplementationDispatchCommand(ctx context.Context, root string, timeout 
 		Err:      execResult.Err,
 	}
 
-	if execResult.Err == nil {
+	if execResult.Failure == commandcheck.FailureNone {
 		return result
 	}
 
@@ -256,13 +254,13 @@ func runImplementationDispatchCommand(ctx context.Context, root string, timeout 
 		return result
 	}
 
-	if execResult.TimedOut {
+	if execResult.Failure == commandcheck.FailureTimeout {
 		result.ExitCode = 124
 		result.Err = context.DeadlineExceeded
 		return result
 	}
 
-	if execResult.ExitError {
+	if execResult.Failure == commandcheck.FailureExit {
 		return result
 	}
 

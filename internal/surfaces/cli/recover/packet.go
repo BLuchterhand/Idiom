@@ -20,6 +20,7 @@ import (
 	"idiom/internal/runtime/localops"
 	"idiom/internal/workflows/atomintake"
 	"idiom/internal/workflows/brieflint"
+	"idiom/internal/workflows/commandcheck"
 	"idiom/internal/workflows/planexecute"
 	"idiom/internal/workflows/recoverstatus"
 	"idiom/internal/workflows/recovery"
@@ -849,13 +850,13 @@ func runRecoveryVerificationCommand(root string, command string) (recoverycontra
 	if run.Check.Status == plancontract.PhaseEvidenceStatusOK {
 		return result, nil
 	}
-	if strings.Contains(run.Check.Error, "package pattern") {
+
+	switch run.Failure {
+	case commandcheck.FailureMissingOperand:
 		return result, fmt.Errorf("recovery verification command must name a package pattern: %s", command)
-	}
-	if run.Check.Error == "unsupported verification command" {
+	case commandcheck.FailureUnsupported:
 		return result, fmt.Errorf("unsupported recovery verification command: %s", command)
-	}
-	if strings.Contains(run.Check.Error, "timed out") {
+	case commandcheck.FailureTimeout:
 		return result, fmt.Errorf("recovery verification command timed out: %s", command)
 	}
 

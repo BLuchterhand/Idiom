@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"idiom/internal/platform/commandexec"
+	"idiom/internal/workflows/commandcheck"
 )
 
 // GoBuildPasses runs `go build ./...` against the project root
@@ -47,21 +47,21 @@ func (c GoBuildPasses) Run(d Diff, ctx RunContext) ([]Finding, error) {
 		return nil, nil
 	}
 
-	result := commandexec.Run(context.TODO(), commandexec.Spec{
-		Name:        "go",
-		Args:        []string{"build", "./..."},
-		Dir:         ctx.ProjectRoot,
-		MergeOutput: true,
+	result := commandcheck.Run(context.TODO(), commandcheck.Request{
+		Argv:         []string{"go", "build", "./..."},
+		Dir:          ctx.ProjectRoot,
+		CaptureBytes: commandcheck.DiagnosticCaptureBytes,
+		MergeOutput:  true,
 	})
-	if result.Err == nil {
+	if result.Failure == commandcheck.FailureNone {
 		return nil, nil
 	}
 
-	if !result.ExitError {
+	if result.Failure != commandcheck.FailureExit {
 		return nil, result.Err
 	}
 
-	out := commandexec.CombineOutput(result.Stdout, result.Stderr)
+	out := result.Output
 	re := regexp.MustCompile(`(?m)^([^:\s]+):(\d+):\d+:\s*(.+)$`)
 	matches := re.FindAllStringSubmatch(out, -1)
 
