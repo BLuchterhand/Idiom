@@ -42,21 +42,11 @@ func TestRunCapturesStdoutStderrAndExitCode(t *testing.T) {
 	}
 }
 
-func TestResultProjectsCombinedAndDisplayOutput(t *testing.T) {
+func TestResultCombinesOutput(t *testing.T) {
 	result := Result{Stdout: " stdout text \n", Stderr: "\nstderr text "}
 
 	if got := result.CombinedOutput(); got != "stdout text\nstderr text" {
 		t.Fatalf("CombinedOutput = %q", got)
-	}
-
-	display := result.DisplayProjection(11)
-	if display.Text != "stdout text\n...[truncated]" || !display.Truncated {
-		t.Fatalf("DisplayProjection = %#v", display)
-	}
-
-	stdout := result.StdoutProjection(6)
-	if stdout.Text != "stdout\n...[truncated]" || !stdout.Truncated {
-		t.Fatalf("StdoutProjection = %#v", stdout)
 	}
 }
 

@@ -33,14 +33,6 @@ func (h languageToolHost) MaxDirectoryEntries() int {
 	return h.manager.cfg.MaxDirectoryEntries
 }
 
-func (h languageToolHost) MaxOutputBytes() int {
-	if h.manager == nil {
-		return 0
-	}
-
-	return h.manager.cfg.MaxOutputBytes
-}
-
 func (h languageToolHost) WritesEnabled() bool {
 	return h.manager != nil && h.manager.cfg.EnableWrites
 }
@@ -116,8 +108,14 @@ func (h languageToolHost) SearchContent(ctx context.Context, req languagetools.S
 }
 
 // idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host
-func (h languageToolHost) RunCommand(ctx context.Context, dir string, extraEnv []string, name string, args ...string) commandexec.Result {
-	return h.manager.runCommandResult(ctx, commandexec.Spec{Mode: commandexec.ModeArgv, Name: name, Args: args, Dir: dir, Env: extraEnv})
+func (h languageToolHost) RunCommand(ctx context.Context, dir string, extraEnv []string, name string, args ...string) languagetools.CommandResult {
+	result := h.manager.runCommandResult(ctx, commandexec.Spec{Mode: commandexec.ModeArgv, Name: name, Args: args, Dir: dir, Env: extraEnv})
+
+	return languagetools.CommandResult{
+		Output: h.manager.commandDisplayOutput(result).Text,
+		Stdout: h.manager.commandStdoutOutput(result).Text,
+		Err:    result.FailureError(""),
+	}
 }
 
 func (m *Manager) executeLanguageTool(ctx context.Context, req ToolRequest) ToolResult {

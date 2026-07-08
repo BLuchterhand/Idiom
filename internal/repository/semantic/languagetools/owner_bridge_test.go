@@ -8,8 +8,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-
-	"idiom/internal/platform/commandexec"
 )
 
 func TestGoDiagnosticTargetsIncludesWorkspaceRootFiles(t *testing.T) {
@@ -144,10 +142,6 @@ func (h ownerTestHost) MaxDirectoryEntries() int {
 	return h.maxDirectoryEntries
 }
 
-func (h ownerTestHost) MaxOutputBytes() int {
-	return 1 << 20
-}
-
 func (h ownerTestHost) WritesEnabled() bool {
 	return false
 }
@@ -199,15 +193,15 @@ func (h ownerTestHost) SearchContent(context.Context, SearchContentRequest) Tool
 	return ToolResult{Error: "not implemented"}
 }
 
-func (h ownerTestHost) RunCommand(_ context.Context, _ string, _ []string, name string, args ...string) commandexec.Result {
+func (h ownerTestHost) RunCommand(_ context.Context, _ string, _ []string, name string, args ...string) CommandResult {
 	if name == "go" && len(args) == 2 && args[0] == "env" {
 		switch args[1] {
 		case "GOBIN", "GOPATH":
-			return commandexec.Result{Stdout: os.Getenv(args[1])}
+			return CommandResult{Output: os.Getenv(args[1]), Stdout: os.Getenv(args[1])}
 		}
 	}
 
-	return commandexec.Result{ExitCode: 1, Err: fmt.Errorf("not implemented")}
+	return CommandResult{Err: fmt.Errorf("not implemented")}
 }
 
 func writeOwnerTestFile(t *testing.T, path string, content string) {

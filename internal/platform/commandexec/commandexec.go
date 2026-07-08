@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"idiom/internal/platform/config"
-	"idiom/internal/platform/textutil"
 )
 
 type ShellMode string
@@ -58,11 +57,6 @@ type Result struct {
 	Err             error
 }
 
-type OutputProjection struct {
-	Text      string
-	Truncated bool
-}
-
 type ForegroundIO struct {
 	Stdin  io.Reader
 	Stdout io.Writer
@@ -98,14 +92,6 @@ func (r Result) CombinedOutput() string {
 	}
 
 	return output
-}
-
-func (r Result) DisplayProjection(maxBytes int) OutputProjection {
-	return projectDisplayOutput(r.CombinedOutput(), maxBytes)
-}
-
-func (r Result) StdoutProjection(maxBytes int) OutputProjection {
-	return projectDisplayOutput(r.Stdout, maxBytes)
 }
 
 const defaultProcessStderrLimit = 64 * 1024
@@ -587,18 +573,6 @@ func (p *Process) Close() error {
 	_ = p.wait()
 
 	return firstErr
-}
-
-func projectDisplayOutput(output string, maxBytes int) OutputProjection {
-	output = strings.TrimSpace(output)
-	if maxBytes > 0 && len(output) > maxBytes {
-		return OutputProjection{
-			Text:      textutil.TruncateBytes(output, maxBytes, "") + "\n...[truncated]",
-			Truncated: true,
-		}
-	}
-
-	return OutputProjection{Text: output}
 }
 
 func configuredCommand(ctx context.Context, spec Spec) (*exec.Cmd, error) {

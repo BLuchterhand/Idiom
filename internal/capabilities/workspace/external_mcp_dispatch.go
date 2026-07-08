@@ -52,7 +52,7 @@ func (m *Manager) executeExternal(ctx context.Context, req ToolRequest) ToolResu
 		MaxOutputBytes: m.cfg.MaxOutputBytes,
 		MergeOutput:    true,
 	})
-	displayOutput := execResult.DisplayProjection(m.cfg.MaxOutputBytes)
+	displayOutput := m.commandDisplayOutput(execResult)
 	out := ToolResult{Tool: req.Tool, Summary: "External tool " + req.Tool, Output: displayOutput.Text}
 	if displayOutput.Truncated || execResult.StdoutTruncated || execResult.StderrTruncated {
 		out.Summary += " (output truncated)"

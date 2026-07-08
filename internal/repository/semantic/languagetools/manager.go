@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	"idiom/internal/contracts/toolfacts"
-	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/failures"
 	semanticcpp "idiom/internal/repository/semantic/cpp"
 	semanticgo "idiom/internal/repository/semantic/golang"
@@ -29,7 +28,6 @@ type Host interface {
 	Enabled() bool
 	Root() string
 	MaxDirectoryEntries() int
-	MaxOutputBytes() int
 	WritesEnabled() bool
 	ResolvePath(path string, workdir string) (string, error)
 	DisplayPath(path string) string
@@ -39,7 +37,7 @@ type Host interface {
 	PathForHandle(handle string) (string, error)
 	RouteLanguageTool(ctx context.Context, req RouteLanguageToolRequest) ToolResult
 	SearchContent(ctx context.Context, req SearchContentRequest) ToolResult
-	RunCommand(ctx context.Context, dir string, extraEnv []string, name string, args ...string) commandexec.Result
+	RunCommand(ctx context.Context, dir string, extraEnv []string, name string, args ...string) CommandResult
 }
 
 type Manager struct {
@@ -82,14 +80,6 @@ func (m *Manager) maxDirectoryEntries() int {
 	}
 
 	return m.host.MaxDirectoryEntries()
-}
-
-func (m *Manager) maxOutputBytes() int {
-	if m == nil || m.host == nil || m.host.MaxOutputBytes() <= 0 {
-		return 1 << 20
-	}
-
-	return m.host.MaxOutputBytes()
 }
 
 func (m *Manager) resolvePath(path string, workdir string) (string, error) {
@@ -185,9 +175,9 @@ func (m *Manager) routeLanguageTool(ctx context.Context, req ToolRequest) ToolRe
 	})
 }
 
-func (m *Manager) runCommandResult(ctx context.Context, dir string, extraEnv []string, name string, args ...string) commandexec.Result {
+func (m *Manager) runCommandResult(ctx context.Context, dir string, extraEnv []string, name string, args ...string) CommandResult {
 	if m == nil || m.host == nil {
-		return commandexec.Result{ExitCode: 1, Err: fmt.Errorf("language tool host unavailable")}
+		return CommandResult{Err: fmt.Errorf("language tool host unavailable")}
 	}
 
 	return m.host.RunCommand(ctx, dir, extraEnv, name, args...)
@@ -195,9 +185,9 @@ func (m *Manager) runCommandResult(ctx context.Context, dir string, extraEnv []s
 
 func (m *Manager) runCommand(ctx context.Context, dir, name string, args ...string) (string, error) {
 	result := m.runCommandResult(ctx, dir, nil, name, args...)
-	output := result.DisplayProjection(m.maxOutputBytes()).Text
+	output := result.Output
 
-	if err := result.FailureError(""); err != nil {
+	if err := result.FailureError(); err != nil {
 		return output, err
 	}
 
@@ -245,6 +235,16 @@ type RouteLanguageToolRequest struct {
 	MaxDepth  int
 	Recursive bool
 	Limit     int
+}
+
+type CommandResult struct {
+	Output string
+	Stdout string
+	Err    error
+}
+
+func (r CommandResult) FailureError() error {
+	return r.Err
 }
 
 type GoDeclarationMove struct {

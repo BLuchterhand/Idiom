@@ -898,11 +898,11 @@ func (m *Manager) runGoPLSCommand(ctx context.Context, args ...string) (string, 
 		args...,
 	)
 
-	if err := result.FailureError(""); err != nil {
-		return result.DisplayProjection(m.maxOutputBytes()).Text, err
+	if err := result.FailureError(); err != nil {
+		return result.Output, err
 	}
 
-	return result.StdoutProjection(m.maxOutputBytes()).Text, nil
+	return result.Stdout, nil
 }
 
 func (m *Manager) isGoWorkspace() bool {
