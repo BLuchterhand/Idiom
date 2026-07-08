@@ -214,6 +214,41 @@ func TestRunForegroundStreamsProvidedIOEnvAndDir(t *testing.T) {
 	}
 }
 
+func TestPrepareForegroundCommandStreamsProvidedIOEnvAndDir(t *testing.T) {
+	dir := t.TempDir()
+	spec := helperSpecWithDir(dir, "foreground-stream")
+	spec.Env = append(spec.Env, "IDIOM_FOREGROUND_VALUE=from-env")
+	spec.Timeout = 0
+
+	var stdout strings.Builder
+	var stderr strings.Builder
+	cmd, err := PrepareForegroundCommand(t.Context(), spec, ForegroundIO{
+		Stdin:  strings.NewReader("payload"),
+		Stdout: &stdout,
+		Stderr: &stderr,
+	})
+	if err != nil {
+		t.Fatalf("PrepareForegroundCommand failed: %v", err)
+	}
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("prepared command failed: %v", err)
+	}
+
+	wantPWD := "pwd=" + config.CanonicalizeExistingPath(dir)
+	if !strings.Contains(stdout.String(), wantPWD) {
+		t.Fatalf("stdout missing %q: %q", wantPWD, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "env=from-env") {
+		t.Fatalf("stdout missing env overlay: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "stdin=payload") {
+		t.Fatalf("stdout missing stdin: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "stderr=payload") {
+		t.Fatalf("stderr missing streamed payload: %q", stderr.String())
+	}
+}
+
 func TestRunForegroundPropagatesExitCode(t *testing.T) {
 	result := RunForeground(t.Context(), helperSpec("exit", "7"), ForegroundIO{
 		Stdout: io.Discard,
@@ -266,6 +301,28 @@ func TestRunForegroundRejectsCaptureOnlyOptions(t *testing.T) {
 			result := RunForeground(t.Context(), tc.spec, ForegroundIO{})
 			if result.Err == nil || !strings.Contains(result.Err.Error(), tc.want) {
 				t.Fatalf("RunForeground result = %#v, want error containing %q", result, tc.want)
+			}
+		})
+	}
+}
+
+func TestPrepareForegroundCommandRejectsManagedOnlyOptions(t *testing.T) {
+	cases := []struct {
+		name string
+		spec Spec
+		want string
+	}{
+		{name: "static stdin", spec: Spec{Name: os.Args[0], Stdin: "input"}, want: "static stdin"},
+		{name: "output log path", spec: Spec{Name: os.Args[0], OutputLogPath: filepath.Join(t.TempDir(), "run.log")}, want: "output log path"},
+		{name: "merge output", spec: Spec{Name: os.Args[0], MergeOutput: true}, want: "merge output"},
+		{name: "timeout", spec: Spec{Name: os.Args[0], Timeout: time.Second}, want: "timeout"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := PrepareForegroundCommand(t.Context(), tc.spec, ForegroundIO{})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("PrepareForegroundCommand error = %v, want containing %q", err, tc.want)
 			}
 		})
 	}

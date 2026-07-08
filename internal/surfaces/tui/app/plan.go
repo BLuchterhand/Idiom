@@ -1,9 +1,9 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/workerruntime"
 )
@@ -683,7 +684,13 @@ func (m *Model) prepareEditPlanCmd() (tea.Cmd, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	c := exec.Command(editorArgs[0], append(editorArgs[1:], path)...)
+	c, err := commandexec.PrepareForegroundCommand(context.Background(), commandexec.Spec{
+		Name: editorArgs[0],
+		Args: append(editorArgs[1:], path),
+	}, commandexec.ForegroundIO{})
+	if err != nil {
+		return nil, "", err
+	}
 	teaCmd := tea.ExecProcess(c, func(err error) tea.Msg {
 		return planEditorDoneMsg{err: err}
 	})

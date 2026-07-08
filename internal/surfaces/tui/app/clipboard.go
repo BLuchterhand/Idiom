@@ -1,14 +1,15 @@
 package app
 
 import (
+	"context"
 	"fmt"
-	"os/exec"
 	"runtime"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
+	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/hosttools"
 	"idiom/internal/runtime/llama"
 )
@@ -87,8 +88,13 @@ func clipboardCopyCmd(target, content string) (tea.Cmd, error) {
 		return nil, err
 	}
 
-	cmd := exec.Command(spec.name, spec.args...)
-	cmd.Stdin = strings.NewReader(content)
+	cmd, err := commandexec.PrepareForegroundCommand(context.Background(), commandexec.Spec{
+		Name: spec.name,
+		Args: spec.args,
+	}, commandexec.ForegroundIO{Stdin: strings.NewReader(content)})
+	if err != nil {
+		return nil, err
+	}
 
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		return clipboardCopyDoneMsg{

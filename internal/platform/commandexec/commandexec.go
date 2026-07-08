@@ -135,15 +135,6 @@ func RunForeground(parent context.Context, spec Spec, streams ForegroundIO) Resu
 	if parent == nil {
 		parent = context.Background()
 	}
-	if spec.OutputLogPath != "" {
-		return Result{ExitCode: 1, Err: errors.New("foreground command cannot use output log path")}
-	}
-	if spec.Stdin != "" {
-		return Result{ExitCode: 1, Err: errors.New("foreground command cannot use static stdin")}
-	}
-	if spec.MergeOutput {
-		return Result{ExitCode: 1, Err: errors.New("foreground command cannot merge output")}
-	}
 
 	ctx := parent
 	var cancel context.CancelFunc
@@ -152,19 +143,52 @@ func RunForeground(parent context.Context, spec Spec, streams ForegroundIO) Resu
 		defer cancel()
 	}
 
-	cmd, err := configuredCommand(ctx, spec)
+	cmd, err := foregroundCommand(ctx, spec, streams)
 	if err != nil {
 		return Result{ExitCode: 1, Err: err}
+	}
+
+	start := time.Now()
+	runErr := cmd.Run()
+
+	return resultFromRun(ctx, time.Since(start), runErr)
+}
+
+// PrepareForegroundCommand builds an exec.Cmd for framework integrations that
+// must own foreground execution themselves, such as terminal handoff. Prefer
+// RunForeground when commandexec can own the full run lifecycle.
+func PrepareForegroundCommand(parent context.Context, spec Spec, streams ForegroundIO) (*exec.Cmd, error) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	if spec.Timeout > 0 {
+		return nil, errors.New("prepared foreground command cannot use timeout")
+	}
+
+	return foregroundCommand(parent, spec, streams)
+}
+
+func foregroundCommand(ctx context.Context, spec Spec, streams ForegroundIO) (*exec.Cmd, error) {
+	if spec.OutputLogPath != "" {
+		return nil, errors.New("foreground command cannot use output log path")
+	}
+	if spec.Stdin != "" {
+		return nil, errors.New("foreground command cannot use static stdin")
+	}
+	if spec.MergeOutput {
+		return nil, errors.New("foreground command cannot merge output")
+	}
+
+	cmd, err := configuredCommand(ctx, spec)
+	if err != nil {
+		return nil, err
 	}
 
 	cmd.Stdin = streams.Stdin
 	cmd.Stdout = streams.Stdout
 	cmd.Stderr = streams.Stderr
 
-	start := time.Now()
-	runErr := cmd.Run()
-
-	return resultFromRun(ctx, time.Since(start), runErr)
+	return cmd, nil
 }
 
 func resultFromRun(ctx context.Context, duration time.Duration, runErr error) Result {
