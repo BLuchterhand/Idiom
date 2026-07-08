@@ -384,6 +384,7 @@ Accepted or corrected slices:
 | Plan/workspace/evidence wrapper and dead-surface cleanup | Production Go `+11 / -120`: net `-109`; deleted unused plan-scope convenience methods, the unreachable workspace write-policy prompt branch, the test-only `SetGoplsBinaryForTesting` production method, manifest projection wrappers, TUI plan/recovery one-call wrappers, the raw candidate-path `os.Stat` gate, and duplicate delegated-discovery candidate appends | Test Go `+24 / -65`: net `-41`; tests now assert candidate-path parity, exercise gopls discovery through `PATH` instead of a production test setter, and target owner APIs rather than deleted wrappers | Focused package tests for plan scope, workspace instructions/tool manifests/gopls fallback, languagetools, runtime evidence candidates, and TUI prompt/recovery passed; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json`; `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `git diff --check` | Accepted after multi-reviewer synthesis; stale-reference scans found no deleted symbols, no replacement pass-through wrappers were introduced, candidate-path extraction is now the single authority for raw/packet/ledger/registry candidates, and `deadcode`/`U1000` are clean |
 | Missing-tool inference authority deletion | Production Go `+3 / -183`: net `-180`; deleted workspace missing-`tool` inference, read-only bare-JSON detection, runtime missing-tool normalization guards, visible `code_navigate` salvage from capability-only JSON, and the now-unreachable `LanguageToolForCapability` helper | Test Go `+41 / -123`: net `-82`; tests now require explicit `tool` in tool transports, reject bare JSON without a tool, and ensure visible capability-only JSON is not salvaged as executable `code_navigate` | Focused: `go test ./internal/capabilities/workspace -count=1`; `go test ./internal/runtime/agent -count=1`; `go test ./internal/repository/semantic/languagetools -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json`; `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `git diff --check` | Accepted after reviewer synthesis; the harness no longer guesses executable tools from field shape, parser errors now clear runtime normalizer `OK`, no replacement wrapper was introduced, and remaining field-alias cleanup is a separate schema-aligned pass |
 | Runtime action-class and dead-bookkeeping cleanup | Production Go `+31 / -192`: net `-161`; fixed rejected `search_content` action-class projection by checking the narrower search class before the broader read class, then deleted the test-only tool-request intent projection, obsolete direct function-call parser entry point, duplicate submit-plan concrete-edit predicate, unused plan coverage/history/bookkeeping values, fake latest-session loop, and empty active-rendering budget branch | Test Go `+14 / -87`: net `-73`; removed tests that preserved dead/private surfaces and the nil-context approval expectation, while retaining public recovery-card search classification coverage and live normalizer/tokenizer coverage | Focused package tests for runtime agent, plan contracts, intent-loop, plan-execute, postflight, TUI resume/rendering/routing, CLI artifact/refine, and Python language tools passed; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`; `/Users/ben/go/bin/staticcheck -checks=U1000 ./...`; `/Users/ben/go/bin/staticcheck '-checks=all,-ST*,-SA1019' ./...`; `/Users/ben/go/bin/deadcode -test ./...`; `git diff --check` | Accepted as a deletion-first cleanup. Coding rules scanned `600` Go files with `0` findings, `deadcode -test` is clean, semantic staticcheck is clean outside repo-wide style/deprecated Bubble Tea noise, and no replacement helper or wrapper was introduced |
+| Workspace action-class owner and plan-execute dead-shim deletion | Production Go `+105 / -183`: net `-78`; moved runtime/workspace tool action-class decisions behind `workspace.ToolActionClass` and `workspace.ToolRequestActionClass`, deleted the runtime-local classifier helpers, removed shallow/dead direct-answer, obligation, repeated-blocker, and source-satisfied wrappers, and deleted seven unused plan-execute compatibility shims plus the superseded textual-history prune helper | Test Go `+99 / -131`: net `-32`; retargeted tests to the workspace action-class owner and backend-aware plan-execute owners, and deleted the test that preserved the superseded textual prune path | Focused: `go test ./internal/workflows/implementationdispatch -count=1`; `go test ./internal/capabilities/workspace ./internal/contracts/autonomy -count=1`; focused runtime action-class/recovery/plan-execute tests; `go test ./internal/runtime/agent -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `/Users/ben/go/bin/deadcode -test ./...`; `/Users/ben/go/bin/staticcheck -checks=U1000 ./...` | Accepted after reviewer synthesis; workspace is now the single source for runtime/workspace tool-to-action projection, the `task` surface splits tool-level `generic_probe` from concrete request-level `delegate`, no replacement pass-through wrapper was introduced, and the remaining autonomy-internal classification map is deferred to an audit-event projection migration because autonomy cannot import workspace |
 
 ## Historical Count Snapshots (Superseded)
 
@@ -826,11 +827,12 @@ Current git state:
   authority consolidation, eval discovery taxonomy deletion, prior-session
   evidence reader deletion, alias-only constant cleanup, and the workspace
   tool-name alias plus source-evidence duplicate-branch cleanup, missing-tool
-  inference authority deletion, and the runtime action-class/dead-bookkeeping
-  cleanup.
+  inference authority deletion, the runtime action-class/dead-bookkeeping
+  cleanup, and the workspace action-class owner plus plan-execute dead-shim
+  deletion.
 - Current branch-plus-worktree diff versus `main`: production Go
-  `+20,690 / -22,274`, net `-1,584`; Go tests `+10,869 / -7,559`, net
-  `+3,310`; strict all-file total `+33,777 / -31,805`, net `+1,972`.
+  `+20,775 / -22,437`, net `-1,662`; Go tests `+11,046 / -7,768`, net
+  `+3,278`; strict all-file total `+34,047 / -32,177`, net `+1,870`.
 - Latest semantic facade cleanup slice only: production Go `+245 / -294`,
   net `-49`; Go tests `+31 / -24`, net `+7`.
 - Latest gitstate cleanup slice only: production Go `+120 / -126`, net `-6`;
@@ -871,6 +873,9 @@ Current git state:
 - Latest runtime action-class and dead-bookkeeping cleanup slice only:
   production Go `+31 / -192`, net `-161`; Go tests `+14 / -87`, net
   `-73`; all files `+57 / -292`, net `-235`.
+- Latest workspace action-class owner and plan-execute dead-shim deletion slice
+  only: production Go `+105 / -183`, net `-78`; Go tests `+99 / -131`,
+  net `-32`; all files `+220 / -322`, net `-102`.
 
 Interpretation: the current goal-period branch is now production-LOC negative.
 Many individual consolidation slices are net-negative and remove real duplicate
@@ -878,8 +883,8 @@ or alias-only surfaces, while the total all-file diff remains positive because
 tests, docs, scripted fixtures, and earlier `commandexec` process-lifecycle
 setup added shared platform coverage before all remaining process migrations
 are complete. The current worktree versus `main` is production Go
-`+20690 / -22274`, net `-1584`; Go tests are `+10869 / -7559`, net `+3310`;
-all tracked files are `+33777 / -31805`, net `+1972`. The implementation
+`+20775 / -22437`, net `-1662`; Go tests are `+11046 / -7768`, net `+3278`;
+all tracked files are `+34047 / -32177`, net `+1870`. The implementation
 ledger above remains the source of truth for accepted local reductions inside
 each consolidation case.
 
@@ -1119,8 +1124,11 @@ Reviewer-updated estimate:
   `/tmp/idiom-tools/deadcode -test ./...`;
   `$(go env GOPATH)/bin/staticcheck -checks=U1000 ./...`;
   `git diff --check`.
-  Reviewer follow-up still open: autonomy action-class derivation still
-  overlaps workspace/runtime tool metadata.
+  Reviewer follow-up still open: autonomy still has an internal audit
+  classification map. Runtime and workspace consumers now use
+  `workspace.ToolActionClass` and `workspace.ToolRequestActionClass`; removing
+  the remaining autonomy map requires an audit-event projection migration rather
+  than importing workspace into autonomy.
 - Planner-owned verification command execution is implemented. The
   plan-execute verification runner now owns command parsing, optional
   recovery-style operand policy, working-dir validation, timeout/process

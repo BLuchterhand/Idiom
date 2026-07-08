@@ -2045,7 +2045,7 @@ func TestRunnerAutonomyShellSideEffectUsesWorkspaceAnalysis(t *testing.T) {
 	}
 }
 
-func TestRunnerAutonomyActionClassForRequestUsesCanonicalVocabulary(t *testing.T) {
+func TestWorkspaceToolRequestActionClassUsesCanonicalVocabulary(t *testing.T) {
 	tests := []struct {
 		name string
 		req  workspace.ToolRequest
@@ -2062,8 +2062,8 @@ func TestRunnerAutonomyActionClassForRequestUsesCanonicalVocabulary(t *testing.T
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := runnerAutonomyActionClassForRequest(tt.req); got != tt.want {
-				t.Fatalf("runnerAutonomyActionClassForRequest(%#v) = %q, want %q", tt.req, got, tt.want)
+			if got := workspace.ToolRequestActionClass(tt.req); got != tt.want {
+				t.Fatalf("ToolRequestActionClass(%#v) = %q, want %q", tt.req, got, tt.want)
 			}
 		})
 	}
@@ -5692,13 +5692,13 @@ func TestCompletionGateRecoveryKeepsScratchpadDeliverableOutputBudget(t *testing
 		Contract:          "implementation_result",
 		RequiredEditPaths: []string{".idiom/refine/example/iter-3/draft.md"},
 	}
-	opts := completionGateRecoveryChatOptions(llama.ChatOptions{MaxTokens: 16384}, brief, nil)
+	opts := completionGateRecoveryChatOptionsForBackend(llama.ChatOptions{MaxTokens: 16384}, brief, nil, true)
 
 	if opts.MaxTokens != 16384 {
 		t.Fatalf("scratchpad recovery must preserve full deliverable budget, got %d", opts.MaxTokens)
 	}
 
-	opts = completionGateRecoveryChatOptions(llama.ChatOptions{}, brief, nil)
+	opts = completionGateRecoveryChatOptionsForBackend(llama.ChatOptions{}, brief, nil, true)
 	if opts.MaxTokens != 16384 {
 		t.Fatalf("scratchpad recovery should default to full deliverable budget, got %d", opts.MaxTokens)
 	}
@@ -8259,12 +8259,12 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 	base := "workspace changes are present, but no successful verification result is present."
 
 	// Tier 0 (first rejection): pass through unchanged.
-	if got := escalateCompletionGateMessage(base, 0); got != base {
+	if got := escalateCompletionGateMessageWithSourceRecovery(base, 0, true, 5); got != base {
 		t.Errorf("first rejection should pass through; got: %s", got)
 	}
 
 	// Tier 1 (second rejection): mention "[gate retry 2/3]" + the base.
-	got := escalateCompletionGateMessage(base, 1)
+	got := escalateCompletionGateMessageWithSourceRecovery(base, 1, true, 5)
 	for _, want := range []string{"[gate retry 2/3]", "no successful verification result", "MUST resolve"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("tier 1 expected to contain %q, got: %s", want, got)
@@ -8272,7 +8272,7 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 	}
 
 	// Tier 2 (third rejection): mention "[gate retry 3/3]" + escalation language.
-	got = escalateCompletionGateMessage(base, 2)
+	got = escalateCompletionGateMessageWithSourceRecovery(base, 2, true, 5)
 	for _, want := range []string{"[gate retry 3/3", "strategy correction required", "ONE concrete tool call", "Do not narrate"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("tier 2 expected to contain %q, got: %s", want, got)
@@ -8283,7 +8283,7 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 	}
 
 	// Empty base: no escalation (defensive).
-	if got := escalateCompletionGateMessage("", 5); got != "" {
+	if got := escalateCompletionGateMessageWithSourceRecovery("", 5, true, 5); got != "" {
 		t.Errorf("empty base should pass through unchanged, got: %q", got)
 	}
 
@@ -8292,7 +8292,7 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 
 	// Tier 1: source-grounding recovery stays in evidence-recovery mode; it
 	// must not imply tools are about to be disabled while read tools are valid.
-	got = escalateCompletionGateMessage(sgUnsupported, 1)
+	got = escalateCompletionGateMessageWithSourceRecovery(sgUnsupported, 1, true, 5)
 	for _, want := range []string{"[source evidence recovery 2/5]", "not backed by a source-body read", "call one bounded"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("source-grounding unsupported tier 1 expected to contain %q, got: %s", want, got)
@@ -8306,7 +8306,7 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 	}
 
 	// Tier 2: should include read-file guidance, not "ONE concrete tool call"
-	got = escalateCompletionGateMessage(sgUnsupported, 2)
+	got = escalateCompletionGateMessageWithSourceRecovery(sgUnsupported, 2, true, 5)
 	for _, want := range []string{"[source evidence recovery 3/5]", "`read_file` or `code_navigate`"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("source-grounding unsupported tier 2 expected to contain %q, got: %s", want, got)
@@ -8323,7 +8323,7 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 	sgMissing := "the answer cites path(s) that were discovered as index candidates but not read as source-body evidence: \"missing.go\". Correct the citation, label it as historical/log-only evidence, or answer from inspected current source."
 
 	// Tier 1: should include read-file guidance
-	got = escalateCompletionGateMessage(sgMissing, 1)
+	got = escalateCompletionGateMessageWithSourceRecovery(sgMissing, 1, true, 5)
 	for _, want := range []string{"[source evidence recovery 2/5]", "not read as source-body evidence", "call one bounded"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("source-grounding missing tier 1 expected to contain %q, got: %s", want, got)
@@ -8337,7 +8337,7 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 	}
 
 	// Tier 2: should include read-file guidance, not "ONE concrete tool call"
-	got = escalateCompletionGateMessage(sgMissing, 2)
+	got = escalateCompletionGateMessageWithSourceRecovery(sgMissing, 2, true, 5)
 	for _, want := range []string{"[source evidence recovery 3/5]", "`read_file` or `code_navigate`"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("source-grounding missing tier 2 expected to contain %q, got: %s", want, got)
@@ -8352,7 +8352,7 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 
 	// Source-grounding (candidate-only evidence wording from read-only gate).
 	sgCandidateOnly := "read-only workspace answers require bounded source-body or diagnostic evidence tied to the user's objective before a final answer. Candidate/search/context paths are not source-body evidence. Candidate path(s): testdata/swe/debug-logs-weird-decisions-suite.json, docs/configuration.md. Inspect one candidate with source-body evidence, use one materially different source-owner probe if these candidates do not establish the claim, or answer `<<QUESTION>>:` with the exact unavailable evidence source."
-	got = escalateCompletionGateMessage(sgCandidateOnly, 1)
+	got = escalateCompletionGateMessageWithSourceRecovery(sgCandidateOnly, 1, true, 5)
 	for _, want := range []string{"[source evidence recovery 2/5]", "Candidate/search/context paths are not source-body evidence", "call one bounded"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("source-grounding candidate-only tier 1 expected to contain %q, got: %s", want, got)
@@ -8367,13 +8367,13 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 
 	// ── Non-source-grounding messages still get generic text ──────
 	normalMsg := "the final answer did not satisfy the active blocker check; continue with concrete writes or a per-path blocker reason."
-	got = escalateCompletionGateMessage(normalMsg, 1)
+	got = escalateCompletionGateMessageWithSourceRecovery(normalMsg, 1, true, 5)
 	for _, want := range []string{"[gate retry 2/3]", "use a different tool call"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("non-source-grounding tier 1 expected to contain %q, got: %s", want, got)
 		}
 	}
-	got = escalateCompletionGateMessage(normalMsg, 2)
+	got = escalateCompletionGateMessageWithSourceRecovery(normalMsg, 2, true, 5)
 	for _, want := range []string{"[gate retry 3/3", "ONE concrete tool call"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("non-source-grounding tier 2 expected to contain %q, got: %s", want, got)

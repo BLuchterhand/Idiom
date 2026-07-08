@@ -1644,7 +1644,7 @@ func genericAllowedActionClasses(tools []string) []string {
 	classes := []string{actionFinalAnswer, actionBlocker}
 
 	for _, tool := range tools {
-		if actionClass := autonomy.TurnPhaseActionClassForTool(tool); actionClass != "" {
+		if actionClass := autonomy.ActionClassToken(workspace.ToolActionClass(tool)); actionClass != "" {
 			classes = append(classes, actionClass)
 		}
 	}
@@ -1660,7 +1660,7 @@ func pruneToolActionClassesWithoutCallableTool(classes []string, callableTools [
 	callableClasses := make(map[string]struct{})
 
 	for _, tool := range callableTools {
-		if actionClass := autonomy.TurnPhaseActionClassForTool(tool); actionClass != "" {
+		if actionClass := autonomy.ActionClassToken(workspace.ToolActionClass(tool)); actionClass != "" {
 			callableClasses[actionClass] = struct{}{}
 		}
 	}
@@ -1703,7 +1703,7 @@ func removePhaseToolsForInvalidActionClasses(tools []string, invalidClasses []st
 		if tool == "" {
 			continue
 		}
-		if class := autonomy.TurnPhaseActionClassForTool(tool); class != "" {
+		if class := autonomy.ActionClassToken(workspace.ToolActionClass(tool)); class != "" {
 			if _, denied := invalid[class]; denied {
 				continue
 			}
@@ -4331,10 +4331,6 @@ func recoveryCardCallableActionClassesForTools(tools []string, contractClasses [
 		switch tool = strings.TrimSpace(tool); {
 		case tool == "":
 			continue
-		case tool == "submit_plan":
-			classes = append(classes, actionSubmitPlan)
-		case tool == "source_sanity" || tool == "harness_feedback" || tool == "idiom_feedback" || tool == "context_trace_pack" || tool == "git_diff" || tool == "git_status" || strings.HasSuffix(tool, "_diagnostics"):
-			classes = append(classes, actionVerify)
 		case tool == "shell":
 			if slicesContainRecoveryCardString(contractClasses, actionVerify) {
 				classes = append(classes, actionVerify)
@@ -4342,17 +4338,8 @@ func recoveryCardCallableActionClassesForTools(tools []string, contractClasses [
 				classes = append(classes, actionGenericProbe)
 			}
 		default:
-			switch workspace.ClassifyTool(tool) {
-			case workspace.CategorySearch:
-				classes = append(classes, actionSearch)
-			case workspace.CategoryRead, workspace.CategoryDiscovery:
-				classes = append(classes, actionRead)
-			case workspace.CategoryWrite:
-				classes = append(classes, actionPerEditWrite)
-			case workspace.CategoryVerification:
-				classes = append(classes, actionVerify)
-			case workspace.CategoryShell, workspace.CategoryMCP:
-				classes = append(classes, actionGenericProbe)
+			if class := autonomy.ActionClassToken(workspace.ToolActionClass(tool)); class != "" {
+				classes = append(classes, class)
 			}
 		}
 	}

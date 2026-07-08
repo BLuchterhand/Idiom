@@ -184,7 +184,7 @@ func TestObligationEvidence(root string, atomPath string, obligation string) (st
 			continue
 		}
 
-		if evidence, ok := TestObligationTermEvidence(path, content, obligation); ok {
+		if evidence, ok := atomintake.TermCoverageLineEvidence(path, content, obligation, "current test source covers design-doc test obligation", 2); ok {
 			return evidence, true
 		}
 	}
@@ -213,21 +213,13 @@ func TestNamesFromText(text string) []string {
 	return names
 }
 
-func TestObligationTermEvidence(path string, content string, obligation string) (string, bool) {
-	return atomintake.TermCoverageLineEvidence(path, content, obligation, "current test source covers design-doc test obligation", 2)
-}
-
-func AtomStateIsSourceSatisfied(state atomintakecontract.IntakeState) bool {
-	return state == atomintakecontract.StateSourceSatisfied
-}
-
 func PreflightRecordsAllSourceSatisfied(records []PreflightSourceSatisfiedRecord) bool {
 	if len(records) == 0 {
 		return false
 	}
 
 	for _, record := range records {
-		if !AtomStateIsSourceSatisfied(record.AtomState) {
+		if record.AtomState != atomintakecontract.StateSourceSatisfied {
 			return false
 		}
 	}

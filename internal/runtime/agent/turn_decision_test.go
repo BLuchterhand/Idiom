@@ -205,7 +205,7 @@ func TestSourceGroundingRejectionContractSurvivesRecoveryPrefixes(t *testing.T) 
 
 	for _, escalated := range []string{
 		"[gate retry 2/3] " + base,
-		escalateCompletionGateMessage(base, 1),
+		escalateCompletionGateMessageWithSourceRecovery(base, 1, true, 5),
 	} {
 		rejection, ok := classifySourceGroundingRejectionText(escalated)
 		if !ok {

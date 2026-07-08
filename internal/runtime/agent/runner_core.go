@@ -1991,7 +1991,7 @@ func (r *Runner) runLegacySessionBody(
 					}
 
 					answer := r.completionGateRepeatedBlockerAnswer(result, collectedResults)
-					blockerKind := r.completionGateRepeatedBlockerKind(collectedResults)
+					blockerKind := string(r.completionGateRepeatedViolation(collectedResults).Kind)
 					emitCompletionStatus("blocked", blockerKind, blockerKind, collectedResults, true)
 
 					return finish(answer, nil, blockerKind, true)
@@ -8760,7 +8760,7 @@ func runnerAutonomyIntentForRequest(brief workerruntime.WorkerRuntimeBrief, req 
 		ToolName:        strings.TrimSpace(req.Tool),
 		Capability:      runnerAutonomyPrimaryCapability(brief, req.Tool),
 		SideEffect:      runnerAutonomySideEffectForBrief(brief, req),
-		ActionClass:     runnerAutonomyActionClassForBrief(brief, req),
+		ActionClass:     workspace.ToolRequestActionClass(req),
 		Transport:       transport,
 		ParserFailure:   input.ParserFailure,
 		RepairSource:    input.RepairSource,
@@ -8770,58 +8770,6 @@ func runnerAutonomyIntentForRequest(brief workerruntime.WorkerRuntimeBrief, req 
 	}
 
 	return autonomy.CanonicalizeToolIntent(intent)
-}
-
-func runnerAutonomyActionClassForRequest(req workspace.ToolRequest) autonomy.ActionClass {
-	return runnerAutonomyActionClassForBrief(workerruntime.WorkerRuntimeBrief{}, req)
-}
-
-func runnerAutonomyActionClassForBrief(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest) autonomy.ActionClass {
-	tool := strings.TrimSpace(req.Tool)
-	switch {
-	case tool == "submit_plan":
-		return autonomy.ActionClassSubmitPlan
-	case tool == "task":
-		return autonomy.ActionClassDelegate
-	case workspace.IsWorkspaceWriteTool(tool):
-		if tool == "write_file" && strings.TrimSpace(req.Path) != "" && !runnerAutonomyLooksLikeSourcePath(req.Path) {
-			return autonomy.ActionClassDeliverableWrite
-		}
-
-		return autonomy.ActionClassPerEditWrite
-	case runnerAutonomyVerificationTool(brief, req):
-		return autonomy.ActionClassVerify
-	case workspace.IsReadTool(tool):
-		if strings.Contains(toolActionClass(req), "broad_inspection") ||
-			workspace.IsSearchToolName(tool) {
-
-			return autonomy.ActionClassSearch
-		}
-
-		return autonomy.ActionClassRead
-	default:
-		return autonomy.ActionClassGenericProbe
-	}
-}
-
-func runnerAutonomyVerificationTool(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest) bool {
-	switch strings.TrimSpace(req.Tool) {
-	case "source_sanity", "go_diagnostics", "cpp_diagnostics":
-		return true
-	case "shell":
-		return runnerAutonomySideEffectForBrief(brief, req) == autonomy.SideEffectReadOnly
-	default:
-		return false
-	}
-}
-
-func runnerAutonomyLooksLikeSourcePath(path string) bool {
-	switch strings.ToLower(filepath.Ext(strings.TrimSpace(path))) {
-	case ".c", ".cc", ".cpp", ".cs", ".go", ".h", ".hpp", ".java", ".js", ".jsx", ".kt", ".kts", ".php", ".py", ".rb", ".rs", ".swift", ".ts", ".tsx":
-		return true
-	default:
-		return false
-	}
 }
 
 func normalizeRequiredEditScopePolicyEvent(policy *autonomy.ContractPolicyEvent, req workspace.ToolRequest, resolution autonomy.PathRoleResolutionSet) {
@@ -8974,7 +8922,7 @@ func runnerAutonomyVerificationStatus(results []workspace.ToolResult, brief work
 
 	for i := len(results) - 1; i >= 0; i-- {
 		result := results[i]
-		if runnerAutonomyIsVerificationResult(result) {
+		if isVerificationRequest(workspace.ToolRequest{Tool: result.Tool}) {
 			if strings.TrimSpace(result.Error) != "" {
 				return "failed"
 			}
@@ -8993,10 +8941,6 @@ func runnerAutonomyVerificationStatusResolvesPostWriteObligation(status string) 
 	default:
 		return false
 	}
-}
-
-func runnerAutonomyIsVerificationResult(result workspace.ToolResult) bool {
-	return isVerificationRequest(workspace.ToolRequest{Tool: result.Tool})
 }
 
 func runnerAutonomyRequiredPathStatus(contract autonomy.AutonomyContract, results []workspace.ToolResult) []string {

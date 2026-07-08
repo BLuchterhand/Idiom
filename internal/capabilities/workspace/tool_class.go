@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"path/filepath"
 	"strings"
 
 	"idiom/internal/contracts/autonomy"
@@ -60,6 +61,81 @@ func IsSearchToolName(name string) bool {
 func IsTextSearchToolName(name string) bool {
 	switch strings.TrimSpace(name) {
 	case ToolNameSearchContent, ToolNameRg, legacyGrepToolName:
+		return true
+	default:
+		return false
+	}
+}
+
+// ToolActionClass returns the canonical autonomy action class for a workspace
+// tool name. The workspace catalog owns this projection because it owns tool
+// categories, language-tool registration, and built-in tool metadata.
+func ToolActionClass(tool string) autonomy.ActionClass {
+	tool = strings.TrimSpace(tool)
+	if tool == "" {
+		return ""
+	}
+
+	if metadata, ok := builtInToolSurfaceCatalog.lookup(tool); ok {
+		if metadata.ActionClass != "" {
+			return autonomy.CanonicalActionClass(metadata.ActionClass)
+		}
+
+		switch ToolCategory(metadata.Category) {
+		case CategoryRead:
+			return autonomy.ActionClassRead
+		case CategorySearch, CategoryDiscovery:
+			return autonomy.ActionClassSearch
+		case CategoryWrite:
+			return autonomy.ActionClassPerEditWrite
+		case CategoryVerification, CategoryShell:
+			return autonomy.ActionClassVerify
+		case CategoryMCP:
+			return autonomy.ActionClassGenericProbe
+		}
+	}
+
+	if IsLanguageToolName(tool) {
+		return autonomy.ActionClassRead
+	}
+
+	if strings.HasPrefix(tool, "mcp:") {
+		return autonomy.ActionClassGenericProbe
+	}
+
+	return ""
+}
+
+// ToolRequestActionClass classifies a concrete tool request. It refines the
+// catalog-level class with request shape for shell verification, scoped
+// list-files reads, and deliverable writes.
+func ToolRequestActionClass(req ToolRequest) autonomy.ActionClass {
+	tool := strings.TrimSpace(req.Tool)
+	switch tool {
+	case ToolNameShell:
+		if AnalyzeShellCommand(req.Command).SideEffect == autonomy.SideEffectReadOnly {
+			return autonomy.ActionClassVerify
+		}
+
+		return autonomy.ActionClassGenericProbe
+	case ToolNameTask:
+		return autonomy.ActionClassDelegate
+	case ToolNameListFiles:
+		if IsScopedInspectionRequest(req) {
+			return autonomy.ActionClassRead
+		}
+	case ToolNameWriteFile:
+		if strings.TrimSpace(req.Path) != "" && !looksLikeSourcePath(req.Path) {
+			return autonomy.ActionClassDeliverableWrite
+		}
+	}
+
+	return ToolActionClass(tool)
+}
+
+func looksLikeSourcePath(path string) bool {
+	switch strings.ToLower(filepath.Ext(strings.TrimSpace(path))) {
+	case ".c", ".cc", ".cpp", ".cs", ".go", ".h", ".hpp", ".java", ".js", ".jsx", ".kt", ".kts", ".php", ".py", ".rb", ".rs", ".swift", ".ts", ".tsx":
 		return true
 	default:
 		return false
@@ -283,7 +359,7 @@ func IsRuntimeInspectionRequest(req ToolRequest) bool {
 		return IsLanguageToolName(tool)
 	}
 
-	actionClass := autonomy.CanonicalActionClass(autonomy.TurnPhaseActionClassForToolClass(tool))
+	actionClass := ToolActionClass(tool)
 	if ToolCategory(metadata.Category) == CategoryWrite ||
 		ToolCategory(metadata.Category) == CategoryVerification ||
 		actionClass == autonomy.ActionClassVerify ||

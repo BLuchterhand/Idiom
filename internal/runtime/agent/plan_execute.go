@@ -2002,10 +2002,6 @@ func fullSourceReadFileSeen(path string, results []workspace.ToolResult) bool {
 	return false
 }
 
-func completionGateRecoveryChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) llama.ChatOptions {
-	return completionGateRecoveryChatOptionsForBackend(opts, brief, results, true)
-}
-
 func implementationRequiredPathHiddenOnlyRecoveryStall(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, reply llama.ChatMessage, priorGateRejections int, supportsNativeTools bool) bool {
 	if supportsNativeTools || priorGateRejections == 0 {
 		return false
@@ -2627,29 +2623,6 @@ func mutationReplyClaimsCompletedWorkspaceChange(reply string) bool {
 
 const sourceGroundingAdditionalReadRecoveryRetries = 2
 
-// escalateCompletionGateMessage prefixes the gate's existing error
-// text with progressively-firmer instructions so the model gets
-// clearer guidance on each retry instead of the same message N times.
-// priorRejections is the number of completion-gate rejections this
-// turn BEFORE the current one (so 0 = first rejection). Generic — no
-// task-family or project assumptions.
-//
-// Tier 0 (first rejection): pass through unchanged. Most rejections
-//
-//	resolve on first retry; extra prefix would be noise.
-//
-// Tier 1 (second rejection): mark it explicitly + remind the model
-//
-//	the gate already fired once and the next move must address the
-//	stated blocker.
-//
-// Tier 2 (third rejection): demand a
-//
-//	concrete tool call by name OR an explicit blocker statement.
-func escalateCompletionGateMessage(base string, priorRejections int) string {
-	return escalateCompletionGateMessageWithSourceRecovery(base, priorRejections, true, 5)
-}
-
 func (r *Runner) escalateCompletionGateMessageForError(base string, priorRejections int, results []workspace.ToolResult, allowedTools []string) string {
 	return escalateCompletionGateMessageWithSourceRecovery(
 		base,
@@ -2907,10 +2880,6 @@ func (r *Runner) completionGateMutationRecoveryApplies(results []workspace.ToolR
 
 	return hasPendingVerificationAfterWrites(results, r.RuntimeBrief) ||
 		sourceEditsNeedSemanticVerification(r.RuntimeBrief, results)
-}
-
-func (r *Runner) completionGateRepeatedBlockerKind(results []workspace.ToolResult) string {
-	return string(r.completionGateRepeatedViolation(results).Kind)
 }
 
 func (r *Runner) completionGateRepeatedViolation(results []workspace.ToolResult) turnViolation {
@@ -4192,30 +4161,6 @@ func prunePlanThenExecuteTerminalTextualMessages(messages []llama.ChatMessage) (
 	}
 
 	return out, droppedActions, droppedScaffolding
-}
-
-func prunePlanThenExecuteTextualToolRequestHistory(messages []llama.ChatMessage) ([]llama.ChatMessage, int) {
-	if len(messages) == 0 {
-		return messages, 0
-	}
-
-	out := make([]llama.ChatMessage, 0, len(messages))
-	dropped := 0
-
-	for _, message := range messages {
-		if planThenExecuteDropTextualToolRequestHistoryMessage(message) {
-			dropped++
-			continue
-		}
-
-		out = append(out, message)
-	}
-
-	if dropped == 0 {
-		return messages, 0
-	}
-
-	return out, dropped
 }
 
 func planThenExecuteDropTerminalTextualScaffoldingMessage(message llama.ChatMessage) bool {
@@ -9278,10 +9223,6 @@ func (r *Runner) emitPlanExecuteSubmitPlanParseRecoveryEventForParseFailure(raw 
 	})
 }
 
-func planThenExecuteReadyToSubmitChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) llama.ChatOptions {
-	return planThenExecuteReadyToSubmitChatOptionsForBackend(opts, brief, results, true)
-}
-
 func planThenExecuteNativeSubmitPlanNudge(brief workerruntime.WorkerRuntimeBrief) string {
 	required := nonEmptyRunnerStrings(brief.RequiredEditPaths, 12)
 
@@ -9417,10 +9358,6 @@ func planThenExecuteUnreadRequiredSourceChatOptions(opts llama.ChatOptions, brie
 	return opts
 }
 
-func planThenExecuteCandidateWriteOnlyRecoveryChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) llama.ChatOptions {
-	return planThenExecuteCandidateWriteOnlyRecoveryChatOptionsForBackend(opts, brief, results, true)
-}
-
 func planThenExecuteCandidateWriteOnlyRecoveryChatOptionsForBackend(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, supportsNativeTools bool) llama.ChatOptions {
 	if !planThenExecutePlannerBrief(brief) || len(brief.RequiredEditPaths) > 0 {
 		return opts
@@ -9532,10 +9469,6 @@ func planThenExecuteSourceSatisfiedRejectionAfterCoverageRejection(results []wor
 	}
 
 	return lastCoverage >= 0 && lastSourceSatisfied > lastCoverage
-}
-
-func planThenExecutePostReadinessRecoveryChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) llama.ChatOptions {
-	return planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts, brief, results, true)
 }
 
 func planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, supportsNativeTools bool) llama.ChatOptions {
@@ -9809,10 +9742,6 @@ func planThenExecuteAnchorRefreshAfterRejectedSubmitPlanPrompt(brief workerrunti
 		"For large Go/source files, raw `read_file` windows are refresh evidence but are not enough to close an invalid-anchor correction; prefer the symbol/body route for the declaration you intend to edit.",
 		"Do not call `submit_plan` again, answer `Decision: source-satisfied`, answer `<<QUESTION>>:`, or reply in prose until the bounded refresh returns.",
 	}, "\n\n")
-}
-
-func planThenExecuteRequiredWriteOnlyRecoveryChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) llama.ChatOptions {
-	return planThenExecuteRequiredWriteOnlyRecoveryChatOptionsForBackend(opts, brief, results, true)
 }
 
 func planThenExecuteRequiredWriteOnlyRecoveryChatOptionsForBackend(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, supportsNativeTools bool) llama.ChatOptions {

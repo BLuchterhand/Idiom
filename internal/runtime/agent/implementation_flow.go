@@ -1201,13 +1201,6 @@ func DirectAnswerSurfacePrefetchEligibility(surface DirectAnswerSurface) (eligib
 	return true, ""
 }
 
-// DirectAnswerSurfaceSupportsReadOnlyInvestigation reports whether the surface
-// advertises the read_only_investigation capability, meaning non-trivial
-// investigation (search + bounded source read) remains available.
-func DirectAnswerSurfaceSupportsReadOnlyInvestigation(surface DirectAnswerSurface) bool {
-	return surfaceSupportsCapability(surface, DirectAnswerSurfaceCapReadOnlyInvestigation)
-}
-
 // surfaceSupportsCapability reports whether the surface advertises the given capability.
 func surfaceSupportsCapability(surface DirectAnswerSurface, cap string) bool {
 	for _, c := range surface.Capabilities {

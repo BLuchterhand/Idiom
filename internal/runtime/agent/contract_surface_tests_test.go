@@ -12519,7 +12519,7 @@ func TestPlanExecuteCompletionGateRecoveryKeepsSubmitPlanBudget(t *testing.T) {
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		RequiredEditPaths: []string{"a.txt"},
 	}
-	got := completionGateRecoveryChatOptions(llama.ChatOptions{MaxTokens: 16384}, brief, nil)
+	got := completionGateRecoveryChatOptionsForBackend(llama.ChatOptions{MaxTokens: 16384}, brief, nil, true)
 
 	if got.MaxTokens != 768 {
 		t.Fatalf("plan-execute source-read recovery should cap to one tool call, got %d", got.MaxTokens)
@@ -12527,13 +12527,13 @@ func TestPlanExecuteCompletionGateRecoveryKeepsSubmitPlanBudget(t *testing.T) {
 
 	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10 (total lines: 10)"}}
 
-	got = completionGateRecoveryChatOptions(llama.ChatOptions{MaxTokens: 16384}, brief, results)
+	got = completionGateRecoveryChatOptionsForBackend(llama.ChatOptions{MaxTokens: 16384}, brief, results, true)
 
 	if got.MaxTokens != 4096 {
 		t.Fatalf("plan-execute existing-file recovery should cap submit_plan budget, got %d", got.MaxTokens)
 	}
 
-	got = completionGateRecoveryChatOptions(llama.ChatOptions{}, brief, results)
+	got = completionGateRecoveryChatOptionsForBackend(llama.ChatOptions{}, brief, results, true)
 	if got.MaxTokens != 4096 {
 		t.Fatalf("plan-execute existing-file recovery should default to capped submit_plan budget, got %d", got.MaxTokens)
 	}
@@ -14434,7 +14434,7 @@ func TestPlanThenExecutePostReadinessRecoveryKeepsHistoryToolsAfterAnchorRefresh
 
 func TestPlanThenExecutePostReadinessRecoverySkipsMissingPlanPathRefreshWithSourceBodyEvidence(t *testing.T) {
 	thinkingOn := true
-	opts := planThenExecutePostReadinessRecoveryChatOptions(llama.ChatOptions{
+	opts := planThenExecutePostReadinessRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:   &thinkingOn,
 		PreserveThinking: true,
 		MaxTokens:        4096,
@@ -14458,7 +14458,7 @@ func TestPlanThenExecutePostReadinessRecoverySkipsMissingPlanPathRefreshWithSour
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
 			Error:   "missing required edit path(s): `internal/workflows/productworkflow/coverage_gate.go`.",
 		},
-	})
+	}, true)
 
 	if opts.ToolChoice != "required" {
 		t.Fatalf("source-backed missing-path recovery should force submit_plan tool choice, got %q", opts.ToolChoice)
@@ -14479,7 +14479,7 @@ func TestPlanThenExecutePostReadinessRecoverySkipsMissingPlanPathRefreshWithSour
 
 func TestPlanThenExecutePostReadinessRecoveryRequiresSubmitForOutlineOnlyMissingCoverage(t *testing.T) {
 	thinkingOn := true
-	opts := planThenExecutePostReadinessRecoveryChatOptions(llama.ChatOptions{
+	opts := planThenExecutePostReadinessRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:   &thinkingOn,
 		PreserveThinking: true,
 		MaxTokens:        4096,
@@ -14503,7 +14503,7 @@ func TestPlanThenExecutePostReadinessRecoveryRequiresSubmitForOutlineOnlyMissing
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
 			Error:   "missing required edit path(s): `internal/workflows/productworkflow/coverage_gate.go`.",
 		},
-	})
+	}, true)
 
 	if opts.ToolChoice != "required" {
 		t.Fatalf("outline-only missing-coverage recovery should force submit_plan tool choice, got %q", opts.ToolChoice)
@@ -15062,7 +15062,7 @@ func TestReviewRepairCompletionGateRecoveryWithFailedEvidenceSuppressesPass(t *t
 
 func TestReviewRepairCompletionGateRecoveryForcesVisibleOutput(t *testing.T) {
 	thinkingOn := true
-	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
+	opts := completionGateRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:   &thinkingOn,
 		PreserveThinking: true,
 		MaxTokens:        8192,
@@ -15070,7 +15070,7 @@ func TestReviewRepairCompletionGateRecoveryForcesVisibleOutput(t *testing.T) {
 		TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
 		Contract:          "review_findings",
 		PermissionProfile: "plan_submission_review",
-	}, nil)
+	}, nil, true)
 
 	if opts.EnableThinking == nil || *opts.EnableThinking {
 		t.Fatalf("review-repair recovery should force visible output over hidden thinking, got %#v", opts.EnableThinking)
@@ -17614,7 +17614,7 @@ func TestDeterministicNoWriteRecoveryReadsRuntimeTargetRef(t *testing.T) {
 
 func TestPlanExecuteCandidateScopeRecoveryPreservesThinking(t *testing.T) {
 	thinkingOn := true
-	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
+	opts := completionGateRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:     &thinkingOn,
 		PreserveThinking:   true,
 		ChatTemplateKwargs: false,
@@ -17625,7 +17625,7 @@ func TestPlanExecuteCandidateScopeRecoveryPreservesThinking(t *testing.T) {
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		Contract:          "implementation_result",
 		PermissionProfile: "guarded_workspace_write",
-	}, nil)
+	}, nil, true)
 
 	if opts.EnableThinking == nil || !*opts.EnableThinking {
 		t.Fatalf("candidate-scope recovery should preserve thinking mode, got %#v", opts.EnableThinking)
@@ -17650,7 +17650,7 @@ func TestPlanExecuteCandidateScopeRecoveryPreservesThinking(t *testing.T) {
 
 func TestPlanExecuteCompletionRecoveryCapsUnreadRequiredSourceCall(t *testing.T) {
 	thinkingOn := true
-	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
+	opts := completionGateRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:   &thinkingOn,
 		PreserveThinking: true,
 		MaxTokens:        16384,
@@ -17663,7 +17663,7 @@ func TestPlanExecuteCompletionRecoveryCapsUnreadRequiredSourceCall(t *testing.T)
 	}, []workspace.ToolResult{
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "route_summary: Read A in a.go lines 1-10\n\n1:func A() {}\n"},
 		{Tool: "code_navigate", Summary: "Code navigation routed file_outline via go_file_outline", Output: "route_summary: Outlined 2 top-level declaration(s) in b.go.\n"},
-	})
+	}, true)
 
 	if opts.EnableThinking == nil || *opts.EnableThinking {
 		t.Fatalf("unread required source recovery should force thinking off for the next short tool call")
@@ -17680,7 +17680,7 @@ func TestPlanExecuteCompletionRecoveryCapsUnreadRequiredSourceCall(t *testing.T)
 
 func TestPlanExecuteCompletionRecoveryForcesVisibleUnreadSourceToolWhenAvailable(t *testing.T) {
 	thinkingOn := true
-	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
+	opts := completionGateRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:   &thinkingOn,
 		PreserveThinking: true,
 		MaxTokens:        16384,
@@ -17697,7 +17697,7 @@ func TestPlanExecuteCompletionRecoveryForcesVisibleUnreadSourceToolWhenAvailable
 		RequiredEditPaths: []string{"a.go", "b.go"},
 	}, []workspace.ToolResult{
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "route_summary: Read A in a.go lines 1-10\n\n1:func A() {}\n"},
-	})
+	}, true)
 
 	if opts.ToolChoice != "required" {
 		t.Fatalf("unread required source recovery should force a visible source-read tool call, got %q", opts.ToolChoice)
@@ -17710,7 +17710,7 @@ func TestPlanExecuteCompletionRecoveryForcesVisibleUnreadSourceToolWhenAvailable
 
 func TestPlanExecuteCandidateScopeRecoveryDropsPriorThinkingAfterRead(t *testing.T) {
 	thinkingOn := true
-	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
+	opts := completionGateRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:     &thinkingOn,
 		PreserveThinking:   true,
 		ChatTemplateKwargs: false,
@@ -17720,7 +17720,7 @@ func TestPlanExecuteCandidateScopeRecoveryDropsPriorThinkingAfterRead(t *testing
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		Contract:          "implementation_result",
 		PermissionProfile: "guarded_workspace_write",
-	}, []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 internal/surfaces/tui/app/rendering.go lines 1-120"}})
+	}, []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 internal/surfaces/tui/app/rendering.go lines 1-120"}}, true)
 
 	if opts.EnableThinking == nil || *opts.EnableThinking {
 		t.Fatalf("post-read plan-execute recovery should force visible output over hidden thinking, got %#v", opts.EnableThinking)
@@ -17741,7 +17741,7 @@ func TestPlanExecuteCandidateScopeRecoveryDropsPriorThinkingAfterRead(t *testing
 
 func TestPlanExecuteRequiredPathPostReadRecoveryCapsPlannerBudget(t *testing.T) {
 	thinkingOn := true
-	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
+	opts := completionGateRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:     &thinkingOn,
 		PreserveThinking:   true,
 		ChatTemplateKwargs: false,
@@ -17752,7 +17752,7 @@ func TestPlanExecuteRequiredPathPostReadRecoveryCapsPlannerBudget(t *testing.T) 
 		Contract:          "implementation_result",
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"},
-	}, []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 cmd/idiom/product_workflow.go lines 1530-1671"}})
+	}, []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 cmd/idiom/product_workflow.go lines 1530-1671"}}, true)
 
 	if opts.EnableThinking == nil || *opts.EnableThinking {
 		t.Fatalf("post-read required-path recovery with unread required source should force thinking off, got %#v", opts.EnableThinking)
@@ -17777,7 +17777,7 @@ func TestPlanExecuteRequiredPathPostReadRecoveryCapsPlannerBudget(t *testing.T) 
 
 func TestPlanExecuteRequiredPathPostReadRecoveryKeepsLargeBudgetForNewFile(t *testing.T) {
 	thinkingOn := true
-	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
+	opts := completionGateRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:     &thinkingOn,
 		PreserveThinking:   true,
 		ChatTemplateKwargs: false,
@@ -17789,7 +17789,7 @@ func TestPlanExecuteRequiredPathPostReadRecoveryKeepsLargeBudgetForNewFile(t *te
 		PermissionProfile: "guarded_workspace_write",
 		Objective:         "Create internal/contracts/writerroute/decision.go",
 		RequiredEditPaths: []string{"internal/contracts/writerroute/decision.go"},
-	}, []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 internal/contracts/writerroute/decision.go", Error: "path is a NEW FILE and does not exist yet"}})
+	}, []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 internal/contracts/writerroute/decision.go", Error: "path is a NEW FILE and does not exist yet"}}, true)
 
 	if opts.MaxTokens != 16384 {
 		t.Fatalf("new-file post-read recovery MaxTokens = %d, want 16384", opts.MaxTokens)
@@ -17798,7 +17798,7 @@ func TestPlanExecuteRequiredPathPostReadRecoveryKeepsLargeBudgetForNewFile(t *te
 
 func TestPlanExecuteReadyToSubmitCapsCloseoutBudget(t *testing.T) {
 	thinkingOn := true
-	opts := planThenExecuteReadyToSubmitChatOptions(llama.ChatOptions{
+	opts := planThenExecuteReadyToSubmitChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:   &thinkingOn,
 		PreserveThinking: true,
 		MaxTokens:        8192,
@@ -17810,7 +17810,7 @@ func TestPlanExecuteReadyToSubmitCapsCloseoutBudget(t *testing.T) {
 	}, []workspace.ToolResult{
 		{Tool: "read_file", Summary: "Read f1 internal/surfaces/tui/app/app.go lines 1-56 (total lines: 56)"},
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read Runner.Run in internal/runtime/agent/runner_core.go lines 88-210"},
-	})
+	}, true)
 
 	if opts.EnableThinking == nil || *opts.EnableThinking {
 		t.Fatalf("ready-to-submit closeout should force visible output over hidden thinking, got %#v", opts.EnableThinking)
@@ -17827,7 +17827,7 @@ func TestPlanExecuteReadyToSubmitCapsCloseoutBudget(t *testing.T) {
 
 func TestPlanExecuteReadyToSubmitForcesSubmitPlanOnlyWhenAvailable(t *testing.T) {
 	thinkingOn := true
-	opts := planThenExecuteReadyToSubmitChatOptions(llama.ChatOptions{
+	opts := planThenExecuteReadyToSubmitChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:   &thinkingOn,
 		PreserveThinking: true,
 		MaxTokens:        8192,
@@ -17845,7 +17845,7 @@ func TestPlanExecuteReadyToSubmitForcesSubmitPlanOnlyWhenAvailable(t *testing.T)
 	}, []workspace.ToolResult{
 		{Tool: "read_file", Summary: "Read f1 internal/surfaces/tui/app/app.go lines 1-56 (total lines: 56)"},
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read Runner.Run in internal/runtime/agent/runner_core.go lines 88-210"},
-	})
+	}, true)
 
 	if opts.ToolChoice != "required" {
 		t.Fatalf("ready-to-submit should force submit_plan tool choice, got %q", opts.ToolChoice)
@@ -18537,7 +18537,7 @@ func TestPlanExecuteOpenCandidateTerminalWaitsForUnreadContextCandidate(t *testi
 
 func TestPlanExecuteCompletionRecoveryKeepsReadsForUnreadContextCandidate(t *testing.T) {
 	thinkingOn := true
-	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
+	opts := completionGateRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:   &thinkingOn,
 		PreserveThinking: true,
 		MaxTokens:        16384,
@@ -18562,7 +18562,7 @@ func TestPlanExecuteCompletionRecoveryKeepsReadsForUnreadContextCandidate(t *tes
 			Summary: "Read f1 pkg/feature.go lines 1-80 (total lines: 80)",
 			Output:  "1:package pkg\n",
 		},
-	})
+	}, true)
 
 	if opts.ToolChoice == "required" {
 		t.Fatalf("completion recovery with unread context candidates must not force terminal submit_plan mode")
@@ -19311,42 +19311,9 @@ func TestPlanExecuteStringifiedSubmitPlanParseFailureEmitsRecoveryEventWithoutPr
 	t.Fatalf("expected plan_then_execute_submit_plan_parse_recovery event, got %#v", events)
 }
 
-func TestPlanExecuteTerminalTextualHistoryPrunesReadToolRequests(t *testing.T) {
-	messages := []llama.ChatMessage{
-		{Role: "system", Content: "base"},
-		{Role: "assistant", Content: `{"tool":"read_file","path":"a.go"}`},
-		{Role: "system", Content: "Read a.go lines 1-20"},
-		{Role: "assistant", Content: `{"tool":"code_navigate","path":"a.go","capability":"read_symbol","pattern":"Run"}`},
-		{Role: "assistant", Content: `{"tool":"submit_plan","rationale":"ok","edits":[]}`},
-		{Role: "assistant", Content: `{"tool":"read_file","path":"a.go""start_line":1}`},
-	}
-
-	pruned, dropped := prunePlanThenExecuteTextualToolRequestHistory(messages)
-	if dropped != 3 {
-		t.Fatalf("dropped = %d, want 3; pruned=%#v", dropped, pruned)
-	}
-
-	joined := ""
-	for _, message := range pruned {
-		joined += message.Content + "\n"
-	}
-
-	if strings.Contains(joined, `"tool":"read_file"`) || strings.Contains(joined, `"tool":"code_navigate"`) {
-		t.Fatalf("terminal history should drop prior read/navigation JSON requests, got:\n%s", joined)
-	}
-
-	if !strings.Contains(joined, "Read a.go lines") {
-		t.Fatalf("terminal history must keep tool result evidence, got:\n%s", joined)
-	}
-
-	if !strings.Contains(joined, `"tool":"submit_plan"`) {
-		t.Fatalf("terminal history should keep submit_plan attempts for correction, got:\n%s", joined)
-	}
-}
-
 func TestPlanExecuteReadyToSubmitRaisesBudgetAfterSourceReadCap(t *testing.T) {
 	thinkingOff := false
-	opts := planThenExecuteReadyToSubmitChatOptions(llama.ChatOptions{
+	opts := planThenExecuteReadyToSubmitChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:   &thinkingOff,
 		PreserveThinking: false,
 		MaxTokens:        768,
@@ -19360,7 +19327,7 @@ func TestPlanExecuteReadyToSubmitRaisesBudgetAfterSourceReadCap(t *testing.T) {
 	}, []workspace.ToolResult{
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640"},
 		{Tool: "read_file", Summary: "Read f2 cmd/idiom/product_workflow_test.go lines 5257-5270"},
-	})
+	}, true)
 
 	if opts.MaxTokens != 4096 {
 		t.Fatalf("ready-to-submit should raise inherited source-read budget to planner budget, got %d", opts.MaxTokens)
@@ -19373,7 +19340,7 @@ func TestPlanExecuteReadyToSubmitRaisesBudgetAfterSourceReadCap(t *testing.T) {
 
 func TestPlanExecuteReadyToSubmitUsesLargeBudgetForFourExistingFiles(t *testing.T) {
 	thinkingOff := false
-	opts := planThenExecuteReadyToSubmitChatOptions(llama.ChatOptions{
+	opts := planThenExecuteReadyToSubmitChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:   &thinkingOff,
 		PreserveThinking: false,
 		MaxTokens:        4096,
@@ -19389,7 +19356,7 @@ func TestPlanExecuteReadyToSubmitUsesLargeBudgetForFourExistingFiles(t *testing.
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read TestProductTDDCoverageGate in cmd/idiom/product_workflow_test.go lines 5257-5270"},
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-120"},
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read TestCoverageGate in internal/workflows/productworkflow/coverage_gate_test.go lines 1-80"},
-	})
+	}, true)
 
 	if opts.MaxTokens != 16384 {
 		t.Fatalf("ready-to-submit should use large budget for four-file textual submit_plan output, got %d", opts.MaxTokens)
@@ -19402,7 +19369,7 @@ func TestPlanExecuteReadyToSubmitUsesLargeBudgetForFourExistingFiles(t *testing.
 
 func TestPlanExecuteReadyToSubmitKeepsBoundedBudgetForThreeExistingFiles(t *testing.T) {
 	thinkingOff := false
-	opts := planThenExecuteReadyToSubmitChatOptions(llama.ChatOptions{
+	opts := planThenExecuteReadyToSubmitChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:   &thinkingOff,
 		PreserveThinking: false,
 		MaxTokens:        4096,
@@ -19417,7 +19384,7 @@ func TestPlanExecuteReadyToSubmitKeepsBoundedBudgetForThreeExistingFiles(t *test
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640"},
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read TestProductTDDCoverageGate in cmd/idiom/product_workflow_test.go lines 5257-5270"},
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-120"},
-	})
+	}, true)
 
 	if opts.MaxTokens != 8192 {
 		t.Fatalf("ready-to-submit should keep bounded budget for three existing files, got %d", opts.MaxTokens)
@@ -19426,7 +19393,7 @@ func TestPlanExecuteReadyToSubmitKeepsBoundedBudgetForThreeExistingFiles(t *test
 
 func TestPlanExecuteParseRecoveryUsesLargeBudgetForFourRequiredPaths(t *testing.T) {
 	thinkingOff := false
-	opts := planThenExecuteRequiredWriteOnlyRecoveryChatOptions(llama.ChatOptions{
+	opts := planThenExecuteRequiredWriteOnlyRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:   &thinkingOff,
 		PreserveThinking: false,
 		MaxTokens:        8192,
@@ -19443,7 +19410,7 @@ func TestPlanExecuteParseRecoveryUsesLargeBudgetForFourRequiredPaths(t *testing.
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-120"},
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read TestCoverageGate in internal/workflows/productworkflow/coverage_gate_test.go lines 1-80"},
 		{Tool: "tool_parse", Summary: "Malformed tool request rejected", Error: "decode tool request: unexpected end of JSON input"},
-	})
+	}, true)
 
 	if opts.MaxTokens != 16384 {
 		t.Fatalf("four-path parse recovery should raise submit_plan retry budget above truncation ceiling, got %d", opts.MaxTokens)
@@ -19482,7 +19449,7 @@ func TestPlanExecuteReadyToSubmitKeepsLargeBudgetForNewFileOrWholeFile(t *testin
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			opts := planThenExecuteReadyToSubmitChatOptions(llama.ChatOptions{
+			opts := planThenExecuteReadyToSubmitChatOptionsForBackend(llama.ChatOptions{
 				EnableThinking:   &thinkingOff,
 				PreserveThinking: false,
 				MaxTokens:        4096,
@@ -19491,7 +19458,7 @@ func TestPlanExecuteReadyToSubmitKeepsLargeBudgetForNewFileOrWholeFile(t *testin
 			}, brief, []workspace.ToolResult{
 				{Tool: "read_file", Summary: "Read f1 internal/workflows/productworkflow/coverage_gate_report.go", Error: "path is a NEW FILE and does not exist yet"},
 				{Tool: "read_file", Summary: "Read f2 internal/workflows/productworkflow/coverage_gate_report_test.go", Error: "path is a NEW FILE and does not exist yet"},
-			})
+			}, true)
 
 			if opts.MaxTokens != 16384 {
 				t.Fatalf("large-body/new-file submit_plan should preserve full budget, got %d", opts.MaxTokens)
@@ -19502,7 +19469,7 @@ func TestPlanExecuteReadyToSubmitKeepsLargeBudgetForNewFileOrWholeFile(t *testin
 
 func TestPlanExecuteRejectedPlanCorrectionUsesLargeBudgetForFourExistingFiles(t *testing.T) {
 	thinkingOff := false
-	opts := planThenExecutePostReadinessRecoveryChatOptions(llama.ChatOptions{
+	opts := planThenExecutePostReadinessRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:   &thinkingOff,
 		PreserveThinking: false,
 		MaxTokens:        4096,
@@ -19520,7 +19487,7 @@ func TestPlanExecuteRejectedPlanCorrectionUsesLargeBudgetForFourExistingFiles(t 
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read TestCoverageGate in internal/workflows/productworkflow/coverage_gate_test.go lines 1-80"},
 		{Tool: "submit_plan", Summary: "submit_plan rejected: required edit path coverage mismatch", Error: "missing required edit path(s): `cmd/idiom/product_workflow_test.go`, `internal/workflows/productworkflow/coverage_gate.go`, `internal/workflows/productworkflow/coverage_gate_test.go`; invalid edit anchor(s): `cmd/idiom/product_workflow.go: old_text not found in current source`; placeholder edit body path(s): `cmd/idiom/product_workflow.go: old_text contains placeholder marker \"... existing code ...\"`"},
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read runProductTDD in cmd/idiom/product_workflow.go lines 1396-1671"},
-	})
+	}, true)
 
 	if opts.MaxTokens != 16384 {
 		t.Fatalf("correction-only four-file submit_plan recovery should use large budget, got %d", opts.MaxTokens)
@@ -19533,7 +19500,7 @@ func TestPlanExecuteRejectedPlanCorrectionUsesLargeBudgetForFourExistingFiles(t 
 
 func TestPlanExecuteUnscopedRejectedPlanCorrectionUsesLargeBudget(t *testing.T) {
 	thinkingOff := false
-	opts := planThenExecutePostReadinessRecoveryChatOptions(llama.ChatOptions{
+	opts := planThenExecutePostReadinessRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:   &thinkingOff,
 		PreserveThinking: false,
 		MaxTokens:        4096,
@@ -19547,7 +19514,7 @@ func TestPlanExecuteUnscopedRejectedPlanCorrectionUsesLargeBudget(t *testing.T) 
 		{Tool: "read_file", Summary: "Read f1 internal/workflows/productworkflow/coverage_gate.go lines 1-391", Output: "package productworkflow\n"},
 		{Tool: "read_file", Summary: "Read f2 cmd/idiom/product_workflow.go lines 1-180", Output: "package main\n"},
 		{Tool: "submit_plan", Summary: "submit_plan rejected", Error: "edits[0]: edit would not change internal/workflows/productworkflow/coverage_gate.go; submit real edits, or answer `Decision: source-satisfied` with current-state evidence when no changes are needed"},
-	})
+	}, true)
 
 	if opts.MaxTokens != 16384 {
 		t.Fatalf("unscoped candidate correction should allow full textual submit_plan budget, got %d", opts.MaxTokens)
@@ -19560,7 +19527,7 @@ func TestPlanExecuteUnscopedRejectedPlanCorrectionUsesLargeBudget(t *testing.T) 
 
 func TestPlanExecuteRejectedPlanCorrectionKeepsLargeBudgetForWholeFile(t *testing.T) {
 	thinkingOff := false
-	opts := planThenExecutePostReadinessRecoveryChatOptions(llama.ChatOptions{
+	opts := planThenExecutePostReadinessRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:   &thinkingOff,
 		PreserveThinking: false,
 		MaxTokens:        4096,
@@ -19577,7 +19544,7 @@ func TestPlanExecuteRejectedPlanCorrectionKeepsLargeBudgetForWholeFile(t *testin
 		{Tool: "read_file", Summary: "Read f2 internal/workflows/productworkflow/coverage_gate_report_test.go lines 1-40"},
 		{Tool: "read_file", Summary: "Read f3 internal/workflows/productworkflow/coverage_gate_fixture.json lines 1-80"},
 		{Tool: "submit_plan", Summary: "submit_plan rejected: invalid edit shape", Error: "replace_all requires a full file body for internal/workflows/productworkflow/coverage_gate_fixture.json"},
-	})
+	}, true)
 
 	if opts.MaxTokens != 16384 {
 		t.Fatalf("whole-file correction should preserve full submit_plan budget, got %d", opts.MaxTokens)
@@ -19626,7 +19593,7 @@ func TestPlanExecuteTextualFallbackUsesLargeBudgetForFourExistingFiles(t *testin
 
 func TestPlanExecuteRequiredPathSymbolReadRecoveryCapsPlannerBudget(t *testing.T) {
 	thinkingOn := true
-	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
+	opts := completionGateRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:     &thinkingOn,
 		PreserveThinking:   true,
 		ChatTemplateKwargs: false,
@@ -19641,7 +19608,7 @@ func TestPlanExecuteRequiredPathSymbolReadRecoveryCapsPlannerBudget(t *testing.T
 		Tool:    "code_navigate",
 		Summary: "Code navigation routed read_symbol via go_read_symbol",
 		Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
-	}})
+	}}, true)
 
 	if opts.PreserveThinking {
 		t.Fatalf("symbol-read required-path recovery should stop preserving prior hidden reasoning")
@@ -19654,7 +19621,7 @@ func TestPlanExecuteRequiredPathSymbolReadRecoveryCapsPlannerBudget(t *testing.T
 
 func TestPlanExecuteRequiredPathAllSourcesReadRecoveryKeepsPlannerBudget(t *testing.T) {
 	thinkingOn := true
-	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
+	opts := completionGateRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:     &thinkingOn,
 		PreserveThinking:   true,
 		ChatTemplateKwargs: false,
@@ -19676,7 +19643,7 @@ func TestPlanExecuteRequiredPathAllSourcesReadRecoveryKeepsPlannerBudget(t *test
 			Summary: "Code navigation routed read_symbol via go_read_symbol",
 			Output:  "route_summary: Read TestProductTDDCoverageGate in cmd/idiom/product_workflow_test.go lines 400-460\n\n400:func TestProductTDDCoverageGate() {}\n",
 		},
-	})
+	}, true)
 
 	if opts.EnableThinking == nil || *opts.EnableThinking {
 		t.Fatalf("all-source recovery should force visible submit_plan output over hidden thinking, got %#v", opts.EnableThinking)
@@ -19693,7 +19660,7 @@ func TestPlanExecuteRequiredPathAllSourcesReadRecoveryKeepsPlannerBudget(t *test
 
 func TestPlanExecuteStrictVisibleActionOverridesThinkingFloor(t *testing.T) {
 	thinkingOn := true
-	opts := planThenExecuteReadyToSubmitChatOptions(llama.ChatOptions{
+	opts := planThenExecuteReadyToSubmitChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:     &thinkingOn,
 		PreserveThinking:   true,
 		ChatTemplateKwargs: false,
@@ -19709,7 +19676,7 @@ func TestPlanExecuteStrictVisibleActionOverridesThinkingFloor(t *testing.T) {
 	}, []workspace.ToolResult{
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1396-1671\n1396:func runProductTDD() {}"},
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "route_summary: Read TestProductLintFailsOnInvalidTDDCoverageTier in cmd/idiom/product_workflow_test.go lines 5300-5480\n5300:func TestProductLintFailsOnInvalidTDDCoverageTier(t *testing.T) {}"},
-	})
+	}, true)
 
 	if opts.EnableThinking == nil || *opts.EnableThinking {
 		t.Fatalf("strict plan-execute visible action should disable thinking even with a thinking-floor route, got %#v", opts.EnableThinking)
@@ -19730,7 +19697,7 @@ func TestPlanExecuteStrictVisibleActionOverridesThinkingFloor(t *testing.T) {
 
 func TestPlanExecuteCandidateReadyKeepsUnreadCandidateReadTools(t *testing.T) {
 	thinkingOn := true
-	opts := planThenExecuteReadyToSubmitChatOptions(llama.ChatOptions{
+	opts := planThenExecuteReadyToSubmitChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:     &thinkingOn,
 		PreserveThinking:   true,
 		ChatTemplateKwargs: false,
@@ -19750,7 +19717,7 @@ func TestPlanExecuteCandidateReadyKeepsUnreadCandidateReadTools(t *testing.T) {
 		Tool:    "read_file",
 		Summary: "Read f1 pkg/feature.go lines 1-4 (total lines: 4)",
 		Output:  "1:package pkg\n2:\n3:func Hardened() bool { return true }\n",
-	}})
+	}}, true)
 
 	if !chatOptionsExposeTool(opts, "read_file") || !chatOptionsExposeTool(opts, "code_navigate") || !chatOptionsExposeTool(opts, "submit_plan") {
 		t.Fatalf("candidate readiness must keep read tools visible while an allowed candidate remains unread, got %#v", opts.Tools)
@@ -19817,7 +19784,7 @@ func TestPlanExecuteContextPackCandidateReadyFiltersSubmitPlanOnly(t *testing.T)
 
 func TestPlanExecuteCandidateWriteOnlyRecoveryForcesVisibleSubmitPlanAfterRead(t *testing.T) {
 	thinkingOn := true
-	opts := planThenExecuteCandidateWriteOnlyRecoveryChatOptions(llama.ChatOptions{
+	opts := planThenExecuteCandidateWriteOnlyRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:     &thinkingOn,
 		PreserveThinking:   true,
 		ChatTemplateKwargs: false,
@@ -19832,7 +19799,7 @@ func TestPlanExecuteCandidateWriteOnlyRecoveryForcesVisibleSubmitPlanAfterRead(t
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		Contract:          "implementation_result",
 		PermissionProfile: "guarded_workspace_write",
-	}, []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 internal/surfaces/tui/app/rendering.go lines 1-120"}})
+	}, []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 internal/surfaces/tui/app/rendering.go lines 1-120"}}, true)
 
 	if opts.EnableThinking == nil || *opts.EnableThinking {
 		t.Fatalf("write-only plan-execute recovery should force visible submit_plan output over hidden thinking, got %#v", opts.EnableThinking)
@@ -19861,7 +19828,7 @@ func TestPlanExecuteCandidateWriteOnlyRecoveryForcesVisibleSubmitPlanAfterRead(t
 
 func TestPlanExecuteRequiredWriteOnlyRecoveryForcesVisibleSubmitPlan(t *testing.T) {
 	thinkingOn := true
-	opts := planThenExecuteRequiredWriteOnlyRecoveryChatOptions(llama.ChatOptions{
+	opts := planThenExecuteRequiredWriteOnlyRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:     &thinkingOn,
 		PreserveThinking:   true,
 		ChatTemplateKwargs: false,
@@ -19877,7 +19844,7 @@ func TestPlanExecuteRequiredWriteOnlyRecoveryForcesVisibleSubmitPlan(t *testing.
 		Contract:          "implementation_result",
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"},
-	}, []workspace.ToolResult{{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol"}})
+	}, []workspace.ToolResult{{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol"}}, true)
 
 	if opts.EnableThinking == nil || *opts.EnableThinking {
 		t.Fatalf("required-path recovery should force visible submit_plan output over hidden thinking, got %#v", opts.EnableThinking)
@@ -19906,7 +19873,7 @@ func TestPlanExecuteRequiredWriteOnlyRecoveryForcesVisibleSubmitPlan(t *testing.
 
 func TestPlanExecutePostReadinessRecoveryAllowsOnlyAnchorRefreshBeforeCorrectedPlan(t *testing.T) {
 	thinkingOn := true
-	opts := planThenExecutePostReadinessRecoveryChatOptions(llama.ChatOptions{
+	opts := planThenExecutePostReadinessRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:   &thinkingOn,
 		PreserveThinking: true,
 		MaxTokens:        4096,
@@ -19930,7 +19897,7 @@ func TestPlanExecutePostReadinessRecoveryAllowsOnlyAnchorRefreshBeforeCorrectedP
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
 			Error:   "invalid edit anchor(s): `cmd/idiom/product_workflow.go: old_text not found in current source`.",
 		},
-	})
+	}, true)
 
 	if opts.ToolChoice != "required" {
 		t.Fatalf("anchor-refresh recovery should force a parser-readable tool request, got %q", opts.ToolChoice)
@@ -20252,7 +20219,7 @@ func TestPlanExecuteVariedRejectedSubmitPlanStreakForcesAnchorRefresh(t *testing
 		t.Fatalf("anchor refresh must not expose submit_plan terminal option: %#v", state.TerminalOptions)
 	}
 
-	opts := planThenExecutePostReadinessRecoveryChatOptions(llama.ChatOptions{
+	opts := planThenExecutePostReadinessRecoveryChatOptionsForBackend(llama.ChatOptions{
 		MaxTokens: 8192,
 		Tools: []llama.Tool{
 			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
@@ -20260,7 +20227,8 @@ func TestPlanExecuteVariedRejectedSubmitPlanStreakForcesAnchorRefresh(t *testing
 			{Type: "function", Function: llama.ToolFunction{Name: "code_navigate"}},
 		},
 		ToolChoice: "auto",
-	}, brief, results)
+	}, brief, results, true)
+
 	if opts.MaxTokens != planThenExecuteAnchorRefreshMaxTokens {
 		t.Fatalf("anchor refresh retry budget = %d, want %d", opts.MaxTokens, planThenExecuteAnchorRefreshMaxTokens)
 	}
@@ -21407,7 +21375,7 @@ func TestPlanExecutePostReadinessRecoveryAllowsCandidateAnchorRefresh(t *testing
 			Error:   "invalid edit anchor(s): `internal/workflows/productworkflow/coverage_gate.go: old_text not found in current source`, `cmd/idiom/product_workflow.go: old_text not found in current source`.",
 		},
 	}
-	opts := planThenExecutePostReadinessRecoveryChatOptions(llama.ChatOptions{
+	opts := planThenExecutePostReadinessRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:   &thinkingOn,
 		PreserveThinking: true,
 		MaxTokens:        4096,
@@ -21418,7 +21386,7 @@ func TestPlanExecutePostReadinessRecoveryAllowsCandidateAnchorRefresh(t *testing
 			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
 		},
 		ToolChoice: "auto",
-	}, brief, results)
+	}, brief, results, true)
 
 	if opts.ToolChoice != "required" {
 		t.Fatalf("candidate anchor-refresh recovery should force a parser-readable tool request, got %q", opts.ToolChoice)
@@ -21435,7 +21403,7 @@ func TestPlanExecutePostReadinessRecoveryAllowsCandidateAnchorRefresh(t *testing
 
 func TestPlanExecutePostReadinessRecoveryAllowsSyntaxPreflightRefresh(t *testing.T) {
 	thinkingOn := true
-	opts := planThenExecutePostReadinessRecoveryChatOptions(llama.ChatOptions{
+	opts := planThenExecutePostReadinessRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:   &thinkingOn,
 		PreserveThinking: true,
 		MaxTokens:        4096,
@@ -21459,7 +21427,7 @@ func TestPlanExecutePostReadinessRecoveryAllowsSyntaxPreflightRefresh(t *testing
 			Summary: "submit_plan rejected",
 			Error:   "edits[0]: preflight syntax validation failed for cmd/idiom/product_workflow.go at line 100: ./cmd/idiom/product_workflow.go:100:6: expected '(', found runProductValidateArtifact",
 		},
-	})
+	}, true)
 
 	if opts.ToolChoice != "required" {
 		t.Fatalf("syntax-refresh recovery should force a parser-readable tool request, got %q", opts.ToolChoice)
@@ -21476,7 +21444,7 @@ func TestPlanExecutePostReadinessRecoveryAllowsSyntaxPreflightRefresh(t *testing
 
 func TestPlanExecutePostReadinessRecoveryForcesCorrectedSubmitPlanAfterAnchorRefresh(t *testing.T) {
 	thinkingOn := true
-	opts := planThenExecutePostReadinessRecoveryChatOptions(llama.ChatOptions{
+	opts := planThenExecutePostReadinessRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:   &thinkingOn,
 		PreserveThinking: true,
 		MaxTokens:        4096,
@@ -21501,7 +21469,7 @@ func TestPlanExecutePostReadinessRecoveryForcesCorrectedSubmitPlanAfterAnchorRef
 			Error:   "invalid edit anchor(s): `cmd/idiom/product_workflow.go: old_text not found in current source`.",
 		},
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640"},
-	})
+	}, true)
 
 	if opts.ToolChoice != "required" {
 		t.Fatalf("corrected-plan recovery should require submit_plan after anchor refresh, got %q", opts.ToolChoice)
@@ -21522,16 +21490,16 @@ func TestPlanExecuteRuntimeRecoverySequencePreservesNewFilePlannerBudget(t *test
 		RequiredEditPaths: []string{"internal/contracts/writerroute/decision.go"},
 	}
 	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 internal/contracts/writerroute/decision.go", Error: "path is a NEW FILE and does not exist yet"}}
-	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
+	opts := completionGateRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:     &thinkingOn,
 		PreserveThinking:   true,
 		ChatTemplateKwargs: false,
 		MaxTokens:          16384,
 		Tools:              []llama.Tool{{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}}},
 		ToolChoice:         "auto",
-	}, brief, results)
+	}, brief, results, true)
 
-	opts = planThenExecuteRequiredWriteOnlyRecoveryChatOptions(opts, brief, results)
+	opts = planThenExecuteRequiredWriteOnlyRecoveryChatOptionsForBackend(opts, brief, results, true)
 
 	if opts.MaxTokens != 16384 {
 		t.Fatalf("real recovery option sequence should preserve new-file planner budget, got %d", opts.MaxTokens)
@@ -21539,7 +21507,7 @@ func TestPlanExecuteRuntimeRecoverySequencePreservesNewFilePlannerBudget(t *test
 }
 
 func TestPlanExecuteCandidateWriteOnlyRecoveryDoesNotForceWithoutReadEvidence(t *testing.T) {
-	opts := planThenExecuteCandidateWriteOnlyRecoveryChatOptions(llama.ChatOptions{
+	opts := planThenExecuteCandidateWriteOnlyRecoveryChatOptionsForBackend(llama.ChatOptions{
 		MaxTokens:  2048,
 		Tools:      []llama.Tool{{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}}},
 		ToolChoice: "auto",
@@ -21547,7 +21515,7 @@ func TestPlanExecuteCandidateWriteOnlyRecoveryDoesNotForceWithoutReadEvidence(t 
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		Contract:          "implementation_result",
 		PermissionProfile: "guarded_workspace_write",
-	}, []workspace.ToolResult{{Tool: "context_pack", Summary: "candidate packet"}})
+	}, []workspace.ToolResult{{Tool: "context_pack", Summary: "candidate packet"}}, true)
 
 	if opts.ToolChoice != "auto" {
 		t.Fatalf("candidate recovery without a source read should not force tool choice, got %q", opts.ToolChoice)
@@ -22549,7 +22517,7 @@ func TestCompletionGateRecoveryPromptFallsBackAfterEmptyContextPack(t *testing.T
 
 func TestCompletionGateRecoveryChatOptionsPreservesDirectMutationModelMode(t *testing.T) {
 	thinkingOn := true
-	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
+	opts := completionGateRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:     &thinkingOn,
 		PreserveThinking:   true,
 		ChatTemplateKwargs: false,
@@ -22560,7 +22528,7 @@ func TestCompletionGateRecoveryChatOptionsPreservesDirectMutationModelMode(t *te
 		TaskFamily:        "implementation",
 		Contract:          "implementation_result",
 		PermissionProfile: "guarded_workspace_write",
-	}, []workspace.ToolResult{{Tool: "context_pack", Summary: "context"}})
+	}, []workspace.ToolResult{{Tool: "context_pack", Summary: "context"}}, true)
 
 	if opts.EnableThinking == nil || !*opts.EnableThinking {
 		t.Fatalf("direct mutation recovery should preserve thinking mode, got %#v", opts.EnableThinking)
@@ -22585,7 +22553,7 @@ func TestCompletionGateRecoveryChatOptionsPreservesDirectMutationModelMode(t *te
 
 func TestCompletionGateRecoveryChatOptionsForcesVisibleToolAfterConcreteRead(t *testing.T) {
 	thinkingOn := true
-	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
+	opts := completionGateRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:     &thinkingOn,
 		PreserveThinking:   true,
 		ChatTemplateKwargs: false,
@@ -22596,7 +22564,7 @@ func TestCompletionGateRecoveryChatOptionsForcesVisibleToolAfterConcreteRead(t *
 		TaskFamily:        "implementation",
 		Contract:          "implementation_result",
 		PermissionProfile: "guarded_workspace_write",
-	}, []workspace.ToolResult{{Tool: "read_file", Summary: "Read internal/surfaces/tui/app/rendering.go", Output: "rightInfo := statusStyle.Render(...) "}})
+	}, []workspace.ToolResult{{Tool: "read_file", Summary: "Read internal/surfaces/tui/app/rendering.go", Output: "rightInfo := statusStyle.Render(...) "}}, true)
 
 	if opts.EnableThinking == nil || !*opts.EnableThinking {
 		t.Fatalf("post-read mutation recovery should keep current-response thinking available, got %#v", opts.EnableThinking)
@@ -22621,7 +22589,7 @@ func TestCompletionGateRecoveryChatOptionsForcesVisibleToolAfterConcreteRead(t *
 
 func TestCompletionGateRecoveryChatOptionsPreservesCurrentThinkingForDirectRequiredPaths(t *testing.T) {
 	thinkingOn := true
-	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
+	opts := completionGateRecoveryChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:     &thinkingOn,
 		PreserveThinking:   true,
 		ChatTemplateKwargs: false,
@@ -22640,7 +22608,7 @@ func TestCompletionGateRecoveryChatOptionsPreservesCurrentThinkingForDirectRequi
 	}, []workspace.ToolResult{
 		{Tool: "read_file", Summary: "Read internal/workflows/productworkflow/coverage_gate.go lines 1-220"},
 		{Tool: "context_query", Summary: "Answered query for ValidatePRDTDDObligationCrossLinks"},
-	})
+	}, true)
 
 	if opts.EnableThinking == nil || !*opts.EnableThinking {
 		t.Fatalf("direct required-path recovery should keep current-response thinking available, got %#v", opts.EnableThinking)
@@ -30515,7 +30483,7 @@ func TestPlanExecuteCompletionBlockerKindDistinguishesInvalidSubmitPlan(t *testi
 		},
 	}
 
-	if got := runner.completionGateRepeatedBlockerKind(results); got != "completion_gate_submit_plan_invalid_repeated" {
+	if got := string(runner.completionGateRepeatedViolation(results).Kind); got != "completion_gate_submit_plan_invalid_repeated" {
 		t.Fatalf("completion blocker kind = %q, want submit-plan invalid", got)
 	}
 }
@@ -31621,7 +31589,7 @@ func TestDirectAnswerSurfaceForBriefFiltersProtocolAndMutationTools(t *testing.T
 		}
 	}
 
-	if !DirectAnswerSurfaceSupportsReadOnlyInvestigation(surface) {
+	if !surfaceSupportsCapability(surface, DirectAnswerSurfaceCapReadOnlyInvestigation) {
 		t.Fatal("direct-answer surface should advertise read-only investigation")
 	}
 }

@@ -160,14 +160,14 @@ func TestRuntimeReadOnlyInvestigationToolNamesKeepsGeneralLaneDiagnostics(t *tes
 	}
 }
 
-func TestRuntimeReadOnlyInvestigationToolActionClassesMatchAutonomy(t *testing.T) {
+func TestRuntimeReadOnlyInvestigationToolActionClassesUseWorkspaceProjection(t *testing.T) {
 	for _, tool := range RuntimeReadOnlyInvestigationToolNames() {
 		if strings.HasPrefix(tool, "mcp:") {
 			continue
 		}
 
-		switch got := autonomy.TurnPhaseActionClassForToolClass(tool); got {
-		case autonomy.ActionClassRead, autonomy.ActionClassSearch, autonomy.ActionClassGenericProbe:
+		switch got := ToolActionClass(tool); got {
+		case autonomy.ActionClassRead, autonomy.ActionClassSearch, autonomy.ActionClassGenericProbe, autonomy.ActionClassDelegate:
 		default:
 			t.Fatalf("%s is in read-only investigation projection with non-investigation action class %q", tool, got)
 		}
