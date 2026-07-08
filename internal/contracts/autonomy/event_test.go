@@ -205,7 +205,7 @@ func TestToolPolicyDecisionEventValidatesReadOnlySidecarCorrelation(t *testing.T
 	event, err := NewToolPolicyDecisionEvent(contract, ContractPolicyEvent{
 		ToolCallID:        "tool-001",
 		ToolName:          "context_pack",
-		ActionClass:       ActionClassSearch,
+		ActionClass:       ActionClass("broad_inspection"),
 		ActionKey:         "search:context_pack:semantic_discovery",
 		Transport:         ToolTransportSidecarCall,
 		Capability:        CapabilitySemanticDiscovery,
@@ -258,6 +258,21 @@ func TestToolPolicyDecisionEventValidatesReadOnlySidecarCorrelation(t *testing.T
 	}, occurredAt, 2)
 	if err == nil || !strings.Contains(err.Error(), "correlation.tool_call_id") {
 		t.Fatalf("expected correlation mismatch validation error, got %v", err)
+	}
+
+	_, err = NewToolPolicyDecisionEvent(contract, ContractPolicyEvent{
+		ToolCallID:      "tool-001",
+		ToolName:        "context_pack",
+		ActionClass:     ActionClass("invented_action"),
+		Decision:        PolicyObserve,
+		Transport:       ToolTransportSidecarCall,
+		Capability:      CapabilitySemanticDiscovery,
+		SideEffect:      SideEffectReadOnly,
+		ReasonCode:      "observe_only_passive_policy",
+		ArgumentsDigest: "sha256:example",
+	}, occurredAt, 3)
+	if err == nil || !strings.Contains(err.Error(), "policy.action_class") {
+		t.Fatalf("expected invalid action class validation error, got %v", err)
 	}
 }
 

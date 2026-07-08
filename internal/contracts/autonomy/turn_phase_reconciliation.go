@@ -120,15 +120,8 @@ func (r *turnPhaseSurfaceReconciler) checkIdentity() {
 func (r *turnPhaseSurfaceReconciler) checkToolVisibility() {
 	callable := TurnPhaseCallableTools(r.phase)
 	for _, tool := range r.surface.CallableTools {
-		actionClass := TurnPhaseActionClassForTool(tool)
-		if actionClass != "" && stringSetContains(r.phase.ActionPolicy.InvalidActionClasses, actionClass) {
-			r.add(tool, actionClass, "turn_phase.tool_visibility.invalid_action_class", "surface advertised callable tool whose action class is invalid in turn_phase_contract")
-
-			continue
-		}
-
 		if len(callable) > 0 && !stringSetContains(callable, tool) {
-			r.add(tool, actionClass, "turn_phase.tool_visibility.disallowed_tool", "surface advertised callable tool absent from turn_phase_contract")
+			r.add(tool, "", "turn_phase.tool_visibility.disallowed_tool", "surface advertised callable tool absent from turn_phase_contract")
 		}
 	}
 }

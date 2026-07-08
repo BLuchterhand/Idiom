@@ -909,6 +909,10 @@ func (e Event) validatePayload(problems *validationProblems) {
 			problems.Add("policy.side_effect is invalid")
 		}
 
+		if e.Policy.ActionClass != "" && !ValidActionClass(e.Policy.ActionClass) {
+			problems.Add("policy.action_class is invalid")
+		}
+
 		for i, match := range e.Policy.PathRoles {
 			if match.Role != "" && !validPathRole(match.Role) {
 				problems.Addf("policy.path_roles[%d].role is invalid", i)
@@ -1294,6 +1298,10 @@ func (p *ContractPolicyEvent) normalize() {
 	p.ToolCallID = strings.TrimSpace(p.ToolCallID)
 	p.ToolName = strings.TrimSpace(p.ToolName)
 	p.PackID = ContractPackID(strings.TrimSpace(string(p.PackID)))
+	if strings.TrimSpace(string(p.ActionClass)) != "" {
+		p.ActionClass = CanonicalActionClass(p.ActionClass)
+	}
+	p.ActionKey = strings.TrimSpace(p.ActionKey)
 	p.Confidence = strings.TrimSpace(p.Confidence)
 	p.ArgumentsSummary = strings.TrimSpace(p.ArgumentsSummary)
 	p.ArgumentsDigest = strings.TrimSpace(p.ArgumentsDigest)

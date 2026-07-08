@@ -699,17 +699,11 @@ func (s *eventAuditState) addTurnPhaseContract(event Event, phase TurnPhaseContr
 	incrementStringMap(&s.report.TurnPhaseCoverage.PhaseCounts, phase.PhaseID)
 	incrementStringMap(&s.report.TurnPhaseCoverage.EnforcementModeCounts, phase.EnforcementMode)
 
-	submitPlanClass := ActionClassToken(ActionClassSubmitPlan)
-	if stringSetContains(phase.ActionPolicy.AllowedActionClasses, submitPlanClass) &&
-		!stringSetContains(phase.RuntimeCall.ExpressibleActionClasses, submitPlanClass) {
-
-		s.addTurnPhaseContradiction(event, phase, "", submitPlanClass, "phase allows submit_plan but runtime_call cannot express submit_plan")
-	}
-
-	if strings.EqualFold(phase.RuntimeCall.ToolTransportMode, "textual") {
-		tools := TurnPhaseCallableTools(phase)
-		if textualPhaseAdvertisesUnexpressibleManifestTool(phase, tools) {
-			s.addTurnPhaseContradiction(event, phase, strings.Join(tools, ","), "", "textual phase advertised manifest-visible allowed_tools")
+	if len(phase.RuntimeCall.ExpressibleActionClasses) > 0 {
+		for _, actionClass := range phase.ActionPolicy.AllowedActionClasses {
+			if !stringSetContains(phase.RuntimeCall.ExpressibleActionClasses, actionClass) {
+				s.addTurnPhaseContradiction(event, phase, "", actionClass, "phase allows action class that runtime_call cannot express")
+			}
 		}
 	}
 
@@ -771,28 +765,6 @@ func usefulReadToolName(tool string) bool {
 		strings.Contains(tool, "navigate")
 }
 
-func textualPhaseAdvertisesUnexpressibleManifestTool(phase TurnPhaseContractEvent, tools []string) bool {
-	for _, tool := range tools {
-		tool = strings.TrimSpace(tool)
-		if tool == "" {
-			continue
-		}
-
-		actionClass := TurnPhaseActionClassForTool(tool)
-		if actionClass == "" {
-			actionClass = tool
-		}
-
-		if stringSetContains(phase.RuntimeCall.ExpressibleActionClasses, actionClass) {
-			continue
-		}
-
-		return true
-	}
-
-	return false
-}
-
 func (s *eventAuditState) addTurnPhaseSurfaceSummary(event Event, surface TurnPhaseSurfaceSummaryEvent) {
 	surface.normalize()
 
@@ -831,7 +803,7 @@ func (s *eventAuditState) addTurnPhasePolicyObservation(event Event) {
 		return
 	}
 
-	actionClass := TurnPhaseActionClassForTool(tool)
+	actionClass := ActionClassToken(event.Policy.ActionClass)
 	if actionClass != "" && stringSetContains(phase.ActionPolicy.InvalidActionClasses, actionClass) {
 		s.addTurnPhaseContradiction(event, phase, tool, actionClass, "observed tool action class is invalid in latest turn_phase_contract")
 
@@ -1923,29 +1895,6 @@ func isPolicyToolEvent(eventType EventType) bool {
 		return true
 	default:
 		return false
-	}
-}
-
-func TurnPhaseActionClassForTool(tool string) string {
-	return ActionClassToken(TurnPhaseActionClassForToolClass(tool))
-}
-
-func TurnPhaseActionClassForToolClass(tool string) ActionClass {
-	switch strings.TrimSpace(tool) {
-	case "read_file", "code_navigate", "go_read_symbol", "go_extract_body", "cpp_read_symbol", "cpp_definition", "file_stats", "read_only_capability", "history_range", "history_symbol":
-		return ActionClassRead
-	case "list_files", "search_files", "search_content", "rg", "grep", "discovery_query", "context_pack", "context_query", "context_zoom", "context_status", "context_impact", "structural_search", "blame_range", "harness_audit", "mcp:exa/web_fetch_exa", "mcp:exa/web_search_exa":
-		return ActionClassSearch
-	case "submit_plan":
-		return ActionClassSubmitPlan
-	case "edit_file", "write_file", "append_file", "mkdir", "apply_patch", "go_move_declarations", "delegate_edit":
-		return ActionClassPerEditWrite
-	case "shell", "source_sanity", "coding_rules_check", "git_diff", "git_status", "context_trace_pack", "go_diagnostics", "cpp_diagnostics", "java_diagnostics", "python_diagnostics", "rust_diagnostics", "ts_diagnostics":
-		return ActionClassVerify
-	case "task", "request_system_search_access":
-		return ActionClassGenericProbe
-	default:
-		return ""
 	}
 }
 

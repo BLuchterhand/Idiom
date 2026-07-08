@@ -1049,10 +1049,11 @@ func TestAuditEventsFlagsTurnPhaseContradictoryToolAction(t *testing.T) {
 		},
 	}, occurredAt.Add(time.Second), 2))
 	readPolicy := mustAutonomyEvent(NewToolPolicyDecisionEvent(contract, ContractPolicyEvent{
-		ToolName:   "read_file",
-		Capability: CapabilityBoundedRead,
-		Decision:   PolicyReject,
-		ReasonCode: "tool_surface",
+		ToolName:    "read_file",
+		ActionClass: ActionClassRead,
+		Capability:  CapabilityBoundedRead,
+		Decision:    PolicyReject,
+		ReasonCode:  "tool_surface",
 	}, occurredAt.Add(2*time.Second), 3))
 
 	report := AuditEvents([]Event{compiled, presented, readPolicy}, EventAuditOptions{})
@@ -1257,31 +1258,6 @@ func TestAuditEventsFlagsReadinessForcingIncidents(t *testing.T) {
 	}
 }
 
-func TestTurnPhaseActionClassForToolCoversProjectionTools(t *testing.T) {
-	cases := map[string]string{
-		"read_file":                    ActionClassToken(ActionClassRead),
-		"read_only_capability":         ActionClassToken(ActionClassRead),
-		"context_status":               ActionClassToken(ActionClassSearch),
-		"history_range":                ActionClassToken(ActionClassRead),
-		"history_symbol":               ActionClassToken(ActionClassRead),
-		"harness_audit":                ActionClassToken(ActionClassSearch),
-		"submit_plan":                  ActionClassToken(ActionClassSubmitPlan),
-		"apply_patch":                  ActionClassToken(ActionClassPerEditWrite),
-		"go_diagnostics":               ActionClassToken(ActionClassVerify),
-		"task":                         ActionClassToken(ActionClassGenericProbe),
-		"request_system_search_access": ActionClassToken(ActionClassGenericProbe),
-	}
-	for tool, want := range cases {
-		if got := TurnPhaseActionClassForTool(tool); got != want {
-			t.Fatalf("TurnPhaseActionClassForTool(%q) = %q, want %q", tool, got, want)
-		}
-
-		if got := ActionClassToken(TurnPhaseActionClassForToolClass(tool)); got != want {
-			t.Fatalf("TurnPhaseActionClassForToolClass(%q) = %q, want %q", tool, got, want)
-		}
-	}
-}
-
 func TestAuditEventsClearsReadinessOpenObligationFlagAfterResolution(t *testing.T) {
 	contract := newEventTestPhaseContract(t)
 	occurredAt := time.Date(2026, 5, 13, 20, 25, 0, 0, time.UTC)
@@ -1392,9 +1368,10 @@ func TestAuditEventsFlagsToolWhenNoManifestToolsAreAllowed(t *testing.T) {
 		},
 	}, occurredAt.Add(time.Second), 2))
 	policy := mustAutonomyEvent(NewToolPolicyDecisionEvent(contract, ContractPolicyEvent{
-		ToolName:   "read_file",
-		Capability: CapabilityBoundedRead,
-		Decision:   PolicyReject,
+		ToolName:    "read_file",
+		ActionClass: ActionClassRead,
+		Capability:  CapabilityBoundedRead,
+		Decision:    PolicyReject,
 	}, occurredAt.Add(2*time.Second), 3))
 
 	report := AuditEvents([]Event{compiled, presented, policy}, EventAuditOptions{})

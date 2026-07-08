@@ -7099,7 +7099,7 @@ func TestPhaseActionVocabularyUsesAutonomyConstants(t *testing.T) {
 	}
 }
 
-func TestGenericAllowedActionClassesUsesAutonomyToolMapping(t *testing.T) {
+func TestGenericAllowedActionClassesUsesWorkspaceToolProjection(t *testing.T) {
 	classes := genericAllowedActionClasses([]string{"history_range", "history_symbol", "context_status", "apply_patch"})
 
 	assertContains(t, classes, actionRead)
