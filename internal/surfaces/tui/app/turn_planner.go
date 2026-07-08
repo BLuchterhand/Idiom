@@ -9,7 +9,6 @@ import (
 	"time"
 	"unicode"
 
-	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/llama"
@@ -1241,30 +1240,11 @@ func (m *Model) workspaceAllowedToolsForTaskFamily(family string) []string {
 		return nil
 	}
 
-	if profile, ok := modelWorkspaceToolSurfaceProfile(family); ok {
+	if profile, ok := workerruntime.WorkspaceToolSurfaceOverrideProfileForTaskFamily(family); ok {
 		return m.workspace.ToolSurfaceSnapshotForProfile(profile).AllowedTools()
 	}
 
 	return m.workspace.ToolSurfaceSnapshot().AllowedTools()
-}
-
-func modelWorkspaceToolSurfaceProfile(family string) (workspace.ToolSurfaceProfile, bool) {
-	if strings.TrimSpace(family) == "" {
-		return "", false
-	}
-
-	profile := workerruntime.RuntimeContractForTaskFamily(family).ToolProfile
-	switch profile {
-	case workspace.ToolSurfaceProfileConversationReadOnly,
-		workspace.ToolSurfaceProfileReadOnlyDiscovery,
-		workspace.ToolSurfaceProfileVerificationOnly,
-		workspace.ToolSurfaceProfileLocateOnly,
-		workspace.ToolSurfaceProfilePlanSubmissionPlanner,
-		workspace.ToolSurfaceProfilePlanSubmissionReview:
-		return profile, true
-	default:
-		return "", false
-	}
 }
 
 func normalizeRouteValue(value string) string {

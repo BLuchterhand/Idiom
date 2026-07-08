@@ -4,6 +4,7 @@ import (
 	"slices"
 	"testing"
 
+	"idiom/internal/contracts/autonomy"
 	semanticlanguage "idiom/internal/repository/semantic/language"
 )
 
@@ -57,6 +58,41 @@ func TestTextSearchToolNameExcludesFileSearch(t *testing.T) {
 		if IsTextSearchToolName(name) {
 			t.Fatalf("IsTextSearchToolName(%q) = true, want false", name)
 		}
+	}
+}
+
+func TestImplementationAttemptToolUsesWorkspaceActionClasses(t *testing.T) {
+	for _, tool := range []string{
+		ToolNameEditFile,
+		ToolNameWriteFile,
+		ToolNameAppendFile,
+		ToolNameApplyPatch,
+		ToolNameMkdir,
+		ToolNameDelegateEdit,
+		ToolNameGoMoveDeclarations,
+		ToolNameSubmitPlan,
+	} {
+		if !IsImplementationAttemptTool(tool) {
+			t.Fatalf("implementation attempt predicate rejected %q with action class %q", tool, ToolActionClass(tool))
+		}
+	}
+
+	for _, tool := range []string{
+		ToolNameReadFile,
+		ToolNameSearchContent,
+		ToolNameSourceSanity,
+		ToolNameShell,
+		ToolNameTask,
+		ToolNameRecoveryDecompose,
+		ToolNameGoDiagnostics,
+	} {
+		if IsImplementationAttemptTool(tool) {
+			t.Fatalf("implementation attempt predicate accepted %q with action class %q", tool, ToolActionClass(tool))
+		}
+	}
+
+	if got := ToolActionClass(ToolNameSubmitPlan); got != autonomy.ActionClassSubmitPlan {
+		t.Fatalf("submit_plan action class = %q, want %q", got, autonomy.ActionClassSubmitPlan)
 	}
 }
 

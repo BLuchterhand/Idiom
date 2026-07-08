@@ -106,6 +106,17 @@ func ToolActionClass(tool string) autonomy.ActionClass {
 	return ""
 }
 
+// IsImplementationAttemptTool reports whether a tool-call name is enough
+// evidence that an implementation lane attempted a write-capable action.
+func IsImplementationAttemptTool(tool string) bool {
+	switch ToolActionClass(tool) {
+	case autonomy.ActionClassPerEditWrite, autonomy.ActionClassSubmitPlan:
+		return true
+	default:
+		return false
+	}
+}
+
 // ToolRequestActionClass classifies a concrete tool request. It refines the
 // catalog-level class with request shape for shell verification, scoped
 // list-files reads, and deliverable writes.

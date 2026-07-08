@@ -45,6 +45,12 @@ func TestWorkspaceToolSurfaceListsProjectCatalog(t *testing.T) {
 		t.Fatalf("workspace write tools no longer project catalog metadata")
 	}
 
+	if !slices.Equal(WorkspacePerEditWriteToolNames(), projectedCatalogTools(func(spec toolSurfaceSpec) bool {
+		return spec.hasFacet(toolSurfaceFacetDirectEditAdapter)
+	})) {
+		t.Fatalf("workspace per-edit write tools no longer project direct edit-adapter metadata")
+	}
+
 	if !slices.Equal(RuntimeSourceInspectionToolNames(), projectedCatalogTools(func(spec toolSurfaceSpec) bool {
 		return spec.RuntimeSourceInspection
 	})) {

@@ -6,7 +6,7 @@ import (
 	"idiom/internal/evidence/lanehistory"
 )
 
-func laneRunFinalState(exitCode int, degradations []laneDegradation, out []byte) string {
+func laneRunFinalState(exitCode int, degradations []laneDegradation, facts laneOutputFacts) string {
 	if exitCode != 0 {
 		return lanehistory.FinalStateFailed
 	}
@@ -15,11 +15,11 @@ func laneRunFinalState(exitCode int, degradations []laneDegradation, out []byte)
 		return lanehistory.FinalStateDegraded
 	}
 
-	if hasReviewRepairDegradedEvent(out) {
+	if facts.ReviewRepairDegraded {
 		return lanehistory.FinalStateDegraded
 	}
 
-	if hasSourceSatisfiedEvent(out) {
+	if facts.SourceSatisfied {
 		return lanehistory.FinalStateSourceSatisfied
 	}
 

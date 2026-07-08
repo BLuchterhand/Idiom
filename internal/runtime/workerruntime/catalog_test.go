@@ -221,6 +221,35 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 	})
 }
 
+func TestWorkspaceToolSurfaceOverrideProfileForTaskFamily(t *testing.T) {
+	tests := []struct {
+		name   string
+		family string
+		want   workspace.ToolSurfaceProfile
+		wantOK bool
+	}{
+		{name: "blank", family: "", wantOK: false},
+		{name: "conversation", family: string(autonomy.TaskFamilyConversation), want: workspace.ToolSurfaceProfileConversationReadOnly, wantOK: true},
+		{name: "verification only", family: "verification_only", want: workspace.ToolSurfaceProfileVerificationOnly, wantOK: true},
+		{name: "locate", family: "locate", want: workspace.ToolSurfaceProfileLocateOnly, wantOK: true},
+		{name: "planner", family: string(autonomy.TaskFamilyPlanThenExecutePlanner), want: workspace.ToolSurfaceProfilePlanSubmissionPlanner, wantOK: true},
+		{name: "review repair", family: string(autonomy.TaskFamilyPlanThenExecuteReview), want: workspace.ToolSurfaceProfilePlanSubmissionReview, wantOK: true},
+		{name: "implementation keeps default workspace surface", family: string(autonomy.TaskFamilyImplementation), wantOK: false},
+		{name: "delegated isolated write keeps default workspace surface", family: string(autonomy.TaskFamilyDelegatedIsolatedImpl), wantOK: false},
+		{name: "delegated read-only keeps default workspace surface", family: string(autonomy.TaskFamilyDelegatedReadOnly), wantOK: false},
+		{name: "artifact distiller stays tool-free", family: ArtifactDistillerTaskFamily, wantOK: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := WorkspaceToolSurfaceOverrideProfileForTaskFamily(tt.family)
+			if ok != tt.wantOK || got != tt.want {
+				t.Fatalf("override profile = (%q, %v), want (%q, %v)", got, ok, tt.want, tt.wantOK)
+			}
+		})
+	}
+}
+
 func runtimeLabelContains[T ~string](values []T, want string) bool {
 	for _, value := range values {
 		if string(value) == want {

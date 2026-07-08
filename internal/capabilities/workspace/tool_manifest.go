@@ -157,21 +157,16 @@ func WorkspaceWriteToolNames() []string {
 }
 
 func WorkspacePerEditWriteToolNames() []string {
-	return []string{ToolNameEditFile, ToolNameWriteFile, ToolNameAppendFile, ToolNameApplyPatch}
+	return builtInToolSurfaceToolsByFacet(toolSurfaceFacetDirectEditAdapter)
 }
 
 func IsWorkspacePerEditWriteTool(tool string) bool {
-	_, ok := workspacePerEditWriteToolNameSet[strings.TrimSpace(tool)]
-	return ok
+	return builtInToolSurfaceHasFacet(tool, toolSurfaceFacetDirectEditAdapter)
 }
 
 func IsWorkspaceWriteTool(tool string) bool {
-	_, ok := workspaceWriteToolNameSet[strings.TrimSpace(tool)]
-	return ok
+	return ClassifyTool(tool) == CategoryWrite
 }
-
-var workspacePerEditWriteToolNameSet = toolNameSet(WorkspacePerEditWriteToolNames())
-var workspaceWriteToolNameSet = toolNameSet(WorkspaceWriteToolNames())
 
 func toolNameSet(tools []string) map[string]struct{} {
 	out := make(map[string]struct{}, len(tools))

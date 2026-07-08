@@ -3,7 +3,6 @@ package lane
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"strings"
 
@@ -51,6 +50,17 @@ type laneDegradation struct {
 	details string
 }
 
+type laneOutputFacts struct {
+	ReadOnlyMarker           string
+	SawImplementationAttempt bool
+	SourceSatisfied          bool
+	ReviewRepairDegraded     bool
+	SessionSummary           laneSessionSummary
+	HasSessionSummary        bool
+	QueuePool                string
+	ImplementationState      *recoverycontract.ImplementationState
+}
+
 // readOnlyMarkers are the substrings the Colony script grep'd for.
 // They show up when idiom routed a write-capable brief to a
 // read-only lane — the regression class plan-execute and implement
@@ -62,37 +72,114 @@ var readOnlyMarkers = []string{
 	"conversation_only",
 }
 
-// editToolNames are the write-class tools whose presence in the
-// emitted tool-call stream means the lane DID attempt the
-// implementation contract. Mirrors the grep alternation in
-// run_idiom_impl.sh exactly so behavior parity is provable.
-var editToolNames = []string{
-	workspace.ToolNameEditFile,
-	workspace.ToolNameWriteFile,
-	workspace.ToolNameAppendFile,
-	workspace.ToolNameApplyPatch,
-	workspace.ToolNameSubmitPlan,
+func analyzeLaneOutputFacts(out []byte) laneOutputFacts {
+	var facts laneOutputFacts
+
+	for _, line := range bytes.Split(out, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+
+		if facts.ReadOnlyMarker == "" {
+			if marker, ok := containsAnyReadOnlyMarker(line); ok {
+				facts.ReadOnlyMarker = marker
+			}
+		}
+
+		if bytes.Contains(line, []byte("<<QUESTION>>:")) {
+			facts.SawImplementationAttempt = true
+		}
+
+		if !facts.SawImplementationAttempt {
+			if tool, ok := rawJSONToolName(line); ok && workspace.IsImplementationAttemptTool(tool) {
+				facts.SawImplementationAttempt = true
+			}
+		}
+
+		if line[0] != '{' {
+			continue
+		}
+
+		var ev map[string]any
+		if err := json.Unmarshal(line, &ev); err != nil {
+			continue
+		}
+
+		facts.applyJSONEvent(ev)
+	}
+
+	return facts
 }
 
-// analyzeLaneOutput scans captured stdout for the three failure
-// modes Phase 6.5 lifted from Colony's wrapper:
-//
-//  1. Read-only lane: write-capable brief routed to a read-only
-//     contract (an idiom routing regression).
-//  2. No edit attempt: run completed without any write-class tool
-//     call AND without a plan-execute typed edit event AND without a
-//     `<<QUESTION>>:` blocker AND without a typed `completion_status:
-//     blocked` event, and without a typed plan-execute source-satisfied
-//     closeout (an idiom completion-contract regression).
-//  3. Non-zero subcommand exit: handled by the caller; we only
-//     surface (1) and (2) here.
-//
-// Returns one degradation per detected class. An empty slice means
-// the run looks clean.
-func analyzeLaneOutput(out []byte, subcommandExit int) []laneDegradation {
+func (facts *laneOutputFacts) applyJSONEvent(ev map[string]any) {
+	if facts == nil {
+		return
+	}
+
+	if workspace.IsImplementationAttemptTool(jsonString(ev["tool"])) {
+		facts.SawImplementationAttempt = true
+	}
+
+	eventType := jsonString(ev["type"])
+
+	if eventType == "completion_status" && strings.EqualFold(jsonString(ev["status"]), "blocked") {
+		facts.SawImplementationAttempt = true
+	}
+
+	if parsedEventType, ok := plancontract.ParsePlanExecuteEventType(eventType); ok {
+		switch parsedEventType {
+		case plancontract.PlanExecuteEventSourceSatisfied:
+			facts.SourceSatisfied = true
+			facts.SawImplementationAttempt = true
+		case plancontract.PlanExecuteEventReviewRepairDegraded:
+			facts.ReviewRepairDegraded = true
+		case plancontract.PlanExecuteEventAutoExactPlanSubmitted, plancontract.PlanExecuteEventExecutorEdit:
+			facts.SawImplementationAttempt = true
+		case plancontract.PlanExecuteEventExecutorComplete:
+			if jsonNumberPositive(ev["total"]) || jsonNumberPositive(ev["succeeded"]) || jsonNumberPositive(ev["failed"]) {
+				facts.SawImplementationAttempt = true
+			}
+		}
+	}
+
+	switch eventType {
+	case "session_summary":
+		facts.SessionSummary = laneSessionSummary{
+			SessionID:                  jsonString(ev["session_id"]),
+			ModelCalls:                 jsonInt(ev["model_calls"]),
+			ToolCalls:                  jsonInt(ev["tool_calls"]),
+			PromptTokens:               jsonInt(ev["prompt_tokens"]),
+			CompletionTokens:           jsonInt(ev["completion_tokens"]),
+			TotalTokens:                jsonInt(ev["total_tokens"]),
+			PromptCacheHitTokens:       jsonInt(ev["prompt_cache_hit_tokens"]),
+			PromptCacheMissTokens:      jsonInt(ev["prompt_cache_miss_tokens"]),
+			PromptCacheAccountingKnown: jsonBool(ev["prompt_cache_accounting_known"]),
+			ReasoningTokens:            jsonInt(ev["reasoning_tokens"]),
+			PeakPromptTokens:           jsonInt(ev["peak_prompt_tokens"]),
+			ContextSize:                jsonInt(ev["ctx_size"]),
+			DurationMS:                 jsonInt(ev["duration_ms"]),
+			StopReason:                 jsonString(ev["stop_reason"]),
+		}
+		facts.HasSessionSummary = true
+	case queuecontract.CommandAdmissionEventName(queuecontract.CommandEventPrefixPlanExecute, queuecontract.AdmissionEventQueueAcquired),
+		queuecontract.CommandAdmissionEventName(queuecontract.CommandEventPrefixImplement, queuecontract.AdmissionEventQueueAcquired):
+		if candidate := jsonString(ev["pool"]); candidate != "" {
+			facts.QueuePool = candidate
+		}
+	case "completion_status", "implementation_lifecycle_state":
+		if state := implementationStateFromEvent(ev); recoverycontract.ImplementationStatePresent(state) {
+			facts.ImplementationState = &state
+		}
+	}
+}
+
+// degradations reports the Phase 6.5 failure modes lifted from Colony's
+// wrapper. An empty slice means the run looks clean.
+func (facts laneOutputFacts) degradations(subcommandExit int) []laneDegradation {
 	var degraded []laneDegradation
 
-	if marker, ok := containsAnyReadOnlyMarker(out); ok {
+	if marker := strings.TrimSpace(facts.ReadOnlyMarker); marker != "" {
 		degraded = append(degraded, laneDegradation{
 			kind:    "read_only_lane",
 			details: "saw " + marker + " in subcommand output (write-capable brief routed to a read-only contract)",
@@ -103,19 +190,33 @@ func analyzeLaneOutput(out []byte, subcommandExit int) []laneDegradation {
 	// exit already signals failure; piling a "no-edit" degradation
 	// on top would be noise. The wrapper's exit code still surfaces
 	// the underlying failure regardless.
-	if subcommandExit == 0 && !sawEditAttempt(out) {
+	if subcommandExit == 0 && !facts.SawImplementationAttempt {
 		degraded = append(degraded, laneDegradation{
 			kind:    "no_edit_attempt",
-			details: "no edit_file/write_file/append_file/apply_patch/submit_plan call AND no typed plan-execute edit event AND no <<QUESTION>>: blocker AND no typed completion_status=blocked/source_satisfied event",
+			details: "no implementation-attempt tool call AND no typed plan-execute edit event AND no <<QUESTION>>: blocker AND no typed completion_status=blocked/source_satisfied event",
 		})
 	}
 
 	return degraded
 }
 
-// containsAnyReadOnlyMarker is a substring search across the
-// captured output. Returns the first marker that hit so the
-// degradation message can name it.
+func rawJSONToolName(line []byte) (string, bool) {
+	toolField := []byte(`"tool":"`)
+	index := bytes.Index(line, toolField)
+	if index < 0 {
+		return "", false
+	}
+
+	remaining := line[index+len(toolField):]
+	end := bytes.IndexByte(remaining, '"')
+	if end < 0 {
+		return "", false
+	}
+
+	return string(remaining[:end]), true
+}
+
+// containsAnyReadOnlyMarker returns the first read-only marker in value.
 func containsAnyReadOnlyMarker(out []byte) (string, bool) {
 	for _, marker := range readOnlyMarkers {
 		if bytes.Contains(out, []byte(marker)) {
@@ -124,87 +225,6 @@ func containsAnyReadOnlyMarker(out []byte) (string, bool) {
 	}
 
 	return "", false
-}
-
-// sawEditAttempt returns true when the captured output proves the
-// lane reached an edit-capable conclusion: either it called a
-// write-class tool, emitted a `<<QUESTION>>:` blocker, terminated
-// with a typed `completion_status: blocked` event, or emitted a typed
-// plan-execute source-satisfied event. Plan-execute also emits typed
-// executor events when it bypasses model tool telemetry with a
-// deterministic submitted plan; those count as edit attempts for the
-// same reason an accepted `submit_plan` call does.
-//
-// "Edit attempt" is broader than "edit succeeded" — a tool call
-// that the runner rejected still counts because it proves the lane
-// tried to write rather than silently exiting clean.
-func sawEditAttempt(out []byte) bool {
-	if bytes.Contains(out, []byte("<<QUESTION>>:")) {
-		return true
-	}
-
-	if hasBlockedCompletionEvent(out) {
-		return true
-	}
-
-	if hasSourceSatisfiedEvent(out) {
-		return true
-	}
-
-	if hasPlanExecuteEditEvent(out) {
-		return true
-	}
-
-	for _, tool := range editToolNames {
-		// Match the JSON shape `"tool":"<name>"` to avoid false
-		// positives on prose mentions. The actual emission point
-		// is `internal/runtime/agent` writing tool-call telemetry, which
-		// uses this exact field name.
-		needle := fmt.Sprintf(`"tool":"%s"`, tool)
-		if bytes.Contains(out, []byte(needle)) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// hasPlanExecuteEditEvent recognizes write attempts emitted by the
-// plan-execute orchestrator itself, outside the agent tool-call stream.
-// The auto-exact path can submit and execute a complete plan without a
-// model `submit_plan` tool event, so the lane ledger must key on these
-// typed events rather than assuming all edits originate in the runner.
-func hasPlanExecuteEditEvent(out []byte) bool {
-	for _, line := range bytes.Split(out, []byte("\n")) {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 || line[0] != '{' {
-			continue
-		}
-
-		var ev map[string]any
-
-		if err := json.Unmarshal(line, &ev); err != nil {
-			continue
-		}
-
-		eventType, ok := plancontract.ParsePlanExecuteEventType(jsonString(ev["type"]))
-		if !ok {
-			continue
-		}
-
-		switch eventType {
-		case plancontract.PlanExecuteEventAutoExactPlanSubmitted:
-			return true
-		case plancontract.PlanExecuteEventExecutorEdit:
-			return true
-		case plancontract.PlanExecuteEventExecutorComplete:
-			if jsonNumberPositive(ev["total"]) || jsonNumberPositive(ev["succeeded"]) || jsonNumberPositive(ev["failed"]) {
-				return true
-			}
-		}
-	}
-
-	return false
 }
 
 func jsonNumberPositive(v any) bool {
@@ -223,91 +243,6 @@ func jsonNumberPositive(v any) bool {
 	default:
 		return false
 	}
-}
-
-// hasSourceSatisfiedEvent walks the JSONL stream looking for the
-// typed plan-execute event emitted after the planner's
-// `Decision: source-satisfied` answer has been checked against every
-// required edit path. This is a legitimate terminal outcome, not a
-// no-op implementation run.
-func hasSourceSatisfiedEvent(out []byte) bool {
-	for _, line := range bytes.Split(out, []byte("\n")) {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 || line[0] != '{' {
-			continue
-		}
-
-		var ev map[string]any
-
-		if err := json.Unmarshal(line, &ev); err != nil {
-			continue
-		}
-
-		eventType, ok := plancontract.ParsePlanExecuteEventType(jsonString(ev["type"]))
-		if ok && eventType == plancontract.PlanExecuteEventSourceSatisfied {
-			return true
-		}
-	}
-
-	return false
-}
-
-// hasReviewRepairDegradedEvent walks the JSONL stream for a post-execute
-// review-repair availability degradation. The executor already reached an edit
-// outcome; this should be recorded as a degraded closeout, not as a failed
-// implementation or a lane-level no-edit regression.
-func hasReviewRepairDegradedEvent(out []byte) bool {
-	for _, line := range bytes.Split(out, []byte("\n")) {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 || line[0] != '{' {
-			continue
-		}
-
-		var ev map[string]any
-
-		if err := json.Unmarshal(line, &ev); err != nil {
-			continue
-		}
-
-		eventType, ok := plancontract.ParsePlanExecuteEventType(jsonString(ev["type"]))
-		if ok && eventType == plancontract.PlanExecuteEventReviewRepairDegraded {
-			return true
-		}
-	}
-
-	return false
-}
-
-// hasBlockedCompletionEvent walks the JSONL stream looking for a
-// `completion_status` event whose `status` is `blocked`. This is
-// the typed-blocker shape idiom emits when the runner stops the
-// lane on a structural condition (read-budget exhausted, write-
-// guard rejected, etc.) — counts as "the lane reached a defined
-// stopping point," not "silently ran without trying anything."
-func hasBlockedCompletionEvent(out []byte) bool {
-	for _, line := range bytes.Split(out, []byte("\n")) {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 || line[0] != '{' {
-			continue
-		}
-
-		var ev map[string]any
-
-		if err := json.Unmarshal(line, &ev); err != nil {
-			continue
-		}
-
-		if ev["type"] != "completion_status" {
-			continue
-		}
-
-		status, _ := ev["status"].(string)
-		if strings.EqualFold(status, "blocked") {
-			return true
-		}
-	}
-
-	return false
 }
 
 // laneSessionSummary holds the token-usage fields the lane wrapper
@@ -332,131 +267,16 @@ type laneSessionSummary struct {
 	StopReason                 string
 }
 
-// parseSessionSummary scans the JSONL output stream for the last
-// `session_summary` event and returns the token totals. Returns
-// ok=false when no such event is present (subcommand ran without
-// --json, or exited before Close()). The "last" choice is
-// deliberate: if a subcommand re-emits during error recovery, the
-// final summary is authoritative.
-func parseSessionSummary(out []byte) (laneSessionSummary, bool) {
-	var (
-		found  bool
-		result laneSessionSummary
-	)
-
-	for _, line := range bytes.Split(out, []byte("\n")) {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 || line[0] != '{' {
-			continue
-		}
-
-		var ev map[string]any
-
-		if err := json.Unmarshal(line, &ev); err != nil {
-			continue
-		}
-
-		if ev["type"] != "session_summary" {
-			continue
-		}
-
-		result = laneSessionSummary{
-			SessionID:                  jsonString(ev["session_id"]),
-			ModelCalls:                 jsonInt(ev["model_calls"]),
-			ToolCalls:                  jsonInt(ev["tool_calls"]),
-			PromptTokens:               jsonInt(ev["prompt_tokens"]),
-			CompletionTokens:           jsonInt(ev["completion_tokens"]),
-			TotalTokens:                jsonInt(ev["total_tokens"]),
-			PromptCacheHitTokens:       jsonInt(ev["prompt_cache_hit_tokens"]),
-			PromptCacheMissTokens:      jsonInt(ev["prompt_cache_miss_tokens"]),
-			PromptCacheAccountingKnown: jsonBool(ev["prompt_cache_accounting_known"]),
-			ReasoningTokens:            jsonInt(ev["reasoning_tokens"]),
-			PeakPromptTokens:           jsonInt(ev["peak_prompt_tokens"]),
-			ContextSize:                jsonInt(ev["ctx_size"]),
-			DurationMS:                 jsonInt(ev["duration_ms"]),
-			StopReason:                 jsonString(ev["stop_reason"]),
-		}
-		found = true
+func implementationStateFromEvent(ev map[string]any) recoverycontract.ImplementationState {
+	return recoverycontract.ImplementationState{
+		Phase:                      jsonString(ev["phase"]),
+		StopReason:                 jsonString(ev["stop_reason"]),
+		RemainingRequiredEditPaths: jsonStringSlice(ev["remaining_required_edit_paths"]),
+		ChangedPaths:               jsonStringSlice(ev["changed_paths"]),
+		SourcedEvidencePaths:       jsonStringSlice(ev["sourced_evidence_paths"]),
+		PendingRedirects:           jsonPendingRedirects(ev["pending_redirects"]),
+		WriteReadyNudgeCount:       jsonInt(ev["write_ready_nudge_count"]),
 	}
-
-	return result, found
-}
-
-func parseLaneQueuePool(out []byte) string {
-	pool := ""
-
-	for _, line := range bytes.Split(out, []byte("\n")) {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 || line[0] != '{' {
-			continue
-		}
-
-		var ev map[string]any
-
-		if err := json.Unmarshal(line, &ev); err != nil {
-			continue
-		}
-
-		eventType := jsonString(ev["type"])
-		if eventType != queuecontract.CommandAdmissionEventName(queuecontract.CommandEventPrefixPlanExecute, queuecontract.AdmissionEventQueueAcquired) &&
-			eventType != queuecontract.CommandAdmissionEventName(queuecontract.CommandEventPrefixImplement, queuecontract.AdmissionEventQueueAcquired) {
-			continue
-		}
-
-		if candidate := jsonString(ev["pool"]); candidate != "" {
-			pool = candidate
-		}
-	}
-
-	return pool
-}
-
-func parseImplementationState(out []byte) (*recoverycontract.ImplementationState, bool) {
-	var (
-		found bool
-		state recoverycontract.ImplementationState
-	)
-
-	for _, line := range bytes.Split(out, []byte("\n")) {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 || line[0] != '{' {
-			continue
-		}
-
-		projection, ok := decodeImplementationStateProjection(line)
-		if !ok {
-			continue
-		}
-
-		switch projection.Type {
-		case "completion_status", "implementation_lifecycle_state":
-			state = projection.ImplementationState
-			found = true
-		}
-	}
-
-	if !found || !recoverycontract.ImplementationStatePresent(state) {
-		return nil, false
-	}
-
-	return &state, true
-}
-
-type implementationStateProjection struct {
-	Type string `json:"type,omitempty"`
-	recoverycontract.ImplementationState
-}
-
-func decodeImplementationStateProjection(data []byte) (implementationStateProjection, bool) {
-	var projection implementationStateProjection
-	if err := json.Unmarshal(data, &projection); err != nil {
-		return implementationStateProjection{}, false
-	}
-	if !recoverycontract.ImplementationStatePresent(projection.ImplementationState) {
-		return implementationStateProjection{}, false
-	}
-
-	return projection, true
 }
 
 // jsonInt coerces a JSON-decoded value (which arrives as float64
@@ -470,4 +290,47 @@ func jsonInt(v any) int {
 	}
 
 	return 0
+}
+
+func jsonStringSlice(v any) []string {
+	values, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if text := jsonString(value); text != "" {
+			out = append(out, text)
+		}
+	}
+
+	return out
+}
+
+func jsonPendingRedirects(v any) []recoverycontract.ImplementationPendingRedirect {
+	values, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+
+	out := make([]recoverycontract.ImplementationPendingRedirect, 0, len(values))
+	for _, value := range values {
+		fields, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		redirect := recoverycontract.ImplementationPendingRedirect{
+			Path:        jsonString(fields["path"]),
+			PendingTool: jsonString(fields["pending_tool"]),
+			Source:      jsonString(fields["source"]),
+			Detail:      jsonString(fields["detail"]),
+		}
+		if redirect.Path != "" || redirect.PendingTool != "" || redirect.Source != "" || redirect.Detail != "" {
+			out = append(out, redirect)
+		}
+	}
+
+	return out
 }

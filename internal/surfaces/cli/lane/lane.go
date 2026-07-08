@@ -381,7 +381,8 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 	}
 
 	subcommandExit := subcode
-	degraded := analyzeLaneOutput(tee.Bytes(), subcode)
+	outputFacts := analyzeLaneOutputFacts(tee.Bytes())
+	degraded := outputFacts.degradations(subcode)
 
 	if opts.Postflight {
 		pfExit := runLanePostflightAfterLane(opts, stdout, stderr)
@@ -402,12 +403,13 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		BriefProvenance: lanehistory.DetectBriefProvenance(opts.BriefPath),
 		Title:           opts.Title,
 		ExitCode:        subcode,
-		FinalState:      laneRunFinalState(subcode, degraded, tee.Bytes()),
-		QueuePool:       parseLaneQueuePool(tee.Bytes()),
+		FinalState:      laneRunFinalState(subcode, degraded, outputFacts),
+		QueuePool:       outputFacts.QueuePool,
 		Degradations:    laneDegradationKinds(degraded),
 	}
 
-	if summary, ok := parseSessionSummary(tee.Bytes()); ok {
+	if outputFacts.HasSessionSummary {
+		summary := outputFacts.SessionSummary
 		historyEvt.SessionID = summary.SessionID
 		historyEvt.ModelCalls = summary.ModelCalls
 		historyEvt.ToolCalls = summary.ToolCalls
@@ -420,10 +422,10 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		historyEvt.StopReason = summary.StopReason
 	}
 
-	if implementationState, ok := parseImplementationState(tee.Bytes()); ok {
-		historyEvt.Implementation = implementationState
+	if outputFacts.ImplementationState != nil {
+		historyEvt.Implementation = outputFacts.ImplementationState
 		if strings.TrimSpace(historyEvt.StopReason) == "" {
-			historyEvt.StopReason = implementationState.StopReason
+			historyEvt.StopReason = outputFacts.ImplementationState.StopReason
 		}
 	}
 

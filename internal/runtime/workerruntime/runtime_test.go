@@ -822,6 +822,21 @@ func TestBuildActionGuidanceSearchSuccessOmitsEditSuggestionWhenReadOnly(t *test
 	}
 }
 
+func TestBuildActionGuidanceWriteSuccessUsesWorkspaceWriteCatalog(t *testing.T) {
+	guidance := BuildActionGuidance(ActionGuidanceInput{
+		Reason:  "tool_result",
+		Request: workspace.ToolRequest{Tool: workspace.ToolNameApplyPatch},
+		Result:  workspace.ToolResult{Tool: workspace.ToolNameApplyPatch, Summary: "Applied patch with 1 op(s)"},
+	})
+	joined := strings.Join(guidance.ValidNext, "\n")
+
+	for _, want := range []string{"targeted verification evidence", "required ledger state"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected write-success guidance %q, got %#v", want, guidance.ValidNext)
+		}
+	}
+}
+
 func TestBuildActionGuidanceSearchSuccessUsesWorkspaceLanguageTaxonomy(t *testing.T) {
 	guidance := BuildActionGuidance(ActionGuidanceInput{
 		Reason:  "tool_result",

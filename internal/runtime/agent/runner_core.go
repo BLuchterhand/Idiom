@@ -806,30 +806,11 @@ func (r *Runner) workspaceToolSurfaceSnapshot() workspace.ToolSurfaceSnapshot {
 		return workspace.ToolSurfaceSnapshot{}
 	}
 
-	if profile, ok := runnerWorkspaceToolSurfaceProfile(r.RuntimeBrief); ok {
+	if profile, ok := workerruntime.WorkspaceToolSurfaceOverrideProfileForTaskFamily(r.RuntimeBrief.TaskFamily); ok {
 		return r.Workspace.ToolSurfaceSnapshotForProfile(profile)
 	}
 
 	return r.Workspace.ToolSurfaceSnapshot()
-}
-
-func runnerWorkspaceToolSurfaceProfile(brief workerruntime.WorkerRuntimeBrief) (workspace.ToolSurfaceProfile, bool) {
-	if strings.TrimSpace(brief.TaskFamily) == "" {
-		return "", false
-	}
-
-	profile := workerruntime.RuntimeContractForTaskFamily(brief.TaskFamily).ToolProfile
-	switch profile {
-	case workspace.ToolSurfaceProfileConversationReadOnly,
-		workspace.ToolSurfaceProfileReadOnlyDiscovery,
-		workspace.ToolSurfaceProfileVerificationOnly,
-		workspace.ToolSurfaceProfileLocateOnly,
-		workspace.ToolSurfaceProfilePlanSubmissionPlanner,
-		workspace.ToolSurfaceProfilePlanSubmissionReview:
-		return profile, true
-	default:
-		return "", false
-	}
 }
 
 type Runner struct {

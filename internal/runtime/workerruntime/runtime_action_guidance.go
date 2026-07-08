@@ -261,7 +261,7 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 					}
 				}
 			}
-		case tool == workspace.ToolNameEditFile || tool == workspace.ToolNameWriteFile || tool == workspace.ToolNameAppendFile || tool == workspace.ToolNameGoMoveDeclarations:
+		case workspace.IsWorkspaceWriteTool(tool):
 			if strings.TrimSpace(input.Result.Error) == "" {
 				guidance.ValidNext = appendUnique(guidance.ValidNext, "targeted verification evidence")
 				guidance.ValidNext = appendUnique(guidance.ValidNext, "required ledger state or answer with the change summary")

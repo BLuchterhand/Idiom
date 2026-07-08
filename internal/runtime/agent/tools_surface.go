@@ -2166,7 +2166,6 @@ func (r *Runner) completeWithoutMoreToolsWithReasonMode(
 	}
 
 	reason = answerFirstNoToolsPrompt(reason)
-	_ = readOnlyClosureDecisionForResults(r.RuntimeBrief, collectedResults)
 
 	if mode == noToolsCloseoutDeterministicRequired {
 		if answer, ok := r.deterministicNoModelCloseoutAnswer(reason, collectedResults); ok {

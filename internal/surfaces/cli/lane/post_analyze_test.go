@@ -6,18 +6,19 @@ import (
 	queuecontract "idiom/internal/contracts/queue"
 )
 
-func TestParseSessionSummaryExtractsTokens(t *testing.T) {
+func TestAnalyzeLaneOutputFactsExtractsSessionSummaryTokens(t *testing.T) {
 	out := []byte(`{"type":"start","prompt":"x"}
 {"type":"tool_request","tool":"read_file"}
 {"type":"session_summary","session_id":"abc123","model_calls":5,"tool_calls":4,"prompt_tokens":12345,"completion_tokens":678,"total_tokens":13023,"peak_prompt_tokens":9000,"ctx_size":262144,"duration_ms":4500,"stop_reason":"model_final","turns":4}
 {"type":"final","content":"done"}
 `)
-	summary, ok := parseSessionSummary(out)
+	facts := analyzeLaneOutputFacts(out)
 
-	if !ok {
+	if !facts.HasSessionSummary {
 		t.Fatal("expected session_summary to be parsed")
 	}
 
+	summary := facts.SessionSummary
 	if summary.PromptTokens != 12345 || summary.CompletionTokens != 678 || summary.TotalTokens != 13023 {
 		t.Fatalf("got %#v", summary)
 	}
@@ -27,15 +28,16 @@ func TestParseSessionSummaryExtractsTokens(t *testing.T) {
 	}
 }
 
-func TestParseSessionSummaryExtractsProviderCacheUsage(t *testing.T) {
+func TestAnalyzeLaneOutputFactsExtractsProviderCacheUsage(t *testing.T) {
 	out := []byte(`{"type":"session_summary","prompt_tokens":13,"completion_tokens":3,"total_tokens":16,"prompt_cache_hit_tokens":8,"prompt_cache_miss_tokens":5,"prompt_cache_accounting_known":true,"reasoning_tokens":2}
 `)
-	summary, ok := parseSessionSummary(out)
+	facts := analyzeLaneOutputFacts(out)
 
-	if !ok {
+	if !facts.HasSessionSummary {
 		t.Fatal("expected session_summary to be parsed")
 	}
 
+	summary := facts.SessionSummary
 	if !summary.PromptCacheAccountingKnown ||
 		summary.PromptCacheHitTokens != 8 ||
 		summary.PromptCacheMissTokens != 5 ||
@@ -45,59 +47,62 @@ func TestParseSessionSummaryExtractsProviderCacheUsage(t *testing.T) {
 	}
 }
 
-func TestParseSessionSummaryReturnsFalseWhenAbsent(t *testing.T) {
+func TestAnalyzeLaneOutputFactsHasNoSessionSummaryWhenAbsent(t *testing.T) {
 	out := []byte(`{"type":"start"}
 some human-readable output
 {"type":"final","content":"done"}
 `)
-	if _, ok := parseSessionSummary(out); ok {
+	if facts := analyzeLaneOutputFacts(out); facts.HasSessionSummary {
 		t.Fatal("expected ok=false when no session_summary event present")
 	}
 }
 
-func TestParseSessionSummaryPicksLastWhenMultiple(t *testing.T) {
+func TestAnalyzeLaneOutputFactsPicksLastSessionSummary(t *testing.T) {
 	// If the subcommand emits multiple summaries (e.g. error recovery
 	// re-runs a Close() path), the final one is authoritative.
 	out := []byte(`{"type":"session_summary","prompt_tokens":100,"completion_tokens":10,"total_tokens":110}
 {"type":"session_summary","prompt_tokens":999,"completion_tokens":99,"total_tokens":1098}
 `)
-	summary, ok := parseSessionSummary(out)
+	facts := analyzeLaneOutputFacts(out)
 
-	if !ok {
+	if !facts.HasSessionSummary {
 		t.Fatal("expected session_summary to be parsed")
 	}
 
+	summary := facts.SessionSummary
 	if summary.TotalTokens != 1098 {
 		t.Fatalf("expected last summary's totals, got TotalTokens=%d", summary.TotalTokens)
 	}
 }
 
-func TestParseSessionSummaryIgnoresMalformedLines(t *testing.T) {
+func TestAnalyzeLaneOutputFactsIgnoresMalformedLines(t *testing.T) {
 	out := []byte(`not json
 {"type":"session_summary"
 {"type":"session_summary","prompt_tokens":42,"completion_tokens":8,"total_tokens":50}
 also not json
 `)
-	summary, ok := parseSessionSummary(out)
+	facts := analyzeLaneOutputFacts(out)
 
-	if !ok {
+	if !facts.HasSessionSummary {
 		t.Fatal("expected session_summary to be parsed")
 	}
 
+	summary := facts.SessionSummary
 	if summary.TotalTokens != 50 {
 		t.Fatalf("got %#v", summary)
 	}
 }
 
-func TestParseImplementationStateUsesLastCompleteSnapshot(t *testing.T) {
+func TestAnalyzeLaneOutputFactsUsesLastImplementationStateSnapshot(t *testing.T) {
 	out := []byte(`{"type":"implementation_lifecycle_state","phase":"implementation.target_write_ready","stop_reason":"model_call_budget_exhausted","remaining_required_edit_paths":["internal/runtime/agent/runner_core.go"],"sourced_evidence_paths":["internal/runtime/agent/implementation_lifecycle.go"],"pending_redirects":[{"path":"internal/runtime/agent/runner_core.go","pending_tool":"read_file","source":"required_edit_path","detail":"refresh source"}],"write_ready_nudge_count":1}
 {"type":"completion_status","status":"blocked","phase":"implementation.target_write_ready","stop_reason":"model_call_budget_exhausted","remaining_required_edit_paths":["internal/runtime/agent/runner_core.go"],"changed_paths":["internal/runtime/agent/implementation_lifecycle.go"],"sourced_evidence_paths":["internal/runtime/agent/implementation_lifecycle.go"],"pending_redirects":[{"path":"internal/runtime/agent/runner_core.go","pending_tool":"read_file","source":"required_edit_path","detail":"refresh source"}],"write_ready_nudge_count":2}
 `)
-	state, ok := parseImplementationState(out)
-	if !ok {
+	facts := analyzeLaneOutputFacts(out)
+	if facts.ImplementationState == nil {
 		t.Fatal("expected implementation state")
 	}
 
+	state := facts.ImplementationState
 	if state.Phase != "implementation.target_write_ready" || state.StopReason != "model_call_budget_exhausted" {
 		t.Fatalf("unexpected lifecycle state: %#v", state)
 	}
@@ -115,15 +120,16 @@ func TestParseImplementationStateUsesLastCompleteSnapshot(t *testing.T) {
 	}
 }
 
-func TestParseImplementationStateLastSnapshotClearsStaleSlices(t *testing.T) {
+func TestAnalyzeLaneOutputFactsLastImplementationStateClearsStaleSlices(t *testing.T) {
 	out := []byte(`{"type":"implementation_lifecycle_state","phase":"implementation.target_write_ready","remaining_required_edit_paths":["internal/runtime/agent/runner_core.go"],"pending_redirects":[{"path":"internal/runtime/agent/runner_core.go","pending_tool":"read_file"}]}
 {"type":"completion_status","status":"blocked","changed_paths":["internal/runtime/agent/implementation_lifecycle.go"]}
 `)
-	state, ok := parseImplementationState(out)
-	if !ok {
+	facts := analyzeLaneOutputFacts(out)
+	if facts.ImplementationState == nil {
 		t.Fatal("expected implementation state")
 	}
 
+	state := facts.ImplementationState
 	if len(state.RemainingRequiredEditPaths) != 0 || len(state.PendingRedirects) != 0 {
 		t.Fatalf("later snapshot should clear stale paths and redirects, got %#v", state)
 	}
@@ -133,27 +139,27 @@ func TestParseImplementationStateLastSnapshotClearsStaleSlices(t *testing.T) {
 	}
 }
 
-func TestDecodeImplementationStateProjection(t *testing.T) {
-	projection, ok := decodeImplementationStateProjection([]byte(`{"type":"completion_status","phase":"implementation.target_write_ready","stop_reason":"model_call_budget_exhausted","remaining_required_edit_paths":["a.go"],"pending_redirects":[{"path":"a.go","pending_tool":"read_file"}],"write_ready_nudge_count":2}`))
-	if !ok {
+func TestAnalyzeLaneOutputFactsDecodesImplementationStateProjection(t *testing.T) {
+	facts := analyzeLaneOutputFacts([]byte(`{"type":"completion_status","phase":"implementation.target_write_ready","stop_reason":"model_call_budget_exhausted","remaining_required_edit_paths":["a.go"],"pending_redirects":[{"path":"a.go","pending_tool":"read_file"}],"write_ready_nudge_count":2}`))
+	if facts.ImplementationState == nil {
 		t.Fatal("expected implementation state projection")
 	}
 
-	if projection.Type != "completion_status" ||
-		projection.Phase != "implementation.target_write_ready" ||
-		projection.StopReason != "model_call_budget_exhausted" ||
-		projection.WriteReadyNudgeCount != 2 ||
-		len(projection.PendingRedirects) != 1 {
+	state := facts.ImplementationState
+	if state.Phase != "implementation.target_write_ready" ||
+		state.StopReason != "model_call_budget_exhausted" ||
+		state.WriteReadyNudgeCount != 2 ||
+		len(state.PendingRedirects) != 1 {
 
-		t.Fatalf("unexpected projection: %#v", projection)
+		t.Fatalf("unexpected projection: %#v", state)
 	}
 }
 
-func TestParseLaneQueuePool(t *testing.T) {
+func TestAnalyzeLaneOutputFactsExtractsQueuePool(t *testing.T) {
 	out := []byte(`{"type":"` + queuecontract.CommandAdmissionEventName(queuecontract.CommandEventPrefixPlanExecute, queuecontract.AdmissionEventQueueAcquired) + `","pool":"qwen-35b"}
 {"type":"session_summary","total_tokens":50}
 `)
-	if got := parseLaneQueuePool(out); got != "qwen-35b" {
+	if got := analyzeLaneOutputFacts(out).QueuePool; got != "qwen-35b" {
 		t.Fatalf("pool = %q, want qwen-35b", got)
 	}
 }

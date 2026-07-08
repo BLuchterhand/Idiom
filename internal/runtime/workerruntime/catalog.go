@@ -281,6 +281,28 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 	}
 }
 
+// WorkspaceToolSurfaceOverrideProfileForTaskFamily reports the runtime-contract
+// tool profile that should override the interactive workspace surface. Write
+// profiles intentionally return false so callers keep the workspace default.
+func WorkspaceToolSurfaceOverrideProfileForTaskFamily(family string) (workspace.ToolSurfaceProfile, bool) {
+	if strings.TrimSpace(family) == "" {
+		return "", false
+	}
+
+	profile := RuntimeContractForTaskFamily(family).ToolProfile
+	switch profile {
+	case workspace.ToolSurfaceProfileConversationReadOnly,
+		workspace.ToolSurfaceProfileReadOnlyDiscovery,
+		workspace.ToolSurfaceProfileVerificationOnly,
+		workspace.ToolSurfaceProfileLocateOnly,
+		workspace.ToolSurfaceProfilePlanSubmissionPlanner,
+		workspace.ToolSurfaceProfilePlanSubmissionReview:
+		return profile, true
+	default:
+		return "", false
+	}
+}
+
 func RuntimeBriefForTaskFamily(family string, lane string, allowedWorkspaceTools []string) WorkerRuntimeBrief {
 	spec := RuntimeContractForTaskFamily(family)
 

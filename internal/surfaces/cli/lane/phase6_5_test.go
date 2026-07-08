@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"idiom/internal/capabilities/workspace"
 	lanecontract "idiom/internal/contracts/lane"
 	"idiom/internal/platform/config"
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
@@ -201,7 +202,8 @@ func TestLaneSlotMutexRejectsHeldSlot(t *testing.T) {
 // reliable degradation signal.
 func TestAnalyzeLaneOutputDetectsReadOnlyMarker(t *testing.T) {
 	out := []byte(`{"type":"route_plan","contract":"verification_only"}` + "\n" + `{"tool":"submit_plan"}`)
-	deg := analyzeLaneOutput(out, 0)
+	facts := analyzeLaneOutputFacts(out)
+	deg := facts.degradations(0)
 
 	if len(deg) != 1 {
 		t.Fatalf("expected exactly one degradation, got %d: %+v", len(deg), deg)
@@ -220,7 +222,8 @@ func TestAnalyzeLaneOutputDetectsReadOnlyMarker(t *testing.T) {
 func TestAnalyzeLaneOutputDetectsNoEditAttempt(t *testing.T) {
 	// Just some chatter, no edit tools, no blocker, no typed event.
 	out := []byte(`{"type":"thinking","content":"musing about the brief"}` + "\n" + `{"type":"final_answer","content":"all done"}`)
-	deg := analyzeLaneOutput(out, 0)
+	facts := analyzeLaneOutputFacts(out)
+	deg := facts.degradations(0)
 
 	if len(deg) != 1 {
 		t.Fatalf("expected exactly one degradation, got %d: %+v", len(deg), deg)
@@ -235,9 +238,19 @@ func TestAnalyzeLaneOutputDetectsNoEditAttempt(t *testing.T) {
 // path: any of the write-class tool calls in the output proves the
 // lane reached an edit-capable conclusion. No degradation reported.
 func TestAnalyzeLaneOutputAcceptsEditAttempt(t *testing.T) {
-	for _, tool := range []string{"edit_file", "write_file", "append_file", "apply_patch", "submit_plan"} {
+	for _, tool := range []string{
+		workspace.ToolNameEditFile,
+		workspace.ToolNameWriteFile,
+		workspace.ToolNameAppendFile,
+		workspace.ToolNameApplyPatch,
+		workspace.ToolNameMkdir,
+		workspace.ToolNameDelegateEdit,
+		workspace.ToolNameGoMoveDeclarations,
+		workspace.ToolNameSubmitPlan,
+	} {
 		out := []byte(`{"type":"tool_call","tool":"` + tool + `"}`)
-		deg := analyzeLaneOutput(out, 0)
+		facts := analyzeLaneOutputFacts(out)
+		deg := facts.degradations(0)
 
 		if len(deg) != 0 {
 			t.Fatalf("tool %q must satisfy the edit-attempt check; got %+v", tool, deg)
@@ -252,7 +265,8 @@ func TestAnalyzeLaneOutputAcceptsPlanExecuteTypedEditEvents(t *testing.T) {
 		`{"type":"idiom.plan_execute.executor_complete","total":4,"succeeded":4,"failed":0}`,
 	}
 	for _, line := range cases {
-		deg := analyzeLaneOutput([]byte(line), 0)
+		facts := analyzeLaneOutputFacts([]byte(line))
+		deg := facts.degradations(0)
 		if len(deg) != 0 {
 			t.Fatalf("plan-execute typed edit event must satisfy the edit-attempt check; event=%s got %+v", line, deg)
 		}
@@ -266,7 +280,8 @@ func TestAnalyzeLaneOutputAcceptsPlanExecuteTypedEditEvents(t *testing.T) {
 // silent no-op.
 func TestAnalyzeLaneOutputAcceptsTypedBlocker(t *testing.T) {
 	out := []byte(`{"type":"completion_status","status":"blocked","reason":"tool_step_budget_exhausted"}`)
-	deg := analyzeLaneOutput(out, 0)
+	facts := analyzeLaneOutputFacts(out)
+	deg := facts.degradations(0)
 
 	if len(deg) != 0 {
 		t.Fatalf("typed blocked completion must satisfy the check; got %+v", deg)
@@ -279,7 +294,8 @@ func TestAnalyzeLaneOutputAcceptsTypedBlocker(t *testing.T) {
 // blocker), distinct from silent no-op exits.
 func TestAnalyzeLaneOutputAcceptsQuestionBlocker(t *testing.T) {
 	out := []byte("model output line\n<<QUESTION>>: what is the canonical anchor?\n")
-	deg := analyzeLaneOutput(out, 0)
+	facts := analyzeLaneOutputFacts(out)
+	deg := facts.degradations(0)
 
 	if len(deg) != 0 {
 		t.Fatalf("<<QUESTION>>: blocker must satisfy the check; got %+v", deg)
@@ -288,13 +304,14 @@ func TestAnalyzeLaneOutputAcceptsQuestionBlocker(t *testing.T) {
 
 func TestAnalyzeLaneOutputAcceptsSourceSatisfiedEvent(t *testing.T) {
 	out := []byte(`{"type":"final","content":"Decision: source-satisfied"}` + "\n" + `{"type":"idiom.plan_execute.source_satisfied","required_edit_paths":["a.go"]}`)
-	deg := analyzeLaneOutput(out, 0)
+	facts := analyzeLaneOutputFacts(out)
+	deg := facts.degradations(0)
 
 	if len(deg) != 0 {
 		t.Fatalf("source-satisfied event must satisfy the check; got %+v", deg)
 	}
 
-	if got := laneRunFinalState(0, deg, out); got != "source-satisfied" {
+	if got := laneRunFinalState(0, deg, facts); got != "source-satisfied" {
 		t.Fatalf("source-satisfied event should be recorded in lane history, got %q", got)
 	}
 }
@@ -304,13 +321,14 @@ func TestLaneHistoryRecordsReviewRepairDegradedAfterExecutorEdit(t *testing.T) {
 		`{"type":"idiom.plan_execute.executor_edit","path":"a.go","status":"applied"}`,
 		`{"type":"idiom.plan_execute.review_repair_degraded","status":"degraded","reason_class":"backend_eof","status_detail":"review unavailable"}`,
 	}, "\n"))
-	deg := analyzeLaneOutput(out, 0)
+	facts := analyzeLaneOutputFacts(out)
+	deg := facts.degradations(0)
 
 	if len(deg) != 0 {
 		t.Fatalf("review-repair availability degradation after an edit must not become a lane regression: %+v", deg)
 	}
 
-	if got := laneRunFinalState(0, deg, out); got != "degraded" {
+	if got := laneRunFinalState(0, deg, facts); got != "degraded" {
 		t.Fatalf("review-repair degraded event should be recorded in lane history, got %q", got)
 	}
 }
@@ -323,7 +341,8 @@ func TestLaneHistoryRecordsReviewRepairDegradedAfterExecutorEdit(t *testing.T) {
 // with the subcommand's code.
 func TestAnalyzeLaneOutputSkipsNoEditWhenSubcommandFailed(t *testing.T) {
 	out := []byte(`{"type":"final_answer","content":"crashed"}`)
-	deg := analyzeLaneOutput(out, 1)
+	facts := analyzeLaneOutputFacts(out)
+	deg := facts.degradations(1)
 
 	for _, d := range deg {
 		if d.kind == "no_edit_attempt" {

@@ -1202,6 +1202,24 @@ Reviewer-updated estimate:
   `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
   `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
   `git diff --check`.
+- Runtime/TUI tool-surface override and lane output facts authority are
+  implemented. `workerruntime` now owns the task-family-to-workspace-surface
+  override policy used by runner and TUI; workspace catalog facets/action
+  classes own direct edit adapters, write-tool classification, and
+  implementation-attempt tool detection; lane post-analysis now builds one
+  `laneOutputFacts` read model for degradation, final state, queue pool,
+  session summary, source-satisfied/review-degraded events, and implementation
+  lifecycle state instead of rescanning JSONL with separate parsers. Production
+  Go changed `+236 / -382`, net `-146`; tests changed `+154 / -43`, net
+  `+111`; total Go code changed `+390 / -425`, net `-35`. Focused verification:
+  `go test ./internal/surfaces/cli/lane`; `go test ./internal/runtime/workerruntime`;
+  `go test ./internal/capabilities/workspace`;
+  `go test ./internal/runtime/agent -run 'Test.*WorkspaceTool|Test.*PlanExecute|Test.*AllowedTools|Test.*ToolSurface|Test.*ToolRequestActionClass'`;
+  `go test ./internal/surfaces/tui/app -run 'Test.*PlanThenExecute|Test.*TurnPlanner|Test.*AllowedTools|Test.*ToolSurface'`.
+  Broad verification: `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `staticcheck -checks=U1000 ./...`; `deadcode -test ./...`;
+  `git diff --check`.
 
 ## Review And Regression Protocol
 

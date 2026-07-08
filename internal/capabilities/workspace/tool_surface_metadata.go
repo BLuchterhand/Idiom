@@ -41,6 +41,7 @@ const (
 	toolSurfaceFacetTaskLedgerReadEvidence     toolSurfaceFacet = "task_ledger_read_evidence"
 	toolSurfaceFacetPathAttachesInstructions   toolSurfaceFacet = "path_attaches_instructions"
 	toolSurfaceFacetBroadDiscovery             toolSurfaceFacet = "broad_discovery"
+	toolSurfaceFacetDirectEditAdapter          toolSurfaceFacet = "direct_edit_adapter"
 )
 
 type toolSurfaceSpec struct {
@@ -197,10 +198,10 @@ var builtInToolSurfaceCatalog = mustNewToolSurfaceCatalog([]toolSurfaceSpec{
 	{Tool: ToolNameSystemSearchAccess, Handler: ToolNameSystemSearchAccess, Category: int(CategoryVerification), ActionClass: autonomy.ActionClassGenericProbe, DefaultManifest: true, PolicyCapabilities: policyBoundedRead, SideEffects: sideEffectReadOnlyAdditive, PlanExecutePlanner: true},
 	{Tool: ToolNameTaskLedger, PolicyCapabilities: policyExternalWrite, SideEffects: sideEffectAdditive},
 	{Tool: ToolNameTask, ActionClass: autonomy.ActionClassGenericProbe, PolicyCapabilities: policyDelegation, SideEffects: sideEffectReadOnlyAdditive},
-	{Tool: ToolNameEditFile, Handler: ToolNameEditFile, Category: int(CategoryWrite), Facets: facets(toolSurfaceFacetPathAttachesInstructions), PolicyCapabilities: policySourceEdit, SideEffects: sideEffectAdditive},
-	{Tool: ToolNameWriteFile, Handler: ToolNameWriteFile, Category: int(CategoryWrite), Facets: facets(toolSurfaceFacetPathAttachesInstructions), PolicyCapabilities: policySourceEdit, SideEffects: sideEffectAdditive},
-	{Tool: ToolNameAppendFile, Handler: ToolNameAppendFile, Category: int(CategoryWrite), Facets: facets(toolSurfaceFacetPathAttachesInstructions), PolicyCapabilities: policySourceEdit, SideEffects: sideEffectAdditive},
-	{Tool: ToolNameApplyPatch, Handler: ToolNameApplyPatch, Category: int(CategoryWrite), PolicyCapabilities: policyApplyPatch, SideEffects: sideEffectAdditiveDestructive},
+	{Tool: ToolNameEditFile, Handler: ToolNameEditFile, Category: int(CategoryWrite), Facets: facets(toolSurfaceFacetPathAttachesInstructions, toolSurfaceFacetDirectEditAdapter), PolicyCapabilities: policySourceEdit, SideEffects: sideEffectAdditive},
+	{Tool: ToolNameWriteFile, Handler: ToolNameWriteFile, Category: int(CategoryWrite), Facets: facets(toolSurfaceFacetPathAttachesInstructions, toolSurfaceFacetDirectEditAdapter), PolicyCapabilities: policySourceEdit, SideEffects: sideEffectAdditive},
+	{Tool: ToolNameAppendFile, Handler: ToolNameAppendFile, Category: int(CategoryWrite), Facets: facets(toolSurfaceFacetPathAttachesInstructions, toolSurfaceFacetDirectEditAdapter), PolicyCapabilities: policySourceEdit, SideEffects: sideEffectAdditive},
+	{Tool: ToolNameApplyPatch, Handler: ToolNameApplyPatch, Category: int(CategoryWrite), Facets: facets(toolSurfaceFacetDirectEditAdapter), PolicyCapabilities: policyApplyPatch, SideEffects: sideEffectAdditiveDestructive},
 	{Tool: ToolNameMkdir, Handler: ToolNameMkdir, Category: int(CategoryWrite), PolicyCapabilities: policySourceEdit, SideEffects: sideEffectAdditive},
 	{Tool: ToolNameDelegateEdit, Category: int(CategoryWrite), PolicyCapabilities: policyDelegatingEdit, SideEffects: sideEffectAdditive},
 	{Tool: ToolNameGoMoveDeclarations, Handler: ToolNameGoMoveDeclarations, Language: "go", Category: int(CategoryWrite), PolicyCapabilities: policySourceEdit, SideEffects: sideEffectAdditive},
