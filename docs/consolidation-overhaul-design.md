@@ -377,6 +377,7 @@ Accepted or corrected slices:
 | Source-result evidence and shell authority cleanup | Production Go `+163 / -245`: net `-82`; deleted the registry-local `EvidenceLevel` classifier, `bodyReadLevelForResult`, `extractPathFromResult`, shell/TUI build-test heuristics, and the Go language-tool `goEnv` helper; the live registry now uses `ReadPathsFromToolResult` and `planThenExecuteToolResultSourceEvidence` as the source-result body authority, shell/TUI verification checks use `workspace.AnalyzeShellCommand`, and Go language tools route `go env` through the host command boundary | Test Go `+90 / -22`: net `+68`; tests now reject the old outline/body split, prove `context_zoom include_source` is registry body evidence, keep graph/candidate `context_zoom` as unread candidate evidence, and model `go env GOPATH` through the language-tool host | Focused: `go test ./internal/runtime/agent -run 'TestPathEvidenceRegistryAndRawReadModelBodyEvidenceParity|TestOutlineEvidenceClassificationDoesNotSatisfyBodyEvidence|TestPathEvidenceContextZoomCandidateOnlyRegistersUnreadCandidate|TestPathEvidenceContextZoomGraphOutputRegistersUnreadCandidate|TestPathEvidencePendingSourceObligationParity|TestSourceEvidencePendingRedirectRequestAllowedAcceptsSourceBodyShapes|TestReadPathsFromToolResultPrefersTypedPathsAndParsesSpaceBearingReadSummary|TestSourceGroundingUsesPathEvidenceRegistryForCitationSupport|TestFinalAnswerAcceptanceRejectsPlanningPathWithoutBodyOwnedSupport|TestPathEvidenceReadOnlyAnswerabilityConsolidationMatrix' -count=1`; `go test ./internal/capabilities/workspace -run 'TestAnalyzeShellCommandClassifiesInspectionAndVerification|TestAnalyzeShellCommandDetectsBuildOrTestSegments|TestSearchToolNameIncludesWorkspaceSearchAndLegacyGrep|TestTextSearchToolNameExcludesFileSearch|TestToolPolicyCapabilitiesUsesWorkspaceCatalog' -count=1`; `go test ./internal/surfaces/tui/app -run 'Test.*History|Test.*Audit|Test.*Lifecycle|Test.*Verification' -count=1`; `go test ./internal/repository/semantic/languagetools -run 'TestFindGoToolUsesGoEnvGOPATHBin|TestLanguageToolBinaryLookupsUseHostPath' -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...` | Accepted after evidence and shell/command reviewer synthesis; the extra `context_zoom` JSON source detector is behavior, not a wrapper, and coding rules caught and forced deletion of a transient pass-through wrapper, leaving `0` active wrapper findings and only the existing `languagetools.Host` boundary adapter suppressions |
 | Dormant answer-grounding authority deletion | Production Go `+0 / -359`: net `-359`; deleted unused `internal/evidence/answergrounding` claim/evidence/path-support authority after import-graph review showed live source grounding and read-only answerability are owned by `internal/runtime/agent` | Test Go `+9 / -510`: net `-501`; deleted package-local tests that preserved the dormant receipt evaluator and retargeted fixture strings in eval/runtime tests to live runtime evidence files | Focused: `go test ./internal/runtime/agent ./internal/evidence/eval ./internal/contracts/compile -count=1`; fixture-focused runtime/eval tests; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`; `git diff --check` | Accepted after evidence reviewer audit; this corrects the prior stale "no accepted pool" estimate and removes a production-compiled duplicate authority rather than adding a compatibility wrapper |
 | Shell verification classification authority | Production Go `+89 / -101`: net `-12`; moved runtime-only verification command family facts into `workspace.AnalyzeShellCommand`, deleted the runtime verification snippet table and runtime full-suite substring classifiers, and kept runtime-owned telemetry wording as presentation logic over the workspace facts | Test Go `+87 / -11`: net `+76`; workspace now covers `bash -n`, `shellcheck`, `tsc`, `ruff check`, `eslint`, `git diff --check`, full-suite commands, and build/test/check families; runtime tests keep shell action keys and post-write telemetry behavior | Focused: `go test ./internal/capabilities/workspace -run 'TestAnalyzeShellCommand|TestShellCommandFromToolResult' -count=1`; `go test ./internal/runtime/agent -run 'TestShellSyntaxCheckSatisfiesScriptPostWriteVerification|TestPostWriteVerificationTelemetryForShellSyntaxCheck|TestPostWriteVerificationTelemetryUsesShellResultCommandFallback|TestToolActionClassNormalizesRepeatedDeadEndKeys|TestVerificationShellActionClassDoesNotShareGenericGitDeadEnd|TestPatchHygieneDoesNotSatisfySourceEditCompletion|TestFinalAnswerAcceptanceAllowsHonestSourceSanityButNoBuildOrTestAnswer|Test.*Verification|TestRunner.*Verification|Test.*SourceVerification|Test.*BuildOrTest|Test.*ObservedVerification' -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`; `git diff --check` | Accepted after shell/command reviewer audit; the rough `40-90` estimate was too optimistic once the typed workspace fact and owner tests were added, but the production slice remains net-negative, removes duplicate command-family authority, and leaves coding-rules at `0` findings |
+| Eval discovery taxonomy deletion | Production Go `+0 / -96`: net `-96`; deleted eval-local `legacyDiscoveryProfile` and `legacyLanguageDiscoveryProfile` plus fallback fill-in/unfill logic, so eval discovery balance consumes only recorded `discovery_class`, `discovery_scope`, and `discovery_cost` emitted by runtime from the workspace owner | Test Go `+18 / -4`: net `+14`; tests now prove unannotated historical tool records do not infer discovery metadata and add explicit metadata where discovery balance is intended | Focused: `go test ./internal/evidence/eval -run 'TestAnalyze.*Discovery|TestAnalyzeCountsRejected|TestAnalyzeDoesNotUncount|TestAnalyzeUncountsRecoverable|TestAnalyzeDoesNotInferDiscoveryProfileForUnannotatedTools' -count=1`; `go test ./internal/capabilities/workspace -run 'TestDiscoveryProfile|TestAnalyzeShellCommand' -count=1`; `go test ./internal/runtime/agent -run 'Test.*Discovery.*ToolRequest|Test.*ToolRequest.*Discovery|Test.*Shell.*Verification' -count=1`; broad verification pending in this slice | Accepted after shell/command reviewer audit; old JSONL without discovery metadata loses inferred discovery counts by design because retaining that inference preserved a stale duplicate taxonomy |
 
 ## Historical Count Snapshots (Superseded)
 
@@ -815,13 +816,13 @@ Current git state:
   owner cleanup, command-result authority cleanup, source-evidence candidate
   extraction cleanup, completion-gate/alias authority cleanup, and the
   source-result evidence plus shell command authority cleanup, dormant
-  answer-grounding authority deletion, and shell verification classification
-  authority consolidation.
+  answer-grounding authority deletion, shell verification classification
+  authority consolidation, and eval discovery taxonomy deletion.
 - Goal-period diff from merge base through the latest working state:
-  production Go `+20,357 / -20,736`, net `-379`; Go tests `+10,013 / -6,501`,
-  net `+3,512`; strict all-file total `+32,420 / -29,206`, net `+3,214`.
+  production Go `+20,307 / -20,830`, net `-523`; Go tests `+10,081 / -6,507`,
+  net `+3,574`; strict all-file total `+32,455 / -29,313`, net `+3,142`.
 - Physical tracked production Go file lines moved from `328,110` at the merge
-  base to `327,683` in the latest working tree: net `-427`.
+  base to `327,587` in the latest working tree: net `-523`.
 - Latest semantic facade cleanup slice only: production Go `+245 / -294`,
   net `-49`; Go tests `+31 / -24`, net `+7`.
 - Latest gitstate cleanup slice only: production Go `+120 / -126`, net `-6`;
@@ -845,13 +846,15 @@ Current git state:
   production Go `+0 / -359`, net `-359`; Go tests `+9 / -510`, net `-501`.
 - Latest shell verification classification authority slice only:
   production Go `+89 / -101`, net `-12`; Go tests `+87 / -11`, net `+76`.
+- Latest eval discovery taxonomy deletion slice only:
+  production Go `+0 / -96`, net `-96`; Go tests `+18 / -4`, net `+14`.
 
 Interpretation: the current goal-period branch is now production-LOC negative.
 Many individual consolidation slices are net-negative and remove real duplicate
 or alias-only surfaces, while the total all-file diff remains positive because
 tests, docs, scripted fixtures, and earlier `commandexec` process-lifecycle
 setup added shared platform coverage before all remaining process migrations
-are complete. The honest current production answer is net `-379` Go LOC from
+are complete. The honest current production answer is net `-475` Go LOC from
 merge base through the working tree. The implementation ledger above remains
 the source of truth for accepted local reductions inside each consolidation
 case.
@@ -959,7 +962,12 @@ Reviewer-updated estimate:
   authority deletion above removed `359` production Go LOC, and the shell
   verification-classification consolidation removed another `12` production Go
   LOC while establishing `workspace.AnalyzeShellCommand` as the owner for those
-  command families. No other accepted immediate pool is currently documented.
+  command families. The eval discovery taxonomy deletion removed another `96`
+  production Go LOC by making recorded workspace-owned discovery metadata the
+  only eval discovery source. The current evidence reviewer found one remaining
+  accepted candidate: retiring the orphan prior-session evidence reader,
+  estimated at `160-170` production Go LOC. No other accepted immediate pool is
+  currently documented.
   With a future evidence/read-model design decision and reviewer acceptance,
   `150-350` production LOC is a hypothesis, not an accepted estimate.
 - Further reductions should come from larger owner moves in the case plan, not

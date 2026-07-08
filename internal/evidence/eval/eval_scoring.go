@@ -14,64 +14,6 @@ import (
 	"idiom/internal/platform/textutil"
 )
 
-func legacyDiscoveryProfile(tool string) (class string, scope string, cost string) {
-	tool = strings.TrimSpace(tool)
-	switch tool {
-	case "pwd":
-		return "workspace_context", "targeted", "low"
-	case "list_files":
-		return "workspace_listing", "broad", "low"
-	case "search_files":
-		return "file_search", "targeted", "low"
-	case "search_content", "rg":
-		return "text_search", "targeted", "low"
-	case "read_file":
-		return "file_read", "targeted", "low"
-	case "code_navigate":
-		return "language_symbol", "targeted", "low"
-	case "source_sanity":
-		return "diagnostics", "targeted", "medium"
-	case "discovery_query":
-		return "composite_query", "targeted", "medium"
-	case "structural_search":
-		return "ast_search", "targeted", "medium"
-	case "dependency_graph":
-		return "dependency_graph", "broad", "medium"
-	case "history_range", "history_symbol", "blame_range":
-		return "history", "targeted", "medium"
-	case "ctags_symbols":
-		return "symbol_index", "targeted", "medium"
-	case "semgrep_scan", "joern_scan":
-		return "security_scan", "broad", "high"
-	case "task":
-		return "delegated_discovery", "broad", "high"
-	case "shell":
-		return "other", "", ""
-	default:
-		return legacyLanguageDiscoveryProfile(tool)
-	}
-}
-
-func legacyLanguageDiscoveryProfile(tool string) (class string, scope string, cost string) {
-	for _, prefix := range []string{"go_", "cpp_", "python_", "ts_", "rust_", "java_"} {
-		if strings.HasPrefix(tool, prefix) {
-			suffix := strings.TrimPrefix(tool, prefix)
-			switch suffix {
-			case "overview", "entrypoints":
-				return "language_overview", "broad", "medium"
-			case "find_symbol", "find_function", "find_type", "find_const", "find_package", "workspace_symbol", "file_outline", "read_symbol":
-				return "language_symbol", "targeted", "low"
-			case "definition", "declaration", "references", "implementations", "calls_from", "calls_into", "extract_body", "related_files", "importers", "includes", "who_includes", "blast_radius", "dead_symbol":
-				return "language_relationship", "targeted", "medium"
-			case "diagnostics":
-				return "diagnostics", "targeted", "medium"
-			}
-		}
-	}
-
-	return "other", "", ""
-}
-
 func Analyze(records []Record) Metrics {
 	metrics := Metrics{
 		Tools:            make(map[string]int),
@@ -734,25 +676,6 @@ func recordToolAttemptMetrics(metrics *Metrics, data map[string]any) {
 	scope := strings.TrimSpace(stringField(data, "discovery_scope"))
 	cost := strings.TrimSpace(stringField(data, "discovery_cost"))
 
-	if class == "shell" {
-		class, scope, cost = "other", "", ""
-	}
-
-	if class == "" || scope == "" || cost == "" {
-		fallbackClass, fallbackScope, fallbackCost := legacyDiscoveryProfile(tool)
-		if class == "" {
-			class = fallbackClass
-		}
-
-		if scope == "" {
-			scope = fallbackScope
-		}
-
-		if cost == "" {
-			cost = fallbackCost
-		}
-	}
-
 	if class != "" && class != "other" {
 		metrics.DiscoveryTools[tool]++
 
@@ -795,25 +718,6 @@ func unrecordToolAttemptMetrics(metrics *Metrics, data map[string]any) {
 	class := strings.TrimSpace(stringField(data, "discovery_class"))
 	scope := strings.TrimSpace(stringField(data, "discovery_scope"))
 	cost := strings.TrimSpace(stringField(data, "discovery_cost"))
-
-	if class == "shell" {
-		class, scope, cost = "other", "", ""
-	}
-
-	if class == "" || scope == "" || cost == "" {
-		fallbackClass, fallbackScope, fallbackCost := legacyDiscoveryProfile(tool)
-		if class == "" {
-			class = fallbackClass
-		}
-
-		if scope == "" {
-			scope = fallbackScope
-		}
-
-		if cost == "" {
-			cost = fallbackCost
-		}
-	}
 
 	if class != "" && class != "other" {
 		decrementMetricMap(metrics.DiscoveryTools, tool)

@@ -843,12 +843,26 @@ func TestAnalyzeCountsRejectedToolResultWithoutRequestAsAttempt(t *testing.T) {
 		t.Fatalf("expected rejected code_navigate attempt to count as tool usage, got %#v", metrics.Tools)
 	}
 
-	if metrics.DiscoveryTools["code_navigate"] != 1 || metrics.DiscoveryClasses["language_symbol"] != 1 {
-		t.Fatalf("expected rejected code_navigate attempt to count as discovery attempt, tools=%#v classes=%#v", metrics.DiscoveryTools, metrics.DiscoveryClasses)
+	if metrics.DiscoveryTools["code_navigate"] != 0 || metrics.DiscoveryClasses["language_symbol"] != 0 {
+		t.Fatalf("unannotated rejected code_navigate must not infer discovery metadata, tools=%#v classes=%#v", metrics.DiscoveryTools, metrics.DiscoveryClasses)
 	}
 
 	if metrics.ErrorCount != 2 || len(metrics.Errors) != 2 {
 		t.Fatalf("expected two error events and two unique errors, count=%d errors=%#v", metrics.ErrorCount, metrics.Errors)
+	}
+}
+
+func TestAnalyzeDoesNotInferDiscoveryProfileForUnannotatedTools(t *testing.T) {
+	records := []Record{
+		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "code_navigate", "path": "internal/labels/labels.go"}},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "code_navigate", "summary": "Read Label", "error": ""}},
+		{Type: "tool_request", Data: map[string]any{"step": 2, "tool": "dependency_graph", "path": "."}},
+		{Type: "tool_result", Data: map[string]any{"step": 2, "tool": "dependency_graph", "summary": "Graph built", "error": ""}},
+	}
+
+	metrics := Analyze(records)
+	if len(metrics.DiscoveryTools) != 0 || len(metrics.DiscoveryClasses) != 0 || len(metrics.DiscoveryScopes) != 0 || len(metrics.DiscoveryCosts) != 0 {
+		t.Fatalf("unannotated tool records must not infer discovery taxonomy, tools=%#v classes=%#v scopes=%#v costs=%#v", metrics.DiscoveryTools, metrics.DiscoveryClasses, metrics.DiscoveryScopes, metrics.DiscoveryCosts)
 	}
 }
 
@@ -1829,9 +1843,9 @@ func TestAnalyzeTracksDiscoveryBalanceMetadata(t *testing.T) {
 		{Type: "tool_result", Data: map[string]any{"step": 2, "error": ""}},
 		{Type: "tool_request", Data: map[string]any{"step": 3, "tool": "semgrep_scan", "discovery_class": "security_scan", "discovery_scope": "broad", "discovery_cost": "high"}},
 		{Type: "tool_result", Data: map[string]any{"step": 3, "error": ""}},
-		{Type: "tool_request", Data: map[string]any{"step": 4, "tool": "dependency_graph"}},
+		{Type: "tool_request", Data: map[string]any{"step": 4, "tool": "dependency_graph", "discovery_class": "dependency_graph", "discovery_scope": "broad", "discovery_cost": "medium"}},
 		{Type: "tool_result", Data: map[string]any{"step": 4, "error": ""}},
-		{Type: "tool_request", Data: map[string]any{"step": 5, "tool": "shell", "discovery_class": "shell", "discovery_scope": "targeted", "discovery_cost": "high"}},
+		{Type: "tool_request", Data: map[string]any{"step": 5, "tool": "shell", "discovery_class": "other", "discovery_scope": "targeted", "discovery_cost": "high"}},
 		{Type: "tool_result", Data: map[string]any{"step": 5, "error": ""}},
 	}
 
