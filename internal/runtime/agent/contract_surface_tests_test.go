@@ -2600,7 +2600,7 @@ func runGitOutput(t *testing.T, root string, args ...string) string {
 	return string(output)
 }
 
-func TestEvidenceToolResultFromWorkspaceUsesNeutralDTO(t *testing.T) {
+func TestPathEvidenceRegistryIngestsWorkspaceResultRelationships(t *testing.T) {
 	result := workspace.ToolResult{
 		Tool:          " read_file ",
 		Code:          "ok",
@@ -2614,16 +2614,14 @@ func TestEvidenceToolResultFromWorkspaceUsesNeutralDTO(t *testing.T) {
 		},
 	}
 
-	dto := FromWorkspaceResult(result)
+	registry := NewPathEvidenceRegistry(t.TempDir())
+	registry.RegisterToolResults([]workspace.ToolResult{result})
 
-	if dto.ToolName != "read_file" || dto.Summary != `Read ./internal\runtime\agent\runner_core.go lines 1-20` {
-		t.Fatalf("unexpected dto identity: %#v", dto)
+	if !registry.HasBodyEvidence("internal/runtime/agent/runner_core.go") {
+		t.Fatal("expected workspace relationship path to register as body evidence")
 	}
-	if got, want := dto.Paths, []string{"internal/runtime/agent/runner_core.go"}; len(got) != len(want) || got[0] != want[0] {
-		t.Fatalf("dto paths = %#v, want %#v", got, want)
-	}
-	if dto.Metadata["code"] != "ok" || dto.Metadata["precision_tier"] != "source_body" {
-		t.Fatalf("metadata = %#v", dto.Metadata)
+	if registry.HasBodyEvidence("internal/runtime/agent/evidence_registry.go") {
+		t.Fatal("mention-only relationship must not register as body evidence")
 	}
 }
 

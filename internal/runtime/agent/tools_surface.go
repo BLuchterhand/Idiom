@@ -2681,15 +2681,7 @@ func shouldPreferModelBudgetSynthesis(agentName string, brief workerruntime.Work
 
 func postChildSourceBodyPacketEvidenceAvailable(results []workspace.ToolResult) bool {
 	for _, fact := range newToolResultEvidenceProjection(results).ReadOnlyDelegatedEvidenceFacts() {
-		if fact.HasPacket {
-			if len(fact.SourceBodyPaths) > 0 {
-				return true
-			}
-
-			continue
-		}
-
-		if delegatedSourceBodyPacketHasGroundedFinding(fact.Output) {
+		if readOnlyDelegatedEvidenceDecisionForObjective("", fact).SourceBodyPacketAvailable {
 			return true
 		}
 	}

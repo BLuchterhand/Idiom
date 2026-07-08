@@ -13,25 +13,25 @@ import (
 )
 
 // --- path evidence registry tests ---
-func TestRegisterToolResultsUsesEvidenceOwnedDTO(t *testing.T) {
+func TestRegisterToolResultsIngestsWorkspaceResults(t *testing.T) {
 	registry := NewPathEvidenceRegistry(t.TempDir())
 
-	registry.RegisterToolResults([]ToolResult{{
-		ToolName: "read_file",
-		Paths:    []string{"internal/runtime/agent/evidence_registry.go"},
-		Summary:  "Read internal/runtime/agent/evidence_registry.go",
+	registry.RegisterToolResults([]workspace.ToolResult{{
+		Tool:    "read_file",
+		Paths:   []string{"internal/runtime/agent/evidence_registry.go"},
+		Summary: "Read internal/runtime/agent/evidence_registry.go",
 	}})
 
 	if !registry.HasBodyEvidence("internal/runtime/agent/evidence_registry.go") {
-		t.Fatal("expected body evidence from evidence-owned DTO")
+		t.Fatal("expected body evidence from workspace result")
 	}
 }
 
 func TestPathEvidenceRegistryRejectsAbsoluteAndEscapingBodyReadPaths(t *testing.T) {
 	registry := NewPathEvidenceRegistry(t.TempDir())
 
-	registry.RegisterToolResults([]ToolResult{{
-		ToolName: "read_file",
+	registry.RegisterToolResults([]workspace.ToolResult{{
+		Tool: "read_file",
 		Paths: []string{
 			"/tmp/outside.go",
 			`C:\tmp\outside.go`,
@@ -67,10 +67,10 @@ func TestCandidatePathExistenceResolvesLazily(t *testing.T) {
 	}
 
 	registry := NewPathEvidenceRegistry(root)
-	registry.RegisterToolResults([]ToolResult{{
-		ToolName: "search_content",
-		Paths:    []string{"internal/runtime/agent/evidence_registry.go"},
-		Summary:  "Found internal/runtime/agent/evidence_registry.go",
+	registry.RegisterToolResults([]workspace.ToolResult{{
+		Tool:    "search_content",
+		Paths:   []string{"internal/runtime/agent/evidence_registry.go"},
+		Summary: "Found internal/runtime/agent/evidence_registry.go",
 	}})
 
 	if !registry.EnsurePathExists("internal/runtime/agent/evidence_registry.go") {
@@ -99,7 +99,7 @@ func TestPathEvidenceRegistryAndRawReadModelBodyEvidenceParity(t *testing.T) {
 			result: workspace.ToolResult{
 				Tool:    workspace.ToolNameReadFile,
 				Summary: "Read internal/runtime/agent/evidence_registry.go lines 20-40 (total lines: 220)",
-				Output:  "func TestRegisterToolResultsUsesEvidenceOwnedDTO(t *testing.T) {}\n",
+				Output:  "func TestRegisterToolResultsIngestsWorkspaceResults(t *testing.T) {}\n",
 			},
 			wantRawLevel:     planThenExecuteEvidenceAnchorReady,
 			wantRawBody:      true,
@@ -158,8 +158,8 @@ func TestPathEvidenceRegistryAndRawReadModelBodyEvidenceParity(t *testing.T) {
 			path: sourcePath,
 			result: workspace.ToolResult{
 				Tool:    "go_read_symbol",
-				Summary: "Read TestRegisterToolResultsUsesEvidenceOwnedDTO in internal/runtime/agent/evidence_registry.go lines 12-24",
-				Output:  "func TestRegisterToolResultsUsesEvidenceOwnedDTO(t *testing.T) {}\n",
+				Summary: "Read TestRegisterToolResultsIngestsWorkspaceResults in internal/runtime/agent/evidence_registry.go lines 12-24",
+				Output:  "func TestRegisterToolResultsIngestsWorkspaceResults(t *testing.T) {}\n",
 			},
 			wantRawLevel:     planThenExecuteEvidenceAnchorReady,
 			wantRawBody:      true,
@@ -171,7 +171,7 @@ func TestPathEvidenceRegistryAndRawReadModelBodyEvidenceParity(t *testing.T) {
 			result: workspace.ToolResult{
 				Tool:    workspace.ToolNameContextZoom,
 				Summary: "Read internal/runtime/agent/evidence_registry.go lines 1-20 with include_source",
-				Output:  `{"path":"internal/runtime/agent/evidence_registry.go","source":"func TestRegisterToolResultsUsesEvidenceOwnedDTO(t *testing.T) {}"}`,
+				Output:  `{"path":"internal/runtime/agent/evidence_registry.go","source":"func TestRegisterToolResultsIngestsWorkspaceResults(t *testing.T) {}"}`,
 			},
 			wantRawLevel:     planThenExecuteEvidenceAnchorReady,
 			wantRawBody:      true,
@@ -195,7 +195,7 @@ func TestPathEvidenceRegistryAndRawReadModelBodyEvidenceParity(t *testing.T) {
 			result: workspace.ToolResult{
 				Tool:    workspace.ToolNameCodeNavigate,
 				Summary: "Read outline in internal/runtime/agent/evidence_registry.go with capability: file_outline",
-				Output:  "capability: file_outline\nfn TestRegisterToolResultsUsesEvidenceOwnedDTO\nstruct PathEvidenceRegistry\n",
+				Output:  "capability: file_outline\nfn TestRegisterToolResultsIngestsWorkspaceResults\nstruct PathEvidenceRegistry\n",
 			},
 			wantRawLevel:     planThenExecuteEvidencePathSeen,
 			wantRawBody:      false,
@@ -215,7 +215,7 @@ func TestPathEvidenceRegistryAndRawReadModelBodyEvidenceParity(t *testing.T) {
 			}
 
 			registry := NewPathEvidenceRegistry(t.TempDir())
-			registry.RegisterToolResults([]ToolResult{FromWorkspaceResult(tt.result)})
+			registry.RegisterToolResults([]workspace.ToolResult{tt.result})
 			if got := registry.HasBodyEvidence(tt.path); got != tt.wantRegistryBody {
 				t.Fatalf("registry body evidence = %v, want %v", got, tt.wantRegistryBody)
 			}
@@ -244,7 +244,7 @@ func TestContextZoomIncludeSourceFlagWithoutBodyIsNotConcreteSourceEvidence(t *t
 	}
 
 	registry := NewPathEvidenceRegistry(".")
-	registry.RegisterToolResults([]ToolResult{FromWorkspaceResult(result)})
+	registry.RegisterToolResults([]workspace.ToolResult{result})
 	if registry.HasBodyEvidence(sourcePath) {
 		t.Fatal("include_source graph metadata must not become registry body evidence")
 	}
@@ -260,7 +260,7 @@ func TestPathEvidenceCandidateOnlyParity(t *testing.T) {
 	}
 
 	registry := NewPathEvidenceRegistry(".")
-	registry.RegisterToolResults([]ToolResult{FromWorkspaceResult(result)})
+	registry.RegisterToolResults([]workspace.ToolResult{result})
 
 	if !registry.EnsurePathExists(sourcePath) {
 		t.Fatal("search candidate should resolve lazily against the workspace")
@@ -310,9 +310,9 @@ func TestPathEvidenceCandidateOnlyParity(t *testing.T) {
 		t.Fatalf("same-path body read should clear unread candidate state: %#v", bodyLedger)
 	}
 	bodyRegistry := NewPathEvidenceRegistry(".")
-	bodyRegistry.RegisterToolResults([]ToolResult{
-		FromWorkspaceResult(result),
-		FromWorkspaceResult(withBody[1]),
+	bodyRegistry.RegisterToolResults([]workspace.ToolResult{
+		result,
+		withBody[1],
 	})
 	if !bodyRegistry.HasBodyEvidence(sourcePath) {
 		t.Fatal("same-path body read should promote registry body evidence")
@@ -343,7 +343,7 @@ func TestPathEvidenceContextDiscoveryCandidateParity(t *testing.T) {
 					"evidence":[{
 						"name":"text_anchor_search",
 						"summary":"Found path evidence registry implementation.",
-						"output_excerpt":"evidence_registry.go:88:func (r *PathEvidenceRegistry) RegisterToolResults(results []ToolResult)"
+						"output_excerpt":"evidence_registry.go:88:func (r *PathEvidenceRegistry) RegisterToolResults(results []workspace.ToolResult)"
 					}]
 				}`,
 			},
@@ -425,7 +425,7 @@ func TestPathEvidenceContextDiscoveryCandidateParity(t *testing.T) {
 			}
 
 			registry := NewPathEvidenceRegistry(".")
-			registry.RegisterToolResults([]ToolResult{FromWorkspaceResult(tt.result)})
+			registry.RegisterToolResults([]workspace.ToolResult{tt.result})
 			registry.mu.RLock()
 			evidence, registered := registry.paths[sourcePath]
 			registry.mu.RUnlock()
@@ -472,7 +472,7 @@ func TestPathEvidenceContextZoomCandidateOnlyRegistersUnreadCandidate(t *testing
 	}
 
 	registry := NewPathEvidenceRegistry(".")
-	registry.RegisterToolResults([]ToolResult{FromWorkspaceResult(result)})
+	registry.RegisterToolResults([]workspace.ToolResult{result})
 	registry.mu.RLock()
 	evidence, registered := registry.paths[sourcePath]
 	registry.mu.RUnlock()
@@ -534,7 +534,7 @@ func TestPathEvidenceContextZoomGraphOutputRegistersUnreadCandidate(t *testing.T
 	}
 
 	registry := NewPathEvidenceRegistry(".")
-	registry.RegisterToolResults([]ToolResult{FromWorkspaceResult(result)})
+	registry.RegisterToolResults([]workspace.ToolResult{result})
 	registry.mu.RLock()
 	evidence, registered := registry.paths[sourcePath]
 	registry.mu.RUnlock()
@@ -548,8 +548,8 @@ func TestPathEvidenceContextZoomGraphOutputRegistersUnreadCandidate(t *testing.T
 
 func TestPathEvidenceRegistryCandidateBoundaries(t *testing.T) {
 	registry := NewPathEvidenceRegistry(".")
-	registry.RegisterToolResults([]ToolResult{{
-		ToolName: workspace.ToolNameContextPack,
+	registry.RegisterToolResults([]workspace.ToolResult{{
+		Tool: workspace.ToolNameContextPack,
 		Paths: []string{
 			"internal/runtime/agent/evidence_registry.go",
 			"../outside.go",
@@ -692,7 +692,7 @@ func TestPathEvidenceReadOnlyAnswerabilityConsolidationMatrix(t *testing.T) {
 					"evidence":[{
 						"name":"text_anchor_search",
 						"summary":"Found path evidence registry implementation.",
-						"output_excerpt":"evidence_registry.go:88:func (r *PathEvidenceRegistry) RegisterToolResults(results []ToolResult)"
+						"output_excerpt":"evidence_registry.go:88:func (r *PathEvidenceRegistry) RegisterToolResults(results []workspace.ToolResult)"
 					}]
 				}`,
 			}},
@@ -831,11 +831,7 @@ func TestPathEvidenceReadOnlyAnswerabilityConsolidationMatrix(t *testing.T) {
 			}
 
 			registry := NewPathEvidenceRegistry(".")
-			var registryResults []ToolResult
-			for _, result := range tt.results {
-				registryResults = append(registryResults, FromWorkspaceResult(result))
-			}
-			registry.RegisterToolResults(registryResults)
+			registry.RegisterToolResults(tt.results)
 			if got := registryCandidate(registry, sourcePath); got != tt.wantRegistryCandidate {
 				t.Fatalf("registry candidate presence = %v, want %v", got, tt.wantRegistryCandidate)
 			}
@@ -910,7 +906,7 @@ func TestPathEvidenceReadOnlyAnswerabilityNonRegistryEvidenceRequiresObjectiveMa
 			}
 
 			registry := NewPathEvidenceRegistry(".")
-			registry.RegisterToolResults([]ToolResult{FromWorkspaceResult(tt.result)})
+			registry.RegisterToolResults([]workspace.ToolResult{tt.result})
 			if registry.HasBodyEvidence("internal/runtime/agent/evidence_registry.go") {
 				t.Fatal("non-registry answerability evidence must not become registry body evidence")
 			}
@@ -932,7 +928,7 @@ func TestOutlineEvidenceClassificationDoesNotSatisfyBodyEvidence(t *testing.T) {
 		Summary: "Read outline in internal/runtime/agent/evidence_registry.go with capability: file_outline",
 		Output: strings.Join([]string{
 			"capability: file_outline",
-			"fn TestRegisterToolResultsUsesEvidenceOwnedDTO",
+			"fn TestRegisterToolResultsIngestsWorkspaceResults",
 			"struct PathEvidenceRegistry",
 		}, "\n"),
 	}
@@ -952,7 +948,7 @@ func TestOutlineEvidenceClassificationDoesNotSatisfyBodyEvidence(t *testing.T) {
 	}
 
 	registry := NewPathEvidenceRegistry(".")
-	registry.RegisterToolResults([]ToolResult{FromWorkspaceResult(outlineResult)})
+	registry.RegisterToolResults([]workspace.ToolResult{outlineResult})
 	if registry.HasBodyEvidence(sourcePath) {
 		t.Fatal("outline-only evidence must not become registry body evidence")
 	}
@@ -985,9 +981,9 @@ func TestOutlineEvidenceClassificationDoesNotSatisfyBodyEvidence(t *testing.T) {
 	}
 
 	promotedRegistry := NewPathEvidenceRegistry(".")
-	promotedRegistry.RegisterToolResults([]ToolResult{
-		FromWorkspaceResult(outlineResult),
-		FromWorkspaceResult(symbolResult),
+	promotedRegistry.RegisterToolResults([]workspace.ToolResult{
+		outlineResult,
+		symbolResult,
 	})
 	if !promotedRegistry.HasBodyEvidence(sourcePath) {
 		t.Fatal("later exact symbol body read should promote registry body evidence")
@@ -1083,7 +1079,7 @@ func TestPathEvidencePendingSourceObligationParity(t *testing.T) {
 	}
 
 	registry := NewPathEvidenceRegistry(".")
-	registry.RegisterToolResults([]ToolResult{FromWorkspaceResult(redirectResult)})
+	registry.RegisterToolResults([]workspace.ToolResult{redirectResult})
 	if registry.HasBodyEvidence(redirectPath) {
 		t.Fatal("redirect-only read_file must not become registry body evidence")
 	}
@@ -1124,9 +1120,9 @@ func TestPathEvidencePendingSourceObligationParity(t *testing.T) {
 		t.Fatalf("same-path source-body read should clear pending redirect: %#v", pending)
 	}
 	promotedRegistry := NewPathEvidenceRegistry(".")
-	promotedRegistry.RegisterToolResults([]ToolResult{
-		FromWorkspaceResult(redirectResult),
-		FromWorkspaceResult(samePathBodyResult),
+	promotedRegistry.RegisterToolResults([]workspace.ToolResult{
+		redirectResult,
+		samePathBodyResult,
 	})
 	if !promotedRegistry.HasBodyEvidence(redirectPath) {
 		t.Fatal("same-path source-body read should promote registry body evidence")
@@ -1208,10 +1204,10 @@ func TestPathEvidencePendingSourceObligationParity(t *testing.T) {
 	}
 
 	outlineRegistry := NewPathEvidenceRegistry(".")
-	outlineRegistry.RegisterToolResults([]ToolResult{
-		FromWorkspaceResult(redirectResult),
-		FromWorkspaceResult(otherBodyResult),
-		FromWorkspaceResult(outlineResult),
+	outlineRegistry.RegisterToolResults([]workspace.ToolResult{
+		redirectResult,
+		otherBodyResult,
+		outlineResult,
 	})
 	if outlineRegistry.HasBodyEvidence(redirectPath) {
 		t.Fatal("registry must not treat file_outline progress as body evidence")
@@ -1378,11 +1374,7 @@ func TestPathEvidenceMutationHistoryParityBoundaries(t *testing.T) {
 	}
 
 	registry := NewPathEvidenceRegistry(".")
-	var registryResults []ToolResult
-	for _, result := range results {
-		registryResults = append(registryResults, FromWorkspaceResult(result))
-	}
-	registry.RegisterToolResults(registryResults)
+	registry.RegisterToolResults(results)
 
 	for _, wantBody := range []string{historyCompletePath, historyNotApplicablePath, historyPendingPath} {
 		if !registry.HasBodyEvidence(wantBody) {
@@ -1402,9 +1394,9 @@ func TestPathEvidenceMutationHistoryParityBoundaries(t *testing.T) {
 	}
 
 	mutationOnlyRegistry := NewPathEvidenceRegistry(".")
-	mutationOnlyRegistry.RegisterToolResults([]ToolResult{
-		FromWorkspaceResult(editResult),
-		FromWorkspaceResult(patchResult),
+	mutationOnlyRegistry.RegisterToolResults([]workspace.ToolResult{
+		editResult,
+		patchResult,
 	})
 	for _, changedOnly := range []string{historyPendingPath, changedOnlyPath} {
 		mutationOnlyRegistry.mu.RLock()
@@ -1473,11 +1465,7 @@ func TestToolResultEvidenceProjectionChangedPaths(t *testing.T) {
 	}
 
 	registry := NewPathEvidenceRegistry(".")
-	var registryResults []ToolResult
-	for _, result := range results {
-		registryResults = append(registryResults, FromWorkspaceResult(result))
-	}
-	registry.RegisterToolResults(registryResults)
+	registry.RegisterToolResults(results)
 	for _, changed := range wantChanged {
 		registry.mu.RLock()
 		_, registered := registry.paths[changed]

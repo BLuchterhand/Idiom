@@ -6041,14 +6041,6 @@ func wrapDelegateEditResult(result workspace.ToolResult, route string) workspace
 	return wrapped
 }
 
-func delegatedSourceBodyPacketHasGroundedFinding(output string) bool {
-	if len(sourceBodyEvidencePathsFromDelegatedPacket(output)) == 0 {
-		return false
-	}
-
-	return delegatedTaskOutputHasFindingEvidence(output)
-}
-
 func allowsDocumentationOnlyPacket(objective string) bool {
 	lower := " " + strings.ToLower(strings.TrimSpace(objective)) + " "
 	return ContainsAny(lower, " readme ", " doc ", " docs ", " documentation ", " markdown ")
@@ -6145,7 +6137,9 @@ func synthesizeDelegatedReadOnlyAnswer(objective string, results []workspace.Too
 		answerabilityResults = append(answerabilityResults, result)
 
 		if strings.TrimSpace(result.Tool) == workspace.ToolNameTask {
-			if fact, ok := readOnlyDelegatedEvidenceFactFromResult(result); ok && fact.HasPacket && !readOnlyEvidencePacketAnswerableForObjective(fact.Packet, objective) {
+			if fact, ok := readOnlyDelegatedEvidenceFactFromResult(result); ok && fact.HasPacket &&
+				!readOnlyDelegatedEvidenceDecisionForObjective(objective, fact).TaskResultAnswerable {
+
 				continue
 			}
 		}

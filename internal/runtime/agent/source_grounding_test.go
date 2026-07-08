@@ -284,10 +284,10 @@ func TestSourceGroundingPathsAfterMarkerStopsBeforeRecoveryInstructions(t *testi
 func TestSourceGroundingUsesPathEvidenceRegistryForCitationSupport(t *testing.T) {
 	runner := readOnlySourceGroundingRunner()
 	runner.PathEvidenceRegistry = NewPathEvidenceRegistry(t.TempDir())
-	runner.PathEvidenceRegistry.RegisterToolResults([]ToolResult{{
-		ToolName: "read_file",
-		Paths:    []string{"internal/workflows/productworkflow/coverage_gate.go"},
-		Summary:  "Read internal/workflows/productworkflow/coverage_gate.go",
+	runner.PathEvidenceRegistry.RegisterToolResults([]workspace.ToolResult{{
+		Tool:    "read_file",
+		Paths:   []string{"internal/workflows/productworkflow/coverage_gate.go"},
+		Summary: "Read internal/workflows/productworkflow/coverage_gate.go",
 	}})
 
 	reason := runner.sourceGroundingRejectionReason(
@@ -345,11 +345,11 @@ func TestSourceGroundingBasenameResolutionMatchesRegistryAndRawEvidence(t *testi
 
 	registryRunner := readOnlySourceGroundingRunner()
 	registryRunner.PathEvidenceRegistry = NewPathEvidenceRegistry(root)
-	registryRunner.PathEvidenceRegistry.RegisterToolResults([]ToolResult{{
-		ToolName: workspace.ToolNameReadFile,
-		Paths:    []string{uniquePath},
-		Summary:  "Read internal/app/target.go lines 1-20",
-		Output:   "package app\nfunc targetBehavior() {}\n",
+	registryRunner.PathEvidenceRegistry.RegisterToolResults([]workspace.ToolResult{{
+		Tool:    workspace.ToolNameReadFile,
+		Paths:   []string{uniquePath},
+		Summary: "Read internal/app/target.go lines 1-20",
+		Output:  "package app\nfunc targetBehavior() {}\n",
 	}})
 	if reason := registryRunner.sourceGroundingRejectionReason("`target.go:2` defines target behavior.", nil); reason != "" {
 		t.Fatalf("unique basename backed by registry source-body evidence blocked: %q", reason)
@@ -360,9 +360,9 @@ func TestSourceGroundingBasenameResolutionMatchesRegistryAndRawEvidence(t *testi
 	writeFixture(ambiguousRoot, "internal/other/target.go")
 	ambiguousRunner := readOnlySourceGroundingRunner()
 	ambiguousRunner.PathEvidenceRegistry = NewPathEvidenceRegistry(ambiguousRoot)
-	ambiguousRunner.PathEvidenceRegistry.RegisterToolResults([]ToolResult{
-		{ToolName: workspace.ToolNameReadFile, Paths: []string{uniquePath}, Summary: "Read internal/app/target.go lines 1-20"},
-		{ToolName: workspace.ToolNameReadFile, Paths: []string{"internal/other/target.go"}, Summary: "Read internal/other/target.go lines 1-20"},
+	ambiguousRunner.PathEvidenceRegistry.RegisterToolResults([]workspace.ToolResult{
+		{Tool: workspace.ToolNameReadFile, Paths: []string{uniquePath}, Summary: "Read internal/app/target.go lines 1-20"},
+		{Tool: workspace.ToolNameReadFile, Paths: []string{"internal/other/target.go"}, Summary: "Read internal/other/target.go lines 1-20"},
 	})
 	reason := ambiguousRunner.sourceGroundingRejectionReason("`target.go:2` defines target behavior.", nil)
 	if !strings.Contains(reason, "target.go") {

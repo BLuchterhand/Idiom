@@ -51,9 +51,9 @@ func NewPathEvidenceRegistry(workspaceRoot string) *PathEvidenceRegistry {
 // Population
 // ---------------------------------------------------------------------------
 
-// RegisterToolResults ingests a slice of ToolResults and updates the registry
+// RegisterToolResults ingests workspace tool results and updates the registry
 // with body-read evidence, candidate paths, and existence status.
-func (r *PathEvidenceRegistry) RegisterToolResults(results []ToolResult) {
+func (r *PathEvidenceRegistry) RegisterToolResults(results []workspace.ToolResult) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -61,27 +61,19 @@ func (r *PathEvidenceRegistry) RegisterToolResults(results []ToolResult) {
 		if strings.TrimSpace(result.Error) != "" {
 			continue
 		}
-		tool := strings.TrimSpace(result.ToolName)
-		workspaceResult := workspace.ToolResult{
-			Tool:         tool,
-			Summary:      result.Summary,
-			Output:       result.Output,
-			Error:        result.Error,
-			Paths:        append([]string(nil), result.Paths...),
-			ChangedPaths: append([]string(nil), result.ChangedPaths...),
-		}
+		tool := strings.TrimSpace(result.Tool)
 
 		switch {
 		case tool == workspace.ToolNameReadFile || tool == workspace.ToolNamePrefetch,
 			tool == workspace.ToolNameCodeNavigate || tool == workspace.ToolNameReadOnlyCapability,
 			strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"),
-			tool == workspace.ToolNameContextZoom && contextZoomResultHasConcreteSourceBody(workspaceResult):
+			tool == workspace.ToolNameContextZoom && contextZoomResultHasConcreteSourceBody(result):
 
-			r.registerBodyRead(workspaceResult)
+			r.registerBodyRead(result)
 		}
 
 		if tool == workspace.ToolNameContextPack || (toolResultEvidenceProjection{}).DiscoveryCandidateTool(tool) || workspace.IsSearchToolName(tool) {
-			r.registerCandidatePaths(workspaceResult)
+			r.registerCandidatePaths(result)
 		}
 	}
 }
@@ -319,17 +311,4 @@ func looksLikeWindowsAbsolutePath(path string) bool {
 		((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) &&
 		path[1] == ':' &&
 		(path[2] == '/' || path[2] == '\\')
-}
-
-// ToolResult is the evidence-owned DTO for ingesting workspace results.
-// Workspace adapters map concrete workspace.ToolResult and sidecar envelopes to
-// this type before evidence code interprets paths, source bodies, or ownership.
-type ToolResult struct {
-	ToolName     string
-	Summary      string
-	Output       string
-	Error        string
-	Paths        []string
-	ChangedPaths []string
-	Metadata     map[string]string
 }
