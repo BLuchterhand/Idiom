@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"idiom/internal/platform/failures"
+	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/hosttools"
 	"idiom/internal/repository/discovery"
 )
@@ -229,7 +230,7 @@ func (m *Manager) gitHistoryApplicability(ctx context.Context, tool string, rel 
 		return toolFailureResult(tool, "Git history unavailable", "git is not installed", failures.Unavailable, reasonGitHistoryUnavailable), true
 	}
 
-	if !hasGitMetadataAncestor(m.cfg.Root) {
+	if !gitstate.HasMetadataAncestor(m.cfg.Root) {
 		return historyNotApplicableResult(tool, rel, "non_git_root"), true
 	}
 
@@ -626,32 +627,6 @@ func (m *Manager) gitRelPath(path string, workdir string) (string, error) {
 	}
 
 	return filepath.ToSlash(rel), nil
-}
-
-func hasGitMetadataAncestor(root string) bool {
-	root = strings.TrimSpace(root)
-	if root == "" {
-		return false
-	}
-
-	dir, err := filepath.Abs(root)
-	if err != nil {
-		dir = root
-	}
-
-	for {
-		gitPath := filepath.Join(dir, ".git")
-		if info, err := os.Stat(gitPath); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
-			return true
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return false
-		}
-
-		dir = parent
-	}
 }
 
 func nearestAncestorWithFile(start string, name string, root string) string {

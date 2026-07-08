@@ -20,8 +20,8 @@ import (
 
 type ConfigLoader func(path string) (config.Config, error)
 type PhaseLogger func(rec *telemetry.Recorder, eventType string, fields map[string]any)
-type ToolRequestLogger func(rec *telemetry.Recorder, req workspace.ToolRequest, rawInputBytes int, profile string, caller workspace.ToolSidecarCaller)
-type ToolResultLogger func(rec *telemetry.Recorder, req workspace.ToolRequest, result workspace.ToolResult, durationMillis int64, profile string, caller workspace.ToolSidecarCaller)
+type ToolRequestLogger func(rec *telemetry.Recorder, req workspace.ToolRequest, rawInputBytes int, profile string, caller workspace.ToolSidecarCaller, timeoutOwner string)
+type ToolResultLogger func(rec *telemetry.Recorder, req workspace.ToolRequest, result workspace.ToolResult, durationMillis int64, profile string, caller workspace.ToolSidecarCaller, timeoutOwner string)
 type OutputWriter func(path string, data []byte, stdout io.Writer) error
 
 type Deps struct {
@@ -101,11 +101,11 @@ func (deps Deps) withDefaults() Deps {
 	}
 
 	if deps.LogToolRequest == nil {
-		deps.LogToolRequest = func(*telemetry.Recorder, workspace.ToolRequest, int, string, workspace.ToolSidecarCaller) {}
+		deps.LogToolRequest = func(*telemetry.Recorder, workspace.ToolRequest, int, string, workspace.ToolSidecarCaller, string) {}
 	}
 
 	if deps.LogToolResult == nil {
-		deps.LogToolResult = func(*telemetry.Recorder, workspace.ToolRequest, workspace.ToolResult, int64, string, workspace.ToolSidecarCaller) {
+		deps.LogToolResult = func(*telemetry.Recorder, workspace.ToolRequest, workspace.ToolResult, int64, string, workspace.ToolSidecarCaller, string) {
 		}
 	}
 
@@ -194,23 +194,24 @@ func runTool(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.R
 		RequiredEditPaths: []string(opts.RequiredEditPaths),
 		ForbiddenPaths:    []string(opts.ForbiddenPaths),
 	}
-	deps.LogToolRequest(rec, req, 0, workspace.ToolProfileDefault, workspace.ToolSidecarCaller{})
-
 	mgr := workspace.NewManager(cfg.Workspace)
 	ctx := context.Background()
 	cancel := func() {}
 
 	timeout := time.Duration(opts.TimeoutSeconds) * time.Second
+	timeoutOwner := "tool_internal_timeout"
 
 	if opts.TimeoutSeconds > 0 {
+		timeoutOwner = "context_cli_timeout_flag"
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 	}
 
 	defer cancel()
+	deps.LogToolRequest(rec, req, 0, workspace.ToolProfileDefault, workspace.ToolSidecarCaller{}, timeoutOwner)
 
 	startedAt := time.Now()
 	result := executeWithTimeout(ctx, mgr, req, timeout)
-	deps.LogToolResult(rec, req, result, time.Since(startedAt).Milliseconds(), workspace.ToolProfileDefault, workspace.ToolSidecarCaller{})
+	deps.LogToolResult(rec, req, result, time.Since(startedAt).Milliseconds(), workspace.ToolProfileDefault, workspace.ToolSidecarCaller{}, timeoutOwner)
 
 	if result.Error != "" {
 		fmt.Fprintln(stderr, result.Error)

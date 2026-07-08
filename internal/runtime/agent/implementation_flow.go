@@ -4852,39 +4852,13 @@ func existingFileNeedsGitHistory(root string, path string) bool {
 		return true
 	}
 
-	if !workspaceRootHasGitMetadata(root) {
+	if !gitstate.HasMetadataAncestor(root) {
 		return false
 	}
 
 	info, err := os.Stat(filepath.Join(root, filepath.FromSlash(path)))
 
 	return err == nil && !info.IsDir()
-}
-
-func workspaceRootHasGitMetadata(root string) bool {
-	root = strings.TrimSpace(root)
-	if root == "" {
-		return false
-	}
-
-	dir, err := filepath.Abs(root)
-	if err != nil {
-		dir = root
-	}
-
-	for {
-		gitPath := filepath.Join(dir, ".git")
-		if info, err := os.Stat(gitPath); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
-			return true
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return false
-		}
-
-		dir = parent
-	}
 }
 
 func gitHistoryEvidenceRequiredMessage(paths []string) string {

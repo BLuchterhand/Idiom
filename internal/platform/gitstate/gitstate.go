@@ -3,6 +3,7 @@ package gitstate
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -111,6 +112,32 @@ func GitPath(ctx context.Context, root string, path string) (string, error) {
 	}
 
 	return resolved, nil
+}
+
+func HasMetadataAncestor(root string) bool {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return false
+	}
+
+	dir, err := filepath.Abs(root)
+	if err != nil {
+		dir = root
+	}
+
+	for {
+		gitPath := filepath.Join(dir, ".git")
+		if info, err := os.Stat(gitPath); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
+			return true
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+
+		dir = parent
+	}
 }
 
 func PorcelainLines(output string) []string {

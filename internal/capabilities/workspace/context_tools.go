@@ -633,7 +633,7 @@ func (m *Manager) contextReadFreshness(ctx context.Context, req ToolRequest, ope
 		Mode:             req.Mode,
 		MaxFiles:         req.FreshnessMaxFiles,
 		PatchActiveStore: true,
-		Enrichers:        m.contextGraphEnrichers(contextRefreshIndexMode(req.Mode)),
+		Enrichers:        m.contextGraphEnrichers(comprehension.NormalizeIndexMode(req.Mode)),
 	})
 }
 
@@ -652,7 +652,7 @@ func (m *Manager) contextStatusFreshness(ctx context.Context, req ToolRequest, s
 		MaxFiles:          contextStatusRefreshMaxFiles(req, status),
 		ExactScopeRefresh: contextStatusExactScopeRefresh(req, status),
 		PatchActiveStore:  true,
-		Enrichers:         m.contextGraphEnrichers(contextRefreshIndexMode(req.Mode)),
+		Enrichers:         m.contextGraphEnrichers(comprehension.NormalizeIndexMode(req.Mode)),
 		Status:            &freshnessStatus,
 	})
 	if err != nil {
@@ -831,15 +831,6 @@ func contextRefreshLanguage(req ToolRequest) string {
 	}
 
 	return "auto"
-}
-
-func contextRefreshIndexMode(mode string) string {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "quick", "standard", "deep":
-		return strings.ToLower(strings.TrimSpace(mode))
-	default:
-		return "standard"
-	}
 }
 
 func contextRefreshSummary(refresh *comprehension.RefreshReport) string {

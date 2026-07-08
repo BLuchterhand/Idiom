@@ -35,7 +35,7 @@ func (m *Manager) Execute(ctx context.Context, req ToolRequest) (result ToolResu
 		return m.toolRuleDeniedResult(req)
 	}
 
-	timeout := ToolTimeoutForRequest(req)
+	timeout := m.ToolTimeoutForRequest(req)
 	if timeout <= 0 {
 		return m.executeDispatch(ctx, req)
 	}
@@ -121,6 +121,25 @@ func ToolTimeoutForRequest(req ToolRequest) time.Duration {
 	}
 
 	return toolTimeoutFor(tool)
+}
+
+// ToolTimeoutForRequest returns the effective wall-clock budget for this
+// manager, including registered external tool timeout declarations.
+func (m *Manager) ToolTimeoutForRequest(req ToolRequest) time.Duration {
+	toolName := strings.TrimSpace(req.Tool)
+	if m != nil {
+		if registry := m.toolSurface.ExternalToolsRegistry(); registry != nil {
+			if tool, ok := registry.Tool(toolName); ok {
+				if tool.TimeoutSeconds > 0 {
+					return time.Duration(tool.TimeoutSeconds) * time.Second
+				}
+
+				return 30 * time.Second
+			}
+		}
+	}
+
+	return ToolTimeoutForRequest(req)
 }
 
 func toolTimeoutFor(tool string) time.Duration {

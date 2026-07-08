@@ -60,7 +60,7 @@ func TestToolDiscoveryListDoesNotInitializeMCPWithoutExplicitAllowRule(t *testin
 }
 
 func TestDirectToolContextUsesWorkspaceToolTimeoutWithMargin(t *testing.T) {
-	ctx, cancel := directToolContext(workspace.ToolRequest{Tool: "discovery_query"})
+	ctx, cancel := directToolContext(workspace.ToolTimeoutForRequest(workspace.ToolRequest{Tool: "discovery_query"}))
 	defer cancel()
 
 	deadline, ok := ctx.Deadline()
@@ -72,7 +72,7 @@ func TestDirectToolContextUsesWorkspaceToolTimeoutWithMargin(t *testing.T) {
 		t.Fatalf("direct discovery_query deadline = %v, want workspace timeout plus small CLI margin", remaining)
 	}
 
-	shellCtx, shellCancel := directToolContext(workspace.ToolRequest{Tool: "shell"})
+	shellCtx, shellCancel := directToolContext(workspace.ToolTimeoutForRequest(workspace.ToolRequest{Tool: "shell"}))
 	defer shellCancel()
 	if _, ok := shellCtx.Deadline(); ok {
 		t.Fatal("shell direct context should defer to the shell tool's internal timeout")

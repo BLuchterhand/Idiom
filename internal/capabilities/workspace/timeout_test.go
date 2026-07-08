@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"idiom/internal/capabilities/workspace/externaltool"
 	contextpackcontract "idiom/internal/contracts/contextpack"
 	"idiom/internal/platform/failures"
 )
@@ -44,6 +45,29 @@ func TestToolTimeoutForRequestExtendsContextStatusRefresh(t *testing.T) {
 
 	if got := ToolTimeoutForRequest(ToolRequest{Tool: "context_status", Refresh: true}); got != 5*time.Minute {
 		t.Fatalf("context_status refresh should have index-build budget, got %v", got)
+	}
+}
+
+func TestManagerToolTimeoutUsesExternalToolDeclaration(t *testing.T) {
+	reg, err := externaltool.NewRegistry([]externaltool.Tool{
+		{Name: "slow_external", Command: "echo", TimeoutSeconds: 75},
+		{Name: "default_external", Command: "echo"},
+	})
+	if err != nil {
+		t.Fatalf("externaltool.NewRegistry: %v", err)
+	}
+
+	mgr := NewManager(testWorkspaceConfig(t))
+	mgr.SetExternalToolsRegistry(reg)
+
+	if got := mgr.ToolTimeoutForRequest(ToolRequest{Tool: "slow_external"}); got != 75*time.Second {
+		t.Fatalf("external timeout = %v, want 75s", got)
+	}
+	if got := mgr.ToolTimeoutForRequest(ToolRequest{Tool: "default_external"}); got != 30*time.Second {
+		t.Fatalf("default external timeout = %v, want 30s", got)
+	}
+	if got := mgr.ToolTimeoutForRequest(ToolRequest{Tool: ToolNameShell}); got != 0 {
+		t.Fatalf("built-in timeout fallback = %v, want shell internal timeout", got)
 	}
 }
 

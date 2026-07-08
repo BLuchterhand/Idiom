@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"idiom/internal/platform/hosttools"
 )
@@ -39,7 +38,6 @@ type Invocation struct {
 	Args    []string
 	Workdir string
 	Stdin   string
-	Timeout time.Duration
 }
 
 // Registry holds external tool definitions keyed by name.
@@ -179,8 +177,8 @@ func definitionForTool(tool Tool) Definition {
 	}
 }
 
-// PrepareInvocation expands argv, stdin, cwd, and timeout for one external
-// tool invocation without executing the process.
+// PrepareInvocation expands argv, stdin, and cwd for one external tool
+// invocation without executing the process.
 func PrepareInvocation(tool Tool, input json.RawMessage, baseDir string) (Invocation, error) {
 	parsed := map[string]any{}
 	if len(input) > 0 {
@@ -192,11 +190,6 @@ func PrepareInvocation(tool Tool, input json.RawMessage, baseDir string) (Invoca
 	args := make([]string, 0, len(tool.Args))
 	for _, raw := range tool.Args {
 		args = append(args, SubstituteArgs(raw, parsed)...)
-	}
-
-	timeout := time.Duration(tool.TimeoutSeconds) * time.Second
-	if timeout <= 0 {
-		timeout = 30 * time.Second
 	}
 
 	workdir := baseDir
@@ -213,7 +206,6 @@ func PrepareInvocation(tool Tool, input json.RawMessage, baseDir string) (Invoca
 		Args:    args,
 		Workdir: workdir,
 		Stdin:   string(input),
-		Timeout: timeout,
 	}, nil
 }
 

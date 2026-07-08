@@ -7729,21 +7729,6 @@ func planThenExecuteShortCircuitAnswer(brief workerruntime.WorkerRuntimeBrief, r
 	return strings.Join(body, "\n"), true
 }
 
-func planThenExecuteNoopSubmitPlanSourceSatisfiedAnswer(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult) (string, bool) {
-	// A rejected no-op submit_plan is still an invalid plan attempt. The
-	// next model turn may explicitly choose Decision: source-satisfied with
-	// current-state evidence, but the harness must not convert the rejected
-	// tool call itself into a successful terminal artifact.
-	return "", false
-}
-
-func planThenExecuteEmptySubmitPlanSourceSatisfiedAnswer(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult) (string, bool) {
-	// A rejected empty submit_plan is not a terminal source-satisfied artifact.
-	// The planner must answer with the explicit Decision: source-satisfied
-	// terminal shape and current-state evidence on a model turn.
-	return "", false
-}
-
 func planThenExecuteEmptySubmitPlanRejection(result workspace.ToolResult) bool {
 	if strings.TrimSpace(result.Tool) != "submit_plan" {
 		return false

@@ -97,13 +97,14 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 
 	req := workspace.ToolRequest{Tool: toolName}
 	sidecarOptions := workspace.ToolSidecarOptions{Caller: caller}
+	effectiveTimeout := workspace.ToolTimeoutForRequest(req)
 	requestLogged := false
 	logRequest := func(rawInputBytes int) {
 		if requestLogged {
 			return
 		}
 
-		LogDirectToolRequest(rec, req, rawInputBytes, profile, caller)
+		LogDirectToolRequest(rec, req, rawInputBytes, profile, caller, directToolTimeoutOwner(effectiveTimeout))
 
 		requestLogged = true
 	}
@@ -112,7 +113,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 			Tool:    toolName,
 			Summary: summary,
 			Error:   errText,
-		}, 0, profile, caller)
+		}, 0, profile, caller, directToolTimeoutOwner(effectiveTimeout))
 	}
 
 	cfg, err := cmdconfig.Load(*configPath)
@@ -167,23 +168,30 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 
 	req.Tool = toolName
 
-	logRequest(len(rawInput))
-
 	extReg, extErr := workspace.LoadExternalToolsRegistry(cfg.Workspace)
 	if extErr != nil {
 		errText := fmt.Sprintf("external tools setup: %v", extErr)
+		logRequest(len(rawInput))
 		logFailureResult("Direct tool setup failed", errText)
 		fmt.Fprintln(stderr, errText)
 
 		return 1
 	}
 
+	mgr := workspace.NewManager(cfg.Workspace)
+	mgr.SetBypassReadBeforeEdit(true)
+	if extReg != nil {
+		mgr.SetExternalToolsRegistry(extReg)
+	}
+	effectiveTimeout = mgr.ToolTimeoutForRequest(req)
+	logRequest(len(rawInput))
+
 	if decision := workspace.ToolRequestAllowedForWorkspaceProfile(req, profile, workspace.ToolProfilePolicyContext{
 		Workspace:     cfg.Workspace,
 		ExternalTools: extReg,
 	}); !decision.Allowed {
 		result := workspace.ToolProfileDeniedResult(req.Tool, profile, decision)
-		LogDirectToolResult(rec, req, result, 0, profile, caller)
+		LogDirectToolResult(rec, req, result, 0, profile, caller, directToolTimeoutOwner(effectiveTimeout))
 
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -195,7 +203,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		}{
 			ToolResult:   result,
 			Sidecar:      workspace.BuildToolSidecarEnvelopeWithOptions(req, result, profile, sidecarOptions),
-			TimeoutOwner: directToolTimeoutOwner(req),
+			TimeoutOwner: directToolTimeoutOwner(effectiveTimeout),
 		}
 		if err := enc.Encode(payload); err != nil {
 			fmt.Fprintf(stderr, "encode result: %v\n", err)
@@ -225,23 +233,16 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		}
 	}
 
-	mgr := workspace.NewManager(cfg.Workspace)
-	mgr.SetBypassReadBeforeEdit(true)
-
-	if extReg != nil {
-		mgr.SetExternalToolsRegistry(extReg)
-	}
-
 	if mcpReg != nil {
 		mgr.SetMCPRegistry(mcpReg)
 	}
 
-	ctx, cancel := directToolContext(req)
+	ctx, cancel := directToolContext(effectiveTimeout)
 	defer cancel()
 
 	startedAt := time.Now()
 	result := mgr.Execute(ctx, req)
-	LogDirectToolResult(rec, req, result, time.Since(startedAt).Milliseconds(), profile, caller)
+	LogDirectToolResult(rec, req, result, time.Since(startedAt).Milliseconds(), profile, caller, directToolTimeoutOwner(effectiveTimeout))
 
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
@@ -253,7 +254,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 	}{
 		ToolResult:   result,
 		Sidecar:      workspace.BuildToolSidecarEnvelopeWithOptions(req, result, profile, sidecarOptions),
-		TimeoutOwner: directToolTimeoutOwner(req),
+		TimeoutOwner: directToolTimeoutOwner(effectiveTimeout),
 	}
 	if err := enc.Encode(payload); err != nil {
 		fmt.Fprintf(stderr, "encode result: %v\n", err)
@@ -268,8 +269,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 	return 0
 }
 
-func directToolContext(req workspace.ToolRequest) (context.Context, context.CancelFunc) {
-	timeout := workspace.ToolTimeoutForRequest(req)
+func directToolContext(timeout time.Duration) (context.Context, context.CancelFunc) {
 	if timeout <= 0 {
 		return context.WithCancel(context.Background())
 	}
@@ -277,8 +277,7 @@ func directToolContext(req workspace.ToolRequest) (context.Context, context.Canc
 	return context.WithTimeout(context.Background(), timeout+5*time.Second)
 }
 
-func directToolTimeoutOwner(req workspace.ToolRequest) string {
-	timeout := workspace.ToolTimeoutForRequest(req)
+func directToolTimeoutOwner(timeout time.Duration) string {
 	if timeout <= 0 {
 		return "tool_internal_timeout"
 	}
@@ -501,7 +500,7 @@ func printUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "  -input string   JSON object with tool request parameters")
 }
 
-func LogDirectToolRequest(rec *telemetry.Recorder, req workspace.ToolRequest, rawInputBytes int, profile string, caller workspace.ToolSidecarCaller) {
+func LogDirectToolRequest(rec *telemetry.Recorder, req workspace.ToolRequest, rawInputBytes int, profile string, caller workspace.ToolSidecarCaller, timeoutOwner string) {
 	if rec == nil {
 		return
 	}
@@ -523,7 +522,7 @@ func LogDirectToolRequest(rec *telemetry.Recorder, req workspace.ToolRequest, ra
 		"end_line":        req.EndLine,
 		"limit":           req.Limit,
 		"recursive":       req.Recursive,
-		"timeout_owner":   directToolTimeoutOwner(req),
+		"timeout_owner":   timeoutOwner,
 	}
 	workspace.AddToolTelemetryAttribution(fields, workspace.ToolSidecarEnvelopeVersion, "cli", strings.TrimSpace(profile), caller, strings.TrimSpace(req.Tool))
 
@@ -537,7 +536,7 @@ func LogDirectToolRequest(rec *telemetry.Recorder, req workspace.ToolRequest, ra
 	_ = rec.Log("tool_request", fields)
 }
 
-func LogDirectToolResult(rec *telemetry.Recorder, req workspace.ToolRequest, result workspace.ToolResult, durationMillis int64, profile string, caller workspace.ToolSidecarCaller) {
+func LogDirectToolResult(rec *telemetry.Recorder, req workspace.ToolRequest, result workspace.ToolResult, durationMillis int64, profile string, caller workspace.ToolSidecarCaller, timeoutOwner string) {
 	if rec == nil {
 		return
 	}
@@ -551,7 +550,7 @@ func LogDirectToolResult(rec *telemetry.Recorder, req workspace.ToolRequest, res
 		"summary":       result.Summary,
 		"error":         result.Error,
 		"duration_ms":   durationMillis,
-		"timeout_owner": directToolTimeoutOwner(req),
+		"timeout_owner": timeoutOwner,
 	}
 	workspace.AddToolTelemetryAttribution(fields, workspace.ToolSidecarEnvelopeVersion, "cli", strings.TrimSpace(profile), caller, tool)
 

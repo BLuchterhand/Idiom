@@ -225,7 +225,7 @@ func EnsureFresh(ctx context.Context, req FreshnessRequest) (decision FreshnessD
 	operation := strings.TrimSpace(req.Operation)
 	scope := inferFreshnessScope(root, req)
 	language := freshnessLanguage(req.Language)
-	mode := freshnessIndexMode(req.Mode)
+	mode := NormalizeIndexMode(req.Mode)
 
 	decision = FreshnessDecision{
 		Policy:    policy,
@@ -1103,15 +1103,6 @@ func freshnessLanguage(language string) string {
 	}
 
 	return language
-}
-
-func freshnessIndexMode(mode string) string {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "quick", "standard", "deep":
-		return strings.ToLower(strings.TrimSpace(mode))
-	default:
-		return "standard"
-	}
 }
 
 func freshnessBlocker(reason string, scope string, pathCount int, maxFiles int) string {

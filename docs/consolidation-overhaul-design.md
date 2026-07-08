@@ -1082,6 +1082,25 @@ Reviewer-updated estimate:
   `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
   `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
   `git diff --check`.
+- Tool-timeout and duplicate-authority cleanup is implemented. Workspace
+  Manager now owns external-tool effective timeouts, the direct CLI reports the
+  same effective timeout owner, and `externaltool.Invocation` no longer carries
+  a second timeout authority. The same reviewer-driven slice removed
+  helper-only plan-execute source-satisfied submit-plan branches/tests, the
+  duplicate workspace Levenshtein implementation, duplicate context index-mode
+  normalization, duplicate `.git` metadata ancestor walkers, and duplicate
+  markdown heading/table parsing in atom intake and implementation dispatch.
+  Production Go changed `+120 / -311`, net `-191`; tests changed `+28 / -304`,
+  net `-276`.
+  Focused verification: `go test ./internal/capabilities/workspace -run 'Test.*External|TestManagerToolTimeout|TestExecuteWithTimeout|TestToolTimeout|Test.*Context|Test.*Fresh|Test.*Graph|Test.*ToolName|Test.*Suggestion|Test.*ReadOnlyCapability|Test.*ToolSurface|TestHarnessAudit|TestToolManifest|TestToolSurfaceProfile|Test.*Git|Test.*Discovery|Test.*RequiredPath' -count=1`;
+  `go test ./internal/surfaces/cli/tool ./internal/surfaces/cli/context ./internal/surfaces/cli/root -count=1`;
+  `go test ./internal/runtime/agent -run 'TestPlanExecuteRunnerRedirectsEmptySubmitPlanSourceSatisfiedToTerminalAnswer|TestPlanThenExecuteShortCircuit|TestReviewRepairCompletionGateRecoveryWithSourceSanityFailureAllowsBoundedEvidence|TestPlanExecuteSubmitPlanCountsAsWriteDuringWriteOnlyRecovery|Test.*Git|Test.*Discovery|TestExistingFileNeedsGitHistory|Test.*RequiredPath|Test.*Workbranch' -count=1`;
+  `go test ./internal/repository/comprehension ./internal/platform/gitstate ./internal/contracts/pathparse ./internal/workflows/atomintake ./internal/workflows/implementationdispatch -count=1`.
+  Broad verification: `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `/tmp/idiom-tools/deadcode -test ./...`;
+  `$(go env GOPATH)/bin/staticcheck -checks=U1000 ./...`;
+  `git diff --check`.
 
 ## Review And Regression Protocol
 

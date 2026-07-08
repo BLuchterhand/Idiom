@@ -260,10 +260,6 @@ func (s *ToolSurface) ExternalToolsRegistry() *externaltool.Registry {
 	return s.externalToolsRegistry
 }
 
-func (s *ToolSurface) ToolManifestTools(opts ToolSurfaceManifestOptions) []string {
-	return ToolManifestTools(toolManifestOptionsForSurface(opts))
-}
-
 func toolManifestOptionsForSurface(opts ToolSurfaceManifestOptions) ToolManifestToolOptions {
 	if opts.Profile != "" {
 		manifestOpts := toolManifestOptionsForSurfaceProfile(opts.Profile)
@@ -291,7 +287,7 @@ func toolManifestOptionsForSurface(opts ToolSurfaceManifestOptions) ToolManifest
 }
 
 func (s *ToolSurface) AllowedTools(opts ToolSurfaceManifestOptions, externalBaseDir string) []string {
-	tools := s.ToolManifestTools(opts)
+	tools := ToolManifestTools(toolManifestOptionsForSurface(opts))
 
 	if registry := s.MCPRegistry(); registry != nil {
 		names := make([]string, 0)

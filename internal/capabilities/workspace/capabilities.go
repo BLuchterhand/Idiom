@@ -584,7 +584,7 @@ func ReadOnlyCapabilityCoverageForTools(tools []string) ReadOnlyCapabilityCovera
 		ResolverRuntimeEnabled:     registry.ResolverRuntimeEnabled,
 		PublicStatusEnabled:        registry.PublicStatusEnabled,
 		DirectToolFallback:         registry.DirectToolFallback,
-		StatusFieldCount:           readOnlyCapabilityStatusFieldCount(),
+		StatusFieldCount:           jsonFieldCount(reflect.TypeOf(ReadOnlyCapabilityStatus{})),
 		FallbackStateCount:         len(fallbackStates),
 		FallbackStates:             fallbackStates,
 		CapabilityCount:            len(registry.Capabilities),
@@ -617,7 +617,7 @@ func (m *Manager) readOnlyCapability(ctx context.Context, req ToolRequest) ToolR
 		return readOnlyCapabilityFallbackResult(requested, target, ReadOnlyCapabilityResolution{}, "invalid_input", "capability is required")
 	}
 
-	resolution, ok := resolveReadOnlyCapabilityForRequest(requested, req)
+	resolution, ok := ResolveReadOnlyCapability(requested, readOnlyCapabilityResolverTools(req))
 	if !ok {
 		if deferred, ok := deferredReadOnlyCapabilityAdapter(requested); ok {
 			return readOnlyCapabilityDeferredResult(requested, target, deferred)
@@ -654,10 +654,6 @@ func (m *Manager) readOnlyCapability(ctx context.Context, req ToolRequest) ToolR
 	result := m.Execute(ctx, routedReq)
 
 	return readOnlyCapabilityWrapResult(requested, target, resolution, adapter, result)
-}
-
-func resolveReadOnlyCapabilityForRequest(id string, req ToolRequest) (ReadOnlyCapabilityResolution, bool) {
-	return ResolveReadOnlyCapability(id, readOnlyCapabilityResolverTools(req))
 }
 
 func readOnlyCapabilityResolverTools(req ToolRequest) []string {
@@ -1563,10 +1559,6 @@ func readOnlyCapabilityFallbackStates() []string {
 		"unmapped",
 		"unsupported",
 	}
-}
-
-func readOnlyCapabilityStatusFieldCount() int {
-	return jsonFieldCount(reflect.TypeOf(ReadOnlyCapabilityStatus{}))
 }
 
 func jsonFieldCount(t reflect.Type) int {

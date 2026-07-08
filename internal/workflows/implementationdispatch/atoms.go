@@ -94,7 +94,7 @@ func PlanDocumentAtomsFromText(text string, sourceRef string) []PlanDocumentAtom
 	headingSet := map[string]struct{}{}
 
 	for _, heading := range pathparse.PlanFileScopeHeadings() {
-		normalized := NormalizeMarkdownHeading(heading)
+		normalized := pathparse.NormalizeMarkdownHeading(heading)
 		if normalized != "" {
 			headingSet[normalized] = struct{}{}
 		}
@@ -107,7 +107,7 @@ func PlanDocumentAtomsFromText(text string, sourceRef string) []PlanDocumentAtom
 
 	for _, rawLine := range strings.Split(text, "\n") {
 		line := strings.TrimSpace(rawLine)
-		normalized := NormalizeMarkdownHeading(line)
+		normalized := pathparse.NormalizeMarkdownHeading(line)
 
 		if _, ok := headingSet[normalized]; ok {
 			active = true
@@ -128,12 +128,12 @@ func PlanDocumentAtomsFromText(text string, sourceRef string) []PlanDocumentAtom
 			continue
 		}
 
-		if sawScopeLine && LooksLikeMarkdownHeading(line) {
+		if sawScopeLine && pathparse.LooksLikeMarkdownHeading(line) {
 			break
 		}
 
-		if cells, ok := markdownTableCells(line); ok {
-			if len(cells) == 0 || markdownTableSeparatorCell(cells[0]) {
+		if cells, ok := pathparse.MarkdownTableCells(line); ok {
+			if len(cells) == 0 || pathparse.MarkdownTableSeparatorCell(cells[0]) {
 				continue
 			}
 
@@ -289,40 +289,6 @@ func atomPathLooksTest(path string) bool {
 		strings.Contains(lower, "/test/") ||
 		strings.Contains(lower, "/tests/") ||
 		strings.HasSuffix(lower, "_test.go")
-}
-
-func markdownTableCells(line string) ([]string, bool) {
-	trimmed := strings.TrimSpace(line)
-	if !strings.HasPrefix(trimmed, "|") || strings.Count(trimmed, "|") < 2 {
-		return nil, false
-	}
-
-	trimmed = strings.TrimPrefix(trimmed, "|")
-	trimmed = strings.TrimSuffix(trimmed, "|")
-
-	parts := strings.Split(trimmed, "|")
-	cells := make([]string, 0, len(parts))
-
-	for _, part := range parts {
-		cells = append(cells, strings.TrimSpace(part))
-	}
-
-	return cells, len(cells) > 0
-}
-
-func markdownTableSeparatorCell(cell string) bool {
-	cell = strings.TrimSpace(cell)
-	if cell == "" {
-		return false
-	}
-
-	for _, r := range cell {
-		if r != '-' && r != ':' && r != ' ' {
-			return false
-		}
-	}
-
-	return strings.Contains(cell, "-")
 }
 
 func MaterializePlanDocumentAtoms(root string, planDocuments []PlanDocument) ([]PlanDocument, error) {

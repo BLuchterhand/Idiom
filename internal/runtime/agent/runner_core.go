@@ -4603,17 +4603,6 @@ func (r *Runner) runLegacySessionBody(
 			return finish(answer, err, "review_repair_noop_plan_closeout", false)
 		}
 
-		if answer, ok := planThenExecuteEmptySubmitPlanSourceSatisfiedAnswer(r.RuntimeBrief, req, result, collectedResults); ok {
-			recorder.activeToolCall = activeToolCall
-
-			r.emitEvent(RunEvent{
-				Role:    "plan_then_execute_source_satisfied_short_circuit",
-				Content: "empty submit_plan encoded a source-satisfied terminal outcome; synthesizing closeout from required-path source evidence",
-			})
-
-			return finish(answer, nil, "plan_source_satisfied_short_circuit", false)
-		}
-
 		if r.planThenExecutePlannerPhase() && planThenExecuteSourceSatisfiedSubmitPlanRejectedResult(result) {
 			surface := DerivePlanExecuteRecoverySurface(r.RuntimeBrief, collectedResults, PlanExecutePlanningTransport{TextualToolParser: true})
 			prompt := planThenExecuteSourceSatisfiedTerminalRequiredPrompt(r.RuntimeBrief, result)

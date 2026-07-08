@@ -165,7 +165,7 @@ func MentionedWorkspacePathsUnderHeadings(text string, headings ...string) []str
 
 	headingSet := make(map[string]struct{}, len(headings))
 	for _, heading := range headings {
-		normalized := normalizeSectionHeading(heading)
+		normalized := NormalizeMarkdownHeading(heading)
 		if normalized != "" {
 			headingSet[normalized] = struct{}{}
 		}
@@ -183,7 +183,7 @@ func MentionedWorkspacePathsUnderHeadings(text string, headings ...string) []str
 
 	for _, rawLine := range strings.Split(text, "\n") {
 		line := strings.TrimSpace(rawLine)
-		normalized := normalizeSectionHeading(line)
+		normalized := NormalizeMarkdownHeading(line)
 
 		if _, ok := headingSet[normalized]; ok {
 			active = true
@@ -204,7 +204,7 @@ func MentionedWorkspacePathsUnderHeadings(text string, headings ...string) []str
 			continue
 		}
 
-		if sawPath && looksLikeMarkdownHeading(line) {
+		if sawPath && LooksLikeMarkdownHeading(line) {
 			break
 		}
 
@@ -249,12 +249,12 @@ func MentionedWorkspacePathsUnderHeadings(text string, headings ...string) []str
 }
 
 func MentionedWorkspacePathsInMarkdownTableFirstCell(line string) []string {
-	cells, ok := markdownTableCells(line)
+	cells, ok := MarkdownTableCells(line)
 	if !ok || len(cells) == 0 {
 		return nil
 	}
 
-	if markdownTableSeparatorCell(cells[0]) {
+	if MarkdownTableSeparatorCell(cells[0]) {
 		return nil
 	}
 
@@ -266,7 +266,7 @@ func looksLikeMarkdownTableRow(line string) bool {
 	return strings.HasPrefix(trimmed, "|") && strings.Count(trimmed, "|") >= 2
 }
 
-func markdownTableCells(line string) ([]string, bool) {
+func MarkdownTableCells(line string) ([]string, bool) {
 	trimmed := strings.TrimSpace(line)
 	if !looksLikeMarkdownTableRow(trimmed) {
 		return nil, false
@@ -285,7 +285,7 @@ func markdownTableCells(line string) ([]string, bool) {
 	return cells, len(cells) > 0
 }
 
-func markdownTableSeparatorCell(cell string) bool {
+func MarkdownTableSeparatorCell(cell string) bool {
 	cell = strings.TrimSpace(cell)
 	if cell == "" {
 		return false
@@ -300,7 +300,7 @@ func markdownTableSeparatorCell(cell string) bool {
 	return strings.Contains(cell, "-")
 }
 
-func normalizeSectionHeading(value string) string {
+func NormalizeMarkdownHeading(value string) string {
 	value = strings.TrimSpace(value)
 	value = strings.Trim(value, "#*: `\"'")
 	value = strings.TrimSuffix(value, ":")
@@ -310,7 +310,7 @@ func normalizeSectionHeading(value string) string {
 	return strings.Join(strings.Fields(value), " ")
 }
 
-func looksLikeMarkdownHeading(line string) bool {
+func LooksLikeMarkdownHeading(line string) bool {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" {
 		return false

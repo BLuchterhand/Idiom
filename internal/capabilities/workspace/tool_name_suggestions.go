@@ -71,7 +71,7 @@ func closestToolNames(target string, candidates []string, maxN int) []string {
 		case strings.Contains(lc, target) || strings.Contains(target, lc):
 			scoredList = append(scoredList, scored{c, 2})
 		default:
-			d := levenshteinDistance(target, lc)
+			d := levenshtein(target, lc)
 			cap := len(target) / 2
 			if cap < 3 {
 				cap = 3
@@ -96,42 +96,4 @@ func closestToolNames(target string, candidates []string, maxN int) []string {
 	}
 
 	return out
-}
-
-func levenshteinDistance(a, b string) int {
-	if a == b {
-		return 0
-	}
-
-	if len(a) == 0 {
-		return len(b)
-	}
-
-	if len(b) == 0 {
-		return len(a)
-	}
-
-	prev := make([]int, len(b)+1)
-	curr := make([]int, len(b)+1)
-
-	for j := 0; j <= len(b); j++ {
-		prev[j] = j
-	}
-
-	for i := 1; i <= len(a); i++ {
-		curr[0] = i
-
-		for j := 1; j <= len(b); j++ {
-			cost := 1
-			if a[i-1] == b[j-1] {
-				cost = 0
-			}
-
-			curr[j] = min(prev[j]+1, curr[j-1]+1, prev[j-1]+cost)
-		}
-
-		prev, curr = curr, prev
-	}
-
-	return prev[len(b)]
 }

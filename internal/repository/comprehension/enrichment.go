@@ -406,7 +406,7 @@ func applyGraphEnrichers(ctx context.Context, opts BuildOptions, graph Graph, re
 		RepoID:    repoID,
 		Scope:     cleanScope(opts.Path),
 		Language:  normalizeLanguage(opts.Language),
-		Mode:      normalizeIndexMode(opts.Mode),
+		Mode:      NormalizeIndexMode(opts.Mode),
 		MaxFiles:  opts.MaxFiles,
 		Now:       graph.GeneratedAt,
 		GitHead:   graph.GitHead,
@@ -561,7 +561,7 @@ func manifestNodeID(path string) string {
 	return "manifest://" + filepath.ToSlash(filepath.Clean(path))
 }
 
-func normalizeIndexMode(mode string) string {
+func NormalizeIndexMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "quick", "standard", "deep":
 		return strings.ToLower(strings.TrimSpace(mode))

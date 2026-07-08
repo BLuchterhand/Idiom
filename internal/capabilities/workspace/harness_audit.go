@@ -1149,7 +1149,7 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 	findings = append(findings, childLifecycleFindings(childLifecycle)...)
 	findings = append(findings, historicalTurnPhaseProjectionFindings(paths)...)
 	findings = append(findings, historicalOpenEvidenceFinalAnswerProjectionFindings(paths)...)
-	findings = append(findings, contractCoverageWarningFindings(currentContractWarnings)...)
+	findings = append(findings, contractCoverageWarningFindingsWithID("contract_event_invalid", currentContractWarnings)...)
 	findings = append(findings, historicalContractCoverageWarningFindings(contractWarnings, currentContractWarnings)...)
 	findings = append(findings, contractCoverageFindings(currentContractCoverage)...)
 	findings = append(findings, featurePlannerLifecycleFindings(featurePlanner)...)
@@ -1985,7 +1985,7 @@ func (m *Manager) auditContractEventCoverageWithFilter(paths []string, filter fu
 	)
 
 	for _, path := range paths {
-		pathEvents, pathWarnings := readHarnessAuditAutonomyEvents(path)
+		pathEvents, pathWarnings := readHarnessAuditAutonomyEventsWithOptions(path, harnessAuditAutonomyDecodeOptions{})
 		includeWarnings := filter == nil || m.harnessAuditPathIsCurrent(path)
 		if includeWarnings {
 			for _, warning := range pathWarnings {
@@ -2545,10 +2545,6 @@ func readHarnessAuditLogFacts(path string) (harnessAuditLogFacts, error) {
 	}
 
 	return facts, nil
-}
-
-func readHarnessAuditAutonomyEvents(path string) ([]autonomy.Event, []string) {
-	return readHarnessAuditAutonomyEventsWithOptions(path, harnessAuditAutonomyDecodeOptions{})
 }
 
 type harnessAuditAutonomyDecodeOptions struct {
@@ -4302,7 +4298,7 @@ func historicalOpenEvidenceFinalAnswerProjectionFindings(paths []string) []harne
 	var count int
 
 	for _, path := range paths {
-		pathEvents, _ := readHarnessAuditAutonomyEvents(path)
+		pathEvents, _ := readHarnessAuditAutonomyEventsWithOptions(path, harnessAuditAutonomyDecodeOptions{})
 		for _, event := range pathEvents {
 			if preFixOpenEvidenceFinalAnswerProjectionEvent(event) {
 				count++
@@ -4399,10 +4395,6 @@ func harnessAuditAllDigits(value string) bool {
 	}
 
 	return true
-}
-
-func contractCoverageWarningFindings(warnings []string) []harnessAuditFinding {
-	return contractCoverageWarningFindingsWithID("contract_event_invalid", warnings)
 }
 
 func historicalContractCoverageWarningFindings(allWarnings []string, currentWarnings []string) []harnessAuditFinding {

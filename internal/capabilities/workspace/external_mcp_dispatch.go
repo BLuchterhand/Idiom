@@ -34,6 +34,7 @@ func (m *Manager) executeExternal(ctx context.Context, req ToolRequest) ToolResu
 		args = json.RawMessage(`{}`)
 	}
 
+	timeout := m.ToolTimeoutForRequest(req)
 	invocation, err := externaltool.PrepareInvocation(tool, args, baseDir)
 	if err != nil {
 		out := ToolResult{Tool: req.Tool, Summary: "External tool " + req.Tool, Error: err.Error()}
@@ -47,7 +48,6 @@ func (m *Manager) executeExternal(ctx context.Context, req ToolRequest) ToolResu
 		Args:           invocation.Args,
 		Dir:            invocation.Workdir,
 		Stdin:          invocation.Stdin,
-		Timeout:        invocation.Timeout,
 		MaxOutputBytes: m.cfg.MaxOutputBytes,
 		MergeOutput:    true,
 	})
@@ -61,7 +61,7 @@ func (m *Manager) executeExternal(ctx context.Context, req ToolRequest) ToolResu
 	if execResult.Err != nil {
 		err := fmt.Errorf("external tool %q: %w", req.Tool, execResult.Err)
 		if execResult.TimedOut {
-			err = fmt.Errorf("external tool %q: timed out after %s", req.Tool, invocation.Timeout)
+			err = fmt.Errorf("external tool %q: timed out after %s", req.Tool, timeout)
 		}
 
 		out.Error = err.Error()

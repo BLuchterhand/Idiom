@@ -36,7 +36,7 @@ func (e atomCurrentStateEvaluation) SourceSatisfied() bool {
 func SourceScopeRowText(specBody string) string {
 	lines := strings.Split(specBody, "\n")
 	for i, raw := range lines {
-		if atomNormalizeMarkdownHeading(raw) != "source scope row" {
+		if pathparse.NormalizeMarkdownHeading(raw) != "source scope row" {
 			continue
 		}
 
@@ -51,7 +51,7 @@ func SourceScopeRowText(specBody string) string {
 				continue
 			}
 
-			if atomLooksLikeMarkdownHeading(trimmed) {
+			if pathparse.LooksLikeMarkdownHeading(trimmed) {
 				break
 			}
 
@@ -617,27 +617,6 @@ func atomSatisfactionCoverageSatisfies(sourceTerms map[string]struct{}, covered 
 	}
 
 	return len(covered) >= required
-}
-
-func atomNormalizeMarkdownHeading(value string) string {
-	value = strings.TrimSpace(value)
-	value = strings.Trim(value, "#*: `\"'")
-	value = strings.TrimSuffix(value, ":")
-	value = strings.ToLower(value)
-	value = strings.NewReplacer("-", " ", "_", " ", "/", " ").Replace(value)
-
-	return strings.Join(strings.Fields(value), " ")
-}
-
-func atomLooksLikeMarkdownHeading(line string) bool {
-	trimmed := strings.TrimSpace(line)
-	if trimmed == "" {
-		return false
-	}
-
-	return strings.HasPrefix(trimmed, "#") ||
-		(strings.HasPrefix(trimmed, "**") && strings.Contains(trimmed, "**")) ||
-		strings.HasSuffix(trimmed, ":")
 }
 
 func atomLooksLikeConcreteFile(path string) bool {

@@ -406,7 +406,7 @@ func MinimumTestObligations(text string) []string {
 
 	for _, raw := range strings.Split(text, "\n") {
 		line := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(raw), ">"))
-		normalized := NormalizeMarkdownHeading(line)
+		normalized := pathparse.NormalizeMarkdownHeading(line)
 
 		if strings.Contains(normalized, "minimum tests") {
 			active = true
@@ -423,7 +423,7 @@ func MinimumTestObligations(text string) []string {
 			continue
 		}
 
-		if sawItem && (LooksLikeMarkdownHeading(line) || LooksLikeNumberedStep(line)) {
+		if sawItem && (pathparse.LooksLikeMarkdownHeading(line) || LooksLikeNumberedStep(line)) {
 			break
 		}
 
@@ -442,7 +442,7 @@ func MinimumTestObligations(text string) []string {
 }
 
 func MarkdownSectionLines(text string, heading string) []string {
-	want := NormalizeMarkdownHeading(heading)
+	want := pathparse.NormalizeMarkdownHeading(heading)
 
 	var lines []string
 
@@ -450,9 +450,9 @@ func MarkdownSectionLines(text string, heading string) []string {
 
 	for _, raw := range strings.Split(text, "\n") {
 		line := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(raw), ">"))
-		normalized := NormalizeMarkdownHeading(line)
+		normalized := pathparse.NormalizeMarkdownHeading(line)
 
-		if active && LooksLikeMarkdownHeading(line) {
+		if active && pathparse.LooksLikeMarkdownHeading(line) {
 			break
 		}
 
@@ -470,13 +470,13 @@ func MarkdownSectionLines(text string, heading string) []string {
 }
 
 func TextBeforeHeading(text string, heading string) string {
-	want := NormalizeMarkdownHeading(heading)
+	want := pathparse.NormalizeMarkdownHeading(heading)
 
 	var kept []string
 
 	for _, raw := range strings.Split(text, "\n") {
 		line := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(raw), ">"))
-		if NormalizeMarkdownHeading(line) == want {
+		if pathparse.NormalizeMarkdownHeading(line) == want {
 			break
 		}
 
@@ -601,27 +601,6 @@ func LooksLikeNumberedStep(line string) bool {
 	}
 
 	return i > 0 && i+1 < len(line) && line[i] == '.' && line[i+1] == ' '
-}
-
-func NormalizeMarkdownHeading(value string) string {
-	value = strings.TrimSpace(value)
-	value = strings.Trim(value, "#*: `\"'")
-	value = strings.TrimSuffix(value, ":")
-	value = strings.ToLower(value)
-	value = strings.NewReplacer("-", " ", "_", " ", "/", " ").Replace(value)
-
-	return strings.Join(strings.Fields(value), " ")
-}
-
-func LooksLikeMarkdownHeading(line string) bool {
-	trimmed := strings.TrimSpace(line)
-	if trimmed == "" {
-		return false
-	}
-
-	return strings.HasPrefix(trimmed, "#") ||
-		(strings.HasPrefix(trimmed, "**") && strings.Contains(trimmed, "**")) ||
-		strings.HasSuffix(trimmed, ":")
 }
 
 func wordText(prompt string) string {

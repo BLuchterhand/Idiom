@@ -549,7 +549,8 @@ func TestReadOnlyCapabilityRuntimeResolutionDoesNotUseWorkspaceManifestDetection
 		t.Fatalf("path-specific runtime resolver should not expose workspace-detected language adapters, got %#v", got)
 	}
 
-	pyResolution, ok := resolveReadOnlyCapabilityForRequest("definition", ToolRequest{Path: filepath.Join("scripts", "tool.py")})
+	pyRequest := ToolRequest{Path: filepath.Join("scripts", "tool.py")}
+	pyResolution, ok := ResolveReadOnlyCapability("definition", readOnlyCapabilityResolverTools(pyRequest))
 	if !ok {
 		t.Fatal("python path should resolve definition capability")
 	}
