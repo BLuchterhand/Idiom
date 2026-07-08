@@ -4557,7 +4557,7 @@ func (r *Runner) preflightPlanThenExecuteSubmitPlanGroundingGuard(req workspace.
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: edit paths lack source grounding",
 			Error: "submit_plan edits for plan-execute planner atoms must be grounded before executor handoff; missing source-body evidence for " + quotedRunnerStrings(missing) + ". " +
-				"Read each existing edit path with `read_file` or " + workspace.CodeNavigateToolName + " " + workspace.CodeNavigateSourceBodyCapabilityPhrase() + ", then submit a corrected plan. If the feature is already present, answer `Decision: source-satisfied` with the observed current-state evidence; if no concrete path can be identified, answer `<<QUESTION>>:` with the exact blocker.",
+				"Read each existing edit path with `read_file` or " + workspace.ToolNameCodeNavigate + " " + workspace.CodeNavigateSourceBodyCapabilityPhrase() + ", then submit a corrected plan. If the feature is already present, answer `Decision: source-satisfied` with the observed current-state evidence; if no concrete path can be identified, answer `<<QUESTION>>:` with the exact blocker.",
 		},
 		Reason: "plan-then-execute planner phase: submit_plan lacked grounded edit paths",
 	}
@@ -5577,7 +5577,7 @@ func planThenExecutePostReadinessRejectionRequiresSubmitReadyTransition(summary 
 func planThenExecuteAnchorRefreshReadFallbackInstruction(refreshPaths []string) string {
 	paths := nonEmptyRunnerStrings(refreshPaths, 1)
 	if len(paths) == 0 {
-		return "Use exactly one bounded `read_file` with `start_line`/`end_line` or `" + workspace.CodeNavigateToolName + "` with " + workspace.CodeNavigateSourceBodyCapabilityPhrase() + " for one refresh path."
+		return "Use exactly one bounded `read_file` with `start_line`/`end_line` or `" + workspace.ToolNameCodeNavigate + "` with " + workspace.CodeNavigateSourceBodyCapabilityPhrase() + " for one refresh path."
 	}
 
 	path := NormalizeRunnerPath(paths[0])
@@ -5585,7 +5585,7 @@ func planThenExecuteAnchorRefreshReadFallbackInstruction(refreshPaths []string) 
 		path = strings.TrimSpace(paths[0])
 	}
 
-	return "Use exactly one bounded source-body request for one refresh path. If no symbol or exact range is known yet, use deterministic fallback `read_file` for `" + path + "` with `start_line:1` and `end_line:120`; otherwise use `" + workspace.CodeNavigateToolName + "` with " + workspace.CodeNavigateSourceBodyCapabilityPhrase() + " for the relevant declaration."
+	return "Use exactly one bounded source-body request for one refresh path. If no symbol or exact range is known yet, use deterministic fallback `read_file` for `" + path + "` with `start_line:1` and `end_line:120`; otherwise use `" + workspace.ToolNameCodeNavigate + "` with " + workspace.CodeNavigateSourceBodyCapabilityPhrase() + " for the relevant declaration."
 }
 
 func planThenExecutePostSourceHistoryRequestAllowed(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
@@ -5627,7 +5627,7 @@ func planThenExecutePostSubmitRejectionRefreshNote(brief workerruntime.WorkerRun
 		return "No further read/search/discovery action is currently allowed for this rejected plan; use the existing source-body evidence to submit corrected edits now."
 	}
 
-	return "The only remaining read exception is one bounded source-body refresh for: " + strings.Join(nonEmptyRunnerStrings(refreshable, 4), ", ") + ". For `" + workspace.CodeNavigateToolName + "`, include explicit " + workspace.CodeNavigateSourceBodyCapabilityPhrase() + " plus `pattern`. Otherwise do not call read/search/discovery before the corrected `submit_plan`."
+	return "The only remaining read exception is one bounded source-body refresh for: " + strings.Join(nonEmptyRunnerStrings(refreshable, 4), ", ") + ". For `" + workspace.ToolNameCodeNavigate + "`, include explicit " + workspace.CodeNavigateSourceBodyCapabilityPhrase() + " plus `pattern`. Otherwise do not call read/search/discovery before the corrected `submit_plan`."
 }
 
 func planThenExecuteRejectedPlanSourceRefreshAllowedForScope(req workspace.ToolRequest, scopePaths []string, results []workspace.ToolResult) bool {
@@ -6082,7 +6082,7 @@ func submitPlanDiagnosticProtocolToken(path string) bool {
 	}
 
 	switch lower {
-	case "read_file", workspace.CodeNavigateToolName, "read_symbol", "extract_body", "submit_plan":
+	case "read_file", workspace.ToolNameCodeNavigate, "read_symbol", "extract_body", "submit_plan":
 		return true
 	default:
 		return false
@@ -8331,7 +8331,7 @@ func planThenExecuteCandidatePostReadinessDiscoveryRejection(req workspace.ToolR
 
 	if target != "" && planThenExecuteCandidateRejectedPlanSourceRefreshTarget(brief, results, target) && planThenExecuteCodeNavigateMissingAnchorCapability(req) {
 		return "Anchor refresh capability required",
-			"the previous `submit_plan` named an invalid edit anchor on " + target + ". `" + workspace.CodeNavigateToolName + "` anchor refresh requires an explicit source-body capability such as " + strings.Join(workspace.CodeNavigateSourceBodyCapabilityNames(), " or ") + " on the same path and concrete symbol/pattern. " + planThenExecuteAnchorRefreshReadFallbackInstruction([]string{target}),
+			"the previous `submit_plan` named an invalid edit anchor on " + target + ". `" + workspace.ToolNameCodeNavigate + "` anchor refresh requires an explicit source-body capability such as " + strings.Join(workspace.CodeNavigateSourceBodyCapabilityNames(), " or ") + " on the same path and concrete symbol/pattern. " + planThenExecuteAnchorRefreshReadFallbackInstruction([]string{target}),
 			plancontract.PlanExecuteRejectionAnchorRefreshCapabilityRequired,
 			true
 	}

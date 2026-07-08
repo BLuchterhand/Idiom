@@ -282,8 +282,7 @@ func (r *Runner) assessSourceGrounding(answer string, results []workspace.ToolRe
 			}
 		}
 
-		if sourceEvidenceHasBody(sourceEvidenceForPath(results, citationPath)) ||
-			(r.PathEvidenceRegistry != nil && r.PathEvidenceRegistry.HasBodyEvidence(citationPath)) ||
+		if (r.PathEvidenceRegistry != nil && r.PathEvidenceRegistry.HasBodyEvidence(citationPath)) ||
 			sourceEvidenceBodyReadForPath(citationPath, results) ||
 			readOnlyExternalDocumentBodyReadForPath(citationPath, results) ||
 			slices.Contains(delegatedReadOnlySourceBodyEvidencePaths(results), citationPath) ||

@@ -19,7 +19,6 @@ import (
 const (
 	readOnlyCapabilitySchemaVersion     = "idiom.read_only_capabilities.v1"
 	readOnlyCapabilityResultVersion     = "idiom.read_only_capability_result.v1"
-	readOnlyCapabilityToolName          = ToolNameReadOnlyCapability
 	readOnlyCapabilityResolverEnv       = "IDIOM_READ_ONLY_CAPABILITY_RESOLVER"
 	readOnlyCapabilityDisabledRoutesEnv = "IDIOM_READ_ONLY_CAPABILITY_DISABLED_ROUTES"
 	readOnlyCapabilityPublicStatusEnv   = "IDIOM_READ_ONLY_CAPABILITY_PUBLIC_STATUS"
@@ -710,7 +709,7 @@ func readOnlyCapabilityFallbackResult(requested string, target ReadOnlyCapabilit
 
 	if detail != "" {
 		payload.UnderlyingResult = &ReadOnlyCapabilityUnderlyingResult{
-			Tool:  readOnlyCapabilityToolName,
+			Tool:  ToolNameReadOnlyCapability,
 			Error: detail,
 		}
 	}
@@ -718,7 +717,7 @@ func readOnlyCapabilityFallbackResult(requested string, target ReadOnlyCapabilit
 	readOnlyCapabilityAttachStatus(&payload, nil, nil)
 
 	return ToolResult{
-		Tool:    readOnlyCapabilityToolName,
+		Tool:    ToolNameReadOnlyCapability,
 		Summary: "Read-only capability not routed",
 		Output:  marshalReadOnlyCapabilityExecutionResult(payload),
 		Error:   strings.TrimSpace(textutil.FirstNonEmpty(detail, reason)),
@@ -746,7 +745,7 @@ func readOnlyCapabilityDeferredResult(requested string, target ReadOnlyCapabilit
 	readOnlyCapabilityAttachStatus(&payload, nil, nil)
 
 	return ToolResult{
-		Tool:    readOnlyCapabilityToolName,
+		Tool:    ToolNameReadOnlyCapability,
 		Summary: "Read-only capability deferred",
 		Output:  marshalReadOnlyCapabilityExecutionResult(payload),
 		Error:   "capability_deferred",
@@ -780,7 +779,7 @@ func readOnlyCapabilityWrapResult(requested string, target ReadOnlyCapabilityRes
 	}
 
 	return ToolResult{
-		Tool:          readOnlyCapabilityToolName,
+		Tool:          ToolNameReadOnlyCapability,
 		Summary:       summary,
 		Output:        marshalReadOnlyCapabilityExecutionResult(payload),
 		Error:         strings.TrimSpace(result.Error),
@@ -1601,7 +1600,7 @@ func readOnlyCapability(id ReadOnlyCapabilityID, description string, adapters []
 }
 
 func codeNavigateCapabilityAdapter(cap semanticlanguage.Capability) ReadOnlyCapabilityAdapterSpec {
-	return readOnlyAdapter(CodeNavigateToolName, string(cap), "", "capability_router")
+	return readOnlyAdapter(ToolNameCodeNavigate, string(cap), "", "capability_router")
 }
 
 func languageCapabilityAdapters(cap semanticlanguage.Capability) []ReadOnlyCapabilityAdapterSpec {
@@ -1673,7 +1672,7 @@ func readOnlyCapabilityMetricAdapters(tools []string) []string {
 }
 
 func isReadOnlyCapabilityMetricAdapter(tool string) bool {
-	if strings.TrimSpace(tool) == readOnlyCapabilityToolName {
+	if strings.TrimSpace(tool) == ToolNameReadOnlyCapability {
 		return false
 	}
 

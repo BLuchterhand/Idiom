@@ -820,12 +820,18 @@ Current git state:
   source-result evidence plus shell command authority cleanup, dormant
   answer-grounding authority deletion, shell verification classification
   authority consolidation, eval discovery taxonomy deletion, prior-session
-  evidence reader deletion, and alias-only constant cleanup.
-- Goal-period diff from merge base through the latest working state:
-  production Go `+20,312 / -21,009`, net `-697`; Go tests `+10,050 / -6,581`,
-  net `+3,469`; strict all-file total `+32,426 / -29,557`, net `+2,869`.
+  evidence reader deletion, alias-only constant cleanup, and the workspace
+  tool-name alias plus source-evidence duplicate-branch cleanup.
+- Goal-period diff from merge base through the committed-plus-staged state:
+  production Go `+20,340 / -21,041`, net `-701`; Go tests `+10,077 / -6,608`,
+  net `+3,469`; strict all-file total `+32,490 / -29,616`, net `+2,874`.
+- Full dirty worktree diff, including ongoing uncommitted runtime/TUI edits
+  outside this staged cleanup, is production Go `+20,652 / -21,057`, net
+  `-405`; Go tests `+10,253 / -6,651`, net `+3,602`; strict all-file total
+  `+32,973 / -29,678`, net `+3,295`.
 - Physical tracked production Go file lines moved from `328,110` at the merge
-  base to `327,413` in the latest working tree: net `-697`.
+  base to about `327,409` in the committed-plus-staged state and `327,705` in
+  the full dirty worktree.
 - Latest semantic facade cleanup slice only: production Go `+245 / -294`,
   net `-49`; Go tests `+31 / -24`, net `+7`.
 - Latest gitstate cleanup slice only: production Go `+120 / -126`, net `-6`;
@@ -855,16 +861,19 @@ Current git state:
   production Go `+0 / -166`, net `-166`; Go tests `+0 / -107`, net `-107`.
 - Latest alias-only constant cleanup slice only:
   production Go `+7 / -15`, net `-8`; Go tests `+4 / -2`, net `+2`.
+- Latest workspace tool-name alias and source-evidence duplicate cleanup slice
+  only: production Go `+31 / -35`, net `-4`; Go tests `+27 / -27`, net `0`.
 
 Interpretation: the current goal-period branch is now production-LOC negative.
 Many individual consolidation slices are net-negative and remove real duplicate
 or alias-only surfaces, while the total all-file diff remains positive because
 tests, docs, scripted fixtures, and earlier `commandexec` process-lifecycle
 setup added shared platform coverage before all remaining process migrations
-are complete. The honest current production answer is net `-697` Go LOC from
-merge base through the working tree. The implementation ledger above remains
-the source of truth for accepted local reductions inside each consolidation
-case.
+are complete. The honest current production answer is net `-701` Go LOC for
+the committed-plus-staged state, and net `-405` Go LOC for the full dirty
+worktree because uncommitted runtime/TUI edits add production code back. The
+implementation ledger above remains the source of truth for accepted local
+reductions inside each consolidation case.
 
 Reviewer-updated estimate:
 

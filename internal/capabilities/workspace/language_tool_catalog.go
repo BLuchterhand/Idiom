@@ -9,8 +9,6 @@ import (
 	semanticlanguage "idiom/internal/repository/semantic/language"
 )
 
-const CodeNavigateToolName = ToolNameCodeNavigate
-
 type languageToolCatalogEntry struct {
 	Language             string
 	Tool                 string
@@ -637,7 +635,7 @@ func CodeNavigateSourceBodyCapabilityPhrase() string {
 }
 
 func CodeNavigateCapabilityInstruction(capability semanticlanguage.Capability) string {
-	return fmt.Sprintf("`%s` with `capability:\"%s\"`", CodeNavigateToolName, string(capability))
+	return fmt.Sprintf("`%s` with `capability:\"%s\"`", ToolNameCodeNavigate, string(capability))
 }
 
 func CodeNavigateRequestExample(capability semanticlanguage.Capability, path, pattern string) string {
@@ -646,7 +644,7 @@ func CodeNavigateRequestExample(capability semanticlanguage.Capability, path, pa
 	}
 
 	request := map[string]string{
-		"tool":       CodeNavigateToolName,
+		"tool":       ToolNameCodeNavigate,
 		"capability": string(capability),
 		"path":       path,
 		"pattern":    pattern,

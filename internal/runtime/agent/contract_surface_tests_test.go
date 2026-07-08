@@ -7588,7 +7588,7 @@ func TestPlanExecuteTerminalTransportCompatibilityMatrix(t *testing.T) {
 				ToolTransportMode:   "native",
 			},
 			message: llama.ChatMessage{ToolCalls: []llama.ToolCall{{
-				Function: llama.ToolCallFunc{Name: workspace.CodeNavigateToolName, Arguments: `{"tool":"context_query","query":"callers of Run"}`},
+				Function: llama.ToolCallFunc{Name: workspace.ToolNameCodeNavigate, Arguments: `{"tool":"context_query","query":"callers of Run"}`},
 			}}},
 			wantPhaseID:           turnPhaseSubmitReadyNativeRequired,
 			wantTransport:         "native",
@@ -9992,7 +9992,7 @@ func TestPlanExecuteRecoveryStateProjectsStaleAnchorFields(t *testing.T) {
 		Results:          results,
 		LastRequest:      req,
 		LastResult:       rejected,
-		BaseAllowedTools: []string{"read_file", workspace.CodeNavigateToolName, workspace.ToolNameSubmitPlan},
+		BaseAllowedTools: []string{"read_file", workspace.ToolNameCodeNavigate, workspace.ToolNameSubmitPlan},
 	})
 
 	state, ok := DerivePlanExecuteRecoveryState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true}, contract, req, rejected, 2)
@@ -10037,7 +10037,7 @@ func TestPlanExecuteRecoveryStateAbsentWithoutRecoverySurfaceOrRejectedResult(t 
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		ContractID:       "contract-1",
 		Brief:            brief,
-		BaseAllowedTools: []string{"read_file", workspace.CodeNavigateToolName},
+		BaseAllowedTools: []string{"read_file", workspace.ToolNameCodeNavigate},
 	})
 
 	if state, ok := DerivePlanExecuteRecoveryState(brief, nil, PlanExecutePlanningTransport{TextualToolParser: true}, contract, workspace.ToolRequest{}, workspace.ToolResult{}, 0); ok {
@@ -10719,7 +10719,7 @@ func TestToolRequestNormalizerClassifiesParserFailure(t *testing.T) {
 func TestToolRequestNormalizerClassifiesNativeTransportMismatch(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{ToolCalls: []llama.ToolCall{{
 		Function: llama.ToolCallFunc{
-			Name:      workspace.CodeNavigateToolName,
+			Name:      workspace.ToolNameCodeNavigate,
 			Arguments: `{"tool":"context_query","query":"callers of Run"}`,
 		},
 	}}})

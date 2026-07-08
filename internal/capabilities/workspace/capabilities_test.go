@@ -196,8 +196,8 @@ func TestReadOnlyCapabilityEvidenceCapabilitiesProjectResolverVocabulary(t *test
 		t.Fatalf("projection should return an isolated slice, got %#v", next)
 	}
 
-	if got := EvidenceCapabilitiesForTool(readOnlyCapabilityToolName); !slices.Equal(got, want) {
-		t.Fatalf("%s evidence capabilities = %#v, want resolver projection %#v", readOnlyCapabilityToolName, got, want)
+	if got := EvidenceCapabilitiesForTool(ToolNameReadOnlyCapability); !slices.Equal(got, want) {
+		t.Fatalf("%s evidence capabilities = %#v, want resolver projection %#v", ToolNameReadOnlyCapability, got, want)
 	}
 
 	codeNavigateWant := CodeNavigationEvidenceCapabilities()
@@ -228,7 +228,7 @@ func TestReadOnlyCapabilityResolverCanBeDisabled(t *testing.T) {
 		MaxDirectoryEntries:   1024,
 		EnableShell:           true,
 	})
-	result := mgr.Execute(context.Background(), ToolRequest{Tool: readOnlyCapabilityToolName, Capability: "definition", Pattern: "Run", Path: "."})
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: ToolNameReadOnlyCapability, Capability: "definition", Pattern: "Run", Path: "."})
 
 	if result.Error == "" {
 		t.Fatalf("disabled resolver should return a structured fallback error, got %#v", result)
@@ -281,7 +281,7 @@ func TestReadOnlyCapabilityRouteCanBeDisabledIndividually(t *testing.T) {
 	})
 
 	result := mgr.Execute(context.Background(), ToolRequest{
-		Tool:       readOnlyCapabilityToolName,
+		Tool:       ToolNameReadOnlyCapability,
 		Capability: string(ReadOnlyCapabilityDefinition),
 		Path:       filepath.Join("pkg", "runner.go"),
 		Pattern:    "Run",
@@ -340,7 +340,7 @@ func TestReadOnlyCapabilityPublicStatusCanBeSuppressedForRoutedResults(t *testin
 	})
 
 	result := mgr.Execute(context.Background(), ToolRequest{
-		Tool:       readOnlyCapabilityToolName,
+		Tool:       ToolNameReadOnlyCapability,
 		Capability: string(ReadOnlyCapabilityDefinition),
 		Path:       filepath.Join("pkg", "runner.go"),
 		Pattern:    "Run",
@@ -381,7 +381,7 @@ func TestReadOnlyCapabilityPublicStatusCanBeSuppressedForDisabledFallback(t *tes
 	mgr := NewManager(config.Workspace{Root: root, CWD: root})
 
 	result := mgr.Execute(context.Background(), ToolRequest{
-		Tool:       readOnlyCapabilityToolName,
+		Tool:       ToolNameReadOnlyCapability,
 		Capability: string(ReadOnlyCapabilityDefinition),
 		Path:       ".",
 		Pattern:    "Run",
@@ -522,7 +522,7 @@ func TestReadOnlyCapabilityRuntimeResolutionDoesNotUseWorkspaceManifestDetection
 		EnableShell:           true,
 	})
 	result := mgr.Execute(context.Background(), ToolRequest{
-		Tool:       readOnlyCapabilityToolName,
+		Tool:       ToolNameReadOnlyCapability,
 		Capability: string(ReadOnlyCapabilityDefinition),
 		Path:       "notes.txt",
 		Pattern:    "Run",
@@ -573,7 +573,7 @@ func TestReadOnlyCapabilityPathLanguageBeatsConflictingOverride(t *testing.T) {
 	})
 
 	result := mgr.Execute(context.Background(), ToolRequest{
-		Tool:       readOnlyCapabilityToolName,
+		Tool:       ToolNameReadOnlyCapability,
 		Capability: string(ReadOnlyCapabilityDefinition),
 		Path:       filepath.Join("pkg", "runner.go"),
 		Language:   "python",
@@ -631,7 +631,7 @@ func TestReadOnlyCapabilityRoutesNamedSliceThroughExistingAdapters(t *testing.T)
 		{
 			name: "file outline",
 			req: ToolRequest{
-				Tool:       readOnlyCapabilityToolName,
+				Tool:       ToolNameReadOnlyCapability,
 				Capability: string(ReadOnlyCapabilityFileOutline),
 				Path:       filepath.Join("pkg", "runner.go"),
 			},
@@ -641,7 +641,7 @@ func TestReadOnlyCapabilityRoutesNamedSliceThroughExistingAdapters(t *testing.T)
 		{
 			name: "inspect symbol",
 			req: ToolRequest{
-				Tool:       readOnlyCapabilityToolName,
+				Tool:       ToolNameReadOnlyCapability,
 				Capability: "inspect_symbol",
 				Path:       filepath.Join("pkg", "runner.go"),
 				Pattern:    "Run",
@@ -652,7 +652,7 @@ func TestReadOnlyCapabilityRoutesNamedSliceThroughExistingAdapters(t *testing.T)
 		{
 			name: "symbol lookup",
 			req: ToolRequest{
-				Tool:       readOnlyCapabilityToolName,
+				Tool:       ToolNameReadOnlyCapability,
 				Capability: string(ReadOnlyCapabilitySymbolLookup),
 				Path:       filepath.Join("pkg", "runner.go"),
 				Pattern:    "Run",
@@ -663,7 +663,7 @@ func TestReadOnlyCapabilityRoutesNamedSliceThroughExistingAdapters(t *testing.T)
 		{
 			name: "references",
 			req: ToolRequest{
-				Tool:       readOnlyCapabilityToolName,
+				Tool:       ToolNameReadOnlyCapability,
 				Capability: string(ReadOnlyCapabilityReferences),
 				Path:       filepath.Join("pkg", "runner.go"),
 				Pattern:    "Run",
@@ -674,7 +674,7 @@ func TestReadOnlyCapabilityRoutesNamedSliceThroughExistingAdapters(t *testing.T)
 		{
 			name: "definition",
 			req: ToolRequest{
-				Tool:       readOnlyCapabilityToolName,
+				Tool:       ToolNameReadOnlyCapability,
 				Capability: string(ReadOnlyCapabilityDefinition),
 				Path:       filepath.Join("pkg", "runner.go"),
 				Pattern:    "Run",
@@ -685,7 +685,7 @@ func TestReadOnlyCapabilityRoutesNamedSliceThroughExistingAdapters(t *testing.T)
 		{
 			name: "calls from",
 			req: ToolRequest{
-				Tool:       readOnlyCapabilityToolName,
+				Tool:       ToolNameReadOnlyCapability,
 				Capability: string(ReadOnlyCapabilityCallsFrom),
 				Path:       filepath.Join("pkg", "runner.go"),
 				Pattern:    "Run",
@@ -696,7 +696,7 @@ func TestReadOnlyCapabilityRoutesNamedSliceThroughExistingAdapters(t *testing.T)
 		{
 			name: "calls into",
 			req: ToolRequest{
-				Tool:       readOnlyCapabilityToolName,
+				Tool:       ToolNameReadOnlyCapability,
 				Capability: string(ReadOnlyCapabilityCallsInto),
 				Path:       filepath.Join("pkg", "runner.go"),
 				Pattern:    "helper",
@@ -707,7 +707,7 @@ func TestReadOnlyCapabilityRoutesNamedSliceThroughExistingAdapters(t *testing.T)
 		{
 			name: "related files",
 			req: ToolRequest{
-				Tool:       readOnlyCapabilityToolName,
+				Tool:       ToolNameReadOnlyCapability,
 				Capability: string(ReadOnlyCapabilityRelatedFiles),
 				Path:       filepath.Join("pkg", "runner.go"),
 				Pattern:    "runner",
@@ -764,7 +764,7 @@ func TestReadOnlyCapabilityRoutesNamedSliceThroughExistingAdapters(t *testing.T)
 func TestReadOnlyCapabilityReportsStructuredDeferredSourceSanityFallback(t *testing.T) {
 	root := t.TempDir()
 	mgr := NewManager(config.Workspace{Root: root, CWD: root})
-	result := mgr.Execute(context.Background(), ToolRequest{Tool: readOnlyCapabilityToolName, Capability: "source-sanity", Path: "."})
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: ToolNameReadOnlyCapability, Capability: "source-sanity", Path: "."})
 
 	if result.Error == "" {
 		t.Fatalf("deferred capability should return an error with structured fallback, got %#v", result)
@@ -807,7 +807,7 @@ func TestReadOnlyCapabilityReportsStructuredDeferredSourceSanityFallback(t *test
 func TestReadOnlyCapabilityReportsStructuredUnmappedFallback(t *testing.T) {
 	root := t.TempDir()
 	mgr := NewManager(config.Workspace{Root: root, CWD: root})
-	result := mgr.Execute(context.Background(), ToolRequest{Tool: readOnlyCapabilityToolName, Capability: "unknown-capability", Path: "."})
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: ToolNameReadOnlyCapability, Capability: "unknown-capability", Path: "."})
 
 	if result.Error == "" {
 		t.Fatalf("unmapped capability should return an error with structured fallback, got %#v", result)
@@ -855,7 +855,7 @@ func TestReadOnlyCapabilityReportsUnsupportedAbsentConfidence(t *testing.T) {
 	})
 
 	result := mgr.Execute(context.Background(), ToolRequest{
-		Tool:       readOnlyCapabilityToolName,
+		Tool:       ToolNameReadOnlyCapability,
 		Capability: string(ReadOnlyCapabilityDefinition),
 		Path:       filepath.Join("scripts", "player.gd"),
 		Language:   "elixir",
@@ -1125,7 +1125,7 @@ func TestToolCapabilityMetadataUsesOneStaticSource(t *testing.T) {
 		wantFirstCapability string
 	}{
 		{
-			tool:                readOnlyCapabilityToolName,
+			tool:                ToolNameReadOnlyCapability,
 			wantCapabilities:    []string{"localize_change", "query_context", "inspect_file", "inspect_symbol", "find_symbol", "find_definition", "find_references", "find_implementations", "calls_from", "calls_into", "related_files", "source_sanity", "trace_runtime_failure", "verify_edit", "audit_behavior"},
 			wantClassification:  CapabilityClassRouted,
 			mutateFirstCall:     true,
@@ -1262,7 +1262,7 @@ func TestReadOnlyCapabilityEvidenceCapabilityDrivesAuditNormalization(t *testing
 			t.Fatalf("ReadOnlyCapabilityEvidenceCapability(%q) = %q, want %q", tc.capability, got, tc.want)
 		}
 
-		if got := auditObservedCapabilityForToolCapability(readOnlyCapabilityToolName, tc.capability); got != tc.want {
+		if got := auditObservedCapabilityForToolCapability(ToolNameReadOnlyCapability, tc.capability); got != tc.want {
 			t.Fatalf("auditObservedCapabilityForToolCapability(%q) = %q, want %q", tc.capability, got, tc.want)
 		}
 	}

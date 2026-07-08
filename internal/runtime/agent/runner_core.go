@@ -492,7 +492,7 @@ func normalizeStateStorePath(raw string) string {
 
 func planThenExecuteAnchorRefreshWriteOnlyError(tool string, refreshPaths []string) string {
 	targets := strings.Join(nonEmptyRunnerStrings(refreshPaths, 4), ", ")
-	return fmt.Sprintf("%s is not available in its requested form while plan-execute anchor-refresh mode is still open for: %s. Issue exactly one bounded source-body request for a remaining refresh path: `read_file` with explicit `start_line`/`end_line`, or `%s` with %s plus `pattern`. Do not call `submit_plan` until that refresh returns.", strings.TrimSpace(tool), targets, workspace.CodeNavigateToolName, workspace.CodeNavigateSourceBodyCapabilityPhrase())
+	return fmt.Sprintf("%s is not available in its requested form while plan-execute anchor-refresh mode is still open for: %s. Issue exactly one bounded source-body request for a remaining refresh path: `read_file` with explicit `start_line`/`end_line`, or `%s` with %s plus `pattern`. Do not call `submit_plan` until that refresh returns.", strings.TrimSpace(tool), targets, workspace.ToolNameCodeNavigate, workspace.CodeNavigateSourceBodyCapabilityPhrase())
 }
 
 type VerificationPolicyDecision struct {
@@ -15053,7 +15053,7 @@ func postReadinessSymbolBodyUpgradeRequest(results []workspace.ToolResult, req w
 	}
 
 	upgraded := req
-	if tool == workspace.CodeNavigateToolName {
+	if tool == workspace.ToolNameCodeNavigate {
 		upgraded.Capability = string(semanticlanguage.CapExtractBody)
 	} else {
 		upgraded.Tool = "go_extract_body"
@@ -15066,7 +15066,7 @@ func postReadinessSymbolBodyUpgradeableTool(tool, capability string) bool {
 	switch strings.TrimSpace(tool) {
 	case "go_read_symbol":
 		return true
-	case workspace.CodeNavigateToolName:
+	case workspace.ToolNameCodeNavigate:
 		return workspace.CodeNavigateCapabilityPredicate(semanticlanguage.CapReadSymbol)(capability)
 	default:
 		return false
@@ -15076,11 +15076,11 @@ func postReadinessSymbolBodyUpgradeableTool(tool, capability string) bool {
 func hasTruncatedGoReadSymbolResult(results []workspace.ToolResult, path string) bool {
 	for _, result := range results {
 		tool := strings.TrimSpace(result.Tool)
-		if (tool != "go_read_symbol" && tool != workspace.CodeNavigateToolName) || strings.TrimSpace(result.Error) != "" {
+		if (tool != "go_read_symbol" && tool != workspace.ToolNameCodeNavigate) || strings.TrimSpace(result.Error) != "" {
 			continue
 		}
 
-		if tool == workspace.CodeNavigateToolName && !strings.Contains(strings.ToLower(result.Output), "routed_tool: go_read_symbol") {
+		if tool == workspace.ToolNameCodeNavigate && !strings.Contains(strings.ToLower(result.Output), "routed_tool: go_read_symbol") {
 			continue
 		}
 

@@ -238,7 +238,7 @@ func TestToolSchemaEnumsDeriveFromCapabilityRegistries(t *testing.T) {
 		t.Fatalf("code_navigate schema enum drifted from runtime capabilities:\ngot  %#v\nwant %#v", got, languagetools.CodeNavigationCapabilityNames())
 	}
 
-	readOnly := toolDefinitionForTest(t, readOnlyCapabilityToolName)
+	readOnly := toolDefinitionForTest(t, ToolNameReadOnlyCapability)
 	registry := BuildReadOnlyCapabilityRegistry()
 	wantReadOnly := make([]string, 0, len(registry.Capabilities))
 

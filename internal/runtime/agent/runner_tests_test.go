@@ -40434,7 +40434,7 @@ func TestRunnerTurnControllerRecordParseFailurePreservesNativeMetadata(t *testin
 	controller, runEvents := newParseFailureControllerFixture(t)
 	normalization := normalizeToolRequestSyntax(llama.ChatMessage{ToolCalls: []llama.ToolCall{{
 		Function: llama.ToolCallFunc{
-			Name:      workspace.CodeNavigateToolName,
+			Name:      workspace.ToolNameCodeNavigate,
 			Arguments: `{"tool":"context_query","query":"callers of Run"}`,
 		},
 	}}})

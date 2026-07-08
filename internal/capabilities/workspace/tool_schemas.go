@@ -275,7 +275,7 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        CodeNavigateToolName,
+			Name:        ToolNameCodeNavigate,
 			Description: "Route a language-agnostic code navigation request to the best language-aware symbol/navigation tool for the given path or language, with a bounded generic source-text fallback.",
 			ParametersJSON: schemaObj(
 				[]string{"capability"},

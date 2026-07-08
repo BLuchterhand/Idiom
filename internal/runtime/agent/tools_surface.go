@@ -544,7 +544,7 @@ func (d *DiscoveryRedirect) considerConversationReadFileRedirect(req workspace.T
 	// tool hiding (e.g., same-path fixation). Redirecting to a hidden tool
 	// creates a dead end — the model follows the redirect only to get a
 	// hidden-tool rejection, wasting a step and confusing the investigation.
-	codeNavigateVisible := len(d.allowedTools) == 0 || redirectToolAllowed(d.allowedTools, workspace.CodeNavigateToolName)
+	codeNavigateVisible := len(d.allowedTools) == 0 || redirectToolAllowed(d.allowedTools, workspace.ToolNameCodeNavigate)
 	if !codeNavigateVisible {
 		return RedirectDecision{}
 	}
@@ -562,7 +562,7 @@ func (d *DiscoveryRedirect) considerConversationReadFileRedirect(req workspace.T
 
 	d.firedRedirects[fp] = true
 
-	summary := "Redirected repeated read_file to " + workspace.CodeNavigateToolName
+	summary := "Redirected repeated read_file to " + workspace.ToolNameCodeNavigate
 	msg := fmt.Sprintf(
 		"You have read %s %d times this turn. Instead of reading small chunks, use %s with the symbol name to get the full body in one call. Try:\n\n%s\n\n"+
 			"If you don't know the symbol name, use %s first to list available symbols.",

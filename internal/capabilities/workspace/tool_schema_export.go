@@ -321,7 +321,7 @@ func toolSchemaErrorClasses(tool string, sideEffects []autonomy.SideEffectClass)
 		classes = append(classes, "unsupported_language", "symbol_not_found", "diagnostics_failed")
 	}
 
-	if tool == readOnlyCapabilityToolName {
+	if tool == ToolNameReadOnlyCapability {
 		classes = append(classes, "capability_deferred", "capability_unmapped", "adapter_unavailable", "resolver_disabled", "route_disabled")
 	}
 

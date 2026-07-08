@@ -9000,11 +9000,11 @@ func sourceEvidencePendingRedirectActionLabel(obligation sourceEvidenceObligatio
 	}
 
 	switch {
-	case tool == workspace.CodeNavigateToolName:
+	case tool == workspace.ToolNameCodeNavigate:
 		return fmt.Sprintf(
 			"%s via %s capability=%s with pattern/symbol, or one %s first when the symbol is unknown",
 			path,
-			workspace.CodeNavigateToolName,
+			workspace.ToolNameCodeNavigate,
 			string(semanticlanguage.CapReadSymbol),
 			string(semanticlanguage.CapFileOutline),
 		)

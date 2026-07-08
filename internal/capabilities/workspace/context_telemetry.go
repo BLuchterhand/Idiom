@@ -140,7 +140,7 @@ func HarnessFeedbackTelemetryFields(tool string, output string) map[string]any {
 
 func ReadOnlyCapabilityTelemetryFields(tool string, output string) map[string]any {
 	tool = strings.TrimSpace(tool)
-	if tool != readOnlyCapabilityToolName || strings.TrimSpace(output) == "" {
+	if tool != ToolNameReadOnlyCapability || strings.TrimSpace(output) == "" {
 		return nil
 	}
 

@@ -116,7 +116,7 @@ func decodeNestedToolRequestJSON(payload []byte) (ToolRequest, bool, error) {
 
 	if strings.TrimSpace(nested.Tool) == "" {
 		nested.Tool = outerTool
-	} else if outerTool == CodeNavigateToolName && CodeNavigateCapabilityAlias(nested.Tool) != "" {
+	} else if outerTool == ToolNameCodeNavigate && CodeNavigateCapabilityAlias(nested.Tool) != "" {
 		if strings.TrimSpace(nested.Capability) == "" {
 			nested.Capability = CodeNavigateCapabilityAlias(nested.Tool)
 		}
