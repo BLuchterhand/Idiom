@@ -326,10 +326,11 @@ fn validate_tool_name(tool: &str) -> Result<(), String> {
 
 fn validate_command_name(command: &str) -> Result<(), String> {
     match command {
-        "architect" | "artifact" | "atom" | "audit" | "backend" | "brief" | "context"
-        | "doctor" | "feature-planner" | "implement" | "init" | "lane" | "local-ops" | "mcp"
-        | "plan-execute" | "probe" | "product" | "product-evidence" | "profile" | "queue"
-        | "ranker" | "recover" | "release" | "skills" | "tool" | "version" => Ok(()),
+        "architect" | "artifact" | "atom" | "audit" | "backend" | "brief" | "doctor"
+        | "feature-planner" | "implement" | "init" | "lane" | "local-ops" | "mcp"
+        | "plan-execute" | "probe" | "product" | "product-evidence" | "profile"
+        | "queue" | "ranker" | "recover" | "release" | "skills" | "tool"
+        | "version" => Ok(()),
         _ => Err(format!("unsupported command {command:?}")),
     }
 }

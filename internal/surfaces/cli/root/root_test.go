@@ -297,7 +297,6 @@ func TestRootTelemetryCommandName(t *testing.T) {
 		{name: "tool subcommand", args: []string{"tool", "run"}, want: "tool:run"},
 		{name: "tool root", args: []string{"tool"}, want: "tool"},
 		{name: "mcp subcommand", args: []string{"mcp", "serve"}, want: "mcp:serve"},
-		{name: "context subcommand", args: []string{"context", "index"}, want: "context:index"},
 		{name: "direct implement", args: []string{"implement"}, want: "implement"},
 		{name: "direct plan execute", args: []string{"plan-execute"}, want: "plan-execute"},
 		{name: "direct artifact", args: []string{"artifact"}, want: "artifact"},

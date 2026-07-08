@@ -8,17 +8,14 @@ import (
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/sessionid"
-	architectcmd "idiom/internal/surfaces/cli/architect"
 	artifactcmd "idiom/internal/surfaces/cli/artifact"
 	cmdconfig "idiom/internal/surfaces/cli/config"
-	contextcmd "idiom/internal/surfaces/cli/context"
 	featureplannercmd "idiom/internal/surfaces/cli/featureplanner"
 	localopscmd "idiom/internal/surfaces/cli/localops"
 	planexecutecmd "idiom/internal/surfaces/cli/planexecute"
 	rankercmd "idiom/internal/surfaces/cli/ranker"
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
 	cmdtelemetry "idiom/internal/surfaces/cli/telemetry"
-	toolcmd "idiom/internal/surfaces/cli/tool"
 )
 
 func runArtifactMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdruntime.PromptRunner, rec *telemetry.Recorder) int {
@@ -35,16 +32,6 @@ func adaptArtifactPromptRunner(promptRun cmdruntime.PromptRunner) artifactcmd.Pr
 			Telemetry:         opts.Telemetry,
 		}, w)
 	}
-}
-
-func runContextMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return contextcmd.Run(args, stdout, stderr, rec, contextcmd.Deps{
-		LoadConfig:     cmdconfig.Load,
-		LogPhase:       telemetry.LogPhase,
-		LogToolRequest: toolcmd.LogDirectToolRequest,
-		LogToolResult:  toolcmd.LogDirectToolResult,
-		WriteOutput:    architectcmd.WriteOutput,
-	})
 }
 
 func featurePlannerDependencies() featureplannercmd.Dependencies {

@@ -339,7 +339,7 @@ func buildProfile(spec profileSpec, hostChecks []HostCheck, backendFile backends
 				Name:     "context index",
 				State:    "degraded",
 				Detail:   contextDetail,
-				Remedy:   "run `idiom context status --refresh` or `idiom context build` before relying on cached discovery evidence",
+				Remedy:   "run `idiom tool context_status --input '{\"refresh\":true}'` before relying on cached discovery evidence",
 				Optional: true,
 			})
 		}

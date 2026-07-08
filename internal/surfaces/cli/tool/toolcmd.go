@@ -384,7 +384,7 @@ func printUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "Caller metadata flags accept short opaque identifiers only and reject common secret-, token-, email-, and path-shaped values: --caller-id, --request-id, and --trace-id.")
 	fmt.Fprintln(stderr, "--profile discovery is read-only/default-deny for mutation, shell, destructive, and unknown side-effect tools; denied calls return a structured sidecar error without executing.")
 	fmt.Fprintln(stderr, "Does not require llama-server.")
-	fmt.Fprintln(stderr, "For persistent codebase context, use `idiom context build|status|query|zoom|pack|impact|trace`.")
+	fmt.Fprintln(stderr, "For persistent codebase context, use `idiom tool context_status --input '{...}'` and related `context_*` tools.")
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, "Discovery tools:")
 	fmt.Fprintln(stderr, "  harness_audit      Audit idiom tool surfaces, backends, and behavior logs")

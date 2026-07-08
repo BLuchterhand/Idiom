@@ -91,8 +91,6 @@ func runMainWithTelemetryDir(args []string, stdout io.Writer, stderr io.Writer, 
 			return toolcmd.RunWithTelemetry(subcommandArgs, stdout, stderr, rec)
 		case "mcp":
 			return mcpcmd.RunWithTelemetryAndVersion(subcommandArgs, stdout, stderr, rec, version)
-		case "context":
-			return runContextMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
 		case "atom":
 			return atomcmd.RunMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
 		case "artifact":
@@ -158,7 +156,7 @@ func rootTelemetryCommandName(args []string) string {
 
 	subcommand := args[0]
 	switch subcommand {
-	case "architect", "atom", "audit", "backend", "brief", "coding-rules", "context",
+	case "architect", "atom", "audit", "backend", "brief", "coding-rules",
 		"feature-planner", "lane", "local-ops", "mcp", "product", "product-evidence",
 		"probe", "queue", "ranker", "recover", "release", "tool":
 		if len(args) > 1 {

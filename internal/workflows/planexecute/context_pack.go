@@ -269,7 +269,7 @@ func RenderPromptContextDiscoveryFallbackSection(opts PromptContextPackOptions, 
 	var b strings.Builder
 
 	b.WriteString("## Context Discovery Fallback\n\n")
-	b.WriteString("Source: idiom context preload fallback. The ranked context packet was unavailable or did not identify a useful target. Run this bounded discovery phase before the first edit-bearing action; do not repeat the same failed `context_pack` call.\n\n")
+	b.WriteString("Source: context_pack preload fallback. The ranked context packet was unavailable or did not identify a useful target. Run this bounded discovery phase before the first edit-bearing action; do not repeat the same failed `context_pack` call.\n\n")
 
 	if reason = strings.TrimSpace(reason); reason != "" {
 		fmt.Fprintf(&b, "- Context packet status: unavailable (%s)\n", collapsePromptContextWhitespace(reason, 220))

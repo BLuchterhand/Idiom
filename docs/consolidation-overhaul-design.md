@@ -1135,7 +1135,7 @@ Reviewer-updated estimate:
   Production Go changed `+120 / -311`, net `-191`; tests changed `+28 / -304`,
   net `-276`.
   Focused verification: `go test ./internal/capabilities/workspace -run 'Test.*External|TestManagerToolTimeout|TestExecuteWithTimeout|TestToolTimeout|Test.*Context|Test.*Fresh|Test.*Graph|Test.*ToolName|Test.*Suggestion|Test.*ReadOnlyCapability|Test.*ToolSurface|TestHarnessAudit|TestToolManifest|TestToolSurfaceProfile|Test.*Git|Test.*Discovery|Test.*RequiredPath' -count=1`;
-  `go test ./internal/surfaces/cli/tool ./internal/surfaces/cli/context ./internal/surfaces/cli/root -count=1`;
+  `go test ./internal/surfaces/cli/tool ./internal/surfaces/cli/root -count=1`;
   `go test ./internal/runtime/agent -run 'TestPlanExecuteRunnerRedirectsEmptySubmitPlanSourceSatisfiedToTerminalAnswer|TestPlanThenExecuteShortCircuit|TestReviewRepairCompletionGateRecoveryWithSourceSanityFailureAllowsBoundedEvidence|TestPlanExecuteSubmitPlanCountsAsWriteDuringWriteOnlyRecovery|Test.*Git|Test.*Discovery|TestExistingFileNeedsGitHistory|Test.*RequiredPath|Test.*Workbranch' -count=1`;
   `go test ./internal/repository/comprehension ./internal/platform/gitstate ./internal/contracts/pathparse ./internal/workflows/atomintake ./internal/workflows/implementationdispatch -count=1`.
   Broad verification: `go test ./...`; `go build ./cmd/idiom`;
