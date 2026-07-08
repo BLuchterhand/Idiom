@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/evidence/lanehistory"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/runtime/localops"
 	"idiom/internal/workflows/productworkflow"
@@ -399,11 +400,11 @@ func blockReleaseEvidencePrivacy(report *releaseEvidenceBundle, forbidden string
 	report.BundleID = "release-evidence-" + report.ArtifactHash
 }
 
-func buildReleaseEvidenceBundle(root string, laneSummary LaneHistorySummary, opts releaseEvidenceOptions) releaseEvidenceBundle {
+func buildReleaseEvidenceBundle(root string, laneSummary lanehistory.Summary, opts releaseEvidenceOptions) releaseEvidenceBundle {
 	return buildReleaseEvidenceBundleWithDeps(root, laneSummary, opts, Dependencies{})
 }
 
-func buildReleaseEvidenceBundleWithDeps(root string, laneSummary LaneHistorySummary, opts releaseEvidenceOptions, deps Dependencies) releaseEvidenceBundle {
+func buildReleaseEvidenceBundleWithDeps(root string, laneSummary lanehistory.Summary, opts releaseEvidenceOptions, deps Dependencies) releaseEvidenceBundle {
 	deps = currentDependencies(deps)
 
 	baseline := loadReleaseEvidenceInputBundle(root, opts.BaselineDir, "baseline")

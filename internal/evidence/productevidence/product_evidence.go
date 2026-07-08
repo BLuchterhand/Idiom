@@ -280,11 +280,11 @@ func runProductEvidenceExportWithDeps(args []string, stdout io.Writer, stderr io
 	return 0
 }
 
-func buildProductEvidenceExportReport(root string, summary LaneHistorySummary, opts productEvidenceExportOptions) productEvidenceExportReport {
+func buildProductEvidenceExportReport(root string, summary lanehistory.Summary, opts productEvidenceExportOptions) productEvidenceExportReport {
 	return buildProductEvidenceExportReportWithDeps(root, summary, opts, Dependencies{})
 }
 
-func buildProductEvidenceExportReportWithDeps(root string, summary LaneHistorySummary, opts productEvidenceExportOptions, deps Dependencies) productEvidenceExportReport {
+func buildProductEvidenceExportReportWithDeps(root string, summary lanehistory.Summary, opts productEvidenceExportOptions, deps Dependencies) productEvidenceExportReport {
 	deps = currentDependencies(deps)
 
 	laneStatus := "not_available"

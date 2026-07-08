@@ -2151,6 +2151,22 @@ func TestShellRejectsDirectoryOnlyCommands(t *testing.T) {
 	}
 }
 
+func TestContextTracePackUsesShellAdmissionPolicy(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(config.Workspace{
+		Root:                  dir,
+		CWD:                   dir,
+		Shell:                 "/bin/sh",
+		CommandTimeoutSeconds: 5,
+		EnableShell:           true,
+	})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: ToolNameContextTracePack, Command: "cd ."})
+	if result.Error == "" || !strings.Contains(result.Error, "do not persist") {
+		t.Fatalf("expected context_trace_pack to reject directory-only shell command, got %#v", result)
+	}
+}
+
 func writeTestFile(t *testing.T, path string, content string) {
 	t.Helper()
 

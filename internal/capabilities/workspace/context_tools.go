@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strings"
 
-	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/failures"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/comprehension"
@@ -855,46 +854,25 @@ func contextRefreshSummary(refresh *comprehension.RefreshReport) string {
 }
 
 func (m *Manager) contextTracePack(ctx context.Context, req ToolRequest) ToolResult {
-	command := strings.TrimSpace(req.Command)
-	if command == "" {
-		return ToolResult{Tool: ToolNameContextTracePack, Summary: "Context trace pack rejected", Error: "command is required"}
+	execution, rejection, ok := m.captureWorkspaceShell(ctx, req, ToolNameContextTracePack)
+	if !ok {
+		return rejection
 	}
 
-	if !m.cfg.EnableShell {
-		return ToolResult{Tool: ToolNameContextTracePack, Summary: "Context trace pack rejected", Error: "shell execution is disabled"}
-	}
-
-	if m.Mode() == ModeExplore {
-		if err := validateExploreShellCommand(command); err != nil {
-			return ToolResult{
-				Tool:    ToolNameContextTracePack,
-				Summary: "Context trace pack rejected",
-				Error:   "explore mode only allows read-only inspection commands: " + err.Error(),
-			}
-		}
-	}
-
-	workdir, err := m.pathAccess.ResolveWorkdir(req.Workdir)
-	if err != nil {
-		return ToolResult{Tool: ToolNameContextTracePack, Summary: "Context trace pack failed to resolve workdir", Error: err.Error()}
-	}
-
-	execResult := m.runCommandResult(ctx, commandexec.Spec{Mode: commandexec.ModeLoginShell, Shell: m.cfg.Shell, Command: command, Dir: workdir})
 	exitCode := 0
 	execError := ""
-
-	if execResult.Err != nil {
-		execError = execResult.FailureError(fmt.Sprintf("%ds", workspaceCommandTimeoutSeconds(m.cfg.CommandTimeoutSeconds))).Error()
-		exitCode = execResult.ExitCode
+	if execution.failure != "" {
+		execError = execution.failure
+		exitCode = execution.result.ExitCode
 	}
 
 	result, err := comprehension.Trace(comprehension.TraceOptions{
 		Root:         m.cfg.Root,
-		Command:      command,
+		Command:      execution.command,
 		Path:         req.Path,
 		Language:     req.Language,
-		Stdout:       execResult.Stdout,
-		Stderr:       execResult.Stderr,
+		Stdout:       execution.result.Stdout,
+		Stderr:       execution.result.Stderr,
 		ExitCode:     exitCode,
 		ExecError:    execError,
 		Limit:        req.Limit,

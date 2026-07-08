@@ -54,37 +54,13 @@ func runLocalOpsMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wri
 
 func productEvidenceDeps() productevidence.Dependencies {
 	return productevidence.Dependencies{
-		SummarizeLaneHistory: summarizeProductEvidenceLaneHistory,
+		SummarizeLaneHistory: lanehistory.Summarize,
 		RunMainNoTelemetry:   runMain,
 		DemoCommandRunnerID:  "cmd/idiom:runMain",
 		Version:              version,
 		Commit:               commit,
 		Date:                 date,
 	}
-}
-
-func summarizeProductEvidenceLaneHistory(root string) (productevidence.LaneHistorySummary, error) {
-	summary, err := lanehistory.Summarize(root)
-	if err != nil {
-		return productevidence.LaneHistorySummary{}, err
-	}
-
-	return productevidence.LaneHistorySummary{
-		Total:                 summary.Total,
-		ByMode:                summary.ByMode,
-		ByExitCode:            summary.ByExitCode,
-		ByFinalState:          summary.ByFinalState,
-		BriefsByPath:          summary.BriefsByPath,
-		ByProvenance:          summary.ByProvenance,
-		TotalModelCalls:       summary.TotalModelCalls,
-		TotalToolCalls:        summary.TotalToolCalls,
-		TotalPromptTokens:     summary.TotalPromptTokens,
-		TotalCompletionTokens: summary.TotalCompletionTokens,
-		TotalTokens:           summary.TotalTokens,
-		TotalDurationMS:       summary.TotalDurationMS,
-		EventsWithTokens:      summary.EventsWithTokens,
-		EventsWithRunMetrics:  summary.EventsWithRunMetrics,
-	}, nil
 }
 
 func runRankerMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {

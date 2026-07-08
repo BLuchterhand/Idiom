@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"idiom/internal/evidence/lanehistory"
 	"idiom/internal/repository/comprehension"
 	"idiom/internal/runtime/localops"
 )
@@ -63,7 +64,7 @@ func TestP91ReleaseEvidenceBundleIncludesRequiredSectionsAndClassifications(t *t
 		t.Fatalf("append learning log: %v", err)
 	}
 
-	report := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:        root,
 		BaselineDir:        "baseline",
 		CurrentDir:         "current",
@@ -162,7 +163,7 @@ func TestReleaseEvidenceSummarizesOpenRecoveryRollup(t *testing.T) {
 	root := t.TempDir()
 	stageProductEvidenceRecoveryPacket(t, root, "release-open-recovery")
 
-	report := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot: root,
 		CurrentDir:  "current",
 	})
@@ -187,7 +188,7 @@ func TestReleaseEvidenceRecoveredRollupDoesNotAddRecoveryBlocker(t *testing.T) {
 	root := t.TempDir()
 	stageProductEvidenceRecoveredPacket(t, root, "release-recovered")
 
-	report := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot: root,
 		CurrentDir:  "current",
 	})
@@ -214,7 +215,7 @@ func TestP911ReleaseEvidenceRequiresExecutableCommandValidation(t *testing.T) {
 	})
 	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
 
-	report := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{ProjectRoot: root, CurrentDir: "current"})
+	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{ProjectRoot: root, CurrentDir: "current"})
 	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.11")
 
 	if gate.Status != "needs_evidence" || gate.Counts["runnable_command_rows"] == 7 || gate.Counts["command_id_mismatch_rows"] == 0 {
@@ -228,7 +229,7 @@ func TestP911ReleaseEvidenceRequiresExecutableCommandValidation(t *testing.T) {
 
 func TestP91ReleaseEvidenceMarksPartialWhenEvidenceMissing(t *testing.T) {
 	root := t.TempDir()
-	report := buildReleaseEvidenceBundle(root, LaneHistorySummary{}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{}, releaseEvidenceOptions{
 		ProjectRoot:        root,
 		BaselineDir:        "missing-baseline",
 		CurrentDir:         "missing-current",
@@ -263,7 +264,7 @@ func TestP913ReleaseEvidenceDowngradesClientRowsWhenValidationRecordsMissing(t *
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
 
-	report := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:     root,
 		LocalOpsReport:  localOpsPath,
 		BenchmarkReport: benchmarkPath,
@@ -291,7 +292,7 @@ func TestP913ReleaseReadinessNeedsEvidenceWhenClientValidationMissing(t *testing
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
 
-	report := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:     root,
 		LocalOpsReport:  localOpsPath,
 		BenchmarkReport: benchmarkPath,
@@ -339,7 +340,7 @@ func TestP96ReleaseReadinessNeedsMeasuredCleanInstallAndCleanupEvidence(t *testi
 	localOps.Quickstart.SetupInstallReadiness.ReleaseInstallProof = "not_claimed"
 	writeP711JSON(t, localOpsPath, localOps)
 
-	report := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:    root,
 		LocalOpsReport: localOpsPath,
 	})
@@ -386,7 +387,7 @@ func TestP96ReleaseActivationMalformedMandatoryFieldsFailClosed(t *testing.T) {
 	localOps.Quickstart.Cleanup = localops.ActivationCleanupEvidence{Status: "pass", ExitStatus: "pass"}
 	writeP711JSON(t, localOpsPath, localOps)
 
-	report := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:    root,
 		LocalOpsReport: localOpsPath,
 	})
@@ -419,7 +420,7 @@ func TestP96ReleaseReadinessNeedsValidationRecordsForStrictActivation(t *testing
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
 
-	report := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:    root,
 		CurrentDir:     "current",
 		LocalOpsReport: localOpsPath,
@@ -463,7 +464,7 @@ func TestP96ReleaseActivationRetainedStatePolicyMustBeReviewed(t *testing.T) {
 	localOps.Quickstart.Cleanup.RetainedStatePolicy = "quickstart smoke retains local context graph by policy"
 	writeP711JSON(t, localOpsPath, localOps)
 
-	report := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:       root,
 		CurrentDir:        "current",
 		LocalOpsReport:    localOpsPath,
@@ -506,7 +507,7 @@ func TestP96ReleaseActivationZeroRankedPacketFailsClosed(t *testing.T) {
 	localOps.Quickstart.FirstUsefulPacket.UsefulEvidence = []string{"candidate_files:0", "candidate_symbols:0", "candidate_tests:0"}
 	writeP711JSON(t, localOpsPath, localOps)
 
-	report := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:       root,
 		CurrentDir:        "current",
 		LocalOpsReport:    localOpsPath,
@@ -532,12 +533,12 @@ func TestP97ReleaseAndProductEvidenceReadinessAgree(t *testing.T) {
 	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
 	stageP711LearningEvidence(t, root, "p97-agreement")
 
-	product := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{
+	product := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{
 		ProjectRoot:       root,
 		LocalOpsReport:    localOpsPath,
 		ValidationRecords: recordsPath,
 	})
-	release := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{
+	release := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:       root,
 		CurrentDir:        "current",
 		LocalOpsReport:    localOpsPath,
@@ -568,10 +569,10 @@ func TestP98ReleaseAndProductEvidenceReadinessAgree(t *testing.T) {
 	stageP711ProductEvidenceFixtures(t, root)
 	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
 
-	product := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{
+	product := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{
 		ProjectRoot: root,
 	})
-	release := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{
+	release := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot: root,
 		CurrentDir:  "current",
 	})
@@ -603,7 +604,7 @@ func TestP98ReleaseReadinessNeedsEvidenceWhenIntegrationProofsIncomplete(t *test
 		p711IntegrationProofWithMCPParityOnPath("p7.8-external-coding-agent", "external_coding_agent_workflow"),
 	})
 
-	report := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot: root,
 	})
 	gate := releaseEvidenceReadinessGate(report.ReleaseReadiness, "P9.8")
@@ -632,7 +633,7 @@ func TestP97ReleaseRetainedUseWithoutCredibleAdoptionSignalDoesNotPass(t *testin
 	recordsPath := filepath.Join(root, "validation-records.json")
 	writeP711JSON(t, recordsPath, records)
 
-	report := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:       root,
 		CurrentDir:        "current",
 		LocalOpsReport:    localOpsPath,
@@ -660,7 +661,7 @@ func TestP914ReleaseBundleDowngradesEveryP912ObjectWhenClientValidationMissing(t
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
 
-	report := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:     root,
 		LocalOpsReport:  localOpsPath,
 		BenchmarkReport: benchmarkPath,
@@ -699,7 +700,7 @@ func TestP913ReleaseBenchmarkNeedsCompetitiveEvidenceWithPassingLocalOps(t *test
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	recordsPath := writeP711ValidationRecords(t, root)
 
-	report := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:       root,
 		LocalOpsReport:    localOpsPath,
 		ValidationRecords: recordsPath,
@@ -745,7 +746,7 @@ func TestP91ReleaseEvidencePreservesPrivacy(t *testing.T) {
 		t.Fatalf("write fixture artifact: %v", err)
 	}
 
-	report := buildReleaseEvidenceBundle(root, LaneHistorySummary{}, releaseEvidenceOptions{
+	report := buildReleaseEvidenceBundle(root, lanehistory.Summary{}, releaseEvidenceOptions{
 		ProjectRoot: root,
 		CurrentDir:  "current",
 	})

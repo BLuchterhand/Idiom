@@ -6,27 +6,12 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"idiom/internal/evidence/lanehistory"
 )
 
-type LaneHistorySummary struct {
-	Total                 int
-	ByMode                map[string]int
-	ByExitCode            map[int]int
-	ByFinalState          map[string]int
-	BriefsByPath          map[string]int
-	ByProvenance          map[string]int
-	TotalModelCalls       int
-	TotalToolCalls        int
-	TotalPromptTokens     int
-	TotalCompletionTokens int
-	TotalTokens           int
-	TotalDurationMS       int
-	EventsWithTokens      int
-	EventsWithRunMetrics  int
-}
-
 type Dependencies struct {
-	SummarizeLaneHistory func(projectRoot string) (LaneHistorySummary, error)
+	SummarizeLaneHistory func(projectRoot string) (lanehistory.Summary, error)
 	RunMainNoTelemetry   func(args []string, stdout io.Writer, stderr io.Writer) int
 	DemoCommandRunnerID  string
 	Version              string
@@ -92,10 +77,10 @@ func (deps Dependencies) withFallback(fallback Dependencies) Dependencies {
 	return deps
 }
 
-func (deps Dependencies) summarizeLaneHistory(projectRoot string) (LaneHistorySummary, error) {
+func (deps Dependencies) summarizeLaneHistory(projectRoot string) (lanehistory.Summary, error) {
 	deps = currentDependencies(deps)
 	if deps.SummarizeLaneHistory == nil {
-		return LaneHistorySummary{}, nil
+		return lanehistory.Summary{}, nil
 	}
 
 	return deps.SummarizeLaneHistory(projectRoot)

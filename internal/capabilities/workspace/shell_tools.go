@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"idiom/internal/platform/commandexec"
-	"idiom/internal/platform/failures"
 )
 
 func IsBroadInspectionRequest(req ToolRequest) bool {
@@ -95,51 +94,94 @@ func splitShellSegments(command string) []string {
 	return segments
 }
 
-func (m *Manager) runShell(ctx context.Context, req ToolRequest) ToolResult {
-	if !m.cfg.EnableShell {
-		return toolPermissionPolicyResult(ToolNameShell, "Shell request rejected", "shell execution is disabled")
+type workspaceShellExecution struct {
+	command       string
+	workdir       string
+	result        commandexec.Result
+	rawOutput     string
+	displayOutput string
+	failure       string
+}
+
+func (m *Manager) captureWorkspaceShell(ctx context.Context, req ToolRequest, tool string) (workspaceShellExecution, ToolResult, bool) {
+	if tool == ToolNameShell && !m.cfg.EnableShell {
+		return workspaceShellExecution{}, toolPermissionPolicyResult(tool, workspaceShellRejectedSummary(tool), "shell execution is disabled"), false
 	}
 
 	command := strings.TrimSpace(req.Command)
 	if command == "" {
-		return toolInvalidArgumentResult(ToolNameShell, "Shell request rejected", "command is required")
+		return workspaceShellExecution{}, toolInvalidArgumentResult(tool, workspaceShellRejectedSummary(tool), "command is required"), false
 	}
 
-	workdir, err := m.pathAccess.ResolveWorkdir(req.Workdir)
-	if err != nil {
-		return toolPathResolutionFailureResult(ToolNameShell, "Failed to resolve workdir", err)
+	if !m.cfg.EnableShell {
+		return workspaceShellExecution{}, toolPermissionPolicyResult(tool, workspaceShellRejectedSummary(tool), "shell execution is disabled"), false
 	}
 
 	if isDirectoryOnlyShellCommand(command) {
-		return withToolFailure(ToolResult{
-			Tool:    ToolNameShell,
-			Summary: "Shell request rejected",
-			Error:   "directory changes inside shell commands do not persist; set workdir or include the command to run in that directory",
-		}, failures.InvalidArgument, reasonToolInvalidArgument)
+		return workspaceShellExecution{}, toolInvalidArgumentResult(tool, workspaceShellRejectedSummary(tool), "directory changes inside shell commands do not persist; set workdir or include the command to run in that directory"), false
 	}
 
 	if m.Mode() == ModeExplore {
 		if err := validateExploreShellCommand(command); err != nil {
-			return withToolFailure(ToolResult{
-				Tool:    ToolNameShell,
-				Summary: "Shell request rejected",
-				Error:   "explore mode only allows read-only inspection shell commands: " + err.Error(),
-			}, failures.PermissionDenied, reasonToolPermissionPolicy)
+			message := "explore mode only allows read-only inspection shell commands: " + err.Error()
+			if tool == ToolNameContextTracePack {
+				message = "explore mode only allows read-only inspection commands: " + err.Error()
+			}
+
+			return workspaceShellExecution{}, toolPermissionPolicyResult(tool, workspaceShellRejectedSummary(tool), message), false
 		}
+	}
+
+	workdir, err := m.pathAccess.ResolveWorkdir(req.Workdir)
+	if err != nil {
+		summary := "Failed to resolve workdir"
+		if tool == ToolNameContextTracePack {
+			summary = "Context trace pack failed to resolve workdir"
+		}
+
+		return workspaceShellExecution{}, toolPathResolutionFailureResult(tool, summary, err), false
 	}
 
 	execResult := m.runCommandResult(ctx, commandexec.Spec{Mode: commandexec.ModeLoginShell, Shell: m.cfg.Shell, Command: command, Dir: workdir})
 	rawOutput := commandexec.CombineOutput(execResult.Stdout, execResult.Stderr)
-	output := m.truncateCommandOutput(rawOutput)
-	result := ToolResult{
-		Tool:    ToolNameShell,
-		Summary: fmt.Sprintf("Ran shell command in %s", m.pathAccess.DisplayPath(workdir)),
-		Output:  "$ " + command + "\n" + strings.TrimSpace(output),
+	execution := workspaceShellExecution{
+		command:       command,
+		workdir:       workdir,
+		result:        execResult,
+		rawOutput:     rawOutput,
+		displayOutput: m.truncateCommandOutput(rawOutput),
 	}
 
 	if execErr := execResult.FailureError(fmt.Sprintf("%ds", workspaceCommandTimeoutSeconds(m.cfg.CommandTimeoutSeconds))); execErr != nil {
-		result.Error = execErr.Error()
-	} else if reason := zeroSelectedTestFailureReason(command, rawOutput); reason != "" {
+		execution.failure = execErr.Error()
+	}
+
+	return execution, ToolResult{}, true
+}
+
+func workspaceShellRejectedSummary(tool string) string {
+	if tool == ToolNameContextTracePack {
+		return "Context trace pack rejected"
+	}
+
+	return "Shell request rejected"
+}
+
+func (m *Manager) runShell(ctx context.Context, req ToolRequest) ToolResult {
+	execution, rejection, ok := m.captureWorkspaceShell(ctx, req, ToolNameShell)
+	if !ok {
+		return rejection
+	}
+
+	result := ToolResult{
+		Tool:    ToolNameShell,
+		Summary: fmt.Sprintf("Ran shell command in %s", m.pathAccess.DisplayPath(execution.workdir)),
+		Output:  "$ " + execution.command + "\n" + strings.TrimSpace(execution.displayOutput),
+	}
+
+	if execution.failure != "" {
+		result.Error = execution.failure
+	} else if reason := zeroSelectedTestFailureReason(execution.command, execution.rawOutput); reason != "" {
 		result.Error = reason
 	} else if m.Mode() != ModeExplore {
 		m.resetLanguageTools()

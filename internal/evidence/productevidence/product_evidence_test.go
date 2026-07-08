@@ -13,6 +13,7 @@ import (
 
 	recoverycontract "idiom/internal/contracts/recovery"
 
+	"idiom/internal/evidence/lanehistory"
 	"idiom/internal/repository/comprehension"
 	"idiom/internal/runtime/localops"
 	"idiom/internal/workflows/recovery"
@@ -75,7 +76,7 @@ func TestP711ProductEvidenceExportCompletenessPrivacyAndClassCoverage(t *testing
 		t.Fatalf("append learning log: %v", err)
 	}
 
-	report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 2}, productEvidenceExportOptions{
+	report := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 2}, productEvidenceExportOptions{
 		ProjectRoot:       root,
 		LocalOpsReport:    localOpsPath,
 		ValidationRecords: recordsPath,
@@ -189,7 +190,7 @@ func TestProductEvidenceSummarizesRecoveryRollups(t *testing.T) {
 	root := t.TempDir()
 	packet := stageProductEvidenceRecoveryPacket(t, root, "open-recovery")
 
-	report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
+	report := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
 
 	body, err := json.Marshal(report)
 	if err != nil {
@@ -234,7 +235,7 @@ func TestProductEvidenceBlocksInvalidRecoveryEvidence(t *testing.T) {
 		t.Fatalf("write invalid reconciliation: %v", err)
 	}
 
-	report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
+	report := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
 	if report.Status != "blocked" || report.Recovery.Status != "blocked" || report.Recovery.MalformedArtifactCount != 1 {
 		t.Fatalf("invalid recovery reconciliation should block product evidence, got status=%q recovery=%#v", report.Status, report.Recovery)
 	}
@@ -270,7 +271,7 @@ func TestP711ProductEvidenceKeepsActivationUsefulWithoutOverclaimingP96(t *testi
 	localOps.Quickstart.Cleanup.RetainedStatePolicy = "quickstart smoke retains local context graph by policy"
 	writeP711JSON(t, localOpsPath, localOps)
 
-	report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{
+	report := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{
 		ProjectRoot:    root,
 		LocalOpsReport: localOpsPath,
 	})
@@ -304,7 +305,7 @@ func TestP96ProductEvidenceStrictActivationWithoutValidationRecordsNeedsEvidence
 
 	localOpsPath := writeP711LocalOpsReport(t, root)
 
-	report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{
+	report := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{
 		ProjectRoot:    root,
 		LocalOpsReport: localOpsPath,
 	})
@@ -347,7 +348,7 @@ func TestP96ProductEvidenceZeroRankedPacketDoesNotPassActivationOrP96(t *testing
 	localOps.Quickstart.FirstUsefulPacket.UsefulEvidence = []string{"candidate_files:0", "candidate_symbols:0", "candidate_tests:0"}
 	writeP711JSON(t, localOpsPath, localOps)
 
-	report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{
+	report := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{
 		ProjectRoot:    root,
 		LocalOpsReport: localOpsPath,
 	})
@@ -368,7 +369,7 @@ func TestP96ProductEvidenceZeroRankedPacketDoesNotPassActivationOrP96(t *testing
 
 func TestP911ProductEvidenceCurrentTranscriptFixturePasses(t *testing.T) {
 	repoRoot := p711TestRepoRoot(t)
-	report := buildProductEvidenceExportReport(repoRoot, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: repoRoot})
+	report := buildProductEvidenceExportReport(repoRoot, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{ProjectRoot: repoRoot})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.11")
 
 	if gate.Status != "evidence_present" {
@@ -403,7 +404,7 @@ func TestP911ProductEvidenceMissingAndDuplicateClassificationFailClosed(t *testi
 	set["transcripts"] = append(transcripts[1:], transcripts[1])
 	writeP711JSON(t, path, set)
 
-	report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
+	report := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.11")
 
 	if gate.Status != "needs_evidence" || gate.Counts["missing_classifications"] == 0 || gate.Counts["duplicate_classifications"] == 0 {
@@ -446,7 +447,7 @@ func TestP911ProductEvidenceRequiredTranscriptFieldsFailClosed(t *testing.T) {
 			stageP711ProductEvidenceFixtures(t, root)
 			p911MutateFirstTranscript(t, root, tc.mutate)
 
-			report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
+			report := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
 			gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.11")
 
 			if gate.Status != "needs_evidence" {
@@ -490,7 +491,7 @@ func TestP911ProductEvidenceRejectsFrameworkSpecificRegulatedReadinessOverclaims
 				row["release_claim_impact"] = "This demo is " + tc.phrase + " for regulated review."
 			})
 
-			report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
+			report := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
 			gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.11")
 
 			if gate.Status != "needs_evidence" || gate.Counts["regulated_or_commercial_overclaims"] == 0 {
@@ -520,7 +521,7 @@ func TestP911ProductEvidenceAllowsPhraseLocalApprovalNegations(t *testing.T) {
 				row["release_claim_impact"] = "Proof-only demo limitation: " + phrase + "."
 			})
 
-			report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
+			report := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
 			gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.11")
 
 			if gate.Counts["regulated_or_commercial_overclaims"] != 0 ||
@@ -621,7 +622,7 @@ func TestP911ProductEvidenceRequiresExecutableCommandValidation(t *testing.T) {
 			stageP711ProductEvidenceFixtures(t, root)
 			p911MutateTranscriptByClass(t, root, "enterprise-saas", tc.mutate)
 
-			report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
+			report := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
 			gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.11")
 
 			if gate.Status != "needs_evidence" || gate.Counts["runnable_command_rows"] == 7 || gate.Counts[tc.wantCount] == 0 {
@@ -656,8 +657,8 @@ func TestP911ProductAndReleaseEvidenceRejectUnsafeCommandAfterSafeReplay(t *test
 	})
 	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
 
-	product := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
-	release := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{ProjectRoot: root, CurrentDir: "current"})
+	product := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
+	release := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{ProjectRoot: root, CurrentDir: "current"})
 	productGate := p711TestReleaseGate(product.ReleaseGateLinkage, "P9.11")
 	releaseGate := releaseEvidenceReadinessGate(release.ReleaseReadiness, "P9.11")
 
@@ -740,7 +741,7 @@ func TestP911ProductEvidenceMalformedTranscriptArtifactFailsClosed(t *testing.T)
 		t.Fatalf("write malformed transcript fixture: %v", err)
 	}
 
-	report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
+	report := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.11")
 
 	if gate.Status != "needs_evidence" || gate.Counts["malformed_transcripts"] == 0 {
@@ -759,7 +760,7 @@ func TestP911ProductEvidenceOverclaimFailsClosed(t *testing.T) {
 		row["release_claim_impact"] = "HIPAA certification and regulated sales readiness are supported by this demo."
 	})
 
-	report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
+	report := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.11")
 
 	if gate.Status != "needs_evidence" || gate.Counts["regulated_or_commercial_overclaims"] == 0 {
@@ -776,8 +777,8 @@ func TestP911ProductAndReleaseEvidenceStructuredStatusAgree(t *testing.T) {
 	stageP711ProductEvidenceFixtures(t, root)
 	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
 
-	product := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
-	release := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{ProjectRoot: root, CurrentDir: "current"})
+	product := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
+	release := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{ProjectRoot: root, CurrentDir: "current"})
 	productGate := p711TestReleaseGate(product.ReleaseGateLinkage, "P9.11")
 	releaseGate := releaseEvidenceReadinessGate(release.ReleaseReadiness, "P9.11")
 
@@ -804,7 +805,7 @@ func TestP910ProductEvidenceNeedsExternalCompetitiveBaselines(t *testing.T) {
 
 	path := writeP910CompetitiveBenchmarkReport(t, root, []map[string]any{p910MeasuredCondition("aider_repo_map")})
 
-	report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{
+	report := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{
 		ProjectRoot:     root,
 		BenchmarkReport: path,
 	})
@@ -828,7 +829,7 @@ func TestP910ProductEvidenceRejectsSelfReferentialOnlyEvidence(t *testing.T) {
 		p910MeasuredCondition("context_pack"),
 	})
 
-	report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{
+	report := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{
 		ProjectRoot:     root,
 		BenchmarkReport: path,
 	})
@@ -847,8 +848,8 @@ func TestP910ProductAndReleaseJSONIncludeZeroCountKeysForDefaultCorpus(t *testin
 	root := t.TempDir()
 	stageP910DefaultCorpusFixture(t, root)
 
-	product := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
-	release := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{ProjectRoot: root})
+	product := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
+	release := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{ProjectRoot: root})
 
 	productBody, err := json.Marshal(product)
 	if err != nil {
@@ -959,7 +960,7 @@ func assertP910ConditionNeedsEvidence(t *testing.T, condition map[string]any, wa
 		p910InfeasibleCondition("external_agent_native"),
 	})
 
-	report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{
+	report := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{
 		ProjectRoot:     root,
 		BenchmarkReport: path,
 	})
@@ -982,13 +983,13 @@ func TestP910ProductAndReleaseEvidenceStructuredStatusAgree(t *testing.T) {
 	recordsPath := writeP711ValidationRecords(t, root)
 	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
 
-	product := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{
+	product := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{
 		ProjectRoot:       root,
 		LocalOpsReport:    localOpsPath,
 		ValidationRecords: recordsPath,
 		BenchmarkReport:   benchmarkPath,
 	})
-	release := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{
+	release := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:       root,
 		LocalOpsReport:    localOpsPath,
 		ValidationRecords: recordsPath,
@@ -1107,7 +1108,7 @@ func TestP810IntegrationProofRequiresDistinctExecutablePaths(t *testing.T) {
 			stageP711ProductEvidenceFixtures(t, root)
 			writeP711IntegrationProofs(t, root, tc.proofs)
 
-			report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+			report := buildProductEvidenceExportReport(root, lanehistory.Summary{}, productEvidenceExportOptions{ProjectRoot: root})
 			integration := p711TestSignal(report.Signals, "integration_proof")
 
 			if integration.Status != "partial" || integration.Completeness != "partial" {
@@ -1185,7 +1186,7 @@ func TestP811IntegrationProofRejectsMalformedRows(t *testing.T) {
 			stageP711ProductEvidenceFixtures(t, root)
 			writeP711IntegrationProofs(t, root, tc.proofs)
 
-			report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+			report := buildProductEvidenceExportReport(root, lanehistory.Summary{}, productEvidenceExportOptions{ProjectRoot: root})
 			assertP811IntegrationNeedsEvidence(t, report)
 
 			integration := p711TestSignal(report.Signals, "integration_proof")
@@ -1254,7 +1255,7 @@ func TestP812IntegrationProofRequiresExplicitSafePrivacySemantics(t *testing.T) 
 			stageP711ProductEvidenceFixtures(t, root)
 			writeP711IntegrationProofs(t, root, tc.proofs)
 
-			report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+			report := buildProductEvidenceExportReport(root, lanehistory.Summary{}, productEvidenceExportOptions{ProjectRoot: root})
 			integration := p711TestSignal(report.Signals, "integration_proof")
 
 			if integration.Status != tc.wantSignalStatus {
@@ -1338,7 +1339,7 @@ func TestP718ValidationRecordsRejectUnknownAndForbiddenEvidence(t *testing.T) {
 			path := filepath.Join(root, "validation-records.json")
 			writeP711JSON(t, path, tc.records)
 
-			report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{
+			report := buildProductEvidenceExportReport(root, lanehistory.Summary{}, productEvidenceExportOptions{
 				ProjectRoot:       root,
 				ValidationRecords: path,
 			})
@@ -1414,7 +1415,7 @@ func TestP719ValidationRecordsRejectEmbeddedAbsolutePathsInAllowedFields(t *test
 				"redaction_status":      "redacted",
 			}})
 
-			report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{
+			report := buildProductEvidenceExportReport(root, lanehistory.Summary{}, productEvidenceExportOptions{
 				ProjectRoot:       root,
 				ValidationRecords: path,
 			})
@@ -1557,7 +1558,7 @@ func TestP97ProductEvidenceMissingValidationRecordsNeedsEvidence(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
 
-	report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{
+	report := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{
 		ProjectRoot: root,
 	})
 	linkage := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.7")
@@ -1717,7 +1718,7 @@ func TestP912ProductEvidenceCurrentValidThesisStatusAndCounts(t *testing.T) {
 	recordsPath := writeP711ValidationRecords(t, root)
 	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
 
-	report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{
+	report := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{
 		ProjectRoot:       root,
 		LocalOpsReport:    localOpsPath,
 		ValidationRecords: recordsPath,
@@ -1983,7 +1984,7 @@ func TestP912ProductEvidenceDecisionMissingOrUnsupportedFailsClosed(t *testing.T
 			stageP711ProductEvidenceFixtures(t, root)
 			p912MutateThesis(t, root, tc.mutate)
 
-			report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
+			report := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{ProjectRoot: root})
 			gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.12")
 
 			if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, tc.wantBlocker) {
@@ -2019,13 +2020,13 @@ func TestP912ProductAndReleaseEvidenceStructuredStatusAgree(t *testing.T) {
 	recordsPath := writeP711ValidationRecords(t, root)
 	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
 
-	product := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{
+	product := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{
 		ProjectRoot:       root,
 		LocalOpsReport:    localOpsPath,
 		ValidationRecords: recordsPath,
 		BenchmarkReport:   benchmarkPath,
 	})
-	release := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{
+	release := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:       root,
 		LocalOpsReport:    localOpsPath,
 		ValidationRecords: recordsPath,
@@ -2046,7 +2047,7 @@ func TestP912ProductAndReleaseEvidenceStructuredStatusAgree(t *testing.T) {
 
 func TestP718TopLevelStatusReflectsMissingSignals(t *testing.T) {
 	root := t.TempDir()
-	report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+	report := buildProductEvidenceExportReport(root, lanehistory.Summary{}, productEvidenceExportOptions{ProjectRoot: root})
 
 	if report.Status != "partial" || report.SignalCompleteness.Status != "partial" {
 		t.Fatalf("missing evidence should produce partial top-level status, got status=%q completeness=%#v", report.Status, report.SignalCompleteness)
@@ -2496,7 +2497,7 @@ func TestP99ProductEvidenceNeedsEvidenceWhenPostureMissingOrMalformed(t *testing
 		t.Fatalf("remove matrix: %v", err)
 	}
 
-	report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+	report := buildProductEvidenceExportReport(root, lanehistory.Summary{}, productEvidenceExportOptions{ProjectRoot: root})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
 
 	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "missing posture matrix") {
@@ -2505,7 +2506,7 @@ func TestP99ProductEvidenceNeedsEvidenceWhenPostureMissingOrMalformed(t *testing
 
 	writeP711Text(t, matrixPath, "{not-json")
 
-	report = buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+	report = buildProductEvidenceExportReport(root, lanehistory.Summary{}, productEvidenceExportOptions{ProjectRoot: root})
 	gate = p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
 
 	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "malformed posture matrix JSON") {
@@ -2518,7 +2519,7 @@ func TestP99ProductEvidenceRejectsComplianceOverclaimAndRegulatedSalesReadiness(
 	stageP711ProductEvidenceFixtures(t, root)
 	writeP711Text(t, filepath.Join(root, "docs", "security-privacy-posture.md"), "Reviewer Command\nIdiom is HIPAA compliant.\n")
 
-	report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+	report := buildProductEvidenceExportReport(root, lanehistory.Summary{}, productEvidenceExportOptions{ProjectRoot: root})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
 
 	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "overclaim") {
@@ -2549,7 +2550,7 @@ func TestP99ProductEvidenceRejectsComplianceOverclaimAndRegulatedSalesReadiness(
 
 	writeP711JSON(t, matrixPath, matrix)
 
-	report = buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+	report = buildProductEvidenceExportReport(root, lanehistory.Summary{}, productEvidenceExportOptions{ProjectRoot: root})
 	gate = p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
 
 	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "regulated client row") {
@@ -2575,7 +2576,7 @@ func TestP99ProductEvidenceBlocksAssertionAwareOverclaimsButAllowsNegatedLimitat
 			stageP711ProductEvidenceFixtures(t, root)
 			writeP711Text(t, filepath.Join(root, "docs", "security-privacy-posture.md"), "Reviewer Command\n"+phrase+"\n")
 
-			report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+			report := buildProductEvidenceExportReport(root, lanehistory.Summary{}, productEvidenceExportOptions{ProjectRoot: root})
 			gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
 
 			if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "overclaim") {
@@ -2602,7 +2603,7 @@ func TestP99ProductEvidenceBlocksAssertionAwareOverclaimsButAllowsNegatedLimitat
 		"No regulated sales readiness claim.",
 	}, "\n"))
 
-	report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+	report := buildProductEvidenceExportReport(root, lanehistory.Summary{}, productEvidenceExportOptions{ProjectRoot: root})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
 
 	if p711TestBlockerContains(gate.Blockers, "overclaim") {
@@ -2659,7 +2660,7 @@ func TestP99ProductEvidenceRejectsPostureMatrixOverclaims(t *testing.T) {
 			tc.mutate(matrix)
 			writeP711JSON(t, matrixPath, matrix)
 
-			report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+			report := buildProductEvidenceExportReport(root, lanehistory.Summary{}, productEvidenceExportOptions{ProjectRoot: root})
 			gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
 
 			if gate.Status != "needs_evidence" ||
@@ -2727,7 +2728,7 @@ func TestP99ProductEvidenceRejectsHollowSourceVerificationRecords(t *testing.T) 
 			stageP711ProductEvidenceFixtures(t, root)
 			writeP711Text(t, filepath.Join(root, "docs", "security-privacy-posture.md"), "Reviewer Command\n\n"+p99PlanFixtureWithSourceRecords(tc.records))
 
-			report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+			report := buildProductEvidenceExportReport(root, lanehistory.Summary{}, productEvidenceExportOptions{ProjectRoot: root})
 			gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
 
 			if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, tc.blocker) {
@@ -2752,7 +2753,7 @@ func TestP99ProductEvidencePrivacyBlockedExportNeedsEvidence(t *testing.T) {
 		"raw_prompt":            "RAW_PROMPT_BODY",
 	}})
 
-	report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{
+	report := buildProductEvidenceExportReport(root, lanehistory.Summary{}, productEvidenceExportOptions{
 		ProjectRoot:       root,
 		ValidationRecords: path,
 	})
@@ -2769,7 +2770,7 @@ func TestP99ProductEvidencePrivacyBlockedExportNeedsEvidence(t *testing.T) {
 		t.Fatalf("privacy-blocked product export should block P9.9 with structured blockers: %#v", gate)
 	}
 
-	release := buildReleaseEvidenceBundle(root, LaneHistorySummary{}, releaseEvidenceOptions{
+	release := buildReleaseEvidenceBundle(root, lanehistory.Summary{}, releaseEvidenceOptions{
 		ProjectRoot:       root,
 		ValidationRecords: path,
 	})
@@ -2788,7 +2789,7 @@ func TestP99ProductEvidenceContradictoryReportMarkersFailClosed(t *testing.T) {
 	stageP711ProductEvidenceFixtures(t, root)
 	writeP711Text(t, filepath.Join(root, "docs", "release.md"), p99ReleaseFixtureText("Decision: no-go\nReviewer signoff: GO"))
 
-	report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+	report := buildProductEvidenceExportReport(root, lanehistory.Summary{}, productEvidenceExportOptions{ProjectRoot: root})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
 
 	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "conflicting GO/no-go markers") {
@@ -2801,7 +2802,7 @@ func TestP99ProductEvidenceRequiresStructuredSourceVerificationMethod(t *testing
 	stageP711ProductEvidenceFixtures(t, root)
 	writeP711Text(t, filepath.Join(root, "docs", "security-privacy-posture.md"), "Reviewer Command\n\nSource anchors checked on 2026-05-14 UTC.\n\nProduct threat model:\nP7.9 P8.4 P9.1 P9.3 P9.9\n\nData-flow map:\n\nPrivacy and retention posture:\n\nControl mapping evidence:\n\nDownstream go/no-go gates:\n")
 
-	report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+	report := buildProductEvidenceExportReport(root, lanehistory.Summary{}, productEvidenceExportOptions{ProjectRoot: root})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
 
 	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "structured source verification evidence") {
@@ -2810,7 +2811,7 @@ func TestP99ProductEvidenceRequiresStructuredSourceVerificationMethod(t *testing
 
 	writeP711Text(t, filepath.Join(root, "docs", "security-privacy-posture.md"), "Reviewer Command\n\n"+p99PlanFixtureText(false))
 
-	report = buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+	report = buildProductEvidenceExportReport(root, lanehistory.Summary{}, productEvidenceExportOptions{ProjectRoot: root})
 	gate = p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
 
 	if gate.Status != "needs_evidence" || !p711TestBlockerContains(gate.Blockers, "unreachable source evidence missing verification method") {
@@ -2842,7 +2843,7 @@ func TestP99ProductEvidenceNeedsEvidenceWhenControlEvidenceOrTiebacksMissing(t *
 	matrix["release_gate_tiebacks"] = []string{"P7.9"}
 	writeP711JSON(t, matrixPath, matrix)
 
-	report := buildProductEvidenceExportReport(root, LaneHistorySummary{}, productEvidenceExportOptions{ProjectRoot: root})
+	report := buildProductEvidenceExportReport(root, lanehistory.Summary{}, productEvidenceExportOptions{ProjectRoot: root})
 	gate := p711TestReleaseGate(report.ReleaseGateLinkage, "P9.9")
 
 	if gate.Status != "needs_evidence" ||
@@ -2862,12 +2863,12 @@ func TestP99ProductAndReleaseEvidenceStructuredStatusAgree(t *testing.T) {
 	stageReleaseEvidenceCommandBundle(t, root, "baseline", releaseEvidenceBaselineCommands())
 	stageReleaseEvidenceCommandBundle(t, root, "current", releaseEvidenceCurrentCommands())
 
-	product := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{
+	product := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{
 		ProjectRoot:       root,
 		LocalOpsReport:    localOpsPath,
 		ValidationRecords: recordsPath,
 	})
-	release := buildReleaseEvidenceBundle(root, LaneHistorySummary{Total: 1}, releaseEvidenceOptions{
+	release := buildReleaseEvidenceBundle(root, lanehistory.Summary{Total: 1}, releaseEvidenceOptions{
 		ProjectRoot:       root,
 		BaselineDir:       "baseline",
 		CurrentDir:        "current",
@@ -3246,7 +3247,7 @@ func p912ProductGateForCompleteEvidence(t *testing.T, root string) productEviden
 	localOpsPath := writeP711LocalOpsReport(t, root)
 	recordsPath := writeP711ValidationRecords(t, root)
 	benchmarkPath := writeP910CompetitiveBenchmarkReport(t, root, p910CoveredCompetitiveConditions())
-	report := buildProductEvidenceExportReport(root, LaneHistorySummary{Total: 1}, productEvidenceExportOptions{
+	report := buildProductEvidenceExportReport(root, lanehistory.Summary{Total: 1}, productEvidenceExportOptions{
 		ProjectRoot:       root,
 		LocalOpsReport:    localOpsPath,
 		ValidationRecords: recordsPath,

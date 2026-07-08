@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"idiom/internal/evidence/lanehistory"
 )
 
 func TestFirstNonEmptyString(t *testing.T) {
@@ -38,7 +40,7 @@ func TestWithFallback(t *testing.T) {
 		Commit:               "fallback-commit",
 		Date:                 "fallback-date",
 		DemoCommandRunnerID:  "fallback-runner",
-		SummarizeLaneHistory: func(string) (LaneHistorySummary, error) { return LaneHistorySummary{}, nil },
+		SummarizeLaneHistory: func(string) (lanehistory.Summary, error) { return lanehistory.Summary{}, nil },
 		RunMainNoTelemetry:   func([]string, io.Writer, io.Writer) int { return 0 },
 	}
 
@@ -105,7 +107,7 @@ func TestWithFallback(t *testing.T) {
 	})
 
 	t.Run("non-nil functions are kept", func(t *testing.T) {
-		custom := func(string) (LaneHistorySummary, error) { return LaneHistorySummary{Total: 99}, nil }
+		custom := func(string) (lanehistory.Summary, error) { return lanehistory.Summary{Total: 99}, nil }
 		result := Dependencies{
 			SummarizeLaneHistory: custom,
 		}.withFallback(fallback)
