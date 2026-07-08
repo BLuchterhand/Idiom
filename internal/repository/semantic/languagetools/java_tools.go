@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/repository/discovery"
 	semanticjava "idiom/internal/repository/semantic/java"
 )
@@ -357,7 +358,19 @@ func (m *Manager) javaReadSymbol(req ToolRequest) ToolResult {
 		return ToolResult{Tool: "java_read_symbol", Summary: "Failed to read Java symbol snippet", Error: err.Error()}
 	}
 
-	return ToolResult{Tool: "java_read_symbol", Summary: fmt.Sprintf("Read %s in %s lines %d-%d", javaDisplayName(match.Qualified, match.Name), m.displayPath(abs), start, end), Output: snippet}
+	displayPath := m.displayPath(abs)
+
+	return ToolResult{
+		Tool:    "java_read_symbol",
+		Summary: fmt.Sprintf("Read %s in %s lines %d-%d", javaDisplayName(match.Qualified, match.Name), displayPath, start, end),
+		Output:  snippet,
+		Paths:   []string{displayPath},
+		Facts: toolfacts.NewSourceBodyFacts(toolfacts.SourceBodyEvidence{
+			Path:      displayPath,
+			StartLine: start,
+			EndLine:   end,
+		}),
+	}
 }
 
 // -- Tools: related / workspace symbol -------------------------------------

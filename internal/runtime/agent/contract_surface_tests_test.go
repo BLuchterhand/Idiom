@@ -1164,7 +1164,7 @@ func TestPlanExecuteUnavailableHistoryToolNudgeDoesNotCallNewFilesSourcePending(
 	brief.RequiredEditPaths = []string{"a.go", "new_file.go"}
 	brief.RequiredEvidence = []string{string(workerruntime.RequiredEvidenceGitHistoryRationale)}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
 		{
 			Tool:    "read_file",
 			Summary: "read_file failed for new_file.go",
@@ -1206,11 +1206,11 @@ func TestPlanThenExecuteHistoryPendingPathsMixedEvidenceStates(t *testing.T) {
 		RequiredEvidence:  []string{string(workerruntime.RequiredEvidenceGitHistoryRationale)},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
 		gitHistoryRangeResult("a.go"),
-		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		readFileSourceBodyResult("b.go", 1, 10, 10, "1:package b\n"),
 		gitHistoryNotApplicableResult("b.go"),
-		{Tool: "read_file", Summary: "Read f3 c.go lines 1-10 (total lines: 10)", Output: "1:package c\n"},
+		readFileSourceBodyResult("c.go", 1, 10, 10, "1:package c\n"),
 	}
 
 	pending := planThenExecuteHistoryPendingPaths(brief, results, nil)
@@ -2619,6 +2619,8 @@ func TestToolResultEvidenceProjectionUsesTypedReadPathsNotMentionRelationships(t
 		Code:          "ok",
 		Summary:       ` Read ./internal\runtime\agent\runner_core.go lines 1-20 `,
 		Output:        "Read internal/runtime/agent/runner_core.go lines 1-20\npackage main",
+		Paths:         []string{"./internal/runtime/agent/runner_core.go"},
+		Facts:         sourceBodyFactsForTest("./internal/runtime/agent/runner_core.go", 1, 20, 0),
 		PrecisionTier: "source_body",
 		Relationships: []workspace.ToolRelationship{
 			{Kind: "reads", SourcePath: "./internal/runtime/agent/runner_core.go"},
@@ -2653,11 +2655,13 @@ func TestFailedReadFileMissingPathIsNotAcceptedEvidence(t *testing.T) {
 			Summary: "No matches in internal/runtime/agent/zero_hit.go",
 			Output:  "0 matching line(s)",
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/runtime/agent/runner_core.go lines 1-8",
-			Output:  "package agent\n\nfunc evidenceTelemetryRegressionFixture() {}\n",
-		},
+		readFileSourceBodyResult(
+			inspectedPath,
+			1,
+			8,
+			0,
+			"package agent\n\nfunc evidenceTelemetryRegressionFixture() {}\n",
+		),
 	}
 
 	for name, paths := range map[string][]string{
@@ -2873,11 +2877,15 @@ func TestBlockedReadOnlyDirectAnswerTelemetryKeepsAcceptedEvidenceEmpty(t *testi
 			events = append(events, got)
 		},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read internal/runtime/agent/runner_core.go lines 1-20",
-		Output:  "package agent\n\nfunc telemetryAccounting() {}\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult(
+			"internal/runtime/agent/runner_core.go",
+			1,
+			20,
+			0,
+			"package agent\n\nfunc telemetryAccounting() {}\n",
+		),
+	}
 	acceptance := finalAnswerAcceptance{
 		SchemaVersion: finalAnswerAcceptanceSchema,
 		Decision:      finalAnswerAcceptanceRejected,
@@ -2923,11 +2931,15 @@ func TestAcceptedReadOnlyDirectAnswerTelemetryKeepsAcceptedEvidenceSeparateFromP
 			events = append(events, got)
 		},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read internal/runtime/agent/runner_core.go lines 1-20",
-		Output:  "package agent\n\nfunc telemetryAccounting() {}\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult(
+			"internal/runtime/agent/runner_core.go",
+			1,
+			20,
+			0,
+			"package agent\n\nfunc telemetryAccounting() {}\n",
+		),
+	}
 	acceptance := finalAnswerAcceptance{
 		SchemaVersion: finalAnswerAcceptanceSchema,
 		Decision:      finalAnswerAcceptanceAccepted,
@@ -3082,11 +3094,13 @@ func TestReadOnlyAnswerabilityHighCardinalitySearchRequiresReturnedCandidateRead
 			Summary: "Found 178 matching line(s) (showing first 50).",
 			Output:  "internal/runtime/agent/runner_core.go:420: completion gate\n",
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/surfaces/tui/app/model_state.go lines 1-80",
-			Output:  "package app\nfunc unrelated() {}\n",
-		},
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/model_state.go",
+			1,
+			80,
+			0,
+			"package app\nfunc unrelated() {}\n",
+		),
 	}
 
 	ledger := readOnlyAnswerabilityForResults(brief, results)
@@ -3102,11 +3116,13 @@ func TestReadOnlyAnswerabilityHighCardinalitySearchRequiresReturnedCandidateRead
 		t.Fatal("direct-answer readiness must remain false until a returned candidate is read")
 	}
 
-	results[1] = workspace.ToolResult{
-		Tool:    "read_file",
-		Summary: "Read internal/runtime/agent/runner_core.go lines 400-460",
-		Output:  "package agent\nfunc completionGateBehavior() {}\n",
-	}
+	results[1] = readFileSourceBodyResult(
+		"internal/runtime/agent/runner_core.go",
+		400,
+		460,
+		0,
+		"package agent\nfunc completionGateBehavior() {}\n",
+	)
 	ledger = readOnlyAnswerabilityForResults(brief, results)
 
 	if !ledger.Answerable() {
@@ -3130,11 +3146,13 @@ func TestReadOnlyAnswerabilityHighCardinalitySearchRequiresObjectiveRelevantCand
 			Summary: "Found 400 matching line(s) (showing first 50).",
 			Output:  "internal/platform/config/config.go:390: redacted\ninternal/evidence/transcript/debuglog.go:18: DebugLogModeRedacted\n",
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/platform/config/config.go lines 390-400",
-			Output:  "package config\nconst RedactedConfigValue = true\n",
-		},
+		readFileSourceBodyResult(
+			"internal/platform/config/config.go",
+			390,
+			400,
+			0,
+			"package config\nconst RedactedConfigValue = true\n",
+		),
 	}
 
 	ledger := readOnlyAnswerabilityForResults(brief, results)
@@ -3150,33 +3168,39 @@ func TestReadOnlyAnswerabilityHighCardinalitySearchRequiresObjectiveRelevantCand
 		t.Fatalf("expected blocker to prioritize objective-relevant candidate, blocker=%q candidates=%#v", blocker, closure.PrioritizedCandidatePaths())
 	}
 
-	results[1] = workspace.ToolResult{
-		Tool:    "read_file",
-		Summary: "Read internal/surfaces/tui/app/slash_commands.go lines 120-140",
-		Output:  "m.status = \"Debug log mode set to redacted\"\nm.debugLogger.SetMode(transcript.DebugLogMode(fields[2]))\n",
-	}
+	results[1] = readFileSourceBodyResult(
+		"internal/surfaces/tui/app/slash_commands.go",
+		120,
+		140,
+		0,
+		"m.status = \"Debug log mode set to redacted\"\nm.debugLogger.SetMode(transcript.DebugLogMode(fields[2]))\n",
+	)
 	ledger = readOnlyAnswerabilityForResults(brief, results)
 
 	if ledger.Answerable() {
 		t.Fatalf("scattered objective words in a UI/control surface must not satisfy noisy-search readiness: %#v", ledger)
 	}
 
-	results[1] = workspace.ToolResult{
-		Tool:    "read_file",
-		Summary: "Read internal/platform/config/config.go lines 390-400",
-		Output:  "DebugLogDir: \"logs/conversations\"\nDebugLogMode: \"redacted\"\n",
-	}
+	results[1] = readFileSourceBodyResult(
+		"internal/platform/config/config.go",
+		390,
+		400,
+		0,
+		"DebugLogDir: \"logs/conversations\"\nDebugLogMode: \"redacted\"\n",
+	)
 	ledger = readOnlyAnswerabilityForResults(brief, results)
 
 	if ledger.Answerable() {
 		t.Fatalf("noisy-search source body must also be on an objective-relevant path before readiness: %#v", ledger)
 	}
 
-	results[1] = workspace.ToolResult{
-		Tool:    "read_file",
-		Summary: "Read internal/evidence/transcript/debuglog.go lines 1-30",
-		Output:  "package transcript\nconst DebugLogModeRedacted = \"redacted\"\n",
-	}
+	results[1] = readFileSourceBodyResult(
+		"internal/evidence/transcript/debuglog.go",
+		1,
+		30,
+		0,
+		"package transcript\nconst DebugLogModeRedacted = \"redacted\"\n",
+	)
 	ledger = readOnlyAnswerabilityForResults(brief, results)
 
 	if !ledger.Answerable() {
@@ -3196,11 +3220,13 @@ func TestReadOnlyAnswerabilityOutlinesAndGeneratedArtifactsDoNotAnswer(t *testin
 			Summary: "Outlined 12 top-level declaration(s) in internal/runtime/agent/runner_core.go",
 			Output:  "file_outline: internal/runtime/agent/runner_core.go\n",
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read .idiom/comprehension/views/pack.json lines 1-20",
-			Output:  `{"candidate_files":[{"path":"internal/runtime/agent/runner_core.go"}]}`,
-		},
+		readFileSourceBodyResult(
+			".idiom/comprehension/views/pack.json",
+			1,
+			20,
+			0,
+			`{"candidate_files":[{"path":"internal/runtime/agent/runner_core.go"}]}`,
+		),
 	}
 
 	ledger := readOnlyAnswerabilityForResults(brief, results)
@@ -3225,10 +3251,12 @@ func TestReadOnlyAnswerabilityContextPackCandidateRequiresObjectiveRelevantSourc
 			Summary: "Context pack wrote .idiom/comprehension/views/pack.json",
 			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/rendering.go"),
 		},
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output: strings.Join([]string{
+		codeNavigateSourceBodyResult(
+			"internal/surfaces/tui/app/rendering.go",
+			32,
+			70,
+			0,
+			strings.Join([]string{
 				"capability: read_symbol",
 				"language: go",
 				"routed_tool: go_read_symbol",
@@ -3238,7 +3266,7 @@ func TestReadOnlyAnswerabilityContextPackCandidateRequiresObjectiveRelevantSourc
 				"33:    return \"Loading UI...\"",
 				"34:}",
 			}, "\n"),
-		},
+		),
 	}
 
 	ledger := readOnlyAnswerabilityForResults(brief, results)
@@ -3254,10 +3282,12 @@ func TestReadOnlyAnswerabilityContextPackCandidateRequiresObjectiveRelevantSourc
 		t.Fatalf("unrelated context candidate source body should not be relevant, got %#v", ledger.RelevantSourceBodyPaths)
 	}
 
-	results[1] = workspace.ToolResult{
-		Tool:    "code_navigate",
-		Summary: "Code navigation routed read_symbol via go_read_symbol",
-		Output: strings.Join([]string{
+	results[1] = codeNavigateSourceBodyResult(
+		"internal/surfaces/tui/app/rendering.go",
+		120,
+		150,
+		0,
+		strings.Join([]string{
 			"capability: read_symbol",
 			"language: go",
 			"routed_tool: go_read_symbol",
@@ -3268,7 +3298,7 @@ func TestReadOnlyAnswerabilityContextPackCandidateRequiresObjectiveRelevantSourc
 			"122:    return m.textarea.View()",
 			"123:}",
 		}, "\n"),
-	}
+	)
 	ledger = readOnlyAnswerabilityForResults(brief, results)
 
 	if !ledger.Answerable() {
@@ -3295,10 +3325,12 @@ func TestReadOnlyAnswerabilityPromotesCollectiveSourceBodyObjectiveSupport(t *te
 	partialResults := append([]workspace.ToolResult{}, contextOnly...)
 
 	partialResults = append(partialResults,
-		workspace.ToolResult{
-			Tool:    "read_file",
-			Summary: "Read internal/surfaces/tui/app/update_handlers.go lines 80-120",
-			Output: strings.Join([]string{
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/update_handlers.go",
+			80,
+			120,
+			0,
+			strings.Join([]string{
 				"80:func (m Model) handleKeyUpdate(msg tea.KeyMsg) (Model, tea.Cmd) {",
 				"81:\tswitch msg.String() {",
 				"82:\tcase \"up\":",
@@ -3309,16 +3341,18 @@ func TestReadOnlyAnswerabilityPromotesCollectiveSourceBodyObjectiveSupport(t *te
 				"87:\treturn m, nil",
 				"88:}",
 			}, "\n"),
-		},
-		workspace.ToolResult{
-			Tool:    "read_file",
-			Summary: "Read internal/surfaces/tui/app/rendering.go lines 300-330",
-			Output: strings.Join([]string{
+		),
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/rendering.go",
+			300,
+			330,
+			0,
+			strings.Join([]string{
 				"300:func (m Model) renderViewport() string {",
 				"301:\treturn m.viewport.View()",
 				"302:}",
 			}, "\n"),
-		},
+		),
 	)
 	ledger = readOnlyAnswerabilityForResults(brief, partialResults)
 
@@ -3334,15 +3368,17 @@ func TestReadOnlyAnswerabilityPromotesCollectiveSourceBodyObjectiveSupport(t *te
 
 	completeResults = append(completeResults, partialResults[1])
 	completeResults[1].Output = strings.ReplaceAll(completeResults[1].Output, "m.navigateHistory(-1)", "m.navigateHistory(-1) // arrow-key history")
-	completeResults = append(completeResults, workspace.ToolResult{
-		Tool:    "read_file",
-		Summary: "Read internal/surfaces/tui/app/rendering.go lines 300-330",
-		Output: strings.Join([]string{
+	completeResults = append(completeResults, readFileSourceBodyResult(
+		"internal/surfaces/tui/app/rendering.go",
+		300,
+		330,
+		0,
+		strings.Join([]string{
 			"300:func (m Model) renderConversationViewport() string {",
 			"301:\treturn m.messages.View()",
 			"302:}",
 		}, "\n"),
-	})
+	))
 
 	ledger = readOnlyAnswerabilityForResults(brief, completeResults)
 	if !ledger.Answerable() {
@@ -3377,10 +3413,12 @@ func TestFinalAnswerAcceptanceAllowsCollectiveSourceBodyObjectiveAnswer(t *testi
 				"internal/surfaces/tui/app/rendering.go",
 			),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/surfaces/tui/app/update_handlers.go lines 80-120",
-			Output: strings.Join([]string{
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/update_handlers.go",
+			80,
+			120,
+			0,
+			strings.Join([]string{
 				"80:func (m Model) handleKeyUpdate(msg tea.KeyMsg) (Model, tea.Cmd) {",
 				"81:\tswitch msg.String() {",
 				"82:\tcase \"up\":",
@@ -3391,16 +3429,18 @@ func TestFinalAnswerAcceptanceAllowsCollectiveSourceBodyObjectiveAnswer(t *testi
 				"87:\treturn m, nil",
 				"88:}",
 			}, "\n"),
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/surfaces/tui/app/rendering.go lines 300-330",
-			Output: strings.Join([]string{
+		),
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/rendering.go",
+			300,
+			330,
+			0,
+			strings.Join([]string{
 				"300:func (m Model) renderConversationViewport() string {",
 				"301:\treturn m.messages.View()",
 				"302:}",
 			}, "\n"),
-		},
+		),
 	}
 	answer := "Up and down arrow keys navigate conversation history through `internal/surfaces/tui/app/update_handlers.go`, where the key handler calls `navigateHistory`, and `internal/surfaces/tui/app/rendering.go` renders the conversation viewport that displays the resulting message state."
 	runner := &Runner{RuntimeBrief: brief}
@@ -3422,10 +3462,12 @@ func TestFinalAnswerAcceptanceAllowsWhatWouldItTakeAnswerFromDiscoveredTUISource
 				"internal/surfaces/tui/app/app.go",
 			),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/surfaces/tui/app/update_handlers.go lines 20-90",
-			Output: strings.Join([]string{
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/update_handlers.go",
+			20,
+			90,
+			0,
+			strings.Join([]string{
 				"20:func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {",
 				"21:\tswitch msg.Type {",
 				"22:\tcase tea.KeyUp:",
@@ -3437,17 +3479,19 @@ func TestFinalAnswerAcceptanceAllowsWhatWouldItTakeAnswerFromDiscoveredTUISource
 				"28:\t}",
 				"29:}",
 			}, "\n"),
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/surfaces/tui/app/rendering.go lines 1-100",
-			Output: strings.Join([]string{
+		),
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/rendering.go",
+			1,
+			100,
+			0,
+			strings.Join([]string{
 				"1:package app",
 				"2:func (m *Model) renderMessages(force bool) {",
 				"3:\tm.viewport.SetContent(strings.Join(m.messages, \"\\n\"))",
 				"4:}",
 			}, "\n"),
-		},
+		),
 	}
 	answer := "It would take wiring the up/down key cases in `internal/surfaces/tui/app/update_handlers.go` to select conversation-history messages and fill the input with the selected message text instead of treating those keys only as the existing panel navigation behavior."
 	runner := &Runner{RuntimeBrief: brief}
@@ -3511,10 +3555,12 @@ func TestFinalAnswerAcceptanceTreatsEchoedObjectivePathInventoryAsAdvisory(t *te
 				"internal/surfaces/tui/app/sessions_panel.go",
 			),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/surfaces/tui/app/sessions_panel.go lines 208-248",
-			Output: strings.Join([]string{
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/sessions_panel.go",
+			208,
+			248,
+			0,
+			strings.Join([]string{
 				"208:func (p *SessionsPanel) HandleKey(msg tea.KeyMsg) {",
 				"209:\tswitch msg.Type {",
 				"210:\tcase tea.KeyUp:",
@@ -3524,11 +3570,13 @@ func TestFinalAnswerAcceptanceTreatsEchoedObjectivePathInventoryAsAdvisory(t *te
 				"214:\t}",
 				"215:}",
 			}, "\n"),
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/surfaces/tui/app/update_handlers.go lines 22-182",
-			Output: strings.Join([]string{
+		),
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/update_handlers.go",
+			22,
+			182,
+			0,
+			strings.Join([]string{
 				"22:func (m Model) handleKeyPress(msg tea.KeyMsg) (Model, tea.Cmd) {",
 				"23:\tswitch msg.Type {",
 				"24:\tcase tea.KeyUp:",
@@ -3541,7 +3589,7 @@ func TestFinalAnswerAcceptanceTreatsEchoedObjectivePathInventoryAsAdvisory(t *te
 				"31:\treturn m, nil",
 				"32:}",
 			}, "\n"),
-		},
+		),
 	}
 	answer := "For `" + objective + "`, `internal/surfaces/tui/app/update_handlers.go` shows defines `Model.handleKeyPress`."
 	runner := &Runner{RuntimeBrief: brief}
@@ -3556,14 +3604,18 @@ func TestFinalAnswerAcceptanceTreatsEchoedObjectivePathInventoryAsAdvisory(t *te
 
 func TestFinalAnswerAcceptanceAllowsExplainerAnswerWithInspectedSymbol(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Explain the harness control flow.")
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read internal/runtime/agent/runner_core.go lines 1-20",
-		Output: strings.Join([]string{
-			"1:package agent",
-			"2:func (r *Runner) Run() {}",
-		}, "\n"),
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult(
+			"internal/runtime/agent/runner_core.go",
+			1,
+			20,
+			0,
+			strings.Join([]string{
+				"1:package agent",
+				"2:func (r *Runner) Run() {}",
+			}, "\n"),
+		),
+	}
 	answer := "`Runner.Run` is visible in `internal/runtime/agent/runner_core.go`; the inspected source anchors the harness control flow in that file."
 	runner := &Runner{RuntimeBrief: brief}
 
@@ -3588,24 +3640,28 @@ func TestReadOnlyAnswerabilityDoesNotPromoteUnrelatedCollectiveSourceBodies(t *t
 			Summary: "Context pack returned a real candidate unrelated to later reads",
 			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/update_handlers.go"),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/platform/config/config.go lines 1-8",
-			Output: strings.Join([]string{
+		readFileSourceBodyResult(
+			"internal/platform/config/config.go",
+			1,
+			8,
+			0,
+			strings.Join([]string{
 				"1:package config",
 				"2:// down key history words appear in an unrelated config comment",
 				"3:const ConfigValue = true",
 			}, "\n"),
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/capabilities/workspace/manager.go lines 1-8",
-			Output: strings.Join([]string{
+		),
+		readFileSourceBodyResult(
+			"internal/capabilities/workspace/manager.go",
+			1,
+			8,
+			0,
+			strings.Join([]string{
 				"1:package workspace",
 				"2:// conversation message words appear in unrelated workspace plumbing",
 				"3:type Manager struct{}",
 			}, "\n"),
-		},
+		),
 	}
 
 	ledger := readOnlyAnswerabilityForResults(brief, results)
@@ -3638,10 +3694,12 @@ func TestReadOnlyAnswerabilityDoesNotTreatSessionsPanelAsChatRecallOwner(t *test
 			Summary: "Context pack returned candidate internal/surfaces/tui/app/sessions_panel.go",
 			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/sessions_panel.go"),
 		},
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output: strings.Join([]string{
+		codeNavigateSourceBodyResult(
+			"internal/surfaces/tui/app/sessions_panel.go",
+			205,
+			245,
+			0,
+			strings.Join([]string{
 				"route_summary: Read Model.handleSessionsPanelKey in internal/surfaces/tui/app/sessions_panel.go lines 205-245",
 				"205:// handleSessionsPanelKey consumes a key press while the Sessions tab",
 				"206:// has focus. Returns (true, cmd) if handled. j/k navigate, Enter",
@@ -3652,7 +3710,7 @@ func TestReadOnlyAnswerabilityDoesNotTreatSessionsPanelAsChatRecallOwner(t *test
 				"230:\t\tif err := m.ResumeSession(id); err != nil {",
 				"236:\t\t\t// Bounce the panel back to History so the resumed chat",
 			}, "\n"),
-		},
+		),
 	}
 	if ledger := readOnlyAnswerabilityForResults(brief, sessionsResults); ledger.Answerable() {
 		t.Fatalf("sessions-panel source owner must not close chat-message recall readiness: %#v", ledger)
@@ -3666,10 +3724,12 @@ func TestReadOnlyAnswerabilityDoesNotTreatSessionsPanelAsChatRecallOwner(t *test
 			Summary: "Context pack returned candidate internal/surfaces/tui/app/help_overlay.go",
 			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/help_overlay.go"),
 		},
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output: strings.Join([]string{
+		codeNavigateSourceBodyResult(
+			"internal/surfaces/tui/app/help_overlay.go",
+			42,
+			88,
+			0,
+			strings.Join([]string{
 				"route_summary: Read Model.handleHelpOverlayKey in internal/surfaces/tui/app/help_overlay.go lines 42-88",
 				"42:// handleHelpOverlayKey consumes a key press while the Help overlay has focus.",
 				"43:func (m *Model) handleHelpOverlayKey(msg tea.KeyMsg) (bool, tea.Cmd) {",
@@ -3681,7 +3741,7 @@ func TestReadOnlyAnswerabilityDoesNotTreatSessionsPanelAsChatRecallOwner(t *test
 				"49:\t}",
 				"50:\treturn true, nil",
 			}, "\n"),
-		},
+		),
 	}
 	if ledger := readOnlyAnswerabilityForResults(brief, overlayResults); ledger.Answerable() {
 		t.Fatalf("unrelated overlay navigation owner must not close chat-message recall readiness: %#v", ledger)
@@ -3691,10 +3751,12 @@ func TestReadOnlyAnswerabilityDoesNotTreatSessionsPanelAsChatRecallOwner(t *test
 
 	stateOnlyResults := []workspace.ToolResult{
 		sessionsResults[0],
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output: strings.Join([]string{
+		codeNavigateSourceBodyResult(
+			"internal/surfaces/tui/app/model_state.go",
+			100,
+			150,
+			0,
+			strings.Join([]string{
 				"route_summary: Read Model in internal/surfaces/tui/app/model_state.go lines 100-150",
 				"100:type Model struct {",
 				"122:\tmessages []llama.ChatMessage",
@@ -3702,7 +3764,7 @@ func TestReadOnlyAnswerabilityDoesNotTreatSessionsPanelAsChatRecallOwner(t *test
 				"131:\tinputState inputState",
 				"150:}",
 			}, "\n"),
-		},
+		),
 	}
 	if ledger := readOnlyAnswerabilityForResults(brief, stateOnlyResults); ledger.Answerable() {
 		t.Fatalf("state-only source body must not close implementation-shape readiness: %#v", ledger)
@@ -3712,10 +3774,12 @@ func TestReadOnlyAnswerabilityDoesNotTreatSessionsPanelAsChatRecallOwner(t *test
 
 	liveShapedStateResults := []workspace.ToolResult{
 		sessionsResults[0],
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output: strings.Join([]string{
+		codeNavigateSourceBodyResult(
+			"internal/surfaces/tui/app/model_state.go",
+			133,
+			263,
+			0,
+			strings.Join([]string{
 				"route_summary: Read Model in internal/surfaces/tui/app/model_state.go lines 133-263",
 				"133:type Model struct {",
 				"162:\tinput    textarea.Model",
@@ -3727,7 +3791,7 @@ func TestReadOnlyAnswerabilityDoesNotTreatSessionsPanelAsChatRecallOwner(t *test
 				"258:\thistory  historyState",
 				"259:}",
 			}, "\n"),
-		},
+		),
 	}
 	if ledger := readOnlyAnswerabilityForResults(brief, liveShapedStateResults); ledger.Answerable() {
 		t.Fatalf("live-shaped Model state body must not close implementation-shape readiness: %#v", ledger)
@@ -3745,10 +3809,12 @@ func TestReadOnlyAnswerabilityDoesNotTreatSessionsPanelAsChatRecallOwner(t *test
 
 	handlerResults := []workspace.ToolResult{
 		sessionsResults[0],
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output: strings.Join([]string{
+		codeNavigateSourceBodyResult(
+			"internal/surfaces/tui/app/update_handlers.go",
+			22,
+			180,
+			0,
+			strings.Join([]string{
 				"route_summary: Read Model.handleKeyPress in internal/surfaces/tui/app/update_handlers.go lines 22-180",
 				"22:func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {",
 				"43:\t\tcase tea.KeyUp:",
@@ -3757,7 +3823,7 @@ func TestReadOnlyAnswerabilityDoesNotTreatSessionsPanelAsChatRecallOwner(t *test
 				"77:\t\t\tif m.history.selected < len(m.history.entries)-1 {",
 				"172:\t\tm.appendHistoryMessage(\"user\", text, nil)",
 			}, "\n"),
-		},
+		),
 	}
 	if ledger := readOnlyAnswerabilityForResults(brief, handlerResults); !ledger.Answerable() {
 		t.Fatalf("chat/history key-handler source body should close readiness: %#v", ledger)
@@ -3778,10 +3844,12 @@ func TestReadOnlyAnswerabilityDoesNotTreatRegressionFixtureAsImplementationOwner
 				"internal/runtime/agent/contract_surface_tests_test.go:1242:objective := \"what would it take to enable the up and down arrow keys to iterate through the user's chat history?\"",
 			}, "\n"),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f2 internal/runtime/agent/contract_surface_tests_test.go lines 1230-1270 (total lines: 1544)",
-			Output: strings.Join([]string{
+		readFileSourceBodyResult(
+			"internal/runtime/agent/contract_surface_tests_test.go",
+			1230,
+			1270,
+			1544,
+			strings.Join([]string{
 				"1237:func TestSynthesizeBriefConversationFallbackPrefersObjectiveRelevantExactProbe(t *testing.T) {",
 				"1242:\tobjective := \"what would it take to enable the up and down arrow keys to iterate through the user's chat history?\"",
 				"1249:\t\t\"route_summary: Read Model.handleKeyPress in internal/surfaces/tui/app/update_handlers.go lines 22-180\",",
@@ -3790,7 +3858,7 @@ func TestReadOnlyAnswerabilityDoesNotTreatRegressionFixtureAsImplementationOwner
 				"1252:\t\t\"49:\\t\\tcase tea.KeyDown:\",",
 				"1253:\t\t\"172:\\t\\tm.appendHistoryMessage(\\\"user\\\", text, nil)\",",
 			}, "\n"),
-		},
+		),
 	}
 
 	ledger := readOnlyAnswerabilityForResults(brief, results)
@@ -3830,10 +3898,12 @@ func TestFinalAnswerAcceptanceRejectsSessionsPanelAsChatRecallOwner(t *testing.T
 				"internal/surfaces/tui/app/model_state.go",
 			),
 		},
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output: strings.Join([]string{
+		codeNavigateSourceBodyResult(
+			"internal/surfaces/tui/app/sessions_panel.go",
+			205,
+			245,
+			0,
+			strings.Join([]string{
 				"route_summary: Read Model.handleSessionsPanelKey in internal/surfaces/tui/app/sessions_panel.go lines 205-245",
 				"205:// handleSessionsPanelKey consumes a key press while the Sessions tab",
 				"206:// has focus. Returns (true, cmd) if handled. j/k navigate, Enter",
@@ -3844,11 +3914,13 @@ func TestFinalAnswerAcceptanceRejectsSessionsPanelAsChatRecallOwner(t *testing.T
 				"230:\t\tif err := m.ResumeSession(id); err != nil {",
 				"236:\t\t\t// Bounce the panel back to History so the resumed chat",
 			}, "\n"),
-		},
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output: strings.Join([]string{
+		),
+		codeNavigateSourceBodyResult(
+			"internal/surfaces/tui/app/model_state.go",
+			100,
+			150,
+			0,
+			strings.Join([]string{
 				"route_summary: Read Model in internal/surfaces/tui/app/model_state.go lines 100-150",
 				"100:type Model struct {",
 				"122:\tmessages []llama.ChatMessage",
@@ -3856,7 +3928,7 @@ func TestFinalAnswerAcceptanceRejectsSessionsPanelAsChatRecallOwner(t *testing.T
 				"131:\tinputState inputState",
 				"150:}",
 			}, "\n"),
-		},
+		),
 	}
 	answer := "It would take changing `Model.handleSessionsPanelKey` in `internal/surfaces/tui/app/sessions_panel.go`. The inspected source shows it already handles `tea.KeyUp` and `tea.KeyDown`, so the work is to route those cases through chat-history state."
 	runner := &Runner{RuntimeBrief: brief}
@@ -3900,7 +3972,7 @@ func TestFinalAnswerAcceptanceRejectsSessionsPanelAsChatRecallOwner(t *testing.T
 	}
 }
 
-func TestReadOnlyAnswerabilityAcceptsDelegatedInspectedPathPacket(t *testing.T) {
+func TestReadOnlyAnswerabilityRejectsDelegatedInspectedPathProsePacket(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Can you tell me how this harness uses subagents?")
 	results := []workspace.ToolResult{{
 		Tool:    "task",
@@ -3919,40 +3991,31 @@ func TestReadOnlyAnswerabilityAcceptsDelegatedInspectedPathPacket(t *testing.T) 
 	}}
 
 	ledger := readOnlyAnswerabilityForResults(brief, results)
-	if !ledger.Answerable() {
-		t.Fatalf("grounded delegated inspected-path packet should be answerable: %#v", ledger)
+	if ledger.Answerable() {
+		t.Fatalf("delegated inspected-path prose must not be source-body authority: %#v", ledger)
 	}
 
-	for _, want := range []string{"internal/runtime/agent/runner_core.go", "internal/runtime/agent/implementation_flow.go"} {
-		if !slices.Contains(ledger.RelevantSourceBodyPaths, want) {
-			t.Fatalf("expected delegated packet path %q to be relevant, got %#v", want, ledger.RelevantSourceBodyPaths)
-		}
+	if len(ledger.RelevantSourceBodyPaths) > 0 || len(ledger.SourceBodyPaths) > 0 {
+		t.Fatalf("delegated prose paths must not be promoted into source-body evidence: %#v", ledger)
 	}
 
-	answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, results)
-	if !ok {
-		t.Fatal("expected deterministic synthesis from grounded delegated packet")
-	}
-
-	for _, want := range []string{"task", "child runner", "`internal/runtime/agent/runner_core.go`", "`internal/runtime/agent/implementation_flow.go`"} {
-		if !strings.Contains(strings.ToLower(answer), strings.ToLower(want)) {
-			t.Fatalf("expected synthesized answer to contain %q, got:\n%s", want, answer)
-		}
+	if answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, results); ok {
+		t.Fatalf("delegated prose packet should not synthesize without typed evidence, got:\n%s", answer)
 	}
 }
 
 func TestPostChildSourceBodyPacketEvidenceAvailableAcceptsDelegatedNegativeFinding(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Review performance risks in this workspace.")
-	results := []workspace.ToolResult{{
-		Tool:    "task",
-		Summary: "Child task completed",
-		Output: strings.Join([]string{
-			"Source-body evidence paths:",
-			"- `internal/runtime/agent/runner_core.go`",
-			"",
-			"Inspected paths: internal/runtime/agent/runner_core.go. No performance issue found.",
-		}, "\n"),
-	}}
+	results := []workspace.ToolResult{typedReadOnlyTaskResult(ReadOnlyEvidencePacket{
+		Objective:       "Review performance risks in this workspace.",
+		Question:        "Review performance risks in this workspace.",
+		SourceBodyPaths: []string{"internal/runtime/agent/runner_core.go"},
+		InspectedPaths:  []string{"internal/runtime/agent/runner_core.go"},
+		Confidence:      "medium",
+		Findings: []ReadOnlyEvidenceFinding{
+			{Path: "internal/runtime/agent/runner_core.go", Text: "No performance issue found in the inspected runner path."},
+		},
+	})}
 
 	ledger := readOnlyAnswerabilityForResults(brief, results)
 	if ledger.Answerable() {
@@ -4110,7 +4173,7 @@ func TestReadOnlyAnswerabilityRejectsGenericToolSchemaPacketForUsefulnessObjecti
 	}
 }
 
-func TestReadOnlyAnswerabilityAcceptsObjectiveRelevantLegacyChildPacket(t *testing.T) {
+func TestReadOnlyAnswerabilityRejectsObjectiveRelevantLegacyChildPacket(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "architecture",
 		Contract:          "architecture_assessment",
@@ -4130,8 +4193,8 @@ func TestReadOnlyAnswerabilityAcceptsObjectiveRelevantLegacyChildPacket(t *testi
 	}}
 
 	ledger := readOnlyAnswerabilityForResults(brief, results)
-	if !ledger.Answerable() {
-		t.Fatalf("objective-relevant legacy child packet should satisfy read-only answerability: %#v", ledger)
+	if ledger.Answerable() {
+		t.Fatalf("objective-relevant legacy child packet must not satisfy read-only answerability: %#v", ledger)
 	}
 }
 
@@ -4349,15 +4412,17 @@ func TestFinalAnswerAcceptanceRejectsGroundingAndKeepsObjectiveDiagnostic(t *tes
 				"internal/runtime/agent/tools_surface.go",
 			),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read docs/decisioning-north-star.md lines 1-6",
-			Output: strings.Join([]string{
+		readFileSourceBodyResult(
+			"docs/decisioning-north-star.md",
+			1,
+			6,
+			0,
+			strings.Join([]string{
 				"1:# Decisioning North Star",
 				"2:The model owns strategy; the harness owns contracts.",
 				"3:Final answers must be grounded in verified source evidence rather than unverified model prose.",
 			}, "\n"),
-		},
+		),
 	}
 	answer := "No. Free-form prose would move deterministic closeout language away from the contract boundary in `internal/runtime/agent/tools_surface.go`."
 	runner := &Runner{RuntimeBrief: brief}
@@ -4538,11 +4603,15 @@ func TestValidationStatusTerminalRecoveryAnswersFromLedger(t *testing.T) {
 
 func TestReadOnlyAnswerabilityRejectsScaffoldFinalEvenWithRelevantSourceBody(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Explain runner answer readiness.")
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read internal/runtime/agent/runner_core.go lines 4128-4285",
-		Output:  "package agent\nfunc runnerReadinessState() {}\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult(
+			"internal/runtime/agent/runner_core.go",
+			4128,
+			4285,
+			0,
+			"package agent\nfunc runnerReadinessState() {}\n",
+		),
+	}
 	answer := "The strongest implementation evidence is in `internal/runtime/agent/runner_core.go`. Use those findings as the source of truth for `Explain runner answer readiness`.\n\nWhat this establishes:\n- The source body shows `runnerReadinessState` computes answer readiness."
 	runner := &Runner{RuntimeBrief: brief}
 
@@ -4559,16 +4628,20 @@ func TestReadOnlyAnswerabilityRejectsScaffoldFinalEvenWithRelevantSourceBody(t *
 func TestReadOnlyAnswerabilityRejectsAnswerAboveSourceFooter(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("how is evidence used in this harness?")
 	results := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/runtime/agent/evidence_readonly.go lines 1-65",
-			Output:  "package agent\ntype ReadOnlyEvidencePacket struct{}\nfunc buildReadOnlyEvidencePacket() {}\n",
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/runtime/agent/runner_core.go lines 128-270",
-			Output:  "package agent\nfunc conversationEvidenceSatisfied() bool { return true }\nfunc (r *Runner) conversationEvidenceAvailableForObjective() bool { return true }\n",
-		},
+		readFileSourceBodyResult(
+			"internal/runtime/agent/evidence_readonly.go",
+			1,
+			65,
+			0,
+			"package agent\ntype ReadOnlyEvidencePacket struct{}\nfunc buildReadOnlyEvidencePacket() {}\n",
+		),
+		readFileSourceBodyResult(
+			"internal/runtime/agent/runner_core.go",
+			128,
+			270,
+			0,
+			"package agent\nfunc conversationEvidenceSatisfied() bool { return true }\nfunc (r *Runner) conversationEvidenceAvailableForObjective() bool { return true }\n",
+		),
 	}
 	answer := "The answer above is grounded in the following inspected source files:\n\n" +
 		"- `internal/runtime/agent/evidence_readonly.go` - `ReadOnlyEvidencePacket` struct, `buildReadOnlyEvidencePacket`\n" +
@@ -4584,16 +4657,20 @@ func TestReadOnlyAnswerabilityRejectsAnswerAboveSourceFooter(t *testing.T) {
 func TestReadOnlyAnswerabilityAllowsStandaloneGroundedEvidenceAnswer(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("how is evidence used in this harness?")
 	results := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/runtime/agent/evidence_readonly.go lines 1-65",
-			Output:  "package agent\ntype ReadOnlyEvidencePacket struct{}\nfunc buildReadOnlyEvidencePacket() {}\n",
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/runtime/agent/runner_core.go lines 128-270",
-			Output:  "package agent\nfunc conversationEvidenceSatisfied() bool { return true }\nfunc (r *Runner) conversationEvidenceAvailableForObjective() bool { return true }\n",
-		},
+		readFileSourceBodyResult(
+			"internal/runtime/agent/evidence_readonly.go",
+			1,
+			65,
+			0,
+			"package agent\ntype ReadOnlyEvidencePacket struct{}\nfunc buildReadOnlyEvidencePacket() {}\n",
+		),
+		readFileSourceBodyResult(
+			"internal/runtime/agent/runner_core.go",
+			128,
+			270,
+			0,
+			"package agent\nfunc conversationEvidenceSatisfied() bool { return true }\nfunc (r *Runner) conversationEvidenceAvailableForObjective() bool { return true }\n",
+		),
 	}
 	answer := "Evidence is used as the harness contract input: `ReadOnlyEvidencePacket` records source-body paths and findings in `internal/runtime/agent/evidence_readonly.go`, and `conversationEvidenceSatisfied` in `internal/runtime/agent/runner_core.go` evaluates the source-evidence threshold before a grounded answer can close."
 	runner := &Runner{RuntimeBrief: brief}
@@ -4615,11 +4692,13 @@ func TestFinalAnswerAcceptanceTreatsOffObjectiveSourceBackedAnswerAsAdvisory(t *
 				"internal/surfaces/tui/app/model.go",
 			),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/surfaces/tui/app/rendering.go lines 1-9",
-			Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
-		},
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/rendering.go",
+			1,
+			9,
+			0,
+			"1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+		),
 	}
 	answer := "The relevant code is `internal/surfaces/tui/app/rendering.go`: `evidenceDisplayName` trims the raw tool name before display."
 	runner := &Runner{RuntimeBrief: brief}
@@ -4638,11 +4717,13 @@ func TestFinalAnswerAcceptanceTreatsObjectiveParrotWithWrongSourceAsAdvisory(t *
 			Summary: "Context pack wrote packet",
 			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/rendering.go"),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/surfaces/tui/app/rendering.go lines 1-9",
-			Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
-		},
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/rendering.go",
+			1,
+			9,
+			0,
+			"1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+		),
 	}
 	answer := "The TUI chat input newline wrap and upward shift issue is in `internal/surfaces/tui/app/rendering.go`: `evidenceDisplayName` trims the raw tool name before display."
 	runner := &Runner{RuntimeBrief: brief}
@@ -4652,11 +4733,15 @@ func TestFinalAnswerAcceptanceTreatsObjectiveParrotWithWrongSourceAsAdvisory(t *
 
 func TestFinalAnswerAcceptanceTreatsCitationlessObjectiveParrotWithUnrelatedReadAsAdvisory(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read internal/surfaces/tui/app/rendering.go lines 1-9",
-		Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/rendering.go",
+			1,
+			9,
+			0,
+			"1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+		),
+	}
 	answer := "The TUI chat input newline wrap and upward shift issue is caused by trimming the raw tool name before display."
 	runner := &Runner{RuntimeBrief: brief}
 
@@ -4674,11 +4759,13 @@ func TestFinalAnswerAcceptanceAppliesToDirectAnswerTaskFamilyAlias(t *testing.T)
 			Summary: "Context pack wrote packet",
 			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/rendering.go"),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/surfaces/tui/app/rendering.go lines 1-9",
-			Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
-		},
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/rendering.go",
+			1,
+			9,
+			0,
+			"1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+		),
 	}
 	answer := "The relevant code is `internal/surfaces/tui/app/rendering.go`: `evidenceDisplayName` trims the raw tool name before display."
 	runner := &Runner{RuntimeBrief: brief}
@@ -4710,11 +4797,15 @@ func TestFinalAnswerAcceptanceRejectsAliasInsufficientEvidenceWhenSourceBodyIsAn
 	brief := readOnlyConversationBriefForTest("What is the role of evidence in the harness?")
 	brief.TaskFamily = string(autonomy.TaskFamilyDirectAnswer)
 
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read internal/runtime/agent/evidence_readonly.go lines 1-9",
-		Output:  "1:package agent\n2:\n3:// Evidence records inspected paths and source-body support for harness readiness.\n4:type SourceEvidenceState struct { SourceBodyPaths []string }\n5:func evidenceReadiness() {}\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult(
+			"internal/runtime/agent/evidence_readonly.go",
+			1,
+			9,
+			0,
+			"1:package agent\n2:\n3:// Evidence records inspected paths and source-body support for harness readiness.\n4:type SourceEvidenceState struct { SourceBodyPaths []string }\n5:func evidenceReadiness() {}\n",
+		),
+	}
 	answer := "I cannot determine from the available evidence what role evidence has in the harness."
 	runner := &Runner{RuntimeBrief: brief}
 
@@ -4744,16 +4835,20 @@ func TestFinalAnswerAcceptanceRejectsAliasInsufficientEvidenceWhenSourceBodyIsAn
 
 func TestFinalAnswerAcceptanceRejectsReadOnlyReadinessNudgeEcho(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("What is the role of evidence in this harness? Where does it come from and what is it used for?")
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read docs/architecture.md lines 1-80",
-		Output: strings.Join([]string{
-			"1:# Idiom Architecture",
-			"2:Idiom is a local coding-agent harness.",
-			"3:The model owns strategy; the harness owns contracts, evidence, permissions, audit, and verification.",
-			"4:Repository evidence feeds runtime briefs, answer grounding, audit trails, and verification decisions.",
-		}, "\n"),
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult(
+			"docs/architecture.md",
+			1,
+			80,
+			0,
+			strings.Join([]string{
+				"1:# Idiom Architecture",
+				"2:Idiom is a local coding-agent harness.",
+				"3:The model owns strategy; the harness owns contracts, evidence, permissions, audit, and verification.",
+				"4:Repository evidence feeds runtime briefs, answer grounding, audit trails, and verification decisions.",
+			}, "\n"),
+		),
+	}
 	answer := strings.Join([]string{
 		"The read-only evidence is sufficient for a grounded answer to this question.",
 		"",
@@ -4788,11 +4883,13 @@ func TestFinalAnswerAcceptanceTreatsAliasObjectiveParrotWithWrongSourceAsAdvisor
 			Summary: "Context pack wrote packet",
 			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/rendering.go"),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/surfaces/tui/app/rendering.go lines 1-9",
-			Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
-		},
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/rendering.go",
+			1,
+			9,
+			0,
+			"1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+		),
 	}
 	answer := "The TUI chat input newline wrap and upward shift issue is in `internal/surfaces/tui/app/rendering.go`: `evidenceDisplayName` trims the raw tool name before display."
 	runner := &Runner{RuntimeBrief: brief}
@@ -4811,11 +4908,13 @@ func TestGenericReadOnlyEvidenceReadyRejectsAliasWrongSource(t *testing.T) {
 			Summary: "Context pack wrote packet",
 			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/rendering.go"),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/surfaces/tui/app/rendering.go lines 1-9",
-			Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
-		},
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/rendering.go",
+			1,
+			9,
+			0,
+			"1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+		),
 	}
 
 	if genericReadOnlyAnswerEvidenceReady(brief, results) {
@@ -4834,22 +4933,26 @@ func TestConversationEvidenceSatisfiedNormalizesDirectAnswerAlias(t *testing.T) 
 			Summary: "Context pack wrote packet",
 			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/rendering.go"),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/surfaces/tui/app/rendering.go lines 1-9",
-			Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
-		},
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/rendering.go",
+			1,
+			9,
+			0,
+			"1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+		),
 	}
 
 	if conversationEvidenceSatisfied(brief, results) {
 		t.Fatal("direct_answer alias should use objective-relevant source-body evidence, not any candidate body")
 	}
 
-	results[1] = workspace.ToolResult{
-		Tool:    "read_file",
-		Summary: "Read internal/surfaces/tui/app/chat_input.go lines 1-9",
-		Output:  "1:package app\n2:\n3:func syncChatInputHeight() {\n4:\t// chat input newline wrap keeps the first existing line visible instead of shifting upward\n5:}\n",
-	}
+	results[1] = readFileSourceBodyResult(
+		"internal/surfaces/tui/app/chat_input.go",
+		1,
+		9,
+		0,
+		"1:package app\n2:\n3:func syncChatInputHeight() {\n4:\t// chat input newline wrap keeps the first existing line visible instead of shifting upward\n5:}\n",
+	)
 	if !conversationEvidenceSatisfied(brief, results) {
 		t.Fatal("direct_answer alias should be satisfied by objective-relevant source-body evidence")
 	}
@@ -4878,11 +4981,15 @@ func TestRunnerReadinessStateNormalizesDirectAnswerAlias(t *testing.T) {
 
 func TestFinalAnswerAcceptanceAllowsObjectiveRelevantSourceBackedAnswer(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read internal/surfaces/tui/app/chat_input.go lines 1-9",
-		Output:  "1:package app\n2:\n3:func syncChatInputHeight() {\n4:\t// chat input newline wrap keeps the first existing line visible instead of shifting upward\n5:}\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/chat_input.go",
+			1,
+			9,
+			0,
+			"1:package app\n2:\n3:func syncChatInputHeight() {\n4:\t// chat input newline wrap keeps the first existing line visible instead of shifting upward\n5:}\n",
+		),
+	}
 	answer := "The chat input newline wrap issue is handled in `internal/surfaces/tui/app/chat_input.go`: `syncChatInputHeight` keeps the first existing line visible instead of letting it shift upward."
 	runner := &Runner{RuntimeBrief: brief}
 
@@ -4915,26 +5022,30 @@ func TestFinalAnswerAcceptanceAllowsSourceBackedPlanningReadinessWhyAnswer(t *te
 			brief := readOnlyConversationBriefForTest("Why are those not dispatchable?")
 			brief.EvidencePaths = []string{tc.statusPath, tc.trackPath}
 			results := []workspace.ToolResult{
-				{
-					Tool:    "read_file",
-					Summary: fmt.Sprintf("Read f1 %s lines 1-8 (total lines: 8)", tc.statusPath),
-					Output: strings.Join([]string{
+				readFileSourceBodyResult(
+					tc.statusPath,
+					1,
+					8,
+					8,
+					strings.Join([]string{
 						"1:# Campaign status",
 						"2:Approved campaigns exist for REC-025, REC-026, REC-027, and REC-028.",
 						"3:These campaign trackers are planning-level approvals, not dispatchable implementation atoms.",
 						"4:They remain blocked until Atom 0.1 specs are written and intake passes.",
 					}, "\n"),
-				},
-				{
-					Tool:    "read_file",
-					Summary: fmt.Sprintf("Read f1 %s lines 1-7 (total lines: 7)", tc.trackPath),
-					Output: strings.Join([]string{
+				),
+				readFileSourceBodyResult(
+					tc.trackPath,
+					1,
+					7,
+					7,
+					strings.Join([]string{
 						"1:# REC-025 tick-path audit tracker",
 						"2:Status: approved planning.",
 						"3:Dispatchable: no.",
 						"4:Next gate: write the Atom 0.1 spec and pass atom intake.",
 					}, "\n"),
-				},
+				),
 			}
 			answer := strings.Join([]string{
 				"They are not dispatchable because the approved campaign docs are still planning-level approvals, not implementation atoms.",
@@ -4963,16 +5074,20 @@ func TestFinalAnswerAcceptanceAllowsSourceBackedPlanningReadinessWhyAnswer(t *te
 func TestFinalAnswerAcceptanceRejectsPlanningPathWithoutBodyOwnedSupport(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Why are those not dispatchable?")
 	brief.EvidencePaths = []string{".planning/campaign-status.md"}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 .planning/campaign-status.md lines 1-6 (total lines: 6)",
-		Output: strings.Join([]string{
-			"1:# Campaign status",
-			"2:Approved campaigns exist for REC-025 and REC-026.",
-			"3:Owners should review the schedule before the next checkpoint.",
-			"4:No atom intake or implementation-readiness decision is recorded here.",
-		}, "\n"),
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult(
+			".planning/campaign-status.md",
+			1,
+			6,
+			6,
+			strings.Join([]string{
+				"1:# Campaign status",
+				"2:Approved campaigns exist for REC-025 and REC-026.",
+				"3:Owners should review the schedule before the next checkpoint.",
+				"4:No atom intake or implementation-readiness decision is recorded here.",
+			}, "\n"),
+		),
+	}
 	answer := "`.planning/campaign-status.md` shows they are not dispatchable because Atom 0.1 intake has not passed."
 	runner := &Runner{RuntimeBrief: brief}
 
@@ -4982,16 +5097,20 @@ func TestFinalAnswerAcceptanceRejectsPlanningPathWithoutBodyOwnedSupport(t *test
 func TestFinalAnswerAcceptanceRejectsContradictedDispatchabilityAnswer(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Why are those not dispatchable?")
 	brief.EvidencePaths = []string{"docs/work/status.md"}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 docs/work/status.md lines 1-6 (total lines: 6)",
-		Output: strings.Join([]string{
-			"1:# Campaign status",
-			"2:Dispatchable: yes.",
-			"3:Atom 0.1 spec is complete and intake passed.",
-			"4:The implementation atom is ready to start.",
-		}, "\n"),
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult(
+			"docs/work/status.md",
+			1,
+			6,
+			6,
+			strings.Join([]string{
+				"1:# Campaign status",
+				"2:Dispatchable: yes.",
+				"3:Atom 0.1 spec is complete and intake passed.",
+				"4:The implementation atom is ready to start.",
+			}, "\n"),
+		),
+	}
 	answer := "`docs/work/status.md` shows they are not dispatchable because Atom 0.1 intake has not passed."
 	runner := &Runner{RuntimeBrief: brief}
 
@@ -5001,16 +5120,20 @@ func TestFinalAnswerAcceptanceRejectsContradictedDispatchabilityAnswer(t *testin
 func TestFinalAnswerAcceptanceAllowsLowConfidenceStrategicSourceBackedAnswer(t *testing.T) {
 	objective := "Why would replacing this with model prose fit our north star or risk leaking unverified information to the user?"
 	brief := readOnlyConversationBriefForTest(objective)
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read docs/decisioning-north-star.md lines 1-6",
-		Output: strings.Join([]string{
-			"1:# Decisioning North Star",
-			"2:The model owns strategy; the harness owns contracts.",
-			"3:Final answers must be grounded in verified source evidence rather than unverified model prose.",
-			"4:Deterministic closeouts prevent raw unverified information from leaking to users.",
-		}, "\n"),
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult(
+			"docs/decisioning-north-star.md",
+			1,
+			6,
+			0,
+			strings.Join([]string{
+				"1:# Decisioning North Star",
+				"2:The model owns strategy; the harness owns contracts.",
+				"3:Final answers must be grounded in verified source evidence rather than unverified model prose.",
+				"4:Deterministic closeouts prevent raw unverified information from leaking to users.",
+			}, "\n"),
+		),
+	}
 	answer := "No. Free-form prose moves the closeout away from deterministic contract enforcement."
 	runner := &Runner{RuntimeBrief: brief}
 
@@ -5043,23 +5166,27 @@ func TestFinalAnswerAcceptanceAllowsReplayStyleNorthStarRiskAnswer(t *testing.T)
 	objective := "Would it fit our north star to replace this with model prose? Or do we ris leaking unverified information to the user?"
 	brief := readOnlyConversationBriefForTest(objective)
 	results := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read docs/decisioning-north-star.md lines 26-53",
-			Output: strings.Join([]string{
+		readFileSourceBodyResult(
+			"docs/decisioning-north-star.md",
+			26,
+			53,
+			0,
+			strings.Join([]string{
 				"28:Read-only conversation, direct-answer, architecture, and review lanes are strategy lanes.",
 				"30:The model owns strategy; the harness owns contracts.",
 				"34:In read-only strategy lanes, do not force answer synthesis or answer-only surfaces merely because the harness thinks evidence is sufficient.",
 			}, "\n"),
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/runtime/agent/tools_surface.go lines 2815-2900",
-			Output: strings.Join([]string{
+		),
+		readFileSourceBodyResult(
+			"internal/runtime/agent/tools_surface.go",
+			2815,
+			2900,
+			0,
+			strings.Join([]string{
 				"2815:func completeWithoutMoreToolsWithReason() {}",
 				"2834:if answer, ok := deterministicNoToolsAnswer(...) { return answer }",
 			}, "\n"),
-		},
+		),
 	}
 	answer := strings.Join([]string{
 		"I now have sufficient evidence to answer your north-star question.",
@@ -5093,24 +5220,28 @@ func TestFinalAnswerAcceptanceRejectsPriorTopicAnswerForNamingQuestion(t *testin
 	objective := "we need a better and more generic name than qwen for the agent in this project... what is a good thematic yet cute option"
 	brief := readOnlyConversationBriefForTest(objective)
 	results := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read docs/idiom-strategic-thesis.md lines 1-6",
-			Output: strings.Join([]string{
+		readFileSourceBodyResult(
+			"docs/idiom-strategic-thesis.md",
+			1,
+			6,
+			0,
+			strings.Join([]string{
 				"1:# Idiom strategic thesis",
 				"2:Idiom is a local coding-agent harness originally optimized around Qwen models.",
 				"3:The project focuses on repo memory, freshness, contracts, audit, and evals.",
 			}, "\n"),
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/runtime/agent/implementation_flow.go lines 2219-2290",
-			Output: strings.Join([]string{
+		),
+		readFileSourceBodyResult(
+			"internal/runtime/agent/implementation_flow.go",
+			2219,
+			2290,
+			0,
+			strings.Join([]string{
 				"2219:func canonicalMutationBlockerFinalAnswer() string {",
 				"2220:\treturn \"<<QUESTION>>: required edit paths remain unchanged\"",
 				"2221:}",
 			}, "\n"),
-		},
+		),
 	}
 	answer := strings.Join([]string{
 		"I have enough evidence to answer this question directly.",
@@ -5129,16 +5260,20 @@ func TestFinalAnswerAcceptanceRejectsPriorTopicAnswerForNamingQuestion(t *testin
 func TestFinalAnswerAcceptanceAllowsGenericLowConfidenceSourceBackedAnswer(t *testing.T) {
 	objective := "Why would replacing verified summaries with generated narrative affect customer release reports?"
 	brief := readOnlyConversationBriefForTest(objective)
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read internal/runtime/agent/runner_core.go lines 1-8",
-		Output: strings.Join([]string{
-			"1:package agent",
-			"2:// Verified summaries are deterministic release-report closeouts.",
-			"3:// Generated narrative is separate from the customer-facing contract.",
-			"4:func finalReportCloseout() {}",
-		}, "\n"),
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult(
+			"internal/runtime/agent/runner_core.go",
+			1,
+			8,
+			0,
+			strings.Join([]string{
+				"1:package agent",
+				"2:// Verified summaries are deterministic release-report closeouts.",
+				"3:// Generated narrative is separate from the customer-facing contract.",
+				"4:func finalReportCloseout() {}",
+			}, "\n"),
+		),
+	}
 	answer := "No. The release closeout remains under a deterministic contract boundary."
 	runner := &Runner{RuntimeBrief: brief}
 
@@ -5166,15 +5301,17 @@ func TestFinalAnswerAcceptanceKeepsCandidateOnlyCitationHardRejectedAfterLowConf
 			Summary: "Context pack wrote packet",
 			Facts:   contextPackCandidateFactsForTest("internal/runtime/agent/runner_tests_test.go"),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read docs/decisioning-north-star.md lines 1-6",
-			Output: strings.Join([]string{
+		readFileSourceBodyResult(
+			"docs/decisioning-north-star.md",
+			1,
+			6,
+			0,
+			strings.Join([]string{
 				"1:# Decisioning North Star",
 				"2:The model owns strategy; the harness owns contracts.",
 				"3:Final answers must be grounded in verified source evidence rather than unverified model prose.",
 			}, "\n"),
-		},
+		),
 	}
 	answer := "No. Free-form prose would move deterministic closeout language away from the contract boundary; `internal/runtime/agent/runner_tests_test.go` confirms the tested closeout behavior."
 	runner := &Runner{RuntimeBrief: brief}
@@ -5194,20 +5331,24 @@ func TestFinalAnswerAcceptanceTreatsLowConfidenceWrongSourceCitationAsAdvisory(t
 			Summary: "Context pack wrote packet",
 			Facts:   contextPackCandidateFactsForTest("docs/decisioning-north-star.md"),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read docs/decisioning-north-star.md lines 1-6",
-			Output: strings.Join([]string{
+		readFileSourceBodyResult(
+			"docs/decisioning-north-star.md",
+			1,
+			6,
+			0,
+			strings.Join([]string{
 				"1:# Decisioning North Star",
 				"2:The model owns strategy; the harness owns contracts.",
 				"3:Final answers must be grounded in verified source evidence rather than unverified model prose.",
 			}, "\n"),
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/runtime/agent/tools_surface.go lines 1-4",
-			Output:  "1:package agent\n2:func ToolSchemaExample() {}\n",
-		},
+		),
+		readFileSourceBodyResult(
+			"internal/runtime/agent/tools_surface.go",
+			1,
+			4,
+			0,
+			"1:package agent\n2:func ToolSchemaExample() {}\n",
+		),
 	}
 	answer := "No. Free-form prose would move deterministic closeout language away from the contract boundary in `internal/runtime/agent/tools_surface.go`."
 	runner := &Runner{RuntimeBrief: brief}
@@ -5305,11 +5446,15 @@ func TestFinalAnswerAcceptanceAllowsFixturePurposeSummary(t *testing.T) {
 
 func TestFinalAnswerAcceptanceRejectsNamedFileWhyAnswerWithUnrelatedBody(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Why does the TUI chat input first wrap to a newline in internal/surfaces/tui/app/rendering.go?")
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read internal/surfaces/tui/app/rendering.go lines 1-9",
-		Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/rendering.go",
+			1,
+			9,
+			0,
+			"1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+		),
+	}
 	answer := "`internal/surfaces/tui/app/rendering.go` contains `evidenceDisplayName`, which trims the raw tool name before display."
 	runner := &Runner{RuntimeBrief: brief}
 
@@ -5327,11 +5472,13 @@ func TestAcceptedAnswerEvidencePathsPreferObjectiveRelevantSourceBody(t *testing
 				"internal/surfaces/tui/app/rendering.go",
 			),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/surfaces/tui/app/chat_input.go lines 1-9",
-			Output:  "1:package app\n2:\n3:func syncChatInputHeight() {\n4:\t// chat input newline wrap keeps the first existing line visible instead of shifting upward\n5:}\n",
-		},
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/chat_input.go",
+			1,
+			9,
+			0,
+			"1:package app\n2:\n3:func syncChatInputHeight() {\n4:\t// chat input newline wrap keeps the first existing line visible instead of shifting upward\n5:}\n",
+		),
 	}
 	answer := "The chat input newline wrap issue is in `internal/surfaces/tui/app/chat_input.go`, where the input height sync keeps the first existing line visible."
 
@@ -5356,11 +5503,13 @@ func TestAcceptedAnswerEvidencePathsAliasIgnoresUnrelatedCandidateBody(t *testin
 			Summary: "Context pack wrote packet",
 			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/rendering.go"),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/surfaces/tui/app/rendering.go lines 1-9",
-			Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
-		},
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/rendering.go",
+			1,
+			9,
+			0,
+			"1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+		),
 	}
 	answer := "The TUI chat input newline wrap and upward shift issue is not established by the inspected source."
 
@@ -5377,12 +5526,10 @@ func TestReadOnlyPrefetchEvidenceDedupsWithModelReadAndKeepsSource(t *testing.T)
 			Tool:    workspace.ToolNamePrefetch,
 			Summary: "Read f1 README.md lines 1-1 (total lines: 1; source: prefetch)",
 			Output:  "1:Idiom is a local coding-agent harness.\n",
+			Paths:   []string{"README.md"},
+			Facts:   sourceBodyFactsForTest("README.md", 1, 1, 1),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 README.md lines 1-1 (total lines: 1)",
-			Output:  "1:Idiom is a local coding-agent harness.\n",
-		},
+		readFileSourceBodyResult("README.md", 1, 1, 1, "1:Idiom is a local coding-agent harness.\n"),
 	}
 
 	ledger := readOnlyAnswerabilityForResults(brief, results)
@@ -5429,11 +5576,7 @@ func TestReadOnlySourceBodyEvidenceSummary(t *testing.T) {
 	}
 
 	results := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read " + bodyPath + " lines 1-20",
-			Output:  "package agent\nfunc Run() {}\n",
-		},
+		readFileSourceBodyResult(bodyPath, 1, 20, 0, "package agent\nfunc Run() {}\n"),
 		{
 			Tool:    "search_content",
 			Summary: "Found 5 matching line(s).",
@@ -5475,11 +5618,7 @@ func TestReadOnlySourceBodyEvidenceSummary(t *testing.T) {
 
 	t.Run("no-candidates", func(t *testing.T) {
 		bodyOnly := []workspace.ToolResult{
-			{
-				Tool:    "read_file",
-				Summary: "Read " + bodyPath + " lines 1-20",
-				Output:  "package agent\nfunc Run() {}\n",
-			},
+			readFileSourceBodyResult(bodyPath, 1, 20, 0, "package agent\nfunc Run() {}\n"),
 		}
 		summary := readOnlySourceBodyEvidenceSummary(bodyOnly)
 		if summary == "" {
@@ -5543,20 +5682,24 @@ func TestReadOnlyCloseoutRejectsLowValueSourceInventoryAcrossConsumers(t *testin
 		PermissionProfile: "read_only_workspace",
 		Objective:         "what would it take to enable up and down arrow keys to iterate through the user's chat history?",
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read internal/surfaces/tui/app/app.go lines 1-8",
-		Output: strings.Join([]string{
-			"1:package app",
-			"2:",
-			"3:func truncateText(value string, max int) string {",
-			"4:\treturn value",
-			"5:}",
-			"6:func normalizeHistoryRole(value string) string {",
-			"7:\treturn strings.ToUpper(value[:1]) + value[1:]",
-			"8:}",
-		}, "\n"),
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/app.go",
+			1,
+			8,
+			0,
+			strings.Join([]string{
+				"1:package app",
+				"2:",
+				"3:func truncateText(value string, max int) string {",
+				"4:\treturn value",
+				"5:}",
+				"6:func normalizeHistoryRole(value string) string {",
+				"7:\treturn strings.ToUpper(value[:1]) + value[1:]",
+				"8:}",
+			}, "\n"),
+		),
+	}
 	answer := "For `what would it take to enable up and down arrow keys to iterate through the user's chat history?`, `internal/surfaces/tui/app/app.go` shows defines `truncateText`, defines `normalizeHistoryRole`, and `normalizeHistoryRole` returns `strings.ToUpper(value[:1]) + value[1:]`."
 
 	closeout := readOnlyClosureDecisionForResults(brief, results)
@@ -5598,6 +5741,8 @@ func TestReadOnlyPrefetchSourceBodyMakesEvidenceAnswerable(t *testing.T) {
 		Tool:    workspace.ToolNamePrefetch,
 		Summary: "Read f1 internal/labels/labels.go lines 1-5 (total lines: 5; source: prefetch)",
 		Output:  "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n",
+		Paths:   []string{"internal/labels/labels.go"},
+		Facts:   sourceBodyFactsForTest("internal/labels/labels.go", 1, 5, 5),
 	}}
 
 	closeout := readOnlyClosureDecisionForResults(brief, results)
@@ -5764,11 +5909,15 @@ func TestReadOnlyEvidencePacketDoesNotRenderGeneratedArtifactRedirectAsAnswer(t 
 		"- internal/runtime/agent/runner_core.go",
 		"Next exact source probe example: {\"tool\":\"read_file\",\"path\":\"internal/runtime/agent/runner_core.go\"}",
 	}, "\n")
-	childResults := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read internal/runtime/agent/runner_core.go lines 1-20",
-		Output:  "package agent\nfunc (r *Runner) Run() {}\n",
-	}}
+	childResults := []workspace.ToolResult{
+		readFileSourceBodyResult(
+			"internal/runtime/agent/runner_core.go",
+			1,
+			20,
+			0,
+			"package agent\nfunc (r *Runner) Run() {}\n",
+		),
+	}
 
 	packet, ok := buildReadOnlyEvidencePacket("Explain the runner.", answer, childResults)
 	if !ok {
@@ -5789,16 +5938,20 @@ func TestReadOnlyEvidencePacketDoesNotRenderGeneratedArtifactRedirectAsAnswer(t 
 
 func TestBuildReadOnlyEvidencePacketFromChildResultsAndAnswerText(t *testing.T) {
 	childResults := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read ./internal/runtime/agent/runner_core.go lines 4310-4370",
-			Output:  "package agent\nfunc readOnlyAnalysisReadyFromEvidence() bool { return true }\n",
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read .idiom/comprehension/views/pack.json lines 1-20",
-			Output:  `{"candidate_files":[{"path":"internal/runtime/agent/runner_core.go"}]}`,
-		},
+		readFileSourceBodyResult(
+			"./internal/runtime/agent/runner_core.go",
+			4310,
+			4370,
+			0,
+			"package agent\nfunc readOnlyAnalysisReadyFromEvidence() bool { return true }\n",
+		),
+		readFileSourceBodyResult(
+			".idiom/comprehension/views/pack.json",
+			1,
+			20,
+			0,
+			`{"candidate_files":[{"path":"internal/runtime/agent/runner_core.go"}]}`,
+		),
 		{
 			Tool:    "search_content",
 			Summary: "Found 1 matching line(s).",
@@ -5841,11 +5994,9 @@ func TestBuildReadOnlyEvidencePacketKeepsFoundFindingBullets(t *testing.T) {
 		"- Read internal/runtime/agent/implementation_flow.go lines 1-20",
 		"- Found task child runner creation in internal/runtime/agent/implementation_flow.go",
 	}, "\n")
-	childResults := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read internal/runtime/agent/implementation_flow.go lines 1-20",
-		Output:  "package agent\n",
-	}}
+	childResults := []workspace.ToolResult{
+		readFileSourceBodyResult("internal/runtime/agent/implementation_flow.go", 1, 20, 0, "package agent\n"),
+	}
 
 	packet, ok := buildReadOnlyEvidencePacket("Explain how delegated child runners are created.", answer, childResults)
 	if !ok {
@@ -5864,11 +6015,9 @@ func TestBuildReadOnlyEvidencePacketDropsLineOrientedSourceFindings(t *testing.T
 		"- 2:",
 		"- 3:import (",
 	}, "\n")
-	childResults := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read internal/runtime/agent/runner_core.go lines 1-20",
-		Output:  "1:package agent\n2:\n3:import (\n",
-	}}
+	childResults := []workspace.ToolResult{
+		readFileSourceBodyResult("internal/runtime/agent/runner_core.go", 1, 20, 0, "1:package agent\n2:\n3:import (\n"),
+	}
 
 	packet, ok := buildReadOnlyEvidencePacket("Explain runner behavior.", answer, childResults)
 	if !ok {
@@ -5890,11 +6039,15 @@ func TestBuildReadOnlyEvidencePacketDropsLineOrientedSourceFindings(t *testing.T
 
 func TestBuildReadOnlyEvidencePacketDropsCompactedLineSourceFindings(t *testing.T) {
 	answer := "Grounded findings:\n- ... 57:\tObjective string. 58:\tFindings []ReadOnlyEvidenceFinding. f3 internal/runtime/agent/evidence_readonly.go."
-	childResults := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read internal/runtime/agent/evidence_readonly.go lines 50-65",
-		Output:  "50:package agent\n57:\tObjective string\n58:\tFindings []ReadOnlyEvidenceFinding\n",
-	}}
+	childResults := []workspace.ToolResult{
+		readFileSourceBodyResult(
+			"internal/runtime/agent/evidence_readonly.go",
+			50,
+			65,
+			0,
+			"50:package agent\n57:\tObjective string\n58:\tFindings []ReadOnlyEvidenceFinding\n",
+		),
+	}
 
 	packet, ok := buildReadOnlyEvidencePacket("What is the role of evidence in this harness?", answer, childResults)
 	if !ok {
@@ -6445,11 +6598,13 @@ func TestSourceEvidencePendingRedirectsForBriefDropsIrrelevantWithoutScopeHints(
 			Summary: "Redirected internal/surfaces/tui/app/history_audit.go to code_navigate",
 			Output:  "Use code_navigate for source-body evidence in internal/surfaces/tui/app/history_audit.go.",
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/surfaces/tui/app/slash_commands.go lines 1-377 (total lines: 377)",
-			Output:  "func slashClear() { m.messages = nil }\n",
-		},
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/slash_commands.go",
+			1,
+			377,
+			377,
+			"func slashClear() { m.messages = nil }\n",
+		),
 	}
 
 	pending := sourceEvidencePendingRedirectsForBrief(brief, results)
@@ -6478,11 +6633,13 @@ func TestSourceEvidencePendingRedirectsForBriefDropsExhaustedObligation(t *testi
 			Summary: "Redirected internal/surfaces/tui/app/sessions.go to code_navigate",
 			Output:  "Use code_navigate for source-body evidence in internal/surfaces/tui/app/sessions.go.",
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/surfaces/tui/app/sessions_panel.go lines 1-219 (total lines: 219)",
-			Output:  "func renderSessionsPanelContent() {}\n",
-		},
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/sessions_panel.go",
+			1,
+			219,
+			219,
+			"func renderSessionsPanelContent() {}\n",
+		),
 		// Three failed code_navigate attempts on the obligation path.
 		{
 			Tool:    "code_navigate",
@@ -6527,11 +6684,13 @@ func TestSourceEvidencePendingRedirectsForBriefKeepsNonExhaustedObligation(t *te
 			Summary: "Redirected internal/surfaces/tui/app/sessions.go to code_navigate",
 			Output:  "Use code_navigate for source-body evidence in internal/surfaces/tui/app/sessions.go.",
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/surfaces/tui/app/sessions_panel.go lines 1-219 (total lines: 219)",
-			Output:  "func renderSessionsPanelContent() {}\n",
-		},
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/sessions_panel.go",
+			1,
+			219,
+			219,
+			"func renderSessionsPanelContent() {}\n",
+		),
 		// Only two failed code_navigate attempts — below the threshold.
 		{
 			Tool:    "code_navigate",
@@ -6632,11 +6791,14 @@ func TestSourceEvidenceStateTracksRedirectPendingUntilBodyEvidence(t *testing.T)
 		t.Fatal("redirect follow-up allowance must stay scoped to the redirected path")
 	}
 
-	results = append(results, workspace.ToolResult{
-		Tool: "code_navigate",
-		Output: "route_summary: Read internal/surfaces/tui/app/sessions.go lines 10-40 (total lines: 120)\n" +
+	results = append(results, codeNavigateSourceBodyResult(
+		"internal/surfaces/tui/app/sessions.go",
+		10,
+		40,
+		120,
+		"route_summary: Read internal/surfaces/tui/app/sessions.go lines 10-40 (total lines: 120)\n"+
 			"func (m sessionModel) moveDown() {\n\tm.cursor++\n}\n",
-	})
+	))
 	evidence = newToolResultEvidenceProjection(results).SourceEvidenceForPath("internal/surfaces/tui/app/sessions.go")
 
 	if !sourceEvidenceHasBody(evidence) {
@@ -6794,11 +6956,13 @@ func TestSourceEvidencePendingRedirectProgressAllowsOneOutlineBeforeBody(t *test
 			Summary: "Redirected internal/surfaces/tui/app/sessions.go to code_navigate",
 			Output:  "Use code_navigate for source-body evidence in internal/surfaces/tui/app/sessions.go.",
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/surfaces/tui/app/sessions_panel.go lines 1-219 (total lines: 219)",
-			Output:  "func renderSessionsPanelContent() {}\nfunc handleSessionsPanelKey() {}\n",
-		},
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/sessions_panel.go",
+			1,
+			219,
+			219,
+			"func renderSessionsPanelContent() {}\nfunc handleSessionsPanelKey() {}\n",
+		),
 	}
 
 	outline := workspace.ToolRequest{
@@ -6924,11 +7088,13 @@ func TestSourceEvidencePendingRedirectsForBriefDropsStaleRedirectAfterPlausibleB
 			Summary: "Redirected internal/surfaces/tui/app/implementation_dispatch.go to code_navigate",
 			Output:  "Use code_navigate for source-body evidence in internal/surfaces/tui/app/implementation_dispatch.go.",
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/surfaces/tui/app/sessions_panel.go lines 1-219 (total lines: 219)",
-			Output:  "func renderSessionsPanelContent() {}\nfunc handleSessionsPanelKey() {}\n",
-		},
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/sessions_panel.go",
+			1,
+			219,
+			219,
+			"func renderSessionsPanelContent() {}\nfunc handleSessionsPanelKey() {}\n",
+		),
 	}
 
 	if pending := sourceEvidencePendingRedirects(results); len(pending) != 1 {
@@ -7139,10 +7305,9 @@ func TestPlanExecutePlanningStateRequiredSourceProjectionSplitsParserVisibleSubm
 	state := DerivePlanExecutePlanningState(workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		RequiredEditPaths: []string{"a.go", "b.go"},
-	}, []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
-	}}, PlanExecutePlanningTransport{TextualToolParser: true})
+	}, []workspace.ToolResult{
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+	}, PlanExecutePlanningTransport{TextualToolParser: true})
 
 	if state.Mode != PlanExecutePlanningModeRequiredSource {
 		t.Fatalf("Mode = %q, want %q", state.Mode, PlanExecutePlanningModeRequiredSource)
@@ -7196,10 +7361,9 @@ func TestPlanExecutePlanningStateCandidateProjectionAllowsSubmitWithSelectedPath
 	state := DerivePlanExecutePlanningState(workerruntime.WorkerRuntimeBrief{
 		TaskFamily:       PlanThenExecutePlannerTaskFamily,
 		AllowedEditPaths: []string{"a.go", "b.go"},
-	}, []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
-	}}, PlanExecutePlanningTransport{TextualToolParser: true})
+	}, []workspace.ToolResult{
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+	}, PlanExecutePlanningTransport{TextualToolParser: true})
 
 	if state.Mode != PlanExecutePlanningModeAllowedCandidate {
 		t.Fatalf("Mode = %q, want %q", state.Mode, PlanExecutePlanningModeAllowedCandidate)
@@ -7220,11 +7384,15 @@ func TestDeriveTurnPhaseContractPlanExecuteOpenCandidateSourceRequiresConcreteSe
 			PermissionProfile: "guarded_workspace_write",
 			AllowedTools:      []string{"context_pack", "read_file", "search_content", "submit_plan"},
 		},
-		Results: []workspace.ToolResult{{
-			Tool:    "read_file",
-			Summary: "Read internal/capabilities/workspace/product_tools.go lines 1-114 (total lines: 114)",
-			Output:  "func (m *Manager) productEfforts(req ToolRequest) ToolResult { return ToolResult{} }",
-		}},
+		Results: []workspace.ToolResult{
+			readFileSourceBodyResult(
+				"internal/capabilities/workspace/product_tools.go",
+				1,
+				114,
+				114,
+				"func (m *Manager) productEfforts(req ToolRequest) ToolResult { return ToolResult{} }",
+			),
+		},
 	})
 
 	if contract.PhaseID != turnPhaseCandidateSource {
@@ -7244,11 +7412,15 @@ func TestDeriveTurnPhaseContractPlanExecuteTerminalRecoveryHidesReadActions(t *t
 			PermissionProfile: "guarded_workspace_write",
 			AllowedTools:      []string{"submit_plan"},
 		},
-		Results: []workspace.ToolResult{{
-			Tool:    "read_file",
-			Summary: "Read internal/workflows/productworkflow/coverage_gate.go lines 1-125 (total lines: 391)",
-			Output:  "func EvaluateCoverageGate() {}",
-		}},
+		Results: []workspace.ToolResult{
+			readFileSourceBodyResult(
+				"internal/workflows/productworkflow/coverage_gate.go",
+				1,
+				125,
+				391,
+				"func EvaluateCoverageGate() {}",
+			),
+		},
 	})
 
 	if contract.PhaseID != turnPhaseCandidateSource {
@@ -7272,8 +7444,8 @@ func TestDeriveTurnPhaseContractSubmitReadyNativeRequired(t *testing.T) {
 			RequiredEditPaths: []string{"a.go", "b.go"},
 		},
 		Results: []workspace.ToolResult{
-			{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"},
-			{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)"},
+			readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+			readFileSourceBodyResult("b.go", 1, 10, 10, "1:package b\n"),
 		},
 		Temperature:         0,
 		TopP:                1,
@@ -7310,10 +7482,9 @@ func TestDeriveTurnPhaseContractSubmitReadyTextual(t *testing.T) {
 			AllowedTools:      []string{"read_file", "submit_plan"},
 			RequiredEditPaths: []string{"a.go"},
 		},
-		Results: []workspace.ToolResult{{
-			Tool:    "read_file",
-			Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
-		}},
+		Results: []workspace.ToolResult{
+			readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+		},
 		TextualToolParser: true,
 	})
 
@@ -7343,10 +7514,9 @@ func TestPlanExecutePlanningStateSubmitReadyProjectionMatchesTransport(t *testin
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		RequiredEditPaths: []string{"a.go"},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+	}
 
 	textual := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true, ResponseFormatJSON: true})
 	if textual.Mode != PlanExecutePlanningModeSubmitReady {
@@ -7442,11 +7612,9 @@ func TestPlanExecuteTerminalTransportCompatibilityMatrix(t *testing.T) {
 		AllowedTools:      []string{"read_file", "code_navigate", "submit_plan"},
 		RequiredEditPaths: []string{"a.go"},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
-		Output:  "1:package a\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+	}
 
 	tests := []struct {
 		name                  string
@@ -7567,11 +7735,9 @@ func TestPlanExecutePlannerAuthorityProjectionParity(t *testing.T) {
 				AllowedTools:      []string{"read_file", "code_navigate", "search_content", "submit_plan", "edit_file"},
 				RequiredEditPaths: []string{"a.go", "b.go"},
 			},
-			results: []workspace.ToolResult{{
-				Tool:    "read_file",
-				Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
-				Output:  "1:package a\n",
-			}},
+			results: []workspace.ToolResult{
+				readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+			},
 			wantMode:    PlanExecutePlanningModeRequiredSource,
 			wantPhaseID: turnPhaseRequiredSource,
 			wantTools:   []string{"read_file", "code_navigate"},
@@ -7585,11 +7751,9 @@ func TestPlanExecutePlannerAuthorityProjectionParity(t *testing.T) {
 				RequiredEditPaths: []string{"pkg/feature.go"},
 				RequiredEvidence:  []string{string(workerruntime.RequiredEvidenceGitHistoryRationale)},
 			},
-			results: []workspace.ToolResult{{
-				Tool:    "read_file",
-				Summary: "Read f1 pkg/feature.go lines 1-10 (total lines: 10)",
-				Output:  "1:package pkg\n2:func Feature() bool { return true }\n",
-			}},
+			results: []workspace.ToolResult{
+				readFileSourceBodyResult("pkg/feature.go", 1, 10, 10, "1:package pkg\n2:func Feature() bool { return true }\n"),
+			},
 			wantMode:    PlanExecutePlanningModeHistoryPending,
 			wantPhaseID: turnPhaseHistoryPending,
 			wantTools:   []string{"history_range", "history_symbol"},
@@ -7602,11 +7766,9 @@ func TestPlanExecutePlannerAuthorityProjectionParity(t *testing.T) {
 				AllowedTools:      []string{"read_file", "code_navigate", "search_content", "submit_plan", "edit_file"},
 				RequiredEditPaths: []string{"a.go"},
 			},
-			results: []workspace.ToolResult{{
-				Tool:    "read_file",
-				Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
-				Output:  "1:package a\n",
-			}},
+			results: []workspace.ToolResult{
+				readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+			},
 			wantMode:    PlanExecutePlanningModeSubmitReady,
 			wantPhaseID: turnPhaseSubmitReadyTextual,
 			wantTools:   []string{"submit_plan"},
@@ -7793,11 +7955,9 @@ func TestPlanExecutePlanningStateAnchorRefreshWinsOverCandidateReadyAndHistory(t
 		t.Fatalf("pending history must not block bounded anchor refresh, got %q: %s", summary, errorText)
 	}
 
-	withRefresh := append(append([]workspace.ToolResult(nil), withoutHistory...), workspace.ToolResult{
-		Tool:    "read_file",
-		Summary: "Read a.go lines 1-10 (total lines: 10)",
-		Output:  "1:package a\n",
-	})
+	withRefresh := append(append([]workspace.ToolResult(nil), withoutHistory...),
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+	)
 
 	state = DerivePlanExecutePlanningState(brief, withRefresh, PlanExecutePlanningTransport{TextualToolParser: true})
 
@@ -7823,7 +7983,7 @@ func TestPlanExecuteRecoverySurfaceAnchorRefreshWinsOverSourceSatisfiedTerminal(
 		RequiredEditPaths: []string{"a.go"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -7870,7 +8030,7 @@ func TestDeriveTurnPhaseContractSourceSatisfiedTerminalSurface(t *testing.T) {
 		RequiredEditPaths: []string{"a.go"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: source-satisfied terminal shape required",
@@ -7951,13 +8111,13 @@ func TestDeriveTurnPhaseContractSubmitCorrectionAfterAnchorRefresh(t *testing.T)
 			RequiredEditPaths: []string{"a.go"},
 		},
 		Results: []workspace.ToolResult{
-			{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"},
+			readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
 			{
 				Tool:    "submit_plan",
 				Summary: "submit_plan rejected: required edit path coverage mismatch",
 				Error:   "submit_plan must use edits[] for changed required paths and top-level source_satisfied_paths for already-final required paths; invalid edit anchor(s): `a.go: old_text not found in current source`.",
 			},
-			{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "route_summary: Read Target in a.go lines 1-10\n1:package a"},
+			codeNavigateSourceBodyResult("a.go", 1, 10, 10, "route_summary: Read Target in a.go lines 1-10\n1:package a"),
 		},
 		TextualToolParser: true,
 	})
@@ -7983,8 +8143,8 @@ func TestDeriveTurnPhaseContractSubmitCorrectionIsSubmitPlanOnly(t *testing.T) {
 			RequiredEditPaths: []string{"a.go", "b.go"},
 		},
 		Results: []workspace.ToolResult{
-			{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"},
-			{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)"},
+			readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+			readFileSourceBodyResult("b.go", 1, 10, 10, "1:package b\n"),
 			{
 				Tool:    "submit_plan",
 				Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -8021,7 +8181,7 @@ func TestTurnPhaseContractInvalidActionClassesWinDuringNormalization(t *testing.
 			RequiredEditPaths: []string{"a.go"},
 		},
 		Results: []workspace.ToolResult{
-			{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"},
+			readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
 			{
 				Tool:    "submit_plan",
 				Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -8052,7 +8212,7 @@ func TestDeriveTurnPhaseContractMalformedSubmitPlanRecoveryUsesTextualOutput(t *
 			RequiredEditPaths: []string{"a.go"},
 		},
 		Results: []workspace.ToolResult{
-			{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"},
+			readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
 			{Tool: "tool_parse", Summary: "Malformed tool request rejected", Error: "decode tool request"},
 		},
 		SupportsNativeTools: true,
@@ -8243,11 +8403,13 @@ func TestDeriveTurnPhaseContractWriteReadyDropsSupersededPendingRedirect(t *test
 				Summary: "Redirected internal/surfaces/tui/app/implementation_dispatch.go to code_navigate",
 				Output:  "Use code_navigate for source-body evidence in internal/surfaces/tui/app/implementation_dispatch.go.",
 			},
-			{
-				Tool:    "read_file",
-				Summary: "Read f1 internal/surfaces/tui/app/sessions_panel.go lines 1-219 (total lines: 219)",
-				Output:  "func renderSessionsPanelContent() {}\nfunc handleSessionsPanelKey() {}\n",
-			},
+			readFileSourceBodyResult(
+				"internal/surfaces/tui/app/sessions_panel.go",
+				1,
+				219,
+				219,
+				"func renderSessionsPanelContent() {}\nfunc handleSessionsPanelKey() {}\n",
+			),
 		},
 		BaseAllowedTools: []string{"read_file", "code_navigate", "search_content", "edit_file", "apply_patch"},
 	})
@@ -8572,11 +8734,15 @@ func TestDeriveTurnPhaseContractUnscopedImplementationWriteReadyAfterSourceBody(
 			PermissionProfile: "guarded_workspace_write",
 			AllowedTools:      []string{"read_file", "search_content", "file_stats", "edit_file", "apply_patch", "source_sanity"},
 		},
-		Results: []workspace.ToolResult{{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/labels/labels.go lines 1-5 (total lines: 5)",
-			Output:  "func ShortLabel() string {\n\treturn \"Save changes\"\n}\n",
-		}},
+		Results: []workspace.ToolResult{
+			readFileSourceBodyResult(
+				"internal/labels/labels.go",
+				1,
+				5,
+				5,
+				"func ShortLabel() string {\n\treturn \"Save changes\"\n}\n",
+			),
+		},
 	})
 
 	if contract.Phase != "target_write_ready" {
@@ -8611,11 +8777,13 @@ func TestDeriveTurnPhaseContractTargetWriteReadyShowsPendingRedirectedSourceObli
 			AllowedTools:      []string{"read_file", "code_navigate", "search_content", "edit_file", "apply_patch"},
 		},
 		Results: []workspace.ToolResult{
-			{
-				Tool:    "read_file",
-				Summary: "Read f1 internal/surfaces/tui/app/sessions_panel.go lines 1-20 (total lines: 80)",
-				Output:  "package app\n\nfunc PanelVisible() bool {\n\treturn true\n}\n",
-			},
+			readFileSourceBodyResult(
+				"internal/surfaces/tui/app/sessions_panel.go",
+				1,
+				20,
+				80,
+				"package app\n\nfunc PanelVisible() bool {\n\treturn true\n}\n",
+			),
 			{
 				Tool:    "read_file",
 				Summary: "Redirected internal/surfaces/tui/app/sessions.go to code_navigate",
@@ -8653,11 +8821,15 @@ func TestDeriveTurnPhaseContractUnscopedImplementationDesignDocReadStaysTargetSo
 			PermissionProfile: "guarded_workspace_write",
 			AllowedTools:      []string{"read_file", "context_pack", "search_content", "edit_file", "apply_patch"},
 		},
-		Results: []workspace.ToolResult{{
-			Tool:    "read_file",
-			Summary: "Read f1 docs/design-tdd-coverage.md lines 1-200 (total lines: 815)",
-			Output:  "Phase 1: EARS And BDD Coverage Checks\n",
-		}},
+		Results: []workspace.ToolResult{
+			readFileSourceBodyResult(
+				"docs/design-tdd-coverage.md",
+				1,
+				200,
+				815,
+				"Phase 1: EARS And BDD Coverage Checks\n",
+			),
+		},
 	})
 
 	if contract.PhaseID != turnPhaseImplementationTargetSource {
@@ -8687,11 +8859,15 @@ func TestDeriveTurnPhaseContractUnscopedImplementationWrongTargetReadStaysTarget
 				"- `internal/runtime/agent/runner_core.go` (editable): matched task terms",
 			},
 		},
-		Results: []workspace.ToolResult{{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/surfaces/tui/app/app.go lines 1-55 (total lines: 55)",
-			Output:  "package app\n\ntype Model struct{}\n",
-		}},
+		Results: []workspace.ToolResult{
+			readFileSourceBodyResult(
+				"internal/surfaces/tui/app/app.go",
+				1,
+				55,
+				55,
+				"package app\n\ntype Model struct{}\n",
+			),
+		},
 	})
 
 	if contract.PhaseID != turnPhaseImplementationTargetSource {
@@ -8718,11 +8894,15 @@ func TestDeriveTurnPhaseContractSingleObjectiveTokenReadStaysTargetSource(t *tes
 				"- `cmd/idiom/lane_history.go` (read_only_evidence): related by calls relationship",
 			},
 		},
-		Results: []workspace.ToolResult{{
-			Tool:    "read_file",
-			Summary: "Read f1 cmd/idiom/lane_history.go lines 1-331 (total lines: 331)",
-			Output:  "package main\n\ntype laneHistoryEvent struct{}\n",
-		}},
+		Results: []workspace.ToolResult{
+			readFileSourceBodyResult(
+				"cmd/idiom/lane_history.go",
+				1,
+				331,
+				331,
+				"package main\n\ntype laneHistoryEvent struct{}\n",
+			),
+		},
 	})
 
 	if contract.PhaseID != turnPhaseImplementationTargetSource {
@@ -8748,11 +8928,15 @@ func TestDeriveTurnPhaseContractNonEditableTargetPacketReadStaysTargetSource(t *
 				"- `internal/surfaces/tui/app/model_state_test.go` (test): related coverage only",
 			},
 		},
-		Results: []workspace.ToolResult{{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/surfaces/tui/app/model_state_test.go lines 1-80 (total lines: 80)",
-			Output:  "package app\n\nfunc TestModelState(t *testing.T) {}\n",
-		}},
+		Results: []workspace.ToolResult{
+			readFileSourceBodyResult(
+				"internal/surfaces/tui/app/model_state_test.go",
+				1,
+				80,
+				80,
+				"package app\n\nfunc TestModelState(t *testing.T) {}\n",
+			),
+		},
 	})
 
 	if contract.PhaseID != turnPhaseImplementationTargetSource {
@@ -8787,11 +8971,15 @@ func TestDeriveTurnPhaseContractUnscopedImplementationPlausibleTargetReadBecomes
 				"- `internal/runtime/agent/runner_core.go` (editable): matched task terms",
 			},
 		},
-		Results: []workspace.ToolResult{{
-			Tool:    "read_file",
-			Summary: "Read f2 internal/surfaces/tui/app/sessions_panel.go lines 1-80 (total lines: 320)",
-			Output:  "package app\n\ntype sessionsPanelModel struct{}\n",
-		}},
+		Results: []workspace.ToolResult{
+			readFileSourceBodyResult(
+				"internal/surfaces/tui/app/sessions_panel.go",
+				1,
+				80,
+				320,
+				"package app\n\ntype sessionsPanelModel struct{}\n",
+			),
+		},
 	})
 
 	if contract.Phase != "target_write_ready" {
@@ -8815,16 +9003,20 @@ func TestDeriveTurnPhaseContractUnscopedImplementationStaysWriteReadyAfterMultip
 			AllowedTools:      []string{"read_file", "code_navigate", "search_content", "edit_file", "apply_patch", "source_sanity"},
 		},
 		Results: []workspace.ToolResult{
-			{
-				Tool:    "read_file",
-				Summary: "Read f1 docs/design-tdd-coverage.md lines 1-20 (total lines: 100)",
-				Output:  "Phase 1: EARS And BDD Coverage Checks\n",
-			},
-			{
-				Tool:    "read_file",
-				Summary: "Read f2 internal/workflows/productworkflow/coverage_gate_test.go lines 1-20 (total lines: 100)",
-				Output:  "func TestCoverageGate(t *testing.T) {}\n",
-			},
+			readFileSourceBodyResult(
+				"docs/design-tdd-coverage.md",
+				1,
+				20,
+				100,
+				"Phase 1: EARS And BDD Coverage Checks\n",
+			),
+			readFileSourceBodyResult(
+				"internal/workflows/productworkflow/coverage_gate_test.go",
+				1,
+				20,
+				100,
+				"func TestCoverageGate(t *testing.T) {}\n",
+			),
 		},
 	})
 
@@ -8906,19 +9098,23 @@ func TestDeriveTurnPhaseContractUnscopedImplementationWriteReadyAfterSymbolBody(
 			PermissionProfile: "guarded_workspace_write",
 			AllowedTools:      []string{"read_file", "code_navigate", "search_content", "edit_file", "apply_patch"},
 		},
-		Results: []workspace.ToolResult{{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output: strings.Join([]string{
-				"capability: read_symbol",
-				"language: go",
-				"routed_tool: go_read_symbol",
-				"route_summary: Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-8",
-				"1:func EvaluateCoverageGate() bool {",
-				"2:\treturn true",
-				"3:}",
-			}, "\n"),
-		}},
+		Results: []workspace.ToolResult{
+			codeNavigateSourceBodyResult(
+				"internal/workflows/productworkflow/coverage_gate.go",
+				1,
+				8,
+				0,
+				strings.Join([]string{
+					"capability: read_symbol",
+					"language: go",
+					"routed_tool: go_read_symbol",
+					"route_summary: Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-8",
+					"1:func EvaluateCoverageGate() bool {",
+					"2:\treturn true",
+					"3:}",
+				}, "\n"),
+			),
+		},
 	})
 
 	if contract.Phase != "target_write_ready" {
@@ -9041,11 +9237,15 @@ func TestDeriveTurnPhaseContractReadOnlyWorkspaceAllowsAnswerAfterEvidence(t *te
 			AllowedTools:      []string{"search_content", "read_file"},
 			Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: false, OpenObligations: []string{"evidence"}},
 		},
-		Results: []workspace.ToolResult{{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/labels/labels.go lines 1-5 (total lines: 5)",
-			Output:  "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n",
-		}},
+		Results: []workspace.ToolResult{
+			readFileSourceBodyResult(
+				"internal/labels/labels.go",
+				1,
+				5,
+				5,
+				"1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n",
+			),
+		},
 	})
 
 	if contract.Phase != "read_only_evidence_available" {
@@ -9070,11 +9270,13 @@ func TestDeriveCurrentTurnPhaseContractReadOnlyCompletionGateRejectionKeepsCorre
 		AllowedTools:      []string{"search_content", "read_file", "code_navigate"},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/labels/labels.go lines 1-5",
-			Output:  "package labels\nfunc ShortLabel() string { return \"Save changes\" }\n",
-		},
+		readFileSourceBodyResult(
+			"internal/labels/labels.go",
+			1,
+			5,
+			0,
+			"package labels\nfunc ShortLabel() string { return \"Save changes\" }\n",
+		),
 		{
 			Tool:    "completion_gate",
 			Summary: "Final answer rejected by blocker check",
@@ -9116,11 +9318,13 @@ func TestDeriveTurnPhaseContractReadOnlyConversationEvidenceAvailableKeepsProofR
 			AllowedTools:      []string{"search_content", "read_file", "code_navigate"},
 		},
 		Results: []workspace.ToolResult{
-			{
-				Tool:    "read_file",
-				Summary: "Read f1 internal/labels/labels.go lines 1-5",
-				Output:  "package labels\nfunc ShortLabel() string { return \"Save changes\" }\n",
-			},
+			readFileSourceBodyResult(
+				"internal/labels/labels.go",
+				1,
+				5,
+				0,
+				"package labels\nfunc ShortLabel() string { return \"Save changes\" }\n",
+			),
 			{Tool: "code_navigate", Summary: "Code navigation routed references via go_references"},
 		},
 	}
@@ -9211,10 +9415,9 @@ func TestDeriveTurnPhaseContractProjectsTypedRouteFields(t *testing.T) {
 			RequiredEditSnippets: []plancontract.RequiredEditSnippet{{ID: "snippet-a", Path: "a.go", Content: "func Run()"}},
 			AllowedTools:         []string{"read_file", "submit_plan"},
 		},
-		Results: []workspace.ToolResult{{
-			Tool:    "read_file",
-			Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
-		}},
+		Results: []workspace.ToolResult{
+			readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+		},
 		SupportsNativeTools: true,
 		ToolTransportMode:   "native",
 		ToolChoice:          "required",
@@ -9446,7 +9649,9 @@ func TestApplyTurnPhaseContractToNextActionStateReplacesForbiddenProbeGuidance(t
 			AllowedTools:      []string{"read_file", "search_content", "submit_plan"},
 			RequiredEditPaths: []string{"a.go"},
 		},
-		Results: []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"}},
+		Results: []workspace.ToolResult{
+			readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+		},
 	})
 	state := runnerNextActionState{
 		Phase:              "generic",
@@ -9479,7 +9684,9 @@ func TestNextActionStateSurfaceSummaryReconcilesWithPhaseContract(t *testing.T) 
 			AllowedTools:      []string{"read_file", "submit_plan"},
 			RequiredEditPaths: []string{"a.go"},
 		},
-		Results:           []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"}},
+		Results: []workspace.ToolResult{
+			readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+		},
 		TextualToolParser: true,
 	})
 	state := applyTurnPhaseContractToNextActionState(runnerNextActionState{
@@ -9523,10 +9730,9 @@ func TestWriteReadyNextActionStateDoesNotMarkAllowedWriteInvalid(t *testing.T) {
 			PermissionProfile: "guarded_workspace_write",
 			AllowedTools:      []string{"read_file", "edit_file", "apply_patch"},
 		},
-		Results: []workspace.ToolResult{{
-			Tool:    "read_file",
-			Summary: "Read f1 pkg/feature.go lines 1-20 (total lines: 20)",
-		}},
+		Results: []workspace.ToolResult{
+			readFileSourceBodyResult("pkg/feature.go", 1, 20, 20, "1:package pkg\n"),
+		},
 		TextualToolParser: true,
 		ToolTransportMode: "textual",
 	})
@@ -10041,9 +10247,9 @@ func TestPlanExecuteRecoveryStateReportsSubmitCorrectionBlockerAllowed(t *testin
 		Error:   "edits[0]: whole-file replace_all edit would rewrite existing source file /workspace/Colony/native/src/simulation/world/collapse_event.h; use a bounded anchored edit with old_text/new_text or start_line/end_line/content, or answer <<QUESTION>> with the exact missing body/anchor blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 native/src/simulation/world/collapse_event.h lines 1-63 (total lines: 63)", Output: "1:#pragma once\n63:};\n"},
+		readFileSourceBodyResult("native/src/simulation/world/collapse_event.h", 1, 63, 63, "1:#pragma once\n63:};\n"),
 		rejection,
-		{Tool: "read_file", Summary: "Read f2 native/src/simulation/world/collapse_event.h lines 1-63 (total lines: 63)", Output: "1:#pragma once\n63:};\n"},
+		readFileSourceBodyResult("native/src/simulation/world/collapse_event.h", 1, 63, 63, "1:#pragma once\n63:};\n"),
 		rejection,
 		rejection,
 	}
@@ -10078,7 +10284,7 @@ func TestPlanExecuteRecoveryStateProjectsNativeSubmitReady(t *testing.T) {
 		RequiredEditPaths: []string{"a.go"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
 	}
 	req := workspace.ToolRequest{Tool: workspace.ToolNameSubmitPlan}
 	rejected := workspace.ToolResult{Tool: workspace.ToolNameSubmitPlan, Summary: "native submit_plan retry required"}
@@ -10122,7 +10328,7 @@ func TestPlanExecuteRecoveryStateProjectsSourceSatisfiedTerminal(t *testing.T) {
 		Code:    workspace.SubmitPlanSourceSatisfiedTerminalRequiredCode,
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
 		rejected,
 	}
 	req := workspace.ToolRequest{Tool: workspace.ToolNameSubmitPlan}
@@ -10161,7 +10367,7 @@ func TestPlanExecuteRecoveryStateProjectsMalformedSubmitPlanRecoveryPhase(t *tes
 		Output:  `{"tool":"submit_plan","edits":"[]"}`,
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
 		rejected,
 	}
 	req := workspace.ToolRequest{Tool: workspace.ToolNameSubmitPlan}
@@ -10212,7 +10418,7 @@ func TestPlanExecuteRecoveryStateClassifiesSyntheticToolParseAsSubmitPlan(t *tes
 		Output:  `{"tool":"submit_plan","edits":"[]"}`,
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
 		rejected,
 	}
 	req := workspace.ToolRequest{Tool: "tool_parse"}
@@ -11126,11 +11332,15 @@ func TestRecoveryCardExposesWriteReadySurfaceWithoutStrategyText(t *testing.T) {
 			},
 		},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/surfaces/tui/app/sessions_panel.go lines 1-219 (total lines: 219)",
-		Output:  "func renderSessionsPanelContent() {}\nfunc handleSessionsPanelKey() {}\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/sessions_panel.go",
+			1,
+			219,
+			219,
+			"func renderSessionsPanelContent() {}\nfunc handleSessionsPanelKey() {}\n",
+		),
+	}
 
 	got := runner.renderRecoveryCardForRejectedActionWithTransport(
 		workspace.ToolRequest{Tool: "code_navigate", Path: "internal/surfaces/tui/app/model.go"},
@@ -11195,7 +11405,7 @@ func TestRecoveryCardForRejectedActionUsesEffectiveTextualFallbackTransport(t *t
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
 	}
 
 	got := runner.renderRecoveryCardForRejectedActionWithTransport(
@@ -12299,11 +12509,15 @@ func TestPlanThenExecuteLoopBudgetRecoveryRequiresTerminalOutcome(t *testing.T) 
 			TaskFamily: PlanThenExecutePlannerTaskFamily,
 		},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/workflows/productworkflow/coverage_gate.go lines 1-10 (total lines: 20)",
-		Output:  "1:package productworkflow\n2:\n3:func EvaluateCoverageGate() {}\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult(
+			"internal/workflows/productworkflow/coverage_gate.go",
+			1,
+			10,
+			20,
+			"1:package productworkflow\n2:\n3:func EvaluateCoverageGate() {}\n",
+		),
+	}
 	recovery, ok := runner.planThenExecuteLoopBudgetRecoveryPrompt(workspace.ToolRequest{
 		Tool:       "code_navigate",
 		Path:       "internal/workflows/productworkflow/coverage_gate.go",
@@ -12433,7 +12647,9 @@ func TestPlanExecuteCompletionGateRecoveryKeepsSubmitPlanBudget(t *testing.T) {
 		t.Fatalf("plan-execute source-read recovery should cap to one tool call, got %d", got.MaxTokens)
 	}
 
-	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10 (total lines: 10)"}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("a.txt", 1, 10, 10, "1:before\n"),
+	}
 
 	got = completionGateRecoveryChatOptionsForBackend(llama.ChatOptions{MaxTokens: 16384}, brief, results, true)
 
@@ -12453,7 +12669,7 @@ func TestPlanExecuteSourceSatisfiedTerminalRecoveryChatOptionsHideSubmitPlanTool
 		RequiredEditPaths: []string{"a.txt"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10 (total lines: 10)", Output: "before\n"},
+		readFileSourceBodyResult("a.txt", 1, 10, 10, "before\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: source-satisfied terminal shape required",
@@ -12909,16 +13125,8 @@ func TestDeterministicPlanExecuteAnchorRefreshOverridesTerminalReply(t *testing.
 	req, _, ok := runner.deterministicPlanExecuteGroundingRecoveryRequest(
 		"<<QUESTION>>: exact blocker: a.txt and b.txt cannot be updated from the rejected submit_plan evidence.",
 		[]workspace.ToolResult{
-			{
-				Tool:    "read_file",
-				Summary: "Read f1 a.txt lines 80-120 (total lines: 120)",
-				Output:  "80:before\n120:end\n",
-			},
-			{
-				Tool:    "read_file",
-				Summary: "Read f2 b.txt lines 1-20 (total lines: 20)",
-				Output:  "1:before\n20:end\n",
-			},
+			readFileSourceBodyResult("a.txt", 80, 120, 120, "80:before\n120:end\n"),
+			readFileSourceBodyResult("b.txt", 1, 20, 20, "1:before\n20:end\n"),
 			{
 				Tool:    "submit_plan",
 				Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -13644,11 +13852,15 @@ func TestPlanThenExecuteRequiredPathDiscoveryRejectsAlreadyReadPathUntilRemainin
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "internal/workflows/productworkflow/coverage_gate.go"},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "code_navigate",
-		Summary: "Code navigation routed read_symbol via go_read_symbol",
-		Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
-	}}
+	results := []workspace.ToolResult{
+		codeNavigateSourceBodyResult(
+			"cmd/idiom/product_workflow.go",
+			1515,
+			1640,
+			0,
+			"route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
+		),
+	}
 	_, errorText, reject := planThenExecuteRequiredPathDiscoveryRejection(workspace.ToolRequest{
 		Tool:       "code_navigate",
 		Path:       "cmd/idiom/product_workflow.go",
@@ -13671,20 +13883,24 @@ func TestPlanThenExecuteRequiredPathDiscoveryNamesSourceBodyRouteAfterRedirect(t
 		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
-		},
+		codeNavigateSourceBodyResult(
+			"cmd/idiom/product_workflow.go",
+			1515,
+			1640,
+			0,
+			"route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
+		),
 		{
 			Tool:    "read_file",
 			Summary: "Redirected cmd/idiom/product_workflow_test.go to code_navigate",
 			Output:  `candidate_request: {"tool":"code_navigate","capability":"file_outline","path":"cmd/idiom/product_workflow_test.go","language":"go"}`,
+			Paths:   []string{"cmd/idiom/product_workflow_test.go"},
 		},
 		{
 			Tool:    "code_navigate",
 			Summary: "Code navigation routed file_outline via go_file_outline",
 			Output:  "route_summary: Outlined 33 top-level declaration(s) in cmd/idiom/product_workflow_test.go.\n",
+			Paths:   []string{"cmd/idiom/product_workflow_test.go"},
 		},
 	}
 
@@ -13739,11 +13955,13 @@ func TestPlanThenExecuteRequiredPathDiscoveryAllowsBoundedInvalidAnchorRefreshBe
 		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "internal/workflows/productworkflow/coverage_gate.go"},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
-		},
+		codeNavigateSourceBodyResult(
+			"cmd/idiom/product_workflow.go",
+			1515,
+			1640,
+			0,
+			"route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
+		),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -13765,11 +13983,13 @@ func TestPlanThenExecuteRequiredPathDiscoveryAllowsBoundedInvalidAnchorRefreshBe
 func TestPlanThenExecuteRejectedPlanSourceRefreshAllowedForInvalidAnchor(t *testing.T) {
 	required := []string{"cmd/idiom/product_workflow.go", "internal/workflows/productworkflow/coverage_gate.go"}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
-		},
+		codeNavigateSourceBodyResult(
+			"cmd/idiom/product_workflow.go",
+			1515,
+			1640,
+			0,
+			"route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
+		),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -13809,16 +14029,8 @@ func TestPlanThenExecuteRejectedPlanSourceRefreshAllowedForInvalidAnchor(t *test
 func TestPlanThenExecuteRejectedPlanSourceRefreshAllowedForPreflightSyntaxValidation(t *testing.T) {
 	required := []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 cmd/idiom/product_workflow.go lines 80-125",
-			Output:  "80:type productValidateArtifactOutput struct {}\n100:func runProductValidateArtifact() {}\n",
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f2 cmd/idiom/product_workflow_test.go lines 1-80",
-			Output:  "1:package main\n",
-		},
+		readFileSourceBodyResult("cmd/idiom/product_workflow.go", 80, 125, 0, "80:type productValidateArtifactOutput struct {}\n100:func runProductValidateArtifact() {}\n"),
+		readFileSourceBodyResult("cmd/idiom/product_workflow_test.go", 1, 80, 0, "1:package main\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
@@ -13869,11 +14081,7 @@ func TestPlanThenExecuteCandidateRejectedPlanRefreshRedirectsToSyntaxLine(t *tes
 			Summary: "Context pack wrote candidates",
 			Facts:   contextPackCandidateFactsForTest("internal/workflows/productworkflow/coverage_gate.go"),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/workflows/productworkflow/coverage_gate.go lines 1-391 (total lines: 391)",
-			Output:  "1:package productworkflow\n",
-		},
+		readFileSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 391, 391, "1:package productworkflow\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
@@ -13907,11 +14115,13 @@ func TestPlanThenExecuteRequiredPathDiscoveryRejectsUnboundedInvalidAnchorRefres
 		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "internal/workflows/productworkflow/coverage_gate.go"},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
-		},
+		codeNavigateSourceBodyResult(
+			"cmd/idiom/product_workflow.go",
+			1515,
+			1640,
+			0,
+			"route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
+		),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -13960,16 +14170,20 @@ func TestPlanThenExecutePostReadinessDiscoveryRejectsMoreSearch(t *testing.T) {
 		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "internal/workflows/productworkflow/coverage_gate.go"},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
-		},
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-120\n\n1:func EvaluateCoverageGate() {}\n",
-		},
+		codeNavigateSourceBodyResult(
+			"cmd/idiom/product_workflow.go",
+			1515,
+			1640,
+			0,
+			"route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
+		),
+		codeNavigateSourceBodyResult(
+			"internal/workflows/productworkflow/coverage_gate.go",
+			1,
+			120,
+			0,
+			"route_summary: Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-120\n\n1:func EvaluateCoverageGate() {}\n",
+		),
 	}
 	summary, errorText, reject := planThenExecutePostReadinessDiscoveryRejection(workspace.ToolRequest{
 		Tool:    "search_content",
@@ -13996,16 +14210,20 @@ func TestPlanThenExecutePostReadinessDiscoveryRejectsAfterBadSubmitPlan(t *testi
 		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "internal/workflows/productworkflow/coverage_gate.go"},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
-		},
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-120\n\n1:func EvaluateCoverageGate() {}\n",
-		},
+		codeNavigateSourceBodyResult(
+			"cmd/idiom/product_workflow.go",
+			1515,
+			1640,
+			0,
+			"route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
+		),
+		codeNavigateSourceBodyResult(
+			"internal/workflows/productworkflow/coverage_gate.go",
+			1,
+			120,
+			0,
+			"route_summary: Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-120\n\n1:func EvaluateCoverageGate() {}\n",
+		),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -14121,11 +14339,13 @@ func TestPlanThenExecutePostReadinessDiscoveryRejectsAfterBadSubmitPlan(t *testi
 		t.Fatal("bounded read_file on a missing required coverage path with only outline evidence should be rejected; correction must use submit_plan")
 	}
 
-	withRefresh := append(append([]workspace.ToolResult(nil), results...), workspace.ToolResult{
-		Tool:    "code_navigate",
-		Summary: "Code navigation routed read_symbol via go_read_symbol",
-		Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n1515:func runProductTDD() {}",
-	})
+	withRefresh := append(append([]workspace.ToolResult(nil), results...), codeNavigateSourceBodyResult(
+		"cmd/idiom/product_workflow.go",
+		1515,
+		1640,
+		0,
+		"route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n1515:func runProductTDD() {}",
+	))
 
 	_, errorText, reject = planThenExecutePostReadinessDiscoveryRejection(workspace.ToolRequest{
 		Tool:      "read_file",
@@ -14164,16 +14384,20 @@ func TestPlanThenExecutePlanningStateTransitionsFromAnchorRefreshToSubmitCorrect
 		AllowedTools:      []string{"read_file", "code_navigate", "submit_plan"},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
-		},
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-120\n\n1:func EvaluateCoverageGate() {}\n",
-		},
+		codeNavigateSourceBodyResult(
+			"cmd/idiom/product_workflow.go",
+			1515,
+			1640,
+			0,
+			"route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
+		),
+		codeNavigateSourceBodyResult(
+			"internal/workflows/productworkflow/coverage_gate.go",
+			1,
+			120,
+			0,
+			"route_summary: Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-120\n\n1:func EvaluateCoverageGate() {}\n",
+		),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -14222,11 +14446,13 @@ func TestPlanThenExecutePlanningStateTransitionsFromAnchorRefreshToSubmitCorrect
 		t.Fatalf("contract should advertise only anchor-refresh read actions, phase=%q actions=%#v", contract.PhaseID, contract.ActionPolicy.AllowedActionClasses)
 	}
 
-	withRefresh := append(append([]workspace.ToolResult(nil), results...), workspace.ToolResult{
-		Tool:    "code_navigate",
-		Summary: "Code navigation routed read_symbol via go_read_symbol",
-		Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n1515:func runProductTDD() {}",
-	})
+	withRefresh := append(append([]workspace.ToolResult(nil), results...), codeNavigateSourceBodyResult(
+		"cmd/idiom/product_workflow.go",
+		1515,
+		1640,
+		0,
+		"route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n1515:func runProductTDD() {}",
+	))
 
 	state = DerivePlanExecutePlanningState(brief, withRefresh, PlanExecutePlanningTransport{TextualToolParser: true})
 
@@ -14247,11 +14473,13 @@ func TestPlanThenExecutePostReadinessAnchorRefreshWinsOverPendingHistory(t *test
 		AllowedTools:      []string{"read_file", "code_navigate", "history_range", "history_symbol", "submit_plan"},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
-		},
+		codeNavigateSourceBodyResult(
+			"cmd/idiom/product_workflow.go",
+			1515,
+			1640,
+			0,
+			"route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
+		),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -14296,21 +14524,25 @@ func TestPlanThenExecutePostReadinessRecoveryKeepsHistoryToolsAfterAnchorRefresh
 		AllowedTools:      []string{"read_file", "code_navigate", "history_range", "history_symbol", "submit_plan"},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
-		},
+		codeNavigateSourceBodyResult(
+			"cmd/idiom/product_workflow.go",
+			1515,
+			1640,
+			0,
+			"route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
+		),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
 			Error:   "invalid edit anchor(s): `cmd/idiom/product_workflow.go: old_text not found in current source`.",
 		},
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n1515:func runProductTDD() {}",
-		},
+		codeNavigateSourceBodyResult(
+			"cmd/idiom/product_workflow.go",
+			1515,
+			1640,
+			0,
+			"route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n1515:func runProductTDD() {}",
+		),
 	}
 	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
 
@@ -14441,7 +14673,7 @@ func TestPlanExecuteRequiredAnchorRefreshRedirectsUnboundedReadFile(t *testing.T
 		},
 	}}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f3 native/src/simulation/world/collapse_event.h lines 1-600 (total lines: 600)"},
+		readFileSourceBodyResult("native/src/simulation/world/collapse_event.h", 1, 600, 600, "1:#pragma once\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
@@ -14477,13 +14709,13 @@ func TestPlanExecuteRequiredAnchorRefreshRedirectsRepeatedBoundedReadFile(t *tes
 		RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp"},
 	}}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f3 native/src/core/colony_sim_tick.cpp lines 1-120 (total lines: 2616)"},
+		readFileSourceBodyResult("native/src/core/colony_sim_tick.cpp", 1, 120, 2616, "1:#include \"colony_sim_tick.h\"\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
 			Error:   "invalid edit anchor(s): `native/src/core/colony_sim_tick.cpp: old_text not found in current source`.",
 		},
-		{Tool: "read_file", Summary: "Read f3 native/src/core/colony_sim_tick.cpp lines 1-120 (total lines: 2616)"},
+		readFileSourceBodyResult("native/src/core/colony_sim_tick.cpp", 1, 120, 2616, "1:#include \"colony_sim_tick.h\"\n"),
 	}
 	req := workspace.ToolRequest{
 		Tool:      workspace.ToolNameReadFile,
@@ -14496,18 +14728,15 @@ func TestPlanExecuteRequiredAnchorRefreshRedirectsRepeatedBoundedReadFile(t *tes
 		t.Fatal("repeated bounded anchor-refresh window should not be accepted as new refresh evidence")
 	}
 
-	redirected, _, ok := runner.planThenExecuteRejectedPlanRefreshReadRedirect(req, results)
-	if !ok {
-		t.Fatal("expected repeated bounded anchor-refresh read_file to redirect to the next bounded window")
+	if redirected, _, ok := runner.planThenExecuteRejectedPlanRefreshReadRedirect(req, results); ok {
+		t.Fatalf("repeated bounded anchor-refresh read should not reopen source reads after refresh evidence; got %#v", redirected)
 	}
 
-	if redirected.Path != "native/src/core/colony_sim_tick.cpp" || redirected.StartLine <= 120 || redirected.EndLine < redirected.StartLine || redirected.EndLine-redirected.StartLine+1 > 400 {
-		t.Fatalf("redirect should advance to a later bounded window, got %#v", redirected)
+	state := DerivePlanExecutePlanningState(runner.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeSubmitCorrection {
+		t.Fatalf("post-refresh state should require submit correction, got %q", state.Mode)
 	}
 
-	if !planThenExecuteRejectedPlanSourceRefreshAllowedForScope(redirected, runner.RuntimeBrief.RequiredEditPaths, results) {
-		t.Fatalf("advanced refresh window should be allowed after repeated bounded read: %#v", redirected)
-	}
 }
 
 func TestPlanThenExecuteRequiredPathDiscoveryRejectsOutOfScopeInvalidAnchorRefresh(t *testing.T) {
@@ -16056,8 +16285,8 @@ func TestMutationCompletionGateAcceptsPlannerSourceSatisfiedWithReadEvidence(t *
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10 (total lines: 10)"},
-		{Tool: "read_file", Summary: "Read f2 b.txt lines 1-10 (total lines: 10)"},
+		readFileSourceBodyResult("a.txt", 1, 10, 10, "1:current a\n"),
+		readFileSourceBodyResult("b.txt", 1, 10, 10, "1:current b\n"),
 	}
 	answer := "Decision: source-satisfied\n- a.txt: already implemented; no changes needed.\n- b.txt: already implemented; no changes needed."
 
@@ -16103,8 +16332,8 @@ func TestMutationCompletionGateAcceptsUnscopedPlannerSourceSatisfiedWithReadEvid
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 pkg/feature.go lines 1-10 (total lines: 10)"},
-		{Tool: "read_file", Summary: "Read f2 pkg/feature_test.go lines 1-10 (total lines: 10)"},
+		readFileSourceBodyResult("pkg/feature.go", 1, 10, 10, "1:package pkg\n"),
+		readFileSourceBodyResult("pkg/feature_test.go", 1, 10, 10, "1:package pkg\n"),
 	}
 	answer := "Decision: source-satisfied\n- pkg/feature.go: requested final state is already present.\n- pkg/feature_test.go: current test coverage already contains the regression."
 
@@ -16194,7 +16423,7 @@ func TestMutationCompletionGateRejectsPlannerSourceSatisfiedWithoutPathEvidence(
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10"},
+		readFileSourceBodyResult("a.txt", 1, 10, 0, "1:current a\n"),
 	}
 	answer := "Decision: source-satisfied\n- a.txt: already implemented; no changes needed.\n- b.txt: already implemented; no changes needed."
 	got, rejected := runner.mutationCompletionRejection(answer, results)
@@ -16219,8 +16448,8 @@ func TestCompletionGateRecoveryPromptPointsPlanExecuteAtSubmitPlan(t *testing.T)
 	}
 
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10 (total lines: 10)"},
-		{Tool: "read_file", Summary: "Read f2 b.txt lines 1-10 (total lines: 10)"},
+		readFileSourceBodyResult("a.txt", 1, 10, 10, "1:current a\n"),
+		readFileSourceBodyResult("b.txt", 1, 10, 10, "1:current b\n"),
 	}
 	prompt, hideReads, ok := runner.completionGateRecoveryPrompt(results)
 
@@ -16282,8 +16511,8 @@ func TestCompletionGateRecoveryPromptPreservesSubmitPlanRejectionDetails(t *test
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10 (total lines: 10)"},
-		{Tool: "read_file", Summary: "Read f2 b.txt lines 1-10 (total lines: 10)"},
+		readFileSourceBodyResult("a.txt", 1, 10, 10, "1:current a\n"),
+		readFileSourceBodyResult("b.txt", 1, 10, 10, "1:current b\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
@@ -16323,8 +16552,8 @@ func TestRequiredPathCompletionRecoveryRejectionPreservesSubmitPlanDetails(t *te
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10 (total lines: 10)"},
-		{Tool: "read_file", Summary: "Read f2 b.txt lines 1-10 (total lines: 10)"},
+		readFileSourceBodyResult("a.txt", 1, 10, 10, "1:current a\n"),
+		readFileSourceBodyResult("b.txt", 1, 10, 10, "1:current b\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
@@ -16404,7 +16633,7 @@ func TestCompletionGateRecoveryPromptPrioritizesUnreadRequiredSource(t *testing.
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "route_summary: Read A in a.go lines 1-10\n\n1:func A() {}\n"},
+		codeNavigateSourceBodyResult("a.go", 1, 10, 0, "route_summary: Read A in a.go lines 1-10\n\n1:func A() {}\n"),
 		{Tool: "code_navigate", Summary: "Code navigation routed file_outline via go_file_outline", Output: "route_summary: Outlined 2 top-level declaration(s) in b.go.\n"},
 		{Tool: "search_content", Summary: "Found 2 matching line(s).", Output: "b.go:12:func TestB(t *testing.T)"},
 	}
@@ -16460,7 +16689,7 @@ func TestDeterministicPlanExecuteRequiredSourceReadStartsFreshPlanner(t *testing
 	}
 
 	req, _, ok = runner.deterministicPlanExecuteRequiredSourceRead([]workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10"},
+		readFileSourceBodyResult("a.txt", 1, 10, 0, "1:current a\n"),
 	})
 	if !ok || req.Tool != "read_file" || req.Path != "a.txt" {
 		t.Fatalf("expected deterministic recovery to advance the shallow required-path read, got %#v ok=%v", req, ok)
@@ -16471,7 +16700,7 @@ func TestDeterministicPlanExecuteRequiredSourceReadStartsFreshPlanner(t *testing
 	}
 
 	req, _, ok = runner.deterministicPlanExecuteRequiredSourceRead([]workspace.ToolResult{
-		{Tool: "read_file", Summary: "Redirected a.txt to code_navigate", Output: "a.txt requires file_outline"},
+		{Tool: "read_file", Summary: "Redirected a.txt to code_navigate", Output: "a.txt requires file_outline", Paths: []string{"a.txt"}},
 	})
 	if !ok || req.Tool != "read_file" || req.Path != "b.txt" {
 		t.Fatalf("expected deterministic recovery to skip attempted path and advance, got %#v ok=%v", req, ok)
@@ -16487,7 +16716,7 @@ func TestDeterministicPlanExecuteRequiredSourceReadStartsFreshPlanner(t *testing
 	}
 
 	req, _, ok = singlePathRunner.deterministicPlanExecuteRequiredSourceRead([]workspace.ToolResult{
-		{Tool: "read_file", Summary: "Redirected a.txt to code_navigate", Output: "a.txt requires file_outline"},
+		{Tool: "read_file", Summary: "Redirected a.txt to code_navigate", Output: "a.txt requires file_outline", Paths: []string{"a.txt"}},
 	})
 
 	if ok {
@@ -16506,11 +16735,7 @@ func TestDeterministicPlanExecuteRequiredSourceReadFollowsGenericCodeWindow(t *t
 	}
 
 	req, _, ok := runner.deterministicPlanExecuteRequiredSourceRead([]workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read cmd/idiom/product_workflow.go lines 1-180 (file has 2892 lines total)",
-			Output:  "1:package main",
-		},
+		readFileSourceBodyResult("cmd/idiom/product_workflow.go", 1, 180, 2892, "1:package main"),
 	})
 	if !ok || req.Tool != "code_navigate" || req.Capability != "file_outline" || req.Path != "cmd/idiom/product_workflow.go" {
 		t.Fatalf("generic code header read should deterministically advance to file_outline, got %#v ok=%v", req, ok)
@@ -16526,11 +16751,9 @@ func TestPlanExecuteRequiredSourceFollowupRedirectsRepeatedGenericRead(t *testin
 			RequiredEditPaths: []string{"cmd/idiom/product_workflow.go"},
 		},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read cmd/idiom/product_workflow.go lines 1-180 (total lines: 2893)",
-		Output:  "1:package main",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("cmd/idiom/product_workflow.go", 1, 180, 2893, "1:package main"),
+	}
 	req := workspace.ToolRequest{
 		Tool:      "read_file",
 		Path:      "cmd/idiom/product_workflow.go",
@@ -16553,11 +16776,9 @@ func TestPlanExecuteRequiredSourceFollowupRedirectsRepeatedGenericRead(t *testin
 
 func TestRepeatedRangeLessReadFileAllowsFullBodyReplay(t *testing.T) {
 	runner := &Runner{}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read a.go lines 1-3 (total lines: 3)",
-		Output:  "1:package a\n2:\n3:func A() {}\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("a.go", 1, 3, 3, "1:package a\n2:\n3:func A() {}\n"),
+	}
 	summary, errorText, reject := runner.repeatedRangeLessReadFileRejection(workspace.ToolRequest{
 		Tool: "read_file",
 		Path: "a.go",
@@ -16638,11 +16859,9 @@ func TestPlanThenExecuteRepeatedSymbolMissRedirectsToModelSelectedBoundedRead(t 
 
 func TestRepeatedRangeLessReadFileDoesNotMatchPathMentionedInBody(t *testing.T) {
 	runner := &Runner{}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read other.go lines 1-3 (total lines: 3)",
-		Output:  "1:package other\n2:// TODO: inspect a.go next\n3:func Other() {}\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("other.go", 1, 3, 3, "1:package other\n2:// TODO: inspect a.go next\n3:func Other() {}\n"),
+	}
 	_, _, reject := runner.repeatedRangeLessReadFileRejection(workspace.ToolRequest{
 		Tool: "read_file",
 		Path: "a.go",
@@ -16749,11 +16968,7 @@ func TestRepeatedRangeLessReadFileAfterOutlineRedirectsToSourceBodyShape(t *test
 func TestRepeatedRangeLessReadFileRedirectDoesNotRewriteAfterConcreteSource(t *testing.T) {
 	runner := &Runner{}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read cmd/idiom/product_workflow.go lines 1-3 (total lines: 3)",
-			Output:  "1:package main\n2:\n3:func runProductWorkflow() {}\n",
-		},
+		readFileSourceBodyResult("cmd/idiom/product_workflow.go", 1, 3, 3, "1:package main\n2:\n3:func runProductWorkflow() {}\n"),
 	}
 	_, _, ok := runner.repeatedRangeLessReadFileRedirect(workspace.ToolRequest{
 		Tool: "read_file",
@@ -16774,11 +16989,9 @@ func TestPlanExecuteRequiredSourceFollowupRedirectAllowsAdvancingRange(t *testin
 			RequiredEditPaths: []string{"internal/workflows/productworkflow/coverage_gate.go"},
 		},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read internal/workflows/productworkflow/coverage_gate.go lines 1-180 (total lines: 338)",
-		Output:  "1:package productworkflow",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 180, 338, "1:package productworkflow"),
+	}
 	req := workspace.ToolRequest{
 		Tool:      "read_file",
 		Path:      "internal/workflows/productworkflow/coverage_gate.go",
@@ -16805,11 +17018,9 @@ func TestPlanExecuteRequiredSourceFollowupRedirectsLargeGoRangeToOutline(t *test
 			RequiredEditPaths: []string{"cmd/idiom/product_workflow_test.go"},
 		},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read cmd/idiom/product_workflow_test.go lines 1-300 (total lines: 6870)",
-		Output:  "1:package main",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("cmd/idiom/product_workflow_test.go", 1, 300, 6870, "1:package main"),
+	}
 	req := workspace.ToolRequest{
 		Tool:      "read_file",
 		Path:      "cmd/idiom/product_workflow_test.go",
@@ -16883,16 +17094,14 @@ func TestPlanExecuteRequiredSourceFollowupRedirectsSatisfiedPathDriftToPendingPa
 		},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read ValidateCoverage in internal/workflows/productworkflow/coverage_gate.go lines 20-80\n\n20:func ValidateCoverage() {}\n",
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read cmd/idiom/product_workflow.go lines 1-180 (total lines: 2893)",
-			Output:  "1:package main",
-		},
+		codeNavigateSourceBodyResult(
+			"internal/workflows/productworkflow/coverage_gate.go",
+			20,
+			80,
+			0,
+			"route_summary: Read ValidateCoverage in internal/workflows/productworkflow/coverage_gate.go lines 20-80\n\n20:func ValidateCoverage() {}\n",
+		),
+		readFileSourceBodyResult("cmd/idiom/product_workflow.go", 1, 180, 2893, "1:package main"),
 		{
 			Tool:    "code_navigate",
 			Summary: "Code navigation routed file_outline via go_file_outline",
@@ -16936,11 +17145,13 @@ func TestPlanExecuteRequiredSourceFollowupRedirectPreservesInvalidAnchorRefresh(
 		},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
-		},
+		codeNavigateSourceBodyResult(
+			"cmd/idiom/product_workflow.go",
+			1515,
+			1640,
+			0,
+			"route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
+		),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -16974,16 +17185,14 @@ func TestPlanExecuteReadySourceRefreshRequiresRejectedPlanAnchorGap(t *testing.T
 		},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1396-1671\n\n1396:func runProductTDD() {}\n",
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/workflows/productworkflow/coverage_gate.go lines 1-300 (total lines: 338)",
-			Output:  "1:package productworkflow",
-		},
+		codeNavigateSourceBodyResult(
+			"cmd/idiom/product_workflow.go",
+			1396,
+			1671,
+			0,
+			"route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1396-1671\n\n1396:func runProductTDD() {}\n",
+		),
+		readFileSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 300, 338, "1:package productworkflow"),
 	}
 	req := workspace.ToolRequest{
 		Tool:            "read_file",
@@ -17024,11 +17233,15 @@ func TestPlanExecuteReadySourceRefreshRejectsBroadOrExhaustedReads(t *testing.T)
 			RequiredEditPaths: []string{"cmd/idiom/product_workflow.go"},
 		},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "code_navigate",
-		Summary: "Code navigation routed read_symbol via go_read_symbol",
-		Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1396-1671\n\n1396:func runProductTDD() {}\n",
-	}}
+	results := []workspace.ToolResult{
+		codeNavigateSourceBodyResult(
+			"cmd/idiom/product_workflow.go",
+			1396,
+			1671,
+			0,
+			"route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1396-1671\n\n1396:func runProductTDD() {}\n",
+		),
+	}
 	rangeLess := workspace.ToolRequest{
 		Tool:            "read_file",
 		Path:            "cmd/idiom/product_workflow.go",
@@ -17081,6 +17294,7 @@ func TestDeterministicPlanExecuteRequiredSourceReadFollowsRedirectedOutline(t *t
 			Tool:    "read_file",
 			Summary: "Redirected cmd/idiom/product_workflow.go to code_navigate",
 			Output:  `The request targets go code. Capability route: file_outline via adapter code_navigate instead of raw read_file.`,
+			Paths:   []string{"cmd/idiom/product_workflow.go"},
 		},
 	})
 	if !ok || req.Tool != "code_navigate" || req.Capability != "file_outline" || req.Path != "cmd/idiom/product_workflow.go" {
@@ -17092,10 +17306,12 @@ func TestDeterministicPlanExecuteRequiredSourceReadFollowsRedirectedOutline(t *t
 			Tool:    "read_file",
 			Summary: "Redirected cmd/idiom/product_workflow.go to code_navigate",
 			Output:  `The request targets go code. Capability route: file_outline via adapter code_navigate instead of raw read_file.`,
+			Paths:   []string{"cmd/idiom/product_workflow.go"},
 		},
 		{
 			Tool:    "code_navigate",
 			Summary: "Code navigation routed file_outline via go_file_outline",
+			Paths:   []string{"cmd/idiom/product_workflow.go"},
 			Output: strings.Join([]string{
 				"capability: file_outline",
 				"route_summary: Outlined 2 top-level declaration(s) in cmd/idiom/product_workflow.go.",
@@ -17122,11 +17338,7 @@ func TestDeterministicPlanExecuteRequiredSourceReadFallbackAdvancesPastReadWindo
 	}
 
 	req, _, ok := runner.deterministicPlanExecuteRequiredSourceRead([]workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read cmd/idiom/product_workflow_test.go lines 1-180 (total lines: 2893)",
-			Output:  "1:package main",
-		},
+		readFileSourceBodyResult("cmd/idiom/product_workflow_test.go", 1, 180, 2893, "1:package main"),
 		{
 			Tool:    "code_navigate",
 			Summary: "Code navigation routed file_outline via go_file_outline",
@@ -17159,19 +17371,12 @@ func TestPlanExecuteUnavailableSearchRedirectsToPendingRequiredSourceRead(t *tes
 		},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read cmd/idiom/product_workflow_test.go lines 1-300 (total lines: 6795)",
-			Output:  "1:package main",
-		},
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow.go", 1515, 1640, 0, "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n"),
+		readFileSourceBodyResult("cmd/idiom/product_workflow_test.go", 1, 300, 6795, "1:package main"),
 		{
 			Tool:    "code_navigate",
 			Summary: "Code navigation routed file_outline via go_file_outline",
+			Paths:   []string{"cmd/idiom/product_workflow_test.go"},
 			Output: strings.Join([]string{
 				"capability: file_outline",
 				"route_summary: Outlined 222 top-level declaration(s) in cmd/idiom/product_workflow_test.go. Includes declaration tags and suggested move batches in the output.",
@@ -17218,11 +17423,9 @@ func TestPlanExecuteUnavailableSearchFallsBackToRequiredSourceGuidance(t *testin
 			},
 		},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "code_navigate",
-		Summary: "Code navigation routed read_symbol via go_read_symbol",
-		Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
-	}}
+	results := []workspace.ToolResult{
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow.go", 1515, 1640, 0, "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n"),
+	}
 	action, ok := runner.planThenExecuteRequiredSourceSurfaceAction(workspace.ToolRequest{
 		Tool:    "search_content",
 		Path:    ".",
@@ -17264,10 +17467,12 @@ func TestDeterministicPlanExecuteRequiredSourceReadUsesLargeFileOutlinePreview(t
 			Tool:    "read_file",
 			Summary: "Redirected cmd/idiom/product_workflow_test.go to code_navigate",
 			Output:  `The request targets go code. Capability route: file_outline via adapter code_navigate instead of raw read_file.`,
+			Paths:   []string{"cmd/idiom/product_workflow_test.go"},
 		},
 		{
 			Tool:    "code_navigate",
 			Summary: "Code navigation routed file_outline via go_file_outline",
+			Paths:   []string{"cmd/idiom/product_workflow_test.go"},
 			Output: strings.Join([]string{
 				"capability: file_outline",
 				"route_summary: Outlined 222 top-level declaration(s) in cmd/idiom/product_workflow_test.go. Includes declaration tags and suggested move batches in the output.",
@@ -17299,10 +17504,12 @@ func TestDeterministicPlanExecuteRequiredSourceReadBoundsLargeFileOutlineWithout
 			Tool:    "read_file",
 			Summary: "Redirected cmd/idiom/product_workflow_test.go to code_navigate",
 			Output:  `The request targets go code. Capability route: file_outline via adapter code_navigate instead of raw read_file.`,
+			Paths:   []string{"cmd/idiom/product_workflow_test.go"},
 		},
 		{
 			Tool:    "code_navigate",
 			Summary: "Code navigation routed file_outline via go_file_outline",
+			Paths:   []string{"cmd/idiom/product_workflow_test.go"},
 			Output: strings.Join([]string{
 				"capability: file_outline",
 				"route_summary: Outlined 222 top-level declaration(s) in cmd/idiom/product_workflow_test.go. Includes declaration tags and suggested move batches in the output.",
@@ -17377,11 +17584,13 @@ func TestCompletionGateRecoveryPromptHidesReadsAfterCandidateScopeRead(t *testin
 	}
 
 	prompt, hideReads, ok := runner.completionGateRecoveryPrompt([]workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read f10 internal/surfaces/tui/app/rendering.go lines 1-180",
-			Output:  "rightInfo := statusStyle.Render(serverState + \"  \" + textutil.Fallback(m.modelID, \"unknown\"))",
-		},
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/rendering.go",
+			1,
+			180,
+			0,
+			"rightInfo := statusStyle.Render(serverState + \"  \" + textutil.Fallback(m.modelID, \"unknown\"))",
+		),
 	})
 	if !ok {
 		t.Fatalf("expected completion gate recovery prompt for planner phase with candidate scope")
@@ -17423,11 +17632,7 @@ func TestCompletionGateRecoveryPromptKeepsUnreadCandidateReadVisible(t *testing.
 	}
 
 	prompt, hideReads, ok := runner.completionGateRecoveryPrompt([]workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 pkg/feature.go lines 1-4 (total lines: 4)",
-			Output:  "1:package pkg\n2:\n3:func Hardened() bool { return true }\n",
-		},
+		readFileSourceBodyResult("pkg/feature.go", 1, 4, 4, "1:package pkg\n2:\n3:func Hardened() bool { return true }\n"),
 	})
 	if !ok {
 		t.Fatalf("expected completion gate recovery prompt for candidate scope")
@@ -17464,11 +17669,7 @@ func TestCompletionGateRecoveryPromptForCandidateScopeFinalAnswerHidesReads(t *t
 	}
 
 	prompt, hideReads, ok := runner.completionGateRecoveryPrompt([]workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 pkg/feature.go lines 1-4 (total lines: 4)",
-			Output:  "1:package pkg\n2:\n3:func Hardened() bool { return true }\n",
-		},
+		readFileSourceBodyResult("pkg/feature.go", 1, 4, 4, "1:package pkg\n2:\n3:func Hardened() bool { return true }\n"),
 		{
 			Tool:    "completion_gate",
 			Summary: "Plan-execute completion gate rejected final answer",
@@ -17716,8 +17917,8 @@ func TestPlanExecuteReadyToSubmitCapsCloseoutBudget(t *testing.T) {
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"internal/surfaces/tui/app/app.go", "internal/runtime/agent/runner_core.go"},
 	}, []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 internal/surfaces/tui/app/app.go lines 1-56 (total lines: 56)"},
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read Runner.Run in internal/runtime/agent/runner_core.go lines 88-210"},
+		readFileSourceBodyResult("internal/surfaces/tui/app/app.go", 1, 56, 56, ""),
+		codeNavigateSourceBodyResult("internal/runtime/agent/runner_core.go", 88, 210, 0, "Read Runner.Run in internal/runtime/agent/runner_core.go lines 88-210"),
 	}, true)
 
 	if opts.EnableThinking == nil || *opts.EnableThinking {
@@ -17751,8 +17952,8 @@ func TestPlanExecuteReadyToSubmitForcesSubmitPlanOnlyWhenAvailable(t *testing.T)
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"internal/surfaces/tui/app/app.go", "internal/runtime/agent/runner_core.go"},
 	}, []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 internal/surfaces/tui/app/app.go lines 1-56 (total lines: 56)"},
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read Runner.Run in internal/runtime/agent/runner_core.go lines 88-210"},
+		readFileSourceBodyResult("internal/surfaces/tui/app/app.go", 1, 56, 56, ""),
+		codeNavigateSourceBodyResult("internal/runtime/agent/runner_core.go", 88, 210, 0, "Read Runner.Run in internal/runtime/agent/runner_core.go lines 88-210"),
 	}, true)
 
 	if opts.ToolChoice != "required" {
@@ -17776,8 +17977,8 @@ func TestPlanExecuteSubmitPlanOnlySurfaceRejection(t *testing.T) {
 		RequiredEditPaths: []string{"a.go", "a_test.go"},
 	}}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-20 (total lines: 20)"},
-		{Tool: "read_file", Summary: "Read f2 a_test.go lines 1-20 (total lines: 20)"},
+		readFileSourceBodyResult("a.go", 1, 20, 20, ""),
+		readFileSourceBodyResult("a_test.go", 1, 20, 20, ""),
 	}
 
 	summary, errorText, prompt, reject := runner.planThenExecuteSubmitPlanOnlySurfaceRejection(
@@ -17816,7 +18017,7 @@ func TestPlanExecuteSubmitPlanOnlySurfaceRejectsEvenWhenToolListDriftsOpen(t *te
 		RequiredEditPaths: []string{"a.go"},
 	}}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-20 (total lines: 20)", Output: "1:package a\n"},
+		readFileSourceBodyResult("a.go", 1, 20, 20, "1:package a\n"),
 	}
 
 	_, _, _, reject := runner.planThenExecuteSubmitPlanOnlySurfaceRejection(
@@ -17837,7 +18038,7 @@ func TestPlanExecuteSubmitPlanOnlySurfaceRejectsAfterCandidateReadyRejection(t *
 		AllowedEditPaths:  []string{"pkg/feature.go"},
 	}}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 pkg/feature.go lines 1-20 (total lines: 20)", Output: "1:package pkg\n"},
+		readFileSourceBodyResult("pkg/feature.go", 1, 20, 20, "1:package pkg\n"),
 		{
 			Tool:    "search_content",
 			Summary: "Plan-execute candidate source already ready",
@@ -17864,8 +18065,8 @@ func TestPlanExecuteSubmitCorrectionSubmitPlanOnlySurfaceRejectsStaleExits(t *te
 		RequiredEditPaths: []string{"a.go", "a_test.go"},
 	}}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-20 (total lines: 20)", Output: "1:package a\n"},
-		{Tool: "read_file", Summary: "Read f2 a_test.go lines 1-20 (total lines: 20)", Output: "1:package a\n"},
+		readFileSourceBodyResult("a.go", 1, 20, 20, "1:package a\n"),
+		readFileSourceBodyResult("a_test.go", 1, 20, 20, "1:package a\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -17909,14 +18110,14 @@ func TestPlanExecuteLiveInvalidAnchorSequenceKeepsAnchorRefreshSurface(t *testin
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f3 native/src/core/colony_sim.h lines 1-100 (total lines: 2001)"},
-		{Tool: "read_file", Summary: "Read f7 native/tests/test_quality_inventory_bindings.cpp lines 1-100 (total lines: 355)"},
+		readFileSourceBodyResult("native/src/core/colony_sim.h", 1, 100, 2001, ""),
+		readFileSourceBodyResult("native/tests/test_quality_inventory_bindings.cpp", 1, 100, 355, ""),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
 			Error:   "submit_plan must use edits[] for changed required paths and top-level source_satisfied_paths for already-final required paths; invalid edit anchor(s): `native/src/core/colony_sim.h: old_text not found in current source`, `native/tests/test_quality_inventory_bindings.cpp: old_text not found in current source`.",
 		},
-		{Tool: "read_file", Summary: "Read f3 native/src/core/colony_sim.h lines 1540-1620 (total lines: 2001)"},
+		readFileSourceBodyResult("native/src/core/colony_sim.h", 1540, 1620, 2001, ""),
 	}
 
 	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
@@ -17989,11 +18190,9 @@ func TestPlanExecuteCandidateReadyTerminalPromptIncludesSubmitSkeleton(t *testin
 		PermissionProfile: "guarded_workspace_write",
 		AllowedEditPaths:  []string{"internal/workflows/productworkflow/coverage_gate.go"},
 	}}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/workflows/productworkflow/coverage_gate.go lines 1-391 (total lines: 391)",
-		Output:  "1:package productworkflow\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 391, 391, "1:package productworkflow\n"),
+	}
 
 	prompt := runner.planThenExecuteSubmitReadyTerminalPrompt("Candidate source already ready", results, false)
 	for _, want := range []string{
@@ -18017,8 +18216,8 @@ func TestPlanExecuteSubmitCorrectionTerminalPromptIsSubmitPlanOnly(t *testing.T)
 		RequiredEditPaths: []string{"a.go", "b.go"},
 	}}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
-		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+		readFileSourceBodyResult("b.go", 1, 10, 10, "1:package b\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -18067,11 +18266,7 @@ func TestPlanExecuteTextualAllowedToolsSubmitReadyDoesNotUseStaleReadSurface(t *
 		RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp", "native/src/simulation/world/collapse_event.cpp", "native/tests/test_collapse_event.cpp"},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read f6 native/src/core/colony_sim_tick.cpp lines 1-180 (total lines: 2616)",
-			Output:  "1:#include \"simulation/world/collapse_event.h\"\n",
-		},
+		readFileSourceBodyResult("native/src/core/colony_sim_tick.cpp", 1, 180, 2616, "1:#include \"simulation/world/collapse_event.h\"\n"),
 		{
 			Tool:    "read_file",
 			Summary: "Required new-file path does not exist yet",
@@ -18105,16 +18300,8 @@ func TestPlanExecuteSubmitReadyTransitionClearsLiveStaleReadSurface(t *testing.T
 		},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read f9 native/src/simulation/world/collapse_event.h lines 1-50 (total lines: 63)",
-			Output:  "1:#pragma once\n",
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f9 native/src/simulation/world/collapse_event.h lines 50-63 (total lines: 63)",
-			Output:  "50:};\n",
-		},
+		readFileSourceBodyResult("native/src/simulation/world/collapse_event.h", 1, 50, 63, "1:#pragma once\n"),
+		readFileSourceBodyResult("native/src/simulation/world/collapse_event.h", 50, 63, 63, "50:};\n"),
 		{
 			Tool:    "read_file",
 			Summary: "Required new-file path does not exist yet",
@@ -18125,11 +18312,7 @@ func TestPlanExecuteSubmitReadyTransitionClearsLiveStaleReadSurface(t *testing.T
 			Summary: "Required new-file path does not exist yet",
 			Error:   "path \"native/tests/test_collapse_event.cpp\" is in your required_edit_paths but does not exist on disk yet - this is a NEW FILE you must create.",
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f7 native/src/core/colony_sim_tick.cpp lines 120-180 (total lines: 2616)",
-			Output:  "120:tickCollapseEvents(world);\n",
-		},
+		readFileSourceBodyResult("native/src/core/colony_sim_tick.cpp", 120, 180, 2616, "120:tickCollapseEvents(world);\n"),
 		gitHistoryRangeResult("native/src/core/colony_sim_tick.cpp"),
 		gitHistoryRangeResult("native/src/simulation/world/collapse_event.h"),
 		{
@@ -18193,7 +18376,7 @@ func TestPlanExecuteTextualAllowedToolsPreservesSourceSatisfiedTerminalNoToolCon
 		RequiredEditPaths: []string{"a.go"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: source-satisfied terminal shape required",
@@ -18281,6 +18464,8 @@ func TestPlanExecuteTextualAllowedToolsKeepsHistoryWhenCandidateReadyNeedsHistor
 			Tool:    "read_file",
 			Summary: "Read f1 pkg/feature.go lines 1-10 (total lines: 10)",
 			Output:  "1:package pkg\n",
+			Paths:   []string{"pkg/feature.go"},
+			Facts:   sourceBodyFactsForTest("pkg/feature.go", 1, 10, 10),
 		},
 		{
 			Tool:    "read_file",
@@ -18325,6 +18510,8 @@ func TestPlanExecuteTextualAllowedToolsRestrictsToHistoryToolsWhenHistoryPending
 			Tool:    "read_file",
 			Summary: "Read f1 pkg/feature.go lines 1-10 (total lines: 10)",
 			Output:  "1:package pkg\n",
+			Paths:   []string{"pkg/feature.go"},
+			Facts:   sourceBodyFactsForTest("pkg/feature.go", 1, 10, 10),
 		},
 		{
 			Tool:    "read_file",
@@ -18373,15 +18560,15 @@ func TestPlanExecuteCandidateTerminalSubmitPlanWaitsForUnreadAllowedCandidate(t 
 		AllowedEditPaths: []string{"pkg/feature.go", "pkg/feature_test.go"},
 	}
 	if planThenExecuteTerminalSubmitPlanAllowed(brief, []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 pkg/feature.go lines 1-4"},
+		readFileSourceBodyResult("pkg/feature.go", 1, 4, 4, ""),
 	}) {
 
 		t.Fatal("candidate scope with unread allowed candidates should not collapse textual surface to submit_plan-only")
 	}
 
 	if !planThenExecuteTerminalSubmitPlanAllowed(brief, []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 pkg/feature.go lines 1-4"},
-		{Tool: "read_file", Summary: "Read f2 pkg/feature_test.go lines 1-4"},
+		readFileSourceBodyResult("pkg/feature.go", 1, 4, 4, ""),
+		readFileSourceBodyResult("pkg/feature_test.go", 1, 4, 4, ""),
 	}) {
 
 		t.Fatal("candidate scope should become terminal once every allowed candidate has source evidence")
@@ -18393,7 +18580,7 @@ func TestPlanExecuteOpenCandidateTerminalDoesNotCollapseAfterOneRead(t *testing.
 		TaskFamily: PlanThenExecutePlannerTaskFamily,
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 internal/example/target.go lines 1-80"},
+		readFileSourceBodyResult("internal/example/target.go", 1, 80, 80, ""),
 	}
 
 	if planThenExecuteTerminalSubmitPlanAllowed(brief, results) {
@@ -18419,6 +18606,8 @@ func TestPlanExecuteOpenCandidateTerminalWaitsForUnreadContextCandidate(t *testi
 			Tool:    "read_file",
 			Summary: "Read f1 pkg/feature.go lines 1-80 (total lines: 80)",
 			Output:  "1:package pkg\n",
+			Paths:   []string{"pkg/feature.go"},
+			Facts:   sourceBodyFactsForTest("pkg/feature.go", 1, 80, 80),
 		},
 	}
 
@@ -18569,11 +18758,13 @@ func TestPlanExecuteLoopBudgetRecoveryDoesNotUseUnreadCandidateEscapeAfterSource
 				"internal/productcmd/product_workflow.go",
 			),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/workflows/productworkflow/coverage_gate.go lines 1-80 (total lines: 320)",
-			Output:  "1:package productworkflow\n2:func EvaluateCoverageGate() {}\n",
-		},
+		readFileSourceBodyResult(
+			"internal/workflows/productworkflow/coverage_gate.go",
+			1,
+			80,
+			320,
+			"1:package productworkflow\n2:func EvaluateCoverageGate() {}\n",
+		),
 	}
 
 	recovery, ok := runner.planThenExecuteLoopBudgetRecoveryPrompt(
@@ -19000,8 +19191,8 @@ func TestPlanExecuteSubmitReadyFailureFeedbackDoesNotSuggestGenericProbe(t *test
 		Error:   "read_file is not available because the plan-execute planner is source-ready and exposes only submit_plan",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-20 (total lines: 20)"},
-		{Tool: "read_file", Summary: "Read f2 a_test.go lines 1-20 (total lines: 20)"},
+		readFileSourceBodyResult("a.go", 1, 20, 20, ""),
+		readFileSourceBodyResult("a_test.go", 1, 20, 20, ""),
 		rejected,
 	}
 
@@ -19055,12 +19246,8 @@ func TestPlanExecuteSubmitReadyStateDoesNotAdvertiseReadProbes(t *testing.T) {
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-20 (total lines: 20)"},
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read Run in b.go lines 10-30\nfunc Run() {}\n",
-		},
+		readFileSourceBodyResult("a.go", 1, 20, 20, ""),
+		codeNavigateSourceBodyResult("b.go", 10, 30, 0, "route_summary: Read Run in b.go lines 10-30\nfunc Run() {}\n"),
 	}
 
 	readyBrief := runnerBriefWithRequiredEditPathHints(brief, results)
@@ -19116,8 +19303,8 @@ func TestPlanExecuteSubmitReadyParseRecoveryBlocksFurtherReads(t *testing.T) {
 	}
 	runner := &Runner{RuntimeBrief: brief}
 	sourceReady := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-20 (total lines: 20)"},
-		{Tool: "read_file", Summary: "Read f2 a_test.go lines 1-20 (total lines: 20)"},
+		readFileSourceBodyResult("a.go", 1, 20, 20, ""),
+		readFileSourceBodyResult("a_test.go", 1, 20, 20, ""),
 	}
 	raw := `{"tool":"submit_plan","rationale":"Update coverage gate","edits":[{"path":"a.go""start_line":1}]}`
 	plan, ok := runner.planThenExecuteSubmitPlanParseRecoveryPlan(raw, errors.New(`invalid character '"' after object key:value pair`), sourceReady)
@@ -19230,8 +19417,8 @@ func TestPlanExecuteReadyToSubmitRaisesBudgetAfterSourceReadCap(t *testing.T) {
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"},
 	}, []workspace.ToolResult{
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640"},
-		{Tool: "read_file", Summary: "Read f2 cmd/idiom/product_workflow_test.go lines 5257-5270"},
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow.go", 1515, 1640, 0, "Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640"),
+		readFileSourceBodyResult("cmd/idiom/product_workflow_test.go", 5257, 5270, 0, ""),
 	}, true)
 
 	if opts.MaxTokens != 4096 {
@@ -19257,10 +19444,10 @@ func TestPlanExecuteReadyToSubmitUsesLargeBudgetForFourExistingFiles(t *testing.
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go", "internal/workflows/productworkflow/coverage_gate.go", "internal/workflows/productworkflow/coverage_gate_test.go"},
 	}, []workspace.ToolResult{
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640"},
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read TestProductTDDCoverageGate in cmd/idiom/product_workflow_test.go lines 5257-5270"},
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-120"},
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read TestCoverageGate in internal/workflows/productworkflow/coverage_gate_test.go lines 1-80"},
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow.go", 1515, 1640, 0, "Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640"),
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow_test.go", 5257, 5270, 0, "Read TestProductTDDCoverageGate in cmd/idiom/product_workflow_test.go lines 5257-5270"),
+		codeNavigateSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 120, 0, "Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-120"),
+		codeNavigateSourceBodyResult("internal/workflows/productworkflow/coverage_gate_test.go", 1, 80, 0, "Read TestCoverageGate in internal/workflows/productworkflow/coverage_gate_test.go lines 1-80"),
 	}, true)
 
 	if opts.MaxTokens != 16384 {
@@ -19286,9 +19473,9 @@ func TestPlanExecuteReadyToSubmitKeepsBoundedBudgetForThreeExistingFiles(t *test
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go", "internal/workflows/productworkflow/coverage_gate.go"},
 	}, []workspace.ToolResult{
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640"},
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read TestProductTDDCoverageGate in cmd/idiom/product_workflow_test.go lines 5257-5270"},
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-120"},
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow.go", 1515, 1640, 0, "Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640"),
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow_test.go", 5257, 5270, 0, "Read TestProductTDDCoverageGate in cmd/idiom/product_workflow_test.go lines 5257-5270"),
+		codeNavigateSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 120, 0, "Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-120"),
 	}, true)
 
 	if opts.MaxTokens != 8192 {
@@ -19310,10 +19497,10 @@ func TestPlanExecuteParseRecoveryUsesLargeBudgetForFourRequiredPaths(t *testing.
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go", "internal/workflows/productworkflow/coverage_gate.go", "internal/workflows/productworkflow/coverage_gate_test.go"},
 	}, []workspace.ToolResult{
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640"},
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read TestProductTDDCoverageGate in cmd/idiom/product_workflow_test.go lines 5257-5270"},
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-120"},
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read TestCoverageGate in internal/workflows/productworkflow/coverage_gate_test.go lines 1-80"},
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow.go", 1515, 1640, 0, "Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640"),
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow_test.go", 5257, 5270, 0, "Read TestProductTDDCoverageGate in cmd/idiom/product_workflow_test.go lines 5257-5270"),
+		codeNavigateSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 120, 0, "Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-120"),
+		codeNavigateSourceBodyResult("internal/workflows/productworkflow/coverage_gate_test.go", 1, 80, 0, "Read TestCoverageGate in internal/workflows/productworkflow/coverage_gate_test.go lines 1-80"),
 		{Tool: "tool_parse", Summary: "Malformed tool request rejected", Error: "decode tool request: unexpected end of JSON input"},
 	}, true)
 
@@ -19386,12 +19573,12 @@ func TestPlanExecuteRejectedPlanCorrectionUsesLargeBudgetForFourExistingFiles(t 
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go", "internal/workflows/productworkflow/coverage_gate.go", "internal/workflows/productworkflow/coverage_gate_test.go"},
 	}, []workspace.ToolResult{
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640"},
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read TestProductTDDCoverageGate in cmd/idiom/product_workflow_test.go lines 5257-5270"},
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-120"},
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read TestCoverageGate in internal/workflows/productworkflow/coverage_gate_test.go lines 1-80"},
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow.go", 1515, 1640, 0, "Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640"),
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow_test.go", 5257, 5270, 0, "Read TestProductTDDCoverageGate in cmd/idiom/product_workflow_test.go lines 5257-5270"),
+		codeNavigateSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 120, 0, "Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-120"),
+		codeNavigateSourceBodyResult("internal/workflows/productworkflow/coverage_gate_test.go", 1, 80, 0, "Read TestCoverageGate in internal/workflows/productworkflow/coverage_gate_test.go lines 1-80"),
 		{Tool: "submit_plan", Summary: "submit_plan rejected: required edit path coverage mismatch", Error: "missing required edit path(s): `cmd/idiom/product_workflow_test.go`, `internal/workflows/productworkflow/coverage_gate.go`, `internal/workflows/productworkflow/coverage_gate_test.go`; invalid edit anchor(s): `cmd/idiom/product_workflow.go: old_text not found in current source`; placeholder edit body path(s): `cmd/idiom/product_workflow.go: old_text contains placeholder marker \"... existing code ...\"`"},
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read runProductTDD in cmd/idiom/product_workflow.go lines 1396-1671"},
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow.go", 1396, 1671, 0, "Read runProductTDD in cmd/idiom/product_workflow.go lines 1396-1671"),
 	}, true)
 
 	if opts.MaxTokens != 16384 {
@@ -19416,8 +19603,8 @@ func TestPlanExecuteUnscopedRejectedPlanCorrectionUsesLargeBudget(t *testing.T) 
 		Contract:          "implementation_result",
 		PermissionProfile: "guarded_workspace_write",
 	}, []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 internal/workflows/productworkflow/coverage_gate.go lines 1-391", Output: "package productworkflow\n"},
-		{Tool: "read_file", Summary: "Read f2 cmd/idiom/product_workflow.go lines 1-180", Output: "package main\n"},
+		readFileSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 391, 391, "package productworkflow\n"),
+		readFileSourceBodyResult("cmd/idiom/product_workflow.go", 1, 180, 0, "package main\n"),
 		{Tool: "submit_plan", Summary: "submit_plan rejected", Error: "edits[0]: edit would not change internal/workflows/productworkflow/coverage_gate.go; submit real edits, or answer `Decision: source-satisfied` with current-state evidence when no changes are needed"},
 	}, true)
 
@@ -19445,9 +19632,9 @@ func TestPlanExecuteRejectedPlanCorrectionKeepsLargeBudgetForWholeFile(t *testin
 		Objective:         "Correct the rejected submit_plan with a whole-file fixture replacement.",
 		RequiredEditPaths: []string{"internal/workflows/productworkflow/coverage_gate_report.go", "internal/workflows/productworkflow/coverage_gate_report_test.go", "internal/workflows/productworkflow/coverage_gate_fixture.json"},
 	}, []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 internal/workflows/productworkflow/coverage_gate_report.go lines 1-40"},
-		{Tool: "read_file", Summary: "Read f2 internal/workflows/productworkflow/coverage_gate_report_test.go lines 1-40"},
-		{Tool: "read_file", Summary: "Read f3 internal/workflows/productworkflow/coverage_gate_fixture.json lines 1-80"},
+		readFileSourceBodyResult("internal/workflows/productworkflow/coverage_gate_report.go", 1, 40, 40, ""),
+		readFileSourceBodyResult("internal/workflows/productworkflow/coverage_gate_report_test.go", 1, 40, 40, ""),
+		readFileSourceBodyResult("internal/workflows/productworkflow/coverage_gate_fixture.json", 1, 80, 80, ""),
 		{Tool: "submit_plan", Summary: "submit_plan rejected: invalid edit shape", Error: "replace_all requires a full file body for internal/workflows/productworkflow/coverage_gate_fixture.json"},
 	}, true)
 
@@ -19473,10 +19660,10 @@ func TestPlanExecuteTextualFallbackUsesLargeBudgetForFourExistingFiles(t *testin
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go", "internal/workflows/productworkflow/coverage_gate.go", "internal/workflows/productworkflow/coverage_gate_test.go"},
 	}, []workspace.ToolResult{
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640"},
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read TestProductTDDCoverageGate in cmd/idiom/product_workflow_test.go lines 5257-5270"},
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-120"},
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read TestCoverageGate in internal/workflows/productworkflow/coverage_gate_test.go lines 1-80"},
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow.go", 1515, 1640, 0, "Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640"),
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow_test.go", 5257, 5270, 0, "Read TestProductTDDCoverageGate in cmd/idiom/product_workflow_test.go lines 5257-5270"),
+		codeNavigateSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 120, 0, "Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-120"),
+		codeNavigateSourceBodyResult("internal/workflows/productworkflow/coverage_gate_test.go", 1, 80, 0, "Read TestCoverageGate in internal/workflows/productworkflow/coverage_gate_test.go lines 1-80"),
 	})
 
 	if opts.MaxTokens != 16384 {
@@ -19513,6 +19700,8 @@ func TestPlanExecuteRequiredPathSymbolReadRecoveryCapsPlannerBudget(t *testing.T
 		Tool:    "code_navigate",
 		Summary: "Code navigation routed read_symbol via go_read_symbol",
 		Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
+		Paths:   []string{"cmd/idiom/product_workflow.go"},
+		Facts:   sourceBodyFactsForTest("cmd/idiom/product_workflow.go", 1515, 1640, 0),
 	}}, true)
 
 	if opts.PreserveThinking {
@@ -19538,16 +19727,8 @@ func TestPlanExecuteRequiredPathAllSourcesReadRecoveryKeepsPlannerBudget(t *test
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"},
 	}, []workspace.ToolResult{
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
-		},
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read TestProductTDDCoverageGate in cmd/idiom/product_workflow_test.go lines 400-460\n\n400:func TestProductTDDCoverageGate() {}\n",
-		},
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow.go", 1515, 1640, 0, "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n"),
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow_test.go", 400, 460, 0, "route_summary: Read TestProductTDDCoverageGate in cmd/idiom/product_workflow_test.go lines 400-460\n\n400:func TestProductTDDCoverageGate() {}\n"),
 	}, true)
 
 	if opts.EnableThinking == nil || *opts.EnableThinking {
@@ -19579,8 +19760,8 @@ func TestPlanExecuteStrictVisibleActionOverridesThinkingFloor(t *testing.T) {
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"},
 	}, []workspace.ToolResult{
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1396-1671\n1396:func runProductTDD() {}"},
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "route_summary: Read TestProductLintFailsOnInvalidTDDCoverageTier in cmd/idiom/product_workflow_test.go lines 5300-5480\n5300:func TestProductLintFailsOnInvalidTDDCoverageTier(t *testing.T) {}"},
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow.go", 1396, 1671, 0, "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1396-1671\n1396:func runProductTDD() {}"),
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow_test.go", 5300, 5480, 0, "route_summary: Read TestProductLintFailsOnInvalidTDDCoverageTier in cmd/idiom/product_workflow_test.go lines 5300-5480\n5300:func TestProductLintFailsOnInvalidTDDCoverageTier(t *testing.T) {}"),
 	}, true)
 
 	if opts.EnableThinking == nil || *opts.EnableThinking {
@@ -19622,6 +19803,8 @@ func TestPlanExecuteCandidateReadyKeepsUnreadCandidateReadTools(t *testing.T) {
 		Tool:    "read_file",
 		Summary: "Read f1 pkg/feature.go lines 1-4 (total lines: 4)",
 		Output:  "1:package pkg\n2:\n3:func Hardened() bool { return true }\n",
+		Paths:   []string{"pkg/feature.go"},
+		Facts:   sourceBodyFactsForTest("pkg/feature.go", 1, 4, 4),
 	}}, true)
 
 	if !chatOptionsExposeTool(opts, "read_file") || !chatOptionsExposeTool(opts, "code_navigate") || !chatOptionsExposeTool(opts, "submit_plan") {
@@ -19654,6 +19837,8 @@ func TestPlanExecuteContextPackCandidateReadyFiltersSubmitPlanOnly(t *testing.T)
 			Tool:    "read_file",
 			Summary: "Read f1 pkg/feature.go lines 1-4 (total lines: 4)",
 			Output:  "1:package pkg\n2:\n3:func Hardened() bool { return true }\n",
+			Paths:   []string{"pkg/feature.go"},
+			Facts:   sourceBodyFactsForTest("pkg/feature.go", 1, 4, 4),
 		},
 	}
 
@@ -19795,8 +19980,8 @@ func TestPlanExecutePostReadinessRecoveryAllowsOnlyAnchorRefreshBeforeCorrectedP
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "internal/workflows/productworkflow/coverage_gate.go"},
 	}, []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 cmd/idiom/product_workflow.go lines 1-20"},
-		{Tool: "read_file", Summary: "Read f2 internal/workflows/productworkflow/coverage_gate.go lines 1-20"},
+		readFileSourceBodyResult("cmd/idiom/product_workflow.go", 1, 20, 20, ""),
+		readFileSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 20, 20, ""),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -19830,21 +20015,21 @@ func TestPlanExecuteRejectedOldTextRequiresAnchorReadyRefresh(t *testing.T) {
 		Error:   "invalid edit anchor(s): `cmd/idiom/product_workflow_test.go: old_text not found in current source`.",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f2 cmd/idiom/product_workflow_test.go lines 1-120 (total lines: 6834)"},
+		readFileSourceBodyResult("cmd/idiom/product_workflow_test.go", 1, 120, 6834, ""),
 		rejected,
-		{Tool: "read_file", Summary: "Read f2 cmd/idiom/product_workflow_test.go lines 1-100 (total lines: 6834)"},
+		readFileSourceBodyResult("cmd/idiom/product_workflow_test.go", 1, 100, 6834, ""),
 	}
 
 	if !planThenExecuteRejectedPlanNeedsSourceRefresh(brief, results) {
 		t.Fatal("generic first-window refresh must not close a stale old_text anchor rejection")
 	}
 
-	results = append(results, workspace.ToolResult{Tool: "read_file", Summary: "Read f2 cmd/idiom/product_workflow_test.go lines 5300-5360 (total lines: 6834)"})
+	results = append(results, readFileSourceBodyResult("cmd/idiom/product_workflow_test.go", 5300, 5360, 6834, ""))
 	if !planThenExecuteRejectedPlanNeedsSourceRefresh(brief, results) {
 		t.Fatal("raw bounded source refresh of a very large Go file should not close stale-anchor refresh requirement")
 	}
 
-	results = append(results, workspace.ToolResult{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "route_summary: Read TestProductLintFailsOnInvalidTDDCoverageTier in cmd/idiom/product_workflow_test.go lines 5300-5360\n5300:func TestProductLintFailsOnInvalidTDDCoverageTier(t *testing.T) {}"})
+	results = append(results, codeNavigateSourceBodyResult("cmd/idiom/product_workflow_test.go", 5300, 5360, 0, "route_summary: Read TestProductLintFailsOnInvalidTDDCoverageTier in cmd/idiom/product_workflow_test.go lines 5300-5360\n5300:func TestProductLintFailsOnInvalidTDDCoverageTier(t *testing.T) {}"))
 	if planThenExecuteRejectedPlanNeedsSourceRefresh(brief, results) {
 		t.Fatal("symbol/body source refresh should close stale-anchor refresh requirement")
 	}
@@ -19863,9 +20048,9 @@ func TestPlanExecuteRejectedOldTextKeepsCppRawRangeInAnchorRefresh(t *testing.T)
 		Error:   "invalid edit anchor(s): `native/src/simulation/production/production_execution.cpp: old_text not found in current source`.",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f5 native/src/simulation/production/production_execution.cpp lines 1-180 (total lines: 1593)"},
+		readFileSourceBodyResult("native/src/simulation/production/production_execution.cpp", 1, 180, 1593, ""),
 		rejected,
-		{Tool: "read_file", Summary: "Read f5 native/src/simulation/production/production_execution.cpp lines 181-360 (total lines: 1593)", Output: "181:void execute_production() {}\n360:}\n"},
+		readFileSourceBodyResult("native/src/simulation/production/production_execution.cpp", 181, 360, 1593, "181:void execute_production() {}\n360:}\n"),
 	}
 
 	if planThenExecuteRejectedPlanNeedsSourceRefresh(brief, results) {
@@ -19891,7 +20076,7 @@ func TestPlanExecuteInvalidAnchorFallbackKeepsWeakRefreshPath(t *testing.T) {
 		Error:   "invalid edit anchor(s): `native/src/simulation/production/production_execution.cpp: old_text not found in current source`.",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f5 native/src/simulation/production/production_execution.cpp lines 1-180 (total lines: 1593)"},
+		readFileSourceBodyResult("native/src/simulation/production/production_execution.cpp", 1, 180, 1593, ""),
 		rejected,
 	}
 	runner := &Runner{RuntimeBrief: brief}
@@ -19905,11 +20090,7 @@ func TestPlanExecuteInvalidAnchorFallbackKeepsWeakRefreshPath(t *testing.T) {
 		t.Fatalf("unexpected refresh request: %#v", req)
 	}
 
-	results = append(results, workspace.ToolResult{
-		Tool:    "read_file",
-		Summary: "Read f5 native/src/simulation/production/production_execution.cpp lines 181-360 (total lines: 1593)",
-		Output:  "181:void execute_production() {}\n360:}\n",
-	})
+	results = append(results, readFileSourceBodyResult("native/src/simulation/production/production_execution.cpp", 181, 360, 1593, "181:void execute_production() {}\n360:}\n"))
 	if req, _, ok := runner.deterministicPlanExecuteGroundingRecoveryRequest("<<QUESTION>>: blocked", results); ok {
 		t.Fatalf("bounded non-header C++ refresh should close the deterministic refresh path, got %#v", req)
 	}
@@ -19940,8 +20121,8 @@ func TestPlanExecuteMissingGroundingRefreshCompletesAfterBoundedReads(t *testing
 	})
 
 	results = append(results,
-		workspace.ToolResult{Tool: "read_file", Summary: "Read f1 native/src/simulation/production/production_execution.cpp lines 181-260 (total lines: 1593)"},
-		workspace.ToolResult{Tool: "read_file", Summary: "Read f2 native/tests/test_quality_inventory_bindings.cpp lines 1-160 (total lines: 260)"},
+		readFileSourceBodyResult("native/src/simulation/production/production_execution.cpp", 181, 260, 1593, ""),
+		readFileSourceBodyResult("native/tests/test_quality_inventory_bindings.cpp", 1, 160, 260, ""),
 	)
 	if paths := planThenExecuteRejectedPlanRefreshPaths(brief, results, rejected, 0); len(paths) != 0 {
 		t.Fatalf("bounded reads should close missing-grounding refresh paths, got %#v", paths)
@@ -19970,7 +20151,7 @@ func TestPlanExecuteRejectedOldTextAllowsRoutedRefreshAfterWeakRead(t *testing.T
 		Error:   "invalid edit anchor(s): `native/src/simulation/production/production_execution.cpp: old_text not found in current source`.",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f5 native/src/simulation/production/production_execution.cpp lines 1-180 (total lines: 1593)"},
+		readFileSourceBodyResult("native/src/simulation/production/production_execution.cpp", 1, 180, 1593, ""),
 		rejected,
 	}
 	refreshReq := workspace.ToolRequest{
@@ -19988,11 +20169,7 @@ func TestPlanExecuteRejectedOldTextAllowsRoutedRefreshAfterWeakRead(t *testing.T
 		t.Fatal("source-refresh allowance must permit routed symbol/body refresh after a raw range")
 	}
 
-	results = append(results, workspace.ToolResult{
-		Tool:    "code_navigate",
-		Summary: "Code navigation routed read_symbol via cpp_read_symbol",
-		Output:  "route_summary: Read apply_quality_record in native/src/simulation/production/production_execution.cpp lines 181-260\n181:void apply_quality_record() {}",
-	})
+	results = append(results, codeNavigateSourceBodyResult("native/src/simulation/production/production_execution.cpp", 181, 260, 0, "route_summary: Read apply_quality_record in native/src/simulation/production/production_execution.cpp lines 181-260\n181:void apply_quality_record() {}"))
 	if planThenExecuteRejectedPlanNeedsSourceRefresh(brief, results) {
 		t.Fatal("routed symbol/body evidence should close stale-anchor refresh")
 	}
@@ -20010,7 +20187,7 @@ func TestPlanExecuteRejectedMissingSourceGroundingRequiresRefreshForRejectedEdit
 		Error:   "submit_plan edits for plan-execute planner atoms must be grounded before executor handoff; missing source-body evidence for `internal/workflows/productworkflow/tdd.go`. Read each existing edit path with `read_file` or `code_navigate` `read_symbol`/`extract_body`, then submit a corrected plan.",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 cmd/idiom/product_workflow.go lines 1-120 (total lines: 2894)"},
+		readFileSourceBodyResult("cmd/idiom/product_workflow.go", 1, 120, 2894, ""),
 		rejected,
 	}
 
@@ -20023,10 +20200,7 @@ func TestPlanExecuteRejectedMissingSourceGroundingRequiresRefreshForRejectedEdit
 		t.Fatalf("refresh paths = %#v, want rejected edit path", paths)
 	}
 
-	results = append(results, workspace.ToolResult{
-		Tool:    "read_file",
-		Summary: "Read f2 internal/workflows/productworkflow/tdd.go lines 1-50 (total lines: 120)",
-	})
+	results = append(results, readFileSourceBodyResult("internal/workflows/productworkflow/tdd.go", 1, 50, 120, ""))
 	if planThenExecuteRejectedPlanNeedsSourceRefresh(brief, results) {
 		t.Fatal("successful source read after the rejected plan should close missing-grounding refresh")
 	}
@@ -20045,8 +20219,8 @@ func TestPlanExecuteRejectedMissingCoverageStaysInSubmitCorrection(t *testing.T)
 		Error:   "submit_plan must use edits[] for changed required paths and top-level source_satisfied_paths for already-final required paths; missing required edit path(s): `b.txt`.",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10 (total lines: 10)", Output: "before\n"},
-		{Tool: "read_file", Summary: "Read f2 b.txt lines 1-10 (total lines: 10)", Output: "before\n"},
+		readFileSourceBodyResult("a.txt", 1, 10, 10, "before\n"),
+		readFileSourceBodyResult("b.txt", 1, 10, 10, "before\n"),
 		rejected,
 	}
 
@@ -20088,7 +20262,7 @@ func TestPlanExecuteVariedRejectedSubmitPlanStreakForcesAnchorRefresh(t *testing
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 native/src/simulation/world/collapse_event.h lines 1-40 (total lines: 40)", Output: "1:#pragma once\n"},
+		readFileSourceBodyResult("native/src/simulation/world/collapse_event.h", 1, 40, 40, "1:#pragma once\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
@@ -20200,11 +20374,7 @@ func TestPlanExecuteGroundingCorrectionReadyNudgeIsSubmitPlanOnly(t *testing.T) 
 	}
 	results := []workspace.ToolResult{
 		rejected,
-		{
-			Tool:    "read_file",
-			Summary: "Read f2 internal/workflows/productworkflow/tdd.go lines 1-50 (total lines: 120)",
-			Output:  "1:package productworkflow\n",
-		},
+		readFileSourceBodyResult("internal/workflows/productworkflow/tdd.go", 1, 50, 120, "1:package productworkflow\n"),
 	}
 
 	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
@@ -20339,13 +20509,13 @@ func TestPlanExecuteRepeatedExistingSourceRewriteAfterRefreshStaysSubmitCorrecti
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 native/src/simulation/world/collapse_event.h lines 1-63 (total lines: 63)", Output: "1:#pragma once\n63:};\n"},
+		readFileSourceBodyResult("native/src/simulation/world/collapse_event.h", 1, 63, 63, "1:#pragma once\n63:};\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
 			Error:   "edits[0]: line-range replacement for /workspace/Colony/native/src/simulation/world/collapse_event.h lines 1-63 would rewrite the entire existing source file; use bounded old_text/new_text or smaller start_line/end_line anchors",
 		},
-		{Tool: "read_file", Summary: "Read f2 native/src/simulation/world/collapse_event.h lines 1-63 (total lines: 63)", Output: "1:#pragma once\n63:};\n"},
+		readFileSourceBodyResult("native/src/simulation/world/collapse_event.h", 1, 63, 63, "1:#pragma once\n63:};\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
@@ -20375,13 +20545,13 @@ func TestPlanExecutePartialPriorRefreshDoesNotCloseLaterInvalidAnchor(t *testing
 		RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 native/src/core/colony_sim_tick.cpp lines 1-180 (total lines: 2616)", Output: "1:#include <x>\n180:void a();\n"},
+		readFileSourceBodyResult("native/src/core/colony_sim_tick.cpp", 1, 180, 2616, "1:#include <x>\n180:void a();\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
 			Error:   "invalid edit anchor(s): `native/src/core/colony_sim_tick.cpp: old_text not found in current source`.",
 		},
-		{Tool: "read_file", Summary: "Read f2 native/src/core/colony_sim_tick.cpp lines 880-1050 (total lines: 2616)", Output: "880:void tick() {}\n1050:}\n"},
+		readFileSourceBodyResult("native/src/core/colony_sim_tick.cpp", 880, 1050, 2616, "880:void tick() {}\n1050:}\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -20406,13 +20576,13 @@ func TestPlanExecuteRepeatedUnsafeSubmitCorrectionAllowsPathBlocker(t *testing.T
 		RequiredEditPaths: []string{"native/src/simulation/world/collapse_event.h"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 native/src/simulation/world/collapse_event.h lines 1-63 (total lines: 63)", Output: "1:#pragma once\n63:};\n"},
+		readFileSourceBodyResult("native/src/simulation/world/collapse_event.h", 1, 63, 63, "1:#pragma once\n63:};\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
 			Error:   "edits[0]: line-range replacement for /workspace/Colony/native/src/simulation/world/collapse_event.h lines 1-63 would rewrite the entire existing source file; use bounded old_text/new_text or smaller start_line/end_line anchors, or answer <<QUESTION>> with the exact missing body/anchor blocker",
 		},
-		{Tool: "read_file", Summary: "Read f2 native/src/simulation/world/collapse_event.h lines 1-63 (total lines: 63)", Output: "1:#pragma once\n63:};\n"},
+		readFileSourceBodyResult("native/src/simulation/world/collapse_event.h", 1, 63, 63, "1:#pragma once\n63:};\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
@@ -20472,8 +20642,8 @@ func TestPlanExecuteMixedUnsafeRewriteDoesNotBypassOtherInvalidAnchorRefresh(t *
 	mixedRejection := "invalid edit anchor(s): `native/src/core/colony_sim_tick.cpp: old_text not found in current source`. " +
 		"edits[1]: whole-file replace_all edit would rewrite existing source file /workspace/Colony/native/src/simulation/world/collapse_event.h; use a bounded anchored edit with old_text/new_text or start_line/end_line/content, or answer <<QUESTION>> with the exact missing body/anchor blocker"
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 native/src/core/colony_sim_tick.cpp lines 1-120 (total lines: 2616)", Output: "1:#include <x>\n120:void a();\n"},
-		{Tool: "read_file", Summary: "Read f2 native/src/simulation/world/collapse_event.h lines 1-63 (total lines: 63)", Output: "1:#pragma once\n63:};\n"},
+		readFileSourceBodyResult("native/src/core/colony_sim_tick.cpp", 1, 120, 2616, "1:#include <x>\n120:void a();\n"),
+		readFileSourceBodyResult("native/src/simulation/world/collapse_event.h", 1, 63, 63, "1:#pragma once\n63:};\n"),
 		{Tool: "submit_plan", Summary: "submit_plan rejected", Error: mixedRejection},
 		{Tool: "submit_plan", Summary: "submit_plan rejected", Error: mixedRejection},
 		{Tool: "submit_plan", Summary: "submit_plan rejected", Error: mixedRejection},
@@ -20507,9 +20677,9 @@ func TestPlanExecuteWrongPathRefreshKeepsAnchorRefreshNonTerminal(t *testing.T) 
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f4 native/src/core/colony_sim_tick.cpp lines 1-120 (total lines: 2616)", Output: "1:#include <x>\n120:void a();\n"},
+		readFileSourceBodyResult("native/src/core/colony_sim_tick.cpp", 1, 120, 2616, "1:#include <x>\n120:void a();\n"),
 		{Tool: "read_file", Summary: "Required new-file path does not exist yet", Error: "path \"native/src/simulation/world/collapse_event.cpp\" is in your required_edit_paths but does not exist on disk yet — this is a NEW FILE you must create."},
-		{Tool: "read_file", Summary: "Read f3 native/src/simulation/world/collapse_event.h lines 1-63 (total lines: 63)", Output: "1:#pragma once\n63:};\n"},
+		readFileSourceBodyResult("native/src/simulation/world/collapse_event.h", 1, 63, 63, "1:#pragma once\n63:};\n"),
 		{Tool: "read_file", Summary: "Required new-file path does not exist yet", Error: "path \"native/tests/test_collapse_event.cpp\" is in your required_edit_paths but does not exist on disk yet — this is a NEW FILE you must create."},
 		{
 			Tool:    "submit_plan",
@@ -20562,13 +20732,13 @@ func TestPlanExecuteAnchorRefreshProjectionUsesOnlyUnresolvedRejectedPaths(t *te
 		"`native/src/simulation/machines/machine.cpp: old_text not found in current source`, " +
 		"`native/tests/test_fluid_brewery_cascade.cpp: old_text not found in current source`."
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 native/src/simulation/economy/fluid_network_system.cpp lines 1-120 (total lines: 230)", Output: "1:#include <x>\n120:void a();\n"},
-		{Tool: "read_file", Summary: "Read f2 native/src/simulation/economy/fluid_network_system.h lines 1-120 (total lines: 120)", Output: "1:#pragma once\n120:};\n"},
-		{Tool: "read_file", Summary: "Read f3 native/src/simulation/machines/machine.cpp lines 1-120 (total lines: 420)", Output: "1:#include <x>\n120:void a();\n"},
-		{Tool: "read_file", Summary: "Read f4 native/tests/test_fluid_brewery_cascade.cpp lines 1-120 (total lines: 180)", Output: "1:#include <x>\n120:TEST_CASE();\n"},
+		readFileSourceBodyResult("native/src/simulation/economy/fluid_network_system.cpp", 1, 120, 230, "1:#include <x>\n120:void a();\n"),
+		readFileSourceBodyResult("native/src/simulation/economy/fluid_network_system.h", 1, 120, 120, "1:#pragma once\n120:};\n"),
+		readFileSourceBodyResult("native/src/simulation/machines/machine.cpp", 1, 120, 420, "1:#include <x>\n120:void a();\n"),
+		readFileSourceBodyResult("native/tests/test_fluid_brewery_cascade.cpp", 1, 120, 180, "1:#include <x>\n120:TEST_CASE();\n"),
 		{Tool: "submit_plan", Summary: "submit_plan rejected: required edit path coverage mismatch", Error: rejection},
-		{Tool: "read_file", Summary: "Read f5 native/src/simulation/economy/fluid_network_system.h lines 1-120 (total lines: 120)", Output: "1:#pragma once\n120:};\n"},
-		{Tool: "read_file", Summary: "Read f6 native/tests/test_fluid_brewery_cascade.cpp lines 1-120 (total lines: 180)", Output: "1:#include <x>\n120:TEST_CASE();\n"},
+		readFileSourceBodyResult("native/src/simulation/economy/fluid_network_system.h", 1, 120, 120, "1:#pragma once\n120:};\n"),
+		readFileSourceBodyResult("native/tests/test_fluid_brewery_cascade.cpp", 1, 120, 180, "1:#include <x>\n120:TEST_CASE();\n"),
 	}
 
 	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
@@ -20598,13 +20768,13 @@ func TestPlanExecuteRepeatedBoundedCppReadAfterRejectionCountsAsFresh(t *testing
 		RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 native/src/core/colony_sim_tick.cpp lines 1-180 (total lines: 2616)", Output: "1:#include <x>\n180:void a();\n"},
+		readFileSourceBodyResult("native/src/core/colony_sim_tick.cpp", 1, 180, 2616, "1:#include <x>\n180:void a();\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
 			Error:   "invalid edit anchor(s): `native/src/core/colony_sim_tick.cpp: old_text not found in current source`.",
 		},
-		{Tool: "read_file", Summary: "Read f2 native/src/core/colony_sim_tick.cpp lines 1-180 (total lines: 2616)", Output: "1:#include <x>\n180:void a();\n"},
+		readFileSourceBodyResult("native/src/core/colony_sim_tick.cpp", 1, 180, 2616, "1:#include <x>\n180:void a();\n"),
 	}
 
 	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
@@ -20629,16 +20799,16 @@ func TestPlanExecuteWrongPathAnchorRefreshRedirectsToPendingPath(t *testing.T) {
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 native/src/simulation/economy/fluid_network_system.h lines 1-82 (total lines: 82)", Output: "1:#pragma once\n82:};\n"},
-		{Tool: "read_file", Summary: "Read f2 native/src/simulation/economy/fluid_network_system.cpp lines 1-230 (total lines: 230)", Output: "1:#include <x>\n230:}\n"},
-		{Tool: "read_file", Summary: "Read f3 native/src/simulation/machines/machine.cpp lines 1-300 (total lines: 600)", Output: "1:#include <x>\n300:}\n"},
-		{Tool: "read_file", Summary: "Read f4 native/tests/test_fluid_brewery_cascade.cpp lines 1-110 (total lines: 110)", Output: "1:#include <x>\n110:}\n"},
+		readFileSourceBodyResult("native/src/simulation/economy/fluid_network_system.h", 1, 82, 82, "1:#pragma once\n82:};\n"),
+		readFileSourceBodyResult("native/src/simulation/economy/fluid_network_system.cpp", 1, 230, 230, "1:#include <x>\n230:}\n"),
+		readFileSourceBodyResult("native/src/simulation/machines/machine.cpp", 1, 300, 600, "1:#include <x>\n300:}\n"),
+		readFileSourceBodyResult("native/tests/test_fluid_brewery_cascade.cpp", 1, 110, 110, "1:#include <x>\n110:}\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
 			Error:   "invalid edit anchor(s): `native/src/simulation/economy/fluid_network_system.h: old_text not found in current source`, `native/src/simulation/economy/fluid_network_system.cpp: old_text not found in current source`, `native/src/simulation/machines/machine.cpp: old_text not found in current source`, `native/tests/test_fluid_brewery_cascade.cpp: old_text not found in current source`.",
 		},
-		{Tool: "read_file", Summary: "Read f5 native/src/simulation/economy/fluid_network_system.h lines 1-82 (total lines: 82)", Output: "1:#pragma once\n82:};\n"},
+		readFileSourceBodyResult("native/src/simulation/economy/fluid_network_system.h", 1, 82, 82, "1:#pragma once\n82:};\n"),
 	}
 	runner := &Runner{RuntimeBrief: brief}
 
@@ -20653,7 +20823,7 @@ func TestPlanExecuteWrongPathAnchorRefreshRedirectsToPendingPath(t *testing.T) {
 		t.Fatalf("redirect = %#v, want next pending cpp refresh from known source extent", redirected)
 	}
 
-	results = append(results, workspace.ToolResult{Tool: "read_file", Summary: "Read f6 native/src/simulation/economy/fluid_network_system.cpp lines 1-230 (total lines: 230)", Output: "1:#include <x>\n230:}\n"})
+	results = append(results, readFileSourceBodyResult("native/src/simulation/economy/fluid_network_system.cpp", 1, 230, 230, "1:#include <x>\n230:}\n"))
 	redirected, _, ok = runner.planThenExecuteRejectedPlanRefreshReadRedirect(
 		workspace.ToolRequest{Tool: workspace.ToolNameReadFile, Path: "native/src/simulation/economy/fluid_network_system.cpp", StartLine: 101, EndLine: 230},
 		results,
@@ -20733,14 +20903,14 @@ func TestPlanExecuteRepeatedNoopProofCorrectionAllowsPathBlocker(t *testing.T) {
 		RequiredEditPaths: []string{"native/src/core/colony_sim_tick.cpp", "native/tests/test_collapse_event.cpp"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 native/src/core/colony_sim_tick.cpp lines 1-120 (total lines: 2616)", Output: "1:#include <x>\n120:void a();\n"},
+		readFileSourceBodyResult("native/src/core/colony_sim_tick.cpp", 1, 120, 2616, "1:#include <x>\n120:void a();\n"),
 		{Tool: "read_file", Summary: "Read f2 native/tests/test_collapse_event.cpp lines 1-1", Error: "path \"native/tests/test_collapse_event.cpp\" is in your required_edit_paths but does not exist on disk yet — this is a NEW FILE you must create. If the brief does not provide enough body evidence for a required source/test file, answer with <<QUESTION>> naming the missing body evidence."},
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
 			Error:   "edits[2]: line-range replacement for /workspace/Colony/native/src/core/colony_sim_tick.cpp lines 1-80 would collapse 73 non-empty source lines to 24; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker",
 		},
-		{Tool: "read_file", Summary: "Read f3 native/src/core/colony_sim_tick.cpp lines 1-120 (total lines: 2616)", Output: "1:#include <x>\n120:void a();\n"},
+		readFileSourceBodyResult("native/src/core/colony_sim_tick.cpp", 1, 120, 2616, "1:#include <x>\n120:void a();\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
@@ -20849,7 +21019,7 @@ func TestPlanExecuteCollapseRangeReadClosesRefresh(t *testing.T) {
 			Summary: "submit_plan rejected",
 			Error:   "edits[2]: line-range replacement for /workspace/Colony/native/src/core/colony_sim_tick.cpp lines 1-80 would collapse 73 non-empty source lines to 24; use smaller bounded anchors or answer <<QUESTION>> with the exact missing body/anchor blocker",
 		},
-		{Tool: "read_file", Summary: "Read f1 native/src/core/colony_sim_tick.cpp lines 1-120 (total lines: 2616)", Output: "1:#include <x>\n120:void after();\n"},
+		readFileSourceBodyResult("native/src/core/colony_sim_tick.cpp", 1, 120, 2616, "1:#include <x>\n120:void after();\n"),
 	}
 
 	rejected := results[0]
@@ -20878,11 +21048,7 @@ func TestPlanExecuteGroundingPostReadinessRejectionSanitizesStaleRecoveryText(t 
 				"Read each existing edit path with `read_file` or `code_navigate` `read_symbol`/`extract_body`, then submit a corrected plan. " +
 				"If the feature is already present, answer `Decision: source-satisfied` with the observed current-state evidence; if no concrete path can be identified, answer `<<QUESTION>>:` with the exact blocker.",
 		},
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read Target in internal/workflows/productworkflow/tdd.go lines 1-50\n1:package productworkflow\n",
-		},
+		codeNavigateSourceBodyResult("internal/workflows/productworkflow/tdd.go", 1, 50, 0, "route_summary: Read Target in internal/workflows/productworkflow/tdd.go lines 1-50\n1:package productworkflow\n"),
 	}
 
 	summary, errorText, reject := planThenExecutePostReadinessDiscoveryRejection(workspace.ToolRequest{
@@ -21060,8 +21226,8 @@ func TestPlanExecuteSubmitReadyClearsStaleReadOnlyToolSurface(t *testing.T) {
 		RequiredEditPaths: []string{"native/src/core/colony_sim.h", "native/tests/test_quality_inventory_bindings.cpp"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 native/src/core/colony_sim.h lines 41-90 (total lines: 120)"},
-		{Tool: "read_file", Summary: "Read f2 native/tests/test_quality_inventory_bindings.cpp lines 121-180 (total lines: 355)"},
+		readFileSourceBodyResult("native/src/core/colony_sim.h", 41, 90, 120, ""),
+		readFileSourceBodyResult("native/tests/test_quality_inventory_bindings.cpp", 121, 180, 355, ""),
 		gitHistoryRangeResult("native/src/core/colony_sim.h"),
 		gitHistoryRangeResult("native/tests/test_quality_inventory_bindings.cpp"),
 	}
@@ -21366,14 +21532,14 @@ func TestPlanExecutePostReadinessRecoveryForcesCorrectedSubmitPlanAfterAnchorRef
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "internal/workflows/productworkflow/coverage_gate.go"},
 	}, []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 cmd/idiom/product_workflow.go lines 1-20"},
-		{Tool: "read_file", Summary: "Read f2 internal/workflows/productworkflow/coverage_gate.go lines 1-20"},
+		readFileSourceBodyResult("cmd/idiom/product_workflow.go", 1, 20, 20, ""),
+		readFileSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 20, 20, ""),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
 			Error:   "invalid edit anchor(s): `cmd/idiom/product_workflow.go: old_text not found in current source`.",
 		},
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640"},
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow.go", 1515, 1640, 0, "Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640"),
 	}, true)
 
 	if opts.ToolChoice != "required" {
@@ -21433,10 +21599,12 @@ func TestPlanExecuteCandidateWriteOnlyRecoveryDoesNotForceWithoutReadEvidence(t 
 
 func TestReadPathsFromResultsCountsCodeNavigateRouteSummary(t *testing.T) {
 	results := []workspace.ToolResult{
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output: strings.Join([]string{
+		codeNavigateSourceBodyResult(
+			"cmd/idiom/product_workflow.go",
+			1382,
+			1501,
+			0,
+			strings.Join([]string{
 				"capability: read_symbol",
 				"language: go",
 				"routed_tool: go_read_symbol",
@@ -21444,11 +21612,8 @@ func TestReadPathsFromResultsCountsCodeNavigateRouteSummary(t *testing.T) {
 				"",
 				"1382:func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {",
 			}, "\n"),
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f2 cmd/idiom/product_workflow_test.go lines 3209-3230",
-		},
+		),
+		readFileSourceBodyResult("cmd/idiom/product_workflow_test.go", 3209, 3230, 0, "3209:func TestProductWorkflow(t *testing.T) {}\n"),
 	}
 
 	paths := readPathsFromResults(results)
@@ -21526,8 +21691,10 @@ func TestCompletionGateRecoveryPromptKeepsUnreadDiscoveredCandidateReadVisible(t
 		},
 		{
 			Tool:    "read_file",
-			Summary: "Read f97 internal/policy/guard.go lines 1-180 (total lines: 180)",
+			Summary: "Read internal/policy/guard.go lines 1-180 (total lines: 180)",
 			Output:  "type PolicyGuardPlan struct{}",
+			Paths:   []string{"internal/policy/guard.go"},
+			Facts:   sourceBodyFactsForTest("internal/policy/guard.go", 1, 180, 180),
 		},
 	}
 	prompt, hideReads, ok := runner.completionGateRecoveryPrompt(results)
@@ -21571,11 +21738,7 @@ func TestPlanExecuteCandidateScopeReadinessDoesNotDeferForUnreadBetterCandidate(
 			Summary: "Found matching lines.",
 			Output:  syntheticPolicyGuardApplySearchOutput(),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f97 internal/policy/guard.go lines 1-180",
-			Output:  "type PolicyGuardPlan struct{}",
-		},
+		readFileSourceBodyResult("internal/policy/guard.go", 1, 180, 180, "type PolicyGuardPlan struct{}"),
 	}
 	got := planThenExecuteReadyToSubmitNudge(brief, results)
 
@@ -21601,7 +21764,7 @@ func TestPlanExecuteCandidateScopeReadinessDoesNotDeferForUnreadAllowedPath(t *t
 		AllowedEditPaths: []string{"pkg/feature.go", "pkg/feature_test.go"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 pkg/feature.go lines 1-20"},
+		readFileSourceBodyResult("pkg/feature.go", 1, 20, 20, ""),
 	}
 
 	if got := planThenExecuteReadyToSubmitNudge(brief, results); got != "" {
@@ -21758,8 +21921,8 @@ func TestPlanThenExecuteRequiredPathHintsSwitchToSubmitPlanAfterSourceEvidence(t
 		RequiredEditPaths: []string{"a.txt", "b.txt"},
 		TargetPacket:      []string{"verified anchors"},
 	}, []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10 (total lines: 10)", Output: "current a"},
-		{Tool: "read_file", Summary: "Read f2 b.txt lines 1-10 (total lines: 10)", Output: "current b"},
+		readFileSourceBodyResult("a.txt", 1, 10, 10, "current a"),
+		readFileSourceBodyResult("b.txt", 1, 10, 10, "current b"),
 	})
 
 	joined := strings.Join(append(append([]string{}, brief.RequiredNext...), brief.InvalidActions...), "\n")
@@ -21791,8 +21954,8 @@ func TestPlanThenExecuteRequiredPathHintsClearStaleSourceReadLanguageAfterReadin
 			"keep this unrelated policy",
 		},
 	}, []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10 (total lines: 10)", Output: "current a"},
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read B in b.txt lines 1-10\n1: current b"},
+		readFileSourceBodyResult("a.txt", 1, 10, 10, "current a"),
+		codeNavigateSourceBodyResult("b.txt", 1, 10, 0, "Read B in b.txt lines 1-10\n1: current b"),
 	})
 
 	joined := strings.Join(append(append(append([]string{}, brief.RequiredNext...), brief.InvalidActions...), brief.SearchPolicy...), "\n")
@@ -22004,11 +22167,9 @@ func TestPlanThenExecuteExplicitNewFileIntentBindsToNamedPathOnly(t *testing.T) 
 		t.Fatalf("mixed existing/new scope must not expose submit_plan before existing source evidence: %#v", state.ParserVisibleTools)
 	}
 
-	withExistingSource := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/labels/labels.go lines 1-8 (total lines: 8)",
-		Output:  "1:package labels\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n",
-	}}
+	withExistingSource := []workspace.ToolResult{
+		readFileSourceBodyResult("internal/labels/labels.go", 1, 8, 8, "1:package labels\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n"),
+	}
 	state = DerivePlanExecutePlanningState(brief, withExistingSource, PlanExecutePlanningTransport{TextualToolParser: true})
 	if state.Mode != PlanExecutePlanningModeHistoryPending {
 		t.Fatalf("mode after existing source read = %q, want history_pending", state.Mode)
@@ -22218,21 +22379,13 @@ func TestCompletionGateRecoveryPromptForUnscopedImplementationNoWriteKeepsReadsA
 		},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/surfaces/tui/app/rendering.go lines 1-120 (total lines: 332)",
-			Output:  "1:package app\n2:func renderMessages() {}\n",
-		},
+		readFileSourceBodyResult("internal/surfaces/tui/app/rendering.go", 1, 120, 332, "1:package app\n2:func renderMessages() {}\n"),
 		{
 			Tool:    "completion_gate",
 			Summary: "Mutation completion gate rejected final answer",
 			Error:   "this task asks for a workspace change, but no successful write tool result is present",
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/surfaces/tui/app/model_state.go lines 1-120 (total lines: 1456)",
-			Output:  "1:package app\n2:type modelState struct{}\n",
-		},
+		readFileSourceBodyResult("internal/surfaces/tui/app/model_state.go", 1, 120, 1456, "1:package app\n2:type modelState struct{}\n"),
 		{
 			Tool:    "completion_gate",
 			Summary: "Mutation completion gate rejected final answer",
@@ -22280,7 +22433,7 @@ func TestCompletionGateRecoveryPromptForDirectRequiredPathImplementationNoWrite(
 	}
 
 	prompt, hideReads, ok := runner.completionGateRecoveryPrompt([]workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read internal/workflows/productworkflow/coverage_gate.go lines 1-220 (total lines: 220)"},
+		readFileSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 220, 220, "1:package productworkflow\n"),
 		{Tool: "context_query", Summary: "Answered query for ValidatePRDTDDObligationCrossLinks"},
 	})
 	if !ok {
@@ -22546,8 +22699,8 @@ func TestCompletionGateRecoveryChatOptionsForcesVisibleTextualActionWhenAnchorsR
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"a.go", "a_test.go"},
 	}, []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read a.go lines 1-20 (total lines: 20)", Output: "1:package a"},
-		{Tool: "read_file", Summary: "Read a_test.go lines 1-40 (total lines: 40)", Output: "1:package a"},
+		readFileSourceBodyResult("a.go", 1, 20, 20, "1:package a"),
+		readFileSourceBodyResult("a_test.go", 1, 40, 40, "1:package a"),
 	}, false)
 
 	if opts.EnableThinking == nil || *opts.EnableThinking {
@@ -22577,11 +22730,9 @@ func TestImplementationRequiredPathHiddenOnlyRecoveryStallDisablesThinkingAfterR
 		Contract:          "implementation_result",
 		RequiredEditPaths: []string{"a.go"},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read a.go lines 1-4 (total lines: 4)",
-		Output:  "1:package main\n2:\n3:func main() {}\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("a.go", 1, 4, 4, "1:package main\n2:\n3:func main() {}\n"),
+	}
 	reply := llama.ChatMessage{ReasoningContent: "I can make the edit now."}
 
 	if implementationRequiredPathHiddenOnlyRecoveryStall(brief, results, reply, 0, false) {
@@ -22607,11 +22758,9 @@ func TestMutationHiddenOnlyNoWriteTerminalRecoveryDoesNotOverrideTargetWriteRead
 		Contract:   "implementation_result",
 	}
 	reply := llama.ChatMessage{ReasoningContent: "I know the edit now."}
-	sourceRead := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read a.go lines 1-3 (total lines: 3)",
-		Output:  "1:package a\n2:\n3:func A() {}\n",
-	}}
+	sourceRead := []workspace.ToolResult{
+		readFileSourceBodyResult("a.go", 1, 3, 3, "1:package a\n2:\n3:func A() {}\n"),
+	}
 
 	if !implementationTargetWriteReadySurfaceActive(brief, sourceRead) {
 		t.Fatal("test setup should be target-write-ready after concrete source evidence")
@@ -22623,6 +22772,7 @@ func TestMutationHiddenOnlyNoWriteTerminalRecoveryDoesNotOverrideTargetWriteRead
 	outlineOnly := []workspace.ToolResult{{
 		Tool:    "code_navigate",
 		Summary: "Code navigation routed file_outline via go_file_outline",
+		Paths:   []string{"a.go"},
 		Output:  "capability: file_outline\nroute_summary: Outlined 1 top-level declaration(s) in a.go.",
 	}}
 	if mutationHiddenOnlyNoWriteTerminalRecoveryStall(brief, outlineOnly, reply, 1, false) {
@@ -23089,16 +23239,8 @@ func TestUnscopedNoWriteRecoveryDoesNotAutoReadAfterWriteReadyGate(t *testing.T)
 			Summary: "packet",
 			Facts:   contextPackCandidateFactsForTest("internal/workflows/productworkflow/coverage_gate_test.go"),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 docs/design-tdd-coverage.md lines 1-180 (total lines: 815)",
-			Output:  "Phase 1: EARS And BDD Coverage Checks\n",
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f2 internal/workflows/productworkflow/coverage_gate.go lines 1-180 (total lines: 552)",
-			Output:  "func EvaluateCoverageGate() {}\n",
-		},
+		readFileSourceBodyResult("docs/design-tdd-coverage.md", 1, 180, 815, "Phase 1: EARS And BDD Coverage Checks\n"),
+		readFileSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 180, 552, "func EvaluateCoverageGate() {}\n"),
 		{
 			Tool:    "completion_gate",
 			Summary: "Mutation completion gate rejected final answer",
@@ -23130,11 +23272,15 @@ func TestCompletionGateRecoveryPromptForTargetWriteReadyFinalAnswer(t *testing.T
 			RequiredEvidence: []string{"changed_paths_or_noop_reason", "verification_status"},
 		},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/runtime/workerruntime/vocabulary.go lines 1-120 (total lines: 361)",
-		Output:  "package workerruntime\n\nconst existingValue = \"literal\"\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult(
+			"internal/runtime/workerruntime/vocabulary.go",
+			1,
+			120,
+			361,
+			"package workerruntime\n\nconst existingValue = \"literal\"\n",
+		),
+	}
 
 	if !implementationTargetWriteReadySurfaceActive(runner.RuntimeBrief, results) {
 		t.Fatal("test setup should be target-write-ready after recommended source evidence")
@@ -23199,15 +23345,14 @@ func TestUnscopedImplementationWriteReadyNudgesNonWriteTools(t *testing.T) {
 			PermissionProfile: "guarded_workspace_write",
 		},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/workflows/productworkflow/coverage_gate.go lines 1-120 (total lines: 552)",
-		Output:  "func EvaluateCoverageGate() {}\n",
-	}, {
-		Tool:    "completion_gate",
-		Summary: "Mutation completion gate rejected final answer",
-		Error:   "this task asks for a workspace change, but no successful write tool result is present",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 120, 552, "func EvaluateCoverageGate() {}\n"),
+		{
+			Tool:    "completion_gate",
+			Summary: "Mutation completion gate rejected final answer",
+			Error:   "this task asks for a workspace change, but no successful write tool result is present",
+		},
+	}
 
 	prompt, ok := runner.implementationTargetWriteReadyNonWritePrompt(
 		workspace.ToolRequest{Tool: "read_file", Path: "internal/workflows/productworkflow/coverage_gate.go"},
@@ -23250,12 +23395,9 @@ func TestUnscopedImplementationWriteReadyDoesNotBlockOnSupersededRedirect(t *tes
 			Tool:    "read_file",
 			Summary: "Redirected internal/surfaces/tui/app/implementation_dispatch.go to code_navigate",
 			Output:  "Use code_navigate for source-body evidence in internal/surfaces/tui/app/implementation_dispatch.go.",
+			Paths:   []string{"internal/surfaces/tui/app/implementation_dispatch.go"},
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/surfaces/tui/app/sessions_panel.go lines 1-219 (total lines: 219)",
-			Output:  "func renderSessionsPanelContent() {}\nfunc handleSessionsPanelKey() {}\n",
-		},
+		readFileSourceBodyResult("internal/surfaces/tui/app/sessions_panel.go", 1, 219, 219, "func renderSessionsPanelContent() {}\nfunc handleSessionsPanelKey() {}\n"),
 	}
 
 	if !implementationTargetWriteReadySurfaceActive(runner.RuntimeBrief, results) {
@@ -23326,19 +23468,15 @@ func TestUnscopedImplementationWriteReadyRejectsNonWriteAfterSymbolBody(t *testi
 		},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output: strings.Join([]string{
-				"capability: read_symbol",
-				"language: go",
-				"routed_tool: go_read_symbol",
-				"route_summary: Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-8",
-				"1:func EvaluateCoverageGate() bool {",
-				"2:\treturn true",
-				"3:}",
-			}, "\n"),
-		},
+		codeNavigateSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 8, 0, strings.Join([]string{
+			"capability: read_symbol",
+			"language: go",
+			"routed_tool: go_read_symbol",
+			"route_summary: Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-8",
+			"1:func EvaluateCoverageGate() bool {",
+			"2:\treturn true",
+			"3:}",
+		}, "\n")),
 	}
 
 	if !implementationTargetWriteReadySurfaceActive(runner.RuntimeBrief, results) {
@@ -23370,19 +23508,15 @@ func TestUnscopedImplementationWriteReadyAllowsOneSamePathSourceRefreshAfterSymb
 		},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output: strings.Join([]string{
-				"capability: read_symbol",
-				"language: go",
-				"routed_tool: go_read_symbol",
-				"route_summary: Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-8",
-				"1:func EvaluateCoverageGate() bool {",
-				"2:\treturn true",
-				"3:}",
-			}, "\n"),
-		},
+		codeNavigateSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 8, 0, strings.Join([]string{
+			"capability: read_symbol",
+			"language: go",
+			"routed_tool: go_read_symbol",
+			"route_summary: Read EvaluateCoverageGate in internal/workflows/productworkflow/coverage_gate.go lines 1-8",
+			"1:func EvaluateCoverageGate() bool {",
+			"2:\treturn true",
+			"3:}",
+		}, "\n")),
 	}
 
 	if !runner.implementationTargetWriteReadySourceRefreshAllowed(
@@ -23455,11 +23589,7 @@ func TestUnscopedImplementationWriteReadyAllowsOneSamePathSourceRefreshAfterSymb
 		t.Fatal("source-refresh allowance must be capped at one use")
 	}
 
-	withFullRead := append(append([]workspace.ToolResult{}, results...), workspace.ToolResult{
-		Tool:    "read_file",
-		Summary: "Read internal/workflows/productworkflow/coverage_gate.go lines 1-8 (total lines: 8)",
-		Output:  "1:func EvaluateCoverageGate() bool {\n2:\treturn true\n3:}\n",
-	})
+	withFullRead := append(append([]workspace.ToolResult{}, results...), readFileSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 8, 8, "1:func EvaluateCoverageGate() bool {\n2:\treturn true\n3:}\n"))
 	if runner.implementationTargetWriteReadySourceRefreshAllowed(
 		workspace.ToolRequest{Tool: "read_file", Path: "internal/workflows/productworkflow/coverage_gate.go"},
 		withFullRead,
@@ -23509,16 +23639,8 @@ func TestUnscopedImplementationWriteReadyAllowsBoundedSamePathContinuation(t *te
 		},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/surfaces/tui/app/sessions_panel.go lines 1-219 (total lines: 219)",
-			Output:  "package app\n",
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f2 internal/surfaces/tui/app/sessions.go lines 1-100 (total lines: 418)",
-			Output:  "package app\n",
-		},
+		readFileSourceBodyResult("internal/surfaces/tui/app/sessions_panel.go", 1, 219, 219, "package app\n"),
+		readFileSourceBodyResult("internal/surfaces/tui/app/sessions.go", 1, 100, 418, "package app\n"),
 	}
 
 	if !implementationTargetWriteReadySurfaceActive(runner.RuntimeBrief, results) {
@@ -23581,15 +23703,9 @@ func TestUnscopedImplementationWriteReadyAllowsBoundedSamePathContinuation(t *te
 		t.Fatal("same-path continuation past known EOF should not be allowed")
 	}
 
-	atContinuationLimit := append(append([]workspace.ToolResult{}, results...), workspace.ToolResult{
-		Tool:    "read_file",
-		Summary: "Read f3 internal/surfaces/tui/app/sessions.go lines 100-200 (total lines: 418)",
-		Output:  "package app\n",
-	}, workspace.ToolResult{
-		Tool:    "read_file",
-		Summary: "Read f4 internal/surfaces/tui/app/sessions.go lines 201-300 (total lines: 418)",
-		Output:  "package app\n",
-	})
+	atContinuationLimit := append(append([]workspace.ToolResult{}, results...),
+		readFileSourceBodyResult("internal/surfaces/tui/app/sessions.go", 100, 200, 418, "package app\n"),
+		readFileSourceBodyResult("internal/surfaces/tui/app/sessions.go", 201, 300, 418, "package app\n"))
 	if runner.implementationTargetWriteReadySourceReadAllowed(
 		workspace.ToolRequest{
 			Tool:      "read_file",
@@ -23615,15 +23731,12 @@ func TestUnscopedImplementationWriteReadyAllowsRedirectedSourceFollowup(t *testi
 		},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/surfaces/tui/app/sessions_panel.go lines 1-219 (total lines: 219)",
-			Output:  "package app\n",
-		},
+		readFileSourceBodyResult("internal/surfaces/tui/app/sessions_panel.go", 1, 219, 219, "package app\n"),
 		{
 			Tool:    "read_file",
 			Summary: "Redirected internal/surfaces/tui/app/sessions.go to code_navigate",
 			Output:  "Use code_navigate for source-body evidence in internal/surfaces/tui/app/sessions.go.",
+			Paths:   []string{"internal/surfaces/tui/app/sessions.go"},
 		},
 	}
 
@@ -23698,10 +23811,12 @@ func TestUnscopedImplementationWriteReadyAllowsRedirectedSourceFollowup(t *testi
 		t.Fatal("new source reads should wait while a redirected source-read obligation is pending")
 	}
 
-	withSourceBody := append(append([]workspace.ToolResult{}, results...), workspace.ToolResult{
-		Tool:    "code_navigate",
-		Summary: "Code navigation routed read_symbol via go_read_symbol",
-		Output: strings.Join([]string{
+	withSourceBody := append(append([]workspace.ToolResult{}, results...), codeNavigateSourceBodyResult(
+		"internal/surfaces/tui/app/sessions.go",
+		1,
+		8,
+		0,
+		strings.Join([]string{
 			"capability: read_symbol",
 			"language: go",
 			"routed_tool: go_read_symbol",
@@ -23710,7 +23825,7 @@ func TestUnscopedImplementationWriteReadyAllowsRedirectedSourceFollowup(t *testi
 			"2:\treturn nil",
 			"3:}",
 		}, "\n"),
-	})
+	))
 	if runner.implementationTargetWriteReadySourceReadAllowed(
 		workspace.ToolRequest{Tool: "code_navigate", Path: "internal/surfaces/tui/app/sessions.go"},
 		withSourceBody,
@@ -23723,6 +23838,7 @@ func TestUnscopedImplementationWriteReadyAllowsRedirectedSourceFollowup(t *testi
 	withOutline := append(append([]workspace.ToolResult{}, results...), workspace.ToolResult{
 		Tool:    "code_navigate",
 		Summary: "Code navigation routed file_outline via go_file_outline",
+		Paths:   []string{"internal/surfaces/tui/app/sessions.go"},
 		Output: strings.Join([]string{
 			"capability: file_outline",
 			"language: go",
@@ -23767,11 +23883,7 @@ func TestUnscopedImplementationWriteReadyAllowsTargetedLocalizationSearch(t *tes
 		},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/surfaces/tui/app/sessions_panel.go lines 1-219 (total lines: 219)",
-			Output:  "package app\n",
-		},
+		readFileSourceBodyResult("internal/surfaces/tui/app/sessions_panel.go", 1, 219, 219, "package app\n"),
 	}
 
 	if !implementationTargetWriteReadySurfaceActive(runner.RuntimeBrief, results) {
@@ -23972,8 +24084,8 @@ func TestCompletionGateRetryLimitCutsOverPlanExecuteSubmitPlanRecovery(t *testin
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "route_summary: Read A in a.go lines 1-10\n\n1:func A() {}\n"},
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "route_summary: Read B in b.go lines 1-10\n\n1:func B() {}\n"},
+		codeNavigateSourceBodyResult("a.go", 1, 10, 0, "route_summary: Read A in a.go lines 1-10\n\n1:func A() {}\n"),
+		codeNavigateSourceBodyResult("b.go", 1, 10, 0, "route_summary: Read B in b.go lines 1-10\n\n1:func B() {}\n"),
 	}
 
 	if got := runner.completionGateRetryLimit(results); got != 1 {
@@ -23991,8 +24103,8 @@ func TestCompletionGateRetryLimitAllowsSubmitCorrectionRepeatRecovery(t *testing
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
-		{Tool: "read_file", Summary: "Read b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+		readFileSourceBodyResult("b.go", 1, 10, 10, "1:package b\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -24027,11 +24139,7 @@ func TestPlanExecuteLoopBudgetRecoveryKeepsUnreadCandidateReadsAvailable(t *test
 			Summary: "Context pack wrote candidates",
 			Facts:   contextPackCandidateFactsForTest("a.go", "b.go"),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 a.go lines 1-20 (total lines: 20)",
-			Output:  "1:package demo\n",
-		},
+		readFileSourceBodyResult("a.go", 1, 20, 20, "1:package demo\n"),
 	}
 
 	recovery, ok := runner.planThenExecuteLoopBudgetRecoveryPrompt(
@@ -24069,8 +24177,8 @@ func TestPlanExecuteSubmitCorrectionLoopBudgetRecoveryIsSubmitPlanOnly(t *testin
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
-		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+		readFileSourceBodyResult("b.go", 1, 10, 10, "1:package b\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -24129,11 +24237,7 @@ func TestPlanExecuteIgnoredLoopBudgetRecoveryForcesTerminalPlannerOutcome(t *tes
 			Summary: "Context pack wrote candidates",
 			Facts:   contextPackCandidateFactsForTest("a.go", "b.go"),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 a.go lines 1-20 (total lines: 20)",
-			Output:  "1:package demo\n",
-		},
+		readFileSourceBodyResult("a.go", 1, 20, 20, "1:package demo\n"),
 	}
 
 	recovery, ok := runner.planThenExecuteIgnoredLoopBudgetRecoveryPrompt(
@@ -24171,8 +24275,8 @@ func TestPlanExecuteSubmitCorrectionIgnoredLoopBudgetRecoveryIsSubmitPlanOnly(t 
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
-		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+		readFileSourceBodyResult("b.go", 1, 10, 10, "1:package b\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -24286,8 +24390,8 @@ func TestPlanThenExecuteReadyToSubmitNudgeFiresWhenAllPathsRead(t *testing.T) {
 		RequiredEditPaths: []string{"a.txt", "b.txt"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10 (total lines: 10)"},
-		{Tool: "read_file", Summary: "Read f2 b.txt lines 1-10 (total lines: 10)"},
+		readFileSourceBodyResult("a.txt", 1, 10, 10, "1:a\n"),
+		readFileSourceBodyResult("b.txt", 1, 10, 10, "1:b\n"),
 	}
 	got := planThenExecuteReadyToSubmitNudge(brief, results)
 
@@ -24308,39 +24412,31 @@ func TestPlanThenExecuteLargeGenericHeaderReadIsNotSourceReady(t *testing.T) {
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"huge.go"},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read huge.go lines 1-180 (bounded large required-path source; file has 1200 lines total; full range-less read omitted)",
-		Output:  "Bounded source packet for huge.go\n- file_lines: 1200\n- returned_lines: 1-180\nSource lines:\n1:package huge",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("huge.go", 1, 180, 1200, "Bounded source packet for huge.go\n- file_lines: 1200\n- returned_lines: 1-180\nSource lines:\n1:package huge"),
+	}
 
 	if got := planThenExecuteReadyToSubmitNudge(brief, results); got != "" {
 		t.Fatalf("generic first-window read of a large file must not reach planner readiness:\n%s", got)
 	}
 
-	noTotalResults := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read huge.go lines 1-180",
-		Output:  "1:package huge",
-	}}
+	noTotalResults := []workspace.ToolResult{
+		readFileSourceBodyResult("huge.go", 1, 180, 0, "1:package huge"),
+	}
 	if got := planThenExecuteReadyToSubmitNudge(brief, noTotalResults); got != "" {
 		t.Fatalf("generic first-window read without total line count must not reach planner readiness:\n%s", got)
 	}
 
-	largeHeaderResults := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read huge.go lines 1-300 (total lines: 6796)",
-		Output:  "1:package huge",
-	}}
+	largeHeaderResults := []workspace.ToolResult{
+		readFileSourceBodyResult("huge.go", 1, 300, 6796, "1:package huge"),
+	}
 	if got := planThenExecuteReadyToSubmitNudge(brief, largeHeaderResults); got != "" {
 		t.Fatalf("generic 300-line header read of a very large file must not reach planner readiness:\n%s", got)
 	}
 
-	midFileRawRangeResults := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read huge.go lines 301-600 (total lines: 6796)",
-		Output:  "301:func Helper() {}",
-	}}
+	midFileRawRangeResults := []workspace.ToolResult{
+		readFileSourceBodyResult("huge.go", 301, 600, 6796, "301:func Helper() {}"),
+	}
 	if got := planThenExecuteReadyToSubmitNudge(brief, midFileRawRangeResults); got != "" {
 		t.Fatalf("raw bounded read_file range of a very large Go file must not reach planner readiness without symbol/body routing:\n%s", got)
 	}
@@ -24370,11 +24466,9 @@ func TestPlanThenExecuteSmallWholeFileReadIsSourceReady(t *testing.T) {
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		RequiredEditPaths: []string{"small.go"},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read small.go lines 1-24 (file has 24 lines total)",
-		Output:  "1:package small\n2:\n3:func Value() int { return 1 }",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("small.go", 1, 24, 24, "1:package small\n2:\n3:func Value() int { return 1 }"),
+	}
 
 	if got := planThenExecuteReadyToSubmitNudge(brief, results); got == "" {
 		t.Fatalf("small whole-file read should reach readiness, got:\n%s", got)
@@ -24390,11 +24484,9 @@ func TestPlanThenExecuteSymbolBodyReadIsSourceReady(t *testing.T) {
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		RequiredEditPaths: []string{"internal/runtime/agent/runner_core.go"},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "code_navigate",
-		Summary: "Code navigation routed read_symbol via go_read_symbol",
-		Output:  "capability: read_symbol\nlanguage: go\nrouted_tool: go_read_symbol\nroute_summary: Read Runner.Run in internal/runtime/agent/runner_core.go lines 88-210\n\n88:func (r *Runner) Run() {}",
-	}}
+	results := []workspace.ToolResult{
+		codeNavigateSourceBodyResult("internal/runtime/agent/runner_core.go", 88, 210, 0, "capability: read_symbol\nlanguage: go\nrouted_tool: go_read_symbol\nroute_summary: Read Runner.Run in internal/runtime/agent/runner_core.go lines 88-210\n\n88:func (r *Runner) Run() {}"),
+	}
 
 	if got := planThenExecuteReadyToSubmitNudge(brief, results); got == "" {
 		t.Fatalf("read_symbol body should reach readiness, got:\n%s", got)
@@ -24434,7 +24526,9 @@ func TestPlanExecuteTextualSubmitPlanRecoveryForcesVisibleOutput(t *testing.T) {
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		RequiredEditPaths: []string{"a.go"},
 	}
-	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read a.go lines 1-20 (total lines: 20)", Output: "1:package a"}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("a.go", 1, 20, 20, "1:package a"),
+	}
 	opts := planThenExecuteReadyToSubmitChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:   &thinkingOn,
 		PreserveThinking: true,
@@ -24711,8 +24805,8 @@ func TestPlanExecuteTerminalTextualCompactContextPreservesEvidenceOnly(t *testin
 		{Role: "assistant", Content: `{"tool":"read_file","path":"a.go"}`},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-20 (total lines: 20)", Output: "1:package a\n2:func Value() int { return 1 }"},
-		{Tool: "read_file", Summary: "Read unrelated.go lines 1-5 (total lines: 5)", Output: "1:package unrelated"},
+		readFileSourceBodyResult("a.go", 1, 20, 20, "1:package a\n2:func Value() int { return 1 }"),
+		readFileSourceBodyResult("unrelated.go", 1, 5, 5, "1:package unrelated"),
 	}
 
 	pruned, _, _ := prunePlanThenExecuteTerminalTextualMessages(messages)
@@ -24738,7 +24832,7 @@ func TestPlanExecuteTerminalTextualCompactContextPreservesEvidenceOnly(t *testin
 		"plan edit",
 		"AUTHORITATIVE_CONSTRAINT: preserve bounded write scope.",
 		planThenExecuteTerminalSourceEvidencePrefix,
-		"Read f1 a.go lines 1-20",
+		"Read a.go lines 1-20",
 		"2:func Value() int { return 1 }",
 	} {
 		if !strings.Contains(joined, want) {
@@ -24807,7 +24901,9 @@ func TestPlanExecuteNativeSubmitPlanRecoveryKeepsRequiredToolChoice(t *testing.T
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		RequiredEditPaths: []string{"a.go"},
 	}
-	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read a.go lines 1-20 (total lines: 20)", Output: "1:package a"}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("a.go", 1, 20, 20, "1:package a"),
+	}
 	opts := planThenExecuteReadyToSubmitChatOptionsForBackend(llama.ChatOptions{
 		EnableThinking:   &thinkingOn,
 		PreserveThinking: true,
@@ -24859,8 +24955,8 @@ func TestPlanExecuteNativeTerminalSurfaceIncludesRequiredPathSkeleton(t *testing
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read a.go lines 1-20 (total lines: 20)", Output: "1:package a"},
-		{Tool: "read_file", Summary: "Read b.go lines 1-20 (total lines: 20)", Output: "1:package b"},
+		readFileSourceBodyResult("a.go", 1, 20, 20, "1:package a"),
+		readFileSourceBodyResult("b.go", 1, 20, 20, "1:package b"),
 	}
 	messages := []llama.ChatMessage{{Role: "user", Content: "plan edit"}}
 
@@ -24919,11 +25015,7 @@ func TestPlanExecuteTerminalSurfaceRefreshAllowsSelectedContextPackCandidate(t *
 			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 1 candidate file(s)",
 			Facts:   contextPackCandidateFactsForTest("pkg/feature.go"),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 pkg/feature.go lines 1-4 (total lines: 4)",
-			Output:  "1:package pkg\n2:\n3:func Hardened() bool { return true }\n",
-		},
+		readFileSourceBodyResult("pkg/feature.go", 1, 4, 4, "1:package pkg\n2:\n3:func Hardened() bool { return true }\n"),
 	}
 	runner := &Runner{RuntimeBrief: brief}
 	messages := []llama.ChatMessage{{Role: "user", Content: "plan feature edit"}}
@@ -24959,11 +25051,7 @@ func TestPlanExecuteTerminalSurfaceRefreshSkipsUnreadContextCandidate(t *testing
 			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
 			Facts:   contextPackCandidateFactsForTest("pkg/feature.go", "pkg/feature_test.go"),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 pkg/feature.go lines 1-4 (total lines: 4)",
-			Output:  "1:package pkg\n2:\n3:func Hardened() bool { return true }\n",
-		},
+		readFileSourceBodyResult("pkg/feature.go", 1, 4, 4, "1:package pkg\n2:\n3:func Hardened() bool { return true }\n"),
 	}
 	runner := &Runner{RuntimeBrief: brief}
 	messages := []llama.ChatMessage{{Role: "user", Content: "plan feature edit"}}
@@ -24990,7 +25078,7 @@ func TestPlanExecuteTrueNativeTerminalSurfaceIncludesRequiredPathSkeleton(t *tes
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read a.go lines 10-40 (total lines: 80)", Output: "10:func value() int {"},
+		readFileSourceBodyResult("a.go", 10, 40, 80, "10:func value() int {"),
 	}
 	messages := []llama.ChatMessage{{Role: "user", Content: "plan edit"}}
 
@@ -25026,8 +25114,8 @@ func TestPlanExecuteTextualFallbackSurfaceIncludesConcreteSubmitPlanJSONSkeleton
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read a.go lines 1-20 (total lines: 20)", Output: "1:package a"},
-		{Tool: "read_file", Summary: "Read b.go lines 1-20 (total lines: 20)", Output: "1:package b"},
+		readFileSourceBodyResult("a.go", 1, 20, 20, "1:package a"),
+		readFileSourceBodyResult("b.go", 1, 20, 20, "1:package b"),
 	}
 	messages := []llama.ChatMessage{{Role: "user", Content: "plan edit"}}
 
@@ -25078,7 +25166,7 @@ func TestPlanExecuteTextualFallbackSurfaceUsesNewFileShapeForMissingPath(t *test
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read a.go lines 1-20 (total lines: 20)", Output: "1:package a"},
+		readFileSourceBodyResult("a.go", 1, 20, 20, "1:package a"),
 		{
 			Tool:    "read_file",
 			Summary: "read_file failed for new_file.go",
@@ -25124,7 +25212,7 @@ func TestPlanExecuteNativeSurfaceUsesNewFileShapeForMissingPath(t *testing.T) {
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read a.go lines 1-20 (total lines: 20)", Output: "1:package a"},
+		readFileSourceBodyResult("a.go", 1, 20, 20, "1:package a"),
 		{
 			Tool:    "read_file",
 			Summary: "read_file failed for new_file.go",
@@ -25166,11 +25254,7 @@ func TestPlanExecuteTerminalSkeletonCapsEvidenceWhileListingAllRequiredPaths(t *
 		path := fmt.Sprintf("file%d.go", i)
 
 		paths = append(paths, path)
-		results = append(results, workspace.ToolResult{
-			Tool:    "read_file",
-			Summary: fmt.Sprintf("Read %s lines 1-10 (total lines: 10)", path),
-			Output:  "1:package p",
-		})
+		results = append(results, readFileSourceBodyResult(path, 1, 10, 10, "1:package p"))
 	}
 
 	skeleton := planThenExecuteTerminalSubmitPlanSkeleton(workerruntime.WorkerRuntimeBrief{
@@ -25218,10 +25302,10 @@ func TestPlanExecutePostRejectionSurfaceKeepsOneSkeletonAndRejectedDraftEvidence
 		Error:   "invalid edit anchor(s): `b.go: old_text not found in current source`.",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read a.go lines 1-20 (total lines: 20)", Output: "1:package a"},
-		{Tool: "read_file", Summary: "Read b.go lines 1-20 (total lines: 20)", Output: "1:package b"},
+		readFileSourceBodyResult("a.go", 1, 20, 20, "1:package a"),
+		readFileSourceBodyResult("b.go", 1, 20, 20, "1:package b"),
 		result,
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "route_summary: Read Target in b.go lines 1-20\n1:package b"},
+		codeNavigateSourceBodyResult("b.go", 1, 20, 20, "route_summary: Read Target in b.go lines 1-20\n1:package b"),
 	}
 	messages := []llama.ChatMessage{
 		{Role: "system", Content: "# Terminal Plan-Execute Native Tool Surface\n" + planThenExecuteNativeSubmitPlanSkeleton([]planThenExecuteSubmitPlanSkeletonEntry{{Path: "stale.go"}})},
@@ -25274,7 +25358,7 @@ func TestPlanExecuteSourceSatisfiedTerminalSurfaceDoesNotAdvertiseSubmitPlanOnly
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "package a\n"},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "package a\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: source-satisfied terminal shape required",
@@ -25326,8 +25410,8 @@ func TestPlanExecuteSourceSatisfiedRejectionAfterInvalidAnchorKeepsAnchorRefresh
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
-		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+		readFileSourceBodyResult("b.go", 1, 10, 10, "1:package b\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -25600,8 +25684,8 @@ func TestPlanExecuteNativeNoToolCallFallbackSwitchesToTextualSubmitPlan(t *testi
 		RequiredEditPaths: []string{"a.go", "b.go"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-20 (total lines: 20)"},
-		{Tool: "read_file", Summary: "Read f2 b.go lines 1-20 (total lines: 20)"},
+		readFileSourceBodyResult("a.go", 1, 20, 20, "1:package a\n"),
+		readFileSourceBodyResult("b.go", 1, 20, 20, "1:package b\n"),
 	}
 	runner := &Runner{
 		Client:       llama.NewClient("http://127.0.0.1:1", time.Second).WithBackend(config.BackendMLX),
@@ -25870,14 +25954,11 @@ func TestPlanThenExecuteUnreadRequiredSourceNudgeFiresAfterOutlineOnlyPath(t *te
 		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
-		},
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow.go", 1515, 1640, 0, "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n"),
 		{
 			Tool:    "code_navigate",
 			Summary: "Code navigation routed file_outline via go_file_outline",
+			Paths:   []string{"cmd/idiom/product_workflow_test.go"},
 			Output:  "route_summary: Outlined 33 top-level declaration(s) in cmd/idiom/product_workflow_test.go.\n",
 		},
 	}
@@ -25905,8 +25986,8 @@ func TestPlanThenExecuteUnreadRequiredSourceChatOptionsCapsNextCall(t *testing.T
 		RequiredEditPaths: []string{"a.go", "b.go"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "route_summary: Read A in a.go lines 1-10\n\n1:func A() {}\n"},
-		{Tool: "code_navigate", Summary: "Code navigation routed file_outline via go_file_outline", Output: "route_summary: Outlined 2 top-level declaration(s) in b.go.\n"},
+		codeNavigateSourceBodyResult("a.go", 1, 10, 0, "route_summary: Read A in a.go lines 1-10\n\n1:func A() {}\n"),
+		{Tool: "code_navigate", Summary: "Code navigation routed file_outline via go_file_outline", Paths: []string{"b.go"}, Output: "route_summary: Outlined 2 top-level declaration(s) in b.go.\n"},
 	}
 	thinkingOn := true
 	opts := planThenExecuteUnreadRequiredSourceChatOptions(llama.ChatOptions{
@@ -25934,8 +26015,8 @@ func TestPlanThenExecuteReadyToSubmitNudgeWaitsForFullCoverage(t *testing.T) {
 		RequiredEditPaths: []string{"a.txt", "b.txt", "c.txt"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10"},
-		{Tool: "read_file", Summary: "Read f2 b.txt lines 1-10"},
+		readFileSourceBodyResult("a.txt", 1, 10, 10, "1:a\n"),
+		readFileSourceBodyResult("b.txt", 1, 10, 10, "1:b\n"),
 		// c.txt has not been read — the nudge must wait.
 	}
 
@@ -25954,7 +26035,7 @@ func TestPlanThenExecuteReadyToSubmitNudgeFiresForCandidateScopeRead(t *testing.
 			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 1 candidate file(s)",
 			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/rendering.go"),
 		},
-		{Tool: "read_file", Summary: "Read f1 internal/surfaces/tui/app/rendering.go lines 1-120"},
+		readFileSourceBodyResult("internal/surfaces/tui/app/rendering.go", 1, 120, 120, "1:package app\n"),
 	}
 
 	got := planThenExecuteReadyToSubmitNudge(brief, results)
@@ -25984,11 +26065,7 @@ func TestPlanThenExecuteReadyToSubmitNudgeDoesNotRequireUnreadUnscopedCandidates
 				"internal/workflows/productworkflow/coverage_gate_test.go",
 			),
 		},
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read EvaluateCoverage in internal/workflows/productworkflow/coverage_gate.go lines 20-80\n\n20:func EvaluateCoverage() {}\n",
-		},
+		codeNavigateSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 20, 80, 0, "route_summary: Read EvaluateCoverage in internal/workflows/productworkflow/coverage_gate.go lines 20-80\n\n20:func EvaluateCoverage() {}\n"),
 	}
 
 	got := planThenExecuteReadyToSubmitNudge(brief, results)
@@ -26027,11 +26104,15 @@ func TestPlanThenExecuteReadyToSubmitNudgeDoesNotRequireAllAllowedCandidates(t *
 		AllowedEditPaths:  []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go", "internal/workflows/productworkflow/coverage_gate.go"},
 		RequiredEditPaths: nil,
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "code_navigate",
-		Summary: "Code navigation routed read_symbol via go_read_symbol",
-		Output:  "route_summary: Read validTestImplementationLedgerJSONL in cmd/idiom/product_workflow_test.go lines 3636-3678\n\n3636:func validTestImplementationLedgerJSONL() string {\n3637:\treturn `{}`\n3638:}\n",
-	}}
+	results := []workspace.ToolResult{
+		codeNavigateSourceBodyResult(
+			"cmd/idiom/product_workflow_test.go",
+			3636,
+			3678,
+			0,
+			"route_summary: Read validTestImplementationLedgerJSONL in cmd/idiom/product_workflow_test.go lines 3636-3678\n\n3636:func validTestImplementationLedgerJSONL() string {\n3637:\treturn `{}`\n3638:}\n",
+		),
+	}
 
 	got := planThenExecuteReadyToSubmitNudge(brief, results)
 	if got == "" {
@@ -26052,11 +26133,9 @@ func TestPlanExecutePlanningStateKeepsCandidatesOutOfRequiredCoverage(t *testing
 		TaskFamily:       PlanThenExecutePlannerTaskFamily,
 		AllowedEditPaths: []string{"pkg/feature.go", "pkg/feature_test.go"},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 pkg/feature.go lines 1-40 (total lines: 40)",
-		Output:  "1:package pkg\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("pkg/feature.go", 1, 40, 40, "1:package pkg\n"),
+	}
 
 	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
 	if state.Mode != PlanExecutePlanningModeAllowedCandidate {
@@ -26080,11 +26159,9 @@ func TestPlanExecutePlanningStateDoesNotPromoteEvidenceOnlyPaths(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily: PlanThenExecutePlannerTaskFamily,
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/workflows/productworkflow/types.go lines 1-40 (total lines: 40)",
-		Output:  "1:package productworkflow\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("internal/workflows/productworkflow/types.go", 1, 40, 40, "1:package productworkflow\n"),
+	}
 
 	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
 	if len(state.RequiredCoveragePaths) != 0 {
@@ -26110,11 +26187,7 @@ func TestPlanExecutePlanningStateDoesNotPromoteEvidenceOnlyPathViaContextPack(t 
 			Summary: "context pack",
 			Facts:   contextPackCandidateFactsForTest("pkg/feature.go"),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 pkg/other.go lines 1-40 (total lines: 40)",
-			Output:  "1:package pkg\n",
-		},
+		readFileSourceBodyResult("pkg/other.go", 1, 40, 40, "1:package pkg\n"),
 	}
 
 	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
@@ -26146,11 +26219,7 @@ func TestPlanExecutePlanningStateSelectsContextPackCandidateWithSourceEvidence(t
 			Summary: "context pack",
 			Facts:   contextPackCandidateFactsForTest("pkg/feature.go"),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 pkg/feature.go lines 1-40 (total lines: 40)",
-			Output:  "1:package pkg\n",
-		},
+		readFileSourceBodyResult("pkg/feature.go", 1, 40, 40, "1:package pkg\n"),
 	}
 
 	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
@@ -26173,14 +26242,14 @@ func TestPlanExecutePlanningStateCorrectionSelectsInvalidArtifactPaths(t *testin
 		RequiredEditPaths: []string{"a.go", "b.go"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read a.go lines 1-20 (total lines: 20)", Output: "1:package a"},
-		{Tool: "read_file", Summary: "Read b.go lines 1-20 (total lines: 20)", Output: "1:package b"},
+		readFileSourceBodyResult("a.go", 1, 20, 20, "1:package a"),
+		readFileSourceBodyResult("b.go", 1, 20, 20, "1:package b"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
 			Error:   "invalid edit anchor(s): `b.go: old_text not found in current source`.",
 		},
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "route_summary: Read Target in b.go lines 1-20\n1:package b"},
+		codeNavigateSourceBodyResult("b.go", 1, 20, 20, "route_summary: Read Target in b.go lines 1-20\n1:package b"),
 	}
 
 	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
@@ -26228,8 +26297,8 @@ func TestPlanExecuteSubmitCorrectionRejectsSourceSatisfiedCloseout(t *testing.T)
 		RequiredEditPaths: []string{"a.go", "b.go"},
 	}}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
-		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+		readFileSourceBodyResult("b.go", 1, 10, 10, "1:package b\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -26265,8 +26334,8 @@ func TestPlanExecuteSourceSatisfiedSubmitPlanRejectionDoesNotEnterSubmitCorrecti
 	}
 	runner := &Runner{RuntimeBrief: brief}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-1 (total lines: 1)", Output: "package a\n"},
-		{Tool: "read_file", Summary: "Read f2 b.go lines 1-1 (total lines: 1)", Output: "package b\n"},
+		readFileSourceBodyResult("a.go", 1, 1, 1, "package a\n"),
+		readFileSourceBodyResult("b.go", 1, 1, 1, "package b\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: source-satisfied terminal shape required",
@@ -26285,8 +26354,8 @@ func TestPlanExecuteSourceSatisfiedSubmitPlanRejectionDoesNotEnterSubmitCorrecti
 	}
 
 	afterNoopRejection := append([]workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
-		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+		readFileSourceBodyResult("b.go", 1, 10, 10, "1:package b\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
@@ -26315,8 +26384,8 @@ func TestPlanExecuteSourceSatisfiedRationaleRejectionDoesNotEnterSubmitCorrectio
 	}
 	runner := &Runner{RuntimeBrief: brief}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
-		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+		readFileSourceBodyResult("b.go", 1, 10, 10, "1:package b\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: source-satisfied rationale",
@@ -26349,8 +26418,8 @@ func TestPlanExecuteSubmitCorrectionTerminalBriefIsSubmitPlanOnly(t *testing.T) 
 		RequiredEditPaths: []string{"a.go", "b.go"},
 	}}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
-		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+		readFileSourceBodyResult("b.go", 1, 10, 10, "1:package b\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -26396,7 +26465,7 @@ func TestPlanExecuteTerminalBriefForbidsWorkspaceOwnedSubmitReadyDisallowedTools
 	}}
 
 	brief := runner.planThenExecuteTerminalToolBrief([]workspace.ToolResult{
-		{Tool: workspace.ToolNameReadFile, Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "package a\n"},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "package a\n"),
 	})
 
 	if !slices.Equal(brief.AllowedTools, []string{workspace.ToolNameSubmitPlan}) {
@@ -26478,7 +26547,9 @@ func TestPlanExecutePlanningStateDerivesTextualJSONTerminalTransport(t *testing.
 	state := DerivePlanExecutePlanningState(workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		RequiredEditPaths: []string{"a.go"},
-	}, []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"}}, PlanExecutePlanningTransport{
+	}, []workspace.ToolResult{
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+	}, PlanExecutePlanningTransport{
 		TextualToolParser:  true,
 		TerminalOnly:       true,
 		ResponseFormatJSON: true,
@@ -26510,8 +26581,8 @@ func TestPlanExecuteDuplicateRejectedPlanStaysInSubmitCorrection(t *testing.T) {
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		RequiredEditPaths: []string{"a.go", "b.go"},
 	}, []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
-		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+		readFileSourceBodyResult("b.go", 1, 10, 10, "1:package b\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected",
@@ -26535,11 +26606,9 @@ func TestPlanExecutePlanningStateKeepsRequiredSourceBeforeHistoryUntilAllRequire
 		RequiredEvidence:  []string{string(workerruntime.RequiredEvidenceGitHistoryRationale)},
 		AllowedTools:      []string{"read_file", "code_navigate", "history_range", "history_symbol", "submit_plan"},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
-		Output:  "1:package a\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+	}
 
 	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
 	if state.Mode != PlanExecutePlanningModeRequiredSource {
@@ -26558,11 +26627,7 @@ func TestPlanExecutePlanningStateKeepsRequiredSourceBeforeHistoryUntilAllRequire
 		}
 	}
 
-	withAllSource := append(results, workspace.ToolResult{
-		Tool:    "read_file",
-		Summary: "Read f2 b.go lines 1-10 (total lines: 10)",
-		Output:  "1:package b\n",
-	})
+	withAllSource := append(results, readFileSourceBodyResult("b.go", 1, 10, 10, "1:package b\n"))
 
 	state = DerivePlanExecutePlanningState(brief, withAllSource, PlanExecutePlanningTransport{TextualToolParser: true})
 
@@ -26584,11 +26649,9 @@ func TestPlanExecutePlanningStateRequiresHistoryAfterSourceEvidence(t *testing.T
 		RequiredEvidence:  []string{string(workerruntime.RequiredEvidenceGitHistoryRationale)},
 		AllowedTools:      []string{"read_file", "history_range", "history_symbol", "submit_plan"},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
-		Output:  "1:package a\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+	}
 
 	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
 	if state.Mode != PlanExecutePlanningModeHistoryPending {
@@ -26644,8 +26707,8 @@ func TestPlanExecutePartialRequiredHistoryDoesNotAdvertiseSubmitPlanReadiness(t 
 		AllowedTools:      []string{"read_file", "history_range", "history_symbol", "submit_plan"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
-		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+		readFileSourceBodyResult("b.go", 1, 10, 10, "1:package b\n"),
 		gitHistoryRangeResult("a.go"),
 	}
 
@@ -26693,11 +26756,9 @@ func TestPlanExecutePostReadinessAllowsRequiredHistoryRead(t *testing.T) {
 		RequiredEditPaths: []string{"a.go"},
 		RequiredEvidence:  []string{string(workerruntime.RequiredEvidenceGitHistoryRationale)},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
-		Output:  "1:package a\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+	}
 	req := workspace.ToolRequest{
 		Tool:      "history_range",
 		Path:      "a.go",
@@ -26716,11 +26777,9 @@ func TestPlanExecutePostReadinessRejectsSourceReadBeforeHistory(t *testing.T) {
 		RequiredEditPaths: []string{"a.go"},
 		RequiredEvidence:  []string{string(workerruntime.RequiredEvidenceGitHistoryRationale)},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
-		Output:  "1:package a\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+	}
 	req := workspace.ToolRequest{
 		Tool:      "read_file",
 		Path:      "a.go",
@@ -26749,16 +26808,8 @@ func TestPlanExecuteSourceReadBeforeHistoryRedirectsToHistoryRange(t *testing.T)
 		},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 a.go lines 10-20 (total lines: 40)",
-			Output:  "10:package a\n",
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f2 b.go lines 30-45 (total lines: 80)",
-			Output:  "30:package b\n",
-		},
+		readFileSourceBodyResult("a.go", 10, 20, 40, "10:package a\n"),
+		readFileSourceBodyResult("b.go", 30, 45, 80, "30:package b\n"),
 	}
 	req := workspace.ToolRequest{
 		Tool:      "read_file",
@@ -26785,11 +26836,9 @@ func TestPlanExecuteSourceReadBeforeHistoryDoesNotBypassUnreadRequiredSource(t *
 			RequiredEvidence:  []string{string(workerruntime.RequiredEvidenceGitHistoryRationale)},
 		},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 a.go lines 1-10 (total lines: 20)",
-		Output:  "1:package a\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("a.go", 1, 10, 20, "1:package a\n"),
+	}
 	req := workspace.ToolRequest{
 		Tool: "read_file",
 		Path: "b.go",
@@ -26808,11 +26857,9 @@ func TestPlanExecuteSubmitBeforeHistoryRedirectsToHistoryRange(t *testing.T) {
 			RequiredEvidence:  []string{string(workerruntime.RequiredEvidenceGitHistoryRationale)},
 		},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
-		Output:  "1:package a\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+	}
 	req := workspace.ToolRequest{
 		Tool: "submit_plan",
 		Edits: []planartifact.PlanEdit{{
@@ -26842,11 +26889,7 @@ func TestPlanExecuteSubmitBeforeHistoryDoesNotRedirectWhenNotApplicable(t *testi
 		},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
-			Output:  "1:package a\n",
-		},
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
 		gitHistoryNotApplicableResult("a.go"),
 	}
 	req := workspace.ToolRequest{
@@ -26881,11 +26924,9 @@ func TestPlanExecuteSubmitBeforeHistoryDoesNotBypassUnreadRequiredSource(t *test
 			RequiredEvidence:  []string{string(workerruntime.RequiredEvidenceGitHistoryRationale)},
 		},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
-		Output:  "1:package a\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+	}
 	req := workspace.ToolRequest{
 		Tool: "submit_plan",
 		Edits: []planartifact.PlanEdit{
@@ -26906,11 +26947,9 @@ func TestImplementationWriteBeforeHistoryRedirectsToHistoryRange(t *testing.T) {
 			RequiredEvidence: []string{string(workerruntime.RequiredEvidenceGitHistoryRationale)},
 		},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
-		Output:  "1:package a\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("a.go", 1, 10, 10, "1:package a\n"),
+	}
 	req := workspace.ToolRequest{
 		Tool:        "edit_file",
 		Path:        "a.go",
@@ -26963,16 +27002,8 @@ func TestPlanThenExecuteRepeatedSymbolReadRemainsModelOwnedBeforeBudget(t *testi
 		TaskFamily: PlanThenExecutePlannerTaskFamily,
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/workflows/productworkflow/types.go lines 1-120 (total lines: 200)",
-			Output:  "1:package productworkflow\n",
-		},
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read CoverageGateResult in internal/workflows/productworkflow/types.go lines 20-40\n20:type CoverageGateResult struct {}\n",
-		},
+		readFileSourceBodyResult("internal/workflows/productworkflow/types.go", 1, 120, 200, "1:package productworkflow\n"),
+		codeNavigateSourceBodyResult("internal/workflows/productworkflow/types.go", 20, 40, 0, "route_summary: Read CoverageGateResult in internal/workflows/productworkflow/types.go lines 20-40\n20:type CoverageGateResult struct {}\n"),
 	}
 
 	req := workspace.ToolRequest{
@@ -27002,24 +27033,12 @@ func TestPlanThenExecuteManyCandidateReadsRemainModelOwned(t *testing.T) {
 				"internal/workflows/productworkflow/coverage_gate_test.go",
 			),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/workflows/productworkflow/coverage_gate.go lines 1-120 (total lines: 391)",
-			Output:  "1:package productworkflow\n",
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f2 internal/workflows/productworkflow/coverage_gate_test.go lines 1-80 (total lines: 80)",
-			Output:  "1:package productworkflow\n",
-		},
+		readFileSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 20, 120, 391, "20:func EvaluateCoverage() {}\n"),
+		readFileSourceBodyResult("internal/workflows/productworkflow/coverage_gate_test.go", 1, 80, 80, "1:package productworkflow\n"),
 	}
 
 	for i := 0; i < 11; i++ {
-		results = append(results, workspace.ToolResult{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read Symbol in internal/workflows/productworkflow/coverage_gate.go lines 20-40\n20:func Symbol() {}\n",
-		})
+		results = append(results, codeNavigateSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 20, 40, 0, "route_summary: Read Symbol in internal/workflows/productworkflow/coverage_gate.go lines 20-40\n20:func Symbol() {}\n"))
 	}
 
 	if !planThenExecuteTerminalSubmitPlanAllowed(brief, results) {
@@ -27050,19 +27069,11 @@ func TestPlanExecuteManyCandidateReadsDoNotBypassUnreadCandidateSurface(t *testi
 			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
 			Facts:   contextPackCandidateFactsForTest("pkg/feature.go", "pkg/feature_test.go"),
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 pkg/feature.go lines 1-80 (total lines: 80)",
-			Output:  "1:package pkg\n",
-		},
+		readFileSourceBodyResult("pkg/feature.go", 1, 80, 80, "1:package pkg\n"),
 	}
 
 	for i := 0; i < 11; i++ {
-		results = append(results, workspace.ToolResult{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read Helper in pkg/feature.go lines 20-40\n20:func Helper() {}\n",
-		})
+		results = append(results, codeNavigateSourceBodyResult("pkg/feature.go", 20, 40, 0, "route_summary: Read Helper in pkg/feature.go lines 20-40\n20:func Helper() {}\n"))
 	}
 
 	if planThenExecuteTerminalSubmitPlanAllowed(brief, results) {
@@ -27464,11 +27475,7 @@ func TestPlanExecuteNoWriteRecoveryLeavesNextCandidateModelOwned(t *testing.T) {
 				"internal/workflows/productworkflow/coverage_gate.go",
 			),
 		},
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n1515:func runProductTDD() {}\n",
-		},
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow.go", 1515, 1640, 0, "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n1515:func runProductTDD() {}\n"),
 		{
 			Tool:    "completion_gate",
 			Summary: "Plan-execute completion gate rejected final answer",
@@ -27496,8 +27503,10 @@ func TestPlanThenExecuteCandidatePostReadinessSamePathReadRemainsModelOwned(t *t
 	}
 	results := []workspace.ToolResult{{
 		Tool:    "code_navigate",
-		Summary: "Code navigation routed read_symbol via go_read_symbol",
+		Summary: "Code navigation read cmd/idiom/product_workflow_test.go lines 3636-3678",
 		Output:  "route_summary: Read validTestImplementationLedgerJSONL in cmd/idiom/product_workflow_test.go lines 3636-3678\n\n3636:func validTestImplementationLedgerJSONL() string {}\n",
+		Paths:   []string{"cmd/idiom/product_workflow_test.go"},
+		Facts:   sourceBodyFactsForTest("cmd/idiom/product_workflow_test.go", 3636, 3678, 0),
 	}}
 
 	req := workspace.ToolRequest{
@@ -27530,9 +27539,11 @@ func TestPlanThenExecuteCandidatePostReadinessDifferentPathDoesNotRequireNamedGa
 			"cmd/idiom/product_workflow.go",
 		),
 	}, {
-		Tool:    "read_file",
-		Summary: "Read f1 internal/workflows/productworkflow/coverage_gate.go lines 1-125 (total lines: 391)",
-		Output:  "1:package productworkflow\n",
+		Tool:    workspace.ToolNameReadFile,
+		Summary: "Read internal/workflows/productworkflow/coverage_gate.go lines 20-125 (total lines: 391)",
+		Output:  "20:func EvaluateCoverage() {}\n",
+		Paths:   []string{"internal/workflows/productworkflow/coverage_gate.go"},
+		Facts:   sourceBodyFactsForTest("internal/workflows/productworkflow/coverage_gate.go", 20, 125, 391),
 	}}
 
 	req := workspace.ToolRequest{
@@ -27561,9 +27572,11 @@ func TestPlanThenExecuteCandidatePostReadinessAllowsSamePathContinuationRead(t *
 		AllowedEditPaths: []string{"internal/workflows/productworkflow/coverage_gate.go"},
 	}
 	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/workflows/productworkflow/coverage_gate.go lines 1-125 (total lines: 391)",
-		Output:  "1:package productworkflow\n",
+		Tool:    workspace.ToolNameReadFile,
+		Summary: "Read internal/workflows/productworkflow/coverage_gate.go lines 20-125 (total lines: 391)",
+		Output:  "20:func EvaluateCoverage() {}\n",
+		Paths:   []string{"internal/workflows/productworkflow/coverage_gate.go"},
+		Facts:   sourceBodyFactsForTest("internal/workflows/productworkflow/coverage_gate.go", 20, 125, 391),
 	}}
 
 	_, _, _, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
@@ -27580,9 +27593,11 @@ func TestPlanThenExecuteCandidatePostReadinessAllowsSamePathContinuationRead(t *
 func TestPlanThenExecuteCandidatePostReadinessAllowsSmallFullReadAfterPartialRead(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{TaskFamily: PlanThenExecutePlannerTaskFamily}
 	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/workflows/productworkflow/coverage_gate.go lines 1-125 (total lines: 391)",
-		Output:  "1:package productworkflow\n",
+		Tool:    workspace.ToolNameReadFile,
+		Summary: "Read internal/workflows/productworkflow/coverage_gate.go lines 20-125 (total lines: 391)",
+		Output:  "20:func EvaluateCoverage() {}\n",
+		Paths:   []string{"internal/workflows/productworkflow/coverage_gate.go"},
+		Facts:   sourceBodyFactsForTest("internal/workflows/productworkflow/coverage_gate.go", 20, 125, 391),
 	}}
 
 	_, _, _, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
@@ -27600,9 +27615,11 @@ func TestPlanThenExecuteCandidatePostReadinessAllowsUnboundedSmallPartialSamePat
 		AllowedEditPaths: []string{"internal/workflows/productworkflow/validate.go"},
 	}
 	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/workflows/productworkflow/validate.go lines 300-350 (total lines: 391)",
+		Tool:    workspace.ToolNameReadFile,
+		Summary: "Read internal/workflows/productworkflow/validate.go lines 300-350 (total lines: 391)",
 		Output:  "300:func ValidateProductWorkflow() {}\n",
+		Paths:   []string{"internal/workflows/productworkflow/validate.go"},
+		Facts:   sourceBodyFactsForTest("internal/workflows/productworkflow/validate.go", 300, 350, 391),
 	}}
 
 	req := workspace.ToolRequest{
@@ -27621,16 +27638,8 @@ func TestPlanThenExecuteCandidatePostReadinessAllowsUnboundedSmallPartialSamePat
 func TestPlanThenExecuteCandidatePostReadinessAllowsPriorReadContinuationOutsideCurrentCandidateSet(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{TaskFamily: PlanThenExecutePlannerTaskFamily}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/workflows/productworkflow/coverage_gate.go lines 1-125 (total lines: 391)",
-			Output:  "1:package productworkflow\n",
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f2 internal/workflows/productworkflow/validate.go lines 1-300 (total lines: 1449)",
-			Output:  "1:package productworkflow\n",
-		},
+		readFileSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 20, 125, 391, "20:func EvaluateCoverage() {}\n"),
+		readFileSourceBodyResult("internal/workflows/productworkflow/validate.go", 300, 420, 1449, "300:func ValidateProductWorkflow() {}\n"),
 	}
 
 	_, _, _, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
@@ -27647,16 +27656,8 @@ func TestPlanThenExecuteCandidatePostReadinessAllowsPriorReadContinuationOutside
 func TestPlanThenExecuteCandidatePostReadinessAllowsSymbolReadOnPreviouslyReadPath(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{TaskFamily: PlanThenExecutePlannerTaskFamily}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/workflows/productworkflow/coverage_gate.go lines 1-391 (total lines: 391)",
-			Output:  "1:package productworkflow\n",
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f2 internal/workflows/productworkflow/validate.go lines 1-300 (total lines: 1449)",
-			Output:  "1:package productworkflow\n",
-		},
+		readFileSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 391, 391, "1:package productworkflow\n"),
+		readFileSourceBodyResult("internal/workflows/productworkflow/validate.go", 300, 420, 1449, "300:func ValidateProductWorkflow() {}\n"),
 	}
 
 	_, _, _, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
@@ -27673,9 +27674,11 @@ func TestPlanThenExecuteCandidatePostReadinessAllowsSymbolReadOnPreviouslyReadPa
 func TestPlanThenExecuteCandidatePostReadinessRejectsNonBodyNavigationOnReadyPath(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{TaskFamily: PlanThenExecutePlannerTaskFamily}
 	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/workflows/productworkflow/coverage_gate.go lines 1-391 (total lines: 391)",
+		Tool:    workspace.ToolNameReadFile,
+		Summary: "Read internal/workflows/productworkflow/coverage_gate.go lines 1-391 (total lines: 391)",
 		Output:  "1:package productworkflow\n",
+		Paths:   []string{"internal/workflows/productworkflow/coverage_gate.go"},
+		Facts:   sourceBodyFactsForTest("internal/workflows/productworkflow/coverage_gate.go", 1, 391, 391),
 	}}
 
 	summary, errorText, _, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
@@ -27705,9 +27708,11 @@ func TestPlanThenExecuteCandidatePostReadinessRejectsDirectorySearchContainingRe
 		AllowedEditPaths: []string{"internal/surfaces/cli/lane/lane.go", "internal/runtime/agent/runner_plan_then_execute_guard.go"},
 	}
 	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/surfaces/cli/lane/lane.go lines 1-1563 (total lines: 1563)",
+		Tool:    workspace.ToolNameReadFile,
+		Summary: "Read internal/surfaces/cli/lane/lane.go lines 1-1563 (total lines: 1563)",
 		Output:  "1:package lane\n",
+		Paths:   []string{"internal/surfaces/cli/lane/lane.go"},
+		Facts:   sourceBodyFactsForTest("internal/surfaces/cli/lane/lane.go", 1, 1563, 1563),
 	}}
 
 	summary, errorText, _, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
@@ -27736,9 +27741,11 @@ func TestPlanThenExecuteCandidateScopeDoesNotFireBeforeAnchorReadyEvidence(t *te
 		AllowedEditPaths: []string{"internal/surfaces/cli/lane/lane.go", "internal/runtime/agent/runner_plan_then_execute_guard.go"},
 	}
 	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/runtime/agent/runner_plan_then_execute_guard.go lines 1-180 (total lines: 4337)",
+		Tool:    workspace.ToolNameReadFile,
+		Summary: "Read internal/runtime/agent/runner_plan_then_execute_guard.go lines 1-180 (total lines: 4337)",
 		Output:  "1:package agent\n",
+		Paths:   []string{"internal/runtime/agent/runner_plan_then_execute_guard.go"},
+		Facts:   sourceBodyFactsForTest("internal/runtime/agent/runner_plan_then_execute_guard.go", 1, 180, 4337),
 	}}
 
 	_, _, _, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
@@ -27757,9 +27764,11 @@ func TestPlanThenExecuteCandidatePostReadinessRejectsSiblingTopicSearchOutsideAl
 		AllowedEditPaths: []string{"internal/surfaces/cli/lane/lane.go", "internal/runtime/agent/runner_plan_then_execute_guard.go"},
 	}
 	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/surfaces/cli/lane/lane.go lines 1-1563 (total lines: 1563)",
+		Tool:    workspace.ToolNameReadFile,
+		Summary: "Read internal/surfaces/cli/lane/lane.go lines 1-1563 (total lines: 1563)",
 		Output:  "1:package lane\n",
+		Paths:   []string{"internal/surfaces/cli/lane/lane.go"},
+		Facts:   sourceBodyFactsForTest("internal/surfaces/cli/lane/lane.go", 1, 1563, 1563),
 	}}
 
 	summary, errorText, _, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
@@ -27789,8 +27798,10 @@ func TestPlanThenExecuteCandidatePostReadinessAllowsUnderCapDocsContextRead(t *t
 	}
 	results := []workspace.ToolResult{{
 		Tool:    workspace.ToolNameReadFile,
-		Summary: "Read f1 internal/runtime/agent/plan_execute.go lines 1-11916 (total lines: 11916)",
+		Summary: "Read internal/runtime/agent/plan_execute.go lines 1-11916 (total lines: 11916)",
 		Output:  "1:package agent\n",
+		Paths:   []string{"internal/runtime/agent/plan_execute.go"},
+		Facts:   sourceBodyFactsForTest("internal/runtime/agent/plan_execute.go", 1, 11916, 11916),
 	}}
 
 	_, _, _, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
@@ -27809,8 +27820,10 @@ func TestPlanThenExecuteCandidatePostReadinessRejectsOverCapDocsContextRead(t *t
 	}
 	results := []workspace.ToolResult{{
 		Tool:    workspace.ToolNameReadFile,
-		Summary: "Read f1 internal/runtime/agent/plan_execute.go lines 1-11916 (total lines: 11916)",
+		Summary: "Read internal/runtime/agent/plan_execute.go lines 1-11916 (total lines: 11916)",
 		Output:  "1:package agent\n",
+		Paths:   []string{"internal/runtime/agent/plan_execute.go"},
+		Facts:   sourceBodyFactsForTest("internal/runtime/agent/plan_execute.go", 1, 11916, 11916),
 	}}
 	for _, docPath := range []string{
 		"docs/one.md",
@@ -27823,6 +27836,8 @@ func TestPlanThenExecuteCandidatePostReadinessRejectsOverCapDocsContextRead(t *t
 			Tool:    workspace.ToolNameReadFile,
 			Summary: "Read f1 " + docPath + " lines 1-100 (total lines: 100)",
 			Output:  "1:# doc\n",
+			Paths:   []string{docPath},
+			Facts:   sourceBodyFactsForTest(docPath, 1, 100, 100),
 		})
 	}
 
@@ -27845,8 +27860,10 @@ func TestPlanThenExecuteCandidatePostReadinessStillRejectsNonDocOutOfScopeRead(t
 	}
 	results := []workspace.ToolResult{{
 		Tool:    workspace.ToolNameReadFile,
-		Summary: "Read f1 internal/runtime/agent/plan_execute.go lines 1-11916 (total lines: 11916)",
+		Summary: "Read internal/runtime/agent/plan_execute.go lines 1-11916 (total lines: 11916)",
 		Output:  "1:package agent\n",
+		Paths:   []string{"internal/runtime/agent/plan_execute.go"},
+		Facts:   sourceBodyFactsForTest("internal/runtime/agent/plan_execute.go", 1, 11916, 11916),
 	}}
 
 	summary, _, _, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
@@ -27972,11 +27989,7 @@ func TestPlanThenExecuteCandidatePostGateRejectsOutOfScopeRead(t *testing.T) {
 				"internal/workflows/productworkflow/coverage_gate.go",
 			),
 		},
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 900-1080\n900:func runProductTDD() {}\n",
-		},
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow.go", 900, 1080, 0, "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 900-1080\n900:func runProductTDD() {}\n"),
 		{
 			Tool:    "completion_gate",
 			Summary: "Plan-execute completion gate rejected final answer",
@@ -28078,11 +28091,8 @@ func TestPlanThenExecuteCandidatePostReadinessAllowsRejectedAnchorRefresh(t *tes
 		AllowedEditPaths: []string{"cmd/idiom/product_workflow.go", "internal/workflows/productworkflow/coverage_gate.go"},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/workflows/productworkflow/coverage_gate.go lines 1-360 (total lines: 360)",
-			Output:  "1:package productworkflow\n",
-		},
+		readFileSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 360, 360, "1:package productworkflow\n"),
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow.go", 1515, 1640, 0, "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n1515:func runProductTDD() {}\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -28107,11 +28117,8 @@ func TestPlanThenExecuteCandidatePostReadinessNamesMissingAnchorCapability(t *te
 		AllowedEditPaths: []string{"cmd/idiom/product_workflow.go", "internal/workflows/productworkflow/coverage_gate.go"},
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/workflows/productworkflow/coverage_gate.go lines 1-360 (total lines: 360)",
-			Output:  "1:package productworkflow\n",
-		},
+		readFileSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 360, 360, "1:package productworkflow\n"),
+		codeNavigateSourceBodyResult("cmd/idiom/product_workflow.go", 1515, 1640, 0, "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n1515:func runProductTDD() {}\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -28207,12 +28214,17 @@ func TestPlanThenExecuteReadyToSubmitNudgeRecognizesLanguageSymbolReads(t *testi
 		RequiredEditPaths: []string{"native/src/foo.cpp"},
 	}
 	results := []workspace.ToolResult{
-		// cpp_read_symbol summary shape: "Read <symbol> in <path> lines A-B"
-		{Tool: "cpp_read_symbol", Summary: "Read MyClass::method in native/src/foo.cpp lines 10-30"},
+		{
+			Tool:    "cpp_read_symbol",
+			Summary: "Read MyClass::method in native/src/foo.cpp lines 10-30",
+			Output:  "10:void MyClass::method() {}",
+			Paths:   []string{"native/src/foo.cpp"},
+			Facts:   sourceBodyFactsForTest("native/src/foo.cpp", 10, 30, 0),
+		},
 	}
 
 	if got := planThenExecuteReadyToSubmitNudge(brief, results); got == "" {
-		t.Fatalf("nudge should recognize language-symbol read summaries as covering the path")
+		t.Fatalf("nudge should recognize language-symbol typed source-body facts as covering the path")
 	}
 }
 
@@ -30395,8 +30407,8 @@ func TestPlanExecuteCompletionBlockerKindDistinguishesInvalidSubmitPlan(t *testi
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-2 (total lines: 2)", Output: "before a\n"},
-		{Tool: "read_file", Summary: "Read f2 b.txt lines 1-2 (total lines: 2)", Output: "before b\n"},
+		readFileSourceBodyResult("a.txt", 1, 2, 2, "before a\n"),
+		readFileSourceBodyResult("b.txt", 1, 2, 2, "before b\n"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -30984,11 +30996,9 @@ func TestTextualWriteGateDirectImplementationRejectsFunctionCallWriteWithExecuta
 		},
 	}
 	reply := `tool: edit_file(path="internal/labels/labels.go", old_text="return \"Save changes\"", new_text="return \"Save\"", description="update label")`
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read internal/labels/labels.go lines 1-5 (total lines: 5)",
-		Output:  "package labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("internal/labels/labels.go", 1, 5, 5, "package labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n"),
+	}
 
 	got, rejected := textualToolCallCompletionRejection(runner, reply, results)
 
@@ -31023,11 +31033,9 @@ func TestTextualWriteGatePlanExecutePointsAtSubmitPlan(t *testing.T) {
 		},
 	}
 	reply := `tool: edit_file(path="internal/labels/labels.go", old_text="return \"Save changes\"", new_text="return \"Save\"", description="update label")`
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read internal/labels/labels.go lines 1-5 (total lines: 5)",
-		Output:  "package labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("internal/labels/labels.go", 1, 5, 5, "package labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n"),
+	}
 
 	got, rejected := textualToolCallCompletionRejection(runner, reply, results)
 
@@ -32119,11 +32127,7 @@ func TestReadOnlyCompletionGateDiagnosticLogCitationIgnoresStaleSearchCandidates
 			Summary: "No file matches for \"*.jsonl\". Closest paths in this workspace: f1 internal/platform/jsonl/jsonl.go, f2 testdata/product-workflows/prd-adr-brief-workflow/evidence/evidence.jsonl.",
 			Output:  "",
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f6 " + logPath + " lines 4300-4420 (total lines: 4641)",
-			Output:  "4420:{\"role\":\"completion_gate_recovery\",\"content\":\"Candidate/search/context paths are not source-body evidence\"}\n4640:{\"completion_gate_rejections\":4,\"stop_reason\":\"user_visible_blocker\"}\n",
-		},
+		readFileSourceBodyResult(logPath, 4300, 4420, 4641, "4420:{\"role\":\"completion_gate_recovery\",\"content\":\"Candidate/search/context paths are not source-body evidence\"}\n4640:{\"completion_gate_rejections\":4,\"stop_reason\":\"user_visible_blocker\"}\n"),
 	}
 	answer := "The latest failure was a repeated completion-gate rejection in `" + logPath + "` after stale search candidates polluted the source-grounding ledger."
 
@@ -32279,11 +32283,13 @@ func TestDiscoveryConsumptionSourceBodyReadClearsPendingDiscovery(t *testing.T) 
 
 	state.applyResult(
 		workspace.ToolRequest{Tool: "read_file", Path: "internal/runtime/agent/runner_core.go", StartLine: 1, EndLine: 40},
-		workspace.ToolResult{
-			Tool:    "read_file",
-			Summary: "Read internal/runtime/agent/runner_core.go lines 1-40",
-			Output:  "package agent\n\ntype runnerExecutionState struct {}\n",
-		},
+		readFileSourceBodyResult(
+			"internal/runtime/agent/runner_core.go",
+			1,
+			40,
+			0,
+			"package agent\n\ntype runnerExecutionState struct {}\n",
+		),
 		"",
 		nil,
 		nil,
@@ -34197,11 +34203,9 @@ func TestDecorateFinalAnswerSynthesizesReadOnlySourceReturnAnswer(t *testing.T) 
 		PermissionProfile: "read_only_workspace",
 		Objective:         "What does internal/labels/labels.go ShortLabel return?",
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/labels/labels.go lines 1-5 (total lines: 5)",
-		Output:  "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("internal/labels/labels.go", 1, 5, 5, "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n"),
+	}
 	answer := "The retained source context identifies the relevant implementation surface as `internal/labels/labels.go`."
 
 	runner := &Runner{}
@@ -34340,11 +34344,9 @@ func TestDecorateFinalAnswerBudgetStopDoesNotPreserveRetainedContextScaffold(t *
 		PermissionProfile: "read_only_workspace",
 		Objective:         "What does internal/labels/labels.go ShortLabel return?",
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/labels/labels.go lines 1-5 (total lines: 5)",
-		Output:  "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("internal/labels/labels.go", 1, 5, 5, "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n"),
+	}
 	answer := "The retained source context identifies the relevant implementation surface as `internal/labels/labels.go`."
 
 	runner := &Runner{}
@@ -34420,11 +34422,9 @@ func TestDecorateFinalAnswerAnswersReadOnlyTextChangeQuestion(t *testing.T) {
 		PermissionProfile: "read_only_workspace",
 		Objective:         "Can we shorten the save label in internal/labels/labels.go?",
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/labels/labels.go lines 1-5 (total lines: 5)",
-		Output:  "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("internal/labels/labels.go", 1, 5, 5, "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n"),
+	}
 	answer := "tool: read_file\n{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\"}"
 
 	runner := &Runner{}
@@ -34457,11 +34457,9 @@ func TestDecorateFinalAnswerTreatsLineOrientedJSONToolAsInternal(t *testing.T) {
 		Contract:          "direct_answer",
 		PermissionProfile: "read_only_workspace",
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/labels/labels.go lines 1-5 (total lines: 5)",
-		Output:  "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("internal/labels/labels.go", 1, 5, 5, "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n"),
+	}
 	answer := "tool: read_file\n{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":200}"
 
 	runner := &Runner{}
@@ -34495,23 +34493,27 @@ func TestDecorateFinalAnswerSynthesizesRoutedCodeNavigateSourceBodyAnswer(t *tes
 		PermissionProfile: "read_only_workspace",
 		Objective:         "Explain how task delegation isolates child runs.",
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "code_navigate",
-		Summary: "Code navigation routed read_symbol via go_read_symbol",
-		Output: strings.Join([]string{
-			"capability: read_symbol",
-			"language: go",
-			"routed_tool: go_read_symbol",
-			"route_summary: Read Runner.launchReadOnlyChild in internal/runtime/agent/runner_core.go lines 100-150",
-			"100:func (r *Runner) launchReadOnlyChild() {",
-			"101:\tpolicy := RunPolicy{MaxToolSteps: 4, MaxModelCalls: 2}",
-			"102:\tbrief := RuntimeBriefForRole(\"read_only_child\")",
-			"103:\tchild := Runner{PermissionPolicy: readOnlyChildTaskPermissionPolicy(), RuntimeBrief: brief}",
-			"104:\tchild.DisableTaskTool = true",
-			"105:\tchild.Run(ctx, request)",
-			"106:}",
-		}, "\n"),
-	}}
+	results := []workspace.ToolResult{
+		codeNavigateSourceBodyResult(
+			"internal/runtime/agent/runner_core.go",
+			100,
+			150,
+			0,
+			strings.Join([]string{
+				"capability: read_symbol",
+				"language: go",
+				"routed_tool: go_read_symbol",
+				"route_summary: Read Runner.launchReadOnlyChild in internal/runtime/agent/runner_core.go lines 100-150",
+				"100:func (r *Runner) launchReadOnlyChild() {",
+				"101:\tpolicy := RunPolicy{MaxToolSteps: 4, MaxModelCalls: 2}",
+				"102:\tbrief := RuntimeBriefForRole(\"read_only_child\")",
+				"103:\tchild := Runner{PermissionPolicy: readOnlyChildTaskPermissionPolicy(), RuntimeBrief: brief}",
+				"104:\tchild.DisableTaskTool = true",
+				"105:\tchild.Run(ctx, request)",
+				"106:}",
+			}, "\n"),
+		),
+	}
 	answer := "Partial findings from this turn (the model stopped before a full synthesis):\n\nVerified context:\n- code_navigate internal/runtime/agent/runner_core.go"
 
 	runner := &Runner{}
@@ -34567,6 +34569,8 @@ func TestPresentableExactProbeAnswerAcceptsReadOnlyCapabilitySourceBody(t *testi
 			"21:\treturn RunPolicy{MaxToolSteps: 4, MaxModelCalls: 2}",
 			"22:}",
 		}, "\n"),
+		Paths: []string{"internal/runtime/agent/runner_core.go"},
+		Facts: sourceBodyFactsForTest("internal/runtime/agent/runner_core.go", 20, 40, 0),
 	}}
 
 	got, ok := presentableExactProbeAnswer(brief, results)
@@ -34696,17 +34700,19 @@ func TestPresentableExactProbeAnswerRejectsRoutedNonBodyEvidence(t *testing.T) {
 
 func TestExactEvidenceSymbolSetAcceptsRoutedCodeNavigateSourceBody(t *testing.T) {
 	results := []workspace.ToolResult{
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output: strings.Join([]string{
+		codeNavigateSourceBodyResult(
+			"internal/surfaces/tui/app/rendering.go",
+			459,
+			520,
+			0,
+			strings.Join([]string{
 				"capability: read_symbol",
 				"route_summary: Read Model.renderMessages in internal/surfaces/tui/app/rendering.go lines 459-520",
 				"459:func (m *Model) renderMessages() {",
 				"460:\tm.messagesViewport.SetContent(rendered)",
 				"461:}",
 			}, "\n"),
-		},
+		),
 		{
 			Tool:    "code_navigate",
 			Summary: "Code navigation routed extract_body via go_extract_body",
@@ -34720,6 +34726,8 @@ func TestExactEvidenceSymbolSetAcceptsRoutedCodeNavigateSourceBody(t *testing.T)
 				"1339:\t\tif strings.EqualFold(value[i:i+len(needle)], needle) {",
 				"1345:}",
 			}, "\n"),
+			Paths: []string{"internal/runtime/agent/runner_delegated_synthesis.go"},
+			Facts: sourceBodyFactsForTest("internal/runtime/agent/runner_delegated_synthesis.go", 1333, 1345, 0),
 		},
 	}
 
@@ -34940,6 +34948,8 @@ func TestCombinedReadFileSourceBodiesIncludesPrefetchEvidence(t *testing.T) {
 			Tool:    workspace.ToolNamePrefetch,
 			Summary: "Read f1 README.md lines 1-1 (total lines: 1; source: prefetch)",
 			Output:  "1:Idiom is a local coding-agent harness.\n",
+			Paths:   []string{"README.md"},
+			Facts:   sourceBodyFactsForTest("README.md", 1, 1, 1),
 		},
 	}
 
@@ -35274,18 +35284,16 @@ func TestSynthesizeBriefConversationFallbackAnswersFromMarkdownEvidence(t *testi
 		PermissionProfile: "read_only_workspace",
 		Objective:         "What is the role of evidence in this harness? Where does it come from and what is it used for?",
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 docs/idiom-strategic-thesis.md lines 1-320",
-		Output: strings.Join([]string{
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("docs/idiom-strategic-thesis.md", 1, 320, 320, strings.Join([]string{
 			"1:# Idiom Strategic Thesis",
 			"5:Idiom sells the missing substrate: repo memory, freshness, contracts, audit, and evals.",
 			"20:Idiom is the local, evidence-first coding-agent harness for teams that need agents to do real work in real repositories.",
 			"21:The model owns strategy; the harness owns contracts, repository memory, verification, auditability, and the learning loop.",
 			"146:The harness decides whether that action is allowed, whether evidence is fresh enough, and whether readiness is satisfied.",
 			"287:Task-scoped repository evidence feeds the runtime brief, including tools, editable paths, evidence paths, verification, and budget.",
-		}, "\n"),
-	}}
+		}, "\n")),
+	}
 
 	got := synthesizeBriefConversationFallback(brief, results)
 	if strings.HasPrefix(got, "<<QUESTION>>") {
@@ -35312,14 +35320,12 @@ func TestSynthesizeBriefConversationFallbackAnswersFromInspectedExplainerSymbol(
 		PermissionProfile: "read_only_workspace",
 		Objective:         "Explain the harness control flow.",
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read internal/runtime/agent/runner_core.go lines 1-20",
-		Output: strings.Join([]string{
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("internal/runtime/agent/runner_core.go", 1, 20, 20, strings.Join([]string{
 			"1:package agent",
 			"2:func (r *Runner) Run() {}",
-		}, "\n"),
-	}}
+		}, "\n")),
+	}
 
 	got := synthesizeBriefConversationFallback(brief, results)
 	if strings.HasPrefix(got, "<<QUESTION>>") {
@@ -35366,10 +35372,12 @@ func TestSynthesizeBriefConversationFallbackAnswersWhatWouldItTakeFromKeyHandler
 		Objective:         objective,
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/surfaces/tui/app/update_handlers.go lines 22-182",
-			Output: strings.Join([]string{
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/update_handlers.go",
+			22,
+			182,
+			0,
+			strings.Join([]string{
 				"22:func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {",
 				"43:\t\tcase tea.KeyUp:",
 				"44:\t\t\tif m.slashSuggestions.selected > 0 {",
@@ -35382,16 +35390,18 @@ func TestSynthesizeBriefConversationFallbackAnswersWhatWouldItTakeFromKeyHandler
 				"83:\t\tcase tea.KeyEnter:",
 				"151:\t\tm.appendHistoryMessage(\"user\", text, nil)",
 			}, "\n"),
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read internal/surfaces/tui/app/model_state.go lines 133-180",
-			Output: strings.Join([]string{
+		),
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/model_state.go",
+			133,
+			180,
+			0,
+			strings.Join([]string{
 				"133:type Model struct {",
 				"166:\tmessages []llama.ChatMessage",
 				"237:\thistory historyState",
 			}, "\n"),
-		},
+		),
 	}
 
 	got := synthesizeBriefConversationFallback(brief, results)
@@ -35410,10 +35420,8 @@ func TestSynthesizeBriefConversationFallbackAnswersWhatWouldItTakeFromKeyHandler
 		t.Fatalf("TUI fallback answer blocked: kind=%q reason=%q\n%s", kind, reason, got)
 	}
 
-	codeNavigateResults := []workspace.ToolResult{{
-		Tool:    "code_navigate",
-		Summary: "Code navigation routed read_symbol via go_read_symbol",
-		Output: strings.Join([]string{
+	codeNavigateResults := []workspace.ToolResult{
+		codeNavigateSourceBodyResult("internal/surfaces/tui/app/update_handlers.go", 22, 141, 0, strings.Join([]string{
 			"capability: read_symbol",
 			"language: go",
 			"routed_tool: go_read_symbol",
@@ -35426,8 +35434,8 @@ func TestSynthesizeBriefConversationFallbackAnswersWhatWouldItTakeFromKeyHandler
 			"76:\t\tcase tea.KeyDown:",
 			"83:\t\tcase tea.KeyEnter:",
 			"151:\t\tm.appendHistoryMessage(\"user\", text, nil)",
-		}, "\n"),
-	}}
+		}, "\n")),
+	}
 
 	got = synthesizeBriefConversationFallback(brief, codeNavigateResults)
 
@@ -35455,42 +35463,34 @@ func TestSynthesizeBriefConversationFallbackPrefersObjectiveRelevantExactProbe(t
 		Objective:         objective,
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output: strings.Join([]string{
-				"capability: read_symbol",
-				"language: go",
-				"routed_tool: go_read_symbol",
-				"route_summary: Read Model.handleHistoryAudit in internal/surfaces/tui/app/history_audit.go lines 1-8",
-				"",
-				"1:func (m *Model) handleHistoryAudit() (tea.Cmd, bool) {",
-				"2:\tm.recordHistoryAuditEvent()",
-				"3:\treturn nil, false",
-				"4:}",
-			}, "\n"),
-		},
-		{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output: strings.Join([]string{
-				"capability: read_symbol",
-				"language: go",
-				"routed_tool: go_read_symbol",
-				"route_summary: Read Model.handleKeyPress in internal/surfaces/tui/app/update_handlers.go lines 22-180",
-				"",
-				"22:func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {",
-				"43:\t\tcase tea.KeyUp:",
-				"44:\t\t\tm.iterateChatHistory(-1)",
-				"49:\t\tcase tea.KeyDown:",
-				"50:\t\t\tm.iterateChatHistory(1)",
-				"70:\t\t\tif m.history.selected > 0 {",
-				"77:\t\t\tif m.history.selected < len(m.history.entries)-1 {",
-				"171:\t\tmessage := m.chatHistory.entries[m.history.selected]",
-				"172:\t\tm.input.SetValue(message.Text)",
-				"173:\t\tm.appendHistoryMessage(\"user\", message.Text, nil)",
-			}, "\n"),
-		},
+		codeNavigateSourceBodyResult("internal/surfaces/tui/app/history_audit.go", 1, 8, 0, strings.Join([]string{
+			"capability: read_symbol",
+			"language: go",
+			"routed_tool: go_read_symbol",
+			"route_summary: Read Model.handleHistoryAudit in internal/surfaces/tui/app/history_audit.go lines 1-8",
+			"",
+			"1:func (m *Model) handleHistoryAudit() (tea.Cmd, bool) {",
+			"2:\tm.recordHistoryAuditEvent()",
+			"3:\treturn nil, false",
+			"4:}",
+		}, "\n")),
+		codeNavigateSourceBodyResult("internal/surfaces/tui/app/update_handlers.go", 22, 180, 0, strings.Join([]string{
+			"capability: read_symbol",
+			"language: go",
+			"routed_tool: go_read_symbol",
+			"route_summary: Read Model.handleKeyPress in internal/surfaces/tui/app/update_handlers.go lines 22-180",
+			"",
+			"22:func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {",
+			"43:\t\tcase tea.KeyUp:",
+			"44:\t\t\tm.iterateChatHistory(-1)",
+			"49:\t\tcase tea.KeyDown:",
+			"50:\t\t\tm.iterateChatHistory(1)",
+			"70:\t\t\tif m.history.selected > 0 {",
+			"77:\t\t\tif m.history.selected < len(m.history.entries)-1 {",
+			"171:\t\tmessage := m.chatHistory.entries[m.history.selected]",
+			"172:\t\tm.input.SetValue(message.Text)",
+			"173:\t\tm.appendHistoryMessage(\"user\", message.Text, nil)",
+		}, "\n")),
 	}
 
 	got := synthesizeBriefConversationFallback(brief, results)
@@ -35677,7 +35677,7 @@ func TestPresentableNoToolsFallbackSkipsSourceBodyForConversationFallback(t *tes
 		PermissionProfile: "read_only_workspace",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read file: internal/workflows/architect/packet.go", Output: "type Evidence struct {\n\tKind  string `json:\"kind\"`\n\tLabel string `json:\"label,omitempty\"`\n}"},
+		{Tool: "read_file", Summary: "Read file: internal/workflows/architect/packet.go", Output: "type Evidence struct {\n\tKind  string `json:\"kind\"`\n\tLabel string `json:\"label,omitempty\"`\n}", Paths: []string{"internal/workflows/architect/packet.go"}},
 	}
 	internalAnswer := "Partial findings from this turn (the budget was reached before a full synthesis):\n\nVerified context:\n- read_file internal/workflows/architect/packet.go"
 
@@ -35690,7 +35690,7 @@ func TestPresentableNoToolsFallbackSkipsSourceBodyForConversationFallback(t *tes
 		t.Errorf("source-body extraction garbage leaked into conversation fallback: %q", got)
 	}
 
-	if !strings.Contains(got, "Evidence paths") {
+	if !strings.Contains(got, "internal/workflows/architect/packet.go") {
 		t.Errorf("fallback should provide useful evidence context: %q", got)
 	}
 }
@@ -35701,7 +35701,7 @@ func TestPresentableNoToolsFallbackSkipsSourceBodyAnswerForConversation(t *testi
 		PermissionProfile: "read_only_workspace",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read file: internal/labels/labels.go", Output: "func ShortLabel() string {\n\treturn \"Save changes\"\n}"},
+		{Tool: "read_file", Summary: "Read file: internal/labels/labels.go", Output: "func ShortLabel() string {\n\treturn \"Save changes\"\n}", Paths: []string{"internal/labels/labels.go"}},
 	}
 	internalAnswer := "The inspected source in `internal/labels/labels.go` contains `func ShortLabel() string {` and `return \"Save changes\"`. No files were changed."
 

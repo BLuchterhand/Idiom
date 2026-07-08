@@ -6020,6 +6020,8 @@ func augmentDelegatedReadOnlyPacket(answer string, objective string, results []w
 	candidates := closureProbeCandidates(results, 4)
 	missingCandidates := make([]string, 0, len(candidates))
 	lowerAnswer := strings.ToLower(answer)
+	hasSourceBodyEvidenceSection := strings.Contains(lowerAnswer, "source-body evidence paths:") ||
+		strings.Contains(lowerAnswer, "source body evidence paths:")
 
 	for _, candidate := range candidates {
 		if strings.Contains(lowerAnswer, strings.ToLower(candidate)) {
@@ -6030,7 +6032,7 @@ func augmentDelegatedReadOnlyPacket(answer string, objective string, results []w
 	}
 
 	if len(missing) == 0 && len(missingCandidates) == 0 {
-		if len(sourceBodyPaths) == 0 || len(sourceBodyEvidencePathsFromDelegatedPacket(answer)) > 0 {
+		if len(sourceBodyPaths) == 0 || hasSourceBodyEvidenceSection {
 			return answer
 		}
 	}
@@ -6039,7 +6041,7 @@ func augmentDelegatedReadOnlyPacket(answer string, objective string, results []w
 
 	b.WriteString(answer)
 
-	if len(sourceBodyPaths) > 0 && len(sourceBodyEvidencePathsFromDelegatedPacket(answer)) == 0 {
+	if len(sourceBodyPaths) > 0 && !hasSourceBodyEvidenceSection {
 		b.WriteString("\n\nSource-body evidence paths:\n")
 
 		for _, path := range textutil.Prefix(sourceBodyPaths, 4) {
@@ -8041,6 +8043,14 @@ func (r *Runner) preflightScopedImplementationBoundedSourceRead(req workspace.To
 				relPath, start, end, len(lines),
 			),
 			Output: output,
+			Paths:  []string{relPath},
+			Facts: toolfacts.NewSourceBodyFacts(toolfacts.SourceBodyEvidence{
+				Path:       relPath,
+				StartLine:  start,
+				EndLine:    end,
+				TotalLines: len(lines),
+				Truncated:  true,
+			}),
 		},
 		Reason: fmt.Sprintf("bounded range-less read_file on large scoped path %s to lines %d-%d of %d", relPath, start, end, len(lines)),
 	}

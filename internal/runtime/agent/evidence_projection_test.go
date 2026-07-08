@@ -23,11 +23,13 @@ func TestToolResultEvidenceProjectionSourceBodyBoundaries(t *testing.T) {
 		{
 			name: "read_file bounded source range",
 			path: sourcePath,
-			result: workspace.ToolResult{
-				Tool:    workspace.ToolNameReadFile,
-				Summary: "Read internal/runtime/agent/evidence_projection.go lines 20-40 (total lines: 220)",
-				Output:  "func TestToolResultEvidenceProjectionSourceBodyBoundaries(t *testing.T) {}\n",
-			},
+			result: readFileSourceBodyResult(
+				sourcePath,
+				20,
+				40,
+				220,
+				"func TestToolResultEvidenceProjectionSourceBodyBoundaries(t *testing.T) {}\n",
+			),
 			wantLevel: planThenExecuteEvidenceAnchorReady,
 			wantBody:  true,
 		},
@@ -40,6 +42,18 @@ func TestToolResultEvidenceProjectionSourceBodyBoundaries(t *testing.T) {
 				Error:   "permission denied",
 			},
 			wantLevel: planThenExecuteEvidenceNone,
+			wantBody:  false,
+		},
+		{
+			name: "read_file path without source body facts is not body evidence",
+			path: sourcePath,
+			result: workspace.ToolResult{
+				Tool:    workspace.ToolNameReadFile,
+				Summary: "Read internal/runtime/agent/evidence_projection.go lines 20-40 (total lines: 220)",
+				Output:  "package agent\n",
+				Paths:   []string{sourcePath},
+			},
+			wantLevel: planThenExecuteEvidencePathSeen,
 			wantBody:  false,
 		},
 		{
@@ -56,22 +70,27 @@ func TestToolResultEvidenceProjectionSourceBodyBoundaries(t *testing.T) {
 		{
 			name: "generated artifacts are not source body evidence",
 			path: generatedPath,
-			result: workspace.ToolResult{
-				Tool:    workspace.ToolNameReadFile,
-				Summary: "Read f1 .idiom/comprehension/views/context.json lines 1-20 (total lines: 20)",
-				Output:  `{"candidate_files":[{"path":"internal/runtime/agent/evidence_projection.go"}]}`,
-			},
+			result: readFileSourceBodyResult(
+				generatedPath,
+				1,
+				20,
+				20,
+				`{"candidate_files":[{"path":"internal/runtime/agent/evidence_projection.go"}]}`,
+			),
 			wantLevel: planThenExecuteEvidenceNone,
 			wantBody:  false,
 		},
 		{
 			name: "routed code_navigate source body",
 			path: sourcePath,
-			result: workspace.ToolResult{
-				Tool: workspace.ToolNameCodeNavigate,
-				Output: "route_summary: Read internal/runtime/agent/evidence_projection.go lines 45-70 (total lines: 220)\n" +
+			result: codeNavigateSourceBodyResult(
+				sourcePath,
+				45,
+				70,
+				220,
+				"route_summary: Read internal/runtime/agent/evidence_projection.go lines 45-70 (total lines: 220)\n"+
 					"func TestCandidatePathExistenceResolvesLazily(t *testing.T) {}\n",
-			},
+			),
 			wantLevel: planThenExecuteEvidenceAnchorReady,
 			wantBody:  true,
 		},
@@ -82,6 +101,8 @@ func TestToolResultEvidenceProjectionSourceBodyBoundaries(t *testing.T) {
 				Tool:    "go_read_symbol",
 				Summary: "Read TestToolResultEvidenceProjectionSourceBodyBoundaries in internal/runtime/agent/evidence_projection.go lines 12-24",
 				Output:  "func TestToolResultEvidenceProjectionSourceBodyBoundaries(t *testing.T) {}\n",
+				Paths:   []string{sourcePath},
+				Facts:   sourceBodyFactsForTest(sourcePath, 12, 24, 0),
 			},
 			wantLevel: planThenExecuteEvidenceAnchorReady,
 			wantBody:  true,
@@ -93,6 +114,8 @@ func TestToolResultEvidenceProjectionSourceBodyBoundaries(t *testing.T) {
 				Tool:    workspace.ToolNameContextZoom,
 				Summary: "Read internal/runtime/agent/evidence_projection.go lines 1-20 with include_source",
 				Output:  `{"path":"internal/runtime/agent/evidence_projection.go","source":"func TestToolResultEvidenceProjectionSourceBodyBoundaries(t *testing.T) {}"}`,
+				Paths:   []string{sourcePath},
+				Facts:   sourceBodyFactsForTest(sourcePath, 1, 20, 20),
 			},
 			wantLevel: planThenExecuteEvidenceAnchorReady,
 			wantBody:  true,
@@ -146,12 +169,7 @@ func TestToolResultEvidenceProjectionCandidateBoundaries(t *testing.T) {
 		t.Fatalf("context_pack candidate paths = %#v, want %q", got, sourcePath)
 	}
 
-	bodyResult := workspace.ToolResult{
-		Tool:    workspace.ToolNameReadFile,
-		Summary: "Read " + sourcePath + " lines 1-20",
-		Output:  "package agent\n",
-		Paths:   []string{sourcePath},
-	}
+	bodyResult := readFileSourceBodyResult(sourcePath, 1, 20, 0, "package agent\n")
 	if got := newToolResultEvidenceProjection([]workspace.ToolResult{bodyResult}).CandidatePaths(); slices.Contains(got, sourcePath) {
 		t.Fatalf("source body path must not also be an unread candidate: %#v", got)
 	}
@@ -214,6 +232,7 @@ func TestToolResultEvidenceProjectionReadOnlyCategoryBoundaries(t *testing.T) {
 			Summary: "Read " + externalPath + " lines 1-20",
 			Output:  "1:external planning notes\n",
 			Paths:   []string{externalPath},
+			Facts:   sourceBodyFactsForTest(externalPath, 1, 20, 0),
 		},
 		{
 			Tool:    workspace.ToolNameSourceSanity,
@@ -230,12 +249,7 @@ func TestToolResultEvidenceProjectionReadOnlyCategoryBoundaries(t *testing.T) {
 				Text: "Read-only evidence packets carry delegated source-body paths.",
 			}},
 		}),
-		{
-			Tool:    workspace.ToolNameReadFile,
-			Summary: "Read " + sourcePath + " lines 1-20",
-			Output:  "1:package agent\n",
-			Paths:   []string{sourcePath},
-		},
+		readFileSourceBodyResult(sourcePath, 1, 20, 0, "1:package agent\n"),
 	}
 
 	projection := newToolResultEvidenceProjection(results)

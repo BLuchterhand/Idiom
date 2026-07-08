@@ -51,12 +51,9 @@ func TestSourceGroundingAllowsBackedExternalDocumentCitation(t *testing.T) {
 	docPath := filepath.Join(t.TempDir(), "Mobile Documents", "Website Project", "conversation brief.md")
 	runner := readOnlySourceGroundingRunner()
 	runner.RuntimeBrief.Objective = "What does the Website failure brief say about duplicate surfaces?"
-	results := []workspace.ToolResult{{
-		Tool:    workspace.ToolNameReadFile,
-		Summary: "Read f35 " + docPath + " lines 1-4 (total lines: 4)",
-		Output:  "1:The Website failure brief says duplicate surfaces caused drift.\n2:The fix is to consolidate final-answer acceptance and completion-gate projection.",
-		Paths:   []string{docPath},
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult(docPath, 1, 4, 4, "1:The Website failure brief says duplicate surfaces caused drift.\n2:The fix is to consolidate final-answer acceptance and completion-gate projection."),
+	}
 	answer := "The Website failure brief says duplicate surfaces caused drift, and that is grounded in `" + filepath.ToSlash(filepath.Clean(docPath)) + "`."
 
 	if reason := runner.sourceGroundingRejectionReason(answer, results); reason != "" {
@@ -83,18 +80,8 @@ func TestSourceGroundingAllowsRelativeCitationToBackedExternalDocument(t *testin
 	runner := readOnlySourceGroundingRunner()
 	runner.RuntimeBrief.Objective = "What can be added to the Website from the iCloud Idiom book project?"
 	results := []workspace.ToolResult{
-		{
-			Tool:    workspace.ToolNameReadFile,
-			Summary: "Read f86 " + bookMatterPath + " lines 1-80 (total lines: 120)",
-			Output:  "1:The book matter proposes Trust the Process, Not the Prompt as the book title.\n",
-			Paths:   []string{bookMatterPath},
-		},
-		{
-			Tool:    workspace.ToolNameReadFile,
-			Summary: "Read f88 " + backMatterPath + " lines 1-80 (total lines: 95)",
-			Output:  "1:The back matter includes author biography notes for the website.\n",
-			Paths:   []string{backMatterPath},
-		},
+		readFileSourceBodyResult(bookMatterPath, 1, 80, 120, "1:The book matter proposes Trust the Process, Not the Prompt as the book title.\n"),
+		readFileSourceBodyResult(backMatterPath, 1, 80, 95, "1:The back matter includes author biography notes for the website.\n"),
 	}
 	answer := "Add book-positioning copy from `front-back/book-matter-and-cover-copy-proposal.md` and author bio material from `front-back/back-matter.md`."
 
@@ -107,12 +94,9 @@ func TestSourceGroundingAllowsBacktickedExternalDocumentPathWithSpaces(t *testin
 	docPath := filepath.ToSlash(filepath.Join(t.TempDir(), "Mobile Documents", "com~apple~CloudDocs", "Idiom Book Project", "front-back", "back-matter.md"))
 	runner := readOnlySourceGroundingRunner()
 	runner.RuntimeBrief.Objective = "What can be added to the Website from the Idiom book and author material?"
-	results := []workspace.ToolResult{{
-		Tool:    workspace.ToolNameReadFile,
-		Summary: "Read f88 " + docPath + " lines 1-80 (total lines: 95)",
-		Output:  "1:The back matter includes author biography notes for the website.\n",
-		Paths:   []string{docPath},
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult(docPath, 1, 80, 95, "1:The back matter includes author biography notes for the website.\n"),
+	}
 	answer := "The author material is grounded in `" + docPath + "`."
 
 	if paths := sourceGroundingMentionedPaths(answer); !slices.Contains(paths, docPath) || slices.Contains(paths, "Project/front-back/back-matter.md") {
@@ -138,11 +122,15 @@ func TestSourceGroundingMentionedPathsIgnoreBacktickedCommands(t *testing.T) {
 
 func TestSourceGroundingAllowsQuotedLineRangeForBackedSourceBody(t *testing.T) {
 	runner := readOnlySourceGroundingRunner()
-	results := []workspace.ToolResult{{
-		Tool:    workspace.ToolNameReadFile,
-		Summary: "Read docs/decisioning-north-star.md lines 26-53",
-		Output:  "28:Read-only lanes are strategy lanes.\n30:The model owns strategy; the harness owns contracts.",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult(
+			"docs/decisioning-north-star.md",
+			26,
+			53,
+			0,
+			"28:Read-only lanes are strategy lanes.\n30:The model owns strategy; the harness owns contracts.",
+		),
+	}
 	answer := "From `docs/decisioning-north-star.md:28-34`, the north star says the model owns strategy and the harness owns contracts."
 
 	paths := sourceGroundingMentionedPaths(answer)
@@ -165,18 +153,8 @@ func TestSourceGroundingRejectsAmbiguousRelativeExternalDocumentCitation(t *test
 	runner := readOnlySourceGroundingRunner()
 	runner.RuntimeBrief.Objective = "What can be added to the Website from the iCloud Idiom book project?"
 	results := []workspace.ToolResult{
-		{
-			Tool:    workspace.ToolNameReadFile,
-			Summary: "Read f1 " + firstPath + " lines 1-10 (total lines: 10)",
-			Output:  "1:first back matter\n",
-			Paths:   []string{firstPath},
-		},
-		{
-			Tool:    workspace.ToolNameReadFile,
-			Summary: "Read f2 " + secondPath + " lines 1-10 (total lines: 10)",
-			Output:  "1:second back matter\n",
-			Paths:   []string{secondPath},
-		},
+		readFileSourceBodyResult(firstPath, 1, 10, 10, "1:first back matter\n"),
+		readFileSourceBodyResult(secondPath, 1, 10, 10, "1:second back matter\n"),
 	}
 	answer := "Use the author material from `front-back/back-matter.md`."
 
@@ -189,12 +167,9 @@ func TestSourceGroundingRejectsAmbiguousRelativeExternalDocumentCitation(t *test
 func TestSourceGroundingAllowsUniqueBareExternalDocumentCitation(t *testing.T) {
 	docPath := filepath.Join(t.TempDir(), "Mobile Documents", "Idiom Book Project", "front-back", "back-matter.md")
 	runner := readOnlySourceGroundingRunner()
-	results := []workspace.ToolResult{{
-		Tool:    workspace.ToolNameReadFile,
-		Summary: "Read f1 " + docPath + " lines 1-10 (total lines: 10)",
-		Output:  "1:The back matter includes author biography notes.\n",
-		Paths:   []string{docPath},
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult(docPath, 1, 10, 10, "1:The back matter includes author biography notes.\n"),
+	}
 	answer := "`back-matter.md:1` contains the author notes."
 
 	if reason := runner.sourceGroundingRejectionReason(answer, results); reason != "" {
@@ -216,18 +191,8 @@ func TestSourceGroundingRejectsBareCitationAmbiguousAcrossWorkspaceAndExternalBo
 	runner := readOnlySourceGroundingRunner()
 	runner.Workspace = workspace.NewManager(config.Workspace{Root: root, CWD: root})
 	results := []workspace.ToolResult{
-		{
-			Tool:    workspace.ToolNameReadFile,
-			Summary: "Read f1 " + workspacePath + " lines 1-5 (total lines: 5)",
-			Output:  "1:workspace back matter\n",
-			Paths:   []string{workspacePath},
-		},
-		{
-			Tool:    workspace.ToolNameReadFile,
-			Summary: "Read f2 " + externalPath + " lines 1-10 (total lines: 10)",
-			Output:  "1:external back matter\n",
-			Paths:   []string{externalPath},
-		},
+		readFileSourceBodyResult(workspacePath, 1, 5, 5, "1:workspace back matter\n"),
+		readFileSourceBodyResult(externalPath, 1, 10, 10, "1:external back matter\n"),
 	}
 	answer := "`back-matter.md:1` contains the author notes."
 
@@ -250,12 +215,9 @@ func TestSourceGroundingRejectsExistingWorkspaceCitationEvenWhenExternalSuffixMa
 	externalPath := filepath.Join(t.TempDir(), "Mobile Documents", "Idiom Book Project", "front-back", "back-matter.md")
 	runner := readOnlySourceGroundingRunner()
 	runner.Workspace = workspace.NewManager(config.Workspace{Root: root, CWD: root})
-	results := []workspace.ToolResult{{
-		Tool:    workspace.ToolNameReadFile,
-		Summary: "Read f2 " + externalPath + " lines 1-10 (total lines: 10)",
-		Output:  "1:external back matter\n",
-		Paths:   []string{externalPath},
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult(externalPath, 1, 10, 10, "1:external back matter\n"),
+	}
 	answer := "`front-back/back-matter.md:1` defines the workspace author bio copy."
 
 	reason := runner.sourceGroundingRejectionReason(answer, results)
@@ -307,7 +269,7 @@ func TestSourceGroundingAssessmentPayloadRequiresCompletionGatePayloadType(t *te
 	}
 }
 
-func TestSourceGroundingUsesResultBackedCitationSupport(t *testing.T) {
+func TestSourceGroundingRejectsPathOnlyCitationSupport(t *testing.T) {
 	runner := readOnlySourceGroundingRunner()
 	results := []workspace.ToolResult{{
 		Tool:    "read_file",
@@ -320,18 +282,16 @@ func TestSourceGroundingUsesResultBackedCitationSupport(t *testing.T) {
 		"The current source `internal/workflows/productworkflow/coverage_gate.go` defines the coverage gate behavior.",
 		results,
 	)
-	if reason != "" {
-		t.Fatalf("expected result-backed source-body evidence to satisfy citation support, got %q", reason)
+	if !strings.Contains(reason, "internal/workflows/productworkflow/coverage_gate.go") {
+		t.Fatalf("path-only read metadata must not satisfy source-body citation support, got %q", reason)
 	}
 }
 
 func TestSourceGroundingRawBodyEvidenceSatisfiesCitationSupport(t *testing.T) {
 	runner := readOnlySourceGroundingRunner()
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/workflows/productworkflow/coverage_gate.go lines 1-80 (total lines: 552)",
-		Output:  "func EvaluateCoverageGate() {}\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 80, 552, "func EvaluateCoverageGate() {}\n"),
+	}
 
 	reason := runner.sourceGroundingRejectionReason(
 		"The current source `internal/workflows/productworkflow/coverage_gate.go` defines the coverage gate behavior.",
@@ -360,11 +320,9 @@ func TestSourceGroundingBasenameResolutionUsesResultBackedEvidence(t *testing.T)
 
 	rawRunner := readOnlySourceGroundingRunner()
 	rawRunner.Workspace = workspace.NewManager(config.Workspace{Root: root, CWD: root})
-	rawResults := []workspace.ToolResult{{
-		Tool:    workspace.ToolNameReadFile,
-		Summary: "Read internal/app/target.go lines 1-20",
-		Output:  "package app\nfunc targetBehavior() {}\n",
-	}}
+	rawResults := []workspace.ToolResult{
+		readFileSourceBodyResult("internal/app/target.go", 1, 20, 0, "package app\nfunc targetBehavior() {}\n"),
+	}
 	if reason := rawRunner.sourceGroundingRejectionReason("`target.go:2` defines target behavior.", rawResults); reason != "" {
 		t.Fatalf("unique basename backed by raw source-body evidence blocked: %q", reason)
 	}
@@ -375,8 +333,8 @@ func TestSourceGroundingBasenameResolutionUsesResultBackedEvidence(t *testing.T)
 	ambiguousRunner := readOnlySourceGroundingRunner()
 	ambiguousRunner.Workspace = workspace.NewManager(config.Workspace{Root: ambiguousRoot, CWD: ambiguousRoot})
 	ambiguousResults := []workspace.ToolResult{
-		{Tool: workspace.ToolNameReadFile, Paths: []string{uniquePath}, Summary: "Read internal/app/target.go lines 1-20", Output: "package app\nfunc targetBehavior() {}\n"},
-		{Tool: workspace.ToolNameReadFile, Paths: []string{"internal/other/target.go"}, Summary: "Read internal/other/target.go lines 1-20", Output: "package other\nfunc targetBehavior() {}\n"},
+		readFileSourceBodyResult(uniquePath, 1, 20, 0, "package app\nfunc targetBehavior() {}\n"),
+		readFileSourceBodyResult("internal/other/target.go", 1, 20, 0, "package other\nfunc targetBehavior() {}\n"),
 	}
 	reason := ambiguousRunner.sourceGroundingRejectionReason("`target.go:2` defines target behavior.", ambiguousResults)
 	if !strings.Contains(reason, "target.go") {

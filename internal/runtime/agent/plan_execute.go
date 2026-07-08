@@ -17,6 +17,7 @@ import (
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
 	planartifact "idiom/internal/contracts/planartifact"
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/textutil"
 	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/runtime/llama"
@@ -1435,11 +1436,6 @@ func concreteSourceEvidenceResultMatchesPath(result workspace.ToolResult, path s
 		return false
 	}
 
-	if strings.TrimSpace(result.Tool) == workspace.ToolNameReadFile {
-		readPath := NormalizeRunnerPath(ExtractReadPathFromSummary(result.Summary))
-		return readPath == path && !IsNonSourceEvidenceArtifactPath(readPath)
-	}
-
 	for _, readPath := range ReadPathsFromToolResult(result) {
 		if IsNonSourceEvidenceArtifactPath(readPath) {
 			continue
@@ -1468,20 +1464,16 @@ func fullSourceReadFileSeen(path string, results []workspace.ToolResult) bool {
 			continue
 		}
 
-		readPath := NormalizeRunnerPath(ExtractReadPathFromSummary(result.Summary))
-		if readPath != path {
+		fact, ok := sourceBodyFactForPath(result, path)
+		if !ok {
 			continue
 		}
 
-		text := strings.ToLower(strings.Join([]string{result.Summary, result.Output}, "\n"))
-		start, end, hasRange := planThenExecuteReadSummaryLineRange(result.Summary)
-		total, hasTotal := planThenExecuteReadSummaryTotalLines(result.Summary)
-
-		if hasRange && hasTotal && start == 1 && end >= total {
+		if sourceBodyFactCoversWholeFile(fact) {
 			return true
 		}
 
-		if hasRange || strings.Contains(text, "output was capped") || strings.Contains(text, "full range-less read omitted") || strings.Contains(text, "bounded large required-path source") {
+		if sourceBodyFactHasRange(fact) || fact.Truncated {
 			continue
 		}
 
@@ -1847,34 +1839,14 @@ func contextZoomJSONHasSourcePath(object map[string]any) bool {
 }
 
 func readFileResultHasConcreteSourceBody(result workspace.ToolResult) bool {
-	text := strings.ToLower(strings.Join([]string{result.Summary, result.Output}, "\n"))
-	if strings.TrimSpace(result.Summary) == "" || !strings.Contains(text, "read ") {
-		return false
-	}
-
-	hasSourcePath := false
-
-	for _, path := range ReadPathsFromToolResult(result) {
-		if IsNonSourceEvidenceArtifactPath(path) {
-			return false
+	for _, fact := range sourceBodyFactsFromResult(result) {
+		path := NormalizeRunnerPath(fact.Path)
+		if path != "" && !IsNonSourceEvidenceArtifactPath(path) {
+			return true
 		}
-
-		hasSourcePath = true
 	}
 
-	if !hasSourcePath {
-		return false
-	}
-
-	if strings.Contains(text, "redirected") ||
-		strings.Contains(text, "file_outline") ||
-		strings.Contains(text, "capability: outline") ||
-		strings.Contains(text, "candidate_request") {
-
-		return false
-	}
-
-	return true
+	return false
 }
 
 func toolResultHasNonArtifactReadPath(result workspace.ToolResult) bool {
@@ -3286,7 +3258,7 @@ func planThenExecuteTerminalSubmitPlanEvidenceByPath(results []workspace.ToolRes
 
 	out := map[string][]planThenExecuteTerminalSubmitPlanEvidence{}
 	seen := map[string]map[string]struct{}{}
-	add := func(path string, summary string) {
+	add := func(path string, summary string, start int, end int) {
 		path = NormalizeRunnerPath(path)
 		summary = strings.TrimSpace(summary)
 
@@ -3304,8 +3276,6 @@ func planThenExecuteTerminalSubmitPlanEvidenceByPath(results []workspace.ToolRes
 
 		seen[path][summary] = struct{}{}
 
-		start, end, _ := planThenExecuteReadSummaryLineRange(summary)
-
 		out[path] = append(out[path], planThenExecuteTerminalSubmitPlanEvidence{
 			Summary:   summary,
 			StartLine: start,
@@ -3318,24 +3288,16 @@ func planThenExecuteTerminalSubmitPlanEvidenceByPath(results []workspace.ToolRes
 			continue
 		}
 
-		for _, path := range ReadPathsFromToolResult(result) {
-			add(path, result.Summary)
+		sourceFacts := sourceBodyFactsFromResult(result)
+		if len(sourceFacts) == 0 {
+			for _, path := range ReadPathsFromToolResult(result) {
+				add(path, result.Summary, 0, 0)
+			}
+			continue
 		}
 
-		for _, line := range strings.Split(result.Output, "\n") {
-			line = strings.TrimSpace(line)
-			if !strings.HasPrefix(line, "route_summary:") {
-				continue
-			}
-
-			summary := strings.TrimSpace(strings.TrimPrefix(line, "route_summary:"))
-			path := ExtractReadPathFromSummary(summary)
-
-			if path == "" {
-				path = ExtractRoutedReadPathFromOutput(line)
-			}
-
-			add(path, summary)
+		for _, fact := range sourceFacts {
+			add(fact.Path, result.Summary, fact.StartLine, fact.EndLine)
 		}
 	}
 
@@ -4902,13 +4864,8 @@ func planThenExecuteLargePathSeen(path string, results []workspace.ToolResult) b
 	}
 
 	for _, result := range results {
-		text := strings.Join([]string{result.Summary, result.Output}, "\n")
-		if !strings.Contains(strings.ToLower(text), strings.ToLower(path)) {
-			continue
-		}
-
-		total, ok := planThenExecuteReadSummaryTotalLines(text)
-		if ok && total >= planThenExecuteLargeFileGenericHeaderMinTotalLines {
+		fact, ok := sourceBodyFactForPath(result, path)
+		if ok && fact.TotalLines >= planThenExecuteLargeFileGenericHeaderMinTotalLines {
 			return true
 		}
 	}
@@ -5607,20 +5564,20 @@ func invalidAnchorCompleteCorrectionEvidenceResult(result workspace.ToolResult, 
 		return true
 	}
 
-	_, end, hasRange := planThenExecuteReadSummaryLineRange(result.Summary)
-	total, hasTotal := planThenExecuteReadSummaryTotalLines(result.Summary)
-	if hasRange && hasTotal && end >= total {
+	fact, ok := sourceBodyFactForPath(result, path)
+	if !ok {
+		return false
+	}
+
+	if sourceBodyFactCoversWholeFile(fact) {
 		return true
 	}
 
 	req := workspace.ToolRequest{
-		Tool: "read_file",
-		Path: path,
-		StartLine: func() int {
-			start, _, _ := planThenExecuteReadSummaryLineRange(result.Summary)
-			return start
-		}(),
-		EndLine: end,
+		Tool:      "read_file",
+		Path:      path,
+		StartLine: fact.StartLine,
+		EndLine:   fact.EndLine,
 	}
 
 	return planThenExecuteReadFileCoversRejectedSyntaxLine(req, path, results) ||
@@ -5644,33 +5601,29 @@ func invalidAnchorCorrectionEvidenceResult(result workspace.ToolResult, path str
 		return true
 	}
 
-	_, end, hasRange := planThenExecuteReadSummaryLineRange(result.Summary)
-	total, hasTotal := planThenExecuteReadSummaryTotalLines(result.Summary)
+	fact, ok := sourceBodyFactForPath(result, path)
+	if !ok {
+		return false
+	}
 
-	if hasRange && hasTotal && end >= total {
+	if sourceBodyFactCoversWholeFile(fact) {
 		return true
 	}
 
 	if planThenExecuteReadFileCoversRejectedSyntaxLine(workspace.ToolRequest{
-		Tool: "read_file",
-		Path: path,
-		StartLine: func() int {
-			start, _, _ := planThenExecuteReadSummaryLineRange(result.Summary)
-			return start
-		}(),
-		EndLine: end,
+		Tool:      "read_file",
+		Path:      path,
+		StartLine: fact.StartLine,
+		EndLine:   fact.EndLine,
 	}, path, results) {
 
 		return true
 	}
 	if planThenExecuteReadFileCoversRejectedLineRange(workspace.ToolRequest{
-		Tool: "read_file",
-		Path: path,
-		StartLine: func() int {
-			start, _, _ := planThenExecuteReadSummaryLineRange(result.Summary)
-			return start
-		}(),
-		EndLine: end,
+		Tool:      "read_file",
+		Path:      path,
+		StartLine: fact.StartLine,
+		EndLine:   fact.EndLine,
 	}, path, results) {
 
 		return true
@@ -5687,8 +5640,8 @@ func readFileResultIsBoundedCppSourceWindow(result workspace.ToolResult, path st
 		return false
 	}
 
-	readPath, readRange, ok := extractReadPathAndRangeFromSummary(result.Summary)
-	if !ok || NormalizeRunnerPath(readPath) != NormalizeRunnerPath(path) {
+	fact, ok := sourceBodyFactForPath(result, path)
+	if !ok {
 		return false
 	}
 
@@ -5698,7 +5651,7 @@ func readFileResultIsBoundedCppSourceWindow(result workspace.ToolResult, path st
 		strings.HasSuffix(normalizedPath, ".cxx")) {
 		return false
 	}
-	if readRange.start > 400 {
+	if fact.StartLine > 400 {
 		return false
 	}
 
@@ -5710,16 +5663,16 @@ func readFileResultCoversRejectedLineRange(result workspace.ToolResult, path str
 		return false
 	}
 
-	readPath, readRange, ok := extractReadPathAndRangeFromSummary(result.Summary)
-	if !ok || NormalizeRunnerPath(readPath) != NormalizeRunnerPath(path) {
+	fact, ok := sourceBodyFactForPath(result, path)
+	if !ok {
 		return false
 	}
 
 	return planThenExecuteReadFileCoversRejectedLineRange(workspace.ToolRequest{
 		Tool:      workspace.ToolNameReadFile,
 		Path:      path,
-		StartLine: readRange.start,
-		EndLine:   readRange.end,
+		StartLine: fact.StartLine,
+		EndLine:   fact.EndLine,
 	}, path, results)
 }
 
@@ -6162,6 +6115,8 @@ func planThenExecuteToolResultSourceEvidence(result workspace.ToolResult, path s
 
 	sourcePaths := ReadPathsFromToolResult(result)
 	sourceMatched := false
+	var sourceFact toolfacts.SourceBodyEvidence
+	hasSourceFact := false
 
 	for _, readPath := range sourcePaths {
 		if IsNonSourceEvidenceArtifactPath(readPath) {
@@ -6170,6 +6125,10 @@ func planThenExecuteToolResultSourceEvidence(result workspace.ToolResult, path s
 
 		if NormalizeRunnerPath(readPath) == path {
 			sourceMatched = true
+			if fact, ok := sourceBodyFactForPath(result, path); ok {
+				sourceFact = fact
+				hasSourceFact = true
+			}
 			break
 		}
 	}
@@ -6180,28 +6139,44 @@ func planThenExecuteToolResultSourceEvidence(result workspace.ToolResult, path s
 
 	tool := strings.TrimSpace(result.Tool)
 
-	evidence.Level = planThenExecuteEvidenceAnchorReady
 	evidence.Source = tool
-	evidence.Detail = "source body"
+	evidence.Level = planThenExecuteEvidencePathSeen
+	evidence.Detail = "typed path seen"
+
+	if !hasSourceFact {
+		if planThenExecuteCodeNavigateIsOutline(result) || strings.HasSuffix(tool, "_file_outline") {
+			evidence.Detail = "file outline"
+		}
+		return evidence
+	}
+
+	evidence.Level, evidence.Detail = planThenExecuteReadFileEvidenceLevel(sourceFact, path)
 
 	switch {
 	case ReadStyleSourceBodyTool(tool):
-		evidence.Level, evidence.Detail = planThenExecuteReadFileEvidenceLevel(result, path)
+		// Evidence level already comes from producer-owned source-body facts.
 	case tool == "code_navigate" || tool == "read_only_capability":
 		if planThenExecuteCodeNavigateIsOutline(result) {
 			evidence.Level = planThenExecuteEvidencePathSeen
 			evidence.Detail = "file outline"
-		} else if !RoutedSourceReadOutputHasBody(result.Output) {
-			evidence.Level = planThenExecuteEvidencePathSeen
-			evidence.Detail = "navigation result without source body"
+		} else if sourceFact.Truncated {
+			evidence.Level = planThenExecuteEvidenceBodyWindow
+			evidence.Detail = "truncated routed source body"
 		} else {
+			evidence.Level = planThenExecuteEvidenceAnchorReady
 			evidence.Detail = "routed source body"
 		}
 	case strings.HasSuffix(tool, "_file_outline"):
 		evidence.Level = planThenExecuteEvidencePathSeen
 		evidence.Detail = "file outline"
 	case strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"):
-		evidence.Detail = "symbol/body read"
+		if sourceFact.Truncated {
+			evidence.Level = planThenExecuteEvidenceBodyWindow
+			evidence.Detail = "truncated symbol/body read"
+		} else {
+			evidence.Level = planThenExecuteEvidenceAnchorReady
+			evidence.Detail = "symbol/body read"
+		}
 	}
 
 	return evidence
@@ -6241,16 +6216,13 @@ func planThenExecuteCodeNavigateIsOutline(result workspace.ToolResult) bool {
 	return false
 }
 
-func planThenExecuteReadFileEvidenceLevel(result workspace.ToolResult, path string) (PlanThenExecuteSourceEvidenceLevel, string) {
-	start, end, hasRange := planThenExecuteReadSummaryLineRange(result.Summary)
-	total, hasTotal := planThenExecuteReadSummaryTotalLines(result.Summary)
-	lower := strings.ToLower(result.Summary + "\n" + result.Output)
+func planThenExecuteReadFileEvidenceLevel(fact toolfacts.SourceBodyEvidence, path string) (PlanThenExecuteSourceEvidenceLevel, string) {
+	start, end := fact.StartLine, fact.EndLine
+	total := fact.TotalLines
+	hasRange := sourceBodyFactHasRange(fact)
+	hasTotal := total > 0
 
-	if strings.Contains(lower, "bounded large required-path source") ||
-		strings.Contains(lower, "full range-less read omitted") ||
-		strings.Contains(lower, "output was capped") ||
-		strings.Contains(lower, "defaulted to recent log tail") {
-
+	if fact.Truncated {
 		return planThenExecuteEvidenceBodyWindow, "bounded body window"
 	}
 
@@ -6317,82 +6289,6 @@ func planThenExecuteGenericHeaderWindow(start, end, total int, hasTotal bool) bo
 	}
 
 	return hasTotal && total >= planThenExecuteLargeFileGenericHeaderMinTotalLines && end <= planThenExecuteLargeFileGenericHeaderReadMaxLines
-}
-
-func planThenExecuteReadSummaryLineRange(summary string) (int, int, bool) {
-	fields := strings.Fields(summary)
-	for i, field := range fields {
-		if field != "lines" || i+1 >= len(fields) {
-			continue
-		}
-
-		startText, endText, ok := strings.Cut(strings.Trim(fields[i+1], ".,;:)"), "-")
-		if !ok {
-			return 0, 0, false
-		}
-
-		start, startErr := strconv.Atoi(startText)
-		end, endErr := strconv.Atoi(endText)
-
-		if startErr != nil || endErr != nil || start <= 0 || end < start {
-			return 0, 0, false
-		}
-
-		return start, end, true
-	}
-
-	return 0, 0, false
-}
-
-func planThenExecuteReadSummaryTotalLines(summary string) (int, bool) {
-	lower := strings.ToLower(summary)
-	if total, ok := planThenExecuteReadSummaryTotalLinesAfter(lower, "total lines:"); ok {
-		return total, true
-	}
-
-	return planThenExecuteReadSummaryTotalLinesAfter(lower, "file has ")
-}
-
-func planThenExecuteReadSummaryTotalLinesAfter(lower string, marker string) (int, bool) {
-	idx := strings.Index(lower, "file has ")
-	if marker != "file has " {
-		idx = strings.Index(lower, marker)
-	}
-
-	if idx < 0 {
-		return 0, false
-	}
-
-	rest := strings.TrimSpace(lower[idx+len(marker):])
-	if marker == "file has " {
-		end := strings.Index(rest, " lines total")
-		if end < 0 {
-			return 0, false
-		}
-
-		rest = rest[:end]
-	} else {
-		rest = strings.TrimLeft(rest, " ")
-
-		end := 0
-
-		for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
-			end++
-		}
-
-		if end == 0 {
-			return 0, false
-		}
-
-		rest = rest[:end]
-	}
-
-	total, err := strconv.Atoi(strings.TrimSpace(rest))
-	if err != nil || total <= 0 {
-		return 0, false
-	}
-
-	return total, true
 }
 
 func firstPlanThenExecuteUnreadRequiredPath(required []string, unread map[string]struct{}) string {
@@ -8282,114 +8178,18 @@ func readRangesForPathFromResults(results []workspace.ToolResult, target string)
 			continue
 		}
 
-		for _, text := range []string{result.Summary, result.Output} {
-			path, readRange, ok := extractReadPathAndRangeFromSummary(text)
-			if ok && NormalizeRunnerPath(path) == target {
-				ranges = append(ranges, readRange)
-			}
-		}
-
-		for _, line := range strings.Split(result.Output, "\n") {
-			line = strings.TrimSpace(line)
-			if !strings.HasPrefix(line, "route_summary:") {
+		for _, fact := range sourceBodyFactsFromResult(result) {
+			if NormalizeRunnerPath(fact.Path) != target {
 				continue
 			}
 
-			path, readRange, ok := extractReadPathAndRangeFromSummary(strings.TrimSpace(strings.TrimPrefix(line, "route_summary:")))
-			if ok && NormalizeRunnerPath(path) == target {
+			if readRange, ok := sourceBodyReadRangeFromFact(fact); ok {
 				ranges = append(ranges, readRange)
 			}
 		}
 	}
 
 	return ranges
-}
-
-func extractReadPathAndRangeFromSummary(summary string) (string, planThenExecuteReadRange, bool) {
-	summary = strings.TrimSpace(summary)
-	if summary == "" {
-		return "", planThenExecuteReadRange{}, false
-	}
-
-	fields := strings.Fields(summary)
-	if len(fields) < 4 || (fields[0] != "Read" && fields[0] != "Extracted") {
-		return "", planThenExecuteReadRange{}, false
-	}
-
-	lineIndex := -1
-
-	for i, field := range fields {
-		if field == "lines" {
-			lineIndex = i
-			break
-		}
-	}
-
-	if lineIndex < 0 || lineIndex+1 >= len(fields) {
-		return "", planThenExecuteReadRange{}, false
-	}
-
-	pathIndex := -1
-	if lineIndex >= 2 && (fields[lineIndex-2] == "in" || fields[lineIndex-2] == "from") {
-		pathIndex = lineIndex - 1
-	} else if lineIndex >= 2 && planThenExecuteReadFileHandleField(fields[1]) {
-		pathIndex = 2
-	} else if lineIndex >= 1 {
-		pathIndex = lineIndex - 1
-	}
-
-	if pathIndex < 0 || pathIndex >= len(fields) {
-		return "", planThenExecuteReadRange{}, false
-	}
-
-	parts := strings.Split(strings.Trim(fields[lineIndex+1], ".,;:"), "-")
-	if len(parts) != 2 {
-		return "", planThenExecuteReadRange{}, false
-	}
-
-	start, err1 := strconv.Atoi(parts[0])
-	end, err2 := strconv.Atoi(parts[1])
-
-	if err1 != nil || err2 != nil || start <= 0 || end < start {
-		return "", planThenExecuteReadRange{}, false
-	}
-
-	total := extractReadTotalLineCount(fields)
-	if parsedTotal, ok := planThenExecuteReadSummaryTotalLines(summary); ok {
-		total = parsedTotal
-	}
-
-	return fields[pathIndex], planThenExecuteReadRange{start: start, end: end, total: total}, true
-}
-
-func planThenExecuteReadFileHandleField(field string) bool {
-	field = strings.TrimSpace(field)
-	if len(field) < 2 || field[0] != 'f' {
-		return false
-	}
-
-	for _, ch := range field[1:] {
-		if ch < '0' || ch > '9' {
-			return false
-		}
-	}
-
-	return true
-}
-
-func extractReadTotalLineCount(fields []string) int {
-	for i := 0; i+2 < len(fields); i++ {
-		if strings.Trim(fields[i], "(),.;:") != "total" || strings.Trim(fields[i+1], "(),.;:") != "lines" {
-			continue
-		}
-
-		total, err := strconv.Atoi(strings.Trim(fields[i+2], "(),.;:"))
-		if err == nil && total > 0 {
-			return total
-		}
-	}
-
-	return 0
 }
 
 const planThenExecuteRejectedSubmitPlanStreakThreshold = 3
@@ -10103,20 +9903,14 @@ func planThenExecuteRequiredSourceReadTotal(path string, results []workspace.Too
 	}
 
 	total := 0
-	lowerPath := strings.ToLower(path)
 
 	for _, result := range results {
 		if strings.TrimSpace(result.Tool) != workspace.ToolNameReadFile || strings.TrimSpace(result.Error) != "" {
 			continue
 		}
 
-		text := strings.ToLower(strings.Join([]string{result.Summary, result.Output}, "\n"))
-		if !strings.Contains(text, lowerPath) {
-			continue
-		}
-
-		if lineCount, ok := planThenExecuteReadSummaryTotalLines(result.Summary); ok && lineCount > total {
-			total = lineCount
+		if fact, ok := sourceBodyFactForPath(result, path); ok && fact.TotalLines > total {
+			total = fact.TotalLines
 		}
 	}
 
@@ -10134,13 +9928,12 @@ func planThenExecuteReadRangeSeen(path string, start, end int, results []workspa
 			continue
 		}
 
-		text := strings.ToLower(strings.Join([]string{result.Summary, result.Output}, "\n"))
-		if !strings.Contains(text, strings.ToLower(path)) {
+		fact, ok := sourceBodyFactForPath(result, path)
+		if !ok {
 			continue
 		}
 
-		priorStart, priorEnd, ok := planThenExecuteReadSummaryLineRange(result.Summary)
-		if ok && priorStart == start && priorEnd == end {
+		if fact.StartLine == start && fact.EndLine == end {
 			return true
 		}
 	}
@@ -10251,25 +10044,27 @@ func planThenExecuteNextRequiredSourceReadRange(path string, results []workspace
 			continue
 		}
 
-		text := strings.ToLower(strings.Join([]string{result.Summary, result.Output}, "\n"))
-		if !strings.Contains(text, strings.ToLower(path)) {
+		fact, ok := sourceBodyFactForPath(result, path)
+		if !ok {
 			continue
 		}
 
-		if !strings.Contains(text, "redirected") || !planThenExecutePathSupportsCodeNavigate(path) {
-			sawReadFileEvidence = true
+		sawReadFileEvidence = true
+
+		if fact.StartLine > 0 && fact.EndLine >= fact.StartLine && fact.EndLine > maxEnd {
+			maxEnd = fact.EndLine
 		}
 
-		if priorStart, priorEnd, ok := planThenExecuteReadSummaryLineRange(result.Summary); ok && priorStart > 0 && priorEnd >= priorStart && priorEnd > maxEnd {
-			maxEnd = priorEnd
-		}
-
-		if lineCount, ok := planThenExecuteReadSummaryTotalLines(result.Summary); ok && lineCount > total {
-			total = lineCount
+		if fact.TotalLines > total {
+			total = fact.TotalLines
 		}
 	}
 
 	if sawReadFileEvidence && maxEnd == 0 {
+		return 0, 0, false
+	}
+
+	if !sawReadFileEvidence && alreadyReadPath(results, path) && !planThenExecuteFileOutlineSeen(path, results) {
 		return 0, 0, false
 	}
 
@@ -10533,14 +10328,8 @@ func planThenExecutePathHasAnyToolEvidence(path string, results []workspace.Tool
 		return false
 	}
 
-	for _, result := range results {
-		text := strings.ToLower(strings.Join([]string{result.Summary, result.Error, result.Output}, "\n"))
-		if strings.Contains(text, strings.ToLower(normalized)) {
-			return true
-		}
-	}
-
-	return false
+	_, ok := newToolResultEvidenceProjection(results).ReadPaths()[normalized]
+	return ok
 }
 
 func (r *Runner) deterministicNoWriteRecoveryUnreadCandidateRead(results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {

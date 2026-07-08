@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/commandexec"
 	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/repository/semantic/languagetools"
@@ -213,8 +212,9 @@ func fromLanguageToolResult(result languagetools.ToolResult) ToolResult {
 		Output:        result.Output,
 		Error:         result.Error,
 		Failure:       result.Failure,
+		Paths:         append([]string(nil), result.Paths...),
 		ChangedPaths:  append([]string(nil), result.ChangedPaths...),
-		Facts:         cloneToolResultFacts(result.Facts),
+		Facts:         result.Facts.Clone(),
 		PrecisionTier: result.PrecisionTier,
 		Relationships: fromLanguageToolRelationships(result.Relationships),
 		PayloadType:   result.PayloadType,
@@ -230,30 +230,13 @@ func toLanguageToolResult(result ToolResult) languagetools.ToolResult {
 		Output:        result.Output,
 		Error:         result.Error,
 		Failure:       result.Failure,
+		Paths:         append([]string(nil), result.Paths...),
 		ChangedPaths:  append([]string(nil), result.ChangedPaths...),
-		Facts:         cloneToolResultFacts(result.Facts),
+		Facts:         result.Facts.Clone(),
 		PrecisionTier: result.PrecisionTier,
 		Relationships: toLanguageToolRelationships(result.Relationships),
 		PayloadType:   result.PayloadType,
 		Payload:       result.Payload,
-	}
-}
-
-func cloneToolResultFacts(facts *toolfacts.ToolResultFacts) *toolfacts.ToolResultFacts {
-	if facts == nil {
-		return nil
-	}
-
-	return &toolfacts.ToolResultFacts{
-		DiagnosticEvidencePaths: append([]string(nil), facts.DiagnosticEvidencePaths...),
-		CandidatePaths:          append([]string(nil), facts.CandidatePaths...),
-		CandidateSymbols:        append([]string(nil), facts.CandidateSymbols...),
-		HasDiscoveryTargets:     facts.HasDiscoveryTargets,
-		DiscoveryStrength:       facts.DiscoveryStrength,
-		SourceOwnerFound:        facts.SourceOwnerFound,
-		LocalizationConfidence:  facts.LocalizationConfidence,
-		GitHistoryPath:          facts.GitHistoryPath,
-		GitHistoryStatus:        facts.GitHistoryStatus,
 	}
 }
 

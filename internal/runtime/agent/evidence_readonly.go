@@ -131,39 +131,6 @@ func readOnlyDelegatedEvidenceDecisionForObjective(objective string, fact readOn
 		return decision
 	}
 
-	sourcePaths := append([]string(nil), fact.SourceBodyPaths...)
-	inspectedPathFallback := false
-	if len(sourcePaths) == 0 && fact.FindingEvidence {
-		sourcePaths = groundedChildPacketEvidencePaths(objective, fact.Output)
-		inspectedPathFallback = len(sourcePaths) > 0
-	}
-
-	groundedAnswer := childPacketContainsGroundedAnswerEvidence(objective, fact.Output)
-	addressesObjective := delegatedPacketAddressesObjective(objective, fact.Output)
-	readinessAnswerable := len(sourcePaths) > 0 && (groundedAnswer || addressesObjective)
-	ledgerAnswerable := len(sourcePaths) > 0 && (groundedAnswer || (inspectedPathFallback && addressesObjective))
-
-	decision.PotentialSourcePaths = sourcePaths
-	decision.SourceBodyPacketAvailable = len(fact.SourceBodyPaths) > 0 && fact.FindingEvidence
-	if ledgerAnswerable {
-		decision.LedgerSourcePaths = append([]string(nil), sourcePaths...)
-		decision.SourceBodySupportText = stripDelegatedReadOnlyInternalPacket(fact.Output)
-		decision.PromoteLedgerSourcePathsToObjective = inspectedPathFallback
-	}
-	if readinessAnswerable {
-		decision.ReadinessSourcePaths = append([]string(nil), sourcePaths...)
-		decision.ClosureEvidencePaths = append([]string(nil), sourcePaths...)
-	} else {
-		decision.FollowupAnchors = delegatedChildPacketFollowupAnchors(objective, fact.Output)
-	}
-
-	decision.TaskResultAnswerable = groundedAnswer
-	if strings.TrimSpace(objective) != "" {
-		decision.AcceptedMentionedEvidenceForObjective = groundedAnswer || addressesObjective
-	} else {
-		decision.AcceptedMentionedEvidenceForObjective = fact.FindingEvidence
-	}
-
 	return decision
 }
 
@@ -324,6 +291,20 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 			continue
 		}
 
+		if workspace.IsReadTool(tool) {
+			paths := readOnlySourceLikePaths(ReadPathsFromToolResult(result), 8)
+			if len(paths) > 0 {
+				ledger.addItem(readOnlyEvidenceItem{
+					Kind:           readOnlyEvidenceOutline,
+					Tool:           tool,
+					CandidatePaths: paths,
+					Summary:        strings.TrimSpace(result.Summary),
+				})
+
+				ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, paths)
+			}
+		}
+
 		if tool == workspace.ToolNameTask {
 			fact, ok := readOnlyDelegatedEvidenceFactFromResult(result)
 			if !ok {
@@ -417,35 +398,6 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 	ledger.GoalRequiresStructureDiscovery = readOnlyObjectiveImpliesArchitecture(ledger.Objective)
 
 	return ledger
-}
-
-func delegatedTaskOutputHasFindingEvidence(output string) bool {
-	output = strings.TrimSpace(output)
-	if output == "" {
-		return false
-	}
-
-	lower := strings.ToLower(output)
-	if readOnlyToolControlGuidanceText(lower) {
-		return false
-	}
-
-	return ContainsAny(lower,
-		"grounded answer",
-		"core files:",
-		"primary files:",
-		"verified context:",
-		"inspected paths:",
-		"evidence used:",
-		"important flow:",
-		"key findings:",
-		"\n- read ",
-		"\n- found ",
-		"\n- located ",
-		"\n- calls ",
-		"\n- uses ",
-		"\n- references ",
-	)
 }
 
 func (l *readOnlyAnswerabilityLedger) addItem(item readOnlyEvidenceItem) {
@@ -3557,25 +3509,6 @@ func isGroundedChildPacketEvidencePath(objective string, path string) bool {
 		strings.HasPrefix(path, "scripts/")
 }
 
-func groundedChildPacketEvidencePaths(objective string, output string) []string {
-	rawPaths := pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(output))
-	if len(rawPaths) == 0 {
-		return nil
-	}
-
-	paths := make([]string, 0, len(rawPaths))
-	for _, raw := range rawPaths {
-		path := normalizeDelegatedDiscoveryEvidencePath(raw)
-		if !isGroundedChildPacketEvidencePath(objective, path) {
-			continue
-		}
-
-		paths = append(paths, path)
-	}
-
-	return uniqueDelegatedDiscoveryPaths(paths)
-}
-
 func fallbackLineBudgetForTool(tool string) int {
 	switch tool {
 	case "discovery_query":
@@ -3881,9 +3814,8 @@ func renderReadOnlyEvidencePacketForToolOutput(packet ReadOnlyEvidencePacket, an
 
 func synthesizeReadOnlyEvidencePacketAnswer(objective string, packets []ReadOnlyEvidencePacket) (string, bool) {
 	var (
-		sourcePaths    []string
-		candidatePaths []string
-		findings       []ReadOnlyEvidenceFinding
+		sourcePaths []string
+		findings    []ReadOnlyEvidenceFinding
 	)
 
 	for _, packet := range packets {
@@ -3893,7 +3825,6 @@ func synthesizeReadOnlyEvidencePacketAnswer(objective string, packets []ReadOnly
 		}
 
 		sourcePaths = textutil.Merge(sourcePaths, packet.SourceBodyPaths)
-		candidatePaths = textutil.Merge(candidatePaths, packet.CandidatePaths, packet.InspectedPaths)
 
 		for _, finding := range packet.Findings {
 			if strings.TrimSpace(finding.Text) == "" {
@@ -3913,10 +3844,7 @@ func synthesizeReadOnlyEvidencePacketAnswer(objective string, packets []ReadOnly
 		return "", false
 	}
 
-	paths := textutil.Merge(sourcePaths, candidatePaths)
-
-	paths = closurePromptEvidencePaths(paths, 8)
-
+	paths := closurePromptEvidencePaths(sourcePaths, 8)
 	if len(paths) == 0 {
 		return "", false
 	}
@@ -4958,96 +4886,6 @@ func delegatedReadOnlySourceBodyReadinessPaths(objective string, results []works
 	return readOnlySourceLikePaths(paths, 16)
 }
 
-func delegatedPacketNamesObjectiveSource(objective string, output string) bool {
-	objective = strings.ToLower(strings.TrimSpace(objective))
-	if objective == "" {
-		return false
-	}
-
-	for _, path := range sourceBodyEvidencePathsFromDelegatedPacket(output) {
-		normalized := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
-		if normalized == "" {
-			continue
-		}
-
-		base := strings.ToLower(filepath.Base(normalized))
-		if strings.Contains(objective, normalized) || (base != "" && strings.Contains(objective, base)) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func delegatedPacketAddressesObjective(objective string, output string) bool {
-	objective = strings.TrimSpace(objective)
-	output = strings.TrimSpace(output)
-
-	if objective == "" || output == "" {
-		return false
-	}
-
-	body := SubstantiveAnswerWithoutEchoedObjective(stripDelegatedReadOnlyInternalPacket(output), objective)
-	if strings.TrimSpace(body) == "" {
-		return false
-	}
-
-	objectiveText := AnswerTextWithoutPathCitations(body)
-	if readOnlyObjectiveAnswerEvidenceSupported(objectiveText, objective) {
-		return true
-	}
-
-	if delegatedPacketNamesObjectiveSource(objective, output) &&
-		readOnlyObjectiveAnswerEvidenceSupportedByNamedSource(objectiveText, objective) {
-
-		return true
-	}
-
-	return false
-}
-
-func childPacketContainsGroundedAnswerEvidence(objective string, output string) bool {
-	output = strings.TrimSpace(output)
-	if output == "" {
-		return false
-	}
-
-	lower := strings.ToLower(output)
-	if readOnlyToolControlGuidanceText(lower) {
-		return false
-	}
-
-	if len(sourceBodyEvidencePathsFromDelegatedPacket(output)) == 0 {
-		return false
-	}
-
-	if !ContainsAny(lower,
-		"grounded answer",
-		"core files:",
-		"primary files:",
-		"verified context:",
-		"inspected paths:",
-		"evidence used:",
-		"important flow:",
-		"key findings:",
-		"\n- read ",
-		"\n- found ",
-		"\n- located ",
-		"\n- calls ",
-		"\n- uses ",
-		"\n- references ",
-	) {
-
-		return false
-	}
-
-	if strings.TrimSpace(objective) == "" {
-		return true
-	}
-
-	return delegatedPacketAddressesObjective(objective, output)
-}
-
 func stripNestedFallbackTemplate(s string) string {
 	trimmed := strings.TrimSpace(s)
 	if trimmed == "" || !strings.HasPrefix(trimmed, "Partial findings from this turn") {
@@ -5847,48 +5685,6 @@ func stripSourceEvidenceLinePrefix(line string) string {
 	}
 
 	return strings.TrimSpace(line[idx+1:])
-}
-
-func sourceBodyEvidencePathsFromDelegatedPacket(output string) []string {
-	var paths []string
-
-	inSection := false
-
-	for _, raw := range strings.Split(output, "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" {
-			if inSection {
-				break
-			}
-
-			continue
-		}
-
-		lower := strings.ToLower(strings.TrimRight(line, ":"))
-		switch lower {
-		case "source-body evidence", "source-body evidence paths", "source body evidence", "source body evidence paths":
-			inSection = true
-			continue
-		}
-
-		if !inSection {
-			continue
-		}
-
-		if strings.HasSuffix(line, ":") && !strings.HasPrefix(line, "- ") {
-			break
-		}
-
-		for _, path := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(line)) {
-			if IsNonSourceEvidenceArtifactPath(path) {
-				continue
-			}
-
-			paths = append(paths, path)
-		}
-	}
-
-	return uniqueDelegatedDiscoveryPaths(paths)
 }
 
 func looksLikeDelegatedGroundedFallbackAnswer(answer string) bool {

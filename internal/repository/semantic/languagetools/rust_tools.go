@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"idiom/internal/contracts/pathparse"
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/hosttools"
 	"idiom/internal/repository/discovery"
 	semanticrust "idiom/internal/repository/semantic/rust"
@@ -264,7 +265,19 @@ func (m *Manager) rustReadSymbol(req ToolRequest) ToolResult {
 		return ToolResult{Tool: "rust_read_symbol", Summary: "Failed to read Rust symbol snippet", Error: err.Error()}
 	}
 
-	return ToolResult{Tool: "rust_read_symbol", Summary: fmt.Sprintf("Read %s in %s lines %d-%d", rustDisplayName(match.Qualified, match.Name), m.displayPath(abs), start, end), Output: snippet}
+	displayPath := m.displayPath(abs)
+
+	return ToolResult{
+		Tool:    "rust_read_symbol",
+		Summary: fmt.Sprintf("Read %s in %s lines %d-%d", rustDisplayName(match.Qualified, match.Name), displayPath, start, end),
+		Output:  snippet,
+		Paths:   []string{displayPath},
+		Facts: toolfacts.NewSourceBodyFacts(toolfacts.SourceBodyEvidence{
+			Path:      displayPath,
+			StartLine: start,
+			EndLine:   end,
+		}),
+	}
 }
 
 // -- Tool: rust_related_files -----------------------------------------------

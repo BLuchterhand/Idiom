@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/discovery"
 )
@@ -784,6 +785,12 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 			Summary: fmt.Sprintf("Read %s lines 0-0 (total lines: 0)", description),
 			Output:  "",
 			Paths:   []string{displayPath},
+			Facts: toolfacts.NewSourceBodyFacts(toolfacts.SourceBodyEvidence{
+				Path:       displayPath,
+				StartLine:  0,
+				EndLine:    0,
+				TotalLines: 0,
+			}),
 		}
 	}
 
@@ -843,6 +850,13 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 		Summary: summary,
 		Output:  strings.TrimRight(b.String(), "\n"),
 		Paths:   []string{displayPath},
+		Facts: toolfacts.NewSourceBodyFacts(toolfacts.SourceBodyEvidence{
+			Path:       displayPath,
+			StartLine:  start,
+			EndLine:    end,
+			TotalLines: len(lines),
+			Truncated:  tailRead || openEndedLogRange || truncated,
+		}),
 	}
 }
 
@@ -905,6 +919,13 @@ func (m *Manager) readLogTail(path string, description string, lineCap int) (Too
 		Summary: fmt.Sprintf("Read %s lines %d-%d (file has %d lines total; defaulted to recent log tail; pass start_line/end_line for a different window)", description, start, start+len(lines)-1, totalLines),
 		Output:  strings.TrimRight(b.String(), "\n"),
 		Paths:   []string{displayPath},
+		Facts: toolfacts.NewSourceBodyFacts(toolfacts.SourceBodyEvidence{
+			Path:       displayPath,
+			StartLine:  start,
+			EndLine:    start + len(lines) - 1,
+			TotalLines: totalLines,
+			Truncated:  totalLines > len(lines),
+		}),
 	}, true
 }
 

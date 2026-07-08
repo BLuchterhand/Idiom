@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/hosttools"
 	"idiom/internal/repository/discovery"
 	semanticcpp "idiom/internal/repository/semantic/cpp"
@@ -203,7 +204,19 @@ func (m *Manager) cppReadSymbol(req ToolRequest) ToolResult {
 		return ToolResult{Tool: "cpp_read_symbol", Summary: "Failed to read C++ symbol snippet", Error: err.Error()}
 	}
 
-	return ToolResult{Tool: "cpp_read_symbol", Summary: fmt.Sprintf("Read %s in %s lines %d-%d", cppDisplayName(match.Qualified, match.Name), m.displayPath(abs), start, end), Output: snippet}
+	displayPath := m.displayPath(abs)
+
+	return ToolResult{
+		Tool:    "cpp_read_symbol",
+		Summary: fmt.Sprintf("Read %s in %s lines %d-%d", cppDisplayName(match.Qualified, match.Name), displayPath, start, end),
+		Output:  snippet,
+		Paths:   []string{displayPath},
+		Facts: toolfacts.NewSourceBodyFacts(toolfacts.SourceBodyEvidence{
+			Path:      displayPath,
+			StartLine: start,
+			EndLine:   end,
+		}),
+	}
 }
 
 func (m *Manager) cppRelatedFiles(req ToolRequest) ToolResult {
@@ -494,7 +507,19 @@ func (m *Manager) cppExtractBody(req ToolRequest) ToolResult {
 		return ToolResult{Tool: "cpp_extract_body", Summary: "Failed to extract C++ body", Error: err.Error()}
 	}
 
-	return ToolResult{Tool: "cpp_extract_body", Summary: fmt.Sprintf("Extracted %s from %s lines %d-%d", cppDisplayName(match.Qualified, match.Name), m.displayPath(abs), start, end), Output: body}
+	displayPath := m.displayPath(abs)
+
+	return ToolResult{
+		Tool:    "cpp_extract_body",
+		Summary: fmt.Sprintf("Extracted %s from %s lines %d-%d", cppDisplayName(match.Qualified, match.Name), displayPath, start, end),
+		Output:  body,
+		Paths:   []string{displayPath},
+		Facts: toolfacts.NewSourceBodyFacts(toolfacts.SourceBodyEvidence{
+			Path:      displayPath,
+			StartLine: start,
+			EndLine:   end,
+		}),
+	}
 }
 
 func (m *Manager) cppIncludes(req ToolRequest) ToolResult {

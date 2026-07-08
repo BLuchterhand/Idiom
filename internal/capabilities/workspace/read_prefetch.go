@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/textutil"
 )
 
@@ -240,6 +241,13 @@ func (m *Manager) prefetchReadFile(requested string, opts PrefetchReadOptions, r
 		Summary: summary,
 		Output:  strings.TrimRight(b.String(), "\n"),
 		Paths:   []string{displayPath},
+		Facts: toolfacts.NewSourceBodyFacts(toolfacts.SourceBodyEvidence{
+			Path:       displayPath,
+			StartLine:  1,
+			EndLine:    len(lines),
+			TotalLines: originalLines,
+			Truncated:  truncated,
+		}),
 	}, displayPath, outputBytes, len(lines), truncated, PrefetchSkippedPath{}
 }
 

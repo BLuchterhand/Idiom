@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/hosttools"
 	"idiom/internal/platform/textutil"
@@ -188,7 +189,8 @@ func (m *Manager) goReadSymbol(req ToolRequest) ToolResult {
 	m.rememberPath(abs)
 
 	start, end := goReadSymbolWindow(match, req.StartLine, req.EndLine)
-	summary := fmt.Sprintf("Read %s in %s lines %d-%d", goQualifiedSymbol(match), m.displayPath(abs), start, end)
+	displayPath := m.displayPath(abs)
+	summary := fmt.Sprintf("Read %s in %s lines %d-%d", goQualifiedSymbol(match), displayPath, start, end)
 
 	if req.StartLine == 0 && req.EndLine == 0 && match.EndLine > 0 && end < match.EndLine {
 		summary = fmt.Sprintf("%s (truncated from lines %d-%d; full-body adapter: go_extract_body)", summary, match.StartLine, match.EndLine)
@@ -203,6 +205,12 @@ func (m *Manager) goReadSymbol(req ToolRequest) ToolResult {
 		Tool:    "go_read_symbol",
 		Summary: summary,
 		Output:  snippet,
+		Paths:   []string{displayPath},
+		Facts: toolfacts.NewSourceBodyFacts(toolfacts.SourceBodyEvidence{
+			Path:      displayPath,
+			StartLine: start,
+			EndLine:   end,
+		}),
 	}
 }
 
@@ -533,10 +541,18 @@ func (m *Manager) goExtractBody(req ToolRequest) ToolResult {
 		return ToolResult{Tool: "go_extract_body", Summary: "Failed to extract Go body", Error: err.Error()}
 	}
 
+	displayPath := m.displayPath(abs)
+
 	return ToolResult{
 		Tool:    "go_extract_body",
-		Summary: fmt.Sprintf("Extracted %s from %s lines %d-%d", goQualifiedSymbol(match), m.displayPath(abs), start, end),
+		Summary: fmt.Sprintf("Extracted %s from %s lines %d-%d", goQualifiedSymbol(match), displayPath, start, end),
 		Output:  body,
+		Paths:   []string{displayPath},
+		Facts: toolfacts.NewSourceBodyFacts(toolfacts.SourceBodyEvidence{
+			Path:      displayPath,
+			StartLine: start,
+			EndLine:   end,
+		}),
 	}
 }
 

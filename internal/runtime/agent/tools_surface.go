@@ -7583,15 +7583,16 @@ func ContainsAny(text string, needles ...string) bool {
 	return false
 }
 
-// ReadPathsFromToolResult extracts workspace-relative paths from a tool result's
-// summary and output fields.
+// ReadPathsFromToolResult returns producer-owned workspace-relative read paths.
 func ReadPathsFromToolResult(r workspace.ToolResult) []string {
-	if CandidateAnchorOnlyResult(r) {
+	if CandidateAnchorOnlyResult(r) && len(r.Paths) == 0 && len(sourceBodyFactsFromResult(r)) == 0 {
 		return nil
 	}
 
 	tool := strings.TrimSpace(r.Tool)
-	if (tool == workspace.ToolNameCodeNavigate || tool == workspace.ToolNameReadOnlyCapability) && !RoutedSourceReadOutputHasBody(r.Output) {
+	bodyFacts := sourceBodyFactsFromResult(r)
+	hasTypedReadPath := len(r.Paths) > 0 || len(bodyFacts) > 0
+	if (tool == workspace.ToolNameCodeNavigate || tool == workspace.ToolNameReadOnlyCapability) && !hasTypedReadPath && !RoutedSourceReadOutputHasBody(r.Output) {
 		return nil
 	}
 
@@ -7599,19 +7600,8 @@ func ReadPathsFromToolResult(r workspace.ToolResult) []string {
 	var paths []string
 
 	candidates := append([]string{}, r.Paths...)
-	hasTypedPath := false
-	for _, candidate := range candidates {
-		if strings.TrimSpace(candidate) != "" {
-			hasTypedPath = true
-			break
-		}
-	}
-	if !hasTypedPath {
-		candidates = append(candidates,
-			ExtractReadPathFromSummary(r.Summary),
-			ExtractReadPathFromSummary(r.Output),
-			ExtractRoutedReadPathFromOutput(r.Output),
-		)
+	for _, fact := range bodyFacts {
+		candidates = append(candidates, fact.Path)
 	}
 
 	for _, candidate := range candidates {
@@ -7683,153 +7673,6 @@ func routedSourceReadOutputHeaderLine(line string) bool {
 	return strings.Contains(line, "capability:") ||
 		strings.Contains(line, "language:") ||
 		strings.Contains(line, "routed_tool:")
-}
-
-// ExtractReadPathFromSummary parses a canonical source-body read summary
-// and returns the path.
-func ExtractReadPathFromSummary(summary string) string {
-	summary = strings.TrimSpace(summary)
-	if summary == "" {
-		return ""
-	}
-
-	if path, ok := extractReadFilePathWithOptionalHandle(summary); ok {
-		return path
-	}
-
-	lower := strings.ToLower(summary)
-	fields := strings.Fields(summary)
-	if len(fields) < 2 {
-		return ""
-	}
-
-	// "Read <symbol> in <path> ..." — language-symbol shape.
-	// "Extracted <symbol> from <path> lines A-B" — extract_body shape.
-	if len(fields) >= 4 && (strings.EqualFold(fields[0], "Read") || strings.EqualFold(fields[0], "Extracted")) {
-		// "Read <symbol> in <path>" or "Extracted <symbol> from <path>"
-		preposition := fields[2]
-		if preposition == "in" || preposition == "from" {
-			return fields[3]
-		}
-	}
-
-	if strings.EqualFold(fields[0], "Read") && len(fields) >= 3 {
-		// "Read fXX path lines A-B (total lines: N)" — read_file shape.
-		// fields[1] is a file handle ("f1"), fields[3] is "lines".
-		if strings.HasPrefix(fields[1], "f") && len(fields) >= 4 && strings.EqualFold(fields[3], "lines") {
-			return fields[2]
-		}
-
-		// "Read path lines A-B" — fields[1] is the path, fields[2] is "lines".
-		if len(fields) >= 3 && strings.EqualFold(fields[2], "lines") {
-			return fields[1]
-		}
-
-		// "Read <N> lines from <path>" — path is at index 4.
-		if len(fields) >= 5 && strings.EqualFold(fields[2], "lines") && strings.EqualFold(fields[3], "from") {
-			return fields[4]
-		}
-
-		// "Read <symbol> in <path>" or "Extracted <symbol> from <path>"
-		if len(fields) >= 4 && strings.EqualFold(fields[2], "in") && strings.EqualFold(fields[0], "Read") {
-			return fields[3]
-		}
-
-		// "Read file: path" or "Read path" — fields[2] is the path (original fallback).
-		return fields[2]
-	}
-
-	// Pattern: "Redirected grep for X to read_file: <path>"
-	if idx := strings.Index(lower, " to read_file: "); idx >= 0 {
-		return strings.TrimSpace(summary[idx+len(" to read_file: "):])
-	}
-
-	// Pattern: "Redirected search to code_navigate: <path>"
-	if idx := strings.Index(lower, " to code_navigate: "); idx >= 0 {
-		return strings.TrimSpace(summary[idx+len(" to code_navigate: "):])
-	}
-
-	// Pattern: "Redirected search to read_only_capability: <path>"
-	if idx := strings.Index(lower, " to read_only_capability: "); idx >= 0 {
-		return strings.TrimSpace(summary[idx+len(" to read_only_capability: "):])
-	}
-
-	// Pattern: "<path> — <summary>" (used by file_outline)
-	parts := strings.SplitN(summary, " — ", 2)
-	if len(parts) == 2 && hasSourceSuffix(parts[0]) {
-		return strings.TrimSpace(parts[0])
-	}
-
-	return ""
-}
-
-func extractReadFilePathWithOptionalHandle(summary string) (string, bool) {
-	if !strings.HasPrefix(strings.ToLower(summary), "read ") {
-		return "", false
-	}
-
-	rest := strings.TrimSpace(summary[len("Read "):])
-	if rest == "" {
-		return "", false
-	}
-
-	fields := strings.Fields(rest)
-	if len(fields) == 0 {
-		return "", false
-	}
-
-	hasHandle := readFileSummaryHandle(fields[0])
-	if hasHandle {
-		rest = strings.TrimSpace(strings.TrimPrefix(rest, fields[0]))
-	}
-
-	match := readFileSummaryLinesMarkerPattern.FindStringIndex(rest)
-	if len(match) != 2 {
-		return "", false
-	}
-
-	idx := match[0]
-	if idx < 0 {
-		return "", false
-	}
-
-	path := strings.TrimSpace(rest[:idx])
-	if path == "" {
-		return "", false
-	}
-
-	if hasHandle {
-		return path, true
-	}
-
-	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" || pathparse.LooksLikeWindowsAbsolutePath(path) {
-		return path, true
-	}
-
-	return "", false
-}
-
-var readFileSummaryLinesMarkerPattern = regexp.MustCompile(`(?i)\s+lines\s+\d+\s*-\s*\d+\b`)
-
-func readFileSummaryHandle(value string) bool {
-	if len(value) < 2 || value[0] != 'f' {
-		return false
-	}
-	for _, r := range value[1:] {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
-}
-
-func hasSourceSuffix(path string) bool {
-	lower := strings.ToLower(path)
-	return strings.HasSuffix(lower, ".go") || strings.HasSuffix(lower, ".rs") ||
-		strings.HasSuffix(lower, ".ts") || strings.HasSuffix(lower, ".py") ||
-		strings.HasSuffix(lower, ".java") || strings.HasSuffix(lower, ".c") ||
-		strings.HasSuffix(lower, ".h") || strings.HasSuffix(lower, ".cpp") ||
-		strings.HasSuffix(lower, ".hpp")
 }
 
 // ---------------------------------------------------------------------------
@@ -7916,17 +7759,6 @@ func RecoveryObjectiveSearchWords(objective string, max int) []string {
 	}
 
 	return terms
-}
-
-// ExtractRoutedReadPathFromOutput extracts the path from a route_summary line.
-func ExtractRoutedReadPathFromOutput(output string) string {
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "route_summary:") {
-			return ExtractReadPathFromSummary(strings.TrimSpace(strings.TrimPrefix(line, "route_summary:")))
-		}
-	}
-	return ""
 }
 
 // CandidateAnchorOnlyText reports whether the given text contains only anchor

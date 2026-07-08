@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/discovery"
 	"idiom/internal/repository/semantic/language"
@@ -232,6 +233,8 @@ func codeNavigationWrapResult(spec codeNavigationSpec, language string, routedTo
 		Summary:       summary,
 		Output:        strings.TrimSpace(output),
 		Error:         strings.TrimSpace(result.Error),
+		Paths:         append([]string(nil), result.Paths...),
+		Facts:         result.Facts.Clone(),
 		PrecisionTier: strings.TrimSpace(result.PrecisionTier),
 		Relationships: append([]ToolRelationship(nil), result.Relationships...),
 	}
@@ -330,10 +333,18 @@ func (m *Manager) genericCodeNavigationOutline(req ToolRequest, spec codeNavigat
 		return ToolResult{Tool: "code_navigate", Summary: "Code navigation generic fallback failed", Error: err.Error()}
 	}
 
+	displayPath := m.displayPath(abs)
+
 	result := ToolResult{
-		Tool:          "generic_source_text",
-		Summary:       fmt.Sprintf("Read %s lines %d-%d", m.displayPath(abs), start, end),
-		Output:        snippet,
+		Tool:    "generic_source_text",
+		Summary: fmt.Sprintf("Read %s lines %d-%d", displayPath, start, end),
+		Output:  snippet,
+		Paths:   []string{displayPath},
+		Facts: toolfacts.NewSourceBodyFacts(toolfacts.SourceBodyEvidence{
+			Path:      displayPath,
+			StartLine: start,
+			EndLine:   end,
+		}),
 		PrecisionTier: PrecisionTierRGFallback,
 	}
 

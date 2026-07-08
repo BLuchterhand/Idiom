@@ -274,6 +274,7 @@ type ToolResult struct {
 	Output        string
 	Error         string
 	Failure       error
+	Paths         []string
 	ChangedPaths  []string
 	Facts         *toolfacts.ToolResultFacts
 	PrecisionTier string

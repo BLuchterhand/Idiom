@@ -779,6 +779,8 @@ func readOnlyCapabilityWrapResult(requested string, target ReadOnlyCapabilityRes
 		Summary:       summary,
 		Output:        marshalReadOnlyCapabilityExecutionResult(payload),
 		Error:         strings.TrimSpace(result.Error),
+		Paths:         append([]string(nil), result.Paths...),
+		Facts:         result.Facts.Clone(),
 		PrecisionTier: result.PrecisionTier,
 		Relationships: append([]ToolRelationship(nil), result.Relationships...),
 	}

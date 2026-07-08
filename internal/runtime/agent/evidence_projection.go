@@ -6,6 +6,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/textutil"
 )
 
@@ -21,7 +22,6 @@ type readOnlyDelegatedEvidenceFact struct {
 	SourceBodyPaths []string
 	InspectedPaths  []string
 	CandidatePaths  []string
-	FindingEvidence bool
 }
 
 func newToolResultEvidenceProjection(results []workspace.ToolResult) toolResultEvidenceProjection {
@@ -42,6 +42,56 @@ func (projection toolResultEvidenceProjection) ReadPaths() map[string]struct{} {
 		}
 	}
 	return paths
+}
+
+func sourceBodyFactsFromResult(result workspace.ToolResult) []toolfacts.SourceBodyEvidence {
+	if result.Facts != nil && len(result.Facts.SourceBodies) > 0 {
+		facts := toolfacts.NormalizeSourceBodies(result.Facts.SourceBodies)
+		if len(facts) > 0 {
+			return facts
+		}
+	}
+
+	return nil
+}
+
+func sourceBodyFactForPath(result workspace.ToolResult, path string) (toolfacts.SourceBodyEvidence, bool) {
+	path = NormalizeRunnerPath(path)
+	if path == "" {
+		return toolfacts.SourceBodyEvidence{}, false
+	}
+
+	for _, fact := range sourceBodyFactsFromResult(result) {
+		if NormalizeRunnerPath(fact.Path) == path {
+			return fact, true
+		}
+	}
+
+	return toolfacts.SourceBodyEvidence{}, false
+}
+
+func sourceBodyFactHasRange(fact toolfacts.SourceBodyEvidence) bool {
+	return fact.StartLine > 0 && fact.EndLine >= fact.StartLine
+}
+
+func sourceBodyFactCoversWholeFile(fact toolfacts.SourceBodyEvidence) bool {
+	if fact.TotalLines == 0 && fact.StartLine == 0 && fact.EndLine == 0 {
+		return true
+	}
+
+	return fact.TotalLines > 0 && fact.StartLine == 1 && fact.EndLine >= fact.TotalLines
+}
+
+func sourceBodyReadRangeFromFact(fact toolfacts.SourceBodyEvidence) (planThenExecuteReadRange, bool) {
+	if !sourceBodyFactHasRange(fact) {
+		return planThenExecuteReadRange{}, false
+	}
+
+	return planThenExecuteReadRange{
+		start: fact.StartLine,
+		end:   fact.EndLine,
+		total: fact.TotalLines,
+	}, true
 }
 
 func (projection toolResultEvidenceProjection) SourceEvidenceForPath(path string) planThenExecuteSourceEvidence {
@@ -179,10 +229,7 @@ func readOnlyDelegatedEvidenceFactFromResult(result workspace.ToolResult) (readO
 		return fact, true
 	}
 
-	fact.SourceBodyPaths = sourceBodyEvidencePathsFromDelegatedPacket(result.Output)
-	fact.FindingEvidence = delegatedTaskOutputHasFindingEvidence(result.Output)
-
-	return fact, true
+	return readOnlyDelegatedEvidenceFact{}, false
 }
 
 func (projection toolResultEvidenceProjection) ReadOnlyEvidencePacketCandidatePaths() []string {
@@ -332,14 +379,10 @@ func normalizeDiagnosticArtifactEvidencePath(path string) string {
 }
 
 func (toolResultEvidenceProjection) ExternalDocumentBodyPathsFromResult(result workspace.ToolResult) []string {
-	if !concreteSourceEvidenceResult(result) {
-		return nil
-	}
-
 	var paths []string
 
-	for _, raw := range ReadPathsFromToolResult(result) {
-		path := normalizeReadOnlyExternalDocumentPath(raw)
+	for _, fact := range sourceBodyFactsFromResult(result) {
+		path := normalizeReadOnlyExternalDocumentPath(fact.Path)
 		if !readOnlyExternalDocumentBodyPath(path) {
 			continue
 		}
