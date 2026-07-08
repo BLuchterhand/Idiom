@@ -4640,7 +4640,10 @@ func TestModelErrorFallbackDoesNotCloseOutCandidateOnlyEvidence(t *testing.T) {
 		SeedResults: []workspace.ToolResult{{
 			Tool:    "context_pack",
 			Summary: "Context packet produced candidate files",
-			Output:  "Candidate files:\n- `docs/idiom-strategic-thesis.md`\n- `internal/runtime/agent/runner_core.go`\n",
+			Facts: contextPackCandidateFactsForTest(
+				"docs/idiom-strategic-thesis.md",
+				"internal/runtime/agent/runner_core.go",
+			),
 		}},
 	}
 
@@ -32541,7 +32544,10 @@ func TestReadOnlyDirectAnswerPresentationUsesLedgerRelevantSourcePaths(t *testin
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote packet",
-			Output:  "internal/surfaces/tui/app/broad_candidate.go\ninternal/surfaces/tui/app/other_candidate.go\n",
+			Facts: contextPackCandidateFactsForTest(
+				"internal/surfaces/tui/app/broad_candidate.go",
+				"internal/surfaces/tui/app/other_candidate.go",
+			),
 		},
 		{
 			Tool:    "read_file",
@@ -32614,7 +32620,10 @@ func TestRunnerEvidencePathsPreservesBroadCandidatesForArchitecture(t *testing.T
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote packet",
-			Output:  "internal/surfaces/tui/app/broad_candidate.go\ninternal/surfaces/tui/app/other_candidate.go\n",
+			Facts: contextPackCandidateFactsForTest(
+				"internal/surfaces/tui/app/broad_candidate.go",
+				"internal/surfaces/tui/app/other_candidate.go",
+			),
 		},
 		{
 			Tool:    "read_file",
@@ -32660,7 +32669,10 @@ func TestEmitAcceptedAnswerSignalsDirectAnswerBlockedUsesLedgerRelevantSourcePat
 			{
 				Tool:    "context_pack",
 				Summary: "Context pack wrote packet",
-				Output:  "internal/surfaces/tui/app/broad_candidate.go\ninternal/surfaces/tui/app/other_candidate.go\n",
+				Facts: contextPackCandidateFactsForTest(
+					"internal/surfaces/tui/app/broad_candidate.go",
+					"internal/surfaces/tui/app/other_candidate.go",
+				),
 			},
 			{
 				Tool:    "read_file",
@@ -32719,7 +32731,10 @@ func TestEmitReadOnlyAnswerReadyEventDirectAnswerUsesLedgerRelevantSourcePaths(t
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote packet",
-			Output:  "internal/surfaces/tui/app/broad_candidate.go\ninternal/surfaces/tui/app/other_candidate.go\n",
+			Facts: contextPackCandidateFactsForTest(
+				"internal/surfaces/tui/app/broad_candidate.go",
+				"internal/surfaces/tui/app/other_candidate.go",
+			),
 		},
 		{
 			Tool:    "read_file",
@@ -32765,11 +32780,11 @@ func TestReadOnlyAnswerReadyPresentationUsesImplementationOwnerPaths(t *testing.
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote packet",
-			Output: strings.Join([]string{
+			Facts: contextPackCandidateFactsForTest(
 				"internal/runtime/agent/runner_core.go",
 				"internal/runtime/agent/evidence_readonly.go",
 				"internal/runtime/agent/contract_surface_tests_test.go",
-			}, "\n"),
+			),
 		},
 		{
 			Tool:    "code_navigate",
@@ -38640,7 +38655,7 @@ func TestFinalAnswerBlockerKindRejectsUnreadCurrentCandidateFile(t *testing.T) {
 	results := []workspace.ToolResult{{
 		Tool:    "context_pack",
 		Summary: "Context pack candidates include src/model_wrapper.py",
-		Output:  "src/model_wrapper.py",
+		Facts:   contextPackCandidateFactsForTest("src/model_wrapper.py"),
 	}}
 
 	kind, reason := runner.finalAnswerBlockerKind(answer, results)
@@ -39014,7 +39029,7 @@ func TestFinalAnswerBlockerKindRejectsLineClaimWithoutSourceBody(t *testing.T) {
 	}
 	answer := "The root cause is in `internal/surfaces/tui/app/lifecycle.go` lines 418-424 where `WindowSizeMsg` is handled."
 	results := []workspace.ToolResult{
-		{Tool: "context_pack", Summary: "Context pack wrote packet", Output: "internal/surfaces/tui/app/lifecycle.go"},
+		{Tool: "context_pack", Summary: "Context pack wrote packet", Facts: contextPackCandidateFactsForTest("internal/surfaces/tui/app/lifecycle.go")},
 	}
 
 	kind, reason := runner.finalAnswerBlockerKind(answer, results)
@@ -39046,7 +39061,7 @@ func TestFinalAnswerBlockerKindRejectsTopLevelLineClaimWithoutSourceBody(t *test
 	answer := "The root cause is in `main.go:3`, where `main` starts the process."
 
 	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{
-		{Tool: "context_pack", Summary: "Context pack wrote packet", Output: "main.go"},
+		{Tool: "context_pack", Summary: "Context pack wrote packet", Facts: contextPackCandidateFactsForTest("main.go")},
 	})
 	if kind != "source_grounding_unmet" {
 		t.Fatalf("top-level line claim without source body got blocker_kind=%q reason=%q, want source_grounding_unmet", kind, reason)
@@ -39075,7 +39090,7 @@ func TestFinalAnswerBlockerKindRejectsCandidateLineClaimWithoutSourceBody(t *tes
 	}
 	answer := "The candidate root cause is in `internal/surfaces/tui/app/lifecycle.go` lines 418-424 where `WindowSizeMsg` is handled."
 	results := []workspace.ToolResult{
-		{Tool: "context_pack", Summary: "Context pack wrote packet", Output: "internal/surfaces/tui/app/lifecycle.go"},
+		{Tool: "context_pack", Summary: "Context pack wrote packet", Facts: contextPackCandidateFactsForTest("internal/surfaces/tui/app/lifecycle.go")},
 	}
 
 	kind, reason := runner.finalAnswerBlockerKind(answer, results)
@@ -39133,7 +39148,7 @@ func TestSourceGroundingStillRejectsUnquotedTopLevelCandidateTextPath(t *testing
 	}
 	answer := "The root cause is in `a.txt`, where the fixture records the wrong closeout."
 	results := []workspace.ToolResult{
-		{Tool: "context_pack", Summary: "Context pack wrote packet", Output: "a.txt"},
+		{Tool: "context_pack", Summary: "Context pack wrote packet", Facts: contextPackCandidateFactsForTest("a.txt")},
 	}
 
 	if reason := runner.sourceGroundingRejectionReason(answer, results); !strings.Contains(reason, "a.txt") {
@@ -39164,7 +39179,7 @@ func TestFinalAnswerBlockerKindAllowsQualifiedEvidencePathListWithoutSourceBody(
 	answer := "Evidence paths: `internal/runtime/agent/runner_core.go`. Candidate context only; no source body was read."
 
 	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{
-		{Tool: "context_pack", Summary: "Context pack wrote packet", Output: "internal/runtime/agent/runner_core.go"},
+		{Tool: "context_pack", Summary: "Context pack wrote packet", Facts: contextPackCandidateFactsForTest("internal/runtime/agent/runner_core.go")},
 	})
 	if kind != "" || reason != "" {
 		t.Fatalf("qualified candidate evidence path list should be accepted: kind=%q reason=%q", kind, reason)
@@ -39753,7 +39768,7 @@ func TestTerminalAnswerDecisionRetryExhaustedForSourceGroundingUnmet(t *testing.
 	}
 	answer := "The root cause is in `internal/surfaces/tui/app/lifecycle.go` lines 418-424 where `WindowSizeMsg` is handled."
 	results := []workspace.ToolResult{
-		{Tool: "context_pack", Summary: "Context pack wrote packet", Output: "internal/surfaces/tui/app/lifecycle.go"},
+		{Tool: "context_pack", Summary: "Context pack wrote packet", Facts: contextPackCandidateFactsForTest("internal/surfaces/tui/app/lifecycle.go")},
 	}
 
 	decision := runner.classifyTerminalAnswer(answer, "model_final", results)
@@ -39794,7 +39809,7 @@ func TestFinishClearsBudgetExhaustedOnRetryExhaustion(t *testing.T) {
 	}
 	answer := "The root cause is in `internal/surfaces/tui/app/lifecycle.go` lines 418-424 where `WindowSizeMsg` is handled."
 	results := []workspace.ToolResult{
-		{Tool: "context_pack", Summary: "Context pack wrote packet", Output: "internal/surfaces/tui/app/lifecycle.go"},
+		{Tool: "context_pack", Summary: "Context pack wrote packet", Facts: contextPackCandidateFactsForTest("internal/surfaces/tui/app/lifecycle.go")},
 	}
 
 	state := &runnerRunState{
@@ -39844,7 +39859,7 @@ func TestFinishSanitizesSourceGroundingRepairInstructions(t *testing.T) {
 	results := []workspace.ToolResult{{
 		Tool:    "context_pack",
 		Summary: "Context pack candidates include internal/surfaces/tui/app/lifecycle.go",
-		Output:  "internal/surfaces/tui/app/lifecycle.go",
+		Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/lifecycle.go"),
 	}}
 	state := &runnerRunState{stopReason: "model_final", collectedResults: results}
 

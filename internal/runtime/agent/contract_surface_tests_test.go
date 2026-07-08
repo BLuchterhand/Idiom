@@ -22354,7 +22354,7 @@ func TestCompletionGateRecoveryPromptFallsBackAfterEmptyContextPack(t *testing.T
 	}
 
 	prompt, _, ok := runner.completionGateRecoveryPrompt([]workspace.ToolResult{
-		{Tool: "context_pack", Summary: "0 candidates", Output: `{"candidate_files":[],"candidate_symbols":[],"tests":[]}`},
+		{Tool: "context_pack", Summary: "0 candidates"},
 	})
 	if !ok {
 		t.Fatalf("expected completion gate recovery prompt")

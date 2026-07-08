@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/pathparse"
 	"idiom/internal/platform/textutil"
 )
 
@@ -242,6 +243,41 @@ func (projection toolResultEvidenceProjection) CandidatePathsFromResult(result w
 	default:
 		return nil
 	}
+}
+
+func contextPackCandidatePathsFromResults(results []workspace.ToolResult, max int) []string {
+	if max <= 0 {
+		max = 4
+	}
+
+	seen := map[string]struct{}{}
+	paths := make([]string, 0, max)
+
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != workspace.ToolNameContextPack || strings.TrimSpace(result.Error) != "" || result.Facts == nil {
+			continue
+		}
+
+		for _, raw := range result.Facts.CandidatePaths {
+			path := NormalizeRunnerPath(raw)
+			if path == "" || !pathparse.HasWorkspaceFileExtension(path) {
+				continue
+			}
+
+			if _, ok := seen[path]; ok {
+				continue
+			}
+
+			seen[path] = struct{}{}
+			paths = append(paths, path)
+
+			if len(paths) >= max {
+				return paths
+			}
+		}
+	}
+
+	return paths
 }
 
 func (toolResultEvidenceProjection) GeneratedArtifactOnlyReadResult(result workspace.ToolResult) bool {

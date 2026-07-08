@@ -522,8 +522,6 @@ func (r *Runner) requiredEditCoveragePaths() []string {
 	return planThenExecuteRequiredCoveragePaths(required, root)
 }
 
-// applyPatchPreflightAction describes what the runner should do with an
-// apply_patch request after the changed-paths pre-flight has inspected it.
 func contextPackUnavailableForRecovery(results []workspace.ToolResult) bool {
 	for _, result := range results {
 		if strings.TrimSpace(result.Tool) != workspace.ToolNameContextPack {
@@ -689,41 +687,6 @@ func candidateRecoveryScopePaths(brief workerruntime.WorkerRuntimeBrief, results
 
 		if len(paths) >= max {
 			return paths
-		}
-	}
-
-	return paths
-}
-
-func contextPackCandidatePathsFromResults(results []workspace.ToolResult, max int) []string {
-	if max <= 0 {
-		max = 4
-	}
-
-	seen := map[string]struct{}{}
-	paths := make([]string, 0, max)
-
-	for _, result := range results {
-		if strings.TrimSpace(result.Tool) != workspace.ToolNameContextPack || strings.TrimSpace(result.Error) != "" || result.Facts == nil {
-			continue
-		}
-
-		for _, raw := range result.Facts.CandidatePaths {
-			path := NormalizeRunnerPath(raw)
-			if path == "" || !pathparse.HasWorkspaceFileExtension(path) {
-				continue
-			}
-
-			if _, ok := seen[path]; ok {
-				continue
-			}
-
-			seen[path] = struct{}{}
-			paths = append(paths, path)
-
-			if len(paths) >= max {
-				return paths
-			}
 		}
 	}
 

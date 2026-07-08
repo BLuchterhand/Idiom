@@ -249,6 +249,7 @@ func cloneToolResultFacts(facts *toolfacts.ToolResultFacts) *toolfacts.ToolResul
 		CandidatePaths:          append([]string(nil), facts.CandidatePaths...),
 		CandidateSymbols:        append([]string(nil), facts.CandidateSymbols...),
 		HasDiscoveryTargets:     facts.HasDiscoveryTargets,
+		DiscoveryStrength:       facts.DiscoveryStrength,
 		SourceOwnerFound:        facts.SourceOwnerFound,
 		LocalizationConfidence:  facts.LocalizationConfidence,
 	}

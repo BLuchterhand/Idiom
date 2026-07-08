@@ -26,9 +26,8 @@ func RankedPackCandidatePaths(result PackResult) []string {
 		return true
 	}
 
-	weakQuality := strings.TrimSpace(result.Quality.LocalizationConfidence) == "low" && !result.Quality.SourceOwnerFound
 	for _, path := range result.Quality.EvidencePaths {
-		if weakQuality && !packQualityPathIsTest(path) {
+		if result.Quality.WeakSourceOwner() && !packQualityPathIsTest(path) {
 			continue
 		}
 

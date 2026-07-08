@@ -95,6 +95,30 @@ type PackQuality struct {
 	Reasons                []string `json:"reasons,omitempty"`
 }
 
+type PackDiscoveryStrength string
+
+const (
+	PackDiscoveryStrengthNone          PackDiscoveryStrength = ""
+	PackDiscoveryStrengthCandidateOnly PackDiscoveryStrength = "candidate_only"
+	PackDiscoveryStrengthSourceOwner   PackDiscoveryStrength = "source_owner"
+)
+
+func (q PackQuality) WeakSourceOwner() bool {
+	return strings.TrimSpace(q.LocalizationConfidence) == "low" && !q.SourceOwnerFound
+}
+
+func (result PackResult) DiscoveryStrength() PackDiscoveryStrength {
+	if len(result.CandidateFiles) == 0 && len(result.CandidateSymbols) == 0 && len(result.Tests) == 0 {
+		return PackDiscoveryStrengthNone
+	}
+
+	if result.Quality.WeakSourceOwner() {
+		return PackDiscoveryStrengthCandidateOnly
+	}
+
+	return PackDiscoveryStrengthSourceOwner
+}
+
 type PackFile struct {
 	Path           string         `json:"path"`
 	Role           string         `json:"role"`
@@ -512,7 +536,7 @@ func addPackResultGaps(ctx *packContext, candidates packCandidates, result *Pack
 		result.Unknowns = append(result.Unknowns, "No exact validation command was inferred from the context graph.")
 	}
 
-	if result.Quality.LocalizationConfidence == "low" && !result.Quality.SourceOwnerFound {
+	if result.Quality.WeakSourceOwner() {
 		result.Unknowns = append(result.Unknowns, "Context packet localized related evidence but did not identify a source-owner file.")
 		result.UnresolvedGaps = append(result.UnresolvedGaps, "reason=weak_source_owner localization_confidence=low")
 		result.UnresolvedGapDetails = append(result.UnresolvedGapDetails, GraphUnresolvedGap{

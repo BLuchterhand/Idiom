@@ -16074,8 +16074,7 @@ func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step in
 		ResultOutputChars: len(surfaceResult.Output),
 		EvidencePaths:     runnerEvidencePathsForBrief(brief, results, 6),
 	}
-	// When context_pack returns a view with candidate files that carry
-	// symbol handles, surface the top symbols as actionable annotations.
+	// Surface producer-ranked context symbols as actionable annotations.
 	if strings.TrimSpace(tool) == workspace.ToolNameContextPack && strings.TrimSpace(result.Error) == "" && result.Facts != nil {
 		state.CandidateSymbols = textutil.Prefix(result.Facts.CandidateSymbols, 5)
 	}
@@ -21123,14 +21122,16 @@ func promptEvidencePathsFromToolResults(results []workspace.ToolResult, max int)
 
 	paths := make([]string, 0, max*2)
 	directPaths := directProbePathsFromToolResults(results, max)
+	projection := newToolResultEvidenceProjection(results)
 
-	for _, packet := range newToolResultEvidenceProjection(results).ReadOnlyEvidencePackets() {
+	for _, packet := range projection.ReadOnlyEvidencePackets() {
 		paths = append(paths, packet.SourceBodyPaths...)
 		paths = append(paths, packet.InspectedPaths...)
 	}
 
 	paths = append(paths, delegatedReadOnlyInspectedImplementationPaths(results)...)
 	paths = append(paths, delegatedDiscoveryQueryEvidencePaths(results, max*4)...)
+	paths = append(paths, contextPackCandidatePathsFromResults(results, max*4)...)
 	paths = append(paths, pinnedPathsFromToolResults(results, max*6)...)
 	paths = prioritizedClosureEvidencePaths(paths, results, max*3)
 

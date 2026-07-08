@@ -9,10 +9,19 @@ import (
 )
 
 func contextPackToolResultFacts(result comprehension.PackResult) *toolfacts.ToolResultFacts {
+	var discoveryStrength toolfacts.DiscoveryStrength
+	switch result.DiscoveryStrength() {
+	case comprehension.PackDiscoveryStrengthCandidateOnly:
+		discoveryStrength = toolfacts.DiscoveryStrengthCandidateOnly
+	case comprehension.PackDiscoveryStrengthSourceOwner:
+		discoveryStrength = toolfacts.DiscoveryStrengthSourceOwner
+	}
+
 	facts := &toolfacts.ToolResultFacts{
 		CandidatePaths:         contextPackFactCandidatePaths(comprehension.RankedPackCandidatePaths(result)),
 		CandidateSymbols:       comprehension.RankedPackCandidateSymbols(result),
 		HasDiscoveryTargets:    len(result.CandidateFiles) > 0 || len(result.CandidateSymbols) > 0 || len(result.Tests) > 0,
+		DiscoveryStrength:      discoveryStrength,
 		SourceOwnerFound:       result.Quality.SourceOwnerFound,
 		LocalizationConfidence: strings.TrimSpace(result.Quality.LocalizationConfidence),
 	}

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/toolfacts"
 	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/runtime/workerruntime"
 )
@@ -55,11 +56,14 @@ func discoveryConsumptionResultStrengthFromLegacySemantics(req workspace.ToolReq
 			return discoveryConsumptionNone
 		}
 
-		if strings.TrimSpace(result.Facts.LocalizationConfidence) == "low" && !result.Facts.SourceOwnerFound {
+		switch result.Facts.DiscoveryStrength {
+		case toolfacts.DiscoveryStrengthCandidateOnly:
 			return discoveryConsumptionCandidateOnly
+		case toolfacts.DiscoveryStrengthSourceOwner:
+			return discoveryConsumptionSourceOwner
+		default:
+			return discoveryConsumptionNone
 		}
-
-		return discoveryConsumptionSourceOwner
 	case tool == workspace.ToolNameContextQuery:
 		if len(discoveryConsumptionCandidatesFromResult(result, 1)) == 0 {
 			return discoveryConsumptionNone
