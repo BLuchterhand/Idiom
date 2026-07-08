@@ -252,11 +252,10 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 		return implementationdispatch.HumanTerminalAtomMessage(closed), nil
 	}
 
-	if satisfied := implementationdispatch.PlanDocumentsSourceSatisfied(root, planDocuments); len(satisfied) == len(planDocuments) && len(satisfied) > 0 {
-		m.logMessage("dispatch_source_satisfied", fmt.Sprintf("skipping plan-execute for %d already-satisfied design-doc atom(s)", len(satisfied)))
-		implementationdispatch.MarkSourceSatisfiedAtomDocuments(root, satisfied)
+	if closeout, ok := implementationdispatch.TryPlanDocumentsSourceSatisfiedCloseout(root, planDocuments); ok {
+		m.logMessage("dispatch_source_satisfied", fmt.Sprintf("skipping plan-execute for %d already-satisfied design-doc atom(s)", closeout.Count))
 
-		return implementationdispatch.HumanSourceSatisfiedMessage(satisfied), nil
+		return closeout.Message, nil
 	}
 
 	if implementationdispatch.PlanDocumentsNeedRefineBeforeDispatch(planDocuments) {
@@ -279,12 +278,10 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 
 			if !refined.OK {
 				if len(refined.PostPreflightBlockers) > 0 {
-					sourceSatisfiedRecords := implementationdispatch.PreflightSourceSatisfiedRecords(refined.PostPreflightBlockers)
-					if implementationdispatch.PreflightRecordsAllSourceSatisfied(sourceSatisfiedRecords) {
-						m.logMessage("dispatch_source_satisfied", fmt.Sprintf("refined atom candidate classified %d atom(s) as source-satisfied", len(refined.PostPreflightBlockers)))
-						implementationdispatch.MarkPreflightSourceSatisfiedAtomDocuments(root, sourceSatisfiedRecords)
+					if closeout, ok := implementationdispatch.TryPreflightSourceSatisfiedCloseout(root, refined.PostPreflightBlockers); ok {
+						m.logMessage("dispatch_source_satisfied", fmt.Sprintf("refined atom candidate classified %d atom(s) as source-satisfied", closeout.Count))
 
-						return implementationdispatch.HumanPreflightSourceSatisfiedMessage(sourceSatisfiedRecords), nil
+						return closeout.Message, nil
 					}
 
 					m.logMessage("dispatch_refine", fmt.Sprintf("refined atom candidate still blocked by preflight for %s", strings.TrimSpace(refined.OutputPath)))
@@ -319,12 +316,10 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 			PlanDocuments: planDocuments,
 			Runner:        planDocumentPreflightRunner,
 		}); len(refinedBlocked) > 0 {
-			sourceSatisfiedRecords := implementationdispatch.PreflightSourceSatisfiedRecords(refinedBlocked)
-			if implementationdispatch.PreflightRecordsAllSourceSatisfied(sourceSatisfiedRecords) {
-				m.logMessage("dispatch_source_satisfied", fmt.Sprintf("refined atom preflight classified %d atom(s) as source-satisfied", len(refinedBlocked)))
-				implementationdispatch.MarkPreflightSourceSatisfiedAtomDocuments(root, sourceSatisfiedRecords)
+			if closeout, ok := implementationdispatch.TryPreflightSourceSatisfiedCloseout(root, refinedBlocked); ok {
+				m.logMessage("dispatch_source_satisfied", fmt.Sprintf("refined atom preflight classified %d atom(s) as source-satisfied", closeout.Count))
 
-				return implementationdispatch.HumanPreflightSourceSatisfiedMessage(sourceSatisfiedRecords), nil
+				return closeout.Message, nil
 			}
 
 			m.logMessage("dispatch_refine", "refined atom brief still blocked by preflight")
@@ -339,12 +334,10 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 		PlanDocuments: planDocuments,
 		Runner:        planDocumentPreflightRunner,
 	}); len(blocked) > 0 {
-		sourceSatisfiedRecords := implementationdispatch.PreflightSourceSatisfiedRecords(blocked)
-		if implementationdispatch.PreflightRecordsAllSourceSatisfied(sourceSatisfiedRecords) {
-			m.logMessage("dispatch_source_satisfied", fmt.Sprintf("preflight classified %d atom(s) as source-satisfied", len(blocked)))
-			implementationdispatch.MarkPreflightSourceSatisfiedAtomDocuments(root, sourceSatisfiedRecords)
+		if closeout, ok := implementationdispatch.TryPreflightSourceSatisfiedCloseout(root, blocked); ok {
+			m.logMessage("dispatch_source_satisfied", fmt.Sprintf("preflight classified %d atom(s) as source-satisfied", closeout.Count))
 
-			return implementationdispatch.HumanPreflightSourceSatisfiedMessage(sourceSatisfiedRecords), nil
+			return closeout.Message, nil
 		}
 
 		if implementationdispatch.PreflightNeedsAtomization(blocked) && implementationdispatch.CanAtomizePlanDocuments(planDocuments) {
@@ -395,12 +388,10 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 
 				if !refined.OK {
 					if len(refined.PostPreflightBlockers) > 0 {
-						sourceSatisfiedRecords := implementationdispatch.PreflightSourceSatisfiedRecords(refined.PostPreflightBlockers)
-						if implementationdispatch.PreflightRecordsAllSourceSatisfied(sourceSatisfiedRecords) {
-							m.logMessage("dispatch_source_satisfied", fmt.Sprintf("refined candidate classified %d atom(s) as source-satisfied", len(refined.PostPreflightBlockers)))
-							implementationdispatch.MarkPreflightSourceSatisfiedAtomDocuments(root, sourceSatisfiedRecords)
+						if closeout, ok := implementationdispatch.TryPreflightSourceSatisfiedCloseout(root, refined.PostPreflightBlockers); ok {
+							m.logMessage("dispatch_source_satisfied", fmt.Sprintf("refined candidate classified %d atom(s) as source-satisfied", closeout.Count))
 
-							return implementationdispatch.HumanPreflightSourceSatisfiedMessage(sourceSatisfiedRecords), nil
+							return closeout.Message, nil
 						}
 
 						m.logMessage("dispatch_refine", fmt.Sprintf("refined candidate still blocked by preflight for %s", strings.TrimSpace(refined.OutputPath)))
@@ -435,12 +426,10 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 				PlanDocuments: planDocuments,
 				Runner:        planDocumentPreflightRunner,
 			}); len(refinedBlocked) > 0 {
-				sourceSatisfiedRecords := implementationdispatch.PreflightSourceSatisfiedRecords(refinedBlocked)
-				if implementationdispatch.PreflightRecordsAllSourceSatisfied(sourceSatisfiedRecords) {
-					m.logMessage("dispatch_source_satisfied", fmt.Sprintf("refined preflight classified %d atom(s) as source-satisfied", len(refinedBlocked)))
-					implementationdispatch.MarkPreflightSourceSatisfiedAtomDocuments(root, sourceSatisfiedRecords)
+				if closeout, ok := implementationdispatch.TryPreflightSourceSatisfiedCloseout(root, refinedBlocked); ok {
+					m.logMessage("dispatch_source_satisfied", fmt.Sprintf("refined preflight classified %d atom(s) as source-satisfied", closeout.Count))
 
-					return implementationdispatch.HumanPreflightSourceSatisfiedMessage(sourceSatisfiedRecords), nil
+					return closeout.Message, nil
 				}
 
 				if implementationdispatch.PreflightNeedsAtomization(refinedBlocked) && implementationdispatch.CanAtomizePlanDocuments(planDocuments) {

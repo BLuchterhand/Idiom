@@ -24,11 +24,72 @@ type TerminalAtomRecord struct {
 	Status       string
 }
 
-type PreflightSourceSatisfiedRecord struct {
+type preflightSourceSatisfiedRecord struct {
 	Path         string
 	AtomState    atomintakecontract.IntakeState
 	Blockers     []string
 	LintBlockers []string
+}
+
+type SourceSatisfiedCloseout struct {
+	Message string
+	Count   int
+}
+
+func TryPlanDocumentsSourceSatisfiedCloseout(root string, planDocuments []PlanDocument) (SourceSatisfiedCloseout, bool) {
+	records := PlanDocumentsSourceSatisfied(root, planDocuments)
+	if len(records) == 0 || len(records) != len(planDocuments) {
+		return SourceSatisfiedCloseout{}, false
+	}
+
+	if markRoot := strings.TrimSpace(root); markRoot != "" {
+		for _, record := range records {
+			var evidence []string
+
+			evidence = append(evidence, record.Evidence...)
+			evidence = append(evidence, record.TestEvidence...)
+			CloseAtomDocument(markRoot, record.DocumentPath, "source-satisfied - do not dispatch", "Source-satisfied closeout recorded by TUI design-doc dispatch.", evidence)
+		}
+	}
+
+	return SourceSatisfiedCloseout{
+		Message: humanSourceSatisfiedMessage(records),
+		Count:   len(records),
+	}, true
+}
+
+func TryPreflightSourceSatisfiedCloseout(root string, results []PlanDocumentPreflightResult) (SourceSatisfiedCloseout, bool) {
+	if len(results) == 0 {
+		return SourceSatisfiedCloseout{}, false
+	}
+
+	records := make([]preflightSourceSatisfiedRecord, 0, len(results))
+	for _, result := range results {
+		record := preflightSourceSatisfiedRecord{
+			Path:         result.Path,
+			AtomState:    result.AtomState,
+			Blockers:     append([]string(nil), result.Blockers...),
+			LintBlockers: append([]string(nil), result.LintBlockers...),
+		}
+		if record.AtomState != atomintakecontract.StateSourceSatisfied {
+			return SourceSatisfiedCloseout{}, false
+		}
+		records = append(records, record)
+	}
+
+	if markRoot := strings.TrimSpace(root); markRoot != "" {
+		for _, record := range records {
+			evidence := append([]string(nil), record.Blockers...)
+
+			evidence = append(evidence, record.LintBlockers...)
+			CloseAtomDocument(markRoot, record.Path, "source-satisfied - do not dispatch", "Atom intake reported this atom as source-satisfied before plan-execute dispatch.", evidence)
+		}
+	}
+
+	return SourceSatisfiedCloseout{
+		Message: humanPreflightSourceSatisfiedMessage(records),
+		Count:   len(records),
+	}, true
 }
 
 func PlanDocumentsSourceSatisfied(root string, planDocuments []PlanDocument) []SourceSatisfiedRecord {
@@ -213,50 +274,7 @@ func TestNamesFromText(text string) []string {
 	return names
 }
 
-func PreflightRecordsAllSourceSatisfied(records []PreflightSourceSatisfiedRecord) bool {
-	if len(records) == 0 {
-		return false
-	}
-
-	for _, record := range records {
-		if record.AtomState != atomintakecontract.StateSourceSatisfied {
-			return false
-		}
-	}
-
-	return true
-}
-
-func MarkSourceSatisfiedAtomDocuments(root string, records []SourceSatisfiedRecord) {
-	root = strings.TrimSpace(root)
-	if root == "" {
-		return
-	}
-
-	for _, record := range records {
-		var evidence []string
-
-		evidence = append(evidence, record.Evidence...)
-		evidence = append(evidence, record.TestEvidence...)
-		CloseAtomDocument(root, record.DocumentPath, "source-satisfied - do not dispatch", "Source-satisfied closeout recorded by TUI design-doc dispatch.", evidence)
-	}
-}
-
-func MarkPreflightSourceSatisfiedAtomDocuments(root string, records []PreflightSourceSatisfiedRecord) {
-	root = strings.TrimSpace(root)
-	if root == "" {
-		return
-	}
-
-	for _, record := range records {
-		evidence := append([]string(nil), record.Blockers...)
-
-		evidence = append(evidence, record.LintBlockers...)
-		CloseAtomDocument(root, record.Path, "source-satisfied - do not dispatch", "Atom intake reported this atom as source-satisfied before plan-execute dispatch.", evidence)
-	}
-}
-
-func HumanSourceSatisfiedMessage(records []SourceSatisfiedRecord) string {
+func humanSourceSatisfiedMessage(records []SourceSatisfiedRecord) string {
 	var b strings.Builder
 
 	b.WriteString("Decision: source-satisfied\n\n")
@@ -337,7 +355,7 @@ func HumanTerminalAtomMessage(records []TerminalAtomRecord) string {
 	return strings.TrimSpace(b.String())
 }
 
-func HumanPreflightSourceSatisfiedMessage(records []PreflightSourceSatisfiedRecord) string {
+func humanPreflightSourceSatisfiedMessage(records []preflightSourceSatisfiedRecord) string {
 	var b strings.Builder
 
 	b.WriteString("Decision: source-satisfied\n\n")

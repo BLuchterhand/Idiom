@@ -249,20 +249,6 @@ func PreflightNeedsAtomization(results []PlanDocumentPreflightResult) bool {
 	return false
 }
 
-func PreflightSourceSatisfiedRecords(results []PlanDocumentPreflightResult) []PreflightSourceSatisfiedRecord {
-	records := make([]PreflightSourceSatisfiedRecord, 0, len(results))
-	for _, result := range results {
-		records = append(records, PreflightSourceSatisfiedRecord{
-			Path:         result.Path,
-			AtomState:    result.AtomState,
-			Blockers:     append([]string(nil), result.Blockers...),
-			LintBlockers: append([]string(nil), result.LintBlockers...),
-		})
-	}
-
-	return records
-}
-
 func compactWhitespace(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }

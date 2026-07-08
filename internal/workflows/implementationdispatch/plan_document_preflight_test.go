@@ -54,6 +54,76 @@ func TestPlanDocumentPreflightStopsBeforeBriefLintWhenAtomIsSourceSatisfied(t *t
 	}
 }
 
+func TestTryPreflightSourceSatisfiedCloseoutMarksAllSourceSatisfiedAtoms(t *testing.T) {
+	root := t.TempDir()
+	atomRel := ".idiom/atoms/design/atom-001.md"
+	original := "# Atom\n\nStatus: pending\n\n## Scope\n\n- `pkg/source.go`\n"
+	writeImplementationDispatchPreflightFile(t, root, atomRel, original)
+
+	closeout, ok := TryPreflightSourceSatisfiedCloseout(root, []PlanDocumentPreflightResult{{
+		Path:         atomRel,
+		AtomState:    atomintakecontract.StateSourceSatisfied,
+		Blockers:     []string{"source-satisfied atom should not dispatch"},
+		LintBlockers: []string{"brief lint blocker retained as closeout evidence"},
+	}})
+	if !ok {
+		t.Fatalf("expected source-satisfied closeout")
+	}
+	if closeout.Count != 1 || !strings.Contains(closeout.Message, "Decision: source-satisfied") || !strings.Contains(closeout.Message, "source-satisfied atom should not dispatch") {
+		t.Fatalf("unexpected closeout: %#v", closeout)
+	}
+
+	updated, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(atomRel)))
+	if err != nil {
+		t.Fatalf("read atom: %v", err)
+	}
+	body := string(updated)
+	for _, want := range []string{
+		"Status: source-satisfied - do not dispatch",
+		"Atom intake reported this atom as source-satisfied before plan-execute dispatch.",
+		"source-satisfied atom should not dispatch",
+		"brief lint blocker retained as closeout evidence",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("updated atom missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestTryPreflightSourceSatisfiedCloseoutDoesNotMutateMixedOrEmptyResults(t *testing.T) {
+	root := t.TempDir()
+	atomRel := ".idiom/atoms/design/atom-001.md"
+	original := "# Atom\n\nStatus: pending\n"
+	writeImplementationDispatchPreflightFile(t, root, atomRel, original)
+
+	if closeout, ok := TryPreflightSourceSatisfiedCloseout(root, nil); ok {
+		t.Fatalf("empty results should not close out: %#v", closeout)
+	}
+
+	if closeout, ok := TryPreflightSourceSatisfiedCloseout(root, []PlanDocumentPreflightResult{
+		{
+			Path:      atomRel,
+			AtomState: atomintakecontract.StateSourceSatisfied,
+			Blockers:  []string{"source-satisfied"},
+		},
+		{
+			Path:      ".idiom/atoms/design/atom-002.md",
+			AtomState: atomintakecontract.StateMissingScope,
+			Blockers:  []string{"missing scope"},
+		},
+	}); ok {
+		t.Fatalf("mixed results should not close out: %#v", closeout)
+	}
+
+	updated, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(atomRel)))
+	if err != nil {
+		t.Fatalf("read atom: %v", err)
+	}
+	if string(updated) != original {
+		t.Fatalf("mixed closeout should not mutate atom:\n%s", string(updated))
+	}
+}
+
 func TestPlanDocumentPreflightContinuesToBriefLintAfterMissingScope(t *testing.T) {
 	root := t.TempDir()
 	writeImplementationDispatchPreflightFile(t, root, "atom.md", "# Atom\n\nStatus: planned\n")

@@ -1220,6 +1220,26 @@ Reviewer-updated estimate:
   `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
   `staticcheck -checks=U1000 ./...`; `deadcode -test ./...`;
   `git diff --check`.
+- Implementation-dispatch source-satisfied closeout authority is implemented.
+  `internal/workflows/implementationdispatch` now owns the closeout decision
+  that converts preflight blockers into source-satisfied records, checks that
+  every blocked atom is source-satisfied, marks atom documents closed, and
+  emits the human source-satisfied message. The TUI no longer reassembles
+  `PreflightSourceSatisfiedRecords`, `PreflightRecordsAllSourceSatisfied`,
+  `MarkPreflightSourceSatisfiedAtomDocuments`, and
+  `HumanPreflightSourceSatisfiedMessage` in five call sites; those exported
+  fragments are deleted or unexported. Production Go changed `+82 / -89`, net
+  `-7`; tests changed `+74 / -4`, net `+70`; total Go code changed
+  `+156 / -93`, net `+63`. Focused verification:
+  `go test ./internal/workflows/implementationdispatch`;
+  `go test ./internal/surfaces/tui/app`. Reviewer-backed next candidates:
+  commandcheck-owned generic outcome projection, and typed workspace
+  `ToolResult` facts for read/source-body/change/submit-plan diagnostics.
+  Broad verification: `go test ./...`;
+  `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `staticcheck -checks=U1000 ./...`; `deadcode -test ./...`;
+  `git diff --check`.
 
 ## Review And Regression Protocol
 

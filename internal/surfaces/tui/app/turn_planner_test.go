@@ -635,12 +635,12 @@ func TestImplementationDispatchSourceSatisfiedRequiresTestObligationEvidence(t *
 		t.Fatalf("write source test with evidence: %v", err)
 	}
 
-	records := implementationdispatch.PlanDocumentsSourceSatisfied(root, []implementationdispatch.PlanDocument{doc})
-	if len(records) != 1 || len(records[0].TestEvidence) == 0 {
-		t.Fatalf("expected source-satisfied test evidence, got %#v", records)
+	closeout, ok := implementationdispatch.TryPlanDocumentsSourceSatisfiedCloseout(root, []implementationdispatch.PlanDocument{doc})
+	if !ok {
+		t.Fatalf("expected source-satisfied closeout")
 	}
 
-	message := implementationdispatch.HumanSourceSatisfiedMessage(records)
+	message := closeout.Message
 	if !strings.Contains(message, "Test obligations") || !strings.Contains(message, "TestRouteDecisionShape") {
 		t.Fatalf("source-satisfied message should report test obligations and evidence:\n%s", message)
 	}
