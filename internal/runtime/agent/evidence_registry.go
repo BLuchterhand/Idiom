@@ -1,12 +1,8 @@
 package agent
 
 import (
-	"crypto/sha256"
-	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 
@@ -279,35 +275,6 @@ func (r *PathEvidenceRegistry) HasBodyEvidence(path string) bool {
 	return planThenExecuteEvidenceRank(pe.BodyReadLevel) >= planThenExecuteEvidenceRank(planThenExecuteEvidenceBodyWindow)
 }
 
-// MergeFromPriorSession injects paths from a prior session's evidence as
-// candidates (not body reads). These become UnreadCandidatePaths entries
-// that the model can choose to read.
-func (r *PathEvidenceRegistry) MergeFromPriorSession(paths []string) {
-	if len(paths) == 0 {
-		return
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	for _, p := range paths {
-		p = normalizeRegistryPath(p)
-		if p == "" {
-			continue
-		}
-		pe, ok := r.paths[p]
-		if !ok {
-			r.paths[p] = &PathEvidence{
-				Path:             p,
-				IsCandidate:      true,
-				ExistsOnDisk:     r.existsOnDiskUnsafe(p),
-				ExistenceChecked: true,
-			}
-		} else {
-			pe.IsCandidate = true
-		}
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -354,130 +321,6 @@ func looksLikeWindowsAbsolutePath(path string) bool {
 		((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) &&
 		path[1] == ':' &&
 		(path[2] == '/' || path[2] == '\\')
-}
-
-// --- session evidence store ---
-// SessionEvidenceRecord stores the paths that were read in a completed session
-// so subsequent sessions can be seeded with candidate paths.
-type SessionEvidenceRecord struct {
-	SessionID  string   `json:"session_id"`
-	Prompt     string   `json:"prompt,omitempty"`     // legacy read-only field; new writes persist only PromptHash
-	PromptHash string   `json:"prompt_hash"`          // sha256 of the original prompt
-	ReadPaths  []string `json:"read_paths"`           // paths that were body-read
-	Objective  string   `json:"objective,omitempty"`  // legacy read-only field; new writes do not persist raw objective text
-	WasBlocked bool     `json:"was_blocked"`          // true if session ended with blocked
-	BlockedBy  string   `json:"blocked_by,omitempty"` // blocker kind if blocked
-	Timestamp  string   `json:"timestamp"`
-}
-
-// sessionEvidenceDir returns the directory under workspaceRoot where session
-// evidence records are stored: .idiom/sessions/evidence/
-func sessionEvidenceDir(workspaceRoot string) string {
-	return filepath.Join(workspaceRoot, ".idiom", "sessions", "evidence")
-}
-
-// sha256Hex returns the lowercase hex-encoded SHA-256 hash of the input string.
-func sha256Hex(s string) string {
-	h := sha256.Sum256([]byte(s))
-	return fmt.Sprintf("%x", h)
-}
-
-// levenshteinDistance computes the Levenshtein edit distance between two strings.
-// It uses a single-row O(n) space variant of the Wagner-Fischer algorithm.
-func levenshteinDistance(a, b string) int {
-	if len(a) < len(b) {
-		a, b = b, a
-	}
-	if len(b) == 0 {
-		return len(a)
-	}
-
-	prev := make([]int, len(b)+1)
-	curr := make([]int, len(b)+1)
-
-	for j := range prev {
-		prev[j] = j
-	}
-
-	for i, ca := range a {
-		curr[0] = i + 1
-		for j, cb := range b {
-			cost := 0
-			if ca != cb {
-				cost = 1
-			}
-			curr[j+1] = min(curr[j]+1, prev[j+1]+1, prev[j]+cost)
-		}
-		prev, curr = curr, prev
-	}
-	return prev[len(b)]
-}
-
-// FindMatchingPriorSession walks the .idiom/sessions/evidence/ directory and
-// returns the most recent SessionEvidenceRecord whose prompt sha256 hash
-// matches. For legacy records that still contain raw prompt text, it can also
-// match when the Levenshtein edit distance is < 20% of the prompt length.
-//
-// "Most recent" is determined by the Timestamp field; records with empty
-// timestamps sort last.
-func FindMatchingPriorSession(workspaceRoot, prompt string) *SessionEvidenceRecord {
-	if workspaceRoot == "" || prompt == "" {
-		return nil
-	}
-
-	dir := sessionEvidenceDir(workspaceRoot)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-
-	promptHash := sha256Hex(prompt)
-	promptLen := float64(len(prompt))
-	threshold := promptLen * 0.20 // 20% of prompt length
-
-	var candidates []*SessionEvidenceRecord
-
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-			continue
-		}
-
-		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
-		if err != nil {
-			continue
-		}
-
-		var record SessionEvidenceRecord
-		if err := json.Unmarshal(data, &record); err != nil {
-			continue
-		}
-
-		// Check hash match first (fast path).
-		if record.PromptHash != "" && record.PromptHash == promptHash {
-			candidates = append(candidates, &record)
-			continue
-		}
-
-		// Fall back to Levenshtein distance check.
-		if threshold <= 0 {
-			continue
-		}
-		dist := levenshteinDistance(prompt, record.Prompt)
-		if float64(dist) < threshold {
-			candidates = append(candidates, &record)
-		}
-	}
-
-	if len(candidates) == 0 {
-		return nil
-	}
-
-	// Sort by timestamp descending (most recent first).
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].Timestamp > candidates[j].Timestamp
-	})
-
-	return candidates[0]
 }
 
 // ToolResult is the evidence-owned DTO for ingesting workspace results.

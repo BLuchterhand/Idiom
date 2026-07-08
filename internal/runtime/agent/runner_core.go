@@ -1334,15 +1334,6 @@ func (r *Runner) runLegacySessionBody(
 		r.PathEvidenceRegistry = NewPathEvidenceRegistry(r.Workspace.Root())
 	}
 
-	// Seed the PathEvidenceRegistry with candidate paths from a prior session
-	// whose prompt is similar to the current prompt. This lets the model
-	// pick up where it left off across sessions without re-reading files.
-	if r.PathEvidenceRegistry != nil && r.Workspace != nil {
-		if priorSession := FindMatchingPriorSession(r.Workspace.Root(), r.RuntimeBrief.Objective); priorSession != nil {
-			r.PathEvidenceRegistry.MergeFromPriorSession(priorSession.ReadPaths)
-		}
-	}
-
 	if r.Workspace != nil {
 		rebuildTools()
 	}

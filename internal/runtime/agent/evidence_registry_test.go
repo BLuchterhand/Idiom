@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/runtime/workerruntime"
@@ -1503,111 +1502,5 @@ func TestPathEvidenceChangedPathsParity(t *testing.T) {
 	wantStore := []string{"internal/app/request-edit.go", "internal/app/request.go"}
 	if got := store.ChangedPaths(); !slices.Equal(got, wantStore) {
 		t.Fatalf("state store changed paths = %#v, want %#v", got, wantStore)
-	}
-}
-
-// --- session evidence store tests ---
-func TestFindMatchingPriorSessionFindsPromptHashRecord(t *testing.T) {
-	root := t.TempDir()
-	prompt := "explain the runner evidence flow"
-	dir := sessionEvidenceDir(root)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatalf("mkdir evidence dir: %v", err)
-	}
-
-	writeSessionRecordForTest(t, dir, SessionEvidenceRecord{
-		SessionID:  "session-1",
-		PromptHash: sha256Hex(prompt),
-		ReadPaths:  []string{"a.go", "b.go"},
-		Timestamp:  time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC).Format(time.RFC3339),
-	})
-
-	record := FindMatchingPriorSession(root, prompt)
-	if record == nil {
-		t.Fatal("expected matching prompt-hash record")
-	}
-
-	if record.SessionID != "session-1" {
-		t.Fatalf("SessionID = %q, want session-1", record.SessionID)
-	}
-
-	if len(record.ReadPaths) != 2 || record.ReadPaths[0] != "a.go" || record.ReadPaths[1] != "b.go" {
-		t.Fatalf("ReadPaths = %#v, want sorted unique paths", record.ReadPaths)
-	}
-	if record.Prompt != "" || record.Objective != "" {
-		t.Fatalf("raw prompt/objective should not be persisted: prompt=%q objective=%q", record.Prompt, record.Objective)
-	}
-	if record.PromptHash != sha256Hex(prompt) {
-		t.Fatalf("PromptHash = %q, want hash of prompt", record.PromptHash)
-	}
-}
-
-func TestFindMatchingPriorSessionFallsBackToLegacyPromptText(t *testing.T) {
-	root := t.TempDir()
-	prompt := "inspect legacy source evidence"
-	dir := sessionEvidenceDir(root)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatalf("mkdir evidence dir: %v", err)
-	}
-
-	writeSessionRecordForTest(t, dir, SessionEvidenceRecord{
-		SessionID: "legacy",
-		Prompt:    prompt,
-		ReadPaths: []string{"legacy.go"},
-		Timestamp: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC).Format(time.RFC3339),
-	})
-
-	record := FindMatchingPriorSession(root, prompt)
-	if record == nil {
-		t.Fatal("expected legacy raw-prompt record")
-	}
-	if record.SessionID != "legacy" || len(record.ReadPaths) != 1 || record.ReadPaths[0] != "legacy.go" {
-		t.Fatalf("legacy record = %#v", record)
-	}
-}
-
-func TestFindMatchingPriorSessionReturnsMostRecentMatch(t *testing.T) {
-	root := t.TempDir()
-	prompt := "inspect source evidence"
-	dir := sessionEvidenceDir(root)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatalf("mkdir evidence dir: %v", err)
-	}
-
-	writeSessionRecordForTest(t, dir, SessionEvidenceRecord{
-		SessionID:  "older",
-		Prompt:     prompt,
-		PromptHash: sha256Hex(prompt),
-		ReadPaths:  []string{"older.go"},
-		Timestamp:  time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC).Format(time.RFC3339),
-	})
-	writeSessionRecordForTest(t, dir, SessionEvidenceRecord{
-		SessionID:  "newer",
-		Prompt:     prompt,
-		PromptHash: sha256Hex(prompt),
-		ReadPaths:  []string{"newer.go"},
-		Timestamp:  time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC).Format(time.RFC3339),
-	})
-
-	record := FindMatchingPriorSession(root, prompt)
-	if record == nil {
-		t.Fatal("expected matching record")
-	}
-
-	if record.SessionID != "newer" {
-		t.Fatalf("SessionID = %q, want newer", record.SessionID)
-	}
-}
-
-func writeSessionRecordForTest(t *testing.T, dir string, record SessionEvidenceRecord) {
-	t.Helper()
-
-	body, err := json.Marshal(record)
-	if err != nil {
-		t.Fatalf("marshal record: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(dir, record.SessionID+".json"), body, 0o600); err != nil {
-		t.Fatalf("write record: %v", err)
 	}
 }
