@@ -1,7 +1,6 @@
 package externaltool
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/hosttools"
 )
 
@@ -31,6 +29,17 @@ type Definition struct {
 	Name           string
 	Description    string
 	ParametersJSON string
+}
+
+// Invocation is the command shape prepared from a registered external tool
+// definition and one JSON input object. The workspace manager owns execution
+// and result projection.
+type Invocation struct {
+	Command string
+	Args    []string
+	Workdir string
+	Stdin   string
+	Timeout time.Duration
 }
 
 // Registry holds external tool definitions keyed by name.
@@ -139,20 +148,6 @@ func (r *Registry) IsReadOnlyDiscovery(name string) bool {
 	return ok && t.ReadOnly && t.Discovery
 }
 
-// Definitions converts registered tools into schema definitions.
-func (r *Registry) Definitions() []Definition {
-	if r == nil {
-		return nil
-	}
-
-	out := make([]Definition, 0, len(r.tools))
-	for _, t := range r.tools {
-		out = append(out, definitionForTool(t))
-	}
-
-	return out
-}
-
 // DefinitionsForBaseDir converts available tools into schema definitions.
 func (r *Registry) DefinitionsForBaseDir(baseDir string) []Definition {
 	if r == nil {
@@ -184,25 +179,13 @@ func definitionForTool(tool Tool) Definition {
 	}
 }
 
-// Invoke runs the registered tool with the provided JSON-encoded input.
-func (r *Registry) Invoke(ctx context.Context, name string, input json.RawMessage, baseDir string, maxOutputBytes int) (string, bool, error) {
-	if r == nil {
-		return "", false, fmt.Errorf("external tool %q: registry not initialised", name)
-	}
-
-	tool, ok := r.tools[name]
-	if !ok {
-		return "", false, fmt.Errorf("external tool %q: not registered", name)
-	}
-
-	if ok, reason := r.Availability(name, baseDir); !ok {
-		return "", false, fmt.Errorf("external tool %q: unavailable: %s", name, reason)
-	}
-
+// PrepareInvocation expands argv, stdin, cwd, and timeout for one external
+// tool invocation without executing the process.
+func PrepareInvocation(tool Tool, input json.RawMessage, baseDir string) (Invocation, error) {
 	parsed := map[string]any{}
 	if len(input) > 0 {
 		if err := json.Unmarshal(input, &parsed); err != nil {
-			return "", false, fmt.Errorf("external tool %q: invalid input JSON: %w", name, err)
+			return Invocation{}, fmt.Errorf("external tool %q: invalid input JSON: %w", tool.Name, err)
 		}
 	}
 
@@ -222,30 +205,16 @@ func (r *Registry) Invoke(ctx context.Context, name string, input json.RawMessag
 	}
 
 	if os.Getenv("IDIOM_DEBUG_TOOLS") != "" {
-		fmt.Fprintf(os.Stderr, "[idiom-debug] external tool=%s argv=%v cwd=%s\n", name, args, workdir)
+		fmt.Fprintf(os.Stderr, "[idiom-debug] external tool=%s argv=%v cwd=%s\n", tool.Name, args, workdir)
 	}
 
-	result := commandexec.Run(ctx, commandexec.Spec{
-		Name:           tool.Command,
-		Args:           args,
-		Dir:            workdir,
-		Stdin:          string(input),
-		Timeout:        timeout,
-		MaxOutputBytes: maxOutputBytes,
-		MergeOutput:    true,
-	})
-	output := commandexec.CombineOutput(result.Stdout, result.Stderr)
-	truncated := result.StdoutTruncated || result.StderrTruncated
-
-	if result.Err != nil {
-		if result.TimedOut {
-			return output, truncated, fmt.Errorf("external tool %q: timed out after %s", name, timeout)
-		}
-
-		return output, truncated, fmt.Errorf("external tool %q: %w", name, result.Err)
-	}
-
-	return output, truncated, nil
+	return Invocation{
+		Command: tool.Command,
+		Args:    args,
+		Workdir: workdir,
+		Stdin:   string(input),
+		Timeout: timeout,
+	}, nil
 }
 
 func unavailableReason(tool Tool, baseDir string) string {

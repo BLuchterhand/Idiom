@@ -3,8 +3,11 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
+	"idiom/internal/capabilities/workspace/externaltool"
+	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/failures"
 )
 
@@ -16,11 +19,13 @@ func (m *Manager) executeExternal(ctx context.Context, req ToolRequest) ToolResu
 		return toolUnavailableResult(req.Tool, "External tools unavailable", "external tools registry not configured")
 	}
 
-	if !registry.Has(req.Tool) {
+	tool, ok := registry.Tool(req.Tool)
+	if !ok {
 		return toolUnsupportedResult(req.Tool, "Unknown external tool", "external tool not registered: "+req.Tool)
 	}
 
-	if ok, reason := registry.Availability(req.Tool, m.externalToolBaseDir()); !ok {
+	baseDir := m.externalToolBaseDir()
+	if ok, reason := registry.Availability(req.Tool, baseDir); !ok {
 		return toolUnavailableResult(req.Tool, "External tool unavailable", "external tool "+req.Tool+" unavailable: "+reason)
 	}
 
@@ -29,19 +34,38 @@ func (m *Manager) executeExternal(ctx context.Context, req ToolRequest) ToolResu
 		args = json.RawMessage(`{}`)
 	}
 
-	output, truncated, err := registry.Invoke(ctx, req.Tool, args, m.cfg.CWD, m.cfg.MaxOutputBytes)
+	invocation, err := externaltool.PrepareInvocation(tool, args, baseDir)
+	if err != nil {
+		out := ToolResult{Tool: req.Tool, Summary: "External tool " + req.Tool, Error: err.Error()}
+		out.Failure = failures.Wrap(failures.Internal, reasonToolInternalFailure, "external tool failed", err)
+
+		return out
+	}
+
+	execResult := commandexec.Run(ctx, commandexec.Spec{
+		Name:           invocation.Command,
+		Args:           invocation.Args,
+		Dir:            invocation.Workdir,
+		Stdin:          invocation.Stdin,
+		Timeout:        invocation.Timeout,
+		MaxOutputBytes: m.cfg.MaxOutputBytes,
+		MergeOutput:    true,
+	})
+	output := commandexec.CombineOutput(execResult.Stdout, execResult.Stderr)
+	truncated := execResult.StdoutTruncated || execResult.StderrTruncated
 	out := ToolResult{Tool: req.Tool, Summary: "External tool " + req.Tool, Output: output}
 	if truncated {
 		out.Summary += " (output truncated)"
 	}
 
-	if err != nil {
+	if execResult.Err != nil {
+		err := fmt.Errorf("external tool %q: %w", req.Tool, execResult.Err)
+		if execResult.TimedOut {
+			err = fmt.Errorf("external tool %q: timed out after %s", req.Tool, invocation.Timeout)
+		}
+
 		out.Error = err.Error()
 		out.Failure = failures.Wrap(failures.Internal, reasonToolInternalFailure, "external tool failed", err)
-
-		if output == "" {
-			out.Output = ""
-		}
 	}
 
 	return out

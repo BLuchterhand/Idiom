@@ -1065,6 +1065,23 @@ Reviewer-updated estimate:
   `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
   `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
   `git diff --check`.
+- External tool execution authority cleanup is implemented. Deleted
+  `externaltool.Registry.Invoke` so externaltool owns catalog validation,
+  availability, argv/stdin/cwd/timeout preparation, and workspace Manager owns
+  `commandexec.Run`, output truncation, typed failure wrapping, and ToolResult
+  projection. The same slice deleted the unused `Registry.Definitions()` API;
+  `DefinitionsForBaseDir` remains the live schema projection surface. Added a
+  regression proving relative external commands execute from `Workspace.Root`
+  when `Workspace.CWD` is empty, matching advertisement-time availability.
+  Production Go changed `+55 / -62`, net `-7`; tests changed `+27 / -0`, net
+  `+27`.
+  Verification: `go test ./internal/capabilities/workspace ./internal/capabilities/workspace/externaltool ./internal/surfaces/cli/tool -run 'Test(Manager.*External|Registry.*External|RegistryAvailability|SubstituteArgs|P75DiscoveryProfileRequiresExternalReadOnlyDiscoveryDeclaration|P75DiscoveryProfileDeniesMutatingExternalTool)' -count=1`;
+  `go test ./internal/capabilities/workspace ./internal/capabilities/workspace/externaltool ./internal/surfaces/cli/tool ./internal/runtime/agent -run 'Test.*External|Test.*ToolSurface|Test.*ReadOnlyDiscovery' -count=1`;
+  `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
+  `git diff --check`.
 
 ## Review And Regression Protocol
 

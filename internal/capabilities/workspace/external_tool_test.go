@@ -53,6 +53,33 @@ func TestManagerDoesNotAdvertiseUnavailableExternalTools(t *testing.T) {
 	}
 }
 
+func TestManagerExecutesExternalToolsFromRootWhenCWDEmpty(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0o755); err != nil {
+		t.Fatalf("mkdir scripts: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(root, "scripts", "ok.sh"), []byte("#!/bin/sh\necho external-ok\n"), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	reg, err := externaltool.NewRegistry([]externaltool.Tool{{Name: "ok_tool", Command: "./scripts/ok.sh"}})
+	if err != nil {
+		t.Fatalf("externaltool.NewRegistry: %v", err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root})
+	mgr.SetExternalToolsRegistry(reg)
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "ok_tool"})
+	if result.Error != "" {
+		t.Fatalf("external tool failed: %#v", result)
+	}
+	if strings.TrimSpace(result.Output) != "external-ok" {
+		t.Fatalf("external tool should run from project root when cwd is empty, got %#v", result.Output)
+	}
+}
+
 func TestToolSurfaceSnapshotCopiesExternalToolView(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0o755); err != nil {
