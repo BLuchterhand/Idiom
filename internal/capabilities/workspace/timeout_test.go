@@ -58,7 +58,7 @@ func TestManagerToolTimeoutUsesExternalToolDeclaration(t *testing.T) {
 	}
 
 	mgr := NewManager(testWorkspaceConfig(t))
-	mgr.SetExternalToolsRegistry(reg)
+	mgr.toolSurface.SetExternalToolsRegistry(reg)
 
 	if got := mgr.ToolTimeoutForRequest(ToolRequest{Tool: "slow_external"}); got != 75*time.Second {
 		t.Fatalf("external timeout = %v, want 75s", got)

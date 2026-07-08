@@ -31,7 +31,7 @@ func TestManagerDoesNotAdvertiseUnavailableExternalTools(t *testing.T) {
 	}
 
 	mgr := NewManager(config.Workspace{Root: root, CWD: root})
-	mgr.SetExternalToolsRegistry(reg)
+	mgr.toolSurface.SetExternalToolsRegistry(reg)
 
 	if !hasString(mgr.ToolSurfaceSnapshot().AllowedTools(), "ok_tool") {
 		t.Fatalf("available external tool missing from allowed tools")
@@ -69,7 +69,7 @@ func TestManagerExecutesExternalToolsFromRootWhenCWDEmpty(t *testing.T) {
 	}
 
 	mgr := NewManager(config.Workspace{Root: root})
-	mgr.SetExternalToolsRegistry(reg)
+	mgr.toolSurface.SetExternalToolsRegistry(reg)
 
 	result := mgr.Execute(context.Background(), ToolRequest{Tool: "ok_tool"})
 	if result.Error != "" {
@@ -102,7 +102,7 @@ func TestToolSurfaceSnapshotCopiesExternalToolView(t *testing.T) {
 	}
 
 	mgr := NewManager(config.Workspace{Root: root, CWD: root})
-	mgr.SetExternalToolsRegistry(reg)
+	mgr.toolSurface.SetExternalToolsRegistry(reg)
 
 	snapshot := mgr.ToolSurfaceSnapshot()
 
@@ -174,7 +174,7 @@ func TestManagerBoundsExternalToolOutput(t *testing.T) {
 	}
 
 	mgr := NewManager(config.Workspace{Root: root, CWD: root, MaxOutputBytes: 8})
-	mgr.SetExternalToolsRegistry(reg)
+	mgr.toolSurface.SetExternalToolsRegistry(reg)
 
 	result := mgr.Execute(context.Background(), ToolRequest{Tool: "chatty_tool"})
 	if result.Error != "" {
@@ -205,7 +205,7 @@ func TestManagerPassesExternalToolInputOnStdin(t *testing.T) {
 	}
 
 	mgr := NewManager(config.Workspace{Root: root, CWD: root, MaxOutputBytes: 1024})
-	mgr.SetExternalToolsRegistry(reg)
+	mgr.toolSurface.SetExternalToolsRegistry(reg)
 
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool: "stdin_tool",

@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"idiom/internal/capabilities/workspace"
-	"idiom/internal/capabilities/workspace/externaltool"
 	"idiom/internal/contracts/autonomy"
 	contractcompile "idiom/internal/contracts/compile"
 	plancontract "idiom/internal/contracts/plan"
@@ -30545,19 +30544,20 @@ func TestImplementationScopedSurfaceActiveForRequiredPathMutation(t *testing.T) 
 }
 
 func TestScopedImplementationDiscoveryLookupAllowsSemanticAndDeclaredProjectTools(t *testing.T) {
-	reg, err := externaltool.NewRegistry([]externaltool.Tool{
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+	cfg.Workspace.ExternalTools = []config.ExternalToolDef{
 		{Name: "lookup", Command: "true", ReadOnly: true, Discovery: true},
 		{Name: "queue_run", Command: "true", ReadOnly: false, Discovery: false},
-	})
-	if err != nil {
-		t.Fatalf("externaltool.NewRegistry: %v", err)
 	}
-
-	root := t.TempDir()
 	runner := &Runner{
-		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true}),
+		Workspace: workspace.NewManager(cfg.Workspace),
 	}
-	runner.Workspace.SetExternalToolsRegistry(reg)
+	setup := workspace.ConfigureToolSurface(context.Background(), cfg, workspace.ConfiguredToolSurfaceOptions{Manager: runner.Workspace})
+	defer setup.Close()
 
 	allowed := []workspace.ToolRequest{
 		{Tool: "cpp_find_symbol", Pattern: "FormativeEventType"},

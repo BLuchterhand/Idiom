@@ -91,7 +91,7 @@ func TestManagerBuildToolDefinitions_AppendsMCPTools(t *testing.T) {
 	reg := registerFakeMCP(t, "exa", srv)
 
 	mgr := NewManager(config.Workspace{})
-	mgr.SetMCPRegistry(reg)
+	mgr.toolSurface.SetMCPRegistry(reg)
 
 	defs := mgr.ToolSurfaceSnapshot().BuildToolDefinitions(nil)
 
@@ -128,7 +128,7 @@ func TestManagerBuildToolDefinitions_AllowedFiltersMCPTools(t *testing.T) {
 	reg := registerFakeMCP(t, "exa", srv)
 
 	mgr := NewManager(config.Workspace{})
-	mgr.SetMCPRegistry(reg)
+	mgr.toolSurface.SetMCPRegistry(reg)
 
 	defs := mgr.ToolSurfaceSnapshot().BuildToolDefinitions([]string{"read_file"})
 	for _, def := range defs {
@@ -155,7 +155,7 @@ func TestManagerAllowedTools_AppendsMCPNames(t *testing.T) {
 
 	mgr := NewManager(config.Workspace{})
 	before := mgr.ToolSurfaceSnapshot().AllowedTools()
-	mgr.SetMCPRegistry(reg)
+	mgr.toolSurface.SetMCPRegistry(reg)
 
 	after := mgr.ToolSurfaceSnapshot().AllowedTools()
 
@@ -226,7 +226,7 @@ func TestManagerExecute_DispatchesMCPCall(t *testing.T) {
 	reg := registerFakeMCP(t, "fake", srv)
 
 	mgr := NewManager(config.Workspace{})
-	mgr.SetMCPRegistry(reg)
+	mgr.toolSurface.SetMCPRegistry(reg)
 
 	req := ToolRequest{Tool: "mcp:fake/echo", Args: []byte(`{"text":"hello"}`)}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -274,7 +274,7 @@ func TestManagerExecute_MCPUnregisteredToolReturnsError(t *testing.T) {
 
 	reg := registerFakeMCP(t, "fake", srv)
 	mgr := NewManager(config.Workspace{})
-	mgr.SetMCPRegistry(reg)
+	mgr.toolSurface.SetMCPRegistry(reg)
 
 	req := ToolRequest{Tool: "mcp:other/unknown", Args: []byte(`{}`)}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -369,7 +369,7 @@ func TestManagerBuildToolDefinitions_EmptyDescriptionFallsBack(t *testing.T) {
 	reg := registerFakeMCP(t, "x", srv)
 
 	mgr := NewManager(config.Workspace{})
-	mgr.SetMCPRegistry(reg)
+	mgr.toolSurface.SetMCPRegistry(reg)
 
 	defs := mgr.ToolSurfaceSnapshot().BuildToolDefinitions(nil)
 	for _, def := range defs {

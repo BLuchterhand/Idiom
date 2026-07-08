@@ -16,7 +16,6 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 
-	"idiom/internal/capabilities/mcp"
 	"idiom/internal/capabilities/workspace"
 	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/evidence/transcript"
@@ -184,7 +183,7 @@ type Model struct {
 	implementerClient     llama.LLMClient
 	implementerController *llama.ServerController
 	workspace             *workspace.Manager
-	mcpRegistry           *mcp.Registry
+	toolSurfaceSetup      *workspace.ConfiguredToolSurface
 	runner                *agent.Runner
 	events                chan tea.Msg
 	eventWaitArmed        bool
@@ -464,9 +463,9 @@ func (m *Model) Close() {
 		_ = m.debugLogger.Close()
 	}
 
-	if m.mcpRegistry != nil {
-		_ = m.mcpRegistry.Close()
-		m.mcpRegistry = nil
+	if m.toolSurfaceSetup != nil {
+		m.toolSurfaceSetup.Close()
+		m.toolSurfaceSetup = nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

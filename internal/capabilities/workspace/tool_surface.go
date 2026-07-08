@@ -179,22 +179,6 @@ func cloneToolDefinitions(defs []ToolDefinition) []ToolDefinition {
 	return append([]ToolDefinition(nil), defs...)
 }
 
-func (m *Manager) SetMCPRegistry(registry *mcp.Registry) {
-	if m == nil {
-		return
-	}
-
-	m.toolSurface.SetMCPRegistry(registry)
-}
-
-func (m *Manager) SetExternalToolsRegistry(registry *externaltool.Registry) {
-	if m == nil {
-		return
-	}
-
-	m.toolSurface.SetExternalToolsRegistry(registry)
-}
-
 func (m *Manager) ToolSurfaceSnapshot() ToolSurfaceSnapshot {
 	if m == nil {
 		return ToolSurfaceSnapshot{toolDefinitions: BuildToolDefinitions(nil)}

@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"idiom/internal/capabilities/workspace"
-	"idiom/internal/capabilities/workspace/externaltool"
 	"idiom/internal/contracts/autonomy"
 	contractcompile "idiom/internal/contracts/compile"
 	plancontract "idiom/internal/contracts/plan"
@@ -8647,15 +8646,13 @@ func TestAdvertisedAllowedToolsPreservesRuntimeBriefOrder(t *testing.T) {
 func TestAdvertisedAllowedToolsSuppressesArtifactFinalAnswerTools(t *testing.T) {
 	root := t.TempDir()
 
-	reg, err := externaltool.NewRegistry([]externaltool.Tool{
-		{Name: "project_lookup", Command: "/bin/sh"},
-	})
-	if err != nil {
-		t.Fatalf("externaltool.NewRegistry: %v", err)
-	}
-
-	manager := workspace.NewManager(config.Workspace{Root: root, CWD: root})
-	manager.SetExternalToolsRegistry(reg)
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.ExternalTools = []config.ExternalToolDef{{Name: "project_lookup", Command: "/bin/sh"}}
+	manager := workspace.NewManager(cfg.Workspace)
+	setup := workspace.ConfigureToolSurface(context.Background(), cfg, workspace.ConfiguredToolSurfaceOptions{Manager: manager})
+	defer setup.Close()
 
 	runner := &Runner{
 		Workspace: manager,
@@ -8675,15 +8672,13 @@ func TestAdvertisedAllowedToolsSuppressesArtifactFinalAnswerTools(t *testing.T) 
 func TestArtifactFinalAnswerRunDoesNotAppendExternalTools(t *testing.T) {
 	root := t.TempDir()
 
-	reg, err := externaltool.NewRegistry([]externaltool.Tool{
-		{Name: "project_lookup", Command: "/bin/sh"},
-	})
-	if err != nil {
-		t.Fatalf("externaltool.NewRegistry: %v", err)
-	}
-
-	manager := workspace.NewManager(config.Workspace{Root: root, CWD: root})
-	manager.SetExternalToolsRegistry(reg)
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.ExternalTools = []config.ExternalToolDef{{Name: "project_lookup", Command: "/bin/sh"}}
+	manager := workspace.NewManager(cfg.Workspace)
+	setup := workspace.ConfigureToolSurface(context.Background(), cfg, workspace.ConfiguredToolSurfaceOptions{Manager: manager})
+	defer setup.Close()
 
 	type requestPayload struct {
 		Tools []llama.Tool `json:"tools,omitempty"`

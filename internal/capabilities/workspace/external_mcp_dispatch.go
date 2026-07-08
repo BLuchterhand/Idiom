@@ -11,8 +11,8 @@ import (
 	"idiom/internal/platform/failures"
 )
 
-// executeExternal dispatches a project-defined external tool registered via
-// SetExternalToolsRegistry.
+// executeExternal dispatches a project-defined external tool attached to the
+// configured tool surface.
 func (m *Manager) executeExternal(ctx context.Context, req ToolRequest) ToolResult {
 	registry := m.toolSurface.ExternalToolsRegistry()
 	if registry == nil {

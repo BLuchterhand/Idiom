@@ -13,7 +13,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"idiom/internal/capabilities/mcp"
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/contracts/toolpolicy"
@@ -375,25 +374,15 @@ func New(cfg config.Config) *Model {
 	mode := modepolicy.ModeOrDefault(m.agentModeName)
 	m.applyModePermissions(mode)
 
-	mcpCtx, mcpCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	registry, mcpFailures := mcp.SetupRegistry(mcpCtx, cfg.MCP, cfg.Workspace.AllowPrivateNetwork)
-
-	mcpCancel()
-
-	if registry != nil {
-		m.workspace.SetMCPRegistry(registry)
-
-		m.mcpRegistry = registry
+	m.toolSurfaceSetup = workspace.ConfigureToolSurface(context.Background(), cfg, workspace.ConfiguredToolSurfaceOptions{
+		Manager: m.workspace,
+		Runtime: true,
+	})
+	if failures := m.toolSurfaceSetup.MCPFailures; len(failures) > 0 {
+		m.setContextError("MCP setup: " + strings.Join(failures, "; "))
 	}
-
-	if len(mcpFailures) > 0 {
-		m.setContextError("MCP setup: " + strings.Join(mcpFailures, "; "))
-	}
-
-	if extReg, extErr := workspace.LoadExternalToolsRegistry(cfg.Workspace); extErr != nil {
+	if extErr := m.toolSurfaceSetup.ExternalToolsError; extErr != nil {
 		m.setContextError("External tools setup: " + extErr.Error())
-	} else if extReg != nil {
-		m.workspace.SetExternalToolsRegistry(extReg)
 	}
 
 	m.runner = &agent.Runner{

@@ -1101,6 +1101,28 @@ Reviewer-updated estimate:
   `/tmp/idiom-tools/deadcode -test ./...`;
   `$(go env GOPATH)/bin/staticcheck -checks=U1000 ./...`;
   `git diff --check`.
+- Configured tool-surface setup is implemented. Workspace now owns the common
+  setup for external tools, MCP initialization policy, registry attachment,
+  lifecycle close, and direct/list profile projection. The direct CLI, tool
+  list, and TUI startup consume that owner instead of each rebuilding external
+  and MCP setup. The same slice deleted the production Manager registry setter
+  pass-throughs; tests that need registries now either use the package-internal
+  `ToolSurface` fixture path or configure external tools through the setup
+  owner. Production Go changed `+146 / -149`, net `-3`; tests changed
+  `+147 / -45`, net `+102`.
+  Focused verification: `go test ./internal/capabilities/workspace -run 'TestConfigureToolSurface|TestManagerBuildToolDefinitions|TestToolSurfaceSnapshot|TestToolAllowedFor|TestToolRequestAllowedFor|TestManagerDoesNotAdvertiseUnavailableExternalTools|TestManagerExecutesExternalToolsFromRootWhenCWDEmpty|TestToolSurfaceSnapshotCopiesExternalToolView|TestManagerAllowedTools|TestManagerBuildToolDefinitions' -count=1`;
+  `go test ./internal/surfaces/cli/tool -run 'TestToolListIncludesConfiguredMCPWebSearch|TestToolDiscoveryListDoesNotInitializeMCPWithoutExplicitAllowRule|TestDirectBuiltInToolDoesNotInitializeConfiguredMCP|TestDiscoveryProfileDeniesConfiguredMCPWithoutExplicitRule|TestToolDiscoveryProfileExecutesConfiguredMCPWebSearch|TestDirectToolOutputIncludesTimeoutOwner' -count=1`;
+  `go test ./internal/surfaces/tui/app -run 'TestSetupMCPRegistry|Test.*MCP.*Close|TestSetForcedTaskFamilyProjectsPlanThenExecuteToolSurface' -count=1`;
+  `go test ./internal/runtime/agent -run 'TestAdvertisedAllowedToolsSuppressesArtifactFinalAnswerTools|TestArtifactFinalAnswerRunDoesNotAppendExternalTools|TestScopedImplementationDiscoveryLookupAllowsSemanticAndDeclaredProjectTools' -count=1`;
+  `go test ./internal/capabilities/workspace ./internal/surfaces/cli/tool ./internal/surfaces/tui/app ./internal/runtime/agent`;
+  `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --fail-on warning`;
+  `/tmp/idiom-tools/deadcode -test ./...`;
+  `$(go env GOPATH)/bin/staticcheck -checks=U1000 ./...`;
+  `git diff --check`.
+  Reviewer follow-up still open: planner-owned verification command execution
+  remains duplicated between plan-execute and recovery, and autonomy
+  action-class derivation still overlaps workspace/runtime tool metadata.
 
 ## Review And Regression Protocol
 

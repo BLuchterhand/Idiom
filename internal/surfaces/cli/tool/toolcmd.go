@@ -7,15 +7,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"slices"
 	"strings"
 	"time"
 
-	"idiom/internal/capabilities/mcp"
 	"idiom/internal/capabilities/workspace"
-	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/evidence/telemetry"
-	"idiom/internal/platform/config"
 	"idiom/internal/platform/textutil"
 	cmdconfig "idiom/internal/surfaces/cli/config"
 )
@@ -168,8 +164,13 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 
 	req.Tool = toolName
 
-	extReg, extErr := workspace.LoadExternalToolsRegistry(cfg.Workspace)
-	if extErr != nil {
+	surfaceSetup := workspace.ConfigureToolSurface(context.Background(), cfg, workspace.ConfiguredToolSurfaceOptions{
+		Profile: profile,
+		Request: req,
+	})
+	defer surfaceSetup.Close()
+
+	if extErr := surfaceSetup.ExternalToolsError; extErr != nil {
 		errText := fmt.Sprintf("external tools setup: %v", extErr)
 		logRequest(len(rawInput))
 		logFailureResult("Direct tool setup failed", errText)
@@ -178,18 +179,12 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		return 1
 	}
 
-	mgr := workspace.NewManager(cfg.Workspace)
+	mgr := surfaceSetup.Manager
 	mgr.SetBypassReadBeforeEdit(true)
-	if extReg != nil {
-		mgr.SetExternalToolsRegistry(extReg)
-	}
 	effectiveTimeout = mgr.ToolTimeoutForRequest(req)
 	logRequest(len(rawInput))
 
-	if decision := workspace.ToolRequestAllowedForWorkspaceProfile(req, profile, workspace.ToolProfilePolicyContext{
-		Workspace:     cfg.Workspace,
-		ExternalTools: extReg,
-	}); !decision.Allowed {
+	if decision := workspace.ToolRequestAllowedForWorkspaceProfile(req, profile, surfaceSetup.PolicyContext); !decision.Allowed {
 		result := workspace.ToolProfileDeniedResult(req.Tool, profile, decision)
 		LogDirectToolResult(rec, req, result, 0, profile, caller, directToolTimeoutOwner(effectiveTimeout))
 
@@ -214,27 +209,14 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		return 1
 	}
 
-	var mcpReg *mcp.Registry
-	if strings.HasPrefix(req.Tool, "mcp:") {
-		mcpCtx, mcpCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		var mcpFailures []string
-		mcpReg, mcpFailures = mcp.SetupRegistry(mcpCtx, cfg.MCP, cfg.Workspace.AllowPrivateNetwork)
-		mcpCancel()
-		if mcpReg != nil {
-			defer mcpReg.Close()
-		}
+	if mcpFailures := surfaceSetup.MCPFailures; len(mcpFailures) > 0 &&
+		(surfaceSetup.MCPRegistry == nil || !surfaceSetup.MCPRegistry.Has(req.Tool)) {
 
-		if len(mcpFailures) > 0 && (mcpReg == nil || !mcpReg.Has(req.Tool)) {
-			errText := "mcp setup: " + strings.Join(mcpFailures, "; ")
-			logFailureResult("Direct tool setup failed", errText)
-			fmt.Fprintln(stderr, errText)
+		errText := "mcp setup: " + strings.Join(mcpFailures, "; ")
+		logFailureResult("Direct tool setup failed", errText)
+		fmt.Fprintln(stderr, errText)
 
-			return 1
-		}
-	}
-
-	if mcpReg != nil {
-		mgr.SetMCPRegistry(mcpReg)
+		return 1
 	}
 
 	ctx, cancel := directToolContext(effectiveTimeout)
@@ -354,88 +336,19 @@ func toolManifestExample(toolName string) (workspace.ToolManifestEntry, bool) {
 }
 
 func RunListWithConfig(stdout io.Writer, configPath string, profile string) int {
-	allTools := workspace.ToolManifestTools(workspace.ToolManifestToolOptions{
-		IncludeTaskLedger: true,
-		IncludeTask:       true,
-		IncludeWriteTools: true,
-		IncludeGo:         true,
-		IncludeCpp:        true,
-		IncludePython:     true,
-		IncludeTypescript: true,
-		IncludeRust:       true,
-		IncludeJava:       true,
+	cfg, _ := cmdconfig.Load(configPath)
+
+	surfaceSetup := workspace.ConfigureToolSurface(context.Background(), cfg, workspace.ConfiguredToolSurfaceOptions{
+		Profile: profile,
+		List:    true,
 	})
-	for _, t := range allTools {
-		if decision := workspace.ToolAllowedForProfile(t, profile); !decision.Allowed {
-			continue
-		}
+	defer surfaceSetup.Close()
 
-		fmt.Fprintln(stdout, t)
-	}
-
-	// Append project-defined external tools when a config is loadable.
-	// Silent on errors: `idiom tool list` is informational; if the
-	// config is missing or malformed the user will see the same error
-	// the moment they invoke any tool.
-	if cfg, err := cmdconfig.Load(configPath); err == nil {
-		if reg, regErr := workspace.LoadExternalToolsRegistry(cfg.Workspace); regErr == nil && reg != nil {
-			baseDir := cfg.Workspace.CWD
-			if strings.TrimSpace(baseDir) == "" {
-				baseDir = cfg.Workspace.Root
-			}
-
-			names := reg.AvailableNames(baseDir)
-			slices.Sort(names)
-
-			for _, name := range names {
-				if profile == workspace.ToolProfileDiscovery && !reg.IsReadOnlyDiscovery(name) {
-					continue
-				}
-
-				fmt.Fprintln(stdout, name)
-			}
-		}
-
-		if profile != workspace.ToolProfileDiscovery || hasConfiguredMCPAllowRule(cfg.Workspace.ToolRules) {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			mcpReg, _ := mcp.SetupRegistry(ctx, cfg.MCP, cfg.Workspace.AllowPrivateNetwork)
-			cancel()
-			if mcpReg != nil {
-				defer mcpReg.Close()
-
-				names := make([]string, 0, len(mcpReg.Tools()))
-				for name := range mcpReg.Tools() {
-					if profile == workspace.ToolProfileDiscovery &&
-						toolpolicy.Match(name, toolpolicy.Request{Tool: name}, config.ToolPolicyRules(cfg.Workspace.ToolRules)) != toolpolicy.Allow {
-						continue
-					}
-					names = append(names, name)
-				}
-				slices.Sort(names)
-
-				for _, name := range names {
-					fmt.Fprintln(stdout, name)
-				}
-			}
-		}
+	for _, tool := range surfaceSetup.ListToolNamesForProfile(profile) {
+		fmt.Fprintln(stdout, tool)
 	}
 
 	return 0
-}
-
-func hasConfiguredMCPAllowRule(rules map[string][]config.ToolRule) bool {
-	for tool, list := range rules {
-		if !strings.HasPrefix(strings.TrimSpace(tool), "mcp:") {
-			continue
-		}
-		for _, rule := range list {
-			if strings.EqualFold(strings.TrimSpace(rule.Decision), "allow") {
-				return true
-			}
-		}
-	}
-
-	return false
 }
 
 func RunSchemas(stdout io.Writer, stderr io.Writer) int {
