@@ -48,13 +48,13 @@ func (m *Manager) executeExternal(ctx context.Context, req ToolRequest) ToolResu
 		Args:           invocation.Args,
 		Dir:            invocation.Workdir,
 		Stdin:          invocation.Stdin,
+		Timeout:        timeout,
 		MaxOutputBytes: m.cfg.MaxOutputBytes,
 		MergeOutput:    true,
 	})
-	output := commandexec.CombineOutput(execResult.Stdout, execResult.Stderr)
-	truncated := execResult.StdoutTruncated || execResult.StderrTruncated
-	out := ToolResult{Tool: req.Tool, Summary: "External tool " + req.Tool, Output: output}
-	if truncated {
+	displayOutput := execResult.DisplayProjection(m.cfg.MaxOutputBytes)
+	out := ToolResult{Tool: req.Tool, Summary: "External tool " + req.Tool, Output: displayOutput.Text}
+	if displayOutput.Truncated || execResult.StdoutTruncated || execResult.StderrTruncated {
 		out.Summary += " (output truncated)"
 	}
 

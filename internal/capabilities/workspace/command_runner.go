@@ -10,21 +10,13 @@ import (
 
 func (m *Manager) runCommand(parent context.Context, dir, name string, args ...string) (string, error) {
 	result := m.runCommandResult(parent, commandexec.Spec{Mode: commandexec.ModeArgv, Dir: dir, Name: name, Args: args})
-	output := m.truncateCommandOutput(commandexec.CombineOutput(result.Stdout, result.Stderr))
+	output := result.DisplayProjection(m.cfg.MaxOutputBytes).Text
 
 	if err := result.FailureError(fmt.Sprintf("%ds", workspaceCommandTimeoutSeconds(m.cfg.CommandTimeoutSeconds))); err != nil {
 		return output, err
 	}
 
 	return output, nil
-}
-
-func (m *Manager) truncateCommandOutput(output string) string {
-	if m.cfg.MaxOutputBytes > 0 && len(output) > m.cfg.MaxOutputBytes {
-		return output[:m.cfg.MaxOutputBytes] + "\n...[truncated]"
-	}
-
-	return output
 }
 
 func (m *Manager) runCommandResult(parent context.Context, spec commandexec.Spec) commandexec.Result {

@@ -897,30 +897,12 @@ func (m *Manager) runGoPLSCommand(ctx context.Context, args ...string) (string, 
 		gopls,
 		args...,
 	)
-	output := strings.TrimSpace(result.Stdout)
 
 	if err := result.FailureError(""); err != nil {
-		errText := strings.TrimSpace(result.Stderr)
-		if errText != "" {
-			if output != "" {
-				output += "\n"
-			}
-
-			output += errText
-		}
-
-		if len(output) > m.maxOutputBytes() {
-			output = output[:m.maxOutputBytes()] + "\n...[truncated]"
-		}
-
-		return output, err
+		return result.DisplayProjection(m.maxOutputBytes()).Text, err
 	}
 
-	if len(output) > m.maxOutputBytes() {
-		output = output[:m.maxOutputBytes()] + "\n...[truncated]"
-	}
-
-	return output, nil
+	return result.StdoutProjection(m.maxOutputBytes()).Text, nil
 }
 
 func (m *Manager) isGoWorkspace() bool {

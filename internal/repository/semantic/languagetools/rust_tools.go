@@ -606,9 +606,7 @@ func (m *Manager) rustDiagnostics(ctx context.Context, req ToolRequest) ToolResu
 	}
 
 	result := m.runCommandResult(ctx, workdir, nil, "cargo", "check", "--quiet", "--message-format=short")
-	output := strings.TrimSpace(strings.TrimSpace(result.Stdout) + "\n" + strings.TrimSpace(result.Stderr))
-
-	output = strings.TrimSpace(output)
+	output := result.DisplayProjection(m.maxOutputBytes()).Text
 
 	if err := result.FailureError(""); err != nil && output == "" {
 		return ToolResult{Tool: "rust_diagnostics", Summary: "Rust diagnostics failed", Error: err.Error()}

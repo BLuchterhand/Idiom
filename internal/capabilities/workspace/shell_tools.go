@@ -144,13 +144,14 @@ func (m *Manager) captureWorkspaceShell(ctx context.Context, req ToolRequest, to
 	}
 
 	execResult := m.runCommandResult(ctx, commandexec.Spec{Mode: commandexec.ModeLoginShell, Shell: m.cfg.Shell, Command: command, Dir: workdir})
-	rawOutput := commandexec.CombineOutput(execResult.Stdout, execResult.Stderr)
+	rawOutput := execResult.CombinedOutput()
+	displayOutput := execResult.DisplayProjection(m.cfg.MaxOutputBytes)
 	execution := workspaceShellExecution{
 		command:       command,
 		workdir:       workdir,
 		result:        execResult,
 		rawOutput:     rawOutput,
-		displayOutput: m.truncateCommandOutput(rawOutput),
+		displayOutput: displayOutput.Text,
 	}
 
 	if execErr := execResult.FailureError(fmt.Sprintf("%ds", workspaceCommandTimeoutSeconds(m.cfg.CommandTimeoutSeconds))); execErr != nil {

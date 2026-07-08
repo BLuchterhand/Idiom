@@ -72,7 +72,7 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 	execResult := m.runCommandResult(parent, commandexec.Spec{Mode: commandexec.ModeArgv, Name: backend.bin, Args: args, Dir: workdir})
 	noMatch := execResult.ExitError && execResult.ExitCode == 1
 	if execResult.Err != nil && !noMatch {
-		output := strings.TrimSpace(strings.TrimSpace(execResult.Stdout) + "\n" + strings.TrimSpace(execResult.Stderr))
+		output := execResult.DisplayProjection(m.cfg.MaxOutputBytes).Text
 		errMsg := execResult.FailureError(fmt.Sprintf("%ds", workspaceCommandTimeoutSeconds(m.cfg.CommandTimeoutSeconds))).Error()
 
 		if trimmed := strings.TrimSpace(execResult.Stderr); trimmed != "" {
@@ -82,7 +82,7 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 		return ToolResult{
 			Tool:    toolName,
 			Summary: "Content search failed",
-			Output:  strings.TrimSpace(output),
+			Output:  output,
 			Error:   errMsg,
 		}
 	}

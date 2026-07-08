@@ -173,20 +173,7 @@ func (m *Manager) runCommandResult(ctx context.Context, dir string, extraEnv []s
 
 func (m *Manager) runCommand(ctx context.Context, dir, name string, args ...string) (string, error) {
 	result := m.runCommandResult(ctx, dir, nil, name, args...)
-	output := strings.TrimSpace(result.Stdout)
-	errText := strings.TrimSpace(result.Stderr)
-
-	if errText != "" {
-		if output != "" {
-			output += "\n"
-		}
-
-		output += errText
-	}
-
-	if max := m.maxOutputBytes(); max > 0 && len(output) > max {
-		output = output[:max] + "\n...[truncated]"
-	}
+	output := result.DisplayProjection(m.maxOutputBytes()).Text
 
 	if err := result.FailureError(""); err != nil {
 		return output, err

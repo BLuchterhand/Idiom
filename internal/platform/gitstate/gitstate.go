@@ -148,7 +148,7 @@ func CombinedOutputText(ctx context.Context, root string, args ...string) (strin
 }
 
 func gitCommandError(args []string, result commandexec.Result) error {
-	output := strings.TrimSpace(commandexec.CombineOutput(result.Stdout, result.Stderr))
+	output := result.CombinedOutput()
 	if output == "" {
 		return fmt.Errorf("git %s: %w", strings.Join(args, " "), result.Err)
 	}

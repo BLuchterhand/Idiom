@@ -105,7 +105,7 @@ func Run(parent context.Context, req Request) (result Result) {
 	result.Duration = run.Duration
 	result.Stdout = run.Stdout
 	result.Stderr = run.Stderr
-	result.Output = commandexec.CombineOutput(run.Stdout, run.Stderr)
+	result.Output = run.CombinedOutput()
 	result.DisplayOutput = TrimDisplay(result.Output, req.DisplayBytes, req.Truncation)
 
 	if run.Err == nil {

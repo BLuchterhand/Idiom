@@ -744,7 +744,7 @@ func (m *Manager) javaDiagnostics(ctx context.Context, req ToolRequest) ToolResu
 
 	if _, err := os.Stat(filepath.Join(m.Root(), "pom.xml")); err == nil {
 		result := m.runCommandResult(ctx, m.Root(), nil, "mvn", "-q", "-o", "compile", "-DskipTests")
-		output := strings.TrimSpace(strings.TrimSpace(result.Stdout) + "\n" + strings.TrimSpace(result.Stderr))
+		output := result.DisplayProjection(m.maxOutputBytes()).Text
 
 		if err := result.FailureError(""); err != nil && output == "" {
 			output = err.Error()
@@ -759,7 +759,7 @@ func (m *Manager) javaDiagnostics(ctx context.Context, req ToolRequest) ToolResu
 
 	if _, err := os.Stat(filepath.Join(m.Root(), "build.gradle")); err == nil {
 		result := m.runCommandResult(ctx, m.Root(), nil, "gradle", "--offline", "--quiet", "compileJava")
-		output := strings.TrimSpace(strings.TrimSpace(result.Stdout) + "\n" + strings.TrimSpace(result.Stderr))
+		output := result.DisplayProjection(m.maxOutputBytes()).Text
 
 		if err := result.FailureError(""); err != nil && output == "" {
 			output = err.Error()
@@ -781,7 +781,7 @@ func (m *Manager) javaDiagnostics(ctx context.Context, req ToolRequest) ToolResu
 		}
 
 		result := m.runCommandResult(ctx, m.Root(), nil, "javac", "-Xlint:all", "-d", os.TempDir(), abs)
-		chunk := strings.TrimSpace(strings.TrimSpace(result.Stdout) + "\n" + strings.TrimSpace(result.Stderr))
+		chunk := result.DisplayProjection(m.maxOutputBytes()).Text
 
 		if chunk == "" {
 			if err := result.FailureError(""); err != nil {

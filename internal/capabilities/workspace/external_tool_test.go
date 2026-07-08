@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"idiom/internal/capabilities/workspace/externaltool"
 	"idiom/internal/platform/config"
@@ -185,6 +186,37 @@ func TestManagerBoundsExternalToolOutput(t *testing.T) {
 	}
 	if !strings.Contains(result.Summary, "output truncated") {
 		t.Fatalf("external tool summary missing truncation signal: %#v", result.Summary)
+	}
+}
+
+func TestManagerEnforcesExternalToolDeclaredTimeout(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0o755); err != nil {
+		t.Fatalf("mkdir scripts: %v", err)
+	}
+
+	script := filepath.Join(root, "scripts", "slow.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec sleep 5\n"), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	reg, err := externaltool.NewRegistry([]externaltool.Tool{{Name: "slow_tool", Command: "./scripts/slow.sh", TimeoutSeconds: 1}})
+	if err != nil {
+		t.Fatalf("externaltool.NewRegistry: %v", err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root, MaxOutputBytes: 1024})
+	mgr.toolSurface.SetExternalToolsRegistry(reg)
+
+	start := time.Now()
+	result := mgr.executeExternal(context.Background(), ToolRequest{Tool: "slow_tool"})
+	elapsed := time.Since(start)
+
+	if result.Error == "" || !strings.Contains(result.Error, `timed out after 1s`) {
+		t.Fatalf("external tool timeout error = %#v", result)
+	}
+	if elapsed > 3*time.Second {
+		t.Fatalf("external tool did not use declared timeout promptly; elapsed=%v", elapsed)
 	}
 }
 
