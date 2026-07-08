@@ -3,6 +3,7 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"idiom/internal/capabilities/workspace/externaltool"
+	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/config"
 )
 
@@ -189,6 +191,46 @@ func TestManagerBoundsExternalToolOutput(t *testing.T) {
 	}
 }
 
+func TestWorkspaceCommandRunnerHonorsExplicitTimeoutOverride(t *testing.T) {
+	exe := workspaceExternalHelperBinary(t)
+	mgr := NewManager(config.Workspace{Root: t.TempDir(), CommandTimeoutSeconds: 5, MaxOutputBytes: 1024})
+
+	result := mgr.runCommandResult(context.Background(), commandexec.Spec{
+		Name:    exe,
+		Args:    workspaceExternalHelperArgs("sleep"),
+		Timeout: 20 * time.Millisecond,
+	})
+
+	if !result.TimedOut {
+		t.Fatalf("runCommandResult should preserve explicit timeout, result=%#v", result)
+	}
+}
+
+func TestWorkspaceCommandRunnerCapturesBeyondDisplayLimit(t *testing.T) {
+	exe := workspaceExternalHelperBinary(t)
+	mgr := NewManager(config.Workspace{Root: t.TempDir(), MaxOutputBytes: 8})
+
+	result := mgr.runCommandResult(context.Background(), commandexec.Spec{
+		Name: exe,
+		Args: workspaceExternalHelperArgs("large-output"),
+	})
+
+	if result.Err != nil {
+		t.Fatalf("runCommandResult failed: %v", result.Err)
+	}
+	if result.StdoutTruncated {
+		t.Fatalf("workspace runner should keep diagnostic capture separate from display limit, result=%#v", result)
+	}
+	if len(strings.TrimSpace(result.Stdout)) <= 8 {
+		t.Fatalf("raw capture should exceed display limit, got %q", result.Stdout)
+	}
+
+	display := mgr.commandDisplayOutput(result)
+	if !display.Truncated || !strings.Contains(display.Text, "...[truncated]") {
+		t.Fatalf("display projection should still truncate model-facing output, got %#v", display)
+	}
+}
+
 func TestManagerEnforcesExternalToolDeclaredTimeout(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0o755); err != nil {
@@ -217,6 +259,56 @@ func TestManagerEnforcesExternalToolDeclaredTimeout(t *testing.T) {
 	}
 	if elapsed > 3*time.Second {
 		t.Fatalf("external tool did not use declared timeout promptly; elapsed=%v", elapsed)
+	}
+}
+
+func TestManagerExternalToolUsesCanonicalPWDOverlay(t *testing.T) {
+	root := t.TempDir()
+	exe := workspaceExternalHelperBinary(t)
+
+	reg, err := externaltool.NewRegistry([]externaltool.Tool{{
+		Name:    "pwd_tool",
+		Command: exe,
+		Args:    workspaceExternalHelperArgs("print-pwd"),
+	}})
+	if err != nil {
+		t.Fatalf("externaltool.NewRegistry: %v", err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root, MaxOutputBytes: 1024})
+	mgr.toolSurface.SetExternalToolsRegistry(reg)
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "pwd_tool"})
+	if result.Error != "" {
+		t.Fatalf("external tool failed: %#v", result)
+	}
+	if got, want := strings.TrimSpace(result.Output), config.CanonicalizeExistingPath(root); got != want {
+		t.Fatalf("external tool PWD = %q, want canonical workspace cwd %q", got, want)
+	}
+}
+
+func TestManagerExternalToolMergesStdoutAndStderr(t *testing.T) {
+	root := t.TempDir()
+	exe := workspaceExternalHelperBinary(t)
+
+	reg, err := externaltool.NewRegistry([]externaltool.Tool{{
+		Name:    "mixed_tool",
+		Command: exe,
+		Args:    workspaceExternalHelperArgs("mixed-output"),
+	}})
+	if err != nil {
+		t.Fatalf("externaltool.NewRegistry: %v", err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root, MaxOutputBytes: 1024})
+	mgr.toolSurface.SetExternalToolsRegistry(reg)
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "mixed_tool"})
+	if result.Error != "" {
+		t.Fatalf("external tool failed: %#v", result)
+	}
+	if !strings.Contains(result.Output, "stdout text") || !strings.Contains(result.Output, "stderr text") {
+		t.Fatalf("external tool output should include stdout and stderr, got %#v", result.Output)
 	}
 }
 
@@ -249,6 +341,57 @@ func TestManagerPassesExternalToolInputOnStdin(t *testing.T) {
 	if !strings.Contains(result.Output, `"message":"hello"`) {
 		t.Fatalf("external tool did not receive JSON input on stdin: %#v", result.Output)
 	}
+}
+
+func workspaceExternalHelperBinary(t *testing.T) string {
+	t.Helper()
+
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+
+	return exe
+}
+
+func workspaceExternalHelperArgs(action string) []string {
+	return []string{"-test.run=TestWorkspaceExternalToolHelperProcess", "--", action}
+}
+
+func TestWorkspaceExternalToolHelperProcess(t *testing.T) {
+	sep := -1
+	for i, arg := range os.Args {
+		if arg == "--" {
+			sep = i
+			break
+		}
+	}
+	if sep < 0 {
+		return
+	}
+
+	args := os.Args[sep+1:]
+	if len(args) == 0 {
+		os.Exit(2)
+	}
+
+	switch args[0] {
+	case "print-pwd":
+		fmt.Fprint(os.Stdout, filepath.Clean(os.Getenv("PWD")))
+		os.Exit(0)
+	case "sleep":
+		time.Sleep(200 * time.Millisecond)
+		os.Exit(0)
+	case "large-output":
+		fmt.Fprint(os.Stdout, strings.Repeat("x", 64))
+		os.Exit(0)
+	case "mixed-output":
+		fmt.Fprint(os.Stdout, "stdout text\n")
+		fmt.Fprint(os.Stderr, "stderr text\n")
+		os.Exit(0)
+	}
+
+	os.Exit(2)
 }
 
 func hasString(values []string, want string) bool {

@@ -47,8 +47,9 @@ func (m *Manager) projectCommandOutput(output string) workspaceCommandOutput {
 }
 
 func (m *Manager) runCommandResult(parent context.Context, spec commandexec.Spec) commandexec.Result {
-	timeoutSeconds := workspaceCommandTimeoutSeconds(m.cfg.CommandTimeoutSeconds)
-	spec.Timeout = time.Duration(timeoutSeconds) * time.Second
+	if spec.Timeout <= 0 {
+		spec.Timeout = time.Duration(workspaceCommandTimeoutSeconds(m.cfg.CommandTimeoutSeconds)) * time.Second
+	}
 	spec.MaxOutputBytes = workspaceCommandCaptureBytes(m.cfg.MaxOutputBytes)
 	spec.CanonicalPWD = true
 

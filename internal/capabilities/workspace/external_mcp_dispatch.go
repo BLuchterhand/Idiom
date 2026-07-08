@@ -43,14 +43,13 @@ func (m *Manager) executeExternal(ctx context.Context, req ToolRequest) ToolResu
 		return out
 	}
 
-	execResult := commandexec.Run(ctx, commandexec.Spec{
-		Name:           invocation.Command,
-		Args:           invocation.Args,
-		Dir:            invocation.Workdir,
-		Stdin:          invocation.Stdin,
-		Timeout:        timeout,
-		MaxOutputBytes: m.cfg.MaxOutputBytes,
-		MergeOutput:    true,
+	execResult := m.runCommandResult(ctx, commandexec.Spec{
+		Name:        invocation.Command,
+		Args:        invocation.Args,
+		Dir:         invocation.Workdir,
+		Stdin:       invocation.Stdin,
+		Timeout:     timeout,
+		MergeOutput: true,
 	})
 	displayOutput := m.commandDisplayOutput(execResult)
 	out := ToolResult{Tool: req.Tool, Summary: "External tool " + req.Tool, Output: displayOutput.Text}
