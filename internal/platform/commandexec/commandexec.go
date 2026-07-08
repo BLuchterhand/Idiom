@@ -57,6 +57,12 @@ type Result struct {
 	Err             error
 }
 
+type ForegroundIO struct {
+	Stdin  io.Reader
+	Stdout io.Writer
+	Stderr io.Writer
+}
+
 func (r Result) FailureError(timeoutLabel string) error {
 	if r.TimedOut {
 		if strings.TrimSpace(timeoutLabel) != "" {
@@ -116,14 +122,56 @@ func Run(parent context.Context, spec Spec) Result {
 		stderrTruncated = false
 	}
 
+	result := resultFromRun(ctx, duration, runErr)
+	result.Stdout = stdoutText
+	result.Stderr = stderrText
+	result.StdoutTruncated = stdoutTruncated
+	result.StderrTruncated = stderrTruncated
+
+	return result
+}
+
+func RunForeground(parent context.Context, spec Spec, streams ForegroundIO) Result {
+	if parent == nil {
+		parent = context.Background()
+	}
+	if spec.OutputLogPath != "" {
+		return Result{ExitCode: 1, Err: errors.New("foreground command cannot use output log path")}
+	}
+	if spec.Stdin != "" {
+		return Result{ExitCode: 1, Err: errors.New("foreground command cannot use static stdin")}
+	}
+	if spec.MergeOutput {
+		return Result{ExitCode: 1, Err: errors.New("foreground command cannot merge output")}
+	}
+
+	ctx := parent
+	var cancel context.CancelFunc
+	if spec.Timeout > 0 {
+		ctx, cancel = context.WithTimeout(parent, spec.Timeout)
+		defer cancel()
+	}
+
+	cmd, err := configuredCommand(ctx, spec)
+	if err != nil {
+		return Result{ExitCode: 1, Err: err}
+	}
+
+	cmd.Stdin = streams.Stdin
+	cmd.Stdout = streams.Stdout
+	cmd.Stderr = streams.Stderr
+
+	start := time.Now()
+	runErr := cmd.Run()
+
+	return resultFromRun(ctx, time.Since(start), runErr)
+}
+
+func resultFromRun(ctx context.Context, duration time.Duration, runErr error) Result {
 	result := Result{
-		Stdout:          stdoutText,
-		Stderr:          stderrText,
-		StdoutTruncated: stdoutTruncated,
-		StderrTruncated: stderrTruncated,
-		ExitCode:        0,
-		Duration:        duration,
-		Err:             runErr,
+		ExitCode: 0,
+		Duration: duration,
+		Err:      runErr,
 	}
 
 	if runErr != nil {

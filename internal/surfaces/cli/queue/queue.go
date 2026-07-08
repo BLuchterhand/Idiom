@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -17,6 +16,7 @@ import (
 
 	queuecontract "idiom/internal/contracts/queue"
 	"idiom/internal/evidence/telemetry"
+	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/failures"
 	"idiom/internal/runtime/runner"
 )
@@ -205,11 +205,6 @@ func runQueueRunWithTelemetry(args []string, stdout, stderr io.Writer, rec *tele
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
-
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
 	// Lease propagation: tell descendant idiom processes that this
 	// pool is already held by an ancestor. Any nested
 	// `runner.MaybeAcquire` call for the same pool short-circuits to
@@ -223,15 +218,21 @@ func runQueueRunWithTelemetry(args []string, stdout, stderr io.Writer, rec *tele
 		heldPools = heldPools + ":" + resolvedPool
 	}
 
-	cmd.Env = append(os.Environ(), runner.HeldPoolsEnv+"="+heldPools)
-
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
-			return exitErr.ExitCode()
+	result := commandexec.RunForeground(ctx, commandexec.Spec{
+		Name: cmdArgs[0],
+		Args: cmdArgs[1:],
+		Env:  []string{runner.HeldPoolsEnv + "=" + heldPools},
+	}, commandexec.ForegroundIO{
+		Stdin:  os.Stdin,
+		Stdout: stdout,
+		Stderr: stderr,
+	})
+	if result.Err != nil {
+		if result.ExitError {
+			return result.ExitCode
 		}
 
-		fmt.Fprintf(stderr, "queue run: %v\n", err)
-
+		fmt.Fprintf(stderr, "queue run: %v\n", result.Err)
 		return 1
 	}
 

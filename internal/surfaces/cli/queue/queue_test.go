@@ -175,11 +175,45 @@ func TestQueueRunPropagatesExitCode(t *testing.T) {
 
 	code := RunMainWithTelemetry([]string{
 		"run", "--socket", sock, "--quiet",
-		"--", "/usr/bin/false",
+		"--", "/bin/sh", "-c", "exit 7",
 	}, &stdout, &stderr, nil)
 
-	if code == 0 {
-		t.Fatalf("expected nonzero exit from /usr/bin/false, got 0")
+	if code != 7 {
+		t.Fatalf("expected exact child exit code 7, got %d; stderr=%s", code, stderr.String())
+	}
+}
+
+func TestQueueRunStreamsChildStdinStdoutAndStderr(t *testing.T) {
+	sock := startDaemonForCLI(t, runner.DefaultConfig())
+
+	readEnd, writeEnd, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	_, _ = writeEnd.WriteString("payload\n")
+	_ = writeEnd.Close()
+
+	origStdin := os.Stdin
+	os.Stdin = readEnd
+	t.Cleanup(func() {
+		os.Stdin = origStdin
+		_ = readEnd.Close()
+	})
+
+	var stdout, stderr bytes.Buffer
+	code := RunMainWithTelemetry([]string{
+		"run", "--socket", sock, "--quiet",
+		"--", "/bin/sh", "-c", `read value; printf 'out=%s\n' "$value"; printf 'err=%s\n' "$value" >&2`,
+	}, &stdout, &stderr, nil)
+
+	if code != 0 {
+		t.Fatalf("queue run exit=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "out=payload") {
+		t.Fatalf("stdout missing child output: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "err=payload") {
+		t.Fatalf("stderr missing child output: %q", stderr.String())
 	}
 }
 

@@ -182,6 +182,95 @@ func TestRunMergeOutputUsesSingleOutputLimit(t *testing.T) {
 	}
 }
 
+func TestRunForegroundStreamsProvidedIOEnvAndDir(t *testing.T) {
+	dir := t.TempDir()
+	spec := helperSpecWithDir(dir, "foreground-stream")
+	spec.Env = append(spec.Env, "IDIOM_FOREGROUND_VALUE=from-env")
+
+	var stdout strings.Builder
+	var stderr strings.Builder
+	result := RunForeground(t.Context(), spec, ForegroundIO{
+		Stdin:  strings.NewReader("payload"),
+		Stdout: &stdout,
+		Stderr: &stderr,
+	})
+
+	if result.Err != nil {
+		t.Fatalf("RunForeground failed: %v", result.Err)
+	}
+
+	wantPWD := "pwd=" + config.CanonicalizeExistingPath(dir)
+	if !strings.Contains(stdout.String(), wantPWD) {
+		t.Fatalf("stdout missing %q: %q", wantPWD, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "env=from-env") {
+		t.Fatalf("stdout missing env overlay: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "stdin=payload") {
+		t.Fatalf("stdout missing stdin: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "stderr=payload") {
+		t.Fatalf("stderr missing streamed payload: %q", stderr.String())
+	}
+}
+
+func TestRunForegroundPropagatesExitCode(t *testing.T) {
+	result := RunForeground(t.Context(), helperSpec("exit", "7"), ForegroundIO{
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+	})
+
+	if result.ExitCode != 7 || !result.ExitError {
+		t.Fatalf("RunForeground result = %#v, want exit code 7 with ExitError", result)
+	}
+}
+
+func TestRunForegroundReportsMissingCommand(t *testing.T) {
+	result := RunForeground(t.Context(), Spec{Name: "definitely-not-an-idiom-test-command"}, ForegroundIO{})
+
+	if result.Err == nil || !result.CommandNotFound || result.ExitCode != 1 {
+		t.Fatalf("RunForeground missing command result = %#v", result)
+	}
+}
+
+func TestRunForegroundHonorsTimeout(t *testing.T) {
+	spec := helperSpec("sleep")
+	spec.Timeout = 10 * time.Millisecond
+
+	result := RunForeground(t.Context(), spec, ForegroundIO{
+		Stdout: io.Discard,
+		Stderr: io.Discard,
+	})
+
+	if !result.TimedOut {
+		t.Fatalf("TimedOut = false; result=%#v", result)
+	}
+	if result.Err == nil {
+		t.Fatalf("Err is nil for timed out foreground command")
+	}
+}
+
+func TestRunForegroundRejectsCaptureOnlyOptions(t *testing.T) {
+	cases := []struct {
+		name string
+		spec Spec
+		want string
+	}{
+		{name: "static stdin", spec: Spec{Name: os.Args[0], Stdin: "input"}, want: "static stdin"},
+		{name: "output log path", spec: Spec{Name: os.Args[0], OutputLogPath: filepath.Join(t.TempDir(), "run.log")}, want: "output log path"},
+		{name: "merge output", spec: Spec{Name: os.Args[0], MergeOutput: true}, want: "merge output"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := RunForeground(t.Context(), tc.spec, ForegroundIO{})
+			if result.Err == nil || !strings.Contains(result.Err.Error(), tc.want) {
+				t.Fatalf("RunForeground result = %#v, want error containing %q", result, tc.want)
+			}
+		})
+	}
+}
+
 func TestStartProvidesStreamingPipesEnvAndDir(t *testing.T) {
 	dir := t.TempDir()
 	spec := helperSpecWithDir(dir, "stream-context")
@@ -467,6 +556,12 @@ func TestCommandExecHelperProcess(t *testing.T) {
 	case "mixed-output":
 		fmt.Fprint(os.Stdout, strings.Repeat("o", 16))
 		fmt.Fprint(os.Stderr, strings.Repeat("e", 16))
+		os.Exit(0)
+
+	case "foreground-stream":
+		data, _ := io.ReadAll(os.Stdin)
+		fmt.Fprintf(os.Stdout, "pwd=%s\nenv=%s\nstdin=%s", filepath.Clean(os.Getenv("PWD")), os.Getenv("IDIOM_FOREGROUND_VALUE"), string(data))
+		fmt.Fprintf(os.Stderr, "stderr=%s", string(data))
 		os.Exit(0)
 
 	case "stream-context":
