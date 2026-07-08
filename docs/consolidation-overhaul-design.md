@@ -1051,6 +1051,20 @@ Reviewer-updated estimate:
   `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
   `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
   `git diff --check`.
+- Command execution owner cleanup continued. Workspace command execution now
+  accepts a `commandexec.Spec` and applies workspace-owned timeout, capture,
+  and canonical `PWD` defaults there; shell and `context_trace_pack` use
+  `commandexec.ModeLoginShell` instead of constructing `shell -lc` locally.
+  Headless patch output now asks `gitstate` for `git diff --binary` instead of
+  shelling through `commandexec` itself. This slice changed production Go by
+  `+19 / -26`, net `-7`, with no test LOC changes.
+  Verification: `go test ./internal/platform/commandexec ./internal/platform/gitstate ./internal/capabilities/workspace ./internal/repository/semantic/languagetools ./internal/surfaces/cli/headless -run 'Test(RunPlainShellMode|CombinedOutputText|WriteGitDiff|RunCommand|ContextTracePackCapturesFailingCommandAsEvidence|RunShell|Shell|SearchContent|LanguageTool|RunCommandUsesConfiguredCommandDirAndBoundsOutput|RunCommandCapturesStdoutStderrAndExitCode)' -count=1`;
+  `go test ./internal/capabilities/workspace ./internal/repository/semantic/languagetools ./internal/surfaces/cli/headless -count=1`;
+  `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
+  `git diff --check`.
 
 ## Review And Regression Protocol
 

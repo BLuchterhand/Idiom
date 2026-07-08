@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/failures"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/comprehension"
@@ -886,7 +887,7 @@ func (m *Manager) contextTracePack(ctx context.Context, req ToolRequest) ToolRes
 		return ToolResult{Tool: ToolNameContextTracePack, Summary: "Context trace pack failed to resolve workdir", Error: err.Error()}
 	}
 
-	execResult := m.runCommandResultWithEnv(ctx, workdir, nil, m.cfg.Shell, "-lc", command)
+	execResult := m.runCommandResult(ctx, commandexec.Spec{Mode: commandexec.ModeLoginShell, Shell: m.cfg.Shell, Command: command, Dir: workdir})
 	exitCode := 0
 	execError := ""
 

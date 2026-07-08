@@ -88,7 +88,7 @@ func (h languageToolHost) Execute(ctx context.Context, req languagetools.ToolReq
 
 // idiom:allow go.no_pass_through_wrapper -- boundary adapter required by languagetools.Host
 func (h languageToolHost) RunCommand(ctx context.Context, dir string, extraEnv []string, name string, args ...string) commandexec.Result {
-	return h.manager.runCommandResultWithEnv(ctx, dir, extraEnv, name, args...)
+	return h.manager.runCommandResult(ctx, commandexec.Spec{Mode: commandexec.ModeArgv, Name: name, Args: args, Dir: dir, Env: extraEnv})
 }
 
 func (m *Manager) executeLanguageTool(ctx context.Context, req ToolRequest) ToolResult {

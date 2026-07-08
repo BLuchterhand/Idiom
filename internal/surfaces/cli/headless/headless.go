@@ -21,6 +21,7 @@ import (
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/config"
+	"idiom/internal/platform/gitstate"
 	"idiom/internal/runtime/sessionlog"
 	"idiom/internal/surfaces/cli/runrecord"
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
@@ -1013,21 +1014,16 @@ func writeGitDiff(path string, cfg config.Config) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	result := commandexec.Run(ctx, commandexec.Spec{
-		Mode:    commandexec.ModePlainShell,
-		Shell:   shellName(cfg),
-		Command: "git diff --binary",
-		Dir:     commandDir(cfg),
-	})
-	if result.Err != nil {
-		if result.TimedOut {
+	output, err := gitstate.CombinedOutputText(ctx, commandDir(cfg), "diff", "--binary")
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("git diff --binary: %w", context.DeadlineExceeded)
 		}
 
-		return fmt.Errorf("git diff --binary: %w", result.Err)
+		return err
 	}
 
-	return os.WriteFile(filepath.Clean(path), []byte(result.Stdout), 0o600)
+	return os.WriteFile(filepath.Clean(path), []byte(output), 0o600)
 }
 
 func writeJSONFile(path string, value any) error {

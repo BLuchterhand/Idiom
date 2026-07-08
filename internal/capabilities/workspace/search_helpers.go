@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/textutil"
 	"idiom/internal/repository/discovery"
 )
@@ -68,7 +69,7 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 
 	args := backend.args(req, m.defaultSearchExcludeGlobs(req.Path, req.Pattern, req.Glob))
 
-	execResult := m.runCommandResultWithEnv(parent, workdir, nil, backend.bin, args...)
+	execResult := m.runCommandResult(parent, commandexec.Spec{Mode: commandexec.ModeArgv, Name: backend.bin, Args: args, Dir: workdir})
 	noMatch := execResult.ExitError && execResult.ExitCode == 1
 	if execResult.Err != nil && !noMatch {
 		output := strings.TrimSpace(strings.TrimSpace(execResult.Stdout) + "\n" + strings.TrimSpace(execResult.Stderr))

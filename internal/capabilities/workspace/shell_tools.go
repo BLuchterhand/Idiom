@@ -128,7 +128,7 @@ func (m *Manager) runShell(ctx context.Context, req ToolRequest) ToolResult {
 		}
 	}
 
-	execResult := m.runCommandResultWithEnv(ctx, workdir, nil, m.cfg.Shell, "-lc", command)
+	execResult := m.runCommandResult(ctx, commandexec.Spec{Mode: commandexec.ModeLoginShell, Shell: m.cfg.Shell, Command: command, Dir: workdir})
 	rawOutput := commandexec.CombineOutput(execResult.Stdout, execResult.Stderr)
 	output := m.truncateCommandOutput(rawOutput)
 	result := ToolResult{
