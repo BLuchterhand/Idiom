@@ -283,12 +283,13 @@ func (r *Runner) assessSourceGrounding(answer string, results []workspace.ToolRe
 			}
 		}
 
+		projection := newToolResultEvidenceProjection(results)
 		if (r.PathEvidenceRegistry != nil && r.PathEvidenceRegistry.HasBodyEvidence(citationPath)) ||
-			newToolResultEvidenceProjection(results).HasSourceBody(citationPath) ||
-			readOnlyExternalDocumentBodyReadForPath(citationPath, results) ||
-			slices.Contains(delegatedReadOnlySourceBodyEvidencePaths(results), citationPath) ||
-			sourceGroundingDiagnosticArtifactReadForPath(path, results) ||
-			sourceGroundingDiagnosticArtifactReadForPath(citationPath, results) {
+			projection.HasSourceBody(citationPath) ||
+			len(projection.ExternalDocumentBodyMatches(citationPath)) > 0 ||
+			slices.Contains(projection.ReadOnlySourceBodyEvidencePaths(), citationPath) ||
+			projection.DiagnosticArtifactReadForPath(path) ||
+			projection.DiagnosticArtifactReadForPath(citationPath) {
 			continue
 		}
 
@@ -492,7 +493,7 @@ func sourceCitationCanonicalPath(r *Runner, path string, results []workspace.Too
 		return path, true
 	}
 
-	externalMatches := sourceCitationExternalDocumentBodyMatches(path, results)
+	externalMatches := newToolResultEvidenceProjection(results).ExternalDocumentBodyMatches(path)
 	if strings.Contains(path, "/") || sourceCitationLooksLikeRootPath(path) {
 		if len(externalMatches) == 1 {
 			return externalMatches[0], true
@@ -518,7 +519,7 @@ func sourceCitationCanonicalPath(r *Runner, path string, results []workspace.Too
 }
 
 func sourceCitationAmbiguousBodyEvidence(r *Runner, path string, results []workspace.ToolResult) bool {
-	externalMatches := sourceCitationExternalDocumentBodyMatches(path, results)
+	externalMatches := newToolResultEvidenceProjection(results).ExternalDocumentBodyMatches(path)
 	if len(externalMatches) == 0 {
 		return false
 	}
@@ -537,13 +538,13 @@ func sourceCitationAmbiguousBodyEvidence(r *Runner, path string, results []works
 func sourceCitationHasExactWorkspaceBodyEvidence(r *Runner, path string, results []workspace.ToolResult) bool {
 	return newToolResultEvidenceProjection(results).HasSourceBody(path) ||
 		(r != nil && r.PathEvidenceRegistry != nil && r.PathEvidenceRegistry.HasBodyEvidence(path)) ||
-		slices.Contains(delegatedReadOnlySourceBodyEvidencePaths(results), path)
+		slices.Contains(newToolResultEvidenceProjection(results).ReadOnlySourceBodyEvidencePaths(), path)
 }
 
 func sourceCitationWorkspaceBodyMatches(r *Runner, path string, results []workspace.ToolResult) []string {
 	base := strings.ToLower(filepath.Base(path))
 	var matches []string
-	for _, candidate := range textutil.Merge(newToolResultEvidenceProjection(results).SourceBodyPaths(), delegatedReadOnlySourceBodyEvidencePaths(results)) {
+	for _, candidate := range newToolResultEvidenceProjection(results).ReadOnlySourceBodyEvidencePaths() {
 		candidate = NormalizeRunnerPath(candidate)
 		if candidate == "" || strings.EqualFold(candidate, path) {
 			continue
@@ -561,45 +562,6 @@ func sourceCitationWorkspaceBodyMatches(r *Runner, path string, results []worksp
 	}
 
 	return uniqueSortedRunnerPaths(matches)
-}
-
-func sourceCitationExternalDocumentBodyMatches(path string, results []workspace.ToolResult) []string {
-	path = filepath.ToSlash(NormalizeRunnerPath(path))
-	if path == "" {
-		return nil
-	}
-
-	var matches []string
-	for _, result := range results {
-		for _, candidate := range readOnlyExternalDocumentBodyPathsFromResult(result) {
-			if sourceCitationExternalDocumentPathMatches(path, candidate) {
-				matches = textutil.AppendUnique(matches, candidate)
-			}
-		}
-	}
-
-	return uniqueSortedRunnerPaths(matches)
-}
-
-func sourceCitationExternalDocumentPathMatches(path string, candidate string) bool {
-	path = strings.Trim(path, "`'\"()[]{}<>,;")
-	path = filepath.ToSlash(strings.TrimPrefix(path, "./"))
-	candidate = normalizeReadOnlyExternalDocumentPath(candidate)
-	if path == "" || candidate == "" {
-		return false
-	}
-
-	pathLower := strings.ToLower(path)
-	candidateLower := strings.ToLower(candidate)
-	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" || looksLikeWindowsAbsolutePath(path) {
-		return pathLower == candidateLower
-	}
-
-	if strings.Contains(path, "/") {
-		return strings.HasSuffix(candidateLower, "/"+pathLower)
-	}
-
-	return strings.ToLower(filepath.Base(candidateLower)) == pathLower
 }
 
 func sourceGroundingMentionedPaths(answer string) []string {
@@ -747,10 +709,10 @@ func sourceGroundingUnsupportedEscapingMentionedPaths(answer string, results []w
 
 	var unsupported []string
 	for _, path := range paths {
-		if sourceGroundingDiagnosticArtifactReadForPath(path, results) {
+		if newToolResultEvidenceProjection(results).DiagnosticArtifactReadForPath(path) {
 			continue
 		}
-		if readOnlyExternalDocumentBodyReadForPath(path, results) {
+		if len(newToolResultEvidenceProjection(results).ExternalDocumentBodyMatches(path)) > 0 {
 			continue
 		}
 		if sourceCitationExplicitlyUnverified(answer, path) || sourceCitationExplicitlyNonCurrent(answer, path) {
@@ -1371,7 +1333,7 @@ func sourceGroundingAnswerCitesReadDiagnosticArtifact(answer string, results []w
 	}
 
 	for _, path := range cited {
-		if sourceGroundingDiagnosticArtifactReadForPath(path, results) {
+		if newToolResultEvidenceProjection(results).DiagnosticArtifactReadForPath(path) {
 			return true
 		}
 	}
@@ -1424,47 +1386,11 @@ func sourceGroundingDiagnosticArtifactPathsFromText(text string) []string {
 
 	var out []string
 	for _, path := range paths {
-		path = sourceGroundingNormalizeDiagnosticArtifactPath(path)
+		path = normalizeDiagnosticArtifactEvidencePath(path)
 		if path != "" && IsDiagnosticLogArtifactPath(path) {
 			out = append(out, path)
 		}
 	}
 
 	return uniqueSortedRunnerPaths(out)
-}
-
-func sourceGroundingDiagnosticArtifactReadForPath(path string, results []workspace.ToolResult) bool {
-	needle := sourceGroundingNormalizeDiagnosticArtifactPath(path)
-	if needle == "" || !IsDiagnosticLogArtifactPath(needle) {
-		return false
-	}
-
-	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" ||
-			strings.TrimSpace(result.Tool) != workspace.ToolNameReadFile ||
-			!readFileResultOnlyMentionsDiagnosticLogArtifacts(result) {
-
-			continue
-		}
-
-		for _, readPath := range ReadPathsFromToolResult(result) {
-			if sourceGroundingNormalizeDiagnosticArtifactPath(readPath) == needle {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
-func sourceGroundingNormalizeDiagnosticArtifactPath(path string) string {
-	path = strings.TrimSpace(strings.Trim(path, "`'\" "))
-	if path == "" {
-		return ""
-	}
-
-	path = filepath.ToSlash(path)
-	path = strings.TrimPrefix(path, "./")
-
-	return path
 }

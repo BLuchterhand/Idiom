@@ -106,7 +106,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 			continue
 		}
 
-		if readFileResultOnlyMentionsDiagnosticLogArtifacts(result) {
+		if (toolResultEvidenceProjection{}).GeneratedArtifactOnlyReadResult(result) {
 			paths := readOnlySourceLikePaths(ReadPathsFromToolResult(result), 8)
 			ledger.addItem(readOnlyEvidenceItem{
 				Kind:           readOnlyEvidenceGeneratedArtifact,
@@ -120,8 +120,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 			continue
 		}
 
-		if readOnlyDiagnosticEvidenceResult(result) {
-			paths := readOnlyDiagnosticEvidencePaths(result, 8)
+		if paths, ok := (toolResultEvidenceProjection{}).DiagnosticEvidencePathsFromResult(result, 8); ok {
 			relevant := readOnlyDiagnosticEvidenceMatchesObjective(ledger.Objective, namedTargets, result, paths)
 
 			ledger.DiagnosticEvidence = true
@@ -163,7 +162,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 		}
 
 		if concreteSourceEvidenceResult(result) {
-			for _, path := range readOnlySourceLikePaths(ReadPathsFromToolResult(result), 8) {
+			for _, path := range (toolResultEvidenceProjection{}).SourceBodyPathsFromResult(result) {
 				ledger.addItem(readOnlyEvidenceItem{
 					Kind:    readOnlyEvidenceSourceBody,
 					Tool:    tool,
@@ -176,7 +175,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 				ledger.observeSourceBodyObjectiveSupport(path, result.Output)
 			}
 
-			for _, path := range readOnlyExternalDocumentBodyPathsFromResult(result) {
+			for _, path := range (toolResultEvidenceProjection{}).ExternalDocumentBodyPathsFromResult(result) {
 				ledger.addItem(readOnlyEvidenceItem{
 					Kind:    readOnlyEvidenceExternalDocument,
 					Tool:    tool,
@@ -328,7 +327,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 	}
 
 	ledger.CandidatePaths = textutil.Merge(namedTargets, ledger.CandidatePaths)
-	ledger.SourceBodyPaths = textutil.Merge(ledger.SourceBodyPaths, readOnlyConcreteSourceBodyPaths(results), delegatedReadOnlySourceBodyReadinessPaths(ledger.Objective, results))
+	ledger.SourceBodyPaths = textutil.Merge(ledger.SourceBodyPaths, newToolResultEvidenceProjection(results).SourceBodyPaths(), delegatedReadOnlySourceBodyReadinessPaths(ledger.Objective, results))
 	ledger.promoteCollectiveSourceBodyObjectiveSupport(namedTargets)
 	ledger.markRelevantSourceBodies(namedTargets)
 	ledger.markRelevantExternalDocuments()
@@ -1566,67 +1565,6 @@ func readOnlyPathSet(paths []string) map[string]struct{} {
 	return set
 }
 
-func readOnlyDiagnosticEvidenceResult(result workspace.ToolResult) bool {
-	if strings.TrimSpace(result.Error) != "" {
-		return false
-	}
-
-	tool := strings.ToLower(strings.TrimSpace(result.Tool))
-	if tool == "" {
-		return false
-	}
-
-	if strings.Contains(tool, "diagnostic") || strings.Contains(tool, "source_sanity") || strings.HasSuffix(tool, "_diagnostics") {
-		return strings.TrimSpace(result.Summary) != "" || strings.TrimSpace(result.Output) != ""
-	}
-
-	return false
-}
-
-func readOnlyConcreteSourceBodyPaths(results []workspace.ToolResult) []string {
-	var paths []string
-	for _, result := range results {
-		if !concreteSourceEvidenceResult(result) {
-			continue
-		}
-		paths = textutil.Merge(paths, readOnlySourceLikePaths(ReadPathsFromToolResult(result), 8))
-	}
-	return paths
-}
-
-func readOnlyExternalDocumentBodyPathsFromResult(result workspace.ToolResult) []string {
-	if !concreteSourceEvidenceResult(result) {
-		return nil
-	}
-
-	var paths []string
-	for _, raw := range ReadPathsFromToolResult(result) {
-		path := normalizeReadOnlyExternalDocumentPath(raw)
-		if !readOnlyExternalDocumentBodyPath(path) {
-			continue
-		}
-
-		paths = textutil.AppendUnique(paths, path)
-	}
-
-	return paths
-}
-
-func readOnlyExternalDocumentBodyReadForPath(path string, results []workspace.ToolResult) bool {
-	path = normalizeReadOnlyExternalDocumentPath(path)
-	if path == "" {
-		return false
-	}
-
-	for _, result := range results {
-		if slices.Contains(readOnlyExternalDocumentBodyPathsFromResult(result), path) {
-			return true
-		}
-	}
-
-	return false
-}
-
 func normalizeReadOnlyExternalDocumentPath(path string) string {
 	path = strings.TrimSpace(path)
 	path = strings.Trim(path, "`'\"()[]{}<>,;")
@@ -1679,17 +1617,6 @@ func readOnlyExternalDocumentPathSet(paths []string) map[string]struct{} {
 		set[path] = struct{}{}
 	}
 	return set
-}
-
-func readOnlyDiagnosticEvidencePaths(result workspace.ToolResult, max int) []string {
-	if max <= 0 {
-		max = 8
-	}
-
-	return readOnlySourceLikePaths(textutil.Merge(
-		ReadPathsFromToolResult(result),
-		readOnlyDiagnosticLocationPaths(result.Summary+"\n"+result.Output, max),
-	), max)
 }
 
 func readOnlyDiagnosticLocationPaths(text string, max int) []string {
@@ -3079,7 +3006,7 @@ func answerMentionsExternalDocument(mentionedPaths []string, externalDocumentPat
 
 	for _, path := range mentionedPaths {
 		for _, externalPath := range externalDocumentPaths {
-			if sourceCitationExternalDocumentPathMatches(path, externalPath) {
+			if externalDocumentPathMatchesCitation(path, externalPath) {
 				return true
 			}
 		}
@@ -3095,7 +3022,7 @@ func answerCitesRelevantExternalDocument(mentionedPaths []string, ledger readOnl
 
 	for _, path := range mentionedPaths {
 		for _, relevantPath := range ledger.RelevantExternalDocumentPaths {
-			if sourceCitationExternalDocumentPathMatches(path, relevantPath) {
+			if externalDocumentPathMatchesCitation(path, relevantPath) {
 				return true
 			}
 		}
@@ -3796,8 +3723,9 @@ func buildReadOnlyEvidencePacket(objective string, answer string, results []work
 
 	answer = sanitizeReadOnlyEvidencePacketAnswer(answer)
 
-	sourceBodyPaths := readOnlyEvidencePacketSourceBodyPaths(results)
-	candidatePaths := readOnlyEvidencePacketCandidatePaths(results)
+	projection := newToolResultEvidenceProjection(results)
+	sourceBodyPaths := readOnlyEvidencePacketSourceLikePaths(projection.SourceBodyPaths(), 16)
+	candidatePaths := projection.ReadOnlyEvidencePacketCandidatePaths()
 	inspectedPaths := readOnlyEvidencePacketInspectedPaths(sourceBodyPaths, candidatePaths, answer)
 	findings := readOnlyEvidencePacketFindings(answer, results, sourceBodyPaths, 6)
 	packet := ReadOnlyEvidencePacket{
@@ -3873,18 +3801,6 @@ func readOnlyEvidencePacketFromResult(result workspace.ToolResult) (ReadOnlyEvid
 	}
 
 	return packet, true
-}
-
-func readOnlyEvidencePacketsFromResults(results []workspace.ToolResult) []ReadOnlyEvidencePacket {
-	packets := make([]ReadOnlyEvidencePacket, 0, 2)
-
-	for _, result := range results {
-		if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
-			packets = append(packets, packet)
-		}
-	}
-
-	return packets
 }
 
 func renderReadOnlyEvidencePacketForToolOutput(packet ReadOnlyEvidencePacket, answer string) string {
@@ -4258,38 +4174,6 @@ func readOnlyEvidencePacketNamesObjectiveSource(packet ReadOnlyEvidencePacket, o
 	return false
 }
 
-func readOnlyEvidencePacketSourceBodyPaths(results []workspace.ToolResult) []string {
-	paths := make([]string, 0, 4)
-
-	paths = append(paths, newToolResultEvidenceProjection(results).SourceBodyPaths()...)
-
-	return readOnlyEvidencePacketSourceLikePaths(paths, 16)
-}
-
-func readOnlyEvidencePacketCandidatePaths(results []workspace.ToolResult) []string {
-	paths := make([]string, 0, 8)
-
-	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-
-		tool := strings.TrimSpace(result.Tool)
-		switch {
-		case (toolResultEvidenceProjection{}).DiscoveryCandidateTool(tool):
-			paths = append(paths, (toolResultEvidenceProjection{}).CandidatePathsFromResult(result, 16)...)
-		case tool == workspace.ToolNameContextPack:
-			paths = append(paths, (toolResultEvidenceProjection{}).CandidatePathsFromResult(result, 16)...)
-		case workspace.IsSearchToolName(tool):
-			paths = append(paths, (toolResultEvidenceProjection{}).CandidatePathsFromResult(result, 64)...)
-		default:
-			paths = append(paths, ReadPathsFromToolResult(result)...)
-		}
-	}
-
-	return readOnlyEvidencePacketSourceLikePaths(paths, 16)
-}
-
 func readOnlyEvidencePacketInspectedPaths(sourceBodyPaths []string, candidatePaths []string, answer string) []string {
 	paths := append([]string{}, sourceBodyPaths...)
 
@@ -4522,21 +4406,6 @@ func discoveryConsumptionCandidatesFromResult(result workspace.ToolResult, max i
 	}
 
 	return promptEvidencePathsFromToolResults([]workspace.ToolResult{result}, max)
-}
-
-func readFileResultOnlyMentionsDiagnosticLogArtifacts(result workspace.ToolResult) bool {
-	paths := ReadPathsFromToolResult(result)
-	if len(paths) == 0 {
-		return false
-	}
-
-	for _, path := range paths {
-		if !IsNonSourceEvidenceArtifactPath(path) {
-			return false
-		}
-	}
-
-	return true
 }
 
 func delegatedDiscoveryPathPriority(path string) int {

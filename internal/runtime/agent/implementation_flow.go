@@ -2223,7 +2223,7 @@ func (r *Runner) composedFinalAnswerFromEvidence(input FinalAnswerDecorateInput)
 
 	delegatedOwnerReady := delegatedImplementationShapeSynthesisAllowed(input.Brief, input.Results)
 	if delegatedOwnerReady {
-		if answer, ok := synthesizeReadOnlyEvidencePacketAnswer(input.Brief.Objective, readOnlyEvidencePacketsFromResults(input.Results)); ok {
+		if answer, ok := synthesizeReadOnlyEvidencePacketAnswer(input.Brief.Objective, newToolResultEvidenceProjection(input.Results).ReadOnlyEvidencePackets()); ok {
 			return answer, true
 		}
 	}
@@ -2508,7 +2508,7 @@ func presentableExternalDocumentEvidenceAnswer(brief workerruntime.WorkerRuntime
 			continue
 		}
 
-		paths := readOnlyExternalDocumentBodyPathsFromResult(result)
+		paths := (toolResultEvidenceProjection{}).ExternalDocumentBodyPathsFromResult(result)
 		if len(paths) == 0 {
 			continue
 		}
@@ -5354,7 +5354,7 @@ func (r *Runner) delegatedChildFallbackSourceRead(ctx context.Context, prompt st
 }
 
 func delegatedChildFallbackSourceReadNeeded(prompt string, results []workspace.ToolResult) bool {
-	return len(delegatedReadOnlySourceBodyEvidencePaths(results)) == 0
+	return len(newToolResultEvidenceProjection(results).ReadOnlySourceBodyEvidencePaths()) == 0
 }
 
 func normalizeReadOnlyChildPrompt(prompt string) string {
@@ -6084,37 +6084,6 @@ func delegatedSourceBodyPacketHasGroundedFinding(output string) bool {
 	return delegatedTaskOutputHasFindingEvidence(output)
 }
 
-func delegatedReadOnlySourceBodyEvidencePaths(results []workspace.ToolResult) []string {
-	paths := make([]string, 0, 4)
-
-	paths = append(paths, newToolResultEvidenceProjection(results).SourceBodyPaths()...)
-
-	for _, result := range results {
-		if strings.TrimSpace(result.Tool) != workspace.ToolNameTask || strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-
-		if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
-			paths = append(paths, packet.SourceBodyPaths...)
-			continue
-		}
-
-		paths = append(paths, sourceBodyEvidencePathsFromDelegatedPacket(result.Output)...)
-	}
-
-	filtered := make([]string, 0, len(paths))
-	for _, raw := range paths {
-		path := normalizeDelegatedDiscoveryEvidencePath(raw)
-		if !isGroundedChildPacketEvidencePath("", path) {
-			continue
-		}
-
-		filtered = append(filtered, path)
-	}
-
-	return uniqueDelegatedDiscoveryPaths(filtered)
-}
-
 func allowsDocumentationOnlyPacket(objective string) bool {
 	lower := " " + strings.ToLower(strings.TrimSpace(objective)) + " "
 	return ContainsAny(lower, " readme ", " doc ", " docs ", " documentation ", " markdown ")
@@ -6239,7 +6208,7 @@ func synthesizeDelegatedReadOnlyAnswer(objective string, results []workspace.Too
 		useful = append(useful, sanitizedResult)
 	}
 
-	if answer, ok := synthesizeReadOnlyEvidencePacketAnswer(objective, readOnlyEvidencePacketsFromResults(answerabilityResults)); ok {
+	if answer, ok := synthesizeReadOnlyEvidencePacketAnswer(objective, newToolResultEvidenceProjection(answerabilityResults).ReadOnlyEvidencePackets()); ok {
 		return answer, true
 	}
 

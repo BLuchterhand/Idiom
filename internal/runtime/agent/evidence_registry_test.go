@@ -404,7 +404,7 @@ func TestPathEvidenceContextDiscoveryCandidateParity(t *testing.T) {
 			if got := newToolResultEvidenceProjection(results).CandidatePaths(); !slices.Contains(got, sourcePath) {
 				t.Fatalf("raw candidate paths = %#v, want %q", got, sourcePath)
 			}
-			if got := readOnlyEvidencePacketCandidatePaths(results); !slices.Contains(got, sourcePath) {
+			if got := newToolResultEvidenceProjection(results).ReadOnlyEvidencePacketCandidatePaths(); !slices.Contains(got, sourcePath) {
 				t.Fatalf("packet candidate paths = %#v, want %q", got, sourcePath)
 			}
 
@@ -451,7 +451,7 @@ func TestPathEvidenceContextZoomCandidateOnlyRegistersUnreadCandidate(t *testing
 	if got := newToolResultEvidenceProjection(results).CandidatePaths(); !slices.Contains(got, sourcePath) {
 		t.Fatalf("raw candidate paths = %#v, want %q", got, sourcePath)
 	}
-	if got := readOnlyEvidencePacketCandidatePaths(results); !slices.Contains(got, sourcePath) {
+	if got := newToolResultEvidenceProjection(results).ReadOnlyEvidencePacketCandidatePaths(); !slices.Contains(got, sourcePath) {
 		t.Fatalf("packet candidate paths = %#v, want %q", got, sourcePath)
 	}
 
@@ -513,7 +513,7 @@ func TestPathEvidenceContextZoomGraphOutputRegistersUnreadCandidate(t *testing.T
 	if newToolResultEvidenceProjection(results).HasSourceBody(sourcePath) {
 		t.Fatal("production-shaped context_zoom graph output must not count as raw source-body evidence")
 	}
-	if got := readOnlyEvidencePacketCandidatePaths(results); !slices.Contains(got, sourcePath) {
+	if got := newToolResultEvidenceProjection(results).ReadOnlyEvidencePacketCandidatePaths(); !slices.Contains(got, sourcePath) {
 		t.Fatalf("packet candidate paths = %#v, want %q", got, sourcePath)
 	}
 
@@ -1503,5 +1503,57 @@ func TestToolResultEvidenceProjectionChangedPaths(t *testing.T) {
 	wantStore := []string{"internal/app/request-edit.go", "internal/app/request.go"}
 	if got := store.ChangedPaths(); !slices.Equal(got, wantStore) {
 		t.Fatalf("state store changed paths = %#v, want %#v", got, wantStore)
+	}
+}
+
+func TestToolResultEvidenceProjectionReadOnlyCategoryBoundaries(t *testing.T) {
+	sourcePath := "internal/runtime/agent/evidence_projection.go"
+	externalPath := filepath.Join(t.TempDir(), "Mobile Documents", "Project Notes", "brief.md")
+	diagnosticPath := "internal/runtime/agent/runner_core.go"
+	taskPath := "internal/runtime/agent/evidence_readonly.go"
+	results := []workspace.ToolResult{
+		{
+			Tool:    workspace.ToolNameReadFile,
+			Summary: "Read " + externalPath + " lines 1-20",
+			Output:  "1:external planning notes\n",
+			Paths:   []string{externalPath},
+		},
+		{
+			Tool:    workspace.ToolNameSourceSanity,
+			Summary: "source_sanity failed for " + diagnosticPath,
+			Output:  diagnosticPath + ":10: undefined: Runner\n",
+		},
+		typedReadOnlyTaskResult(ReadOnlyEvidencePacket{
+			Objective:       "Explain read-only packet evidence.",
+			Question:        "Explain read-only packet evidence.",
+			SourceBodyPaths: []string{taskPath},
+			Findings: []ReadOnlyEvidenceFinding{{
+				Path: taskPath,
+				Text: "Read-only evidence packets carry delegated source-body paths.",
+			}},
+		}),
+		{
+			Tool:    workspace.ToolNameReadFile,
+			Summary: "Read " + sourcePath + " lines 1-20",
+			Output:  "1:package agent\n",
+			Paths:   []string{sourcePath},
+		},
+	}
+
+	projection := newToolResultEvidenceProjection(results)
+	if slices.Contains(projection.SourceBodyPaths(), externalPath) {
+		t.Fatalf("external document leaked into workspace source-body paths: %#v", projection.SourceBodyPaths())
+	}
+	if got := projection.ExternalDocumentBodyMatches("brief.md"); !slices.Contains(got, externalPath) {
+		t.Fatalf("external document matches = %#v, want %q", got, externalPath)
+	}
+	if paths, ok := (toolResultEvidenceProjection{}).DiagnosticEvidencePathsFromResult(results[1], 8); !ok || !slices.Contains(paths, diagnosticPath) {
+		t.Fatalf("diagnostic evidence paths = %#v, ok=%v, want %q", paths, ok, diagnosticPath)
+	}
+	if got := projection.ReadOnlySourceBodyEvidencePaths(); !slices.Contains(got, sourcePath) || !slices.Contains(got, taskPath) {
+		t.Fatalf("read-only source-body evidence paths = %#v, want direct %q and delegated %q", got, sourcePath, taskPath)
+	}
+	if got := projection.ChangedPathList(); len(got) != 0 {
+		t.Fatalf("read-only category evidence must not become changed paths: %#v", got)
 	}
 }

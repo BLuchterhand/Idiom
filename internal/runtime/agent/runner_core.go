@@ -5407,7 +5407,7 @@ func acceptedMentionedEvidenceResultForObjective(result workspace.ToolResult, ob
 		return false
 	}
 
-	if concreteSourceEvidenceResult(result) || readOnlyDiagnosticEvidenceResult(result) {
+	if _, diagnostic := (toolResultEvidenceProjection{}).DiagnosticEvidencePathsFromResult(result, 8); concreteSourceEvidenceResult(result) || diagnostic {
 		return true
 	}
 
@@ -10629,7 +10629,11 @@ func (r *Runner) readOnlyEvidenceCompletionRejection(reply string, results []wor
 
 func readOnlyAnswerHasConcreteEvidence(results []workspace.ToolResult) bool {
 	for _, result := range results {
-		if concreteSourceEvidenceResult(result) || len(readOnlyExternalDocumentBodyPathsFromResult(result)) > 0 || readOnlyDiagnosticEvidenceResult(result) {
+		_, diagnostic := (toolResultEvidenceProjection{}).DiagnosticEvidencePathsFromResult(result, 8)
+		if concreteSourceEvidenceResult(result) ||
+			len((toolResultEvidenceProjection{}).ExternalDocumentBodyPathsFromResult(result)) > 0 ||
+			diagnostic {
+
 			return true
 		}
 	}
@@ -13351,7 +13355,7 @@ func (p delegatedDiscoveryPlan) repairDiscoveryQuery(req workspace.ToolRequest) 
 }
 
 func (p delegatedDiscoveryPlan) candidateConsumptionRequest(results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, bool) {
-	if !slices.Contains(allowedTools, "read_file") || len(delegatedReadOnlySourceBodyEvidencePaths(results)) > 0 {
+	if !slices.Contains(allowedTools, "read_file") || len(newToolResultEvidenceProjection(results).ReadOnlySourceBodyEvidencePaths()) > 0 {
 		return workspace.ToolRequest{}, false
 	}
 
@@ -14888,7 +14892,7 @@ func (r *Runner) delegatedReadOnlyPostDiscoveryInventoryRedirect(results []works
 }
 
 func delegatedReadOnlyPostDiscoveryOutlineReadRedirect(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
-	if len(results) == 0 || len(delegatedReadOnlySourceBodyEvidencePaths(results)) > 0 {
+	if len(results) == 0 || len(newToolResultEvidenceProjection(results).ReadOnlySourceBodyEvidencePaths()) > 0 {
 		return workspace.ToolRequest{}, false
 	}
 
@@ -15695,7 +15699,7 @@ func readOnlyAnalysisExactProbeCount(results []workspace.ToolResult) int {
 
 		switch strings.TrimSpace(result.Tool) {
 		case "read_file":
-			if readFileResultOnlyMentionsDiagnosticLogArtifacts(result) {
+			if (toolResultEvidenceProjection{}).GeneratedArtifactOnlyReadResult(result) {
 				continue
 			}
 
@@ -16861,7 +16865,7 @@ func postChildDiminishingReturnsNudge(objective string, results []workspace.Tool
 
 func delegatedClosureEvidencePaths(objective string, results []workspace.ToolResult, max int) []string {
 	paths := make([]string, 0, max*2)
-	for _, packet := range readOnlyEvidencePacketsFromResults(results) {
+	for _, packet := range newToolResultEvidenceProjection(results).ReadOnlyEvidencePackets() {
 		paths = append(paths, packet.SourceBodyPaths...)
 		paths = append(paths, packet.InspectedPaths...)
 		paths = append(paths, packet.CandidatePaths...)
@@ -21259,7 +21263,7 @@ func promptEvidencePathsFromToolResults(results []workspace.ToolResult, max int)
 	paths := make([]string, 0, max*2)
 	directPaths := directProbePathsFromToolResults(results, max)
 
-	for _, packet := range readOnlyEvidencePacketsFromResults(results) {
+	for _, packet := range newToolResultEvidenceProjection(results).ReadOnlyEvidencePackets() {
 		paths = append(paths, packet.SourceBodyPaths...)
 		paths = append(paths, packet.InspectedPaths...)
 	}
@@ -22200,7 +22204,7 @@ func acceptedAnswerEvidencePaths(answer string, results []workspace.ToolResult, 
 
 	if readOnlyExplanationGateApplies(brief) {
 		paths := textutil.Merge(exactProbeEvidencePaths(results), pathparse.MentionedWorkspacePaths(answer))
-		for _, packet := range readOnlyEvidencePacketsFromResults(results) {
+		for _, packet := range newToolResultEvidenceProjection(results).ReadOnlyEvidencePackets() {
 			if readOnlyEvidencePacketAnswerableForObjective(packet, brief.Objective) {
 				paths = textutil.Merge(paths, packet.SourceBodyPaths, packet.InspectedPaths)
 			}
@@ -22220,7 +22224,7 @@ func acceptedAnswerEvidencePaths(answer string, results []workspace.ToolResult, 
 	}
 
 	paths := textutil.Merge(pinnedPathsFromToolResults(results, 8), pathparse.MentionedWorkspacePaths(answer))
-	for _, packet := range readOnlyEvidencePacketsFromResults(results) {
+	for _, packet := range newToolResultEvidenceProjection(results).ReadOnlyEvidencePackets() {
 		if readOnlyEvidencePacketAnswerableForObjective(packet, brief.Objective) {
 			paths = textutil.Merge(paths, packet.SourceBodyPaths, packet.InspectedPaths)
 		}
