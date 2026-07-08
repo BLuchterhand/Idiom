@@ -333,6 +333,7 @@ func (m *Manager) contextPack(ctx context.Context, req ToolRequest) ToolResult {
 		Tool:    ToolNameContextPack,
 		Summary: fmt.Sprintf("Context pack wrote %s with %d candidate file(s), %d symbol(s), and %d test(s)%s%s", result.ArtifactPath, len(result.CandidateFiles), len(result.CandidateSymbols), len(result.Tests), gap, refreshSummary),
 		Output:  string(output),
+		Facts:   contextPackToolResultFacts(result),
 	}
 }
 

@@ -51,11 +51,11 @@ func discoveryConsumptionResultStrengthFromLegacySemantics(req workspace.ToolReq
 	tool := strings.TrimSpace(req.Tool)
 	switch {
 	case tool == workspace.ToolNameContextPack:
-		if !contextPackResultHasTargets(result) {
+		if result.Facts == nil || !result.Facts.HasDiscoveryTargets {
 			return discoveryConsumptionNone
 		}
 
-		if contextPackResultWeakSourceOwner(result) {
+		if strings.TrimSpace(result.Facts.LocalizationConfidence) == "low" && !result.Facts.SourceOwnerFound {
 			return discoveryConsumptionCandidateOnly
 		}
 

@@ -3043,7 +3043,7 @@ func TestReadOnlyAnswerabilityContextPacketOnlyLocalizes(t *testing.T) {
 	results := []workspace.ToolResult{{
 		Tool:    "context_pack",
 		Summary: "Context pack wrote .idiom/comprehension/views/pack.json",
-		Output:  `{"candidate_files":[{"path":"internal/runtime/agent/runner_core.go"}]}`,
+		Facts:   contextPackCandidateFactsForTest("internal/runtime/agent/runner_core.go"),
 	}}
 
 	ledger := readOnlyAnswerabilityForResults(brief, results)
@@ -3213,7 +3213,7 @@ func TestReadOnlyAnswerabilityContextPackCandidateRequiresObjectiveRelevantSourc
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote .idiom/comprehension/views/pack.json",
-			Output:  `{"candidate_files":[{"path":"internal/surfaces/tui/app/rendering.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/rendering.go"),
 		},
 		{
 			Tool:    "code_navigate",
@@ -3271,7 +3271,10 @@ func TestReadOnlyAnswerabilityPromotesCollectiveSourceBodyObjectiveSupport(t *te
 	contextOnly := []workspace.ToolResult{{
 		Tool:    "context_pack",
 		Summary: "Context pack returned weak candidates",
-		Output:  `{"candidate_files":[{"path":"internal/surfaces/tui/app/update_handlers.go"},{"path":"internal/surfaces/tui/app/rendering.go"}]}`,
+		Facts: contextPackCandidateFactsForTest(
+			"internal/surfaces/tui/app/update_handlers.go",
+			"internal/surfaces/tui/app/rendering.go",
+		),
 	}}
 
 	ledger := readOnlyAnswerabilityForResults(brief, contextOnly)
@@ -3359,7 +3362,10 @@ func TestFinalAnswerAcceptanceAllowsCollectiveSourceBodyObjectiveAnswer(t *testi
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack returned weak candidates",
-			Output:  `{"candidate_files":[{"path":"internal/surfaces/tui/app/update_handlers.go"},{"path":"internal/surfaces/tui/app/rendering.go"}]}`,
+			Facts: contextPackCandidateFactsForTest(
+				"internal/surfaces/tui/app/update_handlers.go",
+				"internal/surfaces/tui/app/rendering.go",
+			),
 		},
 		{
 			Tool:    "read_file",
@@ -3401,7 +3407,10 @@ func TestFinalAnswerAcceptanceAllowsWhatWouldItTakeAnswerFromDiscoveredTUISource
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote weak packet",
-			Output:  `{"candidate_files":[{"path":"internal/runtime/agent/runner_core.go"},{"path":"internal/surfaces/tui/app/app.go"}]}`,
+			Facts: contextPackCandidateFactsForTest(
+				"internal/runtime/agent/runner_core.go",
+				"internal/surfaces/tui/app/app.go",
+			),
 		},
 		{
 			Tool:    "read_file",
@@ -3487,7 +3496,10 @@ func TestFinalAnswerAcceptanceTreatsEchoedObjectivePathInventoryAsAdvisory(t *te
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote packet",
-			Output:  `{"candidate_files":[{"path":"internal/surfaces/tui/app/update_handlers.go"},{"path":"internal/surfaces/tui/app/sessions_panel.go"}]}`,
+			Facts: contextPackCandidateFactsForTest(
+				"internal/surfaces/tui/app/update_handlers.go",
+				"internal/surfaces/tui/app/sessions_panel.go",
+			),
 		},
 		{
 			Tool:    "read_file",
@@ -3564,7 +3576,7 @@ func TestReadOnlyAnswerabilityDoesNotPromoteUnrelatedCollectiveSourceBodies(t *t
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack returned a real candidate unrelated to later reads",
-			Output:  `{"candidate_files":[{"path":"internal/surfaces/tui/app/update_handlers.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/update_handlers.go"),
 		},
 		{
 			Tool:    "read_file",
@@ -3614,7 +3626,7 @@ func TestReadOnlyAnswerabilityDoesNotTreatSessionsPanelAsChatRecallOwner(t *test
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack returned candidate internal/surfaces/tui/app/sessions_panel.go",
-			Output:  `{"candidate_files":[{"path":"internal/surfaces/tui/app/sessions_panel.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/sessions_panel.go"),
 		},
 		{
 			Tool:    "code_navigate",
@@ -3642,7 +3654,7 @@ func TestReadOnlyAnswerabilityDoesNotTreatSessionsPanelAsChatRecallOwner(t *test
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack returned candidate internal/surfaces/tui/app/help_overlay.go",
-			Output:  `{"candidate_files":[{"path":"internal/surfaces/tui/app/help_overlay.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/help_overlay.go"),
 		},
 		{
 			Tool:    "code_navigate",
@@ -3803,7 +3815,10 @@ func TestFinalAnswerAcceptanceRejectsSessionsPanelAsChatRecallOwner(t *testing.T
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack returned candidate internal/surfaces/tui/app/sessions_panel.go",
-			Output:  `{"candidate_files":[{"path":"internal/surfaces/tui/app/sessions_panel.go"},{"path":"internal/surfaces/tui/app/model_state.go"}]}`,
+			Facts: contextPackCandidateFactsForTest(
+				"internal/surfaces/tui/app/sessions_panel.go",
+				"internal/surfaces/tui/app/model_state.go",
+			),
 		},
 		{
 			Tool:    "code_navigate",
@@ -4297,7 +4312,7 @@ func TestReadOnlyAnswerabilityRejectsRetainedContextFinalWithoutSourceBody(t *te
 	results := []workspace.ToolResult{{
 		Tool:    "context_pack",
 		Summary: "Context pack wrote .idiom/comprehension/views/pack.json",
-		Output:  `{"candidate_files":[{"path":"internal/runtime/agent/runner_core.go"}]}`,
+		Facts:   contextPackCandidateFactsForTest("internal/runtime/agent/runner_core.go"),
 	}}
 	answer := "The retained source context identifies the relevant implementation surface as `internal/runtime/agent/runner_core.go`."
 	runner := &Runner{RuntimeBrief: brief}
@@ -4319,7 +4334,10 @@ func TestFinalAnswerAcceptanceRejectsGroundingAndKeepsObjectiveDiagnostic(t *tes
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote packet",
-			Output:  `{"candidate_files":[{"path":"docs/decisioning-north-star.md"},{"path":"internal/runtime/agent/tools_surface.go"}]}`,
+			Facts: contextPackCandidateFactsForTest(
+				"docs/decisioning-north-star.md",
+				"internal/runtime/agent/tools_surface.go",
+			),
 		},
 		{
 			Tool:    "read_file",
@@ -4582,7 +4600,10 @@ func TestFinalAnswerAcceptanceTreatsOffObjectiveSourceBackedAnswerAsAdvisory(t *
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote packet",
-			Output:  `{"candidate_files":[{"path":"internal/surfaces/tui/app/rendering.go"},{"path":"internal/surfaces/tui/app/model.go"}]}`,
+			Facts: contextPackCandidateFactsForTest(
+				"internal/surfaces/tui/app/rendering.go",
+				"internal/surfaces/tui/app/model.go",
+			),
 		},
 		{
 			Tool:    "read_file",
@@ -4605,7 +4626,7 @@ func TestFinalAnswerAcceptanceTreatsObjectiveParrotWithWrongSourceAsAdvisory(t *
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote packet",
-			Output:  `{"candidate_files":[{"path":"internal/surfaces/tui/app/rendering.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/rendering.go"),
 		},
 		{
 			Tool:    "read_file",
@@ -4641,7 +4662,7 @@ func TestFinalAnswerAcceptanceAppliesToDirectAnswerTaskFamilyAlias(t *testing.T)
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote packet",
-			Output:  `{"candidate_files":[{"path":"internal/surfaces/tui/app/rendering.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/rendering.go"),
 		},
 		{
 			Tool:    "read_file",
@@ -4663,7 +4684,7 @@ func TestFinalAnswerAcceptanceTreatsAliasInsufficientEvidenceWithoutSourceBodyAs
 	results := []workspace.ToolResult{{
 		Tool:    "context_pack",
 		Summary: "Context pack wrote packet",
-		Output:  `{"candidate_files":[{"path":"internal/surfaces/tui/app/rendering.go"}]}`,
+		Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/rendering.go"),
 	}}
 	answer := "I cannot determine from the available evidence why the TUI chat input first wraps to a newline."
 	runner := &Runner{RuntimeBrief: brief}
@@ -4755,7 +4776,7 @@ func TestFinalAnswerAcceptanceTreatsAliasObjectiveParrotWithWrongSourceAsAdvisor
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote packet",
-			Output:  `{"candidate_files":[{"path":"internal/surfaces/tui/app/rendering.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/rendering.go"),
 		},
 		{
 			Tool:    "read_file",
@@ -4778,7 +4799,7 @@ func TestGenericReadOnlyEvidenceReadyRejectsAliasWrongSource(t *testing.T) {
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote packet",
-			Output:  `{"candidate_files":[{"path":"internal/surfaces/tui/app/rendering.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/rendering.go"),
 		},
 		{
 			Tool:    "read_file",
@@ -4801,7 +4822,7 @@ func TestConversationEvidenceSatisfiedNormalizesDirectAnswerAlias(t *testing.T) 
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote packet",
-			Output:  `{"candidate_files":[{"path":"internal/surfaces/tui/app/rendering.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/rendering.go"),
 		},
 		{
 			Tool:    "read_file",
@@ -4832,7 +4853,7 @@ func TestRunnerReadinessStateNormalizesDirectAnswerAlias(t *testing.T) {
 	results := []workspace.ToolResult{{
 		Tool:    "context_pack",
 		Summary: "Context pack wrote packet",
-		Output:  `{"candidate_files":[{"path":"internal/surfaces/tui/app/rendering.go"}]}`,
+		Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/rendering.go"),
 	}}
 
 	readiness := runnerReadinessState("main", brief, results)
@@ -5133,7 +5154,7 @@ func TestFinalAnswerAcceptanceKeepsCandidateOnlyCitationHardRejectedAfterLowConf
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote packet",
-			Output:  `{"candidate_files":[{"path":"internal/runtime/agent/runner_tests_test.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("internal/runtime/agent/runner_tests_test.go"),
 		},
 		{
 			Tool:    "read_file",
@@ -5161,7 +5182,7 @@ func TestFinalAnswerAcceptanceTreatsLowConfidenceWrongSourceCitationAsAdvisory(t
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote packet",
-			Output:  `{"candidate_files":[{"path":"docs/decisioning-north-star.md"}]}`,
+			Facts:   contextPackCandidateFactsForTest("docs/decisioning-north-star.md"),
 		},
 		{
 			Tool:    "read_file",
@@ -5291,7 +5312,10 @@ func TestAcceptedAnswerEvidencePathsPreferObjectiveRelevantSourceBody(t *testing
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote packet",
-			Output:  `{"candidate_files":[{"path":"internal/runtime/agent/runner_core.go"},{"path":"internal/surfaces/tui/app/rendering.go"}]}`,
+			Facts: contextPackCandidateFactsForTest(
+				"internal/runtime/agent/runner_core.go",
+				"internal/surfaces/tui/app/rendering.go",
+			),
 		},
 		{
 			Tool:    "read_file",
@@ -5320,7 +5344,7 @@ func TestAcceptedAnswerEvidencePathsAliasIgnoresUnrelatedCandidateBody(t *testin
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote packet",
-			Output:  `{"candidate_files":[{"path":"internal/surfaces/tui/app/rendering.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/rendering.go"),
 		},
 		{
 			Tool:    "read_file",
@@ -6658,7 +6682,7 @@ func TestSourceEvidenceNonBodySignalsDoNotCloseSourceBodyObligations(t *testing.
 			result: workspace.ToolResult{
 				Tool:    "context_pack",
 				Summary: "Context pack includes internal/runtime/agent/runner_core.go.",
-				Output:  `{"candidates":[{"path":"internal/runtime/agent/runner_core.go","reason":"ranked"}]}`,
+				Facts:   contextPackCandidateFactsForTest("internal/runtime/agent/runner_core.go"),
 			},
 		},
 		{
@@ -6705,7 +6729,7 @@ func TestSourceEvidenceCandidatePathsUseContextPackCandidates(t *testing.T) {
 	results := []workspace.ToolResult{{
 		Tool:    workspace.ToolNameContextPack,
 		Summary: "Context pack includes evidence_readonly.go.",
-		Output:  `{"candidate_files":[{"path":"evidence_readonly.go","reason":"ranked"}]}`,
+		Facts:   contextPackCandidateFactsForTest("evidence_readonly.go"),
 	}}
 
 	paths := newToolResultEvidenceProjection(results).CandidatePaths()
@@ -12743,7 +12767,7 @@ func TestDeterministicPlanExecuteGroundingRecoveryReadsRejectedMissingSourcePath
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote view",
-			Output:  `{"candidate_files":[{"path":"internal/runtime/agent/runner_core.go","role":"editable"}]}`,
+			Facts:   contextPackCandidateFactsForTest("internal/runtime/agent/runner_core.go"),
 		},
 	})
 
@@ -12772,7 +12796,7 @@ func TestDeterministicPlanExecuteGroundingRecoveryPrioritizesRejectedMissingSour
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote view",
-			Output:  `{"candidate_files":[{"path":"internal/runtime/agent/runner_core.go","role":"editable"}]}`,
+			Facts:   contextPackCandidateFactsForTest("internal/runtime/agent/runner_core.go"),
 		},
 		{
 			Tool:    "search_content",
@@ -12806,7 +12830,7 @@ func TestDeterministicPlanExecuteGroundingRecoveryDoesNotStealTerminalReply(t *t
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote view",
-			Output:  `{"candidate_files":[{"path":"internal/runtime/agent/runner_core.go","role":"editable"}]}`,
+			Facts:   contextPackCandidateFactsForTest("internal/runtime/agent/runner_core.go"),
 		},
 	})
 
@@ -13784,7 +13808,7 @@ func TestPlanThenExecuteCandidateRejectedPlanRefreshRedirectsToSyntaxLine(t *tes
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote candidates",
-			Output:  `{"candidate_files":[{"path":"internal/workflows/productworkflow/coverage_gate.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("internal/workflows/productworkflow/coverage_gate.go"),
 		},
 		{
 			Tool:    "read_file",
@@ -18342,7 +18366,7 @@ func TestPlanExecuteOpenCandidateTerminalWaitsForUnreadContextCandidate(t *testi
 		{
 			Tool:    "context_pack",
 			Summary: "context pack",
-			Output:  `{"candidate_files":[{"path":"pkg/feature.go"},{"path":"pkg/feature_test.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("pkg/feature.go", "pkg/feature_test.go"),
 		},
 		{
 			Tool:    "read_file",
@@ -18380,7 +18404,7 @@ func TestPlanExecuteCompletionRecoveryKeepsReadsForUnreadContextCandidate(t *tes
 		{
 			Tool:    "context_pack",
 			Summary: "context pack",
-			Output:  `{"candidate_files":[{"path":"pkg/feature.go"},{"path":"pkg/feature_test.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("pkg/feature.go", "pkg/feature_test.go"),
 		},
 		{
 			Tool:    "read_file",
@@ -18406,7 +18430,10 @@ func TestPlanExecuteUnreadCandidateRecoveryDropsMissingFileEvidence(t *testing.T
 		{
 			Tool:    "context_pack",
 			Summary: "context pack",
-			Output:  `{"candidate_files":[{"path":"cmd/idiom/analysis_agents.go"},{"path":"internal/workflows/productworkflow/coverage_gate.go"}]}`,
+			Facts: contextPackCandidateFactsForTest(
+				"cmd/idiom/analysis_agents.go",
+				"internal/workflows/productworkflow/coverage_gate.go",
+			),
 		},
 		{
 			Tool:    "read_file",
@@ -18438,7 +18465,10 @@ func TestPlanExecuteLoopBudgetRecoveryAfterSymbolMissKeepsUnreadCandidatePath(t 
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
-			Output:  `{"candidate_files":[{"path":"internal/workflows/productworkflow/coverage_gate.go"},{"path":"internal/productcmd/product_workflow.go"}]}`,
+			Facts: contextPackCandidateFactsForTest(
+				"internal/workflows/productworkflow/coverage_gate.go",
+				"internal/productcmd/product_workflow.go",
+			),
 		},
 		{
 			Tool:    "code_navigate",
@@ -18487,7 +18517,10 @@ func TestPlanExecuteLoopBudgetRecoveryDoesNotUseUnreadCandidateEscapeAfterSource
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack",
-			Output:  `{"candidate_files":[{"path":"internal/workflows/productworkflow/coverage_gate.go"},{"path":"internal/productcmd/product_workflow.go"}]}`,
+			Facts: contextPackCandidateFactsForTest(
+				"internal/workflows/productworkflow/coverage_gate.go",
+				"internal/productcmd/product_workflow.go",
+			),
 		},
 		{
 			Tool:    "read_file",
@@ -18521,7 +18554,7 @@ func TestPlanExecuteUnscopedEmptySubmitPlanRejectionReopensCandidateSurface(t *t
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
-			Output:  `{"candidate_files":[{"path":"pkg/feature.go"},{"path":"pkg/feature_test.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("pkg/feature.go", "pkg/feature_test.go"),
 		},
 		{
 			Tool:    "read_file",
@@ -19568,7 +19601,7 @@ func TestPlanExecuteContextPackCandidateReadyFiltersSubmitPlanOnly(t *testing.T)
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 1 candidate file(s)",
-			Output:  `{"candidate_files":[{"path":"pkg/feature.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("pkg/feature.go"),
 		},
 		{
 			Tool:    "read_file",
@@ -21399,10 +21432,6 @@ func TestReadPathsFromResultsDoesNotCountRouteSummaryWithoutSourceBody(t *testin
 
 const syntheticPolicyGuardApplyObjective = "We are continuing TDD completion work from docs/design-prd-adr-brief-research-workflow.md. Implement one bounded topic only: policy guard apply must reject predictable staging temp symlinks before durable writes. Focus on the policy guard apply path, not the surrounding workflow boilerplate. Add regression tests proving staging temp symlinks are rejected without partial mutation. Use repo discovery first, make the minimal code changes, and run the focused tests."
 
-func syntheticPolicyGuardApplyContextPackOutput() string {
-	return `{"candidate_files":[{"path":"internal/policy/guard.go"},{"path":"internal/policy/guard_apply.go"}]}`
-}
-
 func syntheticPolicyGuardApplySearchOutput() string {
 	return strings.Join([]string{
 		`internal/policy/guard.go:34: // policy guard planning metadata`,
@@ -21441,7 +21470,7 @@ func TestCompletionGateRecoveryPromptKeepsUnreadDiscoveredCandidateReadVisible(t
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
-			Output:  syntheticPolicyGuardApplyContextPackOutput(),
+			Facts:   contextPackCandidateFactsForTest("internal/policy/guard.go", "internal/policy/guard_apply.go"),
 		},
 		{
 			Tool:    "search_content",
@@ -21488,7 +21517,7 @@ func TestPlanExecuteCandidateScopeReadinessDoesNotDeferForUnreadBetterCandidate(
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
-			Output:  syntheticPolicyGuardApplyContextPackOutput(),
+			Facts:   contextPackCandidateFactsForTest("internal/policy/guard.go", "internal/policy/guard_apply.go"),
 		},
 		{
 			Tool:    "search_content",
@@ -22086,7 +22115,7 @@ func TestCompletionGateRecoveryPromptForUnscopedImplementationNoWrite(t *testing
 	}
 
 	prompt, hideReads, ok := runner.completionGateRecoveryPrompt([]workspace.ToolResult{
-		{Tool: "context_pack", Summary: "Ranked context packet produced.", Output: `{"candidate_files":[{"path":"candidate/path.go"}]}`},
+		{Tool: "context_pack", Summary: "Ranked context packet produced.", Facts: contextPackCandidateFactsForTest("candidate/path.go")},
 	})
 	if !ok {
 		t.Fatalf("expected completion gate recovery prompt for direct implementation with no write")
@@ -22857,7 +22886,7 @@ func TestDeterministicNoWriteRecoverySearchesAfterContextPackOnly(t *testing.T) 
 	req, raw, ok := runner.deterministicNoWriteRecoverySearch([]workspace.ToolResult{{
 		Tool:    "context_pack",
 		Summary: "packet",
-		Output:  `{"candidate_files":[{"path":"internal/surfaces/tui/app/model_popup.go"}]}`,
+		Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/model_popup.go"),
 	}})
 
 	if !ok {
@@ -22907,7 +22936,7 @@ func TestUnscopedContextPackCandidateReadRecoveryAllowsStructuredCandidateRead(t
 	}
 	summary, errText, prompt, rejected := runner.unscopedContextPackCandidateReadRecovery(
 		workspace.ToolRequest{Tool: "read_file", Path: "internal/surfaces/tui/app/model_popup.go"},
-		[]workspace.ToolResult{{Tool: "context_pack", Summary: "packet", Output: `{"candidate_files":[{"path":"internal/surfaces/tui/app/model_popup.go"}]}`}},
+		[]workspace.ToolResult{{Tool: "context_pack", Summary: "packet", Facts: contextPackCandidateFactsForTest("internal/surfaces/tui/app/model_popup.go")}},
 	)
 
 	if rejected {
@@ -22926,7 +22955,7 @@ func TestUnscopedContextPackCandidateReadRecoveryRejectsUngroundedRead(t *testin
 	}
 	summary, errText, prompt, rejected := runner.unscopedContextPackCandidateReadRecovery(
 		workspace.ToolRequest{Tool: "read_file", Path: "internal/surfaces/tui/app/model_popup.go"},
-		[]workspace.ToolResult{{Tool: "context_pack", Summary: "packet", Output: `{"candidate_files":[{"path":"internal/surfaces/tui/app/other.go"}]}`}},
+		[]workspace.ToolResult{{Tool: "context_pack", Summary: "packet", Facts: contextPackCandidateFactsForTest("internal/surfaces/tui/app/other.go")}},
 	)
 
 	if !rejected {
@@ -22979,7 +23008,7 @@ func TestUnscopedNoWriteRecoveryRequiresSourceBodyBeforeWrite(t *testing.T) {
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "context_pack", Summary: "packet", Output: `{"candidate_files":[{"path":"internal/surfaces/tui/app/banner.go"}]}`},
+		{Tool: "context_pack", Summary: "packet", Facts: contextPackCandidateFactsForTest("internal/surfaces/tui/app/banner.go")},
 		{Tool: "completion_gate", Summary: "Mutation completion gate rejected final answer", Error: "no successful workspace write"},
 	}
 
@@ -23011,7 +23040,7 @@ func TestUnscopedNoWriteRecoveryDoesNotAutoReadAfterWriteReadyGate(t *testing.T)
 		{
 			Tool:    "context_pack",
 			Summary: "packet",
-			Output:  `{"candidate_files":[{"path":"internal/workflows/productworkflow/coverage_gate_test.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("internal/workflows/productworkflow/coverage_gate_test.go"),
 		},
 		{
 			Tool:    "read_file",
@@ -23949,7 +23978,7 @@ func TestPlanExecuteLoopBudgetRecoveryKeepsUnreadCandidateReadsAvailable(t *test
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote candidates",
-			Output:  `{"candidate_files":[{"path":"a.go"},{"path":"b.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("a.go", "b.go"),
 		},
 		{
 			Tool:    "read_file",
@@ -24051,7 +24080,7 @@ func TestPlanExecuteIgnoredLoopBudgetRecoveryForcesTerminalPlannerOutcome(t *tes
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote candidates",
-			Output:  `{"candidate_files":[{"path":"a.go"},{"path":"b.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("a.go", "b.go"),
 		},
 		{
 			Tool:    "read_file",
@@ -24841,7 +24870,7 @@ func TestPlanExecuteTerminalSurfaceRefreshAllowsSelectedContextPackCandidate(t *
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 1 candidate file(s)",
-			Output:  `{"candidate_files":[{"path":"pkg/feature.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("pkg/feature.go"),
 		},
 		{
 			Tool:    "read_file",
@@ -24881,7 +24910,7 @@ func TestPlanExecuteTerminalSurfaceRefreshSkipsUnreadContextCandidate(t *testing
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
-			Output:  `{"candidate_files":[{"path":"pkg/feature.go"},{"path":"pkg/feature_test.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("pkg/feature.go", "pkg/feature_test.go"),
 		},
 		{
 			Tool:    "read_file",
@@ -25876,7 +25905,7 @@ func TestPlanThenExecuteReadyToSubmitNudgeFiresForCandidateScopeRead(t *testing.
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 1 candidate file(s)",
-			Output:  `{"candidate_files":[{"path":"internal/surfaces/tui/app/rendering.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/rendering.go"),
 		},
 		{Tool: "read_file", Summary: "Read f1 internal/surfaces/tui/app/rendering.go lines 1-120"},
 	}
@@ -25903,7 +25932,10 @@ func TestPlanThenExecuteReadyToSubmitNudgeDoesNotRequireUnreadUnscopedCandidates
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
-			Output:  `{"candidate_files":[{"path":"internal/workflows/productworkflow/coverage_gate.go"},{"path":"internal/workflows/productworkflow/coverage_gate_test.go"}]}`,
+			Facts: contextPackCandidateFactsForTest(
+				"internal/workflows/productworkflow/coverage_gate.go",
+				"internal/workflows/productworkflow/coverage_gate_test.go",
+			),
 		},
 		{
 			Tool:    "code_navigate",
@@ -26029,7 +26061,7 @@ func TestPlanExecutePlanningStateDoesNotPromoteEvidenceOnlyPathViaContextPack(t 
 		{
 			Tool:    "context_pack",
 			Summary: "context pack",
-			Output:  `{"candidate_files":[{"path":"pkg/feature.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("pkg/feature.go"),
 		},
 		{
 			Tool:    "read_file",
@@ -26065,7 +26097,7 @@ func TestPlanExecutePlanningStateSelectsContextPackCandidateWithSourceEvidence(t
 		{
 			Tool:    "context_pack",
 			Summary: "context pack",
-			Output:  `{"candidate_files":[{"path":"pkg/feature.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("pkg/feature.go"),
 		},
 		{
 			Tool:    "read_file",
@@ -26922,7 +26954,10 @@ func TestPlanThenExecuteManyCandidateReadsRemainModelOwned(t *testing.T) {
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
-			Output:  `{"candidate_files":[{"path":"internal/workflows/productworkflow/coverage_gate.go"},{"path":"internal/workflows/productworkflow/coverage_gate_test.go"}]}`,
+			Facts: contextPackCandidateFactsForTest(
+				"internal/workflows/productworkflow/coverage_gate.go",
+				"internal/workflows/productworkflow/coverage_gate_test.go",
+			),
 		},
 		{
 			Tool:    "read_file",
@@ -26970,7 +27005,7 @@ func TestPlanExecuteManyCandidateReadsDoNotBypassUnreadCandidateSurface(t *testi
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
-			Output:  `{"candidate_files":[{"path":"pkg/feature.go"},{"path":"pkg/feature_test.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("pkg/feature.go", "pkg/feature_test.go"),
 		},
 		{
 			Tool:    "read_file",
@@ -27340,7 +27375,10 @@ func TestPlanExecuteMissingTargetReadRedirectDoesNotSelectCandidate(t *testing.T
 	results := []workspace.ToolResult{{
 		Tool:    "context_pack",
 		Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
-		Output:  `{"candidate_files":[{"path":"internal/workflows/productworkflow/coverage_gate.go"},{"path":"cmd/idiom/audit.go"}]}`,
+		Facts: contextPackCandidateFactsForTest(
+			"internal/workflows/productworkflow/coverage_gate.go",
+			"cmd/idiom/audit.go",
+		),
 	}}
 
 	if req, raw, ok := runner.planThenExecuteMissingTargetReadRedirect(workspace.ToolRequest{Tool: "read_file"}, results); ok {
@@ -27358,7 +27396,7 @@ func TestPlanExecuteMissingTargetReadRedirectSkipsRequiredSourceScope(t *testing
 	results := []workspace.ToolResult{{
 		Tool:    "context_pack",
 		Summary: "Context pack wrote .idiom/comprehension/views/test.json with 1 candidate file(s)",
-		Output:  `{"candidate_files":[{"path":"other.go"}]}`,
+		Facts:   contextPackCandidateFactsForTest("other.go"),
 	}}
 
 	if req, _, ok := runner.planThenExecuteMissingTargetReadRedirect(workspace.ToolRequest{Tool: "read_file"}, results); ok {
@@ -27378,7 +27416,10 @@ func TestPlanExecuteNoWriteRecoveryLeavesNextCandidateModelOwned(t *testing.T) {
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
-			Output:  `{"candidate_files":[{"path":"cmd/idiom/product_workflow.go"},{"path":"internal/workflows/productworkflow/coverage_gate.go"}]}`,
+			Facts: contextPackCandidateFactsForTest(
+				"cmd/idiom/product_workflow.go",
+				"internal/workflows/productworkflow/coverage_gate.go",
+			),
 		},
 		{
 			Tool:    "code_navigate",
@@ -27441,7 +27482,10 @@ func TestPlanThenExecuteCandidatePostReadinessDifferentPathDoesNotRequireNamedGa
 	results := []workspace.ToolResult{{
 		Tool:    "context_pack",
 		Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
-		Output:  `{"candidate_files":[{"path":"internal/workflows/productworkflow/coverage_gate.go"},{"path":"cmd/idiom/product_workflow.go"}]}`,
+		Facts: contextPackCandidateFactsForTest(
+			"internal/workflows/productworkflow/coverage_gate.go",
+			"cmd/idiom/product_workflow.go",
+		),
 	}, {
 		Tool:    "read_file",
 		Summary: "Read f1 internal/workflows/productworkflow/coverage_gate.go lines 1-125 (total lines: 391)",
@@ -27880,7 +27924,10 @@ func TestPlanThenExecuteCandidatePostGateRejectsOutOfScopeRead(t *testing.T) {
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote view",
-			Output:  `{"candidate_files":[{"path":"cmd/idiom/product_workflow.go"},{"path":"internal/workflows/productworkflow/coverage_gate.go"}]}`,
+			Facts: contextPackCandidateFactsForTest(
+				"cmd/idiom/product_workflow.go",
+				"internal/workflows/productworkflow/coverage_gate.go",
+			),
 		},
 		{
 			Tool:    "code_navigate",
@@ -27921,7 +27968,10 @@ func TestPlanThenExecuteCandidatePostGateDoesNotTreatContextPackAsScopeBoundary(
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote view",
-			Output:  `{"candidate_files":[{"path":"cmd/idiom/product_evidence.go"},{"path":"internal/workflows/productworkflow/coverage_gate.go"}]}`,
+			Facts: contextPackCandidateFactsForTest(
+				"cmd/idiom/product_evidence.go",
+				"internal/workflows/productworkflow/coverage_gate.go",
+			),
 		},
 		{
 			Tool:    "code_navigate",
@@ -27951,7 +28001,10 @@ func TestPlanThenExecuteCandidatePostGateAllowsTypedCandidateRead(t *testing.T) 
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote view",
-			Output:  `{"candidate_files":[{"path":"cmd/idiom/product_workflow.go"},{"path":"internal/workflows/productworkflow/coverage_gate.go"}]}`,
+			Facts: contextPackCandidateFactsForTest(
+				"cmd/idiom/product_workflow.go",
+				"internal/workflows/productworkflow/coverage_gate.go",
+			),
 		},
 		{
 			Tool:    "code_navigate",
@@ -31818,7 +31871,7 @@ func TestDiscoveryConsumptionWeakContextPackAllowsCorrectiveFollowup(t *testing.
 		workspace.ToolResult{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote view with candidate file(s)",
-			Output:  `{"quality":{"localization_confidence":"low","source_owner_found":false,"evidence_paths":["internal/runtime/agent/runner_core.go"]},"candidate_files":[{"path":"internal/runtime/agent/runner_core.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("internal/runtime/agent/runner_core.go"),
 		},
 		"",
 		nil,
@@ -31909,7 +31962,10 @@ func TestReadOnlyWeakDiscoveryNextActionNamesMissingSourceOwner(t *testing.T) {
 	result := workspace.ToolResult{
 		Tool:    "context_pack",
 		Summary: "Context pack wrote view with candidate file(s)",
-		Output:  `{"quality":{"localization_confidence":"low","source_owner_found":false,"reasons":["related_evidence_without_source_owner"]},"candidate_files":[{"path":"internal/runtime/agent/runner_core.go"},{"path":"internal/surfaces/tui/app/rendering.go"}]}`,
+		Facts: contextPackCandidateFactsForTest(
+			"internal/runtime/agent/runner_core.go",
+			"internal/surfaces/tui/app/rendering.go",
+		),
 	}
 
 	state, _ := buildRunnerNextActionStateWithAllowedToolsAndContract("main", 1, "tool_result", req, result, []workspace.ToolResult{result}, false, brief, brief.AllowedTools)
@@ -31949,7 +32005,7 @@ func TestReadOnlySourceOwnerDiscoveryNextActionRequiresSourceBody(t *testing.T) 
 	result := workspace.ToolResult{
 		Tool:    "context_pack",
 		Summary: "Context pack wrote view with 1 candidate file(s)",
-		Output:  `{"quality":{"localization_confidence":"high","source_owner_found":true,"evidence_paths":["internal/runtime/agent/runner_core.go"]},"candidate_files":[{"path":"internal/runtime/agent/runner_core.go"}]}`,
+		Facts:   contextPackSourceOwnerFactsForTest("internal/runtime/agent/runner_core.go"),
 	}
 
 	state, _ := buildRunnerNextActionStateWithAllowedToolsAndContract("main", 1, "tool_result", req, result, []workspace.ToolResult{result}, false, brief, brief.AllowedTools)
@@ -32077,7 +32133,7 @@ func TestDiscoveryConsumptionStrongContextPackStillBlocksBroadRediscovery(t *tes
 		workspace.ToolResult{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote view with 1 candidate file(s)",
-			Output:  `{"quality":{"localization_confidence":"high","source_owner_found":true,"evidence_paths":["internal/runtime/agent/runner_core.go"]},"candidate_files":[{"path":"internal/runtime/agent/runner_core.go"}]}`,
+			Facts:   contextPackSourceOwnerFactsForTest("internal/runtime/agent/runner_core.go"),
 		},
 		"",
 		nil,
@@ -32167,7 +32223,7 @@ func TestDiscoveryConsumptionSourceBodyReadClearsPendingDiscovery(t *testing.T) 
 		workspace.ToolResult{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote view with 1 candidate file(s)",
-			Output:  `{"quality":{"localization_confidence":"high","source_owner_found":true,"evidence_paths":["internal/runtime/agent/runner_core.go"]},"candidate_files":[{"path":"internal/runtime/agent/runner_core.go"}]}`,
+			Facts:   contextPackSourceOwnerFactsForTest("internal/runtime/agent/runner_core.go"),
 		},
 		"",
 		nil,
@@ -32206,7 +32262,7 @@ func TestDiscoveryConsumptionFailedGuessedReadDoesNotReopenBroadRediscovery(t *t
 		workspace.ToolResult{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote view with 1 candidate file(s)",
-			Output:  `{"quality":{"localization_confidence":"high","source_owner_found":true,"evidence_paths":["internal/runtime/agent/runner_core.go"]},"candidate_files":[{"path":"internal/runtime/agent/runner_core.go"}]}`,
+			Facts:   contextPackSourceOwnerFactsForTest("internal/runtime/agent/runner_core.go"),
 		},
 		"",
 		nil,

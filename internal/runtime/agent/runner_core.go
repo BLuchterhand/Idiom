@@ -11448,7 +11448,9 @@ func lastNonGateAttemptWasUnavailableContextPack(results []workspace.ToolResult)
 			return false
 		}
 
-		return strings.TrimSpace(results[i].Error) != "" || !contextPackResultHasTargets(results[i])
+		return strings.TrimSpace(results[i].Error) != "" ||
+			results[i].Facts == nil ||
+			!results[i].Facts.HasDiscoveryTargets
 	}
 
 	return false
@@ -16074,8 +16076,8 @@ func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step in
 	}
 	// When context_pack returns a view with candidate files that carry
 	// symbol handles, surface the top symbols as actionable annotations.
-	if strings.TrimSpace(tool) == workspace.ToolNameContextPack && strings.TrimSpace(result.Error) == "" {
-		state.CandidateSymbols = contextPackCandidateSymbols(result.Output, 5)
+	if strings.TrimSpace(tool) == workspace.ToolNameContextPack && strings.TrimSpace(result.Error) == "" && result.Facts != nil {
+		state.CandidateSymbols = textutil.Prefix(result.Facts.CandidateSymbols, 5)
 	}
 
 	if status := scratchpadDeliverableFailedEvidenceStatus(brief, results); status != "" {

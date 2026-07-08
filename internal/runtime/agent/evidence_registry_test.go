@@ -332,7 +332,7 @@ func TestPathEvidenceContextDiscoveryCandidateParity(t *testing.T) {
 			result: workspace.ToolResult{
 				Tool:    workspace.ToolNameContextPack,
 				Summary: "Context pack includes evidence registry candidates.",
-				Output:  `{"candidate_files":[{"path":"evidence_registry.go","reason":"ranked"}]}`,
+				Facts:   contextPackCandidateFactsForTest("evidence_registry.go"),
 			},
 		},
 		{
@@ -675,7 +675,7 @@ func TestPathEvidenceReadOnlyAnswerabilityConsolidationMatrix(t *testing.T) {
 			results: []workspace.ToolResult{{
 				Tool:    workspace.ToolNameContextPack,
 				Summary: "Context pack includes evidence registry candidates.",
-				Output:  `{"candidate_files":[{"path":"evidence_registry.go","reason":"ranked"}]}`,
+				Facts:   contextPackCandidateFactsForTest("evidence_registry.go"),
 			}},
 			wantKind:                   readOnlyEvidenceContextPacket,
 			wantLedgerCandidate:        true,

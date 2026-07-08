@@ -7464,7 +7464,7 @@ func (r *Runner) deterministicPlanExecuteGroundingRecoveryRequest(reply string, 
 
 	candidates := append([]string{}, candidateRecoveryScopePaths(r.RuntimeBrief, results[rejectedAt+1:], 8)...)
 
-	candidates = appendUniqueRunnerPaths(candidates, contextPackCandidatePaths(results[rejectedAt+1:], 8)...)
+	candidates = appendUniqueRunnerPaths(candidates, contextPackCandidatePathsFromResults(results[rejectedAt+1:], 8)...)
 
 	read := readPathsFromResults(results[rejectedAt+1:])
 
@@ -7732,7 +7732,7 @@ func contextPackCandidateReadAllowed(req workspace.ToolRequest, results []worksp
 		return false
 	}
 
-	candidates := contextPackCandidatePaths(results, 32)
+	candidates := contextPackCandidatePathsFromResults(results, 32)
 	for _, candidate := range candidates {
 		if candidate == target {
 			return true
@@ -7740,60 +7740,6 @@ func contextPackCandidateReadAllowed(req workspace.ToolRequest, results []worksp
 	}
 
 	return false
-}
-
-func contextPackCandidatePaths(results []workspace.ToolResult, max int) []string {
-	if max <= 0 {
-		max = 8
-	}
-
-	seen := map[string]struct{}{}
-	paths := make([]string, 0, max)
-	add := func(path string) {
-		path = NormalizeRunnerPath(path)
-		if path == "" || !pathparse.HasWorkspaceFileExtension(path) {
-			return
-		}
-
-		if _, ok := seen[path]; ok {
-			return
-		}
-
-		seen[path] = struct{}{}
-		paths = append(paths, path)
-	}
-
-	for _, result := range results {
-		if strings.TrimSpace(result.Tool) != workspace.ToolNameContextPack || strings.TrimSpace(result.Output) == "" {
-			continue
-		}
-
-		var view struct {
-			CandidateFiles []struct {
-				Path string `json:"path"`
-				Role string `json:"role"`
-			} `json:"candidate_files"`
-		}
-
-		if err := json.Unmarshal([]byte(result.Output), &view); err != nil {
-			continue
-		}
-
-		for _, file := range view.CandidateFiles {
-			role := strings.TrimSpace(file.Role)
-			if role != "" && role != "editable" && role != "read_only_evidence" && role != "test" {
-				continue
-			}
-
-			add(file.Path)
-
-			if len(paths) >= max {
-				return paths
-			}
-		}
-	}
-
-	return paths
 }
 
 func recoverySearchPathLooksEditableSource(path string) bool {

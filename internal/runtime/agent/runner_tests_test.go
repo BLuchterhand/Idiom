@@ -15426,7 +15426,7 @@ func TestConversationPreflightRejectsRepeatedBroadDiscoveryWithoutForcingAnswer(
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote .idiom/comprehension/views/example.json with 4 candidate file(s)",
-			Output:  `{"candidate_files":[{"path":"internal/runtime/agent/runner_core.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("internal/runtime/agent/runner_core.go"),
 		},
 	}
 
@@ -15502,7 +15502,10 @@ func TestConversationDiscoveryConsumptionAllowsFollowupSearchAfterContextPack(t 
 		workspace.ToolResult{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote view with 2 candidate file(s)",
-			Output:  `{"quality":{"localization_confidence":"low","source_owner_found":false,"evidence_paths":["internal/surfaces/tui/app/model.go"],"reasons":["related_evidence_without_source_owner"]},"candidate_files":[{"path":"internal/surfaces/tui/app/model.go"},{"path":"internal/surfaces/tui/app/view.go"}]}`,
+			Facts: contextPackCandidateFactsForTest(
+				"internal/surfaces/tui/app/model.go",
+				"internal/surfaces/tui/app/view.go",
+			),
 		},
 		"",
 		nil,
@@ -15622,7 +15625,10 @@ func TestConversationDiscoveryConsumptionRejectsBroadSearchAfterStrongContextPac
 		workspace.ToolResult{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote view with 2 candidate file(s)",
-			Output:  `{"quality":{"localization_confidence":"high","source_owner_found":true,"evidence_paths":["internal/surfaces/tui/app/model.go"],"reasons":["source_owner_token_overlap_high"]},"candidate_files":[{"path":"internal/surfaces/tui/app/model.go"},{"path":"internal/surfaces/tui/app/view.go"}]}`,
+			Facts: contextPackSourceOwnerFactsForTest(
+				"internal/surfaces/tui/app/model.go",
+				"internal/surfaces/tui/app/view.go",
+			),
 		},
 		"",
 		nil,
@@ -15684,7 +15690,7 @@ func TestConversationDiscoveryConsumptionAllowsNamedDirectorySearchAfterStrongCo
 		workspace.ToolResult{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote view with 16 candidate file(s)",
-			Output:  `{"quality":{"localization_confidence":"high","source_owner_found":true,"evidence_paths":["internal/runtime/agent/runner_core.go"],"reasons":["source_owner_token_overlap_high"]},"candidate_files":[{"path":"internal/runtime/agent/runner_core.go"}]}`,
+			Facts:   contextPackSourceOwnerFactsForTest("internal/runtime/agent/runner_core.go"),
 		},
 		"",
 		nil,
@@ -15747,7 +15753,7 @@ func TestStrongContextPackStillRejectsBroadSearchAfterFailedGuessedRead(t *testi
 		workspace.ToolResult{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote view with 1 candidate file(s)",
-			Output:  `{"quality":{"localization_confidence":"high","source_owner_found":true,"evidence_paths":["internal/surfaces/tui/app/model.go"],"reasons":["source_owner_token_overlap_high"]},"candidate_files":[{"path":"internal/surfaces/tui/app/model.go"}]}`,
+			Facts:   contextPackSourceOwnerFactsForTest("internal/surfaces/tui/app/model.go"),
 		},
 		"",
 		nil,
@@ -15796,16 +15802,12 @@ func TestWeakContextPackDoesNotBlockRefinedContextPack(t *testing.T) {
 		workspace.ToolResult{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote view with 3 candidate file(s)",
-			Output: `{
-				"task":"chat input text box newline wrapping first line invisible",
-				"quality":{"localization_confidence":"low","source_owner_found":false,"evidence_paths":["internal/surfaces/tui/app/rendering_test.go"],"reasons":["related_evidence_without_source_owner"]},
-				"candidate_files":[
-					{"path":"internal/evidence/transcript/debuglog.go","reason":"matched task terms"},
-					{"path":"internal/surfaces/tui/app/plan.go","reason":"matched task terms"},
-					{"path":"internal/surfaces/tui/app/theme_style.go","reason":"matched task terms"}
-				],
-				"tests":[{"path":"internal/surfaces/tui/app/rendering_test.go","symbol":"TestInputHeightUsesTextareaWrappedLineCount","command":"go test ./internal/surfaces/tui/app"}]
-			}`,
+			Facts: contextPackCandidateFactsForTest(
+				"internal/surfaces/tui/app/rendering_test.go",
+				"internal/evidence/transcript/debuglog.go",
+				"internal/surfaces/tui/app/plan.go",
+				"internal/surfaces/tui/app/theme_style.go",
+			),
 		},
 		"",
 		nil,
@@ -15821,60 +15823,6 @@ func TestWeakContextPackDoesNotBlockRefinedContextPack(t *testing.T) {
 	}
 }
 
-func TestContextPackCandidatePathsPreferPacketQualityEvidence(t *testing.T) {
-	result := workspace.ToolResult{
-		Tool:    "context_pack",
-		Summary: "Context pack wrote view with weak source owner",
-		Output: `{
-			"task":"chat input text box newline wrapping first line invisible",
-			"quality":{"localization_confidence":"low","source_owner_found":false,"evidence_paths":["internal/surfaces/tui/app/rendering_test.go"],"reasons":["related_evidence_without_source_owner"]},
-			"candidate_files":[
-				{"path":"internal/evidence/transcript/debuglog.go","reason":"matched task terms"},
-				{"path":"internal/surfaces/tui/app/plan.go","reason":"matched task terms"},
-				{"path":"internal/surfaces/tui/app/theme_style.go","reason":"matched task terms"}
-			],
-			"candidate_symbols":[
-				{"path":"internal/surfaces/tui/app/rendering_test.go","kind":"test","qualified_name":"TestInputHeightUsesTextareaWrappedLineCount"}
-			],
-			"tests":[{"path":"internal/surfaces/tui/app/rendering_test.go","symbol":"TestInputHeightUsesTextareaWrappedLineCount","command":"go test ./internal/surfaces/tui/app"}]
-		}`,
-	}
-
-	paths := contextPackCandidatePathsFromResults([]workspace.ToolResult{result}, 4)
-	if len(paths) == 0 || paths[0] != "internal/surfaces/tui/app/rendering_test.go" {
-		t.Fatalf("expected quality evidence path first, got %#v", paths)
-	}
-
-	if paths[0] == "internal/evidence/transcript/debuglog.go" {
-		t.Fatalf("candidate files must not saturate recovery ahead of stronger packet evidence: %#v", paths)
-	}
-}
-
-func TestContextPackCandidateSymbolsPreferTopLevelQualityEvidence(t *testing.T) {
-	output := `{
-		"task":"chat input text box newline wrapping first line invisible",
-		"quality":{"localization_confidence":"low","source_owner_found":false,"evidence_paths":["internal/surfaces/tui/app/rendering_test.go"],"reasons":["related_evidence_without_source_owner"]},
-		"candidate_files":[
-			{"path":"internal/evidence/transcript/debuglog.go","role":"editable","reason":"matched task terms","handles":["symbol://internal/evidence/transcript/debuglog.go#DebugLogger.LogContext"]},
-			{"path":"internal/surfaces/tui/app/mocha_style.go","role":"editable","reason":"matched task terms","handles":["symbol://internal/surfaces/tui/app/mocha_style.go#mochaText"]}
-		],
-		"candidate_symbols":[
-			{"path":"internal/surfaces/tui/app/rendering_test.go","kind":"test","qualified_name":"TestInputHeightUsesTextareaWrappedLineCount","reason":"matched task terms"},
-			{"path":"internal/runtime/agent/runner_core.go","kind":"func","qualified_name":"textOnlyChatOptions","reason":"matched task terms"}
-		],
-		"tests":[{"path":"internal/surfaces/tui/app/rendering_test.go","symbol":"TestInputHeightUsesTextareaWrappedLineCount","command":"go test ./internal/surfaces/tui/app"}]
-	}`
-
-	symbols := contextPackCandidateSymbols(output, 4)
-	if len(symbols) == 0 || symbols[0] != "internal/surfaces/tui/app/rendering_test.go#TestInputHeightUsesTextareaWrappedLineCount" {
-		t.Fatalf("expected top-level quality evidence symbol first, got %#v", symbols)
-	}
-
-	if symbols[0] == "internal/evidence/transcript/debuglog.go#DebugLogger.LogContext" {
-		t.Fatalf("candidate-file handles must not outrank top-level quality evidence: %#v", symbols)
-	}
-}
-
 func TestContextZoomSourceBodyClearsPendingDiscoveryConsumption(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "conversation",
@@ -15887,7 +15835,7 @@ func TestContextZoomSourceBodyClearsPendingDiscoveryConsumption(t *testing.T) {
 		workspace.ToolResult{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote view with 1 candidate file(s)",
-			Output:  `{"candidate_files":[{"path":"internal/surfaces/tui/app/model.go","handles":["symbol://internal/surfaces/tui/app/model.go#Update"]}]}`,
+			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/model.go"),
 		},
 		"",
 		nil,
@@ -16097,7 +16045,7 @@ func TestConversationEvidenceSatisfiedContextPackAloneFiresGate(t *testing.T) {
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote .idiom/comprehension/views/abc123.json with 4 candidate file(s)",
-			Output:  `{"candidate_files":[{"path":"internal/runtime/agent/runner_core.go"},{"path":"internal/runtime/agent/runner_core.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("internal/runtime/agent/runner_core.go"),
 		},
 	}
 	// context_pack alone is no longer sufficient — the model should read
@@ -21191,8 +21139,8 @@ func TestPlanThenExecuteCandidateRangeLessReadRedirectUsesContextPackScope(t *te
 	}
 	results := []workspace.ToolResult{
 		{
-			Tool:   "context_pack",
-			Output: `{"candidate_files":[{"path":"internal/workflows/productworkflow/scope.go"}],"tests":[{"path":"internal/workflows/productworkflow/coverage_gate_test.go"}]}`,
+			Tool:  "context_pack",
+			Facts: contextPackCandidateFactsForTest("internal/workflows/productworkflow/scope.go", "internal/workflows/productworkflow/coverage_gate_test.go"),
 		},
 		{
 			Tool:    "read_file",
@@ -29661,7 +29609,7 @@ func TestEmitAcceptedAnswerSignalsDirectAnswerAliasBlocksUnrelatedEvidence(t *te
 			{
 				Tool:    "context_pack",
 				Summary: "Context pack wrote packet",
-				Output:  `{"candidate_files":[{"path":"internal/surfaces/tui/app/rendering.go"}]}`,
+				Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/rendering.go"),
 			},
 			{
 				Tool:    "read_file",
@@ -31742,7 +31690,7 @@ func TestArchitectureFinalAnswerAcceptanceRejectsUnsupportedCloseoutWithoutAnswe
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote .idiom/comprehension/views/pack.json with candidate files",
-			Output:  `{"candidate_files":[{"path":"internal/contracts/plan/source_satisfied.go"}]}`,
+			Facts:   contextPackCandidateFactsForTest("internal/contracts/plan/source_satisfied.go"),
 		},
 	}
 	acceptance := runner.evaluateFinalAnswerAcceptance(
