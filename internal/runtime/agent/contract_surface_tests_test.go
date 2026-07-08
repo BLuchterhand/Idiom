@@ -2601,7 +2601,7 @@ func runGitOutput(t *testing.T, root string, args ...string) string {
 	return string(output)
 }
 
-func TestPathEvidenceRegistryIngestsWorkspaceResultRelationships(t *testing.T) {
+func TestToolResultEvidenceProjectionUsesTypedReadPathsNotMentionRelationships(t *testing.T) {
 	result := workspace.ToolResult{
 		Tool:          " read_file ",
 		Code:          "ok",
@@ -2615,14 +2615,12 @@ func TestPathEvidenceRegistryIngestsWorkspaceResultRelationships(t *testing.T) {
 		},
 	}
 
-	registry := NewPathEvidenceRegistry(t.TempDir())
-	registry.RegisterToolResults([]workspace.ToolResult{result})
-
-	if !registry.HasBodyEvidence("internal/runtime/agent/runner_core.go") {
-		t.Fatal("expected workspace relationship path to register as body evidence")
+	projection := newToolResultEvidenceProjection([]workspace.ToolResult{result})
+	if !projection.HasSourceBody("internal/runtime/agent/runner_core.go") {
+		t.Fatal("expected typed read path to count as source-body evidence")
 	}
-	if registry.HasBodyEvidence("internal/runtime/agent/evidence_registry.go") {
-		t.Fatal("mention-only relationship must not register as body evidence")
+	if projection.HasSourceBody("internal/runtime/agent/evidence_registry.go") {
+		t.Fatal("mention-only relationship must not count as source-body evidence")
 	}
 }
 

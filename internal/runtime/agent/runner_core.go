@@ -849,13 +849,6 @@ type Runner struct {
 	StateStore               StateStore
 	stateStoreOwnedBySession bool
 
-	// PathEvidenceRegistry is the consolidated path-existence, body-read,
-	// candidate, and basename-resolution service. Populated once per turn
-	// by RegisterToolResults; queried by the completion gate, readiness
-	// gate, and discovery gate instead of calling os.Stat or scanning
-	// raw tool results. When nil, the old fallback paths are used.
-	PathEvidenceRegistry *PathEvidenceRegistry
-
 	// InstructionAttacher injects configured per-directory guidance
 	// whenever the model touches a file under that directory.
 	InstructionAttacher *instructions.Attacher
@@ -1181,14 +1174,6 @@ func (r *Runner) runLegacySessionBody(
 	taskLedger := newTaskLedgerState(taskLedgerPolicy)
 
 	r.RuntimeBrief = r.runtimeBriefWithLiveState(policy, turnMessages, collectedResults)
-
-	// Initialize the PathEvidenceRegistry as the consolidated path-existence,
-	// body-read, and candidate-path tracking source. All tool results will
-	// be registered into it during the run loop so that code_navigate
-	// file_outline results count as body_window evidence.
-	if r.PathEvidenceRegistry == nil && r.Workspace != nil {
-		r.PathEvidenceRegistry = NewPathEvidenceRegistry(r.Workspace.Root())
-	}
 
 	if r.Workspace != nil {
 		rebuildTools()
@@ -16994,13 +16979,6 @@ func (r runnerTurnRecorder) recordWithOptions(step int, req workspace.ToolReques
 	}
 	if r.runner != nil && r.runner.StateStore != nil {
 		r.runner.StateStore.RecordResult(req, result)
-	}
-
-	// Register the tool result into the PathEvidenceRegistry so that
-	// code_navigate file_outline results count as body_window evidence
-	// and the completion gate can query the consolidated path state.
-	if r.runner != nil && r.runner.PathEvidenceRegistry != nil {
-		r.runner.PathEvidenceRegistry.RegisterToolResults([]workspace.ToolResult{result})
 	}
 
 	if opts.SetLastToolKey && r.lastToolKey != nil {

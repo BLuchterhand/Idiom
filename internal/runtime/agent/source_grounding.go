@@ -284,8 +284,7 @@ func (r *Runner) assessSourceGrounding(answer string, results []workspace.ToolRe
 		}
 
 		projection := newToolResultEvidenceProjection(results)
-		if (r.PathEvidenceRegistry != nil && r.PathEvidenceRegistry.HasBodyEvidence(citationPath)) ||
-			projection.HasSourceBody(citationPath) ||
+		if projection.HasSourceBody(citationPath) ||
 			len(projection.ExternalDocumentBodyMatches(citationPath)) > 0 ||
 			slices.Contains(projection.ReadOnlySourceBodyEvidencePaths(), citationPath) ||
 			projection.DiagnosticArtifactReadForPath(path) ||
@@ -509,12 +508,6 @@ func sourceCitationCanonicalPath(r *Runner, path string, results []workspace.Too
 		return externalMatches[0], true
 	}
 
-	if r != nil && r.PathEvidenceRegistry != nil {
-		if resolved, ok := r.PathEvidenceRegistry.ResolveShortPath(path); ok {
-			return resolved, true
-		}
-	}
-
 	return path, false
 }
 
@@ -537,7 +530,6 @@ func sourceCitationAmbiguousBodyEvidence(r *Runner, path string, results []works
 
 func sourceCitationHasExactWorkspaceBodyEvidence(r *Runner, path string, results []workspace.ToolResult) bool {
 	return newToolResultEvidenceProjection(results).HasSourceBody(path) ||
-		(r != nil && r.PathEvidenceRegistry != nil && r.PathEvidenceRegistry.HasBodyEvidence(path)) ||
 		slices.Contains(newToolResultEvidenceProjection(results).ReadOnlySourceBodyEvidencePaths(), path)
 }
 
@@ -854,10 +846,6 @@ func sourceCitationExists(r *Runner, path string) bool {
 	path = NormalizeRunnerPath(path)
 	if path == "" || strings.HasPrefix(path, "../") || path == ".." || filepath.IsAbs(path) {
 		return false
-	}
-
-	if r != nil && r.PathEvidenceRegistry != nil {
-		return r.PathEvidenceRegistry.EnsurePathExists(path)
 	}
 
 	root := "."

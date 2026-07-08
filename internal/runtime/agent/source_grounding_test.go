@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/platform/config"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -213,7 +214,7 @@ func TestSourceGroundingRejectsBareCitationAmbiguousAcrossWorkspaceAndExternalBo
 
 	externalPath := filepath.Join(t.TempDir(), "Mobile Documents", "Idiom Book Project", "front-back", "back-matter.md")
 	runner := readOnlySourceGroundingRunner()
-	runner.PathEvidenceRegistry = NewPathEvidenceRegistry(root)
+	runner.Workspace = workspace.NewManager(config.Workspace{Root: root, CWD: root})
 	results := []workspace.ToolResult{
 		{
 			Tool:    workspace.ToolNameReadFile,
@@ -248,7 +249,7 @@ func TestSourceGroundingRejectsExistingWorkspaceCitationEvenWhenExternalSuffixMa
 
 	externalPath := filepath.Join(t.TempDir(), "Mobile Documents", "Idiom Book Project", "front-back", "back-matter.md")
 	runner := readOnlySourceGroundingRunner()
-	runner.PathEvidenceRegistry = NewPathEvidenceRegistry(root)
+	runner.Workspace = workspace.NewManager(config.Workspace{Root: root, CWD: root})
 	results := []workspace.ToolResult{{
 		Tool:    workspace.ToolNameReadFile,
 		Summary: "Read f2 " + externalPath + " lines 1-10 (total lines: 10)",
@@ -281,21 +282,21 @@ func TestSourceGroundingPathsAfterMarkerStopsBeforeRecoveryInstructions(t *testi
 	}
 }
 
-func TestSourceGroundingUsesPathEvidenceRegistryForCitationSupport(t *testing.T) {
+func TestSourceGroundingUsesResultBackedCitationSupport(t *testing.T) {
 	runner := readOnlySourceGroundingRunner()
-	runner.PathEvidenceRegistry = NewPathEvidenceRegistry(t.TempDir())
-	runner.PathEvidenceRegistry.RegisterToolResults([]workspace.ToolResult{{
+	results := []workspace.ToolResult{{
 		Tool:    "read_file",
 		Paths:   []string{"internal/workflows/productworkflow/coverage_gate.go"},
 		Summary: "Read internal/workflows/productworkflow/coverage_gate.go",
-	}})
+		Output:  "package productworkflow\nfunc EvaluateCoverageGate() {}\n",
+	}}
 
 	reason := runner.sourceGroundingRejectionReason(
 		"The current source `internal/workflows/productworkflow/coverage_gate.go` defines the coverage gate behavior.",
-		nil,
+		results,
 	)
 	if reason != "" {
-		t.Fatalf("expected PathEvidenceRegistry source-body evidence to satisfy citation support, got %q", reason)
+		t.Fatalf("expected result-backed source-body evidence to satisfy citation support, got %q", reason)
 	}
 }
 
@@ -316,7 +317,7 @@ func TestSourceGroundingRawBodyEvidenceSatisfiesCitationSupport(t *testing.T) {
 	}
 }
 
-func TestSourceGroundingBasenameResolutionMatchesRegistryAndRawEvidence(t *testing.T) {
+func TestSourceGroundingBasenameResolutionUsesResultBackedEvidence(t *testing.T) {
 	writeFixture := func(root string, path string) {
 		t.Helper()
 		fullPath := filepath.Join(root, filepath.FromSlash(path))
@@ -333,7 +334,7 @@ func TestSourceGroundingBasenameResolutionMatchesRegistryAndRawEvidence(t *testi
 	writeFixture(root, uniquePath)
 
 	rawRunner := readOnlySourceGroundingRunner()
-	rawRunner.PathEvidenceRegistry = NewPathEvidenceRegistry(root)
+	rawRunner.Workspace = workspace.NewManager(config.Workspace{Root: root, CWD: root})
 	rawResults := []workspace.ToolResult{{
 		Tool:    workspace.ToolNameReadFile,
 		Summary: "Read internal/app/target.go lines 1-20",
@@ -343,28 +344,16 @@ func TestSourceGroundingBasenameResolutionMatchesRegistryAndRawEvidence(t *testi
 		t.Fatalf("unique basename backed by raw source-body evidence blocked: %q", reason)
 	}
 
-	registryRunner := readOnlySourceGroundingRunner()
-	registryRunner.PathEvidenceRegistry = NewPathEvidenceRegistry(root)
-	registryRunner.PathEvidenceRegistry.RegisterToolResults([]workspace.ToolResult{{
-		Tool:    workspace.ToolNameReadFile,
-		Paths:   []string{uniquePath},
-		Summary: "Read internal/app/target.go lines 1-20",
-		Output:  "package app\nfunc targetBehavior() {}\n",
-	}})
-	if reason := registryRunner.sourceGroundingRejectionReason("`target.go:2` defines target behavior.", nil); reason != "" {
-		t.Fatalf("unique basename backed by registry source-body evidence blocked: %q", reason)
-	}
-
 	ambiguousRoot := t.TempDir()
 	writeFixture(ambiguousRoot, uniquePath)
 	writeFixture(ambiguousRoot, "internal/other/target.go")
 	ambiguousRunner := readOnlySourceGroundingRunner()
-	ambiguousRunner.PathEvidenceRegistry = NewPathEvidenceRegistry(ambiguousRoot)
-	ambiguousRunner.PathEvidenceRegistry.RegisterToolResults([]workspace.ToolResult{
-		{Tool: workspace.ToolNameReadFile, Paths: []string{uniquePath}, Summary: "Read internal/app/target.go lines 1-20"},
-		{Tool: workspace.ToolNameReadFile, Paths: []string{"internal/other/target.go"}, Summary: "Read internal/other/target.go lines 1-20"},
-	})
-	reason := ambiguousRunner.sourceGroundingRejectionReason("`target.go:2` defines target behavior.", nil)
+	ambiguousRunner.Workspace = workspace.NewManager(config.Workspace{Root: ambiguousRoot, CWD: ambiguousRoot})
+	ambiguousResults := []workspace.ToolResult{
+		{Tool: workspace.ToolNameReadFile, Paths: []string{uniquePath}, Summary: "Read internal/app/target.go lines 1-20", Output: "package app\nfunc targetBehavior() {}\n"},
+		{Tool: workspace.ToolNameReadFile, Paths: []string{"internal/other/target.go"}, Summary: "Read internal/other/target.go lines 1-20", Output: "package other\nfunc targetBehavior() {}\n"},
+	}
+	reason := ambiguousRunner.sourceGroundingRejectionReason("`target.go:2` defines target behavior.", ambiguousResults)
 	if !strings.Contains(reason, "target.go") {
 		t.Fatalf("ambiguous basename should remain unsupported, got %q", reason)
 	}

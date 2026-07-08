@@ -1,0 +1,254 @@
+package agent
+
+import (
+	"path/filepath"
+	"slices"
+	"testing"
+
+	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/toolfacts"
+)
+
+func TestToolResultEvidenceProjectionSourceBodyBoundaries(t *testing.T) {
+	const sourcePath = "internal/runtime/agent/evidence_projection.go"
+	const generatedPath = ".idiom/comprehension/views/context.json"
+
+	tests := []struct {
+		name      string
+		path      string
+		result    workspace.ToolResult
+		wantLevel PlanThenExecuteSourceEvidenceLevel
+		wantBody  bool
+	}{
+		{
+			name: "read_file bounded source range",
+			path: sourcePath,
+			result: workspace.ToolResult{
+				Tool:    workspace.ToolNameReadFile,
+				Summary: "Read internal/runtime/agent/evidence_projection.go lines 20-40 (total lines: 220)",
+				Output:  "func TestToolResultEvidenceProjectionSourceBodyBoundaries(t *testing.T) {}\n",
+			},
+			wantLevel: planThenExecuteEvidenceAnchorReady,
+			wantBody:  true,
+		},
+		{
+			name: "failed read_file",
+			path: sourcePath,
+			result: workspace.ToolResult{
+				Tool:    workspace.ToolNameReadFile,
+				Summary: "Read internal/runtime/agent/evidence_projection.go lines 20-40 (total lines: 220)",
+				Error:   "permission denied",
+			},
+			wantLevel: planThenExecuteEvidenceNone,
+			wantBody:  false,
+		},
+		{
+			name: "redirect-only read_file remains pending",
+			path: sourcePath,
+			result: workspace.ToolResult{
+				Tool:    workspace.ToolNameReadFile,
+				Summary: "Redirected internal/runtime/agent/evidence_projection.go to code_navigate",
+				Output:  "Use code_navigate for source-body evidence in internal/runtime/agent/evidence_projection.go.",
+			},
+			wantLevel: planThenExecuteEvidenceSourceBodyPending,
+			wantBody:  false,
+		},
+		{
+			name: "generated artifacts are not source body evidence",
+			path: generatedPath,
+			result: workspace.ToolResult{
+				Tool:    workspace.ToolNameReadFile,
+				Summary: "Read f1 .idiom/comprehension/views/context.json lines 1-20 (total lines: 20)",
+				Output:  `{"candidate_files":[{"path":"internal/runtime/agent/evidence_projection.go"}]}`,
+			},
+			wantLevel: planThenExecuteEvidenceNone,
+			wantBody:  false,
+		},
+		{
+			name: "routed code_navigate source body",
+			path: sourcePath,
+			result: workspace.ToolResult{
+				Tool: workspace.ToolNameCodeNavigate,
+				Output: "route_summary: Read internal/runtime/agent/evidence_projection.go lines 45-70 (total lines: 220)\n" +
+					"func TestCandidatePathExistenceResolvesLazily(t *testing.T) {}\n",
+			},
+			wantLevel: planThenExecuteEvidenceAnchorReady,
+			wantBody:  true,
+		},
+		{
+			name: "symbol read source body",
+			path: sourcePath,
+			result: workspace.ToolResult{
+				Tool:    "go_read_symbol",
+				Summary: "Read TestToolResultEvidenceProjectionSourceBodyBoundaries in internal/runtime/agent/evidence_projection.go lines 12-24",
+				Output:  "func TestToolResultEvidenceProjectionSourceBodyBoundaries(t *testing.T) {}\n",
+			},
+			wantLevel: planThenExecuteEvidenceAnchorReady,
+			wantBody:  true,
+		},
+		{
+			name: "context zoom include source body",
+			path: sourcePath,
+			result: workspace.ToolResult{
+				Tool:    workspace.ToolNameContextZoom,
+				Summary: "Read internal/runtime/agent/evidence_projection.go lines 1-20 with include_source",
+				Output:  `{"path":"internal/runtime/agent/evidence_projection.go","source":"func TestToolResultEvidenceProjectionSourceBodyBoundaries(t *testing.T) {}"}`,
+			},
+			wantLevel: planThenExecuteEvidenceAnchorReady,
+			wantBody:  true,
+		},
+		{
+			name: "candidate anchor only is not body evidence",
+			path: sourcePath,
+			result: workspace.ToolResult{
+				Tool:    workspace.ToolNameCodeNavigate,
+				Summary: "Read internal/runtime/agent/evidence_projection.go lines 1-20",
+				Output:  "path-filter miss\ncandidate_anchor_status: anchors only",
+			},
+			wantLevel: planThenExecuteEvidencePathSeen,
+			wantBody:  false,
+		},
+		{
+			name: "file outline is not body evidence",
+			path: sourcePath,
+			result: workspace.ToolResult{
+				Tool:    workspace.ToolNameCodeNavigate,
+				Summary: "Read outline in internal/runtime/agent/evidence_projection.go with capability: file_outline",
+				Output:  "capability: file_outline\nfn TestToolResultEvidenceProjectionSourceBodyBoundaries\nstruct toolResultEvidenceProjection\n",
+			},
+			wantLevel: planThenExecuteEvidencePathSeen,
+			wantBody:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evidence := newToolResultEvidenceProjection([]workspace.ToolResult{tt.result}).SourceEvidenceForPath(tt.path)
+			if evidence.Level != tt.wantLevel {
+				t.Fatalf("evidence level = %q, want %q; evidence=%#v", evidence.Level, tt.wantLevel, evidence)
+			}
+			if got := sourceEvidenceHasBody(evidence); got != tt.wantBody {
+				t.Fatalf("body evidence = %v, want %v; evidence=%#v", got, tt.wantBody, evidence)
+			}
+		})
+	}
+}
+
+func TestToolResultEvidenceProjectionCandidateBoundaries(t *testing.T) {
+	const sourcePath = "internal/runtime/agent/evidence_projection.go"
+
+	contextResult := workspace.ToolResult{
+		Tool:    workspace.ToolNameContextPack,
+		Summary: "Context pack returned candidate paths.",
+		Facts:   contextPackCandidateFactsForTest(sourcePath),
+	}
+	if got := newToolResultEvidenceProjection([]workspace.ToolResult{contextResult}).CandidatePaths(); !slices.Contains(got, sourcePath) {
+		t.Fatalf("context_pack candidate paths = %#v, want %q", got, sourcePath)
+	}
+
+	bodyResult := workspace.ToolResult{
+		Tool:    workspace.ToolNameReadFile,
+		Summary: "Read " + sourcePath + " lines 1-20",
+		Output:  "package agent\n",
+		Paths:   []string{sourcePath},
+	}
+	if got := newToolResultEvidenceProjection([]workspace.ToolResult{bodyResult}).CandidatePaths(); slices.Contains(got, sourcePath) {
+		t.Fatalf("source body path must not also be an unread candidate: %#v", got)
+	}
+
+	ledger := readOnlyAnswerabilityForResults(directAnswerReadOnlyBrief(), []workspace.ToolResult{contextResult})
+	if !slices.Contains(ledger.CandidatePaths, sourcePath) || !ledger.HasUnreadCandidatePaths {
+		t.Fatalf("context_pack candidate should remain unread in answerability ledger: %#v", ledger)
+	}
+}
+
+func TestToolResultEvidenceProjectionChangedPaths(t *testing.T) {
+	results := []workspace.ToolResult{
+		{Tool: workspace.ToolNameEditFile, ChangedPaths: []string{"internal/app/edit.go"}},
+		{Tool: workspace.ToolNameWriteFile, ChangedPaths: []string{"internal/app/write.go"}},
+		{Tool: workspace.ToolNameAppendFile, ChangedPaths: []string{"internal/app/append.go"}},
+		{Tool: workspace.ToolNameApplyPatch, ChangedPaths: []string{"internal/app/add.go", "internal/app/update.go"}},
+		{Tool: workspace.ToolNameGoMoveDeclarations, ChangedPaths: []string{"internal/app/source.go", "internal/app/destination.go"}},
+		{Tool: workspace.ToolNameDelegateEdit, ChangedPaths: []string{"internal/app/delegated.go"}},
+		{Tool: workspace.ToolNameEditFile, ChangedPaths: []string{"internal/app/failed.go"}, Error: "permission denied"},
+		{Tool: workspace.ToolNameReadFile, Summary: "Read internal/app/read.go lines 1-10"},
+	}
+	wantChangedSet := []string{
+		"internal/app/add.go",
+		"internal/app/append.go",
+		"internal/app/delegated.go",
+		"internal/app/destination.go",
+		"internal/app/edit.go",
+		"internal/app/source.go",
+		"internal/app/update.go",
+		"internal/app/write.go",
+	}
+	wantChangedList := []string{
+		"internal/app/edit.go",
+		"internal/app/write.go",
+		"internal/app/append.go",
+		"internal/app/add.go",
+		"internal/app/update.go",
+		"internal/app/source.go",
+		"internal/app/destination.go",
+		"internal/app/delegated.go",
+	}
+
+	projection := newToolResultEvidenceProjection(results)
+	if got := mapKeys(projection.ChangedPathSet()); !slices.Equal(got, wantChangedSet) {
+		t.Fatalf("changed paths = %#v, want %#v", got, wantChangedSet)
+	}
+	if got := projection.ChangedPathList(); !slices.Equal(got, wantChangedList) {
+		t.Fatalf("changed path list = %#v, want %#v", got, wantChangedList)
+	}
+}
+
+func TestToolResultEvidenceProjectionReadOnlyCategoryBoundaries(t *testing.T) {
+	sourcePath := "internal/runtime/agent/evidence_projection.go"
+	externalPath := filepath.Join(t.TempDir(), "Mobile Documents", "Project Notes", "brief.md")
+	diagnosticPath := "internal/runtime/agent/runner_core.go"
+	taskPath := "internal/runtime/agent/evidence_readonly.go"
+	results := []workspace.ToolResult{
+		{
+			Tool:    workspace.ToolNameReadFile,
+			Summary: "Read " + externalPath + " lines 1-20",
+			Output:  "1:external planning notes\n",
+			Paths:   []string{externalPath},
+		},
+		{
+			Tool:    workspace.ToolNameSourceSanity,
+			Summary: "source_sanity failed for " + diagnosticPath,
+			Output:  diagnosticPath + ":10: undefined: Runner\n",
+			Facts:   &toolfacts.ToolResultFacts{DiagnosticEvidencePaths: []string{diagnosticPath}},
+		},
+		typedReadOnlyTaskResult(ReadOnlyEvidencePacket{
+			Objective:       "Explain read-only packet evidence.",
+			Question:        "Explain read-only packet evidence.",
+			SourceBodyPaths: []string{taskPath},
+			Findings: []ReadOnlyEvidenceFinding{{
+				Path: taskPath,
+				Text: "Read-only evidence packets carry delegated source-body paths.",
+			}},
+		}),
+		{
+			Tool:    workspace.ToolNameReadFile,
+			Summary: "Read " + sourcePath + " lines 1-20",
+			Output:  "1:package agent\n",
+			Paths:   []string{sourcePath},
+		},
+	}
+
+	projection := newToolResultEvidenceProjection(results)
+	if slices.Contains(projection.SourceBodyPaths(), externalPath) {
+		t.Fatalf("external document leaked into workspace source-body paths: %#v", projection.SourceBodyPaths())
+	}
+	if got := projection.ExternalDocumentBodyMatches("brief.md"); !slices.Contains(got, externalPath) {
+		t.Fatalf("external document matches = %#v, want %q", got, externalPath)
+	}
+	if paths := readOnlySourceLikePaths(results[1].Facts.DiagnosticEvidencePaths, 8); !slices.Contains(paths, diagnosticPath) {
+		t.Fatalf("diagnostic evidence paths = %#v, want %q", paths, diagnosticPath)
+	}
+	if got := projection.ReadOnlySourceBodyEvidencePaths(); !slices.Contains(got, sourcePath) || !slices.Contains(got, taskPath) {
+		t.Fatalf("read-only source body evidence paths = %#v, want %q and %q", got, sourcePath, taskPath)
+	}
+}
