@@ -14,6 +14,9 @@ type VerificationObservation struct {
 	Attempted                     bool
 	Successful                    bool
 	Command                       string
+	Verification                  ShellVerificationFamily
+	FullSuite                     bool
+	BuildOrTest                   bool
 	PatchHygieneOnly              bool
 	HTMLSmokeForPendingHTMLWrites bool
 }
@@ -47,7 +50,7 @@ func AnalyzeVerificationResult(result ToolResult) VerificationObservation {
 		return VerificationObservation{}
 	}
 
-	observed := analyzeShellVerificationCommand(ShellCommandFromToolResult(result))
+	observed := analyzeShellVerificationFacts(result)
 	if observed.Attempted {
 		observed.Successful = strings.TrimSpace(result.Error) == ""
 	}
@@ -64,13 +67,17 @@ func AnalyzePostWriteVerificationResult(result ToolResult, pendingPaths []string
 		return observed
 	}
 
+	if result.Facts == nil || strings.TrimSpace(result.Facts.ShellCommand) == "" {
+		return observed
+	}
+
 	if !shellOutputVerifiesPendingHTMLArtifacts(result.Output, pendingPaths) {
 		return observed
 	}
 
 	observed.Attempted = true
 	observed.Successful = true
-	observed.Command = ShellCommandFromToolResult(result)
+	observed.Command = strings.TrimSpace(result.Facts.ShellCommand)
 	observed.HTMLSmokeForPendingHTMLWrites = true
 	return observed
 }
@@ -83,8 +90,24 @@ func analyzeShellVerificationCommand(command string) VerificationObservation {
 	return VerificationObservation{
 		Attempted:        true,
 		Command:          command,
+		Verification:     analysis.Verification,
+		FullSuite:        analysis.FullSuite,
+		BuildOrTest:      analysis.BuildOrTest,
 		PatchHygieneOnly: shellVerificationCommandIsPatchHygieneOnly(command, analysis),
 	}
+}
+
+func analyzeShellVerificationFacts(result ToolResult) VerificationObservation {
+	if result.Facts == nil {
+		return VerificationObservation{}
+	}
+
+	command := strings.TrimSpace(result.Facts.ShellCommand)
+	if command == "" {
+		return VerificationObservation{}
+	}
+
+	return analyzeShellVerificationCommand(command)
 }
 
 func shellVerificationCommandIsPatchHygieneOnly(command string, analysis ShellCommandAnalysis) bool {

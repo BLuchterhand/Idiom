@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/commandexec"
 )
 
@@ -177,6 +178,7 @@ func (m *Manager) runShell(ctx context.Context, req ToolRequest) ToolResult {
 		Tool:    ToolNameShell,
 		Summary: fmt.Sprintf("Ran shell command in %s", m.pathAccess.DisplayPath(execution.workdir)),
 		Output:  "$ " + execution.command + "\n" + strings.TrimSpace(execution.displayOutput),
+		Facts:   &toolfacts.ToolResultFacts{ShellCommand: execution.command},
 	}
 
 	if execution.failure != "" {

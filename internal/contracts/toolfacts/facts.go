@@ -56,6 +56,7 @@ type ToolResultFacts struct {
 	LocalizationConfidence  string               `json:"localization_confidence,omitempty"`
 	GitHistoryPath          string               `json:"git_history_path,omitempty"`
 	GitHistoryStatus        GitHistoryStatus     `json:"git_history_status,omitempty"`
+	ShellCommand            string               `json:"shell_command,omitempty"`
 }
 
 // NewSourceBodyFacts returns normalized source-body evidence facts, or nil when
@@ -87,6 +88,7 @@ func (facts *ToolResultFacts) Clone() *ToolResultFacts {
 		LocalizationConfidence:  facts.LocalizationConfidence,
 		GitHistoryPath:          facts.GitHistoryPath,
 		GitHistoryStatus:        facts.GitHistoryStatus,
+		ShellCommand:            facts.ShellCommand,
 	}
 }
 

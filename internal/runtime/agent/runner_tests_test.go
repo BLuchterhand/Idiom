@@ -4344,11 +4344,7 @@ func TestRunnerExecutionStateApplyResultVerificationResetsVerificationGuards(t *
 	budget.readCallsSinceWrite = 4
 
 	req := workspace.ToolRequest{Tool: "shell", Command: "go test ./..."}
-	result := workspace.ToolResult{
-		Tool:    "shell",
-		Summary: "go test failed",
-		Error:   "exit status 1",
-	}
+	result := shellCommandResultForTest("go test ./...", "", "exit status 1")
 
 	update := state.applyResult(req, result, "", nil, &budget)
 
@@ -4395,11 +4391,7 @@ func TestVerificationPhaseStateMarksGenericSourceSanityInsufficient(t *testing.T
 }
 
 func TestVerificationPhaseStateSeparatesPatchHygieneFromPassedVerification(t *testing.T) {
-	result := workspace.ToolResult{
-		Tool:    "shell",
-		Summary: "Ran shell command",
-		Output:  "$ git diff --check -- internal/labels/labels.go\n",
-	}
+	result := shellCommandResultForTest("git diff --check -- internal/labels/labels.go", "", "")
 
 	state, detail := verificationPhaseState(result)
 	if state != "hygiene" {
@@ -7534,7 +7526,7 @@ func TestTaskLedgerAcceptsCompletedItemWithWriteReadAndVerifyReceipts(t *testing
 	receipts := []workspace.ToolResult{
 		{Tool: "read_file", Summary: "Read README.md"},
 		{Tool: "edit_file", Summary: "Edited README.md", ChangedPaths: []string{"README.md"}},
-		{Tool: "shell", Summary: "Command succeeded", Output: "go test ./..."},
+		shellCommandResultForTest("go test ./...", "", ""),
 	}
 	result := state.apply(workspace.ToolRequest{
 		Tool: "task_ledger",
@@ -7554,7 +7546,7 @@ func TestTaskLedgerRejectsEvidenceNotBackedBySuccessfulReceipts(t *testing.T) {
 	state := newTaskLedgerState(TaskLedgerPolicy{Required: true, RequireEvidence: true})
 	receipts := []workspace.ToolResult{
 		{Tool: "edit_file", Summary: "Edited docs/other.md", ChangedPaths: []string{"docs/other.md"}},
-		{Tool: "shell", Summary: "Command failed", Output: "go test ./...", Error: "exit status 1"},
+		shellCommandResultForTest("go test ./...", "", "exit status 1"),
 	}
 	result := state.apply(workspace.ToolRequest{
 		Tool: "task_ledger",
@@ -7660,7 +7652,7 @@ func TestShellSanityCommandsCountAsVerification(t *testing.T) {
 		t.Fatal("git diff --check should count as a verification request after writes")
 	}
 
-	if !hasSuccessfulVerificationResult([]workspace.ToolResult{{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check\n"}}) {
+	if !hasSuccessfulVerificationResult([]workspace.ToolResult{shellCommandResultForTest("git diff --check", "", "")}) {
 		t.Fatal("git diff --check shell result should count as successful verification")
 	}
 
@@ -7702,7 +7694,7 @@ func TestShellSyntaxCheckSatisfiesScriptPostWriteVerification(t *testing.T) {
 
 	results := []workspace.ToolResult{
 		{Tool: "edit_file", Summary: "Edited scripts/run-harness.sh", ChangedPaths: []string{"scripts/run-harness.sh"}},
-		{Tool: "shell", Summary: "Ran shell command", Output: "$ bash -n scripts/run-harness.sh\n"},
+		shellCommandResultForTest("bash -n scripts/run-harness.sh", "", ""),
 	}
 	if !hasSuccessfulVerificationResult(results) {
 		t.Fatal("bash -n shell result should count as successful verification")
@@ -7721,7 +7713,7 @@ func TestPostWriteVerificationTelemetryForShellSyntaxCheck(t *testing.T) {
 	}}
 	ok := runner.emitPostWriteVerificationTelemetry(
 		workspace.ToolRequest{Tool: "shell", Command: "bash -n scripts/run-harness.sh"},
-		workspace.ToolResult{Tool: "shell", Summary: "Ran shell command", Output: "$ bash -n scripts/run-harness.sh\n"},
+		shellCommandResultForTest("bash -n scripts/run-harness.sh", "", ""),
 	)
 
 	if !ok {
@@ -7771,7 +7763,7 @@ func TestPostWriteVerificationTelemetryUsesShellResultCommandFallback(t *testing
 	}}
 	ok := runner.emitPostWriteVerificationTelemetry(
 		workspace.ToolRequest{Tool: "shell"},
-		workspace.ToolResult{Tool: "shell", Summary: "Ran shell command", Output: "$ bash -n scripts/run-harness.sh\n"},
+		shellCommandResultForTest("bash -n scripts/run-harness.sh", "", ""),
 	)
 
 	if !ok {
@@ -7817,7 +7809,7 @@ func TestPatchHygieneDoesNotSatisfySourceEditCompletion(t *testing.T) {
 	}
 	results := []workspace.ToolResult{
 		{Tool: "edit_file", Summary: "Edited native/tests/test_cart_system.cpp", ChangedPaths: []string{"native/tests/test_cart_system.cpp"}},
-		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- native/tests/test_cart_system.cpp\n"},
+		shellCommandResultForTest("git diff --check -- native/tests/test_cart_system.cpp", "", ""),
 	}
 
 	if result, rejected := runner.mutationCompletionRejection("Changed paths:\n- native/tests/test_cart_system.cpp\n\nVerification: git diff --check passed.", results); !rejected || !strings.Contains(result.Error, "patch hygiene") {
@@ -7850,7 +7842,7 @@ func TestMutationCompletionGateRejectsBlockersNoneBeforeSourceVerification(t *te
 			name: "patch hygiene only",
 			results: []workspace.ToolResult{
 				write,
-				{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- internal/labels/labels.go\n"},
+				shellCommandResultForTest("git diff --check -- internal/labels/labels.go", "", ""),
 			},
 			want: "patch hygiene",
 		},
@@ -7866,7 +7858,7 @@ func TestMutationCompletionGateRejectsBlockersNoneBeforeSourceVerification(t *te
 			name: "failed verification",
 			results: []workspace.ToolResult{
 				write,
-				{Tool: "shell", Summary: "Ran shell command", Output: "$ go test ./...", Error: "internal/labels/labels.go:4: undefined: missing"},
+				shellCommandResultForTest("go test ./...", "", "internal/labels/labels.go:4: undefined: missing"),
 			},
 			want: "latest successful write",
 		},
@@ -7892,7 +7884,7 @@ func TestPlannerOwnedVerificationRequiresSourceSanityBeforeDelegatedStatus(t *te
 	}
 	results := []workspace.ToolResult{
 		{Tool: "edit_file", Summary: "Edited native/tests/test_cart_system.cpp", ChangedPaths: []string{"native/tests/test_cart_system.cpp"}},
-		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- native/tests/test_cart_system.cpp\n"},
+		shellCommandResultForTest("git diff --check -- native/tests/test_cart_system.cpp", "", ""),
 	}
 
 	patchOnlyAnswer := "Changed paths:\n- native/tests/test_cart_system.cpp\n\nVerification: git diff --check passed."
@@ -7981,7 +7973,7 @@ func TestMutationCompletionGateRequiresRequiredEditSnippets(t *testing.T) {
 	}
 	results := []workspace.ToolResult{
 		{Tool: "edit_file", Summary: "Edited " + target, ChangedPaths: []string{target}},
-		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- " + target + "\n"},
+		shellCommandResultForTest("git diff --check -- "+target, "", ""),
 	}
 
 	result, rejected := runner.mutationCompletionRejection("Changed paths:\n- "+target+"\n\nVerification: git diff --check passed.", results)
@@ -8148,7 +8140,7 @@ func TestPatchHygieneAllowsNonSourceCompletion(t *testing.T) {
 	}
 	results := []workspace.ToolResult{
 		{Tool: "edit_file", Summary: "Edited README.md", ChangedPaths: []string{"README.md"}},
-		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- README.md\n"},
+		shellCommandResultForTest("git diff --check -- README.md", "", ""),
 	}
 
 	if result, rejected := runner.mutationCompletionRejection("Changed paths:\n- README.md\n\nVerification: git diff --check passed.", results); rejected {
@@ -8191,7 +8183,7 @@ func TestSourceEditPatchHygieneBlocksMoreReadsButAllowsSourceSanity(t *testing.T
 	}
 	results := []workspace.ToolResult{
 		{Tool: "edit_file", Summary: "Edited native/src/cart_system.cpp", ChangedPaths: []string{"native/src/cart_system.cpp"}},
-		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- native/src/cart_system.cpp\n"},
+		shellCommandResultForTest("git diff --check -- native/src/cart_system.cpp", "", ""),
 	}
 
 	summary, errorText, reject := sourceEditVerificationRejection(workspace.ToolRequest{Tool: "read_file", Path: "native/src/cart_system.cpp"}, brief, results)
@@ -10752,8 +10744,8 @@ func TestPlanExecuteSubmitCorrectionRecoveryNudgeIsSubmitPlanOnly(t *testing.T) 
 func TestTargetInspectionRecoveryNudgeStaysInsideTarget(t *testing.T) {
 	results := []workspace.ToolResult{
 		{Tool: "go_file_outline", Summary: "Outlined 15 top-level declaration(s) in internal/surfaces/tui/app/turn_planner.go.", Output: "package app"},
-		{Tool: "read_file", Summary: "Read f1 docs/frontier-routing-implementation-plan.md lines 1-220", Output: "doc excerpt"},
-		{Tool: "read_file", Summary: "Read f1 docs/frontier-routing-implementation-plan.md lines 220-359", Output: "doc excerpt 2"},
+		readFileSourceBodyResult("docs/frontier-routing-implementation-plan.md", 1, 220, 359, "doc excerpt"),
+		readFileSourceBodyResult("docs/frontier-routing-implementation-plan.md", 220, 359, 359, "doc excerpt 2"),
 	}
 	nudge := buildRejectionRecoveryNudge(
 		workspace.ToolRequest{Tool: "go_read_symbol", Path: "internal/surfaces/tui/app/turn_planner.go", Pattern: "turnRoutePlan"},
@@ -10965,11 +10957,7 @@ func TestDebugLogEvidenceSatisfiedAfterSingleHitAndReadWindow(t *testing.T) {
 			Summary: "Found 1 matching line at logs/llama-server.log:247005.",
 			Output:  "f3 logs/llama-server.log:247005:request exceeds context\ncontext:\n247004:foo",
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f3 logs/llama-server.log lines 247000-247079 (file has 268859 lines total; open-ended log range capped to 80 lines; pass an explicit end_line for a different bounded window)",
-			Output:  "247000:...\n247005:request exceeds context",
-		},
+		readFileSourceBodyResult("logs/llama-server.log", 247000, 247079, 268859, "247000:...\n247005:request exceeds context"),
 	}
 
 	if !debugLogEvidenceSatisfied(brief, results) {
@@ -11381,11 +11369,7 @@ func TestDebugLogPhaseScopeAllowsSameLogFollowupWindow(t *testing.T) {
 			Summary: "Found 1 matching log-like file(s), newest first.",
 			Output:  "f1 logs/conversations/recent.jsonl (modified 2026-04-24T10:00:00-04:00; size 2.1 KB)\n",
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 logs/conversations/recent.jsonl lines 93-172 (file has 172 lines total; defaulted to recent log tail)",
-			Output:  "{\"type\":\"turn_summary\"}\n",
-		},
+		readFileSourceBodyResult("logs/conversations/recent.jsonl", 93, 172, 172, "{\"type\":\"turn_summary\"}\n"),
 	}
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:         "conversation",
@@ -11412,11 +11396,7 @@ func TestOptionalLogSourceRCAAllowsSourceSearchAfterLogTail(t *testing.T) {
 			Summary: "Found 1 matching log-like file(s), newest first.",
 			Output:  "f1 logs/conversations/recent.jsonl (modified 2026-04-24T10:00:00-04:00; size 2.1 KB)\n",
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 logs/conversations/recent.jsonl lines 1-80",
-			Output:  "{\"type\":\"turn_summary\"}\n",
-		},
+		readFileSourceBodyResult("logs/conversations/recent.jsonl", 1, 80, 80, "{\"type\":\"turn_summary\"}\n"),
 	}
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:         "conversation",
@@ -13068,7 +13048,7 @@ func TestForcedCompletionPreservesAcceptedModelMutationCloseout(t *testing.T) {
 	}
 	results := []workspace.ToolResult{
 		{Tool: "edit_file", Summary: "Edited src/example.cpp", ChangedPaths: []string{"src/example.cpp"}},
-		{Tool: "shell", Summary: "Ran shell command", Output: "$ go test ./...\nok\texample.com/repo\n"},
+		shellCommandResultForTest("go test ./...", "ok\texample.com/repo", ""),
 	}
 
 	answer, err := runner.completeWithoutMoreToolsWithReason(
@@ -15201,11 +15181,7 @@ func TestApplyLanePreflightRejectsBlindDebugLogRereadWithoutForcedAnswer(t *test
 			Summary: "Found 1 matching log-like file(s), newest first.",
 			Output:  "f1 logs/conversations/recent.jsonl (modified 2026-04-24T10:00:00-04:00; size 2.1 KB)\n",
 		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 logs/conversations/recent.jsonl lines 1-80",
-			Output:  "{\"type\":\"tool_result\"}\n",
-		},
+		readFileSourceBodyResult("logs/conversations/recent.jsonl", 1, 80, 80, "{\"type\":\"tool_result\"}\n"),
 	}
 
 	runner := &Runner{RuntimeBrief: brief}
@@ -16950,7 +16926,7 @@ func TestRunnerReadinessStateRequiresPlannerOwnedSourceSanityAfterPatchHygiene(t
 	}
 	results := []workspace.ToolResult{
 		{Tool: "edit_file", Summary: "Edited native/src/example.cpp", ChangedPaths: []string{"native/src/example.cpp"}},
-		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- native/src/example.cpp\n"},
+		shellCommandResultForTest("git diff --check -- native/src/example.cpp", "", ""),
 	}
 
 	readiness := runnerReadinessState("main", brief, results)
@@ -18649,7 +18625,7 @@ func TestMutationFallbackAnswerReportsChangedPathsAndVerification(t *testing.T) 
 	results := []workspace.ToolResult{
 		{Tool: "read_file", Summary: "Read README.md", Output: "hello\n"},
 		{Tool: "edit_file", Summary: "Edited README.md", ChangedPaths: []string{"README.md"}},
-		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- README.md\n"},
+		shellCommandResultForTest("git diff --check -- README.md", "", ""),
 	}
 
 	answer, ok := synthesizeNoToolsFallbackAnswer("main", brief, results)
@@ -18681,7 +18657,7 @@ func TestMutationFallbackAnswerDropsStaleHarnessBlockerAfterLaterVerification(t 
 			Summary: "Verification required after workspace edits",
 			Error:   "the workspace has 2 successful write(s) since the last verification.",
 		},
-		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- README.md\n"},
+		shellCommandResultForTest("git diff --check -- README.md", "", ""),
 	}
 
 	answer, ok := synthesizeNoToolsFallbackAnswer("main", brief, results)
@@ -18759,7 +18735,7 @@ func TestEvidenceFirstTargetReadUnlockClearsStaleTargetReadDeadEnd(t *testing.T)
 		TargetRefs: []string{"docs/frontier-routing-implementation-plan.md"},
 	}
 	evidence := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f11 internal/surfaces/tui/app/prompt_routing.go lines 1-207", Output: "func ..."},
+		readFileSourceBodyResult("internal/surfaces/tui/app/prompt_routing.go", 1, 207, 207, "func ..."),
 	}
 
 	if !evidenceFirstTargetReadUnlocked(brief, evidence) {
@@ -18788,7 +18764,7 @@ func TestEvidenceFirstTargetReadRedirectBoundsFollowupTargetWindow(t *testing.T)
 	}
 	evidence := []workspace.ToolResult{
 		{Tool: "go_read_symbol", Summary: "Read Model.buildPromptExecutionPlan in internal/surfaces/tui/app/prompt_routing.go lines 67-99", Output: "func ..."},
-		{Tool: "read_file", Summary: "Read f1 docs/frontier-routing-implementation-plan.md lines 1-220", Output: "doc excerpt"},
+		readFileSourceBodyResult("docs/frontier-routing-implementation-plan.md", 1, 220, 360, "doc excerpt"),
 	}
 
 	redirected, ok := evidenceFirstTargetReadRedirect(brief, evidence, workspace.ToolRequest{
@@ -18811,8 +18787,8 @@ func TestEvidenceFirstTargetReadRefreshHasNoWindowBudget(t *testing.T) {
 	}
 	evidence := []workspace.ToolResult{
 		{Tool: "go_read_symbol", Summary: "Read Model.buildPromptExecutionPlan in internal/surfaces/tui/app/prompt_routing.go lines 67-99", Output: "func ..."},
-		{Tool: "read_file", Summary: "Read f1 docs/frontier-routing-implementation-plan.md lines 1-220", Output: "doc excerpt"},
-		{Tool: "read_file", Summary: "Read f1 docs/frontier-routing-implementation-plan.md lines 221-360", Output: "doc excerpt 2"},
+		readFileSourceBodyResult("docs/frontier-routing-implementation-plan.md", 1, 220, 500, "doc excerpt"),
+		readFileSourceBodyResult("docs/frontier-routing-implementation-plan.md", 221, 360, 500, "doc excerpt 2"),
 	}
 
 	redirected, ok := evidenceFirstTargetReadRedirect(brief, evidence, workspace.ToolRequest{
@@ -18844,8 +18820,8 @@ func TestEvidenceFirstTargetInspectionEncouragesWritesWithoutReadBudget(t *testi
 	}
 	evidence := []workspace.ToolResult{
 		{Tool: "go_read_symbol", Summary: "Read Model.buildPromptExecutionPlan in internal/surfaces/tui/app/prompt_routing.go lines 67-99", Output: "func ..."},
-		{Tool: "read_file", Summary: "Read f1 docs/frontier-routing-implementation-plan.md lines 1-220", Output: "doc excerpt"},
-		{Tool: "read_file", Summary: "Read f1 docs/frontier-routing-implementation-plan.md lines 220-359", Output: "doc excerpt 2"},
+		readFileSourceBodyResult("docs/frontier-routing-implementation-plan.md", 1, 220, 500, "doc excerpt"),
+		readFileSourceBodyResult("docs/frontier-routing-implementation-plan.md", 220, 359, 500, "doc excerpt 2"),
 	}
 
 	if !evidenceFirstTargetInspectionActive(brief, evidence) {
@@ -18892,11 +18868,7 @@ func TestRunnerPhaseHintsUseCapabilityLanguageForPromptSurfaces(t *testing.T) {
 		Tool:   "search_files",
 		Output: "f1 logs/conversations/2026-05-13.jsonl\n",
 	}
-	debugLogRead := workspace.ToolResult{
-		Tool:    "read_file",
-		Summary: "Read f1 logs/conversations/2026-05-13.jsonl lines 1-80",
-		Output:  "decision trace",
-	}
+	debugLogRead := readFileSourceBodyResult("logs/conversations/2026-05-13.jsonl", 1, 80, 80, "decision trace")
 	nonTargetEvidence := workspace.ToolResult{
 		Tool:    "go_read_symbol",
 		Summary: "Read Worker.resolve in internal/surfaces/tui/app/worker.go lines 10-40",
@@ -24522,11 +24494,7 @@ func TestMutationDeterministicFallbackStartsAfterSuccessfulWrite(t *testing.T) {
 		t.Fatal("mutation fallback should be preferred after a successful write")
 	}
 
-	verifiedResults := append(pendingResults, workspace.ToolResult{
-		Tool:    "shell",
-		Summary: "Ran shell command",
-		Output:  "$ git diff --check -- README.md\n",
-	})
+	verifiedResults := append(pendingResults, shellCommandResultForTest("git diff --check -- README.md", "", ""))
 	if !shouldPreferDeterministicNoToolsAnswer("main", brief, verifiedResults) {
 		t.Fatal("mutation fallback should be preferred after changed paths and successful verification")
 	}
@@ -24790,7 +24758,7 @@ func TestSynthesizeMutationFallbackReportsPatchHygieneOnlyForPlannerOwnedSourceE
 		Constraints:          []string{"planner_owned_verification"},
 	}, []workspace.ToolResult{
 		{Tool: "edit_file", Summary: "Edited native/src/example.cpp", ChangedPaths: []string{"native/src/example.cpp"}},
-		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- native/src/example.cpp\n"},
+		shellCommandResultForTest("git diff --check -- native/src/example.cpp", "", ""),
 	})
 
 	for _, want := range []string{
@@ -31620,11 +31588,7 @@ func TestMutationCompletionRejectsUnresolvedRejectedWriteTarget(t *testing.T) {
 		Summary: "Tool not available in current runtime contract",
 		Output:  "Rejected write target: `internal/surfaces/tui/app/update_handlers.go`",
 		Error:   "edit_file is not in the current allowed tool surface.",
-	}, {
-		Tool:    "shell",
-		Summary: "Ran shell command in .",
-		Output:  "ok\tidiom/internal/surfaces/tui/app\n",
-	}}
+	}, shellCommandResultForTest("go test ./internal/surfaces/tui/app", "ok\tidiom/internal/surfaces/tui/app", "")}
 	acceptance := runner.evaluateFinalAnswerAcceptance(
 		"Implemented the requested change.\n\nChanged paths:\n- internal/surfaces/tui/app/model_state.go\n\nVerification: go test ./internal/surfaces/tui/app passed",
 		results,
@@ -31688,11 +31652,7 @@ func TestMutationCompletionIgnoresRecoveredOutOfScopeRejectedWriteTarget(t *test
 		Summary:      "Edited internal/labels/labels.go",
 		Output:       "Changed paths:\n- internal/labels/labels.go\n",
 		ChangedPaths: []string{"internal/labels/labels.go"},
-	}, {
-		Tool:    "shell",
-		Summary: "Ran shell command in .",
-		Output:  "$ go test ./internal/labels\nok\texample.com/frozen-label-repo/internal/labels\n",
-	}}
+	}, shellCommandResultForTest("go test ./internal/labels", "ok\texample.com/frozen-label-repo/internal/labels", "")}
 	acceptance := runner.evaluateFinalAnswerAcceptance(
 		"Implemented the requested change.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: go test ./internal/labels passed",
 		results,
@@ -34608,11 +34568,7 @@ func TestRunnerTerminalRejectedMutationPathDoesNotReturnSuccessTemplate(t *testi
 		Tool:    "edit_file",
 		Summary: "Edited internal/runtime/workerruntime/vocabulary.go",
 		Output:  "Changed paths:\n- internal/runtime/workerruntime/vocabulary.go\n",
-	}, {
-		Tool:    "shell",
-		Summary: "Ran shell command in .",
-		Output:  "ok\texample.com/rejectedpath/internal/runtime/workerruntime\n",
-	}, {
+	}, shellCommandResultForTest("go test ./...", "ok\texample.com/rejectedpath/internal/runtime/workerruntime", ""), {
 		Tool:    "edit_file",
 		Summary: "Tool not available in current runtime contract",
 		Output:  "Rejected write target: `internal/runtime/workerruntime/catalog.go`",
@@ -41164,7 +41120,7 @@ func TestSourceEditsNeedSemanticVerificationAfterPatchHygieneOnly(t *testing.T) 
 	}
 	results := []workspace.ToolResult{
 		{Tool: "edit_file", Summary: "Edited internal/surfaces/tui/app/app.go", ChangedPaths: []string{"internal/surfaces/tui/app/app.go"}},
-		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- internal/surfaces/tui/app/app.go\n"},
+		shellCommandResultForTest("git diff --check -- internal/surfaces/tui/app/app.go", "", ""),
 	}
 
 	if !sourceEditsNeedSemanticVerification(brief, results) {
@@ -41211,7 +41167,7 @@ func TestSourceEditsAreSemanticallyVerifiedAfterCompilerBackedSourceSanity(t *te
 	}
 	results := []workspace.ToolResult{
 		{Tool: "edit_file", Summary: "Edited internal/surfaces/tui/app/app.go", ChangedPaths: []string{"internal/surfaces/tui/app/app.go"}},
-		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- internal/surfaces/tui/app/app.go\n"},
+		shellCommandResultForTest("git diff --check -- internal/surfaces/tui/app/app.go", "", ""),
 		{Tool: "source_sanity", Summary: "source sanity passed", Output: "internal/surfaces/tui/app/app.go: no warnings or errors via go_diagnostics"},
 	}
 
@@ -41263,7 +41219,7 @@ func TestSourceEditsAreSemanticallyVerifiedAfterLanguageCommand(t *testing.T) {
 	}
 	results := []workspace.ToolResult{
 		{Tool: "edit_file", Summary: "Edited internal/surfaces/tui/app/app.go", ChangedPaths: []string{"internal/surfaces/tui/app/app.go"}},
-		{Tool: "shell", Summary: "Ran shell command", Output: "$ npm run build\nbuild succeeded"},
+		shellCommandResultForTest("npm run build", "build succeeded", ""),
 	}
 
 	if sourceEditsNeedSemanticVerification(brief, results) {
@@ -41284,11 +41240,11 @@ func TestPostWriteVerificationAcceptsFocusedHTMLSmokeCheck(t *testing.T) {
 	results := []workspace.ToolResult{
 		{Tool: "write_file", Summary: "Wrote index.html", ChangedPaths: []string{"index.html"}},
 		{Tool: "source_sanity", Summary: "Source sanity unavailable", Error: "index.html is not a supported source file"},
-		{
-			Tool:    "shell",
-			Summary: "Ran shell command",
-			Output:  "$ python3 -c \"import html.parser; html.parser.HTMLParser().feed(open('index.html').read()); print('HTML parsed OK')\"\nHTML parsed OK",
-		},
+		shellCommandResultForTest(
+			"python3 -c \"import html.parser; html.parser.HTMLParser().feed(open('index.html').read()); print('HTML parsed OK')\"",
+			"HTML parsed OK",
+			"",
+		),
 	}
 
 	if hasPendingVerificationAfterWrites(results, brief) {
@@ -41332,11 +41288,11 @@ func TestPostWriteVerificationRejectsHTMLSmokeCheckForGoWrite(t *testing.T) {
 	}
 	results := []workspace.ToolResult{
 		{Tool: "write_file", Summary: "Wrote main.go", ChangedPaths: []string{"main.go"}},
-		{
-			Tool:    "shell",
-			Summary: "Ran shell command",
-			Output:  "$ python3 -c \"import html.parser; html.parser.HTMLParser().feed(open('index.html').read()); print('HTML parsed OK')\"\nHTML parsed OK",
-		},
+		shellCommandResultForTest(
+			"python3 -c \"import html.parser; html.parser.HTMLParser().feed(open('index.html').read()); print('HTML parsed OK')\"",
+			"HTML parsed OK",
+			"",
+		),
 	}
 
 	if !hasPendingVerificationAfterWrites(results, brief) {
@@ -41801,7 +41757,7 @@ func TestSourceVerificationDoesNotTreatIncidentalPathMentionAsVerificationExcept
 			Output: "Implement the feature by changing pkg/feature.go and pkg/feature_test.go.",
 		},
 		{Tool: "edit_file", Summary: "Edited pkg/feature.go", ChangedPaths: []string{"pkg/feature.go"}},
-		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check\npassed"},
+		shellCommandResultForTest("git diff --check", "passed", ""),
 	}
 
 	if summary, errorText, reject := sourceEditVerificationRejection(workspace.ToolRequest{
@@ -41825,7 +41781,7 @@ func TestVerifiedSourceCloseoutIgnoresIncidentalPathMentions(t *testing.T) {
 			Output: "Implement the feature by changing pkg/feature.go and pkg/feature_test.go.",
 		},
 		{Tool: "edit_file", Summary: "Edited pkg/feature.go", ChangedPaths: []string{"pkg/feature.go"}},
-		{Tool: "shell", Summary: "Ran shell command", Output: "$ cargo check\nFinished dev profile"},
+		shellCommandResultForTest("cargo check", "Finished dev profile", ""),
 	}
 
 	if prompt, ok := sourceEditCloseoutPrompt(workspace.ToolRequest{

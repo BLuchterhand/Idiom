@@ -179,25 +179,6 @@ func WorkbranchChildShellPolicy(forbiddenTools []string) ChildShellPolicy {
 	return policy
 }
 
-// ShellCommandFromToolResult extracts the command prefix emitted by the
-// workspace shell tool. The shell result output starts with "$ <command>";
-// if any other non-empty line appears first, the result is not treated as a
-// structured shell command result.
-func ShellCommandFromToolResult(result ToolResult) string {
-	for _, line := range strings.Split(strings.TrimSpace(result.Output), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "$ ") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "$ "))
-		}
-
-		if line != "" {
-			return ""
-		}
-	}
-
-	return ""
-}
-
 func shellCommandBuildOrTest(command string) bool {
 	for _, part := range splitShellSegments(command) {
 		fields := shellCommandFields(part)

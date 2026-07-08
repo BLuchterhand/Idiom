@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"strings"
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/toolfacts"
@@ -44,4 +45,23 @@ func sourceBodyFactsForTest(path string, startLine int, endLine int, totalLines 
 		EndLine:    endLine,
 		TotalLines: totalLines,
 	})
+}
+
+func shellCommandResultForTest(command string, output string, errText string) workspace.ToolResult {
+	command = strings.TrimSpace(command)
+	rendered := "$ " + command
+	if body := strings.TrimSpace(output); body != "" {
+		rendered += "\n" + body
+	}
+
+	result := workspace.ToolResult{
+		Tool:    workspace.ToolNameShell,
+		Summary: "Ran shell command",
+		Output:  rendered,
+		Facts:   &toolfacts.ToolResultFacts{ShellCommand: command},
+	}
+	if errText != "" {
+		result.Error = errText
+	}
+	return result
 }

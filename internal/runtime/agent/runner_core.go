@@ -8711,8 +8711,9 @@ func runnerAutonomyVerificationStatus(results []workspace.ToolResult, brief work
 
 	for i := len(results) - 1; i >= 0; i-- {
 		result := results[i]
-		if workspace.AnalyzeVerificationRequest(workspace.ToolRequest{Tool: result.Tool}).Attempted {
-			if strings.TrimSpace(result.Error) != "" {
+		observed := workspace.AnalyzeVerificationResult(result)
+		if observed.Attempted {
+			if !observed.Successful {
 				return "failed"
 			}
 
@@ -12383,11 +12384,12 @@ func (r *Runner) modelErrorAfterPartialEditBlockerAnswer(modelErr error, results
 func latestSuccessfulVerificationSummary(results []workspace.ToolResult) (string, bool) {
 	for i := len(results) - 1; i >= 0; i-- {
 		result := results[i]
-		if !workspace.AnalyzeVerificationResult(result).Successful {
+		observed := workspace.AnalyzeVerificationResult(result)
+		if !observed.Successful {
 			continue
 		}
 
-		if command := workspace.ShellCommandFromToolResult(result); command != "" {
+		if command := strings.TrimSpace(observed.Command); command != "" {
 			return command + " passed", true
 		}
 
@@ -21630,24 +21632,24 @@ func (r *Runner) emitFinalAnswerBlockerOverride(acceptance finalAnswerAcceptance
 }
 
 func (r *Runner) emitPostWriteVerificationTelemetry(req workspace.ToolRequest, result workspace.ToolResult) bool {
-	if r == nil || r.OnEvent == nil || strings.TrimSpace(result.Error) != "" || !workspace.AnalyzeVerificationResult(result).Successful {
+	observed := workspace.AnalyzeVerificationResult(result)
+	if r == nil || r.OnEvent == nil || strings.TrimSpace(result.Error) != "" || !observed.Successful {
 		return false
 	}
 
-	command := postWriteVerificationTelemetryCommand(req, result)
+	command := postWriteVerificationTelemetryCommand(req, observed)
 	if command == "" {
 		return false
 	}
 
-	analysis := workspace.AnalyzeShellCommand(command)
-	usesFullSuite := analysis.FullSuite
+	usesFullSuite := observed.FullSuite
 	coverage := "targeted verification"
 	confidence := "medium"
 	riskLevel := "low"
 	expectedFailures := []string{"verification failures"}
 	recommendation := "keep targeted tests close to the changed surface before widening scope"
 
-	switch analysis.Verification {
+	switch observed.Verification {
 	case workspace.ShellVerificationScriptSyntax:
 		coverage = "targeted script syntax verification"
 		confidence = "low"
@@ -21694,21 +21696,9 @@ func (r *Runner) emitPostWriteVerificationTelemetry(req workspace.ToolRequest, r
 	return true
 }
 
-func postWriteVerificationTelemetryCommand(req workspace.ToolRequest, result workspace.ToolResult) string {
-	if strings.TrimSpace(req.Tool) == workspace.ToolNameShell {
-		if command := strings.TrimSpace(req.Command); command != "" {
-			return command
-		}
-
-		if command := workspace.ShellCommandFromToolResult(result); command != "" {
-			return command
-		}
-	}
-
-	if strings.TrimSpace(result.Tool) == workspace.ToolNameShell {
-		if command := workspace.ShellCommandFromToolResult(result); command != "" {
-			return command
-		}
+func postWriteVerificationTelemetryCommand(req workspace.ToolRequest, observed workspace.VerificationObservation) string {
+	if command := strings.TrimSpace(observed.Command); command != "" {
+		return command
 	}
 
 	if strings.TrimSpace(req.Tool) == workspace.ToolNameSourceSanity && strings.TrimSpace(req.Path) != "" {

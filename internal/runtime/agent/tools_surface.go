@@ -1004,10 +1004,9 @@ type debugLogFileSelection struct {
 }
 
 type debugLogReadWindow struct {
-	Handle string
-	Path   string
-	Start  int
-	End    int
+	Path  string
+	Start int
+	End   int
 }
 
 var singleSearchContentSummaryRE = regexp.MustCompile(`^Found 1 matching line at (.+):([0-9]+)\.`)
@@ -1099,7 +1098,7 @@ func latestDebugLogSelection(results []workspace.ToolResult) (debugLogFileSelect
 				continue
 			}
 
-			return debugLogFileSelection{Handle: window.Handle, Path: window.Path}, true
+			return debugLogFileSelection{Path: window.Path}, true
 		case workspace.ToolNameSearchContent:
 			hit, ok := parseDebugLogSearchHit(result)
 			if !ok || !mentionsConcreteDebugLogSelector(hit.Path) {
@@ -1156,7 +1155,7 @@ func latestStableDebugLogSelection(results []workspace.ToolResult, sessionID str
 				continue
 			}
 
-			return debugLogFileSelection{Handle: window.Handle, Path: window.Path}, true
+			return debugLogFileSelection{Path: window.Path}, true
 		case workspace.ToolNameSearchContent:
 			hit, ok := parseDebugLogSearchHit(result)
 			if !ok || !mentionsConcreteDebugLogSelector(hit.Path) || currentSessionDebugLogPath(hit.Path, sessionID) {
@@ -1207,10 +1206,6 @@ func hasDebugLogReadForSelection(results []workspace.ToolResult, selection debug
 		window, ok := parseDebugLogReadWindow(result)
 		if !ok {
 			continue
-		}
-
-		if selection.Handle != "" && window.Handle == selection.Handle {
-			return true
 		}
 
 		if selection.Path != "" && window.Path == selection.Path {
@@ -1530,10 +1525,6 @@ func concreteDebugLogArtifactPathForRequest(req workspace.ToolRequest, results [
 	for i := len(results) - 1; i >= 0; i-- {
 		result := results[i]
 
-		if window, ok := parseDebugLogReadWindow(result); ok && window.Handle == handle && mentionsConcreteDebugLogSelector(window.Path) {
-			return window.Path, true
-		}
-
 		if hit, ok := parseDebugLogSearchHit(result); ok && hit.Handle == handle && mentionsConcreteDebugLogSelector(hit.Path) {
 			return hit.Path, true
 		}
@@ -1569,11 +1560,8 @@ func debugLogReadRequestAddsWindow(req workspace.ToolRequest, results []workspac
 			continue
 		}
 
-		if selection.Handle != "" && window.Handle != selection.Handle {
-			continue
-		}
-
-		if selection.Path != "" && NormalizeRunnerPath(window.Path) != NormalizeRunnerPath(selection.Path) {
+		pathMatches := selection.Path != "" && NormalizeRunnerPath(window.Path) == NormalizeRunnerPath(selection.Path)
+		if !pathMatches {
 			continue
 		}
 
@@ -1968,10 +1956,6 @@ func hasDebugLogReadWindowForHit(results []workspace.ToolResult, hit debugLogSea
 			continue
 		}
 
-		if hit.Handle != "" && window.Handle != "" && hit.Handle == window.Handle && hit.Line >= window.Start && hit.Line <= window.End {
-			return true
-		}
-
 		if hit.Path != "" && window.Path == hit.Path && hit.Line >= window.Start && hit.Line <= window.End {
 			return true
 		}
@@ -2030,51 +2014,23 @@ func debugLogRequestCoversHit(req workspace.ToolRequest, hit debugLogSearchHit) 
 }
 
 func parseDebugLogReadWindow(result workspace.ToolResult) (debugLogReadWindow, bool) {
-	summary := strings.TrimSpace(result.Summary)
-	if !strings.HasPrefix(summary, "Read ") {
+	if strings.TrimSpace(result.Tool) != workspace.ToolNameReadFile || strings.TrimSpace(result.Error) != "" {
 		return debugLogReadWindow{}, false
 	}
 
-	body := strings.TrimPrefix(summary, "Read ")
-	linesIdx := strings.Index(body, " lines ")
+	for _, fact := range sourceBodyFactsFromResult(result) {
+		if fact.Path == "" || fact.StartLine <= 0 || fact.EndLine < fact.StartLine {
+			continue
+		}
 
-	if linesIdx <= 0 {
-		return debugLogReadWindow{}, false
+		return debugLogReadWindow{
+			Path:  fact.Path,
+			Start: fact.StartLine,
+			End:   fact.EndLine,
+		}, true
 	}
 
-	left := strings.TrimSpace(body[:linesIdx])
-	right := body[linesIdx+len(" lines "):]
-	rangeField := right
-
-	if space := strings.IndexByte(rangeField, ' '); space >= 0 {
-		rangeField = rangeField[:space]
-	}
-
-	rangeParts := strings.SplitN(rangeField, "-", 2)
-	if len(rangeParts) != 2 {
-		return debugLogReadWindow{}, false
-	}
-
-	start := parseRunnerInt(rangeParts[0])
-	end := parseRunnerInt(rangeParts[1])
-
-	if start <= 0 || end < start {
-		return debugLogReadWindow{}, false
-	}
-
-	window := debugLogReadWindow{Start: start, End: end}
-	leftParts := strings.SplitN(left, " ", 2)
-
-	if len(leftParts) == 2 && strings.HasPrefix(leftParts[0], "f") {
-		window.Handle = strings.TrimSpace(leftParts[0])
-		window.Path = strings.TrimSpace(leftParts[1])
-
-		return window, window.Path != ""
-	}
-
-	window.Path = left
-
-	return window, window.Path != ""
+	return debugLogReadWindow{}, false
 }
 
 func firstNonEmptyLine(s string) string {

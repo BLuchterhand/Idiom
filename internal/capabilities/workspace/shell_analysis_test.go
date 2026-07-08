@@ -221,45 +221,6 @@ func TestAnalyzeShellCommandDetectsVerificationFamilies(t *testing.T) {
 	}
 }
 
-func TestShellCommandFromToolResultExtractsWorkspaceShellPrefix(t *testing.T) {
-	tests := []struct {
-		name   string
-		result ToolResult
-		want   string
-	}{
-		{
-			name:   "shell output prefix",
-			result: ToolResult{Tool: ToolNameShell, Output: "$ go test ./...\nok"},
-			want:   "go test ./...",
-		},
-		{
-			name:   "blank lines before shell prefix",
-			result: ToolResult{Tool: ToolNameShell, Output: "\n\n  $ git diff --check\n"},
-			want:   "git diff --check",
-		},
-		{
-			name:   "unstructured output before prefix is not shell command",
-			result: ToolResult{Tool: ToolNameShell, Output: "ok\n$ go test ./..."},
-		},
-		{
-			name:   "plain command text is not shell command result shape",
-			result: ToolResult{Tool: ToolNameShell, Output: "go test ./..."},
-		},
-		{
-			name:   "empty output",
-			result: ToolResult{Tool: ToolNameShell},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := ShellCommandFromToolResult(tt.result); got != tt.want {
-				t.Fatalf("ShellCommandFromToolResult() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestWorkbranchChildShellPolicyProjectsAnalysisOwnedFamilies(t *testing.T) {
 	policy := WorkbranchChildShellPolicy([]string{
 		"git_push",

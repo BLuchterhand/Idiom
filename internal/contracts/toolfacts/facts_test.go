@@ -36,6 +36,7 @@ func TestToolResultFactsCloneCopiesSlices(t *testing.T) {
 		LocalizationConfidence:  "high",
 		GitHistoryPath:          "a.go",
 		GitHistoryStatus:        GitHistoryStatusCommitDescriptions,
+		ShellCommand:            "go test ./...",
 	}
 
 	clone := original.Clone()

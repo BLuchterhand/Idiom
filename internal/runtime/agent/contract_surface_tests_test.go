@@ -4364,11 +4364,9 @@ func TestReadOnlyAnswerabilityRejectsWrongPathDiagnosticEvidenceEvenWhenTextEcho
 
 func TestReadOnlyAnswerabilityDoesNotTreatCompleteDiagnosticLogAsSourceEvidence(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Why did the runner build fail?")
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f7 logs/conversations/20260603-173738.903.jsonl lines 1-72 (file has 72 lines total; defaulted to recent log tail; pass start_line/end_line for a different window)",
-		Output:  "1:{\"type\":\"session_start\"}\n72:{\"type\":\"final\"}\n",
-	}}
+	results := []workspace.ToolResult{
+		readFileSourceBodyResult("logs/conversations/20260603-173738.903.jsonl", 1, 72, 72, "1:{\"type\":\"session_start\"}\n72:{\"type\":\"final\"}\n"),
+	}
 
 	ledger := readOnlyAnswerabilityForResults(brief, results)
 	if ledger.Answerable() || ledger.DiagnosticRelevant {
@@ -4445,6 +4443,7 @@ func TestFinalAnswerAcceptanceRejectsFalseBuildAndTestAddedClaim(t *testing.T) {
 		Tool:    "source_sanity",
 		Summary: "Source sanity passed for 1 file(s)",
 		Output:  "internal/surfaces/tui/app/model_state.go: no warnings or errors via go_diagnostics",
+		Facts:   &toolfacts.ToolResultFacts{DiagnosticEvidencePaths: []string{"internal/surfaces/tui/app/model_state.go"}},
 	}}
 	answer := "Yes, it still builds, and I added a new test in `internal/surfaces/tui/app/perf_test.go`."
 	runner := &Runner{RuntimeBrief: brief}
@@ -4466,6 +4465,7 @@ func TestFinalAnswerAcceptanceAllowsHonestSourceSanityButNoBuildOrTestAnswer(t *
 		Tool:    "source_sanity",
 		Summary: "Source sanity passed for 1 file(s)",
 		Output:  "internal/surfaces/tui/app/model_state.go: no warnings or errors via go_diagnostics",
+		Facts:   &toolfacts.ToolResultFacts{DiagnosticEvidencePaths: []string{"internal/surfaces/tui/app/model_state.go"}},
 	}}
 	answer := "I ran source_sanity on `internal/surfaces/tui/app/model_state.go`, and it passed. I did not run a build or test command, so I did not verify that the project still builds. I also did not add or change a test path."
 	runner := &Runner{RuntimeBrief: brief}
@@ -4478,19 +4478,29 @@ func TestFinalAnswerAcceptanceAllowsHonestSourceSanityButNoBuildOrTestAnswer(t *
 	}
 }
 
-func TestValidationStatusEvidencePathsExtractDiagnosticOutputPaths(t *testing.T) {
+func TestValidationStatusEvidencePathsUseDiagnosticFacts(t *testing.T) {
 	results := []workspace.ToolResult{{
 		Tool:    "source_sanity",
 		Summary: "Source sanity passed for 1 file(s)",
 		Output:  "internal/surfaces/tui/app/model_state.go: no warnings or errors via go_diagnostics",
+		Facts:   &toolfacts.ToolResultFacts{DiagnosticEvidencePaths: []string{"internal/surfaces/tui/app/model_state.go"}},
 	}}
 
 	paths := validationStatusEvidencePaths(results)
 	if !slices.Contains(paths, "internal/surfaces/tui/app/model_state.go") {
-		t.Fatalf("source_sanity output path should be ledger-backed validation evidence, got %#v", paths)
+		t.Fatalf("source_sanity diagnostic facts should be ledger-backed validation evidence, got %#v", paths)
 	}
 	if slices.Contains(paths, "internal/surfaces/tui/app/perf_test.go") {
 		t.Fatalf("unobserved test path must not become validation ledger evidence, got %#v", paths)
+	}
+
+	transcriptOnly := []workspace.ToolResult{{
+		Tool:    "source_sanity",
+		Summary: "Source sanity passed for 1 file(s)",
+		Output:  "internal/surfaces/tui/app/output_only.go: no warnings or errors via go_diagnostics",
+	}}
+	if paths := validationStatusEvidencePaths(transcriptOnly); len(paths) != 0 {
+		t.Fatalf("diagnostic transcript paths without facts must not become validation evidence, got %#v", paths)
 	}
 }
 
@@ -4500,6 +4510,7 @@ func TestFinalAnswerAcceptanceRejectsUnsupportedCitationInValidationStatusAnswer
 		Tool:    "source_sanity",
 		Summary: "Source sanity passed for 1 file(s)",
 		Output:  "internal/surfaces/tui/app/model_state.go: no warnings or errors via go_diagnostics",
+		Facts:   &toolfacts.ToolResultFacts{DiagnosticEvidencePaths: []string{"internal/surfaces/tui/app/model_state.go"}},
 	}}
 	answer := "I ran source_sanity on `internal/surfaces/tui/app/model_state.go`, and it passed. I did not run a build or test command, so I did not verify that the project still builds. I also did not add or change a test path. Separately, `internal/surfaces/tui/app/perf_test.go` covers this behavior."
 	runner := &Runner{RuntimeBrief: brief}
@@ -4519,11 +4530,7 @@ func TestFinalAnswerAcceptanceRejectsUnsupportedCitationInValidationStatusAnswer
 func TestFinalAnswerAcceptanceRejectsBuildClaimWhenBuildPredatesLaterWrite(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Did you verify that it still builds? And added a test to cover this new behavior?")
 	results := []workspace.ToolResult{
-		{
-			Tool:    "shell",
-			Summary: "Ran shell command",
-			Output:  "$ go test ./internal/surfaces/tui/app\nok",
-		},
+		shellCommandResultForTest("go test ./internal/surfaces/tui/app", "ok", ""),
 		{
 			Tool:    "edit_file",
 			Summary: "Edited internal/surfaces/tui/app/model_state.go",
@@ -4551,11 +4558,7 @@ func TestFinalAnswerAcceptanceAcceptsBuildClaimWhenBuildFollowsWrite(t *testing.
 			Tool:    "edit_file",
 			Summary: "Edited internal/surfaces/tui/app/model_state.go",
 		},
-		{
-			Tool:    "shell",
-			Summary: "Ran shell command",
-			Output:  "$ go test ./internal/surfaces/tui/app\nok",
-		},
+		shellCommandResultForTest("go test ./internal/surfaces/tui/app", "ok", ""),
 	}
 	answer := "The build/test command passed after the change. I did not add or change a test path."
 	runner := &Runner{RuntimeBrief: brief}
@@ -4574,6 +4577,7 @@ func TestValidationStatusTerminalRecoveryAnswersFromLedger(t *testing.T) {
 		Tool:    "source_sanity",
 		Summary: "Source sanity passed for 1 file(s)",
 		Output:  "internal/surfaces/tui/app/model_state.go: no warnings or errors via go_diagnostics",
+		Facts:   &toolfacts.ToolResultFacts{DiagnosticEvidencePaths: []string{"internal/surfaces/tui/app/model_state.go"}},
 	}}
 	runner := &Runner{RuntimeBrief: brief}
 	acceptance := rejectFinalAnswerAcceptanceWithMessage(
@@ -6897,12 +6901,8 @@ func TestSourceEvidenceNonBodySignalsDoNotCloseSourceBodyObligations(t *testing.
 			},
 		},
 		{
-			name: "log summary",
-			result: workspace.ToolResult{
-				Tool:    "read_file",
-				Summary: "Read logs/conversations/session.jsonl lines 1-20",
-				Output:  `{"message":"model mentioned internal/runtime/agent/runner_core.go"}`,
-			},
+			name:   "log summary",
+			result: readFileSourceBodyResult("logs/conversations/session.jsonl", 1, 20, 20, `{"message":"model mentioned internal/runtime/agent/runner_core.go"}`),
 		},
 		{
 			name: "plain mentioned path",
@@ -8709,7 +8709,7 @@ func TestDeriveTurnPhaseContractFailedVerificationOpensRepairLane(t *testing.T) 
 		},
 		Results: []workspace.ToolResult{
 			{Tool: "edit_file", Summary: "Edited pkg/feature.go", ChangedPaths: []string{"pkg/feature.go"}},
-			{Tool: "shell", Summary: "Ran shell command", Output: "$ npm run build\n", Error: "build failed"},
+			shellCommandResultForTest("npm run build", "", "build failed"),
 		},
 	})
 
@@ -34973,11 +34973,9 @@ func TestDecorateFinalAnswerSanitizesInternalReadOnlyRemediationQuestionBlocker(
 			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
 			Objective:         "Explain why the latest run failed.",
 		},
-		Results: []workspace.ToolResult{{
-			Tool:    "read_file",
-			Summary: "Read logs/conversations/session.jsonl lines 1-20",
-			Output:  "1:{\"event\":\"model_stop\"}\n",
-		}},
+		Results: []workspace.ToolResult{
+			readFileSourceBodyResult("logs/conversations/session.jsonl", 1, 20, 20, "1:{\"event\":\"model_stop\"}\n"),
+		},
 		UserFacing: true,
 	})
 

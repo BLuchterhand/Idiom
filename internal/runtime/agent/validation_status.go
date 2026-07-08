@@ -264,12 +264,12 @@ func latestSuccessfulBuildOrTestVerificationSummary(results []workspace.ToolResu
 			continue
 		}
 
-		command := workspace.ShellCommandFromToolResult(result)
-		if command == "" || !workspace.AnalyzeShellCommand(command).BuildOrTest {
+		observed := workspace.AnalyzeVerificationResult(result)
+		if !observed.Successful || !observed.BuildOrTest || strings.TrimSpace(observed.Command) == "" {
 			continue
 		}
 
-		latest = command + " passed"
+		latest = strings.TrimSpace(observed.Command) + " passed"
 	}
 
 	if latest == "" {
@@ -314,8 +314,8 @@ func latestObservedVerificationSummary(results []workspace.ToolResult) (string, 
 			continue
 		}
 
-		if workspace.AnalyzeVerificationResult(result).Successful {
-			if command := workspace.ShellCommandFromToolResult(result); command != "" {
+		if observed := workspace.AnalyzeVerificationResult(result); observed.Successful {
+			if command := strings.TrimSpace(observed.Command); command != "" {
 				return command + " passed", true
 			}
 			if summary := strings.TrimSpace(result.Summary); summary != "" {
@@ -367,8 +367,10 @@ func validationStatusEvidenceLedgerPaths(results []workspace.ToolResult) []strin
 		for _, path := range ReadPathsFromToolResult(result) {
 			add(path)
 		}
-		for _, path := range sourceGroundingMentionedPaths(result.Summary + "\n" + result.Output) {
-			add(path)
+		if result.Facts != nil {
+			for _, path := range result.Facts.DiagnosticEvidencePaths {
+				add(path)
+			}
 		}
 	}
 
