@@ -771,7 +771,7 @@ func parseLaneOptions(args []string, stderr io.Writer) (laneOptions, error) {
 	// runLaneMainWithDeps from .idiom/backends.json. When no backends
 	// file declares an executor role, opts.Model stays empty and the
 	// subcommand uses the configured cfg.LlamaServer model.
-	coderShortcut := fs.Bool("coder", false, "use the project's executor-role alias from .idiom/backends.json (legacy spelling: proxy.default_coder)")
+	coderShortcut := fs.Bool("coder", false, "use the project's executor-role alias from .idiom/backends.json")
 	fs.StringVar(&opts.BackendProfile, "backend-profile", "", "select a named profile from .idiom/backends.json (omit to use the lone profile)")
 	fs.BoolVar(&opts.JSONEvents, "json", false, "emit structured JSONL events to stdout")
 	fs.StringVar(&opts.Resume, "resume", "", "resume a prior session by id")

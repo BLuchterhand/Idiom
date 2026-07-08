@@ -2,7 +2,7 @@
 // `.idiom/backends.json`, the project-side description of which local
 // LLM backends a project's idiom sessions talk to. Phase 4 of the
 // reusability migration introduced this so callers like
-// `idiom lane plan-execute` can pull a `default_coder` alias from
+// `idiom lane plan-execute` can pull an executor-role alias from
 // configuration rather than hardcoding the name. Phase 4b shipped
 // the Go-native launcher (Launch / Stop / Status — see launcher.go)
 // that drives `idiom backend start|stop|status` against the same
@@ -230,19 +230,6 @@ func (f File) ModelByAlias(alias string) (Model, bool) {
 	return Model{}, false
 }
 
-// CoderAlias is the legacy "does this profile have a coder?" spelling.
-// It remains as a compatibility wrapper for callers that still need
-// the historical no-lone-model behavior. New callers should use
-// ResolveRoleAlias(RoleExecutor) or AliasForRole(RoleExecutor).
-func (p Profile) CoderAlias() string {
-	resolution := p.resolveRoleAlias(RoleExecutor, roleAliasOptions{allowLoneModel: false})
-	if resolution.OK {
-		return resolution.Alias
-	}
-
-	return ""
-}
-
 // AliasForRole resolves the alias the harness should use for a given
 // role. Lookup order, top to bottom:
 //
@@ -275,14 +262,6 @@ func (p Profile) AliasForRole(role string) (string, bool) {
 // role and reports the rule that selected it. This method is the
 // active authority for Profile role-to-alias resolution.
 func (p Profile) ResolveRoleAlias(role string) RoleAliasResolution {
-	return p.resolveRoleAlias(role, roleAliasOptions{allowLoneModel: true})
-}
-
-type roleAliasOptions struct {
-	allowLoneModel bool
-}
-
-func (p Profile) resolveRoleAlias(role string, opts roleAliasOptions) RoleAliasResolution {
 	role = strings.ToLower(strings.TrimSpace(role))
 	if role == "" {
 		return RoleAliasResolution{}
@@ -302,7 +281,7 @@ func (p Profile) resolveRoleAlias(role string, opts roleAliasOptions) RoleAliasR
 		}
 	}
 
-	if opts.allowLoneModel && len(p.Models) == 1 {
+	if len(p.Models) == 1 {
 		if alias := strings.TrimSpace(p.Models[0].Alias); alias != "" {
 			return RoleAliasResolution{Role: role, Alias: alias, Source: RoleAliasSourceLoneModel, OK: true}
 		}
@@ -367,7 +346,7 @@ func (p Profile) ModelByAlias(alias string) (Model, bool) {
 // own config".
 //
 // When the resolved alias points to an alias that has no matching
-// Model entry (e.g., proxy.default_coder names an alias the proxy
+// Model entry (e.g., proxy.default_executor names an alias the proxy
 // routes externally), the returned Model still carries the alias on
 // its Alias field so callers can use it as the model identifier in
 // chat-completion requests.

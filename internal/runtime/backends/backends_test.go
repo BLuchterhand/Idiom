@@ -32,7 +32,7 @@ const sampleBackendsJSON = `{
       "proxy": {
         "listen": 47680,
         "default_alias": "qwen3.6-35b",
-        "default_coder": "qwen3-coder-30b"
+        "default_executor": "qwen3-coder-30b"
       }
     }
   }
@@ -68,7 +68,7 @@ func TestLoadParsesSampleBackends(t *testing.T) {
 		t.Fatalf("extra_args round-trip lost: %v", m35.ExtraArgs)
 	}
 
-	if prof.Proxy.Listen != 47680 || prof.Proxy.DefaultAlias != "qwen3.6-35b" || prof.Proxy.DefaultCoder != "qwen3-coder-30b" {
+	if prof.Proxy.Listen != 47680 || prof.Proxy.DefaultAlias != "qwen3.6-35b" || prof.Proxy.DefaultExecutor != "qwen3-coder-30b" {
 		t.Fatalf("proxy decoded incorrectly: %+v", prof.Proxy)
 	}
 }
@@ -244,57 +244,11 @@ func TestFileModelByAliasSearchesAllProfiles(t *testing.T) {
 	}
 }
 
-// TestCoderAliasPrefersExplicitDefaultCoder guards the legacy wrapper
-// spelling: a project that explicitly sets proxy.default_coder gets
-// exactly that alias regardless of how its model list looks.
-func TestCoderAliasPrefersExplicitDefaultCoder(t *testing.T) {
-	prof := Profile{
-		Models: []Model{{Alias: "model-a"}, {Alias: "model-b-coder"}},
-		Proxy:  Proxy{DefaultCoder: "model-a"},
-	}
-	if got := prof.CoderAlias(); got != "model-a" {
-		t.Fatalf("explicit default_coder must win, got %q", got)
-	}
-}
-
-// TestCoderAliasFallsBackToCoderHeuristic verifies that the legacy
-// wrapper still uses the shared executor heuristic.
-func TestCoderAliasFallsBackToCoderHeuristic(t *testing.T) {
-	prof := Profile{Models: []Model{
-		{Alias: "qwen3.6-35b"},
-		{Alias: "qwen3-coder-30b"},
-	}}
-	if got := prof.CoderAlias(); got != "qwen3-coder-30b" {
-		t.Fatalf("heuristic must pick the coder alias, got %q", got)
-	}
-}
-
-// TestCoderAliasReturnsEmptyWhenNoCoderPresent verifies the legacy
-// no-lone-model behavior retained by the wrapper.
-func TestCoderAliasReturnsEmptyWhenNoCoderPresent(t *testing.T) {
-	prof := Profile{Models: []Model{{Alias: "qwen3.6-35b"}, {Alias: "llama-7b"}}}
-	if got := prof.CoderAlias(); got != "" {
-		t.Fatalf("empty result expected when no coder exists, got %q", got)
-	}
-}
-
-func TestCoderAliasCompatibilitySkipsLoneModelFallback(t *testing.T) {
-	prof := Profile{Models: []Model{{Alias: "only-model"}}}
-	if got := prof.CoderAlias(); got != "" {
-		t.Fatalf("CoderAlias must retain no-lone-model compatibility, got %q", got)
-	}
-
-	resolution := prof.ResolveRoleAlias(RoleExecutor)
-	if !resolution.OK || resolution.Alias != "only-model" || resolution.Source != RoleAliasSourceLoneModel {
-		t.Fatalf("ResolveRoleAlias executor = %#v, want lone model resolution", resolution)
-	}
-}
-
-// TestCoderAliasHeuristicSkipsEncoderAndDecoder is the regression
+// TestAliasForRoleExecutorHeuristicSkipsEncoderAndDecoder is the regression
 // guard for the Phase 4/5 review tightening: a loose substring
 // match would pick "encoder" or "decoder" as a coder, which is
 // silently wrong. The hyphen-bounded variant must reject those.
-func TestCoderAliasHeuristicSkipsEncoderAndDecoder(t *testing.T) {
+func TestAliasForRoleExecutorHeuristicSkipsEncoderAndDecoder(t *testing.T) {
 	cases := []struct {
 		name    string
 		aliases []string
@@ -310,14 +264,23 @@ func TestCoderAliasHeuristicSkipsEncoderAndDecoder(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			models := make([]Model, len(tc.aliases))
-			for i, a := range tc.aliases {
-				models[i] = Model{Alias: a}
+			models := make([]Model, 0, len(tc.aliases)+1)
+			models = append(models, Model{Alias: "base"})
+			for _, a := range tc.aliases {
+				models = append(models, Model{Alias: a})
 			}
 
 			prof := Profile{Models: models}
-			if got := prof.CoderAlias(); got != tc.want {
-				t.Fatalf("CoderAlias for %v = %q, want %q", tc.aliases, got, tc.want)
+			got, ok := prof.AliasForRole(RoleExecutor)
+			if tc.want == "" {
+				if ok {
+					t.Fatalf("AliasForRole executor for %v = (%q,true), want miss", tc.aliases, got)
+				}
+				return
+			}
+
+			if !ok || got != tc.want {
+				t.Fatalf("AliasForRole executor for %v = (%q,%v), want (%q,true)", tc.aliases, got, ok, tc.want)
 			}
 		})
 	}
@@ -325,7 +288,7 @@ func TestCoderAliasHeuristicSkipsEncoderAndDecoder(t *testing.T) {
 
 // TestIsHyphenBoundedTokenMatchesEdgeCases is the unit-level guard
 // for the boundary detector. Catches regressions in the boundary
-// logic before they manifest as wrong CoderAlias resolutions.
+// logic before they manifest as wrong executor-role resolutions.
 func TestIsHyphenBoundedTokenMatchesEdgeCases(t *testing.T) {
 	cases := []struct {
 		s, token string

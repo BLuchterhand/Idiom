@@ -18,7 +18,7 @@ const sampleBackendsForCLI = `{
         {"alias": "qwen3.6-35b", "binary": "mlx_lm.server", "port": 47780, "max_tokens": 8192},
         {"alias": "qwen3-coder-30b", "binary": "mlx_lm.server", "port": 47781, "max_tokens": 8192}
       ],
-      "proxy": {"listen": 47680, "default_alias": "qwen3.6-35b", "default_coder": "qwen3-coder-30b"}
+      "proxy": {"listen": 47680, "default_alias": "qwen3.6-35b", "default_executor": "qwen3-coder-30b"}
     }
   }
 }`
@@ -50,8 +50,8 @@ func TestRunBackendListPrintsProfilesFromProjectRoot(t *testing.T) {
 	out := stdout.String()
 	for _, marker := range []string{
 		`profile "qwen-pair"`,
-		`proxy listen=47680 default="qwen3.6-35b" default_coder="qwen3-coder-30b"`,
-		`coder_alias="qwen3-coder-30b"`,
+		`proxy listen=47680 default="qwen3.6-35b" default_executor="qwen3-coder-30b"`,
+		`executor_alias="qwen3-coder-30b"`,
 		`alias="qwen3.6-35b"`,
 		`alias="qwen3-coder-30b"`,
 	} {
@@ -80,13 +80,13 @@ func TestRunBackendListUsesExecutorRoleResolver(t *testing.T) {
 		t.Fatalf("backend list expected exit 0, got %d (stderr=%s)", code, stderr.String())
 	}
 
-	want := `coder_alias="solo-model"`
+	want := `executor_alias="solo-model"`
 	if !strings.Contains(stdout.String(), want) {
 		t.Fatalf("backend list must use shared executor resolver; want %q in:\n%s", want, stdout.String())
 	}
 }
 
-func TestRunBackendListKeepsProxyLineShapeForDefaultExecutor(t *testing.T) {
+func TestRunBackendListShowsDefaultExecutor(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
 		t.Fatalf("mkdir .idiom: %v", err)
@@ -106,16 +106,16 @@ func TestRunBackendListKeepsProxyLineShapeForDefaultExecutor(t *testing.T) {
 	}
 
 	out := stdout.String()
-	if !strings.Contains(out, `proxy listen=47770 default="base" default_coder=""`) {
-		t.Fatalf("backend list must keep legacy proxy line shape, got:\n%s", out)
+	if !strings.Contains(out, `proxy listen=47770 default="base" default_executor="exec"`) {
+		t.Fatalf("backend list must show default_executor, got:\n%s", out)
 	}
 
-	if strings.Contains(out, "default_executor") {
-		t.Fatalf("backend list must not emit default_executor in compatibility output, got:\n%s", out)
+	if strings.Contains(out, "default_coder") {
+		t.Fatalf("backend list must not advertise legacy default_coder, got:\n%s", out)
 	}
 
-	if !strings.Contains(out, `coder_alias="exec"`) {
-		t.Fatalf("backend list must still resolve default_executor through coder_alias compatibility, got:\n%s", out)
+	if !strings.Contains(out, `executor_alias="exec"`) {
+		t.Fatalf("backend list must resolve default_executor through executor_alias, got:\n%s", out)
 	}
 }
 

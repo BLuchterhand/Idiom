@@ -1035,6 +1035,22 @@ Reviewer-updated estimate:
   `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
   `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
   `git diff --check`.
+- Backend executor-role alias cleanup is implemented. Deleted the production
+  `Profile.CoderAlias()` compatibility wrapper and its private
+  `roleAliasOptions` branch, leaving `ResolveRoleAlias` / `AliasForRole` as the
+  single backend role-alias authority. New generated/example configs and
+  `idiom backend list` now advertise `default_executor` / `executor_alias`
+  instead of `default_coder` / `coder_alias`; the `Proxy.DefaultCoder` JSON
+  field remains as legacy read compatibility for existing `.idiom/backends.json`
+  files. This slice changed production Go by `+7 / -31`, net `-24`; tests by
+  `+41 / -78`, net `-37`; and examples by `0 / -2`.
+  Verification: `go test ./internal/runtime/backends -run 'Test(Load|AliasForRole|ResolveRoleAlias|ResolveRoleFromProjectRoot|IsHyphenBoundedToken)' -count=1`;
+  `go test ./internal/surfaces/cli/backend ./internal/surfaces/cli/lane ./internal/surfaces/cli/init -count=1`;
+  `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
+  `git diff --check`.
 
 ## Review And Regression Protocol
 

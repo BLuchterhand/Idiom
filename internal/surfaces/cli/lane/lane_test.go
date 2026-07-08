@@ -1009,12 +1009,12 @@ func TestRunLaneMainComposesProjectOverlay(t *testing.T) {
 	}
 }
 
-// TestRunLaneMainPlanExecuteHonorsBackendsJSONCoder verifies the
+// TestRunLaneMainPlanExecuteHonorsBackendsJSONExecutor verifies the
 // Phase 4 contract: when a project's .idiom/backends.json declares
-// proxy.default_coder, the plan-execute auto-route uses that alias
+// proxy.default_executor, the plan-execute auto-route uses that alias
 // instead of the hardcoded fallback. This is what retires the
 // `// TODO(phase-4):` markers from the previous phase.
-func TestRunLaneMainPlanExecuteHonorsBackendsJSONCoder(t *testing.T) {
+func TestRunLaneMainPlanExecuteHonorsBackendsJSONExecutor(t *testing.T) {
 	briefPath := writeBrief(t, "# atom\n")
 	root := filepath.Dir(briefPath)
 
@@ -1022,7 +1022,7 @@ func TestRunLaneMainPlanExecuteHonorsBackendsJSONCoder(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	body := `{"profiles": {"local": {"models": [{"alias": "custom-coder-7b"}], "proxy": {"default_coder": "custom-coder-7b"}}}}`
+	body := `{"profiles": {"local": {"models": [{"alias": "custom-coder-7b"}], "proxy": {"default_executor": "custom-coder-7b"}}}}`
 	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644); err != nil {
 		t.Fatalf("write backends.json: %v", err)
 	}
@@ -1037,7 +1037,7 @@ func TestRunLaneMainPlanExecuteHonorsBackendsJSONCoder(t *testing.T) {
 	}
 
 	if !argsContain(fake.calledArgs, "--model", "custom-coder-7b") {
-		t.Fatalf("plan-execute auto-route must use backends.json default_coder; forwarded: %v", fake.calledArgs)
+		t.Fatalf("plan-execute auto-route must use backends.json default_executor; forwarded: %v", fake.calledArgs)
 	}
 }
 
@@ -1053,7 +1053,7 @@ func TestRunLaneMainCoderShortcutHonorsBackendsJSON(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	body := `{"profiles": {"local": {"models": [{"alias": "fancy-coder-13b"}], "proxy": {"default_coder": "fancy-coder-13b"}}}}`
+	body := `{"profiles": {"local": {"models": [{"alias": "fancy-coder-13b"}], "proxy": {"default_executor": "fancy-coder-13b"}}}}`
 	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -1113,8 +1113,8 @@ func TestRunLaneMainBackendProfileFlagSelectsProfile(t *testing.T) {
 	}
 
 	body := `{"profiles": {
-		"prod": {"models": [{"alias": "prod-coder"}], "proxy": {"default_coder": "prod-coder"}},
-		"dev":  {"models": [{"alias": "dev-coder"}],  "proxy": {"default_coder": "dev-coder"}}
+		"prod": {"models": [{"alias": "prod-coder"}], "proxy": {"default_executor": "prod-coder"}},
+		"dev":  {"models": [{"alias": "dev-coder"}],  "proxy": {"default_executor": "dev-coder"}}
 	}}`
 	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
@@ -1200,7 +1200,7 @@ func TestRunLaneMainExplicitCoderUsesExecutorWithPlannerProfile(t *testing.T) {
 
 // TestRunLaneMainExplicitModelBeatsBackendsJSON verifies the
 // precedence ladder: an explicit --model wins over both the
-// auto-route and the backends.json default_coder. Operators
+// auto-route and the backends.json default_executor. Operators
 // debugging a model-specific issue need to be able to override the
 // project default without editing backends.json.
 func TestRunLaneMainExplicitModelBeatsBackendsJSON(t *testing.T) {
@@ -1211,7 +1211,7 @@ func TestRunLaneMainExplicitModelBeatsBackendsJSON(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 
-	body := `{"profiles": {"local": {"proxy": {"default_coder": "project-default-coder"}}}}`
+	body := `{"profiles": {"local": {"proxy": {"default_executor": "project-default-coder"}}}}`
 	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -1226,7 +1226,7 @@ func TestRunLaneMainExplicitModelBeatsBackendsJSON(t *testing.T) {
 	}
 
 	if !argsContain(fake.calledArgs, "--model", "operator-override") {
-		t.Fatalf("--model must beat backends.json default_coder; forwarded: %v", fake.calledArgs)
+		t.Fatalf("--model must beat backends.json default_executor; forwarded: %v", fake.calledArgs)
 	}
 }
 
