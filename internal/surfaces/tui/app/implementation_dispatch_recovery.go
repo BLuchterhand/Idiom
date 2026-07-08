@@ -269,7 +269,7 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 		refinedPlanDocuments := append([]implementationdispatch.PlanDocument(nil), planDocuments...)
 
 		for _, doc := range planDocuments {
-			if !implementationdispatch.PlanDocumentNeedsRefineBeforeDispatch(doc) {
+			if !implementationdispatch.IsAtomizedPlanDocumentPath(doc.Path) {
 				continue
 			}
 

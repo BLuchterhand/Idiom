@@ -192,12 +192,16 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 		}
 
 		if tool == "task" {
-			if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
-				sourcePaths := readOnlySourceLikePaths(packet.SourceBodyPaths, 8)
-				packetAnswerable := readOnlyEvidencePacketAnswerableForObjective(packet, ledger.Objective)
+			fact, ok := readOnlyDelegatedEvidenceFactFromResult(result)
+			if !ok {
+				continue
+			}
 
+			if fact.HasPacket {
+				sourcePaths := readOnlySourceLikePaths(fact.SourceBodyPaths, 8)
+				packetAnswerable := readOnlyEvidencePacketAnswerableForObjective(fact.Packet, ledger.Objective)
 				if packetAnswerable {
-					for _, evidence := range readOnlyEvidencePacketObjectiveSourceOwnerEvidence(packet, ledger.Objective) {
+					for _, evidence := range readOnlyEvidencePacketObjectiveSourceOwnerEvidence(fact.Packet, ledger.Objective) {
 						ledger.observeSourceOwnerEvidence(evidence)
 
 						if evidence.OwnerEligible() {
@@ -211,7 +215,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 							Tool:    tool,
 							Source:  readOnlyEvidenceItemSource(tool),
 							Path:    path,
-							Summary: strings.TrimSpace(result.Summary),
+							Summary: fact.Summary,
 						})
 					}
 
@@ -223,33 +227,33 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 					}
 				}
 
-				ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, packet.CandidatePaths, packet.InspectedPaths, sourcePaths)
+				ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, fact.CandidatePaths, fact.InspectedPaths, sourcePaths)
 
 				continue
 			}
 
-			sourcePaths := readOnlySourceLikePaths(sourceBodyEvidencePathsFromDelegatedPacket(result.Output), 8)
+			sourcePaths := readOnlySourceLikePaths(fact.SourceBodyPaths, 8)
 			inspectedPathFallback := false
 
-			if len(sourcePaths) == 0 && delegatedTaskOutputHasFindingEvidence(result.Output) {
-				sourcePaths = readOnlySourceLikePaths(groundedChildPacketEvidencePaths(ledger.Objective, result.Output), 8)
+			if len(sourcePaths) == 0 && fact.FindingEvidence {
+				sourcePaths = readOnlySourceLikePaths(groundedChildPacketEvidencePaths(ledger.Objective, fact.Output), 8)
 				inspectedPathFallback = len(sourcePaths) > 0
 			}
 
 			ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, sourcePaths)
 
-			sourcePathsAnswerable := childPacketContainsGroundedAnswerEvidence(ledger.Objective, result.Output) ||
-				(inspectedPathFallback && delegatedPacketAddressesObjective(ledger.Objective, result.Output))
+			sourcePathsAnswerable := childPacketContainsGroundedAnswerEvidence(ledger.Objective, fact.Output) ||
+				(inspectedPathFallback && delegatedPacketAddressesObjective(ledger.Objective, fact.Output))
 
 			if sourcePathsAnswerable {
-				sourceBodyText := sanitizeDelegatedReadOnlyResultOutput(result)
+				sourceBodyText := stripDelegatedReadOnlyInternalPacket(fact.Output)
 				for _, path := range sourcePaths {
 					ledger.addItem(readOnlyEvidenceItem{
 						Kind:    readOnlyEvidenceSourceBody,
 						Tool:    tool,
 						Source:  readOnlyEvidenceItemSource(tool),
 						Path:    path,
-						Summary: strings.TrimSpace(result.Summary),
+						Summary: fact.Summary,
 					})
 					ledger.observeSourceBodyObjectiveSupport(path, sourceBodyText)
 				}
@@ -2282,19 +2286,20 @@ func TextSharesObjectiveTerm(text string, objective string) bool {
 }
 
 func ReadOnlyTaskResultAnswerableForObjective(result workspace.ToolResult, objective string) bool {
-	if strings.TrimSpace(result.Tool) != workspace.ToolNameTask || strings.TrimSpace(result.Error) != "" {
+	fact, ok := readOnlyDelegatedEvidenceFactFromResult(result)
+	if !ok {
 		return false
 	}
 
-	if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
+	if fact.HasPacket {
 		if strings.TrimSpace(objective) == "" {
-			return readOnlyEvidencePacketAnswerable(packet)
+			return readOnlyEvidencePacketAnswerable(fact.Packet)
 		}
 
-		return readOnlyEvidencePacketAnswerableForObjective(packet, objective)
+		return readOnlyEvidencePacketAnswerableForObjective(fact.Packet, objective)
 	}
 
-	return childPacketContainsGroundedAnswerEvidence(objective, result.Output)
+	return childPacketContainsGroundedAnswerEvidence(objective, fact.Output)
 }
 
 type ReadOnlyCloseoutState string
@@ -4942,29 +4947,25 @@ func normalizeDelegatedReadOnlyPacket(answer string) string {
 func delegatedReadOnlySourceBodyReadinessPaths(objective string, results []workspace.ToolResult) []string {
 	paths := make([]string, 0, 4)
 
-	for _, result := range results {
-		if strings.TrimSpace(result.Tool) != workspace.ToolNameTask || strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-
-		if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
-			if readOnlyEvidencePacketAnswerableForObjective(packet, objective) {
-				paths = append(paths, packet.SourceBodyPaths...)
+	for _, fact := range newToolResultEvidenceProjection(results).ReadOnlyDelegatedEvidenceFacts() {
+		if fact.HasPacket {
+			if readOnlyEvidencePacketAnswerableForObjective(fact.Packet, objective) {
+				paths = append(paths, fact.SourceBodyPaths...)
 			}
 
 			continue
 		}
 
-		sourcePaths := sourceBodyEvidencePathsFromDelegatedPacket(result.Output)
-		if len(sourcePaths) == 0 && delegatedTaskOutputHasFindingEvidence(result.Output) {
-			sourcePaths = groundedChildPacketEvidencePaths(objective, result.Output)
+		sourcePaths := fact.SourceBodyPaths
+		if len(sourcePaths) == 0 && fact.FindingEvidence {
+			sourcePaths = groundedChildPacketEvidencePaths(objective, fact.Output)
 		}
 
 		if len(sourcePaths) == 0 {
 			continue
 		}
 
-		if childPacketContainsGroundedAnswerEvidence(objective, result.Output) || delegatedPacketAddressesObjective(objective, result.Output) {
+		if childPacketContainsGroundedAnswerEvidence(objective, fact.Output) || delegatedPacketAddressesObjective(objective, fact.Output) {
 			paths = append(paths, sourcePaths...)
 		}
 	}

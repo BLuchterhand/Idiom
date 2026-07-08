@@ -1669,45 +1669,6 @@ func exactDebugLogFilePath(path string) bool {
 		strings.HasSuffix(lower, ".trace")
 }
 
-func generatedEvidenceArtifactReadRedirectResult(req workspace.ToolRequest, results []workspace.ToolResult) (workspace.ToolResult, bool) {
-	if strings.TrimSpace(req.Tool) != workspace.ToolNameReadFile {
-		return workspace.ToolResult{}, false
-	}
-
-	path := NormalizeRunnerPath(req.Path)
-	if !isGeneratedDiscoveryContextArtifactPath(path) {
-		return workspace.ToolResult{}, false
-	}
-
-	paths := delegatedDiscoveryQueryEvidencePaths(results, 6)
-	if len(paths) == 0 {
-		paths = promptEvidencePathsFromToolResults(results, 6)
-	}
-
-	paths = nonArtifactEvidencePaths(paths)
-	if len(paths) == 0 {
-		return workspace.ToolResult{}, false
-	}
-
-	var b strings.Builder
-
-	fmt.Fprintf(&b, "Generated evidence artifact %s was not read because generated discovery/context JSON is not source-body evidence.\n", path)
-	b.WriteString("Use the source paths already named by the current discovery packet instead:\n")
-
-	for _, sourcePath := range textutil.Prefix(paths, 6) {
-		fmt.Fprintf(&b, "- %s\n", sourcePath)
-	}
-
-	fmt.Fprintf(&b, "Next exact source probe example: {\"tool\":\"read_file\",\"path\":%q}\n", paths[0])
-	b.WriteString("After one source-body read resolves the claim, answer from the gathered evidence instead of reading artifact JSON.")
-
-	return workspace.ToolResult{
-		Tool:    req.Tool,
-		Summary: "Redirected generated evidence artifact read to source paths",
-		Output:  strings.TrimSpace(b.String()),
-	}, true
-}
-
 func generatedEvidenceArtifactReadRedirectRequest(req workspace.ToolRequest, results []workspace.ToolResult) (workspace.ToolRequest, string, string, bool) {
 	if strings.TrimSpace(req.Tool) != workspace.ToolNameReadFile {
 		return workspace.ToolRequest{}, "", "", false
@@ -2719,20 +2680,16 @@ func shouldPreferModelBudgetSynthesis(agentName string, brief workerruntime.Work
 }
 
 func postChildSourceBodyPacketEvidenceAvailable(results []workspace.ToolResult) bool {
-	for _, result := range results {
-		if strings.TrimSpace(result.Tool) != workspace.ToolNameTask || strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-
-		if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
-			if len(packet.SourceBodyPaths) > 0 {
+	for _, fact := range newToolResultEvidenceProjection(results).ReadOnlyDelegatedEvidenceFacts() {
+		if fact.HasPacket {
+			if len(fact.SourceBodyPaths) > 0 {
 				return true
 			}
 
 			continue
 		}
 
-		if delegatedSourceBodyPacketHasGroundedFinding(result.Output) {
+		if delegatedSourceBodyPacketHasGroundedFinding(fact.Output) {
 			return true
 		}
 	}

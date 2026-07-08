@@ -9,16 +9,12 @@ import (
 
 func PlanDocumentsNeedRefineBeforeDispatch(planDocuments []PlanDocument) bool {
 	for _, doc := range planDocuments {
-		if PlanDocumentNeedsRefineBeforeDispatch(doc) {
+		if IsAtomizedPlanDocumentPath(doc.Path) {
 			return true
 		}
 	}
 
 	return false
-}
-
-func PlanDocumentNeedsRefineBeforeDispatch(doc PlanDocument) bool {
-	return IsAtomizedPlanDocumentPath(doc.Path)
 }
 
 func TestObligationsFromDocuments(docs []PlanDocument) []string {

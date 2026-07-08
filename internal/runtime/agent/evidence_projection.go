@@ -12,6 +12,17 @@ type toolResultEvidenceProjection struct {
 	results []workspace.ToolResult
 }
 
+type readOnlyDelegatedEvidenceFact struct {
+	Summary         string
+	Output          string
+	Packet          ReadOnlyEvidencePacket
+	HasPacket       bool
+	SourceBodyPaths []string
+	InspectedPaths  []string
+	CandidatePaths  []string
+	FindingEvidence bool
+}
+
 func newToolResultEvidenceProjection(results []workspace.ToolResult) toolResultEvidenceProjection {
 	return toolResultEvidenceProjection{results: append([]workspace.ToolResult(nil), results...)}
 }
@@ -127,13 +138,50 @@ func (projection toolResultEvidenceProjection) CandidatePaths() []string {
 func (projection toolResultEvidenceProjection) ReadOnlyEvidencePackets() []ReadOnlyEvidencePacket {
 	packets := make([]ReadOnlyEvidencePacket, 0, 2)
 
-	for _, result := range projection.results {
-		if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
-			packets = append(packets, packet)
+	for _, fact := range projection.ReadOnlyDelegatedEvidenceFacts() {
+		if fact.HasPacket {
+			packets = append(packets, fact.Packet)
 		}
 	}
 
 	return packets
+}
+
+func (projection toolResultEvidenceProjection) ReadOnlyDelegatedEvidenceFacts() []readOnlyDelegatedEvidenceFact {
+	facts := make([]readOnlyDelegatedEvidenceFact, 0, 2)
+
+	for _, result := range projection.results {
+		if fact, ok := readOnlyDelegatedEvidenceFactFromResult(result); ok {
+			facts = append(facts, fact)
+		}
+	}
+
+	return facts
+}
+
+func readOnlyDelegatedEvidenceFactFromResult(result workspace.ToolResult) (readOnlyDelegatedEvidenceFact, bool) {
+	if strings.TrimSpace(result.Tool) != workspace.ToolNameTask || strings.TrimSpace(result.Error) != "" {
+		return readOnlyDelegatedEvidenceFact{}, false
+	}
+
+	fact := readOnlyDelegatedEvidenceFact{
+		Summary: strings.TrimSpace(result.Summary),
+		Output:  strings.TrimSpace(result.Output),
+	}
+
+	if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
+		fact.HasPacket = true
+		fact.Packet = packet
+		fact.SourceBodyPaths = append([]string(nil), packet.SourceBodyPaths...)
+		fact.InspectedPaths = append([]string(nil), packet.InspectedPaths...)
+		fact.CandidatePaths = append([]string(nil), packet.CandidatePaths...)
+		return fact, true
+	}
+
+	fact.SourceBodyPaths = sourceBodyEvidencePathsFromDelegatedPacket(result.Output)
+	fact.FindingEvidence = delegatedTaskOutputHasFindingEvidence(result.Output)
+
+	return fact, true
 }
 
 func (projection toolResultEvidenceProjection) ReadOnlyEvidencePacketCandidatePaths() []string {
@@ -162,17 +210,8 @@ func (projection toolResultEvidenceProjection) ReadOnlySourceBodyEvidencePaths()
 	paths := nonArtifactEvidencePaths(projection.SourceBodyPaths())
 
 	var delegated []string
-	for _, result := range projection.results {
-		if strings.TrimSpace(result.Tool) != workspace.ToolNameTask || strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-
-		if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
-			delegated = append(delegated, packet.SourceBodyPaths...)
-			continue
-		}
-
-		delegated = append(delegated, sourceBodyEvidencePathsFromDelegatedPacket(result.Output)...)
+	for _, fact := range projection.ReadOnlyDelegatedEvidenceFacts() {
+		delegated = append(delegated, fact.SourceBodyPaths...)
 	}
 
 	for _, raw := range delegated {

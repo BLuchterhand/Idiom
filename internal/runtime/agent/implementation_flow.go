@@ -1023,7 +1023,8 @@ func childLifecycleObjectiveAlignmentForResult(result workspace.ToolResult) auto
 	if strings.TrimSpace(result.Error) != "" {
 		return autonomy.ChildObjectiveWeak
 	}
-	if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
+	if fact, ok := readOnlyDelegatedEvidenceFactFromResult(result); ok && fact.HasPacket {
+		packet := fact.Packet
 		if len(packet.Gaps) > 0 {
 			return autonomy.ChildObjectiveWeak
 		}
@@ -1047,7 +1048,8 @@ func childLifecycleObjectiveAlignmentForReadOnlyResult(result workspace.ToolResu
 	if strings.TrimSpace(result.Error) != "" {
 		return autonomy.ChildObjectiveWeak
 	}
-	if _, ok := readOnlyEvidencePacketFromResult(result); !ok {
+	fact, ok := readOnlyDelegatedEvidenceFactFromResult(result)
+	if !ok || !fact.HasPacket {
 		return autonomy.ChildObjectiveWeak
 	}
 	return childLifecycleObjectiveAlignmentForResult(result)
@@ -6089,17 +6091,6 @@ func allowsDocumentationOnlyPacket(objective string) bool {
 	return ContainsAny(lower, " readme ", " doc ", " docs ", " documentation ", " markdown ")
 }
 
-func annotateScopedFallbackAnswer(answer string, objective string) string {
-	answer = strings.TrimSpace(answer)
-	objective = strings.TrimSpace(objective)
-
-	if objective == "" || answer == "" || !strings.HasPrefix(answer, "Partial findings from this turn") {
-		return answer
-	}
-
-	return "Question in scope: " + objective + "\nSource: delegated read-only evidence packet.\n\n" + answer
-}
-
 func augmentDelegatedReadOnlyPacket(answer string, objective string, results []workspace.ToolResult) string {
 	answer = strings.TrimSpace(answer)
 	if answer == "" {
@@ -6191,7 +6182,7 @@ func synthesizeDelegatedReadOnlyAnswer(objective string, results []workspace.Too
 		answerabilityResults = append(answerabilityResults, result)
 
 		if strings.TrimSpace(result.Tool) == workspace.ToolNameTask {
-			if packet, ok := readOnlyEvidencePacketFromResult(result); ok && !readOnlyEvidencePacketAnswerableForObjective(packet, objective) {
+			if fact, ok := readOnlyDelegatedEvidenceFactFromResult(result); ok && fact.HasPacket && !readOnlyEvidencePacketAnswerableForObjective(fact.Packet, objective) {
 				continue
 			}
 		}

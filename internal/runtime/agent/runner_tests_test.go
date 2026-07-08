@@ -25629,17 +25629,6 @@ func TestImmediateBudgetFallbackAnswerUsesExistingEvidence(t *testing.T) {
 	}
 }
 
-func TestAnnotateScopedFallbackAnswerAddsObjectiveForChildPacketFallback(t *testing.T) {
-	answer := annotateScopedFallbackAnswer("Partial findings from this turn (the budget was reached before a full synthesis):\n\nVerified context:\n- Found task hooks", "Can you tell me how this harness uses subagents?")
-	if !strings.Contains(answer, "Question in scope: Can you tell me how this harness uses subagents?") {
-		t.Fatalf("expected scoped question prefix, got:\n%s", answer)
-	}
-
-	if !strings.Contains(answer, "Source: delegated read-only evidence packet.") {
-		t.Fatalf("expected delegated read-only packet source line, got:\n%s", answer)
-	}
-}
-
 func TestChildPacketContainsGroundedAnswerEvidenceRequiresRealEvidence(t *testing.T) {
 	good := "Source-body evidence paths:\n- internal/runtime/agent/implementation_flow.go\n\nInspected paths: internal/runtime/agent/runner_core.go, internal/runtime/agent/implementation_flow.go\nKey findings: the harness uses the task tool to launch an isolated read-only child runner.\nConfidence: high\n"
 	if !childPacketContainsGroundedAnswerEvidence("", good) {
@@ -32475,7 +32464,7 @@ func TestClosurePromptEvidencePathsDropsArtifacts(t *testing.T) {
 	}
 }
 
-func TestGeneratedEvidenceArtifactReadRedirectNamesSourcePaths(t *testing.T) {
+func TestGeneratedEvidenceArtifactReadRedirectChoosesConcreteSourcePath(t *testing.T) {
 	req := workspace.ToolRequest{
 		Tool: "read_file",
 		Path: ".idiom/discovery/queries/query.json",
@@ -32485,25 +32474,6 @@ func TestGeneratedEvidenceArtifactReadRedirectNamesSourcePaths(t *testing.T) {
 		Summary: "Ran architecture discovery",
 		Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"text_anchor_search","summary":"Found paths","output_excerpt":"internal/runtime/agent/runner_core.go:128: finish\ninternal/runtime/agent/implementation_flow.go:16: runChildTask"}]}`,
 	}}
-	result, ok := generatedEvidenceArtifactReadRedirectResult(req, results)
-
-	if !ok {
-		t.Fatal("expected generated evidence artifact read to redirect to source paths")
-	}
-
-	if result.Error != "" {
-		t.Fatalf("soft redirect should not be a rejection, got error %q", result.Error)
-	}
-
-	for _, want := range []string{"generated discovery/context JSON is not source-body evidence", "internal/runtime/agent/runner_core.go", "internal/runtime/agent/implementation_flow.go"} {
-		if !strings.Contains(result.Output, want) {
-			t.Fatalf("redirect output missing %q:\n%s", want, result.Output)
-		}
-	}
-
-	if strings.Contains(result.Output, "- .idiom/discovery/queries/query.json") {
-		t.Fatalf("redirect must not list artifact as source evidence:\n%s", result.Output)
-	}
 
 	redirected, raw, reason, ok := generatedEvidenceArtifactReadRedirectRequest(req, results)
 	if !ok {

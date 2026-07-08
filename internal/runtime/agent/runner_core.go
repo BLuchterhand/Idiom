@@ -5411,20 +5411,21 @@ func acceptedMentionedEvidenceResultForObjective(result workspace.ToolResult, ob
 		return true
 	}
 
-	if strings.TrimSpace(result.Tool) != workspace.ToolNameTask || strings.TrimSpace(result.Output) == "" {
+	fact, ok := readOnlyDelegatedEvidenceFactFromResult(result)
+	if !ok || fact.Output == "" {
 		return false
 	}
 
-	if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
-		return readOnlyEvidencePacketAnswerableForObjective(packet, objective)
+	if fact.HasPacket {
+		return readOnlyEvidencePacketAnswerableForObjective(fact.Packet, objective)
 	}
 
 	if strings.TrimSpace(objective) != "" {
-		return childPacketContainsGroundedAnswerEvidence(objective, result.Output) ||
-			delegatedPacketAddressesObjective(objective, result.Output)
+		return childPacketContainsGroundedAnswerEvidence(objective, fact.Output) ||
+			delegatedPacketAddressesObjective(objective, fact.Output)
 	}
 
-	return delegatedTaskOutputHasFindingEvidence(result.Output)
+	return fact.FindingEvidence
 }
 
 // verificationContractSkipsGate reports whether the brief's
@@ -21391,45 +21392,41 @@ func postChildClosureEvidencePaths(objective string, results []workspace.ToolRes
 	followupAnchors := make([]string, 0, max)
 	acceptedPacket := false
 
-	for _, result := range results {
-		if strings.TrimSpace(result.Tool) != workspace.ToolNameTask || strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-
-		if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
-			packetAnswerable := readOnlyEvidencePacketAnswerableForObjective(packet, objective)
+	for _, fact := range newToolResultEvidenceProjection(results).ReadOnlyDelegatedEvidenceFacts() {
+		if fact.HasPacket {
+			packetAnswerable := readOnlyEvidencePacketAnswerableForObjective(fact.Packet, objective)
 			if strings.TrimSpace(objective) == "" {
-				packetAnswerable = readOnlyEvidencePacketAnswerable(packet)
+				packetAnswerable = readOnlyEvidencePacketAnswerable(fact.Packet)
 			}
 
 			if !packetAnswerable {
-				followupAnchors = append(followupAnchors, readOnlyChildPacketFollowupAnchors(objective, packet)...)
+				followupAnchors = append(followupAnchors, readOnlyChildPacketFollowupAnchors(objective, fact.Packet)...)
 				continue
 			}
 
 			acceptedPacket = true
 
-			paths = append(paths, packet.SourceBodyPaths...)
-			paths = append(paths, packet.InspectedPaths...)
-			paths = append(paths, packet.CandidatePaths...)
+			paths = append(paths, fact.SourceBodyPaths...)
+			paths = append(paths, fact.InspectedPaths...)
+			paths = append(paths, fact.CandidatePaths...)
 
 			continue
 		}
 
-		sourcePaths := sourceBodyEvidencePathsFromDelegatedPacket(result.Output)
-		if len(sourcePaths) == 0 && delegatedTaskOutputHasFindingEvidence(result.Output) {
-			sourcePaths = groundedChildPacketEvidencePaths(objective, result.Output)
+		sourcePaths := fact.SourceBodyPaths
+		if len(sourcePaths) == 0 && fact.FindingEvidence {
+			sourcePaths = groundedChildPacketEvidencePaths(objective, fact.Output)
 		}
 
 		if len(sourcePaths) == 0 {
-			followupAnchors = append(followupAnchors, delegatedChildPacketFollowupAnchors(objective, result.Output)...)
+			followupAnchors = append(followupAnchors, delegatedChildPacketFollowupAnchors(objective, fact.Output)...)
 			continue
 		}
 
-		if !childPacketContainsGroundedAnswerEvidence(objective, result.Output) &&
-			!delegatedPacketAddressesObjective(objective, result.Output) {
+		if !childPacketContainsGroundedAnswerEvidence(objective, fact.Output) &&
+			!delegatedPacketAddressesObjective(objective, fact.Output) {
 
-			followupAnchors = append(followupAnchors, delegatedChildPacketFollowupAnchors(objective, result.Output)...)
+			followupAnchors = append(followupAnchors, delegatedChildPacketFollowupAnchors(objective, fact.Output)...)
 			continue
 		}
 
