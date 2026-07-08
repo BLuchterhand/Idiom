@@ -162,6 +162,7 @@ func TestVerificationPlannerSkipsUnsafeAndUnsupportedPaths(t *testing.T) {
 			"generated/a.go",
 			"pkg/header.go",
 			filepath.Join(root, "abs.go"),
+			`C:\repo\abs.go`,
 			"../outside.go",
 			"pkg//bad.go",
 			"README.md",

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
 	planartifact "idiom/internal/contracts/planartifact"
 	"idiom/internal/platform/atomicfile"
@@ -100,8 +101,8 @@ func approvedPlanAuthorizedNewFiles(root string, base []string, plan planartifac
 			continue
 		}
 
-		path := strings.TrimSpace(filepath.ToSlash(edit.Path))
-		if path == "" || filepath.IsAbs(path) {
+		path := pathparse.NormalizeWorkspaceRelativePath(edit.Path)
+		if path == "" {
 			continue
 		}
 		if _, ok := approved[path]; !ok {

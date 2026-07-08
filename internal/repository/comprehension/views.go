@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"idiom/internal/contracts/pathparse"
 	"idiom/internal/platform/textutil"
 )
 
@@ -571,7 +572,7 @@ func referencedPaths(result PackResult) []string {
 }
 
 func sourceReferencePath(path string) string {
-	path = cleanFreshnessPath(path)
+	path = pathparse.NormalizeWorkspaceRelativePath(path)
 	if path == "" {
 		return ""
 	}

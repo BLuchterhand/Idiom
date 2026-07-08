@@ -8040,17 +8040,7 @@ func scopedImplementationRequiredPath(path string, required []string) string {
 }
 
 func cleanRelativeRunnerPath(path string) string {
-	normalized := NormalizeRunnerPath(path)
-	if normalized == "" || filepath.IsAbs(normalized) {
-		return ""
-	}
-
-	cleaned := filepath.ToSlash(filepath.Clean(normalized))
-	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return ""
-	}
-
-	return cleaned
+	return pathparse.NormalizeWorkspaceRelativePath(NormalizeRunnerPath(path))
 }
 
 func countTextLines(data []byte) int {

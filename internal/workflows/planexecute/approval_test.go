@@ -57,13 +57,14 @@ func TestApprovedPlanAuthorizedNewFilesAddsOnlyApprovedMissingPaths(t *testing.T
 			Required:            true,
 			Status:              planartifact.ApprovalStatusApproved,
 			ExecutionPermission: planartifact.ExecutionPermissionExecuteAll,
-			ApprovedPaths:       []string{"existing.go", "new.go", "bad_shape.go"},
+			ApprovedPaths:       []string{"existing.go", "new.go", "bad_shape.go", `C:\repo\outside.go`},
 		},
 		Edits: []planartifact.PlanEdit{
 			{Path: "existing.go", OldText: "package app\n", NewText: "package app\n\nconst Existing = true\n"},
 			{Path: "new.go", ReplaceAll: true, NewText: "package app\n"},
 			{Path: "bad_shape.go", NewText: "package app\n"},
 			{Path: "unapproved.go", ReplaceAll: true, NewText: "package app\n"},
+			{Path: `C:\repo\outside.go`, ReplaceAll: true, NewText: "package app\n"},
 		},
 	}
 

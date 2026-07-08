@@ -196,10 +196,6 @@ func promptContextPackNeedsFreshnessRecovery(result PromptContextToolResult) boo
 		strings.Contains(text, "context freshness")
 }
 
-func RenderPromptContextPackSection(result PromptContextToolResult) (string, error) {
-	return RenderPromptContextPackSectionWithOptions(result, PromptContextPackOptions{})
-}
-
 func PromptAlreadyHasContextPack(body string) bool {
 	lower := strings.ToLower(body)
 	trimmed := strings.TrimSpace(lower)

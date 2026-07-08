@@ -4071,8 +4071,8 @@ func (r *Runner) submitPlanEditPathGrounding(path string, edit planartifact.Plan
 }
 
 func planThenExecuteEditHasValidatedInsertionAnchor(edit planartifact.PlanEdit, root string, path string, results []workspace.ToolResult) bool {
-	path = NormalizeRunnerPath(path)
-	if path == "" || strings.TrimSpace(root) == "" || filepath.IsAbs(path) {
+	path = pathparse.NormalizeWorkspaceRelativePath(NormalizeRunnerPath(path))
+	if path == "" || strings.TrimSpace(root) == "" {
 		return false
 	}
 
@@ -4108,8 +4108,8 @@ func planThenExecuteEditHasValidatedInsertionAnchor(edit planartifact.PlanEdit, 
 }
 
 func planThenExecuteEditHasExactAnchorContract(edit planartifact.PlanEdit, root string, path string) bool {
-	path = NormalizeRunnerPath(path)
-	if path == "" || strings.TrimSpace(root) == "" || filepath.IsAbs(path) {
+	path = pathparse.NormalizeWorkspaceRelativePath(NormalizeRunnerPath(path))
+	if path == "" || strings.TrimSpace(root) == "" {
 		return false
 	}
 
@@ -4131,8 +4131,8 @@ func planThenExecuteEditHasExactAnchorContract(edit planartifact.PlanEdit, root 
 }
 
 func planThenExecuteCompleteNewFileEdit(edit planartifact.PlanEdit, root string, path string) bool {
-	path = NormalizeRunnerPath(path)
-	if path == "" || strings.TrimSpace(root) == "" || filepath.IsAbs(path) {
+	path = pathparse.NormalizeWorkspaceRelativePath(NormalizeRunnerPath(path))
+	if path == "" || strings.TrimSpace(root) == "" {
 		return false
 	}
 
@@ -4186,8 +4186,8 @@ func normalizedRequiredEditPaths(required []string) []string {
 }
 
 func planThenExecuteRequiredPathIsDirectoryScope(path string, all []string, root string) bool {
-	path = NormalizeRunnerPath(path)
-	if path == "" || filepath.IsAbs(path) {
+	path = pathparse.NormalizeWorkspaceRelativePath(NormalizeRunnerPath(path))
+	if path == "" {
 		return false
 	}
 
@@ -4316,8 +4316,8 @@ func (r *Runner) invalidSubmitPlanAnchors(req workspace.ToolRequest) []string {
 	contentCache := make(map[string]string)
 
 	for _, edit := range planThenExecuteEffectiveSubmitPlanEdits(req) {
-		path := NormalizeRunnerPath(edit.Path)
-		if path == "" || filepath.IsAbs(path) {
+		path := pathparse.NormalizeWorkspaceRelativePath(NormalizeRunnerPath(edit.Path))
+		if path == "" {
 			continue
 		}
 
@@ -4550,7 +4550,8 @@ func planThenExecuteObservedSourceEvidenceForPath(results []workspace.ToolResult
 }
 
 func readPlanProjectionBase(root string, path string) string {
-	if strings.TrimSpace(root) == "" || filepath.IsAbs(path) {
+	path = pathparse.NormalizeWorkspaceRelativePath(path)
+	if strings.TrimSpace(root) == "" || path == "" {
 		return ""
 	}
 
@@ -5326,7 +5327,7 @@ func normalizeSubmitPlanDiagnosticPath(raw string) string {
 	if raw == "" {
 		return ""
 	}
-	if path := NormalizeRunnerPath(raw); path != "" && !filepath.IsAbs(raw) {
+	if path := NormalizeRunnerPath(raw); path != "" && !pathparse.IsAbsolutePath(raw) {
 		return path
 	}
 
@@ -6654,8 +6655,8 @@ func (r *Runner) preflightPlanThenExecuteReviewRepairBroadReadGuard(req workspac
 		return verificationInterceptResult{}
 	}
 
-	path := strings.TrimSpace(req.Path)
-	if path == "" || filepath.IsAbs(path) {
+	path := pathparse.NormalizeWorkspaceRelativePath(req.Path)
+	if path == "" {
 		return verificationInterceptResult{}
 	}
 
@@ -7059,17 +7060,12 @@ func reviewRepairPlanEditsAlreadyApplied(root string, edits []planartifact.PlanE
 	}
 
 	for _, edit := range edits {
-		path := strings.TrimSpace(edit.Path)
-		if path == "" || filepath.IsAbs(path) {
+		path := pathparse.NormalizeWorkspaceRelativePath(edit.Path)
+		if path == "" {
 			return false
 		}
 
-		clean := filepath.Clean(path)
-		if clean == "." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) || clean == ".." {
-			return false
-		}
-
-		bodyBytes, err := os.ReadFile(filepath.Join(root, clean))
+		bodyBytes, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
 		if err != nil {
 			return false
 		}

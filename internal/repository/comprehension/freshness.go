@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
-	pathpkg "path"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"idiom/internal/contracts/pathparse"
 )
 
 type FreshnessPolicy string
@@ -806,7 +807,7 @@ func combineStatusAfterScopedRefresh(before StatusReport, scoped StatusReport, s
 func replaceScopedStatusPaths(before []string, scoped []string, scope string) []string {
 	seen := make(map[string]struct{}, len(before)+len(scoped))
 	for _, path := range before {
-		path = cleanFreshnessPath(path)
+		path = pathparse.NormalizeWorkspaceRelativePath(path)
 		if path == "" || pathInScope(path, scope) {
 			continue
 		}
@@ -815,7 +816,7 @@ func replaceScopedStatusPaths(before []string, scoped []string, scope string) []
 	}
 
 	for _, path := range scoped {
-		path = cleanFreshnessPath(path)
+		path = pathparse.NormalizeWorkspaceRelativePath(path)
 		if path != "" {
 			seen[path] = struct{}{}
 		}
@@ -852,11 +853,11 @@ func skippedFreshnessRefresh(decision FreshnessDecision, language string, blocke
 }
 
 func inferFreshnessScope(root string, req FreshnessRequest) string {
-	if scope := cleanFreshnessPath(req.Path); scope != "" {
+	if scope := pathparse.NormalizeWorkspaceRelativePath(req.Path); scope != "" {
 		return scope
 	}
 
-	if scope := cleanFreshnessPath(pathFromFreshnessHandle(req.Handle)); scope != "" {
+	if scope := pathparse.NormalizeWorkspaceRelativePath(pathFromFreshnessHandle(req.Handle)); scope != "" {
 		return scope
 	}
 
@@ -937,7 +938,7 @@ func freshnessRelevantPaths(paths []string, scope string, checkedPaths []string)
 	seen := make(map[string]struct{})
 
 	for _, path := range paths {
-		path = cleanFreshnessPath(path)
+		path = pathparse.NormalizeWorkspaceRelativePath(path)
 		if path == "" {
 			continue
 		}
@@ -989,7 +990,7 @@ func freshnessBudgetExceeded(status StatusReport, decision FreshnessDecision, ma
 func cleanFreshnessPaths(paths []string) []string {
 	seen := make(map[string]struct{}, len(paths))
 	for _, path := range paths {
-		if clean := cleanFreshnessPath(path); clean != "" {
+		if clean := pathparse.NormalizeWorkspaceRelativePath(path); clean != "" {
 			seen[clean] = struct{}{}
 		}
 	}
@@ -1002,24 +1003,6 @@ func cleanFreshnessPaths(paths []string) []string {
 	slices.Sort(out)
 
 	return out
-}
-
-func cleanFreshnessPath(path string) string {
-	normalized := strings.ReplaceAll(filepath.ToSlash(strings.TrimSpace(path)), "\\", "/")
-	if normalized == "" || filepath.IsAbs(path) || strings.HasPrefix(normalized, "/") || looksLikeWindowsAbsPath(normalized) {
-		return ""
-	}
-
-	path = pathpkg.Clean(normalized)
-	if path == "" || path == "." || path == ".." || strings.HasPrefix(path, "../") {
-		return ""
-	}
-
-	return strings.TrimSuffix(path, "/")
-}
-
-func looksLikeWindowsAbsPath(path string) bool {
-	return len(path) >= 3 && path[1] == ':' && path[2] == '/'
 }
 
 func pathFromFreshnessHandle(handle string) string {
@@ -1043,7 +1026,7 @@ func existingQueryPathScope(root string, query string) string {
 	for _, token := range strings.FieldsFunc(query, func(r rune) bool {
 		return r == '"' || r == '\'' || r == '`' || r == ',' || r == ';' || r == ':' || r == '(' || r == ')' || r == '[' || r == ']' || r == '{' || r == '}'
 	}) {
-		scope := cleanFreshnessPath(token)
+		scope := pathparse.NormalizeWorkspaceRelativePath(token)
 		if scope == "" || !strings.Contains(scope, "/") {
 			continue
 		}
@@ -1138,7 +1121,7 @@ func FreshnessScopeWarningCheck(checkedPaths []string, returnedPaths []string) (
 	seen := make(map[string]struct{})
 
 	for _, rp := range returnedPaths {
-		rp = cleanFreshnessPath(rp)
+		rp = pathparse.NormalizeWorkspaceRelativePath(rp)
 		if rp == "" {
 			continue
 		}

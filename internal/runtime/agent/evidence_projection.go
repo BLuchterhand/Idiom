@@ -379,7 +379,7 @@ func externalDocumentPathMatchesCitation(path string, candidate string) bool {
 
 	pathLower := strings.ToLower(path)
 	candidateLower := strings.ToLower(candidate)
-	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" || looksLikeWindowsAbsolutePath(path) {
+	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" || pathparse.LooksLikeWindowsAbsolutePath(path) {
 		return pathLower == candidateLower
 	}
 

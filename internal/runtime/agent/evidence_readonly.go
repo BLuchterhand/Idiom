@@ -1617,7 +1617,7 @@ func readOnlyPathEscapesWorkspace(raw string) bool {
 	if path == "" {
 		return false
 	}
-	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" || looksLikeWindowsAbsolutePath(path) {
+	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" || pathparse.LooksLikeWindowsAbsolutePath(path) {
 		return true
 	}
 
@@ -1641,7 +1641,7 @@ func normalizeReadOnlyExternalDocumentPath(path string) string {
 		return ""
 	}
 
-	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" || looksLikeWindowsAbsolutePath(path) {
+	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" || pathparse.LooksLikeWindowsAbsolutePath(path) {
 		return filepath.ToSlash(filepath.Clean(path))
 	}
 

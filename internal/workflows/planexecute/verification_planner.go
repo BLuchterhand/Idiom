@@ -2,11 +2,11 @@ package planexecute
 
 import (
 	"os"
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
 
+	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
 )
 
@@ -209,7 +209,7 @@ func cleanVerificationChangedPath(rawPath string) (string, plancontract.Verifica
 		return "", plancontract.VerificationSkip{Reason: plancontract.VerificationSkipEmptyPath}, false
 	}
 
-	if filepath.IsAbs(rawPath) {
+	if pathparse.IsAbsolutePath(rawPath) {
 		return "", plancontract.VerificationSkip{Path: rawPath, Reason: plancontract.VerificationSkipAbsolutePath}, false
 	}
 
@@ -312,23 +312,13 @@ func cleanVerificationWorkingDir(dir string) (string, bool) {
 		return "", true
 	}
 
-	if filepath.IsAbs(dir) || strings.ContainsRune(dir, 0) {
-		return "", false
-	}
-
-	cleaned := strings.TrimPrefix(path.Clean(dir), "./")
-	if cleaned == "" || cleaned == "." {
-		return "", true
-	}
-
-	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
-		return "", false
-	}
-
-	for _, part := range strings.Split(cleaned, "/") {
-		if part == "" || part == "." || part == ".." {
-			return "", false
+	cleaned := pathparse.NormalizeWorkspaceRelativePath(dir)
+	if cleaned == "" {
+		if filepath.ToSlash(filepath.Clean(dir)) == "." {
+			return "", true
 		}
+
+		return "", false
 	}
 
 	return cleaned, true

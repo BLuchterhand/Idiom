@@ -279,15 +279,13 @@ func TestFreshnessRefreshScopesDoesNotOverCollapseNestedFanout(t *testing.T) {
 	}
 }
 
-func TestCleanFreshnessPathRejectsTraversalAndNormalizesBackslashes(t *testing.T) {
-	if got := cleanFreshnessPath(`pkg\file.go`); got != "pkg/file.go" {
-		t.Fatalf("cleanFreshnessPath(backslash path) = %q, want pkg/file.go", got)
+func TestCleanFreshnessPathsRejectsTraversalAndNormalizesBackslashes(t *testing.T) {
+	if got := cleanFreshnessPaths([]string{`pkg\file.go`}); !reflect.DeepEqual(got, []string{"pkg/file.go"}) {
+		t.Fatalf("cleanFreshnessPaths(backslash path) = %#v, want pkg/file.go", got)
 	}
 
-	for _, path := range []string{"../outside.go", "/tmp/outside.go", `C:\tmp\outside.go`} {
-		if got := cleanFreshnessPath(path); got != "" {
-			t.Fatalf("cleanFreshnessPath(%q) = %q, want rejection", path, got)
-		}
+	if got := cleanFreshnessPaths([]string{"../outside.go", "/tmp/outside.go", `C:\tmp\outside.go`}); len(got) != 0 {
+		t.Fatalf("cleanFreshnessPaths(unsafe paths) = %#v, want rejection", got)
 	}
 }
 

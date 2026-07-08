@@ -474,11 +474,11 @@ func TestRenderPromptContextPackSectionOmitsCacheArtifactPath(t *testing.T) {
   ]
 }`
 
-	section, err := RenderPromptContextPackSection(PromptContextToolResult{
+	section, err := RenderPromptContextPackSectionWithOptions(PromptContextToolResult{
 		Tool:    "context_pack",
 		Summary: "Context pack wrote .idiom/comprehension/views/abc123.json with 1 candidate file(s)",
 		Output:  output,
-	})
+	}, PromptContextPackOptions{})
 	if err != nil {
 		t.Fatalf("render context pack: %v", err)
 	}
@@ -583,11 +583,11 @@ func TestRenderPromptContextPackSectionIncludesQualityInPreload(t *testing.T) {
 }
 
 func TestRenderPromptContextPackSectionAddsFallbackWhenNoTargets(t *testing.T) {
-	section, err := RenderPromptContextPackSection(PromptContextToolResult{
+	section, err := RenderPromptContextPackSectionWithOptions(PromptContextToolResult{
 		Tool:    "context_pack",
 		Summary: "Context pack wrote .idiom/comprehension/views/empty.json with 0 candidate file(s)",
 		Output:  `{"pack_id":"empty","candidate_files":[],"candidate_symbols":[],"tests":[]}`,
-	})
+	}, PromptContextPackOptions{})
 	if err != nil {
 		t.Fatalf("render context pack: %v", err)
 	}

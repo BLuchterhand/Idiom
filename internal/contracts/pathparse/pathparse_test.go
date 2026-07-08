@@ -57,6 +57,53 @@ func TestHasWorkspaceFileExtensionIncludesAstro(t *testing.T) {
 	}
 }
 
+func TestLooksLikeWindowsAbsolutePath(t *testing.T) {
+	for _, path := range []string{"C:/repo/file.go", `d:\repo\file.go`} {
+		if !LooksLikeWindowsAbsolutePath(path) {
+			t.Fatalf("LooksLikeWindowsAbsolutePath(%q) = false, want true", path)
+		}
+	}
+
+	for _, path := range []string{"1:/repo/file.go", "internal/C:/file.go", "C:relative/file.go", "/repo/file.go", "repo/file.go", ""} {
+		if LooksLikeWindowsAbsolutePath(path) {
+			t.Fatalf("LooksLikeWindowsAbsolutePath(%q) = true, want false", path)
+		}
+	}
+}
+
+func TestIsAbsolutePath(t *testing.T) {
+	for _, path := range []string{"/repo/file.go", "C:/repo/file.go", `d:\repo\file.go`} {
+		if !IsAbsolutePath(path) {
+			t.Fatalf("IsAbsolutePath(%q) = false, want true", path)
+		}
+	}
+
+	for _, path := range []string{"repo/file.go", "./repo/file.go", "C:relative/file.go", ""} {
+		if IsAbsolutePath(path) {
+			t.Fatalf("IsAbsolutePath(%q) = true, want false", path)
+		}
+	}
+}
+
+func TestNormalizeWorkspaceRelativePath(t *testing.T) {
+	cases := map[string]string{
+		`pkg\file.go`:       "pkg/file.go",
+		"./pkg/../pkg.go":   "pkg.go",
+		"pkg//nested//x.go": "pkg/nested/x.go",
+	}
+	for input, want := range cases {
+		if got := NormalizeWorkspaceRelativePath(input); got != want {
+			t.Fatalf("NormalizeWorkspaceRelativePath(%q) = %q, want %q", input, got, want)
+		}
+	}
+
+	for _, path := range []string{"", ".", "..", "../outside.go", "/tmp/outside.go", `C:\tmp\outside.go`, "./C:/tmp/outside.go", "pkg/../..", "pkg/\x00file.go"} {
+		if got := NormalizeWorkspaceRelativePath(path); got != "" {
+			t.Fatalf("NormalizeWorkspaceRelativePath(%q) = %q, want rejection", path, got)
+		}
+	}
+}
+
 // TestScopeToBriefBodyExtractsMarkedRegion verifies the brief-body
 // scoping primitive Phase 6.5 added: when the lane wrapper has
 // wrapped the project brief in IDIOM:BRIEF-BODY-* markers, every

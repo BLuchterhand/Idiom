@@ -326,9 +326,10 @@ func (r *Runner) assessSourceGrounding(answer string, results []workspace.ToolRe
 				continue
 			}
 
+			authority := featurePlannerPlanPathCitationAuthority(r, answer, path, results)
 			if !sourceCitationExplicitlyNonCurrent(answer, path) &&
-				!sourceCitationBackedByProposedPlanArtifact(r, answer, path, results) &&
-				!sourceCitationBackedByFuturePlanRecommendation(r, answer, path, results) {
+				authority.Kind != featurePlannerPlanCitationArtifactProposed &&
+				authority.Kind != featurePlannerPlanCitationFutureRecommendation {
 				missing = append(missing, path)
 			}
 
@@ -343,8 +344,9 @@ func (r *Runner) assessSourceGrounding(answer string, results []workspace.ToolRe
 			continue
 		}
 
+		authority := featurePlannerPlanPathCitationAuthority(r, answer, path, results)
 		if sourceCitationExplicitlyNonCurrent(answer, path) ||
-			sourceCitationBackedByProposedPlanArtifact(r, answer, path, results) ||
+			authority.Kind == featurePlannerPlanCitationArtifactProposed ||
 			sourceCitationExplicitlyUnverified(answer, path) {
 			continue
 		}
@@ -507,7 +509,7 @@ func sourceGroundingQuotedPathCandidateLooksLikeCitation(path string) bool {
 	}
 
 	if strings.ContainsAny(path, " \t") {
-		return filepath.IsAbs(path) || filepath.VolumeName(path) != "" || looksLikeWindowsAbsolutePath(path)
+		return filepath.IsAbs(path) || filepath.VolumeName(path) != "" || pathparse.LooksLikeWindowsAbsolutePath(path)
 	}
 
 	return true
@@ -524,7 +526,7 @@ func sourceGroundingCitationPathLooksLikePath(token string) bool {
 		return false
 	}
 
-	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" || looksLikeWindowsAbsolutePath(path) {
+	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" || pathparse.LooksLikeWindowsAbsolutePath(path) {
 		return pathparse.HasWorkspaceFileExtension(path)
 	}
 
@@ -891,14 +893,6 @@ func sourceCitationExplicitlyNonCurrent(answer string, path string) bool {
 	}
 
 	return false
-}
-
-func sourceCitationBackedByProposedPlanArtifact(r *Runner, answer string, path string, results []workspace.ToolResult) bool {
-	return featurePlannerPlanPathCitationAuthority(r, answer, path, results).Kind == featurePlannerPlanCitationArtifactProposed
-}
-
-func sourceCitationBackedByFuturePlanRecommendation(r *Runner, answer string, path string, results []workspace.ToolResult) bool {
-	return featurePlannerPlanPathCitationAuthority(r, answer, path, results).Kind == featurePlannerPlanCitationFutureRecommendation
 }
 
 type featurePlannerPlanCitationKind string

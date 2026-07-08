@@ -1,6 +1,7 @@
 package pathparse
 
 import (
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -42,6 +43,37 @@ func LooksLikeWorkspacePathToken(candidate string) bool {
 	}
 
 	return HasWorkspaceFileExtension(candidate)
+}
+
+func LooksLikeWindowsAbsolutePath(path string) bool {
+	return len(path) >= 3 &&
+		((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z')) &&
+		path[1] == ':' &&
+		(path[2] == '/' || path[2] == '\\')
+}
+
+func IsAbsolutePath(path string) bool {
+	path = strings.TrimSpace(path)
+	normalized := strings.ReplaceAll(filepath.ToSlash(path), "\\", "/")
+
+	return filepath.IsAbs(path) ||
+		filepath.VolumeName(path) != "" ||
+		strings.HasPrefix(normalized, "/") ||
+		LooksLikeWindowsAbsolutePath(normalized)
+}
+
+func NormalizeWorkspaceRelativePath(path string) string {
+	normalized := strings.ReplaceAll(filepath.ToSlash(strings.TrimSpace(path)), "\\", "/")
+	if normalized == "" || strings.ContainsRune(normalized, 0) || IsAbsolutePath(normalized) {
+		return ""
+	}
+
+	cleaned := pathpkg.Clean(normalized)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || IsAbsolutePath(cleaned) {
+		return ""
+	}
+
+	return cleaned
 }
 
 func looksLikeSlashSeparatedSymbolToken(candidate string) bool {

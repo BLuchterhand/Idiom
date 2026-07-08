@@ -13,7 +13,6 @@ import (
 
 // Phase constants for the artifact creation workflow.
 const (
-	PhaseInit         = "init"
 	PhasePRDDrafting  = "prd_drafting"
 	PhasePRDReview    = "prd_review"
 	PhaseADRDrafting  = "adr_drafting"
@@ -24,8 +23,6 @@ const (
 
 // validNextCreationPhases constrains phase transitions. A phase not in this
 // map has no valid next phase (e.g. PhaseComplete is terminal).
-// PhaseInit is defined for external compatibility but never written to disk
-// by InitializeEffort, which starts directly at PhasePRDDrafting.
 var validNextCreationPhases = map[string][]string{
 	PhasePRDDrafting:  {PhasePRDReview},
 	PhasePRDReview:    {PhaseADRDrafting},

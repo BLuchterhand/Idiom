@@ -7802,7 +7802,7 @@ func extractReadFilePathWithOptionalHandle(summary string) (string, bool) {
 		return path, true
 	}
 
-	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" || looksLikeWindowsAbsolutePath(path) {
+	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" || pathparse.LooksLikeWindowsAbsolutePath(path) {
 		return path, true
 	}
 

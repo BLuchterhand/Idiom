@@ -17,7 +17,8 @@ func WorkspaceRoot(root string, cwd string) string {
 }
 
 func WorkspaceFile(root string, rel string) (string, bool) {
-	if strings.TrimSpace(rel) == "" || filepath.IsAbs(rel) {
+	rel = pathparse.NormalizeWorkspaceRelativePath(rel)
+	if rel == "" {
 		return "", false
 	}
 

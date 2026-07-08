@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/contracts/pathparse"
 	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/jsonfile"
 	"idiom/internal/platform/textutil"
@@ -970,26 +971,12 @@ func normalizeRoot(root string) (string, error) {
 }
 
 func cleanScope(path string) string {
-	path = cleanScopePath(path)
+	path = pathparse.NormalizeWorkspaceRelativePath(path)
 	if path == "" {
 		return "."
 	}
 
 	return path
-}
-
-func cleanScopePath(path string) string {
-	normalized := strings.ReplaceAll(filepath.ToSlash(strings.TrimSpace(path)), "\\", "/")
-	if normalized == "" || filepath.IsAbs(path) || strings.HasPrefix(normalized, "/") || looksLikeWindowsAbsPath(normalized) {
-		return ""
-	}
-
-	path = filepath.ToSlash(filepath.Clean(normalized))
-	if path == "." || path == ".." || strings.HasPrefix(path, "../") {
-		return ""
-	}
-
-	return strings.TrimSuffix(path, "/")
 }
 
 func pathInScope(path string, scope string) bool {
@@ -998,7 +985,7 @@ func pathInScope(path string, scope string) bool {
 		return true
 	}
 
-	path = cleanScopePath(path)
+	path = pathparse.NormalizeWorkspaceRelativePath(path)
 	if path == "" {
 		return false
 	}
