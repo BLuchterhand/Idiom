@@ -16413,6 +16413,34 @@ func TestControlRailsVerificationShellForbidsCatalogedWorkspaceWrites(t *testing
 	}
 }
 
+func TestControlRailsReadOnlyWorkspaceSuppressesWriteTools(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "diagnostic_notes",
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+			AllowedTools:      []string{workspace.ToolNameReadFile, workspace.ToolNameEditFile, workspace.ToolNameApplyPatch, workspace.ToolNameSubmitPlan},
+			RequiredTools:     []string{workspace.RequiredToolEditFileOrApplyPatch},
+		},
+	}
+
+	rails := runner.controlRails(nil)
+	for _, tool := range []string{workspace.ToolNameEditFile, workspace.ToolNameApplyPatch, workspace.ToolNameSubmitPlan} {
+		if slices.Contains(rails.AllowedTools, tool) {
+			t.Fatalf("read-only workspace rails must not allow %q, got %#v", tool, rails.AllowedTools)
+		}
+		if !slices.Contains(rails.ForbiddenTools, tool) {
+			t.Fatalf("read-only workspace rails must forbid %q, got %#v", tool, rails.ForbiddenTools)
+		}
+	}
+	if !slices.Contains(rails.AllowedTools, workspace.ToolNameReadFile) {
+		t.Fatalf("read-only workspace rails lost read tool: %#v", rails.AllowedTools)
+	}
+	if slices.Contains(rails.RequiredTools, workspace.RequiredToolEditFileOrApplyPatch) {
+		t.Fatalf("read-only workspace rails must not require edit tools: %#v", rails.RequiredTools)
+	}
+}
+
 func TestControlRailsReportRequiredEditPathsAndInstructionAttachment(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -27285,7 +27313,7 @@ func TestFinalAnswerDecoratorDecoratesBudgetExhaustionScaffold(t *testing.T) {
 		UserFacing: true,
 	})
 
-	for _, want := range []string{"not have enough supported evidence", "internal/runtime/agent/runner_core.go"} {
+	for _, want := range []string{"I do not have a supported answer", "internal/runtime/agent/runner_core.go"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("expected budget-exhausted scaffold to become actionable blocker containing %q, got:\n%s", want, answer)
 		}
@@ -27376,7 +27404,7 @@ func TestFinalAnswerDecoratorDoesNotLeakDelegatedPacketWhenComposerLacksDiscover
 		}
 	}
 
-	for _, want := range []string{"not have enough supported evidence", "`internal/runtime/agent/runner_core.go`", "`internal/runtime/agent/implementation_flow.go`"} {
+	for _, want := range []string{"I do not have a supported answer", "`internal/runtime/agent/runner_core.go`", "`internal/runtime/agent/implementation_flow.go`"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("expected evidence-retained blocker to contain %q, got:\n%s", want, answer)
 		}
@@ -31722,7 +31750,7 @@ func TestArchitectureFinalAnswerAcceptanceRejectsInsufficientEvidenceAfterAnswer
 		Output:  "func (r *Runner) runChildTask() { _ = \"task subagent child runner\" }\n",
 	}}
 	acceptance := runner.evaluateFinalAnswerAcceptance(
-		"I could not produce a supported final answer from this run: the run stopped before it retained enough evidence, so I do not have enough supported evidence to answer that fully.",
+		"I do not have a supported answer from this run.",
 		results,
 	)
 
@@ -31758,7 +31786,7 @@ func TestArchitectureFinalAnswerAcceptanceRejectsUnsupportedCloseoutWithoutAnswe
 		},
 	}
 	acceptance := runner.evaluateFinalAnswerAcceptance(
-		"I could not produce a supported final answer from this run: the run stopped before it retained enough evidence, so I do not have enough supported evidence to answer that fully. The current read-only answer has relevant evidence in `internal/runtime/agent/evidence_readonly.go`, but no concrete user-facing finding was retained.",
+		"I do not have a supported answer from this run. The current read-only answer has relevant evidence in `internal/runtime/agent/evidence_readonly.go`, but no concrete user-facing finding was retained.",
 		results,
 	)
 
@@ -39947,11 +39975,13 @@ func TestFinishSanitizesSourceGroundingRepairInstructions(t *testing.T) {
 			t.Fatalf("finish leaked internal repair instruction %q:\n%s", forbidden, returnedAnswer)
 		}
 	}
-	if !strings.Contains(returnedAnswer, "not supported by inspected evidence") {
+	if !strings.Contains(returnedAnswer, "I do not have a supported answer") ||
+		!strings.Contains(returnedAnswer, "run did not retain a supported answer from inspected evidence") {
+
 		t.Fatalf("finish should present a plain unsupported-evidence reason, got:\n%s", returnedAnswer)
 	}
-	if !strings.Contains(returnedAnswer, "internal/surfaces/tui/app/lifecycle.go") {
-		t.Fatalf("finish should preserve the exact unsupported path, got:\n%s", returnedAnswer)
+	if strings.Contains(returnedAnswer, "internal/surfaces/tui/app/lifecycle.go") {
+		t.Fatalf("finish must not expose the rejected answer's unsupported path, got:\n%s", returnedAnswer)
 	}
 }
 
@@ -40214,7 +40244,7 @@ func TestRecoveredReadOnlyTerminalCloseoutDoesNotOverrideObjectiveAdvisory(t *te
 	}
 }
 
-func TestDirectAnswerInsufficientEvidenceClaimWhenEvidenceIsAnswerableIsAdvisory(t *testing.T) {
+func TestDirectAnswerInsufficientEvidenceClaimWhenEvidenceIsAnswerableIsRejected(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "conversation",
@@ -40235,27 +40265,26 @@ func TestDirectAnswerInsufficientEvidenceClaimWhenEvidenceIsAnswerableIsAdvisory
 			"287:Task-scoped repository evidence feeds the runtime brief, including tools, editable paths, evidence paths, verification, and budget.",
 		}, "\n"),
 	}}
-	answer := "I could not produce a supported final answer from this run: the run stopped before it retained enough evidence, so I do not have enough supported evidence to answer that fully."
+	answer := "I do not have a supported answer from this run."
 
 	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
-	if acceptance.Decision != finalAnswerAcceptanceAccepted ||
-		acceptance.PolicyDecision != autonomy.PolicyAllow ||
-		acceptance.BlockerKind != "" {
+	if acceptance.Decision != finalAnswerAcceptanceRejected ||
+		acceptance.PolicyDecision != autonomy.PolicyReject ||
+		acceptance.BlockerKind != string(turnViolationNonAnswerProse) ||
+		acceptance.Reason != string(turnReasonAnswerableEvidenceInsufficient) {
 
-		t.Fatalf("answerable insufficient-evidence closeout must remain advisory, got %#v", acceptance)
+		t.Fatalf("answerable insufficient-evidence closeout must be rejected, got %#v", acceptance)
 	}
-	if len(acceptance.ContractAssessment.Violations) != 0 ||
-		!acceptance.ContractAssessment.HasDiagnostic(turnDiagnosticObjectiveRelevance) {
+	if len(acceptance.ContractAssessment.Violations) == 0 {
 
-		t.Fatalf("expected objective diagnostic without enforceable violations, got %#v", acceptance.ContractAssessment)
+		t.Fatalf("expected enforceable violation, got %#v", acceptance.ContractAssessment)
 	}
 
 	decision := runner.classifyTerminalAnswer(answer, "model_final", results)
-	if decision.Outcome != terminalAnswerAccepted ||
-		decision.StopReason != "model_final" ||
-		decision.PresentedAnswer != answer {
+	if decision.Outcome != terminalAnswerBlocked ||
+		decision.StopReason != string(turnViolationNonAnswerProse) {
 
-		t.Fatalf("terminal answer must accept advisory insufficient-evidence closeout without recovery, got %#v", decision)
+		t.Fatalf("terminal answer must block answerable insufficient-evidence closeout, got %#v", decision)
 	}
 }
 

@@ -406,6 +406,19 @@ func NormalizeRuntimeBrief(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
 		brief.DiscoveryExamples = nil
 	}
 
+	if PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
+		tools := NormalizeReadOnlyWorkspaceToolSet(RuntimeToolSet{
+			AllowedTools:   brief.AllowedTools,
+			RequiredTools:  brief.RequiredTools,
+			ForbiddenTools: brief.ForbiddenTools,
+			ToolManifest:   brief.ToolManifest,
+		})
+		brief.AllowedTools = tools.AllowedTools
+		brief.RequiredTools = tools.RequiredTools
+		brief.ForbiddenTools = tools.ForbiddenTools
+		brief.ToolManifest = tools.ToolManifest
+	}
+
 	if len(brief.ToolManifest) == 0 && len(brief.AllowedTools) > 0 {
 		brief.ToolManifest = workspace.BuildToolManifest(brief.AllowedTools)
 	}
@@ -415,6 +428,77 @@ func NormalizeRuntimeBrief(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
 	}
 
 	return brief
+}
+
+type RuntimeToolSet struct {
+	AllowedTools   []string
+	RequiredTools  []string
+	ForbiddenTools []string
+	ToolManifest   []workspace.ToolManifestEntry
+}
+
+func NormalizeReadOnlyWorkspaceToolSet(tools RuntimeToolSet) RuntimeToolSet {
+	var dropped []string
+	tools.AllowedTools, dropped = filterRuntimeToolNames(tools.AllowedTools, readOnlyRuntimeToolForbidden)
+
+	var requiredDropped []string
+	tools.RequiredTools, requiredDropped = filterRuntimeToolNames(tools.RequiredTools, readOnlyRuntimeRequiredToolForbidden)
+	dropped = mergeStrings(dropped, requiredDropped)
+
+	var manifestDropped []string
+	tools.ToolManifest, manifestDropped = filterRuntimeToolManifest(tools.ToolManifest, readOnlyRuntimeToolForbidden)
+	dropped = mergeStrings(dropped, manifestDropped)
+
+	tools.ForbiddenTools = mergeStrings(tools.ForbiddenTools, dropped)
+
+	return tools
+}
+
+func readOnlyRuntimeRequiredToolForbidden(tool string) bool {
+	return strings.TrimSpace(tool) == workspace.RequiredToolEditFileOrApplyPatch || readOnlyRuntimeToolForbidden(tool)
+}
+
+func readOnlyRuntimeToolForbidden(tool string) bool {
+	tool = strings.TrimSpace(tool)
+	return tool == workspace.ToolNameSubmitPlan || tool == "mutating_shell" || workspace.IsWorkspaceWriteTool(tool)
+}
+
+func filterRuntimeToolNames(values []string, forbidden func(string) bool) ([]string, []string) {
+	if len(values) == 0 {
+		return values, nil
+	}
+
+	filtered := values[:0]
+	var dropped []string
+	for _, value := range values {
+		tool := strings.TrimSpace(value)
+		if forbidden(tool) {
+			dropped = append(dropped, tool)
+			continue
+		}
+		filtered = append(filtered, value)
+	}
+
+	return filtered, textutil.UniqueNonEmpty(dropped)
+}
+
+func filterRuntimeToolManifest(manifest []workspace.ToolManifestEntry, forbidden func(string) bool) ([]workspace.ToolManifestEntry, []string) {
+	if len(manifest) == 0 {
+		return manifest, nil
+	}
+
+	filtered := manifest[:0]
+	var dropped []string
+	for _, entry := range manifest {
+		tool := strings.TrimSpace(entry.Tool)
+		if forbidden(tool) {
+			dropped = append(dropped, tool)
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+
+	return filtered, textutil.UniqueNonEmpty(dropped)
 }
 
 func normalizeRequiredEditSnippets(snippets []plancontract.RequiredEditSnippet) []plancontract.RequiredEditSnippet {

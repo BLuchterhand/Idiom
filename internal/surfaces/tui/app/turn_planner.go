@@ -696,6 +696,15 @@ func plannerPromptHasExplicitMutationIntent(words string) bool {
 		return true
 	}
 
+	if plannerWordsContainVerbObjectWithin(words, "make", 5,
+		"edit", "edits",
+		"change", "changes",
+		"patch", "patches",
+	) {
+
+		return true
+	}
+
 	if plannerWordsContainVerbObjectWithin(words, "add", 5,
 		"test", "tests",
 		"doc", "docs",
@@ -1240,9 +1249,18 @@ func (m *Model) workspaceAllowedToolsForTaskFamily(family string) []string {
 }
 
 func modelWorkspaceToolSurfaceProfile(family string) (workspace.ToolSurfaceProfile, bool) {
+	if strings.TrimSpace(family) == "" {
+		return "", false
+	}
+
 	profile := workerruntime.RuntimeContractForTaskFamily(family).ToolProfile
 	switch profile {
-	case workspace.ToolSurfaceProfilePlanSubmissionPlanner, workspace.ToolSurfaceProfilePlanSubmissionReview:
+	case workspace.ToolSurfaceProfileConversationReadOnly,
+		workspace.ToolSurfaceProfileReadOnlyDiscovery,
+		workspace.ToolSurfaceProfileVerificationOnly,
+		workspace.ToolSurfaceProfileLocateOnly,
+		workspace.ToolSurfaceProfilePlanSubmissionPlanner,
+		workspace.ToolSurfaceProfilePlanSubmissionReview:
 		return profile, true
 	default:
 		return "", false

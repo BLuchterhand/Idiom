@@ -192,16 +192,11 @@ func (a sourceGroundingAssessment) RecoveryPrompt(ledgerGuidance string) string 
 }
 
 func (a sourceGroundingAssessment) PresentableDetail() string {
-	pathSuffix := ""
-	if len(a.Paths) > 0 {
-		pathSuffix = ": " + strings.Join(uniqueSortedRunnerPaths(a.Paths), ", ")
-	}
-
 	switch a.Kind {
 	case sourceGroundingRejectionCandidateOnly, sourceGroundingRejectionMissingCandidate:
-		return "the answer cited path(s) that were not supported by inspected evidence" + pathSuffix
+		return "the run did not retain a supported answer from inspected evidence"
 	case sourceGroundingRejectionUnsupportedDetail:
-		return "the answer cited source path, line, or symbol detail that was not supported by inspected evidence" + pathSuffix
+		return "the run did not retain a supported answer from inspected evidence"
 	case sourceGroundingRejectionExactDetail:
 		detail := firstSentenceBeforeAny(a.Text,
 			" Either anchor that detail",
@@ -211,10 +206,16 @@ func (a sourceGroundingAssessment) PresentableDetail() string {
 			"\n\nEvidence paths observed before rejection:",
 		)
 		detail = strings.TrimSpace(sourceGroundingStripGateRecoveryPrefix(detail))
+		lowerDetail := strings.ToLower(detail)
+		if strings.Contains(lowerDetail, "the answer names additional implementation detail") ||
+			strings.Contains(lowerDetail, "without an exact inspected probe") {
+
+			return "the run did not retain a supported answer from inspected evidence"
+		}
 		if detail != "" {
 			return lowercaseFirstSentence(detail)
 		}
-		return "the answer cited source path, line, or symbol detail that was not supported by inspected evidence" + pathSuffix
+		return "the run did not retain a supported answer from inspected evidence"
 	default:
 		return ""
 	}

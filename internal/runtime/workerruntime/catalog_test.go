@@ -143,6 +143,28 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 		}
 	})
 
+	t.Run("delegated isolated implementation", func(t *testing.T) {
+		spec := RuntimeContractForTaskFamily(string(autonomy.TaskFamilyDelegatedIsolatedImpl))
+		if spec.TaskFamily != autonomy.TaskFamilyDelegatedIsolatedImpl ||
+			spec.Contract != ContractPatchSummary ||
+			spec.PermissionProfile != PermissionIsolatedWorkbranchWrite ||
+			spec.ToolProfile != workspace.ToolSurfaceProfileIsolatedWrite {
+
+			t.Fatalf("delegated isolated implementation must stay write-capable, got %#v", spec)
+		}
+	})
+
+	t.Run("delegated read-only", func(t *testing.T) {
+		spec := RuntimeContractForTaskFamily(string(autonomy.TaskFamilyDelegatedReadOnly))
+		if spec.TaskFamily != autonomy.TaskFamilyDelegatedReadOnly ||
+			spec.Contract != ContractGroundedEvidence ||
+			spec.PermissionProfile != PermissionReadOnlyWorkspace ||
+			spec.ToolProfile != workspace.ToolSurfaceProfileDelegatedReadOnly {
+
+			t.Fatalf("delegated read-only must use delegated read-only profile, got %#v", spec)
+		}
+	})
+
 	t.Run("unknown family", func(t *testing.T) {
 		spec := RuntimeContractForTaskFamily("unknown_family")
 		if spec.TaskFamily != autonomy.TaskFamilyConversation || spec.Contract != ContractDirectAnswer {

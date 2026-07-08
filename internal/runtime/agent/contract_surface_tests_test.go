@@ -4817,7 +4817,7 @@ func TestFinalAnswerAcceptanceTreatsAliasInsufficientEvidenceWithoutSourceBodyAs
 	}
 }
 
-func TestFinalAnswerAcceptanceTreatsAliasInsufficientEvidenceWhenSourceBodyIsAnswerableAsAdvisory(t *testing.T) {
+func TestFinalAnswerAcceptanceRejectsAliasInsufficientEvidenceWhenSourceBodyIsAnswerable(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("What is the role of evidence in the harness?")
 	brief.TaskFamily = string(autonomy.TaskFamilyDirectAnswer)
 
@@ -4839,16 +4839,17 @@ func TestFinalAnswerAcceptanceTreatsAliasInsufficientEvidenceWhenSourceBodyIsAns
 	}
 
 	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
-	if acceptance.Decision != finalAnswerAcceptanceAccepted ||
-		acceptance.PolicyDecision != autonomy.PolicyAllow ||
-		acceptance.BlockerKind != "" {
+	if acceptance.Decision != finalAnswerAcceptanceRejected ||
+		acceptance.PolicyDecision != autonomy.PolicyReject ||
+		acceptance.BlockerKind != string(turnViolationNonAnswerProse) ||
+		acceptance.Reason != string(turnReasonAnswerableEvidenceInsufficient) {
 
-		t.Fatalf("answerable insufficient-evidence closeout must remain advisory, got %#v", acceptance)
+		t.Fatalf("answerable insufficient-evidence closeout must be rejected, got %#v", acceptance)
 	}
 	if !acceptance.ContractAssessment.HasDiagnostic(turnDiagnosticObjectiveRelevance) ||
-		len(acceptance.ContractAssessment.Violations) != 0 {
+		len(acceptance.ContractAssessment.Violations) == 0 {
 
-		t.Fatalf("expected objective diagnostic without enforceable violations, got %#v", acceptance.ContractAssessment)
+		t.Fatalf("expected objective diagnostic plus enforceable violation, got %#v", acceptance.ContractAssessment)
 	}
 }
 
@@ -5689,7 +5690,7 @@ func TestReadOnlyCloseoutRejectsLowValueSourceInventoryAcrossConsumers(t *testin
 		}
 	}
 
-	if !strings.Contains(presented, "not have enough supported evidence") {
+	if !strings.Contains(presented, "I do not have a supported answer") {
 		t.Fatalf("replacement should be an evidence-bounded uncertainty answer:\n%s", presented)
 	}
 }
@@ -35379,7 +35380,7 @@ func TestPresentableNoToolsFallbackDoesNotUseSearchHitAsSourceBody(t *testing.T)
 		t.Fatalf("direct-answer search-only evidence must not expose blocker protocol, got:\n%s", got)
 	}
 
-	if !strings.Contains(got, "not have enough supported evidence") ||
+	if !strings.Contains(got, "I do not have a supported answer") ||
 		!strings.Contains(got, "internal/labels/labels.go") {
 
 		t.Fatalf("expected presentable uncertainty with candidate context, got:\n%s", got)
@@ -35413,13 +35414,13 @@ func TestDecorateFinalAnswerSanitizesReadOnlyQuestionBlocker(t *testing.T) {
 		t.Fatalf("user-facing decorator leaked internal blocker protocol:\n%s", got)
 	}
 
-	for _, want := range []string{"final answer was rejected", "does not establish the user's objective", "internal/surfaces/tui/app/rendering.go"} {
+	for _, want := range []string{"I do not have a supported answer", "inspected evidence did not establish the requested claim", "internal/surfaces/tui/app/rendering.go"} {
 		if !strings.Contains(strings.ToLower(got), strings.ToLower(want)) {
 			t.Fatalf("decorated blocker missing %q:\n%s", want, got)
 		}
 	}
 
-	for _, forbidden := range []string{"<<question>>", "completion gate", "missing completion evidence", "answer with the exact", "required next evidence", "not enough supported evidence"} {
+	for _, forbidden := range []string{"<<question>>", "completion gate", "missing completion evidence", "final answer was rejected", "the final answer uses", "answer with the exact", "required next evidence", "not enough supported evidence"} {
 		if strings.Contains(strings.ToLower(got), forbidden) {
 			t.Fatalf("decorated blocker leaked internal phrase %q:\n%s", forbidden, got)
 		}
@@ -35448,16 +35449,15 @@ func TestDecorateFinalAnswerPreservesCompletionGateUnsupportedDetail(t *testing.
 	})
 
 	for _, want := range []string{
-		"final answer was rejected",
-		"`indexFold`, `strings.EqualFold`",
-		"internal/runtime/agent/runner_delegated_synthesis.go",
+		"I do not have a supported answer",
+		"run did not retain a supported answer from inspected evidence",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("decorated blocker missing %q:\n%s", want, got)
 		}
 	}
 
-	for _, forbidden := range []string{"<<QUESTION>>", "Completion gate", "Missing completion evidence", "Either anchor", "not enough supported evidence"} {
+	for _, forbidden := range []string{"<<QUESTION>>", "Completion gate", "Missing completion evidence", "Either anchor", "indexFold", "strings.EqualFold", "the answer names", "internal/runtime/agent/runner_delegated_synthesis.go", "not enough supported evidence"} {
 		if strings.Contains(got, forbidden) {
 			t.Fatalf("decorated blocker leaked internal phrase %q:\n%s", forbidden, got)
 		}
@@ -35584,7 +35584,7 @@ func TestDecorateFinalAnswerSanitizesInternalReadOnlyRemediationQuestionBlocker(
 		}
 	}
 
-	if !strings.Contains(got, "not have enough supported evidence") || !strings.Contains(got, "logs/conversations/session.jsonl") {
+	if !strings.Contains(got, "I do not have a supported answer") || !strings.Contains(got, "logs/conversations/session.jsonl") {
 		t.Fatalf("decorated blocker should keep user-facing stop context and evidence path, got:\n%s", got)
 	}
 }
@@ -35629,7 +35629,7 @@ func TestDecorateFinalAnswerSanitizesSynthesizedReadOnlyQuestionBlocker(t *testi
 		t.Fatalf("decorator leaked synthesized internal blocker protocol:\n%s", got)
 	}
 
-	if !strings.Contains(got, "not have enough supported evidence") || !strings.Contains(got, "internal/labels/labels.go") {
+	if !strings.Contains(got, "I do not have a supported answer") || !strings.Contains(got, "internal/labels/labels.go") {
 		t.Fatalf("decorated synthesized blocker lost useful context:\n%s", got)
 	}
 
@@ -35698,12 +35698,15 @@ func TestPresentableNoToolsFallbackRejectsEchoedQuestion(t *testing.T) {
 func TestPresentableUnsupportedFinalAnswerLeadMatchesTUIContract(t *testing.T) {
 	got := presentableUnsupportedFinalAnswerLead()
 	for _, want := range []string{
-		"could not produce a supported final answer",
-		"run stopped before",
-		"not have enough supported evidence",
+		"I do not have a supported answer",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("unsupported final-answer lead missing %q:\n%s", want, got)
+		}
+	}
+	for _, forbidden := range []string{"could not produce", "final answer", "run stopped before", "not enough supported evidence"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("unsupported final-answer lead leaked %q:\n%s", forbidden, got)
 		}
 	}
 }
@@ -35862,7 +35865,7 @@ func TestSynthesizeBriefConversationFallback(t *testing.T) {
 		t.Errorf("fallback should identify the actual failure class: %q", got)
 	}
 
-	if !strings.Contains(got, "not have enough supported evidence") {
+	if !strings.Contains(got, "I do not have a supported answer") {
 		t.Errorf("fallback should present uncertainty as normal prose: %q", got)
 	}
 }
@@ -36130,7 +36133,7 @@ func TestSynthesizeBriefConversationFallbackDoesNotUseConflictingNavigationOwner
 	}
 
 	got := synthesizeBriefConversationFallback(brief, results)
-	if strings.Contains(got, "It would take") || strings.HasPrefix(got, "<<QUESTION>>") || !strings.Contains(got, "not have enough supported evidence") {
+	if strings.Contains(got, "It would take") || strings.HasPrefix(got, "<<QUESTION>>") || !strings.Contains(got, "I do not have a supported answer") {
 		t.Fatalf("conflicting navigation owner should not synthesize implementation answer or expose blocker protocol:\n%s", got)
 	}
 }
@@ -36153,7 +36156,7 @@ func TestFinalAnswerDecoratorDoesNotUseDelegatedPacketWithoutImplementationOwner
 		UserFacing: true,
 	})
 
-	if strings.Contains(got, "handleHelpOverlayKey") || strings.Contains(got, "handles up/down") || !strings.Contains(got, "not have enough supported evidence") {
+	if strings.Contains(got, "handleHelpOverlayKey") || strings.Contains(got, "handles up/down") || !strings.Contains(got, "I do not have a supported answer") {
 		t.Fatalf("implementation-shape delegated packet without owner evidence should not synthesize answer:\n%s", got)
 	}
 }

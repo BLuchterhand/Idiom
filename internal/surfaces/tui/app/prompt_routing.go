@@ -97,6 +97,11 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 
 		return m.finishPromptOnceReply(greenfieldCreationConfirmationQuestion(plan)), nil
 	}
+	if m.readOnlyEditRequestRequiresConfirmation(prompt, plan) {
+		m.recordPromptRouteWithoutExecution(prompt, plan)
+
+		return m.finishPromptOnceReply(workspaceEditConfirmationQuestion(plan)), nil
+	}
 
 	restoreRoute := m.applyDirectImplementationPromptRoute(ctx, prompt, plan)
 
@@ -1080,6 +1085,48 @@ func (m *Model) greenfieldCreationRequiresConfirmation(prompt string, plan promp
 	// confirmation protects ambiguous creation/scaffolding requests from being
 	// answered in a read-only lane when there is no existing project evidence.
 	return !hasReadableWorkspaceFiles(m.workspace.Root())
+}
+
+func (m *Model) readOnlyEditRequestRequiresConfirmation(prompt string, plan promptExecutionPlan) bool {
+	if m == nil || m.workspace == nil {
+		return false
+	}
+
+	if m.planExecuteActive || strings.TrimSpace(m.forcedTaskFamily) != "" {
+		return false
+	}
+
+	route := plan.route
+	if route.WriteIntent == "yes" || route.ReadOnlyConstraint || workerruntime.TaskFamilyMutationCapable(route.Family) {
+		return false
+	}
+
+	if promptRequestsReadOnlyEvidenceReport(prompt) {
+		return false
+	}
+
+	words := plannerWordText(prompt)
+	if words == " " {
+		return false
+	}
+
+	if plannerWordsContainAnyWholePhrase(words,
+		"how would",
+		"how do i",
+		"how do we",
+		"explain how",
+		"show me how",
+		"what would",
+		"what should",
+		"fix my understanding",
+		"update me",
+	) {
+		return false
+	}
+
+	return plannerPromptHasExplicitMutationIntent(words) ||
+		promptRequestsConcreteWorkspaceCreation(prompt) ||
+		promptRequestsFileDeletionFollowup(prompt)
 }
 
 const (

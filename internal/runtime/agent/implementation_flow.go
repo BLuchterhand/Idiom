@@ -1316,9 +1316,8 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 		return rejectFinalAnswerAcceptance(acceptance, turnViolationUserVisibleBlocker, turnReasonUserVisibleBlocker)
 	}
 
-	if r != nil && !readOnlyDirectAnswerLane(r.RuntimeBrief) &&
+	if r != nil &&
 		readOnlyAnswerReportsInsufficientEvidence(answer) &&
-		!acceptance.ContractAssessment.HasDiagnostic(turnDiagnosticObjectiveRelevance) &&
 		readOnlyClosureDecisionForResults(r.RuntimeBrief, results).Answerable() {
 
 		return rejectFinalAnswerAcceptance(acceptance, turnViolationNonAnswerProse, turnReasonAnswerableEvidenceInsufficient)
@@ -1882,7 +1881,7 @@ func presentableNonMutationQuestionBlocker(brief workerruntime.WorkerRuntimeBrie
 	reason = presentableQuestionBlockerReason(reason)
 
 	if reason == "" {
-		reason = "the run stopped before producing a supported answer."
+		reason = "the run did not retain a supported answer."
 	}
 
 	if !internalReason && !questionBlockerReasonLooksInternal(reason) && !strings.Contains(reason, "\n") {
@@ -1894,12 +1893,13 @@ func presentableNonMutationQuestionBlocker(brief workerruntime.WorkerRuntimeBrie
 	var b strings.Builder
 
 	if gateReason != "" {
-		b.WriteString("I could not produce a supported final answer: ")
-		b.WriteString(lowercaseFirstSentence(gateReason))
+		b.WriteString(presentableUnsupportedFinalAnswerLead())
+		b.WriteString(" ")
+		b.WriteString(uppercaseFirstSentence(gateReason))
 		if !strings.HasSuffix(strings.TrimSpace(b.String()), ".") {
 			b.WriteString(".")
 		}
-		if len(paths) > 0 {
+		if len(paths) > 0 && !presentableGateReasonSuppressesContextPaths(gateReason) {
 			b.WriteString(" ")
 			b.WriteString(evidenceLabel)
 			b.WriteString(": ")
@@ -1929,6 +1929,10 @@ func presentableNonMutationQuestionBlocker(brief workerruntime.WorkerRuntimeBrie
 	}
 
 	return strings.TrimSpace(b.String()), true
+}
+
+func presentableGateReasonSuppressesContextPaths(reason string) bool {
+	return strings.Contains(strings.ToLower(reason), "run did not retain a supported answer from inspected evidence")
 }
 
 func presentableQuestionBlockerDeterministicAnswerSupported(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, answer string) bool {
@@ -1992,7 +1996,7 @@ func presentableQuestionBlockerReason(reason string) string {
 			return malformed
 		}
 
-		return "the run stopped before it had enough supported evidence for the requested answer"
+		return "the run did not retain enough supported evidence for the requested answer"
 	}
 
 	replacements := []struct {
@@ -2027,7 +2031,7 @@ func presentableCompletionGateQuestionBlockerReason(reason string) string {
 
 	detail = sourceGroundingStripGateRecoveryPrefix(detail)
 	if sourceGroundingDetail := presentableSourceGroundingGateReason(detail); sourceGroundingDetail != "" {
-		return "the final answer was rejected because " + sourceGroundingDetail
+		return sourceGroundingDetail
 	}
 
 	detail = firstSentenceBeforeAny(detail,
@@ -2047,8 +2051,19 @@ func presentableCompletionGateQuestionBlockerReason(reason string) string {
 	if detail == "" {
 		return ""
 	}
+	lowerDetail := strings.ToLower(detail)
+	if strings.Contains(lowerDetail, "the final answer uses inspected source evidence") &&
+		strings.Contains(lowerDetail, "does not establish") {
 
-	return "the final answer was rejected because " + lowercaseFirstSentence(detail)
+		return "the inspected evidence did not establish the requested claim"
+	}
+	if strings.Contains(lowerDetail, "the answer names additional implementation detail") ||
+		strings.Contains(lowerDetail, "without an exact inspected probe") {
+
+		return "the run did not retain a supported answer from inspected evidence"
+	}
+
+	return "the run did not retain a supported answer: " + lowercaseFirstSentence(detail)
 }
 
 func presentableSourceGroundingGateReason(detail string) string {

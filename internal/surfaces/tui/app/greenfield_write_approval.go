@@ -144,6 +144,18 @@ func greenfieldCreationConfirmationQuestion(plan promptExecutionPlan) string {
 	})
 }
 
+func workspaceEditConfirmationQuestion(plan promptExecutionPlan) string {
+	command := "/implement"
+	lane := "implement"
+
+	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(plan.route.Family) {
+		command = "/plan-execute"
+		lane = string(lanecontract.LanePlanExecute)
+	}
+
+	return fmt.Sprintf("This request appears to require workspace edits, but the selected route is read-only. To continue, reply with `%s <objective>` to switch to the write-capable %s lane. Otherwise, rephrase it as a question and I will answer in read-only mode.", command, lane)
+}
+
 func greenfieldScopeAuthorizationFromPlannerQuestion(question featureplanner.PlannerQuestion, statePath string) (greenfieldWriteApprovalRequest, bool) {
 	if !featureplanner.PlannerQuestionOpen(question) ||
 		strings.TrimSpace(question.AuthorityRequired) != "operator_approval" ||

@@ -598,6 +598,7 @@ func (m *Model) renderMessages(forceBottom bool) {
 	enabled := m.cfg.TUI.EvidencePanel
 	width := max(1, m.viewport.Width)
 	msgBodyStyle := bodyStyle.Width(width)
+	messages := m.messages
 
 	const maxContainerRows = 15
 
@@ -647,12 +648,12 @@ func (m *Model) renderMessages(forceBottom bool) {
 
 	var b strings.Builder
 
-	for i, msg := range m.messages {
+	for i, msg := range messages {
 		if i > 0 {
 			b.WriteString("\n\n")
 		}
 
-		b.WriteString(m.cachedMessageRender(msg, msgBodyStyle))
+		b.WriteString(m.cachedMessageRender(msg, messages, msgBodyStyle))
 
 		if msg.Role == "assistant" && strings.TrimSpace(msg.Content) != "" {
 			if containerIdx < len(m.pastTurnContainers) {
@@ -717,8 +718,8 @@ func (m *Model) activeEvidenceContainerVisible() bool {
 
 // cachedMessageRender returns the rendered body for a single message, using
 // the per-message render cache.
-func (m *Model) cachedMessageRender(msg llama.ChatMessage, msgBodyStyle lipgloss.Style) string {
-	for i, existing := range m.messages {
+func (m *Model) cachedMessageRender(msg llama.ChatMessage, messages []llama.ChatMessage, msgBodyStyle lipgloss.Style) string {
+	for i, existing := range messages {
 		if i >= len(m.perMsgRenderCache) {
 			break
 		}
@@ -747,15 +748,17 @@ func (m *Model) streamingBusyText() string {
 func (m *Model) renderedMessageBody() string {
 	width := max(1, m.viewport.Width)
 	useMarkdown := m.mdRenderer != nil
-	hash := messageRenderFingerprint(m.messages)
+	messages := m.messages
+	messageCount := len(messages)
+	hash := messageRenderFingerprint(messages)
 
 	if m.messageRenderWidth == width && m.messageRenderHash == hash && m.messageRenderMD == useMarkdown {
-		if m.messageRenderCache != "" || len(m.messages) == 0 {
+		if m.messageRenderCache != "" || messageCount == 0 {
 			return m.messageRenderCache
 		}
 	}
 
-	if len(m.messages) == 0 {
+	if messageCount == 0 {
 		m.perMsgRenderCache = nil
 		m.perMsgRenderHashes = nil
 		m.perMsgRenderLen = 0
@@ -767,25 +770,25 @@ func (m *Model) renderedMessageBody() string {
 		return ""
 	}
 
-	if m.perMsgRenderLen > len(m.messages) || m.messageRenderWidth != width || m.messageRenderMD != useMarkdown {
+	if m.perMsgRenderLen > messageCount || m.messageRenderWidth != width || m.messageRenderMD != useMarkdown {
 		m.perMsgRenderCache = nil
 		m.perMsgRenderHashes = nil
 		m.perMsgRenderLen = 0
 	}
 
-	if len(m.perMsgRenderCache) < len(m.messages) {
-		m.perMsgRenderCache = append(m.perMsgRenderCache, make([]string, len(m.messages)-len(m.perMsgRenderCache))...)
+	if len(m.perMsgRenderCache) < messageCount {
+		m.perMsgRenderCache = append(m.perMsgRenderCache, make([]string, messageCount-len(m.perMsgRenderCache))...)
 	}
 
-	if len(m.perMsgRenderHashes) < len(m.messages) {
-		m.perMsgRenderHashes = append(m.perMsgRenderHashes, make([]uint64, len(m.messages)-len(m.perMsgRenderHashes))...)
+	if len(m.perMsgRenderHashes) < messageCount {
+		m.perMsgRenderHashes = append(m.perMsgRenderHashes, make([]uint64, messageCount-len(m.perMsgRenderHashes))...)
 	}
 
 	msgBodyStyle := bodyStyle.Width(width)
 
 	var b strings.Builder
 
-	for i, msg := range m.messages {
+	for i, msg := range messages {
 		msgHash := messageRenderFingerprint([]llama.ChatMessage{msg})
 		if m.perMsgRenderCache[i] == "" || m.perMsgRenderHashes[i] != msgHash {
 			m.perMsgRenderCache[i] = m.renderSingleMessage(msg, msgBodyStyle)
@@ -794,14 +797,14 @@ func (m *Model) renderedMessageBody() string {
 
 		b.WriteString(m.perMsgRenderCache[i])
 
-		if i < len(m.messages)-1 {
+		if i < messageCount-1 {
 			b.WriteString("\n\n")
 		}
 	}
 
-	m.perMsgRenderCache = m.perMsgRenderCache[:len(m.messages)]
-	m.perMsgRenderHashes = m.perMsgRenderHashes[:len(m.messages)]
-	m.perMsgRenderLen = len(m.messages)
+	m.perMsgRenderCache = m.perMsgRenderCache[:messageCount]
+	m.perMsgRenderHashes = m.perMsgRenderHashes[:messageCount]
+	m.perMsgRenderLen = messageCount
 
 	m.messageRenderCache = strings.TrimRight(b.String(), "\n")
 	m.messageRenderWidth = width

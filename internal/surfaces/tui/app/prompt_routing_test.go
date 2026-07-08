@@ -117,6 +117,47 @@ func TestGreenfieldCreationConfirmationStillCatchesMisroutedCreationPrompt(t *te
 	}
 }
 
+func TestReadOnlyEditRequestRequiresImplementationConfirmation(t *testing.T) {
+	root := t.TempDir()
+	writePromptRoutingTestFile(t, root, "README.md")
+	model := &Model{
+		workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+	}
+	readOnlyPlan := promptExecutionPlan{
+		route: turnRoutePlan{
+			Family:      "conversation",
+			InitialLane: "main",
+			Contract:    "direct_answer",
+			WriteIntent: "no",
+		},
+	}
+
+	if !model.readOnlyEditRequestRequiresConfirmation("Please make the requested edits in internal/runtime/agent/runner_core.go.", readOnlyPlan) {
+		t.Fatal("misrouted explicit edit request should ask for implementation confirmation before a read-only model turn")
+	}
+
+	if model.readOnlyEditRequestRequiresConfirmation("How would you make the routing code easier to understand?", readOnlyPlan) {
+		t.Fatal("read-only design question should not ask for implementation confirmation")
+	}
+
+	writePlan := promptExecutionPlan{
+		route: turnRoutePlan{
+			Family:      "implementation",
+			InitialLane: "implement",
+			Contract:    "implementation_result",
+			WriteIntent: "yes",
+		},
+	}
+	if model.readOnlyEditRequestRequiresConfirmation("Please make the requested edits.", writePlan) {
+		t.Fatal("write-capable route should not ask for read-only edit confirmation")
+	}
+
+	model.planExecuteActive = true
+	if model.readOnlyEditRequestRequiresConfirmation("Submit a corrective plan with executable edits only.", readOnlyPlan) {
+		t.Fatal("internal plan-execute prompt runner should not ask for user-facing implementation confirmation")
+	}
+}
+
 func TestGreenfieldCreationConfirmationUsesSharedPresenter(t *testing.T) {
 	readOnlyPlan := promptExecutionPlan{
 		route: turnRoutePlan{
@@ -147,6 +188,28 @@ func TestGreenfieldCreationConfirmationUsesSharedPresenter(t *testing.T) {
 	} {
 		if strings.Contains(answer, forbidden) {
 			t.Fatalf("greenfield confirmation leaked scope-authorization text %q:\n%s", forbidden, answer)
+		}
+	}
+}
+
+func TestWorkspaceEditConfirmationQuestionUsesImplementationCommand(t *testing.T) {
+	answer := workspaceEditConfirmationQuestion(promptExecutionPlan{
+		route: turnRoutePlan{
+			Family:      "conversation",
+			InitialLane: "main",
+			Contract:    "direct_answer",
+			WriteIntent: "no",
+		},
+	})
+
+	for _, want := range []string{
+		"selected route is read-only",
+		"`/implement <objective>`",
+		"write-capable implement lane",
+		"answer in read-only mode",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("workspace edit confirmation missing %q:\n%s", want, answer)
 		}
 	}
 }

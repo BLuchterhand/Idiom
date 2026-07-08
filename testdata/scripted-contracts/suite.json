@@ -4518,7 +4518,7 @@
       "runner_mode": "tui",
       "prompt": "Can you investigate why resizing the TUI mid-answer leaves the conversation with stale wrapped lines? Answer from repository evidence and do not edit files.",
       "env": {
-        "IDIOM_LIVE_TUI_DONE_CONTAINS": "[\"could not produce a supported final answer\"]"
+        "IDIOM_LIVE_TUI_DONE_CONTAINS": "[\"I do not have a supported answer\"]"
       },
       "tags": [
         "frozen-repo",
@@ -4551,8 +4551,7 @@
           "idiom.scripted_model.requests"
         ],
         "final_assistant_contains": [
-          "could not produce a supported final answer",
-          "run stopped before"
+          "I do not have a supported answer"
         ],
         "forbid_final_assistant_contains": [
           "Question:",
@@ -4562,6 +4561,8 @@
           "<<QUESTION>>",
           "completion gate",
           "missing completion evidence",
+          "could not produce a supported final answer",
+          "run stopped before",
           "answer with the exact"
         ],
         "require_final_answer_critic": {

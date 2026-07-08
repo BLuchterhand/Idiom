@@ -1888,6 +1888,7 @@ func readOnlyAnswerReportsInsufficientEvidence(answer string) bool {
 	return ContainsAny(lower,
 		"available evidence is not enough",
 		"could not produce a supported final answer",
+		"do not have a supported answer",
 		"evidence is not enough",
 		"insufficient evidence",
 		"not have enough supported evidence",
@@ -3512,7 +3513,7 @@ func (d ReadOnlyCloseout) PrioritizedCandidatePaths() []string {
 }
 
 func presentableUnsupportedFinalAnswerLead() string {
-	return "I could not produce a supported final answer from this run: the run stopped before it retained enough evidence, so I do not have enough supported evidence to answer that fully."
+	return "I do not have a supported answer from this run."
 }
 
 func unsupportedReadOnlyCloseoutAnswer(answer string) bool {

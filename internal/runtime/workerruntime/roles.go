@@ -22,32 +22,9 @@ type RoleSpec struct {
 func RoleSpecFor(name string) RoleSpec {
 	switch roleName(name) {
 	case RoleChildWrite:
-		return RoleSpec{
-			Name:                 RoleChildWrite,
-			TaskFamily:           autonomy.TaskFamilyDelegatedIsolatedImpl,
-			Contract:             ContractPatchSummary,
-			PermissionProfile:    PermissionIsolatedWorkbranchWrite,
-			AllowedTools:         workspace.ManifestToolsForSurfaceProfile(workspace.ToolSurfaceProfileIsolatedWrite),
-			ForbiddenTools:       []string{"task", "mutating_parent_workspace", "git_push", "git_history_mutation", "git_index_mutation", "publish", "deploy"},
-			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceChangedPathsOrNoopReason, RequiredEvidenceVerificationStatus, RequiredEvidenceConfidence},
-			ReadinessGate:        []ReadinessGateID{ReadinessPatchSummaryPresent, ReadinessChangedPathsReported, ReadinessVerificationStatusReported},
-			SearchPolicy:         []SearchPolicyID{SearchPolicyConsumeDelegatedScopeFirst, SearchPolicyAvoidParentWorkspaceAssumptions, SearchPolicyVerifyChangedSurface},
-			VerificationContract: VerificationTestsPassedFailedSkipped,
-			StopConditions:       []StopConditionID{StopPatchReadyForParentReview, StopBlockedByVerificationOrScope, StopBudgetExhaustedWithUncertainty},
-		}
+		return roleSpecFromRuntimeContract(RoleChildWrite, RuntimeContractForTaskFamily(string(autonomy.TaskFamilyDelegatedIsolatedImpl)), []string{"task", "mutating_parent_workspace", "git_push", "git_history_mutation", "git_index_mutation", "publish", "deploy"})
 	case RoleChildReadOnly:
-		return RoleSpec{
-			Name:                 RoleChildReadOnly,
-			TaskFamily:           autonomy.TaskFamilyDelegatedReadOnly,
-			Contract:             ContractGroundedEvidence,
-			PermissionProfile:    PermissionReadOnlyWorkspace,
-			AllowedTools:         workspace.ManifestToolsForSurfaceProfile(workspace.ToolSurfaceProfileDelegatedReadOnly),
-			ForbiddenTools:       roleForbiddenWorkspaceWrites("mutating_shell", workspace.ToolNameTask),
-			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceInspectedPaths, RequiredEvidenceAnswerAddressesDelegatedQuestion, RequiredEvidenceConfidence},
-			SearchPolicy:         []SearchPolicyID{SearchPolicyPreferDiscoveryQueryForCompositeQuestions, SearchPolicyPreferSymbolOrHandleProbesOverRawPathReads, SearchPolicyAnswerWhenEvidenceIsSufficient, SearchPolicyIfNotAnsweringNameOneExactMissingClaimAndProbe, SearchPolicyAvoidBroadLoops},
-			VerificationContract: VerificationNotRequiredReadOnlyChild,
-			StopConditions:       []StopConditionID{StopDelegatedQuestionAnswered, StopBlockedByMissingEvidenceOrPermission, StopBudgetExhaustedWithUncertainty},
-		}
+		return roleSpecFromRuntimeContract(RoleChildReadOnly, RuntimeContractForTaskFamily(string(autonomy.TaskFamilyDelegatedReadOnly)), roleForbiddenWorkspaceWrites("mutating_shell", workspace.ToolNameTask))
 	case RoleRepair:
 		return RoleSpec{
 			Name:                 RoleRepair,
@@ -63,19 +40,7 @@ func RoleSpecFor(name string) RoleSpec {
 			StopConditions:       []StopConditionID{StopRepairVerified, StopRepairBlockedWithFailedOutput, StopBudgetExhaustedWithUncertainty},
 		}
 	case RoleImplement:
-		return RoleSpec{
-			Name:                 RoleImplement,
-			TaskFamily:           autonomy.TaskFamilyImplementation,
-			Contract:             ContractImplementationResult,
-			PermissionProfile:    PermissionGuardedWorkspaceWrite,
-			AllowedTools:         workspace.ManifestToolsForSurfaceProfile(workspace.ToolSurfaceProfileGuardedWrite),
-			ForbiddenTools:       []string{"unbounded_write", "unapproved_protected_write"},
-			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceChangedFilesOrNoopReason, RequiredEvidenceVerificationResult},
-			ReadinessGate:        []ReadinessGateID{ReadinessTargetPacketOrChangedFilesPresent, ReadinessVerificationContractResolved},
-			SearchPolicy:         []SearchPolicyID{SearchPolicyConsumeTargetPacketFirst, SearchPolicyTrustPreloadedCurrentStateAnchors, SearchPolicyWriteOnceEditLocationIsSupported, SearchPolicyAvoidBroadDiscoveryAfterTarget, SearchPolicyVerifyChangedSurface},
-			VerificationContract: VerificationTestsPassedFailedSkipped,
-			StopConditions:       []StopConditionID{StopImplementationVerifiedOrFailureReported, StopBlockedByMissingPermissionOrInformation, StopBudgetExhaustedWithUncertainty},
-		}
+		return roleSpecFromRuntimeContract(RoleImplement, RuntimeContractForTaskFamily(string(autonomy.TaskFamilyImplementation)), []string{"unbounded_write", "unapproved_protected_write"})
 	default:
 		return RoleSpec{
 			Name:                 RoleMain,
@@ -89,6 +54,22 @@ func RoleSpecFor(name string) RoleSpec {
 			VerificationContract: VerificationNotRequiredConversation,
 			StopConditions:       []StopConditionID{StopAnsweredUserRequest, StopBlockedByMissingInformation},
 		}
+	}
+}
+
+func roleSpecFromRuntimeContract(name RoleName, spec RuntimeContractSpec, forbiddenTools []string) RoleSpec {
+	return RoleSpec{
+		Name:                 name,
+		TaskFamily:           spec.TaskFamily,
+		Contract:             spec.Contract,
+		PermissionProfile:    spec.PermissionProfile,
+		AllowedTools:         workspace.ManifestToolsForSurfaceProfile(spec.ToolProfile),
+		ForbiddenTools:       append([]string(nil), forbiddenTools...),
+		RequiredEvidence:     append([]EvidenceRequirementID(nil), spec.RequiredEvidence...),
+		ReadinessGate:        append([]ReadinessGateID(nil), spec.ReadinessGate...),
+		SearchPolicy:         append([]SearchPolicyID(nil), spec.SearchPolicy...),
+		VerificationContract: spec.VerificationContract,
+		StopConditions:       append([]StopConditionID(nil), spec.StopConditions...),
 	}
 }
 

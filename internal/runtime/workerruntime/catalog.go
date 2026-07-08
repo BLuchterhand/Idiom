@@ -201,6 +201,29 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			StopConditions:       []StopConditionID{StopDecisionPassWithChecklist, StopSubmitPlanCorrectiveEditsOrBlocker, StopBlockedByMissingInformation},
 			FinalCritic:          []FinalCriticID{FinalCriticAnswersActualUserRequest, FinalCriticVerificationChecklistPresent, FinalCriticDecisionReported},
 		}
+	case string(autonomy.TaskFamilyDelegatedIsolatedImpl):
+		return RuntimeContractSpec{
+			TaskFamily:           autonomy.TaskFamilyDelegatedIsolatedImpl,
+			Contract:             ContractPatchSummary,
+			PermissionProfile:    PermissionIsolatedWorkbranchWrite,
+			ToolProfile:          workspace.ToolSurfaceProfileIsolatedWrite,
+			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceChangedPathsOrNoopReason, RequiredEvidenceVerificationStatus, RequiredEvidenceConfidence},
+			ReadinessGate:        []ReadinessGateID{ReadinessPatchSummaryPresent, ReadinessChangedPathsReported, ReadinessVerificationStatusReported},
+			SearchPolicy:         []SearchPolicyID{SearchPolicyConsumeDelegatedScopeFirst, SearchPolicyAvoidParentWorkspaceAssumptions, SearchPolicyVerifyChangedSurface},
+			VerificationContract: VerificationTestsPassedFailedSkipped,
+			StopConditions:       []StopConditionID{StopPatchReadyForParentReview, StopBlockedByVerificationOrScope, StopBudgetExhaustedWithUncertainty},
+		}
+	case string(autonomy.TaskFamilyDelegatedReadOnly):
+		return RuntimeContractSpec{
+			TaskFamily:           autonomy.TaskFamilyDelegatedReadOnly,
+			Contract:             ContractGroundedEvidence,
+			PermissionProfile:    PermissionReadOnlyWorkspace,
+			ToolProfile:          workspace.ToolSurfaceProfileDelegatedReadOnly,
+			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceInspectedPaths, RequiredEvidenceAnswerAddressesDelegatedQuestion, RequiredEvidenceConfidence},
+			SearchPolicy:         []SearchPolicyID{SearchPolicyPreferDiscoveryQueryForCompositeQuestions, SearchPolicyPreferSymbolOrHandleProbesOverRawPathReads, SearchPolicyAnswerWhenEvidenceIsSufficient, SearchPolicyIfNotAnsweringNameOneExactMissingClaimAndProbe, SearchPolicyAvoidBroadLoops},
+			VerificationContract: VerificationNotRequiredReadOnlyChild,
+			StopConditions:       []StopConditionID{StopDelegatedQuestionAnswered, StopBlockedByMissingEvidenceOrPermission, StopBudgetExhaustedWithUncertainty},
+		}
 	case "implementation", "test_authoring", "config_edit", "script_edit", "gdscript_edit", "docs_edit", "prompt_edit_security", "failure_injection":
 		family = strings.TrimSpace(family)
 		// Verification contract differs by family: code-producing

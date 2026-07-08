@@ -1564,6 +1564,49 @@ func TestNormalizeRuntimeBriefConversationOnlyClearsToolSurface(t *testing.T) {
 	}
 }
 
+func TestNormalizeRuntimeBriefReadOnlyWorkspaceSuppressesWriteTools(t *testing.T) {
+	brief := NormalizeRuntimeBrief(WorkerRuntimeBrief{
+		TaskFamily:        "implementation_notes",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		AllowedTools:      []string{"read_file", "edit_file", "apply_patch", "submit_plan", "search_content"},
+		ForbiddenTools:    []string{"mutating_shell"},
+		RequiredTools:     []string{workspace.RequiredToolEditFileOrApplyPatch, "workspace_inspection"},
+	})
+
+	for _, forbidden := range []string{"edit_file", "apply_patch", "submit_plan"} {
+		if slices.Contains(brief.AllowedTools, forbidden) {
+			t.Fatalf("read-only workspace brief should not advertise %q in %#v", forbidden, brief.AllowedTools)
+		}
+		if runtimeTestToolManifestContains(brief.ToolManifest, forbidden) {
+			t.Fatalf("read-only workspace brief should not manifest %q in %#v", forbidden, brief.ToolManifest)
+		}
+		if !slices.Contains(brief.ForbiddenTools, forbidden) {
+			t.Fatalf("read-only workspace brief should forbid %q in %#v", forbidden, brief.ForbiddenTools)
+		}
+	}
+
+	if !slices.Contains(brief.AllowedTools, "read_file") || !slices.Contains(brief.AllowedTools, "search_content") {
+		t.Fatalf("read-only workspace brief lost read tools: %#v", brief.AllowedTools)
+	}
+	if slices.Contains(brief.RequiredTools, workspace.RequiredToolEditFileOrApplyPatch) {
+		t.Fatalf("read-only workspace brief should not require edit tools: %#v", brief.RequiredTools)
+	}
+	if !slices.Contains(brief.RequiredTools, "workspace_inspection") {
+		t.Fatalf("read-only workspace brief lost read-only required tool: %#v", brief.RequiredTools)
+	}
+}
+
+func runtimeTestToolManifestContains(manifest []workspace.ToolManifestEntry, tool string) bool {
+	for _, entry := range manifest {
+		if strings.TrimSpace(entry.Tool) == tool {
+			return true
+		}
+	}
+
+	return false
+}
+
 func TestNormalizeRuntimeBriefSuppressesPlaceholderManifestRequests(t *testing.T) {
 	brief := NormalizeRuntimeBrief(WorkerRuntimeBrief{
 		AllowedTools: []string{"submit_plan", "pwd"},

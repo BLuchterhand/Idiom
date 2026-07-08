@@ -948,9 +948,18 @@ func (r *Runner) workspaceToolSurfaceSnapshot() workspace.ToolSurfaceSnapshot {
 }
 
 func runnerWorkspaceToolSurfaceProfile(brief workerruntime.WorkerRuntimeBrief) (workspace.ToolSurfaceProfile, bool) {
+	if strings.TrimSpace(brief.TaskFamily) == "" {
+		return "", false
+	}
+
 	profile := workerruntime.RuntimeContractForTaskFamily(brief.TaskFamily).ToolProfile
 	switch profile {
-	case workspace.ToolSurfaceProfilePlanSubmissionPlanner, workspace.ToolSurfaceProfilePlanSubmissionReview:
+	case workspace.ToolSurfaceProfileConversationReadOnly,
+		workspace.ToolSurfaceProfileReadOnlyDiscovery,
+		workspace.ToolSurfaceProfileVerificationOnly,
+		workspace.ToolSurfaceProfileLocateOnly,
+		workspace.ToolSurfaceProfilePlanSubmissionPlanner,
+		workspace.ToolSurfaceProfilePlanSubmissionReview:
 		return profile, true
 	default:
 		return "", false
@@ -5432,6 +5441,20 @@ func lowercaseFirstSentence(value string) string {
 	first := value[0]
 	if first >= 'A' && first <= 'Z' {
 		return string(first+'a'-'A') + value[1:]
+	}
+
+	return value
+}
+
+func uppercaseFirstSentence(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+
+	first := value[0]
+	if first >= 'a' && first <= 'z' {
+		return string(first-'a'+'A') + value[1:]
 	}
 
 	return value
@@ -11485,6 +11508,16 @@ func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) ru
 		StopConditions:       append([]string(nil), brief.StopConditions...),
 		FinalCritic:          append([]string(nil), brief.FinalCritic...),
 		DynamicInstructions:  r.InstructionAttacher != nil,
+	}
+	if workerruntime.PermissionProfileIsReadOnlyWorkspace(rails.PermissionProfile) {
+		tools := workerruntime.NormalizeReadOnlyWorkspaceToolSet(workerruntime.RuntimeToolSet{
+			AllowedTools:   rails.AllowedTools,
+			RequiredTools:  rails.RequiredTools,
+			ForbiddenTools: rails.ForbiddenTools,
+		})
+		rails.AllowedTools = tools.AllowedTools
+		rails.RequiredTools = tools.RequiredTools
+		rails.ForbiddenTools = tools.ForbiddenTools
 	}
 	if len(rails.RequiredEvidence) == 0 {
 		rails.RequiredEvidence = []string{string(workerruntime.RequiredEvidenceAnswerAddressesUserRequest)}
