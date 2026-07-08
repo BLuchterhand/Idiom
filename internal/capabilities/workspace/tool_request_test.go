@@ -62,22 +62,14 @@ func TestParseToolRequestAcceptsPlainToolPrefixJSONObject(t *testing.T) {
 	}
 }
 
-func TestParseToolRequestAcceptsBareJSONWithSafeMissingToolAlias(t *testing.T) {
-	req, raw, ok, err := ParseToolRequest(`{"path":"internal/example/target.go","start_line":1,"end_line":300}`)
+func TestParseToolRequestIgnoresBareJSONMissingTool(t *testing.T) {
+	_, _, ok, err := ParseToolRequest(`{"path":"internal/example/target.go","start_line":1,"end_line":300}`)
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
 
-	if !ok {
-		t.Fatal("expected bare JSON read request to be accepted")
-	}
-
-	if req.Tool != "read_file" || req.Path != "internal/example/target.go" || req.StartLine != 1 || req.EndLine != 300 {
-		t.Fatalf("unexpected inferred request: %#v", req)
-	}
-
-	if !strings.Contains(raw, `"path":"internal/example/target.go"`) {
-		t.Fatalf("unexpected raw payload: %q", raw)
+	if ok {
+		t.Fatal("bare JSON without an explicit tool should remain answer content")
 	}
 }
 
@@ -826,52 +818,38 @@ func TestParseToolRequestRejectsMalformedOrMissingTool(t *testing.T) {
 	}
 }
 
-func TestParseToolRequestRepairsSafeMissingToolAliases(t *testing.T) {
+func TestParseToolRequestRejectsMissingToolInToolTransport(t *testing.T) {
 	cases := []struct {
 		name string
 		text string
-		want string
 	}{
 		{
 			name: "go outline path only",
 			text: "```tool\n{\"path\":\"internal/surfaces/tui/app/analysis_agents.go\"}\n```",
-			want: "go_file_outline",
 		},
 		{
 			name: "move declaration tag",
 			text: "```tool\n{\"path\":\"internal/surfaces/tui/app/app.go\",\"destination\":\"internal/surfaces/tui/app/rendering.go\",\"pattern\":\"tag:rendering\"}\n```",
-			want: "go_move_declarations",
 		},
 		{
 			name: "shell command",
 			text: "```tool\n{\"command\":\"go test ./internal/surfaces/tui/app\"}\n```",
-			want: "shell",
 		},
 		{
 			name: "child task",
 			text: "```tool\n{\"agent\":\"explorer\",\"prompt\":\"inspect routing\"}\n```",
-			want: "task",
 		},
 		{
 			name: "line edit",
 			text: "```tool\n{\"path\":\"internal/surfaces/tui/app/app.go\",\"start_line\":10,\"end_line\":10,\"content\":\"replacement\"}\n```",
-			want: "edit_file",
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req, _, ok, err := ParseToolRequest(tc.text)
-			if err != nil {
-				t.Fatalf("ParseToolRequest: %v", err)
-			}
-
-			if !ok {
-				t.Fatal("expected tool request")
-			}
-
-			if req.Tool != tc.want {
-				t.Fatalf("tool = %q, want %q", req.Tool, tc.want)
+			_, _, ok, err := ParseToolRequest(tc.text)
+			if !ok || err == nil || !strings.Contains(err.Error(), "missing tool") {
+				t.Fatalf("expected missing-tool rejection, ok=%t err=%v", ok, err)
 			}
 		})
 	}

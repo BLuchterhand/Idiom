@@ -14,7 +14,6 @@ import (
 	planartifact "idiom/internal/contracts/planartifact"
 
 	"idiom/internal/platform/textutil"
-	semanticlanguage "idiom/internal/repository/semantic/language"
 	"idiom/internal/repository/semantic/languagetools"
 )
 
@@ -1215,33 +1214,4 @@ func numericToolField(field string) bool {
 	default:
 		return false
 	}
-}
-
-func inferMissingToolRequest(req ToolRequest) (ToolRequest, bool) {
-	if strings.TrimSpace(req.Tool) != "" {
-		return req, true
-	}
-
-	switch {
-	case len(req.Todos) > 0 || len(req.Items) > 0:
-		req.Tool = ToolNameTaskLedger
-	case strings.TrimSpace(req.Prompt) != "" || strings.TrimSpace(req.Agent) != "":
-		req.Tool = ToolNameTask
-	case strings.TrimSpace(req.Command) != "":
-		req.Tool = ToolNameShell
-	case strings.TrimSpace(req.Destination) != "" || len(req.Declarations) > 0 || len(req.Moves) > 0 || strings.HasPrefix(strings.TrimSpace(req.Pattern), "tag:"):
-		req.Tool = ToolNameGoMoveDeclarations
-	case strings.TrimSpace(req.OldText) != "" || strings.TrimSpace(req.NewText) != "" || (strings.TrimSpace(req.Content) != "" && (req.StartLine != 0 || req.EndLine != 0)):
-		req.Tool = ToolNameEditFile
-	case strings.TrimSpace(req.Glob) != "" && strings.TrimSpace(req.Pattern) != "":
-		req.Tool = ToolNameSearchContent
-	case strings.TrimSpace(req.ID) != "" || req.StartLine != 0 || req.EndLine != 0:
-		req.Tool = ToolNameReadFile
-	case strings.HasSuffix(strings.TrimSpace(req.Path), ".go") && strings.TrimSpace(req.Pattern) == "" && strings.TrimSpace(req.Content) == "":
-		req.Tool = LanguageToolForCapability("go", semanticlanguage.CapFileOutline)
-	default:
-		return ToolRequest{}, false
-	}
-
-	return req, true
 }

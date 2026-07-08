@@ -399,15 +399,6 @@ func LanguageToolHasAnyCapability(tool string, capabilities ...semanticlanguage.
 	return false
 }
 
-func LanguageToolForCapability(language string, capability semanticlanguage.Capability) string {
-	lang, ok := semanticlanguage.LanguageForName(language)
-	if !ok {
-		return ""
-	}
-
-	return strings.TrimSpace(lang.Tool(capability))
-}
-
 // IsLanguageToolName reports whether tool is registered by the workspace
 // language-tool catalog.
 func IsLanguageToolName(tool string) bool {

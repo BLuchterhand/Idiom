@@ -122,65 +122,7 @@ func bareJSONObjectIsToolPayload(payload string) bool {
 		return true
 	}
 
-	if _, ok := fields["capability"]; ok {
-		return false
-	}
-
-	var req ToolRequest
-
-	if err := json.Unmarshal(data, &req); err != nil {
-		return false
-	}
-
-	return bareJSONMissingToolPayloadIsReadOnly(req)
-}
-
-func bareJSONMissingToolPayloadIsReadOnly(req ToolRequest) bool {
-	if strings.TrimSpace(req.Tool) != "" {
-		return true
-	}
-
-	if len(req.Todos) > 0 || len(req.Items) > 0 {
-		return false
-	}
-
-	if strings.TrimSpace(req.Command) != "" ||
-		strings.TrimSpace(req.Prompt) != "" ||
-		strings.TrimSpace(req.Agent) != "" ||
-		strings.TrimSpace(req.Destination) != "" ||
-		len(req.Declarations) > 0 ||
-		len(req.Moves) > 0 ||
-		strings.HasPrefix(strings.TrimSpace(req.Pattern), "tag:") ||
-		strings.TrimSpace(req.OldText) != "" ||
-		strings.TrimSpace(req.NewText) != "" ||
-		strings.TrimSpace(req.Content) != "" ||
-		len(req.Edits) > 0 ||
-		req.PlanArtifact != nil ||
-		strings.TrimSpace(req.Rationale) != "" {
-
-		return false
-	}
-
-	if strings.TrimSpace(req.Glob) != "" && strings.TrimSpace(req.Pattern) != "" {
-		return true
-	}
-
-	return req.StartLine != 0 || req.EndLine != 0 || looksLikeFileHandleID(req.ID)
-}
-
-func looksLikeFileHandleID(id string) bool {
-	id = strings.TrimSpace(id)
-	if len(id) < 2 || id[0] != 'f' {
-		return false
-	}
-
-	for _, r := range id[1:] {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-
-	return true
+	return false
 }
 
 // extractCallingToolPayload detects the [Calling tool: name({json})]

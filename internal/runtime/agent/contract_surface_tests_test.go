@@ -10749,7 +10749,7 @@ func TestToolRequestNormalizerClassifiesNativeTransportMismatch(t *testing.T) {
 	}
 }
 
-func TestToolRequestNormalizerMissingToolInferenceRequiresTypedAuthority(t *testing.T) {
+func TestToolRequestNormalizerRejectsMissingToolInToolTransport(t *testing.T) {
 	tests := []struct {
 		name          string
 		content       string
@@ -10759,24 +10759,23 @@ func TestToolRequestNormalizerMissingToolInferenceRequiresTypedAuthority(t *test
 		wantTransport string
 	}{
 		{
-			name:          "safe read inference is reportable",
+			name:          "read shape missing tool is unsupported",
 			content:       "```tool\n{\"path\":\"internal/runtime/agent/plan_execute.go\"}\n```",
-			wantOK:        true,
-			wantTool:      "go_file_outline",
-			wantOutcome:   toolRequestNormalizerOutcomeMissingToolInferred,
+			wantOK:        false,
+			wantOutcome:   toolRequestNormalizerOutcomeUnsupportedShape,
 			wantTransport: toolRequestNormalizerTransportTextual,
 		},
 		{
-			name:          "write inference is unsafe",
+			name:          "write shape missing tool is unsupported",
 			content:       "```tool\n{\"path\":\"README.md\",\"old_text\":\"old\",\"new_text\":\"new\"}\n```",
 			wantOK:        false,
-			wantOutcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
+			wantOutcome:   toolRequestNormalizerOutcomeUnsupportedShape,
 			wantTransport: toolRequestNormalizerTransportTextual,
 		},
 		{
-			name:          "submit plan inference is unsafe",
+			name:          "submit plan shape missing tool is unsupported",
 			content:       "```tool\n{\"edits\":[{\"path\":\"README.md\",\"old_text\":\"old\",\"new_text\":\"new\"}]}\n```",
-			wantOK:        true,
+			wantOK:        false,
 			wantOutcome:   toolRequestNormalizerOutcomeUnsupportedShape,
 			wantTransport: toolRequestNormalizerTransportTextual,
 		},
@@ -10801,40 +10800,11 @@ func TestToolRequestNormalizerMissingToolInferenceRequiresTypedAuthority(t *test
 			if tt.wantTool == "" && result.Request.Tool != "" {
 				t.Fatalf("missing-tool payload must not infer executable tool %q", result.Request.Tool)
 			}
-			if result.EventOutcome == toolRequestNormalizerOutcomeMissingToolInferred && tt.wantTool == "" {
-				t.Fatalf("unsafe missing-tool payload must not use missing_tool_inferred: %#v", result)
-			}
 			if result.EventOutcome != tt.wantOutcome {
 				t.Fatalf("EventOutcome = %q, want %q; result=%#v", result.EventOutcome, tt.wantOutcome, result)
 			}
 			if result.EventTransport != tt.wantTransport {
 				t.Fatalf("EventTransport = %q, want %q", result.EventTransport, tt.wantTransport)
-			}
-		})
-	}
-}
-
-func TestMissingToolInferenceRequiresTypedAuthorityForWorkspaceWriteTools(t *testing.T) {
-	for _, tool := range workspace.WorkspaceWriteToolNames() {
-		t.Run(tool, func(t *testing.T) {
-			if !missingToolInferenceNeedsTypedAuthority(workspace.ToolRequest{Tool: tool}) {
-				t.Fatalf("missing-tool inference must require typed authority for workspace write tool %q", tool)
-			}
-		})
-	}
-
-	for _, tool := range []string{
-		workspace.ToolNameShell,
-		workspace.ToolNameSubmitPlan,
-		workspace.ToolNameTask,
-		workspace.ToolNameTaskLedger,
-	} {
-		t.Run(tool, func(t *testing.T) {
-			if workspace.IsWorkspaceWriteTool(tool) {
-				t.Fatalf("%q should stay outside the workspace write-tool catalog for this characterization", tool)
-			}
-			if !missingToolInferenceNeedsTypedAuthority(workspace.ToolRequest{Tool: tool}) {
-				t.Fatalf("missing-tool inference must require typed authority for non-write control tool %q", tool)
 			}
 		})
 	}
@@ -10850,7 +10820,7 @@ func TestToolRequestNormalizerDoesNotInferWhenRequiredArgumentsAreAbsent(t *test
 	for _, content := range tests {
 		t.Run(content, func(t *testing.T) {
 			result := normalizeToolRequestSyntax(llama.ChatMessage{Content: content})
-			if result.OK || result.EventOutcome == toolRequestNormalizerOutcomeMissingToolInferred {
+			if result.OK {
 				t.Fatalf("missing required args must not infer a tool request, got %#v", result)
 			}
 		})
@@ -37379,7 +37349,7 @@ func TestNormalizeToolRequestSyntaxRejectsNonJSONTextualWriteTools(t *testing.T)
 	}
 }
 
-func TestNormalizeToolRequestSyntaxBareJSONMissingToolInferred(t *testing.T) {
+func TestNormalizeToolRequestSyntaxBareJSONMissingToolRejected(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
 		Content: `{"path":"README.md","start_line":1,"end_line":20}`,
 	})
@@ -37388,15 +37358,11 @@ func TestNormalizeToolRequestSyntaxBareJSONMissingToolInferred(t *testing.T) {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
 
-	if !result.OK {
-		t.Fatal("expected safe bare JSON read shape to normalize")
+	if result.OK || result.Request.Tool != "" {
+		t.Fatalf("bare JSON without tool must not normalize: %#v", result.Request)
 	}
 
-	if result.Request.Tool != "read_file" || result.Request.Path != "README.md" {
-		t.Fatalf("unexpected request: %#v", result.Request)
-	}
-
-	if result.EventOutcome != toolRequestNormalizerOutcomeMissingToolInferred || result.EventTransport != toolRequestNormalizerTransportTextual {
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
 }
@@ -37487,12 +37453,11 @@ func TestNormalizeToolRequestSyntaxMalformedOutputFixtureMatrix(t *testing.T) {
 			transport: toolRequestNormalizerTransportFencedJSON,
 		},
 		{
-			name:      "safe bare read-only shape inferred",
+			name:      "bare JSON missing tool rejected",
 			content:   `{"path":"README.md","start_line":1,"end_line":20}`,
-			wantOK:    true,
-			wantTool:  "read_file",
-			outcome:   toolRequestNormalizerOutcomeMissingToolInferred,
-			transport: toolRequestNormalizerTransportTextual,
+			wantOK:    false,
+			outcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
+			transport: toolRequestNormalizerTransportFunctionCall,
 		},
 		{
 			name:      "unsafe bare edit shape rejected",

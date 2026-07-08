@@ -5173,28 +5173,7 @@ func parseVisibleToolRequestJSONObject(raw string, fields map[string]json.RawMes
 		return req, marshalToolRequestRaw(req), true
 	}
 
-	if _, hasCapability := fields["capability"]; !hasCapability {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	req, err := workspace.DecodeToolRequestJSON([]byte(raw))
-	if err != nil {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	if strings.TrimSpace(req.Tool) == "" && strings.TrimSpace(req.Capability) != "" {
-		if workspace.CodeNavigateCapabilityAlias(req.Capability) == "" {
-			return workspace.ToolRequest{}, "", false
-		}
-
-		req.Tool = workspace.ToolNameCodeNavigate
-	}
-
-	if strings.TrimSpace(req.Tool) == "" {
-		return workspace.ToolRequest{}, "", false
-	}
-
-	return req, marshalToolRequestRaw(req), true
+	return workspace.ToolRequest{}, "", false
 }
 
 func (r *Runner) safeVisibleToolRequest(req workspace.ToolRequest, results []workspace.ToolResult) bool {
@@ -5750,6 +5729,7 @@ func normalizeToolRequestSyntax(message llama.ChatMessage) toolRequestSyntaxNorm
 		ParseErr: parseErr,
 	}
 	if parseErr != nil {
+		result.OK = false
 		repaired := repairToolRequestSyntax(result)
 		if repaired.Repaired {
 			return repaired
@@ -5777,21 +5757,6 @@ func normalizeToolRequestSyntax(message llama.ChatMessage) toolRequestSyntaxNorm
 		normalizeParsedToolRequestSyntax(&result)
 
 		result.EventOutcome = toolRequestNormalizerOutcomeNormalized
-
-		if toolRequestPayloadMissingExplicitTool(raw) && strings.TrimSpace(req.Tool) != "" {
-			if missingToolInferenceNeedsTypedAuthority(req) {
-				result.Request = workspace.ToolRequest{}
-				result.OK = false
-				result.EventOutcome = toolRequestNormalizerOutcomeUnsafeToInfer
-				result.EventTransport = toolRequestNormalizerTransportTextual
-				result.UnsafeExplicitTool = unsafeToolShapeHasExplicitTool(message.Content)
-
-				return result
-			}
-
-			result.EventOutcome = toolRequestNormalizerOutcomeMissingToolInferred
-		}
-
 		result.EventTransport = toolRequestNormalizerTransportTextual
 		if workspace.LooksLikeXMLToolCallMarkup(message.Content) {
 			result.EventTransport = toolRequestNormalizerTransportXMLToolMarkup
@@ -6676,50 +6641,6 @@ func keyValueLikeText(text string) bool {
 	}
 
 	return false
-}
-
-func toolRequestPayloadMissingExplicitTool(raw string) bool {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || !strings.HasPrefix(raw, "{") {
-		return false
-	}
-
-	var fields map[string]json.RawMessage
-
-	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
-		return false
-	}
-
-	_, hasTool := fields["tool"]
-
-	return !hasTool
-}
-
-func missingToolInferenceNeedsTypedAuthority(req workspace.ToolRequest) bool {
-	tool := strings.TrimSpace(req.Tool)
-	if workspace.IsWorkspaceWriteTool(tool) {
-		return true
-	}
-
-	switch tool {
-	case workspace.ToolNameShell,
-		workspace.ToolNameSubmitPlan,
-		workspace.ToolNameTask,
-		workspace.ToolNameTaskLedger:
-		return true
-	case workspace.ToolNameReadFile:
-		return strings.TrimSpace(req.Path) == "" && strings.TrimSpace(req.Handle) == ""
-	case workspace.ToolNameSearchContent, workspace.ToolNameRg:
-		return strings.TrimSpace(req.Query) == "" && strings.TrimSpace(req.Pattern) == ""
-	case workspace.ToolNameSearchFiles:
-		return strings.TrimSpace(req.Query) == "" && strings.TrimSpace(req.Glob) == ""
-	case workspace.ToolNameCodeNavigate:
-		return strings.TrimSpace(req.Path) == "" && strings.TrimSpace(req.Handle) == "" && strings.TrimSpace(req.Symbol) == ""
-	case workspace.ToolNameContextPack:
-		return strings.TrimSpace(req.Task) == "" && strings.TrimSpace(req.Query) == ""
-	default:
-		return false
-	}
 }
 
 func unsafeTextualWriteAttempt(text string) (tool string, transport string, ok bool) {

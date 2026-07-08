@@ -20926,12 +20926,12 @@ func TestRunnerRejectsUnexecutedToolJSONAsFinalAnswer(t *testing.T) {
 	}
 }
 
-func TestRunnerExecutesBareJSONMissingToolAliasBeforeCompletionGate(t *testing.T) {
+func TestRunnerRejectsBareJSONMissingToolBeforeCompletionGate(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 
-		reply := "I read `internal/example/target.go`; the source body contains the package declaration `package example`."
+		reply := "I cannot inspect `internal/example/target.go` without an explicit tool result."
 
 		if requests == 1 {
 			reply = `{"path":"internal/example/target.go","start_line":1,"end_line":1}`
@@ -20977,32 +20977,24 @@ func TestRunnerExecutesBareJSONMissingToolAliasBeforeCompletionGate(t *testing.T
 		t.Fatalf("Run: %v", err)
 	}
 
-	if requests != 2 {
-		t.Fatalf("expected one tool execution followed by answer, got %d request(s), answer=%q", requests, answer)
+	if requests < 2 {
+		t.Fatalf("expected retry after missing-tool JSON rejection, got %d request(s), answer=%q", requests, answer)
 	}
 
-	if !strings.Contains(answer, "internal/example/target.go") || !strings.Contains(answer, "package example") {
+	if strings.Contains(answer, `"path":"internal/example/target.go"`) {
 		t.Fatalf("unexpected answer: %q", answer)
 	}
 }
 
-func TestRunnerSalvagesVisibleCodeNavigateJSONMissingTool(t *testing.T) {
+func TestRunnerRejectsVisibleCodeNavigateJSONMissingTool(t *testing.T) {
 	runner := &Runner{}
 	req, raw, ok := runner.salvageVisibleToolRequestFromProse(
 		`{"capability":"read_symbol","path":"cmd/idiom/product_workflow.go","pattern":"runProductBrief"}`,
 		nil,
 	)
 
-	if !ok {
-		t.Fatal("expected visible code_navigate payload missing tool field to be salvaged")
-	}
-
-	if req.Tool != "code_navigate" || req.Capability != "read_symbol" || req.Path != "cmd/idiom/product_workflow.go" || req.Pattern != "runProductBrief" {
-		t.Fatalf("unexpected salvaged request: %#v", req)
-	}
-
-	if !strings.Contains(raw, `"tool":"code_navigate"`) {
-		t.Fatalf("salvaged raw request must include inferred tool, got %s", raw)
+	if ok {
+		t.Fatalf("missing-tool code_navigate JSON must not be salvaged, req=%#v raw=%s", req, raw)
 	}
 }
 
@@ -22918,23 +22910,15 @@ func TestDeterministicImplementationEvidencePathReadRequiresSingleEvidencePath(t
 	}
 }
 
-func TestRunnerSalvagesPathOnlyFileOutlineJSONMissingTool(t *testing.T) {
+func TestRunnerRejectsPathOnlyFileOutlineJSONMissingTool(t *testing.T) {
 	runner := &Runner{}
 	req, raw, ok := runner.salvageVisibleToolRequestFromProse(
 		`{"capability":"file_outline","path":"cmd/idiom/product_workflow.go"}`,
 		nil,
 	)
 
-	if !ok {
-		t.Fatal("expected visible file_outline payload missing tool field to be salvaged")
-	}
-
-	if req.Tool != "code_navigate" || req.Capability != "file_outline" || req.Path != "cmd/idiom/product_workflow.go" {
-		t.Fatalf("unexpected salvaged request: %#v", req)
-	}
-
-	if !strings.Contains(raw, `"tool":"code_navigate"`) || !strings.Contains(raw, `"capability":"file_outline"`) {
-		t.Fatalf("salvaged raw request must include inferred code_navigate request, got %s", raw)
+	if ok {
+		t.Fatalf("missing-tool file_outline JSON must not be salvaged, req=%#v raw=%s", req, raw)
 	}
 }
 
@@ -23055,7 +23039,7 @@ func TestRunnerExecutesCanonicalCodeNavigateForRepeatedRangeLessReadAfterOutline
 	}
 }
 
-func TestRunnerExecutesCapabilityOnlyCodeNavigateJSONMissingTool(t *testing.T) {
+func TestRunnerRejectsCapabilityOnlyCodeNavigateJSONMissingTool(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "go.mod", "module example.test\n"); err != nil {
 		t.Fatalf("write go.mod: %v", err)
@@ -23121,21 +23105,12 @@ func TestRunnerExecutesCapabilityOnlyCodeNavigateJSONMissingTool(t *testing.T) {
 		t.Fatalf("unexpected answer %q", answer)
 	}
 
-	if len(toolRequests) != 1 {
-		t.Fatalf("expected one salvaged tool request, got %#v", toolRequests)
+	if len(toolRequests) != 0 {
+		t.Fatalf("missing-tool capability JSON must not execute, got %#v", toolRequests)
 	}
 
-	gotReq := toolRequests[0].Request
-	if gotReq.Tool != "code_navigate" || gotReq.Capability != "file_outline" || gotReq.Path != "main.go" {
-		t.Fatalf("expected inferred code_navigate file_outline request, got %#v", gotReq)
-	}
-
-	if !strings.Contains(toolRequests[0].Raw, `"tool":"code_navigate"`) {
-		t.Fatalf("canonical raw request should include inferred tool, got %s", toolRequests[0].Raw)
-	}
-
-	if !strings.Contains(salvageEvent, "code_navigate") {
-		t.Fatalf("expected visible code_navigate salvage event, got %q", salvageEvent)
+	if salvageEvent != "" {
+		t.Fatalf("missing-tool capability JSON must not emit visible salvage, got %q", salvageEvent)
 	}
 }
 

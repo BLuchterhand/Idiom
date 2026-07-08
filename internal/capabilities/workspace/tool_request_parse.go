@@ -63,10 +63,6 @@ func ParseToolRequest(text string) (ToolRequest, string, bool, error) {
 	}
 
 	if strings.TrimSpace(req.Tool) == "" {
-		if repaired, ok := inferMissingToolRequest(req); ok {
-			return repaired, payload, true, nil
-		}
-
 		return ToolRequest{}, payload, true, fmt.Errorf("tool request is missing tool")
 	}
 
