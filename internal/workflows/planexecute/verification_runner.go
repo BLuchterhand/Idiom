@@ -346,16 +346,16 @@ func RunVerificationCommand(parent context.Context, root string, command plancon
 		Truncation:                commandcheck.TruncatePlanExecute,
 		MergeOutput:               true,
 	})
+	outcome := commandcheck.ProjectOutcome(result, commandcheck.OutcomePolicy{})
 	run.StartedAt = result.StartedAt
 	run.CompletedAt = result.CompletedAt
-	run.ExitCode = result.ExitCode
-	run.Failure = result.Failure
+	run.ExitCode = outcome.ExitCode
+	run.Failure = outcome.Failure
 
-	switch result.Failure {
+	switch outcome.Failure {
 	case commandcheck.FailureNone:
 		check.Status = plancontract.PhaseEvidenceStatusOK
-		check.Summary = result.DisplayOutput
-		run.ExitCode = 0
+		check.Summary = outcome.DisplayOutput
 
 	case commandcheck.FailureUnsupported:
 		check.Error = "unsupported verification command"
@@ -368,9 +368,9 @@ func RunVerificationCommand(parent context.Context, root string, command plancon
 		check.Summary = check.Error
 
 	default:
-		if result.Err != nil {
-			check.Error = firstNonEmptyString(result.DisplayOutput, result.Err.Error())
-			check.Summary = result.Err.Error()
+		if outcome.Err != nil {
+			check.Error = outcome.Diagnostic
+			check.Summary = outcome.Err.Error()
 		}
 	}
 

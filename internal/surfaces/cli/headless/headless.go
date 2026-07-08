@@ -1241,19 +1241,15 @@ func runCommand(ctx context.Context, name string, command string, cfg config.Con
 	check.DurationMS = result.Duration.Milliseconds()
 	check.Stdout = commandcheck.TrimDisplay(result.Stdout, 4000, "")
 	check.Stderr = commandcheck.TrimDisplay(result.Stderr, 4000, "")
-	if result.Failure == commandcheck.FailureNone {
-		check.ExitCode = 0
+	outcome := commandcheck.ProjectOutcome(result, commandcheck.OutcomePolicy{InfrastructureExitCode: 1})
+	check.ExitCode = outcome.ExitCode
 
+	if outcome.Failure == commandcheck.FailureNone {
 		return check
 	}
 
-	if result.Failure == commandcheck.FailureExit {
-		check.ExitCode = result.ExitCode
-	} else {
-		check.ExitCode = 1
-		if result.Err != nil {
-			check.Stderr = commandcheck.TrimDisplay(strings.TrimSpace(check.Stderr+"\n"+result.Err.Error()), 4000, "")
-		}
+	if outcome.Failure != commandcheck.FailureExit && outcome.Err != nil {
+		check.Stderr = commandcheck.TrimDisplay(strings.TrimSpace(check.Stderr+"\n"+outcome.Err.Error()), 4000, "")
 	}
 
 	return check

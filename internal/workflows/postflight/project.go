@@ -171,9 +171,10 @@ func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error)
 		Truncation:   commandcheck.TruncatePostflight,
 		MergeOutput:  true,
 	})
-	output := result.DisplayOutput
+	outcome := commandcheck.ProjectOutcome(result, commandcheck.OutcomePolicy{})
+	output := outcome.DisplayOutput
 
-	if result.Failure == commandcheck.FailureTimeout {
+	if outcome.Failure == commandcheck.FailureTimeout {
 		return []Finding{{
 			Check:    r.Name(),
 			Severity: SeverityError,
@@ -181,18 +182,18 @@ func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error)
 		}}, nil
 	}
 
-	if result.Failure == commandcheck.FailureSpawn {
+	if outcome.Failure == commandcheck.FailureSpawn {
 		// non-exit error: command not found, can't spawn, etc.
 		return []Finding{{
 			Check:    r.Name(),
 			Severity: SeverityError,
-			Message:  fmt.Sprintf("shell project check failed to run: %v", result.Err),
+			Message:  fmt.Sprintf("shell project check failed to run: %v", outcome.Err),
 		}}, nil
 	}
 
-	exitCode := result.ExitCode
+	exitCode := outcome.ExitCode
 
-	if result.Failure == commandcheck.FailureExit && r.spec.shouldFailOnNonZero() {
+	if outcome.Failure == commandcheck.FailureExit && r.spec.shouldFailOnNonZero() {
 		return []Finding{{
 			Check:    r.Name(),
 			Severity: SeverityError,
@@ -200,7 +201,7 @@ func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error)
 		}}, nil
 	}
 
-	if result.Failure == commandcheck.FailureExit {
+	if outcome.Failure == commandcheck.FailureExit {
 		return []Finding{{
 			Check:    r.Name(),
 			Severity: SeverityWarning,

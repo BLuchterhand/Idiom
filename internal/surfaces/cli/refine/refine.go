@@ -155,6 +155,7 @@ func DefaultDispatchWithConfig(metaBriefPath string, configPath string, stdout, 
 	result := commandcheck.Run(context.TODO(), commandcheck.Request{
 		Argv: args,
 	})
+	outcome := commandcheck.ProjectOutcome(result, commandcheck.OutcomePolicy{InfrastructureExitCode: 1})
 
 	if _, err := io.WriteString(stdout, result.Stdout); err != nil {
 		return 1
@@ -163,15 +164,7 @@ func DefaultDispatchWithConfig(metaBriefPath string, configPath string, stdout, 
 		return 1
 	}
 
-	if result.Failure != commandcheck.FailureNone {
-		if result.Failure == commandcheck.FailureExit {
-			return result.ExitCode
-		}
-
-		return 1
-	}
-
-	return result.ExitCode
+	return outcome.ExitCode
 }
 
 func defaultRefineDispatchArgs(binary, configPath, metaBriefPath string) []string {

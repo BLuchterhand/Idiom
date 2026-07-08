@@ -101,14 +101,25 @@ func defaultImplementationDispatchPlanDocumentRefine(ctx context.Context, cfg co
 		args = append([]string{"lane", "refine", "--config", configPath}, args[2:]...)
 	}
 
-	cmdResult := runImplementationDispatchCommand(ctx, root, 30*time.Minute, binary, args...)
+	cmdRun := commandcheck.Run(ctx, commandcheck.Request{
+		Argv:    append([]string{binary}, args...),
+		Dir:     root,
+		Timeout: 30 * time.Minute,
+	})
+	cmdOutcome := commandcheck.ProjectOutcome(cmdRun, commandcheck.OutcomePolicy{
+		Context:                ctx,
+		ContextExitCode:        124,
+		TimeoutErr:             context.DeadlineExceeded,
+		TimeoutExitCode:        124,
+		InfrastructureExitCode: 2,
+	})
 
-	result.ExitCode = cmdResult.ExitCode
-	result.Stdout = cmdResult.Stdout
-	result.Stderr = cmdResult.Stderr
-	result.Err = cmdResult.Err
+	result.ExitCode = cmdOutcome.ExitCode
+	result.Stdout = cmdOutcome.Stdout
+	result.Stderr = cmdOutcome.Stderr
+	result.Err = cmdOutcome.Err
 
-	if cmdResult.ExitCode != 0 {
+	if cmdOutcome.ExitCode != 0 {
 		candidate, candidatePath, blockers, ok := materializeImplementationDispatchNonzeroRefineAcceptedCandidate(ctx, cfg, outRel, doc.AllowDirtyAtomScope)
 		if strings.TrimSpace(candidatePath) != "" {
 			result.OutputPath = candidatePath
@@ -218,54 +229,6 @@ func implementationDispatchIdiomBinary() (string, error) {
 	}
 
 	return path, nil
-}
-
-type implementationDispatchCommandResult struct {
-	ExitCode int
-	Stdout   string
-	Stderr   string
-	Err      error
-}
-
-func runImplementationDispatchCommand(ctx context.Context, root string, timeout time.Duration, binary string, args ...string) implementationDispatchCommandResult {
-	if timeout <= 0 {
-		timeout = 45 * time.Second
-	}
-
-	execResult := commandcheck.Run(ctx, commandcheck.Request{
-		Argv:    append([]string{binary}, args...),
-		Dir:     root,
-		Timeout: timeout,
-	})
-	result := implementationDispatchCommandResult{
-		ExitCode: execResult.ExitCode,
-		Stdout:   execResult.Stdout,
-		Stderr:   execResult.Stderr,
-		Err:      execResult.Err,
-	}
-
-	if execResult.Failure == commandcheck.FailureNone {
-		return result
-	}
-
-	if ctx != nil && ctx.Err() != nil {
-		result.ExitCode = 124
-		result.Err = ctx.Err()
-		return result
-	}
-
-	if execResult.Failure == commandcheck.FailureTimeout {
-		result.ExitCode = 124
-		result.Err = context.DeadlineExceeded
-		return result
-	}
-
-	if execResult.Failure == commandcheck.FailureExit {
-		return result
-	}
-
-	result.ExitCode = 2
-	return result
 }
 
 func implementationDispatchFileExists(path string) bool {

@@ -53,15 +53,16 @@ func (c GoBuildPasses) Run(d Diff, ctx RunContext) ([]Finding, error) {
 		CaptureBytes: commandcheck.DiagnosticCaptureBytes,
 		MergeOutput:  true,
 	})
-	if result.Failure == commandcheck.FailureNone {
+	outcome := commandcheck.ProjectOutcome(result, commandcheck.OutcomePolicy{})
+	if outcome.Failure == commandcheck.FailureNone {
 		return nil, nil
 	}
 
-	if result.Failure != commandcheck.FailureExit {
-		return nil, result.Err
+	if outcome.Failure != commandcheck.FailureExit {
+		return nil, outcome.Err
 	}
 
-	out := result.Output
+	out := outcome.Output
 	re := regexp.MustCompile(`(?m)^([^:\s]+):(\d+):\d+:\s*(.+)$`)
 	matches := re.FindAllStringSubmatch(out, -1)
 

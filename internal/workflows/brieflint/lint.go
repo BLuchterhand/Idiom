@@ -34,20 +34,16 @@ func BuildReport(ctx context.Context, briefPath string, workdir string, timeout 
 		return Report{}, err
 	}
 
-	exit := 0
-	if result.Failure != commandcheck.FailureNone {
-		if result.Failure != commandcheck.FailureExit {
-			return Report{}, fmt.Errorf("failed to run python3: %w", result.Err)
-		}
-
-		exit = result.ExitCode
+	outcome := commandcheck.ProjectOutcome(result, commandcheck.OutcomePolicy{InfrastructureExitCode: 2})
+	if outcome.Failure != commandcheck.FailureNone && outcome.Failure != commandcheck.FailureExit {
+		return Report{}, fmt.Errorf("failed to run python3: %w", outcome.Err)
 	}
 
-	combined := result.Stdout + result.Stderr
+	combined := outcome.Stdout + outcome.Stderr
 
 	return Report{
 		Brief:    briefPath,
-		Exit:     exit,
+		Exit:     outcome.ExitCode,
 		Findings: ParseFindings(briefPath, combined),
 	}, nil
 }

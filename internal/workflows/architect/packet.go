@@ -403,13 +403,14 @@ func runCollectorEvidence(ctx context.Context, root string, collectors []Collect
 			MergeOutput: true,
 		})
 
-		ev.Content = textutil.TruncateBytes(stripANSI(result.Stdout), limit, "\n[truncated]")
+		outcome := commandcheck.ProjectOutcome(result, commandcheck.OutcomePolicy{})
+		ev.Content = textutil.TruncateBytes(stripANSI(outcome.Stdout), limit, "\n[truncated]")
 
-		if result.Failure != commandcheck.FailureNone {
-			if result.Failure == commandcheck.FailureTimeout {
+		if outcome.Failure != commandcheck.FailureNone {
+			if outcome.Failure == commandcheck.FailureTimeout {
 				ev.Error = fmt.Sprintf("collector timed out after %s", timeout)
 			} else {
-				ev.Error = result.Err.Error()
+				ev.Error = outcome.Err.Error()
 			}
 		}
 
