@@ -252,6 +252,8 @@ func Start(parent context.Context, spec Spec) (*Process, error) {
 
 		return nil, fmt.Errorf("start %s: %w", cmd.Path, err)
 	}
+	closeProcessResources(nil, nil, resources)
+	resources = nil
 
 	process := &Process{
 		cmd:       cmd,
@@ -268,6 +270,62 @@ func Start(parent context.Context, spec Spec) (*Process, error) {
 	}
 
 	return process, nil
+}
+
+// StartDetached launches a long-lived child process that commandexec does not
+// manage after start. commandexec still owns command shape, environment overlay,
+// log redirection, process-group detachment, PID capture, and process release.
+func StartDetached(parent context.Context, spec Spec) (int, error) {
+	if parent != nil {
+		select {
+		case <-parent.Done():
+			return 0, parent.Err()
+		default:
+		}
+	}
+	if strings.TrimSpace(spec.OutputLogPath) == "" {
+		return 0, errors.New("detached command requires output log path")
+	}
+	if spec.Stdin != "" {
+		return 0, errors.New("detached command cannot use static stdin")
+	}
+	if spec.MergeOutput {
+		return 0, errors.New("detached command cannot merge output")
+	}
+	if spec.Timeout > 0 {
+		return 0, errors.New("detached command cannot use timeout")
+	}
+
+	cmd, err := configuredCommand(context.Background(), spec)
+	if err != nil {
+		return 0, err
+	}
+	if err := configureDetachedProcessGroup(cmd); err != nil {
+		return 0, err
+	}
+
+	stdin, stdout, _, resources, err := configureProcessIO(cmd, spec)
+	if err != nil {
+		return 0, err
+	}
+
+	if err := cmd.Start(); err != nil {
+		closeProcessResources(stdin, stdout, resources)
+		return 0, fmt.Errorf("start %s: %w", cmd.Path, err)
+	}
+	closeProcessResources(stdin, stdout, resources)
+
+	if cmd.Process == nil {
+		return 0, fmt.Errorf("start %s: no process state after Start", cmd.Path)
+	}
+
+	pid := cmd.Process.Pid
+	_ = cmd.Process.Release()
+	if pid <= 0 {
+		return 0, fmt.Errorf("start %s: invalid pid %d", cmd.Path, pid)
+	}
+
+	return pid, nil
 }
 
 func streamingStderrLimit(limit int) int {

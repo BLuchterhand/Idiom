@@ -3,54 +3,32 @@
 package backends
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"os"
-	"os/exec"
 	"syscall"
+
+	"idiom/internal/platform/commandexec"
 )
 
-// realSpawn is the production launcher on Unix-likes: open the log
-// file, build the command, set Setpgid so the child survives idiom
-// exit, and kick it off. Returns the PID; ready-check happens in
-// the caller.
+// realSpawn is the production launcher on Unix-likes. commandexec owns
+// process construction, log redirection, and process-group setup; the backend
+// launcher owns only the backend-specific argv, PID, and readiness contract.
 func realSpawn(spec LaunchSpec, logPath string) (int, error) {
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return 0, fmt.Errorf("backends: open log %q: %w", logPath, err)
+	if len(spec.Argv) == 0 {
+		return 0, fmt.Errorf("backends: spawn %s: empty argv", spec.Alias)
 	}
 
-	cmd := exec.Command(spec.Argv[0], spec.Argv[1:]...)
-
-	cmd.Stdin = nil
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	if err := cmd.Start(); err != nil {
-		_ = logFile.Close()
+	pid, err := commandexec.StartDetached(context.Background(), commandexec.Spec{
+		Name:          spec.Argv[0],
+		Args:          append([]string(nil), spec.Argv[1:]...),
+		OutputLogPath: logPath,
+	})
+	if err != nil {
 		return 0, fmt.Errorf("backends: spawn %s: %w", spec.Alias, err)
 	}
 
-	// Detach the file handle from this process: the child still
-	// owns it via fork+exec, so closing here doesn't affect the
-	// child's writes. Keeping it open would tie idiom's lifetime
-	// to the child's stdout buffer.
-	_ = logFile.Close()
-	// Release the Go-side cmd state so we don't accumulate zombie
-	// metadata across invocations. The child's exit will be reaped
-	// by init once idiom exits.
-	//
-	// Capture Pid BEFORE Release: on non-Windows, os.Process.Release
-	// resets p.Pid to -1 (documented Go quirk). Returning Pid after
-	// Release would hand callers -1, and any later syscall.Kill(-1, …)
-	// would broadcast to every process the user owns. That's how this
-	// detail used to nuke the whole login session from a passing test.
-	if cmd.Process != nil {
-		pid := cmd.Process.Pid
-
-		_ = cmd.Process.Release()
-
+	if pid > 0 {
 		return pid, nil
 	}
 

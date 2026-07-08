@@ -23,18 +23,17 @@ func tempLog(t *testing.T) string {
 }
 
 // These tests cover the otherwise-bypassed production functions:
-// realSpawn (starts an actual subprocess), portTCPReady (real TCP
+// realSpawn (starts an actual detached subprocess), portTCPReady (real TCP
 // connect), and realPIDForPort (real `lsof` call). They're all
 // build-tagged !windows because they rely on POSIX primitives the
 // stub Windows launcher doesn't provide.
 
-// TestRealSpawnSurvivesParentRelease verifies the load-bearing
-// detach contract: a process started via realSpawn is reparented
-// to init (Setpgid) so it stays alive after the Go side calls
-// Release. Without Setpgid, killing idiom would also kill the
-// backends. The test spawns `sleep 30`, releases the cmd state,
-// and verifies the PID is still alive after a short wait.
-func TestRealSpawnSurvivesParentRelease(t *testing.T) {
+// TestRealSpawnStartsDetachedProcess verifies the load-bearing detach
+// contract: a process started via realSpawn enters its own process group so it
+// can survive the launching idiom command. Without Setpgid, killing idiom
+// would also kill the backends. The test spawns `sleep` and verifies the PID is
+// alive and owns its process group after a short wait.
+func TestRealSpawnStartsDetachedProcess(t *testing.T) {
 	// File build-tagged !windows; no runtime.GOOS check needed.
 	if _, err := exec.LookPath("sleep"); err != nil {
 		t.Skip("sleep binary not available")
@@ -57,7 +56,14 @@ func TestRealSpawnSurvivesParentRelease(t *testing.T) {
 	// Give the kernel a moment to actually start it.
 	time.Sleep(100 * time.Millisecond)
 	if !pidIsAlive(pid) {
-		t.Fatalf("spawned PID %d should still be alive shortly after Release", pid)
+		t.Fatalf("spawned PID %d should still be alive shortly after launch", pid)
+	}
+	pgid, err := syscall.Getpgid(pid)
+	if err != nil {
+		t.Fatalf("Getpgid(%d): %v", pid, err)
+	}
+	if pgid != pid {
+		t.Fatalf("spawned PID should own detached process group: pgid=%d pid=%d", pgid, pid)
 	}
 }
 

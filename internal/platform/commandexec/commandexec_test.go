@@ -422,6 +422,63 @@ while true; do sleep 0.05; done
 	}
 }
 
+func TestStartDetachedOwnsProcessGroupAndLog(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("detached process groups are POSIX-specific")
+	}
+
+	logPath := filepath.Join(t.TempDir(), "detached.log")
+	spec := helperSpec("log-and-sleep")
+	spec.OutputLogPath = logPath
+	spec.Timeout = 0
+
+	pid, err := StartDetached(t.Context(), spec)
+	if err != nil {
+		t.Fatalf("StartDetached failed: %v", err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+
+	pgid, err := syscall.Getpgid(pid)
+	if err != nil {
+		t.Fatalf("Getpgid(%d): %v", pid, err)
+	}
+	if pgid != pid {
+		t.Fatalf("detached process should own its process group: pgid=%d pid=%d", pgid, pid)
+	}
+
+	waitForFileContent(t, logPath, "detached-ready")
+}
+
+func TestStartDetachedUsesDirEnvAndCanonicalPWD(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("detached process groups are POSIX-specific")
+	}
+
+	dir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "detached-context.log")
+	spec := helperSpecWithDir(dir, "detached-context")
+	spec.OutputLogPath = logPath
+	spec.Timeout = 0
+	spec.Env = append(spec.Env, "IDIOM_DETACHED_VALUE=from-env")
+
+	pid, err := StartDetached(t.Context(), spec)
+	if err != nil {
+		t.Fatalf("StartDetached failed: %v", err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+
+	waitForFileContent(t, logPath, "env=from-env")
+	body, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	got := string(body)
+	wantPWD := "pwd=" + config.CanonicalizeExistingPath(dir)
+	if !strings.Contains(got, wantPWD) {
+		t.Fatalf("log missing %q: %q", wantPWD, got)
+	}
+}
+
 func TestStopRejectsStreamingProcess(t *testing.T) {
 	process, err := Start(t.Context(), helperSpec("sleep"))
 	if err != nil {
@@ -493,6 +550,28 @@ func TestStartRejectsStaticStdin(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "static stdin") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestStartDetachedRejectsManagedOnlyOptions(t *testing.T) {
+	cases := []struct {
+		name string
+		spec Spec
+		want string
+	}{
+		{name: "missing log", spec: helperSpec("sleep"), want: "output log path"},
+		{name: "static stdin", spec: Spec{Name: os.Args[0], OutputLogPath: filepath.Join(t.TempDir(), "run.log"), Stdin: "input"}, want: "static stdin"},
+		{name: "merge output", spec: Spec{Name: os.Args[0], OutputLogPath: filepath.Join(t.TempDir(), "run.log"), MergeOutput: true}, want: "merge output"},
+		{name: "timeout", spec: Spec{Name: os.Args[0], OutputLogPath: filepath.Join(t.TempDir(), "run.log"), Timeout: time.Second}, want: "timeout"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := StartDetached(t.Context(), tc.spec)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("StartDetached error = %v, want containing %q", err, tc.want)
+			}
+		})
 	}
 }
 
@@ -571,6 +650,17 @@ func TestCommandExecHelperProcess(t *testing.T) {
 
 	case "stderr-large":
 		fmt.Fprint(os.Stderr, strings.Repeat("e", 64))
+		os.Exit(0)
+
+	case "log-and-sleep":
+		fmt.Fprintln(os.Stdout, "detached-ready")
+		fmt.Fprintln(os.Stderr, "detached-stderr")
+		time.Sleep(200 * time.Millisecond)
+		os.Exit(0)
+
+	case "detached-context":
+		fmt.Fprintf(os.Stdout, "pwd=%s\nenv=%s\n", filepath.Clean(os.Getenv("PWD")), os.Getenv("IDIOM_DETACHED_VALUE"))
+		time.Sleep(200 * time.Millisecond)
 		os.Exit(0)
 
 	}

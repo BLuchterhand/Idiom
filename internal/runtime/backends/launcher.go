@@ -14,8 +14,8 @@ import (
 	"idiom/internal/platform/failures"
 )
 
-// LaunchSpec is the argv recipe a Launcher hands to os/exec to
-// start one backend. It's separated from Launch() so callers can
+// LaunchSpec is the argv recipe a Launcher hands to the process execution
+// boundary to start one backend. It's separated from Launch() so callers can
 // inspect (and tests can assert) the constructed argv without
 // actually spawning a process.
 type LaunchSpec struct {
@@ -264,7 +264,7 @@ type LauncherOptions struct {
 	// default of 90s" (matches Colony's start_local_qwen.sh).
 	ReadyTimeout time.Duration
 	// Spawner is the callback that actually starts the process.
-	// Nil means "use the real os/exec spawner." Tests inject a
+	// Nil means "use the real commandexec-backed spawner." Tests inject a
 	// stub that records argv without spawning.
 	Spawner func(spec LaunchSpec, logPath string) (pid int, err error)
 	// PortReady is the readiness probe; nil means "TCP-connect to
@@ -385,9 +385,8 @@ func sanitizeAlias(alias string) string {
 }
 
 // realSpawn / realStopSignal / realPIDForPort live in
-// launcher_unix.go and launcher_windows.go because Setpgid (used to
-// detach the child) and SIGTERM/SIGKILL (used by Stop) aren't
-// available on all platforms. The Stop function below uses
+// launcher_unix.go and launcher_windows.go because backend process
+// start/stop/status support is POSIX-only. The Stop function below uses
 // realStopSignal indirectly via opts.Kill.
 
 // portTCPReady returns true when 127.0.0.1:<port> accepts a TCP
