@@ -1948,6 +1948,9 @@ func normalize(value string) string {
 	if result.Error != "" {
 		t.Fatalf("go_move_declarations failed: %#v", result)
 	}
+	if len(result.ChangedPaths) != 2 || result.ChangedPaths[0] != "source.go" || result.ChangedPaths[1] != "rendering.go" {
+		t.Fatalf("go_move_declarations changed paths = %#v", result.ChangedPaths)
+	}
 
 	source := readTestFile(t, filepath.Join(dir, "source.go"))
 	dest := readTestFile(t, filepath.Join(dir, "rendering.go"))
@@ -2050,6 +2053,12 @@ func coreValue() int {
 	})
 	if result.Error != "" {
 		t.Fatalf("go_move_declarations batch failed: %#v", result)
+	}
+	if len(result.ChangedPaths) != 3 ||
+		result.ChangedPaths[0] != "rendering.go" ||
+		result.ChangedPaths[1] != "source.go" ||
+		result.ChangedPaths[2] != "task_memory.go" {
+		t.Fatalf("go_move_declarations batch changed paths = %#v", result.ChangedPaths)
 	}
 
 	if source := readTestFile(t, filepath.Join(dir, "source.go")); strings.Contains(source, "renderView") || strings.Contains(source, "normalize") || !strings.Contains(source, "coreValue") {

@@ -206,7 +206,7 @@ func TestPathEvidenceRegistryAndRawReadModelBodyEvidenceParity(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			results := []workspace.ToolResult{tt.result}
-			rawEvidence := sourceEvidenceForPath(results, tt.path)
+			rawEvidence := newToolResultEvidenceProjection(results).SourceEvidenceForPath(tt.path)
 			if rawEvidence.Level != tt.wantRawLevel {
 				t.Fatalf("raw evidence level = %q, want %q; evidence=%#v", rawEvidence.Level, tt.wantRawLevel, rawEvidence)
 			}
@@ -268,10 +268,10 @@ func TestPathEvidenceCandidateOnlyParity(t *testing.T) {
 	if registry.HasBodyEvidence(sourcePath) {
 		t.Fatal("search candidate must not become registry body evidence")
 	}
-	if sourceEvidenceBodyReadForPath(sourcePath, []workspace.ToolResult{result}) {
+	if newToolResultEvidenceProjection([]workspace.ToolResult{result}).HasSourceBody(sourcePath) {
 		t.Fatal("search candidate must not become raw source-body evidence")
 	}
-	if got := sourceEvidenceCandidatePaths([]workspace.ToolResult{result}); !slices.Contains(got, sourcePath) {
+	if got := newToolResultEvidenceProjection([]workspace.ToolResult{result}).CandidatePaths(); !slices.Contains(got, sourcePath) {
 		t.Fatalf("raw candidate paths = %#v, want %q", got, sourcePath)
 	}
 
@@ -297,7 +297,7 @@ func TestPathEvidenceCandidateOnlyParity(t *testing.T) {
 		Summary: "Read evidence_registry.go lines 1-20",
 		Output:  "package agent\ntype PathEvidenceRegistry struct{}\n",
 	})
-	if got := sourceEvidenceCandidatePaths(withBody); slices.Contains(got, sourcePath) {
+	if got := newToolResultEvidenceProjection(withBody).CandidatePaths(); slices.Contains(got, sourcePath) {
 		t.Fatalf("candidate paths after same-path body read = %#v, must not include %q", got, sourcePath)
 	}
 	bodyLedger := readOnlyAnswerabilityForResults(workerruntime.WorkerRuntimeBrief{
@@ -401,7 +401,7 @@ func TestPathEvidenceContextDiscoveryCandidateParity(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			results := []workspace.ToolResult{tt.result}
-			if got := sourceEvidenceCandidatePaths(results); !slices.Contains(got, sourcePath) {
+			if got := newToolResultEvidenceProjection(results).CandidatePaths(); !slices.Contains(got, sourcePath) {
 				t.Fatalf("raw candidate paths = %#v, want %q", got, sourcePath)
 			}
 			if got := readOnlyEvidencePacketCandidatePaths(results); !slices.Contains(got, sourcePath) {
@@ -448,7 +448,7 @@ func TestPathEvidenceContextZoomCandidateOnlyRegistersUnreadCandidate(t *testing
 	}
 	results := []workspace.ToolResult{result}
 
-	if got := sourceEvidenceCandidatePaths(results); !slices.Contains(got, sourcePath) {
+	if got := newToolResultEvidenceProjection(results).CandidatePaths(); !slices.Contains(got, sourcePath) {
 		t.Fatalf("raw candidate paths = %#v, want %q", got, sourcePath)
 	}
 	if got := readOnlyEvidencePacketCandidatePaths(results); !slices.Contains(got, sourcePath) {
@@ -507,10 +507,10 @@ func TestPathEvidenceContextZoomGraphOutputRegistersUnreadCandidate(t *testing.T
 	}
 	results := []workspace.ToolResult{result}
 
-	if got := sourceEvidenceCandidatePaths(results); !slices.Contains(got, sourcePath) {
+	if got := newToolResultEvidenceProjection(results).CandidatePaths(); !slices.Contains(got, sourcePath) {
 		t.Fatalf("production-shaped context_zoom graph output should register a raw candidate path: %#v", got)
 	}
-	if sourceEvidenceBodyReadForPath(sourcePath, results) {
+	if newToolResultEvidenceProjection(results).HasSourceBody(sourcePath) {
 		t.Fatal("production-shaped context_zoom graph output must not count as raw source-body evidence")
 	}
 	if got := readOnlyEvidencePacketCandidatePaths(results); !slices.Contains(got, sourcePath) {
@@ -943,7 +943,7 @@ func TestOutlineEvidenceClassificationDoesNotSatisfyBodyEvidence(t *testing.T) {
 		PermissionProfile: "read_only_workspace",
 	}
 
-	raw := sourceEvidenceForPath([]workspace.ToolResult{outlineResult}, sourcePath)
+	raw := newToolResultEvidenceProjection([]workspace.ToolResult{outlineResult}).SourceEvidenceForPath(sourcePath)
 	if raw.Level != planThenExecuteEvidencePathSeen {
 		t.Fatalf("outline raw evidence level = %q, want %q; evidence=%#v", raw.Level, planThenExecuteEvidencePathSeen, raw)
 	}
@@ -980,7 +980,7 @@ func TestOutlineEvidenceClassificationDoesNotSatisfyBodyEvidence(t *testing.T) {
 	}
 	results := []workspace.ToolResult{outlineResult, symbolResult}
 
-	if !sourceEvidenceBodyReadForPath(sourcePath, results) {
+	if !newToolResultEvidenceProjection(results).HasSourceBody(sourcePath) {
 		t.Fatal("later exact symbol body read should promote raw source-body readiness")
 	}
 
@@ -1326,12 +1326,14 @@ func TestPathEvidenceMutationHistoryParityBoundaries(t *testing.T) {
 		}`,
 	}
 	editResult := workspace.ToolResult{
-		Tool:    workspace.ToolNameEditFile,
-		Summary: "Edited " + historyPendingPath,
+		Tool:         workspace.ToolNameEditFile,
+		Summary:      "Edited legacy-wrong.go",
+		ChangedPaths: []string{historyPendingPath},
 	}
 	patchResult := workspace.ToolResult{
-		Tool:   workspace.ToolNameApplyPatch,
-		Output: "update " + changedOnlyPath + "\n",
+		Tool:         workspace.ToolNameApplyPatch,
+		Output:       "update legacy-wrong.go\n",
+		ChangedPaths: []string{changedOnlyPath},
 	}
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily: PlanThenExecutePlannerTaskFamily,
@@ -1353,7 +1355,7 @@ func TestPathEvidenceMutationHistoryParityBoundaries(t *testing.T) {
 		patchResult,
 	}
 
-	changed := changedPathsFromToolResults(results)
+	changed := newToolResultEvidenceProjection(results).ChangedPathSet()
 	for _, want := range []string{historyPendingPath, changedOnlyPath} {
 		if _, ok := changed[want]; !ok {
 			t.Fatalf("changed paths = %#v, want %q", mapKeys(changed), want)
@@ -1362,7 +1364,7 @@ func TestPathEvidenceMutationHistoryParityBoundaries(t *testing.T) {
 	if _, ok := changed[historyCompletePath]; ok {
 		t.Fatalf("history-only path must not become a changed path: %#v", mapKeys(changed))
 	}
-	if got, want := changedPathListFromToolResults(results), []string{historyPendingPath, changedOnlyPath}; !slices.Equal(got, want) {
+	if got, want := newToolResultEvidenceProjection(results).ChangedPathList(), []string{historyPendingPath, changedOnlyPath}; !slices.Equal(got, want) {
 		t.Fatalf("changed path list = %#v, want %#v", got, want)
 	}
 
@@ -1414,20 +1416,21 @@ func TestPathEvidenceMutationHistoryParityBoundaries(t *testing.T) {
 	}
 }
 
-func TestPathEvidenceChangedPathsParity(t *testing.T) {
+func TestToolResultEvidenceProjectionChangedPaths(t *testing.T) {
 	results := []workspace.ToolResult{
-		{Tool: workspace.ToolNameEditFile, Summary: "Edited internal/app/edit.go"},
-		{Tool: workspace.ToolNameWriteFile, Summary: "Wrote internal/app/write.go"},
-		{Tool: workspace.ToolNameAppendFile, Summary: "Appended internal/app/append.go"},
-		{Tool: workspace.ToolNameMkdir, Summary: "Created directory internal/app/generated"},
+		{Tool: workspace.ToolNameEditFile, Summary: "Edited internal/app/wrong.go", ChangedPaths: []string{"internal/app/edit.go"}},
+		{Tool: workspace.ToolNameWriteFile, Summary: "Wrote internal/app/wrong.go", ChangedPaths: []string{"internal/app/write.go"}},
+		{Tool: workspace.ToolNameAppendFile, Summary: "Appended internal/app/wrong.go", ChangedPaths: []string{"internal/app/append.go"}},
+		{Tool: workspace.ToolNameMkdir, Summary: "Created directory internal/app/wrong", ChangedPaths: []string{"internal/app/generated"}},
 		{
-			Tool:   workspace.ToolNameApplyPatch,
-			Output: "add internal/app/add.go\nupdate internal/app/update.go\ndelete internal/app/delete.go\nupdate+move internal/app/old.go -> internal/app/new.go\n",
+			Tool:         workspace.ToolNameApplyPatch,
+			Output:       "update internal/app/wrong.go\n",
+			ChangedPaths: []string{"internal/app/add.go", "internal/app/update.go", "internal/app/delete.go", "internal/app/old.go", "internal/app/new.go"},
 		},
-		{Tool: workspace.ToolNameGoMoveDeclarations, Summary: "Moved declarations from internal/app/source.go to internal/app/destination.go"},
-		{Tool: workspace.ToolNameDelegateEdit, Summary: "Edited internal/app/delegated.go"},
-		{Tool: workspace.ToolNameDelegateEdit, Output: "update internal/app/delegated_patch.go\n"},
-		{Tool: workspace.ToolNameEditFile, Summary: "Edited internal/app/failed.go", Error: "permission denied"},
+		{Tool: workspace.ToolNameGoMoveDeclarations, Summary: "Moved declarations from internal/app/wrong.go to internal/app/also-wrong.go", ChangedPaths: []string{"internal/app/source.go", "internal/app/destination.go"}},
+		{Tool: workspace.ToolNameDelegateEdit, Summary: "Edited internal/app/wrong.go", ChangedPaths: []string{"internal/app/delegated.go"}},
+		{Tool: workspace.ToolNameDelegateEdit, Output: "update internal/app/wrong.go\n", ChangedPaths: []string{"internal/app/delegated_patch.go"}},
+		{Tool: workspace.ToolNameEditFile, Summary: "Edited internal/app/failed.go", ChangedPaths: []string{"internal/app/failed.go"}, Error: "permission denied"},
 		{Tool: workspace.ToolNameReadFile, Summary: "Read internal/app/read.go lines 1-10"},
 		{Tool: workspace.ToolNameSearchContent, Summary: "1 matching line(s) in internal/app/search.go"},
 	}
@@ -1462,10 +1465,10 @@ func TestPathEvidenceChangedPathsParity(t *testing.T) {
 		"internal/app/delegated_patch.go",
 	}
 
-	if got := mapKeys(changedPathsFromToolResults(results)); !slices.Equal(got, wantChanged) {
+	if got := mapKeys(newToolResultEvidenceProjection(results).ChangedPathSet()); !slices.Equal(got, wantChanged) {
 		t.Fatalf("changed paths = %#v, want %#v", got, wantChanged)
 	}
-	if got := changedPathListFromToolResults(results); !slices.Equal(got, wantChangedList) {
+	if got := newToolResultEvidenceProjection(results).ChangedPathList(); !slices.Equal(got, wantChangedList) {
 		t.Fatalf("changed path list = %#v, want %#v", got, wantChangedList)
 	}
 
@@ -1491,11 +1494,11 @@ func TestPathEvidenceChangedPathsParity(t *testing.T) {
 	)
 	store.RecordResult(
 		workspace.ToolRequest{Tool: workspace.ToolNameEditFile, Path: "internal/app/request-edit.go"},
-		workspace.ToolResult{Tool: workspace.ToolNameEditFile, Summary: "Edited a different display path"},
+		workspace.ToolResult{Tool: workspace.ToolNameEditFile, Summary: "Edited a different display path", ChangedPaths: []string{"internal/app/request-edit.go"}},
 	)
 	store.RecordResult(
 		workspace.ToolRequest{Tool: workspace.ToolNameWriteFile, Path: "internal/app/rejected.go"},
-		workspace.ToolResult{Tool: workspace.ToolNameWriteFile, Summary: "Wrote internal/app/rejected.go", Error: "denied"},
+		workspace.ToolResult{Tool: workspace.ToolNameWriteFile, Summary: "Wrote internal/app/rejected.go", ChangedPaths: []string{"internal/app/rejected.go"}, Error: "denied"},
 	)
 	wantStore := []string{"internal/app/request-edit.go", "internal/app/request.go"}
 	if got := store.ChangedPaths(); !slices.Equal(got, wantStore) {

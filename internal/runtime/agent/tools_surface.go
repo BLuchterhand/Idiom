@@ -1852,7 +1852,7 @@ func repeatedFileOutlineToReadSymbolRewriteRequest(req workspace.ToolRequest, re
 	}
 
 	path := NormalizeRunnerPath(req.Path)
-	if path == "" || sourceEvidenceBodyReadForPath(path, results) || !priorFileOutlineForPath(path, results) {
+	if path == "" || newToolResultEvidenceProjection(results).HasSourceBody(path) || !priorFileOutlineForPath(path, results) {
 		return workspace.ToolRequest{}, "", "", false
 	}
 
@@ -2644,7 +2644,7 @@ func (r *Runner) deterministicNoToolsFallback(phase noToolsFallbackPhase, result
 
 func shouldPreferDeterministicNoToolsAnswer(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
 	if runnerBriefRequiresMutation(brief) {
-		return len(changedPathsFromToolResults(results)) > 0 ||
+		return len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0 ||
 			len(brief.RequiredEditPaths) > 0 ||
 			len(brief.RequiredEditSnippets) > 0 ||
 			targetPacketSupportsWrite(brief)
@@ -3104,7 +3104,7 @@ func scopedImplementationUsesBoundedSourceEdits(brief workerruntime.WorkerRuntim
 // write result is a non-source file (markdown, plain text). Used to
 // exempt doc-deliverable lanes from the post-write verification gate.
 func writeTouchesOnlyNonSourcePaths(result workspace.ToolResult) bool {
-	paths := changedPathsFromToolResult(result)
+	paths := newToolResultEvidenceProjection([]workspace.ToolResult{result}).ChangedPathList()
 	if len(paths) == 0 {
 		return false
 	}
@@ -3123,7 +3123,7 @@ func mkdirTouchesOnlyRequiredPathParents(result workspace.ToolResult, requiredPa
 		return false
 	}
 
-	paths := changedPathsFromToolResult(result)
+	paths := newToolResultEvidenceProjection([]workspace.ToolResult{result}).ChangedPathList()
 	if len(paths) == 0 {
 		return false
 	}
@@ -5209,7 +5209,7 @@ func (r *Runner) safeVisibleWorkspaceWriteRequest(req workspace.ToolRequest, res
 	}
 
 	for _, path := range paths {
-		if !sourceEvidenceBodyReadForPath(path, results) {
+		if !newToolResultEvidenceProjection(results).HasSourceBody(path) {
 			return false
 		}
 	}

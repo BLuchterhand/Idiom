@@ -2126,7 +2126,7 @@ func TestVerificationPolicySourceEditRequiredCarriesTypedDecision(t *testing.T) 
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited native/src/cart_system.cpp"},
+		{Tool: "edit_file", Summary: "Edited native/src/cart_system.cpp", ChangedPaths: []string{"native/src/cart_system.cpp"}},
 		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- native/src/cart_system.cpp\n"},
 	}
 
@@ -6459,14 +6459,16 @@ func TestMissingRequiredEvidenceDoesNotRequireHistoryForNewFilesOrDeliverables(t
 
 	for _, result := range []workspace.ToolResult{
 		{
-			Tool:        workspace.ToolNameWriteFile,
-			Summary:     "Wrote internal/labels/generated.go",
-			PayloadType: writePreimagePayloadType,
-			Payload:     newSourcePayload,
+			Tool:         workspace.ToolNameWriteFile,
+			Summary:      "Wrote internal/labels/generated.go",
+			ChangedPaths: []string{"internal/labels/generated.go"},
+			PayloadType:  writePreimagePayloadType,
+			Payload:      newSourcePayload,
 		},
 		{
-			Tool:    workspace.ToolNameWriteFile,
-			Summary: "Wrote temp.md",
+			Tool:         workspace.ToolNameWriteFile,
+			Summary:      "Wrote temp.md",
+			ChangedPaths: []string{"temp.md"},
 		},
 	} {
 		missing := missingRequiredEvidence(
@@ -6672,12 +6674,12 @@ func TestSourceEvidenceStateTracksRedirectPendingUntilBodyEvidence(t *testing.T)
 		},
 	}
 
-	evidence := sourceEvidenceForPath(results, "internal/surfaces/tui/app/sessions.go")
+	evidence := newToolResultEvidenceProjection(results).SourceEvidenceForPath("internal/surfaces/tui/app/sessions.go")
 	if evidence.Level != planThenExecuteEvidenceSourceBodyPending {
 		t.Fatalf("Level = %q, want %q", evidence.Level, planThenExecuteEvidenceSourceBodyPending)
 	}
 
-	if sourceEvidenceBodyReadForPath("internal/surfaces/tui/app/sessions.go", results) {
+	if newToolResultEvidenceProjection(results).HasSourceBody("internal/surfaces/tui/app/sessions.go") {
 		t.Fatal("redirect-only evidence must not count as source-body evidence")
 	}
 
@@ -6707,7 +6709,7 @@ func TestSourceEvidenceStateTracksRedirectPendingUntilBodyEvidence(t *testing.T)
 		Output: "route_summary: Read internal/surfaces/tui/app/sessions.go lines 10-40 (total lines: 120)\n" +
 			"func (m sessionModel) moveDown() {\n\tm.cursor++\n}\n",
 	})
-	evidence = sourceEvidenceForPath(results, "internal/surfaces/tui/app/sessions.go")
+	evidence = newToolResultEvidenceProjection(results).SourceEvidenceForPath("internal/surfaces/tui/app/sessions.go")
 
 	if !sourceEvidenceHasBody(evidence) {
 		t.Fatalf("Level = %q, want source-body evidence after routed body read", evidence.Level)
@@ -6743,11 +6745,11 @@ func TestSourceEvidenceIgnoresGeneratedArtifacts(t *testing.T) {
 		Summary: "Read f1 .idiom/comprehension/views/context.json lines 1-20 (total lines: 20)",
 		Output:  "1:{\"candidate_files\":[{\"path\":\"internal/runtime/agent/runner_core.go\"}]}\n",
 	}}
-	if sourceEvidenceBodyReadForPath(".idiom/comprehension/views/context.json", results) {
+	if newToolResultEvidenceProjection(results).HasSourceBody(".idiom/comprehension/views/context.json") {
 		t.Fatal("generated context artifacts must not satisfy source-body evidence")
 	}
 
-	if paths := sourceEvidenceBodyPaths(results); len(paths) != 0 {
+	if paths := newToolResultEvidenceProjection(results).SourceBodyPaths(); len(paths) != 0 {
 		t.Fatalf("generated context artifacts must not appear in source-body path list: %#v", paths)
 	}
 }
@@ -6766,11 +6768,11 @@ func TestSourceEvidenceIgnoresCandidateAnchorMiss(t *testing.T) {
 		}, "\n"),
 	}}
 
-	if sourceEvidenceBodyReadForPath("internal/surfaces/tui/app/lifecycle.go", results) {
+	if newToolResultEvidenceProjection(results).HasSourceBody("internal/surfaces/tui/app/lifecycle.go") {
 		t.Fatal("candidate anchor must not count as source-body evidence for the candidate path")
 	}
 
-	if paths := sourceEvidenceBodyPaths(results); len(paths) != 0 {
+	if paths := newToolResultEvidenceProjection(results).SourceBodyPaths(); len(paths) != 0 {
 		t.Fatalf("candidate anchor produced source-body paths: %#v", paths)
 	}
 }
@@ -6825,11 +6827,11 @@ func TestSourceEvidenceNonBodySignalsDoNotCloseSourceBodyObligations(t *testing.
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			results := []workspace.ToolResult{tc.result}
-			if sourceEvidenceBodyReadForPath("internal/runtime/agent/runner_core.go", results) {
+			if newToolResultEvidenceProjection(results).HasSourceBody("internal/runtime/agent/runner_core.go") {
 				t.Fatalf("%s must not satisfy source-body evidence", tc.name)
 			}
 
-			if paths := sourceEvidenceBodyPaths(results); len(paths) != 0 {
+			if paths := newToolResultEvidenceProjection(results).SourceBodyPaths(); len(paths) != 0 {
 				t.Fatalf("%s produced source-body paths: %#v", tc.name, paths)
 			}
 		})
@@ -6843,7 +6845,7 @@ func TestSourceEvidenceCandidatePathsUseContextPackCandidates(t *testing.T) {
 		Output:  `{"candidate_files":[{"path":"evidence_readonly.go","reason":"ranked"}]}`,
 	}}
 
-	paths := sourceEvidenceCandidatePaths(results)
+	paths := newToolResultEvidenceProjection(results).CandidatePaths()
 	if len(paths) != 1 || paths[0] != "evidence_readonly.go" {
 		t.Fatalf("candidate paths = %#v, want context_pack candidate", paths)
 	}
@@ -6916,7 +6918,7 @@ func TestSourceEvidencePendingRedirectProgressAllowsOneOutlineBeforeBody(t *test
 		t.Fatal("source-body follow-up should remain allowed after outline progress")
 	}
 
-	if sourceEvidenceBodyReadForPath("internal/surfaces/tui/app/sessions.go", withOutline) {
+	if newToolResultEvidenceProjection(withOutline).HasSourceBody("internal/surfaces/tui/app/sessions.go") {
 		t.Fatal("outline progress must not count as source-body evidence")
 	}
 }
@@ -8370,8 +8372,9 @@ func TestDeriveTurnPhaseContractImplementationVerifyReady(t *testing.T) {
 			AllowedTools:      []string{"read_file", "code_navigate", "search_content", "edit_file", "source_sanity", "shell", "git_diff", "git_status"},
 		},
 		Results: []workspace.ToolResult{{
-			Tool:    "edit_file",
-			Summary: "Edited internal/surfaces/tui/app/model_swap.go",
+			Tool:         "edit_file",
+			Summary:      "Edited internal/surfaces/tui/app/model_swap.go",
+			ChangedPaths: []string{"internal/surfaces/tui/app/model_swap.go"},
 		}},
 	})
 
@@ -8402,8 +8405,9 @@ func TestDeriveTurnPhaseContractPostWriteAllowsAdditiveNewFileBeforeVerification
 			},
 		},
 		Results: []workspace.ToolResult{{
-			Tool:    "write_file",
-			Summary: "Wrote go.mod",
+			Tool:         "write_file",
+			Summary:      "Wrote go.mod",
+			ChangedPaths: []string{"go.mod"},
 		}},
 	})
 
@@ -8475,8 +8479,9 @@ func TestDeriveTurnPhaseContractImplementationTextualDoesNotAdvertiseManifestToo
 					AllowedTools:      []string{"read_file", "edit_file", "source_sanity", "shell", "git_diff"},
 				},
 				Results: []workspace.ToolResult{{
-					Tool:    "edit_file",
-					Summary: "Edited pkg/feature.go",
+					Tool:         "edit_file",
+					Summary:      "Edited pkg/feature.go",
+					ChangedPaths: []string{"pkg/feature.go"},
 				}},
 				TextualToolParser: true,
 				ToolTransportMode: "textual",
@@ -8585,8 +8590,9 @@ func TestDeriveTurnPhaseContractUnscopedImplementationVerifyReadyRequiresVerific
 			AllowedTools:      []string{"read_file", "code_navigate", "search_content", "edit_file", "source_sanity", "shell", "git_diff", "git_status"},
 		},
 		Results: []workspace.ToolResult{{
-			Tool:    "edit_file",
-			Summary: "Edited pkg/feature.go",
+			Tool:         "edit_file",
+			Summary:      "Edited pkg/feature.go",
+			ChangedPaths: []string{"pkg/feature.go"},
 		}},
 	})
 
@@ -8612,7 +8618,7 @@ func TestDeriveTurnPhaseContractFailedVerificationOpensRepairLane(t *testing.T) 
 			AllowedTools:      []string{"read_file", "code_navigate", "search_content", "edit_file", "apply_patch", "source_sanity", "shell", "git_diff", "git_status"},
 		},
 		Results: []workspace.ToolResult{
-			{Tool: "edit_file", Summary: "Edited pkg/feature.go"},
+			{Tool: "edit_file", Summary: "Edited pkg/feature.go", ChangedPaths: []string{"pkg/feature.go"}},
 			{Tool: "shell", Summary: "Ran shell command", Output: "$ npm run build\n", Error: "build failed"},
 		},
 	})
@@ -22761,7 +22767,7 @@ func TestMutationHiddenOnlyNoWriteTerminalRecoveryDoesNotOverrideTargetWriteRead
 		t.Fatal("target-write-ready hidden-only retry must stay on strategy-preserving recovery and keep reads available")
 	}
 
-	if mutationHiddenOnlyNoWriteTerminalRecoveryStall(brief, append(sourceRead, workspace.ToolResult{Tool: "edit_file", Summary: "Edited a.go"}), reply, 1, false) {
+	if mutationHiddenOnlyNoWriteTerminalRecoveryStall(brief, append(sourceRead, workspace.ToolResult{Tool: "edit_file", Summary: "Edited a.go", ChangedPaths: []string{"a.go"}}), reply, 1, false) {
 		t.Fatal("successful writes should disable no-write terminal recovery")
 	}
 
@@ -23963,7 +23969,7 @@ func TestCompletionGateRecoveryPromptSurvivesStaleGateBeforeLatestWrite(t *testi
 	}
 	results := []workspace.ToolResult{
 		{Tool: "completion_gate", Summary: "Mutation completion gate rejected final answer", Error: "no successful workspace write"},
-		{Tool: "edit_file", Summary: "Edited internal/surfaces/tui/app/model_swap.go"},
+		{Tool: "edit_file", Summary: "Edited internal/surfaces/tui/app/model_swap.go", ChangedPaths: []string{"internal/surfaces/tui/app/model_swap.go"}},
 	}
 
 	if got := runner.completionGateRetryLimit(results); got != 1 {
@@ -24004,7 +24010,7 @@ func TestCompletionGateRetryLimitIgnoresStaleGateBeforeLaterTurnEvents(t *testin
 		Summary: "Mutation completion gate rejected final answer",
 		Error:   "stale completion gate rejection",
 	}
-	edit := workspace.ToolResult{Tool: "edit_file", Summary: "Edited internal/runtime/agent/turn_decision.go"}
+	edit := workspace.ToolResult{Tool: "edit_file", Summary: "Edited internal/runtime/agent/turn_decision.go", ChangedPaths: []string{"internal/runtime/agent/turn_decision.go"}}
 	tests := []struct {
 		name    string
 		results []workspace.ToolResult
@@ -34019,8 +34025,8 @@ func TestDecorateFinalAnswerStripsCompletedMutationSelfBlocker(t *testing.T) {
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited native/src/system.cpp"},
-		{Tool: "edit_file", Summary: "Edited native/tests/test_system.cpp"},
+		{Tool: "edit_file", Summary: "Edited native/src/system.cpp", ChangedPaths: []string{"native/src/system.cpp"}},
+		{Tool: "edit_file", Summary: "Edited native/tests/test_system.cpp", ChangedPaths: []string{"native/tests/test_system.cpp"}},
 		{
 			Tool:    "apply_patch",
 			Summary: "Patch hunk did not apply",
@@ -34062,7 +34068,7 @@ func TestDecorateFinalAnswerKeepsBlockerWhenRequiredPathsRemaining(t *testing.T)
 		RequiredEditPaths: []string{"a.go", "b.go"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited a.go"},
+		{Tool: "edit_file", Summary: "Edited a.go", ChangedPaths: []string{"a.go"}},
 		{
 			Tool:    "apply_patch",
 			Summary: "Patch hunk did not apply",
@@ -34095,7 +34101,7 @@ func TestDecorateFinalAnswerSanitizesMutationCompletionGateBlocker(t *testing.T)
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited src/pages/contact.astro"},
+		{Tool: "edit_file", Summary: "Edited src/pages/contact.astro", ChangedPaths: []string{"src/pages/contact.astro"}},
 		{
 			Tool:    "source_sanity",
 			Summary: "Source sanity unavailable",
@@ -34368,7 +34374,7 @@ func TestDecorateFinalAnswerKeepsBlockerWhenVerificationNotPlannerOwned(t *testi
 		RequiredEditPaths: []string{"a.go"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited a.go"},
+		{Tool: "edit_file", Summary: "Edited a.go", ChangedPaths: []string{"a.go"}},
 		{
 			Tool:    "apply_patch",
 			Summary: "Patch hunk did not apply",
@@ -34400,7 +34406,7 @@ func TestDecorateFinalAnswerKeepsBlockerWhenLastFailureIsNonWriteTool(t *testing
 		RequiredEditPaths: []string{"a.go"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited a.go"},
+		{Tool: "edit_file", Summary: "Edited a.go", ChangedPaths: []string{"a.go"}},
 		{
 			Tool:    "shell",
 			Summary: "shell command failed",

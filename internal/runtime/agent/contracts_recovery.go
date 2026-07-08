@@ -114,7 +114,7 @@ func (r *Runner) unsafeTextualWriteRecoverySurfaceActive(results []workspace.Too
 		return false
 	}
 
-	if len(changedPathsFromToolResults(results)) > 0 {
+	if len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0 {
 		return false
 	}
 
@@ -228,7 +228,7 @@ func runnerPlanExecutePlannerInput(brief workerruntime.WorkerRuntimeBrief, resul
 		RequiredEditPaths:    append([]string(nil), brief.RequiredEditPaths...),
 		AllowedEditPaths:     append([]string(nil), brief.AllowedEditPaths...),
 		EvidencePaths:        append(append([]string(nil), brief.EvidencePaths...), sortedRunnerPathKeys(readPathsFromResults(results))...),
-		ChangedPaths:         mapKeys(changedPathsFromToolResults(results)),
+		ChangedPaths:         mapKeys(newToolResultEvidenceProjection(results).ChangedPathSet()),
 		UserBoundaries:       append([]string(nil), brief.UserBoundaries...),
 		AllowedTools:         allowedTools,
 		ForbiddenTools:       workspace.PlanExecuteKnownPlannerToolNames(brief.ForbiddenTools),
@@ -1746,8 +1746,8 @@ func removePhaseTerminalShape(shapes []string, remove string) []string {
 }
 
 func readOnlySourceBodyEvidenceSummary(results []workspace.ToolResult) string {
-	bodyPaths := sourceEvidenceBodyPaths(results)
-	candidatePaths := sourceEvidenceCandidatePaths(results)
+	bodyPaths := newToolResultEvidenceProjection(results).SourceBodyPaths()
+	candidatePaths := newToolResultEvidenceProjection(results).CandidatePaths()
 
 	var b strings.Builder
 
@@ -1851,7 +1851,7 @@ func implementationTargetSourcePending(brief workerruntime.WorkerRuntimeBrief, r
 		return false
 	}
 
-	if len(changedPathsFromToolResults(results)) > 0 {
+	if len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0 {
 		return false
 	}
 
@@ -1892,7 +1892,7 @@ func implementationTargetWriteReadySurfaceActive(brief workerruntime.WorkerRunti
 		return false
 	}
 
-	if len(changedPathsFromToolResults(results)) > 0 {
+	if len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0 {
 		return false
 	}
 
@@ -1900,7 +1900,7 @@ func implementationTargetWriteReadySurfaceActive(brief workerruntime.WorkerRunti
 }
 
 func implementationTargetSourceEvidenceReady(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	for _, path := range sourceEvidenceBodyPaths(results) {
+	for _, path := range newToolResultEvidenceProjection(results).SourceBodyPaths() {
 		lower := strings.ToLower(path)
 		if strings.HasSuffix(lower, ".md") || strings.HasSuffix(lower, ".mdx") {
 			continue
@@ -2802,7 +2802,7 @@ func planThenExecuteHistoryPendingPaths(brief workerruntime.WorkerRuntimeBrief, 
 			continue
 		case planThenExecuteRequiredPathSourceSatisfied:
 		default:
-			if !sourceEvidenceBodyReadForPath(path, results) {
+			if !newToolResultEvidenceProjection(results).HasSourceBody(path) {
 				continue
 			}
 		}

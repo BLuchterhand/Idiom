@@ -34,6 +34,7 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 
 	planned := make([]plannedWrite, 0, len(ops))
 	summaries := make([]string, 0, len(ops))
+	var changedPaths []string
 
 	for opIdx, op := range ops {
 		path, err := m.pathAccess.ResolveWritePath(op.Path, req.Workdir)
@@ -54,6 +55,7 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 
 			planned = append(planned, plannedWrite{path: path, contents: []byte(body)})
 			summaries = append(summaries, fmt.Sprintf("add %s (%d bytes)", m.pathAccess.DisplayPath(path), len(body)))
+			changedPaths = appendUniqueWorkspaceStrings(changedPaths, m.pathAccess.DisplayPath(path))
 		case patching.OpDelete:
 			info, statErr := os.Stat(path)
 			if statErr != nil {
@@ -66,6 +68,7 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 
 			planned = append(planned, plannedWrite{path: path, remove: true})
 			summaries = append(summaries, fmt.Sprintf("delete %s", m.pathAccess.DisplayPath(path)))
+			changedPaths = appendUniqueWorkspaceStrings(changedPaths, m.pathAccess.DisplayPath(path))
 		case patching.OpUpdate:
 			current, readErr := os.ReadFile(path)
 			if readErr != nil {
@@ -94,6 +97,9 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 					planned = append(planned, plannedWrite{path: path, remove: true})
 				}
 				summary = fmt.Sprintf("update+move %s -> %s", m.pathAccess.DisplayPath(path), m.pathAccess.DisplayPath(destPath))
+				changedPaths = appendUniqueWorkspaceStrings(changedPaths, m.pathAccess.DisplayPath(path), m.pathAccess.DisplayPath(destPath))
+			} else {
+				changedPaths = appendUniqueWorkspaceStrings(changedPaths, m.pathAccess.DisplayPath(path))
 			}
 
 			planned = append(planned, plannedWrite{path: destPath, contents: []byte(updated)})
@@ -137,8 +143,9 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 	m.resetLanguageTools()
 
 	return ToolResult{
-		Tool:    ToolNameApplyPatch,
-		Summary: fmt.Sprintf("Applied patch with %d op(s)", len(ops)),
-		Output:  strings.Join(summaries, "\n"),
+		Tool:         ToolNameApplyPatch,
+		Summary:      fmt.Sprintf("Applied patch with %d op(s)", len(ops)),
+		Output:       strings.Join(summaries, "\n"),
+		ChangedPaths: changedPaths,
 	}
 }

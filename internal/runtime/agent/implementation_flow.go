@@ -666,7 +666,7 @@ func (r *Runner) emitWorkbranchChildTerminal(ctx childLifecycleContext, checkout
 }
 
 func (r *Runner) emitDelegateEditLifecycle(ctx childLifecycleContext, req workspace.ToolRequest, result workspace.ToolResult, route autonomy.ChildExecutionRoute, reasonCode string) {
-	changedPaths := changedPathsFromToolResult(result)
+	changedPaths := newToolResultEvidenceProjection([]workspace.ToolResult{result}).ChangedPathList()
 	status := autonomy.ChildTerminalCompleted
 	if strings.TrimSpace(result.Error) != "" {
 		status = autonomy.ChildTerminalFailed
@@ -1284,7 +1284,7 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 	}
 
 	if r != nil && runnerBriefRequiresMutation(r.RuntimeBrief) {
-		if missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results)); len(missing) > 0 {
+		if missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, newToolResultEvidenceProjection(results).ChangedPathSet()); len(missing) > 0 {
 			return rejectFinalAnswerAcceptance(acceptance, turnViolationRequiredEditPathsRemaining, turnReasonRequiredEditPathsRemaining)
 		}
 
@@ -1342,7 +1342,7 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 	if r != nil &&
 		runnerBriefRequiresMutation(r.RuntimeBrief) &&
 		workerruntime.RuntimeContractMatches(r.RuntimeBrief.Contract, workerruntime.ContractImplementationResult) &&
-		len(changedPathsFromToolResults(results)) == 0 {
+		len(newToolResultEvidenceProjection(results).ChangedPathSet()) == 0 {
 
 		return rejectFinalAnswerAcceptance(acceptance, turnViolationRequiredEvidenceUnmet, turnReasonRequiredEvidenceUnmet)
 	}
@@ -2160,7 +2160,7 @@ func canonicalMutationBlockerFinalAnswer(brief workerruntime.WorkerRuntimeBrief,
 		return "", false
 	}
 
-	changed := changedPathsFromToolResults(results)
+	changed := newToolResultEvidenceProjection(results).ChangedPathSet()
 	missing := missingRequiredEditPaths(brief.RequiredEditPaths, changed)
 
 	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(brief.TaskFamily) &&
@@ -4270,7 +4270,7 @@ func stripCompletedMutationSelfBlocker(brief workerruntime.WorkerRuntimeBrief, r
 		return "", false
 	}
 
-	changed := changedPathsFromToolResults(results)
+	changed := newToolResultEvidenceProjection(results).ChangedPathSet()
 	if len(missingRequiredEditPaths(brief.RequiredEditPaths, changed)) > 0 {
 		return "", false
 	}
@@ -4932,7 +4932,7 @@ func (r *Runner) implementationTargetWriteReadyHistoryReadAllowed(req workspace.
 		return false
 	}
 
-	if !implementationTargetWriteReadySourcePath(path) && !sourceEvidenceBodyReadForPath(path, results) {
+	if !implementationTargetWriteReadySourcePath(path) && !newToolResultEvidenceProjection(results).HasSourceBody(path) {
 		return false
 	}
 
@@ -4947,7 +4947,7 @@ func planThenExecuteSubmitPlanHistoryMissing(brief workerruntime.WorkerRuntimeBr
 	var paths []string
 
 	for _, path := range normalizedRequiredEditPaths(brief.RequiredEditPaths) {
-		if sourceEvidenceBodyReadForPath(path, results) {
+		if newToolResultEvidenceProjection(results).HasSourceBody(path) {
 			paths = append(paths, path)
 		}
 	}
@@ -4955,7 +4955,7 @@ func planThenExecuteSubmitPlanHistoryMissing(brief workerruntime.WorkerRuntimeBr
 	if len(paths) == 0 {
 		state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TerminalOnly: true})
 		for _, path := range state.SelectedEditPaths {
-			if sourceEvidenceBodyReadForPath(path, results) {
+			if newToolResultEvidenceProjection(results).HasSourceBody(path) {
 				paths = append(paths, path)
 			}
 		}
@@ -5329,7 +5329,7 @@ func (r *Runner) delegatedChildFallbackSourceRead(ctx context.Context, prompt st
 	paths := newDelegatedDiscoveryPlan(prompt).consumableSourceBodyCandidatePaths(results, 6)
 	for _, path := range paths {
 		path = NormalizeRunnerPath(path)
-		if path == "" || IsNonSourceEvidenceArtifactPath(path) || sourceEvidenceBodyReadForPath(path, results) {
+		if path == "" || IsNonSourceEvidenceArtifactPath(path) || newToolResultEvidenceProjection(results).HasSourceBody(path) {
 			continue
 		}
 
@@ -6087,7 +6087,7 @@ func delegatedSourceBodyPacketHasGroundedFinding(output string) bool {
 func delegatedReadOnlySourceBodyEvidencePaths(results []workspace.ToolResult) []string {
 	paths := make([]string, 0, 4)
 
-	paths = append(paths, sourceEvidenceBodyPaths(results)...)
+	paths = append(paths, newToolResultEvidenceProjection(results).SourceBodyPaths()...)
 
 	for _, result := range results {
 		if strings.TrimSpace(result.Tool) != workspace.ToolNameTask || strings.TrimSpace(result.Error) != "" {
@@ -6710,7 +6710,7 @@ func exactAnchorPreWriteSurfaceActive(brief workerruntime.WorkerRuntimeBrief, re
 		return false
 	}
 
-	return len(brief.ChangedPaths) == 0 && len(changedPathsFromToolResults(results)) == 0
+	return len(brief.ChangedPaths) == 0 && len(newToolResultEvidenceProjection(results).ChangedPathSet()) == 0
 }
 
 func implementationScopedEditRuntimeBrief(brief workerruntime.WorkerRuntimeBrief) workerruntime.WorkerRuntimeBrief {
@@ -6951,7 +6951,7 @@ func (r *Runner) implementationTargetWriteReadySourceReadAllowed(req workspace.T
 		return false
 	}
 
-	if sourceEvidenceBodyReadForPath(path, results) {
+	if newToolResultEvidenceProjection(results).HasSourceBody(path) {
 		if implementationTargetWriteReadySamePathContinuationReadAllowed(req, results) {
 			return true
 		}
@@ -7057,7 +7057,7 @@ func implementationTargetWriteReadyTargetedCodeNavigate(req workspace.ToolReques
 		return false
 	}
 
-	if !sourceEvidenceBodyReadForPath(path, results) {
+	if !newToolResultEvidenceProjection(results).HasSourceBody(path) {
 		return false
 	}
 
@@ -7249,7 +7249,7 @@ func implementationTargetWriteReadyReadProgressForResult(brief workerruntime.Wor
 		return implementationTargetWriteReadyReadProgressDuplicate
 	}
 
-	if !sourceEvidenceBodyReadForPath(path, priorResults) {
+	if !newToolResultEvidenceProjection(priorResults).HasSourceBody(path) {
 		return implementationTargetWriteReadyReadProgressAddsSource
 	}
 
@@ -7267,7 +7267,7 @@ func implementationTargetWriteReadyReadProgressPath(req workspace.ToolRequest, r
 		return path
 	}
 
-	for _, candidate := range sourceEvidenceBodyPaths([]workspace.ToolResult{result}) {
+	for _, candidate := range newToolResultEvidenceProjection([]workspace.ToolResult{result}).SourceBodyPaths() {
 		if path := NormalizeRunnerPath(candidate); path != "" {
 			return path
 		}
@@ -7345,7 +7345,7 @@ func (r *Runner) implementationTargetWriteReadySourceRefreshAllowed(req workspac
 		return false
 	}
 
-	return sourceEvidenceBodyReadForPath(req.Path, results)
+	return newToolResultEvidenceProjection(results).HasSourceBody(req.Path)
 }
 
 func implementationTargetWriteReadyNewTargetRead(req workspace.ToolRequest) bool {
@@ -7381,7 +7381,7 @@ func implementationTargetSourceReadEstablishedWriteReady(brief workerruntime.Wor
 		}
 	}
 
-	return sourceEvidenceBodyReadForPath(path, results)
+	return newToolResultEvidenceProjection(results).HasSourceBody(path)
 }
 
 func runnerStringSliceContainsPath(values []string, path string) bool {
@@ -8585,7 +8585,7 @@ func applyScratchpadDeliverableCloseoutBias(state runnerNextActionState, brief w
 		return state
 	}
 
-	target := strings.Join(missingRequiredEditPaths(brief.RequiredEditPaths, changedPathsFromToolResults(results)), ", ")
+	target := strings.Join(missingRequiredEditPaths(brief.RequiredEditPaths, newToolResultEvidenceProjection(results).ChangedPathSet()), ", ")
 	if target == "" {
 		target = "the required deliverable"
 	}
@@ -8615,7 +8615,7 @@ func scratchpadDeliverableCloseoutReady(brief workerruntime.WorkerRuntimeBrief, 
 		return false
 	}
 
-	if len(missingRequiredEditPaths(brief.RequiredEditPaths, changedPathsFromToolResults(results))) == 0 {
+	if len(missingRequiredEditPaths(brief.RequiredEditPaths, newToolResultEvidenceProjection(results).ChangedPathSet())) == 0 {
 		return false
 	}
 
@@ -8642,7 +8642,7 @@ func (r *Runner) scratchpadDeliverableCloseoutNonWriteRecovery(req workspace.Too
 		return "", "", "", "", false
 	}
 
-	missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results))
+	missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, newToolResultEvidenceProjection(results).ChangedPathSet())
 
 	target = "the required deliverable"
 
@@ -8714,7 +8714,7 @@ func scratchpadFailedEvidenceFeedbackApplies(brief workerruntime.WorkerRuntimeBr
 		return false
 	}
 
-	return len(missingRequiredEditPaths(brief.RequiredEditPaths, changedPathsFromToolResults(results))) > 0
+	return len(missingRequiredEditPaths(brief.RequiredEditPaths, newToolResultEvidenceProjection(results).ChangedPathSet())) > 0
 }
 
 type taskLedgerState struct {
@@ -8925,7 +8925,7 @@ func taskLedgerWriteEvidenceSatisfied(path string, receipts []workspace.ToolResu
 		return false
 	}
 
-	for got := range changedPathsFromToolResults(receipts) {
+	for got := range newToolResultEvidenceProjection(receipts).ChangedPathSet() {
 		got = NormalizeRunnerPath(got)
 		if got == want || strings.HasPrefix(got, want+"/") || strings.HasPrefix(want, got+"/") {
 			return true
@@ -9396,7 +9396,7 @@ func deterministicPostWriteVerificationRequest(results []workspace.ToolResult, b
 		return workspace.ToolRequest{}, false
 	}
 
-	changed := changedPathsFromToolResults(results)
+	changed := newToolResultEvidenceProjection(results).ChangedPathSet()
 
 	var command string
 
@@ -9483,7 +9483,7 @@ func failedVerificationAfterLatestWrite(results []workspace.ToolResult, brief wo
 			}
 
 			pending = true
-			pendingPaths = textutil.AppendUniqueMulti(pendingPaths, changedPathsFromToolResult(result)...)
+			pendingPaths = textutil.AppendUniqueMulti(pendingPaths, newToolResultEvidenceProjection([]workspace.ToolResult{result}).ChangedPathList()...)
 			failed = false
 			latestFailed = workspace.ToolResult{}
 
@@ -9570,7 +9570,7 @@ func changedSourcePaths(results []workspace.ToolResult) []string {
 			continue
 		}
 
-		for _, path := range changedPathsFromToolResult(result) {
+		for _, path := range newToolResultEvidenceProjection([]workspace.ToolResult{result}).ChangedPathList() {
 			normalized := NormalizeRunnerPath(path)
 			if normalized == "" || !sourcePathNeedsSemanticVerification(normalized) {
 				continue
@@ -9591,7 +9591,7 @@ func changedSourcePaths(results []workspace.ToolResult) []string {
 }
 
 func toolResultChangedSourcePath(result workspace.ToolResult) bool {
-	for _, path := range changedPathsFromToolResult(result) {
+	for _, path := range newToolResultEvidenceProjection([]workspace.ToolResult{result}).ChangedPathList() {
 		if sourcePathNeedsSemanticVerification(path) {
 			return true
 		}
@@ -9823,7 +9823,7 @@ func (r *Runner) preflightVerificationOnAlreadyEditedPath(req workspace.ToolRequ
 		return verificationInterceptResult{}
 	}
 
-	changed := changedPathsFromToolResults(results)
+	changed := newToolResultEvidenceProjection(results).ChangedPathSet()
 	if _, ok := changed[target]; !ok {
 		return verificationInterceptResult{}
 	}

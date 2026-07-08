@@ -29,6 +29,35 @@ func patchWorkspaceConfig(t *testing.T) (*Manager, string) {
 	return NewManager(cfg), dir
 }
 
+func TestWriteToolsReportChangedPaths(t *testing.T) {
+	mgr, dir := patchWorkspaceConfig(t)
+	if err := os.WriteFile(filepath.Join(dir, "existing.txt"), []byte("before\n"), 0o644); err != nil {
+		t.Fatalf("seed existing.txt: %v", err)
+	}
+	mgr.MarkPathObserved("existing.txt")
+
+	for _, tc := range []struct {
+		name string
+		req  ToolRequest
+		want string
+	}{
+		{name: "write", req: ToolRequest{Tool: ToolNameWriteFile, Path: "created.txt", Content: "hello\n"}, want: "created.txt"},
+		{name: "append", req: ToolRequest{Tool: ToolNameAppendFile, Path: "append.txt", Content: "tail\n"}, want: "append.txt"},
+		{name: "mkdir", req: ToolRequest{Tool: ToolNameMkdir, Path: "generated"}, want: "generated"},
+		{name: "edit", req: ToolRequest{Tool: ToolNameEditFile, Path: "existing.txt", OldText: "before\n", NewText: "after\n"}, want: "existing.txt"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := mgr.Execute(context.Background(), tc.req)
+			if result.Error != "" {
+				t.Fatalf("%s failed: %#v", tc.req.Tool, result)
+			}
+			if len(result.ChangedPaths) != 1 || result.ChangedPaths[0] != tc.want {
+				t.Fatalf("%s changed paths = %#v, want %q", tc.req.Tool, result.ChangedPaths, tc.want)
+			}
+		})
+	}
+}
+
 func TestWorkspaceWriteRejectsSymlinkedParent(t *testing.T) {
 	mgr, dir := patchWorkspaceConfig(t)
 	outside := t.TempDir()
@@ -122,6 +151,16 @@ func TestApplyPatchAddUpdateDelete(t *testing.T) {
 
 	if !strings.Contains(result.Summary, "Applied patch") {
 		t.Fatalf("unexpected summary: %q", result.Summary)
+	}
+
+	wantChanged := []string{"created/note.md", "existing.txt", "doomed.txt"}
+	if len(result.ChangedPaths) != len(wantChanged) {
+		t.Fatalf("changed paths = %#v, want %#v", result.ChangedPaths, wantChanged)
+	}
+	for i, want := range wantChanged {
+		if result.ChangedPaths[i] != want {
+			t.Fatalf("changed paths = %#v, want %#v", result.ChangedPaths, wantChanged)
+		}
 	}
 
 	if data, err := os.ReadFile(filepath.Join(dir, "created", "note.md")); err != nil || string(data) != "# Note\nbody\n" {

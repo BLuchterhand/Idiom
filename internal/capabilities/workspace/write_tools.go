@@ -28,9 +28,10 @@ func (m *Manager) makeDir(req ToolRequest) ToolResult {
 	m.resetLanguageTools()
 
 	return ToolResult{
-		Tool:    ToolNameMkdir,
-		Summary: fmt.Sprintf("Created directory %s", m.pathAccess.DisplayPath(path)),
-		Output:  m.pathAccess.DisplayPath(path),
+		Tool:         ToolNameMkdir,
+		Summary:      fmt.Sprintf("Created directory %s", m.pathAccess.DisplayPath(path)),
+		Output:       m.pathAccess.DisplayPath(path),
+		ChangedPaths: []string{m.pathAccess.DisplayPath(path)},
 	}
 }
 
@@ -94,9 +95,10 @@ func (m *Manager) writeFile(req ToolRequest, appendMode bool) ToolResult {
 	m.resetLanguageTools()
 
 	return ToolResult{
-		Tool:    toolName,
-		Summary: fmt.Sprintf("%s %s", action, m.pathAccess.DisplayPath(path)),
-		Output:  fmt.Sprintf("%s bytes: %d", action, len(req.Content)),
+		Tool:         toolName,
+		Summary:      fmt.Sprintf("%s %s", action, m.pathAccess.DisplayPath(path)),
+		Output:       fmt.Sprintf("%s bytes: %d", action, len(req.Content)),
+		ChangedPaths: []string{m.pathAccess.DisplayPath(path)},
 	}
 }
 

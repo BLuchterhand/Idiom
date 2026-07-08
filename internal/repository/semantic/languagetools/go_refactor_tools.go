@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"idiom/internal/platform/textutil"
 )
 
 type goParsedFile struct {
@@ -385,9 +387,10 @@ func (m *Manager) goMoveDeclarations(req ToolRequest) ToolResult {
 	}
 
 	return ToolResult{
-		Tool:    "go_move_declarations",
-		Summary: fmt.Sprintf("Moved %d Go declaration block(s) from %s to %s", len(movedDecls), source.display, m.displayPath(destPath)),
-		Output:  fmt.Sprintf("moved declarations: %s\nchanged files:\n- %s\n- %s", strings.Join(movedNames, ", "), source.display, m.displayPath(destPath)),
+		Tool:         "go_move_declarations",
+		Summary:      fmt.Sprintf("Moved %d Go declaration block(s) from %s to %s", len(movedDecls), source.display, m.displayPath(destPath)),
+		Output:       fmt.Sprintf("moved declarations: %s\nchanged files:\n- %s\n- %s", strings.Join(movedNames, ", "), source.display, m.displayPath(destPath)),
+		ChangedPaths: []string{source.display, m.displayPath(destPath)},
 	}
 }
 
@@ -401,7 +404,7 @@ func (m *Manager) goMoveDeclarationBatch(req ToolRequest) ToolResult {
 	}
 
 	lines := make([]string, 0, len(req.Moves))
-	changed := make(map[string]struct{})
+	var changedPaths []string
 
 	for _, move := range req.Moves {
 		next := ToolRequest{
@@ -428,24 +431,16 @@ func (m *Manager) goMoveDeclarationBatch(req ToolRequest) ToolResult {
 		}
 
 		lines = append(lines, result.Summary)
-		changed[req.Path] = struct{}{}
-
-		if strings.TrimSpace(move.Destination) != "" {
-			changed[move.Destination] = struct{}{}
-		}
+		changedPaths = textutil.AppendUniqueMulti(changedPaths, result.ChangedPaths...)
 	}
 
-	paths := make([]string, 0, len(changed))
-	for path := range changed {
-		paths = append(paths, path)
-	}
-
-	slices.Sort(paths)
+	slices.Sort(changedPaths)
 
 	return ToolResult{
-		Tool:    "go_move_declarations",
-		Summary: fmt.Sprintf("Applied %d Go declaration move batch(es)", len(req.Moves)),
-		Output:  strings.Join(append(lines, "changed files:", "- "+strings.Join(paths, "\n- ")), "\n"),
+		Tool:         "go_move_declarations",
+		Summary:      fmt.Sprintf("Applied %d Go declaration move batch(es)", len(req.Moves)),
+		Output:       strings.Join(append(lines, "changed files:", "- "+strings.Join(changedPaths, "\n- ")), "\n"),
+		ChangedPaths: changedPaths,
 	}
 }
 

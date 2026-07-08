@@ -268,7 +268,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 
 		switch {
 		case tool == workspace.ToolNameContextPack:
-			candidates := readOnlySourceLikePaths(sourceEvidenceCandidatePathsFromResult(result, 16), 16)
+			candidates := readOnlySourceLikePaths((toolResultEvidenceProjection{}).CandidatePathsFromResult(result, 16), 16)
 			ledger.addItem(readOnlyEvidenceItem{
 				Kind:           readOnlyEvidenceContextPacket,
 				Tool:           tool,
@@ -278,7 +278,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 
 			ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, candidates)
 		case workspace.IsSearchToolName(tool):
-			candidates := readOnlySourceLikePaths(sourceEvidenceCandidatePathsFromResult(result, 128), 128)
+			candidates := readOnlySourceLikePaths((toolResultEvidenceProjection{}).CandidatePathsFromResult(result, 128), 128)
 			objectiveCandidates := readOnlyObjectiveCandidatePathsFromSearch(result, ledger.Objective, 128)
 			count, _ := searchContentSummaryMatchCount(result.Summary)
 
@@ -300,8 +300,8 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 
 			ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, candidates)
 			ledger.CandidateObjectivePaths = textutil.Merge(ledger.CandidateObjectivePaths, objectiveCandidates)
-		case sourceEvidenceDiscoveryCandidateTool(tool):
-			candidates := readOnlySourceLikePaths(sourceEvidenceCandidatePathsFromResult(result, 16), 16)
+		case (toolResultEvidenceProjection{}).DiscoveryCandidateTool(tool):
+			candidates := readOnlySourceLikePaths((toolResultEvidenceProjection{}).CandidatePathsFromResult(result, 16), 16)
 			if len(candidates) > 0 {
 				ledger.addItem(readOnlyEvidenceItem{
 					Kind:           readOnlyEvidenceSearchHit,
@@ -2908,7 +2908,7 @@ func answerCitesNamedObjectiveSource(answer string, ledger readOnlyAnswerability
 	lower := strings.ToLower(answer)
 
 	for named := range namedSet {
-		if _, read := sourceSet[named]; !read && !sourceEvidenceBodyReadForPath(named, results) {
+		if _, read := sourceSet[named]; !read && !newToolResultEvidenceProjection(results).HasSourceBody(named) {
 			continue
 		}
 
@@ -4261,7 +4261,7 @@ func readOnlyEvidencePacketNamesObjectiveSource(packet ReadOnlyEvidencePacket, o
 func readOnlyEvidencePacketSourceBodyPaths(results []workspace.ToolResult) []string {
 	paths := make([]string, 0, 4)
 
-	paths = append(paths, sourceEvidenceBodyPaths(results)...)
+	paths = append(paths, newToolResultEvidenceProjection(results).SourceBodyPaths()...)
 
 	return readOnlyEvidencePacketSourceLikePaths(paths, 16)
 }
@@ -4276,12 +4276,12 @@ func readOnlyEvidencePacketCandidatePaths(results []workspace.ToolResult) []stri
 
 		tool := strings.TrimSpace(result.Tool)
 		switch {
-		case sourceEvidenceDiscoveryCandidateTool(tool):
-			paths = append(paths, sourceEvidenceCandidatePathsFromResult(result, 16)...)
+		case (toolResultEvidenceProjection{}).DiscoveryCandidateTool(tool):
+			paths = append(paths, (toolResultEvidenceProjection{}).CandidatePathsFromResult(result, 16)...)
 		case tool == workspace.ToolNameContextPack:
-			paths = append(paths, sourceEvidenceCandidatePathsFromResult(result, 16)...)
+			paths = append(paths, (toolResultEvidenceProjection{}).CandidatePathsFromResult(result, 16)...)
 		case workspace.IsSearchToolName(tool):
-			paths = append(paths, sourceEvidenceCandidatePathsFromResult(result, 64)...)
+			paths = append(paths, (toolResultEvidenceProjection{}).CandidatePathsFromResult(result, 64)...)
 		default:
 			paths = append(paths, ReadPathsFromToolResult(result)...)
 		}
@@ -6247,7 +6247,7 @@ func evidenceFirstTargetReadRedirect(brief workerruntime.WorkerRuntimeBrief, res
 		return workspace.ToolRequest{}, false
 	}
 
-	if len(changedPathsFromToolResults(results)) > 0 {
+	if len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0 {
 		return workspace.ToolRequest{}, false
 	}
 
@@ -6794,7 +6794,7 @@ func (r *Runner) implementationTargetSourceWriteBeforeEvidenceRedirect(req works
 	}
 
 	target := NormalizeRunnerPath(paths[0])
-	if target == "" || sourceEvidenceBodyReadForPath(target, results) {
+	if target == "" || newToolResultEvidenceProjection(results).HasSourceBody(target) {
 		return workspace.ToolRequest{}, "", false
 	}
 
@@ -7134,7 +7134,7 @@ func implementationDeferredWriteCoveredBySourceEvidence(req workspace.ToolReques
 		}
 
 		if allowAnchorMismatch {
-			return sourceEvidenceBodyReadForPath(path, results) || implementationDeferredWriteHasExecutableAnchor(req)
+			return newToolResultEvidenceProjection(results).HasSourceBody(path) || implementationDeferredWriteHasExecutableAnchor(req)
 		}
 
 		return implementationSourceEvidenceTextContains(path, results, oldText)
@@ -7144,7 +7144,7 @@ func implementationDeferredWriteCoveredBySourceEvidence(req workspace.ToolReques
 		return fullSourceReadFileSeen(path, results)
 	case workspace.ToolNameApplyPatch:
 		if implementationApplyPatchDeletesOnlyPath(req, path) {
-			return sourceEvidenceBodyReadForPath(path, results)
+			return newToolResultEvidenceProjection(results).HasSourceBody(path)
 		}
 
 		return false
@@ -7354,7 +7354,7 @@ func implementationTargetSourceWriteTargetsHaveEvidence(req workspace.ToolReques
 
 	for _, path := range paths {
 		path = NormalizeRunnerPath(path)
-		if path == "" || !sourceEvidenceBodyReadForPath(path, results) {
+		if path == "" || !newToolResultEvidenceProjection(results).HasSourceBody(path) {
 			return false
 		}
 	}
@@ -8411,78 +8411,8 @@ type sourceEvidenceObligation struct {
 // and drop it from the write-gating set.
 const maxObligationResolutionAttempts = 3
 
-func sourceEvidenceForPath(results []workspace.ToolResult, path string) planThenExecuteSourceEvidence {
-	return newToolResultEvidenceView(results).SourceEvidenceForPath(path)
-}
-
 func sourceEvidenceHasBody(evidence planThenExecuteSourceEvidence) bool {
 	return planThenExecuteEvidenceRank(evidence.Level) >= planThenExecuteEvidenceRank(planThenExecuteEvidenceBodyWindow)
-}
-
-func sourceEvidenceBodyReadForPath(path string, results []workspace.ToolResult) bool {
-	return newToolResultEvidenceView(results).HasSourceBody(path)
-}
-
-func sourceEvidenceBodyPaths(results []workspace.ToolResult) []string {
-	return newToolResultEvidenceView(results).SourceBodyPaths()
-}
-
-func sourceEvidenceDiscoveryCandidateTool(tool string) bool {
-	tool = strings.TrimSpace(tool)
-	switch tool {
-	case workspace.ToolNameDiscoveryQuery, workspace.ToolNameContextQuery, workspace.ToolNameContextZoom,
-		workspace.ToolNameContextImpact, workspace.ToolNameStructuralSearch:
-		return true
-	default:
-		return strings.HasSuffix(tool, "_workspace_symbol")
-	}
-}
-
-func sourceEvidenceCandidatePathsFromResult(result workspace.ToolResult, max int) []string {
-	if strings.TrimSpace(result.Error) != "" {
-		return nil
-	}
-
-	tool := strings.TrimSpace(result.Tool)
-	switch {
-	case tool == workspace.ToolNameContextPack:
-		return contextPackCandidatePathsFromResults([]workspace.ToolResult{result}, max)
-	case sourceEvidenceDiscoveryCandidateTool(tool):
-		return discoveryConsumptionCandidatesFromResult(result, max)
-	case workspace.IsSearchToolName(tool):
-		return sourceLikePathsFromText(result.Summary+"\n"+result.Output, max)
-	default:
-		return nil
-	}
-}
-
-func sourceEvidenceCandidatePaths(results []workspace.ToolResult) []string {
-	bodySet := make(map[string]struct{})
-	for _, p := range sourceEvidenceBodyPaths(results) {
-		bodySet[p] = struct{}{}
-	}
-
-	seen := make(map[string]struct{})
-	var paths []string
-
-	for _, result := range results {
-		for _, path := range sourceEvidenceCandidatePathsFromResult(result, 128) {
-			normalized := NormalizeRunnerPath(path)
-			if normalized == "" {
-				continue
-			}
-			if _, ok := seen[normalized]; ok {
-				continue
-			}
-			if _, ok := bodySet[normalized]; ok {
-				continue
-			}
-			seen[normalized] = struct{}{}
-			paths = append(paths, normalized)
-		}
-	}
-
-	return paths
 }
 
 func sourceEvidencePendingRedirects(results []workspace.ToolResult) []sourceEvidenceObligation {
@@ -8510,7 +8440,7 @@ func sourceEvidencePendingRedirects(results []workspace.ToolResult) []sourceEvid
 			continue
 		}
 
-		evidence := sourceEvidenceForPath(results, path)
+		evidence := newToolResultEvidenceProjection(results).SourceEvidenceForPath(path)
 
 		pending = append(pending, sourceEvidenceObligation{
 			Path:        path,
@@ -9116,11 +9046,12 @@ func implementationTargetWriteReadyRedirectedRelatedSourceTool(result workspace.
 func FromWorkspaceResult(result workspace.ToolResult) ToolResult {
 	paths := workspaceResultPaths(result)
 	return ToolResult{
-		ToolName: strings.TrimSpace(result.Tool),
-		Summary:  strings.TrimSpace(result.Summary),
-		Output:   result.Output,
-		Error:    strings.TrimSpace(result.Error),
-		Paths:    paths,
+		ToolName:     strings.TrimSpace(result.Tool),
+		Summary:      strings.TrimSpace(result.Summary),
+		Output:       result.Output,
+		Error:        strings.TrimSpace(result.Error),
+		Paths:        paths,
+		ChangedPaths: append([]string(nil), result.ChangedPaths...),
 		Metadata: map[string]string{
 			"code":           strings.TrimSpace(result.Code),
 			"precision_tier": strings.TrimSpace(result.PrecisionTier),

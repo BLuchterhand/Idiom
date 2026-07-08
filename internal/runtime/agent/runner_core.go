@@ -33,81 +33,6 @@ import (
 	"idiom/internal/runtime/workerruntime"
 )
 
-type toolResultEvidenceView struct {
-	results []workspace.ToolResult
-}
-
-func newToolResultEvidenceView(results []workspace.ToolResult) toolResultEvidenceView {
-	return toolResultEvidenceView{results: append([]workspace.ToolResult(nil), results...)}
-}
-
-func (view toolResultEvidenceView) ReadPaths() map[string]struct{} {
-	paths := make(map[string]struct{}, len(view.results))
-	for _, result := range view.results {
-		if strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-		for _, path := range ReadPathsFromToolResult(result) {
-			normalized := NormalizeRunnerPath(path)
-			if normalized != "" {
-				paths[normalized] = struct{}{}
-			}
-		}
-	}
-	return paths
-}
-
-func (view toolResultEvidenceView) SourceEvidenceForPath(path string) planThenExecuteSourceEvidence {
-	path = NormalizeRunnerPath(path)
-	if path == "" || IsNonSourceEvidenceArtifactPath(path) {
-		return planThenExecuteSourceEvidence{}
-	}
-	best := planThenExecuteSourceEvidence{Path: path}
-	for _, result := range view.results {
-		evidence := planThenExecuteToolResultSourceEvidence(result, path)
-		if redirectPath := implementationTargetWriteReadyRedirectedReadPath(result); redirectPath == path {
-			if tool, ok := implementationTargetWriteReadyRedirectedReadTool(result); ok {
-				evidence = planThenExecuteSourceEvidence{
-					Path:   path,
-					Level:  planThenExecuteEvidenceSourceBodyPending,
-					Source: strings.TrimSpace(result.Tool),
-					Detail: "redirected to " + tool,
-				}
-			}
-		}
-		if planThenExecuteEvidenceRank(evidence.Level) > planThenExecuteEvidenceRank(best.Level) {
-			best = evidence
-		}
-	}
-	return best
-}
-
-func (view toolResultEvidenceView) HasSourceBody(path string) bool {
-	return sourceEvidenceHasBody(view.SourceEvidenceForPath(path))
-}
-
-func (view toolResultEvidenceView) SourceBodyPaths() []string {
-	seen := make(map[string]struct{})
-	var paths []string
-	for _, result := range view.results {
-		if strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-		for _, path := range ReadPathsFromToolResult(result) {
-			normalized := NormalizeRunnerPath(path)
-			if normalized == "" || IsNonSourceEvidenceArtifactPath(normalized) || !view.HasSourceBody(normalized) {
-				continue
-			}
-			if _, ok := seen[normalized]; ok {
-				continue
-			}
-			seen[normalized] = struct{}{}
-			paths = append(paths, normalized)
-		}
-	}
-	return paths
-}
-
 type BudgetState struct {
 	StepBudget    int
 	StepsUsed     int
@@ -215,7 +140,11 @@ func (s *stateStore) RecordResult(req workspace.ToolRequest, result workspace.To
 	s.results = append(s.results, result)
 	s.lastReq, s.lastRes, s.hasLast = req, result, true
 	if workspaceWriteResultCompleted(req, result) {
-		for _, path := range writeRequestPaths(req) {
+		paths := newToolResultEvidenceProjection([]workspace.ToolResult{result}).ChangedPathList()
+		if len(paths) == 0 {
+			paths = writeRequestPaths(req)
+		}
+		for _, path := range paths {
 			s.TrackWritePath(path)
 		}
 	}
@@ -907,7 +836,7 @@ func (r *Runner) loopTurnState(state *runnerRunState) TurnState {
 		step = state.stepNumber
 		allowed = state.currentAllowedTools
 	}
-	changed := mapKeys(changedPathsFromToolResults(nil))
+	var changed []string
 	if r.StateStore != nil {
 		changed = r.StateStore.ChangedPaths()
 	}
@@ -4076,7 +4005,7 @@ func (r *Runner) runLegacySessionBody(
 			}
 
 			if autonomyRecorder != nil {
-				autonomyRecorder.emitWriteGate(req, autonomy.PolicyReject, "required_edit_scope_rejected", mapKeys(changedPathsFromToolResults(collectedResults)))
+				autonomyRecorder.emitWriteGate(req, autonomy.PolicyReject, "required_edit_scope_rejected", mapKeys(newToolResultEvidenceProjection(collectedResults).ChangedPathSet()))
 				autonomyRecorder.emitPolicyResult(req, runnerAutonomyPolicyEventInput{
 					Decision:   autonomy.PolicyDeny,
 					ReasonCode: "required_edit_scope_rejected",
@@ -4295,7 +4224,7 @@ func (r *Runner) runLegacySessionBody(
 
 		update := executionState.applyResult(req, result, currentFingerprint, r.Workspace, &requestBudget)
 		if autonomyRecorder != nil && workspaceWriteResultCompleted(req, result) {
-			autonomyRecorder.emitWriteGate(req, autonomy.PolicyAllow, "write_result_completed", mapKeys(changedPathsFromToolResults([]workspace.ToolResult{result})))
+			autonomyRecorder.emitWriteGate(req, autonomy.PolicyAllow, "write_result_completed", mapKeys(newToolResultEvidenceProjection([]workspace.ToolResult{result}).ChangedPathSet()))
 		}
 
 		if deferredGitHistorySubmitPlan != nil && slices.Contains([]string{workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol}, strings.TrimSpace(req.Tool)) {
@@ -4528,7 +4457,7 @@ func (r *Runner) runLegacySessionBody(
 		if update.VerificationState == "done" &&
 			runnerBriefRequiresMutation(r.RuntimeBrief) &&
 			len(r.RuntimeBrief.RequiredEditPaths) == 0 &&
-			len(changedPathsFromToolResults(collectedResults)) > 0 &&
+			len(newToolResultEvidenceProjection(collectedResults).ChangedPathSet()) > 0 &&
 			!hasPendingVerificationAfterWrites(collectedResults, r.RuntimeBrief) &&
 			!sourceEditsNeedSemanticVerification(r.RuntimeBrief, collectedResults) {
 
@@ -5024,13 +4953,13 @@ func (r *Runner) implementationContractCloseoutBlocker(results []workspace.ToolR
 		return "", false
 	}
 
-	if len(changedPathsFromToolResults(results)) > 0 {
+	if len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0 {
 		return "", false
 	}
 
 	facts := implementationCloseoutFacts{
 		StopLabel:           implementationCloseoutStopLabel(stopReason),
-		ChangedPaths:        mapKeys(changedPathsFromToolResults(results)),
+		ChangedPaths:        mapKeys(newToolResultEvidenceProjection(results).ChangedPathSet()),
 		RemainingPaths:      r.remainingRequiredEditPaths(results),
 		SourcedPaths:        implementationTargetWriteReadySourcedPathSummary(results, 5),
 		InspectedEvidence:   conversationInspectedPathSummary(results),
@@ -5310,7 +5239,7 @@ func (r *Runner) completionGateRepeatedBlockerAnswer(result workspace.ToolResult
 		reason = "the final answer did not satisfy the active completion gate"
 	}
 
-	changedPaths := mapKeys(changedPathsFromToolResults(results))
+	changedPaths := mapKeys(newToolResultEvidenceProjection(results).ChangedPathSet())
 
 	var b strings.Builder
 
@@ -5869,7 +5798,7 @@ func writeReadyPacketReadContractActive(brief workerruntime.WorkerRuntimeBrief, 
 		return false
 	}
 
-	if len(changedPathsFromToolResults(results)) > 0 {
+	if len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0 {
 		return false
 	}
 
@@ -5937,7 +5866,7 @@ func implementationScopedEditSurfaceActive(brief workerruntime.WorkerRuntimeBrie
 		return false
 	}
 
-	changed := changedPathsFromToolResults(results)
+	changed := newToolResultEvidenceProjection(results).ChangedPathSet()
 
 	return len(missingRequiredEditPaths(brief.RequiredEditPaths, changed)) != 0
 }
@@ -6002,7 +5931,7 @@ func (r *Runner) preflightApplyPatchAgainstChangedPaths(req workspace.ToolReques
 		return pass
 	}
 
-	changed := changedPathsFromToolResults(results)
+	changed := newToolResultEvidenceProjection(results).ChangedPathSet()
 	if len(changed) == 0 {
 		return pass
 	}
@@ -6180,7 +6109,7 @@ func (r *Runner) exactAnchorHiddenToolBlockerAnswer(req workspace.ToolRequest, r
 		return "", false
 	}
 
-	if len(changedPathsFromToolResults(results)) > 0 {
+	if len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0 {
 		return "", false
 	}
 
@@ -6204,7 +6133,7 @@ func (r *Runner) exactAnchorRepeatedWriteFailureBlockerAnswer(req workspace.Tool
 		return "", false
 	}
 
-	if len(changedPathsFromToolResults(results)) > 0 {
+	if len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0 {
 		return "", false
 	}
 
@@ -6601,7 +6530,7 @@ func runnerAutonomyPathRoles(brief workerruntime.WorkerRuntimeBrief, results []w
 		}
 	}
 
-	for _, path := range mapKeys(changedPathsFromToolResults(results)) {
+	for _, path := range mapKeys(newToolResultEvidenceProjection(results).ChangedPathSet()) {
 		if normalized := NormalizeRunnerPath(path); normalized != "" {
 			roles = append(roles, autonomy.PathRole{Role: autonomy.PathRoleGeneratedArtifact, PathPattern: normalized, Freshness: autonomy.FreshnessFresh, Reason: "recorded changed_paths"})
 		}
@@ -6688,7 +6617,7 @@ func runnerAutonomyForbiddenEffects(brief workerruntime.WorkerRuntimeBrief) []au
 }
 
 func runnerAutonomyObligations(brief workerruntime.WorkerRuntimeBrief, policy RunPolicy, results []workspace.ToolResult) []autonomy.Obligation {
-	changed := changedPathsFromToolResults(results)
+	changed := newToolResultEvidenceProjection(results).ChangedPathSet()
 
 	var obligations []autonomy.Obligation
 
@@ -7897,7 +7826,7 @@ func (a *runnerAutonomyRecorder) emitCompletionGateAttempt(decision autonomy.Too
 		return
 	}
 
-	changed := mapKeys(changedPathsFromToolResults(results))
+	changed := mapKeys(newToolResultEvidenceProjection(results).ChangedPathSet())
 	a.emitGateDecision(runnerAutonomyGateDecision{
 		Gate:               autonomy.GateCompletion,
 		Decision:           decision,
@@ -8915,7 +8844,7 @@ func runnerAutonomyVerificationStatus(results []workspace.ToolResult, brief work
 			return "passed"
 		}
 
-		if len(changedPathsFromToolResults(results)) > 0 {
+		if len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0 {
 			return "not_required"
 		}
 	}
@@ -8944,7 +8873,7 @@ func runnerAutonomyVerificationStatusResolvesPostWriteObligation(status string) 
 }
 
 func runnerAutonomyRequiredPathStatus(contract autonomy.AutonomyContract, results []workspace.ToolResult) []string {
-	changed := changedPathsFromToolResults(results)
+	changed := newToolResultEvidenceProjection(results).ChangedPathSet()
 
 	var status []string
 
@@ -9403,7 +9332,7 @@ func runnerBriefWithRequiredEditPathHints(brief workerruntime.WorkerRuntimeBrief
 		return brief
 	}
 
-	changed := changedPathsFromToolResults(results)
+	changed := newToolResultEvidenceProjection(results).ChangedPathSet()
 	missing := missingRequiredEditPaths(brief.RequiredEditPaths, changed)
 
 	if len(changed) == 0 {
@@ -9707,28 +9636,8 @@ func requestPathInRequiredEditPaths(path string, required []string) bool {
 	return false
 }
 
-func changedPathsFromToolResults(results []workspace.ToolResult) map[string]struct{} {
-	paths := make(map[string]struct{})
-
-	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-
-		for _, path := range changedPathsFromToolResult(result) {
-			paths[NormalizeRunnerPath(path)] = struct{}{}
-		}
-	}
-
-	if len(paths) == 0 {
-		return nil
-	}
-
-	return paths
-}
-
 func unresolvedRejectedMutationPaths(results []workspace.ToolResult, requiredPaths []string) []string {
-	changed := changedPathsFromToolResults(results)
+	changed := newToolResultEvidenceProjection(results).ChangedPathSet()
 	required := readOnlyPathSet(requiredPaths)
 
 	var rejected []string
@@ -9771,7 +9680,7 @@ func unsupportedClaimedChangedPaths(reply string, results []workspace.ToolResult
 		return nil
 	}
 
-	actual := changedPathsFromToolResults(results)
+	actual := newToolResultEvidenceProjection(results).ChangedPathSet()
 	if len(actual) == 0 {
 		return claimed
 	}
@@ -9874,7 +9783,7 @@ func (r *Runner) missingRequiredEditSnippets(results []workspace.ToolResult) []s
 		return nil
 	}
 
-	changed := changedPathsFromToolResults(results)
+	changed := newToolResultEvidenceProjection(results).ChangedPathSet()
 	if len(changed) == 0 {
 		return nil
 	}
@@ -9920,7 +9829,7 @@ func (r *Runner) removedTestDeclarations(results []workspace.ToolResult) []strin
 
 	var paths []string
 
-	for _, path := range mapKeys(changedPathsFromToolResults(results)) {
+	for _, path := range mapKeys(newToolResultEvidenceProjection(results).ChangedPathSet()) {
 		if testSourcePathCanRemoveDeclarations(path) {
 			paths = append(paths, path)
 		}
@@ -10329,103 +10238,6 @@ func changedPathsSectionStatusLabel(label string) bool {
 		strings.HasPrefix(label, "lane sanity")
 }
 
-func changedPathsFromToolResult(result workspace.ToolResult) []string {
-	switch strings.TrimSpace(result.Tool) {
-	case workspace.ToolNameEditFile, workspace.ToolNameWriteFile, workspace.ToolNameAppendFile, workspace.ToolNameMkdir:
-		return changedPathFromSummary(result.Summary)
-	case workspace.ToolNameGoMoveDeclarations:
-		return changedGoMovePathsFromSummary(result.Summary)
-	case workspace.ToolNameApplyPatch:
-		return changedPathsFromPatchOutput(result.Output)
-	case workspace.ToolNameDelegateEdit:
-		// wrapDelegateEditResult preserves the underlying edit_file /
-		// apply_patch summary so we can parse it the same way. Without
-		// this case the planner's required_edit_paths_progress would
-		// never tick paths off after a delegate_edit success.
-		if paths := changedPathFromSummary(result.Summary); len(paths) > 0 {
-			return paths
-		}
-
-		return changedPathsFromPatchOutput(result.Output)
-	default:
-		return nil
-	}
-}
-
-func changedPathsFromPatchOutput(output string) []string {
-	var paths []string
-
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		switch {
-		case strings.HasPrefix(line, "add "):
-			paths = append(paths, patchOutputPath(strings.TrimPrefix(line, "add ")))
-		case strings.HasPrefix(line, "delete "):
-			paths = append(paths, patchOutputPath(strings.TrimPrefix(line, "delete ")))
-		case strings.HasPrefix(line, "update+move "):
-			rest := strings.TrimPrefix(line, "update+move ")
-			source, destination, moved := strings.Cut(rest, " -> ")
-
-			if moved {
-				paths = append(paths, patchOutputPath(source), patchOutputPath(destination))
-			} else {
-				paths = append(paths, patchOutputPath(rest))
-			}
-		case strings.HasPrefix(line, "update "):
-			paths = append(paths, patchOutputPath(strings.TrimPrefix(line, "update ")))
-		}
-	}
-
-	return paths
-}
-
-func patchOutputPath(value string) string {
-	value = strings.TrimSpace(value)
-	if before, _, ok := strings.Cut(value, " ("); ok {
-		value = before
-	}
-
-	return strings.TrimSpace(value)
-}
-
-func changedPathFromSummary(summary string) []string {
-	fields := strings.Fields(strings.TrimSpace(summary))
-	if len(fields) < 2 {
-		return nil
-	}
-
-	switch fields[0] {
-	case "Edited", "Wrote", "Appended":
-		return []string{fields[1]}
-	case "Created":
-		if len(fields) >= 3 && fields[1] == "directory" {
-			return []string{fields[2]}
-		}
-	}
-
-	return nil
-}
-
-func changedGoMovePathsFromSummary(summary string) []string {
-	fields := strings.Fields(strings.TrimSpace(summary))
-	if len(fields) == 0 || fields[0] != "Moved" {
-		return nil
-	}
-
-	var paths []string
-
-	for i, field := range fields {
-		switch field {
-		case "from", "to":
-			if i+1 < len(fields) {
-				paths = append(paths, fields[i+1])
-			}
-		}
-	}
-
-	return paths
-}
-
 func mapKeys(values map[string]struct{}) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
@@ -10469,7 +10281,7 @@ func hasPendingVerificationAfterWrites(results []workspace.ToolResult, brief wor
 			}
 
 			pending = true
-			pendingPaths = textutil.AppendUniqueMulti(pendingPaths, changedPathsFromToolResult(result)...)
+			pendingPaths = textutil.AppendUniqueMulti(pendingPaths, newToolResultEvidenceProjection([]workspace.ToolResult{result}).ChangedPathList()...)
 
 			continue
 		}
@@ -10484,7 +10296,7 @@ func hasPendingVerificationAfterWrites(results []workspace.ToolResult, brief wor
 }
 
 func writeResultMadeNoWorkspaceChange(result workspace.ToolResult) bool {
-	if len(changedPathsFromToolResult(result)) > 0 {
+	if len(newToolResultEvidenceProjection([]workspace.ToolResult{result}).ChangedPathList()) > 0 {
 		return false
 	}
 
@@ -12157,7 +11969,7 @@ func immediateBudgetFallbackAnswer(agentName string, brief workerruntime.WorkerR
 		return "", false
 	}
 
-	if len(changedPathsFromToolResults(results)) > 0 {
+	if len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0 {
 		return "", false
 	}
 
@@ -12439,7 +12251,7 @@ func synthesizePlanThenExecuteSubmitCorrectionBlocker(brief workerruntime.Worker
 	}
 
 	requiredCoverage := planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "")
-	missing := missingRequiredEditPaths(requiredCoverage, changedPathsFromToolResults(results))
+	missing := missingRequiredEditPaths(requiredCoverage, newToolResultEvidenceProjection(results).ChangedPathSet())
 	if len(missing) == 0 {
 		missing = rejectedPathList
 	}
@@ -12537,8 +12349,8 @@ func bulletList(values []string) string {
 }
 
 func synthesizeMutationFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
-	changedPaths := mapKeys(changedPathsFromToolResults(results))
-	missingRequiredPaths := missingRequiredEditPaths(brief.RequiredEditPaths, changedPathsFromToolResults(results))
+	changedPaths := mapKeys(newToolResultEvidenceProjection(results).ChangedPathSet())
+	missingRequiredPaths := missingRequiredEditPaths(brief.RequiredEditPaths, newToolResultEvidenceProjection(results).ChangedPathSet())
 	rejectedMutationPaths := unresolvedRejectedMutationPaths(results, brief.RequiredEditPaths)
 
 	var lastError *workspace.ToolResult
@@ -12688,7 +12500,7 @@ func (r *Runner) modelErrorAfterPartialEditBlockerAnswer(modelErr error, results
 		return "", false
 	}
 
-	if len(changedPathsFromToolResults(results)) == 0 {
+	if len(newToolResultEvidenceProjection(results).ChangedPathSet()) == 0 {
 		return "", false
 	}
 
@@ -13087,13 +12899,13 @@ var requiredEvidenceCheck = map[workerruntime.EvidenceRequirementID]func(answer 
 			return true
 		}
 
-		return len(changedPathsFromToolResults(results)) > 0
+		return len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0
 	},
 	workerruntime.RequiredEvidenceChangedPaths: func(answer string, results []workspace.ToolResult) bool {
-		return len(changedPathsFromToolResults(results)) > 0
+		return len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0
 	},
 	workerruntime.RequiredEvidenceChangedPathsOrNoopReason: func(answer string, results []workspace.ToolResult) bool {
-		if len(changedPathsFromToolResults(results)) > 0 {
+		if len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0 {
 			return true
 		}
 
@@ -13143,7 +12955,7 @@ var requiredEvidenceCheck = map[workerruntime.EvidenceRequirementID]func(answer 
 			strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>")
 	},
 	workerruntime.RequiredEvidenceGitHistoryRationale: func(answer string, results []workspace.ToolResult) bool {
-		if len(changedPathsFromToolResults(results)) > 0 && !changedPathsRequireGitHistory(results) {
+		if len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0 && !changedPathsRequireGitHistory(results) {
 			return true
 		}
 
@@ -13207,7 +13019,7 @@ func changedPathsRequireGitHistory(results []workspace.ToolResult) bool {
 			continue
 		}
 
-		for _, path := range changedPathsFromToolResult(result) {
+		for _, path := range newToolResultEvidenceProjection([]workspace.ToolResult{result}).ChangedPathList() {
 			normalized := NormalizeRunnerPath(path)
 			if normalized == "" || writePathIsNonSource(normalized) {
 				continue
@@ -13546,7 +13358,7 @@ func (p delegatedDiscoveryPlan) candidateConsumptionRequest(results []workspace.
 	paths := p.consumableSourceBodyCandidatePaths(results, 6)
 	for _, path := range paths {
 		path = NormalizeRunnerPath(path)
-		if path == "" || sourceEvidenceBodyReadForPath(path, results) {
+		if path == "" || newToolResultEvidenceProjection(results).HasSourceBody(path) {
 			continue
 		}
 
@@ -15085,7 +14897,7 @@ func delegatedReadOnlyPostDiscoveryOutlineReadRedirect(results []workspace.ToolR
 	}
 
 	path := NormalizeRunnerPath(req.Path)
-	if path == "" || !delegatedDiscoveryConsumableSourcePath(path) || sourceEvidenceBodyReadForPath(path, results) {
+	if path == "" || !delegatedDiscoveryConsumableSourcePath(path) || newToolResultEvidenceProjection(results).HasSourceBody(path) {
 		return workspace.ToolRequest{}, false
 	}
 
@@ -16335,7 +16147,7 @@ func evidenceFirstMutationPhase(brief workerruntime.WorkerRuntimeBrief, results 
 		return ""
 	}
 
-	if len(changedPathsFromToolResults(results)) > 0 {
+	if len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0 {
 		return "post_target_write"
 	}
 
@@ -17638,7 +17450,7 @@ func missingRequiredEditPathsRecoveryNudge(in recoveryNudgeInputs) (string, bool
 		return "", false
 	}
 
-	missing := missingRequiredEditPaths(in.brief.RequiredEditPaths, changedPathsFromToolResults(in.results))
+	missing := missingRequiredEditPaths(in.brief.RequiredEditPaths, newToolResultEvidenceProjection(in.results).ChangedPathSet())
 	if len(missing) == 0 {
 		return "", false
 	}
@@ -17785,7 +17597,7 @@ func prematureEvidenceFirstTargetRecoveryNudge(in recoveryNudgeInputs) (string, 
 func evidenceFirstTargetInspectionActive(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
 	return workerruntime.TaskFamilyEvidenceFirstMutation(brief.TaskFamily) &&
 		len(brief.TargetRefs) > 0 &&
-		len(changedPathsFromToolResults(results)) == 0 &&
+		len(newToolResultEvidenceProjection(results).ChangedPathSet()) == 0 &&
 		hasFocusedNonTargetEvidence(results, brief.TargetRefs) &&
 		hasSuccessfulTargetRead(results, brief.TargetRefs)
 }
@@ -19653,7 +19465,7 @@ func (r *Runner) emitTerminalAnswerSignalsOnce(state *runnerRunState, decision t
 		reason := strings.TrimSpace(decision.Acceptance.Reason)
 		if hostOwnedQuestionCloseoutStopReason(state.stopReason, decision.RawAnswer) &&
 			runnerBriefRequiresMutation(r.RuntimeBrief) &&
-			len(changedPathsFromToolResults(state.collectedResults)) == 0 {
+			len(newToolResultEvidenceProjection(state.collectedResults).ChangedPathSet()) == 0 {
 
 			blockerKind = strings.TrimSpace(state.stopReason)
 			reason = blockerKind
@@ -19666,7 +19478,7 @@ func (r *Runner) emitTerminalAnswerSignalsOnce(state *runnerRunState, decision t
 
 		if terminalBlockedStatusShouldEmit(state.completionStatusEmitted, state.completionStatusLastStatus, state.completionStatusLastBlockerKind, blockerKind) {
 			// Construct the runnerCompletionStatus once, shared by the legacy event emission below.
-			changedPaths := mapKeys(changedPathsFromToolResults(state.collectedResults))
+			changedPaths := mapKeys(newToolResultEvidenceProjection(state.collectedResults).ChangedPathSet())
 			completionPayload := runnerCompletionStatus{
 				Lane:          r.agentName(),
 				TaskFamily:    strings.TrimSpace(r.RuntimeBrief.TaskFamily),
@@ -20163,7 +19975,7 @@ func (r *Runner) runtimeBriefWithLiveState(policy RunPolicy, messages []llama.Ch
 		brief.EvidencePaths = textutil.Merge(brief.EvidencePaths, liveEvidencePaths)
 	}
 
-	brief.ChangedPaths = textutil.Merge(brief.ChangedPaths, mapKeys(changedPathsFromToolResults(results)))
+	brief.ChangedPaths = textutil.Merge(brief.ChangedPaths, mapKeys(newToolResultEvidenceProjection(results).ChangedPathSet()))
 	brief = runnerBriefWithPhaseHints(brief, results)
 	brief.Readiness = runnerReadinessState(r.agentName(), brief, results)
 
@@ -20272,7 +20084,7 @@ func runnerReadinessState(agent string, brief workerruntime.WorkerRuntimeBrief, 
 		readiness.FurtherReadsRequire = "one exact packet-anchored missing claim and one exact probe"
 	}
 
-	changed := changedPathsFromToolResults(results)
+	changed := newToolResultEvidenceProjection(results).ChangedPathSet()
 	if len(changed) > 0 {
 		addSource("changed_paths")
 		addClosed("workspace_changes_present")
@@ -20543,7 +20355,7 @@ func (r *Runner) emitCompletionStatus(payload runnerCompletionStatus) {
 // emitCompletionStatusFromParams constructs the completion-status event from
 // the Run loop's terminal decision fields.
 func (r *Runner) emitCompletionStatusFromParams(status, reason, blockerKind string, results []workspace.ToolResult, userVisibleBlocker bool, writeReadyNudges int) {
-	changedPaths := mapKeys(changedPathsFromToolResults(results))
+	changedPaths := mapKeys(newToolResultEvidenceProjection(results).ChangedPathSet())
 	payload := runnerCompletionStatus{
 		Lane:          r.agentName(),
 		TaskFamily:    strings.TrimSpace(r.RuntimeBrief.TaskFamily),
@@ -21152,7 +20964,7 @@ func scoreMessageForRetention(msg llama.ChatMessage, result *workspace.ToolResul
 
 	editPaths := append([]string{}, brief.RequiredEditPaths...)
 
-	editPaths = append(editPaths, mapKeys(changedPathsFromToolResults(allResults))...)
+	editPaths = append(editPaths, mapKeys(newToolResultEvidenceProjection(allResults).ChangedPathSet())...)
 
 	editScore := 0.0
 
@@ -21474,7 +21286,7 @@ func runnerEvidencePathsForBrief(brief workerruntime.WorkerRuntimeBrief, results
 	}
 
 	scope := mutationEvidenceScope(brief, results)
-	paths := changedPathListFromToolResults(results)
+	paths := newToolResultEvidenceProjection(results).ChangedPathList()
 
 	for _, path := range directProbePathsFromToolResults(results, max*2) {
 		normalized := NormalizeRunnerPath(path)
@@ -21540,9 +21352,9 @@ func runnerPinnedPathsForBrief(brief workerruntime.WorkerRuntimeBrief, results [
 
 	paths := append([]string{}, brief.RequiredEditPaths...)
 
-	paths = append(paths, mapKeys(changedPathsFromToolResults(results))...)
+	paths = append(paths, mapKeys(newToolResultEvidenceProjection(results).ChangedPathSet())...)
 	if implementationTargetWriteReadySurfaceActive(brief, results) {
-		paths = append(paths, sourceEvidenceBodyPaths(results)...)
+		paths = append(paths, newToolResultEvidenceProjection(results).SourceBodyPaths()...)
 	}
 	paths = append(paths, runnerEvidencePathsForBrief(brief, results, max*2)...)
 
@@ -21557,7 +21369,7 @@ func mutationEvidenceScope(brief workerruntime.WorkerRuntimeBrief, results []wor
 		brief.TargetRefs,
 		brief.ChangedPaths,
 		brief.EvidencePaths,
-		mapKeys(changedPathsFromToolResults(results)),
+		mapKeys(newToolResultEvidenceProjection(results).ChangedPathSet()),
 	} {
 		for _, raw := range values {
 			path := NormalizeRunnerPath(raw)
@@ -22169,7 +21981,7 @@ func postWriteVerificationTelemetryCommand(req workspace.ToolRequest, result wor
 // successful write tool result on a brief that has required_edit_paths.
 // The message gives the model running ground truth — paths actually
 // changed (✓) and paths still pending (✗) — derived from
-// changedPathsFromToolResults rather than the model's conversation
+// the tool-result evidence projection rather than the model's conversation
 // memory. Returns empty string when no checklist is appropriate (no
 // required paths in the brief, write was unsuccessful, no state change
 // since the last write, etc.).
@@ -22196,7 +22008,7 @@ func (r *Runner) requiredEditPathsProgressMessage(req workspace.ToolRequest, res
 		return ""
 	}
 
-	changed := changedPathsFromToolResults(results)
+	changed := newToolResultEvidenceProjection(results).ChangedPathSet()
 	if len(changed) == 0 {
 		return ""
 	}
@@ -22267,7 +22079,7 @@ func (r *Runner) finalAnswerBlockerErrorText(kind string, reason string, answer 
 
 	switch kind {
 	case string(turnViolationRequiredEditPathsRemaining):
-		missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results))
+		missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, newToolResultEvidenceProjection(results).ChangedPathSet())
 		if r.planThenExecutePlannerPhase() {
 			base := "the plan-execute planner contract is not fulfilled. The final answer claimed completion, but the harness has no successful submit_plan edit entry for the following required edit path(s): "
 			if len(missing) > 0 {
@@ -22420,38 +22232,11 @@ func acceptedAnswerEvidencePaths(answer string, results []workspace.ToolResult, 
 }
 
 func acceptedImplementationEvidencePaths(results []workspace.ToolResult) []string {
-	paths := changedPathListFromToolResults(results)
+	paths := newToolResultEvidenceProjection(results).ChangedPathList()
 
 	paths = append(paths, directProbePathsFromToolResults(results, 8)...)
 
 	return closurePromptEvidencePathsPreservingTests(paths, 8)
-}
-
-func changedPathListFromToolResults(results []workspace.ToolResult) []string {
-	seen := make(map[string]struct{})
-	paths := make([]string, 0, 4)
-
-	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-
-		for _, rawPath := range changedPathsFromToolResult(result) {
-			path := NormalizeRunnerPath(rawPath)
-			if path == "" {
-				continue
-			}
-
-			if _, ok := seen[path]; ok {
-				continue
-			}
-
-			seen[path] = struct{}{}
-			paths = append(paths, path)
-		}
-	}
-
-	return paths
 }
 
 func closurePromptEvidencePathsPreservingTests(paths []string, max int) []string {
@@ -22537,7 +22322,7 @@ func (r *Runner) explorationDelegationNudge(readCallsSinceWrite int, results []w
 		return ""
 	}
 
-	if len(changedPathsFromToolResults(results)) > 0 || hasSuccessfulTaskResult(results) {
+	if len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0 || hasSuccessfulTaskResult(results) {
 		return ""
 	}
 
@@ -22754,7 +22539,7 @@ func shouldCompactRejectedCompletionReply(r *Runner, reply llama.ChatMessage, re
 		return false
 	}
 
-	if len(changedPathsFromToolResults(results)) > 0 {
+	if len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0 {
 		return false
 	}
 

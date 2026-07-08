@@ -99,9 +99,10 @@ func projectEditFile(path string, display string, current string, req ToolReques
 		updated:     updated,
 		shouldWrite: true,
 		result: ToolResult{
-			Tool:    ToolNameEditFile,
-			Summary: fmt.Sprintf("Edited %s", display),
-			Output:  fmt.Sprintf("replaced occurrences: %d", replaced),
+			Tool:         ToolNameEditFile,
+			Summary:      fmt.Sprintf("Edited %s", display),
+			Output:       fmt.Sprintf("replaced occurrences: %d", replaced),
+			ChangedPaths: []string{display},
 		},
 	}
 }
@@ -247,9 +248,10 @@ func projectLineRangeEdit(display string, current string, req ToolRequest) editP
 		updated:     updated,
 		shouldWrite: true,
 		result: ToolResult{
-			Tool:    ToolNameEditFile,
-			Summary: fmt.Sprintf("Edited %s lines %d-%d", display, startLine, endLine),
-			Output:  fmt.Sprintf("replaced lines: %d-%d", startLine, endLine),
+			Tool:         ToolNameEditFile,
+			Summary:      fmt.Sprintf("Edited %s lines %d-%d", display, startLine, endLine),
+			Output:       fmt.Sprintf("replaced lines: %d-%d", startLine, endLine),
+			ChangedPaths: []string{display},
 		},
 	}
 }

@@ -18,6 +18,15 @@ func FormatToolResultForModel(result ToolResult) string {
 		b.WriteString("precision_tier: " + result.PrecisionTier + "\n")
 	}
 
+	if len(result.ChangedPaths) > 0 {
+		b.WriteString("changed_paths:\n")
+		for _, path := range result.ChangedPaths {
+			if path = strings.TrimSpace(path); path != "" {
+				b.WriteString("- " + path + "\n")
+			}
+		}
+	}
+
 	if result.Error != "" {
 		b.WriteString("status: error\n")
 		b.WriteString("error:\n" + result.Error + "\n")
@@ -119,6 +128,10 @@ func FormatToolTrace(result ToolResult) string {
 
 	if strings.TrimSpace(result.PrecisionTier) != "" {
 		b.WriteString(" | precision_tier=" + result.PrecisionTier)
+	}
+
+	if len(result.ChangedPaths) > 0 {
+		b.WriteString(" | changed_paths=" + strings.Join(result.ChangedPaths, ","))
 	}
 
 	if result.Error != "" {

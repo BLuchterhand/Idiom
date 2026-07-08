@@ -387,6 +387,7 @@ Accepted or corrected slices:
 | Workspace action-class owner and plan-execute dead-shim deletion | Production Go `+105 / -183`: net `-78`; moved runtime/workspace tool action-class decisions behind `workspace.ToolActionClass` and `workspace.ToolRequestActionClass`, deleted the runtime-local classifier helpers, removed shallow/dead direct-answer, obligation, repeated-blocker, and source-satisfied wrappers, and deleted seven unused plan-execute compatibility shims plus the superseded textual-history prune helper | Test Go `+99 / -131`: net `-32`; retargeted tests to the workspace action-class owner and backend-aware plan-execute owners, and deleted the test that preserved the superseded textual prune path | Focused: `go test ./internal/workflows/implementationdispatch -count=1`; `go test ./internal/capabilities/workspace ./internal/contracts/autonomy -count=1`; focused runtime action-class/recovery/plan-execute tests; `go test ./internal/runtime/agent -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `/Users/ben/go/bin/deadcode -test ./...`; `/Users/ben/go/bin/staticcheck -checks=U1000 ./...` | Accepted after reviewer synthesis; workspace is now the single source for runtime/workspace tool-to-action projection, the `task` surface splits tool-level `generic_probe` from concrete request-level `delegate`, no replacement pass-through wrapper was introduced, and the remaining autonomy-internal classification map is deferred to an audit-event projection migration because autonomy cannot import workspace |
 | Autonomy audit event-action projection migration | Production Go `+15 / -65`: net `-50`; deleted the autonomy audit tool-name-to-action classifier (`TurnPhaseActionClassForTool*`) and the textual manifest visibility helper that depended on it, canonicalized and validated `ContractPolicyEvent.ActionClass`, made phase/runtime action-class compatibility compare `ActionPolicy.AllowedActionClasses` directly against `RuntimeCall.ExpressibleActionClasses`, and made observed tool-policy contradictions consume the projected policy event action class | Test Go `+26 / -34`: net `-8`; removed the test that preserved the autonomy classifier map, updated current policy-observation tests to carry action class, canonicalized event fixture input, added invalid action-class event validation coverage, and renamed the runtime recovery test to the workspace projection owner | Focused: `go test ./internal/contracts/autonomy -count=1`; `go test ./internal/contracts/autonomy ./internal/capabilities/workspace -count=1`; `go test ./internal/runtime/agent -run 'TestGenericAllowedActionClassesUsesWorkspaceToolProjection|Test.*TurnPhase|Test.*ActionClass|Test.*RecoveryCard|Test.*Autonomy' -count=1`; package: `go test ./internal/contracts/autonomy ./internal/runtime/agent -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `/Users/ben/go/bin/deadcode -test ./...`; `/Users/ben/go/bin/staticcheck -checks=U1000 ./...`; `git diff --check` | Accepted as the follow-up event-projection migration. Current audit no longer owns a tool-classification map; runtime/workspace action semantics are projected into autonomy policy events, and turn-phase surface reconciliation checks action-class fields instead of reconstructing tool semantics |
 | Workspace verification-observation authority | Production Go `+204 / -229`: net `-25`; added workspace-owned verification observations for request/result attempts, success, patch-hygiene-only shell checks, source_sanity diagnostic backing, and the pending-HTML smoke-check exception, then deleted runtime-local `isVerificationRequest`, `resultCountsAsSuccessfulVerification`, post-write HTML verification parsing, source_sanity diagnostic detection, shell-output patch-hygiene parsing, and `isVerificationToolResult` | Test Go `+149 / -5`: net `+144`; added workspace characterization for structured shell verification, failed attempts, non-verification shell output, source_sanity generic fallback rejection, diagnostic-backed source_sanity, diagnostic tools, and HTML smoke-check path scoping; updated one runtime fixture to use the real `$ <command>` shell output contract instead of preserving unstructured shell evidence | Focused: `go test ./internal/capabilities/workspace -run 'TestAnalyzeVerification|TestAnalyzePostWriteVerification|TestAnalyzeShellCommand|TestShellCommandFromToolResult' -count=1`; `go test ./internal/runtime/agent -run 'Test(LanguageDiagnosticsCountAsVerification|ShellSanityCommandsCountAsVerification|ShellSyntaxCheckSatisfiesScriptPostWriteVerification|SourceEditsNeedSemanticVerificationAfterPatchHygieneOnly|SourceEditsAreSemanticallyVerifiedAfterCompilerBackedSourceSanity|SourceEditsStillNeedVerificationAfterGenericSourceSanityFallback|SourceEditsAreSemanticallyVerifiedAfterLanguageCommand|PostWriteVerificationAcceptsFocusedHTMLSmokeCheck|PostWriteVerificationRejectsHTMLSmokeCheckForGoWrite|FinalAnswerAcceptanceRejectsPendingPostWriteVerification|SourceVerificationDoesNotTreatIncidentalPathMentionAsVerificationException|VerifiedSourceCloseoutIgnoresIncidentalPathMentions)' -count=1`; package: `go test ./internal/capabilities/workspace ./internal/runtime/agent -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`; `git diff --check` | Accepted after shell/verification reviewer feedback; runtime still owns lane policy such as latest-after-write, planner-owned verification, and final-answer readiness, while workspace owns the per-tool verification facts. The old behavior where any successful shell could satisfy required verification evidence is gone, and no replacement wrapper function was introduced |
+| Tool-result evidence projection and typed changed paths | Production Go `+465 / -492`: net `-27`; added a runtime-owned `toolResultEvidenceProjection` for read paths, source-body evidence, unread candidate paths, and changed paths; added typed `ChangedPaths` to workspace and language-tool results; removed runtime summary parsers for direct writes and Go moves, plus the old raw source-evidence and changed-path helper surfaces | Test Go `+256 / -190`: net `+66`; migrated fixtures away from summary-string write evidence, added workspace write-tool changed-path contract tests, added language-tool changed-path coverage, and kept only an explicit legacy patch-output fallback characterization | Focused: `go test ./internal/capabilities/workspace`; `go test ./internal/repository/semantic/languagetools`; `go test ./internal/runtime/agent -run 'TestToolResultEvidenceProjectionChangedPaths|TestToolResultEvidenceProjectionLegacyPatchOutputIncludesDeletes|TestDelegateEditResultsAdvanceRequiredEditPathsProgress|TestPathEvidenceMutationHistoryParityBoundaries'`; package: `go test ./internal/runtime/agent`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`; `git diff --check` | Accepted as a deeper evidence-authority slice rather than a wrapper cleanup. `workspace.ToolResult.ChangedPaths` is now the authority for successful writes, runtime has a single projection for path evidence, and stale-reference scans found no deleted helper names. Remaining architecture work: fold diagnostic, external-document, plan-artifact, and delegated-packet facts into this projection or a neighboring read model, then reduce `PathEvidenceRegistry` registration logic without adding pass-through helpers |
 
 ## Historical Count Snapshots (Superseded)
 
@@ -801,6 +802,9 @@ helper cleanup:
 - `go test ./internal/platform/commandexec -count=1`: latest run passed.
 - `go test ./internal/capabilities/workspace
   ./internal/repository/semantic/languagetools -count=1`: latest run passed.
+- `go test ./internal/runtime/agent -run
+  'TestToolResultEvidenceProjectionChangedPaths|TestToolResultEvidenceProjectionLegacyPatchOutputIncludesDeletes|TestDelegateEditResultsAdvanceRequiredEditPathsProgress|TestPathEvidenceMutationHistoryParityBoundaries'`:
+  latest run passed.
 - `go test ./internal/capabilities/workspace -run
   'TestContextTracePackCapturesFailingCommandAsEvidence|TestSearchContent|TestRunShell|TestShell'
   -count=1`: latest run passed.
@@ -813,6 +817,8 @@ helper cleanup:
   warning`: latest run passed with `0` findings.
 - `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`: latest run
   is clean.
+- `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`:
+  latest run is clean.
 - `git diff --check`: latest run passed.
 
 ## Current Count And Estimate
@@ -832,10 +838,14 @@ Current git state:
   inference authority deletion, the runtime action-class/dead-bookkeeping
   cleanup, the workspace action-class owner plus plan-execute dead-shim
   deletion, the autonomy audit event-action projection migration, and the
-  workspace verification-observation authority migration.
+  workspace verification-observation authority migration, and the tool-result
+  evidence projection plus typed changed-path migration.
 - Current branch-plus-worktree diff versus `main`: production Go
-  `+21,025 / -22,714`, net `-1,689`; Go tests `+11,160 / -7,794`, net
-  `+3,366`; strict all-file total `+34,422 / -32,483`, net `+1,939`.
+  `+21,231 / -23,132`, net `-1,901`; Go tests `+11,385 / -7,953`, net
+  `+3,432`; strict all-file total `+35,055 / -33,067`, net `+1,988`.
+- Latest tool-result evidence projection and typed changed-path slice only:
+  production Go `+465 / -492`, net `-27`; Go tests `+256 / -190`,
+  net `+66`.
 - Latest workspace verification-observation authority slice only:
   production Go `+204 / -229`, net `-25`; Go tests `+149 / -5`,
   net `+144`.
@@ -892,8 +902,8 @@ or alias-only surfaces, while the total all-file diff remains positive because
 tests, docs, scripted fixtures, and earlier `commandexec` process-lifecycle
 setup added shared platform coverage before all remaining process migrations
 are complete. The current worktree versus `main` is production Go
-`+20789 / -22501`, net `-1712`; Go tests are `+11061 / -7791`, net `+3270`;
-all tracked files are `+34082 / -32267`, net `+1815`. The implementation
+`+21,231 / -23,132`, net `-1,901`; Go tests are `+11,385 / -7,953`, net
+`+3,432`; all files are `+35,055 / -33,067`, net `+1,988`. The implementation
 ledger above remains the source of truth for accepted local reductions inside
 each consolidation case.
 

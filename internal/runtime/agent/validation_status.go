@@ -95,7 +95,7 @@ func (r *Runner) validationStatusAnswerCanUseLedgerEvidence(answer string, resul
 	}
 
 	return r.validationStatusAnswerRejectionReason(answer, results) == "" &&
-		(validationAnswerMentionsValidationLedger(strings.ToLower(answer)) || hasObservedVerificationResult(results) || len(changedPathsFromToolResults(results)) > 0)
+		(validationAnswerMentionsValidationLedger(strings.ToLower(answer)) || hasObservedVerificationResult(results) || len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0)
 }
 
 func validationStatusPathBackedByLedger(rawPath string, canonicalPath string, results []workspace.ToolResult) bool {
@@ -284,7 +284,7 @@ func hasChangedTestPath(results []workspace.ToolResult) bool {
 
 func changedTestPaths(results []workspace.ToolResult) []string {
 	var paths []string
-	for _, path := range mapKeys(changedPathsFromToolResults(results)) {
+	for _, path := range mapKeys(newToolResultEvidenceProjection(results).ChangedPathSet()) {
 		if plancontract.PathLooksLikeTest(path) {
 			paths = textutil.AppendUnique(paths, path)
 		}
@@ -353,7 +353,7 @@ func validationStatusEvidenceLedgerPaths(results []workspace.ToolResult) []strin
 		paths = textutil.AppendUnique(paths, normalized)
 	}
 
-	for _, path := range changedPathListFromToolResults(results) {
+	for _, path := range newToolResultEvidenceProjection(results).ChangedPathList() {
 		add(path)
 	}
 

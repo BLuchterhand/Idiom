@@ -284,7 +284,7 @@ func (r *Runner) assessSourceGrounding(answer string, results []workspace.ToolRe
 		}
 
 		if (r.PathEvidenceRegistry != nil && r.PathEvidenceRegistry.HasBodyEvidence(citationPath)) ||
-			sourceEvidenceBodyReadForPath(citationPath, results) ||
+			newToolResultEvidenceProjection(results).HasSourceBody(citationPath) ||
 			readOnlyExternalDocumentBodyReadForPath(citationPath, results) ||
 			slices.Contains(delegatedReadOnlySourceBodyEvidencePaths(results), citationPath) ||
 			sourceGroundingDiagnosticArtifactReadForPath(path, results) ||
@@ -535,7 +535,7 @@ func sourceCitationAmbiguousBodyEvidence(r *Runner, path string, results []works
 }
 
 func sourceCitationHasExactWorkspaceBodyEvidence(r *Runner, path string, results []workspace.ToolResult) bool {
-	return sourceEvidenceBodyReadForPath(path, results) ||
+	return newToolResultEvidenceProjection(results).HasSourceBody(path) ||
 		(r != nil && r.PathEvidenceRegistry != nil && r.PathEvidenceRegistry.HasBodyEvidence(path)) ||
 		slices.Contains(delegatedReadOnlySourceBodyEvidencePaths(results), path)
 }
@@ -543,7 +543,7 @@ func sourceCitationHasExactWorkspaceBodyEvidence(r *Runner, path string, results
 func sourceCitationWorkspaceBodyMatches(r *Runner, path string, results []workspace.ToolResult) []string {
 	base := strings.ToLower(filepath.Base(path))
 	var matches []string
-	for _, candidate := range textutil.Merge(sourceEvidenceBodyPaths(results), delegatedReadOnlySourceBodyEvidencePaths(results)) {
+	for _, candidate := range textutil.Merge(newToolResultEvidenceProjection(results).SourceBodyPaths(), delegatedReadOnlySourceBodyEvidencePaths(results)) {
 		candidate = NormalizeRunnerPath(candidate)
 		if candidate == "" || strings.EqualFold(candidate, path) {
 			continue

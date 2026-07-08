@@ -2710,7 +2710,7 @@ func TestRunnerAutonomyRecorderRejectedCompletionReportsOnlyCurrentlyOpenObligat
 	recorder.emitContractStarted(brief)
 	recorder.emitWriteGate(workspace.ToolRequest{Tool: "write_file", Path: "internal/runtime/agent/runner_core.go"}, autonomy.PolicyAllow, "write_result_completed", []string{"internal/runtime/agent/runner_core.go"})
 	recorder.emitCompletionGate(autonomy.PolicyReject, "required_obligations_open", []workspace.ToolResult{
-		{Tool: "write_file", Summary: "Wrote internal/runtime/agent/runner_core.go"},
+		{Tool: "write_file", Summary: "Wrote internal/runtime/agent/runner_core.go", ChangedPaths: []string{"internal/runtime/agent/runner_core.go"}},
 	})
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
@@ -2971,7 +2971,7 @@ func TestRunnerAutonomyRecorderCompletionAllowDoesNotResolveFailedVerification(t
 	}
 
 	results := []workspace.ToolResult{
-		{Tool: "write_file", Summary: "Wrote internal/runtime/agent/runner_core.go"},
+		{Tool: "write_file", Summary: "Wrote internal/runtime/agent/runner_core.go", ChangedPaths: []string{"internal/runtime/agent/runner_core.go"}},
 		{Tool: "source_sanity", Summary: "Source sanity failed", Error: "internal/runtime/agent/runner_core.go:12: undefined: missingSymbol"},
 	}
 
@@ -3750,9 +3750,9 @@ func TestDelegateEditResultsAdvanceRequiredEditPathsProgress(t *testing.T) {
 		t.Fatalf("delegate_edit wrap should keep tool=delegate_edit, got %q", result.Tool)
 	}
 
-	paths := changedPathsFromToolResult(result)
+	paths := newToolResultEvidenceProjection([]workspace.ToolResult{result}).ChangedPathList()
 	if len(paths) == 0 {
-		t.Fatalf("changedPathsFromToolResult must extract the edited path from a delegate_edit result; got %v", paths)
+		t.Fatalf("delegate_edit projection must expose the edited path; got %v", paths)
 	}
 
 	if !strings.Contains(paths[0], "a.txt") {
@@ -5780,7 +5780,7 @@ func TestRunnerTurnRecorderSyncsStateStoreResultAndChangedPaths(t *testing.T) {
 	}
 
 	req := workspace.ToolRequest{Tool: "edit_file", Path: "README.md"}
-	result := workspace.ToolResult{Tool: "edit_file", Summary: "Edited README.md"}
+	result := workspace.ToolResult{Tool: "edit_file", Summary: "Edited README.md", ChangedPaths: []string{"README.md"}}
 	recorder.record(1, req, result, "tool_result", runnerRecordOptions{})
 
 	if got := len(store.Results()); got != 1 {
@@ -5971,7 +5971,7 @@ func TestConsumeRecoveryReadAllowanceGrantsOnePerRemainingPath(t *testing.T) {
 	}
 	// One required path already written; remaining = b.go, c.go.
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited a.go"},
+		{Tool: "edit_file", Summary: "Edited a.go", ChangedPaths: []string{"a.go"}},
 	}
 	used := map[string]bool{}
 
@@ -6022,8 +6022,8 @@ func TestShouldForceAnswerForPostCompletionVerificationCountsAndCutsOff(t *testi
 	}
 	// All required paths written.
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited a.txt"},
-		{Tool: "edit_file", Summary: "Edited b.txt"},
+		{Tool: "edit_file", Summary: "Edited a.txt", ChangedPaths: []string{"a.txt"}},
+		{Tool: "edit_file", Summary: "Edited b.txt", ChangedPaths: []string{"b.txt"}},
 	}
 	counter := 0
 	read := workspace.ToolRequest{Tool: "read_file", Path: "a.txt"}
@@ -6054,7 +6054,7 @@ func TestShouldForceAnswerForPostCompletionVerificationWaitsForSourceVerificatio
 			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 		},
 	}
-	results := []workspace.ToolResult{{Tool: "edit_file", Summary: "Edited a.go"}}
+	results := []workspace.ToolResult{{Tool: "edit_file", Summary: "Edited a.go", ChangedPaths: []string{"a.go"}}}
 	counter := 0
 	read := workspace.ToolRequest{Tool: "read_file", Path: "a.go"}
 
@@ -6080,7 +6080,7 @@ func TestShouldForceAnswerForPostCompletionVerificationWaitsAfterFailedVerificat
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited a.go"},
+		{Tool: "edit_file", Summary: "Edited a.go", ChangedPaths: []string{"a.go"}},
 		{Tool: "source_sanity", Summary: "Source sanity failed", Error: "a.go:12: undefined: missingSymbol"},
 	}
 	counter := 0
@@ -6108,7 +6108,7 @@ func TestShouldForceAnswerForPostCompletionVerificationCountsAfterSuccessfulSour
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited a.go"},
+		{Tool: "edit_file", Summary: "Edited a.go", ChangedPaths: []string{"a.go"}},
 		{Tool: "source_sanity", Summary: "Source sanity passed", Output: "a.go: no warnings or errors via go_diagnostics"},
 	}
 	counter := 0
@@ -6136,7 +6136,7 @@ func TestCompletionGateRecoveryPromptAfterFailedVerificationRequiresRepair(t *te
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited a.go"},
+		{Tool: "edit_file", Summary: "Edited a.go", ChangedPaths: []string{"a.go"}},
 		{Tool: "source_sanity", Summary: "Source sanity failed", Error: "a.go:12: undefined: missingSymbol"},
 	}
 	prompt, hideReads, ok := runner.completionGateRecoveryPrompt(results)
@@ -6175,7 +6175,7 @@ func TestRunnerCompactionSummaryPreservesFailedVerificationRepairPacket(t *testi
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited a.go"},
+		{Tool: "edit_file", Summary: "Edited a.go", ChangedPaths: []string{"a.go"}},
 		{Tool: "source_sanity", Summary: "Source sanity failed", Error: "a.go:12: undefined: missingSymbol"},
 	}
 	summary := runner.runnerCompactionSummary(RunPolicy{}, nil, results)
@@ -6311,7 +6311,7 @@ func TestShouldForceAnswerForPostCompletionVerificationIgnoresWrites(t *testing.
 			RequiredEditPaths: []string{"a.txt"},
 		},
 	}
-	results := []workspace.ToolResult{{Tool: "edit_file", Summary: "Edited a.txt"}}
+	results := []workspace.ToolResult{{Tool: "edit_file", Summary: "Edited a.txt", ChangedPaths: []string{"a.txt"}}}
 	counter := 0
 	// Even at the threshold, writes don't count.
 	write := workspace.ToolRequest{Tool: "edit_file", Path: "a.txt"}
@@ -6336,7 +6336,7 @@ func TestShouldForceAnswerForPostCompletionVerificationSkipsWhenPathsRemain(t *t
 		},
 	}
 	// Only one of two required paths written — verification cutoff shouldn't engage.
-	results := []workspace.ToolResult{{Tool: "edit_file", Summary: "Edited a.txt"}}
+	results := []workspace.ToolResult{{Tool: "edit_file", Summary: "Edited a.txt", ChangedPaths: []string{"a.txt"}}}
 	counter := 0
 	read := workspace.ToolRequest{Tool: "read_file", Path: "b.txt"}
 
@@ -6361,7 +6361,7 @@ func TestPreflightApplyPatchSkipsAlreadyChangedSectionAndAppliesRemainder(t *tes
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited a.txt"},
+		{Tool: "edit_file", Summary: "Edited a.txt", ChangedPaths: []string{"a.txt"}},
 	}
 	patch := "*** Begin Patch\n" +
 		"*** Update File: a.txt\n" +
@@ -6412,8 +6412,8 @@ func TestPreflightApplyPatchAllSectionsRedundantSynthesizesSuccess(t *testing.T)
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited a.txt"},
-		{Tool: "edit_file", Summary: "Edited b.txt"},
+		{Tool: "edit_file", Summary: "Edited a.txt", ChangedPaths: []string{"a.txt"}},
+		{Tool: "edit_file", Summary: "Edited b.txt", ChangedPaths: []string{"b.txt"}},
 	}
 	// Every section targets a path that has already been changed.
 	patch := "*** Begin Patch\n" +
@@ -6460,7 +6460,7 @@ func TestPreflightApplyPatchAgainstChangedPathsPassesCleanPatch(t *testing.T) {
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited a.txt"},
+		{Tool: "edit_file", Summary: "Edited a.txt", ChangedPaths: []string{"a.txt"}},
 	}
 	// All sections target paths that have NOT been changed yet.
 	patch := "*** Begin Patch\n" +
@@ -6489,7 +6489,7 @@ func TestPreflightApplyPatchAgainstChangedPathsIgnoresParseErrors(t *testing.T) 
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{RequiredEditPaths: []string{"a.txt"}},
 	}
-	results := []workspace.ToolResult{{Tool: "edit_file", Summary: "Edited a.txt"}}
+	results := []workspace.ToolResult{{Tool: "edit_file", Summary: "Edited a.txt", ChangedPaths: []string{"a.txt"}}}
 	// Malformed patch — the parse helper should let the real applyPatch
 	// surface the actual envelope error rather than the pre-flight
 	// short-circuiting it.
@@ -6518,7 +6518,7 @@ func TestPreflightApplyPatchAllSkippedSummaryDiscouragesCompletion(t *testing.T)
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited a.txt"},
+		{Tool: "edit_file", Summary: "Edited a.txt", ChangedPaths: []string{"a.txt"}},
 	}
 	patch := "*** Begin Patch\n" +
 		"*** Update File: a.txt\n" +
@@ -6559,11 +6559,11 @@ func TestRequiredEditPathsProgressMessageRendersCheckmarks(t *testing.T) {
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited a.txt"},
+		{Tool: "edit_file", Summary: "Edited a.txt", ChangedPaths: []string{"a.txt"}},
 	}
 	msg := runner.requiredEditPathsProgressMessage(
 		workspace.ToolRequest{Tool: "edit_file", Path: "a.txt"},
-		workspace.ToolResult{Tool: "edit_file", Summary: "Edited a.txt"},
+		workspace.ToolResult{Tool: "edit_file", Summary: "Edited a.txt", ChangedPaths: []string{"a.txt"}},
 		results,
 	)
 
@@ -6592,10 +6592,10 @@ func TestRequiredEditPathsProgressMessageSilentWhenNoRequiredPaths(t *testing.T)
 			PermissionProfile: "guarded_workspace_write",
 		},
 	}
-	results := []workspace.ToolResult{{Tool: "edit_file", Summary: "Edited foo.txt"}}
+	results := []workspace.ToolResult{{Tool: "edit_file", Summary: "Edited foo.txt", ChangedPaths: []string{"foo.txt"}}}
 	msg := runner.requiredEditPathsProgressMessage(
 		workspace.ToolRequest{Tool: "edit_file", Path: "foo.txt"},
-		workspace.ToolResult{Tool: "edit_file", Summary: "Edited foo.txt"},
+		workspace.ToolResult{Tool: "edit_file", Summary: "Edited foo.txt", ChangedPaths: []string{"foo.txt"}},
 		results,
 	)
 
@@ -6634,10 +6634,10 @@ func TestRequiredEditPathsProgressMessageOnFinalCompletion(t *testing.T) {
 			RequiredEditPaths: []string{"a.txt"},
 		},
 	}
-	results := []workspace.ToolResult{{Tool: "edit_file", Summary: "Edited a.txt"}}
+	results := []workspace.ToolResult{{Tool: "edit_file", Summary: "Edited a.txt", ChangedPaths: []string{"a.txt"}}}
 	msg := runner.requiredEditPathsProgressMessage(
 		workspace.ToolRequest{Tool: "edit_file", Path: "a.txt"},
-		workspace.ToolResult{Tool: "edit_file", Summary: "Edited a.txt"},
+		workspace.ToolResult{Tool: "edit_file", Summary: "Edited a.txt", ChangedPaths: []string{"a.txt"}},
 		results,
 	)
 
@@ -6655,7 +6655,7 @@ func TestFinalAnswerBlockerErrorTextNamesMissingPaths(t *testing.T) {
 			RequiredEditPaths: []string{"a.txt", "b.txt", "c.txt"},
 		},
 	}
-	results := []workspace.ToolResult{{Tool: "edit_file", Summary: "Edited a.txt"}}
+	results := []workspace.ToolResult{{Tool: "edit_file", Summary: "Edited a.txt", ChangedPaths: []string{"a.txt"}}}
 	answer := "Implementation Complete. Changed paths: a.txt, b.txt, c.txt."
 	text := runner.finalAnswerBlockerErrorText("required_edit_paths_remaining", "required_edit_paths_remaining", answer, results)
 
@@ -6679,7 +6679,7 @@ func TestConsumeRecoveryReadAllowanceNoRemainingPaths(t *testing.T) {
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited a.go"},
+		{Tool: "edit_file", Summary: "Edited a.go", ChangedPaths: []string{"a.go"}},
 	}
 	used := map[string]bool{}
 
@@ -7552,7 +7552,7 @@ func TestTaskLedgerAcceptsCompletedItemWithWriteReadAndVerifyReceipts(t *testing
 	state := newTaskLedgerState(TaskLedgerPolicy{Required: true, RequireEvidence: true})
 	receipts := []workspace.ToolResult{
 		{Tool: "read_file", Summary: "Read README.md"},
-		{Tool: "edit_file", Summary: "Edited README.md"},
+		{Tool: "edit_file", Summary: "Edited README.md", ChangedPaths: []string{"README.md"}},
 		{Tool: "shell", Summary: "Command succeeded", Output: "go test ./..."},
 	}
 	result := state.apply(workspace.ToolRequest{
@@ -7572,7 +7572,7 @@ func TestTaskLedgerAcceptsCompletedItemWithWriteReadAndVerifyReceipts(t *testing
 func TestTaskLedgerRejectsEvidenceNotBackedBySuccessfulReceipts(t *testing.T) {
 	state := newTaskLedgerState(TaskLedgerPolicy{Required: true, RequireEvidence: true})
 	receipts := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited docs/other.md"},
+		{Tool: "edit_file", Summary: "Edited docs/other.md", ChangedPaths: []string{"docs/other.md"}},
 		{Tool: "shell", Summary: "Command failed", Output: "go test ./...", Error: "exit status 1"},
 	}
 	result := state.apply(workspace.ToolRequest{
@@ -7594,7 +7594,7 @@ func TestTaskLedgerDoesNotRequireNewEvidenceForAlreadyCompletedItems(t *testing.
 		Todos: []workspace.TaskLedgerItem{
 			{ID: "edit", Content: "Edit README", Status: "completed", Evidence: "write:README.md"},
 		},
-	}, []workspace.ToolResult{{Tool: "edit_file", Summary: "Edited README.md"}})
+	}, []workspace.ToolResult{{Tool: "edit_file", Summary: "Edited README.md", ChangedPaths: []string{"README.md"}}})
 
 	if initial.Error != "" {
 		t.Fatalf("initial ledger update rejected: %#v", initial)
@@ -7707,7 +7707,7 @@ func TestShellSyntaxCheckSatisfiesScriptPostWriteVerification(t *testing.T) {
 	}
 
 	writeOnlyResults := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited scripts/run-harness.sh"},
+		{Tool: "edit_file", Summary: "Edited scripts/run-harness.sh", ChangedPaths: []string{"scripts/run-harness.sh"}},
 	}
 	deterministicReq, ok := deterministicPostWriteVerificationRequest(writeOnlyResults, workerruntime.WorkerRuntimeBrief{VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker"})
 
@@ -7720,7 +7720,7 @@ func TestShellSyntaxCheckSatisfiesScriptPostWriteVerification(t *testing.T) {
 	}
 
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited scripts/run-harness.sh"},
+		{Tool: "edit_file", Summary: "Edited scripts/run-harness.sh", ChangedPaths: []string{"scripts/run-harness.sh"}},
 		{Tool: "shell", Summary: "Ran shell command", Output: "$ bash -n scripts/run-harness.sh\n"},
 	}
 	if !hasSuccessfulVerificationResult(results) {
@@ -7835,7 +7835,7 @@ func TestPatchHygieneDoesNotSatisfySourceEditCompletion(t *testing.T) {
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited native/tests/test_cart_system.cpp"},
+		{Tool: "edit_file", Summary: "Edited native/tests/test_cart_system.cpp", ChangedPaths: []string{"native/tests/test_cart_system.cpp"}},
 		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- native/tests/test_cart_system.cpp\n"},
 	}
 
@@ -7857,7 +7857,7 @@ func TestMutationCompletionGateRejectsBlockersNoneBeforeSourceVerification(t *te
 			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 		},
 	}
-	write := workspace.ToolResult{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"}
+	write := workspace.ToolResult{Tool: "edit_file", Summary: "Edited internal/labels/labels.go", ChangedPaths: []string{"internal/labels/labels.go"}}
 	answer := "Changed paths:\n- internal/labels/labels.go\n\nVerification: not run.\n\nBlockers: none."
 
 	cases := []struct {
@@ -7910,7 +7910,7 @@ func TestPlannerOwnedVerificationRequiresSourceSanityBeforeDelegatedStatus(t *te
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited native/tests/test_cart_system.cpp"},
+		{Tool: "edit_file", Summary: "Edited native/tests/test_cart_system.cpp", ChangedPaths: []string{"native/tests/test_cart_system.cpp"}},
 		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- native/tests/test_cart_system.cpp\n"},
 	}
 
@@ -7995,7 +7995,7 @@ func TestMutationCompletionGateRequiresRequiredEditSnippets(t *testing.T) {
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited " + target},
+		{Tool: "edit_file", Summary: "Edited " + target, ChangedPaths: []string{target}},
 		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- " + target + "\n"},
 	}
 
@@ -8014,7 +8014,7 @@ func TestMutationCompletionGateRequiresRequiredEditSnippets(t *testing.T) {
 	}
 
 	verifiedResults := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited " + target},
+		{Tool: "edit_file", Summary: "Edited " + target, ChangedPaths: []string{target}},
 		{Tool: "cpp_diagnostics", Summary: "Collected C++ diagnostics for 1 file(s).", Output: target + ": no warnings or errors"},
 	}
 	if result, rejected := runner.mutationCompletionRejection("Changed paths:\n- "+target+"\n\nVerification: cpp_diagnostics passed.", verifiedResults); rejected {
@@ -8056,7 +8056,7 @@ TEST_CASE("loader reserves assigned carts") {
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited " + target},
+		{Tool: "edit_file", Summary: "Edited " + target, ChangedPaths: []string{target}},
 		{Tool: "cpp_diagnostics", Summary: "Collected C++ diagnostics for 1 file(s).", Output: target + ": no warnings or errors"},
 	}
 
@@ -8102,7 +8102,7 @@ TEST_CASE("loader reserves assigned carts") {
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited " + target},
+		{Tool: "edit_file", Summary: "Edited " + target, ChangedPaths: []string{target}},
 		{Tool: "cpp_diagnostics", Summary: "Collected C++ diagnostics for 1 file(s).", Output: target + ": no warnings or errors"},
 	}
 
@@ -8162,7 +8162,7 @@ func TestPatchHygieneAllowsNonSourceCompletion(t *testing.T) {
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited README.md"},
+		{Tool: "edit_file", Summary: "Edited README.md", ChangedPaths: []string{"README.md"}},
 		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- README.md\n"},
 	}
 
@@ -8205,7 +8205,7 @@ func TestSourceEditPatchHygieneBlocksMoreReadsButAllowsSourceSanity(t *testing.T
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited native/src/cart_system.cpp"},
+		{Tool: "edit_file", Summary: "Edited native/src/cart_system.cpp", ChangedPaths: []string{"native/src/cart_system.cpp"}},
 		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- native/src/cart_system.cpp\n"},
 	}
 
@@ -8230,7 +8230,7 @@ func TestSourceEditCloseoutAfterSemanticVerificationRequiresNamedGapForReads(t *
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited native/src/cart_system.cpp"},
+		{Tool: "edit_file", Summary: "Edited native/src/cart_system.cpp", ChangedPaths: []string{"native/src/cart_system.cpp"}},
 		{Tool: "cpp_diagnostics", Summary: "Collected C++ diagnostics for 1 file(s).", Output: "native/src/cart_system.cpp: no warnings or errors"},
 	}
 
@@ -10739,7 +10739,7 @@ func TestExactAnchorPreWriteRecoveryNudgeDoesNotSuggestReadRefinement(t *testing
 
 func TestRequiredPathRecoveryNudgeDoesNotAnswerFirst(t *testing.T) {
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited native/src/energy.cpp"},
+		{Tool: "edit_file", Summary: "Edited native/src/energy.cpp", ChangedPaths: []string{"native/src/energy.cpp"}},
 	}
 	nudge := buildRejectionRecoveryNudge(
 		workspace.ToolRequest{Tool: "read_file", Path: "native/tests/test_energy.cpp"},
@@ -13087,7 +13087,7 @@ func TestForcedCompletionAsksModelBeforeDeterministicMutationFallback(t *testing
 			RequiredEditPaths:    []string{"src/example.h", "src/example.cpp"},
 		},
 	}
-	results := []workspace.ToolResult{{Tool: "edit_file", Summary: "Edited src/example.cpp"}}
+	results := []workspace.ToolResult{{Tool: "edit_file", Summary: "Edited src/example.cpp", ChangedPaths: []string{"src/example.cpp"}}}
 
 	answer, err := runner.completeWithoutMoreToolsWithReason(
 		context.Background(),
@@ -13161,7 +13161,7 @@ func TestForcedCompletionPreservesAcceptedModelMutationCloseout(t *testing.T) {
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited src/example.cpp"},
+		{Tool: "edit_file", Summary: "Edited src/example.cpp", ChangedPaths: []string{"src/example.cpp"}},
 		{Tool: "shell", Summary: "Ran shell command", Output: "$ go test ./...\nok\texample.com/repo\n"},
 	}
 
@@ -16953,7 +16953,7 @@ func TestMutationCompletionGateRequiresWriteAndVerification(t *testing.T) {
 	// Source-file write (post-#74 lane-aware gate): verification is
 	// required for source paths. Markdown writes are exempt — see
 	// TestCompletionGateExemptsNonSourceWritesFromVerification.
-	write := workspace.ToolResult{Tool: "edit_file", Summary: "Edited foo.go"}
+	write := workspace.ToolResult{Tool: "edit_file", Summary: "Edited foo.go", ChangedPaths: []string{"foo.go"}}
 	if result, rejected := runner.mutationCompletionRejection("Done.", []workspace.ToolResult{write}); !rejected || !strings.Contains(result.Error, "verification") {
 		t.Fatalf("expected missing-verification rejection, got rejected=%v result=%#v", rejected, result)
 	}
@@ -16980,7 +16980,7 @@ func TestMutationCompletionGateRequiresWriteAndVerification(t *testing.T) {
 	// Stale-verification: a NEW source-file write after the verify
 	// invalidates it (must re-verify). Use a source file so the gate
 	// fires; .md writes are exempt post-#74.
-	laterWrite := workspace.ToolResult{Tool: "edit_file", Summary: "Edited bar.go"}
+	laterWrite := workspace.ToolResult{Tool: "edit_file", Summary: "Edited bar.go", ChangedPaths: []string{"bar.go"}}
 	if result, rejected := runner.mutationCompletionRejection("Done.", []workspace.ToolResult{write, verify, laterWrite}); !rejected || !strings.Contains(result.Error, "latest successful write") {
 		t.Fatalf("expected stale-verification mutation rejection, got rejected=%v result=%#v", rejected, result)
 	}
@@ -17057,9 +17057,10 @@ func TestRunnerReadinessStateRequiresVerificationAfterSourceEdit(t *testing.T) {
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{{
-		Tool:    "edit_file",
-		Summary: "Edited internal/surfaces/tui/app/prompt_routing.go",
-		Output:  "Updated internal/surfaces/tui/app/prompt_routing.go",
+		Tool:         "edit_file",
+		Summary:      "Edited internal/surfaces/tui/app/prompt_routing.go",
+		Output:       "Updated internal/surfaces/tui/app/prompt_routing.go",
+		ChangedPaths: []string{"internal/surfaces/tui/app/prompt_routing.go"},
 	}}
 
 	readiness := runnerReadinessState("main", brief, results)
@@ -17090,8 +17091,9 @@ func TestRunnerReadinessStateRequiresPlannerOwnedLaneSanityAfterSourceEdit(t *te
 		Constraints:          []string{"planner_owned_verification"},
 	}
 	results := []workspace.ToolResult{{
-		Tool:    "edit_file",
-		Summary: "Edited native/src/example.cpp",
+		Tool:         "edit_file",
+		Summary:      "Edited native/src/example.cpp",
+		ChangedPaths: []string{"native/src/example.cpp"},
 	}}
 
 	readiness := runnerReadinessState("main", brief, results)
@@ -17118,7 +17120,7 @@ func TestRunnerReadinessStateRequiresPlannerOwnedSourceSanityAfterPatchHygiene(t
 		Constraints:          []string{"planner_owned_verification"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited native/src/example.cpp"},
+		{Tool: "edit_file", Summary: "Edited native/src/example.cpp", ChangedPaths: []string{"native/src/example.cpp"}},
 		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- native/src/example.cpp\n"},
 	}
 
@@ -17157,7 +17159,7 @@ func TestCompletionGateExemptsNonSourceWritesFromVerification(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			results := []workspace.ToolResult{
-				{Tool: "write_file", Summary: c.writePath},
+				{Tool: "write_file", Summary: c.writePath, ChangedPaths: []string{strings.TrimPrefix(c.writePath, "Wrote ")}},
 			}
 			brief := workerruntime.WorkerRuntimeBrief{
 				VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
@@ -17193,8 +17195,8 @@ func TestRunnerAutonomyVerificationStatusReportsNotRequiredForNonSourceMutation(
 
 func TestDocDeliverableMkdirParentDoesNotRequireVerification(t *testing.T) {
 	results := []workspace.ToolResult{
-		{Tool: "mkdir", Summary: "Created directory .idiom/refine/example/iter-1"},
-		{Tool: "write_file", Summary: "Wrote .idiom/refine/example/iter-1/draft.md"},
+		{Tool: "mkdir", Summary: "Created directory .idiom/refine/example/iter-1", ChangedPaths: []string{".idiom/refine/example/iter-1"}},
+		{Tool: "write_file", Summary: "Wrote .idiom/refine/example/iter-1/draft.md", ChangedPaths: []string{".idiom/refine/example/iter-1/draft.md"}},
 	}
 	brief := workerruntime.WorkerRuntimeBrief{
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
@@ -17532,7 +17534,7 @@ func TestRepeatedCompletionGateRejectionsReturnTypedBlocker(t *testing.T) {
 			// rejects "Done." and forces a typed blocker. Non-source
 			// writes (.md/.txt) are exempt by design — see
 			// hasPendingVerificationAfterWrites.
-			{Tool: "edit_file", Summary: "Edited foo.go"},
+			{Tool: "edit_file", Summary: "Edited foo.go", ChangedPaths: []string{"foo.go"}},
 		},
 		OnEvent: func(event RunEvent) {
 			if event.Role != "completion_status" {
@@ -18609,7 +18611,7 @@ func TestDecorateFinalAnswerCanonicalizesMissingRequiredPathSuccessClaim(t *test
 			RequiredEditPaths: []string{"a.txt", "b.txt"},
 		},
 		Results: []workspace.ToolResult{
-			{Tool: "write_file", Summary: "Wrote a.txt"},
+			{Tool: "write_file", Summary: "Wrote a.txt", ChangedPaths: []string{"a.txt"}},
 		},
 	})
 
@@ -18638,7 +18640,7 @@ func TestDecorateFinalAnswerPreservesConcreteMissingPathBlocker(t *testing.T) {
 			RequiredEditPaths: []string{"a.txt", "b.txt"},
 		},
 		Results: []workspace.ToolResult{
-			{Tool: "write_file", Summary: "Wrote a.txt"},
+			{Tool: "write_file", Summary: "Wrote a.txt", ChangedPaths: []string{"a.txt"}},
 		},
 	})
 
@@ -18821,7 +18823,7 @@ func TestMutationFallbackAnswerReportsChangedPathsAndVerification(t *testing.T) 
 	brief := workerruntime.RuntimeBriefForRole("implement", "main", "update README")
 	results := []workspace.ToolResult{
 		{Tool: "read_file", Summary: "Read README.md", Output: "hello\n"},
-		{Tool: "edit_file", Summary: "Edited README.md"},
+		{Tool: "edit_file", Summary: "Edited README.md", ChangedPaths: []string{"README.md"}},
 		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- README.md\n"},
 	}
 
@@ -18848,7 +18850,7 @@ func TestMutationFallbackAnswerReportsChangedPathsAndVerification(t *testing.T) 
 func TestMutationFallbackAnswerDropsStaleHarnessBlockerAfterLaterVerification(t *testing.T) {
 	brief := workerruntime.RuntimeBriefForRole("implement", "main", "update README")
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited README.md"},
+		{Tool: "edit_file", Summary: "Edited README.md", ChangedPaths: []string{"README.md"}},
 		{
 			Tool:    "read_file",
 			Summary: "Verification required after workspace edits",
@@ -19229,7 +19231,7 @@ func TestRunnerBriefWithPhaseHintsPromotesRequiredPathWriteReadiness(t *testing.
 	}
 
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited native/src/system.cpp"},
+		{Tool: "edit_file", Summary: "Edited native/src/system.cpp", ChangedPaths: []string{"native/src/system.cpp"}},
 	}
 
 	live = runnerBriefWithPhaseHints(brief, results)
@@ -21547,8 +21549,11 @@ func TestImplementationDeferredDeletePatchReplaysAfterProseCompletion(t *testing
 	}
 }
 
-func TestChangedPathsFromPatchOutputIncludesDeletes(t *testing.T) {
-	paths := changedPathsFromPatchOutput("delete temp.md\n")
+func TestToolResultEvidenceProjectionLegacyPatchOutputIncludesDeletes(t *testing.T) {
+	paths := newToolResultEvidenceProjection([]workspace.ToolResult{{
+		Tool:   workspace.ToolNameApplyPatch,
+		Output: "delete temp.md\n",
+	}}).ChangedPathList()
 	if !reflect.DeepEqual(paths, []string{"temp.md"}) {
 		t.Fatalf("changed paths = %#v, want temp.md delete", paths)
 	}
@@ -21780,7 +21785,7 @@ func TestStripCompletedMutationSelfBlockerDoesNotHidePendingSourceVerification(t
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited main.go"},
+		{Tool: "edit_file", Summary: "Edited main.go", ChangedPaths: []string{"main.go"}},
 		{Tool: "shell", Summary: "Tool not available in current runtime contract", Error: "shell is not in the current allowed tool surface."},
 	}
 	answer := "Implemented the requested change.\n\nChanged paths:\n- main.go\n\nVerification: not run.\n\nBlocker:\n- Tool not available in current runtime contract: shell is not in the current allowed tool surface."
@@ -23903,7 +23908,7 @@ func TestRunnerOperationalModelCallLimitDeterministicCloseoutAfterPartialWrite(t
 		context.Background(),
 		nil,
 		llama.ChatOptions{},
-		[]workspace.ToolResult{{Tool: "edit_file", Summary: "Edited a.txt"}},
+		[]workspace.ToolResult{{Tool: "edit_file", Summary: "Edited a.txt", ChangedPaths: []string{"a.txt"}}},
 		"Operational model-call limit is exhausted. Tools are now disabled.",
 		&runnerMetrics{ModelCalls: 1},
 		noToolsCloseoutDeterministicRequired,
@@ -24452,10 +24457,10 @@ func TestToolResultMadeProgressClassifiesUsefulAndStalledResults(t *testing.T) {
 		t.Fatal("failed tools should not count as progress")
 	}
 
-	patchPaths := strings.Join(changedPathsFromToolResult(workspace.ToolResult{
+	patchPaths := strings.Join(newToolResultEvidenceProjection([]workspace.ToolResult{{
 		Tool:   "apply_patch",
 		Output: "add docs/example.md (8 bytes)\nupdate internal/surfaces/tui/app/app.go\nupdate+move old.go -> new.go",
-	}), "\n")
+	}}).ChangedPathList(), "\n")
 	for _, want := range []string{"docs/example.md", "internal/surfaces/tui/app/app.go", "old.go", "new.go"} {
 		if !strings.Contains(patchPaths, want) {
 			t.Fatalf("expected patch changed paths to include %q, got %q", want, patchPaths)
@@ -24589,8 +24594,9 @@ func TestSynthesizeMutationFallbackAnswerDropsErrorsSupersededByLaterWrite(t *te
 			Error:   "edit_file requires a description field",
 		},
 		{
-			Tool:    "edit_file",
-			Summary: "Edited src/example.h",
+			Tool:         "edit_file",
+			Summary:      "Edited src/example.h",
+			ChangedPaths: []string{"src/example.h"},
 		},
 	})
 
@@ -24718,7 +24724,7 @@ func TestSynthesizeMutationFallbackPrefersPostWriteVerificationFailure(t *testin
 		PermissionProfile:    "guarded_workspace_write",
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}, []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited src/pages/contact.astro"},
+		{Tool: "edit_file", Summary: "Edited src/pages/contact.astro", ChangedPaths: []string{"src/pages/contact.astro"}},
 		{
 			Tool:    "source_sanity",
 			Summary: "Source sanity unavailable",
@@ -24755,7 +24761,7 @@ func TestSynthesizeMutationFallbackPrefersPostWriteVerificationFailure(t *testin
 func TestMutationDeterministicFallbackStartsAfterSuccessfulWrite(t *testing.T) {
 	brief := workerruntime.RuntimeBriefForRole("implement", "main", "update README")
 	pendingResults := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited README.md"},
+		{Tool: "edit_file", Summary: "Edited README.md", ChangedPaths: []string{"README.md"}},
 	}
 
 	if !shouldPreferDeterministicNoToolsAnswer("main", brief, pendingResults) {
@@ -25007,7 +25013,7 @@ func TestSynthesizeMutationFallbackReportsMissingRequiredPathsAndPlannerOwnedVer
 		Constraints:          []string{"planner_owned_verification"},
 		RequiredEditPaths:    []string{"native/src/example.h", "native/src/example.cpp"},
 	}, []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited native/src/example.cpp"},
+		{Tool: "edit_file", Summary: "Edited native/src/example.cpp", ChangedPaths: []string{"native/src/example.cpp"}},
 	})
 
 	for _, want := range []string{
@@ -25029,7 +25035,7 @@ func TestSynthesizeMutationFallbackReportsPatchHygieneOnlyForPlannerOwnedSourceE
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 		Constraints:          []string{"planner_owned_verification"},
 	}, []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited native/src/example.cpp"},
+		{Tool: "edit_file", Summary: "Edited native/src/example.cpp", ChangedPaths: []string{"native/src/example.cpp"}},
 		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- native/src/example.cpp\n"},
 	})
 
@@ -25232,7 +25238,7 @@ func TestControlRailsExactAnchorPreWriteDoesNotAdvertiseReadShell(t *testing.T) 
 
 func TestWorkspaceWriteResultCompletedRequiresErrorFreeWrite(t *testing.T) {
 	req := workspace.ToolRequest{Tool: "edit_file", Path: "README.md"}
-	if !workspaceWriteResultCompleted(req, workspace.ToolResult{Tool: "edit_file", Summary: "Edited README.md"}) {
+	if !workspaceWriteResultCompleted(req, workspace.ToolResult{Tool: "edit_file", Summary: "Edited README.md", ChangedPaths: []string{"README.md"}}) {
 		t.Fatal("successful edit_file result should complete the exact-anchor write phase")
 	}
 
@@ -30234,12 +30240,14 @@ func TestEmitAcceptedAnswerSignalsImplementationEvidenceUsesChangedPaths(t *test
 				Output:  "RelPath: \"adrs/ADR-1.md\"\nFile: \"adrs/prd.md\"\nOwner: \"adrs/greeting.test.js\"",
 			},
 			{
-				Tool:    "edit_file",
-				Summary: "Edited internal/workflows/productworkflow/tdd_obligation_plans.go",
+				Tool:         "edit_file",
+				Summary:      "Edited internal/workflows/productworkflow/tdd_obligation_plans.go",
+				ChangedPaths: []string{"internal/workflows/productworkflow/tdd_obligation_plans.go"},
 			},
 			{
-				Tool:    "edit_file",
-				Summary: "Edited internal/workflows/productworkflow/tdd_obligation_plans_test.go",
+				Tool:         "edit_file",
+				Summary:      "Edited internal/workflows/productworkflow/tdd_obligation_plans_test.go",
+				ChangedPaths: []string{"internal/workflows/productworkflow/tdd_obligation_plans_test.go"},
 			},
 		},
 	)
@@ -31939,9 +31947,10 @@ func TestMutationCompletionIgnoresRecoveredOutOfScopeRejectedWriteTarget(t *test
 		Output:  "Rejected write target: `internal/labels/labels_test.go`",
 		Error:   "edit_file requires source evidence before editing.",
 	}, {
-		Tool:    "edit_file",
-		Summary: "Edited internal/labels/labels.go",
-		Output:  "Changed paths:\n- internal/labels/labels.go\n",
+		Tool:         "edit_file",
+		Summary:      "Edited internal/labels/labels.go",
+		Output:       "Changed paths:\n- internal/labels/labels.go\n",
+		ChangedPaths: []string{"internal/labels/labels.go"},
 	}, {
 		Tool:    "shell",
 		Summary: "Ran shell command in .",
@@ -35770,7 +35779,7 @@ func TestRunnerTargetWriteReadyDuplicateReadsContinuePastAdvisoryModelCallBudget
 			t.Fatalf("duplicate source reads should not produce advisory-budget/no-progress closeout or stale source-evidence language %q, got:\n%s", forbidden, answer)
 		}
 	}
-	if len(results) == 0 || len(changedPathsFromToolResults(results)) == 0 {
+	if len(results) == 0 || len(newToolResultEvidenceProjection(results).ChangedPathSet()) == 0 {
 		t.Fatalf("test should end with a workspace change after advisory overage, results=%#v", results)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "internal/runtime/workerruntime/vocabulary.go"))
@@ -41103,8 +41112,8 @@ func TestVerificationInterceptRedirectsReadOnAlreadyEditedRequiredPath(t *testin
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited native/src/core/animal_types.h"},
-		{Tool: "edit_file", Summary: "Edited native/src/simulation/economy/energy.cpp"},
+		{Tool: "edit_file", Summary: "Edited native/src/core/animal_types.h", ChangedPaths: []string{"native/src/core/animal_types.h"}},
+		{Tool: "edit_file", Summary: "Edited native/src/simulation/economy/energy.cpp", ChangedPaths: []string{"native/src/simulation/economy/energy.cpp"}},
 		// Prior read-class result — without this the intercept would
 		// treat the new request as the first read after a write and
 		// let it through (legitimate prep). The donkey-run pattern is
@@ -41155,8 +41164,8 @@ func TestVerificationInterceptHonorsAllPathsCovered(t *testing.T) {
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited a.txt"},
-		{Tool: "edit_file", Summary: "Edited b.txt"},
+		{Tool: "edit_file", Summary: "Edited a.txt", ChangedPaths: []string{"a.txt"}},
+		{Tool: "edit_file", Summary: "Edited b.txt", ChangedPaths: []string{"b.txt"}},
 	}
 	got := runner.preflightVerificationOnAlreadyEditedPath(
 		workspace.ToolRequest{Tool: "read_file", Path: "a.txt"},
@@ -41182,7 +41191,7 @@ func TestVerificationInterceptLetsFirstReadAfterWriteThroughForPrep(t *testing.T
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited a.txt"},
+		{Tool: "edit_file", Summary: "Edited a.txt", ChangedPaths: []string{"a.txt"}},
 	}
 	got := runner.preflightVerificationOnAlreadyEditedPath(
 		workspace.ToolRequest{
@@ -41210,7 +41219,7 @@ func TestVerificationInterceptIgnoresUnrelatedReads(t *testing.T) {
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited a.txt"},
+		{Tool: "edit_file", Summary: "Edited a.txt", ChangedPaths: []string{"a.txt"}},
 	}
 	got := runner.preflightVerificationOnAlreadyEditedPath(
 		workspace.ToolRequest{Tool: "read_file", Path: "supporting/header.h"},
@@ -41237,7 +41246,7 @@ func TestVerificationInterceptIgnoresWritesAndSearches(t *testing.T) {
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited a.txt"},
+		{Tool: "edit_file", Summary: "Edited a.txt", ChangedPaths: []string{"a.txt"}},
 	}
 	cases := []workspace.ToolRequest{
 		{Tool: "edit_file", Path: "a.txt"},
@@ -41271,7 +41280,7 @@ func TestVerificationInterceptOnlyFiresOnVerificationCapabilitiesOfCodeNavigate(
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited a.txt"},
+		{Tool: "edit_file", Summary: "Edited a.txt", ChangedPaths: []string{"a.txt"}},
 		{Tool: "code_navigate", Summary: "prior read"},
 	}
 
@@ -41324,7 +41333,7 @@ func TestVerificationInterceptIgnoresBriefsWithoutRequiredPaths(t *testing.T) {
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited a.txt"},
+		{Tool: "edit_file", Summary: "Edited a.txt", ChangedPaths: []string{"a.txt"}},
 	}
 	got := runner.preflightVerificationOnAlreadyEditedPath(
 		workspace.ToolRequest{Tool: "read_file", Path: "a.txt"},
@@ -41349,7 +41358,7 @@ func TestVerificationInterceptAppliesAcrossLanguageReadSymbolTools(t *testing.T)
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited x.cpp"},
+		{Tool: "edit_file", Summary: "Edited x.cpp", ChangedPaths: []string{"x.cpp"}},
 		// Stacked-read precondition: the model has already done one
 		// read since the write, so the next read on a ✓ path is the
 		// verification-spree pattern this guard targets.
@@ -41381,9 +41390,9 @@ func TestVerificationInterceptAppliesAcrossLanguageReadSymbolTools(t *testing.T)
 
 func TestLatestVerificationAfterLatestSourceWriteResetsOnLaterSourceWrite(t *testing.T) {
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited internal/surfaces/tui/app/first.go"},
+		{Tool: "edit_file", Summary: "Edited internal/surfaces/tui/app/first.go", ChangedPaths: []string{"internal/surfaces/tui/app/first.go"}},
 		{Tool: "source_sanity", Summary: "source sanity passed"},
-		{Tool: "edit_file", Summary: "Edited internal/surfaces/tui/app/second.go"},
+		{Tool: "edit_file", Summary: "Edited internal/surfaces/tui/app/second.go", ChangedPaths: []string{"internal/surfaces/tui/app/second.go"}},
 	}
 
 	if latest, ok := latestVerificationAfterLatestSourceWrite(results); ok {
@@ -41397,7 +41406,7 @@ func TestSourceEditsNeedSemanticVerificationAfterPatchHygieneOnly(t *testing.T) 
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited internal/surfaces/tui/app/app.go"},
+		{Tool: "edit_file", Summary: "Edited internal/surfaces/tui/app/app.go", ChangedPaths: []string{"internal/surfaces/tui/app/app.go"}},
 		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- internal/surfaces/tui/app/app.go\n"},
 	}
 
@@ -41419,7 +41428,7 @@ func TestFinalAnswerAcceptanceRejectsPendingPostWriteVerification(t *testing.T) 
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
+		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go", ChangedPaths: []string{"internal/labels/labels.go"}},
 	}
 	answer := strings.Join([]string{
 		"Implemented the requested change.",
@@ -41444,7 +41453,7 @@ func TestSourceEditsAreSemanticallyVerifiedAfterCompilerBackedSourceSanity(t *te
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited internal/surfaces/tui/app/app.go"},
+		{Tool: "edit_file", Summary: "Edited internal/surfaces/tui/app/app.go", ChangedPaths: []string{"internal/surfaces/tui/app/app.go"}},
 		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- internal/surfaces/tui/app/app.go\n"},
 		{Tool: "source_sanity", Summary: "source sanity passed", Output: "internal/surfaces/tui/app/app.go: no warnings or errors via go_diagnostics"},
 	}
@@ -41473,7 +41482,7 @@ func TestSourceEditsStillNeedVerificationAfterGenericSourceSanityFallback(t *tes
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited internal/surfaces/tui/app/app.go"},
+		{Tool: "edit_file", Summary: "Edited internal/surfaces/tui/app/app.go", ChangedPaths: []string{"internal/surfaces/tui/app/app.go"}},
 		{Tool: "source_sanity", Summary: "Source sanity passed for 1 file(s) (1 generic fallback)", Output: "internal/surfaces/tui/app/app.go: generic delimiter sanity passed via generic_source_sanity"},
 	}
 
@@ -41496,7 +41505,7 @@ func TestSourceEditsAreSemanticallyVerifiedAfterLanguageCommand(t *testing.T) {
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited internal/surfaces/tui/app/app.go"},
+		{Tool: "edit_file", Summary: "Edited internal/surfaces/tui/app/app.go", ChangedPaths: []string{"internal/surfaces/tui/app/app.go"}},
 		{Tool: "shell", Summary: "Ran shell command", Output: "$ npm run build\nbuild succeeded"},
 	}
 
@@ -41516,7 +41525,7 @@ func TestPostWriteVerificationAcceptsFocusedHTMLSmokeCheck(t *testing.T) {
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "write_file", Summary: "Wrote index.html"},
+		{Tool: "write_file", Summary: "Wrote index.html", ChangedPaths: []string{"index.html"}},
 		{Tool: "source_sanity", Summary: "Source sanity unavailable", Error: "index.html is not a supported source file"},
 		{
 			Tool:    "shell",
@@ -41541,7 +41550,7 @@ func TestDeterministicPostWriteVerificationSchedulesHTMLSmokeCheck(t *testing.T)
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "write_file", Summary: "Wrote index.html"},
+		{Tool: "write_file", Summary: "Wrote index.html", ChangedPaths: []string{"index.html"}},
 	}
 
 	req, ok := deterministicPostWriteVerificationRequest(results, brief)
@@ -41565,7 +41574,7 @@ func TestPostWriteVerificationRejectsHTMLSmokeCheckForGoWrite(t *testing.T) {
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "write_file", Summary: "Wrote main.go"},
+		{Tool: "write_file", Summary: "Wrote main.go", ChangedPaths: []string{"main.go"}},
 		{
 			Tool:    "shell",
 			Summary: "Ran shell command",
@@ -41585,7 +41594,7 @@ func TestRewriteVerificationShellReadToSourceSanityForPlannerOwnedChangedSource(
 		Constraints:          []string{"planner_owned_verification"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
+		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go", ChangedPaths: []string{"internal/labels/labels.go"}},
 	}
 
 	req, ok := rewriteVerificationShellReadToSourceSanity(
@@ -41610,7 +41619,7 @@ func TestRewriteVerificationShellReadToSourceSanityRequiresAllowedToolAndChanged
 		Constraints:          []string{"planner_owned_verification"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
+		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go", ChangedPaths: []string{"internal/labels/labels.go"}},
 	}
 
 	if _, ok := rewriteVerificationShellReadToSourceSanity(
@@ -41638,7 +41647,7 @@ func TestRewriteVerificationShellReadDoesNotPickSourceSanityForNormalImplementat
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
+		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go", ChangedPaths: []string{"internal/labels/labels.go"}},
 	}
 
 	if _, ok := rewriteVerificationShellReadToSourceSanity(
@@ -41657,7 +41666,7 @@ func TestFillSourceSanityPathFromSingleChangedSource(t *testing.T) {
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
+		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go", ChangedPaths: []string{"internal/labels/labels.go"}},
 	}
 
 	redirected, ok := fillSourceSanityPathFromSingleChangedSource(
@@ -41681,8 +41690,8 @@ func TestFillSourceSanityPathFromSingleChangedSourceRequiresUnambiguousTarget(t 
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
-		{Tool: "edit_file", Summary: "Edited internal/labels/other.go"},
+		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go", ChangedPaths: []string{"internal/labels/labels.go"}},
+		{Tool: "edit_file", Summary: "Edited internal/labels/other.go", ChangedPaths: []string{"internal/labels/other.go"}},
 	}
 
 	if _, ok := fillSourceSanityPathFromSingleChangedSource(
@@ -41711,7 +41720,7 @@ func TestPostWriteSourceSanityRedirectsPlannerOwnedReadOfChangedSource(t *testin
 		Constraints:          []string{"planner_owned_verification"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
+		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go", ChangedPaths: []string{"internal/labels/labels.go"}},
 	}
 
 	redirected, ok := postWriteSourceSanityRedirect(
@@ -41750,7 +41759,7 @@ func TestPostWriteSourceSanityRedirectRequiresPlannerOwnedPendingSourceVerificat
 		Constraints:          []string{"planner_owned_verification"},
 	}
 	verified := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
+		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go", ChangedPaths: []string{"internal/labels/labels.go"}},
 		{Tool: "source_sanity", Summary: "source sanity passed", Output: "internal/labels/labels.go: no warnings or errors via go_diagnostics"},
 	}
 
@@ -41766,7 +41775,7 @@ func TestPostWriteSourceSanityRedirectRequiresPlannerOwnedPendingSourceVerificat
 	if _, ok := postWriteSourceSanityRedirect(
 		workspace.ToolRequest{Tool: "read_file", Path: "internal/labels/labels.go"},
 		brief,
-		[]workspace.ToolResult{{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"}},
+		[]workspace.ToolResult{{Tool: "edit_file", Summary: "Edited internal/labels/labels.go", ChangedPaths: []string{"internal/labels/labels.go"}}},
 		[]string{"shell"},
 	); ok {
 		t.Fatal("must not redirect when source_sanity is not currently allowed")
@@ -41779,7 +41788,7 @@ func TestPostWriteSourceSanityRedirectsNormalImplementationReadOfChangedSource(t
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
+		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go", ChangedPaths: []string{"internal/labels/labels.go"}},
 	}
 
 	redirected, ok := postWriteSourceSanityRedirect(
@@ -41812,7 +41821,7 @@ func TestPostWriteSourceSanityRedirectsNormalImplementationDiscoveryDrift(t *tes
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: workspace.ToolNameEditFile, Summary: "Edited internal/labels/labels.go"},
+		{Tool: workspace.ToolNameEditFile, Summary: "Edited internal/labels/labels.go", ChangedPaths: []string{"internal/labels/labels.go"}},
 	}
 
 	redirected, ok := postWriteSourceSanityRedirect(
@@ -41924,8 +41933,8 @@ func TestPostWriteSourceSanityRedirectsDiscoveryDriftRequiresSingleChangedSource
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: workspace.ToolNameEditFile, Summary: "Edited internal/labels/labels.go"},
-		{Tool: workspace.ToolNameEditFile, Summary: "Edited internal/labels/other.go"},
+		{Tool: workspace.ToolNameEditFile, Summary: "Edited internal/labels/labels.go", ChangedPaths: []string{"internal/labels/labels.go"}},
+		{Tool: workspace.ToolNameEditFile, Summary: "Edited internal/labels/other.go", ChangedPaths: []string{"internal/labels/other.go"}},
 	}
 
 	if _, ok := postWriteSourceSanityRedirect(
@@ -41944,7 +41953,7 @@ func TestPostWriteSourceSanityRedirectPreservesBoundaryControlTools(t *testing.T
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: workspace.ToolNameEditFile, Summary: "Edited internal/labels/labels.go"},
+		{Tool: workspace.ToolNameEditFile, Summary: "Edited internal/labels/labels.go", ChangedPaths: []string{"internal/labels/labels.go"}},
 	}
 
 	for _, tool := range []string{
@@ -41968,7 +41977,7 @@ func TestPostWriteSourceSanityRedirectRecoversNormalImplementationAfterInvalidVe
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
+		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go", ChangedPaths: []string{"internal/labels/labels.go"}},
 		{
 			Tool:    "edit_file",
 			Summary: "Tool not available in current runtime contract",
@@ -42011,7 +42020,7 @@ func TestPostWriteSourceSanityRedirectIgnoresWriteForUnchangedSource(t *testing.
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
+		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go", ChangedPaths: []string{"internal/labels/labels.go"}},
 	}
 
 	if _, ok := postWriteSourceSanityRedirect(
@@ -42034,7 +42043,7 @@ func TestSourceVerificationDoesNotTreatIncidentalPathMentionAsVerificationExcept
 			Tool:   "read_file",
 			Output: "Implement the feature by changing pkg/feature.go and pkg/feature_test.go.",
 		},
-		{Tool: "edit_file", Summary: "Edited pkg/feature.go"},
+		{Tool: "edit_file", Summary: "Edited pkg/feature.go", ChangedPaths: []string{"pkg/feature.go"}},
 		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check\npassed"},
 	}
 
@@ -42058,7 +42067,7 @@ func TestVerifiedSourceCloseoutIgnoresIncidentalPathMentions(t *testing.T) {
 			Tool:   "read_file",
 			Output: "Implement the feature by changing pkg/feature.go and pkg/feature_test.go.",
 		},
-		{Tool: "edit_file", Summary: "Edited pkg/feature.go"},
+		{Tool: "edit_file", Summary: "Edited pkg/feature.go", ChangedPaths: []string{"pkg/feature.go"}},
 		{Tool: "shell", Summary: "Ran shell command", Output: "$ cargo check\nFinished dev profile"},
 	}
 

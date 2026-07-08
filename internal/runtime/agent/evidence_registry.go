@@ -63,11 +63,12 @@ func (r *PathEvidenceRegistry) RegisterToolResults(results []ToolResult) {
 		}
 		tool := strings.TrimSpace(result.ToolName)
 		workspaceResult := workspace.ToolResult{
-			Tool:    tool,
-			Summary: result.Summary,
-			Output:  result.Output,
-			Error:   result.Error,
-			Paths:   append([]string(nil), result.Paths...),
+			Tool:         tool,
+			Summary:      result.Summary,
+			Output:       result.Output,
+			Error:        result.Error,
+			Paths:        append([]string(nil), result.Paths...),
+			ChangedPaths: append([]string(nil), result.ChangedPaths...),
 		}
 
 		switch {
@@ -79,7 +80,7 @@ func (r *PathEvidenceRegistry) RegisterToolResults(results []ToolResult) {
 			r.registerBodyRead(workspaceResult)
 		}
 
-		if tool == workspace.ToolNameContextPack || sourceEvidenceDiscoveryCandidateTool(tool) || workspace.IsSearchToolName(tool) {
+		if tool == workspace.ToolNameContextPack || (toolResultEvidenceProjection{}).DiscoveryCandidateTool(tool) || workspace.IsSearchToolName(tool) {
 			r.registerCandidatePaths(workspaceResult)
 		}
 	}
@@ -118,7 +119,7 @@ func (r *PathEvidenceRegistry) registerBodyRead(result workspace.ToolResult) {
 // (e.g., readonly DB), search_content candidates provide the fallback path set.
 func (r *PathEvidenceRegistry) registerCandidatePaths(result workspace.ToolResult) {
 	paths := append([]string{}, result.Paths...)
-	paths = append(paths, sourceEvidenceCandidatePathsFromResult(result, 128)...)
+	paths = append(paths, (toolResultEvidenceProjection{}).CandidatePathsFromResult(result, 128)...)
 
 	if len(paths) == 0 {
 		return
@@ -324,10 +325,11 @@ func looksLikeWindowsAbsolutePath(path string) bool {
 // Workspace adapters map concrete workspace.ToolResult and sidecar envelopes to
 // this type before evidence code interprets paths, source bodies, or ownership.
 type ToolResult struct {
-	ToolName string
-	Summary  string
-	Output   string
-	Error    string
-	Paths    []string
-	Metadata map[string]string
+	ToolName     string
+	Summary      string
+	Output       string
+	Error        string
+	Paths        []string
+	ChangedPaths []string
+	Metadata     map[string]string
 }

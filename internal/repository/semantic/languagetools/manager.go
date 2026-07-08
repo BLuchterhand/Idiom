@@ -273,6 +273,7 @@ type ToolResult struct {
 	Output        string
 	Error         string
 	Failure       error
+	ChangedPaths  []string
 	PrecisionTier string
 	Relationships []ToolRelationship
 	PayloadType   string
