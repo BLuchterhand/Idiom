@@ -13,7 +13,16 @@ import (
 	planartifact "idiom/internal/contracts/planartifact"
 	"idiom/internal/contracts/sourcekind"
 	"idiom/internal/platform/config"
+	"idiom/internal/repository/semantic/languagetools"
 )
+
+func requireContentSearchBackend(t *testing.T) {
+	t.Helper()
+
+	if _, err := resolveContentSearchBackend(); err != nil {
+		t.Skip("no supported content search backend installed on this machine")
+	}
+}
 
 func TestSourceSanityFallsBackWhenLanguageDiagnosticsUnavailable(t *testing.T) {
 	root := t.TempDir()
@@ -461,7 +470,8 @@ func TestGoWorkspaceSymbolFallsBackAfterGoplsFailure(t *testing.T) {
 	}
 
 	mgr := NewManager(config.Workspace{Root: dir, CWD: dir})
-	mgr.setGoplsBinaryForTesting(gopls)
+	mgr.languageTools = languagetools.NewManager(languageToolHost{manager: mgr})
+	mgr.languageTools.SetGoplsBinaryForTesting(gopls)
 
 	result := mgr.Execute(context.Background(), ToolRequest{Tool: "go_workspace_symbol", Pattern: "ExampleWorker"})
 	if result.Error != "" {
@@ -490,7 +500,8 @@ func TestGoWorkspaceSymbolFallsBackAfterEmptyGoplsResult(t *testing.T) {
 	}
 
 	mgr := NewManager(config.Workspace{Root: dir, CWD: dir, CommandTimeoutSeconds: 5})
-	mgr.setGoplsBinaryForTesting(gopls)
+	mgr.languageTools = languagetools.NewManager(languageToolHost{manager: mgr})
+	mgr.languageTools.SetGoplsBinaryForTesting(gopls)
 
 	result := mgr.Execute(context.Background(), ToolRequest{Tool: "go_workspace_symbol", Pattern: "func ExampleWorker"})
 	if result.Error != "" {
@@ -3034,9 +3045,7 @@ func TestSearchFilesZeroHitSurfacesClosestPaths(t *testing.T) {
 // model often confuses "find the symbol" with "grep the symbol" and
 // the symbol's name lives in the filename.
 func TestSearchContentZeroHitSuggestsPathsWhenPatternLooksLikeSymbol(t *testing.T) {
-	if !hasContentSearchBackend() {
-		t.Skip("no supported content search backend installed on this machine")
-	}
+	requireContentSearchBackend(t)
 
 	dir := t.TempDir()
 	mustWriteOverview(t, filepath.Join(dir, "internal/surfaces/tui/app/prompt_routing.go"), "package app\nfunc unrelated() {}\n")
@@ -3062,9 +3071,7 @@ func TestSearchContentZeroHitSuggestsPathsWhenPatternLooksLikeSymbol(t *testing.
 }
 
 func TestSearchContentFixedStringsFindsRegexSyntaxLiterally(t *testing.T) {
-	if !hasContentSearchBackend() {
-		t.Skip("no supported content search backend installed on this machine")
-	}
+	requireContentSearchBackend(t)
 
 	dir := t.TempDir()
 	mustWriteOverview(t, filepath.Join(dir, "internal/runtime/workerruntime/catalog.go"), "package workerruntime\nvar _ = FinalCriticID{\"changed_paths_reported\"}\n")
@@ -3093,9 +3100,7 @@ func TestSearchContentFixedStringsFindsRegexSyntaxLiterally(t *testing.T) {
 }
 
 func TestSearchContentSkipsNoisyDirsByDefault(t *testing.T) {
-	if !hasContentSearchBackend() {
-		t.Skip("no supported content search backend installed on this machine")
-	}
+	requireContentSearchBackend(t)
 
 	dir := t.TempDir()
 	mustWriteOverview(t, filepath.Join(dir, "internal/surfaces/tui/app/plan.go"), "package app\nfunc planPanel() {}\n")
@@ -3140,9 +3145,7 @@ func TestSearchContentSkipsNoisyDirsByDefault(t *testing.T) {
 }
 
 func TestSearchContentPrioritizesSourceFilesOverTests(t *testing.T) {
-	if !hasContentSearchBackend() {
-		t.Skip("no supported content search backend installed on this machine")
-	}
+	requireContentSearchBackend(t)
 
 	dir := t.TempDir()
 	mustWriteOverview(t, filepath.Join(dir, "internal", "runtime", "agent", "runner.go"), "package agent\nfunc runChildTask() { /* delegate child spawn */ }\n")
@@ -3172,9 +3175,7 @@ func TestSearchContentPrioritizesSourceFilesOverTests(t *testing.T) {
 }
 
 func TestSearchContentSkipsSuiteManifestByDefaultButAllowsExplicitPath(t *testing.T) {
-	if !hasContentSearchBackend() {
-		t.Skip("no supported content search backend installed on this machine")
-	}
+	requireContentSearchBackend(t)
 
 	dir := t.TempDir()
 	mustWriteOverview(t, filepath.Join(dir, "testdata", "swe", "representative-suite.json"), `{"needle":"SuiteManifestOnlyWidget"}`+"\n")
@@ -3215,9 +3216,7 @@ func TestSearchContentSkipsSuiteManifestByDefaultButAllowsExplicitPath(t *testin
 }
 
 func TestSearchContentTruncatesLongMatchingLines(t *testing.T) {
-	if !hasContentSearchBackend() {
-		t.Skip("no supported content search backend installed on this machine")
-	}
+	requireContentSearchBackend(t)
 
 	dir := t.TempDir()
 	mustWriteOverview(t, filepath.Join(dir, "internal/surfaces/tui/app/huge.go"), "package app\nvar huge = \"needle "+strings.Repeat("x", 800)+"\"\n")
@@ -3258,9 +3257,7 @@ func TestSearchContentTruncatesLongMatchingLines(t *testing.T) {
 }
 
 func TestReadFileReturnsExactLongLineAfterSearchContentTruncates(t *testing.T) {
-	if !hasContentSearchBackend() {
-		t.Skip("no supported content search backend installed on this machine")
-	}
+	requireContentSearchBackend(t)
 
 	dir := t.TempDir()
 	longLine := "var huge = \"needle " + strings.Repeat("x", 800) + "\""

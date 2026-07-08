@@ -12,6 +12,7 @@ import (
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/platform/config"
 	semanticlanguage "idiom/internal/repository/semantic/language"
+	"idiom/internal/repository/semantic/languagetools"
 )
 
 func TestReadOnlyCapabilityRegistryMapsStableVocabularyToAdapters(t *testing.T) {
@@ -620,7 +621,8 @@ func TestReadOnlyCapabilityRoutesNamedSliceThroughExistingAdapters(t *testing.T)
 		MaxDirectoryEntries:   1024,
 		EnableShell:           true,
 	})
-	mgr.setGoplsBinaryForTesting("")
+	mgr.languageTools = languagetools.NewManager(languageToolHost{manager: mgr})
+	mgr.languageTools.SetGoplsBinaryForTesting("")
 
 	tests := []struct {
 		name           string

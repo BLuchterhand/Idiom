@@ -437,7 +437,7 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 		args = append(args, "-session", planExecuteSessionID)
 	}
 
-	for _, path := range featurePlannerWriteEnvelopeFlags(req.ProductWriteEnvelope) {
+	for _, path := range appendUniqueFeaturePlannerStrings(nil, req.ProductWriteEnvelope...) {
 		args = append(args, "-write-allowed-path", path)
 	}
 
@@ -525,10 +525,6 @@ func encodeHeadlessPlanExecuteCompletion(req featurePlannerRequest, stdout io.Wr
 	}
 
 	return string(body), nil
-}
-
-func featurePlannerWriteEnvelopeFlags(paths []string) []string {
-	return appendUniqueFeaturePlannerStrings(nil, paths...)
 }
 
 func appendUniqueFeaturePlannerStrings(base []string, values ...string) []string {

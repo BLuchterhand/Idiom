@@ -362,17 +362,6 @@ func languageToolManifestEntries() []ToolManifestEntry {
 	return entries
 }
 
-func languageToolCatalogToolNames() []string {
-	catalog := languageToolCatalog()
-	out := make([]string, 0, len(catalog))
-
-	for _, entry := range catalog {
-		out = append(out, entry.Tool)
-	}
-
-	return out
-}
-
 func languageToolEvidenceCapabilities(tool string) []string {
 	if entry, ok := languageToolCatalogEntryForTool(tool); ok {
 		return append([]string(nil), entry.EvidenceCapabilities...)

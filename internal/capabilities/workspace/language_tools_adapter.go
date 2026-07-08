@@ -103,30 +103,6 @@ func (m *Manager) resetLanguageTools() {
 	m.languageTools = languagetools.NewManager(languageToolHost{manager: m})
 }
 
-func (m *Manager) isCppWorkspace() bool {
-	return m.languageDetects("cpp")
-}
-
-func (m *Manager) isGoWorkspace() bool {
-	return m.languageDetects("go")
-}
-
-func (m *Manager) isPythonWorkspace() bool {
-	return m.languageDetects("python")
-}
-
-func (m *Manager) isTsWorkspace() bool {
-	return m.languageDetects("typescript")
-}
-
-func (m *Manager) isRustWorkspace() bool {
-	return m.languageDetects("rust")
-}
-
-func (m *Manager) isJavaWorkspace() bool {
-	return m.languageDetects("java")
-}
-
 func (m *Manager) languageDetects(name string) bool {
 	if !m.Enabled() {
 		return false
@@ -135,39 +111,6 @@ func (m *Manager) languageDetects(name string) bool {
 	lang, ok := semanticlanguage.LanguageForName(name)
 
 	return ok && lang.Detect != nil && lang.Detect(m.cfg.Root)
-}
-
-type codeNavigationSpec struct {
-	Name            string
-	Capability      semanticlanguage.Capability
-	RequiresPattern bool
-	RequiresPath    bool
-	Cost            string
-	Class           string
-}
-
-func codeNavigationSpecFor(value string) (codeNavigationSpec, error) {
-	spec, err := languagetools.CodeNavigationSpecFor(value)
-	if err != nil {
-		return codeNavigationSpec{}, err
-	}
-
-	return codeNavigationSpec{
-		Name:            spec.Name,
-		Capability:      semanticlanguage.Capability(spec.Capability),
-		RequiresPattern: spec.RequiresPattern,
-		RequiresPath:    spec.RequiresPath,
-		Cost:            spec.Cost,
-		Class:           spec.Class,
-	}, nil
-}
-
-func (m *Manager) setGoplsBinaryForTesting(path string) {
-	if m.languageTools == nil {
-		m.languageTools = languagetools.NewManager(languageToolHost{manager: m})
-	}
-
-	m.languageTools.SetGoplsBinaryForTesting(path)
 }
 
 func toLanguageToolRequest(req ToolRequest) languagetools.ToolRequest {

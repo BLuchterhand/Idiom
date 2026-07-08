@@ -2583,10 +2583,6 @@ func readHarnessAuditAutonomyEventsWithOptions(path string, opts harnessAuditAut
 	return events, warnings
 }
 
-func decodeHarnessAuditAutonomyEvents(line []byte) ([]autonomy.Event, []string) {
-	return decodeHarnessAuditAutonomyEventsWithOptions(line, harnessAuditAutonomyDecodeOptions{})
-}
-
 func decodeHarnessAuditAutonomyEventsWithOptions(line []byte, opts harnessAuditAutonomyDecodeOptions) ([]autonomy.Event, []string) {
 	var (
 		events   []autonomy.Event

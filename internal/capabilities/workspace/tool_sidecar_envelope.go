@@ -80,10 +80,6 @@ type ToolSidecarError struct {
 	Message string `json:"message"`
 }
 
-func BuildToolSidecarEnvelope(req ToolRequest, result ToolResult, profile string) ToolSidecarEnvelope {
-	return BuildToolSidecarEnvelopeWithOptions(req, result, profile, ToolSidecarOptions{})
-}
-
 func BuildToolSidecarEnvelopeWithOptions(req ToolRequest, result ToolResult, profile string, opts ToolSidecarOptions) ToolSidecarEnvelope {
 	tool := textutil.FirstNonEmpty(strings.TrimSpace(result.Tool), strings.TrimSpace(req.Tool))
 
@@ -523,29 +519,7 @@ func classifyToolSidecarError(result ToolResult) string {
 		return code
 	}
 
-	text := strings.ToLower(strings.Join([]string{result.Summary, result.Error}, " "))
-	switch {
-	case strings.Contains(text, "profile_denied"):
-		return "profile_denied"
-	case strings.Contains(text, "read_only_profile"):
-		return "read_only_profile"
-	case strings.Contains(text, "unsupported tool") || strings.Contains(text, "unknown external tool") || strings.Contains(text, "unknown mcp tool"):
-		return "unsupported_tool"
-	case strings.Contains(text, "invalid input") || strings.Contains(text, " is required") || strings.Contains(text, "missing required"):
-		return "invalid_input"
-	case strings.Contains(text, "freshness_blocker") || strings.Contains(text, "stale context"):
-		return "stale_context"
-	case strings.Contains(text, "timed out") || strings.Contains(text, "timeout"):
-		return "timeout"
-	case strings.Contains(text, "permission") || strings.Contains(text, "read-only") || strings.Contains(text, "protected path"):
-		return "permission_policy"
-	case strings.Contains(text, "unavailable") || strings.Contains(text, "not configured") || strings.Contains(text, "not found"):
-		return "backend_unavailable"
-	case strings.Contains(text, "failed"):
-		return "tool_failed"
-	default:
-		return "tool_error"
-	}
+	return "tool_error"
 }
 
 func classifyToolSidecarResultCode(code string) string {

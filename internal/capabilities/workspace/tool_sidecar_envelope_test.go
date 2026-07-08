@@ -18,7 +18,7 @@ func TestBuildToolSidecarEnvelopeIncludesStructuredFreshness(t *testing.T) {
 		Summary: "Context index is fresh",
 		Output:  `{"indexed":true,"freshness":{"policy":"report_only","operation":"context_status","fresh_for_scope":true},"warnings":["sample warning"],"audit_event_ids":["event-0"],"events":[{"event_id":"event-1"}]}`,
 	}
-	envelope := BuildToolSidecarEnvelope(ToolRequest{Tool: "context_status"}, result, "")
+	envelope := BuildToolSidecarEnvelopeWithOptions(ToolRequest{Tool: "context_status"}, result, "", ToolSidecarOptions{})
 
 	if envelope.SchemaVersion != ToolSidecarEnvelopeVersion {
 		t.Fatalf("schema version = %q, want %q", envelope.SchemaVersion, ToolSidecarEnvelopeVersion)
@@ -77,10 +77,11 @@ func TestBuildToolSidecarEnvelopeUsesSharedContractShape(t *testing.T) {
 }
 
 func TestBuildToolSidecarEnvelopeOmitsChildContextByDefault(t *testing.T) {
-	envelope := BuildToolSidecarEnvelope(
+	envelope := BuildToolSidecarEnvelopeWithOptions(
 		ToolRequest{Tool: "context_pack"},
 		ToolResult{Tool: "context_pack", Summary: "Context pack", Output: `{"files":[]}`},
 		"default",
+		ToolSidecarOptions{},
 	)
 	if envelope.ChildContext != nil {
 		t.Fatalf("child context should be omitted by default: %#v", envelope.ChildContext)
@@ -236,7 +237,7 @@ func TestBuildToolSidecarEnvelopeExtractsStaleFreshnessWithoutGraphState(t *test
 		Summary: "Context query returned stale report-only evidence",
 		Output:  `{"freshness":{"policy":"allow_stale","operation":"context_query","fresh_for_scope":false,"global_fresh":false,"stale_path_count":2,"missing_path_count":1},"nodes":[],"edges":[]}`,
 	}
-	envelope := BuildToolSidecarEnvelope(ToolRequest{Tool: "context_query"}, result, "discovery")
+	envelope := BuildToolSidecarEnvelopeWithOptions(ToolRequest{Tool: "context_query"}, result, "discovery", ToolSidecarOptions{})
 	freshness, ok := envelope.Freshness.(map[string]any)
 
 	if !ok {
@@ -258,11 +259,11 @@ func TestBuildToolSidecarEnvelopeExtractsStaleFreshnessWithoutGraphState(t *test
 
 func TestBuildToolSidecarEnvelopePreservesTextOutput(t *testing.T) {
 	output := "  first line\nsecond line\n"
-	envelope := BuildToolSidecarEnvelope(ToolRequest{Tool: "read_file"}, ToolResult{
+	envelope := BuildToolSidecarEnvelopeWithOptions(ToolRequest{Tool: "read_file"}, ToolResult{
 		Tool:    "read_file",
 		Summary: "Read file",
 		Output:  output,
-	}, "default")
+	}, "default", ToolSidecarOptions{})
 	structured, ok := envelope.StructuredOutput.(map[string]any)
 
 	if !ok {
@@ -278,13 +279,14 @@ func TestBuildToolSidecarEnvelopePreservesTextOutput(t *testing.T) {
 	}
 }
 
-func TestBuildToolSidecarEnvelopeClassifiesStructuredError(t *testing.T) {
+func TestBuildToolSidecarEnvelopeUsesTypedFailureForUnsupportedTool(t *testing.T) {
 	result := ToolResult{
 		Tool:    "not_a_tool",
 		Summary: "Tool request rejected",
 		Error:   `unsupported tool "not_a_tool"`,
+		Failure: failures.New(failures.Unimplemented, reasonToolUnsupported, `unsupported tool "not_a_tool"`),
 	}
-	envelope := BuildToolSidecarEnvelope(ToolRequest{Tool: "not_a_tool"}, result, "default")
+	envelope := BuildToolSidecarEnvelopeWithOptions(ToolRequest{Tool: "not_a_tool"}, result, "default", ToolSidecarOptions{})
 
 	if envelope.SchemaVersion != ToolSidecarEnvelopeVersion {
 		t.Fatalf("schema version = %q, want %q", envelope.SchemaVersion, ToolSidecarEnvelopeVersion)
@@ -310,7 +312,7 @@ func TestBuildToolSidecarEnvelopePrefersTypedFailureMetadata(t *testing.T) {
 		Error:   "invalid input: pattern is required",
 		Failure: failures.New(failures.PermissionDenied, failures.NoReason, "permission denied by policy"),
 	}
-	envelope := BuildToolSidecarEnvelope(ToolRequest{Tool: "context_query"}, result, "default")
+	envelope := BuildToolSidecarEnvelopeWithOptions(ToolRequest{Tool: "context_query"}, result, "default", ToolSidecarOptions{})
 
 	if envelope.Error == nil {
 		t.Fatalf("expected structured error")
@@ -333,7 +335,7 @@ func TestBuildToolSidecarEnvelopePreservesStructuredResultCode(t *testing.T) {
 		Error:   "profile_denied: read_only_profile: refresh requests are not allowed",
 		Failure: failures.New(failures.PermissionDenied, failures.NoReason, "refresh requests are not allowed"),
 	}
-	envelope := BuildToolSidecarEnvelope(ToolRequest{Tool: "context_status"}, result, "discovery")
+	envelope := BuildToolSidecarEnvelopeWithOptions(ToolRequest{Tool: "context_status"}, result, "discovery", ToolSidecarOptions{})
 
 	if envelope.Error == nil {
 		t.Fatalf("expected structured error")
@@ -344,20 +346,20 @@ func TestBuildToolSidecarEnvelopePreservesStructuredResultCode(t *testing.T) {
 	}
 }
 
-func TestBuildToolSidecarEnvelopeFallsBackToStringClassification(t *testing.T) {
+func TestBuildToolSidecarEnvelopeUsesGenericClassForUntypedErrorText(t *testing.T) {
 	result := ToolResult{
 		Tool:    "context_query",
 		Summary: "Context query rejected",
 		Error:   "invalid input: pattern is required",
 	}
-	envelope := BuildToolSidecarEnvelope(ToolRequest{Tool: "context_query"}, result, "default")
+	envelope := BuildToolSidecarEnvelopeWithOptions(ToolRequest{Tool: "context_query"}, result, "default", ToolSidecarOptions{})
 
 	if envelope.Error == nil {
 		t.Fatalf("expected structured error")
 	}
 
-	if envelope.Error.Class != "invalid_input" || envelope.Error.Code != "invalid_input" {
-		t.Fatalf("legacy message classification should still work, got %#v", envelope.Error)
+	if envelope.Error.Class != "tool_error" || envelope.Error.Code != "tool_error" {
+		t.Fatalf("untyped error text should not become semantic authority, got %#v", envelope.Error)
 	}
 }
 
@@ -367,7 +369,7 @@ func TestBuildToolSidecarEnvelopeRendersTypedFailureWithoutLegacyError(t *testin
 		Summary: "Context query failed",
 		Failure: failures.New(failures.DeadlineExceeded, failures.NoReason, "context_query exceeded its deadline"),
 	}
-	envelope := BuildToolSidecarEnvelope(ToolRequest{Tool: "context_query"}, result, "default")
+	envelope := BuildToolSidecarEnvelopeWithOptions(ToolRequest{Tool: "context_query"}, result, "default", ToolSidecarOptions{})
 
 	if envelope.Error == nil {
 		t.Fatalf("expected structured error")
@@ -384,7 +386,7 @@ func TestBuildToolSidecarEnvelopeRendersTypedFailureWithoutLegacyError(t *testin
 
 func TestBuildToolSidecarEnvelopeIncludesContextPackFallbackStructuredOutput(t *testing.T) {
 	result := contextPackFallbackResult(ToolRequest{Tool: ToolNameContextPack, Task: "locate failure"}, 30*time.Millisecond, context.DeadlineExceeded)
-	envelope := BuildToolSidecarEnvelope(ToolRequest{Tool: ToolNameContextPack}, result, "discovery")
+	envelope := BuildToolSidecarEnvelopeWithOptions(ToolRequest{Tool: ToolNameContextPack}, result, "discovery", ToolSidecarOptions{})
 
 	if envelope.Error == nil || envelope.Error.Class != "timeout" || envelope.Error.Code != "timeout" {
 		t.Fatalf("context_pack fallback should remain a typed timeout, got %#v", envelope.Error)
@@ -406,16 +408,16 @@ func TestBuildToolSidecarEnvelopeBoundsGenericStructuredError(t *testing.T) {
 		longMessage += "tool failed with repeated diagnostic detail "
 	}
 
-	envelope := BuildToolSidecarEnvelope(ToolRequest{Tool: "context_query"}, ToolResult{
+	envelope := BuildToolSidecarEnvelopeWithOptions(ToolRequest{Tool: "context_query"}, ToolResult{
 		Tool:    "context_query",
 		Summary: "Context query failed",
 		Error:   longMessage,
-	}, "default")
+	}, "default", ToolSidecarOptions{})
 	if envelope.Error == nil {
 		t.Fatalf("expected structured error")
 	}
 
-	if envelope.Error.Class != "tool_failed" || envelope.Error.Code != "tool_failed" {
+	if envelope.Error.Class != "tool_error" || envelope.Error.Code != "tool_error" {
 		t.Fatalf("unexpected generic error classification: %#v", envelope.Error)
 	}
 

@@ -381,7 +381,7 @@ func (m *Manager) joernScan(ctx context.Context, req ToolRequest) ToolResult {
 }
 
 func (m *Manager) goDependencyGraph(ctx context.Context, target string) ToolResult {
-	if !m.isGoWorkspace() {
+	if !m.languageDetects("go") {
 		return toolUnavailableResult(ToolNameDependencyGraph, "Go dependency graph unavailable", "go.mod was not found at the workspace root")
 	}
 

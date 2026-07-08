@@ -113,6 +113,29 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 		}
 	})
 
+	t.Run("implementation repair", func(t *testing.T) {
+		spec := RuntimeContractForTaskFamily(string(autonomy.TaskFamilyImplementationRepair))
+		if spec.TaskFamily != autonomy.TaskFamilyImplementationRepair || spec.Contract != ContractRepairSummary {
+			t.Fatalf("unexpected implementation repair contract: %#v", spec)
+		}
+
+		if spec.ToolProfile != workspace.ToolSurfaceProfileGuardedWrite || spec.PermissionProfile != PermissionGuardedWorkspaceWrite {
+			t.Fatalf("implementation repair should use guarded write tools and permissions, got %#v", spec)
+		}
+
+		for _, want := range []string{"failed_verification_output", "repair_changed_paths_or_blocker", "verification_status"} {
+			if !runtimeLabelContains(spec.RequiredEvidence, want) {
+				t.Fatalf("implementation repair missing evidence %q in %#v", want, spec.RequiredEvidence)
+			}
+		}
+
+		for _, want := range []string{"use_failed_output_first", "prefer_smallest_followup_edit", "avoid_scope_widening"} {
+			if !runtimeLabelContains(spec.SearchPolicy, want) {
+				t.Fatalf("implementation repair missing search policy %q in %#v", want, spec.SearchPolicy)
+			}
+		}
+	})
+
 	t.Run("feature planner planner", func(t *testing.T) {
 		spec := RuntimeContractForTaskFamily(string(autonomy.TaskFamilyFeaturePlannerPlanner))
 		if spec.TaskFamily != autonomy.TaskFamilyFeaturePlannerPlanner || spec.Contract != ContractFeaturePlan {

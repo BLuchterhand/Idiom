@@ -56,7 +56,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		checkGit(),
 	}
 
-	profiles, err := buildDoctorReadinessProfiles(*configPath, *readinessProfile, results)
+	profiles, err := readiness.BuildProfiles(*configPath, *readinessProfile, readinessHostChecks(results))
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 
@@ -440,10 +440,6 @@ func emitDoctorReadinessText(w io.Writer, profiles []readiness.ProfileReport) {
 			fmt.Fprintf(w, "      %s %s: %s\n", check.State, check.Name, check.Remedy)
 		}
 	}
-}
-
-func buildDoctorReadinessProfiles(configPath, selected string, hostChecks []checkResult) ([]readiness.ProfileReport, error) {
-	return readiness.BuildProfiles(configPath, selected, readinessHostChecks(hostChecks))
 }
 
 func readinessHostChecks(results []checkResult) []readiness.HostCheck {

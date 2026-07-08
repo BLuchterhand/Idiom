@@ -26,19 +26,7 @@ func RoleSpecFor(name string) RoleSpec {
 	case RoleChildReadOnly:
 		return roleSpecFromRuntimeContract(RoleChildReadOnly, RuntimeContractForTaskFamily(string(autonomy.TaskFamilyDelegatedReadOnly)), roleForbiddenWorkspaceWrites("mutating_shell", workspace.ToolNameTask))
 	case RoleRepair:
-		return RoleSpec{
-			Name:                 RoleRepair,
-			TaskFamily:           autonomy.TaskFamilyImplementationRepair,
-			Contract:             ContractRepairSummary,
-			PermissionProfile:    PermissionGuardedWorkspaceWrite,
-			AllowedTools:         workspace.ManifestToolsForSurfaceProfile(workspace.ToolSurfaceProfileGuardedWrite),
-			ForbiddenTools:       []string{"unbounded_write", "unapproved_protected_write"},
-			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceFailedVerificationOutput, RequiredEvidenceChangedPathsOrNoopReasonRepair, RequiredEvidenceVerificationStatus},
-			ReadinessGate:        []ReadinessGateID{ReadinessFailedOutputAddressed, ReadinessVerificationContractResolved},
-			SearchPolicy:         []SearchPolicyID{SearchPolicyUseFailedOutputFirst, SearchPolicyPreferSmallestFollowupEdit, SearchPolicyAvoidScopeWidening},
-			VerificationContract: VerificationTestsPassedFailedSkipped,
-			StopConditions:       []StopConditionID{StopRepairVerified, StopRepairBlockedWithFailedOutput, StopBudgetExhaustedWithUncertainty},
-		}
+		return roleSpecFromRuntimeContract(RoleRepair, RuntimeContractForTaskFamily(string(autonomy.TaskFamilyImplementationRepair)), []string{"unbounded_write", "unapproved_protected_write"})
 	case RoleImplement:
 		return roleSpecFromRuntimeContract(RoleImplement, RuntimeContractForTaskFamily(string(autonomy.TaskFamilyImplementation)), []string{"unbounded_write", "unapproved_protected_write"})
 	default:

@@ -252,12 +252,12 @@ func (m *Manager) exploreThoroughness() ExploreThoroughness {
 func (m *Manager) toolSurfaceManifestOptions(readOnly bool) ToolSurfaceManifestOptions {
 	return ToolSurfaceManifestOptions{
 		ReadOnly:          readOnly,
-		IncludeGo:         m.isGoWorkspace(),
-		IncludeCpp:        m.isCppWorkspace(),
-		IncludePython:     m.isPythonWorkspace(),
-		IncludeTypescript: m.isTsWorkspace(),
-		IncludeRust:       m.isRustWorkspace(),
-		IncludeJava:       m.isJavaWorkspace(),
+		IncludeGo:         m.languageDetects("go"),
+		IncludeCpp:        m.languageDetects("cpp"),
+		IncludePython:     m.languageDetects("python"),
+		IncludeTypescript: m.languageDetects("typescript"),
+		IncludeRust:       m.languageDetects("rust"),
+		IncludeJava:       m.languageDetects("java"),
 	}
 }
 

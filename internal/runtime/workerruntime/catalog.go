@@ -224,6 +224,18 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			VerificationContract: VerificationNotRequiredReadOnlyChild,
 			StopConditions:       []StopConditionID{StopDelegatedQuestionAnswered, StopBlockedByMissingEvidenceOrPermission, StopBudgetExhaustedWithUncertainty},
 		}
+	case string(autonomy.TaskFamilyImplementationRepair):
+		return RuntimeContractSpec{
+			TaskFamily:           autonomy.TaskFamilyImplementationRepair,
+			Contract:             ContractRepairSummary,
+			PermissionProfile:    PermissionGuardedWorkspaceWrite,
+			ToolProfile:          workspace.ToolSurfaceProfileGuardedWrite,
+			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceFailedVerificationOutput, RequiredEvidenceChangedPathsOrNoopReasonRepair, RequiredEvidenceVerificationStatus},
+			ReadinessGate:        []ReadinessGateID{ReadinessFailedOutputAddressed, ReadinessVerificationContractResolved},
+			SearchPolicy:         []SearchPolicyID{SearchPolicyUseFailedOutputFirst, SearchPolicyPreferSmallestFollowupEdit, SearchPolicyAvoidScopeWidening},
+			VerificationContract: VerificationTestsPassedFailedSkipped,
+			StopConditions:       []StopConditionID{StopRepairVerified, StopRepairBlockedWithFailedOutput, StopBudgetExhaustedWithUncertainty},
+		}
 	case "implementation", "test_authoring", "config_edit", "script_edit", "gdscript_edit", "docs_edit", "prompt_edit_security", "failure_injection":
 		family = strings.TrimSpace(family)
 		// Verification contract differs by family: code-producing

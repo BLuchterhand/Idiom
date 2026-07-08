@@ -31,25 +31,13 @@ func TestBuildToolManifestSuppressesPlaceholderRequests(t *testing.T) {
 	}
 }
 
-func TestRenderToolManifestInstructionsOmitsBlankRequestSlot(t *testing.T) {
-	rendered := RenderToolManifestInstructions([]string{"submit_plan"})
-
-	if strings.Contains(rendered, "submit_plan  (") {
-		t.Fatalf("blank request should not render as a double-spaced slot:\n%s", rendered)
+func TestBuildToolManifestSuppressesManifestWidePlaceholderRequests(t *testing.T) {
+	manifest := BuildToolManifest(nil)
+	requests := make([]string, 0, len(manifest))
+	for _, entry := range manifest {
+		requests = append(requests, entry.Request)
 	}
-
-	if strings.Contains(rendered, "relative/file") || strings.Contains(rendered, "one paragraph") {
-		t.Fatalf("placeholder request text leaked into manifest instructions:\n%s", rendered)
-	}
-
-	if !strings.Contains(rendered, "- submit_plan (") {
-		t.Fatalf("sanitized manifest should still name the tool and purpose:\n%s", rendered)
-	}
-}
-
-func TestRenderToolManifestInstructionsSuppressesManifestWidePlaceholderRequests(t *testing.T) {
-	rendered := strings.ToLower(RenderToolManifestInstructions(nil))
-	requestText := renderedManifestRequestText(rendered)
+	requestText := strings.ToLower(strings.Join(requests, "\n"))
 
 	for _, forbidden := range []string{
 		"symbol|text",
@@ -84,7 +72,7 @@ func TestRenderToolManifestInstructionsSuppressesManifestWidePlaceholderRequests
 	}
 
 	if !strings.Contains(requestText, `{"tool":"pwd"}`) {
-		t.Fatalf("concrete non-placeholder request should still render:\n%s", rendered)
+		t.Fatalf("concrete non-placeholder request should still render:\n%s", requestText)
 	}
 }
 
@@ -224,25 +212,4 @@ func TestToolManifestWriteToolsDeriveFromSurfaceMetadata(t *testing.T) {
 	if !slices.Contains(goWriteTools, "go_move_declarations") {
 		t.Fatalf("Go write manifest should include go_move_declarations: %#v", goWriteTools)
 	}
-}
-
-func renderedManifestRequestText(rendered string) string {
-	var b strings.Builder
-
-	for _, line := range strings.Split(rendered, "\n") {
-		idx := strings.Index(line, " {")
-		if idx < 0 {
-			continue
-		}
-
-		request := line[idx+1:]
-		if end := strings.Index(request, " ("); end >= 0 {
-			request = request[:end]
-		}
-
-		b.WriteString(request)
-		b.WriteByte('\n')
-	}
-
-	return b.String()
 }

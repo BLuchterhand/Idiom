@@ -1498,10 +1498,11 @@ func TestContextStatusRefreshRebuildsCollectorMismatchWithoutScope(t *testing.T)
 
 	mgr := NewManager(config.Workspace{Root: root, CWD: root})
 
-	refresh := mgr.contextStatusAutoRefresh(context.Background(), ToolRequest{Tool: "context_status", Refresh: true, Language: "go"}, comprehension.StatusReport{
+	decision := mgr.contextStatusFreshness(context.Background(), ToolRequest{Tool: "context_status", Refresh: true, Language: "go"}, comprehension.StatusReport{
 		Indexed:                  true,
 		CollectorVersionMismatch: true,
 	})
+	refresh := decision.Refresh
 	if refresh == nil || !refresh.Attempted || refresh.Scope != "." || refresh.Reason != "collector_version_mismatch" || refresh.FilesIndexed != 1 || !refresh.FreshAfter {
 		t.Fatalf("expected collector mismatch root rebuild, got %#v", refresh)
 	}
@@ -2689,7 +2690,7 @@ func TestHarnessAuditBehaviorIncludesContractCoverage(t *testing.T) {
 func TestHarnessAuditIgnoresLegacyTurnPhaseProjectionContradictions(t *testing.T) {
 	encoded := mustWorkspaceTextualTurnPhaseProjectionEvent(t, harnessAuditTurnPhaseProjectionIntroducedAt.Add(-time.Minute))
 
-	events, warnings := decodeHarnessAuditAutonomyEvents([]byte(encoded))
+	events, warnings := decodeHarnessAuditAutonomyEventsWithOptions([]byte(encoded), harnessAuditAutonomyDecodeOptions{})
 	if len(warnings) != 0 {
 		t.Fatalf("unexpected warnings: %#v", warnings)
 	}
@@ -2726,7 +2727,7 @@ func TestHarnessAuditIgnoresLegacyTurnPhaseProjectionContradictions(t *testing.T
 func TestHarnessAuditStillFlagsCurrentTurnPhaseProjectionContradictions(t *testing.T) {
 	encoded := mustWorkspaceTextualTurnPhaseProjectionEvent(t, harnessAuditTurnPhaseProjectionIntroducedAt.Add(time.Minute))
 
-	events, warnings := decodeHarnessAuditAutonomyEvents([]byte(encoded))
+	events, warnings := decodeHarnessAuditAutonomyEventsWithOptions([]byte(encoded), harnessAuditAutonomyDecodeOptions{})
 	if len(warnings) != 0 {
 		t.Fatalf("unexpected warnings: %#v", warnings)
 	}
@@ -2751,7 +2752,7 @@ func TestHarnessAuditClassifiesPreFixOpenEvidenceFinalAnswerProjectionAsHistoric
 		t.Fatalf("write pre-fix event log: %v", err)
 	}
 
-	events, warnings := decodeHarnessAuditAutonomyEvents([]byte(encoded))
+	events, warnings := decodeHarnessAuditAutonomyEventsWithOptions([]byte(encoded), harnessAuditAutonomyDecodeOptions{})
 	if len(warnings) != 0 {
 		t.Fatalf("unexpected warnings: %#v", warnings)
 	}
@@ -2775,7 +2776,7 @@ func TestHarnessAuditClassifiesPreFixOpenEvidenceFinalAnswerProjectionAsHistoric
 func TestHarnessAuditStillFlagsPostFixOpenEvidenceFinalAnswerProjection(t *testing.T) {
 	encoded := mustWorkspaceOpenEvidenceFinalAnswerProjectionEvent(t, harnessAuditOpenEvidenceFinalAnswerProjectionFixedAt.Add(time.Minute))
 
-	events, warnings := decodeHarnessAuditAutonomyEvents([]byte(encoded))
+	events, warnings := decodeHarnessAuditAutonomyEventsWithOptions([]byte(encoded), harnessAuditAutonomyDecodeOptions{})
 	if len(warnings) != 0 {
 		t.Fatalf("unexpected warnings: %#v", warnings)
 	}
@@ -2915,7 +2916,7 @@ func TestHarnessAuditBackfillsLegacyGatePackAndEnforcementMode(t *testing.T) {
 		delete(gate, "enforcement_mode")
 	})
 
-	events, warnings := decodeHarnessAuditAutonomyEvents([]byte(legacy))
+	events, warnings := decodeHarnessAuditAutonomyEventsWithOptions([]byte(legacy), harnessAuditAutonomyDecodeOptions{})
 	if len(warnings) != 0 {
 		t.Fatalf("unexpected warnings: %#v", warnings)
 	}
@@ -2957,7 +2958,7 @@ func TestHarnessAuditStillFlagsCurrentAbsentGatePackAndEnforcementMode(t *testin
 		delete(gate, "enforcement_mode")
 	})
 
-	events, warnings := decodeHarnessAuditAutonomyEvents([]byte(currentAbsent))
+	events, warnings := decodeHarnessAuditAutonomyEventsWithOptions([]byte(currentAbsent), harnessAuditAutonomyDecodeOptions{})
 	if len(warnings) != 0 {
 		t.Fatalf("unexpected warnings: %#v", warnings)
 	}
@@ -2993,7 +2994,7 @@ func TestHarnessAuditStillFlagsExplicitEmptyGatePackAndEnforcementMode(t *testin
 		gate["enforcement_mode"] = ""
 	})
 
-	events, warnings := decodeHarnessAuditAutonomyEvents([]byte(explicitEmpty))
+	events, warnings := decodeHarnessAuditAutonomyEventsWithOptions([]byte(explicitEmpty), harnessAuditAutonomyDecodeOptions{})
 	if len(warnings) != 0 {
 		t.Fatalf("unexpected warnings: %#v", warnings)
 	}
@@ -3030,7 +3031,7 @@ func TestHarnessAuditBackfillsLegacyBlockingGateSafeAlternatives(t *testing.T) {
 		delete(gate, "safe_alternatives")
 	})
 
-	events, warnings := decodeHarnessAuditAutonomyEvents([]byte(legacy))
+	events, warnings := decodeHarnessAuditAutonomyEventsWithOptions([]byte(legacy), harnessAuditAutonomyDecodeOptions{})
 	if len(warnings) != 0 {
 		t.Fatalf("unexpected warnings: %#v", warnings)
 	}
@@ -3074,7 +3075,7 @@ func TestHarnessAuditStillFlagsCurrentAbsentBlockingGateSafeAlternatives(t *test
 		delete(gate, "safe_alternatives")
 	})
 
-	events, warnings := decodeHarnessAuditAutonomyEvents([]byte(currentAbsent))
+	events, warnings := decodeHarnessAuditAutonomyEventsWithOptions([]byte(currentAbsent), harnessAuditAutonomyDecodeOptions{})
 	if len(warnings) != 0 {
 		t.Fatalf("unexpected warnings: %#v", warnings)
 	}
@@ -3111,7 +3112,7 @@ func TestHarnessAuditStillFlagsExplicitEmptyBlockingGateSafeAlternatives(t *test
 		gate["safe_alternatives"] = []any{}
 	})
 
-	events, warnings := decodeHarnessAuditAutonomyEvents([]byte(explicitEmpty))
+	events, warnings := decodeHarnessAuditAutonomyEventsWithOptions([]byte(explicitEmpty), harnessAuditAutonomyDecodeOptions{})
 	if len(warnings) != 0 {
 		t.Fatalf("unexpected warnings: %#v", warnings)
 	}

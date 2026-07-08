@@ -984,6 +984,18 @@ Reviewer-updated estimate:
   only eval discovery source. Retiring the orphan prior-session evidence reader
   removed another `166` production Go LOC. No other accepted immediate pool is
   currently documented.
+- Workspace wrapper cleanup is now implemented as the current narrow
+  net-negative slice. Deleted production-only compatibility/test helper
+  surfaces include the context status auto-refresh wrapper, harness audit
+  decoder wrapper, language tool catalog name helper, workspace-local code
+  navigation spec/test hook, content-search backend test helper, sidecar
+  envelope compatibility builder, manifest instruction renderer, language
+  detection aliases, and three one-call CLI surface wrappers. Sidecar error
+  classification now treats `ToolResult.Code` and typed `Failure` as authority
+  and falls back to generic `tool_error` for untyped prose. The repair role now
+  derives from `RuntimeContractForTaskFamily(implementation_repair)` instead
+  of carrying a second inline contract. Current production Go delta for this
+  slice is `+24 / -170`, net `-146`.
   With a future evidence/read-model design decision and reviewer acceptance,
   `150-350` production LOC is a hypothesis, not an accepted estimate.
 - Further reductions should come from larger owner moves in the case plan, not

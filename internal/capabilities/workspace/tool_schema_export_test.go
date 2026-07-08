@@ -257,7 +257,10 @@ func TestLanguageToolCatalogDrivesSchemaManifestAndMetadata(t *testing.T) {
 		t.Fatal("language tool catalog should not be empty")
 	}
 
-	names := languageToolCatalogToolNames()
+	names := make([]string, 0, len(catalog))
+	for _, entry := range catalog {
+		names = append(names, entry.Tool)
+	}
 	if len(names) != len(catalog) {
 		t.Fatalf("catalog names = %d, entries = %d", len(names), len(catalog))
 	}

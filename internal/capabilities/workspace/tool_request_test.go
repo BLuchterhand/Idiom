@@ -246,17 +246,6 @@ func TestParseToolRequestUnwrapsNestedInputObjectPayload(t *testing.T) {
 	}
 }
 
-func TestCodeNavigateAcceptsFindReferencesAlias(t *testing.T) {
-	spec, err := codeNavigationSpecFor("find_references")
-	if err != nil {
-		t.Fatalf("codeNavigationSpecFor(find_references): %v", err)
-	}
-
-	if spec.Name != "references" || spec.Capability != semanticlanguage.CapReferences {
-		t.Fatalf("unexpected references alias spec: %#v", spec)
-	}
-}
-
 func TestCodeNavigateFileOutlineDirectoryReturnsCandidates(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "internal/surfaces/tui/app/lifecycle.go"), "package app\n")

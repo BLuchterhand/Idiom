@@ -41,11 +41,6 @@ func resolveContentSearchBackend() (contentSearchBackend, error) {
 	return contentSearchBackend{}, fmt.Errorf("no supported content search backend found (rg or ggrep)")
 }
 
-func hasContentSearchBackend() bool {
-	_, err := resolveContentSearchBackend()
-	return err == nil
-}
-
 func contentSearchBackendCandidates() []string {
 	switch runtime.GOOS {
 	case "darwin":

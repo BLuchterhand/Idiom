@@ -46,7 +46,7 @@ func runSkillsList(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 2
 	}
 
-	names, err := canonicalSkillNames()
+	names, err := cliassets.SkillNames()
 	if err != nil {
 		fmt.Fprintf(stderr, "skills list: %v\n", err)
 
@@ -144,13 +144,6 @@ func runSkillsInstall(args []string, stdout io.Writer, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "Customize for this project, then commit alongside any orchestrator config.\n")
 
 	return 0
-}
-
-// canonicalSkillNames returns the sorted list of skill names idiom
-// ships templates for. Each name corresponds to a subdirectory under
-// the embedded skills/ root containing a SKILL.md.
-func canonicalSkillNames() ([]string, error) {
-	return cliassets.SkillNames()
 }
 
 func printSkillsUsage(stderr io.Writer) {

@@ -347,26 +347,3 @@ func toolManifestRequestLooksPlaceholder(request string) bool {
 		"<",
 	)
 }
-
-func RenderToolManifestInstructions(allowedTools []string) string {
-	manifest := BuildToolManifest(allowedTools)
-	if len(manifest) == 0 {
-		return ""
-	}
-
-	lines := make([]string, 0, len(manifest))
-	for _, entry := range manifest {
-		line := "- " + entry.Tool
-		if strings.TrimSpace(entry.Request) != "" {
-			line += " " + entry.Request
-		}
-
-		if entry.Purpose != "" {
-			line += " (" + entry.Purpose + ")"
-		}
-
-		lines = append(lines, line)
-	}
-
-	return strings.Join(lines, "\n")
-}

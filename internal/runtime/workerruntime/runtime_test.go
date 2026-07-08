@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/contracts/autonomy"
 	contractcompile "idiom/internal/contracts/compile"
 	recoverycontract "idiom/internal/contracts/recovery"
 )
@@ -1706,6 +1707,28 @@ func TestRoleSpecForChildReadOnlyOmitsNestedTaskDelegation(t *testing.T) {
 	for _, tool := range workspace.WorkspaceWriteToolNames() {
 		if !slices.Contains(spec.ForbiddenTools, tool) {
 			t.Fatalf("child read-only role must forbid cataloged workspace write tool %q, got %#v", tool, spec.ForbiddenTools)
+		}
+	}
+}
+
+func TestRoleSpecForRepairCarriesRepairContract(t *testing.T) {
+	spec := RoleSpecFor("repair")
+	contract := RuntimeContractForTaskFamily(string(autonomy.TaskFamilyImplementationRepair))
+	if spec.Name != RoleRepair || spec.TaskFamily != contract.TaskFamily || spec.Contract != contract.Contract {
+		t.Fatalf("unexpected repair role: %#v", spec)
+	}
+
+	if spec.PermissionProfile != contract.PermissionProfile || spec.VerificationContract != contract.VerificationContract {
+		t.Fatalf("repair role drifted from runtime contract: %#v / %#v", spec, contract)
+	}
+
+	if !slices.Equal(spec.SearchPolicy, contract.SearchPolicy) || !slices.Equal(spec.RequiredEvidence, contract.RequiredEvidence) || !slices.Equal(spec.ReadinessGate, contract.ReadinessGate) || !slices.Equal(spec.StopConditions, contract.StopConditions) {
+		t.Fatalf("repair role should copy catalog-owned contract fields:\nrole=%#v\ncontract=%#v", spec, contract)
+	}
+
+	for _, want := range []string{"unbounded_write", "unapproved_protected_write"} {
+		if !slices.Contains(spec.ForbiddenTools, want) {
+			t.Fatalf("repair role should keep role-specific forbidden tool %q, got %#v", want, spec.ForbiddenTools)
 		}
 	}
 }

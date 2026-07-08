@@ -683,11 +683,6 @@ func (m *Manager) contextStatusFreshness(ctx context.Context, req ToolRequest, s
 	return decision
 }
 
-func (m *Manager) contextStatusAutoRefresh(ctx context.Context, req ToolRequest, status comprehension.StatusReport) *comprehension.RefreshReport {
-	decision := m.contextStatusFreshness(ctx, req, status)
-	return decision.Refresh
-}
-
 func contextStatusRefreshMaxFiles(req ToolRequest, status comprehension.StatusReport) int {
 	if boundedContextRefreshScope(req) != "" || len(req.RequiredEditPaths) > 0 {
 		return 0
