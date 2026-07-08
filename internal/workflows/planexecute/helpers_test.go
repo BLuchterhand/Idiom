@@ -120,16 +120,20 @@ func TestSlow(t *testing.T) {
 		t.Fatalf("write slow test: %v", err)
 	}
 
-	check := runPlanExecuteVerificationCommandWithTimeout(context.Background(), root, plancontract.VerificationCommand{
+	run := RunVerificationCommand(context.Background(), root, plancontract.VerificationCommand{
 		Command: "go test ./slow",
 		Argv:    []string{"go", "test", "./slow"},
-	}, 200*time.Millisecond)
+	}, 200*time.Millisecond, false)
+	check := run.Check
 
 	if check.Status != "failed" {
 		t.Fatalf("status = %q, want failed", check.Status)
 	}
 	if !strings.Contains(check.Error, "timed out") {
 		t.Fatalf("error = %q, want timeout", check.Error)
+	}
+	if !strings.Contains(run.Check.Error, "timed out") || run.ExitCode != -1 || run.StartedAt.IsZero() || run.CompletedAt.IsZero() {
+		t.Fatalf("timeout run metadata = %#v", run)
 	}
 }
 
@@ -143,10 +147,11 @@ import "testing"
 func TestPass(t *testing.T) {}
 `)
 
-	check := runPlanExecuteVerificationCommandWithTimeout(context.Background(), root, plancontract.VerificationCommand{
+	run := RunVerificationCommand(context.Background(), root, plancontract.VerificationCommand{
 		Command:    "go test -count=1 .",
 		WorkingDir: "pkg",
-	}, 10*time.Second)
+	}, 10*time.Second, false)
+	check := run.Check
 
 	if check.Status != plancontract.PhaseEvidenceStatusOK {
 		t.Fatalf("status = %q, want ok; check=%#v", check.Status, check)
@@ -157,22 +162,29 @@ func TestPass(t *testing.T) {}
 	if !strings.Contains(check.Summary, "ok") {
 		t.Fatalf("summary should contain go test output, got %q", check.Summary)
 	}
+	if run.ExitCode != 0 || run.StartedAt.IsZero() || run.CompletedAt.IsZero() {
+		t.Fatalf("pass run metadata = %#v", run)
+	}
 }
 
 func TestRunPlanExecuteVerificationCommandRejectsUnsafeWorkingDir(t *testing.T) {
 	root := t.TempDir()
 	writePlanExecuteVerificationModule(t, root, "unsafeworkdir")
 
-	check := runPlanExecuteVerificationCommandWithTimeout(context.Background(), root, plancontract.VerificationCommand{
+	run := RunVerificationCommand(context.Background(), root, plancontract.VerificationCommand{
 		Command:    "go test ./...",
 		WorkingDir: "../escape",
-	}, 10*time.Second)
+	}, 10*time.Second, false)
+	check := run.Check
 
 	if check.Status != plancontract.PhaseEvidenceStatusFailed {
 		t.Fatalf("status = %q, want failed", check.Status)
 	}
 	if check.Error != "unsafe verification working_dir" {
 		t.Fatalf("error = %q, want unsafe verification working_dir", check.Error)
+	}
+	if run.Check.Error != "unsafe verification working_dir" || run.ExitCode != -1 {
+		t.Fatalf("unsafe working dir metadata = %#v", run)
 	}
 }
 
@@ -194,9 +206,10 @@ func TestFail(t *testing.T) {
 }
 `)
 
-	check := runPlanExecuteVerificationCommandWithTimeout(context.Background(), root, plancontract.VerificationCommand{
+	run := RunVerificationCommand(context.Background(), root, plancontract.VerificationCommand{
 		Command: "go test -count=1 ./pkg",
-	}, 10*time.Second)
+	}, 10*time.Second, false)
+	check := run.Check
 
 	if check.Status != plancontract.PhaseEvidenceStatusFailed {
 		t.Fatalf("status = %q, want failed", check.Status)
@@ -208,6 +221,9 @@ func TestFail(t *testing.T) {
 	}
 	if !strings.Contains(check.Summary, "exit status") {
 		t.Fatalf("summary should preserve process error, got %q", check.Summary)
+	}
+	if run.ExitCode == 0 || run.StartedAt.IsZero() || run.CompletedAt.IsZero() {
+		t.Fatalf("failure run metadata = %#v", run)
 	}
 }
 
@@ -226,15 +242,31 @@ func TestChatty(t *testing.T) {
 }
 `)
 
-	check := runPlanExecuteVerificationCommandWithTimeout(context.Background(), root, plancontract.VerificationCommand{
+	check := RunVerificationCommand(context.Background(), root, plancontract.VerificationCommand{
 		Command: "go test -count=1 -v ./pkg",
-	}, 10*time.Second)
+	}, 10*time.Second, false).Check
 
 	if check.Status != plancontract.PhaseEvidenceStatusOK {
 		t.Fatalf("status = %q, want ok; check=%#v", check.Status, check)
 	}
 	if !strings.Contains(check.Summary, "[truncated") {
 		t.Fatalf("summary should include truncation marker, len=%d summary tail=%q", len(check.Summary), check.Summary[max(0, len(check.Summary)-80):])
+	}
+}
+
+func TestRunVerificationCommandCanRequireOperandAfterPrefix(t *testing.T) {
+	root := t.TempDir()
+	writePlanExecuteVerificationModule(t, root, "requireoperand")
+
+	run := RunVerificationCommand(context.Background(), root, plancontract.VerificationCommand{
+		Command: "go test",
+	}, 10*time.Second, true)
+
+	if run.Check.Status != plancontract.PhaseEvidenceStatusFailed || run.ExitCode != -1 {
+		t.Fatalf("bare prefix should be unsupported, got %#v", run)
+	}
+	if !strings.Contains(run.Check.Error, "package pattern") {
+		t.Fatalf("error = %q, want package pattern", run.Check.Error)
 	}
 }
 

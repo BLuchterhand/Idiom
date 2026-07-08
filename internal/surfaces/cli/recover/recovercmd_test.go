@@ -1088,16 +1088,24 @@ func TestRunRecoveryVerificationCommandRecordsFailureExitCode(t *testing.T) {
 }
 
 func TestRunRecoveryVerificationCommandRejectsUnsupportedCommand(t *testing.T) {
-	result, err := runRecoveryVerificationCommand(t.TempDir(), "go env GOPATH")
-	if err == nil {
-		t.Fatalf("unsupported verification command returned nil error")
-	}
+	for _, tc := range []struct {
+		command string
+		error   string
+	}{
+		{command: "go env GOPATH", error: "unsupported recovery verification command"},
+		{command: "go test", error: "must name a package pattern"},
+	} {
+		result, err := runRecoveryVerificationCommand(t.TempDir(), tc.command)
+		if err == nil || !strings.Contains(err.Error(), tc.error) {
+			t.Fatalf("%s error = %v, want %q", tc.command, err, tc.error)
+		}
 
-	if result.Command != "go env GOPATH" ||
-		result.Status != recoverycontract.ReconciliationVerificationFail ||
-		result.ExitCode != -1 ||
-		result.CompletedAt == "" {
-		t.Fatalf("unexpected unsupported-command result: %#v", result)
+		if result.Command != tc.command ||
+			result.Status != recoverycontract.ReconciliationVerificationFail ||
+			result.ExitCode != -1 ||
+			result.CompletedAt == "" {
+			t.Fatalf("unexpected unsupported-command result for %s: %#v", tc.command, result)
+		}
 	}
 }
 

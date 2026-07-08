@@ -12,16 +12,15 @@ import (
 	"strings"
 	"time"
 
-	recoverycontract "idiom/internal/contracts/recovery"
-
 	plancontract "idiom/internal/contracts/plan"
+	recoverycontract "idiom/internal/contracts/recovery"
 	"idiom/internal/platform/atomicfile"
-	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/config"
 	"idiom/internal/repository/comprehension"
 	"idiom/internal/runtime/localops"
 	"idiom/internal/workflows/atomintake"
 	"idiom/internal/workflows/brieflint"
+	"idiom/internal/workflows/planexecute"
 	"idiom/internal/workflows/recoverstatus"
 	"idiom/internal/workflows/recovery"
 )
@@ -845,58 +844,37 @@ func recoverRequiredTestsForCompletedAtoms(packet recoverycontract.Decomposition
 
 func runRecoveryVerificationCommand(root string, command string) (recoverycontract.ReconciliationCommandResult, error) {
 	command = strings.Join(strings.Fields(command), " ")
-
-	startedAt := time.Now().UTC()
-	result := recoverycontract.ReconciliationCommandResult{
-		Command:   command,
-		Status:    recoverycontract.ReconciliationVerificationFail,
-		ExitCode:  -1,
-		StartedAt: startedAt.Format(time.RFC3339Nano),
+	run := planexecute.RunVerificationCommand(context.Background(), root, plancontract.VerificationCommand{Command: command}, 5*time.Minute, true)
+	result := recoveryCommandResultFromPlanExecuteRun(command, run)
+	if run.Check.Status == plancontract.PhaseEvidenceStatusOK {
+		return result, nil
+	}
+	if strings.Contains(run.Check.Error, "package pattern") {
+		return result, fmt.Errorf("recovery verification command must name a package pattern: %s", command)
+	}
+	if run.Check.Error == "unsupported verification command" {
+		return result, fmt.Errorf("unsupported recovery verification command: %s", command)
+	}
+	if strings.Contains(run.Check.Error, "timed out") {
+		return result, fmt.Errorf("recovery verification command timed out: %s", command)
 	}
 
-	args, err := parseRecoveryVerificationCommand(command)
-	if err != nil {
-		result.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
-		return result, err
-	}
-
-	execResult := commandexec.Run(nil, commandexec.Spec{
-		Name:    args[0],
-		Args:    args[1:],
-		Dir:     root,
-		Timeout: 5 * time.Minute,
-	})
-	if execResult.Err != nil {
-		result.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
-		if execResult.ExitError {
-			result.ExitCode = execResult.ExitCode
-		}
-
-		if execResult.TimedOut {
-			return result, fmt.Errorf("recovery verification command timed out: %s", command)
-		}
-
-		return result, fmt.Errorf("recovery verification command failed: %s: %s", command, strings.TrimSpace(execResult.Stderr))
-	}
-
-	result.Status = recoverycontract.ReconciliationVerificationPass
-	result.ExitCode = 0
-	result.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
-
-	return result, nil
+	return result, fmt.Errorf("recovery verification command failed: %s: %s", command, strings.TrimSpace(run.Check.Error))
 }
 
-func parseRecoveryVerificationCommand(command string) ([]string, error) {
-	args, ok := plancontract.VerificationCommandArgs(command)
-	if !ok {
-		return nil, fmt.Errorf("unsupported recovery verification command: %s", command)
+func recoveryCommandResultFromPlanExecuteRun(command string, run planexecute.VerificationCommandRun) recoverycontract.ReconciliationCommandResult {
+	status := recoverycontract.ReconciliationVerificationFail
+	if run.Check.Status == plancontract.PhaseEvidenceStatusOK {
+		status = recoverycontract.ReconciliationVerificationPass
 	}
 
-	if len(args) == len(plancontract.VerificationCommandPrefix(args)) {
-		return nil, fmt.Errorf("recovery verification command must name a package pattern: %s", command)
+	return recoverycontract.ReconciliationCommandResult{
+		Command:     command,
+		Status:      status,
+		ExitCode:    run.ExitCode,
+		StartedAt:   run.StartedAt.Format(time.RFC3339Nano),
+		CompletedAt: run.CompletedAt.Format(time.RFC3339Nano),
 	}
-
-	return args, nil
 }
 
 func resolveRecoveryPath(root string, path string) string {

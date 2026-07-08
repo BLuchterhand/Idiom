@@ -65,7 +65,7 @@ func runPlanExecuteVerificationPlanWithParentContract(ctx context.Context, root 
 	}
 
 	for _, command := range plan.Commands {
-		check := runPlanExecuteVerificationCommandWithContext(ctx, root, command)
+		check := RunVerificationCommand(ctx, root, command, 0, false).Check
 
 		evidence = append(evidence, check)
 
@@ -282,33 +282,48 @@ func planExecuteFullHash(values ...string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func runPlanExecuteVerificationCommandWithContext(ctx context.Context, root string, command plancontract.VerificationCommand) plancontract.PhaseEvidenceCheck {
-	return runPlanExecuteVerificationCommandWithTimeout(ctx, root, command, defaultPlanExecuteVerificationTimeout)
+type VerificationCommandRun struct {
+	Check       plancontract.PhaseEvidenceCheck
+	StartedAt   time.Time
+	CompletedAt time.Time
+	ExitCode    int
 }
 
-func runPlanExecuteVerificationCommandWithTimeout(parent context.Context, root string, command plancontract.VerificationCommand, timeout time.Duration) plancontract.PhaseEvidenceCheck {
+func RunVerificationCommand(parent context.Context, root string, command plancontract.VerificationCommand, timeout time.Duration, requireOperandAfterPrefix bool) VerificationCommandRun {
+	if timeout <= 0 {
+		timeout = defaultPlanExecuteVerificationTimeout
+	}
 	command.Command = strings.TrimSpace(command.Command)
+	startedAt := time.Now().UTC()
 
 	args := plancontract.NormalizeVerificationArgv(command.Argv)
 
 	if len(args) == 0 {
-		parsed, ok := plancontract.VerificationCommandArgs(command.Command)
-		if !ok {
-			args = nil
-		} else {
+		if parsed, ok := plancontract.VerificationCommandArgs(command.Command); ok {
 			args = parsed
 		}
 	}
 
+	run := VerificationCommandRun{StartedAt: startedAt, ExitCode: -1}
 	check := plancontract.PhaseEvidenceCheck{
 		Kind:       plancontract.PhaseEvidenceKindVerification,
 		Command:    command.Command,
 		WorkingDir: command.WorkingDir,
 		Status:     plancontract.PhaseEvidenceStatusFailed,
 	}
+	finish := func() VerificationCommandRun {
+		run.Check = check
+		run.CompletedAt = time.Now().UTC()
+		return run
+	}
 	if len(args) == 0 || !plancontract.VerificationArgvAllowed(args) {
 		check.Error = "unsupported verification command"
-		return check
+		return finish()
+	}
+
+	if requireOperandAfterPrefix && len(args) == len(plancontract.VerificationCommandPrefix(args)) {
+		check.Error = "verification command must name a package pattern"
+		return finish()
 	}
 
 	workdir := strings.TrimSpace(root)
@@ -321,7 +336,7 @@ func runPlanExecuteVerificationCommandWithTimeout(parent context.Context, root s
 		workingDir, ok := cleanVerificationWorkingDir(command.WorkingDir)
 		if !ok {
 			check.Error = "unsafe verification working_dir"
-			return check
+			return finish()
 		}
 
 		workdir = filepath.Join(workdir, filepath.FromSlash(workingDir))
@@ -338,23 +353,27 @@ func runPlanExecuteVerificationCommandWithTimeout(parent context.Context, root s
 	output := truncatePlanExecuteText(strings.TrimSpace(commandexec.CombineOutput(result.Stdout, result.Stderr)), 12000)
 
 	if result.Err != nil {
+		if result.ExitError {
+			run.ExitCode = result.ExitCode
+		}
 		if result.TimedOut {
 			check.Error = fmt.Sprintf("verification command timed out after %s", timeout)
 			check.Summary = check.Error
 
-			return check
+			return finish()
 		}
 
 		check.Error = firstNonEmptyString(output, result.Err.Error())
 		check.Summary = result.Err.Error()
 
-		return check
+		return finish()
 	}
 
 	check.Status = plancontract.PhaseEvidenceStatusOK
 	check.Summary = output
+	run.ExitCode = 0
 
-	return check
+	return finish()
 }
 
 const planExecuteVerificationCaptureBytes = 1024 * 1024

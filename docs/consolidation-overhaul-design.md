@@ -1120,9 +1120,21 @@ Reviewer-updated estimate:
   `/tmp/idiom-tools/deadcode -test ./...`;
   `$(go env GOPATH)/bin/staticcheck -checks=U1000 ./...`;
   `git diff --check`.
-  Reviewer follow-up still open: planner-owned verification command execution
-  remains duplicated between plan-execute and recovery, and autonomy
-  action-class derivation still overlaps workspace/runtime tool metadata.
+  Reviewer follow-up still open: autonomy action-class derivation still
+  overlaps workspace/runtime tool metadata.
+- Planner-owned verification command execution is implemented. The
+  plan-execute verification runner now owns command parsing, optional
+  recovery-style operand policy, working-dir validation, timeout/process
+  execution, bounded output capture, timestamps, exit code, and pass/fail
+  projection. Recovery now translates that owned run result into
+  `ReconciliationCommandResult` instead of re-parsing or re-running commands.
+  Production Go changed `+56 / -59`, net `-3`; tests changed `+59 / -19`,
+  net `+40`.
+  Focused verification: `go test ./internal/workflows/planexecute -run 'TestRun.*VerificationCommand|TestRunVerificationCommandCanRequireOperandAfterPrefix' -count=1`;
+  `go test ./internal/surfaces/cli/recover -run 'TestRunRecoveryVerificationCommandUsesWorkspaceRoot|TestRunRecoveryVerificationCommandRecordsFailureExitCode|TestRunRecoveryVerificationCommandRejectsUnsupportedCommand' -count=1`;
+  `go test ./internal/contracts/plan ./internal/workflows/planexecute ./internal/surfaces/cli/recover ./internal/workflows/recovery`;
+  `go run ./cmd/idiom coding-rules check --fail-on warning`;
+  `git diff --check`.
 
 ## Review And Regression Protocol
 
