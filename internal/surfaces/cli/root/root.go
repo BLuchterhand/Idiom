@@ -3,6 +3,7 @@ package root
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
@@ -77,7 +78,7 @@ func runMainWithTelemetryDir(args []string, stdout io.Writer, stderr io.Writer, 
 
 		switch subcommand {
 		case "run":
-			return runHeadlessMainWithTelemetry(subcommandArgs, stdout, stderr, cmdruntime.RunPromptOnce, rec)
+			return headlesscmd.Run(subcommandArgs, os.Stdin, stdout, stderr, headlesscmd.PromptRunner(cmdruntime.RunPromptOnce), rec)
 		case "serve":
 			return headlesscmd.RunServe(subcommandArgs, stdout, stderr)
 		case "session":
@@ -143,12 +144,16 @@ func runMainWithTelemetryDir(args []string, stdout io.Writer, stderr io.Writer, 
 		}
 	}
 
-	return cmdruntime.RunWithTelemetry(args, stdout, stderr, cmdruntime.RunPromptOnce, cmdruntime.RunPromptsOnce, cmdruntime.RunTUI, cmdruntime.RunServerOnlyWithTelemetry, cmdruntime.RunListSessions, runVersionMain, rec)
+	if legacyHeadlessAliasRequested(args) {
+		return headlesscmd.RunLegacy(args, stdout, stderr, headlesscmd.PromptRunner(cmdruntime.RunPromptOnce), headlesscmd.PromptsRunner(cmdruntime.RunPromptsOnce), rec)
+	}
+
+	return cmdruntime.RunWithTelemetry(args, stdout, stderr, cmdruntime.RunTUI, cmdruntime.RunServerOnlyWithTelemetry, cmdruntime.RunListSessions, runVersionMain, rec)
 }
 
 func rootTelemetryCommandName(args []string) string {
 	if len(args) == 0 {
-		return legacyRuntimeTelemetryCommandName(args)
+		return legacyRuntimeCommandName(args)
 	}
 
 	subcommand := args[0]
@@ -165,11 +170,11 @@ func rootTelemetryCommandName(args []string) string {
 		"skills", "version":
 		return subcommand
 	default:
-		return legacyRuntimeTelemetryCommandName(args)
+		return legacyRuntimeCommandName(args)
 	}
 }
 
-func legacyRuntimeTelemetryCommandName(args []string) string {
+func legacyRuntimeCommandName(args []string) string {
 	for _, arg := range args {
 		if strings.HasPrefix(arg, "-prompt=") || strings.HasPrefix(arg, "--prompt=") {
 			return "prompt"
@@ -192,6 +197,15 @@ func legacyRuntimeTelemetryCommandName(args []string) string {
 	}
 
 	return "tui"
+}
+
+func legacyHeadlessAliasRequested(args []string) bool {
+	switch legacyRuntimeCommandName(args) {
+	case "prompt", "turns_file":
+		return true
+	default:
+		return false
+	}
 }
 
 func applyBuildInfo(opts Options) {

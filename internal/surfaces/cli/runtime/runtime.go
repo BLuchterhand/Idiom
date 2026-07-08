@@ -1,10 +1,7 @@
 package cmdruntime
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -19,14 +16,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"golang.org/x/term"
 
-	"idiom/internal/capabilities/workspace"
 	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/sessionlog"
 	"idiom/internal/runtime/workerruntime"
-	"idiom/internal/surfaces/cli/runrecord"
 	"idiom/internal/surfaces/tui/app"
 )
 
@@ -43,38 +38,15 @@ type RunOptions struct {
 	ScopeContract               plancontract.PlanScopeContract
 }
 
-type ApplicationRequestMode string
-
-const (
-	ApplicationRequestVersion      ApplicationRequestMode = "version"
-	ApplicationRequestListSessions ApplicationRequestMode = "list_sessions"
-	ApplicationRequestServer       ApplicationRequestMode = "server"
-	ApplicationRequestTurnsFile    ApplicationRequestMode = "turns_file"
-	ApplicationRequestPrompt       ApplicationRequestMode = "prompt"
-	ApplicationRequestTUI          ApplicationRequestMode = "tui"
-)
-
-type ApplicationRequest struct {
-	Mode          ApplicationRequestMode
-	ConfigPath    string
-	ModelOverride string
-	Prompt        string
-	TurnsFile     string
-	Options       RunOptions
-}
-
 type PromptRunner func(config.Config, string, RunOptions, io.Writer) (string, error)
-type PromptsRunner func(config.Config, []string, RunOptions, io.Writer) ([]string, error)
 type ModeRunner func(config.Config, RunOptions) error
 type ListSessionsRunner func(config.Config, io.Writer) error
 type VersionRunner func([]string, io.Writer, io.Writer) int
 
-func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptRun PromptRunner, promptsRun PromptsRunner, tuiRun ModeRunner, serverRun ModeRunner, listSessions ListSessionsRunner, versionRun VersionRunner, rec *telemetry.Recorder) int {
+func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, tuiRun ModeRunner, serverRun ModeRunner, listSessions ListSessionsRunner, versionRun VersionRunner, rec *telemetry.Recorder) int {
 	var (
 		configPath       string
 		serverOnly       bool
-		prompt           string
-		turnsFile        string
 		jsonEvents       bool
 		resume           string
 		listSessionsFlag bool
@@ -86,9 +58,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptR
 	fs.SetOutput(stderr)
 	fs.StringVar(&configPath, "config", "config.json", "path to config file")
 	fs.BoolVar(&serverOnly, "server-only", false, "run only llama-server and block")
-	fs.StringVar(&prompt, "prompt", "", "run one prompt headlessly, print the answer, and exit")
-	fs.StringVar(&turnsFile, "turns-file", "", "run newline-delimited or JSON-array prompts headlessly in one session, print answers, and exit")
-	fs.BoolVar(&jsonEvents, "json", false, "emit structured JSONL events to stdout (only with --prompt)")
+	fs.BoolVar(&jsonEvents, "json", false, "accepted for legacy headless aliases routed by the root command")
 	fs.StringVar(&resume, "resume", "", "resume a prior session by id (filename without .jsonl) before running")
 	fs.BoolVar(&listSessionsFlag, "list-sessions", false, "print recent session ids from the debug log directory and exit")
 	fs.StringVar(&modelOverride, "model", "", "override llama_server.model from config (e.g. an alias the proxy resolves)")
@@ -98,40 +68,22 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptR
 		return 2
 	}
 
-	req, err := newApplicationRequest(applicationRequestFlags{
-		ConfigPath:       configPath,
-		ServerOnly:       serverOnly,
-		Prompt:           prompt,
-		TurnsFile:        turnsFile,
-		JSONEvents:       jsonEvents,
-		Resume:           resume,
-		ListSessionsFlag: listSessionsFlag,
-		ModelOverride:    modelOverride,
-		ShowVersion:      showVersion,
-		Telemetry:        rec,
-	})
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-
-		return 2
-	}
-
-	if req.Mode == ApplicationRequestVersion {
+	if showVersion {
 		return versionRun(nil, stdout, stderr)
 	}
 
-	cfg, err := config.Load(req.ConfigPath)
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 
 		return 1
 	}
 
-	if strings.TrimSpace(req.ModelOverride) != "" {
-		cfg.LlamaServer.Model = req.ModelOverride
+	if strings.TrimSpace(modelOverride) != "" {
+		cfg.LlamaServer.Model = strings.TrimSpace(modelOverride)
 	}
 
-	if req.Mode == ApplicationRequestListSessions {
+	if listSessionsFlag {
 		telemetry.LogPhase(rec, "list_sessions", nil)
 
 		if err := listSessions(cfg, stdout); err != nil {
@@ -143,8 +95,8 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptR
 		return 0
 	}
 
-	if req.Mode == ApplicationRequestServer {
-		if err := serverRun(cfg, req.Options); err != nil {
+	if serverOnly {
+		if err := serverRun(cfg, RunOptions{Telemetry: rec}); err != nil {
 			fmt.Fprintln(stderr, err)
 
 			return 1
@@ -153,271 +105,13 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptR
 		return 0
 	}
 
-	if req.Mode == ApplicationRequestTurnsFile {
-		started := time.Now().UTC()
-		runID, runIDErr := ensureLegacyRunID(&cfg)
-		if runIDErr != nil {
-			fmt.Fprintln(stderr, runIDErr)
-
-			return 2
-		}
-
-		prompts, err := LoadPromptTurns(req.TurnsFile)
-		if err != nil {
-			record := legacyRunCompletionRecord(cfg, req, runID, started, "idiom --turns-file", "", nil)
-			record.ExitCode = 1
-			record.TerminalClass = runrecord.TerminalClassFailed
-			record.Error = err.Error()
-			if saveErr := saveLegacyRunCompletion(record); saveErr != nil {
-				fmt.Fprintln(stderr, saveErr)
-
-				return 1
-			}
-			fmt.Fprintln(stderr, err)
-
-			return 1
-		}
-
-		answers, err := promptsRun(cfg, prompts, req.Options, stdout)
-		record := legacyRunCompletionRecord(cfg, req, runID, started, "idiom --turns-file", strings.Join(prompts, "\n\n"), answers)
-		if err != nil {
-			record.ExitCode = 1
-			record.TerminalClass = runrecord.TerminalClassFailed
-			record.Error = err.Error()
-			if saveErr := saveLegacyRunCompletion(record); saveErr != nil {
-				fmt.Fprintln(stderr, saveErr)
-
-				return 1
-			}
-			fmt.Fprintln(stderr, err)
-
-			return 1
-		}
-
-		record.ExitCode = 0
-		record.TerminalClass = runrecord.TerminalClassCompleted
-		if saveErr := saveLegacyRunCompletion(record); saveErr != nil {
-			fmt.Fprintln(stderr, saveErr)
-
-			return 1
-		}
-
-		if !req.Options.JSONEvents {
-			for _, answer := range answers {
-				fmt.Fprintln(stdout, answer)
-			}
-		}
-
-		return 0
-	}
-
-	if req.Mode == ApplicationRequestPrompt {
-		started := time.Now().UTC()
-		runID, runIDErr := ensureLegacyRunID(&cfg)
-		if runIDErr != nil {
-			fmt.Fprintln(stderr, runIDErr)
-
-			return 2
-		}
-
-		answer, err := promptRun(cfg, req.Prompt, req.Options, stdout)
-		record := legacyRunCompletionRecord(cfg, req, runID, started, "idiom --prompt", req.Prompt, []string{answer})
-		if err != nil {
-			record.ExitCode = 1
-			record.TerminalClass = runrecord.TerminalClassFailed
-			record.Error = err.Error()
-			if saveErr := saveLegacyRunCompletion(record); saveErr != nil {
-				fmt.Fprintln(stderr, saveErr)
-
-				return 1
-			}
-			fmt.Fprintln(stderr, err)
-
-			return 1
-		}
-
-		record.ExitCode = 0
-		record.TerminalClass = runrecord.TerminalClassCompleted
-		if saveErr := saveLegacyRunCompletion(record); saveErr != nil {
-			fmt.Fprintln(stderr, saveErr)
-
-			return 1
-		}
-
-		if !req.Options.JSONEvents {
-			fmt.Fprintln(stdout, answer)
-		}
-
-		return 0
-	}
-
-	if err := tuiRun(cfg, req.Options); err != nil {
+	if err := tuiRun(cfg, RunOptions{Resume: resume, Telemetry: rec}); err != nil {
 		fmt.Fprintln(stderr, err)
 
 		return 1
 	}
 
 	return 0
-}
-
-func ensureLegacyRunID(cfg *config.Config) (string, error) {
-	runID := strings.TrimSpace(cfg.Workspace.SessionID)
-	if runID == "" {
-		runID = runrecord.NewRunID()
-	}
-	if err := runrecord.ValidateRunID(runID); err != nil {
-		return "", err
-	}
-
-	cfg.Workspace.SessionID = runID
-
-	return runID, nil
-}
-
-func legacyRunCompletionRecord(cfg config.Config, req ApplicationRequest, runID string, started time.Time, implementation string, prompt string, answers []string) runrecord.RunCompletionRecord {
-	outputMode := "text"
-	if req.Options.JSONEvents {
-		outputMode = "jsonl"
-	}
-
-	metadata := map[string][]string{
-		"legacy_mode": {string(req.Mode)},
-	}
-	for key, value := range workspace.HarnessAuditBuildIdentityMetadata() {
-		metadata[key] = value
-	}
-	metadata["entrypoint"] = []string{"idiom"}
-	metadata["active_mode"] = []string{string(req.Mode)}
-	metadata["timeout_owner"] = []string{"chat_request_timeout"}
-	if strings.TrimSpace(req.TurnsFile) != "" {
-		metadata["turns_file"] = []string{filepath.Clean(req.TurnsFile)}
-	}
-	if strings.TrimSpace(req.Options.Resume) != "" {
-		metadata["resume"] = []string{strings.TrimSpace(req.Options.Resume)}
-	}
-
-	root := strings.TrimSpace(cfg.Workspace.Root)
-	if root == "" {
-		root = "."
-	}
-
-	return runrecord.RunCompletionRecord{
-		SchemaVersion:  runrecord.RunCompletionSchemaVersion,
-		Type:           runrecord.RunCompletionRecordType,
-		RunID:          runID,
-		SessionID:      runID,
-		PromptSHA256:   runrecord.SHA256Hex(prompt),
-		AnswerSHA256:   runrecord.SHA256Hex(strings.Join(answers, "\n\n")),
-		OutputMode:     outputMode,
-		ConfigPath:     filepath.Clean(req.ConfigPath),
-		WorkspaceRoot:  root,
-		StartedAt:      started,
-		Implementation: implementation,
-		Metadata:       metadata,
-	}
-}
-
-func saveLegacyRunCompletion(record runrecord.RunCompletionRecord) error {
-	record.CompletedAt = time.Now().UTC()
-	record.DurationMS = record.CompletedAt.Sub(record.StartedAt).Milliseconds()
-
-	completionRecord := record
-	runrecord.AddArtifact(&completionRecord, "completion", runrecord.RunCompletionRelPath(record.RunID))
-	if _, err := runrecord.SaveRunCompletionRecord(record.WorkspaceRoot, completionRecord); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-type applicationRequestFlags struct {
-	ConfigPath       string
-	ServerOnly       bool
-	Prompt           string
-	TurnsFile        string
-	JSONEvents       bool
-	Resume           string
-	ListSessionsFlag bool
-	ModelOverride    string
-	ShowVersion      bool
-	Telemetry        *telemetry.Recorder
-}
-
-func newApplicationRequest(flags applicationRequestFlags) (ApplicationRequest, error) {
-	req := ApplicationRequest{
-		Mode:          ApplicationRequestTUI,
-		ConfigPath:    flags.ConfigPath,
-		ModelOverride: strings.TrimSpace(flags.ModelOverride),
-		Prompt:        flags.Prompt,
-		TurnsFile:     flags.TurnsFile,
-		Options: RunOptions{
-			JSONEvents: flags.JSONEvents,
-			Resume:     flags.Resume,
-			Telemetry:  flags.Telemetry,
-		},
-	}
-
-	switch {
-	case flags.ShowVersion:
-		req.Mode = ApplicationRequestVersion
-	case flags.ListSessionsFlag:
-		req.Mode = ApplicationRequestListSessions
-	case flags.ServerOnly:
-		req.Mode = ApplicationRequestServer
-		req.Options.JSONEvents = false
-		req.Options.Resume = ""
-	case strings.TrimSpace(flags.Prompt) != "" && strings.TrimSpace(flags.TurnsFile) != "":
-		return ApplicationRequest{}, fmt.Errorf("--prompt and --turns-file are mutually exclusive")
-	case strings.TrimSpace(flags.TurnsFile) != "":
-		req.Mode = ApplicationRequestTurnsFile
-	case strings.TrimSpace(flags.Prompt) != "":
-		req.Mode = ApplicationRequestPrompt
-	default:
-		req.Mode = ApplicationRequestTUI
-		req.Options.JSONEvents = false
-	}
-
-	return req, nil
-}
-
-func LoadPromptTurns(path string) ([]string, error) {
-	data, err := os.ReadFile(filepath.Clean(path))
-	if err != nil {
-		return nil, fmt.Errorf("read turns file: %w", err)
-	}
-
-	var prompts []string
-
-	if err := json.Unmarshal(data, &prompts); err == nil {
-		return CleanPromptTurns(prompts)
-	}
-
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	for scanner.Scan() {
-		prompts = append(prompts, scanner.Text())
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan turns file: %w", err)
-	}
-
-	return CleanPromptTurns(prompts)
-}
-
-func CleanPromptTurns(prompts []string) ([]string, error) {
-	cleaned := make([]string, 0, len(prompts))
-	for _, prompt := range prompts {
-		prompt = strings.TrimSpace(prompt)
-		if prompt != "" {
-			cleaned = append(cleaned, prompt)
-		}
-	}
-
-	if len(cleaned) == 0 {
-		return nil, fmt.Errorf("turns file did not contain any prompts")
-	}
-
-	return cleaned, nil
 }
 
 func RunTUI(cfg config.Config, opts RunOptions) error {

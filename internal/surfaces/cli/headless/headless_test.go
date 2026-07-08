@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -128,6 +129,223 @@ func TestRunHelpReturnsZero(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "Usage of idiom run") {
 		t.Fatalf("help output missing usage: %q", stderr.String())
+	}
+}
+
+func TestRunLegacyPromptWritesCompletionAndMetadata(t *testing.T) {
+	root := t.TempDir()
+	configPath := writeHeadlessTestConfig(t, root)
+
+	var (
+		stdout, stderr bytes.Buffer
+		gotPrompt      string
+		gotOpts        cmdruntime.RunOptions
+	)
+	code := RunLegacy(
+		[]string{"-config", configPath, "-prompt", "explain routing"},
+		&stdout,
+		&stderr,
+		func(cfg config.Config, prompt string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
+			if cfg.Workspace.SessionID == "" {
+				t.Fatal("legacy prompt should stamp workspace session id before the runner")
+			}
+			gotPrompt = prompt
+			gotOpts = opts
+
+			return "answer text", nil
+		},
+		func(config.Config, []string, cmdruntime.RunOptions, io.Writer) ([]string, error) {
+			t.Fatal("turns-file runner should not run for prompt mode")
+			return nil, nil
+		},
+		nil,
+	)
+	if code != 0 {
+		t.Fatalf("RunLegacy exit = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if gotPrompt != "explain routing" || strings.TrimSpace(stdout.String()) != "answer text" {
+		t.Fatalf("unexpected prompt output prompt=%q stdout=%q", gotPrompt, stdout.String())
+	}
+	if gotOpts.JSONEvents || gotOpts.Resume != "" {
+		t.Fatalf("opts should default to empty: %#v", gotOpts)
+	}
+
+	record, body := readSingleHeadlessCompletion(t, root)
+	if record.SchemaVersion != runrecord.RunCompletionSchemaVersion ||
+		record.Type != runrecord.RunCompletionRecordType ||
+		record.Implementation != "idiom --prompt" ||
+		record.TerminalClass != runrecord.TerminalClassCompleted ||
+		record.OutputMode != "text" ||
+		record.PromptSHA256 == "" ||
+		record.AnswerSHA256 == "" {
+		t.Fatalf("unexpected legacy completion record: %#v", record)
+	}
+	if got := record.Metadata["legacy_mode"]; len(got) != 1 || got[0] != "prompt" {
+		t.Fatalf("legacy_mode metadata = %#v", record.Metadata)
+	}
+	if got := record.Metadata["active_mode"]; len(got) != 1 || got[0] != "prompt" {
+		t.Fatalf("active_mode metadata = %#v", record.Metadata)
+	}
+	if got := record.Metadata["timeout_owner"]; len(got) != 1 || got[0] != "chat_request_timeout" {
+		t.Fatalf("timeout_owner metadata = %#v", record.Metadata)
+	}
+	if bytes.Contains(body, []byte("explain routing")) || bytes.Contains(body, []byte("answer text")) {
+		t.Fatalf("durable completion leaked raw prompt/answer: %s", string(body))
+	}
+}
+
+func TestRunLegacyPromptJSONSuppressesPlainAnswer(t *testing.T) {
+	root := t.TempDir()
+	configPath := writeHeadlessTestConfig(t, root)
+
+	var (
+		stdout, stderr bytes.Buffer
+		gotOpts        cmdruntime.RunOptions
+	)
+	code := RunLegacy(
+		[]string{"-config", configPath, "-prompt", "x", "-json"},
+		&stdout,
+		&stderr,
+		func(_ config.Config, _ string, opts cmdruntime.RunOptions, w io.Writer) (string, error) {
+			gotOpts = opts
+			_, _ = w.Write([]byte("{\"type\":\"final\",\"content\":\"event-only\"}\n"))
+
+			return "plain-answer", nil
+		},
+		func(config.Config, []string, cmdruntime.RunOptions, io.Writer) ([]string, error) {
+			t.Fatal("turns-file runner should not run for prompt mode")
+			return nil, nil
+		},
+		nil,
+	)
+	if code != 0 {
+		t.Fatalf("RunLegacy exit = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if !gotOpts.JSONEvents {
+		t.Fatalf("--json should set JSONEvents true")
+	}
+	if got := stdout.String(); got != "{\"type\":\"final\",\"content\":\"event-only\"}\n" {
+		t.Fatalf("legacy JSON mode must only emit runner JSONL, got %q", got)
+	}
+
+	record, _ := readSingleHeadlessCompletion(t, root)
+	if record.OutputMode != "jsonl" || record.Implementation != "idiom --prompt" {
+		t.Fatalf("unexpected JSON legacy record: %#v", record)
+	}
+}
+
+func TestRunLegacyPromptFailureWritesCompletion(t *testing.T) {
+	root := t.TempDir()
+	configPath := writeHeadlessTestConfig(t, root)
+
+	var stdout, stderr bytes.Buffer
+	code := RunLegacy(
+		[]string{"-config", configPath, "-prompt", "fail this"},
+		&stdout,
+		&stderr,
+		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+			return "", errors.New("prompt failed")
+		},
+		func(config.Config, []string, cmdruntime.RunOptions, io.Writer) ([]string, error) {
+			t.Fatal("turns-file runner should not run for prompt mode")
+			return nil, nil
+		},
+		nil,
+	)
+	if code != 1 || !strings.Contains(stderr.String(), "prompt failed") {
+		t.Fatalf("expected prompt failure, code=%d stderr=%s", code, stderr.String())
+	}
+
+	record, _ := readSingleHeadlessCompletion(t, root)
+	if record.TerminalClass != runrecord.TerminalClassFailed || record.ExitCode != 1 || !strings.Contains(record.Error, "prompt failed") {
+		t.Fatalf("unexpected failure completion: %#v", record)
+	}
+}
+
+func TestRunLegacyTurnsFileUsesSingleSessionRunner(t *testing.T) {
+	root := t.TempDir()
+	configPath := writeHeadlessTestConfig(t, root)
+	turnsPath := filepath.Join(t.TempDir(), "turns.json")
+	if err := os.WriteFile(turnsPath, []byte(`["first turn","second turn"]`), 0o644); err != nil {
+		t.Fatalf("write turns file: %v", err)
+	}
+
+	var (
+		stdout, stderr bytes.Buffer
+		gotPrompts     []string
+		gotOpts        cmdruntime.RunOptions
+	)
+	code := RunLegacy(
+		[]string{"-config", configPath, "-turns-file", turnsPath, "-json", "-resume", "prior-session"},
+		&stdout,
+		&stderr,
+		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+			t.Fatal("single prompt runner should not be called for --turns-file")
+			return "", nil
+		},
+		func(_ config.Config, prompts []string, opts cmdruntime.RunOptions, w io.Writer) ([]string, error) {
+			gotPrompts = append([]string(nil), prompts...)
+			gotOpts = opts
+			_, _ = w.Write([]byte("{\"type\":\"final\",\"content\":\"second answer\"}\n"))
+
+			return []string{"first answer", "second answer"}, nil
+		},
+		nil,
+	)
+	if code != 0 {
+		t.Fatalf("RunLegacy exit = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if strings.Join(gotPrompts, "|") != "first turn|second turn" {
+		t.Fatalf("unexpected prompts: %#v", gotPrompts)
+	}
+	if !gotOpts.JSONEvents || gotOpts.Resume != "prior-session" {
+		t.Fatalf("unexpected opts: %#v", gotOpts)
+	}
+	if got := stdout.String(); got != "{\"type\":\"final\",\"content\":\"second answer\"}\n" {
+		t.Fatalf("JSON turns mode must only emit runner JSONL, got %q", got)
+	}
+
+	record, _ := readSingleHeadlessCompletion(t, root)
+	if record.Implementation != "idiom --turns-file" ||
+		record.OutputMode != "jsonl" ||
+		record.TerminalClass != runrecord.TerminalClassCompleted ||
+		record.PromptSHA256 == "" ||
+		record.AnswerSHA256 == "" {
+		t.Fatalf("unexpected turns-file completion: %#v", record)
+	}
+	if got := record.Metadata["legacy_mode"]; len(got) != 1 || got[0] != "turns_file" {
+		t.Fatalf("legacy_mode metadata = %#v", record.Metadata)
+	}
+	if got := record.Metadata["turns_file"]; len(got) != 1 || got[0] != filepath.Clean(turnsPath) {
+		t.Fatalf("turns_file metadata = %#v", record.Metadata)
+	}
+}
+
+func TestRunLegacyRejectsPromptTurnsConflict(t *testing.T) {
+	root := t.TempDir()
+	configPath := writeHeadlessTestConfig(t, root)
+	turnsPath := filepath.Join(t.TempDir(), "turns.txt")
+	if err := os.WriteFile(turnsPath, []byte("first\n"), 0o644); err != nil {
+		t.Fatalf("write turns file: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := RunLegacy(
+		[]string{"-config", configPath, "-prompt", "x", "-turns-file", turnsPath},
+		&stdout,
+		&stderr,
+		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
+			t.Fatal("prompt runner should not run for invalid legacy flags")
+			return "", nil
+		},
+		func(config.Config, []string, cmdruntime.RunOptions, io.Writer) ([]string, error) {
+			t.Fatal("turns runner should not run for invalid legacy flags")
+			return nil, nil
+		},
+		nil,
+	)
+	if code != 2 || !strings.Contains(stderr.String(), "mutually exclusive") {
+		t.Fatalf("expected prompt/turns conflict, code=%d stderr=%s", code, stderr.String())
 	}
 }
 
@@ -608,4 +826,28 @@ func writeHeadlessTestConfig(t *testing.T, root string) string {
 	}
 
 	return configPath
+}
+
+func readSingleHeadlessCompletion(t *testing.T, root string) (runrecord.RunCompletionRecord, []byte) {
+	t.Helper()
+
+	matches, err := filepath.Glob(filepath.Join(root, ".idiom", "runs", "*.completion.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected one completion record, got %#v", matches)
+	}
+
+	body, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var record runrecord.RunCompletionRecord
+	if err := json.Unmarshal(body, &record); err != nil {
+		t.Fatalf("decode completion record: %v\n%s", err, string(body))
+	}
+
+	return record, body
 }

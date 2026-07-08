@@ -29,6 +29,7 @@ import (
 )
 
 type PromptRunner func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error)
+type PromptsRunner func(config.Config, []string, cmdruntime.RunOptions, io.Writer) ([]string, error)
 
 type stringList []string
 
@@ -55,6 +56,7 @@ type runRequest struct {
 	ConfigPath        string
 	Prompt            string
 	PromptFile        string
+	TurnsFile         string
 	OutputMode        string
 	OutputSchema      string
 	SummaryOut        string
@@ -95,11 +97,8 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 		cfg.LlamaServer.Model = strings.TrimSpace(req.ModelOverride)
 	}
 
-	runID := strings.TrimSpace(req.SessionID)
-	if runID == "" {
-		runID = runrecord.NewRunID()
-	}
-	if err := runrecord.ValidateRunID(runID); err != nil {
+	runID, err := ensureRunID(req.SessionID)
+	if err != nil {
 		fmt.Fprintln(stderr, err)
 
 		return 2
@@ -107,22 +106,19 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 	cfg.Workspace.SessionID = runID
 
 	started := time.Now().UTC()
-	record := runrecord.RunCompletionRecord{
-		SchemaVersion:    runrecord.RunCompletionSchemaVersion,
-		Type:             runrecord.RunCompletionRecordType,
-		RunID:            runID,
-		SessionID:        runID,
-		PromptSHA256:     runrecord.SHA256Hex(req.Prompt),
-		OutputMode:       req.OutputMode,
-		OutputSchema:     strings.TrimSpace(req.OutputSchema),
-		ConfigPath:       filepath.Clean(req.ConfigPath),
-		WorkspaceRoot:    workspaceRoot(cfg),
-		Policy:           req.Policy,
-		StartedAt:        started,
-		Implementation:   "idiom run",
-		UnsupportedFlags: append([]string(nil), req.UnsupportedIntent...),
-		Metadata:         runMetadata(req),
-	}
+	record := newRunCompletionRecord(runCompletionInput{
+		Config:            cfg,
+		ConfigPath:        req.ConfigPath,
+		RunID:             runID,
+		Prompt:            req.Prompt,
+		OutputMode:        req.OutputMode,
+		OutputSchema:      req.OutputSchema,
+		StartedAt:         started,
+		Implementation:    "idiom run",
+		Policy:            req.Policy,
+		UnsupportedIntent: req.UnsupportedIntent,
+		Metadata:          runMetadata(req),
+	})
 
 	runWriter := stdout
 	if req.OutputMode == "json" {
@@ -188,21 +184,15 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 	}
 
 	record.ExitCode = exitCode
-	record.CompletedAt = time.Now().UTC()
-	record.DurationMS = record.CompletedAt.Sub(started).Milliseconds()
-
 	if req.FailOnDegraded && len(req.UnsupportedIntent) > 0 {
 		exitCode = 1
 		record.ExitCode = exitCode
 		record.TerminalClass = runrecord.TerminalClassDegraded
 	}
 
-	completionRecord := record
-	runrecord.AddArtifact(&completionRecord, "completion", runrecord.RunCompletionRelPath(record.RunID))
-	completionPath, saveErr := runrecord.SaveRunCompletionRecord(workspaceRoot(cfg), completionRecord)
+	savedRecord, saveErr := saveRunCompletionRecord(workspaceRoot(cfg), record)
 	if saveErr == nil {
-		record = completionRecord
-		runrecord.AddArtifact(&record, "completion", completionPath)
+		record = savedRecord
 	} else if record.Error == "" {
 		exitCode = 1
 		record.ExitCode = exitCode
@@ -238,6 +228,275 @@ func Run(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, pro
 	}
 
 	return exitCode
+}
+
+func RunLegacy(args []string, stdout io.Writer, stderr io.Writer, promptRun PromptRunner, promptsRun PromptsRunner, rec *telemetry.Recorder) int {
+	req, err := parseLegacyRunRequest(args, stderr)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+
+		return 2
+	}
+
+	cfg, err := config.Load(req.ConfigPath)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+
+		return 1
+	}
+
+	if strings.TrimSpace(req.ModelOverride) != "" {
+		cfg.LlamaServer.Model = strings.TrimSpace(req.ModelOverride)
+	}
+
+	runID, err := ensureRunID(cfg.Workspace.SessionID)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+
+		return 2
+	}
+	cfg.Workspace.SessionID = runID
+
+	started := time.Now().UTC()
+	mode := "prompt"
+	implementation := "idiom --prompt"
+	promptHashText := req.Prompt
+	var answers []string
+	var runErr error
+
+	runOpts := cmdruntime.RunOptions{
+		JSONEvents: req.JSONEvents,
+		Resume:     req.Resume,
+		Telemetry:  rec,
+	}
+	if strings.TrimSpace(req.TurnsFile) != "" {
+		mode = "turns_file"
+		implementation = "idiom --turns-file"
+		prompts, err := loadPromptTurns(req.TurnsFile)
+		if err != nil {
+			record := newRunCompletionRecord(runCompletionInput{
+				Config:         cfg,
+				ConfigPath:     req.ConfigPath,
+				RunID:          runID,
+				OutputMode:     legacyOutputMode(req),
+				StartedAt:      started,
+				Implementation: implementation,
+				Metadata:       legacyRunMetadata(req, mode),
+			})
+			record.ExitCode = 1
+			record.TerminalClass = runrecord.TerminalClassFailed
+			record.Error = err.Error()
+			if _, saveErr := saveRunCompletionRecord(workspaceRoot(cfg), record); saveErr != nil {
+				fmt.Fprintln(stderr, saveErr)
+
+				return 1
+			}
+			fmt.Fprintln(stderr, err)
+
+			return 1
+		}
+
+		promptHashText = strings.Join(prompts, "\n\n")
+		answers, runErr = promptsRun(cfg, prompts, runOpts, stdout)
+	} else {
+		var answer string
+		answer, runErr = promptRun(cfg, req.Prompt, runOpts, stdout)
+		answers = []string{answer}
+	}
+
+	record := newRunCompletionRecord(runCompletionInput{
+		Config:         cfg,
+		ConfigPath:     req.ConfigPath,
+		RunID:          runID,
+		Prompt:         promptHashText,
+		Answers:        answers,
+		OutputMode:     legacyOutputMode(req),
+		StartedAt:      started,
+		Implementation: implementation,
+		Metadata:       legacyRunMetadata(req, mode),
+	})
+	if runErr != nil {
+		record.ExitCode = 1
+		record.TerminalClass = runrecord.TerminalClassFailed
+		record.Error = runErr.Error()
+	} else {
+		record.TerminalClass = runrecord.TerminalClassCompleted
+	}
+
+	if _, saveErr := saveRunCompletionRecord(workspaceRoot(cfg), record); saveErr != nil {
+		fmt.Fprintln(stderr, saveErr)
+
+		return 1
+	}
+	if runErr != nil {
+		fmt.Fprintln(stderr, runErr)
+
+		return 1
+	}
+
+	if !req.JSONEvents {
+		for _, answer := range answers {
+			fmt.Fprintln(stdout, answer)
+		}
+	}
+
+	return 0
+}
+
+func parseLegacyRunRequest(args []string, stderr io.Writer) (runRequest, error) {
+	req := runRequest{ConfigPath: "config.json", OutputMode: "text"}
+
+	fs := flag.NewFlagSet("idiom", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.StringVar(&req.ConfigPath, "config", req.ConfigPath, "path to config file")
+	fs.StringVar(&req.Prompt, "prompt", "", "run one prompt headlessly, print the answer, and exit")
+	fs.StringVar(&req.TurnsFile, "turns-file", "", "run newline-delimited or JSON-array prompts headlessly in one session, print answers, and exit")
+	fs.BoolVar(&req.JSONEvents, "json", false, "emit structured JSONL events to stdout")
+	fs.StringVar(&req.Resume, "resume", "", "resume a prior session by id before running")
+	fs.StringVar(&req.ModelOverride, "model", "", "override llama_server.model from config")
+
+	if err := fs.Parse(args); err != nil {
+		return runRequest{}, err
+	}
+
+	switch {
+	case strings.TrimSpace(req.Prompt) != "" && strings.TrimSpace(req.TurnsFile) != "":
+		return runRequest{}, fmt.Errorf("--prompt and --turns-file are mutually exclusive")
+	case strings.TrimSpace(req.TurnsFile) != "":
+		req.TurnsFile = strings.TrimSpace(req.TurnsFile)
+	case strings.TrimSpace(req.Prompt) != "":
+		req.Prompt = strings.TrimSpace(req.Prompt)
+	default:
+		return runRequest{}, fmt.Errorf("legacy headless run requires --prompt or --turns-file")
+	}
+
+	return req, nil
+}
+
+type runCompletionInput struct {
+	Config            config.Config
+	ConfigPath        string
+	RunID             string
+	Prompt            string
+	Answers           []string
+	OutputMode        string
+	OutputSchema      string
+	StartedAt         time.Time
+	Implementation    string
+	Policy            runrecord.HeadlessPolicy
+	UnsupportedIntent []string
+	Metadata          map[string][]string
+}
+
+func newRunCompletionRecord(input runCompletionInput) runrecord.RunCompletionRecord {
+	outputMode := strings.TrimSpace(input.OutputMode)
+	if outputMode == "" {
+		outputMode = "text"
+	}
+
+	return runrecord.RunCompletionRecord{
+		SchemaVersion:    runrecord.RunCompletionSchemaVersion,
+		Type:             runrecord.RunCompletionRecordType,
+		RunID:            input.RunID,
+		SessionID:        input.RunID,
+		PromptSHA256:     runrecord.SHA256Hex(input.Prompt),
+		AnswerSHA256:     runrecord.SHA256Hex(strings.Join(input.Answers, "\n\n")),
+		OutputMode:       outputMode,
+		OutputSchema:     strings.TrimSpace(input.OutputSchema),
+		ConfigPath:       filepath.Clean(input.ConfigPath),
+		WorkspaceRoot:    workspaceRoot(input.Config),
+		Policy:           input.Policy,
+		StartedAt:        input.StartedAt,
+		Implementation:   input.Implementation,
+		UnsupportedFlags: append([]string(nil), input.UnsupportedIntent...),
+		Metadata:         input.Metadata,
+	}
+}
+
+func saveRunCompletionRecord(root string, record runrecord.RunCompletionRecord) (runrecord.RunCompletionRecord, error) {
+	record.CompletedAt = time.Now().UTC()
+	record.DurationMS = record.CompletedAt.Sub(record.StartedAt).Milliseconds()
+
+	completionRecord := record
+	runrecord.AddArtifact(&completionRecord, "completion", runrecord.RunCompletionRelPath(record.RunID))
+	if _, err := runrecord.SaveRunCompletionRecord(root, completionRecord); err != nil {
+		return record, err
+	}
+
+	return completionRecord, nil
+}
+
+func ensureRunID(candidate string) (string, error) {
+	runID := strings.TrimSpace(candidate)
+	if runID == "" {
+		runID = runrecord.NewRunID()
+	}
+	if err := runrecord.ValidateRunID(runID); err != nil {
+		return "", err
+	}
+
+	return runID, nil
+}
+
+func legacyOutputMode(req runRequest) string {
+	if req.JSONEvents {
+		return "jsonl"
+	}
+
+	return "text"
+}
+
+func legacyRunMetadata(req runRequest, mode string) map[string][]string {
+	metadata := workspace.HarnessAuditBuildIdentityMetadata()
+	metadata["entrypoint"] = []string{"idiom"}
+	metadata["legacy_mode"] = []string{mode}
+	metadata["active_mode"] = []string{mode}
+	metadata["timeout_owner"] = []string{"chat_request_timeout"}
+	if strings.TrimSpace(req.TurnsFile) != "" {
+		metadata["turns_file"] = []string{filepath.Clean(req.TurnsFile)}
+	}
+	if strings.TrimSpace(req.Resume) != "" {
+		metadata["resume"] = []string{strings.TrimSpace(req.Resume)}
+	}
+
+	return metadata
+}
+
+func loadPromptTurns(path string) ([]string, error) {
+	data, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return nil, fmt.Errorf("read turns file: %w", err)
+	}
+
+	var prompts []string
+	if err := json.Unmarshal(data, &prompts); err == nil {
+		return cleanPromptTurns(prompts)
+	}
+
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	for scanner.Scan() {
+		prompts = append(prompts, scanner.Text())
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan turns file: %w", err)
+	}
+
+	return cleanPromptTurns(prompts)
+}
+
+func cleanPromptTurns(prompts []string) ([]string, error) {
+	cleaned := make([]string, 0, len(prompts))
+	for _, prompt := range prompts {
+		prompt = strings.TrimSpace(prompt)
+		if prompt != "" {
+			cleaned = append(cleaned, prompt)
+		}
+	}
+	if len(cleaned) == 0 {
+		return nil, fmt.Errorf("turns file did not contain any prompts")
+	}
+
+	return cleaned, nil
 }
 
 func parseRunRequest(args []string, stdin io.Reader, stderr io.Writer) (runRequest, error) {

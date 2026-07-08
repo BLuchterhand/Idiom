@@ -3,7 +3,6 @@ package root
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,256 +17,15 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/sessionlog"
-	"idiom/internal/surfaces/cli/runrecord"
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
 	toolcmd "idiom/internal/surfaces/cli/tool"
 	"idiom/internal/workflows/recovery"
 )
 
 func nopList(config.Config, io.Writer) error { return nil }
-func nopPrompts(config.Config, []string, cmdruntime.RunOptions, io.Writer) ([]string, error) {
-	return nil, nil
-}
 
-func run(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdruntime.PromptRunner, promptsRun cmdruntime.PromptsRunner, tuiRun cmdruntime.ModeRunner, serverRun cmdruntime.ModeRunner, listSessions cmdruntime.ListSessionsRunner) int {
-	return cmdruntime.RunWithTelemetry(args, stdout, stderr, promptRun, promptsRun, tuiRun, serverRun, listSessions, runVersionMain, nil)
-}
-
-func TestRunPromptModeUsesInjectedRunner(t *testing.T) {
-	root := t.TempDir()
-	configPath := writeMainConfigRoot(t, root)
-
-	var (
-		stdout, stderr bytes.Buffer
-		gotPrompt      string
-		gotOpts        cmdruntime.RunOptions
-	)
-
-	code := run(
-		[]string{"-config", configPath, "-prompt", "explain routing"},
-		&stdout,
-		&stderr,
-		func(_ config.Config, prompt string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
-			gotPrompt = prompt
-			gotOpts = opts
-
-			return "answer text", nil
-		},
-		nopPrompts,
-		func(config.Config, cmdruntime.RunOptions) error {
-			t.Fatal("TUI runner should not be called in prompt mode")
-
-			return nil
-		},
-		func(config.Config, cmdruntime.RunOptions) error {
-			t.Fatal("server runner should not be called in prompt mode")
-
-			return nil
-		},
-		nopList,
-	)
-
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
-	}
-
-	if gotPrompt != "explain routing" || strings.TrimSpace(stdout.String()) != "answer text" {
-		t.Fatalf("unexpected prompt output prompt=%q stdout=%q", gotPrompt, stdout.String())
-	}
-
-	if gotOpts.JSONEvents || gotOpts.Resume != "" {
-		t.Fatalf("opts should default to empty: %#v", gotOpts)
-	}
-
-	record := readSingleLegacyRunCompletion(t, root)
-	if record.SchemaVersion != runrecord.RunCompletionSchemaVersion ||
-		record.Type != runrecord.RunCompletionRecordType ||
-		record.Implementation != "idiom --prompt" ||
-		record.TerminalClass != "completed" ||
-		record.OutputMode != "text" {
-		t.Fatalf("unexpected legacy completion record: %#v", record)
-	}
-	if record.AnswerSHA256 == "" || record.PromptSHA256 == "" {
-		t.Fatalf("legacy completion should carry hashes without raw content: %#v", record)
-	}
-}
-
-func TestRunPromptModeJSONSuppressesFinalPrint(t *testing.T) {
-	configPath := writeMainConfig(t)
-
-	var (
-		stdout, stderr bytes.Buffer
-		gotOpts        cmdruntime.RunOptions
-	)
-
-	code := run(
-		[]string{"-config", configPath, "-prompt", "x", "-json"},
-		&stdout,
-		&stderr,
-		func(_ config.Config, _ string, opts cmdruntime.RunOptions, w io.Writer) (string, error) {
-			gotOpts = opts
-			_, _ = w.Write([]byte("{\"type\":\"final\",\"content\":\"ok\"}\n"))
-
-			return "ok", nil
-		},
-		nopPrompts,
-		func(config.Config, cmdruntime.RunOptions) error { return nil },
-		func(config.Config, cmdruntime.RunOptions) error { return nil },
-		nopList,
-	)
-
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
-	}
-
-	if !gotOpts.JSONEvents {
-		t.Fatalf("--json should set JSONEvents true")
-	}
-
-	if strings.Contains(stdout.String(), "ok\n") && !strings.Contains(stdout.String(), "\"type\":\"final\"") {
-		t.Fatalf("--json mode must not append the answer string after JSONL: %q", stdout.String())
-	}
-
-	if !strings.Contains(stdout.String(), "\"type\":\"final\"") {
-		t.Fatalf("expected JSONL final event in stdout, got %q", stdout.String())
-	}
-}
-
-func TestRunPromptModeForwardsResume(t *testing.T) {
-	configPath := writeMainConfig(t)
-
-	var (
-		stdout, stderr bytes.Buffer
-		gotOpts        cmdruntime.RunOptions
-	)
-
-	code := run(
-		[]string{"-config", configPath, "-prompt", "x", "-resume", "20260101-000000.000"},
-		&stdout,
-		&stderr,
-		func(_ config.Config, _ string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
-			gotOpts = opts
-			return "ok", nil
-		},
-		nopPrompts,
-		func(config.Config, cmdruntime.RunOptions) error { return nil },
-		func(config.Config, cmdruntime.RunOptions) error { return nil },
-		nopList,
-	)
-
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
-	}
-
-	if gotOpts.Resume != "20260101-000000.000" {
-		t.Fatalf("resume id not forwarded: %#v", gotOpts)
-	}
-}
-
-func TestRunPromptModeWritesFailureCompletion(t *testing.T) {
-	root := t.TempDir()
-	configPath := writeMainConfigRoot(t, root)
-
-	var stdout, stderr bytes.Buffer
-	code := run(
-		[]string{"-config", configPath, "-prompt", "fail this"},
-		&stdout,
-		&stderr,
-		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-			return "", errors.New("prompt failed")
-		},
-		nopPrompts,
-		func(config.Config, cmdruntime.RunOptions) error { return nil },
-		func(config.Config, cmdruntime.RunOptions) error { return nil },
-		nopList,
-	)
-
-	if code != 1 || !strings.Contains(stderr.String(), "prompt failed") {
-		t.Fatalf("expected prompt failure, code=%d stderr=%s", code, stderr.String())
-	}
-
-	record := readSingleLegacyRunCompletion(t, root)
-	if record.TerminalClass != "failed" || record.ExitCode != 1 || !strings.Contains(record.Error, "prompt failed") {
-		t.Fatalf("unexpected failure completion: %#v", record)
-	}
-}
-
-func TestRunTurnsFileUsesSingleSessionRunner(t *testing.T) {
-	configPath := writeMainConfig(t)
-	turnsPath := filepath.Join(t.TempDir(), "turns.json")
-
-	if err := os.WriteFile(turnsPath, []byte(`["first turn","second turn"]`), 0o644); err != nil {
-		t.Fatalf("write turns file: %v", err)
-	}
-
-	var (
-		stdout, stderr bytes.Buffer
-		gotPrompts     []string
-		gotOpts        cmdruntime.RunOptions
-	)
-
-	code := run(
-		[]string{"-config", configPath, "-turns-file", turnsPath, "-json", "-resume", "prior-session"},
-		&stdout,
-		&stderr,
-		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-			t.Fatal("single prompt runner should not be called for --turns-file")
-
-			return "", nil
-		},
-		func(_ config.Config, prompts []string, opts cmdruntime.RunOptions, w io.Writer) ([]string, error) {
-			gotPrompts = append([]string(nil), prompts...)
-			gotOpts = opts
-			_, _ = w.Write([]byte("{\"type\":\"final\",\"content\":\"second answer\"}\n"))
-
-			return []string{"first answer", "second answer"}, nil
-		},
-		func(config.Config, cmdruntime.RunOptions) error { return nil },
-		func(config.Config, cmdruntime.RunOptions) error { return nil },
-		nopList,
-	)
-
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
-	}
-
-	if strings.Join(gotPrompts, "|") != "first turn|second turn" {
-		t.Fatalf("unexpected prompts: %#v", gotPrompts)
-	}
-
-	if !gotOpts.JSONEvents || gotOpts.Resume != "prior-session" {
-		t.Fatalf("unexpected opts: %#v", gotOpts)
-	}
-
-	if !strings.Contains(stdout.String(), `"type":"final"`) || strings.Contains(stdout.String(), "second answer\n") && !strings.Contains(stdout.String(), `"content":"second answer"`) {
-		t.Fatalf("JSON turns mode should only emit runner JSONL, got %q", stdout.String())
-	}
-}
-
-func TestRunTurnsFileRejectsPromptConflict(t *testing.T) {
-	configPath := writeMainConfig(t)
-	turnsPath := filepath.Join(t.TempDir(), "turns.txt")
-
-	if err := os.WriteFile(turnsPath, []byte("first\n"), 0o644); err != nil {
-		t.Fatalf("write turns file: %v", err)
-	}
-
-	var stdout, stderr bytes.Buffer
-
-	code := run(
-		[]string{"-config", configPath, "-prompt", "x", "-turns-file", turnsPath},
-		&stdout,
-		&stderr,
-		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) { return "", nil },
-		nopPrompts,
-		func(config.Config, cmdruntime.RunOptions) error { return nil },
-		func(config.Config, cmdruntime.RunOptions) error { return nil },
-		nopList,
-	)
-
-	if code != 2 || !strings.Contains(stderr.String(), "mutually exclusive") {
-		t.Fatalf("expected prompt/turns conflict, code=%d stderr=%s", code, stderr.String())
-	}
+func runRuntime(args []string, stdout io.Writer, stderr io.Writer, tuiRun cmdruntime.ModeRunner, serverRun cmdruntime.ModeRunner, listSessions cmdruntime.ListSessionsRunner) int {
+	return cmdruntime.RunWithTelemetry(args, stdout, stderr, tuiRun, serverRun, listSessions, runVersionMain, nil)
 }
 
 func TestRunListSessionsCallsListRunner(t *testing.T) {
@@ -276,16 +34,10 @@ func TestRunListSessionsCallsListRunner(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
 	called := false
-	code := run(
+	code := runRuntime(
 		[]string{"-config", configPath, "-list-sessions"},
 		&stdout,
 		&stderr,
-		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-			t.Fatal("prompt runner should not be called")
-
-			return "", nil
-		},
-		nopPrompts,
 		func(config.Config, cmdruntime.RunOptions) error {
 			t.Fatal("TUI runner should not be called")
 
@@ -315,16 +67,10 @@ func TestRunServerOnlyUsesInjectedRunner(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
 	called := false
-	code := run(
+	code := runRuntime(
 		[]string{"-config", configPath, "-server-only"},
 		&stdout,
 		&stderr,
-		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-			t.Fatal("prompt runner should not be called in server-only mode")
-
-			return "", nil
-		},
-		nopPrompts,
 		func(config.Config, cmdruntime.RunOptions) error {
 			t.Fatal("TUI runner should not be called in server-only mode")
 
@@ -348,16 +94,10 @@ func TestRunDefaultUsesTUIRunner(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
 	called := false
-	code := run(
+	code := runRuntime(
 		[]string{"-config", configPath},
 		&stdout,
 		&stderr,
-		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-			t.Fatal("prompt runner should not be called in default mode")
-
-			return "", nil
-		},
-		nopPrompts,
 		func(config.Config, cmdruntime.RunOptions) error {
 			called = true
 			return nil
@@ -400,16 +140,10 @@ func TestRunDefaultLoadsWorkspaceToolRulesFromRootConfig(t *testing.T) {
 		gotCfg         config.Config
 	)
 
-	code := run(
+	code := runRuntime(
 		[]string{"-config", configPath},
 		&stdout,
 		&stderr,
-		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-			t.Fatal("prompt runner should not be called in default mode")
-
-			return "", nil
-		},
-		nopPrompts,
 		func(cfg config.Config, _ cmdruntime.RunOptions) error {
 			gotCfg = cfg
 			return nil
@@ -434,7 +168,7 @@ func TestRunDefaultLoadsWorkspaceToolRulesFromRootConfig(t *testing.T) {
 	}
 }
 
-func TestRunReportsConfigAndRunnerErrors(t *testing.T) {
+func TestRunReportsConfigErrors(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
 	badDir := t.TempDir()
@@ -443,12 +177,10 @@ func TestRunReportsConfigAndRunnerErrors(t *testing.T) {
 		t.Fatalf("write bad config: %v", err)
 	}
 
-	code := run(
+	code := runRuntime(
 		[]string{"-config", badPath},
 		&stdout,
 		&stderr,
-		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) { return "", nil },
-		nopPrompts,
 		func(config.Config, cmdruntime.RunOptions) error { return nil },
 		func(config.Config, cmdruntime.RunOptions) error { return nil },
 		nopList,
@@ -457,38 +189,15 @@ func TestRunReportsConfigAndRunnerErrors(t *testing.T) {
 	if code != 1 || !strings.Contains(stderr.String(), "inspect config") {
 		t.Fatalf("expected config parse failure, code=%d stderr=%s", code, stderr.String())
 	}
-
-	configPath := writeMainConfig(t)
-
-	stdout.Reset()
-	stderr.Reset()
-
-	code = run(
-		[]string{"-config", configPath, "-prompt", "fail"},
-		&stdout,
-		&stderr,
-		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-			return "", errors.New("prompt failed")
-		},
-		nopPrompts,
-		func(config.Config, cmdruntime.RunOptions) error { return nil },
-		func(config.Config, cmdruntime.RunOptions) error { return nil },
-		nopList,
-	)
-	if code != 1 || !strings.Contains(stderr.String(), "prompt failed") {
-		t.Fatalf("expected prompt failure, code=%d stderr=%s", code, stderr.String())
-	}
 }
 
 func TestRunRejectsInvalidFlags(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := run(
+	code := runRuntime(
 		[]string{"-does-not-exist"},
 		&stdout,
 		&stderr,
-		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) { return "", nil },
-		nopPrompts,
 		func(config.Config, cmdruntime.RunOptions) error { return nil },
 		func(config.Config, cmdruntime.RunOptions) error { return nil },
 		nopList,
@@ -507,16 +216,10 @@ func TestRunRejectsInvalidFlags(t *testing.T) {
 func TestRunVersionFlagShortCircuits(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := run(
+	code := runRuntime(
 		[]string{"--version"},
 		&stdout,
 		&stderr,
-		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-			t.Fatal("prompt runner must not be called for --version")
-
-			return "", nil
-		},
-		nopPrompts,
 		func(config.Config, cmdruntime.RunOptions) error {
 			t.Fatal("TUI runner must not be called for --version")
 
@@ -553,12 +256,10 @@ func TestRunVersionFlagShortCircuits(t *testing.T) {
 func TestRunSingleDashVersionFlagAlsoWorks(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 
-	code := run(
+	code := runRuntime(
 		[]string{"-version"},
 		&stdout,
 		&stderr,
-		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) { return "", nil },
-		nopPrompts,
 		func(config.Config, cmdruntime.RunOptions) error { return nil },
 		func(config.Config, cmdruntime.RunOptions) error { return nil },
 		nopList,
@@ -1214,33 +915,6 @@ func writeMainConfigRoot(t *testing.T, root string) string {
 func stringFieldForTest(record map[string]any, key string) string {
 	value, _ := record[key].(string)
 	return value
-}
-
-func readSingleLegacyRunCompletion(t *testing.T, root string) runrecord.RunCompletionRecord {
-	t.Helper()
-
-	matches, err := filepath.Glob(filepath.Join(root, ".idiom", "runs", "*.completion.json"))
-	if err != nil {
-		t.Fatalf("glob completion records: %v", err)
-	}
-	if len(matches) != 1 {
-		t.Fatalf("expected one completion record under %s, got %#v", root, matches)
-	}
-
-	body, err := os.ReadFile(matches[0])
-	if err != nil {
-		t.Fatalf("read completion record: %v", err)
-	}
-	if bytes.Contains(body, []byte("answer text")) || bytes.Contains(body, []byte("explain routing")) {
-		t.Fatalf("completion record should not contain raw prompt or answer: %s", string(body))
-	}
-
-	var record runrecord.RunCompletionRecord
-	if err := json.Unmarshal(body, &record); err != nil {
-		t.Fatalf("decode completion record: %v", err)
-	}
-
-	return record
 }
 
 func readMainTelemetryRecords(t *testing.T, path string) []map[string]any {

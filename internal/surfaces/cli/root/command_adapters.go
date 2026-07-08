@@ -2,7 +2,6 @@ package root
 
 import (
 	"io"
-	"os"
 
 	"idiom/internal/evidence/lanehistory"
 	"idiom/internal/evidence/productevidence"
@@ -14,7 +13,6 @@ import (
 	cmdconfig "idiom/internal/surfaces/cli/config"
 	contextcmd "idiom/internal/surfaces/cli/context"
 	featureplannercmd "idiom/internal/surfaces/cli/featureplanner"
-	headlesscmd "idiom/internal/surfaces/cli/headless"
 	localopscmd "idiom/internal/surfaces/cli/localops"
 	planexecutecmd "idiom/internal/surfaces/cli/planexecute"
 	rankercmd "idiom/internal/surfaces/cli/ranker"
@@ -47,10 +45,6 @@ func runContextMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writ
 		LogToolResult:  toolcmd.LogDirectToolResult,
 		WriteOutput:    architectcmd.WriteOutput,
 	})
-}
-
-func runHeadlessMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdruntime.PromptRunner, rec *telemetry.Recorder) int {
-	return headlesscmd.Run(args, os.Stdin, stdout, stderr, headlesscmd.PromptRunner(promptRun), rec)
 }
 
 func featurePlannerDependencies() featureplannercmd.Dependencies {
