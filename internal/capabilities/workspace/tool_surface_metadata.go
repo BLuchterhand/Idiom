@@ -212,21 +212,9 @@ var builtInToolSurfaceCatalog = mustNewToolSurfaceCatalog([]toolSurfaceSpec{
 	{Tool: ToolNameTsDiagnostics, Category: int(CategoryRead), DefaultManifest: false, PolicyCapabilities: policyShellVerification, SideEffects: sideEffectUnknown},
 })
 
-func defaultToolManifestTools() []string {
-	return builtInToolSurfaceCatalog.toolsWhere(func(spec toolSurfaceSpec) bool {
-		return spec.DefaultManifest
-	})
-}
-
 func builtInToolSurfaceToolsByCategory(category ToolCategory) []string {
 	return builtInToolSurfaceCatalog.toolsWhere(func(spec toolSurfaceSpec) bool {
 		return ToolCategory(spec.Category) == category
-	})
-}
-
-func builtInToolSurfaceToolsByCategoryWithoutLanguageSpecific(category ToolCategory) []string {
-	return builtInToolSurfaceCatalog.toolsWhere(func(spec toolSurfaceSpec) bool {
-		return ToolCategory(spec.Category) == category && strings.TrimSpace(spec.Language) == ""
 	})
 }
 

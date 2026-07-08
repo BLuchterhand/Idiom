@@ -3667,7 +3667,7 @@ func TestPlanExecuteTerminalOutcomeMatrixForTUIWrapper(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := implementationDispatchPlanExecuteFailureCanUseRecovery(tt.failure.Result); got != tt.recovery {
+			if got := recovery.PlanExecuteFailureCanUseRecovery(implementationDispatchPlanExecuteRunFailureKind(tt.failure.Result)); got != tt.recovery {
 				t.Fatalf("recovery eligibility = %t, want %t", got, tt.recovery)
 			}
 

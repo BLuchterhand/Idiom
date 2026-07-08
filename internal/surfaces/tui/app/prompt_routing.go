@@ -254,7 +254,9 @@ func (m *Model) shouldPreloadDirectImplementationContext(prompt string, plan pro
 		return false
 	}
 
-	if !workerruntime.TaskFamilyMutationCapable(plan.route.Family) || isPlanExecuteInternalFamily(plan.route.Family) {
+	if !workerruntime.TaskFamilyMutationCapable(plan.route.Family) ||
+		workerruntime.TaskFamilyIsPlanThenExecutePlanner(plan.route.Family) ||
+		workerruntime.TaskFamilyIsPlanThenExecuteReview(plan.route.Family) {
 		return false
 	}
 

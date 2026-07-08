@@ -843,7 +843,7 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 			return msg, nil
 		}
 
-		if implementationDispatchPlanExecuteFailureCanUseRecovery(result) {
+		if recovery.PlanExecuteFailureCanUseRecovery(implementationDispatchPlanExecuteRunFailureKind(result)) {
 			answer, handled, err := m.handlePlanExecutePlannerBlocked(ctx, implementationDispatchPlanExecuteFailure{
 				Prompt:        prompt,
 				Plan:          plan,
@@ -975,10 +975,6 @@ func humanPlanExecuteNewFileAuthorizationRequiredMessage(paths []string) string 
 	b.WriteString("```")
 
 	return strings.TrimSpace(b.String())
-}
-
-func implementationDispatchPlanExecuteFailureCanUseRecovery(result planexecute.RunResult) bool {
-	return recovery.PlanExecuteFailureCanUseRecovery(implementationDispatchPlanExecuteRunFailureKind(result))
 }
 
 func (m *Model) humanPlanExecuteMissingNewFileAuthorizationMessage(result planexecute.RunResult, authorizedNewFiles []string) (string, bool) {

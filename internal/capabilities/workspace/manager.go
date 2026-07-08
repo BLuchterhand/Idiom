@@ -30,7 +30,6 @@ type Manager struct {
 
 	mode                 Mode
 	thoroughness         ExploreThoroughness
-	writePolicy          WritePolicy
 	bypassReadBeforeEdit bool
 	mu                   sync.Mutex
 	pathTracker          PathTracker
@@ -55,13 +54,6 @@ const (
 	ThoroughnessMedium ExploreThoroughness = "medium"
 )
 
-type WritePolicy string
-
-const (
-	WritePolicyGuarded WritePolicy = "guarded"
-	WritePolicyAuto    WritePolicy = "auto"
-)
-
 func NewManager(cfg config.Workspace) *Manager {
 	cfg.Root = config.CanonicalizeExistingPath(cfg.Root)
 	cfg.CWD = config.CanonicalizeExistingPath(cfg.CWD)
@@ -70,7 +62,6 @@ func NewManager(cfg config.Workspace) *Manager {
 		cfg:          cfg,
 		mode:         ModeNormal,
 		thoroughness: ThoroughnessMedium,
-		writePolicy:  WritePolicyGuarded,
 		pathTracker:  NewPathTracker(),
 		pathAccess:   NewPathAccess(cfg),
 		writeGuard:   NewWriteGuard(),
@@ -170,21 +161,6 @@ func (m *Manager) SetMode(mode Mode) error {
 	return nil
 }
 
-func (m *Manager) SetWritePolicy(policy WritePolicy) error {
-	switch policy {
-	case WritePolicyGuarded, WritePolicyAuto:
-	default:
-		return fmt.Errorf("unsupported write policy %q", policy)
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.writePolicy = policy
-
-	return nil
-}
-
 func (m *Manager) Instructions() string {
 	if !m.Enabled() {
 		return "Workspace tools are disabled because no workspace root is configured."
@@ -205,26 +181,12 @@ func (m *Manager) Instructions() string {
 			"- After an orientation call, narrow with structured language-aware routes or discovered handles first. Exact-text search and bounded reads are fallback capabilities for prose, config, or ranges a semantic probe cannot cover.\n"+
 			"- Paths are relative to the working directory unless absolute.\n"+
 			"- Prefer anchored edit capabilities for localized changes; full-body writes overwrite and are only safe when the active contract permits them.\n"+
-			"%s"+
+			"- Write policy is guarded: prefer anchored edits for existing files. Avoid whole-file rewrites of existing files, avoid state-changing shell commands for edits, and only create/append/mkdir when the user clearly requested that broader write scope.\n"+
 			"- shell runs with the same OS permissions as this process. Prefer the dedicated tools where one exists.\n"+
 			"- After tool results, either answer directly or take one exact evidence step tied to a named gap.",
 		m.cfg.Root,
 		m.cfg.CWD,
-		m.writePolicyInstructions(),
 	)
-}
-
-func (m *Manager) writePolicyInstructions() string {
-	m.mu.Lock()
-	policy := m.writePolicy
-	m.mu.Unlock()
-
-	switch policy {
-	case WritePolicyAuto:
-		return "- Write policy is auto: file tools may create, rewrite, or append within the workspace when the task requires it. Still prefer precise anchored edits and avoid unnecessary rewrites.\n"
-	default:
-		return "- Write policy is guarded: prefer anchored edits for existing files. Avoid whole-file rewrites of existing files, avoid state-changing shell commands for edits, and only create/append/mkdir when the user clearly requested that broader write scope.\n"
-	}
 }
 
 func (m *Manager) exploreInstructions() string {

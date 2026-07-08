@@ -507,8 +507,8 @@ func TestPathEvidenceContextZoomGraphOutputRegistersUnreadCandidate(t *testing.T
 	}
 	results := []workspace.ToolResult{result}
 
-	if got := sourceEvidenceCandidatePaths(results); slices.Contains(got, sourcePath) {
-		t.Fatalf("production-shaped context_zoom graph output is not currently a raw candidate path: %#v", got)
+	if got := sourceEvidenceCandidatePaths(results); !slices.Contains(got, sourcePath) {
+		t.Fatalf("production-shaped context_zoom graph output should register a raw candidate path: %#v", got)
 	}
 	if sourceEvidenceBodyReadForPath(sourcePath, results) {
 		t.Fatal("production-shaped context_zoom graph output must not count as raw source-body evidence")

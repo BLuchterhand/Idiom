@@ -48,9 +48,13 @@ func ToolManifestTools(opts ToolManifestToolOptions) []string {
 		tools = append(tools, ToolNameTask)
 	}
 
-	tools = append(tools, defaultToolManifestTools()...)
+	tools = append(tools, builtInToolSurfaceCatalog.toolsWhere(func(spec toolSurfaceSpec) bool {
+		return spec.DefaultManifest
+	})...)
 	if opts.IncludeWriteTools && !opts.IncludePlanThenExecute {
-		tools = append(tools, workspaceWriteToolNamesWithoutLanguageSpecific()...)
+		tools = append(tools, builtInToolSurfaceCatalog.toolsWhere(func(spec toolSurfaceSpec) bool {
+			return ToolCategory(spec.Category) == CategoryWrite && strings.TrimSpace(spec.Language) == ""
+		})...)
 	}
 
 	if opts.IncludePlanThenExecute {
@@ -154,10 +158,6 @@ func WorkspaceWriteToolNames() []string {
 
 func WorkspacePerEditWriteToolNames() []string {
 	return []string{ToolNameEditFile, ToolNameWriteFile, ToolNameAppendFile, ToolNameApplyPatch}
-}
-
-func workspaceWriteToolNamesWithoutLanguageSpecific() []string {
-	return builtInToolSurfaceToolsByCategoryWithoutLanguageSpecific(CategoryWrite)
 }
 
 func IsWorkspacePerEditWriteTool(tool string) bool {

@@ -75,58 +75,6 @@ func TestPlanScopeContractRequiredPathsWinOverAllowedCandidates(t *testing.T) {
 	}
 }
 
-func TestOpenEditSetObligationsUseRequiredPathsNotAllowedCandidates(t *testing.T) {
-	contract := NewPlanScopeContract(
-		[]string{"pkg/required.go", "pkg/required_test.go"},
-		[]string{"pkg/optional.go", "pkg/optional_test.go"},
-		nil,
-	)
-
-	open := contract.OpenEditSetObligations([]string{"pkg/optional.go", "pkg/optional_test.go"})
-	if len(open) != 2 {
-		t.Fatalf("open obligations = %#v, want required implementation and test paths", open)
-	}
-
-	want := []EditSetOpenObligation{
-		{
-			Code:   EditSetOpenObligationRequestedTestEditMissing,
-			Kind:   EditSetObligationKindTestEdit,
-			Path:   "pkg/required_test.go",
-			Source: "required_coverage_path",
-		},
-		{
-			Code:   EditSetOpenObligationRequestedImplementationEditMissing,
-			Kind:   EditSetObligationKindImplementationEdit,
-			Path:   "pkg/required.go",
-			Source: "required_coverage_path",
-		},
-	}
-	if !slices.Equal(open, want) {
-		t.Fatalf("open obligations = %#v, want %#v", open, want)
-	}
-}
-
-func TestOpenEditSetObligationsDoNotDemoteRequiredPaths(t *testing.T) {
-	contract := NewPlanScopeContract(
-		[]string{"pkg/feature.go", "./pkg/feature.go"},
-		[]string{"pkg/feature.go", "pkg/optional.go"},
-		nil,
-	)
-
-	if got, want := contract.RequiredCoveragePaths, []string{"pkg/feature.go"}; !slices.Equal(got, want) {
-		t.Fatalf("required coverage paths = %#v, want %#v", got, want)
-	}
-
-	if got, want := contract.AllowedCandidatePaths, []string{"pkg/optional.go"}; !slices.Equal(got, want) {
-		t.Fatalf("allowed candidate paths = %#v, want %#v", got, want)
-	}
-
-	open := contract.OpenEditSetObligations([]string{"pkg/optional.go"})
-	if len(open) != 1 || open[0].Path != "pkg/feature.go" || open[0].Kind != EditSetObligationKindImplementationEdit {
-		t.Fatalf("required path should remain an open implementation obligation, got %#v", open)
-	}
-}
-
 func TestNormalizeWorkspacePathCleansComparisonVariants(t *testing.T) {
 	cases := map[string]string{
 		` ./pkg\feature.go `: "pkg/feature.go",

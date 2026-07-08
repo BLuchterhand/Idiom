@@ -119,9 +119,6 @@ func (r *PathEvidenceRegistry) registerBodyRead(result workspace.ToolResult) {
 func (r *PathEvidenceRegistry) registerCandidatePaths(result workspace.ToolResult) {
 	paths := append([]string{}, result.Paths...)
 	paths = append(paths, sourceEvidenceCandidatePathsFromResult(result, 128)...)
-	if sourceEvidenceDiscoveryCandidateTool(result.Tool) {
-		paths = append(paths, delegatedDiscoveryQueryEvidencePaths([]workspace.ToolResult{result}, 128)...)
-	}
 
 	if len(paths) == 0 {
 		return

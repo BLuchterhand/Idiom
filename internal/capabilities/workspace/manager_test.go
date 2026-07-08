@@ -462,16 +462,16 @@ func TestGoWorkspaceSymbolFallsBackAfterGoplsFailure(t *testing.T) {
 	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/test\n\ngo 1.22\n")
 	writeTestFile(t, filepath.Join(dir, "worker.go"), "package test\n\nfunc ExampleWorker() {}\n")
 
-	gopls := filepath.Join(dir, "fake-gopls.sh")
+	gopls := filepath.Join(dir, "gopls")
 	writeTestFile(t, gopls, "#!/bin/sh\necho simulated gopls failure >&2\nexit 1\n")
 
 	if err := os.Chmod(gopls, 0o755); err != nil {
 		t.Fatalf("chmod fake gopls: %v", err)
 	}
+	t.Setenv("PATH", dir)
 
 	mgr := NewManager(config.Workspace{Root: dir, CWD: dir})
 	mgr.languageTools = languagetools.NewManager(languageToolHost{manager: mgr})
-	mgr.languageTools.SetGoplsBinaryForTesting(gopls)
 
 	result := mgr.Execute(context.Background(), ToolRequest{Tool: "go_workspace_symbol", Pattern: "ExampleWorker"})
 	if result.Error != "" {
@@ -492,16 +492,16 @@ func TestGoWorkspaceSymbolFallsBackAfterEmptyGoplsResult(t *testing.T) {
 	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/test\n\ngo 1.22\n")
 	writeTestFile(t, filepath.Join(dir, "worker.go"), "package test\n\nfunc ExampleWorker() {}\n")
 
-	gopls := filepath.Join(dir, "fake-gopls.sh")
+	gopls := filepath.Join(dir, "gopls")
 	writeTestFile(t, gopls, "#!/bin/sh\nexit 0\n")
 
 	if err := os.Chmod(gopls, 0o755); err != nil {
 		t.Fatalf("chmod fake gopls: %v", err)
 	}
+	t.Setenv("PATH", dir)
 
 	mgr := NewManager(config.Workspace{Root: dir, CWD: dir, CommandTimeoutSeconds: 5})
 	mgr.languageTools = languagetools.NewManager(languageToolHost{manager: mgr})
-	mgr.languageTools.SetGoplsBinaryForTesting(gopls)
 
 	result := mgr.Execute(context.Background(), ToolRequest{Tool: "go_workspace_symbol", Pattern: "func ExampleWorker"})
 	if result.Error != "" {

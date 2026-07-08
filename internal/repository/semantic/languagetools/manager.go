@@ -63,18 +63,6 @@ func NewManager(host Host) *Manager {
 	return &Manager{host: host}
 }
 
-func (m *Manager) SetGoplsBinaryForTesting(path string) {
-	if m == nil {
-		return
-	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.goplsPath = path
-	m.goplsChecked = true
-}
-
 func (m *Manager) Enabled() bool {
 	return m != nil && m.host != nil && m.host.Enabled()
 }

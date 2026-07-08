@@ -17,10 +17,6 @@ import (
 var planDocumentPreflightRunner implementationdispatch.PlanDocumentPreflightRunner = implementationdispatch.PreflightPlanDocument
 var planDocumentRefineRunner = defaultImplementationDispatchPlanDocumentRefine
 
-func isPlanExecuteInternalFamily(family string) bool {
-	return workerruntime.TaskFamilyIsPlanThenExecutePlanner(family) || workerruntime.TaskFamilyIsPlanThenExecuteReview(family)
-}
-
 func implementationDispatchHasPlanExecuteHandoff(prompt string, plan promptExecutionPlan, cfg config.Config) bool {
 	requiredPaths, allowedPaths, planDocuments, blockers := implementationDispatchEditScopePlanDocumentsAndResolution(prompt, plan, cfg)
 

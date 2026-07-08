@@ -4278,7 +4278,6 @@ func readOnlyEvidencePacketCandidatePaths(results []workspace.ToolResult) []stri
 		switch {
 		case sourceEvidenceDiscoveryCandidateTool(tool):
 			paths = append(paths, sourceEvidenceCandidatePathsFromResult(result, 16)...)
-			paths = append(paths, delegatedDiscoveryQueryEvidencePaths([]workspace.ToolResult{result}, 8)...)
 		case tool == workspace.ToolNameContextPack:
 			paths = append(paths, sourceEvidenceCandidatePathsFromResult(result, 16)...)
 		case workspace.IsSearchToolName(tool):
@@ -8478,29 +8477,12 @@ func sourceEvidenceCandidatePaths(results []workspace.ToolResult) []string {
 			if _, ok := bodySet[normalized]; ok {
 				continue
 			}
-			if !sourceEvidenceCandidatePathExists(normalized) {
-				seen[normalized] = struct{}{}
-				continue
-			}
 			seen[normalized] = struct{}{}
 			paths = append(paths, normalized)
 		}
 	}
 
 	return paths
-}
-
-// sourceEvidenceCandidatePathExists checks whether a candidate path from a
-// discovery tool result actually exists on the filesystem. This prevents
-// stale graph-index entries from appearing as valid candidates.
-func sourceEvidenceCandidatePathExists(path string) bool {
-	path = NormalizeRunnerPath(path)
-	if path == "" || strings.HasPrefix(path, "../") || path == ".." || filepath.IsAbs(path) {
-		return false
-	}
-
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }
 
 func sourceEvidencePendingRedirects(results []workspace.ToolResult) []sourceEvidenceObligation {

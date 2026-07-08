@@ -3,6 +3,8 @@ package workspace
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -611,6 +613,20 @@ func TestReadOnlyCapabilityRoutesNamedSliceThroughExistingAdapters(t *testing.T)
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "go.mod"), "module example.com/capability\n\ngo 1.22\n")
 	writeTestFile(t, filepath.Join(root, "pkg", "runner.go"), "package pkg\n\nfunc Run() string {\n\treturn helper()\n}\n\nfunc helper() string {\n\treturn \"ok\"\n}\n")
+	searchBackend, err := resolveContentSearchBackend()
+	if err != nil {
+		t.Skipf("no supported content search backend installed on this machine: %v", err)
+	}
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatalf("create test tool bin: %v", err)
+	}
+	searchTool := filepath.Join(bin, filepath.Base(searchBackend.bin))
+	writeTestFile(t, searchTool, fmt.Sprintf("#!/bin/sh\nexec %q \"$@\"\n", searchBackend.bin))
+	if err := os.Chmod(searchTool, 0o755); err != nil {
+		t.Fatalf("chmod test search backend: %v", err)
+	}
+	t.Setenv("PATH", bin)
 
 	mgr := NewManager(config.Workspace{
 		Root:                  root,
@@ -622,7 +638,6 @@ func TestReadOnlyCapabilityRoutesNamedSliceThroughExistingAdapters(t *testing.T)
 		EnableShell:           true,
 	})
 	mgr.languageTools = languagetools.NewManager(languageToolHost{manager: mgr})
-	mgr.languageTools.SetGoplsBinaryForTesting("")
 
 	tests := []struct {
 		name           string

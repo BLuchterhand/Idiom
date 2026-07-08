@@ -70,26 +70,6 @@ func (contract PlanScopeContract) WithWriteAllowedPaths(paths []string) PlanScop
 	return contract.Normalized()
 }
 
-func (contract PlanScopeContract) WithEditSetObligation(kind EditSetObligationKind, source string) PlanScopeContract {
-	contract.EditSetObligations = contract.EditSetObligations.With(kind, source)
-	return contract.Normalized()
-}
-
-func (contract PlanScopeContract) RequiredEditSetObligations() EditSetObligations {
-	contract = contract.Normalized()
-	return EditSetObligationsForRequiredPaths(contract.RequiredCoveragePaths, "required_coverage_path")
-}
-
-func (contract PlanScopeContract) OpenEditSetObligations(changedPaths []string) []EditSetOpenObligation {
-	contract = contract.Normalized()
-	obligations := MergeEditSetObligations(
-		contract.RequiredEditSetObligations(),
-		contract.EditSetObligations,
-	)
-
-	return obligations.Open(changedPaths)
-}
-
 func UniqueScopePaths(paths []string) []string {
 	var out []string
 

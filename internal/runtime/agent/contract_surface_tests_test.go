@@ -37884,10 +37884,6 @@ func TestRunnerAllowsEditWithDescription(t *testing.T) {
 
 	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true})
 
-	if err := ws.SetWritePolicy(workspace.WritePolicyAuto); err != nil {
-		t.Fatalf("set write policy: %v", err)
-	}
-
 	// Satisfy the read-before-edit invariant for edit_file.
 	ws.MarkPathObserved("README.md")
 

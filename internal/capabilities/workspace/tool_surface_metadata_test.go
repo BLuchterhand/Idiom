@@ -33,7 +33,7 @@ func TestBuiltInToolSurfaceCatalogLookupReturnsClonedMetadata(t *testing.T) {
 }
 
 func TestWorkspaceToolSurfaceListsProjectCatalog(t *testing.T) {
-	if !slices.Equal(defaultToolManifestTools(), projectedCatalogTools(func(spec toolSurfaceSpec) bool {
+	if !slices.Equal(ToolManifestTools(ToolManifestToolOptions{}), projectedCatalogTools(func(spec toolSurfaceSpec) bool {
 		return spec.DefaultManifest
 	})) {
 		t.Fatalf("default manifest tools no longer project catalog metadata")
