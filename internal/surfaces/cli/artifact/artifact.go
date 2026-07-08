@@ -461,7 +461,7 @@ func runArtifactValidator(command string, artifactPath string, stderr io.Writer)
 		return 2, fmt.Errorf("validator requires a materialized artifact path")
 	}
 
-	result := commandexec.Run(nil, commandexec.Spec{
+	result := commandexec.Run(context.TODO(), commandexec.Spec{
 		Mode:           commandexec.ModePlainShell,
 		Shell:          "/bin/sh",
 		Command:        command,

@@ -2,6 +2,7 @@ package postflight
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -162,7 +163,7 @@ func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error)
 		workdir = ctx.ProjectRoot
 	}
 
-	result := commandexec.Run(nil, commandexec.Spec{
+	result := commandexec.Run(context.TODO(), commandexec.Spec{
 		Name:           cmd,
 		Args:           args,
 		Dir:            workdir,

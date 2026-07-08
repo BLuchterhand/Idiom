@@ -1,6 +1,7 @@
 package postflight
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -46,7 +47,7 @@ func (c GoBuildPasses) Run(d Diff, ctx RunContext) ([]Finding, error) {
 		return nil, nil
 	}
 
-	result := commandexec.Run(nil, commandexec.Spec{
+	result := commandexec.Run(context.TODO(), commandexec.Spec{
 		Name:        "go",
 		Args:        []string{"build", "./..."},
 		Dir:         ctx.ProjectRoot,

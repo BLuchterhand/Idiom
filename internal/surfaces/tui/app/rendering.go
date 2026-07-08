@@ -401,12 +401,6 @@ func renderActiveContainer(te *turnEvidence, width, maxRows int, streaming bool)
 	}
 
 	toolCount, catBreakdown, verifyStatus := evidenceStats(te.tools)
-	budget := ""
-
-	if te.finalized && len(te.tools) > 0 {
-		// Budget not yet available during active rendering; comes via
-		// budgetLedgerMsg after turn ends.
-	}
 
 	expanded := te.expanded && !te.userCollapsed
 	if streaming && !te.userCollapsed {
@@ -415,7 +409,7 @@ func renderActiveContainer(te *turnEvidence, width, maxRows int, streaming bool)
 
 	var b strings.Builder
 
-	b.WriteString(renderEvidenceSummary(toolCount, catBreakdown, verifyStatus, budget, expanded))
+	b.WriteString(renderEvidenceSummary(toolCount, catBreakdown, verifyStatus, "", expanded))
 
 	if expanded {
 		start := te.scrollOff

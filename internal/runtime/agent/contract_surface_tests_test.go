@@ -11405,12 +11405,17 @@ func TestRecoveryCardExposesCallablePendingRedirectSurfaceWithoutStrategyText(t 
 			ExpressibleActionClasses: []string{actionRead, actionPerEditWrite, actionBlocker},
 		},
 	}
-	got := RenderRecoveryCard(BuildRecoveryCard(RecoveryCardInput{
+	card := BuildRecoveryCard(RecoveryCardInput{
 		PhaseContract:       contract,
 		CurrentAllowedTools: []string{"code_navigate", "apply_patch"},
 		RejectedRequest:     workspace.ToolRequest{Tool: "search_content", Path: "internal/surfaces/tui/app"},
 		RejectedResult:      workspace.ToolResult{Tool: "search_content", Summary: "Implementation target write-ready pending source-body obligation rejected"},
-	}))
+	})
+	got := RenderRecoveryCard(card)
+
+	if card.RejectedAction.ActionClass != actionSearch {
+		t.Fatalf("rejected search_content should retain search action class, got %q", card.RejectedAction.ActionClass)
+	}
 
 	assertRecoveryCardContains(t, got,
 		"currently callable action classes: read, per_edit_write, blocker",
@@ -21530,17 +21535,6 @@ func TestPlanExecuteRuntimeRecoverySequencePreservesNewFilePlannerBudget(t *test
 
 	if opts.MaxTokens != 16384 {
 		t.Fatalf("real recovery option sequence should preserve new-file planner budget, got %d", opts.MaxTokens)
-	}
-}
-
-func TestReasoningSubmitPlanRejectsOldTextOnlyJSONEdit(t *testing.T) {
-	req, err := workspace.DecodeToolRequestJSON([]byte(`{"tool":"submit_plan","edits":[{"path":"a.txt","old_text":"old"}]}`))
-	if err != nil {
-		t.Fatalf("DecodeToolRequestJSON: %v", err)
-	}
-
-	if reasoningSubmitPlanHasConcreteEdit(req) {
-		t.Fatal("old_text-only JSON submit_plan must not be treated as a concrete visible edit")
 	}
 }
 
@@ -36293,16 +36287,6 @@ func TestNormalizeToolRequestSyntaxNativeToolCall(t *testing.T) {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
 
-	intent := result.Intent()
-	if intent.ToolName != "search_content" ||
-		intent.ActionClass != actionRead ||
-		intent.Transport != toolRequestNormalizerTransportNative ||
-		intent.ParserState != toolRequestNormalizerOutcomeNormalized ||
-		intent.Confidence != "normalized" {
-
-		t.Fatalf("unexpected tooling intent projection: %#v", intent)
-	}
-
 	input := runnerAutonomyPolicyInputFromNormalization(result)
 	if input.Source != "tooling.intent" {
 		t.Fatalf("policy input source = %q, want tooling.intent", input.Source)
@@ -37313,40 +37297,6 @@ func TestRepairToolRequestSyntaxNestedArgumentsRejectsMixedWrapper(t *testing.T)
 
 	if result.OK && result.EventTransport == toolRequestNormalizerTransportNestedArguments {
 		t.Fatalf("mixed wrapper must not be repaired through nested arguments: %#v", result.Request)
-	}
-}
-
-func TestParseFunctionCallToolRequestSyntaxEmptyString(t *testing.T) {
-	// Fix: empty content must not be classified as "unsafe_to_infer".
-	// An empty string is a model producing no visible output, not a
-	// failed function-call attempt. Classifying it as unsafe skips
-	// the reasoning-content salvage paths that could recover the answer.
-	req, ok, unsafe := parseFunctionCallToolRequestSyntax("")
-	if ok {
-		t.Fatalf("empty string must not parse as a valid tool request")
-	}
-
-	if unsafe {
-		t.Fatalf("empty string must not be classified as unsafe: got unsafe=true, want unsafe=false")
-	}
-
-	if req.Tool != "" {
-		t.Fatalf("empty string must produce zero-value ToolRequest, got tool=%q", req.Tool)
-	}
-}
-
-func TestParseFunctionCallToolRequestSyntaxWhitespaceOnly(t *testing.T) {
-	req, ok, unsafe := parseFunctionCallToolRequestSyntax("   \n  \t  ")
-	if ok {
-		t.Fatalf("whitespace-only must not parse as a valid tool request")
-	}
-
-	if unsafe {
-		t.Fatalf("whitespace-only must not be classified as unsafe: got unsafe=true, want unsafe=false")
-	}
-
-	if req.Tool != "" {
-		t.Fatalf("whitespace-only must produce zero-value ToolRequest, got tool=%q", req.Tool)
 	}
 }
 

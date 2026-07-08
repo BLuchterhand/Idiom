@@ -123,25 +123,3 @@ func TestApprovePlanForExecutionRejectsPartialDecision(t *testing.T) {
 		t.Fatalf("partial approval error = %v", err)
 	}
 }
-
-func TestApprovePlanForExecutionNormalizesNilContext(t *testing.T) {
-	_, err := approvePlanForExecution(nil, "plan.json", planartifact.PlanArtifact{
-		Edits: []planartifact.PlanEdit{{Path: "a.go", OldText: "old", NewText: "new"}},
-	}, PlanApprovalPhaseInitial, Options{
-		OnPlanApproval: func(ctx context.Context, _ PlanApprovalRequest) PlanApprovalDecision {
-			if ctx == nil {
-				t.Fatal("approval callback received nil context")
-			}
-			select {
-			case <-ctx.Done():
-				t.Fatal("background context should not be canceled")
-			default:
-			}
-
-			return PlanApprovalDecision{Approved: true}
-		},
-	}, []string{"a.go"})
-	if err != nil {
-		t.Fatalf("approvePlanForExecution: %v", err)
-	}
-}

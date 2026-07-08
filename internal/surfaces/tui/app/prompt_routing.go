@@ -494,11 +494,6 @@ func (m *Model) runPlanExecuteCommandOnce(ctx context.Context, objective string)
 		_ = m.debugLogger.LogRunEvent("internal_prompt", fmt.Sprintf("suppressed nested plan-execute command (%d chars)", len(objective)))
 	}
 
-	history := m.requestMessages()
-	if suppressTranscript {
-		history = append(history, llama.ChatMessage{Role: "user", Content: objective})
-	}
-
 	plan = promptExecutionPlanWithConversationContext(objective, m.conversationFollowupHistory(objective, suppressTranscript), plan, m.projectRoot())
 
 	if summary := strings.TrimSpace(renderTurnRoutePlan(plan.route)); summary != "" {

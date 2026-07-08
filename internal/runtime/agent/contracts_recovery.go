@@ -4455,10 +4455,10 @@ func recoveryCardRejectedActionClass(req workspace.ToolRequest, result workspace
 		return actionPerEditWrite
 	case isVerificationRequest(workspace.ToolRequest{Tool: tool, Command: req.Command, Path: req.Path}):
 		return actionVerify
-	case workspace.IsReadTool(strings.TrimSpace(tool)):
-		return actionRead
 	case workspace.IsSearchToolName(tool):
 		return actionSearch
+	case workspace.IsReadTool(strings.TrimSpace(tool)):
+		return actionRead
 	default:
 		return strings.TrimSpace(toolActionClass(req))
 	}

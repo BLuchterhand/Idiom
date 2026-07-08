@@ -37616,7 +37616,7 @@ func TestLooksLikeTextualToolCallDetectsDSML(t *testing.T) {
 
 	// Test with the DSML signature
 	if !IsTextualToolCall("<n_tool_calls>") {
-		// This should still pass (existing test)
+		t.Fatal("textual tool-call marker not detected by IsTextualToolCall")
 	}
 
 	// The DSML signature should be detected

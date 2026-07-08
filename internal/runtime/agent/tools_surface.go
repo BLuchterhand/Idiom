@@ -5504,30 +5504,6 @@ func reasoningToolRequestHasPlaceholder(req workspace.ToolRequest) bool {
 	return false
 }
 
-func reasoningSubmitPlanHasConcreteEdit(req workspace.ToolRequest) bool {
-	edits := reasoningSubmitPlanEdits(req)
-	if len(edits) == 0 {
-		return false
-	}
-
-	for _, edit := range edits {
-		if strings.TrimSpace(edit.Path) == "" {
-			continue
-		}
-
-		hasOldText := strings.TrimSpace(edit.OldText) != ""
-		hasContent := strings.TrimSpace(edit.Content) != "" || strings.TrimSpace(edit.ContentRef) != ""
-		hasRange := edit.StartLine > 0 && edit.EndLine >= edit.StartLine && hasContent
-		hasReplace := edit.ReplaceAll && (strings.TrimSpace(edit.NewText) != "" || strings.TrimSpace(edit.NewTextRef) != "")
-
-		if (hasOldText && planartifact.PlanEditHasExplicitReplacementText(edit)) || hasRange || hasReplace {
-			return true
-		}
-	}
-
-	return false
-}
-
 func reasoningSubmitPlanEdits(req workspace.ToolRequest) []planartifact.PlanEdit {
 	if req.PlanArtifact != nil && len(req.PlanArtifact.Edits) > 0 {
 		return append([]planartifact.PlanEdit(nil), req.PlanArtifact.Edits...)
@@ -5567,56 +5543,6 @@ type toolRequestSyntaxNormalization struct {
 	ActiveToolCall     *llama.ToolCall
 	Repaired           bool
 	UnsafeExplicitTool bool
-}
-
-type toolRequestIntentProjection struct {
-	ToolName    string
-	ActionClass string
-	Transport   string
-	ParserState string
-	Confidence  string
-}
-
-func (n toolRequestSyntaxNormalization) Intent() toolRequestIntentProjection {
-	return toolRequestIntentProjection{
-		ToolName:    strings.TrimSpace(n.Request.Tool),
-		ActionClass: toolRequestIntentActionClass(n.Request),
-		Transport:   strings.TrimSpace(n.EventTransport),
-		ParserState: strings.TrimSpace(n.EventOutcome),
-		Confidence:  toolRequestIntentConfidence(n),
-	}
-}
-
-func toolRequestIntentActionClass(req workspace.ToolRequest) string {
-	tool := strings.TrimSpace(req.Tool)
-	if tool == "" {
-		return ""
-	}
-	if tool == workspace.ToolNameSearchContent {
-		return actionRead
-	}
-	return string(runnerAutonomyActionClassForRequest(req))
-}
-
-func toolRequestIntentConfidence(n toolRequestSyntaxNormalization) string {
-	switch strings.TrimSpace(n.EventOutcome) {
-	case toolRequestNormalizerOutcomeNormalized:
-		if n.Repaired {
-			return "repaired"
-		}
-		return "normalized"
-	case toolRequestNormalizerOutcomeMissingToolInferred:
-		return "inferred"
-	case toolRequestNormalizerOutcomeUnsafeToInfer:
-		return "unsafe"
-	case toolRequestNormalizerOutcomeTransportMismatch:
-		return "transport_mismatch"
-	default:
-		if n.OK {
-			return "normalized"
-		}
-		return "unsupported"
-	}
 }
 
 func runnerAutonomyPolicyInputFromNormalization(n toolRequestSyntaxNormalization) runnerAutonomyPolicyEventInput {
@@ -6173,69 +6099,6 @@ func parseReadFileLinesAlias(raw string) (int, int, bool) {
 	}
 
 	return line, line, true
-}
-
-func parseFunctionCallToolRequestSyntax(text string) (workspace.ToolRequest, bool, bool) {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		// Empty content is not a function call attempt -- it is a model producing no
-		// visible output (often because everything went into the thinking block).
-		// Classifying empty strings as "unsafe" causes the harness to skip
-		// reasoning-content salvage paths that could recover the answer.
-		return workspace.ToolRequest{}, false, false
-	}
-
-	if strings.Contains(trimmed, "\n") {
-		if strings.Contains(trimmed, "(") && keyValueLikeText(trimmed) {
-			return workspace.ToolRequest{}, false, false
-		}
-
-		return workspace.ToolRequest{}, false, false
-	}
-
-	if strings.Contains(trimmed, "{") || strings.Contains(trimmed, "```") {
-		return workspace.ToolRequest{}, false, true
-	}
-
-	key, body, ok := strings.Cut(trimmed, ":")
-	if !ok || strings.ToLower(strings.TrimSpace(key)) != "tool" {
-		if ok && keyValueMissingToolActionField(strings.ToLower(strings.TrimSpace(key))) {
-			return workspace.ToolRequest{}, false, true
-		}
-
-		return workspace.ToolRequest{}, false, false
-	}
-
-	body = strings.TrimSpace(body)
-
-	open := strings.Index(body, "(")
-
-	if open < 0 {
-		return workspace.ToolRequest{}, false, true
-	}
-
-	if !strings.HasSuffix(body, ")") {
-		return workspace.ToolRequest{}, false, true
-	}
-
-	tool := strings.TrimSpace(body[:open])
-	if !toolRequestSyntaxIdentifier(tool) {
-		return workspace.ToolRequest{}, false, true
-	}
-
-	args := strings.TrimSpace(body[open+1 : len(body)-1])
-	values, ok := parseFunctionCallToolArguments(args)
-
-	if !ok {
-		return workspace.ToolRequest{}, false, true
-	}
-
-	req, ok := toolRequestFromSyntaxValues(tool, values)
-	if !ok {
-		return workspace.ToolRequest{}, false, true
-	}
-
-	return req, true, false
 }
 
 func parseFunctionCallToolArguments(args string) (map[string]string, bool) {

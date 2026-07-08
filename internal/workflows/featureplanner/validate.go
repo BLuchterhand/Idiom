@@ -2783,9 +2783,6 @@ func deltaAllowsField(delta PlanAuthorityDelta, field string) bool {
 			return true
 		}
 
-		if strings.HasPrefix(candidate, "atom:") {
-			continue
-		}
 	}
 
 	return false

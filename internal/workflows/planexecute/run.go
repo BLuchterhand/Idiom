@@ -275,10 +275,6 @@ func runLoadedPlanExecution(ctx context.Context, cfg config.Config, opts Options
 
 		return RunResult{ExitCode: 1, SessionID: progress.SessionID, ResumeStatePath: progressPath}
 	}
-	if savedPath != "" {
-		progressPath = savedPath
-	}
-
 	if emitPhase != nil {
 		emitPhase("executing", fmt.Sprintf("Applying %d edit(s)...", len(plan.Edits)))
 	}

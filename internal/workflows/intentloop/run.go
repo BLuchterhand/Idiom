@@ -107,7 +107,7 @@ func Run(cfg config.Config, opts IntentLoopOptions, promptRun planexecute.Prompt
 	if result, terminal := resumeIncompleteCycle(cfg, opts, promptRun, rec, stdout, stderr, &state); result.Status != "" {
 		return result
 	} else if terminal != nil {
-		statePath, _ = SaveState(cfg.Workspace.Root, &state)
+		_, _ = SaveState(cfg.Workspace.Root, &state)
 	}
 
 	if opts.DetectExternalScopedChanges {
@@ -128,7 +128,7 @@ func Run(cfg config.Config, opts IntentLoopOptions, promptRun planexecute.Prompt
 	for cycle := state.CurrentCycle + 1; cycle <= state.MaxCycles; cycle++ {
 		state.CurrentCycle = cycle
 		result, terminal, completionPath := runOneCycle(cfg, opts, promptRun, rec, stdout, stderr, &state, cycle)
-		statePath, _ = SaveState(cfg.Workspace.Root, &state)
+		_, _ = SaveState(cfg.Workspace.Root, &state)
 		if result.Status != "" {
 			return result
 		}

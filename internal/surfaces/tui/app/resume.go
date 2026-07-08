@@ -147,28 +147,28 @@ func (m *Model) restoreDirectFeaturePlannerSessionFromSessionLog(path string) bo
 	}
 
 	ids := featurePlannerSessionIDsFromSessionLog(path)
-	for i := len(ids) - 1; i >= 0; i-- {
-		state, _, err := featureplanner.LoadState(root, ids[i])
-		if err != nil {
-			m.directFeaturePlannerSessionID = ""
-			return false
-		}
-
-		if featurePlannerStateAcceptsDirectOperatorInput(state) {
-			m.directFeaturePlannerSessionID = strings.TrimSpace(state.SessionID)
-			if effortRoot := strings.TrimSpace(state.EffortRoot); effortRoot != "" {
-				m.featurePlannerEffortRoot = m.resolveFeaturePlannerEffortRoot(effortRoot)
-			}
-
-			return true
-		}
-
+	if len(ids) == 0 {
 		m.directFeaturePlannerSessionID = ""
-
 		return false
 	}
 
-	return false
+	state, _, err := featureplanner.LoadState(root, ids[len(ids)-1])
+	if err != nil {
+		m.directFeaturePlannerSessionID = ""
+		return false
+	}
+
+	if !featurePlannerStateAcceptsDirectOperatorInput(state) {
+		m.directFeaturePlannerSessionID = ""
+		return false
+	}
+
+	m.directFeaturePlannerSessionID = strings.TrimSpace(state.SessionID)
+	if effortRoot := strings.TrimSpace(state.EffortRoot); effortRoot != "" {
+		m.featurePlannerEffortRoot = m.resolveFeaturePlannerEffortRoot(effortRoot)
+	}
+
+	return true
 }
 
 func featurePlannerSessionIDsFromSessionLog(path string) []string {

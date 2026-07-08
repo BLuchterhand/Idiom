@@ -717,7 +717,7 @@ func TestFeaturePlannerTUIE2EOpenApprovalQuestionKeepsChatInteractive(t *testing
 	m.input.SetValue("Approved. Use go test ./pkg.")
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(*Model)
-	m = waitForFeaturePlannerTUIStreamDone(t, m)
+	waitForFeaturePlannerTUIStreamDone(t, m)
 
 	if client.callCount != 2 {
 		t.Fatalf("explicit approval should resume feature planner with one more model call, got %d", client.callCount)

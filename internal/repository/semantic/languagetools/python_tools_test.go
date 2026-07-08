@@ -114,12 +114,11 @@ def test_tick():
 	}
 
 	callsFrom := mgr.Execute(context.Background(), workspace.ToolRequest{Tool: "python_calls_from", Pattern: "helper"})
-	if callsFrom.Error != "" && !strings.Contains(callsFrom.Error, "no Python LSP") {
-		// Fall back is OK; we don't require calls-from to succeed if LSP is absent.
-	}
-
-	// The semantic fallback should still produce something for helper().
-	if callsFrom.Error == "" && !strings.Contains(callsFrom.Output, "tick") && !strings.Contains(callsFrom.Output, "Engine") {
+	if callsFrom.Error != "" {
+		if !strings.Contains(callsFrom.Error, "no Python LSP") {
+			t.Fatalf("unexpected pythonCallsFrom error: %#v", callsFrom)
+		}
+	} else if !strings.Contains(callsFrom.Output, "tick") && !strings.Contains(callsFrom.Output, "Engine") {
 		t.Fatalf("unexpected pythonCallsFrom result (index fallback expected to mention tick/Engine): %#v", callsFrom)
 	}
 

@@ -383,6 +383,7 @@ Accepted or corrected slices:
 | Runtime route/contract hardening checkpoint | Production Go `+293 / -75`: net `+218`; not counted as a LOC-reduction slice. This checkpoint makes delegated child task-family contracts the role authority, normalizes read-only runtime tool sets through one forbidden predicate, blocks misrouted read-only edit prompts with an explicit write-lane confirmation, shortens unsupported-answer closeout wording, and snapshots TUI render inputs while rendering | Test Go `+251 / -43`: net `+208`; added/updated coverage for read-only tool suppression, delegated child role/tool surfaces, read-only edit confirmation including plan-execute internal prompts, unsupported-answer wording, and render-cache growth during rendering; scripted fixture text now rejects the old verbose unsupported-answer phrasing | Focused: `go test ./internal/runtime/workerruntime ./internal/runtime/agent -run 'TestRoleSpecFor|TestRuntimeContractForTaskFamilyUsesSharedProfiles|TestNormalizeRuntimeBriefReadOnlyWorkspaceSuppressesWriteTools|TestControlRailsReadOnlyWorkspaceSuppressesWriteTools|TestWorkbranchChildToolEventsCarryLifecycleIDs|TestRunnerExecutesWorkbranchWriteChildTaskWithoutMutatingParent|TestRunnerRoutesWorkbranchChildOntoImplementerClient' -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --json --fail-on warning`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`; `git diff --check` | Accepted as behavior hardening after stale reviewer findings were filtered against the current tree. Static dead code is clean, coding rules report `0` findings, and the added role adapter is an authority projection from `RuntimeContractSpec`, not a pass-through replacement wrapper |
 | Plan/workspace/evidence wrapper and dead-surface cleanup | Production Go `+11 / -120`: net `-109`; deleted unused plan-scope convenience methods, the unreachable workspace write-policy prompt branch, the test-only `SetGoplsBinaryForTesting` production method, manifest projection wrappers, TUI plan/recovery one-call wrappers, the raw candidate-path `os.Stat` gate, and duplicate delegated-discovery candidate appends | Test Go `+24 / -65`: net `-41`; tests now assert candidate-path parity, exercise gopls discovery through `PATH` instead of a production test setter, and target owner APIs rather than deleted wrappers | Focused package tests for plan scope, workspace instructions/tool manifests/gopls fallback, languagetools, runtime evidence candidates, and TUI prompt/recovery passed; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json`; `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `git diff --check` | Accepted after multi-reviewer synthesis; stale-reference scans found no deleted symbols, no replacement pass-through wrappers were introduced, candidate-path extraction is now the single authority for raw/packet/ledger/registry candidates, and `deadcode`/`U1000` are clean |
 | Missing-tool inference authority deletion | Production Go `+3 / -183`: net `-180`; deleted workspace missing-`tool` inference, read-only bare-JSON detection, runtime missing-tool normalization guards, visible `code_navigate` salvage from capability-only JSON, and the now-unreachable `LanguageToolForCapability` helper | Test Go `+41 / -123`: net `-82`; tests now require explicit `tool` in tool transports, reject bare JSON without a tool, and ensure visible capability-only JSON is not salvaged as executable `code_navigate` | Focused: `go test ./internal/capabilities/workspace -count=1`; `go test ./internal/runtime/agent -count=1`; `go test ./internal/repository/semantic/languagetools -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json`; `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`; `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`; `git diff --check` | Accepted after reviewer synthesis; the harness no longer guesses executable tools from field shape, parser errors now clear runtime normalizer `OK`, no replacement wrapper was introduced, and remaining field-alias cleanup is a separate schema-aligned pass |
+| Runtime action-class and dead-bookkeeping cleanup | Production Go `+31 / -192`: net `-161`; fixed rejected `search_content` action-class projection by checking the narrower search class before the broader read class, then deleted the test-only tool-request intent projection, obsolete direct function-call parser entry point, duplicate submit-plan concrete-edit predicate, unused plan coverage/history/bookkeeping values, fake latest-session loop, and empty active-rendering budget branch | Test Go `+14 / -87`: net `-73`; removed tests that preserved dead/private surfaces and the nil-context approval expectation, while retaining public recovery-card search classification coverage and live normalizer/tokenizer coverage | Focused package tests for runtime agent, plan contracts, intent-loop, plan-execute, postflight, TUI resume/rendering/routing, CLI artifact/refine, and Python language tools passed; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`; `/Users/ben/go/bin/staticcheck -checks=U1000 ./...`; `/Users/ben/go/bin/staticcheck '-checks=all,-ST*,-SA1019' ./...`; `/Users/ben/go/bin/deadcode -test ./...`; `git diff --check` | Accepted as a deletion-first cleanup. Coding rules scanned `600` Go files with `0` findings, `deadcode -test` is clean, semantic staticcheck is clean outside repo-wide style/deprecated Bubble Tea noise, and no replacement helper or wrapper was introduced |
 
 ## Historical Count Snapshots (Superseded)
 
@@ -824,17 +825,12 @@ Current git state:
   answer-grounding authority deletion, shell verification classification
   authority consolidation, eval discovery taxonomy deletion, prior-session
   evidence reader deletion, alias-only constant cleanup, and the workspace
-  tool-name alias plus source-evidence duplicate-branch cleanup.
-- Goal-period diff from merge base through the committed-plus-staged state:
-  production Go `+20,340 / -21,041`, net `-701`; Go tests `+10,077 / -6,608`,
-  net `+3,469`; strict all-file total `+32,490 / -29,616`, net `+2,874`.
-- Full dirty worktree diff, including ongoing uncommitted runtime/TUI edits
-  outside this staged cleanup, is production Go `+20,652 / -21,057`, net
-  `-405`; Go tests `+10,253 / -6,651`, net `+3,602`; strict all-file total
-  `+32,973 / -29,678`, net `+3,295`.
-- Physical tracked production Go file lines moved from `328,110` at the merge
-  base to about `327,409` in the committed-plus-staged state and `327,705` in
-  the full dirty worktree.
+  tool-name alias plus source-evidence duplicate-branch cleanup, missing-tool
+  inference authority deletion, and the runtime action-class/dead-bookkeeping
+  cleanup.
+- Current branch-plus-worktree diff versus `main`: production Go
+  `+20,690 / -22,274`, net `-1,584`; Go tests `+10,869 / -7,559`, net
+  `+3,310`; strict all-file total `+33,777 / -31,805`, net `+1,972`.
 - Latest semantic facade cleanup slice only: production Go `+245 / -294`,
   net `-49`; Go tests `+31 / -24`, net `+7`.
 - Latest gitstate cleanup slice only: production Go `+120 / -126`, net `-6`;
@@ -872,6 +868,9 @@ Current git state:
 - Latest missing-tool inference authority deletion slice only:
   production Go `+3 / -183`, net `-180`; Go tests `+41 / -123`,
   net `-82`.
+- Latest runtime action-class and dead-bookkeeping cleanup slice only:
+  production Go `+31 / -192`, net `-161`; Go tests `+14 / -87`, net
+  `-73`; all files `+57 / -292`, net `-235`.
 
 Interpretation: the current goal-period branch is now production-LOC negative.
 Many individual consolidation slices are net-negative and remove real duplicate
@@ -879,8 +878,8 @@ or alias-only surfaces, while the total all-file diff remains positive because
 tests, docs, scripted fixtures, and earlier `commandexec` process-lifecycle
 setup added shared platform coverage before all remaining process migrations
 are complete. The current worktree versus `main` is production Go
-`+20503 / -21421`, net `-918`; all Go is `+31001 / -28358`, net `+2643`;
-all tracked files are `+33095 / -30328`, net `+2767`. The implementation
+`+20690 / -22274`, net `-1584`; Go tests are `+10869 / -7559`, net `+3310`;
+all tracked files are `+33777 / -31805`, net `+1972`. The implementation
 ledger above remains the source of truth for accepted local reductions inside
 each consolidation case.
 

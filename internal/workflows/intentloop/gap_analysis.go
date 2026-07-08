@@ -27,9 +27,7 @@ func AnalyzeEvidenceGaps(contract IntentLoopContract, record plancontract.PlanEx
 	}
 
 	if contract.RequireSourceSanity {
-		for _, gap := range sourceSanityGaps(record) {
-			gaps = append(gaps, gap)
-		}
+		gaps = append(gaps, sourceSanityGaps(record)...)
 	}
 	if contract.RequireVerification || contract.RequireRequiredTests {
 		for _, test := range contract.RequiredTestCommands {
@@ -48,12 +46,8 @@ func AnalyzeEvidenceGaps(contract IntentLoopContract, record plancontract.PlanEx
 			DetailHash:  sha256Prefixed(detail),
 		})
 	}
-	for _, gap := range requiredPathCoverageGaps(contract, record) {
-		gaps = append(gaps, gap)
-	}
-	for _, gap := range acceptanceEvidenceGaps(contract, record) {
-		gaps = append(gaps, gap)
-	}
+	gaps = append(gaps, requiredPathCoverageGaps(contract, record)...)
+	gaps = append(gaps, acceptanceEvidenceGaps(contract, record)...)
 
 	return normalizeEvidenceGaps(gaps)
 }

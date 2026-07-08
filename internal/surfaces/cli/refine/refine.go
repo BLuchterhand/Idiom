@@ -3,6 +3,7 @@ package refine
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -151,7 +152,7 @@ func DefaultDispatchWithConfig(metaBriefPath string, configPath string, stdout, 
 	}
 
 	args := defaultRefineDispatchArgs(binary, configPath, metaBriefPath)
-	result := commandexec.Run(nil, commandexec.Spec{
+	result := commandexec.Run(context.TODO(), commandexec.Spec{
 		Name: args[0],
 		Args: args[1:],
 	})

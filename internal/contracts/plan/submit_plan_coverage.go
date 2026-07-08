@@ -198,7 +198,6 @@ func ValidateCoverage(input CoverageInput) CoverageDecision {
 	scope := normalizeScope(input.Scope)
 	scopeActive := scope.Active()
 	planned := make(map[string]struct{}, len(input.Edits)+len(input.SourceSatisfiedPaths))
-	var plannedPaths []string
 
 	var outside []string
 	var missingPathEdits []string
@@ -206,7 +205,6 @@ func ValidateCoverage(input CoverageInput) CoverageDecision {
 	for _, path := range input.SourceSatisfiedPaths {
 		if normalized := normalizePath(path); normalized != "" {
 			planned[normalized] = struct{}{}
-			plannedPaths = append(plannedPaths, normalized)
 			if scopeActive && !scope.Allows(normalized) {
 				outside = append(outside, normalized)
 			}
@@ -221,7 +219,6 @@ func ValidateCoverage(input CoverageInput) CoverageDecision {
 		}
 
 		planned[path] = struct{}{}
-		plannedPaths = append(plannedPaths, path)
 		if scopeActive && !scope.Allows(path) {
 			outside = append(outside, path)
 		}
