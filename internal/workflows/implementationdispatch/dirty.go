@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	plancontract "idiom/internal/contracts/plan"
+	"idiom/internal/contracts/pathparse"
 )
 
 type DirtyAllowance struct {
@@ -147,7 +147,7 @@ func dirtyAllowancePaths(prompt string) []string {
 					continue
 				}
 
-				normalized := plancontract.NormalizeWorkspacePath(token)
+				normalized := pathparse.NormalizeWorkspaceRelativePath(token)
 				if normalized == "" {
 					continue
 				}
@@ -232,13 +232,13 @@ func documentMatchesAllowedDirtyPath(doc PlanDocument, allowedPaths []string) bo
 
 	allowed := make(map[string]struct{}, len(allowedPaths))
 	for _, path := range allowedPaths {
-		if normalized := plancontract.NormalizeWorkspacePath(path); normalized != "" {
+		if normalized := pathparse.NormalizeWorkspaceRelativePath(path); normalized != "" {
 			allowed[normalized] = struct{}{}
 		}
 	}
 
 	for _, path := range scope {
-		normalized := plancontract.NormalizeWorkspacePath(path)
+		normalized := pathparse.NormalizeWorkspaceRelativePath(path)
 		if _, ok := allowed[normalized]; ok {
 			return true
 		}

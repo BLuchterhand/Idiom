@@ -74,23 +74,3 @@ func TestPlanScopeContractRequiredPathsWinOverAllowedCandidates(t *testing.T) {
 		t.Fatalf("allowed candidate paths = %#v, want %#v", contract.AllowedCandidatePaths, want)
 	}
 }
-
-func TestNormalizeWorkspacePathCleansComparisonVariants(t *testing.T) {
-	cases := map[string]string{
-		` ./pkg\feature.go `: "pkg/feature.go",
-		"pkg//feature.go":    "pkg/feature.go",
-		"pkg/./feature.go":   "pkg/feature.go",
-		"pkg/feature.go/":    "pkg/feature.go",
-	}
-	for input, want := range cases {
-		if got := NormalizeWorkspacePath(input); got != want {
-			t.Fatalf("NormalizeWorkspacePath(%q) = %q, want %q", input, got, want)
-		}
-	}
-
-	for _, input := range []string{"", ".", "..", "../escape.go", "/tmp/abs.go", "pkg/\x00bad.go"} {
-		if got := NormalizeWorkspacePath(input); got != "" {
-			t.Fatalf("NormalizeWorkspacePath(%q) = %q, want empty invalid path", input, got)
-		}
-	}
-}

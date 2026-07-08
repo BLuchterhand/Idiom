@@ -4,7 +4,7 @@ import (
 	"slices"
 	"strings"
 
-	plancontract "idiom/internal/contracts/plan"
+	"idiom/internal/contracts/pathparse"
 )
 
 type ScopeGateInput struct {
@@ -136,7 +136,7 @@ type ScopeGateBlocker struct {
 }
 
 func normalizePath(p string) string {
-	p = plancontract.NormalizeWorkspacePath(p)
+	p = pathparse.NormalizeWorkspaceRelativePath(p)
 	p = normalizeMovedSourcePath(p)
 
 	return p

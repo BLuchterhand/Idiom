@@ -12,6 +12,7 @@ import (
 
 	planartifact "idiom/internal/contracts/planartifact"
 	"idiom/internal/contracts/sensitivity"
+	"idiom/internal/platform/safepath"
 	"idiom/internal/platform/textutil"
 )
 
@@ -996,12 +997,8 @@ func pathAllowedAsNew(path string, roles map[string]string, lines []string) bool
 }
 
 func fileExistsUnderRoot(root string, path string) bool {
-	if strings.TrimSpace(root) == "" || strings.TrimSpace(path) == "" {
-		return false
-	}
-
-	full, ok := pathUnderRoot(root, path)
-	if !ok {
+	full, _, err := safepath.UnderRoot(root, path, "plan audit file path", safepath.Options{})
+	if err != nil {
 		return false
 	}
 
@@ -1011,42 +1008,14 @@ func fileExistsUnderRoot(root string, path string) bool {
 }
 
 func pathExistsUnderRoot(root string, path string) bool {
-	if strings.TrimSpace(root) == "" || strings.TrimSpace(path) == "" {
+	full, _, err := safepath.UnderRoot(root, path, "plan audit path", safepath.Options{})
+	if err != nil {
 		return false
 	}
 
-	full, ok := pathUnderRoot(root, path)
-	if !ok {
-		return false
-	}
+	_, statErr := os.Stat(full)
 
-	_, err := os.Stat(full)
-
-	return err == nil
-}
-
-func pathUnderRoot(root string, path string) (string, bool) {
-	cleanRoot, err := filepath.Abs(filepath.Clean(root))
-	if err != nil {
-		return "", false
-	}
-
-	full := path
-	if !filepath.IsAbs(full) {
-		full = filepath.Join(cleanRoot, path)
-	}
-
-	cleanFull, err := filepath.Abs(filepath.Clean(full))
-	if err != nil {
-		return "", false
-	}
-
-	rel, err := filepath.Rel(cleanRoot, cleanFull)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", false
-	}
-
-	return cleanFull, true
+	return statErr == nil
 }
 
 func commandReferencePaths(command string) []string {

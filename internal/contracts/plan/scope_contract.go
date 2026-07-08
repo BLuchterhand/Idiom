@@ -141,26 +141,6 @@ func NormalizeScopePath(path string) string {
 	return path
 }
 
-func NormalizeWorkspacePath(path string) string {
-	path = strings.TrimSpace(path)
-	path = strings.ReplaceAll(path, "\\", "/")
-
-	for strings.HasPrefix(path, "./") {
-		path = strings.TrimPrefix(path, "./")
-	}
-
-	if path == "" || filepath.IsAbs(path) || strings.ContainsRune(path, 0) {
-		return ""
-	}
-
-	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(path)))
-	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
-		return ""
-	}
-
-	return NormalizeScopePath(clean)
-}
-
 func planScopeContractID(contract PlanScopeContract) string {
 	contract.ContractID = ""
 

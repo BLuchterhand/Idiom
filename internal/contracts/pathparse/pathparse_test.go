@@ -87,9 +87,11 @@ func TestIsAbsolutePath(t *testing.T) {
 
 func TestNormalizeWorkspaceRelativePath(t *testing.T) {
 	cases := map[string]string{
-		`pkg\file.go`:       "pkg/file.go",
-		"./pkg/../pkg.go":   "pkg.go",
-		"pkg//nested//x.go": "pkg/nested/x.go",
+		` ./pkg\feature.go `: "pkg/feature.go",
+		"./pkg/../pkg.go":    "pkg.go",
+		"pkg//nested//x.go":  "pkg/nested/x.go",
+		"pkg/./feature.go":   "pkg/feature.go",
+		"pkg/feature.go/":    "pkg/feature.go",
 	}
 	for input, want := range cases {
 		if got := NormalizeWorkspaceRelativePath(input); got != want {

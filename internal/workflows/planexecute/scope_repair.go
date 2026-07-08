@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"idiom/internal/platform/safepath"
 )
 
 type candidatePathRepair struct {
@@ -72,17 +74,12 @@ func applyCandidatePathRepairsToPrompt(prompt string, repairs []candidatePathRep
 }
 
 func pathExistsUnderRoot(root string, path string) bool {
-	path = strings.TrimSpace(path)
-	if path == "" {
+	full, _, err := safepath.UnderRoot(root, path, "candidate path", safepath.Options{})
+	if err != nil {
 		return false
 	}
 
-	candidate := path
-	if !filepath.IsAbs(candidate) {
-		candidate = filepath.Join(root, candidate)
-	}
-
-	info, err := os.Stat(candidate)
+	info, err := os.Stat(full)
 	return err == nil && !info.IsDir()
 }
 

@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	plancontract "idiom/internal/contracts/plan"
+	"idiom/internal/contracts/pathparse"
 )
 
 const SchemaVersion = "idiom.edit_intent.v1"
@@ -298,7 +298,7 @@ func normalizePathList(paths []string) ([]string, error) {
 }
 
 func normalizePath(path string) (string, error) {
-	normalized := plancontract.NormalizeWorkspacePath(path)
+	normalized := pathparse.NormalizeWorkspaceRelativePath(path)
 	if normalized == "" {
 		return "", fmt.Errorf("path must stay relative to the workspace")
 	}

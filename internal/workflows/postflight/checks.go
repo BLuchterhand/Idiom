@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	plancontract "idiom/internal/contracts/plan"
+	"idiom/internal/contracts/pathparse"
 )
 
 // Severity classifies how seriously a Finding should be treated.
@@ -119,13 +119,13 @@ func (c FileAllowlistMismatch) Run(d Diff, ctx RunContext) ([]Finding, error) {
 
 	allow := make(map[string]struct{}, len(ctx.RequiredEditPaths))
 	for _, p := range ctx.RequiredEditPaths {
-		allow[plancontract.NormalizeWorkspacePath(p)] = struct{}{}
+		allow[pathparse.NormalizeWorkspaceRelativePath(p)] = struct{}{}
 	}
 
 	var findings []Finding
 
 	for _, p := range d.ModifiedPaths() {
-		if _, ok := allow[plancontract.NormalizeWorkspacePath(p)]; !ok {
+		if _, ok := allow[pathparse.NormalizeWorkspaceRelativePath(p)]; !ok {
 			findings = append(findings, Finding{
 				Check:    c.Name(),
 				Severity: SeverityError,
