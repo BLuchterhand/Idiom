@@ -191,7 +191,11 @@ func (h ownerTestHost) PathForHandle(handle string) (string, error) {
 	return "", fmt.Errorf("unknown handle %q", handle)
 }
 
-func (h ownerTestHost) Execute(context.Context, ToolRequest) ToolResult {
+func (h ownerTestHost) RouteLanguageTool(context.Context, RouteLanguageToolRequest) ToolResult {
+	return ToolResult{Error: "not implemented"}
+}
+
+func (h ownerTestHost) SearchContent(context.Context, SearchContentRequest) ToolResult {
 	return ToolResult{Error: "not implemented"}
 }
 

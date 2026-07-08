@@ -27,7 +27,7 @@ func annotateToolFailure(result ToolResult) ToolResult {
 		return result
 	}
 
-	text := strings.ToLower(strings.Join([]string{result.Code, result.Summary, result.Error}, " "))
+	text := strings.ToLower(strings.Join([]string{result.Summary, result.Error}, " "))
 	switch {
 	case strings.Contains(text, "unsupported") || strings.Contains(text, "unknown"):
 		return withToolFailure(result, failures.Unimplemented, reasonLanguageToolUnsupported)

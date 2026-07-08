@@ -9,6 +9,7 @@ import (
 
 	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/config"
+	"idiom/internal/repository/semantic/languagetools"
 )
 
 // Fix 6 integration — Manager.EvaluateToolRule owns the workspace overlay:
@@ -112,5 +113,58 @@ func TestManagerExecuteDeniesConfiguredReadFileRule(t *testing.T) {
 
 	if strings.Contains(res.Output+res.Summary+res.Error, secret) {
 		t.Fatalf("deny result leaked file content: %+v", res)
+	}
+}
+
+func TestCodeNavigateRouteHonorsConcreteLanguageToolDeny(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "go.mod"), "module example.com/routepolicy\n\ngo 1.22\n")
+	writeTestFile(t, filepath.Join(root, "pkg", "feature.go"), "package pkg\n\ntype Widget struct{}\n")
+
+	mgr := NewManager(config.Workspace{
+		Root: root,
+		CWD:  root,
+		ToolRules: map[string][]config.ToolRule{
+			"go_definition": {
+				{Pattern: "pkg/feature.go", Decision: "deny"},
+			},
+		},
+	})
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:       "code_navigate",
+		Capability: "definition",
+		Path:       "pkg/feature.go",
+		Pattern:    "Widget",
+	})
+
+	if result.Error == "" || !strings.Contains(result.Error, "deny go_definition") {
+		t.Fatalf("expected routed go_definition deny, got %#v", result)
+	}
+	if !strings.Contains(result.Summary, "Code navigation routed definition via go_definition") {
+		t.Fatalf("expected code_navigate wrapper summary, got %#v", result)
+	}
+}
+
+func TestLanguageSearchContentPortHonorsSearchContentDeny(t *testing.T) {
+	root := t.TempDir()
+
+	mgr := NewManager(config.Workspace{
+		Root: root,
+		CWD:  root,
+		ToolRules: map[string][]config.ToolRule{
+			"search_content": {
+				{Pattern: ".", Decision: "deny"},
+			},
+		},
+	})
+
+	result := (languageToolHost{manager: mgr}).SearchContent(context.Background(), languagetools.SearchContentRequest{
+		Path:    ".",
+		Pattern: "anything",
+	})
+
+	if result.Error == "" || !strings.Contains(result.Error, "deny search_content") {
+		t.Fatalf("expected search_content deny through reference fallback, got %#v", result)
 	}
 }

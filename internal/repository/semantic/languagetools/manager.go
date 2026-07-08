@@ -2,7 +2,6 @@ package languagetools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -38,7 +37,8 @@ type Host interface {
 	RememberPath(abs string)
 	PrimeDiscoveredPaths(paths []string)
 	PathForHandle(handle string) (string, error)
-	Execute(ctx context.Context, req ToolRequest) ToolResult
+	RouteLanguageTool(ctx context.Context, req RouteLanguageToolRequest) ToolResult
+	SearchContent(ctx context.Context, req SearchContentRequest) ToolResult
 	RunCommand(ctx context.Context, dir string, extraEnv []string, name string, args ...string) commandexec.Result
 }
 
@@ -140,7 +140,29 @@ func (m *Manager) pathForHandle(handle string) (string, error) {
 	return m.host.PathForHandle(handle)
 }
 
-func (m *Manager) execute(ctx context.Context, req ToolRequest) ToolResult {
+func (m *Manager) searchContent(ctx context.Context, req ToolRequest, toolName string) ToolResult {
+	if m == nil || m.host == nil {
+		return ToolResult{
+			Tool:    toolName,
+			Summary: "Language tool host unavailable",
+			Error:   "language tool host unavailable",
+			Failure: failures.New(failures.Unavailable, reasonLanguageToolUnavailable, "language tool host unavailable"),
+		}
+	}
+
+	result := m.host.SearchContent(ctx, SearchContentRequest{
+		Pattern: req.Pattern,
+		Path:    req.Path,
+		Glob:    req.Glob,
+		Workdir: req.Workdir,
+	})
+
+	result.Tool = toolName
+
+	return result
+}
+
+func (m *Manager) routeLanguageTool(ctx context.Context, req ToolRequest) ToolResult {
 	if m == nil || m.host == nil {
 		return ToolResult{
 			Tool:    req.Tool,
@@ -150,17 +172,17 @@ func (m *Manager) execute(ctx context.Context, req ToolRequest) ToolResult {
 		}
 	}
 
-	return m.host.Execute(ctx, req)
-}
-
-func (m *Manager) searchContent(ctx context.Context, req ToolRequest, toolName string) ToolResult {
-	req.Tool = "search_content"
-
-	result := m.execute(ctx, req)
-
-	result.Tool = toolName
-
-	return result
+	return m.host.RouteLanguageTool(ctx, RouteLanguageToolRequest{
+		Tool:      req.Tool,
+		Path:      req.Path,
+		Workdir:   req.Workdir,
+		Pattern:   req.Pattern,
+		StartLine: req.StartLine,
+		EndLine:   req.EndLine,
+		MaxDepth:  req.MaxDepth,
+		Recursive: req.Recursive,
+		Limit:     req.Limit,
+	})
 }
 
 func (m *Manager) runCommandResult(ctx context.Context, dir string, extraEnv []string, name string, args ...string) commandexec.Result {
@@ -187,65 +209,42 @@ func (m *Manager) ActiveLanguages() []language.LanguageSupport {
 }
 
 type ToolRequest struct {
-	Tool              string
-	ID                string
-	Key               string
-	Handle            string
-	Path              string
-	Root              string
-	EffortRoot        string
-	StartLine         int
-	EndLine           int
-	Pattern           string
-	Status            string
-	Task              string
-	Purpose           string
-	Capability        string
-	Language          string
-	Glob              string
-	Workdir           string
-	Command           string
-	Prompt            string
-	Agent             string
-	Mode              string
-	Content           string
-	OldText           string
-	NewText           string
-	ReplaceAll        bool
-	Recursive         bool
-	MaxDepth          int
-	Limit             int
-	BudgetTokens      int
-	Resolution        string
-	IncludeEvidence   bool
-	IncludeSource     bool
-	IncludeFiles      bool
-	Refresh           bool
-	OperatorView      bool
-	FreshnessPolicy   string
-	FreshnessMaxFiles int
-	Category          string
-	Component         string
-	Expected          string
-	Observed          string
-	Workaround        string
-	Impact            string
-	Evidence          []string
-	Confidence        string
-	Severity          string
-	SuggestedFix      string
-	SessionID         string
-	FailureID         string
-	PacketPath        string
-	OutputPath        string
-	RequiredTests     []string
-	RequiredEditPaths []string
-	ForbiddenPaths    []string
-	Destination       string
-	Declarations      []string
-	Moves             []GoDeclarationMove
-	Description       string
-	TaskID            string
+	Tool         string
+	ID           string
+	Path         string
+	Workdir      string
+	StartLine    int
+	EndLine      int
+	Pattern      string
+	Capability   string
+	Language     string
+	Resolution   string
+	Glob         string
+	MaxDepth     int
+	Limit        int
+	Recursive    bool
+	Destination  string
+	Declarations []string
+	Moves        []GoDeclarationMove
+}
+
+type SearchContentRequest struct {
+	Pattern string
+	Path    string
+	Glob    string
+	Workdir string
+}
+
+type RouteLanguageToolRequest struct {
+	Tool      string
+	Path      string
+	Workdir   string
+	Pattern   string
+	StartLine int
+	EndLine   int
+	MaxDepth  int
+	Recursive bool
+	Limit     int
 }
 
 type GoDeclarationMove struct {
@@ -256,7 +255,6 @@ type GoDeclarationMove struct {
 
 type ToolResult struct {
 	Tool          string
-	Code          string
 	Summary       string
 	Output        string
 	Error         string
@@ -266,8 +264,6 @@ type ToolResult struct {
 	Facts         *toolfacts.ToolResultFacts
 	PrecisionTier string
 	Relationships []ToolRelationship
-	PayloadType   string
-	Payload       json.RawMessage
 }
 
 func diagnosticToolFacts(paths []string) *toolfacts.ToolResultFacts {

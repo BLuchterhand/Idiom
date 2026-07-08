@@ -82,7 +82,7 @@ func (m *Manager) codeNavigate(ctx context.Context, req ToolRequest) ToolResult 
 			routed.Tool = tool
 			routed.Capability = ""
 
-			result := m.execute(ctx, routed)
+			result := m.routeLanguageTool(ctx, routed)
 
 			if !codeNavigationCanFallback(result) {
 				return codeNavigationWrapResult(spec, lang.Name, tool, result, "")
