@@ -9118,7 +9118,6 @@ func runnerAutonomyArgumentsDigest(req workspace.ToolRequest) string {
 		Path:            strings.TrimSpace(req.Path),
 		Pattern:         strings.TrimSpace(req.Pattern),
 		Query:           strings.TrimSpace(req.Query),
-		Symbol:          strings.TrimSpace(req.Symbol),
 		Task:            strings.TrimSpace(req.Task),
 		Purpose:         strings.TrimSpace(req.Purpose),
 		Workdir:         strings.TrimSpace(req.Workdir),
@@ -14686,7 +14685,7 @@ func conversationTargetedContentSearch(req workspace.ToolRequest) bool {
 		return false
 	}
 
-	pattern := strings.TrimSpace(textutil.FirstNonEmpty(req.Pattern, req.Query))
+	pattern := strings.TrimSpace(req.Pattern)
 	if pattern == "" {
 		return false
 	}
@@ -14711,7 +14710,7 @@ func conversationTargetedFileNameSearch(req workspace.ToolRequest) bool {
 		return false
 	}
 
-	pattern := textutil.FirstNonEmpty(req.Pattern, req.Glob, req.Query)
+	pattern := textutil.FirstNonEmpty(req.Pattern, req.Glob)
 
 	pattern = filepath.ToSlash(strings.TrimSpace(pattern))
 
@@ -15040,7 +15039,7 @@ func (r *Runner) mainReadOnlyBroadSearchContextPackRequest(results []workspace.T
 		return workspace.ToolRequest{}, false
 	}
 
-	pattern := strings.TrimSpace(textutil.FirstNonEmpty(req.Pattern, req.Query))
+	pattern := strings.TrimSpace(req.Pattern)
 	if pattern == "" {
 		return workspace.ToolRequest{}, false
 	}

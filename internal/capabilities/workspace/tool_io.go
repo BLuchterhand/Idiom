@@ -21,12 +21,9 @@ type ToolRequest struct {
 	Pattern           string              `json:"pattern,omitempty"`
 	Query             string              `json:"query,omitempty"`
 	Status            string              `json:"status,omitempty"`
-	Symbol            string              `json:"symbol,omitempty"`
 	Task              string              `json:"task,omitempty"`
 	Purpose           string              `json:"purpose,omitempty"`
 	Capability        string              `json:"capability,omitempty"`
-	Operation         string              `json:"operation,omitempty"`
-	Action            string              `json:"action,omitempty"`
 	Decision          string              `json:"decision,omitempty"`
 	Language          string              `json:"language,omitempty"`
 	Glob              string              `json:"glob,omitempty"`

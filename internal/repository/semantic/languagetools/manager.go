@@ -209,14 +209,10 @@ type ToolRequest struct {
 	StartLine         int
 	EndLine           int
 	Pattern           string
-	Query             string
 	Status            string
-	Symbol            string
 	Task              string
 	Purpose           string
 	Capability        string
-	Operation         string
-	Action            string
 	Language          string
 	Glob              string
 	Workdir           string

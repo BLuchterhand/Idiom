@@ -160,7 +160,7 @@ func TestParseToolRequestRepairsRawControlCharsInsideStringValues(t *testing.T) 
 }
 
 func TestParseToolRequestRepairsMalformedToolNameObjectPayload(t *testing.T) {
-	req, _, ok, err := ParseToolRequest(`{"tool":"code_navigate":{"capability":"read_symbol","path":"cmd/idiom/audit.go","symbol":"runAuditWatchMain"}}`)
+	req, _, ok, err := ParseToolRequest(`{"tool":"code_navigate":{"capability":"read_symbol","path":"cmd/idiom/audit.go","pattern":"runAuditWatchMain"}}`)
 	if err != nil {
 		t.Fatalf("ParseToolRequest should repair malformed tool-name object: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestParseToolRequestRepairsMalformedToolNameObjectPayload(t *testing.T) {
 		t.Fatal("expected repaired tool request")
 	}
 
-	if req.Tool != "code_navigate" || req.Capability != "read_symbol" || req.Path != "cmd/idiom/audit.go" || req.Symbol != "runAuditWatchMain" {
+	if req.Tool != "code_navigate" || req.Capability != "read_symbol" || req.Path != "cmd/idiom/audit.go" || req.Pattern != "runAuditWatchMain" {
 		t.Fatalf("unexpected request: %#v", req)
 	}
 }
@@ -223,18 +223,14 @@ func TestParseToolRequestNestedCodeNavigateGraphResolutionDoesNotBecomeCapabilit
 	}
 }
 
-func TestParseToolRequestUnwrapsNestedInputObjectPayload(t *testing.T) {
-	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"code_navigate\",\"input\":{\"tool\":\"read_symbol\",\"path\":\"internal/frontier/discovery.go\",\"symbol\":\"DiscoveryQuery\"}}\n```")
-	if err != nil {
-		t.Fatalf("ParseToolRequest: %v", err)
+func TestParseToolRequestRejectsNestedInputToolMismatch(t *testing.T) {
+	_, _, _, err := ParseToolRequest("```tool\n{\"tool\":\"code_navigate\",\"input\":{\"tool\":\"read_symbol\",\"path\":\"internal/frontier/discovery.go\",\"pattern\":\"DiscoveryQuery\"}}\n```")
+	if err == nil {
+		t.Fatal("expected nested tool mismatch to be rejected")
 	}
 
-	if !ok {
-		t.Fatal("expected tool request")
-	}
-
-	if req.Tool != "code_navigate" || req.Capability != "read_symbol" || req.Path != "internal/frontier/discovery.go" || req.Symbol != "DiscoveryQuery" {
-		t.Fatalf("unexpected nested input object request repair: %#v", req)
+	if !strings.Contains(err.Error(), `nested request tool "read_symbol" does not match envelope tool "code_navigate"`) {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -286,7 +282,7 @@ func TestCodeNavigateRejectsGraphResolutionWithoutNavigationCapability(t *testin
 	}
 }
 
-func TestParseToolRequestTreatsSymbolAsPatternAlias(t *testing.T) {
+func TestParseToolRequestDoesNotTreatSymbolAsPatternAlias(t *testing.T) {
 	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"go_read_symbol\",\"path\":\"internal/runtime/agent/runner.go\",\"symbol\":\"Runner.Run\"}\n```")
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
@@ -296,12 +292,12 @@ func TestParseToolRequestTreatsSymbolAsPatternAlias(t *testing.T) {
 		t.Fatal("expected tool request")
 	}
 
-	if req.Pattern != "Runner.Run" {
-		t.Fatalf("pattern = %q, want symbol alias", req.Pattern)
+	if req.Pattern != "" {
+		t.Fatalf("symbol must not populate pattern, got %q", req.Pattern)
 	}
 }
 
-func TestParseToolRequestTreatsSearchQueryAsPatternAlias(t *testing.T) {
+func TestParseToolRequestDoesNotTreatSearchQueryAsPatternAlias(t *testing.T) {
 	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"search_content\",\"path\":\"internal/workflows/productworkflow\",\"query\":\"lint audit authority\"}\n```")
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
@@ -315,12 +311,12 @@ func TestParseToolRequestTreatsSearchQueryAsPatternAlias(t *testing.T) {
 		t.Fatalf("tool = %q, want search_content", req.Tool)
 	}
 
-	if req.Pattern != "lint audit authority" {
-		t.Fatalf("pattern = %q, want query alias", req.Pattern)
+	if req.Pattern != "" || req.Query != "lint audit authority" {
+		t.Fatalf("query must remain query without populating pattern: %#v", req)
 	}
 }
 
-func TestParseToolRequestTreatsOperationAsCapabilityAlias(t *testing.T) {
+func TestParseToolRequestDoesNotTreatOperationAsCapabilityAlias(t *testing.T) {
 	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"code_navigate\",\"operation\":\"read_symbol\",\"path\":\"internal/workflows/productworkflow/coverage_gate.go\",\"symbol\":\"EvaluateCoverageGate\"}\n```")
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
@@ -330,12 +326,12 @@ func TestParseToolRequestTreatsOperationAsCapabilityAlias(t *testing.T) {
 		t.Fatal("expected tool request")
 	}
 
-	if req.Tool != "code_navigate" || req.Capability != "read_symbol" || req.Pattern != "EvaluateCoverageGate" {
+	if req.Tool != "code_navigate" || req.Capability != "" || req.Pattern != "" {
 		t.Fatalf("unexpected request: %#v", req)
 	}
 }
 
-func TestParseToolRequestTreatsActionAsCodeNavigateCapabilityAlias(t *testing.T) {
+func TestParseToolRequestDoesNotTreatActionAsCodeNavigateCapabilityAlias(t *testing.T) {
 	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"code_navigate\",\"action\":\"read_symbol\",\"extract_body\":true,\"path\":\"internal/workflows/productworkflow/coverage_gate.go\",\"symbol\":\"CoverageResult\"}\n```")
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
@@ -345,12 +341,12 @@ func TestParseToolRequestTreatsActionAsCodeNavigateCapabilityAlias(t *testing.T)
 		t.Fatal("expected tool request")
 	}
 
-	if req.Tool != "code_navigate" || req.Capability != "read_symbol" || req.Pattern != "CoverageResult" {
+	if req.Tool != "code_navigate" || req.Capability != "" || req.Pattern != "" {
 		t.Fatalf("unexpected request: %#v", req)
 	}
 }
 
-func TestParseToolRequestTreatsResolutionAsCodeNavigateCapabilityAlias(t *testing.T) {
+func TestParseToolRequestDoesNotTreatResolutionAsCodeNavigateCapabilityAlias(t *testing.T) {
 	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"code_navigate\",\"resolution\":\"definition\",\"path\":\"internal/workflows/productworkflow/coverage_gate.go\",\"symbol\":\"EvaluateCoverageGate\"}\n```")
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
@@ -360,7 +356,7 @@ func TestParseToolRequestTreatsResolutionAsCodeNavigateCapabilityAlias(t *testin
 		t.Fatal("expected tool request")
 	}
 
-	if req.Tool != "code_navigate" || req.Capability != "definition" || req.Pattern != "EvaluateCoverageGate" {
+	if req.Tool != "code_navigate" || req.Capability != "" || req.Pattern != "" || req.Resolution != "definition" {
 		t.Fatalf("unexpected request: %#v", req)
 	}
 }
@@ -491,13 +487,13 @@ Add the required policy gate.
 func TestParseToolRequestRepairsUnclosedPrefixedQwenXMLTool(t *testing.T) {
 	req, raw, ok, err := ParseToolRequest(`<tool_call>
 <tool_code_navigate>
-<parameter=action>
+<parameter=capability>
 read_symbol
 </parameter>
 <parameter=path>
 internal/workflows/productworkflow/coverage_gate.go
 </parameter>
-<parameter=symbol>
+<parameter=pattern>
 CoverageGate
 </parameter>
 </tool_call>`)
@@ -648,10 +644,10 @@ func TestParseToolRequestAcceptsQwenPrefixedToolTag(t *testing.T) {
 <parameter=path>
 internal/workflows/productworkflow/coverage_gate.go
 </parameter>
-<parameter=operation>
+<parameter=capability>
 read_symbol
 </parameter>
-<parameter=symbol>
+<parameter=pattern>
 EvaluateCoverageGate
 </parameter>
 </tool_code_navigate>`)
@@ -676,7 +672,7 @@ func TestParseToolRequestAcceptsQwenPrefixedToolTagJSONArguments(t *testing.T) {
 	req, raw, ok, err := ParseToolRequest(`I'll start by exploring the relevant source files.
 
 <tool_code_navigate>
-{"language":"go","path":"internal/workflows/productworkflow/coverage_gate.go","capability":"read_symbol","symbol":"CoverageGate"}
+{"language":"go","path":"internal/workflows/productworkflow/coverage_gate.go","capability":"read_symbol","pattern":"CoverageGate"}
 </tool_code_navigate>`)
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
@@ -699,7 +695,7 @@ func TestParseToolRequestAcceptsQwenPrefixedToolTagJSONArgumentsWithoutCapabilit
 	req, raw, ok, err := ParseToolRequest(`I'll start by exploring the relevant source files.
 
 <tool_code_navigate>
-{"language":"go","path":"internal/workflows/productworkflow/coverage_gate.go","precision_tier":"syntax-index","symbol":"CoverageGate"}
+{"language":"go","path":"internal/workflows/productworkflow/coverage_gate.go","precision_tier":"syntax-index","pattern":"CoverageGate"}
 </tool_code_navigate>`)
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
@@ -1284,7 +1280,7 @@ func TestParseToolRequestAcceptsDeepSeekNativeJSONFormat(t *testing.T) {
 		},
 		{
 			name: "code_navigate bare JSON",
-			text: `{"tool":"code_navigate","capability":"read_symbol","path":"internal/runtime/agent/runner.go","symbol":"Runner.Run"}`,
+			text: `{"tool":"code_navigate","capability":"read_symbol","path":"internal/runtime/agent/runner.go","pattern":"Runner.Run"}`,
 			want: "code_navigate",
 		},
 		{
@@ -1441,22 +1437,22 @@ func TestParseToolRequestAcceptsAllQwenFormatsAfterGuard(t *testing.T) {
 			name: "Qwen prefixed tag with parameters",
 			text: `<tool_code_navigate>
 <parameter=path>internal/surfaces/tui/app/lifecycle.go</parameter>
-<parameter=operation>read_symbol</parameter>
-<parameter=symbol>Lifecycle.Run</parameter>
+<parameter=capability>read_symbol</parameter>
+<parameter=pattern>Lifecycle.Run</parameter>
 </tool_code_navigate>`,
 			want: "code_navigate",
 		},
 		{
 			name: "Qwen prefixed tag with JSON arguments",
 			text: `<tool_code_navigate>
-{"path":"internal/workflows/productworkflow/coverage_gate.go","capability":"read_symbol","symbol":"CoverageGate"}
+{"path":"internal/workflows/productworkflow/coverage_gate.go","capability":"read_symbol","pattern":"CoverageGate"}
 </tool_code_navigate>`,
 			want: "code_navigate",
 		},
 		{
 			name: "Qwen prefixed tag with JSON without capability",
 			text: `<tool_code_navigate>
-{"language":"go","path":"internal/workflows/productworkflow/coverage_gate.go","precision_tier":"syntax-index","symbol":"CoverageGate"}
+{"language":"go","path":"internal/workflows/productworkflow/coverage_gate.go","precision_tier":"syntax-index","pattern":"CoverageGate"}
 </tool_code_navigate>`,
 			want: "code_navigate",
 		},
@@ -1464,9 +1460,9 @@ func TestParseToolRequestAcceptsAllQwenFormatsAfterGuard(t *testing.T) {
 			name: "Qwen unclosed prefixed tag",
 			text: `<tool_call>
 <tool_code_navigate>
-<parameter=action>read_symbol</parameter>
+<parameter=capability>read_symbol</parameter>
 <parameter=path>internal/workflows/productworkflow/coverage_gate.go</parameter>
-<parameter=symbol>CoverageGate</parameter>
+<parameter=pattern>CoverageGate</parameter>
 </tool_call>`,
 			want: "code_navigate",
 		},

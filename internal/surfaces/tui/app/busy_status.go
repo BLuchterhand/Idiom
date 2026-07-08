@@ -162,16 +162,14 @@ func busyStatusForCommand(command string) string {
 
 func busyTopicFromRequest(req workspace.ToolRequest) string {
 	switch {
-	case strings.TrimSpace(req.Symbol) != "":
-		return genericBusyTopic(req.Symbol)
+	case strings.TrimSpace(req.Pattern) != "":
+		return genericBusyTopic(req.Pattern)
 	case strings.TrimSpace(req.Query) != "":
 		return genericBusyTopic(req.Query)
 	case strings.TrimSpace(req.Task) != "":
 		return genericBusyTopic(req.Task)
 	case strings.TrimSpace(req.Purpose) != "":
 		return genericBusyTopic(req.Purpose)
-	case strings.TrimSpace(req.Pattern) != "":
-		return genericBusyTopic(req.Pattern)
 	case strings.TrimSpace(req.Description) != "":
 		return genericBusyTopic(req.Description)
 	case strings.TrimSpace(req.NamedGap) != "":

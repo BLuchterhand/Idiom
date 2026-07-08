@@ -49,10 +49,6 @@ type codeNavigationSpecDefinition struct {
 }
 
 func (m *Manager) codeNavigate(ctx context.Context, req ToolRequest) ToolResult {
-	// Fallback: when the model omits capability, infer it from the request
-	// shape. The normalizer also handles this, but textual transports can
-	// sometimes bypass the normalization pipeline — double-gating here
-	// prevents needless "capability is required" errors.
 	if strings.TrimSpace(req.Capability) == "" {
 		if codeNavigateGraphResolutionOnly(req.Resolution) {
 			return ToolResult{
@@ -61,12 +57,6 @@ func (m *Manager) codeNavigate(ctx context.Context, req ToolRequest) ToolResult 
 				Error:   fmt.Sprintf("code_navigate received graph resolution %q without a navigation capability; use context_query for graph resolutions or set capability to one of %s", strings.TrimSpace(req.Resolution), CodeNavigationCapabilityList()),
 			}
 		}
-
-		if strings.TrimSpace(req.Path) != "" {
-			req.Capability = "file_outline"
-		} else if strings.TrimSpace(req.Pattern) != "" || strings.TrimSpace(req.Query) != "" || strings.TrimSpace(req.Symbol) != "" {
-			req.Capability = "read_symbol"
-		}
 	}
 
 	spec, err := CodeNavigationSpecFor(req.Capability)
@@ -74,7 +64,7 @@ func (m *Manager) codeNavigate(ctx context.Context, req ToolRequest) ToolResult 
 		return ToolResult{Tool: "code_navigate", Summary: "Code navigation rejected", Error: err.Error()}
 	}
 
-	req.Pattern = textutil.FirstNonEmpty(req.Pattern, req.Query, req.Symbol)
+	req.Pattern = strings.TrimSpace(req.Pattern)
 	if spec.RequiresPattern && strings.TrimSpace(req.Pattern) == "" {
 		return ToolResult{Tool: "code_navigate", Summary: "Code navigation rejected", Error: fmt.Sprintf("pattern is required for %s", spec.Name)}
 	}

@@ -1031,7 +1031,7 @@ func TestRunMainDirectToolInputUsesSharedRequestDecoder(t *testing.T) {
 	code := runMain([]string{
 		"tool", "go_read_symbol",
 		"-config", configPath,
-		"-input", `{"path":"internal/surfaces/cli/root/root.go","symbol":"runMain"}`,
+		"-input", `{"path":"internal/surfaces/cli/root/root.go","pattern":"runMain"}`,
 	}, &stdout, &stderr)
 
 	if code != 0 {

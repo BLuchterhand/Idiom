@@ -7096,10 +7096,6 @@ func implementationTargetWriteReadyTargetedCodeNavigate(req workspace.ToolReques
 
 	capability := strings.TrimSpace(req.Capability)
 	if capability == "" {
-		capability = strings.TrimSpace(req.Operation)
-	}
-
-	if capability == "" {
 		return false
 	}
 
@@ -7107,7 +7103,7 @@ func implementationTargetWriteReadyTargetedCodeNavigate(req workspace.ToolReques
 	case "find_definition", "read_symbol", "extract_body", "outline":
 		return true
 	default:
-		return strings.TrimSpace(req.Symbol) != "" && strings.Contains(strings.ToLower(capability), "symbol")
+		return strings.TrimSpace(req.Pattern) != "" && strings.Contains(strings.ToLower(capability), "symbol")
 	}
 }
 

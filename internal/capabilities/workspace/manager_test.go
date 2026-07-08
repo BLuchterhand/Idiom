@@ -2324,7 +2324,7 @@ func TestSearchFilesGlobOnlyZeroHitIsSearchResultNotSchemaError(t *testing.T) {
 	}
 }
 
-func TestSearchFilesAcceptsQueryAliasWhenPatternOmitted(t *testing.T) {
+func TestSearchFilesRejectsQueryWhenPatternAndGlobOmitted(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "internal", "surfaces", "tui", "app", "input.go"), "package app\n")
 
@@ -2339,12 +2339,12 @@ func TestSearchFilesAcceptsQueryAliasWhenPatternOmitted(t *testing.T) {
 		Path:  ".",
 	})
 
-	if result.Error != "" {
-		t.Fatalf("query alias should execute, got %#v", result)
+	if result.Error == "" {
+		t.Fatalf("query without pattern/glob should reject, got %#v", result)
 	}
 
-	if !strings.Contains(result.Output, "internal/surfaces/tui/app/input.go") || !strings.Contains(result.Summary, "Interpreted query") {
-		t.Fatalf("query alias should return file evidence and interpretation note, got summary=%q output=\n%s", result.Summary, result.Output)
+	if !strings.Contains(result.Error, "pattern is required") {
+		t.Fatalf("unexpected rejection: %#v", result)
 	}
 }
 

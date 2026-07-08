@@ -1232,16 +1232,15 @@ func TestSourceEvidencePendingRedirectRequestAllowedAcceptsSourceBodyShapes(t *t
 			want:       true,
 		},
 		{
-			name:       "code navigate inspect symbol with symbol",
+			name:       "code navigate inspect symbol with pattern",
 			obligation: sourceEvidenceObligation{Path: "a.go", PendingTool: workspace.ToolNameCodeNavigate},
-			request:    workspace.ToolRequest{Tool: workspace.ToolNameCodeNavigate, Path: "a.go", Capability: "inspect_symbol", Symbol: "Apply"},
+			request:    workspace.ToolRequest{Tool: workspace.ToolNameCodeNavigate, Path: "a.go", Capability: "inspect_symbol", Pattern: "Apply"},
 			want:       true,
 		},
 		{
-			name:       "code navigate symbol body with query",
+			name:       "code navigate symbol body with query rejected",
 			obligation: sourceEvidenceObligation{Path: "a.go", PendingTool: workspace.ToolNameCodeNavigate},
 			request:    workspace.ToolRequest{Tool: workspace.ToolNameCodeNavigate, Path: "a.go", Capability: "symbol_body", Query: "Apply"},
-			want:       true,
 		},
 		{
 			name:       "read only capability source body",
@@ -1252,14 +1251,13 @@ func TestSourceEvidencePendingRedirectRequestAllowedAcceptsSourceBodyShapes(t *t
 		{
 			name:       "direct read symbol",
 			obligation: sourceEvidenceObligation{Path: "a.go", PendingTool: "go_read_symbol"},
-			request:    workspace.ToolRequest{Tool: "go_read_symbol", Path: "a.go", Symbol: "Apply"},
+			request:    workspace.ToolRequest{Tool: "go_read_symbol", Path: "a.go", Pattern: "Apply"},
 			want:       true,
 		},
 		{
-			name:       "direct extract body",
+			name:       "direct extract body with query rejected",
 			obligation: sourceEvidenceObligation{Path: "a.go", PendingTool: "go_extract_body"},
 			request:    workspace.ToolRequest{Tool: "go_extract_body", Path: "a.go", Query: "Apply"},
-			want:       true,
 		},
 		{
 			name:       "missing symbol pattern rejected",

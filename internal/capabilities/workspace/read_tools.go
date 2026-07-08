@@ -671,11 +671,6 @@ func searchFilesPattern(req ToolRequest) (pattern string, interpreted string) {
 		return glob, fmt.Sprintf("Interpreted glob %q as the file search pattern.", glob)
 	}
 
-	query := strings.TrimSpace(req.Query)
-	if query != "" {
-		return query, fmt.Sprintf("Interpreted query %q as the file search pattern.", query)
-	}
-
 	return "", ""
 }
 

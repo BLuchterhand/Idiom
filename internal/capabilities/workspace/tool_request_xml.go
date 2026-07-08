@@ -173,10 +173,6 @@ func deepSeekXMLPayloadFromParts(original string, toolName string, body string) 
 			return original, true, fmt.Errorf("DeepSeek XML tool request has unsafe parameter name %q", name)
 		}
 
-		if name == "operation" {
-			name = "capability"
-		}
-
 		raw, err := qwenXMLParameterRaw(name, param[2])
 		if err != nil {
 			return original, true, err
@@ -360,7 +356,7 @@ var qwenXMLToolParameterFields = []string{
 	"path", "pattern", "symbol", "capability", "command", "prompt",
 	"task", "query", "rationale", "edits", "old_text", "new_text",
 	"agent", "language", "start_line", "end_line", "replace_all",
-	"recursive", "operation", "action", "resolution", "glob",
+	"recursive", "resolution", "glob",
 	"include_evidence", "include_source", "include_files", "refresh",
 	"category", "component", "expected", "observed", "workaround",
 	"impact", "evidence", "suggested_fix", "required_tests",
@@ -508,10 +504,6 @@ func extractQwenXMLFunctionPayload(envelope string) (string, bool, error) {
 		name := strings.TrimSpace(param[1])
 		if name == "" {
 			continue
-		}
-
-		if name == "operation" {
-			name = "capability"
 		}
 
 		raw, err := qwenXMLParameterRaw(name, param[2])

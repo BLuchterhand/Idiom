@@ -14,7 +14,6 @@ import (
 	planartifact "idiom/internal/contracts/planartifact"
 
 	"idiom/internal/platform/textutil"
-	"idiom/internal/repository/semantic/languagetools"
 )
 
 var malformedToolNameObjectPattern = regexp.MustCompile(`(?s)^\{\s*"tool"\s*:\s*"([A-Za-z_][A-Za-z0-9_.-]*)"\s*:\s*\{(.*)\}\s*\}$`)
@@ -29,7 +28,6 @@ func decodeFlatToolRequestJSON(payload []byte) (ToolRequest, error) {
 			var repairedReq ToolRequest
 
 			if repairErr := json.Unmarshal(repaired, &repairedReq); repairErr == nil && !toolRequestLostStringifiedStructuredField(repairedReq, stringifiedFields) {
-				normalizeToolRequestAliases(&repairedReq)
 				repairEmbeddedQwenXMLToolParameters(&repairedReq)
 
 				return repairedReq, nil
@@ -46,7 +44,6 @@ func decodeFlatToolRequestJSON(payload []byte) (ToolRequest, error) {
 					return ToolRequest{}, err
 				}
 
-				normalizeToolRequestAliases(&req)
 				repairEmbeddedQwenXMLToolParameters(&req)
 
 				return req, nil
@@ -66,7 +63,6 @@ func decodeFlatToolRequestJSON(payload []byte) (ToolRequest, error) {
 		}
 	}
 
-	normalizeToolRequestAliases(&req)
 	repairEmbeddedQwenXMLToolParameters(&req)
 
 	return req, nil
@@ -115,56 +111,13 @@ func decodeNestedToolRequestJSON(payload []byte) (ToolRequest, bool, error) {
 
 	if strings.TrimSpace(nested.Tool) == "" {
 		nested.Tool = outerTool
-	} else if outerTool == ToolNameCodeNavigate && CodeNavigateCapabilityAlias(nested.Tool) != "" {
-		if strings.TrimSpace(nested.Capability) == "" {
-			nested.Capability = CodeNavigateCapabilityAlias(nested.Tool)
-		}
-
-		nested.Tool = outerTool
 	} else if strings.TrimSpace(nested.Tool) != outerTool {
 		return ToolRequest{}, true, fmt.Errorf("nested request tool %q does not match envelope tool %q", nested.Tool, outerTool)
 	}
 
-	normalizeToolRequestAliases(&nested)
 	repairEmbeddedQwenXMLToolParameters(&nested)
 
 	return nested, true, nil
-}
-
-func CodeNavigateCapabilityAlias(value string) string {
-	if strings.TrimSpace(value) == "" {
-		return ""
-	}
-
-	spec, err := languagetools.CodeNavigationSpecFor(value)
-	if err != nil {
-		return ""
-	}
-
-	return strings.TrimSpace(spec.Name)
-}
-
-func CodeNavigateResolutionCapabilityAlias(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" || ContextGraphResolutionOnly(value) {
-		return ""
-	}
-
-	return CodeNavigateCapabilityAlias(value)
-}
-
-func ContextGraphResolutionOnly(value string) bool {
-	key := strings.ToLower(strings.TrimSpace(value))
-
-	key = strings.ReplaceAll(key, "-", "_")
-	key = strings.ReplaceAll(key, " ", "_")
-
-	switch key {
-	case "repository", "package", "file", "symbol", "summary", "any":
-		return true
-	default:
-		return false
-	}
 }
 
 var stringifiedJSONToolFieldNames = []string{
@@ -996,50 +949,6 @@ func repairStringArrayToolFields(payload []byte) ([]byte, bool) {
 	}
 
 	return out, true
-}
-
-func normalizeToolRequestAliases(req *ToolRequest) {
-	if req == nil {
-		return
-	}
-
-	if strings.TrimSpace(req.Pattern) == "" && strings.TrimSpace(req.Symbol) != "" {
-		req.Pattern = req.Symbol
-	}
-
-	if strings.TrimSpace(req.Capability) == "" && strings.TrimSpace(req.Operation) != "" {
-		req.Capability = req.Operation
-	}
-
-	if strings.TrimSpace(req.Capability) == "" && strings.TrimSpace(req.Action) != "" && toolRequestUsesCapabilityAlias(req.Tool) {
-		req.Capability = req.Action
-	}
-
-	if strings.TrimSpace(req.Capability) == "" && strings.TrimSpace(req.Resolution) != "" && toolRequestUsesCapabilityAlias(req.Tool) {
-		req.Capability = CodeNavigateResolutionCapabilityAlias(req.Resolution)
-	}
-
-	if strings.TrimSpace(req.Pattern) == "" && strings.TrimSpace(req.Query) != "" && toolRequestUsesPatternAlias(req.Tool) {
-		req.Pattern = req.Query
-	}
-}
-
-func toolRequestUsesCapabilityAlias(tool string) bool {
-	switch strings.TrimSpace(tool) {
-	case ToolNameCodeNavigate, ToolNameReadOnlyCapability:
-		return true
-	default:
-		return false
-	}
-}
-
-func toolRequestUsesPatternAlias(tool string) bool {
-	switch strings.TrimSpace(tool) {
-	case ToolNameSearchContent, ToolNameRg, ToolNameSearchFiles:
-		return true
-	default:
-		return false
-	}
 }
 
 func repairNumericStringToolFields(payload []byte) ([]byte, bool) {

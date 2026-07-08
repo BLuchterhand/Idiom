@@ -19,6 +19,7 @@ import (
 	planartifact "idiom/internal/contracts/planartifact"
 	"idiom/internal/platform/textutil"
 	semanticlanguage "idiom/internal/repository/semantic/language"
+	"idiom/internal/repository/semantic/languagetools"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 )
@@ -1779,12 +1780,12 @@ func pathlessReadSymbolAfterOutlineRewriteRequest(req workspace.ToolRequest, res
 		return workspace.ToolRequest{}, "", "", false
 	}
 
-	capability := strings.TrimSpace(textutil.FirstNonEmpty(req.Capability, req.Operation, req.Action))
+	capability := strings.TrimSpace(req.Capability)
 	if capability != "read_symbol" && capability != "symbol_body" && capability != "inspect_symbol" {
 		return workspace.ToolRequest{}, "", "", false
 	}
 
-	symbol := strings.TrimSpace(textutil.FirstNonEmpty(req.Pattern, req.Symbol, req.Query))
+	symbol := strings.TrimSpace(req.Pattern)
 	if symbol == "" {
 		return workspace.ToolRequest{}, "", "", false
 	}
@@ -1800,10 +1801,6 @@ func pathlessReadSymbolAfterOutlineRewriteRequest(req workspace.ToolRequest, res
 
 	if strings.TrimSpace(redirected.Pattern) == "" {
 		redirected.Pattern = symbol
-	}
-
-	if strings.TrimSpace(redirected.Symbol) == "" {
-		redirected.Symbol = symbol
 	}
 
 	raw := marshalToolRequestRaw(redirected)
@@ -1849,7 +1846,7 @@ func repeatedFileOutlineToReadSymbolRewriteRequest(req workspace.ToolRequest, re
 		return workspace.ToolRequest{}, "", "", false
 	}
 
-	capability := strings.TrimSpace(textutil.FirstNonEmpty(req.Capability, req.Operation, req.Action))
+	capability := strings.TrimSpace(req.Capability)
 	if capability != "file_outline" && capability != "outline" {
 		return workspace.ToolRequest{}, "", "", false
 	}
@@ -1867,10 +1864,7 @@ func repeatedFileOutlineToReadSymbolRewriteRequest(req workspace.ToolRequest, re
 	redirected := req
 
 	redirected.Capability = "read_symbol"
-	redirected.Operation = ""
-	redirected.Action = ""
 	redirected.Pattern = symbol
-	redirected.Symbol = symbol
 	redirected.NamedGap = textutil.FirstNonEmpty(strings.TrimSpace(req.NamedGap), "source-body evidence for repeated outline path")
 	redirected.WhyNotAnswering = textutil.FirstNonEmpty(strings.TrimSpace(req.WhyNotAnswering), "need a declaration body from the outlined file rather than another outline")
 
@@ -1921,13 +1915,13 @@ func readOnlyDefinitionToReadSymbolRewriteRequest(req workspace.ToolRequest, bri
 		return workspace.ToolRequest{}, "", "", false
 	}
 
-	capability := strings.TrimSpace(textutil.FirstNonEmpty(req.Capability, req.Operation, req.Action))
+	capability := strings.TrimSpace(req.Capability)
 	if capability != "find_definition" && capability != "definition" {
 		return workspace.ToolRequest{}, "", "", false
 	}
 
 	path := NormalizeRunnerPath(req.Path)
-	symbol := strings.TrimSpace(textutil.FirstNonEmpty(req.Pattern, req.Symbol, req.Query))
+	symbol := strings.TrimSpace(req.Pattern)
 
 	if path == "" || symbol == "" {
 		return workspace.ToolRequest{}, "", "", false
@@ -1937,10 +1931,7 @@ func readOnlyDefinitionToReadSymbolRewriteRequest(req workspace.ToolRequest, bri
 
 	redirected.Path = path
 	redirected.Capability = "read_symbol"
-	redirected.Operation = ""
-	redirected.Action = ""
 	redirected.Pattern = symbol
-	redirected.Symbol = symbol
 	redirected.NamedGap = textutil.FirstNonEmpty(strings.TrimSpace(req.NamedGap), "source-body evidence for definition target")
 	redirected.WhyNotAnswering = textutil.FirstNonEmpty(strings.TrimSpace(req.WhyNotAnswering), "definition location is anchor evidence; the answer needs the declaration body")
 
@@ -4926,7 +4917,6 @@ func parseMalformedVisibleReadOnlyToolJSONPrefix(text string) (workspace.ToolReq
 		Capability:      firstJSONLikeStringField(candidate, "capability"),
 		NamedGap:        firstJSONLikeStringField(candidate, "named_gap"),
 		WhyNotAnswering: firstJSONLikeStringField(candidate, "why_not_answering"),
-		Symbol:          firstJSONLikeStringField(candidate, "symbol"),
 	}
 	if v, ok := firstJSONLikeIntField(candidate, "start_line"); ok {
 		req.StartLine = v
@@ -5344,8 +5334,11 @@ func (r *Runner) safeReasoningToolRequest(req workspace.ToolRequest, results []w
 	case workspace.ToolNameStructuralSearch:
 		return strings.TrimSpace(req.Pattern) != ""
 	case workspace.ToolNameCodeNavigate:
-		return workspace.CodeNavigateCapabilityAlias(req.Capability) != "" &&
-			(strings.TrimSpace(req.Path) != "" || strings.TrimSpace(req.Pattern) != "" || strings.TrimSpace(req.Query) != "")
+		if _, err := languagetools.CodeNavigationSpecFor(req.Capability); err != nil {
+			return false
+		}
+
+		return strings.TrimSpace(req.Path) != "" || strings.TrimSpace(req.Pattern) != ""
 	case workspace.ToolNameSubmitPlan:
 		return false
 	default:
@@ -6065,36 +6058,9 @@ func normalizeKeyValueArgsObject(tool string, object string) (string, bool) {
 		}
 	}
 
-	if _, ok := fields["capability"]; !ok && syntaxToolRequestUsesCapabilityAlias(tool) {
-		if rawKind, hasKind := fields["kind"]; hasKind {
-			var kind string
-
-			if err := json.Unmarshal(rawKind, &kind); err == nil && strings.TrimSpace(kind) != "" {
-				capabilityRaw, _ := json.Marshal(strings.TrimSpace(kind))
-
-				fields["capability"] = capabilityRaw
-			}
-		}
-
-		if _, hasCapability := fields["capability"]; !hasCapability {
-			if rawResolution, hasResolution := fields["resolution"]; hasResolution {
-				var resolution string
-
-				if err := json.Unmarshal(rawResolution, &resolution); err == nil && strings.TrimSpace(resolution) != "" {
-					if capability := workspace.CodeNavigateResolutionCapabilityAlias(resolution); capability != "" {
-						capabilityRaw, _ := json.Marshal(capability)
-
-						fields["capability"] = capabilityRaw
-					}
-				}
-			}
-		}
-	}
-
 	toolRaw, _ := json.Marshal(tool)
 
 	fields["tool"] = toolRaw
-	delete(fields, "kind")
 
 	payload, err := json.Marshal(fields)
 	if err != nil {
@@ -6115,11 +6081,6 @@ func normalizeParsedToolRequestSyntax(result *toolRequestSyntaxNormalization) {
 	}
 
 	if normalizeReadFileLinesAlias(result) {
-		result.Raw = marshalToolRequestRaw(result.Request)
-		result.Repaired = true
-	}
-
-	if normalizeCodeNavigateMissingCapability(&result.Request) {
 		result.Raw = marshalToolRequestRaw(result.Request)
 		result.Repaired = true
 	}
@@ -6212,49 +6173,6 @@ func parseReadFileLinesAlias(raw string) (int, int, bool) {
 	}
 
 	return line, line, true
-}
-
-func normalizeCodeNavigateMissingCapability(req *workspace.ToolRequest) bool {
-	if req == nil || strings.TrimSpace(req.Tool) != "code_navigate" || strings.TrimSpace(req.Capability) != "" {
-		return false
-	}
-
-	if workspace.ContextGraphResolutionOnly(req.Resolution) {
-		return false
-	}
-
-	mode := strings.TrimSpace(req.Mode)
-	if mode != "" && workspace.CodeNavigateCapabilityAlias(mode) != "" {
-		req.Capability = mode
-		return true
-	}
-
-	pattern := strings.TrimSpace(req.Pattern)
-	query := strings.TrimSpace(req.Query)
-	symbol := strings.TrimSpace(req.Symbol)
-	target := textutil.FirstNonEmpty(pattern, query, symbol)
-
-	if target != "" && workspace.CodeNavigateCapabilityAlias(target) == "" {
-		req.Capability = "read_symbol"
-		if strings.TrimSpace(req.Pattern) == "" {
-			req.Pattern = target
-		}
-
-		return true
-	}
-
-	if strings.TrimSpace(req.Path) == "" {
-		return false
-	}
-
-	req.Capability = "file_outline"
-	if target != "" && workspace.CodeNavigateCapabilityAlias(target) != "" {
-		req.Pattern = ""
-		req.Query = ""
-		req.Symbol = ""
-	}
-
-	return true
 }
 
 func parseFunctionCallToolRequestSyntax(text string) (workspace.ToolRequest, bool, bool) {
@@ -6465,10 +6383,7 @@ func toolRequestFromSyntaxValues(tool string, values map[string]string) (workspa
 		Path:            values["path"],
 		Pattern:         values["pattern"],
 		Query:           values["query"],
-		Symbol:          values["symbol"],
 		Capability:      values["capability"],
-		Operation:       values["operation"],
-		Action:          values["action"],
 		Mode:            values["mode"],
 		Task:            values["task"],
 		Glob:            values["glob"],
@@ -6503,32 +6418,9 @@ func toolRequestFromSyntaxValues(tool string, values map[string]string) (workspa
 		OldText:         values["old_text"],
 		NewText:         values["new_text"],
 	}
-	if strings.TrimSpace(req.Capability) == "" && strings.TrimSpace(req.Operation) != "" {
-		req.Capability = req.Operation
-	}
-
-	if strings.TrimSpace(req.Capability) == "" && strings.TrimSpace(req.Action) != "" && syntaxToolRequestUsesCapabilityAlias(req.Tool) {
-		req.Capability = req.Action
-	}
-
-	if strings.TrimSpace(req.Capability) == "" && strings.TrimSpace(values["kind"]) != "" && syntaxToolRequestUsesCapabilityAlias(req.Tool) {
-		req.Capability = values["kind"]
-	}
-
-	if strings.TrimSpace(req.Capability) == "" && strings.TrimSpace(req.Resolution) != "" && syntaxToolRequestUsesCapabilityAlias(req.Tool) {
-		req.Capability = workspace.CodeNavigateResolutionCapabilityAlias(req.Resolution)
-	}
 
 	if strings.TrimSpace(req.Path) == "" && strings.TrimSpace(values["scope"]) != "" {
 		req.Path = values["scope"]
-	}
-
-	if strings.TrimSpace(req.Pattern) == "" && strings.TrimSpace(req.Symbol) != "" {
-		req.Pattern = req.Symbol
-	}
-
-	if strings.TrimSpace(req.Pattern) == "" && strings.TrimSpace(req.Query) != "" && workspace.IsSearchToolName(req.Tool) {
-		req.Pattern = req.Query
 	}
 
 	// Parse read_file lines alias: "lines: N-M" becomes start_line=N,
@@ -6582,19 +6474,10 @@ func toolRequestFromSyntaxValues(tool string, values map[string]string) (workspa
 	return req, true
 }
 
-func syntaxToolRequestUsesCapabilityAlias(tool string) bool {
-	switch strings.TrimSpace(tool) {
-	case "code_navigate", "read_only_capability":
-		return true
-	default:
-		return false
-	}
-}
-
 func keyValueToolRequestFieldAllowed(key string) bool {
 	switch key {
-	case "tool", "id", "key", "path", "file", "scope", "pattern", "query", "capability", "operation", "action", "kind", "mode", "task", "glob", "language", "resolution",
-		"symbol", "named_gap", "why_not_answering", "start_line", "end_line", "limit", "budget_tokens", "max_depth",
+	case "tool", "id", "key", "path", "file", "scope", "pattern", "query", "capability", "mode", "task", "glob", "language", "resolution",
+		"named_gap", "why_not_answering", "start_line", "end_line", "limit", "budget_tokens", "max_depth",
 		"include_evidence", "include_source", "include_files", "refresh", "lines", "replace_all",
 		"purpose", "command", "description", "content", "prompt", "agent", "workdir", "handle", "root", "destination", "status",
 		"packet_path", "output_path", "component", "category", "session_id", "confidence", "severity", "suggested_fix",
@@ -7866,18 +7749,6 @@ func parseToolCall(call llama.ToolCall) (workspace.ToolRequest, bool, error) {
 	if strings.TrimSpace(req.Tool) == "" {
 		req.Tool = call.Function.Name
 	} else if strings.TrimSpace(req.Tool) != call.Function.Name {
-		if call.Function.Name == "code_navigate" {
-			if capability := workspace.CodeNavigateCapabilityAlias(req.Tool); capability != "" {
-				if strings.TrimSpace(req.Capability) == "" {
-					req.Capability = capability
-				}
-
-				req.Tool = call.Function.Name
-
-				return req, true, nil
-			}
-		}
-
 		return workspace.ToolRequest{}, false, fmt.Errorf("native tool call %q arguments declared tool %q", call.Function.Name, req.Tool)
 	}
 

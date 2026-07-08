@@ -231,7 +231,7 @@ func baseToolDefinitions() []ToolDefinition {
 			Description: "Find files by name or path pattern.",
 			ParametersJSON: schemaObj(
 				nil,
-				`"pattern":`+strProp("filename/path substring or simple glob, e.g. app or *.go; one of pattern, glob, or query is required")+`,"path":`+strProp("root to search under")+`,"glob":`+strProp("optional glob pattern; accepted as the file search pattern when pattern is omitted")+`,"query":`+strProp("optional filename/path query; accepted as the file search pattern when pattern and glob are omitted"),
+				`"pattern":`+strProp("filename/path substring or simple glob, e.g. app or *.go; one of pattern or glob is required")+`,"path":`+strProp("root to search under")+`,"glob":`+strProp("optional glob pattern; accepted as the file search pattern when pattern is omitted"),
 			),
 		},
 		{
@@ -279,7 +279,7 @@ func baseToolDefinitions() []ToolDefinition {
 			Description: "Route a language-agnostic code navigation request to the best language-aware symbol/navigation tool for the given path or language, with a bounded generic source-text fallback.",
 			ParametersJSON: schemaObj(
 				[]string{"capability"},
-				`"capability":{"type":"string","enum":`+stringEnumJSON(languagetools.CodeNavigationCapabilityNames())+`,"description":"navigation capability the model needs"},"path":`+strProp("source file or narrow source directory used to infer language and scope")+`,"pattern":`+strProp("symbol/name/pattern for symbol-shaped capabilities")+`,"query":`+strProp("alternate symbol/name/pattern when pattern is not used")+`,"language":`+strProp("optional language override such as go, cpp, python, typescript, rust, java")+`,"start_line":`+intProp("optional start line for file_outline/read_symbol/extract_body-capable routes")+`,"end_line":`+intProp("optional end line for file_outline/read_symbol/extract_body-capable routes")+`,"limit":`+intProp("max generic fallback matches; default 50"),
+				`"capability":{"type":"string","enum":`+stringEnumJSON(languagetools.CodeNavigationCapabilityNames())+`,"description":"navigation capability the model needs"},"path":`+strProp("source file or narrow source directory used to infer language and scope")+`,"pattern":`+strProp("symbol/name/pattern for symbol-shaped capabilities")+`,"language":`+strProp("optional language override such as go, cpp, python, typescript, rust, java")+`,"start_line":`+intProp("optional start line for file_outline/read_symbol/extract_body-capable routes")+`,"end_line":`+intProp("optional end line for file_outline/read_symbol/extract_body-capable routes")+`,"limit":`+intProp("max generic fallback matches; default 50"),
 			),
 		},
 		{
@@ -287,7 +287,7 @@ func baseToolDefinitions() []ToolDefinition {
 			Description: "Invoke a stable read-only capability ID from the capability registry. Routes through existing read-only adapters, preserves adapter fallback/uncertainty in the result wrapper, and leaves direct adapter tools available.",
 			ParametersJSON: schemaObj(
 				[]string{"capability"},
-				`"capability":{"type":"string","enum":`+stringEnumJSON(readOnlyCapabilityIDsForSchema())+`,"description":"read-only capability ID from the registry; source-sanity is intentionally not accepted here"},"path":`+strProp("source file or narrow source directory used by the underlying adapter")+`,"pattern":`+strProp("symbol/name/pattern for symbol-shaped capabilities")+`,"query":`+strProp("alternate symbol/name/pattern when pattern is not used")+`,"language":`+strProp("optional language override such as go, cpp, python, typescript, rust, java")+`,"start_line":`+intProp("optional start line for file-outline/inspect-symbol routes")+`,"end_line":`+intProp("optional end line for file-outline/inspect-symbol routes")+`,"limit":`+intProp("max generic fallback matches; default 50"),
+				`"capability":{"type":"string","enum":`+stringEnumJSON(readOnlyCapabilityIDsForSchema())+`,"description":"read-only capability ID from the registry; source-sanity is intentionally not accepted here"},"path":`+strProp("source file or narrow source directory used by the underlying adapter")+`,"pattern":`+strProp("symbol/name/pattern for symbol-shaped capabilities")+`,"language":`+strProp("optional language override such as go, cpp, python, typescript, rust, java")+`,"start_line":`+intProp("optional start line for file-outline/inspect-symbol routes")+`,"end_line":`+intProp("optional end line for file-outline/inspect-symbol routes")+`,"limit":`+intProp("max generic fallback matches; default 50"),
 			),
 		},
 		{

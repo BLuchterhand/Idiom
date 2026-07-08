@@ -92,12 +92,12 @@ const DebugLogModeRedacted DebugLogMode = "redacted"
 	result := mgr.Execute(context.Background(), workspace.ToolRequest{
 		Tool:       "code_navigate",
 		Capability: "find_definition",
-		Symbol:     "DebugLogMode",
+		Pattern:    "DebugLogMode",
 		Language:   "go",
 	})
 
 	if result.Error != "" {
-		t.Fatalf("code_navigate find_definition should route from symbol, got error: %s\n%s", result.Error, result.Output)
+		t.Fatalf("code_navigate find_definition should route from pattern, got error: %s\n%s", result.Error, result.Output)
 	}
 
 	for _, want := range []string{"capability: definition", "routed_tool: go_definition", "route_summary: Resolved Go definition"} {

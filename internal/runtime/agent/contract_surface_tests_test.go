@@ -6970,9 +6970,9 @@ func TestSourceEvidenceStateTracksDirectOutlineRedirectToRelatedReadSymbol(t *te
 	}
 
 	body := workspace.ToolRequest{
-		Tool:   "go_read_symbol",
-		Path:   "internal/capabilities/workspace/tool_schemas.go",
-		Symbol: "ToolSchemas",
+		Tool:    "go_read_symbol",
+		Path:    "internal/capabilities/workspace/tool_schemas.go",
+		Pattern: "ToolSchemas",
 	}
 	if !sourceEvidencePendingRedirectFollowupAllowedForBrief(brief, body, results) {
 		t.Fatal("related read_symbol route should satisfy the redirected source-body obligation")
@@ -12191,7 +12191,7 @@ func TestSourceEvidencePendingRedirectForPathEmptyPath(t *testing.T) {
 
 func TestSourceEvidencePendingRedirectFollowupAllowed(t *testing.T) {
 	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Redirected src/main.go to code_navigate", Output: "Use code_navigate for source-body evidence in src/main.go."}}
-	req := workspace.ToolRequest{Path: "src/main.go", Tool: "code_navigate", Capability: "read_symbol", Symbol: "init"}
+	req := workspace.ToolRequest{Path: "src/main.go", Tool: "code_navigate", Capability: "read_symbol", Pattern: "init"}
 	if !sourceEvidencePendingRedirectFollowupAllowed(req, results) {
 		t.Fatal("expected followup allowed")
 	}
@@ -16707,7 +16707,6 @@ func TestPlanThenExecuteRepeatedSymbolMissRedirectsToModelSelectedBoundedRead(t 
 		Tool:       "code_navigate",
 		Capability: "read_symbol",
 		Path:       "internal/workflows/productworkflow/coverage_gate.go",
-		Symbol:     "CoverageGateResult",
 		Pattern:    "CoverageGateResult",
 	}
 
@@ -18620,7 +18619,7 @@ func TestPlanExecuteLoopBudgetRecoveryAfterSymbolMissKeepsUnreadCandidatePath(t 
 	}
 
 	recovery, ok := runner.planThenExecuteLoopBudgetRecoveryPrompt(
-		workspace.ToolRequest{Tool: "code_navigate", Path: "internal/workflows/productworkflow/coverage_gate.go", Capability: "read_symbol", Symbol: "CoverageGate", Pattern: "CoverageGate"},
+		workspace.ToolRequest{Tool: "code_navigate", Path: "internal/workflows/productworkflow/coverage_gate.go", Capability: "read_symbol", Pattern: "CoverageGate"},
 		results,
 		"the model repeated code_navigate with the same arguments 3 turns in a row",
 		false,
@@ -32782,7 +32781,7 @@ func TestDiscoveryConsumptionStrongContextPackStillBlocksBroadRediscovery(t *tes
 		{Tool: "context_query", Path: ".", Query: "runner discovery consumption", Resolution: "symbol"},
 		{Tool: "context_query", Query: "runner discovery consumption", Resolution: "symbol", IncludeEvidence: true},
 		{Tool: "context_query", Query: "runner discovery consumption", Resolution: "symbol", Pattern: "runner"},
-		{Tool: "context_query", Query: "runner discovery consumption", Resolution: "symbol", Symbol: "runner"},
+		{Tool: "context_query", Query: "runner discovery consumption", Resolution: "symbol", Pattern: "runner"},
 		{Tool: "search_files", Path: ".", Pattern: "discovery"},
 	} {
 		if !state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(req, directAnswerReadOnlyBrief()) {
@@ -36716,7 +36715,7 @@ func TestNormalizeToolRequestSyntaxJanusCodeNavigate(t *testing.T) {
 <janus_invoke name="code_navigate">
 <janus_parameter name="capability" string="true">read_symbol</janus_parameter>
 <janus_parameter name="path" string="true">internal/runtime/agent/runner_core.go</janus_parameter>
-<janus_parameter name="symbol" string="true">Runner</janus_parameter>
+<janus_parameter name="pattern" string="true">Runner</janus_parameter>
 </janus_invoke>
 </janus_tool_calls>`,
 	})
@@ -36732,7 +36731,7 @@ func TestNormalizeToolRequestSyntaxJanusCodeNavigate(t *testing.T) {
 	if result.Request.Tool != "code_navigate" ||
 		result.Request.Capability != "read_symbol" ||
 		result.Request.Path != "internal/runtime/agent/runner_core.go" ||
-		result.Request.Symbol != "Runner" {
+		result.Request.Pattern != "Runner" {
 
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
@@ -36935,31 +36934,23 @@ func TestNormalizeToolRequestSyntaxKeyValueSearchScopeAlias(t *testing.T) {
 	}
 }
 
-func TestNormalizeToolRequestSyntaxKeyValueActionAlias(t *testing.T) {
+func TestNormalizeToolRequestSyntaxRejectsKeyValueActionAlias(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
 		Content: "tool: code_navigate\naction: read_symbol\npath: internal/workflows/productworkflow/coverage_gate.go\nsymbol: EvaluateCoverageGate",
 	})
 
-	if result.ParseErr != nil {
-		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	if result.OK {
+		t.Fatalf("action alias must not normalize: %#v", result.Request)
 	}
 
-	if !result.OK {
-		t.Fatal("expected key/value tool request to normalize")
-	}
-
-	if result.Request.Tool != "code_navigate" || result.Request.Capability != "read_symbol" || result.Request.Pattern != "EvaluateCoverageGate" {
-		t.Fatalf("unexpected request: %#v", result.Request)
-	}
-
-	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportKeyValue {
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportKeyValue {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
 }
 
 func TestNormalizeToolRequestSyntaxKeyValueLinesAliasOnlyAppliesToReadFile(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
-		Content: "tool: code_navigate\npath: internal/workflows/productworkflow/coverage_gate.go\nsymbol: EvaluateCoverageGate\nlines: 1-20",
+		Content: "tool: code_navigate\ncapability: read_symbol\npath: internal/workflows/productworkflow/coverage_gate.go\npattern: EvaluateCoverageGate\nlines: 1-20",
 	})
 
 	if result.ParseErr != nil {
@@ -37024,9 +37015,9 @@ func TestNormalizeToolRequestSyntaxKeyValueReadFileLinesAliasRejectsMalformedRan
 	}
 }
 
-func TestNormalizeToolRequestSyntaxCodeNavigateDefaultsMissingCapabilityWithSymbol(t *testing.T) {
+func TestNormalizeToolRequestSyntaxCodeNavigateDoesNotDefaultMissingCapabilityWithPattern(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
-		Content: "tool: code_navigate\npath: cmd/idiom/product_workflow.go\nsymbol: Run\nstart_line: 1\nend_line: 100",
+		Content: "tool: code_navigate\npath: cmd/idiom/product_workflow.go\npattern: Run\nstart_line: 1\nend_line: 100",
 	})
 
 	if result.ParseErr != nil {
@@ -37038,19 +37029,19 @@ func TestNormalizeToolRequestSyntaxCodeNavigateDefaultsMissingCapabilityWithSymb
 	}
 
 	if result.Request.Tool != "code_navigate" ||
-		result.Request.Capability != "read_symbol" ||
+		result.Request.Capability != "" ||
 		result.Request.Path != "cmd/idiom/product_workflow.go" ||
 		result.Request.Pattern != "Run" {
 
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
 
-	if !result.Repaired {
-		t.Fatal("expected missing capability repair to be marked repaired")
+	if result.Repaired {
+		t.Fatal("missing capability must not be repaired")
 	}
 }
 
-func TestNormalizeToolRequestSyntaxCodeNavigateDefaultsMissingCapabilityWithPathOnly(t *testing.T) {
+func TestNormalizeToolRequestSyntaxCodeNavigateDoesNotDefaultMissingCapabilityWithPathOnly(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
 		Content: `{"tool":"code_navigate","path":"cmd/idiom/product_workflow.go","symbol":"read_symbol"}`,
 	})
@@ -37064,16 +37055,15 @@ func TestNormalizeToolRequestSyntaxCodeNavigateDefaultsMissingCapabilityWithPath
 	}
 
 	if result.Request.Tool != "code_navigate" ||
-		result.Request.Capability != "file_outline" ||
+		result.Request.Capability != "" ||
 		result.Request.Path != "cmd/idiom/product_workflow.go" ||
-		result.Request.Pattern != "" ||
-		result.Request.Symbol != "" {
+		result.Request.Pattern != "" {
 
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
 
-	if !result.Repaired {
-		t.Fatal("expected missing capability repair to be marked repaired")
+	if result.Repaired {
+		t.Fatal("missing capability must not be repaired")
 	}
 }
 
@@ -37103,7 +37093,7 @@ func TestNormalizeToolRequestSyntaxCodeReadAlias(t *testing.T) {
 	}
 }
 
-func TestNormalizeToolRequestSyntaxResolutionAlias(t *testing.T) {
+func TestNormalizeToolRequestSyntaxResolutionDoesNotBecomeCapability(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
 		Content: `{"tool":"code_navigate","path":"internal/workflows/productworkflow/coverage_gate.go","pattern":"func EvaluateCoverageGate","resolution":"definition"}`,
 	})
@@ -37117,9 +37107,10 @@ func TestNormalizeToolRequestSyntaxResolutionAlias(t *testing.T) {
 	}
 
 	if result.Request.Tool != "code_navigate" ||
-		result.Request.Capability != "definition" ||
+		result.Request.Capability != "" ||
 		result.Request.Path != "internal/workflows/productworkflow/coverage_gate.go" ||
-		result.Request.Pattern != "func EvaluateCoverageGate" {
+		result.Request.Pattern != "func EvaluateCoverageGate" ||
+		result.Request.Resolution != "definition" {
 
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
@@ -37131,7 +37122,7 @@ func TestNormalizeToolRequestSyntaxResolutionAlias(t *testing.T) {
 
 func TestNormalizeToolRequestSyntaxCodeNavigateFindReferencesAlias(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
-		Content: `{"tool":"code_navigate","capability":"find_references","path":"internal/surfaces/tui/app","symbol":"input"}`,
+		Content: `{"tool":"code_navigate","capability":"find_references","path":"internal/surfaces/tui/app","pattern":"input"}`,
 	})
 
 	if result.ParseErr != nil {
@@ -37195,7 +37186,7 @@ func TestNormalizeToolRequestSyntaxKeyValueArgsJSONRejectsToolMismatch(t *testin
 
 func TestNormalizeToolRequestSyntaxFunctionCall(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
-		Content: `tool: code_navigate(capability="read_symbol", path="internal/workflows/productworkflow/coverage_gate.go", language="go", symbol="EvaluateCoverageGate")`,
+		Content: `tool: code_navigate(capability="read_symbol", path="internal/workflows/productworkflow/coverage_gate.go", language="go", pattern="EvaluateCoverageGate")`,
 	})
 
 	if result.ParseErr != nil {
@@ -37210,7 +37201,7 @@ func TestNormalizeToolRequestSyntaxFunctionCall(t *testing.T) {
 		result.Request.Capability != "read_symbol" ||
 		result.Request.Path != "internal/workflows/productworkflow/coverage_gate.go" ||
 		result.Request.Language != "go" ||
-		result.Request.Symbol != "EvaluateCoverageGate" {
+		result.Request.Pattern != "EvaluateCoverageGate" {
 
 		t.Fatalf("unexpected request: %#v", result.Request)
 	}
@@ -37220,54 +37211,30 @@ func TestNormalizeToolRequestSyntaxFunctionCall(t *testing.T) {
 	}
 }
 
-func TestNormalizeToolRequestSyntaxFunctionCallOperationAlias(t *testing.T) {
+func TestNormalizeToolRequestSyntaxRejectsFunctionCallOperationAlias(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
 		Content: `tool: code_navigate(operation="read_symbol", path="internal/workflows/productworkflow/coverage_gate.go", symbol="EvaluateCoverageGate")`,
 	})
 
-	if result.ParseErr != nil {
-		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	if result.OK {
+		t.Fatalf("operation alias must not normalize: %#v", result.Request)
 	}
 
-	if !result.OK {
-		t.Fatal("expected function-call-shaped tool request to normalize")
-	}
-
-	if result.Request.Tool != "code_navigate" ||
-		result.Request.Capability != "read_symbol" ||
-		result.Request.Path != "internal/workflows/productworkflow/coverage_gate.go" ||
-		result.Request.Pattern != "EvaluateCoverageGate" {
-
-		t.Fatalf("unexpected request: %#v", result.Request)
-	}
-
-	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
 }
 
-func TestNormalizeToolRequestSyntaxFunctionCallActionAlias(t *testing.T) {
+func TestNormalizeToolRequestSyntaxRejectsFunctionCallActionAlias(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
 		Content: `tool: code_navigate(action="read_symbol", path="internal/workflows/productworkflow/coverage_gate.go", symbol="EvaluateCoverageGate")`,
 	})
 
-	if result.ParseErr != nil {
-		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	if result.OK {
+		t.Fatalf("action alias must not normalize: %#v", result.Request)
 	}
 
-	if !result.OK {
-		t.Fatal("expected function-call-shaped tool request to normalize")
-	}
-
-	if result.Request.Tool != "code_navigate" ||
-		result.Request.Capability != "read_symbol" ||
-		result.Request.Path != "internal/workflows/productworkflow/coverage_gate.go" ||
-		result.Request.Pattern != "EvaluateCoverageGate" {
-
-		t.Fatalf("unexpected request: %#v", result.Request)
-	}
-
-	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
 }

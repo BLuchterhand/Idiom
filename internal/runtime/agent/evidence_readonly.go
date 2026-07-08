@@ -8755,7 +8755,7 @@ func sourceEvidencePendingRedirectRequestAllowed(obligation sourceEvidenceObliga
 }
 
 func sourceEvidenceToolSourceBodyRequest(req workspace.ToolRequest) bool {
-	capability := sourceEvidenceCapabilityToken(firstSourceEvidenceString(req.Capability, req.Action, req.Operation, req.Mode))
+	capability := sourceEvidenceCapabilityToken(firstSourceEvidenceString(req.Capability, req.Mode))
 	switch capability {
 	case "read_symbol", "inspect_symbol", "symbol_body":
 		return sourceEvidenceRequestHasSymbolPattern(req)
@@ -8794,7 +8794,7 @@ func sourceEvidencePendingRedirectOutlineProgressAllowed(obligation sourceEviden
 
 	switch tool {
 	case "code_navigate", "read_only_capability":
-		return sourceEvidenceCapabilityIsOutline(firstSourceEvidenceString(req.Capability, req.Action, req.Operation, req.Mode))
+		return sourceEvidenceCapabilityIsOutline(firstSourceEvidenceString(req.Capability, req.Mode))
 	default:
 		return false
 	}
@@ -8867,7 +8867,7 @@ func sourceEvidencePendingRedirectOutlineTool(tool string) string {
 }
 
 func sourceEvidenceRequestHasSymbolPattern(req workspace.ToolRequest) bool {
-	return strings.TrimSpace(firstSourceEvidenceString(req.Pattern, req.Symbol, req.Query)) != ""
+	return strings.TrimSpace(req.Pattern) != ""
 }
 
 func sourceEvidenceCapabilityToken(value string) string {

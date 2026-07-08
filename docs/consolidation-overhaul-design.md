@@ -1014,6 +1014,27 @@ Reviewer-updated estimate:
   findings. Earlier warning pools were either deleted or narrowed into explicit
   suppressions for compatibility/API seams that are not opportunistic deletion
   candidates.
+- Workspace request field-alias deletion is implemented. The canonical request
+  fields for code navigation and language-symbol tools are now `capability` and
+  `pattern`; `query` remains canonical only for graph/query tools such as
+  `context_query`, `context_pack`, discovery/product query tools, and related
+  graph flows. Deleted compatibility authority includes JSON request alias
+  normalization, XML `operation -> capability` rewrites, runtime
+  `action`/`operation`/`resolution` capability inference, missing
+  `code_navigate` capability inference, `symbol`/`query` pattern inference for
+  language navigation, `search_files` query fallback, and the dead
+  `ToolRequest.Symbol`/`Operation`/`Action` fields. This slice changed Go by
+  `+121 / -430`, net `-309`; production Go changed `+28 / -298`, net `-270`;
+  tests changed `+93 / -132`, net `-39`. Branch-plus-worktree production Go is
+  now `+20434 / -21574`, net `-1140` versus `main`; all Go remains net
+  positive because tests are still `+3474` versus `main`.
+  Verification: `go test ./internal/capabilities/workspace ./internal/runtime/agent ./internal/repository/semantic/languagetools -count=1`;
+  `go test ./internal/runtime/agent -count=1`; `go test ./internal/surfaces/cli/root -count=1`;
+  `go test ./...`; `go build ./cmd/idiom`;
+  `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `git diff --check`.
 
 ## Review And Regression Protocol
 

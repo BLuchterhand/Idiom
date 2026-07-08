@@ -1781,7 +1781,7 @@ func (r *Runner) planThenExecuteMalformedSymbolReadRedirect(req workspace.ToolRe
 		return workspace.ToolRequest{}, "", false
 	}
 
-	if strings.TrimSpace(req.Pattern) != "" || strings.TrimSpace(req.Symbol) != "" || strings.TrimSpace(req.Query) != "" {
+	if strings.TrimSpace(req.Pattern) != "" {
 		return workspace.ToolRequest{}, "", false
 	}
 
@@ -1817,10 +1817,6 @@ func (r *Runner) planThenExecuteRepeatedSymbolReadFallbackRedirect(req workspace
 
 	tool := strings.TrimSpace(req.Tool)
 	capability := strings.TrimSpace(req.Capability)
-
-	if capability == "" {
-		capability = strings.TrimSpace(req.Operation)
-	}
 
 	if tool != workspace.ToolNameCodeNavigate && tool != workspace.ToolNameReadOnlyCapability &&
 		!strings.HasSuffix(tool, "_read_symbol") && !strings.HasSuffix(tool, "_extract_body") {
@@ -10691,9 +10687,6 @@ func planThenExecuteRequiredSourceRequestAdvances(req workspace.ToolRequest, pat
 			strings.HasSuffix(capability, "_read_symbol") ||
 			strings.HasSuffix(capability, "_extract_body"):
 			symbol := strings.TrimSpace(req.Pattern)
-			if symbol == "" {
-				symbol = strings.TrimSpace(req.Symbol)
-			}
 
 			return symbol == "" || !planThenExecuteReadSymbolSeen(path, symbol, results)
 		default:

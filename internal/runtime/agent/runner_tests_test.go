@@ -4804,9 +4804,9 @@ func TestPostReadinessReadinessWithoutAnswerableEvidenceRemainsAdvisory(t *testi
 		Objective:         "What does the debug log redacted mode do?",
 	}
 	req := workspace.ToolRequest{
-		Tool:   "code_navigate",
-		Path:   "internal/evidence/transcript/debuglog.go",
-		Symbol: "DebugLogger.sanitizeValue",
+		Tool:    "code_navigate",
+		Path:    "internal/evidence/transcript/debuglog.go",
+		Pattern: "DebugLogger.sanitizeValue",
 	}
 
 	if gap := textutil.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering); gap != "" {
@@ -21006,9 +21006,9 @@ func TestRunnerSalvagesExplicitVisibleToolJSONAfterCompletionGateRecovery(t *tes
 		"tool: code_navigate",
 		"capability: read_symbol",
 		"path: cmd/idiom/product_evidence.go",
-		"symbol: p912EvaluateCoverageGate",
+		"pattern: p912EvaluateCoverageGate",
 		"",
-		`{"tool":"code_navigate","capability":"read_symbol","path":"cmd/idiom/product_evidence.go","symbol":"p912EvaluateCoverageGate"}`,
+		`{"tool":"code_navigate","capability":"read_symbol","path":"cmd/idiom/product_evidence.go","pattern":"p912EvaluateCoverageGate"}`,
 	}, "\n")
 	results := []workspace.ToolResult{{
 		Tool:    "completion_gate",
@@ -28086,7 +28086,7 @@ func TestPathlessReadSymbolAfterOutlineInheritsOutlinePath(t *testing.T) {
 		Summary: "Code navigation routed file_outline via go_file_outline",
 		Output:  "capability: file_outline\nroute_summary: Outlined internal/runtime/agent/implementation_flow.go",
 	}}
-	req := workspace.ToolRequest{Tool: "code_navigate", Capability: "read_symbol", Symbol: "Runner.runChildTask"}
+	req := workspace.ToolRequest{Tool: "code_navigate", Capability: "read_symbol", Pattern: "Runner.runChildTask"}
 	rewritten, raw, reason, ok := pathlessReadSymbolAfterOutlineRewriteRequest(req, results)
 
 	if !ok {
@@ -28140,7 +28140,7 @@ func TestReadOnlyDefinitionProbeUpgradesToReadSymbol(t *testing.T) {
 		Tool:       "code_navigate",
 		Path:       "internal/evidence/transcript/debuglog.go",
 		Capability: "find_definition",
-		Symbol:     "DebugLogModeRedacted",
+		Pattern:    "DebugLogModeRedacted",
 	}
 	rewritten, raw, reason, ok := readOnlyDefinitionToReadSymbolRewriteRequest(req, workerruntime.WorkerRuntimeBrief{
 		Contract:          "architecture_assessment",
@@ -35416,7 +35416,7 @@ func TestRunnerTargetWriteReadyAmbiguousOutputThenReadsOperationalLimitReportsNo
 	replies := []string{
 		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go"}`,
 		"path: internal/runtime/workerruntime/vocabulary.go\nold_text: const modeName = \"legacy\"\nnew_text: const ModeName = \"modern\"\ndescription: promote mode literal\nstatus: ready to edit",
-		`{"tool":"search_content","query":"modeName","path":"internal/runtime/workerruntime/vocabulary.go","named_gap":"confirm no other symbol references before editing"}`,
+		`{"tool":"search_content","pattern":"modeName","path":"internal/runtime/workerruntime/vocabulary.go","named_gap":"confirm no other symbol references before editing"}`,
 		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go","start_line":1,"end_line":3,"named_gap":"confirm exact replacement anchor before editing"}`,
 	}
 
@@ -35543,7 +35543,7 @@ func TestRunnerTargetWriteReadyExplicitUnsafeThenReadsOperationalLimitReportsNoW
 	replies := []string{
 		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go"}`,
 		"tool: write_file\npath: internal/runtime/workerruntime/vocabulary.go\ncontent: package workerruntime\n\nconst ModeName = \"modern\"\ndescription: promote mode literal",
-		`{"tool":"search_content","query":"modeName","path":"internal/runtime/workerruntime/vocabulary.go","named_gap":"confirm no other symbol references before editing"}`,
+		`{"tool":"search_content","pattern":"modeName","path":"internal/runtime/workerruntime/vocabulary.go","named_gap":"confirm no other symbol references before editing"}`,
 		`{"tool":"read_file","path":"internal/runtime/workerruntime/vocabulary.go","start_line":1,"end_line":3,"named_gap":"confirm exact replacement anchor before editing"}`,
 	}
 
