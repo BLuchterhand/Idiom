@@ -439,48 +439,5 @@ func (toolResultEvidenceProjection) ChangedPathsFromResult(result workspace.Tool
 		return append([]string(nil), result.ChangedPaths...)
 	}
 
-	switch strings.TrimSpace(result.Tool) {
-	case workspace.ToolNameApplyPatch:
-		return legacyChangedPathsFromPatchOutput(result.Output)
-	case workspace.ToolNameDelegateEdit:
-		return legacyChangedPathsFromPatchOutput(result.Output)
-	default:
-		return nil
-	}
-}
-
-func legacyChangedPathsFromPatchOutput(output string) []string {
-	var paths []string
-
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		switch {
-		case strings.HasPrefix(line, "add "):
-			paths = append(paths, legacyPatchOutputPath(strings.TrimPrefix(line, "add ")))
-		case strings.HasPrefix(line, "delete "):
-			paths = append(paths, legacyPatchOutputPath(strings.TrimPrefix(line, "delete ")))
-		case strings.HasPrefix(line, "update+move "):
-			rest := strings.TrimPrefix(line, "update+move ")
-			source, destination, moved := strings.Cut(rest, " -> ")
-
-			if moved {
-				paths = append(paths, legacyPatchOutputPath(source), legacyPatchOutputPath(destination))
-			} else {
-				paths = append(paths, legacyPatchOutputPath(rest))
-			}
-		case strings.HasPrefix(line, "update "):
-			paths = append(paths, legacyPatchOutputPath(strings.TrimPrefix(line, "update ")))
-		}
-	}
-
-	return paths
-}
-
-func legacyPatchOutputPath(value string) string {
-	value = strings.TrimSpace(value)
-	if before, _, ok := strings.Cut(value, " ("); ok {
-		value = before
-	}
-
-	return strings.TrimSpace(value)
+	return nil
 }

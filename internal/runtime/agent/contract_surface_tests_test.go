@@ -10872,7 +10872,7 @@ func TestBuildRecoveryCardDerivesCallableSurfaceFromPhaseContract(t *testing.T) 
 			AllowedTools:      []string{"read_file", "source_sanity", "shell", "apply_patch"},
 		},
 		Results: []workspace.ToolResult{
-			{Tool: "apply_patch", Summary: "Patched files", Output: "update a.go\n"},
+			{Tool: "apply_patch", Summary: "Patched files", Output: "update a.go\n", ChangedPaths: []string{"a.go"}},
 		},
 		BaseAllowedTools: []string{"read_file", "source_sanity", "shell", "apply_patch"},
 	})
@@ -11100,7 +11100,7 @@ func TestRecoveryCardForRejectedActionBuildsRecoveryCard(t *testing.T) {
 	got := runner.renderRecoveryCardForRejectedActionWithTransport(
 		workspace.ToolRequest{Tool: "completion_gate"},
 		workspace.ToolResult{Tool: "completion_gate", Summary: "Completion gate rejected final answer", Error: "post-write verification is unresolved"},
-		[]workspace.ToolResult{{Tool: "apply_patch", Summary: "Patched files", Output: "update internal/example.go\n"}},
+		[]workspace.ToolResult{{Tool: "apply_patch", Summary: "Patched files", Output: "update internal/example.go\n", ChangedPaths: []string{"internal/example.go"}}},
 		[]string{"read_file", "source_sanity", "shell", "apply_patch"},
 		PlanExecutePlanningTransport{},
 	)
@@ -11361,9 +11361,10 @@ func TestBuildRecoveryCardExposesVerificationReadySurfaceWithoutStrategyText(t *
 			AllowedTools:      []string{"source_sanity", "shell", "git_diff", "git_status", "apply_patch"},
 		},
 		Results: []workspace.ToolResult{{
-			Tool:    "apply_patch",
-			Summary: "Patched files",
-			Output:  "update internal/surfaces/tui/app/sessions_panel.go\n",
+			Tool:         "apply_patch",
+			Summary:      "Patched files",
+			Output:       "update internal/surfaces/tui/app/sessions_panel.go\n",
+			ChangedPaths: []string{"internal/surfaces/tui/app/sessions_panel.go"},
 		}},
 		BaseAllowedTools: []string{"source_sanity", "shell", "git_diff", "git_status", "apply_patch"},
 	})

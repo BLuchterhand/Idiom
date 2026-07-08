@@ -7944,7 +7944,11 @@ func TestClaimedChangedPathsStopBeforeVerificationStatusProse(t *testing.T) {
 
 func TestUnsupportedClaimedChangedPathsIgnoresDescriptiveSlashPhrases(t *testing.T) {
 	results := []workspace.ToolResult{
-		{Tool: "apply_patch", Output: "update native/src/simulation/logistics/track_system.cpp\nupdate native/tests/test_transport_integration.cpp\n"},
+		{
+			Tool:         "apply_patch",
+			Output:       "update native/src/simulation/logistics/track_system.cpp\nupdate native/tests/test_transport_integration.cpp\n",
+			ChangedPaths: []string{"native/src/simulation/logistics/track_system.cpp", "native/tests/test_transport_integration.cpp"},
+		},
 	}
 	answer := strings.Join([]string{
 		"Changed paths:",
@@ -8173,7 +8177,7 @@ func TestPatchHygieneAllowsNonSourceCompletion(t *testing.T) {
 
 func TestNoopWriteDoesNotCreatePendingVerification(t *testing.T) {
 	results := []workspace.ToolResult{
-		{Tool: workspace.ToolNameApplyPatch, Summary: "Applied patch with 1 op(s)", Output: "delete temp.md\n"},
+		{Tool: workspace.ToolNameApplyPatch, Summary: "Applied patch with 1 op(s)", Output: "delete temp.md\n", ChangedPaths: []string{"temp.md"}},
 		{Tool: workspace.ToolNameApplyPatch, Summary: "apply_patch made no new changes (all sections were redundant)", Output: "skipped redundant delete temp.md"},
 		{Tool: workspace.ToolNameSourceSanity, Summary: "Source sanity unavailable", Error: "stat temp.md: no such file or directory"},
 	}
@@ -17182,7 +17186,7 @@ func TestRunnerAutonomyVerificationStatusReportsNotRequiredForNonSourceMutation(
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{Tool: "apply_patch", Summary: "Applied patch with 1 op(s)", Output: "delete temp.md\n"},
+		{Tool: "apply_patch", Summary: "Applied patch with 1 op(s)", Output: "delete temp.md\n", ChangedPaths: []string{"temp.md"}},
 	}
 
 	if got := runnerAutonomyVerificationStatus(results, brief); got != "not_required" {
@@ -21547,16 +21551,6 @@ func TestImplementationDeferredDeletePatchReplaysAfterProseCompletion(t *testing
 	}
 }
 
-func TestToolResultEvidenceProjectionLegacyPatchOutputIncludesDeletes(t *testing.T) {
-	paths := newToolResultEvidenceProjection([]workspace.ToolResult{{
-		Tool:   workspace.ToolNameApplyPatch,
-		Output: "delete temp.md\n",
-	}}).ChangedPathList()
-	if !reflect.DeepEqual(paths, []string{"temp.md"}) {
-		t.Fatalf("changed paths = %#v, want temp.md delete", paths)
-	}
-}
-
 func TestRunnerRecoversDeleteFileAfterEmptyWriteAttemptAndProse(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "temp.md", "temp\n"); err != nil {
@@ -24456,8 +24450,9 @@ func TestToolResultMadeProgressClassifiesUsefulAndStalledResults(t *testing.T) {
 	}
 
 	patchPaths := strings.Join(newToolResultEvidenceProjection([]workspace.ToolResult{{
-		Tool:   "apply_patch",
-		Output: "add docs/example.md (8 bytes)\nupdate internal/surfaces/tui/app/app.go\nupdate+move old.go -> new.go",
+		Tool:         "apply_patch",
+		Output:       "add docs/example.md (8 bytes)\nupdate internal/surfaces/tui/app/app.go\nupdate+move old.go -> new.go",
+		ChangedPaths: []string{"docs/example.md", "internal/surfaces/tui/app/app.go", "old.go", "new.go"},
 	}}).ChangedPathList(), "\n")
 	for _, want := range []string{"docs/example.md", "internal/surfaces/tui/app/app.go", "old.go", "new.go"} {
 		if !strings.Contains(patchPaths, want) {
