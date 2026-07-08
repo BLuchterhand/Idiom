@@ -2141,31 +2141,33 @@ func mutationReplyClaimsCompletedWorkspaceChange(reply string) bool {
 
 const sourceGroundingAdditionalReadRecoveryRetries = 2
 
-func (r *Runner) escalateCompletionGateMessageForError(base string, priorRejections int, results []workspace.ToolResult, allowedTools []string) string {
+func (r *Runner) escalateCompletionGateResultMessage(result workspace.ToolResult, priorRejections int, results []workspace.ToolResult, allowedTools []string) string {
+	_, sourceGrounding := sourceGroundingAssessmentFromResult(result)
+	sourceReadRecoveryAvailable := sourceGrounding && r.sourceGroundingReadRecoveryEligible(allowedTools)
+	retryLimit := r.completionGateRetryLimit(results)
+	if sourceReadRecoveryAvailable {
+		retryLimit = r.sourceGroundingCompletionGateRetryLimit(results)
+	}
 	return escalateCompletionGateMessageWithSourceRecovery(
-		base,
+		result.Error,
 		priorRejections,
-		r.sourceGroundingReadRecoveryAvailable(base, allowedTools),
-		r.completionGateRetryLimitForError(base, results, allowedTools),
+		sourceGrounding,
+		sourceReadRecoveryAvailable,
+		retryLimit,
 	)
 }
 
-func escalateCompletionGateMessageWithSourceRecovery(base string, priorRejections int, sourceReadRecoveryAvailable bool, retryLimit int) string {
+func escalateCompletionGateMessageWithSourceRecovery(base string, priorRejections int, sourceGrounding bool, sourceReadRecoveryAvailable bool, retryLimit int) string {
 	trimmed := strings.TrimSpace(base)
 	if trimmed == "" {
 		return base
 	}
 
-	// Detect source-grounding rejection patterns. When the gate says the model
-	// cited paths without source-body evidence, the next valid action is either
-	// a bounded source-body read or an explicitly qualified citation.
-	_, isSourceGrounding := classifySourceGroundingRejectionText(trimmed)
-
 	switch {
 	case priorRejections <= 0:
 		return base
 	case priorRejections == 1:
-		if isSourceGrounding {
+		if sourceGrounding {
 			if !sourceReadRecoveryAvailable {
 				return "[gate retry 2/3] " + trimmed +
 					" — the gate already rejected one prior attempt with this error;" +
@@ -2187,7 +2189,7 @@ func escalateCompletionGateMessageWithSourceRecovery(base string, priorRejection
 			" your next move MUST resolve the stated blocker (use a different tool" +
 			" call or state a concrete reason this cannot proceed)."
 	default:
-		if isSourceGrounding {
+		if sourceGrounding {
 			if !sourceReadRecoveryAvailable {
 				return "[gate retry 3/3 — strategy correction required] " + trimmed +
 					" — repeated source-grounding rejections mean the active reply still cites" +
@@ -2214,14 +2216,6 @@ func escalateCompletionGateMessageWithSourceRecovery(base string, priorRejection
 			" missing evidence, or write a final answer that explicitly names the" +
 			" blocker. Do not narrate; act."
 	}
-}
-
-// isSourceGroundingError reports whether a completion gate error text is a
-// source-grounding rejection (the model cited paths without reading them).
-// Used to trigger non-read tool hiding on retry.
-func isSourceGroundingError(errText string) bool {
-	_, ok := classifySourceGroundingRejectionText(errText)
-	return ok
 }
 
 func planThenExecuteMissingSubmitPlanError(requiredEditPaths []string) string {
@@ -2271,16 +2265,19 @@ func (r *Runner) sourceGroundingCompletionGateRetryLimit(results []workspace.Too
 	return r.completionGateRetryLimit(results) + sourceGroundingAdditionalReadRecoveryRetries
 }
 
-func (r *Runner) completionGateRetryLimitForError(errorText string, results []workspace.ToolResult, allowedTools []string) int {
-	if r.sourceGroundingReadRecoveryAvailable(errorText, allowedTools) {
+func (r *Runner) completionGateRetryLimitForResult(result workspace.ToolResult, results []workspace.ToolResult, allowedTools []string) int {
+	if r.sourceGroundingReadRecoveryAvailable(result, allowedTools) {
 		return r.sourceGroundingCompletionGateRetryLimit(results)
 	}
 
 	return r.completionGateRetryLimit(results)
 }
 
-func (r *Runner) sourceGroundingReadRecoveryAvailable(errorText string, allowedTools []string) bool {
-	if r == nil || !isSourceGroundingError(errorText) {
+func (r *Runner) sourceGroundingReadRecoveryAvailable(result workspace.ToolResult, allowedTools []string) bool {
+	if r == nil {
+		return false
+	}
+	if _, ok := sourceGroundingAssessmentFromResult(result); !ok {
 		return false
 	}
 
@@ -2669,10 +2666,8 @@ func (r *Runner) readOnlyEvidenceCompletionRecoveryPrompt(results []workspace.To
 	// qualify the answer rather than searching for new targets. Check this
 	// before the Readiness gate because even a nil/ready Readiness can
 	// produce a source-grounding-unmet rejection on the answer text.
-	if r.lastCompletionGateError != "" {
-		if assessment, ok := classifySourceGroundingRejectionText(r.lastCompletionGateError); ok && len(assessment.Paths) > 0 {
-			return assessment.RecoveryPrompt(readOnlyEvidenceLedgerGuidanceForBrief(brief, results))
-		}
+	if r.lastCompletionGateSourceGrounding.hasTypedSignal() && len(r.lastCompletionGateSourceGrounding.Paths) > 0 {
+		return r.lastCompletionGateSourceGrounding.RecoveryPrompt(readOnlyEvidenceLedgerGuidanceForBrief(brief, results))
 	}
 
 	if brief.Readiness == nil || brief.Readiness.ReadyToAnswer {

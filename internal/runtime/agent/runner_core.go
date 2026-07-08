@@ -868,10 +868,18 @@ type Runner struct {
 	currentTransport    PlanExecutePlanningTransport
 	activeAutonomy      *runnerAutonomyRecorder
 
-	// lastCompletionGateError stores the error text from the most recent
-	// completion-gate rejection so that recovery prompt functions can
-	// inspect it without the result being in collectedResults yet.
-	lastCompletionGateError string
+	lastCompletionGateSourceGrounding sourceGroundingAssessment
+}
+
+func (r *Runner) rememberCompletionGateRejection(result workspace.ToolResult) {
+	if r == nil {
+		return
+	}
+
+	r.lastCompletionGateSourceGrounding = sourceGroundingAssessment{}
+	if assessment, ok := sourceGroundingAssessmentFromResult(result); ok {
+		r.lastCompletionGateSourceGrounding = assessment
+	}
 }
 
 func (r *Runner) supportsNativeTools() bool {
@@ -1722,7 +1730,7 @@ func (r *Runner) runLegacySessionBody(
 			if rejected {
 				priorGateRejections := completionGateRejections
 
-				result.Error = r.escalateCompletionGateMessageForError(result.Error, priorGateRejections, collectedResults, currentAllowedTools)
+				result.Error = r.escalateCompletionGateResultMessage(result, priorGateRejections, collectedResults, currentAllowedTools)
 
 				if autonomyRecorder != nil {
 					autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyReject, runnerAutonomyReasonCode(result.Summary), collectedResults, priorGateRejections)
@@ -1736,13 +1744,10 @@ func (r *Runner) runLegacySessionBody(
 
 				completionGateRejections = priorGateRejections + 1
 
-				// Store the current rejection error so recovery prompt
-				// functions can inspect it even though it is not yet in
-				// collectedResults.
-				r.lastCompletionGateError = result.Error
+				r.rememberCompletionGateRejection(result)
 
-				retryLimit := r.completionGateRetryLimitForError(result.Error, collectedResults, currentAllowedTools)
-				sourceGroundingReadRecovery := r.sourceGroundingReadRecoveryAvailable(result.Error, currentAllowedTools) &&
+				retryLimit := r.completionGateRetryLimitForResult(result, collectedResults, currentAllowedTools)
+				sourceGroundingReadRecovery := r.sourceGroundingReadRecoveryAvailable(result, currentAllowedTools) &&
 					priorGateRejections < retryLimit
 
 				shouldAttachRecoveryPrompt := priorGateRejections == 0 ||
@@ -13022,7 +13027,7 @@ func (r *Runner) retryRejectedFinalAnswerForRun(input runnerFinalAnswerRetryInpu
 	// When source-body read tools are available for a source-grounding
 	// rejection, hide non-read tools so the next action is a bounded source
 	// read instead of another prose answer.
-	if r.sourceGroundingReadRecoveryAvailable(input.result.Error, input.currentAllowedTools) {
+	if r.sourceGroundingReadRecoveryAvailable(input.result, input.currentAllowedTools) {
 		state.hideNonSourceBodyReadTools(OwnerSourceGrounding, input.currentAllowedTools)
 	}
 	if input.rebuildTools != nil {
@@ -14130,9 +14135,9 @@ func (r *Runner) conversationRepeatedBroadDiscoveryAfterGate(req workspace.ToolR
 	return summary, errorText, true
 }
 
-// conversationSourceGroundingMissingPaths scans results for a completion_gate
-// rejection caused by source_grounding_unmet and returns the paths cited in
-// the error text that the model should read.
+// conversationSourceGroundingMissingPaths scans typed completion_gate
+// source-grounding payloads and returns the unsupported paths the model should
+// read.
 func conversationSourceGroundingMissingPaths(results []workspace.ToolResult) []string {
 	for _, result := range results {
 		tool := strings.TrimSpace(result.Tool)
@@ -14140,12 +14145,7 @@ func conversationSourceGroundingMissingPaths(results []workspace.ToolResult) []s
 			continue
 		}
 
-		errorText := strings.TrimSpace(result.Error)
-		if errorText == "" {
-			continue
-		}
-
-		if assessment, ok := classifySourceGroundingRejectionText(errorText); ok && len(assessment.Paths) > 0 {
+		if assessment, ok := sourceGroundingAssessmentFromResult(result); ok && len(assessment.Paths) > 0 {
 			return uniqueSortedRunnerPaths(assessment.Paths)
 		}
 	}
@@ -19396,7 +19396,7 @@ func (r *Runner) retryRejectedFinalAnswer(state *runnerRunState, stepNumber int,
 
 	priorGateRejections := state.completionGateRejections
 
-	result.Error = r.escalateCompletionGateMessageForError(result.Error, priorGateRejections, state.collectedResults, state.currentAllowedTools)
+	result.Error = r.escalateCompletionGateResultMessage(result, priorGateRejections, state.collectedResults, state.currentAllowedTools)
 
 	if state.autonomyRecorder != nil {
 		state.autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyReject, runnerAutonomyReasonCode(result.Summary), state.collectedResults, priorGateRejections)
@@ -19406,9 +19406,7 @@ func (r *Runner) retryRejectedFinalAnswer(state *runnerRunState, stepNumber int,
 
 	state.completionGateRejections = priorGateRejections + 1
 
-	// Store the current rejection error so recovery prompt functions
-	// can inspect it even though it is not yet in collectedResults.
-	r.lastCompletionGateError = result.Error
+	r.rememberCompletionGateRejection(result)
 
 	var recoveryPrompt string
 
@@ -22421,10 +22419,8 @@ func (r *Runner) malformedToolRecoveryPrompt(raw string, parseErr error, results
 		if ledger := readOnlyEvidenceLedgerGuidanceForBrief(brief, results); ledger != "" {
 			lines = append(lines, ledger)
 		}
-		if r.lastCompletionGateError != "" {
-			if assessment, ok := classifySourceGroundingRejectionText(r.lastCompletionGateError); ok && len(assessment.Paths) > 0 {
-				lines = append(lines, "If the malformed tool text was trying to repair missing source evidence, the unsupported citation path(s) are: "+formatInlinePathList(assessment.Paths, 4)+". Valid strategies are to read one missing body, cite only body-backed evidence, qualify candidate-only paths as unverified, or state the exact blocker.")
-			}
+		if r.lastCompletionGateSourceGrounding.hasTypedSignal() && len(r.lastCompletionGateSourceGrounding.Paths) > 0 {
+			lines = append(lines, "If the malformed tool text was trying to repair missing source evidence, the unsupported citation path(s) are: "+formatInlinePathList(r.lastCompletionGateSourceGrounding.Paths, 4)+". Valid strategies are to read one missing body, cite only body-backed evidence, qualify candidate-only paths as unverified, or state the exact blocker.")
 		}
 	}
 

@@ -35796,8 +35796,8 @@ func TestFinalAnswerAcceptanceEventFieldsIncludeTypedAssessment(t *testing.T) {
 		Reason:                  "objective evidence missing",
 		RelevantSourceBodyPaths: []string{"internal/runtime/agent/runner_core.go"},
 	})
-	sourceGroundingMessage := "the answer cites path(s) that were discovered as index candidates but not read as source-body evidence: `internal/runtime/agent/implementation_flow.go`."
-	acceptance = rejectFinalAnswerAcceptanceWithMessage(acceptance, turnViolationSourceGroundingUnmet, turnReasonSourceGroundingUnmet, sourceGroundingMessage)
+	sourceGroundingAssessment := sourceGroundingCandidateOnlyAssessment([]string{"internal/runtime/agent/implementation_flow.go"})
+	acceptance = rejectFinalAnswerAcceptanceWithSourceGrounding(acceptance, sourceGroundingAssessment)
 
 	fields := finalAnswerAcceptanceEventFields(acceptance)
 	diagnostics, ok := fields["contract_diagnostics"].([]map[string]any)
@@ -35818,12 +35818,12 @@ func TestFinalAnswerAcceptanceEventFieldsIncludeTypedAssessment(t *testing.T) {
 		violations[0]["policy_pack_id"] != string(autonomy.ContractPackFinalAnswerAcceptance) {
 		t.Fatalf("unexpected violation field: %#v", violations[0])
 	}
-	if violations[0]["message"] != sourceGroundingMessage {
+	if violations[0]["message"] != sourceGroundingAssessment.Message() {
 		t.Fatalf("violation should carry exact source-grounding message: %#v", violations[0])
 	}
 	paths, ok := violations[0]["source_grounding_paths"].([]string)
 	if !ok || !slices.Contains(paths, "internal/runtime/agent/implementation_flow.go") {
-		t.Fatalf("violation should carry parsed source-grounding paths: %#v", violations[0])
+		t.Fatalf("violation should carry typed source-grounding paths: %#v", violations[0])
 	}
 }
 
@@ -35845,10 +35845,14 @@ func TestFinalAnswerPolicyRejectsGroundingAndKeepsObjectiveAdvisory(t *testing.T
 		Reason:                  "objective evidence missing",
 		RelevantSourceBodyPaths: []string{"internal/runtime/agent/runner_core.go"},
 	})
-	acceptance = rejectFinalAnswerAcceptanceWithMessage(acceptance, turnViolationSourceGroundingUnmet, turnReasonSourceGroundingUnmet, "source grounding missing")
+	sourceGroundingAssessment := sourceGroundingAssessment{
+		Kind: sourceGroundingRejectionUnsupportedDetail,
+		Text: "source grounding missing",
+	}
+	acceptance = rejectFinalAnswerAcceptanceWithSourceGrounding(acceptance, sourceGroundingAssessment)
 
 	if acceptance.BlockerKind != "source_grounding_unmet" ||
-		acceptance.Reason != "source grounding missing" ||
+		acceptance.Reason != sourceGroundingAssessment.Message() ||
 		acceptance.PolicyDecision != autonomy.PolicyReject {
 
 		t.Fatalf("expected grounding rejection with advisory objective metadata, got %#v", acceptance)

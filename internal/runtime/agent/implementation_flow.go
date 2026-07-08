@@ -1324,7 +1324,7 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 				acceptance.EvidencePaths = closurePromptEvidencePaths(directAnswerRelevance.RelevantSourceBodyPaths, 8)
 			}
 
-			return rejectFinalAnswerAcceptanceWithMessage(acceptance, turnViolationSourceGroundingUnmet, turnReasonSourceGroundingUnmet, assessment.Message())
+			return rejectFinalAnswerAcceptanceWithSourceGrounding(acceptance, assessment)
 		}
 	}
 
@@ -2025,11 +2025,21 @@ func presentableCompletionGateQuestionBlockerReason(reason string) string {
 }
 
 func presentableSourceGroundingGateReason(detail string) string {
-	assessment, ok := classifySourceGroundingRejectionText(detail)
-	if !ok {
+	detail = strings.TrimSpace(sourceGroundingStripGateRecoveryPrefix(detail))
+	if detail == "" {
 		return ""
 	}
-	return assessment.PresentableDetail()
+	lower := strings.ToLower(detail)
+	if (strings.Contains(lower, "source-body evidence") || strings.Contains(lower, "source-body read")) &&
+		(strings.Contains(lower, "candidate/search/context paths") ||
+			strings.Contains(lower, "answer cites path") ||
+			strings.Contains(lower, "not backed by a source-body read") ||
+			strings.Contains(lower, "without an exact inspected probe")) {
+
+		return "the run did not retain a supported answer from inspected evidence"
+	}
+
+	return ""
 }
 
 func firstSentenceBeforeAny(text string, markers ...string) string {

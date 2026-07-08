@@ -78,12 +78,13 @@ type turnDiagnostic struct {
 }
 
 type turnViolation struct {
-	Kind        turnViolationKind
-	PackID      autonomy.ContractPackID
-	InvariantID string
-	ReasonCode  turnReasonCode
-	Evidence    []turnEvidenceRef
-	Message     string
+	Kind            turnViolationKind
+	PackID          autonomy.ContractPackID
+	InvariantID     string
+	ReasonCode      turnReasonCode
+	Evidence        []turnEvidenceRef
+	Message         string
+	SourceGrounding sourceGroundingAssessment
 }
 
 type turnContractAssessment struct {
@@ -166,6 +167,23 @@ func rejectFinalAnswerAcceptanceWithMessage(acceptance finalAnswerAcceptance, ki
 		ReasonCode:  reason,
 		Evidence:    turnEvidenceRefsFromPaths(acceptance.EvidencePaths),
 		Message:     acceptance.Reason,
+	})
+	return finalAnswerAcceptanceWithPolicy(acceptance)
+}
+
+func rejectFinalAnswerAcceptanceWithSourceGrounding(acceptance finalAnswerAcceptance, assessment sourceGroundingAssessment) finalAnswerAcceptance {
+	acceptance.Decision = finalAnswerAcceptanceRejected
+	acceptance.BlockerKind = string(turnViolationSourceGroundingUnmet)
+	acceptance.Reason = strings.TrimSpace(textutil.FirstNonEmpty(assessment.Message(), string(turnReasonSourceGroundingUnmet)))
+	acceptance.ContractAssessment.Violations = nil
+	acceptance.ContractAssessment = acceptance.ContractAssessment.withViolation(turnViolation{
+		Kind:            turnViolationSourceGroundingUnmet,
+		PackID:          autonomy.ContractPackFinalAnswerAcceptance,
+		InvariantID:     finalAnswerPolicyInvariantAcceptance,
+		ReasonCode:      turnReasonSourceGroundingUnmet,
+		Evidence:        turnEvidenceRefsFromPaths(acceptance.EvidencePaths),
+		Message:         acceptance.Reason,
+		SourceGrounding: assessment,
 	})
 	return finalAnswerAcceptanceWithPolicy(acceptance)
 }
@@ -393,18 +411,27 @@ func turnContractAssessmentCapabilities(assessment turnContractAssessment) turnV
 	return turnViolationCapabilitiesForKind(violationKind)
 }
 
-func turnContractAssessmentPrimaryViolationKind(assessment turnContractAssessment) (turnViolationKind, bool) {
+func turnContractAssessmentPrimaryViolation(assessment turnContractAssessment) (turnViolation, bool) {
 	if len(assessment.Violations) == 0 || assessment.Violations[0].Kind == "" {
+		return turnViolation{}, false
+	}
+	return assessment.Violations[0], true
+}
+
+func turnContractAssessmentPrimaryViolationKind(assessment turnContractAssessment) (turnViolationKind, bool) {
+	violation, ok := turnContractAssessmentPrimaryViolation(assessment)
+	if !ok {
 		return "", false
 	}
-	return assessment.Violations[0].Kind, true
+	return violation.Kind, true
 }
 
 func turnContractAssessmentPrimaryViolationReasonCode(assessment turnContractAssessment) turnReasonCode {
-	if len(assessment.Violations) == 0 {
+	violation, ok := turnContractAssessmentPrimaryViolation(assessment)
+	if !ok {
 		return ""
 	}
-	return assessment.Violations[0].ReasonCode
+	return violation.ReasonCode
 }
 
 func turnContractAssessmentPrimaryViolationReasonCodeMatches(assessment turnContractAssessment, codes ...turnReasonCode) bool {

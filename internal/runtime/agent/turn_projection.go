@@ -53,10 +53,13 @@ func turnViolationEventFields(violation turnViolation) map[string]any {
 	}
 	if message := strings.TrimSpace(violation.Message); message != "" {
 		fields["message"] = message
-		if violation.Kind == turnViolationSourceGroundingUnmet {
-			if assessment, ok := classifySourceGroundingRejectionText(message); ok && len(assessment.Paths) > 0 {
-				fields["source_grounding_paths"] = assessment.Paths
-			}
+	}
+	if violation.Kind == turnViolationSourceGroundingUnmet {
+		if violation.SourceGrounding.Kind != "" {
+			fields["source_grounding_kind"] = string(violation.SourceGrounding.Kind)
+		}
+		if paths := uniqueSortedRunnerPaths(violation.SourceGrounding.Paths); len(paths) > 0 {
+			fields["source_grounding_paths"] = paths
 		}
 	}
 	if paths := turnEvidencePaths(violation.Evidence); len(paths) > 0 {
@@ -79,15 +82,20 @@ func turnEvidencePaths(refs []turnEvidenceRef) []string {
 }
 
 func finalAnswerCompletionGateProjection(acceptance finalAnswerAcceptance, summary string, errorText string) (workspace.ToolResult, bool) {
-	if _, ok := turnContractAssessmentPrimaryViolationKind(acceptance.ContractAssessment); !ok {
+	violation, ok := turnContractAssessmentPrimaryViolation(acceptance.ContractAssessment)
+	if !ok {
 		return workspace.ToolResult{}, false
 	}
 	if strings.TrimSpace(summary) == "" {
 		summary = "Final answer rejected by blocker check"
 	}
-	return workspace.ToolResult{
+	result := workspace.ToolResult{
 		Tool:    "completion_gate",
 		Summary: strings.TrimSpace(summary),
 		Error:   strings.TrimSpace(errorText),
-	}, true
+	}
+	if violation.Kind == turnViolationSourceGroundingUnmet {
+		result = annotateSourceGroundingAssessment(result, violation.SourceGrounding)
+	}
+	return result, true
 }

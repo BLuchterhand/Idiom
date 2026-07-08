@@ -8266,12 +8266,12 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 	base := "workspace changes are present, but no successful verification result is present."
 
 	// Tier 0 (first rejection): pass through unchanged.
-	if got := escalateCompletionGateMessageWithSourceRecovery(base, 0, true, 5); got != base {
+	if got := escalateCompletionGateMessageWithSourceRecovery(base, 0, false, false, 5); got != base {
 		t.Errorf("first rejection should pass through; got: %s", got)
 	}
 
 	// Tier 1 (second rejection): mention "[gate retry 2/3]" + the base.
-	got := escalateCompletionGateMessageWithSourceRecovery(base, 1, true, 5)
+	got := escalateCompletionGateMessageWithSourceRecovery(base, 1, false, false, 5)
 	for _, want := range []string{"[gate retry 2/3]", "no successful verification result", "MUST resolve"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("tier 1 expected to contain %q, got: %s", want, got)
@@ -8279,7 +8279,7 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 	}
 
 	// Tier 2 (third rejection): mention "[gate retry 3/3]" + escalation language.
-	got = escalateCompletionGateMessageWithSourceRecovery(base, 2, true, 5)
+	got = escalateCompletionGateMessageWithSourceRecovery(base, 2, false, false, 5)
 	for _, want := range []string{"[gate retry 3/3", "strategy correction required", "ONE concrete tool call", "Do not narrate"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("tier 2 expected to contain %q, got: %s", want, got)
@@ -8290,97 +8290,19 @@ func TestEscalateCompletionGateMessageTiers(t *testing.T) {
 	}
 
 	// Empty base: no escalation (defensive).
-	if got := escalateCompletionGateMessageWithSourceRecovery("", 5, true, 5); got != "" {
+	if got := escalateCompletionGateMessageWithSourceRecovery("", 5, false, false, 5); got != "" {
 		t.Errorf("empty base should pass through unchanged, got: %q", got)
-	}
-
-	// ── Source-grounding (unsupported paths) ──────────────────────
-	sgUnsupported := "the answer cites source path/line/symbol detail not backed by a source-body read: \"foo.go\". Use one exact read/code_navigate body probe for the claim, or qualify it as unverified."
-
-	// Tier 1: source-grounding recovery stays in evidence-recovery mode; it
-	// must not imply tools are about to be disabled while read tools are valid.
-	got = escalateCompletionGateMessageWithSourceRecovery(sgUnsupported, 1, true, 5)
-	for _, want := range []string{"[source evidence recovery 2/5]", "not backed by a source-body read", "call one bounded"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("source-grounding unsupported tier 1 expected to contain %q, got: %s", want, got)
-		}
-	}
-	if strings.Contains(got, "tools disable") {
-		t.Errorf("source-grounding unsupported tier 1 must not threaten tool disable; got: %s", got)
-	}
-	if strings.Contains(got, "use a different tool call") {
-		t.Errorf("source-grounding unsupported tier 1 must not contain 'use a different tool call'; got: %s", got)
-	}
-
-	// Tier 2: should include read-file guidance, not "ONE concrete tool call"
-	got = escalateCompletionGateMessageWithSourceRecovery(sgUnsupported, 2, true, 5)
-	for _, want := range []string{"[source evidence recovery 3/5]", "`read_file` or `code_navigate`"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("source-grounding unsupported tier 2 expected to contain %q, got: %s", want, got)
-		}
-	}
-	if strings.Contains(got, "tools disable") {
-		t.Errorf("source-grounding unsupported tier 2 must not threaten tool disable; got: %s", got)
-	}
-	if strings.Contains(got, "ONE concrete tool call") {
-		t.Errorf("source-grounding unsupported tier 2 must not contain 'ONE concrete tool call'; got: %s", got)
-	}
-
-	// ── Source-grounding (non-existent paths) ─────────────────────
-	sgMissing := "the answer cites path(s) that were discovered as index candidates but not read as source-body evidence: \"missing.go\". Correct the citation, label it as historical/log-only evidence, or answer from inspected current source."
-
-	// Tier 1: should include read-file guidance
-	got = escalateCompletionGateMessageWithSourceRecovery(sgMissing, 1, true, 5)
-	for _, want := range []string{"[source evidence recovery 2/5]", "not read as source-body evidence", "call one bounded"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("source-grounding missing tier 1 expected to contain %q, got: %s", want, got)
-		}
-	}
-	if strings.Contains(got, "tools disable") {
-		t.Errorf("source-grounding missing tier 1 must not threaten tool disable; got: %s", got)
-	}
-	if strings.Contains(got, "use a different tool call") {
-		t.Errorf("source-grounding missing tier 1 must not contain 'use a different tool call'; got: %s", got)
-	}
-
-	// Tier 2: should include read-file guidance, not "ONE concrete tool call"
-	got = escalateCompletionGateMessageWithSourceRecovery(sgMissing, 2, true, 5)
-	for _, want := range []string{"[source evidence recovery 3/5]", "`read_file` or `code_navigate`"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("source-grounding missing tier 2 expected to contain %q, got: %s", want, got)
-		}
-	}
-	if strings.Contains(got, "tools disable") {
-		t.Errorf("source-grounding missing tier 2 must not threaten tool disable; got: %s", got)
-	}
-	if strings.Contains(got, "ONE concrete tool call") {
-		t.Errorf("source-grounding missing tier 2 must not contain 'ONE concrete tool call'; got: %s", got)
-	}
-
-	// Source-grounding (candidate-only evidence wording from read-only gate).
-	sgCandidateOnly := "read-only workspace answers require bounded source-body or diagnostic evidence tied to the user's objective before a final answer. Candidate/search/context paths are not source-body evidence. Candidate path(s): testdata/swe/debug-logs-weird-decisions-suite.json, docs/configuration.md. Inspect one candidate with source-body evidence, use one materially different source-owner probe if these candidates do not establish the claim, or answer `<<QUESTION>>:` with the exact unavailable evidence source."
-	got = escalateCompletionGateMessageWithSourceRecovery(sgCandidateOnly, 1, true, 5)
-	for _, want := range []string{"[source evidence recovery 2/5]", "Candidate/search/context paths are not source-body evidence", "call one bounded"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("source-grounding candidate-only tier 1 expected to contain %q, got: %s", want, got)
-		}
-	}
-	if strings.Contains(got, "tools disable") {
-		t.Errorf("source-grounding candidate-only tier 1 must not threaten tool disable; got: %s", got)
-	}
-	if strings.Contains(got, "use a different tool call") {
-		t.Errorf("source-grounding candidate-only tier 1 must not contain generic tool-call advice; got: %s", got)
 	}
 
 	// ── Non-source-grounding messages still get generic text ──────
 	normalMsg := "the final answer did not satisfy the active blocker check; continue with concrete writes or a per-path blocker reason."
-	got = escalateCompletionGateMessageWithSourceRecovery(normalMsg, 1, true, 5)
+	got = escalateCompletionGateMessageWithSourceRecovery(normalMsg, 1, false, false, 5)
 	for _, want := range []string{"[gate retry 2/3]", "use a different tool call"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("non-source-grounding tier 1 expected to contain %q, got: %s", want, got)
 		}
 	}
-	got = escalateCompletionGateMessageWithSourceRecovery(normalMsg, 2, true, 5)
+	got = escalateCompletionGateMessageWithSourceRecovery(normalMsg, 2, false, false, 5)
 	for _, want := range []string{"[gate retry 3/3", "ONE concrete tool call"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("non-source-grounding tier 2 expected to contain %q, got: %s", want, got)
@@ -30244,9 +30166,14 @@ func TestReadOnlySourceGroundingUnmetRecoveryPromptMentionsPathsAndOptions(t *te
 		},
 	}
 
-	// Simulate a source_grounding_unmet rejection error that cites paths
-	// not backed by body evidence.
-	runner.lastCompletionGateError = "the answer cites source path/line/symbol detail not backed by a source-body read: `internal/surfaces/tui/app/model_state_test.go:1-5`, `internal/surfaces/tui/app/view.go:42`. Use one exact read/code_navigate body probe for the claim, or qualify it as unverified."
+	assessment := sourceGroundingUnsupportedDetailAssessment([]string{
+		"internal/surfaces/tui/app/model_state_test.go:1-5",
+		"internal/surfaces/tui/app/view.go:42",
+	})
+	runner.rememberCompletionGateRejection(annotateSourceGroundingAssessment(workspace.ToolResult{
+		Tool:  "completion_gate",
+		Error: assessment.Message(),
+	}, assessment))
 
 	// Evidence results are not needed because the source-grounding check
 	// returns the recovery prompt before the evidence-readiness check.
@@ -30286,9 +30213,6 @@ func TestReadOnlySourceGroundingUnmetRecoveryPromptSkippedWhenNoLastError(t *tes
 		},
 	}
 
-	// No source-grounding error set — recovery prompt should not fire.
-	runner.lastCompletionGateError = ""
-
 	// Without evidence and without a source-grounding error, the normal
 	// "no evidence" recovery path should produce a prompt.
 	prompt, _, ok := runner.completionGateRecoveryPrompt(nil)
@@ -30317,15 +30241,18 @@ func TestSourceGroundingRetryHidesNonReadToolsOnlyWhenReadRecoveryAvailable(t *t
 	rejections := 0
 	turnMessages := []llama.ChatMessage{}
 
-	sourceGroundingErr := "the answer cites source path/line/symbol detail not backed by a source-body read: `src/graphics/renderer.rs`. Use one exact read/code_navigate body probe."
+	sourceGroundingAssessment := sourceGroundingUnsupportedDetailAssessment([]string{"src/graphics/renderer.rs"})
+	sourceGroundingErr := sourceGroundingAssessment.Message()
+	sourceGroundingResult := annotateSourceGroundingAssessment(workspace.ToolResult{Tool: "completion_gate", Summary: "Rejected", Error: sourceGroundingErr}, sourceGroundingAssessment)
+	sourceGroundingAcceptance := rejectFinalAnswerAcceptanceWithSourceGrounding(newFinalAnswerAcceptance(), sourceGroundingAssessment)
 	retried := runner.retryRejectedFinalAnswerForRun(runnerFinalAnswerRetryInput{
 		stepNumber: 1,
 		assistantMessage: llama.ChatMessage{
 			Role:    "assistant",
 			Content: "The renderer uses src/graphics/renderer.rs.",
 		},
-		acceptance:               rejectFinalAnswerAcceptanceWithMessage(newFinalAnswerAcceptance(), turnViolationSourceGroundingUnmet, turnReasonSourceGroundingUnmet, sourceGroundingErr),
-		result:                   workspace.ToolResult{Tool: "completion_gate", Summary: "Rejected", Error: sourceGroundingErr},
+		acceptance:               sourceGroundingAcceptance,
+		result:                   sourceGroundingResult,
 		collectedResults:         nil,
 		currentAllowedTools:      []string{"read_file", "code_navigate", "search_content"},
 		completionGateRejections: &rejections,
@@ -30369,8 +30296,8 @@ func TestSourceGroundingRetryHidesNonReadToolsOnlyWhenReadRecoveryAvailable(t *t
 			Role:    "assistant",
 			Content: "The renderer uses src/graphics/renderer.rs.",
 		},
-		acceptance:               rejectFinalAnswerAcceptanceWithMessage(newFinalAnswerAcceptance(), turnViolationSourceGroundingUnmet, turnReasonSourceGroundingUnmet, sourceGroundingErr),
-		result:                   workspace.ToolResult{Tool: "completion_gate", Summary: "Rejected", Error: sourceGroundingErr},
+		acceptance:               sourceGroundingAcceptance,
+		result:                   sourceGroundingResult,
 		collectedResults:         nil,
 		currentAllowedTools:      []string{"search_content"},
 		completionGateRejections: &noReadRejections,
@@ -30387,7 +30314,11 @@ func TestSourceGroundingRetryHidesNonReadToolsOnlyWhenReadRecoveryAvailable(t *t
 }
 
 func TestSourceGroundingCompletionGateErrorGetsReadRecoveryExtension(t *testing.T) {
-	sourceGroundingErr := "the answer cites source path/line/symbol detail not backed by a source-body read: `internal/runtime/workerruntime/catalog.go`. Use one exact read/code_navigate body probe for the claim, or qualify it as unverified."
+	assessment := sourceGroundingUnsupportedDetailAssessment([]string{"internal/runtime/workerruntime/catalog.go"})
+	result := annotateSourceGroundingAssessment(workspace.ToolResult{
+		Tool:  "completion_gate",
+		Error: assessment.Message(),
+	}, assessment)
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
@@ -30398,7 +30329,7 @@ func TestSourceGroundingCompletionGateErrorGetsReadRecoveryExtension(t *testing.
 	}
 
 	genericLimit := runner.completionGateRetryLimit(nil)
-	extendedLimit := runner.completionGateRetryLimitForError(sourceGroundingErr, nil, []string{"read_file", "code_navigate", "search_content"})
+	extendedLimit := runner.completionGateRetryLimitForResult(result, nil, []string{"read_file", "code_navigate", "search_content"})
 	if extendedLimit != genericLimit+sourceGroundingAdditionalReadRecoveryRetries {
 		t.Fatalf("source-grounding retry limit = %d, want generic %d + %d", extendedLimit, genericLimit, sourceGroundingAdditionalReadRecoveryRetries)
 	}
@@ -30411,14 +30342,18 @@ func TestSourceGroundingCompletionGateErrorGetsReadRecoveryExtension(t *testing.
 			AllowedTools:      []string{"search_content"},
 		},
 	}
-	noReadToolLimit := noReadToolRunner.completionGateRetryLimitForError(sourceGroundingErr, nil, []string{"search_content"})
+	noReadToolLimit := noReadToolRunner.completionGateRetryLimitForResult(result, nil, []string{"search_content"})
 	if noReadToolLimit != genericLimit {
 		t.Fatalf("source-grounding without read tools should use generic limit %d, got %d", genericLimit, noReadToolLimit)
 	}
 }
 
 func TestSourceGroundingCompletionGateEscalationUsesReadRecoveryAvailability(t *testing.T) {
-	sourceGroundingErr := "the answer cites source path/line/symbol detail not backed by a source-body read: `internal/runtime/workerruntime/catalog.go`. Use one exact read/code_navigate body probe for the claim, or qualify it as unverified."
+	assessment := sourceGroundingUnsupportedDetailAssessment([]string{"internal/runtime/workerruntime/catalog.go"})
+	result := annotateSourceGroundingAssessment(workspace.ToolResult{
+		Tool:  "completion_gate",
+		Error: "source grounding blocked",
+	}, assessment)
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
@@ -30428,7 +30363,7 @@ func TestSourceGroundingCompletionGateEscalationUsesReadRecoveryAvailability(t *
 		},
 	}
 
-	withReadTools := runner.escalateCompletionGateMessageForError(sourceGroundingErr, 1, nil, []string{"read_file", "code_navigate", "search_content"})
+	withReadTools := runner.escalateCompletionGateResultMessage(result, 1, nil, []string{"read_file", "code_navigate", "search_content"})
 	if !strings.Contains(withReadTools, "[source evidence recovery 2/5]") {
 		t.Fatalf("source-grounding with source-body read tools should use source evidence recovery label, got:\n%s", withReadTools)
 	}
@@ -30445,7 +30380,7 @@ func TestSourceGroundingCompletionGateEscalationUsesReadRecoveryAvailability(t *
 		},
 	}
 
-	withoutReadTools := noReadToolRunner.escalateCompletionGateMessageForError(sourceGroundingErr, 1, nil, []string{"search_content"})
+	withoutReadTools := noReadToolRunner.escalateCompletionGateResultMessage(result, 1, nil, []string{"search_content"})
 	if strings.Contains(withoutReadTools, "source evidence recovery") {
 		t.Fatalf("source-grounding without source-body read tools must not use source evidence recovery label, got:\n%s", withoutReadTools)
 	}
@@ -30457,12 +30392,54 @@ func TestSourceGroundingCompletionGateEscalationUsesReadRecoveryAvailability(t *
 	}
 }
 
-func TestConversationSourceGroundingMissingPathsHandlesCandidateOnlyError(t *testing.T) {
-	results := []workspace.ToolResult{{
+func TestSourceGroundingRecoveryRequiresTypedPayload(t *testing.T) {
+	assessment := sourceGroundingUnsupportedDetailAssessment([]string{"internal/runtime/workerruntime/catalog.go"})
+	result := workspace.ToolResult{
 		Tool:    "completion_gate",
 		Summary: "Rejected",
-		Error:   "read-only workspace answers require bounded source-body or diagnostic evidence tied to the user's objective before a final answer. Candidate/search/context paths are not source-body evidence. Candidate path(s): `internal/runtime/agent/implementation_flow.go`, `internal/runtime/promptstack/stack.go`. Inspect one candidate with source-body evidence.",
-	}}
+		Error:   assessment.Message(),
+	}
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(autonomy.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file", "code_navigate", "search_content"},
+		},
+	}
+
+	if runner.sourceGroundingReadRecoveryAvailable(result, []string{"read_file", "code_navigate", "search_content"}) {
+		t.Fatal("rendered source-grounding prose without a typed payload must not activate read recovery")
+	}
+
+	genericLimit := runner.completionGateRetryLimit(nil)
+	if got := runner.completionGateRetryLimitForResult(result, nil, []string{"read_file", "code_navigate", "search_content"}); got != genericLimit {
+		t.Fatalf("prose-only source-grounding-looking result should use generic retry limit %d, got %d", genericLimit, got)
+	}
+
+	escalated := runner.escalateCompletionGateResultMessage(result, 1, nil, []string{"read_file", "code_navigate", "search_content"})
+	if strings.Contains(escalated, "source evidence recovery") {
+		t.Fatalf("prose-only source-grounding-looking result must not use source recovery escalation, got:\n%s", escalated)
+	}
+	if !strings.Contains(escalated, "[gate retry 2/3]") {
+		t.Fatalf("prose-only source-grounding-looking result should use generic escalation, got:\n%s", escalated)
+	}
+
+	if paths := conversationSourceGroundingMissingPaths([]workspace.ToolResult{result}); len(paths) != 0 {
+		t.Fatalf("prose-only source-grounding-looking result must not expose missing paths, got %#v", paths)
+	}
+}
+
+func TestConversationSourceGroundingMissingPathsHandlesCandidateOnlyError(t *testing.T) {
+	assessment := sourceGroundingCandidateOnlyAssessment([]string{
+		"internal/runtime/agent/implementation_flow.go",
+		"internal/runtime/promptstack/stack.go",
+	})
+	results := []workspace.ToolResult{annotateSourceGroundingAssessment(workspace.ToolResult{
+		Tool:    "completion_gate",
+		Summary: "Rejected",
+		Error:   assessment.Message(),
+	}, assessment)}
 
 	paths := conversationSourceGroundingMissingPaths(results)
 	if !slices.Contains(paths, "internal/runtime/agent/implementation_flow.go") ||
@@ -30485,7 +30462,11 @@ func TestReadOnlyRecoveryPromptMentionsToolRestriction(t *testing.T) {
 			Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: false},
 		},
 	}
-	runner.lastCompletionGateError = "the answer cites source path/line/symbol detail not backed by a source-body read: `src/graphics/renderer.rs:42`. Use one exact read/code_navigate body probe."
+	assessment := sourceGroundingUnsupportedDetailAssessment([]string{"src/graphics/renderer.rs:42"})
+	runner.rememberCompletionGateRejection(annotateSourceGroundingAssessment(workspace.ToolResult{
+		Tool:  "completion_gate",
+		Error: assessment.Message(),
+	}, assessment))
 
 	prompt, hideReads, ok := runner.completionGateRecoveryPrompt(nil)
 	if !ok {
@@ -30513,7 +30494,14 @@ func TestReadOnlySourceGroundingRecoveryPromptIncludesLedgerGuidance(t *testing.
 			Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: false},
 		},
 	}
-	runner.lastCompletionGateError = "the answer cites path(s) that were discovered as index candidates but not read as source-body evidence: `internal/surfaces/cli/implement/implement.go`, `internal/runtime/llama/client.go`."
+	assessment := sourceGroundingMissingCandidateAssessment([]string{
+		"internal/surfaces/cli/implement/implement.go",
+		"internal/runtime/llama/client.go",
+	})
+	runner.rememberCompletionGateRejection(annotateSourceGroundingAssessment(workspace.ToolResult{
+		Tool:  "completion_gate",
+		Error: assessment.Message(),
+	}, assessment))
 	results := []workspace.ToolResult{
 		{
 			Tool:    "read_file",
@@ -30559,7 +30547,11 @@ func TestMalformedToolRecoveryPromptRejectsXMLTransportAndShowsLedger(t *testing
 		},
 		currentTransport: PlanExecutePlanningTransport{SupportsNativeTools: true},
 	}
-	runner.lastCompletionGateError = "the answer cites path(s) that were discovered as index candidates but not read as source-body evidence: `internal/surfaces/cli/implement/implement.go`."
+	assessment := sourceGroundingMissingCandidateAssessment([]string{"internal/surfaces/cli/implement/implement.go"})
+	runner.rememberCompletionGateRejection(annotateSourceGroundingAssessment(workspace.ToolResult{
+		Tool:  "completion_gate",
+		Error: assessment.Message(),
+	}, assessment))
 	results := []workspace.ToolResult{{
 		Tool:    "read_file",
 		Summary: "Read internal/runtime/agent/implementation_flow.go lines 1-80",

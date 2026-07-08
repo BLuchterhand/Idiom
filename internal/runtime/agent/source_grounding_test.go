@@ -264,21 +264,46 @@ func TestSourceGroundingRejectsExistingWorkspaceCitationEvenWhenExternalSuffixMa
 	}
 }
 
-func TestSourceGroundingPathsAfterMarkerStopsBeforeRecoveryInstructions(t *testing.T) {
-	message := sourceGroundingMissingCandidateAssessment([]string{
+func TestSourceGroundingAssessmentPayloadCarriesMissingPaths(t *testing.T) {
+	assessment := sourceGroundingMissingCandidateAssessment([]string{
 		"essay-series.md",
 		"front-back/back-matter.md",
 		"front-back/book-matter-and-cover-copy-proposal.md",
-	}).Message()
+	})
 
-	paths := sourceGroundingPathsAfterMarker(message, sourceGroundingMissingCandidateMarker+":")
+	result := annotateSourceGroundingAssessment(workspace.ToolResult{Tool: "completion_gate"}, assessment)
+	got, ok := sourceGroundingAssessmentFromResult(result)
+	if !ok {
+		t.Fatal("expected typed source-grounding payload")
+	}
+
 	want := []string{
 		"essay-series.md",
 		"front-back/back-matter.md",
 		"front-back/book-matter-and-cover-copy-proposal.md",
 	}
-	if !slices.Equal(paths, want) {
-		t.Fatalf("parsed source-grounding paths = %#v, want %#v", paths, want)
+	if got.Kind != sourceGroundingRejectionMissingCandidate {
+		t.Fatalf("kind = %q, want %q", got.Kind, sourceGroundingRejectionMissingCandidate)
+	}
+	if !slices.Equal(got.Paths, want) {
+		t.Fatalf("source-grounding paths = %#v, want %#v", got.Paths, want)
+	}
+}
+
+func TestSourceGroundingAssessmentPayloadRequiresCompletionGatePayloadType(t *testing.T) {
+	assessment := sourceGroundingMissingCandidateAssessment([]string{"essay-series.md"})
+	result := annotateSourceGroundingAssessment(workspace.ToolResult{Tool: "completion_gate"}, assessment)
+
+	wrongTool := result
+	wrongTool.Tool = workspace.ToolNameReadFile
+	if _, ok := sourceGroundingAssessmentFromResult(wrongTool); ok {
+		t.Fatal("source-grounding payload on a non-completion-gate result must not carry authority")
+	}
+
+	wrongPayloadType := result
+	wrongPayloadType.PayloadType = "agent.source_grounding_assessment.v0"
+	if _, ok := sourceGroundingAssessmentFromResult(wrongPayloadType); ok {
+		t.Fatal("source-grounding payload with an unexpected payload type must not carry authority")
 	}
 }
 

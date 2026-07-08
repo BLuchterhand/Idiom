@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -31,6 +32,8 @@ const (
 	sourceGroundingUnsupportedDetailMarker = "not backed by a source-body read"
 )
 
+const sourceGroundingAssessmentPayloadType = "agent.source_grounding_assessment.v1"
+
 var sourceGroundingInlineCodePathCandidatePattern = regexp.MustCompile("`([^`\\n]+)`")
 
 type sourceGroundingAssessment struct {
@@ -39,47 +42,64 @@ type sourceGroundingAssessment struct {
 	Text  string
 }
 
-func classifySourceGroundingRejectionText(text string) (sourceGroundingAssessment, bool) {
-	text = strings.TrimSpace(sourceGroundingStripGateRecoveryPrefix(text))
-	if text == "" {
+type sourceGroundingAssessmentPayload struct {
+	Kind  sourceGroundingRejectionKind `json:"kind,omitempty"`
+	Paths []string                     `json:"paths,omitempty"`
+	Text  string                       `json:"text,omitempty"`
+}
+
+func (a sourceGroundingAssessment) hasTypedSignal() bool {
+	return a.Kind != sourceGroundingRejectionUnknown ||
+		len(a.Paths) > 0 ||
+		strings.TrimSpace(a.Text) != ""
+}
+
+func (a sourceGroundingAssessment) payload() sourceGroundingAssessmentPayload {
+	return sourceGroundingAssessmentPayload{
+		Kind:  a.Kind,
+		Paths: uniqueSortedRunnerPaths(a.Paths),
+		Text:  strings.TrimSpace(a.Text),
+	}
+}
+
+func annotateSourceGroundingAssessment(result workspace.ToolResult, assessment sourceGroundingAssessment) workspace.ToolResult {
+	if !assessment.hasTypedSignal() {
+		return result
+	}
+
+	payload, err := json.Marshal(assessment.payload())
+	if err != nil {
+		return result
+	}
+
+	result.PayloadType = sourceGroundingAssessmentPayloadType
+	result.Payload = payload
+	return result
+}
+
+func sourceGroundingAssessmentFromResult(result workspace.ToolResult) (sourceGroundingAssessment, bool) {
+	if strings.TrimSpace(result.Tool) != "completion_gate" ||
+		strings.TrimSpace(result.PayloadType) != sourceGroundingAssessmentPayloadType ||
+		len(result.Payload) == 0 {
+
 		return sourceGroundingAssessment{}, false
 	}
 
-	lower := strings.ToLower(text)
-	switch {
-	case strings.Contains(text, sourceGroundingCandidateOnlyMarker):
-		return sourceGroundingAssessment{
-			Kind:  sourceGroundingRejectionCandidateOnly,
-			Paths: sourceGroundingPathsAfterMarker(text, sourceGroundingCandidateOnlyPathMarker),
-			Text:  text,
-		}, true
-	case strings.Contains(text, sourceGroundingMissingCandidateMarker):
-		return sourceGroundingAssessment{
-			Kind:  sourceGroundingRejectionMissingCandidate,
-			Paths: sourceGroundingPathsAfterMarker(text, sourceGroundingMissingCandidateMarker+":"),
-			Text:  text,
-		}, true
-	case strings.Contains(text, sourceGroundingUnsupportedDetailMarker):
-		return sourceGroundingAssessment{
-			Kind:  sourceGroundingRejectionUnsupportedDetail,
-			Paths: sourceGroundingPathsAfterMarker(text, sourceGroundingUnsupportedDetailMarker+":"),
-			Text:  text,
-		}, true
-	case strings.Contains(lower, "source-body evidence") && strings.Contains(lower, "answer cites path"):
-		return sourceGroundingAssessment{
-			Kind:  sourceGroundingRejectionMissingCandidate,
-			Paths: sourceGroundingPathsAfterMarker(text, ":"),
-			Text:  text,
-		}, true
-	case strings.Contains(lower, "without an exact inspected probe"):
-		return sourceGroundingAssessment{
-			Kind:  sourceGroundingRejectionExactDetail,
-			Paths: sourceGroundingPathsAfterMarker(text, ":"),
-			Text:  text,
-		}, true
-	default:
+	var payload sourceGroundingAssessmentPayload
+	if err := json.Unmarshal(result.Payload, &payload); err != nil {
 		return sourceGroundingAssessment{}, false
 	}
+
+	assessment := sourceGroundingAssessment{
+		Kind:  payload.Kind,
+		Paths: uniqueSortedRunnerPaths(payload.Paths),
+		Text:  strings.TrimSpace(payload.Text),
+	}
+	if !assessment.hasTypedSignal() {
+		return sourceGroundingAssessment{}, false
+	}
+
+	return assessment, true
 }
 
 func sourceGroundingCandidateOnlyAssessment(paths []string) sourceGroundingAssessment {
@@ -347,126 +367,6 @@ func (r *Runner) sourceGroundingRejectionReason(answer string, results []workspa
 	return r.assessSourceGrounding(answer, results).Message()
 }
 
-func sourceGroundingPathsAfterMarker(text string, marker string) []string {
-	text = strings.TrimSpace(sourceGroundingStripGateRecoveryPrefix(text))
-	marker = strings.TrimSpace(marker)
-	if text == "" || marker == "" {
-		return nil
-	}
-
-	lower := strings.ToLower(text)
-	markerLower := strings.ToLower(marker)
-	idx := strings.Index(lower, markerLower)
-	if idx < 0 {
-		return nil
-	}
-
-	pathText := strings.TrimSpace(text[idx+len(marker):])
-	if pathText == "" {
-		return nil
-	}
-	pathText = sourceGroundingPathListBeforeInstructions(pathText)
-
-	var paths []string
-	for _, token := range strings.Split(pathText, ",") {
-		token = strings.TrimSpace(token)
-		if token == "" {
-			continue
-		}
-		if idx := strings.Index(token, ". "); idx > 0 {
-			token = token[:idx]
-		}
-		token = strings.TrimSuffix(token, ".")
-		if idx := strings.Index(token, " — "); idx > 0 {
-			token = token[:idx]
-		}
-		token = strings.Trim(token, "`'\" ")
-		if token != "" && sourceGroundingRecoveredPathTokenLooksLikePath(token) {
-			paths = append(paths, token)
-		}
-	}
-
-	return uniqueSortedRunnerPaths(paths)
-}
-
-func sourceGroundingRecoveredPathTokenLooksLikePath(token string) bool {
-	token = strings.TrimSpace(strings.Trim(token, "`'\" "))
-	if token == "" {
-		return false
-	}
-
-	path := sourceGroundingPathTokenWithoutLineSuffix(token)
-	if path == "" {
-		return false
-	}
-
-	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" || looksLikeWindowsAbsolutePath(path) {
-		return pathparse.HasWorkspaceFileExtension(path)
-	}
-
-	return pathparse.LooksLikeWorkspacePathToken(path)
-}
-
-func sourceGroundingPathTokenWithoutLineSuffix(token string) string {
-	token = strings.TrimSpace(token)
-	idx := strings.LastIndex(token, ":")
-	if idx <= 0 || idx == len(token)-1 {
-		return token
-	}
-
-	if !sourceGroundingLineSuffix(token[idx+1:]) {
-		return token
-	}
-
-	return token[:idx]
-}
-
-func sourceGroundingLineSuffix(suffix string) bool {
-	suffix = strings.TrimSpace(suffix)
-	if suffix == "" {
-		return false
-	}
-
-	start, end, ranged := strings.Cut(suffix, "-")
-	if !sourceGroundingAllDigits(start) {
-		return false
-	}
-	if !ranged {
-		return true
-	}
-
-	return sourceGroundingAllDigits(end)
-}
-
-func sourceGroundingAllDigits(value string) bool {
-	if value == "" {
-		return false
-	}
-
-	for _, r := range value {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-
-	return true
-}
-
-func sourceGroundingPathListBeforeInstructions(text string) string {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return ""
-	}
-
-	for _, delimiter := range []string{". Read ", ". Use ", ". Inspect ", ". Valid ", ". If "} {
-		if idx := strings.Index(text, delimiter); idx >= 0 {
-			return strings.TrimSpace(text[:idx])
-		}
-	}
-
-	return text
-}
-
 func sourceGroundingStripGateRecoveryPrefix(text string) string {
 	text = strings.TrimSpace(text)
 	if !strings.HasPrefix(text, "[gate retry") &&
@@ -594,20 +494,83 @@ func sourceGroundingQuotedPathCandidates(text string) []string {
 			continue
 		}
 
-		paths = append(paths, sourceGroundingPathTokenWithoutLineSuffix(path))
+		paths = append(paths, sourceGroundingCitationPathWithoutLineSuffix(path))
 	}
 
 	return uniqueSortedRunnerPaths(paths)
 }
 
 func sourceGroundingQuotedPathCandidateLooksLikeCitation(path string) bool {
-	path = sourceGroundingPathTokenWithoutLineSuffix(strings.TrimSpace(path))
-	if !sourceGroundingRecoveredPathTokenLooksLikePath(path) {
+	path = sourceGroundingCitationPathWithoutLineSuffix(strings.TrimSpace(path))
+	if !sourceGroundingCitationPathLooksLikePath(path) {
 		return false
 	}
 
 	if strings.ContainsAny(path, " \t") {
 		return filepath.IsAbs(path) || filepath.VolumeName(path) != "" || looksLikeWindowsAbsolutePath(path)
+	}
+
+	return true
+}
+
+func sourceGroundingCitationPathLooksLikePath(token string) bool {
+	token = strings.TrimSpace(strings.Trim(token, "`'\" "))
+	if token == "" {
+		return false
+	}
+
+	path := sourceGroundingCitationPathWithoutLineSuffix(token)
+	if path == "" {
+		return false
+	}
+
+	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" || looksLikeWindowsAbsolutePath(path) {
+		return pathparse.HasWorkspaceFileExtension(path)
+	}
+
+	return pathparse.LooksLikeWorkspacePathToken(path)
+}
+
+func sourceGroundingCitationPathWithoutLineSuffix(token string) string {
+	token = strings.TrimSpace(token)
+	idx := strings.LastIndex(token, ":")
+	if idx <= 0 || idx == len(token)-1 {
+		return token
+	}
+
+	if !sourceGroundingCitationLineSuffix(token[idx+1:]) {
+		return token
+	}
+
+	return token[:idx]
+}
+
+func sourceGroundingCitationLineSuffix(suffix string) bool {
+	suffix = strings.TrimSpace(suffix)
+	if suffix == "" {
+		return false
+	}
+
+	start, end, ranged := strings.Cut(suffix, "-")
+	if !sourceGroundingAllDigits(start) {
+		return false
+	}
+	if !ranged {
+		return true
+	}
+
+	return sourceGroundingAllDigits(end)
+}
+
+func sourceGroundingAllDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
 	}
 
 	return true

@@ -153,38 +153,44 @@ func TestRawLegacyReasonTextDoesNotDriveContextAwareRetry(t *testing.T) {
 	}
 }
 
-func TestSourceGroundingRejectionContractClassifiesRenderedMessages(t *testing.T) {
+func TestSourceGroundingRejectionContractCarriesTypedPayload(t *testing.T) {
 	tests := []struct {
-		name string
-		text string
-		kind sourceGroundingRejectionKind
-		path string
+		name       string
+		assessment sourceGroundingAssessment
+		kind       sourceGroundingRejectionKind
+		path       string
 	}{
 		{
-			name: "candidate only completion gate",
-			text: sourceGroundingCandidateOnlyAssessment([]string{"testdata/swe/debug-logs-weird-decisions-suite.json", "docs/configuration.md"}).Message(),
-			kind: sourceGroundingRejectionCandidateOnly,
-			path: "docs/configuration.md",
+			name:       "candidate only completion gate",
+			assessment: sourceGroundingCandidateOnlyAssessment([]string{"testdata/swe/debug-logs-weird-decisions-suite.json", "docs/configuration.md"}),
+			kind:       sourceGroundingRejectionCandidateOnly,
+			path:       "docs/configuration.md",
 		},
 		{
-			name: "missing candidate citation",
-			text: sourceGroundingMissingCandidateAssessment([]string{"internal/runtime/agent/implementation_flow.go"}).Message(),
-			kind: sourceGroundingRejectionMissingCandidate,
-			path: "internal/runtime/agent/implementation_flow.go",
+			name:       "missing candidate citation",
+			assessment: sourceGroundingMissingCandidateAssessment([]string{"internal/runtime/agent/implementation_flow.go"}),
+			kind:       sourceGroundingRejectionMissingCandidate,
+			path:       "internal/runtime/agent/implementation_flow.go",
 		},
 		{
-			name: "unsupported source detail",
-			text: sourceGroundingUnsupportedDetailAssessment([]string{"internal/runtime/agent/runner_core.go:11456"}).Message(),
-			kind: sourceGroundingRejectionUnsupportedDetail,
-			path: "internal/runtime/agent/runner_core.go:11456",
+			name:       "unsupported source detail",
+			assessment: sourceGroundingUnsupportedDetailAssessment([]string{"internal/runtime/agent/runner_core.go:11456"}),
+			kind:       sourceGroundingRejectionUnsupportedDetail,
+			path:       "internal/runtime/agent/runner_core.go:11456",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rejection, ok := classifySourceGroundingRejectionText(tt.text)
+			acceptance := rejectFinalAnswerAcceptanceWithSourceGrounding(newFinalAnswerAcceptance(), tt.assessment)
+			result, ok := finalAnswerCompletionGateProjection(acceptance, "", acceptance.Reason)
 			if !ok {
-				t.Fatalf("expected source-grounding classification for %q", tt.text)
+				t.Fatal("expected completion-gate projection")
+			}
+
+			rejection, ok := sourceGroundingAssessmentFromResult(result)
+			if !ok {
+				t.Fatalf("expected typed source-grounding payload on %#v", result)
 			}
 			if rejection.Kind != tt.kind {
 				t.Fatalf("kind = %q, want %q", rejection.Kind, tt.kind)
@@ -192,36 +198,19 @@ func TestSourceGroundingRejectionContractClassifiesRenderedMessages(t *testing.T
 			if !slices.Contains(rejection.Paths, tt.path) {
 				t.Fatalf("paths = %#v, want %q", rejection.Paths, tt.path)
 			}
-			if !isSourceGroundingError(tt.text) {
-				t.Fatalf("isSourceGroundingError should accept rendered %s message", tt.name)
-			}
 		})
 	}
 }
 
-func TestSourceGroundingRejectionContractSurvivesRecoveryPrefixes(t *testing.T) {
+func TestSourceGroundingRejectionEscalationUsesTypedSignal(t *testing.T) {
 	base := sourceGroundingCandidateOnlyAssessment([]string{"testdata/swe/debug-logs-weird-decisions-suite.json", "docs/configuration.md"}).Message()
+	escalated := escalateCompletionGateMessageWithSourceRecovery(base, 1, true, true, 5)
 
-	for _, escalated := range []string{
-		"[gate retry 2/3] " + base,
-		escalateCompletionGateMessageWithSourceRecovery(base, 1, true, 5),
-	} {
-		rejection, ok := classifySourceGroundingRejectionText(escalated)
-		if !ok {
-			t.Fatalf("escalated candidate-only message should still classify:\n%s", escalated)
-		}
-		if rejection.Kind != sourceGroundingRejectionCandidateOnly {
-			t.Fatalf("kind = %q, want %q", rejection.Kind, sourceGroundingRejectionCandidateOnly)
-		}
-		if !slices.Contains(rejection.Paths, "docs/configuration.md") {
-			t.Fatalf("paths = %#v, want docs/configuration.md", rejection.Paths)
-		}
-		if strings.Contains(escalated, "use a different tool call") {
-			t.Fatalf("candidate-only source-grounding retry must not use generic recovery text:\n%s", escalated)
-		}
-		if detail := rejection.PresentableDetail(); strings.Contains(detail, "[gate retry") || strings.Contains(detail, "[source evidence recovery") {
-			t.Fatalf("presentable detail should not leak gate prefix, got %q", detail)
-		}
+	if !strings.Contains(escalated, "[source evidence recovery 2/5]") {
+		t.Fatalf("typed source-grounding retry should use source recovery label:\n%s", escalated)
+	}
+	if strings.Contains(escalated, "use a different tool call") {
+		t.Fatalf("source-grounding retry must not use generic recovery text:\n%s", escalated)
 	}
 }
 
@@ -265,14 +254,14 @@ func TestTurnAssessmentEventFieldsProjectViolationMessagesOnly(t *testing.T) {
 }
 
 func TestFinalAnswerAcceptanceExposesTypedAssessment(t *testing.T) {
-	acceptance := rejectFinalAnswerAcceptanceWithMessage(finalAnswerAcceptance{
+	acceptance := rejectFinalAnswerAcceptanceWithSourceGrounding(finalAnswerAcceptance{
 		EvidencePaths: []string{"internal/runtime/agent/runner_core.go"},
-	}, turnViolationSourceGroundingUnmet, turnReasonSourceGroundingUnmet, "source path not backed by inspected evidence")
+	}, sourceGroundingUnsupportedDetailAssessment([]string{"internal/runtime/agent/source_grounding.go"}))
 
-	if len(acceptance.ContractAssessment.Violations) == 0 {
+	violation, ok := turnContractAssessmentPrimaryViolation(acceptance.ContractAssessment)
+	if !ok {
 		t.Fatalf("source grounding rejection should expose enforceable violation: %#v", acceptance.ContractAssessment)
 	}
-	violation := acceptance.ContractAssessment.Violations[0]
 	if violation.Kind != turnViolationSourceGroundingUnmet {
 		t.Fatalf("violation kind = %q, want %q", violation.Kind, turnViolationSourceGroundingUnmet)
 	}
@@ -287,7 +276,7 @@ func TestFinalAnswerAcceptanceExposesTypedAssessment(t *testing.T) {
 func TestRejectFinalAnswerAcceptanceNormalizesTypedAssessment(t *testing.T) {
 	acceptance := rejectFinalAnswerAcceptance(finalAnswerAcceptance{
 		EvidencePaths: []string{"internal/runtime/agent/runner_core.go"},
-	}, turnViolationSourceGroundingUnmet, turnReasonSourceGroundingUnmet)
+	}, turnViolationRequiredEvidenceUnmet, turnReasonRequiredEvidenceUnmet)
 
 	if acceptance.Decision != finalAnswerAcceptanceRejected ||
 		acceptance.PolicyDecision != autonomy.PolicyReject ||
@@ -295,7 +284,7 @@ func TestRejectFinalAnswerAcceptanceNormalizesTypedAssessment(t *testing.T) {
 		acceptance.InvariantID != finalAnswerPolicyInvariantAcceptance {
 		t.Fatalf("reject helper must return normalized policy metadata: %#v", acceptance)
 	}
-	if !acceptance.ContractAssessment.HasViolation(turnViolationSourceGroundingUnmet) ||
+	if !acceptance.ContractAssessment.HasViolation(turnViolationRequiredEvidenceUnmet) ||
 		acceptance.ContractAssessment.HasDiagnostic(turnDiagnosticObjectiveRelevance) {
 		t.Fatalf("reject helper must return typed violation only, got %#v", acceptance.ContractAssessment)
 	}
@@ -318,7 +307,7 @@ func TestFinalAnswerAcceptancePreservesObjectiveDiagnosticAssessment(t *testing.
 }
 
 func TestFinalAnswerAcceptanceAcceptedOverrideClearsTypedViolations(t *testing.T) {
-	rejected := rejectFinalAnswerAcceptanceWithMessage(newFinalAnswerAcceptance(), turnViolationSourceGroundingUnmet, turnReasonSourceGroundingUnmet, "source missing")
+	rejected := rejectFinalAnswerAcceptanceWithSourceGrounding(newFinalAnswerAcceptance(), sourceGroundingUnsupportedDetailAssessment([]string{"internal/runtime/agent/source_grounding.go"}))
 	if len(rejected.ContractAssessment.Violations) == 0 {
 		t.Fatalf("test setup expected violation: %#v", rejected.ContractAssessment)
 	}
@@ -330,7 +319,7 @@ func TestFinalAnswerAcceptanceAcceptedOverrideClearsTypedViolations(t *testing.T
 }
 
 func TestFinalAnswerAcceptanceRejectedOverrideReplacesTypedViolations(t *testing.T) {
-	rejected := rejectFinalAnswerAcceptanceWithMessage(newFinalAnswerAcceptance(), turnViolationSourceGroundingUnmet, turnReasonSourceGroundingUnmet, "source missing")
+	rejected := rejectFinalAnswerAcceptanceWithSourceGrounding(newFinalAnswerAcceptance(), sourceGroundingUnsupportedDetailAssessment([]string{"internal/runtime/agent/source_grounding.go"}))
 	if !rejected.ContractAssessment.HasViolation(turnViolationSourceGroundingUnmet) {
 		t.Fatalf("test setup expected source-grounding violation: %#v", rejected.ContractAssessment)
 	}
