@@ -1177,43 +1177,6 @@ func DirectAnswerSurfaceForBrief(brief workerruntime.WorkerRuntimeBrief) (Direct
 	}, true
 }
 
-// DirectAnswerSurfacePrefetchEligibility checks whether this direct-answer
-// surface supports source-body prefetch telemetry. Returns (eligible,
-// missReason) where missReason is non-empty when not eligible.
-//
-// Eligibility requires:
-//  1. A non-zero surface (not the zero value).
-//  2. The surface version is recognised (matches DirectAnswerSurfaceVersion).
-//  3. The surface advertises source_body_prefetch capability.
-//
-// Normal model-led investigation remains available regardless.
-func DirectAnswerSurfacePrefetchEligibility(surface DirectAnswerSurface) (eligible bool, missReason string) {
-	if surface.SchemaVersion == "" || surface.Version == "" {
-		return false, "direct_answer_surface_missing"
-	}
-
-	if surface.Version != DirectAnswerSurfaceVersion {
-		return false, "direct_answer_surface_stale: version=" + surface.Version + " expected=" + DirectAnswerSurfaceVersion
-	}
-
-	if !surfaceSupportsCapability(surface, DirectAnswerSurfaceCapSourceBodyPrefetch) {
-		return false, "direct_answer_surface_no_source_body_prefetch_capability"
-	}
-
-	return true, ""
-}
-
-// surfaceSupportsCapability reports whether the surface advertises the given capability.
-func surfaceSupportsCapability(surface DirectAnswerSurface, cap string) bool {
-	for _, c := range surface.Capabilities {
-		if c == cap {
-			return true
-		}
-	}
-
-	return false
-}
-
 // directAnswerSurfaceCapabilities returns the capabilities the current
 // direct-answer surface advertises. This is the single source of truth;
 // add new capabilities here as they are implemented.

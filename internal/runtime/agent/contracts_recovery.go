@@ -3848,10 +3848,6 @@ func appendRecoveryCardToMessage(message string, card string) string {
 	}
 }
 
-func (r *Runner) renderRecoveryCardForRejectedAction(req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult, currentAllowedTools []string) string {
-	return r.renderRecoveryCardForRejectedActionWithTransport(req, result, results, currentAllowedTools, PlanExecutePlanningTransport{})
-}
-
 func (r *Runner) renderRecoveryCardForRejectedActionWithTransport(req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult, currentAllowedTools []string, transport PlanExecutePlanningTransport) string {
 	if r == nil {
 		return ""
@@ -4779,40 +4775,6 @@ func (p *completionGatePipeline) Evaluate(reply string, results []workspace.Tool
 	return workspace.ToolResult{}, false
 }
 
-type Projection struct {
-	Lane       string
-	TaskFamily string
-	Phase      string
-	ReadOnly   bool
-}
-
-func (p Projection) RouteKey() string {
-	if p.Phase == "" {
-		return p.Lane + ":" + p.TaskFamily
-	}
-	return p.Lane + ":" + p.TaskFamily + ":" + p.Phase
-}
-
-type Violation struct {
-	ContractID    string
-	InvariantID   string
-	ObligationIDs []string
-	SurfaceID     string
-	ActionClass   string
-	ReasonCode    string
-	EvidenceRefs  []string
-}
-
-func (v Violation) IsZero() bool {
-	return v.ContractID == "" &&
-		v.InvariantID == "" &&
-		len(v.ObligationIDs) == 0 &&
-		v.SurfaceID == "" &&
-		v.ActionClass == "" &&
-		v.ReasonCode == "" &&
-		len(v.EvidenceRefs) == 0
-}
-
 type RuntimeCallPolicyInput struct {
 	SupportsNativeTools      bool
 	ForceNativeTools         bool
@@ -5142,30 +5104,4 @@ func mapKeysSorted(values map[string]map[Owner]struct{}) []string {
 	}
 	sort.Strings(keys)
 	return keys
-}
-
-const InvariantPostWrite = "verification.post_write"
-
-// Decision is the neutral runtime verification decision passed from
-// verification gates to completion, recovery, and autonomy recording.
-type VerificationDecision struct {
-	Handled     bool
-	Decision    autonomy.ToolPolicyDecision
-	InvariantID string
-	ReasonCode  string
-	Status      string
-	Source      string
-	Summary     string
-	Error       string
-}
-
-func NewVerificationDecision(decision autonomy.ToolPolicyDecision, reasonCode string, status string) VerificationDecision {
-	return VerificationDecision{
-		Handled:     true,
-		Decision:    decision,
-		InvariantID: InvariantPostWrite,
-		ReasonCode:  strings.TrimSpace(reasonCode),
-		Status:      strings.TrimSpace(status),
-		Source:      "verification_policy",
-	}
 }

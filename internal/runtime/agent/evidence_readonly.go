@@ -8466,34 +8466,6 @@ func reverseSourceEvidenceObligations(values []sourceEvidenceObligation) {
 	}
 }
 
-func sourceEvidencePendingRedirectForPath(path string, results []workspace.ToolResult) (sourceEvidenceObligation, bool) {
-	path = NormalizeRunnerPath(path)
-	if path == "" {
-		return sourceEvidenceObligation{}, false
-	}
-
-	for _, obligation := range sourceEvidencePendingRedirects(results) {
-		if obligation.Path == path {
-			return obligation, true
-		}
-	}
-
-	return sourceEvidenceObligation{}, false
-}
-
-func sourceEvidencePendingRedirectFollowupAllowed(req workspace.ToolRequest, results []workspace.ToolResult) bool {
-	path := NormalizeRunnerPath(req.Path)
-	tool := strings.TrimSpace(req.Tool)
-
-	if path == "" || tool == "" {
-		return false
-	}
-
-	obligation, ok := sourceEvidencePendingRedirectForPath(path, results)
-
-	return ok && sourceEvidencePendingRedirectRequestAllowed(obligation, req)
-}
-
 func sourceEvidencePendingRedirectFollowupAllowedForBrief(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest, results []workspace.ToolResult) bool {
 	path := NormalizeRunnerPath(req.Path)
 	tool := strings.TrimSpace(req.Tool)

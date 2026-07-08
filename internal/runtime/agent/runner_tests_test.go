@@ -42115,21 +42115,3 @@ func TestRunnerSetCurrentAllowedToolsSyncsStateStore(t *testing.T) {
 		t.Fatalf("run state allowed tools = %#v", got)
 	}
 }
-
-func TestRunnerLoopTurnStatePrefersStateStoreChangedPaths(t *testing.T) {
-	store := newStateStore(nil, false, 0)
-	store.TrackWritePath("docs/design.md")
-	runner := &Runner{StateStore: store}
-	state := &runnerRunState{
-		stepNumber:          3,
-		currentAllowedTools: []string{"submit_plan"},
-	}
-
-	got := runner.loopTurnState(state)
-	if got.Step != 3 || len(got.AllowedTools) != 1 || got.AllowedTools[0] != "submit_plan" {
-		t.Fatalf("unexpected loop turn state surface: %#v", got)
-	}
-	if len(got.ChangedPaths) != 1 || got.ChangedPaths[0] != "docs/design.md" {
-		t.Fatalf("loop turn state changed paths = %#v, want docs/design.md", got.ChangedPaths)
-	}
-}

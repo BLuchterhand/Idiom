@@ -2094,79 +2094,6 @@ func TestToolResultMessageNilCallReturnsSystem(t *testing.T) {
 	}
 }
 
-func TestVerificationPolicyPostWriteRequiredCarriesTypedDecision(t *testing.T) {
-	decision := verificationPostWriteRequiredDecision(
-		workspace.ToolRequest{Tool: "read_file", Path: "README.md"},
-		workerruntime.WorkerRuntimeBrief{RequiredEditPaths: []string{"README.md"}},
-		2,
-	)
-
-	assertVerificationPolicyDecision(t, decision, autonomy.PolicyReject, "verification_required_after_writes", "pending")
-}
-
-func TestVerificationPolicyPostWriteRequiredPreservesWriteCountSemantics(t *testing.T) {
-	brief := workerruntime.WorkerRuntimeBrief{RequiredEditPaths: []string{"README.md"}}
-
-	if decision := verificationPostWriteRequiredDecision(workspace.ToolRequest{Tool: "read_file", Path: "README.md"}, brief, 1); decision.Handled {
-		t.Fatalf("one write since verification should not require verification yet: %#v", decision)
-	}
-
-	decision := verificationPostWriteRequiredDecision(workspace.ToolRequest{Tool: "read_file", Path: "README.md"}, brief, 2)
-	assertVerificationPolicyDecision(t, decision, autonomy.PolicyReject, "verification_required_after_writes", "pending")
-
-	if decision := verificationPostWriteRequiredDecision(workspace.ToolRequest{Tool: "source_sanity", Path: "main.go"}, brief, 2); decision.Handled {
-		t.Fatalf("verification request must remain allowed: %#v", decision)
-	}
-}
-
-func TestVerificationPolicySourceEditRequiredCarriesTypedDecision(t *testing.T) {
-	brief := workerruntime.WorkerRuntimeBrief{
-		TaskFamily:           "implementation",
-		Contract:             "implementation_result",
-		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
-	}
-	results := []workspace.ToolResult{
-		{Tool: "edit_file", Summary: "Edited native/src/cart_system.cpp", ChangedPaths: []string{"native/src/cart_system.cpp"}},
-		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- native/src/cart_system.cpp\n"},
-	}
-
-	decision := verificationSourceEditRequiredDecision(
-		workspace.ToolRequest{Tool: "read_file", Path: "native/src/cart_system.cpp"},
-		brief,
-		results,
-	)
-
-	assertVerificationPolicyDecision(t, decision, autonomy.PolicyReject, "source_edit_verification_required", "pending")
-}
-
-func TestVerificationPolicyResultCarriesTypedDecision(t *testing.T) {
-	assertVerificationPolicyDecision(t, verificationResultDecision("done"), autonomy.PolicyAllow, "verification_result_done", "done")
-	assertVerificationPolicyDecision(t, verificationResultDecision("failed"), autonomy.PolicyReject, "verification_result_failed", "failed")
-}
-
-func assertVerificationPolicyDecision(t *testing.T, decision VerificationPolicyDecision, wantDecision autonomy.ToolPolicyDecision, wantReason string, wantStatus string) {
-	t.Helper()
-
-	if !decision.Handled {
-		t.Fatalf("expected handled verification decision")
-	}
-	if decision.InvariantID != verificationPolicyInvariantPostWrite {
-		t.Fatalf("InvariantID = %q, want %q", decision.InvariantID, verificationPolicyInvariantPostWrite)
-	}
-	if decision.Decision != wantDecision {
-		t.Fatalf("Decision = %q, want %q", decision.Decision, wantDecision)
-	}
-	if decision.ReasonCode != wantReason {
-		t.Fatalf("ReasonCode = %q, want %q", decision.ReasonCode, wantReason)
-	}
-	if decision.Status != wantStatus {
-		t.Fatalf("Status = %q, want %q", decision.Status, wantStatus)
-	}
-	if decision.Source != "verification_policy" {
-		t.Fatalf("Source = %q, want verification_policy", decision.Source)
-	}
-}
-
 func TestSentinelFailuresPreserveErrorsIsAndCanonicalCodes(t *testing.T) {
 	tests := []struct {
 		name string
@@ -2231,37 +2158,6 @@ func TestWriteDecisionPendingRequiredPaths(t *testing.T) {
 	}
 }
 
-func TestProjectionRouteKey(t *testing.T) {
-	got := (Projection{Lane: "main", TaskFamily: "plan_execute", Phase: "planner"}).RouteKey()
-	if got != "main:plan_execute:planner" {
-		t.Fatalf("RouteKey = %q", got)
-	}
-}
-
-func TestTurnStateCarriesSurfaceState(t *testing.T) {
-	state := NewTurnState(2, []string{"read_file"}, []string{"README.md"})
-
-	if state.Step != 2 || state.AllowedTools[0] != "read_file" || state.ChangedPaths[0] != "README.md" {
-		t.Fatalf("unexpected turn state: %#v", state)
-	}
-}
-
-func TestNewTurnStateCopiesAndSortsSlices(t *testing.T) {
-	allowed := []string{"read_file"}
-	changed := []string{"b.go", "a.go"}
-
-	state := NewTurnState(1, allowed, changed)
-	allowed[0] = "shell"
-	changed[0] = "z.go"
-
-	if state.AllowedTools[0] != "read_file" {
-		t.Fatalf("allowed tools mutated through caller slice: %#v", state.AllowedTools)
-	}
-	if state.ChangedPaths[0] != "a.go" || state.ChangedPaths[1] != "b.go" {
-		t.Fatalf("changed paths = %#v, want sorted a.go,b.go", state.ChangedPaths)
-	}
-}
-
 type recordingController struct {
 	events []string
 	steps  int
@@ -2310,15 +2206,6 @@ func TestRunSessionOwnsLifecycleOrder(t *testing.T) {
 	want := []string{"bootstrap", "step", "step", "finish", "close"}
 	if !slices.Equal(controller.events, want) {
 		t.Fatalf("events = %#v, want %#v", controller.events, want)
-	}
-}
-
-func TestViolationIsZero(t *testing.T) {
-	if !(Violation{}).IsZero() {
-		t.Fatal("empty violation should be zero")
-	}
-	if (Violation{InvariantID: "completion.readiness"}).IsZero() {
-		t.Fatal("violation with invariant should not be zero")
 	}
 }
 
@@ -2573,29 +2460,6 @@ func TestIntentCarriesTransportNeutralToolRequest(t *testing.T) {
 
 	if intent.ToolName != "read_file" || intent.ActionClass != "read" || intent.Transport != "native" {
 		t.Fatalf("unexpected intent: %#v", intent)
-	}
-}
-
-func TestNewDecisionCarriesVerificationInvariant(t *testing.T) {
-	decision := NewVerificationDecision(autonomy.PolicyReject, " verification_required_after_writes ", " pending ")
-
-	if !decision.Handled {
-		t.Fatalf("expected handled decision")
-	}
-	if decision.Decision != autonomy.PolicyReject {
-		t.Fatalf("Decision = %q, want %q", decision.Decision, autonomy.PolicyReject)
-	}
-	if decision.InvariantID != InvariantPostWrite {
-		t.Fatalf("InvariantID = %q, want %q", decision.InvariantID, InvariantPostWrite)
-	}
-	if decision.ReasonCode != "verification_required_after_writes" {
-		t.Fatalf("ReasonCode = %q", decision.ReasonCode)
-	}
-	if decision.Status != "pending" {
-		t.Fatalf("Status = %q", decision.Status)
-	}
-	if decision.Source != "verification_policy" {
-		t.Fatalf("Source = %q", decision.Source)
 	}
 }
 
@@ -6684,7 +6548,11 @@ func TestSourceEvidenceStateTracksRedirectPendingUntilBodyEvidence(t *testing.T)
 	}
 
 	req := workspace.ToolRequest{Tool: "code_navigate", Path: "internal/surfaces/tui/app/sessions.go", Capability: "read_symbol", Pattern: "session"}
-	if !sourceEvidencePendingRedirectFollowupAllowed(req, results) {
+	pending := sourceEvidencePendingRedirects(results)
+	if len(pending) != 1 {
+		t.Fatalf("pending redirects = %#v, want one sessions.go obligation", pending)
+	}
+	if !sourceEvidencePendingRedirectRequestAllowed(pending[0], req) {
 		t.Fatal("exact redirected source-body follow-up should be allowed")
 	}
 
@@ -6694,13 +6562,13 @@ func TestSourceEvidenceStateTracksRedirectPendingUntilBodyEvidence(t *testing.T)
 		"references":                     {Tool: "code_navigate", Path: "internal/surfaces/tui/app/sessions.go", Capability: "references", Pattern: "session"},
 		"read symbol missing pattern":    {Tool: "code_navigate", Path: "internal/surfaces/tui/app/sessions.go", Capability: "read_symbol"},
 	} {
-		if sourceEvidencePendingRedirectFollowupAllowed(badReq, results) {
+		if sourceEvidencePendingRedirectRequestAllowed(pending[0], badReq) {
 			t.Fatalf("%s should not satisfy a redirected source-body obligation", name)
 		}
 	}
 
 	other := workspace.ToolRequest{Tool: "code_navigate", Path: "internal/surfaces/tui/app/sessions_panel.go", Capability: "read_symbol", Pattern: "session"}
-	if sourceEvidencePendingRedirectFollowupAllowed(other, results) {
+	if NormalizeRunnerPath(other.Path) == pending[0].Path && sourceEvidencePendingRedirectRequestAllowed(pending[0], other) {
 		t.Fatal("redirect follow-up allowance must stay scoped to the redirected path")
 	}
 
@@ -11204,7 +11072,7 @@ func TestRecoveryCardExposesWriteReadySurfaceWithoutStrategyText(t *testing.T) {
 		Output:  "func renderSessionsPanelContent() {}\nfunc handleSessionsPanelKey() {}\n",
 	}}
 
-	got := runner.renderRecoveryCardForRejectedAction(
+	got := runner.renderRecoveryCardForRejectedActionWithTransport(
 		workspace.ToolRequest{Tool: "code_navigate", Path: "internal/surfaces/tui/app/model.go"},
 		workspace.ToolResult{
 			Tool:    "code_navigate",
@@ -11213,6 +11081,7 @@ func TestRecoveryCardExposesWriteReadySurfaceWithoutStrategyText(t *testing.T) {
 		},
 		results,
 		[]string{"mkdir", "edit_file", "write_file", "append_file", "apply_patch", "delegate_edit", "go_move_declarations"},
+		PlanExecutePlanningTransport{},
 	)
 
 	assertRecoveryCardContains(t, got,
@@ -11239,11 +11108,12 @@ func TestRecoveryCardForRejectedActionBuildsRecoveryCard(t *testing.T) {
 		},
 	}
 
-	got := runner.renderRecoveryCardForRejectedAction(
+	got := runner.renderRecoveryCardForRejectedActionWithTransport(
 		workspace.ToolRequest{Tool: "completion_gate"},
 		workspace.ToolResult{Tool: "completion_gate", Summary: "Completion gate rejected final answer", Error: "post-write verification is unresolved"},
 		[]workspace.ToolResult{{Tool: "apply_patch", Summary: "Patched files", Output: "update internal/example.go\n"}},
 		[]string{"read_file", "source_sanity", "shell", "apply_patch"},
+		PlanExecutePlanningTransport{},
 	)
 
 	assertRecoveryCardContains(t, got,
@@ -11708,7 +11578,7 @@ func TestCompletionGateRecoveryCardUsesGuardedMutationTargetSourcePhase(t *testi
 			AllowedTools:      []string{"context_pack", "read_file", "search_content", "edit_file", "apply_patch", "source_sanity"},
 		},
 	}
-	got := runner.renderRecoveryCardForRejectedAction(
+	got := runner.renderRecoveryCardForRejectedActionWithTransport(
 		workspace.ToolRequest{Tool: "completion_gate"},
 		workspace.ToolResult{
 			Tool:    "completion_gate",
@@ -11717,6 +11587,7 @@ func TestCompletionGateRecoveryCardUsesGuardedMutationTargetSourcePhase(t *testi
 		},
 		nil,
 		[]string{"context_pack", "read_file", "search_content", "edit_file", "apply_patch", "source_sanity"},
+		PlanExecutePlanningTransport{},
 	)
 
 	assertRecoveryCardContains(t, got,
@@ -12170,54 +12041,6 @@ func TestSourceEvidencePendingRedirectsDetectsRedirectedRead(t *testing.T) {
 func TestSourceEvidencePendingRedirectsEmptyResults(t *testing.T) {
 	if len(sourceEvidencePendingRedirects(nil)) != 0 {
 		t.Fatal("expected empty pending")
-	}
-}
-
-func TestSourceEvidencePendingRedirectForPathFound(t *testing.T) {
-	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Redirected src/main.go to code_navigate", Output: "Use code_navigate for source-body evidence in src/main.go."}}
-	obligation, ok := sourceEvidencePendingRedirectForPath("src/main.go", results)
-	if !ok {
-		t.Fatal("expected pending redirect")
-	}
-	if obligation.Path != "src/main.go" {
-		t.Fatalf("expected src/main.go, got %q", obligation.Path)
-	}
-}
-
-func TestSourceEvidencePendingRedirectForPathNotFound(t *testing.T) {
-	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Redirected src/main.go to code_navigate"}}
-	_, ok := sourceEvidencePendingRedirectForPath("src/lib.rs", results)
-	if ok {
-		t.Fatal("expected no pending redirect")
-	}
-}
-
-func TestSourceEvidencePendingRedirectForPathEmptyPath(t *testing.T) {
-	_, ok := sourceEvidencePendingRedirectForPath("", nil)
-	if ok {
-		t.Fatal("expected false for empty path")
-	}
-}
-
-func TestSourceEvidencePendingRedirectFollowupAllowed(t *testing.T) {
-	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Redirected src/main.go to code_navigate", Output: "Use code_navigate for source-body evidence in src/main.go."}}
-	req := workspace.ToolRequest{Path: "src/main.go", Tool: "code_navigate", Capability: "read_symbol", Pattern: "init"}
-	if !sourceEvidencePendingRedirectFollowupAllowed(req, results) {
-		t.Fatal("expected followup allowed")
-	}
-}
-
-func TestSourceEvidencePendingRedirectFollowupAllowedWrongTool(t *testing.T) {
-	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Redirected src/main.go to code_navigate"}}
-	req := workspace.ToolRequest{Path: "src/main.go", Tool: "edit_file"}
-	if sourceEvidencePendingRedirectFollowupAllowed(req, results) {
-		t.Fatal("expected no followup for wrong tool")
-	}
-}
-
-func TestSourceEvidencePendingRedirectFollowupAllowedEmptyRequest(t *testing.T) {
-	if sourceEvidencePendingRedirectFollowupAllowed(workspace.ToolRequest{}, nil) {
-		t.Fatal("expected false for empty request")
 	}
 }
 
@@ -31595,7 +31418,7 @@ func TestDirectAnswerSurfaceForBriefFiltersProtocolAndMutationTools(t *testing.T
 		}
 	}
 
-	if !surfaceSupportsCapability(surface, DirectAnswerSurfaceCapReadOnlyInvestigation) {
+	if !slices.Contains(surface.Capabilities, DirectAnswerSurfaceCapReadOnlyInvestigation) {
 		t.Fatal("direct-answer surface should advertise read-only investigation")
 	}
 }
@@ -31614,71 +31437,6 @@ func TestDirectAnswerSurfaceNotReturnedForWriteBrief(t *testing.T) {
 
 	if _, ok := DirectAnswerSurfaceForBrief(brief); ok {
 		t.Fatal("non-direct-answer task family must not receive lightweight direct-answer surface")
-	}
-}
-
-func TestDirectAnswerSurfacePrefetchEligibilityTypedMisses(t *testing.T) {
-	tests := []struct {
-		name       string
-		surface    DirectAnswerSurface
-		wantPrefix string
-	}{
-		{
-			name:       "missing",
-			surface:    DirectAnswerSurface{},
-			wantPrefix: "direct_answer_surface_missing",
-		},
-		{
-			name: "stale",
-			surface: DirectAnswerSurface{
-				SchemaVersion: DirectAnswerSurfaceSchemaVersion,
-				Version:       "old",
-				Capabilities:  []string{DirectAnswerSurfaceCapSourceBodyPrefetch},
-			},
-			wantPrefix: "direct_answer_surface_stale:",
-		},
-		{
-			name: "capability absent",
-			surface: DirectAnswerSurface{
-				SchemaVersion: DirectAnswerSurfaceSchemaVersion,
-				Version:       DirectAnswerSurfaceVersion,
-				Capabilities:  []string{DirectAnswerSurfaceCapReadOnlyInvestigation},
-			},
-			wantPrefix: "direct_answer_surface_no_source_body_prefetch_capability",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			eligible, missReason := DirectAnswerSurfacePrefetchEligibility(tt.surface)
-			if eligible {
-				t.Fatal("prefetch should not be eligible")
-			}
-
-			if !strings.HasPrefix(missReason, tt.wantPrefix) {
-				t.Fatalf("miss reason = %q, want prefix %q", missReason, tt.wantPrefix)
-			}
-		})
-	}
-}
-
-func TestDirectAnswerSurfacePrefetchEligibilityRequiresAdvertisedCapability(t *testing.T) {
-	surface := DirectAnswerSurface{
-		SchemaVersion: DirectAnswerSurfaceSchemaVersion,
-		Version:       DirectAnswerSurfaceVersion,
-		Capabilities: []string{
-			DirectAnswerSurfaceCapReadOnlyInvestigation,
-			DirectAnswerSurfaceCapSourceBodyPrefetch,
-		},
-	}
-
-	eligible, missReason := DirectAnswerSurfacePrefetchEligibility(surface)
-	if !eligible {
-		t.Fatalf("prefetch should be eligible when surface advertises capability, miss reason %q", missReason)
-	}
-
-	if missReason != "" {
-		t.Fatalf("eligible surface returned miss reason %q", missReason)
 	}
 }
 

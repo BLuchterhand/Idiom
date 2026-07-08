@@ -424,52 +424,6 @@ func planThenExecuteAnchorRefreshWriteOnlyError(tool string, refreshPaths []stri
 	return fmt.Sprintf("%s is not available in its requested form while plan-execute anchor-refresh mode is still open for: %s. Issue exactly one bounded source-body request for a remaining refresh path: `read_file` with explicit `start_line`/`end_line`, or `%s` with %s plus `pattern`. Do not call `submit_plan` until that refresh returns.", strings.TrimSpace(tool), targets, workspace.ToolNameCodeNavigate, workspace.CodeNavigateSourceBodyCapabilityPhrase())
 }
 
-type VerificationPolicyDecision struct {
-	Handled     bool
-	InvariantID string
-	Decision    autonomy.ToolPolicyDecision
-	ReasonCode  string
-	Status      string
-	Source      string
-}
-
-const verificationPolicyInvariantPostWrite = "verification.post_write"
-
-func verificationPostWriteRequiredDecision(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, writesSinceVerification int) VerificationPolicyDecision {
-	state := &runnerExecutionState{writesSinceVerification: writesSinceVerification}
-	if !state.shouldRequireVerification(req, brief) {
-		return VerificationPolicyDecision{}
-	}
-	return verificationPolicyDecision(autonomy.PolicyReject, "verification_required_after_writes", "pending")
-}
-
-func verificationSourceEditRequiredDecision(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) VerificationPolicyDecision {
-	if _, _, reject := sourceEditVerificationRejection(req, brief, results); !reject {
-		return VerificationPolicyDecision{}
-	}
-	return verificationPolicyDecision(autonomy.PolicyReject, "source_edit_verification_required", "pending")
-}
-
-func verificationResultDecision(status string) VerificationPolicyDecision {
-	status = strings.TrimSpace(status)
-	decision := autonomy.PolicyAllow
-	if status == "failed" {
-		decision = autonomy.PolicyReject
-	}
-	return verificationPolicyDecision(decision, "verification_result_"+status, status)
-}
-
-func verificationPolicyDecision(decision autonomy.ToolPolicyDecision, reason string, status string) VerificationPolicyDecision {
-	return VerificationPolicyDecision{
-		Handled:     true,
-		InvariantID: verificationPolicyInvariantPostWrite,
-		Decision:    decision,
-		ReasonCode:  strings.TrimSpace(reason),
-		Status:      strings.TrimSpace(status),
-		Source:      "verification_policy",
-	}
-}
-
 type LifecycleCloseoutPolicyDecision struct {
 	Handled bool
 	Gate    runnerAutonomyGateDecision
@@ -824,23 +778,6 @@ func (r *Runner) presentableBriefConversationFallbackCandidate(results []workspa
 		return presentableBriefConversationFallbackCandidate("", workerruntime.WorkerRuntimeBrief{}, results)
 	}
 	return readOnlyClosureDecisionForResults(r.RuntimeBrief, results).PresentableBriefConversationFallbackCandidate(r.agentName())
-}
-
-func (r *Runner) loopTurnState(state *runnerRunState) TurnState {
-	if r == nil {
-		return NewTurnState(0, nil, nil)
-	}
-	step := 0
-	var allowed []string
-	if state != nil {
-		step = state.stepNumber
-		allowed = state.currentAllowedTools
-	}
-	var changed []string
-	if r.StateStore != nil {
-		changed = r.StateStore.ChangedPaths()
-	}
-	return NewTurnState(step, allowed, changed)
 }
 
 func (r *Runner) sessionID() string {
@@ -19097,7 +19034,6 @@ type runnerRunState struct {
 	collectedResults []workspace.ToolResult
 	turnMessages     []llama.ChatMessage
 
-	stepNumber      int
 	budgetExhausted bool
 	stopReason      string
 
@@ -22911,25 +22847,6 @@ func (d WriteDecision) PendingRequiredPaths() []string {
 		pending = append(pending, path)
 	}
 	return pending
-}
-
-// TurnState is the authoritative mutable state holder target for the runner
-// loop migration. It starts as a small boundary type while legacy state remains
-// in the root runner.
-type TurnState struct {
-	Step         int
-	AllowedTools []string
-	ChangedPaths []string
-}
-
-func NewTurnState(step int, allowedTools []string, changedPaths []string) TurnState {
-	state := TurnState{
-		Step:         step,
-		AllowedTools: append([]string(nil), allowedTools...),
-		ChangedPaths: append([]string(nil), changedPaths...),
-	}
-	slices.Sort(state.ChangedPaths)
-	return state
 }
 
 // SessionConfig defines the loop-owned lifecycle budget. A zero MaxSteps means

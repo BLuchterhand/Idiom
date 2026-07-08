@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/runtime/workerruntime"
 )
@@ -346,79 +345,5 @@ func TestFinalAnswerAcceptanceRejectedOverrideReplacesTypedViolations(t *testing
 		!transport.ContractAssessment.HasViolation(turnViolationTransportProtocolOutput) ||
 		len(transport.ContractAssessment.Violations) != 1 {
 		t.Fatalf("rejected override must replace stale typed violations: %#v", transport.ContractAssessment)
-	}
-}
-
-func TestTurnAssessmentFromToolAuthorizationPolicy(t *testing.T) {
-	tests := []struct {
-		name     string
-		decision autonomy.ToolPolicyDecision
-		reason   string
-		want     turnViolationKind
-	}{
-		{name: "ask", decision: autonomy.PolicyAsk, reason: "write_approval_required", want: turnViolationToolAuthorizationApprovalRequired},
-		{name: "reject", decision: autonomy.PolicyReject, reason: "current_tool_surface", want: turnViolationToolAuthorizationDenied},
-		{name: "deny", decision: autonomy.PolicyDeny, reason: "protected_path", want: turnViolationToolAuthorizationDenied},
-		{name: "allow", decision: autonomy.PolicyAllow, reason: "current_tool_surface"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			policy := toolAuthorizationPolicyEvent(
-				workspace.ToolRequest{Tool: workspace.ToolNameTask},
-				tt.decision,
-				tt.reason,
-				"status",
-				"class",
-				"tool_authorization_policy",
-				tt.decision == autonomy.PolicyAsk,
-			)
-
-			assessment := turnAssessmentFromToolAuthorizationPolicy(policy)
-			if tt.want == "" {
-				if len(assessment.Violations) > 0 {
-					t.Fatalf("allow policy must not create violations: %#v", assessment)
-				}
-				return
-			}
-			if !assessment.HasViolation(tt.want) {
-				t.Fatalf("policy should create %q violation, got %#v", tt.want, assessment)
-			}
-			violation := assessment.Violations[0]
-			if violation.PackID != autonomy.ContractPackToolAuthorization ||
-				violation.InvariantID != toolAuthorizationPolicyInvariant ||
-				violation.ReasonCode != turnReasonCode(tt.reason) {
-				t.Fatalf("unexpected authorization violation: %#v", violation)
-			}
-		})
-	}
-}
-
-func TestTurnAssessmentFromVerificationDecision(t *testing.T) {
-	required := VerificationDecision{
-		Handled:     true,
-		Decision:    autonomy.PolicyReject,
-		ReasonCode:  "verification_required_after_writes",
-		Status:      "pending",
-		InvariantID: verificationPolicyInvariantPostWrite,
-	}
-	requiredAssessment := turnAssessmentFromVerificationDecision(required)
-	if !requiredAssessment.HasViolation(turnViolationPostWriteVerificationRequired) {
-		t.Fatalf("verification required should create typed violation: %#v", requiredAssessment)
-	}
-
-	failed := required
-	failed.ReasonCode = "verification_result_failed"
-	failed.Status = "failed"
-	failedAssessment := turnAssessmentFromVerificationDecision(failed)
-	if !failedAssessment.HasViolation(turnViolationPostWriteVerificationFailed) {
-		t.Fatalf("failed verification should create typed violation: %#v", failedAssessment)
-	}
-
-	allowed := required
-	allowed.Decision = autonomy.PolicyAllow
-	allowed.Status = "passed"
-	if assessment := turnAssessmentFromVerificationDecision(allowed); len(assessment.Violations) > 0 {
-		t.Fatalf("allowed verification must not create violations: %#v", assessment)
 	}
 }
