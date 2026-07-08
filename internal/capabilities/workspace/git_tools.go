@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"idiom/internal/platform/gitstate"
 )
 
 func (m *Manager) gitStatus(ctx context.Context, req ToolRequest) ToolResult {
@@ -12,7 +14,7 @@ func (m *Manager) gitStatus(ctx context.Context, req ToolRequest) ToolResult {
 		return ToolResult{Tool: ToolNameGitStatus, Summary: "Failed to resolve workdir", Error: err.Error()}
 	}
 
-	output, execErr := m.runCommand(ctx, workdir, "git", "status", "--porcelain=v1", "--branch", "--untracked-files=normal")
+	output, execErr := m.gitRunner(workdir).Status(ctx)
 	result := ToolResult{
 		Tool:    ToolNameGitStatus,
 		Summary: fmt.Sprintf("Read git status in %s", m.pathAccess.DisplayPath(workdir)),
@@ -32,7 +34,6 @@ func (m *Manager) gitDiff(ctx context.Context, req ToolRequest) ToolResult {
 		return ToolResult{Tool: ToolNameGitDiff, Summary: "Failed to resolve workdir", Error: err.Error()}
 	}
 
-	args := []string{"diff", "--no-color"}
 	diffPath := ""
 
 	if req.Path != "" {
@@ -42,11 +43,9 @@ func (m *Manager) gitDiff(ctx context.Context, req ToolRequest) ToolResult {
 		}
 
 		diffPath = resolved
-
-		args = append(args, "--", req.Path)
 	}
 
-	output, execErr := m.runCommand(ctx, workdir, "git", args...)
+	output, execErr := m.gitRunner(workdir).WorktreeDiff(ctx, req.Path)
 	scope := "working tree"
 
 	if req.Path != "" {
@@ -67,4 +66,13 @@ func (m *Manager) gitDiff(ctx context.Context, req ToolRequest) ToolResult {
 	}
 
 	return result
+}
+
+func (m *Manager) gitRunner(root string) gitstate.Runner {
+	return gitstate.Runner{
+		Root: root,
+		RunCommand: func(ctx context.Context, root string, args ...string) (string, error) {
+			return m.runCommand(ctx, root, "git", args...)
+		},
+	}
 }

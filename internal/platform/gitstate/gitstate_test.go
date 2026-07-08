@@ -1,6 +1,7 @@
 package gitstate
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -175,6 +176,183 @@ func TestDirtyPathsIncludesAllUntrackedFiles(t *testing.T) {
 	want := []string{"a -> b.txt", "nested/new.txt", `quote"path.txt`, "tracked.txt"}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("DirtyPaths = %#v, want %#v", got, want)
+	}
+}
+
+func TestFilterPorcelainStatusByPathPrefixUsesParsedPath(t *testing.T) {
+	status := strings.Join([]string{
+		" M .idiom/recovery/packet.json",
+		` M "docs/.idiom-note.md"`,
+		"?? src/main.go",
+		`R  "old -> path.go" -> ".idiom/generated.go"`,
+	}, "\n")
+
+	got := FilterPorcelainStatusByPathPrefix(status, ".idiom/")
+	want := strings.Join([]string{
+		`M "docs/.idiom-note.md"`,
+		"?? src/main.go",
+	}, "\n")
+	if got != want {
+		t.Fatalf("filtered status = %q, want %q", got, want)
+	}
+}
+
+func TestRunnerStatusAndDiffUseInjectedCommandPolicy(t *testing.T) {
+	var calls []string
+	runner := Runner{
+		Root: "/repo",
+		RunCommand: func(ctx context.Context, root string, args ...string) (string, error) {
+			if root != "/repo" {
+				t.Fatalf("root = %q, want /repo", root)
+			}
+			calls = append(calls, strings.Join(args, " "))
+			return strings.Join(args, " "), nil
+		},
+	}
+
+	status, err := runner.Status(t.Context())
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if status != "status --porcelain=v1 --branch --untracked-files=normal" {
+		t.Fatalf("Status command = %q", status)
+	}
+
+	diff, err := runner.WorktreeDiff(t.Context(), "src/file.go")
+	if err != nil {
+		t.Fatalf("WorktreeDiff: %v", err)
+	}
+	if diff != "diff --no-color -- src/file.go" {
+		t.Fatalf("WorktreeDiff command = %q", diff)
+	}
+
+	want := []string{
+		"status --porcelain=v1 --branch --untracked-files=normal",
+		"diff --no-color -- src/file.go",
+	}
+	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("calls = %#v, want %#v", calls, want)
+	}
+}
+
+func TestCheckHistoryApplicabilityReportsRepositoryStates(t *testing.T) {
+	nonGit := t.TempDir()
+	writeGitStateFile(t, filepath.Join(nonGit, "sample.go"), "package main\n")
+	got, err := (Runner{Root: nonGit}).CheckHistoryApplicability(t.Context(), "sample.go")
+	if err != nil {
+		t.Fatalf("CheckHistoryApplicability non-git: %v", err)
+	}
+	if got.Applicable || got.Reason != HistoryReasonNonGitRoot {
+		t.Fatalf("non-git applicability = %#v, want non_git_root", got)
+	}
+
+	noHead := t.TempDir()
+	gitStateGit(t, noHead, "init")
+	writeGitStateFile(t, filepath.Join(noHead, "sample.go"), "package main\n")
+	got, err = (Runner{Root: noHead}).CheckHistoryApplicability(t.Context(), "sample.go")
+	if err != nil {
+		t.Fatalf("CheckHistoryApplicability no-head: %v", err)
+	}
+	if got.Applicable || got.Reason != HistoryReasonNoHead {
+		t.Fatalf("no-head applicability = %#v, want no_head", got)
+	}
+
+	untracked := initGitStateRepo(t)
+	writeGitStateFile(t, filepath.Join(untracked, "sample.go"), "package main\n")
+	got, err = (Runner{Root: untracked}).CheckHistoryApplicability(t.Context(), "sample.go")
+	if err != nil {
+		t.Fatalf("CheckHistoryApplicability untracked: %v", err)
+	}
+	if got.Applicable || got.Reason != HistoryReasonUntrackedPath {
+		t.Fatalf("untracked applicability = %#v, want untracked_path", got)
+	}
+
+	noCommittedHistory := initGitStateRepo(t)
+	writeGitStateFile(t, filepath.Join(noCommittedHistory, "sample.go"), "package main\n")
+	gitStateGit(t, noCommittedHistory, "add", "sample.go")
+	got, err = (Runner{Root: noCommittedHistory}).CheckHistoryApplicability(t.Context(), "sample.go")
+	if err != nil {
+		t.Fatalf("CheckHistoryApplicability staged path: %v", err)
+	}
+	if got.Applicable || got.Reason != HistoryReasonPathNoCommittedHistory {
+		t.Fatalf("staged path applicability = %#v, want path_no_committed_history", got)
+	}
+
+	applicable := initGitStateRepo(t)
+	got, err = (Runner{Root: applicable}).CheckHistoryApplicability(t.Context(), "tracked.txt")
+	if err != nil {
+		t.Fatalf("CheckHistoryApplicability applicable: %v", err)
+	}
+	if !got.Applicable || got.Reason != "" {
+		t.Fatalf("applicable history = %#v, want applicable", got)
+	}
+}
+
+func TestCheckHistoryApplicabilityMatchesExactPaths(t *testing.T) {
+	root := initGitStateRepo(t)
+	writeGitStateFile(t, filepath.Join(root, "dir", "space path.go"), "package main\n")
+	writeGitStateFile(t, filepath.Join(root, "dir", "space path.go.bak"), "package main\n")
+	gitStateGit(t, root, "add", "dir/space path.go.bak")
+	gitStateGit(t, root, "commit", "-m", "add sibling")
+
+	got, err := (Runner{Root: root}).CheckHistoryApplicability(t.Context(), "dir/space path.go")
+	if err != nil {
+		t.Fatalf("CheckHistoryApplicability: %v", err)
+	}
+	if got.Applicable || got.Reason != HistoryReasonUntrackedPath {
+		t.Fatalf("untracked path with committed sibling = %#v, want untracked_path", got)
+	}
+
+	got, err = (Runner{Root: root}).CheckHistoryApplicability(t.Context(), "dir/space path.go.bak")
+	if err != nil {
+		t.Fatalf("CheckHistoryApplicability sibling: %v", err)
+	}
+	if !got.Applicable {
+		t.Fatalf("committed sibling applicability = %#v, want applicable", got)
+	}
+}
+
+func TestHistoryCommandsUseStableGitForms(t *testing.T) {
+	root := t.TempDir()
+	gitStateGit(t, root, "init")
+	gitStateGit(t, root, "config", "user.email", "test@example.com")
+	gitStateGit(t, root, "config", "user.name", "Test User")
+	writeGitStateFile(t, filepath.Join(root, "sample.go"), "package main\n\nfunc add(a int, b int) int {\n\treturn a + b\n}\n")
+	gitStateGit(t, root, "add", "sample.go")
+	gitStateGit(t, root, "commit", "-m", "initial")
+	writeGitStateFile(t, filepath.Join(root, "sample.go"), "package main\n\nfunc add(a int, b int) int {\n\treturn a - b\n}\n")
+	gitStateGit(t, root, "commit", "-am", "change add")
+
+	runner := Runner{Root: root}
+
+	history, err := runner.HistoryRange(t.Context(), "sample.go", 3, 5)
+	if err != nil {
+		t.Fatalf("HistoryRange: %v\n%s", err, history.Output)
+	}
+	if !history.HasCommitDescriptions {
+		t.Fatalf("HistoryRange should report commit descriptions: %#v", history)
+	}
+	if !strings.Contains(history.Output, "change add") || !strings.Contains(history.Output, "initial") {
+		t.Fatalf("HistoryRange missing expected commits:\n%s", history.Output)
+	}
+
+	symbol, err := runner.HistorySymbol(t.Context(), "sample.go", "add")
+	if err != nil {
+		t.Fatalf("HistorySymbol: %v\n%s", err, symbol.Output)
+	}
+	if !symbol.HasCommitDescriptions {
+		t.Fatalf("HistorySymbol should report commit descriptions: %#v", symbol)
+	}
+	if !strings.Contains(symbol.Output, "change add") || !strings.Contains(symbol.Output, "initial") {
+		t.Fatalf("HistorySymbol missing expected commits:\n%s", symbol.Output)
+	}
+
+	blame, err := runner.BlameRange(t.Context(), "sample.go", 4, 4)
+	if err != nil {
+		t.Fatalf("BlameRange: %v\n%s", err, blame)
+	}
+	if !strings.Contains(blame, "return a - b") {
+		t.Fatalf("BlameRange missing changed line:\n%s", blame)
 	}
 }
 

@@ -21,6 +21,7 @@ import (
 	"idiom/internal/contracts/pathparse"
 	plancontract "idiom/internal/contracts/plan"
 	"idiom/internal/contracts/sourcekind"
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/gitstate"
@@ -4470,12 +4471,6 @@ func synthesizeBriefConversationFallback(brief workerruntime.WorkerRuntimeBrief,
 	return readOnlyClosureDecisionForResults(brief, results).ConversationFallback()
 }
 
-type gitHistoryNotApplicableOutput struct {
-	Status string `json:"status"`
-	Code   string `json:"code"`
-	Path   string `json:"path"`
-}
-
 func mutationHistoryEvidenceRequired(brief workerruntime.WorkerRuntimeBrief) bool {
 	brief = workerruntime.NormalizeRuntimeBrief(brief)
 	for _, label := range brief.RequiredEvidence {
@@ -4490,8 +4485,9 @@ func mutationHistoryEvidenceRequired(brief workerruntime.WorkerRuntimeBrief) boo
 func successfulGitHistoryEvidenceSeen(results []workspace.ToolResult) bool {
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) == "" &&
-			slices.Contains([]string{workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol}, strings.TrimSpace(result.Tool)) &&
-			gitHistoryResultIncludesCommitDescription(result) {
+			workspace.ToolSurfacePhaseAllowsTool(result.Tool, workspace.ToolSurfacePhasePlanExecuteHistoryPending) &&
+			result.Facts != nil &&
+			result.Facts.GitHistoryStatus == toolfacts.GitHistoryStatusCommitDescriptions {
 
 			return true
 		}
@@ -4507,80 +4503,21 @@ func successfulGitHistoryResultForPath(path string, results []workspace.ToolResu
 	}
 
 	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" || !slices.Contains([]string{workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol}, strings.TrimSpace(result.Tool)) {
+		if strings.TrimSpace(result.Error) != "" || !workspace.ToolSurfacePhaseAllowsTool(result.Tool, workspace.ToolSurfacePhasePlanExecuteHistoryPending) {
 			continue
 		}
 
-		if gitHistoryNotApplicableForPath(path, result) {
-			return true
-		}
-
-		if !gitHistoryResultIncludesCommitDescription(result) {
+		if result.Facts == nil || NormalizeRunnerPath(result.Facts.GitHistoryPath) != path {
 			continue
 		}
 
-		if NormalizeRunnerPath(gitHistoryResultPath(result)) == path {
+		switch result.Facts.GitHistoryStatus {
+		case toolfacts.GitHistoryStatusCommitDescriptions, toolfacts.GitHistoryStatusNotApplicable:
 			return true
 		}
 	}
 
 	return false
-}
-
-func gitHistoryResultIncludesCommitDescription(result workspace.ToolResult) bool {
-	output := strings.TrimSpace(result.Output)
-	return strings.HasPrefix(output, "commit ") || strings.Contains(output, "\ncommit ")
-}
-
-func gitHistoryNotApplicableForPath(path string, result workspace.ToolResult) bool {
-	if strings.TrimSpace(result.Code) != workspace.HistoryNotApplicableCode {
-		return false
-	}
-
-	if strings.TrimSpace(result.Error) != "" || !slices.Contains([]string{workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol}, strings.TrimSpace(result.Tool)) {
-		return false
-	}
-
-	var output gitHistoryNotApplicableOutput
-
-	if err := json.Unmarshal([]byte(strings.TrimSpace(result.Output)), &output); err != nil {
-		return false
-	}
-
-	if strings.TrimSpace(output.Code) != "" && strings.TrimSpace(output.Code) != workspace.HistoryNotApplicableCode {
-		return false
-	}
-
-	if strings.TrimSpace(output.Status) != "" && strings.TrimSpace(output.Status) != "not_applicable" {
-		return false
-	}
-
-	return NormalizeRunnerPath(output.Path) == NormalizeRunnerPath(path)
-}
-
-func gitHistoryResultPath(result workspace.ToolResult) string {
-	summary := strings.TrimSpace(result.Summary)
-	switch strings.TrimSpace(result.Tool) {
-	case workspace.ToolNameHistoryRange:
-		const prefix = "Read git history for "
-
-		if !strings.HasPrefix(summary, prefix) {
-			return ""
-		}
-
-		tail := strings.TrimSpace(strings.TrimPrefix(summary, prefix))
-		if idx := strings.Index(tail, " lines "); idx >= 0 {
-			return strings.TrimSpace(tail[:idx])
-		}
-	case workspace.ToolNameHistorySymbol:
-		const marker = " in "
-
-		if idx := strings.LastIndex(summary, marker); idx >= 0 {
-			return strings.TrimSpace(summary[idx+len(marker):])
-		}
-	}
-
-	return ""
 }
 
 func (r *Runner) writeBeforeGitHistoryEvidenceRejection(req workspace.ToolRequest, results []workspace.ToolResult) (string, string, bool) {

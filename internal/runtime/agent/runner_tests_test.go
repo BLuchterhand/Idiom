@@ -1105,11 +1105,7 @@ func TestPlanExecuteModelProtocolShowsCompletedHistoryWhenSourceBodyPending(t *t
 			"submit_plan",
 		},
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "history_range",
-		Summary: "Read git history for a.go lines 1-10",
-		Output:  "commit abc123\n\n    explain current behavior",
-	}, {
+	results := []workspace.ToolResult{gitHistoryRangeResult("a.go"), {
 		Tool:    "submit_plan",
 		Summary: "submit_plan rejected: required edit path coverage mismatch",
 		Error:   "submit_plan must use edits[] for changed required paths and top-level source_satisfied_paths for already-final required paths; invalid edit anchor(s): `a.go: old_text not found in current source`.",
@@ -21854,11 +21850,7 @@ func TestImplementationDeferredWriteReplayRequiresHistoryWhenMarked(t *testing.T
 		t.Fatalf("must not replay before history evidence, got req=%#v raw=%q", replayReq, raw)
 	}
 
-	results = append(results, workspace.ToolResult{
-		Tool:    "history_range",
-		Summary: "Read git history for internal/labels/labels.go lines 1-5",
-		Output:  "commit abc123\n\n    Preserve current label behavior",
-	})
+	results = append(results, gitHistoryRangeResult("internal/labels/labels.go"))
 	if replayReq, _, replay := deferred.replayAfterEvidence(verifyReq, results, []string{"source_sanity", "edit_file"}); !replay || replayReq.Tool != "edit_file" {
 		t.Fatalf("expected replay after source and history evidence, replay=%v req=%#v", replay, replayReq)
 	}
@@ -21878,11 +21870,7 @@ func TestImplementationDeferredExactEditReplaysAfterHistoryWithoutPriorRead(t *t
 	}
 	deferred.RequiresHistory = true
 
-	results := []workspace.ToolResult{{
-		Tool:    "history_range",
-		Summary: "Read git history for internal/labels/labels.go lines 1-80",
-		Output:  "commit abc123\n\n    Preserve current label behavior",
-	}}
+	results := []workspace.ToolResult{gitHistoryRangeResult("internal/labels/labels.go")}
 
 	replayReq, raw, replay := deferred.replayAfterHistoryEvidence(results)
 	if !replay {

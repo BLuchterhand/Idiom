@@ -13,6 +13,19 @@ const (
 	DiscoveryStrengthSourceOwner DiscoveryStrength = "source_owner"
 )
 
+// GitHistoryStatus describes producer-owned git-history evidence for a tool
+// result. Consumers should not infer this from human-readable summaries.
+type GitHistoryStatus string
+
+const (
+	// GitHistoryStatusCommitDescriptions means a history tool returned commit
+	// descriptions for the scoped path.
+	GitHistoryStatusCommitDescriptions GitHistoryStatus = "commit_descriptions"
+	// GitHistoryStatusNotApplicable means the scoped path has no applicable
+	// committed history, and the reason field explains why.
+	GitHistoryStatusNotApplicable GitHistoryStatus = "not_applicable"
+)
+
 // ToolResultFacts carries producer-owned evidence facts that consumers should
 // not re-derive from model-facing result text.
 type ToolResultFacts struct {
@@ -23,4 +36,6 @@ type ToolResultFacts struct {
 	DiscoveryStrength       DiscoveryStrength `json:"discovery_strength,omitempty"`
 	SourceOwnerFound        bool              `json:"source_owner_found,omitempty"`
 	LocalizationConfidence  string            `json:"localization_confidence,omitempty"`
+	GitHistoryPath          string            `json:"git_history_path,omitempty"`
+	GitHistoryStatus        GitHistoryStatus  `json:"git_history_status,omitempty"`
 }

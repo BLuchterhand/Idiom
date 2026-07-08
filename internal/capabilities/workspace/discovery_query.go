@@ -781,7 +781,7 @@ func discoveryQueryID(root string, purpose string, req ToolRequest, target strin
 	var head, status string
 	if snapshot, err := gitstate.Current(context.Background(), root); err == nil {
 		head = snapshot.Head
-		status = filterDiscoveryQueryStatus(snapshot.Status)
+		status = gitstate.FilterPorcelainStatusByPathPrefix(snapshot.Status, ".idiom/")
 	}
 	payload, _ := json.Marshal(map[string]any{
 		"purpose":  purpose,
@@ -796,23 +796,6 @@ func discoveryQueryID(root string, purpose string, req ToolRequest, target strin
 	sum := sha256.Sum256(payload)
 
 	return fmt.Sprintf("%x", sum[:8])
-}
-
-func filterDiscoveryQueryStatus(status string) string {
-	var lines []string
-
-	for _, line := range strings.Split(status, "\n") {
-		if strings.Contains(line, ".idiom/") {
-			continue
-		}
-
-		line = strings.TrimSpace(line)
-		if line != "" {
-			lines = append(lines, line)
-		}
-	}
-
-	return strings.Join(lines, "\n")
 }
 
 func ensureDiscoveryArtifactsIgnored(root string) error {

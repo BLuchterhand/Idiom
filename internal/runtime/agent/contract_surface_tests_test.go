@@ -1079,6 +1079,10 @@ func TestSubmitPlanHistoryGuardAcceptsHistorySymbol(t *testing.T) {
 		Tool:    "history_symbol",
 		Summary: "Read git history for Apply in pkg/logic.go",
 		Output:  "commit 1234567\nAuthor: Example\n\n    Preserve Apply behavior for compatibility\n",
+		Facts: &toolfacts.ToolResultFacts{
+			GitHistoryPath:   "pkg/logic.go",
+			GitHistoryStatus: toolfacts.GitHistoryStatusCommitDescriptions,
+		},
 	}}
 
 	if guard := runner.preflightPlanThenExecuteSubmitPlanHistoryGuard(req, results); guard.Intercepted {
@@ -1106,6 +1110,10 @@ func gitHistoryRangeResult(path string) workspace.ToolResult {
 		Tool:    "history_range",
 		Summary: "Read git history for " + path + " lines 1-20",
 		Output:  "commit 1234567\nAuthor: Example\n\n    Preserve established behavior for compatibility\n",
+		Facts: &toolfacts.ToolResultFacts{
+			GitHistoryPath:   path,
+			GitHistoryStatus: toolfacts.GitHistoryStatusCommitDescriptions,
+		},
 	}
 }
 
@@ -1115,6 +1123,10 @@ func gitHistoryNotApplicableResult(path string) workspace.ToolResult {
 		Code:    workspace.HistoryNotApplicableCode,
 		Summary: "Git history not applicable for " + path,
 		Output:  `{"status":"not_applicable","code":"` + workspace.HistoryNotApplicableCode + `","reason":"untracked_path","path":"` + path + `"}`,
+		Facts: &toolfacts.ToolResultFacts{
+			GitHistoryPath:   path,
+			GitHistoryStatus: toolfacts.GitHistoryStatusNotApplicable,
+		},
 	}
 }
 
@@ -6375,14 +6387,45 @@ func TestMissingRequiredEvidenceRequiresHistoryForExistingSourceWrites(t *testin
 		[]string{string(workerruntime.RequiredEvidenceGitHistoryRationale)},
 		"Implemented the source change.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: not run.",
 		[]workspace.ToolResult{{
-			Tool:        workspace.ToolNameWriteFile,
-			Summary:     "Wrote internal/labels/labels.go",
-			PayloadType: writePreimagePayloadType,
-			Payload:     existingSourcePayload,
+			Tool:         workspace.ToolNameWriteFile,
+			Summary:      "Wrote internal/labels/labels.go",
+			ChangedPaths: []string{"internal/labels/labels.go"},
+			PayloadType:  writePreimagePayloadType,
+			Payload:      existingSourcePayload,
 		}},
 	)
 	if !slices.Equal(missing, []string{string(workerruntime.RequiredEvidenceGitHistoryRationale)}) {
 		t.Fatalf("existing source write should still require history evidence, got %#v", missing)
+	}
+
+	wrongPathHistory := missingRequiredEvidence(
+		[]string{string(workerruntime.RequiredEvidenceGitHistoryRationale)},
+		"Implemented the source change.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: not run.",
+		[]workspace.ToolResult{{
+			Tool:         workspace.ToolNameWriteFile,
+			Summary:      "Wrote internal/labels/labels.go",
+			ChangedPaths: []string{"internal/labels/labels.go"},
+			PayloadType:  writePreimagePayloadType,
+			Payload:      existingSourcePayload,
+		}, gitHistoryRangeResult("internal/labels/other.go")},
+	)
+	if !slices.Equal(wrongPathHistory, []string{string(workerruntime.RequiredEvidenceGitHistoryRationale)}) {
+		t.Fatalf("history for another path must not satisfy changed source history evidence, got %#v", wrongPathHistory)
+	}
+
+	rightPathHistory := missingRequiredEvidence(
+		[]string{string(workerruntime.RequiredEvidenceGitHistoryRationale)},
+		"Implemented the source change.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: not run.",
+		[]workspace.ToolResult{{
+			Tool:         workspace.ToolNameWriteFile,
+			Summary:      "Wrote internal/labels/labels.go",
+			ChangedPaths: []string{"internal/labels/labels.go"},
+			PayloadType:  writePreimagePayloadType,
+			Payload:      existingSourcePayload,
+		}, gitHistoryRangeResult("internal/labels/labels.go")},
+	)
+	if len(rightPathHistory) != 0 {
+		t.Fatalf("path-scoped history should satisfy changed source history evidence, got %#v", rightPathHistory)
 	}
 }
 
@@ -7706,7 +7749,7 @@ func TestPlanExecutePlanningStateAnchorRefreshWinsOverCandidateReadyAndHistory(t
 	}
 	results := []workspace.ToolResult{
 		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
-		{Tool: "history_range", Summary: "Read git history for a.go lines 1-10", Output: "commit abc123\n\n    explain current behavior"},
+		gitHistoryRangeResult("a.go"),
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -11964,14 +12007,21 @@ func TestWriteFailureTargetPathNoError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSuccessfulGitHistoryEvidenceSeenWithValidResult(t *testing.T) {
-	results := []workspace.ToolResult{{Tool: workspace.ToolNameHistoryRange, Summary: "history_range: src/main.go:10-50: commit abc123", Output: "commit abc123\nAuthor: test\nDate:   Mon Jan 1 00:00:00 2024\n\n    fix initialization\n\n--- a/src/main.go\n+++ b/src/main.go\n@@ -10,15 +10,20 @@\n"}}
+	results := []workspace.ToolResult{gitHistoryRangeResult("src/main.go")}
 	if !successfulGitHistoryEvidenceSeen(results) {
 		t.Fatal("expected true for valid git history result")
 	}
 }
 
 func TestSuccessfulGitHistoryEvidenceSeenWithHistorySymbol(t *testing.T) {
-	results := []workspace.ToolResult{{Tool: workspace.ToolNameHistorySymbol, Summary: "history_symbol: src/main.go:42: init: commit abc123", Output: "commit abc123\n\n    refactor init function\n"}}
+	results := []workspace.ToolResult{{
+		Tool:   workspace.ToolNameHistorySymbol,
+		Output: "commit abc123\n\n    refactor init function\n",
+		Facts: &toolfacts.ToolResultFacts{
+			GitHistoryPath:   "src/main.go",
+			GitHistoryStatus: toolfacts.GitHistoryStatusCommitDescriptions,
+		},
+	}}
 	if !successfulGitHistoryEvidenceSeen(results) {
 		t.Fatal("expected true for history_symbol")
 	}
@@ -11994,6 +12044,17 @@ func TestSuccessfulGitHistoryEvidenceSeenWithWrongTool(t *testing.T) {
 	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read src/main.go lines 1-50", Output: "package main"}}
 	if successfulGitHistoryEvidenceSeen(results) {
 		t.Fatal("expected false for non-history tool")
+	}
+}
+
+func TestSuccessfulGitHistoryEvidenceSeenIgnoresLegacyTextWithoutFacts(t *testing.T) {
+	results := []workspace.ToolResult{{
+		Tool:    workspace.ToolNameHistoryRange,
+		Summary: "Read git history for src/main.go lines 10-50",
+		Output:  "commit abc123\n\n    fix initialization\n",
+	}}
+	if successfulGitHistoryEvidenceSeen(results) {
+		t.Fatal("expected false without producer-owned git history facts")
 	}
 }
 
@@ -18021,11 +18082,7 @@ func TestPlanExecuteTextualAllowedToolsSubmitReadyDoesNotUseStaleReadSurface(t *
 			Summary: "Required new-file path does not exist yet",
 			Error:   "path \"native/tests/test_collapse_event.cpp\" is in your required_edit_paths but does not exist on disk yet - this is a NEW FILE you must create.",
 		},
-		{
-			Tool:    "history_range",
-			Summary: "Read git history for native/src/core/colony_sim_tick.cpp lines 1-180",
-			Output:  "commit abc123\n\n    route existing tick dispatch",
-		},
+		gitHistoryRangeResult("native/src/core/colony_sim_tick.cpp"),
 	}
 
 	if state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true}); state.Mode != PlanExecutePlanningModeRequiredSource {
@@ -18073,16 +18130,8 @@ func TestPlanExecuteSubmitReadyTransitionClearsLiveStaleReadSurface(t *testing.T
 			Summary: "Read f7 native/src/core/colony_sim_tick.cpp lines 120-180 (total lines: 2616)",
 			Output:  "120:tickCollapseEvents(world);\n",
 		},
-		{
-			Tool:    "history_range",
-			Summary: "Read git history for native/src/core/colony_sim_tick.cpp lines 120-180",
-			Output:  "commit abc123",
-		},
-		{
-			Tool:    "history_range",
-			Summary: "Read git history for native/src/simulation/world/collapse_event.h lines 1-50",
-			Output:  "commit def456",
-		},
+		gitHistoryRangeResult("native/src/core/colony_sim_tick.cpp"),
+		gitHistoryRangeResult("native/src/simulation/world/collapse_event.h"),
 		{
 			Tool:    "read_file",
 			Summary: "Plan submission required",
@@ -21013,8 +21062,8 @@ func TestPlanExecuteSubmitReadyClearsStaleReadOnlyToolSurface(t *testing.T) {
 	results := []workspace.ToolResult{
 		{Tool: "read_file", Summary: "Read f1 native/src/core/colony_sim.h lines 41-90 (total lines: 120)"},
 		{Tool: "read_file", Summary: "Read f2 native/tests/test_quality_inventory_bindings.cpp lines 121-180 (total lines: 355)"},
-		{Tool: "history_range", Summary: "Read git history for native/src/core/colony_sim.h lines 41-90"},
-		{Tool: "history_range", Summary: "Read git history for native/tests/test_quality_inventory_bindings.cpp lines 121-180"},
+		gitHistoryRangeResult("native/src/core/colony_sim.h"),
+		gitHistoryRangeResult("native/tests/test_quality_inventory_bindings.cpp"),
 	}
 
 	if planThenExecuteReadyToSubmitNudge(brief, results) == "" {
@@ -26572,11 +26621,7 @@ func TestPlanExecutePlanningStateRequiresHistoryAfterSourceEvidence(t *testing.T
 		t.Fatalf("history-pending phase should not invalidate read action class for history tools: %#v", state.InvalidActionClasses)
 	}
 
-	withHistory := append(results, workspace.ToolResult{
-		Tool:    "history_range",
-		Summary: "Read git history for a.go lines 1-10",
-		Output:  "commit abc123\n\n    explain current behavior",
-	})
+	withHistory := append(results, gitHistoryRangeResult("a.go"))
 
 	state = DerivePlanExecutePlanningState(brief, withHistory, PlanExecutePlanningTransport{TextualToolParser: true})
 
@@ -26601,7 +26646,7 @@ func TestPlanExecutePartialRequiredHistoryDoesNotAdvertiseSubmitPlanReadiness(t 
 	results := []workspace.ToolResult{
 		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
 		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
-		{Tool: "history_range", Summary: "Read git history for a.go lines 1-10", Output: "commit abc123\n\n    explain current behavior"},
+		gitHistoryRangeResult("a.go"),
 	}
 
 	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})

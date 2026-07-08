@@ -26,6 +26,46 @@ type DirtyPathOptions struct {
 	Sort           bool
 }
 
+type HistoryNotApplicableReason string
+
+const (
+	HistoryReasonNonGitRoot             HistoryNotApplicableReason = "non_git_root"
+	HistoryReasonNoHead                 HistoryNotApplicableReason = "no_head"
+	HistoryReasonUntrackedPath          HistoryNotApplicableReason = "untracked_path"
+	HistoryReasonPathNoCommittedHistory HistoryNotApplicableReason = "path_no_committed_history"
+)
+
+type HistoryApplicabilityResult struct {
+	Applicable bool
+	Reason     HistoryNotApplicableReason
+	Output     string
+}
+
+type HistoryLogResult struct {
+	Output                string
+	HasCommitDescriptions bool
+}
+
+type CommandRunner func(ctx context.Context, root string, args ...string) (string, error)
+
+type Runner struct {
+	Root       string
+	RunCommand CommandRunner
+}
+
+func (r Runner) run(ctx context.Context, args ...string) (string, error) {
+	if r.RunCommand != nil {
+		return r.RunCommand(ctx, r.Root, args...)
+	}
+
+	result := CombinedOutput(ctx, r.Root, args...)
+	if result.Err != nil {
+		return result.Stdout, gitCommandError(args, result)
+	}
+
+	return result.Stdout, nil
+}
+
 func Current(ctx context.Context, root string) (Snapshot, error) {
 	head, err := Output(ctx, root, "rev-parse", "HEAD")
 	if err != nil {
@@ -71,6 +111,26 @@ func DirtyPaths(ctx context.Context, root string, opts DirtyPathOptions) ([]stri
 	return dirtyPathsFromPorcelain(output, opts), nil
 }
 
+func FilterPorcelainStatusByPathPrefix(output string, ignorePrefixes ...string) string {
+	var lines []string
+
+	for _, line := range PorcelainLines(output) {
+		path := PathFromPorcelainLine(line)
+		ignored := false
+		for _, prefix := range ignorePrefixes {
+			if strings.HasPrefix(path, filepath.ToSlash(prefix)) {
+				ignored = true
+				break
+			}
+		}
+		if !ignored {
+			lines = append(lines, strings.TrimSpace(line))
+		}
+	}
+
+	return strings.Join(lines, "\n")
+}
+
 func CombinedOutput(ctx context.Context, root string, args ...string) commandexec.Result {
 	spec := gitSpec(root, args...)
 	spec.MergeOutput = true
@@ -112,6 +172,102 @@ func GitPath(ctx context.Context, root string, path string) (string, error) {
 	}
 
 	return resolved, nil
+}
+
+func (r Runner) Status(ctx context.Context) (string, error) {
+	return r.run(ctx, "status", "--porcelain=v1", "--branch", "--untracked-files=normal")
+}
+
+func (r Runner) WorktreeDiff(ctx context.Context, pathspec string) (string, error) {
+	args := []string{"diff", "--no-color"}
+	if strings.TrimSpace(pathspec) != "" {
+		args = append(args, "--", filepath.ToSlash(pathspec))
+	}
+
+	return r.run(ctx, args...)
+}
+
+func (r Runner) CheckHistoryApplicability(ctx context.Context, rel string) (HistoryApplicabilityResult, error) {
+	rel = filepath.ToSlash(strings.TrimSpace(rel))
+	if !HasMetadataAncestor(r.Root) {
+		return HistoryApplicabilityResult{Reason: HistoryReasonNonGitRoot}, nil
+	}
+
+	output, err := r.run(ctx, "rev-parse", "--git-dir")
+	if err != nil {
+		return HistoryApplicabilityResult{Output: output}, err
+	}
+
+	output, err = r.run(ctx, "rev-parse", "--verify", "--quiet", "HEAD")
+	if err != nil {
+		if strings.TrimSpace(output) == "" {
+			return HistoryApplicabilityResult{Reason: HistoryReasonNoHead}, nil
+		}
+
+		return HistoryApplicabilityResult{Output: output}, err
+	}
+
+	output, err = r.run(ctx, "ls-files", "--", rel)
+	if err != nil {
+		return HistoryApplicabilityResult{Output: output}, err
+	}
+	if !outputContainsPath(output, rel) {
+		return HistoryApplicabilityResult{Reason: HistoryReasonUntrackedPath}, nil
+	}
+
+	output, err = r.run(ctx, "ls-tree", "--name-only", "-r", "HEAD", "--", rel)
+	if err != nil {
+		return HistoryApplicabilityResult{Output: output}, err
+	}
+	if !outputContainsPath(output, rel) {
+		return HistoryApplicabilityResult{Reason: HistoryReasonPathNoCommittedHistory}, nil
+	}
+
+	return HistoryApplicabilityResult{Applicable: true}, nil
+}
+
+func (r Runner) HistoryRange(ctx context.Context, rel string, startLine int, endLine int) (HistoryLogResult, error) {
+	spec := fmt.Sprintf("%d,%d:%s", startLine, endLine, filepath.ToSlash(rel))
+	return r.historyLog(ctx, spec)
+}
+
+func (r Runner) HistorySymbol(ctx context.Context, rel string, symbol string) (HistoryLogResult, error) {
+	spec := fmt.Sprintf(":%s:%s", symbol, filepath.ToSlash(rel))
+	return r.historyLog(ctx, spec)
+}
+
+func (r Runner) historyLog(ctx context.Context, spec string) (HistoryLogResult, error) {
+	output, err := r.run(ctx, "log", "--no-color", "--decorate=short", "-L", spec)
+	return HistoryLogResult{
+		Output:                output,
+		HasCommitDescriptions: historyLogHasCommitDescription(output),
+	}, err
+}
+
+func historyLogHasCommitDescription(output string) bool {
+	output = strings.TrimSpace(output)
+	return strings.HasPrefix(output, "commit ") || strings.Contains(output, "\ncommit ")
+}
+
+func (r Runner) BlameRange(ctx context.Context, rel string, startLine int, endLine int) (string, error) {
+	args := []string{"blame", "--date=short"}
+
+	if startLine > 0 || endLine > 0 {
+		start := startLine
+		if start <= 0 {
+			start = 1
+		}
+
+		if endLine > 0 {
+			args = append(args, "-L", fmt.Sprintf("%d,%d", start, endLine))
+		} else {
+			args = append(args, "-L", fmt.Sprintf("%d,+80", start))
+		}
+	}
+
+	args = append(args, "--", filepath.ToSlash(rel))
+
+	return r.run(ctx, args...)
 }
 
 func HasMetadataAncestor(root string) bool {
@@ -208,6 +364,17 @@ func PathFromPorcelainLine(line string) string {
 	}
 
 	return filepath.ToSlash(payload)
+}
+
+func outputContainsPath(output string, rel string) bool {
+	rel = strings.TrimSpace(filepath.ToSlash(rel))
+	for _, line := range strings.Split(output, "\n") {
+		if strings.TrimSpace(filepath.ToSlash(line)) == rel {
+			return true
+		}
+	}
+
+	return false
 }
 
 func porcelainRenameSeparatorIndex(payload string) int {

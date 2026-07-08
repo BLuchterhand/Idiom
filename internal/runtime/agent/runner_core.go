@@ -12813,7 +12813,17 @@ var requiredEvidenceCheck = map[workerruntime.EvidenceRequirementID]func(answer 
 			strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>")
 	},
 	workerruntime.RequiredEvidenceGitHistoryRationale: func(answer string, results []workspace.ToolResult) bool {
-		if len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0 && !changedPathsRequireGitHistory(results) {
+		if len(newToolResultEvidenceProjection(results).ChangedPathSet()) > 0 {
+			requiredPaths := changedPathsRequiringGitHistory(results)
+			if len(requiredPaths) == 0 {
+				return true
+			}
+			for _, path := range requiredPaths {
+				if !successfulGitHistoryResultForPath(path, results) {
+					return false
+				}
+			}
+
 			return true
 		}
 
@@ -12867,7 +12877,9 @@ func missingRequiredEvidence(evidence []string, answer string, results []workspa
 	return missing
 }
 
-func changedPathsRequireGitHistory(results []workspace.ToolResult) bool {
+func changedPathsRequiringGitHistory(results []workspace.ToolResult) []string {
+	var paths []string
+
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) != "" || !workspace.IsWorkspaceWriteTool(result.Tool) {
 			continue
@@ -12887,11 +12899,11 @@ func changedPathsRequireGitHistory(results []workspace.ToolResult) bool {
 				continue
 			}
 
-			return true
+			paths = append(paths, normalized)
 		}
 	}
 
-	return false
+	return uniqueSortedRunnerPaths(paths)
 }
 
 func toolResultPreimagePathWasMissing(result workspace.ToolResult, path string) bool {

@@ -10,8 +10,8 @@ import (
 	"slices"
 	"strings"
 
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/failures"
-	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/hosttools"
 	"idiom/internal/repository/discovery"
 )
@@ -116,12 +116,20 @@ func (m *Manager) historyRange(ctx context.Context, req ToolRequest) ToolResult 
 		return result
 	}
 
-	spec := fmt.Sprintf("%d,%d:%s", startLine, endLine, rel)
-	output, execErr := m.runCommand(ctx, m.cfg.Root, "git", "log", "--no-color", "--decorate=short", "-L", spec)
-	result := ToolResult{Tool: ToolNameHistoryRange, Summary: fmt.Sprintf("Read git history for %s lines %d-%d", rel, startLine, endLine), Output: strings.TrimSpace(output)}
+	history, execErr := m.gitRunner(m.cfg.Root).HistoryRange(ctx, rel, startLine, endLine)
+	result := ToolResult{
+		Tool:    ToolNameHistoryRange,
+		Summary: fmt.Sprintf("Read git history for %s lines %d-%d", rel, startLine, endLine),
+		Output:  strings.TrimSpace(history.Output),
+	}
 
 	if execErr != nil {
 		result.Error = execErr.Error()
+	} else if history.HasCommitDescriptions {
+		result.Facts = &toolfacts.ToolResultFacts{
+			GitHistoryPath:   rel,
+			GitHistoryStatus: toolfacts.GitHistoryStatusCommitDescriptions,
+		}
 	}
 
 	return result
@@ -160,12 +168,20 @@ func (m *Manager) historySymbol(ctx context.Context, req ToolRequest) ToolResult
 		return result
 	}
 
-	spec := fmt.Sprintf(":%s:%s", symbol, rel)
-	output, execErr := m.runCommand(ctx, m.cfg.Root, "git", "log", "--no-color", "--decorate=short", "-L", spec)
-	result := ToolResult{Tool: ToolNameHistorySymbol, Summary: fmt.Sprintf("Read git history for %s in %s", symbol, rel), Output: strings.TrimSpace(output)}
+	history, execErr := m.gitRunner(m.cfg.Root).HistorySymbol(ctx, rel, symbol)
+	result := ToolResult{
+		Tool:    ToolNameHistorySymbol,
+		Summary: fmt.Sprintf("Read git history for %s in %s", symbol, rel),
+		Output:  strings.TrimSpace(history.Output),
+	}
 
 	if execErr != nil {
 		result.Error = execErr.Error()
+	} else if history.HasCommitDescriptions {
+		result.Facts = &toolfacts.ToolResultFacts{
+			GitHistoryPath:   rel,
+			GitHistoryStatus: toolfacts.GitHistoryStatusCommitDescriptions,
+		}
 	}
 
 	return result
@@ -181,8 +197,6 @@ func (m *Manager) blameRange(ctx context.Context, req ToolRequest) ToolResult {
 		return result
 	}
 
-	args := []string{"blame", "--date=short"}
-
 	if req.StartLine > 0 || req.EndLine > 0 {
 		start := req.StartLine
 		end := req.EndLine
@@ -194,17 +208,9 @@ func (m *Manager) blameRange(ctx context.Context, req ToolRequest) ToolResult {
 		if end > 0 && start > end {
 			return toolInvalidArgumentResult(ToolNameBlameRange, "Blame query rejected", "start_line must be <= end_line")
 		}
-
-		if end > 0 {
-			args = append(args, "-L", fmt.Sprintf("%d,%d", start, end))
-		} else {
-			args = append(args, "-L", fmt.Sprintf("%d,+80", start))
-		}
 	}
 
-	args = append(args, "--", rel)
-
-	output, execErr := m.runCommand(ctx, m.cfg.Root, "git", args...)
+	output, execErr := m.gitRunner(m.cfg.Root).BlameRange(ctx, rel, req.StartLine, req.EndLine)
 	result := ToolResult{Tool: ToolNameBlameRange, Summary: fmt.Sprintf("Read git blame for %s", rel), Output: strings.TrimSpace(output)}
 
 	if execErr != nil {
@@ -230,38 +236,12 @@ func (m *Manager) gitHistoryApplicability(ctx context.Context, tool string, rel 
 		return toolFailureResult(tool, "Git history unavailable", "git is not installed", failures.Unavailable, reasonGitHistoryUnavailable), true
 	}
 
-	if !gitstate.HasMetadataAncestor(m.cfg.Root) {
-		return historyNotApplicableResult(tool, rel, "non_git_root"), true
-	}
-
-	if output, err := m.runCommand(ctx, m.cfg.Root, "git", "rev-parse", "--git-dir"); err != nil {
-		return gitHistoryFailureResult(tool, "Git history unavailable", output, err), true
-	}
-
-	if output, err := m.runCommand(ctx, m.cfg.Root, "git", "rev-parse", "--verify", "--quiet", "HEAD"); err != nil {
-		if strings.TrimSpace(output) == "" {
-			return historyNotApplicableResult(tool, rel, "no_head"), true
-		}
-
-		return gitHistoryFailureResult(tool, "Git history unavailable", output, err), true
-	}
-
-	trackedOutput, err := m.runCommand(ctx, m.cfg.Root, "git", "ls-files", "--", rel)
+	applicability, err := m.gitRunner(m.cfg.Root).CheckHistoryApplicability(ctx, rel)
 	if err != nil {
-		return gitHistoryFailureResult(tool, "Git history unavailable", trackedOutput, err), true
+		return gitHistoryFailureResult(tool, "Git history unavailable", applicability.Output, err), true
 	}
-
-	if !gitOutputContainsPath(trackedOutput, rel) {
-		return historyNotApplicableResult(tool, rel, "untracked_path"), true
-	}
-
-	headOutput, err := m.runCommand(ctx, m.cfg.Root, "git", "ls-tree", "--name-only", "-r", "HEAD", "--", rel)
-	if err != nil {
-		return gitHistoryFailureResult(tool, "Git history unavailable", headOutput, err), true
-	}
-
-	if !gitOutputContainsPath(headOutput, rel) {
-		return historyNotApplicableResult(tool, rel, "path_no_committed_history"), true
+	if !applicability.Applicable {
+		return historyNotApplicableResult(tool, rel, string(applicability.Reason)), true
 	}
 
 	return ToolResult{}, false
@@ -286,6 +266,10 @@ func historyNotApplicableResult(tool string, rel string, reason string) ToolResu
 		Code:    HistoryNotApplicableCode,
 		Summary: fmt.Sprintf("Git history not applicable for %s", rel),
 		Output:  output,
+		Facts: &toolfacts.ToolResultFacts{
+			GitHistoryPath:   rel,
+			GitHistoryStatus: toolfacts.GitHistoryStatusNotApplicable,
+		},
 	}
 }
 
@@ -297,17 +281,6 @@ func gitHistoryFailureResult(tool string, summary string, output string, err err
 		Error:   err.Error(),
 		Failure: failures.Wrap(failures.Unavailable, reasonGitHistoryUnavailable, summary, err),
 	}
-}
-
-func gitOutputContainsPath(output string, rel string) bool {
-	rel = strings.TrimSpace(filepath.ToSlash(rel))
-	for _, line := range strings.Split(output, "\n") {
-		if strings.TrimSpace(filepath.ToSlash(line)) == rel {
-			return true
-		}
-	}
-
-	return false
 }
 
 func (m *Manager) ctagsSymbols(ctx context.Context, req ToolRequest) ToolResult {

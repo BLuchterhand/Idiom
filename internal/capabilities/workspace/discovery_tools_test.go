@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"idiom/internal/contracts/autonomy"
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/evidence/eval"
 	"idiom/internal/platform/config"
 	"idiom/internal/repository/comprehension"
@@ -4349,6 +4350,57 @@ func TestHistorySymbolMalformedPatternRemainsError(t *testing.T) {
 	}
 }
 
+func TestHistoryRangeDoesNotAttachCommitFactsOnGitFailure(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatalf("create fake git metadata: %v", err)
+	}
+	writeWorkspaceFile(t, filepath.Join(root, "sample.go"), "package main\n")
+
+	bin := t.TempDir()
+	fakeGit := filepath.Join(bin, "git")
+	script := `#!/bin/sh
+case "$1" in
+  rev-parse)
+    case "$2" in
+      --git-dir) echo .git; exit 0 ;;
+      --verify) echo abc123; exit 0 ;;
+    esac
+    ;;
+  ls-files)
+    echo sample.go
+    exit 0
+    ;;
+  ls-tree)
+    echo sample.go
+    exit 0
+    ;;
+  log)
+    echo "commit abc123"
+    echo
+    echo "    partial output before failure"
+    exit 1
+    ;;
+esac
+exit 2
+`
+	if err := os.WriteFile(fakeGit, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake git: %v", err)
+	}
+	t.Setenv("PATH", bin)
+
+	mgr := historyTestManager(root)
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "history_range", Path: "sample.go", StartLine: 1, EndLine: 1})
+
+	if result.Error == "" {
+		t.Fatalf("expected failing fake git log to remain an error, got %#v", result)
+	}
+	if result.Facts != nil {
+		t.Fatalf("failing git history command must not attach authoritative facts: %#v", result.Facts)
+	}
+}
+
 func historyTestManager(root string) *Manager {
 	return NewManager(config.Workspace{
 		Root:                  root,
@@ -4370,6 +4422,12 @@ func assertHistoryNotApplicable(t *testing.T, result ToolResult, reason string, 
 
 	if result.Code != HistoryNotApplicableCode {
 		t.Fatalf("history result Code = %q, want %q; result=%#v", result.Code, HistoryNotApplicableCode, result)
+	}
+
+	if result.Facts == nil ||
+		result.Facts.GitHistoryPath != path ||
+		result.Facts.GitHistoryStatus != toolfacts.GitHistoryStatusNotApplicable {
+		t.Fatalf("history not-applicable facts = %#v, want path=%q", result.Facts, path)
 	}
 
 	var payload struct {

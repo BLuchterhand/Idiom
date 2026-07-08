@@ -252,6 +252,8 @@ func cloneToolResultFacts(facts *toolfacts.ToolResultFacts) *toolfacts.ToolResul
 		DiscoveryStrength:       facts.DiscoveryStrength,
 		SourceOwnerFound:        facts.SourceOwnerFound,
 		LocalizationConfidence:  facts.LocalizationConfidence,
+		GitHistoryPath:          facts.GitHistoryPath,
+		GitHistoryStatus:        facts.GitHistoryStatus,
 	}
 }
 
