@@ -34,6 +34,11 @@ type Request struct {
 	ShellCommand, Shell, Dir   string
 	Env                        []string
 	Timeout                    time.Duration
+	Context                    context.Context
+	ContextExitCode            int
+	TimeoutErr                 error
+	TimeoutExitCode            int
+	InfrastructureExitCode     int
 	AllowedArgv                func([]string) bool
 	PrefixArgv                 func([]string) []string
 	RequireOperandAfterPrefix  bool
@@ -50,6 +55,7 @@ type Result struct {
 	Err                    error
 	Stdout, Stderr, Output string
 	DisplayOutput          string
+	Diagnostic             string
 }
 
 func Run(parent context.Context, req Request) (result Result) {
@@ -64,6 +70,7 @@ func Run(parent context.Context, req Request) (result Result) {
 		if result.Duration == 0 {
 			result.Duration = result.CompletedAt.Sub(result.StartedAt)
 		}
+		result = projectResult(result, req)
 	}()
 
 	if len(req.Argv) > 0 || req.AllowedArgv != nil || req.PrefixArgv != nil || req.RequireOperandAfterPrefix {
@@ -118,6 +125,57 @@ func Run(parent context.Context, req Request) (result Result) {
 	}
 
 	return result
+}
+
+func projectResult(result Result, req Request) Result {
+	result.Diagnostic = commandDiagnostic(result.DisplayOutput, result.Err)
+	if result.Failure == FailureNone {
+		result.ExitCode = 0
+		return result
+	}
+
+	if req.Context != nil && req.Context.Err() != nil {
+		result.ExitCode = policyExitCode(req.ContextExitCode, result.ExitCode)
+		result.Err = req.Context.Err()
+		result.Diagnostic = commandDiagnostic(result.DisplayOutput, result.Err)
+		return result
+	}
+
+	switch result.Failure {
+	case FailureTimeout:
+		timeoutExitCode := req.TimeoutExitCode
+		if timeoutExitCode == 0 {
+			timeoutExitCode = req.InfrastructureExitCode
+		}
+		result.ExitCode = policyExitCode(timeoutExitCode, result.ExitCode)
+		if req.TimeoutErr != nil {
+			result.Err = req.TimeoutErr
+			result.Diagnostic = commandDiagnostic(result.DisplayOutput, result.Err)
+		}
+	case FailureSpawn, FailureUnsupported, FailureMissingOperand:
+		result.ExitCode = policyExitCode(req.InfrastructureExitCode, result.ExitCode)
+	}
+
+	return result
+}
+
+func policyExitCode(policyCode, resultCode int) int {
+	if policyCode != 0 {
+		return policyCode
+	}
+
+	return resultCode
+}
+
+func commandDiagnostic(displayOutput string, err error) string {
+	if displayOutput != "" {
+		return displayOutput
+	}
+	if err != nil {
+		return err.Error()
+	}
+
+	return ""
 }
 
 func TrimDisplay(text string, maxBytes int, style TruncationStyle) string {

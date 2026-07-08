@@ -1232,24 +1232,24 @@ func runCommand(ctx context.Context, name string, command string, cfg config.Con
 	check := runrecord.HeadlessCheck{Name: name, Command: command}
 
 	result := commandcheck.Run(ctx, commandcheck.Request{
-		ShellCommand: command,
-		Shell:        shellName(cfg),
-		Dir:          commandDir(cfg),
-		CaptureBytes: commandcheck.DiagnosticCaptureBytes,
+		ShellCommand:           command,
+		Shell:                  shellName(cfg),
+		Dir:                    commandDir(cfg),
+		CaptureBytes:           commandcheck.DiagnosticCaptureBytes,
+		InfrastructureExitCode: 1,
 	})
 
 	check.DurationMS = result.Duration.Milliseconds()
 	check.Stdout = commandcheck.TrimDisplay(result.Stdout, 4000, "")
 	check.Stderr = commandcheck.TrimDisplay(result.Stderr, 4000, "")
-	outcome := commandcheck.ProjectOutcome(result, commandcheck.OutcomePolicy{InfrastructureExitCode: 1})
-	check.ExitCode = outcome.ExitCode
+	check.ExitCode = result.ExitCode
 
-	if outcome.Failure == commandcheck.FailureNone {
+	if result.Failure == commandcheck.FailureNone {
 		return check
 	}
 
-	if outcome.Failure != commandcheck.FailureExit && outcome.Err != nil {
-		check.Stderr = commandcheck.TrimDisplay(strings.TrimSpace(check.Stderr+"\n"+outcome.Err.Error()), 4000, "")
+	if result.Failure != commandcheck.FailureExit && result.Err != nil {
+		check.Stderr = commandcheck.TrimDisplay(strings.TrimSpace(check.Stderr+"\n"+result.Err.Error()), 4000, "")
 	}
 
 	return check

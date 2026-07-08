@@ -462,32 +462,30 @@ func runArtifactValidator(command string, artifactPath string, stderr io.Writer)
 	}
 
 	result := commandcheck.Run(context.TODO(), commandcheck.Request{
-		ShellCommand: command,
-		Shell:        "/bin/sh",
-		Env:          []string{"IDIOM_ARTIFACT=" + artifactPath},
-		Timeout:      2 * time.Minute,
-		CaptureBytes: commandcheck.DiagnosticCaptureBytes,
-		MergeOutput:  true,
+		ShellCommand:           command,
+		Shell:                  "/bin/sh",
+		Env:                    []string{"IDIOM_ARTIFACT=" + artifactPath},
+		Timeout:                2 * time.Minute,
+		TimeoutErr:             context.DeadlineExceeded,
+		TimeoutExitCode:        124,
+		InfrastructureExitCode: 1,
+		CaptureBytes:           commandcheck.DiagnosticCaptureBytes,
+		MergeOutput:            true,
 	})
 	if result.Stdout != "" && stderr != nil {
 		_, _ = io.WriteString(stderr, result.Stdout)
 	}
-	outcome := commandcheck.ProjectOutcome(result, commandcheck.OutcomePolicy{
-		TimeoutErr:             context.DeadlineExceeded,
-		TimeoutExitCode:        124,
-		InfrastructureExitCode: 1,
-	})
 
-	if outcome.Failure != commandcheck.FailureNone {
-		if outcome.Failure == commandcheck.FailureTimeout {
-			return outcome.ExitCode, fmt.Errorf("artifact validator timed out: %w", outcome.Err)
+	if result.Failure != commandcheck.FailureNone {
+		if result.Failure == commandcheck.FailureTimeout {
+			return result.ExitCode, fmt.Errorf("artifact validator timed out: %w", result.Err)
 		}
 
-		if outcome.Failure == commandcheck.FailureExit {
-			return outcome.ExitCode, fmt.Errorf("artifact validator failed: %w", outcome.Err)
+		if result.Failure == commandcheck.FailureExit {
+			return result.ExitCode, fmt.Errorf("artifact validator failed: %w", result.Err)
 		}
 
-		return outcome.ExitCode, fmt.Errorf("artifact validator failed: %w", outcome.Err)
+		return result.ExitCode, fmt.Errorf("artifact validator failed: %w", result.Err)
 	}
 
 	return 0, nil

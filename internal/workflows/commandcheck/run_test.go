@@ -2,7 +2,6 @@ package commandcheck
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -63,6 +62,9 @@ func TestRunClassifiesExitAndAppliesDisplayPolicy(t *testing.T) {
 	if !strings.Contains(run.DisplayOutput, "... (truncated; rerun the check for full output)") {
 		t.Fatalf("display output missing truncation marker: %q", run.DisplayOutput)
 	}
+	if run.Diagnostic != run.DisplayOutput {
+		t.Fatalf("Diagnostic = %q, want display output", run.Diagnostic)
+	}
 }
 
 func TestRunCapturesExitStdoutAndStderr(t *testing.T) {
@@ -97,6 +99,76 @@ func TestRunClassifiesTimeout(t *testing.T) {
 	}
 }
 
+func TestRunAppliesInfrastructureExitCode(t *testing.T) {
+	run := Run(t.Context(), Request{
+		Argv:                   []string{"definitely-not-run"},
+		AllowedArgv:            func([]string) bool { return false },
+		InfrastructureExitCode: 2,
+	})
+
+	if run.Failure != FailureUnsupported || run.ExitCode != 2 {
+		t.Fatalf("run = %#v, want unsupported with policy exit 2", run)
+	}
+}
+
+func TestRunUsesErrorAsFallbackDiagnostic(t *testing.T) {
+	run := Run(t.Context(), Request{
+		Argv:                   []string{"definitely-not-a-real-idiom-commandcheck-binary"},
+		InfrastructureExitCode: 2,
+	})
+
+	if run.Failure != FailureSpawn || run.ExitCode != 2 {
+		t.Fatalf("run = %#v, want spawn failure with policy exit 2", run)
+	}
+	if run.Diagnostic == "" || !strings.Contains(run.Diagnostic, "definitely-not-a-real-idiom-commandcheck-binary") {
+		t.Fatalf("Diagnostic = %q, want spawn error text", run.Diagnostic)
+	}
+}
+
+func TestRunContextOverridePrecedesTimeoutPolicy(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	run := Run(t.Context(), Request{
+		Argv:            []string{"definitely-not-run"},
+		AllowedArgv:     func([]string) bool { return false },
+		Context:         ctx,
+		ContextExitCode: 124,
+		TimeoutErr:      context.DeadlineExceeded,
+		TimeoutExitCode: 125,
+	})
+
+	if run.ExitCode != 124 {
+		t.Fatalf("ExitCode = %d, want context exit code", run.ExitCode)
+	}
+	if run.Err != context.Canceled {
+		t.Fatalf("Err = %v, want context.Canceled", run.Err)
+	}
+	if run.Diagnostic != context.Canceled.Error() {
+		t.Fatalf("Diagnostic = %q, want context error", run.Diagnostic)
+	}
+}
+
+func TestRunAppliesTimeoutPolicy(t *testing.T) {
+	run := Run(t.Context(), Request{
+		Argv:            commandCheckHelperArgv("sleep"),
+		Env:             commandCheckHelperEnv(),
+		Timeout:         20 * time.Millisecond,
+		TimeoutErr:      context.DeadlineExceeded,
+		TimeoutExitCode: 124,
+	})
+
+	if run.Failure != FailureTimeout || run.ExitCode != 124 {
+		t.Fatalf("run = %#v, want timeout with exit 124", run)
+	}
+	if run.Err != context.DeadlineExceeded {
+		t.Fatalf("Err = %v, want deadline exceeded", run.Err)
+	}
+	if run.Diagnostic != context.DeadlineExceeded.Error() {
+		t.Fatalf("Diagnostic = %q, want timeout error", run.Diagnostic)
+	}
+}
+
 func TestRunUsesWorkingDirectory(t *testing.T) {
 	root := t.TempDir()
 	run := Run(t.Context(), Request{
@@ -118,95 +190,6 @@ func TestRunUsesWorkingDirectory(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("working directory = %q, want %q", got, want)
-	}
-}
-
-func TestProjectOutcomePreservesExitResultAndDiagnostic(t *testing.T) {
-	runErr := errors.New("exit status 7")
-	outcome := ProjectOutcome(Result{
-		Failure:       FailureExit,
-		ExitCode:      7,
-		Err:           runErr,
-		Stdout:        "out",
-		Stderr:        "err",
-		Output:        "out\nerr",
-		DisplayOutput: "display text",
-	}, OutcomePolicy{})
-
-	if outcome.Failure != FailureExit {
-		t.Fatalf("Failure = %q, want exit", outcome.Failure)
-	}
-	if outcome.Failure != FailureExit || outcome.ExitCode != 7 || outcome.Err != runErr {
-		t.Fatalf("outcome metadata = %#v, want exit failure", outcome)
-	}
-	if outcome.Diagnostic != "display text" {
-		t.Fatalf("Diagnostic = %q, want display text", outcome.Diagnostic)
-	}
-	if outcome.Stdout != "out" || outcome.Stderr != "err" || outcome.Output != "out\nerr" || outcome.DisplayOutput != "display text" {
-		t.Fatalf("captured output changed: %#v", outcome)
-	}
-}
-
-func TestProjectOutcomeUsesErrorAsFallbackDiagnostic(t *testing.T) {
-	runErr := errors.New("spawn failed")
-	outcome := ProjectOutcome(Result{
-		Failure:  FailureSpawn,
-		ExitCode: -1,
-		Err:      runErr,
-	}, OutcomePolicy{InfrastructureExitCode: 2})
-
-	if outcome.ExitCode != 2 {
-		t.Fatalf("ExitCode = %d, want policy code 2", outcome.ExitCode)
-	}
-	if outcome.Diagnostic != "spawn failed" {
-		t.Fatalf("Diagnostic = %q, want err text", outcome.Diagnostic)
-	}
-}
-
-func TestProjectOutcomeContextOverridePrecedesTimeoutPolicy(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	outcome := ProjectOutcome(Result{
-		Failure:  FailureTimeout,
-		ExitCode: -1,
-		Err:      errors.New("process timeout"),
-	}, OutcomePolicy{
-		Context:         ctx,
-		ContextExitCode: 124,
-		TimeoutErr:      context.DeadlineExceeded,
-		TimeoutExitCode: 125,
-	})
-
-	if outcome.ExitCode != 124 {
-		t.Fatalf("ExitCode = %d, want context exit code", outcome.ExitCode)
-	}
-	if outcome.Err != context.Canceled {
-		t.Fatalf("Err = %v, want context.Canceled", outcome.Err)
-	}
-	if outcome.Diagnostic != context.Canceled.Error() {
-		t.Fatalf("Diagnostic = %q, want context error", outcome.Diagnostic)
-	}
-}
-
-func TestProjectOutcomeAppliesTimeoutPolicy(t *testing.T) {
-	outcome := ProjectOutcome(Result{
-		Failure:  FailureTimeout,
-		ExitCode: -1,
-		Err:      errors.New("process timeout"),
-	}, OutcomePolicy{
-		TimeoutErr:      context.DeadlineExceeded,
-		TimeoutExitCode: 124,
-	})
-
-	if outcome.ExitCode != 124 {
-		t.Fatalf("ExitCode = %d, want timeout exit code", outcome.ExitCode)
-	}
-	if outcome.Err != context.DeadlineExceeded {
-		t.Fatalf("Err = %v, want deadline exceeded", outcome.Err)
-	}
-	if outcome.Diagnostic != context.DeadlineExceeded.Error() {
-		t.Fatalf("Diagnostic = %q, want timeout error", outcome.Diagnostic)
 	}
 }
 

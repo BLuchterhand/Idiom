@@ -102,11 +102,9 @@ func defaultImplementationDispatchPlanDocumentRefine(ctx context.Context, cfg co
 	}
 
 	cmdRun := commandcheck.Run(ctx, commandcheck.Request{
-		Argv:    append([]string{binary}, args...),
-		Dir:     root,
-		Timeout: 30 * time.Minute,
-	})
-	cmdOutcome := commandcheck.ProjectOutcome(cmdRun, commandcheck.OutcomePolicy{
+		Argv:                   append([]string{binary}, args...),
+		Dir:                    root,
+		Timeout:                30 * time.Minute,
 		Context:                ctx,
 		ContextExitCode:        124,
 		TimeoutErr:             context.DeadlineExceeded,
@@ -114,12 +112,12 @@ func defaultImplementationDispatchPlanDocumentRefine(ctx context.Context, cfg co
 		InfrastructureExitCode: 2,
 	})
 
-	result.ExitCode = cmdOutcome.ExitCode
-	result.Stdout = cmdOutcome.Stdout
-	result.Stderr = cmdOutcome.Stderr
-	result.Err = cmdOutcome.Err
+	result.ExitCode = cmdRun.ExitCode
+	result.Stdout = cmdRun.Stdout
+	result.Stderr = cmdRun.Stderr
+	result.Err = cmdRun.Err
 
-	if cmdOutcome.ExitCode != 0 {
+	if cmdRun.ExitCode != 0 {
 		candidate, candidatePath, blockers, ok := materializeImplementationDispatchNonzeroRefineAcceptedCandidate(ctx, cfg, outRel, doc.AllowDirtyAtomScope)
 		if strings.TrimSpace(candidatePath) != "" {
 			result.OutputPath = candidatePath

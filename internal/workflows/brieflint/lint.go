@@ -34,16 +34,15 @@ func BuildReport(ctx context.Context, briefPath string, workdir string, timeout 
 		return Report{}, err
 	}
 
-	outcome := commandcheck.ProjectOutcome(result, commandcheck.OutcomePolicy{InfrastructureExitCode: 2})
-	if outcome.Failure != commandcheck.FailureNone && outcome.Failure != commandcheck.FailureExit {
-		return Report{}, fmt.Errorf("failed to run python3: %w", outcome.Err)
+	if result.Failure != commandcheck.FailureNone && result.Failure != commandcheck.FailureExit {
+		return Report{}, fmt.Errorf("failed to run python3: %w", result.Err)
 	}
 
-	combined := outcome.Stdout + outcome.Stderr
+	combined := result.Stdout + result.Stderr
 
 	return Report{
 		Brief:    briefPath,
-		Exit:     outcome.ExitCode,
+		Exit:     result.ExitCode,
 		Findings: ParseFindings(briefPath, combined),
 	}, nil
 }
@@ -56,9 +55,10 @@ func RunEmbeddedPreflight(ctx context.Context, briefPath string, workdir string,
 	defer cleanup()
 
 	return commandcheck.Run(ctx, commandcheck.Request{
-		Argv:    []string{"python3", scriptPath, briefPath},
-		Dir:     workdir,
-		Timeout: timeout,
+		Argv:                   []string{"python3", scriptPath, briefPath},
+		Dir:                    workdir,
+		Timeout:                timeout,
+		InfrastructureExitCode: 2,
 	}), nil
 }
 

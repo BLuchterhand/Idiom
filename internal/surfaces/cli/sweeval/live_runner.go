@@ -154,20 +154,19 @@ func (r liveSuiteRunner) runTask(index int, total int, task eval.SWETask, logPat
 		}
 	}
 
-	outcome := commandcheck.ProjectOutcome(result, commandcheck.OutcomePolicy{})
-	if outcome.Failure != commandcheck.FailureNone {
+	if result.Failure != commandcheck.FailureNone {
 		if _, loadErr := eval.LoadRecords(logPath); loadErr == nil && !fileMissingOrEmpty(logPath) {
-			fmt.Fprintf(r.progress, "[%d/%d] runner exited nonzero for %s but wrote a scoreable log: %v\n", index+1, total, strings.TrimSpace(task.ID), outcome.Err)
+			fmt.Fprintf(r.progress, "[%d/%d] runner exited nonzero for %s but wrote a scoreable log: %v\n", index+1, total, strings.TrimSpace(task.ID), result.Err)
 			fmt.Fprintf(r.progress, "[%d/%d] finished %s in %s -> %s\n", index+1, total, strings.TrimSpace(task.ID), time.Since(start).Round(time.Millisecond), logPath)
 
 			return nil
 		}
 
-		if outcome.Failure == commandcheck.FailureTimeout {
+		if result.Failure == commandcheck.FailureTimeout {
 			return fmt.Errorf("run live task %s: evaluator deadline exceeded after %ds", task.ID, taskTimeout+45)
 		}
 
-		return fmt.Errorf("run live task %s: %w: %s", task.ID, outcome.Err, strings.TrimSpace(string(output)))
+		return fmt.Errorf("run live task %s: %w: %s", task.ID, result.Err, strings.TrimSpace(string(output)))
 	}
 
 	fmt.Fprintf(r.progress, "[%d/%d] finished %s in %s -> %s\n", index+1, total, strings.TrimSpace(task.ID), time.Since(start).Round(time.Millisecond), logPath)

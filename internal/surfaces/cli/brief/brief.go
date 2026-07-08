@@ -288,18 +288,17 @@ func RunLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.R
 	if result.Stderr != "" {
 		fmt.Fprint(stderr, result.Stderr)
 	}
-	outcome := commandcheck.ProjectOutcome(result, commandcheck.OutcomePolicy{InfrastructureExitCode: 2})
 
-	if outcome.Failure != commandcheck.FailureNone {
-		if outcome.Failure == commandcheck.FailureExit {
-			telemetry.LogPhase(rec, "brief_lint", map[string]any{"exit": outcome.ExitCode})
+	if result.Failure != commandcheck.FailureNone {
+		if result.Failure == commandcheck.FailureExit {
+			telemetry.LogPhase(rec, "brief_lint", map[string]any{"exit": result.ExitCode})
 
-			return outcome.ExitCode
+			return result.ExitCode
 		}
 
-		fmt.Fprintf(stderr, "brief lint: failed to run python3: %v\n", outcome.Err)
+		fmt.Fprintf(stderr, "brief lint: failed to run python3: %v\n", result.Err)
 
-		return outcome.ExitCode
+		return result.ExitCode
 	}
 
 	telemetry.LogPhase(rec, "brief_lint", map[string]any{"exit": 0})
@@ -457,14 +456,13 @@ func runBriefLintResult(content string, stderr io.Writer) (int, []string) {
 	if err != nil {
 		return 2, []string{fmt.Sprintf("python3 failed: %v", err)}
 	}
-	outcome := commandcheck.ProjectOutcome(result, commandcheck.OutcomePolicy{InfrastructureExitCode: 2})
 
-	if outcome.Failure != commandcheck.FailureNone {
-		if outcome.Failure == commandcheck.FailureExit {
-			return outcome.ExitCode, parseLintFailures(outcome.Stderr)
+	if result.Failure != commandcheck.FailureNone {
+		if result.Failure == commandcheck.FailureExit {
+			return result.ExitCode, parseLintFailures(result.Stderr)
 		}
 
-		return outcome.ExitCode, []string{fmt.Sprintf("python3 failed: %v", outcome.Err)}
+		return result.ExitCode, []string{fmt.Sprintf("python3 failed: %v", result.Err)}
 	}
 
 	return 0, nil
