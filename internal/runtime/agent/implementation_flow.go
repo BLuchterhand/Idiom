@@ -669,7 +669,7 @@ func (r *Runner) emitWorkbranchChildTerminal(ctx childLifecycleContext, checkout
 }
 
 func (r *Runner) emitDelegateEditLifecycle(ctx childLifecycleContext, req workspace.ToolRequest, result workspace.ToolResult, route autonomy.ChildExecutionRoute, reasonCode string) {
-	changedPaths := newToolResultEvidenceProjection([]workspace.ToolResult{result}).ChangedPathList()
+	changedPaths := newToolResultEvidenceRecord(result).ChangedPathList()
 	status := autonomy.ChildTerminalCompleted
 	if strings.TrimSpace(result.Error) != "" {
 		status = autonomy.ChildTerminalFailed
@@ -1885,36 +1885,33 @@ func questionBlockerContextPaths(brief workerruntime.WorkerRuntimeBrief, results
 		max = 4
 	}
 
-	if paths := sourceGroundingCandidateOnlyContextPaths(brief, results, max); len(paths) > 0 {
-		return "Candidate paths surfaced", paths
-	} else if readOnlyDirectAnswerLane(brief) {
-		ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
+	if readOnlyDirectAnswerLane(brief) {
+		closeout := readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
 
-		paths := textutil.Merge(ledger.RelevantSourceBodyPaths, ledger.SourceBodyObjectivePaths)
-
-		if ledger.DiagnosticRelevant {
-			paths = textutil.Merge(paths, ledger.DiagnosticPaths)
+		if paths := closurePromptEvidencePaths(closeout.Evidence.CandidatePaths, max); closeout.CandidateOnlyEvidence() && len(paths) > 0 {
+			return "Candidate paths surfaced", paths
 		}
 
-		paths = closurePromptEvidencePaths(paths, max)
-		if len(paths) > 0 {
+		paths := textutil.Merge(closeout.Evidence.RelevantSourceBodyPaths, closeout.Evidence.SourceBodyObjectivePaths)
+		if closeout.Evidence.DiagnosticRelevant {
+			paths = textutil.Merge(paths, closeout.Evidence.DiagnosticPaths)
+		}
+		if paths = closurePromptEvidencePaths(paths, max); len(paths) > 0 {
 			return "Inspected evidence", paths
 		}
 
-		paths = readOnlyCloseoutEvidencePaths(brief, results, max)
-		if len(paths) > 0 {
+		if paths := closurePromptEvidencePaths(closeout.FinalAnswerDecision("").AcceptedEvidencePaths, max); len(paths) > 0 {
 			return "Inspected evidence", paths
 		}
 
-		paths = promptEvidencePathsFromToolResults(results, max)
-		if len(paths) > 0 {
+		if paths := promptEvidencePathsFromToolResults(results, max); len(paths) > 0 {
 			return "Inspected evidence", paths
 		}
 
 		return "", nil
 	}
 
-	paths := readOnlyCloseoutEvidencePaths(brief, results, max)
+	paths := closurePromptEvidencePaths(acceptedAnswerEvidencePaths("", results, brief), max)
 	if len(paths) == 0 {
 		paths = delegatedClosureEvidencePaths(brief.Objective, results, max)
 	}
@@ -7035,7 +7032,7 @@ func implementationTargetWriteReadyReadProgressPath(req workspace.ToolRequest, r
 		return path
 	}
 
-	for _, candidate := range newToolResultEvidenceProjection([]workspace.ToolResult{result}).SourceBodyPaths() {
+	for _, candidate := range newToolResultEvidenceRecord(result).SourceBodyPaths() {
 		if path := NormalizeRunnerPath(candidate); path != "" {
 			return path
 		}
@@ -9109,7 +9106,7 @@ func failedVerificationAfterLatestWrite(results []workspace.ToolResult, brief wo
 			}
 
 			pending = true
-			pendingPaths = textutil.AppendUniqueMulti(pendingPaths, newToolResultEvidenceProjection([]workspace.ToolResult{result}).ChangedPathList()...)
+			pendingPaths = textutil.AppendUniqueMulti(pendingPaths, newToolResultEvidenceRecord(result).ChangedPathList()...)
 			failed = false
 			latestFailed = workspace.ToolResult{}
 
@@ -9164,14 +9161,13 @@ func latestVerificationAfterLatestSourceWrite(results []workspace.ToolResult) (w
 
 	found := false
 	seenSourceWrite := false
-	projection := newToolResultEvidenceProjection(results)
 
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) != "" {
 			continue
 		}
 
-		if len(projection.ChangedSourcePathsFromResult(result)) > 0 {
+		if len(newToolResultEvidenceRecord(result).ChangedSourcePathList()) > 0 {
 			seenSourceWrite = true
 			found = false
 			latest = workspace.ToolResult{}

@@ -2762,7 +2762,7 @@ func scopedImplementationUsesBoundedSourceEdits(brief workerruntime.WorkerRuntim
 // write result is a non-source file (markdown, plain text). Used to
 // exempt doc-deliverable lanes from the post-write verification gate.
 func writeTouchesOnlyNonSourcePaths(result workspace.ToolResult) bool {
-	paths := newToolResultEvidenceProjection([]workspace.ToolResult{result}).ChangedPathList()
+	paths := newToolResultEvidenceRecord(result).ChangedPathList()
 	if len(paths) == 0 {
 		return false
 	}
@@ -2781,7 +2781,7 @@ func mkdirTouchesOnlyRequiredPathParents(result workspace.ToolResult, requiredPa
 		return false
 	}
 
-	paths := newToolResultEvidenceProjection([]workspace.ToolResult{result}).ChangedPathList()
+	paths := newToolResultEvidenceRecord(result).ChangedPathList()
 	if len(paths) == 0 {
 		return false
 	}

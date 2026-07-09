@@ -24,6 +24,8 @@ type toolResultEvidenceRecord struct {
 	failed              bool
 	sourceBodies        []toolfacts.SourceBodyEvidence
 	readPaths           []string
+	changedPaths        []string
+	changedSourcePaths  []string
 	candidateAnchorOnly bool
 }
 
@@ -69,6 +71,8 @@ func newToolResultEvidenceRecord(result workspace.ToolResult) toolResultEvidence
 		candidateAnchorOnly: CandidateAnchorOnlyText(result.Summary + "\n" + result.Output),
 	}
 	record.readPaths = record.deriveReadPaths()
+	record.changedPaths = record.deriveChangedPaths()
+	record.changedSourcePaths = record.deriveChangedSourcePaths()
 	return record
 }
 
@@ -110,6 +114,44 @@ func (record toolResultEvidenceRecord) deriveReadPaths() []string {
 
 func (record toolResultEvidenceRecord) ReadPaths() []string {
 	return append([]string(nil), record.readPaths...)
+}
+
+func (record toolResultEvidenceRecord) ChangedPathList() []string {
+	return append([]string(nil), record.changedPaths...)
+}
+
+func (record toolResultEvidenceRecord) ChangedSourcePathList() []string {
+	return append([]string(nil), record.changedSourcePaths...)
+}
+
+func (record toolResultEvidenceRecord) deriveChangedPaths() []string {
+	if record.failed {
+		return nil
+	}
+
+	var paths []string
+	for _, rawPath := range record.result.ChangedPaths {
+		path := NormalizeRunnerPath(rawPath)
+		if path == "" {
+			continue
+		}
+		paths = textutil.AppendUnique(paths, path)
+	}
+
+	return paths
+}
+
+func (record toolResultEvidenceRecord) deriveChangedSourcePaths() []string {
+	var paths []string
+	for _, path := range record.changedPaths {
+		if !sourcekind.CoversSourceSanity(path) {
+			continue
+		}
+
+		paths = textutil.AppendUnique(paths, path)
+	}
+
+	return paths
 }
 
 func (record toolResultEvidenceRecord) SourceBodyFact(path string) (toolfacts.SourceBodyEvidence, bool) {
@@ -852,16 +894,7 @@ func (projection toolResultEvidenceProjection) ChangedPathList() []string {
 	paths := make([]string, 0, 4)
 
 	for _, record := range projection.records {
-		if record.failed {
-			continue
-		}
-
-		for _, rawPath := range projection.ChangedPathsFromResult(record.result) {
-			path := NormalizeRunnerPath(rawPath)
-			if path == "" {
-				continue
-			}
-
+		for _, path := range record.ChangedPathList() {
 			if _, ok := seen[path]; ok {
 				continue
 			}
@@ -874,20 +907,12 @@ func (projection toolResultEvidenceProjection) ChangedPathList() []string {
 	return paths
 }
 
-func (toolResultEvidenceProjection) ChangedPathsFromResult(result workspace.ToolResult) []string {
-	if len(result.ChangedPaths) > 0 {
-		return append([]string(nil), result.ChangedPaths...)
-	}
-
-	return nil
-}
-
 func (projection toolResultEvidenceProjection) ChangedSourcePathList() []string {
 	seen := make(map[string]struct{})
 	paths := make([]string, 0, 4)
 
 	for _, record := range projection.records {
-		for _, path := range projection.ChangedSourcePathsFromResult(record.result) {
+		for _, path := range record.ChangedSourcePathList() {
 			if _, ok := seen[path]; ok {
 				continue
 			}
@@ -898,24 +923,6 @@ func (projection toolResultEvidenceProjection) ChangedSourcePathList() []string 
 	}
 
 	return uniqueSortedRunnerPaths(paths)
-}
-
-func (projection toolResultEvidenceProjection) ChangedSourcePathsFromResult(result workspace.ToolResult) []string {
-	if strings.TrimSpace(result.Error) != "" {
-		return nil
-	}
-
-	var paths []string
-	for _, rawPath := range projection.ChangedPathsFromResult(result) {
-		path := NormalizeRunnerPath(rawPath)
-		if path == "" || !sourcekind.CoversSourceSanity(path) {
-			continue
-		}
-
-		paths = textutil.AppendUnique(paths, path)
-	}
-
-	return paths
 }
 
 func (projection toolResultEvidenceProjection) HasChangedSourcePath(path string) bool {

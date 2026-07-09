@@ -143,7 +143,7 @@ func (s *stateStore) RecordResult(req workspace.ToolRequest, result workspace.To
 	s.results = append(s.results, result)
 	s.lastReq, s.lastRes, s.hasLast = req, result, true
 	if workspaceWriteResultCompleted(req, result) {
-		paths := newToolResultEvidenceProjection([]workspace.ToolResult{result}).ChangedPathList()
+		paths := newToolResultEvidenceRecord(result).ChangedPathList()
 		if len(paths) == 0 {
 			paths = writeRequestPaths(req)
 		}
@@ -4065,7 +4065,7 @@ func (r *Runner) runLegacySessionBody(
 
 		update := executionState.applyResult(req, result, currentFingerprint, r.Workspace, &requestBudget)
 		if autonomyRecorder != nil && workspaceWriteResultCompleted(req, result) {
-			autonomyRecorder.emitWriteGate(req, autonomy.PolicyAllow, "write_result_completed", mapKeys(newToolResultEvidenceProjection([]workspace.ToolResult{result}).ChangedPathSet()))
+			autonomyRecorder.emitWriteGate(req, autonomy.PolicyAllow, "write_result_completed", uniqueSortedRunnerPaths(newToolResultEvidenceRecord(result).ChangedPathList()))
 		}
 
 		if deferredGitHistorySubmitPlan != nil && slices.Contains([]string{workspace.ToolNameHistoryRange, workspace.ToolNameHistorySymbol}, strings.TrimSpace(req.Tool)) {
@@ -10082,7 +10082,7 @@ func hasPendingVerificationAfterWrites(results []workspace.ToolResult, brief wor
 			}
 
 			pending = true
-			pendingPaths = textutil.AppendUniqueMulti(pendingPaths, newToolResultEvidenceProjection([]workspace.ToolResult{result}).ChangedPathList()...)
+			pendingPaths = textutil.AppendUniqueMulti(pendingPaths, newToolResultEvidenceRecord(result).ChangedPathList()...)
 
 			continue
 		}
@@ -10097,7 +10097,7 @@ func hasPendingVerificationAfterWrites(results []workspace.ToolResult, brief wor
 }
 
 func writeResultMadeNoWorkspaceChange(result workspace.ToolResult) bool {
-	if len(newToolResultEvidenceProjection([]workspace.ToolResult{result}).ChangedPathList()) > 0 {
+	if len(newToolResultEvidenceRecord(result).ChangedPathList()) > 0 {
 		return false
 	}
 
@@ -12684,7 +12684,7 @@ func changedPathsRequiringGitHistory(results []workspace.ToolResult) []string {
 			continue
 		}
 
-		for _, path := range newToolResultEvidenceProjection([]workspace.ToolResult{result}).ChangedPathList() {
+		for _, path := range newToolResultEvidenceRecord(result).ChangedPathList() {
 			normalized := NormalizeRunnerPath(path)
 			if normalized == "" || writePathIsNonSource(normalized) {
 				continue

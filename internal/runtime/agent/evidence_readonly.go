@@ -2115,6 +2115,14 @@ func (d ReadOnlyCloseout) Answerable() bool {
 	return d.State == readOnlyClosureAnswerReady
 }
 
+func (d ReadOnlyCloseout) CandidateOnlyEvidence() bool {
+	evidence := d.Evidence
+	return len(evidence.CandidatePaths) > 0 &&
+		len(evidence.SourceBodyPaths) == 0 &&
+		len(evidence.ExternalDocumentBodyPaths) == 0 &&
+		!evidence.DiagnosticEvidence
+}
+
 func (d ReadOnlyCloseout) BlockerText() string {
 	evidence := d.Evidence
 	switch d.Reason {
@@ -3169,11 +3177,6 @@ func readOnlyCandidateOnlyPaths(ledger readOnlyAnswerabilityLedger, max int) []s
 	}
 
 	return out
-}
-
-func readOnlyCloseoutEvidencePaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
-	paths := acceptedAnswerEvidencePaths("", results, brief)
-	return closurePromptEvidencePaths(paths, max)
 }
 
 func (d ReadOnlyCloseout) PrioritizedCandidatePaths() []string {
