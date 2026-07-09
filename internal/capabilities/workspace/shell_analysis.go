@@ -26,7 +26,6 @@ type ShellCommandAnalysis struct {
 	ExploreAllowed   bool
 	ExploreRejection string
 	ActionClass      autonomy.ActionClass
-	Replacement      *ShellReplacementCandidate
 }
 
 type ShellVerificationFamily string
@@ -93,7 +92,6 @@ func AnalyzeShellCommand(command string) ShellCommandAnalysis {
 	analysis.BuildOrTest = shellCommandBuildOrTest(command)
 	analysis.Verification = shellCommandVerification(command)
 	analysis.FullSuite = analysis.Verification == ShellVerificationFullSuite
-	analysis.Replacement = shellReplacementCandidate(command)
 
 	if !analysis.HasControlSyntax && readOnlyShellCommand(analysis.Head, analysis.Args) {
 		analysis.SideEffect = autonomy.SideEffectReadOnly
@@ -308,6 +306,66 @@ func lowerShellArgs(args []string) []string {
 	}
 
 	return out
+}
+
+func shellCommandFields(command string) []string {
+	var (
+		fields []string
+		b      strings.Builder
+		quote  rune
+	)
+
+	escaped := false
+	for _, r := range command {
+		if escaped {
+			b.WriteRune(r)
+			escaped = false
+			continue
+		}
+
+		if r == '\\' {
+			if quote == '\'' {
+				b.WriteRune(r)
+			} else {
+				escaped = true
+			}
+			continue
+		}
+
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+			} else {
+				b.WriteRune(r)
+			}
+			continue
+		}
+
+		if r == '\'' || r == '"' {
+			quote = r
+			continue
+		}
+
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+			if b.Len() > 0 {
+				fields = append(fields, b.String())
+				b.Reset()
+			}
+			continue
+		}
+
+		b.WriteRune(r)
+	}
+
+	if escaped {
+		b.WriteRune('\\')
+	}
+
+	if b.Len() > 0 {
+		fields = append(fields, b.String())
+	}
+
+	return fields
 }
 
 func readOnlyShellCommand(head string, args []string) bool {

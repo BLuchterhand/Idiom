@@ -2197,16 +2197,6 @@ func (r *Runner) runLegacySessionBody(
 			}
 		}
 
-		if decision := r.implementationTargetWriteReadyHiddenShellRedirect(req, collectedResults, currentAllowedTools, discoveryRedirect); decision.ShouldRedirect {
-			result := decision.Result
-
-			recorder.activeToolCall = activeToolCall
-			recorder.record(stepNumber, req, result, "discovery_redirect_target_write_ready_hidden_shell", runnerRecordOptions{})
-			r.emitEvent(RunEvent{Role: "discovery_redirect_target_write_ready_hidden_shell", Content: fmt.Sprintf("%s → %s", req.Tool, decision.Capability)})
-
-			continue
-		}
-
 		if r.implementationTargetWriteReadySourceReadAllowed(req, collectedResults, implementationTargetWriteReadySourceRefreshes) {
 			recoveryReadAllowanceGrantedThisRequest = true
 			implementationTargetWriteReadySourceRefreshes++
@@ -2791,30 +2781,6 @@ func (r *Runner) runLegacySessionBody(
 
 		if redirected, redirectedRaw, ok := r.planThenExecuteMalformedSymbolReadRedirect(req, collectedResults, currentAllowedTools); ok {
 			req, raw = r.rewriteToolRequest(&turnMessages, req, raw, redirected, redirectedRaw, "plan_execute_malformed_symbol_read_bounded")
-			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
-		}
-
-		if redirected, ok := rewriteVerificationShellReadToSourceSanity(req, r.RuntimeBrief, collectedResults, currentAllowedTools); ok {
-			redirectedRaw := marshalToolRequestRaw(redirected)
-			r.emitEvent(marshalRunEvent("tool_request_normalizer", map[string]any{
-				"outcome":                      "normalized",
-				"transport":                    "verification_shell_read_rewrite",
-				"tool":                         strings.TrimSpace(redirected.Tool),
-				"path":                         strings.TrimSpace(redirected.Path),
-				"original_tool":                strings.TrimSpace(req.Tool),
-				"original_raw":                 strings.TrimSpace(raw),
-				"rewritten_raw":                strings.TrimSpace(redirectedRaw),
-				"reason":                       "source_edit_verification_requires_source_sanity",
-				workspace.ToolNameSourceSanity: true,
-				"changed_source":               true,
-			}))
-
-			turnMessages = append(turnMessages, llama.ChatMessage{
-				Role:    "system",
-				Content: rewriteVisibilityNote(req.Tool, redirected.Tool),
-			})
-			req = redirected
-			raw = redirectedRaw
 			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 

@@ -55,26 +55,6 @@ func SyntaxIdentifierForLanguage(language string, pattern string) (string, bool)
 	return "", false
 }
 
-func SyntaxIdentifierFromAnyLanguage(pattern string) (string, bool) {
-	var found string
-	for _, extractors := range syntaxExtractors {
-		for _, re := range extractors {
-			m := re.FindStringSubmatch(pattern)
-			if len(m) < 2 || m[1] == "" {
-				continue
-			}
-
-			if found != "" && found != m[1] {
-				return "", false
-			}
-
-			found = m[1]
-		}
-	}
-
-	return found, found != ""
-}
-
 var syntaxExtractors = map[string][]*regexp.Regexp{
 	"go": {
 		regexp.MustCompile(`^func\s*\([^)]*\)\s*([A-Za-z_]\w*)`),

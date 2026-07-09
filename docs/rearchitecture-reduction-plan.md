@@ -159,9 +159,13 @@ Runtime discovery-result meaning now has a single local outcome projection over
 search status. Pending-discovery state and read-only answerability consume that
 projection; the dead pending-search-hit rejection scaffold was removed, leaving
 generic exact-repeat/no-progress controls as the owner of repeated search
-behavior. Reviewer-backed follow-up targets are broader
-`toolResultEvidenceProjection` consolidation and deletion of shell replacement
-redirects that prescribe strategy rather than enforce invariants.
+behavior. Shell replacement redirects that prescribed `read_file`,
+`file_stats`, language-tool, or `source_sanity` follow-up requests from shell
+syntax were deleted; workspace shell analysis remains the command-meaning
+authority, and runtime no longer converts read-like shell intent into a
+harness-chosen strategy. Reviewer-backed follow-up targets are broader
+`toolResultEvidenceProjection` consolidation and remaining command-execution
+authority seams.
 
 ### 5. Product Workflow Projection
 

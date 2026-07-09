@@ -6794,43 +6794,6 @@ func (r *Runner) implementationTargetWriteReadySourceReadAllowed(req workspace.T
 	return implementationTargetWriteReadyNewTargetRead(req)
 }
 
-func (r *Runner) implementationTargetWriteReadyHiddenShellRedirect(req workspace.ToolRequest, results []workspace.ToolResult, allowedTools []string, redirect *DiscoveryRedirect) RedirectDecision {
-	if r == nil || redirect == nil || !textutil.EqualTrimFold(req.Tool, workspace.ToolNameShell) {
-		return RedirectDecision{}
-	}
-
-	if !implementationTargetWriteReadySurfaceActive(r.RuntimeBrief, results) {
-		return RedirectDecision{}
-	}
-
-	redirect.SetAllowedTools(allowedTools)
-	decision := redirect.Consider(req, r.Workspace)
-	if !decision.ShouldRedirect || decision.HardReject {
-		return RedirectDecision{}
-	}
-
-	if !implementationTargetWriteReadyRedirectCapabilityAllowed(decision.Capability, allowedTools) {
-		return RedirectDecision{}
-	}
-
-	return decision
-}
-
-func implementationTargetWriteReadyRedirectCapabilityAllowed(capability string, allowedTools []string) bool {
-	switch capability {
-	case workspace.ToolNameReadFile:
-		return slices.Contains(allowedTools, workspace.ToolNameReadFile)
-	case workspace.ToolNameSearchFiles:
-		return slices.Contains(allowedTools, workspace.ToolNameSearchFiles)
-	case workspace.ToolNameFileStats:
-		return slices.Contains(allowedTools, workspace.ToolNameFileStats)
-	case string(semanticlanguage.CapFileOutline), string(semanticlanguage.CapReadSymbol), string(semanticlanguage.CapExtractBody):
-		return slices.Contains(allowedTools, workspace.ToolNameCodeNavigate) || slices.Contains(allowedTools, workspace.ToolNameReadFile)
-	default:
-		return false
-	}
-}
-
 func implementationTargetWriteReadyTargetedDiscoveryAllowed(req workspace.ToolRequest, results []workspace.ToolResult) bool {
 	switch strings.TrimSpace(req.Tool) {
 	case workspace.ToolNameSearchContent:
@@ -8951,42 +8914,6 @@ func sourceEditVerificationRejection(req workspace.ToolRequest, brief workerrunt
 	return "Source edit verification required",
 		fmt.Sprintf("source edits are present in %s, but the latest successful check is only patch hygiene (`git diff --check`) or no compiler-backed source-aware check at all. Required evidence is a focused language-appropriate build/test/check command, compiler-backed source-sanity, language diagnostics, or the concrete verification blocker before more reads.", summarizeRunnerPaths(paths, 3)),
 		true
-}
-
-func rewriteVerificationShellReadToSourceSanity(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, bool) {
-	if strings.TrimSpace(req.Tool) != "shell" || !slices.Contains(allowedTools, "source_sanity") {
-		return workspace.ToolRequest{}, false
-	}
-
-	if !plannerOwnsVerification(brief) {
-		return workspace.ToolRequest{}, false
-	}
-
-	if !sourceEditsNeedSemanticVerification(brief, results) {
-		return workspace.ToolRequest{}, false
-	}
-
-	analysis := workspace.AnalyzeShellCommand(req.Command)
-	if analysis.Replacement == nil ||
-		analysis.Replacement.Kind != workspace.ShellReplacementCatReadFile ||
-		analysis.Replacement.Request.Tool != workspace.ToolNameReadFile {
-
-		return workspace.ToolRequest{}, false
-	}
-
-	path := strings.TrimSpace(analysis.Replacement.Request.Path)
-	if path == "" || !sourcekind.CoversSourceSanity(path) {
-		return workspace.ToolRequest{}, false
-	}
-
-	normalizedPath := NormalizeRunnerPath(path)
-	for _, changed := range changedSourcePaths(results) {
-		if NormalizeRunnerPath(changed) == normalizedPath {
-			return workspace.ToolRequest{Tool: "source_sanity", Path: path}, true
-		}
-	}
-
-	return workspace.ToolRequest{}, false
 }
 
 func fillSourceSanityPathFromSingleChangedSource(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, bool) {
