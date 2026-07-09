@@ -30806,7 +30806,7 @@ func TestAcceptedAnswerEvidencePathsIncludeMentionedToolOutputPaths(t *testing.T
 			}, "\n"),
 		},
 	}
-	paths := newToolResultEvidenceProjection(results).acceptedAnswerEvidencePaths("Discovery tool improvements are grounded in the inspected evidence.", brief)
+	paths := acceptedFinalAnswerEvidencePaths("Discovery tool improvements are grounded in the inspected evidence.", brief, results)
 
 	for _, want := range []string{"internal/runtime/agent/implementation_flow.go", "internal/runtime/agent/runner_core.go"} {
 		if !slices.Contains(paths, want) {

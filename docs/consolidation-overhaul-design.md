@@ -1408,6 +1408,24 @@ Reviewer-updated estimate:
   `git diff --check`. Full verification is the standard post-change gate:
   `go test ./...`; `go build ./cmd/idiom`; coding-rules, deadcode, and
   staticcheck.
+- Read-only accepted final-answer evidence now belongs to the closeout owner
+  instead of `toolResultEvidenceProjection`. The projection still supplies raw
+  changed paths, pinned paths, delegated facts, and exact probe paths, but the
+  policy deciding which paths support a read-only final answer lives on
+  `ReadOnlyCloseout.AcceptedAnswerEvidencePaths` and the final-answer boundary
+  dispatches mutation evidence separately through `acceptedFinalAnswerEvidencePaths`.
+  `ConversationUncertaintyFallback` also stopped rebuilding inspected paths
+  from every raw `ToolResult`; it now uses the closeout ledger's source-body,
+  external-document, and diagnostic paths, keeping the raw result scan only for
+  human source anchors. Production Go changed `+52 / -55`, net `-3`; tests
+  changed `+9 / -9`, net `0`. Focused verification:
+  `go test ./internal/runtime/agent -run 'TestSynthesizeBriefConversationFallback|TestDecorateFinalAnswerConversationFallbackDoesNotInventBudgetExhaustion|TestPresentableNoToolsFallbackSkipsSourceBodyForConversationFallback|TestAcceptedFinalAnswerTelemetryPreservesAcceptedEvidencePaths|TestFinalAnswerDecision|TestFinalAnswerAcceptance' -count=1`;
+  `go test ./internal/runtime/agent -run 'TestAcceptedFinalAnswerTelemetryPreservesAcceptedEvidencePaths|TestReadOnlyCloseoutRejectsLowValueSourceInventoryAcrossConsumers|TestArchitectureFinalAnswerAcceptanceRejectsUnsupportedCloseoutWithoutAnswerability|TestFinalAnswerDecision|TestSourceGroundingRejectsPathOnlyCitationSupport|TestReadOnlyAnswerabilityHighCardinality|TestReadOnlyCompletionGateCandidateOnlyRecovery|TestFinalAnswerAcceptance|TestSuccessfulSearchAllows|TestFailedGuessedRead' -count=1`;
+  `go test ./internal/runtime/agent -count=1`;
+  `git diff --check`. Remaining read-only consolidation targets are typed
+  producer facts for discovery/source-body evidence and removal of delegated
+  read-only prose round-tripping once typed packets carry all child evidence
+  authority.
 
 ## Review And Regression Protocol
 

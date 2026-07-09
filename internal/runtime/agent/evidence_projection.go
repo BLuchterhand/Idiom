@@ -1030,44 +1030,6 @@ func (projection toolResultEvidenceProjection) delegatedClosureEvidencePaths(obj
 	return closurePromptEvidencePaths(paths, max)
 }
 
-func (projection toolResultEvidenceProjection) acceptedAnswerEvidencePaths(answer string, brief workerruntime.WorkerRuntimeBrief) []string {
-	if runnerBriefRequiresMutation(brief) {
-		if paths := projection.acceptedImplementationEvidencePaths(); len(paths) > 0 {
-			return paths
-		}
-	}
-
-	if readOnlyDirectAnswerAcceptanceApplies(brief) {
-		decision := readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), projection.results).
-			FinalAnswerDecision(answer)
-
-		return append([]string(nil), decision.AcceptedEvidencePaths...)
-	}
-
-	if readOnlyExplanationGateApplies(brief) {
-		paths := textutil.Merge(projection.exactProbeEvidencePaths(), pathparse.MentionedWorkspacePaths(answer))
-		paths = textutil.Merge(paths, projection.acceptedDelegatedReadOnlyEvidencePaths(brief.Objective))
-
-		paths = textutil.Merge(paths, projection.delegatedReadOnlyInspectedImplementationPaths())
-		if len(paths) == 0 {
-			paths = textutil.Merge(paths, projection.MentionedEvidencePathsForObjective(brief.Objective, 24))
-		}
-
-		paths = projection.prioritizedClosureEvidencePaths(paths, 8)
-		paths = closurePromptEvidencePaths(paths, 8)
-
-		if len(paths) > 0 {
-			return paths
-		}
-	}
-
-	paths := textutil.Merge(projection.pinnedPaths(8), pathparse.MentionedWorkspacePaths(answer))
-	paths = textutil.Merge(paths, projection.acceptedDelegatedReadOnlyEvidencePaths(brief.Objective))
-	paths = delegatedDiscoveryAnswerEvidencePaths(brief.Objective, paths)
-
-	return closurePromptEvidencePaths(paths, 8)
-}
-
 func (projection toolResultEvidenceProjection) acceptedDelegatedReadOnlyEvidencePaths(objective string) []string {
 	var paths []string
 	for _, fact := range projection.ReadOnlyDelegatedEvidenceFacts() {

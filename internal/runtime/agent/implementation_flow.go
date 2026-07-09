@@ -1210,7 +1210,7 @@ func EmitDirectAnswerSurfaceEvent(emitFn func(event RunEvent), surface DirectAns
 func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspace.ToolResult) finalAnswerAcceptance {
 	acceptance := newFinalAnswerAcceptance()
 	if r != nil {
-		acceptance.EvidencePaths = newToolResultEvidenceProjection(results).acceptedAnswerEvidencePaths(answer, r.RuntimeBrief)
+		acceptance.EvidencePaths = acceptedFinalAnswerEvidencePaths(answer, r.RuntimeBrief, results)
 	}
 
 	var directAnswerRelevance readOnlyDirectAnswerRelevance
@@ -1879,7 +1879,7 @@ func questionBlockerContextPaths(brief workerruntime.WorkerRuntimeBrief, results
 			return "Inspected evidence", paths
 		}
 
-		if paths := closurePromptEvidencePaths(closeout.FinalAnswerDecision("").AcceptedEvidencePaths, max); len(paths) > 0 {
+		if paths := closurePromptEvidencePaths(closeout.AcceptedAnswerEvidencePaths(""), max); len(paths) > 0 {
 			return "Inspected evidence", paths
 		}
 
@@ -1892,7 +1892,7 @@ func questionBlockerContextPaths(brief workerruntime.WorkerRuntimeBrief, results
 	}
 
 	projection := newToolResultEvidenceProjection(results)
-	paths := closurePromptEvidencePaths(projection.acceptedAnswerEvidencePaths("", brief), max)
+	paths := closurePromptEvidencePaths(acceptedFinalAnswerEvidencePaths("", brief, results), max)
 	if len(paths) == 0 {
 		paths = projection.delegatedClosureEvidencePaths(brief.Objective, max)
 	}

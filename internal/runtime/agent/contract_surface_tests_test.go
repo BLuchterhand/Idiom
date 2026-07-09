@@ -3501,7 +3501,7 @@ func TestFinalAnswerAcceptanceAllowsWhatWouldItTakeAnswerFromDiscoveredTUISource
 		t.Fatalf("what-would-it-take answer from discovered TUI source bodies blocked: kind=%q reason=%q", kind, reason)
 	}
 
-	paths := newToolResultEvidenceProjection(results).acceptedAnswerEvidencePaths(answer, brief)
+	paths := acceptedFinalAnswerEvidencePaths(answer, brief, results)
 	if !slices.Contains(paths, "internal/surfaces/tui/app/update_handlers.go") {
 		t.Fatalf("expected accepted evidence path from the strongest source-body support, got %#v", paths)
 	}
@@ -3960,14 +3960,14 @@ func TestFinalAnswerAcceptanceRejectsSessionsPanelAsChatRecallOwner(t *testing.T
 
 	assertObjectiveRelevanceAdvisoryForTest(t, runner, answer, results, "answer_objective_unmet:citation_mismatch")
 
-	if paths := newToolResultEvidenceProjection(results).acceptedAnswerEvidencePaths(answer, brief); slices.Contains(paths, "internal/surfaces/tui/app/sessions_panel.go") {
+	if paths := acceptedFinalAnswerEvidencePaths(answer, brief, results); slices.Contains(paths, "internal/surfaces/tui/app/sessions_panel.go") {
 		t.Fatalf("accepted evidence paths must not promote conflicting navigation owner, got %#v", paths)
 	}
 
 	aliasRunner := &Runner{RuntimeBrief: aliasBrief}
 	assertObjectiveRelevanceAdvisoryForTest(t, aliasRunner, answer, results, "answer_objective_unmet:citation_mismatch")
 
-	if paths := newToolResultEvidenceProjection(results).acceptedAnswerEvidencePaths(answer, aliasBrief); slices.Contains(paths, "internal/surfaces/tui/app/sessions_panel.go") {
+	if paths := acceptedFinalAnswerEvidencePaths(answer, aliasBrief, results); slices.Contains(paths, "internal/surfaces/tui/app/sessions_panel.go") {
 		t.Fatalf("direct_answer alias accepted evidence paths promoted conflicting navigation owner, got %#v", paths)
 	}
 }
@@ -4168,7 +4168,7 @@ func TestReadOnlyAnswerabilityRejectsGenericToolSchemaPacketForUsefulnessObjecti
 		t.Fatalf("generic tool/schema packet must not populate post-child evidence paths, got %#v", paths)
 	}
 
-	if paths := newToolResultEvidenceProjection(results).acceptedAnswerEvidencePaths("Discovery tool schema details are available.", brief); len(paths) > 0 {
+	if paths := acceptedFinalAnswerEvidencePaths("Discovery tool schema details are available.", brief, results); len(paths) > 0 {
 		t.Fatalf("generic tool/schema packet must not leak accepted evidence paths, got %#v", paths)
 	}
 }
@@ -4277,7 +4277,7 @@ func TestReadOnlyAnswerabilityAcceptsExplicitDiagnosticEvidence(t *testing.T) {
 		t.Fatalf("diagnostic final-answer decision missed accepted diagnostic path: %#v", decision.AcceptedEvidencePaths)
 	}
 
-	if paths := newToolResultEvidenceProjection(results).acceptedAnswerEvidencePaths(answer, brief); !slices.Contains(paths, "internal/runtime/agent/runner_core.go") {
+	if paths := acceptedFinalAnswerEvidencePaths(answer, brief, results); !slices.Contains(paths, "internal/runtime/agent/runner_core.go") {
 		t.Fatalf("accepted evidence paths missed relevant diagnostic path: %#v", paths)
 	}
 }
@@ -4312,7 +4312,7 @@ func TestReadOnlyAnswerabilityRejectsUnrelatedDiagnosticEvidence(t *testing.T) {
 		t.Fatalf("unrelated diagnostic evidence must not become accepted evidence: %#v", decision.AcceptedEvidencePaths)
 	}
 
-	if paths := newToolResultEvidenceProjection(results).acceptedAnswerEvidencePaths(answer, brief); len(paths) > 0 {
+	if paths := acceptedFinalAnswerEvidencePaths(answer, brief, results); len(paths) > 0 {
 		t.Fatalf("accepted evidence paths promoted unrelated diagnostic evidence: %#v", paths)
 	}
 }
@@ -5486,7 +5486,7 @@ func TestAcceptedAnswerEvidencePathsPreferObjectiveRelevantSourceBody(t *testing
 	}
 	answer := "The chat input newline wrap issue is in `internal/surfaces/tui/app/chat_input.go`, where the input height sync keeps the first existing line visible."
 
-	paths := newToolResultEvidenceProjection(results).acceptedAnswerEvidencePaths(answer, brief)
+	paths := acceptedFinalAnswerEvidencePaths(answer, brief, results)
 	if len(paths) == 0 {
 		t.Fatal("expected evidence paths")
 	}
@@ -5517,7 +5517,7 @@ func TestAcceptedAnswerEvidencePathsAliasIgnoresUnrelatedCandidateBody(t *testin
 	}
 	answer := "The TUI chat input newline wrap and upward shift issue is not established by the inspected source."
 
-	paths := newToolResultEvidenceProjection(results).acceptedAnswerEvidencePaths(answer, brief)
+	paths := acceptedFinalAnswerEvidencePaths(answer, brief, results)
 	if len(paths) != 0 {
 		t.Fatalf("alias evidence paths should not report unrelated candidate source body, got %v", paths)
 	}

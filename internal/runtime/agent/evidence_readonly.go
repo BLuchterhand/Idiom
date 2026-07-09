@@ -2181,23 +2181,13 @@ func (d ReadOnlyCloseout) ConversationFallback() string {
 }
 
 func (d ReadOnlyCloseout) ConversationUncertaintyFallback() string {
-	var (
-		inspectedPaths []string
-		anchors        []string
+	inspectedPaths := readOnlyEvidenceDisplayPaths(
+		textutil.Merge(d.Evidence.SourceBodyPaths, d.Evidence.ExternalDocumentBodyPaths, d.Evidence.DiagnosticPaths),
+		6,
 	)
+	var anchors []string
 
 	for _, result := range d.Results {
-		paths := newToolResultEvidenceRecord(result).ReadPaths()
-		for _, path := range paths {
-			if IsNonSourceEvidenceArtifactPath(path) {
-				continue
-			}
-
-			if path != "" && !slices.Contains(inspectedPaths, path) {
-				inspectedPaths = append(inspectedPaths, path)
-			}
-		}
-
 		if anchor := conversationFallbackEvidenceAnchor(result); anchor != "" && !slices.Contains(anchors, anchor) {
 			anchors = append(anchors, anchor)
 		}
@@ -2300,6 +2290,51 @@ func (d readOnlyFinalAnswerDecision) DirectAnswerRelevance() readOnlyDirectAnswe
 
 func (d ReadOnlyCloseout) DirectAnswerRelevance(answer string) readOnlyDirectAnswerRelevance {
 	return d.FinalAnswerDecision(answer).DirectAnswerRelevance()
+}
+
+func acceptedFinalAnswerEvidencePaths(answer string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []string {
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	if runnerBriefRequiresMutation(brief) {
+		if paths := newToolResultEvidenceProjection(results).acceptedImplementationEvidencePaths(); len(paths) > 0 {
+			return paths
+		}
+	}
+
+	return readOnlyClosureDecisionForResults(brief, results).AcceptedAnswerEvidencePaths(answer)
+}
+
+func (d ReadOnlyCloseout) AcceptedAnswerEvidencePaths(answer string) []string {
+	brief := workerruntime.NormalizeRuntimeBrief(d.Brief)
+	if readOnlyDirectAnswerAcceptanceApplies(brief) {
+		decision := readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), d.Results).
+			FinalAnswerDecision(answer)
+
+		return append([]string(nil), decision.AcceptedEvidencePaths...)
+	}
+
+	projection := newToolResultEvidenceProjection(d.Results)
+	if readOnlyExplanationGateApplies(brief) {
+		paths := textutil.Merge(projection.exactProbeEvidencePaths(), pathparse.MentionedWorkspacePaths(answer))
+		paths = textutil.Merge(paths, projection.acceptedDelegatedReadOnlyEvidencePaths(brief.Objective))
+
+		paths = textutil.Merge(paths, projection.delegatedReadOnlyInspectedImplementationPaths())
+		if len(paths) == 0 {
+			paths = textutil.Merge(paths, projection.MentionedEvidencePathsForObjective(brief.Objective, 24))
+		}
+
+		paths = projection.prioritizedClosureEvidencePaths(paths, 8)
+		paths = closurePromptEvidencePaths(paths, 8)
+
+		if len(paths) > 0 {
+			return paths
+		}
+	}
+
+	paths := textutil.Merge(projection.pinnedPaths(8), pathparse.MentionedWorkspacePaths(answer))
+	paths = textutil.Merge(paths, projection.acceptedDelegatedReadOnlyEvidencePaths(brief.Objective))
+	paths = delegatedDiscoveryAnswerEvidencePaths(brief.Objective, paths)
+
+	return closurePromptEvidencePaths(paths, 8)
 }
 
 func (d ReadOnlyCloseout) FinalAnswerDecision(answer string) readOnlyFinalAnswerDecision {
