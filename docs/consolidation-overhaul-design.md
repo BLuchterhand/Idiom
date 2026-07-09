@@ -1530,6 +1530,28 @@ Reviewer-updated estimate:
   as inventory. Full verification: `go test ./...`; `go build ./cmd/idiom`;
   `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
   `git diff --check`.
+- Runtime wrapper cleanup continued by deleting five more production functions
+  reachable only through tests: `sourceEvidencePendingRedirectFollowupAllowedForBrief`,
+  `sourceEvidencePendingRedirectProgressAllowedForBrief`,
+  `retryAnswerHedgeRejectionReason`, `runnerAutonomyContract`, and
+  `runnerAutonomyRecorder.emitCompletionGate`. Tests now call the live owners
+  directly: `sourceEvidencePendingRedirectsForBrief` plus
+  `sourceEvidencePendingRedirectRequestAllowed` /
+  `sourceEvidencePendingRedirectOutlineProgressAllowed`,
+  `buildRunnerAutonomyContract`, and `emitCompletionGateAttempt`. The stale
+  retry-hedge setup assertion was removed instead of preserving an unused
+  classifier. Production Go changed `+0 / -89`, net `-89`; test Go changed
+  `+39 / -40`, net `-1`. With this worktree included, the branch is production
+  Go `+26,575 / -33,012`, net `-6,437` versus `main`. Focused verification:
+  `go test ./internal/runtime/agent -run 'Test(RunnerAutonomyContract|RunnerAutonomyRecorder|SourceEvidence(PendingRedirect|StateTracksDirectOutlineRedirect|CandidatePaths)|ObjectiveAdvisoryDoesNotBecomeTerminalRecovery|ReadOnlyExplanationMeta|FinalAnswerAcceptanceRetryPolicy)' -count=1`;
+  `go test ./internal/runtime/agent -count=1`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./internal/runtime/agent`;
+  `go run golang.org/x/tools/cmd/deadcode@latest ./... | rg '^internal/runtime/agent/'`
+  as inventory, now showing only `Runner.emitAcceptedAnswerSignals` and
+  `Runner.completeWithoutMoreToolsWithReason`. Full verification:
+  `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `git diff --check`.
 
 ## Review And Regression Protocol
 

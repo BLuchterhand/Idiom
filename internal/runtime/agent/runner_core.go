@@ -5241,40 +5241,6 @@ func readOnlyExplanationGateApplies(brief workerruntime.WorkerRuntimeBrief) bool
 	}
 }
 
-// retryAnswerHedgeRejectionReason checks whether the retry answer from
-// ensureNonEmptyAnswer is a hedge or meta-response about evidence sufficiency
-// rather than a substantive answer. This catches cases where the model, after
-// being forced to retry an empty response, produces text that describes why it
-// cannot answer instead of actually answering.
-func retryAnswerHedgeRejectionReason(reply string) string {
-	trimmed := strings.TrimSpace(reply)
-	if trimmed == "" || len(trimmed) > 500 {
-		return ""
-	}
-
-	lower := strings.ToLower(trimmed)
-	for _, phrase := range []string{
-		"does not retain enough",
-		"not retain enough",
-		"cannot provide",
-		"unable to provide",
-		"retained source context",
-		"not sufficient",
-		"insufficient evidence",
-		"does not contain enough",
-		"the answer above stands",
-		"the answer above cites",
-		"i have answered the question",
-		"the evidence is sufficient and",
-	} {
-		if strings.Contains(lower, phrase) {
-			return "the answer is a hedge about evidence sufficiency rather than a substantive response to the user's question. If a previous gate rejection told you to read a specific path, call `read_file` or `code_navigate` for that path now — do not explain why you cannot answer."
-		}
-	}
-
-	return ""
-}
-
 func readOnlyExplanationMetaRejectionReason(reply string) string {
 	trimmed := strings.TrimSpace(reply)
 	if trimmed == "" {
@@ -6150,15 +6116,6 @@ func protocolWithActiveAuthority(protocol contractcompile.ModelProtocolProjectio
 	}
 
 	return protocol
-}
-
-func runnerAutonomyContract(r *Runner, policy RunPolicy, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (autonomy.AutonomyContract, []autonomy.Obligation, bool) {
-	compiled, ok := buildRunnerAutonomyContract(r, policy, brief, results)
-	if !ok {
-		return autonomy.AutonomyContract{}, nil, false
-	}
-
-	return compiled.contract, compiled.obligations, true
 }
 
 func legacyRunnerAutonomyContract(r *Runner, policy RunPolicy, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (autonomy.AutonomyContract, []autonomy.Obligation, bool) {
@@ -7544,10 +7501,6 @@ func (a *runnerAutonomyRecorder) emitVerificationGate(req workspace.ToolRequest,
 		VerificationStatus: status,
 		Source:             "runner_verification_gate",
 	})
-}
-
-func (a *runnerAutonomyRecorder) emitCompletionGate(decision autonomy.ToolPolicyDecision, reasonCode string, results []workspace.ToolResult) {
-	a.emitCompletionGateAttempt(decision, reasonCode, results, 0)
 }
 
 func (a *runnerAutonomyRecorder) emitCompletionGateAttempt(decision autonomy.ToolPolicyDecision, reasonCode string, results []workspace.ToolResult, attempts int) {

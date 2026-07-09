@@ -7015,11 +7015,16 @@ func TestSourceEvidencePendingRedirectProgressAllowsOneOutlineBeforeBody(t *test
 		NamedGap:        "declarations needed before selecting source-body evidence",
 		WhyNotAnswering: "need symbol names for the redirected source-body follow-up",
 	}
-	if sourceEvidencePendingRedirectFollowupAllowedForBrief(brief, outline, results) {
+	pending := sourceEvidencePendingRedirectsForBrief(brief, results)
+	if len(pending) != 1 {
+		t.Fatalf("pending redirects = %#v, want one source-body obligation", pending)
+	}
+
+	if sourceEvidencePendingRedirectRequestAllowed(pending[0], outline) {
 		t.Fatal("outline progress must not satisfy the source-body follow-up contract")
 	}
 
-	if !sourceEvidencePendingRedirectProgressAllowedForBrief(brief, outline, results) {
+	if !sourceEvidencePendingRedirectOutlineProgressAllowed(pending[0], outline, results) {
 		t.Fatal("the exact redirected same-path outline should be allowed as progress before a symbol is known")
 	}
 
@@ -7028,7 +7033,7 @@ func TestSourceEvidencePendingRedirectProgressAllowsOneOutlineBeforeBody(t *test
 	withoutGap.NamedGap = ""
 	withoutGap.WhyNotAnswering = ""
 
-	if sourceEvidencePendingRedirectProgressAllowedForBrief(brief, withoutGap, results) {
+	if sourceEvidencePendingRedirectOutlineProgressAllowed(pending[0], withoutGap, results) {
 		t.Fatal("outline progress should require a named gap or why_not_answering reason")
 	}
 
@@ -7044,12 +7049,17 @@ func TestSourceEvidencePendingRedirectProgressAllowsOneOutlineBeforeBody(t *test
 			"- sessionModel lines 8-24",
 		}, "\n"),
 	})
-	if sourceEvidencePendingRedirectProgressAllowedForBrief(brief, outline, withOutline) {
+	pendingWithOutline := sourceEvidencePendingRedirectsForBrief(brief, withOutline)
+	if len(pendingWithOutline) != 1 {
+		t.Fatalf("pending redirects after outline = %#v, want one source-body obligation", pendingWithOutline)
+	}
+
+	if sourceEvidencePendingRedirectOutlineProgressAllowed(pendingWithOutline[0], outline, withOutline) {
 		t.Fatal("same-path outline progress should be single-use while the body obligation remains pending")
 	}
 
 	body := workspace.ToolRequest{Tool: "code_navigate", Path: "internal/surfaces/tui/app/sessions.go", Capability: "read_symbol", Pattern: "sessionModel"}
-	if !sourceEvidencePendingRedirectProgressAllowedForBrief(brief, body, withOutline) {
+	if !sourceEvidencePendingRedirectRequestAllowed(pendingWithOutline[0], body) {
 		t.Fatal("source-body follow-up should remain allowed after outline progress")
 	}
 
@@ -7090,7 +7100,7 @@ func TestSourceEvidenceStateTracksDirectOutlineRedirectToRelatedReadSymbol(t *te
 
 	tools := sourceEvidencePendingRedirectTools(brief.AllowedTools, pending)
 	for _, want := range []string{"go_read_symbol", "go_file_outline"} {
-		if !containsSourceEvidenceTool(tools, want) {
+		if !slices.Contains(tools, want) {
 			t.Fatalf("pending redirect tools missing %q: %#v", want, tools)
 		}
 	}
@@ -7101,7 +7111,7 @@ func TestSourceEvidenceStateTracksDirectOutlineRedirectToRelatedReadSymbol(t *te
 		NamedGap:        "need declarations before selecting a symbol body",
 		WhyNotAnswering: "the raw read redirected to an outline route first",
 	}
-	if !sourceEvidencePendingRedirectProgressAllowedForBrief(brief, outline, results) {
+	if !sourceEvidencePendingRedirectOutlineProgressAllowed(pending[0], outline, results) {
 		t.Fatal("direct outline redirect should allow one same-path outline before symbol body")
 	}
 
@@ -7110,7 +7120,7 @@ func TestSourceEvidenceStateTracksDirectOutlineRedirectToRelatedReadSymbol(t *te
 		Path:    "internal/capabilities/workspace/tool_schemas.go",
 		Pattern: "ToolSchemas",
 	}
-	if !sourceEvidencePendingRedirectFollowupAllowedForBrief(brief, body, results) {
+	if !sourceEvidencePendingRedirectRequestAllowed(pending[0], body) {
 		t.Fatal("related read_symbol route should satisfy the redirected source-body obligation")
 	}
 }
@@ -7147,16 +7157,6 @@ func TestSourceEvidencePendingRedirectsForBriefDropsStaleRedirectAfterPlausibleB
 	if pending := sourceEvidencePendingRedirectsForBrief(brief, results); len(pending) != 0 {
 		t.Fatalf("scoped pending redirects = %#v, want stale unrelated redirect dropped after plausible source-body evidence", pending)
 	}
-}
-
-func containsSourceEvidenceTool(tools []string, want string) bool {
-	for _, tool := range tools {
-		if tool == want {
-			return true
-		}
-	}
-
-	return false
 }
 
 func TestSourceEvidencePendingRedirectsForBriefKeepsPlausibleRedirect(t *testing.T) {

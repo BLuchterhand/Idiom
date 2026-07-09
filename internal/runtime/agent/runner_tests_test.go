@@ -292,10 +292,12 @@ func TestRunnerAutonomyContractMapsMutationGatesToObligations(t *testing.T) {
 	}
 	policy := RunPolicy{MaxToolSteps: 12, MaxModelCalls: 3, MaxContextMessages: 20, MaxContextChars: 120000}
 
-	contract, obligations, ok := runnerAutonomyContract(&Runner{AgentName: "main"}, policy, brief, nil)
+	compiled, ok := buildRunnerAutonomyContract(&Runner{AgentName: "main"}, policy, brief, nil)
 	if !ok {
-		t.Fatal("runnerAutonomyContract returned ok=false")
+		t.Fatal("buildRunnerAutonomyContract returned ok=false")
 	}
+	contract := compiled.contract
+	obligations := compiled.obligations
 
 	for _, want := range []autonomy.ObligationKind{
 		autonomy.ObligationWrite,
@@ -739,7 +741,7 @@ func TestRunnerAutonomyPlannerContractProtocolAndGatesShareCompiledAuthority(t *
 
 	recorder.emitTurnPhaseContract(phase, protocol)
 	recorder.markModelProtocolPresented(protocol)
-	recorder.emitCompletionGate(autonomy.PolicyReject, "required_obligations_open", results)
+	recorder.emitCompletionGateAttempt(autonomy.PolicyReject, "required_obligations_open", results, 0)
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
 
@@ -867,7 +869,7 @@ func TestRunnerAutonomyPlannerAuthorityIgnoresStalePhaseContractID(t *testing.T)
 		t.Fatalf("active turn contract should be projected from compiled canonical contract: %#v", recorder.activeTurnContract)
 	}
 	recorder.markModelProtocolPresented(protocol)
-	recorder.emitCompletionGate(autonomy.PolicyReject, "required_obligations_open", results)
+	recorder.emitCompletionGateAttempt(autonomy.PolicyReject, "required_obligations_open", results, 0)
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
 	for _, event := range events {
@@ -2116,10 +2118,12 @@ func TestRunnerAutonomyContractMapsReadOnlyLaneToEvidenceObligation(t *testing.T
 		ForbiddenTools:    []string{"apply_patch", "edit_file"},
 	}
 
-	contract, obligations, ok := runnerAutonomyContract(&Runner{AgentName: "main"}, RunPolicy{}, brief, nil)
+	compiled, ok := buildRunnerAutonomyContract(&Runner{AgentName: "main"}, RunPolicy{}, brief, nil)
 	if !ok {
-		t.Fatal("runnerAutonomyContract returned ok=false")
+		t.Fatal("buildRunnerAutonomyContract returned ok=false")
 	}
+	contract := compiled.contract
+	obligations := compiled.obligations
 
 	if countObligationKind(obligations, autonomy.ObligationEvidence) != 1 ||
 		countObligationKind(obligations, autonomy.ObligationWrite) != 0 {
@@ -2171,7 +2175,7 @@ func TestRunnerAutonomyRecorderEmitsGateEventsForExistingGates(t *testing.T) {
 	recorder.emitContractStarted(brief)
 	recorder.emitWriteGate(workspace.ToolRequest{Tool: "apply_patch", Content: "*** Begin Patch\n*** Update File: internal/runtime/agent/runner_core.go\n@@\n*** End Patch\n"}, autonomy.PolicyReject, "outside_required_edit_paths", nil)
 	recorder.emitVerificationGate(workspace.ToolRequest{Tool: "read_file", Path: "internal/runtime/agent/runner_core.go"}, autonomy.PolicyReject, "verification_required_after_write", "pending")
-	recorder.emitCompletionGate(autonomy.PolicyReject, "completion_gate_rejected", nil)
+	recorder.emitCompletionGateAttempt(autonomy.PolicyReject, "completion_gate_rejected", nil, 0)
 	recorder.emitLoopGate(workspace.ToolRequest{Tool: "read_file", Path: "internal/runtime/agent/runner_core.go"}, autonomy.PolicyStop, "repeated_tool_call", "read_file:internal/runtime/agent/runner_core.go", 3)
 	recorder.emitBudgetGate(lifecycleBudgetCloseoutDecision(policy, runnerMetrics{ToolCalls: 5, ModelCalls: 2}, "max_tool_steps", true))
 
@@ -2273,7 +2277,7 @@ func TestRunnerAutonomyRecorderGateDecisionPayloadIncludesPackModeFactsAndAltern
 	recorder.emitTurnPhaseContract(phase, contractcompile.ModelProtocolProjection{})
 	recorder.emitWriteGate(workspace.ToolRequest{Tool: "apply_patch", Content: "*** Begin Patch\n*** Update File: README.md\n@@\n-x\n+y\n*** End Patch\n"}, autonomy.PolicyReject, "required_edit_scope_rejected", nil)
 	recorder.emitVerificationGate(workspace.ToolRequest{Tool: "shell"}, autonomy.PolicyReject, "verification_required_after_write", "pending")
-	recorder.emitCompletionGate(autonomy.PolicyReject, "required_obligations_open", nil)
+	recorder.emitCompletionGateAttempt(autonomy.PolicyReject, "required_obligations_open", nil, 0)
 	recorder.emitLoopGate(workspace.ToolRequest{Tool: "read_file", Path: "internal/runtime/agent/runner_core.go"}, autonomy.PolicyStop, "repeated_tool_call", "read_file:internal/runtime/agent/runner_core.go", 3)
 	recorder.emitBudgetGate(lifecycleBudgetCloseoutDecision(policy, runnerMetrics{ToolCalls: 5, ModelCalls: 2}, "max_tool_steps", true))
 	recorder.emitGateDecision(runnerAutonomyGateDecision{
@@ -2366,8 +2370,8 @@ func TestRunnerAutonomyRecorderDoesNotReportClosedObligationsOpenAtLaterGate(t *
 	}
 
 	recorder.emitContractStarted(brief)
-	recorder.emitCompletionGate(autonomy.PolicyAllow, "final_answer_accepted", nil)
-	recorder.emitCompletionGate(autonomy.PolicyAllow, "final_answer_accepted", nil)
+	recorder.emitCompletionGateAttempt(autonomy.PolicyAllow, "final_answer_accepted", nil, 0)
+	recorder.emitCompletionGateAttempt(autonomy.PolicyAllow, "final_answer_accepted", nil, 0)
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
 	var completionGates []autonomy.Event
@@ -2427,7 +2431,7 @@ func TestRunnerAutonomyRecorderLifecycleEventsCloseSuccessfulGateObligations(t *
 			recorder.emitContractStarted(brief)
 			recorder.emitWriteGate(workspace.ToolRequest{Tool: "apply_patch", Path: "internal/runtime/agent/runner_core.go"}, autonomy.PolicyAllow, "write_result_completed", []string{"internal/runtime/agent/runner_core.go"})
 			recorder.emitVerificationGate(workspace.ToolRequest{Tool: "shell", Command: "go test ./internal/runtime/agent"}, autonomy.PolicyAllow, "verification_result_passed", "passed")
-			recorder.emitCompletionGate(autonomy.PolicyAllow, "final_answer_accepted", nil)
+			recorder.emitCompletionGateAttempt(autonomy.PolicyAllow, "final_answer_accepted", nil, 0)
 			recorder.emitLoopCloseout(lifecycleLoopCloseoutDecision("completed", recorder.hasOpenObligationsForGate(autonomy.GateLoop)))
 			recorder.emitBudgetGate(lifecycleBudgetCloseoutDecision(policy, runnerMetrics{ToolCalls: 3, ModelCalls: 2}, tc.budgetStopReason, tc.budgetExhausted))
 
@@ -2490,7 +2494,7 @@ func TestRunnerAutonomyRecorderOpensBeforeInitialResolvedObligations(t *testing.
 	}
 
 	recorder.emitContractStarted(brief)
-	recorder.emitCompletionGate(autonomy.PolicyAllow, "final_answer_accepted", results)
+	recorder.emitCompletionGateAttempt(autonomy.PolicyAllow, "final_answer_accepted", results, 0)
 	recorder.emitLoopCloseout(lifecycleLoopCloseoutDecision("completed", recorder.hasOpenObligationsForGate(autonomy.GateLoop)))
 	recorder.emitBudgetGate(lifecycleBudgetCloseoutDecision(policy, runnerMetrics{ToolCalls: 2, ModelCalls: 1}, "completed", false))
 
@@ -2708,9 +2712,9 @@ func TestRunnerAutonomyRecorderRejectedCompletionReportsOnlyCurrentlyOpenObligat
 
 	recorder.emitContractStarted(brief)
 	recorder.emitWriteGate(workspace.ToolRequest{Tool: "write_file", Path: "internal/runtime/agent/runner_core.go"}, autonomy.PolicyAllow, "write_result_completed", []string{"internal/runtime/agent/runner_core.go"})
-	recorder.emitCompletionGate(autonomy.PolicyReject, "required_obligations_open", []workspace.ToolResult{
+	recorder.emitCompletionGateAttempt(autonomy.PolicyReject, "required_obligations_open", []workspace.ToolResult{
 		{Tool: "write_file", Summary: "Wrote internal/runtime/agent/runner_core.go", ChangedPaths: []string{"internal/runtime/agent/runner_core.go"}},
-	})
+	}, 0)
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
 	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
@@ -2769,7 +2773,7 @@ func TestRunnerAutonomyRecorderRejectedCompletionEmitsGuardFriction(t *testing.T
 	}
 
 	recorder.emitTurnPhaseContract(phase, protocol)
-	recorder.emitCompletionGate(autonomy.PolicyReject, "required_obligations_open", results)
+	recorder.emitCompletionGateAttempt(autonomy.PolicyReject, "required_obligations_open", results, 0)
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
 
@@ -2976,7 +2980,7 @@ func TestRunnerAutonomyRecorderCompletionAllowDoesNotResolveFailedVerification(t
 
 	recorder.emitContractStarted(brief)
 	recorder.emitWriteGate(workspace.ToolRequest{Tool: "write_file", Path: "internal/runtime/agent/runner_core.go"}, autonomy.PolicyAllow, "write_result_completed", []string{"internal/runtime/agent/runner_core.go"})
-	recorder.emitCompletionGate(autonomy.PolicyAllow, "final_answer_accepted", results)
+	recorder.emitCompletionGateAttempt(autonomy.PolicyAllow, "final_answer_accepted", results, 0)
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
 	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
@@ -39911,7 +39915,7 @@ func TestDirectAnswerInsufficientEvidenceClaimWhenEvidenceIsAnswerableIsRejected
 	}
 }
 
-func TestRetryAnswerHedgeDoesNotBecomeObjectiveRecovery(t *testing.T) {
+func TestObjectiveAdvisoryDoesNotBecomeTerminalRecovery(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "conversation",
@@ -39932,11 +39936,6 @@ func TestRetryAnswerHedgeDoesNotBecomeObjectiveRecovery(t *testing.T) {
 			"287:Task-scoped repository evidence feeds the runtime brief, including tools, editable paths, evidence paths, verification, and budget.",
 		}, "\n"),
 	}}
-
-	hedge := "I cannot provide a supported answer because the retained source context is not sufficient."
-	if reason := retryAnswerHedgeRejectionReason(hedge); reason == "" {
-		t.Fatalf("test setup should detect retry hedge")
-	}
 
 	advisory := finalAnswerAcceptanceWithDirectAnswerRelevance(newFinalAnswerAcceptance(), readOnlyDirectAnswerRelevance{
 		BlockerKind: answerObjectiveUnmetInsufficientEvidenceClaimed,

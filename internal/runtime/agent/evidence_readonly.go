@@ -7943,48 +7943,6 @@ func reverseSourceEvidenceObligations(values []sourceEvidenceObligation) {
 	}
 }
 
-func sourceEvidencePendingRedirectFollowupAllowedForBrief(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest, results []workspace.ToolResult) bool {
-	path := NormalizeRunnerPath(req.Path)
-	tool := strings.TrimSpace(req.Tool)
-
-	if path == "" || tool == "" {
-		return false
-	}
-
-	for _, obligation := range sourceEvidencePendingRedirectsForBrief(brief, results) {
-		if obligation.Path == path && sourceEvidencePendingRedirectRequestAllowed(obligation, req) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func sourceEvidencePendingRedirectProgressAllowedForBrief(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest, results []workspace.ToolResult) bool {
-	path := NormalizeRunnerPath(req.Path)
-	tool := strings.TrimSpace(req.Tool)
-
-	if path == "" || tool == "" {
-		return false
-	}
-
-	for _, obligation := range sourceEvidencePendingRedirectsForBrief(brief, results) {
-		if obligation.Path != path {
-			continue
-		}
-
-		if sourceEvidencePendingRedirectRequestAllowed(obligation, req) {
-			return true
-		}
-
-		if sourceEvidencePendingRedirectOutlineProgressAllowed(obligation, req, results) {
-			return true
-		}
-	}
-
-	return false
-}
-
 func sourceEvidencePendingRedirectRequestAllowed(obligation sourceEvidenceObligation, req workspace.ToolRequest) bool {
 	tool := strings.TrimSpace(req.Tool)
 	if tool == "" || tool != strings.TrimSpace(obligation.PendingTool) {
