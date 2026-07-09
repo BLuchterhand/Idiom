@@ -192,60 +192,40 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 
 	ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, readOnlyBriefCandidateEvidencePaths(brief))
 
-	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-
-		tool := strings.TrimSpace(result.Tool)
-		if tool == "" {
-			continue
-		}
-
-		if projection.GeneratedArtifactOnlyReadResult(result) {
-			paths := readOnlySourceLikePaths(ReadPathsFromToolResult(result), 8)
+	for _, observation := range projection.ReadOnlyEvidenceObservations() {
+		switch observation.Kind {
+		case readOnlyEvidenceGeneratedArtifact:
 			ledger.addItem(readOnlyEvidenceItem{
 				Kind:           readOnlyEvidenceGeneratedArtifact,
-				Tool:           tool,
-				CandidatePaths: paths,
-				Summary:        strings.TrimSpace(result.Summary),
+				Tool:           observation.Tool,
+				CandidatePaths: observation.CandidatePaths,
+				Summary:        observation.Summary,
 			})
 
-			ledger.GeneratedArtifactPaths = textutil.Merge(ledger.GeneratedArtifactPaths, paths)
+			ledger.GeneratedArtifactPaths = textutil.Merge(ledger.GeneratedArtifactPaths, observation.CandidatePaths)
 
-			continue
-		}
-
-		concreteFacts := projection.ConcreteReadOnlyEvidenceFactsFromResult(result)
-		for _, fact := range concreteFacts {
-			if fact.Kind != readOnlyEvidenceDiagnostic {
-				continue
-			}
-
-			relevant := readOnlyDiagnosticEvidenceMatchesObjective(ledger.Objective, namedTargets, result, fact.CandidatePaths)
+		case readOnlyEvidenceDiagnostic:
+			relevant := readOnlyDiagnosticEvidenceMatchesObjective(ledger.Objective, namedTargets, observation.Summary+"\n"+observation.Output, observation.CandidatePaths)
 
 			ledger.DiagnosticEvidence = true
-			ledger.DiagnosticPaths = textutil.Merge(ledger.DiagnosticPaths, fact.CandidatePaths)
+			ledger.DiagnosticPaths = textutil.Merge(ledger.DiagnosticPaths, observation.CandidatePaths)
 
 			if relevant {
 				ledger.DiagnosticRelevant = true
 			}
 
 			ledger.addItem(readOnlyEvidenceItem{
-				Kind:           fact.Kind,
-				Tool:           fact.Tool,
-				CandidatePaths: fact.CandidatePaths,
+				Kind:           observation.Kind,
+				Tool:           observation.Tool,
+				CandidatePaths: observation.CandidatePaths,
 				Relevant:       relevant,
-				Summary:        fact.Summary,
+				Summary:        observation.Summary,
 			})
-		}
 
-		if featurePlannerPlanArtifactResult(result) {
-			paths := featurePlannerPlanArtifactProposedPaths(result)
-			relevant := featurePlannerPlanArtifactMatchesObjective(ledger.Objective, result)
-
+		case readOnlyEvidencePlanArtifact:
+			relevant := featurePlannerPlanArtifactPathsMatchObjective(ledger.Objective, observation.CandidatePaths)
 			ledger.PlanArtifactEvidence = true
-			ledger.PlanArtifactPaths = textutil.Merge(ledger.PlanArtifactPaths, paths)
+			ledger.PlanArtifactPaths = textutil.Merge(ledger.PlanArtifactPaths, observation.CandidatePaths)
 
 			if relevant {
 				ledger.PlanArtifactRelevant = true
@@ -253,138 +233,85 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 
 			ledger.addItem(readOnlyEvidenceItem{
 				Kind:           readOnlyEvidencePlanArtifact,
-				Tool:           tool,
-				CandidatePaths: paths,
+				Tool:           observation.Tool,
+				CandidatePaths: observation.CandidatePaths,
 				Relevant:       relevant,
-				Summary:        strings.TrimSpace(result.Summary),
+				Summary:        observation.Summary,
 			})
 
-			continue
-		}
+		case readOnlyEvidenceSourceBody:
+			ledger.addItem(readOnlyEvidenceItem{
+				Kind:    observation.Kind,
+				Tool:    observation.Tool,
+				Source:  observation.Source,
+				Path:    observation.Path,
+				Summary: observation.Summary,
+			})
 
-		hasConcreteBodyEvidence := false
-		for _, fact := range concreteFacts {
-			switch fact.Kind {
-			case readOnlyEvidenceSourceBody:
-				ledger.addItem(readOnlyEvidenceItem{
-					Kind:    fact.Kind,
-					Tool:    fact.Tool,
-					Source:  fact.Source,
-					Path:    fact.Path,
-					Summary: fact.Summary,
-				})
+			ledger.SourceBodyPaths = textutil.Merge(ledger.SourceBodyPaths, []string{observation.Path})
+			ledger.observeSourceBodyObjectiveSupport(observation.Path, observation.Output)
 
-				ledger.SourceBodyPaths = textutil.Merge(ledger.SourceBodyPaths, []string{fact.Path})
-				ledger.observeSourceBodyObjectiveSupport(fact.Path, fact.Output)
-				hasConcreteBodyEvidence = true
-			case readOnlyEvidenceExternalDocument:
-				ledger.addItem(readOnlyEvidenceItem{
-					Kind:    fact.Kind,
-					Tool:    fact.Tool,
-					Source:  fact.Source,
-					Path:    fact.Path,
-					Summary: fact.Summary,
-				})
+		case readOnlyEvidenceExternalDocument:
+			ledger.addItem(readOnlyEvidenceItem{
+				Kind:    observation.Kind,
+				Tool:    observation.Tool,
+				Source:  observation.Source,
+				Path:    observation.Path,
+				Summary: observation.Summary,
+			})
 
-				ledger.ExternalDocumentBodyPaths = textutil.Merge(ledger.ExternalDocumentBodyPaths, []string{fact.Path})
-				ledger.observeExternalDocumentObjectiveSupport(fact.Path, fact.Output)
-				hasConcreteBodyEvidence = true
-			}
-		}
+			ledger.ExternalDocumentBodyPaths = textutil.Merge(ledger.ExternalDocumentBodyPaths, []string{observation.Path})
+			ledger.observeExternalDocumentObjectiveSupport(observation.Path, observation.Output)
 
-		if hasConcreteBodyEvidence {
-			continue
-		}
+		case readOnlyEvidenceOutline:
+			ledger.addItem(readOnlyEvidenceItem{
+				Kind:           readOnlyEvidenceOutline,
+				Tool:           observation.Tool,
+				CandidatePaths: observation.CandidatePaths,
+				Summary:        observation.Summary,
+			})
 
-		if workspace.IsReadTool(tool) {
-			paths := readOnlySourceLikePaths(ReadPathsFromToolResult(result), 8)
-			if len(paths) > 0 {
-				ledger.addItem(readOnlyEvidenceItem{
-					Kind:           readOnlyEvidenceOutline,
-					Tool:           tool,
-					CandidatePaths: paths,
-					Summary:        strings.TrimSpace(result.Summary),
-				})
+			ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, observation.CandidatePaths)
 
-				ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, paths)
-			}
-		}
-
-		if tool == workspace.ToolNameTask {
-			fact, ok := readOnlyDelegatedEvidenceFactFromResult(result)
-			if !ok {
-				continue
-			}
-
-			ledger.observeDelegatedEvidence(readOnlyDelegatedEvidenceDecisionForObjective(ledger.Objective, fact))
-			continue
-		}
-
-		switch {
-		case tool == workspace.ToolNameContextPack:
-			discovery := discoveryResultOutcomeFromResult(workspace.ToolRequest{Tool: tool}, result, 16)
-			candidates := readOnlySourceLikePaths(discovery.Candidates, 16)
+		case readOnlyEvidenceContextPacket:
 			ledger.addItem(readOnlyEvidenceItem{
 				Kind:           readOnlyEvidenceContextPacket,
-				Tool:           tool,
-				CandidatePaths: candidates,
-				Summary:        strings.TrimSpace(result.Summary),
+				Tool:           observation.Tool,
+				CandidatePaths: observation.CandidatePaths,
+				Summary:        observation.Summary,
 			})
 
-			ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, candidates)
-		case workspace.IsSearchToolName(tool):
-			discovery := discoveryResultOutcomeFromResult(workspace.ToolRequest{Tool: tool}, result, 128)
-			candidates := readOnlySourceLikePaths(discovery.Candidates, 128)
-			objectiveCandidates := readOnlyObjectiveCandidatePathsFromSearch(result, ledger.Objective, 128)
+			ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, observation.CandidatePaths)
 
-			if discovery.SearchHitCount > ledger.SearchHitCount {
-				ledger.SearchHitCount = discovery.SearchHitCount
+		case readOnlyEvidenceSearchHit:
+			objectiveCandidates := readOnlyObjectiveCandidatePathsFromText(observation.Summary+"\n"+observation.Output, ledger.Objective, 128)
+
+			if observation.HitCount > ledger.SearchHitCount {
+				ledger.SearchHitCount = observation.HitCount
 			}
 
-			if discovery.HighCardinalitySearch {
+			if observation.HighCardinality {
 				ledger.HighCardinalitySearch = true
 			}
 
 			ledger.addItem(readOnlyEvidenceItem{
 				Kind:           readOnlyEvidenceSearchHit,
-				Tool:           tool,
-				CandidatePaths: candidates,
-				HitCount:       discovery.SearchHitCount,
-				Summary:        strings.TrimSpace(result.Summary),
+				Tool:           observation.Tool,
+				CandidatePaths: observation.CandidatePaths,
+				HitCount:       observation.HitCount,
+				Summary:        observation.Summary,
 			})
 
-			ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, candidates)
+			ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, observation.CandidatePaths)
 			ledger.CandidateObjectivePaths = textutil.Merge(ledger.CandidateObjectivePaths, objectiveCandidates)
-		case (toolResultEvidenceProjection{}).DiscoveryCandidateTool(tool):
-			discovery := discoveryResultOutcomeFromResult(workspace.ToolRequest{Tool: tool}, result, 16)
-			candidates := readOnlySourceLikePaths(discovery.Candidates, 16)
-			if len(candidates) > 0 {
-				ledger.addItem(readOnlyEvidenceItem{
-					Kind:           readOnlyEvidenceSearchHit,
-					Tool:           tool,
-					CandidatePaths: candidates,
-					Summary:        strings.TrimSpace(result.Summary),
-				})
-
-				ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, candidates)
-			}
-		default:
-			if readOnlyOutlineEvidenceResult(result) {
-				candidates := readOnlySourceLikePaths(ReadPathsFromToolResult(result), 8)
-				ledger.addItem(readOnlyEvidenceItem{
-					Kind:           readOnlyEvidenceOutline,
-					Tool:           tool,
-					CandidatePaths: candidates,
-					Summary:        strings.TrimSpace(result.Summary),
-				})
-
-				ledger.CandidatePaths = textutil.Merge(ledger.CandidatePaths, candidates)
-			}
 		}
 	}
 
+	for _, fact := range projection.ReadOnlyDelegatedEvidenceFacts() {
+		ledger.observeDelegatedEvidence(readOnlyDelegatedEvidenceDecisionForObjective(ledger.Objective, fact))
+	}
+
 	ledger.CandidatePaths = textutil.Merge(namedTargets, ledger.CandidatePaths)
-	ledger.SourceBodyPaths = textutil.Merge(ledger.SourceBodyPaths, delegatedReadOnlySourceBodyReadinessPaths(ledger.Objective, results))
 	ledger.promoteCollectiveSourceBodyObjectiveSupport(namedTargets)
 	ledger.markRelevantSourceBodies(namedTargets)
 	ledger.markRelevantExternalDocuments()
@@ -999,14 +926,14 @@ func candidateSourcePathStronglyOverlapsObjective(path string, objective string)
 	return matches >= 2
 }
 
-func readOnlyObjectiveCandidatePathsFromSearch(result workspace.ToolResult, objective string, max int) []string {
+func readOnlyObjectiveCandidatePathsFromText(text string, objective string, max int) []string {
 	if max <= 0 {
 		max = 128
 	}
 
 	var paths []string
 
-	for _, line := range strings.Split(result.Summary+"\n"+result.Output, "\n") {
+	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || !readOnlySearchHitHasObjectiveTerms(line, objective) {
 			continue
@@ -1639,7 +1566,7 @@ func readOnlyExternalDocumentPathSet(paths []string) map[string]struct{} {
 	return set
 }
 
-func readOnlyDiagnosticEvidenceMatchesObjective(objective string, namedTargets []string, result workspace.ToolResult, paths []string) bool {
+func readOnlyDiagnosticEvidenceMatchesObjective(objective string, namedTargets []string, text string, paths []string) bool {
 	objective = strings.TrimSpace(objective)
 	paths = readOnlySourceLikePaths(paths, 8)
 
@@ -1665,7 +1592,7 @@ func readOnlyDiagnosticEvidenceMatchesObjective(objective string, namedTargets [
 		return false
 	}
 
-	if sourceBodyHasStrongObjectiveToken(result.Summary+"\n"+result.Output, objective) {
+	if sourceBodyHasStrongObjectiveToken(text, objective) {
 		return true
 	}
 
@@ -1683,24 +1610,6 @@ func readOnlyObjectiveExplicitlyAsksForDiagnostics(objective string) bool {
 		"source_sanity",
 		"compiler error", "compile error",
 	)
-}
-
-func readOnlyOutlineEvidenceResult(result workspace.ToolResult) bool {
-	if strings.TrimSpace(result.Error) != "" || len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(result)) > 0 {
-		return false
-	}
-
-	text := strings.ToLower(strings.TrimSpace(result.Summary + "\n" + result.Output))
-	if text == "" {
-		return false
-	}
-
-	if !ContainsAny(text, "file_outline", "capability: outline", "outlined ", "top-level declaration") {
-		return false
-	}
-
-	return len(readOnlySourceLikePaths(ReadPathsFromToolResult(result), 1)) > 0 ||
-		len(sourceLikePathsFromText(result.Summary+"\n"+result.Output, 1)) > 0
 }
 
 func readOnlyScaffoldFinalAnswer(answer string) bool {
@@ -4738,17 +4647,6 @@ func normalizeDelegatedReadOnlyPacket(answer string) string {
 	return answer
 }
 
-func delegatedReadOnlySourceBodyReadinessPaths(objective string, results []workspace.ToolResult) []string {
-	paths := make([]string, 0, 4)
-
-	for _, fact := range newToolResultEvidenceProjection(results).ReadOnlyDelegatedEvidenceFacts() {
-		decision := readOnlyDelegatedEvidenceDecisionForObjective(objective, fact)
-		paths = append(paths, decision.ReadinessSourcePaths...)
-	}
-
-	return readOnlySourceLikePaths(paths, 16)
-}
-
 func stripNestedFallbackTemplate(s string) string {
 	trimmed := strings.TrimSpace(s)
 	if trimmed == "" || !strings.HasPrefix(trimmed, "Partial findings from this turn") {
@@ -6100,7 +5998,15 @@ func readOnlyPlanArtifactEvidenceSupportsReply(brief workerruntime.WorkerRuntime
 }
 
 func featurePlannerPlanArtifactMatchesObjective(objective string, result workspace.ToolResult) bool {
-	if !featurePlannerPlanArtifactResult(result) || len(featurePlannerPlanArtifactProposedPaths(result)) == 0 {
+	if !featurePlannerPlanArtifactResult(result) {
+		return false
+	}
+
+	return featurePlannerPlanArtifactPathsMatchObjective(objective, featurePlannerPlanArtifactProposedPaths(result))
+}
+
+func featurePlannerPlanArtifactPathsMatchObjective(objective string, paths []string) bool {
+	if len(paths) == 0 {
 		return false
 	}
 

@@ -178,7 +178,13 @@ the projection can derive path-backed source-body evidence from typed producer
 facts, while read-only answerability remains the objective-scoped policy owner.
 The next evidence pass should replace repeated raw-result branching in
 `readOnlyAnswerabilityForResults` with a cached normalized projection model,
-not add more single-call helper wrappers.
+not add more single-call helper wrappers. The first observation-model pass now
+has `readOnlyAnswerabilityForResults` consuming projection-owned evidence
+observations for generated artifacts, diagnostics, source/external bodies, plan
+artifacts, outlines, context packets, search hits, and semantic discovery
+candidates. The remaining projection target is caching and reuse: repeated
+callers still reconstruct observations, delegated facts, and per-result
+source-body paths instead of sharing one normalized read model.
 
 ### 5. Product Workflow Projection
 

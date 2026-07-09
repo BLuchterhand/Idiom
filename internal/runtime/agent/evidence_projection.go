@@ -26,14 +26,16 @@ type readOnlyDelegatedEvidenceFact struct {
 	CandidatePaths  []string
 }
 
-type readOnlyConcreteEvidenceFact struct {
-	Kind           readOnlyEvidenceKind
-	Tool           string
-	Source         string
-	Path           string
-	CandidatePaths []string
-	Summary        string
-	Output         string
+type readOnlyEvidenceObservation struct {
+	Kind            readOnlyEvidenceKind
+	Tool            string
+	Source          string
+	Path            string
+	CandidatePaths  []string
+	HitCount        int
+	HighCardinality bool
+	Summary         string
+	Output          string
 }
 
 func newToolResultEvidenceProjection(results []workspace.ToolResult) toolResultEvidenceProjection {
@@ -168,15 +170,15 @@ func (projection toolResultEvidenceProjection) SourceBodyPaths() []string {
 	return paths
 }
 
-func (projection toolResultEvidenceProjection) ConcreteReadOnlyEvidenceFacts() []readOnlyConcreteEvidenceFact {
-	var facts []readOnlyConcreteEvidenceFact
+func (projection toolResultEvidenceProjection) ReadOnlyEvidenceObservations() []readOnlyEvidenceObservation {
+	var observations []readOnlyEvidenceObservation
 	for _, result := range projection.results {
-		facts = append(facts, projection.ConcreteReadOnlyEvidenceFactsFromResult(result)...)
+		observations = append(observations, projection.ReadOnlyEvidenceObservationsFromResult(result)...)
 	}
-	return facts
+	return observations
 }
 
-func (projection toolResultEvidenceProjection) ConcreteReadOnlyEvidenceFactsFromResult(result workspace.ToolResult) []readOnlyConcreteEvidenceFact {
+func (projection toolResultEvidenceProjection) ReadOnlyEvidenceObservationsFromResult(result workspace.ToolResult) []readOnlyEvidenceObservation {
 	if strings.TrimSpace(result.Error) != "" {
 		return nil
 	}
@@ -187,12 +189,22 @@ func (projection toolResultEvidenceProjection) ConcreteReadOnlyEvidenceFactsFrom
 	}
 
 	summary := strings.TrimSpace(result.Summary)
-	var facts []readOnlyConcreteEvidenceFact
+	var observations []readOnlyEvidenceObservation
+
+	if projection.GeneratedArtifactOnlyReadResult(result) {
+		return []readOnlyEvidenceObservation{{
+			Kind:           readOnlyEvidenceGeneratedArtifact,
+			Tool:           tool,
+			CandidatePaths: readOnlySourceLikePaths(ReadPathsFromToolResult(result), 8),
+			Summary:        summary,
+			Output:         result.Output,
+		}}
+	}
 
 	if result.Facts != nil {
 		paths := readOnlySourceLikePaths(result.Facts.DiagnosticEvidencePaths, 8)
 		if len(paths) > 0 {
-			facts = append(facts, readOnlyConcreteEvidenceFact{
+			observations = append(observations, readOnlyEvidenceObservation{
 				Kind:           readOnlyEvidenceDiagnostic,
 				Tool:           tool,
 				CandidatePaths: paths,
@@ -202,8 +214,19 @@ func (projection toolResultEvidenceProjection) ConcreteReadOnlyEvidenceFactsFrom
 		}
 	}
 
+	if featurePlannerPlanArtifactResult(result) {
+		observations = append(observations, readOnlyEvidenceObservation{
+			Kind:           readOnlyEvidencePlanArtifact,
+			Tool:           tool,
+			CandidatePaths: featurePlannerPlanArtifactProposedPaths(result),
+			Summary:        summary,
+			Output:         result.Output,
+		})
+		return observations
+	}
+
 	for _, path := range projection.SourceBodyPathsFromResult(result) {
-		facts = append(facts, readOnlyConcreteEvidenceFact{
+		observations = append(observations, readOnlyEvidenceObservation{
 			Kind:    readOnlyEvidenceSourceBody,
 			Tool:    tool,
 			Source:  tool,
@@ -219,7 +242,7 @@ func (projection toolResultEvidenceProjection) ConcreteReadOnlyEvidenceFactsFrom
 			continue
 		}
 
-		facts = append(facts, readOnlyConcreteEvidenceFact{
+		observations = append(observations, readOnlyEvidenceObservation{
 			Kind:    readOnlyEvidenceExternalDocument,
 			Tool:    tool,
 			Source:  tool,
@@ -229,7 +252,106 @@ func (projection toolResultEvidenceProjection) ConcreteReadOnlyEvidenceFactsFrom
 		})
 	}
 
-	return facts
+	if hasReadOnlyBodyObservation(observations) {
+		return observations
+	}
+
+	if workspace.IsReadTool(tool) {
+		paths := readOnlySourceLikePaths(ReadPathsFromToolResult(result), 8)
+		if len(paths) > 0 {
+			observations = append(observations, readOnlyEvidenceObservation{
+				Kind:           readOnlyEvidenceOutline,
+				Tool:           tool,
+				CandidatePaths: paths,
+				Summary:        summary,
+				Output:         result.Output,
+			})
+		}
+	}
+
+	switch {
+	case tool == workspace.ToolNameTask:
+		return observations
+	case tool == workspace.ToolNameContextPack:
+		discovery := discoveryResultOutcomeFromResult(workspace.ToolRequest{Tool: tool}, result, 16)
+		observations = append(observations, readOnlyEvidenceObservation{
+			Kind:           readOnlyEvidenceContextPacket,
+			Tool:           tool,
+			CandidatePaths: readOnlySourceLikePaths(discovery.Candidates, 16),
+			Summary:        summary,
+			Output:         result.Output,
+		})
+	case workspace.IsSearchToolName(tool):
+		discovery := discoveryResultOutcomeFromResult(workspace.ToolRequest{Tool: tool}, result, 128)
+		observations = append(observations, readOnlyEvidenceObservation{
+			Kind:            readOnlyEvidenceSearchHit,
+			Tool:            tool,
+			CandidatePaths:  readOnlySourceLikePaths(discovery.Candidates, 128),
+			HitCount:        discovery.SearchHitCount,
+			HighCardinality: discovery.HighCardinalitySearch,
+			Summary:         summary,
+			Output:          result.Output,
+		})
+	case projection.DiscoveryCandidateTool(tool):
+		discovery := discoveryResultOutcomeFromResult(workspace.ToolRequest{Tool: tool}, result, 16)
+		candidates := readOnlySourceLikePaths(discovery.Candidates, 16)
+		if len(candidates) > 0 {
+			observations = append(observations, readOnlyEvidenceObservation{
+				Kind:           readOnlyEvidenceSearchHit,
+				Tool:           tool,
+				CandidatePaths: candidates,
+				Summary:        summary,
+				Output:         result.Output,
+			})
+		}
+	default:
+		if observation, ok := projection.readOnlyOutlineObservationFromResult(result); ok {
+			observations = append(observations, observation)
+		}
+	}
+
+	return observations
+}
+
+func hasReadOnlyBodyObservation(observations []readOnlyEvidenceObservation) bool {
+	for _, observation := range observations {
+		switch observation.Kind {
+		case readOnlyEvidenceSourceBody, readOnlyEvidenceExternalDocument:
+			return true
+		}
+	}
+	return false
+}
+
+func (projection toolResultEvidenceProjection) readOnlyOutlineObservationFromResult(result workspace.ToolResult) (readOnlyEvidenceObservation, bool) {
+	if strings.TrimSpace(result.Error) != "" || len(projection.SourceBodyPathsFromResult(result)) > 0 {
+		return readOnlyEvidenceObservation{}, false
+	}
+
+	text := strings.ToLower(strings.TrimSpace(result.Summary + "\n" + result.Output))
+	if text == "" {
+		return readOnlyEvidenceObservation{}, false
+	}
+
+	if !ContainsAny(text, "file_outline", "capability: outline", "outlined ", "top-level declaration") {
+		return readOnlyEvidenceObservation{}, false
+	}
+
+	candidates := readOnlySourceLikePaths(ReadPathsFromToolResult(result), 8)
+	if len(candidates) == 0 {
+		candidates = sourceLikePathsFromText(result.Summary+"\n"+result.Output, 8)
+	}
+	if len(candidates) == 0 {
+		return readOnlyEvidenceObservation{}, false
+	}
+
+	return readOnlyEvidenceObservation{
+		Kind:           readOnlyEvidenceOutline,
+		Tool:           strings.TrimSpace(result.Tool),
+		CandidatePaths: candidates,
+		Summary:        strings.TrimSpace(result.Summary),
+		Output:         result.Output,
+	}, true
 }
 
 func (projection toolResultEvidenceProjection) CandidatePaths() []string {
@@ -461,11 +583,11 @@ func (projection toolResultEvidenceProjection) ExternalDocumentBodyMatches(path 
 
 	var matches []string
 
-	for _, fact := range projection.ConcreteReadOnlyEvidenceFacts() {
-		if fact.Kind != readOnlyEvidenceExternalDocument || !externalDocumentPathMatchesCitation(path, fact.Path) {
+	for _, observation := range projection.ReadOnlyEvidenceObservations() {
+		if observation.Kind != readOnlyEvidenceExternalDocument || !externalDocumentPathMatchesCitation(path, observation.Path) {
 			continue
 		}
-		matches = textutil.AppendUnique(matches, fact.Path)
+		matches = textutil.AppendUnique(matches, observation.Path)
 	}
 
 	return uniqueSortedRunnerPaths(matches)

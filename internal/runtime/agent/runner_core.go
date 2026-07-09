@@ -762,25 +762,11 @@ func (r *Runner) presentableFallbackCandidate(results []workspace.ToolResult, an
 		return "", false
 	}
 	if genericEvidenceAnswerIncludesLineOrientedSourceBody(answer) || looksLikeLineOrientedSourceSnippetAnswer(answer) {
-		if checked, checkedOK := r.presentableOrReadOnlyNonAnswerReplacement(results, presentable); checkedOK {
+		if checked, checkedOK := closeout.PresentableOrReadOnlyNonAnswerReplacement(r.agentName(), presentable); checkedOK {
 			return checked, true
 		}
 	}
 	return presentable, true
-}
-
-func (r *Runner) presentableOrReadOnlyNonAnswerReplacement(results []workspace.ToolResult, answer string) (string, bool) {
-	if r == nil {
-		return presentableOrReadOnlyNonAnswerReplacement("", workerruntime.WorkerRuntimeBrief{}, results, answer)
-	}
-	return readOnlyClosureDecisionForResults(r.RuntimeBrief, results).PresentableOrReadOnlyNonAnswerReplacement(r.agentName(), answer)
-}
-
-func (r *Runner) presentableBriefConversationFallbackCandidate(results []workspace.ToolResult) (string, bool) {
-	if r == nil {
-		return presentableBriefConversationFallbackCandidate("", workerruntime.WorkerRuntimeBrief{}, results)
-	}
-	return readOnlyClosureDecisionForResults(r.RuntimeBrief, results).PresentableBriefConversationFallbackCandidate(r.agentName())
 }
 
 func (r *Runner) sessionID() string {
@@ -10402,8 +10388,15 @@ func (r *Runner) readOnlyEvidenceCompletionRejection(reply string, results []wor
 
 	projection := newToolResultEvidenceProjection(results)
 	diagnosticArtifactSupported := sourceGroundingDiagnosticArtifactCitationSupportsObjective(brief, reply, projection)
+	concreteReadOnlyEvidence := false
+	for _, observation := range projection.ReadOnlyEvidenceObservations() {
+		switch observation.Kind {
+		case readOnlyEvidenceDiagnostic, readOnlyEvidenceSourceBody, readOnlyEvidenceExternalDocument:
+			concreteReadOnlyEvidence = true
+		}
+	}
 	if readOnlyDirectAnswerLane(brief) &&
-		(len(projection.ConcreteReadOnlyEvidenceFacts()) > 0 ||
+		(concreteReadOnlyEvidence ||
 			readOnlyPlanArtifactEvidenceSupportsReply(brief, reply, results) ||
 			diagnosticArtifactSupported) {
 
@@ -11751,7 +11744,7 @@ func immediateBudgetFallbackAnswer(agentName string, brief workerruntime.WorkerR
 	}
 
 	if implementationShapeOwnerContractApplies(brief) && !delegatedOwnerReady {
-		return presentableFallbackCandidate(agentName, brief, results, synthesizeBriefConversationFallback(brief, results))
+		return presentableFallbackCandidate(agentName, brief, results, readOnlyClosureDecisionForResults(brief, results).ConversationFallback())
 	}
 
 	if usefulFallbackResultCount(results) < 2 {
@@ -11863,7 +11856,7 @@ func synthesizeNoToolsFallbackAnswer(agentName string, brief workerruntime.Worke
 		}
 
 		if implementationShapeOwnerContractApplies(brief) && !delegatedOwnerReady {
-			return synthesizeBriefConversationFallback(brief, results), true
+			return readOnlyClosureDecisionForResults(brief, results).ConversationFallback(), true
 		}
 	}
 

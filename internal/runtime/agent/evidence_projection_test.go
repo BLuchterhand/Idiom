@@ -258,6 +258,12 @@ func TestToolResultEvidenceProjectionReadOnlyCategoryBoundaries(t *testing.T) {
 	externalPath := filepath.Join(t.TempDir(), "Mobile Documents", "Project Notes", "brief.md")
 	diagnosticPath := "internal/runtime/agent/runner_core.go"
 	taskPath := "internal/runtime/agent/evidence_readonly.go"
+	generatedPath := ".idiom/comprehension/views/context.json"
+	planPath := "internal/runtime/agent/plan_artifact.go"
+	outlinePath := "internal/runtime/agent/outline.go"
+	contextPath := "internal/runtime/agent/context_packet.go"
+	searchPath := "internal/runtime/agent/search_hit.go"
+	discoveryPath := "internal/runtime/agent/discovery_candidate.go"
 	results := []workspace.ToolResult{
 		{
 			Tool:    workspace.ToolNameReadFile,
@@ -282,6 +288,34 @@ func TestToolResultEvidenceProjectionReadOnlyCategoryBoundaries(t *testing.T) {
 			}},
 		}),
 		readFileSourceBodyResult(sourcePath, 1, 20, 0, "1:package agent\n"),
+		readFileSourceBodyResult(generatedPath, 1, 20, 20, `{"candidate_files":[{"path":"`+sourcePath+`"}]}`),
+		{
+			Tool:        featurePlannerPlanArtifactPayloadType,
+			PayloadType: featurePlannerPlanArtifactPayloadType,
+			Summary:     "Feature planner plan artifact proposed files.",
+			Payload:     []byte(`{"proposed_paths":["` + planPath + `"]}`),
+		},
+		{
+			Tool:    workspace.ToolNameCodeNavigate,
+			Summary: "Read outline in " + outlinePath + " with capability: file_outline",
+			Output:  "capability: file_outline\nfn ObserveReadOnlyEvidence\n",
+			Paths:   []string{outlinePath},
+		},
+		{
+			Tool:    workspace.ToolNameContextPack,
+			Summary: "Context pack returned candidate paths.",
+			Facts:   contextPackCandidateFactsForTest(contextPath),
+		},
+		{
+			Tool:    workspace.ToolNameSearchContent,
+			Summary: "Found 75 matching lines",
+			Output:  searchPath + ":12: read-only observation\n",
+		},
+		{
+			Tool:    workspace.ToolNameDiscoveryQuery,
+			Summary: "Discovery query produced a candidate.",
+			Output:  discoveryPath + ": semantic discovery candidate\n",
+		},
 		{
 			Tool:  workspace.ToolNameReadFile,
 			Error: "permission denied",
@@ -290,26 +324,50 @@ func TestToolResultEvidenceProjectionReadOnlyCategoryBoundaries(t *testing.T) {
 	}
 
 	projection := newToolResultEvidenceProjection(results)
-	facts := projection.ConcreteReadOnlyEvidenceFacts()
-	if !slices.ContainsFunc(facts, func(fact readOnlyConcreteEvidenceFact) bool {
-		return fact.Kind == readOnlyEvidenceSourceBody && fact.Path == sourcePath
-	}) {
-		t.Fatalf("concrete read-only evidence facts missing source body %q: %#v", sourcePath, facts)
+	observations := projection.ReadOnlyEvidenceObservations()
+	requireObservation := func(name string, match func(readOnlyEvidenceObservation) bool) {
+		t.Helper()
+		if !slices.ContainsFunc(observations, match) {
+			t.Fatalf("read-only evidence observations missing %s: %#v", name, observations)
+		}
 	}
-	if !slices.ContainsFunc(facts, func(fact readOnlyConcreteEvidenceFact) bool {
-		return fact.Kind == readOnlyEvidenceExternalDocument && fact.Path == externalPath
+	requireObservation("source body "+sourcePath, func(observation readOnlyEvidenceObservation) bool {
+		return observation.Kind == readOnlyEvidenceSourceBody && observation.Path == sourcePath
+	})
+	requireObservation("external document "+externalPath, func(observation readOnlyEvidenceObservation) bool {
+		return observation.Kind == readOnlyEvidenceExternalDocument && observation.Path == externalPath
+	})
+	requireObservation("diagnostic "+diagnosticPath, func(observation readOnlyEvidenceObservation) bool {
+		return observation.Kind == readOnlyEvidenceDiagnostic && slices.Contains(observation.CandidatePaths, diagnosticPath)
+	})
+	requireObservation("generated artifact", func(observation readOnlyEvidenceObservation) bool {
+		return observation.Kind == readOnlyEvidenceGeneratedArtifact && observation.Tool == workspace.ToolNameReadFile
+	})
+	requireObservation("plan artifact "+planPath, func(observation readOnlyEvidenceObservation) bool {
+		return observation.Kind == readOnlyEvidencePlanArtifact && slices.Contains(observation.CandidatePaths, planPath)
+	})
+	requireObservation("outline "+outlinePath, func(observation readOnlyEvidenceObservation) bool {
+		return observation.Kind == readOnlyEvidenceOutline && slices.Contains(observation.CandidatePaths, outlinePath)
+	})
+	requireObservation("context packet "+contextPath, func(observation readOnlyEvidenceObservation) bool {
+		return observation.Kind == readOnlyEvidenceContextPacket && slices.Contains(observation.CandidatePaths, contextPath)
+	})
+	requireObservation("search hit "+searchPath, func(observation readOnlyEvidenceObservation) bool {
+		return observation.Kind == readOnlyEvidenceSearchHit &&
+			observation.Tool == workspace.ToolNameSearchContent &&
+			observation.HitCount == 75 &&
+			observation.HighCardinality &&
+			slices.Contains(observation.CandidatePaths, searchPath)
+	})
+	requireObservation("discovery candidate "+discoveryPath, func(observation readOnlyEvidenceObservation) bool {
+		return observation.Kind == readOnlyEvidenceSearchHit &&
+			observation.Tool == workspace.ToolNameDiscoveryQuery &&
+			slices.Contains(observation.CandidatePaths, discoveryPath)
+	})
+	if slices.ContainsFunc(observations, func(observation readOnlyEvidenceObservation) bool {
+		return observation.Path == "internal/runtime/agent/failed.go"
 	}) {
-		t.Fatalf("concrete read-only evidence facts missing external document %q: %#v", externalPath, facts)
-	}
-	if !slices.ContainsFunc(facts, func(fact readOnlyConcreteEvidenceFact) bool {
-		return fact.Kind == readOnlyEvidenceDiagnostic && slices.Contains(fact.CandidatePaths, diagnosticPath)
-	}) {
-		t.Fatalf("concrete read-only evidence facts missing diagnostic path %q: %#v", diagnosticPath, facts)
-	}
-	if slices.ContainsFunc(facts, func(fact readOnlyConcreteEvidenceFact) bool {
-		return fact.Path == "internal/runtime/agent/failed.go"
-	}) {
-		t.Fatalf("failed results must not become concrete read-only evidence: %#v", facts)
+		t.Fatalf("failed results must not become read-only evidence observations: %#v", observations)
 	}
 	if slices.Contains(projection.SourceBodyPaths(), externalPath) {
 		t.Fatalf("external document leaked into workspace source-body paths: %#v", projection.SourceBodyPaths())

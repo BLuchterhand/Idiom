@@ -498,7 +498,8 @@ func presentableExactProbeResult(result workspace.ToolResult) bool {
 
 	switch tool {
 	case "code_navigate", "read_only_capability":
-		return RoutedSourceReadOutputHasBody(result.Output) && toolResultHasNonArtifactReadPath(result)
+		return RoutedSourceReadOutputHasBody(result.Output) &&
+			len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(result)) > 0
 	default:
 		return false
 	}
@@ -1705,13 +1706,13 @@ func (r *Runner) decorateFinalAnswer(input FinalAnswerDecorateInput) string {
 		}
 
 		if presentable, ok := presentableNoToolsFallbackAnswer(input.Brief, input.Results, answer); ok {
-			if checked, ok := r.presentableOrReadOnlyNonAnswerReplacement(input.Results, presentable); ok {
+			if checked, ok := readOnlyClosureDecisionForResults(r.RuntimeBrief, input.Results).PresentableOrReadOnlyNonAnswerReplacement(r.agentName(), presentable); ok {
 				return present(checked)
 			}
 		}
 
 		if conversationFallbackShouldAvoidSourceBody(input.Brief) {
-			if checked, ok := r.presentableBriefConversationFallbackCandidate(input.Results); ok {
+			if checked, ok := readOnlyClosureDecisionForResults(r.RuntimeBrief, input.Results).PresentableBriefConversationFallbackCandidate(r.agentName()); ok {
 				return present(checked)
 			}
 		}
@@ -1737,7 +1738,7 @@ func (r *Runner) decorateFinalAnswer(input FinalAnswerDecorateInput) string {
 	}
 
 	if presentable, ok := presentableNoToolsFallbackAnswer(input.Brief, input.Results, answer); ok {
-		if checked, ok := r.presentableOrReadOnlyNonAnswerReplacement(input.Results, presentable); ok {
+		if checked, ok := readOnlyClosureDecisionForResults(r.RuntimeBrief, input.Results).PresentableOrReadOnlyNonAnswerReplacement(r.agentName(), presentable); ok {
 			return present(checked)
 		}
 	}
@@ -1809,7 +1810,7 @@ func presentableNonMutationQuestionBlocker(brief workerruntime.WorkerRuntimeBrie
 		if answer != "" &&
 			!strings.HasPrefix(answer, "<<QUESTION>>") &&
 			!readOnlyAnswerReportsInsufficientEvidence(answer) &&
-			presentableQuestionBlockerDeterministicAnswerSupported(brief, results, answer) {
+			readOnlyClosureDecisionForResults(brief, results).SupportsPresentableQuestionBlockerAnswer(answer) {
 
 			return answer, true
 		}
@@ -1876,10 +1877,6 @@ func presentableNonMutationQuestionBlocker(brief workerruntime.WorkerRuntimeBrie
 
 func presentableGateReasonSuppressesContextPaths(reason string) bool {
 	return strings.Contains(strings.ToLower(reason), "run did not retain a supported answer from inspected evidence")
-}
-
-func presentableQuestionBlockerDeterministicAnswerSupported(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, answer string) bool {
-	return readOnlyClosureDecisionForResults(brief, results).SupportsPresentableQuestionBlockerAnswer(answer)
 }
 
 func questionBlockerContextPaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) (string, []string) {
@@ -2296,11 +2293,11 @@ func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 			return concrete, true
 		}
 
-		return synthesizeBriefConversationFallback(brief, results), true
+		return closure.ConversationFallback(), true
 	}
 
 	if conversationFallbackShouldAvoidSourceBody(brief) && looksLikeSourceBodyFallbackAnswer(internalAnswer) {
-		return synthesizeBriefConversationFallback(brief, results), true
+		return closure.ConversationFallback(), true
 	}
 
 	lineOrientedGenericAnswer := genericEvidenceAnswerIncludesLineOrientedSourceBody(internalAnswer) ||
@@ -2350,7 +2347,7 @@ func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 	// Only block for direct user-facing conversation lanes, not for delegated
 	// read-only investigation lanes that benefit from source-body composition.
 	if isDeterministicFallbackAnswer(internalAnswer) && conversationFallbackShouldAvoidSourceBody(brief) {
-		return synthesizeBriefConversationFallback(brief, results), true
+		return closure.ConversationFallback(), true
 	}
 
 	if sourceBody, ok := presentableReadFileSourceAnswer(brief, results); ok {
@@ -2474,13 +2471,13 @@ func presentableExternalDocumentEvidenceAnswer(brief workerruntime.WorkerRuntime
 			continue
 		}
 
-		for _, fact := range projection.ConcreteReadOnlyEvidenceFactsFromResult(result) {
-			if fact.Kind != readOnlyEvidenceExternalDocument {
+		for _, observation := range projection.ReadOnlyEvidenceObservationsFromResult(result) {
+			if observation.Kind != readOnlyEvidenceExternalDocument {
 				continue
 			}
 
 			parts = append(parts, externalDocumentEvidenceAnswerPart{
-				path:  fact.Path,
+				path:  observation.Path,
 				lines: lines,
 			})
 
@@ -4447,14 +4444,6 @@ func conversationFallbackShouldAvoidSourceBody(brief workerruntime.WorkerRuntime
 // "Partial findings from this turn..." text that the harness generates when
 // the model fails to produce a substantive answer.
 
-// synthesizeBriefConversationFallback produces a short fallback for
-// conversation lanes when the model failed but the deterministic fallback
-// answer is available. It avoids the source-body extraction path that
-// produces misleading code-fragment answers.
-func synthesizeBriefConversationFallback(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
-	return readOnlyClosureDecisionForResults(brief, results).ConversationFallback()
-}
-
 func mutationHistoryEvidenceRequired(brief workerruntime.WorkerRuntimeBrief) bool {
 	brief = workerruntime.NormalizeRuntimeBrief(brief)
 	for _, label := range brief.RequiredEvidence {
@@ -5943,7 +5932,12 @@ func augmentDelegatedReadOnlyPacket(answer string, objective string, results []w
 		return ""
 	}
 
-	sourceBodyPaths := delegatedReadOnlySourceBodyReadinessPaths(objective, results)
+	var sourceBodyPaths []string
+	for _, fact := range newToolResultEvidenceProjection(results).ReadOnlyDelegatedEvidenceFacts() {
+		decision := readOnlyDelegatedEvidenceDecisionForObjective(objective, fact)
+		sourceBodyPaths = append(sourceBodyPaths, decision.ReadinessSourcePaths...)
+	}
+	sourceBodyPaths = readOnlySourceLikePaths(sourceBodyPaths, 16)
 	paths := delegatedClosureEvidencePaths(objective, results, 8)
 	mentioned := normalizePostChildEvidencePaths(pathparse.MentionedWorkspacePaths(answer))
 	missing := make([]string, 0, len(paths))

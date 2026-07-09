@@ -1705,18 +1705,6 @@ func (r *Runner) markConcreteSourceEvidenceObserved(result workspace.ToolResult)
 	}
 }
 
-func toolResultHasNonArtifactReadPath(result workspace.ToolResult) bool {
-	for _, path := range ReadPathsFromToolResult(result) {
-		if IsNonSourceEvidenceArtifactPath(path) {
-			continue
-		}
-
-		return true
-	}
-
-	return false
-}
-
 func (r *Runner) mutationCompletionRejection(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
 	if strings.HasPrefix(r.agentName(), "child:") || strings.HasPrefix(r.agentName(), "child_write:") {
 		return workspace.ToolResult{}, false

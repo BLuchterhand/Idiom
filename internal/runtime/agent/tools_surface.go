@@ -2367,14 +2367,6 @@ func presentableFallbackCandidate(agentName string, brief workerruntime.WorkerRu
 	return readOnlyClosureDecisionForResults(brief, results).PresentableFallbackCandidate(agentName, answer)
 }
 
-func presentableOrReadOnlyNonAnswerReplacement(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, answer string) (string, bool) {
-	return readOnlyClosureDecisionForResults(brief, results).PresentableOrReadOnlyNonAnswerReplacement(agentName, answer)
-}
-
-func presentableBriefConversationFallbackCandidate(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
-	return readOnlyClosureDecisionForResults(brief, results).PresentableBriefConversationFallbackCandidate(agentName)
-}
-
 func fallbackCandidateUsesReadOnlyNonAnswerReplacement(agentName string, brief workerruntime.WorkerRuntimeBrief) bool {
 	if strings.HasPrefix(agentName, "child:") || strings.HasPrefix(agentName, "child_write:") {
 		return false

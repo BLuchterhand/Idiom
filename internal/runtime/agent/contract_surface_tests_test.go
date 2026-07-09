@@ -12081,21 +12081,6 @@ func TestPlanThenExecuteNativeNoCallFallbackRecoveryPlan(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// P0: final_answer_decorator.go — presentableQuestionBlockerDeterministicAnswerSupported (0%)
-// ---------------------------------------------------------------------------
-
-func TestPresentableQuestionBlockerDeterministicAnswerSupportedWithoutCompleteReadOnlyLane(t *testing.T) {
-	brief := workerruntime.WorkerRuntimeBrief{TaskFamily: string(autonomy.TaskFamilyImplementation), Contract: string(workerruntime.ContractDirectAnswer), PermissionProfile: "read_only_workspace"}
-	_ = presentableQuestionBlockerDeterministicAnswerSupported(brief, nil, "<<QUESTION>>: missing file")
-}
-
-func TestPresentableQuestionBlockerDeterministicAnswerSupportedReadOnlyLane(t *testing.T) {
-	brief := workerruntime.WorkerRuntimeBrief{TaskFamily: string(autonomy.TaskFamilyConversation), Contract: string(workerruntime.ContractDirectAnswer), PermissionProfile: "read_only_workspace"}
-	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read src/main.go lines 1-50 (total lines: 200)", Output: "package main\n\nfunc main() {\n\tprintln(\"hello\")\n}\n"}}
-	_ = presentableQuestionBlockerDeterministicAnswerSupported(brief, results, "<<QUESTION>>: missing file src/unknown.go")
-}
-
-// ---------------------------------------------------------------------------
 // P0: source_evidence_state.go — implementationTargetWriteReadyRedirectedSourceTool (0%)
 // ---------------------------------------------------------------------------
 
@@ -34917,7 +34902,7 @@ func TestSynthesizeBriefConversationFallback(t *testing.T) {
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "capability: read_symbol\nroute_summary: Read Model.resize in internal/surfaces/tui/app/model_state.go lines 774-820\n774:func (m *Model) resize() {"},
 		{Tool: "context_query", Summary: "Context query returned 12 nodes"},
 	}
-	got := synthesizeBriefConversationFallback(brief, results)
+	got := readOnlyClosureDecisionForResults(brief, results).ConversationFallback()
 
 	if strings.HasPrefix(got, "<<QUESTION>>:") {
 		t.Errorf("read-only conversation fallback must not expose typed blocker protocol, got: %q", got)
@@ -34972,7 +34957,7 @@ func TestSynthesizeBriefConversationFallbackAnswersFromMarkdownEvidence(t *testi
 		}, "\n")),
 	}
 
-	got := synthesizeBriefConversationFallback(brief, results)
+	got := readOnlyClosureDecisionForResults(brief, results).ConversationFallback()
 	if strings.HasPrefix(got, "<<QUESTION>>") {
 		t.Fatalf("answerable markdown evidence should synthesize an answer, got:\n%s", got)
 	}
@@ -35004,7 +34989,7 @@ func TestSynthesizeBriefConversationFallbackAnswersFromInspectedExplainerSymbol(
 		}, "\n")),
 	}
 
-	got := synthesizeBriefConversationFallback(brief, results)
+	got := readOnlyClosureDecisionForResults(brief, results).ConversationFallback()
 	if strings.HasPrefix(got, "<<QUESTION>>") {
 		t.Fatalf("answerable inspected symbol should synthesize an answer, got:\n%s", got)
 	}
@@ -35027,7 +35012,7 @@ func TestSynthesizeBriefConversationFallbackAnswersFromInspectedExplainerSymbol(
 			Error:   "the named_gap reads as an explainer rather than naming a specific symbol body",
 		},
 	)
-	got = synthesizeBriefConversationFallback(brief, results)
+	got = readOnlyClosureDecisionForResults(brief, results).ConversationFallback()
 
 	if strings.HasPrefix(got, "<<QUESTION>>") {
 		t.Fatalf("post-readiness rejections must not hide answerable source evidence, got:\n%s", got)
@@ -35081,7 +35066,7 @@ func TestSynthesizeBriefConversationFallbackAnswersWhatWouldItTakeFromKeyHandler
 		),
 	}
 
-	got := synthesizeBriefConversationFallback(brief, results)
+	got := readOnlyClosureDecisionForResults(brief, results).ConversationFallback()
 	if strings.HasPrefix(got, "<<QUESTION>>") {
 		t.Fatalf("answerable TUI key-handler evidence should synthesize an answer, got:\n%s", got)
 	}
@@ -35114,7 +35099,7 @@ func TestSynthesizeBriefConversationFallbackAnswersWhatWouldItTakeFromKeyHandler
 		}, "\n")),
 	}
 
-	got = synthesizeBriefConversationFallback(brief, codeNavigateResults)
+	got = readOnlyClosureDecisionForResults(brief, codeNavigateResults).ConversationFallback()
 
 	if strings.HasPrefix(got, "<<QUESTION>>") {
 		t.Fatalf("answerable code_navigate key-handler evidence should synthesize an answer, got:\n%s", got)
@@ -35170,7 +35155,7 @@ func TestSynthesizeBriefConversationFallbackPrefersObjectiveRelevantExactProbe(t
 		}, "\n")),
 	}
 
-	got := synthesizeBriefConversationFallback(brief, results)
+	got := readOnlyClosureDecisionForResults(brief, results).ConversationFallback()
 	if !strings.Contains(got, "Model.handleKeyPress") {
 		t.Fatalf("expected key handler to win source-owner selection, got:\n%s", got)
 	}
@@ -35206,7 +35191,7 @@ func TestSynthesizeBriefConversationFallbackDoesNotUseConflictingNavigationOwner
 		},
 	}
 
-	got := synthesizeBriefConversationFallback(brief, results)
+	got := readOnlyClosureDecisionForResults(brief, results).ConversationFallback()
 	if strings.Contains(got, "It would take") || strings.HasPrefix(got, "<<QUESTION>>") || !strings.Contains(got, "I do not have a supported answer") {
 		t.Fatalf("conflicting navigation owner should not synthesize implementation answer or expose blocker protocol:\n%s", got)
 	}
