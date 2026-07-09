@@ -16,9 +16,9 @@ import (
 	"time"
 
 	"idiom/internal/evidence/telemetry"
+	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/workerruntime"
-	"idiom/internal/workflows/commandcheck"
 	"idiom/internal/workflows/productworkflow"
 )
 
@@ -461,32 +461,26 @@ func runArtifactValidator(command string, artifactPath string, stderr io.Writer)
 		return 2, fmt.Errorf("validator requires a materialized artifact path")
 	}
 
-	result := commandcheck.Run(context.TODO(), commandcheck.Request{
-		ShellCommand:           command,
-		Shell:                  "/bin/sh",
-		Env:                    []string{"IDIOM_ARTIFACT=" + artifactPath},
-		Timeout:                2 * time.Minute,
-		TimeoutErr:             context.DeadlineExceeded,
-		TimeoutExitCode:        124,
-		InfrastructureExitCode: 1,
-		CaptureBytes:           commandcheck.DiagnosticCaptureBytes,
-		MergeOutput:            true,
+	result := commandexec.Run(context.TODO(), commandexec.Spec{
+		Mode:           commandexec.ModePlainShell,
+		Command:        command,
+		Shell:          "/bin/sh",
+		Env:            []string{"IDIOM_ARTIFACT=" + artifactPath},
+		Timeout:        2 * time.Minute,
+		MaxOutputBytes: commandexec.DiagnosticCaptureBytes,
+		MergeOutput:    true,
 	})
 	if result.Stdout != "" && stderr != nil {
 		_, _ = io.WriteString(stderr, result.Stdout)
 	}
 
-	if result.Failure != commandcheck.FailureNone {
-		if result.Failure == commandcheck.FailureTimeout {
-			return result.ExitCode, fmt.Errorf("artifact validator timed out: %w", result.Err)
-		}
-
-		if result.Failure == commandcheck.FailureExit {
-			return result.ExitCode, fmt.Errorf("artifact validator failed: %w", result.Err)
-		}
-
-		return result.ExitCode, fmt.Errorf("artifact validator failed: %w", result.Err)
+	if result.Err == nil {
+		return 0, nil
 	}
 
-	return 0, nil
+	if result.TimedOut {
+		return 124, fmt.Errorf("artifact validator timed out: %w", context.DeadlineExceeded)
+	}
+
+	return result.ExitCode, fmt.Errorf("artifact validator failed: %w", result.Err)
 }

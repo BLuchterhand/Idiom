@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/workerruntime"
-	"idiom/internal/workflows/commandcheck"
 	"idiom/internal/workflows/implementationdispatch"
 )
 
@@ -101,21 +101,27 @@ func defaultImplementationDispatchPlanDocumentRefine(ctx context.Context, cfg co
 		args = append([]string{"lane", "refine", "--config", configPath}, args[2:]...)
 	}
 
-	cmdRun := commandcheck.Run(ctx, commandcheck.Request{
-		Argv:                   append([]string{binary}, args...),
-		Dir:                    root,
-		Timeout:                30 * time.Minute,
-		Context:                ctx,
-		ContextExitCode:        124,
-		TimeoutErr:             context.DeadlineExceeded,
-		TimeoutExitCode:        124,
-		InfrastructureExitCode: 2,
+	cmdRun := commandexec.Run(ctx, commandexec.Spec{
+		Mode:    commandexec.ModeArgv,
+		Name:    binary,
+		Args:    append([]string(nil), args...),
+		Dir:     root,
+		Timeout: 30 * time.Minute,
 	})
 
 	result.ExitCode = cmdRun.ExitCode
 	result.Stdout = cmdRun.Stdout
 	result.Stderr = cmdRun.Stderr
 	result.Err = cmdRun.Err
+	if ctx.Err() != nil {
+		result.ExitCode = 124
+		result.Err = ctx.Err()
+	} else if cmdRun.TimedOut {
+		result.ExitCode = 124
+		result.Err = context.DeadlineExceeded
+	} else if cmdRun.Err != nil && !cmdRun.ExitError {
+		result.ExitCode = 2
+	}
 
 	if cmdRun.ExitCode != 0 {
 		candidate, candidatePath, blockers, ok := materializeImplementationDispatchNonzeroRefineAcceptedCandidate(ctx, cfg, outRel, doc.AllowDirtyAtomScope)

@@ -1155,7 +1155,7 @@ func (m *Manager) compileCommandsDir() string {
 func (m *Manager) runClangdCheck(ctx context.Context, compileDir string, rel string) (string, error) {
 	result := m.runCommandResult(ctx, m.Root(), nil, "clangd", "--compile-commands-dir="+compileDir, "--check="+rel, "--log=error")
 
-	return result.Output, result.FailureError()
+	return result.Output, result.Err
 }
 
 func (m *Manager) cppDiagnosticTargets(req ToolRequest) ([]string, error) {

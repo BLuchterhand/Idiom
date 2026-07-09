@@ -96,6 +96,8 @@ func (r Result) CombinedOutput() string {
 
 const defaultProcessStderrLimit = 64 * 1024
 
+const DiagnosticCaptureBytes = 1024 * 1024
+
 func Run(parent context.Context, spec Spec) Result {
 	if parent == nil {
 		parent = context.Background()

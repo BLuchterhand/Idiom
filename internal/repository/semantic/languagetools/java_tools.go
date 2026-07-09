@@ -746,8 +746,8 @@ func (m *Manager) javaDiagnostics(ctx context.Context, req ToolRequest) ToolResu
 		result := m.runCommandResult(ctx, m.Root(), nil, "mvn", "-q", "-o", "compile", "-DskipTests")
 		output := result.Output
 
-		if err := result.FailureError(); err != nil && output == "" {
-			output = err.Error()
+		if result.Err != nil && output == "" {
+			output = result.Err.Error()
 		}
 
 		if output == "" {
@@ -761,8 +761,8 @@ func (m *Manager) javaDiagnostics(ctx context.Context, req ToolRequest) ToolResu
 		result := m.runCommandResult(ctx, m.Root(), nil, "gradle", "--offline", "--quiet", "compileJava")
 		output := result.Output
 
-		if err := result.FailureError(); err != nil && output == "" {
-			output = err.Error()
+		if result.Err != nil && output == "" {
+			output = result.Err.Error()
 		}
 
 		if output == "" {
@@ -784,8 +784,8 @@ func (m *Manager) javaDiagnostics(ctx context.Context, req ToolRequest) ToolResu
 		chunk := result.Output
 
 		if chunk == "" {
-			if err := result.FailureError(); err != nil {
-				chunk = fmt.Sprintf("%s: %s", rel, err.Error())
+			if result.Err != nil {
+				chunk = fmt.Sprintf("%s: %s", rel, result.Err.Error())
 			} else {
 				chunk = fmt.Sprintf("%s: no warnings or errors", rel)
 			}

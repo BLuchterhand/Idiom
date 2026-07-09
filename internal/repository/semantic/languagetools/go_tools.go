@@ -898,8 +898,8 @@ func (m *Manager) runGoPLSCommand(ctx context.Context, args ...string) (string, 
 		args...,
 	)
 
-	if err := result.FailureError(); err != nil {
-		return result.Output, err
+	if result.Err != nil {
+		return result.Output, result.Err
 	}
 
 	return result.Stdout, nil

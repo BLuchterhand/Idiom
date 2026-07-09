@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/workflows/commandcheck"
+	"idiom/internal/platform/commandexec"
 )
 
 //go:embed brief-preflight.py
@@ -34,7 +34,7 @@ func BuildReport(ctx context.Context, briefPath string, workdir string, timeout 
 		return Report{}, err
 	}
 
-	if result.Failure != commandcheck.FailureNone && result.Failure != commandcheck.FailureExit {
+	if result.Err != nil && !result.ExitError {
 		return Report{}, fmt.Errorf("failed to run python3: %w", result.Err)
 	}
 
@@ -47,19 +47,25 @@ func BuildReport(ctx context.Context, briefPath string, workdir string, timeout 
 	}, nil
 }
 
-func RunEmbeddedPreflight(ctx context.Context, briefPath string, workdir string, timeout time.Duration) (commandcheck.Result, error) {
+func RunEmbeddedPreflight(ctx context.Context, briefPath string, workdir string, timeout time.Duration) (commandexec.Result, error) {
 	scriptPath, cleanup, err := WriteEmbeddedPreflight()
 	if err != nil {
-		return commandcheck.Result{}, fmt.Errorf("cannot stage preflight script: %w", err)
+		return commandexec.Result{}, fmt.Errorf("cannot stage preflight script: %w", err)
 	}
 	defer cleanup()
 
-	return commandcheck.Run(ctx, commandcheck.Request{
-		Argv:                   []string{"python3", scriptPath, briefPath},
-		Dir:                    workdir,
-		Timeout:                timeout,
-		InfrastructureExitCode: 2,
-	}), nil
+	result := commandexec.Run(ctx, commandexec.Spec{
+		Mode:    commandexec.ModeArgv,
+		Name:    "python3",
+		Args:    []string{scriptPath, briefPath},
+		Dir:     workdir,
+		Timeout: timeout,
+	})
+	if result.Err != nil && (result.TimedOut || !result.ExitError) {
+		result.ExitCode = 2
+	}
+
+	return result, nil
 }
 
 func WriteEmbeddedPreflight() (path string, cleanup func(), err error) {

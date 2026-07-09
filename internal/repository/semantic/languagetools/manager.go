@@ -187,8 +187,8 @@ func (m *Manager) runCommand(ctx context.Context, dir, name string, args ...stri
 	result := m.runCommandResult(ctx, dir, nil, name, args...)
 	output := result.Output
 
-	if err := result.FailureError(); err != nil {
-		return output, err
+	if result.Err != nil {
+		return output, result.Err
 	}
 
 	return output, nil
@@ -241,10 +241,6 @@ type CommandResult struct {
 	Output string
 	Stdout string
 	Err    error
-}
-
-func (r CommandResult) FailureError() error {
-	return r.Err
 }
 
 type GoDeclarationMove struct {

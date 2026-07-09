@@ -16,11 +16,11 @@ import (
 	"time"
 
 	"idiom/internal/contracts/pathparse"
+	"idiom/internal/platform/commandexec"
 	briefcmd "idiom/internal/surfaces/cli/brief"
 	"idiom/internal/surfaces/cliassets"
 	"idiom/internal/workflows/atomintake"
 	"idiom/internal/workflows/brieflint"
-	"idiom/internal/workflows/commandcheck"
 )
 
 // refineIterMetrics captures observable per-iteration data and is
@@ -152,9 +152,10 @@ func DefaultDispatchWithConfig(metaBriefPath string, configPath string, stdout, 
 	}
 
 	args := defaultRefineDispatchArgs(binary, configPath, metaBriefPath)
-	result := commandcheck.Run(context.TODO(), commandcheck.Request{
-		Argv:                   args,
-		InfrastructureExitCode: 1,
+	result := commandexec.Run(context.TODO(), commandexec.Spec{
+		Mode: commandexec.ModeArgv,
+		Name: args[0],
+		Args: append([]string(nil), args[1:]...),
 	})
 
 	if _, err := io.WriteString(stdout, result.Stdout); err != nil {

@@ -19,12 +19,13 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/evidence/telemetry"
+	"idiom/internal/platform/commandexec"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/gitstate"
+	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/sessionlog"
 	"idiom/internal/surfaces/cli/runrecord"
 	cmdruntime "idiom/internal/surfaces/cli/runtime"
-	"idiom/internal/workflows/commandcheck"
 	"idiom/internal/workflows/planexecute"
 )
 
@@ -1093,25 +1094,28 @@ func runCommandWithConfigTimeout(name string, command string, cfg config.Config)
 func runCommand(ctx context.Context, name string, command string, cfg config.Config) runrecord.HeadlessCheck {
 	check := runrecord.HeadlessCheck{Name: name, Command: command}
 
-	result := commandcheck.Run(ctx, commandcheck.Request{
-		ShellCommand:           command,
-		Shell:                  shellName(cfg),
-		Dir:                    commandDir(cfg),
-		CaptureBytes:           commandcheck.DiagnosticCaptureBytes,
-		InfrastructureExitCode: 1,
+	result := commandexec.Run(ctx, commandexec.Spec{
+		Mode:           commandexec.ModePlainShell,
+		Command:        command,
+		Shell:          shellName(cfg),
+		Dir:            commandDir(cfg),
+		MaxOutputBytes: commandexec.DiagnosticCaptureBytes,
 	})
 
 	check.DurationMS = result.Duration.Milliseconds()
-	check.Stdout = commandcheck.TrimDisplay(result.Stdout, 4000, "")
-	check.Stderr = commandcheck.TrimDisplay(result.Stderr, 4000, "")
+	check.Stdout = textutil.TruncateBytes(strings.TrimSpace(result.Stdout), 4000, "")
+	check.Stderr = textutil.TruncateBytes(strings.TrimSpace(result.Stderr), 4000, "")
 	check.ExitCode = result.ExitCode
 
-	if result.Failure == commandcheck.FailureNone {
+	if result.Err == nil {
 		return check
 	}
 
-	if result.Failure != commandcheck.FailureExit && result.Err != nil {
-		check.Stderr = commandcheck.TrimDisplay(strings.TrimSpace(check.Stderr+"\n"+result.Err.Error()), 4000, "")
+	if result.TimedOut || !result.ExitError {
+		check.ExitCode = 1
+		if result.Err != nil {
+			check.Stderr = textutil.TruncateBytes(strings.TrimSpace(check.Stderr+"\n"+result.Err.Error()), 4000, "")
+		}
 	}
 
 	return check

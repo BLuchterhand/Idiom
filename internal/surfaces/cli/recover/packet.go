@@ -20,7 +20,6 @@ import (
 	"idiom/internal/runtime/localops"
 	"idiom/internal/workflows/atomintake"
 	"idiom/internal/workflows/brieflint"
-	"idiom/internal/workflows/commandcheck"
 	"idiom/internal/workflows/planexecute"
 	"idiom/internal/workflows/recoverstatus"
 	"idiom/internal/workflows/recovery"
@@ -851,12 +850,12 @@ func runRecoveryVerificationCommand(root string, command string) (recoverycontra
 		return result, nil
 	}
 
-	switch run.Failure {
-	case commandcheck.FailureMissingOperand:
+	switch {
+	case run.Rejection == planexecute.VerificationCommandRejectionMissingOperand:
 		return result, fmt.Errorf("recovery verification command must name a package pattern: %s", command)
-	case commandcheck.FailureUnsupported:
+	case run.Rejection == planexecute.VerificationCommandRejectionUnsupported:
 		return result, fmt.Errorf("unsupported recovery verification command: %s", command)
-	case commandcheck.FailureTimeout:
+	case run.TimedOut:
 		return result, fmt.Errorf("recovery verification command timed out: %s", command)
 	}
 

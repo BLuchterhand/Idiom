@@ -11,7 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/workflows/commandcheck"
+	"idiom/internal/platform/commandexec"
+	"idiom/internal/platform/textutil"
 )
 
 // ProjectCheck is the on-disk representation of a check declared
@@ -162,18 +163,21 @@ func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error)
 		workdir = ctx.ProjectRoot
 	}
 
-	result := commandcheck.Run(context.TODO(), commandcheck.Request{
-		Argv:         append([]string{cmd}, args...),
-		Dir:          workdir,
-		Timeout:      60 * time.Second,
-		CaptureBytes: commandcheck.DiagnosticCaptureBytes,
-		DisplayBytes: shellOutputCap,
-		Truncation:   commandcheck.TruncatePostflight,
-		MergeOutput:  true,
+	result := commandexec.Run(context.TODO(), commandexec.Spec{
+		Mode:           commandexec.ModeArgv,
+		Name:           cmd,
+		Args:           args,
+		Dir:            workdir,
+		Timeout:        60 * time.Second,
+		MaxOutputBytes: commandexec.DiagnosticCaptureBytes,
+		MergeOutput:    true,
 	})
-	output := result.DisplayOutput
+	output := strings.TrimSpace(result.CombinedOutput())
+	if len(output) > shellOutputCap {
+		output = textutil.TruncateBytes(output, shellOutputCap, "") + "... (truncated; rerun the check for full output)"
+	}
 
-	if result.Failure == commandcheck.FailureTimeout {
+	if result.TimedOut {
 		return []Finding{{
 			Check:    r.Name(),
 			Severity: SeverityError,
@@ -181,7 +185,7 @@ func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error)
 		}}, nil
 	}
 
-	if result.Failure == commandcheck.FailureSpawn {
+	if result.Err != nil && !result.ExitError {
 		// non-exit error: command not found, can't spawn, etc.
 		return []Finding{{
 			Check:    r.Name(),
@@ -192,7 +196,7 @@ func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error)
 
 	exitCode := result.ExitCode
 
-	if result.Failure == commandcheck.FailureExit && r.spec.shouldFailOnNonZero() {
+	if result.ExitError && r.spec.shouldFailOnNonZero() {
 		return []Finding{{
 			Check:    r.Name(),
 			Severity: SeverityError,
@@ -200,7 +204,7 @@ func (r *projectCheckRunner) runShell(d Diff, ctx RunContext) ([]Finding, error)
 		}}, nil
 	}
 
-	if result.Failure == commandcheck.FailureExit {
+	if result.ExitError {
 		return []Finding{{
 			Check:    r.Name(),
 			Severity: SeverityWarning,

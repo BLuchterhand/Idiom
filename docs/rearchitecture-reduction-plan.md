@@ -174,8 +174,11 @@ behavior. Shell replacement redirects that prescribed `read_file`,
 syntax were deleted; workspace shell analysis remains the command-meaning
 authority, and runtime no longer converts read-like shell intent into a
 harness-chosen strategy. Reviewer-backed follow-up targets are broader
-`toolResultEvidenceProjection` consolidation and remaining command-execution
-authority seams. Changed-source path classification now belongs to
+`toolResultEvidenceProjection` consolidation and owner-specific command
+authority cleanup. The generic workflow command wrapper target was resolved by
+deleting `internal/workflows/commandcheck`; future command work should delete
+duplicate execution/display policy in place, not recreate a shared check
+facade. Changed-source path classification now belongs to
 `toolResultEvidenceProjection` through the `sourcekind.CoversSourceSanity`
 contract, and the old read-path pass-through helper has been deleted; the
 larger remaining evidence target is a cached projection/read-only answerability
@@ -872,9 +875,10 @@ consume one owner for each enforceable fact.
   write/read classification, schema and manifest projections, phase/profile
   surface resolution, request target extraction, shell policy, discovery
   rewrites, and typed workspace tool-result metadata.
-- `internal/platform/commandexec` should own all process execution details:
+- `internal/platform/commandexec` owns process execution details:
   `os/exec`, `Run`, `Start`, shell mode, timeout, exit status, bounded
-  stdout/stderr capture, duration, canonical `PWD`, and environment overlays.
+  stdout/stderr capture, duration, optional canonical `PWD`, and environment
+  overlays.
 - `internal/contracts/*` owns stable vocabulary and public contracts: autonomy
   action-class vocabulary, plan verification command contracts, submit-plan
   diagnostics, read evidence metadata, recovery records, and audit DTO shape.
@@ -885,9 +889,10 @@ consume one owner for each enforceable fact.
   duplicate workspace validation.
 - `internal/capabilities/workspace/toolpolicy` owns only pattern matching over
   caller-provided policy targets. Workspace owns target extraction.
-- CLI, TUI, and workflow packages own request construction and presentation.
-  They should adapt to workspace/contracts/platform results, not own duplicate
-  shell, tool, or execution rules.
+- CLI, TUI, and workflow packages own request construction, validation, exit
+  projection, and presentation for their surfaces. They should adapt to
+  workspace/contracts/platform results, not own duplicate shell, tool, or
+  process execution rules.
 
 ```mermaid
 flowchart TD
@@ -947,11 +952,12 @@ flowchart TD
    shell side-effect, workbranch shell allow/deny, and discovery redirect parser
    tables with calls to the workspace classifier. Runtime keeps only redirect
    escalation, retry, fingerprint, and user-facing recovery text.
-4. Add `internal/platform/commandexec` and migrate workspace shell, language
-   tools, planexecute verification, postflight checks, recovery commands,
-   headless checks, artifact commands, sweeval, queue child launch, and other
-   direct `os/exec` call sites onto it. Keep domain-specific allowlists in
-   their current owners during the migration.
+4. `internal/platform/commandexec` is the one-shot and long-lived process
+   owner. Workspace shell, language tools, planexecute verification,
+   postflight checks, recovery commands, headless checks, artifact commands,
+   sweeval, queue child launch, and related surfaces should use it directly
+   while keeping domain-specific allowlists, exit-code projection, and display
+   wording in their current owners.
 5. Move tool-rule target extraction and write-target extraction to workspace.
    Leave `toolpolicy` as a pure matcher over strings supplied by workspace.
 6. Add typed read metadata and typed `submit_plan` diagnostics while preserving
@@ -1018,8 +1024,9 @@ High-confidence reduction bands:
 
 - `commandexec` plus sanctioned long-lived process start owner: remove direct
   one-shot command wrappers, duplicated timeout/capture/env/PWD handling, and
-  shell-mode variants. Expected production reduction after full migration:
-  roughly 700 to 1,500 lines.
+  shell-mode variants. Several slices have already landed here, including
+  deletion of `internal/workflows/commandcheck`; remaining reductions must be
+  owner-specific and should not add a replacement command-check facade.
 - `gitstate` owner: remove repeated `HEAD`, porcelain status, git-path,
   dirty-path, and combined-output helpers across workspace, repository,
   runtime, and workflows. Expected production reduction: roughly 300 to 800
