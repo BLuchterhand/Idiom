@@ -1804,6 +1804,22 @@ Reviewer-updated estimate:
   `go build ./cmd/idiom`;
   `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
   `/Users/ben/go/bin/staticcheck -checks=U1000 ./...`; `git diff --check`.
+- Recovery failure-record wrapper cleanup deleted
+  `recovery.TryLoadPlanExecuteFailureRecord`, a plan-execute-specific loader
+  facade over the generic failure-record store. Tests now call
+  `TryLoadFailureRecord(root, PlanExecuteFailureID(sessionID))` when they need
+  exact plan-execute record lookup, while production continues to use
+  `TryLoadFailureRecordForSession` where mixed recovery lanes are intended.
+  Production Go changed `+0 / -4`, net `-4`; test Go changed `+10 / -10`,
+  net `0`. With this worktree included, the branch is production Go
+  `+26,558 / -35,240`, net `-8,682` versus `main`. Focused verification:
+  `go test ./internal/workflows/recovery ./internal/workflows/planexecute ./internal/surfaces/cli/recover ./internal/capabilities/workspace -run 'Test.*(Recovery|Recover|PlanExecute|Decompose|FailureRecord|SaveRunProgressState)' -count=1`;
+  focused U1000 over touched packages; `deadcode ./...` no longer reports the
+  recovery wrapper, leaving only the deliberately retained shared
+  `jsoneventstest` test helpers in this narrowed inventory. Full verification:
+  `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `/Users/ben/go/bin/staticcheck -checks=U1000 ./...`; `git diff --check`.
 
 ## Review And Regression Protocol
 

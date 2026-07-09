@@ -290,7 +290,7 @@ func TestRunRecoverInspectComputesLegacyFailedProgressWithoutWriting(t *testing.
 		t.Fatalf("failure class=%q", report.FailureClass)
 	}
 
-	if _, _, found, err := recovery.TryLoadPlanExecuteFailureRecord(root, state.SessionID); err != nil || found {
+	if _, _, found, err := recovery.TryLoadFailureRecord(root, recovery.PlanExecuteFailureID(state.SessionID)); err != nil || found {
 		t.Fatalf("inspect should not persist fallback record, found=%v err=%v", found, err)
 	}
 }
@@ -330,7 +330,7 @@ func TestRunRecoverInspectComputesRecoveryRequiredProgressWithoutWriting(t *test
 			if report.NextAction == string(recoverycontract.NextActionNone) {
 				t.Fatalf("recovery-required status %q must produce an actionable fallback report: %#v", status, report)
 			}
-			if _, _, found, err := recovery.TryLoadPlanExecuteFailureRecord(root, state.SessionID); err != nil || found {
+			if _, _, found, err := recovery.TryLoadFailureRecord(root, recovery.PlanExecuteFailureID(state.SessionID)); err != nil || found {
 				t.Fatalf("inspect should not persist fallback record, found=%v err=%v", found, err)
 			}
 		})
@@ -865,7 +865,7 @@ func TestRecoverDecomposeRejectsRecoveryControlArtifactOutput(t *testing.T) {
 		t.Fatalf("unexpected control artifact report: %#v", report)
 	}
 
-	if _, _, found, err := recovery.TryLoadPlanExecuteFailureRecord(root, sessionID); err != nil || !found {
+	if _, _, found, err := recovery.TryLoadFailureRecord(root, recovery.PlanExecuteFailureID(sessionID)); err != nil || !found {
 		t.Fatalf("failure record should remain readable, found=%v err=%v", found, err)
 	}
 }

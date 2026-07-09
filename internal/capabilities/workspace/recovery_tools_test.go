@@ -277,7 +277,7 @@ func TestRecoveryDecomposeToolRejectsControlArtifactOutputPath(t *testing.T) {
 		t.Fatalf("expected control artifact rejection, got error=%q output=%s", decompose.Error, decompose.Output)
 	}
 
-	if _, _, found, err := recovery.TryLoadPlanExecuteFailureRecord(root, "sid-control-artifact-output"); err != nil || !found {
+	if _, _, found, err := recovery.TryLoadFailureRecord(root, recovery.PlanExecuteFailureID("sid-control-artifact-output")); err != nil || !found {
 		t.Fatalf("failure record should remain readable, found=%v err=%v", found, err)
 	}
 }

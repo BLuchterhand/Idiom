@@ -1178,9 +1178,9 @@ func TestSaveRunProgressStateWritesRecoveryDecompositionPacket(t *testing.T) {
 		t.Fatalf("saveRunProgressState: %v", err)
 	}
 
-	record, _, found, err := recovery.TryLoadPlanExecuteFailureRecord(root, state.SessionID)
+	record, _, found, err := recovery.TryLoadFailureRecord(root, recovery.PlanExecuteFailureID(state.SessionID))
 	if err != nil || !found {
-		t.Fatalf("TryLoadPlanExecuteFailureRecord found=%v err=%v", found, err)
+		t.Fatalf("TryLoadFailureRecord found=%v err=%v", found, err)
 	}
 
 	packetPath, _, err := recovery.DecompositionPacketPath(root, record.FailureID, "")
@@ -1324,7 +1324,7 @@ func TestRunPlannerBlockedPreservesFullAnchorRefreshFailureReason(t *testing.T) 
 		t.Fatalf("terminal completion should retain full blocker detail, got %#v", result.Completion)
 	}
 
-	record, _, found, err := recovery.TryLoadPlanExecuteFailureRecord(root, result.SessionID)
+	record, _, found, err := recovery.TryLoadFailureRecord(root, recovery.PlanExecuteFailureID(result.SessionID))
 	if err != nil || !found {
 		t.Fatalf("load recovery record found=%v err=%v", found, err)
 	}
@@ -1540,7 +1540,7 @@ func TestRunPersistsProgressAndResumeRunsReviewRepairOnly(t *testing.T) {
 		t.Fatalf("progress state must store prompt hash, not raw prompt")
 	}
 
-	record, recordPath, found, err := recovery.TryLoadPlanExecuteFailureRecord(root, first.SessionID)
+	record, recordPath, found, err := recovery.TryLoadFailureRecord(root, recovery.PlanExecuteFailureID(first.SessionID))
 	if err != nil {
 		t.Fatalf("load recovery record: %v", err)
 	}
@@ -1838,7 +1838,7 @@ func TestRunContinuesReviewRepairAfterSourceSanityFailure(t *testing.T) {
 		t.Fatalf("expected completed repaired progress, got %#v", state)
 	}
 
-	if record, recordPath, found, err := recovery.TryLoadPlanExecuteFailureRecord(root, result.SessionID); err != nil || found {
+	if record, recordPath, found, err := recovery.TryLoadFailureRecord(root, recovery.PlanExecuteFailureID(result.SessionID)); err != nil || found {
 		t.Fatalf("successful repair should not leave stale recovery record found=%v path=%s record=%#v err=%v", found, recordPath, record, err)
 	}
 }
@@ -2164,7 +2164,7 @@ func TestRunKeepsSourceSanityFailureWhenReviewRepairUnavailable(t *testing.T) {
 		t.Fatalf("expected failed source sanity progress after degraded review, got %#v", state)
 	}
 
-	record, _, found, err := recovery.TryLoadPlanExecuteFailureRecord(root, result.SessionID)
+	record, _, found, err := recovery.TryLoadFailureRecord(root, recovery.PlanExecuteFailureID(result.SessionID))
 	if err != nil || !found {
 		t.Fatalf("expected terminal failure record found=%v err=%v", found, err)
 	}

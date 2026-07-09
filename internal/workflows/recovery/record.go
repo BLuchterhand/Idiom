@@ -409,10 +409,6 @@ func writeFailureRecord(root string, record recoverycontract.FailureRecord, now 
 	return record, relPath, nil
 }
 
-func TryLoadPlanExecuteFailureRecord(root string, sessionID string) (recoverycontract.FailureRecord, string, bool, error) {
-	return TryLoadFailureRecord(root, PlanExecuteFailureID(strings.TrimSpace(sessionID)))
-}
-
 func TryLoadFailureRecordForSession(root string, sessionID string) (recoverycontract.FailureRecord, string, bool, error) {
 	for _, failureID := range FailureIDCandidatesForSession(sessionID) {
 		record, path, found, err := TryLoadFailureRecord(root, failureID)
