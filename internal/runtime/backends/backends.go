@@ -330,47 +330,6 @@ func (p Profile) ModelByAlias(alias string) (Model, bool) {
 	return Model{}, false
 }
 
-// ResolveRoleFromProjectRoot loads <projectRoot>/.idiom/backends.json,
-// selects the named profile (or the lone profile when name is empty),
-// and resolves the alias + Model entry for the requested role. The
-// returned ok is false when the file is missing, the profile is not
-// found, or the role isn't declared. Errors only surface for malformed
-// JSON — callers can treat (ok=false, err=nil) as "fall back to your
-// own config".
-//
-// When the resolved alias points to an alias that has no matching
-// Model entry (e.g., proxy.default_executor names an alias the proxy
-// routes externally), the returned Model still carries the alias on
-// its Alias field so callers can use it as the model identifier in
-// chat-completion requests.
-func ResolveRoleFromProjectRoot(projectRoot, profileName, role string) (alias string, model Model, ok bool, err error) {
-	file, found, err := LoadFromProjectRoot(projectRoot)
-	if err != nil {
-		return "", Model{}, false, err
-	}
-
-	if !found {
-		return "", Model{}, false, nil
-	}
-
-	prof, profOK := file.Profile(profileName)
-	if !profOK {
-		return "", Model{}, false, nil
-	}
-
-	alias, ok = prof.AliasForRole(role)
-	if !ok {
-		return "", Model{}, false, nil
-	}
-
-	model, _ = prof.ModelByAlias(alias)
-	if strings.TrimSpace(model.Alias) == "" {
-		model.Alias = alias
-	}
-
-	return alias, model, true, nil
-}
-
 // isHyphenBoundedToken reports whether `token` appears in `s` with
 // non-alphanumeric (or string-end) boundaries on both sides. So
 // "qwen3-coder-30b" matches "coder" but "encoder" does not. We

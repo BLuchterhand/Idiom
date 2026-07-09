@@ -167,33 +167,6 @@ func TestRemoveEmptyValues(t *testing.T) {
 	}
 }
 
-func TestUniqueLimit(t *testing.T) {
-	result := UniqueLimit([]string{"a", "b", "a", "c"}, 2)
-	if len(result) != 2 {
-		t.Fatalf("UniqueLimit len = %d, want 2: %v", len(result), result)
-	}
-
-	if result[0] != "a" || result[1] != "b" {
-		t.Errorf("UniqueLimit = %v, want [a b]", result)
-	}
-}
-
-func TestUniqueLimitBelowMax(t *testing.T) {
-	original := []string{"a", "b"}
-	result := UniqueLimit(original, 10)
-
-	if len(result) != 2 {
-		t.Fatalf("UniqueLimit len = %d, want 2", len(result))
-	}
-}
-
-func TestUniqueLimitZeroMax(t *testing.T) {
-	result := UniqueLimit([]string{"a", "b"}, 0)
-	if len(result) != 2 {
-		t.Fatalf("UniqueLimit with max=0 len = %d, want 2", len(result))
-	}
-}
-
 func TestPrefix(t *testing.T) {
 	original := []string{"a", "b", "c", "d", "e"}
 	result := Prefix(original, 3)

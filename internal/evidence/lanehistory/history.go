@@ -243,10 +243,6 @@ func Summarize(projectRoot string) (Summary, error) {
 	return SummarizeWithFilter(projectRoot, Filter{})
 }
 
-func SummarizeByMode(projectRoot string, mode string) (Summary, error) {
-	return SummarizeWithFilter(projectRoot, Filter{ModeFilter: mode})
-}
-
 func PrintSummary(projectRoot string, w io.Writer, filter Filter) error {
 	s, err := SummarizeWithFilter(projectRoot, filter)
 	if err != nil {

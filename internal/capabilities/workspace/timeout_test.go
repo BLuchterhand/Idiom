@@ -110,7 +110,7 @@ func TestExecuteWithTimeoutFnSynthesizesTimeoutOnStall(t *testing.T) {
 		t.Fatalf("error should name the configured timeout, got %q", res.Error)
 	}
 
-	if !failures.IsCode(res.Failure, failures.DeadlineExceeded) {
+	if failures.CodeOf(res.Failure) != failures.DeadlineExceeded {
 		t.Fatalf("timeout result should carry DeadlineExceeded failure metadata, got %#v", res.Failure)
 	}
 
@@ -137,7 +137,7 @@ func TestExecuteWithTimeoutFnContextPackTimeoutCarriesFallbackPayload(t *testing
 		return ToolResult{Tool: ToolNameContextPack, Summary: "should never be returned"}
 	})
 
-	if res.Tool != ToolNameContextPack || !failures.IsCode(res.Failure, failures.DeadlineExceeded) {
+	if res.Tool != ToolNameContextPack || failures.CodeOf(res.Failure) != failures.DeadlineExceeded {
 		t.Fatalf("context_pack timeout should keep tool/failure metadata, got %#v", res)
 	}
 
@@ -174,7 +174,7 @@ func TestExecuteWithTimeoutFnRecoversPanic(t *testing.T) {
 		t.Fatalf("error should carry the panic message, got %q", res.Error)
 	}
 
-	if !failures.IsCode(res.Failure, failures.Internal) {
+	if failures.CodeOf(res.Failure) != failures.Internal {
 		t.Fatalf("panic result should carry Internal failure metadata, got %#v", res.Failure)
 	}
 }

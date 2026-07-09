@@ -1782,6 +1782,28 @@ Reviewer-updated estimate:
   slices. Full verification: `go test ./...`; `go build ./cmd/idiom`;
   `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
   `/Users/ben/go/bin/staticcheck -checks=U1000 ./...`; `git diff --check`.
+- Utility and backend dead-facade cleanup deleted production-unreachable
+  internal helper surfaces preserved only by tests: `lanehistory.SummarizeByMode`,
+  `failures.ParseCode`, `failures.IsCode`, `textutil.NormalizePath`,
+  `textutil.NormalizeRelPath`, `textutil.UniqueLimit`,
+  `textutil.TruncateRunes`, and `backends.ResolveRoleFromProjectRoot`.
+  Ownership now stays on `lanehistory.SummarizeWithFilter` and `Filter`,
+  one-way failure-code wire names plus `CodeOf`/`ReasonOf`, contract-specific
+  path normalizers, byte-budget truncation, slice primitives, and explicit
+  backend loading/profile/role/model lookup APIs. Tests that only preserved
+  dead composition helpers were deleted; workspace timeout tests were retargeted
+  to `failures.CodeOf`. Architecture and test reviewers both recommended
+  deleting all candidate APIs. Production Go changed `+0 / -137`, net `-137`;
+  test Go changed `+7 / -276`, net `-269`. With this worktree included, the
+  branch is production Go `+26,561 / -35,239`, net `-8,678` versus `main`.
+  Focused verification:
+  `go test ./internal/platform/textutil ./internal/platform/failures ./internal/evidence/lanehistory ./internal/runtime/backends -count=1`;
+  `go test ./internal/capabilities/workspace -run 'TestExecuteWithTimeoutFn' -count=1`;
+  focused U1000 over touched packages; stale-symbol and deadcode scans for
+  deleted names are clean. Full verification: `go test ./...`;
+  `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `/Users/ben/go/bin/staticcheck -checks=U1000 ./...`; `git diff --check`.
 
 ## Review And Regression Protocol
 

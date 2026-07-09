@@ -122,15 +122,6 @@ func Remove(values []string, remove []string) []string {
 	return Unique(out)
 }
 
-func UniqueLimit(values []string, max int) []string {
-	values = Unique(values)
-	if max > 0 && len(values) > max {
-		return append([]string(nil), values[:max]...)
-	}
-
-	return values
-}
-
 func Prefix(values []string, max int) []string {
 	if max <= 0 || len(values) <= max {
 		return values

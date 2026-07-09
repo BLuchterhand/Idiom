@@ -48,25 +48,6 @@ var codeNames = [...]string{
 	Unimplemented:      "unimplemented",
 }
 
-var codesByName = map[string]Code{
-	"unknown":             Unknown,
-	"canceled":            Canceled,
-	"invalid_argument":    InvalidArgument,
-	"deadline_exceeded":   DeadlineExceeded,
-	"not_found":           NotFound,
-	"already_exists":      AlreadyExists,
-	"permission_denied":   PermissionDenied,
-	"resource_exhausted":  ResourceExhausted,
-	"failed_precondition": FailedPrecondition,
-	"aborted":             Aborted,
-	"out_of_range":        OutOfRange,
-	"unavailable":         Unavailable,
-	"internal":            Internal,
-	"data_loss":           DataLoss,
-	"unauthenticated":     Unauthenticated,
-	"unimplemented":       Unimplemented,
-}
-
 func (c Code) String() string {
 	if int(c) >= 0 && int(c) < len(codeNames) {
 		if name := codeNames[c]; name != "" {
@@ -75,11 +56,6 @@ func (c Code) String() string {
 	}
 
 	return "unknown"
-}
-
-func ParseCode(name string) (Code, bool) {
-	code, ok := codesByName[strings.TrimSpace(name)]
-	return code, ok
 }
 
 // Reason is intentionally package-extensible: domain packages may define their
@@ -228,8 +204,4 @@ func ReasonOf(err error) Reason {
 	}
 
 	return NoReason
-}
-
-func IsCode(err error, code Code) bool {
-	return err != nil && CodeOf(err) == code
 }

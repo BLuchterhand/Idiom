@@ -64,25 +64,6 @@ func TestCodeStringStable(t *testing.T) {
 	}
 }
 
-func TestParseCode(t *testing.T) {
-	code, ok := failures.ParseCode("permission_denied")
-	if !ok {
-		t.Fatal("ParseCode returned ok=false")
-	}
-
-	if code != failures.PermissionDenied {
-		t.Fatalf("ParseCode returned %v, want %v", code, failures.PermissionDenied)
-	}
-
-	if _, ok := failures.ParseCode("PermissionDenied"); ok {
-		t.Fatal("ParseCode accepted non-canonical name")
-	}
-
-	if code, ok := failures.ParseCode("unimplemented"); !ok || code != failures.Unimplemented {
-		t.Fatalf("ParseCode unimplemented = %v, %v; want %v, true", code, ok, failures.Unimplemented)
-	}
-}
-
 func TestWrapUnwrapAsAndCodeOf(t *testing.T) {
 	cause := errors.New("disk unavailable")
 	err := failures.Wrap(failures.Unavailable, reasonQueueFull, "cannot read queue", cause)
@@ -132,10 +113,6 @@ func TestCustomProviders(t *testing.T) {
 	if got := failures.ReasonOf(err); got != reasonBadInput {
 		t.Fatalf("ReasonOf custom error = %v, want %v", got, reasonBadInput)
 	}
-
-	if !failures.IsCode(err, failures.InvalidArgument) {
-		t.Fatal("IsCode returned false for custom provider code")
-	}
 }
 
 func TestFallbacks(t *testing.T) {
@@ -153,11 +130,11 @@ func TestFallbacks(t *testing.T) {
 		t.Fatalf("ReasonOf plain error = %v, want %v", got, failures.NoReason)
 	}
 
-	if failures.IsCode(err, failures.Internal) {
-		t.Fatal("IsCode returned true for wrong fallback code")
+	if got := failures.CodeOf(err); got == failures.Internal {
+		t.Fatal("CodeOf returned Internal for plain error")
 	}
 
-	if failures.IsCode(nil, failures.Unknown) {
-		t.Fatal("IsCode returned true for nil error")
+	if got := failures.CodeOf(nil); got != failures.Unknown {
+		t.Fatalf("CodeOf nil = %v, want %v", got, failures.Unknown)
 	}
 }
