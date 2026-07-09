@@ -29737,7 +29737,12 @@ func TestDirectAnswerQuestionProtocolIsRetryableNotUserVisibleBlocker(t *testing
 		t.Fatalf("read-only direct-answer QUESTION protocol should be retryable protocol drift, got %q", kind)
 	}
 
-	if !runner.retryableFinalAnswerAcceptanceRejection(rejectFinalAnswerAcceptanceFromLegacyBlocker(newFinalAnswerAcceptance(), kind, kind), nil, 0, nil) {
+	if !runner.retryableFinalAnswerAcceptanceRejection(
+		rejectFinalAnswerAcceptance(newFinalAnswerAcceptance(), turnViolationReadOnlyProtocolBlocker, turnReasonReadOnlyProtocolBlocker),
+		nil,
+		0,
+		nil,
+	) {
 		t.Fatalf("%s should enter read-only final-answer retry policy", kind)
 	}
 }

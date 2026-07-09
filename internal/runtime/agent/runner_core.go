@@ -508,11 +508,6 @@ func modelCallReadinessBeforeModelCall(input ModelCallReadinessPolicyInput) Mode
 	return ModelCallReadinessPolicyDecision{}
 }
 
-type ToolAuthorizationPermissionDecision struct {
-	Snapshot PermissionDecisionSnapshot
-	Policy   ToolAuthorizationPolicyEvent
-}
-
 type ToolAuthorizationSurfaceDecision struct {
 	Rejected     bool
 	Summary      string
@@ -548,26 +543,6 @@ func (r *Runner) readOnlyWriteChildTaskPermissionDecision(req workspace.ToolRequ
 	}, true
 }
 
-func toolAuthorizationPermissionDecision(req workspace.ToolRequest, policy toolpolicy.Policy, workspaceRulesDeny bool) ToolAuthorizationPermissionDecision {
-	snapshot := permissionPolicyDecision(policy, req)
-	if workspaceRulesDeny {
-		snapshot.Decision = toolpolicy.Deny
-		snapshot.Rule = "workspace.tool_rules decision=deny"
-	}
-	result := "no_approval_needed"
-	decision := autonomy.PolicyAllow
-	errorClass := ""
-	if snapshot.Decision == toolpolicy.Ask {
-		decision, result, errorClass = autonomy.PolicyAsk, "approval_required", "permission_policy"
-	} else if snapshot.Decision == toolpolicy.Deny {
-		decision, result, errorClass = autonomy.PolicyDeny, "denied", "permission_policy"
-	}
-	return ToolAuthorizationPermissionDecision{
-		Snapshot: snapshot,
-		Policy:   toolAuthorizationPolicyEvent(req, decision, "permission_policy", result, errorClass, strings.TrimSpace(snapshot.Rule), snapshot.Decision == toolpolicy.Ask),
-	}
-}
-
 func toolAuthorizationSurfaceDecision(req workspace.ToolRequest, visibleTools []string, recoveryAllowance bool) ToolAuthorizationSurfaceDecision {
 	parity := CompareParity(ParityInput{
 		SurfaceID:   "current_tool_surface",
@@ -594,10 +569,6 @@ func toolAuthorizationSurfaceDecision(req workspace.ToolRequest, visibleTools []
 		Policy:       policy,
 		ParityReport: parity,
 	}
-}
-
-func toolAuthorizationWriteApprovalRequired(req workspace.ToolRequest) ToolAuthorizationPolicyEvent {
-	return toolAuthorizationPolicyEvent(req, autonomy.PolicyAsk, "write_approval_required", "approval_required", "approval_guard", "tool_authorization_policy", true)
 }
 
 func toolAuthorizationSurfacePolicyEvent(req workspace.ToolRequest, decision autonomy.ToolPolicyDecision) ToolAuthorizationPolicyEvent {

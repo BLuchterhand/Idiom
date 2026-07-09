@@ -23547,15 +23547,6 @@ func TestUnscopedImplementationWriteReadyAllowsOneSamePathSourceRefreshAfterSymb
 		}, "\n")),
 	}
 
-	if !runner.implementationTargetWriteReadySourceRefreshAllowed(
-		workspace.ToolRequest{Tool: "read_file", Path: "internal/workflows/productworkflow/coverage_gate.go"},
-		results,
-		0,
-	) {
-
-		t.Fatal("expected one same-path source refresh to be allowed after symbol-body evidence")
-	}
-
 	if !runner.implementationTargetWriteReadySourceReadAllowed(
 		workspace.ToolRequest{
 			Tool:      "read_file",
@@ -23608,25 +23599,7 @@ func TestUnscopedImplementationWriteReadyAllowsOneSamePathSourceRefreshAfterSymb
 		}
 	}
 
-	if runner.implementationTargetWriteReadySourceRefreshAllowed(
-		workspace.ToolRequest{Tool: "read_file", Path: "internal/workflows/productworkflow/coverage_gate.go"},
-		results,
-		1,
-	) {
-
-		t.Fatal("source-refresh allowance must be capped at one use")
-	}
-
 	withFullRead := append(append([]workspace.ToolResult{}, results...), readFileSourceBodyResult("internal/workflows/productworkflow/coverage_gate.go", 1, 8, 8, "1:func EvaluateCoverageGate() bool {\n2:\treturn true\n3:}\n"))
-	if runner.implementationTargetWriteReadySourceRefreshAllowed(
-		workspace.ToolRequest{Tool: "read_file", Path: "internal/workflows/productworkflow/coverage_gate.go"},
-		withFullRead,
-		0,
-	) {
-
-		t.Fatal("same-path source refresh should not be allowed after a full read_file result")
-	}
-
 	prompt, ok := runner.implementationTargetWriteReadyNonWritePrompt(
 		workspace.ToolRequest{Tool: "read_file", Path: "internal/workflows/productworkflow/coverage_gate.go"},
 		withFullRead,
@@ -30870,65 +30843,6 @@ func TestPlanExecuteNonToolPlannerQuestionDoesNotAutoRead(t *testing.T) {
 	}
 }
 
-func TestToolAuthorizationPolicyPermissionAllowsWithTypedMetadata(t *testing.T) {
-	decision := toolAuthorizationPermissionDecision(
-		workspace.ToolRequest{Tool: "read_file", Path: "README.md"},
-		toolpolicy.Policy{Default: toolpolicy.Allow},
-		false,
-	)
-
-	if decision.Snapshot.Decision != toolpolicy.Allow {
-		t.Fatalf("permission snapshot = %#v", decision.Snapshot)
-	}
-
-	if decision.Policy.Decision != autonomy.PolicyAllow ||
-		decision.Policy.PackID != autonomy.ContractPackToolAuthorization ||
-		decision.Policy.InvariantID != toolAuthorizationPolicyInvariant ||
-		decision.Policy.ReasonCode != "permission_policy" ||
-		decision.Policy.Result != "no_approval_needed" {
-		t.Fatalf("unexpected allow policy metadata: %#v", decision.Policy)
-	}
-}
-
-func TestToolAuthorizationPolicyPermissionDeniesConfiguredWorkspaceRule(t *testing.T) {
-	decision := toolAuthorizationPermissionDecision(
-		workspace.ToolRequest{Tool: "edit_file", Path: "README.md"},
-		toolpolicy.Policy{Default: toolpolicy.Allow},
-		true,
-	)
-
-	if decision.Snapshot.Decision != toolpolicy.Deny || !workspaceToolRulesPermissionDeny(decision.Snapshot) {
-		t.Fatalf("expected workspace rule deny snapshot, got %#v", decision.Snapshot)
-	}
-
-	if decision.Policy.Decision != autonomy.PolicyDeny ||
-		decision.Policy.PackID != autonomy.ContractPackToolAuthorization ||
-		decision.Policy.ErrorClass != "permission_policy" ||
-		decision.Policy.Result != "denied" ||
-		!strings.Contains(decision.Policy.Source, "workspace.tool_rules") {
-		t.Fatalf("unexpected deny policy metadata: %#v", decision.Policy)
-	}
-}
-
-func TestToolAuthorizationPolicyPermissionAsksForApproval(t *testing.T) {
-	decision := toolAuthorizationPermissionDecision(
-		workspace.ToolRequest{Tool: "shell", Command: "git status"},
-		toolpolicy.Policy{Default: toolpolicy.Ask},
-		false,
-	)
-
-	if decision.Snapshot.Decision != toolpolicy.Ask {
-		t.Fatalf("permission snapshot = %#v", decision.Snapshot)
-	}
-
-	if decision.Policy.Decision != autonomy.PolicyAsk ||
-		!decision.Policy.ApprovalRequired ||
-		decision.Policy.Result != "approval_required" ||
-		decision.Policy.ErrorClass != "permission_policy" {
-		t.Fatalf("unexpected ask policy metadata: %#v", decision.Policy)
-	}
-}
-
 func TestToolAuthorizationPolicySurfaceRejectsUnavailableTool(t *testing.T) {
 	decision := toolAuthorizationSurfaceDecision(
 		workspace.ToolRequest{Tool: "shell"},
@@ -30979,22 +30893,6 @@ func TestToolAuthorizationPolicySurfaceSkipsRecoveryAllowance(t *testing.T) {
 		decision.Policy.ParityReport.SurfaceID != "current_tool_surface" {
 
 		t.Fatalf("expected emit-ready allow parity policy: %#v", decision.Policy)
-	}
-}
-
-func TestToolAuthorizationPolicyWriteApprovalRequiredAsksWithTypedMetadata(t *testing.T) {
-	decision := toolAuthorizationWriteApprovalRequired(
-		workspace.ToolRequest{Tool: "edit_file", Path: "README.md"},
-	)
-
-	if decision.Decision != autonomy.PolicyAsk ||
-		decision.PackID != autonomy.ContractPackToolAuthorization ||
-		decision.InvariantID != toolAuthorizationPolicyInvariant ||
-		decision.ReasonCode != "write_approval_required" ||
-		!decision.ApprovalRequired ||
-		decision.Result != "approval_required" ||
-		decision.ErrorClass != "approval_guard" {
-		t.Fatalf("unexpected write approval policy metadata: %#v", decision)
 	}
 }
 

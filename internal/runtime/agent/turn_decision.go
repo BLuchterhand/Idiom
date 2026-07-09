@@ -188,19 +188,6 @@ func rejectFinalAnswerAcceptanceWithSourceGrounding(acceptance finalAnswerAccept
 	return finalAnswerAcceptanceWithPolicy(acceptance)
 }
 
-func rejectFinalAnswerAcceptanceFromLegacyBlocker(acceptance finalAnswerAcceptance, kind string, reason string) finalAnswerAcceptance {
-	violation, ok := turnViolationFromLegacyBlocker(kind, reason, acceptance.EvidencePaths)
-	if !ok {
-		return finalAnswerAcceptanceWithPolicy(acceptance)
-	}
-	acceptance.Decision = finalAnswerAcceptanceRejected
-	acceptance.BlockerKind = string(violation.Kind)
-	acceptance.Reason = strings.TrimSpace(textutil.FirstNonEmpty(violation.Message, reason, string(violation.ReasonCode), string(violation.Kind)))
-	acceptance.ContractAssessment.Violations = nil
-	acceptance.ContractAssessment = acceptance.ContractAssessment.withViolation(violation)
-	return finalAnswerAcceptanceWithPolicy(acceptance)
-}
-
 func finalAnswerAcceptanceWithPolicy(acceptance finalAnswerAcceptance) finalAnswerAcceptance {
 	if acceptance.Decision == "" {
 		acceptance.Decision = finalAnswerAcceptanceAccepted
@@ -519,17 +506,6 @@ func turnEvidenceRefsFromPaths(paths []string) []turnEvidenceRef {
 		refs = append(refs, turnEvidenceRef{Path: path})
 	}
 	return refs
-}
-
-func finalAnswerAssessmentForAcceptance(acceptance finalAnswerAcceptance) turnContractAssessment {
-	assessment := acceptance.ContractAssessment
-	if diagnostic, ok := turnDiagnosticFromLegacyBlocker(acceptance.BlockerKind, acceptance.Reason, acceptance.EvidencePaths); ok {
-		assessment = assessment.withDiagnostic(diagnostic)
-	}
-	if acceptance.Decision != finalAnswerAcceptanceRejected {
-		assessment.Violations = nil
-	}
-	return assessment
 }
 
 func turnCompletionGateRepeatedViolation(kind turnViolationKind) turnViolation {

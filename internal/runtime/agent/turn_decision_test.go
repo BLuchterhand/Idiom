@@ -85,7 +85,7 @@ func TestTurnViolationCapabilitiesAreCentralized(t *testing.T) {
 	}
 	for _, tt := range tests {
 		acceptance := rejectedFinalAnswerAcceptanceForTest(tt.kind)
-		capabilities := turnContractAssessmentCapabilities(finalAnswerAssessmentForAcceptance(acceptance))
+		capabilities := turnContractAssessmentCapabilities(acceptance.ContractAssessment)
 		if got := capabilities.Retryable; got != tt.retryable {
 			t.Fatalf("retryable(%q) = %v, want %v", tt.kind, got, tt.retryable)
 		}
@@ -218,14 +218,6 @@ func TestTurnUnknownLegacyBlockerDoesNotBecomeTypedViolation(t *testing.T) {
 	if _, ok := turnViolationFromLegacyBlocker("new_semantic_signal", "new signal", nil); ok {
 		t.Fatal("unknown legacy blocker must not become an enforceable typed violation")
 	}
-
-	acceptance := rejectFinalAnswerAcceptanceFromLegacyBlocker(newFinalAnswerAcceptance(), "new_semantic_signal", "new signal")
-	if acceptance.Decision != finalAnswerAcceptanceAccepted {
-		t.Fatalf("unknown legacy blocker must not reject without typed mapping: %#v", acceptance)
-	}
-	if len(acceptance.ContractAssessment.Violations) > 0 || turnFinalAnswerAcceptanceRetryable(acceptance) || turnFinalAnswerAcceptanceRecoverable(acceptance) {
-		t.Fatalf("unknown legacy blocker must not mint typed violation: %#v", acceptance.ContractAssessment)
-	}
 }
 
 func TestTurnAssessmentEventFieldsProjectViolationMessagesOnly(t *testing.T) {
@@ -296,7 +288,6 @@ func TestFinalAnswerAcceptancePreservesObjectiveDiagnosticAssessment(t *testing.
 		Reason:                  "objective relevance diagnostic",
 		RelevantSourceBodyPaths: []string{"internal/runtime/agent/evidence_readonly.go"},
 	})
-	acceptance.ContractAssessment = finalAnswerAssessmentForAcceptance(acceptance)
 
 	if len(acceptance.ContractAssessment.Violations) > 0 {
 		t.Fatalf("objective relevance diagnostic must not expose violations: %#v", acceptance.ContractAssessment)

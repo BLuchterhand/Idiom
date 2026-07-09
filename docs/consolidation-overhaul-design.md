@@ -1510,6 +1510,26 @@ Reviewer-updated estimate:
   `go run golang.org/x/tools/cmd/deadcode@latest ./...` as inventory, with
   remaining affected-package findings unrelated to this slice;
   `git diff --check`.
+- Runtime dead-helper cleanup removed production APIs that were only reachable
+  from tests: `ToolAuthorizationPermissionDecision`,
+  `toolAuthorizationPermissionDecision`, `toolAuthorizationWriteApprovalRequired`,
+  `Runner.implementationTargetWriteReadySourceRefreshAllowed`,
+  `rejectFinalAnswerAcceptanceFromLegacyBlocker`, and
+  `finalAnswerAssessmentForAcceptance`. Tests were pruned or retargeted to live
+  owners instead of adding replacement wrappers: authorization surface coverage
+  stays on `toolAuthorizationSurfaceDecision`, write-ready expansion coverage
+  stays on `implementationTargetWriteReadySourceReadAllowed`, and final-answer
+  retry coverage now constructs typed violations directly. Production Go changed
+  `+0 / -61`, net `-61`; test Go changed `+7 / -113`, net `-106`. With this
+  worktree included, the branch is production Go `+26,595 / -32,943`, net
+  `-6,348` versus `main`. Focused verification:
+  `go test ./internal/runtime/agent -run 'Test(ToolAuthorizationPolicySurface|UnscopedImplementationWriteReady|TurnViolationCapabilities|TurnUnknownLegacyBlocker|FinalAnswerAcceptance|DirectAnswerQuestionProtocol|FinalAnswerAcceptanceRetryPolicy)' -count=1`;
+  `go test ./internal/runtime/agent -count=1`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./internal/runtime/agent`;
+  `go run golang.org/x/tools/cmd/deadcode@latest ./... | rg '^internal/runtime/agent/'`
+  as inventory. Full verification: `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `git diff --check`.
 
 ## Review And Regression Protocol
 

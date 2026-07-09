@@ -6883,14 +6883,6 @@ func implementationTargetWriteReadyKnownTotalLines(ranges []planThenExecuteReadR
 	return total, total > 0
 }
 
-func (r *Runner) implementationTargetWriteReadySourceRefreshAllowed(req workspace.ToolRequest, results []workspace.ToolResult, refreshes int) bool {
-	if !r.implementationTargetWriteReadySourceReadAllowed(req, results, refreshes) {
-		return false
-	}
-
-	return newToolResultEvidenceProjection(results).HasSourceBody(req.Path)
-}
-
 func implementationTargetWriteReadyNewTargetRead(req workspace.ToolRequest) bool {
 	return strings.TrimSpace(req.Path) != ""
 }
