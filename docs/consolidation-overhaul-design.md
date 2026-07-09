@@ -1651,6 +1651,33 @@ Reviewer-updated estimate:
   `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./internal/runtime/queueadmission ./internal/runtime/runner ./internal/surfaces/cli/queue ./internal/surfaces/cli/implement ./internal/workflows/planexecute ./internal/workflows/planexecute/adapters`;
   `go run golang.org/x/tools/cmd/deadcode@latest ./... | rg '^(internal/runtime/(queueadmission|runner)|internal/surfaces/cli/(queue|implement)|internal/workflows/planexecute)'`
   as inventory, now showing no touched queue-package findings; `git diff --check`.
+- Autonomy action-intent and envelope dead-surface cleanup deleted validation
+  APIs and helpers that had no production callers: `ToolIntent.Validate`,
+  `NormalizedAction.Validate`, `ActionDecision`,
+  `CanonicalizeActionDecision`, the plural `ActionClassTokens` facade,
+  speculative vocabulary predicates for parser/repair/transport/capability
+  values, the private dotted-token helper, `ContractEnvelope`,
+  `ProtocolShape`, envelope normalization/validation, and the now-unused
+  model-exchange label predicate. Live runtime paths still use
+  `CanonicalizeToolIntent`, `ActionFromIntent`,
+  `CanonicalizeNormalizedAction`, `ActionClassToken`, `ValidActionClass`,
+  `ContractModelExchangeEvent`, and the nested model-exchange record
+  validators. Tests were pruned or retargeted to live canonicalization,
+  compile output, and model-response/harness-authority validation instead of
+  preserving the deleted facades. Production Go changed `+0 / -320`, net
+  `-320`; test Go changed `+20 / -196`, net `-176`. With this worktree
+  included, the branch is production Go `+26,611 / -34,447`, net `-7,836`
+  versus `main`. Focused verification:
+  `go test ./internal/contracts/autonomy ./internal/contracts/compile -count=1`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./internal/contracts/autonomy ./internal/contracts/compile ./internal/runtime/agent`;
+  `go run golang.org/x/tools/cmd/deadcode@latest ./... | rg '^internal/contracts/autonomy/'`
+  as inventory, now showing no deleted action-intent/envelope helpers and only
+  separate event/obligation-ledger findings. Full verification: `go test ./...`;
+  `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
+  `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
+  `git diff --check`.
 
 ## Review And Regression Protocol
 

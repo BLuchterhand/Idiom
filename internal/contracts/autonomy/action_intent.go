@@ -1,7 +1,6 @@
 package autonomy
 
 import (
-	"fmt"
 	"slices"
 	"strings"
 )
@@ -72,31 +71,6 @@ func ActionClassToken(value ActionClass) string {
 	return string(value)
 }
 
-func ActionClassTokens(values ...ActionClass) []string {
-	if len(values) == 0 {
-		return nil
-	}
-
-	out := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-
-	for _, value := range values {
-		token := ActionClassToken(value)
-		if token == "" {
-			continue
-		}
-
-		if _, ok := seen[token]; ok {
-			continue
-		}
-
-		seen[token] = struct{}{}
-		out = append(out, token)
-	}
-
-	return out
-}
-
 func IsToolActionClass(value ActionClass) bool {
 	switch CanonicalActionClass(value) {
 	case ActionClassRead,
@@ -146,20 +120,6 @@ type NormalizedAction struct {
 	Source      string          `json:"source,omitempty"`
 }
 
-// ActionDecision is the normalized policy result for a classified action. It
-// uses the existing ToolPolicyDecision vocabulary and keeps reason/invariant
-// fields factual, so callers can render recovery without embedding strategy.
-type ActionDecision struct {
-	Decision         ToolPolicyDecision `json:"decision"`
-	ActionClass      ActionClass        `json:"action_class,omitempty"`
-	Capability       Capability         `json:"capability,omitempty"`
-	SideEffect       SideEffectClass    `json:"side_effect,omitempty"`
-	InvariantID      string             `json:"invariant_id,omitempty"`
-	ReasonCode       string             `json:"reason_code,omitempty"`
-	ApprovalRequired bool               `json:"approval_required,omitempty"`
-	Source           string             `json:"source,omitempty"`
-}
-
 func CanonicalizeToolIntent(in ToolIntent) ToolIntent {
 	out := in
 
@@ -198,43 +158,6 @@ func CanonicalizeToolIntent(in ToolIntent) ToolIntent {
 	return out
 }
 
-func (i ToolIntent) Validate() error {
-	i = CanonicalizeToolIntent(i)
-	if i.Transport != "" && !ValidToolTransport(i.Transport) {
-		return fmt.Errorf("invalid tool transport %q", i.Transport)
-	}
-
-	if i.ParserFailure != "" && !ValidParserFailureClass(i.ParserFailure) {
-		return fmt.Errorf("invalid parser failure class %q", i.ParserFailure)
-	}
-
-	if i.RepairSource != "" && !ValidRepairSource(i.RepairSource) {
-		return fmt.Errorf("invalid repair source %q", i.RepairSource)
-	}
-
-	if i.ActionClass != "" && !ValidActionClass(i.ActionClass) {
-		return fmt.Errorf("invalid action class %q", i.ActionClass)
-	}
-
-	if i.Capability != "" && !ValidCapability(i.Capability) {
-		return fmt.Errorf("invalid capability %q", i.Capability)
-	}
-
-	if i.SideEffect != "" && !validSideEffect(i.SideEffect) {
-		return fmt.Errorf("invalid side effect %q", i.SideEffect)
-	}
-
-	if i.Repaired && i.RepairSource == RepairSourceNone {
-		return fmt.Errorf("repaired intent requires repair source")
-	}
-
-	if i.ParserFailure != ParserFailureNone && i.Transport == ToolTransportUnknown {
-		return fmt.Errorf("parser failure requires known transport")
-	}
-
-	return nil
-}
-
 func CanonicalizeNormalizedAction(in NormalizedAction) NormalizedAction {
 	out := in
 
@@ -256,66 +179,6 @@ func CanonicalizeNormalizedAction(in NormalizedAction) NormalizedAction {
 	}
 
 	return out
-}
-
-func (a NormalizedAction) Validate() error {
-	a = CanonicalizeNormalizedAction(a)
-	if !ValidActionClass(a.ActionClass) {
-		return fmt.Errorf("invalid action class %q", a.ActionClass)
-	}
-
-	if a.Capability != "" && !ValidCapability(a.Capability) {
-		return fmt.Errorf("invalid capability %q", a.Capability)
-	}
-
-	if a.SideEffect != "" && !validSideEffect(a.SideEffect) {
-		return fmt.Errorf("invalid side effect %q", a.SideEffect)
-	}
-
-	if strings.TrimSpace(a.ActionKey) == "" {
-		return fmt.Errorf("normalized action requires action key")
-	}
-
-	return nil
-}
-
-func CanonicalizeActionDecision(in ActionDecision) ActionDecision {
-	out := in
-
-	out.Decision = ToolPolicyDecision(canonicalToken(string(in.Decision)))
-	out.ActionClass = CanonicalActionClass(in.ActionClass)
-	out.Capability = CanonicalCapability(in.Capability)
-	out.SideEffect = CanonicalSideEffect(in.SideEffect)
-	out.InvariantID = canonicalDottedToken(in.InvariantID)
-	out.ReasonCode = canonicalDottedToken(in.ReasonCode)
-	out.Source = canonicalToken(in.Source)
-
-	return out
-}
-
-func (d ActionDecision) Validate() error {
-	d = CanonicalizeActionDecision(d)
-	if !validDecision(d.Decision) {
-		return fmt.Errorf("invalid policy decision %q", d.Decision)
-	}
-
-	if d.ActionClass != "" && !ValidActionClass(d.ActionClass) {
-		return fmt.Errorf("invalid action class %q", d.ActionClass)
-	}
-
-	if d.Capability != "" && !ValidCapability(d.Capability) {
-		return fmt.Errorf("invalid capability %q", d.Capability)
-	}
-
-	if d.SideEffect != "" && !validSideEffect(d.SideEffect) {
-		return fmt.Errorf("invalid side effect %q", d.SideEffect)
-	}
-
-	if d.ApprovalRequired && d.Decision != PolicyAsk {
-		return fmt.Errorf("approval required decisions must use %q", PolicyAsk)
-	}
-
-	return nil
 }
 
 func ActionFromIntent(intent ToolIntent) NormalizedAction {
@@ -353,15 +216,6 @@ func CanonicalToolTransport(value ToolTransport) ToolTransport {
 	}
 }
 
-func ValidToolTransport(value ToolTransport) bool {
-	switch value {
-	case ToolTransportUnknown, ToolTransportNativeCall, ToolTransportTextualCall, ToolTransportSidecarCall, ToolTransportShellCommand, ToolTransportVisibleAnswer:
-		return true
-	default:
-		return false
-	}
-}
-
 func CanonicalParserFailureClass(value ParserFailureClass) ParserFailureClass {
 	switch canonicalToken(string(value)) {
 	case "", "none", "ok":
@@ -383,15 +237,6 @@ func CanonicalParserFailureClass(value ParserFailureClass) ParserFailureClass {
 	}
 }
 
-func ValidParserFailureClass(value ParserFailureClass) bool {
-	switch value {
-	case ParserFailureNone, ParserFailureMalformedJSON, ParserFailureSchemaMismatch, ParserFailureMissingToolName, ParserFailureUnsupportedTransport, ParserFailureTransportMismatch, ParserFailureAmbiguousToolCall:
-		return true
-	default:
-		return false
-	}
-}
-
 func CanonicalRepairSource(value RepairSource) RepairSource {
 	switch canonicalToken(string(value)) {
 	case "", "none":
@@ -408,15 +253,6 @@ func CanonicalRepairSource(value RepairSource) RepairSource {
 		return RepairSourceModelSelfRepair
 	default:
 		return RepairSource(canonicalToken(string(value)))
-	}
-}
-
-func ValidRepairSource(value RepairSource) bool {
-	switch value {
-	case RepairSourceNone, RepairSourceHostNormalizer, RepairSourceParserRepair, RepairSourceRecoveryPrompt, RepairSourceDeterministicFallback, RepairSourceModelSelfRepair:
-		return true
-	default:
-		return false
 	}
 }
 
@@ -494,15 +330,6 @@ func CanonicalCapability(value Capability) Capability {
 		return CapabilityDelegation
 	default:
 		return Capability(canonicalToken(string(value)))
-	}
-}
-
-func ValidCapability(value Capability) bool {
-	switch value {
-	case CapabilitySemanticDiscovery, CapabilityLiteralSearch, CapabilityBoundedRead, CapabilityUnboundedRead, CapabilitySourceEdit, CapabilityApplyPatch, CapabilityShellVerification, CapabilityMutatingShell, CapabilityPlanSubmission, CapabilityExternalRead, CapabilityExternalWrite, CapabilityDelegation:
-		return true
-	default:
-		return false
 	}
 }
 
@@ -619,13 +446,6 @@ func buildActionKey(class ActionClass, tool string, capability Capability, targe
 func canonicalActionKey(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	value = strings.Join(strings.Fields(value), " ")
-
-	return value
-}
-
-func canonicalDottedToken(value string) string {
-	value = canonicalToken(value)
-	value = strings.ReplaceAll(value, "_", ".")
 
 	return value
 }

@@ -1,61 +1,9 @@
 package autonomy
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 )
-
-func TestContractEnvelopeCarriesCompactAllowlistedContextPacket(t *testing.T) {
-	envelope := ContractEnvelope{
-		ContractID:   "contract_abc123",
-		ProtocolHash: "protocol_def456",
-		SchemaNames: []string{
-			ModelResponseSchemaVersion,
-			ContextPacketSchemaVersion,
-			ModelResponseSchemaVersion,
-		},
-		ContextPacket: &ContextPacket{
-			PacketID:         "packet_001",
-			ContractID:       "contract_abc123",
-			ProtocolHash:     "protocol_def456",
-			TargetRefs:       []string{"pack:c90ecdd88a13bbe5"},
-			PathRefs:         []string{"internal/contracts/autonomy/model_exchange.go"},
-			EvidenceRefs:     []string{"evidence:source_body"},
-			ObligationRefs:   []string{"obl-source"},
-			SchemaNames:      []string{ContextPacketSchemaVersion},
-			RedactionMarkers: []string{"metadata_only", "prompt_omitted", "transcript_omitted", "file_content_omitted"},
-		},
-		ProtocolShape: ProtocolShape{
-			SchemaNames:           []string{ModelResponseSchemaVersion, "submit_plan"},
-			CallableActionClasses: []string{"read", "submit_plan"},
-			TerminalResponseKinds: []string{"propose_action", "request_context"},
-			VisibleTools:          []string{"read_file"},
-			CallableTools:         []string{"read_file"},
-		},
-	}
-
-	if err := envelope.Validate(); err != nil {
-		t.Fatalf("envelope should validate: %v", err)
-	}
-
-	envelope.Normalize()
-
-	if envelope.SchemaVersion != ContractEnvelopeSchemaVersion {
-		t.Fatalf("Normalize should default schema version, got %q", envelope.SchemaVersion)
-	}
-
-	encoded, err := json.Marshal(envelope)
-	if err != nil {
-		t.Fatalf("marshal envelope: %v", err)
-	}
-
-	for _, forbidden := range []string{"raw_prompt", "raw_transcript", "file_body", "secret="} {
-		if strings.Contains(string(encoded), forbidden) {
-			t.Fatalf("envelope leaked forbidden marker %q: %s", forbidden, encoded)
-		}
-	}
-}
 
 func TestModelResponseVariantsRequireMatchingSinglePayload(t *testing.T) {
 	for _, tc := range []struct {

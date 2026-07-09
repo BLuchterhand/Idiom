@@ -275,22 +275,22 @@ func TestCompilePlanExecutePlannerDefaultActionClassesUseAutonomyVocabulary(t *t
 		t.Fatalf("CompilePlanExecutePlanner failed: %v", err)
 	}
 
-	wantCallable := sortedStrings(autonomy.ActionClassTokens(
-		autonomy.ActionClassRead,
-		autonomy.ActionClassSearch,
-		autonomy.ActionClassSubmitPlan,
-		autonomy.ActionClassSourceSatisfied,
-		autonomy.ActionClassBlocker,
-	))
+	wantCallable := sortedStrings([]string{
+		string(autonomy.ActionClassRead),
+		string(autonomy.ActionClassSearch),
+		string(autonomy.ActionClassSubmitPlan),
+		string(autonomy.ActionClassSourceSatisfied),
+		string(autonomy.ActionClassBlocker),
+	})
 	if !slices.Equal(result.Protocol.CallableActionClasses, wantCallable) {
 		t.Fatalf("callable action classes = %#v, want autonomy vocabulary %#v", result.Protocol.CallableActionClasses, wantCallable)
 	}
 
-	wantInvalid := sortedStrings(autonomy.ActionClassTokens(
-		autonomy.ActionClassPerEditWrite,
-		autonomy.ActionClassVerify,
-		autonomy.ActionClassProseFinal,
-	))
+	wantInvalid := sortedStrings([]string{
+		string(autonomy.ActionClassPerEditWrite),
+		string(autonomy.ActionClassVerify),
+		string(autonomy.ActionClassProseFinal),
+	})
 	if !slices.Equal(result.Protocol.InvalidActionClasses, wantInvalid) {
 		t.Fatalf("invalid action classes = %#v, want autonomy vocabulary %#v", result.Protocol.InvalidActionClasses, wantInvalid)
 	}

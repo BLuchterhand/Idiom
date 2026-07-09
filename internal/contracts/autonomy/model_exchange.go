@@ -25,18 +25,6 @@ const (
 	ModelResponseEscalate          ModelResponseKind = "escalate"
 )
 
-type ContractEnvelope struct {
-	SchemaVersion string         `json:"schema_version"`
-	EnvelopeID    string         `json:"envelope_id,omitempty"`
-	ContractID    string         `json:"contract_id"`
-	ContractRef   string         `json:"contract_ref,omitempty"`
-	ProtocolHash  string         `json:"protocol_hash"`
-	ProtocolRef   string         `json:"protocol_ref,omitempty"`
-	SchemaNames   []string       `json:"schema_names,omitempty"`
-	ContextPacket *ContextPacket `json:"context_packet,omitempty"`
-	ProtocolShape ProtocolShape  `json:"protocol_shape,omitempty"`
-}
-
 type ContextPacket struct {
 	SchemaVersion    string   `json:"schema_version"`
 	PacketID         string   `json:"packet_id,omitempty"`
@@ -50,14 +38,6 @@ type ContextPacket struct {
 	ObligationRefs   []string `json:"obligation_refs,omitempty"`
 	SchemaNames      []string `json:"schema_names,omitempty"`
 	RedactionMarkers []string `json:"redaction_markers,omitempty"`
-}
-
-type ProtocolShape struct {
-	SchemaNames           []string `json:"schema_names,omitempty"`
-	CallableActionClasses []string `json:"callable_action_classes,omitempty"`
-	TerminalResponseKinds []string `json:"terminal_response_kinds,omitempty"`
-	VisibleTools          []string `json:"visible_tools,omitempty"`
-	CallableTools         []string `json:"callable_tools,omitempty"`
 }
 
 type ModelResponse struct {
@@ -227,52 +207,6 @@ type ModelExchangeValidationError struct {
 
 func (e ModelExchangeValidationError) Error() string {
 	return "invalid model exchange: " + strings.Join(e.Problems, "; ")
-}
-
-func (e *ContractEnvelope) Normalize() {
-	e.SchemaVersion = firstModelExchangeValue(e.SchemaVersion, ContractEnvelopeSchemaVersion)
-	e.EnvelopeID = strings.TrimSpace(e.EnvelopeID)
-	e.ContractID = strings.TrimSpace(e.ContractID)
-	e.ContractRef = strings.TrimSpace(e.ContractRef)
-	e.ProtocolHash = strings.TrimSpace(e.ProtocolHash)
-	e.ProtocolRef = strings.TrimSpace(e.ProtocolRef)
-	e.SchemaNames = compactStrings(e.SchemaNames)
-	e.ProtocolShape.normalize()
-
-	if e.ContextPacket != nil {
-		e.ContextPacket.Normalize()
-	}
-}
-
-func (e ContractEnvelope) Validate() error {
-	e.Normalize()
-
-	var problems validationProblems
-
-	validateModelExchangeSchemaID("contract_envelope.schema_version", e.SchemaVersion, ContractEnvelopeSchemaVersion, &problems)
-	validateModelExchangeContractRefs(e.ContractID, e.ProtocolHash, &problems)
-	validateModelExchangeRedactionMarkers("contract_envelope", envelopeValues(e), &problems)
-	validateModelExchangeProtocolShape(e.ProtocolShape, &problems)
-
-	if e.ContextPacket != nil {
-		if err := e.ContextPacket.Validate(); err != nil {
-			problems.AddError(err)
-		}
-
-		if e.ContextPacket.ContractID != "" && e.ContextPacket.ContractID != e.ContractID {
-			problems.Add("context_packet.contract_id must match contract_envelope.contract_id")
-		}
-
-		if e.ContextPacket.ProtocolHash != "" && e.ContextPacket.ProtocolHash != e.ProtocolHash {
-			problems.Add("context_packet.protocol_hash must match contract_envelope.protocol_hash")
-		}
-	}
-
-	if problems.Any() {
-		return ModelExchangeValidationError{Problems: problems.Messages()}
-	}
-
-	return nil
 }
 
 func (p *ContextPacket) Normalize() {
@@ -624,52 +558,6 @@ func validateModelResponsePayloadPresence(response ModelResponse, problems *vali
 	}
 }
 
-func validateModelExchangeProtocolShape(shape ProtocolShape, problems *validationProblems) {
-	validateModelExchangeRedactionMarkers("protocol_shape", protocolShapeValues(shape), problems)
-
-	for i, value := range append(append([]string(nil), shape.CallableActionClasses...), shape.TerminalResponseKinds...) {
-		if !validModelExchangeLabel(value, 160) {
-			problems.Addf("protocol_shape action/terminal entry %d must be a compact label", i)
-		}
-	}
-
-	for i, value := range shape.SchemaNames {
-		if !validModelExchangeLabel(value, 128) {
-			problems.Addf("protocol_shape.schema_names[%d] must be a compact schema id", i)
-		}
-	}
-}
-
-func validModelExchangeLabel(value string, maxLen int) bool {
-	value = strings.TrimSpace(value)
-	if value == "" || len(value) > maxLen {
-		return false
-	}
-
-	for _, r := range value {
-		if r >= 'a' && r <= 'z' {
-			continue
-		}
-
-		if r >= 'A' && r <= 'Z' {
-			continue
-		}
-
-		if r >= '0' && r <= '9' {
-			continue
-		}
-
-		switch r {
-		case '_', '-', '/', '.', ':', '=', '@', '<', '>', ' ':
-			continue
-		default:
-			return false
-		}
-	}
-
-	return true
-}
-
 func validateModelExchangeRedactionMarkers(field string, values []string, problems *validationProblems) {
 	for _, value := range values {
 		if looksLikeRawGuardFrictionContent(value) {
@@ -900,14 +788,6 @@ func modelExchangeRollbackControlRefs(value *RollbackControl) modelExchangeRefs 
 	return modelExchangeRefs{name: "rollback_control", contractID: value.ContractID, protocolHash: value.ProtocolHash}
 }
 
-func (s *ProtocolShape) normalize() {
-	s.SchemaNames = compactStrings(s.SchemaNames)
-	s.CallableActionClasses = compactStrings(s.CallableActionClasses)
-	s.TerminalResponseKinds = compactStrings(s.TerminalResponseKinds)
-	s.VisibleTools = compactStrings(s.VisibleTools)
-	s.CallableTools = compactStrings(s.CallableTools)
-}
-
 func (p *ProposedAction) normalize() {
 	p.ActionClass = strings.TrimSpace(p.ActionClass)
 	p.ToolName = strings.TrimSpace(p.ToolName)
@@ -945,15 +825,6 @@ func (e *Escalation) normalize() {
 	e.ReasonCode = strings.TrimSpace(e.ReasonCode)
 }
 
-func envelopeValues(e ContractEnvelope) []string {
-	values := []string{e.SchemaVersion, e.EnvelopeID, e.ContractID, e.ContractRef, e.ProtocolHash, e.ProtocolRef}
-
-	values = append(values, e.SchemaNames...)
-	values = append(values, protocolShapeValues(e.ProtocolShape)...)
-
-	return values
-}
-
 func contextPacketValues(p ContextPacket) []string {
 	values := []string{p.SchemaVersion, p.PacketID, p.ContractID, p.ProtocolHash}
 
@@ -965,17 +836,6 @@ func contextPacketValues(p ContextPacket) []string {
 	values = append(values, p.ObligationRefs...)
 	values = append(values, p.SchemaNames...)
 	values = append(values, p.RedactionMarkers...)
-
-	return values
-}
-
-func protocolShapeValues(shape ProtocolShape) []string {
-	values := append([]string(nil), shape.SchemaNames...)
-
-	values = append(values, shape.CallableActionClasses...)
-	values = append(values, shape.TerminalResponseKinds...)
-	values = append(values, shape.VisibleTools...)
-	values = append(values, shape.CallableTools...)
 
 	return values
 }
