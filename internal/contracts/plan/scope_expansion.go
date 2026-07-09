@@ -36,15 +36,6 @@ type ScopeExpansionPath struct {
 	Source string        `json:"source,omitempty"`
 }
 
-type ScopeExpansionProposal struct {
-	ID     string                `json:"id,omitempty"`
-	Policy ScopeExpansionPolicy  `json:"policy"`
-	Paths  []ScopeExpansionPath  `json:"paths,omitempty"`
-	Reason string                `json:"reason,omitempty"`
-	Source string                `json:"source,omitempty"`
-	Events []ScopeExpansionEvent `json:"events,omitempty"`
-}
-
 type ScopeExpansionEvent struct {
 	Kind       ScopeExpansionEventKind `json:"kind"`
 	ProposalID string                  `json:"proposal_id,omitempty"`
@@ -65,27 +56,6 @@ func (path ScopeExpansionPath) Normalized() ScopeExpansionPath {
 	}
 
 	return path
-}
-
-func (proposal ScopeExpansionProposal) Normalized() ScopeExpansionProposal {
-	proposal.ID = strings.TrimSpace(proposal.ID)
-	proposal.Policy = NormalizeScopeExpansionPolicy(proposal.Policy)
-	proposal.Paths = NormalizeScopeExpansionPaths(proposal.Paths)
-	proposal.Reason = strings.TrimSpace(proposal.Reason)
-	proposal.Source = strings.TrimSpace(proposal.Source)
-
-	events := make([]ScopeExpansionEvent, 0, len(proposal.Events))
-	for _, event := range proposal.Events {
-		event = event.Normalized()
-		if event.Kind == "" {
-			continue
-		}
-
-		events = append(events, event)
-	}
-	proposal.Events = events
-
-	return proposal
 }
 
 func (event ScopeExpansionEvent) Normalized() ScopeExpansionEvent {

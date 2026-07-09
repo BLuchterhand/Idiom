@@ -65,15 +65,6 @@ func PlanEditHasExplicitReplacementText(edit PlanEdit) bool {
 	return edit.newTextSet
 }
 
-func NewDeletionEdit(path string, oldText string, purpose string) PlanEdit {
-	return PlanEdit{
-		Path:       path,
-		OldText:    oldText,
-		Purpose:    purpose,
-		newTextSet: true,
-	}
-}
-
 func MarkLegacyDeletionEditsExplicit(edits []PlanEdit) []PlanEdit {
 	out := append([]PlanEdit(nil), edits...)
 	for i := range out {

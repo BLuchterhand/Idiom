@@ -39,16 +39,6 @@ func TestPlanEditExplicitReplacementTextRejectsProgrammaticOldTextOnly(t *testin
 	}
 }
 
-func TestNewDeletionEditMarksProgrammaticDeletionExplicit(t *testing.T) {
-	edit := NewDeletionEdit("a.go", "delete me", "remove obsolete text")
-	if !PlanEditHasExplicitReplacementText(edit) {
-		t.Fatalf("NewDeletionEdit should mark empty replacement text explicit")
-	}
-	if err := ValidatePlanEditShape(edit); err != nil {
-		t.Fatalf("NewDeletionEdit should validate: %v", err)
-	}
-}
-
 func TestMarkLegacyDeletionEditsExplicit(t *testing.T) {
 	edits := MarkLegacyDeletionEditsExplicit([]PlanEdit{{
 		Path:    "a.go",

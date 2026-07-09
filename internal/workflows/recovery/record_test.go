@@ -631,7 +631,7 @@ func TestClassifyPlanExecuteFailureRecognizesVerificationFailed(t *testing.T) {
 	}
 }
 
-func TestClassifyPlanExecuteFailureCoversKnownPlanExecuteFailureKinds(t *testing.T) {
+func TestClassifyPlanExecuteFailureCoversPlanExecuteFailureKinds(t *testing.T) {
 	tests := []struct {
 		kind plancontract.PlanExecuteFailureKind
 		want recoverycontract.FailureClass

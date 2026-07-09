@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -205,20 +204,6 @@ type PlanExecutionContractViolation struct {
 	ObligationID string `json:"obligation_id,omitempty"`
 }
 
-func StrictTerminalEvidenceRequirements() TerminalEvidenceRequirements {
-	return TerminalEvidenceRequirements{
-		Explicit:                    true,
-		RequireSourceEvidence:       true,
-		RequireChangedPathCoverage:  true,
-		RequireRequiredPathCoverage: true,
-		RequireSourceSanity:         true,
-		RequireVerification:         true,
-		RequireReview:               true,
-		RequireRequiredTests:        true,
-		RequireTestArtifacts:        true,
-	}
-}
-
 func (contract PlanExecutionContract) Normalized() PlanExecutionContract {
 	contract.Revision = strings.TrimSpace(contract.Revision)
 	if contract.Revision == "" {
@@ -264,18 +249,6 @@ func normalizePlanArtifactBinding(binding PlanArtifactBinding) PlanArtifactBindi
 	}
 
 	return binding
-}
-
-func planArtifactBindingHasContent(binding PlanArtifactBinding) bool {
-	binding = normalizePlanArtifactBinding(binding)
-
-	return binding.ArtifactID != "" ||
-		binding.Revision != 0 ||
-		binding.Digest != "" ||
-		binding.WorkspaceFingerprint != "" ||
-		binding.ApprovalEventID != "" ||
-		binding.ApprovalStatus != "" ||
-		binding.ApprovalMode != ""
 }
 
 func (atom AtomExecutionContract) normalized(planID string) AtomExecutionContract {
@@ -402,157 +375,6 @@ func NormalizeStableContractIDPart(value string) string {
 	}
 
 	return strings.Trim(b.String(), "-_.")
-}
-
-func ValidatePlanExecutionContractInput(contract PlanExecutionContract) []PlanExecutionContractViolation {
-	var violations []PlanExecutionContractViolation
-
-	if strings.TrimSpace(contract.Revision) != "" && strings.TrimSpace(contract.Revision) != PlanExecutionContractRevision {
-		violations = append(violations, contractViolation("unsupported_contract_revision", "", "", "", fmt.Sprintf("unsupported plan execution contract revision %q", contract.Revision)))
-	}
-
-	if planArtifactBindingHasContent(contract.PlanArtifact) {
-		binding := normalizePlanArtifactBinding(contract.PlanArtifact)
-		if binding.ArtifactID == "" {
-			violations = append(violations, contractViolation("missing_plan_artifact_id", "", "", "", "plan artifact binding must declare artifact_id"))
-		}
-		if binding.Revision <= 0 {
-			violations = append(violations, contractViolation("missing_plan_artifact_revision", "", "", "", "plan artifact binding must declare a positive revision"))
-		}
-		if binding.Digest == "" {
-			violations = append(violations, contractViolation("missing_plan_artifact_digest", "", "", "", "plan artifact binding must declare digest"))
-		}
-		if binding.WorkspaceFingerprint == "" {
-			violations = append(violations, contractViolation("missing_plan_artifact_workspace_fingerprint", "", "", "", "plan artifact binding must declare workspace_fingerprint"))
-		}
-		if binding.ApprovalStatus != "" && binding.ApprovalStatus != "approved" {
-			violations = append(violations, contractViolation("plan_artifact_not_approved", "", "", "", "plan artifact binding approval_status must be approved"))
-		}
-		if binding.ApprovalStatus == "approved" && binding.ApprovalEventID == "" {
-			violations = append(violations, contractViolation("missing_plan_artifact_approval_event", "", "", "", "approved plan artifact binding must declare approval_event_id"))
-		}
-	}
-
-	if len(contract.Atoms) == 0 {
-		violations = append(violations, contractViolation("missing_atoms", "", "", "", "plan execution contract must contain at least one atom"))
-	}
-
-	for _, file := range contract.AuthorizedNewFiles {
-		if NormalizeScopePath(file.Path) == "" {
-			violations = append(violations, contractViolation("invalid_authorized_new_file", "", file.Path, "", "authorized new file path must be repo-relative"))
-		}
-	}
-
-	for _, root := range contract.AuthorizedNewRoots {
-		if normalizeAuthorizedRoot(root.Root) == "" {
-			violations = append(violations, contractViolation("invalid_authorized_new_root", "", root.Root, "", "authorized new root must be repo-relative"))
-		}
-	}
-
-	for _, delta := range contract.AuthorityDeltas {
-		violations = append(violations, validateAuthorityDelta("", delta)...)
-	}
-
-	for _, atom := range contract.Atoms {
-		violations = append(violations, ValidateAtomExecutionContractInput(atom)...)
-	}
-
-	return violations
-}
-
-func ValidateAtomExecutionContractInput(atom AtomExecutionContract) []PlanExecutionContractViolation {
-	var violations []PlanExecutionContractViolation
-
-	rawRequired := atom.Scope.RequiredCoveragePaths
-	rawAllowed := atom.Scope.AllowedCandidatePaths
-	rawAtomID := NormalizeStableContractIDPart(atom.AtomID)
-
-	for _, path := range rawRequired {
-		if strings.TrimSpace(path) != "" && NormalizeScopePath(path) == "" {
-			violations = append(violations, contractViolation("invalid_required_edit_path", rawAtomID, path, "", "required edit path must be repo-relative"))
-		}
-	}
-
-	for _, path := range rawAllowed {
-		if strings.TrimSpace(path) != "" && NormalizeScopePath(path) == "" {
-			violations = append(violations, contractViolation("invalid_allowed_edit_path", rawAtomID, path, "", "allowed edit path must be repo-relative"))
-		}
-	}
-
-	for _, path := range atom.Scope.WriteAllowedPaths {
-		if strings.TrimSpace(path) != "" && NormalizeScopePath(strings.TrimSuffix(strings.TrimSpace(path), "/**")) == "" {
-			violations = append(violations, contractViolation("invalid_write_envelope_path", rawAtomID, path, "", "write envelope path must be repo-relative"))
-		}
-	}
-
-	for _, obligation := range atom.Scope.EditSetObligations {
-		if strings.TrimSpace(obligation.Path) != "" && NormalizeScopePath(obligation.Path) == "" {
-			violations = append(violations, contractViolation("invalid_edit_set_obligation_path", rawAtomID, obligation.Path, string(obligation.Kind), "edit-set obligation path must be repo-relative"))
-		}
-	}
-
-	for _, file := range atom.AuthorizedNewFiles {
-		if strings.TrimSpace(file.Path) != "" && NormalizeScopePath(file.Path) == "" {
-			violations = append(violations, contractViolation("invalid_authorized_new_file", rawAtomID, file.Path, "", "authorized new file path must be repo-relative"))
-		}
-	}
-
-	for _, root := range atom.AuthorizedNewRoots {
-		if strings.TrimSpace(root.Root) != "" && normalizeAuthorizedRoot(root.Root) == "" {
-			violations = append(violations, contractViolation("invalid_authorized_new_root", rawAtomID, root.Root, "", "authorized new root must be repo-relative"))
-		}
-	}
-
-	for _, obligation := range atom.TDDObligations {
-		for _, path := range obligation.TestArtifactPaths {
-			if strings.TrimSpace(path) != "" && NormalizeScopePath(path) == "" {
-				violations = append(violations, contractViolation("invalid_tdd_test_artifact_path", rawAtomID, path, obligation.ID, "TDD test artifact path must be repo-relative"))
-			}
-		}
-	}
-
-	for _, obligation := range atom.SourceEvidenceObligations {
-		if obligation.Required && strings.TrimSpace(obligation.Path) != "" && NormalizeScopePath(obligation.Path) == "" {
-			violations = append(violations, contractViolation("invalid_source_evidence_path", rawAtomID, obligation.Path, obligation.ID, "required source evidence path must be repo-relative"))
-		}
-	}
-
-	atom = atom.Normalized()
-	if !atom.Scope.HasContent() {
-		violations = append(violations, contractViolation("missing_scope", atom.AtomID, "", "", "atom execution contract must declare scope"))
-	}
-
-	for _, path := range UniqueScopePaths(rawRequired) {
-		if containsScopePath(rawAllowed, path) {
-			violations = append(violations, contractViolation("required_path_demoted_to_allowed", atom.AtomID, path, "", "required edit paths must not be repeated as allowed edit paths"))
-		}
-	}
-
-	if atom.Scope.WriteAllowedExplicit {
-		for _, path := range atom.Scope.RequiredCoveragePaths {
-			if !pathAllowedByPatterns(path, atom.Scope.WriteAllowedPaths) {
-				violations = append(violations, contractViolation("required_path_outside_write_envelope", atom.AtomID, path, "", "required edit path is outside the write envelope"))
-			}
-		}
-	}
-
-	for _, test := range atom.RequiredTests {
-		if strings.TrimSpace(test.Command) == "" {
-			violations = append(violations, contractViolation("missing_required_test_command", atom.AtomID, "", test.ID, "required test must declare a command"))
-		}
-	}
-
-	for _, obligation := range atom.TDDObligations {
-		if strings.TrimSpace(obligation.Command) == "" {
-			violations = append(violations, contractViolation("missing_tdd_command", atom.AtomID, "", obligation.ID, "TDD obligation must declare the required command"))
-		}
-	}
-
-	for _, delta := range atom.AuthorityDeltas {
-		violations = append(violations, validateAuthorityDelta(atom.AtomID, delta)...)
-	}
-
-	return violations
 }
 
 func ValidateAtomTerminalEvidenceInput(atom AtomExecutionContract, evidence TerminalEvidenceInput) []PlanExecutionContractViolation {
@@ -999,34 +821,6 @@ func normalizeAuthorizationMetadata(metadata NewFileAuthorizationMetadata) NewFi
 	metadata.InputHash = strings.TrimSpace(metadata.InputHash)
 
 	return metadata
-}
-
-func validateAuthorityDelta(atomID string, delta AuthorityDelta) []PlanExecutionContractViolation {
-	if strings.TrimSpace(delta.Path) != "" && NormalizeScopePath(delta.Path) == "" {
-		return []PlanExecutionContractViolation{contractViolation("invalid_authority_delta_path", atomID, delta.Path, "", "authority delta path must be repo-relative")}
-	}
-	for _, fact := range delta.SourceFacts {
-		if strings.TrimSpace(fact.Path) != "" && NormalizeScopePath(fact.Path) == "" {
-			return []PlanExecutionContractViolation{contractViolation("invalid_authority_delta_source_fact_path", atomID, fact.Path, "", "authority delta source fact path must be repo-relative")}
-		}
-	}
-
-	normalized := normalizeAuthorityDeltas([]AuthorityDelta{delta})
-	if len(normalized) == 0 {
-		return []PlanExecutionContractViolation{contractViolation("invalid_authority_delta", atomID, "", "", "authority delta must declare a kind")}
-	}
-
-	delta = normalized[0]
-	switch delta.Kind {
-	case AuthorityDeltaKindDemoteRequiredPath:
-		return []PlanExecutionContractViolation{contractViolation("required_path_demotion_rejected", atomID, delta.Path, "", "required edit path authority cannot be demoted by downstream plan execution")}
-	case AuthorityDeltaKindAddNewFile, AuthorityDeltaKindAddNewRoot, AuthorityDeltaKindPromoteRequiredPath, AuthorityDeltaKindNarrowWriteEnvelope, AuthorityDeltaKindExpandWriteEnvelope:
-		return nil
-	case "":
-		return []PlanExecutionContractViolation{contractViolation("invalid_authority_delta", atomID, delta.Path, "", "authority delta must declare a kind")}
-	default:
-		return []PlanExecutionContractViolation{contractViolation("unknown_authority_delta", atomID, delta.Path, "", fmt.Sprintf("unknown authority delta kind %q", delta.Kind))}
-	}
 }
 
 func validateTerminalSourceEvidence(atom AtomExecutionContract, evidence TerminalEvidenceInput) []PlanExecutionContractViolation {

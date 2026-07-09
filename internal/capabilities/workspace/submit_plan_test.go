@@ -1714,7 +1714,15 @@ func TestPlanArtifactSynthesizesStableApprovalScopeAndHandoffIDs(t *testing.T) {
 }
 
 func TestPlanArtifactPartialApprovalSemanticsAreClientClassAgnostic(t *testing.T) {
-	for _, class := range planartifact.ApprovedClientClassifications() {
+	for _, class := range []string{
+		string(planartifact.ClientClassificationFinance),
+		string(planartifact.ClientClassificationHealthcareLifeSciences),
+		string(planartifact.ClientClassificationPublicSector),
+		string(planartifact.ClientClassificationEnterpriseSaaS),
+		string(planartifact.ClientClassificationToolingVendor),
+		string(planartifact.ClientClassificationLocalModelPrivateCode),
+		string(planartifact.ClientClassificationOpenSource),
+	} {
 		result := AuditPlanArtifact(t.TempDir(), planartifact.PlanArtifact{
 			SchemaVersion: planartifact.SchemaVersion,
 			PlanID:        "plan-partial-" + class,
@@ -2360,7 +2368,15 @@ func TestValidatePlanArtifactRejectsBackslashTraversalPath(t *testing.T) {
 }
 
 func TestPlanArtifactClientClassificationExamplesCoverApprovedClasses(t *testing.T) {
-	for _, class := range planartifact.ApprovedClientClassifications() {
+	for _, class := range []string{
+		string(planartifact.ClientClassificationFinance),
+		string(planartifact.ClientClassificationHealthcareLifeSciences),
+		string(planartifact.ClientClassificationPublicSector),
+		string(planartifact.ClientClassificationEnterpriseSaaS),
+		string(planartifact.ClientClassificationToolingVendor),
+		string(planartifact.ClientClassificationLocalModelPrivateCode),
+		string(planartifact.ClientClassificationOpenSource),
+	} {
 		artifact := planartifact.NormalizeForSubmit(planartifact.PlanArtifact{
 			SchemaVersion: planartifact.SchemaVersion,
 			PlanID:        "plan-" + class,

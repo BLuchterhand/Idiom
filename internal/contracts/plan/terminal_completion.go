@@ -430,26 +430,6 @@ const (
 	PlanExecuteRequiredPathCoverageSourceSatisfied PlanExecuteRequiredPathCoverageStatus = "source_satisfied"
 )
 
-func ParsePlanExecuteRequiredPathCoverageStatus(raw string) (PlanExecuteRequiredPathCoverageStatus, bool) {
-	status := PlanExecuteRequiredPathCoverageStatus(strings.TrimSpace(raw))
-	if KnownPlanExecuteRequiredPathCoverageStatus(status) {
-		return status, true
-	}
-
-	return "", false
-}
-
-func KnownPlanExecuteRequiredPathCoverageStatus(status PlanExecuteRequiredPathCoverageStatus) bool {
-	switch status {
-	case PlanExecuteRequiredPathCoverageMissing,
-		PlanExecuteRequiredPathCoverageChanged,
-		PlanExecuteRequiredPathCoverageSourceSatisfied:
-		return true
-	default:
-		return false
-	}
-}
-
 type PlanExecuteTerminalInvariant struct {
 	Code   string `json:"code"`
 	Status string `json:"status"`

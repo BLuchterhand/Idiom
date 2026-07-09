@@ -245,23 +245,3 @@ func TestPhaseEvidenceStatusVocabularyCoversTerminalProducers(t *testing.T) {
 		t.Fatalf("ParsePhaseEvidenceStatus accepted unknown status %q", parsed)
 	}
 }
-
-func TestRequiredPathCoverageStatusVocabulary(t *testing.T) {
-	for _, status := range []PlanExecuteRequiredPathCoverageStatus{
-		PlanExecuteRequiredPathCoverageMissing,
-		PlanExecuteRequiredPathCoverageChanged,
-		PlanExecuteRequiredPathCoverageSourceSatisfied,
-	} {
-		parsed, ok := ParsePlanExecuteRequiredPathCoverageStatus(string(status))
-		if !ok || parsed != status {
-			t.Fatalf("ParsePlanExecuteRequiredPathCoverageStatus(%q) = %q %v", status, parsed, ok)
-		}
-		if !KnownPlanExecuteRequiredPathCoverageStatus(status) {
-			t.Fatalf("KnownPlanExecuteRequiredPathCoverageStatus rejected %q", status)
-		}
-	}
-
-	if parsed, ok := ParsePlanExecuteRequiredPathCoverageStatus("covered"); ok {
-		t.Fatalf("ParsePlanExecuteRequiredPathCoverageStatus accepted unknown status %q", parsed)
-	}
-}

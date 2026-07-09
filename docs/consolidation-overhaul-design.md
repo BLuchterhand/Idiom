@@ -1727,6 +1727,35 @@ Reviewer-updated estimate:
   `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
   `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
   `git diff --check`.
+- Plan contract dead API cleanup deleted production-unreachable contract helpers
+  that tests were preserving as authority surfaces:
+  `EditSetObligationsForRequiredPaths`, `StrictTerminalEvidenceRequirements`,
+  `ValidatePlanExecutionContractInput`, `ValidateAtomExecutionContractInput`,
+  `planArtifactBindingHasContent`, `validateAuthorityDelta`,
+  `KnownPlanExecuteFailureKind`, rejection-code parser/list helpers,
+  `ScopeExpansionProposal`, required-path-coverage status parser/predicate
+  helpers, `planartifact.NewDeletionEdit`, and
+  `planartifact.ApprovedClientClassifications`. Live contract authority remains
+  on plan execution normalization, stable IDs/hashes, terminal-evidence
+  validation, failure-kind parsing, typed rejection/status constants, scope
+  path/event normalization, deletion semantics through JSON/legacy marking, and
+  `KnownClientClassification`. Tests were deleted or retargeted to those live
+  owners instead of preserving raw ingress validators or list-returning
+  convenience APIs. Architecture and test reviewers both recommended deletion.
+  Production Go changed `+0 / -335`, net `-335`; test Go changed
+  `+78 / -225`, net `-147`. With this worktree included, the branch is
+  production Go `+26,611 / -34,997`, net `-8,386` versus `main`. Focused
+  verification:
+  `go test ./internal/contracts/plan ./internal/contracts/planartifact ./internal/capabilities/workspace ./internal/workflows/planexecute ./internal/workflows/recovery -count=1`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./internal/contracts/plan ./internal/contracts/planartifact ./internal/capabilities/workspace ./internal/workflows/planexecute ./internal/workflows/recovery`;
+  `go run golang.org/x/tools/cmd/deadcode@latest ./... | rg '^(internal/contracts/(plan|planartifact)|internal/capabilities/workspace|internal/workflows/(planexecute|recovery))/'`
+  as inventory, now showing only the separate recovery record loader candidate;
+  stale-symbol scan for deleted names is clean. Full verification:
+  `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
+  `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
+  `git diff --check`.
 
 ## Review And Regression Protocol
 

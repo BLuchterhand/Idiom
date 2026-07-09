@@ -9,23 +9,16 @@ import (
 	"testing"
 )
 
-func TestKnownPlanExecuteFailureKindCoversPlanExecuteFailures(t *testing.T) {
+func TestPlanExecuteFailureKindsParseKnownValues(t *testing.T) {
 	seen := map[PlanExecuteFailureKind]struct{}{}
 	for _, kind := range PlanExecuteFailureKinds() {
 		if _, ok := seen[kind]; ok {
 			t.Fatalf("duplicate PlanExecuteFailureKinds entry %q", kind)
 		}
 		seen[kind] = struct{}{}
-		if !KnownPlanExecuteFailureKind(string(kind)) {
-			t.Fatalf("KnownPlanExecuteFailureKind(%q) = false", kind)
-		}
 		if parsed, ok := ParsePlanExecuteFailureKind(string(kind)); !ok || parsed != kind {
 			t.Fatalf("ParsePlanExecuteFailureKind(%q) = %q %v, want %q true", kind, parsed, ok, kind)
 		}
-	}
-
-	if KnownPlanExecuteFailureKind("review_repair_typo") {
-		t.Fatal("KnownPlanExecuteFailureKind accepted unknown kind")
 	}
 }
 

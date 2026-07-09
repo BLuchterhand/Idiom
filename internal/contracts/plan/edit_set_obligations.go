@@ -173,20 +173,6 @@ func (obligations EditSetObligations) Open(changedPaths []string) []EditSetOpenO
 	return open
 }
 
-func EditSetObligationsForRequiredPaths(paths []string, source string) EditSetObligations {
-	var obligations EditSetObligations
-	for _, path := range UniqueScopePaths(paths) {
-		switch {
-		case PathLooksLikeTest(path):
-			obligations = obligations.WithPath(EditSetObligationKindTestEdit, path, source)
-		case PathLooksLikeImplementation(path):
-			obligations = obligations.WithPath(EditSetObligationKindImplementationEdit, path, source)
-		}
-	}
-
-	return obligations.Normalized()
-}
-
 func EditSetObligationFailureMessage(reason PlanExecuteFailureKind) string {
 	switch reason {
 	case PlanExecuteFailureMissingRequestedTestEdit:

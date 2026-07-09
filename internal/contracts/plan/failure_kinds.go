@@ -51,18 +51,6 @@ const (
 	PlanExecuteFailureReviewRepairDegraded PlanExecuteFailureKind = "review_repair_degraded"
 )
 
-// KnownPlanExecuteFailureKind reports whether kind is part of the contract vocabulary.
-func KnownPlanExecuteFailureKind(kind string) bool {
-	value := PlanExecuteFailureKind(strings.TrimSpace(kind))
-	for _, known := range PlanExecuteFailureKinds() {
-		if value == known {
-			return true
-		}
-	}
-
-	return false
-}
-
 // ParsePlanExecuteFailureKind parses exact contract values plus legacy
 // hyphenated spellings used by older terminal records.
 func ParsePlanExecuteFailureKind(kind string) (PlanExecuteFailureKind, bool) {

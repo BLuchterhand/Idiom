@@ -52,10 +52,10 @@ func TestEditSetObligationRejectionReasonClassifiesChangedPaths(t *testing.T) {
 }
 
 func TestEditSetObligationsReportNormalizedOpenExactPaths(t *testing.T) {
-	obligations := EditSetObligationsForRequiredPaths(
-		[]string{"pkg/feature.go", "pkg/feature_test.go", "docs/feature.md", "pkg/feature_test.go"},
-		"required_scope",
-	)
+	obligations := EditSetObligations{
+		{Kind: EditSetObligationKindImplementationEdit, Path: "pkg/feature.go", Source: "required_scope"},
+		{Kind: EditSetObligationKindTestEdit, Path: "pkg/feature_test.go", Source: "required_scope"},
+	}.Normalized()
 
 	open := obligations.Open([]string{"pkg/feature.go"})
 	if len(open) != 1 {
@@ -64,33 +64,5 @@ func TestEditSetObligationsReportNormalizedOpenExactPaths(t *testing.T) {
 
 	if got := open[0]; got.Code != EditSetOpenObligationRequestedTestEditMissing || got.Kind != EditSetObligationKindTestEdit || got.Path != "pkg/feature_test.go" || got.Source != "required_scope" {
 		t.Fatalf("open obligation = %#v, want normalized missing test path", got)
-	}
-}
-
-func TestRequiredPathObligationsClassifyTestsAndImplementation(t *testing.T) {
-	obligations := EditSetObligationsForRequiredPaths(
-		[]string{
-			"pkg/feature.go",
-			"pkg/feature_test.go",
-			"web/component.spec.tsx",
-			"prompts/agent.md",
-			"README.md",
-		},
-		"required_scope",
-	)
-
-	var got []EditSetObligation
-	for _, obligation := range obligations {
-		got = append(got, EditSetObligation{Kind: obligation.Kind, Path: obligation.Path})
-	}
-
-	want := []EditSetObligation{
-		{Kind: EditSetObligationKindTestEdit, Path: "pkg/feature_test.go"},
-		{Kind: EditSetObligationKindTestEdit, Path: "web/component.spec.tsx"},
-		{Kind: EditSetObligationKindImplementationEdit, Path: "pkg/feature.go"},
-		{Kind: EditSetObligationKindImplementationEdit, Path: "prompts/agent.md"},
-	}
-	if !slices.Equal(got, want) {
-		t.Fatalf("required path obligations = %#v, want %#v", got, want)
 	}
 }

@@ -97,34 +97,8 @@ func TestPlanExecutionContractCarriesApprovedPlanArtifactBinding(t *testing.T) {
 		t.Fatalf("plan artifact binding was not normalized: %+v", normalized.PlanArtifact)
 	}
 
-	if violations := ValidatePlanExecutionContractInput(normalized); len(violations) > 0 {
-		t.Fatalf("approved plan artifact binding should validate: %+v", violations)
-	}
-
 	if normalized.ContractHash == variant.Normalized().ContractHash {
 		t.Fatalf("plan artifact digest must contribute to contract hash")
-	}
-}
-
-func TestPlanExecutionContractRejectsIncompleteApprovedPlanArtifactBinding(t *testing.T) {
-	contract := PlanExecutionContract{
-		PlanID: "feature-plan-42",
-		PlanArtifact: PlanArtifactBinding{
-			ArtifactID:      "plan-artifact-1",
-			Revision:        1,
-			ApprovalStatus:  "approved",
-			ApprovalEventID: "approval-1",
-		},
-		Atoms: []AtomExecutionContract{{
-			AtomID: "atom-1",
-			Scope:  PlanScopeContract{RequiredCoveragePaths: []string{"pkg/a.go"}},
-		}},
-	}
-
-	violations := ValidatePlanExecutionContractInput(contract)
-	if !hasViolationCode(violations, "missing_plan_artifact_digest") ||
-		!hasViolationCode(violations, "missing_plan_artifact_workspace_fingerprint") {
-		t.Fatalf("expected artifact digest/workspace violations, got %+v", violations)
 	}
 }
 
@@ -172,27 +146,6 @@ func TestPlanExecutionContractNormalizesAuthoritySourceFacts(t *testing.T) {
 	}
 }
 
-func TestPlanExecutionContractRejectsInvalidAuthoritySourceFactPath(t *testing.T) {
-	contract := PlanExecutionContract{
-		PlanID: "source-facts",
-		AuthorityDeltas: []AuthorityDelta{{
-			Kind:   AuthorityDeltaKindNarrowWriteEnvelope,
-			Path:   "pkg/feature.go",
-			Source: "accepted_source",
-			SourceFacts: []SourceAuthorityFact{{
-				Path:      "../outside.go",
-				Symbol:    "helper",
-				Signature: "void helper()",
-			}},
-		}},
-	}
-
-	violations := ValidatePlanExecutionContractInput(contract)
-	if !hasViolationCode(violations, "invalid_authority_delta_source_fact_path") {
-		t.Fatalf("invalid source fact path should be rejected: %#v", violations)
-	}
-}
-
 func TestAcceptanceObligationWithoutIDGetsEnforcedStableID(t *testing.T) {
 	atom := AtomExecutionContract{
 		AtomID: "atom-1",
@@ -203,7 +156,17 @@ func TestAcceptanceObligationWithoutIDGetsEnforcedStableID(t *testing.T) {
 			Required:    true,
 			Source:      "featureplanner.sdd",
 		}},
-		TerminalEvidence: StrictTerminalEvidenceRequirements(),
+		TerminalEvidence: TerminalEvidenceRequirements{
+			Explicit:                    true,
+			RequireSourceEvidence:       true,
+			RequireChangedPathCoverage:  true,
+			RequireRequiredPathCoverage: true,
+			RequireSourceSanity:         true,
+			RequireVerification:         true,
+			RequireReview:               true,
+			RequireRequiredTests:        true,
+			RequireTestArtifacts:        true,
+		},
 	}.Normalized()
 	if len(atom.AcceptanceObligations) != 1 || atom.AcceptanceObligations[0].ID == "" {
 		t.Fatalf("acceptance obligation should get stable ID: %#v", atom.AcceptanceObligations)
@@ -306,7 +269,17 @@ func TestAcceptanceEvidenceThresholdClaimsAreValidated(t *testing.T) {
 					Required:  true,
 					Threshold: tt.threshold,
 				}},
-				TerminalEvidence: StrictTerminalEvidenceRequirements(),
+				TerminalEvidence: TerminalEvidenceRequirements{
+					Explicit:                    true,
+					RequireSourceEvidence:       true,
+					RequireChangedPathCoverage:  true,
+					RequireRequiredPathCoverage: true,
+					RequireSourceSanity:         true,
+					RequireVerification:         true,
+					RequireReview:               true,
+					RequireRequiredTests:        true,
+					RequireTestArtifacts:        true,
+				},
 			}.Normalized()
 
 			evidence := validTerminalEvidence()
@@ -348,7 +321,17 @@ func TestPlanExecutionContractValidatesStructuredAuthorizedNewFiles(t *testing.T
 			Reason: "typed generated package",
 			Source: "feature_planner",
 		}},
-		TerminalEvidence: StrictTerminalEvidenceRequirements(),
+		TerminalEvidence: TerminalEvidenceRequirements{
+			Explicit:                    true,
+			RequireSourceEvidence:       true,
+			RequireChangedPathCoverage:  true,
+			RequireRequiredPathCoverage: true,
+			RequireSourceSanity:         true,
+			RequireVerification:         true,
+			RequireReview:               true,
+			RequireRequiredTests:        true,
+			RequireTestArtifacts:        true,
+		},
 	}
 
 	accepted := ValidateAtomTerminalEvidenceInput(atom, TerminalEvidenceInput{
@@ -378,48 +361,6 @@ func TestPlanExecutionContractValidatesStructuredAuthorizedNewFiles(t *testing.T
 	})
 	if !hasViolationCode(rejected, "changed_path_outside_write_envelope") {
 		t.Fatalf("unstructured new path should be rejected, got %#v", rejected)
-	}
-}
-
-func TestPlanExecutionContractRejectsRequiredPathDemotion(t *testing.T) {
-	atom := AtomExecutionContract{
-		AtomID: "demotion",
-		Scope: PlanScopeContract{
-			RequiredCoveragePaths: []string{"pkg/feature.go"},
-			AllowedCandidatePaths: []string{"pkg/feature.go", "pkg/optional.go"},
-		},
-		AuthorityDeltas: []AuthorityDelta{{
-			Kind: AuthorityDeltaKindDemoteRequiredPath,
-			Path: "pkg/feature.go",
-			From: "required",
-			To:   "allowed",
-		}},
-	}
-
-	violations := ValidateAtomExecutionContractInput(atom)
-	if !hasViolationCode(violations, "required_path_demoted_to_allowed") {
-		t.Fatalf("required path repeated as allowed should be rejected: %#v", violations)
-	}
-
-	if !hasViolationCode(violations, "required_path_demotion_rejected") {
-		t.Fatalf("authority delta demoting required path should be rejected: %#v", violations)
-	}
-}
-
-func TestPlanExecutionContractRejectsInvalidEditSetObligationPath(t *testing.T) {
-	atom := AtomExecutionContract{
-		AtomID: "invalid-edit-set-path",
-		Scope: PlanScopeContract{
-			RequiredCoveragePaths: []string{"pkg/feature.go"},
-			EditSetObligations: EditSetObligations{
-				{Kind: EditSetObligationKindImplementationEdit, Path: "/tmp/outside.go", Source: "fixture"},
-			},
-		},
-	}
-
-	violations := ValidateAtomExecutionContractInput(atom)
-	if !hasViolationCode(violations, "invalid_edit_set_obligation_path") {
-		t.Fatalf("invalid edit-set obligation path should be rejected before normalization drops it: %#v", violations)
 	}
 }
 
@@ -506,7 +447,17 @@ func tddAtom() AtomExecutionContract {
 			Kind:     "harness_observed_source",
 			Required: true,
 		}},
-		TerminalEvidence: StrictTerminalEvidenceRequirements(),
+		TerminalEvidence: TerminalEvidenceRequirements{
+			Explicit:                    true,
+			RequireSourceEvidence:       true,
+			RequireChangedPathCoverage:  true,
+			RequireRequiredPathCoverage: true,
+			RequireSourceSanity:         true,
+			RequireVerification:         true,
+			RequireReview:               true,
+			RequireRequiredTests:        true,
+			RequireTestArtifacts:        true,
+		},
 	}
 }
 

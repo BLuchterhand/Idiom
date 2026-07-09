@@ -98,15 +98,6 @@ var approvedClientClassifications = []ClientClassification{
 	ClientClassificationOpenSource,
 }
 
-func ApprovedClientClassifications() []string {
-	out := make([]string, 0, len(approvedClientClassifications))
-	for _, classification := range approvedClientClassifications {
-		out = append(out, string(classification))
-	}
-
-	return out
-}
-
 func KnownClientClassification(value string) bool {
 	return knownTrimmed(value, approvedClientClassifications...)
 }

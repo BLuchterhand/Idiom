@@ -42,48 +42,18 @@ func TestScopeExpansionPathsDropInvalidEntriesAndDeduplicateByPathRole(t *testin
 	}
 }
 
-func TestScopeExpansionProposalNormalizesPolicyPathsAndEvents(t *testing.T) {
-	proposal := ScopeExpansionProposal{
-		ID:     " proposal-1 ",
-		Policy: " BOUNDED_DISCOVERY ",
+func TestScopeExpansionEventNormalizesPolicyPathsAndMetadata(t *testing.T) {
+	event := ScopeExpansionEvent{
+		Kind:       " PROPOSAL ",
+		ProposalID: " proposal-1 ",
+		Policy:     ScopeExpansionPolicyRequiresUserApproval,
 		Paths: []ScopeExpansionPath{
-			{Path: "pkg/a.go", Role: ScopePathRoleCandidateExpansion},
-			{Path: "/tmp/outside.go", Role: ScopePathRoleReadOnlyEvidence},
+			{Path: "docs/ref.md", Role: ScopePathRoleReferenceDocument},
 		},
-		Reason: " inspect nearby implementation ",
+		Reason: " needs source ",
 		Source: " planner ",
-		Events: []ScopeExpansionEvent{
-			{
-				Kind:       " PROPOSAL ",
-				ProposalID: " proposal-1 ",
-				Policy:     ScopeExpansionPolicyRequiresUserApproval,
-				Paths: []ScopeExpansionPath{
-					{Path: "docs/ref.md", Role: ScopePathRoleReferenceDocument},
-				},
-				Reason: " needs source ",
-				Source: " planner ",
-			},
-			{Kind: "ignored"},
-		},
 	}.Normalized()
 
-	if proposal.ID != "proposal-1" {
-		t.Fatalf("id = %q, want trimmed id", proposal.ID)
-	}
-	if proposal.Policy != ScopeExpansionPolicyBoundedDiscovery {
-		t.Fatalf("policy = %q, want %q", proposal.Policy, ScopeExpansionPolicyBoundedDiscovery)
-	}
-	if want := []ScopeExpansionPath{{Path: "pkg/a.go", Role: ScopePathRoleCandidateExpansion}}; !slices.Equal(proposal.Paths, want) {
-		t.Fatalf("paths = %#v, want %#v", proposal.Paths, want)
-	}
-	if proposal.Reason != "inspect nearby implementation" || proposal.Source != "planner" {
-		t.Fatalf("proposal metadata not trimmed: %#v", proposal)
-	}
-	if len(proposal.Events) != 1 {
-		t.Fatalf("events = %#v, want one valid event", proposal.Events)
-	}
-
-	event := proposal.Events[0]
 	if event.Kind != ScopeExpansionEventProposalCreated {
 		t.Fatalf("event kind = %q, want %q", event.Kind, ScopeExpansionEventProposalCreated)
 	}
@@ -92,6 +62,9 @@ func TestScopeExpansionProposalNormalizesPolicyPathsAndEvents(t *testing.T) {
 	}
 	if want := []ScopeExpansionPath{{Path: "docs/ref.md", Role: ScopePathRoleReferenceDocument}}; !slices.Equal(event.Paths, want) {
 		t.Fatalf("event paths = %#v, want %#v", event.Paths, want)
+	}
+	if event.Reason != "needs source" || event.Source != "planner" {
+		t.Fatalf("event metadata not trimmed: %#v", event)
 	}
 }
 
