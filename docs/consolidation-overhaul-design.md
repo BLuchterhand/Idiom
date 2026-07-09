@@ -426,6 +426,7 @@ current source of truth.
 | Delegated read-only terminal decision cleanup | Production Go `+31 / -53`: net `-22`; production consumers no longer request raw `ReadOnlyEvidencePacket` lists from `toolResultEvidenceProjection`; packet synthesis, accepted-answer evidence paths, and delegated closure paths now consume `ReadOnlyDelegatedEvidenceFacts` through `readOnlyDelegatedEvidenceDecisionForObjective`, and the always-false source-inventory allowance wrappers were deleted instead of preserved | Test Go `+7 / -6`: net `+1`; retargeted packet synthesis and source-inventory coverage to delegated fact projection and final-answer acceptance behavior rather than helper existence | Focused: `go test ./internal/runtime/agent -run 'Test(ReadOnlyEvidencePacket|ReadOnlyAnswerability|FinalAnswerAcceptance|SourceGrounding|PostChildClosureEvidencePaths|DelegatedClosureEvidencePaths|ForcedCompletion|ArchitectureFinalAnswerAcceptance|ArchitectureCompletionRejection)' -count=1`; package: `go test ./internal/runtime/agent -count=1`; broad verification below | Accepted as a deletion-positive read-only terminal authority cleanup. This does not create a replacement wrapper: packet parsing remains the typed wire-contract boundary, while `readOnlyDelegatedEvidenceDecision` owns objective-scoped answerability and accepted evidence paths. The command outcome target was later resolved by deleting `commandcheck` instead of polishing it |
 | Git history command and evidence authority | Production Go `+254 / -157`: net `+97`; added `gitstate.Runner` as the owner for git status, diff, history applicability, history command forms, blame command forms, porcelain status filtering, and commit-description detection; workspace now injects its command policy and owns only path validation, summaries, failure wrapping, edit-recovery side effects, and `ToolResult` projection; runtime consumes typed git-history facts instead of parsing summaries or JSON output | Test Go `+382 / -45`: net `+337`; added gitstate repository-state, exact-path, porcelain-filter, command-policy, and history-command characterization; added workspace coverage for git status/diff side effects, not-applicable facts, failed history commands not emitting positive facts, and runtime path-scoped history evidence | Focused: `go test ./internal/platform/gitstate ./internal/capabilities/workspace -run 'Test(History|RunnerStatus|CheckHistory|FilterPorcelain|Git)' -count=1`; `go test ./internal/runtime/agent -run 'Test(MissingRequiredEvidence.*History|SuccessfulGitHistoryEvidenceSeen|WriteBeforeGitHistoryEvidence|SubmitPlanHistoryGuard|PlanExecute.*History|PlanThenExecute.*History|ImplementationDeferred.*History)' -count=1`; broad verification below | Accepted as architecture-positive setup, not as a LOC-reduction slice. Reviewers confirmed `Manager.gitRunner` is a real policy adapter, not a pass-through wrapper. Reviewer fixes removed the one-use history-output helper, removed the dead `GitHistoryReason` fact, moved commit-output semantics to `gitstate`, ensured failed git history commands do not emit positive facts, and tightened final-answer evidence to require path-matched history for changed existing source files |
 | Semantic language-tool catalog authority | Production Go `+794 / -812`: net `-18`; moved language-tool catalog, supplemental tool metadata, manifest ordering, evidence metadata, and code-navigation capability specs to `internal/repository/semantic/languagetools`; workspace now only projects semantic specs into tool definitions/manifests/metadata; deleted workspace `LanguageTool*` pass-through predicates and moved runtime/TUI consumers to the semantic owner directly; shared tool JSON-schema construction through `internal/platform/tooljsonschema` instead of duplicating schema helpers | Test Go `+151 / -76`: net `+75`; added semantic catalog characterization for supplemental/core tools, code-navigation parity, and `ToolParts`, then retargeted workspace schema/manifest/classification tests to `languagetools.ToolCatalog` rather than the deleted workspace catalog internals | Focused: `go test ./internal/platform/tooljsonschema ./internal/repository/semantic/languagetools ./internal/capabilities/workspace -run 'TestToolCatalogOwnsLanguageToolAndCodeNavigationCapabilities|TestToolParts|TestLanguageToolCatalogDrivesSchemaManifestAndMetadata|TestToolManifestToolsPreservesLanguageToolOrder|TestToolSchemaEnumsDeriveFromCapabilityRegistries|TestToolSchemaPolicyKeepsRegistryDiagnosticsDeferred' -count=1`; package: `go test ./internal/platform/tooljsonschema ./internal/repository/semantic/languagetools ./internal/capabilities/workspace ./internal/runtime/workerruntime ./internal/surfaces/tui/app -count=1`; `go test ./internal/runtime/agent -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `git diff --check` | Accepted as an authority consolidation with only a small LOC win. No workspace-local language catalog, wrapper predicate, `ToolCapability`, `ToolHasCapability`, `ToolsForLanguage`, or test-only `CodeNavigationSpecs` API remains; dispatch still maps concrete handlers and is the next language-tool target only if it can be made catalog-driven without increasing code or hiding language-specific behavior |
+| Tool telemetry projection authority | Production Go `+191 / -152`: net `+39`; moved direct CLI and MCP `tool_request`/`tool_result` field schemas into `workspace.ToolRequestTelemetryFields` and `workspace.ToolResultTelemetryFields`, deleted the direct-tool exported logging helpers, removed MCP's duplicate map-building/audit-ID merge logic, and left only transport/redaction/event-ID choices at the CLI/MCP edges | Test Go `+102`; added workspace boundary coverage for direct value fields, MCP presence fields, attribution, discovery facts, output metrics, sidecar audit IDs, and tool-specific output telemetry | Focused: `go test ./internal/capabilities/workspace -run 'Test.*Telemetry|Test.*Sidecar' -count=1`; `go test ./internal/surfaces/cli/tool -run 'Test.*Tool|Test.*Sidecar|Test.*Telemetry|Test.*Discovery' -count=1`; `go test ./internal/surfaces/cli/mcp -run 'TestMCPClientStdioSmokeTelemetryAndCallerParity|Test.*Sidecar|Test.*Telemetry|Test.*Profile|Test.*Classification' -count=1`; broad: `go test ./...`; `go build ./cmd/idiom`; `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json`; `/Users/ben/go/bin/staticcheck -checks=U1000 ./...`; `/Users/ben/go/bin/deadcode ./...`; `git diff --check` | Accepted as an authority setup slice, not a LOC-reduction slice by itself. The value is deleting competing telemetry schema owners before consolidating the larger direct-tool/MCP invocation path; no exported replacement wrapper or compatibility alias was added. Current branch production Go is `+26,889 / -36,406`, net `-9,517` versus `main`; deadcode inventory remains limited to the retained shared `jsoneventstest` helpers |
 
 ## Historical Count Snapshots (Superseded)
 
@@ -884,26 +885,14 @@ Current git state:
 
 - Branch state: `codex/rearchitecture-surface-authority` is based on
   merge-base `b6591bf5eb647e29a10697b48585047c6a8361da`; the latest working
-  state includes the runtime alias, ADR shim, transport alias, autodetect
-  owner cleanup, command-result authority cleanup, source-evidence candidate
-  extraction cleanup, completion-gate/alias authority cleanup, and the
-  source-result evidence plus shell command authority cleanup, dormant
-  answer-grounding authority deletion, shell verification classification
-  authority consolidation, eval discovery taxonomy deletion, prior-session
-  evidence reader deletion, alias-only constant cleanup, and the workspace
-  tool-name alias plus source-evidence duplicate-branch cleanup, missing-tool
-  inference authority deletion, the runtime action-class/dead-bookkeeping
-  cleanup, the workspace action-class owner plus plan-execute dead-shim
-  deletion, the autonomy audit event-action projection migration, and the
-  workspace verification-observation authority migration, and the tool-result
-  evidence projection plus typed changed-path migration, the read-only
-  evidence category projection migration, the git history command/evidence
-  authority migration, the top-level headless alias deletion, and the
-  read-only closeout/source-grounding authority consolidation, and the
-  delegated read-only terminal decision cleanup.
+  state includes all ledgered cleanup through the tool telemetry projection
+  authority slice.
 - Current branch-plus-worktree diff versus `main`: production Go
-  `+24,746 / -31,033`, net `-6,287`; Go tests `+15,034 / -13,571`, net
-  `+1,463`; strict all-file total `+42,501 / -46,597`, net `-4,096`.
+  `+26,889 / -36,406`, net `-9,517`; Go tests `+17,127 / -17,208`, net
+  `-81`; strict all-file total `+47,044 / -55,601`, net `-8,557`.
+- Latest tool telemetry projection authority slice only: production Go
+  `+191 / -152`, net `+39`; Go tests `+102`; accepted as authority setup,
+  not as a standalone LOC-reduction slice.
 - Latest delegated read-only terminal decision cleanup slice only:
   production Go `+31 / -53`, net `-22`; Go tests `+7 / -6`, net `+1`;
   docs `+8 / -3`.
@@ -974,10 +963,10 @@ or alias-only surfaces, while the total all-file diff remains positive because
 tests, docs, scripted fixtures, and earlier `commandexec` process-lifecycle
 setup added shared platform coverage before all remaining process migrations
 are complete. The current worktree versus `main` is production Go
-`+23,520 / -26,614`, net `-3,094`; Go tests are `+12,158 / -10,126`, net
-`+2,032`; all files are `+38,032 / -38,721`, net `-689`. The implementation
-ledger above remains the source of truth for accepted local reductions inside
-each consolidation case.
+`+26,889 / -36,406`, net `-9,517`; Go tests are `+17,127 / -17,208`,
+net `-81`; all files are `+47,044 / -55,601`, net `-8,557`. The
+implementation ledger above remains the source of truth for accepted local
+reductions inside each consolidation case.
 
 Reviewer-updated estimate:
 

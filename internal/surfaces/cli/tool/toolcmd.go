@@ -12,7 +12,6 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/evidence/telemetry"
-	"idiom/internal/platform/textutil"
 	cmdconfig "idiom/internal/surfaces/cli/config"
 )
 
@@ -100,16 +99,38 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 			return
 		}
 
-		LogDirectToolRequest(rec, req, rawInputBytes, profile, caller, directToolTimeoutOwner(effectiveTimeout))
+		if rec != nil {
+			_ = rec.Log("tool_request", workspace.ToolRequestTelemetryFields(req, workspace.ToolTelemetryRequestOptions{
+				Agent:         "direct",
+				Transport:     "cli",
+				Profile:       profile,
+				Caller:        caller,
+				RawInputBytes: rawInputBytes,
+				TimeoutOwner:  directToolTimeoutOwner(effectiveTimeout),
+				RequestFields: workspace.ToolTelemetryRequestValues,
+			}))
+		}
 
 		requestLogged = true
 	}
+	logResult := func(result workspace.ToolResult, durationMillis int64) {
+		if rec != nil {
+			_ = rec.Log("tool_result", workspace.ToolResultTelemetryFields(req, result, workspace.ToolTelemetryResultOptions{
+				Agent:          "direct",
+				Transport:      "cli",
+				Profile:        profile,
+				Caller:         caller,
+				DurationMillis: durationMillis,
+				TimeoutOwner:   directToolTimeoutOwner(effectiveTimeout),
+			}))
+		}
+	}
 	logFailureResult := func(summary string, errText string) {
-		LogDirectToolResult(rec, req, workspace.ToolResult{
+		logResult(workspace.ToolResult{
 			Tool:    toolName,
 			Summary: summary,
 			Error:   errText,
-		}, 0, profile, caller, directToolTimeoutOwner(effectiveTimeout))
+		}, 0)
 	}
 
 	cfg, err := cmdconfig.Load(*configPath)
@@ -186,7 +207,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 
 	if decision := workspace.ToolRequestAllowedForWorkspaceProfile(req, profile, surfaceSetup.PolicyContext); !decision.Allowed {
 		result := workspace.ToolProfileDeniedResult(req.Tool, profile, decision)
-		LogDirectToolResult(rec, req, result, 0, profile, caller, directToolTimeoutOwner(effectiveTimeout))
+		logResult(result, 0)
 
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -224,7 +245,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 
 	startedAt := time.Now()
 	result := mgr.Execute(ctx, req)
-	LogDirectToolResult(rec, req, result, time.Since(startedAt).Milliseconds(), profile, caller, directToolTimeoutOwner(effectiveTimeout))
+	logResult(result, time.Since(startedAt).Milliseconds())
 
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
@@ -411,81 +432,4 @@ func printUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "Flags:")
 	fmt.Fprintln(stderr, "  -config string  path to config file (default \"config.json\")")
 	fmt.Fprintln(stderr, "  -input string   JSON object with tool request parameters")
-}
-
-func LogDirectToolRequest(rec *telemetry.Recorder, req workspace.ToolRequest, rawInputBytes int, profile string, caller workspace.ToolSidecarCaller, timeoutOwner string) {
-	if rec == nil {
-		return
-	}
-
-	fields := map[string]any{
-		"step":            1,
-		"agent":           "direct",
-		"tool":            strings.TrimSpace(req.Tool),
-		"raw_input_bytes": rawInputBytes,
-		"path":            strings.TrimSpace(req.Path),
-		"workdir":         strings.TrimSpace(req.Workdir),
-		"purpose":         strings.TrimSpace(req.Purpose),
-		"language":        strings.TrimSpace(req.Language),
-		"has_pattern":     strings.TrimSpace(req.Pattern) != "",
-		"has_query":       strings.TrimSpace(req.Query) != "",
-		"has_command":     strings.TrimSpace(req.Command) != "",
-		"has_content":     strings.TrimSpace(req.Content) != "",
-		"start_line":      req.StartLine,
-		"end_line":        req.EndLine,
-		"limit":           req.Limit,
-		"recursive":       req.Recursive,
-		"timeout_owner":   timeoutOwner,
-	}
-	workspace.AddToolTelemetryAttribution(fields, workspace.ToolSidecarEnvelopeVersion, "cli", strings.TrimSpace(profile), caller, strings.TrimSpace(req.Tool))
-
-	discoveryProfile := workspace.DiscoveryProfileForRequest(req)
-	if discoveryProfile.Discovery {
-		fields["discovery_class"] = discoveryProfile.Class
-		fields["discovery_scope"] = discoveryProfile.Scope
-		fields["discovery_cost"] = discoveryProfile.Cost
-	}
-
-	_ = rec.Log("tool_request", fields)
-}
-
-func LogDirectToolResult(rec *telemetry.Recorder, req workspace.ToolRequest, result workspace.ToolResult, durationMillis int64, profile string, caller workspace.ToolSidecarCaller, timeoutOwner string) {
-	if rec == nil {
-		return
-	}
-
-	outputChars := len(result.Output)
-	tool := textutil.FirstNonEmpty(result.Tool, req.Tool)
-	fields := map[string]any{
-		"step":          1,
-		"agent":         "direct",
-		"tool":          tool,
-		"summary":       result.Summary,
-		"error":         result.Error,
-		"duration_ms":   durationMillis,
-		"timeout_owner": timeoutOwner,
-	}
-	workspace.AddToolTelemetryAttribution(fields, workspace.ToolSidecarEnvelopeVersion, "cli", strings.TrimSpace(profile), caller, tool)
-
-	if outputChars > 0 {
-		fields["output_chars"] = outputChars
-		fields["output_lines"] = workspace.ToolOutputLineCount(result.Output)
-	}
-
-	if result.PrecisionTier != "" {
-		fields["precision_tier"] = result.PrecisionTier
-	}
-
-	discoveryProfile := workspace.DiscoveryProfileForRequest(req)
-	if discoveryProfile.Discovery {
-		fields["discovery_class"] = discoveryProfile.Class
-		fields["discovery_scope"] = discoveryProfile.Scope
-		fields["discovery_cost"] = discoveryProfile.Cost
-	}
-
-	for key, value := range workspace.ToolTelemetryFields(tool, result.Output) {
-		fields[key] = value
-	}
-
-	_ = rec.Log("tool_result", fields)
 }

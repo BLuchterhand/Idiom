@@ -858,37 +858,20 @@ func (s *DiscoveryServer) logMCPToolRequest(req workspace.ToolRequest, rawInputB
 		return
 	}
 
-	fields := map[string]any{
-		"step":            1,
-		"agent":           "mcp",
-		"tool":            strings.TrimSpace(req.Tool),
-		"raw_input_bytes": rawInputBytes,
-		"has_path":        strings.TrimSpace(req.Path) != "",
-		"has_workdir":     strings.TrimSpace(req.Workdir) != "",
-		"has_purpose":     strings.TrimSpace(req.Purpose) != "",
-		"language":        strings.TrimSpace(req.Language),
-		"has_pattern":     strings.TrimSpace(req.Pattern) != "",
-		"has_query":       strings.TrimSpace(req.Query) != "",
-		"has_command":     strings.TrimSpace(req.Command) != "",
-		"has_content":     strings.TrimSpace(req.Content) != "",
-		"start_line":      req.StartLine,
-		"end_line":        req.EndLine,
-		"limit":           req.Limit,
-		"recursive":       req.Recursive,
-	}
-	workspace.AddToolTelemetryAttribution(fields, workspace.ToolSidecarEnvelopeVersion, StdioTransport, s.profile, caller, strings.TrimSpace(req.Tool))
-
+	eventID := ""
 	if caller.RequestID != "" {
-		fields["telemetry_event_id"] = caller.RequestID + ":request"
+		eventID = caller.RequestID + ":request"
 	}
 
-	profile := workspace.DiscoveryProfileForRequest(req)
-	if profile.Discovery {
-		fields["discovery_class"] = profile.Class
-		fields["discovery_scope"] = profile.Scope
-		fields["discovery_cost"] = profile.Cost
-	}
-
+	fields := workspace.ToolRequestTelemetryFields(req, workspace.ToolTelemetryRequestOptions{
+		Agent:            "mcp",
+		Transport:        StdioTransport,
+		Profile:          s.profile,
+		Caller:           caller,
+		RawInputBytes:    rawInputBytes,
+		TelemetryEventID: eventID,
+		RequestFields:    workspace.ToolTelemetryRequestPresence,
+	})
 	_ = s.rec.Log("tool_request", fields)
 }
 
@@ -897,48 +880,23 @@ func (s *DiscoveryServer) logMCPToolResult(req workspace.ToolRequest, result wor
 		return
 	}
 
-	tool := textutil.FirstNonEmpty(result.Tool, req.Tool)
-	fields := map[string]any{
-		"step":        1,
-		"agent":       "mcp",
-		"tool":        tool,
-		"summary":     s.redactText(result.Summary),
-		"error":       s.redactText(result.Error),
-		"duration_ms": durationMillis,
-	}
-	workspace.AddToolTelemetryAttribution(fields, workspace.ToolSidecarEnvelopeVersion, StdioTransport, s.profile, caller, tool)
-
+	eventID := ""
 	if caller.RequestID != "" {
-		fields["telemetry_event_id"] = caller.RequestID + ":result"
+		eventID = caller.RequestID + ":result"
 	}
 
-	if result.Output != "" {
-		fields["output_chars"] = len(result.Output)
-		fields["output_lines"] = workspace.ToolOutputLineCount(result.Output)
-	}
-
-	if result.PrecisionTier != "" {
-		fields["precision_tier"] = result.PrecisionTier
-	}
-
-	envelope := workspace.BuildToolSidecarEnvelopeWithOptions(req, result, s.profile, workspace.ToolSidecarOptions{
-		Caller:    caller,
-		Transport: StdioTransport,
+	safeResult := result
+	safeResult.Summary = s.redactText(safeResult.Summary)
+	safeResult.Error = s.redactText(safeResult.Error)
+	fields := workspace.ToolResultTelemetryFields(req, safeResult, workspace.ToolTelemetryResultOptions{
+		Agent:                "mcp",
+		Transport:            StdioTransport,
+		Profile:              s.profile,
+		Caller:               caller,
+		DurationMillis:       durationMillis,
+		TelemetryEventID:     eventID,
+		IncludeAuditEventIDs: true,
 	})
-	if len(envelope.AuditEventIDs) > 0 {
-		fields["audit_event_ids"] = append([]string(nil), envelope.AuditEventIDs...)
-	}
-
-	profile := workspace.DiscoveryProfileForRequest(req)
-	if profile.Discovery {
-		fields["discovery_class"] = profile.Class
-		fields["discovery_scope"] = profile.Scope
-		fields["discovery_cost"] = profile.Cost
-	}
-
-	for key, value := range workspace.ToolTelemetryFields(tool, result.Output) {
-		fields[key] = value
-	}
 
 	_ = s.rec.Log("tool_result", fields)
 }
