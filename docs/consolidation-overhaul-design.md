@@ -1917,6 +1917,22 @@ Reviewer-updated estimate:
   `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json`;
   `/Users/ben/go/bin/staticcheck -checks=U1000 ./...`;
   `/Users/ben/go/bin/deadcode -test ./...`; `git diff --check`.
+- Runtime source-path evidence authority now comes from
+  `toolResultEvidenceProjection.SourceEvidenceForPath`. The duplicated
+  `planThenExecuteRequiredSourceEvidenceForPath` loop and the
+  `planThenExecuteObservedSourceEvidenceForPath` pass-through helper were
+  deleted, so redirect-pending source evidence, source-body ranking, and
+  source-satisfied anchor checks share the projection's behavior. Hot loops now
+  reuse one projection value instead of rebuilding the evidence scan for every
+  path. Production Go changed `+29 / -42`, net `-13`; test Go changed `+1 /
+  -1`, net `0`; pre-ledger tracked files changed `+30 / -43`, net `-13`.
+  With this worktree included, the branch is production Go `+27,180 /
+  -36,918`, net `-9,738` versus `main`. Verification:
+  `go test ./internal/runtime/agent -run 'Test(SourceEvidenceStateTracksRedirectPendingUntilBodyEvidence|RedirectOnlyEvidenceDoesNotBecomeSourceSatisfiedAnchorReady|ToolResultEvidenceProjectionSourceBodyBoundaries|ToolResultEvidenceProjectionCloseoutUsesProjectedResultSnapshot|PlanExecute|RequiredSource|SourceSatisfied|ImplementationRequiredPathAnchorsReady)' -count=1`;
+  `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json`;
+  `/Users/ben/go/bin/staticcheck -checks=U1000 ./...`;
+  `/Users/ben/go/bin/deadcode -test ./...`; `git diff --check`.
 
 ## Review And Regression Protocol
 

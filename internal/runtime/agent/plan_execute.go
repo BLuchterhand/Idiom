@@ -2564,9 +2564,10 @@ func (r *Runner) implementationRequiredPathCompletionRecoveryPrompt(missing []st
 		b.WriteString("If the current evidence supports the requested change, call one write capability now for a remaining required path: `edit_file`, `write_file`, `append_file`, or `apply_patch`. Use real current text, complete replacement text, or a valid patch; do not copy placeholders or ellipses.\n\n")
 	}
 
+	projection := newToolResultEvidenceProjection(results)
 	unread := make([]string, 0, len(missing))
 	for _, path := range missing {
-		evidence := planThenExecuteRequiredSourceEvidenceForPath(r.RuntimeBrief, results, path)
+		evidence := projection.SourceEvidenceForPath(path)
 		if evidence.Level == planThenExecuteEvidenceAnchorReady {
 			continue
 		}
@@ -3840,7 +3841,7 @@ func (r *Runner) submitPlanEditPathGrounding(path string, edit planartifact.Plan
 	}
 
 	if r != nil {
-		evidence := planThenExecuteRequiredSourceEvidenceForPath(r.RuntimeBrief, results, path)
+		evidence := newToolResultEvidenceProjection(results).SourceEvidenceForPath(path)
 		if evidence.Level == planThenExecuteEvidenceAnchorReady {
 			return evidence
 		}
@@ -3895,7 +3896,7 @@ func planThenExecuteEditHasValidatedInsertionAnchor(edit planartifact.PlanEdit, 
 		return false
 	}
 
-	evidence := planThenExecuteRequiredSourceEvidenceForPath(workerruntime.WorkerRuntimeBrief{}, results, path)
+	evidence := newToolResultEvidenceProjection(results).SourceEvidenceForPath(path)
 	if planThenExecuteEvidenceRank(evidence.Level) < planThenExecuteEvidenceRank(planThenExecuteEvidencePathSeen) {
 		return false
 	}
@@ -4325,7 +4326,7 @@ func (r *Runner) planThenExecuteAttachSubmitPlanSourceSatisfiedEvidence(req work
 	}
 
 	for _, path := range sourceSatisfiedPaths {
-		evidence := planThenExecuteObservedSourceEvidenceForPath(results, path)
+		evidence := newToolResultEvidenceProjection(results).SourceEvidenceForPath(path)
 		if evidence.Level != planThenExecuteEvidenceAnchorReady {
 			continue
 		}
@@ -4349,10 +4350,6 @@ func (r *Runner) planThenExecuteAttachSubmitPlanSourceSatisfiedEvidence(req work
 	req.PlanArtifact = &artifact
 
 	return req
-}
-
-func planThenExecuteObservedSourceEvidenceForPath(results []workspace.ToolResult, path string) planThenExecuteSourceEvidence {
-	return newToolResultEvidenceProjection(results).SourceEvidenceForPath(path)
 }
 
 func readPlanProjectionBase(root string, path string) string {
@@ -5695,13 +5692,14 @@ func planThenExecutePendingRequiredSourceEvidence(brief workerruntime.WorkerRunt
 	required := planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "")
 	pending := make([]planThenExecuteSourceEvidence, 0, len(required))
 
+	projection := newToolResultEvidenceProjection(results)
 	for _, path := range required {
 		state := planThenExecuteRequiredPathState(brief, results, path)
 		if !state.requiresSourceBodyRead() {
 			continue
 		}
 
-		evidence := planThenExecuteRequiredSourceEvidenceForPath(brief, results, path)
+		evidence := projection.SourceEvidenceForPath(path)
 		if evidence.Level == planThenExecuteEvidenceAnchorReady {
 			continue
 		}
@@ -5797,7 +5795,7 @@ func planThenExecuteRequiredPathState(brief workerruntime.WorkerRuntimeBrief, re
 		}
 	}
 
-	if planThenExecuteRequiredSourceEvidenceForPath(brief, results, path).Level == planThenExecuteEvidenceAnchorReady {
+	if newToolResultEvidenceProjection(results).SourceEvidenceForPath(path).Level == planThenExecuteEvidenceAnchorReady {
 		return planThenExecuteRequiredPathSourceSatisfied
 	}
 
@@ -6987,8 +6985,9 @@ func planThenExecuteSourceSatisfiedResultsCoverPaths(requiredPaths []string, res
 		return false
 	}
 
+	projection := newToolResultEvidenceProjection(results)
 	for _, path := range requiredPaths {
-		if planThenExecuteRequiredSourceEvidenceForPath(workerruntime.WorkerRuntimeBrief{}, results, path).Level != planThenExecuteEvidenceAnchorReady {
+		if projection.SourceEvidenceForPath(path).Level != planThenExecuteEvidenceAnchorReady {
 			return false
 		}
 	}
@@ -7016,15 +7015,16 @@ func requiredPathsHaveSourceBodyEvidence(requiredPaths []string, results []works
 		refreshSet[NormalizeRunnerPath(p)] = struct{}{}
 	}
 
+	fullProjection := newToolResultEvidenceProjection(results)
 	for _, path := range requiredPaths {
 		normPath := NormalizeRunnerPath(path)
-		scoped := results
+		projection := fullProjection
 
 		if _, needsFresh := refreshSet[normPath]; needsFresh && resultCutoff > 0 && resultCutoff < len(results) {
-			scoped = results[resultCutoff:]
+			projection = newToolResultEvidenceProjection(results[resultCutoff:])
 		}
 
-		if planThenExecuteRequiredSourceEvidenceForPath(workerruntime.WorkerRuntimeBrief{}, scoped, normPath).Level != planThenExecuteEvidenceAnchorReady {
+		if projection.SourceEvidenceForPath(normPath).Level != planThenExecuteEvidenceAnchorReady {
 			return false
 		}
 	}
@@ -7802,7 +7802,7 @@ func planThenExecuteUnreadRequiredSourceNudge(brief workerruntime.WorkerRuntimeB
 		return ""
 	}
 
-	evidence := planThenExecuteRequiredSourceEvidenceForPath(brief, results, next)
+	evidence := newToolResultEvidenceProjection(results).SourceEvidenceForPath(next)
 	state := string(evidence.Level)
 
 	if state == "" {
@@ -7857,9 +7857,10 @@ func planThenExecuteRequiredPathHasTerminalMissingFileEvidence(path string, resu
 
 func planThenExecuteAnchorReadyPaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) map[string]struct{} {
 	paths := make(map[string]struct{})
+	projection := newToolResultEvidenceProjection(results)
 
 	for _, path := range planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "") {
-		if planThenExecuteRequiredSourceEvidenceForPath(brief, results, path).Level == planThenExecuteEvidenceAnchorReady {
+		if projection.SourceEvidenceForPath(path).Level == planThenExecuteEvidenceAnchorReady {
 			paths[path] = struct{}{}
 		}
 	}
@@ -7868,8 +7869,8 @@ func planThenExecuteAnchorReadyPaths(brief workerruntime.WorkerRuntimeBrief, res
 		return paths
 	}
 
-	for path := range newToolResultEvidenceProjection(results).ReadPaths() {
-		if planThenExecuteRequiredSourceEvidenceForPath(brief, results, path).Level == planThenExecuteEvidenceAnchorReady {
+	for path := range projection.ReadPaths() {
+		if projection.SourceEvidenceForPath(path).Level == planThenExecuteEvidenceAnchorReady {
 			paths[path] = struct{}{}
 		}
 	}
@@ -8008,7 +8009,8 @@ func implementationRequiredPathAnchorsReady(brief workerruntime.WorkerRuntimeBri
 		return false
 	}
 
-	changed := newToolResultEvidenceProjection(results).ChangedPathSet()
+	projection := newToolResultEvidenceProjection(results)
+	changed := projection.ChangedPathSet()
 
 	for _, path := range brief.RequiredEditPaths {
 		normalized := NormalizeRunnerPath(path)
@@ -8020,7 +8022,7 @@ func implementationRequiredPathAnchorsReady(brief workerruntime.WorkerRuntimeBri
 			continue
 		}
 
-		evidence := planThenExecuteRequiredSourceEvidenceForPath(brief, results, normalized)
+		evidence := projection.SourceEvidenceForPath(normalized)
 		if evidence.Level != planThenExecuteEvidenceAnchorReady {
 			return false
 		}
@@ -8999,7 +9001,7 @@ func (r *Runner) planThenExecuteRequiredSourceSurfaceAction(req workspace.ToolRe
 
 		target := NormalizeRunnerPath(planThenExecuteRequestTargetPath(redirected))
 		if _, missing := unread[target]; missing {
-			evidence := planThenExecuteRequiredSourceEvidenceForPath(r.RuntimeBrief, results, target)
+			evidence := newToolResultEvidenceProjection(results).SourceEvidenceForPath(target)
 			if planThenExecuteRequiredSourceRequestAdvances(redirected, target, evidence, results) {
 				return planThenExecuteRequiredSourceSurfaceAction{
 					Request:  redirected,
@@ -9094,7 +9096,8 @@ func (r *Runner) deterministicImplementationRequiredPathRead(results []workspace
 		return workspace.ToolRequest{}, "", false
 	}
 
-	changed := newToolResultEvidenceProjection(results).ChangedPathSet()
+	projection := newToolResultEvidenceProjection(results)
+	changed := projection.ChangedPathSet()
 
 	for _, path := range r.requiredEditCoveragePaths() {
 		normalized := NormalizeRunnerPath(path)
@@ -9106,7 +9109,7 @@ func (r *Runner) deterministicImplementationRequiredPathRead(results []workspace
 			continue
 		}
 
-		evidence := planThenExecuteRequiredSourceEvidenceForPath(r.RuntimeBrief, results, normalized)
+		evidence := projection.SourceEvidenceForPath(normalized)
 		if evidence.Level == planThenExecuteEvidenceAnchorReady {
 			continue
 		}
@@ -9222,7 +9225,7 @@ func (r *Runner) planThenExecuteRequiredSourceFollowupRedirect(results []workspa
 		return redirected, true
 	}
 
-	evidence := planThenExecuteRequiredSourceEvidenceForPath(r.RuntimeBrief, results, target)
+	evidence := newToolResultEvidenceProjection(results).SourceEvidenceForPath(target)
 	if evidence.Level == planThenExecuteEvidenceNone && !planThenExecutePathHasAnyToolEvidence(target, results) {
 		return workspace.ToolRequest{}, false
 	}

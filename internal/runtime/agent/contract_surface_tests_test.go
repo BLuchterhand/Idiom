@@ -6824,7 +6824,7 @@ func TestRedirectOnlyEvidenceDoesNotBecomeSourceSatisfiedAnchorReady(t *testing.
 		},
 	}
 
-	evidence := planThenExecuteObservedSourceEvidenceForPath(results, "internal/surfaces/tui/app/sessions.go")
+	evidence := newToolResultEvidenceProjection(results).SourceEvidenceForPath("internal/surfaces/tui/app/sessions.go")
 	if evidence.Level != planThenExecuteEvidenceSourceBodyPending {
 		t.Fatalf("Level = %q, want %q", evidence.Level, planThenExecuteEvidenceSourceBodyPending)
 	}

@@ -4744,23 +4744,6 @@ const (
 	planThenExecuteEvidenceNewFileContract     PlanThenExecuteSourceEvidenceLevel = "new_file_contract"
 )
 
-func planThenExecuteRequiredSourceEvidenceForPath(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, path string) planThenExecuteSourceEvidence {
-	path = NormalizeRunnerPath(path)
-	if path == "" {
-		return planThenExecuteSourceEvidence{}
-	}
-
-	best := planThenExecuteSourceEvidence{Path: path}
-	for _, result := range results {
-		evidence := newToolResultEvidenceRecord(result).SourceEvidenceForPath(path)
-		if planThenExecuteEvidenceRank(evidence.Level) > planThenExecuteEvidenceRank(best.Level) {
-			best = evidence
-		}
-	}
-
-	return best
-}
-
 func sourceEvidenceObjectiveLineTerms(objective string) []string {
 	lower := strings.ToLower(strings.TrimSpace(objective))
 	terms := readOnlySearchHitObjectiveTerms(objective)

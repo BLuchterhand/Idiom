@@ -7152,6 +7152,7 @@ func (r *Runner) deterministicPlanExecuteSourceSatisfiedEvidenceRead(reply strin
 
 	candidateSet := normalizedRequiredEditPathSet(candidateRecoveryScopePaths(r.RuntimeBrief, results, 16))
 	requiredSet := normalizedRequiredEditPathSet(r.requiredEditCoveragePaths())
+	projection := newToolResultEvidenceProjection(results)
 
 	for _, path := range evidencePaths {
 		normalized := NormalizeRunnerPath(path)
@@ -7169,7 +7170,7 @@ func (r *Runner) deterministicPlanExecuteSourceSatisfiedEvidenceRead(reply strin
 			}
 		}
 
-		if planThenExecuteRequiredSourceEvidenceForPath(r.RuntimeBrief, results, normalized).Level == planThenExecuteEvidenceAnchorReady {
+		if projection.SourceEvidenceForPath(normalized).Level == planThenExecuteEvidenceAnchorReady {
 			continue
 		}
 
