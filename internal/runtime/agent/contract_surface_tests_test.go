@@ -14015,7 +14015,7 @@ func TestPlanThenExecuteRejectedPlanSourceRefreshAllowedForInvalidAnchor(t *test
 func TestPlanThenExecuteRejectedPlanSourceRefreshAllowedForPreflightSyntaxValidation(t *testing.T) {
 	required := []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"}
 	results := []workspace.ToolResult{
-		readFileSourceBodyResult("cmd/idiom/product_workflow.go", 80, 125, 0, "80:type productValidateArtifactOutput struct {}\n100:func runProductValidateArtifact() {}\n"),
+		readFileSourceBodyResult("cmd/idiom/product_workflow.go", 80, 125, 0, "100:func runProductValidateArtifact() {}\n"),
 		readFileSourceBodyResult("cmd/idiom/product_workflow_test.go", 1, 80, 0, "1:package main\n"),
 		{
 			Tool:    "submit_plan",

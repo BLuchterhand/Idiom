@@ -264,6 +264,22 @@ func productStatusNextActionsForAudit(auditStatus ProductWorkflowStatus, actions
 	return next
 }
 
+func ProductStatusDisplayNextValidActions(view ProductStatusView, workflowStateErr bool) []string {
+	if workflowStateErr {
+		if len(view.NextValidActions) > 0 {
+			return view.NextValidActions
+		}
+		return []string{"restore a valid workflow_state.json, then rerun `idiom product status --effort-root <path>`"}
+	}
+	if view.AuditStatus != ProductWorkflowStatusPass {
+		return productStatusNextActionsForAudit(view.AuditStatus, view.NextValidActions)
+	}
+	if len(view.NextValidActions) > 0 {
+		return view.NextValidActions
+	}
+	return []string{"run `idiom product audit --effort-root <path>` for detailed section findings"}
+}
+
 func classifyProductWorkflowProjection(statusBucket string, currentState string, auditStatus ProductWorkflowStatus, freshnessState string, openObligations []string, blockers []StatusBlocker, nextActions []string) (workflowstate.StateID, workflowstate.TerminalState, bool) {
 	statusBucket = strings.TrimSpace(statusBucket)
 	currentState = strings.TrimSpace(currentState)

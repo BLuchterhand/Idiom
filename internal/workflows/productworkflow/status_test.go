@@ -112,6 +112,58 @@ func TestLoadProductStatusInvalidWorkflowStateJSON(t *testing.T) {
 	}
 }
 
+func TestProductStatusDisplayNextValidActions(t *testing.T) {
+	tests := []struct {
+		name             string
+		view             ProductStatusView
+		workflowStateErr bool
+		want             []string
+	}{
+		{
+			name:             "workflow state load error uses existing recovery action",
+			view:             ProductStatusView{NextValidActions: []string{"fix workflow_state.json content and rerun product status"}},
+			workflowStateErr: true,
+			want:             []string{"fix workflow_state.json content and rerun product status"},
+		},
+		{
+			name:             "workflow state load error supplies recovery fallback",
+			view:             ProductStatusView{},
+			workflowStateErr: true,
+			want:             []string{"restore a valid workflow_state.json, then rerun `idiom product status --effort-root <path>`"},
+		},
+		{
+			name: "audit failure prepends remediation",
+			view: ProductStatusView{
+				AuditStatus:      ProductWorkflowStatusFail,
+				NextValidActions: []string{"submit_for_verification"},
+			},
+			want: []string{ProductStatusAuditRemediationAction, "submit_for_verification"},
+		},
+		{
+			name: "pass keeps workflow actions",
+			view: ProductStatusView{
+				AuditStatus:      ProductWorkflowStatusPass,
+				NextValidActions: []string{"complete"},
+			},
+			want: []string{"complete"},
+		},
+		{
+			name: "pass supplies audit fallback",
+			view: ProductStatusView{AuditStatus: ProductWorkflowStatusPass},
+			want: []string{"run `idiom product audit --effort-root <path>` for detailed section findings"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ProductStatusDisplayNextValidActions(tt.view, tt.workflowStateErr)
+			if !sameStatusTestStrings(got, tt.want) {
+				t.Fatalf("expected %#v, got %#v", tt.want, got)
+			}
+		})
+	}
+}
+
 func containsStatusSubstring(view ProductStatusView, value string) bool {
 	for _, blocker := range view.Blockers {
 		if strings.Contains(blocker.Message, value) {
@@ -132,6 +184,18 @@ func containsStatusSubstring(view ProductStatusView, value string) bool {
 	}
 
 	return false
+}
+
+func sameStatusTestStrings(left []string, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestLoadProductStatusSemanticInvalidWorkflowState(t *testing.T) {

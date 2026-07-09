@@ -5985,7 +5985,7 @@ created_at: 2026-05-17T00:00:00Z
 		t.Fatalf("expected code 1 for parser-invalid PRD, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 
-	var out productValidateArtifactOutput
+	var out productworkflow.ProductArtifactValidationResult
 
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
@@ -6014,7 +6014,7 @@ func TestProductValidateArtifactFailsClosedForUnknownPRDTDDObligation(t *testing
 		t.Fatalf("expected code 1 for traceability-invalid PRD, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 
-	var out productValidateArtifactOutput
+	var out productworkflow.ProductArtifactValidationResult
 
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
@@ -6240,7 +6240,7 @@ func TestProductValidateArtifactFailsClosedForInvalidGeneratedADR(t *testing.T) 
 		t.Fatalf("expected code 1 for parser-invalid ADR, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 
-	var out productValidateArtifactOutput
+	var out productworkflow.ProductArtifactValidationResult
 
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
@@ -6271,7 +6271,7 @@ func TestProductValidateArtifactFailsClosedForUnknownADRTDDObligation(t *testing
 		t.Fatalf("expected code 1 for traceability-invalid ADR, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 
-	var out productValidateArtifactOutput
+	var out productworkflow.ProductArtifactValidationResult
 
 	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())

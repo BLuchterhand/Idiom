@@ -544,6 +544,10 @@ func LintEffortFolder(root string) LintSummaryResult {
 		}
 	}
 
+	result.NextValidAction = "fix findings, then rerun `idiom product lint --effort-root <path>`"
+	if result.Status == ProductWorkflowStatusPass {
+		result.NextValidAction = "run `idiom product audit --effort-root <path>` for section-level checks"
+	}
 	return result
 }
 

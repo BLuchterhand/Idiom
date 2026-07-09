@@ -96,14 +96,6 @@ func printProductUsage(w io.Writer) {
 	fmt.Fprintln(w, "Exit codes: 0 pass, 1 lint findings, 2 usage error.")
 }
 
-type productValidateArtifactOutput struct {
-	Status          productworkflow.ProductWorkflowStatus `json:"status"`
-	Kind            string                                `json:"kind"`
-	Path            string                                `json:"path"`
-	Error           string                                `json:"error,omitempty"`
-	NextValidAction string                                `json:"next_valid_action"`
-}
-
 func runProductValidateArtifact(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	fs := flag.NewFlagSet("idiom product validate-artifact", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -143,80 +135,12 @@ func runProductValidateArtifact(args []string, stdout io.Writer, stderr io.Write
 		return 2
 	}
 
-	cleanPath := filepath.Clean(path)
-	data, err := os.ReadFile(cleanPath)
-	out := productValidateArtifactOutput{
-		Status:          productworkflow.ProductWorkflowStatusPass,
-		Kind:            kind,
-		Path:            cleanPath,
-		NextValidAction: "artifact is parser-valid for product workflow intake",
-	}
-
-	if err != nil {
-		out.Status = productworkflow.ProductWorkflowStatusFail
-		out.Error = fmt.Sprintf("read artifact: %v", err)
-		out.NextValidAction = "regenerate or repair the artifact before continuing"
-	} else {
-		switch kind {
-		case "prd":
-			var prd productworkflow.PRDDocument
-
-			prd, err = productworkflow.ParsePRDMarkdown(data)
-
-			if err == nil && strings.TrimSpace(tddLedgerPath) != "" {
-				var tdd productworkflow.TDDLedger
-
-				tdd, err = parseProductValidatorTDDLedger(tddLedgerPath)
-				if err == nil {
-					tddIDs := productworkflow.BuildKnownTDDObligationIDs(tdd, nil)
-					if linkErrs := productworkflow.ValidatePRDTDDObligationCrossLinks(prd.Requirements, tddIDs); len(linkErrs) > 0 {
-						err = errors.New(linkErrs[0].Message)
-					}
-				}
-			}
-		case "adr":
-			var adr productworkflow.ADRDocument
-
-			adr, err = productworkflow.ParseADRMarkdown(data)
-
-			if err == nil && (strings.TrimSpace(prdPath) != "" || strings.TrimSpace(tddLedgerPath) != "") {
-				var prdIDs map[string]bool
-
-				if strings.TrimSpace(prdPath) != "" {
-					var prd productworkflow.PRDDocument
-
-					prd, err = parseProductValidatorPRD(prdPath)
-					if err == nil {
-						prdIDs = productworkflow.PRDRequirementIDSet(prd.Requirements)
-					}
-				}
-
-				var tddIDs map[string]bool
-
-				if err == nil && strings.TrimSpace(tddLedgerPath) != "" {
-					var tdd productworkflow.TDDLedger
-
-					tdd, err = parseProductValidatorTDDLedger(tddLedgerPath)
-					if err == nil {
-						tddIDs = productworkflow.BuildKnownTDDObligationIDs(tdd, nil)
-					}
-				}
-
-				if err == nil {
-					linkErrs := productworkflow.ValidateADRCrossLinks([]productworkflow.ParsedADR{{RelPath: cleanPath, Doc: adr}}, prdIDs, nil, tddIDs)
-					if len(linkErrs) > 0 {
-						err = errors.New(linkErrs[0].Message)
-					}
-				}
-			}
-		}
-
-		if err != nil {
-			out.Status = productworkflow.ProductWorkflowStatusFail
-			out.Error = err.Error()
-			out.NextValidAction = "regenerate or repair the artifact before continuing"
-		}
-	}
+	out := productworkflow.ValidateProductArtifact(productworkflow.ProductArtifactValidationOptions{
+		Kind:          kind,
+		Path:          path,
+		PRDPath:       prdPath,
+		TDDLedgerPath: tddLedgerPath,
+	})
 
 	telemetry.LogPhase(rec, "product_validate_artifact", map[string]any{
 		"status": out.Status,
@@ -246,24 +170,6 @@ func runProductValidateArtifact(args []string, stdout io.Writer, stderr io.Write
 	}
 
 	return 0
-}
-
-func parseProductValidatorPRD(path string) (productworkflow.PRDDocument, error) {
-	data, err := os.ReadFile(filepath.Clean(path))
-	if err != nil {
-		return productworkflow.PRDDocument{}, fmt.Errorf("read PRD cross-link input: %w", err)
-	}
-
-	return productworkflow.ParsePRDMarkdown(data)
-}
-
-func parseProductValidatorTDDLedger(path string) (productworkflow.TDDLedger, error) {
-	data, err := os.ReadFile(filepath.Clean(path))
-	if err != nil {
-		return productworkflow.TDDLedger{}, fmt.Errorf("read TDD cross-link input: %w", err)
-	}
-
-	return productworkflow.ParseTDDLedgerJSON(data)
 }
 
 func runProductLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
@@ -300,8 +206,6 @@ func runProductLint(args []string, stdout io.Writer, stderr io.Writer, rec *tele
 	}
 
 	result := productworkflow.LintEffortFolder(absRoot)
-
-	result.NextValidAction = productLintNextValidAction(result.Status)
 	telemetry.LogPhase(rec, "product_lint", map[string]any{
 		"status":        result.Status,
 		"finding_count": len(result.Findings),
@@ -909,7 +813,7 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		exitCode = 1
 	}
 
-	displayNextActions := productStatusNextValidActions(view, exitCode, wsErr != nil)
+	displayNextActions := productworkflow.ProductStatusDisplayNextValidActions(view, wsErr != nil)
 	operatorStatus := productworkflow.BuildProductOperatorStatusView(view, workflowState)
 
 	telemetry.LogPhase(rec, "product_status", map[string]any{
@@ -1235,48 +1139,6 @@ func printProductOperatorStatus(stdout io.Writer, effortName string, view produc
 
 func printProductRecoveryStatus(stdout io.Writer, recoveryStatus *productworkflow.ProductRecoveryStatus) {
 	fmt.Fprint(stdout, productworkflow.FormatProductRecoveryStatusText(recoveryStatus))
-}
-
-func productLintNextValidAction(status productworkflow.ProductWorkflowStatus) string {
-	if status == productworkflow.ProductWorkflowStatusPass {
-		return "run `idiom product audit --effort-root <path>` for section-level checks"
-	}
-
-	return "fix findings, then rerun `idiom product lint --effort-root <path>`"
-}
-
-func productStatusNextValidActions(view productworkflow.ProductStatusView, exitCode int, workflowStateErr bool) []string {
-	if workflowStateErr {
-		if len(view.NextValidActions) > 0 {
-			return view.NextValidActions
-		}
-
-		return []string{"restore a valid workflow_state.json, then rerun `idiom product status --effort-root <path>`"}
-	}
-
-	if exitCode != 0 {
-		action := productworkflow.ProductStatusAuditRemediationAction
-		if len(view.NextValidActions) == 0 {
-			return []string{action}
-		}
-
-		if view.NextValidActions[0] == action {
-			return view.NextValidActions
-		}
-
-		next := make([]string, 0, len(view.NextValidActions)+1)
-
-		next = append(next, action)
-		next = append(next, view.NextValidActions...)
-
-		return next
-	}
-
-	if len(view.NextValidActions) > 0 {
-		return view.NextValidActions
-	}
-
-	return []string{"run `idiom product audit --effort-root <path>` for detailed section findings"}
 }
 
 func runProductResearch(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
