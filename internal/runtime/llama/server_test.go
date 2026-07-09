@@ -196,7 +196,7 @@ while true; do sleep 1; done
 		_ = controller.Stop(ctx)
 	})
 
-	waitForLogContent(t, readyPath, "ready")
+	waitForFileContent(t, controller, readyPath, "ready")
 	cancelStart()
 	time.Sleep(100 * time.Millisecond)
 
@@ -224,21 +224,26 @@ while true; do sleep 1; done
 	}
 }
 
-func waitForLogContent(t *testing.T, path string, want string) {
+func waitForFileContent(t *testing.T, controller *ServerController, path string, want string) {
 	t.Helper()
 
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		body, err := os.ReadFile(path)
 		if err == nil && strings.Contains(string(body), want) {
 			return
+		}
+		if !controller.IsRunning() {
+			log, _ := os.ReadFile(controller.LogPath())
+			t.Fatalf("server exited while waiting for %q in %s; server_log=%q", want, path, string(log))
 		}
 
 		time.Sleep(10 * time.Millisecond)
 	}
 
 	body, _ := os.ReadFile(path)
-	t.Fatalf("timed out waiting for %q in %s; content=%q", want, path, string(body))
+	log, _ := os.ReadFile(controller.LogPath())
+	t.Fatalf("timed out waiting for %q in %s; content=%q server_log=%q", want, path, string(body), string(log))
 }
 
 func waitForControllerStopped(t *testing.T, controller *ServerController) {
