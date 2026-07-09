@@ -252,14 +252,14 @@ func TestToolSchemaEnumsDeriveFromCapabilityRegistries(t *testing.T) {
 }
 
 func TestLanguageToolCatalogDrivesSchemaManifestAndMetadata(t *testing.T) {
-	catalog := languageToolCatalog()
+	catalog := languagetools.ToolCatalog()
 	if len(catalog) == 0 {
 		t.Fatal("language tool catalog should not be empty")
 	}
 
 	names := make([]string, 0, len(catalog))
-	for _, entry := range catalog {
-		names = append(names, entry.Tool)
+	for _, spec := range catalog {
+		names = append(names, spec.Tool)
 	}
 	if len(names) != len(catalog) {
 		t.Fatalf("catalog names = %d, entries = %d", len(names), len(catalog))
@@ -286,65 +286,65 @@ func TestLanguageToolCatalogDrivesSchemaManifestAndMetadata(t *testing.T) {
 		manifestByTool[entry.Tool] = entry
 	}
 
-	for _, entry := range catalog {
-		def, ok := defByTool[entry.Tool]
+	for _, spec := range catalog {
+		def, ok := defByTool[spec.Tool]
 		if !ok {
-			t.Fatalf("catalog tool %s missing schema definition", entry.Tool)
+			t.Fatalf("catalog tool %s missing schema definition", spec.Tool)
 		}
 
-		if def.Description != entry.Description || def.ParametersJSON != entry.ParametersJSON {
-			t.Fatalf("%s schema drifted from catalog:\ndef  %#v\nentry %#v", entry.Tool, def, entry)
+		if def.Description != spec.Description || def.ParametersJSON != spec.ParametersJSON {
+			t.Fatalf("%s schema drifted from catalog:\ndef  %#v\nspec %#v", spec.Tool, def, spec)
 		}
 
 		if !json.Valid([]byte(def.ParametersJSON)) {
-			t.Fatalf("%s catalog schema is invalid JSON: %s", entry.Tool, def.ParametersJSON)
+			t.Fatalf("%s catalog schema is invalid JSON: %s", spec.Tool, def.ParametersJSON)
 		}
 
-		manifestEntry, ok := manifestByTool[entry.Tool]
+		manifestEntry, ok := manifestByTool[spec.Tool]
 		if !ok {
-			t.Fatalf("catalog tool %s missing manifest entry", entry.Tool)
+			t.Fatalf("catalog tool %s missing manifest entry", spec.Tool)
 		}
 
-		if manifestEntry.Purpose != entry.ManifestPurpose {
-			t.Fatalf("%s manifest purpose = %q, want %q", entry.Tool, manifestEntry.Purpose, entry.ManifestPurpose)
+		if manifestEntry.Purpose != spec.ManifestPurpose {
+			t.Fatalf("%s manifest purpose = %q, want %q", spec.Tool, manifestEntry.Purpose, spec.ManifestPurpose)
 		}
 
-		if !slices.Equal(manifestEntry.EvidenceCapabilities, entry.EvidenceCapabilities) {
-			t.Fatalf("%s evidence metadata = %#v, want %#v", entry.Tool, manifestEntry.EvidenceCapabilities, entry.EvidenceCapabilities)
+		if !slices.Equal(manifestEntry.EvidenceCapabilities, spec.EvidenceCapabilities) {
+			t.Fatalf("%s evidence metadata = %#v, want %#v", spec.Tool, manifestEntry.EvidenceCapabilities, spec.EvidenceCapabilities)
 		}
 
 		wantClassification := CapabilityClassCompatibilityAdapter
-		if entry.Capability == semanticlanguage.CapDiagnostics {
+		if spec.Capability == semanticlanguage.CapDiagnostics {
 			wantClassification = CapabilityClassDeferred
 		}
 
 		if manifestEntry.CapabilityClassification != wantClassification {
-			t.Fatalf("%s classification = %q, want %q", entry.Tool, manifestEntry.CapabilityClassification, wantClassification)
+			t.Fatalf("%s classification = %q, want %q", spec.Tool, manifestEntry.CapabilityClassification, wantClassification)
 		}
 
-		if !IsLanguageToolName(entry.Tool) {
-			t.Fatalf("%s should be accepted as a catalog language tool", entry.Tool)
+		if !languagetools.IsToolName(spec.Tool) {
+			t.Fatalf("%s should be accepted as a catalog language tool", spec.Tool)
 		}
 	}
 }
 
 func TestExtractBodyIsRegistryBackedLanguageCapability(t *testing.T) {
 	for _, tool := range []string{"go_extract_body", "cpp_extract_body"} {
-		entry, ok := languageToolCatalogEntryForTool(tool)
+		spec, ok := languagetools.ToolSpecForTool(tool)
 		if !ok {
 			t.Fatalf("%s missing from language tool catalog", tool)
 		}
 
-		if entry.Supplemental {
-			t.Fatalf("%s should be registry-backed, not supplemental: %#v", tool, entry)
+		if spec.Supplemental {
+			t.Fatalf("%s should be registry-backed, not supplemental: %#v", tool, spec)
 		}
 
-		if entry.Capability != semanticlanguage.CapExtractBody {
-			t.Fatalf("%s capability = %q, want %q", tool, entry.Capability, semanticlanguage.CapExtractBody)
+		if spec.Capability != semanticlanguage.CapExtractBody {
+			t.Fatalf("%s capability = %q, want %q", tool, spec.Capability, semanticlanguage.CapExtractBody)
 		}
 
-		if !slices.Contains(entry.EvidenceCapabilities, "inspect_symbol") {
-			t.Fatalf("%s evidence capabilities = %#v", tool, entry.EvidenceCapabilities)
+		if !slices.Contains(spec.EvidenceCapabilities, "inspect_symbol") {
+			t.Fatalf("%s evidence capabilities = %#v", tool, spec.EvidenceCapabilities)
 		}
 	}
 }
@@ -442,9 +442,9 @@ func TestToolSchemaPolicyUsesToolSurfaceMetadata(t *testing.T) {
 
 func TestToolSchemaPolicyKeepsRegistryDiagnosticsDeferred(t *testing.T) {
 	var diagnosticTools []string
-	for _, entry := range languageToolCatalog() {
-		if entry.Capability == semanticlanguage.CapDiagnostics {
-			diagnosticTools = append(diagnosticTools, entry.Tool)
+	for _, spec := range languagetools.ToolCatalog() {
+		if spec.Capability == semanticlanguage.CapDiagnostics {
+			diagnosticTools = append(diagnosticTools, spec.Tool)
 		}
 	}
 	if len(diagnosticTools) == 0 {

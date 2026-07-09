@@ -8,6 +8,7 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/toolfacts"
 	semanticlanguage "idiom/internal/repository/semantic/language"
+	"idiom/internal/repository/semantic/languagetools"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -29,7 +30,7 @@ func successfulSearchDiscoveryResult(req workspace.ToolRequest, result workspace
 	}
 
 	tool := strings.TrimSpace(req.Tool)
-	if workspace.IsSearchToolName(tool) || workspace.LanguageToolHasAnyCapability(tool, semanticlanguage.CapWorkspaceSymbol) {
+	if workspace.IsSearchToolName(tool) || languagetools.ToolHasAnyCapability(tool, semanticlanguage.CapWorkspaceSymbol) {
 		return true
 	}
 
@@ -85,7 +86,7 @@ func discoveryConsumptionResultStrengthFromLegacySemantics(req workspace.ToolReq
 
 		return discoveryConsumptionSourceOwner
 	case tool == workspace.ToolNameSearchFiles ||
-		workspace.LanguageToolHasAnyCapability(tool, semanticlanguage.CapWorkspaceSymbol) ||
+		languagetools.ToolHasAnyCapability(tool, semanticlanguage.CapWorkspaceSymbol) ||
 		tool == workspace.ToolNameStructuralSearch ||
 		tool == workspace.ToolNameDiscoveryQuery ||
 		tool == workspace.ToolNameContextZoom ||

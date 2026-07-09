@@ -463,7 +463,7 @@ func CapabilityClassificationForTool(tool string) string {
 		return ""
 	case IsWorkspaceWriteTool(tool):
 		return CapabilityClassWriteSideEffect
-	case LanguageToolHasCapability(tool, semanticlanguage.CapDiagnostics):
+	case languagetools.ToolHasAnyCapability(tool, semanticlanguage.CapDiagnostics):
 		return CapabilityClassDeferred
 	}
 

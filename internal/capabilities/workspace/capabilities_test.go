@@ -1247,15 +1247,17 @@ func TestToolCapabilityMetadataUsesOneStaticSource(t *testing.T) {
 		}
 	}
 
-	for _, specs := range supplementalLanguageToolSpecs {
-		for _, spec := range specs {
-			if got := EvidenceCapabilitiesForTool(spec.Tool); !slices.Equal(got, spec.EvidenceCapabilities) {
-				t.Fatalf("supplemental language tool %s capabilities = %#v, want %#v", spec.Tool, got, spec.EvidenceCapabilities)
-			}
+	for _, spec := range languagetools.ToolCatalog() {
+		if !spec.Supplemental {
+			continue
+		}
 
-			if got := CapabilityClassificationForTool(spec.Tool); got == "" {
-				t.Fatalf("supplemental language tool %s should expose capability classification", spec.Tool)
-			}
+		if got := EvidenceCapabilitiesForTool(spec.Tool); !slices.Equal(got, spec.EvidenceCapabilities) {
+			t.Fatalf("supplemental language tool %s capabilities = %#v, want %#v", spec.Tool, got, spec.EvidenceCapabilities)
+		}
+
+		if got := CapabilityClassificationForTool(spec.Tool); got == "" {
+			t.Fatalf("supplemental language tool %s should expose capability classification", spec.Tool)
 		}
 	}
 }

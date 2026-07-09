@@ -28,6 +28,7 @@ import (
 	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/textutil"
 	semanticlanguage "idiom/internal/repository/semantic/language"
+	"idiom/internal/repository/semantic/languagetools"
 	"idiom/internal/runtime/instructions"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
@@ -8876,7 +8877,7 @@ func runnerAutonomyPrimaryCapability(brief workerruntime.WorkerRuntimeBrief, too
 
 func runnerAutonomyPolicyPaths(req workspace.ToolRequest) []string {
 	tool := strings.TrimSpace(req.Tool)
-	if workspace.IsRuntimeInspectionRequest(req) || workspace.IsLanguageToolName(tool) ||
+	if workspace.IsRuntimeInspectionRequest(req) || languagetools.IsToolName(tool) ||
 		tool == workspace.ToolNameGitDiff || tool == workspace.ToolNameGitStatus {
 
 		for _, path := range []string{req.Path, req.Workdir} {
@@ -8920,7 +8921,7 @@ func runnerAutonomyFallbackSideEffectForRequest(req workspace.ToolRequest) auton
 		return autonomy.SideEffectAdditive
 	}
 
-	if workspace.IsRuntimeInspectionRequest(req) || workspace.IsLanguageToolName(tool) ||
+	if workspace.IsRuntimeInspectionRequest(req) || languagetools.IsToolName(tool) ||
 		tool == workspace.ToolNameGitDiff || tool == workspace.ToolNameGitStatus {
 
 		return autonomy.SideEffectReadOnly
@@ -12640,7 +12641,7 @@ func isResultUsefulForFallback(result workspace.ToolResult) bool {
 	case "task", "discovery_query", "read_file", "search_content", "search_files":
 		return true
 	default:
-		return workspace.LanguageToolHasAnyCapability(result.Tool, semanticlanguage.CapReadSymbol, semanticlanguage.CapFileOutline)
+		return languagetools.ToolHasAnyCapability(result.Tool, semanticlanguage.CapReadSymbol, semanticlanguage.CapFileOutline)
 	}
 }
 
@@ -13397,13 +13398,13 @@ func delegatedDiscoveryConsumableLayerScore(name string) int {
 	switch {
 	case name == "text_anchor_search":
 		return 80
-	case workspace.LanguageToolHasAnyCapability(name, semanticlanguage.CapReadSymbol):
+	case languagetools.ToolHasAnyCapability(name, semanticlanguage.CapReadSymbol):
 		return 75
-	case workspace.LanguageToolHasAnyCapability(name, semanticlanguage.CapReferences):
+	case languagetools.ToolHasAnyCapability(name, semanticlanguage.CapReferences):
 		return 65
-	case workspace.LanguageToolHasAnyCapability(name, semanticlanguage.CapDefinition):
+	case languagetools.ToolHasAnyCapability(name, semanticlanguage.CapDefinition):
 		return 60
-	case workspace.LanguageToolHasAnyCapability(name, semanticlanguage.CapWorkspaceSymbol):
+	case languagetools.ToolHasAnyCapability(name, semanticlanguage.CapWorkspaceSymbol):
 		return 45
 	}
 
@@ -15567,7 +15568,7 @@ func readOnlyAnalysisExactProbeCount(results []workspace.ToolResult) int {
 				count++
 			}
 		default:
-			if !workspace.LanguageToolHasAnyCapability(
+			if !languagetools.ToolHasAnyCapability(
 				result.Tool,
 				semanticlanguage.CapReadSymbol,
 				semanticlanguage.CapExtractBody,

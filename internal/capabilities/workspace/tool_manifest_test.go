@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	semanticlanguage "idiom/internal/repository/semantic/language"
+	"idiom/internal/repository/semantic/languagetools"
 )
 
 func TestBuildToolManifestSuppressesPlaceholderRequests(t *testing.T) {
@@ -115,11 +116,13 @@ func TestToolManifestToolsDerivesLanguageMembershipFromRegistry(t *testing.T) {
 		}
 	}
 
-	for _, specs := range supplementalLanguageToolSpecs {
-		for _, spec := range specs {
-			if seen[spec.Tool] != 1 {
-				t.Fatalf("supplemental language tool %s manifest count = %d, want 1", spec.Tool, seen[spec.Tool])
-			}
+	for _, spec := range languagetools.ToolCatalog() {
+		if !spec.Supplemental {
+			continue
+		}
+
+		if seen[spec.Tool] != 1 {
+			t.Fatalf("supplemental language tool %s manifest count = %d, want 1", spec.Tool, seen[spec.Tool])
 		}
 	}
 }
@@ -160,8 +163,8 @@ func TestToolManifestToolsPreservesLanguageToolOrder(t *testing.T) {
 			name: "python",
 			opts: ToolManifestToolOptions{IncludePython: true},
 			want: []string{
-				"python_overview", "python_entrypoints", "python_find_symbol", "python_read_symbol", "python_related_files", "python_references",
-				"python_definition", "python_implementations", "python_calls_from", "python_calls_into", "python_workspace_symbol", "python_diagnostics", "python_file_outline",
+				"python_overview", "python_entrypoints", "python_find_symbol", "python_read_symbol", "python_related_files", "python_definition",
+				"python_implementations", "python_references", "python_calls_from", "python_calls_into", "python_workspace_symbol", "python_diagnostics", "python_file_outline",
 			},
 		},
 		{
@@ -176,8 +179,8 @@ func TestToolManifestToolsPreservesLanguageToolOrder(t *testing.T) {
 			name: "java",
 			opts: ToolManifestToolOptions{IncludeJava: true},
 			want: []string{
-				"java_overview", "java_entrypoints", "java_find_symbol", "java_read_symbol", "java_related_files", "java_workspace_symbol",
-				"java_definition", "java_references", "java_implementations", "java_calls_from", "java_calls_into", "java_diagnostics", "java_file_outline",
+				"java_overview", "java_entrypoints", "java_find_symbol", "java_read_symbol", "java_related_files", "java_definition",
+				"java_implementations", "java_references", "java_calls_from", "java_calls_into", "java_workspace_symbol", "java_diagnostics", "java_file_outline",
 			},
 		},
 	}

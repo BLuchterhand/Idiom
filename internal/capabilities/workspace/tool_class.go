@@ -6,6 +6,7 @@ import (
 
 	"idiom/internal/contracts/autonomy"
 	semanticlanguage "idiom/internal/repository/semantic/language"
+	"idiom/internal/repository/semantic/languagetools"
 )
 
 const legacyGrepToolName = "grep"
@@ -31,7 +32,7 @@ func ClassifyTool(name string) ToolCategory {
 		return ToolCategory(metadata.Category)
 	}
 
-	if IsLanguageToolName(name) {
+	if languagetools.IsToolName(name) {
 		return CategoryRead
 	}
 
@@ -95,7 +96,7 @@ func ToolActionClass(tool string) autonomy.ActionClass {
 		}
 	}
 
-	if IsLanguageToolName(tool) {
+	if languagetools.IsToolName(tool) {
 		return autonomy.ActionClassRead
 	}
 
@@ -168,7 +169,7 @@ func IsReadClassToolName(name string) bool {
 }
 
 func IsLanguageReadClassToolName(name string) bool {
-	return LanguageToolHasAnyCapability(name,
+	return languagetools.ToolHasAnyCapability(name,
 		semanticlanguage.CapReadSymbol,
 		semanticlanguage.CapFileOutline,
 		semanticlanguage.CapExtractBody,
@@ -240,7 +241,7 @@ func IsSourceBodyInspectionTool(name string) bool {
 		return true
 	}
 
-	return LanguageToolHasAnyCapability(name,
+	return languagetools.ToolHasAnyCapability(name,
 		semanticlanguage.CapReadSymbol,
 		semanticlanguage.CapFileOutline,
 		semanticlanguage.CapExtractBody,
@@ -248,7 +249,7 @@ func IsSourceBodyInspectionTool(name string) bool {
 }
 
 func IsLanguageSourceBodyTool(name string) bool {
-	return LanguageToolHasAnyCapability(name, semanticlanguage.CapReadSymbol, semanticlanguage.CapExtractBody)
+	return languagetools.ToolHasAnyCapability(name, semanticlanguage.CapReadSymbol, semanticlanguage.CapExtractBody)
 }
 
 // TaskLedgerReadEvidenceTool reports whether a successful tool result can
@@ -259,7 +260,7 @@ func TaskLedgerReadEvidenceTool(name string) bool {
 		return true
 	}
 
-	return LanguageToolHasAnyCapability(name, semanticlanguage.CapReadSymbol, semanticlanguage.CapExtractBody, semanticlanguage.CapFileOutline)
+	return languagetools.ToolHasAnyCapability(name, semanticlanguage.CapReadSymbol, semanticlanguage.CapExtractBody, semanticlanguage.CapFileOutline)
 }
 
 // ToolRequestPathAttachesInstructions reports whether a request's Path should
@@ -270,7 +271,7 @@ func ToolRequestPathAttachesInstructions(tool string) bool {
 		return true
 	}
 
-	return LanguageToolHasAnyCapability(tool,
+	return languagetools.ToolHasAnyCapability(tool,
 		semanticlanguage.CapReadSymbol,
 		semanticlanguage.CapFileOutline,
 		semanticlanguage.CapExtractBody,
@@ -284,9 +285,9 @@ func ToolRequestPathAttachesInstructions(tool string) bool {
 func BroadDiscoveryToolNames() []string {
 	tools := builtInToolSurfaceToolsByFacet(toolSurfaceFacetBroadDiscovery)
 
-	for _, entry := range languageToolCatalog() {
-		if entry.Capability == semanticlanguage.CapOverview || entry.Capability == semanticlanguage.CapEntrypoints {
-			tools = append(tools, entry.Tool)
+	for _, spec := range languagetools.ToolCatalog() {
+		if spec.Capability == semanticlanguage.CapOverview || spec.Capability == semanticlanguage.CapEntrypoints {
+			tools = append(tools, spec.Tool)
 		}
 	}
 
@@ -367,7 +368,7 @@ func IsRuntimeInspectionRequest(req ToolRequest) bool {
 
 	metadata, ok := builtInToolSurfaceCatalog.lookup(tool)
 	if !ok {
-		return IsLanguageToolName(tool)
+		return languagetools.IsToolName(tool)
 	}
 
 	actionClass := ToolActionClass(tool)

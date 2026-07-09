@@ -8,6 +8,7 @@ import (
 
 	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/commandexec"
+	"idiom/internal/repository/semantic/languagetools"
 )
 
 func IsBroadInspectionRequest(req ToolRequest) bool {
@@ -33,7 +34,7 @@ func IsScopedInspectionRequest(req ToolRequest) bool {
 
 func isStructuredNarrowingTool(tool string) bool {
 	tool = strings.TrimSpace(tool)
-	if IsLanguageToolName(tool) {
+	if languagetools.IsToolName(tool) {
 		return true
 	}
 

@@ -5,6 +5,7 @@ import (
 
 	"idiom/internal/platform/textutil"
 	semanticlanguage "idiom/internal/repository/semantic/language"
+	"idiom/internal/repository/semantic/languagetools"
 )
 
 type ToolManifestEntry struct {
@@ -103,9 +104,9 @@ func appendLanguageManifestTools(tools []string, languageName string) []string {
 		return tools
 	}
 
-	for _, entry := range languageToolCatalog() {
-		if entry.Language == lang.Name {
-			tools = append(tools, entry.Tool)
+	for _, spec := range languagetools.ToolCatalog() {
+		if spec.Language == lang.Name {
+			tools = append(tools, spec.Tool)
 		}
 	}
 
@@ -270,7 +271,7 @@ func mergeLanguageToolManifestEntries(entries []ToolManifestEntry) []ToolManifes
 	inserted := false
 
 	for _, entry := range entries {
-		if IsLanguageToolName(entry.Tool) {
+		if languagetools.IsToolName(entry.Tool) {
 			if !inserted {
 				out = append(out, catalog...)
 				inserted = true

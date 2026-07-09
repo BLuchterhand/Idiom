@@ -6,6 +6,7 @@ import (
 
 	"idiom/internal/platform/textutil"
 	semanticlanguage "idiom/internal/repository/semantic/language"
+	"idiom/internal/repository/semantic/languagetools"
 )
 
 type ToolDiscoveryProfile struct {
@@ -196,7 +197,7 @@ func shellDiscoveryProfile(command string) ToolDiscoveryProfile {
 }
 
 func languageDiscoveryProfile(tool string) ToolDiscoveryProfile {
-	_, suffix, ok := LanguageToolParts(tool)
+	_, suffix, ok := languagetools.ToolParts(tool)
 	if !ok {
 		return ToolDiscoveryProfile{Class: "other"}
 	}

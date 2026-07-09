@@ -10,6 +10,7 @@ import (
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/failures"
 	"idiom/internal/platform/textutil"
+	"idiom/internal/repository/semantic/languagetools"
 )
 
 const ToolProfileDefault = "default"
@@ -196,5 +197,5 @@ func IsBuiltInToolName(tool string) bool {
 		return true
 	}
 
-	return IsLanguageToolName(tool)
+	return languagetools.IsToolName(tool)
 }

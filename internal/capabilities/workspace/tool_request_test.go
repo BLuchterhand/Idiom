@@ -10,6 +10,7 @@ import (
 
 	"idiom/internal/platform/config"
 	semanticlanguage "idiom/internal/repository/semantic/language"
+	"idiom/internal/repository/semantic/languagetools"
 )
 
 func TestParseToolRequestExtractsFirstJSONObjectFromToolFence(t *testing.T) {
@@ -1561,18 +1562,20 @@ func TestStructuredNarrowingUsesSharedRegistryPredicate(t *testing.T) {
 		}
 	}
 
-	for _, specs := range supplementalLanguageToolSpecs {
-		for _, spec := range specs {
-			tool := spec.Tool
-			req := ToolRequest{Tool: tool}
+	for _, spec := range languagetools.ToolCatalog() {
+		if !spec.Supplemental {
+			continue
+		}
 
-			if !IsNarrowingRequest(req) {
-				t.Fatalf("legacy language helper %s should be narrowing", tool)
-			}
+		tool := spec.Tool
+		req := ToolRequest{Tool: tool}
 
-			if !mgr.ShouldClearBroadInspectionLock(req, ToolResult{Tool: tool, Summary: "ok"}) {
-				t.Fatalf("legacy language helper %s should clear broad inspection lock", tool)
-			}
+		if !IsNarrowingRequest(req) {
+			t.Fatalf("supplemental language tool %s should be narrowing", tool)
+		}
+
+		if !mgr.ShouldClearBroadInspectionLock(req, ToolResult{Tool: tool, Summary: "ok"}) {
+			t.Fatalf("supplemental language tool %s should clear broad inspection lock", tool)
 		}
 	}
 

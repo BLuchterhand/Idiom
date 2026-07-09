@@ -20,6 +20,7 @@ import (
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/textutil"
 	semanticlanguage "idiom/internal/repository/semantic/language"
+	"idiom/internal/repository/semantic/languagetools"
 	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/backends"
 	"idiom/internal/runtime/instructions"
@@ -926,7 +927,7 @@ func toolRequestIntent(event agent.ToolRequestEvent) string {
 		return "apply the planned change in " + target
 	}
 
-	if workspace.LanguageToolHasCapability(tool, semanticlanguage.CapFileOutline) {
+	if languagetools.ToolHasAnyCapability(tool, semanticlanguage.CapFileOutline) {
 		if target == "" {
 			return "scan the file structure before reading details"
 		}
@@ -934,7 +935,7 @@ func toolRequestIntent(event agent.ToolRequestEvent) string {
 		return "scan " + target + " to find the right symbol or section"
 	}
 
-	if workspace.LanguageToolHasCapability(tool, semanticlanguage.CapReadSymbol) {
+	if languagetools.ToolHasAnyCapability(tool, semanticlanguage.CapReadSymbol) {
 		if target == "" {
 			return "read the exact declaration instead of a broad file slice"
 		}
@@ -1304,7 +1305,7 @@ func (m *Model) pinPathsFromToolResult(result workspace.ToolResult) {
 		tool == workspace.ToolNameEditFile ||
 		tool == workspace.ToolNameWriteFile ||
 		tool == workspace.ToolNameAppendFile ||
-		workspace.LanguageToolHasAnyCapability(tool, semanticlanguage.CapReadSymbol, semanticlanguage.CapExtractBody, semanticlanguage.CapFileOutline) {
+		languagetools.ToolHasAnyCapability(tool, semanticlanguage.CapReadSymbol, semanticlanguage.CapExtractBody, semanticlanguage.CapFileOutline) {
 
 		if path := extractPinnablePathFromSummary(result.Summary); path != "" {
 			registry.Pin(path)

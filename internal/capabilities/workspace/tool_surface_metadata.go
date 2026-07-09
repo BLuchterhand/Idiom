@@ -7,6 +7,7 @@ import (
 
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/platform/textutil"
+	"idiom/internal/repository/semantic/languagetools"
 )
 
 var (
@@ -267,7 +268,7 @@ func ToolPolicyCapabilities(tool string) []autonomy.Capability {
 		return []autonomy.Capability{autonomy.CapabilityLiteralSearch}
 	}
 
-	if IsLanguageToolName(tool) {
+	if languagetools.IsToolName(tool) {
 		return []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}
 	}
 

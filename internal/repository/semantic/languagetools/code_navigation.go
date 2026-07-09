@@ -21,34 +21,6 @@ const (
 	codeNavigationFileLimit         = 64
 )
 
-type codeNavigationSpec struct {
-	Name            string
-	Capability      language.Capability
-	RequiresPattern bool
-	RequiresPath    bool
-	Cost            string
-	Class           string
-}
-
-var codeNavigationSpecs = []codeNavigationSpecDefinition{
-	{Spec: codeNavigationSpec{Name: "file_outline", Capability: language.CapFileOutline, RequiresPath: true, Class: "language_symbol", Cost: "low"}, Aliases: []string{"file_outline", "outline"}},
-	{Spec: codeNavigationSpec{Name: "find_symbol", Capability: language.CapFindSymbol, RequiresPattern: true, Class: "language_symbol", Cost: "low"}, Aliases: []string{"find_symbol", "symbol", "symbol_lookup", "lookup"}},
-	{Spec: codeNavigationSpec{Name: "workspace_symbol", Capability: language.CapWorkspaceSymbol, RequiresPattern: true, Class: "language_symbol", Cost: "low"}, Aliases: []string{"workspace_symbol", "workspace_symbols", "find_symbol_workspace"}},
-	{Spec: codeNavigationSpec{Name: "read_symbol", Capability: language.CapReadSymbol, RequiresPattern: true, Class: "language_symbol", Cost: "low"}, Aliases: []string{"read_symbol", "inspect_symbol", "symbol_body"}},
-	{Spec: codeNavigationSpec{Name: "extract_body", Capability: language.CapExtractBody, RequiresPattern: true, Class: "language_symbol", Cost: "low"}, Aliases: []string{"extract_body", "full_body", "symbol_full_body"}},
-	{Spec: codeNavigationSpec{Name: "definition", Capability: language.CapDefinition, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"definition", "definitions", "declaration", "declarations", "find_definition", "find_definitions", "find_declaration", "find_declarations", "goto_definition", "go_to_definition"}},
-	{Spec: codeNavigationSpec{Name: "references", Capability: language.CapReferences, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"references", "reference", "usages", "find_references", "find_reference"}},
-	{Spec: codeNavigationSpec{Name: "calls_from", Capability: language.CapCallsFrom, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"calls_from", "callees"}},
-	{Spec: codeNavigationSpec{Name: "calls_into", Capability: language.CapCallsInto, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"calls_into", "callers"}},
-	{Spec: codeNavigationSpec{Name: "implementations", Capability: language.CapImplementations, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"implementations", "implementation", "impls"}},
-	{Spec: codeNavigationSpec{Name: "related_files", Capability: language.CapRelatedFiles, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"related_files", "related"}},
-}
-
-type codeNavigationSpecDefinition struct {
-	Spec    codeNavigationSpec
-	Aliases []string
-}
-
 func (m *Manager) codeNavigate(ctx context.Context, req ToolRequest) ToolResult {
 	if strings.TrimSpace(req.Capability) == "" {
 		if codeNavigateGraphResolutionOnly(req.Resolution) {
@@ -97,24 +69,24 @@ func (m *Manager) codeNavigate(ctx context.Context, req ToolRequest) ToolResult 
 	return m.genericCodeNavigationFallback(req, spec, reason)
 }
 
-func CodeNavigationSpecFor(value string) (codeNavigationSpec, error) {
+func CodeNavigationSpecFor(value string) (CodeNavigationSpec, error) {
 	key := normalizeCodeNavigationCapability(value)
 
 	for _, entry := range codeNavigationSpecs {
 		for _, alias := range entry.Aliases {
 			if normalizeCodeNavigationCapability(alias) == key {
-				return entry.Spec, nil
+				return entry, nil
 			}
 		}
 	}
 
-	return codeNavigationSpec{}, fmt.Errorf("capability is required; choose one of %s", CodeNavigationCapabilityList())
+	return CodeNavigationSpec{}, fmt.Errorf("capability is required; choose one of %s", CodeNavigationCapabilityList())
 }
 
 func CodeNavigationCapabilityNames() []string {
 	names := make([]string, 0, len(codeNavigationSpecs))
 	for _, entry := range codeNavigationSpecs {
-		names = append(names, entry.Spec.Name)
+		names = append(names, entry.Name)
 	}
 
 	return names
@@ -123,7 +95,7 @@ func CodeNavigationCapabilityNames() []string {
 func CodeNavigationCapabilities() []language.Capability {
 	capabilities := make([]language.Capability, 0, len(codeNavigationSpecs))
 	for _, entry := range codeNavigationSpecs {
-		capabilities = append(capabilities, entry.Spec.Capability)
+		capabilities = append(capabilities, entry.Capability)
 	}
 
 	return capabilities
@@ -204,7 +176,7 @@ func codeNavigationCanFallback(result ToolResult) bool {
 		strings.Contains(text, "not supported")
 }
 
-func codeNavigationWrapResult(spec codeNavigationSpec, language string, routedTool string, result ToolResult, fallbackReason string) ToolResult {
+func codeNavigationWrapResult(spec CodeNavigationSpec, language string, routedTool string, result ToolResult, fallbackReason string) ToolResult {
 	header := []string{
 		fmt.Sprintf("capability: %s", spec.Name),
 		fmt.Sprintf("language: %s", language),
@@ -244,7 +216,7 @@ func codeNavigationResultDetail(result ToolResult) string {
 	return textutil.FirstNonEmpty(result.Error, result.Summary, result.Output)
 }
 
-func (m *Manager) genericCodeNavigationFallback(req ToolRequest, spec codeNavigationSpec, reason string) ToolResult {
+func (m *Manager) genericCodeNavigationFallback(req ToolRequest, spec CodeNavigationSpec, reason string) ToolResult {
 	if spec.Name == "file_outline" {
 		return m.genericCodeNavigationOutline(req, spec, reason)
 	}
@@ -304,7 +276,7 @@ func (m *Manager) codeNavigationPathIsFile(path string, workdir string) bool {
 	return err == nil && !info.IsDir()
 }
 
-func (m *Manager) genericCodeNavigationOutline(req ToolRequest, spec codeNavigationSpec, reason string) ToolResult {
+func (m *Manager) genericCodeNavigationOutline(req ToolRequest, spec CodeNavigationSpec, reason string) ToolResult {
 	abs, err := m.resolvePath(req.Path, req.Workdir)
 	if err != nil {
 		return ToolResult{Tool: "code_navigate", Summary: "Code navigation generic fallback failed", Error: err.Error()}
@@ -351,7 +323,7 @@ func (m *Manager) genericCodeNavigationOutline(req ToolRequest, spec codeNavigat
 	return codeNavigationWrapResult(spec, "generic", "generic_source_text", result, reason)
 }
 
-func (m *Manager) genericCodeNavigationDirectoryOutline(abs string, spec codeNavigationSpec, reason string) ToolResult {
+func (m *Manager) genericCodeNavigationDirectoryOutline(abs string, spec CodeNavigationSpec, reason string) ToolResult {
 	entries, err := os.ReadDir(abs)
 	if err != nil {
 		return ToolResult{Tool: "code_navigate", Summary: "Code navigation generic fallback failed", Error: err.Error()}

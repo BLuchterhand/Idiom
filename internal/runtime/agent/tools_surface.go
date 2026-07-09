@@ -4450,7 +4450,7 @@ const narrowToolFamilyNudgeAt = 5
 
 func toolActionClass(req workspace.ToolRequest) string {
 	tool := strings.TrimSpace(req.Tool)
-	if workspace.IsLanguageToolName(tool) {
+	if languagetools.IsToolName(tool) {
 		target := textutil.FirstNonEmpty(strings.TrimSpace(req.Pattern), strings.TrimSpace(req.Path), strings.TrimSpace(req.ID))
 		return tool + ":" + normalizeActionToken(target)
 	}

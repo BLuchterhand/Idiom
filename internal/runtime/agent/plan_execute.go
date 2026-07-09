@@ -20,6 +20,7 @@ import (
 	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/textutil"
 	semanticlanguage "idiom/internal/repository/semantic/language"
+	"idiom/internal/repository/semantic/languagetools"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 )
@@ -382,7 +383,7 @@ func scopedImplementationSymbolOwnerLookupAllowed(req workspace.ToolRequest) boo
 		return scopedImplementationLookupTargetAllowed(req)
 	}
 
-	_, suffix, ok := workspace.LanguageToolParts(tool)
+	_, suffix, ok := languagetools.ToolParts(tool)
 	if !ok {
 		return false
 	}

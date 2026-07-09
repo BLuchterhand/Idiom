@@ -6,6 +6,7 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/textutil"
 	semanticlanguage "idiom/internal/repository/semantic/language"
+	"idiom/internal/repository/semantic/languagetools"
 )
 
 func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
@@ -464,9 +465,9 @@ func filterClosureGuidanceNext(values []string, scope string) []string {
 }
 
 func languageOutlineGuidanceTool(tool string) bool {
-	return workspace.LanguageToolHasAnyCapability(tool, semanticlanguage.CapFileOutline, semanticlanguage.CapOverview)
+	return languagetools.ToolHasAnyCapability(tool, semanticlanguage.CapFileOutline, semanticlanguage.CapOverview)
 }
 
 func languageBodyInspectionGuidanceTool(tool string) bool {
-	return workspace.LanguageToolHasAnyCapability(tool, semanticlanguage.CapReadSymbol, semanticlanguage.CapExtractBody)
+	return languagetools.ToolHasAnyCapability(tool, semanticlanguage.CapReadSymbol, semanticlanguage.CapExtractBody)
 }

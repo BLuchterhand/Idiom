@@ -243,7 +243,7 @@ const (
 )
 
 func annotateLanguagePrecisionTier(result ToolResult) ToolResult {
-	if strings.TrimSpace(result.PrecisionTier) != "" || !IsLanguageToolName(result.Tool) {
+	if strings.TrimSpace(result.PrecisionTier) != "" || !languagetools.IsToolName(result.Tool) {
 		return result
 	}
 

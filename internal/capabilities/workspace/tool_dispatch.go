@@ -9,6 +9,7 @@ import (
 
 	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/failures"
+	"idiom/internal/repository/semantic/languagetools"
 )
 
 type toolSurfaceHandlerID string
@@ -267,7 +268,7 @@ func (m *Manager) executeDispatch(ctx context.Context, req ToolRequest) (result 
 		return toolPermissionPolicyResult(tool, "Tool request rejected", reason)
 	}
 
-	if IsLanguageToolName(tool) {
+	if languagetools.IsToolName(tool) {
 		return m.executeLanguageTool(ctx, req)
 	}
 

@@ -6,6 +6,7 @@ import (
 
 	"idiom/internal/contracts/autonomy"
 	semanticlanguage "idiom/internal/repository/semantic/language"
+	"idiom/internal/repository/semantic/languagetools"
 )
 
 func TestClassifyToolUsesLanguageRegistryForReadTools(t *testing.T) {
@@ -23,12 +24,14 @@ func TestClassifyToolUsesLanguageRegistryForReadTools(t *testing.T) {
 }
 
 func TestClassifyToolKeepsLegacyLanguageHelpers(t *testing.T) {
-	for _, specs := range supplementalLanguageToolSpecs {
-		for _, spec := range specs {
-			tool := spec.Tool
-			if got := ClassifyTool(tool); got != CategoryRead {
-				t.Fatalf("legacy language helper %s category = %v, want %v", tool, got, CategoryRead)
-			}
+	for _, spec := range languagetools.ToolCatalog() {
+		if !spec.Supplemental {
+			continue
+		}
+
+		tool := spec.Tool
+		if got := ClassifyTool(tool); got != CategoryRead {
+			t.Fatalf("supplemental language tool %s category = %v, want %v", tool, got, CategoryRead)
 		}
 	}
 }
@@ -232,20 +235,6 @@ func TestRuntimeNarrowToolFamilyUsesLanguageCatalog(t *testing.T) {
 		if got := RuntimeNarrowToolFamily(tc.tool); got != tc.want {
 			t.Fatalf("RuntimeNarrowToolFamily(%q) = %q, want %q", tc.tool, got, tc.want)
 		}
-	}
-}
-
-func TestLanguageToolPartsUsesCatalog(t *testing.T) {
-	language, suffix, ok := LanguageToolParts("ts_file_outline")
-	if !ok {
-		t.Fatal("LanguageToolParts(ts_file_outline) did not find catalog entry")
-	}
-	if language != "typescript" || suffix != "file_outline" {
-		t.Fatalf("LanguageToolParts(ts_file_outline) = %q, %q; want typescript, file_outline", language, suffix)
-	}
-
-	if _, _, ok := LanguageToolParts("go_fake_tool"); ok {
-		t.Fatal("LanguageToolParts(go_fake_tool) found non-catalog tool")
 	}
 }
 

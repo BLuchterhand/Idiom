@@ -19,6 +19,7 @@ import (
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/textutil"
 	semanticlanguage "idiom/internal/repository/semantic/language"
+	"idiom/internal/repository/semantic/languagetools"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -1840,9 +1841,9 @@ func extractExactProbeAnchor(result workspace.ToolResult) (string, string) {
 	summary := strings.TrimSpace(result.Summary)
 	tool := strings.TrimSpace(result.Tool)
 	switch {
-	case workspace.LanguageToolHasAnyCapability(tool, semanticlanguage.CapReadSymbol):
+	case languagetools.ToolHasAnyCapability(tool, semanticlanguage.CapReadSymbol):
 		return extractReadExactProbeAnchor(summary)
-	case workspace.LanguageToolHasAnyCapability(tool, semanticlanguage.CapExtractBody):
+	case languagetools.ToolHasAnyCapability(tool, semanticlanguage.CapExtractBody):
 		if rest, ok := strings.CutPrefix(summary, "Extracted "); ok {
 			if symbol, remainder, found := strings.Cut(rest, " in "); found {
 				return extractExactProbePath(remainder), strings.TrimSpace(symbol)
@@ -4245,13 +4246,13 @@ func delegatedDiscoveryLayerPriority(name string) int {
 	switch {
 	case name == "text_anchor_search":
 		return 0
-	case workspace.LanguageToolHasAnyCapability(name, semanticlanguage.CapReadSymbol):
+	case languagetools.ToolHasAnyCapability(name, semanticlanguage.CapReadSymbol):
 		return 1
-	case workspace.LanguageToolHasAnyCapability(name, semanticlanguage.CapReferences):
+	case languagetools.ToolHasAnyCapability(name, semanticlanguage.CapReferences):
 		return 2
-	case workspace.LanguageToolHasAnyCapability(name, semanticlanguage.CapDefinition):
+	case languagetools.ToolHasAnyCapability(name, semanticlanguage.CapDefinition):
 		return 3
-	case workspace.LanguageToolHasAnyCapability(name, semanticlanguage.CapWorkspaceSymbol):
+	case languagetools.ToolHasAnyCapability(name, semanticlanguage.CapWorkspaceSymbol):
 		return 4
 	case name == "related_files":
 		return 5

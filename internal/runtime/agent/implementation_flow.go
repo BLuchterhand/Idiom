@@ -27,6 +27,7 @@ import (
 	"idiom/internal/platform/gitstate"
 	"idiom/internal/platform/textutil"
 	semanticlanguage "idiom/internal/repository/semantic/language"
+	"idiom/internal/repository/semantic/languagetools"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/modepolicy"
 	"idiom/internal/runtime/workerruntime"
@@ -9704,7 +9705,7 @@ func verificationInterceptToolCovered(req workspace.ToolRequest) bool {
 		return false
 	}
 
-	return workspace.LanguageToolHasAnyCapability(tool, semanticlanguage.CapFileOutline, semanticlanguage.CapReadSymbol)
+	return languagetools.ToolHasAnyCapability(tool, semanticlanguage.CapFileOutline, semanticlanguage.CapReadSymbol)
 }
 
 // precedingResultWasReadClass returns true if the most recent recorded
