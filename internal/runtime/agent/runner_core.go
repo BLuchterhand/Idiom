@@ -646,21 +646,6 @@ func toolAuthorizationSurfaceParityReport(recorder *runnerAutonomyRecorder, deci
 	})
 }
 
-type runnerSession struct {
-	runner *Runner
-
-	messages []llama.ChatMessage
-	opts     llama.ChatOptions
-
-	onStatus      func(string)
-	onToolRequest func(ToolRequestEvent)
-	onToolResult  func(ToolResultEvent)
-
-	answer string
-	err    error
-	ran    bool
-}
-
 func (r *Runner) Run(
 	ctx context.Context,
 	messages []llama.ChatMessage,
@@ -669,21 +654,9 @@ func (r *Runner) Run(
 	onToolRequest func(ToolRequestEvent),
 	onToolResult func(ToolResultEvent),
 ) (string, error) {
-	return RunSession(ctx, SessionConfig{}, &runnerSession{
-		runner:        r,
-		messages:      append([]llama.ChatMessage(nil), messages...),
-		opts:          opts,
-		onStatus:      onStatus,
-		onToolRequest: onToolRequest,
-		onToolResult:  onToolResult,
-	})
-}
-
-func (s *runnerSession) Bootstrap(_ context.Context, _ *SessionState) error {
-	if s == nil || s.runner == nil {
-		return nil
+	if r == nil {
+		return "", nil
 	}
-	r := s.runner
 	if r.LanePolicy == nil {
 		r.LanePolicy = LanePolicyForBrief(r.RuntimeBrief)
 	}
@@ -692,32 +665,12 @@ func (s *runnerSession) Bootstrap(_ context.Context, _ *SessionState) error {
 		r.stateStoreOwnedBySession = true
 	}
 	r.StateStore.SetRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths)
+	defer func() {
+		r.currentAllowedTools = nil
+		r.activeAutonomy = nil
+	}()
 
-	return nil
-}
-
-func (s *runnerSession) RunStep(ctx context.Context, _ *SessionState) StepResult {
-	if s == nil || s.runner == nil || s.ran {
-		return StepResult{Answer: s.answer, Err: s.err, Done: true}
-	}
-	s.ran = true
-	s.answer, s.err = s.runner.runSessionLoop(ctx, s.messages, s.opts, s.onStatus, s.onToolRequest, s.onToolResult)
-	return StepResult{Answer: s.answer, Err: s.err, Done: true}
-}
-
-func (s *runnerSession) Finish(_ context.Context, _ *SessionState, result StepResult) (string, error) {
-	if result.Answer != "" || result.Err != nil {
-		return result.Answer, result.Err
-	}
-	return s.answer, s.err
-}
-
-func (s *runnerSession) Close(_ context.Context, _ *SessionState) {
-	if s == nil || s.runner == nil {
-		return
-	}
-	s.runner.currentAllowedTools = nil
-	s.runner.activeAutonomy = nil
+	return r.runSessionLoop(ctx, append([]llama.ChatMessage(nil), messages...), opts, onStatus, onToolRequest, onToolResult)
 }
 
 func (r *Runner) presentableFallbackCandidate(results []workspace.ToolResult, answer string) (string, bool) {
@@ -21615,57 +21568,4 @@ func (d WriteDecision) PendingRequiredPaths() []string {
 		pending = append(pending, path)
 	}
 	return pending
-}
-
-// SessionConfig defines the loop-owned lifecycle budget. A zero MaxSteps means
-// the controller is responsible for ending the session.
-type SessionConfig struct {
-	MaxSteps int
-}
-
-// SessionState is the small mutable state owned by the loop package. Concrete
-// runner adapters keep domain state behind SessionController.
-type SessionState struct {
-	Step int
-}
-
-// StepResult is the controller's response for one loop step.
-type StepResult struct {
-	Answer string
-	Err    error
-	Done   bool
-}
-
-// SessionController is the narrow lifecycle adapter implemented by the root
-// runner while orchestration is migrated out of the legacy monolith.
-type SessionController interface {
-	Bootstrap(context.Context, *SessionState) error
-	RunStep(context.Context, *SessionState) StepResult
-	Finish(context.Context, *SessionState, StepResult) (string, error)
-	Close(context.Context, *SessionState)
-}
-
-// RunSession owns the agent session lifecycle: bootstrap, bounded step loop,
-// finish, and close. Domain packages provide the step adapter; this package
-// owns the sequencing contract.
-func RunSession(ctx context.Context, cfg SessionConfig, controller SessionController) (answer string, err error) {
-	state := &SessionState{}
-	if controller == nil {
-		return "", nil
-	}
-	defer controller.Close(ctx, state)
-
-	if err := controller.Bootstrap(ctx, state); err != nil {
-		return controller.Finish(ctx, state, StepResult{Err: err, Done: true})
-	}
-
-	for cfg.MaxSteps <= 0 || state.Step < cfg.MaxSteps {
-		state.Step++
-		result := controller.RunStep(ctx, state)
-		if result.Done || result.Err != nil {
-			return controller.Finish(ctx, state, result)
-		}
-	}
-
-	return controller.Finish(ctx, state, StepResult{Done: true})
 }

@@ -2162,57 +2162,6 @@ func TestWriteDecisionPendingRequiredPaths(t *testing.T) {
 	}
 }
 
-type recordingController struct {
-	events []string
-	steps  int
-}
-
-func (c *recordingController) Bootstrap(_ context.Context, state *SessionState) error {
-	c.events = append(c.events, "bootstrap")
-	if state.Step != 0 {
-		c.events = append(c.events, "bootstrap-step-not-zero")
-	}
-	return nil
-}
-
-func (c *recordingController) RunStep(_ context.Context, state *SessionState) StepResult {
-	c.steps++
-	c.events = append(c.events, "step")
-	if state.Step == 2 {
-		return StepResult{Answer: "done", Done: true}
-	}
-	return StepResult{}
-}
-
-func (c *recordingController) Finish(_ context.Context, _ *SessionState, result StepResult) (string, error) {
-	c.events = append(c.events, "finish")
-	return result.Answer, result.Err
-}
-
-func (c *recordingController) Close(_ context.Context, _ *SessionState) {
-	c.events = append(c.events, "close")
-}
-
-func TestRunSessionOwnsLifecycleOrder(t *testing.T) {
-	controller := &recordingController{}
-
-	answer, err := RunSession(context.Background(), SessionConfig{}, controller)
-	if err != nil {
-		t.Fatalf("RunSession error = %v", err)
-	}
-	if answer != "done" {
-		t.Fatalf("answer = %q, want done", answer)
-	}
-	if controller.steps != 2 {
-		t.Fatalf("steps = %d, want 2", controller.steps)
-	}
-
-	want := []string{"bootstrap", "step", "step", "finish", "close"}
-	if !slices.Equal(controller.events, want) {
-		t.Fatalf("events = %#v, want %#v", controller.events, want)
-	}
-}
-
 func TestRunNoteToolWritesHarnessMetadataAtomically(t *testing.T) {
 	root := t.TempDir()
 	result := runNoteTool(root, `{"key":"finding-1","content":"Important source fact."}`)

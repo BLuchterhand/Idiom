@@ -7383,35 +7383,35 @@ func TestRewriteMissingRequiredNewFileProbeIgnoresUnrelatedTools(t *testing.T) {
 	}
 }
 
-type runnerSessionTestClient struct {
+type runnerRunTestClient struct {
 	calls int
 }
 
-func (c *runnerSessionTestClient) CompleteChat(context.Context, []llama.ChatMessage, llama.ChatOptions) (string, error) {
+func (c *runnerRunTestClient) CompleteChat(context.Context, []llama.ChatMessage, llama.ChatOptions) (string, error) {
 	c.calls++
 	return "session answer", nil
 }
 
-func (c *runnerSessionTestClient) CompleteChatMessage(context.Context, []llama.ChatMessage, llama.ChatOptions) (llama.ChatMessage, error) {
+func (c *runnerRunTestClient) CompleteChatMessage(context.Context, []llama.ChatMessage, llama.ChatOptions) (llama.ChatMessage, error) {
 	c.calls++
 	return llama.ChatMessage{Content: "session answer"}, nil
 }
 
-func (c *runnerSessionTestClient) StreamChat(context.Context, []llama.ChatMessage, llama.ChatOptions, func(string) error) error {
+func (c *runnerRunTestClient) StreamChat(context.Context, []llama.ChatMessage, llama.ChatOptions, func(string) error) error {
 	c.calls++
 	return nil
 }
 
-func (c *runnerSessionTestClient) ListModels(context.Context) ([]llama.ModelInfo, error) {
+func (c *runnerRunTestClient) ListModels(context.Context) ([]llama.ModelInfo, error) {
 	return []llama.ModelInfo{{ID: "runner-session-test"}}, nil
 }
 
-func (c *runnerSessionTestClient) Backend() string { return "test" }
+func (c *runnerRunTestClient) Backend() string { return "test" }
 
-func (c *runnerSessionTestClient) SupportsNativeTools() bool { return false }
+func (c *runnerRunTestClient) SupportsNativeTools() bool { return false }
 
-func TestRunnerRunUsesLoopSessionFacade(t *testing.T) {
-	client := &runnerSessionTestClient{}
+func TestRunnerRunExecutesSessionLoopOnce(t *testing.T) {
+	client := &runnerRunTestClient{}
 	runner := &Runner{Client: client}
 
 	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "answer"}}, llama.ChatOptions{}, nil, nil, nil)
@@ -7426,36 +7426,38 @@ func TestRunnerRunUsesLoopSessionFacade(t *testing.T) {
 	}
 }
 
-func TestRunnerSessionBootstrapOwnsEngineInitialization(t *testing.T) {
+func TestRunnerRunOwnsEngineInitialization(t *testing.T) {
 	injectedStore := newStateStore(nil, true, 2)
+	client := &runnerRunTestClient{}
 	runner := &Runner{
+		Client:       client,
 		StateStore:   injectedStore,
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{RequiredEditPaths: []string{"internal/runtime/agent/runner_core.go"}},
 	}
-	session := &runnerSession{runner: runner}
 
-	if err := session.Bootstrap(context.Background(), &SessionState{}); err != nil {
-		t.Fatalf("Bootstrap error = %v", err)
+	if _, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "answer"}}, llama.ChatOptions{}, nil, nil, nil); err != nil {
+		t.Fatalf("Run error = %v", err)
 	}
 
 	if runner.StateStore != injectedStore {
-		t.Fatal("Bootstrap should preserve injected StateStore")
+		t.Fatal("Run should preserve injected StateStore")
 	}
 	if remaining := runner.StateStore.RequiredEditsRemaining(); len(remaining) != 1 || remaining[0] != "internal/runtime/agent/runner_core.go" {
 		t.Fatalf("required edits = %#v", remaining)
 	}
 	if runner.LanePolicy == nil {
-		t.Fatalf("Bootstrap did not initialize lane policy: %#v", runner)
+		t.Fatalf("Run did not initialize lane policy: %#v", runner)
 	}
 }
 
-func TestRunnerSessionBootstrapResetsAutoOwnedStateStorePerRun(t *testing.T) {
+func TestRunnerRunResetsAutoOwnedStateStorePerRun(t *testing.T) {
+	client := &runnerRunTestClient{}
 	runner := &Runner{
+		Client:       client,
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{RequiredEditPaths: []string{"first.go"}},
 	}
-	first := &runnerSession{runner: runner}
-	if err := first.Bootstrap(context.Background(), &SessionState{}); err != nil {
-		t.Fatalf("first Bootstrap error = %v", err)
+	if _, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "answer"}}, llama.ChatOptions{}, nil, nil, nil); err != nil {
+		t.Fatalf("first Run error = %v", err)
 	}
 	firstStore := runner.StateStore
 	runner.StateStore.TrackWritePath("first.go")
@@ -7464,13 +7466,12 @@ func TestRunnerSessionBootstrapResetsAutoOwnedStateStorePerRun(t *testing.T) {
 	}
 
 	runner.RuntimeBrief = workerruntime.WorkerRuntimeBrief{RequiredEditPaths: []string{"second.go"}}
-	second := &runnerSession{runner: runner}
-	if err := second.Bootstrap(context.Background(), &SessionState{}); err != nil {
-		t.Fatalf("second Bootstrap error = %v", err)
+	if _, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "answer"}}, llama.ChatOptions{}, nil, nil, nil); err != nil {
+		t.Fatalf("second Run error = %v", err)
 	}
 
 	if runner.StateStore == firstStore {
-		t.Fatal("Bootstrap reused auto-owned per-run StateStore")
+		t.Fatal("Run reused auto-owned per-run StateStore")
 	}
 	if got := runner.StateStore.ChangedPaths(); len(got) != 0 {
 		t.Fatalf("second run changed paths leaked from first run: %#v", got)
@@ -7480,13 +7481,17 @@ func TestRunnerSessionBootstrapResetsAutoOwnedStateStorePerRun(t *testing.T) {
 	}
 }
 
-func TestRunnerSessionCloseClearsRunFields(t *testing.T) {
+func TestRunnerRunClearsPerRunFields(t *testing.T) {
+	client := &runnerRunTestClient{}
 	runner := &Runner{
+		Client:              client,
 		currentAllowedTools: []string{"read_file"},
 		activeAutonomy:      &runnerAutonomyRecorder{},
 	}
 
-	(&runnerSession{runner: runner}).Close(context.Background(), &SessionState{})
+	if _, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "answer"}}, llama.ChatOptions{}, nil, nil, nil); err != nil {
+		t.Fatalf("Run error = %v", err)
+	}
 
 	if runner.currentAllowedTools != nil {
 		t.Fatalf("currentAllowedTools = %#v, want nil", runner.currentAllowedTools)
