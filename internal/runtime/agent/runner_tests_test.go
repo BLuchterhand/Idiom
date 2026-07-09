@@ -15660,6 +15660,8 @@ func TestContextZoomSourceBodyClearsPendingDiscoveryConsumption(t *testing.T) {
 			Tool:    "context_zoom",
 			Summary: "Context zoom returned source body for internal/surfaces/tui/app/model.go#Update",
 			Output:  `{"path":"internal/surfaces/tui/app/model.go","source":"func Update() {}"}`,
+			Paths:   []string{"internal/surfaces/tui/app/model.go"},
+			Facts:   sourceBodyFactsForTest("internal/surfaces/tui/app/model.go", 1, 1, 1),
 		},
 		"",
 		nil,
@@ -15700,7 +15702,7 @@ func TestCandidateAnchorMissDoesNotCountAsSourceBodyEvidence(t *testing.T) {
 	}
 
 	for _, result := range []workspace.ToolResult{direct, routed} {
-		if concreteSourceEvidenceResult(result) {
+		if paths := (toolResultEvidenceProjection{}).SourceBodyPathsFromResult(result); len(paths) != 0 {
 			t.Fatalf("%s candidate-anchor miss counted as concrete source evidence", result.Tool)
 		}
 
@@ -27839,7 +27841,7 @@ func TestDelegatedChildFallbackSourceReadUsesDiscoveredEvidencePath(t *testing.T
 		t.Fatalf("expected fallback to read discovered evidence path, req=%#v result=%#v", req, result)
 	}
 
-	if !readFileResultHasConcreteSourceBody(result) {
+	if paths := (toolResultEvidenceProjection{}).SourceBodyPathsFromResult(result); len(paths) == 0 {
 		t.Fatalf("fallback result should contain source body, got %#v", result)
 	}
 }
@@ -30789,107 +30791,107 @@ func TestAcceptedAnswerEvidencePathsIncludeMentionedToolOutputPaths(t *testing.T
 	}
 }
 
-func TestReadFileResultHasConcreteSourceBodyExcludesDiagnosticLogs(t *testing.T) {
-	if readFileResultHasConcreteSourceBody(readFileSourceBodyResult(
+func TestToolResultEvidenceProjectionSourceBodyPathsExcludeDiagnosticArtifacts(t *testing.T) {
+	if len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(readFileSourceBodyResult(
 		"logs/conversations/recent.jsonl",
 		1,
 		80,
 		80,
 		"1:{\"type\":\"final\",\"content\":\"The user is asking me...\"}\n",
-	)) {
+	))) > 0 {
 
 		t.Fatal("diagnostic conversation logs must not satisfy codebase source-body evidence")
 	}
 
-	if readFileResultHasConcreteSourceBody(readFileSourceBodyResult(
+	if len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(readFileSourceBodyResult(
 		".idiom/comprehension/views/context.json",
 		1,
 		80,
 		80,
 		"1:{\"candidate_files\":[{\"path\":\"internal/runtime/agent/runner_core.go\"}]}\n",
-	)) {
+	))) > 0 {
 
 		t.Fatal("generated .idiom context artifacts must not satisfy codebase source-body evidence")
 	}
 
-	if readFileResultHasConcreteSourceBody(workspace.ToolResult{
+	if len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(workspace.ToolResult{
 		Tool:    "read_file",
 		Summary: "Read f1 .codex/discovery/packet.json lines 1-80",
 		Output:  "1:{\"candidate_files\":[{\"path\":\"internal/runtime/agent/runner_core.go\"}]}\n",
-	}) {
+	})) > 0 {
 
 		t.Fatal("generated discovery artifacts must not satisfy codebase source-body evidence")
 	}
 
-	if readFileResultHasConcreteSourceBody(workspace.ToolResult{
+	if len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(workspace.ToolResult{
 		Tool:    "read_file",
 		Summary: "Read f1 transcripts/session.jsonl lines 1-80",
 		Output:  "1:{\"role\":\"assistant\",\"content\":\"...\"}\n",
-	}) {
+	})) > 0 {
 
 		t.Fatal("top-level transcript artifacts must not satisfy codebase source-body evidence")
 	}
 
-	if readFileResultHasConcreteSourceBody(workspace.ToolResult{
+	if len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(workspace.ToolResult{
 		Tool:    "read_file",
 		Summary: "Read f1 testdata/swe/generated-logs/direct.jsonl lines 1-80",
 		Output:  "1:{\"type\":\"tool_result\"}\n",
-	}) {
+	})) > 0 {
 
 		t.Fatal("generated eval logs must not satisfy codebase source-body evidence")
 	}
 
-	if !readFileResultHasConcreteSourceBody(readFileSourceBodyResult(
+	if len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(readFileSourceBodyResult(
 		"internal/runtime/agent/runner_core.go",
 		1,
 		80,
 		0,
 		"1:package agent\n2:\n3:func example() {}\n",
-	)) {
+	))) == 0 {
 
 		t.Fatal("source file read should satisfy codebase source-body evidence")
 	}
 
-	if !readFileResultHasConcreteSourceBody(readFileSourceBodyResult(
+	if len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(readFileSourceBodyResult(
 		"testdata/events.jsonl",
 		1,
 		20,
 		0,
 		"1:{\"event\":\"fixture\"}\n",
-	)) {
+	))) == 0 {
 
 		t.Fatal("checked-in jsonl fixtures outside diagnostic log directories should remain source-body evidence")
 	}
 
-	if !readFileResultHasConcreteSourceBody(readFileSourceBodyResult(
+	if len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(readFileSourceBodyResult(
 		"internal/log/reader.go",
 		1,
 		20,
 		0,
 		"1:package log\n2:func reader() {}\n",
-	)) {
+	))) == 0 {
 
 		t.Fatal("source files under internal/log must remain source-body evidence")
 	}
 
-	if !readFileResultHasConcreteSourceBody(readFileSourceBodyResult(
+	if len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(readFileSourceBodyResult(
 		"internal/traces/reader.go",
 		1,
 		20,
 		0,
 		"1:package traces\n2:func reader() {}\n",
-	)) {
+	))) == 0 {
 
 		t.Fatal("source files under internal/traces must remain source-body evidence")
 	}
 
-	if !readFileResultHasConcreteSourceBody(readFileSourceBodyResult(
+	if len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(readFileSourceBodyResult(
 		"internal/evidence/transcript/debuglog.go",
 		1,
 		20,
 		0,
 		"1:package transcript\n2:func debuglog() {}\n",
-	)) {
+	))) == 0 {
 
 		t.Fatal("source files under internal/evidence/transcript must remain source-body evidence")
 	}

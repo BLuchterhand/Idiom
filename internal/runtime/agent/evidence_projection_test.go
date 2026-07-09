@@ -282,9 +282,35 @@ func TestToolResultEvidenceProjectionReadOnlyCategoryBoundaries(t *testing.T) {
 			}},
 		}),
 		readFileSourceBodyResult(sourcePath, 1, 20, 0, "1:package agent\n"),
+		{
+			Tool:  workspace.ToolNameReadFile,
+			Error: "permission denied",
+			Facts: sourceBodyFactsForTest("internal/runtime/agent/failed.go", 1, 10, 10),
+		},
 	}
 
 	projection := newToolResultEvidenceProjection(results)
+	facts := projection.ConcreteReadOnlyEvidenceFacts()
+	if !slices.ContainsFunc(facts, func(fact readOnlyConcreteEvidenceFact) bool {
+		return fact.Kind == readOnlyEvidenceSourceBody && fact.Path == sourcePath
+	}) {
+		t.Fatalf("concrete read-only evidence facts missing source body %q: %#v", sourcePath, facts)
+	}
+	if !slices.ContainsFunc(facts, func(fact readOnlyConcreteEvidenceFact) bool {
+		return fact.Kind == readOnlyEvidenceExternalDocument && fact.Path == externalPath
+	}) {
+		t.Fatalf("concrete read-only evidence facts missing external document %q: %#v", externalPath, facts)
+	}
+	if !slices.ContainsFunc(facts, func(fact readOnlyConcreteEvidenceFact) bool {
+		return fact.Kind == readOnlyEvidenceDiagnostic && slices.Contains(fact.CandidatePaths, diagnosticPath)
+	}) {
+		t.Fatalf("concrete read-only evidence facts missing diagnostic path %q: %#v", diagnosticPath, facts)
+	}
+	if slices.ContainsFunc(facts, func(fact readOnlyConcreteEvidenceFact) bool {
+		return fact.Path == "internal/runtime/agent/failed.go"
+	}) {
+		t.Fatalf("failed results must not become concrete read-only evidence: %#v", facts)
+	}
 	if slices.Contains(projection.SourceBodyPaths(), externalPath) {
 		t.Fatalf("external document leaked into workspace source-body paths: %#v", projection.SourceBodyPaths())
 	}

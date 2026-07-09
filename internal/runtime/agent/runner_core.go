@@ -5263,7 +5263,7 @@ func acceptedMentionedEvidenceResultForObjective(result workspace.ToolResult, ob
 	}
 
 	diagnostic := result.Facts != nil && len(readOnlySourceLikePaths(result.Facts.DiagnosticEvidencePaths, 8)) > 0
-	if concreteSourceEvidenceResult(result) || diagnostic {
+	if len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(result)) > 0 || diagnostic {
 		return true
 	}
 
@@ -10400,9 +10400,10 @@ func (r *Runner) readOnlyEvidenceCompletionRejection(reply string, results []wor
 		}
 	}
 
-	diagnosticArtifactSupported := sourceGroundingDiagnosticArtifactCitationSupportsObjective(brief, reply, newToolResultEvidenceProjection(results))
+	projection := newToolResultEvidenceProjection(results)
+	diagnosticArtifactSupported := sourceGroundingDiagnosticArtifactCitationSupportsObjective(brief, reply, projection)
 	if readOnlyDirectAnswerLane(brief) &&
-		(readOnlyAnswerHasConcreteEvidence(results) ||
+		(len(projection.ConcreteReadOnlyEvidenceFacts()) > 0 ||
 			readOnlyPlanArtifactEvidenceSupportsReply(brief, reply, results) ||
 			diagnosticArtifactSupported) {
 
@@ -10427,7 +10428,7 @@ func (r *Runner) readOnlyEvidenceCompletionRejection(reply string, results []wor
 		return workspace.ToolResult{}, false
 	}
 
-	if readPaths := sortedRunnerPathKeys(newToolResultEvidenceProjection(results).ReadPaths()); len(readPaths) > 0 {
+	if readPaths := sortedRunnerPathKeys(projection.ReadPaths()); len(readPaths) > 0 {
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
 			Summary: "Read-only completion gate rejected final answer",
@@ -10440,20 +10441,6 @@ func (r *Runner) readOnlyEvidenceCompletionRejection(reply string, results []wor
 		Summary: "Read-only completion gate rejected final answer",
 		Error:   "read-only workspace answers require bounded source-body or diagnostic evidence tied to the user's objective before a final answer. Use one targeted read/search/discovery tool for the explicit question, or answer `<<QUESTION>>:` with the exact unavailable evidence source.",
 	}, true
-}
-
-func readOnlyAnswerHasConcreteEvidence(results []workspace.ToolResult) bool {
-	for _, result := range results {
-		diagnostic := result.Facts != nil && len(readOnlySourceLikePaths(result.Facts.DiagnosticEvidencePaths, 8)) > 0
-		if concreteSourceEvidenceResult(result) ||
-			len((toolResultEvidenceProjection{}).ExternalDocumentBodyPathsFromResult(result)) > 0 ||
-			diagnostic {
-
-			return true
-		}
-	}
-
-	return false
 }
 
 func (r *Runner) readOnlyNonSubstantiveCompletionRejection(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
@@ -11511,7 +11498,8 @@ func (s *runnerExecutionState) applyResult(req workspace.ToolRequest, result wor
 		s.consecutiveListFiles = 0
 	}
 
-	sourceBodyConsumed := concreteSourceEvidenceResult(result) || (toolResultMadeProgress(req, result) && workspace.IsWorkspaceWriteTool(strings.TrimSpace(req.Tool)))
+	sourceBodyConsumed := len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(result)) > 0 ||
+		(toolResultMadeProgress(req, result) && workspace.IsWorkspaceWriteTool(strings.TrimSpace(req.Tool)))
 	discoveryOutcome := discoveryResultOutcomeFromResult(req, result, 6)
 
 	if discoveryOutcome.Strength != "" {
@@ -20796,12 +20784,17 @@ func implementationSourceCoverageByPath(results []workspace.ToolResult) map[stri
 			continue
 		}
 
+		bodyPathSet := make(map[string]struct{})
+		for _, path := range (toolResultEvidenceProjection{}).SourceBodyPathsFromResult(result) {
+			bodyPathSet[path] = struct{}{}
+		}
+
 		for _, rawPath := range paths {
 			path := NormalizeRunnerPath(rawPath)
 			if path == "" || IsNonSourceEvidenceArtifactPath(path) {
 				continue
 			}
-			hasBody := sourceEvidenceHasBody(planThenExecuteToolResultSourceEvidence(result, path))
+			_, hasBody := bodyPathSet[path]
 			fact, hasFact := sourceBodyFactForPath(result, path)
 			hasRange := hasFact && sourceBodyFactHasRange(fact)
 			if !hasBody && !hasRange {
@@ -20945,8 +20938,9 @@ func directProbePathsFromToolResults(results []workspace.ToolResult, max int) []
 
 	var paths []string
 
+	projection := newToolResultEvidenceProjection(results)
 	for _, result := range results {
-		if !concreteSourceEvidenceResult(result) {
+		if len(projection.SourceBodyPathsFromResult(result)) == 0 {
 			continue
 		}
 

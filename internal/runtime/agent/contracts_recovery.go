@@ -119,7 +119,7 @@ func (r *Runner) unsafeTextualWriteRecoverySurfaceActive(results []workspace.Too
 	}
 
 	if r.planThenExecutePlannerPhase() {
-		return concreteSourceEvidenceAlreadyRead(results)
+		return len(newToolResultEvidenceProjection(results).SourceBodyPaths()) > 0
 	}
 
 	return implementationTargetWriteReadySurfaceActive(r.RuntimeBrief, results)

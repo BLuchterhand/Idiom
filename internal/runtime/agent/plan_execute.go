@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1012,13 +1011,7 @@ func mutationNoWriteLoopEvidenceReady(brief workerruntime.WorkerRuntimeBrief, re
 		return implementationRequiredPathAnchorsReady(brief, results)
 	}
 
-	for _, result := range results {
-		if concreteSourceEvidenceResult(result) {
-			return true
-		}
-	}
-
-	return false
+	return len(newToolResultEvidenceProjection(results).SourceBodyPaths()) > 0
 }
 
 type planThenExecuteLoopBudgetRecovery struct {
@@ -1431,25 +1424,6 @@ func rangeLessReadFileWasRedirectedToOutline(path string, results []workspace.To
 	return false
 }
 
-func concreteSourceEvidenceResultMatchesPath(result workspace.ToolResult, path string) bool {
-	path = NormalizeRunnerPath(path)
-	if path == "" || IsNonSourceEvidenceArtifactPath(path) {
-		return false
-	}
-
-	for _, readPath := range ReadPathsFromToolResult(result) {
-		if IsNonSourceEvidenceArtifactPath(readPath) {
-			continue
-		}
-
-		if NormalizeRunnerPath(readPath) == path {
-			return true
-		}
-	}
-
-	return false
-}
-
 func fullSourceReadFileSeen(path string, results []workspace.ToolResult) bool {
 	path = NormalizeRunnerPath(path)
 	if path == "" {
@@ -1458,10 +1432,6 @@ func fullSourceReadFileSeen(path string, results []workspace.ToolResult) bool {
 
 	for _, result := range results {
 		if strings.TrimSpace(result.Tool) != workspace.ToolNameReadFile || strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-
-		if !readFileResultHasConcreteSourceBody(result) {
 			continue
 		}
 
@@ -1529,7 +1499,7 @@ func mutationHiddenOnlyNoWriteTerminalRecoveryStall(brief workerruntime.WorkerRu
 		return false
 	}
 
-	return concreteSourceEvidenceAlreadyRead(results)
+	return len(newToolResultEvidenceProjection(results).SourceBodyPaths()) > 0
 }
 
 func (r *Runner) unscopedNoWriteTerminalRecoveryReady(results []workspace.ToolResult) bool {
@@ -1541,7 +1511,7 @@ func (r *Runner) unscopedNoWriteTerminalRecoveryReady(results []workspace.ToolRe
 		return false
 	}
 
-	return concreteSourceEvidenceAlreadyRead(results) && mutationNoWriteCompletionGateRejectionCount(results) >= 2
+	return len(newToolResultEvidenceProjection(results).SourceBodyPaths()) > 0 && mutationNoWriteCompletionGateRejectionCount(results) >= 2
 }
 
 func mutationNoWriteCompletionGateRejectionCount(results []workspace.ToolResult) int {
@@ -1706,16 +1676,6 @@ func reviewRepairTerminalOutcomeRequiredPrompt(brief workerruntime.WorkerRuntime
 	return strings.Join(lines, "\n\n")
 }
 
-func concreteSourceEvidenceAlreadyRead(results []workspace.ToolResult) bool {
-	for _, result := range results {
-		if concreteSourceEvidenceResult(result) {
-			return true
-		}
-	}
-
-	return false
-}
-
 func implementationTargetWriteReadySourcedPathSummary(results []workspace.ToolResult, max int) string {
 	paths := newToolResultEvidenceProjection(results).SourceBodyPaths()
 	if len(paths) == 0 {
@@ -1736,118 +1696,13 @@ func implementationTargetWriteReadySourcedPathSummary(results []workspace.ToolRe
 }
 
 func (r *Runner) markConcreteSourceEvidenceObserved(result workspace.ToolResult) {
-	if r == nil || r.Workspace == nil || !concreteSourceEvidenceResult(result) {
+	if r == nil || r.Workspace == nil {
 		return
 	}
 
-	for _, path := range ReadPathsFromToolResult(result) {
-		if IsNonSourceEvidenceArtifactPath(path) {
-			continue
-		}
-
-		if !sourceEvidenceHasBody(planThenExecuteToolResultSourceEvidence(result, path)) {
-			continue
-		}
-
+	for _, path := range (toolResultEvidenceProjection{}).SourceBodyPathsFromResult(result) {
 		r.Workspace.MarkPathObserved(path)
 	}
-}
-
-func contextZoomResultHasConcreteSourceBody(result workspace.ToolResult) bool {
-	text := strings.Join([]string{result.Summary, result.Output}, "\n")
-	if strings.TrimSpace(text) == "" {
-		return false
-	}
-
-	hasSourcePath := false
-
-	for _, path := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(text)) {
-		if IsNonSourceEvidenceArtifactPath(path) {
-			continue
-		}
-
-		hasSourcePath = true
-
-		break
-	}
-
-	if !hasSourcePath {
-		return false
-	}
-
-	if strings.Contains(result.Output, "route_summary:") && RoutedSourceReadOutputHasBody(result.Output) {
-		return true
-	}
-
-	return contextZoomOutputHasConcreteSourceBody(result.Output)
-}
-
-func contextZoomOutputHasConcreteSourceBody(output string) bool {
-	output = strings.TrimSpace(output)
-	if output == "" {
-		return false
-	}
-
-	var decoded any
-	if err := json.Unmarshal([]byte(output), &decoded); err != nil {
-		return false
-	}
-
-	return contextZoomJSONHasConcreteSourceBody(decoded)
-}
-
-func contextZoomJSONHasConcreteSourceBody(value any) bool {
-	object, ok := value.(map[string]any)
-	if !ok {
-		if list, ok := value.([]any); ok {
-			for _, item := range list {
-				if contextZoomJSONHasConcreteSourceBody(item) {
-					return true
-				}
-			}
-		}
-
-		return false
-	}
-
-	if contextZoomJSONHasSourcePath(object) {
-		if source, ok := object["source"].(string); ok && strings.TrimSpace(source) != "" {
-			return true
-		}
-		if sourceBody, ok := object["source_body"].(string); ok && strings.TrimSpace(sourceBody) != "" {
-			return true
-		}
-	}
-
-	for _, nested := range object {
-		if contextZoomJSONHasConcreteSourceBody(nested) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func contextZoomJSONHasSourcePath(object map[string]any) bool {
-	path, ok := object["path"].(string)
-	if !ok {
-		return false
-	}
-
-	path = NormalizeRunnerPath(path)
-
-	return path != "" && !IsNonSourceEvidenceArtifactPath(path)
-}
-
-func readFileResultHasConcreteSourceBody(result workspace.ToolResult) bool {
-	for _, fact := range sourceBodyFactsFromResult(result) {
-		path := NormalizeRunnerPath(fact.Path)
-		if path != "" && !IsNonSourceEvidenceArtifactPath(path) {
-			return true
-		}
-	}
-
-	return false
 }
 
 func toolResultHasNonArtifactReadPath(result workspace.ToolResult) bool {
@@ -8218,7 +8073,7 @@ func completionGateRecoveryChatOptionsForBackend(opts llama.ChatOptions, brief w
 		runnerBriefRequiresMutation(brief) &&
 		len(brief.RequiredEditPaths) == 0 &&
 		len(newToolResultEvidenceProjection(results).ChangedPathSet()) == 0 &&
-		concreteSourceEvidenceAlreadyRead(results) &&
+		len(newToolResultEvidenceProjection(results).SourceBodyPaths()) > 0 &&
 		mutationNoWriteCompletionGateRejectionCount(results) >= 2 {
 
 		opts = forceVisibleActionChatOptions(opts)

@@ -2459,6 +2459,7 @@ func presentableExternalDocumentEvidenceAnswer(brief workerruntime.WorkerRuntime
 	}
 
 	var parts []externalDocumentEvidenceAnswerPart
+	projection := newToolResultEvidenceProjection(results)
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" {
 			continue
@@ -2468,19 +2469,18 @@ func presentableExternalDocumentEvidenceAnswer(brief workerruntime.WorkerRuntime
 			continue
 		}
 
-		paths := (toolResultEvidenceProjection{}).ExternalDocumentBodyPathsFromResult(result)
-		if len(paths) == 0 {
-			continue
-		}
-
 		lines := objectiveRelevantExternalDocumentEvidenceLines(objective, result.Output, 2)
 		if len(lines) == 0 {
 			continue
 		}
 
-		for _, path := range paths {
+		for _, fact := range projection.ConcreteReadOnlyEvidenceFactsFromResult(result) {
+			if fact.Kind != readOnlyEvidenceExternalDocument {
+				continue
+			}
+
 			parts = append(parts, externalDocumentEvidenceAnswerPart{
-				path:  path,
+				path:  fact.Path,
 				lines: lines,
 			})
 
@@ -2654,16 +2654,16 @@ func combinedReadFileSourceBodies(results []workspace.ToolResult) []readFileSour
 	byPath := make(map[string]*aggregate)
 	order := make([]string, 0, len(results))
 
+	projection := newToolResultEvidenceProjection(results)
 	for i, result := range results {
 		if strings.TrimSpace(result.Error) != "" ||
-			!ReadStyleSourceBodyTool(result.Tool) ||
-			!readFileResultHasConcreteSourceBody(result) {
+			!ReadStyleSourceBodyTool(result.Tool) {
 
 			continue
 		}
 
-		paths := ReadPathsFromToolResult(result)
-		if len(paths) == 0 || IsNonSourceEvidenceArtifactPath(paths[0]) {
+		paths := projection.SourceBodyPathsFromResult(result)
+		if len(paths) == 0 {
 			continue
 		}
 
@@ -5239,7 +5239,7 @@ func (r *Runner) delegatedChildFallbackSourceRead(ctx context.Context, prompt st
 		}
 		result := r.Workspace.Execute(ctx, req)
 
-		if strings.TrimSpace(result.Error) != "" || !readFileResultHasConcreteSourceBody(result) {
+		if strings.TrimSpace(result.Error) != "" || len((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(result)) == 0 {
 			continue
 		}
 
@@ -7013,12 +7013,12 @@ func implementationTargetWriteReadyReadProgressForResult(brief workerruntime.Wor
 		return implementationTargetWriteReadyReadProgressNotApplicable
 	}
 
-	if !concreteSourceEvidenceResult(result) {
+	path := implementationTargetWriteReadyReadProgressPath(req, result)
+	if path == "" {
 		return implementationTargetWriteReadyReadProgressDuplicate
 	}
 
-	path := implementationTargetWriteReadyReadProgressPath(req, result)
-	if path == "" {
+	if !slices.Contains((toolResultEvidenceProjection{}).SourceBodyPathsFromResult(result), path) {
 		return implementationTargetWriteReadyReadProgressDuplicate
 	}
 

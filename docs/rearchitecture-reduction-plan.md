@@ -170,7 +170,15 @@ authority seams. Changed-source path classification now belongs to
 `toolResultEvidenceProjection` through the `sourcekind.CoversSourceSanity`
 contract, and the old read-path pass-through helper has been deleted; the
 larger remaining evidence target is a cached projection/read-only answerability
-model rather than more caller-local path scanners.
+model rather than more caller-local path scanners. Source-body evidence
+classification now also belongs to `toolResultEvidenceProjection`: the old
+whole-result concrete-source classifier, read-file-specific body helper, and
+context-zoom JSON body detector were deleted. Source body is accepted only when
+the projection can derive path-backed source-body evidence from typed producer
+facts, while read-only answerability remains the objective-scoped policy owner.
+The next evidence pass should replace repeated raw-result branching in
+`readOnlyAnswerabilityForResults` with a cached normalized projection model,
+not add more single-call helper wrappers.
 
 ### 5. Product Workflow Projection
 

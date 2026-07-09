@@ -26,6 +26,16 @@ type readOnlyDelegatedEvidenceFact struct {
 	CandidatePaths  []string
 }
 
+type readOnlyConcreteEvidenceFact struct {
+	Kind           readOnlyEvidenceKind
+	Tool           string
+	Source         string
+	Path           string
+	CandidatePaths []string
+	Summary        string
+	Output         string
+}
+
 func newToolResultEvidenceProjection(results []workspace.ToolResult) toolResultEvidenceProjection {
 	return toolResultEvidenceProjection{results: append([]workspace.ToolResult(nil), results...)}
 }
@@ -125,20 +135,19 @@ func (projection toolResultEvidenceProjection) HasSourceBody(path string) bool {
 	return sourceEvidenceHasBody(projection.SourceEvidenceForPath(path))
 }
 
-func (projection toolResultEvidenceProjection) SourceBodyPathsFromResult(result workspace.ToolResult) []string {
+func (toolResultEvidenceProjection) SourceBodyPathsFromResult(result workspace.ToolResult) []string {
 	if strings.TrimSpace(result.Error) != "" {
 		return nil
 	}
 
 	single := toolResultEvidenceProjection{results: []workspace.ToolResult{result}}
 	var paths []string
-
-	for _, path := range ReadPathsFromToolResult(result) {
-		normalized := NormalizeRunnerPath(path)
-		if normalized == "" || IsNonSourceEvidenceArtifactPath(normalized) || readOnlyExternalDocumentBodyPath(normalized) || !single.HasSourceBody(normalized) {
+	for _, rawPath := range ReadPathsFromToolResult(result) {
+		path := NormalizeRunnerPath(rawPath)
+		if path == "" || IsNonSourceEvidenceArtifactPath(path) || readOnlyExternalDocumentBodyPath(path) || !single.HasSourceBody(path) {
 			continue
 		}
-		paths = textutil.AppendUnique(paths, normalized)
+		paths = textutil.AppendUnique(paths, path)
 	}
 
 	return paths
@@ -157,6 +166,70 @@ func (projection toolResultEvidenceProjection) SourceBodyPaths() []string {
 		}
 	}
 	return paths
+}
+
+func (projection toolResultEvidenceProjection) ConcreteReadOnlyEvidenceFacts() []readOnlyConcreteEvidenceFact {
+	var facts []readOnlyConcreteEvidenceFact
+	for _, result := range projection.results {
+		facts = append(facts, projection.ConcreteReadOnlyEvidenceFactsFromResult(result)...)
+	}
+	return facts
+}
+
+func (projection toolResultEvidenceProjection) ConcreteReadOnlyEvidenceFactsFromResult(result workspace.ToolResult) []readOnlyConcreteEvidenceFact {
+	if strings.TrimSpace(result.Error) != "" {
+		return nil
+	}
+
+	tool := strings.TrimSpace(result.Tool)
+	if tool == "" {
+		return nil
+	}
+
+	summary := strings.TrimSpace(result.Summary)
+	var facts []readOnlyConcreteEvidenceFact
+
+	if result.Facts != nil {
+		paths := readOnlySourceLikePaths(result.Facts.DiagnosticEvidencePaths, 8)
+		if len(paths) > 0 {
+			facts = append(facts, readOnlyConcreteEvidenceFact{
+				Kind:           readOnlyEvidenceDiagnostic,
+				Tool:           tool,
+				CandidatePaths: paths,
+				Summary:        summary,
+				Output:         result.Output,
+			})
+		}
+	}
+
+	for _, path := range projection.SourceBodyPathsFromResult(result) {
+		facts = append(facts, readOnlyConcreteEvidenceFact{
+			Kind:    readOnlyEvidenceSourceBody,
+			Tool:    tool,
+			Source:  tool,
+			Path:    path,
+			Summary: summary,
+			Output:  result.Output,
+		})
+	}
+
+	for _, fact := range sourceBodyFactsFromResult(result) {
+		path := normalizeReadOnlyExternalDocumentPath(fact.Path)
+		if !readOnlyExternalDocumentBodyPath(path) {
+			continue
+		}
+
+		facts = append(facts, readOnlyConcreteEvidenceFact{
+			Kind:    readOnlyEvidenceExternalDocument,
+			Tool:    tool,
+			Source:  tool,
+			Path:    path,
+			Summary: summary,
+			Output:  result.Output,
+		})
+	}
+
+	return facts
 }
 
 func (projection toolResultEvidenceProjection) CandidatePaths() []string {
@@ -380,20 +453,6 @@ func normalizeDiagnosticArtifactEvidencePath(path string) string {
 	return path
 }
 
-func (toolResultEvidenceProjection) ExternalDocumentBodyPathsFromResult(result workspace.ToolResult) []string {
-	var paths []string
-
-	for _, fact := range sourceBodyFactsFromResult(result) {
-		path := normalizeReadOnlyExternalDocumentPath(fact.Path)
-		if !readOnlyExternalDocumentBodyPath(path) {
-			continue
-		}
-		paths = textutil.AppendUnique(paths, path)
-	}
-
-	return paths
-}
-
 func (projection toolResultEvidenceProjection) ExternalDocumentBodyMatches(path string) []string {
 	path = strings.ReplaceAll(strings.TrimSpace(path), "\\", "/")
 	if path == "" {
@@ -402,13 +461,11 @@ func (projection toolResultEvidenceProjection) ExternalDocumentBodyMatches(path 
 
 	var matches []string
 
-	for _, result := range projection.results {
-		for _, candidate := range projection.ExternalDocumentBodyPathsFromResult(result) {
-			if !externalDocumentPathMatchesCitation(path, candidate) {
-				continue
-			}
-			matches = textutil.AppendUnique(matches, candidate)
+	for _, fact := range projection.ConcreteReadOnlyEvidenceFacts() {
+		if fact.Kind != readOnlyEvidenceExternalDocument || !externalDocumentPathMatchesCitation(path, fact.Path) {
+			continue
 		}
+		matches = textutil.AppendUnique(matches, fact.Path)
 	}
 
 	return uniqueSortedRunnerPaths(matches)
