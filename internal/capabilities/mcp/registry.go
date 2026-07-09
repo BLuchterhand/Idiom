@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+
+	"idiom/internal/contracts/mcpidentity"
 )
 
 // ServerConfig describes one MCP stdio server the registry should spawn.
@@ -61,9 +63,9 @@ func NewRegistry() *Registry {
 // child process and reader use the registry's own background context so
 // they outlive any short-lived setup timeout the caller passes here.
 func (r *Registry) Spawn(ctx context.Context, cfg ServerConfig) error {
-	name := strings.TrimSpace(cfg.Name)
-	if name == "" {
-		return fmt.Errorf("mcp server name is required")
+	name, err := mcpidentity.NormalizeServerName(cfg.Name)
+	if err != nil {
+		return err
 	}
 
 	if strings.TrimSpace(cfg.Command) == "" {
@@ -92,7 +94,10 @@ func (r *Registry) Spawn(ctx context.Context, cfg ServerConfig) error {
 		return fmt.Errorf("mcp %s tools/list: %w", name, err)
 	}
 
-	r.register(name, client, tools)
+	if err := r.register(name, client, tools); err != nil {
+		_ = client.Close()
+		return err
+	}
 
 	return nil
 }
@@ -101,8 +106,12 @@ func (r *Registry) Spawn(ctx context.Context, cfg ServerConfig) error {
 // Client directly. ctx applies only to the handshake; the client's
 // readLoop is bound to the registry's background context.
 func (r *Registry) RegisterExisting(ctx context.Context, name string, client *Client) error {
-	if strings.TrimSpace(name) == "" {
-		return fmt.Errorf("mcp server name is required")
+	name, err := mcpidentity.NormalizeServerName(name)
+	if err != nil {
+		return err
+	}
+	if client == nil {
+		return fmt.Errorf("mcp server %q client is required", name)
 	}
 
 	if err := client.Start(r.bgCtx); err != nil {
@@ -118,41 +127,38 @@ func (r *Registry) RegisterExisting(ctx context.Context, name string, client *Cl
 		return err
 	}
 
-	r.register(name, client, tools)
-
-	return nil
+	return r.register(name, client, tools)
 }
 
-func (r *Registry) register(name string, client *Client, tools []Tool) {
+func (r *Registry) register(name string, client *Client, tools []Tool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.clients[name] = client
+	if _, exists := r.clients[name]; exists {
+		return fmt.Errorf("mcp server %q is already registered", name)
+	}
+
+	registered := make(map[string]registeredTool, len(tools))
 	for _, tool := range tools {
-		r.tools[QualifiedToolName(name, tool.Name)] = registeredTool{Server: name, Tool: tool}
-	}
-}
+		toolName := strings.TrimSpace(tool.Name)
+		if toolName == "" {
+			return fmt.Errorf("mcp server %q returned a tool without a name", name)
+		}
 
-// QualifiedToolName produces the namespaced tool id used when the model
-// invokes an MCP tool. Prefix `mcp:` matches OpenCode's convention and also
-// lets workspace.Manager dispatch cleanly.
-func QualifiedToolName(server string, tool string) string {
-	return "mcp:" + strings.TrimSpace(server) + "/" + strings.TrimSpace(tool)
-}
+		qualified := mcpidentity.QualifiedToolName(name, toolName)
+		if _, exists := registered[qualified]; exists {
+			return fmt.Errorf("mcp server %q returned duplicate tool %q", name, toolName)
+		}
 
-// ParseQualifiedToolName is the inverse of QualifiedToolName.
-func ParseQualifiedToolName(name string) (server string, tool string, ok bool) {
-	trimmed := strings.TrimPrefix(strings.TrimSpace(name), "mcp:")
-	if trimmed == name {
-		return "", "", false
+		registered[qualified] = registeredTool{Server: name, Tool: tool}
 	}
 
-	idx := strings.IndexByte(trimmed, '/')
-	if idx <= 0 || idx >= len(trimmed)-1 {
-		return "", "", false
+	r.clients[name] = client
+	for qualified, tool := range registered {
+		r.tools[qualified] = tool
 	}
 
-	return trimmed[:idx], trimmed[idx+1:], true
+	return nil
 }
 
 // Tools snapshots the current namespaced tool catalog.
@@ -180,7 +186,7 @@ func (r *Registry) Has(qualified string) bool {
 
 // Call dispatches a namespaced tool call to the owning client.
 func (r *Registry) Call(ctx context.Context, qualified string, arguments json.RawMessage) (ToolCallResult, error) {
-	server, tool, ok := ParseQualifiedToolName(qualified)
+	server, tool, ok := mcpidentity.ParseQualifiedToolName(qualified)
 	if !ok {
 		return ToolCallResult{}, fmt.Errorf("mcp: %q is not a qualified MCP tool", qualified)
 	}

@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"idiom/internal/contracts/mcpidentity"
 )
 
 // Fix 8 (minimal MCP client) — exercises docs/opencode-fixes-design.md §8.
@@ -440,7 +442,7 @@ func TestRegistryNamespaceAndDispatch(t *testing.T) {
 	client := NewClient(transport)
 	registry := NewRegistry()
 
-	if err := registry.RegisterExisting(ctx, "docs", client); err != nil {
+	if err := registry.RegisterExisting(ctx, " docs ", client); err != nil {
 		t.Fatalf("RegisterExisting: %v", err)
 	}
 
@@ -464,6 +466,85 @@ func TestRegistryNamespaceAndDispatch(t *testing.T) {
 	}
 }
 
+func TestRegistryRejectsConcurrentDuplicateServerRegistrationWithoutMixingTools(t *testing.T) {
+	transports := []*fakeTransport{newFakeTransport(), newFakeTransport()}
+	toolNames := []string{"search", "summarize"}
+	clients := make([]*Client, len(transports))
+
+	for i, transport := range transports {
+		name := toolNames[i]
+		respondInitializeThenTools(t, transport, []Tool{{Name: name}}, func(called string, _ json.RawMessage) ToolCallResult {
+			return ToolCallResult{Content: []json.RawMessage{json.RawMessage(`{"tool":"` + called + `"}`)}}
+		})
+		clients[i] = NewClient(transport)
+		defer clients[i].Close()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	registry := NewRegistry()
+	defer registry.Close()
+
+	errs := make([]error, len(clients))
+	var wg sync.WaitGroup
+	for i, client := range clients {
+		wg.Add(1)
+		go func(index int, candidate *Client) {
+			defer wg.Done()
+			errs[index] = registry.RegisterExisting(ctx, "docs", candidate)
+		}(i, client)
+	}
+	wg.Wait()
+
+	registered := 0
+	rejected := 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			registered++
+		case strings.Contains(err.Error(), `mcp server "docs" is already registered`):
+			rejected++
+		default:
+			t.Fatalf("unexpected registration error: %v", err)
+		}
+	}
+	if registered != 1 || rejected != 1 {
+		t.Fatalf("registration outcomes = success:%d duplicate:%d, want 1 each; errors=%v", registered, rejected, errs)
+	}
+
+	tools := registry.Tools()
+	if len(tools) != 1 {
+		t.Fatalf("registered tools = %#v, want one server-owned catalog", tools)
+	}
+	if registry.Has("mcp:docs/search") == registry.Has("mcp:docs/summarize") {
+		t.Fatalf("registry mixed or lost duplicate-server catalogs: %#v", tools)
+	}
+}
+
+func TestRegistryRejectsDuplicateToolNamesAtomically(t *testing.T) {
+	transport := newFakeTransport()
+	respondInitializeThenTools(t, transport, []Tool{{Name: "search"}, {Name: " search "}}, func(string, json.RawMessage) ToolCallResult {
+		return ToolCallResult{}
+	})
+	client := NewClient(transport)
+	defer client.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	registry := NewRegistry()
+	defer registry.Close()
+
+	err := registry.RegisterExisting(ctx, "docs", client)
+	if err == nil || !strings.Contains(err.Error(), `duplicate tool "search"`) {
+		t.Fatalf("RegisterExisting error = %v, want duplicate-tool rejection", err)
+	}
+	if tools := registry.Tools(); len(tools) != 0 {
+		t.Fatalf("duplicate tool registration partially mutated registry: %#v", tools)
+	}
+}
+
 func TestRegistryRejectsUnknownQualifiedTool(t *testing.T) {
 	registry := NewRegistry()
 
@@ -478,16 +559,16 @@ func TestRegistryRejectsUnknownQualifiedTool(t *testing.T) {
 }
 
 func TestParseQualifiedToolName(t *testing.T) {
-	server, tool, ok := ParseQualifiedToolName("mcp:docs/summarize")
+	server, tool, ok := mcpidentity.ParseQualifiedToolName("mcp:docs/summarize")
 	if !ok || server != "docs" || tool != "summarize" {
 		t.Fatalf("unexpected parse: server=%q tool=%q ok=%v", server, tool, ok)
 	}
 
-	if _, _, ok := ParseQualifiedToolName("plain_tool"); ok {
+	if _, _, ok := mcpidentity.ParseQualifiedToolName("plain_tool"); ok {
 		t.Fatal("non-MCP prefix must not parse")
 	}
 
-	if _, _, ok := ParseQualifiedToolName("mcp:only-server"); ok {
+	if _, _, ok := mcpidentity.ParseQualifiedToolName("mcp:only-server"); ok {
 		t.Fatal("missing tool part must not parse")
 	}
 }

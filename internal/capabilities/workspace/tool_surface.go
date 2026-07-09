@@ -7,6 +7,7 @@ import (
 
 	"idiom/internal/capabilities/mcp"
 	"idiom/internal/capabilities/workspace/externaltool"
+	"idiom/internal/contracts/mcpidentity"
 )
 
 type ToolSurface struct {
@@ -364,7 +365,7 @@ func (s *ToolSurface) BuildToolDefinitions(allowed []string, externalBaseDir str
 
 	for _, qualified := range names {
 		spec := tools[qualified]
-		server, _, _ := mcp.ParseQualifiedToolName(qualified)
+		server, _, _ := mcpidentity.ParseQualifiedToolName(qualified)
 		description := spec.Description
 		if description == "" {
 			description = "MCP tool from " + server

@@ -60,6 +60,7 @@ func coreContractPackageDirectImports() map[string][]string {
 		"idiom/internal/contracts/featureplanner": {},
 		"idiom/internal/contracts/intentloop":     {},
 		"idiom/internal/contracts/lane":           {},
+		"idiom/internal/contracts/mcpidentity":    {},
 		"idiom/internal/contracts/pathparse":      {},
 		"idiom/internal/contracts/plan":           {"idiom/internal/contracts/lane", "idiom/internal/contracts/pathparse", "idiom/internal/contracts/recovery", "idiom/internal/contracts/sourcekind", "idiom/internal/contracts/workflowstate"},
 		"idiom/internal/contracts/planartifact":   {"idiom/internal/contracts/plan", "idiom/internal/contracts/sensitivity"},

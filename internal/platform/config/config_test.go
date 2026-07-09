@@ -671,6 +671,11 @@ func TestMCPServerValidate(t *testing.T) {
 			wantErrSub: "name is required",
 		},
 		{
+			name:       "reserved name separator",
+			server:     MCPServer{Name: "team/docs", URL: "https://example.com/"},
+			wantErrSub: "cannot contain '/'",
+		},
+		{
 			name:       "both stdio and http",
 			server:     MCPServer{Name: "x", Command: "foo", URL: "https://example.com/"},
 			wantErrSub: "both command and url",
@@ -726,6 +731,20 @@ func TestConfigValidatePropagatesMCPError(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "mcp[0]") {
 		t.Fatalf("expected error to mention mcp[0], got %q", err.Error())
+	}
+}
+
+func TestConfigValidateRejectsNormalizedDuplicateMCPServerNames(t *testing.T) {
+	cfg := Default()
+	cfg.Chat.SaveDir = t.TempDir()
+	cfg.MCP = []MCPServer{
+		{Name: "docs", Command: "first"},
+		{Name: " docs ", Command: "second"},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), `server name "docs" duplicates mcp[0]`) {
+		t.Fatalf("Validate error = %v, want normalized duplicate-name rejection", err)
 	}
 }
 

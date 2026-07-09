@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"idiom/internal/contracts/mcpidentity"
 	"idiom/internal/contracts/toolpolicy"
 	"idiom/internal/platform/textutil"
 )
@@ -817,10 +818,17 @@ func (c Config) Validate() error {
 		}
 	}
 
+	mcpServerIndexes := make(map[string]int, len(c.MCP))
 	for i, srv := range c.MCP {
 		if err := srv.Validate(); err != nil {
 			return fmt.Errorf("mcp[%d]: %w", i, err)
 		}
+
+		name, _ := mcpidentity.NormalizeServerName(srv.Name)
+		if previous, exists := mcpServerIndexes[name]; exists {
+			return fmt.Errorf("mcp[%d]: server name %q duplicates mcp[%d]", i, name, previous)
+		}
+		mcpServerIndexes[name] = i
 	}
 
 	return nil
@@ -830,8 +838,8 @@ func (c Config) Validate() error {
 // entry. Both unset or both set is a config error; we do not silently
 // pick one transport over the other.
 func (m MCPServer) Validate() error {
-	if strings.TrimSpace(m.Name) == "" {
-		return fmt.Errorf("name is required")
+	if _, err := mcpidentity.NormalizeServerName(m.Name); err != nil {
+		return err
 	}
 
 	hasStdio := m.IsStdio()
