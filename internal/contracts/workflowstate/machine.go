@@ -238,19 +238,6 @@ func PromptContextPacketDefinition() MachineDefinition {
 	}
 }
 
-func ValidateTransition(workflowID WorkflowID, from StateID, event TransitionEvent) (StateID, error) {
-	definition, ok := definitionByWorkflowID(workflowID)
-	if !ok {
-		return "", fmt.Errorf("unknown workflow id %q", workflowID)
-	}
-	for _, transition := range definition.Transitions {
-		if transition.From == from && transition.On == event {
-			return transition.To, nil
-		}
-	}
-	return "", fmt.Errorf("transition %q from state %q is not valid for workflow %q", event, from, workflowID)
-}
-
 func ValidateTerminalProjection(workflowID WorkflowID, terminalState TerminalState) error {
 	definition, ok := definitionByWorkflowID(workflowID)
 	if !ok {

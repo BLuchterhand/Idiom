@@ -1,8 +1,6 @@
 package modepolicy
 
 import (
-	"fmt"
-	"slices"
 	"strings"
 
 	"idiom/internal/contracts/toolpolicy"
@@ -102,45 +100,4 @@ func ModeOrDefault(name string) Mode {
 	}
 
 	return BuildMode()
-}
-
-func ModeNames() []string {
-	modes := DefaultModes()
-	names := make([]string, 0, len(modes))
-
-	for _, mode := range modes {
-		names = append(names, mode.Name)
-	}
-
-	slices.Sort(names)
-
-	return names
-}
-
-func (m Mode) Validate() error {
-	if strings.TrimSpace(m.Name) == "" {
-		return fmt.Errorf("agent mode name is required")
-	}
-
-	if m.StepCap < 0 {
-		return fmt.Errorf("agent mode %q: step_cap must be non-negative", m.Name)
-	}
-
-	for tool, rules := range m.PermissionRules {
-		if strings.TrimSpace(tool) == "" {
-			return fmt.Errorf("agent mode %q: permission rule has empty tool name", m.Name)
-		}
-
-		for i, rule := range rules {
-			switch rule.Decision {
-			case toolpolicy.Allow, toolpolicy.Ask, toolpolicy.Deny:
-			case toolpolicy.None:
-				return fmt.Errorf("agent mode %q: %s rule %d has empty decision", m.Name, tool, i)
-			default:
-				return fmt.Errorf("agent mode %q: %s rule %d has invalid decision %q", m.Name, tool, i, rule.Decision)
-			}
-		}
-	}
-
-	return nil
 }

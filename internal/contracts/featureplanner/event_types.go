@@ -228,13 +228,6 @@ func ParseNestedPlanExecuteCompletionEventName(name string) (NestedPlanExecuteCo
 	}
 }
 
-func NestedPlanExecuteCompletionEventNames() []string {
-	return []string{
-		string(NestedPlanExecuteCompletionEventCompleted),
-		string(NestedPlanExecuteCompletionEventBlocked),
-	}
-}
-
 func knownValue[T comparable](value T, known []T) bool {
 	for _, candidate := range known {
 		if value == candidate {

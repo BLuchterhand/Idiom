@@ -120,7 +120,7 @@ func TestMCPDiscoveryMCPDiscoveryProfileExposesExpandedSurface(t *testing.T) {
 	cfg.Workspace.Root = root
 	cfg.Workspace.CWD = root
 
-	server, err := NewDiscoveryServer(cfg, workspace.ToolProfileMCPDiscovery)
+	server, err := NewDiscoveryServerWithOptions(cfg, workspace.ToolProfileMCPDiscovery, DiscoveryServerOptions{})
 	if err != nil {
 		t.Fatalf("new MCP mcp_discovery server: %v", err)
 	}
@@ -1093,7 +1093,7 @@ func (t *testMCPStdioTransport) Close() error {
 func newTestMCPDiscoveryServer(t *testing.T, cfg config.Config) *DiscoveryServer {
 	t.Helper()
 
-	server, err := NewDiscoveryServer(cfg, workspace.ToolProfileDiscovery)
+	server, err := NewDiscoveryServerWithOptions(cfg, workspace.ToolProfileDiscovery, DiscoveryServerOptions{})
 	if err != nil {
 		t.Fatalf("new MCP discovery server: %v", err)
 	}

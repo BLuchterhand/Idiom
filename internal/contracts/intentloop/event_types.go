@@ -59,19 +59,6 @@ func KnownEventType(eventType EventType) bool {
 	return ok
 }
 
-func ParseEventName(name string) (EventType, bool) {
-	name = strings.TrimSpace(name)
-	if !strings.HasPrefix(name, EventPrefix) {
-		return "", false
-	}
-	name = strings.TrimPrefix(name, EventPrefix)
-	eventType := EventType(name)
-	if !KnownEventType(eventType) {
-		return "", false
-	}
-	return eventType, true
-}
-
 func EventNames() []string {
 	eventTypes := EventTypes()
 	out := make([]string, 0, len(eventTypes))

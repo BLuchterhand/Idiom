@@ -64,15 +64,6 @@ const (
 	ScopeStatusOutOfScope ScopeStatus = "out_of_scope"
 )
 
-func SourceLanes() []SourceLane {
-	lanes := lanecontract.LaneIDs()
-	out := make([]SourceLane, 0, len(lanes))
-	for _, lane := range lanes {
-		out = append(out, SourceLane(lane))
-	}
-	return out
-}
-
 func KnownSourceLane(value SourceLane) bool {
 	return lanecontract.KnownLaneID(lanecontract.LaneID(value))
 }

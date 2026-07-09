@@ -3,7 +3,7 @@ package recovery
 import "testing"
 
 func TestRecoveryFailureVocabularyIsKnown(t *testing.T) {
-	for _, lane := range SourceLanes() {
+	for _, lane := range []SourceLane{SourceLanePlanExecute, SourceLaneImplement} {
 		if !KnownSourceLane(lane) {
 			t.Fatalf("KnownSourceLane(%q) = false", lane)
 		}
@@ -24,6 +24,9 @@ func TestRecoveryFailureVocabularyIsKnown(t *testing.T) {
 		}
 	}
 
+	if KnownSourceLane(SourceLane("typo")) {
+		t.Fatal("KnownSourceLane accepted unknown lane")
+	}
 	if KnownFailureClass(FailureClass("typo")) {
 		t.Fatal("KnownFailureClass accepted unknown class")
 	}
@@ -36,16 +39,6 @@ func TestRecoveryFailureVocabularyIsKnown(t *testing.T) {
 }
 
 func TestRecoveryFailureVocabularyIncludesCanonicalConstants(t *testing.T) {
-	lanes := map[SourceLane]bool{}
-	for _, lane := range SourceLanes() {
-		lanes[lane] = true
-	}
-	for _, lane := range []SourceLane{SourceLanePlanExecute, SourceLaneImplement} {
-		if !lanes[lane] {
-			t.Fatalf("SourceLanes() missing %q: %#v", lane, SourceLanes())
-		}
-	}
-
 	classes := map[FailureClass]bool{}
 	for _, class := range FailureClasses() {
 		classes[class] = true

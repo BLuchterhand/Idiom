@@ -19,32 +19,3 @@ const (
 	TurnPhaseArtifactFinalAnswer         TurnPhaseID = "artifact.final_answer"
 	TurnPhaseGeneric                     TurnPhaseID = "generic"
 )
-
-func TurnPhaseIDs() []TurnPhaseID {
-	return []TurnPhaseID{
-		TurnPhaseRequiredSource,
-		TurnPhaseCandidateSource,
-		TurnPhaseHistoryPending,
-		TurnPhaseSubmitReadyNativeRequired,
-		TurnPhaseSubmitReadyTextual,
-		TurnPhaseSourceSatisfiedTerminal,
-		TurnPhaseMalformedSubmitPlanRecovery,
-		TurnPhaseStaleAnchorRefresh,
-		TurnPhaseReviewRepairTerminal,
-		TurnPhaseImplementationTargetSource,
-		TurnPhaseImplementationWriteReady,
-		TurnPhaseImplementationVerifyReady,
-		TurnPhaseProductAcceptanceCloseout,
-		TurnPhaseArtifactFinalAnswer,
-		TurnPhaseGeneric,
-	}
-}
-
-func KnownTurnPhaseID(value TurnPhaseID) bool {
-	for _, phaseID := range TurnPhaseIDs() {
-		if value == phaseID {
-			return true
-		}
-	}
-	return false
-}

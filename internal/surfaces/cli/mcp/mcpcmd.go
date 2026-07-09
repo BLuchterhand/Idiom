@@ -170,10 +170,6 @@ type DiscoveryServer struct {
 	requestSeq atomic.Int64
 }
 
-func NewDiscoveryServer(cfg config.Config, profile string) (*DiscoveryServer, error) {
-	return NewDiscoveryServerWithOptions(cfg, profile, DiscoveryServerOptions{})
-}
-
 func NewDiscoveryServerWithOptions(cfg config.Config, profile string, opts DiscoveryServerOptions) (*DiscoveryServer, error) {
 	tools, err := workspace.BuildMCPDiscoveryToolSchemas(profile)
 	if err != nil {

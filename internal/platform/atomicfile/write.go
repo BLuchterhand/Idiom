@@ -39,11 +39,6 @@ func (e *PostCommitError) Committed() bool {
 	return e != nil
 }
 
-func IsPostCommit(err error) bool {
-	var postCommit *PostCommitError
-	return errors.As(err, &postCommit) && postCommit.Committed()
-}
-
 func WriteFile(path string, body []byte, perm os.FileMode) error {
 	path = strings.TrimSpace(path)
 	if path == "" {

@@ -1849,6 +1849,30 @@ Reviewer-updated estimate:
   JSON-events test helpers, comprehension view cache/load helpers, semantic
   indexsupport/languagetools helpers, modepolicy/readiness helpers, CLI MCP
   discovery server construction, and intentloop stale-session cleanup.
+- Dead contract, repository, runtime, and stale workflow facades cleanup deleted
+  the remaining reviewer-confirmed wrapper/list/test-only APIs:
+  `TurnPhaseIDs`, `KnownTurnPhaseID`, `NestedPlanExecuteCompletionEventNames`,
+  intent-loop `ParseEventName`, recovery `SourceLanes`, recovery report
+  list/predicate helpers, `ValidateTransition`, `IsPostCommit`,
+  `ResetViewCacheCounters`, `LoadViewByID`, `StripLineCommentStringAware`,
+  `RustToolNames`, `ModeNames`, `Mode.Validate`, readiness `ProfileCount`,
+  CLI MCP `NewDiscoveryServer`, `CompactStaleSessions`, and
+  `stateIsOlderThan`. Constants, real parsers, `LoadViewByIDStatus`,
+  `ToolCatalog`, and active `CompactChildArtifacts` behavior remain as the
+  single owners. Tests were retargeted away from helper self-preservation:
+  readiness JSON now asserts the named profile set, view-cache tests assert
+  fresh/stale/missing `ViewLoadStatus`, Rust dispatch coverage derives names
+  from `ToolCatalog`, and cache counter resets are package-local test setup.
+  Production Go changed `+0 / -304`, net `-304`; test Go changed
+  `+85 / -226`, net `-141`; total tracked files changed `+85 / -530`, net
+  `-445`. With this worktree included, the branch is production Go
+  `+26,467 / -36,143`, net `-9,676` versus `main`. Focused verification:
+  `go test ./internal/contracts/compile ./internal/contracts/featureplanner ./internal/contracts/intentloop ./internal/contracts/recovery ./internal/contracts/workflowstate ./internal/platform/atomicfile ./internal/runtime/modepolicy ./internal/runtime/readiness ./internal/surfaces/cli/doctor ./internal/surfaces/cli/mcp ./internal/repository/comprehension ./internal/repository/semantic/internal/indexsupport ./internal/repository/semantic/languagetools ./internal/workflows/intentloop -count=1`;
+  focused U1000 over touched packages; `deadcode ./...` now reports only the
+  deliberately retained shared `jsoneventstest` test helpers. Full
+  verification: `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `/Users/ben/go/bin/staticcheck -checks=U1000 ./...`; `git diff --check`.
 
 ## Review And Regression Protocol
 

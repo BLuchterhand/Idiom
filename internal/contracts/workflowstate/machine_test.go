@@ -152,22 +152,6 @@ func TestValidateStateProjectionCoversDispatchableInvariants(t *testing.T) {
 	}
 }
 
-func TestValidateTransitionAcceptsKnownTransition(t *testing.T) {
-	to, err := ValidateTransition(WorkflowPlanExecuteExecutor, StateExecuting, TransitionEventEditsApplied)
-	if err != nil {
-		t.Fatalf("ValidateTransition returned error: %v", err)
-	}
-	if to != StateReviewing {
-		t.Fatalf("transition target = %q, want %q", to, StateReviewing)
-	}
-}
-
-func TestValidateTransitionRejectsUnknownTransition(t *testing.T) {
-	if _, err := ValidateTransition(WorkflowPlanExecuteExecutor, StateExecuting, TransitionEvent("reviewed-ish")); err == nil {
-		t.Fatalf("unknown transition should fail")
-	}
-}
-
 func TestMachineDefinitionsHaveStableTransitionGraphs(t *testing.T) {
 	for _, definition := range Definitions() {
 		t.Run(string(definition.WorkflowID), func(t *testing.T) {

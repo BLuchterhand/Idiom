@@ -84,9 +84,6 @@ func TestWriteFileReturnsDirectorySyncOperationalErrors(t *testing.T) {
 	if !errors.As(err, &postCommitErr) || !postCommitErr.Committed() {
 		t.Fatalf("WriteFile error should expose committed post-rename state, got %T %[1]v", err)
 	}
-	if !IsPostCommit(err) {
-		t.Fatalf("IsPostCommit should recognize committed post-rename error: %v", err)
-	}
 
 	body, readErr := os.ReadFile(path)
 	if readErr != nil {

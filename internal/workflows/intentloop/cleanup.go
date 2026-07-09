@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 )
 
 type CleanupReport struct {
@@ -26,57 +25,6 @@ type ChildArtifactSnapshot struct {
 	TerminalCompletionSHA256 string `json:"terminal_completion_sha256,omitempty"`
 	ResumeStatePath          string `json:"resume_state_path,omitempty"`
 	ResumeStateSHA256        string `json:"resume_state_sha256,omitempty"`
-}
-
-func CompactStaleSessions(root string, olderThan time.Duration, now time.Time) (CleanupReport, error) {
-	if olderThan <= 0 {
-		return CleanupReport{}, fmt.Errorf("olderThan must be positive")
-	}
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-
-	sessionsDir := filepath.Join(normalizeCleanupRoot(root), ".idiom", "intent-loop", "sessions")
-	entries, err := os.ReadDir(sessionsDir)
-	if os.IsNotExist(err) {
-		return CleanupReport{}, nil
-	}
-	if err != nil {
-		return CleanupReport{}, fmt.Errorf("read intent-loop sessions dir: %w", err)
-	}
-
-	var report CleanupReport
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-
-		sessionID := strings.TrimSuffix(entry.Name(), ".json")
-		state, _, err := LoadState(root, sessionID)
-		if err != nil {
-			return report, err
-		}
-		if !stateIsOlderThan(state, filepath.Join(sessionsDir, entry.Name()), olderThan, now) {
-			continue
-		}
-
-		childReport, err := CompactChildArtifacts(root, &state)
-		if err != nil {
-			return report, err
-		}
-		report.CompactedSessions = append(report.CompactedSessions, sessionID)
-		report.DeletedPaths = append(report.DeletedPaths, childReport.DeletedPaths...)
-		report.PreservedPaths = append(report.PreservedPaths, childReport.PreservedPaths...)
-		report.ChildSnapshots = append(report.ChildSnapshots, childReport.ChildSnapshots...)
-		if _, err := SaveState(root, &state); err != nil {
-			return report, err
-		}
-	}
-
-	sort.Strings(report.CompactedSessions)
-	sort.Strings(report.DeletedPaths)
-	sort.Strings(report.PreservedPaths)
-	return report, nil
 }
 
 func CompactChildArtifacts(root string, state *IntentLoopState) (CleanupReport, error) {
@@ -197,19 +145,6 @@ func removeSessionTransientArtifacts(root string, sessionID string) ([]string, e
 	}
 	sort.Strings(deleted)
 	return deleted, nil
-}
-
-func stateIsOlderThan(state IntentLoopState, statePath string, olderThan time.Duration, now time.Time) bool {
-	for _, raw := range []string{state.UpdatedAt, state.CreatedAt} {
-		if stamp, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(raw)); err == nil {
-			return now.Sub(stamp) > olderThan
-		}
-	}
-	info, err := os.Stat(statePath)
-	if err != nil {
-		return false
-	}
-	return now.Sub(info.ModTime()) > olderThan
 }
 
 func hashRelativeFile(root string, relPath string) (string, bool, error) {

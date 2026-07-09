@@ -185,18 +185,6 @@ func recordRediscoveryTokensAvoided(result PackResult) {
 	}
 }
 
-// ResetViewCacheCounters zeroes the counters. Test-only helper.
-func ResetViewCacheCounters() {
-	viewCacheHits.Store(0)
-	viewCacheMisses.Store(0)
-	viewCacheWrites.Store(0)
-	viewCacheFreshnessHits.Store(0)
-	viewCacheStalePreventions.Store(0)
-	viewCacheStaleRowMisses.Store(0)
-	estimatedFullTokensSaved.Store(0)
-	estimatedRediscoveryTokensAvoided.Store(0)
-}
-
 // LoadView returns the cached PackResult for the given key, or
 // (PackResult{}, false, nil) on cache miss. Cache misses are not
 // errors; only genuine I/O or decode failures return an error.
@@ -258,24 +246,6 @@ func LoadView(root string, key ViewKey) (PackResult, bool, error) {
 
 	result.Cache = GraphViewCacheStateForKey(key, textutil.FirstNonEmpty(result.StoreKind, result.Provenance.StoreKind), "hit", "fresh_cached_row")
 	AttachPackResultContract(&result)
-
-	return result, true, nil
-}
-
-// LoadViewByID fetches a cached PackResult by its content-addressed
-// pack_id. Unlike LoadView, this skips key reconstruction — it's the
-// executor entry point for rehydrating a planner's packet from the
-// PlanArtifact.PackID field. Returns (PackResult{}, false, nil) on
-// cache miss; non-nil error only on genuine I/O / decode failure.
-func LoadViewByID(root string, packID string) (PackResult, bool, error) {
-	result, status, err := LoadViewByIDStatus(root, packID)
-	if err != nil {
-		return PackResult{}, false, err
-	}
-
-	if status.State != ViewLoadStateFresh {
-		return PackResult{}, false, nil
-	}
 
 	return result, true, nil
 }

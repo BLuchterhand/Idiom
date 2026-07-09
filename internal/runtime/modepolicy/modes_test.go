@@ -6,25 +6,17 @@ import (
 	"idiom/internal/contracts/toolpolicy"
 )
 
-func TestDefaultModesValidate(t *testing.T) {
-	for _, mode := range DefaultModes() {
-		if err := mode.Validate(); err != nil {
-			t.Errorf("mode %q failed validation: %v", mode.Name, err)
-		}
-	}
-}
-
 func TestModeByNameRoundTrip(t *testing.T) {
-	for _, name := range ModeNames() {
-		mode, ok := ModeByName(name)
+	for _, wantMode := range DefaultModes() {
+		mode, ok := ModeByName(wantMode.Name)
 		if !ok {
-			t.Errorf("ModeByName(%q) = !ok, want ok", name)
+			t.Errorf("ModeByName(%q) = !ok, want ok", wantMode.Name)
 
 			continue
 		}
 
-		if mode.Name != name {
-			t.Errorf("ModeByName(%q).Name = %q", name, mode.Name)
+		if mode.Name != wantMode.Name {
+			t.Errorf("ModeByName(%q).Name = %q", wantMode.Name, mode.Name)
 		}
 	}
 

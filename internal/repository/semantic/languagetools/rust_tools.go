@@ -810,23 +810,3 @@ func (m *Manager) ExecuteRustTool(ctx context.Context, req ToolRequest) ToolResu
 		return ToolResult{Tool: tool, Summary: "Tool request rejected", Error: fmt.Sprintf("unsupported Rust tool %q", tool)}
 	}
 }
-
-// RustToolNames returns the full list of rust_* tools this package
-// exposes. tool_manifest.go consumes this when IncludeRust is set.
-func RustToolNames() []string {
-	return []string{
-		"rust_overview",
-		"rust_entrypoints",
-		"rust_find_symbol",
-		"rust_workspace_symbol",
-		"rust_read_symbol",
-		"rust_related_files",
-		"rust_file_outline",
-		"rust_definition",
-		"rust_references",
-		"rust_calls_from",
-		"rust_calls_into",
-		"rust_implementations",
-		"rust_diagnostics",
-	}
-}

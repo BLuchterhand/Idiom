@@ -11,22 +11,12 @@ func TestEventTypesAllRoundTrip(t *testing.T) {
 		seen[eventType] = struct{}{}
 
 		name := EventName(eventType)
-		parsed, ok := ParseEventName(name)
-		if !ok || parsed != eventType {
-			t.Fatalf("ParseEventName(%q) = %q %v", name, parsed, ok)
+		if name != EventPrefix+string(eventType) {
+			t.Fatalf("EventName(%q) = %q, want prefix form", eventType, name)
 		}
-	}
-}
-
-func TestParseEventNameRejectsUnknown(t *testing.T) {
-	if eventType, ok := ParseEventName("idiom.intent_loop.not_real"); ok {
-		t.Fatalf("ParseEventName accepted %q", eventType)
-	}
-}
-
-func TestParseEventNameRejectsBareKnownType(t *testing.T) {
-	if eventType, ok := ParseEventName(string(EventStart)); ok {
-		t.Fatalf("ParseEventName accepted bare event type %q", eventType)
+		if !KnownEventType(eventType) {
+			t.Fatalf("KnownEventType(%q) = false", eventType)
+		}
 	}
 }
 
@@ -84,9 +74,6 @@ func TestIntentLoopCycleStatusesParseDeclaredValues(t *testing.T) {
 }
 
 func TestIntentLoopVocabularyParsersTrimButKnownEventTypeIsExact(t *testing.T) {
-	if eventType, ok := ParseEventName(" \t" + EventName(EventStart) + "\n"); !ok || eventType != EventStart {
-		t.Fatalf("ParseEventName trimmed start = %q %v, want %q true", eventType, ok, EventStart)
-	}
 	if status, ok := ParseStatus(" \t" + string(StatusCompleted) + "\n"); !ok || status != StatusCompleted {
 		t.Fatalf("ParseStatus trimmed completed = %q %v, want %q true", status, ok, StatusCompleted)
 	}

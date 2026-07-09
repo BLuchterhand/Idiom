@@ -24,29 +24,6 @@ func StripLineComment(line string) string {
 	return line
 }
 
-func StripLineCommentStringAware(line string) string {
-	inString := false
-
-	for i := 0; i < len(line)-1; i++ {
-		r := line[i]
-		if r == '\\' {
-			i++
-			continue
-		}
-
-		if r == '"' {
-			inString = !inString
-			continue
-		}
-
-		if !inString && line[i] == '/' && line[i+1] == '/' {
-			return line[:i]
-		}
-	}
-
-	return line
-}
-
 func FirstQualified(scope, name, sep string) string {
 	if strings.TrimSpace(scope) != "" {
 		return scope + sep + name

@@ -830,7 +830,7 @@ func TestLoadCachedPackCompactProjectionFallback(t *testing.T) {
 // RenderCompactPackProjection records estimated token savings when
 // budget enforcement omits items (Atom 6).
 func TestEstimatedFullTokensSaved_BudgetEnforcement(t *testing.T) {
-	ResetViewCacheCounters()
+	resetViewCacheCounters()
 
 	fullSaved, _ := TokenSavingsCounters()
 	if fullSaved != 0 {
@@ -874,7 +874,7 @@ func TestEstimatedFullTokensSaved_BudgetEnforcement(t *testing.T) {
 // TestEstimatedFullTokensSaved_UnboundedNoSavings verifies that
 // unbounded rendering (BudgetTokens=0) does not record false savings.
 func TestEstimatedFullTokensSaved_UnboundedNoSavings(t *testing.T) {
-	ResetViewCacheCounters()
+	resetViewCacheCounters()
 
 	result := PackResult{
 		PackID:  "unbounded-savings-test",
@@ -900,7 +900,7 @@ func TestEstimatedFullTokensSaved_UnboundedNoSavings(t *testing.T) {
 // full unbounded output genuinely exceeds the truncated output
 // (truncation note costs less than rendering all omitted items).
 func TestEstimatedFullTokensSaved_HeaderExceedsBudget(t *testing.T) {
-	ResetViewCacheCounters()
+	resetViewCacheCounters()
 
 	// Many files so full unbounded rendering >> truncated output.
 	files := make([]PackFile, 20)

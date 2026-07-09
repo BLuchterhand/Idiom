@@ -371,8 +371,17 @@ func TestRustToolsWithRustAnalyzer(t *testing.T) {
 
 func TestExecuteRustToolDispatch(t *testing.T) {
 	mgr, _ := newRustFixtureManager(t)
+	var names []string
+	for _, spec := range languagetools.ToolCatalog() {
+		if spec.Language == "rust" {
+			names = append(names, spec.Tool)
+		}
+	}
+	if len(names) == 0 {
+		t.Fatal("ToolCatalog has no rust tools")
+	}
 
-	for _, name := range languagetools.RustToolNames() {
+	for _, name := range names {
 		if name == "rust_diagnostics" {
 			continue // cargo may not be installed
 		}

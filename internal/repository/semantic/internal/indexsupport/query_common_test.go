@@ -66,24 +66,6 @@ func TestStripLineCommentOnlyComment(t *testing.T) {
 	}
 }
 
-func TestStripLineCommentStringAwareBasicComment(t *testing.T) {
-	if result := StripLineCommentStringAware("int x = 5; // comment"); result != "int x = 5; " {
-		t.Fatalf("unexpected result: %q", result)
-	}
-}
-
-func TestStripLineCommentStringAwareInString(t *testing.T) {
-	if result := StripLineCommentStringAware(`String s = "http://example.com";`); result != `String s = "http://example.com";` {
-		t.Fatalf("unexpected result: %q", result)
-	}
-}
-
-func TestStripLineCommentStringAwareEscapedQuote(t *testing.T) {
-	if result := StripLineCommentStringAware(`String s = "say \"hi\""; // done`); result != `String s = "say \"hi\""; ` {
-		t.Fatalf("unexpected result: %q", result)
-	}
-}
-
 func TestFirstQualifiedWithScope(t *testing.T) {
 	if result := FirstQualified("MyClass", "myMethod", "."); result != "MyClass.myMethod" {
 		t.Fatalf("expected MyClass.myMethod, got %s", result)

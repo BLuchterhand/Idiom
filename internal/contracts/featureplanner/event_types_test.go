@@ -98,10 +98,14 @@ func TestKnownDurableEventNameAcceptsCurrentAndLegacyNames(t *testing.T) {
 	}
 }
 
-func TestNestedPlanExecuteCompletionEventNamesRoundTrip(t *testing.T) {
-	for _, name := range NestedPlanExecuteCompletionEventNames() {
+func TestNestedPlanExecuteCompletionEventParserAcceptsDeclaredValues(t *testing.T) {
+	for _, eventName := range []NestedPlanExecuteCompletionEventName{
+		NestedPlanExecuteCompletionEventCompleted,
+		NestedPlanExecuteCompletionEventBlocked,
+	} {
+		name := string(eventName)
 		parsed, ok := ParseNestedPlanExecuteCompletionEventName(name)
-		if !ok || string(parsed) != name {
+		if !ok || parsed != eventName {
 			t.Fatalf("ParseNestedPlanExecuteCompletionEventName(%q) = %q %v", name, parsed, ok)
 		}
 		if !KnownNestedPlanExecuteCompletionEventName(name) {

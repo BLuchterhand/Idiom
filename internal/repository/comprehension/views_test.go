@@ -105,14 +105,14 @@ func TestSaveAndLoadViewRoundTrip(t *testing.T) {
 		t.Fatalf("CandidateFiles lost: %d", len(got.CandidateFiles))
 	}
 
-	// LoadViewByID must work the same way for the executor side.
-	got2, hit2, err := LoadViewByID(root, key.ID())
+	// LoadViewByIDStatus is the executor rehydration contract.
+	got2, status2, err := LoadViewByIDStatus(root, key.ID())
 	if err != nil {
-		t.Fatalf("LoadViewByID: %v", err)
+		t.Fatalf("LoadViewByIDStatus: %v", err)
 	}
 
-	if !hit2 || got2.Task != original.Task {
-		t.Fatalf("LoadViewByID expected hit with task %q, got hit=%v task=%q", original.Task, hit2, got2.Task)
+	if status2.State != ViewLoadStateFresh || got2.Task != original.Task {
+		t.Fatalf("LoadViewByIDStatus expected fresh hit with task %q, got status=%#v task=%q", original.Task, status2, got2.Task)
 	}
 }
 
@@ -165,9 +165,9 @@ func TestLoadViewMissOnEmpty(t *testing.T) {
 		t.Fatalf("expected miss on empty workspace")
 	}
 
-	_, hit2, err := LoadViewByID(root, "feedfacecafebeef")
-	if err != nil || hit2 {
-		t.Fatalf("LoadViewByID on empty workspace should miss, got hit=%v err=%v", hit2, err)
+	_, status2, err := LoadViewByIDStatus(root, "feedfacecafebeef")
+	if err != nil || status2.State != ViewLoadStateMissing {
+		t.Fatalf("LoadViewByIDStatus on empty workspace should miss, got status=%#v err=%v", status2, err)
 	}
 }
 
@@ -258,7 +258,7 @@ func TestMarkAllViewsStale(t *testing.T) {
 }
 
 func TestReadViewStatsIncludesSessionCounters(t *testing.T) {
-	ResetViewCacheCounters()
+	resetViewCacheCounters()
 
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/viewstats\n\ngo 1.22\n")
@@ -396,7 +396,7 @@ func TestReadViewStatsSeparatesCurrentFreshRowsFromHistoricalStaleGaps(t *testin
 }
 
 func TestPackHitsCacheOnIdenticalSecondCall(t *testing.T) {
-	ResetViewCacheCounters()
+	resetViewCacheCounters()
 
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/cache\n\ngo 1.22\n")
@@ -441,7 +441,7 @@ func TestPackHitsCacheOnIdenticalSecondCall(t *testing.T) {
 // graph_views cache hit increments estimatedRediscoveryTokensAvoided
 // (Atom 6).
 func TestPackCacheHitRecordsRediscoveryAvoidance(t *testing.T) {
-	ResetViewCacheCounters()
+	resetViewCacheCounters()
 
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/rediscovery\n\ngo 1.22\n")
@@ -489,7 +489,7 @@ func TestPackCacheHitRecordsRediscoveryAvoidance(t *testing.T) {
 }
 
 func TestPackExposesGraphViewContractCacheAndRankerReasons(t *testing.T) {
-	ResetViewCacheCounters()
+	resetViewCacheCounters()
 
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/contract\n\ngo 1.22\n")
@@ -701,7 +701,7 @@ func TestReadViewStatsCountsContractCoverageForCurrentRows(t *testing.T) {
 }
 
 func TestPackCacheKeyChangesForPersistedWeightsAndRuntimeTraces(t *testing.T) {
-	ResetViewCacheCounters()
+	resetViewCacheCounters()
 
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/invalidation\n\ngo 1.22\n")
@@ -779,7 +779,7 @@ func TestPackCacheKeyChangesForPersistedWeightsAndRuntimeTraces(t *testing.T) {
 }
 
 func TestPackInvalidationAttributionIdentifiesRuntimeOnlyState(t *testing.T) {
-	ResetViewCacheCounters()
+	resetViewCacheCounters()
 
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/runtimeonly\n\ngo 1.22\n")
@@ -820,7 +820,7 @@ func TestPackInvalidationAttributionIdentifiesRuntimeOnlyState(t *testing.T) {
 }
 
 func TestPackCacheHitSurvivesNoopFullRebuild(t *testing.T) {
-	ResetViewCacheCounters()
+	resetViewCacheCounters()
 
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/nooprebuild\n\ngo 1.22\n")
@@ -857,7 +857,7 @@ func TestPackCacheHitSurvivesNoopFullRebuild(t *testing.T) {
 }
 
 func TestPackCacheKeyIncludesLearnedWeightsOverride(t *testing.T) {
-	ResetViewCacheCounters()
+	resetViewCacheCounters()
 
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/overrideweights\n\ngo 1.22\n")
@@ -893,7 +893,7 @@ func TestPackCacheKeyIncludesLearnedWeightsOverride(t *testing.T) {
 }
 
 func TestLoadViewByIDRefusesStaleReferencedPath(t *testing.T) {
-	ResetViewCacheCounters()
+	resetViewCacheCounters()
 
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/stalepacket\n\ngo 1.22\n")
@@ -912,15 +912,15 @@ func TestLoadViewByIDRefusesStaleReferencedPath(t *testing.T) {
 
 	writeFile(t, sourcePath, "package pkg\n\nfunc X() string { return \"changed\" }\n")
 
-	if _, hit, err := LoadViewByID(root, pack.PackID); err != nil {
-		t.Fatalf("LoadViewByID: %v", err)
-	} else if hit {
-		t.Fatalf("stale referenced path should miss instead of rehydrating cached packet")
+	if _, status, err := LoadViewByIDStatus(root, pack.PackID); err != nil {
+		t.Fatalf("LoadViewByIDStatus: %v", err)
+	} else if status.State != ViewLoadStateStale {
+		t.Fatalf("stale referenced path should report stale instead of rehydrating cached packet, got %#v", status)
 	}
 }
 
 func TestLoadViewByIDStatusReportsExplicitStaleRows(t *testing.T) {
-	ResetViewCacheCounters()
+	resetViewCacheCounters()
 
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/stalerow\n\ngo 1.22\n")
@@ -961,13 +961,13 @@ func TestLoadViewByIDStatusReportsExplicitStaleRows(t *testing.T) {
 		t.Fatalf("expected stale result with packet contents preserved, got %#v", got)
 	}
 
-	if _, hit, err := LoadViewByID(root, key.ID()); err != nil || hit {
-		t.Fatalf("LoadViewByID should still expose stale row as a cache miss, hit=%v err=%v", hit, err)
+	if _, staleStatus, err := LoadViewByIDStatus(root, key.ID()); err != nil || staleStatus.State != ViewLoadStateStale {
+		t.Fatalf("LoadViewByIDStatus should keep reporting stale row, status=%#v err=%v", staleStatus, err)
 	}
 }
 
 func TestLoadViewByIDStatusReportsNonCurrentRows(t *testing.T) {
-	ResetViewCacheCounters()
+	resetViewCacheCounters()
 
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/noncurrentrow\n\ngo 1.22\n")
@@ -1006,7 +1006,7 @@ func TestLoadViewByIDStatusReportsNonCurrentRows(t *testing.T) {
 }
 
 func TestLoadViewByIDAllowsUnrelatedStalePath(t *testing.T) {
-	ResetViewCacheCounters()
+	resetViewCacheCounters()
 
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/scopedpacket\n\ngo 1.22\n")
@@ -1026,13 +1026,13 @@ func TestLoadViewByIDAllowsUnrelatedStalePath(t *testing.T) {
 
 	writeFile(t, otherPath, "package other\n\nfunc Other() string { return \"new\" }\n")
 
-	got, hit, err := LoadViewByID(root, pack.PackID)
+	got, status, err := LoadViewByIDStatus(root, pack.PackID)
 	if err != nil {
-		t.Fatalf("LoadViewByID: %v", err)
+		t.Fatalf("LoadViewByIDStatus: %v", err)
 	}
 
-	if !hit {
-		t.Fatalf("unrelated stale path should not invalidate scoped cached packet")
+	if status.State != ViewLoadStateFresh {
+		t.Fatalf("unrelated stale path should not invalidate scoped cached packet, got %#v", status)
 	}
 
 	if got.Freshness == nil || !got.Freshness.FreshForScope || got.Freshness.GlobalFresh {
@@ -1041,7 +1041,7 @@ func TestLoadViewByIDAllowsUnrelatedStalePath(t *testing.T) {
 }
 
 func TestPackUsesCachedViewWhenOnlyUnrelatedPathIsStale(t *testing.T) {
-	ResetViewCacheCounters()
+	resetViewCacheCounters()
 
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/scopedpack\n\ngo 1.22\n")

@@ -219,10 +219,6 @@ var profileSpecs = []profileSpec{
 	{name: "sidecar", taskFamily: string(autonomy.TaskFamilyDebugLogs), requiredRoles: []string{backends.RoleClassifier}},
 }
 
-func ProfileCount() int {
-	return len(profileSpecs)
-}
-
 type gatePolicy struct {
 	name              string
 	checkName         string

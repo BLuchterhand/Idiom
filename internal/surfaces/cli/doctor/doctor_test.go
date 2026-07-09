@@ -126,11 +126,23 @@ func TestRunDoctorMainJSONFormat(t *testing.T) {
 		t.Fatalf("summary counts (%d) don't match check count (%d)", total, len(got.Checks))
 	}
 
-	if len(got.ReadinessProfiles) != readiness.ProfileCount() {
+	wantProfiles := map[string]bool{
+		"discovery": false,
+		"plan":      false,
+		"implement": false,
+		"eval":      false,
+		"sidecar":   false,
+	}
+	if len(got.ReadinessProfiles) != len(wantProfiles) {
 		t.Fatalf("expected all readiness profiles in JSON output, got %#v", got.ReadinessProfiles)
 	}
 
 	for _, profile := range got.ReadinessProfiles {
+		if _, ok := wantProfiles[profile.Name]; !ok {
+			t.Fatalf("unexpected readiness profile %q in JSON output", profile.Name)
+		}
+		wantProfiles[profile.Name] = true
+
 		if profile.Name == "" || profile.State == "" || profile.Enforcement == "" || profile.TaskFamily == "" || profile.Contract == "" {
 			t.Fatalf("profile readiness missing machine-readable fields: %#v", profile)
 		}
@@ -161,6 +173,11 @@ func TestRunDoctorMainJSONFormat(t *testing.T) {
 			if !doctorProfileHasCheck(profile.Checks, want) {
 				t.Fatalf("profile %q missing readiness check %q in %#v", profile.Name, want, profile.Checks)
 			}
+		}
+	}
+	for name, seen := range wantProfiles {
+		if !seen {
+			t.Fatalf("missing readiness profile %q in JSON output", name)
 		}
 	}
 }
