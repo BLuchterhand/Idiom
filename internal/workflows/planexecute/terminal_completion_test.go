@@ -598,8 +598,8 @@ func TestFinalizeTerminalCompletionRejectsMissingRequiredAcceptanceIDs(t *testin
 		t.Fatalf("RequiredAcceptanceEvidenceIDs alone must not populate AcceptanceEvidenceIDs: got %#v", result.Completion.AcceptanceEvidenceIDs)
 	}
 
-	loaded, _, err := LoadProgressState(root, state.SessionID)
-	if err != nil {
+	loaded, _, found, err := TryLoadProgressState(root, state.SessionID)
+	if err != nil || !found {
 		t.Fatalf("LoadProgressState: %v", err)
 	}
 
@@ -649,8 +649,8 @@ func TestFinalizeTerminalCompletionClearsAcceptanceIDsOnDirectFailure(t *testing
 		t.Fatalf("failed terminal completion should not retain acceptance IDs: %#v", result.Completion.AcceptanceEvidenceIDs)
 	}
 
-	loaded, _, err := LoadProgressState(root, state.SessionID)
-	if err != nil {
+	loaded, _, found, err := TryLoadProgressState(root, state.SessionID)
+	if err != nil || !found {
 		t.Fatalf("LoadProgressState: %v", err)
 	}
 

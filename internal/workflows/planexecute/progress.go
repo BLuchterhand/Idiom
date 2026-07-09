@@ -310,19 +310,6 @@ func progressPhaseAllowsStatus(phase plancontract.PlanExecuteProgressPhase, stat
 	}
 }
 
-func LoadProgressState(root string, resumeID string) (ProgressState, string, error) {
-	state, relPath, found, err := TryLoadProgressState(root, resumeID)
-	if err != nil {
-		return ProgressState{}, relPath, err
-	}
-
-	if !found {
-		return ProgressState{}, relPath, fmt.Errorf("plan-execute progress state %s does not exist", relPath)
-	}
-
-	return state, relPath, nil
-}
-
 func (s *ProgressState) MarkPlanLoaded(root string, planPath string, plan planartifact.PlanArtifact, baseline ReviewRepairBaseline) {
 	s.Phase = plancontract.PlanExecuteProgressPhaseExecutor
 	s.Status = plancontract.PlanExecuteProgressStatusRunning

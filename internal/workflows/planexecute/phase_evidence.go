@@ -1,7 +1,6 @@
 package planexecute
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -258,47 +257,7 @@ func loadPlanExecutePacketEvidence(root string, packID string) PhaseEvidencePack
 		return packet
 	}
 
-	view, artifactHit, artifactErr := loadPlanExecutePacketArtifact(root, packID)
-	if artifactErr != nil {
-		return PhaseEvidencePacket{PackID: packID, Status: PhaseEvidencePacketStatusError, Error: artifactErr.Error()}
-	}
-
-	if !artifactHit {
-		return PhaseEvidencePacket{PackID: packID, Status: PhaseEvidencePacketStatusMiss}
-	}
-
-	packet := PhaseEvidencePacketFromView(view)
-
-	packet.Status = PhaseEvidencePacketStatusAvailableStale
-	packet.Fresh = false
-	packet.Confidence = firstNonEmptyString(packet.Confidence, "stale")
-
-	return packet
-}
-
-func loadPlanExecutePacketArtifact(root string, packID string) (comprehension.PackResult, bool, error) {
-	path := filepath.Join(strings.TrimSpace(root), ".idiom", "comprehension", "views", packID+".json")
-	body, err := os.ReadFile(filepath.Clean(path))
-
-	if os.IsNotExist(err) {
-		return comprehension.PackResult{}, false, nil
-	}
-
-	if err != nil {
-		return comprehension.PackResult{}, false, err
-	}
-
-	var view comprehension.PackResult
-
-	if err := json.Unmarshal(body, &view); err != nil {
-		return comprehension.PackResult{}, false, err
-	}
-
-	if strings.TrimSpace(view.PackID) == "" {
-		view.PackID = packID
-	}
-
-	return view, true, nil
+	return PhaseEvidencePacket{PackID: packID, Status: PhaseEvidencePacketStatusMiss}
 }
 
 func PhaseEvidencePacketFromView(view comprehension.PackResult) PhaseEvidencePacket {

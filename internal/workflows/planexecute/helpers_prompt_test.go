@@ -8,7 +8,7 @@ import (
 )
 
 func TestPlanExecutePlannerSystemAddendumFrontloadsPlannerProtocol(t *testing.T) {
-	got := planExecutePlannerSystemAddendum([]string{"a.go", "b_test.go"}, nil)
+	got := PlanExecutePlannerSystemAddendumWithObligations([]string{"a.go", "b_test.go"}, nil, nil)
 	for _, want := range []string{
 		"executable plan artifact, not a narrative implementation answer",
 		"Visible response protocol",

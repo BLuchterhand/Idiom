@@ -7,10 +7,6 @@ import (
 	plancontract "idiom/internal/contracts/plan"
 )
 
-func planExecutePlannerSystemAddendum(requiredEditPaths []string, allowedEditPaths []string) string {
-	return PlanExecutePlannerSystemAddendumWithObligations(requiredEditPaths, allowedEditPaths, nil)
-}
-
 func PlanExecutePlannerSystemAddendumWithObligations(requiredEditPaths []string, allowedEditPaths []string, obligations plancontract.EditSetObligations) string {
 	lines := []string{
 		"# Plan-then-execute (planner phase)",

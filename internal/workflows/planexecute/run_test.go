@@ -181,7 +181,7 @@ func TestProgressStatePreservesJSONEventWriteFailureKind(t *testing.T) {
 }
 
 func TestPlanExecutePromptTreatsReplaceAllAsNewFileOnly(t *testing.T) {
-	prompt := planExecutePlannerSystemAddendum([]string{"pkg/existing.go", "pkg/new_helper.go"}, nil)
+	prompt := PlanExecutePlannerSystemAddendumWithObligations([]string{"pkg/existing.go", "pkg/new_helper.go"}, nil, nil)
 
 	for _, want := range []string{
 		"replace_all:true`+`new_text`+empty `old_text` for missing/new files only",
@@ -1228,8 +1228,8 @@ func TestRunPlannerBlockedProgressEventCarriesTerminalFailureFields(t *testing.T
 		t.Fatalf("expected planner_blocked result, got %#v stdout=%s stderr=%s", result, stdout.String(), stderr.String())
 	}
 
-	state, _, err := LoadProgressState(root, result.SessionID)
-	if err != nil {
+	state, _, found, err := TryLoadProgressState(root, result.SessionID)
+	if err != nil || !found {
 		t.Fatalf("load progress state: %v", err)
 	}
 
@@ -1296,8 +1296,8 @@ func TestRunPlannerBlockedPreservesFullAnchorRefreshFailureReason(t *testing.T) 
 		t.Fatalf("expected planner_blocked result, got %#v stdout=%s stderr=%s", result, stdout.String(), stderr.String())
 	}
 
-	state, _, err := LoadProgressState(root, result.SessionID)
-	if err != nil {
+	state, _, found, err := TryLoadProgressState(root, result.SessionID)
+	if err != nil || !found {
 		t.Fatalf("load progress state: %v", err)
 	}
 
@@ -1381,8 +1381,8 @@ func TestSaveProgressStateRedactsDurableFailureText(t *testing.T) {
 		t.Fatalf("SaveProgressState: %v", err)
 	}
 
-	loaded, _, err := LoadProgressState(root, state.SessionID)
-	if err != nil {
+	loaded, _, found, err := TryLoadProgressState(root, state.SessionID)
+	if err != nil || !found {
 		t.Fatalf("LoadProgressState: %v", err)
 	}
 
@@ -1523,8 +1523,8 @@ func TestRunPersistsProgressAndResumeRunsReviewRepairOnly(t *testing.T) {
 		t.Fatalf("failed run should expose a resume state path")
 	}
 
-	state, _, err := LoadProgressState(root, first.SessionID)
-	if err != nil {
+	state, _, found, err := TryLoadProgressState(root, first.SessionID)
+	if err != nil || !found {
 		t.Fatalf("load progress state: %v", err)
 	}
 
@@ -1642,8 +1642,8 @@ func TestRunPersistsReviewRepairQuestionAsBlockedProgress(t *testing.T) {
 		t.Fatalf("expected blocked review result, got %#v stdout=%s stderr=%s", result, stdout.String(), stderr.String())
 	}
 
-	state, _, err := LoadProgressState(root, result.SessionID)
-	if err != nil {
+	state, _, found, err := TryLoadProgressState(root, result.SessionID)
+	if err != nil || !found {
 		t.Fatalf("load progress state: %v", err)
 	}
 
@@ -1708,8 +1708,8 @@ func TestRunResumeReviewRepairUsesPersistedTypedEditSetObligations(t *testing.T)
 		t.Fatalf("first run should fail review checklist gate, got code=%d stdout=%s stderr=%s", first.ExitCode, firstStdout.String(), firstStderr.String())
 	}
 
-	state, _, err := LoadProgressState(root, first.SessionID)
-	if err != nil {
+	state, _, found, err := TryLoadProgressState(root, first.SessionID)
+	if err != nil || !found {
 		t.Fatalf("load progress state: %v", err)
 	}
 
@@ -1829,8 +1829,8 @@ func TestRunContinuesReviewRepairAfterSourceSanityFailure(t *testing.T) {
 		t.Fatalf("expected typed executor verification handoff event, got stdout=%s", stdout.String())
 	}
 
-	state, _, err := LoadProgressState(root, result.SessionID)
-	if err != nil {
+	state, _, found, err := TryLoadProgressState(root, result.SessionID)
+	if err != nil || !found {
 		t.Fatalf("load progress state: %v", err)
 	}
 
@@ -1926,8 +1926,8 @@ func TestRunContinuesReviewRepairAfterRequestedVerificationFailure(t *testing.T)
 		t.Fatalf("expected repaired source body, got:\n%s", got)
 	}
 
-	state, _, err := LoadProgressState(root, result.SessionID)
-	if err != nil {
+	state, _, found, err := TryLoadProgressState(root, result.SessionID)
+	if err != nil || !found {
 		t.Fatalf("load progress state: %v", err)
 	}
 
@@ -2152,8 +2152,8 @@ func TestRunKeepsSourceSanityFailureWhenReviewRepairUnavailable(t *testing.T) {
 		t.Fatalf("expected source_sanity_failed result, got %#v", result)
 	}
 
-	state, _, err := LoadProgressState(root, result.SessionID)
-	if err != nil {
+	state, _, found, err := TryLoadProgressState(root, result.SessionID)
+	if err != nil || !found {
 		t.Fatalf("load progress state: %v", err)
 	}
 

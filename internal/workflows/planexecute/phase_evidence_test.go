@@ -1,7 +1,6 @@
 package planexecute
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -46,7 +45,6 @@ func TestCollectPlanExecutePhaseEvidenceLoadsPacketAndExecutorChecks(t *testing.
 	if err := comprehension.SaveView(root, key, cached); err != nil {
 		t.Fatalf("SaveView: %v", err)
 	}
-	writePlanExecutePhaseEvidencePackArtifact(t, root, cached)
 
 	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package pkg\n\nfunc A() string { return \"beta\" }\n"), 0o644); err != nil {
 		t.Fatalf("seed post-execute a.go: %v", err)
@@ -78,7 +76,7 @@ func TestCollectPlanExecutePhaseEvidenceLoadsPacketAndExecutorChecks(t *testing.
 		t.Fatalf("phase = %q, want %q", evidence.Phase, PhaseEvidencePhaseReviewRepair)
 	}
 	if evidence.Packet.Status != PhaseEvidencePacketStatusAvailableStale || evidence.Packet.PackID != key.ID() {
-		t.Fatalf("expected stale packet artifact %s, got %#v", key.ID(), evidence.Packet)
+		t.Fatalf("expected stale graph-view packet %s, got %#v", key.ID(), evidence.Packet)
 	}
 	if evidence.ExecutorHandoff.PacketState != plancontract.ExecutorHandoffStateStale || evidence.ExecutorHandoff.Reason == "" {
 		t.Fatalf("expected stale executor handoff evidence, got %#v", evidence.ExecutorHandoff)
@@ -126,23 +124,5 @@ func TestLoadPlanExecutePacketEvidenceRejectsInvalidPackID(t *testing.T) {
 	got := loadPlanExecutePacketEvidence(root, "../secret")
 	if got.Status != PhaseEvidencePacketStatusInvalidPackID {
 		t.Fatalf("invalid pack ids must be rejected before cache-path fallback, got %#v", got)
-	}
-}
-
-func writePlanExecutePhaseEvidencePackArtifact(t *testing.T, root string, pack comprehension.PackResult) {
-	t.Helper()
-
-	path := filepath.Join(root, ".idiom", "comprehension", "views", pack.PackID+".json")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir pack artifact: %v", err)
-	}
-
-	body, err := json.MarshalIndent(pack, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal pack artifact: %v", err)
-	}
-
-	if err := os.WriteFile(path, append(body, '\n'), 0o644); err != nil {
-		t.Fatalf("write pack artifact: %v", err)
 	}
 }

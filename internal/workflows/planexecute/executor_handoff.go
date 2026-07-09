@@ -113,32 +113,6 @@ func ClassifyExecutorHandoffPacket(root string, plan planartifact.PlanArtifact) 
 		return handoff
 	}
 
-	view, artifactHit, artifactErr := loadPlanExecutePacketArtifact(root, effectivePackID)
-	if artifactErr != nil {
-		if handoff.State != plancontract.ExecutorHandoffStateOverridden {
-			handoff.State = plancontract.ExecutorHandoffStateMissing
-			handoff.Reason = "artifact_load_error"
-		}
-
-		return handoff
-	}
-
-	if artifactHit {
-		handoff = applyExecutorHandoffView(handoff, view)
-		if overridden {
-			handoff.State = plancontract.ExecutorHandoffStateOverridden
-			handoff.Reason = "packet_id_override"
-
-			return handoff
-		}
-
-		handoff.State = plancontract.ExecutorHandoffStateStale
-		handoff.Reason = "legacy_artifact_fallback"
-		handoff.Fresh = false
-
-		return handoff
-	}
-
 	if handoff.State != plancontract.ExecutorHandoffStateOverridden {
 		handoff.State = plancontract.ExecutorHandoffStateMissing
 		handoff.Reason = "cache_miss"

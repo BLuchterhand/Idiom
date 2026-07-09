@@ -1591,6 +1591,27 @@ Reviewer-updated estimate:
   `go test ./...`; `go build ./cmd/idiom`;
   `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
   `git diff --check`.
+- Plan-execute packet and progress dead-surface cleanup deleted the legacy
+  `.idiom/comprehension/views/<pack>.json` packet fallback from executor
+  handoff and phase-evidence collection. `comprehension.LoadViewByIDStatus`
+  is now the single packet authority for fresh, stale, non-current, and missing
+  graph-view packets; standalone legacy artifacts are ignored and reported as
+  graph cache misses. The same pass deleted test-only production wrappers
+  `planExecutePlannerSystemAddendum` and `LoadProgressState`; tests now call
+  `PlanExecutePlannerSystemAddendumWithObligations` and
+  `TryLoadProgressState` with explicit found checks. Production Go changed
+  `+1 / -85`, net `-84`; test Go changed `+50 / -76`, net `-26`. With this
+  worktree included, the branch is production Go `+26,551 / -33,994`,
+  net `-7,443` versus `main`. Focused verification:
+  `go test ./internal/workflows/planexecute -run 'Test(PlanExecutePlannerSystemAddendum|TryLoadProgressState|CollectPlanExecutePhaseEvidence|LoadPlanExecutePacketEvidence|ExecutorHandoff|PlanExecutePrompt|Progress|TerminalCompletion)' -count=1`;
+  `go test ./internal/surfaces/cli/planexecute -run 'TestRun(ExecutorPhase|PlanExecuteMainResume)' -count=1`;
+  `go test ./internal/workflows/planexecute ./internal/surfaces/cli/planexecute ./internal/repository/comprehension -count=1`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./internal/workflows/planexecute ./internal/surfaces/cli/planexecute ./internal/repository/comprehension`;
+  `go run golang.org/x/tools/cmd/deadcode@latest ./... | rg '^internal/workflows/planexecute/'`
+  as inventory, now showing no planexecute findings. Full verification:
+  `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `git diff --check`.
 
 ## Review And Regression Protocol
 

@@ -1881,14 +1881,14 @@ func TestRunExecutorPhaseBlocksPartialApprovalScopeDrift(t *testing.T) {
 	}
 }
 
-func TestRunExecutorPhaseEmitsStalePacketHandoff(t *testing.T) {
+func TestRunExecutorPhaseIgnoresLegacyPackArtifactWithoutGraphView(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("alpha\n"), 0o644); err != nil {
 		t.Fatalf("seed a.txt: %v", err)
 	}
 
 	packID := "deadc0decafef00d"
-	writePlanExecutePackArtifact(t, root, comprehension.PackResult{
+	legacyPacket := comprehension.PackResult{
 		PackID:         packID,
 		IndexID:        "idx-old",
 		Root:           root,
@@ -1896,7 +1896,18 @@ func TestRunExecutorPhaseEmitsStalePacketHandoff(t *testing.T) {
 		Mode:           "plan",
 		Fresh:          false,
 		CandidateFiles: []comprehension.PackFile{{Path: "a.txt", Role: "editable"}},
-	})
+	}
+	legacyPath := filepath.Join(root, ".idiom", "comprehension", "views", packID+".json")
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+		t.Fatalf("mkdir legacy packet dir: %v", err)
+	}
+	body, err := json.MarshalIndent(legacyPacket, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal legacy packet: %v", err)
+	}
+	if err := os.WriteFile(legacyPath, append(body, '\n'), 0o644); err != nil {
+		t.Fatalf("write legacy packet: %v", err)
+	}
 
 	plan := planartifact.PlanArtifact{
 		SchemaVersion: planartifact.SchemaVersion,
@@ -1921,12 +1932,15 @@ func TestRunExecutorPhaseEmitsStalePacketHandoff(t *testing.T) {
 		t.Fatalf("expected executor_handoff_packet event, got %s", stdout.String())
 	}
 
-	if handoff["packet_state"] != string(plancontract.ExecutorHandoffStateStale) || handoff["reason"] != "legacy_artifact_fallback" || handoff["fresh"] != false {
-		t.Fatalf("expected stale packet state, got %#v", handoff)
+	if handoff["packet_state"] != string(plancontract.ExecutorHandoffStateMissing) || handoff["reason"] != "cache_miss" || handoff["fresh"] != false {
+		t.Fatalf("expected graph cache miss despite legacy artifact, got %#v", handoff)
 	}
 
-	if _, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventExecutorPacketStale)); !ok {
-		t.Fatalf("expected executor_packet_stale compatibility event, got %s", stdout.String())
+	if _, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventExecutorPackMiss)); !ok {
+		t.Fatalf("expected executor_pack_miss event, got %s", stdout.String())
+	}
+	if _, ok := jsoneventstest.FindByType(events, plancontract.PlanExecuteEventName(plancontract.PlanExecuteEventExecutorPacketStale)); ok {
+		t.Fatalf("legacy artifact must not emit stale packet event, got %s", stdout.String())
 	}
 }
 
@@ -3157,8 +3171,8 @@ func TestRunPlanExecuteMainResumeRerunsReviewRepairOnly(t *testing.T) {
 		t.Fatalf("first run should fail review checklist gate, got %d stdout=%s stderr=%s", code, firstStdout.String(), firstStderr.String())
 	}
 
-	state, _, err := planexecute.LoadProgressState(root, plannerSessionID)
-	if err != nil {
+	state, _, found, err := planexecute.TryLoadProgressState(root, plannerSessionID)
+	if err != nil || !found {
 		t.Fatalf("load progress state: %v", err)
 	}
 
@@ -3253,8 +3267,8 @@ func TestRunPlanExecuteMainResumeUsesPersistedTypedEditSetObligations(t *testing
 		t.Fatalf("first run should fail review checklist gate, got %d stdout=%s stderr=%s", code, firstStdout.String(), firstStderr.String())
 	}
 
-	state, _, err := planexecute.LoadProgressState(root, plannerSessionID)
-	if err != nil {
+	state, _, found, err := planexecute.TryLoadProgressState(root, plannerSessionID)
+	if err != nil || !found {
 		t.Fatalf("load progress state: %v", err)
 	}
 
@@ -3663,26 +3677,6 @@ func planExecuteTestEditPaths(edits []planartifact.PlanEdit) []string {
 	}
 
 	return paths
-}
-
-func writePlanExecutePackArtifact(t *testing.T, root string, pack comprehension.PackResult) string {
-	t.Helper()
-
-	path := filepath.Join(root, ".idiom", "comprehension", "views", pack.PackID+".json")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir pack artifact: %v", err)
-	}
-
-	body, err := json.MarshalIndent(pack, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal pack artifact: %v", err)
-	}
-
-	if err := os.WriteFile(path, append(body, '\n'), 0o644); err != nil {
-		t.Fatalf("write pack artifact: %v", err)
-	}
-
-	return path
 }
 
 func runReviewRepairPhaseForTest(
