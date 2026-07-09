@@ -3680,7 +3680,7 @@ func (r *Runner) runLegacySessionBody(
 				rebuildTools()
 
 				if ReadOnlyTaskResultAnswerableForObjective(result, r.RuntimeBrief.Objective) {
-					evidencePaths := postChildClosureEvidencePaths(r.RuntimeBrief.Objective, []workspace.ToolResult{result}, 4)
+					evidencePaths := newToolResultEvidenceProjection([]workspace.ToolResult{result}).postChildClosureEvidencePaths(r.RuntimeBrief.Objective, 4)
 
 					requestBudget.broadEvidenceDelegationSatisfied = true
 					r.RuntimeBrief.Constraints = textutil.Merge(r.RuntimeBrief.Constraints, []string{"child_packet_available"})
@@ -4592,7 +4592,7 @@ func (r *Runner) runLegacySessionBody(
 				nudge := buildReadinessNudge(ReadinessNudge{
 					Headline:          "The delegated read-only evidence is sufficient for a grounded answer to this question.",
 					EvidencePathLabel: "Core evidence paths: ",
-					EvidencePaths:     closurePromptEvidencePaths(delegatedClosureEvidencePaths(r.RuntimeBrief.Objective, collectedResults, 4), 4),
+					EvidencePaths:     closurePromptEvidencePaths(newToolResultEvidenceProjection(collectedResults).delegatedClosureEvidencePaths(r.RuntimeBrief.Objective, 4), 4),
 					Objective:         r.RuntimeBrief.Objective,
 					RuntimeBrief:      r.RuntimeBrief,
 					Results:           collectedResults,
@@ -4607,7 +4607,7 @@ func (r *Runner) runLegacySessionBody(
 					nudge = buildReadinessNudge(ReadinessNudge{
 						Headline:          "The read-only evidence is sufficient for a grounded answer to this question.",
 						EvidencePathLabel: "Core evidence paths: ",
-						EvidencePaths:     closurePromptEvidencePaths(readOnlyPresentationEvidencePathsForBrief(r.RuntimeBrief, collectedResults, 4), 4),
+						EvidencePaths:     closurePromptEvidencePaths(newToolResultEvidenceProjection(collectedResults).evidencePathsForBrief(r.RuntimeBrief, 4), 4),
 						Objective:         strings.TrimSpace(r.RuntimeBrief.Objective),
 						RuntimeBrief:      r.RuntimeBrief,
 						Results:           collectedResults,
@@ -5128,7 +5128,7 @@ func (r *Runner) completionGateRepeatedBlockerAnswer(result workspace.ToolResult
 	b.WriteString(reason)
 
 	if !runnerBriefRequiresMutation(r.RuntimeBrief) {
-		if paths := promptEvidencePathsFromToolResults(results, 8); len(paths) > 0 {
+		if paths := newToolResultEvidenceProjection(results).promptEvidencePaths(8); len(paths) > 0 {
 			b.WriteString("\n\nEvidence paths observed before rejection:\n")
 			for _, path := range paths {
 				b.WriteString("- ")
@@ -11655,7 +11655,7 @@ func budgetDeterministicBlocker(reason string, brief workerruntime.WorkerRuntime
 		return b.String()
 	}
 
-	if paths := promptEvidencePathsFromToolResults(results, 6); len(paths) > 0 {
+	if paths := newToolResultEvidenceProjection(results).promptEvidencePaths(6); len(paths) > 0 {
 		b.WriteString("\n\nEvidence paths:\n")
 		for _, path := range paths {
 			b.WriteString("- ")
@@ -15263,7 +15263,7 @@ func (r *Runner) readOnlyAnalysisAnswerReadyAfterResult(req workspace.ToolReques
 	}
 
 	exactProbes := readOnlyAnalysisExactProbeCount(results)
-	evidencePaths := promptEvidencePathsFromToolResults(results, 6)
+	evidencePaths := newToolResultEvidenceProjection(results).promptEvidencePaths(6)
 
 	if delegatedReadOnlyHasCompositeDiscoveryPacket(results) {
 		closure := readOnlyClosureDecisionForResults(r.RuntimeBrief, results)
@@ -15376,48 +15376,13 @@ func delegatedReadOnlyHasCompositeDiscoveryPacket(results []workspace.ToolResult
 	return false
 }
 
-func delegatedReadOnlyInspectedImplementationPaths(results []workspace.ToolResult) []string {
-	seen := make(map[string]struct{})
-	paths := make([]string, 0, 4)
-
-	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" {
-			continue
-		}
-
-		if newToolResultEvidenceRecord(result).candidateAnchorOnly {
-			continue
-		}
-
-		if !workspace.IsSourceBodyInspectionTool(result.Tool) {
-			continue
-		}
-
-		for _, path := range pinnedPathsFromToolResults([]workspace.ToolResult{result}, 4) {
-			path = filepath.ToSlash(strings.TrimSpace(path))
-			if path == "" || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-				continue
-			}
-
-			if _, ok := seen[path]; ok {
-				continue
-			}
-
-			seen[path] = struct{}{}
-			paths = append(paths, path)
-		}
-	}
-
-	return paths
-}
-
 func delegatedReadOnlyHasBodyRead(results []workspace.ToolResult, wantPath string) bool {
 	wantPath = filepath.ToSlash(strings.TrimSpace(wantPath))
 	if wantPath == "" {
 		return false
 	}
 
-	for _, path := range delegatedReadOnlyInspectedImplementationPaths(results) {
+	for _, path := range newToolResultEvidenceProjection(results).delegatedReadOnlyInspectedImplementationPaths() {
 		if path == wantPath {
 			return true
 		}
@@ -15444,7 +15409,7 @@ func delegatedReadOnlySiblingImplementationPath(results []workspace.ToolResult, 
 		}
 	}
 
-	for _, path := range pinnedPathsFromToolResults(results, 32) {
+	for _, path := range newToolResultEvidenceProjection(results).pinnedPaths(32) {
 		path = filepath.ToSlash(strings.TrimSpace(path))
 		if path == "" || path == currentPath || strings.HasSuffix(path, "_test.go") || !strings.HasSuffix(path, ".go") {
 			continue
@@ -15803,6 +15768,7 @@ func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step in
 		WriteCapable:              runnerHasWorkspaceWriteCapability(brief, brief.AllowedTools),
 		ToolTransportMode:         recoveryToolTransportMode(planningTransport),
 	})
+	projection := newToolResultEvidenceProjection(results)
 	state := runnerNextActionState{
 		Lane:              strings.TrimSpace(agent),
 		Phase:             runnerLivePhase(brief, surfaceReq, surfaceResult, results),
@@ -15813,7 +15779,7 @@ func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step in
 		ResultSummary:     textutil.Truncate(strings.TrimSpace(surfaceResult.Summary), 220),
 		ResultError:       textutil.Truncate(strings.TrimSpace(surfaceResult.Error), 260),
 		ResultOutputChars: len(surfaceResult.Output),
-		EvidencePaths:     runnerEvidencePathsForBrief(brief, results, 6),
+		EvidencePaths:     projection.evidencePathsForBrief(brief, 6),
 	}
 	// Surface producer-ranked context symbols as actionable annotations.
 	if strings.TrimSpace(tool) == workspace.ToolNameContextPack && strings.TrimSpace(result.Error) == "" && result.Facts != nil {
@@ -15825,11 +15791,11 @@ func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step in
 	}
 
 	if strings.HasPrefix(strings.TrimSpace(agent), "child:") && delegatedReadOnlyClosureReady(agent, brief, results) {
-		state.EvidencePaths = delegatedClosureEvidencePaths(brief.Objective, results, 6)
+		state.EvidencePaths = projection.delegatedClosureEvidencePaths(brief.Objective, 6)
 	}
 
 	if !runnerBriefRequiresMutation(brief) && !strings.HasPrefix(strings.TrimSpace(agent), "child:") && postChildPacketClosureReadyWithBrief(brief, results) {
-		state.EvidencePaths = postChildClosureEvidencePaths(brief.Objective, results, 6)
+		state.EvidencePaths = projection.postChildClosureEvidencePaths(brief.Objective, 6)
 	}
 
 	state.Constraints = textutil.Merge(brief.Constraints, guidance.Constraints)
@@ -15918,7 +15884,7 @@ func applyReadOnlyDiscoveryPendingGuidance(state runnerNextActionState, brief wo
 		return state
 	}
 
-	if len(runnerEvidencePathsForBrief(brief, results, 1)) > 0 {
+	if len(newToolResultEvidenceProjection(results).evidencePathsForBrief(brief, 1)) > 0 {
 		return state
 	}
 
@@ -16189,7 +16155,7 @@ func buildReadinessNudge(ctx ReadinessNudge) string {
 	}
 
 	if ctx.IncludeProbeSuggestions {
-		if suggestion := closureProbeSuggestionLine(ctx.Results, 3); suggestion != "" {
+		if suggestion := newToolResultEvidenceProjection(ctx.Results).closureProbeSuggestionLine(3); suggestion != "" {
 			lines = append(lines, suggestion)
 		}
 	}
@@ -16253,7 +16219,7 @@ func delegatedReadOnlyDiminishingReturnsNudge(objective string, results []worksp
 	// The readiness nudge already disclosed the advisory continuation shape.
 	// Repeating that prose burns context for no behavior change. Emit a
 	// ledger note instead and let the model decide strategy.
-	paths := closurePromptEvidencePaths(delegatedClosureEvidencePaths(objective, results, 4), 3)
+	paths := closurePromptEvidencePaths(newToolResultEvidenceProjection(results).delegatedClosureEvidencePaths(objective, 4), 3)
 	line := "The evidence ledger already supports a final answer. Continue with tools only if you can name an exact material missing claim and a bounded source that would resolve it."
 
 	if len(paths) > 0 {
@@ -16261,156 +16227,6 @@ func delegatedReadOnlyDiminishingReturnsNudge(objective string, results []worksp
 	}
 
 	return line
-}
-
-func closureProbeSuggestionLine(results []workspace.ToolResult, max int) string {
-	candidates := closureProbeCandidates(results, max)
-	if len(candidates) == 0 {
-		return ""
-	}
-
-	quoted := make([]string, 0, len(candidates))
-	for _, candidate := range candidates {
-		quoted = append(quoted, "`"+candidate+"`")
-	}
-
-	return "Evidence-grounded exact probes to prefer: " + strings.Join(quoted, ", ") + "."
-}
-
-func closureProbeCandidates(results []workspace.ToolResult, max int) []string {
-	if max <= 0 {
-		max = 3
-	}
-
-	candidates := make([]string, 0, max)
-	add := func(raw string) {
-		if symbol, ok := delegatedReadOnlyLiteralSymbolCandidate(raw); ok {
-			candidates = textutil.AppendUnique(candidates, symbol)
-		}
-	}
-
-	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-
-		for _, field := range []string{result.Output, result.Summary} {
-			text := normalizeWorkspacePathScanText(field)
-			for _, match := range closurePathLineSymbolPattern.FindAllStringSubmatch(text, -1) {
-				if len(match) > 1 {
-					add(match[1])
-
-					if len(candidates) >= max {
-						return candidates[:max]
-					}
-				}
-			}
-
-			for _, match := range closurePathCallPattern.FindAllStringSubmatch(text, -1) {
-				if len(match) > 2 {
-					add(match[2])
-
-					if len(candidates) >= max {
-						return candidates[:max]
-					}
-				}
-			}
-
-			for _, line := range strings.Split(text, "\n") {
-				for _, match := range callLikeIdentifierPattern.FindAllStringSubmatch(line, -1) {
-					if len(match) > 1 {
-						add(match[1])
-
-						if len(candidates) >= max {
-							return candidates[:max]
-						}
-					}
-				}
-			}
-
-			for _, match := range goFuncDeclPattern.FindAllStringSubmatch(text, -1) {
-				if len(match) > 1 {
-					add(match[1])
-
-					if len(candidates) >= max {
-						return candidates[:max]
-					}
-				}
-			}
-		}
-	}
-
-	return candidates
-}
-
-func closureProbeCandidatesByPath(results []workspace.ToolResult, maxPerPath int) map[string][]string {
-	if maxPerPath <= 0 {
-		maxPerPath = 3
-	}
-
-	byPath := make(map[string][]string)
-	add := func(path string, raw string) {
-		path = normalizeDelegatedDiscoveryEvidencePath(path)
-		if path == "" {
-			return
-		}
-
-		symbol, ok := delegatedReadOnlyLiteralSymbolCandidate(raw)
-		if !ok {
-			return
-		}
-
-		current := byPath[path]
-		if containsExactProbeCandidate(current, symbol) {
-			return
-		}
-
-		if len(current) >= maxPerPath {
-			return
-		}
-
-		byPath[path] = append(current, symbol)
-	}
-
-	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-
-		for _, field := range []string{result.Output, result.Summary} {
-			text := normalizeWorkspacePathScanText(field)
-			for _, match := range closurePathScopedSymbolPattern.FindAllStringSubmatch(text, -1) {
-				if len(match) > 2 {
-					add(match[1], match[2])
-				}
-			}
-
-			for _, match := range closurePathCallPattern.FindAllStringSubmatch(text, -1) {
-				if len(match) > 2 {
-					add(match[1], match[2])
-				}
-			}
-
-			for _, line := range strings.Split(text, "\n") {
-				paths := pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(line))
-				if len(paths) == 0 {
-					continue
-				}
-
-				for _, match := range callLikeIdentifierPattern.FindAllStringSubmatch(line, -1) {
-					if len(match) <= 1 {
-						continue
-					}
-
-					for _, path := range paths {
-						add(path, match[1])
-					}
-				}
-			}
-		}
-	}
-
-	return byPath
 }
 
 func containsExactProbeCandidate(candidates []string, pattern string) bool {
@@ -16455,7 +16271,7 @@ func postChildDiminishingReturnsNudge(objective string, results []workspace.Tool
 	// The child-packet boundary nudge already disclosed the continuation
 	// contract; this is a ledger note, not another prose block telling the
 	// model what was already said.
-	paths := postChildClosureEvidencePaths(objective, results, 3)
+	paths := newToolResultEvidenceProjection(results).postChildClosureEvidencePaths(objective, 3)
 	line := "The child-packet evidence ledger already supports a final answer. Continue with tools only if you can name an exact material missing claim and a bounded source that would resolve it."
 
 	if len(paths) > 0 {
@@ -16465,40 +16281,21 @@ func postChildDiminishingReturnsNudge(objective string, results []workspace.Tool
 	return line
 }
 
-func delegatedClosureEvidencePaths(objective string, results []workspace.ToolResult, max int) []string {
-	paths := make([]string, 0, max*2)
-	for _, fact := range newToolResultEvidenceProjection(results).ReadOnlyDelegatedEvidenceFacts() {
-		paths = append(paths, fact.SourceBodyPaths...)
-		paths = append(paths, fact.InspectedPaths...)
-		paths = append(paths, fact.CandidatePaths...)
-	}
-
-	paths = append(paths, delegatedReadOnlyInspectedImplementationPaths(results)...)
-	paths = append(paths, delegatedDiscoveryQueryEvidencePaths(results, max*4)...)
-	paths = append(paths, pinnedPathsFromToolResults(results, max*4)...)
-	paths = prioritizedClosureEvidencePaths(delegatedDiscoveryAnswerEvidencePaths(objective, paths), results, max)
-
-	return closurePromptEvidencePaths(paths, max)
-}
-
 func closureDecisionRationale(objective string, results []workspace.ToolResult, fallbackPaths []string) (string, string) {
+	projection := newToolResultEvidenceProjection(results)
 	paths := closurePromptEvidencePaths(fallbackPaths, 4)
 	if len(paths) == 0 {
-		paths = delegatedClosureEvidencePaths(objective, results, 4)
+		paths = projection.delegatedClosureEvidencePaths(objective, 4)
 	}
 
 	switch {
-	case len(paths) > 0 && closureHasExactProbeEvidence(results):
+	case len(paths) > 0 && len(projection.closureProbeCandidates(1)) > 0:
 		return "the current evidence already names inspected source paths " + summarizePostChildEvidencePaths(paths, 3) + " and includes at least one exact inspected probe", "another follow-up is only likely to help if it changes one named claim; otherwise it will mostly restate adjacent detail"
 	case len(paths) > 0:
 		return "the current evidence already names inspected source paths " + summarizePostChildEvidencePaths(paths, 3), "another follow-up is only likely to help if it closes one named gap; otherwise additional reads mostly restate nearby files"
 	default:
 		return "the current evidence already covers the named scope well enough to support a grounded answer", "another follow-up is only likely to help if it closes one named gap"
 	}
-}
-
-func closureHasExactProbeEvidence(results []workspace.ToolResult) bool {
-	return len(closureProbeCandidates(results, 1)) > 0
 }
 
 func applyClosurePromptRefinement(state runnerNextActionState) runnerNextActionState {
@@ -19539,7 +19336,7 @@ func (r *Runner) runtimeBriefWithLiveState(policy RunPolicy, messages []llama.Ch
 		}
 	}
 
-	liveEvidencePaths := runnerEvidencePathsForBrief(brief, results, 8)
+	liveEvidencePaths := newToolResultEvidenceProjection(results).evidencePathsForBrief(brief, 8)
 	if readOnlyDirectAnswerLane(brief) {
 		if len(liveEvidencePaths) > 0 {
 			brief.EvidencePaths = liveEvidencePaths
@@ -19809,10 +19606,10 @@ func readOnlyAnalysisReadyFromEvidence(results []workspace.ToolResult) bool {
 	}
 
 	if delegatedReadOnlyHasCompositeDiscoveryPacket(results) {
-		return readOnlyAnalysisExactProbeCount(results) >= 1 && len(promptEvidencePathsFromToolResults(results, 6)) >= 2
+		return readOnlyAnalysisExactProbeCount(results) >= 1 && len(newToolResultEvidenceProjection(results).promptEvidencePaths(6)) >= 2
 	}
 
-	return readOnlyAnalysisExactProbeCount(results) >= 2 && len(promptEvidencePathsFromToolResults(results, 6)) >= 1
+	return readOnlyAnalysisExactProbeCount(results) >= 2 && len(newToolResultEvidenceProjection(results).promptEvidencePaths(6)) >= 1
 }
 
 func runnerCurrentAllowedOrBriefTools(currentAllowedTools []string, briefAllowedTools []string) []string {
@@ -20131,7 +19928,7 @@ func (r *Runner) emitDelegatedReadOnlyAnswerReadyEvent(req workspace.ToolRequest
 		return
 	}
 
-	paths := delegatedClosureEvidencePaths(r.RuntimeBrief.Objective, results, 8)
+	paths := newToolResultEvidenceProjection(results).delegatedClosureEvidencePaths(r.RuntimeBrief.Objective, 8)
 	payload := map[string]any{
 		"agent":                      r.agentName(),
 		"reason":                     "sufficient_delegated_read_only_evidence",
@@ -20153,7 +19950,7 @@ func (r *Runner) emitReadOnlyAnswerReadyEvent(req workspace.ToolRequest, results
 		return
 	}
 
-	paths := readOnlyPresentationEvidencePathsForBrief(r.RuntimeBrief, results, 8)
+	paths := newToolResultEvidenceProjection(results).evidencePathsForBrief(r.RuntimeBrief, 8)
 	payload := map[string]any{
 		"agent":          r.agentName(),
 		"reason":         "sufficient_read_only_evidence",
@@ -20289,7 +20086,7 @@ func (r *Runner) compactTurnMessagesIfNeeded(messages *[]llama.ChatMessage, poli
 		RetainedMessages: len(compacted),
 		MaxHistory:       policy.MaxContextMessages,
 		MaxChars:         policy.MaxContextChars,
-		PinnedPaths:      runnerPinnedPathsForBrief(r.RuntimeBrief, results, 8),
+		PinnedPaths:      newToolResultEvidenceProjection(results).pinnedPathsForBrief(r.RuntimeBrief, 8),
 		PinnedMemoryKind: "runner_task_state",
 		Strategy:         "retain_system_and_user_objective_with_evidence_weighted_middle",
 	})
@@ -20330,7 +20127,7 @@ func (r *Runner) runnerCompactionSummary(policy RunPolicy, ledger *taskLedgerSta
 		b.WriteString("\n")
 	}
 
-	if paths := runnerPinnedPathsForBrief(r.RuntimeBrief, results, 8); len(paths) > 0 {
+	if paths := newToolResultEvidenceProjection(results).pinnedPathsForBrief(r.RuntimeBrief, 8); len(paths) > 0 {
 		b.WriteString("\nPinned paths:\n")
 
 		for _, path := range paths {
@@ -20769,227 +20566,6 @@ func latestUserObjective(messages []llama.ChatMessage) string {
 	return ""
 }
 
-func pinnedPathsFromToolResults(results []workspace.ToolResult, max int) []string {
-	seen := make(map[string]struct{})
-
-	var paths []string
-
-	for _, result := range results {
-		for _, field := range []string{result.Summary, result.Output, result.Error} {
-			for _, path := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(field)) {
-				if _, ok := seen[path]; ok {
-					continue
-				}
-
-				seen[path] = struct{}{}
-				paths = append(paths, path)
-			}
-		}
-	}
-
-	paths = prioritizedClosureEvidencePaths(paths, results, len(paths))
-
-	return textutil.Prefix(paths, max)
-}
-
-func directProbePathsFromToolResults(results []workspace.ToolResult, max int) []string {
-	if max <= 0 {
-		max = 8
-	}
-
-	seen := make(map[string]struct{}, max)
-
-	var paths []string
-
-	for _, result := range results {
-		if len(newToolResultEvidenceRecord(result).SourceBodyPaths()) == 0 {
-			continue
-		}
-
-		for _, path := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(result.Summary)) {
-			path = normalizeDelegatedDiscoveryEvidencePath(path)
-			if path == "" || IsNonSourceEvidenceArtifactPath(path) || !delegatedDiscoveryLooksLikeEvidencePath(path) {
-				continue
-			}
-
-			if _, ok := seen[path]; ok {
-				continue
-			}
-
-			seen[path] = struct{}{}
-			paths = append(paths, path)
-
-			if len(paths) >= max {
-				return paths
-			}
-		}
-	}
-
-	return paths
-}
-
-func promptEvidencePathsFromToolResults(results []workspace.ToolResult, max int) []string {
-	if max <= 0 {
-		max = 8
-	}
-
-	paths := make([]string, 0, max*2)
-	directPaths := directProbePathsFromToolResults(results, max)
-	projection := newToolResultEvidenceProjection(results)
-
-	for _, fact := range projection.ReadOnlyDelegatedEvidenceFacts() {
-		paths = append(paths, fact.SourceBodyPaths...)
-		paths = append(paths, fact.InspectedPaths...)
-	}
-
-	paths = append(paths, delegatedReadOnlyInspectedImplementationPaths(results)...)
-	paths = append(paths, delegatedDiscoveryQueryEvidencePaths(results, max*4)...)
-	paths = append(paths, contextPackCandidatePathsFromResults(results, max*4)...)
-	paths = append(paths, pinnedPathsFromToolResults(results, max*6)...)
-	paths = prioritizedClosureEvidencePaths(paths, results, max*3)
-
-	return textutil.Prefix(uniqueDelegatedDiscoveryPaths(append(directPaths, closurePromptEvidencePaths(paths, max*2)...)), max)
-}
-
-func runnerEvidencePathsForBrief(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
-	if max <= 0 {
-		max = 8
-	}
-
-	if !runnerBriefRequiresMutation(brief) {
-		if readOnlyDirectAnswerLane(brief) {
-			return readOnlyDirectAnswerPresentationEvidencePaths(brief, results, max)
-		}
-
-		return promptEvidencePathsFromToolResults(results, max)
-	}
-
-	scope := mutationEvidenceScope(brief, results)
-	paths := newToolResultEvidenceProjection(results).ChangedPathList()
-
-	for _, path := range directProbePathsFromToolResults(results, max*2) {
-		normalized := NormalizeRunnerPath(path)
-		if normalized == "" || !scope[normalized] {
-			continue
-		}
-
-		paths = append(paths, normalized)
-	}
-
-	for _, path := range brief.EvidencePaths {
-		normalized := NormalizeRunnerPath(path)
-		if normalized == "" || !scope[normalized] {
-			continue
-		}
-
-		paths = append(paths, normalized)
-	}
-
-	return closurePromptEvidencePathsPreservingTests(paths, max)
-}
-
-func readOnlyPresentationEvidencePathsForBrief(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
-	if readOnlyDirectAnswerLane(brief) {
-		return readOnlyDirectAnswerPresentationEvidencePaths(brief, results, max)
-	}
-
-	return promptEvidencePathsFromToolResults(results, max)
-}
-
-func readOnlyDirectAnswerPresentationEvidencePaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
-	if max <= 0 {
-		max = 8
-	}
-
-	ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
-	paths := append([]string{}, ledger.RelevantSourceBodyPaths...)
-	paths = textutil.Merge(paths, ledger.RelevantExternalDocumentPaths)
-
-	if ObjectiveAsksImplementationShape(ledger.Objective) {
-		paths = textutil.Merge(paths, ledger.ImplementationOwnerPaths())
-	}
-
-	if ledger.DiagnosticRelevant {
-		paths = textutil.Merge(paths, readOnlySourceLikePaths(ledger.DiagnosticPaths, max*2))
-	}
-
-	return readOnlyEvidenceDisplayPaths(paths, max)
-}
-
-func runnerPinnedPathsForBrief(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
-	if max <= 0 {
-		max = 8
-	}
-
-	if !runnerBriefRequiresMutation(brief) {
-		if readOnlyDirectAnswerLane(brief) {
-			return readOnlyDirectAnswerPresentationEvidencePaths(brief, results, max)
-		}
-
-		return promptEvidencePathsFromToolResults(results, max)
-	}
-
-	paths := append([]string{}, brief.RequiredEditPaths...)
-
-	paths = append(paths, mapKeys(newToolResultEvidenceProjection(results).ChangedPathSet())...)
-	if implementationTargetWriteReadySurfaceActive(brief, results) {
-		paths = append(paths, newToolResultEvidenceProjection(results).SourceBodyPaths()...)
-	}
-	paths = append(paths, runnerEvidencePathsForBrief(brief, results, max*2)...)
-
-	return closurePromptEvidencePathsPreservingTests(paths, max)
-}
-
-func mutationEvidenceScope(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) map[string]bool {
-	scope := map[string]bool{}
-
-	for _, values := range [][]string{
-		brief.RequiredEditPaths,
-		brief.TargetRefs,
-		brief.ChangedPaths,
-		brief.EvidencePaths,
-		mapKeys(newToolResultEvidenceProjection(results).ChangedPathSet()),
-	} {
-		for _, raw := range values {
-			path := NormalizeRunnerPath(raw)
-			if path != "" {
-				scope[path] = true
-			}
-		}
-	}
-
-	return scope
-}
-
-func postChildClosureEvidencePaths(objective string, results []workspace.ToolResult, max int) []string {
-	paths := make([]string, 0, max)
-	followupAnchors := make([]string, 0, max)
-	acceptedPacket := false
-
-	for _, fact := range newToolResultEvidenceProjection(results).ReadOnlyDelegatedEvidenceFacts() {
-		decision := readOnlyDelegatedEvidenceDecisionForObjective(objective, fact)
-		if len(decision.ClosureEvidencePaths) == 0 {
-			followupAnchors = append(followupAnchors, decision.FollowupAnchors...)
-			continue
-		}
-
-		acceptedPacket = true
-		paths = append(paths, decision.ClosureEvidencePaths...)
-	}
-
-	if acceptedPacket {
-		paths = append(paths, pinnedPathsFromToolResults(results, max*4)...)
-	}
-
-	if len(paths) == 0 {
-		paths = append(paths, followupAnchors...)
-	}
-
-	paths = prioritizedClosureEvidencePaths(delegatedDiscoveryAnswerEvidencePaths(objective, paths), results, max)
-
-	return closurePromptEvidencePaths(paths, max)
-}
-
 func readOnlyChildPacketFollowupAnchors(objective string, packet ReadOnlyEvidencePacket) []string {
 	if !weakChildPacketFollowupAnchorsAllowed(objective) {
 		return nil
@@ -21244,7 +20820,7 @@ func (r *Runner) emitFinalAnswerTelemetry(answer string, results []workspace.Too
 	var presentationEvidencePaths []string
 
 	if readOnlyDirectAnswerLane(r.RuntimeBrief) && len(evidencePaths) == 0 {
-		presentationEvidencePaths = readOnlyDirectAnswerPresentationEvidencePaths(r.RuntimeBrief, results, 8)
+		presentationEvidencePaths = newToolResultEvidenceProjection(results).readOnlyDirectAnswerPresentationEvidencePaths(r.RuntimeBrief, 8)
 	}
 
 	addPresentationEvidencePaths := func(payload map[string]any) {
@@ -21686,114 +21262,6 @@ func (r *Runner) decoratedReadOnlyReplyForCompletionGate(reply string, results [
 	}
 
 	return decorated
-}
-
-func acceptedAnswerEvidencePaths(answer string, results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) []string {
-	if runnerBriefRequiresMutation(brief) {
-		if paths := acceptedImplementationEvidencePaths(results); len(paths) > 0 {
-			return paths
-		}
-	}
-
-	if readOnlyDirectAnswerAcceptanceApplies(brief) {
-		return acceptedReadOnlyDirectAnswerEvidencePaths(answer, brief, results)
-	}
-
-	if readOnlyExplanationGateApplies(brief) {
-		paths := textutil.Merge(exactProbeEvidencePaths(results), pathparse.MentionedWorkspacePaths(answer))
-		paths = textutil.Merge(paths, acceptedDelegatedReadOnlyEvidencePaths(brief.Objective, results))
-
-		paths = textutil.Merge(paths, delegatedReadOnlyInspectedImplementationPaths(results))
-		if len(paths) == 0 {
-			paths = textutil.Merge(paths, newToolResultEvidenceProjection(results).MentionedEvidencePathsForObjective(brief.Objective, 24))
-		}
-
-		paths = prioritizedClosureEvidencePaths(paths, results, 8)
-		paths = closurePromptEvidencePaths(paths, 8)
-
-		if len(paths) > 0 {
-			return paths
-		}
-	}
-
-	paths := textutil.Merge(pinnedPathsFromToolResults(results, 8), pathparse.MentionedWorkspacePaths(answer))
-	paths = textutil.Merge(paths, acceptedDelegatedReadOnlyEvidencePaths(brief.Objective, results))
-	paths = delegatedDiscoveryAnswerEvidencePaths(brief.Objective, paths)
-
-	return closurePromptEvidencePaths(paths, 8)
-}
-
-func acceptedDelegatedReadOnlyEvidencePaths(objective string, results []workspace.ToolResult) []string {
-	var paths []string
-	for _, fact := range newToolResultEvidenceProjection(results).ReadOnlyDelegatedEvidenceFacts() {
-		decision := readOnlyDelegatedEvidenceDecisionForObjective(objective, fact)
-		if decision.TaskResultAnswerable {
-			paths = textutil.Merge(paths, decision.LedgerSourcePaths, decision.InspectedPaths)
-		}
-	}
-
-	return paths
-}
-
-func acceptedImplementationEvidencePaths(results []workspace.ToolResult) []string {
-	paths := newToolResultEvidenceProjection(results).ChangedPathList()
-
-	paths = append(paths, directProbePathsFromToolResults(results, 8)...)
-
-	return closurePromptEvidencePathsPreservingTests(paths, 8)
-}
-
-func closurePromptEvidencePathsPreservingTests(paths []string, max int) []string {
-	cleaned := make([]string, 0, len(paths))
-	for _, path := range uniqueDelegatedDiscoveryPaths(paths) {
-		path = normalizeDelegatedDiscoveryEvidencePath(path)
-		switch {
-		case path == "":
-			continue
-		case strings.HasPrefix(path, ".idiom/"), strings.HasPrefix(path, "idiom/"), strings.HasPrefix(path, ".codex/"), strings.HasPrefix(path, "codex/"), strings.HasPrefix(path, "."):
-			continue
-		case !delegatedDiscoveryLooksLikeEvidencePath(path):
-			continue
-		case !strings.Contains(path, "/") && !strings.HasSuffix(path, ".go"):
-			continue
-		}
-
-		cleaned = append(cleaned, path)
-	}
-
-	return textutil.Prefix(cleaned, max)
-}
-
-func exactProbeEvidencePaths(results []workspace.ToolResult) []string {
-	seen := make(map[string]struct{})
-	paths := make([]string, 0, 4)
-
-	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" {
-			continue
-		}
-
-		if !workspace.IsLanguageSourceBodyTool(result.Tool) {
-			continue
-		}
-
-		path, _ := extractExactProbeAnchor(result)
-
-		path = normalizeDelegatedDiscoveryEvidencePath(path)
-
-		if path == "" {
-			continue
-		}
-
-		if _, ok := seen[path]; ok {
-			continue
-		}
-
-		seen[path] = struct{}{}
-		paths = append(paths, path)
-	}
-
-	return preferNonTestEvidencePaths(paths)
 }
 
 func (r *Runner) agentName() string {

@@ -8743,14 +8743,14 @@ func TestTextualToolProtocolEntriesPrioritizeWriteAliasExamples(t *testing.T) {
 }
 
 func TestPinnedPathsFromToolResultsRejectsToolJSONFragments(t *testing.T) {
-	paths := pinnedPathsFromToolResults([]workspace.ToolResult{
+	paths := newToolResultEvidenceProjection([]workspace.ToolResult{
 		{
 			Tool:    "go_move_declarations",
 			Summary: `Blocked go_move_declarations with path:"internal/surfaces/tui/app/analysis_agents.go" and moves: {destination:"internal/surfaces/tui/app/orchestration.go", pattern:"tag:foo"}.`,
 			Output:  `{"tool":"go_move_declarations","path":"internal/surfaces/tui/app/analysis_agents.go:12:3","moves":[{"destination":"internal/surfaces/tui/app/implementation.go"}]}`,
 			Error:   "internal/surfaces/tui/app/analysis_agents.go:12:3: move was outside approval scope",
 		},
-	}, 8)
+	}).pinnedPaths(8)
 
 	if !slices.Contains(paths, "internal/surfaces/tui/app/analysis_agents.go") {
 		t.Fatalf("expected source path to be pinned, got %#v", paths)
@@ -27233,7 +27233,7 @@ func TestDelegatedReadOnlyAnswerReadyNudgeIncludesClosureJustification(t *testin
 	nudge := buildReadinessNudge(ReadinessNudge{
 		Headline:          "The delegated read-only evidence is sufficient for a grounded answer to this question.",
 		EvidencePathLabel: "Core evidence paths: ",
-		EvidencePaths:     closurePromptEvidencePaths(delegatedClosureEvidencePaths("Explain how this harness uses subagents.", results, 4), 4),
+		EvidencePaths:     closurePromptEvidencePaths(newToolResultEvidenceProjection(results).delegatedClosureEvidencePaths("Explain how this harness uses subagents.", 4), 4),
 		Objective:         "Explain how this harness uses subagents.",
 		Results:           results,
 		ContinuationScope: "delegated_read_only_answer_ready",
@@ -27268,7 +27268,7 @@ func TestClosureProbeCandidatesExtractCallLikeSignals(t *testing.T) {
 		Summary: "Ran architecture_boundary discovery query",
 		Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"text_anchor_search","summary":"Found call sites","output_excerpt":"internal/runtime/agent/runner_core.go:574: result := r.runChildTask(ctx, req, opts)\ninternal/runtime/agent/implementation_flow.go:16: func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, opts llama.ChatOptions) string"}]}`,
 	}}
-	candidates := closureProbeCandidates(results, 3)
+	candidates := newToolResultEvidenceProjection(results).closureProbeCandidates(3)
 
 	if !containsExactProbeCandidate(candidates, "runChildTask") {
 		t.Fatalf("expected call-like discovery line to surface runChildTask, got %#v", candidates)
@@ -27281,7 +27281,7 @@ func TestDelegatedClosureEvidencePathsPreserveDiscoveryPacketOrderAmongEqualPrio
 		Summary: "Ran architecture_boundary discovery query",
 		Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"text_anchor_search","summary":"Found handoff files","output_excerpt":"internal/runtime/agent/runner_core.go:574: result := r.runChildTask(ctx, req, opts)\ninternal/runtime/agent/implementation_flow.go:16: func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, opts llama.ChatOptions) string\ninternal/runtime/agent/implementation_flow.go:18: func (AnswerComposer) Compose(input AnswerComposerInput) (string, bool)"}]}`,
 	}}
-	paths := delegatedClosureEvidencePaths("Explain how this harness uses subagents.", results, 4)
+	paths := newToolResultEvidenceProjection(results).delegatedClosureEvidencePaths("Explain how this harness uses subagents.", 4)
 
 	if len(paths) < 2 {
 		t.Fatalf("expected multiple closure evidence paths, got %#v", paths)
@@ -30806,7 +30806,7 @@ func TestAcceptedAnswerEvidencePathsIncludeMentionedToolOutputPaths(t *testing.T
 			}, "\n"),
 		},
 	}
-	paths := acceptedAnswerEvidencePaths("Discovery tool improvements are grounded in the inspected evidence.", results, brief)
+	paths := newToolResultEvidenceProjection(results).acceptedAnswerEvidencePaths("Discovery tool improvements are grounded in the inspected evidence.", brief)
 
 	for _, want := range []string{"internal/runtime/agent/implementation_flow.go", "internal/runtime/agent/runner_core.go"} {
 		if !slices.Contains(paths, want) {
@@ -32206,11 +32206,11 @@ func TestStructuredSourceReadRewriteRunsCodeNavigateInsteadOfControlRedirect(t *
 }
 
 func TestPromptEvidencePathsFromToolResultsDropsPromptArtifacts(t *testing.T) {
-	got := promptEvidencePathsFromToolResults([]workspace.ToolResult{{
+	got := newToolResultEvidenceProjection([]workspace.ToolResult{{
 		Tool:    "task",
 		Summary: "Child task completed",
 		Output:  "Inspected paths:\n- `.idiom/discovery/queries/query.json`\n- `internal/runtime/agent/runner_core.go`\n- `internal/runtime/agent/implementation_flow.go:93-94`\n- `search/read`\n",
-	}}, 6)
+	}}).promptEvidencePaths(6)
 	want := []string{
 		"internal/runtime/agent/runner_core.go",
 		"internal/runtime/agent/implementation_flow.go",
@@ -32222,7 +32222,7 @@ func TestPromptEvidencePathsFromToolResultsDropsPromptArtifacts(t *testing.T) {
 }
 
 func TestPromptEvidencePathsFromToolResultsPrefersExactProbePathsOverEarlyScaffolding(t *testing.T) {
-	got := promptEvidencePathsFromToolResults([]workspace.ToolResult{
+	got := newToolResultEvidenceProjection([]workspace.ToolResult{
 		{
 			Tool:   "discovery_query",
 			Output: "codex/README.md\ncodex/project-context.md\ncodex/AGENTS.md\ninternal/runtime/agent/implementation_flow.go\ninternal/capabilities/workspace/tool_schemas.go\n",
@@ -32242,7 +32242,7 @@ func TestPromptEvidencePathsFromToolResultsPrefersExactProbePathsOverEarlyScaffo
 			Summary: "Found 1 matching line at internal/capabilities/workspace/tool_schemas.go:85.",
 			Output:  "internal/capabilities/workspace/tool_schemas.go:85: Delegate a bounded evidence-gathering question to a sub-agent.",
 		},
-	}, 4)
+	}).promptEvidencePaths(4)
 	if len(got) == 0 || got[0] != "internal/runtime/agent/implementation_flow.go" {
 		t.Fatalf("expected exact semantic probe path to be prioritized, got %#v", got)
 	}
@@ -32286,7 +32286,7 @@ func TestReadOnlyDirectAnswerPresentationUsesLedgerRelevantSourcePaths(t *testin
 		),
 	}
 
-	got := runnerEvidencePathsForBrief(brief, results, 8)
+	got := newToolResultEvidenceProjection(results).evidencePathsForBrief(brief, 8)
 	if !slices.Contains(got, "internal/surfaces/tui/app/rendering.go") {
 		t.Fatalf("expected direct-answer evidence paths to contain ledger source path, got %#v", got)
 	}
@@ -32364,7 +32364,7 @@ func TestRunnerEvidencePathsPreservesBroadCandidatesForArchitecture(t *testing.T
 		),
 	}
 
-	got := runnerEvidencePathsForBrief(brief, results, 8)
+	got := newToolResultEvidenceProjection(results).evidencePathsForBrief(brief, 8)
 	if !slices.Contains(got, "internal/surfaces/tui/app/broad_candidate.go") {
 		t.Fatalf("non-direct-answer presentation should retain broad candidate paths, got %#v", got)
 	}
@@ -32539,7 +32539,7 @@ func TestReadOnlyAnswerReadyPresentationUsesImplementationOwnerPaths(t *testing.
 		),
 	}
 
-	paths := readOnlyDirectAnswerPresentationEvidencePaths(brief, results, 8)
+	paths := newToolResultEvidenceProjection(results).readOnlyDirectAnswerPresentationEvidencePaths(brief, 8)
 	if !slices.Contains(paths, "internal/surfaces/tui/app/update_handlers.go") {
 		t.Fatalf("expected implementation owner path in presentation evidence, got %#v", paths)
 	}
@@ -32553,7 +32553,7 @@ func TestReadOnlyAnswerReadyPresentationUsesImplementationOwnerPaths(t *testing.
 	nudge := buildReadinessNudge(ReadinessNudge{
 		Headline:          "The read-only evidence is sufficient for a grounded answer to this question.",
 		EvidencePathLabel: "Core evidence paths: ",
-		EvidencePaths:     closurePromptEvidencePaths(readOnlyPresentationEvidencePathsForBrief(brief, results, 4), 4),
+		EvidencePaths:     closurePromptEvidencePaths(newToolResultEvidenceProjection(results).evidencePathsForBrief(brief, 4), 4),
 		Objective:         strings.TrimSpace(brief.Objective),
 		Results:           results,
 		ContinuationScope: "answer_readiness_reached",
@@ -32575,7 +32575,7 @@ func TestReadOnlyAnswerReadyPresentationUsesImplementationOwnerPaths(t *testing.
 }
 
 func TestPromptEvidencePathsFromToolResultsKeepsDirectTestProbePath(t *testing.T) {
-	got := promptEvidencePathsFromToolResults([]workspace.ToolResult{
+	got := newToolResultEvidenceProjection([]workspace.ToolResult{
 		{
 			Tool:    "read_file",
 			Summary: "Read f5 cmd/idiom/product_workflow_test.go lines 1-6721",
@@ -32586,7 +32586,7 @@ func TestPromptEvidencePathsFromToolResultsKeepsDirectTestProbePath(t *testing.T
 				"27:cmd/idiom/product_workflow.go",
 			}, "\n"),
 		},
-	}, 4)
+	}).promptEvidencePaths(4)
 	if len(got) == 0 || got[0] != "cmd/idiom/product_workflow_test.go" {
 		t.Fatalf("expected direct test-file probe path to stay pinned first, got %#v", got)
 	}
@@ -32625,12 +32625,12 @@ func TestRunnerEvidencePathsForMutationDoNotPinOutputMentionedFixturePaths(t *te
 		},
 	}
 
-	evidence := runnerEvidencePathsForBrief(brief, results, 8)
+	evidence := newToolResultEvidenceProjection(results).evidencePathsForBrief(brief, 8)
 	if !reflect.DeepEqual(evidence, []string{"internal/workflows/productworkflow/coverage_gate.go"}) {
 		t.Fatalf("expected mutation evidence to keep only direct scoped probes, got %#v", evidence)
 	}
 
-	pinned := runnerPinnedPathsForBrief(brief, results, 8)
+	pinned := newToolResultEvidenceProjection(results).pinnedPathsForBrief(brief, 8)
 	for _, want := range brief.RequiredEditPaths {
 		if !slices.Contains(pinned, want) {
 			t.Fatalf("expected pinned mutation paths to retain required path %q, got %#v", want, pinned)
@@ -32681,7 +32681,7 @@ func TestRunnerPinnedPathsForTargetWriteReadyIncludesAllSourceBodyEvidence(t *te
 		t.Fatalf("expected source-body evidence to activate target-write-ready surface")
 	}
 
-	pinned := runnerPinnedPathsForBrief(brief, results, 8)
+	pinned := newToolResultEvidenceProjection(results).pinnedPathsForBrief(brief, 8)
 	for _, want := range []string{
 		"internal/runtime/workerruntime/catalog.go",
 		"internal/runtime/workerruntime/roles.go",
@@ -32695,7 +32695,7 @@ func TestRunnerPinnedPathsForTargetWriteReadyIncludesAllSourceBodyEvidence(t *te
 
 func TestPostChildClosureEvidencePathsPreservesMultiFilePacketCoverage(t *testing.T) {
 	objective := "Explain how this harness uses subagents."
-	got := postChildClosureEvidencePaths(objective, []workspace.ToolResult{typedReadOnlyTaskResult(ReadOnlyEvidencePacket{
+	got := newToolResultEvidenceProjection([]workspace.ToolResult{typedReadOnlyTaskResult(ReadOnlyEvidencePacket{
 		Objective:       objective,
 		Question:        objective,
 		SourceBodyPaths: []string{"internal/runtime/agent/runner_core.go", "internal/runtime/agent/implementation_flow.go"},
@@ -32710,7 +32710,7 @@ func TestPostChildClosureEvidencePathsPreservesMultiFilePacketCoverage(t *testin
 			{Path: "internal/runtime/agent/runner_core.go", Text: "The harness uses subagents through the task runner path."},
 			{Path: "internal/runtime/agent/implementation_flow.go", Text: "The implementation flow shapes delegated child responses."},
 		},
-	})}, 6)
+	})}).postChildClosureEvidencePaths(objective, 6)
 	want := []string{
 		"internal/runtime/agent/runner_core.go",
 		"internal/runtime/agent/implementation_flow.go",
@@ -32723,13 +32723,13 @@ func TestPostChildClosureEvidencePathsPreservesMultiFilePacketCoverage(t *testin
 
 func TestPostChildClosureEvidencePathsUsesWeakPacketAnchorsForFollowup(t *testing.T) {
 	objective := "Can you tell me how this harness uses subagents?"
-	got := postChildClosureEvidencePaths(objective, []workspace.ToolResult{typedReadOnlyTaskResult(ReadOnlyEvidencePacket{
+	got := newToolResultEvidenceProjection([]workspace.ToolResult{typedReadOnlyTaskResult(ReadOnlyEvidencePacket{
 		Objective:      objective,
 		Question:       objective,
 		InspectedPaths: []string{"internal/runtime/agent/implementation_flow.go", "internal/runtime/agent/runner_core.go", "docs/debugging-reviewer-bench.md"},
 		Confidence:     "low",
 		Gaps:           []string{"missing source-body findings for the delegated answer"},
-	})}, 4)
+	})}).postChildClosureEvidencePaths(objective, 4)
 	want := []string{
 		"internal/runtime/agent/implementation_flow.go",
 		"internal/runtime/agent/runner_core.go",
@@ -32741,7 +32741,7 @@ func TestPostChildClosureEvidencePathsUsesWeakPacketAnchorsForFollowup(t *testin
 }
 
 func TestDelegatedClosureEvidencePathsRetainsDiscoveryPacketAfterExactProbe(t *testing.T) {
-	got := delegatedClosureEvidencePaths("How does this harness utilize sub-agents?", []workspace.ToolResult{
+	got := newToolResultEvidenceProjection([]workspace.ToolResult{
 		{
 			Tool:    "discovery_query",
 			Summary: "Ran function_tracing discovery query",
@@ -32752,7 +32752,7 @@ func TestDelegatedClosureEvidencePathsRetainsDiscoveryPacketAfterExactProbe(t *t
 			Summary: "Read Runner.runChildTask in internal/runtime/agent/implementation_flow.go lines 16-131",
 			Output:  "func (r *Runner) runChildTask(...) {}",
 		},
-	}, 6)
+	}).delegatedClosureEvidencePaths("How does this harness utilize sub-agents?", 6)
 	want := []string{
 		"internal/runtime/agent/implementation_flow.go",
 		"internal/runtime/agent/runner_core.go",

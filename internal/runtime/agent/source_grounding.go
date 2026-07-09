@@ -377,7 +377,7 @@ func (r *Runner) readOnlyEvidenceSourceGroundingAssessment(brief workerruntime.W
 
 	if len(intersectRunnerPaths(
 		readOnlySourceLikePaths(pathparse.MentionedWorkspacePaths(answer), 16),
-		delegatedClosureEvidencePaths(brief.Objective, closeout.Results, 8),
+		newToolResultEvidenceProjection(closeout.Results).delegatedClosureEvidencePaths(brief.Objective, 8),
 	)) > 0 {
 		return sourceGroundingAssessment{}
 	}

@@ -576,7 +576,7 @@ func concreteRecoveryEvidencePaths(results []workspace.ToolResult, max int) []st
 		}
 	}
 
-	return promptEvidencePathsFromToolResults(filtered, max)
+	return newToolResultEvidenceProjection(filtered).promptEvidencePaths(max)
 }
 
 func recoveryEvidencePathsForObjective(objective string, results []workspace.ToolResult, max int) []string {
@@ -2721,7 +2721,7 @@ func (r *Runner) refreshPlanThenExecuteTerminalToolSurface(messages *[]llama.Cha
 		Permission:        terminalBrief.PermissionProfile,
 		TargetRefs:        append([]string(nil), terminalBrief.TargetRefs...),
 		RequiredEditPaths: append([]string(nil), terminalBrief.RequiredEditPaths...),
-		EvidencePaths:     runnerEvidencePathsForBrief(terminalBrief, results, 6),
+		EvidencePaths:     newToolResultEvidenceProjection(results).evidencePathsForBrief(terminalBrief, 6),
 		Constraints:       append([]string(nil), terminalBrief.Constraints...),
 		AllowedTools:      submitPlanTools,
 		ToolManifest:      workspace.BuildToolManifest(submitPlanTools),
@@ -2804,7 +2804,7 @@ func (r *Runner) refreshPlanThenExecuteTerminalOutcomeSurface(messages *[]llama.
 		Permission:        terminalBrief.PermissionProfile,
 		TargetRefs:        append([]string(nil), terminalBrief.TargetRefs...),
 		RequiredEditPaths: append([]string(nil), terminalBrief.RequiredEditPaths...),
-		EvidencePaths:     runnerEvidencePathsForBrief(terminalBrief, results, 6),
+		EvidencePaths:     newToolResultEvidenceProjection(results).evidencePathsForBrief(terminalBrief, 6),
 		Constraints:       append([]string(nil), terminalBrief.Constraints...),
 		AllowedTools:      nil,
 		ToolManifest:      nil,
@@ -2872,7 +2872,7 @@ func (r *Runner) refreshPlanThenExecuteTerminalTextualFallbackSurface(messages *
 		Permission:        terminalBrief.PermissionProfile,
 		TargetRefs:        append([]string(nil), terminalBrief.TargetRefs...),
 		RequiredEditPaths: append([]string(nil), terminalBrief.RequiredEditPaths...),
-		EvidencePaths:     runnerEvidencePathsForBrief(terminalBrief, results, 6),
+		EvidencePaths:     newToolResultEvidenceProjection(results).evidencePathsForBrief(terminalBrief, 6),
 		Constraints:       append([]string(nil), terminalBrief.Constraints...),
 		AllowedTools:      submitPlanTools,
 		ToolManifest:      workspace.BuildToolManifest(submitPlanTools),
@@ -2932,7 +2932,7 @@ func (r *Runner) refreshPlanThenExecuteAnchorRefreshSurface(messages *[]llama.Ch
 		Permission:        brief.PermissionProfile,
 		TargetRefs:        append([]string(nil), brief.TargetRefs...),
 		RequiredEditPaths: append([]string(nil), brief.RequiredEditPaths...),
-		EvidencePaths:     runnerEvidencePathsForBrief(brief, results, 6),
+		EvidencePaths:     newToolResultEvidenceProjection(results).evidencePathsForBrief(brief, 6),
 		Constraints:       append([]string(nil), brief.Constraints...),
 		AllowedTools:      anchorRefreshTools,
 		ToolManifest:      workspace.BuildToolManifest(anchorRefreshTools),

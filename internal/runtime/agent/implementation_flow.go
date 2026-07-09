@@ -1210,7 +1210,7 @@ func EmitDirectAnswerSurfaceEvent(emitFn func(event RunEvent), surface DirectAns
 func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspace.ToolResult) finalAnswerAcceptance {
 	acceptance := newFinalAnswerAcceptance()
 	if r != nil {
-		acceptance.EvidencePaths = acceptedAnswerEvidencePaths(answer, results, r.RuntimeBrief)
+		acceptance.EvidencePaths = newToolResultEvidenceProjection(results).acceptedAnswerEvidencePaths(answer, r.RuntimeBrief)
 	}
 
 	var directAnswerRelevance readOnlyDirectAnswerRelevance
@@ -1432,17 +1432,6 @@ func readOnlyDirectAnswerAcceptanceLedgerBrief(brief workerruntime.WorkerRuntime
 	}
 
 	return brief
-}
-
-func acceptedReadOnlyDirectAnswerEvidencePaths(answer string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []string {
-	if !readOnlyDirectAnswerAcceptanceApplies(brief) {
-		return nil
-	}
-
-	decision := readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results).
-		FinalAnswerDecision(answer)
-
-	return append([]string(nil), decision.AcceptedEvidencePaths...)
 }
 
 func readOnlyAcceptedDirectAnswerEvidencePaths(answer string, ledger readOnlyAnswerabilityLedger, results []workspace.ToolResult) []string {
@@ -1894,16 +1883,18 @@ func questionBlockerContextPaths(brief workerruntime.WorkerRuntimeBrief, results
 			return "Inspected evidence", paths
 		}
 
-		if paths := promptEvidencePathsFromToolResults(results, max); len(paths) > 0 {
+		projection := newToolResultEvidenceProjection(results)
+		if paths := projection.promptEvidencePaths(max); len(paths) > 0 {
 			return "Inspected evidence", paths
 		}
 
 		return "", nil
 	}
 
-	paths := closurePromptEvidencePaths(acceptedAnswerEvidencePaths("", results, brief), max)
+	projection := newToolResultEvidenceProjection(results)
+	paths := closurePromptEvidencePaths(projection.acceptedAnswerEvidencePaths("", brief), max)
 	if len(paths) == 0 {
-		paths = delegatedClosureEvidencePaths(brief.Objective, results, max)
+		paths = projection.delegatedClosureEvidencePaths(brief.Objective, max)
 	}
 
 	if len(paths) == 0 {
@@ -2346,13 +2337,14 @@ func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 		return prose, true
 	}
 
-	paths := delegatedClosureEvidencePaths(brief.Objective, results, 4)
+	projection := newToolResultEvidenceProjection(results)
+	paths := projection.delegatedClosureEvidencePaths(brief.Objective, 4)
 	if len(paths) == 0 {
-		paths = postChildClosureEvidencePaths(brief.Objective, results, 4)
+		paths = projection.postChildClosureEvidencePaths(brief.Objective, 4)
 	}
 
 	if len(paths) == 0 {
-		paths = promptEvidencePathsFromToolResults(results, 4)
+		paths = projection.promptEvidencePaths(4)
 	}
 
 	paths = closurePromptEvidencePaths(paths, 4)
@@ -5920,13 +5912,14 @@ func augmentDelegatedReadOnlyPacket(answer string, objective string, results []w
 		return ""
 	}
 
+	projection := newToolResultEvidenceProjection(results)
 	var sourceBodyPaths []string
-	for _, fact := range newToolResultEvidenceProjection(results).ReadOnlyDelegatedEvidenceFacts() {
+	for _, fact := range projection.ReadOnlyDelegatedEvidenceFacts() {
 		decision := readOnlyDelegatedEvidenceDecisionForObjective(objective, fact)
 		sourceBodyPaths = append(sourceBodyPaths, decision.ReadinessSourcePaths...)
 	}
 	sourceBodyPaths = readOnlySourceLikePaths(sourceBodyPaths, 16)
-	paths := delegatedClosureEvidencePaths(objective, results, 8)
+	paths := projection.delegatedClosureEvidencePaths(objective, 8)
 	mentioned := normalizePostChildEvidencePaths(pathparse.MentionedWorkspacePaths(answer))
 	missing := make([]string, 0, len(paths))
 	mentionedSet := make(map[string]struct{}, len(mentioned))
@@ -5943,7 +5936,7 @@ func augmentDelegatedReadOnlyPacket(answer string, objective string, results []w
 		missing = append(missing, path)
 	}
 
-	candidates := closureProbeCandidates(results, 4)
+	candidates := projection.closureProbeCandidates(4)
 	missingCandidates := make([]string, 0, len(candidates))
 	lowerAnswer := strings.ToLower(answer)
 	hasSourceBodyEvidenceSection := strings.Contains(lowerAnswer, "source-body evidence paths:") ||
@@ -6045,14 +6038,8 @@ func synthesizeDelegatedReadOnlyAnswer(objective string, results []workspace.Too
 		return "", false
 	}
 
-	paths := append([]string{}, sourceBodyPaths...)
-
-	paths = append(paths, answerability.CandidatePaths...)
-	paths = append(paths, delegatedReadOnlyInspectedImplementationPaths(sanitizedResults)...)
-	paths = append(paths, delegatedDiscoveryQueryEvidencePaths(sanitizedResults, 8)...)
-	paths = append(paths, pinnedPathsFromToolResults(sanitizedResults, 8)...)
-	paths = prioritizedClosureEvidencePaths(paths, sanitizedResults, 8)
-	paths = closurePromptEvidencePaths(paths, 8)
+	projection := newToolResultEvidenceProjection(sanitizedResults)
+	paths := projection.delegatedReadOnlyFallbackEvidencePaths(answerability, 8)
 
 	if len(paths) == 0 {
 		return "", false
@@ -6358,41 +6345,6 @@ func prioritizedDelegatedEvidencePaths(paths []string, max int) []string {
 	return textutil.Prefix(paths, max)
 }
 
-func prioritizedClosureEvidencePaths(paths []string, results []workspace.ToolResult, max int) []string {
-	paths = uniqueDelegatedDiscoveryPaths(paths)
-	paths = preferNonTestEvidencePaths(paths)
-
-	if len(paths) <= 1 {
-		return paths
-	}
-
-	sharedCounts, candidateCounts := closureEvidenceProbeScores(results)
-
-	sort.SliceStable(paths, func(i, j int) bool {
-		pi := delegatedDiscoveryPathPriority(paths[i])
-		pj := delegatedDiscoveryPathPriority(paths[j])
-
-		if pi != pj {
-			return pi < pj
-		}
-
-		ni := normalizeDelegatedDiscoveryEvidencePath(paths[i])
-		nj := normalizeDelegatedDiscoveryEvidencePath(paths[j])
-
-		if sharedCounts[ni] != sharedCounts[nj] {
-			return sharedCounts[ni] > sharedCounts[nj]
-		}
-
-		if candidateCounts[ni] != candidateCounts[nj] {
-			return candidateCounts[ni] > candidateCounts[nj]
-		}
-
-		return false
-	})
-
-	return textutil.Prefix(paths, max)
-}
-
 func delegatedDiscoverySummaryIsBroadCountOnly(lower string) bool {
 	if !strings.Contains(lower, "matching line") {
 		return false
@@ -6409,8 +6361,12 @@ func delegatedDiscoverySummaryIsBroadCountOnly(lower string) bool {
 }
 
 func closurePromptEvidencePaths(paths []string, max int) []string {
+	return filteredClosurePromptEvidencePaths(preferNonTestEvidencePaths(uniqueDelegatedDiscoveryPaths(paths)), max)
+}
+
+func filteredClosurePromptEvidencePaths(paths []string, max int) []string {
 	cleaned := make([]string, 0, len(paths))
-	for _, path := range preferNonTestEvidencePaths(uniqueDelegatedDiscoveryPaths(paths)) {
+	for _, path := range paths {
 		path = normalizeDelegatedDiscoveryEvidencePath(path)
 		switch {
 		case path == "":
@@ -6427,61 +6383,6 @@ func closurePromptEvidencePaths(paths []string, max int) []string {
 	}
 
 	return textutil.Prefix(cleaned, max)
-}
-
-func closureEvidenceProbeScores(results []workspace.ToolResult) (map[string]int, map[string]int) {
-	byPath := closureProbeCandidatesByPath(results, 6)
-	probeFrequency := make(map[string]int)
-
-	for _, candidates := range byPath {
-		seen := make(map[string]struct{})
-
-		for _, candidate := range candidates {
-			key := strings.ToLower(strings.TrimSpace(candidate))
-			if key == "" {
-				continue
-			}
-
-			if _, ok := seen[key]; ok {
-				continue
-			}
-
-			seen[key] = struct{}{}
-			probeFrequency[key]++
-		}
-	}
-
-	sharedCounts := make(map[string]int, len(byPath))
-	candidateCounts := make(map[string]int, len(byPath))
-
-	for rawPath, candidates := range byPath {
-		path := normalizeDelegatedDiscoveryEvidencePath(rawPath)
-		if path == "" {
-			continue
-		}
-
-		seen := make(map[string]struct{})
-
-		for _, candidate := range candidates {
-			key := strings.ToLower(strings.TrimSpace(candidate))
-			if key == "" {
-				continue
-			}
-
-			if _, ok := seen[key]; ok {
-				continue
-			}
-
-			seen[key] = struct{}{}
-			candidateCounts[path]++
-
-			if probeFrequency[key] > 1 {
-				sharedCounts[path] += probeFrequency[key]
-			}
-		}
-	}
-
-	return sharedCounts, candidateCounts
 }
 
 func isDelegatedDiscoveryContextDigestLayer(name string) bool {

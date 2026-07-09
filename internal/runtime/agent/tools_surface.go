@@ -1431,7 +1431,7 @@ func generatedEvidenceArtifactReadRedirectRequest(req workspace.ToolRequest, res
 
 	paths := delegatedDiscoveryQueryEvidencePaths(results, 6)
 	if len(paths) == 0 {
-		paths = promptEvidencePathsFromToolResults(results, 6)
+		paths = newToolResultEvidenceProjection(results).promptEvidencePaths(6)
 	}
 
 	paths = nonArtifactEvidencePaths(paths)
@@ -1911,7 +1911,7 @@ func (r *Runner) completeWithoutMoreToolsWithReasonMode(
 
 	if preferModelSynthesis {
 		reason = strings.TrimSpace(reason + "\nUse the evidence already gathered to answer the delegated question directly. Do not return a partial-findings template if a concise grounded answer is possible.")
-		if paths := delegatedClosureEvidencePaths(r.RuntimeBrief.Objective, collectedResults, 4); len(paths) > 0 {
+		if paths := newToolResultEvidenceProjection(collectedResults).delegatedClosureEvidencePaths(r.RuntimeBrief.Objective, 4); len(paths) > 0 {
 			reason = strings.TrimSpace(reason + "\nCarry forward the inspected implementation paths explicitly in the answer: " + summarizePostChildEvidencePaths(paths, 4) + ". Do not collapse the answer to a single file when the evidence already spans multiple relevant implementation paths.")
 		}
 	}

@@ -3871,7 +3871,7 @@ func (r *Runner) renderRecoveryCardForRejectedActionWithTransport(req workspace.
 		CurrentAllowedTools: effectiveRecoveryCardAllowedTools(currentAllowedTools, brief, results, contract),
 		RejectedRequest:     req,
 		RejectedResult:      result,
-		EvidenceRefs:        runnerEvidencePathsForBrief(brief, results, 6),
+		EvidenceRefs:        newToolResultEvidenceProjection(results).evidencePathsForBrief(brief, 6),
 		RecoveryState:       recoveryStatePtr,
 	}))
 }

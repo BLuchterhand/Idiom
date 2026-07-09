@@ -2665,9 +2665,9 @@ func TestFailedReadFileMissingPathIsNotAcceptedEvidence(t *testing.T) {
 	}
 
 	for name, paths := range map[string][]string{
-		"direct probes":           directProbePathsFromToolResults(results, 8),
+		"direct probes":           newToolResultEvidenceProjection(results).directProbePaths(8),
 		"mentioned evidence":      newToolResultEvidenceProjection(results).MentionedEvidencePathsForObjective("", 8),
-		"implementation evidence": acceptedImplementationEvidencePaths(results),
+		"implementation evidence": newToolResultEvidenceProjection(results).acceptedImplementationEvidencePaths(),
 	} {
 		if slices.Contains(paths, missingPath) {
 			t.Fatalf("%s promoted missing read_file path as accepted evidence: %#v", name, paths)
@@ -3501,7 +3501,7 @@ func TestFinalAnswerAcceptanceAllowsWhatWouldItTakeAnswerFromDiscoveredTUISource
 		t.Fatalf("what-would-it-take answer from discovered TUI source bodies blocked: kind=%q reason=%q", kind, reason)
 	}
 
-	paths := acceptedAnswerEvidencePaths(answer, results, brief)
+	paths := newToolResultEvidenceProjection(results).acceptedAnswerEvidencePaths(answer, brief)
 	if !slices.Contains(paths, "internal/surfaces/tui/app/update_handlers.go") {
 		t.Fatalf("expected accepted evidence path from the strongest source-body support, got %#v", paths)
 	}
@@ -3960,14 +3960,14 @@ func TestFinalAnswerAcceptanceRejectsSessionsPanelAsChatRecallOwner(t *testing.T
 
 	assertObjectiveRelevanceAdvisoryForTest(t, runner, answer, results, "answer_objective_unmet:citation_mismatch")
 
-	if paths := acceptedAnswerEvidencePaths(answer, results, brief); slices.Contains(paths, "internal/surfaces/tui/app/sessions_panel.go") {
+	if paths := newToolResultEvidenceProjection(results).acceptedAnswerEvidencePaths(answer, brief); slices.Contains(paths, "internal/surfaces/tui/app/sessions_panel.go") {
 		t.Fatalf("accepted evidence paths must not promote conflicting navigation owner, got %#v", paths)
 	}
 
 	aliasRunner := &Runner{RuntimeBrief: aliasBrief}
 	assertObjectiveRelevanceAdvisoryForTest(t, aliasRunner, answer, results, "answer_objective_unmet:citation_mismatch")
 
-	if paths := acceptedAnswerEvidencePaths(answer, results, aliasBrief); slices.Contains(paths, "internal/surfaces/tui/app/sessions_panel.go") {
+	if paths := newToolResultEvidenceProjection(results).acceptedAnswerEvidencePaths(answer, aliasBrief); slices.Contains(paths, "internal/surfaces/tui/app/sessions_panel.go") {
 		t.Fatalf("direct_answer alias accepted evidence paths promoted conflicting navigation owner, got %#v", paths)
 	}
 }
@@ -4164,11 +4164,11 @@ func TestReadOnlyAnswerabilityRejectsGenericToolSchemaPacketForUsefulnessObjecti
 		t.Fatal("generic tool/schema packet must not activate child packet closure")
 	}
 
-	if paths := postChildClosureEvidencePaths(brief.Objective, results, 4); len(paths) > 0 {
+	if paths := newToolResultEvidenceProjection(results).postChildClosureEvidencePaths(brief.Objective, 4); len(paths) > 0 {
 		t.Fatalf("generic tool/schema packet must not populate post-child evidence paths, got %#v", paths)
 	}
 
-	if paths := acceptedAnswerEvidencePaths("Discovery tool schema details are available.", results, brief); len(paths) > 0 {
+	if paths := newToolResultEvidenceProjection(results).acceptedAnswerEvidencePaths("Discovery tool schema details are available.", brief); len(paths) > 0 {
 		t.Fatalf("generic tool/schema packet must not leak accepted evidence paths, got %#v", paths)
 	}
 }
@@ -4277,7 +4277,7 @@ func TestReadOnlyAnswerabilityAcceptsExplicitDiagnosticEvidence(t *testing.T) {
 		t.Fatalf("diagnostic final-answer decision missed accepted diagnostic path: %#v", decision.AcceptedEvidencePaths)
 	}
 
-	if paths := acceptedAnswerEvidencePaths(answer, results, brief); !slices.Contains(paths, "internal/runtime/agent/runner_core.go") {
+	if paths := newToolResultEvidenceProjection(results).acceptedAnswerEvidencePaths(answer, brief); !slices.Contains(paths, "internal/runtime/agent/runner_core.go") {
 		t.Fatalf("accepted evidence paths missed relevant diagnostic path: %#v", paths)
 	}
 }
@@ -4312,7 +4312,7 @@ func TestReadOnlyAnswerabilityRejectsUnrelatedDiagnosticEvidence(t *testing.T) {
 		t.Fatalf("unrelated diagnostic evidence must not become accepted evidence: %#v", decision.AcceptedEvidencePaths)
 	}
 
-	if paths := acceptedAnswerEvidencePaths(answer, results, brief); len(paths) > 0 {
+	if paths := newToolResultEvidenceProjection(results).acceptedAnswerEvidencePaths(answer, brief); len(paths) > 0 {
 		t.Fatalf("accepted evidence paths promoted unrelated diagnostic evidence: %#v", paths)
 	}
 }
@@ -5486,7 +5486,7 @@ func TestAcceptedAnswerEvidencePathsPreferObjectiveRelevantSourceBody(t *testing
 	}
 	answer := "The chat input newline wrap issue is in `internal/surfaces/tui/app/chat_input.go`, where the input height sync keeps the first existing line visible."
 
-	paths := acceptedAnswerEvidencePaths(answer, results, brief)
+	paths := newToolResultEvidenceProjection(results).acceptedAnswerEvidencePaths(answer, brief)
 	if len(paths) == 0 {
 		t.Fatal("expected evidence paths")
 	}
@@ -5517,7 +5517,7 @@ func TestAcceptedAnswerEvidencePathsAliasIgnoresUnrelatedCandidateBody(t *testin
 	}
 	answer := "The TUI chat input newline wrap and upward shift issue is not established by the inspected source."
 
-	paths := acceptedAnswerEvidencePaths(answer, results, brief)
+	paths := newToolResultEvidenceProjection(results).acceptedAnswerEvidencePaths(answer, brief)
 	if len(paths) != 0 {
 		t.Fatalf("alias evidence paths should not report unrelated candidate source body, got %v", paths)
 	}
@@ -6179,7 +6179,7 @@ func TestReadOnlyTaskResultAnswerableForObjectiveUsesTypedPacketAsAuthority(t *t
 		t.Fatal("typed packet rejection must not fall back to legacy rendered text promotion")
 	}
 
-	if paths := postChildClosureEvidencePaths("Explain how subagents work.", []workspace.ToolResult{result}, 4); len(paths) != 0 {
+	if paths := newToolResultEvidenceProjection([]workspace.ToolResult{result}).postChildClosureEvidencePaths("Explain how subagents work.", 4); len(paths) != 0 {
 		t.Fatalf("non-answerable typed packet must not promote closure evidence paths: %#v", paths)
 	}
 }

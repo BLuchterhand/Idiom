@@ -340,5 +340,5 @@ func validationStatusEvidencePaths(results []workspace.ToolResult) []string {
 	for _, path := range newToolResultEvidenceProjection(results).ValidationStatusEvidenceLedgerPaths() {
 		paths = textutil.AppendUnique(paths, path)
 	}
-	return closurePromptEvidencePathsPreservingTests(paths, 8)
+	return closurePromptTargetEvidencePaths(paths, 8)
 }

@@ -3,6 +3,7 @@ package agent
 import (
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
@@ -11,9 +12,11 @@ import (
 	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/textutil"
 	semanticlanguage "idiom/internal/repository/semantic/language"
+	"idiom/internal/runtime/workerruntime"
 )
 
 type toolResultEvidenceProjection struct {
+	results []workspace.ToolResult
 	records []toolResultEvidenceRecord
 }
 
@@ -58,7 +61,7 @@ func newToolResultEvidenceProjection(results []workspace.ToolResult) toolResultE
 		records = append(records, newToolResultEvidenceRecord(result))
 	}
 
-	return toolResultEvidenceProjection{records: records}
+	return toolResultEvidenceProjection{results: append([]workspace.ToolResult(nil), results...), records: records}
 }
 
 func newToolResultEvidenceRecord(result workspace.ToolResult) toolResultEvidenceRecord {
@@ -781,6 +784,632 @@ func (projection toolResultEvidenceProjection) ReadOnlySourceBodyEvidencePaths()
 	}
 
 	return uniqueDelegatedDiscoveryPaths(paths)
+}
+
+func (projection toolResultEvidenceProjection) pinnedPaths(max int) []string {
+	seen := make(map[string]struct{})
+
+	var paths []string
+
+	for _, record := range projection.records {
+		for _, path := range recordPinnedWorkspacePaths(record) {
+			if _, ok := seen[path]; ok {
+				continue
+			}
+
+			seen[path] = struct{}{}
+			paths = append(paths, path)
+		}
+	}
+
+	paths = projection.prioritizedClosureEvidencePaths(paths, len(paths))
+
+	return textutil.Prefix(paths, max)
+}
+
+func recordPinnedWorkspacePaths(record toolResultEvidenceRecord) []string {
+	seen := make(map[string]struct{})
+	var paths []string
+
+	for _, field := range []string{record.summary, record.output, record.result.Error} {
+		for _, path := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(field)) {
+			if _, ok := seen[path]; ok {
+				continue
+			}
+
+			seen[path] = struct{}{}
+			paths = append(paths, path)
+		}
+	}
+
+	return paths
+}
+
+func (projection toolResultEvidenceProjection) directProbePaths(max int) []string {
+	if max <= 0 {
+		max = 8
+	}
+
+	seen := make(map[string]struct{}, max)
+
+	var paths []string
+
+	for _, record := range projection.records {
+		if len(record.SourceBodyPaths()) == 0 {
+			continue
+		}
+
+		for _, path := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(record.summary)) {
+			path = normalizeDelegatedDiscoveryEvidencePath(path)
+			if path == "" || IsNonSourceEvidenceArtifactPath(path) || !delegatedDiscoveryLooksLikeEvidencePath(path) {
+				continue
+			}
+
+			if _, ok := seen[path]; ok {
+				continue
+			}
+
+			seen[path] = struct{}{}
+			paths = append(paths, path)
+
+			if len(paths) >= max {
+				return paths
+			}
+		}
+	}
+
+	return paths
+}
+
+func (projection toolResultEvidenceProjection) promptEvidencePaths(max int) []string {
+	if max <= 0 {
+		max = 8
+	}
+
+	paths := make([]string, 0, max*2)
+	directPaths := projection.directProbePaths(max)
+
+	for _, fact := range projection.ReadOnlyDelegatedEvidenceFacts() {
+		paths = append(paths, fact.SourceBodyPaths...)
+		paths = append(paths, fact.InspectedPaths...)
+	}
+
+	paths = append(paths, projection.delegatedReadOnlyInspectedImplementationPaths()...)
+	paths = append(paths, delegatedDiscoveryQueryEvidencePaths(projection.results, max*4)...)
+	paths = append(paths, contextPackCandidatePathsFromResults(projection.results, max*4)...)
+	paths = append(paths, projection.pinnedPaths(max*6)...)
+	paths = projection.prioritizedClosureEvidencePaths(paths, max*3)
+
+	return textutil.Prefix(uniqueDelegatedDiscoveryPaths(append(directPaths, closurePromptEvidencePaths(paths, max*2)...)), max)
+}
+
+func (projection toolResultEvidenceProjection) evidencePathsForBrief(brief workerruntime.WorkerRuntimeBrief, max int) []string {
+	if max <= 0 {
+		max = 8
+	}
+
+	if !runnerBriefRequiresMutation(brief) {
+		if readOnlyDirectAnswerLane(brief) {
+			return projection.readOnlyDirectAnswerPresentationEvidencePaths(brief, max)
+		}
+
+		return projection.promptEvidencePaths(max)
+	}
+
+	scope := projection.mutationEvidenceScope(brief)
+	paths := projection.ChangedPathList()
+
+	for _, path := range projection.directProbePaths(max * 2) {
+		normalized := NormalizeRunnerPath(path)
+		if normalized == "" || !scope[normalized] {
+			continue
+		}
+
+		paths = append(paths, normalized)
+	}
+
+	for _, path := range brief.EvidencePaths {
+		normalized := NormalizeRunnerPath(path)
+		if normalized == "" || !scope[normalized] {
+			continue
+		}
+
+		paths = append(paths, normalized)
+	}
+
+	return closurePromptTargetEvidencePaths(paths, max)
+}
+
+func (projection toolResultEvidenceProjection) readOnlyDirectAnswerPresentationEvidencePaths(brief workerruntime.WorkerRuntimeBrief, max int) []string {
+	if max <= 0 {
+		max = 8
+	}
+
+	ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), projection.results)
+	paths := append([]string{}, ledger.RelevantSourceBodyPaths...)
+	paths = textutil.Merge(paths, ledger.RelevantExternalDocumentPaths)
+
+	if ObjectiveAsksImplementationShape(ledger.Objective) {
+		paths = textutil.Merge(paths, ledger.ImplementationOwnerPaths())
+	}
+
+	if ledger.DiagnosticRelevant {
+		paths = textutil.Merge(paths, readOnlySourceLikePaths(ledger.DiagnosticPaths, max*2))
+	}
+
+	return readOnlyEvidenceDisplayPaths(paths, max)
+}
+
+func (projection toolResultEvidenceProjection) pinnedPathsForBrief(brief workerruntime.WorkerRuntimeBrief, max int) []string {
+	if max <= 0 {
+		max = 8
+	}
+
+	if !runnerBriefRequiresMutation(brief) {
+		if readOnlyDirectAnswerLane(brief) {
+			return projection.readOnlyDirectAnswerPresentationEvidencePaths(brief, max)
+		}
+
+		return projection.promptEvidencePaths(max)
+	}
+
+	paths := append([]string{}, brief.RequiredEditPaths...)
+
+	paths = append(paths, mapKeys(projection.ChangedPathSet())...)
+	if implementationTargetWriteReadySurfaceActive(brief, projection.results) {
+		paths = append(paths, projection.SourceBodyPaths()...)
+	}
+	paths = append(paths, projection.evidencePathsForBrief(brief, max*2)...)
+
+	return closurePromptTargetEvidencePaths(paths, max)
+}
+
+func (projection toolResultEvidenceProjection) mutationEvidenceScope(brief workerruntime.WorkerRuntimeBrief) map[string]bool {
+	scope := map[string]bool{}
+
+	for _, values := range [][]string{
+		brief.RequiredEditPaths,
+		brief.TargetRefs,
+		brief.ChangedPaths,
+		brief.EvidencePaths,
+		mapKeys(projection.ChangedPathSet()),
+	} {
+		for _, raw := range values {
+			path := NormalizeRunnerPath(raw)
+			if path != "" {
+				scope[path] = true
+			}
+		}
+	}
+
+	return scope
+}
+
+func (projection toolResultEvidenceProjection) postChildClosureEvidencePaths(objective string, max int) []string {
+	paths := make([]string, 0, max)
+	followupAnchors := make([]string, 0, max)
+	acceptedPacket := false
+
+	for _, fact := range projection.ReadOnlyDelegatedEvidenceFacts() {
+		decision := readOnlyDelegatedEvidenceDecisionForObjective(objective, fact)
+		if len(decision.ClosureEvidencePaths) == 0 {
+			followupAnchors = append(followupAnchors, decision.FollowupAnchors...)
+			continue
+		}
+
+		acceptedPacket = true
+		paths = append(paths, decision.ClosureEvidencePaths...)
+	}
+
+	if acceptedPacket {
+		paths = append(paths, projection.pinnedPaths(max*4)...)
+	}
+
+	if len(paths) == 0 {
+		paths = append(paths, followupAnchors...)
+	}
+
+	paths = projection.prioritizedClosureEvidencePaths(delegatedDiscoveryAnswerEvidencePaths(objective, paths), max)
+
+	return closurePromptEvidencePaths(paths, max)
+}
+
+func (projection toolResultEvidenceProjection) delegatedClosureEvidencePaths(objective string, max int) []string {
+	paths := make([]string, 0, max*2)
+	for _, fact := range projection.ReadOnlyDelegatedEvidenceFacts() {
+		paths = append(paths, fact.SourceBodyPaths...)
+		paths = append(paths, fact.InspectedPaths...)
+		paths = append(paths, fact.CandidatePaths...)
+	}
+
+	paths = append(paths, projection.delegatedReadOnlyInspectedImplementationPaths()...)
+	paths = append(paths, delegatedDiscoveryQueryEvidencePaths(projection.results, max*4)...)
+	paths = append(paths, projection.pinnedPaths(max*4)...)
+	paths = projection.prioritizedClosureEvidencePaths(delegatedDiscoveryAnswerEvidencePaths(objective, paths), max)
+
+	return closurePromptEvidencePaths(paths, max)
+}
+
+func (projection toolResultEvidenceProjection) acceptedAnswerEvidencePaths(answer string, brief workerruntime.WorkerRuntimeBrief) []string {
+	if runnerBriefRequiresMutation(brief) {
+		if paths := projection.acceptedImplementationEvidencePaths(); len(paths) > 0 {
+			return paths
+		}
+	}
+
+	if readOnlyDirectAnswerAcceptanceApplies(brief) {
+		decision := readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), projection.results).
+			FinalAnswerDecision(answer)
+
+		return append([]string(nil), decision.AcceptedEvidencePaths...)
+	}
+
+	if readOnlyExplanationGateApplies(brief) {
+		paths := textutil.Merge(projection.exactProbeEvidencePaths(), pathparse.MentionedWorkspacePaths(answer))
+		paths = textutil.Merge(paths, projection.acceptedDelegatedReadOnlyEvidencePaths(brief.Objective))
+
+		paths = textutil.Merge(paths, projection.delegatedReadOnlyInspectedImplementationPaths())
+		if len(paths) == 0 {
+			paths = textutil.Merge(paths, projection.MentionedEvidencePathsForObjective(brief.Objective, 24))
+		}
+
+		paths = projection.prioritizedClosureEvidencePaths(paths, 8)
+		paths = closurePromptEvidencePaths(paths, 8)
+
+		if len(paths) > 0 {
+			return paths
+		}
+	}
+
+	paths := textutil.Merge(projection.pinnedPaths(8), pathparse.MentionedWorkspacePaths(answer))
+	paths = textutil.Merge(paths, projection.acceptedDelegatedReadOnlyEvidencePaths(brief.Objective))
+	paths = delegatedDiscoveryAnswerEvidencePaths(brief.Objective, paths)
+
+	return closurePromptEvidencePaths(paths, 8)
+}
+
+func (projection toolResultEvidenceProjection) acceptedDelegatedReadOnlyEvidencePaths(objective string) []string {
+	var paths []string
+	for _, fact := range projection.ReadOnlyDelegatedEvidenceFacts() {
+		decision := readOnlyDelegatedEvidenceDecisionForObjective(objective, fact)
+		if decision.TaskResultAnswerable {
+			paths = textutil.Merge(paths, decision.LedgerSourcePaths, decision.InspectedPaths)
+		}
+	}
+
+	return paths
+}
+
+func (projection toolResultEvidenceProjection) acceptedImplementationEvidencePaths() []string {
+	paths := projection.ChangedPathList()
+
+	paths = append(paths, projection.directProbePaths(8)...)
+
+	return closurePromptTargetEvidencePaths(paths, 8)
+}
+
+func (projection toolResultEvidenceProjection) delegatedReadOnlyFallbackEvidencePaths(answerability readOnlyAnswerabilityLedger, max int) []string {
+	paths := append([]string{}, answerability.RelevantSourceBodyPaths...)
+
+	paths = append(paths, answerability.CandidatePaths...)
+	paths = append(paths, projection.delegatedReadOnlyInspectedImplementationPaths()...)
+	paths = append(paths, delegatedDiscoveryQueryEvidencePaths(projection.results, max)...)
+	paths = append(paths, projection.pinnedPaths(max)...)
+	paths = projection.prioritizedClosureEvidencePaths(paths, max)
+
+	return closurePromptEvidencePaths(paths, max)
+}
+
+func (projection toolResultEvidenceProjection) delegatedReadOnlyInspectedImplementationPaths() []string {
+	seen := make(map[string]struct{})
+	paths := make([]string, 0, 4)
+
+	for _, record := range projection.records {
+		if record.failed || strings.TrimSpace(record.output) == "" {
+			continue
+		}
+
+		if record.candidateAnchorOnly {
+			continue
+		}
+
+		if !workspace.IsSourceBodyInspectionTool(record.tool) {
+			continue
+		}
+
+		recordPaths := projection.prioritizedClosureEvidencePaths(recordPinnedWorkspacePaths(record), 4)
+		for _, path := range recordPaths {
+			path = filepath.ToSlash(strings.TrimSpace(path))
+			if path == "" || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				continue
+			}
+
+			if _, ok := seen[path]; ok {
+				continue
+			}
+
+			seen[path] = struct{}{}
+			paths = append(paths, path)
+		}
+	}
+
+	return paths
+}
+
+func closurePromptTargetEvidencePaths(paths []string, max int) []string {
+	return filteredClosurePromptEvidencePaths(uniqueDelegatedDiscoveryPaths(paths), max)
+}
+
+func (projection toolResultEvidenceProjection) exactProbeEvidencePaths() []string {
+	seen := make(map[string]struct{})
+	paths := make([]string, 0, 4)
+
+	for _, record := range projection.records {
+		if record.failed || strings.TrimSpace(record.output) == "" {
+			continue
+		}
+
+		if !workspace.IsLanguageSourceBodyTool(record.tool) {
+			continue
+		}
+
+		path, _ := extractExactProbeAnchor(record.result)
+
+		path = normalizeDelegatedDiscoveryEvidencePath(path)
+
+		if path == "" {
+			continue
+		}
+
+		if _, ok := seen[path]; ok {
+			continue
+		}
+
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+
+	return preferNonTestEvidencePaths(paths)
+}
+
+func (projection toolResultEvidenceProjection) closureProbeSuggestionLine(max int) string {
+	candidates := projection.closureProbeCandidates(max)
+	if len(candidates) == 0 {
+		return ""
+	}
+
+	quoted := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		quoted = append(quoted, "`"+candidate+"`")
+	}
+
+	return "Evidence-grounded exact probes to prefer: " + strings.Join(quoted, ", ") + "."
+}
+
+func (projection toolResultEvidenceProjection) closureProbeCandidates(max int) []string {
+	if max <= 0 {
+		max = 3
+	}
+
+	candidates := make([]string, 0, max)
+	add := func(raw string) {
+		if symbol, ok := delegatedReadOnlyLiteralSymbolCandidate(raw); ok {
+			candidates = textutil.AppendUnique(candidates, symbol)
+		}
+	}
+
+	for _, record := range projection.records {
+		if record.failed {
+			continue
+		}
+
+		for _, field := range []string{record.output, record.summary} {
+			text := normalizeWorkspacePathScanText(field)
+			for _, match := range closurePathLineSymbolPattern.FindAllStringSubmatch(text, -1) {
+				if len(match) > 1 {
+					add(match[1])
+
+					if len(candidates) >= max {
+						return candidates[:max]
+					}
+				}
+			}
+
+			for _, match := range closurePathCallPattern.FindAllStringSubmatch(text, -1) {
+				if len(match) > 2 {
+					add(match[2])
+
+					if len(candidates) >= max {
+						return candidates[:max]
+					}
+				}
+			}
+
+			for _, line := range strings.Split(text, "\n") {
+				for _, match := range callLikeIdentifierPattern.FindAllStringSubmatch(line, -1) {
+					if len(match) > 1 {
+						add(match[1])
+
+						if len(candidates) >= max {
+							return candidates[:max]
+						}
+					}
+				}
+			}
+
+			for _, match := range goFuncDeclPattern.FindAllStringSubmatch(text, -1) {
+				if len(match) > 1 {
+					add(match[1])
+
+					if len(candidates) >= max {
+						return candidates[:max]
+					}
+				}
+			}
+		}
+	}
+
+	return candidates
+}
+
+func (projection toolResultEvidenceProjection) prioritizedClosureEvidencePaths(paths []string, max int) []string {
+	paths = uniqueDelegatedDiscoveryPaths(paths)
+	paths = preferNonTestEvidencePaths(paths)
+
+	if len(paths) <= 1 {
+		return paths
+	}
+
+	sharedCounts, candidateCounts := projection.closureEvidenceProbeScores()
+
+	sort.SliceStable(paths, func(i, j int) bool {
+		pi := delegatedDiscoveryPathPriority(paths[i])
+		pj := delegatedDiscoveryPathPriority(paths[j])
+
+		if pi != pj {
+			return pi < pj
+		}
+
+		ni := normalizeDelegatedDiscoveryEvidencePath(paths[i])
+		nj := normalizeDelegatedDiscoveryEvidencePath(paths[j])
+
+		if sharedCounts[ni] != sharedCounts[nj] {
+			return sharedCounts[ni] > sharedCounts[nj]
+		}
+
+		if candidateCounts[ni] != candidateCounts[nj] {
+			return candidateCounts[ni] > candidateCounts[nj]
+		}
+
+		return false
+	})
+
+	return textutil.Prefix(paths, max)
+}
+
+func (projection toolResultEvidenceProjection) closureEvidenceProbeScores() (map[string]int, map[string]int) {
+	byPath := projection.closureProbeCandidatesByPath(6)
+	probeFrequency := make(map[string]int)
+
+	for _, candidates := range byPath {
+		seen := make(map[string]struct{})
+
+		for _, candidate := range candidates {
+			key := strings.ToLower(strings.TrimSpace(candidate))
+			if key == "" {
+				continue
+			}
+
+			if _, ok := seen[key]; ok {
+				continue
+			}
+
+			seen[key] = struct{}{}
+			probeFrequency[key]++
+		}
+	}
+
+	sharedCounts := make(map[string]int, len(byPath))
+	candidateCounts := make(map[string]int, len(byPath))
+
+	for rawPath, candidates := range byPath {
+		path := normalizeDelegatedDiscoveryEvidencePath(rawPath)
+		if path == "" {
+			continue
+		}
+
+		seen := make(map[string]struct{})
+
+		for _, candidate := range candidates {
+			key := strings.ToLower(strings.TrimSpace(candidate))
+			if key == "" {
+				continue
+			}
+
+			if _, ok := seen[key]; ok {
+				continue
+			}
+
+			seen[key] = struct{}{}
+			candidateCounts[path]++
+
+			if probeFrequency[key] > 1 {
+				sharedCounts[path] += probeFrequency[key]
+			}
+		}
+	}
+
+	return sharedCounts, candidateCounts
+}
+
+func (projection toolResultEvidenceProjection) closureProbeCandidatesByPath(maxPerPath int) map[string][]string {
+	if maxPerPath <= 0 {
+		maxPerPath = 3
+	}
+
+	byPath := make(map[string][]string)
+	add := func(path string, raw string) {
+		path = normalizeDelegatedDiscoveryEvidencePath(path)
+		if path == "" {
+			return
+		}
+
+		symbol, ok := delegatedReadOnlyLiteralSymbolCandidate(raw)
+		if !ok {
+			return
+		}
+
+		current := byPath[path]
+		if containsExactProbeCandidate(current, symbol) {
+			return
+		}
+
+		if len(current) >= maxPerPath {
+			return
+		}
+
+		byPath[path] = append(current, symbol)
+	}
+
+	for _, record := range projection.records {
+		if record.failed {
+			continue
+		}
+
+		for _, field := range []string{record.output, record.summary} {
+			text := normalizeWorkspacePathScanText(field)
+			for _, match := range closurePathScopedSymbolPattern.FindAllStringSubmatch(text, -1) {
+				if len(match) > 2 {
+					add(match[1], match[2])
+				}
+			}
+
+			for _, match := range closurePathCallPattern.FindAllStringSubmatch(text, -1) {
+				if len(match) > 2 {
+					add(match[1], match[2])
+				}
+			}
+
+			for _, line := range strings.Split(text, "\n") {
+				paths := pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(line))
+				if len(paths) == 0 {
+					continue
+				}
+
+				for _, match := range callLikeIdentifierPattern.FindAllStringSubmatch(line, -1) {
+					if len(match) <= 1 {
+						continue
+					}
+
+					for _, path := range paths {
+						add(path, match[1])
+					}
+				}
+			}
+		}
+	}
+
+	return byPath
 }
 
 func (record toolResultEvidenceRecord) CandidatePaths(max int) []string {
