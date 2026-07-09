@@ -13033,34 +13033,13 @@ func (p delegatedDiscoveryPlan) consumableSourceBodyCandidatePaths(results []wor
 		best[path] = candidate
 	}
 
-	if facts := discoveryQueryCandidateEvidenceFacts(results); len(facts) > 0 {
-		for _, fact := range facts {
-			addCandidate(
-				fact.Path,
-				strings.TrimSpace(fact.LayerName),
-				strings.TrimSpace(fact.EvidenceLine),
-				strings.TrimSpace(fact.Summary),
-			)
-		}
-	} else {
-		for _, summary := range delegatedDiscoverySummaries(results) {
-			for _, evidence := range summary.Evidence {
-				layerName := strings.TrimSpace(evidence.Name)
-				summaryText := strings.TrimSpace(evidence.Summary)
-				text := normalizeWorkspacePathScanText(strings.TrimSpace(evidence.Summary + "\n" + evidence.OutputExcerpt))
-
-				for _, rawLine := range strings.Split(text, "\n") {
-					line := strings.TrimSpace(rawLine)
-					if line == "" {
-						continue
-					}
-
-					for _, path := range delegatedDiscoveryLineCandidatePaths(line) {
-						addCandidate(path, layerName, line, summaryText)
-					}
-				}
-			}
-		}
+	for _, fact := range discoveryQueryCandidateEvidenceFacts(results) {
+		addCandidate(
+			fact.Path,
+			strings.TrimSpace(fact.LayerName),
+			strings.TrimSpace(fact.EvidenceLine),
+			strings.TrimSpace(fact.Summary),
+		)
 	}
 
 	candidates := make([]delegatedDiscoveryConsumableCandidate, 0, len(best))
@@ -13080,20 +13059,6 @@ func (p delegatedDiscoveryPlan) consumableSourceBodyCandidatePaths(results []wor
 	}
 
 	return closurePromptEvidencePaths(paths, max)
-}
-
-func delegatedDiscoveryLineCandidatePaths(line string) []string {
-	var paths []string
-
-	for _, path := range pathparse.MentionedWorkspacePaths(line) {
-		paths = textutil.AppendUnique(paths, path)
-	}
-
-	for _, match := range delegatedPacketPathLinePattern.FindAllString(line, -1) {
-		paths = textutil.AppendUnique(paths, match)
-	}
-
-	return paths
 }
 
 func delegatedDiscoveryConsumableSourcePath(path string) bool {

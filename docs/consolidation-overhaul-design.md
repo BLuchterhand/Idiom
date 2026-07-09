@@ -1487,9 +1487,29 @@ Reviewer-updated estimate:
   `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./internal/capabilities/workspace ./internal/runtime/agent ./internal/contracts/toolfacts`.
   Full verification: `go test ./...`; `go build ./cmd/idiom`;
   `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+	`go run golang.org/x/tools/cmd/deadcode@latest ./...` as inventory, with
+	only unrelated pre-existing runtime dead-code findings after deleting the
+	newly stale text-search predicate; `git diff --check`.
+- The retained factless `discovery_query` JSON candidate fallback is now
+  deleted. Runtime candidate paths, ranked delegated candidates,
+  generated-artifact source redirects, answer-ready events, read-only evidence
+  packets, closure evidence paths, and fallback source reads all consume
+  `ToolResultFacts` only. `discovery_query` packet JSON can no longer become
+  evidence authority merely because it looks like a discovery packet. The same
+  pass also removed final-answer synthesis parsing of discovery packet JSON:
+  `AnswerComposer` now renders findings from typed discovery candidate facts,
+  so the runtime no longer carries a duplicate packet-summary DTO/parser for
+  answer presentation. Production Go changed `+41 / -244`, net `-203`; test Go
+  changed `+153 / -57`, net `+96`. With this worktree included, the branch is
+  production Go `+26,612 / -32,899`, net `-6,287` versus `main`. Focused
+  verification: `go test ./internal/runtime/agent -count=1`;
+  `go test ./internal/contracts/toolfacts ./internal/capabilities/workspace -run 'TestToolResultFactsCloneCopiesSlices|TestSearchContent(PrioritizesSourceFilesOverTests|FactsClassifyDisplayCapAsHighCardinality|TruncatesLongMatchingLines)|TestDiscoveryQueryFactsRankTextAnchorCandidates|TestSearchToolNameIncludesWorkspaceSearchAndLegacyGrep' -count=1`.
+  Full verification: `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./internal/capabilities/workspace ./internal/runtime/agent ./internal/contracts/toolfacts`;
   `go run golang.org/x/tools/cmd/deadcode@latest ./...` as inventory, with
-  only unrelated pre-existing runtime dead-code findings after deleting the
-  newly stale text-search predicate; `git diff --check`.
+  remaining affected-package findings unrelated to this slice;
+  `git diff --check`.
 
 ## Review And Regression Protocol
 

@@ -219,6 +219,26 @@ func TestToolResultEvidenceProjectionCandidateBoundaries(t *testing.T) {
 	}
 }
 
+func TestFactlessDiscoveryQueryOutputDoesNotCreateCandidateAuthority(t *testing.T) {
+	result := workspace.ToolResult{
+		Tool:    workspace.ToolNameDiscoveryQuery,
+		Summary: "Ran discovery query",
+		Output:  `{"evidence":[{"name":"text_anchor_search","output_excerpt":"internal/runtime/agent/runner_core.go:10: runChildTask"}]}`,
+	}
+	results := []workspace.ToolResult{result}
+
+	if got := newToolResultEvidenceProjection(results).CandidatePaths(); len(got) != 0 {
+		t.Fatalf("factless discovery_query output should not create candidate paths, got %#v", got)
+	}
+	if got := discoveryQueryCandidatePaths(results, 4); len(got) != 0 {
+		t.Fatalf("factless discovery_query output should not feed discovery candidate paths, got %#v", got)
+	}
+	outcome := discoveryResultOutcomeFromResult(workspace.ToolRequest{Tool: workspace.ToolNameDiscoveryQuery}, result, 4)
+	if outcome.Strength != "" || len(outcome.Candidates) != 0 {
+		t.Fatalf("factless discovery_query should not create discovery outcome, got %#v", outcome)
+	}
+}
+
 func TestToolResultEvidenceProjectionChangedPaths(t *testing.T) {
 	results := []workspace.ToolResult{
 		{Tool: workspace.ToolNameEditFile, ChangedPaths: []string{"internal/app/edit.go"}},

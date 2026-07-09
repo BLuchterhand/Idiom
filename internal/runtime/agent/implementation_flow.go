@@ -38,9 +38,9 @@ import (
 type AnswerComposer struct{}
 
 type AnswerComposerInput struct {
-	Question      string
-	EvidencePaths []string
-	Summaries     []delegatedDiscoverySummary
+	Question            string
+	EvidencePaths       []string
+	DiscoveryCandidates []toolfacts.DiscoveryCandidateEvidence
 }
 
 const implementationTargetWriteReadySourceProbeToolsPhrase = "read_file/search_content/file_stats"
@@ -48,9 +48,9 @@ const implementationTargetWriteReadySourceProbeToolsPhrase = "read_file/search_c
 func (AnswerComposer) Compose(input AnswerComposerInput) (string, bool) {
 	question := strings.TrimSpace(input.Question)
 	paths := uniqueDelegatedDiscoveryPaths(input.EvidencePaths)
-	lines := decoratedDiscoveryFindingLines(input.Summaries, 4)
+	lines := decoratedDiscoveryFindingLines(input.DiscoveryCandidates, 4)
 
-	if len(input.Summaries) == 0 || len(lines) == 0 {
+	if len(lines) == 0 {
 		return "", false
 	}
 
@@ -86,8 +86,8 @@ func composeGenericEvidenceAnswer(question string, paths []string, lines []strin
 	return strings.TrimSpace(b.String())
 }
 
-func decoratedDiscoveryFindingLines(summaries []delegatedDiscoverySummary, limit int) []string {
-	raw := delegatedDiscoveryFindingLines(summaries, limit)
+func decoratedDiscoveryFindingLines(candidates []toolfacts.DiscoveryCandidateEvidence, limit int) []string {
+	raw := delegatedDiscoveryFindingLines(candidates, limit)
 	lines := make([]string, 0, len(raw))
 
 	for _, line := range raw {
@@ -6195,39 +6195,14 @@ func readOnlyToolControlGuidanceText(value string) bool {
 }
 
 func synthesizeDelegatedDiscoveryAnswer(objective string, results []workspace.ToolResult, paths []string) (string, bool) {
-	summaries := delegatedDiscoverySummaries(results)
 	question := delegatedDisplayQuestion(objective)
 	evidencePaths := delegatedDiscoveryAnswerEvidencePaths(question, paths)
 
 	return AnswerComposer{}.Compose(AnswerComposerInput{
-		Question:      question,
-		EvidencePaths: evidencePaths,
-		Summaries:     summaries,
+		Question:            question,
+		EvidencePaths:       evidencePaths,
+		DiscoveryCandidates: discoveryQueryCandidateEvidenceFacts(results),
 	})
-}
-
-func delegatedDiscoverySummaries(results []workspace.ToolResult) []delegatedDiscoverySummary {
-	var summaries []delegatedDiscoverySummary
-
-	for _, result := range results {
-		if strings.TrimSpace(result.Tool) != workspace.ToolNameDiscoveryQuery || strings.TrimSpace(result.Output) == "" || strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-
-		var summary delegatedDiscoverySummary
-
-		if err := json.Unmarshal([]byte(result.Output), &summary); err != nil {
-			continue
-		}
-
-		if summary.ArtifactPath == "" && len(summary.Evidence) == 0 {
-			continue
-		}
-
-		summaries = append(summaries, summary)
-	}
-
-	return summaries
 }
 
 func delegatedDiscoveryAnswerEvidencePaths(objective string, paths []string) []string {

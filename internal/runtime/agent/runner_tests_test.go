@@ -3836,6 +3836,12 @@ func TestDelegatedReadOnlyCandidateConsumptionPrefersObjectiveSemanticAnchorsOve
 			`{"name":"target_listing","summary":"Listed internal/runtime/agent.","output_excerpt":"internal/runtime/agent/agenterrors/errors.go\ninternal/runtime/agent/implementation_flow.go\ninternal/runtime/agent/implementation_flow.go"},` +
 			`{"name":"text_anchor_search","summary":"Found delegated child orchestration implementation paths.","output_excerpt":"internal/runtime/agent/implementation_flow.go:16: func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, opts llama.ChatOptions) workspace.ToolResult\ninternal/runtime/agent/runner_core.go:574: result := r.runChildTask(ctx, req, opts)"}` +
 			`]}`,
+		Facts: discoveryQueryFactsForTest(
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/agenterrors/errors.go", LayerName: "target_listing", Summary: "Listed internal/runtime/agent.", EvidenceLine: "internal/runtime/agent/agenterrors/errors.go"},
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/implementation_flow.go", LayerName: "target_listing", Summary: "Listed internal/runtime/agent.", EvidenceLine: "internal/runtime/agent/implementation_flow.go"},
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/implementation_flow.go", LayerName: "text_anchor_search", Summary: "Found delegated child orchestration implementation paths.", EvidenceLine: "internal/runtime/agent/implementation_flow.go:16: func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, opts llama.ChatOptions) workspace.ToolResult"},
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/runner_core.go", LayerName: "text_anchor_search", Summary: "Found delegated child orchestration implementation paths.", EvidenceLine: "internal/runtime/agent/runner_core.go:574: result := r.runChildTask(ctx, req, opts)"},
+		),
 	}}
 
 	decision := runner.applyLanePreflight(runnerLanePreflightInput{
@@ -3869,6 +3875,10 @@ func TestDelegatedReadOnlyCandidateConsumptionDoesNotForceListingOnlyPath(t *tes
 		Tool:    "discovery_query",
 		Summary: "Ran architecture_boundary discovery query",
 		Output:  `{"evidence":[{"name":"target_listing","summary":"Listed internal/runtime/agent.","output_excerpt":"internal/runtime/agent/agenterrors/errors.go\ninternal/runtime/agent/implementation_flow.go\ninternal/runtime/agent/implementation_flow.go"}]}`,
+		Facts: discoveryQueryFactsForTest(
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/agenterrors/errors.go", LayerName: "target_listing", Summary: "Listed internal/runtime/agent.", EvidenceLine: "internal/runtime/agent/agenterrors/errors.go"},
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/implementation_flow.go", LayerName: "target_listing", Summary: "Listed internal/runtime/agent.", EvidenceLine: "internal/runtime/agent/implementation_flow.go"},
+		),
 	}}
 
 	decision := runner.applyLanePreflight(runnerLanePreflightInput{
@@ -3898,6 +3908,10 @@ func TestDelegatedReadOnlyCandidateConsumptionUsesObjectiveOverlapForWeakLayer(t
 		Tool:    "discovery_query",
 		Summary: "Ran architecture_boundary discovery query",
 		Output:  `{"evidence":[{"name":"target_listing","summary":"Listed internal/runtime/agent.","output_excerpt":"internal/runtime/agent/agenterrors/errors.go:1: package agenterrors\ninternal/runtime/agent/implementation_flow.go:16: child orchestration packet flow\ninternal/runtime/agent/implementation_flow.go:1: package agent"}]}`,
+		Facts: discoveryQueryFactsForTest(
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/agenterrors/errors.go", LayerName: "target_listing", Summary: "Listed internal/runtime/agent.", EvidenceLine: "internal/runtime/agent/agenterrors/errors.go:1: package agenterrors"},
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/implementation_flow.go", LayerName: "target_listing", Summary: "Listed internal/runtime/agent.", EvidenceLine: "internal/runtime/agent/implementation_flow.go:16: child orchestration packet flow"},
+		),
 	}}
 
 	decision := runner.applyLanePreflight(runnerLanePreflightInput{
@@ -4193,6 +4207,10 @@ func TestDelegatedReadOnlyPostDiscoveryInventoryConsumesCandidateSource(t *testi
 		Output: `{"purpose":"architecture_boundary","artifact_path":".idiom/discovery/queries/query.json","evidence":[` +
 			`{"name":"text_anchor_search","summary":"Found discovery tool implementation paths.","output_excerpt":"internal/runtime/agent/implementation_flow.go:18: func (AnswerComposer) Compose(input AnswerComposerInput) (string, bool)\ninternal/capabilities/workspace/discovery_query.go:338: func (r *discoveryQueryRunner) run(ctx context.Context) {}"}` +
 			`]}`,
+		Facts: discoveryQueryFactsForTest(
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/implementation_flow.go", LayerName: "text_anchor_search", Summary: "Found discovery tool implementation paths.", EvidenceLine: "internal/runtime/agent/implementation_flow.go:18: func (AnswerComposer) Compose(input AnswerComposerInput) (string, bool)"},
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/capabilities/workspace/discovery_query.go", LayerName: "text_anchor_search", Summary: "Found discovery tool implementation paths.", EvidenceLine: "internal/capabilities/workspace/discovery_query.go:338: func (r *discoveryQueryRunner) run(ctx context.Context) {}"},
+		),
 	}}
 
 	decision := runner.applyLanePreflight(runnerLanePreflightInput{
@@ -4264,6 +4282,13 @@ func TestDelegatedReadOnlyCandidateConsumptionPrefersDiscoveredMechanismEvidence
 			`{"name":"go_workspace_symbol","summary":"No Go workspace symbols matched \"discovery|tool|usefulness\".","output_excerpt":"Symbol index: no matching symbols. capability: file_outline. language: go."},` +
 			`{"name":"text_anchor_search","summary":"Found discovery tool implementation paths.","output_excerpt":"internal/capabilities/workspace/discovery_query.go:338: func (r *discoveryQueryRunner) run(ctx context.Context) {}\ninternal/runtime/agent/implementation_flow.go:18: func (AnswerComposer) Compose(input AnswerComposerInput) (string, bool)\ninternal/runtime/agent/runner_core.go:37: type delegatedDiscoveryPlan struct"}` +
 			`]}`,
+		Facts: discoveryQueryFactsForTest(
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/capabilities/workspace/discovery_query.go", LayerName: "related_files", Summary: "Found related Go files.", EvidenceLine: "internal/capabilities/workspace/discovery_query.go"},
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/implementation_flow.go", LayerName: "related_files", Summary: "Found related Go files.", EvidenceLine: "internal/runtime/agent/implementation_flow.go"},
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/capabilities/workspace/discovery_query.go", LayerName: "text_anchor_search", Summary: "Found discovery tool implementation paths.", EvidenceLine: "internal/capabilities/workspace/discovery_query.go:338: func (r *discoveryQueryRunner) run(ctx context.Context) {}"},
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/implementation_flow.go", LayerName: "text_anchor_search", Summary: "Found discovery tool implementation paths.", EvidenceLine: "internal/runtime/agent/implementation_flow.go:18: func (AnswerComposer) Compose(input AnswerComposerInput) (string, bool)"},
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/runner_core.go", LayerName: "text_anchor_search", Summary: "Found discovery tool implementation paths.", EvidenceLine: "internal/runtime/agent/runner_core.go:37: type delegatedDiscoveryPlan struct"},
+		),
 	}}
 
 	paths := plan.consumableSourceBodyCandidatePaths(results, 4)
@@ -4296,6 +4321,10 @@ func TestDelegatedReadOnlyCandidateConsumptionDoesNotInjectUndiscoveredMechanism
 		Output: `{"purpose":"architecture_boundary","artifact_path":".idiom/discovery/queries/query.json","evidence":[` +
 			`{"name":"text_anchor_search","summary":"Found discovery tool implementation paths.","output_excerpt":"internal/capabilities/workspace/discovery_query.go:338: func (r *discoveryQueryRunner) run(ctx context.Context) {}\ninternal/runtime/agent/runner_core.go:574: result := r.runChildTask(ctx, req, opts)"}` +
 			`]}`,
+		Facts: discoveryQueryFactsForTest(
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/capabilities/workspace/discovery_query.go", LayerName: "text_anchor_search", Summary: "Found discovery tool implementation paths.", EvidenceLine: "internal/capabilities/workspace/discovery_query.go:338: func (r *discoveryQueryRunner) run(ctx context.Context) {}"},
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/runner_core.go", LayerName: "text_anchor_search", Summary: "Found discovery tool implementation paths.", EvidenceLine: "internal/runtime/agent/runner_core.go:574: result := r.runChildTask(ctx, req, opts)"},
+		),
 	}}
 
 	paths := plan.consumableSourceBodyCandidatePaths(results, 4)
@@ -4323,6 +4352,12 @@ func TestDelegatedReadOnlyCandidateConsumptionDemotesInventoryLayer(t *testing.T
 			`{"name":"related_files","summary":"Found related Go files.","output_excerpt":"internal/runtime/agent/nearby.go\ninternal/runtime/agent/implementation_flow.go"},` +
 			`{"name":"text_anchor_search","summary":"Found discovery routing implementation anchor.","output_excerpt":"internal/runtime/agent/runner_core.go:37: type delegatedDiscoveryPlan struct\ninternal/capabilities/workspace/discovery_query.go:338: func (r *discoveryQueryRunner) run(ctx context.Context) {}"}` +
 			`]}`,
+		Facts: discoveryQueryFactsForTest(
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/nearby.go", LayerName: "related_files", Summary: "Found related Go files.", EvidenceLine: "internal/runtime/agent/nearby.go"},
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/implementation_flow.go", LayerName: "related_files", Summary: "Found related Go files.", EvidenceLine: "internal/runtime/agent/implementation_flow.go"},
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/runner_core.go", LayerName: "text_anchor_search", Summary: "Found discovery routing implementation anchor.", EvidenceLine: "internal/runtime/agent/runner_core.go:37: type delegatedDiscoveryPlan struct"},
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/capabilities/workspace/discovery_query.go", LayerName: "text_anchor_search", Summary: "Found discovery routing implementation anchor.", EvidenceLine: "internal/capabilities/workspace/discovery_query.go:338: func (r *discoveryQueryRunner) run(ctx context.Context) {}"},
+		),
 	}}
 
 	paths := plan.consumableSourceBodyCandidatePaths(results, 4)
@@ -25476,6 +25511,10 @@ func TestDelegatedReadOnlyRepeatedDiscoveryConsumesCandidateSource(t *testing.T)
 	results := []workspace.ToolResult{{
 		Tool:   "discovery_query",
 		Output: `{"evidence":[{"name":"text_anchor_search","summary":"implementation anchor: internal/runtime/agent/implementation_flow.go:42 runChildTask"},{"name":"text_anchor_search","summary":"implementation anchor: internal/runtime/agent/runner_core.go:300 task tool dispatch"}]}`,
+		Facts: discoveryQueryFactsForTest(
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/implementation_flow.go", LayerName: "text_anchor_search", Summary: "implementation anchor: internal/runtime/agent/implementation_flow.go:42 runChildTask", EvidenceLine: "internal/runtime/agent/implementation_flow.go:42 runChildTask"},
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/runner_core.go", LayerName: "text_anchor_search", Summary: "implementation anchor: internal/runtime/agent/runner_core.go:300 task tool dispatch", EvidenceLine: "internal/runtime/agent/runner_core.go:300 task tool dispatch"},
+		),
 	}}
 	decision := runner.applyLanePreflight(runnerLanePreflightInput{
 		Results: results,
@@ -26266,26 +26305,15 @@ func TestDiscoveryQueryCandidatePathsPreferProducerFacts(t *testing.T) {
 }
 
 func TestAnswerComposerUsesProvidedDiscoveryUsefulnessEvidenceOnly(t *testing.T) {
-	summaries := []delegatedDiscoverySummary{{
-		Purpose:      "architecture_boundary",
-		ArtifactPath: ".idiom/discovery/queries/query.json",
-		Evidence: []struct {
-			Name          string `json:"name"`
-			Tool          string `json:"tool"`
-			Summary       string `json:"summary"`
-			Error         string `json:"error,omitempty"`
-			OutputExcerpt string `json:"output_excerpt,omitempty"`
-		}{{
-			Name:          "text_anchor_search",
-			Summary:       "Found discovery tool implementation paths.",
-			OutputExcerpt: "internal/capabilities/workspace/discovery_query.go:1: package workspace",
-		}},
-	}}
-
 	answer, ok := AnswerComposer{}.Compose(AnswerComposerInput{
 		Question:      "What can we add to our discovery tools in an effort at increasing their overall usefulness?",
 		EvidencePaths: []string{"internal/capabilities/workspace/discovery_query.go"},
-		Summaries:     summaries,
+		DiscoveryCandidates: []toolfacts.DiscoveryCandidateEvidence{{
+			Path:         "internal/capabilities/workspace/discovery_query.go",
+			LayerName:    "text_anchor_search",
+			Summary:      "Found discovery tool implementation paths.",
+			EvidenceLine: "internal/capabilities/workspace/discovery_query.go:1: package workspace",
+		}},
 	})
 	if !ok {
 		t.Fatal("expected discovery-usefulness answer composition")
@@ -26310,6 +26338,10 @@ func TestDelegatedDiscoveryAnswerStaysGenericForDebugLogRedactedMode(t *testing.
 			Tool:    "discovery_query",
 			Summary: "Ran architecture_boundary discovery query with 10 layer(s); artifact: .idiom/discovery/queries/debug.json",
 			Output:  `{"purpose":"architecture_boundary","artifact_path":".idiom/discovery/queries/debug.json","evidence":[{"name":"text_anchor_search","summary":"Found debug redaction implementation paths.","output_excerpt":"internal/evidence/transcript/debuglog.go:18: DebugLogModeRedacted DebugLogMode = \"redacted\"\ninternal/evidence/transcript/debuglog.go:528: return redactedBlob(typed)\ninternal/surfaces/tui/app/model_state.go:469: case \"redacted\", \"full\":"}]}`,
+			Facts: discoveryQueryFactsForTest(
+				toolfacts.DiscoveryCandidateEvidence{Path: "internal/evidence/transcript/debuglog.go", LayerName: "text_anchor_search", Summary: "Found debug redaction implementation paths.", EvidenceLine: "internal/evidence/transcript/debuglog.go:18: DebugLogModeRedacted DebugLogMode = \"redacted\""},
+				toolfacts.DiscoveryCandidateEvidence{Path: "internal/surfaces/tui/app/model_state.go", LayerName: "text_anchor_search", Summary: "Found debug redaction implementation paths.", EvidenceLine: "internal/surfaces/tui/app/model_state.go:469: case \"redacted\", \"full\":"},
+			),
 		},
 		readFileSourceBodyResult("internal/evidence/transcript/debuglog.go", 1, 80, 0, "package transcript\ntype DebugLogMode string\nconst DebugLogModeRedacted DebugLogMode = \"redacted\"\n"),
 	}
@@ -26608,18 +26640,10 @@ func TestAnswerComposerDoesNotLeakTelemetrySections(t *testing.T) {
 	answer, ok := AnswerComposer{}.Compose(AnswerComposerInput{
 		Question:      "Can you tell me how this harness uses subagents?",
 		EvidencePaths: []string{"`internal/runtime/agent/runner_core.go`,", "internal/runtime/agent/implementation_flow.go"},
-		Summaries: []delegatedDiscoverySummary{{
-			Purpose:      "architecture_boundary",
-			ArtifactPath: ".idiom/discovery/queries/query.json",
-			Evidence: []struct {
-				Name          string `json:"name"`
-				Tool          string `json:"tool"`
-				Summary       string `json:"summary"`
-				Error         string `json:"error,omitempty"`
-				OutputExcerpt string `json:"output_excerpt,omitempty"`
-			}{
-				{Name: "text_anchor_search", Summary: "Found subagent handoff implementation paths."},
-			},
+		DiscoveryCandidates: []toolfacts.DiscoveryCandidateEvidence{{
+			Path:      "internal/runtime/agent/runner_core.go",
+			LayerName: "text_anchor_search",
+			Summary:   "Found subagent handoff implementation paths.",
 		}},
 	})
 	if !ok {
@@ -26686,20 +26710,10 @@ func TestAnswerComposerDecoratesDiscoveryToolEvidenceGenerically(t *testing.T) {
 			"internal/runtime/agent/discovery_redirect.go",
 			"internal/runtime/agent/runner_tests_test.go",
 		},
-		Summaries: []delegatedDiscoverySummary{{
-			Purpose:      "architecture_boundary",
-			ArtifactPath: ".idiom/discovery/queries/query.json",
-			Evidence: []struct {
-				Name          string `json:"name"`
-				Tool          string `json:"tool"`
-				Summary       string `json:"summary"`
-				Error         string `json:"error,omitempty"`
-				OutputExcerpt string `json:"output_excerpt,omitempty"`
-			}{
-				{Name: "text_anchor_search", Summary: "Found discovery implementation paths."},
-				{Name: "go_read_symbol", Summary: "Read answer composer and runner synthesis boundaries."},
-			},
-		}},
+		DiscoveryCandidates: []toolfacts.DiscoveryCandidateEvidence{
+			{Path: "internal/runtime/agent/runner_core.go", LayerName: "text_anchor_search", Summary: "Found discovery implementation paths."},
+			{Path: "internal/runtime/agent/implementation_flow.go", LayerName: "go_read_symbol", Summary: "Read answer composer and runner synthesis boundaries."},
+		},
 	})
 	if !ok {
 		t.Fatal("expected generic discovery-tool evidence answer")
@@ -26730,20 +26744,10 @@ func TestAnswerComposerGenericFallbackDecoratesDiscoveryLayers(t *testing.T) {
 	answer, ok := AnswerComposer{}.Compose(AnswerComposerInput{
 		Question:      "How is routing decided?",
 		EvidencePaths: []string{"internal/surfaces/tui/app/turn_planner.go", "internal/runtime/modepolicy/modes.go"},
-		Summaries: []delegatedDiscoverySummary{{
-			Purpose:      "architecture_boundary",
-			ArtifactPath: ".idiom/discovery/queries/query.json",
-			Evidence: []struct {
-				Name          string `json:"name"`
-				Tool          string `json:"tool"`
-				Summary       string `json:"summary"`
-				Error         string `json:"error,omitempty"`
-				OutputExcerpt string `json:"output_excerpt,omitempty"`
-			}{
-				{Name: "text_anchor_search", Summary: "Found routing anchors in internal/surfaces/tui/app/turn_planner.go. Bounded-read capability is available on returned handles, or narrow the pattern to see more."},
-				{Name: "go_read_symbol", Summary: "Read classifyPromptRoute in internal/surfaces/tui/app/turn_planner.go lines 42-96"},
-			},
-		}},
+		DiscoveryCandidates: []toolfacts.DiscoveryCandidateEvidence{
+			{Path: "internal/surfaces/tui/app/turn_planner.go", LayerName: "text_anchor_search", Summary: "Found routing anchors in internal/surfaces/tui/app/turn_planner.go. Bounded-read capability is available on returned handles, or narrow the pattern to see more."},
+			{Path: "internal/surfaces/tui/app/turn_planner.go", LayerName: "go_read_symbol", Summary: "Read classifyPromptRoute in internal/surfaces/tui/app/turn_planner.go lines 42-96"},
+		},
 	})
 	if !ok {
 		t.Fatal("expected generic composed answer")
@@ -26863,6 +26867,9 @@ func TestFinalAnswerDecoratorSkipsChildInternalOutput(t *testing.T) {
 			Tool:    "discovery_query",
 			Summary: "Ran discovery query",
 			Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"text_anchor_search","summary":"Found paths.","output_excerpt":"internal/runtime/agent/runner_core.go:128: finish"}]}`,
+			Facts: discoveryQueryFactsForTest(
+				toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/runner_core.go", LayerName: "text_anchor_search", Summary: "Found paths.", EvidenceLine: "internal/runtime/agent/runner_core.go:128: finish"},
+			),
 		}},
 		UserFacing: runner.userFacingFinalAnswer(),
 	})
@@ -26886,6 +26893,9 @@ func TestFinalAnswerDecoratorDecoratesBudgetExhaustionScaffold(t *testing.T) {
 			Tool:    "discovery_query",
 			Summary: "Ran discovery query",
 			Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"text_anchor_search","summary":"Found paths.","output_excerpt":"internal/runtime/agent/runner_core.go:128: finish"}]}`,
+			Facts: discoveryQueryFactsForTest(
+				toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/runner_core.go", LayerName: "text_anchor_search", Summary: "Found paths.", EvidenceLine: "internal/runtime/agent/runner_core.go:128: finish"},
+			),
 		}},
 		UserFacing: true,
 	})
@@ -27239,6 +27249,10 @@ func TestDelegatedReadOnlyAnswerReadyNudgeIncludesClosureJustification(t *testin
 		Tool:    "discovery_query",
 		Summary: "Ran architecture_boundary discovery query",
 		Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"go_read_symbol","summary":"Read subagent flow","output_excerpt":"internal/runtime/agent/runner_core.go:648 runChildTask\ninternal/runtime/agent/implementation_flow.go:16 runChildTask\ninternal/runtime/agent/implementation_flow.go:18 Compose"}]}`,
+		Facts: discoveryQueryFactsForTest(
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/runner_core.go", LayerName: "go_read_symbol", Summary: "Read subagent flow", EvidenceLine: "internal/runtime/agent/runner_core.go:648 runChildTask"},
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/implementation_flow.go", LayerName: "go_read_symbol", Summary: "Read subagent flow", EvidenceLine: "internal/runtime/agent/implementation_flow.go:16 runChildTask"},
+		),
 	}}
 	nudge := buildReadinessNudge(ReadinessNudge{
 		Headline:          "The delegated read-only evidence is sufficient for a grounded answer to this question.",
@@ -27290,6 +27304,10 @@ func TestDelegatedClosureEvidencePathsPreserveDiscoveryPacketOrderAmongEqualPrio
 		Tool:    "discovery_query",
 		Summary: "Ran architecture_boundary discovery query",
 		Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"text_anchor_search","summary":"Found handoff files","output_excerpt":"internal/runtime/agent/runner_core.go:574: result := r.runChildTask(ctx, req, opts)\ninternal/runtime/agent/implementation_flow.go:16: func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, opts llama.ChatOptions) string\ninternal/runtime/agent/implementation_flow.go:18: func (AnswerComposer) Compose(input AnswerComposerInput) (string, bool)"}]}`,
+		Facts: discoveryQueryFactsForTest(
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/implementation_flow.go", LayerName: "text_anchor_search", Summary: "Found handoff files", EvidenceLine: "internal/runtime/agent/implementation_flow.go:16: func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, opts llama.ChatOptions) string"},
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/runner_core.go", LayerName: "text_anchor_search", Summary: "Found handoff files", EvidenceLine: "internal/runtime/agent/runner_core.go:574: result := r.runChildTask(ctx, req, opts)"},
+		),
 	}}
 	paths := newToolResultEvidenceProjection(results).delegatedClosureEvidencePaths("Explain how this harness uses subagents.", 4)
 
@@ -27307,6 +27325,10 @@ func TestDelegatedReadOnlyDiminishingReturnsNudgeEscalates(t *testing.T) {
 		Tool:    "discovery_query",
 		Summary: "Ran architecture_boundary discovery query",
 		Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"go_read_symbol","summary":"Read subagent flow","output_excerpt":"internal/runtime/agent/runner_core.go:648 runChildTask\ninternal/runtime/agent/implementation_flow.go:16 runChildTask"}]}`,
+		Facts: discoveryQueryFactsForTest(
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/runner_core.go", LayerName: "go_read_symbol", Summary: "Read subagent flow", EvidenceLine: "internal/runtime/agent/runner_core.go:648 runChildTask"},
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/implementation_flow.go", LayerName: "go_read_symbol", Summary: "Read subagent flow", EvidenceLine: "internal/runtime/agent/implementation_flow.go:16 runChildTask"},
+		),
 	}}
 	first := delegatedReadOnlyDiminishingReturnsNudge("Explain how this harness uses subagents.", results, 1)
 	second := delegatedReadOnlyDiminishingReturnsNudge("Explain how this harness uses subagents.", results, 2)
@@ -27840,6 +27862,9 @@ func TestDelegatedChildFallbackSourceReadUsesDiscoveredEvidencePath(t *testing.T
 		Tool:    "discovery_query",
 		Summary: "Ran architecture_boundary discovery query",
 		Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"text_anchor_search","summary":"Found discovery paths","output_excerpt":"internal/runtime/agent/runner_core.go:1: package agent"}]}`,
+		Facts: discoveryQueryFactsForTest(
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/runner_core.go", LayerName: "text_anchor_search", Summary: "Found discovery paths", EvidenceLine: "internal/runtime/agent/runner_core.go:1: package agent"},
+		),
 	}}
 	req, result, ok := runner.delegatedChildFallbackSourceRead(context.Background(), "What can we add to our discovery tools in an effort at increasing their overall usefulness?", results)
 
@@ -27888,6 +27913,11 @@ func TestDelegatedChildFallbackSourceReadUsesPlanCandidateRanking(t *testing.T) 
 			`{"name":"target_listing","summary":"Listed internal/runtime/agent.","output_excerpt":"internal/runtime/agent/agenterrors/errors.go\ninternal/runtime/agent/implementation_flow.go"},` +
 			`{"name":"text_anchor_search","summary":"Found delegated child orchestration implementation paths.","output_excerpt":"internal/runtime/agent/implementation_flow.go:16: func (r *Runner) runChildTask()"}` +
 			`]}`,
+		Facts: discoveryQueryFactsForTest(
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/agenterrors/errors.go", LayerName: "target_listing", Summary: "Listed internal/runtime/agent.", EvidenceLine: "internal/runtime/agent/agenterrors/errors.go"},
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/implementation_flow.go", LayerName: "target_listing", Summary: "Listed internal/runtime/agent.", EvidenceLine: "internal/runtime/agent/implementation_flow.go"},
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/implementation_flow.go", LayerName: "text_anchor_search", Summary: "Found delegated child orchestration implementation paths.", EvidenceLine: "internal/runtime/agent/implementation_flow.go:16: func (r *Runner) runChildTask()"},
+		),
 	}}
 	req, result, ok := runner.delegatedChildFallbackSourceRead(context.Background(), "Explain how this harness uses subagents and child task orchestration.", results)
 
@@ -29004,6 +29034,10 @@ func TestEmitDelegatedReadOnlyAnswerReadyEventCanonicalizesEvidencePaths(t *test
 		Tool:    "discovery_query",
 		Summary: "Discovery query complete",
 		Output:  `{"artifact_path":".codex/discovery/impact-analysis.json","evidence":[{"name":"go_read_symbol","summary":"Read subagent flow","output_excerpt":"internal/runtime/agent/runner_core.go:648 runChildTask\ninternal/runtime/agent/implementation_flow.go:16 runChildTask\ninternal/runtime/agent/implementation_flow.go:73 synthesizeDelegatedReadOnlyAnswer"}]}`,
+		Facts: discoveryQueryFactsForTest(
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/runner_core.go", LayerName: "go_read_symbol", Summary: "Read subagent flow", EvidenceLine: "internal/runtime/agent/runner_core.go:648 runChildTask"},
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/implementation_flow.go", LayerName: "go_read_symbol", Summary: "Read subagent flow", EvidenceLine: "internal/runtime/agent/implementation_flow.go:16 runChildTask"},
+		),
 	}}
 	runner.emitDelegatedReadOnlyAnswerReadyEvent(workspace.ToolRequest{Tool: "discovery_query"}, results)
 
@@ -29043,6 +29077,10 @@ func TestReadOnlyEvidencePacketCarriesChildResultPathsWithoutAugmentation(t *tes
 			Tool:    "discovery_query",
 			Summary: "Ran architecture_boundary discovery query",
 			Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"go_read_symbol","summary":"Read subagent flow","output_excerpt":"internal/runtime/agent/runner_core.go:648 runChildTask\ninternal/runtime/agent/implementation_flow.go:16 runChildTask\ninternal/runtime/agent/implementation_flow.go:18 Compose"}]}`,
+			Facts: discoveryQueryFactsForTest(
+				toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/runner_core.go", LayerName: "go_read_symbol", Summary: "Read subagent flow", EvidenceLine: "internal/runtime/agent/runner_core.go:648 runChildTask"},
+				toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/implementation_flow.go", LayerName: "go_read_symbol", Summary: "Read subagent flow", EvidenceLine: "internal/runtime/agent/implementation_flow.go:16 runChildTask"},
+			),
 		},
 	}
 	packet, ok := buildReadOnlyEvidencePacket("Explain how subagents work.", answer, results)
@@ -29073,6 +29111,10 @@ func TestReadOnlyEvidencePacketDoesNotInjectDiscoveryUsefulnessExpectedPaths(t *
 			Tool:    "discovery_query",
 			Summary: "Ran architecture_boundary discovery query",
 			Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"text_anchor_search","summary":"Found discovery tool implementation paths.","output_excerpt":"internal/capabilities/workspace/discovery_query.go:338: func runDiscoveryQuery\ninternal/runtime/agent/runner_core.go:648: runChildTask"}]}`,
+			Facts: discoveryQueryFactsForTest(
+				toolfacts.DiscoveryCandidateEvidence{Path: "internal/capabilities/workspace/discovery_query.go", LayerName: "text_anchor_search", Summary: "Found discovery tool implementation paths.", EvidenceLine: "internal/capabilities/workspace/discovery_query.go:338: func runDiscoveryQuery"},
+				toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/runner_core.go", LayerName: "text_anchor_search", Summary: "Found discovery tool implementation paths.", EvidenceLine: "internal/runtime/agent/runner_core.go:648: runChildTask"},
+			),
 		},
 	}
 	packet, ok := buildReadOnlyEvidencePacket("What can we add to our discovery tools in an effort at increasing their overall usefulness?", answer, results)
@@ -32165,6 +32207,10 @@ func TestGeneratedEvidenceArtifactReadRedirectChoosesConcreteSourcePath(t *testi
 		Tool:    "discovery_query",
 		Summary: "Ran architecture discovery",
 		Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"text_anchor_search","summary":"Found paths","output_excerpt":"internal/runtime/agent/runner_core.go:128: finish\ninternal/runtime/agent/implementation_flow.go:16: runChildTask"}]}`,
+		Facts: discoveryQueryFactsForTest(
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/implementation_flow.go", LayerName: "text_anchor_search", Summary: "Found paths", EvidenceLine: "internal/runtime/agent/implementation_flow.go:16: runChildTask"},
+			toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/runner_core.go", LayerName: "text_anchor_search", Summary: "Found paths", EvidenceLine: "internal/runtime/agent/runner_core.go:128: finish"},
+		),
 	}}
 
 	redirected, raw, reason, ok := generatedEvidenceArtifactReadRedirectRequest(req, results)
@@ -32771,6 +32817,11 @@ func TestDelegatedClosureEvidencePathsRetainsDiscoveryPacketAfterExactProbe(t *t
 			Tool:    "discovery_query",
 			Summary: "Ran function_tracing discovery query",
 			Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"go_read_symbol","summary":"Read flow","output_excerpt":"internal/runtime/agent/runner_core.go:648 runChildTask\ninternal/runtime/agent/implementation_flow.go:16 runChildTask\ninternal/runtime/agent/implementation_flow.go:18 Compose\ninternal/runtime/agent/runner_tests_test.go:1 package agent"}]}`,
+			Facts: discoveryQueryFactsForTest(
+				toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/implementation_flow.go", LayerName: "go_read_symbol", Summary: "Read flow", EvidenceLine: "internal/runtime/agent/implementation_flow.go:16 runChildTask"},
+				toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/runner_core.go", LayerName: "go_read_symbol", Summary: "Read flow", EvidenceLine: "internal/runtime/agent/runner_core.go:648 runChildTask"},
+				toolfacts.DiscoveryCandidateEvidence{Path: "internal/runtime/agent/runner_tests_test.go", LayerName: "go_read_symbol", Summary: "Read flow", EvidenceLine: "internal/runtime/agent/runner_tests_test.go:1 package agent"},
+			),
 		},
 		{
 			Tool:    "go_read_symbol",

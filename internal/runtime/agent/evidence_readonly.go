@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -4168,34 +4167,6 @@ func delegatedDiscoveryPathPriority(path string) int {
 	}
 }
 
-func delegatedDiscoveryLayerPriority(name string) int {
-	name = strings.TrimSpace(name)
-	switch {
-	case name == "text_anchor_search":
-		return 0
-	case languagetools.ToolHasAnyCapability(name, semanticlanguage.CapReadSymbol):
-		return 1
-	case languagetools.ToolHasAnyCapability(name, semanticlanguage.CapReferences):
-		return 2
-	case languagetools.ToolHasAnyCapability(name, semanticlanguage.CapDefinition):
-		return 3
-	case languagetools.ToolHasAnyCapability(name, semanticlanguage.CapWorkspaceSymbol):
-		return 4
-	case name == "related_files":
-		return 5
-	case name == workspace.ToolNameDependencyGraph:
-		return 6
-	case name == workspace.ToolNameCtagsSymbols:
-		return 7
-	case name == "target_listing":
-		return 20
-	case name == "project_behavior_digest" || name == "project_context_digest":
-		return 30
-	default:
-		return 10
-	}
-}
-
 func delegatedDiscoveryLooksLikeEvidencePath(path string) bool {
 	path = filepath.ToSlash(strings.TrimSpace(path))
 	if path == "" {
@@ -4279,27 +4250,6 @@ func normalizeDelegatedDiscoveryEvidencePath(path string) string {
 	return path
 }
 
-func delegatedDiscoveryEvidenceLinePriority(line string) int {
-	line = strings.TrimSpace(line)
-
-	lower := strings.ToLower(line)
-
-	switch {
-	case line == "":
-		return 5
-	case strings.Contains(lower, "package "):
-		return 5
-	case closurePathScopedSymbolPattern.MatchString(line), closurePathCallPattern.MatchString(line):
-		return 0
-	case strings.Contains(lower, "func "):
-		return 1
-	case strings.Contains(lower, "type "):
-		return 2
-	default:
-		return 3
-	}
-}
-
 func discoveryQueryCandidateEvidenceFacts(results []workspace.ToolResult) []toolfacts.DiscoveryCandidateEvidence {
 	var candidates []toolfacts.DiscoveryCandidateEvidence
 	for _, result := range results {
@@ -4342,7 +4292,7 @@ func discoveryQueryCandidatePaths(results []workspace.ToolResult, limit int) []s
 
 	facts := discoveryQueryCandidateEvidenceFacts(results)
 	if len(facts) == 0 {
-		return legacyDelegatedDiscoveryQueryEvidencePaths(results, limit)
+		return nil
 	}
 
 	paths := make([]string, 0, len(facts))
@@ -4375,91 +4325,6 @@ func discoveryQueryCandidateEvidencePath(path string) bool {
 	}
 
 	return strings.Contains(path, "/") || strings.HasSuffix(path, ".go")
-}
-
-func legacyDelegatedDiscoveryQueryEvidencePaths(results []workspace.ToolResult, limit int) []string {
-	if limit <= 0 {
-		limit = 4
-	}
-
-	type discoveryPathCandidate struct {
-		path  string
-		score int
-	}
-
-	best := make(map[string]int)
-	addCandidate := func(path string, layerName string, line string) {
-		path = normalizeDelegatedDiscoveryEvidencePath(path)
-		if !discoveryQueryCandidateEvidencePath(path) {
-			return
-		}
-
-		score := delegatedDiscoveryLayerPriority(layerName)*100 + delegatedDiscoveryEvidenceLinePriority(line)*10 + delegatedDiscoveryPathPriority(path)
-		if prior, ok := best[path]; ok && prior <= score {
-			return
-		}
-
-		best[path] = score
-	}
-
-	for _, result := range results {
-		if strings.TrimSpace(result.Tool) != workspace.ToolNameDiscoveryQuery || strings.TrimSpace(result.Output) == "" {
-			continue
-		}
-
-		var summary struct {
-			Evidence []struct {
-				Name          string `json:"name"`
-				Summary       string `json:"summary"`
-				OutputExcerpt string `json:"output_excerpt"`
-			} `json:"evidence"`
-		}
-
-		if err := json.Unmarshal([]byte(result.Output), &summary); err != nil {
-			continue
-		}
-
-		for _, evidence := range summary.Evidence {
-			text := normalizeWorkspacePathScanText(strings.TrimSpace(evidence.Summary + "\n" + evidence.OutputExcerpt))
-			for _, line := range strings.Split(text, "\n") {
-				line = strings.TrimSpace(line)
-				if line == "" {
-					continue
-				}
-
-				for _, path := range pathparse.MentionedWorkspacePaths(line) {
-					addCandidate(path, evidence.Name, line)
-				}
-
-				for _, match := range delegatedPacketPathLinePattern.FindAllString(line, -1) {
-					addCandidate(match, evidence.Name, line)
-				}
-			}
-		}
-	}
-
-	candidates := make([]discoveryPathCandidate, 0, len(best))
-	for path, score := range best {
-		candidates = append(candidates, discoveryPathCandidate{path: path, score: score})
-	}
-
-	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].score != candidates[j].score {
-			return candidates[i].score < candidates[j].score
-		}
-
-		return candidates[i].path < candidates[j].path
-	})
-
-	paths := make([]string, 0, limit)
-	for _, candidate := range candidates {
-		paths = append(paths, candidate.path)
-		if len(paths) >= limit {
-			return preferNonTestEvidencePaths(paths)
-		}
-	}
-
-	return preferNonTestEvidencePaths(paths)
 }
 
 func delegatedDiscoveryLineIsBarePath(line string) bool {
@@ -4503,29 +4368,34 @@ func delegatedDiscoveryFindingSummaryIsUseful(name string, text string) bool {
 	return true
 }
 
-func delegatedDiscoveryFindingLines(summaries []delegatedDiscoverySummary, limit int) []string {
+func delegatedDiscoveryFindingLines(candidates []toolfacts.DiscoveryCandidateEvidence, limit int) []string {
 	var lines []string
+	seen := map[string]struct{}{}
 
-	for _, summary := range summaries {
-		for _, evidence := range summary.Evidence {
-			name := strings.TrimSpace(evidence.Name)
-			if name == "" || isDelegatedDiscoveryContextDigestLayer(name) || name == "target_listing" {
-				continue
-			}
+	for _, evidence := range candidates {
+		name := strings.TrimSpace(evidence.LayerName)
+		if name == "" || isDelegatedDiscoveryContextDigestLayer(name) || name == "target_listing" {
+			continue
+		}
 
-			text := strings.TrimSpace(evidence.Summary)
-			if text == "" || strings.TrimSpace(evidence.Error) != "" {
-				continue
-			}
+		text := strings.TrimSpace(evidence.Summary)
+		if text == "" {
+			continue
+		}
 
-			if !delegatedDiscoveryFindingSummaryIsUseful(name, text) {
-				continue
-			}
+		if !delegatedDiscoveryFindingSummaryIsUseful(name, text) {
+			continue
+		}
 
-			lines = append(lines, name+": "+text)
-			if limit > 0 && len(lines) >= limit {
-				return lines
-			}
+		line := name + ": " + text
+		if _, ok := seen[line]; ok {
+			continue
+		}
+
+		seen[line] = struct{}{}
+		lines = append(lines, line)
+		if limit > 0 && len(lines) >= limit {
+			return lines
 		}
 	}
 
@@ -4613,19 +4483,6 @@ func delegatedDisplayQuestion(objective string) string {
 	}
 
 	return strings.TrimSpace(objective)
-}
-
-type delegatedDiscoverySummary struct {
-	Purpose      string `json:"purpose"`
-	ArtifactPath string `json:"artifact_path"`
-	Evidence     []struct {
-		Name          string `json:"name"`
-		Tool          string `json:"tool"`
-		Summary       string `json:"summary"`
-		Error         string `json:"error,omitempty"`
-		OutputExcerpt string `json:"output_excerpt,omitempty"`
-	} `json:"evidence,omitempty"`
-	Gaps []string `json:"gaps,omitempty"`
 }
 
 func delegatedReadOnlyFindingLineIsUseful(line string) bool {
