@@ -29,17 +29,23 @@ func TestInstallToolsScriptsExposeSidecarOnlyLaunchers(t *testing.T) {
 
 	powerShellScript := readInstallToolFile(t, root, "install-tools.ps1")
 	for _, want := range []string{
-		"windows_amd64.zip",
-		"idiom-tool-bin.exe",
-		"idiom-tool.cmd",
-		"idiom-mcp-discovery.cmd",
-		"Get-FileHash -Algorithm SHA256",
-		"Expand-Archive",
-		"tool %*",
-		"mcp serve --stdio --profile discovery %*",
+		"install.ps1",
+		`"-Profile", "Tools"`,
+		"Programs\\idiom-tools\\bin",
+		"ReleaseUrlBase",
+		"InstallerArgs",
 	} {
 		if !strings.Contains(powerShellScript, want) {
 			t.Fatalf("install-tools.ps1 missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		"Get-FileHash -Algorithm SHA256",
+		"Expand-Archive",
+		"windows_amd64.zip",
+	} {
+		if strings.Contains(powerShellScript, forbidden) {
+			t.Fatalf("install-tools.ps1 should delegate install mechanics, still contains %q", forbidden)
 		}
 	}
 }

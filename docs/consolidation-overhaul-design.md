@@ -1863,6 +1863,34 @@ Reviewer-updated estimate:
   verification: `go test ./...`; `go build ./cmd/idiom`;
   `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
   `/Users/ben/go/bin/staticcheck -checks=U1000 ./...`; `git diff --check`.
+- Tool invocation authority and Windows tools-installer consolidation moved the
+  normal direct-CLI/MCP tool lifecycle behind `ConfiguredToolSurface.InvokeTool`.
+  Workspace now owns schema exposure denial, profile denial, per-tool timeout
+  context policy, execution timing, result filtering before telemetry/payload
+  projection, sidecar payload construction, and direct timeout-owner labeling.
+  `idiom tool` now owns only flags/stdin/config/input setup and result
+  encoding; MCP owns JSON-RPC validation and redaction. The MCP fixed
+  `60*time.Second` tool-call timeout and schema `toolByName` authority were
+  deleted, so MCP now uses the same manager timeout declarations as direct
+  tools. `install-tools.ps1` is now a compatibility entrypoint that preserves
+  the older `Programs\idiom-tools\bin` default while delegating install
+  mechanics to `install.ps1 -Profile Tools`, matching the Unix wrapper and
+  deleting duplicated checksum/download/extract/PATH/launcher verification
+  logic. This slice is deliberately not production-LOC negative: production
+  code changed `+327 / -266`, net `+61` (`install-tools.ps1` was
+  `+28 / -126`, while the new Go invocation owner was `+212` and adapter
+  deletion was `+87 / -140`). Test code changed `+176 / -30`, net `+146`.
+  With this worktree included, the branch is broad production code
+  `+29,014 / -38,454`, net `-9,440` versus `main`; production Go is
+  `+27,462 / -36,820`, net `-9,358`. Focused verification:
+  `go test ./internal/capabilities/workspace -run 'TestConfiguredToolSurfaceInvokeTool|TestToolInvocationContext' -count=1`;
+  `go test ./internal/surfaces/cli/tool ./internal/surfaces/cli/mcp ./internal/evidence/sidecarvalidation -count=1`;
+  `go test ./internal/evidence/sidecarvalidation -run TestInstallToolsScriptsExposeSidecarOnlyLaunchers -count=1`.
+  Full verification: `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json`;
+  `/Users/ben/go/bin/staticcheck -checks=U1000 ./...`; `git diff --check`.
+  `deadcode ./...` still reports only the deliberately retained shared
+  `jsoneventstest` test helpers.
 
 ## Review And Regression Protocol
 

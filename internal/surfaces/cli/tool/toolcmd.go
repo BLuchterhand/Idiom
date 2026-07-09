@@ -15,6 +15,8 @@ import (
 	cmdconfig "idiom/internal/surfaces/cli/config"
 )
 
+const directToolTimeoutMargin = 5 * time.Second
+
 func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		printUsage(stderr)
@@ -91,7 +93,6 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 	}
 
 	req := workspace.ToolRequest{Tool: toolName}
-	sidecarOptions := workspace.ToolSidecarOptions{Caller: caller}
 	effectiveTimeout := workspace.ToolTimeoutForRequest(req)
 	requestLogged := false
 	logRequest := func(rawInputBytes int) {
@@ -106,7 +107,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 				Profile:       profile,
 				Caller:        caller,
 				RawInputBytes: rawInputBytes,
-				TimeoutOwner:  directToolTimeoutOwner(effectiveTimeout),
+				TimeoutOwner:  workspace.ToolInvocationTimeoutOwner(effectiveTimeout, directToolTimeoutMargin),
 				RequestFields: workspace.ToolTelemetryRequestValues,
 			}))
 		}
@@ -121,7 +122,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 				Profile:        profile,
 				Caller:         caller,
 				DurationMillis: durationMillis,
-				TimeoutOwner:   directToolTimeoutOwner(effectiveTimeout),
+				TimeoutOwner:   workspace.ToolInvocationTimeoutOwner(effectiveTimeout, directToolTimeoutMargin),
 			}))
 		}
 	}
@@ -202,90 +203,43 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *te
 
 	mgr := surfaceSetup.Manager
 	mgr.SetBypassReadBeforeEdit(true)
-	effectiveTimeout = mgr.ToolTimeoutForRequest(req)
-	logRequest(len(rawInput))
-
-	if decision := workspace.ToolRequestAllowedForWorkspaceProfile(req, profile, surfaceSetup.PolicyContext); !decision.Allowed {
-		result := workspace.ToolProfileDeniedResult(req.Tool, profile, decision)
-		logResult(result, 0)
-
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-
-		payload := struct {
-			workspace.ToolResult
-			Sidecar      workspace.ToolSidecarEnvelope `json:"sidecar"`
-			TimeoutOwner string                        `json:"timeout_owner,omitempty"`
-		}{
-			ToolResult:   result,
-			Sidecar:      workspace.BuildToolSidecarEnvelopeWithOptions(req, result, profile, sidecarOptions),
-			TimeoutOwner: directToolTimeoutOwner(effectiveTimeout),
-		}
-		if err := enc.Encode(payload); err != nil {
-			fmt.Fprintf(stderr, "encode result: %v\n", err)
-
-			return 1
-		}
+	outcome := surfaceSetup.InvokeTool(context.Background(), req, workspace.ToolInvocationOptions{
+		Profile:             profile,
+		Agent:               "direct",
+		Transport:           "cli",
+		Caller:              caller,
+		RawInputBytes:       len(rawInput),
+		RequestFields:       workspace.ToolTelemetryRequestValues,
+		PolicyMode:          workspace.ToolInvocationPolicyWorkspaceProfile,
+		IncludeTimeoutOwner: true,
+		TimeoutMargin:       directToolTimeoutMargin,
+		SetupFailureSummary: "Direct tool setup failed",
+		Telemetry: func(event string, fields map[string]any) {
+			if rec != nil {
+				_ = rec.Log(event, fields)
+			}
+		},
+	})
+	if outcome.SetupFailure != "" {
+		fmt.Fprintln(stderr, outcome.SetupFailure)
 
 		return 1
 	}
-
-	if mcpFailures := surfaceSetup.MCPFailures; len(mcpFailures) > 0 &&
-		(surfaceSetup.MCPRegistry == nil || !surfaceSetup.MCPRegistry.Has(req.Tool)) {
-
-		errText := "mcp setup: " + strings.Join(mcpFailures, "; ")
-		logFailureResult("Direct tool setup failed", errText)
-		fmt.Fprintln(stderr, errText)
-
-		return 1
-	}
-
-	ctx, cancel := directToolContext(effectiveTimeout)
-	defer cancel()
-
-	startedAt := time.Now()
-	result := mgr.Execute(ctx, req)
-	logResult(result, time.Since(startedAt).Milliseconds())
 
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
 
-	payload := struct {
-		workspace.ToolResult
-		Sidecar      workspace.ToolSidecarEnvelope `json:"sidecar"`
-		TimeoutOwner string                        `json:"timeout_owner,omitempty"`
-	}{
-		ToolResult:   result,
-		Sidecar:      workspace.BuildToolSidecarEnvelopeWithOptions(req, result, profile, sidecarOptions),
-		TimeoutOwner: directToolTimeoutOwner(effectiveTimeout),
-	}
-	if err := enc.Encode(payload); err != nil {
+	if err := enc.Encode(outcome.Payload); err != nil {
 		fmt.Fprintf(stderr, "encode result: %v\n", err)
 
 		return 1
 	}
 
-	if result.Error != "" {
+	if outcome.Result.Error != "" {
 		return 1
 	}
 
 	return 0
-}
-
-func directToolContext(timeout time.Duration) (context.Context, context.CancelFunc) {
-	if timeout <= 0 {
-		return context.WithCancel(context.Background())
-	}
-
-	return context.WithTimeout(context.Background(), timeout+5*time.Second)
-}
-
-func directToolTimeoutOwner(timeout time.Duration) string {
-	if timeout <= 0 {
-		return "tool_internal_timeout"
-	}
-
-	return "workspace_tool_timeout_with_cli_margin"
 }
 
 func HelpRequested(args []string) bool {

@@ -12,10 +12,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"idiom/internal/capabilities/mcp"
-	"idiom/internal/capabilities/workspace"
 	"idiom/internal/platform/config"
 )
 
@@ -56,26 +54,6 @@ func TestToolDiscoveryListDoesNotInitializeMCPWithoutExplicitAllowRule(t *testin
 	}
 	if strings.Contains(stdout.String(), "mcp:") {
 		t.Fatalf("discovery list should not advertise denied MCP tools:\n%s", stdout.String())
-	}
-}
-
-func TestDirectToolContextUsesWorkspaceToolTimeoutWithMargin(t *testing.T) {
-	ctx, cancel := directToolContext(workspace.ToolTimeoutForRequest(workspace.ToolRequest{Tool: "discovery_query"}))
-	defer cancel()
-
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		t.Fatal("discovery_query direct context should have a deadline")
-	}
-	remaining := time.Until(deadline)
-	if remaining < 90*time.Second || remaining > 96*time.Second {
-		t.Fatalf("direct discovery_query deadline = %v, want workspace timeout plus small CLI margin", remaining)
-	}
-
-	shellCtx, shellCancel := directToolContext(workspace.ToolTimeoutForRequest(workspace.ToolRequest{Tool: "shell"}))
-	defer shellCancel()
-	if _, ok := shellCtx.Deadline(); ok {
-		t.Fatal("shell direct context should defer to the shell tool's internal timeout")
 	}
 }
 

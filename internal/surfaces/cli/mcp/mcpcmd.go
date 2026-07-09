@@ -159,15 +159,15 @@ type DiscoveryServerOptions struct {
 }
 
 type DiscoveryServer struct {
-	cfg        config.Config
-	profile    string
-	manager    *workspace.Manager
-	tools      []workspace.ExportedToolSchema
-	toolByName map[string]workspace.ExportedToolSchema
-	caller     workspace.ToolSidecarCaller
-	rec        *telemetry.Recorder
-	version    string
-	requestSeq atomic.Int64
+	cfg          config.Config
+	profile      string
+	toolSurface  *workspace.ConfiguredToolSurface
+	tools        []workspace.ExportedToolSchema
+	toolExposure workspace.ToolInvocationExposure
+	caller       workspace.ToolSidecarCaller
+	rec          *telemetry.Recorder
+	version      string
+	requestSeq   atomic.Int64
 }
 
 func NewDiscoveryServerWithOptions(cfg config.Config, profile string, opts DiscoveryServerOptions) (*DiscoveryServer, error) {
@@ -176,9 +176,9 @@ func NewDiscoveryServerWithOptions(cfg config.Config, profile string, opts Disco
 		return nil, err
 	}
 
-	toolByName := make(map[string]workspace.ExportedToolSchema, len(tools))
+	toolNames := make([]string, 0, len(tools))
 	for _, tool := range tools {
-		toolByName[tool.Name] = tool
+		toolNames = append(toolNames, tool.Name)
 	}
 
 	mgr := workspace.NewManager(cfg.Workspace)
@@ -190,14 +190,20 @@ func NewDiscoveryServerWithOptions(cfg config.Config, profile string, opts Disco
 	}
 
 	return &DiscoveryServer{
-		cfg:        cfg,
-		profile:    profile,
-		manager:    mgr,
-		tools:      tools,
-		toolByName: toolByName,
-		caller:     opts.Caller,
-		rec:        opts.Telemetry,
-		version:    version,
+		cfg:     cfg,
+		profile: profile,
+		toolSurface: &workspace.ConfiguredToolSurface{
+			Manager:       mgr,
+			PolicyContext: workspace.ToolProfilePolicyContext{Workspace: cfg.Workspace},
+		},
+		tools: tools,
+		toolExposure: workspace.ToolInvocationExposure{
+			ToolNames:    toolNames,
+			DeniedReason: "tool is not exposed by the schema-derived MCP discovery profile",
+		},
+		caller:  opts.Caller,
+		rec:     opts.Telemetry,
+		version: version,
 	}, nil
 }
 
@@ -512,7 +518,7 @@ func (s *DiscoveryServer) resourceFreshness(ctx context.Context, rel string) map
 	freshnessCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	result := s.manager.Execute(freshnessCtx, req)
+	result := s.toolSurface.Manager.Execute(freshnessCtx, req)
 
 	if result.Error != "" {
 		evidence["state"] = "unavailable"
@@ -754,7 +760,10 @@ func (s *DiscoveryServer) callTool(ctx context.Context, params json.RawMessage) 
 		result = s.redactToolResult(result)
 		s.logMCPToolResult(req, result, 0, caller)
 
-		return s.mcpToolResult(req, result, caller), nil
+		return s.mcpToolResult(workspace.BuildToolInvocationPayload(req, result, s.profile, workspace.ToolSidecarOptions{
+			Caller:    caller,
+			Transport: StdioTransport,
+		}, "")), nil
 	}
 
 	req, err := workspace.DecodeToolRequestJSON(args)
@@ -771,46 +780,41 @@ func (s *DiscoveryServer) callTool(ctx context.Context, params json.RawMessage) 
 		result = s.redactToolResult(result)
 		s.logMCPToolResult(req, result, 0, caller)
 
-		return s.mcpToolResult(req, result, caller), nil
+		return s.mcpToolResult(workspace.BuildToolInvocationPayload(req, result, s.profile, workspace.ToolSidecarOptions{
+			Caller:    caller,
+			Transport: StdioTransport,
+		}, "")), nil
 	}
 
 	req.Tool = toolName
 	req.Args = json.RawMessage(args)
-	s.logMCPToolRequest(req, len(args), caller)
-
-	if _, ok := s.toolByName[toolName]; !ok {
-		result := workspace.ToolProfileDeniedResult(toolName, s.profile, workspace.ToolProfileDecision{
-			Allowed: false,
-			Code:    "profile_denied",
-			Reason:  "tool is not exposed by the schema-derived MCP discovery profile",
-		})
-
-		result = s.redactToolResult(result)
-		s.logMCPToolResult(req, result, 0, caller)
-
-		return s.mcpToolResult(req, result, caller), nil
+	requestEventID := ""
+	resultEventID := ""
+	if caller.RequestID != "" {
+		requestEventID = caller.RequestID + ":request"
+		resultEventID = caller.RequestID + ":result"
 	}
+	outcome := s.toolSurface.InvokeTool(ctx, req, workspace.ToolInvocationOptions{
+		Profile:                 s.profile,
+		Agent:                   "mcp",
+		Transport:               StdioTransport,
+		Caller:                  caller,
+		RawInputBytes:           len(args),
+		RequestFields:           workspace.ToolTelemetryRequestPresence,
+		PolicyMode:              workspace.ToolInvocationPolicyProfile,
+		Exposure:                s.toolExposure,
+		IncludeAuditEventIDs:    true,
+		RequestTelemetryEventID: requestEventID,
+		ResultTelemetryEventID:  resultEventID,
+		ResultFilter:            s.redactToolResult,
+		Telemetry: func(event string, fields map[string]any) {
+			if s.rec != nil {
+				_ = s.rec.Log(event, fields)
+			}
+		},
+	})
 
-	if decision := workspace.ToolRequestAllowedForProfile(req, s.profile); !decision.Allowed {
-		result := workspace.ToolProfileDeniedResult(req.Tool, s.profile, decision)
-
-		result = s.redactToolResult(result)
-		s.logMCPToolResult(req, result, 0, caller)
-
-		return s.mcpToolResult(req, result, caller), nil
-	}
-
-	toolCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-
-	defer cancel()
-
-	startedAt := time.Now()
-	result := s.manager.Execute(toolCtx, req)
-
-	result = s.redactToolResult(result)
-	s.logMCPToolResult(req, result, time.Since(startedAt).Milliseconds(), caller)
-
-	return s.mcpToolResult(req, result, caller), nil
+	return s.mcpToolResult(outcome.Payload), nil
 }
 
 type mcpCallerMeta struct {
@@ -921,18 +925,7 @@ func mcpArgumentsContainPrivatePath(args []byte) bool {
 	return false
 }
 
-func (s *DiscoveryServer) mcpToolResult(req workspace.ToolRequest, result workspace.ToolResult, caller workspace.ToolSidecarCaller) mcpToolCallResult {
-	payload := struct {
-		workspace.ToolResult
-		Sidecar workspace.ToolSidecarEnvelope `json:"sidecar"`
-	}{
-		ToolResult: result,
-		Sidecar: workspace.BuildToolSidecarEnvelopeWithOptions(req, result, s.profile, workspace.ToolSidecarOptions{
-			Caller:    caller,
-			Transport: StdioTransport,
-		}),
-	}
-
+func (s *DiscoveryServer) mcpToolResult(payload workspace.ToolInvocationPayload) mcpToolCallResult {
 	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		data = []byte(`{"Error":"encode MCP tool result"}`)
@@ -942,7 +935,7 @@ func (s *DiscoveryServer) mcpToolResult(req workspace.ToolRequest, result worksp
 
 	return mcpToolCallResult{
 		Content: []mcpToolContent{{Type: "text", Text: text}},
-		IsError: strings.TrimSpace(result.Error) != "",
+		IsError: strings.TrimSpace(payload.Error) != "",
 	}
 }
 
