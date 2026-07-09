@@ -147,6 +147,13 @@ Language-backed read-only capability registry, runtime routing, evidence
 capabilities, and discovery profiling now project from a workspace catalog and
 the semantic `languagetools` code-navigation spec instead of separate
 read-only/code-navigation switches.
+Hidden deferred `read_only_capability` facades for `source-sanity`,
+`trace-runtime-failure`, and `verify-edit` have been removed; those tools keep
+their direct tool schemas/classification, while unsupported requests through
+the read-only resolver now use the normal unmapped fallback path. The read-only
+capability and tool-schema exports moved to `v2` for the removed fields/error
+class, and private non-runtime-routed resolver states now report `unsupported`
+instead of preserving a deferred route vocabulary.
 
 ### 5. Product Workflow Projection
 

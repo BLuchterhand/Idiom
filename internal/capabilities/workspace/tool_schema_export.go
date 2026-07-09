@@ -12,7 +12,7 @@ import (
 	"idiom/internal/repository/semantic/languagetools"
 )
 
-const ToolSchemaExportVersion = "idiom.tool_schema_export.v1"
+const ToolSchemaExportVersion = "idiom.tool_schema_export.v2"
 
 // ToolSchemaExport is the sidecar-safe contract view of the built-in workspace
 // tool surface. It intentionally derives names, descriptions, and JSON schemas
@@ -323,7 +323,7 @@ func toolSchemaErrorClasses(tool string, sideEffects []autonomy.SideEffectClass)
 	}
 
 	if tool == ToolNameReadOnlyCapability {
-		classes = append(classes, "capability_deferred", "capability_unmapped", "adapter_unavailable", "resolver_disabled", "route_disabled")
+		classes = append(classes, "capability_unmapped", "adapter_unavailable", "resolver_disabled", "route_disabled")
 	}
 
 	if builtInToolSurfaceStaleContextErrors(tool) {

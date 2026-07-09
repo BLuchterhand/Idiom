@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	readOnlyCapabilitySchemaVersion     = "idiom.read_only_capabilities.v1"
+	readOnlyCapabilitySchemaVersion     = "idiom.read_only_capabilities.v2"
 	readOnlyCapabilityResultVersion     = "idiom.read_only_capability_result.v1"
 	readOnlyCapabilityResolverEnv       = "IDIOM_READ_ONLY_CAPABILITY_RESOLVER"
 	readOnlyCapabilityDisabledRoutesEnv = "IDIOM_READ_ONLY_CAPABILITY_DISABLED_ROUTES"
@@ -68,9 +68,6 @@ const (
 	ReadOnlyCapabilityCallsInto       ReadOnlyCapabilityID = "calls-into"
 	ReadOnlyCapabilityRelatedFiles    ReadOnlyCapabilityID = "related-files"
 	ReadOnlyCapabilityAuditBehavior   ReadOnlyCapabilityID = "audit-behavior"
-	ReadOnlyCapabilitySourceSanity    ReadOnlyCapabilityID = "source-sanity"
-	ReadOnlyCapabilityTraceRuntime    ReadOnlyCapabilityID = "trace-runtime-failure"
-	ReadOnlyCapabilityVerifyEdit      ReadOnlyCapabilityID = "verify-edit"
 )
 
 type readOnlyLanguageCapabilityEntry struct {
@@ -157,13 +154,6 @@ type ReadOnlyCapabilityUnsafeAdapterSpec struct {
 	Reason              string                     `json:"reason"`
 	DeclaredSideEffects []autonomy.SideEffectClass `json:"declared_side_effects,omitempty"`
 	SchemaSideEffects   []autonomy.SideEffectClass `json:"schema_side_effects,omitempty"`
-}
-
-type ReadOnlyCapabilityDeferredAdapterSpec struct {
-	Capability        string                     `json:"capability"`
-	Tool              string                     `json:"tool"`
-	Reason            string                     `json:"reason"`
-	SchemaSideEffects []autonomy.SideEffectClass `json:"schema_side_effects,omitempty"`
 }
 
 type ReadOnlyCapabilityRouteState struct {
@@ -275,32 +265,30 @@ type ReadOnlyCapabilityUnderlyingResult struct {
 }
 
 type ReadOnlyCapabilityCoverage struct {
-	SchemaVersion              string                                  `json:"schema_version"`
-	ResolverRuntimeEnabled     bool                                    `json:"resolver_runtime_enabled"`
-	PublicStatusEnabled        bool                                    `json:"public_status_enabled"`
-	DirectToolFallback         bool                                    `json:"direct_tool_fallback"`
-	StatusFieldCount           int                                     `json:"status_field_count"`
-	FallbackStateCount         int                                     `json:"fallback_state_count"`
-	FallbackStates             []string                                `json:"fallback_states,omitempty"`
-	CapabilityCount            int                                     `json:"capability_count"`
-	RoutedCapabilityCount      int                                     `json:"routed_capability_count"`
-	RoutedCapabilities         []string                                `json:"routed_capabilities,omitempty"`
-	FallbackReasonCount        int                                     `json:"fallback_reason_count"`
-	FallbackReasons            []string                                `json:"fallback_reasons,omitempty"`
-	RouteStateCounts           map[string]int                          `json:"route_state_counts,omitempty"`
-	RouteStates                []ReadOnlyCapabilityRouteState          `json:"route_states,omitempty"`
-	DisabledCapabilityCount    int                                     `json:"disabled_capability_count"`
-	DisabledCapabilities       []string                                `json:"disabled_capabilities,omitempty"`
-	MappedAdapterCount         int                                     `json:"mapped_adapter_count"`
-	ReadOnlyAdapterCount       int                                     `json:"read_only_adapter_count"`
-	MappedReadOnlyAdapterCount int                                     `json:"mapped_read_only_adapter_count"`
-	Coverage                   float64                                 `json:"coverage"`
-	UnmappedAdapterCount       int                                     `json:"unmapped_adapter_count"`
-	UnmappedAdapters           []string                                `json:"unmapped_adapters,omitempty"`
-	UnsafeMappedAdapterCount   int                                     `json:"unsafe_mapped_adapter_count"`
-	UnsafeMappedAdapters       []ReadOnlyCapabilityUnsafeAdapterSpec   `json:"unsafe_mapped_adapters,omitempty"`
-	DeferredAdapterCount       int                                     `json:"deferred_adapter_count"`
-	DeferredAdapters           []ReadOnlyCapabilityDeferredAdapterSpec `json:"deferred_adapters,omitempty"`
+	SchemaVersion              string                                `json:"schema_version"`
+	ResolverRuntimeEnabled     bool                                  `json:"resolver_runtime_enabled"`
+	PublicStatusEnabled        bool                                  `json:"public_status_enabled"`
+	DirectToolFallback         bool                                  `json:"direct_tool_fallback"`
+	StatusFieldCount           int                                   `json:"status_field_count"`
+	FallbackStateCount         int                                   `json:"fallback_state_count"`
+	FallbackStates             []string                              `json:"fallback_states,omitempty"`
+	CapabilityCount            int                                   `json:"capability_count"`
+	RoutedCapabilityCount      int                                   `json:"routed_capability_count"`
+	RoutedCapabilities         []string                              `json:"routed_capabilities,omitempty"`
+	FallbackReasonCount        int                                   `json:"fallback_reason_count"`
+	FallbackReasons            []string                              `json:"fallback_reasons,omitempty"`
+	RouteStateCounts           map[string]int                        `json:"route_state_counts,omitempty"`
+	RouteStates                []ReadOnlyCapabilityRouteState        `json:"route_states,omitempty"`
+	DisabledCapabilityCount    int                                   `json:"disabled_capability_count"`
+	DisabledCapabilities       []string                              `json:"disabled_capabilities,omitempty"`
+	MappedAdapterCount         int                                   `json:"mapped_adapter_count"`
+	ReadOnlyAdapterCount       int                                   `json:"read_only_adapter_count"`
+	MappedReadOnlyAdapterCount int                                   `json:"mapped_read_only_adapter_count"`
+	Coverage                   float64                               `json:"coverage"`
+	UnmappedAdapterCount       int                                   `json:"unmapped_adapter_count"`
+	UnmappedAdapters           []string                              `json:"unmapped_adapters,omitempty"`
+	UnsafeMappedAdapterCount   int                                   `json:"unsafe_mapped_adapter_count"`
+	UnsafeMappedAdapters       []ReadOnlyCapabilityUnsafeAdapterSpec `json:"unsafe_mapped_adapters,omitempty"`
 }
 
 func ReadOnlyCapabilityEvidenceCapabilities() []string {
@@ -316,9 +304,6 @@ func ReadOnlyCapabilityEvidenceCapabilities() []string {
 		EvidenceCapabilityCallsFrom,
 		EvidenceCapabilityCallsInto,
 		EvidenceCapabilityRelatedFiles,
-		EvidenceCapabilitySourceSanity,
-		EvidenceCapabilityTraceRuntimeFailure,
-		EvidenceCapabilityVerifyEdit,
 		EvidenceCapabilityAuditBehavior,
 	}
 }
@@ -349,12 +334,6 @@ func ReadOnlyCapabilityEvidenceCapability(capability string) string {
 		return EvidenceCapabilityLocalizeChange
 	case string(ReadOnlyCapabilityQueryContext):
 		return EvidenceCapabilityQueryContext
-	case string(ReadOnlyCapabilitySourceSanity):
-		return EvidenceCapabilitySourceSanity
-	case string(ReadOnlyCapabilityTraceRuntime):
-		return EvidenceCapabilityTraceRuntimeFailure
-	case string(ReadOnlyCapabilityVerifyEdit):
-		return EvidenceCapabilityVerifyEdit
 	case string(ReadOnlyCapabilityAuditBehavior):
 		return EvidenceCapabilityAuditBehavior
 	default:
@@ -512,7 +491,6 @@ func ReadOnlyCapabilityCoverageForTools(tools []string) ReadOnlyCapabilityCovera
 	registry := BuildReadOnlyCapabilityRegistry()
 	readOnlyAdapters := readOnlyCapabilityMetricAdapters(tools)
 	readOnlySet := stringSet(readOnlyAdapters)
-	toolSet := stringSet(tools)
 	mappedSet := make(map[string]struct{})
 
 	for _, capability := range registry.Capabilities {
@@ -541,7 +519,6 @@ func ReadOnlyCapabilityCoverageForTools(tools []string) ReadOnlyCapabilityCovera
 	}
 
 	unsafe := unsafeReadOnlyCapabilityMappingsForTools(registry, tools)
-	deferred := deferredReadOnlyCapabilityAdaptersForTools(toolSet)
 	routeStates := readOnlyCapabilityRouteStates(registry, tools)
 	routedCapabilities := readOnlyCapabilityRoutedIDsFromStates(routeStates)
 	disabledCapabilities := readOnlyCapabilityDisabledIDsFromStates(routeStates)
@@ -578,8 +555,6 @@ func ReadOnlyCapabilityCoverageForTools(tools []string) ReadOnlyCapabilityCovera
 		UnmappedAdapters:           unmapped,
 		UnsafeMappedAdapterCount:   len(unsafe),
 		UnsafeMappedAdapters:       unsafe,
-		DeferredAdapterCount:       len(deferred),
-		DeferredAdapters:           deferred,
 	}
 }
 
@@ -593,10 +568,6 @@ func (m *Manager) readOnlyCapability(ctx context.Context, req ToolRequest) ToolR
 
 	resolution, ok := ResolveReadOnlyCapability(requested, readOnlyCapabilityResolverTools(req))
 	if !ok {
-		if deferred, ok := deferredReadOnlyCapabilityAdapter(requested); ok {
-			return readOnlyCapabilityDeferredResult(requested, target, deferred)
-		}
-
 		return readOnlyCapabilityFallbackResult(requested, target, ReadOnlyCapabilityResolution{
 			ResolverRuntimeEnabled: readOnlyCapabilityResolverRuntimeEnabled(),
 			DirectToolFallback:     true,
@@ -691,34 +662,6 @@ func readOnlyCapabilityFallbackResult(requested string, target ReadOnlyCapabilit
 		Summary: "Read-only capability not routed",
 		Output:  marshalReadOnlyCapabilityExecutionResult(payload),
 		Error:   strings.TrimSpace(textutil.FirstNonEmpty(detail, reason)),
-	}
-}
-
-func readOnlyCapabilityDeferredResult(requested string, target ReadOnlyCapabilityResolvedTarget, adapter ReadOnlyCapabilityDeferredAdapterSpec) ToolResult {
-	payload := readOnlyCapabilityExecutionPayload(requested, target, ReadOnlyCapabilityResolution{
-		Capability: ReadOnlyCapabilitySpec{
-			ID:          strings.TrimSpace(adapter.Capability),
-			Description: "Deferred from read-only capability execution because the direct tool schema is not read-only-only.",
-			ReadOnly:    false,
-			SideEffects: append([]autonomy.SideEffectClass(nil), adapter.SchemaSideEffects...),
-		},
-		ResolverRuntimeEnabled: readOnlyCapabilityResolverRuntimeEnabled(),
-		DirectToolFallback:     true,
-	})
-
-	payload.FallbackReason = "capability_deferred"
-	payload.UnderlyingResult = &ReadOnlyCapabilityUnderlyingResult{
-		Tool:    strings.TrimSpace(adapter.Tool),
-		Summary: "Capability deferred from read-only routing",
-		Error:   strings.TrimSpace(adapter.Reason),
-	}
-	readOnlyCapabilityAttachStatus(&payload, nil, nil)
-
-	return ToolResult{
-		Tool:    ToolNameReadOnlyCapability,
-		Summary: "Read-only capability deferred",
-		Output:  marshalReadOnlyCapabilityExecutionResult(payload),
-		Error:   "capability_deferred",
 	}
 }
 
@@ -1052,7 +995,6 @@ func readOnlyCapabilityFallbackReasonCode(sourceReason string) string {
 	sourceReason = strings.TrimSpace(sourceReason)
 	switch sourceReason {
 	case "adapter_schema_side_effects_not_read_only_only",
-		"capability_deferred",
 		"capability_route_disabled",
 		"capability_not_runtime_routed",
 		"capability_unmapped",
@@ -1088,8 +1030,6 @@ func readOnlyCapabilityFallbackState(reason string) string {
 	switch reason {
 	case "resolver_runtime_disabled", "capability_route_disabled":
 		return "disabled"
-	case "capability_deferred":
-		return "deferred"
 	case "capability_unmapped":
 		return "unmapped"
 	case "no_available_read_only_adapter", "adapter_unavailable":
@@ -1390,7 +1330,7 @@ func readOnlyCapabilityRouteStates(registry ReadOnlyCapabilityRegistry, tools []
 			state.State = "disabled"
 			state.Reason = "capability_route_disabled"
 		case !isReadOnlyCapabilityRuntimeRouted(capability.ID):
-			state.State = "deferred"
+			state.State = "unsupported"
 			state.Reason = "capability_not_runtime_routed"
 		default:
 			available, unavailable := filterCapabilityAdapters(capability.Adapters, tools)
@@ -1412,23 +1352,6 @@ func readOnlyCapabilityRouteStates(registry ReadOnlyCapabilityRegistry, tools []
 			}
 		}
 
-		states = append(states, state)
-	}
-
-	deferredStates := make(map[string]ReadOnlyCapabilityRouteState)
-	for _, adapter := range deferredReadOnlyCapabilityAdaptersForTools(stringSet(tools)) {
-		capability := strings.TrimSpace(adapter.Capability)
-		if capability == "" {
-			continue
-		}
-		state := deferredStates[capability]
-		state.Capability = capability
-		state.State = "deferred"
-		state.Reason = strings.TrimSpace(adapter.Reason)
-		state.AdapterCount++
-		deferredStates[capability] = state
-	}
-	for _, state := range deferredStates {
 		states = append(states, state)
 	}
 
@@ -1500,7 +1423,6 @@ func readOnlyCapabilityFallbackReasonCodes() []string {
 		"absent_result",
 		"adapter_unavailable",
 		"adapter_schema_side_effects_not_read_only_only",
-		"capability_deferred",
 		"capability_not_runtime_routed",
 		"capability_route_disabled",
 		"capability_unmapped",
@@ -1519,7 +1441,6 @@ func readOnlyCapabilityFallbackStates() []string {
 	return []string{
 		"absent",
 		"degraded",
-		"deferred",
 		"disabled",
 		"error",
 		"rejected",
@@ -1697,12 +1618,6 @@ func normalizeReadOnlyCapabilityID(id string) string {
 		return string(ReadOnlyCapabilityRelatedFiles)
 	case "audit", "audit-behavior", "auditbehaviour", "audit-behaviour", "harness-audit":
 		return string(ReadOnlyCapabilityAuditBehavior)
-	case string(ReadOnlyCapabilitySourceSanity), "sourcesanity", "source-diagnostics":
-		return string(ReadOnlyCapabilitySourceSanity)
-	case string(ReadOnlyCapabilityTraceRuntime), "traceruntimefailure", "runtime-trace", "trace-failure":
-		return string(ReadOnlyCapabilityTraceRuntime)
-	case string(ReadOnlyCapabilityVerifyEdit), "verifyedit", "verification", "source-verification":
-		return string(ReadOnlyCapabilityVerifyEdit)
 	default:
 		return key
 	}
@@ -1765,73 +1680,6 @@ func unsafeReadOnlyCapabilityReason(declaredSideEffects []autonomy.SideEffectCla
 	}
 
 	return ""
-}
-
-func deferredReadOnlyCapabilityAdaptersForTools(toolSet map[string]struct{}) []ReadOnlyCapabilityDeferredAdapterSpec {
-	deferred := []ReadOnlyCapabilityDeferredAdapterSpec{
-		{
-			Capability:        string(ReadOnlyCapabilitySourceSanity),
-			Tool:              ToolNameSourceSanity,
-			Reason:            "schema_side_effects_not_read_only_only",
-			SchemaSideEffects: append([]autonomy.SideEffectClass(nil), toolSchemaSideEffects(ToolNameSourceSanity)...),
-		},
-		{
-			Capability:        string(ReadOnlyCapabilityTraceRuntime),
-			Tool:              ToolNameContextTracePack,
-			Reason:            "schema_side_effects_not_read_only_only",
-			SchemaSideEffects: append([]autonomy.SideEffectClass(nil), toolSchemaSideEffects(ToolNameContextTracePack)...),
-		},
-		{
-			Capability:        string(ReadOnlyCapabilityVerifyEdit),
-			Tool:              ToolNameContextTracePack,
-			Reason:            "schema_side_effects_not_read_only_only",
-			SchemaSideEffects: append([]autonomy.SideEffectClass(nil), toolSchemaSideEffects(ToolNameContextTracePack)...),
-		},
-		{
-			Capability:        string(ReadOnlyCapabilityVerifyEdit),
-			Tool:              ToolNameSourceSanity,
-			Reason:            "schema_side_effects_not_read_only_only",
-			SchemaSideEffects: append([]autonomy.SideEffectClass(nil), toolSchemaSideEffects(ToolNameSourceSanity)...),
-		},
-		{
-			Capability:        string(ReadOnlyCapabilityVerifyEdit),
-			Tool:              ToolNameShell,
-			Reason:            "schema_side_effects_not_read_only_only",
-			SchemaSideEffects: append([]autonomy.SideEffectClass(nil), toolSchemaSideEffects(ToolNameShell)...),
-		},
-	}
-	out := deferred[:0]
-
-	for _, adapter := range deferred {
-		if len(toolSet) > 0 {
-			if _, ok := toolSet[adapter.Tool]; !ok {
-				continue
-			}
-		}
-
-		out = append(out, adapter)
-	}
-
-	slices.SortFunc(out, func(a, b ReadOnlyCapabilityDeferredAdapterSpec) int {
-		if c := cmp.Compare(a.Capability, b.Capability); c != 0 {
-			return c
-		}
-
-		return cmp.Compare(a.Tool, b.Tool)
-	})
-
-	return append([]ReadOnlyCapabilityDeferredAdapterSpec(nil), out...)
-}
-
-func deferredReadOnlyCapabilityAdapter(id string) (ReadOnlyCapabilityDeferredAdapterSpec, bool) {
-	want := normalizeReadOnlyCapabilityID(id)
-	for _, adapter := range deferredReadOnlyCapabilityAdaptersForTools(nil) {
-		if normalizeReadOnlyCapabilityID(adapter.Capability) == want {
-			return adapter, true
-		}
-	}
-
-	return ReadOnlyCapabilityDeferredAdapterSpec{}, false
 }
 
 func isReadOnlyOnlySideEffects(sideEffects []autonomy.SideEffectClass) bool {

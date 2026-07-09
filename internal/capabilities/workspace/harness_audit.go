@@ -3831,7 +3831,7 @@ func toolSurfaceFindings(surface harnessAuditToolSurface) []harnessAuditFinding 
 			ID:             "unmapped_capability_adapter",
 			Severity:       "info",
 			Evidence:       fmt.Sprintf("%d read-only adapter(s) are not mapped to capability routes", surface.CapabilityRegistry.UnmappedAdapterCount),
-			Recommendation: "Map each adapter to a stable capability, defer it with a named reason, or keep the direct compatibility route documented.",
+			Recommendation: "Map each adapter to a stable read-only capability or keep the direct tool route documented outside the read-only resolver.",
 			Tools:          append([]string(nil), surface.CapabilityRegistry.UnmappedAdapters...),
 		})
 	}
@@ -4832,7 +4832,7 @@ func harnessAuditSummary(report harnessAuditReport) string {
 		if report.ToolSurface.CapabilityRegistry != nil {
 			coverage := report.ToolSurface.CapabilityRegistry
 
-			parts = append(parts, fmt.Sprintf("capability_coverage=%d/%d routed=%d disabled=%d fallback_reasons=%d unmapped=%d unsafe=%d deferred=%d", coverage.MappedReadOnlyAdapterCount, coverage.ReadOnlyAdapterCount, coverage.RoutedCapabilityCount, coverage.DisabledCapabilityCount, coverage.FallbackReasonCount, coverage.UnmappedAdapterCount, coverage.UnsafeMappedAdapterCount, coverage.DeferredAdapterCount))
+			parts = append(parts, fmt.Sprintf("capability_coverage=%d/%d routed=%d disabled=%d fallback_reasons=%d unmapped=%d unsafe=%d", coverage.MappedReadOnlyAdapterCount, coverage.ReadOnlyAdapterCount, coverage.RoutedCapabilityCount, coverage.DisabledCapabilityCount, coverage.FallbackReasonCount, coverage.UnmappedAdapterCount, coverage.UnsafeMappedAdapterCount))
 		}
 	}
 
@@ -5040,19 +5040,12 @@ func auditObservedCapabilityForToolCapability(tool, capability string) string {
 		return ""
 	}
 
-	if mapped := evidenceCapabilityForLanguageCapability(semanticlanguage.Capability(capability)); mapped != "" {
-		return mapped
+	if tool == ToolNameReadOnlyCapability {
+		return ReadOnlyCapabilityEvidenceCapability(capability)
 	}
 
-	if tool == ToolNameReadOnlyCapability {
-		if mapped := ReadOnlyCapabilityEvidenceCapability(capability); mapped != "" {
-			return mapped
-		}
-
-		switch normalizeReadOnlyCapabilityID(capability) {
-		case string(ReadOnlyCapabilitySourceSanity):
-			return EvidenceCapabilitySourceDiagnostics
-		}
+	if mapped := evidenceCapabilityForLanguageCapability(semanticlanguage.Capability(capability)); mapped != "" {
+		return mapped
 	}
 
 	switch strings.ReplaceAll(strings.ToLower(capability), "-", "_") {

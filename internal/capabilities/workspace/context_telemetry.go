@@ -173,10 +173,6 @@ func ReadOnlyCapabilityTelemetryFields(tool string, output string) map[string]an
 		fields["capability_unmapped"] = true
 	}
 
-	if fields["capability_fallback_reason"] == "capability_deferred" {
-		fields["capability_deferred"] = true
-	}
-
 	if fields["capability_fallback_state"] != nil && fields["capability_fallback_state"] != "none" {
 		fields["capability_fallback"] = true
 	}

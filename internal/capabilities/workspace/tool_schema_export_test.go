@@ -249,6 +249,24 @@ func TestToolSchemaEnumsDeriveFromCapabilityRegistries(t *testing.T) {
 	if got := stringEnumForToolProperty(t, readOnly, "capability"); !slices.Equal(got, wantReadOnly) {
 		t.Fatalf("read_only_capability schema enum drifted from registry:\ngot  %#v\nwant %#v", got, wantReadOnly)
 	}
+
+	export, err := BuildToolSchemaExport(nil)
+	if err != nil {
+		t.Fatalf("BuildToolSchemaExport returned error: %v", err)
+	}
+	exported := make(map[string]ExportedToolSchema, len(export.Tools))
+	for _, tool := range export.Tools {
+		exported[tool.Name] = tool
+	}
+	readOnlyExport := exported[ToolNameReadOnlyCapability]
+	for _, want := range []string{"capability_unmapped", "adapter_unavailable", "resolver_disabled", "route_disabled"} {
+		if !slices.Contains(readOnlyExport.Policy.ErrorClasses, want) {
+			t.Fatalf("read_only_capability error classes = %#v, want %q", readOnlyExport.Policy.ErrorClasses, want)
+		}
+	}
+	if slices.Contains(readOnlyExport.Policy.ErrorClasses, "capability_deferred") {
+		t.Fatalf("read_only_capability should not advertise deleted deferred facade error class: %#v", readOnlyExport.Policy.ErrorClasses)
+	}
 }
 
 func TestLanguageToolCatalogDrivesSchemaManifestAndMetadata(t *testing.T) {

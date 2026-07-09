@@ -1318,6 +1318,30 @@ Reviewer-updated estimate:
   evidence projection vs consumer reclassification, mutation verification
   ledger consolidation, and deletion of hidden deferred read-only capability
   facades where tests only preserve stale compatibility.
+- Hidden deferred `read_only_capability` facades are deleted. The
+  read-only capability resolver no longer carries compatibility IDs, fallback
+  result rendering, telemetry flags, audit coverage fields, or route-state
+  synthesis for `source-sanity`, `trace-runtime-failure`, and `verify-edit`;
+  unsupported requests such as `read_only_capability/source-sanity` now return
+  the normal structured `capability_unmapped` fallback without impersonating
+  the direct `source_sanity` tool. Direct tool schema truth is preserved:
+  `source_sanity` and `context_trace_pack` still advertise their own evidence
+  capabilities/classification outside the read-only resolver. The public
+  read-only capability and tool-schema export versions were bumped to `v2`, and
+  harness audit projection now treats direct-tool aliases as unmapped when they
+  are requested through `read_only_capability`. Non-runtime-routed resolver
+  entries report `unsupported` rather than preserving private deferred route
+  vocabulary. Production Go changed `+26 / -178`, net `-152`; tests changed
+  `+82 / -54`, net `+28`; docs changed `+31 / -0`, net `+31`.
+  Focused verification:
+  `go test ./internal/capabilities/workspace -run 'TestReadOnlyCapability|TestBuildToolSchemaExport|TestToolCapabilityMetadata|TestHarnessAudit|TestToolSchemaEnumsDeriveFromCapabilityRegistries' -count=1`;
+  `go test ./internal/capabilities/workspace -count=1`;
+  `go test ./internal/runtime/agent -run 'Test(ReadOnlyEvidencePacket|ReadOnlyAnswerability|ReadOnlyCloseout|ReadOnlyCapability|SourceGrounding|HarnessAudit|FinalAnswer)' -count=1`.
+  Broad verification: `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
+  `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
+  `git diff --check`.
 
 ## Review And Regression Protocol
 

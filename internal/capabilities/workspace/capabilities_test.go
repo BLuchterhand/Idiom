@@ -104,7 +104,7 @@ func TestReadOnlyCapabilityRegistryMapsStableVocabularyToAdapters(t *testing.T) 
 	}
 
 	if _, ok := ResolveReadOnlyCapability("source-sanity", nil); ok {
-		t.Fatal("source-sanity must remain deferred from the initial read-only capability vocabulary")
+		t.Fatal("source-sanity must remain unmapped from the read-only capability vocabulary")
 	}
 }
 
@@ -118,9 +118,6 @@ func TestReadOnlyCapabilityResolverDoesNotFacadeWriteCapabilities(t *testing.T) 
 	} {
 		if resolution, ok := ResolveReadOnlyCapability(capability, nil); ok {
 			t.Fatalf("write capability %q must not resolve through read-only facade: %#v", capability, resolution)
-		}
-		if deferred, ok := deferredReadOnlyCapabilityAdapter(capability); ok {
-			t.Fatalf("write capability %q must not be deferred as read-only evidence: %#v", capability, deferred)
 		}
 	}
 
@@ -182,9 +179,6 @@ func TestReadOnlyCapabilityEvidenceCapabilitiesProjectResolverVocabulary(t *test
 		"calls_from",
 		"calls_into",
 		"related_files",
-		"source_sanity",
-		"trace_runtime_failure",
-		"verify_edit",
 		"audit_behavior",
 	}
 	got := ReadOnlyCapabilityEvidenceCapabilities()
@@ -320,8 +314,8 @@ func TestReadOnlyCapabilityRouteCanBeDisabledIndividually(t *testing.T) {
 		t.Fatalf("disabled definition route should not be counted as routed: %#v", coverage.RoutedCapabilities)
 	}
 
-	if coverage.RouteStateCounts["disabled"] != 2 || coverage.RouteStateCounts["deferred"] == 0 {
-		t.Fatalf("route state counts should include disabled and deferred states, got %#v", coverage.RouteStateCounts)
+	if coverage.RouteStateCounts["disabled"] != 2 || coverage.RouteStateCounts["deferred"] != 0 {
+		t.Fatalf("route state counts should include only disabled routed-capability states, got %#v", coverage.RouteStateCounts)
 	}
 }
 
@@ -456,7 +450,7 @@ func TestReadOnlyCapabilityAdaptersMatchSchemaSideEffectTruth(t *testing.T) {
 	}
 
 	if !slices.Contains(sourceSanity.Policy.SideEffects, autonomy.SideEffectUnknown) {
-		t.Fatalf("source_sanity schema truth should expose unknown side effects while it remains deferred: %#v", sourceSanity.Policy.SideEffects)
+		t.Fatalf("source_sanity schema truth should expose unknown side effects as a direct tool: %#v", sourceSanity.Policy.SideEffects)
 	}
 }
 
@@ -779,46 +773,47 @@ func TestReadOnlyCapabilityRoutesNamedSliceThroughExistingAdapters(t *testing.T)
 	}
 }
 
-func TestReadOnlyCapabilityReportsStructuredDeferredSourceSanityFallback(t *testing.T) {
+func TestReadOnlyCapabilityReportsUnmappedSourceSanityFacade(t *testing.T) {
 	root := t.TempDir()
 	mgr := NewManager(config.Workspace{Root: root, CWD: root})
 	result := mgr.Execute(context.Background(), ToolRequest{Tool: ToolNameReadOnlyCapability, Capability: "source-sanity", Path: "."})
 
 	if result.Error == "" {
-		t.Fatalf("deferred capability should return an error with structured fallback, got %#v", result)
+		t.Fatalf("unmapped capability should return an error with structured fallback, got %#v", result)
 	}
 
 	var payload ReadOnlyCapabilityExecutionResult
 
 	if err := json.Unmarshal([]byte(result.Output), &payload); err != nil {
-		t.Fatalf("decode capability deferred payload: %v\n%s", err, result.Output)
+		t.Fatalf("decode capability unmapped payload: %v\n%s", err, result.Output)
 	}
 
-	if payload.FallbackReason != "capability_deferred" || payload.Routed || payload.Capability != "source-sanity" {
-		t.Fatalf("unexpected deferred fallback payload: %#v", payload)
+	if payload.FallbackReason != "capability_unmapped" ||
+		payload.Routed ||
+		payload.Capability != "" ||
+		payload.RequestedCapability != "source-sanity" {
+
+		t.Fatalf("unexpected unmapped fallback payload: %#v", payload)
 	}
 
-	if payload.UnderlyingResult == nil ||
-		payload.UnderlyingResult.Tool != "source_sanity" ||
-		!strings.Contains(payload.UnderlyingResult.Error, "schema_side_effects_not_read_only_only") {
-
-		t.Fatalf("deferred fallback should preserve direct source_sanity schema truth, got %#v", payload.UnderlyingResult)
+	if payload.UnderlyingResult != nil {
+		t.Fatalf("unmapped read-only facade should not impersonate the direct source_sanity tool, got %#v", payload.UnderlyingResult)
 	}
 
 	if payload.Status.State != "fallback" ||
-		payload.Status.Fallback.State != "deferred" ||
-		payload.Status.Fallback.Reason != "capability_deferred" ||
+		payload.Status.Fallback.State != "unmapped" ||
+		payload.Status.Fallback.Reason != "capability_unmapped" ||
 		len(payload.Status.UnresolvedGaps) == 0 {
 
-		t.Fatalf("deferred status should expose fallback details, got %#v", payload.Status)
+		t.Fatalf("unmapped status should expose fallback details, got %#v", payload.Status)
 	}
 
 	fields := ToolTelemetryFields(result.Tool, result.Output)
-	if fields["capability_fallback_state"] != "deferred" ||
-		fields["capability_fallback_reason"] != "capability_deferred" ||
-		fields["capability_deferred"] != true {
+	if fields["capability_fallback_state"] != "unmapped" ||
+		fields["capability_fallback_reason"] != "capability_unmapped" ||
+		fields["capability_unmapped"] != true {
 
-		t.Fatalf("deferred telemetry fields = %#v", fields)
+		t.Fatalf("unmapped telemetry fields = %#v", fields)
 	}
 }
 
@@ -975,14 +970,14 @@ func TestReadOnlyCapabilityCoverageReportsUnmappedAdapters(t *testing.T) {
 		t.Fatalf("expected fallback reason metrics in coverage: %#v", coverage)
 	}
 
-	if !slices.Contains(coverage.FallbackReasons, "capability_deferred") ||
-		!slices.Contains(coverage.FallbackStates, "deferred") {
+	if slices.Contains(coverage.FallbackReasons, "capability_deferred") ||
+		slices.Contains(coverage.FallbackStates, "deferred") {
 
-		t.Fatalf("expected deferred fallback metrics in coverage: %#v", coverage)
+		t.Fatalf("read-only capability coverage should not preserve deferred facade metrics: %#v", coverage)
 	}
 
-	if coverage.RouteStateCounts["routed"] != 12 || coverage.RouteStateCounts["deferred"] != 3 || len(coverage.RouteStates) == 0 {
-		t.Fatalf("expected routed/deferred route state metrics in coverage: %#v", coverage)
+	if coverage.RouteStateCounts["routed"] != 12 || coverage.RouteStateCounts["deferred"] != 0 || len(coverage.RouteStates) == 0 {
+		t.Fatalf("expected routed-only route state metrics in coverage: %#v", coverage)
 	}
 
 	if coverage.DisabledCapabilityCount != 0 || len(coverage.DisabledCapabilities) != 0 {
@@ -995,19 +990,6 @@ func TestReadOnlyCapabilityCoverageReportsUnmappedAdapters(t *testing.T) {
 
 	if coverage.UnsafeMappedAdapterCount != 0 || len(coverage.UnsafeMappedAdapters) != 0 {
 		t.Fatalf("read-only capability registry should have zero unsafe schema mappings: %#v", coverage.UnsafeMappedAdapters)
-	}
-
-	if coverage.DeferredAdapterCount != len(coverage.DeferredAdapters) {
-		t.Fatalf("deferred count drift: %#v", coverage)
-	}
-
-	if !slices.ContainsFunc(coverage.DeferredAdapters, func(adapter ReadOnlyCapabilityDeferredAdapterSpec) bool {
-		return adapter.Capability == "source-sanity" &&
-			adapter.Tool == "source_sanity" &&
-			slices.Contains(adapter.SchemaSideEffects, autonomy.SideEffectUnknown)
-	}) {
-
-		t.Fatalf("source_sanity should be named as deferred mixed/unknown adapter: %#v", coverage.DeferredAdapters)
 	}
 
 	if slices.Contains(coverage.UnmappedAdapters, "context_pack") {
@@ -1041,6 +1023,30 @@ func TestReadOnlyCapabilityCoverageKeepsStatusMetricsWhenPublicStatusSuppressed(
 
 	if coverage.RoutedCapabilityCount == 0 {
 		t.Fatalf("public status suppression should not disable routing metrics: %#v", coverage)
+	}
+}
+
+func TestReadOnlyCapabilityRouteStatesTreatNonRuntimeRegistryEntriesAsUnsupported(t *testing.T) {
+	registry := ReadOnlyCapabilityRegistry{
+		ResolverRuntimeEnabled: true,
+		Capabilities: []ReadOnlyCapabilitySpec{
+			readOnlyCapability(
+				ReadOnlyCapabilityID("fixture-non-runtime"),
+				"Fixture capability outside the runtime-routed resolver set.",
+				[]ReadOnlyCapabilityAdapterSpec{
+					readOnlyAdapter(ToolNameReadFile, EvidenceCapabilityInspectFile, "", "fixture"),
+				},
+			),
+		},
+	}
+
+	states := readOnlyCapabilityRouteStates(registry, []string{ToolNameReadFile})
+	if len(states) != 1 {
+		t.Fatalf("route states = %#v, want one synthetic state", states)
+	}
+
+	if states[0].State != "unsupported" || states[0].Reason != "capability_not_runtime_routed" {
+		t.Fatalf("non-runtime capability state = %#v, want unsupported/not-runtime", states[0])
 	}
 }
 
@@ -1108,8 +1114,8 @@ func TestHarnessAuditReportsCapabilityRegistryMetrics(t *testing.T) {
 		t.Fatalf("harness audit should report fallback state metrics, got %#v", got)
 	}
 
-	if got.RouteStateCounts["routed"] != 12 || got.RouteStateCounts["deferred"] != 3 {
-		t.Fatalf("harness audit should report routed/deferred route states, got %#v", got.RouteStateCounts)
+	if got.RouteStateCounts["routed"] != 12 || got.RouteStateCounts["deferred"] != 0 {
+		t.Fatalf("harness audit should report routed route states without deferred facades, got %#v", got.RouteStateCounts)
 	}
 
 	if got.UnsafeMappedAdapterCount != 0 || len(got.UnsafeMappedAdapters) != 0 {
@@ -1125,12 +1131,6 @@ func TestHarnessAuditReportsCapabilityRegistryMetrics(t *testing.T) {
 		t.Fatalf("harness audit should surface unmapped adapters as an informational finding, findings=%#v historical=%#v unmapped=%#v", report.Findings, report.HistoricalFindings, got.UnmappedAdapters)
 	}
 
-	if !slices.ContainsFunc(got.DeferredAdapters, func(adapter ReadOnlyCapabilityDeferredAdapterSpec) bool {
-		return adapter.Capability == "source-sanity" && adapter.Tool == "source_sanity"
-	}) {
-
-		t.Fatalf("harness audit should name deferred source_sanity adapter, got %#v", got.DeferredAdapters)
-	}
 }
 
 func TestToolCapabilityMetadataUsesOneStaticSource(t *testing.T) {
@@ -1144,7 +1144,7 @@ func TestToolCapabilityMetadataUsesOneStaticSource(t *testing.T) {
 	}{
 		{
 			tool:                ToolNameReadOnlyCapability,
-			wantCapabilities:    []string{"localize_change", "query_context", "inspect_file", "inspect_symbol", "find_symbol", "find_definition", "find_references", "find_implementations", "calls_from", "calls_into", "related_files", "source_sanity", "trace_runtime_failure", "verify_edit", "audit_behavior"},
+			wantCapabilities:    []string{"localize_change", "query_context", "inspect_file", "inspect_symbol", "find_symbol", "find_definition", "find_references", "find_implementations", "calls_from", "calls_into", "related_files", "audit_behavior"},
 			wantClassification:  CapabilityClassRouted,
 			mutateFirstCall:     true,
 			wantFirstCapability: "localize_change",
@@ -1285,6 +1285,16 @@ func TestReadOnlyCapabilityEvidenceCapabilityDrivesAuditNormalization(t *testing
 		if got := auditObservedCapabilityForToolCapability(ToolNameReadOnlyCapability, tc.capability); got != tc.want {
 			t.Fatalf("auditObservedCapabilityForToolCapability(%q) = %q, want %q", tc.capability, got, tc.want)
 		}
+	}
+
+	for _, capability := range []string{"source-sanity", "source-diagnostics", "verify-edit"} {
+		if got := auditObservedCapabilityForToolCapability(ToolNameReadOnlyCapability, capability); got != "" {
+			t.Fatalf("read_only_capability audit normalization for deleted facade %q = %q, want empty", capability, got)
+		}
+	}
+
+	if got := auditObservedCapabilityForToolCapability(ToolNameSourceSanity, "source_diagnostics"); got != EvidenceCapabilitySourceDiagnostics {
+		t.Fatalf("direct source_sanity audit normalization = %q, want %q", got, EvidenceCapabilitySourceDiagnostics)
 	}
 }
 
