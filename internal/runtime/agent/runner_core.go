@@ -20698,19 +20698,6 @@ func (r *Runner) decorateTerminalAnswerDecision(decision terminalAnswerDecision,
 	})
 }
 
-func (r *Runner) emitAcceptedAnswerSignals(answer string, results []workspace.ToolResult) {
-	if r == nil || r.OnEvent == nil || strings.TrimSpace(answer) == "" {
-		return
-	}
-
-	acceptance := r.evaluateFinalAnswerAcceptance(answer, results)
-	r.emitFinalAnswerTelemetry(answer, results, acceptance)
-
-	if acceptance.BlockerKind != "" {
-		r.emitCompletionStatusFromParams("blocked", acceptance.Reason, acceptance.BlockerKind, results, true, 0)
-	}
-}
-
 func (r *Runner) emitFinalAnswerTelemetry(answer string, results []workspace.ToolResult, acceptance finalAnswerAcceptance) {
 	if r == nil || r.OnEvent == nil || strings.TrimSpace(answer) == "" {
 		return

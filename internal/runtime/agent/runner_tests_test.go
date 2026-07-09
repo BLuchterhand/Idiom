@@ -12194,16 +12194,17 @@ func TestForcedCompletionModelOwnedAnswerForReadOnlyArchitecture(t *testing.T) {
 		},
 	}
 
-	answer, err := runner.completeWithoutMoreToolsWithReason(
+	answer, err := runner.completeWithoutMoreToolsWithReasonMode(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: "how does this harness make use of sub-agents?"}},
 		llama.ChatOptions{},
 		runner.SeedResults,
 		"Post-readiness named-gap contract is exhausted. Tools are now disabled. Write the normal final answer from the evidence already gathered.",
 		nil,
+		noToolsCloseoutModelAllowed,
 	)
 	if err != nil {
-		t.Fatalf("completeWithoutMoreToolsWithReason: %v", err)
+		t.Fatalf("completeWithoutMoreToolsWithReasonMode: %v", err)
 	}
 
 	for _, want := range []string{
@@ -12324,16 +12325,17 @@ func TestForcedCompletionFallsBackWhenReadOnlyRetryStillViolatesCompletionGate(t
 		readFileSourceBodyResult("internal/labels/labels.go", 1, 5, 5, "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n"),
 	}
 
-	answer, err := runner.completeWithoutMoreToolsWithReason(
+	answer, err := runner.completeWithoutMoreToolsWithReasonMode(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: "Can we shorten the save label in internal/labels/labels.go?"}},
 		llama.ChatOptions{},
 		results,
 		"The conversation lane has enough bounded evidence. Tools are now disabled. Answer the user's actual question now.",
 		nil,
+		noToolsCloseoutModelAllowed,
 	)
 	if err != nil {
-		t.Fatalf("completeWithoutMoreToolsWithReason: %v", err)
+		t.Fatalf("completeWithoutMoreToolsWithReasonMode: %v", err)
 	}
 
 	if answer == replies[1] || strings.Contains(answer, `"tool"`) || strings.Contains(answer, "I need one more probe") {
@@ -12394,16 +12396,17 @@ func TestForcedCompletionFallsBackWhenReadOnlyRetryReturnsSourceInventory(t *tes
 		}, "\n"),
 	}}
 
-	answer, err := runner.completeWithoutMoreToolsWithReason(
+	answer, err := runner.completeWithoutMoreToolsWithReasonMode(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: objective}},
 		llama.ChatOptions{},
 		results,
 		"Repeated post-readiness follow-up requests omitted the exact missing claim. Tools are now disabled. Answer from gathered evidence or state the exact unsupported claim.",
 		nil,
+		noToolsCloseoutModelAllowed,
 	)
 	if err != nil {
-		t.Fatalf("completeWithoutMoreToolsWithReason: %v", err)
+		t.Fatalf("completeWithoutMoreToolsWithReasonMode: %v", err)
 	}
 
 	if answer == badInventoryAnswer || strings.Contains(answer, "shows defines") {
@@ -12472,16 +12475,17 @@ func TestForcedCompletionFallsBackWhenReadOnlyRetryReturnsInspectedBodyInventory
 		}, "\n"),
 	}}
 
-	answer, err := runner.completeWithoutMoreToolsWithReason(
+	answer, err := runner.completeWithoutMoreToolsWithReasonMode(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: objective}},
 		llama.ChatOptions{},
 		results,
 		"Repeated post-readiness follow-up requests omitted the exact missing claim. Tools are now disabled. Answer from gathered evidence or state the exact unsupported claim.",
 		nil,
+		noToolsCloseoutModelAllowed,
 	)
 	if err != nil {
-		t.Fatalf("completeWithoutMoreToolsWithReason: %v", err)
+		t.Fatalf("completeWithoutMoreToolsWithReasonMode: %v", err)
 	}
 
 	if answer == badInventoryAnswer || strings.Contains(answer, "inspected body shows") {
@@ -12548,16 +12552,17 @@ func TestForcedCompletionRepairReturnDoesNotLeakSourceInventory(t *testing.T) {
 		}, "\n"),
 	}}
 
-	answer, err := runner.completeWithoutMoreToolsWithReason(
+	answer, err := runner.completeWithoutMoreToolsWithReasonMode(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: objective}},
 		llama.ChatOptions{},
 		results,
 		"The conversation lane has enough bounded evidence. Tools are now disabled. Answer from gathered evidence or state the exact unsupported claim.",
 		nil,
+		noToolsCloseoutModelAllowed,
 	)
 	if err != nil {
-		t.Fatalf("completeWithoutMoreToolsWithReason: %v", err)
+		t.Fatalf("completeWithoutMoreToolsWithReasonMode: %v", err)
 	}
 
 	if strings.Contains(answer, "clearest inspected implementation anchor") || strings.Contains(answer, "inspected body shows") {
@@ -12662,7 +12667,7 @@ func TestForcedCompletionRequestForcesVisibleTextOnlyOutput(t *testing.T) {
 		},
 	}
 
-	answer, err := runner.completeWithoutMoreToolsWithReason(
+	answer, err := runner.completeWithoutMoreToolsWithReasonMode(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: "Answer from gathered evidence."}},
 		llama.ChatOptions{
@@ -12675,9 +12680,10 @@ func TestForcedCompletionRequestForcesVisibleTextOnlyOutput(t *testing.T) {
 		nil,
 		"Tools are now disabled. Answer from gathered evidence.",
 		nil,
+		noToolsCloseoutModelAllowed,
 	)
 	if err != nil {
-		t.Fatalf("completeWithoutMoreToolsWithReason: %v", err)
+		t.Fatalf("completeWithoutMoreToolsWithReasonMode: %v", err)
 	}
 
 	if !sawRequest {
@@ -12964,16 +12970,17 @@ func TestForcedCompletionAsksModelBeforeDeterministicMutationFallback(t *testing
 	}
 	results := []workspace.ToolResult{{Tool: "edit_file", Summary: "Edited src/example.cpp", ChangedPaths: []string{"src/example.cpp"}}}
 
-	answer, err := runner.completeWithoutMoreToolsWithReason(
+	answer, err := runner.completeWithoutMoreToolsWithReasonMode(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: "implement the requested patch"}},
 		llama.ChatOptions{},
 		results,
 		"Post-readiness implementation closeout is exhausted. Tools are now disabled.",
 		nil,
+		noToolsCloseoutModelAllowed,
 	)
 	if err != nil {
-		t.Fatalf("completeWithoutMoreToolsWithReason: %v", err)
+		t.Fatalf("completeWithoutMoreToolsWithReasonMode: %v", err)
 	}
 
 	if requests != 1 {
@@ -13040,16 +13047,17 @@ func TestForcedCompletionPreservesAcceptedModelMutationCloseout(t *testing.T) {
 		shellCommandResultForTest("go test ./...", "ok\texample.com/repo", ""),
 	}
 
-	answer, err := runner.completeWithoutMoreToolsWithReason(
+	answer, err := runner.completeWithoutMoreToolsWithReasonMode(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: "move duplicated constants"}},
 		llama.ChatOptions{},
 		results,
 		"Post-readiness implementation closeout is exhausted. Tools are now disabled.",
 		nil,
+		noToolsCloseoutModelAllowed,
 	)
 	if err != nil {
-		t.Fatalf("completeWithoutMoreToolsWithReason: %v", err)
+		t.Fatalf("completeWithoutMoreToolsWithReasonMode: %v", err)
 	}
 
 	if requests != 1 {
@@ -29141,7 +29149,7 @@ func TestReadOnlyEvidencePacketDoesNotInjectDiscoveryUsefulnessExpectedPaths(t *
 	}
 }
 
-func TestEmitAcceptedAnswerSignalsSanitizesEvidencePaths(t *testing.T) {
+func TestEmitFinalAnswerTelemetrySanitizesEvidencePaths(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Lane:       "architecture",
@@ -29160,14 +29168,13 @@ func TestEmitAcceptedAnswerSignalsSanitizesEvidencePaths(t *testing.T) {
 
 		_ = json.Unmarshal([]byte(event.Content), &readiness)
 	}
-	runner.emitAcceptedAnswerSignals(
-		"The harness delegates through `internal/runtime/agent/runner_core.go` and `internal/runtime/agent/implementation_flow.go` rather than `symbol/body/branch` markers or `.idiom/discovery/queries/query.json` artifacts.",
-		[]workspace.ToolResult{{
-			Tool:    "task",
-			Summary: "Child task completed",
-			Output:  "Question: explain subagents\nSource: delegated read-only evidence packet.\n\nInspected paths:\n- `internal/runtime/agent/runner_core.go`\n- `.idiom/discovery/queries/query.json`\n- `internal/runtime/agent/implementation_flow.go`\n",
-		}},
-	)
+	answer := "The harness delegates through `internal/runtime/agent/runner_core.go` and `internal/runtime/agent/implementation_flow.go` rather than `symbol/body/branch` markers or `.idiom/discovery/queries/query.json` artifacts."
+	results := []workspace.ToolResult{{
+		Tool:    "task",
+		Summary: "Child task completed",
+		Output:  "Question: explain subagents\nSource: delegated read-only evidence packet.\n\nInspected paths:\n- `internal/runtime/agent/runner_core.go`\n- `.idiom/discovery/queries/query.json`\n- `internal/runtime/agent/implementation_flow.go`\n",
+	}}
+	runner.emitFinalAnswerTelemetry(answer, results, runner.evaluateFinalAnswerAcceptance(answer, results))
 
 	rawPaths, _ := readiness["evidence_paths"].([]any)
 	got := make([]string, 0, len(rawPaths))
@@ -29191,7 +29198,7 @@ func TestEmitAcceptedAnswerSignalsSanitizesEvidencePaths(t *testing.T) {
 	}
 }
 
-func TestEmitAcceptedAnswerSignalsUsesTypedPacketEvidencePaths(t *testing.T) {
+func TestEmitFinalAnswerTelemetryUsesTypedPacketEvidencePaths(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Lane:       "architecture",
@@ -29218,7 +29225,9 @@ func TestEmitAcceptedAnswerSignalsUsesTypedPacketEvidencePaths(t *testing.T) {
 		Findings:        []ReadOnlyEvidenceFinding{{Path: "internal/runtime/agent/runner_core.go", Text: "The runner delegates subagent work via the task tool."}},
 		Confidence:      "high",
 	})
-	runner.emitAcceptedAnswerSignals("The harness delegates via task.", []workspace.ToolResult{result})
+	answer := "The harness delegates via task."
+	results := []workspace.ToolResult{result}
+	runner.emitFinalAnswerTelemetry(answer, results, runner.evaluateFinalAnswerAcceptance(answer, results))
 
 	rawPaths, _ := readiness["evidence_paths"].([]any)
 	got := make([]string, 0, len(rawPaths))
@@ -29240,7 +29249,7 @@ func TestEmitAcceptedAnswerSignalsUsesTypedPacketEvidencePaths(t *testing.T) {
 	}
 }
 
-func TestEmitAcceptedAnswerSignalsPrefersExactProbePathsOverNoisyPinnedPaths(t *testing.T) {
+func TestEmitFinalAnswerTelemetryPrefersExactProbePathsOverNoisyPinnedPaths(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Lane:              "architecture",
@@ -29260,21 +29269,20 @@ func TestEmitAcceptedAnswerSignalsPrefersExactProbePathsOverNoisyPinnedPaths(t *
 
 		_ = json.Unmarshal([]byte(event.Content), &readiness)
 	}
-	runner.emitAcceptedAnswerSignals(
-		"`Runner.runChildTask` creates the bounded child runner in `internal/runtime/agent/implementation_flow.go` and returns the child result to the parent as evidence.",
-		[]workspace.ToolResult{
-			{
-				Tool:    "task",
-				Summary: "Child task completed",
-				Output:  "Primary files: `internal/runtime/instructions/attacher.go`, `internal/runtime/modepolicy/modes.go`.",
-			},
-			{
-				Tool:    "go_read_symbol",
-				Summary: "Read Runner.runChildTask in internal/runtime/agent/implementation_flow.go lines 16-132",
-				Output:  "func (r *Runner) runChildTask(...) workspace.ToolResult { return workspace.ToolResult{} }",
-			},
+	answer := "`Runner.runChildTask` creates the bounded child runner in `internal/runtime/agent/implementation_flow.go` and returns the child result to the parent as evidence."
+	results := []workspace.ToolResult{
+		{
+			Tool:    "task",
+			Summary: "Child task completed",
+			Output:  "Primary files: `internal/runtime/instructions/attacher.go`, `internal/runtime/modepolicy/modes.go`.",
 		},
-	)
+		{
+			Tool:    "go_read_symbol",
+			Summary: "Read Runner.runChildTask in internal/runtime/agent/implementation_flow.go lines 16-132",
+			Output:  "func (r *Runner) runChildTask(...) workspace.ToolResult { return workspace.ToolResult{} }",
+		},
+	}
+	runner.emitFinalAnswerTelemetry(answer, results, runner.evaluateFinalAnswerAcceptance(answer, results))
 
 	rawPaths, _ := readiness["evidence_paths"].([]any)
 	got := make([]string, 0, len(rawPaths))
@@ -29296,7 +29304,7 @@ func TestEmitAcceptedAnswerSignalsPrefersExactProbePathsOverNoisyPinnedPaths(t *
 	}
 }
 
-func TestEmitAcceptedAnswerSignalsDirectAnswerAliasBlocksUnrelatedEvidence(t *testing.T) {
+func TestEmitFinalAnswerTelemetryDirectAnswerAliasBlocksUnrelatedEvidence(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Lane:              "main",
@@ -29317,23 +29325,22 @@ func TestEmitAcceptedAnswerSignalsDirectAnswerAliasBlocksUnrelatedEvidence(t *te
 			events[event.Role] = fields
 		}
 	}
-	runner.emitAcceptedAnswerSignals(
-		"The TUI chat input newline wrap and upward shift issue is in `internal/surfaces/tui/app/rendering.go`: `evidenceDisplayName` trims the raw tool name before display.",
-		[]workspace.ToolResult{
-			{
-				Tool:    "context_pack",
-				Summary: "Context pack wrote packet",
-				Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/rendering.go"),
-			},
-			readFileSourceBodyResult(
-				"internal/surfaces/tui/app/rendering.go",
-				1,
-				9,
-				0,
-				"1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
-			),
+	answer := "The TUI chat input newline wrap and upward shift issue is in `internal/surfaces/tui/app/rendering.go`: `evidenceDisplayName` trims the raw tool name before display."
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote packet",
+			Facts:   contextPackCandidateFactsForTest("internal/surfaces/tui/app/rendering.go"),
 		},
-	)
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/rendering.go",
+			1,
+			9,
+			0,
+			"1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+		),
+	}
+	runner.emitFinalAnswerTelemetry(answer, results, runner.evaluateFinalAnswerAcceptance(answer, results))
 
 	readiness := events["readiness_check"]
 	if readiness["acceptance_contract"] != finalAnswerAcceptanceSchema {
@@ -29854,7 +29861,7 @@ func TestFinalAnswerAcceptanceRetryPolicyRequiresToolsAndNoMutation(t *testing.T
 	}
 }
 
-func TestEmitAcceptedAnswerSignalsImplementationEvidenceUsesChangedPaths(t *testing.T) {
+func TestEmitFinalAnswerTelemetryImplementationEvidenceUsesChangedPaths(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Lane:              "implement",
@@ -29874,26 +29881,25 @@ func TestEmitAcceptedAnswerSignalsImplementationEvidenceUsesChangedPaths(t *test
 
 		_ = json.Unmarshal([]byte(event.Content), &readiness)
 	}
-	runner.emitAcceptedAnswerSignals(
-		"Changed `internal/workflows/productworkflow/tdd_obligation_plans.go` and tests.",
-		[]workspace.ToolResult{
-			{
-				Tool:    "read_file",
-				Summary: "Read f2 internal/workflows/productworkflow/tdd_obligation_plans_test.go lines 1-220",
-				Output:  "RelPath: \"adrs/ADR-1.md\"\nFile: \"adrs/prd.md\"\nOwner: \"adrs/greeting.test.js\"",
-			},
-			{
-				Tool:         "edit_file",
-				Summary:      "Edited internal/workflows/productworkflow/tdd_obligation_plans.go",
-				ChangedPaths: []string{"internal/workflows/productworkflow/tdd_obligation_plans.go"},
-			},
-			{
-				Tool:         "edit_file",
-				Summary:      "Edited internal/workflows/productworkflow/tdd_obligation_plans_test.go",
-				ChangedPaths: []string{"internal/workflows/productworkflow/tdd_obligation_plans_test.go"},
-			},
+	answer := "Changed `internal/workflows/productworkflow/tdd_obligation_plans.go` and tests."
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f2 internal/workflows/productworkflow/tdd_obligation_plans_test.go lines 1-220",
+			Output:  "RelPath: \"adrs/ADR-1.md\"\nFile: \"adrs/prd.md\"\nOwner: \"adrs/greeting.test.js\"",
 		},
-	)
+		{
+			Tool:         "edit_file",
+			Summary:      "Edited internal/workflows/productworkflow/tdd_obligation_plans.go",
+			ChangedPaths: []string{"internal/workflows/productworkflow/tdd_obligation_plans.go"},
+		},
+		{
+			Tool:         "edit_file",
+			Summary:      "Edited internal/workflows/productworkflow/tdd_obligation_plans_test.go",
+			ChangedPaths: []string{"internal/workflows/productworkflow/tdd_obligation_plans_test.go"},
+		},
+	}
+	runner.emitFinalAnswerTelemetry(answer, results, runner.evaluateFinalAnswerAcceptance(answer, results))
 
 	rawPaths, _ := readiness["evidence_paths"].([]any)
 	got := make([]string, 0, len(rawPaths))
@@ -32450,7 +32456,7 @@ func TestRunnerEvidencePathsPreservesBroadCandidatesForArchitecture(t *testing.T
 	}
 }
 
-func TestEmitAcceptedAnswerSignalsDirectAnswerBlockedUsesLedgerRelevantSourcePaths(t *testing.T) {
+func TestEmitFinalAnswerTelemetryDirectAnswerBlockedUsesLedgerRelevantSourcePaths(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Lane:              "main",
@@ -32470,31 +32476,30 @@ func TestEmitAcceptedAnswerSignalsDirectAnswerBlockedUsesLedgerRelevantSourcePat
 
 		_ = json.Unmarshal([]byte(event.Content), &readiness)
 	}
-	runner.emitAcceptedAnswerSignals(
-		"The issue is in `internal/surfaces/tui/app/broad_candidate.go`.",
-		[]workspace.ToolResult{
-			{
-				Tool:    "context_pack",
-				Summary: "Context pack wrote packet",
-				Facts: contextPackCandidateFactsForTest(
-					"internal/surfaces/tui/app/broad_candidate.go",
-					"internal/surfaces/tui/app/other_candidate.go",
-				),
-			},
-			readFileSourceBodyResult(
-				"internal/surfaces/tui/app/rendering.go",
-				1,
-				6,
-				0,
-				strings.Join([]string{
-					"1:package app",
-					"2:",
-					"3:// chat input newline rendering is handled by this function.",
-					"4:func renderChatInputNewline() {}",
-				}, "\n"),
+	answer := "The issue is in `internal/surfaces/tui/app/broad_candidate.go`."
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote packet",
+			Facts: contextPackCandidateFactsForTest(
+				"internal/surfaces/tui/app/broad_candidate.go",
+				"internal/surfaces/tui/app/other_candidate.go",
 			),
 		},
-	)
+		readFileSourceBodyResult(
+			"internal/surfaces/tui/app/rendering.go",
+			1,
+			6,
+			0,
+			strings.Join([]string{
+				"1:package app",
+				"2:",
+				"3:// chat input newline rendering is handled by this function.",
+				"4:func renderChatInputNewline() {}",
+			}, "\n"),
+		),
+	}
+	runner.emitFinalAnswerTelemetry(answer, results, runner.evaluateFinalAnswerAcceptance(answer, results))
 
 	rawPaths, _ := readiness["evidence_paths"].([]any)
 	got := make([]string, 0, len(rawPaths))
@@ -37034,9 +37039,9 @@ func TestCompleteWithoutMoreToolsInjectsToolResultForDanglingToolCalls(t *testin
 		},
 	}
 
-	answer, err := runner.completeWithoutMoreToolsWithReason(context.Background(), messages, llama.ChatOptions{}, nil, "tools are now disabled", nil)
+	answer, err := runner.completeWithoutMoreToolsWithReasonMode(context.Background(), messages, llama.ChatOptions{}, nil, "tools are now disabled", nil, noToolsCloseoutModelAllowed)
 	if err != nil {
-		t.Fatalf("completeWithoutMoreToolsWithReason: %v", err)
+		t.Fatalf("completeWithoutMoreToolsWithReasonMode: %v", err)
 	}
 	if answer != "final answer from evidence" {
 		t.Fatalf("answer = %q", answer)
@@ -37223,23 +37228,24 @@ func TestCompleteWithoutMoreToolsWithReasonCatchesNToolCallsXML(t *testing.T) {
 		Policy: RunPolicy{MaxToolSteps: 1, MaxNoProgressTurns: 3},
 	}
 
-	answer, err := runner.completeWithoutMoreToolsWithReason(
+	answer, err := runner.completeWithoutMoreToolsWithReasonMode(
 		context.Background(),
 		[]llama.ChatMessage{{Role: "user", Content: "hello"}},
 		llama.ChatOptions{},
 		nil,
 		"Model-call budget is exhausted.",
 		nil,
+		noToolsCloseoutModelAllowed,
 	)
 	if err == nil {
 		// If no error, the answer must NOT be the raw XML
 		if strings.Contains(answer, "<n_tool_calls>") || strings.Contains(answer, "<n_invoke") {
-			t.Fatalf("completeWithoutMoreToolsWithReason returned raw n_tool_calls XML instead of catching it:\n%s", answer)
+			t.Fatalf("completeWithoutMoreToolsWithReasonMode returned raw n_tool_calls XML instead of catching it:\n%s", answer)
 		}
 
 		// The answer should be a clean fallback
 		if answer == "" {
-			t.Fatal("completeWithoutMoreToolsWithReason returned empty string for XML input")
+			t.Fatal("completeWithoutMoreToolsWithReasonMode returned empty string for XML input")
 		}
 
 		t.Logf("XML was caught, returned: %s", answer[:min(len(answer), 100)])

@@ -1850,17 +1850,6 @@ func answerFirstNoToolsPrompt(reason string) string {
 	return strings.TrimSpace(reason + "\n\n" + contract)
 }
 
-func (r *Runner) completeWithoutMoreToolsWithReason(
-	ctx context.Context,
-	turnMessages []llama.ChatMessage,
-	opts llama.ChatOptions,
-	collectedResults []workspace.ToolResult,
-	reason string,
-	metrics *runnerMetrics,
-) (string, error) {
-	return r.completeWithoutMoreToolsWithReasonMode(ctx, turnMessages, opts, collectedResults, reason, metrics, noToolsCloseoutModelAllowed)
-}
-
 type noToolsCloseoutMode string
 
 const (

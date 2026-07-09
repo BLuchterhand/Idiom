@@ -1552,6 +1552,23 @@ Reviewer-updated estimate:
   `go test ./...`; `go build ./cmd/idiom`;
   `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
   `git diff --check`.
+- Runtime final dead-facade cleanup deleted the remaining two runtime-agent
+  production APIs that existed only for tests: `Runner.emitAcceptedAnswerSignals`
+  and `Runner.completeWithoutMoreToolsWithReason`. Tests now call the live
+  owners directly: `evaluateFinalAnswerAcceptance` plus
+  `emitFinalAnswerTelemetry`, and `completeWithoutMoreToolsWithReasonMode` with
+  `noToolsCloseoutModelAllowed`. Production Go changed `+0 / -24`, net `-24`;
+  test Go changed `+114 / -108`, net `+6`. With this worktree included, the
+  branch is production Go `+26,524 / -32,985`, net `-6,461` versus `main`.
+  Focused verification:
+  `go test ./internal/runtime/agent -run 'Test(EmitFinalAnswerTelemetry|ForcedCompletion|DeterministicNoTools|CompleteWithoutMoreTools|ToolStepBudgetPartialRequiredEdits|FinalAnswerTelemetry)' -count=1`;
+  `go test ./internal/runtime/agent -count=1`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./internal/runtime/agent`;
+  `go run golang.org/x/tools/cmd/deadcode@latest ./... | rg '^internal/runtime/agent/'`
+  as inventory, now showing no runtime-agent findings. Full verification:
+  `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `git diff --check`.
 
 ## Review And Regression Protocol
 
