@@ -189,7 +189,7 @@ fi
       require_single_turn_lane_entrypoint "implement"
       IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" implement -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}
     elif [[ "$runner_mode" == "auto" || -z "$runner_mode" ]]; then
-      IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" -config "$config_path" -turns-file "$turns_file" ${IDIOM_EXTRA_ARGS:-}
+      IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" run -config "$config_path" --turns-file "$turns_file" ${IDIOM_EXTRA_ARGS:-}
     else
       echo "unsupported IDIOM_SWE_RUNNER_MODE: $runner_mode" >&2
       exit 2
@@ -203,7 +203,7 @@ fi
       require_single_turn_lane_entrypoint "implement"
       IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" go run ./cmd/idiom implement -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}
     elif [[ "$runner_mode" == "auto" || -z "$runner_mode" ]]; then
-      IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" go run ./cmd/idiom -config "$config_path" -turns-file "$turns_file" ${IDIOM_EXTRA_ARGS:-}
+      IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" go run ./cmd/idiom run -config "$config_path" --turns-file "$turns_file" ${IDIOM_EXTRA_ARGS:-}
     else
       echo "unsupported IDIOM_SWE_RUNNER_MODE: $runner_mode" >&2
       exit 2

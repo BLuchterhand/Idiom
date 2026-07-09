@@ -39,6 +39,7 @@ type RunOptions struct {
 }
 
 type PromptRunner func(config.Config, string, RunOptions, io.Writer) (string, error)
+type PromptsRunner func(config.Config, []string, RunOptions, io.Writer) ([]string, error)
 type ModeRunner func(config.Config, RunOptions) error
 type ListSessionsRunner func(config.Config, io.Writer) error
 type VersionRunner func([]string, io.Writer, io.Writer) int
@@ -47,7 +48,6 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, tuiRun 
 	var (
 		configPath       string
 		serverOnly       bool
-		jsonEvents       bool
 		resume           string
 		listSessionsFlag bool
 		modelOverride    string
@@ -58,7 +58,6 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, tuiRun 
 	fs.SetOutput(stderr)
 	fs.StringVar(&configPath, "config", "config.json", "path to config file")
 	fs.BoolVar(&serverOnly, "server-only", false, "run only llama-server and block")
-	fs.BoolVar(&jsonEvents, "json", false, "accepted for legacy headless aliases routed by the root command")
 	fs.StringVar(&resume, "resume", "", "resume a prior session by id (filename without .jsonl) before running")
 	fs.BoolVar(&listSessionsFlag, "list-sessions", false, "print recent session ids from the debug log directory and exit")
 	fs.StringVar(&modelOverride, "model", "", "override llama_server.model from config (e.g. an alias the proxy resolves)")
@@ -116,7 +115,7 @@ func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, tuiRun 
 
 func RunTUI(cfg config.Config, opts RunOptions) error {
 	if !stdoutIsTerminal() || !stderrIsTerminal() {
-		return fmt.Errorf("interactive TUI requires a terminal; use `idiom run --prompt ...` or legacy `idiom -prompt ...` for non-interactive runs")
+		return fmt.Errorf("interactive TUI requires a terminal; use `idiom run --prompt ...` for non-interactive runs")
 	}
 
 	model := app.New(cfg)

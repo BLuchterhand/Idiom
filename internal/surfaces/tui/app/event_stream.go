@@ -54,7 +54,7 @@ func (s *jsonEventStream) emit(record map[string]any) {
 }
 
 // SetJSONEventStream wires a JSONL event sink onto the Model. Callers (typically
-// headless `idiom --prompt --json`) should pass os.Stdout. Pass nil to
+// headless `idiom run --prompt --json`) should pass os.Stdout. Pass nil to
 // disable. The sessionID is included in every emitted record so consumers can
 // correlate events with the matching debug log file.
 func (m *Model) SetJSONEventStream(w io.Writer, sessionID string) {

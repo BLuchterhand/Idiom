@@ -78,7 +78,7 @@ func runMainWithTelemetryDir(args []string, stdout io.Writer, stderr io.Writer, 
 
 		switch subcommand {
 		case "run":
-			return headlesscmd.Run(subcommandArgs, os.Stdin, stdout, stderr, headlesscmd.PromptRunner(cmdruntime.RunPromptOnce), rec)
+			return headlesscmd.Run(subcommandArgs, os.Stdin, stdout, stderr, cmdruntime.RunPromptOnce, cmdruntime.RunPromptsOnce, rec)
 		case "serve":
 			return headlesscmd.RunServe(subcommandArgs, stdout, stderr)
 		case "session":
@@ -142,16 +142,12 @@ func runMainWithTelemetryDir(args []string, stdout io.Writer, stderr io.Writer, 
 		}
 	}
 
-	if legacyHeadlessAliasRequested(args) {
-		return headlesscmd.RunLegacy(args, stdout, stderr, headlesscmd.PromptRunner(cmdruntime.RunPromptOnce), headlesscmd.PromptsRunner(cmdruntime.RunPromptsOnce), rec)
-	}
-
 	return cmdruntime.RunWithTelemetry(args, stdout, stderr, cmdruntime.RunTUI, cmdruntime.RunServerOnlyWithTelemetry, cmdruntime.RunListSessions, runVersionMain, rec)
 }
 
 func rootTelemetryCommandName(args []string) string {
 	if len(args) == 0 {
-		return legacyRuntimeCommandName(args)
+		return runtimeCommandName(args)
 	}
 
 	subcommand := args[0]
@@ -168,42 +164,25 @@ func rootTelemetryCommandName(args []string) string {
 		"skills", "version":
 		return subcommand
 	default:
-		return legacyRuntimeCommandName(args)
+		return runtimeCommandName(args)
 	}
 }
 
-func legacyRuntimeCommandName(args []string) string {
+func runtimeCommandName(args []string) string {
 	for _, arg := range args {
-		if strings.HasPrefix(arg, "-prompt=") || strings.HasPrefix(arg, "--prompt=") {
-			return "prompt"
-		}
-
-		if strings.HasPrefix(arg, "-turns-file=") || strings.HasPrefix(arg, "--turns-file=") {
-			return "turns_file"
+		if strings.HasPrefix(arg, "-server-only=") || strings.HasPrefix(arg, "--server-only=") {
+			return "server"
 		}
 
 		switch arg {
 		case "-server-only", "--server-only":
 			return "server"
-		case "-prompt", "--prompt":
-			return "prompt"
-		case "-turns-file", "--turns-file":
-			return "turns_file"
 		case "-list-sessions", "--list-sessions":
 			return "list_sessions"
 		}
 	}
 
 	return "tui"
-}
-
-func legacyHeadlessAliasRequested(args []string) bool {
-	switch legacyRuntimeCommandName(args) {
-	case "prompt", "turns_file":
-		return true
-	default:
-		return false
-	}
 }
 
 func applyBuildInfo(opts Options) {

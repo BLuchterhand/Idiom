@@ -964,9 +964,8 @@ flowchart TD
    finding IDs and severities. Keep one report DTO and command entrypoint.
 9. Prune compatibility surfaces after the new authorities are in use:
    `default_coder` generation, no-op plan-execute flags, direct-tool legacy JSON
-   envelope fields, top-level `idiom -prompt`, transport-mode aliases,
-   languagetools test compatibility facades, `workerruntime` pass-through
-   aliases, and `probe --coder` if external parity is no longer required.
+   envelope fields, transport-mode aliases, languagetools test compatibility
+   facades, and `workerruntime` pass-through aliases.
 
 Hold recovery legacy progress readers and featureplanner replay compatibility
 readers until a persistence horizon or migration is defined.

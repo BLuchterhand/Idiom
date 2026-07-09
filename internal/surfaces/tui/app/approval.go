@@ -77,7 +77,7 @@ func (m *Model) requestApprovalResponse(req workspace.ToolRequest, modeName stri
 		return approvalResponse{}
 	}
 
-	// In headless mode (idiom --prompt --json, idiom artifact, idiom
+	// In headless mode (idiom run --prompt --json, idiom artifact, idiom
 	// implement) there is no TUI thread to call resolveApproval, so
 	// blocking on the response channel hangs the lane forever. Auto-deny
 	// instead so the runner's doom-loop / approval-required path closes

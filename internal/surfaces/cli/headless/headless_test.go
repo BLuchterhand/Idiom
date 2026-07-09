@@ -65,7 +65,7 @@ func TestRunAppliesPolicyOverridesAndWritesCompletion(t *testing.T) {
 		}
 
 		return "answer", nil
-	}, nil)
+	}, nil, nil)
 
 	if code != 0 {
 		t.Fatalf("Run exit = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
@@ -123,7 +123,7 @@ func TestRunHelpReturnsZero(t *testing.T) {
 	code := Run([]string{"--help"}, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
 		t.Fatal("prompt runner should not run for help")
 		return "", nil
-	}, nil)
+	}, nil, nil)
 	if code != 0 {
 		t.Fatalf("help exit = %d stderr=%s", code, stderr.String())
 	}
@@ -132,124 +132,20 @@ func TestRunHelpReturnsZero(t *testing.T) {
 	}
 }
 
-func TestRunLegacyPromptWritesCompletionAndMetadata(t *testing.T) {
-	root := t.TempDir()
-	configPath := writeHeadlessTestConfig(t, root)
-
-	var (
-		stdout, stderr bytes.Buffer
-		gotPrompt      string
-		gotOpts        cmdruntime.RunOptions
-	)
-	code := RunLegacy(
-		[]string{"-config", configPath, "-prompt", "explain routing"},
-		&stdout,
-		&stderr,
-		func(cfg config.Config, prompt string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
-			if cfg.Workspace.SessionID == "" {
-				t.Fatal("legacy prompt should stamp workspace session id before the runner")
-			}
-			gotPrompt = prompt
-			gotOpts = opts
-
-			return "answer text", nil
-		},
-		func(config.Config, []string, cmdruntime.RunOptions, io.Writer) ([]string, error) {
-			t.Fatal("turns-file runner should not run for prompt mode")
-			return nil, nil
-		},
-		nil,
-	)
-	if code != 0 {
-		t.Fatalf("RunLegacy exit = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
-	}
-	if gotPrompt != "explain routing" || strings.TrimSpace(stdout.String()) != "answer text" {
-		t.Fatalf("unexpected prompt output prompt=%q stdout=%q", gotPrompt, stdout.String())
-	}
-	if gotOpts.JSONEvents || gotOpts.Resume != "" {
-		t.Fatalf("opts should default to empty: %#v", gotOpts)
-	}
-
-	record, body := readSingleHeadlessCompletion(t, root)
-	if record.SchemaVersion != runrecord.RunCompletionSchemaVersion ||
-		record.Type != runrecord.RunCompletionRecordType ||
-		record.Implementation != "idiom --prompt" ||
-		record.TerminalClass != runrecord.TerminalClassCompleted ||
-		record.OutputMode != "text" ||
-		record.PromptSHA256 == "" ||
-		record.AnswerSHA256 == "" {
-		t.Fatalf("unexpected legacy completion record: %#v", record)
-	}
-	if got := record.Metadata["legacy_mode"]; len(got) != 1 || got[0] != "prompt" {
-		t.Fatalf("legacy_mode metadata = %#v", record.Metadata)
-	}
-	if got := record.Metadata["active_mode"]; len(got) != 1 || got[0] != "prompt" {
-		t.Fatalf("active_mode metadata = %#v", record.Metadata)
-	}
-	if got := record.Metadata["timeout_owner"]; len(got) != 1 || got[0] != "chat_request_timeout" {
-		t.Fatalf("timeout_owner metadata = %#v", record.Metadata)
-	}
-	if bytes.Contains(body, []byte("explain routing")) || bytes.Contains(body, []byte("answer text")) {
-		t.Fatalf("durable completion leaked raw prompt/answer: %s", string(body))
-	}
-}
-
-func TestRunLegacyPromptJSONSuppressesPlainAnswer(t *testing.T) {
-	root := t.TempDir()
-	configPath := writeHeadlessTestConfig(t, root)
-
-	var (
-		stdout, stderr bytes.Buffer
-		gotOpts        cmdruntime.RunOptions
-	)
-	code := RunLegacy(
-		[]string{"-config", configPath, "-prompt", "x", "-json"},
-		&stdout,
-		&stderr,
-		func(_ config.Config, _ string, opts cmdruntime.RunOptions, w io.Writer) (string, error) {
-			gotOpts = opts
-			_, _ = w.Write([]byte("{\"type\":\"final\",\"content\":\"event-only\"}\n"))
-
-			return "plain-answer", nil
-		},
-		func(config.Config, []string, cmdruntime.RunOptions, io.Writer) ([]string, error) {
-			t.Fatal("turns-file runner should not run for prompt mode")
-			return nil, nil
-		},
-		nil,
-	)
-	if code != 0 {
-		t.Fatalf("RunLegacy exit = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
-	}
-	if !gotOpts.JSONEvents {
-		t.Fatalf("--json should set JSONEvents true")
-	}
-	if got := stdout.String(); got != "{\"type\":\"final\",\"content\":\"event-only\"}\n" {
-		t.Fatalf("legacy JSON mode must only emit runner JSONL, got %q", got)
-	}
-
-	record, _ := readSingleHeadlessCompletion(t, root)
-	if record.OutputMode != "jsonl" || record.Implementation != "idiom --prompt" {
-		t.Fatalf("unexpected JSON legacy record: %#v", record)
-	}
-}
-
-func TestRunLegacyPromptFailureWritesCompletion(t *testing.T) {
+func TestRunPromptFailureWritesCompletion(t *testing.T) {
 	root := t.TempDir()
 	configPath := writeHeadlessTestConfig(t, root)
 
 	var stdout, stderr bytes.Buffer
-	code := RunLegacy(
-		[]string{"-config", configPath, "-prompt", "fail this"},
+	code := Run(
+		[]string{"--config", configPath, "--prompt", "fail this"},
+		bytes.NewReader(nil),
 		&stdout,
 		&stderr,
 		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
 			return "", errors.New("prompt failed")
 		},
-		func(config.Config, []string, cmdruntime.RunOptions, io.Writer) ([]string, error) {
-			t.Fatal("turns-file runner should not run for prompt mode")
-			return nil, nil
-		},
+		nil,
 		nil,
 	)
 	if code != 1 || !strings.Contains(stderr.String(), "prompt failed") {
@@ -262,7 +158,7 @@ func TestRunLegacyPromptFailureWritesCompletion(t *testing.T) {
 	}
 }
 
-func TestRunLegacyTurnsFileUsesSingleSessionRunner(t *testing.T) {
+func TestRunTurnsFileUsesSingleSessionRunner(t *testing.T) {
 	root := t.TempDir()
 	configPath := writeHeadlessTestConfig(t, root)
 	turnsPath := filepath.Join(t.TempDir(), "turns.json")
@@ -275,8 +171,9 @@ func TestRunLegacyTurnsFileUsesSingleSessionRunner(t *testing.T) {
 		gotPrompts     []string
 		gotOpts        cmdruntime.RunOptions
 	)
-	code := RunLegacy(
-		[]string{"-config", configPath, "-turns-file", turnsPath, "-json", "-resume", "prior-session"},
+	code := Run(
+		[]string{"--config", configPath, "--turns-file", turnsPath, "--json", "--resume", "prior-session"},
+		bytes.NewReader(nil),
 		&stdout,
 		&stderr,
 		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
@@ -293,7 +190,7 @@ func TestRunLegacyTurnsFileUsesSingleSessionRunner(t *testing.T) {
 		nil,
 	)
 	if code != 0 {
-		t.Fatalf("RunLegacy exit = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+		t.Fatalf("Run exit = %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
 	}
 	if strings.Join(gotPrompts, "|") != "first turn|second turn" {
 		t.Fatalf("unexpected prompts: %#v", gotPrompts)
@@ -306,22 +203,25 @@ func TestRunLegacyTurnsFileUsesSingleSessionRunner(t *testing.T) {
 	}
 
 	record, _ := readSingleHeadlessCompletion(t, root)
-	if record.Implementation != "idiom --turns-file" ||
+	if record.Implementation != "idiom run" ||
 		record.OutputMode != "jsonl" ||
 		record.TerminalClass != runrecord.TerminalClassCompleted ||
 		record.PromptSHA256 == "" ||
 		record.AnswerSHA256 == "" {
 		t.Fatalf("unexpected turns-file completion: %#v", record)
 	}
-	if got := record.Metadata["legacy_mode"]; len(got) != 1 || got[0] != "turns_file" {
-		t.Fatalf("legacy_mode metadata = %#v", record.Metadata)
+	if got := record.Metadata["entrypoint"]; len(got) != 1 || got[0] != "idiom run" {
+		t.Fatalf("entrypoint metadata = %#v", record.Metadata)
+	}
+	if got := record.Metadata["active_mode"]; len(got) != 1 || got[0] != "headless_turns_file" {
+		t.Fatalf("active_mode metadata = %#v", record.Metadata)
 	}
 	if got := record.Metadata["turns_file"]; len(got) != 1 || got[0] != filepath.Clean(turnsPath) {
 		t.Fatalf("turns_file metadata = %#v", record.Metadata)
 	}
 }
 
-func TestRunLegacyRejectsPromptTurnsConflict(t *testing.T) {
+func TestRunRejectsPromptTurnsConflict(t *testing.T) {
 	root := t.TempDir()
 	configPath := writeHeadlessTestConfig(t, root)
 	turnsPath := filepath.Join(t.TempDir(), "turns.txt")
@@ -330,21 +230,22 @@ func TestRunLegacyRejectsPromptTurnsConflict(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := RunLegacy(
-		[]string{"-config", configPath, "-prompt", "x", "-turns-file", turnsPath},
+	code := Run(
+		[]string{"--config", configPath, "--prompt", "x", "--turns-file", turnsPath},
+		bytes.NewReader(nil),
 		&stdout,
 		&stderr,
 		func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
-			t.Fatal("prompt runner should not run for invalid legacy flags")
+			t.Fatal("prompt runner should not run for invalid flags")
 			return "", nil
 		},
 		func(config.Config, []string, cmdruntime.RunOptions, io.Writer) ([]string, error) {
-			t.Fatal("turns runner should not run for invalid legacy flags")
+			t.Fatal("turns runner should not run for invalid flags")
 			return nil, nil
 		},
 		nil,
 	)
-	if code != 2 || !strings.Contains(stderr.String(), "mutually exclusive") {
+	if code != 2 || !strings.Contains(stderr.String(), "cannot be combined") {
 		t.Fatalf("expected prompt/turns conflict, code=%d stderr=%s", code, stderr.String())
 	}
 }
@@ -362,7 +263,7 @@ func TestRunValidatesOutputSchema(t *testing.T) {
 		"--session", "run-schema",
 	}, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
 		return `{"schema_version":"answer.v1","answer":"ok"}`, nil
-	}, nil)
+	}, nil, nil)
 
 	if code != 0 {
 		t.Fatalf("schema-valid run failed: code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
@@ -389,7 +290,7 @@ func TestRunValidatesOutputSchema(t *testing.T) {
 		"--session", "run-schema-bad",
 	}, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
 		return `{"schema_version":"wrong.v1","answer":"ok"}`, nil
-	}, nil)
+	}, nil, nil)
 	if code == 0 {
 		t.Fatal("schema mismatch should fail")
 	}
@@ -434,7 +335,7 @@ func TestRunRejectsInvalidPolicyFlags(t *testing.T) {
 			code := Run(tt.args, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
 				t.Fatal("prompt runner should not run for invalid flags")
 				return "", nil
-			}, nil)
+			}, nil, nil)
 			if code != 2 {
 				t.Fatalf("exit = %d, want 2 stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 			}
@@ -466,7 +367,7 @@ func TestRunRejectsInvalidSessionIDsBeforeModelExecution(t *testing.T) {
 			}, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
 				t.Fatal("prompt runner should not run for invalid session id")
 				return "", nil
-			}, nil)
+			}, nil, nil)
 
 			if code != 2 {
 				t.Fatalf("exit = %d, want 2 stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -493,7 +394,7 @@ func TestRunFailsWhenCompletionCannotBeSaved(t *testing.T) {
 		"--session", "completion-save-fails",
 	}, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
 		return "ok", nil
-	}, nil)
+	}, nil, nil)
 
 	if code == 0 {
 		t.Fatal("completion save failure should fail the run")
@@ -529,7 +430,7 @@ func TestRunPolicyTimeoutProjectsToRuntimeRequestTimeout(t *testing.T) {
 			t.Fatalf("timeout projection = request %d start %d, want 2/0", cfg.Chat.RequestTimeoutSeconds, cfg.Chat.ServerStartTimeoutSecs)
 		}
 		return "ok", nil
-	}, nil)
+	}, nil, nil)
 
 	if code != 0 {
 		t.Fatalf("timeout projection run failed stdout=%s stderr=%s", stdout.String(), stderr.String())
@@ -670,7 +571,7 @@ func TestRunFailOnDegradedRejectsUnsupportedApprovalPolicy(t *testing.T) {
 		"--session", "run-degraded",
 	}, bytes.NewReader(nil), &stdout, &stderr, func(config.Config, string, cmdruntime.RunOptions, io.Writer) (string, error) {
 		return "ok", nil
-	}, nil)
+	}, nil, nil)
 
 	if code == 0 {
 		t.Fatalf("degraded run should fail when --fail-on-degraded is set")
@@ -701,7 +602,7 @@ func TestRunJSONFlagEmitsJSONLOnly(t *testing.T) {
 		_, _ = w.Write([]byte("{\"type\":\"final\",\"content\":\"ok\"}\n"))
 
 		return "ok", nil
-	}, nil)
+	}, nil, nil)
 
 	if code != 0 {
 		t.Fatalf("Run exit = %d stderr=%s", code, stderr.String())
