@@ -26,7 +26,7 @@ func readOnlySourceGroundingRunner() Runner {
 func TestSourceGroundingEscapingMentionedPaths(t *testing.T) {
 	answer := "The bug is in `/tmp/outside/labels.go:6`, and a related path is ../other/config.yaml."
 
-	paths := sourceGroundingEscapingMentionedPaths(answer)
+	paths := analyzeSourceCitations(answer).EscapingPaths
 	if len(paths) != 2 {
 		t.Fatalf("escaping paths = %#v, want two", paths)
 	}
@@ -38,11 +38,12 @@ func TestSourceGroundingEscapingMentionedPaths(t *testing.T) {
 func TestSourceGroundingEscapingUnsupportedPathsAllowUnverifiedQualification(t *testing.T) {
 	answer := "The outside path `/tmp/outside/labels.go:6` is unverified and outside the workspace."
 
-	if paths := sourceGroundingEscapingMentionedPaths(answer); len(paths) != 1 || paths[0] != "/tmp/outside/labels.go" {
+	paths := analyzeSourceCitations(answer).EscapingPaths
+	if len(paths) != 1 || paths[0] != "/tmp/outside/labels.go" {
 		t.Fatalf("escaping path detection changed: %#v", paths)
 	}
 
-	if unsupported := sourceGroundingUnsupportedEscapingMentionedPaths(answer, nil); len(unsupported) != 0 {
+	if unsupported := sourceGroundingUnsupportedEscapingPaths(answer, paths, nil); len(unsupported) != 0 {
 		t.Fatalf("unverified outside-workspace citation should not block source grounding: %#v", unsupported)
 	}
 }
@@ -99,7 +100,7 @@ func TestSourceGroundingAllowsBacktickedExternalDocumentPathWithSpaces(t *testin
 	}
 	answer := "The author material is grounded in `" + docPath + "`."
 
-	if paths := sourceGroundingMentionedPaths(answer); !slices.Contains(paths, docPath) || slices.Contains(paths, "Project/front-back/back-matter.md") {
+	if paths := analyzeSourceCitations(answer).MentionedPaths; !slices.Contains(paths, docPath) || slices.Contains(paths, "Project/front-back/back-matter.md") {
 		t.Fatalf("mentioned paths = %#v, want intact external path without truncated Project fragment", paths)
 	}
 
@@ -111,7 +112,7 @@ func TestSourceGroundingAllowsBacktickedExternalDocumentPathWithSpaces(t *testin
 func TestSourceGroundingMentionedPathsIgnoreBacktickedCommands(t *testing.T) {
 	answer := "| Test file | Command |\n| `tests/test_models.py` | `pytest tests/test_models.py` |"
 
-	paths := sourceGroundingMentionedPaths(answer)
+	paths := analyzeSourceCitations(answer).MentionedPaths
 	if !slices.Contains(paths, "tests/test_models.py") {
 		t.Fatalf("mentioned paths = %#v, want tests/test_models.py", paths)
 	}
@@ -133,7 +134,7 @@ func TestSourceGroundingAllowsQuotedLineRangeForBackedSourceBody(t *testing.T) {
 	}
 	answer := "From `docs/decisioning-north-star.md:28-34`, the north star says the model owns strategy and the harness owns contracts."
 
-	paths := sourceGroundingMentionedPaths(answer)
+	paths := analyzeSourceCitations(answer).MentionedPaths
 	if !slices.Contains(paths, "docs/decisioning-north-star.md") {
 		t.Fatalf("mentioned paths = %#v, want line range stripped to docs/decisioning-north-star.md", paths)
 	}
@@ -143,6 +144,47 @@ func TestSourceGroundingAllowsQuotedLineRangeForBackedSourceBody(t *testing.T) {
 
 	if reason := runner.sourceGroundingRejectionReason(answer, results); reason != "" {
 		t.Fatalf("body-backed quoted line range should not be rejected: %q", reason)
+	}
+}
+
+func TestSourceCitationAnalysisContractAcrossRuntimeConsumers(t *testing.T) {
+	answer := strings.Join([]string{
+		"From `docs/decisioning-north-star.md:28-34`, the north star says the model owns strategy.",
+		"The Rust entrypoint `main.rs:10` routes that behavior, while `source grounding` is just prose.",
+		"The token `path/to/file.go` is a tool schema placeholder, not a repository citation.",
+		"```",
+		"`fake/path.go:1` is a fenced example.",
+		"```",
+		"> `quoted/path.go:1` is quoted context.",
+	}, "\n")
+
+	citations := analyzeSourceCitations(answer)
+	mentioned := citations.MentionedPaths
+	if !slices.Contains(mentioned, "docs/decisioning-north-star.md") {
+		t.Fatalf("mentioned paths = %#v, want line range stripped to docs/decisioning-north-star.md", mentioned)
+	}
+	if !slices.Contains(mentioned, "main.rs") {
+		t.Fatalf("mentioned paths = %#v, want non-Go file citation main.rs", mentioned)
+	}
+	for _, unwanted := range []string{"docs/decisioning-north-star.md:28-34", "path/to/file.go", "fake/path.go", "quoted/path.go"} {
+		if slices.Contains(mentioned, unwanted) {
+			t.Fatalf("mentioned paths = %#v, should not include %s", mentioned, unwanted)
+		}
+	}
+
+	stripped := citations.textWithoutPathCitations()
+	if strings.Contains(stripped, "docs/decisioning-north-star") || strings.Contains(stripped, "main.rs") || strings.Contains(stripped, "path/to/file.go") {
+		t.Fatalf("path citations were not stripped from answer prose: %q", stripped)
+	}
+	if !strings.Contains(stripped, "source grounding") {
+		t.Fatalf("non-path code span should remain in prose: %q", stripped)
+	}
+
+	inspected := readOnlyEvidencePacketSourceLikePaths(citations.MentionedPaths, 16)
+	for _, unwanted := range []string{"path/to/file.go", "fake/path.go", "quoted/path.go"} {
+		if slices.Contains(inspected, unwanted) {
+			t.Fatalf("inspected paths = %#v, should not include %s", inspected, unwanted)
+		}
 	}
 }
 

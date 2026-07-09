@@ -1471,7 +1471,7 @@ func acceptedReadOnlyDirectAnswerEvidencePaths(answer string, brief workerruntim
 }
 
 func readOnlyAcceptedDirectAnswerEvidencePaths(answer string, ledger readOnlyAnswerabilityLedger, results []workspace.ToolResult) []string {
-	mentioned := readOnlySourceLikePaths(sourceGroundingMentionedPaths(answer), 16)
+	mentioned := readOnlySourceLikePaths(analyzeSourceCitations(answer).MentionedPaths, 16)
 	relevant := ledger.RelevantSourceBodyPaths
 	objectivePaths := ledger.SourceBodyObjectivePaths
 
@@ -1497,7 +1497,7 @@ func readOnlyAcceptedDirectAnswerEvidencePaths(answer string, ledger readOnlyAns
 }
 
 func acceptedFeaturePlannerPlanArtifactPaths(answer string, ledger readOnlyAnswerabilityLedger) []string {
-	mentioned := sourceGroundingMentionedPaths(answer)
+	mentioned := analyzeSourceCitations(answer).MentionedPaths
 	if len(mentioned) == 0 {
 		return ledger.PlanArtifactPaths
 	}
@@ -1523,13 +1523,14 @@ func acceptedFeaturePlannerPlanArtifactPaths(answer string, ledger readOnlyAnswe
 }
 
 func answerCitedCollectiveSourceBodySupportPaths(answer string, ledger readOnlyAnswerabilityLedger) []string {
-	mentionedSet := readOnlyPathSet(sourceGroundingMentionedPaths(answer))
+	mentioned := analyzeSourceCitations(answer).MentionedPaths
+	mentionedSet := readOnlyPathSet(mentioned)
 	if len(mentionedSet) == 0 {
 		return nil
 	}
 
 	if ledger.directAnswerConversation() && ObjectiveAsksImplementationShape(ledger.Objective) {
-		return intersectRunnerPaths(ledger.ImplementationOwnerPaths(), sourceGroundingMentionedPaths(answer))
+		return intersectRunnerPaths(ledger.ImplementationOwnerPaths(), mentioned)
 	}
 
 	sourceSet := readOnlyPathSet(ledger.SourceBodyPaths)

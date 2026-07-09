@@ -10,7 +10,6 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
-	"idiom/internal/platform/textutil"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -33,8 +32,6 @@ const (
 )
 
 const sourceGroundingAssessmentPayloadType = "agent.source_grounding_assessment.v1"
-
-var sourceGroundingInlineCodePathCandidatePattern = regexp.MustCompile("`([^`\\n]+)`")
 
 type sourceGroundingAssessment struct {
 	Kind  sourceGroundingRejectionKind
@@ -265,11 +262,12 @@ func (r *Runner) assessSourceGrounding(answer string, results []workspace.ToolRe
 
 	validationLedgerEvidence := r.validationStatusAnswerCanUseLedgerEvidence(answer, results)
 
-	if escaping := sourceGroundingUnsupportedEscapingMentionedPaths(answer, results); len(escaping) > 0 {
+	citations := analyzeSourceCitations(answer)
+	if escaping := sourceGroundingUnsupportedEscapingPaths(answer, citations.EscapingPaths, results); len(escaping) > 0 {
 		return sourceGroundingUnsupportedDetailAssessment(escaping)
 	}
 
-	paths := sourceGroundingMentionedPaths(answer)
+	paths := citations.MentionedPaths
 	if len(paths) == 0 {
 		return sourceGroundingAssessment{}
 	}
@@ -312,12 +310,7 @@ func (r *Runner) assessSourceGrounding(answer string, results []workspace.ToolRe
 			continue
 		}
 
-		citationExists := sourceCitationExists(r, citationPath)
-		if !citationExists && sourceCitationIsSchemaPlaceholder(answer, path) {
-			continue
-		}
-
-		if !citationExists {
+		if !sourceCitationExists(r, citationPath) {
 			if !strings.Contains(path, "/") &&
 				!sourceCitationLooksLikeRootPath(path) &&
 				!sourceCitationHasLineSuffix(answer, path) &&
@@ -458,208 +451,7 @@ func sourceCitationWorkspaceBodyMatches(r *Runner, path string, results []worksp
 	return uniqueSortedRunnerPaths(matches)
 }
 
-func sourceGroundingMentionedPaths(answer string) []string {
-	scanText := stripQuotedAndFencedSourceExamples(answer)
-	paths := filterSourceGroundingMentionedPaths(pathparse.MentionedWorkspaceFiles(scanText))
-	quotedPaths := sourceGroundingQuotedPathCandidates(scanText)
-	if len(quotedPaths) > 0 {
-		paths = sourceGroundingDropQuotedPathFragments(paths, quotedPaths)
-		paths = append(paths, quotedPaths...)
-	}
-	lineRE := regexp.MustCompile("(?i)(?:^|[\\s`'\"(])([a-z0-9_.-]+\\.(?:go|py|ts|tsx|js|jsx|rs|java|c|cc|cpp|h|hpp|sh|zsh|gd|astro|md|mdx|markdown|json|jsonl|yaml|yml|toml|txt)):\\d+")
-
-	for _, match := range lineRE.FindAllStringSubmatch(scanText, -1) {
-		if len(match) > 1 && sourceGroundingMentionedPathLooksPlausible(match[1]) {
-			paths = append(paths, match[1])
-		}
-	}
-
-	rootLineRE := regexp.MustCompile("(?i)(?:^|[\\s`'\"(])((?:go\\.mod|go\\.sum|makefile|dockerfile|readme\\.md|agents\\.md|package\\.json|package-lock\\.json|pnpm-lock\\.yaml|yarn\\.lock|pyproject\\.toml|poetry\\.lock|cargo\\.toml|cargo\\.lock)):\\d+")
-	for _, match := range rootLineRE.FindAllStringSubmatch(scanText, -1) {
-		if len(match) > 1 && sourceGroundingMentionedPathLooksPlausible(match[1]) {
-			paths = append(paths, match[1])
-		}
-	}
-
-	return uniqueSortedRunnerPaths(paths)
-}
-
-func sourceGroundingQuotedPathCandidates(text string) []string {
-	var paths []string
-	for _, match := range sourceGroundingInlineCodePathCandidatePattern.FindAllStringSubmatch(text, -1) {
-		if len(match) <= 1 {
-			continue
-		}
-
-		path := strings.TrimSpace(strings.Trim(match[1], "`'\"()[]{}<>,;"))
-		if !sourceGroundingQuotedPathCandidateLooksLikeCitation(path) {
-			continue
-		}
-
-		paths = append(paths, sourceGroundingCitationPathWithoutLineSuffix(path))
-	}
-
-	return uniqueSortedRunnerPaths(paths)
-}
-
-func sourceGroundingQuotedPathCandidateLooksLikeCitation(path string) bool {
-	path = sourceGroundingCitationPathWithoutLineSuffix(strings.TrimSpace(path))
-	if !sourceGroundingCitationPathLooksLikePath(path) {
-		return false
-	}
-
-	if strings.ContainsAny(path, " \t") {
-		return filepath.IsAbs(path) || filepath.VolumeName(path) != "" || pathparse.LooksLikeWindowsAbsolutePath(path)
-	}
-
-	return true
-}
-
-func sourceGroundingCitationPathLooksLikePath(token string) bool {
-	token = strings.TrimSpace(strings.Trim(token, "`'\" "))
-	if token == "" {
-		return false
-	}
-
-	path := sourceGroundingCitationPathWithoutLineSuffix(token)
-	if path == "" {
-		return false
-	}
-
-	if filepath.IsAbs(path) || filepath.VolumeName(path) != "" || pathparse.LooksLikeWindowsAbsolutePath(path) {
-		return pathparse.HasWorkspaceFileExtension(path)
-	}
-
-	return pathparse.LooksLikeWorkspacePathToken(path)
-}
-
-func sourceGroundingCitationPathWithoutLineSuffix(token string) string {
-	token = strings.TrimSpace(token)
-	idx := strings.LastIndex(token, ":")
-	if idx <= 0 || idx == len(token)-1 {
-		return token
-	}
-
-	if !sourceGroundingCitationLineSuffix(token[idx+1:]) {
-		return token
-	}
-
-	return token[:idx]
-}
-
-func sourceGroundingCitationLineSuffix(suffix string) bool {
-	suffix = strings.TrimSpace(suffix)
-	if suffix == "" {
-		return false
-	}
-
-	start, end, ranged := strings.Cut(suffix, "-")
-	if !sourceGroundingAllDigits(start) {
-		return false
-	}
-	if !ranged {
-		return true
-	}
-
-	return sourceGroundingAllDigits(end)
-}
-
-func sourceGroundingAllDigits(value string) bool {
-	if value == "" {
-		return false
-	}
-
-	for _, r := range value {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-
-	return true
-}
-
-func sourceGroundingDropQuotedPathFragments(paths []string, quotedPaths []string) []string {
-	if len(paths) == 0 || len(quotedPaths) == 0 {
-		return paths
-	}
-
-	var out []string
-	for _, path := range paths {
-		if sourceGroundingPathCoveredByQuotedCandidate(path, quotedPaths) {
-			continue
-		}
-
-		out = append(out, path)
-	}
-
-	return out
-}
-
-func sourceGroundingPathCoveredByQuotedCandidate(path string, quotedPaths []string) bool {
-	path = filepath.ToSlash(strings.TrimSpace(strings.Trim(path, "`'\"()[]{}<>,;")))
-	if path == "" {
-		return false
-	}
-
-	pathLower := strings.ToLower(path)
-	for _, quotedPath := range quotedPaths {
-		quotedPath = filepath.ToSlash(strings.TrimSpace(strings.Trim(quotedPath, "`'\"()[]{}<>,;")))
-		if quotedPath == "" || strings.EqualFold(quotedPath, path) {
-			continue
-		}
-
-		quotedLower := strings.ToLower(quotedPath)
-		if strings.HasSuffix(quotedLower, "/"+pathLower) ||
-			strings.Contains(quotedLower, " "+pathLower) {
-
-			return true
-		}
-	}
-
-	return false
-}
-
-func sourceGroundingEscapingMentionedPaths(answer string) []string {
-	scanText := stripQuotedAndFencedSourceExamples(answer)
-	seen := map[string]struct{}{}
-	var paths []string
-
-	for _, raw := range sourceGroundingEscapingPathCandidates(scanText) {
-		raw = strings.Trim(raw, "`'\"()[]{}<>,;")
-		if !readOnlyPathEscapesWorkspace(raw) {
-			continue
-		}
-
-		path := sourceGroundingEscapingPathDisplay(raw)
-		if path == "" || !pathparse.HasWorkspaceFileExtension(path) {
-			continue
-		}
-
-		if _, ok := seen[path]; ok {
-			continue
-		}
-		seen[path] = struct{}{}
-		paths = append(paths, path)
-	}
-
-	return textutil.Sorted(paths)
-}
-
-func sourceGroundingEscapingPathCandidates(text string) []string {
-	var candidates []string
-
-	for _, match := range sourceGroundingInlineCodePathCandidatePattern.FindAllStringSubmatch(text, -1) {
-		if len(match) > 1 {
-			candidates = append(candidates, match[1])
-		}
-	}
-
-	candidates = append(candidates, strings.Fields(text)...)
-	return candidates
-}
-
-func sourceGroundingUnsupportedEscapingMentionedPaths(answer string, results []workspace.ToolResult) []string {
-	paths := sourceGroundingEscapingMentionedPaths(answer)
+func sourceGroundingUnsupportedEscapingPaths(answer string, paths []string, results []workspace.ToolResult) []string {
 	if len(paths) == 0 {
 		return nil
 	}
@@ -679,112 +471,6 @@ func sourceGroundingUnsupportedEscapingMentionedPaths(answer string, results []w
 	}
 
 	return unsupported
-}
-
-func sourceGroundingEscapingPathDisplay(raw string) string {
-	path := strings.TrimSpace(raw)
-	path = strings.Trim(path, "`'\"()[]{}<>,;")
-	if path == "" {
-		return ""
-	}
-
-	for _, ext := range []string{".jsonl", ".json", ".yaml", ".toml", ".astro", ".tsx", ".jsx", ".cpp", ".hpp", ".zsh", ".go", ".py", ".ts", ".js", ".rs", ".java", ".cc", ".c", ".h", ".sh", ".gd", ".md", ".yml", ".txt"} {
-		if idx := indexFold(path, ext); idx >= 0 {
-			return path[:idx+len(ext)]
-		}
-	}
-
-	return path
-}
-
-func stripQuotedAndFencedSourceExamples(text string) string {
-	if strings.TrimSpace(text) == "" {
-		return text
-	}
-
-	var out []string
-	inFence := false
-
-	for _, line := range strings.Split(text, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
-			inFence = !inFence
-			continue
-		}
-
-		if inFence || strings.HasPrefix(trimmed, ">") {
-			continue
-		}
-
-		out = append(out, line)
-	}
-
-	return strings.Join(out, "\n")
-}
-
-func filterSourceGroundingMentionedPaths(paths []string) []string {
-	out := make([]string, 0, len(paths))
-	for _, path := range paths {
-		if sourceGroundingMentionedPathLooksPlausible(path) {
-			out = append(out, path)
-		}
-	}
-
-	return out
-}
-
-func sourceGroundingMentionedPathLooksPlausible(path string) bool {
-	path = NormalizeRunnerPath(path)
-	if path == "" {
-		return false
-	}
-
-	base := filepath.Base(filepath.ToSlash(path))
-	if base == "." || base == "/" || base == "" {
-		return false
-	}
-
-	ext := filepath.Ext(base)
-	if ext != "" && base == ext {
-		return false
-	}
-
-	return true
-}
-
-func sourceGroundingMentionedPathIsSchemaPlaceholder(path string) bool {
-	path = strings.ToLower(strings.Trim(filepath.ToSlash(NormalizeRunnerPath(path)), "/"))
-	if path == "" {
-		return false
-	}
-
-	switch path {
-	case "path/file.go", "path/to/file.go", "path/to/source.go",
-		"file/path.go", "some/path.go", "example/file.go",
-		"example/path.go", "src/path/file.go":
-		return true
-	default:
-		return false
-	}
-}
-
-func sourceCitationIsSchemaPlaceholder(answer string, path string) bool {
-	if !sourceGroundingMentionedPathIsSchemaPlaceholder(path) {
-		return false
-	}
-
-	lower := strings.ToLower(sourceCitationWindow(answer, path))
-	return ContainsAny(lower,
-		"schema placeholder",
-		"schema example",
-		"example placeholder",
-		"placeholder path",
-		"placeholder source",
-		"tool schema",
-		"recovery prompt",
-		"not a repository citation",
-		"not a missing source file",
-	)
 }
 
 func sourceGroundingGateApplies(brief workerruntime.WorkerRuntimeBrief) bool {

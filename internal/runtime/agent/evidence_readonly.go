@@ -1223,8 +1223,9 @@ func readOnlyObjectiveAnswerEvidenceSupportedWithMinTerms(output string, objecti
 		return false
 	}
 
-	objectiveText := AnswerTextWithoutPathCitations(output)
-	mechanismText := strings.ToLower(AnswerProseForObjectiveMatching(objectiveText))
+	citations := analyzeSourceCitations(output)
+	objectiveText := citations.textWithoutPathCitations()
+	mechanismText := strings.ToLower(sourceCitationTextWithoutPathTokens(objectiveText))
 
 	if sourceBodyHasStrongObjectiveToken(objectiveText, objective) &&
 		ReadOnlyExplanationHasMechanismVerb(mechanismText) {
@@ -2083,121 +2084,6 @@ func SubstantiveAnswerWithoutEchoedObjective(answer string, objective string) st
 	return strings.TrimSpace(body)
 }
 
-func AnswerProseForObjectiveMatching(answer string) string {
-	answer = strings.TrimSpace(answer)
-	if answer == "" {
-		return ""
-	}
-
-	var b strings.Builder
-
-	inCodeSpan := false
-
-	for i := 0; i < len(answer); i++ {
-		ch := answer[i]
-		if ch == '`' {
-			inCodeSpan = !inCodeSpan
-
-			b.WriteByte(' ')
-
-			continue
-		}
-
-		if inCodeSpan {
-			continue
-		}
-
-		b.WriteByte(ch)
-	}
-
-	words := strings.Fields(b.String())
-	if len(words) == 0 {
-		return ""
-	}
-
-	kept := make([]string, 0, len(words))
-	for _, word := range words {
-		trimmed := strings.Trim(word, ".,:;!?()[]{}\"'")
-		if looksLikePathCitationToken(trimmed) {
-			continue
-		}
-
-		kept = append(kept, trimmed)
-	}
-
-	return strings.Join(kept, " ")
-}
-
-func looksLikePathCitationToken(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return false
-	}
-
-	value = strings.Trim(value, ".,:;!?()[]{}\"'")
-
-	return strings.Contains(value, "/") ||
-		strings.HasSuffix(value, ".go") ||
-		strings.Contains(value, ".go:") ||
-		strings.Contains(value, "\\")
-}
-
-func AnswerTextWithoutPathCitations(answer string) string {
-	answer = strings.TrimSpace(answer)
-	if answer == "" {
-		return ""
-	}
-
-	var b strings.Builder
-
-	for i := 0; i < len(answer); {
-		if answer[i] != '`' {
-			b.WriteByte(answer[i])
-
-			i++
-
-			continue
-		}
-
-		end := strings.IndexByte(answer[i+1:], '`')
-		if end < 0 {
-			b.WriteByte(' ')
-
-			i++
-
-			continue
-		}
-
-		span := answer[i+1 : i+1+end]
-		if !looksLikePathCitationToken(span) {
-			b.WriteByte(' ')
-			b.WriteString(span)
-			b.WriteByte(' ')
-		} else {
-			b.WriteByte(' ')
-		}
-
-		i += end + 2
-	}
-
-	words := strings.Fields(b.String())
-	if len(words) == 0 {
-		return ""
-	}
-
-	kept := make([]string, 0, len(words))
-	for _, word := range words {
-		trimmed := strings.Trim(word, ".,:;!?()[]{}\"'")
-		if looksLikePathCitationToken(trimmed) {
-			continue
-		}
-
-		kept = append(kept, trimmed)
-	}
-
-	return strings.Join(kept, " ")
-}
-
 func ReadOnlyExplanationHasMechanismVerb(lower string) bool {
 	for _, phrase := range []string{
 		" uses ", " use ", " used ", " delegates ", " delegate ", " delegated ",
@@ -2735,7 +2621,7 @@ func answerAddressesPlanArtifactObjective(answer string, objective string, ledge
 		return false
 	}
 
-	mentioned := readOnlySourceLikePaths(sourceGroundingMentionedPaths(answer), 16)
+	mentioned := readOnlySourceLikePaths(analyzeSourceCitations(answer).MentionedPaths, 16)
 	if len(mentioned) > 0 {
 		return featurePlannerPlanPathCitationsAreRelevant(answer, mentioned, ledger)
 	}
@@ -2779,7 +2665,7 @@ func answerCitesNamedObjectiveSource(answer string, ledger readOnlyAnswerability
 
 	sourceSet := readOnlyPathSet(ledger.SourceBodyPaths)
 
-	for _, raw := range sourceGroundingMentionedPaths(answer) {
+	for _, raw := range analyzeSourceCitations(answer).MentionedPaths {
 		path := NormalizeRunnerPath(raw)
 		if path == "" {
 			continue
@@ -2853,7 +2739,9 @@ func answerObjectiveTerms(answer string, objective string) []string {
 }
 
 func readOnlySharedObjectiveSupportTerms(answer string, objective string) []string {
-	answer = AnswerProseForObjectiveMatching(AnswerTextWithoutPathCitations(SubstantiveAnswerWithoutEchoedObjective(answer, objective)))
+	answer = sourceCitationTextWithoutPathTokens(
+		analyzeSourceCitations(SubstantiveAnswerWithoutEchoedObjective(answer, objective)).textWithoutPathCitations(),
+	)
 	if strings.TrimSpace(answer) == "" || strings.TrimSpace(objective) == "" {
 		return nil
 	}
@@ -2921,7 +2809,7 @@ func readOnlyLowConfidenceObjectiveSupportStopWord(term string) bool {
 }
 
 func answerSourceCitationsAreObjectiveRelevant(answer string, ledger readOnlyAnswerabilityLedger) bool {
-	mentionedPaths := sourceGroundingMentionedPaths(answer)
+	mentionedPaths := analyzeSourceCitations(answer).MentionedPaths
 	if answerCitesRelevantExternalDocument(mentionedPaths, ledger) {
 		return true
 	}
@@ -3060,7 +2948,7 @@ func readOnlyAnswerUsesInspectedSourceAsAnswer(answer string, ledger readOnlyAns
 		return false
 	}
 
-	if len(readOnlySourceLikePaths(sourceGroundingMentionedPaths(answer), 16)) > 0 {
+	if len(readOnlySourceLikePaths(analyzeSourceCitations(answer).MentionedPaths, 16)) > 0 {
 		return true
 	}
 
@@ -3667,7 +3555,8 @@ func buildReadOnlyEvidencePacket(objective string, answer string, results []work
 	projection := newToolResultEvidenceProjection(results)
 	sourceBodyPaths := readOnlyEvidencePacketSourceLikePaths(projection.SourceBodyPaths(), 16)
 	candidatePaths := projection.ReadOnlyEvidencePacketCandidatePaths()
-	inspectedPaths := readOnlyEvidencePacketInspectedPaths(sourceBodyPaths, candidatePaths, answer)
+	citations := analyzeSourceCitations(answer)
+	inspectedPaths := readOnlyEvidencePacketSourceLikePaths(textutil.Merge(sourceBodyPaths, candidatePaths, citations.MentionedPaths), 16)
 	findings := readOnlyEvidencePacketFindings(answer, results, sourceBodyPaths, 6)
 	packet := ReadOnlyEvidencePacket{
 		SchemaVersion:   readOnlyEvidencePacketPayloadType,
@@ -3967,7 +3856,7 @@ func readOnlyEvidencePacketAnswerableForObjective(packet ReadOnlyEvidencePacket,
 	}
 
 	body := SubstantiveAnswerWithoutEchoedObjective(strings.Join(findingText, "\n"), objective)
-	objectiveText := AnswerTextWithoutPathCitations(body)
+	objectiveText := analyzeSourceCitations(body).textWithoutPathCitations()
 
 	if readOnlyObjectiveAnswerEvidenceSupported(objectiveText, objective) {
 		return true
@@ -4108,15 +3997,6 @@ func readOnlyEvidencePacketNamesObjectiveSource(packet ReadOnlyEvidencePacket, o
 	}
 
 	return false
-}
-
-func readOnlyEvidencePacketInspectedPaths(sourceBodyPaths []string, candidatePaths []string, answer string) []string {
-	paths := append([]string{}, sourceBodyPaths...)
-
-	paths = append(paths, candidatePaths...)
-	paths = append(paths, pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(answer))...)
-
-	return readOnlyEvidencePacketSourceLikePaths(paths, 16)
 }
 
 func readOnlyEvidencePacketFindings(answer string, results []workspace.ToolResult, sourceBodyPaths []string, limit int) []ReadOnlyEvidenceFinding {
@@ -6246,7 +6126,7 @@ func readOnlyPlanArtifactEvidenceSupportsReply(brief workerruntime.WorkerRuntime
 		return true
 	}
 
-	mentioned := readOnlySourceLikePaths(sourceGroundingMentionedPaths(answer), 16)
+	mentioned := readOnlySourceLikePaths(analyzeSourceCitations(answer).MentionedPaths, 16)
 	return len(mentioned) > 0 && proposedPlanPathCitationsAreRelevant(answer, mentioned, ledger)
 }
 
@@ -7276,7 +7156,7 @@ func sourceInventoryHasPathBulletList(answer string) bool {
 		if !strings.HasPrefix(line, "- ") {
 			continue
 		}
-		if len(sourceGroundingMentionedPaths(line)) > 0 {
+		if len(analyzeSourceCitations(line).MentionedPaths) > 0 {
 			pathBullets++
 		}
 	}
@@ -7294,7 +7174,7 @@ func sourceInventoryAnswerIsPrimarilyInventory(answer string) bool {
 		if sourceInventoryLineHasNonAnswerMarker(normalized) {
 			continue
 		}
-		if strings.HasPrefix(line, "- ") && len(sourceGroundingMentionedPaths(line)) > 0 {
+		if strings.HasPrefix(line, "- ") && len(analyzeSourceCitations(line).MentionedPaths) > 0 {
 			continue
 		}
 		return false

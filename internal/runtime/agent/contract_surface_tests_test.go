@@ -6080,8 +6080,8 @@ func TestReadOnlyEvidencePacketAnswerableForObjectiveAcceptsSubagentWorkPacket(t
 	}
 	objective := "Explain how subagents work."
 	body := strings.Join([]string{packet.Findings[0].Text, packet.Findings[1].Text}, "\n")
-	objectiveText := AnswerTextWithoutPathCitations(SubstantiveAnswerWithoutEchoedObjective(body, objective))
-	mechanismText := strings.ToLower(AnswerProseForObjectiveMatching(objectiveText))
+	objectiveText := analyzeSourceCitations(SubstantiveAnswerWithoutEchoedObjective(body, objective)).textWithoutPathCitations()
+	mechanismText := strings.ToLower(sourceCitationTextWithoutPathTokens(objectiveText))
 
 	if !readOnlyEvidencePacketAnswerableForObjective(packet, objective) {
 		t.Fatalf("expected subagent packet to support objective answerability: terms=%#v objectiveText=%q mechanism=%t packet=%#v",

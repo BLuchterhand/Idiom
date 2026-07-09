@@ -1274,6 +1274,24 @@ Reviewer-updated estimate:
   `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
   `staticcheck -checks=U1000 ./...`; `deadcode -test ./...`;
   `git diff --check`.
+- Runtime source-citation analysis authority is implemented. `source_citations`
+  now owns final-answer path citation parsing, line-suffix normalization,
+  explicit schema-placeholder filtering, escaping-path detection, and
+  path-citation prose stripping for source grounding, read-only evidence
+  packets, direct-answer objective support, and implementation acceptance.
+  The old source-grounding-only parser, read-only path-token stripper, and
+  evidence-packet raw answer path scan are deleted instead of kept as
+  compatibility wrappers. Production Go changed `+397 / -459`, net `-62`;
+  tests changed `+50 / -8`, net `+42`; total Go code changed `+447 / -467`,
+  net `-20`. Focused verification:
+  `go test ./internal/runtime/agent -run 'TestSourceGroundingEscapingMentionedPaths|TestSourceGroundingEscapingUnsupportedPathsAllowUnverifiedQualification|TestSourceGroundingAllowsBacktickedExternalDocumentPathWithSpaces|TestSourceGroundingAllowsQuotedLineRangeForBackedSourceBody|TestSourceCitationAnalysisContractAcrossRuntimeConsumers' -count=1`;
+  `go test ./internal/runtime/agent -run 'TestReadOnlyObjective|TestReadOnlyEvidencePacket|TestSourceGrounding' -count=1`;
+  `go test ./internal/runtime/agent -count=1`. Broad verification:
+  `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json`;
+  `go run honnef.co/go/tools/cmd/staticcheck@latest -checks=U1000 ./...`;
+  `go run golang.org/x/tools/cmd/deadcode@latest -test ./...`;
+  `git diff --check`.
 
 ## Review And Regression Protocol
 
