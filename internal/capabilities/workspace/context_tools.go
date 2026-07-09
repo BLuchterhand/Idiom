@@ -189,6 +189,7 @@ func (m *Manager) contextQuery(ctx context.Context, req ToolRequest) ToolResult 
 		Tool:    ToolNameContextQuery,
 		Summary: fmt.Sprintf("Context query returned %d node(s) and %d edge(s)%s%s", len(result.Nodes), len(result.Edges), gap, refreshSummary),
 		Output:  string(output),
+		Facts:   contextQueryToolResultFacts(result),
 	}
 }
 

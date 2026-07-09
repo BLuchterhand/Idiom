@@ -40,34 +40,37 @@ func discoveryResultOutcomeFromResult(req workspace.ToolRequest, result workspac
 		return outcome
 	}
 
-	if strings.TrimSpace(record.output) == "" && strings.TrimSpace(record.summary) == "" {
+	hasDiscoveryFacts := result.Facts != nil && result.Facts.HasDiscoveryTargets
+	if strings.TrimSpace(record.output) == "" && strings.TrimSpace(record.summary) == "" && !hasDiscoveryFacts {
 		return outcome
 	}
 
 	outcome.Candidates = record.CandidatePaths(maxCandidates)
 
-	switch {
-	case tool == workspace.ToolNameContextPack:
-		if result.Facts == nil || !result.Facts.HasDiscoveryTargets {
-			return outcome
-		}
-
+	if hasDiscoveryFacts {
 		switch result.Facts.DiscoveryStrength {
 		case toolfacts.DiscoveryStrengthCandidateOnly:
 			outcome.Strength = toolfacts.DiscoveryStrengthCandidateOnly
 		case toolfacts.DiscoveryStrengthSourceOwner:
 			outcome.Strength = toolfacts.DiscoveryStrengthSourceOwner
 		}
+		if outcome.Strength == "" {
+			if result.Facts.SourceOwnerFound {
+				outcome.Strength = toolfacts.DiscoveryStrengthSourceOwner
+			} else if len(outcome.Candidates) > 0 || len(result.Facts.CandidateSymbols) > 0 {
+				outcome.Strength = toolfacts.DiscoveryStrengthCandidateOnly
+			}
+		}
+		return outcome
+	}
+
+	switch {
 	case tool == workspace.ToolNameContextQuery:
 		if len(outcome.Candidates) == 0 {
 			return outcome
 		}
 
-		if discoveryConsumptionResultHasReadableSourceOwner(result) {
-			outcome.Strength = toolfacts.DiscoveryStrengthSourceOwner
-		} else {
-			outcome.Strength = toolfacts.DiscoveryStrengthCandidateOnly
-		}
+		outcome.Strength = toolfacts.DiscoveryStrengthCandidateOnly
 	case workspace.IsTextSearchToolName(tool):
 		if len(outcome.Candidates) == 0 {
 			return outcome
@@ -125,30 +128,4 @@ func textSearchDiscoveryResultBreadth(result workspace.ToolResult) (broad bool, 
 	}
 
 	return broad || count >= discoveryBroadSearchMatchThreshold, count, true
-}
-
-func discoveryConsumptionResultHasReadableSourceOwner(result workspace.ToolResult) bool {
-	text := strings.TrimSpace(result.Summary + "\n" + result.Output)
-	if text == "" {
-		return false
-	}
-
-	lower := strings.ToLower(text)
-	if strings.Contains(lower, `"source_owner_found":false`) ||
-		strings.Contains(lower, `"source_owner_found": false`) {
-
-		return false
-	}
-
-	if !strings.Contains(lower, `"source_owner_found":true`) &&
-		!strings.Contains(lower, `"source_owner_found": true`) &&
-		!strings.Contains(lower, "source owner found") &&
-		!strings.Contains(lower, "source-owner found") &&
-		!strings.Contains(lower, "readable source owner") &&
-		!strings.Contains(lower, "readable source-owner") {
-
-		return false
-	}
-
-	return len(readOnlySourceLikePaths(sourceLikePathsFromText(text, 4), 1)) > 0
 }

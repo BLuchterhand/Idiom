@@ -2910,7 +2910,7 @@ func planThenExecuteSelectableEditPaths(brief workerruntime.WorkerRuntimeBrief, 
 		}
 	}
 
-	for _, path := range contextPackCandidatePathsFromResults(results, max) {
+	for _, path := range typedDiscoveryCandidatePathsFromResults(results, max) {
 		add(path)
 
 		if len(paths) >= max {

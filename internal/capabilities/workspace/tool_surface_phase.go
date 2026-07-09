@@ -331,7 +331,12 @@ func ImplementationScopedSemanticDiscoveryToolAllowed(tool string) bool {
 }
 
 func PlanExecuteHistoryPendingToolListForPrompt() string {
-	return "`history_range` or `history_symbol`"
+	tools := ToolSurfacePhaseToolNames(ToolSurfacePhasePlanExecuteHistoryPending)
+	for i, tool := range tools {
+		tools[i] = "`" + tool + "`"
+	}
+
+	return strings.Join(tools, " or ")
 }
 
 func PlanExecuteSubmitReadyDisallowedTools(available []string) []string {

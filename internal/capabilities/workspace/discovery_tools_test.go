@@ -4455,6 +4455,28 @@ func TestStructuralSearchRejectsMissingPattern(t *testing.T) {
 	}
 }
 
+func TestStructuralSearchFactsUseAstGrepFiles(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "internal", "runner.go"), "package internal\n")
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	output := fmt.Sprintf(`[
+  {"file":%q,"range":{"start":{"line":1,"column":1},"end":{"line":3,"column":1}}},
+  {"file":"pkg/handler.go","range":{"start":{"line":10,"column":1},"end":{"line":12,"column":1}}},
+  {"file":"pkg/handler.go","range":{"start":{"line":20,"column":1},"end":{"line":22,"column":1}}}
+]`, filepath.Join(root, "internal", "runner.go"))
+
+	facts := mgr.structuralSearchToolResultFacts(output)
+	if facts == nil {
+		t.Fatal("expected structural_search facts")
+	}
+	if got, want := facts.CandidatePaths, []string{"internal/runner.go", "pkg/handler.go"}; !slices.Equal(got, want) {
+		t.Fatalf("candidate paths = %#v, want %#v", got, want)
+	}
+	if !facts.HasDiscoveryTargets || facts.DiscoveryStrength != toolfacts.DiscoveryStrengthSourceOwner || !facts.SourceOwnerFound {
+		t.Fatalf("unexpected structural_search facts: %#v", facts)
+	}
+}
+
 func TestOptionalExternalDiscoveryToolsReportUnavailable(t *testing.T) {
 	t.Setenv("PATH", "")
 

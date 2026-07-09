@@ -654,7 +654,7 @@ func candidateRecoveryScopePaths(brief workerruntime.WorkerRuntimeBrief, results
 		}
 	}
 
-	for _, path := range contextPackCandidatePathsFromResults(results, max) {
+	for _, path := range typedDiscoveryCandidatePathsFromResults(results, max) {
 		add(path)
 
 		if len(paths) >= max {

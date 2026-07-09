@@ -1439,6 +1439,30 @@ Reviewer-updated estimate:
   changed `+33 / -24`, net `+9`. Focused verification:
   `go test ./internal/runtime/agent -run 'TestReadOnlyEvidencePacket|TestBuildReadOnlyEvidencePacket|TestReadOnlyTaskResultAnswerableForObjectiveUsesTypedPacketAsAuthority|TestSynthesizeBriefConversationFallback|TestFinalAnswerDecoratorUsesExactProbeEvidenceOverRetainedScopeSummary|TestExactProbeObservationsDoNotInferChildRuntimeSemantics|TestForcedCompletionModelOwnedAnswerForReadOnlyArchitecture' -count=1`;
   `go test ./internal/runtime/agent -count=1`; `git diff --check`.
+- Discovery producer facts now cover `context_query`, `search_files`, and
+  `structural_search`, and runtime discovery consumption reads typed
+  `ToolResultFacts` before consulting legacy result text. This deleted the
+  context-query `source_owner_found` summary/JSON parser, replaced the
+  context-pack-only candidate extractor with typed discovery fact extraction,
+  converted context-query tests away from parser-shaped JSON fixtures, removed
+  the named `defaultChildRunner` pass-through wrapper, and derived the
+  plan-execute history-pending prompt tool list from the workspace phase table.
+  Production Go changed `+180 / -72`, net `+108`; test Go changed `+92 / -6`,
+  net `+86`. This is an accepted setup slice, not a LOC-reduction slice: it
+  moves authority to producers but leaves the larger `discovery_query` ranked
+  evidence parser and text-search hit-count parser as follow-up deletion
+  targets. With this worktree included, the branch remains at `-6,387`
+  production Go LOC versus `main`. Focused verification:
+  `go test ./internal/capabilities/workspace -run 'TestContext(Pack|Query)Facts|TestSearchFilesSkipsNoisyDirsByDefaultButAllowsExplicitPath|TestStructuralSearchFactsUseAstGrepFiles|TestPlanExecuteToolSurfacePhaseSets'`;
+  `go test ./internal/runtime/agent -run 'TestToolResultEvidenceProjectionCandidateBoundaries|TestDiscoveryConsumptionCandidateOnlyContextQueryAllowsFollowup|TestDiscoveryConsumptionStrongContextPackStillBlocksBroadRediscovery'`;
+  `go test ./internal/capabilities/workspace`;
+  `go test ./internal/runtime/agent`;
+  `go test ./internal/workflows/planexecute/runner ./internal/workflows/planexecute`.
+  Full verification: `go test ./...`; `go build ./cmd/idiom`;
+  `go run ./cmd/idiom coding-rules check --project-root . --config coding_rules.example.json --json --fail-on warning`;
+  `/Users/ben/go/bin/deadcode -test ./...`;
+  `/Users/ben/go/bin/staticcheck -checks=U1000 ./...`;
+  `git diff --check`.
 
 ## Review And Regression Protocol
 

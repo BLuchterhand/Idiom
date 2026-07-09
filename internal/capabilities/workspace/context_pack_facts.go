@@ -18,7 +18,7 @@ func contextPackToolResultFacts(result comprehension.PackResult) *toolfacts.Tool
 	}
 
 	facts := &toolfacts.ToolResultFacts{
-		CandidatePaths:         contextPackFactCandidatePaths(comprehension.RankedPackCandidatePaths(result)),
+		CandidatePaths:         discoveryFactCandidatePaths(comprehension.RankedPackCandidatePaths(result)),
 		CandidateSymbols:       comprehension.RankedPackCandidateSymbols(result),
 		HasDiscoveryTargets:    len(result.CandidateFiles) > 0 || len(result.CandidateSymbols) > 0 || len(result.Tests) > 0,
 		DiscoveryStrength:      discoveryStrength,
@@ -33,7 +33,50 @@ func contextPackToolResultFacts(result comprehension.PackResult) *toolfacts.Tool
 	return facts
 }
 
-func contextPackFactCandidatePaths(candidates []string) []string {
+func contextQueryToolResultFacts(result comprehension.QueryResult) *toolfacts.ToolResultFacts {
+	paths := discoveryFactCandidatePaths(extractPathsFromNodeSummaries(result.Nodes))
+	symbols := contextQueryCandidateSymbols(result.Nodes)
+	if len(paths) == 0 && len(symbols) == 0 {
+		return nil
+	}
+
+	facts := &toolfacts.ToolResultFacts{
+		CandidatePaths:      paths,
+		CandidateSymbols:    symbols,
+		HasDiscoveryTargets: true,
+		DiscoveryStrength:   toolfacts.DiscoveryStrengthCandidateOnly,
+		SourceOwnerFound:    false,
+	}
+
+	return facts
+}
+
+func contextQueryCandidateSymbols(nodes []comprehension.NodeSummary) []string {
+	seen := map[string]struct{}{}
+	var symbols []string
+	for _, node := range nodes {
+		name := strings.TrimSpace(node.QualifiedName)
+		if name == "" {
+			continue
+		}
+
+		value := name
+		if path := strings.TrimPrefix(strings.TrimSpace(node.Path), "./"); path != "" {
+			value = path + "#" + name
+		}
+
+		if _, ok := seen[value]; ok {
+			continue
+		}
+
+		seen[value] = struct{}{}
+		symbols = append(symbols, value)
+	}
+
+	return symbols
+}
+
+func discoveryFactCandidatePaths(candidates []string) []string {
 	seen := map[string]struct{}{}
 	var paths []string
 	for _, candidate := range candidates {

@@ -7115,7 +7115,7 @@ func (r *Runner) deterministicPlanExecuteGroundingRecoveryRequest(reply string, 
 
 	candidates := append([]string{}, candidateRecoveryScopePaths(r.RuntimeBrief, results[rejectedAt+1:], 8)...)
 
-	candidates = appendUniqueRunnerPaths(candidates, contextPackCandidatePathsFromResults(results[rejectedAt+1:], 8)...)
+	candidates = appendUniqueRunnerPaths(candidates, typedDiscoveryCandidatePathsFromResults(results[rejectedAt+1:], 8)...)
 
 	read := newToolResultEvidenceProjection(results[rejectedAt+1:]).ReadPaths()
 
@@ -7383,10 +7383,15 @@ func contextPackCandidateReadAllowed(req workspace.ToolRequest, results []worksp
 		return false
 	}
 
-	candidates := contextPackCandidatePathsFromResults(results, 32)
-	for _, candidate := range candidates {
-		if candidate == target {
-			return true
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != workspace.ToolNameContextPack || strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+
+		for _, candidate := range toolResultFactsCandidatePaths(result.Facts, 32) {
+			if candidate == target {
+				return true
+			}
 		}
 	}
 

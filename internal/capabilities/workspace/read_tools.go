@@ -457,7 +457,9 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 	}
 
 	output := make([]string, 0, displayLimit+1)
+	candidatePaths := make([]string, 0, displayLimit)
 	for _, match := range matches[:displayLimit] {
+		candidatePaths = append(candidatePaths, match.display)
 		if includeLogDirs && !match.modTime.IsZero() {
 			output = append(output, fmt.Sprintf("%s (modified %s; size %s)", m.handleDisplay(match.path), match.modTime.Format(time.RFC3339), formatBytes(match.size)))
 			continue
@@ -482,10 +484,21 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 		summary += " " + interpretedPattern
 	}
 
+	var facts *toolfacts.ToolResultFacts
+	if factPaths := discoveryFactCandidatePaths(candidatePaths); len(factPaths) > 0 {
+		facts = &toolfacts.ToolResultFacts{
+			CandidatePaths:      factPaths,
+			HasDiscoveryTargets: true,
+			DiscoveryStrength:   toolfacts.DiscoveryStrengthSourceOwner,
+			SourceOwnerFound:    true,
+		}
+	}
+
 	return ToolResult{
 		Tool:    ToolNameSearchFiles,
 		Summary: summary,
 		Output:  strings.Join(output, "\n"),
+		Facts:   facts,
 	}
 }
 

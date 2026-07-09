@@ -876,7 +876,7 @@ func (projection toolResultEvidenceProjection) promptEvidencePaths(max int) []st
 
 	paths = append(paths, projection.delegatedReadOnlyInspectedImplementationPaths()...)
 	paths = append(paths, delegatedDiscoveryQueryEvidencePaths(projection.results, max*4)...)
-	paths = append(paths, contextPackCandidatePathsFromResults(projection.results, max*4)...)
+	paths = append(paths, typedDiscoveryCandidatePathsFromResults(projection.results, max*4)...)
 	paths = append(paths, projection.pinnedPaths(max*6)...)
 	paths = projection.prioritizedClosureEvidencePaths(paths, max*3)
 
@@ -1379,9 +1379,11 @@ func (record toolResultEvidenceRecord) CandidatePaths(max int) []string {
 		return nil
 	}
 
+	if paths := toolResultFactsCandidatePaths(record.result.Facts, max); len(paths) > 0 {
+		return paths
+	}
+
 	switch {
-	case record.tool == workspace.ToolNameContextPack:
-		return contextPackCandidatePathsFromResults([]workspace.ToolResult{record.result}, max)
 	case record.tool == workspace.ToolNameDiscoveryQuery:
 		if paths := delegatedDiscoveryQueryEvidencePaths([]workspace.ToolResult{record.result}, max); len(paths) > 0 {
 			return paths
@@ -1396,7 +1398,7 @@ func (record toolResultEvidenceRecord) CandidatePaths(max int) []string {
 	}
 }
 
-func contextPackCandidatePathsFromResults(results []workspace.ToolResult, max int) []string {
+func typedDiscoveryCandidatePathsFromResults(results []workspace.ToolResult, max int) []string {
 	if max <= 0 {
 		max = 4
 	}
@@ -1405,16 +1407,11 @@ func contextPackCandidatePathsFromResults(results []workspace.ToolResult, max in
 	paths := make([]string, 0, max)
 
 	for _, result := range results {
-		if strings.TrimSpace(result.Tool) != workspace.ToolNameContextPack || strings.TrimSpace(result.Error) != "" || result.Facts == nil {
+		if strings.TrimSpace(result.Error) != "" {
 			continue
 		}
 
-		for _, raw := range result.Facts.CandidatePaths {
-			path := NormalizeRunnerPath(raw)
-			if path == "" || !pathparse.HasWorkspaceFileExtension(path) {
-				continue
-			}
-
+		for _, path := range toolResultFactsCandidatePaths(result.Facts, max) {
 			if _, ok := seen[path]; ok {
 				continue
 			}
@@ -1425,6 +1422,37 @@ func contextPackCandidatePathsFromResults(results []workspace.ToolResult, max in
 			if len(paths) >= max {
 				return paths
 			}
+		}
+	}
+
+	return paths
+}
+
+func toolResultFactsCandidatePaths(facts *toolfacts.ToolResultFacts, max int) []string {
+	if facts == nil {
+		return nil
+	}
+	if max <= 0 {
+		max = 4
+	}
+
+	seen := map[string]struct{}{}
+	paths := make([]string, 0, max)
+	for _, raw := range facts.CandidatePaths {
+		path := NormalizeRunnerPath(raw)
+		if path == "" || !pathparse.HasWorkspaceFileExtension(path) {
+			continue
+		}
+
+		if _, ok := seen[path]; ok {
+			continue
+		}
+
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+
+		if len(paths) >= max {
+			return paths
 		}
 	}
 

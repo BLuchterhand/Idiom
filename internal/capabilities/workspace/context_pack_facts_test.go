@@ -1,8 +1,10 @@
 package workspace
 
 import (
+	"slices"
 	"testing"
 
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/repository/comprehension"
 )
 
@@ -73,5 +75,28 @@ func TestContextPackFactsCandidateSymbolsPreferTopLevelQualityEvidence(t *testin
 
 	if facts.CandidateSymbols[0] == "internal/evidence/transcript/debuglog.go#DebugLogger.LogContext" {
 		t.Fatalf("candidate-file handles must not outrank top-level quality evidence: %#v", facts.CandidateSymbols)
+	}
+}
+
+func TestContextQueryFactsCarryCandidatePathsAndSymbols(t *testing.T) {
+	facts := contextQueryToolResultFacts(comprehension.QueryResult{
+		Nodes: []comprehension.NodeSummary{
+			{Path: "internal/runtime/agent/runner_core.go", QualifiedName: "Runner.Run"},
+			{Path: "internal/runtime/agent/runner_core.go", QualifiedName: "Runner.Run"},
+			{Path: "README.md"},
+		},
+	})
+
+	if facts == nil {
+		t.Fatal("expected context query facts")
+	}
+	if got, want := facts.CandidatePaths, []string{"internal/runtime/agent/runner_core.go", "README.md"}; !slices.Equal(got, want) {
+		t.Fatalf("candidate paths = %#v, want %#v", got, want)
+	}
+	if got, want := facts.CandidateSymbols, []string{"internal/runtime/agent/runner_core.go#Runner.Run"}; !slices.Equal(got, want) {
+		t.Fatalf("candidate symbols = %#v, want %#v", got, want)
+	}
+	if !facts.HasDiscoveryTargets || facts.DiscoveryStrength != toolfacts.DiscoveryStrengthCandidateOnly || facts.SourceOwnerFound {
+		t.Fatalf("unexpected context query discovery facts: %#v", facts)
 	}
 }

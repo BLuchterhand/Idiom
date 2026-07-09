@@ -283,7 +283,8 @@ func TestRunnerEndToEndAllowsContextQueryAfterBroadTextSearch(t *testing.T) {
 				return &workspace.ToolResult{
 					Tool:    req.Tool,
 					Summary: "Context query returned lifecycle candidates.",
-					Output:  `{"source_owner_found":false,"candidates":[{"path":"internal/contracts/workflowstate/machine.go","symbol":"Machine"}]}`,
+					Output:  `{"candidates":[{"path":"internal/contracts/workflowstate/machine.go","symbol":"Machine"}]}`,
+					Facts:   discoveryCandidateFactsForTest("internal/contracts/workflowstate/machine.go"),
 				}
 			default:
 				return nil

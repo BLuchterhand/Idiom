@@ -65,9 +65,49 @@ func (m *Manager) structuralSearch(ctx context.Context, req ToolRequest) ToolRes
 
 	if execErr != nil {
 		result.Error = execErr.Error()
+	} else {
+		result.Facts = m.structuralSearchToolResultFacts(output)
 	}
 
 	return result
+}
+
+func (m *Manager) structuralSearchToolResultFacts(output string) *toolfacts.ToolResultFacts {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return nil
+	}
+
+	var matches []struct {
+		File string `json:"file"`
+	}
+	if err := json.Unmarshal([]byte(output), &matches); err != nil {
+		return nil
+	}
+
+	paths := make([]string, 0, len(matches))
+	for _, match := range matches {
+		file := strings.TrimSpace(match.File)
+		if file == "" {
+			continue
+		}
+		if filepath.IsAbs(file) {
+			file = m.pathAccess.DisplayPath(file)
+		}
+		paths = append(paths, file)
+	}
+
+	factPaths := discoveryFactCandidatePaths(paths)
+	if len(factPaths) == 0 {
+		return nil
+	}
+
+	return &toolfacts.ToolResultFacts{
+		CandidatePaths:      factPaths,
+		HasDiscoveryTargets: true,
+		DiscoveryStrength:   toolfacts.DiscoveryStrengthSourceOwner,
+		SourceOwnerFound:    true,
+	}
 }
 
 func (m *Manager) dependencyGraph(ctx context.Context, req ToolRequest) ToolResult {

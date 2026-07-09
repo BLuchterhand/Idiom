@@ -13,6 +13,7 @@ import (
 
 	planartifact "idiom/internal/contracts/planartifact"
 	"idiom/internal/contracts/sourcekind"
+	"idiom/internal/contracts/toolfacts"
 	"idiom/internal/platform/config"
 	"idiom/internal/repository/semantic/languagetools"
 )
@@ -2221,6 +2222,13 @@ func TestSearchFilesSkipsNoisyDirsByDefaultButAllowsExplicitPath(t *testing.T) {
 	})
 	if explicit.Error != "" {
 		t.Fatalf("explicit search_files failed: %#v", explicit)
+	}
+
+	if explicit.Facts == nil || explicit.Facts.DiscoveryStrength != toolfacts.DiscoveryStrengthSourceOwner || !explicit.Facts.SourceOwnerFound {
+		t.Fatalf("search_files should publish source-owner discovery facts, got %#v", explicit.Facts)
+	}
+	if !slices.Contains(explicit.Facts.CandidatePaths, ".claude/worktrees/HiddenWorktreeWidget.go") {
+		t.Fatalf("search_files facts missing displayed candidate path: %#v", explicit.Facts.CandidatePaths)
 	}
 
 	if !strings.Contains(explicit.Output, ".claude/worktrees/HiddenWorktreeWidget.go") {

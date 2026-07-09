@@ -33,11 +33,14 @@ func Run(cfg config.Config, opts planexecute.Options, runOpts Options, promptRun
 		opts.Context = context.Background()
 	}
 
-	if runOpts.IntentLoop {
-		childRunner := runOpts.ChildRunner
-		if childRunner == nil {
-			childRunner = defaultChildRunner
+	runPlanExecute := runOpts.ChildRunner
+	if runPlanExecute == nil {
+		runPlanExecute = func(cfg config.Config, opts planexecute.Options, promptRun planexecute.PromptRunner, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer) planexecute.RunResult {
+			return planexecute.RunWithDependencies(cfg, opts, promptRun, rec, stdout, stderr, planexecuteadapters.Dependencies())
 		}
+	}
+
+	if runOpts.IntentLoop {
 		result := intentloop.Run(cfg, intentloop.IntentLoopOptions{
 			PlanExecuteOptions:          opts,
 			SessionID:                   opts.SessionID,
@@ -45,7 +48,7 @@ func Run(cfg config.Config, opts planexecute.Options, runOpts Options, promptRun
 			MaxCycles:                   runOpts.MaxCycles,
 			CycleBudgetTokens:           runOpts.TotalBudgetTokens,
 			DetectExternalScopedChanges: true,
-			RunPlanExecute:              childRunner,
+			RunPlanExecute:              runPlanExecute,
 		}, promptRun, rec, stdout, stderr)
 		return planexecute.RunResult{
 			ExitCode:       result.ExitCode,
@@ -55,12 +58,5 @@ func Run(cfg config.Config, opts planexecute.Options, runOpts Options, promptRun
 		}
 	}
 
-	return defaultChildRunner(cfg, opts, promptRun, rec, stdout, stderr)
-}
-
-func defaultChildRunner(cfg config.Config, opts planexecute.Options, promptRun planexecute.PromptRunner, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer) planexecute.RunResult {
-	if opts.Context == nil {
-		opts.Context = context.Background()
-	}
-	return planexecute.RunWithDependencies(cfg, opts, promptRun, rec, stdout, stderr, planexecuteadapters.Dependencies())
+	return runPlanExecute(cfg, opts, promptRun, rec, stdout, stderr)
 }

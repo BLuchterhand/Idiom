@@ -178,6 +178,25 @@ func TestToolResultEvidenceProjectionCandidateBoundaries(t *testing.T) {
 	if !slices.Contains(ledger.CandidatePaths, sourcePath) || !ledger.HasUnreadCandidatePaths {
 		t.Fatalf("context_pack candidate should remain unread in answerability ledger: %#v", ledger)
 	}
+
+	factResult := workspace.ToolResult{
+		Tool:    workspace.ToolNameContextQuery,
+		Summary: "Context query mentioned internal/runtime/agent/wrong.go",
+		Output:  `{"candidates":[{"path":"internal/runtime/agent/wrong.go"}]}`,
+		Facts: &toolfacts.ToolResultFacts{
+			CandidatePaths:      []string{sourcePath},
+			HasDiscoveryTargets: true,
+			DiscoveryStrength:   toolfacts.DiscoveryStrengthSourceOwner,
+			SourceOwnerFound:    true,
+		},
+	}
+	if got := newToolResultEvidenceProjection([]workspace.ToolResult{factResult}).CandidatePaths(); !slices.Equal(got, []string{sourcePath}) {
+		t.Fatalf("candidate paths should come from facts, got %#v", got)
+	}
+	outcome := discoveryResultOutcomeFromResult(workspace.ToolRequest{Tool: workspace.ToolNameContextQuery}, factResult, 4)
+	if outcome.Strength != toolfacts.DiscoveryStrengthSourceOwner || !slices.Equal(outcome.Candidates, []string{sourcePath}) {
+		t.Fatalf("discovery outcome should come from facts, got %#v", outcome)
+	}
 }
 
 func TestToolResultEvidenceProjectionChangedPaths(t *testing.T) {

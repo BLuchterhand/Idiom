@@ -31879,7 +31879,8 @@ func TestDiscoveryConsumptionCandidateOnlyContextQueryAllowsFollowup(t *testing.
 		workspace.ToolResult{
 			Tool:    "context_query",
 			Summary: "Found 2 candidate owner(s); source owner not established",
-			Output:  `{"source_owner_found":false,"candidates":[{"path":"internal/runtime/agent/runner_core.go"},{"path":"internal/runtime/agent/runner_core.go"}]}`,
+			Output:  `{"candidates":[{"path":"internal/runtime/agent/runner_core.go"},{"path":"internal/runtime/agent/runner_core.go"}]}`,
+			Facts:   discoveryCandidateFactsForTest("internal/runtime/agent/runner_core.go"),
 		},
 		"",
 		nil,
@@ -32182,7 +32183,8 @@ func TestDiscoveryConsumptionStrongContextPackStillBlocksBroadRediscovery(t *tes
 		workspace.ToolResult{
 			Tool:    "context_query",
 			Summary: "Found candidate-only related paths",
-			Output:  `{"source_owner_found":false,"candidates":[{"path":"internal/runtime/agent/runner_core.go"}]}`,
+			Output:  `{"candidates":[{"path":"internal/runtime/agent/runner_core.go"}]}`,
+			Facts:   discoveryCandidateFactsForTest("internal/runtime/agent/runner_core.go"),
 		},
 		"",
 		nil,
